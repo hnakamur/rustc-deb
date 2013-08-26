@@ -21,7 +21,7 @@ SELF_BOOTSTRAP = \
 SYSTEM_LLVM = --llvm-root=/usr
 
 %:
-	dh $@
+	dh $@ --parallel
 
 override_dh_auto_configure:
 	    ./configure \
