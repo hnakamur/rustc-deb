@@ -1,0 +1,3 @@
+version=3
+https://github.com/mozilla/rust/wiki/Doc-releases \
+http://static.rust-lang.org/dist/rust-(.*)\.tar\.gz

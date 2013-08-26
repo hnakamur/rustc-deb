@@ -1,0 +1,130 @@
+Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: rust
+Source: http://www.rust-lang.org
+
+Files: *
+Copyright: 2006-2009 Graydon Hoare
+           2009-2013 Mozilla Foundation
+           2012-2013 The Rust Project Developers (see AUTHORS.txt)
+License: Expat or Apache-2.0
+ Licensed under the Apache License, Version 2.0 <LICENSE-APACHE 
+ or http://www.apache.org/licenses/LICENSE-2.0> or the MIT
+ license <LICENSE-MIT or http://opensource.org/licenses/MIT>,
+ at your option. All files in the project carrying such
+ notice may not be copied, modified, or distributed except
+ according to those terms. 
+
+Files: src/rt/isaac/*
+Copyright: 1996 Bob Jenkins
+License: public-domain
+
+Files: src/rt/miniz.c
+Copyright: 1996 Rich Geldreich
+License: public-domain
+
+Files: src/rt/uthash/*
+Copyright: 2003-2009, Troy D. Hanson
+License: BSD-1-clause
+
+Files: src/rt/bigint/*
+Copyright: 2000 Jef Poskanzer
+License: BSD-2-clause
+
+Files: src/rt/vg/*.h
+Copyright: 2000-2010 Julian Seward
+License: BSD-3-clause
+
+Files: src/libuv/*
+Copyright: 2011-2013 Joyent, Inc. and other Node contributors
+License: BSD-3-clause
+
+Files: src/llvm/*
+Copyright: 2003-2012 University of Illinois at Urbana-Champaign
+License: BSD-3-clause
+
+License: BSD-1-clause
+ Redistribution and use in source and binary forms, with
+ or without modification, are permitted provided that the
+ following conditions are met:
+ .
+ 1. Redistributions of source code must retain the
+    above copyright notice, this list of conditions
+    and the following disclaimer.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+ CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
+ WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY
+ DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+ USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+ USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+ OF SUCH DAMAGE.
+
+License: BSD-2-clause
+ Redistribution and use in source and binary forms, with
+ or without modification, are permitted provided that the
+ following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above
+    copyright notice, this list of conditions and the
+    following disclaimer.
+ 2. Redistributions in binary form must reproduce the
+    above copyright notice, this list of conditions and
+    the following disclaimer in the documentation and/or
+    other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS
+ ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR
+ CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: Expat
+ Permission is hereby granted, free of charge, to any
+ person obtaining a copy of this software and associated
+ documentation files (the "Software"), to deal in the
+ Software without restriction, including without
+ limitation the rights to use, copy, modify, merge,
+ publish, distribute, sublicense, and/or sell copies of
+ the Software, and to permit persons to whom the Software
+ is furnished to do so, subject to the following
+ conditions:
+ .
+ The above copyright notice and this permission notice
+ shall be included in all copies or substantial portions
+ of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+ TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+ PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+ SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ DEALINGS IN THE SOFTWARE.
+
+
+License: BSD-3-clause
+ The full text of the BSD-3-clause license can be found in
+ `/usr/share/common-licenses/BSD'.
+
+License: Apache-2.0
+ The full text of the Apache license can be found in
+ `/usr/share/common-licenses/Apache-2.0'.

@@ -1,0 +1,5 @@
+rust (0.6-0~exp1) experimental; urgency=low
+
+  * Initial packaging
+
+ -- Luca Bruno <lucab@debian.org>  Sun, 07 Apr 2013 13:53:22 +0200
