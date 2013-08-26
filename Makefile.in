@@ -1,0 +1,643 @@
+# Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+# file at the top-level directory of this distribution and at
+# http://rust-lang.org/COPYRIGHT.
+#
+# Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+# http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+# <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+# option. This file may not be copied, modified, or distributed
+# except according to those terms.
+
+# An explanation of how the build is structured:
+#
+# There are multiple build stages (0-3) needed to verify that the
+# compiler is properly self-hosting. Each stage is divided between
+# 'host' artifacts and 'target' artifacts, where the stageN host
+# compiler builds artifacts for 1 or more stageN target architectures.
+# Once the stageN target compiler has been built for the host
+# architecture it is promoted (copied) to a stageN+1 host artifact.
+#
+# The stage3 host compiler is a compiler that successfully builds
+# itself and should (in theory) be bitwise identical to the stage2
+# host compiler. The process is bootstrapped using a stage0 host
+# compiler downloaded from a previous snapshot.
+#
+# At no time should stageN artifacts be interacting with artifacts
+# from other stages. For consistency, we use the 'promotion' logic
+# for all artifacts, even those that don't make sense on non-host
+# architectures.
+#
+# The directory layout for a stage is intended to match the layout
+# of the installed compiler, and looks like the following:
+#
+# stageN - this is the system root, corresponding to, e.g. /usr
+#   bin - binaries compiled for the host
+#   lib - libraries used by the host compiler
+#     rustc - rustc's own place to organize libraries
+#       $(target) - target-specific artifacts
+#         bin - binaries for target architectures
+#         lib - libraries for target architectures
+#
+# A note about host libraries:
+#
+# The only libraries that get promoted to stageN/lib are those needed
+# by rustc. In general, rust programs, even those compiled for the
+# host architecture will use libraries from the target
+# directories. This gives rust some freedom to experiment with how
+# libraries are managed and versioned without polluting the common
+# areas of the filesystem.
+#
+# General rust binaries may stil live in the host bin directory; they
+# will just link against the libraries in the target lib directory.
+#
+# Admittedly this is a little convoluted.
+
+STAGES = 0 1 2 3
+
+######################################################################
+# Residual auto-configuration
+######################################################################
+
+# Recursive wildcard function
+# http://blog.jgc.org/2011/07/gnu-make-recursive-wildcard-function.html
+rwildcard=$(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) \
+  $(filter $(subst *,%,$2),$d))
+
+include config.mk
+
+# We track all of the object files we might build so that we can find
+# and include all of the .d files in one fell swoop.
+ALL_OBJ_FILES :=
+
+MKFILE_DEPS := config.stamp $(call rwildcard,$(CFG_SRC_DIR)mk/,*)
+NON_BUILD_HOST_TRIPLES = $(filter-out $(CFG_BUILD_TRIPLE),$(CFG_HOST_TRIPLES))
+NON_BUILD_TARGET_TRIPLES = $(filter-out $(CFG_BUILD_TRIPLE),$(CFG_TARGET_TRIPLES))
+
+ifneq ($(MAKE_RESTARTS),)
+CFG_INFO := $(info cfg: make restarts: $(MAKE_RESTARTS))
+endif
+
+CFG_INFO := $(info cfg: build triple $(CFG_BUILD_TRIPLE))
+CFG_INFO := $(info cfg: host triples $(CFG_HOST_TRIPLES))
+CFG_INFO := $(info cfg: target triples $(CFG_TARGET_TRIPLES))
+
+ifneq ($(wildcard $(NON_BUILD_HOST_TRIPLES)),)
+CFG_INFO := $(info cfg: non-build host triples $(NON_BUILD_HOST_TRIPLES))
+endif
+ifneq ($(wildcard $(NON_BUILD_TARGET_TRIPLES)),)
+CFG_INFO := $(info cfg: non-build target triples $(NON_BUILD_TARGET_TRIPLES))
+endif
+
+CFG_RUSTC_FLAGS := $(RUSTFLAGS)
+CFG_GCCISH_CFLAGS :=
+CFG_GCCISH_LINK_FLAGS :=
+
+ifdef CFG_DISABLE_OPTIMIZE
+  $(info cfg: disabling rustc optimization (CFG_DISABLE_OPTIMIZE))
+  CFG_RUSTC_FLAGS +=
+else
+  CFG_RUSTC_FLAGS += -O
+endif
+
+ifdef CFG_ENABLE_DEBUG
+  $(info cfg: enabling more debugging (CFG_ENABLE_DEBUG))
+  CFG_RUSTC_FLAGS +=
+  CFG_GCCISH_CFLAGS += -DRUST_DEBUG
+else
+  CFG_GCCISH_CFLAGS += -DRUST_NDEBUG
+endif
+
+ifdef SAVE_TEMPS
+  CFG_RUSTC_FLAGS += --save-temps
+endif
+ifdef TIME_PASSES
+  CFG_RUSTC_FLAGS += -Z time-passes
+endif
+ifdef TIME_LLVM_PASSES
+  CFG_RUSTC_FLAGS += -Z time-llvm-passes
+endif
+ifdef TRACE
+  CFG_RUSTC_FLAGS += -Z trace
+endif
+
+# platform-specific auto-configuration
+include $(CFG_SRC_DIR)mk/platform.mk
+
+# Run the stage1/2 compilers under valgrind
+ifdef VALGRIND_COMPILE
+  CFG_VALGRIND_COMPILE :=$(CFG_VALGRIND)
+else
+  CFG_VALGRIND_COMPILE :=
+endif
+
+# version-string calculation
+CFG_GIT_DIR := $(CFG_SRC_DIR).git
+CFG_RELEASE = 0.6
+CFG_VERSION = $(CFG_RELEASE)
+
+ifneq ($(wildcard $(CFG_GIT)),)
+ifneq ($(wildcard $(CFG_GIT_DIR)),)
+    CFG_VERSION += $(shell git --git-dir=$(CFG_GIT_DIR) log -1 \
+                     --pretty=format:'(%h %ci)')
+    CFG_VER_HASH = $(shell git --git-dir=$(CFG_GIT_DIR) log -1 \
+                     --pretty=format:'%H')
+endif
+endif
+
+ifdef CFG_ENABLE_VALGRIND
+  $(info cfg: enabling valgrind (CFG_ENABLE_VALGRIND))
+else
+  CFG_VALGRIND :=
+endif
+ifdef CFG_BAD_VALGRIND
+  $(info cfg: disabling valgrind due to its unreliability on this platform)
+  CFG_VALGRIND :=
+endif
+
+
+######################################################################
+# Target-and-rule "utility variables"
+######################################################################
+
+ifdef VERBOSE
+  Q :=
+  E =
+else
+  Q := @
+  E = echo $(1)
+endif
+
+S := $(CFG_SRC_DIR)
+
+define DEF_X
+X_$(1) := $(CFG_EXE_SUFFIX_$(1))
+endef
+$(foreach target,$(CFG_TARGET_TRIPLES),\
+  $(eval $(call DEF_X,$(target))))
+
+# Look in doc and src dirs.
+VPATH := $(S)doc $(S)src
+
+# "Source" files we generate in builddir along the way.
+GENERATED :=
+
+# Delete the built-in rules.
+.SUFFIXES:
+%:: %,v
+%:: RCS/%,v
+%:: RCS/%
+%:: s.%
+%:: SCCS/s.%
+
+
+######################################################################
+# Crates
+######################################################################
+
+define DEF_LIBS
+
+CFG_RUNTIME_$(1) :=$(call CFG_LIB_NAME_$(1),rustrt)
+CFG_RUSTLLVM_$(1) :=$(call CFG_LIB_NAME_$(1),rustllvm)
+CFG_CORELIB_$(1) :=$(call CFG_LIB_NAME_$(1),core)
+CFG_STDLIB_$(1) :=$(call CFG_LIB_NAME_$(1),std)
+CFG_LIBRUSTC_$(1) :=$(call CFG_LIB_NAME_$(1),rustc)
+CFG_LIBSYNTAX_$(1) :=$(call CFG_LIB_NAME_$(1),syntax)
+CFG_LIBFUZZER_$(1) :=$(call CFG_LIB_NAME_$(1),fuzzer)
+CFG_LIBRUSTPKG_$(1) :=$(call CFG_LIB_NAME_$(1),rustpkg)
+CFG_LIBRUSTDOC_$(1) :=$(call CFG_LIB_NAME_$(1),rustdoc)
+CFG_LIBRUSTI_$(1) :=$(call CFG_LIB_NAME_$(1),rusti)
+CFG_LIBRUST_$(1) :=$(call CFG_LIB_NAME_$(1),rust)
+
+STDLIB_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),std)
+CORELIB_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),core)
+LIBRUSTC_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rustc)
+LIBSYNTAX_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),syntax)
+LIBFUZZER_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),fuzzer)
+LIBRUSTPKG_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rustpkg)
+LIBRUSTDOC_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rustdoc)
+LIBRUSTI_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rusti)
+LIBRUST_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rust)
+STDLIB_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),std)
+CORELIB_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),core)
+LIBRUSTC_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rustc)
+LIBSYNTAX_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),syntax)
+LIBFUZZER_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),fuzzer)
+LIBRUSTPKG_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rustpkg)
+LIBRUSTDOC_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rustdoc)
+LIBRUSTI_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rusti)
+LIBRUST_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rust)
+
+endef
+
+$(foreach target,$(CFG_TARGET_TRIPLES),\
+  $(eval $(call DEF_LIBS,$(target))))
+
+######################################################################
+# Core library variables
+######################################################################
+
+CORELIB_CRATE := $(S)src/libcore/core.rc
+CORELIB_INPUTS := $(wildcard $(addprefix $(S)src/libcore/,        \
+                                           core.rc *.rs */*.rs */*/*rs))
+
+######################################################################
+# Standard library variables
+######################################################################
+
+STDLIB_CRATE := $(S)src/libstd/std.rc
+STDLIB_INPUTS := $(wildcard $(addprefix $(S)src/libstd/,          \
+                                          std.rc *.rs */*.rs))
+
+######################################################################
+# rustc crate variables
+######################################################################
+
+COMPILER_CRATE := $(S)src/librustc/rustc.rc
+COMPILER_INPUTS := $(wildcard $(addprefix $(S)src/librustc/,      \
+                           rustc.rc *.rs */*.rs */*/*.rs */*/*/*.rs))
+
+LIBSYNTAX_CRATE := $(S)src/libsyntax/syntax.rc
+LIBSYNTAX_INPUTS := $(wildcard $(addprefix $(S)src/libsyntax/, \
+                            syntax.rc *.rs */*.rs */*/*.rs))
+
+DRIVER_CRATE := $(S)src/driver/driver.rs
+
+######################################################################
+# LLVM macros
+######################################################################
+
+# FIXME: x86-ism
+LLVM_COMPONENTS=x86 arm mips ipo bitreader bitwriter linker asmparser jit mcjit \
+                interpreter
+
+define DEF_LLVM_VARS
+# The configure script defines these variables with the target triples
+# separated by Z. This defines new ones with the expected format.
+CFG_LLVM_BUILD_DIR_$(1):=$$(CFG_LLVM_BUILD_DIR_$(subst -,_,$(1)))
+CFG_LLVM_INST_DIR_$(1):=$$(CFG_LLVM_INST_DIR_$(subst -,_,$(1)))
+
+# Any rules that depend on LLVM should depend on LLVM_CONFIG
+LLVM_CONFIG_$(1):=$$(CFG_LLVM_INST_DIR_$(1))/bin/llvm-config$$(X_$(1))
+LLVM_MC_$(1):=$$(CFG_LLVM_INST_DIR_$(1))/bin/llvm-mc$$(X_$(1))
+LLVM_VERSION_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --version)
+LLVM_BINDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --bindir)
+LLVM_INCDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --includedir)
+LLVM_LIBDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --libdir)
+LLVM_LIBS_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --libs $$(LLVM_COMPONENTS))
+LLVM_LDFLAGS_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --ldflags)
+# On FreeBSD, it may search wrong headers (that are for pre-installed LLVM),
+# so we replace -I with -iquote to ensure that it searches bundled LLVM first.
+LLVM_CXXFLAGS_$(1)=$$(subst -I, -iquote , $$(shell "$$(LLVM_CONFIG_$(1))" --cxxflags))
+LLVM_HOST_TRIPLE_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --host-target)
+
+LLVM_AS_$(1)=$$(CFG_LLVM_INST_DIR_$(1))/bin/llvm-as$$(X_$(1))
+LLC_$(1)=$$(CFG_LLVM_INST_DIR_$(1))/bin/llc$$(X_$(1))
+
+endef
+
+$(foreach host,$(CFG_HOST_TRIPLES), \
+ $(eval $(call DEF_LLVM_VARS,$(host))))
+
+######################################################################
+# Exports for sub-utilities
+######################################################################
+
+# Note that any variable that re-configure should pick up needs to be
+# exported
+
+export CFG_SRC_DIR
+export CFG_BUILD_DIR
+export CFG_VERSION
+export CFG_BUILD_TRIPLE
+export CFG_LLVM_ROOT
+export CFG_ENABLE_MINGW_CROSS
+export CFG_PREFIX
+export CFG_LIBDIR
+
+######################################################################
+# Subprograms
+######################################################################
+
+######################################################################
+# Per-stage targets and runner
+######################################################################
+
+define SREQ
+# $(1) is the stage number
+# $(2) is the target triple
+# $(3) is the host triple
+
+# Destinations of artifacts for the host compiler
+HROOT$(1)_H_$(3) = $(3)/stage$(1)
+HBIN$(1)_H_$(3) = $$(HROOT$(1)_H_$(3))/bin
+HLIB$(1)_H_$(3) = $$(HROOT$(1)_H_$(3))/$$(CFG_LIBDIR)
+
+# Destinations of artifacts for target architectures
+TROOT$(1)_T_$(2)_H_$(3) = $$(HLIB$(1)_H_$(3))/rustc/$(2)
+TBIN$(1)_T_$(2)_H_$(3) = $$(TROOT$(1)_T_$(2)_H_$(3))/bin
+TLIB$(1)_T_$(2)_H_$(3) = $$(TROOT$(1)_T_$(2)_H_$(3))/$$(CFG_LIBDIR)
+
+# The name of the core and standard libraries used by rustc
+ifdef CFG_DISABLE_SHAREDSTD
+  HCORELIB_DEFAULT$(1)_H_$(3) = \
+    $$(HLIB$(1)_H_$(3))/libcore.rlib
+  TCORELIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
+    $$(TLIB$(1)_T_$(2)_H_$(3))/libcore.rlib
+
+  HSTDLIB_DEFAULT$(1)_H_$(3) = \
+    $$(HLIB$(1)_H_$(3))/libstd.rlib
+  TSTDLIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
+    $$(TLIB$(1)_T_$(2)_H_$(3))/libstd.rlib
+
+  HLIBRUSTC_DEFAULT$(1)_H_$(3) = \
+    $$(HLIB$(1)_H_$(3))/librustc.rlib
+  TLIBRUSTC_DEFAULT$(1)_T_$(2)_H_$(3) = \
+    $$(TLIB$(1)_T_$(2)_H_$(3))/librustc.rlib
+else
+  HCORELIB_DEFAULT$(1)_H_$(3) = \
+    $$(HLIB$(1)_H_$(3))/$(CFG_CORELIB_$(3))
+  TCORELIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
+    $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_CORELIB_$(2))
+
+  HSTDLIB_DEFAULT$(1)_H_$(3) = \
+    $$(HLIB$(1)_H_$(3))/$(CFG_STDLIB_$(3))
+  TSTDLIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
+    $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2))
+
+  HLIBRUSTC_DEFAULT$(1)_H_$(3) = \
+    $$(HLIB$(1)_H_$(3))/$(CFG_LIBRUSTC_$(3))
+  TLIBRUSTC_DEFAULT$(1)_T_$(2)_H_$(3) = \
+    $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTC_$(2))
+endif
+
+# Preqrequisites for using the stageN compiler
+HSREQ$(1)_H_$(3) = \
+	$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
+	$$(HLIB$(1)_H_$(3))/$(CFG_RUNTIME_$(3)) \
+	$$(HLIB$(1)_H_$(3))/$(CFG_RUSTLLVM_$(3)) \
+	$$(HCORELIB_DEFAULT$(1)_H_$(3)) \
+	$$(HSTDLIB_DEFAULT$(1)_H_$(3)) \
+	$$(HLIBSYNTAX_DEFAULT$(1)_H_$(3)) \
+	$$(HLIBRUSTC_DEFAULT$(1)_H_$(3)) \
+	$$(MKFILE_DEPS)
+
+# Prerequisites for using the stageN compiler to build target artifacts
+TSREQ$(1)_T_$(2)_H_$(3) = \
+	$$(HSREQ$(1)_H_$(3)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_RUNTIME_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/libmorestack.a
+
+# Prerequisites for a working stageN compiler and libraries, for a specific target
+SREQ$(1)_T_$(2)_H_$(3) = \
+	$$(TSREQ$(1)_T_$(2)_H_$(3)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_CORELIB_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2))
+
+# Prerequisites for a working stageN compiler and libraries, for a specific target
+CSREQ$(1)_T_$(2)_H_$(3) = \
+	$$(TSREQ$(1)_T_$(2)_H_$(3)) \
+	$$(HBIN$(1)_H_$(3))/fuzzer$$(X_$(3)) \
+	$$(HBIN$(1)_H_$(3))/rustpkg$$(X_$(3)) \
+	$$(HBIN$(1)_H_$(3))/rustdoc$$(X_$(3)) \
+	$$(HBIN$(1)_H_$(3))/rusti$$(X_$(3)) \
+	$$(HBIN$(1)_H_$(3))/rust$$(X_$(3)) \
+	$$(HLIB$(1)_H_$(3))/$(CFG_LIBFUZZER_$(3)) \
+	$$(HLIB$(1)_H_$(3))/$(CFG_LIBRUSTPKG_$(3)) \
+	$$(HLIB$(1)_H_$(3))/$(CFG_LIBRUSTDOC_$(3)) \
+	$$(HLIB$(1)_H_$(3))/$(CFG_LIBRUSTI_$(3)) \
+	$$(HLIB$(1)_H_$(3))/$(CFG_LIBRUST_$(3)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_CORELIB_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2))  \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBSYNTAX_$(2))  \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTC_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBFUZZER_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTPKG_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTDOC_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTI_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUST_$(2))
+
+ifeq ($(1),0)
+# Don't run the the stage0 compiler under valgrind - that ship has sailed
+CFG_VALGRIND_COMPILE$(1) =
+else
+CFG_VALGRIND_COMPILE$(1) = $$(CFG_VALGRIND_COMPILE)
+endif
+
+# Add RUSTFLAGS_STAGEN values to the build command
+EXTRAFLAGS_STAGE$(1) = $$(RUSTFLAGS_STAGE$(1))
+
+CFGFLAG$(1)_T_$(2)_H_$(3) = stage$(1)
+
+# Pass --cfg stage0 only for the build->host part of stage0;
+# if you're building a cross config, the host->* parts are
+# effectively stage1, since it uses the just-built stage0.
+ifeq ($(1),0)
+ifneq ($(strip $(CFG_BUILD_TRIPLE)),$(strip $(3)))
+CFGFLAG$(1)_T_$(2)_H_$(3) = stage1
+endif
+endif
+
+STAGE$(1)_T_$(2)_H_$(3) := 						\
+	$$(Q)$$(call CFG_RUN_TARG_$(3),$(1),				\
+		$$(CFG_VALGRIND_COMPILE$(1)) 			\
+		$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3))			\
+		--cfg $$(CFGFLAG$(1)_T_$(2)_H_$(3))			\
+		$$(CFG_RUSTC_FLAGS) $$(EXTRAFLAGS_STAGE$(1)) --target=$(2)) \
+                $$(RUSTC_FLAGS_$(2))
+
+PERF_STAGE$(1)_T_$(2)_H_$(3) := 				\
+	$$(Q)$$(call CFG_RUN_TARG_$(3),$(1),				\
+		$$(CFG_PERF_TOOL) 						\
+		$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3))			\
+		--cfg $$(CFGFLAG$(1)_T_$(2)_H_$(3))			\
+		$$(CFG_RUSTC_FLAGS) $$(EXTRAFLAGS_STAGE$(1)) --target=$(2)) \
+                $$(RUSTC_FLAGS_$(2))
+
+endef
+
+$(foreach build,$(CFG_HOST_TRIPLES), \
+ $(eval $(foreach target,$(CFG_TARGET_TRIPLES), \
+  $(eval $(foreach stage,$(STAGES), \
+   $(eval $(call SREQ,$(stage),$(target),$(build))))))))
+
+######################################################################
+# rustc-H-targets
+#
+# Builds a functional Rustc for the given host.
+######################################################################
+
+define DEF_RUSTC_STAGE_TARGET
+# $(1) == architecture
+# $(2) == stage
+
+rustc-stage$(2)-H-$(1):							\
+	$$(foreach target,$$(CFG_TARGET_TRIPLES),	\
+		$$(SREQ$(2)_T_$$(target)_H_$(1)))
+
+endef
+
+$(foreach host,$(CFG_HOST_TRIPLES),							\
+ $(eval $(foreach stage,1 2 3,									\
+  $(eval $(call DEF_RUSTC_STAGE_TARGET,$(host),$(stage))))))
+
+rustc-stage1: rustc-stage1-H-$(CFG_BUILD_TRIPLE)
+rustc-stage2: rustc-stage2-H-$(CFG_BUILD_TRIPLE)
+rustc-stage3: rustc-stage3-H-$(CFG_BUILD_TRIPLE)
+
+define DEF_RUSTC_TARGET
+# $(1) == architecture
+
+rustc-H-$(1): rustc-stage2-H-$(1)
+endef
+
+$(foreach host,$(CFG_TARGET_TRIPLES),			\
+ $(eval $(call DEF_RUSTC_TARGET,$(host))))
+
+rustc-stage1: rustc-stage1-H-$(CFG_BUILD_TRIPLE)
+rustc-stage2: rustc-stage2-H-$(CFG_BUILD_TRIPLE)
+rustc-stage3: rustc-stage3-H-$(CFG_BUILD_TRIPLE)
+rustc: rustc-H-$(CFG_BUILD_TRIPLE)
+
+rustc-H-all: $(foreach host,$(CFG_HOST_TRIPLES),rustc-H-$(host))
+
+######################################################################
+# Entrypoint rule
+######################################################################
+
+.DEFAULT_GOAL := all
+
+ifneq ($(CFG_IN_TRANSITION),)
+
+CFG_INFO := $(info cfg:)
+CFG_INFO := $(info cfg: *** compiler is in snapshot transition ***)
+CFG_INFO := $(info cfg: *** stage2 and later will not be built ***)
+CFG_INFO := $(info cfg:)
+
+#XXX This is surely busted
+all: $(SREQ1$(CFG_BUILD_TRIPLE)) $(GENERATED) docs
+
+else
+
+define ALL_TARGET_N
+ifneq ($$(findstring $(1),$$(CFG_HOST_TRIPLES)),)
+# This is a host
+all-target-$(1)-host-$(2): $$(CSREQ2_T_$(1)_H_$(2))
+else
+# This is a target only
+all-target-$(1)-host-$(2): $$(SREQ2_T_$(1)_H_$(2))
+endif
+endef
+
+$(foreach target,$(CFG_TARGET_TRIPLES), \
+ $(foreach host,$(CFG_HOST_TRIPLES), \
+ $(eval $(call ALL_TARGET_N,$(target),$(host)))))
+
+ALL_TARGET_RULES = $(foreach target,$(CFG_TARGET_TRIPLES), \
+	$(foreach host,$(CFG_HOST_TRIPLES), \
+ all-target-$(target)-host-$(host)))
+
+all: $(ALL_TARGET_RULES) $(GENERATED) docs
+
+endif
+
+
+######################################################################
+# Re-configuration
+######################################################################
+
+ifndef CFG_DISABLE_MANAGE_SUBMODULES
+# This is a pretty expensive operation but I don't see any way to avoid it
+NEED_GIT_RECONFIG=$(shell cd "$(CFG_SRC_DIR)" && "$(CFG_GIT)" submodule status | grep -c '^\(+\|-\)')
+else
+NEED_GIT_RECONFIG=0
+endif
+
+ifeq ($(NEED_GIT_RECONFIG),0)
+else
+# If the submodules have changed then always execute config.mk
+.PHONY: config.stamp
+endif
+
+Makefile config.mk: config.stamp
+
+config.stamp: $(S)configure $(S)Makefile.in $(S)src/snapshots.txt
+	@$(call E, cfg: reconfiguring)
+	$(Q)$(S)configure $(CFG_CONFIGURE_ARGS)
+
+
+######################################################################
+# Primary-target makefiles
+######################################################################
+
+include $(CFG_SRC_DIR)mk/target.mk
+include $(CFG_SRC_DIR)mk/host.mk
+include $(CFG_SRC_DIR)mk/stage0.mk
+include $(CFG_SRC_DIR)mk/rt.mk
+include $(CFG_SRC_DIR)mk/rustllvm.mk
+include $(CFG_SRC_DIR)mk/tools.mk
+include $(CFG_SRC_DIR)mk/docs.mk
+include $(CFG_SRC_DIR)mk/llvm.mk
+
+######################################################################
+# Secondary makefiles, conditionalized for speed
+######################################################################
+
+ifneq ($(strip $(findstring dist,$(MAKECMDGOALS))   \
+               $(findstring check,$(MAKECMDGOALS))  \
+               $(findstring test,$(MAKECMDGOALS))   \
+               $(findstring tidy,$(MAKECMDGOALS))   \
+               $(findstring clean,$(MAKECMDGOALS))),)
+  CFG_INFO := $(info cfg: including dist rules)
+  include $(CFG_SRC_DIR)mk/dist.mk
+endif
+
+ifneq ($(strip $(findstring snap,$(MAKECMDGOALS))   \
+               $(findstring clean,$(MAKECMDGOALS))),)
+  CFG_INFO := $(info cfg: including snap rules)
+  include $(CFG_SRC_DIR)mk/snap.mk
+endif
+
+ifneq ($(findstring reformat,$(MAKECMDGOALS)),)
+  CFG_INFO := $(info cfg: including reformat rules)
+  include $(CFG_SRC_DIR)mk/pp.mk
+endif
+
+ifneq ($(strip $(findstring check,$(MAKECMDGOALS)) \
+               $(findstring test,$(MAKECMDGOALS))  \
+               $(findstring perf,$(MAKECMDGOALS))  \
+               $(findstring tidy,$(MAKECMDGOALS))),)
+  CFG_INFO := $(info cfg: including test rules)
+  include $(CFG_SRC_DIR)mk/tests.mk
+endif
+
+ifneq ($(findstring perf,$(MAKECMDGOALS)),)
+  CFG_INFO := $(info cfg: including perf rules)
+  include $(CFG_SRC_DIR)mk/perf.mk
+endif
+
+ifneq ($(findstring clean,$(MAKECMDGOALS)),)
+  CFG_INFO := $(info cfg: including clean rules)
+  include $(CFG_SRC_DIR)mk/clean.mk
+endif
+
+ifneq ($(findstring install,$(MAKECMDGOALS)),)
+  ifdef DESTDIR
+    CFG_INFO := $(info cfg: setting CFG_PREFIX via DESTDIR, $(DESTDIR)/$(CFG_PREFIX))
+    CFG_PREFIX:=$(DESTDIR)/$(CFG_PREFIX)
+    export CFG_PREFIX
+  endif
+
+  CFG_INFO := $(info cfg: including install rules)
+  include $(CFG_SRC_DIR)mk/install.mk
+endif
+
+ifneq ($(strip $(findstring TAGS.emacs,$(MAKECMDGOALS)) \
+               $(findstring TAGS.vi,$(MAKECMDGOALS))),)
+  CFG_INFO := $(info cfg: including ctags rules)
+  include $(CFG_SRC_DIR)mk/ctags.mk
+endif
+
+# Find all of the .d files and include them to add information about
+# header file dependencies.
+ALL_DEP_FILES := $(ALL_OBJ_FILES:%.o=%.d)
+-include $(ALL_DEP_FILES)
