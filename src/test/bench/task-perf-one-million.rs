@@ -10,7 +10,13 @@
 
 // Test for concurrent tasks
 
-use core::comm::*;
+// xfail-test OOM on linux-32 without opts
+
+use std::comm::*;
+use std::os;
+use std::task;
+use std::uint;
+use std::vec;
 
 fn calc(children: uint, parent_wait_chan: &Chan<Chan<Chan<int>>>) {
 

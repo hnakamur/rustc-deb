@@ -12,13 +12,13 @@
 //
 
 proto! streamp (
-    open:send<T:Owned> {
+    open:send<T:Send> {
         data(T) -> open<T>
     }
 )
 
 fn rendezvous() {
-    let (c, s) = streamp::init();
+    let (s, c) = streamp::init();
     let streams: ~[streamp::client::open<int>] = ~[c];
 
     error!("%?", streams[0]);

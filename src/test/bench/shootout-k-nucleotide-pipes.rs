@@ -8,35 +8,43 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-pretty (extra blank line is inserted in vec::mapi call)
+// xfail-pretty the `let to_child` line gets an extra newline
 // multi tasking k-nucleotide
 
-#[legacy_modes];
+extern mod extra;
 
-extern mod std;
-use std::sort;
-use core::hashmap::linear::LinearMap;
-use core::io::ReaderUtil;
-use core::comm::{stream, Port, Chan};
-use core::cmp::Ord;
+use extra::sort;
+use std::cmp::Ord;
+use std::comm::{stream, Port, Chan};
+use std::comm;
+use std::hashmap::HashMap;
+use std::io::ReaderUtil;
+use std::io;
+use std::option;
+use std::os;
+use std::result;
+use std::str;
+use std::task;
+use std::util;
+use std::vec;
 
 // given a map, print a sorted version of it
-fn sort_and_fmt(mm: &LinearMap<~[u8], uint>, total: uint) -> ~str {
+fn sort_and_fmt(mm: &HashMap<~[u8], uint>, total: uint) -> ~str {
    fn pct(xx: uint, yy: uint) -> float {
       return (xx as float) * 100f / (yy as float);
    }
 
    fn le_by_val<TT:Copy,UU:Copy + Ord>(kv0: &(TT,UU),
                                          kv1: &(TT,UU)) -> bool {
-      let (_, v0) = *kv0;
-      let (_, v1) = *kv1;
+      let (_, v0) = copy *kv0;
+      let (_, v1) = copy *kv1;
       return v0 >= v1;
    }
 
    fn le_by_key<TT:Copy + Ord,UU:Copy>(kv0: &(TT,UU),
                                          kv1: &(TT,UU)) -> bool {
-      let (k0, _) = *kv0;
-      let (k1, _) = *kv1;
+      let (k0, _) = copy *kv0;
+      let (k1, _) = copy *kv1;
       return k0 <= k1;
    }
 
@@ -48,7 +56,7 @@ fn sort_and_fmt(mm: &LinearMap<~[u8], uint>, total: uint) -> ~str {
    let mut pairs = ~[];
 
    // map -> [(k,%)]
-   for mm.each |&(&key, &val)| {
+   for mm.iter().advance |(&key, &val)| {
       pairs.push((key, pct(val, total)));
    }
 
@@ -56,10 +64,13 @@ fn sort_and_fmt(mm: &LinearMap<~[u8], uint>, total: uint) -> ~str {
 
    let mut buffer = ~"";
 
-   for pairs_sorted.each |kv| {
+   for pairs_sorted.iter().advance |kv| {
        let (k,v) = copy *kv;
        unsafe {
-           buffer += (fmt!("%s %0.3f\n", str::to_upper(str::raw::from_bytes(k)), v));
+           let b = str::raw::from_bytes(k);
+           // FIXME: #4318 Instead of to_ascii and to_str_ascii, could use
+           // to_ascii_consume and to_str_consume to not do a unnecessary copy.
+           buffer.push_str(fmt!("%s %0.3f\n", b.to_ascii().to_upper().to_str_ascii(), v));
        }
    }
 
@@ -67,16 +78,19 @@ fn sort_and_fmt(mm: &LinearMap<~[u8], uint>, total: uint) -> ~str {
 }
 
 // given a map, search for the frequency of a pattern
-fn find(mm: &LinearMap<~[u8], uint>, key: ~str) -> uint {
-   match mm.find(&str::to_bytes(str::to_lower(key))) {
+fn find(mm: &HashMap<~[u8], uint>, key: ~str) -> uint {
+   // FIXME: #4318 Instead of to_ascii and to_str_ascii, could use
+   // to_ascii_consume and to_str_consume to not do a unnecessary copy.
+   let key = key.to_ascii().to_lower().to_str_ascii();
+   match mm.find_equiv(&key.as_bytes()) {
       option::None      => { return 0u; }
       option::Some(&num) => { return num; }
    }
 }
 
 // given a map, increment the counter for a key
-fn update_freq(mm: &mut LinearMap<~[u8], uint>, key: &[u8]) {
-    let key = vec::slice(key, 0, key.len()).to_vec();
+fn update_freq(mm: &mut HashMap<~[u8], uint>, key: &[u8]) {
+    let key = key.to_owned();
     let newval = match mm.pop(&key) {
         Some(v) => v + 1,
         None => 1
@@ -91,19 +105,19 @@ fn windows_with_carry(bb: &[u8], nn: uint,
                       it: &fn(window: &[u8])) -> ~[u8] {
    let mut ii = 0u;
 
-   let len = vec::len(bb);
+   let len = bb.len();
    while ii < len - (nn - 1u) {
-      it(vec::slice(bb, ii, ii+nn));
+      it(bb.slice(ii, ii+nn));
       ii += 1u;
    }
 
-   return vec::slice(bb, len - (nn - 1u), len).to_vec();
+   return bb.slice(len - (nn - 1u), len).to_owned();
 }
 
-fn make_sequence_processor(sz: uint, from_parent: comm::Port<~[u8]>,
-                           to_parent: comm::Chan<~str>) {
-
-   let mut freqs: LinearMap<~[u8], uint> = LinearMap::new();
+fn make_sequence_processor(sz: uint,
+                           from_parent: &comm::Port<~[u8]>,
+                           to_parent: &comm::Chan<~str>) {
+   let mut freqs: HashMap<~[u8], uint> = HashMap::new();
    let mut carry: ~[u8] = ~[];
    let mut total: uint = 0u;
 
@@ -137,7 +151,7 @@ fn make_sequence_processor(sz: uint, from_parent: comm::Port<~[u8]>,
 // given a FASTA file on stdin, process sequence THREE
 fn main() {
     let args = os::args();
-   let rdr = if os::getenv(~"RUST_BENCH").is_some() {
+    let rdr = if os::getenv(~"RUST_BENCH").is_some() {
        // FIXME: Using this compile-time env variable is a crummy way to
        // get to this massive data set, but include_bin! chokes on it (#2598)
        let path = Path(env!("CFG_SRC_DIR"))
@@ -149,15 +163,13 @@ fn main() {
 
 
 
-   // initialize each sequence sorter
-   let sizes = ~[1,2,3,4,6,12,18];
-    let streams = vec::map(sizes, |_sz| Some(stream()));
-    let mut streams = streams;
+    // initialize each sequence sorter
+    let sizes = ~[1u,2,3,4,6,12,18];
+    let mut streams = vec::from_fn(sizes.len(), |_| Some(stream::<~str>()));
     let mut from_child = ~[];
-    let to_child   = vec::mapi(sizes, |ii, sz| {
+    let to_child   = do sizes.iter().zip(streams.mut_iter()).transform |(sz, stream_ref)| {
         let sz = *sz;
-        let mut stream = None;
-        stream <-> streams[ii];
+        let stream = util::replace(stream_ref, None);
         let (from_child_, to_parent_) = stream.unwrap();
 
         from_child.push(from_child_);
@@ -165,11 +177,11 @@ fn main() {
         let (from_parent, to_child) = comm::stream();
 
         do task::spawn_with(from_parent) |from_parent| {
-            make_sequence_processor(sz, from_parent, to_parent_);
+            make_sequence_processor(sz, &from_parent, &to_parent_);
         };
 
         to_child
-    });
+    }.collect::<~[Chan<~[u8]>]>();
 
 
    // latch stores true after we've started
@@ -179,27 +191,27 @@ fn main() {
    while !rdr.eof() {
       let line: ~str = rdr.read_line();
 
-      if str::len(line) == 0u { loop; }
+      if line.len() == 0u { loop; }
 
-      match (line[0], proc_mode) {
+      match (line[0] as char, proc_mode) {
 
          // start processing if this is the one
-         ('>' as u8, false) => {
-            match str::find_str_from(line, ~"THREE", 1u) {
+         ('>', false) => {
+            match line.slice_from(1).find_str(~"THREE") {
                option::Some(_) => { proc_mode = true; }
                option::None    => { }
             }
          }
 
          // break our processing
-         ('>' as u8, true) => { break; }
+         ('>', true) => { break; }
 
          // process the sequence for k-mers
          (_, true) => {
-            let line_bytes = str::to_bytes(line);
+            let line_bytes = line.as_bytes();
 
-           for sizes.eachi |ii, _sz| {
-               let mut lb = copy line_bytes;
+           for sizes.iter().enumerate().advance |(ii, _sz)| {
+               let mut lb = line_bytes.to_owned();
                to_child[ii].send(lb);
             }
          }
@@ -210,13 +222,12 @@ fn main() {
    }
 
    // finish...
-    for sizes.eachi |ii, _sz| {
+    for sizes.iter().enumerate().advance |(ii, _sz)| {
       to_child[ii].send(~[]);
    }
 
    // now fetch and print result messages
-    for sizes.eachi |ii, _sz| {
+    for sizes.iter().enumerate().advance |(ii, _sz)| {
       io::println(from_child[ii].recv());
    }
 }
-

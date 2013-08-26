@@ -10,17 +10,18 @@
 
 struct X(Either<(uint,uint),extern fn()>);
 
-pub impl X {
-    fn with(&self, blk: &fn(x: &Either<(uint,uint),extern fn()>)) {
+impl X {
+    pub fn with(&self, blk: &fn(x: &Either<(uint,uint),extern fn()>)) {
         blk(&**self)
     }
 }
+
 fn main() {
     let mut x = X(Right(main));
-    do (&mut x).with |opt| {  //~ ERROR illegal borrow
+    do (&mut x).with |opt| {
         match opt {
             &Right(ref f) => {
-                x = X(Left((0,0))); //~ ERROR assigning to captured outer mutable variable
+                x = X(Left((0,0))); //~ ERROR cannot assign to `x`
                 (*f)()
             },
             _ => fail!()

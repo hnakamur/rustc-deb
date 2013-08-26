@@ -29,6 +29,8 @@ rust_sched_loop::rust_sched_loop(rust_scheduler *sched, int id, bool killed) :
     should_exit(false),
     cached_c_stack(NULL),
     extra_c_stack(NULL),
+    cached_big_stack(NULL),
+    extra_big_stack(NULL),
     dead_task(NULL),
     killed(killed),
     pump_signal(NULL),
@@ -36,12 +38,12 @@ rust_sched_loop::rust_sched_loop(rust_scheduler *sched, int id, bool killed) :
     sched(sched),
     log_lvl(log_debug),
     min_stack_size(kernel->env->min_stack_size),
-    local_region(kernel->env, false),
+    local_region(false, kernel->env->detailed_leaks, kernel->env->poison_on_free),
     // FIXME #2891: calculate a per-scheduler name.
     name("main")
 {
     LOGPTR(this, "new dom", (uintptr_t)this);
-    rng_init(kernel, &rng, NULL, 0);
+    rng_init(&rng, kernel->env->rust_seed, NULL, 0);
 
     if (!tls_initialized)
         init_tls();
@@ -152,7 +154,7 @@ rust_sched_loop::schedule_task() {
     lock.must_have_lock();
     size_t tasks = running_tasks.length();
     if (tasks > 0) {
-        size_t i = (tasks > 1) ? (rng_gen_u32(kernel, &rng) % tasks) : 0;
+        size_t i = (tasks > 1) ? (rng_gen_u32(&rng) % tasks) : 0;
         return running_tasks[i];
     }
     return NULL;
@@ -262,6 +264,11 @@ rust_sched_loop::run_single_turn() {
         if (cached_c_stack) {
             destroy_exchange_stack(kernel->region(), cached_c_stack);
             cached_c_stack = NULL;
+        }
+        assert(!extra_big_stack);
+        if (cached_big_stack) {
+            destroy_exchange_stack(kernel->region(), cached_big_stack);
+            cached_big_stack = NULL;
         }
 
         sched->release_task_thread();
@@ -392,6 +399,13 @@ rust_sched_loop::prepare_c_stack(rust_task *task) {
         cached_c_stack = create_exchange_stack(kernel->region(),
                                                C_STACK_SIZE);
     }
+    assert(!extra_big_stack);
+    if (!cached_big_stack) {
+        cached_big_stack = create_exchange_stack(kernel->region(),
+                                                 C_STACK_SIZE +
+                                                 (C_STACK_SIZE * 2));
+        cached_big_stack->is_big = 1;
+    }
 }
 
 void
@@ -399,6 +413,10 @@ rust_sched_loop::unprepare_c_stack() {
     if (extra_c_stack) {
         destroy_exchange_stack(kernel->region(), extra_c_stack);
         extra_c_stack = NULL;
+    }
+    if (extra_big_stack) {
+        destroy_exchange_stack(kernel->region(), extra_big_stack);
+        extra_big_stack = NULL;
     }
 }
 

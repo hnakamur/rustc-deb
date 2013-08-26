@@ -10,11 +10,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
-use std::timer::sleep;
-use std::uv;
-use core::pipes;
-use core::pipes::recv;
+extern mod extra;
+
+use extra::timer::sleep;
+use extra::uv;
+use std::cell::Cell;
+use std::pipes::*;
+use std::pipes;
+use std::task;
 
 proto! oneshot (
     waiting:send {
@@ -22,13 +25,38 @@ proto! oneshot (
     }
 )
 
+
+/** Spawn a task to provide a service.
+
+It takes an initialization function that produces a send and receive
+endpoint. The send endpoint is returned to the caller and the receive
+endpoint is passed to the new task.
+
+*/
+pub fn spawn_service<T:Send,Tb:Send>(
+            init: extern fn() -> (RecvPacketBuffered<T, Tb>,
+                                  SendPacketBuffered<T, Tb>),
+            service: ~fn(v: RecvPacketBuffered<T, Tb>))
+        -> SendPacketBuffered<T, Tb> {
+    let (server, client) = init();
+
+    // This is some nasty gymnastics required to safely move the pipe
+    // into a new task.
+    let server = Cell::new(server);
+    do task::spawn {
+        service(server.take());
+    }
+
+    client
+}
+
 pub fn main() {
     use oneshot::client::*;
 
-    let c = pipes::spawn_service(oneshot::init, |p| { recv(p); });
+    let c = spawn_service(oneshot::init, |p| { recv(p); });
 
     let iotask = &uv::global_loop::get();
     sleep(iotask, 500);
-    
+
     signal(c);
 }

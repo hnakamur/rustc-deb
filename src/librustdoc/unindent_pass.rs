@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -19,25 +19,20 @@ instances where the string containing the doc comment is opened in the
 middle of a line, and each of the following lines is indented.
 */
 
-use core::prelude::*;
 
+use std::uint;
 use pass::Pass;
 use text_pass;
-
-use core::str;
-use core::uint;
-use core::vec;
 
 pub fn mk_pass() -> Pass {
     text_pass::mk_pass(~"unindent", unindent)
 }
 
 fn unindent(s: &str) -> ~str {
-    let mut lines = ~[];
-    for str::each_line_any(s) |line| { lines.push(line.to_owned()); }
+    let lines = s.any_line_iter().collect::<~[&str]>();
     let mut saw_first_line = false;
     let mut saw_second_line = false;
-    let min_indent = do vec::foldl(uint::max_value, lines)
+    let min_indent = do lines.iter().fold(uint::max_value)
         |min_indent, line| {
 
         // After we see the first non-whitespace line, look at
@@ -47,7 +42,7 @@ fn unindent(s: &str) -> ~str {
         let ignore_previous_indents =
             saw_first_line &&
             !saw_second_line &&
-            !str::is_whitespace(*line);
+            !line.is_whitespace();
 
         let min_indent = if ignore_previous_indents {
             uint::max_value
@@ -59,12 +54,12 @@ fn unindent(s: &str) -> ~str {
             saw_second_line = true;
         }
 
-        if str::is_whitespace(*line) {
+        if line.is_whitespace() {
             min_indent
         } else {
             saw_first_line = true;
             let mut spaces = 0;
-            do str::all(*line) |char| {
+            do line.iter().all |char| {
                 // Only comparing against space because I wouldn't
                 // know what to do with mixed whitespace chars
                 if char == ' ' {
@@ -78,19 +73,20 @@ fn unindent(s: &str) -> ~str {
         }
     };
 
-    if !lines.is_empty() {
-        let unindented = ~[lines.head().trim().to_owned()]
-            + do lines.tail().map |line| {
-            if str::is_whitespace(*line) {
-                copy *line
-            } else {
-                assert!(str::len(*line) >= min_indent);
-                str::slice(*line, min_indent, str::len(*line)).to_owned()
-            }
-        };
-        str::connect(unindented, ~"\n")
-    } else {
-        s.to_str()
+    match lines {
+        [head, .. tail] => {
+            let mut unindented = ~[ head.trim() ];
+            unindented.push_all(do tail.map |&line| {
+                if line.is_whitespace() {
+                    line
+                } else {
+                    assert!(line.len() >= min_indent);
+                    line.slice_from(min_indent)
+                }
+            });
+            unindented.connect("\n")
+        }
+        [] => s.to_owned()
     }
 }
 
@@ -98,14 +94,14 @@ fn unindent(s: &str) -> ~str {
 fn should_unindent() {
     let s = ~"    line1\n    line2";
     let r = unindent(s);
-    assert!(r == ~"line1\nline2");
+    assert_eq!(r, ~"line1\nline2");
 }
 
 #[test]
 fn should_unindent_multiple_paragraphs() {
     let s = ~"    line1\n\n    line2";
     let r = unindent(s);
-    assert!(r == ~"line1\n\nline2");
+    assert_eq!(r, ~"line1\n\nline2");
 }
 
 #[test]
@@ -114,7 +110,7 @@ fn should_leave_multiple_indent_levels() {
     // base indentation and should be preserved
     let s = ~"    line1\n\n        line2";
     let r = unindent(s);
-    assert!(r == ~"line1\n\n    line2");
+    assert_eq!(r, ~"line1\n\n    line2");
 }
 
 #[test]
@@ -126,12 +122,12 @@ fn should_ignore_first_line_indent() {
     //          and continue here"]
     let s = ~"line1\n    line2";
     let r = unindent(s);
-    assert!(r == ~"line1\nline2");
+    assert_eq!(r, ~"line1\nline2");
 }
 
 #[test]
 fn should_not_ignore_first_line_indent_in_a_single_line_para() {
     let s = ~"line1\n\n    line2";
     let r = unindent(s);
-    assert!(r == ~"line1\n\n    line2");
+    assert_eq!(r, ~"line1\n\n    line2");
 }

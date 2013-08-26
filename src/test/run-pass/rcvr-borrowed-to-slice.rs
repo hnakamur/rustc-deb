@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::vec;
+
 trait sum {
     fn sum(self) -> int;
 }
@@ -16,7 +18,7 @@ trait sum {
 impl<'self> sum for &'self [int] {
     fn sum(self) -> int {
         let mut sum = 0;
-        for vec::each(self) |e| { sum += *e; }
+        for self.iter().advance |e| { sum += *e; }
         return sum;
     }
 }
@@ -27,15 +29,15 @@ pub fn main() {
     let x = ~[1, 2, 3];
     let y = call_sum(x);
     debug!("y==%d", y);
-    assert!(y == 6);
+    assert_eq!(y, 6);
 
     let mut x = ~[1, 2, 3];
     let y = x.sum();
     debug!("y==%d", y);
-    assert!(y == 6);
+    assert_eq!(y, 6);
 
     let x = ~[1, 2, 3];
     let y = x.sum();
     debug!("y==%d", y);
-    assert!(y == 6);
+    assert_eq!(y, 6);
 }

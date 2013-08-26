@@ -10,8 +10,10 @@
 
 // Reported as issue #126, child leaks the string.
 
-extern mod std;
+use std::task;
 
-fn child2(&&s: ~str) { }
+fn child2(s: ~str) { }
 
-pub fn main() { let x = task::spawn(|| child2(~"hi") ); }
+pub fn main() {
+    let x = task::spawn(|| child2(~"hi"));
+}

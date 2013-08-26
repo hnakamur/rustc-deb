@@ -14,7 +14,7 @@ trait Foo {
 
 impl Foo for int {
     fn foo(@self) {
-        io::println("Hello world!");
+        println("Hello world!");
     }
 }
 
@@ -22,4 +22,3 @@ pub fn main() {
     let x = @3 as @Foo;
     x.foo();
 }
-

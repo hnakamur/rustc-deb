@@ -1,6 +1,6 @@
 // xfail-pretty
 
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,48 +10,50 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[legacy_modes];
-#[allow(deprecated_mode)];
-
 /*!
 
 An implementation of the Graph500 Breadth First Search problem in Rust.
 
 */
 
-extern mod std;
-use std::arc;
-use std::time;
-use std::deque::Deque;
-use std::par;
-use core::hashmap::linear::{LinearMap, LinearSet};
-use core::io::WriterUtil;
-use core::int::abs;
-use core::rand::RngUtil;
+extern mod extra;
+use extra::arc;
+use extra::time;
+use extra::deque::Deque;
+use extra::par;
+use std::hashmap::HashSet;
+use std::int::abs;
+use std::io;
+use std::os;
+use std::rand::RngUtil;
+use std::rand;
+use std::uint;
+use std::vec;
 
 type node_id = i64;
 type graph = ~[~[node_id]];
 type bfs_result = ~[node_id];
 
 fn make_edges(scale: uint, edgefactor: uint) -> ~[(node_id, node_id)] {
-    let r = rand::xorshift();
+    let mut r = rand::XorShiftRng::new();
 
-    fn choose_edge(i: node_id, j: node_id, scale: uint, r: @rand::Rng)
-        -> (node_id, node_id) {
-
+    fn choose_edge<R: rand::Rng>(i: node_id,
+                                 j: node_id,
+                                 scale: uint,
+                                 r: &mut R)
+                                 -> (node_id, node_id) {
         let A = 0.57;
         let B = 0.19;
         let C = 0.19;
 
         if scale == 0u {
             (i, j)
-        }
-        else {
+        } else {
             let i = i * 2i64;
             let j = j * 2i64;
             let scale = scale - 1u;
 
-            let x = r.gen_float();
+            let x = r.gen::<float>();
 
             if x < A {
                 choose_edge(i, j, scale, r)
@@ -75,23 +77,22 @@ fn make_edges(scale: uint, edgefactor: uint) -> ~[(node_id, node_id)] {
     }
 
     do vec::from_fn((1u << scale) * edgefactor) |_i| {
-        choose_edge(0i64, 0i64, scale, r)
+        choose_edge(0i64, 0i64, scale, &mut r)
     }
 }
 
 fn make_graph(N: uint, edges: ~[(node_id, node_id)]) -> graph {
     let mut graph = do vec::from_fn(N) |_i| {
-        LinearSet::new()
+        HashSet::new()
     };
 
-    do vec::each(edges) |e| {
+    for edges.iter().advance |e| {
         match *e {
             (i, j) => {
                 graph[i].insert(j);
                 graph[j].insert(i);
             }
         }
-        true
     }
 
     do vec::map_consume(graph) |mut v| {
@@ -104,13 +105,13 @@ fn make_graph(N: uint, edges: ~[(node_id, node_id)]) -> graph {
 }
 
 fn gen_search_keys(graph: &[~[node_id]], n: uint) -> ~[node_id] {
-    let mut keys = LinearSet::new();
-    let r = rand::Rng();
+    let mut keys = HashSet::new();
+    let mut r = rand::rng();
 
     while keys.len() < n {
         let k = r.gen_uint_range(0u, graph.len());
 
-        if graph[k].len() > 0u && vec::any(graph[k], |i| {
+        if graph[k].len() > 0u && graph[k].iter().any_(|i| {
             *i != k as node_id
         }) {
             keys.insert(k as node_id);
@@ -130,7 +131,7 @@ fn gen_search_keys(graph: &[~[node_id]], n: uint) -> ~[node_id] {
  */
 fn bfs(graph: graph, key: node_id) -> bfs_result {
     let mut marks : ~[node_id]
-        = vec::from_elem(vec::len(graph), -1i64);
+        = vec::from_elem(graph.len(), -1i64);
 
     let mut q = Deque::new();
 
@@ -140,7 +141,7 @@ fn bfs(graph: graph, key: node_id) -> bfs_result {
     while !q.is_empty() {
         let t = q.pop_front();
 
-        do graph[t].each() |k| {
+        do graph[t].iter().advance |k| {
             if marks[*k] == -1i64 {
                 marks[*k] = t;
                 q.add_back(*k);
@@ -186,21 +187,21 @@ fn bfs2(graph: graph, key: node_id) -> bfs_result {
     }
 
     let mut i = 0;
-    while vec::any(colors, is_gray) {
+    while colors.iter().any_(is_gray) {
         // Do the BFS.
         info!("PBFS iteration %?", i);
         i += 1;
-        colors = do colors.mapi() |i, c| {
+        colors = do colors.iter().enumerate().transform |(i, c)| {
             let c : color = *c;
             match c {
               white => {
                 let i = i as node_id;
 
-                let neighbors = copy graph[i];
+                let neighbors = &graph[i];
 
                 let mut color = white;
 
-                do neighbors.each() |k| {
+                do neighbors.iter().advance |k| {
                     if is_gray(&colors[*k]) {
                         color = gray(*k);
                         false
@@ -213,21 +214,21 @@ fn bfs2(graph: graph, key: node_id) -> bfs_result {
               gray(parent) => { black(parent) }
               black(parent) => { black(parent) }
             }
-        }
+        }.collect()
     }
 
     // Convert the results.
-    do vec::map(colors) |c| {
+    do colors.iter().transform |c| {
         match *c {
           white => { -1i64 }
           black(parent) => { parent }
-          _ => { fail!(~"Found remaining gray nodes in BFS") }
+          _ => { fail!("Found remaining gray nodes in BFS") }
         }
-    }
+    }.collect()
 }
 
 /// A parallel version of the bfs function.
-fn pbfs(&&graph: arc::ARC<graph>, key: node_id) -> bfs_result {
+fn pbfs(graph: &arc::ARC<graph>, key: node_id) -> bfs_result {
     // This works by doing functional updates of a color vector.
 
     enum color {
@@ -238,7 +239,7 @@ fn pbfs(&&graph: arc::ARC<graph>, key: node_id) -> bfs_result {
         black(node_id)
     };
 
-    let graph_vec = arc::get(&graph); // FIXME #3387 requires this temp
+    let graph_vec = graph.get(); // FIXME #3387 requires this temp
     let mut colors = do vec::from_fn(graph_vec.len()) |i| {
         if i as node_id == key {
             gray(key)
@@ -270,13 +271,13 @@ fn pbfs(&&graph: arc::ARC<graph>, key: node_id) -> bfs_result {
 
         let color = arc::ARC(colors);
 
-        let color_vec = arc::get(&color); // FIXME #3387 requires this temp
+        let color_vec = color.get(); // FIXME #3387 requires this temp
         colors = do par::mapi(*color_vec) {
-            let colors = arc::clone(&color);
-            let graph = arc::clone(&graph);
-            let result: ~fn(+x: uint, +y: &color) -> color = |i, c| {
-                let colors = arc::get(&colors);
-                let graph = arc::get(&graph);
+            let colors = color.clone();
+            let graph = graph.clone();
+            let result: ~fn(x: uint, y: &color) -> color = |i, c| {
+                let colors = colors.get();
+                let graph = graph.get();
                 match *c {
                   white => {
                     let i = i as node_id;
@@ -285,7 +286,7 @@ fn pbfs(&&graph: arc::ARC<graph>, key: node_id) -> bfs_result {
 
                     let mut color = white;
 
-                    do neighbors.each() |k| {
+                    do neighbors.iter().advance |k| {
                         if is_gray(&colors[*k]) {
                             color = gray(*k);
                             false
@@ -300,7 +301,7 @@ fn pbfs(&&graph: arc::ARC<graph>, key: node_id) -> bfs_result {
             };
             result
         };
-        assert!((colors.len() == old_len));
+        assert_eq!(colors.len(), old_len);
     }
 
     // Convert the results.
@@ -309,7 +310,7 @@ fn pbfs(&&graph: arc::ARC<graph>, key: node_id) -> bfs_result {
             match *c {
                 white => { -1i64 }
                 black(parent) => { parent }
-                _ => { fail!(~"Found remaining gray nodes in BFS") }
+                _ => { fail!("Found remaining gray nodes in BFS") }
             }
         };
         result
@@ -340,7 +341,7 @@ fn validate(edges: ~[(node_id, node_id)],
         }
         else {
             while parent != root {
-                if vec::contains(path, &parent) {
+                if path.contains(&parent) {
                     status = false;
                 }
 
@@ -361,7 +362,7 @@ fn validate(edges: ~[(node_id, node_id)],
 
     info!(~"Verifying tree edges...");
 
-    let status = do tree.alli() |k, parent| {
+    let status = do tree.iter().enumerate().all |(k, parent)| {
         if *parent != root && *parent != -1i64 {
             level[*parent] == level[k] - 1
         }
@@ -377,7 +378,7 @@ fn validate(edges: ~[(node_id, node_id)],
 
     info!(~"Verifying graph edges...");
 
-    let status = do edges.all() |e| {
+    let status = do edges.iter().all |e| {
         let (u, v) = *e;
 
         abs(level[u] - level[v]) <= 1
@@ -396,12 +397,12 @@ fn validate(edges: ~[(node_id, node_id)],
 
     let status = do par::alli(tree) {
         let edges = copy edges;
-        let result: ~fn(+x: uint, v: &i64) -> bool = |u, v| {
+        let result: ~fn(x: uint, v: &i64) -> bool = |u, v| {
             let u = u as node_id;
             if *v == -1i64 || u == root {
                 true
             } else {
-                edges.contains(&(u, *v)) || edges.contains(&(*v, u))
+                edges.iter().any_(|x| x == &(u, *v)) || edges.iter().any_(|x| x == &(*v, u))
             }
         };
         result
@@ -433,14 +434,14 @@ fn main() {
     let stop = time::precise_time_s();
 
     io::stdout().write_line(fmt!("Generated %? edges in %? seconds.",
-                                 vec::len(edges), stop - start));
+                                 edges.len(), stop - start));
 
     let start = time::precise_time_s();
     let graph = make_graph(1 << scale, copy edges);
     let stop = time::precise_time_s();
 
     let mut total_edges = 0;
-    vec::each(graph, |edges| { total_edges += edges.len(); true });
+    for graph.iter().advance |edges| { total_edges += edges.len(); }
 
     io::stdout().write_line(fmt!("Generated graph with %? edges in %? seconds.",
                                  total_edges / 2,
@@ -498,7 +499,7 @@ fn main() {
         }
 
         let start = time::precise_time_s();
-        let bfs_tree = pbfs(graph_arc, *root);
+        let bfs_tree = pbfs(&graph_arc, *root);
         let stop = time::precise_time_s();
 
         total_par += stop - start;

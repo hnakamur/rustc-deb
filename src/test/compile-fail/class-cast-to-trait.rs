@@ -13,15 +13,14 @@ trait noisy {
 }
 
 struct cat {
-  priv mut meows : uint,
+  priv meows : uint,
 
-  mut how_hungry : int,
+  how_hungry : int,
   name : ~str,
 }
 
-pub impl cat {
-
-  fn eat(&self) -> bool {
+impl cat {
+  pub fn eat(&self) -> bool {
     if self.how_hungry > 0 {
         error!("OM NOM NOM");
         self.how_hungry -= 2;
@@ -39,7 +38,7 @@ impl noisy for cat {
 
 }
 
-priv impl cat {
+impl cat {
     fn meow(&self) {
       error!("Meow");
       self.meows += 1;
@@ -59,5 +58,5 @@ fn cat(in_x : uint, in_y : int, in_name: ~str) -> cat {
 
 fn main() {
   let nyan : @noisy  = @cat(0, 2, ~"nyan") as @noisy;
-  nyan.eat(); //~ ERROR type `@noisy` does not implement any method in scope named `eat`
+  nyan.eat(); //~ ERROR does not implement any method in scope named `eat`
 }

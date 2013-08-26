@@ -17,6 +17,7 @@
 #include "sync/timer.h"
 #include "sync/rust_thread.h"
 #include "rust_abi.h"
+#include "vg/valgrind.h"
 
 #include <time.h>
 
@@ -74,13 +75,6 @@ vec_reserve_shared_actual(type_desc* ty, rust_vec_box** vp,
     reserve_vec_exact_shared(task, vp, n_elts * ty->size);
 }
 
-// This is completely misnamed.
-extern "C" CDECL void
-vec_reserve_shared(type_desc* ty, rust_vec_box** vp,
-                   size_t n_elts) {
-    reserve_vec_exact(vp, n_elts * ty->size);
-}
-
 extern "C" CDECL size_t
 rand_seed_size() {
     return rng_seed_size();
@@ -88,8 +82,7 @@ rand_seed_size() {
 
 extern "C" CDECL void
 rand_gen_seed(uint8_t* dest, size_t size) {
-    rust_task *task = rust_get_current_task();
-    rng_gen_seed(task->kernel, dest, size);
+    rng_gen_seed(dest, size);
 }
 
 extern "C" CDECL void *
@@ -101,14 +94,14 @@ rand_new_seeded(uint8_t* seed, size_t seed_size) {
         task->fail();
         return NULL;
     }
-    rng_init(task->kernel, rng, seed, seed_size);
+    char *env_seed = task->kernel->env->rust_seed;
+    rng_init(rng, env_seed, seed, seed_size);
     return rng;
 }
 
 extern "C" CDECL uint32_t
 rand_next(rust_rng *rng) {
-    rust_task *task = rust_get_current_task();
-    return rng_gen_u32(task->kernel, rng);
+    return rng_gen_u32(rng);
 }
 
 extern "C" CDECL void
@@ -152,6 +145,16 @@ debug_abi_2(floats f) {
                   0xff,
                   f.a - 1.0 };
     return ff;
+}
+
+extern "C" int
+debug_static_mut;
+
+int debug_static_mut = 3;
+
+extern "C" void
+debug_static_mut_check_four() {
+    assert(debug_static_mut == 4);
 }
 
 /* Debug builtins for std::dbg. */
@@ -460,18 +463,18 @@ rust_localtime(int64_t sec, int32_t nsec, rust_tm *timeptr) {
     tm_to_rust_tm(&tm, timeptr, gmtoff, zone, nsec);
 }
 
-extern "C" CDECL void
-rust_timegm(rust_tm* timeptr, int64_t *out) {
+extern "C" CDECL int64_t
+rust_timegm(rust_tm* timeptr) {
     tm t;
     rust_tm_to_tm(timeptr, &t);
-    *out = TIMEGM(&t);
+    return TIMEGM(&t);
 }
 
-extern "C" CDECL void
-rust_mktime(rust_tm* timeptr, int64_t *out) {
+extern "C" CDECL int64_t
+rust_mktime(rust_tm* timeptr) {
     tm t;
     rust_tm_to_tm(timeptr, &t);
-    *out = mktime(&t);
+    return mktime(&t);
 }
 
 extern "C" CDECL rust_sched_id
@@ -539,9 +542,19 @@ rust_get_task() {
     return rust_get_current_task();
 }
 
+extern "C" rust_task *
+rust_try_get_task() {
+    return rust_try_get_current_task();
+}
+
 extern "C" CDECL stk_seg *
 rust_get_stack_segment() {
     return rust_get_current_task()->stk;
+}
+
+extern "C" CDECL stk_seg *
+rust_get_c_stack() {
+    return rust_get_current_task()->get_c_stack();
 }
 
 extern "C" CDECL void
@@ -588,50 +601,6 @@ rust_log_console_off() {
     rust_task *task = rust_get_current_task();
     log_console_off(task->kernel->env);
 }
-
-extern "C" CDECL lock_and_signal *
-rust_dbg_lock_create() {
-    return new lock_and_signal();
-}
-
-extern "C" CDECL void
-rust_dbg_lock_destroy(lock_and_signal *lock) {
-    assert(lock);
-    delete lock;
-}
-
-extern "C" CDECL void
-rust_dbg_lock_lock(lock_and_signal *lock) {
-    assert(lock);
-    lock->lock();
-}
-
-extern "C" CDECL void
-rust_dbg_lock_unlock(lock_and_signal *lock) {
-    assert(lock);
-    lock->unlock();
-}
-
-extern "C" CDECL void
-rust_dbg_lock_wait(lock_and_signal *lock) {
-    assert(lock);
-    lock->wait();
-}
-
-extern "C" CDECL void
-rust_dbg_lock_signal(lock_and_signal *lock) {
-    assert(lock);
-    lock->signal();
-}
-
-typedef void *(*dbg_callback)(void*);
-
-extern "C" CDECL void *
-rust_dbg_call(dbg_callback cb, void *data) {
-    return cb(data);
-}
-
-extern "C" CDECL void rust_dbg_do_nothing() { }
 
 extern "C" CDECL void
 rust_dbg_breakpoint() {
@@ -717,6 +686,20 @@ rust_task_local_data_atexit(rust_task *task, void (*cleanup_fn)(void *data)) {
     task->task_local_data_cleanup = cleanup_fn;
 }
 
+// set/get/atexit task_borrow_list can run on the rust stack for speed.
+extern "C" void *
+rust_take_task_borrow_list(rust_task *task) {
+    void *r = task->borrow_list;
+    task->borrow_list = NULL;
+    return r;
+}
+extern "C" void
+rust_set_task_borrow_list(rust_task *task, void *data) {
+    assert(task->borrow_list == NULL);
+    assert(data != NULL);
+    task->borrow_list = data;
+}
+
 extern "C" void
 task_clear_event_reject(rust_task *task) {
     task->clear_event_reject();
@@ -749,15 +732,6 @@ rust_task_deref(rust_task *task) {
     task->deref();
 }
 
-// Must call on rust stack.
-extern "C" CDECL void
-rust_call_tydesc_glue(void *root, size_t *tydesc, size_t glue_index) {
-    void (*glue_fn)(void *, void *, void *, void *) =
-        (void (*)(void *, void *, void *, void *))tydesc[glue_index];
-    if (glue_fn)
-        glue_fn(0, 0, 0, root);
-}
-
 // Don't run on the Rust stack!
 extern "C" void
 rust_log_str(uint32_t level, const char *str, size_t size) {
@@ -775,7 +749,7 @@ public:
 
     virtual void run() {
         record_sp_limit(0);
-        fn.f(NULL, fn.env, NULL);
+        fn.f(fn.env, NULL);
     }
 };
 
@@ -844,65 +818,26 @@ rust_readdir() {
 
 #endif
 
-// These functions are used in the unit tests for C ABI calls.
-
-extern "C" CDECL uint32_t
-rust_dbg_extern_identity_u32(uint32_t u) {
-    return u;
-}
-
-extern "C" CDECL uint64_t
-rust_dbg_extern_identity_u64(uint64_t u) {
-    return u;
-}
-
-struct TwoU64s {
-    uint64_t one;
-    uint64_t two;
-};
-
-extern "C" CDECL TwoU64s
-rust_dbg_extern_identity_TwoU64s(TwoU64s u) {
-    return u;
-}
-
-extern "C" CDECL double
-rust_dbg_extern_identity_double(double u) {
-    return u;
-}
-
-extern "C" CDECL char
-rust_dbg_extern_identity_u8(char u) {
-    return u;
-}
-
 extern "C" rust_env*
 rust_get_rt_env() {
     rust_task *task = rust_get_current_task();
     return task->kernel->env;
 }
 
-typedef void *(*nullary_fn)();
-
-extern "C" CDECL void
-rust_call_nullary_fn(nullary_fn f) {
-    f();
-}
-
 #ifndef _WIN32
-pthread_key_t sched_key;
+pthread_key_t rt_key = -1;
 #else
-DWORD sched_key;
+DWORD rt_key = -1;
 #endif
 
 extern "C" void*
-rust_get_sched_tls_key() {
-    return &sched_key;
+rust_get_rt_tls_key() {
+    return &rt_key;
 }
 
-// Initialize the global state required by the new scheduler
+// Initialize the TLS key used by the new scheduler
 extern "C" CDECL void
-rust_initialize_global_state() {
+rust_initialize_rt_tls_key() {
 
     static lock_and_signal init_lock;
     static bool initialized = false;
@@ -912,14 +847,76 @@ rust_initialize_global_state() {
     if (!initialized) {
 
 #ifndef _WIN32
-        assert(!pthread_key_create(&sched_key, NULL));
+        assert(!pthread_key_create(&rt_key, NULL));
 #else
-        sched_key = TlsAlloc();
-        assert(sched_key != TLS_OUT_OF_INDEXES);
+        rt_key = TlsAlloc();
+        assert(rt_key != TLS_OUT_OF_INDEXES);
 #endif
 
         initialized = true;
     }
+}
+
+extern "C" CDECL memory_region*
+rust_new_memory_region(uintptr_t synchronized,
+                       uintptr_t detailed_leaks,
+                       uintptr_t poison_on_free) {
+    return new memory_region((bool)synchronized,
+                             (bool)detailed_leaks,
+                             (bool)poison_on_free);
+}
+
+extern "C" CDECL void
+rust_delete_memory_region(memory_region *region) {
+    delete region;
+}
+
+extern "C" CDECL boxed_region*
+rust_new_boxed_region(memory_region *region,
+                      uintptr_t poison_on_free) {
+    return new boxed_region(region, poison_on_free);
+}
+
+extern "C" CDECL void
+rust_delete_boxed_region(boxed_region *region) {
+    delete region;
+}
+
+extern "C" CDECL rust_opaque_box*
+rust_boxed_region_malloc(boxed_region *region, type_desc *td, size_t size) {
+    return region->malloc(td, size);
+}
+
+extern "C" CDECL void
+rust_boxed_region_free(boxed_region *region, rust_opaque_box *box) {
+    region->free(box);
+}
+
+typedef void *(rust_try_fn)(void*, void*);
+
+extern "C" CDECL uintptr_t
+rust_try(rust_try_fn f, void *fptr, void *env) {
+    try {
+        f(fptr, env);
+    } catch (uintptr_t token) {
+        assert(token != 0);
+        return token;
+    }
+    return 0;
+}
+
+extern "C" CDECL void
+rust_begin_unwind(uintptr_t token) {
+#ifndef __WIN32__
+    throw token;
+#else
+    abort();
+#endif
+}
+
+extern "C" CDECL uintptr_t
+rust_running_on_valgrind() {
+    return RUNNING_ON_VALGRIND;
 }
 
 //

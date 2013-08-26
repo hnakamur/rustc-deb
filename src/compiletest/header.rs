@@ -10,13 +10,11 @@
 
 use core::prelude::*;
 
-use common;
 use common::config;
+use common;
 
-use core::io::ReaderUtil;
 use core::io;
 use core::os;
-use core::str;
 
 pub struct TestProps {
     // Lines that should be expected, in order, on standard out
@@ -59,12 +57,14 @@ pub fn load_props(testfile: &Path) -> TestProps {
             pp_exact = parse_pp_exact(ln, testfile);
         }
 
-        for parse_aux_build(ln).each |ab| {
-            aux_builds.push(*ab);
+        match parse_aux_build(ln) {
+            Some(ab) => { aux_builds.push(ab); }
+            None => {}
         }
 
-        for parse_exec_env(ln).each |ee| {
-            exec_env.push(*ee);
+        match parse_exec_env(ln) {
+            Some(ee) => { exec_env.push(ee); }
+            None => {}
         }
 
         match parse_debugger_cmd(ln) {
@@ -88,18 +88,17 @@ pub fn load_props(testfile: &Path) -> TestProps {
     };
 }
 
-pub fn is_test_ignored(config: config, testfile: &Path) -> bool {
-    let mut found = false;
+pub fn is_test_ignored(config: &config, testfile: &Path) -> bool {
     for iter_header(testfile) |ln| {
-        if parse_name_directive(ln, ~"xfail-test") { return true; }
+        if parse_name_directive(ln, "xfail-test") { return true; }
         if parse_name_directive(ln, xfail_target()) { return true; }
         if config.mode == common::mode_pretty &&
-           parse_name_directive(ln, ~"xfail-pretty") { return true; }
+           parse_name_directive(ln, "xfail-pretty") { return true; }
     };
-    return found;
+    return false;
 
     fn xfail_target() -> ~str {
-        ~"xfail-" + str::from_slice(os::SYSNAME)
+        ~"xfail-" + os::SYSNAME
     }
 }
 
@@ -111,52 +110,54 @@ fn iter_header(testfile: &Path, it: &fn(~str) -> bool) -> bool {
         // Assume that any directives will be found before the first
         // module or function. This doesn't seem to be an optimization
         // with a warm page cache. Maybe with a cold one.
-        if str::starts_with(ln, ~"fn")
-            || str::starts_with(ln, ~"mod") {
+        if ln.starts_with("fn") || ln.starts_with("mod") {
             return false;
         } else { if !(it(ln)) { return false; } }
     }
     return true;
 }
 
-fn parse_error_pattern(line: ~str) -> Option<~str> {
+fn parse_error_pattern(line: &str) -> Option<~str> {
     parse_name_value_directive(line, ~"error-pattern")
 }
 
-fn parse_aux_build(line: ~str) -> Option<~str> {
+fn parse_aux_build(line: &str) -> Option<~str> {
     parse_name_value_directive(line, ~"aux-build")
 }
 
-fn parse_compile_flags(line: ~str) -> Option<~str> {
+fn parse_compile_flags(line: &str) -> Option<~str> {
     parse_name_value_directive(line, ~"compile-flags")
 }
 
-fn parse_debugger_cmd(line: ~str) -> Option<~str> {
+fn parse_debugger_cmd(line: &str) -> Option<~str> {
     parse_name_value_directive(line, ~"debugger")
 }
 
-fn parse_check_line(line: ~str) -> Option<~str> {
+fn parse_check_line(line: &str) -> Option<~str> {
     parse_name_value_directive(line, ~"check")
 }
 
-fn parse_exec_env(line: ~str) -> Option<(~str, ~str)> {
+fn parse_exec_env(line: &str) -> Option<(~str, ~str)> {
     do parse_name_value_directive(line, ~"exec-env").map |nv| {
         // nv is either FOO or FOO=BAR
-        let mut strs = ~[];
-        for str::each_splitn_char(*nv, '=', 1u) |s| { strs.push(s.to_owned()); }
+        let mut strs: ~[~str] = nv.splitn_iter('=', 1).transform(|s| s.to_owned()).collect();
+
         match strs.len() {
-          1u => (strs[0], ~""),
-          2u => (strs[0], strs[1]),
-          n => fail!(fmt!("Expected 1 or 2 strings, not %u", n))
+          1u => (strs.pop(), ~""),
+          2u => {
+              let end = strs.pop();
+              (strs.pop(), end)
+          }
+          n => fail!("Expected 1 or 2 strings, not %u", n)
         }
     }
 }
 
-fn parse_pp_exact(line: ~str, testfile: &Path) -> Option<Path> {
+fn parse_pp_exact(line: &str, testfile: &Path) -> Option<Path> {
     match parse_name_value_directive(line, ~"pp-exact") {
       Some(s) => Some(Path(s)),
       None => {
-        if parse_name_directive(line, ~"pp-exact") {
+        if parse_name_directive(line, "pp-exact") {
             Some(testfile.file_path())
         } else {
             None
@@ -165,22 +166,20 @@ fn parse_pp_exact(line: ~str, testfile: &Path) -> Option<Path> {
     }
 }
 
-fn parse_name_directive(line: ~str, directive: ~str) -> bool {
-    str::contains(line, directive)
+fn parse_name_directive(line: &str, directive: &str) -> bool {
+    line.contains(directive)
 }
 
-fn parse_name_value_directive(line: ~str,
+fn parse_name_value_directive(line: &str,
                               directive: ~str) -> Option<~str> {
-    unsafe {
-        let keycolon = directive + ~":";
-        match str::find_str(line, keycolon) {
-            Some(colon) => {
-                let value = str::slice(line, colon + str::len(keycolon),
-                                       str::len(line)).to_owned();
-                debug!("%s: %s", directive,  value);
-                Some(value)
-            }
-            None => None
+    let keycolon = directive + ":";
+    match line.find_str(keycolon) {
+        Some(colon) => {
+            let value = line.slice(colon + keycolon.len(),
+                                   line.len()).to_owned();
+            debug!("%s: %s", directive,  value);
+            Some(value)
         }
+        None => None
     }
 }

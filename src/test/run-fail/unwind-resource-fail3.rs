@@ -14,13 +14,13 @@ struct faily_box {
     i: @int
 }
 // What happens to the box pointer owned by this class?
- 
+
 fn faily_box(i: @int) -> faily_box { faily_box { i: i } }
 
 #[unsafe_destructor]
 impl Drop for faily_box {
-    fn finalize(&self) {
-        fail!(~"quux");
+    fn drop(&self) {
+        fail!("quux");
     }
 }
 

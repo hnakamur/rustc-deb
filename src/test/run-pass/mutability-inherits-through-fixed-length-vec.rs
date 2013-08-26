@@ -11,13 +11,13 @@
 fn test1() {
     let mut ints = [0, ..32];
     ints[0] += 1;
-    assert!(ints[0] == 1);
+    assert_eq!(ints[0], 1);
 }
 
 fn test2() {
     let mut ints = [0, ..32];
-    for vec::each_mut(ints) |i| { *i += 22; }
-    for ints.each |i| { assert!(*i == 22); }
+    for ints.mut_iter().advance |i| { *i += 22; }
+    for ints.iter().advance |i| { assert!(*i == 22); }
 }
 
 pub fn main() {

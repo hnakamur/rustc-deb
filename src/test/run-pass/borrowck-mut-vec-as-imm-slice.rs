@@ -10,14 +10,14 @@
 
 fn want_slice(v: &[int]) -> int {
     let mut sum = 0;
-    for vec::each(v) |i| { sum += *i; }
-    return sum;
+    for v.iter().advance |i| { sum += *i; }
+    sum
 }
 
-fn has_mut_vec(+v: ~[int]) -> int {
+fn has_mut_vec(v: ~[int]) -> int {
     want_slice(v)
 }
 
 pub fn main() {
-    assert!(has_mut_vec(~[1, 2, 3]) == 6);
+    assert_eq!(has_mut_vec(~[1, 2, 3]), 6);
 }

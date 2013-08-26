@@ -22,12 +22,12 @@ enum Foo {
 fn f(x: &Foo) {
     match *x {
         Baz { x: x, y: y } => {
-            assert!(x == 1.0);
-            assert!(y == 2.0);
+            assert_eq!(x, 1.0);
+            assert_eq!(y, 2.0);
         }
         Bar { y: y, x: x } => {
-            assert!(x == 1);
-            assert!(y == 2);
+            assert_eq!(x, 1);
+            assert_eq!(y, 2);
         }
     }
 }
@@ -38,4 +38,3 @@ pub fn main() {
     let y = Baz { x: 1.0, y: 2.0 };
     f(&y);
 }
-

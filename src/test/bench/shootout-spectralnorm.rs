@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,77 +8,59 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Based on spectalnorm.gcc by Sebastien Loisel
+use std::f64;
+use std::from_str::FromStr;
+use std::os;
+use std::vec;
 
-extern mod std;
-
-fn eval_A(i: uint, j: uint) -> float {
-    1.0/(((i+j)*(i+j+1u)/2u+i+1u) as float)
+#[inline]
+fn A(i: i32, j: i32) -> i32 {
+    (i+j) * (i+j+1) / 2 + i + 1
 }
 
-fn eval_A_times_u(u: &const [float], Au: &mut [float]) {
-    let N = vec::len(u);
-    let mut i = 0u;
-    while i < N {
-        Au[i] = 0.0;
-        let mut j = 0u;
-        while j < N {
-            Au[i] += eval_A(i, j) * u[j];
-            j += 1u;
+fn dot(v: &[f64], u: &[f64]) -> f64 {
+    let mut sum = 0.0;
+    for v.iter().enumerate().advance |(i, &v_i)| {
+        sum += v_i * u[i];
+    }
+    sum
+}
+
+fn mult_Av(v: &mut [f64], out: &mut [f64]) {
+    for out.mut_iter().enumerate().advance |(i, out_i)| {
+        let mut sum = 0.0;
+        for v.mut_iter().enumerate().advance |(j, &v_j)| {
+            sum += v_j / (A(i as i32, j as i32) as f64);
         }
-        i += 1u;
+        *out_i = sum;
     }
 }
 
-fn eval_At_times_u(u: &const [float], Au: &mut [float]) {
-    let N = vec::len(u);
-    let mut i = 0u;
-    while i < N {
-        Au[i] = 0.0;
-        let mut j = 0u;
-        while j < N {
-            Au[i] += eval_A(j, i) * u[j];
-            j += 1u;
+fn mult_Atv(v: &mut [f64], out: &mut [f64]) {
+    for out.mut_iter().enumerate().advance |(i, out_i)| {
+        let mut sum = 0.0;
+        for v.mut_iter().enumerate().advance |(j, &v_j)| {
+            sum += v_j / (A(j as i32, i as i32) as f64);
         }
-        i += 1u;
+        *out_i = sum;
     }
 }
 
-fn eval_AtA_times_u(u: &const [float], AtAu: &mut [float]) {
-    let mut v = vec::from_elem(vec::len(u), 0.0);
-    eval_A_times_u(u, v);
-    eval_At_times_u(v, AtAu);
+fn mult_AtAv(v: &mut [f64], out: &mut [f64], tmp: &mut [f64]) {
+    mult_Av(v, tmp);
+    mult_Atv(tmp, out);
 }
 
+#[fixed_stack_segment]
 fn main() {
-    let args = os::args();
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"2000"]
-    } else if args.len() <= 1u {
-        ~[~"", ~"1000"]
-    } else {
-        args
-    };
-
-    let N = uint::from_str(args[1]).get();
-
-    let mut u = vec::from_elem(N, 1.0);
-    let mut v = vec::from_elem(N, 0.0);
-    let mut i = 0u;
-    while i < 10u {
-        eval_AtA_times_u(u, v);
-        eval_AtA_times_u(v, u);
-        i += 1u;
+    let n: uint = FromStr::from_str(os::args()[1]).get();
+    let mut u = vec::from_elem(n, 1f64);
+    let mut v = u.clone();
+    let mut tmp = u.clone();
+    for 8.times {
+        mult_AtAv(u, v, tmp);
+        mult_AtAv(v, u, tmp);
     }
 
-    let mut vBv = 0.0;
-    let mut vv = 0.0;
-    let mut i = 0u;
-    while i < N {
-        vBv += u[i] * v[i];
-        vv += v[i] * v[i];
-        i += 1u;
-    }
-
-    io::println(fmt!("%0.9f\n", float::sqrt(vBv / vv)));
+    println(fmt!("%.9f", f64::sqrt(dot(u,v) / dot(v,v)) as float));
 }

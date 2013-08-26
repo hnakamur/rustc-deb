@@ -13,12 +13,11 @@ struct Foo {
 }
 
 impl Drop for Foo {
-    fn finalize(&self) {
-        io::println("bye");
+    fn drop(&self) {
+        println("bye");
     }
 }
 
 pub fn main() {
     let x: Foo = Foo { x: 3 };
 }
-

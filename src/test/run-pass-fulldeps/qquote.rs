@@ -10,12 +10,10 @@
 
 // xfail-pretty
 
-#[legacy_modes];
-
-extern mod std;
+extern mod extra;
 extern mod syntax;
 
-use core::io::*;
+use std::io::*;
 
 use syntax::diagnostic;
 use syntax::ast;
@@ -29,7 +27,7 @@ trait fake_ext_ctxt {
     fn cfg() -> ast::crate_cfg;
     fn parse_sess() -> parse::parse_sess;
     fn call_site() -> span;
-    fn ident_of(st: ~str) -> ast::ident;
+    fn ident_of(st: &str) -> ast::ident;
 }
 
 type fake_session = parse::parse_sess;
@@ -44,8 +42,8 @@ impl fake_ext_ctxt for fake_session {
             expn_info: None
         }
     }
-    fn ident_of(st: ~str) -> ast::ident {
-        self.interner.intern(@copy st)
+    fn ident_of(st: &str) -> ast::ident {
+        self.interner.intern(st)
     }
 }
 
@@ -84,7 +82,6 @@ fn check_pp<T>(cx: fake_ext_ctxt,
     stdout().write_line(s);
     if expect != ~"" {
         error!("expect: '%s', got: '%s'", expect, s);
-        assert!(s == expect);
+        assert_eq!(s, expect);
     }
 }
-

@@ -17,14 +17,14 @@ This document does not serve as a tutorial introduction to the
 language. Background familiarity with the language is assumed. A separate
 [tutorial] document is available to help acquire such background familiarity.
 
-This document also does not serve as a reference to the [core] or [standard]
+This document also does not serve as a reference to the [standard] or [extra]
 libraries included in the language distribution. Those libraries are
 documented separately by extracting documentation attributes from their
 source code.
 
 [tutorial]: tutorial.html
-[core]: core/index.html
 [standard]: std/index.html
+[extra]: extra/index.html
 
 ## Disclaimer
 
@@ -301,10 +301,10 @@ num_lit : nonzero_dec [ dec_digit | '_' ] * num_suffix ?
 num_suffix : int_suffix | float_suffix ;
 
 int_suffix : 'u' int_suffix_size ?
-           | 'i' int_suffix_size ;
+           | 'i' int_suffix_size ? ;
 int_suffix_size : [ '8' | '1' '6' | '3' '2' | '6' '4' ] ;
 
-float_suffix : [ exponent | '.' dec_lit exponent ? ] float_suffix_ty ? ;
+float_suffix : [ exponent | '.' dec_lit exponent ? ] ? float_suffix_ty ? ;
 float_suffix_ty : 'f' [ '3' '2' | '6' '4' ] ;
 exponent : ['E' | 'e'] ['-' | '+' ] ? dec_lit ;
 dec_lit : [ dec_digit | '_' ] + ;
@@ -441,10 +441,10 @@ expression context, the final namespace qualifier is omitted.
 Two examples of paths with type arguments:
 
 ~~~~
-# use core::hashmap::linear::LinearMap;
+# use std::hashmap::HashMap;
 # fn f() {
 # fn id<T:Copy>(t: T) -> T { t }
-type t = LinearMap<int,~str>;  // Type arguments used in a type expression
+type t = HashMap<int,~str>;  // Type arguments used in a type expression
 let x = id::<int>(10);         // Type arguments used in a call expression
 # }
 ~~~~
@@ -618,7 +618,7 @@ each of which may have some number of [attributes](#attributes) attached to it.
 
 ~~~~~~~~ {.ebnf .gram}
 item : mod_item | fn_item | type_item | struct_item | enum_item
-     | static_item | trait_item | impl_item | foreign_mod_item ;
+     | static_item | trait_item | impl_item | extern_block ;
 ~~~~~~~~
 
 An _item_ is a component of a crate; some module items can be defined in crate
@@ -752,10 +752,11 @@ link_attr : ident '=' literal ;
 ~~~~~~~~
 
 An _`extern mod` declaration_ specifies a dependency on an external crate.
-The external crate is then bound into the declaring scope as the `ident` provided in the `extern_mod_decl`.
+The external crate is then bound into the declaring scope
+as the `ident` provided in the `extern_mod_decl`.
 
-The external crate is resolved to a specific `soname` at compile time, and a
-runtime linkage requirement to that `soname` is passed to the linker for
+The external crate is resolved to a specific `soname` at compile time,
+and a runtime linkage requirement to that `soname` is passed to the linker for
 loading at runtime. The `soname` is resolved at compile time by scanning the
 compiler's library path and matching the `link_attrs` provided in the
 `use_decl` against any `#link` attributes that were declared on the external
@@ -767,9 +768,9 @@ Three examples of `extern mod` declarations:
 ~~~~~~~~{.xfail-test}
 extern mod pcre (uuid = "54aba0f8-a7b1-4beb-92f1-4cf625264841");
 
-extern mod std; // equivalent to: extern mod std ( name = "std" );
+extern mod extra; // equivalent to: extern mod extra ( name = "extra" );
 
-extern mod ruststd (name = "std"); // linking to 'std' under another name
+extern mod rustextra (name = "extra"); // linking to 'extra' under another name
 ~~~~~~~~
 
 ##### Use declarations
@@ -801,20 +802,15 @@ Use declarations support a number of convenient shortcuts:
 An example of `use` declarations:
 
 ~~~~
-use core::float::sin;
-use core::str::{slice, to_upper};
-use core::option::Some;
+use std::float::sin;
+use std::option::{Some, None};
 
 fn main() {
-    // Equivalent to 'info!(core::float::sin(1.0));'
+    // Equivalent to 'info!(std::float::sin(1.0));'
     info!(sin(1.0));
 
-    // Equivalent to 'info!(core::option::Some(1.0));'
-    info!(Some(1.0));
-
-    // Equivalent to
-    // 'info!(core::str::to_upper(core::str::slice("foo", 0, 1)));'
-    info!(to_upper(slice("foo", 0, 1)));
+    // Equivalent to 'info!(~[std::option::Some(1.0), std::option::None]);'
+    info!(~[Some(1.0), None]);
 }
 ~~~~
 
@@ -886,11 +882,11 @@ the function name.
 
 ~~~~ {.xfail-test}
 fn iter<T>(seq: &[T], f: &fn(T)) {
-    for seq.each |elt| { f(elt); }
+    for seq.iter().advance |elt| { f(elt); }
 }
 fn map<T, U>(seq: &[T], f: &fn(T) -> U) -> ~[U] {
     let mut acc = ~[];
-    for seq.each |elt| { acc.push(f(elt)); }
+    for seq.iter().advance |elt| { acc.push(f(elt)); }
     acc
 }
 ~~~~
@@ -992,10 +988,10 @@ Thus the return type on `f` only needs to reflect the `if` branch of the conditi
 #### Extern functions
 
 Extern functions are part of Rust's foreign function interface,
-providing the opposite functionality to [foreign modules](#foreign-modules).
-Whereas foreign modules allow Rust code to call foreign code,
-extern functions with bodies defined in Rust code _can be called by foreign code_.
-They are defined in the same way as any other Rust function,
+providing the opposite functionality to [external blocks](#external-blocks).
+Whereas external blocks allow Rust code to call foreign code,
+extern functions with bodies defined in Rust code _can be called by foreign
+code_. They are defined in the same way as any other Rust function,
 except that they have the `extern` modifier.
 
 ~~~
@@ -1011,7 +1007,8 @@ let fptr: *u8 = new_vec;
 ~~~
 
 The primary motivation for extern functions is
-to create callbacks for foreign functions that expect to receive function pointers.
+to create callbacks for foreign functions that expect to receive function
+pointers.
 
 ### Type definitions
 
@@ -1295,7 +1292,7 @@ with matching types and type parameter counts.
 
 An implementation can take type parameters,
 which can be different from the type parameters taken by the trait it implements.
-Implementation parameters are written after after the `impl` keyword.
+Implementation parameters are written after the `impl` keyword.
 
 ~~~~
 # trait Seq<T> { }
@@ -1308,64 +1305,61 @@ impl Seq<bool> for u32 {
 }
 ~~~~
 
-### Foreign modules
+### External blocks
 
 ~~~ {.ebnf .gram}
-foreign_mod_item : "extern mod" ident '{' foreign_mod '} ;
-foreign_mod : [ foreign_fn ] * ;
+extern_block_item : "extern" '{' extern_block '} ;
+extern_block : [ foreign_fn ] * ;
 ~~~
 
-Foreign modules form the basis for Rust's foreign function interface. A
-foreign module describes functions in external, non-Rust
-libraries.
-Functions within foreign modules are declared in the same way as other Rust functions,
-with the exception that they may not have a body and are instead terminated by a semicolon.
+External blocks form the basis for Rust's foreign function interface.
+Declarations in an external block describe symbols
+in external, non-Rust libraries.
+
+Functions within external blocks
+are declared in the same way as other Rust functions,
+with the exception that they may not have a body
+and are instead terminated by a semicolon.
 
 ~~~
-# use core::libc::{c_char, FILE};
+# use std::libc::{c_char, FILE};
 # #[nolink]
 
-extern mod c {
+extern {
     fn fopen(filename: *c_char, mode: *c_char) -> *FILE;
 }
 ~~~
 
-Functions within foreign modules may be called by Rust code, just like functions defined in Rust.
-The Rust compiler automatically translates between the Rust ABI and the foreign ABI.
+Functions within external blocks may be called by Rust code,
+just like functions defined in Rust.
+The Rust compiler automatically translates
+between the Rust ABI and the foreign ABI.
 
-The name of the foreign module has special meaning to the Rust compiler in
-that it will treat the module name as the name of a library to link to,
-performing the linking as appropriate for the target platform. The name
-given for the foreign module will be transformed in a platform-specific way
-to determine the name of the library. For example, on Linux the name of the
-foreign module is prefixed with 'lib' and suffixed with '.so', so the
-foreign mod 'rustrt' would be linked to a library named 'librustrt.so'.
+A number of [attributes](#attributes) control the behavior of external
+blocks.
 
-A number of [attributes](#attributes) control the behavior of foreign
-modules.
-
-By default foreign modules assume that the library they are calling use the
-standard C "cdecl" ABI. Other ABIs may be specified using the `abi`
-attribute as in
+By default external blocks assume
+that the library they are calling uses the standard C "cdecl" ABI.
+Other ABIs may be specified using the `abi` attribute as in
 
 ~~~{.xfail-test}
 // Interface to the Windows API
 #[abi = "stdcall"]
-extern mod kernel32 { }
+extern { }
 ~~~
 
-The `link_name` attribute allows the default library naming behavior to
-be overridden by explicitly specifying the name of the library.
+The `link_name` attribute allows the name of the library to be specified.
 
 ~~~{.xfail-test}
 #[link_name = "crypto"]
-extern mod mycrypto { }
+extern { }
 ~~~
 
-The `nolink` attribute tells the Rust compiler not to do any linking for the foreign module.
-This is particularly useful for creating foreign
-modules for libc, which tends to not follow standard library naming
-conventions and is linked to all Rust programs anyway.
+The `nolink` attribute tells the Rust compiler
+not to do any linking for the external block.
+This is particularly useful for creating external blocks for libc,
+which tends to not follow standard library naming conventions
+and is linked to all Rust programs anyway.
 
 ## Attributes
 
@@ -1425,6 +1419,9 @@ names are effectively reserved. Some significant attributes include:
 * The `test` attribute, for marking functions as unit tests.
 * The `allow`, `warn`, `forbid`, and `deny` attributes, for controlling lint checks. Lint checks supported
 by the compiler can be found via `rustc -W help`.
+* The `deriving` attribute, for automatically generating
+  implementations of certain traits.
+* The `static_assert` attribute, for asserting that a static bool is true at compiletime
 
 Other attributes may be added or removed during development of the language.
 
@@ -1434,7 +1431,7 @@ Some primitive Rust operations are defined in Rust code,
 rather than being implemented directly in C or assembly language.
 The definitions of these operations have to be easy for the compiler to find.
 The `lang` attribute makes it possible to declare these operations.
-For example, the `str` module in the Rust core library defines the string equality function:
+For example, the `str` module in the Rust standard library defines the string equality function:
 
 ~~~ {.xfail-test}
 #[lang="str_eq"]
@@ -1468,9 +1465,9 @@ A complete list of the built-in language items follows:
 `mul`
   : Elements can be multiplied.
 `div`
-  : Elements can be divided.
-`mod`
-  : Elements have a modulo operation.
+  : Elements have a division operation.
+`rem`
+  : Elements have a remainder operation.
 `neg`
   : Elements can be negated arithmetically.
 `not`
@@ -1525,6 +1522,50 @@ A complete list of the built-in language items follows:
 
 > **Note:** This list is likely to become out of date. We should auto-generate it
 > from `librustc/middle/lang_items.rs`.
+
+### Deriving
+
+The `deriving` attribute allows certain traits to be automatically
+implemented for data structures. For example, the following will
+create an `impl` for the `Eq` and `Clone` traits for `Foo`, the type
+parameter `T` will be given the `Eq` or `Clone` constraints for the
+appropriate `impl`:
+
+~~~
+#[deriving(Eq, Clone)]
+struct Foo<T> {
+    a: int,
+    b: T
+}
+~~~
+
+The generated `impl` for `Eq` is equivalent to
+
+~~~
+# struct Foo<T> { a: int, b: T }
+impl<T: Eq> Eq for Foo<T> {
+    fn eq(&self, other: &Foo<T>) -> bool {
+        self.a == other.a && self.b == other.b
+    }
+
+    fn ne(&self, other: &Foo<T>) -> bool {
+        self.a != other.a || self.b != other.b
+    }
+}
+~~~
+
+Supported traits for `deriving` are:
+
+* Comparison traits: `Eq`, `TotalEq`, `Ord`, `TotalOrd`.
+* Serialization: `Encodable`, `Decodable`. These require `extra`.
+* `Clone` and `DeepClone`, to perform (deep) copies.
+* `IterBytes`, to iterate over the bytes in a data type.
+* `Rand`, to create a random instance of a data type.
+* `Zero`, to create an zero (or empty) instance of a data type.
+* `ToStr`, to convert to a string. For a type with this instance,
+  `obj.to_str()` has similar output as `fmt!("%?", obj)`, but it differs in that
+  each constituent field of the type must also implement `ToStr` and will have
+  `field.to_str()` invoked to build up the result.
 
 # Statements and expressions
 
@@ -1653,11 +1694,12 @@ Path expressions are [lvalues](#lvalues-rvalues-and-temporaries).
 
 ### Tuple expressions
 
-Tuples are written by enclosing two or more comma-separated
+Tuples are written by enclosing one or more comma-separated
 expressions in parentheses. They are used to create [tuple-typed](#tuple-types)
 values.
 
 ~~~~~~~~ {.tuple}
+(0,);
 (0f, 4.5f);
 ("a", 4u, true);
 ~~~~~~~~
@@ -1796,6 +1838,7 @@ is bounds-checked at run-time. When the check fails, it will put the
 task in a _failing state_.
 
 ~~~~
+# use std::task;
 # do task::spawn_unlinked {
 
 ([1, 2, 3, 4])[0];
@@ -1841,25 +1884,25 @@ Binary operators expressions are given in terms of
 #### Arithmetic operators
 
 Binary arithmetic expressions are syntactic sugar for calls to built-in traits,
-defined in the `core::ops` module of the `core` library.
+defined in the `std::ops` module of the `std` library.
 This means that arithmetic operators can be overridden for user-defined types.
 The default meaning of the operators on standard types is given here.
 
 `+`
   : Addition and vector/string concatenation.
-    Calls the `add` method on the `core::ops::Add` trait.
+    Calls the `add` method on the `std::ops::Add` trait.
 `-`
   : Subtraction.
-    Calls the `sub` method on the `core::ops::Sub` trait.
+    Calls the `sub` method on the `std::ops::Sub` trait.
 `*`
   : Multiplication.
-    Calls the `mul` method on the `core::ops::Mul` trait.
+    Calls the `mul` method on the `std::ops::Mul` trait.
 `/`
-  : Division.
-    Calls the `div` method on the `core::ops::Div` trait.
+  : Quotient.
+    Calls the `div` method on the `std::ops::Div` trait.
 `%`
-  : Modulo (a.k.a. "remainder").
-    Calls the `modulo` method on the `core::ops::Modulo` trait.
+  : Remainder.
+    Calls the `rem` method on the `std::ops::Rem` trait.
 
 #### Bitwise operators
 
@@ -1870,19 +1913,19 @@ The default meaning of the operators on standard types is given here.
 
 `&`
   : And.
-    Calls the `bitand` method of the `core::ops::BitAnd` trait.
+    Calls the `bitand` method of the `std::ops::BitAnd` trait.
 `|`
   : Inclusive or.
-    Calls the `bitor` method of the `core::ops::BitOr` trait.
+    Calls the `bitor` method of the `std::ops::BitOr` trait.
 `^`
   : Exclusive or.
-    Calls the `bitxor` method of the `core::ops::BitXor` trait.
+    Calls the `bitxor` method of the `std::ops::BitXor` trait.
 `<<`
   : Logical left shift.
-    Calls the `shl` method of the `core::ops::Shl` trait.
+    Calls the `shl` method of the `std::ops::Shl` trait.
 `>>`
   : Logical right shift.
-    Calls the `shr` method of the `core::ops::Shr` trait.
+    Calls the `shr` method of the `std::ops::Shr` trait.
 
 #### Lazy boolean operators
 
@@ -1903,22 +1946,22 @@ The default meaning of the operators on standard types is given here.
 
 `==`
   : Equal to.
-    Calls the `eq` method on the `core::cmp::Eq` trait.
+    Calls the `eq` method on the `std::cmp::Eq` trait.
 `!=`
   : Unequal to.
-    Calls the `ne` method on the `core::cmp::Eq` trait.
+    Calls the `ne` method on the `std::cmp::Eq` trait.
 `<`
   : Less than.
-    Calls the `lt` method on the `core::cmp::Ord` trait.
+    Calls the `lt` method on the `std::cmp::Ord` trait.
 `>`
   : Greater than.
-    Calls the `gt` method on the `core::cmp::Ord` trait.
+    Calls the `gt` method on the `std::cmp::Ord` trait.
 `<=`
   : Less than or equal.
-    Calls the `le` method on the `core::cmp::Ord` trait.
+    Calls the `le` method on the `std::cmp::Ord` trait.
 `>=`
   : Greater than or equal.
-    Calls the `ge` method on the `core::cmp::Ord` trait.
+    Calls the `ge` method on the `std::cmp::Ord` trait.
 
 
 #### Type cast expressions
@@ -1944,35 +1987,6 @@ fn avg(v: &[float]) -> float {
   return sum / sz;
 }
 ~~~~
-
-#### Swap expressions
-
-A _swap expression_ consists of an [lvalue](#lvalues-rvalues-and-temporaries) followed by a bi-directional arrow (`<->`) and another [lvalue](#lvalues-rvalues-and-temporaries).
-
-Evaluating a swap expression causes, as a side effect, the values held in the left-hand-side and right-hand-side [lvalues](#lvalues-rvalues-and-temporaries) to be exchanged indivisibly.
-
-Evaluating a swap expression neither changes reference counts,
-nor deeply copies any owned structure pointed to by the moved [rvalue](#lvalues-rvalues-and-temporaries).
-Instead, the swap expression represents an indivisible *exchange of ownership*,
-between the right-hand-side and the left-hand-side of the expression.
-No allocation or destruction is entailed.
-
-An example of three different swap expressions:
-
-~~~~~~~~
-# let mut x = &mut [0];
-# let mut a = &mut [0];
-# let i = 0;
-# struct S1 { z: int };
-# struct S2 { c: int };
-# let mut y = S1{z: 0};
-# let mut b = S2{c: 0};
-
-x <-> a;
-x[i] <-> a[i];
-y.z <-> b.c;
-~~~~~~~~
-
 
 #### Assignment expressions
 
@@ -2014,10 +2028,11 @@ as
 == !=
 &&
 ||
-= <->
+=
 ~~~~
 
-Operators at the same precedence level are evaluated left-to-right.
+Operators at the same precedence level are evaluated left-to-right. [Unary operators](#unary-operator-expressions)
+have the same precedence level and it is stronger than any of the binary operators'.
 
 ### Grouped expressions
 
@@ -2106,11 +2121,11 @@ then the expression completes.
 Some examples of call expressions:
 
 ~~~~
-# use core::from_str::FromStr::from_str;
+# use std::from_str::FromStr;
 # fn add(x: int, y: int) -> int { 0 }
 
 let x: int = add(1, 2);
-let pi = from_str::<f32>("3.14");
+let pi = FromStr::from_str::<f32>("3.14");
 ~~~~
 
 ### Lambda expressions
@@ -2153,7 +2168,7 @@ fn ten_times(f: &fn(int)) {
     }
 }
 
-ten_times(|j| io::println(fmt!("hello, %d", j)));
+ten_times(|j| println(fmt!("hello, %d", j)));
 
 ~~~~
 
@@ -2174,7 +2189,7 @@ An example:
 let mut i = 0;
 
 while i < 10 {
-    io::println("hello\n");
+    println("hello\n");
     i = i + 1;
 }
 ~~~~
@@ -2186,7 +2201,7 @@ A loop expression denotes an infinite loop;
 see [Continue expressions](#continue-expressions) for continue expressions.
 
 ~~~~~~~~{.ebnf .gram}
-loop_expr : "loop" [ ident ':' ] '{' block '}';
+loop_expr : [ lifetime ':' ] "loop" '{' block '}';
 ~~~~~~~~
 
 A `loop` expression may optionally have a _label_.
@@ -2197,7 +2212,7 @@ See [Break expressions](#break-expressions).
 ### Break expressions
 
 ~~~~~~~~{.ebnf .gram}
-break_expr : "break" [ ident ];
+break_expr : "break" [ lifetime ];
 ~~~~~~~~
 
 A `break` expression has an optional `label`.
@@ -2210,7 +2225,7 @@ but must enclose it.
 ### Continue expressions
 
 ~~~~~~~~{.ebnf .gram}
-continue_expr : "loop" [ ident ];
+continue_expr : "loop" [ lifetime ];
 ~~~~~~~~
 
 A continue expression, written `loop`, also has an optional `label`.
@@ -2235,6 +2250,14 @@ do_expr : "do" expr [ '|' ident_list '|' ] ? '{' block '}' ;
 
 A _do expression_ provides a more-familiar block-syntax for a [lambda expression](#lambda-expressions),
 including a special translation of [return expressions](#return-expressions) inside the supplied block.
+
+Any occurrence of a [return expression](#return-expressions)
+inside this `block` expression is rewritten
+as a reference to an (anonymous) flag set in the caller's environment,
+which is checked on return from the `expr` and, if set,
+causes a corresponding return from the caller.
+In this way, the meaning of `return` statements in language built-in control blocks is preserved,
+if they are rewritten using lambda functions and `do` expressions as abstractions.
 
 The optional `ident_list` and `block` provided in a `do` expression are parsed as though they constitute a lambda expression;
 if the `ident_list` is missing, an empty `ident_list` is implied.
@@ -2282,19 +2305,15 @@ A _for expression_ is similar to a [`do` expression](#do-expressions),
 in that it provides a special block-form of lambda expression,
 suited to passing the `block` function to a higher-order function implementing a loop.
 
-Like a `do` expression, a `return` expression inside a `for` expresison is rewritten,
-to access a local flag that causes an early return in the caller.
+In contrast to a `do` expression, a `for` expression is designed to work
+with methods such as `each` and `times`, that require the body block to
+return a boolean. The `for` expression accommodates this by implicitly
+returning `true` at the end of each block, unless a `break` expression
+is evaluated.
 
-Additionally, any occurrence of a [return expression](#return-expressions)
-inside the `block` of a `for` expression is rewritten
-as a reference to an (anonymous) flag set in the caller's environment,
-which is checked on return from the `expr` and, if set,
-causes a corresponding return from the caller.
-In this way, the meaning of `return` statements in language built-in control blocks is preserved,
-if they are rewritten using lambda functions and `do` expressions as abstractions.
-
-Like `return` expressions, any [`break`](#break-expressions) and [`loop`](#loop-expressions) expressions
-are rewritten inside `for` expressions, with a combination of local flag variables,
+In addition, [`break`](#break-expressions) and [`loop`](#loop-expressions) expressions
+are rewritten inside `for` expressions in the same way that `return` expressions are,
+with a combination of local flag variables,
 and early boolean-valued returns from the `block` function,
 such that the meaning of `break` and `loop` is preserved in a primitive loop
 when rewritten as a `for` loop controlled by a higher order function.
@@ -2304,11 +2323,13 @@ An example of a for loop over the contents of a vector:
 ~~~~
 # type foo = int;
 # fn bar(f: foo) { }
-# let a = 0, b = 0, c = 0;
+# let a = 0;
+# let b = 0;
+# let c = 0;
 
 let v: &[foo] = &[a, b, c];
 
-for v.each |e| {
+for v.iter().advance |e| {
     bar(*e);
 }
 ~~~~
@@ -2316,6 +2337,7 @@ for v.each |e| {
 An example of a for loop over a series of integers:
 
 ~~~~
+# use std::uint;
 # fn bar(b:uint) { }
 for uint::range(0, 256) |i| {
     bar(i);
@@ -2372,9 +2394,9 @@ enum List<X> { Nil, Cons(X, @List<X>) }
 let x: List<int> = Cons(10, @Cons(11, @Nil));
 
 match x {
-    Cons(_, @Nil) => fail!(~"singleton list"),
+    Cons(_, @Nil) => fail!("singleton list"),
     Cons(*)       => return,
-    Nil           => fail!(~"empty list")
+    Nil           => fail!("empty list")
 }
 ~~~~
 
@@ -2416,10 +2438,11 @@ match x {
 }
 ~~~~
 
-Patterns that bind variables default to binding to a copy of the matched value. This can be made
-explicit using the ```copy``` keyword, changed to bind to a borrowed pointer by using the ```ref```
-keyword, or to a mutable borrowed pointer using ```ref mut```, or the value can be moved into
-the new binding using ```move```.
+Patterns that bind variables default to binding to a copy or move of the matched value
+(depending on the matched value's type).
+This can be made explicit using the ```copy``` keyword,
+changed to bind to a borrowed pointer by using the ```ref``` keyword,
+or to a mutable borrowed pointer using ```ref mut```.
 
 A pattern that's just an identifier,
 like `Nil` in the previous answer,
@@ -2578,7 +2601,7 @@ to the record type-constructor. The differences are as follows:
 
 Tuple types and values are denoted by listing the types or values of their
 elements, respectively, in a parenthesized, comma-separated
-list. Single-element tuples are not legal; all tuples have two or more values.
+list.
 
 The members of a tuple are laid out in memory contiguously, like a record, in
 order specified by the tuple type.
@@ -2597,7 +2620,7 @@ assert!(b != "world");
 
 The vector type constructor represents a homogeneous array of values of a given type.
 A vector has a fixed size.
-(Operations like `vec::push` operate solely on owned vectors.)
+(Operations like `vec.push` operate solely on owned vectors.)
 A vector type can be annotated with a _definite_ size,
 written with a trailing asterisk and integer literal, such as `[int * 10]`.
 Such a definite-sized vector type is a first-class type, since its size is known statically.
@@ -2778,6 +2801,7 @@ the vtable pointer for the `T` implementation of `R`, and the pointer value of `
 An example of an object type:
 
 ~~~~~~~~
+# use std::int;
 trait Printable {
   fn to_str(&self) -> ~str;
 }
@@ -2787,7 +2811,7 @@ impl Printable for int {
 }
 
 fn print(a: @Printable) {
-   io::println(a.to_str());
+   println(a.to_str());
 }
 
 fn main() {
@@ -2805,7 +2829,7 @@ Within the body of an item that has type parameter declarations, the names of it
 ~~~~~~~
 fn map<A: Copy, B: Copy>(f: &fn(A) -> B, xs: &[A]) -> ~[B] {
    if xs.len() == 0 { return ~[]; }
-   let first: B = f(xs[0]);
+   let first: B = f(copy xs[0]);
    let rest: ~[B] = map(f, xs.slice(1, xs.len()));
    return ~[first] + rest;
 }
@@ -2838,13 +2862,13 @@ call to the method `make_string`.
 Types in Rust are categorized into kinds, based on various properties of the components of the type.
 The kinds are:
 
-`Const`
+`Freeze`
   : Types of this kind are deeply immutable;
     they contain no mutable memory locations directly or indirectly via pointers.
-`Owned`
+`Send`
   : Types of this kind can be safely sent between tasks.
     This kind includes scalars, owning pointers, owned closures, and
-    structural types containing only other owned types. All `Owned` types are `Static`.
+    structural types containing only other owned types. All `Send` types are `Static`.
 `Static`
   : Types of this kind do not contain any borrowed pointers;
     this can be a useful guarantee for code that breaks borrowing assumptions using [`unsafe` operations](#unsafe-functions).
@@ -2858,7 +2882,7 @@ The kinds are:
     trait provides a single method `finalize` that takes no parameters, and is run
     when values of the type are dropped. Such a method is called a "destructor",
     and are always executed in "top-down" order: a value is completely destroyed
-    before any of the values it owns run their destructors. Only `Owned` types
+    before any of the values it owns run their destructors. Only `Send` types
     that do not implement `Copy` can implement `Drop`.
 
 > **Note:** The `finalize` method may be renamed in future versions of Rust.
@@ -2944,10 +2968,10 @@ frame they are allocated within.
 A task owns all memory it can *safely* reach through local variables,
 as well as managed, owning and borrowed pointers.
 
-When a task sends a value that has the `Owned` trait to another task,
+When a task sends a value that has the `Send` trait to another task,
 it loses ownership of the value sent and can no longer refer to it.
 This is statically guaranteed by the combined use of "move semantics",
-and the compiler-checked _meaning_ of the `Owned` trait:
+and the compiler-checked _meaning_ of the `Send` trait:
 it is only instantiated for (transitively) sendable kinds of data constructor and pointers,
 never including managed or borrowed pointers.
 
@@ -2976,7 +3000,7 @@ allocated within the stack's memory. The value is a part of the stack frame.
 
 Local variables are immutable unless declared with `let mut`.  The
 `mut` keyword applies to all local variables declared within that
-declaration (so `let mut x, y` declares two mutable variables, `x` and
+declaration (so `let mut (x, y) = ...` declares two mutable variables, `x` and
 `y`).
 
 Function parameters are immutable unless declared with `mut`. The
@@ -3092,7 +3116,7 @@ These include:
   - read-only and read-write shared variables with various safe mutual exclusion patterns
   - simple locks and semaphores
 
-When such facilities carry values, the values are restricted to the [`Owned` type-kind](#type-kinds).
+When such facilities carry values, the values are restricted to the [`Send` type-kind](#type-kinds).
 Restricting communication interfaces to this kind ensures that no borrowed or managed pointers move between tasks.
 Thus access to an entire data structure can be mediated through its owning "root" value;
 no further locking or copying is required to avoid data races within the substructure of such a value.
@@ -3149,7 +3173,7 @@ execute, after which it is *descheduled* at a loop-edge or similar
 preemption point, and another task within is scheduled, pseudo-randomly.
 
 An executing task can yield control at any time, by making a library call to
-`core::task::yield`, which deschedules it immediately. Entering any other
+`std::task::yield`, which deschedules it immediately. Entering any other
 non-executing state (blocked, dead) similarly deschedules the task.
 
 
@@ -3162,7 +3186,7 @@ run-time. It is smaller and simpler than many modern language runtimes. It is
 tightly integrated into the language's execution model of memory, tasks,
 communication and logging.
 
-> **Note:** The runtime library will merge with the `core` library in future versions of Rust.
+> **Note:** The runtime library will merge with the `std` library in future versions of Rust.
 
 ### Memory allocation
 
@@ -3251,6 +3275,28 @@ of runtime logging modules follows.
 * `::rt::backtrace` Log a backtrace on task failure
 * `::rt::callback` Unused
 
+#### Logging Expressions
+
+Rust provides several macros to log information. Here's a simple Rust program
+that demonstrates all four of them:
+
+```rust
+fn main() {
+    error!("This is an error log")
+    warn!("This is a warn log")
+    info!("this is an info log")
+    debug!("This is a debug log")
+}
+```
+
+These four log levels correspond to levels 1-4, as controlled by `RUST_LOG`:
+
+```bash
+$ RUST_LOG=rust=3 ./rust
+rust: ~"\"This is an error log\""
+rust: ~"\"This is a warn log\""
+rust: ~"\"this is an info log\""
+```
 
 # Appendix: Rationales and design tradeoffs
 
@@ -3328,4 +3374,3 @@ Additional specific influences can be seen from the following languages:
 * The typeclass system of Haskell.
 * The lexical identifier rule of Python.
 * The block syntax of Ruby.
-

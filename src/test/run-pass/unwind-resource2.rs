@@ -9,7 +9,9 @@
 // except according to those terms.
 
 // xfail-win32
-extern mod std;
+extern mod extra;
+
+use std::task;
 
 struct complainer {
   c: @int,
@@ -17,7 +19,7 @@ struct complainer {
 
 #[unsafe_destructor]
 impl Drop for complainer {
-    fn finalize(&self) {}
+    fn drop(&self) {}
 }
 
 fn complainer(c: @int) -> complainer {

@@ -15,8 +15,8 @@ pub struct S {
 }
 
 impl Drop for S {
-    fn finalize(&self) {
-        io::println("goodbye");
+    fn drop(&self) {
+        println("goodbye");
     }
 }
 
@@ -25,4 +25,3 @@ pub fn f() {
     let y = x;
     let z = y;
 }
-

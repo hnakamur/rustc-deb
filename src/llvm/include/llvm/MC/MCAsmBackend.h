@@ -22,7 +22,7 @@ class MCELFObjectTargetWriter;
 struct MCFixupKindInfo;
 class MCFragment;
 class MCInst;
-class MCInstFragment;
+class MCRelaxableFragment;
 class MCObjectWriter;
 class MCSection;
 class MCValue;
@@ -36,9 +36,13 @@ protected: // Can only create subclasses.
   MCAsmBackend();
 
   unsigned HasReliableSymbolDifference : 1;
+  unsigned HasDataInCodeSupport : 1;
 
 public:
   virtual ~MCAsmBackend();
+
+  /// lifetime management
+  virtual void reset() { }
 
   /// createObjectWriter - Create a new MCObjectWriter instance for use by the
   /// assembler backend to emit the final object file.
@@ -63,6 +67,12 @@ public:
   /// eventually should be eliminated.
   bool hasReliableSymbolDifference() const {
     return HasReliableSymbolDifference;
+  }
+
+  /// hasDataInCodeSupport - Check whether this target implements data-in-code
+  /// markers. If not, data region directives will be ignored.
+  bool hasDataInCodeSupport() const {
+    return HasDataInCodeSupport;
   }
 
   /// doesSectionRequireSymbols - Check whether the given section requires that
@@ -120,7 +130,7 @@ public:
   /// fixup requires the associated instruction to be relaxed.
   virtual bool fixupNeedsRelaxation(const MCFixup &Fixup,
                                     uint64_t Value,
-                                    const MCInstFragment *DF,
+                                    const MCRelaxableFragment *DF,
                                     const MCAsmLayout &Layout) const = 0;
 
   /// RelaxInstruction - Relax the instruction in the given fragment to the next

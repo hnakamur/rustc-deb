@@ -10,6 +10,8 @@
 
 // xfail-fast
 
+use std::int;
+
 trait vec_monad<A> {
     fn bind<B:Copy>(&self, f: &fn(&A) -> ~[B]) -> ~[B];
 }
@@ -17,7 +19,9 @@ trait vec_monad<A> {
 impl<A> vec_monad<A> for ~[A] {
     fn bind<B:Copy>(&self, f: &fn(&A) -> ~[B]) -> ~[B] {
         let mut r = ~[];
-        for self.each |elt| { r += f(elt); }
+        for self.iter().advance |elt| {
+            r.push_all_move(f(elt));
+        }
         r
     }
 }
@@ -40,8 +44,8 @@ fn transform(x: Option<int>) -> Option<~str> {
 }
 
 pub fn main() {
-    assert!(transform(Some(10)) == Some(~"11"));
-    assert!(transform(None) == None);
+    assert_eq!(transform(Some(10)), Some(~"11"));
+    assert_eq!(transform(None), None);
     assert!((~[~"hi"])
         .bind(|x| ~[x.clone(), *x + ~"!"] )
         .bind(|x| ~[x.clone(), *x + ~"?"] ) ==

@@ -16,13 +16,13 @@ trait get_ctxt<'self> {
 
 struct HasCtxt<'self> { c: &'self Ctxt }
 
-impl<'self> get_ctxt for HasCtxt<'self> {
+impl<'self> get_ctxt<'self> for HasCtxt<'self> {
     fn get_ctxt(&self) -> &'self Ctxt {
         self.c
     }
 }
 
-fn get_v(gc: @get_ctxt) -> uint {
+fn get_v(gc: @get_ctxt:) -> uint {
     gc.get_ctxt().v
 }
 
@@ -30,5 +30,5 @@ pub fn main() {
     let ctxt = Ctxt { v: 22 };
     let hc = HasCtxt { c: &ctxt };
 
-    assert!(get_v(@hc as @get_ctxt) == 22);
+    assert_eq!(get_v(@hc as @get_ctxt:), 22);
 }

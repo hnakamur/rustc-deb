@@ -37,24 +37,21 @@ updating the states using rule (2) until there are no changes.
 
 */
 
-use core::prelude::*;
+use ext::base::ExtCtxt;
+use ext::pipes::proto::{protocol_};
 
-use ext::base::ext_ctxt;
-use ext::pipes::proto::protocol;
+use extra::bitv::Bitv;
 
-use core::str;
-use std::bitv::Bitv;
-
-pub fn analyze(proto: protocol, _cx: @ext_ctxt) {
+pub fn analyze(proto: @mut protocol_, _cx: @ExtCtxt) {
     debug!("initializing colive analysis");
     let num_states = proto.num_states();
-    let mut colive = do (copy proto.states).map_to_vec |state| {
+    let mut colive: ~[~Bitv] = do (copy proto.states).iter().transform() |state| {
         let mut bv = ~Bitv::new(num_states, false);
         for state.reachable |s| {
             bv.set(s.id, true);
         }
         bv
-    };
+    }.collect();
 
     let mut i = 0;
     let mut changed = true;
@@ -62,7 +59,7 @@ pub fn analyze(proto: protocol, _cx: @ext_ctxt) {
         changed = false;
         debug!("colive iteration %?", i);
         let mut new_colive = ~[];
-        for colive.eachi |i, this_colive| {
+        for colive.iter().enumerate().advance |(i, this_colive)| {
             let mut result = this_colive.clone();
             let this = proto.get_state_by_id(i);
             for this_colive.ones |j| {
@@ -81,14 +78,14 @@ pub fn analyze(proto: protocol, _cx: @ext_ctxt) {
 
     // Determine if we're bounded
     let mut self_live = ~[];
-    for colive.eachi |i, bv| {
+    for colive.iter().enumerate().advance |(i, bv)| {
         if bv.get(i) {
             self_live.push(proto.get_state_by_id(i))
         }
     }
 
     if self_live.len() > 0 {
-        let states = str::connect(self_live.map(|s| copy s.name), ~" ");
+        let states = self_live.map(|s| copy s.name).connect(" ");
 
         debug!("protocol %s is unbounded due to loops involving: %s",
                copy proto.name, states);
@@ -107,4 +104,3 @@ pub fn analyze(proto: protocol, _cx: @ext_ctxt) {
         proto.bounded = Some(true);
     }
 }
-

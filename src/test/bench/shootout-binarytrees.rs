@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,39 +8,38 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
-use std::arena;
-use methods = std::arena::Arena;
+extern mod extra;
+use extra::arena;
 
-enum tree<'self> {
-    nil,
-    node(&'self tree<'self>, &'self tree<'self>, int),
+enum Tree<'self> {
+    Nil,
+    Node(&'self Tree<'self>, &'self Tree<'self>, int),
 }
 
-fn item_check(t: &tree) -> int {
+fn item_check(t: &Tree) -> int {
     match *t {
-      nil => { return 0; }
-      node(left, right, item) => {
+      Nil => { return 0; }
+      Node(left, right, item) => {
         return item + item_check(left) - item_check(right);
       }
     }
 }
 
-fn bottom_up_tree<'r>(arena: &'r arena::Arena,
-                      item: int,
-                      depth: int)
-                   -> &'r tree<'r> {
+fn bottom_up_tree<'r>(arena: &'r arena::Arena, item: int, depth: int)
+                   -> &'r Tree<'r> {
     if depth > 0 {
         return arena.alloc(
-            || node(bottom_up_tree(arena, 2 * item - 1, depth - 1),
+            || Node(bottom_up_tree(arena, 2 * item - 1, depth - 1),
                     bottom_up_tree(arena, 2 * item, depth - 1),
                     item));
     }
-    return arena.alloc(|| nil);
+    return arena.alloc(|| Nil);
 }
 
 fn main() {
-    let args = os::args();
+    use std::os;
+    use std::int;
+    let args = std::os::args();
     let args = if os::getenv(~"RUST_BENCH").is_some() {
         ~[~"", ~"17"]
     } else if args.len() <= 1u {
@@ -62,7 +61,7 @@ fn main() {
     let stretch_depth = max_depth + 1;
     let stretch_tree = bottom_up_tree(&stretch_arena, 0, stretch_depth);
 
-    io::println(fmt!("stretch tree of depth %d\t check: %d",
+    println(fmt!("stretch tree of depth %d\t check: %d",
                           stretch_depth,
                           item_check(stretch_tree)));
 
@@ -80,12 +79,12 @@ fn main() {
             chk += item_check(temp_tree);
             i += 1;
         }
-        io::println(fmt!("%d\t trees of depth %d\t check: %d",
+        println(fmt!("%d\t trees of depth %d\t check: %d",
                          iterations * 2, depth,
                          chk));
         depth += 2;
     }
-    io::println(fmt!("long lived trees of depth %d\t check: %d",
+    println(fmt!("long lived tree of depth %d\t check: %d",
                      max_depth,
-                          item_check(long_lived_tree)));
+                     item_check(long_lived_tree)));
 }

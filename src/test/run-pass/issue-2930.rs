@@ -9,13 +9,13 @@
 // except according to those terms.
 
 proto! stream (
-    Stream:send<T:Owned> {
+    Stream:send<T:Send> {
         send(T) -> Stream<T>
     }
 )
 
 pub fn main() {
-    let (bc, _bp) = stream::init();
+    let (_bp, bc) = stream::init();
 
     stream::client::send(bc, ~"abc");
 }

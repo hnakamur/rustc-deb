@@ -17,19 +17,17 @@ trait Bar : Drop {
 }
 
 impl Drop for Foo {
-    fn finalize(&self) {
-        io::println("kaboom");
+    fn drop(&self) {
+        println("kaboom");
     }
 }
 
 impl Bar for Foo {
     fn blah(&self) {
-        self.finalize();    //~ ERROR explicit call to destructor
+        self.drop();    //~ ERROR explicit call to destructor
     }
 }
 
 fn main() {
     let x = Foo { x: 3 };
 }
-
-

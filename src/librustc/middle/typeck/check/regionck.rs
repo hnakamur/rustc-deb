@@ -27,19 +27,19 @@ this point a bit better.
 
 */
 
-use core::prelude::*;
 
 use middle::freevars::get_freevars;
-use middle::pat_util::pat_bindings;
-use middle::ty::{encl_region, re_scope};
+use middle::ty::{re_scope};
 use middle::ty;
 use middle::typeck::check::FnCtxt;
-use middle::typeck::check::lookup_def;
+use middle::typeck::check::regionmanip::relate_nested_regions;
 use middle::typeck::infer::resolve_and_force_all_but_regions;
 use middle::typeck::infer::resolve_type;
-use util::ppaux::{note_and_explain_region, ty_to_str};
+use util::ppaux::{note_and_explain_region, ty_to_str, region_to_str};
+use middle::pat_util;
 
-use core::result;
+use std::result;
+use std::uint;
 use syntax::ast::{ManagedSigil, OwnedSigil, BorrowedSigil};
 use syntax::ast::{def_arg, def_binding, def_local, def_self, def_upvar};
 use syntax::ast;
@@ -53,12 +53,13 @@ pub struct Rcx {
 
 pub type rvt = visit::vt<@mut Rcx>;
 
-pub fn encl_region_of_def(fcx: @mut FnCtxt, def: ast::def) -> ty::Region {
+fn encl_region_of_def(fcx: @mut FnCtxt, def: ast::def) -> ty::Region {
     let tcx = fcx.tcx();
     match def {
-        def_local(node_id, _) | def_arg(node_id, _, _) |
-        def_self(node_id, _) | def_binding(node_id, _) =>
-            return encl_region(tcx, node_id),
+        def_local(node_id, _) | def_arg(node_id, _) |
+        def_self(node_id, _) | def_binding(node_id, _) => {
+            tcx.region_maps.encl_region(node_id)
+        }
         def_upvar(_, subdef, closure_id, body_id) => {
             match ty::ty_closure_sigil(fcx.node_ty(closure_id)) {
                 BorrowedSigil => encl_region_of_def(fcx, *subdef),
@@ -72,8 +73,12 @@ pub fn encl_region_of_def(fcx: @mut FnCtxt, def: ast::def) -> ty::Region {
     }
 }
 
-pub impl Rcx {
-    fn resolve_type(@mut self, unresolved_ty: ty::t) -> ty::t {
+impl Rcx {
+    pub fn tcx(&self) -> ty::ctxt {
+        self.fcx.ccx.tcx
+    }
+
+    pub fn resolve_type(&mut self, unresolved_ty: ty::t) -> ty::t {
         /*!
          * Try to resolve the type for the given node, returning
          * t_err if an error results.  Note that we never care
@@ -105,145 +110,237 @@ pub impl Rcx {
         match resolve_type(self.fcx.infcx(), unresolved_ty,
                            resolve_and_force_all_but_regions) {
             Ok(t) => t,
-            Err(_) => ty::mk_err(self.fcx.tcx())
+            Err(_) => ty::mk_err()
         }
     }
 
     /// Try to resolve the type for the given node.
-    fn resolve_node_type(@mut self, id: ast::node_id) -> ty::t {
+    pub fn resolve_node_type(@mut self, id: ast::node_id) -> ty::t {
         self.resolve_type(self.fcx.node_ty(id))
+    }
+
+    /// Try to resolve the type for the given node.
+    pub fn resolve_expr_type_adjusted(@mut self, expr: @ast::expr) -> ty::t {
+        let ty_unadjusted = self.resolve_node_type(expr.id);
+        if ty::type_is_error(ty_unadjusted) || ty::type_is_bot(ty_unadjusted) {
+            ty_unadjusted
+        } else {
+            let tcx = self.fcx.tcx();
+            let adjustments = self.fcx.inh.adjustments;
+            ty::adjust_ty(tcx, expr.span, ty_unadjusted,
+                          adjustments.find_copy(&expr.id))
+        }
     }
 }
 
 pub fn regionck_expr(fcx: @mut FnCtxt, e: @ast::expr) {
     let rcx = @mut Rcx { fcx: fcx, errors_reported: 0 };
-    let v = regionck_visitor();
-    (v.visit_expr)(e, rcx, v);
+    if fcx.err_count_since_creation() == 0 {
+        // regionck assumes typeck succeeded
+        let v = regionck_visitor();
+        (v.visit_expr)(e, (rcx, v));
+    }
     fcx.infcx().resolve_regions();
 }
 
 pub fn regionck_fn(fcx: @mut FnCtxt, blk: &ast::blk) {
     let rcx = @mut Rcx { fcx: fcx, errors_reported: 0 };
-    let v = regionck_visitor();
-    (v.visit_block)(blk, rcx, v);
+    if fcx.err_count_since_creation() == 0 {
+        // regionck assumes typeck succeeded
+        let v = regionck_visitor();
+        (v.visit_block)(blk, (rcx, v));
+    }
     fcx.infcx().resolve_regions();
 }
 
-pub fn regionck_visitor() -> rvt {
+fn regionck_visitor() -> rvt {
+    // (*) FIXME(#3238) should use visit_pat, not visit_arm/visit_local,
+    // However, right now we run into an issue whereby some free
+    // regions are not properly related if they appear within the
+    // types of arguments that must be inferred. This could be
+    // addressed by deferring the construction of the region
+    // hierarchy, and in particular the relationships between free
+    // regions, until regionck, as described in #3238.
     visit::mk_vt(@visit::Visitor {visit_item: visit_item,
-                                  visit_stmt: visit_stmt,
                                   visit_expr: visit_expr,
-                                  visit_block: visit_block,
+
+                                  //visit_pat: visit_pat, // (*) see above
+                                  visit_arm: visit_arm,
                                   visit_local: visit_local,
+
+                                  visit_block: visit_block,
                                   .. *visit::default_visitor()})
 }
 
-pub fn visit_item(_item: @ast::item, &&_rcx: @mut Rcx, _v: rvt) {
+fn visit_item(_item: @ast::item, (_rcx, _v): (@mut Rcx, rvt)) {
     // Ignore items
 }
 
-pub fn visit_local(l: @ast::local, &&rcx: @mut Rcx, v: rvt) {
-    // Check to make sure that the regions in all local variables are
-    // within scope.
-    //
-    // Note: we do this here rather than in visit_pat because we do
-    // not wish to constrain the regions in *patterns* in quite the
-    // same way.  `visit_node()` guarantees that the region encloses
-    // the node in question, which ultimately constrains the regions
-    // in patterns to enclose the match expression as a whole.  But we
-    // want them to enclose the *arm*.  However, regions in patterns
-    // must either derive from the discriminant or a ref pattern: in
-    // the case of the discriminant, the regions will be constrained
-    // when the type of the discriminant is checked.  In the case of a
-    // ref pattern, the variable is created with a suitable lower
-    // bound.
-    let e = rcx.errors_reported;
-    (v.visit_pat)(l.node.pat, rcx, v);
-    let def_map = rcx.fcx.ccx.tcx.def_map;
-    do pat_bindings(def_map, l.node.pat) |_bm, id, sp, _path| {
-        visit_node(id, sp, rcx);
-    }
-    if e != rcx.errors_reported {
-        return; // if decl has errors, skip initializer expr
+fn visit_block(b: &ast::blk, (rcx, v): (@mut Rcx, rvt)) {
+    rcx.fcx.tcx().region_maps.record_cleanup_scope(b.node.id);
+    visit::visit_block(b, (rcx, v));
+}
+
+fn visit_arm(arm: &ast::arm, (rcx, v): (@mut Rcx, rvt)) {
+    // see above
+    for arm.pats.iter().advance |&p| {
+        constrain_bindings_in_pat(p, rcx);
     }
 
-    (v.visit_ty)(l.node.ty, rcx, v);
-    for l.node.init.each |i| {
-        (v.visit_expr)(*i, rcx, v);
+    visit::visit_arm(arm, (rcx, v));
+}
+
+fn visit_local(l: @ast::local, (rcx, v): (@mut Rcx, rvt)) {
+    // see above
+    constrain_bindings_in_pat(l.node.pat, rcx);
+    visit::visit_local(l, (rcx, v));
+}
+
+fn constrain_bindings_in_pat(pat: @ast::pat, rcx: @mut Rcx) {
+    let tcx = rcx.fcx.tcx();
+    debug!("regionck::visit_pat(pat=%s)", pat.repr(tcx));
+    do pat_util::pat_bindings(tcx.def_map, pat) |_, id, span, _| {
+        // If we have a variable that contains region'd data, that
+        // data will be accessible from anywhere that the variable is
+        // accessed. We must be wary of loops like this:
+        //
+        //     // from src/test/compile-fail/borrowck-lend-flow.rs
+        //     let mut v = ~3, w = ~4;
+        //     let mut x = &mut w;
+        //     loop {
+        //         **x += 1;   // (2)
+        //         borrow(v);  //~ ERROR cannot borrow
+        //         x = &mut v; // (1)
+        //     }
+        //
+        // Typically, we try to determine the region of a borrow from
+        // those points where it is dereferenced. In this case, one
+        // might imagine that the lifetime of `x` need only be the
+        // body of the loop. But of course this is incorrect because
+        // the pointer that is created at point (1) is consumed at
+        // point (2), meaning that it must be live across the loop
+        // iteration. The easiest way to guarantee this is to require
+        // that the lifetime of any regions that appear in a
+        // variable's type enclose at least the variable's scope.
+
+        let encl_region = tcx.region_maps.encl_region(id);
+        constrain_regions_in_type_of_node(rcx, id, encl_region, span);
     }
 }
 
-pub fn visit_block(b: &ast::blk, &&rcx: @mut Rcx, v: rvt) {
-    visit::visit_block(b, rcx, v);
-}
+fn visit_expr(expr: @ast::expr, (rcx, v): (@mut Rcx, rvt)) {
+    debug!("regionck::visit_expr(e=?)");
 
-pub fn visit_expr(expr: @ast::expr, &&rcx: @mut Rcx, v: rvt) {
-    debug!("visit_expr(e=%s)", rcx.fcx.expr_to_str(expr));
+    let has_method_map = rcx.fcx.inh.method_map.contains_key(&expr.id);
 
-    for rcx.fcx.inh.adjustments.find(&expr.id).each |&adjustment| {
-        match *adjustment {
-            @ty::AutoDerefRef(
-                ty::AutoDerefRef {
-                    autoderefs: autoderefs, autoref: Some(ref autoref)}) => {
-                guarantor::for_autoref(rcx, expr, autoderefs, autoref);
+    // Record cleanup scopes, which are used by borrowck to decide the
+    // maximum lifetime of a temporary rvalue.  These were derived by
+    // examining where trans creates block scopes, not because this
+    // reflects some principled decision around temporary lifetimes.
+    // Ordinarily this would seem like something that should be setup
+    // in region, but we need to know which uses of operators are
+    // overloaded.  See #3511.
+    let tcx = rcx.fcx.tcx();
+    match expr.node {
+        // You'd think that x += y where `+=` is overloaded would be a
+        // cleanup scope. You'd be... kind of right. In fact the
+        // handling of `+=` and friends in trans for overloaded
+        // operators is a hopeless mess and I can't figure out how to
+        // represent it. - ndm
+        //
+        // ast::expr_assign_op(*) |
+
+        ast::expr_index(*) |
+        ast::expr_binary(*) |
+        ast::expr_unary(*) if has_method_map => {
+            tcx.region_maps.record_cleanup_scope(expr.id);
+        }
+        ast::expr_binary(_, ast::and, lhs, rhs) |
+        ast::expr_binary(_, ast::or, lhs, rhs) => {
+            tcx.region_maps.record_cleanup_scope(lhs.id);
+            tcx.region_maps.record_cleanup_scope(rhs.id);
+        }
+        ast::expr_call(*) |
+        ast::expr_method_call(*) => {
+            tcx.region_maps.record_cleanup_scope(expr.id);
+        }
+        ast::expr_match(_, ref arms) => {
+            tcx.region_maps.record_cleanup_scope(expr.id);
+            for arms.iter().advance |arm| {
+                for arm.guard.iter().advance |guard| {
+                    tcx.region_maps.record_cleanup_scope(guard.id);
+                }
             }
-            _ => {}
+        }
+        ast::expr_while(cond, ref body) => {
+            tcx.region_maps.record_cleanup_scope(cond.id);
+            tcx.region_maps.record_cleanup_scope(body.node.id);
+        }
+        _ => {}
+    }
+
+    // Check any autoderefs or autorefs that appear.
+    {
+        let r = rcx.fcx.inh.adjustments.find(&expr.id);
+        for r.iter().advance |&adjustment| {
+            debug!("adjustment=%?", adjustment);
+            match *adjustment {
+                @ty::AutoDerefRef(
+                    ty::AutoDerefRef {autoderefs: autoderefs, autoref: opt_autoref}) =>
+                {
+                    let expr_ty = rcx.resolve_node_type(expr.id);
+                    constrain_derefs(rcx, expr, autoderefs, expr_ty);
+                    for opt_autoref.iter().advance |autoref| {
+                        guarantor::for_autoref(rcx, expr, autoderefs, autoref);
+
+                        // Require that the resulting region encompasses
+                        // the current node.
+                        //
+                        // FIXME(#6268) remove to support nested method calls
+                        constrain_regions_in_type_of_node(
+                            rcx, expr.id, ty::re_scope(expr.id), expr.span);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
     match expr.node {
-        ast::expr_path(*) => {
-            // Avoid checking the use of local variables, as we
-            // already check their definitions.  The def'n always
-            // encloses the use.  So if the def'n is enclosed by the
-            // region, then the uses will also be enclosed (and
-            // otherwise, an error will have been reported at the
-            // def'n site).
-            match lookup_def(rcx.fcx, expr.span, expr.id) {
-                ast::def_local(*) | ast::def_arg(*) |
-                ast::def_upvar(*) => return,
-                _ => ()
-            }
-        }
-
         ast::expr_call(callee, ref args, _) => {
-            // Check for a.b() where b is a method.  Ensure that
-            // any types in the callee are valid for the entire
-            // method call.
-
-            // FIXME(#3387)--we should really invoke
-            // `constrain_auto_ref()` on all exprs.  But that causes a
-            // lot of spurious errors because of how the region
-            // hierarchy is setup.
-            if rcx.fcx.inh.method_map.contains_key(&callee.id) {
-                match callee.node {
-                    ast::expr_field(base, _, _) => {
-                        constrain_auto_ref(rcx, base);
-                    }
-                    _ => {
-                        // This can happen if you have code like
-                        // (x[0])() where `x[0]` is overloaded.  Just
-                        // ignore it.
-                    }
-                }
-            } else {
-                constrain_auto_ref(rcx, callee);
-            }
-
-            for args.each |arg| {
-                constrain_auto_ref(rcx, *arg);
-            }
+            constrain_callee(rcx, callee.id, expr, callee);
+            constrain_call(rcx, callee.id, expr, None, *args, false);
         }
 
-        ast::expr_method_call(rcvr, _, _, ref args, _) => {
-            // Check for a.b() where b is a method.  Ensure that
-            // any types in the callee are valid for the entire
-            // method call.
+        ast::expr_method_call(callee_id, arg0, _, _, ref args, _) => {
+            constrain_call(rcx, callee_id, expr, Some(arg0), *args, false);
+        }
 
-            constrain_auto_ref(rcx, rcvr);
-            for args.each |arg| {
-                constrain_auto_ref(rcx, *arg);
-            }
+        ast::expr_index(callee_id, lhs, rhs) |
+        ast::expr_assign_op(callee_id, _, lhs, rhs) |
+        ast::expr_binary(callee_id, _, lhs, rhs) if has_method_map => {
+            // As `expr_method_call`, but the call is via an
+            // overloaded op.  Note that we (sadly) currently use an
+            // implicit "by ref" sort of passing style here.  This
+            // should be converted to an adjustment!
+            constrain_call(rcx, callee_id, expr, Some(lhs), [rhs], true);
+        }
+
+        ast::expr_unary(callee_id, _, lhs) if has_method_map => {
+            // As above.
+            constrain_call(rcx, callee_id, expr, Some(lhs), [], true);
+        }
+
+        ast::expr_unary(_, ast::deref, base) => {
+            // For *a, the lifetime of a must enclose the deref
+            let base_ty = rcx.resolve_node_type(base.id);
+            constrain_derefs(rcx, expr, 1, base_ty);
+        }
+
+        ast::expr_index(_, vec_expr, _) => {
+            // For a[b], the lifetime of a must enclose the deref
+            let vec_type = rcx.resolve_expr_type_adjusted(vec_expr);
+            constrain_index(rcx, expr, vec_type);
         }
 
         ast::expr_cast(source, _) => {
@@ -262,7 +359,7 @@ pub fn visit_expr(expr: @ast::expr, &&rcx: @mut Rcx, v: rvt) {
             // explaining how it goes about doing that.
             let target_ty = rcx.resolve_node_type(expr.id);
             match ty::get(target_ty).sty {
-                ty::ty_trait(_, _, ty::RegionTraitStore(trait_region)) => {
+                ty::ty_trait(_, _, ty::RegionTraitStore(trait_region), _, _) => {
                     let source_ty = rcx.fcx.expr_ty(source);
                     constrain_regions_in_type(rcx, trait_region,
                                               expr.span, source_ty);
@@ -273,6 +370,16 @@ pub fn visit_expr(expr: @ast::expr, &&rcx: @mut Rcx, v: rvt) {
 
         ast::expr_addr_of(_, base) => {
             guarantor::for_addr_of(rcx, expr, base);
+
+            // Require that when you write a `&expr` expression, the
+            // resulting pointer has a lifetime that encompasses the
+            // `&expr` expression itself. Note that we constraining
+            // the type of the node expr.id here *before applying
+            // adjustments*.
+            //
+            // FIXME(#6268) nested method calls requires that this rule change
+            let ty0 = rcx.resolve_node_type(expr.id);
+            constrain_regions_in_type(rcx, ty::re_scope(expr.id), expr.span, ty0);
         }
 
         ast::expr_match(discr, ref arms) => {
@@ -280,6 +387,8 @@ pub fn visit_expr(expr: @ast::expr, &&rcx: @mut Rcx, v: rvt) {
         }
 
         ast::expr_fn_block(*) => {
+            // The lifetime of a block fn must not outlive the variables
+            // it closes over
             let function_type = rcx.resolve_node_type(expr.id);
             match ty::get(function_type).sty {
                 ty::ty_closure(ty::ClosureTy {sigil: ast::BorrowedSigil,
@@ -293,195 +402,346 @@ pub fn visit_expr(expr: @ast::expr, &&rcx: @mut Rcx, v: rvt) {
         _ => ()
     }
 
-    if !visit_node(expr.id, expr.span, rcx) { return; }
-    visit::visit_expr(expr, rcx, v);
+    visit::visit_expr(expr, (rcx, v));
 }
 
-pub fn visit_stmt(s: @ast::stmt, &&rcx: @mut Rcx, v: rvt) {
-    visit::visit_stmt(s, rcx, v);
-}
-
-pub fn visit_node(id: ast::node_id, span: span, rcx: @mut Rcx) -> bool {
-    /*!
-     *
-     * checks the type of the node `id` and reports an error if it
-     * references a region that is not in scope for that node.
-     * Returns false if an error is reported; this is used to cause us
-     * to cut off region checking for that subtree to avoid reporting
-     * tons of errors. */
-
-    let fcx = rcx.fcx;
-
-    // find the region where this expr evaluation is taking place
-    let tcx = fcx.ccx.tcx;
-    let encl_region = ty::encl_region(tcx, id);
-
-    // Otherwise, look at the type and see if it is a region pointer.
-    constrain_regions_in_type_of_node(rcx, id, encl_region, span)
-}
-
-pub fn constrain_auto_ref(rcx: @mut Rcx, expr: @ast::expr) {
-    /*!
-     *
-     * If `expr` is auto-ref'd (e.g., as part of a borrow), then this
-     * function ensures that the lifetime of the resulting borrowed
-     * ptr includes at least the expression `expr`. */
-
-    debug!("constrain_auto_ref(expr=%s)", rcx.fcx.expr_to_str(expr));
-
-    let adjustment = rcx.fcx.inh.adjustments.find(&expr.id);
-    let region = match adjustment {
-        Some(&@ty::AutoDerefRef(
-            ty::AutoDerefRef {
-                autoref: Some(ref auto_ref), _})) => {
-            auto_ref.region
-        }
-        _ => { return; }
-    };
-
+fn constrain_callee(rcx: @mut Rcx,
+                    callee_id: ast::node_id,
+                    call_expr: @ast::expr,
+                    callee_expr: @ast::expr)
+{
     let tcx = rcx.fcx.tcx();
-    let encl_region = ty::encl_region(tcx, expr.id);
-    match rcx.fcx.mk_subr(true, expr.span, encl_region, region) {
-        result::Ok(()) => {}
-        result::Err(_) => {
-            // In practice, this cannot happen: `region` is always a
-            // region variable, and constraints on region variables
-            // are collected and then resolved later.  However, I
-            // included the span_err() here (rather than, say,
-            // span_bug()) because it seemed more future-proof: if,
-            // for some reason, the code were to change so that in
-            // some cases `region` is not a region variable, then
-            // reporting an error would be the correct path.
-            tcx.sess.span_err(
-                expr.span,
-                ~"lifetime of borrowed pointer does not include \
-                  the expression being borrowed");
-            note_and_explain_region(
-                tcx,
-                ~"lifetime of the borrowed pointer is",
-                region,
-                ~"");
-            rcx.errors_reported += 1;
+
+    let call_region = ty::re_scope(call_expr.id);
+
+    let callee_ty = rcx.resolve_node_type(callee_id);
+    match ty::get(callee_ty).sty {
+        ty::ty_bare_fn(*) => { }
+        ty::ty_closure(ref closure_ty) => {
+            match rcx.fcx.mk_subr(true, callee_expr.span,
+                                  call_region, closure_ty.region) {
+                result::Err(_) => {
+                    tcx.sess.span_err(
+                        callee_expr.span,
+                        fmt!("cannot invoke closure outside of its lifetime"));
+                    note_and_explain_region(
+                        tcx,
+                        "the closure is only valid for ",
+                        closure_ty.region,
+                        "");
+                }
+                result::Ok(_) => {}
+            }
+        }
+        _ => {
+            // this should not happen, but it does if the program is
+            // erroneous
+            //
+            // tcx.sess.span_bug(
+            //     callee_expr.span,
+            //     fmt!("Calling non-function: %s", callee_ty.repr(tcx)));
         }
     }
 }
 
-pub fn constrain_free_variables(
-    rcx: @mut Rcx,
-    region: ty::Region,
-    expr: @ast::expr) {
+fn constrain_call(rcx: @mut Rcx,
+                  // might be expr_call, expr_method_call, or an overloaded
+                  // operator
+                  callee_id: ast::node_id,
+                  call_expr: @ast::expr,
+                  receiver: Option<@ast::expr>,
+                  arg_exprs: &[@ast::expr],
+                  implicitly_ref_args: bool)
+{
+    //! Invoked on every call site (i.e., normal calls, method calls,
+    //! and overloaded operators). Constrains the regions which appear
+    //! in the type of the function. Also constrains the regions that
+    //! appear in the arguments appropriately.
+
+    let tcx = rcx.fcx.tcx();
+    debug!("constrain_call(call_expr=%s, implicitly_ref_args=%?)",
+           call_expr.repr(tcx), implicitly_ref_args);
+    let callee_ty = rcx.resolve_node_type(callee_id);
+    if ty::type_is_error(callee_ty) {
+        // Bail, as function type is unknown
+        return;
+    }
+    let fn_sig = ty::ty_fn_sig(callee_ty);
+
+    // `callee_region` is the scope representing the time in which the
+    // call occurs.
+    //
+    // FIXME(#6268) to support nested method calls, should be callee_id
+    let callee_scope = call_expr.id;
+    let callee_region = ty::re_scope(callee_scope);
+
+    for arg_exprs.iter().advance |&arg_expr| {
+        // ensure that any regions appearing in the argument type are
+        // valid for at least the lifetime of the function:
+        constrain_regions_in_type_of_node(
+            rcx, arg_expr.id, callee_region, arg_expr.span);
+
+        // unfortunately, there are two means of taking implicit
+        // references, and we need to propagate constraints as a
+        // result. modes are going away and the "DerefArgs" code
+        // should be ported to use adjustments
+        if implicitly_ref_args {
+            guarantor::for_by_ref(rcx, arg_expr, callee_scope);
+        }
+    }
+
+    // as loop above, but for receiver
+    for receiver.iter().advance |&r| {
+        constrain_regions_in_type_of_node(
+            rcx, r.id, callee_region, r.span);
+        if implicitly_ref_args {
+            guarantor::for_by_ref(rcx, r, callee_scope);
+        }
+    }
+
+    // constrain regions that may appear in the return type to be
+    // valid for the function call:
+    constrain_regions_in_type(
+        rcx, callee_region, call_expr.span, fn_sig.output);
+}
+
+fn constrain_derefs(rcx: @mut Rcx,
+                    deref_expr: @ast::expr,
+                    derefs: uint,
+                    mut derefd_ty: ty::t)
+{
     /*!
-     *
+     * Invoked on any dereference that occurs, whether explicitly
+     * or through an auto-deref.  Checks that if this is a region
+     * pointer being derefenced, the lifetime of the pointer includes
+     * the deref expr.
+     */
+    let tcx = rcx.fcx.tcx();
+    let r_deref_expr = ty::re_scope(deref_expr.id);
+    for uint::range(0, derefs) |i| {
+        debug!("constrain_derefs(deref_expr=?, derefd_ty=%s, derefs=%?/%?",
+               rcx.fcx.infcx().ty_to_str(derefd_ty),
+               i, derefs);
+
+        match ty::get(derefd_ty).sty {
+            ty::ty_rptr(r_ptr, _) => {
+                mk_subregion_due_to_derefence(rcx, deref_expr.span,
+                                              r_deref_expr, r_ptr);
+            }
+
+            _ => {}
+        }
+
+        match ty::deref(tcx, derefd_ty, true) {
+            Some(mt) => derefd_ty = mt.ty,
+            /* if this type can't be dereferenced, then there's already an error
+               in the session saying so. Just bail out for now */
+            None => break
+        }
+    }
+}
+
+pub fn mk_subregion_due_to_derefence(rcx: @mut Rcx,
+                                     deref_span: span,
+                                     minimum_lifetime: ty::Region,
+                                     maximum_lifetime: ty::Region) {
+    match rcx.fcx.mk_subr(true, deref_span,
+                          minimum_lifetime, maximum_lifetime) {
+        result::Ok(*) => {}
+        result::Err(*) => {
+            rcx.tcx().sess.span_err(
+                deref_span,
+                fmt!("dereference of reference outside its lifetime"));
+            note_and_explain_region(
+                rcx.tcx(),
+                "the reference is only valid for ",
+                maximum_lifetime,
+                "");
+        }
+    }
+}
+
+
+fn constrain_index(rcx: @mut Rcx,
+                   index_expr: @ast::expr,
+                   indexed_ty: ty::t)
+{
+    /*!
+     * Invoked on any index expression that occurs.  Checks that if
+     * this is a slice being indexed, the lifetime of the pointer
+     * includes the deref expr.
+     */
+
+    let tcx = rcx.fcx.tcx();
+
+    debug!("constrain_index(index_expr=?, indexed_ty=%s",
+           rcx.fcx.infcx().ty_to_str(indexed_ty));
+
+    let r_index_expr = ty::re_scope(index_expr.id);
+    match ty::get(indexed_ty).sty {
+        ty::ty_estr(ty::vstore_slice(r_ptr)) |
+        ty::ty_evec(_, ty::vstore_slice(r_ptr)) => {
+            match rcx.fcx.mk_subr(true, index_expr.span, r_index_expr, r_ptr) {
+                result::Ok(*) => {}
+                result::Err(*) => {
+                    tcx.sess.span_err(
+                        index_expr.span,
+                        fmt!("index of slice outside its lifetime"));
+                    note_and_explain_region(
+                        tcx,
+                        "the slice is only valid for ",
+                        r_ptr,
+                        "");
+                }
+            }
+        }
+
+        _ => {}
+    }
+}
+
+fn constrain_free_variables(rcx: @mut Rcx,
+                            region: ty::Region,
+                            expr: @ast::expr) {
+    /*!
      * Make sure that all free variables referenced inside the closure
-     * outlive the closure itself. */
+     * outlive the closure itself.
+     */
 
     let tcx = rcx.fcx.ccx.tcx;
-    for get_freevars(tcx, expr.id).each |freevar| {
+    debug!("constrain_free_variables(%s, %s)",
+           region.repr(tcx), expr.repr(tcx));
+    for get_freevars(tcx, expr.id).iter().advance |freevar| {
         debug!("freevar def is %?", freevar.def);
         let def = freevar.def;
         let en_region = encl_region_of_def(rcx.fcx, def);
+        debug!("en_region = %s", en_region.repr(tcx));
         match rcx.fcx.mk_subr(true, freevar.span,
                               region, en_region) {
           result::Ok(()) => {}
           result::Err(_) => {
             tcx.sess.span_err(
                 freevar.span,
-                ~"captured variable does not outlive the enclosing closure");
+                "captured variable does not outlive the enclosing closure");
             note_and_explain_region(
                 tcx,
-                ~"captured variable is valid for ",
+                "captured variable is valid for ",
                 en_region,
-                ~"");
+                "");
             note_and_explain_region(
                 tcx,
-                ~"closure is valid for ",
+                "closure is valid for ",
                 region,
-                ~"");
+                "");
           }
         }
     }
 }
 
-pub fn constrain_regions_in_type_of_node(
+fn constrain_regions_in_type_of_node(
     rcx: @mut Rcx,
     id: ast::node_id,
-    encl_region: ty::Region,
-    span: span) -> bool {
+    minimum_lifetime: ty::Region,
+    span: span) -> bool
+{
+    //! Guarantees that any lifetimes which appear in the type of
+    //! the node `id` (after applying adjustments) are valid for at
+    //! least `minimum_lifetime`
+
     let tcx = rcx.fcx.tcx();
 
     // Try to resolve the type.  If we encounter an error, then typeck
     // is going to fail anyway, so just stop here and let typeck
     // report errors later on in the writeback phase.
-    let ty = rcx.resolve_node_type(id);
+    let ty0 = rcx.resolve_node_type(id);
+    let adjustment = rcx.fcx.inh.adjustments.find_copy(&id);
+    let ty = ty::adjust_ty(tcx, span, ty0, adjustment);
     debug!("constrain_regions_in_type_of_node(\
-            ty=%s, id=%d, encl_region=%?)",
-           ty_to_str(tcx, ty), id, encl_region);
-    constrain_regions_in_type(rcx, encl_region, span, ty)
+            ty=%s, ty0=%s, id=%d, minimum_lifetime=%?, adjustment=%?)",
+           ty_to_str(tcx, ty), ty_to_str(tcx, ty0),
+           id, minimum_lifetime, adjustment);
+    constrain_regions_in_type(rcx, minimum_lifetime, span, ty)
 }
 
-pub fn constrain_regions_in_type(
+fn constrain_regions_in_type(
     rcx: @mut Rcx,
-    encl_region: ty::Region,
+    minimum_lifetime: ty::Region,
     span: span,
-    ty: ty::t) -> bool {
+    ty: ty::t) -> bool
+{
     /*!
-     *
      * Requires that any regions which appear in `ty` must be
-     * superregions of `encl_region`.  This prevents regions from
-     * being used outside of the block in which they are valid.
-     * Recall that regions represent blocks of code or expressions:
-     * this requirement basically says "any place that uses or may use
-     * a region R must be within the block of code that R corresponds
-     * to." */
+     * superregions of `minimum_lifetime`.  Also enforces the constraint
+     * that given a pointer type `&'r T`, T must not contain regions
+     * that outlive 'r, as well as analogous constraints for other
+     * lifetime'd types.
+     *
+     * This check prevents regions from being used outside of the block in
+     * which they are valid.  Recall that regions represent blocks of
+     * code or expressions: this requirement basically says "any place
+     * that uses or may use a region R must be within the block of
+     * code that R corresponds to."
+     */
 
     let e = rcx.errors_reported;
-    ty::walk_regions_and_ty(
-        rcx.fcx.ccx.tcx, ty,
-        |r| constrain_region(rcx, encl_region, span, r),
-        |t| ty::type_has_regions(t));
-    return (e == rcx.errors_reported);
+    let tcx = rcx.fcx.ccx.tcx;
 
-    fn constrain_region(rcx: @mut Rcx,
-                        encl_region: ty::Region,
-                        span: span,
-                        region: ty::Region) {
-        let tcx = rcx.fcx.ccx.tcx;
+    debug!("constrain_regions_in_type(minimum_lifetime=%s, ty=%s)",
+           region_to_str(tcx, "", false, minimum_lifetime),
+           ty_to_str(tcx, ty));
 
-        debug!("constrain_region(encl_region=%?, region=%?)",
-               encl_region, region);
+    do relate_nested_regions(tcx, Some(minimum_lifetime), ty) |r_sub, r_sup| {
+        debug!("relate(r_sub=%s, r_sup=%s)",
+               region_to_str(tcx, "", false, r_sub),
+               region_to_str(tcx, "", false, r_sup));
 
-        match region {
-          ty::re_bound(_) => {
+        if r_sup.is_bound() || r_sub.is_bound() {
             // a bound region is one which appears inside an fn type.
             // (e.g., the `&` in `fn(&T)`).  Such regions need not be
-            // constrained by `encl_region` as they are placeholders
+            // constrained by `minimum_lifetime` as they are placeholders
             // for regions that are as-yet-unknown.
-            return;
-          }
-          _ => ()
-        }
-
-        match rcx.fcx.mk_subr(true, span, encl_region, region) {
-          result::Err(_) => {
-            tcx.sess.span_err(
-                span,
-                fmt!("reference is not valid outside of its lifetime"));
-            note_and_explain_region(
-                tcx,
-                ~"the reference is only valid for ",
-                region,
-                ~"");
-            rcx.errors_reported += 1u;
-          }
-          result::Ok(()) => {
-          }
+        } else {
+            match rcx.fcx.mk_subr(true, span, r_sub, r_sup) {
+                result::Err(_) => {
+                    if r_sub == minimum_lifetime {
+                        tcx.sess.span_err(
+                            span,
+                            fmt!("reference is not valid outside of its lifetime"));
+                        note_and_explain_region(
+                            tcx,
+                            "the reference is only valid for ",
+                            r_sup,
+                            "");
+                    } else {
+                        tcx.sess.span_err(
+                            span,
+                            fmt!("in type `%s`, pointer has a longer lifetime than \
+                                  the data it references",
+                                 rcx.fcx.infcx().ty_to_str(ty)));
+                        note_and_explain_region(
+                            tcx,
+                            "the pointer is valid for ",
+                            r_sub,
+                            "");
+                        note_and_explain_region(
+                            tcx,
+                            "but the referenced data is only valid for ",
+                            r_sup,
+                            "");
+                    }
+                    rcx.errors_reported += 1u;
+                }
+                result::Ok(()) => {
+                }
+            }
         }
     }
+
+    return (e == rcx.errors_reported);
 }
 
 pub mod guarantor {
     /*!
-     *
      * The routines in this module are aiming to deal with the case
      * where a the contents of a borrowed pointer are re-borrowed.
      * Imagine you have a borrowed pointer `b` with lifetime L1 and
@@ -494,8 +754,8 @@ pub mod guarantor {
      * inferencer would not know of this dependency and thus it might
      * infer the lifetime of L2 to be greater than L1 (issue #3148).
      *
-     * There are a number of troublesome scenarios in the test
-     * `region-dependent-addr-of.rs`, but here is one example:
+     * There are a number of troublesome scenarios in the tests
+     * `region-dependent-*.rs`, but here is one example:
      *
      *     struct Foo { i: int }
      *     struct Bar { foo: Foo  }
@@ -527,23 +787,24 @@ pub mod guarantor {
      * but more special purpose.
      */
 
-    use core::prelude::*;
+
     use middle::typeck::check::regionck::{Rcx, infallibly_mk_subr};
+    use middle::typeck::check::regionck::mk_subregion_due_to_derefence;
     use middle::ty;
     use syntax::ast;
     use syntax::codemap::span;
     use util::ppaux::{ty_to_str};
 
+    use std::uint;
+
     pub fn for_addr_of(rcx: @mut Rcx, expr: @ast::expr, base: @ast::expr) {
         /*!
-         *
          * Computes the guarantor for an expression `&base` and then
          * ensures that the lifetime of the resulting pointer is linked
          * to the lifetime of its guarantor (if any).
          */
 
-        debug!("guarantor::for_addr_of(base=%s)", rcx.fcx.expr_to_str(base));
-        let _i = ::util::common::indenter();
+        debug!("guarantor::for_addr_of(base=?)");
 
         let guarantor = guarantor(rcx, base);
         link(rcx, expr.span, expr.id, guarantor);
@@ -551,15 +812,16 @@ pub mod guarantor {
 
     pub fn for_match(rcx: @mut Rcx, discr: @ast::expr, arms: &[ast::arm]) {
         /*!
-         *
          * Computes the guarantors for any ref bindings in a match and
          * then ensures that the lifetime of the resulting pointer is
          * linked to the lifetime of its guarantor (if any).
          */
 
+        debug!("regionck::for_match()");
         let discr_guarantor = guarantor(rcx, discr);
-        for arms.each |arm| {
-            for arm.pats.each |pat| {
+        debug!("discr_guarantor=%s", discr_guarantor.repr(rcx.tcx()));
+        for arms.iter().advance |arm| {
+            for arm.pats.iter().advance |pat| {
                 link_ref_bindings_in_pat(rcx, *pat, discr_guarantor);
             }
         }
@@ -570,21 +832,69 @@ pub mod guarantor {
                        autoderefs: uint,
                        autoref: &ty::AutoRef) {
         /*!
-         *
          * Computes the guarantor for an expression that has an
          * autoref adjustment and links it to the lifetime of the
          * autoref.  This is only important when auto re-borrowing
          * region pointers.
          */
 
-        debug!("guarantor::for_autoref(expr=%s)", rcx.fcx.expr_to_str(expr));
-        let _i = ::util::common::indenter();
+        debug!("guarantor::for_autoref(autoref=%?)", autoref);
 
         let mut expr_ct = categorize_unadjusted(rcx, expr);
+        debug!("    unadjusted cat=%?", expr_ct.cat);
         expr_ct = apply_autoderefs(
             rcx, expr, autoderefs, expr_ct);
-        for expr_ct.cat.guarantor.each |g| {
-            infallibly_mk_subr(rcx, true, expr.span, autoref.region, *g);
+
+        match *autoref {
+            ty::AutoPtr(r, _) => {
+                // In this case, we are implicitly adding an `&`.
+                maybe_make_subregion(rcx, expr, r, expr_ct.cat.guarantor);
+            }
+
+            ty::AutoBorrowVec(r, _) |
+            ty::AutoBorrowVecRef(r, _) |
+            ty::AutoBorrowFn(r) => {
+                // In each of these cases, what is being borrowed is
+                // not the (autoderef'd) expr itself but rather the
+                // contents of the autoderef'd expression (i.e., what
+                // the pointer points at).
+                maybe_make_subregion(rcx, expr, r,
+                                     guarantor_of_deref(&expr_ct.cat));
+            }
+
+            ty::AutoUnsafe(_) => {}
+        }
+
+        fn maybe_make_subregion(
+            rcx: @mut Rcx,
+            expr: @ast::expr,
+            sub_region: ty::Region,
+            sup_region: Option<ty::Region>) {
+            for sup_region.iter().advance |r| {
+                infallibly_mk_subr(rcx, true, expr.span, sub_region, *r);
+            }
+        }
+    }
+
+    pub fn for_by_ref(rcx: @mut Rcx,
+                      expr: @ast::expr,
+                      callee_scope: ast::node_id) {
+        /*!
+         * Computes the guarantor for cases where the `expr` is
+         * being passed by implicit reference and must outlive
+         * `callee_scope`.
+         */
+
+        let tcx = rcx.tcx();
+        debug!("guarantor::for_by_ref(expr=%s, callee_scope=%?)",
+               expr.repr(tcx), callee_scope);
+        let expr_cat = categorize(rcx, expr);
+        debug!("guarantor::for_by_ref(expr=%?, callee_scope=%?) category=%?",
+               expr.id, callee_scope, expr_cat);
+        let minimum_lifetime = ty::re_scope(callee_scope);
+        for expr_cat.guarantor.iter().advance |guarantor| {
+            mk_subregion_due_to_derefence(rcx, expr.span,
+                                          minimum_lifetime, *guarantor);
         }
     }
 
@@ -599,7 +909,7 @@ pub mod guarantor {
          * to the lifetime of its guarantor (if any).
          */
 
-        debug!("opt_constrain_region(id=%?, guarantor=%?)", id, guarantor);
+        debug!("link(id=%?, guarantor=%?)", id, guarantor);
 
         let bound = match guarantor {
             None => {
@@ -615,7 +925,7 @@ pub mod guarantor {
         // expressions, both of which always yield a region variable, so
         // mk_subr should never fail.
         let rptr_ty = rcx.resolve_node_type(id);
-        if !ty::type_is_error(rptr_ty) && !ty::type_is_bot(rptr_ty) {
+        if !ty::type_is_bot(rptr_ty) {
             let tcx = rcx.fcx.ccx.tcx;
             debug!("rptr_ty=%s", ty_to_str(tcx, rptr_ty));
             let r = ty::ty_region(tcx, span, rptr_ty);
@@ -655,16 +965,16 @@ pub mod guarantor {
          * `&expr`).
          */
 
-        debug!("guarantor(expr=%s)", rcx.fcx.expr_to_str(expr));
+        debug!("guarantor()");
         match expr.node {
-            ast::expr_unary(ast::deref, b) => {
+            ast::expr_unary(_, ast::deref, b) => {
                 let cat = categorize(rcx, b);
                 guarantor_of_deref(&cat)
             }
             ast::expr_field(b, _, _) => {
                 categorize(rcx, b).guarantor
             }
-            ast::expr_index(b, _) => {
+            ast::expr_index(_, b, _) => {
                 let cat = categorize(rcx, b);
                 guarantor_of_deref(&cat)
             }
@@ -673,7 +983,7 @@ pub mod guarantor {
                 guarantor(rcx, e)
             }
 
-            ast::expr_path(*) => {
+            ast::expr_path(*) | ast::expr_self => {
                 // Either a variable or constant and hence resides
                 // in constant memory or on the stack frame.  Either way,
                 // not guaranteed by a region pointer.
@@ -696,7 +1006,6 @@ pub mod guarantor {
             ast::expr_while(*) |
             ast::expr_loop(*) |
             ast::expr_assign(*) |
-            ast::expr_swap(*) |
             ast::expr_assign_op(*) |
             ast::expr_cast(*) |
             ast::expr_call(*) |
@@ -720,8 +1029,7 @@ pub mod guarantor {
     }
 
     fn categorize(rcx: @mut Rcx, expr: @ast::expr) -> ExprCategorization {
-        debug!("categorize(expr=%s)", rcx.fcx.expr_to_str(expr));
-        let _i = ::util::common::indenter();
+        debug!("categorize()");
 
         let mut expr_ct = categorize_unadjusted(rcx, expr);
         debug!("before adjustments, cat=%?", expr_ct.cat);
@@ -742,12 +1050,24 @@ pub mod guarantor {
                 expr_ct = apply_autoderefs(
                     rcx, expr, adjustment.autoderefs, expr_ct);
 
-                for adjustment.autoref.each |autoref| {
-                    // If there is an autoref, then the result of this
-                    // expression will be some sort of borrowed pointer.
-                    expr_ct.cat.guarantor = None;
-                    expr_ct.cat.pointer = BorrowedPointer(autoref.region);
-                    debug!("autoref, cat=%?", expr_ct.cat);
+                match adjustment.autoref {
+                    None => {
+                    }
+                    Some(ty::AutoUnsafe(_)) => {
+                        expr_ct.cat.guarantor = None;
+                        expr_ct.cat.pointer = OtherPointer;
+                        debug!("autoref, cat=%?", expr_ct.cat);
+                    }
+                    Some(ty::AutoPtr(r, _)) |
+                    Some(ty::AutoBorrowVec(r, _)) |
+                    Some(ty::AutoBorrowVecRef(r, _)) |
+                    Some(ty::AutoBorrowFn(r)) => {
+                        // If there is an autoref, then the result of this
+                        // expression will be some sort of borrowed pointer.
+                        expr_ct.cat.guarantor = None;
+                        expr_ct.cat.pointer = BorrowedPointer(r);
+                        debug!("autoref, cat=%?", expr_ct.cat);
+                    }
                 }
             }
 
@@ -761,8 +1081,7 @@ pub mod guarantor {
     fn categorize_unadjusted(rcx: @mut Rcx,
                              expr: @ast::expr)
                           -> ExprCategorizationType {
-        debug!("categorize_unadjusted(expr=%s)", rcx.fcx.expr_to_str(expr));
-        let _i = ::util::common::indenter();
+        debug!("categorize_unadjusted()");
 
         let guarantor = {
             if rcx.fcx.inh.method_map.contains_key(&expr.id) {
@@ -783,13 +1102,19 @@ pub mod guarantor {
     }
 
     fn apply_autoderefs(
-        +rcx: @mut Rcx,
-        +expr: @ast::expr,
-        +autoderefs: uint,
-        +ct: ExprCategorizationType)
+        rcx: @mut Rcx,
+        expr: @ast::expr,
+        autoderefs: uint,
+        ct: ExprCategorizationType)
      -> ExprCategorizationType {
         let mut ct = ct;
         let tcx = rcx.fcx.ccx.tcx;
+
+        if (ty::type_is_error(ct.ty)) {
+            ct.cat.pointer = NotPointer;
+            return ct;
+        }
+
         for uint::range(0, autoderefs) |_| {
             ct.cat.guarantor = guarantor_of_deref(&ct.cat);
 
@@ -813,18 +1138,28 @@ pub mod guarantor {
 
     fn pointer_categorize(ty: ty::t) -> PointerCategorization {
         match ty::get(ty).sty {
-            ty::ty_rptr(r, _) | ty::ty_evec(_, ty::vstore_slice(r)) |
+            ty::ty_rptr(r, _) |
+            ty::ty_evec(_, ty::vstore_slice(r)) |
             ty::ty_estr(ty::vstore_slice(r)) => {
                 BorrowedPointer(r)
             }
-            ty::ty_uniq(*) | ty::ty_estr(ty::vstore_uniq) |
+            ty::ty_uniq(*) |
+            ty::ty_estr(ty::vstore_uniq) |
             ty::ty_evec(_, ty::vstore_uniq) => {
                 OwnedPointer
             }
-            ty::ty_box(*) | ty::ty_ptr(*) |
+            ty::ty_box(*) |
+            ty::ty_ptr(*) |
             ty::ty_evec(_, ty::vstore_box) |
             ty::ty_estr(ty::vstore_box) => {
                 OtherPointer
+            }
+            ty::ty_closure(ref closure_ty) => {
+                match closure_ty.sigil {
+                    ast::BorrowedSigil => BorrowedPointer(closure_ty.region),
+                    ast::OwnedSigil => OwnedPointer,
+                    ast::ManagedSigil => OtherPointer,
+                }
             }
             _ => {
                 NotPointer
@@ -857,25 +1192,27 @@ pub mod guarantor {
 
         debug!("link_ref_bindings_in_pat(pat=%s, guarantor=%?)",
                rcx.fcx.pat_to_str(pat), guarantor);
-        let _i = ::util::common::indenter();
 
         match pat.node {
             ast::pat_wild => {}
             ast::pat_ident(ast::bind_by_ref(_), _, opt_p) => {
                 link(rcx, pat.span, pat.id, guarantor);
 
-                for opt_p.each |p| {
+                for opt_p.iter().advance |p| {
                     link_ref_bindings_in_pat(rcx, *p, guarantor);
                 }
             }
             ast::pat_ident(_, _, opt_p) => {
-                for opt_p.each |p| {
+                for opt_p.iter().advance |p| {
                     link_ref_bindings_in_pat(rcx, *p, guarantor);
                 }
             }
-            ast::pat_enum(*) => {}
+            ast::pat_enum(_, None) => {}
+            ast::pat_enum(_, Some(ref pats)) => {
+                link_ref_bindings_in_pats(rcx, pats, guarantor);
+            }
             ast::pat_struct(_, ref fpats, _) => {
-                for fpats.each |fpat| {
+                for fpats.iter().advance |fpat| {
                     link_ref_bindings_in_pat(rcx, fpat.pat, guarantor);
                 }
             }
@@ -890,29 +1227,25 @@ pub mod guarantor {
             }
             ast::pat_region(p) => {
                 let rptr_ty = rcx.resolve_node_type(pat.id);
-                if !ty::type_is_error(rptr_ty) {
-                    let r = ty::ty_region(rcx.fcx.tcx(), pat.span, rptr_ty);
-                    link_ref_bindings_in_pat(rcx, p, Some(r));
-                }
+                let r = ty::ty_region(rcx.fcx.tcx(), pat.span, rptr_ty);
+                link_ref_bindings_in_pat(rcx, p, Some(r));
             }
             ast::pat_lit(*) => {}
             ast::pat_range(*) => {}
             ast::pat_vec(ref before, ref slice, ref after) => {
                 let vec_ty = rcx.resolve_node_type(pat.id);
-                if !ty::type_is_error(vec_ty) {
-                    let vstore = ty::ty_vstore(vec_ty);
-                    let guarantor1 = match vstore {
-                        ty::vstore_fixed(_) | ty::vstore_uniq => guarantor,
-                        ty::vstore_slice(r) => Some(r),
-                        ty::vstore_box => None
-                    };
+                let vstore = ty::ty_vstore(vec_ty);
+                let guarantor1 = match vstore {
+                    ty::vstore_fixed(_) | ty::vstore_uniq => guarantor,
+                    ty::vstore_slice(r) => Some(r),
+                    ty::vstore_box => None
+                };
 
-                    link_ref_bindings_in_pats(rcx, before, guarantor1);
-                    for slice.each |&p| {
-                        link_ref_bindings_in_pat(rcx, p, guarantor);
-                    }
-                    link_ref_bindings_in_pats(rcx, after, guarantor1);
+                link_ref_bindings_in_pats(rcx, before, guarantor1);
+                for slice.iter().advance |&p| {
+                    link_ref_bindings_in_pat(rcx, p, guarantor);
                 }
+                link_ref_bindings_in_pats(rcx, after, guarantor1);
             }
         }
     }
@@ -920,7 +1253,7 @@ pub mod guarantor {
     fn link_ref_bindings_in_pats(rcx: @mut Rcx,
                                  pats: &~[@ast::pat],
                                  guarantor: Option<ty::Region>) {
-        for pats.each |pat| {
+        for pats.iter().advance |pat| {
             link_ref_bindings_in_pat(rcx, *pat, guarantor);
         }
     }
@@ -933,7 +1266,6 @@ pub fn infallibly_mk_subr(rcx: @mut Rcx,
                           a: ty::Region,
                           b: ty::Region) {
     /*!
-     *
      * Constrains `a` to be a subregion of `b`.  In many cases, we
      * know that this can never yield an error due to the way that
      * region inferencing works.  Therefore just report a bug if we

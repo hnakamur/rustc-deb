@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::sys;
+
 struct Cat {
     x: int
 }
@@ -17,17 +19,18 @@ struct Kitty {
 }
 
 impl Drop for Kitty {
-    fn finalize(&self) {}
+    fn drop(&self) {}
 }
 
 #[cfg(target_arch = "x86_64")]
 pub fn main() {
-    assert!((sys::size_of::<Cat>() == 8 as uint));
-    assert!((sys::size_of::<Kitty>() == 16 as uint));
+    assert_eq!(sys::size_of::<Cat>(), 8 as uint);
+    assert_eq!(sys::size_of::<Kitty>(), 16 as uint);
 }
 
 #[cfg(target_arch = "x86")]
+#[cfg(target_arch = "arm")]
 pub fn main() {
-    assert!((sys::size_of::<Cat>() == 4 as uint));
-    assert!((sys::size_of::<Kitty>() == 8 as uint));
+    assert_eq!(sys::size_of::<Cat>(), 4 as uint);
+    assert_eq!(sys::size_of::<Kitty>(), 8 as uint);
 }

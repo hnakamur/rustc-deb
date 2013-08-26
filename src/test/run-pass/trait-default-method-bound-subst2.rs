@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
+#[allow(default_methods)];
 
 trait A<T> {
     fn g(&self, x: T) -> T { x }
@@ -21,5 +21,5 @@ fn f<T, V: A<T>>(i: V, j: T) -> T {
 }
 
 pub fn main () {
-    assert!(f(0, 2) == 2);
+    assert_eq!(f(0, 2), 2);
 }

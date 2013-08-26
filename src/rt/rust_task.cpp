@@ -36,12 +36,13 @@ rust_task::rust_task(rust_sched_loop *sched_loop, rust_task_state state,
     kernel(sched_loop->kernel),
     name(name),
     list_index(-1),
-    boxed(sched_loop->kernel->env, &local_region),
+    boxed(&local_region, sched_loop->kernel->env->poison_on_free),
     local_region(&sched_loop->local_region),
     unwinding(false),
     total_stack_sz(0),
     task_local_data(NULL),
     task_local_data_cleanup(NULL),
+    borrow_list(NULL),
     state(state),
     cond(NULL),
     cond_name("none"),
@@ -73,6 +74,9 @@ rust_task::delete_this()
        assertions that hold at task-lifecycle events. */
     assert(ref_count == 0); // ||
     //   (ref_count == 1 && this == sched->root_task));
+
+    // The borrow list should be freed in the task annihilator
+    assert(!borrow_list);
 
     sched_loop->release_task(this);
 }
@@ -157,9 +161,7 @@ void task_start_wrapper(spawn_args *a)
 
     bool threw_exception = false;
     try {
-        // The first argument is the return pointer; as the task fn
-        // must have void return type, we can safely pass 0.
-        a->f(0, a->envptr, a->argptr);
+        a->f(a->envptr, a->argptr);
     } catch (rust_task *ex) {
         assert(ex == task && "Expected this task to be thrown for unwinding");
         threw_exception = true;
@@ -180,7 +182,11 @@ void task_start_wrapper(spawn_args *a)
     if(env) {
         // free the environment (which should be a unique closure).
         const type_desc *td = env->td;
-        td->drop_glue(NULL, NULL, NULL, box_body(env));
+        td->drop_glue(NULL,
+#ifdef _RUST_STAGE0
+                      NULL,
+#endif
+                      box_body(env));
         task->kernel->region()->free(env);
     }
 
@@ -457,8 +463,9 @@ rust_task::get_next_stack_size(size_t min, size_t current, size_t requested) {
         "min: %" PRIdPTR " current: %" PRIdPTR " requested: %" PRIdPTR,
         min, current, requested);
 
-    // Allocate at least enough to accomodate the next frame
-    size_t sz = std::max(min, requested);
+    // Allocate at least enough to accomodate the next frame, plus a little
+    // slack to avoid thrashing
+    size_t sz = std::max(min, requested + (requested / 2));
 
     // And double the stack size each allocation
     const size_t max = 1024 * 1024;
@@ -528,11 +535,11 @@ rust_task::new_stack(size_t requested_sz) {
     // arbitrarily selected as 2x the maximum stack size.
     if (!unwinding && used_stack > max_stack) {
         LOG_ERR(this, task, "task %" PRIxPTR " ran out of stack", this);
-        fail();
+        abort();
     } else if (unwinding && used_stack > max_stack * 2) {
         LOG_ERR(this, task,
                 "task %" PRIxPTR " ran out of stack during unwinding", this);
-        fail();
+        abort();
     }
 
     size_t sz = rust_stk_sz + RED_ZONE_SIZE;
@@ -555,11 +562,37 @@ rust_task::cleanup_after_turn() {
     // Delete any spare stack segments that were left
     // behind by calls to prev_stack
     assert(stk);
+
     while (stk->next) {
         stk_seg *new_next = stk->next->next;
+        assert (!stk->next->is_big);
         free_stack(stk->next);
+
         stk->next = new_next;
     }
+}
+
+// NB: Runs on the Rust stack. Returns true if we successfully allocated the big
+// stack and false otherwise.
+bool
+rust_task::new_big_stack() {
+    assert(stk);
+
+    stk_seg *borrowed_big_stack = sched_loop->borrow_big_stack();
+    if (!borrowed_big_stack) {
+        return false;
+    }
+
+    borrowed_big_stack->task = this;
+    borrowed_big_stack->next = stk->next;
+    if (borrowed_big_stack->next)
+        borrowed_big_stack->next->prev = borrowed_big_stack;
+    borrowed_big_stack->prev = stk;
+    stk->next = borrowed_big_stack;
+
+    stk = borrowed_big_stack;
+
+    return true;
 }
 
 static bool
@@ -582,10 +615,9 @@ void
 rust_task::reset_stack_limit() {
     uintptr_t sp = get_sp();
     while (!sp_in_stk_seg(sp, stk)) {
-        stk = stk->prev;
+        prev_stack();
         assert(stk != NULL && "Failed to find the current stack");
     }
-    record_stack_limit();
 }
 
 void
@@ -601,7 +633,12 @@ rust_task::delete_all_stacks() {
     assert(stk->next == NULL);
     while (stk != NULL) {
         stk_seg *prev = stk->prev;
-        free_stack(stk);
+
+        if (stk->is_big)
+            sched_loop->return_big_stack(stk);
+        else
+            free_stack(stk);
+
         stk = prev;
     }
 }

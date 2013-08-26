@@ -16,7 +16,6 @@ corresponding AST nodes. The information gathered here is the basis
 of the natural-language documentation for a crate.
 */
 
-use core::prelude::*;
 
 use astsrv;
 use attr_parser;
@@ -27,7 +26,6 @@ use fold::Fold;
 use fold;
 use pass::Pass;
 
-use core::vec;
 use syntax::ast;
 use syntax::ast_map;
 
@@ -78,12 +76,6 @@ fn fold_crate(
     }
 }
 
-#[test]
-fn should_replace_top_module_name_with_crate_name() {
-    let doc = test::mk_doc(~"#[link(name = \"bond\")];");
-    assert!(doc.cratemod().name() == ~"bond");
-}
-
 fn fold_item(
     fold: &fold::Fold<astsrv::Srv>,
     doc: doc::ItemDoc
@@ -107,42 +99,18 @@ fn fold_item(
     }
 }
 
-fn parse_item_attrs<T:Owned>(
+fn parse_item_attrs<T:Send>(
     srv: astsrv::Srv,
     id: doc::AstId,
     parse_attrs: ~fn(a: ~[ast::attribute]) -> T) -> T {
     do astsrv::exec(srv) |ctxt| {
-        let attrs = match *ctxt.ast_map.get(&id) {
-          ast_map::node_item(item, _) => copy item.attrs,
-          ast_map::node_foreign_item(item, _, _, _) => copy item.attrs,
-          _ => fail!(~"parse_item_attrs: not an item")
+        let attrs = match ctxt.ast_map.get_copy(&id) {
+            ast_map::node_item(item, _) => copy item.attrs,
+            ast_map::node_foreign_item(item, _, _, _) => copy item.attrs,
+            _ => fail!("parse_item_attrs: not an item")
         };
         parse_attrs(attrs)
     }
-}
-
-#[test]
-fn should_should_extract_mod_attributes() {
-    let doc = test::mk_doc(~"#[doc = \"test\"] mod a { }");
-    assert!(doc.cratemod().mods()[0].desc() == Some(~"test"));
-}
-
-#[test]
-fn should_extract_top_mod_attributes() {
-    let doc = test::mk_doc(~"#[doc = \"test\"];");
-    assert!(doc.cratemod().desc() == Some(~"test"));
-}
-
-#[test]
-fn should_extract_foreign_fn_attributes() {
-    let doc = test::mk_doc(~"extern { #[doc = \"test\"] fn a(); }");
-    assert!(doc.cratemod().nmods()[0].fns[0].desc() == Some(~"test"));
-}
-
-#[test]
-fn should_extract_fn_attributes() {
-    let doc = test::mk_doc(~"#[doc = \"test\"] fn a() -> int { }");
-    assert!(doc.cratemod().fns()[0].desc() == Some(~"test"));
 }
 
 fn fold_enum(
@@ -155,17 +123,17 @@ fn fold_enum(
     let doc = fold::default_seq_fold_enum(fold, doc);
 
     doc::EnumDoc {
-        variants: do vec::map(doc.variants) |variant| {
+        variants: do doc.variants.iter().transform |variant| {
             let variant = copy *variant;
             let desc = {
                 let variant = copy variant;
                 do astsrv::exec(srv.clone()) |ctxt| {
-                    match *ctxt.ast_map.get(&doc_id) {
+                    match ctxt.ast_map.get_copy(&doc_id) {
                         ast_map::node_item(@ast::item {
                             node: ast::item_enum(ref enum_definition, _), _
                         }, _) => {
                             let ast_variant =
-                                vec::find(enum_definition.variants, |v| {
+                                copy *enum_definition.variants.iter().find_(|v| {
                                     to_str(v.node.name) == variant.name
                                 }).get();
 
@@ -173,9 +141,8 @@ fn fold_enum(
                                 copy ast_variant.node.attrs)
                         }
                         _ => {
-                            fail!(fmt!("Enum variant %s has id that's \
-                                       not bound to an enum item",
-                                      variant.name))
+                            fail!("Enum variant %s has id that's not bound to an enum item",
+                                  variant.name)
                         }
                     }
                 }
@@ -185,22 +152,9 @@ fn fold_enum(
                 desc: desc,
                 .. variant
             }
-        },
+        }.collect(),
         .. doc
     }
-}
-
-#[test]
-fn should_extract_enum_docs() {
-    let doc = test::mk_doc(~"#[doc = \"b\"]\
-                            enum a { v }");
-    assert!(doc.cratemod().enums()[0].desc() == Some(~"b"));
-}
-
-#[test]
-fn should_extract_variant_docs() {
-    let doc = test::mk_doc(~"enum a { #[doc = \"c\"] v }");
-    assert!(doc.cratemod().enums()[0].variants[0].desc == Some(~"c"));
 }
 
 fn fold_trait(
@@ -224,35 +178,35 @@ fn merge_method_attrs(
 
     // Create an assoc list from method name to attributes
     let attrs: ~[(~str, Option<~str>)] = do astsrv::exec(srv) |ctxt| {
-        match *ctxt.ast_map.get(&item_id) {
-          ast_map::node_item(@ast::item {
-            node: ast::item_trait(_, _, ref methods), _
-          }, _) => {
-            vec::map(*methods, |method| {
-                match copy *method {
-                  ast::required(ty_m) => {
-                    (to_str(ty_m.ident),
-                     attr_parser::parse_desc(copy ty_m.attrs))
-                  }
-                  ast::provided(m) => {
-                    (to_str(m.ident), attr_parser::parse_desc(copy m.attrs))
-                  }
-                }
-            })
-          }
-          ast_map::node_item(@ast::item {
-            node: ast::item_impl(_, _, _, ref methods), _
-          }, _) => {
-            vec::map(*methods, |method| {
-                (to_str(method.ident),
-                 attr_parser::parse_desc(copy method.attrs))
-            })
-          }
-          _ => fail!(~"unexpected item")
+        match ctxt.ast_map.get_copy(&item_id) {
+            ast_map::node_item(@ast::item {
+                node: ast::item_trait(_, _, ref methods), _
+            }, _) => {
+                methods.iter().transform(|method| {
+                    match copy *method {
+                        ast::required(ty_m) => {
+                            (to_str(ty_m.ident),
+                             attr_parser::parse_desc(copy ty_m.attrs))
+                        }
+                        ast::provided(m) => {
+                            (to_str(m.ident), attr_parser::parse_desc(copy m.attrs))
+                        }
+                    }
+                }).collect()
+            }
+            ast_map::node_item(@ast::item {
+                node: ast::item_impl(_, _, _, ref methods), _
+            }, _) => {
+                methods.iter().transform(|method| {
+                    (to_str(method.ident),
+                     attr_parser::parse_desc(copy method.attrs))
+                }).collect()
+            }
+            _ => fail!("unexpected item")
         }
     };
 
-    do vec::map2(docs, attrs) |doc, attrs| {
+    do docs.iter().zip(attrs.iter()).transform |(doc, attrs)| {
         assert!(doc.name == attrs.first());
         let desc = attrs.second();
 
@@ -260,23 +214,7 @@ fn merge_method_attrs(
             desc: desc,
             .. copy *doc
         }
-    }
-}
-
-#[test]
-fn should_extract_trait_docs() {
-    let doc = test::mk_doc(~"#[doc = \"whatever\"] trait i { fn a(); }");
-    assert!(doc.cratemod().traits()[0].desc() == Some(~"whatever"));
-}
-
-#[test]
-fn should_extract_trait_method_docs() {
-    let doc = test::mk_doc(
-        ~"trait i {\
-         #[doc = \"desc\"]\
-         fn f(a: bool) -> bool;\
-         }");
-    assert!(doc.cratemod().traits()[0].methods[0].desc == Some(~"desc"));
+    }.collect()
 }
 
 
@@ -293,34 +231,94 @@ fn fold_impl(
     }
 }
 
-#[test]
-fn should_extract_impl_docs() {
-    let doc = test::mk_doc(
-        ~"#[doc = \"whatever\"] impl int { fn a() { } }");
-    assert!(doc.cratemod().impls()[0].desc() == Some(~"whatever"));
-}
-
-#[test]
-fn should_extract_impl_method_docs() {
-    let doc = test::mk_doc(
-        ~"impl int {\
-         #[doc = \"desc\"]\
-         fn f(a: bool) -> bool { }\
-         }");
-    assert!(doc.cratemod().impls()[0].methods[0].desc == Some(~"desc"));
-}
-
 #[cfg(test)]
 mod test {
+
     use astsrv;
     use attr_pass::run;
     use doc;
     use extract;
 
-    pub fn mk_doc(source: ~str) -> doc::Doc {
+    fn mk_doc(source: ~str) -> doc::Doc {
         do astsrv::from_str(copy source) |srv| {
             let doc = extract::from_srv(srv.clone(), ~"");
             run(srv.clone(), doc)
         }
+    }
+
+    #[test]
+    fn should_replace_top_module_name_with_crate_name() {
+        let doc = mk_doc(~"#[link(name = \"bond\")];");
+        assert!(doc.cratemod().name() == ~"bond");
+    }
+
+    #[test]
+    fn should_should_extract_mod_attributes() {
+        let doc = mk_doc(~"#[doc = \"test\"] mod a { }");
+        assert!(doc.cratemod().mods()[0].desc() == Some(~"test"));
+    }
+
+    #[test]
+    fn should_extract_top_mod_attributes() {
+        let doc = mk_doc(~"#[doc = \"test\"];");
+        assert!(doc.cratemod().desc() == Some(~"test"));
+    }
+
+    #[test]
+    fn should_extract_foreign_fn_attributes() {
+        let doc = mk_doc(~"extern { #[doc = \"test\"] fn a(); }");
+        assert!(doc.cratemod().nmods()[0].fns[0].desc() == Some(~"test"));
+    }
+
+    #[test]
+    fn should_extract_fn_attributes() {
+        let doc = mk_doc(~"#[doc = \"test\"] fn a() -> int { }");
+        assert!(doc.cratemod().fns()[0].desc() == Some(~"test"));
+    }
+
+    #[test]
+    fn should_extract_enum_docs() {
+        let doc = mk_doc(~"#[doc = \"b\"]\
+                                 enum a { v }");
+        assert!(doc.cratemod().enums()[0].desc() == Some(~"b"));
+    }
+
+    #[test]
+    fn should_extract_variant_docs() {
+        let doc = mk_doc(~"enum a { #[doc = \"c\"] v }");
+        assert!(doc.cratemod().enums()[0].variants[0].desc == Some(~"c"));
+    }
+
+    #[test]
+    fn should_extract_trait_docs() {
+        let doc = mk_doc(~"#[doc = \"whatever\"] trait i { fn a(); }");
+        assert!(doc.cratemod().traits()[0].desc() == Some(~"whatever"));
+    }
+
+    #[test]
+    fn should_extract_trait_method_docs() {
+        let doc = mk_doc(
+            ~"trait i {\
+              #[doc = \"desc\"]\
+              fn f(a: bool) -> bool;\
+              }");
+        assert!(doc.cratemod().traits()[0].methods[0].desc == Some(~"desc"));
+    }
+
+    #[test]
+    fn should_extract_impl_docs() {
+        let doc = mk_doc(
+            ~"#[doc = \"whatever\"] impl int { fn a() { } }");
+        assert!(doc.cratemod().impls()[0].desc() == Some(~"whatever"));
+    }
+
+    #[test]
+    fn should_extract_impl_method_docs() {
+        let doc = mk_doc(
+            ~"impl int {\
+              #[doc = \"desc\"]\
+              fn f(a: bool) -> bool { }\
+              }");
+        assert!(doc.cratemod().impls()[0].methods[0].desc == Some(~"desc"));
     }
 }

@@ -8,9 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::io::println;
+use std::io::println;
 
 pub fn main() {
     println("Hello world!");
 }
-

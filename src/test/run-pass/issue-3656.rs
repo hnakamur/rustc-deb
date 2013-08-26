@@ -13,7 +13,7 @@
 // Incorrect struct size computation in the FFI, because of not taking
 // the alignment of elements into account.
 
-use core::libc::*;
+use std::libc::*;
 
 struct KEYGEN {
     hash_algorithm: [c_uint, ..2],
@@ -24,7 +24,7 @@ struct KEYGEN {
 
 extern {
     // Bogus signature, just need to test if it compiles.
-    pub fn malloc(++data: KEYGEN);
+    pub fn malloc(data: KEYGEN);
 }
 
 pub fn main() {

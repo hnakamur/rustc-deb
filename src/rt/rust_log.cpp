@@ -24,7 +24,7 @@
  */
 static lock_and_signal _log_lock;
 /**
- * Indicates whether we are outputing to the console.
+ * Indicates whether we are outputting to the console.
  * Protected by _log_lock;
  */
 static bool _log_to_console = true;
@@ -314,7 +314,7 @@ void update_log_settings(void* crate_map, char* settings) {
                      n_dirs, &n_matches);
 
     if (n_matches < n_dirs) {
-        // NOTE: Android compiler is complaining about format specifiers here
+        // NB: Android compiler is complaining about format specifiers here
         // and I don't understand why
         /*printf("warning: got %" PRIdPTR " RUST_LOG specs, "
                "enabled %" PRIdPTR " flags.",
@@ -324,6 +324,10 @@ void update_log_settings(void* crate_map, char* settings) {
     free(buffer);
 }
 
+extern "C" CDECL void
+rust_update_log_settings(void* crate_map, char* settings) {
+    update_log_settings(crate_map, settings);
+}
 
 //
 // Local Variables:

@@ -8,29 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
 // A pass that annotates for each loops and functions with the free
 // variables that they contain.
 
-use core::prelude::*;
 
 use middle::resolve;
 use middle::ty;
 
-use core::hashmap::linear::LinearMap;
+use std::hashmap::HashMap;
 use syntax::codemap::span;
 use syntax::{ast, ast_util, visit};
 
 // A vector of defs representing the free variables referred to in a function.
 // (The def_upvar will already have been stripped).
-#[auto_encode]
-#[auto_decode]
+#[deriving(Encodable, Decodable)]
 pub struct freevar_entry {
     def: ast::def, //< The variable being accessed free.
     span: span     //< First span where it is accessed (there can be multiple)
 }
 pub type freevar_info = @~[@freevar_entry];
-pub type freevar_map = @mut LinearMap<ast::node_id, freevar_info>;
+pub type freevar_map = @mut HashMap<ast::node_id, freevar_info>;
 
 // Searches through part of the AST for all references to locals or
 // upvars in this frame and returns the list of definition IDs thus found.
@@ -39,19 +36,19 @@ pub type freevar_map = @mut LinearMap<ast::node_id, freevar_info>;
 // in order to start the search.
 fn collect_freevars(def_map: resolve::DefMap, blk: &ast::blk)
     -> freevar_info {
-    let seen = @mut LinearMap::new();
+    let seen = @mut HashMap::new();
     let refs = @mut ~[];
 
-    fn ignore_item(_i: @ast::item, &&_depth: int, _v: visit::vt<int>) { }
+    fn ignore_item(_i: @ast::item, (_depth, _v): (int, visit::vt<int>)) { }
 
-    let walk_expr: @fn(expr: @ast::expr, &&depth: int, v: visit::vt<int>) =
-        |expr, depth, v| {
+    let walk_expr: @fn(expr: @ast::expr, (int, visit::vt<int>)) =
+        |expr, (depth, v)| {
             match expr.node {
-              ast::expr_fn_block(*) => visit::visit_expr(expr, depth + 1, v),
-              ast::expr_path(*) => {
+              ast::expr_fn_block(*) => visit::visit_expr(expr, (depth + 1, v)),
+              ast::expr_path(*) | ast::expr_self => {
                   let mut i = 0;
                   match def_map.find(&expr.id) {
-                    None => fail!(~"path not found"),
+                    None => fail!("path not found"),
                     Some(&df) => {
                       let mut def = df;
                       while i < depth {
@@ -74,14 +71,14 @@ fn collect_freevars(def_map: resolve::DefMap, blk: &ast::blk)
                     }
                   }
               }
-              _ => visit::visit_expr(expr, depth, v)
+              _ => visit::visit_expr(expr, (depth, v))
             }
         };
 
     let v = visit::mk_vt(@visit::Visitor {visit_item: ignore_item,
                                           visit_expr: walk_expr,
                                           .. *visit::default_visitor()});
-    (v.visit_block)(blk, 1, v);
+    (v.visit_block)(blk, (1, v));
     return @/*bad*/copy *refs;
 }
 
@@ -90,9 +87,9 @@ fn collect_freevars(def_map: resolve::DefMap, blk: &ast::blk)
 // efficient as it fully recomputes the free variables at every
 // node of interest rather than building up the free variables in
 // one pass. This could be improved upon if it turns out to matter.
-pub fn annotate_freevars(def_map: resolve::DefMap, crate: @ast::crate) ->
+pub fn annotate_freevars(def_map: resolve::DefMap, crate: &ast::crate) ->
    freevar_map {
-    let freevars = @mut LinearMap::new();
+    let freevars = @mut HashMap::new();
 
     let walk_fn: @fn(&visit::fn_kind,
                      &ast::fn_decl,
@@ -107,26 +104,18 @@ pub fn annotate_freevars(def_map: resolve::DefMap, crate: @ast::crate) ->
         visit::mk_simple_visitor(@visit::SimpleVisitor {
             visit_fn: walk_fn,
             .. *visit::default_simple_visitor()});
-    visit::visit_crate(*crate, (), visitor);
+    visit::visit_crate(crate, ((), visitor));
 
     return freevars;
 }
 
 pub fn get_freevars(tcx: ty::ctxt, fid: ast::node_id) -> freevar_info {
     match tcx.freevars.find(&fid) {
-      None => fail!(~"get_freevars: "+int::to_str(fid)+~" has no freevars"),
+      None => fail!("get_freevars: %d has no freevars", fid),
       Some(&d) => return d
     }
 }
 
 pub fn has_freevars(tcx: ty::ctxt, fid: ast::node_id) -> bool {
-    return vec::len(*get_freevars(tcx, fid)) != 0u;
+    !get_freevars(tcx, fid).is_empty()
 }
-
-// Local Variables:
-// mode: rust
-// fill-column: 78;
-// indent-tabs-mode: nil
-// c-basic-offset: 4
-// buffer-file-coding-system: utf-8-unix
-// End:

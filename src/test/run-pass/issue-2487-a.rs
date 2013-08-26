@@ -14,11 +14,11 @@ struct socket {
 }
 
 impl Drop for socket {
-    fn finalize(&self) {}
+    fn drop(&self) {}
 }
 
-pub impl socket {
-    fn set_identity(&self)  {
+impl socket {
+    pub fn set_identity(&self)  {
         do closure {
             setsockopt_bytes(self.sock.clone())
         }

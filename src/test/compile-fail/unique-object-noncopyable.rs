@@ -17,12 +17,12 @@ struct Bar {
 }
 
 impl Drop for Bar {
-    fn finalize(&self) {}
+    fn drop(&self) {}
 }
 
 impl Foo for Bar {
     fn f(&self) {
-        io::println("hi");
+        println("hi");
     }
 }
 
@@ -31,4 +31,3 @@ fn main() {
     let y: ~Foo = x as ~Foo;
     let _z = copy y; //~ ERROR copying a value of non-copyable type
 }
-

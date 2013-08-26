@@ -1,4 +1,4 @@
-use core::io::println;
+use std::io::println;
 
 fn main() {
     let v: ~[int] = ~[ 1, ..5 ];
@@ -20,4 +20,3 @@ fn main() {
     println((copy v[3]).to_str());
     println((copy v[4]).to_str());
 }
-

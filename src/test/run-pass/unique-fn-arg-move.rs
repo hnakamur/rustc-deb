@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f(+i: ~int) {
-    assert!(*i == 100);
+fn f(i: ~int) {
+    assert_eq!(*i, 100);
 }
 
 pub fn main() {

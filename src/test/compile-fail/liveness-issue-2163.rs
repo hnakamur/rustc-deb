@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::vec;
+
 fn main() {
     let a: ~[int] = ~[];
-    vec::each(a, |_| -> bool {
+    a.iter().advance(|_| -> bool {
         //~^ ERROR mismatched types
     });
 }

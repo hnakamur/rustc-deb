@@ -22,13 +22,12 @@ impl Baz for A { fn h(&self) -> int { 30 } }
 impl Quux for A;
 
 fn f<T:Quux + Foo + Bar + Baz>(a: &T) {
-    assert!(a.f() == 10);
-    assert!(a.g() == 20);
-    assert!(a.h() == 30);
+    assert_eq!(a.f(), 10);
+    assert_eq!(a.g(), 20);
+    assert_eq!(a.h(), 30);
 }
 
 pub fn main() {
     let a = &A { x: 3 };
     f(a);
 }
-

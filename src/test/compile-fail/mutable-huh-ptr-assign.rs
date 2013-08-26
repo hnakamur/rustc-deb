@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
+extern mod extra;
 
 fn main() {
-    unsafe fn f(&&v: *const int) {
-        *v = 1 //~ ERROR assigning to dereference of const * pointer
+    unsafe fn f(v: *const int) {
+        *v = 1 //~ ERROR cannot assign
     }
 
     unsafe {

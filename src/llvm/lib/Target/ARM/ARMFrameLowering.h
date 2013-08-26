@@ -23,12 +23,14 @@ namespace llvm {
 
 class ARMFrameLowering : public TargetFrameLowering {
 protected:
+  const ARMBaseTargetMachine &TM;
   const ARMSubtarget &STI;
 
 public:
-  explicit ARMFrameLowering(const ARMSubtarget &sti)
+  explicit ARMFrameLowering(const ARMBaseTargetMachine& tm,
+                            const ARMSubtarget &sti)
     : TargetFrameLowering(StackGrowsDown, sti.getStackAlignment(), 0, 4),
-      STI(sti) {
+      TM(tm), STI(sti) {
   }
 
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
@@ -59,6 +61,8 @@ public:
   void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
                                             RegScavenger *RS) const;
 
+  void adjustForSegmentedStacks(MachineFunction &MF) const;
+
  private:
   void emitPushInst(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
                     const std::vector<CalleeSavedInfo> &CSI, unsigned StmOpc,
@@ -70,6 +74,11 @@ public:
                    unsigned LdrOpc, bool isVarArg, bool NoGap,
                    bool(*Func)(unsigned, bool),
                    unsigned NumAlignedDPRCS2Regs) const;
+
+  virtual void eliminateCallFramePseudoInstr(
+                                    MachineFunction &MF,
+                                    MachineBasicBlock &MBB,
+                                    MachineBasicBlock::iterator MI) const;
 };
 
 } // End llvm namespace

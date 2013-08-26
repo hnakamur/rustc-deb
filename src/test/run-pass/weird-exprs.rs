@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::util;
+
 // Just a grab bag of stuff that you wouldn't want to actually write.
 
 fn strange() -> bool { let _x: bool = return true; }
@@ -52,7 +54,7 @@ fn notsure() {
     let mut _y = (_x = 0) == (_x = 0);
     let mut _z = (_x = 0) < (_x = 0);
     let _a = (_x += 0) == (_x = 0);
-    let _b = (_y <-> _z) == (_y <-> _z);
+    let _b = util::swap(&mut _y, &mut _z) == util::swap(&mut _y, &mut _z);
 }
 
 fn canttouchthis() -> uint {
@@ -65,7 +67,7 @@ fn canttouchthis() -> uint {
 fn angrydome() {
     loop { if break { } }
     let mut i = 0;
-    loop { i += 1; if i == 1 { match (loop) { 1 => { }, _ => fail!(~"wat") } }
+    loop { i += 1; if i == 1 { match (loop) { 1 => { }, _ => fail!("wat") } }
       break; }
 }
 

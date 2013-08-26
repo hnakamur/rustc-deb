@@ -1,6 +1,8 @@
-extern mod std;
+extern mod extra;
 
-use core::comm::Chan;
+use std::comm::Chan;
+use std::task;
+use std::uint;
 
 type RingBuffer = ~[float];
 type SamplesFn = ~fn(samples: &RingBuffer);
@@ -24,4 +26,3 @@ fn foo(name: ~str, samples_chan: Chan<Msg>) {
 }
 
 pub fn main() {}
-

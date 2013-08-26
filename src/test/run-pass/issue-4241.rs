@@ -8,12 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
-extern mod std;
+// xfail-fast
 
-use std::net::tcp::TcpSocketBuf;
+extern mod extra;
 
-use core::io::{ReaderUtil,WriterUtil};
+use extra::net::tcp::TcpSocketBuf;
+
+use std::io;
+use std::int;
+
+use std::io::{ReaderUtil,WriterUtil};
 
 enum Result {
   Nil,
@@ -28,13 +32,13 @@ priv fn parse_data(len: uint, io: @io::Reader) -> Result {
   let res =
       if (len > 0) {
       let bytes = io.read_bytes(len as uint);
-      assert!(bytes.len() == len);
+      assert_eq!(bytes.len(), len);
       Data(bytes)
   } else {
       Data(~[])
   };
-  assert!(io.read_char() == '\r');
-  assert!(io.read_char() == '\n');
+  assert_eq!(io.read_char(), '\r');
+  assert_eq!(io.read_char(), '\n');
   return res;
 }
 
@@ -55,7 +59,7 @@ priv fn parse_list(len: uint, io: @io::Reader) -> Result {
 priv fn chop(s: ~str) -> ~str {
   s.slice(0, s.len() - 1).to_owned()
 }
-  
+
 priv fn parse_bulk(io: @io::Reader) -> Result {
     match int::from_str(chop(io.read_line())) {
     None => fail!(),
@@ -95,11 +99,11 @@ priv fn parse_response(io: @io::Reader) -> Result {
 
 priv fn cmd_to_str(cmd: ~[~str]) -> ~str {
   let mut res = ~"*";
-  str::push_str(&mut res, cmd.len().to_str());
-  str::push_str(&mut res, "\r\n");
-    for cmd.each |s| {
-    str::push_str(&mut res, str::concat(~[~"$", s.len().to_str(), ~"\r\n",
-                                          copy *s, ~"\r\n"]));
+  res.push_str(cmd.len().to_str());
+  res.push_str("\r\n");
+    for cmd.iter().advance |s| {
+    res.push_str([~"$", s.len().to_str(), ~"\r\n",
+                  copy *s, ~"\r\n"].concat() );
     }
   res
 }

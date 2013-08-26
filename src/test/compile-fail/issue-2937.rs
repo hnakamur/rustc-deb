@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern:failed to resolve imports
-use x = m::f;
+use x = m::f; //~ ERROR failed to resolve import
+              //~^ ERROR unresolved import: there is no `f` in `m`
 
 mod m {
 }

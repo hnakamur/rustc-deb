@@ -14,7 +14,7 @@ struct r {
 
 #[unsafe_destructor]
 impl Drop for r {
-    fn finalize(&self) {
+    fn drop(&self) {
         unsafe {
             *(self.i) = *(self.i) + 1;
         }
@@ -32,5 +32,5 @@ pub fn main() {
     {
         let j = ~r(i);
     }
-    assert!(*i == 1);
+    assert_eq!(*i, 1);
 }

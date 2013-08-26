@@ -10,8 +10,9 @@
 
 pub fn main() {
     let mut sum = 0;
-    for vec::each(~[1, 2, 3, 4, 5]) |x| {
+    let xs = ~[1, 2, 3, 4, 5];
+    for xs.iter().advance |x| {
         sum += *x;
     }
-    assert!((sum == 15));
+    assert_eq!(sum, 15);
 }

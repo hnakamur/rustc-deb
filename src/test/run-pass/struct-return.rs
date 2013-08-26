@@ -16,8 +16,8 @@ mod rustrt {
 
     #[nolink]
     pub extern {
-        pub fn debug_abi_1(++q: Quad) -> Quad;
-        pub fn debug_abi_2(++f: Floats) -> Floats;
+        pub fn debug_abi_1(q: Quad) -> Quad;
+        pub fn debug_abi_2(f: Floats) -> Floats;
     }
 }
 
@@ -32,10 +32,10 @@ fn test1() {
         error!("b: %x", qq.b as uint);
         error!("c: %x", qq.c as uint);
         error!("d: %x", qq.d as uint);
-        assert!(qq.a == q.c + 1u64);
-        assert!(qq.b == q.d - 1u64);
-        assert!(qq.c == q.a + 1u64);
-        assert!(qq.d == q.b - 1u64);
+        assert_eq!(qq.a, q.c + 1u64);
+        assert_eq!(qq.b, q.d - 1u64);
+        assert_eq!(qq.c, q.a + 1u64);
+        assert_eq!(qq.d, q.b - 1u64);
     }
 }
 
@@ -49,13 +49,14 @@ fn test2() {
         error!("a: %f", ff.a as float);
         error!("b: %u", ff.b as uint);
         error!("c: %f", ff.c as float);
-        assert!(ff.a == f.c + 1.0f64);
-        assert!(ff.b == 0xff_u8);
-        assert!(ff.c == f.a - 1.0f64);
+        assert_eq!(ff.a, f.c + 1.0f64);
+        assert_eq!(ff.b, 0xff_u8);
+        assert_eq!(ff.c, f.a - 1.0f64);
     }
 }
 
 #[cfg(target_arch = "x86")]
+#[cfg(target_arch = "arm")]
 fn test2() {
 }
 

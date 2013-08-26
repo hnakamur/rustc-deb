@@ -9,16 +9,17 @@
 // except according to those terms.
 
 // xfail-fast
-#[legacy_modes];
 
-extern mod std;
+extern mod extra;
 
-use core::comm::Chan;
-use core::comm::Port;
+use std::comm::Chan;
+use std::comm::Port;
+use std::comm;
+use std::task;
 
 pub fn main() { test05(); }
 
-fn test05_start(ch : Chan<int>) {
+fn test05_start(ch : &Chan<int>) {
     ch.send(10);
     error!("sent 10");
     ch.send(20);
@@ -29,12 +30,12 @@ fn test05_start(ch : Chan<int>) {
 
 fn test05() {
     let (po, ch) = comm::stream();
-    task::spawn(|| test05_start(ch) );
-    let mut value = po.recv();
+    task::spawn(|| test05_start(&ch) );
+    let mut value: int = po.recv();
     error!(value);
     value = po.recv();
     error!(value);
     value = po.recv();
     error!(value);
-    assert!((value == 30));
+    assert_eq!(value, 30);
 }

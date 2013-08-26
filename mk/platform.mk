@@ -11,7 +11,7 @@
 
 # Create variables HOST_<triple> containing the host part
 # of each target triple.  For example, the triple i686-darwin-macos
-# would create a variable HOST_i686-darwin-macos with the value 
+# would create a variable HOST_i686-darwin-macos with the value
 # i386.
 define DEF_HOST_VAR
   HOST_$(1) = $(subst i686,i386,$(word 1,$(subst -, ,$(1))))
@@ -29,7 +29,7 @@ $(foreach t,$(CFG_TARGET_TRIPLES),$(info cfg: os for $(t) is $(OSTYPE_$(t))))
 # FIXME: no-omit-frame-pointer is just so that task_start_wrapper
 # has a frame pointer and the stack walker can understand it. Turning off
 # frame pointers everywhere is overkill
-CFG_GCCISH_CFLAGS += -fno-omit-frame-pointer
+CFG_GCCISH_CFLAGS += -fno-omit-frame-pointer -DUSE_UTF8
 
 # On Darwin, we need to run dsymutil so the debugging information ends
 # up in the right place.  On other platforms, it automatically gets
@@ -106,7 +106,32 @@ ifeq ($(CFG_C_COMPILER),gcc)
     CPP=gcc
   endif
 else
+ifeq ($(CFG_C_COMPILER),ccache clang)
+  # The -Qunused-arguments sidesteps spurious warnings from clang
+  ifeq ($(origin CC),default)
+    CC=ccache clang -Qunused-arguments
+  endif
+  ifeq ($(origin CXX),default)
+    CXX=ccache clang++ -Qunused-arguments
+  endif
+  ifeq ($(origin CPP),default)
+    CPP=ccache clang -Qunused-arguments
+  endif
+else
+ifeq ($(CFG_C_COMPILER),ccache gcc)
+  ifeq ($(origin CC),default)
+    CC=ccache gcc
+  endif
+  ifeq ($(origin CXX),default)
+    CXX=ccache g++
+  endif
+  ifeq ($(origin CPP),default)
+    CPP=ccache gcc
+  endif
+else
   CFG_ERR := $(error please try on a system with gcc or clang)
+endif
+endif
 endif
 endif
 
@@ -121,7 +146,7 @@ CFG_LIB_GLOB_x86_64-unknown-linux-gnu=lib$(1)-*.so
 CFG_LIB_DSYM_GLOB_x86_64-unknown-linux-gnu=lib$(1)-*.dylib.dSYM
 CFG_GCCISH_CFLAGS_x86_64-unknown-linux-gnu := -Wall -Werror -g -fPIC -m64
 CFG_GCCISH_CXXFLAGS_x86_64-unknown-linux-gnu := -fno-rtti
-CFG_GCCISH_LINK_FLAGS_x86_64-unknown-linux-gnu := -shared -fPIC -ldl -lpthread -lrt -g -m64
+CFG_GCCISH_LINK_FLAGS_x86_64-unknown-linux-gnu := -shared -fPIC -ldl -pthread  -lrt -g -m64
 CFG_GCCISH_DEF_FLAG_x86_64-unknown-linux-gnu := -Wl,--export-dynamic,--dynamic-list=
 CFG_GCCISH_PRE_LIB_FLAGS_x86_64-unknown-linux-gnu := -Wl,-whole-archive
 CFG_GCCISH_POST_LIB_FLAGS_x86_64-unknown-linux-gnu := -Wl,-no-whole-archive
@@ -147,7 +172,7 @@ CFG_LIB_GLOB_i686-unknown-linux-gnu=lib$(1)-*.so
 CFG_LIB_DSYM_GLOB_i686-unknown-linux-gnu=lib$(1)-*.dylib.dSYM
 CFG_GCCISH_CFLAGS_i686-unknown-linux-gnu := -Wall -Werror -g -fPIC -m32
 CFG_GCCISH_CXXFLAGS_i686-unknown-linux-gnu := -fno-rtti
-CFG_GCCISH_LINK_FLAGS_i686-unknown-linux-gnu := -shared -fPIC -ldl -lpthread -lrt -g -m32
+CFG_GCCISH_LINK_FLAGS_i686-unknown-linux-gnu := -shared -fPIC -ldl -pthread  -lrt -g -m32
 CFG_GCCISH_DEF_FLAG_i686-unknown-linux-gnu := -Wl,--export-dynamic,--dynamic-list=
 CFG_GCCISH_PRE_LIB_FLAGS_i686-unknown-linux-gnu := -Wl,-whole-archive
 CFG_GCCISH_POST_LIB_FLAGS_i686-unknown-linux-gnu := -Wl,-no-whole-archive
@@ -173,7 +198,7 @@ CFG_LIB_GLOB_x86_64-apple-darwin=lib$(1)-*.dylib
 CFG_LIB_DSYM_GLOB_x86_64-apple-darwin=lib$(1)-*.dylib.dSYM
 CFG_GCCISH_CFLAGS_x86_64-apple-darwin := -Wall -Werror -g -fPIC -m64 -arch x86_64
 CFG_GCCISH_CXXFLAGS_x86_64-apple-darwin := -fno-rtti
-CFG_GCCISH_LINK_FLAGS_x86_64-apple-darwin := -dynamiclib -lpthread -framework CoreServices -Wl,-no_compact_unwind -m64
+CFG_GCCISH_LINK_FLAGS_x86_64-apple-darwin := -dynamiclib -pthread  -framework CoreServices -Wl,-no_compact_unwind -m64
 CFG_GCCISH_DEF_FLAG_x86_64-apple-darwin := -Wl,-exported_symbols_list,
 CFG_GCCISH_PRE_LIB_FLAGS_x86_64-apple-darwin :=
 CFG_GCCISH_POST_LIB_FLAGS_x86_64-apple-darwin :=
@@ -198,7 +223,7 @@ CFG_LIB_GLOB_i686-apple-darwin=lib$(1)-*.dylib
 CFG_LIB_DSYM_GLOB_i686-apple-darwin=lib$(1)-*.dylib.dSYM
 CFG_GCCISH_CFLAGS_i686-apple-darwin := -Wall -Werror -g -fPIC -m32 -arch i386
 CFG_GCCISH_CXXFLAGS_i686-apple-darwin := -fno-rtti
-CFG_GCCISH_LINK_FLAGS_i686-apple-darwin := -dynamiclib -lpthread -framework CoreServices -Wl,-no_compact_unwind -m32
+CFG_GCCISH_LINK_FLAGS_i686-apple-darwin := -dynamiclib -pthread  -framework CoreServices -Wl,-no_compact_unwind -m32
 CFG_GCCISH_DEF_FLAG_i686-apple-darwin := -Wl,-exported_symbols_list,
 CFG_GCCISH_PRE_LIB_FLAGS_i686-apple-darwin :=
 CFG_GCCISH_POST_LIB_FLAGS_i686-apple-darwin :=
@@ -239,6 +264,57 @@ CFG_RUN_arm-linux-androideabi=
 CFG_RUN_TARG_arm-linux-androideabi=
 RUSTC_FLAGS_arm-linux-androideabi :=--android-cross-path=$(CFG_ANDROID_CROSS_PATH)
 
+# arm-unknown-linux-gnueabihf configuration
+CC_arm-unknown-linux-gnueabihf=arm-linux-gnueabihf-gcc
+CXX_arm-unknown-linux-gnueabihf=arm-linux-gnueabihf-g++
+CPP_arm-unknown-linux-gnueabihf=arm-linux-gnueabihf-gcc -E
+AR_arm-unknown-linux-gnueabihf=arm-linux-gnueabihf-ar
+CFG_LIB_NAME_arm-unknown-linux-gnueabihf=lib$(1).so
+CFG_LIB_GLOB_arm-unknown-linux-gnueabihf=lib$(1)-*.so
+CFG_LIB_DSYM_GLOB_arm-unknown-linux-gnueabihf=lib$(1)-*.dylib.dSYM
+CFG_GCCISH_CFLAGS_arm-unknown-linux-gnueabihf := -Wall -g -fPIC
+CFG_GCCISH_CXXFLAGS_arm-unknown-linux-gnueabihf := -fno-rtti
+CFG_GCCISH_LINK_FLAGS_arm-unknown-linux-gnueabihf := -shared -fPIC -g
+CFG_GCCISH_DEF_FLAG_arm-unknown-linux-gnueabihf := -Wl,--export-dynamic,--dynamic-list=
+CFG_GCCISH_PRE_LIB_FLAGS_arm-unknown-linux-gnueabihf := -Wl,-whole-archive
+CFG_GCCISH_POST_LIB_FLAGS_arm-unknown-linux-gnueabihf := -Wl,-no-whole-archive
+CFG_DEF_SUFFIX_arm-unknown-linux-gnueabihf := .linux.def
+CFG_INSTALL_NAME_ar,-unknown-linux-gnueabihf =
+CFG_LIBUV_LINK_FLAGS_arm-unknown-linux-gnueabihf =
+CFG_EXE_SUFFIX_arm-unknown-linux-gnueabihf :=
+CFG_WINDOWSY_arm-unknown-linux-gnueabihf :=
+CFG_UNIXY_arm-unknown-linux-gnueabihf := 1
+CFG_PATH_MUNGE_arm-unknown-linux-gnueabihf := true
+CFG_LDPATH_arm-unknown-linux-gnueabihf :=
+CFG_RUN_arm-unknown-linux-gnueabihf=
+CFG_RUN_TARG_arm-unknown-linux-gnueabihf=
+RUSTC_FLAGS_arm-unknown-linux-gnueabihf := --linker=$(CC_arm-unknown-linux-gnueabihf)
+
+# mips-unknown-linux-gnu configuration
+CC_mips-unknown-linux-gnu=mips-linux-gnu-gcc
+CXX_mips-unknown-linux-gnu=mips-linux-gnu-g++
+CPP_mips-unknown-linux-gnu=mips-linux-gnu-gcc -E
+AR_mips-unknown-linux-gnu=mips-linux-gnu-ar
+CFG_LIB_NAME_mips-unknown-linux-gnu=lib$(1).so
+CFG_LIB_GLOB_mips-unknown-linux-gnu=lib$(1)-*.so
+CFG_LIB_DSYM_GLOB_mips-unknown-linux-gnu=lib$(1)-*.dylib.dSYM
+CFG_GCCISH_CFLAGS_mips-unknown-linux-gnu := -Wall -g -fPIC -mips32r2 -msoft-float -mabi=32 -mno-compact-eh
+CFG_GCCISH_CXXFLAGS_mips-unknown-linux-gnu := -fno-rtti
+CFG_GCCISH_LINK_FLAGS_mips-unknown-linux-gnu := -shared -fPIC -g -mips32r2 -msoft-float -mabi=32
+CFG_GCCISH_DEF_FLAG_mips-unknown-linux-gnu := -Wl,--export-dynamic,--dynamic-list=
+CFG_GCCISH_PRE_LIB_FLAGS_mips-unknown-linux-gnu := -Wl,-whole-archive
+CFG_GCCISH_POST_LIB_FLAGS_mips-unknown-linux-gnu := -Wl,-no-whole-archive
+CFG_DEF_SUFFIX_mips-unknown-linux-gnu := .linux.def
+CFG_INSTALL_NAME_mips-unknown-linux-gnu =
+CFG_LIBUV_LINK_FLAGS_mips-unknown-linux-gnu =
+CFG_EXE_SUFFIX_mips-unknown-linux-gnu :=
+CFG_WINDOWSY_mips-unknown-linux-gnu :=
+CFG_UNIXY_mips-unknown-linux-gnu := 1
+CFG_PATH_MUNGE_mips-unknown-linux-gnu := true
+CFG_LDPATH_mips-unknown-linux-gnu :=
+CFG_RUN_mips-unknown-linux-gnu=
+CFG_RUN_TARG_mips-unknown-linux-gnu=
+
 # i686-pc-mingw32 configuration
 CC_i686-pc-mingw32=$(CC)
 CXX_i686-pc-mingw32=$(CXX)
@@ -251,8 +327,8 @@ CFG_GCCISH_CFLAGS_i686-pc-mingw32 := -Wall -Werror -g -march=i686
 CFG_GCCISH_CXXFLAGS_i686-pc-mingw32 := -fno-rtti
 CFG_GCCISH_LINK_FLAGS_i686-pc-mingw32 := -shared -fPIC -g
 CFG_GCCISH_DEF_FLAG_i686-pc-mingw32 :=
-CFG_GCCISH_PRE_LIB_FLAGS_i686-pc-mingw32 := 
-CFG_GCCISH_POST_LIB_FLAGS_i686-pc-mingw32 := 
+CFG_GCCISH_PRE_LIB_FLAGS_i686-pc-mingw32 :=
+CFG_GCCISH_POST_LIB_FLAGS_i686-pc-mingw32 :=
 CFG_DEF_SUFFIX_i686-pc-mingw32 := .mingw32.def
 CFG_INSTALL_NAME_i686-pc-mingw32 =
 CFG_LIBUV_LINK_FLAGS_i686-pc-mingw32 := -lWs2_32 -lpsapi -liphlpapi
@@ -300,13 +376,13 @@ CFG_LIB_NAME_x86_64-unknown-freebsd=lib$(1).so
 CFG_LIB_GLOB_x86_64-unknown-freebsd=lib$(1)-*.so
 CFG_LIB_DSYM_GLOB_x86_64-unknown-freebsd=$(1)-*.dylib.dSYM
 CFG_GCCISH_CFLAGS_x86_64-unknown-freebsd := -Wall -Werror -g -fPIC -I/usr/local/include
-CFG_GCCISH_LINK_FLAGS_x86_64-unknown-freebsd := -shared -fPIC -g -lpthread -lrt
+CFG_GCCISH_LINK_FLAGS_x86_64-unknown-freebsd := -shared -fPIC -g -pthread  -lrt
 CFG_GCCISH_DEF_FLAG_x86_64-unknown-freebsd := -Wl,--export-dynamic,--dynamic-list=
 CFG_GCCISH_PRE_LIB_FLAGS_x86_64-unknown-freebsd := -Wl,-whole-archive
 CFG_GCCISH_POST_LIB_FLAGS_x86_64-unknown-freebsd := -Wl,-no-whole-archive
 CFG_DEF_SUFFIX_x86_64-unknown-freebsd := .bsd.def
 CFG_INSTALL_NAME_x86_64-unknown-freebsd =
-CFG_LIBUV_LINK_FLAGS_x86_64-unknown-freebsd := -lpthread -lkvm
+CFG_LIBUV_LINK_FLAGS_x86_64-unknown-freebsd := -pthread  -lkvm
 CFG_EXE_SUFFIX_x86_64-unknown-freebsd :=
 CFG_WINDOWSY_x86_64-unknown-freebsd :=
 CFG_UNIXY_x86_64-unknown-freebsd := 1
@@ -315,6 +391,15 @@ CFG_LDPATH_x86_64-unknown-freebsd :=
 CFG_RUN_x86_64-unknown-freebsd=$(2)
 CFG_RUN_TARG_x86_64-unknown-freebsd=$(call CFG_RUN_x86_64-unknown-freebsd,,$(2))
 
+ifeq ($(CFG_CCACHE_CPP2),1)
+  CCACHE_CPP2=1
+  export CCACHE_CPP
+endif
+
+ifdef CFG_CCACHE_BASEDIR
+  CCACHE_BASEDIR=$(CFG_CCACHE_BASEDIR)
+  export CCACHE_BASEDIR
+endif
 
 define CFG_MAKE_TOOLCHAIN
   CFG_COMPILE_C_$(1) = $$(CC_$(1))  \

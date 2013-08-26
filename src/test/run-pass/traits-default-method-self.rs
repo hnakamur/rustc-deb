@@ -8,18 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//xfail-test
-
-// Currently failing with an ICE in trans.  (FIXME: #2794)
+#[allow(default_methods)];
 
 trait Cat {
-    fn meow() -> bool;
-    fn scratch() -> bool { self.purr() }
-    fn purr() -> bool { true }
+    fn meow(&self) -> bool;
+    fn scratch(&self) -> bool { self.purr() }
+    fn purr(&self) -> bool { true }
 }
 
 impl Cat for int {
-    fn meow() -> bool {
+    fn meow(&self) -> bool {
         self.scratch()
     }
 }

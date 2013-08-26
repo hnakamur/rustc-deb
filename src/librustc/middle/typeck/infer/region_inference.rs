@@ -24,7 +24,7 @@ it's worth spending more time on a more involved analysis.  Moreover,
 regions are a simpler case than types: they don't have aggregate
 structure, for example.
 
-Unlike normal type inference, which is similar in spirit H-M and thus
+Unlike normal type inference, which is similar in spirit to H-M and thus
 works progressively, the region type inference works by accumulating
 constraints over the course of a function.  Finally, at the end of
 processing a function, we process and solve the constraints all at
@@ -130,7 +130,7 @@ of these variables can effectively be unified into a single variable.
 Once SCCs are removed, we are left with a DAG.  At this point, we can
 walk the DAG in toplogical order once to compute the expanding nodes,
 and again in reverse topological order to compute the contracting
-nodes.The main reason I did not write it this way is that I did not
+nodes. The main reason I did not write it this way is that I did not
 feel like implementing the SCC and toplogical sort algorithms at the
 moment.
 
@@ -536,57 +536,33 @@ more convincing in the future.
 
 */
 
-use core::prelude::*;
 
-use middle::region::is_subregion_of;
-use middle::region;
 use middle::ty;
-use middle::ty::{Region, RegionVid, re_static, re_infer, re_free, re_bound};
+use middle::ty::{FreeRegion, Region, RegionVid};
+use middle::ty::{re_empty, re_static, re_infer, re_free, re_bound};
 use middle::ty::{re_scope, ReVar, ReSkolemized, br_fresh};
 use middle::typeck::infer::cres;
 use util::common::indenter;
 use util::ppaux::note_and_explain_region;
 
-use core::cell::{Cell, empty_cell};
-use core::hashmap::linear::{LinearMap, LinearSet};
-use core::result::{Err, Ok};
-use core::to_bytes;
-use core::uint;
-use core::vec;
+use std::cell::Cell;
+use std::hashmap::{HashMap, HashSet};
+use std::uint;
+use std::vec;
 use syntax::codemap::span;
+use syntax::ast;
 
-#[deriving(Eq)]
+#[deriving(Eq,IterBytes)]
 enum Constraint {
     ConstrainVarSubVar(RegionVid, RegionVid),
     ConstrainRegSubVar(Region, RegionVid),
     ConstrainVarSubReg(RegionVid, Region)
 }
 
-impl to_bytes::IterBytes for Constraint {
-   fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
-        match *self {
-          ConstrainVarSubVar(ref v0, ref v1) =>
-          to_bytes::iter_bytes_3(&0u8, v0, v1, lsb0, f),
-
-          ConstrainRegSubVar(ref ra, ref va) =>
-          to_bytes::iter_bytes_3(&1u8, ra, va, lsb0, f),
-
-          ConstrainVarSubReg(ref va, ref ra) =>
-          to_bytes::iter_bytes_3(&2u8, va, ra, lsb0, f)
-        }
-    }
-}
-
-#[deriving(Eq)]
+#[deriving(Eq, IterBytes)]
 struct TwoRegions {
     a: Region,
     b: Region,
-}
-
-impl to_bytes::IterBytes for TwoRegions {
-    fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
-        to_bytes::iter_bytes_2(&self.a, &self.b, lsb0, f)
-    }
 }
 
 enum UndoLogEntry {
@@ -600,12 +576,12 @@ enum CombineMapType {
     Lub, Glb
 }
 
-type CombineMap = LinearMap<TwoRegions, RegionVid>;
+type CombineMap = HashMap<TwoRegions, RegionVid>;
 
 pub struct RegionVarBindings {
     tcx: ty::ctxt,
     var_spans: ~[span],
-    constraints: LinearMap<Constraint, span>,
+    constraints: HashMap<Constraint, span>,
     lubs: CombineMap,
     glbs: CombineMap,
     skolemization_count: uint,
@@ -631,22 +607,22 @@ pub fn RegionVarBindings(tcx: ty::ctxt) -> RegionVarBindings {
     RegionVarBindings {
         tcx: tcx,
         var_spans: ~[],
-        values: empty_cell(),
-        constraints: LinearMap::new(),
-        lubs: LinearMap::new(),
-        glbs: LinearMap::new(),
+        values: Cell::new_empty(),
+        constraints: HashMap::new(),
+        lubs: HashMap::new(),
+        glbs: HashMap::new(),
         skolemization_count: 0,
         bound_count: 0,
         undo_log: ~[]
     }
 }
 
-pub impl RegionVarBindings {
-    fn in_snapshot(&mut self) -> bool {
+impl RegionVarBindings {
+    pub fn in_snapshot(&self) -> bool {
         self.undo_log.len() > 0
     }
 
-    fn start_snapshot(&mut self) -> uint {
+    pub fn start_snapshot(&mut self) -> uint {
         debug!("RegionVarBindings: snapshot()=%u", self.undo_log.len());
         if self.in_snapshot() {
             self.undo_log.len()
@@ -656,14 +632,14 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn commit(&mut self) {
+    pub fn commit(&mut self) {
         debug!("RegionVarBindings: commit()");
         while self.undo_log.len() > 0 {
             self.undo_log.pop();
         }
     }
 
-    fn rollback_to(&mut self, snapshot: uint) {
+    pub fn rollback_to(&mut self, snapshot: uint) {
         debug!("RegionVarBindings: rollback_to(%u)", snapshot);
         while self.undo_log.len() > snapshot {
             let undo_item = self.undo_log.pop();
@@ -671,7 +647,7 @@ pub impl RegionVarBindings {
             match undo_item {
               Snapshot => {}
               AddVar(vid) => {
-                assert!(self.var_spans.len() == vid.to_uint() + 1);
+                assert_eq!(self.var_spans.len(), vid.to_uint() + 1);
                 self.var_spans.pop();
               }
               AddConstraint(ref constraint) => {
@@ -687,11 +663,11 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn num_vars(&mut self) -> uint {
+    pub fn num_vars(&mut self) -> uint {
         self.var_spans.len()
     }
 
-    fn new_region_var(&mut self, span: span) -> RegionVid {
+    pub fn new_region_var(&mut self, span: span) -> RegionVid {
         let id = self.num_vars();
         self.var_spans.push(span);
         let vid = RegionVid { id: id };
@@ -703,13 +679,13 @@ pub impl RegionVarBindings {
         return vid;
     }
 
-    fn new_skolemized(&mut self, br: ty::bound_region) -> Region {
+    pub fn new_skolemized(&mut self, br: ty::bound_region) -> Region {
         let sc = self.skolemization_count;
         self.skolemization_count += 1;
         re_infer(ReSkolemized(sc, br))
     }
 
-    fn new_bound(&mut self) -> Region {
+    pub fn new_bound(&mut self) -> Region {
         // Creates a fresh bound variable for use in GLB computations.
         // See discussion of GLB computation in the large comment at
         // the top of this file for more details.
@@ -729,7 +705,7 @@ pub impl RegionVarBindings {
         re_bound(br_fresh(sc))
     }
 
-    fn add_constraint(&mut self, +constraint: Constraint, span: span) {
+    pub fn add_constraint(&mut self, constraint: Constraint, span: span) {
         // cannot add constraints once regions are resolved
         assert!(self.values.is_empty());
 
@@ -742,10 +718,8 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn make_subregion(&mut self,
-                      span: span,
-                      sub: Region,
-                      sup: Region) -> cres<()> {
+    pub fn make_subregion(&mut self, span: span, sub: Region, sup: Region)
+                          -> cres<()> {
         // cannot add constraints once regions are resolved
         assert!(self.values.is_empty());
 
@@ -783,11 +757,8 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn lub_regions(&mut self,
-                   span: span,
-                   a: Region,
-                   b: Region)
-                -> cres<Region> {
+    pub fn lub_regions(&mut self, span: span, a: Region, b: Region)
+                       -> cres<Region> {
         // cannot add constraints once regions are resolved
         assert!(self.values.is_empty());
 
@@ -809,11 +780,8 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn glb_regions(&mut self,
-                   span: span,
-                   a: Region,
-                   b: Region)
-                -> cres<Region> {
+    pub fn glb_regions(&mut self, span: span, a: Region, b: Region)
+                       -> cres<Region> {
         // cannot add constraints once regions are resolved
         assert!(self.values.is_empty());
 
@@ -836,8 +804,7 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn resolve_var(&mut self, rid: RegionVid) -> ty::Region {
-        debug!("RegionVarBindings: resolve_var(%?=%u)", rid, rid.to_uint());
+    pub fn resolve_var(&mut self, rid: RegionVid) -> ty::Region {
         if self.values.is_empty() {
             self.tcx.sess.span_bug(
                 self.var_spans[rid.to_uint()],
@@ -846,29 +813,14 @@ pub impl RegionVarBindings {
         }
 
         let v = self.values.with_ref(|values| values[rid.to_uint()]);
+        debug!("RegionVarBindings: resolve_var(%?=%u)=%?",
+               rid, rid.to_uint(), v);
         match v {
             Value(r) => r,
 
             NoValue => {
-                // No constraints, report an error.  It is plausible
-                // that we could select an arbitrary region here
-                // instead.  At the moment I am not doing this because
-                // this generally masks bugs in the inference
-                // algorithm, and given our syntax one cannot create
-                // generally create a lifetime variable that isn't
-                // used in some type, and hence all lifetime variables
-                // should ultimately have some bounds.
-
-                self.tcx.sess.span_err(
-                    self.var_spans[rid.to_uint()],
-                    fmt!("Unconstrained region variable #%u", rid.to_uint()));
-
-                // Touch of a hack: to suppress duplicate messages,
-                // replace the NoValue entry with ErrorValue.
-                let mut values = self.values.take();
-                values[rid.to_uint()] = ErrorValue;
-                self.values.put_back(values);
-                re_static
+                // No constraints, return ty::re_empty
+                re_empty
             }
 
             ErrorValue => {
@@ -878,15 +830,15 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn combine_vars(&mut self,
-                    t: CombineMapType,
-                    a: Region,
-                    b: Region,
-                    span: span,
-                    relate: &fn(self: &mut RegionVarBindings,
-                                old_r: Region,
-                                new_r: Region) -> cres<()>)
-                 -> cres<Region> {
+    pub fn combine_vars(&mut self,
+                        t: CombineMapType,
+                        a: Region,
+                        b: Region,
+                        span: span,
+                        relate: &fn(this: &mut RegionVarBindings,
+                                    old_r: Region,
+                                    new_r: Region) -> cres<()>)
+                        -> cres<Region> {
         let vars = TwoRegions { a: a, b: b };
         let c;
         {
@@ -920,9 +872,8 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn vars_created_since_snapshot(&mut self,
-                                   snapshot: uint)
-                                -> ~[RegionVid] {
+    pub fn vars_created_since_snapshot(&mut self, snapshot: uint)
+                                       -> ~[RegionVid] {
         do vec::build |push| {
             for uint::range(snapshot, self.undo_log.len()) |i| {
                 match self.undo_log[i] {
@@ -933,7 +884,7 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn tainted(&mut self, snapshot: uint, r0: Region) -> ~[Region] {
+    pub fn tainted(&mut self, snapshot: uint, r0: Region) -> ~[Region] {
         /*!
          *
          * Computes all regions that have been related to `r0` in any
@@ -951,7 +902,8 @@ pub impl RegionVarBindings {
         // `result_set` acts as a worklist: we explore all outgoing
         // edges and add any new regions we find to result_set.  This
         // is not a terribly efficient implementation.
-        let mut result_set = ~[r0], result_index = 0;
+        let mut result_set = ~[r0];
+        let mut result_index = 0;
         while result_index < result_set.len() {
             // nb: can't use uint::range() here because result_set grows
             let r = result_set[result_index];
@@ -995,14 +947,14 @@ pub impl RegionVarBindings {
 
         return result_set;
 
-        fn consider_adding_edge(+result_set: ~[Region],
+        fn consider_adding_edge(result_set: ~[Region],
                                 r: &Region,
                                 r1: &Region,
                                 r2: &Region) -> ~[Region]
         {
             let mut result_set = result_set;
             if *r == *r1 { // Clearly, this is potentially inefficient.
-                if !result_set.contains(r2) {
+                if !result_set.iter().any_(|x| x == r2) {
                     result_set.push(*r2);
                 }
             }
@@ -1017,22 +969,27 @@ pub impl RegionVarBindings {
     constraints, assuming such values can be found; if they cannot,
     errors are reported.
     */
-    fn resolve_regions(&mut self) {
+    pub fn resolve_regions(&mut self) {
         debug!("RegionVarBindings: resolve_regions()");
         let v = self.infer_variable_values();
         self.values.put_back(v);
     }
 }
 
-priv impl RegionVarBindings {
-    fn is_subregion_of(&mut self, sub: Region, sup: Region) -> bool {
-        is_subregion_of(self.tcx.region_map, sub, sup)
+impl RegionVarBindings {
+    fn is_subregion_of(&self, sub: Region, sup: Region) -> bool {
+        let rm = self.tcx.region_maps;
+        rm.is_subregion_of(sub, sup)
     }
 
-    fn lub_concrete_regions(&mut self, +a: Region, +b: Region) -> Region {
+    fn lub_concrete_regions(&self, a: Region, b: Region) -> Region {
         match (a, b) {
           (re_static, _) | (_, re_static) => {
             re_static // nothing lives longer than static
+          }
+
+          (re_empty, r) | (r, re_empty) => {
+            r // everything lives longer than empty
           }
 
           (re_infer(ReVar(v_id)), _) | (_, re_infer(ReVar(v_id))) => {
@@ -1042,17 +999,17 @@ priv impl RegionVarBindings {
                       non-concrete regions: %?, %?", a, b));
           }
 
-          (f @ re_free(f_id, _), re_scope(s_id)) |
-          (re_scope(s_id), f @ re_free(f_id, _)) => {
+          (f @ re_free(ref fr), re_scope(s_id)) |
+          (re_scope(s_id), f @ re_free(ref fr)) => {
             // A "free" region can be interpreted as "some region
-            // at least as big as the block f_id".  So, we can
+            // at least as big as the block fr.scope_id".  So, we can
             // reasonably compare free regions and scopes:
-            let rm = self.tcx.region_map;
-            match region::nearest_common_ancestor(rm, f_id, s_id) {
-              // if the free region's scope `f_id` is bigger than
+            let rm = self.tcx.region_maps;
+            match rm.nearest_common_ancestor(fr.scope_id, s_id) {
+              // if the free region's scope `fr.scope_id` is bigger than
               // the scope region `s_id`, then the LUB is the free
               // region itself:
-              Some(r_id) if r_id == f_id => f,
+              Some(r_id) if r_id == fr.scope_id => f,
 
               // otherwise, we don't know what the free region is,
               // so we must conservatively say the LUB is static:
@@ -1064,36 +1021,76 @@ priv impl RegionVarBindings {
             // The region corresponding to an outer block is a
             // subtype of the region corresponding to an inner
             // block.
-            let rm = self.tcx.region_map;
-            match region::nearest_common_ancestor(rm, a_id, b_id) {
+            let rm = self.tcx.region_maps;
+            match rm.nearest_common_ancestor(a_id, b_id) {
               Some(r_id) => re_scope(r_id),
               _ => re_static
             }
+          }
+
+          (re_free(ref a_fr), re_free(ref b_fr)) => {
+             self.lub_free_regions(a_fr, b_fr)
           }
 
           // For these types, we cannot define any additional
           // relationship:
           (re_infer(ReSkolemized(*)), _) |
           (_, re_infer(ReSkolemized(*))) |
-          (re_free(_, _), re_free(_, _)) |
           (re_bound(_), re_bound(_)) |
-          (re_bound(_), re_free(_, _)) |
+          (re_bound(_), re_free(_)) |
           (re_bound(_), re_scope(_)) |
-          (re_free(_, _), re_bound(_)) |
+          (re_free(_), re_bound(_)) |
           (re_scope(_), re_bound(_)) => {
             if a == b {a} else {re_static}
           }
         }
     }
 
-    fn glb_concrete_regions(&mut self,
-                            +a: Region,
-                            +b: Region)
+    fn lub_free_regions(&self,
+                        a: &FreeRegion,
+                        b: &FreeRegion) -> ty::Region
+    {
+        /*!
+         * Computes a region that encloses both free region arguments.
+         * Guarantee that if the same two regions are given as argument,
+         * in any order, a consistent result is returned.
+         */
+
+        return match a.cmp(b) {
+            Less => helper(self, a, b),
+            Greater => helper(self, b, a),
+            Equal => ty::re_free(*a)
+        };
+
+        fn helper(this: &RegionVarBindings,
+                  a: &FreeRegion,
+                  b: &FreeRegion) -> ty::Region
+        {
+            let rm = this.tcx.region_maps;
+            if rm.sub_free_region(*a, *b) {
+                ty::re_free(*b)
+            } else if rm.sub_free_region(*b, *a) {
+                ty::re_free(*a)
+            } else {
+                ty::re_static
+            }
+        }
+    }
+
+    fn glb_concrete_regions(&self,
+                            a: Region,
+                            b: Region)
                          -> cres<Region> {
+        debug!("glb_concrete_regions(%?, %?)", a, b);
         match (a, b) {
             (re_static, r) | (r, re_static) => {
                 // static lives longer than everything else
                 Ok(r)
+            }
+
+            (re_empty, _) | (_, re_empty) => {
+                // nothing lives shorter than everything else
+                Ok(re_empty)
             }
 
             (re_infer(ReVar(v_id)), _) |
@@ -1104,37 +1101,26 @@ priv impl RegionVarBindings {
                           non-concrete regions: %?, %?", a, b));
             }
 
-            (re_free(f_id, _), s @ re_scope(s_id)) |
-            (s @ re_scope(s_id), re_free(f_id, _)) => {
+            (re_free(ref fr), s @ re_scope(s_id)) |
+            (s @ re_scope(s_id), re_free(ref fr)) => {
                 // Free region is something "at least as big as
-                // `f_id`."  If we find that the scope `f_id` is bigger
+                // `fr.scope_id`."  If we find that the scope `fr.scope_id` is bigger
                 // than the scope `s_id`, then we can say that the GLB
                 // is the scope `s_id`.  Otherwise, as we do not know
                 // big the free region is precisely, the GLB is undefined.
-                let rm = self.tcx.region_map;
-                match region::nearest_common_ancestor(rm, f_id, s_id) {
-                    Some(r_id) if r_id == f_id => Ok(s),
+                let rm = self.tcx.region_maps;
+                match rm.nearest_common_ancestor(fr.scope_id, s_id) {
+                    Some(r_id) if r_id == fr.scope_id => Ok(s),
                     _ => Err(ty::terr_regions_no_overlap(b, a))
                 }
             }
 
-            (re_scope(a_id), re_scope(b_id)) |
-            (re_free(a_id, _), re_free(b_id, _)) => {
-                if a == b {
-                    // Same scope or same free identifier, easy case.
-                    Ok(a)
-                } else {
-                    // We want to generate the intersection of two
-                    // scopes or two free regions.  So, if one of
-                    // these scopes is a subscope of the other, return
-                    // it.  Otherwise fail.
-                    let rm = self.tcx.region_map;
-                    match region::nearest_common_ancestor(rm, a_id, b_id) {
-                        Some(r_id) if a_id == r_id => Ok(re_scope(b_id)),
-                        Some(r_id) if b_id == r_id => Ok(re_scope(a_id)),
-                        _ => Err(ty::terr_regions_no_overlap(b, a))
-                    }
-                }
+            (re_scope(a_id), re_scope(b_id)) => {
+                self.intersect_scopes(a, b, a_id, b_id)
+            }
+
+            (re_free(ref a_fr), re_free(ref b_fr)) => {
+                self.glb_free_regions(a_fr, b_fr)
             }
 
             // For these types, we cannot define any additional
@@ -1142,9 +1128,9 @@ priv impl RegionVarBindings {
             (re_infer(ReSkolemized(*)), _) |
             (_, re_infer(ReSkolemized(*))) |
             (re_bound(_), re_bound(_)) |
-            (re_bound(_), re_free(_, _)) |
+            (re_bound(_), re_free(_)) |
             (re_bound(_), re_scope(_)) |
-            (re_free(_, _), re_bound(_)) |
+            (re_free(_), re_bound(_)) |
             (re_scope(_), re_bound(_)) => {
                 if a == b {
                     Ok(a)
@@ -1155,9 +1141,61 @@ priv impl RegionVarBindings {
         }
     }
 
+    fn glb_free_regions(&self,
+                        a: &FreeRegion,
+                        b: &FreeRegion) -> cres<ty::Region>
+    {
+        /*!
+         * Computes a region that is enclosed by both free region arguments,
+         * if any. Guarantees that if the same two regions are given as argument,
+         * in any order, a consistent result is returned.
+         */
+
+        return match a.cmp(b) {
+            Less => helper(self, a, b),
+            Greater => helper(self, b, a),
+            Equal => Ok(ty::re_free(*a))
+        };
+
+        fn helper(this: &RegionVarBindings,
+                  a: &FreeRegion,
+                  b: &FreeRegion) -> cres<ty::Region>
+        {
+            let rm = this.tcx.region_maps;
+            if rm.sub_free_region(*a, *b) {
+                Ok(ty::re_free(*a))
+            } else if rm.sub_free_region(*b, *a) {
+                Ok(ty::re_free(*b))
+            } else {
+                this.intersect_scopes(ty::re_free(*a), ty::re_free(*b),
+                                      a.scope_id, b.scope_id)
+            }
+        }
+    }
+
     fn report_type_error(&mut self, span: span, terr: &ty::type_err) {
         let terr_str = ty::type_err_to_str(self.tcx, terr);
         self.tcx.sess.span_err(span, terr_str);
+    }
+
+    fn intersect_scopes(&self,
+                        region_a: ty::Region,
+                        region_b: ty::Region,
+                        scope_a: ast::node_id,
+                        scope_b: ast::node_id) -> cres<Region>
+    {
+        // We want to generate the intersection of two
+        // scopes or two free regions.  So, if one of
+        // these scopes is a subscope of the other, return
+        // it.  Otherwise fail.
+        debug!("intersect_scopes(scope_a=%?, scope_b=%?, region_a=%?, region_b=%?)",
+               scope_a, scope_b, region_a, region_b);
+        let rm = self.tcx.region_maps;
+        match rm.nearest_common_ancestor(scope_a, scope_b) {
+            Some(r_id) if scope_a == r_id => Ok(re_scope(scope_b)),
+            Some(r_id) if scope_b == r_id => Ok(re_scope(scope_a)),
+            _ => Err(ty::terr_regions_no_overlap(region_a, region_b))
+        }
     }
 }
 
@@ -1194,17 +1232,15 @@ struct SpannedRegion {
     span: span,
 }
 
-type TwoRegionsMap = LinearSet<TwoRegions>;
-
-pub impl RegionVarBindings {
-    fn infer_variable_values(&mut self) -> ~[GraphNodeValue] {
+impl RegionVarBindings {
+    pub fn infer_variable_values(&mut self) -> ~[GraphNodeValue] {
         let mut graph = self.construct_graph();
         self.expansion(&mut graph);
         self.contraction(&mut graph);
         self.extract_values_and_report_conflicts(&graph)
     }
 
-    fn construct_graph(&mut self) -> Graph {
+    pub fn construct_graph(&mut self) -> Graph {
         let num_vars = self.num_vars();
         let num_edges = self.constraints.len();
 
@@ -1223,7 +1259,7 @@ pub impl RegionVarBindings {
 
         // It would be nice to write this using map():
         let mut edges = vec::with_capacity(num_edges);
-        for self.constraints.each |&(constraint, span)| {
+        for self.constraints.iter().advance |(constraint, span)| {
             edges.push(GraphEdge {
                 next_edge: [uint::max_value, uint::max_value],
                 constraint: *constraint,
@@ -1253,19 +1289,23 @@ pub impl RegionVarBindings {
 
         return (graph);
 
-        fn insert_edge(+graph: &mut Graph,
+        fn insert_edge(graph: &mut Graph,
                        node_id: RegionVid,
                        edge_dir: Direction,
                        edge_idx: uint) {
+            //! Insert edge `edge_idx` on the link list of edges in direction
+            //! `edge_dir` for the node `node_id`
             let edge_dir = edge_dir as uint;
-            graph.edges[edge_idx].next_edge[edge_dir] =
-                graph.nodes[node_id.to_uint()].head_edge[edge_dir];
-            graph.nodes[node_id.to_uint()].head_edge[edge_dir] =
-                edge_idx;
+            assert_eq!(graph.edges[edge_idx].next_edge[edge_dir],
+                       uint::max_value);
+            let n = node_id.to_uint();
+            let prev_head = graph.nodes[n].head_edge[edge_dir];
+            graph.edges[edge_idx].next_edge[edge_dir] = prev_head;
+            graph.nodes[n].head_edge[edge_dir] = edge_idx;
         }
     }
 
-    fn expansion(&mut self, graph: &mut Graph) {
+    pub fn expansion(&mut self, graph: &mut Graph) {
         do iterate_until_fixed_point(~"Expansion", graph) |nodes, edge| {
             match edge.constraint {
               ConstrainRegSubVar(a_region, b_vid) => {
@@ -1289,11 +1329,11 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn expand_node(&mut self,
-                   a_region: Region,
-                   b_vid: RegionVid,
-                   b_node: &mut GraphNode)
-                -> bool {
+    pub fn expand_node(&mut self,
+                       a_region: Region,
+                       b_vid: RegionVid,
+                       b_node: &mut GraphNode)
+                       -> bool {
         debug!("expand_node(%?, %? == %?)",
                a_region, b_vid, b_node.value);
 
@@ -1325,7 +1365,7 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn contraction(&mut self, graph: &mut Graph) {
+    pub fn contraction(&mut self, graph: &mut Graph) {
         do iterate_until_fixed_point(~"Contraction", graph) |nodes, edge| {
             match edge.constraint {
               ConstrainRegSubVar(*) => {
@@ -1349,17 +1389,17 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn contract_node(&mut self,
-                     a_vid: RegionVid,
-                     a_node: &mut GraphNode,
-                     b_region: Region)
-                  -> bool {
+    pub fn contract_node(&mut self,
+                         a_vid: RegionVid,
+                         a_node: &mut GraphNode,
+                         b_region: Region)
+                         -> bool {
         debug!("contract_node(%? == %?/%?, %?)",
                a_vid, a_node.value, a_node.classification, b_region);
 
         return match a_node.value {
             NoValue => {
-                assert!(a_node.classification == Contracting);
+                assert_eq!(a_node.classification, Contracting);
                 a_node.value = Value(b_region);
                 true // changed
             }
@@ -1380,13 +1420,13 @@ pub impl RegionVarBindings {
             }
         };
 
-        fn check_node(+self: &mut RegionVarBindings,
+        fn check_node(this: &mut RegionVarBindings,
                       a_vid: RegionVid,
-                      +a_node: &mut GraphNode,
+                      a_node: &mut GraphNode,
                       a_region: Region,
                       b_region: Region)
                    -> bool {
-            if !self.is_subregion_of(a_region, b_region) {
+            if !this.is_subregion_of(a_region, b_region) {
                 debug!("Setting %? to ErrorValue: %? not subregion of %?",
                        a_vid, a_region, b_region);
                 a_node.value = ErrorValue;
@@ -1394,13 +1434,13 @@ pub impl RegionVarBindings {
             false
         }
 
-        fn adjust_node(+self: &mut RegionVarBindings,
+        fn adjust_node(this: &mut RegionVarBindings,
                        a_vid: RegionVid,
-                       +a_node: &mut GraphNode,
+                       a_node: &mut GraphNode,
                        a_region: Region,
                        b_region: Region)
                     -> bool {
-            match self.glb_concrete_regions(a_region, b_region) {
+            match this.glb_concrete_regions(a_region, b_region) {
                 Ok(glb) => {
                     if glb == a_region {
                         false
@@ -1412,6 +1452,8 @@ pub impl RegionVarBindings {
                     }
                 }
                 Err(_) => {
+                    debug!("Setting %? to ErrorValue: no glb of %?, %?",
+                           a_vid, a_region, b_region);
                     a_node.value = ErrorValue;
                     false
                 }
@@ -1419,12 +1461,24 @@ pub impl RegionVarBindings {
         }
     }
 
-    fn extract_values_and_report_conflicts(
-        &mut self,
-        graph: &Graph) -> ~[GraphNodeValue]
-    {
-        let mut dup_map = LinearSet::new();
-        graph.nodes.mapi(|idx, node| {
+    pub fn extract_values_and_report_conflicts(&mut self, graph: &Graph)
+                                               -> ~[GraphNodeValue] {
+        debug!("extract_values_and_report_conflicts()");
+
+        // This is the best way that I have found to suppress
+        // duplicate and related errors. Basically we keep a set of
+        // flags for every node. Whenever an error occurs, we will
+        // walk some portion of the graph looking to find pairs of
+        // conflicting regions to report to the user. As we walk, we
+        // trip the flags from false to true, and if we find that
+        // we've already reported an error involving any particular
+        // node we just stop and don't report the current error.  The
+        // idea is to report errors that derive from independent
+        // regions of the graph, but not those that derive from
+        // overlapping locations.
+        let mut dup_vec = graph.nodes.map(|_| uint::max_value);
+
+        graph.nodes.iter().enumerate().transform(|(idx, node)| {
             match node.value {
                 Value(_) => {
                     /* Inference successful */
@@ -1458,55 +1512,44 @@ pub impl RegionVarBindings {
                        that is not used is not a problem, so if this rule
                        starts to create problems we'll have to revisit
                        this portion of the code and think hard about it. =) */
+
                     let node_vid = RegionVid { id: idx };
                     match node.classification {
                         Expanding => {
                             self.report_error_for_expanding_node(
-                                graph, &mut dup_map, node_vid);
+                                graph, dup_vec, node_vid);
                         }
                         Contracting => {
                             self.report_error_for_contracting_node(
-                                graph, &mut dup_map, node_vid);
+                                graph, dup_vec, node_vid);
                         }
                     }
                 }
             }
 
             node.value
-        })
+        }).collect()
     }
 
-    // Used to suppress reporting the same basic error over and over
-    fn is_reported(&mut self,
-                   dup_map: &mut TwoRegionsMap,
-                   r_a: Region,
-                   r_b: Region)
-                -> bool {
-        let key = TwoRegions { a: r_a, b: r_b };
-        !dup_map.insert(key)
-    }
-
-    fn report_error_for_expanding_node(&mut self,
-                                       graph: &Graph,
-                                       dup_map: &mut TwoRegionsMap,
-                                       node_idx: RegionVid) {
+    pub fn report_error_for_expanding_node(&mut self,
+                                           graph: &Graph,
+                                           dup_vec: &mut [uint],
+                                           node_idx: RegionVid) {
         // Errors in expanding nodes result from a lower-bound that is
         // not contained by an upper-bound.
-        let lower_bounds =
-            self.collect_concrete_regions(graph, node_idx, Incoming);
-        let upper_bounds =
-            self.collect_concrete_regions(graph, node_idx, Outgoing);
+        let (lower_bounds, lower_dup) =
+            self.collect_concrete_regions(graph, node_idx, Incoming, dup_vec);
+        let (upper_bounds, upper_dup) =
+            self.collect_concrete_regions(graph, node_idx, Outgoing, dup_vec);
 
-        for vec::each(lower_bounds) |lower_bound| {
-            for vec::each(upper_bounds) |upper_bound| {
+        if lower_dup || upper_dup {
+            return;
+        }
+
+        for lower_bounds.iter().advance |lower_bound| {
+            for upper_bounds.iter().advance |upper_bound| {
                 if !self.is_subregion_of(lower_bound.region,
                                          upper_bound.region) {
-
-                    if self.is_reported(dup_map,
-                                        lower_bound.region,
-                                        upper_bound.region) {
-                        return;
-                    }
 
                     self.tcx.sess.span_err(
                         self.var_spans[node_idx.to_uint()],
@@ -1515,9 +1558,9 @@ pub impl RegionVarBindings {
 
                     note_and_explain_region(
                         self.tcx,
-                        ~"first, the lifetime cannot outlive ",
+                        "first, the lifetime cannot outlive ",
                         upper_bound.region,
-                        ~"...");
+                        "...");
 
                     self.tcx.sess.span_note(
                         upper_bound.span,
@@ -1525,9 +1568,9 @@ pub impl RegionVarBindings {
 
                     note_and_explain_region(
                         self.tcx,
-                        ~"but, the lifetime must be valid for ",
+                        "but, the lifetime must be valid for ",
                         lower_bound.region,
-                        ~"...");
+                        "...");
 
                     self.tcx.sess.span_note(
                         lower_bound.span,
@@ -1537,29 +1580,35 @@ pub impl RegionVarBindings {
                 }
             }
         }
+
+        self.tcx.sess.span_bug(
+            self.var_spans[node_idx.to_uint()],
+            fmt!("report_error_for_expanding_node() could not find error \
+                  for var %?, lower_bounds=%s, upper_bounds=%s",
+                 node_idx,
+                 lower_bounds.map(|x| x.region).repr(self.tcx),
+                 upper_bounds.map(|x| x.region).repr(self.tcx)));
     }
 
-    fn report_error_for_contracting_node(&mut self,
-                                         graph: &Graph,
-                                         dup_map: &mut TwoRegionsMap,
-                                         node_idx: RegionVid) {
+    pub fn report_error_for_contracting_node(&mut self,
+                                             graph: &Graph,
+                                             dup_vec: &mut [uint],
+                                             node_idx: RegionVid) {
         // Errors in contracting nodes result from two upper-bounds
         // that have no intersection.
-        let upper_bounds = self.collect_concrete_regions(graph, node_idx,
-                                                         Outgoing);
+        let (upper_bounds, dup_found) =
+            self.collect_concrete_regions(graph, node_idx, Outgoing, dup_vec);
 
-        for vec::each(upper_bounds) |upper_bound_1| {
-            for vec::each(upper_bounds) |upper_bound_2| {
+        if dup_found {
+            return;
+        }
+
+        for upper_bounds.iter().advance |upper_bound_1| {
+            for upper_bounds.iter().advance |upper_bound_2| {
                 match self.glb_concrete_regions(upper_bound_1.region,
                                                 upper_bound_2.region) {
                   Ok(_) => {}
                   Err(_) => {
-
-                    if self.is_reported(dup_map,
-                                        upper_bound_1.region,
-                                        upper_bound_2.region) {
-                        return;
-                    }
 
                     self.tcx.sess.span_err(
                         self.var_spans[node_idx.to_uint()],
@@ -1568,9 +1617,9 @@ pub impl RegionVarBindings {
 
                     note_and_explain_region(
                         self.tcx,
-                        ~"first, the lifetime must be contained by ",
+                        "first, the lifetime must be contained by ",
                         upper_bound_1.region,
-                        ~"...");
+                        "...");
 
                     self.tcx.sess.span_note(
                         upper_bound_1.span,
@@ -1578,9 +1627,9 @@ pub impl RegionVarBindings {
 
                     note_and_explain_region(
                         self.tcx,
-                        ~"but, the lifetime must also be contained by ",
+                        "but, the lifetime must also be contained by ",
                         upper_bound_2.region,
-                        ~"...");
+                        "...");
 
                     self.tcx.sess.span_note(
                         upper_bound_2.span,
@@ -1591,66 +1640,112 @@ pub impl RegionVarBindings {
                 }
             }
         }
+
+        self.tcx.sess.span_bug(
+            self.var_spans[node_idx.to_uint()],
+            fmt!("report_error_for_contracting_node() could not find error \
+                  for var %?, upper_bounds=%s",
+                 node_idx,
+                 upper_bounds.map(|x| x.region).repr(self.tcx)));
     }
 
-    fn collect_concrete_regions(&mut self,
-                                graph: &Graph,
-                                orig_node_idx: RegionVid,
-                                dir: Direction)
-                             -> ~[SpannedRegion] {
-        let mut set = LinearSet::new();
-        let mut stack = ~[orig_node_idx];
-        set.insert(orig_node_idx.to_uint());
-        let mut result = ~[];
-        while !vec::is_empty(stack) {
-            let node_idx = stack.pop();
-            for self.each_edge(graph, node_idx, dir) |edge| {
+    pub fn collect_concrete_regions(&mut self,
+                                    graph: &Graph,
+                                    orig_node_idx: RegionVid,
+                                    dir: Direction,
+                                    dup_vec: &mut [uint])
+                                    -> (~[SpannedRegion], bool) {
+        struct WalkState {
+            set: HashSet<RegionVid>,
+            stack: ~[RegionVid],
+            result: ~[SpannedRegion],
+            dup_found: bool
+        }
+        let mut state = WalkState {
+            set: HashSet::new(),
+            stack: ~[orig_node_idx],
+            result: ~[],
+            dup_found: false
+        };
+        state.set.insert(orig_node_idx);
+
+        // to start off the process, walk the source node in the
+        // direction specified
+        process_edges(self, &mut state, graph, orig_node_idx, dir);
+
+        while !state.stack.is_empty() {
+            let node_idx = state.stack.pop();
+            let classification = graph.nodes[node_idx.to_uint()].classification;
+
+            // check whether we've visited this node on some previous walk
+            if dup_vec[node_idx.to_uint()] == uint::max_value {
+                dup_vec[node_idx.to_uint()] = orig_node_idx.to_uint();
+            } else if dup_vec[node_idx.to_uint()] != orig_node_idx.to_uint() {
+                state.dup_found = true;
+            }
+
+            debug!("collect_concrete_regions(orig_node_idx=%?, node_idx=%?, \
+                    classification=%?)",
+                   orig_node_idx, node_idx, classification);
+
+            // figure out the direction from which this node takes its
+            // values, and search for concrete regions etc in that direction
+            let dir = match classification {
+                Expanding => Incoming,
+                Contracting => Outgoing
+            };
+
+            process_edges(self, &mut state, graph, node_idx, dir);
+        }
+
+        let WalkState {result, dup_found, _} = state;
+        return (result, dup_found);
+
+        fn process_edges(this: &mut RegionVarBindings,
+                         state: &mut WalkState,
+                         graph: &Graph,
+                         source_vid: RegionVid,
+                         dir: Direction) {
+            debug!("process_edges(source_vid=%?, dir=%?)", source_vid, dir);
+
+            for this.each_edge(graph, source_vid, dir) |edge| {
                 match edge.constraint {
-                  ConstrainVarSubVar(from_vid, to_vid) => {
-                    let vid = match dir {
-                      Incoming => from_vid,
-                      Outgoing => to_vid
-                    };
-                    if set.insert(vid.to_uint()) {
-                        stack.push(vid);
+                    ConstrainVarSubVar(from_vid, to_vid) => {
+                        let opp_vid =
+                            if from_vid == source_vid {to_vid} else {from_vid};
+                        if state.set.insert(opp_vid) {
+                            state.stack.push(opp_vid);
+                        }
                     }
-                  }
 
-                  ConstrainRegSubVar(region, _) => {
-                    assert!(dir == Incoming);
-                    result.push(SpannedRegion {
-                        region: region,
-                        span: edge.span
-                    });
-                  }
-
-                  ConstrainVarSubReg(_, region) => {
-                    assert!(dir == Outgoing);
-                    result.push(SpannedRegion {
-                        region: region,
-                        span: edge.span
-                    });
-                  }
+                    ConstrainRegSubVar(region, _) |
+                    ConstrainVarSubReg(_, region) => {
+                        state.result.push(SpannedRegion {
+                            region: region,
+                            span: edge.span
+                        });
+                    }
                 }
             }
         }
-        return result;
     }
 
-    fn each_edge(&mut self,
-                 graph: &Graph,
-                 node_idx: RegionVid,
-                 dir: Direction,
-                 op: &fn(edge: &GraphEdge) -> bool) {
+    pub fn each_edge(&mut self,
+                     graph: &Graph,
+                     node_idx: RegionVid,
+                     dir: Direction,
+                     op: &fn(edge: &GraphEdge) -> bool)
+                     -> bool {
         let mut edge_idx =
             graph.nodes[node_idx.to_uint()].head_edge[dir as uint];
         while edge_idx != uint::max_value {
             let edge_ptr = &graph.edges[edge_idx];
             if !op(edge_ptr) {
-                return;
+                return false;
             }
             edge_idx = edge_ptr.next_edge[dir as uint];
         }
+        return true;
     }
 }
 
@@ -1674,4 +1769,3 @@ fn iterate_until_fixed_point(
     }
     debug!("---- %s Complete after %u iteration(s)", tag, iteration);
 }
-

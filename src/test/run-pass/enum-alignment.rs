@@ -8,13 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::cast;
+use std::ptr;
+use std::sys;
+
 fn addr_of<T>(ptr: &T) -> uint {
-    let ptr = ptr::addr_of(ptr);
+    let ptr = ptr::to_unsafe_ptr(ptr);
     unsafe { ptr as uint }
 }
 
 fn is_aligned<T>(ptr: &T) -> bool {
-    (addr_of(ptr) % sys::min_align_of::<T>()) == 0
+    unsafe {
+        let addr: uint = cast::transmute(ptr);
+        (addr % sys::min_align_of::<T>()) == 0
+    }
 }
 
 pub fn main() {

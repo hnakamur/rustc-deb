@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef __ANDROID__
+
 #include "rust_android_dummy.h"
 #include <math.h>
 #include <errno.h>
-
-#ifdef __ANDROID__
 
 int backtrace(void **array, int size) { return 0; }
 
@@ -59,7 +59,53 @@ extern "C" void srand()
 extern "C" void atof()
 {
 }
+
 extern "C" void tgammaf()
 {
 }
+
+extern "C" int glob(const char *pattern,
+                    int flags,
+                    int (*errfunc) (const char *epath, int eerrno),
+                    glob_t *pglob)
+{
+    return 0;
+}
+
+extern "C" void globfree(glob_t *pglob)
+{
+}
+
+extern "C" int pthread_atfork(void (*prefork)(void),
+                              void (*postfork_parent)(void),
+                              void (*postfork_child)(void))
+{
+    return 0;
+}
+
+extern "C" int mlockall(int flags)
+{
+    return 0;
+}
+
+extern "C" int munlockall(void)
+{
+    return 0;
+}
+
+extern "C" int shm_open(const char *name, int oflag, mode_t mode)
+{
+    return 0;
+}
+
+extern "C" int shm_unlink(const char *name)
+{
+    return 0;
+}
+
+extern "C" int posix_madvise(void *addr, size_t len, int advice)
+{
+    return 0;
+}
+
 #endif

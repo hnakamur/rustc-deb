@@ -10,12 +10,12 @@
 
 // This is what the signature to spawn should look like with bare functions
 
-fn spawn<T:Owned>(val: T, f: extern fn(T)) {
+fn spawn<T:Send>(val: T, f: extern fn(T)) {
     f(val);
 }
 
-fn f(+i: int) {
-    assert!(i == 100);
+fn f(i: int) {
+    assert_eq!(i, 100);
 }
 
 pub fn main() {

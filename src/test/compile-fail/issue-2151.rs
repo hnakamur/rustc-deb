@@ -9,8 +9,6 @@
 // except according to those terms.
 
 fn main() {
-    for vec::each(fail!()) |i| {
-        debug!(i * 2);
-        //~^ ERROR the type of this value must be known
-   };
+    let x = fail!();
+    x.clone(); //~ ERROR the type of this value must be known in this context
 }

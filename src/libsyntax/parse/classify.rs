@@ -15,6 +15,13 @@
 use ast;
 use codemap;
 
+// does this expression require a semicolon to be treated
+// as a statement? The negation of this: 'can this expression
+// be used as a statement without a semicolon' -- is used
+// as an early-bail-out in the parser so that, for instance,
+// 'if true {...} else {...}
+//  |x| 5 '
+// isn't parsed as (if true {...} else {...} | x) | 5
 pub fn expr_requires_semi_to_be_stmt(e: @ast::expr) -> bool {
     match e.node {
       ast::expr_if(*)
@@ -24,8 +31,8 @@ pub fn expr_requires_semi_to_be_stmt(e: @ast::expr) -> bool {
       | ast::expr_loop(*)
       | ast::expr_call(_, _, ast::DoSugar)
       | ast::expr_call(_, _, ast::ForSugar)
-      | ast::expr_method_call(_, _, _, _, ast::DoSugar)
-      | ast::expr_method_call(_, _, _, _, ast::ForSugar) => false,
+      | ast::expr_method_call(_, _, _, _, _, ast::DoSugar)
+      | ast::expr_method_call(_, _, _, _, _, ast::ForSugar) => false,
       _ => true
     }
 }
@@ -40,7 +47,10 @@ pub fn expr_is_simple_block(e: @ast::expr) -> bool {
     }
 }
 
-pub fn stmt_ends_with_semi(stmt: ast::stmt) -> bool {
+// this statement requires a semicolon after it.
+// note that in one case (stmt_semi), we've already
+// seen the semicolon, and thus don't need another.
+pub fn stmt_ends_with_semi(stmt: &ast::stmt) -> bool {
     return match stmt.node {
         ast::stmt_decl(d, _) => {
             match d.node {

@@ -15,8 +15,8 @@
 #define LLVM_CODEGEN_FASTISEL_H
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/ValueTypes.h"
 
 namespace llvm {
 
@@ -24,7 +24,6 @@ class AllocaInst;
 class Constant;
 class ConstantFP;
 class FunctionLoweringInfo;
-class GCFunctionInfo;
 class Instruction;
 class LoadInst;
 class MachineBasicBlock;
@@ -33,7 +32,7 @@ class MachineFunction;
 class MachineInstr;
 class MachineFrameInfo;
 class MachineRegisterInfo;
-class TargetData;
+class DataLayout;
 class TargetInstrInfo;
 class TargetLibraryInfo;
 class TargetLowering;
@@ -55,12 +54,11 @@ protected:
   MachineConstantPool &MCP;
   DebugLoc DL;
   const TargetMachine &TM;
-  const TargetData &TD;
+  const DataLayout &TD;
   const TargetInstrInfo &TII;
   const TargetLowering &TLI;
   const TargetRegisterInfo &TRI;
   const TargetLibraryInfo *LibInfo;
-  GCFunctionInfo &GFI;
 
   /// The position of the last instruction for materializing constants
   /// for use in the current block. It resets to EmitStartPt when it
@@ -92,6 +90,11 @@ public:
 
   /// getCurDebugLoc() - Return current debug location information.
   DebugLoc getCurDebugLoc() const { return DL; }
+  
+  /// LowerArguments - Do "fast" instruction selection for function arguments
+  /// and append machine instructions to the current block. Return true if
+  /// it is successful.
+  bool LowerArguments();
 
   /// SelectInstruction - Do "fast" instruction selection for the given
   /// LLVM IR instruction, and append generated machine instructions to
@@ -133,6 +136,10 @@ public:
   /// into the current block.
   void recomputeInsertPt();
 
+  /// removeDeadCode - Remove all dead instructions between the I and E.
+  void removeDeadCode(MachineBasicBlock::iterator I,
+                      MachineBasicBlock::iterator E);
+
   struct SavePoint {
     MachineBasicBlock::iterator InsertPt;
     DebugLoc DL;
@@ -149,8 +156,7 @@ public:
 
 protected:
   explicit FastISel(FunctionLoweringInfo &funcInfo,
-                    const TargetLibraryInfo *libInfo,
-                    GCFunctionInfo &gcInfo);
+                    const TargetLibraryInfo *libInfo);
 
   /// TargetSelectInstruction - This method is called by target-independent
   /// code when the normal FastISel process fails to select an instruction.
@@ -159,6 +165,11 @@ protected:
   ///
   virtual bool
   TargetSelectInstruction(const Instruction *I) = 0;
+  
+  /// FastLowerArguments - This method is called by target-independent code to
+  /// do target specific argument lowering. It returns true if it was
+  /// successful.
+  virtual bool FastLowerArguments();
 
   /// FastEmit_r - This method is called by target-independent code
   /// to request that an instruction with the given type and opcode
@@ -398,10 +409,6 @@ private:
 
   /// hasTrivialKill - Test whether the given value has exactly one use.
   bool hasTrivialKill(const Value *V) const;
-
-  /// removeDeadCode - Remove all dead instructions between the I and E.
-  void removeDeadCode(MachineBasicBlock::iterator I,
-                      MachineBasicBlock::iterator E);
 };
 
 }

@@ -11,11 +11,15 @@
 // Compare bounded and unbounded protocol performance.
 
 // xfail-pretty
- 
-extern mod std;
 
-use core::pipes::{spawn_service, recv};
-use std::time::precise_time_s;
+extern mod extra;
+
+use extra::time::precise_time_s;
+use std::cell::Cell;
+use std::io;
+use std::os;
+use std::pipes::*;
+use std::task;
 
 proto! pingpong (
     ping: send {
@@ -43,7 +47,7 @@ proto! pingpong_unbounded (
 
 // This stuff should go in libcore::pipes
 macro_rules! move_it (
-    { $x:expr } => { let t = *ptr::addr_of(&($x)); t }
+    { $x:expr } => { let t = *ptr::to_unsafe_ptr(&($x)); t }
 )
 
 macro_rules! follow (
@@ -70,9 +74,56 @@ macro_rules! follow (
     )
 )
 
-fn switch<T:Owned,Tb:Owned,U>(+endp: core::pipes::RecvPacketBuffered<T, Tb>,
-                      f: &fn(+v: Option<T>) -> U) -> U {
-    f(core::pipes::try_recv(endp))
+
+/** Spawn a task to provide a service.
+
+It takes an initialization function that produces a send and receive
+endpoint. The send endpoint is returned to the caller and the receive
+endpoint is passed to the new task.
+
+*/
+pub fn spawn_service<T:Send,Tb:Send>(
+            init: extern fn() -> (RecvPacketBuffered<T, Tb>,
+                                  SendPacketBuffered<T, Tb>),
+            service: ~fn(v: RecvPacketBuffered<T, Tb>))
+        -> SendPacketBuffered<T, Tb> {
+    let (server, client) = init();
+
+    // This is some nasty gymnastics required to safely move the pipe
+    // into a new task.
+    let server = Cell::new(server);
+    do task::spawn {
+        service(server.take());
+    }
+
+    client
+}
+
+/** Like `spawn_service_recv`, but for protocols that start in the
+receive state.
+
+*/
+pub fn spawn_service_recv<T:Send,Tb:Send>(
+        init: extern fn() -> (SendPacketBuffered<T, Tb>,
+                              RecvPacketBuffered<T, Tb>),
+        service: ~fn(v: SendPacketBuffered<T, Tb>))
+        -> RecvPacketBuffered<T, Tb> {
+    let (server, client) = init();
+
+    // This is some nasty gymnastics required to safely move the pipe
+    // into a new task.
+    let server = Cell::new(server);
+    do task::spawn {
+        service(server.take())
+    }
+
+    client
+}
+
+fn switch<T:Send,Tb:Send,U>(endp: std::pipes::RecvPacketBuffered<T, Tb>,
+                              f: &fn(v: Option<T>) -> U)
+                              -> U {
+    f(std::pipes::try_recv(endp))
 }
 
 // Here's the benchmark

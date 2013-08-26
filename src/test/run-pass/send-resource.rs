@@ -8,14 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::comm::*;
+use std::comm::*;
+use std::task;
 
 struct test {
   f: int,
 }
 
 impl Drop for test {
-    fn finalize(&self) {}
+    fn drop(&self) {}
 }
 
 fn test(f: int) -> test {

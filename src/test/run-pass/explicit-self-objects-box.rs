@@ -18,7 +18,7 @@ struct S {
 
 impl Foo for S {
     fn f(@self) {
-        assert!(self.x == 3);
+        assert_eq!(self.x, 3);
     }
 }
 
@@ -30,5 +30,3 @@ pub fn main() {
     y.f();
     y.f();
 }
-
-

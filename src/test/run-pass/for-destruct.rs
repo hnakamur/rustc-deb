@@ -8,10 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct Pair { x: int, y: int }
+// xfail-test: #3511: does not currently compile, due to rvalue issues
 
+use std::vec;
+
+struct Pair { x: int, y: int }
 pub fn main() {
     for vec::each(~[Pair {x: 10, y: 20}, Pair {x: 30, y: 0}]) |elt| {
-        assert!((elt.x + elt.y == 30));
+        assert_eq!(elt.x + elt.y, 30);
     }
 }

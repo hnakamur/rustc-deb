@@ -15,7 +15,6 @@ Each page corresponds is a logical section. There may be pages for
 individual modules, pages for the crate, indexes, etc.
 */
 
-use core::prelude::*;
 
 use astsrv;
 use config;
@@ -26,7 +25,8 @@ use fold;
 use pass::Pass;
 use util::NominalOp;
 
-use core::comm::*;
+use std::comm::*;
+use std::task;
 use syntax::ast;
 
 #[cfg(test)] use doc::PageUtils;
@@ -50,7 +50,7 @@ pub fn run(
 
     let (result_port, result_chan) = stream();
     let (page_port, page_chan) = stream();
-    let page_chan = SharedChan(page_chan);
+    let page_chan = SharedChan::new(page_chan);
     do task::spawn {
         result_chan.send(make_doc_from_pages(&page_port));
     };
@@ -69,7 +69,7 @@ fn make_doc_from_pages(page_port: &PagePort) -> doc::Doc {
     loop {
         let val = page_port.recv();
         if val.is_some() {
-            pages += ~[val.unwrap()];
+            pages.push(val.unwrap());
         } else {
             break;
         }
@@ -149,27 +149,6 @@ fn fold_nmod(
     return doc;
 }
 
-#[test]
-fn should_not_split_the_doc_into_pages_for_doc_per_crate() {
-    let doc = test::mk_doc_(
-        config::DocPerCrate,
-        ~"mod a { } mod b { mod c { } }"
-    );
-    assert!(doc.pages.len() == 1u);
-}
-
-#[test]
-fn should_make_a_page_for_every_mod() {
-    let doc = test::mk_doc(~"mod a { }");
-    assert!(doc.pages.mods()[0].name() == ~"a");
-}
-
-#[test]
-fn should_remove_mods_from_containing_mods() {
-    let doc = test::mk_doc(~"mod a { }");
-    assert!(vec::is_empty(doc.cratemod().mods()));
-}
-
 #[cfg(test)]
 mod test {
     use astsrv;
@@ -178,7 +157,7 @@ mod test {
     use extract;
     use page_pass::run;
 
-    pub fn mk_doc_(
+    fn mk_doc_(
         output_style: config::OutputStyle,
         source: ~str
     ) -> doc::Doc {
@@ -188,7 +167,28 @@ mod test {
         }
     }
 
-    pub fn mk_doc(source: ~str) -> doc::Doc {
+    fn mk_doc(source: ~str) -> doc::Doc {
         mk_doc_(config::DocPerMod, copy source)
+    }
+
+    #[test]
+    fn should_not_split_the_doc_into_pages_for_doc_per_crate() {
+        let doc = mk_doc_(
+            config::DocPerCrate,
+            ~"mod a { } mod b { mod c { } }"
+        );
+        assert_eq!(doc.pages.len(), 1u);
+    }
+
+    #[test]
+    fn should_make_a_page_for_every_mod() {
+        let doc = mk_doc(~"mod a { }");
+        assert_eq!(doc.pages.mods()[0].name(), ~"a");
+    }
+
+    #[test]
+    fn should_remove_mods_from_containing_mods() {
+        let doc = mk_doc(~"mod a { }");
+        assert!(doc.cratemod().mods().is_empty());
     }
 }

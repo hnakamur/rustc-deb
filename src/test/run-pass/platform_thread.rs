@@ -12,6 +12,8 @@
 // The OS main scheduler should continue to be available and not terminate
 // while it is not in use.
 
+use std::task;
+
 pub fn main() {
     run(100);
 }
@@ -24,9 +26,15 @@ fn run(i: int) {
         return;
     }
 
-    do task::task().sched_mode(task::PlatformThread).unlinked().spawn {
+    let mut builder = task::task();
+    builder.sched_mode(task::PlatformThread);
+    builder.unlinked();
+    do builder.spawn {
         task::yield();
-        do task::task().sched_mode(task::SingleThreaded).unlinked().spawn {
+        let mut builder = task::task();
+        builder.sched_mode(task::SingleThreaded);
+        builder.unlinked();
+        do builder.spawn {
             task::yield();
             run(i - 1);
             task::yield();

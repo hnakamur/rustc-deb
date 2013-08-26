@@ -10,11 +10,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
+extern mod extra;
 
-use core::io::{ReaderUtil, WriterUtil};
-use core::io;
-use core::unstable::intrinsics::cttz16;
+use std::io::{ReaderUtil, WriterUtil};
+use std::io;
+use std::os;
+use std::str;
+use std::u8;
+use std::uint;
+use std::unstable::intrinsics::cttz16;
+use std::vec;
 
 // Computes a single solution to a given 9x9 sudoku
 //
@@ -39,7 +44,7 @@ struct Sudoku {
     grid: grid
 }
 
-pub impl Sudoku {
+impl Sudoku {
     pub fn new(g: grid) -> Sudoku {
         return Sudoku { grid: g }
     }
@@ -68,15 +73,15 @@ pub impl Sudoku {
         let mut g = vec::from_fn(10u, { |_i| ~[0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8] });
         while !reader.eof() {
             let line = reader.read_line();
-            let mut comps = ~[];
-            for str::each_split_char(line.trim(), ',') |s| { comps.push(s.to_owned()) }
-            if vec::len(comps) == 3u {
+            let comps: ~[&str] = line.trim().split_iter(',').collect();
+
+            if comps.len() == 3u {
                 let row     = uint::from_str(comps[0]).get() as u8;
                 let col     = uint::from_str(comps[1]).get() as u8;
                 g[row][col] = uint::from_str(comps[2]).get() as u8;
             }
             else {
-                fail!(~"Invalid sudoku file");
+                fail!("Invalid sudoku file");
             }
         }
         return Sudoku::new(g)
@@ -98,12 +103,14 @@ pub impl Sudoku {
         for u8::range(0u8, 9u8) |row| {
             for u8::range(0u8, 9u8) |col| {
                 let color = self.grid[row][col];
-                if color == 0u8 { work += ~[(row, col)]; }
+                if color == 0u8 {
+                    work.push((row, col));
+                }
             }
         }
 
         let mut ptr = 0u;
-        let end = vec::len(work);
+        let end = work.len();
         while (ptr < end) {
             let (row, col) = work[ptr];
             // is there another color to try?
@@ -112,7 +119,7 @@ pub impl Sudoku {
                 ptr = ptr + 1u;
             } else {
                 // no: redo this field aft recoloring pred; unless there is none
-                if ptr == 0u { fail!(~"No solution found for this sudoku"); }
+                if ptr == 0u { fail!("No solution found for this sudoku"); }
                 ptr = ptr - 1u;
             }
         }
@@ -167,10 +174,10 @@ impl Colors {
         let val = **self & heads;
         if (0u16 == val) {
             return 0u8;
-        }
-        else
-        {
-            return cttz16(val as i16) as u8;
+        } else {
+            unsafe {
+                return cttz16(val as i16) as u8;
+            }
         }
     }
 
@@ -212,30 +219,30 @@ static default_solution: [[u8, ..9], ..9] = [
 
 #[test]
 fn colors_new_works() {
-    assert!(*Colors::new(1) == 1022u16);
-    assert!(*Colors::new(2) == 1020u16);
-    assert!(*Colors::new(3) == 1016u16);
-    assert!(*Colors::new(4) == 1008u16);
-    assert!(*Colors::new(5) == 992u16);
-    assert!(*Colors::new(6) == 960u16);
-    assert!(*Colors::new(7) == 896u16);
-    assert!(*Colors::new(8) == 768u16);
-    assert!(*Colors::new(9) == 512u16);
+    assert_eq!(*Colors::new(1), 1022u16);
+    assert_eq!(*Colors::new(2), 1020u16);
+    assert_eq!(*Colors::new(3), 1016u16);
+    assert_eq!(*Colors::new(4), 1008u16);
+    assert_eq!(*Colors::new(5), 992u16);
+    assert_eq!(*Colors::new(6), 960u16);
+    assert_eq!(*Colors::new(7), 896u16);
+    assert_eq!(*Colors::new(8), 768u16);
+    assert_eq!(*Colors::new(9), 512u16);
 }
 
 #[test]
 fn colors_next_works() {
-    assert!(Colors(0).next() == 0u8);
-    assert!(Colors(2).next() == 1u8);
-    assert!(Colors(4).next() == 2u8);
-    assert!(Colors(8).next() == 3u8);
-    assert!(Colors(16).next() == 4u8);
-    assert!(Colors(32).next() == 5u8);
-    assert!(Colors(64).next() == 6u8);
-    assert!(Colors(128).next() == 7u8);
-    assert!(Colors(256).next() == 8u8);
-    assert!(Colors(512).next() == 9u8);
-    assert!(Colors(1024).next() == 0u8);
+    assert_eq!(Colors(0).next(), 0u8);
+    assert_eq!(Colors(2).next(), 1u8);
+    assert_eq!(Colors(4).next(), 2u8);
+    assert_eq!(Colors(8).next(), 3u8);
+    assert_eq!(Colors(16).next(), 4u8);
+    assert_eq!(Colors(32).next(), 5u8);
+    assert_eq!(Colors(64).next(), 6u8);
+    assert_eq!(Colors(128).next(), 7u8);
+    assert_eq!(Colors(256).next(), 8u8);
+    assert_eq!(Colors(512).next(), 9u8);
+    assert_eq!(Colors(1024).next(), 0u8);
 }
 
 #[test]
@@ -247,7 +254,7 @@ fn colors_remove_works() {
     colors.remove(1);
 
     // THEN
-    assert!(colors.next() == 2u8);
+    assert_eq!(colors.next(), 2u8);
 }
 
 #[test]
@@ -265,7 +272,7 @@ fn check_default_sudoku_solution() {
 
 fn main() {
     let args        = os::args();
-    let use_default = vec::len(args) == 1u;
+    let use_default = args.len() == 1u;
     let mut sudoku = if use_default {
         Sudoku::from_vec(&default_sudoku)
     } else {
@@ -274,4 +281,3 @@ fn main() {
     sudoku.solve();
     sudoku.write(io::stdout());
 }
-

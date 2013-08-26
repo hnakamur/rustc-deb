@@ -8,19 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::comm::*;
+use std::comm::*;
+use std::ptr;
+use std::task;
 
 pub fn main() {
     let (p, ch) = stream::<uint>();
 
     let x = ~1;
-    let x_in_parent = ptr::addr_of(&(*x)) as uint;
+    let x_in_parent = ptr::to_unsafe_ptr(&(*x)) as uint;
 
     task::spawn(|| {
-        let x_in_child = ptr::addr_of(&(*x)) as uint;
+        let x_in_child = ptr::to_unsafe_ptr(&(*x)) as uint;
         ch.send(x_in_child);
     });
 
     let x_in_child = p.recv();
-    assert!(x_in_parent == x_in_child);
+    assert_eq!(x_in_parent, x_in_child);
 }

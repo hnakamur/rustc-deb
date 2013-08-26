@@ -133,6 +133,9 @@
 #define RZ_BSD_32   (1024*20)
 #define RZ_BSD_64   (1024*20)
 
+// The threshold beyond which we switch to the C stack.
+#define STACK_THRESHOLD (1024 * 1024)
+
 #ifdef __linux__
 #ifdef __i386__
 #define RED_ZONE_SIZE RZ_LINUX_32
@@ -141,6 +144,9 @@
 #define RED_ZONE_SIZE RZ_LINUX_64
 #endif
 #ifdef __mips__
+#define RED_ZONE_SIZE RZ_MAC_32
+#endif
+#ifdef __arm__
 #define RED_ZONE_SIZE RZ_LINUX_32
 #endif
 #endif
@@ -170,6 +176,10 @@
 #endif
 #ifdef __ANDROID__
 #define RED_ZONE_SIZE RZ_MAC_32
+#endif
+
+#ifndef RED_ZONE_SIZE
+# error "Red zone not defined for this platform"
 #endif
 
 struct frame_glue_fns {
@@ -238,6 +248,11 @@ rust_task : public kernel_owned<rust_task>
     void *task_local_data;
     void (*task_local_data_cleanup)(void *data);
 
+    // Contains a ~[BorrowRecord] pointer, or NULL.
+    //
+    // Used by borrow management code in libcore/unstable/lang.rs.
+    void *borrow_list;
+
 private:
 
     // Protects state, cond, cond_name
@@ -266,6 +281,7 @@ private:
     // Called when the atomic refcount reaches zero
     void delete_this();
 
+    bool new_big_stack();
     void new_stack_fast(size_t requested_sz);
     void new_stack(size_t requested_sz);
     void free_stack(stk_seg *stk);
@@ -367,6 +383,7 @@ public:
     void call_on_c_stack(void *args, void *fn_ptr);
     void call_on_rust_stack(void *args, void *fn_ptr);
     bool have_c_stack() { return c_stack != NULL; }
+    stk_seg *get_c_stack() { return c_stack; }
 
     rust_task_state get_state() { return state; }
     rust_cond *get_cond() { return cond; }
@@ -387,12 +404,6 @@ public:
     void inhibit_yield();
     void allow_yield();
 };
-
-// FIXME (#2697): It would be really nice to be able to get rid of this.
-inline void *operator new[](size_t size, rust_task *task, const char *tag) {
-    return task->malloc(size, tag);
-}
-
 
 template <typename T> struct task_owned {
     inline void *operator new(size_t size, rust_task *task,
@@ -568,6 +579,11 @@ rust_task::new_stack_fast(size_t requested_sz) {
     // The minimum stack size, in bytes, of a Rust stack, excluding red zone
     size_t min_sz = sched_loop->min_stack_size;
 
+    if (requested_sz > STACK_THRESHOLD) {
+        if (new_big_stack())
+            return;
+    }
+
     // Try to reuse an existing stack segment
     if (stk != NULL && stk->next != NULL) {
         size_t next_sz = user_stack_size(stk->next);
@@ -588,14 +604,28 @@ rust_task::prev_stack() {
     // require switching to the C stack and be costly. Instead we'll just move
     // up the link list and clean up later, either in new_stack or after our
     // turn ends on the scheduler.
-    stk = stk->prev;
+    if (stk->is_big) {
+        stk_seg *ss = stk;
+        stk = stk->prev;
+
+        // Unlink the big stack.
+        if (ss->next)
+            ss->next->prev = ss->prev;
+        if (ss->prev)
+            ss->prev->next = ss->next;
+
+        sched_loop->return_big_stack(ss);
+    } else {
+        stk = stk->prev;
+    }
+
     record_stack_limit();
 }
 
 // The LLVM-generated segmented-stack function prolog compares the amount of
 // stack needed for each frame to the end-of-stack pointer stored in the
 // TCB. As an optimization, when the frame size is less than 256 bytes, it
-// will simply compare %esp to to the stack limit instead of subtracting the
+// will simply compare %esp to the stack limit instead of subtracting the
 // frame size. As a result we need our stack limit to account for those 256
 // bytes.
 const unsigned LIMIT_OFFSET = 256;

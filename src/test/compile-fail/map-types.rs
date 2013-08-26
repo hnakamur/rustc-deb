@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::container::Map;
-use core::hashmap::linear::LinearMap;
+use std::container::Map;
+use std::hashmap::HashMap;
 
 // Test that trait types printed in error msgs include the type arguments.
 
 fn main() {
-    let x: @Map<~str, ~str> = @LinearMap::new::<~str, ~str>() as
+    let x: @Map<~str, ~str> = @HashMap::new::<~str, ~str>() as
         @Map<~str, ~str>;
     let y: @Map<uint, ~str> = @x;
-    //~^ ERROR mismatched types: expected `@core::container::Map<uint,~str>`
+    //~^ ERROR expected trait std::container::Map but found @-ptr
 }

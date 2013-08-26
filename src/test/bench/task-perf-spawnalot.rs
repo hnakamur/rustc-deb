@@ -8,7 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f(&&n: uint) {
+use std::os;
+use std::task;
+use std::uint;
+
+fn f(n: uint) {
     let mut i = 0u;
     while i < n {
         task::try(|| g() );

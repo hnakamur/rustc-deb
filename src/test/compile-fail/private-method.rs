@@ -11,14 +11,16 @@
 // error-pattern:method `nap` is private
 
 mod kitties {
+    use std::uint;
+
     pub struct cat {
-        priv mut meows : uint,
+        priv meows : uint,
 
         how_hungry : int,
     }
 
-    pub impl cat {
-        priv fn nap(&self) { uint::range(1u, 10000u, |_i| false)}
+    impl cat {
+        priv fn nap(&self) { uint::range(1u, 10000u, |_i| false); }
     }
 
     pub fn cat(in_x : uint, in_y : int) -> cat {

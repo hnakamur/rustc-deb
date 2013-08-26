@@ -8,13 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
+extern mod extra;
 
-use core::io;
-use std::time;
-use std::treemap::TreeMap;
-use core::hashmap::linear::{LinearMap, LinearSet};
-use core::trie::TrieMap;
+use extra::time;
+use extra::treemap::TreeMap;
+use std::hashmap::{HashMap, HashSet};
+use std::io;
+use std::os;
+use std::rand::Rng;
+use std::trie::TrieMap;
+use std::uint;
+use std::vec;
 
 fn timed(label: &str, f: &fn()) {
     let start = time::precise_time_s();
@@ -34,7 +38,7 @@ fn ascending<M: Map<uint, uint>>(map: &mut M, n_keys: uint) {
 
     do timed("search") {
         for uint::range(0, n_keys) |i| {
-            assert!(map.find(&i).unwrap() == &(i + 1));
+            assert_eq!(map.find(&i).unwrap(), &(i + 1));
         }
     }
 
@@ -56,7 +60,7 @@ fn descending<M: Map<uint, uint>>(map: &mut M, n_keys: uint) {
 
     do timed("search") {
         for uint::range_rev(n_keys, 0) |i| {
-            assert!(map.find(&i).unwrap() == &(i + 1));
+            assert_eq!(map.find(&i).unwrap(), &(i + 1));
         }
     }
 
@@ -77,7 +81,7 @@ fn vector<M: Map<uint, uint>>(map: &mut M, n_keys: uint, dist: &[uint]) {
 
     do timed("search") {
         for uint::range(0, n_keys) |i| {
-            assert!(map.find(&dist[i]).unwrap() == &(i + 1));
+            assert_eq!(map.find(&dist[i]).unwrap(), &(i + 1));
         }
     }
 
@@ -88,6 +92,7 @@ fn vector<M: Map<uint, uint>>(map: &mut M, n_keys: uint, dist: &[uint]) {
     }
 }
 
+#[fixed_stack_segment]
 fn main() {
     let args = os::args();
     let n_keys = {
@@ -101,8 +106,8 @@ fn main() {
     let mut rand = vec::with_capacity(n_keys);
 
     {
-        let rng = core::rand::seeded_rng([1, 1, 1, 1, 1, 1, 1]);
-        let mut set = LinearSet::new();
+        let mut rng = std::rand::IsaacRng::new_seeded([1, 1, 1, 1, 1, 1, 1]);
+        let mut set = HashSet::new();
         while set.len() != n_keys {
             let next = rng.next() as uint;
             if set.insert(next) {
@@ -131,21 +136,21 @@ fn main() {
         vector(&mut map, n_keys, rand);
     }
 
-    io::println("\nLinearMap:");
+    io::println("\nHashMap:");
 
     {
-        let mut map = LinearMap::new::<uint, uint>();
+        let mut map = HashMap::new::<uint, uint>();
         ascending(&mut map, n_keys);
     }
 
     {
-        let mut map = LinearMap::new::<uint, uint>();
+        let mut map = HashMap::new::<uint, uint>();
         descending(&mut map, n_keys);
     }
 
     {
         io::println(" Random integers:");
-        let mut map = LinearMap::new::<uint, uint>();
+        let mut map = HashMap::new::<uint, uint>();
         vector(&mut map, n_keys, rand);
     }
 

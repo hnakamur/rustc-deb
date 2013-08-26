@@ -10,6 +10,8 @@
 
 // Issue #2303
 
+use std::sys;
+
 mod rusti {
     #[abi = "rust-intrinsic"]
     pub extern "rust-intrinsic" {
@@ -57,6 +59,15 @@ mod m {
     }
 }
 
+#[cfg(target_os = "android")]
+mod m {
+    #[cfg(target_arch = "arm")]
+    pub mod m {
+        pub fn align() -> uint { 8u }
+        pub fn size() -> uint { 16u }
+    }
+}
+
 pub fn main() {
     unsafe {
         let x = Outer {c8: 22u8, t: Inner {c64: 44u64}};
@@ -69,12 +80,12 @@ pub fn main() {
         debug!("y = %s", y);
 
         // per clang/gcc the alignment of `Inner` is 4 on x86.
-        assert!(rusti::min_align_of::<Inner>() == m::m::align());
+        assert_eq!(rusti::min_align_of::<Inner>(), m::m::align());
 
         // per clang/gcc the size of `Outer` should be 12
         // because `Inner`s alignment was 4.
-        assert!(sys::size_of::<Outer>() == m::m::size());
+        assert_eq!(sys::size_of::<Outer>(), m::m::size());
 
-        assert!(y == ~"{c8: 22, t: {c64: 44}}");
+        assert_eq!(y, ~"{c8: 22, t: {c64: 44}}");
     }
 }

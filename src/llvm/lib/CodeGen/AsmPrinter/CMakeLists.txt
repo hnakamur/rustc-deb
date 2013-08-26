@@ -9,7 +9,6 @@ add_llvm_library(LLVMAsmPrinter
   DwarfCompileUnit.cpp
   DwarfDebug.cpp
   DwarfException.cpp
-  GenericGCPrinter.cpp
   OcamlGCPrinter.cpp
   Win64Exception.cpp
   )

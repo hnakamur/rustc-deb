@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[legacy_modes];
-
 enum ast<'self> {
     num(uint),
     add(&'self ast<'self>, &'self ast<'self>)
@@ -32,12 +30,12 @@ fn compute(x: &ast) -> uint {
 fn map_nums(x: &ast, f: &fn(uint) -> uint) -> &ast {
     match *x {
       num(x) => {
-        return &num(f(x)); //~ ERROR illegal borrow
+        return &num(f(x)); //~ ERROR borrowed value does not live long enough
       }
       add(x, y) => {
-        let m_x = map_nums(x, f);
-        let m_y = map_nums(y, f);
-        return &add(m_x, m_y);  //~ ERROR illegal borrow
+        let m_x = map_nums(x, |z| f(z));
+        let m_y = map_nums(y, |z| f(z));
+        return &add(m_x, m_y);  //~ ERROR borrowed value does not live long enough
       }
     }
 }

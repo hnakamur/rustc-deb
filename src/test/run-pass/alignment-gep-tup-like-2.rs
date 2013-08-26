@@ -23,8 +23,8 @@ fn make_cycle<A:Copy>(a: A) {
     g.rec = Some(g);
 }
 
-fn f<A:Owned + Copy,B:Owned + Copy>(a: A, b: B) -> @fn() -> (A, B) {
-    let result: @fn() -> (A, B) = || (a, b);
+fn f<A:Send + Copy,B:Send + Copy>(a: A, b: B) -> @fn() -> (A, B) {
+    let result: @fn() -> (A, B) = || (copy a, copy b);
     result
 }
 
@@ -35,6 +35,6 @@ pub fn main() {
     make_cycle(z);
     let (a, b) = z();
     debug!("a=%u b=%u", *a as uint, b as uint);
-    assert!(*a == x);
-    assert!(b == y);
+    assert_eq!(*a, x);
+    assert_eq!(b, y);
 }

@@ -12,12 +12,14 @@
 #[crate_type = "lib"];
 
 pub mod socket {
+    use std::libc;
+
     pub struct socket_handle {
         sockfd: libc::c_int,
     }
 
     impl Drop for socket_handle {
-        fn finalize(&self) {
+        fn drop(&self) {
             /* c::close(self.sockfd); */
         }
     }

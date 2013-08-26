@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::str;
+
 struct S { f0: ~str, f1: int }
 
 pub fn main() {
     let s = ~"Hello, world!";
-    let _s = S { f0: str::from_slice(s), ..S { f0: s, f1: 23 } };
+    let _s = S { f0: str::to_owned(s), ..S { f0: s, f1: 23 } };
 }

@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
+extern mod extra;
+
+use std::str;
 
 pub fn main() {
     // Make sure we properly handle repeated self-appends.
@@ -16,8 +18,8 @@ pub fn main() {
     let mut i = 20;
     let mut expected_len = 1u;
     while i > 0 {
-        error!(str::len(a));
-        assert!((str::len(a) == expected_len));
+        error!(a.len());
+        assert_eq!(a.len(), expected_len);
         a = a + a; // FIXME(#3387)---can't write a += a
         i -= 1;
         expected_len *= 2u;

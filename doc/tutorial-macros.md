@@ -13,7 +13,8 @@ doing nothing otherwise:
 ~~~~
 # enum t { special_a(uint), special_b(uint) };
 # fn f() -> uint {
-# let input_1 = special_a(0), input_2 = special_a(0);
+# let input_1 = special_a(0);
+# let input_2 = special_a(0);
 match input_1 {
     special_a(x) => { return x; }
     _ => {}
@@ -38,7 +39,8 @@ the pattern in the above code:
 ~~~~
 # enum t { special_a(uint), special_b(uint) };
 # fn f() -> uint {
-# let input_1 = special_a(0), input_2 = special_a(0);
+# let input_1 = special_a(0);
+# let input_2 = special_a(0);
 macro_rules! early_return(
     ($inp:expr $sp:ident) => ( // invoke it like `(input_5 special_e)`
         match $inp {
@@ -155,7 +157,8 @@ instead of `*` to mean "at least one".
 ~~~~
 # enum t { special_a(uint),special_b(uint),special_c(uint),special_d(uint)};
 # fn f() -> uint {
-# let input_1 = special_a(0), input_2 = special_a(0);
+# let input_1 = special_a(0);
+# let input_2 = special_a(0);
 macro_rules! early_return(
     ($inp:expr, [ $($sp:ident)|+ ]) => (
         match $inp {
@@ -223,7 +226,7 @@ match x {
                 // complicated stuff goes here
                 return result + val;
             },
-            _ => fail!(~"Didn't get good_2")
+            _ => fail!("Didn't get good_2")
         }
     }
     _ => return 0 // default value
@@ -265,7 +268,7 @@ macro_rules! biased_match (
 biased_match!((x)       ~ (good_1(g1, val)) else { return 0 };
               binds g1, val )
 biased_match!((g1.body) ~ (good_2(result) )
-                  else { fail!(~"Didn't get good_2") };
+                  else { fail!("Didn't get good_2") };
               binds result )
 // complicated stuff goes here
 return result + val;
@@ -366,7 +369,7 @@ macro_rules! biased_match (
 # fn f(x: t1) -> uint {
 biased_match!(
     (x)       ~ (good_1(g1, val)) else { return 0 };
-    (g1.body) ~ (good_2(result) ) else { fail!(~"Didn't get good_2") };
+    (g1.body) ~ (good_2(result) ) else { fail!("Didn't get good_2") };
     binds val, result )
 // complicated stuff goes here
 return result + val;
@@ -402,4 +405,3 @@ tricky. Invoking the `log_syntax!` macro can help elucidate intermediate
 states, invoking `trace_macros!(true)` will automatically print those
 intermediate states out, and passing the flag `--pretty expanded` as a
 command-line argument to the compiler will show the result of expansion.
-

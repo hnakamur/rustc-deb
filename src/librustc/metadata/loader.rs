@@ -8,10 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
 //! Finds crate binaries and loads their metadata
 
-use core::prelude::*;
 
 use lib::llvm::{False, llvm, mk_object_file, mk_section_iter};
 use metadata::decoder;
@@ -20,20 +18,20 @@ use metadata::filesearch::FileSearch;
 use metadata::filesearch;
 use syntax::codemap::span;
 use syntax::diagnostic::span_handler;
+use syntax::parse::token;
 use syntax::parse::token::ident_interner;
 use syntax::print::pprust;
 use syntax::{ast, attr};
 
-use core::cast;
-use core::flate;
-use core::io::WriterUtil;
-use core::io;
-use core::os::consts::{macos, freebsd, linux, android, win32};
-use core::option;
-use core::ptr;
-use core::str;
-use core::uint;
-use core::vec;
+use std::cast;
+use std::io;
+use std::option;
+use std::os::consts::{macos, freebsd, linux, android, win32};
+use std::ptr;
+use std::str;
+use std::uint;
+use std::vec;
+use extra::flate;
 
 pub enum os {
     os_macos,
@@ -49,29 +47,29 @@ pub struct Context {
     span: span,
     ident: ast::ident,
     metas: ~[@ast::meta_item],
-    hash: @~str,
+    hash: @str,
     os: os,
     is_static: bool,
     intr: @ident_interner
 }
 
-pub fn load_library_crate(cx: Context) -> (~str, @~[u8]) {
+pub fn load_library_crate(cx: &Context) -> (~str, @~[u8]) {
     match find_library_crate(cx) {
       Some(ref t) => return (/*bad*/copy *t),
       None => {
         cx.diag.span_fatal(
             cx.span, fmt!("can't find crate for `%s`",
-                          *cx.intr.get(cx.ident)));
+                          token::ident_to_str(&cx.ident)));
       }
     }
 }
 
-fn find_library_crate(cx: Context) -> Option<(~str, @~[u8])> {
+fn find_library_crate(cx: &Context) -> Option<(~str, @~[u8])> {
     attr::require_unique_names(cx.diag, cx.metas);
     find_library_crate_aux(cx, libname(cx), cx.filesearch)
 }
 
-fn libname(cx: Context) -> (~str, ~str) {
+fn libname(cx: &Context) -> (~str, ~str) {
     if cx.is_static { return (~"lib", ~".rlib"); }
     let (dll_prefix, dll_suffix) = match cx.os {
         os_win32 => (win32::DLL_PREFIX, win32::DLL_SUFFIX),
@@ -81,93 +79,91 @@ fn libname(cx: Context) -> (~str, ~str) {
         os_freebsd => (freebsd::DLL_PREFIX, freebsd::DLL_SUFFIX),
     };
 
-    (str::from_slice(dll_prefix), str::from_slice(dll_suffix))
+    (str::to_owned(dll_prefix), str::to_owned(dll_suffix))
 }
 
 fn find_library_crate_aux(
-    cx: Context,
+    cx: &Context,
     (prefix, suffix): (~str, ~str),
     filesearch: @filesearch::FileSearch
 ) -> Option<(~str, @~[u8])> {
     let crate_name = crate_name_from_metas(cx.metas);
-    let prefix: ~str = prefix + *crate_name + ~"-";
-    let suffix: ~str = /*bad*/copy suffix;
+    let prefix = prefix + crate_name + "-";
 
     let mut matches = ~[];
-    filesearch::search(filesearch, |path| {
+    filesearch::search(filesearch, |path| -> Option<()> {
         debug!("inspecting file %s", path.to_str());
-        let f: ~str = path.filename().get();
-        if !(f.starts_with(prefix) && f.ends_with(suffix)) {
-            debug!("skipping %s, doesn't look like %s*%s", path.to_str(),
-                   prefix, suffix);
-            option::None::<()>
-        } else {
-            debug!("%s is a candidate", path.to_str());
-            match get_metadata_section(cx.os, path) {
-              option::Some(cvec) => {
-                if !crate_matches(cvec, cx.metas, cx.hash) {
-                    debug!("skipping %s, metadata doesn't match",
-                           path.to_str());
-                    option::None::<()>
-                } else {
-                    debug!("found %s with matching metadata", path.to_str());
-                    matches.push((path.to_str(), cvec));
-                    option::None::<()>
+        match path.filename() {
+            Some(ref f) if f.starts_with(prefix) && f.ends_with(suffix) => {
+                debug!("%s is a candidate", path.to_str());
+                match get_metadata_section(cx.os, path) {
+                    Some(cvec) =>
+                        if !crate_matches(cvec, cx.metas, cx.hash) {
+                            debug!("skipping %s, metadata doesn't match",
+                                   path.to_str());
+                            None
+                        } else {
+                            debug!("found %s with matching metadata", path.to_str());
+                            matches.push((path.to_str(), cvec));
+                            None
+                        },
+                    _ => {
+                        debug!("could not load metadata for %s", path.to_str());
+                        None
+                    }
                 }
-              }
-              _ => {
-                debug!("could not load metadata for %s", path.to_str());
-                option::None::<()>
-              }
+            }
+            _ => {
+                debug!("skipping %s, doesn't look like %s*%s", path.to_str(),
+                       prefix, suffix);
+                None
+            }
+        }});
+
+    match matches.len() {
+        0 => None,
+        1 => Some(matches[0]),
+        _ => {
+            cx.diag.span_err(
+                    cx.span, fmt!("multiple matching crates for `%s`", crate_name));
+                cx.diag.handler().note("candidates:");
+                for matches.iter().advance |&(ident, data)| {
+                    cx.diag.handler().note(fmt!("path: %s", ident));
+                    let attrs = decoder::get_crate_attributes(data);
+                    note_linkage_attrs(cx.intr, cx.diag, attrs);
+                }
+                cx.diag.handler().abort_if_errors();
+                None
             }
         }
-    });
-
-    if matches.is_empty() {
-        None
-    } else if matches.len() == 1u {
-        Some(/*bad*/copy matches[0])
-    } else {
-        cx.diag.span_err(
-            cx.span, fmt!("multiple matching crates for `%s`", *crate_name));
-        cx.diag.handler().note(~"candidates:");
-        for matches.each |&(ident, data)| {
-            cx.diag.handler().note(fmt!("path: %s", ident));
-            let attrs = decoder::get_crate_attributes(data);
-            note_linkage_attrs(cx.intr, cx.diag, attrs);
-        }
-        cx.diag.handler().abort_if_errors();
-        None
-    }
 }
 
-pub fn crate_name_from_metas(metas: &[@ast::meta_item]) -> @~str {
-    let name_items = attr::find_meta_items_by_name(metas, ~"name");
-    match name_items.last_opt() {
-        Some(i) => {
-            match attr::get_meta_item_value_str(*i) {
-                Some(n) => n,
-                // FIXME (#2406): Probably want a warning here since the user
-                // is using the wrong type of meta item.
-                _ => fail!()
-            }
+pub fn crate_name_from_metas(metas: &[@ast::meta_item]) -> @str {
+    for metas.iter().advance |m| {
+        match m.node {
+            ast::meta_name_value(s, ref l) if s == @"name" =>
+                match l.node {
+                    ast::lit_str(s) => return s,
+                    _ => ()
+                },
+            _ => ()
         }
-        None => fail!(~"expected to find the crate name")
     }
+    fail!("expected to find the crate name")
 }
 
 pub fn note_linkage_attrs(intr: @ident_interner,
                           diag: @span_handler,
                           attrs: ~[ast::attribute]) {
-    for attr::find_linkage_metas(attrs).each |mi| {
-        diag.handler().note(fmt!("meta: %s",
-              pprust::meta_item_to_str(*mi,intr)));
+    let r = attr::find_linkage_metas(attrs);
+    for r.iter().advance |mi| {
+        diag.handler().note(fmt!("meta: %s", pprust::meta_item_to_str(*mi,intr)));
     }
 }
 
 fn crate_matches(crate_data: @~[u8],
                  metas: &[@ast::meta_item],
-                 hash: @~str) -> bool {
+                 hash: @str) -> bool {
     let attrs = decoder::get_crate_attributes(crate_data);
     let linkage_metas = attr::find_linkage_metas(attrs);
     if !hash.is_empty() {
@@ -181,9 +177,9 @@ pub fn metadata_matches(extern_metas: &[@ast::meta_item],
                         local_metas: &[@ast::meta_item]) -> bool {
 
     debug!("matching %u metadata requirements against %u items",
-           vec::len(local_metas), vec::len(extern_metas));
+           local_metas.len(), extern_metas.len());
 
-    for local_metas.each |needed| {
+    for local_metas.iter().advance |needed| {
         if !attr::contains(extern_metas, *needed) {
             return false;
         }
@@ -205,34 +201,33 @@ fn get_metadata_section(os: os,
         let si = mk_section_iter(of.llof);
         while llvm::LLVMIsSectionIteratorAtEnd(of.llof, si.llsi) == False {
             let name_buf = llvm::LLVMGetSectionName(si.llsi);
-            let name = unsafe { str::raw::from_c_str(name_buf) };
-            if name == meta_section_name(os) {
+            let name = str::raw::from_c_str(name_buf);
+            debug!("get_metadata_section: name %s", name);
+            if name == read_meta_section_name(os) {
                 let cbuf = llvm::LLVMGetSectionContents(si.llsi);
                 let csz = llvm::LLVMGetSectionSize(si.llsi) as uint;
                 let mut found = None;
-                unsafe {
-                    let cvbuf: *u8 = cast::reinterpret_cast(&cbuf);
-                    let vlen = vec::len(encoder::metadata_encoding_version);
-                    debug!("checking %u bytes of metadata-version stamp",
-                           vlen);
-                    let minsz = uint::min(vlen, csz);
-                    let mut version_ok = false;
-                    do vec::raw::buf_as_slice(cvbuf, minsz) |buf0| {
-                        version_ok = (buf0 ==
-                                      encoder::metadata_encoding_version);
-                    }
-                    if !version_ok { return None; }
+                let cvbuf: *u8 = cast::transmute(cbuf);
+                let vlen = encoder::metadata_encoding_version.len();
+                debug!("checking %u bytes of metadata-version stamp",
+                       vlen);
+                let minsz = uint::min(vlen, csz);
+                let mut version_ok = false;
+                do vec::raw::buf_as_slice(cvbuf, minsz) |buf0| {
+                    version_ok = (buf0 ==
+                                  encoder::metadata_encoding_version);
+                }
+                if !version_ok { return None; }
 
-                    let cvbuf1 = ptr::offset(cvbuf, vlen);
-                    debug!("inflating %u bytes of compressed metadata",
-                           csz - vlen);
-                    do vec::raw::buf_as_slice(cvbuf1, csz-vlen) |bytes| {
-                        let inflated = flate::inflate_bytes(bytes);
-                        found = Some(@(inflated));
-                    }
-                    if found != None {
-                        return found;
-                    }
+                let cvbuf1 = ptr::offset(cvbuf, vlen);
+                debug!("inflating %u bytes of compressed metadata",
+                       csz - vlen);
+                do vec::raw::buf_as_slice(cvbuf1, csz-vlen) |bytes| {
+                    let inflated = flate::inflate_bytes(bytes);
+                    found = Some(@(inflated));
+                }
+                if found != None {
+                    return found;
                 }
             }
             llvm::LLVMMoveToNextSection(si.llsi);
@@ -251,6 +246,16 @@ pub fn meta_section_name(os: os) -> ~str {
     }
 }
 
+pub fn read_meta_section_name(os: os) -> ~str {
+    match os {
+      os_macos => ~"__note.rustc",
+      os_win32 => ~".note.rustc",
+      os_linux => ~".note.rustc",
+      os_android => ~".note.rustc",
+      os_freebsd => ~".note.rustc"
+    }
+}
+
 // A diagnostic function for dumping crate metadata to an output stream
 pub fn list_file_metadata(intr: @ident_interner,
                           os: os,
@@ -259,8 +264,7 @@ pub fn list_file_metadata(intr: @ident_interner,
     match get_metadata_section(os, path) {
       option::Some(bytes) => decoder::list_crate_metadata(intr, bytes, out),
       option::None => {
-        out.write_str(~"could not find metadata in "
-                      + path.to_str() + ~".\n");
+        out.write_str(fmt!("could not find metadata in %s.\n", path.to_str()))
       }
     }
 }

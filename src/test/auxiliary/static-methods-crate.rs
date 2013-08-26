@@ -13,6 +13,8 @@
 
 #[crate_type = "lib"];
 
+use std::int;
+
 pub trait read {
     fn readMaybe(s: ~str) -> Option<Self>;
 }
@@ -36,6 +38,6 @@ impl read for bool {
 pub fn read<T:read + Copy>(s: ~str) -> T {
     match read::readMaybe(s) {
       Some(x) => x,
-      _ => fail!(~"read failed!")
+      _ => fail!("read failed!")
     }
 }

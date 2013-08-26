@@ -8,7 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
+extern mod extra;
+
+use std::io;
+use std::uint;
+use std::vec;
 
 trait methods {
     fn to_bytes(&self) -> ~[u8];
@@ -21,7 +25,7 @@ impl methods for () {
 }
 
 // the position of this function is significant! - if it comes before methods
-// then it works, if it comes after it then it doesnt!
+// then it works, if it comes after it then it doesn't!
 fn to_bools(bitv: Storage) -> ~[bool] {
     vec::from_fn(8, |i| {
         let w = i / 64;
@@ -41,5 +45,5 @@ pub fn main() {
         io::println(fmt!("%u => %u vs %u", i, bools[i] as uint, bools2[i] as uint));
     }
 
-    assert!(bools == bools2);
+    assert_eq!(bools, bools2);
 }

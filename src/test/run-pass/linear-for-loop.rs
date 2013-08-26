@@ -8,17 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-
 pub fn main() {
     let x = ~[1, 2, 3];
     let mut y = 0;
-    for x.each |i| { debug!(*i); y += *i; }
+    for x.iter().advance |i| { debug!(*i); y += *i; }
     debug!(y);
-    assert!((y == 6));
+    assert_eq!(y, 6);
     let s = ~"hello there";
     let mut i: int = 0;
-    for str::each(s) |c| {
+    for s.bytes_iter().advance |c| {
         if i == 0 { assert!((c == 'h' as u8)); }
         if i == 1 { assert!((c == 'e' as u8)); }
         if i == 2 { assert!((c == 'l' as u8)); }
@@ -30,5 +28,5 @@ pub fn main() {
         debug!(i);
         debug!(c);
     }
-    assert!((i == 11));
+    assert_eq!(i, 11);
 }
