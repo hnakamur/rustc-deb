@@ -1,0 +1,29 @@
+Source: rust
+Section: devel
+Priority: extra
+Maintainer: Luca Bruno <lucab@debian.org>
+Build-Depends: debhelper (>= 8.0.0),
+               curl,
+               python
+#              rust (>= 0.6), rust (< 0.7~)
+#              llvm
+Standards-Version: 3.9.4
+Homepage: http://www.rust-lang.org/
+Vcs-Git: git://git.debian.org/collab-maint/rust.git
+Vcs-Browser: http://git.debian.org/?p=collab-maint/rust.git;a=summary
+
+Package: rust
+Architecture: amd64 i386
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: a safe, concurrent, practical language
+ Rust is a curly-brace, block-structured expression language.
+ It visually resembles the C language family, but differs significantly
+ in syntactic and semantic details. Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles. Rust also supports
+ generic programming and metaprogramming, in both static and
+ dynamic styles.

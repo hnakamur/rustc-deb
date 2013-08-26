@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+# These are the normal build flags
+COMMON_FLAGS = \
+               --disable-manage-submodules \
+	       --prefix=/usr
+
+# TODO
+# These flags will be used to avoid external
+# stage0 bootstrap binaries
+SELF_BOOTSTRAP = \
+		 --enable-local-rust \
+		 --local-rust-root=/usr
+
+# TODO
+# These flags will enable the system-wide LLVM
+SYSTEM_LLVM = --llvm-root=/usr
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	    ./configure \
+		    $(COMMON_FLAGS) \
+		    # TODO
+		    # $(SELF_BOOTSTRAP) 
+		    # $(SYSTEM_LLVM)
