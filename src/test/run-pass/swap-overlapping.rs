@@ -10,6 +10,9 @@
 
 // Issue #5041 - avoid overlapping memcpy when src and dest of a swap are the same
 
+use std::ptr;
+use std::util;
+
 pub fn main() {
     let mut test = TestDescAndFn {
         desc: TestDesc {
@@ -22,7 +25,9 @@ pub fn main() {
 }
 
 fn do_swap(test: &mut TestDescAndFn) {
-    *test <-> *test;
+    unsafe {
+        ptr::swap_ptr(test, test);
+    }
 }
 
 pub enum TestName {

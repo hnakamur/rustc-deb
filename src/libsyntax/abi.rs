@@ -8,9 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
-use core::to_bytes;
-use core::to_str::ToStr;
+use std::to_bytes;
 
 #[deriving(Eq)]
 pub enum Abi {
@@ -60,9 +58,7 @@ enum AbiArchitecture {
     Archs(u32)  // Multiple architectures (bitset)
 }
 
-#[auto_encode]
-#[auto_decode]
-#[deriving(Eq)]
+#[deriving(Eq, Encodable, Decodable)]
 pub struct AbiSet {
     priv bits: u32   // each bit represents one of the abis below
 }
@@ -83,17 +79,13 @@ static AbiDatas: &'static [AbiData] = &[
     AbiData {abi: RustIntrinsic, name: "rust-intrinsic", abi_arch: RustArch},
 ];
 
-fn each_abi(op: &fn(abi: Abi) -> bool) {
+fn each_abi(op: &fn(abi: Abi) -> bool) -> bool {
     /*!
      *
      * Iterates through each of the defined ABIs.
      */
 
-    for AbiDatas.each |abi_data| {
-        if !op(abi_data.abi) {
-            return;
-        }
-    }
+    AbiDatas.iter().advance(|abi_data| op(abi_data.abi))
 }
 
 pub fn lookup(name: &str) -> Option<Abi> {
@@ -114,18 +106,18 @@ pub fn all_names() -> ~[&'static str] {
     AbiDatas.map(|d| d.name)
 }
 
-pub impl Abi {
+impl Abi {
     #[inline]
-    fn index(&self) -> uint {
+    pub fn index(&self) -> uint {
         *self as uint
     }
 
     #[inline]
-    fn data(&self) -> &'static AbiData {
+    pub fn data(&self) -> &'static AbiData {
         &AbiDatas[self.index()]
     }
 
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         self.data().name
     }
 }
@@ -136,76 +128,70 @@ impl Architecture {
     }
 }
 
-pub impl AbiSet {
-    fn from(abi: Abi) -> AbiSet {
+impl AbiSet {
+    pub fn from(abi: Abi) -> AbiSet {
         AbiSet { bits: (1 << abi.index()) }
     }
 
     #[inline]
-    fn Rust() -> AbiSet {
+    pub fn Rust() -> AbiSet {
         AbiSet::from(Rust)
     }
 
     #[inline]
-    fn C() -> AbiSet {
+    pub fn C() -> AbiSet {
         AbiSet::from(C)
     }
 
     #[inline]
-    fn Intrinsic() -> AbiSet {
+    pub fn Intrinsic() -> AbiSet {
         AbiSet::from(RustIntrinsic)
     }
 
-    fn default() -> AbiSet {
+    pub fn default() -> AbiSet {
         AbiSet::C()
     }
 
-    fn empty() -> AbiSet {
+    pub fn empty() -> AbiSet {
         AbiSet { bits: 0 }
     }
 
     #[inline]
-    fn is_rust(&self) -> bool {
+    pub fn is_rust(&self) -> bool {
         self.bits == 1 << Rust.index()
     }
 
     #[inline]
-    fn is_c(&self) -> bool {
+    pub fn is_c(&self) -> bool {
         self.bits == 1 << C.index()
     }
 
     #[inline]
-    fn is_intrinsic(&self) -> bool {
+    pub fn is_intrinsic(&self) -> bool {
         self.bits == 1 << RustIntrinsic.index()
     }
 
-    fn contains(&self, abi: Abi) -> bool {
+    pub fn contains(&self, abi: Abi) -> bool {
         (self.bits & (1 << abi.index())) != 0
     }
 
-    fn subset_of(&self, other_abi_set: AbiSet) -> bool {
+    pub fn subset_of(&self, other_abi_set: AbiSet) -> bool {
         (self.bits & other_abi_set.bits) == self.bits
     }
 
-    fn add(&mut self, abi: Abi) {
+    pub fn add(&mut self, abi: Abi) {
         self.bits |= (1 << abi.index());
     }
 
-    fn each(&self, op: &fn(abi: Abi) -> bool) {
-        for each_abi |abi| {
-            if self.contains(abi) {
-                if !op(abi) {
-                    return;
-                }
-            }
-        }
+    pub fn each(&self, op: &fn(abi: Abi) -> bool) -> bool {
+        each_abi(|abi| !self.contains(abi) || op(abi))
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.bits == 0
     }
 
-    fn for_arch(&self, arch: Architecture) -> Option<Abi> {
+    pub fn for_arch(&self, arch: Architecture) -> Option<Abi> {
         // NB---Single platform ABIs come first
         for self.each |abi| {
             let data = abi.data();
@@ -219,13 +205,13 @@ pub impl AbiSet {
         None
     }
 
-    fn check_valid(&self) -> Option<(Abi, Abi)> {
+    pub fn check_valid(&self) -> Option<(Abi, Abi)> {
         let mut abis = ~[];
         for self.each |abi| { abis.push(abi); }
 
-        for abis.eachi |i, abi| {
+        for abis.iter().enumerate().advance |(i, abi)| {
             let data = abi.data();
-            for abis.slice(0, i).each |other_abi| {
+            for abis.slice(0, i).iter().advance |other_abi| {
                 let other_data = other_abi.data();
                 debug!("abis=(%?,%?) datas=(%?,%?)",
                        abi, data.abi_arch,
@@ -255,13 +241,13 @@ pub impl AbiSet {
 }
 
 impl to_bytes::IterBytes for Abi {
-    fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
+    fn iter_bytes(&self, lsb0: bool, f: to_bytes::Cb) -> bool {
         self.index().iter_bytes(lsb0, f)
     }
 }
 
 impl to_bytes::IterBytes for AbiSet {
-    fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
+    fn iter_bytes(&self, lsb0: bool, f: to_bytes::Cb) -> bool {
         self.bits.iter_bytes(lsb0, f)
     }
 }
@@ -274,13 +260,11 @@ impl ToStr for Abi {
 
 impl ToStr for AbiSet {
     fn to_str(&self) -> ~str {
-        unsafe { // so we can push to strs.
-            let mut strs = ~[];
-            for self.each |abi| {
-                strs.push(abi.data().name);
-            }
-            fmt!("\"%s\"", str::connect_slices(strs, " "))
+        let mut strs = ~[];
+        for self.each |abi| {
+            strs.push(abi.data().name);
         }
+        fmt!("\"%s\"", strs.connect(" "))
     }
 }
 
@@ -313,7 +297,7 @@ fn cannot_combine(n: Abi, m: Abi) {
                          (m == a && n == b));
         }
         None => {
-            fail!(~"Invalid match not detected");
+            fail!("Invalid match not detected");
         }
     }
 }
@@ -325,7 +309,7 @@ fn can_combine(n: Abi, m: Abi) {
     set.add(m);
     match set.check_valid() {
         Some((_, _)) => {
-            fail!(~"Valid match declared invalid");
+            fail!("Valid match declared invalid");
         }
         None => {}
     }
@@ -388,7 +372,7 @@ fn abi_to_str_rust() {
 
 #[test]
 fn indices_are_correct() {
-    for AbiDatas.eachi |i, abi_data| {
+    for AbiDatas.iter().enumerate().advance |(i, abi_data)| {
         assert!(i == abi_data.abi.index());
     }
 
@@ -403,7 +387,7 @@ fn indices_are_correct() {
 #[cfg(test)]
 fn check_arch(abis: &[Abi], arch: Architecture, expect: Option<Abi>) {
     let mut set = AbiSet::empty();
-    for abis.each |&abi| {
+    for abis.iter().advance |&abi| {
         set.add(abi);
     }
     let r = set.for_arch(arch);

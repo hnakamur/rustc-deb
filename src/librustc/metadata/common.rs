@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -7,7 +7,7 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-
+use std::cast;
 
 // EBML enum definitions and utils shared by the encoder and decoder
 
@@ -74,7 +74,9 @@ pub static tag_crate_dep_vers: uint = 0x2cu;
 pub static tag_mod_impl: uint = 0x30u;
 
 pub static tag_item_trait_method: uint = 0x31u;
-pub static tag_impl_trait: uint = 0x32u;
+
+pub static tag_item_trait_ref: uint = 0x32u;
+pub static tag_item_super_trait_ref: uint = 0x33u;
 
 // discriminator value for variants
 pub static tag_disr_val: uint = 0x34u;
@@ -98,9 +100,9 @@ pub static tag_mod_impl_trait: uint = 0x47u;
   different tags.
  */
 pub static tag_item_impl_method: uint = 0x48u;
-pub static tag_item_dtor: uint = 0x49u;
-pub static tag_item_trait_method_self_ty: uint = 0x4b;
+pub static tag_item_trait_method_explicit_self: uint = 0x4b;
 pub static tag_item_trait_method_self_ty_region: uint = 0x4c;
+
 
 // Reexports are found within module tags. Each reexport contains def_ids
 // and names.
@@ -109,6 +111,7 @@ pub static tag_items_data_item_reexport_def_id: uint = 0x4e;
 pub static tag_items_data_item_reexport_name: uint = 0x4f;
 
 // used to encode crate_ctxt side tables
+#[deriving(Eq)]
 pub enum astencode_tag { // Reserves 0x50 -- 0x6f
     tag_ast = 0x50,
 
@@ -124,8 +127,7 @@ pub enum astencode_tag { // Reserves 0x50 -- 0x6f
     tag_table_node_type_subst = 0x58,
     tag_table_freevars = 0x59,
     tag_table_tcache = 0x5a,
-    tag_table_param_bounds = 0x5b,
-    tag_table_inferred_modes = 0x5c,
+    tag_table_param_defs = 0x5b,
     tag_table_mutbl = 0x5d,
     tag_table_last_use = 0x5e,
     tag_table_spill = 0x5f,
@@ -134,6 +136,16 @@ pub enum astencode_tag { // Reserves 0x50 -- 0x6f
     tag_table_adjustments = 0x62,
     tag_table_moves_map = 0x63,
     tag_table_capture_map = 0x64
+}
+static first_astencode_tag : uint = tag_ast as uint;
+static last_astencode_tag : uint = tag_table_capture_map as uint;
+impl astencode_tag {
+    pub fn from_uint(value : uint) -> Option<astencode_tag> {
+        let is_a_tag = first_astencode_tag <= value && value <= last_astencode_tag;
+        if !is_a_tag { None } else {
+            Some(unsafe { cast::transmute(value as int) })
+        }
+    }
 }
 
 pub static tag_item_trait_method_sort: uint = 0x70;
@@ -159,9 +171,16 @@ pub static tag_items_data_item_visibility: uint = 0x78;
 pub static tag_link_args: uint = 0x79;
 pub static tag_link_args_arg: uint = 0x7a;
 
+pub static tag_item_method_tps: uint = 0x7b;
+pub static tag_item_method_fty: uint = 0x7c;
+pub static tag_item_method_transformed_self_ty: uint = 0x7d;
+
+pub static tag_mod_child: uint = 0x7e;
+pub static tag_misc_info: uint = 0x7f;
+pub static tag_misc_info_crate_items: uint = 0x80;
+
 pub struct LinkMeta {
     name: @str,
     vers: @str,
     extras_hash: @str
 }
-

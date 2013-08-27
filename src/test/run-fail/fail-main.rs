@@ -9,5 +9,5 @@
 // except according to those terms.
 
 // error-pattern:moop
-extern mod std;
-fn main() { fail!(~"moop"); }
+extern mod extra;
+fn main() { fail!("moop"); }

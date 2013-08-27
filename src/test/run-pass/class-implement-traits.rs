@@ -9,7 +9,8 @@
 // except according to those terms.
 
 // xfail-fast
-#[legacy_modes];
+
+use std::uint;
 
 trait noisy {
   fn speak(&mut self);
@@ -22,7 +23,7 @@ struct cat {
     name : ~str,
 }
 
-priv impl cat {
+impl cat {
     fn meow(&mut self) {
         error!("Meow");
         self.meows += 1u;
@@ -32,8 +33,8 @@ priv impl cat {
     }
 }
 
-pub impl cat {
-    fn eat(&mut self) -> bool {
+impl cat {
+    pub fn eat(&mut self) -> bool {
         if self.how_hungry > 0 {
             error!("OM NOM NOM");
             self.how_hungry -= 2;
@@ -66,6 +67,7 @@ pub fn main() {
   let mut nyan = cat(0u, 2, ~"nyan");
   nyan.eat();
   assert!((!nyan.eat()));
-  for uint::range(1u, 10u) |_i| { make_speak(nyan); };
-  assert!((nyan.eat()));
+  for uint::range(1u, 10u) |_i| {
+    make_speak(copy nyan);
+  }
 }

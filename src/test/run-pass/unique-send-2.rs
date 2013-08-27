@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::comm::*;
+use std::comm::*;
+use std::task;
+use std::uint;
 
 fn child(c: &SharedChan<~uint>, i: uint) {
     c.send(~i);
@@ -16,7 +18,7 @@ fn child(c: &SharedChan<~uint>, i: uint) {
 
 pub fn main() {
     let (p, ch) = stream();
-    let ch = SharedChan(ch);
+    let ch = SharedChan::new(ch);
     let n = 100u;
     let mut expected = 0u;
     for uint::range(0u, n) |i| {
@@ -31,5 +33,5 @@ pub fn main() {
         actual += *j;
     }
 
-    assert!(expected == actual);
+    assert_eq!(expected, actual);
 }

@@ -12,12 +12,11 @@
 ifdef PPFILES
   PP_INPUTS_FILTERED := $(wildcard $(PPFILES))
 else
-  PP_INPUTS = $(wildcard $(addprefix $(S)src/libcore/,*.rs */*.rs)) \
-              $(wildcard $(addprefix $(S)src/libstd/,*.rs */*.rs)) \
+  PP_INPUTS = $(wildcard $(addprefix $(S)src/libstd/,*.rs */*.rs)) \
+              $(wildcard $(addprefix $(S)src/libextra/,*.rs */*.rs)) \
               $(wildcard $(addprefix $(S)src/rustc/,*.rs */*.rs */*/*.rs)) \
               $(wildcard $(S)src/test/*/*.rs    \
                          $(S)src/test/*/*/*.rs) \
-              $(wildcard $(S)src/fuzzer/*.rs)   \
               $(wildcard $(S)src/rustpkg/*.rs) \
               $(wildcard $(S)src/rusti/*.rs) \
               $(wildcard $(S)src/rust/*.rs)

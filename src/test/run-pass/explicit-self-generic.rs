@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
+extern mod extra;
 
 /**
  * A function that returns a hash of a value
@@ -20,24 +20,23 @@ type EqFn<K> = ~fn(K, K) -> bool;
 
 struct LM { resize_at: uint, size: uint }
 
-enum LinearMap<K,V> {
-    LinearMap_(LM)
+enum HashMap<K,V> {
+    HashMap_(LM)
 }
 
-fn linear_map<K,V>() -> LinearMap<K,V> {
-    LinearMap_(LM{
+fn linear_map<K,V>() -> HashMap<K,V> {
+    HashMap_(LM{
         resize_at: 32,
         size: 0})
 }
 
-pub impl<K,V> LinearMap<K,V> {
-    fn len(&mut self) -> uint {
+impl<K,V> HashMap<K,V> {
+    pub fn len(&mut self) -> uint {
         self.size
     }
 }
 
 pub fn main() {
     let mut m = ~linear_map::<(),()>();
-    assert!(m.len() == 0);
+    assert_eq!(m.len(), 0);
 }
-

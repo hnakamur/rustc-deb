@@ -17,8 +17,8 @@ struct Foo {
 }
 
 impl Drop for Foo {
-    fn finalize(&self) {
-        io::println("Goodbye!");
+    fn drop(&self) {
+        println("Goodbye!");
     }
 }
 
@@ -26,4 +26,3 @@ fn main() {
     let a = Foo { x: 3 };
     let _ = [ a, ..5 ];     //~ ERROR copying a value of non-copyable type
 }
-

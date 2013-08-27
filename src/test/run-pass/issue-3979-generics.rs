@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
+// xfail-test FIXME #5946
 trait Positioned<S> {
   fn SetX(&mut self, S);
   fn X(&self) -> S;
@@ -32,10 +32,10 @@ impl Positioned<int> for Point {
     }
 }
 
-impl Point: Movable<int, int>;
+impl Movable<int, int> for Point;
 
 pub fn main() {
     let p = Point{ x: 1, y: 2};
     p.translate(3);
-    assert!(p.X() == 4);
+    assert_eq!(p.X(), 4);
 }

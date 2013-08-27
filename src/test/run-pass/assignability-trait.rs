@@ -13,22 +13,18 @@
 // it.
 
 trait iterable<A> {
-    fn iterate(&self, blk: &fn(x: &A) -> bool);
+    fn iterate(&self, blk: &fn(x: &A) -> bool) -> bool;
 }
 
 impl<'self,A> iterable<A> for &'self [A] {
-    fn iterate(&self, f: &fn(x: &A) -> bool) {
-        for vec::each(*self) |e| {
-            if !f(e) { break; }
-        }
+    fn iterate(&self, f: &fn(x: &A) -> bool) -> bool {
+        self.iter().advance(f)
     }
 }
 
 impl<A> iterable<A> for ~[A] {
-    fn iterate(&self, f: &fn(x: &A) -> bool) {
-        for vec::each(*self) |e| {
-            if !f(e) { break; }
-        }
+    fn iterate(&self, f: &fn(x: &A) -> bool) -> bool {
+        self.iter().advance(f)
     }
 }
 
@@ -43,15 +39,15 @@ pub fn main() {
     // Call a method
     for x.iterate() |y| { assert!(x[*y] == *y); }
     // Call a parameterized function
-    assert!(length(x.clone()) == vec::len(x));
+    assert_eq!(length(x.clone()), x.len());
     // Call a parameterized function, with type arguments that require
     // a borrow
-    assert!(length::<int, &[int]>(x) == vec::len(x));
+    assert_eq!(length::<int, &[int]>(x), x.len());
 
     // Now try it with a type that *needs* to be borrowed
     let z = [0,1,2,3];
     // Call a method
     for z.iterate() |y| { assert!(z[*y] == *y); }
     // Call a parameterized function
-    assert!(length::<int, &[int]>(z) == vec::len(z));
+    assert_eq!(length::<int, &[int]>(z), z.len());
 }

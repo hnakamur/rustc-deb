@@ -8,12 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
+extern mod extra;
 
 fn test(actual: ~str, expected: ~str) {
     debug!(actual.clone());
     debug!(expected.clone());
-    assert!((actual == expected));
+    assert_eq!(actual, expected);
 }
 
 pub fn main() {
@@ -58,6 +58,9 @@ fn part1() {
     test(fmt!("%x", 0xffffffff_u), ~"ffffffff");
     test(fmt!("%o", 0xffffffff_u), ~"37777777777");
     test(fmt!("%t", 0xffffffff_u), ~"11111111111111111111111111111111");
+
+    // Don't result in a compilation error
+    test(fmt!(""), ~"");
 }
 fn part2() {
     // Widths
@@ -250,13 +253,13 @@ fn part6() {
 
 fn percent() {
     let s = fmt!("ab%%cd");
-    assert!((s == ~"ab%cd"));
+    assert_eq!(s, ~"ab%cd");
 }
 
 fn more_floats() {
-    assert!(~"3.1416"      == fmt!("%.4f", 3.14159));
-    assert!(~"3"           == fmt!("%.0f", 3.14159));
-    assert!(~"99"          == fmt!("%.0f", 98.5));
-    assert!(~"7.0000"      == fmt!("%.4f", 6.999999999));
-    assert!(~"3.141590000" == fmt!("%.9f", 3.14159));
+    assert_eq!(~"3.1416", fmt!("%.4f", 3.14159));
+    assert_eq!(~"3", fmt!("%.0f", 3.14159));
+    assert_eq!(~"99", fmt!("%.0f", 98.5));
+    assert_eq!(~"7.0000", fmt!("%.4f", 6.999999999));
+    assert_eq!(~"3.141590000", fmt!("%.9f", 3.14159));
 }

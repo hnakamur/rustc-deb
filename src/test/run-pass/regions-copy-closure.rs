@@ -12,14 +12,14 @@ struct closure_box<'self> {
     cl: &'self fn(),
 }
 
-fn box_it<'r>(+x: &'r fn()) -> closure_box<'r> {
+fn box_it<'r>(x: &'r fn()) -> closure_box<'r> {
     closure_box {cl: x}
 }
 
 pub fn main() {
     let mut i = 3;
     let cl_box = box_it(|| i += 1);
-    assert!(i == 3);
+    assert_eq!(i, 3);
     (cl_box.cl)();
-    assert!(i == 4);
+    assert_eq!(i, 4);
 }

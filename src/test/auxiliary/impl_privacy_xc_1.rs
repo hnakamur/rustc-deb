@@ -4,7 +4,6 @@ pub struct Fish {
     x: int
 }
 
-pub impl Fish {
-    fn swim(&self) {}
+impl Fish {
+    pub fn swim(&self) {}
 }
-

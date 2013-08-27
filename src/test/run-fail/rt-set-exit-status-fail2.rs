@@ -10,6 +10,9 @@
 
 // error-pattern:whatever
 
+use std::os;
+use std::task;
+
 struct r {
   x:int,
 }
@@ -18,7 +21,7 @@ struct r {
 // failed has no effect and the process exits with the
 // runtime's exit code
 impl Drop for r {
-    fn finalize(&self) {
+    fn drop(&self) {
         os::set_exit_status(50);
     }
 }

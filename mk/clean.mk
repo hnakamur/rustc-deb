@@ -20,10 +20,10 @@ CLEAN_STAGE_RULES =								\
     clean$(stage)_T_$(target)_H_$(host))))
 
 CLEAN_LLVM_RULES = 								\
- $(foreach target, $(CFG_TARGET_TRIPLES),		\
+ $(foreach target, $(CFG_HOST_TRIPLES),		\
   clean-llvm$(target))
 
-.PHONY: clean clean-all clean-misc
+.PHONY: clean clean-all clean-misc clean-llvm
 
 clean-all: clean clean-llvm
 
@@ -48,7 +48,7 @@ clean-misc:
 	$(Q)rm -f $(RUSTLLVM_LIB_OBJS) $(RUSTLLVM_OBJS_OBJS) $(RUSTLLVM_DEF)
 	$(Q)rm -Rf $(DOCS)
 	$(Q)rm -Rf $(GENERATED)
-	$(Q)rm -f tmp/*.log tmp/*.rc tmp/*.rs tmp/*.ok
+	$(Q)rm -f tmp/*
 	$(Q)rm -Rf rust-stage0-*.tar.bz2 $(PKG_NAME)-*.tar.gz dist
 	$(Q)rm -Rf $(foreach ext, \
                  html aux cp fn ky log pdf pg toc tp vr cps, \
@@ -63,27 +63,24 @@ define CLEAN_HOST_STAGE_N
 
 clean$(1)_H_$(2):
 	$(Q)rm -f $$(HBIN$(1)_H_$(2))/rustc$(X_$(2))
-	$(Q)rm -f $$(HBIN$(1)_H_$(2))/fuzzer$(X_$(2))
 	$(Q)rm -f $$(HBIN$(1)_H_$(2))/rustpkg$(X_$(2))
 	$(Q)rm -f $$(HBIN$(1)_H_$(2))/serializer$(X_$(2))
 	$(Q)rm -f $$(HBIN$(1)_H_$(2))/rustdoc$(X_$(2))
 	$(Q)rm -f $$(HBIN$(1)_H_$(2))/rusti$(X_$(2))
 	$(Q)rm -f $$(HBIN$(1)_H_$(2))/rust$(X_$(2))
-	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_LIBFUZZER_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_LIBRUSTPKG_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_LIBRUSTDOC_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_RUNTIME_$(2))
-	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_CORELIB_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_STDLIB_$(2))
+	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_EXTRALIB_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_LIBRUSTC_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_LIBSYNTAX_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_LIBRUSTI_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CFG_LIBRUST_$(2))
-	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(CORELIB_GLOB_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(STDLIB_GLOB_$(2))
+	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(EXTRALIB_GLOB_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(LIBRUSTC_GLOB_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(LIBSYNTAX_GLOB_$(2))
-	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(LIBFUZZER_GLOB_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(LIBRUSTPKG_GLOB_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(LIBRUSTDOC_GLOB_$(2))
 	$(Q)rm -f $$(HLIB$(1)_H_$(2))/$(LIBRUSTI_GLOB_$(2))
@@ -101,27 +98,24 @@ define CLEAN_TARGET_STAGE_N
 
 clean$(1)_T_$(2)_H_$(3):
 	$(Q)rm -f $$(TBIN$(1)_T_$(2)_H_$(3))/rustc$(X_$(2))
-	$(Q)rm -f $$(TBIN$(1)_T_$(2)_H_$(3))/fuzzer$(X_$(2))
 	$(Q)rm -f $$(TBIN$(1)_T_$(2)_H_$(3))/rustpkg$(X_$(2))
 	$(Q)rm -f $$(TBIN$(1)_T_$(2)_H_$(3))/serializer$(X_$(2))
 	$(Q)rm -f $$(TBIN$(1)_T_$(2)_H_$(3))/rustdoc$(X_$(2))
 	$(Q)rm -f $$(TBIN$(1)_T_$(2)_H_$(3))/rusti$(X_$(2))
 	$(Q)rm -f $$(TBIN$(1)_T_$(2)_H_$(3))/rust$(X_$(2))
-	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBFUZZER_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTPKG_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTDOC_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_RUNTIME_$(2))
-	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_CORELIB_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2))
+	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_EXTRALIB_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTC_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBSYNTAX_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTI_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUST_$(2))
-	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CORELIB_GLOB_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(STDLIB_GLOB_$(2))
+	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(EXTRALIB_GLOB_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(LIBRUSTC_GLOB_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(LIBSYNTAX_GLOB_$(2))
-	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(LIBFUZZER_GLOB_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(LIBRUSTPKG_GLOB_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(LIBRUSTDOC_GLOB_$(2))
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(LIBRUSTI_GLOB_$(2))

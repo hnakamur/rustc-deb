@@ -14,14 +14,14 @@ struct r {
 
 #[unsafe_destructor]
 impl Drop for r {
-    fn finalize(&self) {
+    fn drop(&self) {
         unsafe {
             *(self.i) = *(self.i) + 1;
         }
     }
 }
 
-fn f<T>(+_i: ~[T], +_j: ~[T]) {
+fn f<T>(_i: ~[T], _j: ~[T]) {
 }
 
 fn main() {

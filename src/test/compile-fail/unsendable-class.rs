@@ -11,6 +11,8 @@
 // Test that a class with an unsendable field can't be
 // sent
 
+use std::comm;
+
 struct foo {
   i: int,
   j: @~str,
@@ -25,6 +27,6 @@ fn foo(i:int, j: @~str) -> foo {
 
 fn main() {
   let cat = ~"kitty";
-    let (_, ch) = comm::stream(); //~ ERROR does not fulfill `Owned`
-  ch.send(foo(42, @(cat))); //~ ERROR does not fulfill `Owned`
+    let (_, ch) = comm::stream(); //~ ERROR does not fulfill `Send`
+  ch.send(foo(42, @(cat))); //~ ERROR does not fulfill `Send`
 }

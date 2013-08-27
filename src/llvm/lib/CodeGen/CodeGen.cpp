@@ -19,6 +19,7 @@ using namespace llvm;
 
 /// initializeCodeGen - Initialize all passes linked into the CodeGen library.
 void llvm::initializeCodeGen(PassRegistry &Registry) {
+  initializeBasicTTIPass(Registry);
   initializeBranchFolderPassPass(Registry);
   initializeCalculateSpillWeightsPass(Registry);
   initializeCodePlacementOptPass(Registry);
@@ -28,12 +29,10 @@ void llvm::initializeCodeGen(PassRegistry &Registry) {
   initializeExpandISelPseudosPass(Registry);
   initializeFinalizeMachineBundlesPass(Registry);
   initializeGCMachineCodeAnalysisPass(Registry);
-  initializeGCMachineCodeFixupPass(Registry);
   initializeGCModuleInfoPass(Registry);
   initializeIfConverterPass(Registry);
   initializeLiveDebugVariablesPass(Registry);
   initializeLiveIntervalsPass(Registry);
-  initializeLiveIRVariablesPass(Registry);
   initializeLiveStacksPass(Registry);
   initializeLiveVariablesPass(Registry);
   initializeLocalStackSlotPassPass(Registry);

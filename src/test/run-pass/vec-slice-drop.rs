@@ -15,7 +15,7 @@ struct foo {
 
 #[unsafe_destructor]
 impl Drop for foo {
-    fn finalize(&self) {
+    fn drop(&self) {
         unsafe {
             *self.x += 1;
         }
@@ -32,7 +32,7 @@ pub fn main() {
     let x = @mut 0;
     {
         let l = &[foo(x)];
-        assert!(*l[0].x == 0);
+        assert_eq!(*l[0].x, 0);
     }
-    assert!(*x == 1);
+    assert_eq!(*x, 1);
 }

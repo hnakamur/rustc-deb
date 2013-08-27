@@ -99,9 +99,9 @@ If you've fulfilled those prerequisites, something along these lines
 should work.
 
 ~~~~ {.notrust}
-$ curl -O http://static.rust-lang.org/dist/rust-0.6.tar.gz
-$ tar -xzf rust-0.6.tar.gz
-$ cd rust-0.6
+$ curl -O http://static.rust-lang.org/dist/rust-0.7.tar.gz
+$ tar -xzf rust-0.7.tar.gz
+$ cd rust-0.7
 $ ./configure
 $ make && make install
 ~~~~
@@ -119,8 +119,8 @@ API-documentation tool; `rustpkg`, the Rust package manager;
 interface for them, and for a few common command line scenarios.
 
 [wiki-start]: https://github.com/mozilla/rust/wiki/Note-getting-started-developing-Rust
-[tarball]: http://static.rust-lang.org/dist/rust-0.6.tar.gz
-[win-exe]: http://static.rust-lang.org/dist/rust-0.6-install.exe
+[tarball]: http://static.rust-lang.org/dist/rust-0.7.tar.gz
+[win-exe]: http://static.rust-lang.org/dist/rust-0.7-install.exe
 
 ## Compiling your first program
 
@@ -129,7 +129,7 @@ we have a file `hello.rs` containing this program:
 
 ~~~~
 fn main() {
-    io::println("hello?");
+    println("hello?");
 }
 ~~~~
 
@@ -139,12 +139,12 @@ Windows) which, upon running, will likely do exactly what you expect.
 
 The Rust compiler tries to provide useful information when it encounters an
 error. If you introduce an error into the program (for example, by changing
-`io::println` to some nonexistent function), and then compile it, you'll see
+`println` to some nonexistent function), and then compile it, you'll see
 an error message like this:
 
 ~~~~ {.notrust}
-hello.rs:2:4: 2:16 error: unresolved name: io::print_with_unicorns
-hello.rs:2     io::print_with_unicorns("hello?");
+hello.rs:2:4: 2:16 error: unresolved name: print_with_unicorns
+hello.rs:2     print_with_unicorns("hello?");
                ^~~~~~~~~~~~~~~~~~~~~~~
 ~~~~
 
@@ -227,7 +227,7 @@ let hi = "hi";
 let mut count = 0;
 
 while count < 10 {
-    io::println(fmt!("count: %?", count));
+    println(fmt!("count: %?", count));
     count += 1;
 }
 ~~~~
@@ -362,7 +362,7 @@ The nil type, written `()`, has a single value, also written `()`.
 ## Operators
 
 Rust's set of operators contains very few surprises. Arithmetic is done with
-`*`, `/`, `%`, `+`, and `-` (multiply, divide, take remainder, add, and subtract). `-` is
+`*`, `/`, `%`, `+`, and `-` (multiply, quotient, remainder, add, and subtract). `-` is
 also a unary prefix operator that negates numbers. As in C, the bitwise operators
 `>>`, `<<`, `&`, `|`, and `^` are also supported.
 
@@ -400,10 +400,10 @@ don't match the types of the arguments.
 ~~~~
 # let mystery_object = ();
 
-io::println(fmt!("%s is %d", "the answer", 43));
+println(fmt!("%s is %d", "the answer", 43));
 
 // %? will conveniently print any type
-io::println(fmt!("what is this thing: %?", mystery_object));
+println(fmt!("what is this thing: %?", mystery_object));
 ~~~~
 
 [pf]: http://en.cppreference.com/w/cpp/io/c/fprintf
@@ -422,11 +422,11 @@ compulsory, an `if` can have an optional `else` clause, and multiple
 
 ~~~~
 if false {
-    io::println("that's odd");
+    println("that's odd");
 } else if true {
-    io::println("right");
+    println("right");
 } else {
-    io::println("neither true nor false");
+    println("neither true nor false");
 }
 ~~~~
 
@@ -454,10 +454,10 @@ executes its corresponding arm.
 ~~~~
 # let my_number = 1;
 match my_number {
-  0     => io::println("zero"),
-  1 | 2 => io::println("one or two"),
-  3..10 => io::println("three to ten"),
-  _     => io::println("something else")
+  0     => println("zero"),
+  1 | 2 => println("one or two"),
+  3..10 => println("three to ten"),
+  _     => println("something else")
 }
 ~~~~
 
@@ -483,8 +483,8 @@ commas are optional.
 ~~~
 # let my_number = 1;
 match my_number {
-  0 => { io::println("zero") }
-  _ => { io::println("something else") }
+  0 => { println("zero") }
+  _ => { println("something else") }
 }
 ~~~
 
@@ -495,9 +495,14 @@ omitted.
 
 A powerful application of pattern matching is *destructuring*:
 matching in order to bind names to the contents of data
-types. Remember that `(float, float)` is a tuple of two floats:
+types.
+
+> ***Note:*** The following code makes use of tuples (`(float, float)`) which
+> are explained in section 5.3. For now you can think of tuples as a list of
+> items.
 
 ~~~~
+# use std::float;
 fn angle(vector: (float, float)) -> float {
     let pi = float::consts::pi;
     match vector {
@@ -552,19 +557,22 @@ while cake_amount > 0 {
 `loop` denotes an infinite loop, and is the preferred way of writing `while true`:
 
 ~~~~
+# use std::int;
 let mut x = 5;
 loop {
     x += x - 3;
     if x % 5 == 0 { break; }
-    io::println(int::to_str(x));
+    println(int::to_str(x));
 }
 ~~~~
 
 This code prints out a weird sequence of numbers and stops as soon as
 it finds one that can be divided by five.
 
-For more involved iteration, such as enumerating the elements of a
-collection, Rust uses [higher-order functions](#closures).
+Rust also has a `for` construct. It's different from C's `for` and it works
+best when iterating over collections. See the section on [closures](#closures)
+to find out how to use `for` and higher-order functions for enumerating
+elements of a collection.
 
 # Data structures
 
@@ -610,8 +618,8 @@ origin.y += 1.0; // ERROR: assigning to immutable field
 # struct Point { x: float, y: float }
 # let mypoint = Point { x: 0.0, y: 0.0 };
 match mypoint {
-    Point { x: 0.0, y: yy } => { io::println(yy.to_str());                     }
-    Point { x: xx,  y: yy } => { io::println(xx.to_str() + " " + yy.to_str()); }
+    Point { x: 0.0, y: yy } => { println(yy.to_str());                     }
+    Point { x: xx,  y: yy } => { println(xx.to_str() + " " + yy.to_str()); }
 }
 ~~~~
 
@@ -626,7 +634,7 @@ reuses the field name as the binding name.
 # struct Point { x: float, y: float }
 # let mypoint = Point { x: 0.0, y: 0.0 };
 match mypoint {
-    Point { x, _ } => { io::println(x.to_str()) }
+    Point { x, _ } => { println(x.to_str()) }
 }
 ~~~
 
@@ -695,6 +703,7 @@ get at their contents. All variant constructors can be used as
 patterns, as in this definition of `area`:
 
 ~~~~
+# use std::float;
 # struct Point {x: float, y: float}
 # enum Shape { Circle(Point, float), Rectangle(Point, Point) }
 fn area(sh: Shape) -> float {
@@ -726,7 +735,7 @@ fn point_from_direction(dir: Direction) -> Point {
 Enum variants may also be structs. For example:
 
 ~~~~
-# use core::float;
+# use std::float;
 # struct Point { x: float, y: float }
 # fn square(x: float) -> float { x * x }
 enum Shape {
@@ -747,7 +756,7 @@ fn area(sh: Shape) -> float {
 
 Tuples in Rust behave exactly like structs, except that their fields
 do not have names. Thus, you cannot access their fields with dot notation.
-Tuples can have any arity except for 0 or 1 (though you may consider
+Tuples can have any arity except for 0 (though you may consider
 unit, `()`, as the empty tuple if you like).
 
 ~~~~
@@ -864,108 +873,27 @@ fn first((value, _): (int, float)) -> int { value }
 
 # Destructors
 
-C-style resource management requires the programmer to match every allocation
-with a free, which means manually tracking the responsibility for cleaning up
-(the owner). Correctness is left to the programmer, and it's easy to get wrong.
+A *destructor* is a function responsible for cleaning up the resources used by
+an object when it is no longer accessible. Destructors can be defined to handle
+the release of resources like files, sockets and heap memory.
 
-The following code demonstrates manual memory management, in order to contrast
-it with Rust's resource management. Rust enforces safety, so the `unsafe`
-keyword is used to explicitly wrap the unsafe code. The keyword is a promise to
-the compiler that unsafety does not leak outside of the unsafe block, and is
-used to create safe concepts on top of low-level code.
+Objects are never accessible after their destructor has been called, so there
+are no dynamic failures from accessing freed resources. When a task fails, the
+destructors of all objects in the task are called.
+
+The `~` sigil represents a unique handle for a memory allocation on the heap:
 
 ~~~~
-use core::libc::{calloc, free, size_t};
-
-fn main() {
-    unsafe {
-        let a = calloc(1, int::bytes as size_t);
-
-        let d;
-
-        {
-            let b = calloc(1, int::bytes as size_t);
-
-            let c = calloc(1, int::bytes as size_t);
-            d = c; // move ownership to d
-
-            free(b);
-        }
-
-        free(d);
-        free(a);
-    }
+{
+    // an integer allocated on the heap
+    let y = ~10;
 }
+// the destructor frees the heap memory as soon as `y` goes out of scope
 ~~~~
 
-Rust uses destructors to handle the release of resources like memory
-allocations, files and sockets. An object will only be destroyed when there is
-no longer any way to access it, which prevents dynamic failures from an attempt
-to use a freed resource. When a task fails, the stack unwinds and the
-destructors of all objects owned by that task are called.
-
-The unsafe code from above can be contained behind a safe API that prevents
-memory leaks or use-after-free:
-
-~~~~
-use core::libc::{calloc, free, c_void, size_t};
-
-struct Blob { priv ptr: *c_void }
-
-impl Blob {
-    fn new() -> Blob {
-        unsafe { Blob{ptr: calloc(1, int::bytes as size_t)} }
-    }
-}
-
-impl Drop for Blob {
-    fn finalize(&self) {
-        unsafe { free(self.ptr); }
-    }
-}
-
-fn main() {
-    let a = Blob::new();
-
-    let d;
-
-    {
-        let b = Blob::new();
-
-        let c = Blob::new();
-        d = c; // move ownership to d
-
-        // b is destroyed here
-    }
-
-    // d is destroyed here
-    // a is destroyed here
-}
-~~~~
-
-This pattern is common enough that Rust includes dynamically allocated memory
-as first-class types (`~` and `@`). Non-memory resources like files are cleaned
-up with custom destructors.
-
-~~~~
-fn main() {
-    let a = ~0;
-
-    let d;
-
-    {
-        let b = ~0;
-
-        let c = ~0;
-        d = c; // move ownership to d
-
-        // b is destroyed here
-    }
-
-    // d is destroyed here
-    // a is destroyed here
-}
-~~~~
+Rust includes syntax for heap memory allocation in the language since it's
+commonly used, but the same semantics can be implemented by a type with a
+custom destructor.
 
 # Ownership
 
@@ -980,6 +908,22 @@ and destroy the contained object when they go out of scope. A box managed by
 the garbage collector starts a new ownership tree, and the destructor is called
 when it is collected.
 
+~~~~
+// the struct owns the objects contained in the `x` and `y` fields
+struct Foo { x: int, y: ~int }
+
+{
+    // `a` is the owner of the struct, and thus the owner of the struct's fields
+    let a = Foo { x: 5, y: ~10 };
+}
+// when `a` goes out of scope, the destructor for the `~int` in the struct's
+// field is called
+
+// `b` is mutable, and the mutability is inherited by the objects it owns
+let mut b = Foo { x: 5, y: ~10 };
+b.x = 10;
+~~~~
+
 If an object doesn't contain garbage-collected boxes, it consists of a single
 ownership tree and is given the `Owned` trait which allows it to be sent
 between tasks. Custom destructors can only be implemented directly on types
@@ -988,7 +932,7 @@ custom destructors.
 
 # Boxes
 
-Many modern languages represent values as as pointers to heap memory by
+Many modern languages represent values as pointers to heap memory by
 default. In contrast, Rust, like C and C++, represents such types directly.
 Another way to say this is that aggregate data in Rust are *unboxed*. This
 means that if you `let x = Point { x: 1f, y: 1f };`, you are creating a struct
@@ -1003,7 +947,7 @@ refer to that through a pointer.
 ## Owned boxes
 
 An owned box (`~`) is a uniquely owned allocation on the heap. It inherits the
-mutability and lifetime of the owner as it would if there was no box.
+mutability and lifetime of the owner as it would if there was no box:
 
 ~~~~
 let x = 5; // immutable
@@ -1017,8 +961,8 @@ let mut y = ~5; // mutable
 
 The purpose of an owned box is to add a layer of indirection in order to create
 recursive data structures or cheaply pass around an object larger than a
-pointer. Since an owned box has a unique owner, it can be used to represent any
-tree data structure.
+pointer. Since an owned box has a unique owner, it can only be used to
+represent a tree data structure.
 
 The following struct won't compile, because the lack of indirection would mean
 it has an infinite size:
@@ -1067,6 +1011,27 @@ let mut d = @mut 5; // mutable variable, mutable box
 d = @mut 15;
 ~~~~
 
+A mutable variable and an immutable variable can refer to the same box, given
+that their types are compatible. Mutability of a box is a property of its type,
+however, so for example a mutable handle to an immutable box cannot be
+assigned a reference to a mutable box.
+
+~~~~
+let a = @1;     // immutable box
+let b = @mut 2; // mutable box
+
+let mut c : @int;       // declare a variable with type managed immutable int
+let mut d : @mut int;   // and one of type managed mutable int
+
+c = a;          // box type is the same, okay
+d = b;          // box type is the same, okay
+~~~~
+
+~~~~ {.xfail-test}
+// but b cannot be assigned to c, or a to d
+c = b;          // error
+~~~~
+
 # Move semantics
 
 Rust uses a shallow copy for parameter passing, assignment and returning values
@@ -1079,6 +1044,16 @@ the source location and will not be destroyed there.
 let x = ~5;
 let y = x.clone(); // y is a newly allocated box
 let z = x; // no new memory allocated, x can no longer be used
+~~~~
+
+Since in owned boxes mutability is a property of the owner, not the
+box, mutable boxes may become immutable when they are moved, and vice-versa.
+
+~~~~
+let r = ~13;
+let mut s = r; // box becomes mutable
+*s += 1;
+let t = s; // box becomes immutable
 ~~~~
 
 # Borrowed pointers
@@ -1109,8 +1084,8 @@ let managed_box  : @Point = @Point { x: 5.0, y: 1.0 };
 let owned_box    : ~Point = ~Point { x: 7.0, y: 9.0 };
 ~~~
 
-Suppose we wanted to write a procedure that computed the distance
-between any two points, no matter where they were stored. For example,
+Suppose we want to write a procedure that computes the distance
+between any two points, no matter where they are stored. For example,
 we might like to compute the distance between `on_the_stack` and
 `managed_box`, or between `managed_box` and `owned_box`. One option is
 to define a function that takes two arguments of type point—that is,
@@ -1191,7 +1166,7 @@ they are frozen:
 let x = @mut 5;
 let y = x;
 {
-    let y = &*y; // the managed box is now frozen
+    let z = &*y; // the managed box is now frozen
     // modifying it through x or y will cause a task failure
 }
 // the box is now unfrozen again
@@ -1255,13 +1230,13 @@ let area = rect.area();
 ~~~
 
 You can write an expression that dereferences any number of pointers
-automatically. For example, if you felt inclined, you could write
+automatically. For example, if you feel inclined, you could write
 something silly like
 
 ~~~
 # struct Point { x: float, y: float }
 let point = &@~Point { x: 10f, y: 20f };
-io::println(fmt!("%f", point.x));
+println(fmt!("%f", point.x));
 ~~~
 
 The indexing operator (`[]`) also auto-dereferences.
@@ -1306,9 +1281,9 @@ let your_crayons = ~[BananaMania, Beaver, Bittersweet];
 // Add two vectors to create a new one
 let our_crayons = my_crayons + your_crayons;
 
-// += will append to a vector, provided it lives in a mutable slot
+// .push_all() will append to a vector, provided it lives in a mutable slot
 let mut my_crayons = my_crayons;
-my_crayons += your_crayons;
+my_crayons.push_all(your_crayons);
 ~~~~
 
 > ***Note:*** The above examples of vector addition use owned
@@ -1396,14 +1371,13 @@ let exchange_crayons: ~str = ~"Black, BlizzardBlue, Blue";
 ~~~
 
 Both vectors and strings support a number of useful
-[methods](#functions-and-methods), defined in [`core::vec`]
-and [`core::str`]. Here are some examples.
+[methods](#functions-and-methods), defined in [`std::vec`]
+and [`std::str`]. Here are some examples.
 
-[`core::vec`]: core/vec.html
-[`core::str`]: core/str.html
+[`std::vec`]: std/vec.html
+[`std::str`]: std/str.html
 
 ~~~
-# use core::io::println;
 # enum Crayon {
 #     Almond, AntiqueBrass, Apricot,
 #     Aquamarine, Asparagus, AtomicTangerine,
@@ -1421,7 +1395,8 @@ assert!(crayons.len() == 3);
 assert!(!crayons.is_empty());
 
 // Iterate over a vector, obtaining a pointer to each element
-for crayons.each |crayon| {
+// (`for` is explained in the next section)
+for crayons.iter().advance |crayon| {
     let delicious_crayon_wax = unwrap_crayon(*crayon);
     eat_crayon_wax(delicious_crayon_wax);
 }
@@ -1435,7 +1410,7 @@ let new_favorite_crayon_name = favorite_crayon_name.trim();
 
 if favorite_crayon_name.len() > 5 {
    // Create a substring
-   println(favorite_crayon_name.substr(0, 5));
+   println(favorite_crayon_name.slice_chars(0, 5));
 }
 ~~~
 
@@ -1458,7 +1433,6 @@ Rust also supports _closures_, functions that can access variables in
 the enclosing scope.
 
 ~~~~
-# use println = core::io::println;
 fn call_closure_with_ten(b: &fn(int)) { b(10); }
 
 let captured_var = 20;
@@ -1468,10 +1442,15 @@ call_closure_with_ten(closure);
 ~~~~
 
 Closures begin with the argument list between vertical bars and are followed by
-a single expression. The types of the arguments are generally omitted,
-as is the return type, because the compiler can almost always infer
-them. In the rare case where the compiler needs assistance, though, the
-arguments and return types may be annotated.
+a single expression. Remember that a block, `{ <expr1>; <expr2>; ... }`, is
+considered a single expression: it evaluates to the result of the last
+expression it contains if that expression is not followed by a semicolon,
+otherwise the block evaluates to `()`.
+
+The types of the arguments are generally omitted, as is the return type,
+because the compiler can almost always infer them. In the rare case where the
+compiler needs assistance, though, the arguments and return types may be
+annotated.
 
 ~~~~
 let square = |x: int| -> uint { x * x as uint };
@@ -1512,7 +1491,6 @@ This code creates a closure that adds a given string to its argument,
 returns it from a function, and then calls it:
 
 ~~~~
-# extern mod std;
 fn mk_appender(suffix: ~str) -> @fn(~str) -> ~str {
     // The compiler knows that we intend this closure to be of type @fn
     return |s| s + suffix;
@@ -1520,7 +1498,7 @@ fn mk_appender(suffix: ~str) -> @fn(~str) -> ~str {
 
 fn main() {
     let shout = mk_appender(~"!");
-    io::println(shout(~"hey ho, let's go"));
+    println(shout(~"hey ho, let's go"));
 }
 ~~~~
 
@@ -1574,13 +1552,6 @@ fn each(v: &[int], op: &fn(v: &int)) {
 }
 ~~~~
 
-As an aside, the reason we pass in a *pointer* to an integer rather
-than the integer itself is that this is how the actual `each()`
-function for vectors works. `vec::each` though is a
-[generic](#generics) function, so must be efficient to use for all
-types. Passing the elements by pointer avoids copying potentially
-large objects.
-
 As a caller, if we use a closure to provide the final operator
 argument, we can write it in a way that has a pleasant, block-like
 structure.
@@ -1615,7 +1586,7 @@ words, it is a function that takes an owned closure that takes no
 arguments.
 
 ~~~~
-use core::task::spawn;
+use std::task::spawn;
 
 do spawn() || {
     debug!("I'm a task, whatever");
@@ -1627,99 +1598,14 @@ lists back to back. Since that is so unsightly, empty argument lists
 may be omitted from `do` expressions.
 
 ~~~~
-# use core::task::spawn;
+# use std::task::spawn;
 do spawn {
    debug!("Kablam!");
 }
 ~~~~
 
-## For loops
-
-The most common way to express iteration in Rust is with a `for`
-loop. Like `do`, `for` is a nice syntax for describing control flow
-with closures.  Additionally, within a `for` loop, `break`, `loop`,
-and `return` work just as they do with `while` and `loop`.
-
-Consider again our `each` function, this time improved to
-break early when the iteratee returns `false`:
-
-~~~~
-fn each(v: &[int], op: &fn(v: &int) -> bool) {
-   let mut n = 0;
-   while n < v.len() {
-       if !op(&v[n]) {
-           break;
-       }
-       n += 1;
-   }
-}
-~~~~
-
-And using this function to iterate over a vector:
-
-~~~~
-# use each = core::vec::each;
-# use println = core::io::println;
-each([2, 4, 8, 5, 16], |n| {
-    if *n % 2 != 0 {
-        println("found odd number!");
-        false
-    } else { true }
-});
-~~~~
-
-With `for`, functions like `each` can be treated more
-like built-in looping structures. When calling `each`
-in a `for` loop, instead of returning `false` to break
-out of the loop, you just write `break`. To skip ahead
-to the next iteration, write `loop`.
-
-~~~~
-# use each = core::vec::each;
-# use println = core::io::println;
-for each([2, 4, 8, 5, 16]) |n| {
-    if *n % 2 != 0 {
-        println("found odd number!");
-        break;
-    }
-}
-~~~~
-
-As an added bonus, you can use the `return` keyword, which is not
-normally allowed in closures, in a block that appears as the body of a
-`for` loop: the meaning of `return` in such a block is to return from
-the enclosing function, not just the loop body.
-
-~~~~
-# use each = core::vec::each;
-fn contains(v: &[int], elt: int) -> bool {
-    for each(v) |x| {
-        if (*x == elt) { return true; }
-    }
-    false
-}
-~~~~
-
-Notice that, because `each` passes each value by borrowed pointer,
-the iteratee needs to dereference it before using it.
-In these situations it can be convenient to lean on Rust's
-argument patterns to bind `x` to the actual value, not the pointer.
-
-~~~~
-# use each = core::vec::each;
-# fn contains(v: &[int], elt: int) -> bool {
-    for each(v) |&x| {
-        if (x == elt) { return true; }
-    }
-#    false
-# }
-~~~~
-
-`for` syntax only works with stack closures.
-
-> ***Note:*** This is, essentially, a special loop protocol:
-> the keywords `break`, `loop`, and `return` work, in varying degree,
-> with `while`, `loop`, `do`, and `for` constructs.
+If you want to see the output of `debug!` statements, you will need to turn on `debug!` logging.
+To enable `debug!` logging, set the RUST_LOG environment variable to the name of your crate, which, for a file named `foo.rs`, will be `foo` (e.g., with bash, `export RUST_LOG=foo`).
 
 # Methods
 
@@ -1810,7 +1696,7 @@ to a borrowed pointer.
 #    fn draw_value(self) { ... }
 # }
 # let s = Circle(Point { x: 1f, y: 2f }, 3f);
-// As with typical function arguments, managed and unique pointers
+// As with typical function arguments, managed and owned pointers
 // are automatically converted to borrowed pointers
 
 (@s).draw_borrowed();
@@ -1828,7 +1714,7 @@ s.draw_borrowed();
 ~~~
 
 Implementations may also define standalone (sometimes called "static")
-methods. The absence of a `self` paramater distinguishes such methods.
+methods. The absence of a `self` parameter distinguishes such methods.
 These methods are the preferred way to define constructor functions.
 
 ~~~~ {.xfail-test}
@@ -1841,8 +1727,8 @@ impl Circle {
 To call such a method, just prefix it with the type name and a double colon:
 
 ~~~~
-# use core::float::consts::pi;
-# use core::float::sqrt;
+# use std::float::consts::pi;
+# use std::float::sqrt;
 struct Circle { radius: float }
 impl Circle {
     fn new(area: float) -> Circle { Circle { radius: sqrt(area / pi) } }
@@ -1863,7 +1749,7 @@ of `vector`:
 ~~~~
 fn map<T, U>(vector: &[T], function: &fn(v: &T) -> U) -> ~[U] {
     let mut accumulator = ~[];
-    for vec::each(vector) |element| {
+    for vector.iter().advance |element| {
         accumulator.push(function(element));
     }
     return accumulator;
@@ -1888,8 +1774,8 @@ illegal to copy and pass by value.
 Generic `type`, `struct`, and `enum` declarations follow the same pattern:
 
 ~~~~
-# use core::hashmap::linear::LinearMap;
-type Set<T> = LinearMap<T, ()>;
+# use std::hashmap::HashMap;
+type Set<T> = HashMap<T, ()>;
 
 struct Stack<T> {
     elements: ~[T]
@@ -1960,12 +1846,14 @@ fn head_bad<T>(v: &[T]) -> T {
 ~~~~
 
 However, we can tell the compiler that the `head` function is only for
-copyable types: that is, those that have the `Copy` trait.
+copyable types: that is, those that have the `Copy` trait. In that
+case, we can explicitly create a second copy of the value we are
+returning using the `copy` keyword:
 
 ~~~~
 // This does
 fn head<T: Copy>(v: &[T]) -> T {
-    v[0]
+    copy v[0]
 }
 ~~~~
 
@@ -1996,7 +1884,7 @@ types by the compiler, and may not be overridden:
 > iterations of the language, and often still are.
 
 Additionally, the `Drop` trait is used to define destructors. This
-trait defines one method called `finalize`, which is automatically
+trait defines one method called `drop`, which is automatically
 called when a value of the type that implements this trait is
 destroyed, either because the value went out of scope or because the
 garbage collector reclaimed it.
@@ -2007,15 +1895,15 @@ struct TimeBomb {
 }
 
 impl Drop for TimeBomb {
-    fn finalize(&self) {
-        for iter::repeat(self.explosivity) {
-            io::println("blam!");
+    fn drop(&self) {
+        for self.explosivity.times {
+            println("blam!");
         }
     }
 }
 ~~~
 
-It is illegal to call `finalize` directly. Only code inserted by the compiler
+It is illegal to call `drop` directly. Only code inserted by the compiler
 may call it.
 
 ## Declaring and implementing traits
@@ -2041,11 +1929,11 @@ and `~str`.
 ~~~~
 # trait Printable { fn print(&self); }
 impl Printable for int {
-    fn print(&self) { io::println(fmt!("%d", *self)) }
+    fn print(&self) { println(fmt!("%d", *self)) }
 }
 
 impl Printable for ~str {
-    fn print(&self) { io::println(*self) }
+    fn print(&self) { println(*self) }
 }
 
 # 1.print();
@@ -2059,15 +1947,11 @@ types might look like the following:
 
 ~~~~
 trait Seq<T> {
-    fn len(&self) -> uint;
-    fn iter(&self, b: &fn(v: &T));
+    fn length(&self) -> uint;
 }
 
 impl<T> Seq<T> for ~[T] {
-    fn len(&self) -> uint { vec::len(*self) }
-    fn iter(&self, b: &fn(v: &T)) {
-        for vec::each(*self) |elt| { b(elt); }
-    }
+    fn length(&self) -> uint { self.len() }
 }
 ~~~~
 
@@ -2083,11 +1967,10 @@ method declarations. So, re-declaring the type parameter
 `T` as an explicit type parameter for `len`, in either the trait or
 the impl, would be a compile-time error.
 
-Within a trait definition, `self` is a special type that you can think
+Within a trait definition, `Self` is a special type that you can think
 of as a type parameter. An implementation of the trait for any given
-type `T` replaces the `self` type parameter with `T`. Simply, in a
-trait, `self` is a type, and in an impl, `self` is a value. The
-following trait describes types that support an equality operation:
+type `T` replaces the `Self` type parameter with `T`. The following
+trait describes types that support an equality operation:
 
 ~~~~
 // In a trait, `self` refers to the self argument.
@@ -2103,7 +1986,7 @@ impl Eq for int {
 ~~~~
 
 Notice that in the trait definition, `equals` takes a
-second parameter of type `self`.
+second parameter of type `Self`.
 In contrast, in the `impl`, `equals` takes a second parameter of
 type `int`, only using `self` as the name of the receiver.
 
@@ -2113,8 +1996,8 @@ name and a double colon.  The compiler uses type inference to decide which
 implementation to use.
 
 ~~~~
-# use core::float::consts::pi;
-# use core::float::sqrt;
+# use std::float::consts::pi;
+# use std::float::sqrt;
 trait Shape { fn new(area: float) -> Self; }
 struct Circle { radius: float }
 struct Square { length: float }
@@ -2141,7 +2024,7 @@ generic types.
 ~~~~
 # trait Printable { fn print(&self); }
 fn print_all<T: Printable>(printable_things: ~[T]) {
-    for printable_things.each |thing| {
+    for printable_things.iter().advance |thing| {
         thing.print();
     }
 }
@@ -2161,7 +2044,7 @@ as in this version of `print_all` that copies elements.
 fn print_all<T: Printable + Copy>(printable_things: ~[T]) {
     let mut i = 0;
     while i < printable_things.len() {
-        let copy_of_thing = printable_things[i];
+        let copy_of_thing = copy printable_things[i];
         copy_of_thing.print();
         i += 1;
     }
@@ -2187,7 +2070,7 @@ However, consider this function:
 trait Drawable { fn draw(&self); }
 
 fn draw_all<T: Drawable>(shapes: ~[T]) {
-    for shapes.each |shape| { shape.draw(); }
+    for shapes.iter().advance |shape| { shape.draw(); }
 }
 # let c: Circle = new_circle();
 # draw_all(~[c]);
@@ -2202,7 +2085,7 @@ an _object_.
 ~~~~
 # trait Drawable { fn draw(&self); }
 fn draw_all(shapes: &[@Drawable]) {
-    for shapes.each |shape| { shape.draw(); }
+    for shapes.iter().advance |shape| { shape.draw(); }
 }
 ~~~~
 
@@ -2270,8 +2153,8 @@ trait Circle : Shape { fn radius(&self) -> float; }
 Now, we can implement `Circle` on a type only if we also implement `Shape`.
 
 ~~~~
-# use core::float::consts::pi;
-# use core::float::sqrt;
+# use std::float::consts::pi;
+# use std::float::sqrt;
 # trait Shape { fn area(&self) -> float; }
 # trait Circle : Shape { fn radius(&self) -> float; }
 # struct Point { x: float, y: float }
@@ -2288,7 +2171,7 @@ impl Shape for CircleStruct {
 Notice that methods of `Circle` can call methods on `Shape`, as our
 `radius` implementation calls the `area` method.
 This is a silly way to compute the radius of a circle
-(since we could just return the `circle` field), but you get the idea.
+(since we could just return the `radius` field), but you get the idea.
 
 In type-parameterized functions,
 methods of the supertrait may be called on values of subtrait-bound type parameters.
@@ -2306,8 +2189,8 @@ fn radius_times_area<T: Circle>(c: T) -> float {
 Likewise, supertrait methods may also be called on trait objects.
 
 ~~~ {.xfail-test}
-# use core::float::consts::pi;
-# use core::float::sqrt;
+# use std::float::consts::pi;
+# use std::float::sqrt;
 # trait Shape { fn area(&self) -> float; }
 # trait Circle : Shape { fn radius(&self) -> float; }
 # struct Point { x: float, y: float }
@@ -2322,6 +2205,27 @@ let nonsense = mycircle.radius() * mycircle.area();
 
 > ***Note:*** Trait inheritance does not actually work with objects yet
 
+## Deriving implementations for traits
+
+A small number of traits in `std` and `extra` can have implementations
+that can be automatically derived. These instances are specified by
+placing the `deriving` attribute on a data type declaration. For
+example, the following will mean that `Circle` has an implementation
+for `Eq` and can be used with the equality operators, and that a value
+of type `ABC` can be randomly generated and converted to a string:
+
+~~~
+#[deriving(Eq)]
+struct Circle { radius: float }
+
+#[deriving(Rand, ToStr)]
+enum ABC { A, B, C }
+~~~
+
+The full list of derivable traits is `Eq`, `TotalEq`, `Ord`,
+`TotalOrd`, `Encodable` `Decodable`, `Clone`, `DeepClone`,
+`IterBytes`, `Rand`, `Zero`, and `ToStr`.
+
 # Modules and crates
 
 The Rust namespace is arranged in a hierarchy of modules. Each source
@@ -2335,7 +2239,7 @@ mod farm {
 }
 
 fn main() {
-    io::println(farm::chicken());
+    println(farm::chicken());
 }
 ~~~~
 
@@ -2523,7 +2427,7 @@ will not be compiled successfully.
 
 ## A minimal example
 
-Now for something that you can actually compile yourself. We have
+Now for something that you can actually compile yourself, we have
 these two files:
 
 ~~~~
@@ -2535,7 +2439,7 @@ pub fn explore() -> &str { "world" }
 ~~~~ {.xfail-test}
 // main.rs
 extern mod world;
-fn main() { io::println(~"hello " + world::explore()); }
+fn main() { println(~"hello " + world::explore()); }
 ~~~~
 
 Now compile and run like this (adjust to your platform if necessary):
@@ -2552,17 +2456,17 @@ as well as an inscrutable string of alphanumerics. These are both
 part of Rust's library versioning scheme. The alphanumerics are
 a hash representing the crate metadata.
 
-## The core library
+## The standard library
 
-The Rust core library provides runtime features required by the language,
+The Rust standard library provides runtime features required by the language,
 including the task scheduler and memory allocators, as well as library
 support for Rust built-in types, platform abstractions, and other commonly
 used features.
 
-[`core`] includes modules corresponding to each of the integer types, each of
+[`std`] includes modules corresponding to each of the integer types, each of
 the floating point types, the [`bool`] type, [tuples], [characters], [strings],
 [vectors], [managed boxes], [owned boxes],
-and unsafe and borrowed [pointers].  Additionally, `core` provides
+and unsafe and borrowed [pointers].  Additionally, `std` provides
 some pervasive types ([`option`] and [`result`]),
 [task] creation and [communication] primitives,
 platform abstractions ([`os`] and [`path`]), basic
@@ -2570,49 +2474,49 @@ I/O abstractions ([`io`]), [containers] like [`hashmap`],
 common traits ([`kinds`], [`ops`], [`cmp`], [`num`],
 [`to_str`], [`clone`]), and complete bindings to the C standard library ([`libc`]).
 
-### Core injection and the Rust prelude
+### Standard Library injection and the Rust prelude
 
-`core` is imported at the topmost level of every crate by default, as
+`std` is imported at the topmost level of every crate by default, as
 if the first line of each crate was
 
-    extern mod core;
+    extern mod std;
 
-This means that the contents of core can be accessed from from any context
-with the `core::` path prefix, as in `use core::vec`, `use core::task::spawn`,
+This means that the contents of std can be accessed from from any context
+with the `std::` path prefix, as in `use std::vec`, `use std::task::spawn`,
 etc.
 
-Additionally, `core` contains a `prelude` module that reexports many of the
-most common core modules, types and traits. The contents of the prelude are
+Additionally, `std` contains a `prelude` module that reexports many of the
+most common standard modules, types and traits. The contents of the prelude are
 imported into every *module* by default.  Implicitly, all modules behave as if
 they contained the following prologue:
 
-    use core::prelude::*;
+    use std::prelude::*;
 
-[`core`]: core/index.html
-[`bool`]: core/bool.html
-[tuples]: core/tuple.html
-[characters]: core/char.html
-[strings]: core/str.html
-[vectors]: core/vec.html
-[managed boxes]: core/managed.html
-[owned boxes]: core/owned.html
-[pointers]: core/ptr.html
-[`option`]: core/option.html
-[`result`]: core/result.html
-[task]: core/task.html
-[communication]: core/comm.html
-[`os`]: core/os.html
-[`path`]: core/path.html
-[`io`]: core/io.html
-[containers]: core/container.html
-[`hashmap`]: core/hashmap.html
-[`kinds`]: core/kinds.html
-[`ops`]: core/ops.html
-[`cmp`]: core/cmp.html
-[`num`]: core/num.html
-[`to_str`]: core/to_str.html
-[`clone`]: core/clone.html
-[`libc`]: core/libc.html
+[`std`]: std/index.html
+[`bool`]: std/bool.html
+[tuples]: std/tuple.html
+[characters]: std/char.html
+[strings]: std/str.html
+[vectors]: std/vec.html
+[managed boxes]: std/managed.html
+[owned boxes]: std/owned.html
+[pointers]: std/ptr.html
+[`option`]: std/option.html
+[`result`]: std/result.html
+[task]: std/task.html
+[communication]: std/comm.html
+[`os`]: std/os.html
+[`path`]: std/path.html
+[`io`]: std/io.html
+[containers]: std/container.html
+[`hashmap`]: std/hashmap.html
+[`kinds`]: std/kinds.html
+[`ops`]: std/ops.html
+[`cmp`]: std/cmp.html
+[`num`]: std/num.html
+[`to_str`]: std/to_str.html
+[`clone`]: std/clone.html
+[`libc`]: std/libc.html
 
 # What next?
 
@@ -2623,6 +2527,7 @@ tutorials on individual topics.
 * [Tasks and communication][tasks]
 * [Macros][macros]
 * [The foreign function interface][ffi]
+* [Containers and iterators](tutorial-container.html)
 
 There is further documentation on the [wiki].
 

@@ -10,10 +10,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
-use std::timer::sleep;
-use std::uv;
-use core::pipes;
+extern mod extra;
+use extra::timer::sleep;
+use extra::uv;
+use std::pipes;
 
 proto! oneshot (
     waiting:send {
@@ -22,11 +22,13 @@ proto! oneshot (
 )
 
 pub fn main() {
-    let (c, p) = oneshot::init();
+    let (p, c) = oneshot::init();
+    let mut p = p;
+    let mut c = c;
 
-    assert!(!pipes::peek(&p));
+    assert!(!pipes::peek(&mut p));
 
     oneshot::client::signal(c);
 
-    assert!(pipes::peek(&p));
+    assert!(pipes::peek(&mut p));
 }

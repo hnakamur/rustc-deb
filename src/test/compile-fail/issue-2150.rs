@@ -8,11 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#[deny(unreachable_code)];
+#[allow(unused_variable)];
+
 fn fail_len(v: ~[int]) -> uint {
-    let mut i = fail!();
-    for v.each |x| { i += 1u; }
-    //~^ WARNING unreachable statement
-    //~^^ ERROR the type of this value must be known
+    let mut i = 3;
+    fail!();
+    for v.iter().advance |x| { i += 1u; }
+    //~^ ERROR: unreachable statement
     return i;
 }
 fn main() {}

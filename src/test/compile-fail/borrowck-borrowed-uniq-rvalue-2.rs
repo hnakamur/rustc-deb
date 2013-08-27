@@ -14,7 +14,7 @@ struct defer<'self> {
 
 #[unsafe_destructor]
 impl<'self> Drop for defer<'self> {
-    fn finalize(&self) {
+    fn drop(&self) {
         unsafe {
             error!("%?", self.x);
         }
@@ -28,5 +28,6 @@ fn defer<'r>(x: &'r [&'r str]) -> defer<'r> {
 }
 
 fn main() {
-    let _x = defer(~["Goodbye", "world!"]); //~ ERROR illegal borrow
+    let x = defer(~["Goodbye", "world!"]); //~ ERROR borrowed value does not live long enough
+    x.x[0];
 }

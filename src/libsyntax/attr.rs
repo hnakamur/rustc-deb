@@ -10,7 +10,7 @@
 
 // Functions dealing with attributes and meta_items
 
-use core::prelude::*;
+use extra;
 
 use ast;
 use codemap::{spanned, dummy_spanned};
@@ -19,29 +19,27 @@ use codemap::BytePos;
 use diagnostic::span_handler;
 use parse::comments::{doc_comment_style, strip_doc_comment_decoration};
 
-use core::vec;
-use core::hashmap::linear::LinearSet;
-use std;
-
+use std::hashmap::HashSet;
+use std::vec;
 /* Constructors */
 
-pub fn mk_name_value_item_str(name: @~str, value: @~str)
+pub fn mk_name_value_item_str(name: @str, value: @str)
                            -> @ast::meta_item {
     let value_lit = dummy_spanned(ast::lit_str(value));
     mk_name_value_item(name, value_lit)
 }
 
-pub fn mk_name_value_item(name: @~str, +value: ast::lit)
+pub fn mk_name_value_item(name: @str, value: ast::lit)
         -> @ast::meta_item {
     @dummy_spanned(ast::meta_name_value(name, value))
 }
 
-pub fn mk_list_item(name: @~str, +items: ~[@ast::meta_item]) ->
+pub fn mk_list_item(name: @str, items: ~[@ast::meta_item]) ->
    @ast::meta_item {
     @dummy_spanned(ast::meta_list(name, items))
 }
 
-pub fn mk_word_item(name: @~str) -> @ast::meta_item {
+pub fn mk_word_item(name: @str) -> @ast::meta_item {
     @dummy_spanned(ast::meta_word(name))
 }
 
@@ -51,13 +49,13 @@ pub fn mk_attr(item: @ast::meta_item) -> ast::attribute {
                                     is_sugared_doc: false })
 }
 
-pub fn mk_sugared_doc_attr(+text: ~str,
-                           +lo: BytePos, +hi: BytePos) -> ast::attribute {
+pub fn mk_sugared_doc_attr(text: @str,
+                           lo: BytePos, hi: BytePos) -> ast::attribute {
     let style = doc_comment_style(text);
-    let lit = spanned(lo, hi, ast::lit_str(@text));
+    let lit = spanned(lo, hi, ast::lit_str(text));
     let attr = ast::attribute_ {
         style: style,
-        value: @spanned(lo, hi, ast::meta_name_value(@~"doc", lit)),
+        value: @spanned(lo, hi, ast::meta_name_value(@"doc", lit)),
         is_sugared_doc: true
     };
     spanned(lo, hi, attr)
@@ -77,8 +75,8 @@ pub fn attr_metas(attrs: &[ast::attribute]) -> ~[@ast::meta_item] {
 pub fn desugar_doc_attr(attr: &ast::attribute) -> ast::attribute {
     if attr.node.is_sugared_doc {
         let comment = get_meta_item_value_str(attr.node.value).get();
-        let meta = mk_name_value_item_str(@~"doc",
-                                     @strip_doc_comment_decoration(*comment));
+        let meta = mk_name_value_item_str(@"doc",
+                                     strip_doc_comment_decoration(comment).to_managed());
         mk_attr(meta)
     } else {
         *attr
@@ -87,11 +85,11 @@ pub fn desugar_doc_attr(attr: &ast::attribute) -> ast::attribute {
 
 /* Accessors */
 
-pub fn get_attr_name(attr: &ast::attribute) -> @~str {
+pub fn get_attr_name(attr: &ast::attribute) -> @str {
     get_meta_item_name(attr.node.value)
 }
 
-pub fn get_meta_item_name(meta: @ast::meta_item) -> @~str {
+pub fn get_meta_item_name(meta: @ast::meta_item) -> @str {
     match meta.node {
         ast::meta_word(n) => n,
         ast::meta_name_value(n, _) => n,
@@ -103,7 +101,7 @@ pub fn get_meta_item_name(meta: @ast::meta_item) -> @~str {
  * Gets the string value if the meta_item is a meta_name_value variant
  * containing a string, otherwise none
  */
-pub fn get_meta_item_value_str(meta: @ast::meta_item) -> Option<@~str> {
+pub fn get_meta_item_value_str(meta: @ast::meta_item) -> Option<@str> {
     match meta.node {
         ast::meta_name_value(_, v) => {
             match v.node {
@@ -129,7 +127,7 @@ pub fn get_meta_item_list(meta: @ast::meta_item)
  * a tuple containing the name and string value, otherwise `none`
  */
 pub fn get_name_value_str_pair(item: @ast::meta_item)
-                            -> Option<(@~str, @~str)> {
+                            -> Option<(@str, @str)> {
     match attr::get_meta_item_value_str(item) {
       Some(value) => {
         let name = attr::get_meta_item_name(item);
@@ -146,7 +144,7 @@ pub fn get_name_value_str_pair(item: @ast::meta_item)
 pub fn find_attrs_by_name(attrs: &[ast::attribute], name: &str) ->
    ~[ast::attribute] {
     do vec::filter_mapped(attrs) |a| {
-        if name == *get_attr_name(a) {
+        if name == get_attr_name(a) {
             Some(*a)
         } else {
             None
@@ -158,8 +156,8 @@ pub fn find_attrs_by_name(attrs: &[ast::attribute], name: &str) ->
 pub fn find_meta_items_by_name(metas: &[@ast::meta_item], name: &str) ->
    ~[@ast::meta_item] {
     let mut rs = ~[];
-    for metas.each |mi| {
-        if name == *get_meta_item_name(*mi) {
+    for metas.iter().advance |mi| {
+        if name == get_meta_item_name(*mi) {
             rs.push(*mi)
         }
     }
@@ -172,7 +170,7 @@ pub fn find_meta_items_by_name(metas: &[@ast::meta_item], name: &str) ->
  */
 pub fn contains(haystack: &[@ast::meta_item],
                 needle: @ast::meta_item) -> bool {
-    for haystack.each |item| {
+    for haystack.iter().advance |item| {
         if eq(*item, needle) { return true; }
     }
     return false;
@@ -193,8 +191,8 @@ fn eq(a: @ast::meta_item, b: @ast::meta_item) -> bool {
         ast::meta_list(ref na, ref misa) => match b.node {
             ast::meta_list(ref nb, ref misb) => {
                 if na != nb { return false; }
-                for misa.each |mi| {
-                    if !misb.contains(mi) { return false; }
+                for misa.iter().advance |mi| {
+                    if !misb.iter().any_(|x| x == mi) { return false; }
                 }
                 true
             }
@@ -213,7 +211,7 @@ pub fn attrs_contains_name(attrs: &[ast::attribute], name: &str) -> bool {
 }
 
 pub fn first_attr_value_str_by_name(attrs: &[ast::attribute], name: &str)
-                                 -> Option<@~str> {
+                                 -> Option<@str> {
 
     let mattrs = find_attrs_by_name(attrs, name);
     if mattrs.len() > 0 {
@@ -231,7 +229,7 @@ fn last_meta_item_by_name(items: &[@ast::meta_item], name: &str)
 }
 
 pub fn last_meta_item_value_str_by_name(items: &[@ast::meta_item], name: &str)
-                                     -> Option<@~str> {
+                                     -> Option<@str> {
 
     match last_meta_item_by_name(items, name) {
         Some(item) => {
@@ -258,8 +256,8 @@ pub fn last_meta_item_list_by_name(items: ~[@ast::meta_item], name: &str)
 
 pub fn sort_meta_items(items: &[@ast::meta_item]) -> ~[@ast::meta_item] {
     // This is sort of stupid here, converting to a vec of mutables and back
-    let mut v = vec::from_slice(items);
-    do std::sort::quick_sort(v) |ma, mb| {
+    let mut v = vec::to_owned(items);
+    do extra::sort::quick_sort(v) |ma, mb| {
         get_meta_item_name(*ma) <= get_meta_item_name(*mb)
     }
 
@@ -281,7 +279,7 @@ pub fn remove_meta_items_by_name(items: ~[@ast::meta_item], name: &str) ->
    ~[@ast::meta_item] {
 
     return vec::filter_mapped(items, |item| {
-        if name != *get_meta_item_name(*item) {
+        if name != get_meta_item_name(*item) {
             Some(*item)
         } else {
             None
@@ -294,7 +292,7 @@ pub fn remove_meta_items_by_name(items: ~[@ast::meta_item], name: &str) ->
  * linkage
  */
 pub fn find_linkage_metas(attrs: &[ast::attribute]) -> ~[@ast::meta_item] {
-    do find_attrs_by_name(attrs, ~"link").flat_map |attr| {
+    do find_attrs_by_name(attrs, "link").flat_map |attr| {
         match attr.node.value.node {
             ast::meta_list(_, ref items) => /* FIXME (#2543) */ copy *items,
             _ => ~[]
@@ -312,14 +310,14 @@ pub enum inline_attr {
 
 /// True if something like #[inline] is found in the list of attrs.
 pub fn find_inline_attr(attrs: &[ast::attribute]) -> inline_attr {
-    // FIXME (#2809)---validate the usage of #[inline] and #[inline(always)]
-    do vec::foldl(ia_none, attrs) |ia,attr| {
+    // FIXME (#2809)---validate the usage of #[inline] and #[inline]
+    do attrs.iter().fold(ia_none) |ia,attr| {
         match attr.node.value.node {
-          ast::meta_word(@~"inline") => ia_hint,
-          ast::meta_list(@~"inline", ref items) => {
-            if !find_meta_items_by_name(*items, ~"always").is_empty() {
+          ast::meta_word(s) if "inline" == s => ia_hint,
+          ast::meta_list(s, ref items) if "inline" == s => {
+            if !find_meta_items_by_name(*items, "always").is_empty() {
                 ia_always
-            } else if !find_meta_items_by_name(*items, ~"never").is_empty() {
+            } else if !find_meta_items_by_name(*items, "never").is_empty() {
                 ia_never
             } else {
                 ia_hint
@@ -333,24 +331,14 @@ pub fn find_inline_attr(attrs: &[ast::attribute]) -> inline_attr {
 
 pub fn require_unique_names(diagnostic: @span_handler,
                             metas: &[@ast::meta_item]) {
-    let mut set = LinearSet::new();
-    for metas.each |meta| {
+    let mut set = HashSet::new();
+    for metas.iter().advance |meta| {
         let name = get_meta_item_name(*meta);
 
         // FIXME: How do I silence the warnings? --pcw (#2619)
         if !set.insert(name) {
             diagnostic.span_fatal(meta.span,
-                                  fmt!("duplicate meta item `%s`", *name));
+                                  fmt!("duplicate meta item `%s`", name));
         }
     }
 }
-
-//
-// Local Variables:
-// mode: rust
-// fill-column: 78;
-// indent-tabs-mode: nil
-// c-basic-offset: 4
-// buffer-file-coding-system: utf-8-unix
-// End:
-//

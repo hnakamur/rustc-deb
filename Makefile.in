@@ -101,7 +101,7 @@ endif
 
 ifdef CFG_ENABLE_DEBUG
   $(info cfg: enabling more debugging (CFG_ENABLE_DEBUG))
-  CFG_RUSTC_FLAGS +=
+  CFG_RUSTC_FLAGS += --cfg debug
   CFG_GCCISH_CFLAGS += -DRUST_DEBUG
 else
   CFG_GCCISH_CFLAGS += -DRUST_NDEBUG
@@ -109,6 +109,9 @@ endif
 
 ifdef SAVE_TEMPS
   CFG_RUSTC_FLAGS += --save-temps
+endif
+ifdef ASM_COMMENTS
+  CFG_RUSTC_FLAGS += -Z asm-comments
 endif
 ifdef TIME_PASSES
   CFG_RUSTC_FLAGS += -Z time-passes
@@ -118,6 +121,10 @@ ifdef TIME_LLVM_PASSES
 endif
 ifdef TRACE
   CFG_RUSTC_FLAGS += -Z trace
+endif
+ifndef DEBUG_BORROWS
+  RUSTFLAGS_STAGE1 += -Z no-debug-borrows
+  RUSTFLAGS_STAGE2 += -Z no-debug-borrows
 endif
 
 # platform-specific auto-configuration
@@ -132,15 +139,17 @@ endif
 
 # version-string calculation
 CFG_GIT_DIR := $(CFG_SRC_DIR).git
-CFG_RELEASE = 0.6
+CFG_RELEASE = 0.7
 CFG_VERSION = $(CFG_RELEASE)
+# windows exe's need numeric versions - don't use anything but
+# numbers and dots here
+CFG_VERSION_WIN = 0.7
 
 ifneq ($(wildcard $(CFG_GIT)),)
 ifneq ($(wildcard $(CFG_GIT_DIR)),)
     CFG_VERSION += $(shell git --git-dir=$(CFG_GIT_DIR) log -1 \
                      --pretty=format:'(%h %ci)')
-    CFG_VER_HASH = $(shell git --git-dir=$(CFG_GIT_DIR) log -1 \
-                     --pretty=format:'%H')
+    CFG_VER_HASH = $(shell git --git-dir=$(CFG_GIT_DIR) rev-parse HEAD)
 endif
 endif
 
@@ -198,30 +207,27 @@ define DEF_LIBS
 
 CFG_RUNTIME_$(1) :=$(call CFG_LIB_NAME_$(1),rustrt)
 CFG_RUSTLLVM_$(1) :=$(call CFG_LIB_NAME_$(1),rustllvm)
-CFG_CORELIB_$(1) :=$(call CFG_LIB_NAME_$(1),core)
 CFG_STDLIB_$(1) :=$(call CFG_LIB_NAME_$(1),std)
+CFG_EXTRALIB_$(1) :=$(call CFG_LIB_NAME_$(1),extra)
 CFG_LIBRUSTC_$(1) :=$(call CFG_LIB_NAME_$(1),rustc)
 CFG_LIBSYNTAX_$(1) :=$(call CFG_LIB_NAME_$(1),syntax)
-CFG_LIBFUZZER_$(1) :=$(call CFG_LIB_NAME_$(1),fuzzer)
 CFG_LIBRUSTPKG_$(1) :=$(call CFG_LIB_NAME_$(1),rustpkg)
 CFG_LIBRUSTDOC_$(1) :=$(call CFG_LIB_NAME_$(1),rustdoc)
 CFG_LIBRUSTI_$(1) :=$(call CFG_LIB_NAME_$(1),rusti)
 CFG_LIBRUST_$(1) :=$(call CFG_LIB_NAME_$(1),rust)
 
+EXTRALIB_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),extra)
 STDLIB_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),std)
-CORELIB_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),core)
 LIBRUSTC_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rustc)
 LIBSYNTAX_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),syntax)
-LIBFUZZER_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),fuzzer)
 LIBRUSTPKG_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rustpkg)
 LIBRUSTDOC_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rustdoc)
 LIBRUSTI_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rusti)
 LIBRUST_GLOB_$(1) :=$(call CFG_LIB_GLOB_$(1),rust)
+EXTRALIB_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),extra)
 STDLIB_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),std)
-CORELIB_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),core)
 LIBRUSTC_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rustc)
 LIBSYNTAX_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),syntax)
-LIBFUZZER_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),fuzzer)
 LIBRUSTPKG_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rustpkg)
 LIBRUSTDOC_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rustdoc)
 LIBRUSTI_DSYM_GLOB_$(1) :=$(call CFG_LIB_DSYM_GLOB_$(1),rusti)
@@ -233,32 +239,32 @@ $(foreach target,$(CFG_TARGET_TRIPLES),\
   $(eval $(call DEF_LIBS,$(target))))
 
 ######################################################################
-# Core library variables
-######################################################################
-
-CORELIB_CRATE := $(S)src/libcore/core.rc
-CORELIB_INPUTS := $(wildcard $(addprefix $(S)src/libcore/,        \
-                                           core.rc *.rs */*.rs */*/*rs))
-
-######################################################################
 # Standard library variables
 ######################################################################
 
-STDLIB_CRATE := $(S)src/libstd/std.rc
-STDLIB_INPUTS := $(wildcard $(addprefix $(S)src/libstd/,          \
-                                          std.rc *.rs */*.rs))
+STDLIB_CRATE := $(S)src/libstd/std.rs
+STDLIB_INPUTS := $(wildcard $(addprefix $(S)src/libstd/,        \
+                                           *.rs */*.rs */*/*rs */*/*/*rs))
+
+######################################################################
+# Extra library variables
+######################################################################
+
+EXTRALIB_CRATE := $(S)src/libextra/extra.rs
+EXTRALIB_INPUTS := $(wildcard $(addprefix $(S)src/libextra/,          \
+                                          *.rs */*.rs))
 
 ######################################################################
 # rustc crate variables
 ######################################################################
 
-COMPILER_CRATE := $(S)src/librustc/rustc.rc
+COMPILER_CRATE := $(S)src/librustc/rustc.rs
 COMPILER_INPUTS := $(wildcard $(addprefix $(S)src/librustc/,      \
-                           rustc.rc *.rs */*.rs */*/*.rs */*/*/*.rs))
+                           *.rs */*.rs */*/*.rs */*/*/*.rs))
 
-LIBSYNTAX_CRATE := $(S)src/libsyntax/syntax.rc
+LIBSYNTAX_CRATE := $(S)src/libsyntax/syntax.rs
 LIBSYNTAX_INPUTS := $(wildcard $(addprefix $(S)src/libsyntax/, \
-                            syntax.rc *.rs */*.rs */*/*.rs))
+                           *.rs */*.rs */*/*.rs))
 
 DRIVER_CRATE := $(S)src/driver/driver.rs
 
@@ -268,7 +274,7 @@ DRIVER_CRATE := $(S)src/driver/driver.rs
 
 # FIXME: x86-ism
 LLVM_COMPONENTS=x86 arm mips ipo bitreader bitwriter linker asmparser jit mcjit \
-                interpreter
+                interpreter instrumentation
 
 define DEF_LLVM_VARS
 # The configure script defines these variables with the target triples
@@ -308,6 +314,7 @@ $(foreach host,$(CFG_HOST_TRIPLES), \
 export CFG_SRC_DIR
 export CFG_BUILD_DIR
 export CFG_VERSION
+export CFG_VERSION_WIN
 export CFG_BUILD_TRIPLE
 export CFG_LLVM_ROOT
 export CFG_ENABLE_MINGW_CROSS
@@ -337,32 +344,32 @@ TROOT$(1)_T_$(2)_H_$(3) = $$(HLIB$(1)_H_$(3))/rustc/$(2)
 TBIN$(1)_T_$(2)_H_$(3) = $$(TROOT$(1)_T_$(2)_H_$(3))/bin
 TLIB$(1)_T_$(2)_H_$(3) = $$(TROOT$(1)_T_$(2)_H_$(3))/$$(CFG_LIBDIR)
 
-# The name of the core and standard libraries used by rustc
+# The name of the standard and extra libraries used by rustc
 ifdef CFG_DISABLE_SHAREDSTD
-  HCORELIB_DEFAULT$(1)_H_$(3) = \
-    $$(HLIB$(1)_H_$(3))/libcore.rlib
-  TCORELIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
-    $$(TLIB$(1)_T_$(2)_H_$(3))/libcore.rlib
-
   HSTDLIB_DEFAULT$(1)_H_$(3) = \
     $$(HLIB$(1)_H_$(3))/libstd.rlib
   TSTDLIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
     $$(TLIB$(1)_T_$(2)_H_$(3))/libstd.rlib
+
+  HEXTRALIB_DEFAULT$(1)_H_$(3) = \
+    $$(HLIB$(1)_H_$(3))/libextra.rlib
+  TEXTRALIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
+    $$(TLIB$(1)_T_$(2)_H_$(3))/libextra.rlib
 
   HLIBRUSTC_DEFAULT$(1)_H_$(3) = \
     $$(HLIB$(1)_H_$(3))/librustc.rlib
   TLIBRUSTC_DEFAULT$(1)_T_$(2)_H_$(3) = \
     $$(TLIB$(1)_T_$(2)_H_$(3))/librustc.rlib
 else
-  HCORELIB_DEFAULT$(1)_H_$(3) = \
-    $$(HLIB$(1)_H_$(3))/$(CFG_CORELIB_$(3))
-  TCORELIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
-    $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_CORELIB_$(2))
-
   HSTDLIB_DEFAULT$(1)_H_$(3) = \
     $$(HLIB$(1)_H_$(3))/$(CFG_STDLIB_$(3))
   TSTDLIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
     $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2))
+
+  HEXTRALIB_DEFAULT$(1)_H_$(3) = \
+    $$(HLIB$(1)_H_$(3))/$(CFG_EXTRALIB_$(3))
+  TEXTRALIB_DEFAULT$(1)_T_$(2)_H_$(3) = \
+    $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_EXTRALIB_$(2))
 
   HLIBRUSTC_DEFAULT$(1)_H_$(3) = \
     $$(HLIB$(1)_H_$(3))/$(CFG_LIBRUSTC_$(3))
@@ -375,8 +382,8 @@ HSREQ$(1)_H_$(3) = \
 	$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
 	$$(HLIB$(1)_H_$(3))/$(CFG_RUNTIME_$(3)) \
 	$$(HLIB$(1)_H_$(3))/$(CFG_RUSTLLVM_$(3)) \
-	$$(HCORELIB_DEFAULT$(1)_H_$(3)) \
 	$$(HSTDLIB_DEFAULT$(1)_H_$(3)) \
+	$$(HEXTRALIB_DEFAULT$(1)_H_$(3)) \
 	$$(HLIBSYNTAX_DEFAULT$(1)_H_$(3)) \
 	$$(HLIBRUSTC_DEFAULT$(1)_H_$(3)) \
 	$$(MKFILE_DEPS)
@@ -390,27 +397,24 @@ TSREQ$(1)_T_$(2)_H_$(3) = \
 # Prerequisites for a working stageN compiler and libraries, for a specific target
 SREQ$(1)_T_$(2)_H_$(3) = \
 	$$(TSREQ$(1)_T_$(2)_H_$(3)) \
-	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_CORELIB_$(2)) \
-	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2))
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_EXTRALIB_$(2))
 
 # Prerequisites for a working stageN compiler and libraries, for a specific target
 CSREQ$(1)_T_$(2)_H_$(3) = \
 	$$(TSREQ$(1)_T_$(2)_H_$(3)) \
-	$$(HBIN$(1)_H_$(3))/fuzzer$$(X_$(3)) \
 	$$(HBIN$(1)_H_$(3))/rustpkg$$(X_$(3)) \
 	$$(HBIN$(1)_H_$(3))/rustdoc$$(X_$(3)) \
 	$$(HBIN$(1)_H_$(3))/rusti$$(X_$(3)) \
 	$$(HBIN$(1)_H_$(3))/rust$$(X_$(3)) \
-	$$(HLIB$(1)_H_$(3))/$(CFG_LIBFUZZER_$(3)) \
 	$$(HLIB$(1)_H_$(3))/$(CFG_LIBRUSTPKG_$(3)) \
 	$$(HLIB$(1)_H_$(3))/$(CFG_LIBRUSTDOC_$(3)) \
 	$$(HLIB$(1)_H_$(3))/$(CFG_LIBRUSTI_$(3)) \
 	$$(HLIB$(1)_H_$(3))/$(CFG_LIBRUST_$(3)) \
-	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_CORELIB_$(2)) \
-	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2))  \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_STDLIB_$(2)) \
+	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_EXTRALIB_$(2))  \
 	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBSYNTAX_$(2))  \
 	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTC_$(2)) \
-	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBFUZZER_$(2)) \
 	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTPKG_$(2)) \
 	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTDOC_$(2)) \
 	$$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_LIBRUSTI_$(2)) \
@@ -536,9 +540,18 @@ ALL_TARGET_RULES = $(foreach target,$(CFG_TARGET_TRIPLES), \
 	$(foreach host,$(CFG_HOST_TRIPLES), \
  all-target-$(target)-host-$(host)))
 
-all: $(ALL_TARGET_RULES) $(GENERATED) docs
+all: rustllvm/llvm-auto-clean-stamp \
+     $(ALL_TARGET_RULES) $(GENERATED) docs
 
 endif
+
+# This is used to independently force an LLVM clean rebuild
+# when we changed something not otherwise captured by builtin
+# dependencies. In these cases, commit a change that touches
+# the stamp in the source dir.
+rustllvm/llvm-auto-clean-stamp: $(S)src/rustllvm/llvm-auto-clean-trigger
+	$(Q)$(MAKE) clean-llvm
+	touch $@
 
 
 ######################################################################

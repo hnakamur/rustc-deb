@@ -10,6 +10,8 @@
 
 // xfail-fast
 
+use std::int;
+
 trait to_str {
     fn to_str(&self) -> ~str;
 }
@@ -29,7 +31,10 @@ trait map<T> {
 impl<T> map<T> for ~[T] {
     fn map<U:Copy>(&self, f: &fn(&T) -> U) -> ~[U] {
         let mut r = ~[];
-        for self.each |x| { r += ~[f(x)]; }
+        // FIXME: #7355 generates bad code with Iterator
+        for std::uint::range(0, self.len()) |i| {
+            r.push(f(&self[i]));
+        }
         r
     }
 }
@@ -42,8 +47,8 @@ fn bar<U:to_str,T:map<U>>(x: T) -> ~[~str] {
 }
 
 pub fn main() {
-    assert!(foo(~[1]) == ~[~"hi"]);
-    assert!(bar::<int, ~[int]>(~[4, 5]) == ~[~"4", ~"5"]);
-    assert!(bar::<~str, ~[~str]>(~[~"x", ~"y"]) == ~[~"x", ~"y"]);
-    assert!(bar::<(), ~[()]>(~[()]) == ~[~"()"]);
+    assert_eq!(foo(~[1]), ~[~"hi"]);
+    assert_eq!(bar::<int, ~[int]>(~[4, 5]), ~[~"4", ~"5"]);
+    assert_eq!(bar::<~str, ~[~str]>(~[~"x", ~"y"]), ~[~"x", ~"y"]);
+    assert_eq!(bar::<(), ~[()]>(~[()]), ~[~"()"]);
 }

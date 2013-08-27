@@ -10,7 +10,9 @@
 
 // Tests of the runtime's scheduler interface
 
-use core::comm::*;
+use std::cast;
+use std::comm::*;
+use std::libc;
 
 pub type sched_id = int;
 pub type task_id = *libc::c_void;
@@ -20,6 +22,8 @@ pub type closure = *libc::c_void;
 
 mod rustrt {
     use super::{closure, sched_id, task, task_id};
+
+    use std::libc;
 
     pub extern {
         pub fn rust_new_sched(num_threads: libc::uintptr_t) -> sched_id;
@@ -44,11 +48,11 @@ pub fn main() {
                 let child_sched_id = rustrt::rust_get_sched_id();
                 error!("child_sched_id %?", child_sched_id);
                 assert!(child_sched_id != parent_sched_id);
-                assert!(child_sched_id == new_sched_id);
+                assert_eq!(child_sched_id, new_sched_id);
                 ch.send(());
             }
         };
-        let fptr = cast::reinterpret_cast(&ptr::addr_of(&f));
+        let fptr = cast::transmute(&f);
         rustrt::start_task(new_task_id, fptr);
         cast::forget(f);
         po.recv();

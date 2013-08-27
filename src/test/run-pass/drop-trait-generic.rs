@@ -13,13 +13,12 @@ struct S<T> {
 }
 
 #[unsafe_destructor]
-impl<T> ::core::ops::Drop for S<T> {
-    fn finalize(&self) {
-        io::println("bye");
+impl<T> ::std::ops::Drop for S<T> {
+    fn drop(&self) {
+        println("bye");
     }
 }
 
 pub fn main() {
     let x = S { x: 1 };
 }
-

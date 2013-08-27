@@ -10,10 +10,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::hashmap::linear::LinearMap;
+use std::hashmap::HashMap;
+use std::str;
 
 pub fn main() {
-    let mut m = LinearMap::new();
-    m.insert(str::to_bytes(~"foo"), str::to_bytes(~"bar"));
+    let mut m = HashMap::new();
+    m.insert("foo".as_bytes().to_owned(), "bar".as_bytes().to_owned());
     error!(m);
 }

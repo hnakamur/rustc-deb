@@ -9,8 +9,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+extern mod extra;
 
-extern mod std;
+use std::task;
 
 pub fn main() {
     let mut i = 10;
@@ -18,5 +19,4 @@ pub fn main() {
     debug!("main thread exiting");
 }
 
-fn child(&&x: int) { debug!(x); }
-
+fn child(x: int) { debug!(x); }

@@ -10,17 +10,24 @@
 
 // chameneos
 
-extern mod std;
-use std::sort;
-use core::cell::Cell;
-use core::comm::*;
+extern mod extra;
+
+use extra::sort;
+use std::cell::Cell;
+use std::comm::*;
+use std::io;
+use std::option;
+use std::os;
+use std::task;
+use std::uint;
+use std::vec;
 
 fn print_complements() {
-    let all = ~[Blue, Red, Yellow];
-    for vec::each(all) |aa| {
-        for vec::each(all) |bb| {
-            io::println(show_color(*aa) + ~" + " + show_color(*bb) +
-                ~" -> " + show_color(transform(*aa, *bb)));
+    let all = [Blue, Red, Yellow];
+    for all.iter().advance |aa| {
+        for all.iter().advance |bb| {
+            println(show_color(*aa) + " + " + show_color(*bb) +
+                    " -> " + show_color(transform(*aa, *bb)));
         }
     }
 }
@@ -42,9 +49,9 @@ fn show_color(cc: color) -> ~str {
 
 fn show_color_list(set: ~[color]) -> ~str {
     let mut out = ~"";
-    for vec::eachi(set) |_ii, col| {
-        out += ~" ";
-        out += show_color(*col);
+    for set.iter().advance |col| {
+        out.push_char(' ');
+        out.push_str(show_color(*col));
     }
     return out;
 }
@@ -61,7 +68,7 @@ fn show_digit(nn: uint) -> ~str {
         7 => {~"seven"}
         8 => {~"eight"}
         9 => {~"nine"}
-        _ => {fail!(~"expected digits from 0 to 9...")}
+        _ => {fail!("expected digits from 0 to 9...")}
     }
 }
 
@@ -75,10 +82,10 @@ fn show_number(nn: uint) -> ~str {
     while num != 0 {
         dig = num % 10;
         num = num / 10;
-        out = show_digit(dig) + ~" " + out;
+        out = show_digit(dig) + " " + out;
     }
 
-    return out;
+    return ~" " + out;
 }
 
 fn transform(aa: color, bb: color) -> color {
@@ -124,8 +131,8 @@ fn creature(
             }
             option::None => {
                 // log creatures met and evil clones of self
-                let report = fmt!("%u", creatures_met) + ~" " +
-                             show_number(evil_clones_met);
+                let report = fmt!("%u %s",
+                                  creatures_met, show_number(evil_clones_met));
                 to_rendezvous_log.send(report);
                 break;
             }
@@ -137,15 +144,15 @@ fn rendezvous(nn: uint, set: ~[color]) {
 
     // these ports will allow us to hear from the creatures
     let (from_creatures, to_rendezvous) = stream::<CreatureInfo>();
-    let to_rendezvous = SharedChan(to_rendezvous);
+    let to_rendezvous = SharedChan::new(to_rendezvous);
     let (from_creatures_log, to_rendezvous_log) = stream::<~str>();
-    let to_rendezvous_log = SharedChan(to_rendezvous_log);
+    let to_rendezvous_log = SharedChan::new(to_rendezvous_log);
 
     // these channels will be passed to the creatures so they can talk to us
 
     // these channels will allow us to talk to each creature by 'name'/index
     let to_creature: ~[Chan<Option<CreatureInfo>>] =
-        vec::mapi(set, |ii, col| {
+        set.iter().enumerate().transform(|(ii, col)| {
             // create each creature as a listener with a port, and
             // give us a channel to talk to each
             let ii = ii;
@@ -153,13 +160,13 @@ fn rendezvous(nn: uint, set: ~[color]) {
             let to_rendezvous = to_rendezvous.clone();
             let to_rendezvous_log = to_rendezvous_log.clone();
             let (from_rendezvous, to_creature) = stream();
-            let from_rendezvous = Cell(from_rendezvous);
+            let from_rendezvous = Cell::new(from_rendezvous);
             do task::spawn || {
                 creature(ii, col, from_rendezvous.take(), to_rendezvous.clone(),
                          to_rendezvous_log.clone());
             }
             to_creature
-        });
+        }).collect();
 
     let mut creatures_met = 0;
 
@@ -175,13 +182,13 @@ fn rendezvous(nn: uint, set: ~[color]) {
     }
 
     // tell each creature to stop
-    for vec::eachi(to_creature) |_ii, to_one| {
+    for to_creature.iter().advance |to_one| {
         to_one.send(None);
     }
 
     // save each creature's meeting stats
     let mut report = ~[];
-    for vec::each(to_creature) |_to_one| {
+    for to_creature.iter().advance |_to_one| {
         report.push(from_creatures_log.recv());
     }
 
@@ -189,7 +196,7 @@ fn rendezvous(nn: uint, set: ~[color]) {
     io::println(show_color_list(set));
 
     // print each creature's stats
-    for vec::each(report) |rep| {
+    for report.iter().advance |rep| {
         io::println(*rep);
     }
 
@@ -218,4 +225,3 @@ fn main() {
     rendezvous(nn,
         ~[Blue, Red, Yellow, Red, Yellow, Blue, Red, Yellow, Red, Blue]);
 }
-

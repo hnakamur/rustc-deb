@@ -8,15 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::cmp::Eq;
+use std::cmp::Eq;
 
 fn sendable() {
 
-    fn f<T:Owned + Eq>(i: T, j: T) {
-        assert!(i == j);
+    fn f<T:Send + Eq>(i: T, j: T) {
+        assert_eq!(i, j);
     }
 
-    fn g<T:Owned + Eq>(i: T, j: T) {
+    fn g<T:Send + Eq>(i: T, j: T) {
         assert!(i != j);
     }
 
@@ -31,7 +31,7 @@ fn sendable() {
 fn copyable() {
 
     fn f<T:Copy + Eq>(i: T, j: T) {
-        assert!(i == j);
+        assert_eq!(i, j);
     }
 
     fn g<T:Copy + Eq>(i: T, j: T) {
@@ -49,7 +49,7 @@ fn copyable() {
 fn noncopyable() {
 
     fn f<T:Eq>(i: T, j: T) {
-        assert!(i == j);
+        assert_eq!(i, j);
     }
 
     fn g<T:Eq>(i: T, j: T) {

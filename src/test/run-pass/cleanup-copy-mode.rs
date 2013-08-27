@@ -9,11 +9,14 @@
 // except according to those terms.
 
 // xfail-win32
-fn adder(+x: @int, +y: @int) -> int { return *x + *y; }
+
+use std::result;
+use std::task;
+
+fn adder(x: @int, y: @int) -> int { return *x + *y; }
 fn failer() -> @int { fail!(); }
 pub fn main() {
     assert!(result::is_err(&task::try(|| {
         adder(@2, failer()); ()
     })));
 }
-

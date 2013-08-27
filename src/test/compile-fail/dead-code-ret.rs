@@ -9,10 +9,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#[deny(unreachable_code)];
 
-// error-pattern: dead
-
-fn f(caller: str) { debug!(caller); }
-
-fn main() { return f("main"); debug!("Paul is dead"); }
-
+fn main() {
+    return;
+    debug!("Paul is dead"); //~ ERROR: unreachable
+}

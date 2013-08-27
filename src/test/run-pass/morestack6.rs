@@ -11,7 +11,12 @@
 // This test attempts to force the dynamic linker to resolve
 // external symbols as close to the red zone as possible.
 
+use std::rand;
+use std::task;
+
 mod rustrt {
+    use std::libc;
+
     pub extern {
         pub fn debug_get_stk_seg() -> *u8;
 
@@ -54,6 +59,7 @@ fn runtest2(f: extern fn(), frame_backoff: u32, last_stk: *u8) -> u32 {
 }
 
 pub fn main() {
+    use std::rand::Rng;
     let fns = ~[
         calllink01,
         calllink02,
@@ -61,8 +67,8 @@ pub fn main() {
         calllink09,
         calllink10
     ];
-    let rng = rand::Rng();
-    for fns.each |f| {
+    let mut rng = rand::rng();
+    for fns.iter().advance |f| {
         let f = *f;
         let sz = rng.next() % 256u32 + 256u32;
         let frame_backoff = rng.next() % 10u32 + 1u32;

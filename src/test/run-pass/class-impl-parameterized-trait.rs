@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
+// xfail-test FIXME #7307
 // xfail-fast
 
-extern mod std;
-use std::oldmap::*;
+extern mod extra;
+use extra::oldmap::*;
 
 class cat : map<int, bool> {
   priv {
@@ -48,7 +48,7 @@ class cat : map<int, bool> {
   }
 
   fn size() -> uint { self.meows as uint }
-  fn insert(+k: int, +v: bool) -> bool { 
+  fn insert(+k: int, +v: bool) -> bool {
     if v { self.meows += k; } else { self.meows -= k; };
     true
   }

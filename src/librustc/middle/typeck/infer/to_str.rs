@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
 
 use middle::ty::{FnSig, Vid};
 use middle::ty::IntVarValue;
@@ -16,12 +15,10 @@ use middle::ty;
 use middle::typeck::infer::{Bound, Bounds};
 use middle::typeck::infer::InferCtxt;
 use middle::typeck::infer::unify::{Redirect, Root, VarValue};
-use util::ppaux::{mt_to_str, ty_to_str};
+use util::ppaux::{mt_to_str, ty_to_str, trait_ref_to_str};
 
+use std::uint;
 use syntax::ast;
-
-use core::uint;
-use core::str;
 
 pub trait InferStr {
     fn inf_str(&self, cx: &InferCtxt) -> ~str;
@@ -36,7 +33,7 @@ impl InferStr for ty::t {
 impl InferStr for FnSig {
     fn inf_str(&self, cx: &InferCtxt) -> ~str {
         fmt!("(%s) -> %s",
-             str::connect(self.inputs.map(|a| a.ty.inf_str(cx)), ", "),
+             self.inputs.map(|a| a.inf_str(cx)).connect(", "),
              self.output.inf_str(cx))
     }
 }
@@ -89,5 +86,11 @@ impl InferStr for IntVarValue {
 impl InferStr for ast::float_ty {
     fn inf_str(&self, _cx: &InferCtxt) -> ~str {
         self.to_str()
+    }
+}
+
+impl InferStr for ty::TraitRef {
+    fn inf_str(&self, cx: &InferCtxt) -> ~str {
+        trait_ref_to_str(cx.tcx, self)
     }
 }

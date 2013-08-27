@@ -15,10 +15,10 @@
 #define ARMBASEINSTRUCTIONINFO_H
 
 #include "ARM.h"
-#include "llvm/CodeGen/MachineInstrBuilder.h"
-#include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/Target/TargetInstrInfo.h"
 
 #define GET_INSTRINFO_HEADER
 #include "ARMGenInstrInfo.inc"
@@ -228,10 +228,6 @@ public:
   int getOperandLatency(const InstrItineraryData *ItinData,
                         SDNode *DefNode, unsigned DefIdx,
                         SDNode *UseNode, unsigned UseIdx) const;
-
-  virtual unsigned getOutputLatency(const InstrItineraryData *ItinData,
-                                    const MachineInstr *DefMI, unsigned DefIdx,
-                                    const MachineInstr *DepMI) const;
 
   /// VFP/NEON execution domains.
   std::pair<uint16_t, uint16_t>

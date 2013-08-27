@@ -12,16 +12,16 @@
 // are const.
 
 
-fn foo<T:Copy + Const>(x: T) -> T { x }
+fn foo<T:Copy + Freeze>(x: T) -> T { x }
 
 struct F { field: int }
 
 pub fn main() {
-    foo(1);
+    /*foo(1);
     foo(~"hi");
     foo(~[1, 2, 3]);
     foo(F{field: 42});
     foo((1, 2u));
-    foo(@1);
+    foo(@1);*/
     foo(~1);
 }

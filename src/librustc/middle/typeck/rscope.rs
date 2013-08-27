@@ -8,12 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
 
 use middle::ty;
 
-use core::result::Result;
-use core::result;
+use std::result;
 use syntax::ast;
 use syntax::codemap::span;
 use syntax::opt_vec::OptVec;
@@ -58,7 +56,7 @@ impl RegionParamNames {
     }
 
     fn has_ident(&self, ident: ast::ident) -> bool {
-        for self.each |region_param_name| {
+        for self.iter().advance |region_param_name| {
             if *region_param_name == ident {
                 return true;
             }
@@ -76,7 +74,7 @@ impl RegionParamNames {
                             opt_vec::Vec(new_lifetimes.map(|lt| lt.ident)));
                     }
                     opt_vec::Vec(ref mut existing_lifetimes) => {
-                        for new_lifetimes.each |new_lifetime| {
+                        for new_lifetimes.iter().advance |new_lifetime| {
                             existing_lifetimes.push(new_lifetime.ident);
                         }
                     }
@@ -146,7 +144,7 @@ impl RegionParameterization {
 }
 
 pub struct MethodRscope {
-    self_ty: ast::self_ty_,
+    explicit_self: ast::explicit_self_,
     variance: Option<ty::region_variance>,
     region_param_names: RegionParamNames,
 }
@@ -154,14 +152,14 @@ pub struct MethodRscope {
 impl MethodRscope {
     // `generics` here refers to the generics of the outer item (impl or
     // trait).
-    pub fn new(self_ty: ast::self_ty_,
+    pub fn new(explicit_self: ast::explicit_self_,
                variance: Option<ty::region_variance>,
                rcvr_generics: &ast::Generics)
             -> MethodRscope {
-        let mut region_param_names =
+        let region_param_names =
             RegionParamNames::from_generics(rcvr_generics);
         MethodRscope {
-            self_ty: self_ty,
+            explicit_self: explicit_self,
             variance: variance,
             region_param_names: region_param_names
         }
@@ -180,12 +178,11 @@ impl region_scope for MethodRscope {
         })
     }
     fn self_region(&self, _span: span) -> Result<ty::Region, RegionError> {
-        assert!(self.variance.is_some() || self.self_ty.is_borrowed());
+        assert!(self.variance.is_some());
         match self.variance {
             None => {}  // must be borrowed self, so this is OK
             Some(_) => {
-                if !self.self_ty.is_borrowed() &&
-                        !self.region_param_names.has_self() {
+                if !self.region_param_names.has_self() {
                     return Err(RegionError {
                         msg: ~"the `self` lifetime must be declared",
                         replacement: ty::re_bound(ty::br_self)
@@ -232,7 +229,7 @@ impl region_scope for type_rscope {
             None => {
                 // if the self region is used, region parameterization should
                 // have inferred that this type is RP
-                fail!(~"region parameterization should have inferred that \
+                fail!("region parameterization should have inferred that \
                         this type is RP");
             }
             Some(ref region_parameterization) => {
@@ -271,11 +268,11 @@ pub struct binding_rscope {
     region_param_names: RegionParamNames,
 }
 
-pub fn in_binding_rscope<RS:region_scope + Copy + Durable>(
-        self: &RS,
-        +region_param_names: RegionParamNames)
+pub fn in_binding_rscope<RS:region_scope + Copy + 'static>(
+        this: &RS,
+        region_param_names: RegionParamNames)
      -> binding_rscope {
-    let base = @copy *self;
+    let base = @copy *this;
     let base = base as @region_scope;
     binding_rscope {
         base: base,

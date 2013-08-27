@@ -15,8 +15,7 @@ fn g<X:Copy>(x: X) -> X { return x; }
 struct Pair<T> {a: T, b: T}
 
 fn f<T:Copy>(t: T) -> Pair<T> {
-
-    let x: Pair<T> = Pair {a: t, b: t};
+    let x: Pair<T> = Pair {a: copy t, b: t};
     return g::<Pair<T>>(x);
 }
 
@@ -24,6 +23,6 @@ pub fn main() {
     let b = f::<int>(10);
     debug!(b.a);
     debug!(b.b);
-    assert!((b.a == 10));
-    assert!((b.b == 10));
+    assert_eq!(b.a, 10);
+    assert_eq!(b.b, 10);
 }

@@ -11,6 +11,8 @@
 // except according to those terms.
 
 mod base {
+    use std::io;
+
     pub trait HasNew<T> {
         fn new() -> T;
     }
@@ -21,7 +23,7 @@ mod base {
 
     impl ::base::HasNew<Foo> for Foo {
         fn new() -> Foo {
-			unsafe { io::println("Foo"); }
+            unsafe { println("Foo"); }
             Foo { dummy: () }
         }
     }
@@ -32,7 +34,7 @@ mod base {
 
     impl ::base::HasNew<Bar> for Bar {
         fn new() -> Bar {
-			unsafe { io::println("Bar"); }
+            unsafe { io::println("Bar"); }
             Bar { dummy: () }
         }
     }
@@ -40,5 +42,5 @@ mod base {
 
 pub fn main() {
     let f: base::Foo = base::HasNew::new::<base::Foo, base::Foo>();
-	let b: base::Bar = base::HasNew::new::<base::Bar, base::Bar>();
+    let b: base::Bar = base::HasNew::new::<base::Bar, base::Bar>();
 }

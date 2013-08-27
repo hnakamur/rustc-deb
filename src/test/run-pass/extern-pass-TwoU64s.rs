@@ -11,7 +11,9 @@
 // Test a foreign function that accepts and returns a struct
 // by value.
 
-// xfail-test --- broken on 32-bit ABIs! (#5347)
+// xfail-fast This works standalone on windows but not with check-fast.
+// possibly because there is another test that uses this extern fn but gives it
+// a different signature
 
 #[deriving(Eq)]
 struct TwoU64s {
@@ -26,7 +28,6 @@ pub fn main() {
     unsafe {
         let x = TwoU64s {one: 22, two: 23};
         let y = rust_dbg_extern_identity_TwoU64s(x);
-        assert!(x == y);
+        assert_eq!(x, y);
     }
 }
-

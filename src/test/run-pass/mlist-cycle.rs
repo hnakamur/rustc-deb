@@ -11,15 +11,17 @@
 // xfail-test
 // -*- rust -*-
 extern mod std;
+use std::gc;
+use std::gc::rustrt;
 
-type cell = {c: @list};
+struct cell {c: @list}
 
 enum list { link(@mut cell), nil, }
 
 pub fn main() {
-    let first: @cell = @mut {c: @nil()};
-    let second: @cell = @mut {c: @link(first)};
+    let first: @cell = @mut cell{c: @nil()};
+    let second: @cell = @mut cell{c: @link(first)};
     first._0 = @link(second);
-    sys.rustrt.gc();
-    let third: @cell = @mut {c: @nil()};
+    rustrt::gc();
+    let third: @cell = @mut cell{c: @nil()};
 }

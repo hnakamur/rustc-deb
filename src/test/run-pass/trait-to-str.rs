@@ -10,11 +10,14 @@
 
 // xfail-fast
 
-#[no_core];
+#[no_std];
 
-extern mod core;
+extern mod std;
 
-use core::{str, int, vec};
+use std::str::StrVector;
+use std::vec::ImmutableVector;
+use std::iterator::IteratorUtil;
+use std::int;
 
 trait to_str {
     fn to_str(&self) -> ~str;
@@ -26,7 +29,7 @@ impl to_str for int {
 
 impl<T:to_str> to_str for ~[T] {
     fn to_str(&self) -> ~str {
-        ~"[" + str::connect(vec::map(*self, |e| e.to_str() ), ~", ") + ~"]"
+        fmt!("[%s]", self.iter().transform(|e| e.to_str()).collect::<~[~str]>().connect(", "))
     }
 }
 

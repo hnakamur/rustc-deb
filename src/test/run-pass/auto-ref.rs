@@ -18,7 +18,7 @@ trait Stuff {
 
 impl Stuff for Foo {
     fn printme(&self) {
-        io::println(fmt!("%d", self.x));
+        println(fmt!("%d", self.x));
     }
 }
 
@@ -26,4 +26,3 @@ pub fn main() {
     let x = Foo { x: 3 };
     x.printme();
 }
-

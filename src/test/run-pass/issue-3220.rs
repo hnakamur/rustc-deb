@@ -11,7 +11,7 @@
 struct thing { x: int, }
 
 impl Drop for thing {
-    fn finalize(&self) {}
+    fn drop(&self) {}
 }
 
 fn thing() -> thing {
@@ -19,7 +19,10 @@ fn thing() -> thing {
         x: 0
     }
 }
-pub impl thing { fn f(self) {} }
+
+impl thing {
+    pub fn f(self) {}
+}
 
 pub fn main() {
     let z = thing();

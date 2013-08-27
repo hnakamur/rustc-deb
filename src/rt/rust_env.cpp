@@ -13,6 +13,7 @@
 // that might come from the environment is loaded here, once, during
 // init.
 
+#include "sync/lock_and_signal.h"
 #include "rust_env.h"
 
 // The environment variables that the runtime knows about
@@ -24,6 +25,19 @@
 #define RUST_SEED "RUST_SEED"
 #define RUST_POISON_ON_FREE "RUST_POISON_ON_FREE"
 #define RUST_DEBUG_MEM "RUST_DEBUG_MEM"
+#define RUST_DEBUG_BORROW "RUST_DEBUG_BORROW"
+
+static lock_and_signal env_lock;
+
+extern "C" CDECL void
+rust_take_env_lock() {
+    env_lock.lock();
+}
+
+extern "C" CDECL void
+rust_drop_env_lock() {
+    env_lock.unlock();
+}
 
 #if defined(__WIN32__)
 static int
@@ -97,7 +111,7 @@ get_max_stk_size() {
         return strtol(maxsz, NULL, 0);
     }
     else {
-        return 1024*1024*8;
+        return 1024*1024*1024;
     }
 }
 
@@ -118,6 +132,8 @@ copyenv(const char* name) {
 
 rust_env*
 load_env(int argc, char **argv) {
+    scoped_lock with(env_lock);
+
     rust_env *env = (rust_env*)malloc(sizeof(rust_env));
 
     env->num_sched_threads = (size_t)get_num_threads();
@@ -130,6 +146,7 @@ load_env(int argc, char **argv) {
     env->argc = argc;
     env->argv = argv;
     env->debug_mem = getenv(RUST_DEBUG_MEM) != NULL;
+    env->debug_borrow = getenv(RUST_DEBUG_BORROW) != NULL;
     return env;
 }
 

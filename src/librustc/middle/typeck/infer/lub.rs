@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
 
+use middle::ty::{BuiltinBounds};
 use middle::ty::RegionVid;
 use middle::ty;
 use middle::typeck::infer::combine::*;
@@ -18,24 +18,26 @@ use middle::typeck::infer::lattice::*;
 use middle::typeck::infer::sub::Sub;
 use middle::typeck::infer::to_str::InferStr;
 use middle::typeck::infer::{cres, InferCtxt};
+use middle::typeck::infer::fold_regions_in_sig;
 use middle::typeck::isr_alist;
 use util::common::indent;
 use util::ppaux::mt_to_str;
 
-use std::list;
+use extra::list;
 use syntax::abi::AbiSet;
 use syntax::ast;
 use syntax::ast::{Many, Once, extern_fn, m_const, impure_fn};
-use syntax::ast::{pure_fn, unsafe_fn};
+use syntax::ast::{unsafe_fn};
 use syntax::ast::{Onceness, purity};
 use syntax::codemap::span;
 
 pub struct Lub(CombineFields);  // least-upper-bound: common supertype
 
-pub impl Lub {
-    fn bot_ty(&self, b: ty::t) -> cres<ty::t> { Ok(b) }
-    fn ty_bot(&self, b: ty::t)
-             -> cres<ty::t> { self.bot_ty(b) } // commutative
+impl Lub {
+    pub fn bot_ty(&self, b: ty::t) -> cres<ty::t> { Ok(b) }
+    pub fn ty_bot(&self, b: ty::t) -> cres<ty::t> {
+        self.bot_ty(b) // commutative
+    }
 }
 
 impl Combine for Lub {
@@ -89,8 +91,7 @@ impl Combine for Lub {
         match (a, b) {
           (unsafe_fn, _) | (_, unsafe_fn) => Ok(unsafe_fn),
           (impure_fn, _) | (_, impure_fn) => Ok(impure_fn),
-          (extern_fn, _) | (_, extern_fn) => Ok(extern_fn),
-          (pure_fn, pure_fn) => Ok(pure_fn)
+          (extern_fn, extern_fn) => Ok(extern_fn),
         }
     }
 
@@ -99,6 +100,12 @@ impl Combine for Lub {
             (Once, _) | (_, Once) => Ok(Once),
             (Many, Many) => Ok(Many)
         }
+    }
+
+    fn bounds(&self, a: BuiltinBounds, b: BuiltinBounds) -> cres<BuiltinBounds> {
+        // More bounds is a subtype of fewer bounds, so
+        // the LUB (mutual supertype) is the intersection.
+        Ok(a.intersection(b))
     }
 
     fn contraregions(&self, a: ty::Region, b: ty::Region)
@@ -143,13 +150,14 @@ impl Combine for Lub {
         let new_vars =
             self.infcx.region_vars.vars_created_since_snapshot(snapshot);
         let sig1 =
-            self.infcx.fold_regions_in_sig(
+            fold_regions_in_sig(
+                self.infcx.tcx,
                 &sig0,
                 |r, _in_fn| generalize_region(self, snapshot, new_vars,
                                               a_isr, r));
         return Ok(sig1);
 
-        fn generalize_region(self: &Lub,
+        fn generalize_region(this: &Lub,
                              snapshot: uint,
                              new_vars: &[RegionVid],
                              a_isr: isr_alist,
@@ -160,12 +168,12 @@ impl Combine for Lub {
                 return r0;
             }
 
-            let tainted = self.infcx.region_vars.tainted(snapshot, r0);
+            let tainted = this.infcx.region_vars.tainted(snapshot, r0);
 
             // Variables created during LUB computation which are
             // *related* to regions that pre-date the LUB computation
             // stay as they are.
-            if !tainted.all(|r| is_var_in_set(new_vars, *r)) {
+            if !tainted.iter().all(|r| is_var_in_set(new_vars, *r)) {
                 debug!("generalize_region(r0=%?): \
                         non-new-variables found in %?",
                        r0, tainted);
@@ -179,7 +187,7 @@ impl Combine for Lub {
             // with.
             for list::each(a_isr) |pair| {
                 let (a_br, a_r) = *pair;
-                if tainted.contains(&a_r) {
+                if tainted.iter().any_(|x| x == &a_r) {
                     debug!("generalize_region(r0=%?): \
                             replacing with %?, tainted=%?",
                            r0, a_br, tainted);
@@ -187,8 +195,8 @@ impl Combine for Lub {
                 }
             }
 
-            self.infcx.tcx.sess.span_bug(
-                self.span,
+            this.infcx.tcx.sess.span_bug(
+                this.span,
                 fmt!("Region %? is not associated with \
                       any bound region from A!", r0));
         }
@@ -236,18 +244,15 @@ impl Combine for Lub {
         super_trait_stores(self, vk, a, b)
     }
 
-    fn modes(&self, a: ast::mode, b: ast::mode) -> cres<ast::mode> {
-        super_modes(self, a, b)
-    }
-
-    fn args(&self, a: ty::arg, b: ty::arg) -> cres<ty::arg> {
+    fn args(&self, a: ty::t, b: ty::t) -> cres<ty::t> {
         super_args(self, a, b)
     }
 
-    fn substs(&self, did: ast::def_id,
+    fn substs(&self,
+              generics: &ty::Generics,
               as_: &ty::substs,
               bs: &ty::substs) -> cres<ty::substs> {
-        super_substs(self, did, as_, bs)
+        super_substs(self, generics, as_, bs)
     }
 
     fn tps(&self, as_: &[ty::t], bs: &[ty::t]) -> cres<~[ty::t]> {
@@ -257,5 +262,9 @@ impl Combine for Lub {
     fn self_tys(&self, a: Option<ty::t>, b: Option<ty::t>)
                -> cres<Option<ty::t>> {
         super_self_tys(self, a, b)
+    }
+
+    fn trait_refs(&self, a: &ty::TraitRef, b: &ty::TraitRef) -> cres<ty::TraitRef> {
+        super_trait_refs(self, a, b)
     }
 }

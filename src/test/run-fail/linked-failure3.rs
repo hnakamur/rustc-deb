@@ -12,7 +12,10 @@
 
 // error-pattern:fail
 
-fn grandchild() { fail!(~"grandchild dies"); }
+use std::comm;
+use std::task;
+
+fn grandchild() { fail!("grandchild dies"); }
 
 fn child() {
     let (p, _c) = comm::stream::<int>();

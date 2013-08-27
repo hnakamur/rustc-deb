@@ -8,24 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
-
 use abi::AbiSet;
 use ast::*;
 use ast;
 use ast_util::{inlined_item_utils, stmt_id};
 use ast_util;
 use codemap;
-use codemap::spanned;
 use diagnostic::span_handler;
 use parse::token::ident_interner;
 use print::pprust;
 use visit;
+use syntax::parse::token::special_idents;
 
-use core::cmp;
-use core::hashmap::linear::LinearMap;
-use core::str;
-use core::vec;
+use std::cmp;
+use std::hashmap::HashMap;
+use std::vec;
 
 pub enum path_elt {
     path_mod(ident),
@@ -54,34 +51,34 @@ impl cmp::Eq for path_elt {
 
 pub type path = ~[path_elt];
 
-pub fn path_to_str_with_sep(p: &[path_elt], sep: ~str, itr: @ident_interner)
+pub fn path_to_str_with_sep(p: &[path_elt], sep: &str, itr: @ident_interner)
                          -> ~str {
     let strs = do p.map |e| {
         match *e {
-          path_mod(s) => copy *itr.get(s),
-          path_name(s) => copy *itr.get(s)
+          path_mod(s) => itr.get(s.name),
+          path_name(s) => itr.get(s.name)
         }
     };
-    str::connect(strs, sep)
+    strs.connect(sep)
 }
 
-pub fn path_ident_to_str(p: path, i: ident, itr: @ident_interner) -> ~str {
-    if vec::is_empty(p) {
+pub fn path_ident_to_str(p: &path, i: ident, itr: @ident_interner) -> ~str {
+    if p.is_empty() {
         //FIXME /* FIXME (#2543) */ copy *i
-        copy *itr.get(i)
+        itr.get(i.name).to_owned()
     } else {
-        fmt!("%s::%s", path_to_str(p, itr), *itr.get(i))
+        fmt!("%s::%s", path_to_str(*p, itr), itr.get(i.name))
     }
 }
 
 pub fn path_to_str(p: &[path_elt], itr: @ident_interner) -> ~str {
-    path_to_str_with_sep(p, ~"::", itr)
+    path_to_str_with_sep(p, "::", itr)
 }
 
 pub fn path_elt_to_str(pe: path_elt, itr: @ident_interner) -> ~str {
     match pe {
-        path_mod(s) => copy *itr.get(s),
-        path_name(s) => copy *itr.get(s)
+        path_mod(s) => itr.get(s.name).to_owned(),
+        path_name(s) => itr.get(s.name).to_owned()
     }
 }
 
@@ -94,29 +91,25 @@ pub enum ast_node {
     node_variant(variant, @item, @path),
     node_expr(@expr),
     node_stmt(@stmt),
-    // Locals are numbered, because the alias analysis needs to know in which
-    // order they are introduced.
-    node_arg(arg, uint),
-    node_local(uint),
-    // Destructor for a struct
-    node_dtor(Generics, @struct_dtor, def_id, @path),
+    node_arg,
+    node_local(ident),
     node_block(blk),
     node_struct_ctor(@struct_def, @item, @path),
+    node_callee_scope(@expr)
 }
 
-pub type map = @mut LinearMap<node_id, ast_node>;
+pub type map = @mut HashMap<node_id, ast_node>;
 
 pub struct Ctx {
     map: map,
     path: path,
-    local_id: uint,
     diag: @span_handler,
 }
 
 pub type vt = visit::vt<@mut Ctx>;
 
-pub fn extend(cx: @mut Ctx, +elt: ident) -> @path {
-    @(vec::append(copy cx.path, ~[path_name(elt)]))
+pub fn extend(cx: @mut Ctx, elt: ident) -> @path {
+    @(vec::append(copy cx.path, [path_name(elt)]))
 }
 
 pub fn mk_ast_map_visitor() -> vt {
@@ -125,21 +118,19 @@ pub fn mk_ast_map_visitor() -> vt {
         visit_expr: map_expr,
         visit_stmt: map_stmt,
         visit_fn: map_fn,
-        visit_local: map_local,
-        visit_arm: map_arm,
         visit_block: map_block,
+        visit_pat: map_pat,
         .. *visit::default_visitor()
     });
 }
 
-pub fn map_crate(diag: @span_handler, c: crate) -> map {
+pub fn map_crate(diag: @span_handler, c: &crate) -> map {
     let cx = @mut Ctx {
-        map: @mut LinearMap::new(),
+        map: @mut HashMap::new(),
         path: ~[],
-        local_id: 0u,
         diag: diag,
     };
-    visit::visit_crate(c, cx, mk_ast_map_visitor());
+    visit::visit_crate(c, (cx, mk_ast_map_visitor()));
     cx.map
 }
 
@@ -148,8 +139,8 @@ pub fn map_crate(diag: @span_handler, c: crate) -> map {
 // the item itself.
 pub fn map_decoded_item(diag: @span_handler,
                         map: map,
-                        +path: path,
-                        ii: inlined_item) {
+                        path: path,
+                        ii: &inlined_item) {
     // I believe it is ok for the local IDs of inlined items from other crates
     // to overlap with the local ids from this crate, so just generate the ids
     // starting from 0.  (In particular, I think these ids are only used in
@@ -159,7 +150,6 @@ pub fn map_decoded_item(diag: @span_handler,
     let cx = @mut Ctx {
         map: map,
         path: copy path,
-        local_id: 0,
         diag: diag,
     };
     let v = mk_ast_map_visitor();
@@ -167,8 +157,8 @@ pub fn map_decoded_item(diag: @span_handler,
     // methods get added to the AST map when their impl is visited.  Since we
     // don't decode and instantiate the impl, but just the method, we have to
     // add it to the table now:
-    match ii {
-      ii_item(*) | ii_dtor(*) => { /* fallthrough */ }
+    match *ii {
+      ii_item(*) => { /* fallthrough */ }
       ii_foreign(i) => {
         cx.map.insert(i.id, node_foreign_item(i,
                                               AbiSet::Intrinsic(),
@@ -190,91 +180,57 @@ pub fn map_fn(
     body: &blk,
     sp: codemap::span,
     id: node_id,
-    &&cx: @mut Ctx,
-    v: visit::vt<@mut Ctx>
+    (cx,v): (@mut Ctx,
+             visit::vt<@mut Ctx>)
 ) {
-    for decl.inputs.each |a| {
-        cx.map.insert(a.id,
-                      node_arg(/* FIXME (#2543) */ copy *a, cx.local_id));
-        cx.local_id += 1u;
+    for decl.inputs.iter().advance |a| {
+        cx.map.insert(a.id, node_arg);
     }
-    match *fk {
-        visit::fk_dtor(generics, ref attrs, self_id, parent_id) => {
-            let dt = @spanned {
-                node: ast::struct_dtor_ {
-                    id: id,
-                    attrs: /* FIXME (#2543) */ vec::from_slice(*attrs),
-                    self_id: self_id,
-                    body: /* FIXME (#2543) */ copy *body,
-                },
-                span: sp,
-            };
-            cx.map.insert(
-                id,
-                node_dtor(
-                    /* FIXME (#2543) */ copy *generics,
-                    dt,
-                    parent_id,
-                    @/* FIXME (#2543) */ copy cx.path));
-      }
-      _ => ()
-    }
-    visit::visit_fn(fk, decl, body, sp, id, cx, v);
+    visit::visit_fn(fk, decl, body, sp, id, (cx, v));
 }
 
-pub fn map_block(b: &blk, &&cx: @mut Ctx, v: visit::vt<@mut Ctx>) {
+pub fn map_block(b: &blk, (cx,v): (@mut Ctx, visit::vt<@mut Ctx>)) {
     cx.map.insert(b.node.id, node_block(/* FIXME (#2543) */ copy *b));
-    visit::visit_block(b, cx, v);
+    visit::visit_block(b, (cx, v));
 }
 
-pub fn number_pat(cx: @mut Ctx, pat: @pat) {
-    do ast_util::walk_pat(pat) |p| {
-        match p.node {
-          pat_ident(*) => {
-            cx.map.insert(p.id, node_local(cx.local_id));
-            cx.local_id += 1u;
-          }
-          _ => ()
+pub fn map_pat(pat: @pat, (cx,v): (@mut Ctx, visit::vt<@mut Ctx>)) {
+    match pat.node {
+        pat_ident(_, path, _) => {
+            // Note: this is at least *potentially* a pattern...
+            cx.map.insert(pat.id, node_local(ast_util::path_to_ident(path)));
         }
-    };
-}
+        _ => ()
+    }
 
-pub fn map_local(loc: @local, &&cx: @mut Ctx, v: visit::vt<@mut Ctx>) {
-    number_pat(cx, loc.node.pat);
-    visit::visit_local(loc, cx, v);
-}
-
-pub fn map_arm(arm: &arm, &&cx: @mut Ctx, v: visit::vt<@mut Ctx>) {
-    number_pat(cx, arm.pats[0]);
-    visit::visit_arm(arm, cx, v);
+    visit::visit_pat(pat, (cx, v));
 }
 
 pub fn map_method(impl_did: def_id, impl_path: @path,
-                  m: @method, &&cx: @mut Ctx) {
+                  m: @method, cx: @mut Ctx) {
     cx.map.insert(m.id, node_method(m, impl_did, impl_path));
-    cx.map.insert(m.self_id, node_local(cx.local_id));
-    cx.local_id += 1u;
+    cx.map.insert(m.self_id, node_local(special_idents::self_));
 }
 
-pub fn map_item(i: @item, &&cx: @mut Ctx, v: visit::vt<@mut Ctx>) {
+pub fn map_item(i: @item, (cx, v): (@mut Ctx, visit::vt<@mut Ctx>)) {
     let item_path = @/* FIXME (#2543) */ copy cx.path;
     cx.map.insert(i.id, node_item(i, item_path));
     match i.node {
         item_impl(_, _, _, ref ms) => {
             let impl_did = ast_util::local_def(i.id);
-            for ms.each |m| {
+            for ms.iter().advance |m| {
                 map_method(impl_did, extend(cx, i.ident), *m, cx);
             }
         }
         item_enum(ref enum_definition, _) => {
-            for (*enum_definition).variants.each |v| {
+            for (*enum_definition).variants.iter().advance |v| {
                 cx.map.insert(v.node.id, node_variant(
                     /* FIXME (#2543) */ copy *v, i,
                     extend(cx, i.ident)));
             }
         }
         item_foreign_mod(ref nm) => {
-            for nm.items.each |nitem| {
+            for nm.items.iter().advance |nitem| {
                 // Compute the visibility for this native item.
                 let visibility = match nitem.vis {
                     public => public,
@@ -303,15 +259,15 @@ pub fn map_item(i: @item, &&cx: @mut Ctx, v: visit::vt<@mut Ctx>) {
                 struct_def,
                 node_item(i, item_path),
                 i.ident,
-                cx,
-                v
+                (cx,
+                 v)
             );
         }
         item_trait(_, ref traits, ref methods) => {
-            for traits.each |p| {
+            for traits.iter().advance |p| {
                 cx.map.insert(p.ref_id, node_item(i, item_path));
             }
-            for methods.each |tm| {
+            for methods.iter().advance |tm| {
                 let id = ast_util::trait_method_to_ty_method(tm).id;
                 let d_id = ast_util::local_def(i.id);
                 cx.map.insert(
@@ -322,13 +278,14 @@ pub fn map_item(i: @item, &&cx: @mut Ctx, v: visit::vt<@mut Ctx>) {
         }
         _ => ()
     }
+
     match i.node {
         item_mod(_) | item_foreign_mod(_) => {
             cx.path.push(path_mod(i.ident));
         }
         _ => cx.path.push(path_name(i.ident))
     }
-    visit::visit_item(i, cx, v);
+    visit::visit_item(i, (cx, v));
     cx.path.pop();
 }
 
@@ -336,8 +293,8 @@ pub fn map_struct_def(
     struct_def: @ast::struct_def,
     parent_node: ast_node,
     ident: ast::ident,
-    cx: @mut Ctx,
-    _v: visit::vt<@mut Ctx>
+    (cx, _v): (@mut Ctx,
+               visit::vt<@mut Ctx>)
 ) {
     let p = extend(cx, ident);
     // If this is a tuple-like struct, register the constructor.
@@ -349,20 +306,27 @@ pub fn map_struct_def(
                     cx.map.insert(ctor_id,
                                   node_struct_ctor(struct_def, item, p));
                 }
-                _ => fail!(~"struct def parent wasn't an item")
+                _ => fail!("struct def parent wasn't an item")
             }
         }
     }
 }
 
-pub fn map_expr(ex: @expr, &&cx: @mut Ctx, v: visit::vt<@mut Ctx>) {
+pub fn map_expr(ex: @expr, (cx,v): (@mut Ctx, visit::vt<@mut Ctx>)) {
     cx.map.insert(ex.id, node_expr(ex));
-    visit::visit_expr(ex, cx, v);
+    // Expressions which are or might be calls:
+    {
+        let r = ex.get_callee_id();
+        for r.iter().advance |callee_id| {
+            cx.map.insert(*callee_id, node_callee_scope(ex));
+        }
+    }
+    visit::visit_expr(ex, (cx, v));
 }
 
-pub fn map_stmt(stmt: @stmt, &&cx: @mut Ctx, v: visit::vt<@mut Ctx>) {
-    cx.map.insert(stmt_id(*stmt), node_stmt(stmt));
-    visit::visit_stmt(stmt, cx, v);
+pub fn map_stmt(stmt: @stmt, (cx,v): (@mut Ctx, visit::vt<@mut Ctx>)) {
+    cx.map.insert(stmt_id(stmt), node_stmt(stmt));
+    visit::visit_stmt(stmt, (cx, v));
 }
 
 pub fn node_id_to_str(map: map, id: node_id, itr: @ident_interner) -> ~str {
@@ -371,9 +335,9 @@ pub fn node_id_to_str(map: map, id: node_id, itr: @ident_interner) -> ~str {
         fmt!("unknown node (id=%d)", id)
       }
       Some(&node_item(item, path)) => {
-        let path_str = path_ident_to_str(*path, item.ident, itr);
+        let path_str = path_ident_to_str(path, item.ident, itr);
         let item_str = match item.node {
-          item_const(*) => ~"const",
+          item_static(*) => ~"static",
           item_fn(*) => ~"fn",
           item_mod(*) => ~"mod",
           item_foreign_mod(*) => ~"foreign mod",
@@ -388,36 +352,36 @@ pub fn node_id_to_str(map: map, id: node_id, itr: @ident_interner) -> ~str {
       }
       Some(&node_foreign_item(item, abi, _, path)) => {
         fmt!("foreign item %s with abi %? (id=%?)",
-             path_ident_to_str(*path, item.ident, itr), abi, id)
+             path_ident_to_str(path, item.ident, itr), abi, id)
       }
       Some(&node_method(m, _, path)) => {
         fmt!("method %s in %s (id=%?)",
-             *itr.get(m.ident), path_to_str(*path, itr), id)
+             itr.get(m.ident.name), path_to_str(*path, itr), id)
       }
       Some(&node_trait_method(ref tm, _, path)) => {
         let m = ast_util::trait_method_to_ty_method(&**tm);
         fmt!("method %s in %s (id=%?)",
-             *itr.get(m.ident), path_to_str(*path, itr), id)
+             itr.get(m.ident.name), path_to_str(*path, itr), id)
       }
       Some(&node_variant(ref variant, _, path)) => {
         fmt!("variant %s in %s (id=%?)",
-             *itr.get(variant.node.name), path_to_str(*path, itr), id)
+             itr.get(variant.node.name.name), path_to_str(*path, itr), id)
       }
       Some(&node_expr(expr)) => {
         fmt!("expr %s (id=%?)", pprust::expr_to_str(expr, itr), id)
       }
+      Some(&node_callee_scope(expr)) => {
+        fmt!("callee_scope %s (id=%?)", pprust::expr_to_str(expr, itr), id)
+      }
       Some(&node_stmt(stmt)) => {
         fmt!("stmt %s (id=%?)",
-             pprust::stmt_to_str(*stmt, itr), id)
+             pprust::stmt_to_str(stmt, itr), id)
       }
-      Some(&node_arg(_, _)) => { // add more info here
+      Some(&node_arg) => {
         fmt!("arg (id=%?)", id)
       }
-      Some(&node_local(_)) => { // add more info here
-        fmt!("local (id=%?)", id)
-      }
-      Some(&node_dtor(*)) => { // add more info here
-        fmt!("node_dtor (id=%?)", id)
+      Some(&node_local(ident)) => {
+        fmt!("local (id=%?, name=%s)", id, itr.get(ident.name))
       }
       Some(&node_block(_)) => {
         fmt!("block")
@@ -430,17 +394,9 @@ pub fn node_id_to_str(map: map, id: node_id, itr: @ident_interner) -> ~str {
 
 pub fn node_item_query<Result>(items: map, id: node_id,
                                query: &fn(@item) -> Result,
-                               +error_msg: ~str) -> Result {
+                               error_msg: ~str) -> Result {
     match items.find(&id) {
         Some(&node_item(it, _)) => query(it),
         _ => fail!(error_msg)
     }
 }
-
-// Local Variables:
-// mode: rust
-// fill-column: 78;
-// indent-tabs-mode: nil
-// c-basic-offset: 4
-// buffer-file-coding-system: utf-8-unix
-// End:

@@ -10,7 +10,6 @@
 
 //! Build indexes as appropriate for the markdown pass
 
-use core::prelude::*;
 
 use astsrv;
 use config;
@@ -21,8 +20,6 @@ use fold;
 use markdown_pass;
 use markdown_writer;
 use pass::Pass;
-
-use core::str;
 
 pub fn mk_pass(config: config::Config) -> Pass {
     Pass {
@@ -76,7 +73,7 @@ fn build_mod_index(
 ) -> doc::Index {
     doc::Index {
         entries: doc.items.map(|doc| {
-            item_to_entry(copy *doc, copy config)
+            item_to_entry(copy *doc, &config)
         })
     }
 }
@@ -87,14 +84,14 @@ fn build_nmod_index(
 ) -> doc::Index {
     doc::Index {
         entries: doc.fns.map(|doc| {
-            item_to_entry(doc::FnTag(copy *doc), copy config)
+            item_to_entry(doc::FnTag(copy *doc), &config)
         })
     }
 }
 
 fn item_to_entry(
     doc: doc::ItemTag,
-    config: config::Config
+    config: &config::Config
 ) -> doc::IndexEntry {
     let link = match doc {
       doc::ModTag(_) | doc::NmodTag(_)
@@ -115,7 +112,7 @@ fn item_to_entry(
     }
 }
 
-fn pandoc_header_id(header: &str) -> ~str {
+pub fn pandoc_header_id(header: &str) -> ~str {
 
     // http://johnmacfarlane.net/pandoc/README.html#headers
 
@@ -128,146 +125,45 @@ fn pandoc_header_id(header: &str) -> ~str {
     return header;
 
     fn remove_formatting(s: &str) -> ~str {
-        str::replace(s, ~"`", ~"")
+        s.replace("`", "")
     }
     fn remove_punctuation(s: &str) -> ~str {
-        let s = str::replace(s, ~"<", ~"");
-        let s = str::replace(s, ~">", ~"");
-        let s = str::replace(s, ~"[", ~"");
-        let s = str::replace(s, ~"]", ~"");
-        let s = str::replace(s, ~"(", ~"");
-        let s = str::replace(s, ~")", ~"");
-        let s = str::replace(s, ~"@~", ~"");
-        let s = str::replace(s, ~"~", ~"");
-        let s = str::replace(s, ~"/", ~"");
-        let s = str::replace(s, ~":", ~"");
-        let s = str::replace(s, ~"&", ~"");
-        let s = str::replace(s, ~"^", ~"");
-        let s = str::replace(s, ~",", ~"");
-        let s = str::replace(s, ~"'", ~"");
-        let s = str::replace(s, ~"+", ~"");
+        let s = s.replace("<", "");
+        let s = s.replace(">", "");
+        let s = s.replace("[", "");
+        let s = s.replace("]", "");
+        let s = s.replace("(", "");
+        let s = s.replace(")", "");
+        let s = s.replace("@~", "");
+        let s = s.replace("~", "");
+        let s = s.replace("/", "");
+        let s = s.replace(":", "");
+        let s = s.replace("&", "");
+        let s = s.replace("^", "");
+        let s = s.replace(",", "");
+        let s = s.replace("'", "");
+        let s = s.replace("+", "");
         return s;
     }
     fn replace_with_hyphens(s: &str) -> ~str {
         // Collapse sequences of whitespace to a single dash
         // XXX: Hacky implementation here that only covers
         // one or two spaces.
-        let s = str::trim(s);
-        let s = str::replace(s, ~"  ", ~"-");
-        let s = str::replace(s, ~" ", ~"-");
+        let s = s.trim();
+        let s = s.replace("  ", "-");
+        let s = s.replace(" ", "-");
         return s;
     }
-    fn convert_to_lowercase(s: &str) -> ~str { str::to_lower(s) }
+    // FIXME: #4318 Instead of to_ascii and to_str_ascii, could use
+    // to_ascii_consume and to_str_consume to not do a unnecessary copy.
+    fn convert_to_lowercase(s: &str) -> ~str { s.to_ascii().to_lower().to_str_ascii() }
     fn remove_up_to_first_letter(s: &str) -> ~str { s.to_str() }
     fn maybe_use_section_id(s: &str) -> ~str { s.to_str() }
 }
 
-#[test]
-fn should_remove_punctuation_from_headers() {
-    assert!(pandoc_header_id(~"impl foo of bar<A>") ==
-        ~"impl-foo-of-bara");
-    assert!(pandoc_header_id(~"impl of num::num for int")
-        == ~"impl-of-numnum-for-int");
-    assert!(pandoc_header_id(~"impl of num::num for int/&")
-        == ~"impl-of-numnum-for-int");
-    assert!(pandoc_header_id(~"impl of num::num for ^int")
-        == ~"impl-of-numnum-for-int");
-    assert!(pandoc_header_id(~"impl for & condvar")
-        == ~"impl-for-condvar");
-    assert!(pandoc_header_id(~"impl of Select<T, U> for (Left, Right)")
-                 == ~"impl-of-selectt-u-for-left-right");
-    assert!(pandoc_header_id(~"impl of Condition<'self, T, U>")
-                 == ~"impl-of-conditionself-t-u");
-    assert!(pandoc_header_id(~"impl of Condition<T: Copy + Clone>")
-                 == ~"impl-of-conditiont-copy-clone");
-}
-
-#[test]
-fn should_trim_whitespace_after_removing_punctuation() {
-    assert!(pandoc_header_id("impl foo for ()") == ~"impl-foo-for");
-}
-
-#[test]
-fn should_index_mod_contents() {
-    let doc = test::mk_doc(
-        config::DocPerCrate,
-        ~"mod a { } fn b() { }"
-    );
-    assert!((&doc.cratemod().index).get().entries[0] == doc::IndexEntry {
-        kind: ~"Module",
-        name: ~"a",
-        brief: None,
-        link: ~"#module-a"
-    });
-    assert!((&doc.cratemod().index).get().entries[1] == doc::IndexEntry {
-        kind: ~"Function",
-        name: ~"b",
-        brief: None,
-        link: ~"#function-b"
-    });
-}
-
-#[test]
-fn should_index_mod_contents_multi_page() {
-    let doc = test::mk_doc(
-        config::DocPerMod,
-        ~"mod a { } fn b() { }"
-    );
-    assert!((&doc.cratemod().index).get().entries[0] == doc::IndexEntry {
-        kind: ~"Module",
-        name: ~"a",
-        brief: None,
-        link: ~"a.html"
-    });
-    assert!((&doc.cratemod().index).get().entries[1] == doc::IndexEntry {
-        kind: ~"Function",
-        name: ~"b",
-        brief: None,
-        link: ~"#function-b"
-    });
-}
-
-#[test]
-fn should_index_foreign_mod_pages() {
-    let doc = test::mk_doc(
-        config::DocPerMod,
-        ~"extern mod a { }"
-    );
-    assert!((&doc.cratemod().index).get().entries[0] == doc::IndexEntry {
-        kind: ~"Foreign module",
-        name: ~"a",
-        brief: None,
-        link: ~"a.html"
-    });
-}
-
-#[test]
-fn should_add_brief_desc_to_index() {
-    let doc = test::mk_doc(
-        config::DocPerMod,
-        ~"#[doc = \"test\"] mod a { }"
-    );
-    assert!((&doc.cratemod().index).get().entries[0].brief
-        == Some(~"test"));
-}
-
-#[test]
-fn should_index_foreign_mod_contents() {
-    let doc = test::mk_doc(
-        config::DocPerCrate,
-        ~"extern mod a { fn b(); }"
-    );
-    assert!((&doc.cratemod().nmods()[0].index).get().entries[0]
-        == doc::IndexEntry {
-        kind: ~"Function",
-        name: ~"b",
-        brief: None,
-        link: ~"#function-b"
-    });
-}
-
 #[cfg(test)]
 mod test {
+
     use astsrv;
     use attr_pass;
     use config;
@@ -276,10 +172,9 @@ mod test {
     use extract;
     use markdown_index_pass::run;
     use path_pass;
+    use super::pandoc_header_id;
 
-    use core::path::Path;
-
-    pub fn mk_doc(output_style: config::OutputStyle, source: ~str)
+    fn mk_doc(output_style: config::OutputStyle, source: ~str)
                -> doc::Doc {
         do astsrv::from_str(source) |srv| {
             let config = config::Config {
@@ -292,5 +187,95 @@ mod test {
             let doc = (path_pass::mk_pass().f)(srv.clone(), doc);
             run(srv.clone(), doc, config)
         }
+    }
+
+    #[test]
+    fn should_remove_punctuation_from_headers() {
+        assert!(pandoc_header_id("impl foo of bar<A>") ==
+                ~"impl-foo-of-bara");
+        assert!(pandoc_header_id("impl of num::num for int")
+                == ~"impl-of-numnum-for-int");
+        assert!(pandoc_header_id("impl of num::num for int/&")
+                == ~"impl-of-numnum-for-int");
+        assert!(pandoc_header_id("impl of num::num for ^int")
+                == ~"impl-of-numnum-for-int");
+        assert!(pandoc_header_id("impl for & condvar")
+                == ~"impl-for-condvar");
+        assert!(pandoc_header_id("impl of Select<T, U> for (Left, Right)")
+                == ~"impl-of-selectt-u-for-left-right");
+        assert!(pandoc_header_id("impl of Condition<'self, T, U>")
+                == ~"impl-of-conditionself-t-u");
+        assert!(pandoc_header_id("impl of Condition<T: Copy + Clone>")
+                == ~"impl-of-conditiont-copy-clone");
+    }
+
+    #[test]
+    fn should_trim_whitespace_after_removing_punctuation() {
+        assert_eq!(pandoc_header_id("impl foo for ()"), ~"impl-foo-for");
+    }
+
+    #[test]
+    fn should_index_mod_contents() {
+        let doc = mk_doc(
+            config::DocPerCrate,
+            ~"mod a { } fn b() { }"
+        );
+        assert!(doc.cratemod().index.get().entries[0] == doc::IndexEntry {
+            kind: ~"Module",
+            name: ~"a",
+            brief: None,
+            link: ~"#module-a"
+        });
+        assert!(doc.cratemod().index.get().entries[1] == doc::IndexEntry {
+            kind: ~"Function",
+            name: ~"b",
+            brief: None,
+            link: ~"#function-b"
+        });
+    }
+
+    #[test]
+    fn should_index_mod_contents_multi_page() {
+        let doc = mk_doc(
+            config::DocPerMod,
+            ~"mod a { } fn b() { }"
+        );
+        assert!(doc.cratemod().index.get().entries[0] == doc::IndexEntry {
+            kind: ~"Module",
+            name: ~"a",
+            brief: None,
+            link: ~"a.html"
+        });
+        assert!(doc.cratemod().index.get().entries[1] == doc::IndexEntry {
+            kind: ~"Function",
+            name: ~"b",
+            brief: None,
+            link: ~"#function-b"
+        });
+    }
+
+    #[test]
+    fn should_add_brief_desc_to_index() {
+        let doc = mk_doc(
+            config::DocPerMod,
+            ~"#[doc = \"test\"] mod a { }"
+        );
+        assert!(doc.cratemod().index.get().entries[0].brief
+                == Some(~"test"));
+    }
+
+    #[test]
+    fn should_index_foreign_mod_contents() {
+        let doc = mk_doc(
+            config::DocPerCrate,
+            ~"extern { fn b(); }"
+        );
+        assert!(doc.cratemod().nmods()[0].index.get().entries[0]
+                == doc::IndexEntry {
+                    kind: ~"Function",
+                    name: ~"b",
+                    brief: None,
+                    link: ~"#function-b"
+                });
     }
 }

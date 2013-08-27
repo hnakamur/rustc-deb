@@ -13,8 +13,10 @@
 // A port of task-killjoin to use a class with a dtor to manage
 // the join.
 
-use core::cell::Cell;
-use core::comm::*;
+use std::cell::Cell;
+use std::comm::*;
+use std::ptr;
+use std::task;
 
 struct notify {
     ch: Chan<bool>, v: @mut bool,
@@ -22,11 +24,11 @@ struct notify {
 
 #[unsafe_destructor]
 impl Drop for notify {
-    fn finalize(&self) {
+    fn drop(&self) {
         unsafe {
             error!("notify: task=%? v=%x unwinding=%b b=%b",
                    task::get_task(),
-                   ptr::addr_of(&(*(self.v))) as uint,
+                   ptr::to_unsafe_ptr(&(*(self.v))) as uint,
                    task::failing(),
                    *(self.v));
             let b = *(self.v);
@@ -47,13 +49,13 @@ fn joinable(f: ~fn()) -> Port<bool> {
         let b = @mut false;
         error!("wrapper: task=%? allocated v=%x",
                task::get_task(),
-               ptr::addr_of(&(*b)) as uint);
+               ptr::to_unsafe_ptr(&(*b)) as uint);
         let _r = notify(c, b);
         f();
         *b = true;
     }
     let (p, c) = stream();
-    let c = Cell(c);
+    let c = Cell::new(c);
     do task::spawn_unlinked {
         let ccc = c.take();
         wrapper(ccc, f)
@@ -83,11 +85,3 @@ fn supervisor() {
 pub fn main() {
     join(joinable(supervisor));
 }
-
-// Local Variables:
-// mode: rust;
-// fill-column: 78;
-// indent-tabs-mode: nil
-// c-basic-offset: 4
-// buffer-file-coding-system: utf-8-unix
-// End:

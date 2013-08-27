@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::libc;
+
 fn main() {
-    let x : *~[int] = ptr::addr_of(&~[1,2,3]);
+    let x : *~[int] = &~[1,2,3];
     let y : *libc::c_void = x as *libc::c_void;
     unsafe {
         let _z = copy *y;

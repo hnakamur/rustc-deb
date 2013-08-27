@@ -1,10 +1,10 @@
-use core::libc::c_int;
-use core::libc;
+use std::libc::c_int;
+use std::libc;
 
 pub struct Fd(c_int);
 
 impl Drop for Fd {
-    fn finalize(&self) {
+    fn drop(&self) {
         unsafe {
             libc::close(**self);
         }
@@ -13,5 +13,3 @@ impl Drop for Fd {
 
 pub fn main() {
 }
-
-

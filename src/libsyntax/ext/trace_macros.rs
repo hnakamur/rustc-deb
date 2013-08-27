@@ -8,16 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
-
 use ast;
 use codemap::span;
-use ext::base::ext_ctxt;
+use ext::base::ExtCtxt;
 use ext::base;
 use parse::lexer::{new_tt_reader, reader};
 use parse::parser::Parser;
+use parse::token::keywords;
 
-pub fn expand_trace_macros(cx: @ext_ctxt,
+use std::vec;
+
+pub fn expand_trace_macros(cx: @ExtCtxt,
                            sp: span,
                            tt: &[ast::token_tree])
                         -> base::MacResult {
@@ -25,9 +26,8 @@ pub fn expand_trace_macros(cx: @ext_ctxt,
     let cfg = cx.cfg();
     let tt_rdr = new_tt_reader(
         copy cx.parse_sess().span_diagnostic,
-        cx.parse_sess().interner,
         None,
-        vec::from_slice(tt)
+        vec::to_owned(tt)
     );
     let rdr = tt_rdr as @reader;
     let rust_parser = Parser(
@@ -36,12 +36,12 @@ pub fn expand_trace_macros(cx: @ext_ctxt,
         rdr.dup()
     );
 
-    if rust_parser.is_keyword(&~"true") {
+    if rust_parser.is_keyword(keywords::True) {
         cx.set_trace_macros(true);
-    } else if rust_parser.is_keyword(&~"false") {
+    } else if rust_parser.is_keyword(keywords::False) {
         cx.set_trace_macros(false);
     } else {
-        cx.span_fatal(sp, ~"trace_macros! only accepts `true` or `false`")
+        cx.span_fatal(sp, "trace_macros! only accepts `true` or `false`")
     }
 
     rust_parser.bump();

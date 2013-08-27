@@ -32,7 +32,6 @@
  * a lattice.
  */
 
-use core::prelude::*;
 
 use middle::ty::{RegionVid, TyVar, Vid};
 use middle::ty;
@@ -43,12 +42,10 @@ use middle::typeck::infer::glb::Glb;
 use middle::typeck::infer::lub::Lub;
 use middle::typeck::infer::unify::*;
 use middle::typeck::infer::sub::Sub;
-use middle::typeck::infer::lub::Lub;
-use middle::typeck::infer::glb::Glb;
 use middle::typeck::infer::to_str::InferStr;
 use util::common::indenter;
 
-use std::list;
+use extra::list;
 
 pub trait LatticeValue {
     fn sub(cf: &CombineFields, a: &Self, b: &Self) -> ures;
@@ -73,13 +70,53 @@ impl LatticeValue for ty::t {
     }
 }
 
-pub impl CombineFields {
+pub trait CombineFieldsLatticeMethods {
+    fn var_sub_var<T:Copy + InferStr + LatticeValue,
+                   V:Copy + Eq + ToStr + Vid + UnifyVid<Bounds<T>>>(&self,
+                                                                    a_id: V,
+                                                                    b_id: V)
+                                                                    -> ures;
+    /// make variable a subtype of T
+    fn var_sub_t<T:Copy + InferStr + LatticeValue,
+                 V:Copy + Eq + ToStr + Vid + UnifyVid<Bounds<T>>>(
+                 &self,
+                 a_id: V,
+                 b: T)
+                 -> ures;
+    fn t_sub_var<T:Copy + InferStr + LatticeValue,
+                 V:Copy + Eq + ToStr + Vid + UnifyVid<Bounds<T>>>(
+                 &self,
+                 a: T,
+                 b_id: V)
+                 -> ures;
+    fn merge_bnd<T:Copy + InferStr + LatticeValue>(
+                 &self,
+                 a: &Bound<T>,
+                 b: &Bound<T>,
+                 lattice_op: LatticeOp<T>)
+                 -> cres<Bound<T>>;
+    fn set_var_to_merged_bounds<T:Copy + InferStr + LatticeValue,
+                                V:Copy+Eq+ToStr+Vid+UnifyVid<Bounds<T>>>(
+                                &self,
+                                v_id: V,
+                                a: &Bounds<T>,
+                                b: &Bounds<T>,
+                                rank: uint)
+                                -> ures;
+    fn bnds<T:Copy + InferStr + LatticeValue>(
+            &self,
+            a: &Bound<T>,
+            b: &Bound<T>)
+            -> ures;
+}
+
+impl CombineFieldsLatticeMethods for CombineFields {
     fn var_sub_var<T:Copy + InferStr + LatticeValue,
                    V:Copy + Eq + ToStr + Vid + UnifyVid<Bounds<T>>>(
-        &self,
-        +a_id: V,
-        +b_id: V) -> ures
-    {
+                   &self,
+                   a_id: V,
+                   b_id: V)
+                   -> ures {
         /*!
          *
          * Make one variable a subtype of another variable.  This is a
@@ -89,10 +126,10 @@ pub impl CombineFields {
         // Need to make sub_id a subtype of sup_id.
         let node_a = self.infcx.get(a_id);
         let node_b = self.infcx.get(b_id);
-        let a_id = node_a.root;
-        let b_id = node_b.root;
-        let a_bounds = node_a.possible_types;
-        let b_bounds = node_b.possible_types;
+        let a_id = copy node_a.root;
+        let b_id = copy node_b.root;
+        let a_bounds = copy node_a.possible_types;
+        let b_bounds = copy node_b.possible_types;
 
         debug!("vars(%s=%s <: %s=%s)",
                a_id.to_str(), a_bounds.inf_str(self.infcx),
@@ -102,8 +139,8 @@ pub impl CombineFields {
 
         // If both A's UB and B's LB have already been bound to types,
         // see if we can make those types subtypes.
-        match (a_bounds.ub, b_bounds.lb) {
-            (Some(ref a_ub), Some(ref b_lb)) => {
+        match (&a_bounds.ub, &b_bounds.lb) {
+            (&Some(ref a_ub), &Some(ref b_lb)) => {
                 let r = self.infcx.try(
                     || LatticeValue::sub(self, a_ub, b_lb));
                 match r {
@@ -129,18 +166,18 @@ pub impl CombineFields {
     /// make variable a subtype of T
     fn var_sub_t<T:Copy + InferStr + LatticeValue,
                  V:Copy + Eq + ToStr + Vid + UnifyVid<Bounds<T>>>(
-        &self,
-        +a_id: V,
-        +b: T) -> ures
-    {
+                 &self,
+                 a_id: V,
+                 b: T)
+                 -> ures {
         /*!
          *
          * Make a variable (`a_id`) a subtype of the concrete type `b` */
 
         let node_a = self.infcx.get(a_id);
-        let a_id = node_a.root;
+        let a_id = copy node_a.root;
         let a_bounds = &node_a.possible_types;
-        let b_bounds = &Bounds { lb: None, ub: Some(b) };
+        let b_bounds = &Bounds { lb: None, ub: Some(copy b) };
 
         debug!("var_sub_t(%s=%s <: %s)",
                a_id.to_str(),
@@ -153,17 +190,17 @@ pub impl CombineFields {
 
     fn t_sub_var<T:Copy + InferStr + LatticeValue,
                  V:Copy + Eq + ToStr + Vid + UnifyVid<Bounds<T>>>(
-        &self,
-        +a: T,
-        +b_id: V) -> ures
-    {
+                 &self,
+                 a: T,
+                 b_id: V)
+                 -> ures {
         /*!
          *
          * Make a concrete type (`a`) a subtype of the variable `b_id` */
 
-        let a_bounds = &Bounds { lb: Some(a), ub: None };
+        let a_bounds = &Bounds { lb: Some(copy a), ub: None };
         let node_b = self.infcx.get(b_id);
-        let b_id = node_b.root;
+        let b_id = copy node_b.root;
         let b_bounds = &node_b.possible_types;
 
         debug!("t_sub_var(%s <: %s=%s)",
@@ -176,12 +213,11 @@ pub impl CombineFields {
     }
 
     fn merge_bnd<T:Copy + InferStr + LatticeValue>(
-        &self,
-        a: &Bound<T>,
-        b: &Bound<T>,
-        lattice_op: LatticeOp<T>)
-        -> cres<Bound<T>>
-    {
+                 &self,
+                 a: &Bound<T>,
+                 b: &Bound<T>,
+                 lattice_op: LatticeOp<T>)
+                 -> cres<Bound<T>> {
         /*!
          *
          * Combines two bounds into a more general bound. */
@@ -191,11 +227,11 @@ pub impl CombineFields {
                b.inf_str(self.infcx));
         let _r = indenter();
 
-        match (*a, *b) {
-            (None,          None) => Ok(None),
-            (Some(_),       None) => Ok(*a),
-            (None,          Some(_)) => Ok(*b),
-            (Some(ref v_a), Some(ref v_b)) => {
+        match (a, b) {
+            (&None,          &None) => Ok(None),
+            (&Some(_),       &None) => Ok(copy *a),
+            (&None,          &Some(_)) => Ok(copy *b),
+            (&Some(ref v_a), &Some(ref v_b)) => {
                 do lattice_op(self, v_a, v_b).chain |v| {
                     Ok(Some(v))
                 }
@@ -205,12 +241,12 @@ pub impl CombineFields {
 
     fn set_var_to_merged_bounds<T:Copy + InferStr + LatticeValue,
                                 V:Copy+Eq+ToStr+Vid+UnifyVid<Bounds<T>>>(
-        &self,
-        +v_id: V,
-        a: &Bounds<T>,
-        b: &Bounds<T>,
-        rank: uint) -> ures
-    {
+                                &self,
+                                v_id: V,
+                                a: &Bounds<T>,
+                                b: &Bounds<T>,
+                                rank: uint)
+                                -> ures {
         /*!
          *
          * Updates the bounds for the variable `v_id` to be the intersection
@@ -265,22 +301,21 @@ pub impl CombineFields {
         uok()
     }
 
-    fn bnds<T:Copy + InferStr + LatticeValue>(
-        &self,
-        a: &Bound<T>,
-        b: &Bound<T>) -> ures
-    {
+    fn bnds<T:Copy + InferStr + LatticeValue>(&self,
+                                              a: &Bound<T>,
+                                              b: &Bound<T>)
+                                              -> ures {
         debug!("bnds(%s <: %s)", a.inf_str(self.infcx),
                b.inf_str(self.infcx));
         let _r = indenter();
 
-        match (*a, *b) {
-            (None, None) |
-            (Some(_), None) |
-            (None, Some(_)) => {
+        match (a, b) {
+            (&None, &None) |
+            (&Some(_), &None) |
+            (&None, &Some(_)) => {
                 uok()
             }
-            (Some(ref t_a), Some(ref t_b)) => {
+            (&Some(ref t_a), &Some(ref t_b)) => {
                 LatticeValue::sub(self, t_a, t_b)
             }
         }
@@ -296,7 +331,7 @@ pub impl CombineFields {
 pub trait LatticeDir {
     fn combine_fields(&self) -> CombineFields;
     fn bnd<T:Copy>(&self, b: &Bounds<T>) -> Option<T>;
-    fn with_bnd<T:Copy>(&self, b: &Bounds<T>, +t: T) -> Bounds<T>;
+    fn with_bnd<T:Copy>(&self, b: &Bounds<T>, t: T) -> Bounds<T>;
 }
 
 pub trait TyLatticeDir {
@@ -305,9 +340,9 @@ pub trait TyLatticeDir {
 
 impl LatticeDir for Lub {
     fn combine_fields(&self) -> CombineFields { **self }
-    fn bnd<T:Copy>(&self, b: &Bounds<T>) -> Option<T> { b.ub }
-    fn with_bnd<T:Copy>(&self, b: &Bounds<T>, +t: T) -> Bounds<T> {
-        Bounds { ub: Some(t), ..*b }
+    fn bnd<T:Copy>(&self, b: &Bounds<T>) -> Option<T> { copy b.ub }
+    fn with_bnd<T:Copy>(&self, b: &Bounds<T>, t: T) -> Bounds<T> {
+        Bounds { ub: Some(t), ..copy *b }
     }
 }
 
@@ -319,40 +354,40 @@ impl TyLatticeDir for Lub {
 
 impl LatticeDir for Glb {
     fn combine_fields(&self) -> CombineFields { **self }
-    fn bnd<T:Copy>(&self, b: &Bounds<T>) -> Option<T> { b.lb }
-    fn with_bnd<T:Copy>(&self, b: &Bounds<T>, +t: T) -> Bounds<T> {
-        Bounds { lb: Some(t), ..*b }
+    fn bnd<T:Copy>(&self, b: &Bounds<T>) -> Option<T> { copy b.lb }
+    fn with_bnd<T:Copy>(&self, b: &Bounds<T>, t: T) -> Bounds<T> {
+        Bounds { lb: Some(t), ..copy *b }
     }
 }
 
 impl TyLatticeDir for Glb {
     fn ty_bot(&self, _t: ty::t) -> cres<ty::t> {
-        Ok(ty::mk_bot(self.infcx.tcx))
+        Ok(ty::mk_bot())
     }
 }
 
 pub fn super_lattice_tys<L:LatticeDir + TyLatticeDir + Combine>(
-    self: &L,
+    this: &L,
     a: ty::t,
     b: ty::t) -> cres<ty::t> {
-    debug!("%s.lattice_tys(%s, %s)", self.tag(),
-           a.inf_str(self.infcx()),
-           b.inf_str(self.infcx()));
+    debug!("%s.lattice_tys(%s, %s)", this.tag(),
+           a.inf_str(this.infcx()),
+           b.inf_str(this.infcx()));
     let _r = indenter();
 
     if a == b {
         return Ok(a);
     }
 
-    let tcx = self.infcx().tcx;
+    let tcx = this.infcx().tcx;
 
     match (&ty::get(a).sty, &ty::get(b).sty) {
-        (&ty::ty_bot, _) => { return self.ty_bot(b); }
-        (_, &ty::ty_bot) => { return self.ty_bot(a); }
+        (&ty::ty_bot, _) => { return this.ty_bot(b); }
+        (_, &ty::ty_bot) => { return this.ty_bot(a); }
 
         (&ty::ty_infer(TyVar(a_id)), &ty::ty_infer(TyVar(b_id))) => {
-            let r = if_ok!(lattice_vars(self, a_id, b_id,
-                                        |x, y| self.tys(*x, *y)));
+            let r = if_ok!(lattice_vars(this, a_id, b_id,
+                                        |x, y| this.tys(*x, *y)));
             return match r {
                 VarResult(v) => Ok(ty::mk_var(tcx, v)),
                 ValueResult(t) => Ok(t)
@@ -360,17 +395,17 @@ pub fn super_lattice_tys<L:LatticeDir + TyLatticeDir + Combine>(
         }
 
         (&ty::ty_infer(TyVar(a_id)), _) => {
-            return lattice_var_and_t(self, a_id, &b,
-                                     |x, y| self.tys(*x, *y));
+            return lattice_var_and_t(this, a_id, &b,
+                                     |x, y| this.tys(*x, *y));
         }
 
         (_, &ty::ty_infer(TyVar(b_id))) => {
-            return lattice_var_and_t(self, b_id, &a,
-                                     |x, y| self.tys(*x, *y));
+            return lattice_var_and_t(this, b_id, &a,
+                                     |x, y| this.tys(*x, *y));
         }
 
         _ => {
-            return super_tys(self, a, b);
+            return super_tys(this, a, b);
         }
     }
 }
@@ -400,22 +435,22 @@ pub enum LatticeVarResult<V,T> {
 pub fn lattice_vars<L:LatticeDir + Combine,
                     T:Copy + InferStr + LatticeValue,
                     V:Copy + Eq + ToStr + Vid + UnifyVid<Bounds<T>>>(
-    self: &L,                           // defines whether we want LUB or GLB
-    +a_vid: V,                          // first variable
-    +b_vid: V,                          // second variable
+    this: &L,                           // defines whether we want LUB or GLB
+    a_vid: V,                          // first variable
+    b_vid: V,                          // second variable
     lattice_dir_op: LatticeDirOp<T>)    // LUB or GLB operation on types
     -> cres<LatticeVarResult<V,T>> {
-    let nde_a = self.infcx().get(a_vid);
-    let nde_b = self.infcx().get(b_vid);
-    let a_vid = nde_a.root;
-    let b_vid = nde_b.root;
+    let nde_a = this.infcx().get(a_vid);
+    let nde_b = this.infcx().get(b_vid);
+    let a_vid = copy nde_a.root;
+    let b_vid = copy nde_b.root;
     let a_bounds = &nde_a.possible_types;
     let b_bounds = &nde_b.possible_types;
 
     debug!("%s.lattice_vars(%s=%s <: %s=%s)",
-           self.tag(),
-           a_vid.to_str(), a_bounds.inf_str(self.infcx()),
-           b_vid.to_str(), b_bounds.inf_str(self.infcx()));
+           this.tag(),
+           a_vid.to_str(), a_bounds.inf_str(this.infcx()),
+           b_vid.to_str(), b_bounds.inf_str(this.infcx()));
 
     // Same variable: the easy case.
     if a_vid == b_vid {
@@ -424,10 +459,10 @@ pub fn lattice_vars<L:LatticeDir + Combine,
 
     // If both A and B have an UB type, then we can just compute the
     // LUB of those types:
-    let a_bnd = self.bnd(a_bounds), b_bnd = self.bnd(b_bounds);
+    let (a_bnd, b_bnd) = (this.bnd(a_bounds), this.bnd(b_bounds));
     match (a_bnd, b_bnd) {
         (Some(ref a_ty), Some(ref b_ty)) => {
-            match self.infcx().try(|| lattice_dir_op(a_ty, b_ty) ) {
+            match this.infcx().try(|| lattice_dir_op(a_ty, b_ty) ) {
                 Ok(t) => return Ok(ValueResult(t)),
                 Err(_) => { /*fallthrough */ }
             }
@@ -437,47 +472,48 @@ pub fn lattice_vars<L:LatticeDir + Combine,
 
     // Otherwise, we need to merge A and B into one variable.  We can
     // then use either variable as an upper bound:
-    let cf = self.combine_fields();
-    do cf.var_sub_var(a_vid, b_vid).then {
-        Ok(VarResult(a_vid))
+    let cf = this.combine_fields();
+    do cf.var_sub_var(copy a_vid, copy b_vid).then {
+        Ok(VarResult(copy a_vid))
     }
 }
 
 pub fn lattice_var_and_t<L:LatticeDir + Combine,
                          T:Copy + InferStr + LatticeValue,
                          V:Copy + Eq + ToStr + Vid + UnifyVid<Bounds<T>>>(
-    self: &L,
-    +a_id: V,
+    this: &L,
+    a_id: V,
     b: &T,
     lattice_dir_op: LatticeDirOp<T>)
     -> cres<T> {
-    let nde_a = self.infcx().get(a_id);
-    let a_id = nde_a.root;
+    let nde_a = this.infcx().get(a_id);
+    let a_id = copy nde_a.root;
     let a_bounds = &nde_a.possible_types;
 
     // The comments in this function are written for LUB, but they
     // apply equally well to GLB if you inverse upper/lower/sub/super/etc.
 
     debug!("%s.lattice_var_and_t(%s=%s <: %s)",
-           self.tag(),
+           this.tag(),
            a_id.to_str(),
-           a_bounds.inf_str(self.infcx()),
-           b.inf_str(self.infcx()));
+           a_bounds.inf_str(this.infcx()),
+           b.inf_str(this.infcx()));
 
-    match self.bnd(a_bounds) {
+    match this.bnd(a_bounds) {
         Some(ref a_bnd) => {
             // If a has an upper bound, return the LUB(a.ub, b)
-            debug!("bnd=Some(%s)", a_bnd.inf_str(self.infcx()));
+            debug!("bnd=Some(%s)", a_bnd.inf_str(this.infcx()));
             lattice_dir_op(a_bnd, b)
         }
         None => {
             // If a does not have an upper bound, make b the upper bound of a
             // and then return b.
             debug!("bnd=None");
-            let a_bounds = self.with_bnd(a_bounds, *b);
-            do self.combine_fields().bnds(&a_bounds.lb, &a_bounds.ub).then {
-                self.infcx().set(a_id, Root(a_bounds, nde_a.rank));
-                Ok(*b)
+            let a_bounds = this.with_bnd(a_bounds, copy *b);
+            do this.combine_fields().bnds(&a_bounds.lb, &a_bounds.ub).then {
+                this.infcx().set(copy a_id,
+                                 Root(copy a_bounds, copy nde_a.rank));
+                Ok(copy *b)
             }
         }
     }
@@ -487,14 +523,14 @@ pub fn lattice_var_and_t<L:LatticeDir + Combine,
 // Random utility functions used by LUB/GLB when computing LUB/GLB of
 // fn types
 
-pub fn var_ids<T:Combine>(self: &T, isr: isr_alist) -> ~[RegionVid] {
+pub fn var_ids<T:Combine>(this: &T, isr: isr_alist) -> ~[RegionVid] {
     let mut result = ~[];
     for list::each(isr) |pair| {
         match pair.second() {
             ty::re_infer(ty::ReVar(r)) => { result.push(r); }
             r => {
-                self.infcx().tcx.sess.span_bug(
-                    self.span(),
+                this.infcx().tcx.sess.span_bug(
+                    this.span(),
                     fmt!("Found non-region-vid: %?", r));
             }
         }
@@ -504,7 +540,7 @@ pub fn var_ids<T:Combine>(self: &T, isr: isr_alist) -> ~[RegionVid] {
 
 pub fn is_var_in_set(new_vars: &[RegionVid], r: ty::Region) -> bool {
     match r {
-        ty::re_infer(ty::ReVar(ref v)) => new_vars.contains(v),
+        ty::re_infer(ty::ReVar(ref v)) => new_vars.iter().any_(|x| x == v),
         _ => false
     }
 }

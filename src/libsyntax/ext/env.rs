@@ -8,22 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
 /*
  * The compiler code necessary to support the env! extension.  Eventually this
  * should all get sucked into either the compiler syntax extension plugin
  * interface.
  */
 
-use core::prelude::*;
-
 use ast;
 use codemap::span;
 use ext::base::*;
 use ext::base;
-use ext::build::mk_uniq_str;
+use ext::build::AstBuilder;
 
-pub fn expand_syntax_ext(cx: @ext_ctxt, sp: span, tts: &[ast::token_tree])
+use std::os;
+
+pub fn expand_syntax_ext(cx: @ExtCtxt, sp: span, tts: &[ast::token_tree])
     -> base::MacResult {
 
     let var = get_single_str_from_tts(cx, sp, tts, "env!");
@@ -32,18 +31,8 @@ pub fn expand_syntax_ext(cx: @ext_ctxt, sp: span, tts: &[ast::token_tree])
     // Option<str> rather than just an maybe-empty string.
 
     let e = match os::getenv(var) {
-      None => mk_uniq_str(cx, sp, ~""),
-      Some(ref s) => mk_uniq_str(cx, sp, copy *s)
+      None => cx.expr_str(sp, @""),
+      Some(s) => cx.expr_str(sp, s.to_managed())
     };
     MRExpr(e)
 }
-
-//
-// Local Variables:
-// mode: rust
-// fill-column: 78;
-// indent-tabs-mode: nil
-// c-basic-offset: 4
-// buffer-file-coding-system: utf-8-unix
-// End:
-//

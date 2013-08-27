@@ -7,16 +7,16 @@ $(HBIN0_H_$(CFG_BUILD_TRIPLE))/rustc$(X_$(CFG_BUILD_TRIPLE)):		\
 		$(S)src/etc/get-snapshot.py $(MKFILE_DEPS)
 	@$(call E, fetch: $@)
 #   Note: the variable "SNAPSHOT_FILE" is generally not set, and so
-#   we generally only pass one argument to this script.  
+#   we generally only pass one argument to this script.
 ifdef CFG_ENABLE_LOCAL_RUST
 	$(Q)$(S)src/etc/local_stage0.sh $(CFG_BUILD_TRIPLE) $(CFG_LOCAL_RUST_ROOT)
-else 
+else
 	$(Q)$(CFG_PYTHON) $(S)src/etc/get-snapshot.py $(CFG_BUILD_TRIPLE) $(SNAPSHOT_FILE)
 ifdef CFG_ENABLE_PAX_FLAGS
 	@$(call E, apply PaX flags: $@)
 	@"$(CFG_PAXCTL)" -cm "$@"
 endif
-endif 
+endif
 	$(Q)touch $@
 
 # Host libs will be extracted by the above rule
@@ -25,11 +25,11 @@ $(HLIB0_H_$(CFG_BUILD_TRIPLE))/$(CFG_RUNTIME_$(CFG_BUILD_TRIPLE)): \
 		$(HBIN0_H_$(CFG_BUILD_TRIPLE))/rustc$(X_$(CFG_BUILD_TRIPLE))
 	$(Q)touch $@
 
-$(HLIB0_H_$(CFG_BUILD_TRIPLE))/$(CFG_CORELIB_$(CFG_BUILD_TRIPLE)): \
+$(HLIB0_H_$(CFG_BUILD_TRIPLE))/$(CFG_STDLIB_$(CFG_BUILD_TRIPLE)): \
 		$(HBIN0_H_$(CFG_BUILD_TRIPLE))/rustc$(X_$(CFG_BUILD_TRIPLE))
 	$(Q)touch $@
 
-$(HLIB0_H_$(CFG_BUILD_TRIPLE))/$(CFG_STDLIB_$(CFG_BUILD_TRIPLE)): \
+$(HLIB0_H_$(CFG_BUILD_TRIPLE))/$(CFG_EXTRALIB_$(CFG_BUILD_TRIPLE)): \
 		$(HBIN0_H_$(CFG_BUILD_TRIPLE))/rustc$(X_$(CFG_BUILD_TRIPLE))
 	$(Q)touch $@
 
@@ -58,15 +58,15 @@ $$(HLIB0_H_$(1))/$(CFG_RUNTIME_$(1)): \
 	@$$(call E, cp: $$@)
 	$$(Q)cp $$< $$@
 
-$$(HLIB0_H_$(1))/$(CFG_CORELIB_$(1)): \
-		$$(TLIB$(2)_T_$(1)_H_$(3))/$(CFG_CORELIB_$(1))
-	@$$(call E, cp: $$@)
-	$$(Q)cp $$(TLIB$(2)_T_$(1)_H_$(3))/$(CORELIB_GLOB_$(1)) $$@
-
 $$(HLIB0_H_$(1))/$(CFG_STDLIB_$(1)): \
 		$$(TLIB$(2)_T_$(1)_H_$(3))/$(CFG_STDLIB_$(1))
 	@$$(call E, cp: $$@)
 	$$(Q)cp $$(TLIB$(2)_T_$(1)_H_$(3))/$(STDLIB_GLOB_$(1)) $$@
+
+$$(HLIB0_H_$(1))/$(CFG_EXTRALIB_$(1)): \
+		$$(TLIB$(2)_T_$(1)_H_$(3))/$(CFG_EXTRALIB_$(1))
+	@$$(call E, cp: $$@)
+	$$(Q)cp $$(TLIB$(2)_T_$(1)_H_$(3))/$(EXTRALIB_GLOB_$(1)) $$@
 
 $$(HLIB0_H_$(1))/$(CFG_LIBRUSTC_$(1)): \
 		$$(TLIB$(2)_T_$(1)_H_$(3))/$(CFG_LIBRUSTC_$(1))

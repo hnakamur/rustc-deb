@@ -9,7 +9,7 @@
 // except according to those terms.
 
 fn main() {
-    for vec::each(~[0]) |_i| {  //~ ERROR A for-loop body must return (), but
+    for 2.times {  //~ ERROR A for-loop body must return (), but
         true
     }
 }

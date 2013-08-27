@@ -53,7 +53,7 @@ fn is_hidden(srv: astsrv::Srv, doc: doc::ItemDoc) -> bool {
 
     let id = doc.id;
     do astsrv::exec(srv) |ctxt| {
-        let attrs = match *ctxt.ast_map.get(&id) {
+        let attrs = match ctxt.ast_map.get_copy(&id) {
           ast_map::node_item(item, _) => copy item.attrs,
           _ => ~[]
         };
@@ -61,25 +61,23 @@ fn is_hidden(srv: astsrv::Srv, doc: doc::ItemDoc) -> bool {
     }
 }
 
-#[test]
-fn should_prune_hidden_items() {
-    use core::vec;
-
-    let doc = test::mk_doc(~"#[doc(hidden)] mod a { }");
-    assert!(vec::is_empty(doc.cratemod().mods()))
-}
-
 #[cfg(test)]
-pub mod test {
+mod test {
     use astsrv;
     use doc;
     use extract;
     use prune_hidden_pass::run;
 
-    pub fn mk_doc(source: ~str) -> doc::Doc {
+    fn mk_doc(source: ~str) -> doc::Doc {
         do astsrv::from_str(copy source) |srv| {
             let doc = extract::from_srv(srv.clone(), ~"");
             run(srv.clone(), doc)
         }
+    }
+
+    #[test]
+    fn should_prune_hidden_items() {
+        let doc = mk_doc(~"#[doc(hidden)] mod a { }");
+        assert!(doc.cratemod().mods().is_empty())
     }
 }

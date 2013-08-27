@@ -16,12 +16,17 @@
 
 // This version uses automatically compiled channel contracts.
 
-extern mod std;
+extern mod extra;
 
-use core::cell::Cell;
-use core::pipes::recv;
-use std::time;
-use std::future;
+use extra::future;
+use extra::time;
+use std::cell::Cell;
+use std::io;
+use std::os;
+use std::pipes::recv;
+use std::ptr;
+use std::uint;
+use std::util;
 
 proto! ring (
     num:send {
@@ -29,29 +34,23 @@ proto! ring (
     }
 )
 
-macro_rules! move_out (
-    ($x:expr) => { unsafe { let y = *ptr::addr_of(&$x); y } }
-)
-
 fn thread_ring(i: uint,
                count: uint,
-               +num_chan: ring::client::num,
-               +num_port: ring::server::num) {
+               num_chan: ring::client::num,
+               num_port: ring::server::num) {
     let mut num_chan = Some(num_chan);
     let mut num_port = Some(num_port);
     // Send/Receive lots of messages.
     for uint::range(0, count) |j| {
         //error!("task %?, iter %?", i, j);
-        let mut num_chan2 = None;
-        let mut num_port2 = None;
-        num_chan2 <-> num_chan;
-        num_port2 <-> num_port;
+        let num_chan2 = util::replace(&mut num_chan, None);
+        let num_port2 = util::replace(&mut num_port, None);
         num_chan = Some(ring::client::num(num_chan2.unwrap(), i * j));
         let port = num_port2.unwrap();
         match recv(port) {
           ring::num(_n, p) => {
             //log(error, _n);
-            num_port = Some(move_out!(p));
+            num_port = Some(p);
           }
         }
     };
@@ -65,13 +64,13 @@ fn main() {
         ~[~"", ~"100", ~"1000"]
     } else {
         copy args
-    }; 
+    };
 
     let num_tasks = uint::from_str(args[1]).get();
     let msg_per_task = uint::from_str(args[2]).get();
 
-    let (num_chan, num_port) = ring::init();
-    let mut num_chan = Cell(num_chan);
+    let (num_port, num_chan) = ring::init();
+    let mut num_chan = Cell::new(num_chan);
 
     let start = time::precise_time_s();
 
@@ -80,9 +79,9 @@ fn main() {
 
     for uint::range(1u, num_tasks) |i| {
         //error!("spawning %?", i);
-        let (new_chan, num_port) = ring::init();
-        let num_chan2 = Cell(num_chan.take());
-        let num_port = Cell(num_port);
+        let (num_port, new_chan) = ring::init();
+        let num_chan2 = Cell::new(num_chan.take());
+        let num_port = Cell::new(num_port);
         let new_future = do future::spawn || {
             let num_chan = num_chan2.take();
             let num_port1 = num_port.take();
@@ -96,7 +95,9 @@ fn main() {
     thread_ring(0, msg_per_task, num_chan.take(), num_port);
 
     // synchronize
-    for futures.each |f| { f.get() };
+    for futures.mut_iter().advance |f| {
+        let _ = f.get();
+    }
 
     let stop = time::precise_time_s();
 

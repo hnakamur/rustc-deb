@@ -21,11 +21,15 @@ struct rust_opaque_box;
 // - the main function: has a NULL environment, but uses the void* arg
 // - unique closures of type fn~(): have a non-NULL environment, but
 //   no arguments (and hence the final void*) is harmless
-typedef void (*CDECL spawn_fn)(void*, rust_opaque_box*, void *);
+typedef void (*CDECL spawn_fn)(rust_opaque_box*, void *);
 
 struct type_desc;
 
-typedef void CDECL (glue_fn)(void *, void *, const type_desc **, void *);
+typedef void CDECL (glue_fn)(void *,
+#ifdef _RUST_STAGE0
+                             const type_desc **,
+#endif
+                             void *);
 
 // Corresponds to the boxed data in the @ region.  The body follows the
 // header; you can obtain a ptr via box_body() below.
@@ -57,8 +61,6 @@ struct type_desc {
     glue_fn *drop_glue;
     glue_fn *free_glue;
     glue_fn *visit_glue;
-    const uint8_t *unused;
-    const uint8_t *unused2;
 };
 
 extern "C" type_desc *rust_clone_type_desc(type_desc*);

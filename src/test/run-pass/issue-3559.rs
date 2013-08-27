@@ -1,4 +1,4 @@
-// xfail-fast
+// xfail-test #4276
 
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
@@ -11,11 +11,10 @@
 // except according to those terms.
 
 // rustc --test map_to_str.rs && ./map_to_str
-extern mod std;
+extern mod extra;
 
-use core::io::{WriterUtil};
+use std::io::{WriterUtil};
 
-#[cfg(test)]
 fn check_strs(actual: &str, expected: &str) -> bool
 {
     if actual != expected
@@ -26,10 +25,9 @@ fn check_strs(actual: &str, expected: &str) -> bool
     return true;
 }
 
-#[test]
 fn tester()
 {
-    let mut table = core::hashmap::linear::LinearMap();
+    let mut table = std::hashmap::HashMap::new();
     table.insert(@~"one", 1);
     table.insert(@~"two", 2);
     assert!(check_strs(table.to_str(), ~"xxx"));   // not sure what expected should be

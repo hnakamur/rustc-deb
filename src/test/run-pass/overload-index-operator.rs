@@ -11,7 +11,7 @@
 // Test overloading of the `[]` operator.  In particular test that it
 // takes its argument *by reference*.
 
-use core::ops::Index;
+use std::ops::Index;
 
 struct AssociationList<K,V> {
     pairs: ~[AssociationPair<K,V>]
@@ -30,12 +30,12 @@ impl<K,V> AssociationList<K,V> {
 
 impl<K:Eq,V:Copy> Index<K,V> for AssociationList<K,V> {
     fn index(&self, index: &K) -> V {
-        for self.pairs.each |pair| {
+        for self.pairs.iter().advance |pair| {
             if pair.key == *index {
                 return copy pair.value;
             }
         }
-        fail!(fmt!("No value found for key: %?", index));
+        fail!("No value found for key: %?", index);
     }
 }
 

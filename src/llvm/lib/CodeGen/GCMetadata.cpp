@@ -14,20 +14,13 @@
 #include "llvm/CodeGen/GCMetadata.h"
 #include "llvm/CodeGen/GCStrategy.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
-#include "llvm/Pass.h"
 #include "llvm/CodeGen/Passes.h"
-#include "llvm/Constant.h"
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/Instructions.h"
-#include "llvm/Type.h"
-#include "llvm/Value.h"
+#include "llvm/IR/Function.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetData.h"
-#include <utility>
 using namespace llvm;
 
 namespace {
@@ -44,21 +37,9 @@ namespace {
     void getAnalysisUsage(AnalysisUsage &AU) const;
     
     bool runOnFunction(Function &F);
-  };
-  
-  class Deleter : public FunctionPass {
-    static char ID;
-    
-  public:
-    Deleter();
-    
-    const char *getPassName() const;
-    void getAnalysisUsage(AnalysisUsage &AU) const;
-    
-    bool runOnFunction(Function &F);
     bool doFinalization(Module &M);
   };
-  
+
 }
 
 INITIALIZE_PASS(GCModuleInfo, "collector-metadata",
@@ -70,38 +51,6 @@ GCFunctionInfo::GCFunctionInfo(const Function &F, GCStrategy &S)
   : F(F), S(S), FrameSize(~0LL) {}
 
 GCFunctionInfo::~GCFunctionInfo() {}
-
-std::pair<const AllocaInst *, unsigned>
-GCFunctionInfo::findGCRootOrigin(const TargetData *TD, const Value *V) {
-  const Instruction *I = cast<Instruction>(V->stripPointerCasts());
-
-  unsigned Offset = 0;
-  while (const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(I)) {
-    Type *Ty = GEP->getPointerOperand()->getType();
-    for (GetElementPtrInst::const_op_iterator OI = GEP->op_begin() + 1,
-                                              OE = GEP->op_end();
-                                              OI != OE; ++OI) {
-      if (StructType *StructTy = dyn_cast<StructType>(Ty)) {
-        unsigned Field = cast<ConstantInt>(*OI)->getZExtValue();
-        if (TD)
-          Offset += TD->getStructLayout(StructTy)->getElementOffset(Field);
-        Ty = StructTy->getElementType(Field);
-        continue;
-      }
-
-      Ty = cast<SequentialType>(Ty)->getElementType();
-      assert(isa<ConstantInt>(*OI) &&
-             "GEP arguments to llvm.gcroot must have constant indices!");
-      unsigned Index = cast<ConstantInt>(*OI)->getSExtValue();
-      if (TD)
-        Offset += TD->getTypeAllocSize(Ty) * Index;
-    }
-
-    I = cast<Instruction>(GEP->getPointerOperand());
-  }
-
-  return std::make_pair(cast<AllocaInst>(I), Offset);
-}
 
 // -----------------------------------------------------------------------------
 
@@ -197,21 +146,15 @@ bool Printer::runOnFunction(Function &F) {
   
   OS << "GC roots for " << FD->getFunction().getName() << ":\n";
   for (GCFunctionInfo::roots_iterator RI = FD->roots_begin(),
-                                      RE = FD->roots_end(); RI != RE; ++RI) {
-    OS << "\t";
-    if (RI->Num >= 0) {
-      OS << "fi#" << RI->Num << "\t" << RI->Loc.StackOffset << "[sp]\n";
-    } else {
-      // TODO: Use TargetRegisterInfo to get an actual name for the register.
-      OS << "reg" << "\t" << RI->Loc.PhysReg << "\n";
-    }
-  }
+                                      RE = FD->roots_end(); RI != RE; ++RI)
+    OS << "\t" << RI->Num << "\t" << RI->StackOffset << "[sp]\n";
   
   OS << "GC safe points for " << FD->getFunction().getName() << ":\n";
-  for (unsigned PI = 0, PE = FD->size(); PI != PE; ++PI) {
-    GCPoint &Point = FD->getPoint(PI);
-    OS << "\t" << Point.Label->getName() << ": "
-       << DescKind(Point.Kind) << ", live = {";
+  for (GCFunctionInfo::iterator PI = FD->begin(),
+                                PE = FD->end(); PI != PE; ++PI) {
+    
+    OS << "\t" << PI->Label->getName() << ": "
+       << DescKind(PI->Kind) << ", live = {";
     
     for (GCFunctionInfo::live_iterator RI = FD->live_begin(PI),
                                        RE = FD->live_end(PI);;) {
@@ -227,32 +170,9 @@ bool Printer::runOnFunction(Function &F) {
   return false;
 }
 
-// -----------------------------------------------------------------------------
-
-char Deleter::ID = 0;
-
-FunctionPass *llvm::createGCInfoDeleter() {
-  return new Deleter();
-}
-
-Deleter::Deleter() : FunctionPass(ID) {}
-
-const char *Deleter::getPassName() const {
-  return "Delete Garbage Collector Information";
-}
-
-void Deleter::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.setPreservesAll();
-  AU.addRequired<GCModuleInfo>();
-}
-
-bool Deleter::runOnFunction(Function &MF) {
-  return false;
-}
-
-bool Deleter::doFinalization(Module &M) {
+bool Printer::doFinalization(Module &M) {
   GCModuleInfo *GMI = getAnalysisIfAvailable<GCModuleInfo>();
-  assert(GMI && "Deleter didn't require GCModuleInfo?!");
+  assert(GMI && "Printer didn't require GCModuleInfo?!");
   GMI->clear();
   return false;
 }

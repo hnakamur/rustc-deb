@@ -8,16 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
 fn compute1() -> float {
     let v = ~[0f, 1f, 2f, 3f];
 
-    do vec::foldl(0f, v) |x, y| { x + *y } - 10f
+    do v.iter().fold(0f) |x, y| { x + *y } - 10f
     //~^ ERROR mismatched types: expected `()`
 }
 
 fn main() {
     let x = compute1();
     debug!(x);
-    assert!((x == -4f));
+    assert_eq!(x, -4f);
 }

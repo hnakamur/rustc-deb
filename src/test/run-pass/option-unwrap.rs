@@ -15,7 +15,7 @@ struct dtor {
 
 #[unsafe_destructor]
 impl Drop for dtor {
-    fn finalize(&self) {
+    fn drop(&self) {
         // abuse access to shared mutable state to write this code
         unsafe {
             *self.x -= 1;
@@ -23,7 +23,7 @@ impl Drop for dtor {
     }
 }
 
-fn unwrap<T>(+o: Option<T>) -> T {
+fn unwrap<T>(o: Option<T>) -> T {
     match o {
       Some(v) => v,
       None => fail!()
@@ -38,5 +38,5 @@ pub fn main() {
         let c = unwrap(b);
     }
 
-    assert!(*x == 0);
+    assert_eq!(*x, 0);
 }

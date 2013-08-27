@@ -11,8 +11,9 @@
 #[link(name="foreign_lib", vers="0.0")];
 
 pub mod rustrt {
+    use std::libc;
+
     pub extern {
         pub fn rust_get_argc() -> libc::c_int;
     }
 }
-

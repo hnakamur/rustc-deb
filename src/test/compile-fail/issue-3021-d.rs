@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
+extern mod extra;
 
 trait siphash {
     fn result(&self) -> u64;
@@ -23,17 +23,17 @@ fn siphash(k0 : u64, k1 : u64) -> siphash {
 
     fn mk_result(st : SipState) -> u64 {
 
-        let v0 = st.v0,
-            v1 = st.v1;
+        let v0 = st.v0;
+        let v1 = st.v1;
         return v0 ^ v1;
     }
 
    impl siphash for SipState {
         fn reset(&self) {
             self.v0 = k0 ^ 0x736f6d6570736575;  //~ ERROR attempted dynamic environment-capture
-            //~^ ERROR unresolved name: `k0`.
+            //~^ ERROR unresolved name `k0`.
             self.v1 = k1 ^ 0x646f72616e646f6d;   //~ ERROR attempted dynamic environment-capture
-            //~^ ERROR unresolved name: `k1`.
+            //~^ ERROR unresolved name `k1`.
         }
         fn result(&self) -> u64 { return mk_result(self); }
     }

@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -17,12 +17,12 @@ query AST-related information, shielding the rest of Rustdoc from its
 non-sendableness.
 */
 
-use core::prelude::*;
 
 use parse;
 
-use core::cell::Cell;
-use core::comm::{stream, SharedChan, Port};
+use std::cell::Cell;
+use std::comm::{stream, SharedChan, Port};
+use std::task;
 use rustc::driver::driver;
 use rustc::driver::session::Session;
 use rustc::driver::session::{basic_options, options};
@@ -38,7 +38,7 @@ pub struct Ctxt {
 
 type SrvOwner<'self,T> = &'self fn(srv: Srv) -> T;
 pub type CtxtHandler<T> = ~fn(ctxt: Ctxt) -> T;
-type Parser = ~fn(Session, s: ~str) -> @ast::crate;
+type Parser = ~fn(Session, s: @str) -> @ast::crate;
 
 enum Msg {
     HandleRequest(~fn(Ctxt)),
@@ -62,14 +62,14 @@ fn run<T>(owner: SrvOwner<T>, source: ~str, parse: Parser) -> T {
 
     let (po, ch) = stream();
 
-    let source = Cell(source);
-    let parse = Cell(parse);
+    let source = Cell::new(source);
+    let parse = Cell::new(parse);
     do task::spawn {
-        act(&po, source.take(), parse.take());
+        act(&po, source.take().to_managed(), parse.take());
     }
 
     let srv_ = Srv {
-        ch: SharedChan(ch)
+        ch: SharedChan::new(ch)
     };
 
     let res = owner(srv_.clone());
@@ -77,12 +77,12 @@ fn run<T>(owner: SrvOwner<T>, source: ~str, parse: Parser) -> T {
     res
 }
 
-fn act(po: &Port<Msg>, source: ~str, parse: Parser) {
+fn act(po: &Port<Msg>, source: @str, parse: Parser) {
     let sess = build_session();
 
     let ctxt = build_ctxt(
         sess,
-        parse(sess, copy source)
+        parse(sess, source)
     );
 
     let mut keep_going = true;
@@ -98,7 +98,7 @@ fn act(po: &Port<Msg>, source: ~str, parse: Parser) {
     }
 }
 
-pub fn exec<T:Owned>(
+pub fn exec<T:Send>(
     srv: Srv,
     f: ~fn(ctxt: Ctxt) -> T
 ) -> T {
@@ -117,7 +117,7 @@ fn build_ctxt(sess: Session,
     let ast = syntax::ext::expand::expand_crate(sess.parse_sess,
                                                 copy sess.opts.cfg, ast);
     let ast = front::test::modify_for_testing(sess, ast);
-    let ast_map = ast_map::map_crate(sess.diagnostic(), *ast);
+    let ast_map = ast_map::map_crate(sess.diagnostic(), ast);
 
     Ctxt {
         ast: ast,
@@ -138,7 +138,7 @@ fn should_prune_unconfigured_items() {
     let source = ~"#[cfg(shut_up_and_leave_me_alone)]fn a() { }";
     do from_str(source) |srv| {
         do exec(srv) |ctxt| {
-            assert!(vec::is_empty(ctxt.ast.node.module.items));
+            assert!(ctxt.ast.node.module.items.is_empty());
         }
     }
 }
@@ -164,6 +164,6 @@ fn srv_should_return_request_result() {
     let source = ~"fn a() { }";
     do from_str(source) |srv| {
         let result = exec(srv, |_ctxt| 1000 );
-        assert!(result == 1000);
+        assert_eq!(result, 1000);
     }
 }

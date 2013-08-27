@@ -22,30 +22,45 @@ mod rusti {
 #[cfg(target_os = "macos")]
 #[cfg(target_os = "freebsd")]
 mod m {
+    #[main]
     #[cfg(target_arch = "x86")]
     pub fn main() {
         unsafe {
-            assert!(::rusti::pref_align_of::<u64>() == 8u);
-            assert!(::rusti::min_align_of::<u64>() == 4u);
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8u);
+            assert_eq!(::rusti::min_align_of::<u64>(), 4u);
         }
     }
 
+    #[main]
     #[cfg(target_arch = "x86_64")]
     pub fn main() {
         unsafe {
-            assert!(::rusti::pref_align_of::<u64>() == 8u);
-            assert!(::rusti::min_align_of::<u64>() == 8u);
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8u);
+            assert_eq!(::rusti::min_align_of::<u64>(), 8u);
         }
     }
 }
 
 #[cfg(target_os = "win32")]
 mod m {
+    #[main]
     #[cfg(target_arch = "x86")]
     pub fn main() {
         unsafe {
-            assert!(::rusti::pref_align_of::<u64>() == 8u);
-            assert!(::rusti::min_align_of::<u64>() == 8u);
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8u);
+            assert_eq!(::rusti::min_align_of::<u64>(), 8u);
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+mod m {
+    #[main]
+    #[cfg(target_arch = "arm")]
+    pub fn main() {
+        unsafe {
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8u);
+            assert_eq!(::rusti::min_align_of::<u64>(), 8u);
         }
     }
 }

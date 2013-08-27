@@ -18,9 +18,9 @@ struct finish<T> {
 
 #[unsafe_destructor]
 impl<T:Copy> Drop for finish<T> {
-    fn finalize(&self) {
+    fn drop(&self) {
         unsafe {
-            (self.arg.fin)(self.arg.val);
+            (self.arg.fin)(copy self.arg.val);
         }
     }
 }
@@ -36,5 +36,5 @@ pub fn main() {
     fn dec_box(i: @mut int) { *i -= 1; }
 
     { let _i = finish(Arg{val: box, fin: dec_box}); }
-    assert!((*box == 9));
+    assert_eq!(*box, 9);
 }

@@ -9,14 +9,15 @@
 // except according to those terms.
 
 // error-pattern: reference is not valid outside of its lifetime
-extern mod std;
-use std::arc;
+extern mod extra;
+use extra::arc;
 fn main() {
     let x = ~arc::RWARC(1);
     let mut y = None;
     do x.write_downgrade |write_mode| {
         y = Some(write_mode);
     }
+    y.get();
     // Adding this line causes a method unification failure instead
     // do (&option::unwrap(y)).write |state| { assert!(*state == 1); }
 }

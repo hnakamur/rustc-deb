@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::ptr;
+
 enum maybe_pointy {
     none,
     p(@mut Pointy),
@@ -18,8 +20,8 @@ struct Pointy {
     d : ~fn() -> uint,
 }
 
-fn make_uniq_closure<A:Owned + Copy>(a: A) -> ~fn() -> uint {
-    let result: ~fn() -> uint = || ptr::addr_of(&a) as uint;
+fn make_uniq_closure<A:Send + Copy>(a: A) -> ~fn() -> uint {
+    let result: ~fn() -> uint = || ptr::to_unsafe_ptr(&a) as uint;
     result
 }
 

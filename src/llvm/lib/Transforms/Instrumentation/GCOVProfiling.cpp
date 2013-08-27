@@ -16,19 +16,20 @@
 
 #define DEBUG_TYPE "insert-gcov-profiling"
 
-#include "ProfilingUtils.h"
 #include "llvm/Transforms/Instrumentation.h"
-#include "llvm/DebugInfo.h"
-#include "llvm/IRBuilder.h"
-#include "llvm/Instructions.h"
-#include "llvm/Module.h"
-#include "llvm/Pass.h"
+#include "ProfilingUtils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/UniqueVector.h"
+#include "llvm/DebugInfo.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/DebugLoc.h"
 #include "llvm/Support/InstIterator.h"
@@ -39,30 +40,57 @@
 #include <utility>
 using namespace llvm;
 
+static cl::opt<std::string>
+DefaultGCOVVersion("default-gcov-version", cl::init("402*"), cl::Hidden,
+                   cl::ValueRequired);
+
+GCOVOptions GCOVOptions::getDefault() {
+  GCOVOptions Options;
+  Options.EmitNotes = true;
+  Options.EmitData = true;
+  Options.UseCfgChecksum = false;
+  Options.NoRedZone = false;
+  Options.FunctionNamesInData = true;
+
+  if (DefaultGCOVVersion.size() != 4) {
+    llvm::report_fatal_error(std::string("Invalid -default-gcov-version: ") +
+                             DefaultGCOVVersion);
+  }
+  memcpy(Options.Version, DefaultGCOVVersion.c_str(), 4);
+  return Options;
+}
+
 namespace {
   class GCOVProfiler : public ModulePass {
   public:
     static char ID;
-    GCOVProfiler()
-        : ModulePass(ID), EmitNotes(true), EmitData(true), Use402Format(false),
-          UseExtraChecksum(false) {
+    GCOVProfiler() : ModulePass(ID), Options(GCOVOptions::getDefault()) {
+      ReversedVersion[0] = Options.Version[3];
+      ReversedVersion[1] = Options.Version[2];
+      ReversedVersion[2] = Options.Version[1];
+      ReversedVersion[3] = Options.Version[0];
+      ReversedVersion[4] = '\0';
       initializeGCOVProfilerPass(*PassRegistry::getPassRegistry());
     }
-    GCOVProfiler(bool EmitNotes, bool EmitData, bool use402Format = false,
-                 bool useExtraChecksum = false)
-        : ModulePass(ID), EmitNotes(EmitNotes), EmitData(EmitData),
-          Use402Format(use402Format), UseExtraChecksum(useExtraChecksum) {
-      assert((EmitNotes || EmitData) && "GCOVProfiler asked to do nothing?");
+    GCOVProfiler(const GCOVOptions &Options) : ModulePass(ID), Options(Options){
+      assert((Options.EmitNotes || Options.EmitData) &&
+             "GCOVProfiler asked to do nothing?");
+      ReversedVersion[0] = Options.Version[3];
+      ReversedVersion[1] = Options.Version[2];
+      ReversedVersion[2] = Options.Version[1];
+      ReversedVersion[3] = Options.Version[0];
+      ReversedVersion[4] = '\0';
       initializeGCOVProfilerPass(*PassRegistry::getPassRegistry());
     }
     virtual const char *getPassName() const {
       return "GCOV Profiler";
     }
+
   private:
     bool runOnModule(Module &M);
 
-    // Create the GCNO files for the Module based on DebugInfo.
-    void emitGCNO();
+    // Create the .gcno files for the Module based on DebugInfo.
+    void emitProfileNotes();
 
     // Modify the program to track transitions along edges and call into the
     // profiling runtime to emit .gcda files when run.
@@ -83,8 +111,8 @@ namespace {
     // block number.
     GlobalVariable *buildEdgeLookupTable(Function *F,
                                          GlobalVariable *Counter,
-                                         const UniqueVector<BasicBlock *> &Preds,
-                                         const UniqueVector<BasicBlock *> &Succs);
+                                         const UniqueVector<BasicBlock *>&Preds,
+                                         const UniqueVector<BasicBlock*>&Succs);
 
     // Add the function to write out all our counters to the global destructor
     // list.
@@ -94,10 +122,10 @@ namespace {
 
     std::string mangleName(DICompileUnit CU, const char *NewStem);
 
-    bool EmitNotes;
-    bool EmitData;
-    bool Use402Format;
-    bool UseExtraChecksum;
+    GCOVOptions Options;
+
+    // Reversed, NUL-terminated copy of Options.Version.
+    char ReversedVersion[5];  
 
     Module *M;
     LLVMContext *Ctx;
@@ -108,10 +136,8 @@ char GCOVProfiler::ID = 0;
 INITIALIZE_PASS(GCOVProfiler, "insert-gcov-profiling",
                 "Insert instrumentation for GCOV profiling", false, false)
 
-ModulePass *llvm::createGCOVProfilerPass(bool EmitNotes, bool EmitData,
-                                         bool Use402Format,
-                                         bool UseExtraChecksum) {
-  return new GCOVProfiler(EmitNotes, EmitData, Use402Format, UseExtraChecksum);
+ModulePass *llvm::createGCOVProfilerPass(const GCOVOptions &Options) {
+  return new GCOVProfiler(Options);
 }
 
 namespace {
@@ -249,8 +275,8 @@ namespace {
   // object users can construct, the blocks and lines will be rooted here.
   class GCOVFunction : public GCOVRecord {
    public:
-    GCOVFunction(DISubprogram SP, raw_ostream *os,
-                 bool Use402Format, bool UseExtraChecksum) {
+    GCOVFunction(DISubprogram SP, raw_ostream *os, uint32_t Ident,
+                 bool UseCfgChecksum) {
       this->os = os;
 
       Function *F = SP.getFunction();
@@ -264,13 +290,12 @@ namespace {
       writeBytes(FunctionTag, 4);
       uint32_t BlockLen = 1 + 1 + 1 + lengthOfGCOVString(SP.getName()) +
           1 + lengthOfGCOVString(SP.getFilename()) + 1;
-      if (UseExtraChecksum)
+      if (UseCfgChecksum)
         ++BlockLen;
       write(BlockLen);
-      uint32_t Ident = reinterpret_cast<intptr_t>((MDNode*)SP);
       write(Ident);
       write(0);  // lineno checksum
-      if (UseExtraChecksum)
+      if (UseCfgChecksum)
         write(0);  // cfg checksum
       writeGCOVString(SP.getName());
       writeGCOVString(SP.getFilename());
@@ -354,12 +379,12 @@ bool GCOVProfiler::runOnModule(Module &M) {
   this->M = &M;
   Ctx = &M.getContext();
 
-  if (EmitNotes) emitGCNO();
-  if (EmitData) return emitProfileArcs();
+  if (Options.EmitNotes) emitProfileNotes();
+  if (Options.EmitData) return emitProfileArcs();
   return false;
 }
 
-void GCOVProfiler::emitGCNO() {
+void GCOVProfiler::emitProfileNotes() {
   NamedMDNode *CU_Nodes = M->getNamedMetadata("llvm.dbg.cu");
   if (!CU_Nodes) return;
 
@@ -372,10 +397,9 @@ void GCOVProfiler::emitGCNO() {
     std::string ErrorInfo;
     raw_fd_ostream out(mangleName(CU, "gcno").c_str(), ErrorInfo,
                        raw_fd_ostream::F_Binary);
-    if (!Use402Format)
-      out.write("oncg*404MVLL", 12);
-    else
-      out.write("oncg*204MVLL", 12);
+    out.write("oncg", 4);
+    out.write(ReversedVersion, 4);
+    out.write("MVLL", 4);
 
     DIArray SPs = CU.getSubprograms();
     for (unsigned i = 0, e = SPs.getNumElements(); i != e; ++i) {
@@ -384,7 +408,7 @@ void GCOVProfiler::emitGCNO() {
 
       Function *F = SP.getFunction();
       if (!F) continue;
-      GCOVFunction Func(SP, &out, Use402Format, UseExtraChecksum);
+      GCOVFunction Func(SP, &out, i, Options.UseCfgChecksum);
 
       for (Function::iterator BB = F->begin(), E = F->end(); BB != E; ++BB) {
         GCOVBlock &Block = Func.getBlock(BB);
@@ -465,21 +489,18 @@ bool GCOVProfiler::emitProfileArcs() {
             Value *Counter = Builder.CreateConstInBoundsGEP2_64(Counters, 0,
                                                                 Edge);
             Value *Count = Builder.CreateLoad(Counter);
-            Count = Builder.CreateAdd(Count,
-                                      ConstantInt::get(Type::getInt64Ty(*Ctx),1));
+            Count = Builder.CreateAdd(Count, Builder.getInt64(1));
             Builder.CreateStore(Count, Counter);
           } else if (BranchInst *BI = dyn_cast<BranchInst>(TI)) {
-            Value *Sel = Builder.CreateSelect(
-              BI->getCondition(),
-              ConstantInt::get(Type::getInt64Ty(*Ctx), Edge),
-              ConstantInt::get(Type::getInt64Ty(*Ctx), Edge + 1));
+            Value *Sel = Builder.CreateSelect(BI->getCondition(),
+                                              Builder.getInt64(Edge),
+                                              Builder.getInt64(Edge + 1));
             SmallVector<Value *, 2> Idx;
-            Idx.push_back(Constant::getNullValue(Type::getInt64Ty(*Ctx)));
+            Idx.push_back(Builder.getInt64(0));
             Idx.push_back(Sel);
             Value *Counter = Builder.CreateInBoundsGEP(Counters, Idx);
             Value *Count = Builder.CreateLoad(Counter);
-            Count = Builder.CreateAdd(Count,
-                                      ConstantInt::get(Type::getInt64Ty(*Ctx),1));
+            Count = Builder.CreateAdd(Count, Builder.getInt64(1));
             Builder.CreateStore(Count, Counter);
           } else {
             ComplexEdgePreds.insert(BB);
@@ -496,10 +517,9 @@ bool GCOVProfiler::emitProfileArcs() {
                                ComplexEdgePreds, ComplexEdgeSuccs);
         GlobalVariable *EdgeState = getEdgeStateValue();
         
-        Type *Int32Ty = Type::getInt32Ty(*Ctx);
         for (int i = 0, e = ComplexEdgePreds.size(); i != e; ++i) {
           IRBuilder<> Builder(ComplexEdgePreds[i+1]->getTerminator());
-          Builder.CreateStore(ConstantInt::get(Int32Ty, i), EdgeState);
+          Builder.CreateStore(Builder.getInt32(i), EdgeState);
         }
         for (int i = 0, e = ComplexEdgeSuccs.size(); i != e; ++i) {
           // call runtime to perform increment
@@ -540,13 +560,13 @@ GlobalVariable *GCOVProfiler::buildEdgeLookupTable(
   // read it. Threads and invoke make this untrue.
 
   // emit [(succs * preds) x i64*], logically [succ x [pred x i64*]].
+  size_t TableSize = Succs.size() * Preds.size();
   Type *Int64PtrTy = Type::getInt64PtrTy(*Ctx);
-  ArrayType *EdgeTableTy = ArrayType::get(
-      Int64PtrTy, Succs.size() * Preds.size());
+  ArrayType *EdgeTableTy = ArrayType::get(Int64PtrTy, TableSize);
 
-  Constant **EdgeTable = new Constant*[Succs.size() * Preds.size()];
+  OwningArrayPtr<Constant *> EdgeTable(new Constant*[TableSize]);
   Constant *NullValue = Constant::getNullValue(Int64PtrTy);
-  for (int i = 0, ie = Succs.size() * Preds.size(); i != ie; ++i)
+  for (size_t i = 0; i != TableSize; ++i)
     EdgeTable[i] = NullValue;
 
   unsigned Edge = 0;
@@ -556,8 +576,8 @@ GlobalVariable *GCOVProfiler::buildEdgeLookupTable(
     if (Successors > 1 && !isa<BranchInst>(TI) && !isa<ReturnInst>(TI)) {
       for (int i = 0; i != Successors; ++i) {
         BasicBlock *Succ = TI->getSuccessor(i);
-        IRBuilder<> builder(Succ);
-        Value *Counter = builder.CreateConstInBoundsGEP2_64(Counters, 0,
+        IRBuilder<> Builder(Succ);
+        Value *Counter = Builder.CreateConstInBoundsGEP2_64(Counters, 0,
                                                             Edge + i);
         EdgeTable[((Succs.idFor(Succ)-1) * Preds.size()) +
                   (Preds.idFor(BB)-1)] = cast<Constant>(Counter);
@@ -566,7 +586,7 @@ GlobalVariable *GCOVProfiler::buildEdgeLookupTable(
     Edge += Successors;
   }
 
-  ArrayRef<Constant*> V(&EdgeTable[0], Succs.size() * Preds.size());
+  ArrayRef<Constant*> V(&EdgeTable[0], TableSize);
   GlobalVariable *EdgeTableGV =
       new GlobalVariable(
           *M, EdgeTableTy, true, GlobalValue::InternalLinkage,
@@ -577,8 +597,11 @@ GlobalVariable *GCOVProfiler::buildEdgeLookupTable(
 }
 
 Constant *GCOVProfiler::getStartFileFunc() {
-  FunctionType *FTy = FunctionType::get(Type::getVoidTy(*Ctx),
-                                              Type::getInt8PtrTy(*Ctx), false);
+  Type *Args[] = {
+    Type::getInt8PtrTy(*Ctx),  // const char *orig_filename
+    Type::getInt8PtrTy(*Ctx),  // const char version[4]
+  };
+  FunctionType *FTy = FunctionType::get(Type::getVoidTy(*Ctx), Args, false);
   return M->getOrInsertFunction("llvm_gcda_start_file", FTy);
 }
 
@@ -594,9 +617,10 @@ Constant *GCOVProfiler::getIncrementIndirectCounterFunc() {
 }
 
 Constant *GCOVProfiler::getEmitFunctionFunc() {
-  Type *Args[2] = {
+  Type *Args[3] = {
     Type::getInt32Ty(*Ctx),    // uint32_t ident
     Type::getInt8PtrTy(*Ctx),  // const char *function_name
+    Type::getInt8Ty(*Ctx),     // uint8_t use_extra_checksum
   };
   FunctionType *FTy = FunctionType::get(Type::getVoidTy(*Ctx), Args, false);
   return M->getOrInsertFunction("llvm_gcda_emit_function", FTy);
@@ -607,8 +631,7 @@ Constant *GCOVProfiler::getEmitArcsFunc() {
     Type::getInt32Ty(*Ctx),     // uint32_t num_counters
     Type::getInt64PtrTy(*Ctx),  // uint64_t *counters
   };
-  FunctionType *FTy = FunctionType::get(Type::getVoidTy(*Ctx),
-                                              Args, false);
+  FunctionType *FTy = FunctionType::get(Type::getVoidTy(*Ctx), Args, false);
   return M->getOrInsertFunction("llvm_gcda_emit_arcs", FTy);
 }
 
@@ -638,6 +661,9 @@ void GCOVProfiler::insertCounterWriteout(
     WriteoutF = Function::Create(WriteoutFTy, GlobalValue::InternalLinkage,
                                  "__llvm_gcov_writeout", M);
   WriteoutF->setUnnamedAddr(true);
+  WriteoutF->addFnAttr(Attribute::NoInline);
+  if (Options.NoRedZone)
+    WriteoutF->addFnAttr(Attribute::NoRedZone);
 
   BasicBlock *BB = BasicBlock::Create(*Ctx, "entry", WriteoutF);
   IRBuilder<> Builder(BB);
@@ -652,22 +678,23 @@ void GCOVProfiler::insertCounterWriteout(
     for (unsigned i = 0, e = CU_Nodes->getNumOperands(); i != e; ++i) {
       DICompileUnit CU(CU_Nodes->getOperand(i));
       std::string FilenameGcda = mangleName(CU, "gcda");
-      Builder.CreateCall(StartFile,
-                         Builder.CreateGlobalStringPtr(FilenameGcda));
-      for (ArrayRef<std::pair<GlobalVariable *, MDNode *> >::iterator
-             I = CountersBySP.begin(), E = CountersBySP.end();
-           I != E; ++I) {
-        DISubprogram SP(I->second);
-        intptr_t ident = reinterpret_cast<intptr_t>(I->second);
-        Builder.CreateCall2(EmitFunction,
-                            ConstantInt::get(Type::getInt32Ty(*Ctx), ident),
-                            Builder.CreateGlobalStringPtr(SP.getName()));
-        
-        GlobalVariable *GV = I->first;
+      Builder.CreateCall2(StartFile,
+                          Builder.CreateGlobalStringPtr(FilenameGcda),
+                          Builder.CreateGlobalStringPtr(ReversedVersion));
+      for (unsigned j = 0, e = CountersBySP.size(); j != e; ++j) {
+        DISubprogram SP(CountersBySP[j].second);
+        Builder.CreateCall3(EmitFunction,
+                            Builder.getInt32(j),
+                            Options.FunctionNamesInData ?
+                              Builder.CreateGlobalStringPtr(SP.getName()) :
+                              Constant::getNullValue(Builder.getInt8PtrTy()),
+                            Builder.getInt8(Options.UseCfgChecksum));
+
+        GlobalVariable *GV = CountersBySP[j].first;
         unsigned Arcs =
           cast<ArrayType>(GV->getType()->getElementType())->getNumElements();
         Builder.CreateCall2(EmitArcs,
-                            ConstantInt::get(Type::getInt32Ty(*Ctx), Arcs),
+                            Builder.getInt32(Arcs),
                             Builder.CreateConstGEP2_64(GV, 0, 0));
       }
       Builder.CreateCall(EndFile);
@@ -683,11 +710,13 @@ void GCOVProfiler::insertCounterWriteout(
   F->setUnnamedAddr(true);
   F->setLinkage(GlobalValue::InternalLinkage);
   F->addFnAttr(Attribute::NoInline);
+  if (Options.NoRedZone)
+    F->addFnAttr(Attribute::NoRedZone);
 
   BB = BasicBlock::Create(*Ctx, "entry", F);
   Builder.SetInsertPoint(BB);
 
-  FTy = FunctionType::get(Type::getInt32Ty(*Ctx),
+  FTy = FunctionType::get(Builder.getInt32Ty(),
                           PointerType::get(FTy, 0), false);
   Constant *AtExitFn = M->getOrInsertFunction("atexit", FTy);
   Builder.CreateCall(AtExitFn, WriteoutF);
@@ -702,10 +731,8 @@ void GCOVProfiler::insertIndirectCounterIncrement() {
   Fn->setUnnamedAddr(true);
   Fn->setLinkage(GlobalValue::InternalLinkage);
   Fn->addFnAttr(Attribute::NoInline);
-
-  Type *Int32Ty = Type::getInt32Ty(*Ctx);
-  Type *Int64Ty = Type::getInt64Ty(*Ctx);
-  Constant *NegOne = ConstantInt::get(Int32Ty, 0xffffffff);
+  if (Options.NoRedZone)
+    Fn->addFnAttr(Attribute::NoRedZone);
 
   // Create basic blocks for function.
   BasicBlock *BB = BasicBlock::Create(*Ctx, "entry", Fn);
@@ -720,26 +747,27 @@ void GCOVProfiler::insertIndirectCounterIncrement() {
   Argument *Arg = Fn->arg_begin();
   Arg->setName("predecessor");
   Value *Pred = Builder.CreateLoad(Arg, "pred");
-  Value *Cond = Builder.CreateICmpEQ(Pred, NegOne);
+  Value *Cond = Builder.CreateICmpEQ(Pred, Builder.getInt32(0xffffffff));
   BranchInst::Create(Exit, PredNotNegOne, Cond, BB);
 
   Builder.SetInsertPoint(PredNotNegOne);
 
   // uint64_t *counter = counters[pred];
   // if (!counter) return;
-  Value *ZExtPred = Builder.CreateZExt(Pred, Int64Ty);
+  Value *ZExtPred = Builder.CreateZExt(Pred, Builder.getInt64Ty());
   Arg = llvm::next(Fn->arg_begin());
   Arg->setName("counters");
   Value *GEP = Builder.CreateGEP(Arg, ZExtPred);
   Value *Counter = Builder.CreateLoad(GEP, "counter");
   Cond = Builder.CreateICmpEQ(Counter,
-                              Constant::getNullValue(Int64Ty->getPointerTo()));
+                              Constant::getNullValue(
+                                  Builder.getInt64Ty()->getPointerTo()));
   Builder.CreateCondBr(Cond, Exit, CounterEnd);
 
   // ++*counter;
   Builder.SetInsertPoint(CounterEnd);
   Value *Add = Builder.CreateAdd(Builder.CreateLoad(Counter),
-                                 ConstantInt::get(Int64Ty, 1));
+                                 Builder.getInt64(1));
   Builder.CreateStore(Add, Counter);
   Builder.CreateBr(Exit);
 
@@ -758,6 +786,9 @@ insertFlush(ArrayRef<std::pair<GlobalVariable*, MDNode*> > CountersBySP) {
   else
     FlushF->setLinkage(GlobalValue::InternalLinkage);
   FlushF->setUnnamedAddr(true);
+  FlushF->addFnAttr(Attribute::NoInline);
+  if (Options.NoRedZone)
+    FlushF->addFnAttr(Attribute::NoRedZone);
 
   BasicBlock *Entry = BasicBlock::Create(*Ctx, "entry", FlushF);
 

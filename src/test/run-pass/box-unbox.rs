@@ -12,11 +12,11 @@
 
 struct Box<T> {c: @T}
 
-fn unbox<T:Copy>(b: Box<T>) -> T { return *b.c; }
+fn unbox<T:Copy>(b: Box<T>) -> T { return copy *b.c; }
 
 pub fn main() {
     let foo: int = 17;
     let bfoo: Box<int> = Box {c: @foo};
     debug!("see what's in our box");
-    assert!((unbox::<int>(bfoo) == foo));
+    assert_eq!(unbox::<int>(bfoo), foo);
 }

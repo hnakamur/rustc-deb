@@ -48,21 +48,23 @@ independently:
 
 */
 
-use core::prelude::*;
+
+use driver::session;
 
 use middle::resolve;
 use middle::ty;
 use util::common::time;
+use util::ppaux::Repr;
 use util::ppaux;
 
-use core::hashmap::linear::LinearMap;
-use core::result;
-use core::vec;
-use std::list::List;
-use std::list;
+use std::hashmap::HashMap;
+use std::result;
+use extra::list::List;
+use extra::list;
 use syntax::codemap::span;
 use syntax::print::pprust::*;
-use syntax::{ast, ast_map};
+use syntax::{ast, ast_map, abi};
+use syntax::opt_vec;
 
 #[path = "check/mod.rs"]
 pub mod check;
@@ -73,8 +75,7 @@ pub mod infer;
 pub mod collect;
 pub mod coherence;
 
-#[auto_encode]
-#[auto_decode]
+#[deriving(Encodable, Decodable)]
 pub enum method_origin {
     // supertrait method invoked on "self" inside a default method
     // first field is supertrait ID;
@@ -98,8 +99,7 @@ pub enum method_origin {
 
 // details for a method invoked with a receiver whose type is a type parameter
 // with a bounded trait.
-#[auto_encode]
-#[auto_decode]
+#[deriving(Encodable, Decodable)]
 pub struct method_param {
     // the trait containing the method to be invoked
     trait_id: ast::def_id,
@@ -116,12 +116,15 @@ pub struct method_param {
 }
 
 pub struct method_map_entry {
-    // the type and mode of the self parameter, which is not reflected
-    // in the fn type (FIXME #3446)
-    self_arg: ty::arg,
+    // the type of the self parameter, which is not reflected in the fn type
+    // (FIXME #3446)
+    self_ty: ty::t,
+
+    // the mode of `self`
+    self_mode: ty::SelfMode,
 
     // the type of explicit self on the method
-    explicit_self: ast::self_ty_,
+    explicit_self: ast::explicit_self_,
 
     // method details being invoked
     origin: method_origin,
@@ -129,10 +132,11 @@ pub struct method_map_entry {
 
 // maps from an expression id that corresponds to a method call to the details
 // of the method to be invoked
-pub type method_map = @mut LinearMap<ast::node_id, method_map_entry>;
+pub type method_map = @mut HashMap<ast::node_id, method_map_entry>;
 
+pub type vtable_param_res = @~[vtable_origin];
 // Resolutions for bounds of all parameters, left to right, for a given path.
-pub type vtable_res = @~[vtable_origin];
+pub type vtable_res = @~[vtable_param_res];
 
 pub enum vtable_origin {
     /*
@@ -150,34 +154,43 @@ pub enum vtable_origin {
       The first uint is the param number (identifying T in the example),
       and the second is the bound number (identifying baz)
      */
-    vtable_param(uint, uint)
+    vtable_param(uint, uint),
+
+    /*
+     Dynamic vtable, comes from self.
+    */
+    vtable_self(ast::def_id)
 }
 
-pub impl vtable_origin {
-    fn to_str(&self, tcx: ty::ctxt) -> ~str {
+impl Repr for vtable_origin {
+    fn repr(&self, tcx: ty::ctxt) -> ~str {
         match *self {
             vtable_static(def_id, ref tys, ref vtable_res) => {
-                fmt!("vtable_static(%?:%s, %?, %?)",
-                     def_id, ty::item_path_str(tcx, def_id),
-                     tys,
-                     vtable_res.map(|o| o.to_str(tcx)))
+                fmt!("vtable_static(%?:%s, %s, %s)",
+                     def_id,
+                     ty::item_path_str(tcx, def_id),
+                     tys.repr(tcx),
+                     vtable_res.repr(tcx))
             }
 
             vtable_param(x, y) => {
                 fmt!("vtable_param(%?, %?)", x, y)
             }
+            vtable_self(def_id) => {
+                fmt!("vtable_self(%?)", def_id)
+            }
         }
     }
 }
 
-pub type vtable_map = @mut LinearMap<ast::node_id, vtable_res>;
+pub type vtable_map = @mut HashMap<ast::node_id, vtable_res>;
 
 pub struct CrateCtxt {
     // A mapping from method call sites to traits that have that method.
     trait_map: resolve::TraitMap,
     method_map: method_map,
     vtable_map: vtable_map,
-    coherence_info: @coherence::CoherenceInfo,
+    coherence_info: coherence::CoherenceInfo,
     tcx: ty::ctxt
 }
 
@@ -189,11 +202,11 @@ pub fn write_ty_to_tcx(tcx: ty::ctxt, node_id: ast::node_id, ty: ty::t) {
 }
 pub fn write_substs_to_tcx(tcx: ty::ctxt,
                            node_id: ast::node_id,
-                           +substs: ~[ty::t]) {
+                           substs: ~[ty::t]) {
     if substs.len() > 0u {
         debug!("write_substs_to_tcx(%d, %?)", node_id,
                substs.map(|t| ppaux::ty_to_str(tcx, *t)));
-        assert!(substs.all(|t| !ty::type_needs_infer(*t)));
+        assert!(substs.iter().all(|t| !ty::type_needs_infer(*t)));
         tcx.node_type_substs.insert(node_id, substs);
     }
 }
@@ -210,20 +223,20 @@ pub fn lookup_def_tcx(tcx: ty::ctxt, sp: span, id: ast::node_id) -> ast::def {
     match tcx.def_map.find(&id) {
       Some(&x) => x,
       _ => {
-        tcx.sess.span_fatal(sp, ~"internal error looking up a definition")
+        tcx.sess.span_fatal(sp, "internal error looking up a definition")
       }
     }
 }
 
-pub fn lookup_def_ccx(ccx: @mut CrateCtxt, sp: span, id: ast::node_id)
+pub fn lookup_def_ccx(ccx: &CrateCtxt, sp: span, id: ast::node_id)
                    -> ast::def {
     lookup_def_tcx(ccx.tcx, sp, id)
 }
 
 pub fn no_params(t: ty::t) -> ty::ty_param_bounds_and_ty {
     ty::ty_param_bounds_and_ty {
-        bounds: @~[],
-        region_param: None,
+        generics: ty::Generics {type_param_defs: @~[],
+                                region_param: None},
         ty: t
     }
 }
@@ -237,7 +250,8 @@ pub fn require_same_types(
     t2: ty::t,
     msg: &fn() -> ~str) -> bool {
 
-    let l_tcx, l_infcx;
+    let l_tcx;
+    let l_infcx;
     match maybe_infcx {
       None => {
         l_tcx = tcx;
@@ -252,7 +266,7 @@ pub fn require_same_types(
     match infer::mk_eqty(l_infcx, t1_is_expected, span, t1, t2) {
         result::Ok(()) => true,
         result::Err(ref terr) => {
-            l_tcx.sess.span_err(span, msg() + ~": " +
+            l_tcx.sess.span_err(span, msg() + ": " +
                                 ty::type_err_to_str(l_tcx, terr));
             ty::note_and_explain_type_err(l_tcx, terr);
             false
@@ -270,11 +284,11 @@ trait get_and_find_region {
 }
 
 impl get_and_find_region for isr_alist {
-    fn get(&self, br: ty::bound_region) -> ty::Region {
+    pub fn get(&self, br: ty::bound_region) -> ty::Region {
         self.find(br).get()
     }
 
-    fn find(&self, br: ty::bound_region) -> Option<ty::Region> {
+    pub fn find(&self, br: ty::bound_region) -> Option<ty::Region> {
         for list::each(*self) |isr| {
             let (isr_br, isr_r) = *isr;
             if isr_br == br { return Some(isr_r); }
@@ -283,7 +297,7 @@ impl get_and_find_region for isr_alist {
     }
 }
 
-fn check_main_fn_ty(ccx: @mut CrateCtxt,
+fn check_main_fn_ty(ccx: &CrateCtxt,
                     main_id: ast::node_id,
                     main_span: span) {
     let tcx = ccx.tcx;
@@ -297,8 +311,7 @@ fn check_main_fn_ty(ccx: @mut CrateCtxt,
                         if ps.is_parameterized() => {
                             tcx.sess.span_err(
                                 main_span,
-                                ~"main function is not allowed \
-                                  to have type parameters");
+                                "main function is not allowed to have type parameters");
                             return;
                         }
                         _ => ()
@@ -307,7 +320,7 @@ fn check_main_fn_ty(ccx: @mut CrateCtxt,
                 _ => ()
             }
             let mut ok = ty::type_is_nil(fn_ty.sig.output);
-            let num_args = vec::len(fn_ty.sig.inputs);
+            let num_args = fn_ty.sig.inputs.len();
             ok &= num_args == 0u;
             if !ok {
                 tcx.sess.span_err(
@@ -319,54 +332,102 @@ fn check_main_fn_ty(ccx: @mut CrateCtxt,
         }
         _ => {
             tcx.sess.span_bug(main_span,
-                              ~"main has a non-function type: found `" +
-                              ppaux::ty_to_str(tcx, main_t) + ~"`");
+                              fmt!("main has a non-function type: found `%s`",
+                                   ppaux::ty_to_str(tcx, main_t)));
         }
     }
 }
 
-fn check_for_main_fn(ccx: @mut CrateCtxt) {
+fn check_start_fn_ty(ccx: &CrateCtxt,
+                     start_id: ast::node_id,
+                     start_span: span) {
+    let tcx = ccx.tcx;
+    let start_t = ty::node_id_to_type(tcx, start_id);
+    match ty::get(start_t).sty {
+        ty::ty_bare_fn(_) => {
+            match tcx.items.find(&start_id) {
+                Some(&ast_map::node_item(it,_)) => {
+                    match it.node {
+                        ast::item_fn(_,_,_,ref ps,_)
+                        if ps.is_parameterized() => {
+                            tcx.sess.span_err(
+                                start_span,
+                                "start function is not allowed to have type parameters");
+                            return;
+                        }
+                        _ => ()
+                    }
+                }
+                _ => ()
+            }
+
+            let se_ty = ty::mk_bare_fn(tcx, ty::BareFnTy {
+                purity: ast::impure_fn,
+                abis: abi::AbiSet::Rust(),
+                sig: ty::FnSig {
+                    bound_lifetime_names: opt_vec::Empty,
+                    inputs: ~[
+                        ty::mk_int(),
+                        ty::mk_imm_ptr(tcx, ty::mk_imm_ptr(tcx, ty::mk_u8())),
+                        ty::mk_imm_ptr(tcx, ty::mk_u8())
+                    ],
+                    output: ty::mk_int()
+                }
+            });
+
+            require_same_types(tcx, None, false, start_span, start_t, se_ty,
+                || fmt!("start function expects type: `%s`", ppaux::ty_to_str(ccx.tcx, se_ty)));
+
+        }
+        _ => {
+            tcx.sess.span_bug(start_span,
+                              fmt!("start has a non-function type: found `%s`",
+                                   ppaux::ty_to_str(tcx, start_t)));
+        }
+    }
+}
+
+fn check_for_entry_fn(ccx: &CrateCtxt) {
     let tcx = ccx.tcx;
     if !*tcx.sess.building_library {
-        match *tcx.sess.main_fn {
-          Some((id, sp)) => check_main_fn_ty(ccx, id, sp),
-          None => tcx.sess.err(~"main function not found")
+        match *tcx.sess.entry_fn {
+          Some((id, sp)) => match *tcx.sess.entry_type {
+              Some(session::EntryMain) => check_main_fn_ty(ccx, id, sp),
+              Some(session::EntryStart) => check_start_fn_ty(ccx, id, sp),
+              None => tcx.sess.bug("entry function without a type")
+          },
+          None => tcx.sess.bug("type checking without entry function")
         }
     }
 }
 
 pub fn check_crate(tcx: ty::ctxt,
-                   +trait_map: resolve::TraitMap,
-                   crate: @ast::crate)
+                   trait_map: resolve::TraitMap,
+                   crate: &ast::crate)
                 -> (method_map, vtable_map) {
     let time_passes = tcx.sess.time_passes();
     let ccx = @mut CrateCtxt {
         trait_map: trait_map,
-        method_map: @mut LinearMap::new(),
-        vtable_map: @mut LinearMap::new(),
-        coherence_info: @coherence::CoherenceInfo(),
+        method_map: @mut HashMap::new(),
+        vtable_map: @mut HashMap::new(),
+        coherence_info: coherence::CoherenceInfo(),
         tcx: tcx
     };
 
     time(time_passes, ~"type collecting", ||
         collect::collect_item_types(ccx, crate));
 
-    time(time_passes, ~"method resolution", ||
+    // this ensures that later parts of type checking can assume that items
+    // have valid types and not error
+    tcx.sess.abort_if_errors();
+
+    time(time_passes, ~"coherence checking", ||
         coherence::check_coherence(ccx, crate));
 
     time(time_passes, ~"type checking", ||
         check::check_item_types(ccx, crate));
 
-    check_for_main_fn(ccx);
+    check_for_entry_fn(ccx);
     tcx.sess.abort_if_errors();
     (ccx.method_map, ccx.vtable_map)
 }
-//
-// Local Variables:
-// mode: rust
-// fill-column: 78;
-// indent-tabs-mode: nil
-// c-basic-offset: 4
-// buffer-file-coding-system: utf-8-unix
-// End:
-//

@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
-
 fn foo(x: &[uint]) -> uint {
     x[0]
 }
@@ -17,5 +15,5 @@ fn foo(x: &[uint]) -> uint {
 pub fn main() {
     let p = @[22u];
     let r = foo(p);
-    assert!(r == 22u);
+    assert_eq!(r, 22u);
 }

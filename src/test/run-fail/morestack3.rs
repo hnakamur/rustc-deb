@@ -12,9 +12,11 @@
 
 // Just testing unwinding
 
-extern mod std;
+extern mod extra;
 
-fn getbig_and_fail(&&i: int) {
+use std::task;
+
+fn getbig_and_fail(i: int) {
     let _r = and_then_get_big_again(5);
     if i != 0 {
         getbig_and_fail(i - 1);
@@ -28,7 +30,7 @@ struct and_then_get_big_again {
 }
 
 impl Drop for and_then_get_big_again {
-    fn finalize(&self) {
+    fn drop(&self) {
         fn getbig(i: int) {
             if i != 0 {
                 getbig(i - 1);

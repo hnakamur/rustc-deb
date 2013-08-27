@@ -9,16 +9,17 @@
 // except according to those terms.
 
 // xfail-win32
-extern mod std;
+extern mod extra;
 
-use core::comm::*;
+use std::comm::*;
+use std::task;
 
 struct complainer {
   c: SharedChan<bool>,
 }
 
 impl Drop for complainer {
-    fn finalize(&self) {
+    fn drop(&self) {
         error!("About to send!");
         self.c.send(true);
         error!("Sent!");
@@ -39,7 +40,7 @@ fn f(c: SharedChan<bool>) {
 
 pub fn main() {
     let (p, c) = stream();
-    let c = SharedChan(c);
+    let c = SharedChan::new(c);
     task::spawn_unlinked(|| f(c.clone()) );
     error!("hiiiiiiiii");
     assert!(p.recv());

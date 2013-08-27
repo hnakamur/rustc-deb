@@ -162,7 +162,7 @@ rust_kernel::release_scheduler_id(rust_sched_id id) {
 }
 
 /*
-Called by rust_sched_reaper to join every every terminating scheduler thread,
+Called by rust_sched_reaper to join every terminating scheduler thread,
 so that we can be sure they have completely exited before the process exits.
 If we don't join them then we can see valgrind errors due to un-freed pthread
 memory.
@@ -211,7 +211,6 @@ rust_kernel::run() {
     assert(osmain_driver != NULL);
     osmain_driver->start_main_loop();
     sched_reaper.join();
-    rust_check_exchange_count_on_exit();
     return rval;
 }
 
@@ -256,25 +255,6 @@ rust_kernel::generate_task_id() {
     assert(id != INTPTR_MAX && "Hit the maximum task id");
     return id;
 }
-
-#ifdef __WIN32__
-void
-rust_kernel::win32_require(LPCTSTR fn, BOOL ok) {
-    if (!ok) {
-        LPTSTR buf;
-        DWORD err = GetLastError();
-        FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
-                      FORMAT_MESSAGE_FROM_SYSTEM |
-                      FORMAT_MESSAGE_IGNORE_INSERTS,
-                      NULL, err,
-                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                      (LPTSTR) &buf, 0, NULL );
-        KLOG_ERR_(dom, "%s failed with error %ld: %s", fn, err, buf);
-        LocalFree((HLOCAL)buf);
-        assert(ok);
-    }
-}
-#endif
 
 void
 rust_kernel::set_exit_status(int code) {

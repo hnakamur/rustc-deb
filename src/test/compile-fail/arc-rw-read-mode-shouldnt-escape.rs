@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
-use std::arc;
+extern mod extra;
+use extra::arc;
 fn main() {
     let x = ~arc::RWARC(1);
     let mut y = None;
@@ -17,6 +17,7 @@ fn main() {
         y = Some(x.downgrade(write_mode));
         //~^ ERROR cannot infer an appropriate lifetime
     }
+    y.get();
     // Adding this line causes a method unification failure instead
     // do (&option::unwrap(y)).read |state| { assert!(*state == 1); }
 }

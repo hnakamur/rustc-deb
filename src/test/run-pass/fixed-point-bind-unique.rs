@@ -10,11 +10,11 @@
 
 // xfail-fast
 
-fn fix_help<A:'static,B:Owned>(f: extern fn(@fn(A) -> B, A) -> B, x: A) -> B {
+fn fix_help<A:'static,B:Send>(f: extern fn(@fn(A) -> B, A) -> B, x: A) -> B {
     return f(|a| fix_help(f, a), x);
 }
 
-fn fix<A:'static,B:Owned>(f: extern fn(@fn(A) -> B, A) -> B) -> @fn(A) -> B {
+fn fix<A:'static,B:Send>(f: extern fn(@fn(A) -> B, A) -> B) -> @fn(A) -> B {
     return |a| fix_help(f, a);
 }
 
@@ -25,6 +25,6 @@ fn fact_(f: @fn(v: int) -> int, n: int) -> int {
 
 pub fn main() {
     let fact = fix(fact_);
-    assert!((fact(5) == 120));
-    assert!((fact(2) == 2));
+    assert_eq!(fact(5), 120);
+    assert_eq!(fact(2), 2);
 }

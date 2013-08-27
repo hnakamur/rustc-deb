@@ -11,11 +11,11 @@
 #[link(name = "req")];
 #[crate_type = "lib"];
 
-extern mod std;
+extern mod extra;
 
-use core::hashmap::linear::LinearMap;
+use std::hashmap::HashMap;
 
-pub type header_map = LinearMap<~str, @mut ~[@~str]>;
+pub type header_map = HashMap<~str, @mut ~[@~str]>;
 
 // the unused ty param is necessary so this gets monomorphized
 pub fn request<T:Copy>(req: &header_map) {

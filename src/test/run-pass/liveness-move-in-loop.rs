@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn take(+x: int) -> int {x}
+fn take(x: int) -> int {x}
 
 fn the_loop() {
     let mut list = ~[];
     loop {
         let x = 5;
         if x > 3 {
-            list += ~[take(x)];
+            list.push(take(x));
         } else {
             break;
         }

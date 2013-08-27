@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::cmp::Eq;
+use std::cmp::Eq;
 
 pub trait MyNum : Add<Self,Self> + Sub<Self,Self> + Mul<Self,Self> + Eq {
 }
@@ -38,4 +38,3 @@ impl Eq for MyInt {
 impl MyNum for MyInt;
 
 fn mi(v: int) -> MyInt { MyInt { val: v } }
-

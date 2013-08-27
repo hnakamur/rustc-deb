@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
 
+use middle::ty::{BuiltinBounds};
 use middle::ty;
 use middle::ty::TyVar;
 use middle::typeck::check::regionmanip::replace_bound_regions_in_fn_sig;
@@ -17,18 +17,18 @@ use middle::typeck::infer::combine::*;
 use middle::typeck::infer::cres;
 use middle::typeck::infer::glb::Glb;
 use middle::typeck::infer::InferCtxt;
+use middle::typeck::infer::lattice::CombineFieldsLatticeMethods;
 use middle::typeck::infer::lub::Lub;
 use middle::typeck::infer::to_str::InferStr;
 use util::common::{indent, indenter};
 use util::ppaux::bound_region_to_str;
 
-use std::list::Nil;
-use std::list;
+use extra::list::Nil;
+use extra::list;
 use syntax::abi::AbiSet;
 use syntax::ast;
 use syntax::ast::{Onceness, m_const, purity};
 use syntax::codemap::span;
-
 
 pub struct Sub(CombineFields);  // "subtype", "subregion" etc
 
@@ -102,6 +102,19 @@ impl Combine for Sub {
         })
     }
 
+    fn bounds(&self, a: BuiltinBounds, b: BuiltinBounds) -> cres<BuiltinBounds> {
+        // More bounds is a subtype of fewer bounds.
+        //
+        // e.g., fn:Copy() <: fn(), because the former is a function
+        // that only closes over copyable things, but the latter is
+        // any function at all.
+        if a.contains(b) {
+            Ok(a)
+        } else {
+            Err(ty::terr_builtin_bounds(expected_found(self, a, b)))
+        }
+    }
+
     fn tys(&self, a: ty::t, b: ty::t) -> cres<ty::t> {
         debug!("%s.tys(%s, %s)", self.tag(),
                a.inf_str(self.infcx), b.inf_str(self.infcx));
@@ -166,7 +179,7 @@ impl Combine for Sub {
                                               None, b) |br| {
                 let skol = self.infcx.region_vars.new_skolemized(br);
                 debug!("Bound region %s skolemized to %?",
-                       bound_region_to_str(self.infcx.tcx, br),
+                       bound_region_to_str(self.infcx.tcx, "", false, br),
                        skol);
                 skol
             }
@@ -185,12 +198,12 @@ impl Combine for Sub {
         for list::each(skol_isr) |pair| {
             let (skol_br, skol) = *pair;
             let tainted = self.infcx.region_vars.tainted(snapshot, skol);
-            for tainted.each |tainted_region| {
+            for tainted.iter().advance |tainted_region| {
                 // Each skolemized should only be relatable to itself
                 // or new variables:
                 match *tainted_region {
                     ty::re_infer(ty::ReVar(ref vid)) => {
-                        if new_vars.contains(vid) { loop; }
+                        if new_vars.iter().any_(|x| x == vid) { loop; }
                     }
                     _ => {
                         if *tainted_region == skol { loop; }
@@ -244,22 +257,19 @@ impl Combine for Sub {
                     vk: ty::terr_vstore_kind,
                     a: ty::TraitStore,
                     b: ty::TraitStore)
-                 -> cres<ty::TraitStore> {
+                    -> cres<ty::TraitStore> {
         super_trait_stores(self, vk, a, b)
     }
 
-    fn modes(&self, a: ast::mode, b: ast::mode) -> cres<ast::mode> {
-        super_modes(self, a, b)
-    }
-
-    fn args(&self, a: ty::arg, b: ty::arg) -> cres<ty::arg> {
+    fn args(&self, a: ty::t, b: ty::t) -> cres<ty::t> {
         super_args(self, a, b)
     }
 
-    fn substs(&self, did: ast::def_id,
+    fn substs(&self,
+              generics: &ty::Generics,
               as_: &ty::substs,
               bs: &ty::substs) -> cres<ty::substs> {
-        super_substs(self, did, as_, bs)
+        super_substs(self, generics, as_, bs)
     }
 
     fn tps(&self, as_: &[ty::t], bs: &[ty::t]) -> cres<~[ty::t]> {
@@ -270,5 +280,8 @@ impl Combine for Sub {
                -> cres<Option<ty::t>> {
         super_self_tys(self, a, b)
     }
-}
 
+    fn trait_refs(&self, a: &ty::TraitRef, b: &ty::TraitRef) -> cres<ty::TraitRef> {
+        super_trait_refs(self, a, b)
+    }
+}

@@ -10,8 +10,11 @@
 
 // xfail-fast
 
-extern mod std;
-use core::comm::Chan;
+extern mod extra;
+
+use std::comm::Chan;
+use std::comm;
+use std::task;
 
 pub fn main() { debug!("===== WITHOUT THREADS ====="); test00(); }
 
@@ -32,7 +35,7 @@ fn test00() {
 
     debug!("Creating tasks");
 
-    let po = comm::PortSet();
+    let po = comm::PortSet::new();
 
     let mut i: int = 0;
 
@@ -40,9 +43,9 @@ fn test00() {
     let mut results = ~[];
     while i < number_of_tasks {
         let ch = po.chan();
-        task::task().future_result(|+r| {
-            results.push(r);
-        }).spawn({
+        let mut builder = task::task();
+        builder.future_result(|r| results.push(r));
+        builder.spawn({
             let i = i;
             || test00_start(&ch, i, number_of_messages)
         });
@@ -51,7 +54,7 @@ fn test00() {
 
     // Read from spawned tasks...
     let mut sum = 0;
-    for results.each |r| {
+    for results.iter().advance |r| {
         i = 0;
         while i < number_of_messages {
             let value = po.recv();
@@ -61,11 +64,11 @@ fn test00() {
     }
 
     // Join spawned tasks...
-    for results.each |r| { r.recv(); }
+    for results.iter().advance |r| { r.recv(); }
 
     debug!("Completed: Final number is: ");
     error!(sum);
     // assert (sum == (((number_of_tasks * (number_of_tasks - 1)) / 2) *
     //       number_of_messages));
-    assert!((sum == 480));
+    assert_eq!(sum, 480);
 }

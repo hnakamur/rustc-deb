@@ -19,7 +19,7 @@ enum color {
     orange = 8 >> 1
 }
 
-impl cmp::Eq for color {
+impl Eq for color {
     fn eq(&self, other: &color) -> bool {
         ((*self) as uint) == ((*other) as uint)
     }
@@ -38,9 +38,9 @@ pub fn main() {
 }
 
 fn test_color(color: color, val: int, name: ~str) {
-    //assert!(unsafe::reinterpret_cast(color) == val);
-    assert!(color as int == val);
-    assert!(color as float == val as float);
+    //assert!(unsafe::transmute(color) == val);
+    assert_eq!(color as int, val);
+    assert_eq!(color as float, val as float);
     assert!(get_color_alt(color) == name);
     assert!(get_color_if(color) == name);
 }
@@ -69,5 +69,3 @@ fn get_color_if(color: color) -> ~str {
     else if color == orange {~"orange"}
     else {~"unknown"}
 }
-
-

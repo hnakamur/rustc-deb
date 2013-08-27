@@ -8,25 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use lib::llvm::{llvm, TypeRef, ValueRef, Attribute, Void};
+use lib::llvm::{llvm, ValueRef, Attribute, Void};
 use middle::trans::base::*;
 use middle::trans::build::*;
 use middle::trans::common::*;
 
-use core::libc::c_uint;
-use core::option;
-use core::vec;
+use middle::trans::type_::Type;
+
+use std::libc::c_uint;
+use std::option;
 
 pub trait ABIInfo {
-    fn compute_info(&self,
-                    atys: &[TypeRef],
-                    rty: TypeRef,
-                    ret_def: bool) -> FnType;
+    fn compute_info(&self, atys: &[Type], rty: Type, ret_def: bool) -> FnType;
 }
 
 pub struct LLVMType {
     cast: bool,
-    ty: TypeRef
+    ty: Type
 }
 
 pub struct FnType {
@@ -36,14 +34,14 @@ pub struct FnType {
     sret: bool
 }
 
-pub impl FnType {
-    fn decl_fn(&self, decl: &fn(fnty: TypeRef) -> ValueRef) -> ValueRef {
-        let atys = vec::map(self.arg_tys, |t| t.ty);
+impl FnType {
+    pub fn decl_fn(&self, decl: &fn(fnty: Type) -> ValueRef) -> ValueRef {
+        let atys = self.arg_tys.iter().transform(|t| t.ty).collect::<~[Type]>();
         let rty = self.ret_ty.ty;
-        let fnty = T_fn(atys, rty);
+        let fnty = Type::func(atys, &rty);
         let llfn = decl(fnty);
 
-        for vec::eachi(self.attrs) |i, a| {
+        for self.attrs.iter().enumerate().advance |(i, a)| {
             match *a {
                 option::Some(attr) => {
                     unsafe {
@@ -57,28 +55,27 @@ pub impl FnType {
         return llfn;
     }
 
-    fn build_shim_args(&self, bcx: block,
-                       arg_tys: &[TypeRef],
-                       llargbundle: ValueRef) -> ~[ValueRef] {
-        let mut atys = /*bad*/copy self.arg_tys;
-        let mut attrs = /*bad*/copy self.attrs;
+    pub fn build_shim_args(&self, bcx: block, arg_tys: &[Type], llargbundle: ValueRef)
+                           -> ~[ValueRef] {
+        let mut atys: &[LLVMType] = self.arg_tys;
+        let mut attrs: &[option::Option<Attribute>] = self.attrs;
 
         let mut llargvals = ~[];
         let mut i = 0u;
-        let n = vec::len(arg_tys);
+        let n = arg_tys.len();
 
         if self.sret {
             let llretptr = GEPi(bcx, llargbundle, [0u, n]);
             let llretloc = Load(bcx, llretptr);
                 llargvals = ~[llretloc];
-                atys = vec::from_slice(atys.tail());
-                attrs = vec::from_slice(attrs.tail());
+                atys = atys.tail();
+                attrs = attrs.tail();
         }
 
         while i < n {
             let llargval = if atys[i].cast {
                 let arg_ptr = GEPi(bcx, llargbundle, [0u, i]);
-                let arg_ptr = BitCast(bcx, arg_ptr, T_ptr(atys[i].ty));
+                let arg_ptr = BitCast(bcx, arg_ptr, atys[i].ty.ptr_to());
                 Load(bcx, arg_ptr)
             } else if attrs[i].is_some() {
                 GEPi(bcx, llargbundle, [0u, i])
@@ -92,16 +89,13 @@ pub impl FnType {
         return llargvals;
     }
 
-    fn build_shim_ret(&self, bcx: block,
-                      arg_tys: &[TypeRef], ret_def: bool,
-                      llargbundle: ValueRef, llretval: ValueRef) {
-        for vec::eachi(self.attrs) |i, a| {
+    pub fn build_shim_ret(&self, bcx: block, arg_tys: &[Type], ret_def: bool,
+                          llargbundle: ValueRef, llretval: ValueRef) {
+        for self.attrs.iter().enumerate().advance |(i, a)| {
             match *a {
                 option::Some(attr) => {
                     unsafe {
-                        llvm::LLVMAddInstrAttribute(
-                            llretval, (i + 1u) as c_uint,
-                                        attr as c_uint);
+                        llvm::LLVMAddInstrAttribute(llretval, (i + 1u) as c_uint, attr as c_uint);
                     }
                 }
                 _ => ()
@@ -110,13 +104,13 @@ pub impl FnType {
         if self.sret || !ret_def {
             return;
         }
-        let n = vec::len(arg_tys);
+        let n = arg_tys.len();
         // R** llretptr = &args->r;
         let llretptr = GEPi(bcx, llargbundle, [0u, n]);
         // R* llretloc = *llretptr; /* (args->r) */
         let llretloc = Load(bcx, llretptr);
         if self.ret_ty.cast {
-            let tmp_ptr = BitCast(bcx, llretloc, T_ptr(self.ret_ty.ty));
+            let tmp_ptr = BitCast(bcx, llretloc, self.ret_ty.ty.ptr_to());
             // *args->r = r;
             Store(bcx, llretval, tmp_ptr);
         } else {
@@ -125,25 +119,25 @@ pub impl FnType {
         };
     }
 
-    fn build_wrap_args(&self, bcx: block, ret_ty: TypeRef,
-                       llwrapfn: ValueRef, llargbundle: ValueRef) {
-        let mut atys = /*bad*/copy self.arg_tys;
-        let mut attrs = /*bad*/copy self.attrs;
+    pub fn build_wrap_args(&self, bcx: block, ret_ty: Type,
+                           llwrapfn: ValueRef, llargbundle: ValueRef) {
+        let mut atys: &[LLVMType] = self.arg_tys;
+        let mut attrs: &[option::Option<Attribute>] = self.attrs;
         let mut j = 0u;
         let llretptr = if self.sret {
-            atys = vec::from_slice(atys.tail());
-            attrs = vec::from_slice(attrs.tail());
+            atys = atys.tail();
+            attrs = attrs.tail();
             j = 1u;
             get_param(llwrapfn, 0u)
         } else if self.ret_ty.cast {
             let retptr = alloca(bcx, self.ret_ty.ty);
-            BitCast(bcx, retptr, T_ptr(ret_ty))
+            BitCast(bcx, retptr, ret_ty.ptr_to())
         } else {
             alloca(bcx, ret_ty)
         };
 
         let mut i = 0u;
-        let n = vec::len(atys);
+        let n = atys.len();
         while i < n {
             let mut argval = get_param(llwrapfn, i + j);
             if attrs[i].is_some() {
@@ -151,7 +145,7 @@ pub impl FnType {
                 store_inbounds(bcx, argval, llargbundle, [0u, i]);
             } else if atys[i].cast {
                 let argptr = GEPi(bcx, llargbundle, [0u, i]);
-                let argptr = BitCast(bcx, argptr, T_ptr(atys[i].ty));
+                let argptr = BitCast(bcx, argptr, atys[i].ty.ptr_to());
                 Store(bcx, argval, argptr);
             } else {
                 store_inbounds(bcx, argval, llargbundle, [0u, i]);
@@ -161,56 +155,21 @@ pub impl FnType {
         store_inbounds(bcx, llretptr, llargbundle, [0u, n]);
     }
 
-    fn build_wrap_ret(&self, bcx: block,
-                      arg_tys: &[TypeRef], llargbundle: ValueRef) {
-        unsafe {
-            if llvm::LLVMGetTypeKind(self.ret_ty.ty) == Void {
-                RetVoid(bcx);
-                return;
-            }
+    pub fn build_wrap_ret(&self, bcx: block, arg_tys: &[Type], llargbundle: ValueRef) {
+        if self.ret_ty.ty.kind() == Void {
+            return;
         }
-        let n = vec::len(arg_tys);
-        let llretval = load_inbounds(bcx, llargbundle, ~[0u, n]);
-        let llretval = if self.ret_ty.cast {
-            let retptr = BitCast(bcx, llretval, T_ptr(self.ret_ty.ty));
-            Load(bcx, retptr)
-        } else {
-            Load(bcx, llretval)
-        };
-        Ret(bcx, llretval);
+
+        if bcx.fcx.llretptr.is_some() {
+            let llretval = load_inbounds(bcx, llargbundle, [ 0, arg_tys.len() ]);
+            let llretval = if self.ret_ty.cast {
+                let retptr = BitCast(bcx, llretval, self.ret_ty.ty.ptr_to());
+                Load(bcx, retptr)
+            } else {
+                Load(bcx, llretval)
+            };
+            let llretptr = BitCast(bcx, bcx.fcx.llretptr.get(), self.ret_ty.ty.ptr_to());
+            Store(bcx, llretval, llretptr);
+        }
     }
 }
-
-enum LLVM_ABIInfo { LLVM_ABIInfo }
-
-impl ABIInfo for LLVM_ABIInfo {
-    fn compute_info(&self,
-                    atys: &[TypeRef],
-                    rty: TypeRef,
-                    _ret_def: bool) -> FnType {
-        let arg_tys = do atys.map |a| {
-            LLVMType { cast: false, ty: *a }
-        };
-        let ret_ty = LLVMType {
-            cast: false,
-            ty: rty
-        };
-        let attrs = do atys.map |_| {
-            option::None
-        };
-        let sret = false;
-
-        return FnType {
-            arg_tys: arg_tys,
-            ret_ty: ret_ty,
-            attrs: attrs,
-            sret: sret
-        };
-    }
-}
-
-pub fn llvm_abi_info() -> @ABIInfo {
-    return @LLVM_ABIInfo as @ABIInfo;
-}
-
-

@@ -10,9 +10,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::util;
+
 // tjc: I don't know why
 pub mod pipes {
-    use core::cast::{forget, transmute};
+    use std::cast::{forget, transmute};
+    use std::cast;
+    use std::task;
+    use std::util;
 
     pub struct Stuff<T> {
         state: state,
@@ -34,7 +39,7 @@ pub mod pipes {
         payload: Option<T>
     }
 
-    pub fn packet<T:Owned>() -> *packet<T> {
+    pub fn packet<T:Send>() -> *packet<T> {
         unsafe {
             let p: *packet<T> = cast::transmute(~Stuff{
                 state: empty,
@@ -51,25 +56,25 @@ pub mod pipes {
       pub fn atomic_xchg_rel(_dst: &mut int, _src: int) -> int { fail!(); }
     }
 
-    // We should consider moving this to ::core::unsafe, although I
+    // We should consider moving this to ::std::unsafe, although I
     // suspect graydon would want us to use void pointers instead.
-    pub unsafe fn uniquify<T>(+x: *T) -> ~T {
+    pub unsafe fn uniquify<T>(x: *T) -> ~T {
         unsafe { cast::transmute(x) }
     }
 
-    pub fn swap_state_acq(+dst: &mut state, src: state) -> state {
+    pub fn swap_state_acq(dst: &mut state, src: state) -> state {
         unsafe {
             transmute(rusti::atomic_xchg_acq(transmute(dst), src as int))
         }
     }
 
-    pub fn swap_state_rel(+dst: &mut state, src: state) -> state {
+    pub fn swap_state_rel(dst: &mut state, src: state) -> state {
         unsafe {
             transmute(rusti::atomic_xchg_rel(transmute(dst), src as int))
         }
     }
 
-    pub fn send<T:Owned>(mut p: send_packet<T>, +payload: T) {
+    pub fn send<T:Send>(mut p: send_packet<T>, payload: T) {
         let mut p = p.unwrap();
         let mut p = unsafe { uniquify(p) };
         assert!((*p).payload.is_none());
@@ -82,7 +87,7 @@ pub mod pipes {
             // The receiver will eventually clean this up.
             unsafe { forget(p); }
           }
-          full => { fail!(~"duplicate send") }
+          full => { fail!("duplicate send") }
           blocked => {
 
             // The receiver will eventually clean this up.
@@ -95,7 +100,7 @@ pub mod pipes {
         }
     }
 
-    pub fn recv<T:Owned>(mut p: recv_packet<T>) -> Option<T> {
+    pub fn recv<T:Send>(mut p: recv_packet<T>) -> Option<T> {
         let mut p = p.unwrap();
         let mut p = unsafe { uniquify(p) };
         loop {
@@ -104,19 +109,18 @@ pub mod pipes {
             match old_state {
               empty | blocked => { task::yield(); }
               full => {
-                let mut payload = None;
-                payload <-> (*p).payload;
+                let payload = util::replace(&mut p.payload, None);
                 return Some(payload.unwrap())
               }
               terminated => {
-                assert!(old_state == terminated);
+                assert_eq!(old_state, terminated);
                 return None;
               }
             }
         }
     }
 
-    pub fn sender_terminate<T:Owned>(mut p: *packet<T>) {
+    pub fn sender_terminate<T:Send>(mut p: *packet<T>) {
         let mut p = unsafe { uniquify(p) };
         match swap_state_rel(&mut (*p).state, terminated) {
           empty | blocked => {
@@ -125,7 +129,7 @@ pub mod pipes {
           }
           full => {
             // This is impossible
-            fail!(~"you dun goofed")
+            fail!("you dun goofed")
           }
           terminated => {
             // I have to clean up, use drop_glue
@@ -133,7 +137,7 @@ pub mod pipes {
         }
     }
 
-    pub fn receiver_terminate<T:Owned>(mut p: *packet<T>) {
+    pub fn receiver_terminate<T:Send>(mut p: *packet<T>) {
         let mut p = unsafe { uniquify(p) };
         match swap_state_rel(&mut (*p).state, terminated) {
           empty => {
@@ -142,7 +146,7 @@ pub mod pipes {
           }
           blocked => {
             // this shouldn't happen.
-            fail!(~"terminating a blocked packet")
+            fail!("terminating a blocked packet")
           }
           terminated | full => {
             // I have to clean up, use drop_glue
@@ -155,29 +159,26 @@ pub mod pipes {
     }
 
     #[unsafe_destructor]
-    impl<T:Owned> Drop for send_packet<T> {
-        fn finalize(&self) {
+    impl<T:Send> Drop for send_packet<T> {
+        fn drop(&self) {
             unsafe {
                 if self.p != None {
-                    let mut p = None;
                     let self_p: &mut Option<*packet<T>> =
                         cast::transmute(&self.p);
-                    p <-> *self_p;
+                    let p = util::replace(self_p, None);
                     sender_terminate(p.unwrap())
                 }
             }
         }
     }
 
-    pub impl<T:Owned> send_packet<T> {
-        fn unwrap(&mut self) -> *packet<T> {
-            let mut p = None;
-            p <-> self.p;
-            p.unwrap()
+    impl<T:Send> send_packet<T> {
+        pub fn unwrap(&mut self) -> *packet<T> {
+            util::replace(&mut self.p, None).unwrap()
         }
     }
 
-    pub fn send_packet<T:Owned>(p: *packet<T>) -> send_packet<T> {
+    pub fn send_packet<T:Send>(p: *packet<T>) -> send_packet<T> {
         send_packet {
             p: Some(p)
         }
@@ -188,66 +189,60 @@ pub mod pipes {
     }
 
     #[unsafe_destructor]
-    impl<T:Owned> Drop for recv_packet<T> {
-        fn finalize(&self) {
+    impl<T:Send> Drop for recv_packet<T> {
+        fn drop(&self) {
             unsafe {
                 if self.p != None {
-                    let mut p = None;
                     let self_p: &mut Option<*packet<T>> =
                         cast::transmute(&self.p);
-                    p <-> *self_p;
+                    let p = util::replace(self_p, None);
                     receiver_terminate(p.unwrap())
                 }
             }
         }
     }
 
-    pub impl<T:Owned> recv_packet<T> {
-        fn unwrap(&mut self) -> *packet<T> {
-            let mut p = None;
-            p <-> self.p;
-            p.unwrap()
+    impl<T:Send> recv_packet<T> {
+        pub fn unwrap(&mut self) -> *packet<T> {
+            util::replace(&mut self.p, None).unwrap()
         }
     }
 
-    pub fn recv_packet<T:Owned>(p: *packet<T>) -> recv_packet<T> {
+    pub fn recv_packet<T:Send>(p: *packet<T>) -> recv_packet<T> {
         recv_packet {
             p: Some(p)
         }
     }
 
-    pub fn entangle<T:Owned>() -> (send_packet<T>, recv_packet<T>) {
+    pub fn entangle<T:Send>() -> (send_packet<T>, recv_packet<T>) {
         let p = packet();
         (send_packet(p), recv_packet(p))
     }
 }
 
 pub mod pingpong {
-    use core::cast;
-    use core::ptr;
+    use std::cast;
+    use std::ptr;
+    use std::util;
 
     pub struct ping(::pipes::send_packet<pong>);
     pub struct pong(::pipes::send_packet<ping>);
 
-    pub fn liberate_ping(+p: ping) -> ::pipes::send_packet<pong> {
+    pub fn liberate_ping(p: ping) -> ::pipes::send_packet<pong> {
         unsafe {
             let addr : *::pipes::send_packet<pong> = match &p {
-              &ping(ref x) => { cast::transmute(ptr::addr_of(x)) }
+              &ping(ref x) => { cast::transmute(x) }
             };
-            let liberated_value = *addr;
-            cast::forget(p);
-            liberated_value
+            fail!()
         }
     }
 
-    pub fn liberate_pong(+p: pong) -> ::pipes::send_packet<ping> {
+    pub fn liberate_pong(p: pong) -> ::pipes::send_packet<ping> {
         unsafe {
             let addr : *::pipes::send_packet<ping> = match &p {
-              &pong(ref x) => { cast::transmute(ptr::addr_of(x)) }
+              &pong(ref x) => { cast::transmute(x) }
             };
-            let liberated_value = *addr;
-            cast::forget(p);
-            liberated_value
+            fail!()
         }
     }
 
@@ -256,23 +251,23 @@ pub mod pingpong {
     }
 
     pub mod client {
-        use core::option;
+        use std::option;
         use pingpong;
 
         pub type ping = ::pipes::send_packet<pingpong::ping>;
         pub type pong = ::pipes::recv_packet<pingpong::pong>;
 
-        pub fn do_ping(+c: ping) -> pong {
+        pub fn do_ping(c: ping) -> pong {
             let (sp, rp) = ::pipes::entangle();
 
             ::pipes::send(c, pingpong::ping(sp));
             rp
         }
 
-        pub fn do_pong(+c: pong) -> (ping, ()) {
+        pub fn do_pong(c: pong) -> (ping, ()) {
             let packet = ::pipes::recv(c);
             if packet.is_none() {
-                fail!(~"sender closed the connection")
+                fail!("sender closed the connection")
             }
             (pingpong::liberate_pong(packet.unwrap()), ())
         }
@@ -284,15 +279,15 @@ pub mod pingpong {
         pub type ping = ::pipes::recv_packet<pingpong::ping>;
         pub type pong = ::pipes::send_packet<pingpong::pong>;
 
-        pub fn do_ping(+c: ping) -> (pong, ()) {
+        pub fn do_ping(c: ping) -> (pong, ()) {
             let packet = ::pipes::recv(c);
             if packet.is_none() {
-                fail!(~"sender closed the connection")
+                fail!("sender closed the connection")
             }
             (pingpong::liberate_ping(packet.unwrap()), ())
         }
 
-        pub fn do_pong(+c: pong) -> ping {
+        pub fn do_pong(c: pong) -> ping {
             let (sp, rp) = ::pipes::entangle();
             ::pipes::send(c, pingpong::pong(sp));
             rp
@@ -300,14 +295,14 @@ pub mod pingpong {
     }
 }
 
-fn client(+chan: pingpong::client::ping) {
+fn client(chan: pingpong::client::ping) {
     let chan = pingpong::client::do_ping(chan);
     error!(~"Sent ping");
     let (_chan, _data) = pingpong::client::do_pong(chan);
     error!(~"Received pong");
 }
 
-fn server(+chan: pingpong::server::ping) {
+fn server(chan: pingpong::server::ping) {
     let (chan, _data) = pingpong::server::do_ping(chan);
     error!(~"Received ping");
     let _chan = pingpong::server::do_pong(chan);
@@ -319,8 +314,8 @@ pub fn main() {
 //    Commented out because of option::get error
 
     let (client_, server_) = pingpong::init();
-    let client_ = Cell(client_);
-    let server_ = Cell(server_);
+    let client_ = Cell::new(client_);
+    let server_ = Cell::new(server_);
 
     task::spawn {|client_|
         let client__ = client_.take();

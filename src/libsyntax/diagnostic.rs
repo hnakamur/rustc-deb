@@ -8,17 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
-
 use codemap::{Pos, span};
 use codemap;
 
-use core::io::WriterUtil;
-use core::io;
-use core::str;
-use core::vec;
-
-use std::term;
+use std::io;
+use std::uint;
+use extra::term;
 
 pub type Emitter = @fn(cmsp: Option<(@codemap::CodeMap, span)>,
                        msg: &str,
@@ -31,6 +26,7 @@ pub trait handler {
     fn fatal(@mut self, msg: &str) -> !;
     fn err(@mut self, msg: &str);
     fn bump_err_count(@mut self);
+    fn err_count(@mut self) -> uint;
     fn has_errors(@mut self) -> bool;
     fn abort_if_errors(@mut self);
     fn warn(@mut self, msg: &str);
@@ -105,7 +101,12 @@ impl handler for HandlerT {
     fn bump_err_count(@mut self) {
         self.err_count += 1u;
     }
-    fn has_errors(@mut self) -> bool { self.err_count > 0u }
+    fn err_count(@mut self) -> uint {
+        self.err_count
+    }
+    fn has_errors(@mut self) -> bool {
+        self.err_count > 0u
+    }
     fn abort_if_errors(@mut self) {
         let s;
         match self.err_count {
@@ -176,29 +177,43 @@ fn diagnosticstr(lvl: level) -> ~str {
     }
 }
 
-fn diagnosticcolor(lvl: level) -> u8 {
+fn diagnosticcolor(lvl: level) -> term::color::Color {
     match lvl {
-        fatal => term::color_bright_red,
-        error => term::color_bright_red,
-        warning => term::color_bright_yellow,
-        note => term::color_bright_green
+        fatal => term::color::bright_red,
+        error => term::color::bright_red,
+        warning => term::color::bright_yellow,
+        note => term::color::bright_green
     }
 }
 
-fn print_diagnostic(topic: ~str, lvl: level, msg: &str) {
-    let use_color = term::color_supported() &&
-        io::stderr().get_type() == io::Screen;
+fn print_maybe_colored(msg: &str, color: term::color::Color) {
+    let stderr = io::stderr();
+
+    let t = term::Terminal::new(stderr);
+
+    match t {
+        Ok(term) => {
+            if stderr.get_type() == io::Screen {
+                term.fg(color);
+                stderr.write_str(msg);
+                term.reset();
+            } else {
+                stderr.write_str(msg);
+            }
+        },
+        _ => stderr.write_str(msg)
+    }
+}
+
+fn print_diagnostic(topic: &str, lvl: level, msg: &str) {
+    let stderr = io::stderr();
+
     if !topic.is_empty() {
-        io::stderr().write_str(fmt!("%s ", topic));
+        stderr.write_str(fmt!("%s ", topic));
     }
-    if use_color {
-        term::fg(io::stderr(), diagnosticcolor(lvl));
-    }
-    io::stderr().write_str(fmt!("%s:", diagnosticstr(lvl)));
-    if use_color {
-        term::reset(io::stderr());
-    }
-    io::stderr().write_str(fmt!(" %s\n", msg));
+
+    print_maybe_colored(fmt!("%s: ", diagnosticstr(lvl)), diagnosticcolor(lvl));
+    stderr.write_str(fmt!("%s\n", msg));
 }
 
 pub fn collect(messages: @mut ~[~str])
@@ -215,17 +230,17 @@ pub fn emit(cmsp: Option<(@codemap::CodeMap, span)>, msg: &str, lvl: level) {
         let ss = cm.span_to_str(sp);
         let lines = cm.span_to_lines(sp);
         print_diagnostic(ss, lvl, msg);
-        highlight_lines(cm, sp, lines);
+        highlight_lines(cm, sp, lvl, lines);
         print_macro_backtrace(cm, sp);
       }
       None => {
-        print_diagnostic(~"", lvl, msg);
+        print_diagnostic("", lvl, msg);
       }
     }
 }
 
 fn highlight_lines(cm: @codemap::CodeMap,
-                   sp: span,
+                   sp: span, lvl: level,
                    lines: @codemap::FileLines) {
     let fm = lines.file;
 
@@ -233,29 +248,32 @@ fn highlight_lines(cm: @codemap::CodeMap,
     let max_lines = 6u;
     let mut elided = false;
     let mut display_lines = /* FIXME (#2543) */ copy lines.lines;
-    if vec::len(display_lines) > max_lines {
-        display_lines = vec::slice(display_lines, 0u, max_lines).to_vec();
+    if display_lines.len() > max_lines {
+        display_lines = display_lines.slice(0u, max_lines).to_owned();
         elided = true;
     }
     // Print the offending lines
-    for display_lines.each |line| {
+    for display_lines.iter().advance |line| {
         io::stderr().write_str(fmt!("%s:%u ", fm.name, *line + 1u));
-        let s = fm.get_line(*line as int) + ~"\n";
+        let s = fm.get_line(*line as int) + "\n";
         io::stderr().write_str(s);
     }
     if elided {
-        let last_line = display_lines[vec::len(display_lines) - 1u];
+        let last_line = display_lines[display_lines.len() - 1u];
         let s = fmt!("%s:%u ", fm.name, last_line + 1u);
-        let mut indent = str::len(s);
+        let mut indent = s.len();
         let mut out = ~"";
-        while indent > 0u { out += ~" "; indent -= 1u; }
-        out += ~"...\n";
+        while indent > 0u {
+            out.push_char(' ');
+            indent -= 1u;
+        }
+        out.push_str("...\n");
         io::stderr().write_str(out);
     }
 
     // FIXME (#3260)
     // If there's one line at fault we can easily point to the problem
-    if vec::len(lines.lines) == 1u {
+    if lines.lines.len() == 1u {
         let lo = cm.lookup_char_pos(sp.lo);
         let mut digits = 0u;
         let mut num = (lines.lines[0] + 1u) / 10u;
@@ -264,40 +282,47 @@ fn highlight_lines(cm: @codemap::CodeMap,
         while num > 0u { num /= 10u; digits += 1u; }
 
         // indent past |name:## | and the 0-offset column location
-        let mut left = str::len(fm.name) + digits + lo.col.to_uint() + 3u;
+        let left = fm.name.len() + digits + lo.col.to_uint() + 3u;
         let mut s = ~"";
         // Skip is the number of characters we need to skip because they are
         // part of the 'filename:line ' part of the previous line.
-        let skip = str::len(fm.name) + digits + 3u;
+        let skip = fm.name.len() + digits + 3u;
         for skip.times() {
-            s += ~" ";
+            s.push_char(' ');
         }
         let orig = fm.get_line(lines.lines[0] as int);
         for uint::range(0u,left-skip) |pos| {
             let curChar = (orig[pos] as char);
-            s += match curChar { // Whenever a tab occurs on the previous
-                '\t' => "\t",    // line, we insert one on the error-point-
-                _ => " "         // -squigly-line as well (instead of a
-            };                   // space). This way the squigly-line will
-        }                        // usually appear in the correct position.
-        s += ~"^";
+            // Whenever a tab occurs on the previous line, we insert one on
+            // the error-point-squiggly-line as well (instead of a space).
+            // That way the squiggly line will usually appear in the correct
+            // position.
+            match curChar {
+                '\t' => s.push_char('\t'),
+                _ => s.push_char(' '),
+            };
+        }
+        io::stderr().write_str(s);
+        let mut s = ~"^";
         let hi = cm.lookup_char_pos(sp.hi);
         if hi.col != lo.col {
             // the ^ already takes up one space
-            let num_squiglies = hi.col.to_uint()-lo.col.to_uint()-1u;
-            for num_squiglies.times() { s += ~"~"; }
+            let num_squigglies = hi.col.to_uint()-lo.col.to_uint()-1u;
+            for num_squigglies.times() {
+                s.push_char('~')
+            }
         }
-        io::stderr().write_str(s + ~"\n");
+        print_maybe_colored(s + "\n", diagnosticcolor(lvl));
     }
 }
 
 fn print_macro_backtrace(cm: @codemap::CodeMap, sp: span) {
-    for sp.expn_info.each |ei| {
-        let ss = ei.callee.span.map_default(@~"", |span| @cm.span_to_str(*span));
-        print_diagnostic(*ss, note,
+    for sp.expn_info.iter().advance |ei| {
+        let ss = ei.callee.span.map_default(~"", |span| cm.span_to_str(*span));
+        print_diagnostic(ss, note,
                          fmt!("in expansion of %s!", ei.callee.name));
         let ss = cm.span_to_str(ei.call_site);
-        print_diagnostic(ss, note, ~"expansion site");
+        print_diagnostic(ss, note, "expansion site");
         print_macro_backtrace(cm, ei.call_site);
     }
 }
@@ -306,7 +331,7 @@ pub fn expect<T:Copy>(diag: @span_handler,
                        opt: Option<T>,
                        msg: &fn() -> ~str) -> T {
     match opt {
-       Some(ref t) => (*t),
+       Some(ref t) => copy *t,
        None => diag.handler().bug(msg())
     }
 }

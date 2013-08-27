@@ -8,7 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::cell::Cell;
+use std::cell::Cell;
+use std::task;
 
 struct Port<T>(@T);
 
@@ -19,7 +20,7 @@ fn main() {
 
     #[unsafe_destructor]
     impl Drop for foo {
-        fn finalize(&self) {}
+        fn drop(&self) {}
     }
 
     fn foo(x: Port<()>) -> foo {
@@ -28,10 +29,10 @@ fn main() {
         }
     }
 
-    let x = Cell(foo(Port(@())));
+    let x = Cell::new(foo(Port(@())));
 
     do task::spawn {
-        let y = x.take();   //~ ERROR value has non-owned type
+        let y = x.take();   //~ ERROR does not fulfill `Send`
         error!(y);
     }
 }

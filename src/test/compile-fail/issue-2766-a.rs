@@ -9,16 +9,16 @@
 // except according to those terms.
 
 pub mod stream {
-    pub enum Stream<T:Owned> { send(T, ::stream::server::Stream<T>), }
+    pub enum Stream<T:Send> { send(T, ::stream::server::Stream<T>), }
     pub mod server {
-        use core::option;
-        use core::pipes;
+        use std::option;
+        use std::pipes;
 
-        pub impl<T:Owned> Stream<T> {
-            pub fn recv() -> extern fn(+v: Stream<T>) -> ::stream::Stream<T> {
+        impl<T:Send> Stream<T> {
+            pub fn recv() -> extern fn(v: Stream<T>) -> ::stream::Stream<T> {
               // resolve really should report just one error here.
               // Change the test case when it changes.
-              pub fn recv(+pipe: Stream<T>) -> ::stream::Stream<T> { //~ ERROR attempt to use a type argument out of scope
+              pub fn recv(pipe: Stream<T>) -> ::stream::Stream<T> { //~ ERROR attempt to use a type argument out of scope
                 //~^ ERROR use of undeclared type name
                 //~^^ ERROR attempt to use a type argument out of scope
                 //~^^^ ERROR use of undeclared type name
@@ -28,7 +28,7 @@ pub mod stream {
             }
         }
 
-        pub type Stream<T:Owned> = pipes::RecvPacket<::stream::Stream<T>>;
+        pub type Stream<T:Send> = pipes::RecvPacket<::stream::Stream<T>>;
     }
 }
 

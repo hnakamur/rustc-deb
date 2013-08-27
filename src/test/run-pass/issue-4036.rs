@@ -11,11 +11,12 @@
 // Issue #4036: Test for an issue that arose around fixing up type inference
 // byproducts in vtable records.
 
-extern mod std;
-use self::std::json;
-use self::std::serialize;
+extern mod extra;
+use self::extra::json;
+use self::extra::serialize;
 
 pub fn main() {
     let json = json::from_str("[1]").unwrap();
-    let _x: ~[int] = serialize::Decodable::decode(&json::Decoder(json));
+    let mut decoder = json::Decoder(json);
+    let _x: ~[int] = serialize::Decodable::decode(&mut decoder);
 }

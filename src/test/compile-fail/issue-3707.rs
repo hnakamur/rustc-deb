@@ -8,17 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
 struct Obj {
     member: uint
 }
 
-pub impl Obj {
-    fn boom() -> bool {
+impl Obj {
+    pub fn boom() -> bool {
         return 1+1 == 2
     }
-    fn chirp() {
-        self.boom(); //~ ERROR wat
+    pub fn chirp(&self) {
+        self.boom(); //~ ERROR `&Obj` does not implement any method in scope named `boom`
     }
 }
 
