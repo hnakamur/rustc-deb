@@ -4,10 +4,15 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
+RUST_VERSION := $(shell dpkg-parsechangelog | egrep '^Version:' | cut -f 2 -d ' ' | cut -f 1 -d '-' | cut -f 1-2 -d .)
+RUST_PREFIX := usr
+DEB_DESTDIR := $(CURDIR)/debian/rust
+RUST_TMP_PREFIX := $(DEB_DESTDIR)/$(RUST_PREFIX)
+
 # These are the normal build flags
 COMMON_FLAGS = \
                --disable-manage-submodules \
-	       --prefix=/usr
+               --prefix=/$(RUST_PREFIX)
 
 # TODO
 # These flags will be used to avoid external
