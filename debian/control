@@ -15,15 +15,10 @@ Vcs-Browser: http://git.debian.org/?p=collab-maint/rust.git;a=summary
 Package: rust
 Architecture: amd64 i386
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: a safe, concurrent, practical language
- Rust is a curly-brace, block-structured expression language.
- It visually resembles the C language family, but differs significantly
- in syntactic and semantic details. Its design is oriented toward
- concerns of "programming in the large", that is, of creating and
- maintaining boundaries - both abstract and operational - that
- preserve large-system integrity, availability and concurrency.
+Description: Rust systems programming language
+ Rust is a systems programming language that runs blazingly fast,
+ prevents almost all crashes, and eliminates data races.
  .
- It supports a mixture of imperative procedural, concurrent actor,
- object-oriented and pure functional styles. Rust also supports
- generic programming and metaprogramming, in both static and
- dynamic styles.
+ Features: zero-cost abstractions; move semantics; guaranteed memory
+ safety; threads without data races; trait-based generics; pattern
+ matching; type inference; minimal runtime; efficient C bindings
