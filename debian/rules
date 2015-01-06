@@ -23,7 +23,9 @@ SYSTEM_LLVM = --llvm-root=/usr
 %:
 	dh $@ --parallel
 
+# Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
+	SHELL=/bin/sh \
 	    ./configure \
 		    $(COMMON_FLAGS) \
 		    # TODO
