@@ -7,7 +7,7 @@ Build-Depends: debhelper (>= 9),
                python
 #              rust (>= 0.6), rust (< 0.7~)
 #              llvm
-Standards-Version: 3.9.4
+Standards-Version: 3.9.6
 Homepage: http://www.rust-lang.org/
 Vcs-Git: git://git.debian.org/collab-maint/rust.git
 Vcs-Browser: http://git.debian.org/?p=collab-maint/rust.git;a=summary
