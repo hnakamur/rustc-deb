@@ -14,10 +14,6 @@ License: Expat or Apache-2.0
  notice may not be copied, modified, or distributed except
  according to those terms. 
 
-Files: src/rt/isaac/*
-Copyright: 1996 Bob Jenkins
-License: public-domain
-
 Files: src/rt/miniz.c
 Copyright: 1996 Rich Geldreich
 License: public-domain
