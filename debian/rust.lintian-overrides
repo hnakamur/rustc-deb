@@ -1,2 +1,4 @@
 # Rust uses libraries that are not directly linked to libc
 rust binary: library-not-linked-against-libc
+
+rust binary: description-starts-with-package-name
