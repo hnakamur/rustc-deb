@@ -3,10 +3,15 @@ Section: devel
 Priority: extra
 Maintainer: Luca Bruno <lucab@debian.org>
 Build-Depends: debhelper (>= 9),
+               autotools-dev,
                curl,
-               python
-#              rust (>= 0.6), rust (< 0.7~)
-#              llvm
+               python,
+               pandoc,
+               nodejs,
+               po4a,
+               llvm-dev,
+               zlib1g-dev,
+               libedit-dev
 Standards-Version: 3.9.6
 Homepage: http://www.rust-lang.org/
 Vcs-Git: git://git.debian.org/collab-maint/rust.git
