@@ -28,6 +28,7 @@ RUST_TMP_PREFIX := $(DEB_DESTDIR)/$(RUST_PREFIX)
 COMMON_FLAGS = \
                --disable-manage-submodules \
                --mandir=/usr/share/man \
+               --enable-rpath \
                --prefix=/$(RUST_PREFIX)
 
 # TODO
