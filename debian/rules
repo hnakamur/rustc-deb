@@ -4,6 +4,11 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
+# When using sudo pbuilder, this will cause mk/install.mk to run sudo,
+# but we don't need sudo as a build-dep for the package if we unexport
+# the SUDO_USER variable.
+unexport SUDO_USER
+
 RUST_VERSION := $(shell dpkg-parsechangelog | egrep '^Version:' | cut -f 2 -d ' ' | cut -f 1 -d '-' | cut -f 1-2 -d .)
 RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(RUST_VERSION)
 DEB_DESTDIR := $(CURDIR)/debian/rust
