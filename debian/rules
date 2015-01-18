@@ -76,3 +76,5 @@ override_dh_auto_install:
 	dh_link $(RUST_PREFIX)/bin/rustdoc usr/bin/rustdoc-$(DEBIAN_RUST_VERSION)
 	dh_link usr/bin/rustdoc-$(DEBIAN_RUST_VERSION) usr/bin/rustdoc
 	dh_link usr/share/man/man1/rustdoc.1 usr/share/man/man1/rustdoc-$(DEBIAN_RUST_VERSION).1
+	dh_link $(RUST_PREFIX)/bin/rust-gdb usr/bin/rust-gdb-$(DEBIAN_RUST_VERSION)
+	dh_link usr/bin/rust-gdb-$(DEBIAN_RUST_VERSION) usr/bin/rust-gdb
