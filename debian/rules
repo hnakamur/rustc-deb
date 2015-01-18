@@ -59,9 +59,14 @@ override_dh_auto_configure:
 override_dh_auto_test:
 	true
 
+LD_TMP1 := $(RUST_TMP_PREFIX)/lib
+LD_TMP2 := $(LD_TMP1)/rustlib/i686-unknown-linux-gnu/lib
+LD_TMP3 := $(LD_TMP1)/rustlib/x86_64-unknown-linux-gnu/lib
+RUST_TMP_LD_PATH := $(LD_TMP1):$(LD_TMP2):$(LD_TMP3)
+
 override_dh_shlibdeps:
-	LD_LIBRARY_PATH=$(RUST_TMP_PREFIX)/lib:$(LD_LIBRARY_PATH) \
-		dh_shlibdeps -l$(RUST_TMP_PREFIX)/lib
+	LD_LIBRARY_PATH=$(RUST_TMP_LD_PATH):$(LD_LIBRARY_PATH) \
+		dh_shlibdeps -l$(RUST_TMP_LD_PATH)
 
 override_dh_auto_install:
 	dh_auto_install
