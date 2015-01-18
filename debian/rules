@@ -9,8 +9,18 @@
 # the SUDO_USER variable.
 unexport SUDO_USER
 
-RUST_VERSION := $(shell dpkg-parsechangelog | egrep '^Version:' | cut -f 2 -d ' ' | cut -f 1 -d '-' | cut -f 1-2 -d .)
-RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(RUST_VERSION)
+UPSTREAM_RUST_VERSION := \
+	$(shell dpkg-parsechangelog | \
+	egrep '^Version:' | \
+	cut -f 2 -d ' ' | \
+	cut -f 1 -d '-' | \
+	tr '~' -)
+DEBIAN_RUST_VERSION := \
+	$(shell echo $(UPSTREAM_RUST_VERSION) | \
+	cut -f 1 -d '-' | cut -f 1-2 -d .)
+DEBIAN_RUST_VERSION_TYPE := \
+	$(shell echo $(UPSTREAM_RUST_VERSION) | cut -f 2 -d '-')
+RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(DEBIAN_RUST_VERSION)
 DEB_DESTDIR := $(CURDIR)/debian/rust
 RUST_TMP_PREFIX := $(DEB_DESTDIR)/$(RUST_PREFIX)
 
@@ -55,9 +65,9 @@ override_dh_shlibdeps:
 
 override_dh_auto_install:
 	dh_auto_install
-	dh_link $(RUST_PREFIX)/bin/rustc usr/bin/rustc-$(RUST_VERSION)
-	dh_link usr/bin/rustc-$(RUST_VERSION) usr/bin/rustc
-	dh_link usr/share/man/man1/rustc.1 usr/share/man/man1/rustc-$(RUST_VERSION).1
-	dh_link $(RUST_PREFIX)/bin/rustdoc usr/bin/rustdoc-$(RUST_VERSION)
-	dh_link usr/bin/rustdoc-$(RUST_VERSION) usr/bin/rustdoc
-	dh_link usr/share/man/man1/rustdoc.1 usr/share/man/man1/rustdoc-$(RUST_VERSION).1
+	dh_link $(RUST_PREFIX)/bin/rustc usr/bin/rustc-$(DEBIAN_RUST_VERSION)
+	dh_link usr/bin/rustc-$(DEBIAN_RUST_VERSION) usr/bin/rustc
+	dh_link usr/share/man/man1/rustc.1 usr/share/man/man1/rustc-$(DEBIAN_RUST_VERSION).1
+	dh_link $(RUST_PREFIX)/bin/rustdoc usr/bin/rustdoc-$(DEBIAN_RUST_VERSION)
+	dh_link usr/bin/rustdoc-$(DEBIAN_RUST_VERSION) usr/bin/rustdoc
+	dh_link usr/share/man/man1/rustdoc.1 usr/share/man/man1/rustdoc-$(DEBIAN_RUST_VERSION).1
