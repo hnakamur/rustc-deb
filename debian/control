@@ -9,7 +9,6 @@ Build-Depends: debhelper (>= 9),
                pandoc,
                nodejs,
                po4a,
-               llvm-dev,
                zlib1g-dev,
                libedit-dev
 Standards-Version: 3.9.6
