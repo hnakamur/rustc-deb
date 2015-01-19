@@ -8,12 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct Foo(int, int);
+struct Foo(isize, isize);
 
 fn main() {
     let x = Foo(1, 2);
     match x {   //~ ERROR non-exhaustive
-        Foo(1, b) => println(fmt!("%d", b)),
-        Foo(2, b) => println(fmt!("%d", b))
+        Foo(1, b) => println!("{}", b),
+        Foo(2, b) => println!("{}", b)
     }
 }

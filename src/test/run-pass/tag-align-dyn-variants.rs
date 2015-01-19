@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,35 +8,36 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
+// ignore-linux #7340 fails on 32-bit Linux
+// ignore-macos #7340 fails on 32-bit macos
 
-use std::ptr;
+use std::mem;
 
-enum a_tag<A,B> {
-    varA(A),
-    varB(B)
+enum Tag<A,B> {
+    VarA(A),
+    VarB(B),
 }
 
-struct t_rec<A,B> {
+struct Rec<A,B> {
     chA: u8,
-    tA: a_tag<A,B>,
+    tA: Tag<A,B>,
     chB: u8,
-    tB: a_tag<A,B>
+    tB: Tag<A,B>,
 }
 
-fn mk_rec<A:Copy,B:Copy>(a: A, b: B) -> t_rec<A,B> {
-    return t_rec{ chA:0u8, tA:varA(a), chB:1u8, tB:varB(b) };
+fn mk_rec<A,B>(a: A, b: B) -> Rec<A,B> {
+    Rec { chA:0u8, tA:Tag::VarA(a), chB:1u8, tB:Tag::VarB(b) }
 }
 
 fn is_aligned<A>(amnt: uint, u: &A) -> bool {
-    let p = ptr::to_unsafe_ptr(u) as uint;
+    let p: uint = unsafe { mem::transmute(u) };
     return (p & (amnt-1u)) == 0u;
 }
 
-fn variant_data_is_aligned<A,B>(amnt: uint, u: &a_tag<A,B>) -> bool {
+fn variant_data_is_aligned<A,B>(amnt: uint, u: &Tag<A,B>) -> bool {
     match u {
-      &varA(ref a) => is_aligned(amnt, a),
-      &varB(ref b) => is_aligned(amnt, b)
+      &Tag::VarA(ref a) => is_aligned(amnt, a),
+      &Tag::VarB(ref b) => is_aligned(amnt, b)
     }
 }
 

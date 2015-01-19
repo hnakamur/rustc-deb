@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,28 +8,28 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test #5723
+// ignore-test #5723
 
-// Test that you cannot escape a borrowed pointer
+// Test that you cannot escape a reference
 // into a trait.
 
-struct ctxt { v: uint }
+struct ctxt { v: usize }
 
 trait get_ctxt {
-    fn get_ctxt(&self) -> &'self ctxt;
+    fn get_ctxt(&self) -> &'a ctxt;
 }
 
-struct has_ctxt<'self> { c: &'self ctxt }
+struct has_ctxt<'a> { c: &'a ctxt }
 
-impl<'self> get_ctxt for has_ctxt<'self> {
-    fn get_ctxt(&self) -> &'self ctxt { self.c }
+impl<'a> get_ctxt for has_ctxt<'a> {
+    fn get_ctxt(&self) -> &'a ctxt { self.c }
 }
 
 fn make_gc() -> @get_ctxt  {
-    let ctxt = ctxt { v: 22u };
+    let ctxt = ctxt { v: 22us };
     let hc = has_ctxt { c: &ctxt };
     return @hc as @get_ctxt;
-    //^~ ERROR source contains borrowed pointer
+    //~^ ERROR source contains reference
 }
 
 fn main() {

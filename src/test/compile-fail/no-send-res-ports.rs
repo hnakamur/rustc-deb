@@ -8,19 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::cell::Cell;
-use std::task;
+#![feature(unsafe_destructor)]
 
-struct Port<T>(@T);
+use std::thread::Thread;
+use std::rc::Rc;
+
+#[derive(Show)]
+struct Port<T>(Rc<T>);
 
 fn main() {
+    #[derive(Show)]
     struct foo {
       _x: Port<()>,
     }
 
     #[unsafe_destructor]
     impl Drop for foo {
-        fn drop(&self) {}
+        fn drop(&mut self) {}
     }
 
     fn foo(x: Port<()>) -> foo {
@@ -29,10 +33,12 @@ fn main() {
         }
     }
 
-    let x = Cell::new(foo(Port(@())));
+    let x = foo(Port(Rc::new(())));
 
-    do task::spawn {
-        let y = x.take();   //~ ERROR does not fulfill `Send`
-        error!(y);
-    }
+    Thread::spawn(move|| {
+        //~^ ERROR `core::marker::Send` is not implemented
+        //~^^ ERROR `core::marker::Send` is not implemented
+        let y = x;
+        println!("{:?}", y);
+    });
 }

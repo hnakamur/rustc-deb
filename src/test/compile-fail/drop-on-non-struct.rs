@@ -8,12 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-type Foo = @[u8];
-
-impl Drop for Foo {   //~ ERROR the Drop trait may only be implemented
-//~^ ERROR cannot provide an extension implementation
-    fn drop(&self) {
-        println("kaboom");
+impl<'a> Drop for &'a mut isize {
+    //~^ ERROR the Drop trait may only be implemented on structures
+    //~^^ ERROR E0117
+    fn drop(&mut self) {
+        println!("kaboom");
     }
 }
 

@@ -9,9 +9,9 @@
 // except according to those terms.
 
 fn main() {
-    let mut xs = ~[1, 2, 3, 4];
+    let mut xs: Vec<isize> = vec!();
 
-    for xs.mut_iter().advance |x| {
-        xs.push(1) //~ ERROR cannot borrow `xs` as mutable
+    for x in xs.iter_mut() {
+        xs.push(1is) //~ ERROR cannot borrow `xs`
     }
 }

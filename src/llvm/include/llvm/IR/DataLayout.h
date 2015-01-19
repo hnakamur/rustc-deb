@@ -22,8 +22,13 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Type.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/DataTypes.h"
+
+// this needs to be outside of the namespace, to avoid conflict with llvm-c decl
+typedef struct LLVMOpaqueTargetData *LLVMTargetDataRef;
 
 namespace llvm {
 
@@ -32,6 +37,7 @@ class Type;
 class IntegerType;
 class StructType;
 class StructLayout;
+class Triple;
 class GlobalVariable;
 class LLVMContext;
 template<typename T>
@@ -43,8 +49,7 @@ enum AlignTypeEnum {
   INTEGER_ALIGN = 'i',               ///< Integer type alignment
   VECTOR_ALIGN = 'v',                ///< Vector type alignment
   FLOAT_ALIGN = 'f',                 ///< Floating point type alignment
-  AGGREGATE_ALIGN = 'a',             ///< Aggregate alignment
-  STACK_ALIGN = 's'                  ///< Stack objects alignment
+  AGGREGATE_ALIGN = 'a'              ///< Aggregate alignment
 };
 
 /// Layout alignment element.
@@ -76,38 +81,52 @@ struct LayoutAlignElem {
 struct PointerAlignElem {
   unsigned            ABIAlign;       ///< ABI alignment for this type/bitw
   unsigned            PrefAlign;      ///< Pref. alignment for this type/bitw
-  uint32_t            TypeBitWidth;   ///< Type bit width
+  uint32_t            TypeByteWidth;  ///< Type byte width
   uint32_t            AddressSpace;   ///< Address space for the pointer type
 
   /// Initializer
-  static PointerAlignElem get(uint32_t addr_space, unsigned abi_align,
-                             unsigned pref_align, uint32_t bit_width);
+  static PointerAlignElem get(uint32_t AddressSpace, unsigned ABIAlign,
+                             unsigned PrefAlign, uint32_t TypeByteWidth);
   /// Equality predicate
   bool operator==(const PointerAlignElem &rhs) const;
 };
 
-
-/// DataLayout - This class holds a parsed version of the target data layout
-/// string in a module and provides methods for querying it.  The target data
-/// layout string is specified *by the target* - a frontend generating LLVM IR
-/// is required to generate the right target data for the target being codegen'd
-/// to.  If some measure of portability is desired, an empty string may be
-/// specified in the module.
-class DataLayout : public ImmutablePass {
+/// This class holds a parsed version of the target data layout string in a
+/// module and provides methods for querying it. The target data layout string
+/// is specified *by the target* - a frontend generating LLVM IR is required to
+/// generate the right target data for the target being codegen'd to.
+class DataLayout {
 private:
   bool          LittleEndian;          ///< Defaults to false
   unsigned      StackNaturalAlign;     ///< Stack natural alignment
+
+  enum ManglingModeT {
+    MM_None,
+    MM_ELF,
+    MM_MachO,
+    MM_WINCOFF,
+    MM_Mips
+  };
+  ManglingModeT ManglingMode;
 
   SmallVector<unsigned char, 8> LegalIntWidths; ///< Legal Integers.
 
   /// Alignments - Where the primitive type alignment data is stored.
   ///
-  /// @sa init().
+  /// @sa reset().
   /// @note Could support multiple size pointer alignments, e.g., 32-bit
   /// pointers vs. 64-bit pointers by extending LayoutAlignment, but for now,
   /// we don't.
   SmallVector<LayoutAlignElem, 16> Alignments;
-  DenseMap<unsigned, PointerAlignElem> Pointers;
+  typedef SmallVector<PointerAlignElem, 8> PointersTy;
+  PointersTy Pointers;
+
+  PointersTy::const_iterator
+  findPointerLowerBound(uint32_t AddressSpace) const {
+    return const_cast<DataLayout *>(this)->findPointerLowerBound(AddressSpace);
+  }
+
+  PointersTy::iterator findPointerLowerBound(uint32_t AddressSpace);
 
   /// InvalidAlignmentElem - This member is a signal that a requested alignment
   /// type and bit width were not found in the SmallVector.
@@ -127,8 +146,8 @@ private:
                             bool ABIAlign, Type *Ty) const;
 
   //! Set/initialize pointer alignments
-  void setPointerAlignment(uint32_t addr_space, unsigned abi_align,
-      unsigned pref_align, uint32_t bit_width);
+  void setPointerAlignment(uint32_t AddrSpace, unsigned ABIAlign,
+                           unsigned PrefAlign, uint32_t TypeByteWidth);
 
   //! Internal helper method that returns requested alignment for type.
   unsigned getAlignment(Type *Ty, bool abi_or_pref) const;
@@ -153,41 +172,40 @@ private:
   /// malformed.
   void parseSpecifier(StringRef LayoutDescription);
 
-public:
-  /// Default ctor.
-  ///
-  /// @note This has to exist, because this is a pass, but it should never be
-  /// used.
-  DataLayout();
+  // Free all internal data structures.
+  void clear();
 
-  /// Constructs a DataLayout from a specification string. See init().
-  explicit DataLayout(StringRef LayoutDescription)
-    : ImmutablePass(ID) {
-    init(LayoutDescription);
+public:
+  /// Constructs a DataLayout from a specification string. See reset().
+  explicit DataLayout(StringRef LayoutDescription) : LayoutMap(nullptr) {
+    reset(LayoutDescription);
   }
 
   /// Initialize target data from properties stored in the module.
   explicit DataLayout(const Module *M);
 
-  DataLayout(const DataLayout &TD) :
-    ImmutablePass(ID),
-    LittleEndian(TD.isLittleEndian()),
-    StackNaturalAlign(TD.StackNaturalAlign),
-    LegalIntWidths(TD.LegalIntWidths),
-    Alignments(TD.Alignments),
-    Pointers(TD.Pointers),
-    LayoutMap(0)
-  { }
+  void init(const Module *M);
+
+  DataLayout(const DataLayout &DL) : LayoutMap(nullptr) { *this = DL; }
+
+  DataLayout &operator=(const DataLayout &DL) {
+    clear();
+    LittleEndian = DL.isLittleEndian();
+    StackNaturalAlign = DL.StackNaturalAlign;
+    ManglingMode = DL.ManglingMode;
+    LegalIntWidths = DL.LegalIntWidths;
+    Alignments = DL.Alignments;
+    Pointers = DL.Pointers;
+    return *this;
+  }
+
+  bool operator==(const DataLayout &Other) const;
+  bool operator!=(const DataLayout &Other) const { return !(*this == Other); }
 
   ~DataLayout();  // Not virtual, do not subclass this class
 
-  /// DataLayout is an immutable pass, but holds state.  This allows the pass
-  /// manager to clear its mutable state.
-  bool doFinalization(Module &M);
-
-  /// Parse a data layout string (with fallback to default values). Ensure that
-  /// the data layout pass is registered.
-  void init(StringRef LayoutDescription);
+  /// Parse a data layout string (with fallback to default values).
+  void reset(StringRef LayoutDescription);
 
   /// Layout endianness...
   bool isLittleEndian() const { return LittleEndian; }
@@ -206,8 +224,8 @@ public:
   /// The width is specified in bits.
   ///
   bool isLegalInteger(unsigned Width) const {
-    for (unsigned i = 0, e = (unsigned)LegalIntWidths.size(); i != e; ++i)
-      if (LegalIntWidths[i] == Width)
+    for (unsigned LegalIntWidth : LegalIntWidths)
+      if (LegalIntWidth == Width)
         return true;
     return false;
   }
@@ -221,13 +239,57 @@ public:
     return (StackNaturalAlign != 0) && (Align > StackNaturalAlign);
   }
 
+  bool hasMicrosoftFastStdCallMangling() const {
+    return ManglingMode == MM_WINCOFF;
+  }
+
+  bool hasLinkerPrivateGlobalPrefix() const {
+    return ManglingMode == MM_MachO;
+  }
+
+  const char *getLinkerPrivateGlobalPrefix() const {
+    if (ManglingMode == MM_MachO)
+      return "l";
+    return getPrivateGlobalPrefix();
+  }
+
+  char getGlobalPrefix() const {
+    switch (ManglingMode) {
+    case MM_None:
+    case MM_ELF:
+    case MM_Mips:
+      return '\0';
+    case MM_MachO:
+    case MM_WINCOFF:
+      return '_';
+    }
+    llvm_unreachable("invalid mangling mode");
+  }
+
+  const char *getPrivateGlobalPrefix() const {
+    switch (ManglingMode) {
+    case MM_None:
+      return "";
+    case MM_ELF:
+      return ".L";
+    case MM_Mips:
+      return "$";
+    case MM_MachO:
+    case MM_WINCOFF:
+      return "L";
+    }
+    llvm_unreachable("invalid mangling mode");
+  }
+
+  static const char *getManglingComponent(const Triple &T);
+
   /// fitsInLegalInteger - This function returns true if the specified type fits
   /// in a native integer type supported by the CPU.  For example, if the CPU
   /// only supports i32 as a native integer type, then i27 fits in a legal
-  // integer type but i45 does not.
+  /// integer type but i45 does not.
   bool fitsInLegalInteger(unsigned Width) const {
-    for (unsigned i = 0, e = (unsigned)LegalIntWidths.size(); i != e; ++i)
-      if (Width <= LegalIntWidths[i])
+    for (unsigned LegalIntWidth : LegalIntWidths)
+      if (Width <= LegalIntWidth)
         return true;
     return false;
   }
@@ -235,39 +297,36 @@ public:
   /// Layout pointer alignment
   /// FIXME: The defaults need to be removed once all of
   /// the backends/clients are updated.
-  unsigned getPointerABIAlignment(unsigned AS = 0)  const {
-    DenseMap<unsigned, PointerAlignElem>::const_iterator val = Pointers.find(AS);
-    if (val == Pointers.end()) {
-      val = Pointers.find(0);
-    }
-    return val->second.ABIAlign;
-  }
+  unsigned getPointerABIAlignment(unsigned AS = 0) const;
+
   /// Return target's alignment for stack-based pointers
   /// FIXME: The defaults need to be removed once all of
   /// the backends/clients are updated.
-  unsigned getPointerPrefAlignment(unsigned AS = 0) const {
-    DenseMap<unsigned, PointerAlignElem>::const_iterator val = Pointers.find(AS);
-    if (val == Pointers.end()) {
-      val = Pointers.find(0);
-    }
-    return val->second.PrefAlign;
-  }
+  unsigned getPointerPrefAlignment(unsigned AS = 0) const;
+
   /// Layout pointer size
   /// FIXME: The defaults need to be removed once all of
   /// the backends/clients are updated.
-  unsigned getPointerSize(unsigned AS = 0)          const {
-    DenseMap<unsigned, PointerAlignElem>::const_iterator val = Pointers.find(AS);
-    if (val == Pointers.end()) {
-      val = Pointers.find(0);
-    }
-    return val->second.TypeBitWidth;
-  }
+  unsigned getPointerSize(unsigned AS = 0) const;
+
   /// Layout pointer size, in bits
   /// FIXME: The defaults need to be removed once all of
   /// the backends/clients are updated.
-  unsigned getPointerSizeInBits(unsigned AS = 0)    const {
+  unsigned getPointerSizeInBits(unsigned AS = 0) const {
     return getPointerSize(AS) * 8;
   }
+
+  /// Layout pointer size, in bits, based on the type.  If this function is
+  /// called with a pointer type, then the type size of the pointer is returned.
+  /// If this function is called with a vector of pointers, then the type size
+  /// of the pointer is returned.  This should only be called with a pointer or
+  /// vector of pointers.
+  unsigned getPointerTypeSizeInBits(Type *) const;
+
+  unsigned getPointerTypeSize(Type *Ty) const {
+    return getPointerTypeSizeInBits(Ty) / 8;
+  }
+
   /// Size examples:
   ///
   /// Type        SizeInBits  StoreSizeInBits  AllocSizeInBits[*]
@@ -329,10 +388,6 @@ public:
   /// an integer type of the specified bitwidth.
   unsigned getABIIntegerTypeAlignment(unsigned BitWidth) const;
 
-  /// getCallFrameTypeAlignment - Return the minimum ABI-required alignment
-  /// for the specified type when it is part of a call frame.
-  unsigned getCallFrameTypeAlignment(Type *Ty) const;
-
   /// getPrefTypeAlignment - Return the preferred stack/global alignment for
   /// the specified type.  This is always at least as good as the ABI alignment.
   unsigned getPrefTypeAlignment(Type *Ty) const;
@@ -349,6 +404,21 @@ public:
   /// least as big as that of a pointer of the given pointer (vector of pointer)
   /// type.
   Type *getIntPtrType(Type *) const;
+
+  /// getSmallestLegalIntType - Return the smallest integer type with size at
+  /// least as big as Width bits.
+  Type *getSmallestLegalIntType(LLVMContext &C, unsigned Width = 0) const;
+
+  /// getLargestLegalIntType - Return the largest legal integer type, or null if
+  /// none are set.
+  Type *getLargestLegalIntType(LLVMContext &C) const {
+    unsigned LargestSize = getLargestLegalIntTypeSize();
+    return (LargestSize == 0) ? nullptr : Type::getIntNTy(C, LargestSize);
+  }
+
+  /// getLargestLegalIntTypeSize - Return the size of largest legal integer
+  /// type size, or 0 if none are set.
+  unsigned getLargestLegalIntTypeSize() const;
 
   /// getIndexedOffset - return the offset from the beginning of the type for
   /// the specified indices.  This is used to implement getelementptr.
@@ -378,8 +448,30 @@ public:
     assert((Alignment & (Alignment-1)) == 0 && "Alignment must be power of 2!");
     return (Val + (Alignment-1)) & ~UIntTy(Alignment-1);
   }
+};
+
+inline DataLayout *unwrap(LLVMTargetDataRef P) {
+   return reinterpret_cast<DataLayout*>(P);
+}
+
+inline LLVMTargetDataRef wrap(const DataLayout *P) {
+   return reinterpret_cast<LLVMTargetDataRef>(const_cast<DataLayout*>(P));
+}
+
+class DataLayoutPass : public ImmutablePass {
+  DataLayout DL;
+
+public:
+  /// This has to exist, because this is a pass, but it should never be used.
+  DataLayoutPass();
+  ~DataLayoutPass();
+
+  const DataLayout &getDataLayout() const { return DL; }
 
   static char ID; // Pass identification, replacement for typeid
+
+  bool doFinalization(Module &M) override;
+  bool doInitialization(Module &M) override;
 };
 
 /// StructLayout - used to lazily calculate structure layout information for a
@@ -420,8 +512,51 @@ public:
 
 private:
   friend class DataLayout;   // Only DataLayout can create this class
-  StructLayout(StructType *ST, const DataLayout &TD);
+  StructLayout(StructType *ST, const DataLayout &DL);
 };
+
+
+// The implementation of this method is provided inline as it is particularly
+// well suited to constant folding when called on a specific Type subclass.
+inline uint64_t DataLayout::getTypeSizeInBits(Type *Ty) const {
+  assert(Ty->isSized() && "Cannot getTypeInfo() on a type that is unsized!");
+  switch (Ty->getTypeID()) {
+  case Type::LabelTyID:
+    return getPointerSizeInBits(0);
+  case Type::PointerTyID:
+    return getPointerSizeInBits(Ty->getPointerAddressSpace());
+  case Type::ArrayTyID: {
+    ArrayType *ATy = cast<ArrayType>(Ty);
+    return ATy->getNumElements() *
+           getTypeAllocSizeInBits(ATy->getElementType());
+  }
+  case Type::StructTyID:
+    // Get the layout annotation... which is lazily created on demand.
+    return getStructLayout(cast<StructType>(Ty))->getSizeInBits();
+  case Type::IntegerTyID:
+    return Ty->getIntegerBitWidth();
+  case Type::HalfTyID:
+    return 16;
+  case Type::FloatTyID:
+    return 32;
+  case Type::DoubleTyID:
+  case Type::X86_MMXTyID:
+    return 64;
+  case Type::PPC_FP128TyID:
+  case Type::FP128TyID:
+    return 128;
+    // In memory objects this is always aligned to a higher boundary, but
+  // only 80 bits contain information.
+  case Type::X86_FP80TyID:
+    return 80;
+  case Type::VectorTyID: {
+    VectorType *VTy = cast<VectorType>(Ty);
+    return VTy->getNumElements() * getTypeSizeInBits(VTy->getElementType());
+  }
+  default:
+    llvm_unreachable("DataLayout::getTypeSizeInBits(): Unsupported type");
+  }
+}
 
 } // End llvm namespace
 

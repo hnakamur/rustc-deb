@@ -8,23 +8,27 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct X(Either<(uint,uint),extern fn()>);
+enum Either<T, U> { Left(T), Right(U) }
+
+struct X(Either<(usize,usize), fn()>);
 
 impl X {
-    pub fn with(&self, blk: &fn(x: &Either<(uint,uint),extern fn()>)) {
-        blk(&**self)
+    pub fn with<F>(&self, blk: F) where F: FnOnce(&Either<(usize, usize), fn()>) {
+        let X(ref e) = *self;
+        blk(e)
     }
 }
 
 fn main() {
-    let mut x = X(Right(main));
-    do (&mut x).with |opt| {
-        match opt {
-            &Right(ref f) => {
-                x = X(Left((0,0))); //~ ERROR cannot assign to `x`
-                (*f)()
-            },
-            _ => fail!()
-        }
-    }
+    let mut x = X(Either::Right(main as fn()));
+    (&mut x).with(
+        |opt| { //~ ERROR cannot borrow `x` as mutable more than once at a time
+            match opt {
+                &Either::Right(ref f) => {
+                    x = X(Either::Left((0, 0)));
+                    (*f)()
+                },
+                _ => panic!()
+            }
+        })
 }

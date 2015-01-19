@@ -8,11 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[allow(default_methods)];
 
 trait Foo {
     fn f(&self) {
-        println("Hello!");
+        println!("Hello!");
         self.g();
     }
     fn g(&self);
@@ -24,7 +23,7 @@ struct A {
 
 impl Foo for A {
     fn g(&self) {
-        println("Goodbye!");
+        println!("Goodbye!");
     }
 }
 

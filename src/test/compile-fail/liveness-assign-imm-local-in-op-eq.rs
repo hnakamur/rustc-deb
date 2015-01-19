@@ -9,10 +9,10 @@
 // except according to those terms.
 
 fn test() {
-    let v: int;
+    let v: isize;
     v = 2;  //~ NOTE prior assignment occurs here
     v += 1; //~ ERROR re-assignment of immutable variable
-    copy v;
+    v.clone();
 }
 
 fn main() {

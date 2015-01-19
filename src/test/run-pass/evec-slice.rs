@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(dead_assignment)]
+
 pub fn main() {
     let x : &[int] = &[1,2,3,4,5];
-    let mut z = &[1,2,3,4,5];
+    let mut z : &[int] = &[1,2,3,4,5];
     z = x;
     assert_eq!(z[0], 1);
     assert_eq!(z[4], 5);
@@ -20,7 +22,7 @@ pub fn main() {
     let c : &[int] = &[2,2,2,2,3];
     let cc : &[int] = &[2,2,2,2,2,2];
 
-    debug!(a);
+    println!("{:?}", a);
 
     assert!(a < b);
     assert!(a <= b);
@@ -28,7 +30,7 @@ pub fn main() {
     assert!(b >= a);
     assert!(b > a);
 
-    debug!(b);
+    println!("{:?}", b);
 
     assert!(b < c);
     assert!(b <= c);
@@ -42,7 +44,7 @@ pub fn main() {
     assert!(c >= a);
     assert!(c > a);
 
-    debug!(c);
+    println!("{:?}", c);
 
     assert!(a < cc);
     assert!(a <= cc);
@@ -50,5 +52,5 @@ pub fn main() {
     assert!(cc >= a);
     assert!(cc > a);
 
-    debug!(cc);
+    println!("{:?}", cc);
 }

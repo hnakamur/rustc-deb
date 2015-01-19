@@ -12,16 +12,16 @@
 // an impl against a trait
 
 trait A {
-  fn b<C:Copy,D>(&self, x: C) -> C;
+  fn b<C:Clone,D>(&self, x: C) -> C;
 }
 
 struct E {
- f: int
+ f: isize
 }
 
 impl A for E {
   // n.b. The error message is awful -- see #3404
-  fn b<F:Copy,G>(&self, _x: G) -> G { fail!() } //~ ERROR method `b` has an incompatible type
+  fn b<F:Clone,G>(&self, _x: G) -> G { panic!() } //~ ERROR method `b` has an incompatible type
 }
 
 fn main() {}

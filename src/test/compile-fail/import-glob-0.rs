@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -13,10 +13,10 @@
 use module_of_many_things::*;
 
 mod module_of_many_things {
-    pub fn f1() { debug!("f1"); }
-    pub fn f2() { debug!("f2"); }
-    fn f3() { debug!("f3"); }
-    pub fn f4() { debug!("f4"); }
+    pub fn f1() { println!("f1"); }
+    pub fn f2() { println!("f2"); }
+    fn f3() { println!("f3"); }
+    pub fn f4() { println!("f4"); }
 }
 
 

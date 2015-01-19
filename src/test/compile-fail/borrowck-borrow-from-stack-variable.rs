@@ -13,12 +13,16 @@ struct Foo {
   bar2: Bar
 }
 
+impl Copy for Foo {}
+
 struct Bar {
-  int1: int,
-  int2: int,
+  int1: isize,
+  int2: isize,
 }
 
-fn make_foo() -> Foo { fail!() }
+impl Copy for Bar {}
+
+fn make_foo() -> Foo { panic!() }
 
 fn borrow_same_field_twice_mut_mut() {
     let mut foo = make_foo();

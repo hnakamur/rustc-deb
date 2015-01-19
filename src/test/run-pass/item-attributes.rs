@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -11,16 +11,13 @@
 // These are attributes of the implicit crate. Really this just needs to parse
 // for completeness since .rs files linked from .rc files support this
 // notation to specify their module's attributes
-#[attr1 = "val"];
-#[attr2 = "val"];
-#[attr3];
-#[attr4(attr5)];
+#![allow(unused_attribute)]
+#![attr1 = "val"]
+#![attr2 = "val"]
+#![attr3]
+#![attr4(attr5)]
 
-// Special linkage attributes for the crate
-#[link(name = "extra",
-       vers = "0.1",
-       uuid = "122bed0b-c19b-4b82-b0b7-7ae8aead7297",
-       url = "http://rust-lang.org/src/extra")];
+#![crate_id="foobar#0.1"]
 
 // These are attributes of the following mod
 #[attr1 = "val"]
@@ -39,8 +36,7 @@ mod test_single_attr_outer {
 
     pub mod rustrt {
         #[attr = "val"]
-        #[abi = "cdecl"]
-        pub extern {}
+        extern {}
     }
 }
 
@@ -60,8 +56,7 @@ mod test_multi_attr_outer {
     pub mod rustrt {
         #[attr1 = "val"]
         #[attr2 = "val"]
-        #[abi = "cdecl"]
-        pub extern {}
+        extern {}
     }
 
     #[attr1 = "val"]
@@ -83,8 +78,7 @@ mod test_stmt_single_attr_outer {
 
         mod rustrt {
             #[attr = "val"]
-            #[abi = "cdecl"]
-            pub extern {
+            extern {
             }
         }
     }
@@ -101,34 +95,31 @@ mod test_stmt_multi_attr_outer {
         #[attr2 = "val"]
         fn f() { }
 
-        /* FIXME: Issue #493
         #[attr1 = "val"]
         #[attr2 = "val"]
         mod mod1 {
         }
 
-        pub mod rustrt {
+        mod rustrt {
             #[attr1 = "val"]
             #[attr2 = "val"]
-            #[abi = "cdecl"]
-            pub extern {
+            extern {
             }
         }
-        */
     }
 }
 
 mod test_attr_inner {
     pub mod m {
         // This is an attribute of mod m
-        #[attr = "val"];
+        #![attr = "val"]
     }
 }
 
 mod test_attr_inner_then_outer {
     pub mod m {
         // This is an attribute of mod m
-        #[attr = "val"];
+        #![attr = "val"]
         // This is an attribute of fn f
         #[attr = "val"]
         fn f() { }
@@ -138,8 +129,8 @@ mod test_attr_inner_then_outer {
 mod test_attr_inner_then_outer_multi {
     pub mod m {
         // This is an attribute of mod m
-        #[attr1 = "val"];
-        #[attr2 = "val"];
+        #![attr1 = "val"]
+        #![attr2 = "val"]
         // This is an attribute of fn f
         #[attr1 = "val"]
         #[attr2 = "val"]
@@ -148,10 +139,8 @@ mod test_attr_inner_then_outer_multi {
 }
 
 mod test_distinguish_syntax_ext {
-    extern mod extra;
-
     pub fn f() {
-        fmt!("test%s", ~"s");
+        format!("test{}", "s");
         #[attr = "val"]
         fn g() { }
     }
@@ -167,33 +156,34 @@ mod test_other_forms {
 
 mod test_foreign_items {
     pub mod rustrt {
-        use std::libc;
+        extern crate libc;
 
-        #[abi = "cdecl"]
-        pub extern {
-            #[attr];
+        extern {
+            #![attr]
 
             #[attr]
-            fn get_task_id() -> libc::intptr_t;
+            fn rust_get_test_int() -> libc::intptr_t;
         }
     }
 }
 
-mod test_literals {
-    #[str = "s"];
-    #[char = 'c'];
-    #[int = 100];
-    #[uint = 100u];
-    #[mach_int = 100u32];
-    #[float = 1.0];
-    #[mach_float = 1.0f32];
-    #[nil = ()];
-    #[bool = true];
+
+// FIXME #623 - these aren't supported yet
+/*mod test_literals {
+    #![str = "s"]
+    #![char = 'c']
+    #![int = 100]
+    #![uint = 100u]
+    #![mach_int = 100u32]
+    #![float = 1.0]
+    #![mach_float = 1.0f32]
+    #![nil = ()]
+    #![bool = true]
     mod m {}
-}
+}*/
 
 fn test_fn_inner() {
-    #[inner_fn_attr];
+    #![inner_fn_attr]
 }
 
 pub fn main() { }

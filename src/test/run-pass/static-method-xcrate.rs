@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,16 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
 // aux-build:static-methods-crate.rs
 
-extern mod static_methods_crate;
+extern crate static_methods_crate;
 
 use static_methods_crate::read;
 
 pub fn main() {
-    let result: int = read(~"5");
+    let result: int = read("5".to_string());
     assert_eq!(result, 5);
-    assert_eq!(read::readMaybe(~"false"), Some(false));
-    assert_eq!(read::readMaybe(~"foo"), None::<bool>);
+    assert_eq!(read::readMaybe("false".to_string()), Some(false));
+    assert_eq!(read::readMaybe("foo".to_string()), None::<bool>);
 }

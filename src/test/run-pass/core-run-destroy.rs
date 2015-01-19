@@ -1,4 +1,4 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,92 +8,99 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
+// ignore-pretty
 // compile-flags:--test
 
 // NB: These tests kill child processes. Valgrind sees these children as leaking
 // memory, which makes for some *confusing* logs. That's why these are here
 // instead of in std.
 
-use std::libc;
-use std::os;
-use std::run::*;
-use std::run;
+#![reexport_test_harness_main = "test_main"]
+
+extern crate libc;
+
+use std::io::{Process, Command, timer};
+use std::time::Duration;
 use std::str;
+use std::sync::mpsc::channel;
+use std::thread::Thread;
 
-#[test]
+macro_rules! succeed { ($e:expr) => (
+    match $e { Ok(..) => {}, Err(e) => panic!("panic: {}", e) }
+) }
+
 fn test_destroy_once() {
-    let mut p = run::Process::new("echo", [], run::ProcessOptions::new());
-    p.destroy(); // this shouldn't crash (and nor should the destructor)
+    let mut p = sleeper();
+    match p.signal_exit() {
+        Ok(()) => {}
+        Err(e) => panic!("error: {}", e),
+    }
 }
 
-#[test]
+#[cfg(unix)]
+pub fn sleeper() -> Process {
+    Command::new("sleep").arg("1000").spawn().unwrap()
+}
+#[cfg(windows)]
+pub fn sleeper() -> Process {
+    // There's a `timeout` command on windows, but it doesn't like having
+    // its output piped, so instead just ping ourselves a few times with
+    // gaps in between so we're sure this process is alive for awhile
+    Command::new("ping").arg("127.0.0.1").arg("-n").arg("1000").spawn().unwrap()
+}
+
 fn test_destroy_twice() {
-    let mut p = run::Process::new("echo", [], run::ProcessOptions::new());
-    p.destroy(); // this shouldnt crash...
-    p.destroy(); // ...and nor should this (and nor should the destructor)
+    let mut p = sleeper();
+    succeed!(p.signal_exit()); // this shouldnt crash...
+    let _ = p.signal_exit(); // ...and nor should this (and nor should the destructor)
 }
 
-fn test_destroy_actually_kills(force: bool) {
+pub fn test_destroy_actually_kills(force: bool) {
+    use std::io::process::{Command, ProcessOutput, ExitStatus, ExitSignal};
+    use std::io::timer;
+    use libc;
+    use std::str;
 
-    #[cfg(unix)]
+    #[cfg(all(unix,not(target_os="android")))]
     static BLOCK_COMMAND: &'static str = "cat";
+
+    #[cfg(all(unix,target_os="android"))]
+    static BLOCK_COMMAND: &'static str = "/system/bin/cat";
 
     #[cfg(windows)]
     static BLOCK_COMMAND: &'static str = "cmd";
 
-    #[cfg(unix,not(target_os="android"))]
-    fn process_exists(pid: libc::pid_t) -> bool {
-        let run::ProcessOutput {output, _} = run::process_output("ps", [~"-p", pid.to_str()]);
-        str::from_bytes(output).contains(pid.to_str())
-    }
-
-    #[cfg(unix,target_os="android")]
-    fn process_exists(pid: libc::pid_t) -> bool {
-        let run::ProcessOutput {output, _} = run::process_output("/system/bin/ps", [pid.to_str()]);
-        str::from_bytes(output).contains(~"root")
-    }
-
-    #[cfg(windows)]
-    fn process_exists(pid: libc::pid_t) -> bool {
-
-        use std::libc::types::os::arch::extra::DWORD;
-        use std::libc::funcs::extra::kernel32::{CloseHandle, GetExitCodeProcess, OpenProcess};
-        use std::libc::consts::os::extra::{FALSE, PROCESS_QUERY_INFORMATION, STILL_ACTIVE };
-
-        unsafe {
-            let proc = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid as DWORD);
-            if proc.is_null() {
-                return false;
-            }
-            // proc will be non-null if the process is alive, or if it died recently
-            let mut status = 0;
-            GetExitCodeProcess(proc, &mut status);
-            CloseHandle(proc);
-            return status == STILL_ACTIVE;
-        }
-    }
-
     // this process will stay alive indefinitely trying to read from stdin
-    let mut p = run::Process::new(BLOCK_COMMAND, [], run::ProcessOptions::new());
+    let mut p = Command::new(BLOCK_COMMAND).spawn().unwrap();
 
-    assert!(process_exists(p.get_id()));
+    assert!(p.signal(0).is_ok());
 
     if force {
-        p.force_destroy();
+        p.signal_kill().unwrap();
     } else {
-        p.destroy();
+        p.signal_exit().unwrap();
     }
 
-    assert!(!process_exists(p.get_id()));
+    // Don't let this test time out, this should be quick
+    let (tx, rx1) = channel();
+    let mut t = timer::Timer::new().unwrap();
+    let rx2 = t.oneshot(Duration::milliseconds(1000));
+    Thread::spawn(move|| {
+        select! {
+            _ = rx2.recv() => unsafe { libc::exit(1) },
+            _ = rx1.recv() => {}
+        }
+    });
+    match p.wait().unwrap() {
+        ExitStatus(..) => panic!("expected a signal"),
+        ExitSignal(..) => tx.send(()).unwrap(),
+    }
 }
 
-#[test]
 fn test_unforced_destroy_actually_kills() {
     test_destroy_actually_kills(false);
 }
 
-#[test]
 fn test_forced_destroy_actually_kills() {
     test_destroy_actually_kills(true);
 }

@@ -8,14 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
-use std::task;
+use std::thread::Thread;
 
 pub fn main() {
-    task::spawn(|| child(~"Hello") );
+    let _t = Thread::spawn(move|| child("Hello".to_string()) );
 }
 
-fn child(s: ~str) {
+fn child(_s: String) {
 
 }

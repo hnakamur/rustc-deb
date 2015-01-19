@@ -12,11 +12,11 @@
 
 fn a() { }
 
-fn b() { fail!(); }
+fn b() { panic!(); }
 
 fn main() {
-    let x = ~[0];
+    let _x = vec!(0i);
     a();
-    let y = ~[0];
+    let _y = vec!(0i);
     b();
 }

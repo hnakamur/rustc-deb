@@ -1,4 +1,4 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -9,31 +9,41 @@
 // except according to those terms.
 
 // This test is brittle!
-// xfail-pretty - the pretty tests lose path information, breaking include!
+// ignore-pretty - the pretty tests lose path information, breaking include!
 
 pub mod m1 {
     pub mod m2 {
-        pub fn where_am_i() -> ~str { (module_path!()).to_owned() }
+        pub fn where_am_i() -> String {
+            (module_path!()).to_string()
+        }
     }
 }
 
-macro_rules! indirect_line( () => ( line!() ) )
+macro_rules! indirect_line { () => ( line!() ) }
 
 pub fn main() {
-    assert_eq!(line!(), 23);
-    //assert!((col!() == 11));
-    assert_eq!(indirect_line!(), 25);
-    assert!((file!().to_owned().ends_with(~"syntax-extension-source-utils.rs")));
-    assert_eq!(stringify!((2*3) + 5).to_owned(), ~"( 2 * 3 ) + 5");
-    assert!(include!("syntax-extension-source-utils-files/includeme.fragment").to_owned()
-           == ~"victory robot 6");
+    assert_eq!(line!(), 25);
+    //assert!((column!() == 11));
+    assert_eq!(indirect_line!(), 27);
+    assert!((file!().ends_with("syntax-extension-source-utils.rs")));
+    assert_eq!(stringify!((2*3) + 5).to_string(), "( 2 * 3 ) + 5".to_string());
+    assert!(include!("syntax-extension-source-utils-files/includeme.\
+                      fragment").to_string()
+           == "victory robot 6".to_string());
 
     assert!(
-        include_str!("syntax-extension-source-utils-files/includeme.fragment").to_owned()
-        .starts_with(~"/* this is for "));
+        include_str!("syntax-extension-source-utils-files/includeme.\
+                      fragment").to_string()
+        .as_slice()
+        .starts_with("/* this is for "));
     assert!(
-        include_bin!("syntax-extension-source-utils-files/includeme.fragment")
+        include_bytes!("syntax-extension-source-utils-files/includeme.fragment")
         [1] == (42 as u8)); // '*'
     // The Windows tests are wrapped in an extra module for some reason
-    assert!((m1::m2::where_am_i().ends_with(~"m1::m2")));
+    assert!((m1::m2::where_am_i().as_slice().ends_with("m1::m2")));
+
+    assert!(match (45, "( 2 * 3 ) + 5") {
+        (line!(), stringify!((2*3) + 5)) => true,
+        _ => false
+    })
 }

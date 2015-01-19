@@ -8,25 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Operations and constants for `i64`
+//! Operations and constants for signed 64-bits integers (`i64` type)
 
-use num::BitCount;
-use unstable::intrinsics;
+#![stable]
+#![doc(primitive = "i64")]
 
-pub use self::generated::*;
+pub use core::i64::{BITS, BYTES, MIN, MAX};
 
-int_module!(i64, 64)
-
-impl BitCount for i64 {
-    /// Counts the number of bits set. Wraps LLVM's `ctpop` intrinsic.
-    #[inline]
-    fn population_count(&self) -> i64 { unsafe { intrinsics::ctpop64(*self) } }
-
-    /// Counts the number of leading zeros. Wraps LLVM's `ctlz` intrinsic.
-    #[inline]
-    fn leading_zeros(&self) -> i64 { unsafe { intrinsics::ctlz64(*self) } }
-
-    /// Counts the number of trailing zeros. Wraps LLVM's `cttz` intrinsic.
-    #[inline]
-    fn trailing_zeros(&self) -> i64 { unsafe { intrinsics::cttz64(*self) } }
-}
+int_module! { i64 }

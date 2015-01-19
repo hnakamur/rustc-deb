@@ -8,32 +8,36 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::uint;
-use std::util;
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-struct Ints {sum: ~int, values: ~[int]}
+use std::mem::swap;
+
+#[derive(Show)]
+struct Ints {sum: Box<int>, values: Vec<int> }
 
 fn add_int(x: &mut Ints, v: int) {
     *x.sum += v;
-    let mut values = ~[];
-    util::swap(&mut values, &mut x.values);
+    let mut values = Vec::new();
+    swap(&mut values, &mut x.values);
     values.push(v);
-    util::swap(&mut values, &mut x.values);
+    swap(&mut values, &mut x.values);
 }
 
-fn iter_ints(x: &Ints, f: &fn(x: &int) -> bool) -> bool {
+fn iter_ints<F>(x: &Ints, mut f: F) -> bool where F: FnMut(&int) -> bool {
     let l = x.values.len();
-    uint::range(0, l, |i| f(&x.values[i]))
+    range(0u, l).all(|i| f(&x.values[i]))
 }
 
 pub fn main() {
-    let mut ints = ~Ints {sum: ~0, values: ~[]};
-    add_int(ints, 22);
-    add_int(ints, 44);
+    let mut ints = box Ints {sum: box 0, values: Vec::new()};
+    add_int(&mut *ints, 22);
+    add_int(&mut *ints, 44);
 
-    for iter_ints(ints) |i| {
-        error!("int = %d", *i);
-    }
+    iter_ints(&*ints, |i| {
+        println!("int = {:?}", *i);
+        true
+    });
 
-    error!("ints=%?", ints);
+    println!("ints={:?}", ints);
 }

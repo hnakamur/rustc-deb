@@ -10,10 +10,10 @@
 
 pub mod kitties {
     pub struct cat {
-        priv meows : uint,
+        meows : uint,
 
-        how_hungry : int,
-        name : ~str,
+        pub how_hungry : int,
+        pub name : String,
     }
 
     impl cat {
@@ -21,11 +21,11 @@ pub mod kitties {
 
         pub fn eat(&mut self) -> bool {
             if self.how_hungry > 0 {
-                error!("OM NOM NOM");
+                println!("OM NOM NOM");
                 self.how_hungry -= 2;
                 return true;
             } else {
-                error!("Not hungry!");
+                println!("Not hungry!");
                 return false;
             }
         }
@@ -33,7 +33,7 @@ pub mod kitties {
 
     impl cat {
         pub fn meow(&mut self) {
-            error!("Meow");
+            println!("Meow");
             self.meows += 1u;
             if self.meows % 5u == 0u {
                 self.how_hungry += 1;
@@ -41,7 +41,7 @@ pub mod kitties {
         }
     }
 
-    pub fn cat(in_x : uint, in_y : int, in_name: ~str) -> cat {
+    pub fn cat(in_x : uint, in_y : int, in_name: String) -> cat {
         cat {
             meows: in_x,
             how_hungry: in_y,

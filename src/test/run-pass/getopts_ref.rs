@@ -1,6 +1,4 @@
-// xfail-fast
-
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,18 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
+extern crate getopts;
 
-use extra::getopts::*;
+use getopts::{optopt, getopts};
 
 pub fn main() {
-    let args = ~[];
-    let opts = ~[optopt(~"b")];
+    let args = Vec::new();
+    let opts = vec!(optopt("b", "", "something", "SMTHNG"));
 
-    match getopts(args, opts) {
+    match getopts(args.as_slice(), opts.as_slice()) {
         Ok(ref m)  =>
-            assert!(!opt_present(m, "b")),
-        Err(ref f) => fail!(fail_str(copy *f))
+            assert!(!m.opt_present("b")),
+        Err(ref f) => panic!("{}", *f)
     };
 
 }

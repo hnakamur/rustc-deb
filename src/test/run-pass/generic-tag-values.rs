@@ -8,22 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-
-
-// -*- rust -*-
 enum noption<T> { some(T), }
 
 struct Pair { x: int, y: int }
 
 pub fn main() {
-    let nop: noption<int> = some::<int>(5);
-    match nop { some::<int>(n) => { debug!(n); assert!((n == 5)); } }
-    let nop2: noption<Pair> = some(Pair{x: 17, y: 42});
+    let nop: noption<int> = noption::some::<int>(5);
+    match nop { noption::some::<int>(n) => { println!("{}", n); assert!((n == 5)); } }
+    let nop2: noption<Pair> = noption::some(Pair{x: 17, y: 42});
     match nop2 {
-      some(t) => {
-        debug!(t.x);
-        debug!(t.y);
+      noption::some(t) => {
+        println!("{}", t.x);
+        println!("{}", t.y);
         assert_eq!(t.x, 17);
         assert_eq!(t.y, 42);
       }

@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Eq)]
+#[derive(PartialEq)]
 struct Bike {
-    name: ~str,
+    name: String,
 }
 
 pub fn main() {
-    let town_bike = Bike { name: ~"schwinn" };
-    let my_bike = Bike { name: ~"surly" };
+    let town_bike = Bike { name: "schwinn".to_string() };
+    let my_bike = Bike { name: "surly".to_string() };
 
     assert!(town_bike != my_bike);
 }

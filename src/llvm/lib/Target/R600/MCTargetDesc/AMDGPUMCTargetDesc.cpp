@@ -24,6 +24,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 
+using namespace llvm;
+
 #define GET_INSTRINFO_MC_DESC
 #include "AMDGPUGenInstrInfo.inc"
 
@@ -32,8 +34,6 @@
 
 #define GET_REGINFO_MC_DESC
 #include "AMDGPUGenRegisterInfo.inc"
-
-using namespace llvm;
 
 static MCInstrInfo *createAMDGPUMCInstrInfo() {
   MCInstrInfo *X = new MCInstrInfo();
@@ -78,7 +78,7 @@ static MCCodeEmitter *createAMDGPUMCCodeEmitter(const MCInstrInfo &MCII,
   if (STI.getFeatureBits() & AMDGPU::Feature64BitPtr) {
     return createSIMCCodeEmitter(MCII, MRI, STI, Ctx);
   } else {
-    return createR600MCCodeEmitter(MCII, MRI, STI, Ctx);
+    return createR600MCCodeEmitter(MCII, MRI, STI);
   }
 }
 
@@ -86,9 +86,10 @@ static MCStreamer *createMCStreamer(const Target &T, StringRef TT,
                                     MCContext &Ctx, MCAsmBackend &MAB,
                                     raw_ostream &_OS,
                                     MCCodeEmitter *_Emitter,
+                                    const MCSubtargetInfo &STI,
                                     bool RelaxAll,
                                     bool NoExecStack) {
-  return createPureStreamer(Ctx, MAB, _OS, _Emitter);
+  return createELFStreamer(Ctx, MAB, _OS, _Emitter, false, false);
 }
 
 extern "C" void LLVMInitializeR600TargetMC() {

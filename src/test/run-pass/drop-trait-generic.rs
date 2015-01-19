@@ -8,17 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(unsafe_destructor)]
+
 struct S<T> {
     x: T
 }
 
 #[unsafe_destructor]
 impl<T> ::std::ops::Drop for S<T> {
-    fn drop(&self) {
-        println("bye");
+    fn drop(&mut self) {
+        println!("bye");
     }
 }
 
 pub fn main() {
-    let x = S { x: 1 };
+    let _x = S { x: 1i };
 }

@@ -9,16 +9,24 @@
 // except according to those terms.
 
 struct cat {
-    meow: @fn(),
+    meow: extern "Rust" fn(),
+}
+
+impl Copy for cat {}
+
+fn meow() {
+    println!("meow")
 }
 
 fn cat() -> cat {
     cat {
-        meow: || error!("meow")
+        meow: meow,
     }
 }
 
 struct KittyInfo {kitty: cat}
+
+impl Copy for KittyInfo {}
 
 // Code compiles and runs successfully if we add a + before the first arg
 fn nyan(kitty: cat, _kitty_info: KittyInfo) {
@@ -26,6 +34,6 @@ fn nyan(kitty: cat, _kitty_info: KittyInfo) {
 }
 
 pub fn main() {
-    let mut kitty = cat();
-    nyan(copy kitty, KittyInfo {kitty: copy kitty});
+    let kitty = cat();
+    nyan(kitty, KittyInfo {kitty: kitty});
 }

@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-win32
 // Passing enums by value
 
 pub enum void { }
@@ -16,8 +15,7 @@ pub enum void { }
 mod bindgen {
     use super::void;
 
-    #[nolink]
-    pub extern {
+    extern {
         pub fn printf(v: void);
     }
 }

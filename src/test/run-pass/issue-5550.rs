@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn main() {
-    let s: ~str = ~"foobar";
-    let mut t: &str = s;
+#![allow(dead_assignment)]
+
+pub fn main() {
+    let s: String = "foobar".to_string();
+    let mut t: &str = s.as_slice();
     t = t.slice(0, 3); // for master: str::view(t, 0, 3) maybe
 }

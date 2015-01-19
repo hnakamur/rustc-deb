@@ -9,13 +9,13 @@
 // except according to those terms.
 
 use std::os;
-use std::task;
 use std::uint;
+use std::thread::Thread;
 
 fn f(n: uint) {
     let mut i = 0u;
     while i < n {
-        task::try(|| g() );
+        let _ = Thread::scoped(move|| g()).join();
         i += 1u;
     }
 }
@@ -24,14 +24,14 @@ fn g() { }
 
 fn main() {
     let args = os::args();
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"400"]
+    let args = if os::getenv("RUST_BENCH").is_some() {
+        vec!("".to_string(), "400".to_string())
     } else if args.len() <= 1u {
-        ~[~"", ~"10"]
+        vec!("".to_string(), "10".to_string())
     } else {
-        args
+        args.into_iter().collect()
     };
-    let n = uint::from_str(args[1]).get();
+    let n = args[1].parse().unwrap();
     let mut i = 0u;
-    while i < n { task::spawn(|| f(n) ); i += 1u; }
+    while i < n { Thread::spawn(move|| f(n) ); i += 1u; }
 }

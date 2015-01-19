@@ -9,24 +9,24 @@
 // except according to those terms.
 
 pub fn main() {
-    let mut x = 0;
+    let mut x = 0i;
 
     'foo: loop {
         'bar: loop {
             'quux: loop {
-                if 1 == 2 {
+                if 1i == 2 {
                     break 'foo;
                 }
                 else {
                     break 'bar;
                 }
             }
-            loop 'foo;
+            continue 'foo;
         }
         x = 42;
         break;
     }
 
-    error!("%?", x);
+    println!("{}", x);
     assert_eq!(x, 42);
 }

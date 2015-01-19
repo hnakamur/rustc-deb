@@ -1,6 +1,4 @@
-// xfail-fast
-
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,11 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::hashmap::HashMap;
-use std::str;
+extern crate collections;
+
+use std::collections::HashMap;
 
 pub fn main() {
     let mut m = HashMap::new();
-    m.insert("foo".as_bytes().to_owned(), "bar".as_bytes().to_owned());
-    error!(m);
+    m.insert(b"foo".to_vec(), b"bar".to_vec());
+    println!("{:?}", m);
 }

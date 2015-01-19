@@ -11,10 +11,14 @@
 // pp-exact
 
 fn main() {
-    let x = Some(3);
+    let x = Some(3i);
     let _y =
         match x {
-            Some(_) => ~[~"some(_)", ~"not", ~"SO", ~"long", ~"string"],
-            None => ~[~"none"]
+            Some(_) =>
+            ["some(_)".to_string(), "not".to_string(), "SO".to_string(),
+             "long".to_string(), "string".to_string()],
+            None =>
+            ["none".to_string(), "a".to_string(), "a".to_string(),
+             "a".to_string(), "a".to_string()],
         };
 }

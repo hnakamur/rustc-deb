@@ -8,7 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 fn main() {
-    let v: ~[int] = ~[1, 2, 3];
-    v[1] = 4; //~ ERROR cannot assign
+    let v: Vec<isize> = vec!(1, 2, 3);
+    v[1] = 4; //~ ERROR cannot borrow immutable local variable `v` as mutable
 }

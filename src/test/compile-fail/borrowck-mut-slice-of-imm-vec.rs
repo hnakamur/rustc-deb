@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn write(v: &mut [int]) {
+fn write(v: &mut [isize]) {
     v[0] += 1;
 }
 
 fn main() {
-    let v = ~[1, 2, 3];
-    write(v); //~ ERROR cannot borrow
+    let v = vec!(1, 2, 3);
+    write(v.as_mut_slice()); //~ ERROR cannot borrow
 }

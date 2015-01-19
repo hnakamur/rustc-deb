@@ -8,20 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[crate_type="lib"];
+#![crate_type="lib"]
 
 pub struct S {
     x: int,
 }
 
 impl Drop for S {
-    fn drop(&self) {
-        println("goodbye");
+    fn drop(&mut self) {
+        println!("goodbye");
     }
 }
 
 pub fn f() {
     let x = S { x: 1 };
     let y = x;
-    let z = y;
+    let _z = y;
 }

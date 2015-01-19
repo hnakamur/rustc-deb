@@ -1,3 +1,13 @@
+// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*
  * This calculates the platform-variable portion of the libc module.
  * Move code in here only as you discover it is platform-variable.
@@ -143,6 +153,7 @@ void posix88_consts() {
   put_const(S_IFBLK, int);
   put_const(S_IFDIR, int);
   put_const(S_IFREG, int);
+  put_const(S_IFLNK, int);
   put_const(S_IFMT, int);
 
   put_const(S_IEXEC, int);

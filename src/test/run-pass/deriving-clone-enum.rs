@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Clone, DeepClone)]
+#[derive(Clone)]
 enum E {
     A,
     B(()),
@@ -16,6 +16,5 @@ enum E {
 }
 
 pub fn main() {
-    let _ = A.clone();
-    let _ = B(()).deep_clone();
+    let _ = E::A.clone();
 }

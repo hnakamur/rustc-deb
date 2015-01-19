@@ -8,21 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(unsafe_destructor)]
+
 // Make sure the destructor is run for newtype structs.
 
-struct Foo(@mut int);
+use std::cell::Cell;
+
+struct Foo<'a>(&'a Cell<int>);
 
 #[unsafe_destructor]
-impl Drop for Foo {
-    fn drop(&self) {
-        ***self = 23;
+impl<'a> Drop for Foo<'a> {
+    fn drop(&mut self) {
+        let Foo(i) = *self;
+        i.set(23);
     }
 }
 
-fn main() {
-    let y = @mut 32;
+pub fn main() {
+    let y = &Cell::new(32);
     {
-        let x = Foo(y);
+        let _x = Foo(y);
     }
-    assert_eq!(*y, 23);
+    assert_eq!(y.get(), 23);
 }

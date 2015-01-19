@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,42 +8,34 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
-
-extern mod extra;
-
-use std::comm;
-use std::task;
+use std::thread::Thread;
+use std::sync::mpsc::{channel, Sender};
 
 pub fn main() { test00(); }
 
-fn test00_start(c: &comm::Chan<int>, number_of_messages: int) {
+fn test00_start(c: &Sender<int>, number_of_messages: int) {
     let mut i: int = 0;
-    while i < number_of_messages { c.send(i + 0); i += 1; }
+    while i < number_of_messages { c.send(i + 0).unwrap(); i += 1; }
 }
 
 fn test00() {
     let r: int = 0;
     let mut sum: int = 0;
-    let p = comm::PortSet::new();
+    let (tx, rx) = channel();
     let number_of_messages: int = 10;
-    let ch = p.chan();
 
-    let mut result = None;
-    let mut builder = task::task();
-    builder.future_result(|r| result = Some(r));
-    do builder.spawn {
-        test00_start(&ch, number_of_messages);
-    }
+    let result = Thread::scoped(move|| {
+        test00_start(&tx, number_of_messages);
+    });
 
     let mut i: int = 0;
     while i < number_of_messages {
-        sum += p.recv();
-        debug!(r);
+        sum += rx.recv().unwrap();
+        println!("{}", r);
         i += 1;
     }
 
-    result.unwrap().recv();
+    result.join();
 
     assert_eq!(sum, number_of_messages * (number_of_messages - 1) / 2);
 }

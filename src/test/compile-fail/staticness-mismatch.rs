@@ -13,8 +13,9 @@ trait foo {
     fn bar();
 }
 
-impl foo for int {
-    fn bar(&self) {} //~ ERROR method `bar` has a `&self` declaration in the impl, but not in the trait
+impl foo for isize {
+    fn bar(&self) {}
+    //~^ ERROR method `bar` has a `&self` declaration in the impl, but not in the trait
 }
 
 fn main() {}

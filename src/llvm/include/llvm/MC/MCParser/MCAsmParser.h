@@ -30,18 +30,34 @@ class SMRange;
 class SourceMgr;
 class Twine;
 
+class InlineAsmIdentifierInfo {
+public:
+  void *OpDecl;
+  bool IsVarDecl;
+  unsigned Length, Size, Type;
+
+  void clear() {
+    OpDecl = nullptr;
+    IsVarDecl = false;
+    Length = 1;
+    Size = 0;
+    Type = 0;
+  }
+};
+
 /// MCAsmParserSemaCallback - Generic Sema callback for assembly parser.
 class MCAsmParserSemaCallback {
 public:
-  virtual ~MCAsmParserSemaCallback(); 
-  virtual void *LookupInlineAsmIdentifier(StringRef Name, void *Loc,
-                                          unsigned &Length, unsigned &Size, 
-                                          unsigned &Type, bool &IsVarDecl) = 0;
+  virtual ~MCAsmParserSemaCallback();
+  virtual void *LookupInlineAsmIdentifier(StringRef &LineBuf,
+                                          InlineAsmIdentifierInfo &Info,
+                                          bool IsUnevaluatedContext) = 0;
+  virtual StringRef LookupInlineAsmLabel(StringRef Identifier, SourceMgr &SM,
+                                         SMLoc Location, bool Create) = 0;
 
   virtual bool LookupInlineAsmField(StringRef Base, StringRef Member,
                                     unsigned &Offset) = 0;
 };
-
 
 /// MCAsmParser - Generic assembler parser interface, for use by target specific
 /// assembly parsers.
@@ -102,18 +118,22 @@ public:
                                 const MCInstPrinter *IP,
                                 MCAsmParserSemaCallback &SI) = 0;
 
+  /// Note - Emit a note at the location \p L, with the message \p Msg.
+  virtual void Note(SMLoc L, const Twine &Msg,
+                    ArrayRef<SMRange> Ranges = None) = 0;
+
   /// Warning - Emit a warning at the location \p L, with the message \p Msg.
   ///
   /// \return The return value is true, if warnings are fatal.
   virtual bool Warning(SMLoc L, const Twine &Msg,
-                       ArrayRef<SMRange> Ranges = ArrayRef<SMRange>()) = 0;
+                       ArrayRef<SMRange> Ranges = None) = 0;
 
   /// Error - Emit an error at the location \p L, with the message \p Msg.
   ///
   /// \return The return value is always true, as an idiomatic convenience to
   /// clients.
   virtual bool Error(SMLoc L, const Twine &Msg,
-                     ArrayRef<SMRange> Ranges = ArrayRef<SMRange>()) = 0;
+                     ArrayRef<SMRange> Ranges = None) = 0;
 
   /// Lex - Get the next AsmToken in the stream, possibly handling file
   /// inclusion first.
@@ -123,8 +143,7 @@ public:
   const AsmToken &getTok();
 
   /// \brief Report an error at the current lexer location.
-  bool TokError(const Twine &Msg,
-                ArrayRef<SMRange> Ranges = ArrayRef<SMRange>());
+  bool TokError(const Twine &Msg, ArrayRef<SMRange> Ranges = None);
 
   /// parseIdentifier - Parse an identifier or string (as a quoted identifier)
   /// and set \p Res to the identifier contents.
@@ -150,6 +169,13 @@ public:
   /// @result - False on success.
   virtual bool parseExpression(const MCExpr *&Res, SMLoc &EndLoc) = 0;
   bool parseExpression(const MCExpr *&Res);
+
+  /// parsePrimaryExpr - Parse a primary expression.
+  ///
+  /// @param Res - The value of the expression. The result is undefined
+  /// on error.
+  /// @result - False on success.
+  virtual bool parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) = 0;
 
   /// parseParenExpression - Parse an arbitrary expression, assuming that an
   /// initial '(' has already been consumed.

@@ -8,14 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-win32 #5745
-// xfail-macos Broken on mac i686
-
-struct TwoU8s {
+pub struct TwoU8s {
     one: u8, two: u8
 }
 
-pub extern {
+#[link(name = "rust_test_helpers")]
+extern {
     pub fn rust_dbg_extern_return_TwoU8s() -> TwoU8s;
 }
 

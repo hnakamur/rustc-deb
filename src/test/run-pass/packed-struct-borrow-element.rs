@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[packed]
+#[repr(packed)]
 struct Foo {
     bar: u8,
     baz: uint
 }
 
-fn main() {
+pub fn main() {
     let foo = Foo { bar: 1, baz: 2 };
     let brw = &foo.baz;
 

@@ -12,19 +12,15 @@
 // nominal types (but not on other types) and that they are type
 // checked.
 
-struct an_enum<'self>(&'self int);
-struct a_class<'self> { x:&'self int }
+struct an_enum<'a>(&'a isize);
+struct a_class<'a> { x:&'a isize }
 
 fn a_fn1<'a,'b>(e: an_enum<'a>) -> an_enum<'b> {
-    return e; //~ ERROR mismatched types: expected `an_enum<'b>` but found `an_enum<'a>`
+    return e; //~ ERROR mismatched types: expected `an_enum<'b>`, found `an_enum<'a>`
 }
 
 fn a_fn3<'a,'b>(e: a_class<'a>) -> a_class<'b> {
-    return e; //~ ERROR mismatched types: expected `a_class<'b>` but found `a_class<'a>`
-}
-
-fn a_fn4<'a,'b>() {
-    let _: int<'a> = 1; //~ ERROR region parameters are not allowed on this type
+    return e; //~ ERROR mismatched types: expected `a_class<'b>`, found `a_class<'a>`
 }
 
 fn main() { }

@@ -1,94 +1,132 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
+// The Computer Language Benchmarks Game
+// http://benchmarksgame.alioth.debian.org/
 //
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
+// contributed by the Rust Project Developers
 
-// chameneos
+// Copyright (c) 2012-2014 The Rust Project Developers
+//
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// - Redistributions of source code must retain the above copyright
+//   notice, this list of conditions and the following disclaimer.
+//
+// - Redistributions in binary form must reproduce the above copyright
+//   notice, this list of conditions and the following disclaimer in
+//   the documentation and/or other materials provided with the
+//   distribution.
+//
+// - Neither the name of "The Computer Language Benchmarks Game" nor
+//   the name of "The Computer Language Shootout Benchmarks" nor the
+//   names of its contributors may be used to endorse or promote
+//   products derived from this software without specific prior
+//   written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+// OF THE POSSIBILITY OF SUCH DAMAGE.
 
-extern mod extra;
+// no-pretty-expanded
 
-use extra::sort;
-use std::cell::Cell;
-use std::comm::*;
-use std::io;
-use std::option;
-use std::os;
-use std::task;
-use std::uint;
-use std::vec;
+use self::Color::{Red, Yellow, Blue};
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::fmt;
+use std::thread::Thread;
 
 fn print_complements() {
     let all = [Blue, Red, Yellow];
-    for all.iter().advance |aa| {
-        for all.iter().advance |bb| {
-            println(show_color(*aa) + " + " + show_color(*bb) +
-                    " -> " + show_color(transform(*aa, *bb)));
+    for aa in all.iter() {
+        for bb in all.iter() {
+            println!("{:?} + {:?} -> {:?}", *aa, *bb, transform(*aa, *bb));
         }
     }
 }
 
-enum color { Red, Yellow, Blue }
+enum Color {
+    Red,
+    Yellow,
+    Blue,
+}
+
+impl Copy for Color {}
+
+impl fmt::Show for Color {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let str = match *self {
+            Red => "red",
+            Yellow => "yellow",
+            Blue => "blue",
+        };
+        write!(f, "{}", str)
+    }
+}
 
 struct CreatureInfo {
     name: uint,
-    color: color
+    color: Color
 }
 
-fn show_color(cc: color) -> ~str {
-    match (cc) {
-        Red    => {~"red"}
-        Yellow => {~"yellow"}
-        Blue   => {~"blue"}
+impl Copy for CreatureInfo {}
+
+fn show_color_list(set: Vec<Color>) -> String {
+    let mut out = String::new();
+    for col in set.iter() {
+        out.push(' ');
+        out.push_str(format!("{:?}", col).as_slice());
+    }
+    out
+}
+
+fn show_digit(nn: uint) -> &'static str {
+    match nn {
+        0 => {" zero"}
+        1 => {" one"}
+        2 => {" two"}
+        3 => {" three"}
+        4 => {" four"}
+        5 => {" five"}
+        6 => {" six"}
+        7 => {" seven"}
+        8 => {" eight"}
+        9 => {" nine"}
+        _ => {panic!("expected digits from 0 to 9...")}
     }
 }
 
-fn show_color_list(set: ~[color]) -> ~str {
-    let mut out = ~"";
-    for set.iter().advance |col| {
-        out.push_char(' ');
-        out.push_str(show_color(*col));
-    }
-    return out;
-}
+struct Number(uint);
+impl fmt::Show for Number {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut out = vec![];
+        let Number(mut num) = *self;
+        if num == 0 { out.push(show_digit(0)) };
 
-fn show_digit(nn: uint) -> ~str {
-    match (nn) {
-        0 => {~"zero"}
-        1 => {~"one"}
-        2 => {~"two"}
-        3 => {~"three"}
-        4 => {~"four"}
-        5 => {~"five"}
-        6 => {~"six"}
-        7 => {~"seven"}
-        8 => {~"eight"}
-        9 => {~"nine"}
-        _ => {fail!("expected digits from 0 to 9...")}
+        while num != 0 {
+            let dig = num % 10;
+            num = num / 10;
+            let s = show_digit(dig);
+            out.push(s);
+        }
+
+        for s in out.iter().rev() {
+            try!(write!(f, "{}", s))
+        }
+        Ok(())
     }
 }
 
-fn show_number(nn: uint) -> ~str {
-    let mut out = ~"";
-    let mut num = nn;
-    let mut dig;
-
-    if num == 0 { out = show_digit(0) };
-
-    while num != 0 {
-        dig = num % 10;
-        num = num / 10;
-        out = show_digit(dig) + " " + out;
-    }
-
-    return ~" " + out;
-}
-
-fn transform(aa: color, bb: color) -> color {
+fn transform(aa: Color, bb: Color) -> Color {
     match (aa, bb) {
         (Red,    Red   ) => { Red    }
         (Red,    Yellow) => { Blue   }
@@ -104,23 +142,22 @@ fn transform(aa: color, bb: color) -> color {
 
 fn creature(
     name: uint,
-    color: color,
-    from_rendezvous: Port<Option<CreatureInfo>>,
-    to_rendezvous: SharedChan<CreatureInfo>,
-    to_rendezvous_log: SharedChan<~str>
+    mut color: Color,
+    from_rendezvous: Receiver<CreatureInfo>,
+    to_rendezvous: Sender<CreatureInfo>,
+    to_rendezvous_log: Sender<String>
 ) {
-    let mut color = color;
-    let mut creatures_met = 0;
+    let mut creatures_met = 0i32;
     let mut evil_clones_met = 0;
+    let mut rendezvous = from_rendezvous.iter();
 
     loop {
         // ask for a pairing
-        to_rendezvous.send(CreatureInfo {name: name, color: color});
-        let resp = from_rendezvous.recv();
+        to_rendezvous.send(CreatureInfo {name: name, color: color}).unwrap();
 
-        // log and change, or print and quit
-        match resp {
-            option::Some(other_creature) => {
+        // log and change, or quit
+        match rendezvous.next() {
+            Some(other_creature) => {
                 color = transform(color, other_creature.color);
 
                 // track some statistics
@@ -129,99 +166,83 @@ fn creature(
                    evil_clones_met += 1;
                 }
             }
-            option::None => {
-                // log creatures met and evil clones of self
-                let report = fmt!("%u %s",
-                                  creatures_met, show_number(evil_clones_met));
-                to_rendezvous_log.send(report);
-                break;
-            }
+            None => break
         }
     }
+    // log creatures met and evil clones of self
+    let report = format!("{}{:?}", creatures_met, Number(evil_clones_met));
+    to_rendezvous_log.send(report).unwrap();
 }
 
-fn rendezvous(nn: uint, set: ~[color]) {
-
+fn rendezvous(nn: uint, set: Vec<Color>) {
     // these ports will allow us to hear from the creatures
-    let (from_creatures, to_rendezvous) = stream::<CreatureInfo>();
-    let to_rendezvous = SharedChan::new(to_rendezvous);
-    let (from_creatures_log, to_rendezvous_log) = stream::<~str>();
-    let to_rendezvous_log = SharedChan::new(to_rendezvous_log);
+    let (to_rendezvous, from_creatures) = channel::<CreatureInfo>();
 
     // these channels will be passed to the creatures so they can talk to us
+    let (to_rendezvous_log, from_creatures_log) = channel::<String>();
 
     // these channels will allow us to talk to each creature by 'name'/index
-    let to_creature: ~[Chan<Option<CreatureInfo>>] =
-        set.iter().enumerate().transform(|(ii, col)| {
+    let mut to_creature: Vec<Sender<CreatureInfo>> =
+        set.iter().enumerate().map(|(ii, &col)| {
             // create each creature as a listener with a port, and
             // give us a channel to talk to each
-            let ii = ii;
-            let col = *col;
             let to_rendezvous = to_rendezvous.clone();
             let to_rendezvous_log = to_rendezvous_log.clone();
-            let (from_rendezvous, to_creature) = stream();
-            let from_rendezvous = Cell::new(from_rendezvous);
-            do task::spawn || {
-                creature(ii, col, from_rendezvous.take(), to_rendezvous.clone(),
-                         to_rendezvous_log.clone());
-            }
+            let (to_creature, from_rendezvous) = channel();
+            Thread::spawn(move|| {
+                creature(ii,
+                         col,
+                         from_rendezvous,
+                         to_rendezvous,
+                         to_rendezvous_log);
+            });
             to_creature
         }).collect();
 
     let mut creatures_met = 0;
 
     // set up meetings...
-    for nn.times {
-        let fst_creature: CreatureInfo = from_creatures.recv();
-        let snd_creature: CreatureInfo = from_creatures.recv();
+    for _ in range(0, nn) {
+        let fst_creature = from_creatures.recv().unwrap();
+        let snd_creature = from_creatures.recv().unwrap();
 
         creatures_met += 2;
 
-        to_creature[fst_creature.name].send(Some(snd_creature));
-        to_creature[snd_creature.name].send(Some(fst_creature));
+        to_creature[fst_creature.name].send(snd_creature).unwrap();
+        to_creature[snd_creature.name].send(fst_creature).unwrap();
     }
 
     // tell each creature to stop
-    for to_creature.iter().advance |to_one| {
-        to_one.send(None);
-    }
-
-    // save each creature's meeting stats
-    let mut report = ~[];
-    for to_creature.iter().advance |_to_one| {
-        report.push(from_creatures_log.recv());
-    }
+    drop(to_creature);
 
     // print each color in the set
-    io::println(show_color_list(set));
+    println!("{}", show_color_list(set));
 
     // print each creature's stats
-    for report.iter().advance |rep| {
-        io::println(*rep);
+    drop(to_rendezvous_log);
+    for rep in from_creatures_log.iter() {
+        println!("{}", rep);
     }
 
     // print the total number of creatures met
-    io::println(show_number(creatures_met));
+    println!("{:?}\n", Number(creatures_met));
 }
 
 fn main() {
-    let args = os::args();
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"200000"]
-    } else if args.len() <= 1u {
-        ~[~"", ~"600"]
+    let nn = if std::os::getenv("RUST_BENCH").is_some() {
+        200000
     } else {
-        args
+        std::os::args().as_slice()
+                       .get(1)
+                       .and_then(|arg| arg.parse())
+                       .unwrap_or(600u)
     };
 
-    let nn = uint::from_str(args[1]).get();
-
     print_complements();
-    io::println(~"");
+    println!("");
 
-    rendezvous(nn, ~[Blue, Red, Yellow]);
-    io::println(~"");
+    rendezvous(nn, vec!(Blue, Red, Yellow));
 
     rendezvous(nn,
-        ~[Blue, Red, Yellow, Red, Yellow, Blue, Red, Yellow, Red, Blue]);
+        vec!(Blue, Red, Yellow, Red, Yellow, Blue, Red, Yellow, Red, Blue));
 }

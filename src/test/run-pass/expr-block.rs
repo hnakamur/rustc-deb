@@ -11,7 +11,6 @@
 
 
 
-// -*- rust -*-
 
 // Tests for standalone blocks as expressions
 fn test_basic() { let rs: bool = { true }; assert!((rs)); }
@@ -21,7 +20,7 @@ struct RS { v1: int, v2: int }
 fn test_rec() { let rs = { RS {v1: 10, v2: 20} }; assert!((rs.v2 == 20)); }
 
 fn test_filled_with_stuff() {
-    let rs = { let mut a = 0; while a < 10 { a += 1; } a };
+    let rs = { let mut a = 0i; while a < 10 { a += 1; } a };
     assert_eq!(rs, 10);
 }
 

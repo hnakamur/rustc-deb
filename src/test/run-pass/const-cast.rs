@@ -8,16 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::libc;
+extern crate libc;
+
+struct TestStruct {
+    x: *const libc::c_void
+}
+
+unsafe impl Sync for TestStruct {}
 
 extern fn foo() {}
-
-static x: *u8 = foo;
-static y: *libc::c_void = x as *libc::c_void;
-static a: &'static int = &10;
-static b: *int = a as *int;
+const x: extern "C" fn() = foo;
+static y: TestStruct = TestStruct { x: x as *const libc::c_void };
 
 pub fn main() {
-    assert_eq!(x as *libc::c_void, y);
-    assert_eq!(a as *int, b);
+    assert_eq!(x as *const libc::c_void, y.x);
 }

@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,17 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
 // aux-build:foreign_lib.rs
 
 // The purpose of this test is to check that we can
 // successfully (and safely) invoke external, cdecl
 // functions from outside the crate.
 
-extern mod foreign_lib;
+extern crate foreign_lib;
 
 pub fn main() {
     unsafe {
-        let foo = foreign_lib::rustrt::rust_get_argc();
+        let _foo = foreign_lib::rustrt::rust_get_test_int();
     }
 }

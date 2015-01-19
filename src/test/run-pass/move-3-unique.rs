@@ -8,23 +8,27 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-use std::uint;
+#[derive(Clone)]
+struct Triple {
+    x: int,
+    y: int,
+    z: int,
+}
 
-struct Triple { x: int, y: int, z: int }
-
-fn test(x: bool, foo: ~Triple) -> int {
+fn test(x: bool, foo: Box<Triple>) -> int {
     let bar = foo;
-    let mut y: ~Triple;
-    if x { y = bar; } else { y = ~Triple {x: 4, y: 5, z: 6}; }
+    let mut y: Box<Triple>;
+    if x { y = bar; } else { y = box Triple {x: 4, y: 5, z: 6}; }
     return y.y;
 }
 
 pub fn main() {
-    let x = ~Triple{x: 1, y: 2, z: 3};
-    for uint::range(0u, 10000u) |_i| {
-        assert_eq!(test(true, copy x), 2);
+    let x = box Triple{x: 1, y: 2, z: 3};
+    for _ in range(0u, 10000u) {
+        assert_eq!(test(true, x.clone()), 2);
     }
     assert_eq!(test(false, x), 5);
 }

@@ -10,32 +10,18 @@
 
 use ast;
 use codemap;
-use ext::base::*;
 use ext::base;
 use print;
-use parse::token::{get_ident_interner};
 
-use std::vec;
-use std::io;
-
-pub fn expand_syntax_ext(cx: @ExtCtxt,
-                         sp: codemap::span,
-                         tt: &[ast::token_tree])
-                      -> base::MacResult {
+pub fn expand_syntax_ext<'cx>(cx: &'cx mut base::ExtCtxt,
+                              sp: codemap::Span,
+                              tts: &[ast::TokenTree])
+                              -> Box<base::MacResult+'cx> {
 
     cx.print_backtrace();
-    io::stdout().write_line(
-        print::pprust::tt_to_str(
-            ast::tt_delim(vec::to_owned(tt)),
-            get_ident_interner()));
 
-    //trivial expression
-    MRExpr(@ast::expr {
-        id: cx.next_id(),
-        node: ast::expr_lit(@codemap::spanned {
-            node: ast::lit_nil,
-            span: sp
-        }),
-        span: sp,
-    })
+    println!("{}", print::pprust::tts_to_string(tts));
+
+    // any so that `log_syntax` can be invoked as an expression and item.
+    base::DummyResult::any(sp)
 }

@@ -9,6 +9,6 @@
 // except according to those terms.
 
 
-enum list_cell<T> { cons(@list_cell<T>), nil }
+enum list_cell<T> { cons(Box<list_cell<T>>), nil }
 
 pub fn main() { }

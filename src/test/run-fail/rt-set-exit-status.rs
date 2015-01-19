@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,11 +10,12 @@
 
 // error-pattern:whatever
 
+#[macro_use] extern crate log;
 use std::os;
 
 fn main() {
-    error!(~"whatever");
-    // 101 is the code the runtime uses on task failure and the value
+    error!("whatever");
+    // 101 is the code the runtime uses on task panic and the value
     // compiletest expects run-fail tests to return.
     os::set_exit_status(101);
 }

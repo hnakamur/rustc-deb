@@ -8,15 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Eq)]
+#[derive(PartialEq, Show)]
 enum Foo {
     Bar(int, int),
-    Baz(float, float)
+    Baz(f64, f64)
 }
 
 pub fn main() {
-    let a = Bar(1, 2);
-    let b = Bar(1, 2);
+    let a = Foo::Bar(1, 2);
+    let b = Foo::Bar(1, 2);
     assert_eq!(a, b);
     assert!(!(a != b));
     assert!(a.eq(&b));

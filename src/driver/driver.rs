@@ -8,24 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[no_core];
-#[no_std];
-
-extern mod core(name = "std", vers = "0.7");
-
-#[cfg(rustpkg)]
-extern mod this(name = "rustpkg");
-
 #[cfg(rustdoc)]
-extern mod this(name = "rustdoc");
-
-#[cfg(rusti)]
-extern mod this(name = "rusti");
-
-#[cfg(rust)]
-extern mod this(name = "rust");
+extern crate "rustdoc" as this;
 
 #[cfg(rustc)]
-extern mod this(name = "rustc");
+extern crate "rustc_driver" as this;
 
 fn main() { this::main() }

@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,47 +8,45 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
 
-use std::int;
 
 trait to_str {
-    fn to_str(&self) -> ~str;
+    fn to_string_(&self) -> String;
 }
 impl to_str for int {
-    fn to_str(&self) -> ~str { int::to_str(*self) }
+    fn to_string_(&self) -> String { self.to_string() }
 }
-impl to_str for ~str {
-    fn to_str(&self) -> ~str { self.clone() }
+impl to_str for String {
+    fn to_string_(&self) -> String { self.clone() }
 }
 impl to_str for () {
-    fn to_str(&self) -> ~str { ~"()" }
+    fn to_string_(&self) -> String { "()".to_string() }
 }
 
 trait map<T> {
-    fn map<U:Copy>(&self, f: &fn(&T) -> U) -> ~[U];
+    fn map<U, F>(&self, f: F) -> Vec<U> where F: FnMut(&T) -> U;
 }
-impl<T> map<T> for ~[T] {
-    fn map<U:Copy>(&self, f: &fn(&T) -> U) -> ~[U] {
-        let mut r = ~[];
-        // FIXME: #7355 generates bad code with Iterator
-        for std::uint::range(0, self.len()) |i| {
-            r.push(f(&self[i]));
+impl<T> map<T> for Vec<T> {
+    fn map<U, F>(&self, mut f: F) -> Vec<U> where F: FnMut(&T) -> U {
+        let mut r = Vec::new();
+        for i in self.iter() {
+            r.push(f(i));
         }
         r
     }
 }
 
-fn foo<U, T: map<U>>(x: T) -> ~[~str] {
-    x.map(|_e| ~"hi" )
+fn foo<U, T: map<U>>(x: T) -> Vec<String> {
+    x.map(|_e| "hi".to_string() )
 }
-fn bar<U:to_str,T:map<U>>(x: T) -> ~[~str] {
-    x.map(|_e| _e.to_str() )
+fn bar<U:to_str,T:map<U>>(x: T) -> Vec<String> {
+    x.map(|_e| _e.to_string_() )
 }
 
 pub fn main() {
-    assert_eq!(foo(~[1]), ~[~"hi"]);
-    assert_eq!(bar::<int, ~[int]>(~[4, 5]), ~[~"4", ~"5"]);
-    assert_eq!(bar::<~str, ~[~str]>(~[~"x", ~"y"]), ~[~"x", ~"y"]);
-    assert_eq!(bar::<(), ~[()]>(~[()]), ~[~"()"]);
+    assert_eq!(foo(vec!(1i)), vec!("hi".to_string()));
+    assert_eq!(bar::<int, Vec<int> >(vec!(4, 5)), vec!("4".to_string(), "5".to_string()));
+    assert_eq!(bar::<String, Vec<String> >(vec!("x".to_string(), "y".to_string())),
+               vec!("x".to_string(), "y".to_string()));
+    assert_eq!(bar::<(), Vec<()>>(vec!(())), vec!("()".to_string()));
 }

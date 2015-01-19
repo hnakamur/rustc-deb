@@ -8,11 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unused_allocation)]
+#![allow(unreachable_code)]
+#![allow(unused_variables)]
+
+
 // error-pattern:so long
 fn main() {
-    let mut x = ~[];
-    let y = ~[3];
-    fail!("so long");
-    x.push_all_move(y);
-    ~"good" + ~"bye";
+    let mut x = Vec::new();
+    let y = vec!(3i);
+    panic!("so long");
+    x.extend(y.into_iter());
 }

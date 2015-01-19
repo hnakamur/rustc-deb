@@ -3,69 +3,68 @@
 .section	.note.GNU-stack, "", %progbits
 #endif
 
+/* See i386/morestack.S for the lengthy, general explanation. */
+
 .text
 .code 32
 .arm
+#if defined(__APPLE__)
+.align 2
+#else
 .align
+#endif
 
-.global upcall_new_stack
-.global upcall_del_stack
-.global __morestack
-.hidden __morestack
+#if defined(__APPLE__)
+#define MORESTACK ___morestack
+#define STACK_EXHAUSTED _rust_stack_exhausted
+#else
+#define MORESTACK __morestack
+#define STACK_EXHAUSTED rust_stack_exhausted
+#endif
+
+.global STACK_EXHAUSTED
+.global MORESTACK
+
+// Unfortunately LLVM yet doesn't support emitting correct debug
+// DWARF information for non-ELF targets so to make it compile
+// on iOS all that directives are simply commented out
+#if defined(__APPLE__)
+#define UNWIND @
+#else
+#define UNWIND
+#endif
+
+#if defined(__APPLE__)
+.private_extern MORESTACK
+#else
+.hidden MORESTACK
+#endif
+
+#if !defined(__APPLE__)
+   .type MORESTACK,%function
+#endif
 
 // r4 and r5 are scratch registers for __morestack due to llvm
 // ARMFrameLowering::adjustForSegmentedStacks() implementation.
- .type __morestack,%function
-__morestack:
-	.fnstart
-	// Save frame pointer and return address
-	.save {r4, r5}
-	.save {lr}
-	.save {r6, fp, lr}
+MORESTACK:
+    UNWIND .fnstart
+
+    // Save frame pointer and return address
+    UNWIND .save {r4, r5}
+    UNWIND .save {lr}
+    UNWIND .save {r6, fp, lr}
     push {r6, fp, lr}
 
-	.movsp r6
-	mov r6, sp
-	.setfp fp, sp, #4
-	add fp, sp, #4
+    UNWIND .movsp r6
+    mov r6, sp
+    UNWIND .setfp fp, sp, #4
+    add fp, sp, #4
 
     // Save argument registers of the original function
     push {r0, r1, r2, r3, lr}
 
-    mov r0, r4         // The amount of stack needed
-    add r1, fp, #20    // Address of stack arguments
-    mov r2, r5         // Size of stack arguments
-
     // Create new stack
-    bl upcall_new_stack@plt
+    bl STACK_EXHAUSTED@plt
 
-    // Hold new stack pointer
-    mov r5, r0
-
-    // Pop the saved arguments
-    pop {r0, r1, r2, r3, lr}
-
-    // Grab the return pointer
-    add r4, lr, #16    // Skip past the return
-    mov sp, r5         // Swich to the new stack
-    mov lr, pc
-    mov pc, r4         // Call the original function
-
-    // Switch back to rust stack
-    mov sp, r6
-
-    // Save return value
-	mov r4, r0
-	mov r5, r1
-
-    // Remove the new allocated stack
-    bl upcall_del_stack@plt
-
-    // Restore return value
-	mov r0, r4
-	mov r1, r5
-
-    // Return
-    pop {r6, fp, lr}
-    mov pc, lr
-    .fnend
+    // the above function ensures that it never returns
+    UNWIND  .fnend

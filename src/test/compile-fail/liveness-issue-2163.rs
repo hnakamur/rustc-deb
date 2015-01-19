@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::vec;
+use std::vec::Vec;
 
 fn main() {
-    let a: ~[int] = ~[];
-    a.iter().advance(|_| -> bool {
+    let a: Vec<isize> = Vec::new();
+    a.iter().all(|_| -> bool {
         //~^ ERROR mismatched types
     });
 }

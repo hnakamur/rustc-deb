@@ -8,9 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[allow(while_true)];
+#![allow(while_true)]
+#![allow(dead_code)]
 
-struct A(int);
+struct A(isize);
 
 impl A {
     fn foo(&self) { while true {} }
@@ -21,7 +22,7 @@ impl A {
 
 #[deny(while_true)]
 mod foo {
-    struct B(int);
+    struct B(isize);
 
     impl B {
         fn foo(&self) { while true {} } //~ ERROR: infinite loops

@@ -8,29 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(intrinsics)]
+
 pub mod rusti {
-    #[abi = "rust-intrinsic"]
-    pub extern "rust-intrinsic" {
-        fn atomic_cxchg(dst: &mut int, old: int, src: int) -> int;
-        fn atomic_cxchg_acq(dst: &mut int, old: int, src: int) -> int;
-        fn atomic_cxchg_rel(dst: &mut int, old: int, src: int) -> int;
-
-        fn atomic_xchg(dst: &mut int, src: int) -> int;
-        fn atomic_xchg_acq(dst: &mut int, src: int) -> int;
-        fn atomic_xchg_rel(dst: &mut int, src: int) -> int;
-
-        fn atomic_xadd(dst: &mut int, src: int) -> int;
-        fn atomic_xadd_acq(dst: &mut int, src: int) -> int;
-        fn atomic_xadd_rel(dst: &mut int, src: int) -> int;
-
-        fn atomic_xsub(dst: &mut int, src: int) -> int;
-        fn atomic_xsub_acq(dst: &mut int, src: int) -> int;
-        fn atomic_xsub_rel(dst: &mut int, src: int) -> int;
+    extern "rust-intrinsic" {
+        pub fn atomic_xchg<T>(dst: *mut T, src: T) -> T;
     }
 }
 
 #[inline(always)]
-pub fn atomic_xchg(dst: &mut int, src: int) -> int {
+pub fn atomic_xchg(dst: *mut int, src: int) -> int {
     unsafe {
         rusti::atomic_xchg(dst, src)
     }

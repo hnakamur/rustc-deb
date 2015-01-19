@@ -1,13 +1,13 @@
 ======================
-LLVM 3.3 Release Notes
+LLVM 3.5 Release Notes
 ======================
 
 .. contents::
     :local:
 
 .. warning::
-   These are in-progress notes for the upcoming LLVM 3.3 release.  You may
-   prefer the `LLVM 3.2 Release Notes <http://llvm.org/releases/3.2/docs
+   These are in-progress notes for the upcoming LLVM 3.6 release.  You may
+   prefer the `LLVM 3.5 Release Notes <http://llvm.org/releases/3.5.0/docs
    /ReleaseNotes.html>`_.
 
 
@@ -15,7 +15,7 @@ Introduction
 ============
 
 This document contains the release notes for the LLVM Compiler Infrastructure,
-release 3.3.  Here we describe the status of LLVM, including major improvements
+release 3.6.  Here we describe the status of LLVM, including major improvements
 from the previous release, improvements in various subprojects of LLVM, and
 some of the current users of the code.  All LLVM releases may be downloaded
 from the `LLVM releases web site <http://llvm.org/releases/>`_.
@@ -41,28 +41,10 @@ Non-comprehensive list of changes in this release
    functionality, or simply have a lot to talk about), see the `NOTE` below
    for adding a new subsection.
 
-* The CellSPU port has been removed.  It can still be found in older versions.
+* Support for AuroraUX has been removed.
 
-* The IR-level extended linker APIs (for example, to link bitcode files out of
-  archives) have been removed. Any existing clients of these features should
-  move to using a linker with integrated LTO support.
-
-* LLVM and Clang's documentation has been migrated to the `Sphinx
-  <http://sphinx-doc.org/>`_ documentation generation system which uses
-  easy-to-write reStructuredText. See `llvm/docs/README.txt` for more
-  information.
-
-* TargetTransformInfo (TTI) is a new interface that can be used by IR-level
-  passes to obtain target-specific information, such as the costs of
-  instructions. Only "Lowering" passes such as LSR and the vectorizer are
-  allowed to use the TTI infrastructure.
-
-* We've improved the X86 and ARM cost model.
-
-* The Attributes classes have been completely rewritten and expanded. They now
-  support not only enumerated attributes and alignments, but "string"
-  attributes, which are useful for passing information to code generation. See
-  :doc:`HowToUseAttributes` for more details.
+* Added support for a `native object file-based bitcode wrapper format
+  <BitCodeFormat.html#native-object-file>`_.
 
 * ... next change ...
 
@@ -76,49 +58,30 @@ Non-comprehensive list of changes in this release
 
    Makes programs 10x faster by doing Special New Thing.
 
-AArch64 target
---------------
+Changes to the ARM Backend
+--------------------------
 
-We've added support for AArch64, ARM's 64-bit architecture. Development is still
-in fairly early stages, but we expect successful compilation when:
+ During this release ...
 
-- compiling standard compliant C99 and C++03 with Clang;
-- using Linux as a target platform;
-- where code + static data doesn't exceed 4GB in size (heap allocated data has
-  no limitation).
 
-Some additional functionality is also implemented, notably DWARF debugging,
-GNU-style thread local storage and inline assembly.
+Changes to the MIPS Target
+--------------------------
 
-Hexagon Target
---------------
+During this release ...
 
-- Removed support for hexagonv2 and hexagonv3 processor architectures.
+Changes to the PowerPC Target
+-----------------------------
 
-Loop Vectorizer
----------------
+During this release ...
 
-We've continued the work on the loop vectorizer. The loop vectorizer now
-has the following features:
+External Open Source Projects Using LLVM 3.6
+============================================
 
-- Loops with unknown trip count.
-- Runtime checks of pointers
-- Reductions, Inductions
-- If Conversion
-- Pointer induction variables
-- Reverse iterators
-- Vectorization of mixed types
-- Vectorization of function calls
-- Partial unrolling during vectorization
+An exciting aspect of LLVM is that it is used as an enabling technology for
+a lot of other language and tools projects. This section lists some of the
+projects that have already been updated to work with LLVM 3.6.
 
-R600 Backend
-------------
-
-The R600 backend was added in this release, it supports AMD GPUs
-(HD2XXX - HD7XXX).  This backend is used in AMD's Open Source
-graphics / compute drivers which are developed as part of the `Mesa3D
-<http://www.mesa3d.org>`_ project.
-
+* A project
 
 
 Additional Information

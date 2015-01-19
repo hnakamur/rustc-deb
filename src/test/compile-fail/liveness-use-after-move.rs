@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
+
 fn main() {
-    let x = ~5;
+    let x = box 5is;
     let y = x;
-    debug!(*x); //~ ERROR use of moved value: `x`
-    copy y;
+    println!("{}", *x); //~ ERROR use of moved value: `*x`
+    y.clone();
 }

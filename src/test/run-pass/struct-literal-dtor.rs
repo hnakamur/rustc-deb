@@ -9,15 +9,17 @@
 // except according to those terms.
 
 struct foo {
-    x: ~str,
+    x: String,
 }
 
 impl Drop for foo {
-    fn drop(&self) {
-        error!("%s", self.x);
+    fn drop(&mut self) {
+        println!("{}", self.x);
     }
 }
 
 pub fn main() {
-    let _z = foo { x: ~"Hello" };
+    let _z = foo {
+        x: "Hello".to_string()
+    };
 }

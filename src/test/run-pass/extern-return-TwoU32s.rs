@@ -8,11 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct TwoU32s {
+pub struct TwoU32s {
     one: u32, two: u32
 }
 
-pub extern {
+#[link(name = "rust_test_helpers")]
+extern {
     pub fn rust_dbg_extern_return_TwoU32s() -> TwoU32s;
 }
 

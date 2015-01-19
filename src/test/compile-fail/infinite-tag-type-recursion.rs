@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -12,6 +11,6 @@
 
 // error-pattern: illegal recursive enum type; wrap the inner value in a box
 
-enum mlist { cons(int, mlist), nil, }
+enum mlist { cons(isize, mlist), nil, }
 
-fn main() { let a = cons(10, cons(11, nil)); }
+fn main() { let a = mlist::cons(10, mlist::cons(11, mlist::nil)); }

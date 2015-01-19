@@ -9,10 +9,10 @@
 // except according to those terms.
 
 struct S {
- y: int
+ y: isize
 }
 
-impl Cmp, ToStr for S { //~ ERROR: expected `{` but found `,`
+impl Cmp, ToString for S { //~ ERROR: expected one of `(`, `+`, `::`, or `{`, found `,`
   fn eq(&&other: S) { false }
-  fn to_str(&self) -> ~str { ~"hi" }
+  fn to_string(&self) -> String { "hi".to_string() }
 }

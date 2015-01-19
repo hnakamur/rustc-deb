@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,21 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast - check-fast doesn't understand aux-build
 // aux-build:cci_impl_lib.rs
 
-extern mod cci_impl_lib;
+extern crate cci_impl_lib;
 use cci_impl_lib::uint_helpers;
 
 pub fn main() {
     //let bt0 = sys::frame_address();
-    //debug!("%?", bt0);
+    //println!("%?", bt0);
 
-    do 3u.to(10u) |i| {
-        print(fmt!("%u\n", i));
+    3u.to(10u, |i| {
+        println!("{}", i);
 
         //let bt1 = sys::frame_address();
-        //debug!("%?", bt1);
+        //println!("%?", bt1);
         //assert!(bt0 == bt1);
-    }
+    })
 }

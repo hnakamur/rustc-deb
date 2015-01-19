@@ -8,23 +8,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::cell::Cell;
-use std::task;
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+use std::thread::Thread;
 
 pub fn main() { test05(); }
 
-fn test05_start(f: ~fn(int)) {
+fn test05_start<F:FnOnce(int)>(f: F) {
     f(22);
 }
 
 fn test05() {
-    let three = ~3;
-    let fn_to_send: ~fn(int) = |n| {
-        error!(*three + n); // will copy x into the closure
+    let three = box 3;
+    let fn_to_send = move|: n:int| {
+        println!("{}", *three + n); // will copy x into the closure
         assert_eq!(*three, 3);
     };
-    let fn_to_send = Cell::new(fn_to_send);
-    task::spawn(|| {
-        test05_start(fn_to_send.take());
-    });
+    Thread::scoped(move|| {
+        test05_start(fn_to_send);
+    }).join().ok().unwrap();
 }

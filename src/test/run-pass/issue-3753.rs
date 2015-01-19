@@ -9,31 +9,35 @@
 // except according to those terms.
 
 // Issue #3656
-// Issue Name: pub method preceeded by attribute can't be parsed
+// Issue Name: pub method preceded by attribute can't be parsed
 // Abstract: Visibility parsing failed when compiler parsing
 
-use std::float;
+use std::f64;
 
-struct Point {
-    x: float,
-    y: float
+pub struct Point {
+    x: f64,
+    y: f64
 }
 
+impl Copy for Point {}
+
 pub enum Shape {
-    Circle(Point, float),
+    Circle(Point, f64),
     Rectangle(Point, Point)
 }
 
+impl Copy for Shape {}
+
 impl Shape {
-    pub fn area(&self, sh: Shape) -> float {
+    pub fn area(&self, sh: Shape) -> f64 {
         match sh {
-            Circle(_, size) => float::consts::pi * size * size,
-            Rectangle(Point {x, y}, Point {x: x2, y: y2}) => (x2 - x) * (y2 - y)
+            Shape::Circle(_, size) => f64::consts::PI * size * size,
+            Shape::Rectangle(Point {x, y}, Point {x: x2, y: y2}) => (x2 - x) * (y2 - y)
         }
     }
 }
 
 pub fn main(){
-    let s = Circle(Point { x: 1f, y: 2f }, 3f);
-    println(fmt!("%f", s.area(s)));
+    let s = Shape::Circle(Point { x: 1.0, y: 2.0 }, 3.0);
+    println!("{}", s.area(s));
 }

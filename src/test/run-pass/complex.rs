@@ -11,23 +11,22 @@
 
 
 
-// -*- rust -*-
 type t = int;
 
 fn nothing() { }
 
-fn putstr(s: ~str) { }
+fn putstr(_s: String) { }
 
-fn putint(i: int) {
+fn putint(_i: int) {
     let mut i: int = 33;
-    while i < 36 { putstr(~"hi"); i = i + 1; }
+    while i < 36 { putstr("hi".to_string()); i = i + 1; }
 }
 
 fn zerg(i: int) -> int { return i; }
 
 fn foo(x: int) -> int {
     let mut y: t = x + 2;
-    putstr(~"hello");
+    putstr("hello".to_string());
     while y < 10 { putint(y); if y * 3 == 4 { y = y + 2; nothing(); } }
     let mut z: t;
     z = 0x55;
@@ -36,8 +35,8 @@ fn foo(x: int) -> int {
 }
 
 pub fn main() {
-    let x: int = 2 + 2;
-    debug!("%?", x);
-    debug!("hello, world");
-    debug!("%?", 10);
+    let x: int = 2i + 2;
+    println!("{}", x);
+    println!("hello, world");
+    println!("{}", 10i);
 }

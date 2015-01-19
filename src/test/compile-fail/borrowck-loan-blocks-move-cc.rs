@@ -8,24 +8,28 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::task;
+#![feature(box_syntax)]
 
-fn borrow(v: &int, f: &fn(x: &int)) {
+use std::thread::Thread;
+
+fn borrow<F>(v: &isize, f: F) where F: FnOnce(&isize) {
     f(v);
 }
 
 fn box_imm() {
-    let v = ~3;
+    let v = box 3is;
     let _w = &v;
-    do task::spawn {
-        debug!("v=%d", *v);
+    Thread::spawn(move|| {
+        println!("v={}", *v);
         //~^ ERROR cannot move `v` into closure
-    }
+    });
+}
 
-    let v = ~3;
+fn box_imm_explicit() {
+    let v = box 3is;
     let _w = &v;
-    task::spawn(|| {
-        debug!("v=%d", *v);
+    Thread::spawn(move|| {
+        println!("v={}", *v);
         //~^ ERROR cannot move
     });
 }

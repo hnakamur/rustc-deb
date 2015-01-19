@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-4 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -12,42 +12,45 @@
 // making method calls, but only if there aren't any matches without
 // it.
 
+#![feature(unboxed_closures)]
+
 trait iterable<A> {
-    fn iterate(&self, blk: &fn(x: &A) -> bool) -> bool;
+    fn iterate<F>(&self, blk: F) -> bool where F: FnMut(&A) -> bool;
 }
 
-impl<'self,A> iterable<A> for &'self [A] {
-    fn iterate(&self, f: &fn(x: &A) -> bool) -> bool {
-        self.iter().advance(f)
+impl<'a,A> iterable<A> for &'a [A] {
+    fn iterate<F>(&self, f: F) -> bool where F: FnMut(&A) -> bool {
+        self.iter().all(f)
     }
 }
 
-impl<A> iterable<A> for ~[A] {
-    fn iterate(&self, f: &fn(x: &A) -> bool) -> bool {
-        self.iter().advance(f)
+impl<A> iterable<A> for Vec<A> {
+    fn iterate<F>(&self, f: F) -> bool where F: FnMut(&A) -> bool {
+        self.iter().all(f)
     }
 }
 
 fn length<A, T: iterable<A>>(x: T) -> uint {
     let mut len = 0;
-    for x.iterate() |_y| { len += 1 }
+    x.iterate(|_y| {
+        len += 1;
+        true
+    });
     return len;
 }
 
 pub fn main() {
-    let x = ~[0,1,2,3];
+    let x: Vec<int> = vec!(0,1,2,3);
     // Call a method
-    for x.iterate() |y| { assert!(x[*y] == *y); }
+    x.iterate(|y| { assert!(x[*y as uint] == *y); true });
     // Call a parameterized function
     assert_eq!(length(x.clone()), x.len());
     // Call a parameterized function, with type arguments that require
     // a borrow
-    assert_eq!(length::<int, &[int]>(x), x.len());
+    assert_eq!(length::<int, &[int]>(x.as_slice()), x.len());
 
     // Now try it with a type that *needs* to be borrowed
     let z = [0,1,2,3];
-    // Call a method
-    for z.iterate() |y| { assert!(z[*y] == *y); }
     // Call a parameterized function
-    assert_eq!(length::<int, &[int]>(z), z.len());
+    assert_eq!(length::<int, &[int]>(&z), z.len());
 }

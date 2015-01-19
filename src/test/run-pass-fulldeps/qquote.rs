@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-pretty
+// ignore-pretty
+// ignore-test
 
-extern mod extra;
-extern mod syntax;
+#![feature(quote)]
+
+extern crate syntax;
 
 use std::io::*;
 
@@ -24,7 +26,7 @@ use syntax::print::*;
 
 
 trait fake_ext_ctxt {
-    fn cfg() -> ast::crate_cfg;
+    fn cfg() -> ast::CrateConfig;
     fn parse_sess() -> parse::parse_sess;
     fn call_site() -> span;
     fn ident_of(st: &str) -> ast::ident;
@@ -33,13 +35,13 @@ trait fake_ext_ctxt {
 type fake_session = parse::parse_sess;
 
 impl fake_ext_ctxt for fake_session {
-    fn cfg() -> ast::crate_cfg { ~[] }
+    fn cfg() -> ast::CrateConfig { Vec::new() }
     fn parse_sess() -> parse::parse_sess { self }
     fn call_site() -> span {
         codemap::span {
             lo: codemap::BytePos(0),
             hi: codemap::BytePos(0),
-            expn_info: None
+            expn_id: codemap::NO_EXPANSION
         }
     }
     fn ident_of(st: &str) -> ast::ident {
@@ -52,36 +54,38 @@ fn mk_ctxt() -> fake_ext_ctxt {
 }
 
 fn main() {
-    let ext_cx = mk_ctxt();
+    let cx = mk_ctxt();
 
-    let abc = quote_expr!(23);
-    check_pp(ext_cx, abc,  pprust::print_expr, ~"23");
+    let abc = quote_expr!(cx, 23);
+    check_pp(ext_cx, abc,  pprust::print_expr, "23".to_string());
 
 
-    let ty = quote_ty!(int);
-    check_pp(ext_cx, ty, pprust::print_type, ~"int");
+    let ty = quote_ty!(cx, int);
+    check_pp(ext_cx, ty, pprust::print_type, "int".to_string());
 
-    let item = quote_item!(static x : int = 10;).get();
-    check_pp(ext_cx, item, pprust::print_item, ~"static x: int = 10;");
+    let item = quote_item!(cx, static x : int = 10;).get();
+    check_pp(ext_cx, item, pprust::print_item, "static x: int = 10;".to_string());
 
-    let stmt = quote_stmt!(let x = 20;);
-    check_pp(ext_cx, *stmt, pprust::print_stmt, ~"let x = 20;");
+    let stmt = quote_stmt!(cx, let x = 20;);
+    check_pp(ext_cx, *stmt, pprust::print_stmt, "let x = 20;".to_string());
 
-    let pat = quote_pat!(Some(_));
-    check_pp(ext_cx, pat, pprust::print_refutable_pat, ~"Some(_)");
+    let pat = quote_pat!(cx, Some(_));
+    check_pp(ext_cx, pat, pprust::print_pat, "Some(_)".to_string());
 
+    let arm = quote_arm!(cx, (ref x, ref y) => (x, y));
+    check_pp(ext_cx, arm, pprust::print_stmt, "(ref x, ref y) = (x, y)".to_string());
 }
 
 fn check_pp<T>(cx: fake_ext_ctxt,
-               expr: T, f: &fn(pprust::ps, T), expect: ~str) {
-    let s = do io::with_str_writer |wr| {
+               expr: T, f: |pprust::ps, T|, expect: String) {
+    let s = io::with_str_writer(|wr| {
         let pp = pprust::rust_printer(wr, cx.parse_sess().interner);
         f(pp, expr);
         pp::eof(pp.s);
-    };
+    });
     stdout().write_line(s);
-    if expect != ~"" {
-        error!("expect: '%s', got: '%s'", expect, s);
+    if expect != "".to_string() {
+        println!("expect: '%s', got: '%s'", expect, s);
         assert_eq!(s, expect);
     }
 }

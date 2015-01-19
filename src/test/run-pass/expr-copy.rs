@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
 
 fn f(arg: &mut A) {
     arg.a = 100;
@@ -16,12 +15,14 @@ fn f(arg: &mut A) {
 
 struct A { a: int }
 
+impl Copy for A {}
+
 pub fn main() {
     let mut x = A {a: 10};
     f(&mut x);
     assert_eq!(x.a, 100);
     x.a = 20;
-    let mut y = copy x;
+    let mut y = x;
     f(&mut y);
     assert_eq!(x.a, 20);
 }

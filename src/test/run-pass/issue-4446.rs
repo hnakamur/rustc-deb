@@ -8,14 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::{pipes, io, task, comm};
+use std::io::println;
+use std::sync::mpsc::channel;
+use std::thread::Thread;
 
-fn main() {
-    let (port, chan) = comm::stream();
+pub fn main() {
+    let (tx, rx) = channel();
 
-    do task::spawn {
-        io::println(port.recv());
-    }
+    tx.send("hello, world").unwrap();
 
-    chan.send("hello, world");
+    Thread::scoped(move|| {
+        println(rx.recv().unwrap());
+    }).join().ok().unwrap();
 }

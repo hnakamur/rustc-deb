@@ -8,28 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::vec;
-
 pub fn main() {
-    let mut i = 0;
+    let mut i = 0i;
     while i < 20 { i += 1; if i == 10 { break; } }
     assert_eq!(i, 10);
     loop { i += 1; if i == 20 { break; } }
     assert_eq!(i, 20);
-    let xs = [1, 2, 3, 4, 5, 6];
-    for xs.iter().advance |x| {
+    let xs = [1i, 2, 3, 4, 5, 6];
+    for x in xs.iter() {
         if *x == 3 { break; } assert!((*x <= 3));
     }
     i = 0;
-    while i < 10 { i += 1; if i % 2 == 0 { loop; } assert!((i % 2 != 0)); }
+    while i < 10 { i += 1; if i % 2 == 0 { continue; } assert!((i % 2 != 0)); }
     i = 0;
     loop {
-        i += 1; if i % 2 == 0 { loop; } assert!((i % 2 != 0));
+        i += 1; if i % 2 == 0 { continue; } assert!((i % 2 != 0));
         if i >= 10 { break; }
     }
-    let ys = ~[1, 2, 3, 4, 5, 6];
-    for ys.iter().advance |x| {
-        if *x % 2 == 0 { loop; }
+    let ys = vec!(1i, 2, 3, 4, 5, 6);
+    for x in ys.iter() {
+        if *x % 2 == 0 { continue; }
         assert!((*x % 2 != 0));
     }
 }

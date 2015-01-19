@@ -9,14 +9,14 @@
 // except according to those terms.
 
 struct cat {
-  priv meows : uint,
+  meows : usize,
 }
 
 impl cat {
     fn sleep(&self) { loop{} }
     fn meow(&self) {
-      error!("Meow");
-      meows += 1u; //~ ERROR unresolved name
+      println!("Meow");
+      meows += 1us; //~ ERROR unresolved name
       sleep();     //~ ERROR unresolved name
     }
 

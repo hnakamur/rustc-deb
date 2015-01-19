@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[allow(default_methods)];
 
 trait A {
     fn g(&self) -> int { 10 }
@@ -21,5 +20,5 @@ fn f<T:A>(i: T) {
 }
 
 pub fn main () {
-    f(0);
+    f(0i);
 }

@@ -9,15 +9,13 @@
 // except according to those terms.
 
 pub mod kitties {
-    use std::uint;
-
     pub struct cat {
-        priv meows : uint,
-        how_hungry : int,
+        meows : uint,
+        pub how_hungry : int,
     }
 
     impl cat {
-        priv fn nap(&self) { for uint::range(1, 10000u) |_i|{}}
+        fn nap(&self) {}
     }
 
     pub fn cat(in_x : uint, in_y : int) -> cat {
@@ -26,5 +24,4 @@ pub mod kitties {
             how_hungry: in_y
         }
     }
-
 }

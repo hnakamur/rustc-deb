@@ -42,6 +42,11 @@ class CCIf<string predicate, CCAction A> : CCPredicateAction<A> {
 class CCIfByVal<CCAction A> : CCIf<"ArgFlags.isByVal()", A> {
 }
 
+/// CCIfConsecutiveRegs - If the current argument has InConsecutiveRegs
+/// parameter attribute, apply Action A.
+class CCIfConsecutiveRegs<CCAction A> : CCIf<"ArgFlags.isInConsecutiveRegs()", A> {
+}
+
 /// CCIfCC - Match if the current calling convention is 'CC'.
 class CCIfCC<string CC, CCAction A>
   : CCIf<!strconcat("State.getCallingConv() == ", CC), A> {}
@@ -89,11 +94,15 @@ class CCAssignToStack<int size, int align> : CCAction {
   int Align = align;
 }
 
-/// CCAssignToStackWithShadow - Same as CCAssignToStack, but with a register
-/// to be shadowed.
-class CCAssignToStackWithShadow<int size, int align, Register reg> :
-        CCAssignToStack<size, align> {
-  Register ShadowReg = reg;
+/// CCAssignToStackWithShadow - Same as CCAssignToStack, but with a list of
+/// registers to be shadowed. Note that, unlike CCAssignToRegWithShadow, this
+/// shadows ALL of the registers in shadowList.
+class CCAssignToStackWithShadow<int size,
+                                int align,
+                                list<Register> shadowList> : CCAction {
+  int Size = size;
+  int Align = align;
+  list<Register> ShadowRegList = shadowList;
 }
 
 /// CCPassByVal - This action always matches: it assigns the value to a stack
@@ -107,6 +116,12 @@ class CCPassByVal<int size, int align> : CCAction {
 /// CCPromoteToType - If applied, this promotes the specified current value to
 /// the specified type.
 class CCPromoteToType<ValueType destTy> : CCAction {
+  ValueType DestTy = destTy;
+}
+
+/// CCPromoteToUpperBitsInType - If applied, this promotes the specified current
+/// value to the specified type and shifts the value into the upper bits.
+class CCPromoteToUpperBitsInType<ValueType destTy> : CCAction {
   ValueType DestTy = destTy;
 }
 
@@ -143,4 +158,10 @@ class CallingConv<list<CCAction> actions> {
 /// returning from getCallPreservedMask().
 class CalleeSavedRegs<dag saves> {
   dag SaveList = saves;
+
+  // Registers that are also preserved across function calls, but should not be
+  // included in the generated FOO_SaveList array. These registers will be
+  // included in the FOO_RegMask bit mask. This can be used for registers that
+  // are saved automatically, like the SPARC register windows.
+  dag OtherPreserved;
 }

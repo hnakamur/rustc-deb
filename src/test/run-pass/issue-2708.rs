@@ -8,6 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 struct Font {
     fontbuf: uint,
     cairo_font: uint,
@@ -16,7 +19,7 @@ struct Font {
 }
 
 impl Drop for Font {
-    fn drop(&self) {}
+    fn drop(&mut self) {}
 }
 
 fn Font() -> Font {
@@ -28,5 +31,5 @@ fn Font() -> Font {
 }
 
 pub fn main() {
-    let _f = @Font();
+    let _f = box Font();
 }

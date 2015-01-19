@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,10 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-pretty -- comments are unfaithfully preserved
-
 fn main() {
-    let mut x: Option<int> = None;
+    let mut x: Option<isize> = None;
     match x {
       None => {
           // Note: on this branch, no borrow has occurred.
@@ -22,5 +20,5 @@ fn main() {
           x = Some(*i+1); //~ ERROR cannot assign to `x`
       }
     }
-    copy x; // just to prevent liveness warnings
+    x.clone(); // just to prevent liveness warnings
 }

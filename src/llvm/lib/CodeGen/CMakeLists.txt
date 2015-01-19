@@ -2,29 +2,32 @@ add_llvm_library(LLVMCodeGen
   AggressiveAntiDepBreaker.cpp
   AllocationOrder.cpp
   Analysis.cpp
+  AtomicExpandPass.cpp
   BasicTargetTransformInfo.cpp
   BranchFolding.cpp
   CalcSpillWeights.cpp
   CallingConvLower.cpp
   CodeGen.cpp
-  CodePlacementOpt.cpp
+  CodeGenPrepare.cpp
   CriticalAntiDepBreaker.cpp
   DFAPacketizer.cpp
   DeadMachineInstructionElim.cpp
   DwarfEHPrepare.cpp
   EarlyIfConversion.cpp
   EdgeBundles.cpp
+  ErlangGC.cpp
   ExecutionDepsFix.cpp
   ExpandISelPseudos.cpp
   ExpandPostRAPseudos.cpp
   GCMetadata.cpp
   GCMetadataPrinter.cpp
   GCStrategy.cpp
+  GlobalMerge.cpp
   IfConversion.cpp
   InlineSpiller.cpp
   InterferenceCache.cpp
   IntrinsicLowering.cpp
-  JITCodeEmitter.cpp
+  JumpInstrTables.cpp
   LLVMTargetMachine.cpp
   LatencyPriorityQueue.cpp
   LexicalScopes.cpp
@@ -35,6 +38,7 @@ add_llvm_library(LLVMCodeGen
   LiveRangeCalc.cpp
   LiveRangeEdit.cpp
   LiveRegMatrix.cpp
+  LivePhysRegs.cpp
   LiveStackAnalysis.cpp
   LiveVariables.cpp
   LocalStackSlotAllocation.cpp
@@ -43,9 +47,10 @@ add_llvm_library(LLVMCodeGen
   MachineBlockPlacement.cpp
   MachineBranchProbabilityInfo.cpp
   MachineCSE.cpp
-  MachineCodeEmitter.cpp
+  MachineCombiner.cpp
   MachineCopyPropagation.cpp
   MachineDominators.cpp
+  MachineDominanceFrontier.cpp
   MachineFunction.cpp
   MachineFunctionAnalysis.cpp
   MachineFunctionPass.cpp
@@ -59,6 +64,7 @@ add_llvm_library(LLVMCodeGen
   MachinePassRegistry.cpp
   MachinePostDominators.cpp
   MachineRegisterInfo.cpp
+  MachineRegionInfo.cpp
   MachineSSAUpdater.cpp
   MachineScheduler.cpp
   MachineSink.cpp
@@ -88,7 +94,6 @@ add_llvm_library(LLVMCodeGen
   ScheduleDAGPrinter.cpp
   ScoreboardHazardRecognizer.cpp
   ShadowStackGC.cpp
-  ShrinkWrapping.cpp
   SjLjEHPrepare.cpp
   SlotIndexes.cpp
   SpillPlacement.cpp
@@ -97,7 +102,8 @@ add_llvm_library(LLVMCodeGen
   StackColoring.cpp
   StackProtector.cpp
   StackSlotColoring.cpp
-  StrongPHIElimination.cpp
+  StackMapLivenessAnalysis.cpp
+  StackMaps.cpp
   TailDuplication.cpp
   TargetFrameLoweringImpl.cpp
   TargetInstrInfo.cpp

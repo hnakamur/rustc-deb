@@ -9,6 +9,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// pp-exact
+// ignore-pretty: `expand` adds some preludes before shebang
+//
+// ignore-lexer-test FIXME #15878
 
-pub fn main() { println("Hello World"); }
+pub fn main() { println!("Hello World"); }

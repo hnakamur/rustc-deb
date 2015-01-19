@@ -9,10 +9,10 @@
 // except according to those terms.
 
 struct S {
-    x: int,
-    y: int,
+    x: isize,
+    y: isize,
 }
 
 fn main(foo: S) {
-//~^ ERROR Wrong type in main function: found `extern "Rust" fn(S)`
+//~^ ERROR: main function expects type
 }

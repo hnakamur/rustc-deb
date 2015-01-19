@@ -8,17 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::string::String;
 
-#[deriving(Eq)]
-enum t { a, b(~str), }
+#[derive(PartialEq)]
+enum t { a, b(String), }
 
 fn make(i: int) -> t {
-    if i > 10 { return a; }
-    let mut s = ~"hello";
+    if i > 10 { return t::a; }
+    let mut s = String::from_str("hello");
     // Ensure s is non-const.
 
     s.push_str("there");
-    return b(s);
+    return t::b(s);
 }
 
 pub fn main() {
@@ -26,5 +27,5 @@ pub fn main() {
 
 
     // The auto slot for the result of make(i) should not leak.
-    while make(i) != a { i += 1; }
+    while make(i) != t::a { i += 1; }
 }

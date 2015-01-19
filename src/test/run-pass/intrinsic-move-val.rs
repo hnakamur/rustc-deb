@@ -8,19 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+#![feature(intrinsics)]
+
+use std::mem::transmute;
+
 mod rusti {
-    #[abi = "rust-intrinsic"]
-    pub extern "rust-intrinsic" {
+    extern "rust-intrinsic" {
+        pub fn init<T>() -> T;
         pub fn move_val_init<T>(dst: &mut T, src: T);
-        pub fn move_val<T>(dst: &mut T, src: T);
     }
 }
 
 pub fn main() {
     unsafe {
-        let mut x = @1;
-        let mut y = @2;
-        rusti::move_val(&mut y, x);
+        let x = box 1i;
+        let mut y = rusti::init();
+        let mut z: *const uint = transmute(&x);
+        rusti::move_val_init(&mut y, x);
         assert_eq!(*y, 1);
+        assert_eq!(*z, 0); // `x` is nulled out, not directly visible
     }
 }

@@ -8,25 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
-fn asSendfn( f : ~fn()->uint ) -> uint {
-   return f();
-}
-
-fn asLambda( f : @fn()->uint ) -> uint {
-   return f();
-}
-
-fn asBlock( f : &fn()->uint ) -> uint {
+fn asBlock<F>(f: F) -> uint where F: FnOnce() -> uint {
    return f();
 }
 
 pub fn main() {
-   let x = asSendfn(|| 22u);
-   assert_eq!(x, 22u);
-   let x = asLambda(|| 22u);
-   assert_eq!(x, 22u);
    let x = asBlock(|| 22u);
    assert_eq!(x, 22u);
 }

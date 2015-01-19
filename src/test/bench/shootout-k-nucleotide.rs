@@ -1,21 +1,57 @@
-// xfail-test
+// The Computer Language Benchmarks Game
+// http://benchmarksgame.alioth.debian.org/
+//
+// contributed by the Rust Project Developers
 
-extern mod extra;
+// Copyright (c) 2014 The Rust Project Developers
+//
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// - Redistributions of source code must retain the above copyright
+//   notice, this list of conditions and the following disclaimer.
+//
+// - Redistributions in binary form must reproduce the above copyright
+//   notice, this list of conditions and the following disclaimer in
+//   the documentation and/or other materials provided with the
+//   distribution.
+//
+// - Neither the name of "The Computer Language Benchmarks Game" nor
+//   the name of "The Computer Language Shootout Benchmarks" nor the
+//   names of its contributors may be used to endorse or promote
+//   products derived from this software without specific prior
+//   written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+// OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use std::cast::transmute;
-use std::i32::range;
-use std::libc::{STDIN_FILENO, c_int, fdopen, fgets, fileno, fopen, fstat};
-use std::libc::{stat, strlen};
-use std::ptr::null;
-use std::unstable::intrinsics::init;
-use std::vec::{reverse};
-use extra::sort::quick_sort3;
+// ignore-android see #10393 #13206
 
-static LINE_LEN: uint = 80;
-static TABLE: [u8, ..4] = [ 'A' as u8, 'C' as u8, 'G' as u8, 'T' as u8 ];
+#![feature(box_syntax)]
+
+use std::ascii::OwnedAsciiExt;
+use std::iter::repeat;
+use std::slice;
+use std::sync::Arc;
+use std::thread::Thread;
+
+static TABLE: [u8;4] = [ 'A' as u8, 'C' as u8, 'G' as u8, 'T' as u8 ];
 static TABLE_SIZE: uint = 2 << 16;
 
-static OCCURRENCES: [&'static str, ..5] = [
+static OCCURRENCES: [&'static str;5] = [
     "GGT",
     "GGTA",
     "GGTATT",
@@ -25,42 +61,39 @@ static OCCURRENCES: [&'static str, ..5] = [
 
 // Code implementation
 
-#[deriving(Eq, Ord)]
+#[derive(PartialEq, PartialOrd, Ord, Eq)]
 struct Code(u64);
+
+impl Copy for Code {}
 
 impl Code {
     fn hash(&self) -> u64 {
-        **self
+        let Code(ret) = *self;
+        return ret;
     }
 
-    #[inline(always)]
     fn push_char(&self, c: u8) -> Code {
-        Code((**self << 2) + (pack_symbol(c) as u64))
+        Code((self.hash() << 2) + (pack_symbol(c) as u64))
     }
 
-    fn rotate(&self, c: u8, frame: i32) -> Code {
-        Code(*self.push_char(c) & ((1u64 << (2 * (frame as u64))) - 1))
+    fn rotate(&self, c: u8, frame: uint) -> Code {
+        Code(self.push_char(c).hash() & ((1u64 << (2 * frame)) - 1))
     }
 
     fn pack(string: &str) -> Code {
-        let mut code = Code(0u64);
-        for uint::range(0, string.len()) |i| {
-            code = code.push_char(string[i]);
-        }
-        code
+        string.bytes().fold(Code(0u64), |a, b| a.push_char(b))
     }
 
-    // XXX: Inefficient.
-    fn unpack(&self, frame: i32) -> ~str {
-        let mut key = **self;
-        let mut result = ~[];
-        for (frame as uint).times {
+    fn unpack(&self, frame: uint) -> String {
+        let mut key = self.hash();
+        let mut result = Vec::new();
+        for _ in range(0, frame) {
             result.push(unpack_symbol((key as u8) & 3));
             key >>= 2;
         }
 
-        reverse(result);
-        str::from_bytes(result)
+        result.reverse();
+        String::from_utf8(result).unwrap()
     }
 }
 
@@ -82,231 +115,206 @@ struct PrintCallback(&'static str);
 
 impl TableCallback for PrintCallback {
     fn f(&self, entry: &mut Entry) {
-        println(fmt!("%d\t%s", entry.count as int, **self));
+        let PrintCallback(s) = *self;
+        println!("{}\t{}", entry.count as int, s);
     }
 }
 
 struct Entry {
     code: Code,
-    count: i32,
-    next: Option<~Entry>,
+    count: uint,
+    next: Option<Box<Entry>>,
 }
 
 struct Table {
-    count: i32,
-    items: [Option<~Entry>, ..TABLE_SIZE]
+    items: Vec<Option<Box<Entry>>>
+}
+
+struct Items<'a> {
+    cur: Option<&'a Entry>,
+    items: slice::Iter<'a, Option<Box<Entry>>>,
 }
 
 impl Table {
     fn new() -> Table {
         Table {
-            count: 0,
-            items: [ None, ..TABLE_SIZE ],
+            items: range(0, TABLE_SIZE).map(|_| None).collect()
         }
     }
 
     fn search_remainder<C:TableCallback>(item: &mut Entry, key: Code, c: C) {
         match item.next {
             None => {
-                let mut entry = ~Entry {
+                let mut entry = box Entry {
                     code: key,
                     count: 0,
                     next: None,
                 };
-                c.f(entry);
+                c.f(&mut *entry);
                 item.next = Some(entry);
             }
             Some(ref mut entry) => {
                 if entry.code == key {
-                    c.f(*entry);
+                    c.f(&mut **entry);
                     return;
                 }
 
-                Table::search_remainder(*entry, key, c)
+                Table::search_remainder(&mut **entry, key, c)
             }
         }
     }
 
     fn lookup<C:TableCallback>(&mut self, key: Code, c: C) {
-        let index = *key % (TABLE_SIZE as u64);
+        let index = key.hash() % (TABLE_SIZE as u64);
 
         {
-            if self.items[index].is_none() {
-                let mut entry = ~Entry {
+            if self.items[index as uint].is_none() {
+                let mut entry = box Entry {
                     code: key,
                     count: 0,
                     next: None,
                 };
-                c.f(entry);
-                self.items[index] = Some(entry);
+                c.f(&mut *entry);
+                self.items[index as uint] = Some(entry);
                 return;
             }
         }
 
         {
-            let mut entry = &mut *self.items[index].get_mut_ref();
+            let entry = self.items[index as uint].as_mut().unwrap();
             if entry.code == key {
-                c.f(*entry);
+                c.f(&mut **entry);
                 return;
             }
 
-            Table::search_remainder(*entry, key, c)
+            Table::search_remainder(&mut **entry, key, c)
         }
     }
 
-    fn each(&self, f: &fn(entry: &Entry) -> bool) {
-        for self.items.each |item| {
-            match *item {
-                None => {}
-                Some(ref item) => {
-                    let mut item: &Entry = *item;
-                    loop {
-                        if !f(item) {
-                            return;
-                        }
+    fn iter(&self) -> Items {
+        Items { cur: None, items: self.items.iter() }
+    }
+}
 
-                        match item.next {
-                            None => break,
-                            Some(ref next_item) => item = &**next_item,
-                        }
+impl<'a> Iterator for Items<'a> {
+    type Item = &'a Entry;
+
+    fn next(&mut self) -> Option<&'a Entry> {
+        let ret = match self.cur {
+            None => {
+                let i;
+                loop {
+                    match self.items.next() {
+                        None => return None,
+                        Some(&None) => {}
+                        Some(&Some(ref a)) => { i = &**a; break }
                     }
                 }
-            };
+                self.cur = Some(&*i);
+                &*i
+            }
+            Some(c) => c
+        };
+        match ret.next {
+            None => { self.cur = None; }
+            Some(ref next) => { self.cur = Some(&**next); }
         }
+        return Some(ret);
     }
 }
 
 // Main program
 
 fn pack_symbol(c: u8) -> u8 {
-    match c {
-        'a' as u8 | 'A' as u8 => 0,
-        'c' as u8 | 'C' as u8 => 1,
-        'g' as u8 | 'G' as u8 => 2,
-        't' as u8 | 'T' as u8 => 3,
-        _ => fail!(c.to_str())
+    match c as char {
+        'A' => 0,
+        'C' => 1,
+        'G' => 2,
+        'T' => 3,
+        _ => panic!("{}", c as char),
     }
 }
 
 fn unpack_symbol(c: u8) -> u8 {
-    TABLE[c]
+    TABLE[c as uint]
 }
 
-fn next_char<'a>(mut buf: &'a [u8]) -> &'a [u8] {
-    loop {
-        buf = buf.slice(1, buf.len());
-        if buf.len() == 0 {
-            break;
-        }
-        if buf[0] != (' ' as u8) && buf[0] != ('\t' as u8) &&
-                buf[0] != ('\n' as u8) && buf[0] != 0 {
-            break;
-        }
-    }
-    buf
-}
-
-#[inline(never)]
-fn read_stdin() -> ~[u8] {
-    unsafe {
-        let mode = "r";
-        //let stdin = fdopen(STDIN_FILENO as c_int, transmute(&mode[0]));
-        let path = "knucleotide-input.txt";
-        let stdin = fopen(transmute(&path[0]), transmute(&mode[0]));
-
-        let mut st: stat = init();
-        fstat(fileno(stdin), &mut st);
-        let mut buf = vec::from_elem(st.st_size as uint, 0);
-
-        let header = ">THREE".as_bytes();
-
-        {
-            let mut window: &mut [u8] = buf;
-            loop {
-                fgets(transmute(&mut window[0]), LINE_LEN as c_int, stdin);
-
-                {
-                    if window.slice(0, 6) == header {
-                        break;
-                    }
-                }
-            }
-
-            while fgets(transmute(&mut window[0]),
-                        LINE_LEN as c_int,
-                        stdin) != null() {
-                window = window.mut_slice(strlen(transmute(&window[0])) as uint, window.len());
-            }
-        }
-
-        buf
-    }
-}
-
-#[inline(never)]
-#[fixed_stack_segment]
-fn generate_frequencies(frequencies: &mut Table,
-                        mut input: &[u8],
-                        frame: i32) {
+fn generate_frequencies(mut input: &[u8], frame: uint) -> Table {
+    let mut frequencies = Table::new();
+    if input.len() < frame { return frequencies; }
     let mut code = Code(0);
 
     // Pull first frame.
-    for (frame as uint).times {
+    for _ in range(0, frame) {
         code = code.push_char(input[0]);
-        input = next_char(input);
+        input = &input[1..];
     }
     frequencies.lookup(code, BumpCallback);
 
     while input.len() != 0 && input[0] != ('>' as u8) {
         code = code.rotate(input[0], frame);
         frequencies.lookup(code, BumpCallback);
-        input = next_char(input);
+        input = &input[1..];
     }
+    frequencies
 }
 
-#[inline(never)]
-#[fixed_stack_segment]
-fn print_frequencies(frequencies: &Table, frame: i32) {
-    let mut vector = ~[];
-    for frequencies.each |entry| {
-        vector.push((entry.code, entry.count));
+fn print_frequencies(frequencies: &Table, frame: uint) {
+    let mut vector = Vec::new();
+    for entry in frequencies.iter() {
+        vector.push((entry.count, entry.code));
     }
-    quick_sort3(vector);
+    vector.as_mut_slice().sort();
 
     let mut total_count = 0;
-    for vector.each |&(_, count)| {
+    for &(count, _) in vector.iter() {
         total_count += count;
     }
 
-    for vector.each |&(key, count)| {
-        println(fmt!("%s %.3f",
-                     key.unpack(frame),
-                     (count as float * 100.0) / (total_count as float)));
+    for &(count, key) in vector.iter().rev() {
+        println!("{} {:.3}",
+                 key.unpack(frame).as_slice(),
+                 (count as f32 * 100.0) / (total_count as f32));
     }
+    println!("");
 }
 
 fn print_occurrences(frequencies: &mut Table, occurrence: &'static str) {
     frequencies.lookup(Code::pack(occurrence), PrintCallback(occurrence))
 }
 
-#[fixed_stack_segment]
+fn get_sequence<R: Buffer>(r: &mut R, key: &str) -> Vec<u8> {
+    let mut res = Vec::new();
+    for l in r.lines().map(|l| l.ok().unwrap())
+        .skip_while(|l| key != l.as_slice().slice_to(key.len())).skip(1)
+    {
+        res.push_all(l.as_slice().trim().as_bytes());
+    }
+    res.into_ascii_uppercase()
+}
+
 fn main() {
-    let input = read_stdin();
+    let input = if std::os::getenv("RUST_BENCH").is_some() {
+        let fd = std::io::File::open(&Path::new("shootout-k-nucleotide.data"));
+        get_sequence(&mut std::io::BufferedReader::new(fd), ">THREE")
+    } else {
+        get_sequence(&mut *std::io::stdin().lock(), ">THREE")
+    };
+    let input = Arc::new(input);
 
-    let mut frequencies = ~Table::new();
-    generate_frequencies(frequencies, input, 1);
-    print_frequencies(frequencies, 1);
+    let nb_freqs: Vec<_> = range(1u, 3).map(|i| {
+        let input = input.clone();
+        (i, Thread::scoped(move|| generate_frequencies(input.as_slice(), i)))
+    }).collect();
+    let occ_freqs: Vec<_> = OCCURRENCES.iter().map(|&occ| {
+        let input = input.clone();
+        Thread::scoped(move|| generate_frequencies(input.as_slice(), occ.len()))
+    }).collect();
 
-    *frequencies = Table::new();
-    generate_frequencies(frequencies, input, 2);
-    print_frequencies(frequencies, 2);
-
-    for range(0, 5) |i| {
-        let occurrence = OCCURRENCES[i];
-        *frequencies = Table::new();
-        generate_frequencies(frequencies,
-                             input,
-                             occurrence.len() as i32);
-        print_occurrences(frequencies, occurrence);
+    for (i, freq) in nb_freqs.into_iter() {
+        print_frequencies(&freq.join().ok().unwrap(), i);
+    }
+    for (&occ, freq) in OCCURRENCES.iter().zip(occ_freqs.into_iter()) {
+        print_occurrences(&mut freq.join().ok().unwrap(), occ);
     }
 }

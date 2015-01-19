@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,40 +8,36 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-win32
-extern mod extra;
-
-use std::comm::*;
-use std::task;
+use std::sync::mpsc::{channel, Sender};
+use std::thread::Thread;
 
 struct complainer {
-  c: SharedChan<bool>,
+    tx: Sender<bool>,
 }
 
 impl Drop for complainer {
-    fn drop(&self) {
-        error!("About to send!");
-        self.c.send(true);
-        error!("Sent!");
+    fn drop(&mut self) {
+        println!("About to send!");
+        self.tx.send(true).unwrap();
+        println!("Sent!");
     }
 }
 
-fn complainer(c: SharedChan<bool>) -> complainer {
-    error!("Hello!");
+fn complainer(tx: Sender<bool>) -> complainer {
+    println!("Hello!");
     complainer {
-        c: c
+        tx: tx
     }
 }
 
-fn f(c: SharedChan<bool>) {
-    let _c = complainer(c);
-    fail!();
+fn f(tx: Sender<bool>) {
+    let _tx = complainer(tx);
+    panic!();
 }
 
 pub fn main() {
-    let (p, c) = stream();
-    let c = SharedChan::new(c);
-    task::spawn_unlinked(|| f(c.clone()) );
-    error!("hiiiiiiiii");
-    assert!(p.recv());
+    let (tx, rx) = channel();
+    let _t = Thread::scoped(move|| f(tx.clone()));
+    println!("hiiiiiiiii");
+    assert!(rx.recv().unwrap());
 }

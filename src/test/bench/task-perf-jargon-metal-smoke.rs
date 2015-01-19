@@ -1,6 +1,4 @@
-// xfail-pretty
-
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,50 +8,49 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Test performance of a task "spawn ladder", in which children task have many
+// Test performance of a task "spawn ladder", in which children task have
 // many ancestor taskgroups, but with only a few such groups alive at a time.
 // Each child task has to enlist as a descendant in each of its ancestor
 // groups, but that shouldn't have to happen for already-dead groups.
 //
 // The filename is a song reference; google it in quotes.
 
-use std::cell::Cell;
-use std::comm;
+// ignore-pretty very bad with line comments
+
+use std::sync::mpsc::{channel, Sender};
 use std::os;
-use std::task;
+use std::thread::Thread;
 use std::uint;
 
-fn child_generation(gens_left: uint, c: comm::Chan<()>) {
+fn child_generation(gens_left: uint, tx: Sender<()>) {
     // This used to be O(n^2) in the number of generations that ever existed.
     // With this code, only as many generations are alive at a time as tasks
     // alive at a time,
-    let c = Cell::new(c);
-    do task::spawn_supervised {
-        let c = c.take();
+    Thread::spawn(move|| {
         if gens_left & 1 == 1 {
-            task::yield(); // shake things up a bit
+            Thread::yield_now(); // shake things up a bit
         }
         if gens_left > 0 {
-            child_generation(gens_left - 1, c); // recurse
+            child_generation(gens_left - 1, tx); // recurse
         } else {
-            c.send(())
+            tx.send(()).unwrap()
         }
-    }
+    });
 }
 
 fn main() {
     let args = os::args();
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"100000"]
+    let args = if os::getenv("RUST_BENCH").is_some() {
+        vec!("".to_string(), "100000".to_string())
     } else if args.len() <= 1 {
-        ~[~"", ~"100"]
+        vec!("".to_string(), "100".to_string())
     } else {
-        copy args
+        args.clone().into_iter().collect()
     };
 
-    let (p,c) = comm::stream();
-    child_generation(uint::from_str(args[1]).get(), c);
-    if p.try_recv().is_none() {
-        fail!("it happened when we slumbered");
+    let (tx, rx) = channel();
+    child_generation(args[1].parse().unwrap(), tx);
+    if rx.recv().is_err() {
+        panic!("it happened when we slumbered");
     }
 }

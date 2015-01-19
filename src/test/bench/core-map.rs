@@ -8,167 +8,161 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
+#![feature(unboxed_closures)]
 
-use extra::time;
-use extra::treemap::TreeMap;
-use std::hashmap::{HashMap, HashSet};
-use std::io;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::os;
-use std::rand::Rng;
-use std::trie::TrieMap;
+use std::rand::{Rng, IsaacRng, SeedableRng};
+use std::time::Duration;
 use std::uint;
-use std::vec;
 
-fn timed(label: &str, f: &fn()) {
-    let start = time::precise_time_s();
-    f();
-    let end = time::precise_time_s();
-    io::println(fmt!("  %s: %f", label, end - start));
+fn timed<F>(label: &str, f: F) where F: FnMut() {
+    println!("  {}: {}", label, Duration::span(f));
 }
 
-fn ascending<M: Map<uint, uint>>(map: &mut M, n_keys: uint) {
-    io::println(" Ascending integers:");
+trait MutableMap {
+    fn insert(&mut self, k: uint, v: uint);
+    fn remove(&mut self, k: &uint) -> bool;
+    fn find(&self, k: &uint) -> Option<&uint>;
+}
 
-    do timed("insert") {
-        for uint::range(0, n_keys) |i| {
+impl MutableMap for BTreeMap<uint, uint> {
+    fn insert(&mut self, k: uint, v: uint) { self.insert(k, v); }
+    fn remove(&mut self, k: &uint) -> bool { self.remove(k).is_some() }
+    fn find(&self, k: &uint) -> Option<&uint> { self.get(k) }
+}
+impl MutableMap for HashMap<uint, uint> {
+    fn insert(&mut self, k: uint, v: uint) { self.insert(k, v); }
+    fn remove(&mut self, k: &uint) -> bool { self.remove(k).is_some() }
+    fn find(&self, k: &uint) -> Option<&uint> { self.get(k) }
+}
+
+fn ascending<M: MutableMap>(map: &mut M, n_keys: uint) {
+    println!(" Ascending integers:");
+
+    timed("insert", || {
+        for i in range(0u, n_keys) {
             map.insert(i, i + 1);
         }
-    }
+    });
 
-    do timed("search") {
-        for uint::range(0, n_keys) |i| {
+    timed("search", || {
+        for i in range(0u, n_keys) {
             assert_eq!(map.find(&i).unwrap(), &(i + 1));
         }
-    }
+    });
 
-    do timed("remove") {
-        for uint::range(0, n_keys) |i| {
+    timed("remove", || {
+        for i in range(0, n_keys) {
             assert!(map.remove(&i));
         }
-    }
+    });
 }
 
-fn descending<M: Map<uint, uint>>(map: &mut M, n_keys: uint) {
-    io::println(" Descending integers:");
+fn descending<M: MutableMap>(map: &mut M, n_keys: uint) {
+    println!(" Descending integers:");
 
-    do timed("insert") {
-        for uint::range_rev(n_keys, 0) |i| {
+    timed("insert", || {
+        for i in range(0, n_keys).rev() {
             map.insert(i, i + 1);
         }
-    }
+    });
 
-    do timed("search") {
-        for uint::range_rev(n_keys, 0) |i| {
+    timed("search", || {
+        for i in range(0, n_keys).rev() {
             assert_eq!(map.find(&i).unwrap(), &(i + 1));
         }
-    }
+    });
 
-    do timed("remove") {
-        for uint::range_rev(n_keys, 0) |i| {
+    timed("remove", || {
+        for i in range(0, n_keys) {
             assert!(map.remove(&i));
         }
-    }
+    });
 }
 
-fn vector<M: Map<uint, uint>>(map: &mut M, n_keys: uint, dist: &[uint]) {
-
-    do timed("insert") {
-        for uint::range(0, n_keys) |i| {
+fn vector<M: MutableMap>(map: &mut M, n_keys: uint, dist: &[uint]) {
+    timed("insert", || {
+        for i in range(0u, n_keys) {
             map.insert(dist[i], i + 1);
         }
-    }
+    });
 
-    do timed("search") {
-        for uint::range(0, n_keys) |i| {
+    timed("search", || {
+        for i in range(0u, n_keys) {
             assert_eq!(map.find(&dist[i]).unwrap(), &(i + 1));
         }
-    }
+    });
 
-    do timed("remove") {
-        for uint::range(0, n_keys) |i| {
+    timed("remove", || {
+        for i in range(0u, n_keys) {
             assert!(map.remove(&dist[i]));
         }
-    }
+    });
 }
 
-#[fixed_stack_segment]
 fn main() {
     let args = os::args();
+    let args = args.as_slice();
     let n_keys = {
         if args.len() == 2 {
-            uint::from_str(args[1]).get()
+            args[1].parse::<uint>().unwrap()
         } else {
             1000000
         }
     };
 
-    let mut rand = vec::with_capacity(n_keys);
+    let mut rand = Vec::with_capacity(n_keys);
 
     {
-        let mut rng = std::rand::IsaacRng::new_seeded([1, 1, 1, 1, 1, 1, 1]);
+        let seed: &[_] = &[1, 1, 1, 1, 1, 1, 1];
+        let mut rng: IsaacRng = SeedableRng::from_seed(seed);
         let mut set = HashSet::new();
         while set.len() != n_keys {
-            let next = rng.next() as uint;
+            let next = rng.gen();
             if set.insert(next) {
                 rand.push(next);
             }
         }
     }
 
-    io::println(fmt!("%? keys", n_keys));
+    println!("{} keys", n_keys);
 
-    io::println("\nTreeMap:");
+    // FIXME: #9970
+    println!("{}", "\nBTreeMap:");
 
     {
-        let mut map = TreeMap::new::<uint, uint>();
+        let mut map: BTreeMap<uint,uint> = BTreeMap::new();
         ascending(&mut map, n_keys);
     }
 
     {
-        let mut map = TreeMap::new::<uint, uint>();
+        let mut map: BTreeMap<uint,uint> = BTreeMap::new();
         descending(&mut map, n_keys);
     }
 
     {
-        io::println(" Random integers:");
-        let mut map = TreeMap::new::<uint, uint>();
-        vector(&mut map, n_keys, rand);
+        println!(" Random integers:");
+        let mut map: BTreeMap<uint,uint> = BTreeMap::new();
+        vector(&mut map, n_keys, rand.as_slice());
     }
 
-    io::println("\nHashMap:");
+    // FIXME: #9970
+    println!("{}", "\nHashMap:");
 
     {
-        let mut map = HashMap::new::<uint, uint>();
+        let mut map: HashMap<uint,uint> = HashMap::new();
         ascending(&mut map, n_keys);
     }
 
     {
-        let mut map = HashMap::new::<uint, uint>();
+        let mut map: HashMap<uint,uint> = HashMap::new();
         descending(&mut map, n_keys);
     }
 
     {
-        io::println(" Random integers:");
-        let mut map = HashMap::new::<uint, uint>();
-        vector(&mut map, n_keys, rand);
-    }
-
-    io::println("\nTrieMap:");
-
-    {
-        let mut map = TrieMap::new::<uint>();
-        ascending(&mut map, n_keys);
-    }
-
-    {
-        let mut map = TrieMap::new::<uint>();
-        descending(&mut map, n_keys);
-    }
-
-    {
-        io::println(" Random integers:");
-        let mut map = TrieMap::new::<uint>();
-        vector(&mut map, n_keys, rand);
+        println!(" Random integers:");
+        let mut map: HashMap<uint,uint> = HashMap::new();
+        vector(&mut map, n_keys, rand.as_slice());
     }
 }

@@ -8,38 +8,27 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Common routines shared by parser mods
+
 use parse::token;
-use parse::token::{get_ident_interner};
 
-// SeqSep : a sequence separator (token)
-// and whether a trailing separator is allowed.
+/// SeqSep : a sequence separator (token)
+/// and whether a trailing separator is allowed.
 pub struct SeqSep {
-    sep: Option<token::Token>,
-    trailing_sep_allowed: bool
+    pub sep: Option<token::Token>,
+    pub trailing_sep_allowed: bool
 }
 
-pub fn seq_sep_trailing_disallowed(t: token::Token) -> SeqSep {
-    SeqSep {
-        sep: Some(t),
-        trailing_sep_allowed: false,
-    }
-}
 pub fn seq_sep_trailing_allowed(t: token::Token) -> SeqSep {
     SeqSep {
         sep: Some(t),
         trailing_sep_allowed: true,
     }
 }
+
 pub fn seq_sep_none() -> SeqSep {
     SeqSep {
         sep: None,
         trailing_sep_allowed: false,
     }
 }
-
-// maps any token back to a string. not necessary if you know it's
-// an identifier....
-pub fn token_to_str(token: &token::Token) -> ~str {
-    token::to_str(get_ident_interner(), token)
-}
-

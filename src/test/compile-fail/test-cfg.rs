@@ -10,9 +10,9 @@
 
 // compile-flags: --cfg foo
 
-#[cfg(foo, bar)] // foo AND bar
+#[cfg(all(foo, bar))] // foo AND bar
 fn foo() {}
 
 fn main() {
-    foo(); //~ ERROR unresolved name `foo`.
+    foo(); //~ ERROR unresolved name `foo`
 }

@@ -1,6 +1,5 @@
-// xfail-fast
 
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -21,15 +20,13 @@ static b: bool = true;
 
 mod rustrt {
     #[cfg(bogus)]
-    #[abi = "cdecl"]
-    pub extern {
+    extern {
         // This symbol doesn't exist and would be a link error if this
         // module was translated
         pub fn bogus();
     }
 
-    #[abi = "cdecl"]
-    pub extern {}
+    extern {}
 }
 
 #[cfg(bogus)]
@@ -83,21 +80,21 @@ mod m {
 // Since the bogus configuration isn't defined main will just be
 // parsed, but nothing further will be done with it
 #[cfg(bogus)]
-pub fn main() { fail!() }
+pub fn main() { panic!() }
 
 pub fn main() {
     // Exercise some of the configured items in ways that wouldn't be possible
     // if they had the bogus definition
     assert!((b));
-    let x: t = true;
-    let y: tg = bar;
+    let _x: t = true;
+    let _y: tg = tg::bar;
 
     test_in_fn_ctxt();
 }
 
 fn test_in_fn_ctxt() {
     #[cfg(bogus)]
-    fn f() { fail!() }
+    fn f() { panic!() }
     fn f() { }
     f();
 
@@ -109,11 +106,10 @@ fn test_in_fn_ctxt() {
 
 mod test_foreign_items {
     pub mod rustrt {
-        #[abi = "cdecl"]
-        pub extern {
+        extern {
             #[cfg(bogus)]
-            pub fn rust_get_stdin() -> ~str;
-            pub fn rust_get_stdin() -> ~str;
+            pub fn write() -> String;
+            pub fn write() -> String;
         }
     }
 }

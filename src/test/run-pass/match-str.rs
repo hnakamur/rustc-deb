@@ -11,21 +11,21 @@
 // Issue #53
 
 pub fn main() {
-    match ~"test" { ~"not-test" => fail!(), ~"test" => (), _ => fail!() }
+    match "test" { "not-test" => panic!(), "test" => (), _ => panic!() }
 
-    enum t { tag1(~str), tag2, }
+    enum t { tag1(String), tag2, }
 
 
-    match tag1(~"test") {
-      tag2 => fail!(),
-      tag1(~"not-test") => fail!(),
-      tag1(~"test") => (),
-      _ => fail!()
+    match t::tag1("test".to_string()) {
+      t::tag2 => panic!(),
+      t::tag1(ref s) if "test" != s.as_slice() => panic!(),
+      t::tag1(ref s) if "test" == s.as_slice() => (),
+      _ => panic!()
     }
 
-    let x = match ~"a" { ~"a" => 1, ~"b" => 2, _ => fail!() };
+    let x = match "a" { "a" => 1i, "b" => 2i, _ => panic!() };
     assert_eq!(x, 1);
 
-    match ~"a" { ~"a" => { } ~"b" => { }, _ => fail!() }
+    match "a" { "a" => { } "b" => { }, _ => panic!() }
 
 }

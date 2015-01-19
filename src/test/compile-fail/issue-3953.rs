@@ -8,31 +8,27 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::cmp::Eq;
+// ignore-tidy-linelength
 
-trait Hahaha: Eq + Eq + Eq + Eq + Eq + //~ ERROR Duplicate supertrait
-              Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq +
-              Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq +
-              Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq +
-              Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq +
-              Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq +
-              Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq +
-              Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq + Eq +
-              Eq {}
+use std::cmp::PartialEq;
 
-struct Lol(int);
+trait Hahaha: PartialEq + PartialEq {
+    //~^ ERROR trait `PartialEq` already appears in the list of bounds
+}
+
+struct Lol(isize);
 
 impl Hahaha for Lol { }
 
-impl Eq for Lol {
+impl PartialEq for Lol {
     fn eq(&self, other: &Lol) -> bool { **self != **other }
     fn ne(&self, other: &Lol) -> bool { **self == **other }
 }
 
 fn main() {
     if Lol(2) == Lol(4) {
-        println("2 == 4");
+        println!("2 == 4");
     } else {
-        println("2 != 4");
+        println!("2 != 4");
     }
 }

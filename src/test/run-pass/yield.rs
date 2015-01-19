@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -9,21 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::task;
+use std::thread::Thread;
 
 pub fn main() {
-    let mut result = None;
-    let mut builder = task::task();
-    builder.future_result(|r| { result = Some(r); });
-    builder.spawn(child);
-    error!("1");
-    task::yield();
-    error!("2");
-    task::yield();
-    error!("3");
-    result.unwrap().recv();
+    let mut result = Thread::scoped(child);
+    println!("1");
+    Thread::yield_now();
+    println!("2");
+    Thread::yield_now();
+    println!("3");
+    result.join();
 }
 
 fn child() {
-    error!("4"); task::yield(); error!("5"); task::yield(); error!("6");
+    println!("4"); Thread::yield_now(); println!("5"); Thread::yield_now(); println!("6");
 }

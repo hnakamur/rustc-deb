@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -11,9 +10,8 @@
 
 // Tests that a function with a ! annotation always actually fails
 
-fn bad_bang(i: uint) -> ! {
-    if i < 0u { } else { fail!(); }
-    //~^ ERROR expected `!` but found `()`
+fn bad_bang(i: usize) -> ! { //~ ERROR computation may converge in a function marked as diverging
+    if i < 0us { } else { panic!(); }
 }
 
-fn main() { bad_bang(5u); }
+fn main() { bad_bang(5us); }

@@ -1,6 +1,5 @@
-// xfail-fast
 
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -12,9 +11,8 @@
 
 // A more complex example of numeric extensions
 
-extern mod extra;
-
-use std::cmp::{Eq, Ord};
+use std::cmp::{PartialEq, PartialOrd};
+use std::num::NumCast;
 
 pub trait TypeExt {}
 
@@ -33,10 +31,9 @@ impl TypeExt for int {}
 
 impl TypeExt for f32 {}
 impl TypeExt for f64 {}
-impl TypeExt for float {}
 
 
-pub trait NumExt: TypeExt + Eq + Ord + Num + NumCast {}
+pub trait NumExt: TypeExt + PartialEq + PartialOrd + NumCast {}
 
 impl NumExt for u8 {}
 impl NumExt for u16 {}
@@ -52,7 +49,6 @@ impl NumExt for int {}
 
 impl NumExt for f32 {}
 impl NumExt for f64 {}
-impl NumExt for float {}
 
 
 pub trait UnSignedExt: NumExt {}
@@ -74,7 +70,6 @@ impl SignedExt for int {}
 
 impl SignedExt for f32 {}
 impl SignedExt for f64 {}
-impl SignedExt for float {}
 
 
 pub trait IntegerExt: NumExt {}
@@ -92,14 +87,13 @@ impl IntegerExt for i64 {}
 impl IntegerExt for int {}
 
 
-pub trait FloatExt: NumExt + ApproxEq<Self> {}
+pub trait FloatExt: NumExt {}
 
 impl FloatExt for f32 {}
 impl FloatExt for f64 {}
-impl FloatExt for float {}
 
 
-fn test_float_ext<T:FloatExt>(n: T) { println(fmt!("%?", n < n)) }
+fn test_float_ext<T:FloatExt>(n: T) { println!("{}", n < n) }
 
 pub fn main() {
     test_float_ext(1f32);

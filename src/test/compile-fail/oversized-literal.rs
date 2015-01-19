@@ -8,6 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern:literal out of range
-
-fn main() { debug!(300u8); }
+fn main() {
+    println!("{}", 18446744073709551616u64);  //~ error: int literal is too large
+}

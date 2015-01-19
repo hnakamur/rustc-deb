@@ -1,19 +1,32 @@
-// xfail-fast
+// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // aux-build:trait_default_method_xc_aux.rs
 
-#[allow(default_methods)];
-
-extern mod aux(name = "trait_default_method_xc_aux");
-use aux::{A, B, TestEquality};
-
+extern crate "trait_default_method_xc_aux" as aux;
+use aux::{A, TestEquality, Something};
+use aux::B;
 
 fn f<T: aux::A>(i: T) {
     assert_eq!(i.g(), 10);
 }
 
+fn welp<T>(i: int, _x: &T) -> int {
+    i.g()
+}
 
-pub struct thing { x: int }
-impl A for thing {
+mod stuff {
+    pub struct thing { pub x: int }
+}
+
+impl A for stuff::thing {
     fn f(&self) -> int { 10 }
 }
 
@@ -29,43 +42,45 @@ fn neq<T: TestEquality>(lhs: &T, rhs: &T) -> bool {
 }
 
 
-impl TestEquality for thing {
-    fn test_eq(&self, rhs: &thing) -> bool {
+impl TestEquality for stuff::thing {
+    fn test_eq(&self, rhs: &stuff::thing) -> bool {
         //self.x.test_eq(&rhs.x)
         eq(&self.x, &rhs.x)
     }
 }
 
 
-fn main () {
+pub fn main() {
     // Some tests of random things
-    f(0);
+    f(0i);
 
-    let a = thing { x: 0 };
-    let b = thing { x: 1 };
+    assert_eq!(A::lurr(&0i, &1i), 21);
 
-    //assert_eq!(0i.g(), 10);
+    let a = stuff::thing { x: 0 };
+    let b = stuff::thing { x: 1 };
+    let c = Something { x: 1 };
+
+    assert_eq!(0i.g(), 10);
     assert_eq!(a.g(), 10);
-    assert_eq!(a.h(), 10);
+    assert_eq!(a.h(), 11);
+    assert_eq!(c.h(), 11);
 
+    assert_eq!(0i.thing(3.14f64, 1i), (3.14f64, 1i));
+    assert_eq!(B::staticthing(&0i, 3.14f64, 1i), (3.14f64, 1i));
+    assert_eq!(B::<f64>::staticthing::<int>(&0i, 3.14, 1), (3.14, 1));
 
-    //assert_eq!(0i.thing(3.14, 1), (3.14, 1));
-
-    assert_eq!(g(0i, 3.14, 1), (3.14, 1));
-    assert_eq!(g(false, 3.14, 1), (3.14, 1));
-
-    let obj = @0i as @A;
-    assert_eq!(obj.h(), 10);
+    assert_eq!(g(0i, 3.14f64, 1i), (3.14f64, 1i));
+    assert_eq!(g(false, 3.14f64, 1i), (3.14, 1));
 
 
     // Trying out a real one
-    //assert!(12.test_neq(&10));
-    //assert!(!10.test_neq(&10));
+    assert!(12i.test_neq(&10i));
+    assert!(!10i.test_neq(&10i));
     assert!(a.test_neq(&b));
     assert!(!a.test_neq(&a));
 
-    assert!(neq(&12, &10));
-    assert!(!neq(&10, &10));
+    assert!(neq(&12i, &10i));
+    assert!(!neq(&10i, &10i));
     assert!(neq(&a, &b));
     assert!(!neq(&a, &a));
 }

@@ -9,11 +9,11 @@
 // except according to those terms.
 
 fn test() {
-    let v: int;
+    let v: isize;
     loop {
         v = 1; //~ ERROR re-assignment of immutable variable
         //~^ NOTE prior assignment occurs here
-        copy v; // just to prevent liveness warnings
+        v.clone(); // just to prevent liveness warnings
     }
 }
 

@@ -50,7 +50,7 @@ GENERAL OPTIONS
 
 
 
-**-load**\ =\ *puginfilename*
+**-load**\ =\ *pluginfilename*
 
  Causes **lli** to load the plugin (shared object) named *pluginfilename* and use
  it for optimization.
@@ -187,12 +187,6 @@ CODE GENERATION OPTIONS
 **-disable-spill-fusing**
 
  Disable fusing of spill code into instructions.
-
-
-
-**-enable-correct-eh-support**
-
- Make the -lowerinvoke pass insert expensive, but correct, EH code.
 
 
 

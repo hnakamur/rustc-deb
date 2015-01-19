@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,12 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+use std::fmt;
+
 struct cat {
-    priv meows : uint,
+    meows : uint,
 
     how_hungry : int,
-    name : ~str,
+    name : String,
 }
 
 impl cat {
@@ -21,12 +25,12 @@ impl cat {
 
     pub fn eat(&mut self) -> bool {
         if self.how_hungry > 0 {
-            error!("OM NOM NOM");
+            println!("OM NOM NOM");
             self.how_hungry -= 2;
             return true;
         }
         else {
-            error!("Not hungry!");
+            println!("Not hungry!");
             return false;
         }
     }
@@ -34,7 +38,7 @@ impl cat {
 
 impl cat {
     fn meow(&mut self) {
-        error!("Meow");
+        println!("Meow");
         self.meows += 1u;
         if self.meows % 5u == 0u {
             self.how_hungry += 1;
@@ -42,7 +46,7 @@ impl cat {
     }
 }
 
-fn cat(in_x : uint, in_y : int, in_name: ~str) -> cat {
+fn cat(in_x : uint, in_y : int, in_name: String) -> cat {
     cat {
         meows: in_x,
         how_hungry: in_y,
@@ -50,22 +54,19 @@ fn cat(in_x : uint, in_y : int, in_name: ~str) -> cat {
     }
 }
 
-impl ToStr for cat {
-    fn to_str(&self) -> ~str {
-        // FIXME #5384: this unsafe block is to work around purity
-        unsafe {
-            self.name.clone()
-        }
+impl fmt::String for cat {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)
     }
 }
 
-fn print_out(thing: @ToStr, expected: ~str) {
-  let actual = thing.to_str();
-  debug!("%s", actual);
-  assert_eq!(actual, expected);
+fn print_out(thing: Box<ToString>, expected: String) {
+  let actual = (*thing).to_string();
+  println!("{}", actual);
+  assert_eq!(actual.to_string(), expected);
 }
 
 pub fn main() {
-  let mut nyan : @ToStr = @cat(0u, 2, ~"nyan") as @ToStr;
-  print_out(nyan, ~"nyan");
+  let nyan: Box<ToString> = box cat(0u, 2, "nyan".to_string()) as Box<ToString>;
+  print_out(nyan, "nyan".to_string());
 }

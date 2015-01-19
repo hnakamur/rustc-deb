@@ -8,10 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
-use std::int;
-use std::io;
 use std::os;
 
 fn fib(n: int) -> int {
@@ -24,13 +20,13 @@ fn fib(n: int) -> int {
 
 fn main() {
     let args = os::args();
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"40"]
+    let args = if os::getenv("RUST_BENCH").is_some() {
+        vec!("".to_string(), "40".to_string())
     } else if args.len() <= 1u {
-        ~[~"", ~"30"]
+        vec!("".to_string(), "30".to_string())
     } else {
-        args
+        args.into_iter().collect()
     };
-    let n = int::from_str(args[1]).get();
-    io::println(fmt!("%d\n", fib(n)));
+    let n = args[1].parse().unwrap();
+    println!("{}\n", fib(n));
 }

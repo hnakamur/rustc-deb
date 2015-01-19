@@ -1,6 +1,5 @@
-// xfail-fast
 
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,20 +9,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Eq)]
-#[deriving(Clone)]
-#[deriving(IterBytes)]
+use std::hash::{Hash, SipHasher};
+
+// testing multiple separate deriving attributes
+#[derive(PartialEq)]
+#[derive(Clone)]
+#[derive(Hash)]
 struct Foo {
     bar: uint,
     baz: int
 }
 
-pub fn main() {
-    use std::hash::{Hash, HashUtil}; // necessary for IterBytes check
+fn hash<T: Hash<SipHasher>>(_t: &T) {}
 
+pub fn main() {
     let a = Foo {bar: 4, baz: -3};
 
-    a == a;    // check for Eq impl w/o testing its correctness
+    a == a;    // check for PartialEq impl w/o testing its correctness
     a.clone(); // check for Clone impl w/o testing its correctness
-    a.hash();  // check for IterBytes impl w/o testing its correctness
+    hash(&a);  // check for Hash impl w/o testing its correctness
 }

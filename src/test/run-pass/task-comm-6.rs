@@ -8,37 +8,38 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::comm::Chan;
-use std::comm;
+#![allow(dead_assignment)]
+
+use std::sync::mpsc::channel;
 
 pub fn main() { test00(); }
 
 fn test00() {
     let mut r: int = 0;
     let mut sum: int = 0;
-    let p = comm::PortSet::new();
-    let c0 = p.chan();
-    let c1 = p.chan();
-    let c2 = p.chan();
-    let c3 = p.chan();
+    let (tx, rx) = channel();
+    let mut tx0 = tx.clone();
+    let mut tx1 = tx.clone();
+    let mut tx2 = tx.clone();
+    let mut tx3 = tx.clone();
     let number_of_messages: int = 1000;
     let mut i: int = 0;
     while i < number_of_messages {
-        c0.send(i + 0);
-        c1.send(i + 0);
-        c2.send(i + 0);
-        c3.send(i + 0);
+        tx0.send(i + 0).unwrap();
+        tx1.send(i + 0).unwrap();
+        tx2.send(i + 0).unwrap();
+        tx3.send(i + 0).unwrap();
         i += 1;
     }
     i = 0;
     while i < number_of_messages {
-        r = p.recv();
+        r = rx.recv().unwrap();
         sum += r;
-        r = p.recv();
+        r = rx.recv().unwrap();
         sum += r;
-        r = p.recv();
+        r = rx.recv().unwrap();
         sum += r;
-        r = p.recv();
+        r = rx.recv().unwrap();
         sum += r;
         i += 1;
     }

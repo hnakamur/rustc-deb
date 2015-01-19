@@ -8,19 +8,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::ops::Add;
+
+#[derive(Copy)]
 struct Point {
-    x: int,
-    y: int,
+    x: isize,
+    y: isize,
 }
 
-impl Add<int,int> for Point {
-    fn add(&self, z: &int) -> int {
-        self.x + self.y + (*z)
+impl Add<isize> for Point {
+    type Output = isize;
+
+    fn add(self, z: isize) -> isize {
+        self.x + self.y + z
     }
 }
 
 impl Point {
-    pub fn times(&self, z: int) -> int {
+    pub fn times(&self, z: isize) -> isize {
         self.x * self.y * z
     }
 }
@@ -40,19 +45,11 @@ fn b() {
 
     let q = &mut p;
 
-    p + 3;  //~ ERROR cannot borrow `p`
+    p + 3;  //~ ERROR cannot use `p`
     p.times(3); //~ ERROR cannot borrow `p`
 
     *q + 3; // OK to use the new alias `q`
     q.x += 1; // and OK to mutate it
-}
-
-fn c() {
-    // Here the receiver is in aliased memory but due to write
-    // barriers we can still consider it immutable.
-    let q = @mut Point {x: 3, y: 4};
-    *q + 3;
-    q.times(3);
 }
 
 fn main() {

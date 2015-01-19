@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name = "crateresolve4a", vers= "0.2")];
-#[crate_type = "lib"];
+#![crate_name="crateresolve4a#0.2"]
+#![crate_type = "lib"]
 
 pub fn g() -> int { 20 }

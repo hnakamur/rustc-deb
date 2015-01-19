@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 pub fn main() {
-    let (&x, &y, &z) = (&3, &'a', &@"No pets!");
+    let (&x, &y) = (&3i, &'a');
     assert_eq!(x, 3);
     assert_eq!(y, 'a');
-    assert_eq!(z, @"No pets!");
 }

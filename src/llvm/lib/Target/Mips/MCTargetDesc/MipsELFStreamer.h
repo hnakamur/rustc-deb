@@ -1,43 +1,58 @@
-//=== MipsELFStreamer.h - MipsELFStreamer ------------------------------===//
+//===-------- MipsELFStreamer.h - ELF Object Output -----------------------===//
 //
-//                    The LLVM Compiler Infrastructure
+//                     The LLVM Compiler Infrastructure
 //
 // This file is distributed under the University of Illinois Open Source
-// License. See LICENCE.TXT for details.
+// License. See LICENSE.TXT for details.
 //
-//===-------------------------------------------------------------------===//
-#ifndef MIPSELFSTREAMER_H_
-#define MIPSELFSTREAMER_H_
+//===----------------------------------------------------------------------===//
+//
+// This is a custom MCELFStreamer which allows us to insert some hooks before
+// emitting data into an actual object file.
+//
+//===----------------------------------------------------------------------===//
 
+#ifndef LLVM_LIB_TARGET_MIPS_MCTARGETDESC_MIPSELFSTREAMER_H
+#define LLVM_LIB_TARGET_MIPS_MCTARGETDESC_MIPSELFSTREAMER_H
+
+#include "MipsOptionRecord.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCELFStreamer.h"
+#include <memory>
 
 namespace llvm {
-class MipsAsmPrinter;
-class MipsSubtarget;
-class MCSymbol;
+class MCAsmBackend;
+class MCCodeEmitter;
+class MCContext;
+class MCSubtargetInfo;
 
 class MipsELFStreamer : public MCELFStreamer {
+  SmallVector<std::unique_ptr<MipsOptionRecord>, 8> MipsOptionRecords;
+  MipsRegInfoRecord *RegInfoRecord;
+
 public:
-  MipsELFStreamer(MCContext &Context, MCAsmBackend &TAB,
-                  raw_ostream &OS, MCCodeEmitter *Emitter,
-                  bool RelaxAll, bool NoExecStack)
-    : MCELFStreamer(SK_MipsELFStreamer, Context, TAB, OS, Emitter) {
+  MipsELFStreamer(MCContext &Context, MCAsmBackend &MAB, raw_ostream &OS,
+                  MCCodeEmitter *Emitter, const MCSubtargetInfo &STI)
+      : MCELFStreamer(Context, MAB, OS, Emitter) {
+
+    RegInfoRecord = new MipsRegInfoRecord(this, Context, STI);
+    MipsOptionRecords.push_back(
+        std::unique_ptr<MipsRegInfoRecord>(RegInfoRecord));
   }
 
-  ~MipsELFStreamer() {}
-  void emitELFHeaderFlagsCG(const MipsSubtarget &Subtarget);
-  void emitMipsSTOCG(const MipsSubtarget &Subtarget,
-                     MCSymbol *Sym,
-                     unsigned Val);
+  /// Overriding this function allows us to add arbitrary behaviour before the
+  /// \p Inst is actually emitted. For example, we can inspect the operands and
+  /// gather sufficient information that allows us to reason about the register
+  /// usage for the translation unit.
+  void EmitInstruction(const MCInst &Inst, const MCSubtargetInfo &STI) override;
 
-  static bool classof(const MCStreamer *S) {
-    return S->getKind() == SK_MipsELFStreamer;
-  }
+  /// Emits all the option records stored up until the point it's called.
+  void EmitMipsOptionRecords();
 };
 
-  MCELFStreamer* createMipsELFStreamer(MCContext &Context, MCAsmBackend &TAB,
-                                       raw_ostream &OS, MCCodeEmitter *Emitter,
-                                       bool RelaxAll, bool NoExecStack);
-}
-
-#endif /* MIPSELFSTREAMER_H_ */
+MCELFStreamer *createMipsELFStreamer(MCContext &Context, MCAsmBackend &MAB,
+                                     raw_ostream &OS, MCCodeEmitter *Emitter,
+                                     const MCSubtargetInfo &STI, bool RelaxAll,
+                                     bool NoExecStack);
+} // namespace llvm.
+#endif

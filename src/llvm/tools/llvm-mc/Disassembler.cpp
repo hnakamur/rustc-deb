@@ -13,10 +13,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "Disassembler.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -36,10 +38,10 @@ private:
 public:
   VectorMemoryObject(const ByteArrayTy &bytes) : Bytes(bytes) {}
 
-  uint64_t getBase() const { return 0; }
-  uint64_t getExtent() const { return Bytes.size(); }
+  uint64_t getBase() const override { return 0; }
+  uint64_t getExtent() const override { return Bytes.size(); }
 
-  int readByte(uint64_t Addr, uint8_t *Byte) const {
+  int readByte(uint64_t Addr, uint8_t *Byte) const override {
     if (Addr >= getExtent())
       return -1;
     *Byte = Bytes[Addr].first;
@@ -51,7 +53,8 @@ public:
 static bool PrintInsts(const MCDisassembler &DisAsm,
                        const ByteArrayTy &Bytes,
                        SourceMgr &SM, raw_ostream &Out,
-                       MCStreamer &Streamer) {
+                       MCStreamer &Streamer, bool InAtomicBlock,
+                       const MCSubtargetInfo &STI) {
   // Wrap the vector in a MemoryObject.
   VectorMemoryObject memoryObject(Bytes);
 
@@ -70,8 +73,13 @@ static bool PrintInsts(const MCDisassembler &DisAsm,
       SM.PrintMessage(SMLoc::getFromPointer(Bytes[Index].second),
                       SourceMgr::DK_Warning,
                       "invalid instruction encoding");
+      // Don't try to resynchronise the stream in a block
+      if (InAtomicBlock)
+        return true;
+
       if (Size == 0)
         Size = 1; // skip illegible bytes
+
       break;
 
     case MCDisassembler::SoftFail:
@@ -81,7 +89,7 @@ static bool PrintInsts(const MCDisassembler &DisAsm,
       // Fall through
 
     case MCDisassembler::Success:
-      Streamer.EmitInstruction(Inst);
+      Streamer.EmitInstruction(Inst, STI);
       break;
     }
   }
@@ -89,14 +97,11 @@ static bool PrintInsts(const MCDisassembler &DisAsm,
   return false;
 }
 
-static bool ByteArrayFromString(ByteArrayTy &ByteArray,
-                                StringRef &Str,
-                                SourceMgr &SM) {
-  while (!Str.empty()) {
-    // Strip horizontal whitespace.
-    if (size_t Pos = Str.find_first_not_of(" \t\r")) {
+static bool SkipToToken(StringRef &Str) {
+  while (!Str.empty() && Str.find_first_not_of(" \t\r\n#,") != 0) {
+    // Strip horizontal whitespace and commas.
+    if (size_t Pos = Str.find_first_not_of(" \t\r,")) {
       Str = Str.substr(Pos);
-      continue;
     }
 
     // If this is the end of a line or start of a comment, remove the rest of
@@ -113,9 +118,22 @@ static bool ByteArrayFromString(ByteArrayTy &ByteArray,
       }
       continue;
     }
+  }
+
+  return !Str.empty();
+}
+
+
+static bool ByteArrayFromString(ByteArrayTy &ByteArray,
+                                StringRef &Str,
+                                SourceMgr &SM) {
+  while (SkipToToken(Str)) {
+    // Handled by higher level
+    if (Str[0] == '[' || Str[0] == ']')
+      return false;
 
     // Get the current token.
-    size_t Next = Str.find_first_of(" \t\n\r#");
+    size_t Next = Str.find_first_of(" \t\n\r,#[]");
     StringRef Value = Str.substr(0, Next);
 
     // Convert to a byte and add to the byte vector.
@@ -143,7 +161,24 @@ int Disassembler::disassemble(const Target &T,
                               MemoryBuffer &Buffer,
                               SourceMgr &SM,
                               raw_ostream &Out) {
-  OwningPtr<const MCDisassembler> DisAsm(T.createMCDisassembler(STI));
+
+  std::unique_ptr<const MCRegisterInfo> MRI(T.createMCRegInfo(Triple));
+  if (!MRI) {
+    errs() << "error: no register info for target " << Triple << "\n";
+    return -1;
+  }
+
+  std::unique_ptr<const MCAsmInfo> MAI(T.createMCAsmInfo(*MRI, Triple));
+  if (!MAI) {
+    errs() << "error: no assembly info for target " << Triple << "\n";
+    return -1;
+  }
+
+  // Set up the MCContext for creating symbols and MCExpr's.
+  MCContext Ctx(MAI.get(), MRI.get(), nullptr);
+
+  std::unique_ptr<const MCDisassembler> DisAsm(
+    T.createMCDisassembler(STI, Ctx));
   if (!DisAsm) {
     errs() << "error: no disassembler for target " << Triple << "\n";
     return -1;
@@ -157,11 +192,44 @@ int Disassembler::disassemble(const Target &T,
   // Convert the input to a vector for disassembly.
   ByteArrayTy ByteArray;
   StringRef Str = Buffer.getBuffer();
+  bool InAtomicBlock = false;
 
-  ErrorOccurred |= ByteArrayFromString(ByteArray, Str, SM);
+  while (SkipToToken(Str)) {
+    ByteArray.clear();
 
-  if (!ByteArray.empty())
-    ErrorOccurred |= PrintInsts(*DisAsm, ByteArray, SM, Out, Streamer);
+    if (Str[0] == '[') {
+      if (InAtomicBlock) {
+        SM.PrintMessage(SMLoc::getFromPointer(Str.data()), SourceMgr::DK_Error,
+                        "nested atomic blocks make no sense");
+        ErrorOccurred = true;
+      }
+      InAtomicBlock = true;
+      Str = Str.drop_front();
+      continue;
+    } else if (Str[0] == ']') {
+      if (!InAtomicBlock) {
+        SM.PrintMessage(SMLoc::getFromPointer(Str.data()), SourceMgr::DK_Error,
+                        "attempt to close atomic block without opening");
+        ErrorOccurred = true;
+      }
+      InAtomicBlock = false;
+      Str = Str.drop_front();
+      continue;
+    }
+
+    // It's a real token, get the bytes and emit them
+    ErrorOccurred |= ByteArrayFromString(ByteArray, Str, SM);
+
+    if (!ByteArray.empty())
+      ErrorOccurred |= PrintInsts(*DisAsm, ByteArray, SM, Out, Streamer,
+                                  InAtomicBlock, STI);
+  }
+
+  if (InAtomicBlock) {
+    SM.PrintMessage(SMLoc::getFromPointer(Str.data()), SourceMgr::DK_Error,
+                    "unclosed atomic block");
+    ErrorOccurred = true;
+  }
 
   return ErrorOccurred;
 }

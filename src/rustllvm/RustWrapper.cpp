@@ -9,6 +9,16 @@
 // except according to those terms.
 
 #include "rustllvm.h"
+#include "llvm/Object/Archive.h"
+#include "llvm/Object/ObjectFile.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DiagnosticPrinter.h"
+
+#if LLVM_VERSION_MINOR >= 5
+#include "llvm/IR/CallSite.h"
+#else
+#include "llvm/Support/CallSite.h"
+#endif
 
 //===----------------------------------------------------------------------===
 //
@@ -19,430 +29,49 @@
 
 using namespace llvm;
 using namespace llvm::sys;
+using namespace llvm::object;
 
-static const char *LLVMRustError;
+static char *LastError;
 
-extern cl::opt<bool> EnableARMEHABI;
-
+#if LLVM_VERSION_MINOR >= 5
 extern "C" LLVMMemoryBufferRef
 LLVMRustCreateMemoryBufferWithContentsOfFile(const char *Path) {
-  LLVMMemoryBufferRef MemBuf = NULL;
-  LLVMCreateMemoryBufferWithContentsOfFile(Path, &MemBuf,
-    const_cast<char **>(&LLVMRustError));
-  return MemBuf;
+  ErrorOr<std::unique_ptr<MemoryBuffer>> buf_or = MemoryBuffer::getFile(Path,
+                                                                        -1,
+                                                                        false);
+  if (!buf_or) {
+      LLVMRustSetLastError(buf_or.getError().message().c_str());
+      return nullptr;
+  }
+  return wrap(buf_or.get().release());
 }
-
-extern "C" const char *LLVMRustGetLastError(void) {
-  return LLVMRustError;
+#else
+extern "C" LLVMMemoryBufferRef
+LLVMRustCreateMemoryBufferWithContentsOfFile(const char *Path) {
+  OwningPtr<MemoryBuffer> buf;
+  error_code err = MemoryBuffer::getFile(Path, buf, -1, false);
+  if (err) {
+      LLVMRustSetLastError(err.message().c_str());
+      return NULL;
+  }
+  return wrap(buf.take());
 }
-
-extern "C" void LLVMAddBasicAliasAnalysisPass(LLVMPassManagerRef PM);
-
-extern "C" void LLVMRustAddPrintModulePass(LLVMPassManagerRef PMR,
-                                           LLVMModuleRef M,
-                                           const char* path) {
-  PassManager *PM = unwrap<PassManager>(PMR);
-  std::string ErrorInfo;
-  raw_fd_ostream OS(path, ErrorInfo, raw_fd_ostream::F_Binary);
-  formatted_raw_ostream FOS(OS);
-  PM->add(createPrintModulePass(&FOS));
-  PM->run(*unwrap(M));
-}
-
-void LLVMInitializeX86TargetInfo();
-void LLVMInitializeX86Target();
-void LLVMInitializeX86TargetMC();
-void LLVMInitializeX86AsmPrinter();
-void LLVMInitializeX86AsmParser();
-
-
-void LLVMInitializeARMTargetInfo();
-void LLVMInitializeARMTarget();
-void LLVMInitializeARMTargetMC();
-void LLVMInitializeARMAsmPrinter();
-void LLVMInitializeARMAsmParser();
-
-void LLVMInitializeMipsTargetInfo();
-void LLVMInitializeMipsTarget();
-void LLVMInitializeMipsTargetMC();
-void LLVMInitializeMipsAsmPrinter();
-void LLVMInitializeMipsAsmParser();
-// Only initialize the platforms supported by Rust here,
-// because using --llvm-root will have multiple platforms
-// that rustllvm doesn't actually link to and it's pointless to put target info
-// into the registry that Rust can not generate machine code for.
-
-void LLVMRustInitializeTargets() {
-  LLVMInitializeX86TargetInfo();
-  LLVMInitializeX86Target();
-  LLVMInitializeX86TargetMC();
-  LLVMInitializeX86AsmPrinter();
-  LLVMInitializeX86AsmParser();
-
-  LLVMInitializeARMTargetInfo();
-  LLVMInitializeARMTarget();
-  LLVMInitializeARMTargetMC();
-  LLVMInitializeARMAsmPrinter();
-  LLVMInitializeARMAsmParser();
-
-  LLVMInitializeMipsTargetInfo();
-  LLVMInitializeMipsTarget();
-  LLVMInitializeMipsTargetMC();
-  LLVMInitializeMipsAsmPrinter();
-  LLVMInitializeMipsAsmParser();
-}
-
-// Custom memory manager for MCJITting. It needs special features
-// that the generic JIT memory manager doesn't entail. Based on
-// code from LLI, change where needed for Rust.
-class RustMCJITMemoryManager : public JITMemoryManager {
-public:
-  SmallVector<sys::MemoryBlock, 16> AllocatedDataMem;
-  SmallVector<sys::MemoryBlock, 16> AllocatedCodeMem;
-  SmallVector<sys::MemoryBlock, 16> FreeCodeMem;
-  void* __morestack;
-  DenseSet<DynamicLibrary*> crates;
-
-  RustMCJITMemoryManager(void* sym) : __morestack(sym) { }
-  ~RustMCJITMemoryManager();
-
-  bool loadCrate(const char*, std::string*);
-
-  virtual uint8_t *allocateCodeSection(uintptr_t Size, unsigned Alignment,
-                                       unsigned SectionID);
-
-  virtual uint8_t *allocateDataSection(uintptr_t Size, unsigned Alignment,
-                                       unsigned SectionID, bool isReadOnly);
-
-  virtual bool applyPermissions(std::string *Str);
-
-  virtual void *getPointerToNamedFunction(const std::string &Name,
-                                          bool AbortOnFailure = true);
-
-  // Invalidate instruction cache for code sections. Some platforms with
-  // separate data cache and instruction cache require explicit cache flush,
-  // otherwise JIT code manipulations (like resolved relocations) will get to
-  // the data cache but not to the instruction cache.
-  virtual void invalidateInstructionCache();
-
-  // The MCJITMemoryManager doesn't use the following functions, so we don't
-  // need implement them.
-  virtual void setMemoryWritable() {
-    llvm_unreachable("Unimplemented call");
-  }
-  virtual void setMemoryExecutable() {
-    llvm_unreachable("Unimplemented call");
-  }
-  virtual void setPoisonMemory(bool poison) {
-    llvm_unreachable("Unimplemented call");
-  }
-  virtual void AllocateGOT() {
-    llvm_unreachable("Unimplemented call");
-  }
-  virtual uint8_t *getGOTBase() const {
-    llvm_unreachable("Unimplemented call");
-    return 0;
-  }
-  virtual uint8_t *startFunctionBody(const Function *F,
-                                     uintptr_t &ActualSize){
-    llvm_unreachable("Unimplemented call");
-    return 0;
-  }
-  virtual uint8_t *allocateStub(const GlobalValue* F, unsigned StubSize,
-                                unsigned Alignment) {
-    llvm_unreachable("Unimplemented call");
-    return 0;
-  }
-  virtual void endFunctionBody(const Function *F, uint8_t *FunctionStart,
-                               uint8_t *FunctionEnd) {
-    llvm_unreachable("Unimplemented call");
-  }
-  virtual uint8_t *allocateSpace(intptr_t Size, unsigned Alignment) {
-    llvm_unreachable("Unimplemented call");
-    return 0;
-  }
-  virtual uint8_t *allocateGlobal(uintptr_t Size, unsigned Alignment) {
-    llvm_unreachable("Unimplemented call");
-    return 0;
-  }
-  virtual void deallocateFunctionBody(void *Body) {
-    llvm_unreachable("Unimplemented call");
-  }
-  virtual uint8_t* startExceptionTable(const Function* F,
-                                       uintptr_t &ActualSize) {
-    llvm_unreachable("Unimplemented call");
-    return 0;
-  }
-  virtual void endExceptionTable(const Function *F, uint8_t *TableStart,
-                                 uint8_t *TableEnd, uint8_t* FrameRegister) {
-    llvm_unreachable("Unimplemented call");
-  }
-  virtual void deallocateExceptionTable(void *ET) {
-    llvm_unreachable("Unimplemented call");
-  }
-};
-
-bool RustMCJITMemoryManager::loadCrate(const char* file, std::string* err) {
-  DynamicLibrary crate = DynamicLibrary::getPermanentLibrary(file,
-                                                             err);
-
-  if(crate.isValid()) {
-    crates.insert(&crate);
-
-    return true;
-  }
-
-  return false;
-}
-
-uint8_t *RustMCJITMemoryManager::allocateDataSection(uintptr_t Size,
-                                                     unsigned Alignment,
-                                                     unsigned SectionID,
-                                                     bool isReadOnly) {
-  if (!Alignment)
-    Alignment = 16;
-  uint8_t *Addr = (uint8_t*)calloc((Size + Alignment - 1)/Alignment, Alignment);
-  AllocatedDataMem.push_back(sys::MemoryBlock(Addr, Size));
-  return Addr;
-}
-
-bool RustMCJITMemoryManager::applyPermissions(std::string *Str) {
-    // Empty.
-    return true;
-}
-
-uint8_t *RustMCJITMemoryManager::allocateCodeSection(uintptr_t Size,
-                                                     unsigned Alignment,
-                                                     unsigned SectionID) {
-  if (!Alignment)
-    Alignment = 16;
-  unsigned NeedAllocate = Alignment * ((Size + Alignment - 1)/Alignment + 1);
-  uintptr_t Addr = 0;
-  // Look in the list of free code memory regions and use a block there if one
-  // is available.
-  for (int i = 0, e = FreeCodeMem.size(); i != e; ++i) {
-    sys::MemoryBlock &MB = FreeCodeMem[i];
-    if (MB.size() >= NeedAllocate) {
-      Addr = (uintptr_t)MB.base();
-      uintptr_t EndOfBlock = Addr + MB.size();
-      // Align the address.
-      Addr = (Addr + Alignment - 1) & ~(uintptr_t)(Alignment - 1);
-      // Store cutted free memory block.
-      FreeCodeMem[i] = sys::MemoryBlock((void*)(Addr + Size),
-                                        EndOfBlock - Addr - Size);
-      return (uint8_t*)Addr;
-    }
-  }
-
-  // No pre-allocated free block was large enough. Allocate a new memory region.
-  sys::MemoryBlock MB = sys::Memory::AllocateRWX(NeedAllocate, 0, 0);
-
-  AllocatedCodeMem.push_back(MB);
-  Addr = (uintptr_t)MB.base();
-  uintptr_t EndOfBlock = Addr + MB.size();
-  // Align the address.
-  Addr = (Addr + Alignment - 1) & ~(uintptr_t)(Alignment - 1);
-  // The AllocateRWX may allocate much more memory than we need. In this case,
-  // we store the unused memory as a free memory block.
-  unsigned FreeSize = EndOfBlock-Addr-Size;
-  if (FreeSize > 16)
-    FreeCodeMem.push_back(sys::MemoryBlock((void*)(Addr + Size), FreeSize));
-
-  // Return aligned address
-  return (uint8_t*)Addr;
-}
-
-void RustMCJITMemoryManager::invalidateInstructionCache() {
-  for (int i = 0, e = AllocatedCodeMem.size(); i != e; ++i)
-    sys::Memory::InvalidateInstructionCache(AllocatedCodeMem[i].base(),
-                                            AllocatedCodeMem[i].size());
-}
-
-void *RustMCJITMemoryManager::getPointerToNamedFunction(const std::string &Name,
-                                                       bool AbortOnFailure) {
-#ifdef __linux__
-  // Force the following functions to be linked in to anything that uses the
-  // JIT. This is a hack designed to work around the all-too-clever Glibc
-  // strategy of making these functions work differently when inlined vs. when
-  // not inlined, and hiding their real definitions in a separate archive file
-  // that the dynamic linker can't see. For more info, search for
-  // 'libc_nonshared.a' on Google, or read http://llvm.org/PR274.
-  if (Name == "stat") return (void*)(intptr_t)&stat;
-  if (Name == "fstat") return (void*)(intptr_t)&fstat;
-  if (Name == "lstat") return (void*)(intptr_t)&lstat;
-  if (Name == "stat64") return (void*)(intptr_t)&stat64;
-  if (Name == "fstat64") return (void*)(intptr_t)&fstat64;
-  if (Name == "lstat64") return (void*)(intptr_t)&lstat64;
-  if (Name == "atexit") return (void*)(intptr_t)&atexit;
-  if (Name == "mknod") return (void*)(intptr_t)&mknod;
 #endif
 
-  if (Name == "__morestack" || Name == "___morestack") return &__morestack;
-
-  const char *NameStr = Name.c_str();
-
-  // Look through loaded crates and main for symbols.
-
-  void *Ptr = sys::DynamicLibrary::SearchForAddressOfSymbol(NameStr);
-  if (Ptr) return Ptr;
-
-  // If it wasn't found and if it starts with an underscore ('_') character,
-  // try again without the underscore.
-  if (NameStr[0] == '_') {
-    Ptr = sys::DynamicLibrary::SearchForAddressOfSymbol(NameStr+1);
-    if (Ptr) return Ptr;
-  }
-
-  if (AbortOnFailure)
-    report_fatal_error("Program used external function '" + Name +
-                      "' which could not be resolved!");
-  return 0;
+extern "C" char *LLVMRustGetLastError(void) {
+  char *ret = LastError;
+  LastError = NULL;
+  return ret;
 }
 
-RustMCJITMemoryManager::~RustMCJITMemoryManager() {
-  for (unsigned i = 0, e = AllocatedCodeMem.size(); i != e; ++i)
-    sys::Memory::ReleaseRWX(AllocatedCodeMem[i]);
-  for (unsigned i = 0, e = AllocatedDataMem.size(); i != e; ++i)
-    free(AllocatedDataMem[i].base());
+void LLVMRustSetLastError(const char *err) {
+  free((void*) LastError);
+  LastError = strdup(err);
 }
 
-extern "C" void*
-LLVMRustPrepareJIT(void* __morestack) {
-  // An execution engine will take ownership of this later
-  // and clean it up for us.
-
-  return (void*) new RustMCJITMemoryManager(__morestack);
-}
-
-extern "C" bool
-LLVMRustLoadCrate(void* mem, const char* crate) {
-  RustMCJITMemoryManager* manager = (RustMCJITMemoryManager*) mem;
-  std::string Err;
-
-  assert(manager);
-
-  if(!manager->loadCrate(crate, &Err)) {
-    LLVMRustError = Err.c_str();
-    return false;
-  }
-
-  return true;
-}
-
-extern "C" LLVMExecutionEngineRef
-LLVMRustBuildJIT(void* mem,
-                 LLVMModuleRef M,
-                 bool EnableSegmentedStacks) {
-
-  InitializeNativeTarget();
-  InitializeNativeTargetAsmPrinter();
-  InitializeNativeTargetAsmParser();
-
-  std::string Err;
-  TargetOptions Options;
-  Options.JITExceptionHandling = true;
-  Options.JITEmitDebugInfo = true;
-  Options.NoFramePointerElim = true;
-  Options.EnableSegmentedStacks = EnableSegmentedStacks;
-  RustMCJITMemoryManager* MM = (RustMCJITMemoryManager*) mem;
-  assert(MM);
-
-  ExecutionEngine* EE = EngineBuilder(unwrap(M))
-    .setErrorStr(&Err)
-    .setTargetOptions(Options)
-    .setJITMemoryManager(MM)
-    .setUseMCJIT(true)
-    .setAllocateGVsWithCode(false)
-    .create();
-
-  if(!EE || Err != "") {
-    LLVMRustError = Err.c_str();
-    // The EngineBuilder only takes ownership of these two structures if the
-    // create() call is successful, but here it wasn't successful.
-    LLVMDisposeModule(M);
-    delete MM;
-    return NULL;
-  }
-
-  MM->invalidateInstructionCache();
-  return wrap(EE);
-}
-
-extern "C" bool
-LLVMRustWriteOutputFile(LLVMPassManagerRef PMR,
-                        LLVMModuleRef M,
-                        const char *triple,
-                        const char *feature,
-                        const char *path,
-                        TargetMachine::CodeGenFileType FileType,
-                        CodeGenOpt::Level OptLevel,
-      bool EnableSegmentedStacks) {
-
-  LLVMRustInitializeTargets();
-
-  // Initializing the command-line options more than once is not
-  // allowed. So, check if they've already been initialized.
-  // (This could happen if we're being called from rustpkg, for
-  // example.)
-  if (!EnableARMEHABI) {
-    int argc = 3;
-    const char* argv[] = {"rustc", "-arm-enable-ehabi",
-        "-arm-enable-ehabi-descriptors"};
-    cl::ParseCommandLineOptions(argc, argv);
-  }
-
-  TargetOptions Options;
-  Options.NoFramePointerElim = true;
-  Options.EnableSegmentedStacks = EnableSegmentedStacks;
-  Options.FixedStackSegmentSize = 2 * 1024 * 1024;  // XXX: This is too big.
-
-  PassManager *PM = unwrap<PassManager>(PMR);
-
-  std::string Err;
-  std::string Trip(Triple::normalize(triple));
-  std::string FeaturesStr(feature);
-  std::string CPUStr("generic");
-  const Target *TheTarget = TargetRegistry::lookupTarget(Trip, Err);
-  TargetMachine *Target =
-    TheTarget->createTargetMachine(Trip, CPUStr, FeaturesStr,
-           Options, Reloc::PIC_,
-           CodeModel::Default, OptLevel);
-  Target->addAnalysisPasses(*PM);
-
-  bool NoVerify = false;
-  std::string ErrorInfo;
-  raw_fd_ostream OS(path, ErrorInfo,
-                    raw_fd_ostream::F_Binary);
-  if (ErrorInfo != "") {
-    LLVMRustError = ErrorInfo.c_str();
-    return false;
-  }
-  formatted_raw_ostream FOS(OS);
-
-  bool foo = Target->addPassesToEmitFile(*PM, FOS, FileType, NoVerify);
-  assert(!foo);
-  (void)foo;
-  PM->run(*unwrap(M));
-  delete Target;
-  return true;
-}
-
-extern "C" LLVMModuleRef LLVMRustParseAssemblyFile(LLVMContextRef C,
-                                                   const char *Filename) {
-  SMDiagnostic d;
-  Module *m = ParseAssemblyFile(Filename, d, *unwrap(C));
-  if (m) {
-    return wrap(m);
-  } else {
-    LLVMRustError = d.getMessage().str().c_str();
-    return NULL;
-  }
-}
-
-extern "C" LLVMModuleRef LLVMRustParseBitcode(LLVMMemoryBufferRef MemBuf) {
-  LLVMModuleRef M;
-  return LLVMParseBitcode(MemBuf, &M, const_cast<char **>(&LLVMRustError))
-         ? NULL : M;
+extern "C" void
+LLVMRustSetNormalizedTarget(LLVMModuleRef M, const char *triple) {
+    unwrap(M)->setTargetTriple(Triple::normalize(triple));
 }
 
 extern "C" LLVMValueRef LLVMRustConstSmallInt(LLVMTypeRef IntTy, unsigned N,
@@ -460,11 +89,6 @@ extern "C" LLVMValueRef LLVMRustConstInt(LLVMTypeRef IntTy,
   return LLVMConstInt(IntTy, N, SignExtend);
 }
 
-extern bool llvm::TimePassesIsEnabled;
-extern "C" void LLVMRustEnableTimePasses() {
-  TimePassesIsEnabled = true;
-}
-
 extern "C" void LLVMRustPrintPassTimings() {
   raw_fd_ostream OS (2, false); // stderr.
   TimerGroup::printAll(OS);
@@ -479,6 +103,69 @@ extern "C" LLVMValueRef LLVMGetOrInsertFunction(LLVMModuleRef M,
 
 extern "C" LLVMTypeRef LLVMMetadataTypeInContext(LLVMContextRef C) {
   return wrap(Type::getMetadataTy(*unwrap(C)));
+}
+
+extern "C" void LLVMAddCallSiteAttribute(LLVMValueRef Instr, unsigned index, uint64_t Val) {
+  CallSite Call = CallSite(unwrap<Instruction>(Instr));
+  AttrBuilder B;
+  B.addRawValue(Val);
+  Call.setAttributes(
+    Call.getAttributes().addAttributes(Call->getContext(), index,
+                                       AttributeSet::get(Call->getContext(),
+                                                         index, B)));
+}
+
+
+#if LLVM_VERSION_MINOR >= 5
+extern "C" void LLVMAddDereferenceableCallSiteAttr(LLVMValueRef Instr, unsigned idx, uint64_t b) {
+  CallSite Call = CallSite(unwrap<Instruction>(Instr));
+  AttrBuilder B;
+  B.addDereferenceableAttr(b);
+  Call.setAttributes(
+    Call.getAttributes().addAttributes(Call->getContext(), idx,
+                                       AttributeSet::get(Call->getContext(),
+                                                         idx, B)));
+}
+#else
+extern "C" void LLVMAddDereferenceableCallSiteAttr(LLVMValueRef, unsigned, uint64_t) {}
+#endif
+
+extern "C" void LLVMAddFunctionAttribute(LLVMValueRef Fn, unsigned index, uint64_t Val) {
+  Function *A = unwrap<Function>(Fn);
+  AttrBuilder B;
+  B.addRawValue(Val);
+  A->addAttributes(index, AttributeSet::get(A->getContext(), index, B));
+}
+
+#if LLVM_VERSION_MINOR >= 5
+extern "C" void LLVMAddDereferenceableAttr(LLVMValueRef Fn, unsigned index, uint64_t bytes) {
+  Function *A = unwrap<Function>(Fn);
+  AttrBuilder B;
+  B.addDereferenceableAttr(bytes);
+  A->addAttributes(index, AttributeSet::get(A->getContext(), index, B));
+}
+#else
+extern "C" void LLVMAddDereferenceableAttr(LLVMValueRef, unsigned, uint64_t) {}
+#endif
+
+extern "C" void LLVMAddFunctionAttrString(LLVMValueRef Fn, unsigned index, const char *Name) {
+  Function *F = unwrap<Function>(Fn);
+  AttrBuilder B;
+  B.addAttribute(Name);
+  F->addAttributes(index, AttributeSet::get(F->getContext(), index, B));
+}
+
+extern "C" void LLVMRemoveFunctionAttrString(LLVMValueRef fn, unsigned index, const char *Name) {
+  Function *f = unwrap<Function>(fn);
+  LLVMContext &C = f->getContext();
+  AttrBuilder B;
+  B.addAttribute(Name);
+  AttributeSet to_remove = AttributeSet::get(C, index, B);
+
+  AttributeSet attrs = f->getAttributes();
+  f->setAttributes(attrs.removeAttributes(f->getContext(),
+                                          index,
+                                          to_remove));
 }
 
 extern "C" LLVMValueRef LLVMBuildAtomicLoad(LLVMBuilderRef B,
@@ -509,18 +196,17 @@ extern "C" LLVMValueRef LLVMBuildAtomicCmpXchg(LLVMBuilderRef B,
                                                LLVMValueRef target,
                                                LLVMValueRef old,
                                                LLVMValueRef source,
-                                               AtomicOrdering order) {
+                                               AtomicOrdering order,
+                                               AtomicOrdering failure_order) {
     return wrap(unwrap(B)->CreateAtomicCmpXchg(unwrap(target), unwrap(old),
-                                               unwrap(source), order));
+                                               unwrap(source), order
+#if LLVM_VERSION_MINOR >= 5
+                                               , failure_order
+#endif
+                                               ));
 }
-extern "C" LLVMValueRef LLVMBuildAtomicRMW(LLVMBuilderRef B,
-                                           AtomicRMWInst::BinOp op,
-                                           LLVMValueRef target,
-                                           LLVMValueRef source,
-                                           AtomicOrdering order) {
-    return wrap(unwrap(B)->CreateAtomicRMW(op,
-                                           unwrap(target), unwrap(source),
-                                           order));
+extern "C" LLVMValueRef LLVMBuildAtomicFence(LLVMBuilderRef B, AtomicOrdering order) {
+    return wrap(unwrap(B)->CreateFence(order));
 }
 
 extern "C" void LLVMSetDebug(int Enabled) {
@@ -540,33 +226,23 @@ extern "C" LLVMValueRef LLVMInlineAsm(LLVMTypeRef Ty,
                                IsAlignStack, (InlineAsm::AsmDialect) Dialect));
 }
 
-/**
- * This function is intended to be a threadsafe interface into enabling a
- * multithreaded LLVM. This is invoked at the start of the translation phase of
- * compilation to ensure that LLVM is ready.
- *
- * All of trans properly isolates LLVM with the use of a different
- * LLVMContextRef per task, thus allowing parallel compilation of different
- * crates in the same process. At the time of this writing, the use case for
- * this is unit tests for rusti, but there are possible other applications.
- */
-extern "C" bool LLVMRustStartMultithreading() {
-    static Mutex lock;
-    bool ret = true;
-    assert(lock.acquire());
-    if (!LLVMIsMultithreaded()) {
-        ret = LLVMStartMultithreaded();
-    }
-    assert(lock.release());
-    return ret;
-}
-
-
 typedef DIBuilder* DIBuilderRef;
 
 template<typename DIT>
-DIT unwrapDI(LLVMValueRef ref) { 
-    return DIT(ref ? unwrap<MDNode>(ref) : NULL); 
+DIT unwrapDI(LLVMValueRef ref) {
+    return DIT(ref ? unwrap<MDNode>(ref) : NULL);
+}
+
+#if LLVM_VERSION_MINOR >= 5
+extern "C" const uint32_t LLVMRustDebugMetadataVersion = DEBUG_METADATA_VERSION;
+#else
+extern "C" const uint32_t LLVMRustDebugMetadataVersion = 1;
+#endif
+
+extern "C" void LLVMRustAddModuleFlag(LLVMModuleRef M,
+                                      const char *name,
+                                      uint32_t value) {
+    unwrap(M)->addModuleFlag(Module::Warning, name, value);
 }
 
 extern "C" DIBuilderRef LLVMDIBuilderCreate(LLVMModuleRef M) {
@@ -581,7 +257,7 @@ extern "C" void LLVMDIBuilderFinalize(DIBuilderRef Builder) {
     Builder->finalize();
 }
 
-extern "C" void LLVMDIBuilderCreateCompileUnit(
+extern "C" LLVMValueRef LLVMDIBuilderCreateCompileUnit(
     DIBuilderRef Builder,
     unsigned Lang,
     const char* File,
@@ -591,8 +267,14 @@ extern "C" void LLVMDIBuilderCreateCompileUnit(
     const char* Flags,
     unsigned RuntimeVer,
     const char* SplitName) {
-    Builder->createCompileUnit(Lang, File, Dir, Producer, isOptimized,
-        Flags, RuntimeVer, SplitName);
+    return wrap(Builder->createCompileUnit(Lang,
+                                           File,
+                                           Dir,
+                                           Producer,
+                                           isOptimized,
+                                           Flags,
+                                           RuntimeVer,
+                                           SplitName));
 }
 
 extern "C" LLVMValueRef LLVMDIBuilderCreateFile(
@@ -604,21 +286,25 @@ extern "C" LLVMValueRef LLVMDIBuilderCreateFile(
 
 extern "C" LLVMValueRef LLVMDIBuilderCreateSubroutineType(
     DIBuilderRef Builder,
-    LLVMValueRef File, 
+    LLVMValueRef File,
     LLVMValueRef ParameterTypes) {
     return wrap(Builder->createSubroutineType(
-        unwrapDI<DIFile>(File), 
+        unwrapDI<DIFile>(File),
+#if LLVM_VERSION_MINOR >= 6
+        unwrapDI<DITypeArray>(ParameterTypes)));
+#else
         unwrapDI<DIArray>(ParameterTypes)));
+#endif
 }
 
 extern "C" LLVMValueRef LLVMDIBuilderCreateFunction(
     DIBuilderRef Builder,
-    LLVMValueRef Scope, 
+    LLVMValueRef Scope,
     const char* Name,
     const char* LinkageName,
-    LLVMValueRef File,  
+    LLVMValueRef File,
     unsigned LineNo,
-    LLVMValueRef Ty, 
+    LLVMValueRef Ty,
     bool isLocalToUnit,
     bool isDefinition,
     unsigned ScopeLine,
@@ -628,11 +314,11 @@ extern "C" LLVMValueRef LLVMDIBuilderCreateFunction(
     LLVMValueRef TParam,
     LLVMValueRef Decl) {
     return wrap(Builder->createFunction(
-        unwrapDI<DIScope>(Scope), Name, LinkageName, 
-        unwrapDI<DIFile>(File), LineNo, 
-        unwrapDI<DIType>(Ty), isLocalToUnit, isDefinition, ScopeLine, 
+        unwrapDI<DIScope>(Scope), Name, LinkageName,
+        unwrapDI<DIFile>(File), LineNo,
+        unwrapDI<DICompositeType>(Ty), isLocalToUnit, isDefinition, ScopeLine,
         Flags, isOptimized,
-        unwrap<Function>(Fn), 
+        unwrap<Function>(Fn),
         unwrapDI<MDNode*>(TParam),
         unwrapDI<MDNode*>(Decl)));
 }
@@ -644,10 +330,10 @@ extern "C" LLVMValueRef LLVMDIBuilderCreateBasicType(
     uint64_t AlignInBits,
     unsigned Encoding) {
     return wrap(Builder->createBasicType(
-        Name, SizeInBits, 
+        Name, SizeInBits,
         AlignInBits, Encoding));
 }
-    
+
 extern "C" LLVMValueRef LLVMDIBuilderCreatePointerType(
     DIBuilderRef Builder,
     LLVMValueRef PointeeTy,
@@ -670,14 +356,24 @@ extern "C" LLVMValueRef LLVMDIBuilderCreateStructType(
     LLVMValueRef DerivedFrom,
     LLVMValueRef Elements,
     unsigned RunTimeLang,
-    LLVMValueRef VTableHolder) {
+    LLVMValueRef VTableHolder,
+    const char *UniqueId) {
     return wrap(Builder->createStructType(
-        unwrapDI<DIDescriptor>(Scope), Name, 
-        unwrapDI<DIFile>(File), LineNumber, 
-        SizeInBits, AlignInBits, Flags, 
-        unwrapDI<DIType>(DerivedFrom), 
-        unwrapDI<DIArray>(Elements), RunTimeLang, 
-        unwrapDI<MDNode*>(VTableHolder)));
+        unwrapDI<DIDescriptor>(Scope),
+        Name,
+        unwrapDI<DIFile>(File),
+        LineNumber,
+        SizeInBits,
+        AlignInBits,
+        Flags,
+        unwrapDI<DIType>(DerivedFrom),
+        unwrapDI<DIArray>(Elements),
+        RunTimeLang,
+        unwrapDI<DIType>(VTableHolder)
+#if LLVM_VERSION_MINOR >= 4
+        ,UniqueId
+#endif
+        ));
 }
 
 extern "C" LLVMValueRef LLVMDIBuilderCreateMemberType(
@@ -692,12 +388,12 @@ extern "C" LLVMValueRef LLVMDIBuilderCreateMemberType(
     unsigned Flags,
     LLVMValueRef Ty) {
     return wrap(Builder->createMemberType(
-        unwrapDI<DIDescriptor>(Scope), Name, 
+        unwrapDI<DIDescriptor>(Scope), Name,
         unwrapDI<DIFile>(File), LineNo,
-        SizeInBits, AlignInBits, OffsetInBits, Flags, 
+        SizeInBits, AlignInBits, OffsetInBits, Flags,
         unwrapDI<DIType>(Ty)));
 }
-    
+
 extern "C" LLVMValueRef LLVMDIBuilderCreateLexicalBlock(
     DIBuilderRef Builder,
     LLVMValueRef Scope,
@@ -705,10 +401,40 @@ extern "C" LLVMValueRef LLVMDIBuilderCreateLexicalBlock(
     unsigned Line,
     unsigned Col) {
     return wrap(Builder->createLexicalBlock(
-        unwrapDI<DIDescriptor>(Scope), 
-        unwrapDI<DIFile>(File), Line, Col));
+        unwrapDI<DIDescriptor>(Scope),
+        unwrapDI<DIFile>(File), Line, Col
+#if LLVM_VERSION_MINOR == 5
+        , 0
+#endif
+        ));
 }
-    
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateStaticVariable(
+    DIBuilderRef Builder,
+    LLVMValueRef Context,
+    const char* Name,
+    const char* LinkageName,
+    LLVMValueRef File,
+    unsigned LineNo,
+    LLVMValueRef Ty,
+    bool isLocalToUnit,
+    LLVMValueRef Val,
+    LLVMValueRef Decl = NULL) {
+#if LLVM_VERSION_MINOR == 6
+    return wrap(Builder->createGlobalVariable(unwrapDI<DIDescriptor>(Context),
+#else
+    return wrap(Builder->createStaticVariable(unwrapDI<DIDescriptor>(Context),
+#endif
+        Name,
+        LinkageName,
+        unwrapDI<DIFile>(File),
+        LineNo,
+        unwrapDI<DIType>(Ty),
+        isLocalToUnit,
+        unwrap(Val),
+        unwrapDI<MDNode*>(Decl)));
+}
+
 extern "C" LLVMValueRef LLVMDIBuilderCreateLocalVariable(
     DIBuilderRef Builder,
     unsigned Tag,
@@ -720,45 +446,45 @@ extern "C" LLVMValueRef LLVMDIBuilderCreateLocalVariable(
     bool AlwaysPreserve,
     unsigned Flags,
     unsigned ArgNo) {
-    return wrap(Builder->createLocalVariable(Tag, 
-        unwrapDI<DIDescriptor>(Scope), Name, 
-        unwrapDI<DIFile>(File), 
-        LineNo, 
+    return wrap(Builder->createLocalVariable(Tag,
+        unwrapDI<DIDescriptor>(Scope), Name,
+        unwrapDI<DIFile>(File),
+        LineNo,
         unwrapDI<DIType>(Ty), AlwaysPreserve, Flags, ArgNo));
 }
 
 extern "C" LLVMValueRef LLVMDIBuilderCreateArrayType(
     DIBuilderRef Builder,
-    uint64_t Size,  
-    uint64_t AlignInBits,  
-    LLVMValueRef Ty, 
+    uint64_t Size,
+    uint64_t AlignInBits,
+    LLVMValueRef Ty,
     LLVMValueRef Subscripts) {
     return wrap(Builder->createArrayType(Size, AlignInBits,
-        unwrapDI<DIType>(Ty), 
+        unwrapDI<DIType>(Ty),
         unwrapDI<DIArray>(Subscripts)));
 }
 
 extern "C" LLVMValueRef LLVMDIBuilderCreateVectorType(
     DIBuilderRef Builder,
-    uint64_t Size,  
-    uint64_t AlignInBits,  
-    LLVMValueRef Ty, 
+    uint64_t Size,
+    uint64_t AlignInBits,
+    LLVMValueRef Ty,
     LLVMValueRef Subscripts) {
     return wrap(Builder->createVectorType(Size, AlignInBits,
-        unwrapDI<DIType>(Ty), 
+        unwrapDI<DIType>(Ty),
         unwrapDI<DIArray>(Subscripts)));
 }
 
 extern "C" LLVMValueRef LLVMDIBuilderGetOrCreateSubrange(
-    DIBuilderRef Builder, 
-    int64_t Lo, 
+    DIBuilderRef Builder,
+    int64_t Lo,
     int64_t Count) {
     return wrap(Builder->getOrCreateSubrange(Lo, Count));
 }
 
 extern "C" LLVMValueRef LLVMDIBuilderGetOrCreateArray(
     DIBuilderRef Builder,
-    LLVMValueRef* Ptr, 
+    LLVMValueRef* Ptr,
     unsigned Count) {
     return wrap(Builder->getOrCreateArray(
         ArrayRef<Value*>(reinterpret_cast<Value**>(Ptr), Count)));
@@ -770,8 +496,8 @@ extern "C" LLVMValueRef LLVMDIBuilderInsertDeclareAtEnd(
     LLVMValueRef VarInfo,
     LLVMBasicBlockRef InsertAtEnd) {
     return wrap(Builder->insertDeclare(
-        unwrap(Val), 
-        unwrapDI<DIVariable>(VarInfo), 
+        unwrap(Val),
+        unwrapDI<DIVariable>(VarInfo),
         unwrap(InsertAtEnd)));
 }
 
@@ -781,7 +507,423 @@ extern "C" LLVMValueRef LLVMDIBuilderInsertDeclareBefore(
     LLVMValueRef VarInfo,
     LLVMValueRef InsertBefore) {
     return wrap(Builder->insertDeclare(
-        unwrap(Val), 
-        unwrapDI<DIVariable>(VarInfo), 
+        unwrap(Val),
+        unwrapDI<DIVariable>(VarInfo),
         unwrap<Instruction>(InsertBefore)));
+}
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateEnumerator(
+    DIBuilderRef Builder,
+    const char* Name,
+    uint64_t Val)
+{
+    return wrap(Builder->createEnumerator(Name, Val));
+}
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateEnumerationType(
+    DIBuilderRef Builder,
+    LLVMValueRef Scope,
+    const char* Name,
+    LLVMValueRef File,
+    unsigned LineNumber,
+    uint64_t SizeInBits,
+    uint64_t AlignInBits,
+    LLVMValueRef Elements,
+    LLVMValueRef ClassType)
+{
+    return wrap(Builder->createEnumerationType(
+        unwrapDI<DIDescriptor>(Scope),
+        Name,
+        unwrapDI<DIFile>(File),
+        LineNumber,
+        SizeInBits,
+        AlignInBits,
+        unwrapDI<DIArray>(Elements),
+        unwrapDI<DIType>(ClassType)));
+}
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateUnionType(
+    DIBuilderRef Builder,
+    LLVMValueRef Scope,
+    const char* Name,
+    LLVMValueRef File,
+    unsigned LineNumber,
+    uint64_t SizeInBits,
+    uint64_t AlignInBits,
+    unsigned Flags,
+    LLVMValueRef Elements,
+    unsigned RunTimeLang,
+    const char* UniqueId)
+{
+    return wrap(Builder->createUnionType(
+        unwrapDI<DIDescriptor>(Scope),
+        Name,
+        unwrapDI<DIFile>(File),
+        LineNumber,
+        SizeInBits,
+        AlignInBits,
+        Flags,
+        unwrapDI<DIArray>(Elements),
+        RunTimeLang
+#if LLVM_VERSION_MINOR >= 4
+        ,UniqueId
+#endif
+        ));
+}
+
+#if LLVM_VERSION_MINOR < 5
+extern "C" void LLVMSetUnnamedAddr(LLVMValueRef Value, LLVMBool Unnamed) {
+    unwrap<GlobalValue>(Value)->setUnnamedAddr(Unnamed);
+}
+#endif
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateTemplateTypeParameter(
+    DIBuilderRef Builder,
+    LLVMValueRef Scope,
+    const char* Name,
+    LLVMValueRef Ty,
+    LLVMValueRef File,
+    unsigned LineNo,
+    unsigned ColumnNo)
+{
+    return wrap(Builder->createTemplateTypeParameter(
+      unwrapDI<DIDescriptor>(Scope),
+      Name,
+      unwrapDI<DIType>(Ty),
+      unwrapDI<MDNode*>(File),
+      LineNo,
+      ColumnNo));
+}
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateOpDeref(LLVMTypeRef IntTy)
+{
+    return LLVMConstInt(IntTy, DIBuilder::OpDeref, true);
+}
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateOpPlus(LLVMTypeRef IntTy)
+{
+    return LLVMConstInt(IntTy, DIBuilder::OpPlus, true);
+}
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateComplexVariable(
+    DIBuilderRef Builder,
+    unsigned Tag,
+    LLVMValueRef Scope,
+    const char *Name,
+    LLVMValueRef File,
+    unsigned LineNo,
+    LLVMValueRef Ty,
+    LLVMValueRef* AddrOps,
+    unsigned AddrOpsCount,
+    unsigned ArgNo)
+{
+    llvm::ArrayRef<llvm::Value*> addr_ops((llvm::Value**)AddrOps, AddrOpsCount);
+
+    return wrap(Builder->createComplexVariable(
+        Tag,
+        unwrapDI<DIDescriptor>(Scope),
+        Name,
+        unwrapDI<DIFile>(File),
+        LineNo,
+        unwrapDI<DIType>(Ty),
+        addr_ops,
+        ArgNo
+    ));
+}
+
+extern "C" LLVMValueRef LLVMDIBuilderCreateNameSpace(
+    DIBuilderRef Builder,
+    LLVMValueRef Scope,
+    const char* Name,
+    LLVMValueRef File,
+    unsigned LineNo)
+{
+    return wrap(Builder->createNameSpace(
+        unwrapDI<DIDescriptor>(Scope),
+        Name,
+        unwrapDI<DIFile>(File),
+        LineNo));
+}
+
+extern "C" void LLVMDICompositeTypeSetTypeArray(
+    LLVMValueRef CompositeType,
+    LLVMValueRef TypeArray)
+{
+#if LLVM_VERSION_MINOR >= 6
+    unwrapDI<DICompositeType>(CompositeType).setArrays(unwrapDI<DIArray>(TypeArray));
+#else
+    unwrapDI<DICompositeType>(CompositeType).setTypeArray(unwrapDI<DIArray>(TypeArray));
+#endif
+}
+
+extern "C" void LLVMWriteTypeToString(LLVMTypeRef Type, RustStringRef str) {
+    raw_rust_string_ostream os(str);
+    unwrap<llvm::Type>(Type)->print(os);
+}
+
+extern "C" void LLVMWriteValueToString(LLVMValueRef Value, RustStringRef str) {
+    raw_rust_string_ostream os(str);
+    os << "(";
+    unwrap<llvm::Value>(Value)->getType()->print(os);
+    os << ":";
+    unwrap<llvm::Value>(Value)->print(os);
+    os << ")";
+}
+
+#if LLVM_VERSION_MINOR >= 5
+extern "C" bool
+LLVMRustLinkInExternalBitcode(LLVMModuleRef dst, char *bc, size_t len) {
+    Module *Dst = unwrap(dst);
+#if LLVM_VERSION_MINOR == 5
+    MemoryBuffer* buf = MemoryBuffer::getMemBufferCopy(StringRef(bc, len));
+    ErrorOr<Module *> Src = llvm::getLazyBitcodeModule(buf, Dst->getContext());
+#else
+    std::unique_ptr<MemoryBuffer> buf = MemoryBuffer::getMemBufferCopy(StringRef(bc, len));
+    ErrorOr<Module *> Src = llvm::getLazyBitcodeModule(std::move(buf), Dst->getContext());
+#endif
+    if (!Src) {
+        LLVMRustSetLastError(Src.getError().message().c_str());
+#if LLVM_VERSION_MINOR == 5
+        delete buf;
+#endif
+        return false;
+    }
+
+    std::string Err;
+    if (Linker::LinkModules(Dst, *Src, Linker::DestroySource, &Err)) {
+        LLVMRustSetLastError(Err.c_str());
+        return false;
+    }
+    return true;
+}
+#else
+extern "C" bool
+LLVMRustLinkInExternalBitcode(LLVMModuleRef dst, char *bc, size_t len) {
+    Module *Dst = unwrap(dst);
+    MemoryBuffer* buf = MemoryBuffer::getMemBufferCopy(StringRef(bc, len));
+    std::string Err;
+    Module *Src = llvm::getLazyBitcodeModule(buf, Dst->getContext(), &Err);
+    if (!Src) {
+        LLVMRustSetLastError(Err.c_str());
+        delete buf;
+        return false;
+    }
+
+    if (Linker::LinkModules(Dst, Src, Linker::DestroySource, &Err)) {
+        LLVMRustSetLastError(Err.c_str());
+        return false;
+    }
+    return true;
+}
+#endif
+
+#if LLVM_VERSION_MINOR >= 5
+extern "C" void*
+LLVMRustOpenArchive(char *path) {
+    ErrorOr<std::unique_ptr<MemoryBuffer>> buf_or = MemoryBuffer::getFile(path,
+                                                                          -1,
+                                                                          false);
+    if (!buf_or) {
+        LLVMRustSetLastError(buf_or.getError().message().c_str());
+        return nullptr;
+    }
+
+#if LLVM_VERSION_MINOR >= 6
+    ErrorOr<std::unique_ptr<Archive>> archive_or =
+        Archive::create(buf_or.get()->getMemBufferRef());
+
+    if (!archive_or) {
+        LLVMRustSetLastError(archive_or.getError().message().c_str());
+        return nullptr;
+    }
+
+    OwningBinary<Archive> *ret = new OwningBinary<Archive>(
+            std::move(archive_or.get()), std::move(buf_or.get()));
+#else
+    std::error_code err;
+    Archive *ret = new Archive(std::move(buf_or.get()), err);
+    if (err) {
+        LLVMRustSetLastError(err.message().c_str());
+        return nullptr;
+    }
+#endif
+
+    return ret;
+}
+#else
+extern "C" void*
+LLVMRustOpenArchive(char *path) {
+    OwningPtr<MemoryBuffer> buf;
+    error_code err = MemoryBuffer::getFile(path, buf, -1, false);
+    if (err) {
+        LLVMRustSetLastError(err.message().c_str());
+        return NULL;
+    }
+    Archive *ret = new Archive(buf.take(), err);
+    if (err) {
+        LLVMRustSetLastError(err.message().c_str());
+        return NULL;
+    }
+    return ret;
+}
+#endif
+
+extern "C" const char*
+#if LLVM_VERSION_MINOR >= 6
+LLVMRustArchiveReadSection(OwningBinary<Archive> *ob, char *name, size_t *size) {
+
+    std::unique_ptr<Archive> &ar = ob->getBinary();
+#else
+LLVMRustArchiveReadSection(Archive *ar, char *name, size_t *size) {
+#endif
+
+#if LLVM_VERSION_MINOR >= 5
+    Archive::child_iterator child = ar->child_begin(),
+                              end = ar->child_end();
+    for (; child != end; ++child) {
+        ErrorOr<StringRef> name_or_err = child->getName();
+        if (name_or_err.getError()) continue;
+        StringRef sect_name = name_or_err.get();
+#else
+    Archive::child_iterator child = ar->begin_children(),
+                              end = ar->end_children();
+    for (; child != end; ++child) {
+        StringRef sect_name;
+        error_code err = child->getName(sect_name);
+        if (err) continue;
+#endif
+        if (sect_name.trim(" ") == name) {
+            StringRef buf = child->getBuffer();
+            *size = buf.size();
+            return buf.data();
+        }
+    }
+    return NULL;
+}
+
+extern "C" void
+#if LLVM_VERSION_MINOR >= 6
+LLVMRustDestroyArchive(OwningBinary<Archive> *ar) {
+#else
+LLVMRustDestroyArchive(Archive *ar) {
+#endif
+    delete ar;
+}
+
+#if LLVM_VERSION_MINOR >= 5
+extern "C" void
+LLVMRustSetDLLExportStorageClass(LLVMValueRef Value) {
+    GlobalValue *V = unwrap<GlobalValue>(Value);
+    V->setDLLStorageClass(GlobalValue::DLLExportStorageClass);
+}
+#else
+extern "C" void
+LLVMRustSetDLLExportStorageClass(LLVMValueRef Value) {
+    LLVMSetLinkage(Value, LLVMDLLExportLinkage);
+}
+#endif
+
+extern "C" int
+LLVMVersionMinor() {
+    return LLVM_VERSION_MINOR;
+}
+
+extern "C" int
+LLVMVersionMajor() {
+    return LLVM_VERSION_MAJOR;
+}
+
+// Note that the two following functions look quite similar to the
+// LLVMGetSectionName function. Sadly, it appears that this function only
+// returns a char* pointer, which isn't guaranteed to be null-terminated. The
+// function provided by LLVM doesn't return the length, so we've created our own
+// function which returns the length as well as the data pointer.
+//
+// For an example of this not returning a null terminated string, see
+// lib/Object/COFFObjectFile.cpp in the getSectionName function. One of the
+// branches explicitly creates a StringRef without a null terminator, and then
+// that's returned.
+
+inline section_iterator *unwrap(LLVMSectionIteratorRef SI) {
+    return reinterpret_cast<section_iterator*>(SI);
+}
+
+extern "C" int
+LLVMRustGetSectionName(LLVMSectionIteratorRef SI, const char **ptr) {
+    StringRef ret;
+#if LLVM_VERSION_MINOR >= 5
+    if (std::error_code ec = (*unwrap(SI))->getName(ret))
+#else
+    if (error_code ec = (*unwrap(SI))->getName(ret))
+#endif
+      report_fatal_error(ec.message());
+    *ptr = ret.data();
+    return ret.size();
+}
+
+// LLVMArrayType function does not support 64-bit ElementCount
+extern "C" LLVMTypeRef
+LLVMRustArrayType(LLVMTypeRef ElementType, uint64_t ElementCount) {
+    return wrap(ArrayType::get(unwrap(ElementType), ElementCount));
+}
+
+DEFINE_SIMPLE_CONVERSION_FUNCTIONS(Twine, LLVMTwineRef)
+DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DebugLoc, LLVMDebugLocRef)
+
+extern "C" void
+LLVMWriteTwineToString(LLVMTwineRef T, RustStringRef str) {
+    raw_rust_string_ostream os(str);
+    unwrap(T)->print(os);
+}
+
+extern "C" void
+LLVMUnpackOptimizationDiagnostic(
+    LLVMDiagnosticInfoRef di,
+    const char **pass_name_out,
+    LLVMValueRef *function_out,
+    LLVMDebugLocRef *debugloc_out,
+    LLVMTwineRef *message_out)
+{
+    // Undefined to call this not on an optimization diagnostic!
+    llvm::DiagnosticInfoOptimizationBase *opt
+        = static_cast<llvm::DiagnosticInfoOptimizationBase*>(unwrap(di));
+
+    *pass_name_out = opt->getPassName();
+    *function_out = wrap(&opt->getFunction());
+    *debugloc_out = wrap(&opt->getDebugLoc());
+    *message_out = wrap(&opt->getMsg());
+}
+
+extern "C" void LLVMWriteDiagnosticInfoToString(LLVMDiagnosticInfoRef di, RustStringRef str) {
+    raw_rust_string_ostream os(str);
+    DiagnosticPrinterRawOStream dp(os);
+    unwrap(di)->print(dp);
+}
+
+extern "C" int LLVMGetDiagInfoKind(LLVMDiagnosticInfoRef di) {
+    return unwrap(di)->getKind();
+}
+
+extern "C" void LLVMWriteDebugLocToString(
+    LLVMContextRef C,
+    LLVMDebugLocRef dl,
+    RustStringRef str)
+{
+    raw_rust_string_ostream os(str);
+    unwrap(dl)->print(*unwrap(C), os);
+}
+
+DEFINE_SIMPLE_CONVERSION_FUNCTIONS(SMDiagnostic, LLVMSMDiagnosticRef)
+
+extern "C" void LLVMSetInlineAsmDiagnosticHandler(
+    LLVMContextRef C,
+    LLVMContext::InlineAsmDiagHandlerTy H,
+    void *CX)
+{
+    unwrap(C)->setInlineAsmDiagnosticHandler(H, CX);
+}
+
+extern "C" void LLVMWriteSMDiagnosticToString(LLVMSMDiagnosticRef d, RustStringRef str) {
+    raw_rust_string_ostream os(str);
+    unwrap(d)->print("", os);
 }

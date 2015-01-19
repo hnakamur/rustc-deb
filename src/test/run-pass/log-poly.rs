@@ -8,13 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#[derive(Show)]
 enum Numbers {
     Three
 }
 
 pub fn main() {
-    debug!(1);
-    info!(2.0);
-    warn!(Three);
-    error!(~[4]);
+    println!("{:?}", 1i);
+    println!("{:?}", 2.0f64);
+    println!("{:?}", Numbers::Three);
+    println!("{:?}", vec!(4i));
 }

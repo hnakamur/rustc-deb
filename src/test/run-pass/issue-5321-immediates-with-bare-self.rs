@@ -7,6 +7,8 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+//
+// ignore-lexer-test FIXME #15877
 
 trait Fooable {
     fn yes(self);
@@ -14,12 +16,10 @@ trait Fooable {
 
 impl Fooable for uint {
     fn yes(self) {
-        for self.times {
-            println("yes");
-        }
+        for _ in range(0, self) { println!("yes"); }
     }
 }
 
-fn main() {
+pub fn main() {
     2.yes();
 }

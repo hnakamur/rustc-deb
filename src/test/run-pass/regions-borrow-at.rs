@@ -8,13 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 fn foo(x: &uint) -> uint {
     *x
 }
 
 pub fn main() {
-    let p = @22u;
-    let r = foo(p);
-    debug!("r=%u", r);
+    let p = box 22u;
+    let r = foo(&*p);
+    println!("r={}", r);
     assert_eq!(r, 22u);
 }

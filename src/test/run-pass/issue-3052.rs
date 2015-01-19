@@ -8,10 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-type Connection = @fn(~[u8]);
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+type Connection = Box<FnMut(Vec<u8>) + 'static>;
 
 fn f() -> Option<Connection> {
-    let mock_connection: Connection = |_| {};
+    let mock_connection: Connection = box |&mut: _| {};
     Some(mock_connection)
 }
 

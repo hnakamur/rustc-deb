@@ -1,4 +1,4 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
+// ignore-test needs networking
 
-extern mod extra;
+extern crate extra;
 
 use extra::net::tcp::TcpSocketBuf;
 
@@ -24,8 +24,8 @@ enum Result {
   Int(int),
   Data(~[u8]),
   List(~[Result]),
-  Error(~str),
-  Status(~str)
+  Error(String),
+  Status(String)
 }
 
 priv fn parse_data(len: uint, io: @io::Reader) -> Result {
@@ -43,45 +43,44 @@ priv fn parse_data(len: uint, io: @io::Reader) -> Result {
 }
 
 priv fn parse_list(len: uint, io: @io::Reader) -> Result {
-  let mut list: ~[Result] = ~[];
-    for len.times {
-    let v =
-        match io.read_char() {
-        '$' => parse_bulk(io),
-        ':' => parse_int(io),
-         _ => fail!()
-    };
-    list.push(v);
+    let mut list: ~[Result] = ~[];
+    for _ in range(0, len) {
+        let v = match io.read_char() {
+            '$' => parse_bulk(io),
+            ':' => parse_int(io),
+             _ => panic!()
+        };
+        list.push(v);
     }
-  return List(list);
+    return List(list);
 }
 
-priv fn chop(s: ~str) -> ~str {
-  s.slice(0, s.len() - 1).to_owned()
+priv fn chop(s: String) -> String {
+  s.slice(0, s.len() - 1).to_string()
 }
 
 priv fn parse_bulk(io: @io::Reader) -> Result {
-    match int::from_str(chop(io.read_line())) {
-    None => fail!(),
+    match from_str::<int>(chop(io.read_line())) {
+    None => panic!(),
     Some(-1) => Nil,
     Some(len) if len >= 0 => parse_data(len as uint, io),
-    Some(_) => fail!()
+    Some(_) => panic!()
     }
 }
 
 priv fn parse_multi(io: @io::Reader) -> Result {
-    match int::from_str(chop(io.read_line())) {
-    None => fail!(),
+    match from_str::<int>(chop(io.read_line())) {
+    None => panic!(),
     Some(-1) => Nil,
     Some(0) => List(~[]),
     Some(len) if len >= 0 => parse_list(len as uint, io),
-    Some(_) => fail!()
+    Some(_) => panic!()
     }
 }
 
 priv fn parse_int(io: @io::Reader) -> Result {
-    match int::from_str(chop(io.read_line())) {
-    None => fail!(),
+    match from_str::<int>(chop(io.read_line())) {
+    None => panic!(),
     Some(i) => Int(i)
     }
 }
@@ -93,39 +92,38 @@ priv fn parse_response(io: @io::Reader) -> Result {
     '+' => Status(chop(io.read_line())),
     '-' => Error(chop(io.read_line())),
     ':' => parse_int(io),
-    _ => fail!()
+    _ => panic!()
     }
 }
 
-priv fn cmd_to_str(cmd: ~[~str]) -> ~str {
-  let mut res = ~"*";
-  res.push_str(cmd.len().to_str());
+priv fn cmd_to_string(cmd: ~[String]) -> String {
+  let mut res = "*".to_string();
+  res.push_str(cmd.len().to_string());
   res.push_str("\r\n");
-    for cmd.iter().advance |s| {
-    res.push_str([~"$", s.len().to_str(), ~"\r\n",
-                  copy *s, ~"\r\n"].concat() );
+    for s in cmd.iter() {
+    res.push_str(["$".to_string(), s.len().to_string(), "\r\n".to_string(),
+                  (*s).clone(), "\r\n".to_string()].concat() );
     }
   res
 }
 
-fn query(cmd: ~[~str], sb: TcpSocketBuf) -> Result {
-  let cmd = cmd_to_str(cmd);
-  //io::println(cmd);
+fn query(cmd: ~[String], sb: TcpSocketBuf) -> Result {
+  let cmd = cmd_to_string(cmd);
+  //println!("{}", cmd);
   sb.write_str(cmd);
   let res = parse_response(@sb as @io::Reader);
-  //io::println(fmt!("%?", res));
   res
 }
 
-fn query2(cmd: ~[~str]) -> Result {
-  let _cmd = cmd_to_str(cmd);
-    do io::with_str_reader(~"$3\r\nXXX\r\n") |sb| {
+fn query2(cmd: ~[String]) -> Result {
+  let _cmd = cmd_to_string(cmd);
+    io::with_str_reader("$3\r\nXXX\r\n".to_string())(|sb| {
     let res = parse_response(@sb as @io::Reader);
-    io::println(fmt!("%?", res));
+    println!("{}", res);
     res
-    }
+    });
 }
 
 
-fn main() {
+pub fn main() {
 }

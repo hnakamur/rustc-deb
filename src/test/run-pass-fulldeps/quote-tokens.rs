@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,21 +8,38 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[allow(non_implicitly_copyable_typarams)];
+// ignore-android
+// ignore-pretty: does not work well with `--test`
 
-extern mod syntax;
+#![feature(quote)]
+
+extern crate syntax;
 
 use syntax::ext::base::ExtCtxt;
+use syntax::ptr::P;
 
-fn syntax_extension(ext_cx: @ExtCtxt) {
-    let e_toks : ~[syntax::ast::token_tree] = quote_tokens!(1 + 2);
-    let p_toks : ~[syntax::ast::token_tree] = quote_tokens!((x, 1 .. 4, *));
+fn syntax_extension(cx: &ExtCtxt) {
+    let e_toks : Vec<syntax::ast::TokenTree> = quote_tokens!(cx, 1 + 2);
+    let p_toks : Vec<syntax::ast::TokenTree> = quote_tokens!(cx, (x, 1 .. 4, *));
 
-    let a: @syntax::ast::expr = quote_expr!(1 + 2);
-    let _b: Option<@syntax::ast::item> = quote_item!( static foo : int = $e_toks; );
-    let _c: @syntax::ast::pat = quote_pat!( (x, 1 .. 4, *) );
-    let _d: @syntax::ast::stmt = quote_stmt!( let x = $a; );
-    let _e: @syntax::ast::expr = quote_expr!( match foo { $p_toks => 10 } );
+    let a: P<syntax::ast::Expr> = quote_expr!(cx, 1 + 2);
+    let _b: Option<P<syntax::ast::Item>> = quote_item!(cx, static foo : int = $e_toks; );
+    let _c: P<syntax::ast::Pat> = quote_pat!(cx, (x, 1 .. 4, *) );
+    let _d: P<syntax::ast::Stmt> = quote_stmt!(cx, let x = $a; );
+    let _d: syntax::ast::Arm = quote_arm!(cx, (ref x, ref y) = (x, y) );
+    let _e: P<syntax::ast::Expr> = quote_expr!(cx, match foo { $p_toks => 10 } );
+
+    let _f: P<syntax::ast::Expr> = quote_expr!(cx, ());
+    let _g: P<syntax::ast::Expr> = quote_expr!(cx, true);
+    let _h: P<syntax::ast::Expr> = quote_expr!(cx, 'a');
+
+    let i: Option<P<syntax::ast::Item>> = quote_item!(cx, #[derive(Eq)] struct Foo; );
+    assert!(i.is_some());
+
+    let _j: P<syntax::ast::Method> = quote_method!(cx, fn foo(&self) {});
+    let _k: P<syntax::ast::Method> = quote_method!(cx, #[doc = "hello"] fn foo(&self) {});
+
+    let _l: P<syntax::ast::Ty> = quote_ty!(cx, &int);
 }
 
 fn main() {

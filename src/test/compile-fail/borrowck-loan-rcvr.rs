@@ -8,18 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct point { x: int, y: int }
+
+struct point { x: isize, y: isize }
 
 trait methods {
     fn impurem(&self);
-    fn blockm(&self, f: &fn());
+    fn blockm<F>(&self, f: F) where F: FnOnce();
 }
 
 impl methods for point {
     fn impurem(&self) {
     }
 
-    fn blockm(&self, f: &fn()) { f() }
+    fn blockm<F>(&self, f: F) where F: FnOnce() { f() }
 }
 
 fn a() {
@@ -30,9 +31,9 @@ fn a() {
     p.impurem();
 
     // But in this case we do not honor the loan:
-    do p.blockm {
-        p.x = 10; //~ ERROR cannot assign
-    }
+    p.blockm(|| { //~ ERROR cannot borrow `p` as mutable
+        p.x = 10;
+    })
 }
 
 fn b() {
@@ -44,17 +45,6 @@ fn b() {
     p.impurem(); //~ ERROR cannot borrow
 
     l.x += 1;
-}
-
-fn c() {
-    // Loaning @mut as & is considered legal due to dynamic checks...
-    let q = @mut point {x: 3, y: 4};
-    q.impurem();
-
-    // ...but we still detect errors statically when we can.
-    do q.blockm {
-        q.x = 10; //~ ERROR cannot assign
-    }
 }
 
 fn main() {

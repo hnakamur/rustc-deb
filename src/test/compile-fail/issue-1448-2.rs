@@ -10,6 +10,8 @@
 
 // Regression test for issue #1448 and #1386
 
+fn foo(a: usize) -> usize { a }
+
 fn main() {
-    debug!("%u", 10i); //~ ERROR mismatched types
+    println!("{}", foo(10is)); //~ ERROR mismatched types
 }

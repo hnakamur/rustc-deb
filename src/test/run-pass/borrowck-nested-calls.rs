@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test #5074 nested method calls
+// ignore-test FIXME (#6268) nested method calls
 
 // Test that (safe) nested calls with `&mut` receivers are permitted.
 
@@ -24,7 +24,7 @@ impl Foo {
     }
 }
 
-fn main() {
+pub fn main() {
     let mut f = Foo {a: 22, b: 23};
     f.inc_a(f.next_b());
     assert_eq!(f.a, 22+23);

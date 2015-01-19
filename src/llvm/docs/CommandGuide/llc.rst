@@ -45,7 +45,7 @@ End-user Options
 
  Generate code at different optimization levels.  These correspond to the
  ``-O0``, ``-O1``, ``-O2``, and ``-O3`` optimization levels used by
- :program:`llvm-gcc` and :program:`clang`.
+ :program:`clang`.
 
 .. option:: -mtriple=<target triple>
 
@@ -68,6 +68,14 @@ End-user Options
  .. code-block:: none
 
    llvm-as < /dev/null | llc -march=xyz -mcpu=help
+
+.. option:: -filetype=<output file type>
+
+ Specify what kind of output ``llc`` should generated.  Options are: ``asm``
+ for textual assembly ( ``'.s'``), ``obj`` for native object files (``'.o'``)
+ and ``null`` for not emitting anything (for performance testing).
+
+ Note that not all targets support all options.
 
 .. option:: -mattr=a1,+a2,-a3,...
 
@@ -104,11 +112,6 @@ End-user Options
  optimizations allow the code generator to make use of some instructions which
  would otherwise not be usable (such as ``fsin`` on X86).
 
-.. option:: --enable-correct-eh-support
-
- Instruct the **lowerinvoke** pass to insert code for correct exception
- handling support.  This is expensive and is by default omitted for efficiency.
-
 .. option:: --stats
 
  Print statistics recorded by code-generation passes.
@@ -133,24 +136,24 @@ Tuning/Configuration Options
 
 .. option:: --regalloc=<allocator>
 
- Specify the register allocator to use.  The default ``allocator`` is *local*.
+ Specify the register allocator to use.
  Valid register allocators are:
 
- *simple*
+ *basic*
 
-  Very simple "always spill" register allocator
+  Basic register allocator.
 
- *local*
+ *fast*
 
-  Local register allocator
+  Fast register allocator. It is the default for unoptimized code.
 
- *linearscan*
+ *greedy*
 
-  Linear scan global register allocator
+  Greedy register allocator. It is the default for optimized code.
 
- *iterativescan*
+ *pbqp*
 
-  Iterative scan global register allocator
+  Register allocator based on 'Partitioned Boolean Quadratic Programming'.
 
 .. option:: --spiller=<spiller>
 

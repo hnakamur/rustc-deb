@@ -8,17 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 /*!
  * This is a regression test for a bug in LLVM, fixed in upstream r179587,
  * where the switch instructions generated for destructuring enums
  * represented with nullable pointers could be misoptimized in some cases.
  */
 
-enum List<X> { Nil, Cons(X, @List<X>) }
+enum List<X> { Nil, Cons(X, Box<List<X>>) }
 pub fn main() {
-    match Cons(10, @Nil) {
-        Cons(10, _) => {}
-        Nil => {}
-        _ => fail!()
+    match List::Cons(10i, box List::Nil) {
+        List::Cons(10i, _) => {}
+        List::Nil => {}
+        _ => panic!()
     }
 }

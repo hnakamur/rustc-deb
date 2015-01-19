@@ -8,21 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-use std::unstable;
+use std::sync::Mutex;
 
 struct Point {x: int, y: int, z: int}
 
 fn f(p: &mut Point) { p.z = 13; }
 
 pub fn main() {
-    unsafe {
-        let x = Some(unstable::sync::exclusive(true));
-        match x {
-            Some(ref z) if z.with(|b| *b) => {
-                do z.with |b| { assert!(*b); }
-            },
-            _ => fail!()
-        }
+    let x = Some(Mutex::new(true));
+    match x {
+        Some(ref z) if *z.lock().unwrap() => {
+            assert!(*z.lock().unwrap());
+        },
+        _ => panic!()
     }
 }

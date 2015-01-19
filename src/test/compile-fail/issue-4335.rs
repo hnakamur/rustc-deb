@@ -8,11 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(unboxed_closures)]
+#![feature(box_syntax)]
+
 fn id<T>(t: T) -> T { t }
 
-fn f<'r, T>(v: &'r T) -> &'r fn()->T { id::<&'r fn()->T>(|| *v) } //~ ERROR cannot infer an appropriate lifetime due to conflicting requirements
+fn f<'r, T>(v: &'r T) -> Box<FnMut() -> T + 'r> {
+    id(box |&mut:| *v) //~ ERROR cannot infer
+}
 
 fn main() {
-    let v = &5;
-    println(fmt!("%d", f(v)()));
+    let v = &5is;
+    println!("{}", f(v).call_mut(()));
 }

@@ -1,6 +1,4 @@
-// xfail-fast
-
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,22 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-use extra::list;
-
+#[derive(Clone, Show)]
 enum foo {
   a(uint),
-  b(~str),
+  b(String),
 }
 
-fn check_log<T>(exp: ~str, v: T) {
-    assert_eq!(exp, fmt!("%?", v));
+fn check_log<T: std::fmt::Show>(exp: String, v: T) {
+    assert_eq!(exp, format!("{:?}", v));
 }
 
 pub fn main() {
-    let x = list::from_vec(~[a(22u), b(~"hi")]);
-    let exp = ~"@Cons(a(22), @Cons(b(~\"hi\"), @Nil))";
-    let act = fmt!("%?", x);
-    assert!(act == exp);
+    let mut x = Some(foo::a(22u));
+    let exp = "Some(a(22u))".to_string();
+    let act = format!("{:?}", x);
+    assert_eq!(act, exp);
+    check_log(exp, x);
+
+    x = None;
+    let exp = "None".to_string();
+    let act = format!("{:?}", x);
+    assert_eq!(act, exp);
     check_log(exp, x);
 }

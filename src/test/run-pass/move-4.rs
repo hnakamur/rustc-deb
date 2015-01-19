@@ -8,12 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-extern mod extra;
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
 struct Triple { a: int, b: int, c: int }
 
-fn test(foo: @Triple) -> @Triple {
+fn test(foo: Box<Triple>) -> Box<Triple> {
     let foo = foo;
     let bar = foo;
     let baz = bar;
@@ -22,7 +22,7 @@ fn test(foo: @Triple) -> @Triple {
 }
 
 pub fn main() {
-    let x = @Triple{a: 1, b: 2, c: 3};
+    let x = box Triple{a: 1, b: 2, c: 3};
     let y = test(x);
     assert_eq!(y.c, 3);
 }

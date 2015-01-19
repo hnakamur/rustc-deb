@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -9,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::task;
+use std::thread::Thread;
 
 pub fn main() {
     let mut i: int = 0;
-    while i < 100 { i = i + 1; error!(i); task::yield(); }
+    while i < 100 { i = i + 1; println!("{}", i); Thread::yield_now(); }
 }

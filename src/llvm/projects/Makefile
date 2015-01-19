@@ -20,9 +20,7 @@ DIRS := $(filter-out compiler-rt,$(DIRS))
 # Don't build libcxx, it isn't designed to be built directly.
 DIRS := $(filter-out libcxx,$(DIRS))
 
-# Sparc cannot link shared libraries (libtool problem?)
-ifeq ($(ARCH), Sparc)
-DIRS := $(filter-out sample, $(DIRS))
-endif
+# DragonEgg may be checked out here but doesn't (yet) build directly.
+DIRS := $(filter-out dragonegg,$(DIRS))
 
 include $(PROJ_SRC_ROOT)/Makefile.rules

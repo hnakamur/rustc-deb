@@ -1,0 +1,19 @@
+digraph block {
+    N0[label="entry"];
+    N1[label="exit"];
+    N2[label="expr 1is"];
+    N3[label="expr 7is"];
+    N4[label="expr 17is"];
+    N5[label="expr [1is, 7is, 17is]"];
+    N6[label="local _v"];
+    N7[label="stmt let _v = [1is, 7is, 17is];"];
+    N8[label="block { let _v = [1is, 7is, 17is]; }"];
+    N0 -> N2;
+    N2 -> N3;
+    N3 -> N4;
+    N4 -> N5;
+    N5 -> N6;
+    N6 -> N7;
+    N7 -> N8;
+    N8 -> N1;
+}

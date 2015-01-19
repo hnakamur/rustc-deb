@@ -8,24 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::hashmap::HashSet;
+extern crate collections;
+use std::collections::HashSet;
 
 struct Foo {
-  n: HashSet<int>,
+  n: HashSet<isize>,
 }
 
 impl Foo {
-    pub fn foo(&mut self, fun: &fn(&int)) {
-        for self.n.iter().advance |f| {
+    pub fn foo<F>(&mut self, mut fun: F) where F: FnMut(&isize) {
+        for f in self.n.iter() {
             fun(f);
         }
     }
 }
 
 fn bar(f: &mut Foo) {
-  do f.foo |a| {
-    f.n.insert(*a); //~ ERROR cannot borrow
-  }
+  f.foo(
+        |a| { //~ ERROR closure requires unique access to `f`
+            f.n.insert(*a);
+        })
 }
 
 fn main() {

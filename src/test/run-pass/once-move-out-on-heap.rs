@@ -1,4 +1,4 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,20 +10,17 @@
 
 // Testing guarantees provided by once functions.
 
-// xfail-fast
 
-extern mod extra;
-use extra::arc;
-use std::util;
+use std::sync::Arc;
 
-fn foo(blk: ~once fn()) {
+fn foo<F:FnOnce()>(blk: F) {
     blk();
 }
 
-fn main() {
-    let x = arc::ARC(true);
-    do foo {
-        assert!(*x.get());
-        util::ignore(x);
-    }
+pub fn main() {
+    let x = Arc::new(true);
+    foo(move|| {
+        assert!(*x);
+        drop(x);
+    });
 }

@@ -9,15 +9,12 @@
 // except according to those terms.
 
 
-
-
-// -*- rust -*-
 enum colour { red, green, blue, }
 
-enum tree { children(@list), leaf(colour), }
+enum tree { children(Box<list>), leaf(colour), }
 
-enum list { cons(@tree, @list), nil, }
+enum list { cons(Box<tree>, Box<list>), nil, }
 
-enum small_list { kons(int, @small_list), neel, }
+enum small_list { kons(int, Box<small_list>), neel, }
 
 pub fn main() { }

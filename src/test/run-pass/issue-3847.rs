@@ -9,7 +9,7 @@
 // except according to those terms.
 
 mod buildings {
-    pub struct Tower { height: uint }
+    pub struct Tower { pub height: uint }
 }
 
 pub fn main() {
@@ -18,5 +18,5 @@ pub fn main() {
         buildings::Tower { height: h } => { h }
     };
 
-    println(h.to_str());
+    println!("{}", h);
 }

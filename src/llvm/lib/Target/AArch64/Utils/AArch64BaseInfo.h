@@ -1,4 +1,4 @@
-//===-- AArch64BaseInfo.h - Top level definitions for AArch64- --*- C++ -*-===//
+//===-- AArch64BaseInfo.h - Top level definitions for AArch64 ---*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -14,95 +14,256 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_AARCH64_BASEINFO_H
-#define LLVM_AARCH64_BASEINFO_H
+#ifndef LLVM_LIB_TARGET_AARCH64_UTILS_AARCH64BASEINFO_H
+#define LLVM_LIB_TARGET_AARCH64_UTILS_AARCH64BASEINFO_H
 
-#include "llvm/ADT/StringSwitch.h"
+// FIXME: Is it easiest to fix this layering violation by moving the .inc
+// #includes from AArch64MCTargetDesc.h to here?
+#include "MCTargetDesc/AArch64MCTargetDesc.h" // For AArch64::X0 and friends.
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace llvm {
 
-// // Enums corresponding to AArch64 condition codes
-namespace A64CC {
-  // The CondCodes constants map directly to the 4-bit encoding of the
-  // condition field for predicated instructions.
-  enum CondCodes {   // Meaning (integer)          Meaning (floating-point)
-    EQ = 0,        // Equal                      Equal
-    NE,            // Not equal                  Not equal, or unordered
-    HS,            // Unsigned higher or same    >, ==, or unordered
-    LO,            // Unsigned lower or same     Less than
-    MI,            // Minus, negative            Less than
-    PL,            // Plus, positive or zero     >, ==, or unordered
-    VS,            // Overflow                   Unordered
-    VC,            // No overflow                Ordered
-    HI,            // Unsigned higher            Greater than, or unordered
-    LS,            // Unsigned lower or same     Less than or equal
-    GE,            // Greater than or equal      Greater than or equal
-    LT,            // Less than                  Less than, or unordered
-    GT,            // Signed greater than        Greater than
-    LE,            // Signed less than or equal  <, ==, or unordered
-    AL,            // Always (unconditional)     Always (unconditional)
-    NV,             // Always (unconditional)     Always (unconditional)
-    // Note the NV exists purely to disassemble 0b1111. Execution
-    // is "always".
-    Invalid
-  };
+inline static unsigned getWRegFromXReg(unsigned Reg) {
+  switch (Reg) {
+  case AArch64::X0: return AArch64::W0;
+  case AArch64::X1: return AArch64::W1;
+  case AArch64::X2: return AArch64::W2;
+  case AArch64::X3: return AArch64::W3;
+  case AArch64::X4: return AArch64::W4;
+  case AArch64::X5: return AArch64::W5;
+  case AArch64::X6: return AArch64::W6;
+  case AArch64::X7: return AArch64::W7;
+  case AArch64::X8: return AArch64::W8;
+  case AArch64::X9: return AArch64::W9;
+  case AArch64::X10: return AArch64::W10;
+  case AArch64::X11: return AArch64::W11;
+  case AArch64::X12: return AArch64::W12;
+  case AArch64::X13: return AArch64::W13;
+  case AArch64::X14: return AArch64::W14;
+  case AArch64::X15: return AArch64::W15;
+  case AArch64::X16: return AArch64::W16;
+  case AArch64::X17: return AArch64::W17;
+  case AArch64::X18: return AArch64::W18;
+  case AArch64::X19: return AArch64::W19;
+  case AArch64::X20: return AArch64::W20;
+  case AArch64::X21: return AArch64::W21;
+  case AArch64::X22: return AArch64::W22;
+  case AArch64::X23: return AArch64::W23;
+  case AArch64::X24: return AArch64::W24;
+  case AArch64::X25: return AArch64::W25;
+  case AArch64::X26: return AArch64::W26;
+  case AArch64::X27: return AArch64::W27;
+  case AArch64::X28: return AArch64::W28;
+  case AArch64::FP: return AArch64::W29;
+  case AArch64::LR: return AArch64::W30;
+  case AArch64::SP: return AArch64::WSP;
+  case AArch64::XZR: return AArch64::WZR;
+  }
+  // For anything else, return it unchanged.
+  return Reg;
+}
 
-} // namespace A64CC
+inline static unsigned getXRegFromWReg(unsigned Reg) {
+  switch (Reg) {
+  case AArch64::W0: return AArch64::X0;
+  case AArch64::W1: return AArch64::X1;
+  case AArch64::W2: return AArch64::X2;
+  case AArch64::W3: return AArch64::X3;
+  case AArch64::W4: return AArch64::X4;
+  case AArch64::W5: return AArch64::X5;
+  case AArch64::W6: return AArch64::X6;
+  case AArch64::W7: return AArch64::X7;
+  case AArch64::W8: return AArch64::X8;
+  case AArch64::W9: return AArch64::X9;
+  case AArch64::W10: return AArch64::X10;
+  case AArch64::W11: return AArch64::X11;
+  case AArch64::W12: return AArch64::X12;
+  case AArch64::W13: return AArch64::X13;
+  case AArch64::W14: return AArch64::X14;
+  case AArch64::W15: return AArch64::X15;
+  case AArch64::W16: return AArch64::X16;
+  case AArch64::W17: return AArch64::X17;
+  case AArch64::W18: return AArch64::X18;
+  case AArch64::W19: return AArch64::X19;
+  case AArch64::W20: return AArch64::X20;
+  case AArch64::W21: return AArch64::X21;
+  case AArch64::W22: return AArch64::X22;
+  case AArch64::W23: return AArch64::X23;
+  case AArch64::W24: return AArch64::X24;
+  case AArch64::W25: return AArch64::X25;
+  case AArch64::W26: return AArch64::X26;
+  case AArch64::W27: return AArch64::X27;
+  case AArch64::W28: return AArch64::X28;
+  case AArch64::W29: return AArch64::FP;
+  case AArch64::W30: return AArch64::LR;
+  case AArch64::WSP: return AArch64::SP;
+  case AArch64::WZR: return AArch64::XZR;
+  }
+  // For anything else, return it unchanged.
+  return Reg;
+}
 
-inline static const char *A64CondCodeToString(A64CC::CondCodes CC) {
-  switch (CC) {
+static inline unsigned getBRegFromDReg(unsigned Reg) {
+  switch (Reg) {
+  case AArch64::D0:  return AArch64::B0;
+  case AArch64::D1:  return AArch64::B1;
+  case AArch64::D2:  return AArch64::B2;
+  case AArch64::D3:  return AArch64::B3;
+  case AArch64::D4:  return AArch64::B4;
+  case AArch64::D5:  return AArch64::B5;
+  case AArch64::D6:  return AArch64::B6;
+  case AArch64::D7:  return AArch64::B7;
+  case AArch64::D8:  return AArch64::B8;
+  case AArch64::D9:  return AArch64::B9;
+  case AArch64::D10: return AArch64::B10;
+  case AArch64::D11: return AArch64::B11;
+  case AArch64::D12: return AArch64::B12;
+  case AArch64::D13: return AArch64::B13;
+  case AArch64::D14: return AArch64::B14;
+  case AArch64::D15: return AArch64::B15;
+  case AArch64::D16: return AArch64::B16;
+  case AArch64::D17: return AArch64::B17;
+  case AArch64::D18: return AArch64::B18;
+  case AArch64::D19: return AArch64::B19;
+  case AArch64::D20: return AArch64::B20;
+  case AArch64::D21: return AArch64::B21;
+  case AArch64::D22: return AArch64::B22;
+  case AArch64::D23: return AArch64::B23;
+  case AArch64::D24: return AArch64::B24;
+  case AArch64::D25: return AArch64::B25;
+  case AArch64::D26: return AArch64::B26;
+  case AArch64::D27: return AArch64::B27;
+  case AArch64::D28: return AArch64::B28;
+  case AArch64::D29: return AArch64::B29;
+  case AArch64::D30: return AArch64::B30;
+  case AArch64::D31: return AArch64::B31;
+  }
+  // For anything else, return it unchanged.
+  return Reg;
+}
+
+
+static inline unsigned getDRegFromBReg(unsigned Reg) {
+  switch (Reg) {
+  case AArch64::B0:  return AArch64::D0;
+  case AArch64::B1:  return AArch64::D1;
+  case AArch64::B2:  return AArch64::D2;
+  case AArch64::B3:  return AArch64::D3;
+  case AArch64::B4:  return AArch64::D4;
+  case AArch64::B5:  return AArch64::D5;
+  case AArch64::B6:  return AArch64::D6;
+  case AArch64::B7:  return AArch64::D7;
+  case AArch64::B8:  return AArch64::D8;
+  case AArch64::B9:  return AArch64::D9;
+  case AArch64::B10: return AArch64::D10;
+  case AArch64::B11: return AArch64::D11;
+  case AArch64::B12: return AArch64::D12;
+  case AArch64::B13: return AArch64::D13;
+  case AArch64::B14: return AArch64::D14;
+  case AArch64::B15: return AArch64::D15;
+  case AArch64::B16: return AArch64::D16;
+  case AArch64::B17: return AArch64::D17;
+  case AArch64::B18: return AArch64::D18;
+  case AArch64::B19: return AArch64::D19;
+  case AArch64::B20: return AArch64::D20;
+  case AArch64::B21: return AArch64::D21;
+  case AArch64::B22: return AArch64::D22;
+  case AArch64::B23: return AArch64::D23;
+  case AArch64::B24: return AArch64::D24;
+  case AArch64::B25: return AArch64::D25;
+  case AArch64::B26: return AArch64::D26;
+  case AArch64::B27: return AArch64::D27;
+  case AArch64::B28: return AArch64::D28;
+  case AArch64::B29: return AArch64::D29;
+  case AArch64::B30: return AArch64::D30;
+  case AArch64::B31: return AArch64::D31;
+  }
+  // For anything else, return it unchanged.
+  return Reg;
+}
+
+namespace AArch64CC {
+
+// The CondCodes constants map directly to the 4-bit encoding of the condition
+// field for predicated instructions.
+enum CondCode {  // Meaning (integer)          Meaning (floating-point)
+  EQ = 0x0,      // Equal                      Equal
+  NE = 0x1,      // Not equal                  Not equal, or unordered
+  HS = 0x2,      // Unsigned higher or same    >, ==, or unordered
+  LO = 0x3,      // Unsigned lower             Less than
+  MI = 0x4,      // Minus, negative            Less than
+  PL = 0x5,      // Plus, positive or zero     >, ==, or unordered
+  VS = 0x6,      // Overflow                   Unordered
+  VC = 0x7,      // No overflow                Not unordered
+  HI = 0x8,      // Unsigned higher            Greater than, or unordered
+  LS = 0x9,      // Unsigned lower or same     Less than or equal
+  GE = 0xa,      // Greater than or equal      Greater than or equal
+  LT = 0xb,      // Less than                  Less than, or unordered
+  GT = 0xc,      // Greater than               Greater than
+  LE = 0xd,      // Less than or equal         <, ==, or unordered
+  AL = 0xe,      // Always (unconditional)     Always (unconditional)
+  NV = 0xf,      // Always (unconditional)     Always (unconditional)
+  // Note the NV exists purely to disassemble 0b1111. Execution is "always".
+  Invalid
+};
+
+inline static const char *getCondCodeName(CondCode Code) {
+  switch (Code) {
   default: llvm_unreachable("Unknown condition code");
-  case A64CC::EQ:  return "eq";
-  case A64CC::NE:  return "ne";
-  case A64CC::HS:  return "hs";
-  case A64CC::LO:  return "lo";
-  case A64CC::MI:  return "mi";
-  case A64CC::PL:  return "pl";
-  case A64CC::VS:  return "vs";
-  case A64CC::VC:  return "vc";
-  case A64CC::HI:  return "hi";
-  case A64CC::LS:  return "ls";
-  case A64CC::GE:  return "ge";
-  case A64CC::LT:  return "lt";
-  case A64CC::GT:  return "gt";
-  case A64CC::LE:  return "le";
-  case A64CC::AL:  return "al";
-  case A64CC::NV:  return "nv";
+  case EQ:  return "eq";
+  case NE:  return "ne";
+  case HS:  return "hs";
+  case LO:  return "lo";
+  case MI:  return "mi";
+  case PL:  return "pl";
+  case VS:  return "vs";
+  case VC:  return "vc";
+  case HI:  return "hi";
+  case LS:  return "ls";
+  case GE:  return "ge";
+  case LT:  return "lt";
+  case GT:  return "gt";
+  case LE:  return "le";
+  case AL:  return "al";
+  case NV:  return "nv";
   }
 }
 
-inline static A64CC::CondCodes A64StringToCondCode(StringRef CondStr) {
-  return StringSwitch<A64CC::CondCodes>(CondStr.lower())
-             .Case("eq", A64CC::EQ)
-             .Case("ne", A64CC::NE)
-             .Case("ne", A64CC::NE)
-             .Case("hs", A64CC::HS)
-             .Case("cs", A64CC::HS)
-             .Case("lo", A64CC::LO)
-             .Case("cc", A64CC::LO)
-             .Case("mi", A64CC::MI)
-             .Case("pl", A64CC::PL)
-             .Case("vs", A64CC::VS)
-             .Case("vc", A64CC::VC)
-             .Case("hi", A64CC::HI)
-             .Case("ls", A64CC::LS)
-             .Case("ge", A64CC::GE)
-             .Case("lt", A64CC::LT)
-             .Case("gt", A64CC::GT)
-             .Case("le", A64CC::LE)
-             .Case("al", A64CC::AL)
-             .Case("nv", A64CC::NV)
-             .Default(A64CC::Invalid);
+inline static CondCode getInvertedCondCode(CondCode Code) {
+  // To reverse a condition it's necessary to only invert the low bit:
+
+  return static_cast<CondCode>(static_cast<unsigned>(Code) ^ 0x1);
 }
 
-inline static A64CC::CondCodes A64InvertCondCode(A64CC::CondCodes CC) {
-  // It turns out that the condition codes have been designed so that in order
-  // to reverse the intent of the condition you only have to invert the low bit:
-
-  return static_cast<A64CC::CondCodes>(static_cast<unsigned>(CC) ^ 0x1);
+/// Given a condition code, return NZCV flags that would satisfy that condition.
+/// The flag bits are in the format expected by the ccmp instructions.
+/// Note that many different flag settings can satisfy a given condition code,
+/// this function just returns one of them.
+inline static unsigned getNZCVToSatisfyCondCode(CondCode Code) {
+  // NZCV flags encoded as expected by ccmp instructions, ARMv8 ISA 5.5.7.
+  enum { N = 8, Z = 4, C = 2, V = 1 };
+  switch (Code) {
+  default: llvm_unreachable("Unknown condition code");
+  case EQ: return Z; // Z == 1
+  case NE: return 0; // Z == 0
+  case HS: return C; // C == 1
+  case LO: return 0; // C == 0
+  case MI: return N; // N == 1
+  case PL: return 0; // N == 0
+  case VS: return V; // V == 1
+  case VC: return 0; // V == 0
+  case HI: return C; // C == 1 && Z == 0
+  case LS: return 0; // C == 0 || Z == 1
+  case GE: return 0; // N == V
+  case LT: return N; // N != V
+  case GT: return 0; // Z == 0 && N == V
+  case LE: return Z; // Z == 1 || N != V
+  }
 }
+} // end namespace AArch64CC
 
 /// Instances of this class can perform bidirectional mapping from random
 /// identifier strings to operand encodings. For example "MSR" takes a named
@@ -115,14 +276,14 @@ inline static A64CC::CondCodes A64InvertCondCode(A64CC::CondCodes CC) {
 /// out just how often these instructions are emitted before working on it. It
 /// might even be optimal to just reorder the tables for the common instructions
 /// rather than changing the algorithm.
-struct NamedImmMapper {
+struct AArch64NamedImmMapper {
   struct Mapping {
     const char *Name;
     uint32_t Value;
   };
 
   template<int N>
-  NamedImmMapper(const Mapping (&Pairs)[N], uint32_t TooBigImm)
+  AArch64NamedImmMapper(const Mapping (&Pairs)[N], uint32_t TooBigImm)
     : Pairs(&Pairs[0]), NumPairs(N), TooBigImm(TooBigImm) {}
 
   StringRef toString(uint32_t Value, bool &Valid) const;
@@ -138,7 +299,7 @@ protected:
   uint32_t TooBigImm;
 };
 
-namespace A64AT {
+namespace AArch64AT {
   enum ATValues {
     Invalid = -1,    // Op0 Op1  CRn   CRm   Op2
     S1E1R = 0x43c0,  // 01  000  0111  1000  000
@@ -155,14 +316,14 @@ namespace A64AT {
     S12E0W = 0x63c7  // 01  100  0111  1000  111
   };
 
-  struct ATMapper : NamedImmMapper {
+  struct ATMapper : AArch64NamedImmMapper {
     const static Mapping ATPairs[];
 
     ATMapper();
   };
 
 }
-namespace A64DB {
+namespace AArch64DB {
   enum DBValues {
     Invalid = -1,
     OSHLD = 0x1,
@@ -179,14 +340,14 @@ namespace A64DB {
     SY =    0xf
   };
 
-  struct DBarrierMapper : NamedImmMapper {
+  struct DBarrierMapper : AArch64NamedImmMapper {
     const static Mapping DBarrierPairs[];
 
     DBarrierMapper();
   };
 }
 
-namespace  A64DC {
+namespace  AArch64DC {
   enum DCValues {
     Invalid = -1,   // Op1  CRn   CRm   Op2
     ZVA   = 0x5ba1, // 01  011  0111  0100  001
@@ -199,7 +360,7 @@ namespace  A64DC {
     CISW  = 0x43f2  // 01  000  0111  1110  010
   };
 
-  struct DCMapper : NamedImmMapper {
+  struct DCMapper : AArch64NamedImmMapper {
     const static Mapping DCPairs[];
 
     DCMapper();
@@ -207,7 +368,7 @@ namespace  A64DC {
 
 }
 
-namespace  A64IC {
+namespace  AArch64IC {
   enum ICValues {
     Invalid = -1,     // Op1  CRn   CRm   Op2
     IALLUIS = 0x0388, // 000  0111  0001  000
@@ -216,7 +377,7 @@ namespace  A64IC {
   };
 
 
-  struct ICMapper : NamedImmMapper {
+  struct ICMapper : AArch64NamedImmMapper {
     const static Mapping ICPairs[];
 
     ICMapper();
@@ -227,19 +388,19 @@ namespace  A64IC {
   }
 }
 
-namespace  A64ISB {
+namespace  AArch64ISB {
   enum ISBValues {
     Invalid = -1,
     SY = 0xf
   };
-  struct ISBMapper : NamedImmMapper {
+  struct ISBMapper : AArch64NamedImmMapper {
     const static Mapping ISBPairs[];
 
     ISBMapper();
   };
 }
 
-namespace A64PRFM {
+namespace AArch64PRFM {
   enum PRFMValues {
     Invalid = -1,
     PLDL1KEEP = 0x00,
@@ -262,14 +423,14 @@ namespace A64PRFM {
     PSTL3STRM = 0x15
   };
 
-  struct PRFMMapper : NamedImmMapper {
+  struct PRFMMapper : AArch64NamedImmMapper {
     const static Mapping PRFMPairs[];
 
     PRFMMapper();
   };
 }
 
-namespace A64PState {
+namespace AArch64PState {
   enum PStateValues {
     Invalid = -1,
     SPSel = 0x05,
@@ -277,7 +438,7 @@ namespace A64PState {
     DAIFClr = 0x1f
   };
 
-  struct PStateMapper : NamedImmMapper {
+  struct PStateMapper : AArch64NamedImmMapper {
     const static Mapping PStatePairs[];
 
     PStateMapper();
@@ -285,10 +446,11 @@ namespace A64PState {
 
 }
 
-namespace A64SE {
+namespace AArch64SE {
     enum ShiftExtSpecifiers {
         Invalid = -1,
         LSL,
+        MSL,
         LSR,
         ASR,
         ROR,
@@ -305,7 +467,66 @@ namespace A64SE {
     };
 }
 
-namespace A64SysReg {
+namespace AArch64Layout {
+    enum VectorLayout {
+        Invalid = -1,
+        VL_8B,
+        VL_4H,
+        VL_2S,
+        VL_1D,
+
+        VL_16B,
+        VL_8H,
+        VL_4S,
+        VL_2D,
+
+        // Bare layout for the 128-bit vector
+        // (only show ".b", ".h", ".s", ".d" without vector number)
+        VL_B,
+        VL_H,
+        VL_S,
+        VL_D
+    };
+}
+
+inline static const char *
+AArch64VectorLayoutToString(AArch64Layout::VectorLayout Layout) {
+  switch (Layout) {
+  case AArch64Layout::VL_8B:  return ".8b";
+  case AArch64Layout::VL_4H:  return ".4h";
+  case AArch64Layout::VL_2S:  return ".2s";
+  case AArch64Layout::VL_1D:  return ".1d";
+  case AArch64Layout::VL_16B:  return ".16b";
+  case AArch64Layout::VL_8H:  return ".8h";
+  case AArch64Layout::VL_4S:  return ".4s";
+  case AArch64Layout::VL_2D:  return ".2d";
+  case AArch64Layout::VL_B:  return ".b";
+  case AArch64Layout::VL_H:  return ".h";
+  case AArch64Layout::VL_S:  return ".s";
+  case AArch64Layout::VL_D:  return ".d";
+  default: llvm_unreachable("Unknown Vector Layout");
+  }
+}
+
+inline static AArch64Layout::VectorLayout
+AArch64StringToVectorLayout(StringRef LayoutStr) {
+  return StringSwitch<AArch64Layout::VectorLayout>(LayoutStr)
+             .Case(".8b", AArch64Layout::VL_8B)
+             .Case(".4h", AArch64Layout::VL_4H)
+             .Case(".2s", AArch64Layout::VL_2S)
+             .Case(".1d", AArch64Layout::VL_1D)
+             .Case(".16b", AArch64Layout::VL_16B)
+             .Case(".8h", AArch64Layout::VL_8H)
+             .Case(".4s", AArch64Layout::VL_4S)
+             .Case(".2d", AArch64Layout::VL_2D)
+             .Case(".b", AArch64Layout::VL_B)
+             .Case(".h", AArch64Layout::VL_H)
+             .Case(".s", AArch64Layout::VL_S)
+             .Case(".d", AArch64Layout::VL_D)
+             .Default(AArch64Layout::Invalid);
+}
+
+namespace AArch64SysReg {
   enum SysRegROValues {
     MDCCSR_EL0        = 0x9808, // 10  011  0000  0001  000
     DBGDTRRX_EL0      = 0x9828, // 10  011  0000  0101  000
@@ -336,16 +557,16 @@ namespace A64SysReg {
     ID_ISAR3_EL1      = 0xc013, // 11  000  0000  0010  011
     ID_ISAR4_EL1      = 0xc014, // 11  000  0000  0010  100
     ID_ISAR5_EL1      = 0xc015, // 11  000  0000  0010  101
-    ID_AA64PFR0_EL1   = 0xc020, // 11  000  0000  0100  000
-    ID_AA64PFR1_EL1   = 0xc021, // 11  000  0000  0100  001
-    ID_AA64DFR0_EL1   = 0xc028, // 11  000  0000  0101  000
-    ID_AA64DFR1_EL1   = 0xc029, // 11  000  0000  0101  001
-    ID_AA64AFR0_EL1   = 0xc02c, // 11  000  0000  0101  100
-    ID_AA64AFR1_EL1   = 0xc02d, // 11  000  0000  0101  101
-    ID_AA64ISAR0_EL1  = 0xc030, // 11  000  0000  0110  000
-    ID_AA64ISAR1_EL1  = 0xc031, // 11  000  0000  0110  001
-    ID_AA64MMFR0_EL1  = 0xc038, // 11  000  0000  0111  000
-    ID_AA64MMFR1_EL1  = 0xc039, // 11  000  0000  0111  001
+    ID_A64PFR0_EL1    = 0xc020, // 11  000  0000  0100  000
+    ID_A64PFR1_EL1    = 0xc021, // 11  000  0000  0100  001
+    ID_A64DFR0_EL1    = 0xc028, // 11  000  0000  0101  000
+    ID_A64DFR1_EL1    = 0xc029, // 11  000  0000  0101  001
+    ID_A64AFR0_EL1    = 0xc02c, // 11  000  0000  0101  100
+    ID_A64AFR1_EL1    = 0xc02d, // 11  000  0000  0101  101
+    ID_A64ISAR0_EL1   = 0xc030, // 11  000  0000  0110  000
+    ID_A64ISAR1_EL1   = 0xc031, // 11  000  0000  0110  001
+    ID_A64MMFR0_EL1   = 0xc038, // 11  000  0000  0111  000
+    ID_A64MMFR1_EL1   = 0xc039, // 11  000  0000  0111  001
     MVFR0_EL1         = 0xc018, // 11  000  0000  0011  000
     MVFR1_EL1         = 0xc019, // 11  000  0000  0011  001
     MVFR2_EL1         = 0xc01a, // 11  000  0000  0011  010
@@ -354,13 +575,73 @@ namespace A64SysReg {
     RVBAR_EL3         = 0xf601, // 11  110  1100  0000  001
     ISR_EL1           = 0xc608, // 11  000  1100  0001  000
     CNTPCT_EL0        = 0xdf01, // 11  011  1110  0000  001
-    CNTVCT_EL0        = 0xdf02  // 11  011  1110  0000  010
+    CNTVCT_EL0        = 0xdf02,  // 11  011  1110  0000  010
+
+    // Trace registers
+    TRCSTATR          = 0x8818, // 10  001  0000  0011  000
+    TRCIDR8           = 0x8806, // 10  001  0000  0000  110
+    TRCIDR9           = 0x880e, // 10  001  0000  0001  110
+    TRCIDR10          = 0x8816, // 10  001  0000  0010  110
+    TRCIDR11          = 0x881e, // 10  001  0000  0011  110
+    TRCIDR12          = 0x8826, // 10  001  0000  0100  110
+    TRCIDR13          = 0x882e, // 10  001  0000  0101  110
+    TRCIDR0           = 0x8847, // 10  001  0000  1000  111
+    TRCIDR1           = 0x884f, // 10  001  0000  1001  111
+    TRCIDR2           = 0x8857, // 10  001  0000  1010  111
+    TRCIDR3           = 0x885f, // 10  001  0000  1011  111
+    TRCIDR4           = 0x8867, // 10  001  0000  1100  111
+    TRCIDR5           = 0x886f, // 10  001  0000  1101  111
+    TRCIDR6           = 0x8877, // 10  001  0000  1110  111
+    TRCIDR7           = 0x887f, // 10  001  0000  1111  111
+    TRCOSLSR          = 0x888c, // 10  001  0001  0001  100
+    TRCPDSR           = 0x88ac, // 10  001  0001  0101  100
+    TRCDEVAFF0        = 0x8bd6, // 10  001  0111  1010  110
+    TRCDEVAFF1        = 0x8bde, // 10  001  0111  1011  110
+    TRCLSR            = 0x8bee, // 10  001  0111  1101  110
+    TRCAUTHSTATUS     = 0x8bf6, // 10  001  0111  1110  110
+    TRCDEVARCH        = 0x8bfe, // 10  001  0111  1111  110
+    TRCDEVID          = 0x8b97, // 10  001  0111  0010  111
+    TRCDEVTYPE        = 0x8b9f, // 10  001  0111  0011  111
+    TRCPIDR4          = 0x8ba7, // 10  001  0111  0100  111
+    TRCPIDR5          = 0x8baf, // 10  001  0111  0101  111
+    TRCPIDR6          = 0x8bb7, // 10  001  0111  0110  111
+    TRCPIDR7          = 0x8bbf, // 10  001  0111  0111  111
+    TRCPIDR0          = 0x8bc7, // 10  001  0111  1000  111
+    TRCPIDR1          = 0x8bcf, // 10  001  0111  1001  111
+    TRCPIDR2          = 0x8bd7, // 10  001  0111  1010  111
+    TRCPIDR3          = 0x8bdf, // 10  001  0111  1011  111
+    TRCCIDR0          = 0x8be7, // 10  001  0111  1100  111
+    TRCCIDR1          = 0x8bef, // 10  001  0111  1101  111
+    TRCCIDR2          = 0x8bf7, // 10  001  0111  1110  111
+    TRCCIDR3          = 0x8bff, // 10  001  0111  1111  111
+
+    // GICv3 registers
+    ICC_IAR1_EL1      = 0xc660, // 11  000  1100  1100  000
+    ICC_IAR0_EL1      = 0xc640, // 11  000  1100  1000  000
+    ICC_HPPIR1_EL1    = 0xc662, // 11  000  1100  1100  010
+    ICC_HPPIR0_EL1    = 0xc642, // 11  000  1100  1000  010
+    ICC_RPR_EL1       = 0xc65b, // 11  000  1100  1011  011
+    ICH_VTR_EL2       = 0xe659, // 11  100  1100  1011  001
+    ICH_EISR_EL2      = 0xe65b, // 11  100  1100  1011  011
+    ICH_ELSR_EL2      = 0xe65d  // 11  100  1100  1011  101
   };
 
   enum SysRegWOValues {
     DBGDTRTX_EL0      = 0x9828, // 10  011  0000  0101  000
     OSLAR_EL1         = 0x8084, // 10  000  0001  0000  100
-    PMSWINC_EL0       = 0xdce4  // 11  011  1001  1100  100
+    PMSWINC_EL0       = 0xdce4,  // 11  011  1001  1100  100
+
+    // Trace Registers
+    TRCOSLAR          = 0x8884, // 10  001  0001  0000  100
+    TRCLAR            = 0x8be6, // 10  001  0111  1100  110
+
+    // GICv3 registers
+    ICC_EOIR1_EL1     = 0xc661, // 11  000  1100  1100  001
+    ICC_EOIR0_EL1     = 0xc641, // 11  000  1100  1000  001
+    ICC_DIR_EL1       = 0xc659, // 11  000  1100  1011  001
+    ICC_SGI1R_EL1     = 0xc65d, // 11  000  1100  1011  101
+    ICC_ASGI1R_EL1    = 0xc65e, // 11  000  1100  1011  110
+    ICC_SGI0R_EL1     = 0xc65f  // 11  000  1100  1011  111
   };
 
   enum SysRegValues {
@@ -616,38 +897,269 @@ namespace A64SysReg {
     PMEVTYPER27_EL0   = 0xdf7b, // 11  011  1110  1111  011
     PMEVTYPER28_EL0   = 0xdf7c, // 11  011  1110  1111  100
     PMEVTYPER29_EL0   = 0xdf7d, // 11  011  1110  1111  101
-    PMEVTYPER30_EL0   = 0xdf7e  // 11  011  1110  1111  110
+    PMEVTYPER30_EL0   = 0xdf7e, // 11  011  1110  1111  110
+
+    // Trace registers
+    TRCPRGCTLR        = 0x8808, // 10  001  0000  0001  000
+    TRCPROCSELR       = 0x8810, // 10  001  0000  0010  000
+    TRCCONFIGR        = 0x8820, // 10  001  0000  0100  000
+    TRCAUXCTLR        = 0x8830, // 10  001  0000  0110  000
+    TRCEVENTCTL0R     = 0x8840, // 10  001  0000  1000  000
+    TRCEVENTCTL1R     = 0x8848, // 10  001  0000  1001  000
+    TRCSTALLCTLR      = 0x8858, // 10  001  0000  1011  000
+    TRCTSCTLR         = 0x8860, // 10  001  0000  1100  000
+    TRCSYNCPR         = 0x8868, // 10  001  0000  1101  000
+    TRCCCCTLR         = 0x8870, // 10  001  0000  1110  000
+    TRCBBCTLR         = 0x8878, // 10  001  0000  1111  000
+    TRCTRACEIDR       = 0x8801, // 10  001  0000  0000  001
+    TRCQCTLR          = 0x8809, // 10  001  0000  0001  001
+    TRCVICTLR         = 0x8802, // 10  001  0000  0000  010
+    TRCVIIECTLR       = 0x880a, // 10  001  0000  0001  010
+    TRCVISSCTLR       = 0x8812, // 10  001  0000  0010  010
+    TRCVIPCSSCTLR     = 0x881a, // 10  001  0000  0011  010
+    TRCVDCTLR         = 0x8842, // 10  001  0000  1000  010
+    TRCVDSACCTLR      = 0x884a, // 10  001  0000  1001  010
+    TRCVDARCCTLR      = 0x8852, // 10  001  0000  1010  010
+    TRCSEQEVR0        = 0x8804, // 10  001  0000  0000  100
+    TRCSEQEVR1        = 0x880c, // 10  001  0000  0001  100
+    TRCSEQEVR2        = 0x8814, // 10  001  0000  0010  100
+    TRCSEQRSTEVR      = 0x8834, // 10  001  0000  0110  100
+    TRCSEQSTR         = 0x883c, // 10  001  0000  0111  100
+    TRCEXTINSELR      = 0x8844, // 10  001  0000  1000  100
+    TRCCNTRLDVR0      = 0x8805, // 10  001  0000  0000  101
+    TRCCNTRLDVR1      = 0x880d, // 10  001  0000  0001  101
+    TRCCNTRLDVR2      = 0x8815, // 10  001  0000  0010  101
+    TRCCNTRLDVR3      = 0x881d, // 10  001  0000  0011  101
+    TRCCNTCTLR0       = 0x8825, // 10  001  0000  0100  101
+    TRCCNTCTLR1       = 0x882d, // 10  001  0000  0101  101
+    TRCCNTCTLR2       = 0x8835, // 10  001  0000  0110  101
+    TRCCNTCTLR3       = 0x883d, // 10  001  0000  0111  101
+    TRCCNTVR0         = 0x8845, // 10  001  0000  1000  101
+    TRCCNTVR1         = 0x884d, // 10  001  0000  1001  101
+    TRCCNTVR2         = 0x8855, // 10  001  0000  1010  101
+    TRCCNTVR3         = 0x885d, // 10  001  0000  1011  101
+    TRCIMSPEC0        = 0x8807, // 10  001  0000  0000  111
+    TRCIMSPEC1        = 0x880f, // 10  001  0000  0001  111
+    TRCIMSPEC2        = 0x8817, // 10  001  0000  0010  111
+    TRCIMSPEC3        = 0x881f, // 10  001  0000  0011  111
+    TRCIMSPEC4        = 0x8827, // 10  001  0000  0100  111
+    TRCIMSPEC5        = 0x882f, // 10  001  0000  0101  111
+    TRCIMSPEC6        = 0x8837, // 10  001  0000  0110  111
+    TRCIMSPEC7        = 0x883f, // 10  001  0000  0111  111
+    TRCRSCTLR2        = 0x8890, // 10  001  0001  0010  000
+    TRCRSCTLR3        = 0x8898, // 10  001  0001  0011  000
+    TRCRSCTLR4        = 0x88a0, // 10  001  0001  0100  000
+    TRCRSCTLR5        = 0x88a8, // 10  001  0001  0101  000
+    TRCRSCTLR6        = 0x88b0, // 10  001  0001  0110  000
+    TRCRSCTLR7        = 0x88b8, // 10  001  0001  0111  000
+    TRCRSCTLR8        = 0x88c0, // 10  001  0001  1000  000
+    TRCRSCTLR9        = 0x88c8, // 10  001  0001  1001  000
+    TRCRSCTLR10       = 0x88d0, // 10  001  0001  1010  000
+    TRCRSCTLR11       = 0x88d8, // 10  001  0001  1011  000
+    TRCRSCTLR12       = 0x88e0, // 10  001  0001  1100  000
+    TRCRSCTLR13       = 0x88e8, // 10  001  0001  1101  000
+    TRCRSCTLR14       = 0x88f0, // 10  001  0001  1110  000
+    TRCRSCTLR15       = 0x88f8, // 10  001  0001  1111  000
+    TRCRSCTLR16       = 0x8881, // 10  001  0001  0000  001
+    TRCRSCTLR17       = 0x8889, // 10  001  0001  0001  001
+    TRCRSCTLR18       = 0x8891, // 10  001  0001  0010  001
+    TRCRSCTLR19       = 0x8899, // 10  001  0001  0011  001
+    TRCRSCTLR20       = 0x88a1, // 10  001  0001  0100  001
+    TRCRSCTLR21       = 0x88a9, // 10  001  0001  0101  001
+    TRCRSCTLR22       = 0x88b1, // 10  001  0001  0110  001
+    TRCRSCTLR23       = 0x88b9, // 10  001  0001  0111  001
+    TRCRSCTLR24       = 0x88c1, // 10  001  0001  1000  001
+    TRCRSCTLR25       = 0x88c9, // 10  001  0001  1001  001
+    TRCRSCTLR26       = 0x88d1, // 10  001  0001  1010  001
+    TRCRSCTLR27       = 0x88d9, // 10  001  0001  1011  001
+    TRCRSCTLR28       = 0x88e1, // 10  001  0001  1100  001
+    TRCRSCTLR29       = 0x88e9, // 10  001  0001  1101  001
+    TRCRSCTLR30       = 0x88f1, // 10  001  0001  1110  001
+    TRCRSCTLR31       = 0x88f9, // 10  001  0001  1111  001
+    TRCSSCCR0         = 0x8882, // 10  001  0001  0000  010
+    TRCSSCCR1         = 0x888a, // 10  001  0001  0001  010
+    TRCSSCCR2         = 0x8892, // 10  001  0001  0010  010
+    TRCSSCCR3         = 0x889a, // 10  001  0001  0011  010
+    TRCSSCCR4         = 0x88a2, // 10  001  0001  0100  010
+    TRCSSCCR5         = 0x88aa, // 10  001  0001  0101  010
+    TRCSSCCR6         = 0x88b2, // 10  001  0001  0110  010
+    TRCSSCCR7         = 0x88ba, // 10  001  0001  0111  010
+    TRCSSCSR0         = 0x88c2, // 10  001  0001  1000  010
+    TRCSSCSR1         = 0x88ca, // 10  001  0001  1001  010
+    TRCSSCSR2         = 0x88d2, // 10  001  0001  1010  010
+    TRCSSCSR3         = 0x88da, // 10  001  0001  1011  010
+    TRCSSCSR4         = 0x88e2, // 10  001  0001  1100  010
+    TRCSSCSR5         = 0x88ea, // 10  001  0001  1101  010
+    TRCSSCSR6         = 0x88f2, // 10  001  0001  1110  010
+    TRCSSCSR7         = 0x88fa, // 10  001  0001  1111  010
+    TRCSSPCICR0       = 0x8883, // 10  001  0001  0000  011
+    TRCSSPCICR1       = 0x888b, // 10  001  0001  0001  011
+    TRCSSPCICR2       = 0x8893, // 10  001  0001  0010  011
+    TRCSSPCICR3       = 0x889b, // 10  001  0001  0011  011
+    TRCSSPCICR4       = 0x88a3, // 10  001  0001  0100  011
+    TRCSSPCICR5       = 0x88ab, // 10  001  0001  0101  011
+    TRCSSPCICR6       = 0x88b3, // 10  001  0001  0110  011
+    TRCSSPCICR7       = 0x88bb, // 10  001  0001  0111  011
+    TRCPDCR           = 0x88a4, // 10  001  0001  0100  100
+    TRCACVR0          = 0x8900, // 10  001  0010  0000  000
+    TRCACVR1          = 0x8910, // 10  001  0010  0010  000
+    TRCACVR2          = 0x8920, // 10  001  0010  0100  000
+    TRCACVR3          = 0x8930, // 10  001  0010  0110  000
+    TRCACVR4          = 0x8940, // 10  001  0010  1000  000
+    TRCACVR5          = 0x8950, // 10  001  0010  1010  000
+    TRCACVR6          = 0x8960, // 10  001  0010  1100  000
+    TRCACVR7          = 0x8970, // 10  001  0010  1110  000
+    TRCACVR8          = 0x8901, // 10  001  0010  0000  001
+    TRCACVR9          = 0x8911, // 10  001  0010  0010  001
+    TRCACVR10         = 0x8921, // 10  001  0010  0100  001
+    TRCACVR11         = 0x8931, // 10  001  0010  0110  001
+    TRCACVR12         = 0x8941, // 10  001  0010  1000  001
+    TRCACVR13         = 0x8951, // 10  001  0010  1010  001
+    TRCACVR14         = 0x8961, // 10  001  0010  1100  001
+    TRCACVR15         = 0x8971, // 10  001  0010  1110  001
+    TRCACATR0         = 0x8902, // 10  001  0010  0000  010
+    TRCACATR1         = 0x8912, // 10  001  0010  0010  010
+    TRCACATR2         = 0x8922, // 10  001  0010  0100  010
+    TRCACATR3         = 0x8932, // 10  001  0010  0110  010
+    TRCACATR4         = 0x8942, // 10  001  0010  1000  010
+    TRCACATR5         = 0x8952, // 10  001  0010  1010  010
+    TRCACATR6         = 0x8962, // 10  001  0010  1100  010
+    TRCACATR7         = 0x8972, // 10  001  0010  1110  010
+    TRCACATR8         = 0x8903, // 10  001  0010  0000  011
+    TRCACATR9         = 0x8913, // 10  001  0010  0010  011
+    TRCACATR10        = 0x8923, // 10  001  0010  0100  011
+    TRCACATR11        = 0x8933, // 10  001  0010  0110  011
+    TRCACATR12        = 0x8943, // 10  001  0010  1000  011
+    TRCACATR13        = 0x8953, // 10  001  0010  1010  011
+    TRCACATR14        = 0x8963, // 10  001  0010  1100  011
+    TRCACATR15        = 0x8973, // 10  001  0010  1110  011
+    TRCDVCVR0         = 0x8904, // 10  001  0010  0000  100
+    TRCDVCVR1         = 0x8924, // 10  001  0010  0100  100
+    TRCDVCVR2         = 0x8944, // 10  001  0010  1000  100
+    TRCDVCVR3         = 0x8964, // 10  001  0010  1100  100
+    TRCDVCVR4         = 0x8905, // 10  001  0010  0000  101
+    TRCDVCVR5         = 0x8925, // 10  001  0010  0100  101
+    TRCDVCVR6         = 0x8945, // 10  001  0010  1000  101
+    TRCDVCVR7         = 0x8965, // 10  001  0010  1100  101
+    TRCDVCMR0         = 0x8906, // 10  001  0010  0000  110
+    TRCDVCMR1         = 0x8926, // 10  001  0010  0100  110
+    TRCDVCMR2         = 0x8946, // 10  001  0010  1000  110
+    TRCDVCMR3         = 0x8966, // 10  001  0010  1100  110
+    TRCDVCMR4         = 0x8907, // 10  001  0010  0000  111
+    TRCDVCMR5         = 0x8927, // 10  001  0010  0100  111
+    TRCDVCMR6         = 0x8947, // 10  001  0010  1000  111
+    TRCDVCMR7         = 0x8967, // 10  001  0010  1100  111
+    TRCCIDCVR0        = 0x8980, // 10  001  0011  0000  000
+    TRCCIDCVR1        = 0x8990, // 10  001  0011  0010  000
+    TRCCIDCVR2        = 0x89a0, // 10  001  0011  0100  000
+    TRCCIDCVR3        = 0x89b0, // 10  001  0011  0110  000
+    TRCCIDCVR4        = 0x89c0, // 10  001  0011  1000  000
+    TRCCIDCVR5        = 0x89d0, // 10  001  0011  1010  000
+    TRCCIDCVR6        = 0x89e0, // 10  001  0011  1100  000
+    TRCCIDCVR7        = 0x89f0, // 10  001  0011  1110  000
+    TRCVMIDCVR0       = 0x8981, // 10  001  0011  0000  001
+    TRCVMIDCVR1       = 0x8991, // 10  001  0011  0010  001
+    TRCVMIDCVR2       = 0x89a1, // 10  001  0011  0100  001
+    TRCVMIDCVR3       = 0x89b1, // 10  001  0011  0110  001
+    TRCVMIDCVR4       = 0x89c1, // 10  001  0011  1000  001
+    TRCVMIDCVR5       = 0x89d1, // 10  001  0011  1010  001
+    TRCVMIDCVR6       = 0x89e1, // 10  001  0011  1100  001
+    TRCVMIDCVR7       = 0x89f1, // 10  001  0011  1110  001
+    TRCCIDCCTLR0      = 0x8982, // 10  001  0011  0000  010
+    TRCCIDCCTLR1      = 0x898a, // 10  001  0011  0001  010
+    TRCVMIDCCTLR0     = 0x8992, // 10  001  0011  0010  010
+    TRCVMIDCCTLR1     = 0x899a, // 10  001  0011  0011  010
+    TRCITCTRL         = 0x8b84, // 10  001  0111  0000  100
+    TRCCLAIMSET       = 0x8bc6, // 10  001  0111  1000  110
+    TRCCLAIMCLR       = 0x8bce, // 10  001  0111  1001  110
+
+    // GICv3 registers
+    ICC_BPR1_EL1      = 0xc663, // 11  000  1100  1100  011
+    ICC_BPR0_EL1      = 0xc643, // 11  000  1100  1000  011
+    ICC_PMR_EL1       = 0xc230, // 11  000  0100  0110  000
+    ICC_CTLR_EL1      = 0xc664, // 11  000  1100  1100  100
+    ICC_CTLR_EL3      = 0xf664, // 11  110  1100  1100  100
+    ICC_SRE_EL1       = 0xc665, // 11  000  1100  1100  101
+    ICC_SRE_EL2       = 0xe64d, // 11  100  1100  1001  101
+    ICC_SRE_EL3       = 0xf665, // 11  110  1100  1100  101
+    ICC_IGRPEN0_EL1   = 0xc666, // 11  000  1100  1100  110
+    ICC_IGRPEN1_EL1   = 0xc667, // 11  000  1100  1100  111
+    ICC_IGRPEN1_EL3   = 0xf667, // 11  110  1100  1100  111
+    ICC_SEIEN_EL1     = 0xc668, // 11  000  1100  1101  000
+    ICC_AP0R0_EL1     = 0xc644, // 11  000  1100  1000  100
+    ICC_AP0R1_EL1     = 0xc645, // 11  000  1100  1000  101
+    ICC_AP0R2_EL1     = 0xc646, // 11  000  1100  1000  110
+    ICC_AP0R3_EL1     = 0xc647, // 11  000  1100  1000  111
+    ICC_AP1R0_EL1     = 0xc648, // 11  000  1100  1001  000
+    ICC_AP1R1_EL1     = 0xc649, // 11  000  1100  1001  001
+    ICC_AP1R2_EL1     = 0xc64a, // 11  000  1100  1001  010
+    ICC_AP1R3_EL1     = 0xc64b, // 11  000  1100  1001  011
+    ICH_AP0R0_EL2     = 0xe640, // 11  100  1100  1000  000
+    ICH_AP0R1_EL2     = 0xe641, // 11  100  1100  1000  001
+    ICH_AP0R2_EL2     = 0xe642, // 11  100  1100  1000  010
+    ICH_AP0R3_EL2     = 0xe643, // 11  100  1100  1000  011
+    ICH_AP1R0_EL2     = 0xe648, // 11  100  1100  1001  000
+    ICH_AP1R1_EL2     = 0xe649, // 11  100  1100  1001  001
+    ICH_AP1R2_EL2     = 0xe64a, // 11  100  1100  1001  010
+    ICH_AP1R3_EL2     = 0xe64b, // 11  100  1100  1001  011
+    ICH_HCR_EL2       = 0xe658, // 11  100  1100  1011  000
+    ICH_MISR_EL2      = 0xe65a, // 11  100  1100  1011  010
+    ICH_VMCR_EL2      = 0xe65f, // 11  100  1100  1011  111
+    ICH_VSEIR_EL2     = 0xe64c, // 11  100  1100  1001  100
+    ICH_LR0_EL2       = 0xe660, // 11  100  1100  1100  000
+    ICH_LR1_EL2       = 0xe661, // 11  100  1100  1100  001
+    ICH_LR2_EL2       = 0xe662, // 11  100  1100  1100  010
+    ICH_LR3_EL2       = 0xe663, // 11  100  1100  1100  011
+    ICH_LR4_EL2       = 0xe664, // 11  100  1100  1100  100
+    ICH_LR5_EL2       = 0xe665, // 11  100  1100  1100  101
+    ICH_LR6_EL2       = 0xe666, // 11  100  1100  1100  110
+    ICH_LR7_EL2       = 0xe667, // 11  100  1100  1100  111
+    ICH_LR8_EL2       = 0xe668, // 11  100  1100  1101  000
+    ICH_LR9_EL2       = 0xe669, // 11  100  1100  1101  001
+    ICH_LR10_EL2      = 0xe66a, // 11  100  1100  1101  010
+    ICH_LR11_EL2      = 0xe66b, // 11  100  1100  1101  011
+    ICH_LR12_EL2      = 0xe66c, // 11  100  1100  1101  100
+    ICH_LR13_EL2      = 0xe66d, // 11  100  1100  1101  101
+    ICH_LR14_EL2      = 0xe66e, // 11  100  1100  1101  110
+    ICH_LR15_EL2      = 0xe66f, // 11  100  1100  1101  111
   };
 
-  // Note that these do not inherit from NamedImmMapper. This class is
+  // Cyclone specific system registers
+  enum CycloneSysRegValues {
+    CPM_IOACC_CTL_EL3 = 0xff90
+  };
+
+  // Note that these do not inherit from AArch64NamedImmMapper. This class is
   // sufficiently different in its behaviour that I don't believe it's worth
-  // burdening the common NamedImmMapper with abstractions only needed in
+  // burdening the common AArch64NamedImmMapper with abstractions only needed in
   // this one case.
   struct SysRegMapper {
-    static const NamedImmMapper::Mapping SysRegPairs[];
+    static const AArch64NamedImmMapper::Mapping SysRegPairs[];
+    static const AArch64NamedImmMapper::Mapping CycloneSysRegPairs[];
 
-    const NamedImmMapper::Mapping *InstPairs;
+    const AArch64NamedImmMapper::Mapping *InstPairs;
     size_t NumInstPairs;
+    uint64_t FeatureBits;
 
-    SysRegMapper() {}
+    SysRegMapper(uint64_t FeatureBits) : FeatureBits(FeatureBits) { }
     uint32_t fromString(StringRef Name, bool &Valid) const;
-    std::string toString(uint32_t Bits, bool &Valid) const;
+    std::string toString(uint32_t Bits) const;
   };
 
   struct MSRMapper : SysRegMapper {
-    static const NamedImmMapper::Mapping MSRPairs[];
-    MSRMapper();
+    static const AArch64NamedImmMapper::Mapping MSRPairs[];
+    MSRMapper(uint64_t FeatureBits);
   };
 
   struct MRSMapper : SysRegMapper {
-    static const NamedImmMapper::Mapping MRSPairs[];
-    MRSMapper();
+    static const AArch64NamedImmMapper::Mapping MRSPairs[];
+    MRSMapper(uint64_t FeatureBits);
   };
 
   uint32_t ParseGenericRegister(StringRef Name, bool &Valid);
 }
 
-namespace A64TLBI {
+namespace AArch64TLBI {
   enum TLBIValues {
     Invalid = -1,          // Op0 Op1  CRn   CRm   Op2
     IPAS2E1IS    = 0x6401, // 01  100  1000  0000  001
@@ -684,7 +1196,7 @@ namespace A64TLBI {
     VAALE1       = 0x443f  // 01  000  1000  0111  111
   };
 
-  struct TLBIMapper : NamedImmMapper {
+  struct TLBIMapper : AArch64NamedImmMapper {
     const static Mapping TLBIPairs[];
 
     TLBIMapper();
@@ -707,78 +1219,67 @@ namespace A64TLBI {
       return true;
     }
   }
-}
+} 
 
 namespace AArch64II {
-
+  /// Target Operand Flag enum.
   enum TOF {
-    //===--------------------------------------------------------------===//
+    //===------------------------------------------------------------------===//
     // AArch64 Specific MachineOperand flags.
 
     MO_NO_FLAG,
 
-    // MO_GOT - Represents a relocation referring to the GOT entry of a given
-    // symbol. Used in adrp.
-    MO_GOT,
+    MO_FRAGMENT = 0x7,
 
-    // MO_GOT_LO12 - Represents a relocation referring to the low 12 bits of the
-    // GOT entry of a given symbol. Used in ldr only.
-    MO_GOT_LO12,
+    /// MO_PAGE - A symbol operand with this flag represents the pc-relative
+    /// offset of the 4K page containing the symbol.  This is used with the
+    /// ADRP instruction.
+    MO_PAGE = 1,
 
-    // MO_DTPREL_* - Represents a relocation referring to the offset from a
-    // module's dynamic thread pointer. Used in the local-dynamic TLS access
-    // model.
-    MO_DTPREL_G1,
-    MO_DTPREL_G0_NC,
+    /// MO_PAGEOFF - A symbol operand with this flag represents the offset of
+    /// that symbol within a 4K page.  This offset is added to the page address
+    /// to produce the complete address.
+    MO_PAGEOFF = 2,
 
-    // MO_GOTTPREL_* - Represents a relocation referring to a GOT entry
-    // providing the offset of a variable from the thread-pointer. Used in
-    // initial-exec TLS model where this offset is assigned in the static thread
-    // block and thus known by the dynamic linker.
-    MO_GOTTPREL,
-    MO_GOTTPREL_LO12,
+    /// MO_G3 - A symbol operand with this flag (granule 3) represents the high
+    /// 16-bits of a 64-bit address, used in a MOVZ or MOVK instruction
+    MO_G3 = 3,
 
-    // MO_TLSDESC_* - Represents a relocation referring to a GOT entry providing
-    // a TLS descriptor chosen by the dynamic linker. Used for the
-    // general-dynamic and local-dynamic TLS access models where very littls is
-    // known at link-time.
-    MO_TLSDESC,
-    MO_TLSDESC_LO12,
+    /// MO_G2 - A symbol operand with this flag (granule 2) represents the bits
+    /// 32-47 of a 64-bit address, used in a MOVZ or MOVK instruction
+    MO_G2 = 4,
 
-    // MO_TPREL_* - Represents a relocation referring to the offset of a
-    // variable from the thread pointer itself. Used in the local-exec TLS
-    // access model.
-    MO_TPREL_G1,
-    MO_TPREL_G0_NC,
+    /// MO_G1 - A symbol operand with this flag (granule 1) represents the bits
+    /// 16-31 of a 64-bit address, used in a MOVZ or MOVK instruction
+    MO_G1 = 5,
 
-    // MO_LO12 - On a symbol operand, this represents a relocation containing
-    // lower 12 bits of the address. Used in add/sub/ldr/str.
-    MO_LO12
+    /// MO_G0 - A symbol operand with this flag (granule 0) represents the bits
+    /// 0-15 of a 64-bit address, used in a MOVZ or MOVK instruction
+    MO_G0 = 6,
+
+    /// MO_GOT - This flag indicates that a symbol operand represents the
+    /// address of the GOT entry for the symbol, rather than the address of
+    /// the symbol itself.
+    MO_GOT = 8,
+
+    /// MO_NC - Indicates whether the linker is expected to check the symbol
+    /// reference for overflow. For example in an ADRP/ADD pair of relocations
+    /// the ADRP usually does check, but not the ADD.
+    MO_NC = 0x10,
+
+    /// MO_TLS - Indicates that the operand being accessed is some kind of
+    /// thread-local symbol. On Darwin, only one type of thread-local access
+    /// exists (pre linker-relaxation), but on ELF the TLSModel used for the
+    /// referee will affect interpretation.
+    MO_TLS = 0x20,
+
+    /// MO_CONSTPOOL - This flag indicates that a symbol operand represents
+    /// the address of a constant pool entry for the symbol, rather than the
+    /// address of the symbol itself.
+    MO_CONSTPOOL = 0x40
   };
-}
+} // end namespace AArch64II
 
-class APFloat;
-
-namespace A64Imms {
-  bool isFPImm(const APFloat &Val, uint32_t &Imm8Bits);
-
-  inline bool isFPImm(const APFloat &Val) {
-    uint32_t Imm8;
-    return isFPImm(Val, Imm8);
-  }
-
-  bool isLogicalImm(unsigned RegWidth, uint64_t Imm, uint32_t &Bits);
-  bool isLogicalImmBits(unsigned RegWidth, uint32_t Bits, uint64_t &Imm);
-
-  bool isMOVZImm(int RegWidth, uint64_t Value, int &UImm16, int &Shift);
-  bool isMOVNImm(int RegWidth, uint64_t Value, int &UImm16, int &Shift);
-
-  // We sometimes want to know whether the immediate is representable with a
-  // MOVN but *not* with a MOVZ (because that would take priority).
-  bool isOnlyMOVNImm(int RegWidth, uint64_t Value, int &UImm16, int &Shift);
-
-}
-
-} // end namespace llvm;
+} // end namespace llvm
 
 #endif

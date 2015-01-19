@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Eq)]
+#[derive(PartialEq)]
 struct A { x: uint }
 
 impl Drop for A {
-    fn drop(&self) {}
+    fn drop(&mut self) {}
 }
 
-fn main() {}
+pub fn main() {}

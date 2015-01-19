@@ -8,17 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct font<'self> {
-    fontbuf: &'self ~[u8],
+
+struct font<'a> {
+    fontbuf: &'a Vec<u8> ,
 }
 
-impl<'self> font<'self> {
-    pub fn buf(&self) -> &'self ~[u8] {
+impl<'a> font<'a> {
+    pub fn buf(&self) -> &'a Vec<u8> {
         self.fontbuf
     }
 }
 
-fn font<'r>(fontbuf: &'r ~[u8]) -> font<'r> {
+fn font(fontbuf: &Vec<u8> ) -> font {
     font {
         fontbuf: fontbuf
     }

@@ -8,5 +8,5 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn force(f: &fn() -> int) -> int { f() }
-fn main() { debug!(force(|| {})); } //~ ERROR mismatched types
+fn force<F>(f: F) -> isize where F: FnOnce() -> isize { f() }
+fn main() { println!("{}", force(|| {})); } //~ ERROR mismatched types

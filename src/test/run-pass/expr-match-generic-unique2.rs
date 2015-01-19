@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,22 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
-// -*- rust -*-
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-type compare<T> = @fn(T, T) -> bool;
-
-fn test_generic<T:Copy+Clone>(expected: T, eq: compare<T>) {
+fn test_generic<T: Clone, F>(expected: T, eq: F) where F: FnOnce(T, T) -> bool {
     let actual: T = match true {
         true => expected.clone(),
-        _ => fail!("wat")
+        _ => panic!("wat")
     };
-    assert!((eq(expected, actual)));
+    assert!(eq(expected, actual));
 }
 
 fn test_vec() {
-    fn compare_box(v1: ~int, v2: ~int) -> bool { return v1 == v2; }
-    test_generic::<~int>(~1, compare_box);
+    fn compare_box(v1: Box<int>, v2: Box<int>) -> bool { return v1 == v2; }
+    test_generic::<Box<int>, _>(box 1, compare_box);
 }
 
 pub fn main() { test_vec(); }

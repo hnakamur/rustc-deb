@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern: instantiating a type parameter with an incompatible type
 fn bar<T: Sized>() { }
-fn foo<T>() { bar::<T>() }
+fn foo<T: ?Sized>() { bar::<T>() } //~ ERROR the trait `core::marker::Sized` is not implemented
 fn main() { }

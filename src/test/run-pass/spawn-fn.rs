@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -9,17 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::task;
+use std::thread::Thread;
 
-fn x(s: ~str, n: int) {
-    debug!(s);
-    debug!(n);
+fn x(s: String, n: int) {
+    println!("{}", s);
+    println!("{}", n);
 }
 
 pub fn main() {
-    task::spawn(|| x(~"hello from first spawned fn", 65) );
-    task::spawn(|| x(~"hello from second spawned fn", 66) );
-    task::spawn(|| x(~"hello from third spawned fn", 67) );
+    let _t = Thread::spawn(|| x("hello from first spawned fn".to_string(), 65) );
+    let _t = Thread::spawn(|| x("hello from second spawned fn".to_string(), 66) );
+    let _t = Thread::spawn(|| x("hello from third spawned fn".to_string(), 67) );
     let mut i: int = 30;
-    while i > 0 { i = i - 1; debug!("parent sleeping"); task::yield(); }
+    while i > 0 {
+        i = i - 1;
+        println!("parent sleeping");
+        Thread::yield_now();
+    }
 }

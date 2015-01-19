@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -17,9 +16,9 @@ enum color {
 }
 
 pub fn main() {
-    error!(match red {
-        red => { 1 }
-        green => { 2 }
-        blue => { 3 }
+    println!("{}", match color::red {
+        color::red => { 1i }
+        color::green => { 2i }
+        color::blue => { 3i }
     });
 }

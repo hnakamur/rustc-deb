@@ -8,15 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-static FOO: int = 10;
-static BAR: int = 3;
+const FOO: int = 10;
+const BAR: int = 3;
 
 pub fn main() {
-    let x: int = 3;
+    let x: int = 3i;
     let y = match x {
-        FOO => 1,
-        BAR => 2,
-        _ => 3
+        FOO => 1i,
+        BAR => 2i,
+        _ => 3i
     };
     assert_eq!(y, 2);
 }

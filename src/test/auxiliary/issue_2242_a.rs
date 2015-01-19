@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name = "a", vers = "0.1")];
-#[crate_type = "lib"];
+#![crate_name="a#0.1"]
+#![crate_type = "lib"]
 
 trait to_strz {
-    fn to_strz() -> ~str;
+    fn to_strz() -> String;
 }
 
-impl to_strz for ~str {
-    fn to_strz() -> ~str { copy self }
+impl to_strz for String {
+    fn to_strz() -> String { self.clone() }
 }

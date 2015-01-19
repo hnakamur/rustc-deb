@@ -5,7 +5,7 @@
 <language id="rust" _name="Rust" version="2.0" _section="Sources">
   <metadata>
     <property name="mimetypes">text/x-rust</property>
-    <property name="globs">*.rs;*.rc</property>
+    <property name="globs">*.rs</property>
     <property name="line-comment-start">//</property>
     <property name="block-comment-start">/*</property>
     <property name="block-comment-end">*/</property>
@@ -19,8 +19,10 @@
     <style id="type" _name="Data Type" map-to="def:type"/>
     <style id="constant" _name="Constant" map-to="def:constant"/>
     <style id="identifier" _name="Identifier" map-to="def:identifier"/>
-    <style id="number" _name="Number" map-to="def:decimal"/>
+    <style id="number" _name="Number" map-to="def:number"/>
     <style id="scope" _name="Scope" map-to="def:preprocessor"/>
+    <style id="attribute" _name="Attribute" map-to="def:preprocessor"/>
+    <style id="macro" _name="Macro" map-to="def:preprocessor"/>
   </styles>
 
   <definitions>
@@ -37,8 +39,10 @@
 		<keyword>as</keyword>
 		<keyword>assert</keyword>
 		<keyword>break</keyword>
+		<keyword>box</keyword>
 		<keyword>const</keyword>
-		<keyword>copy</keyword>
+		<keyword>continue</keyword>
+		<keyword>crate</keyword>
 		<keyword>do</keyword>
 		<keyword>drop</keyword>
 		<keyword>else</keyword>
@@ -49,6 +53,7 @@
 		<keyword>for</keyword>
 		<keyword>if</keyword>
 		<keyword>impl</keyword>
+		<keyword>in</keyword>
 		<keyword>let</keyword>
 		<keyword>log</keyword>
 		<keyword>loop</keyword>
@@ -66,13 +71,17 @@
 		<keyword>trait</keyword>
 		<keyword>unsafe</keyword>
 		<keyword>use</keyword>
+		<keyword>virtual</keyword>
+		<keyword>where</keyword>
 		<keyword>while</keyword>
     </context>
 
     <context id="types" style-ref="type">
 		<keyword>bool</keyword>
 		<keyword>int</keyword>
+		<keyword>isize</keyword>
 		<keyword>uint</keyword>
+		<keyword>usize</keyword>
 		<keyword>i8</keyword>
 		<keyword>i16</keyword>
 		<keyword>i32</keyword>
@@ -83,10 +92,8 @@
 		<keyword>u64</keyword>
 		<keyword>f32</keyword>
 		<keyword>f64</keyword>
-		<keyword>float</keyword>
 		<keyword>char</keyword>
 		<keyword>str</keyword>
-		<keyword>Either</keyword>
 		<keyword>Option</keyword>
 		<keyword>Result</keyword>
     </context>
@@ -133,8 +140,6 @@
 		<keyword>false</keyword>
 		<keyword>Some</keyword>
 		<keyword>None</keyword>
-		<keyword>Left</keyword>
-		<keyword>Right</keyword>
 		<keyword>Ok</keyword>
 		<keyword>Err</keyword>
 		<keyword>Success</keyword>
@@ -203,39 +208,107 @@
       </include>
     </context>
 
+    <define-regex id="int_suffix" extended="true">
+      (i8|i16|i32|i64|i|u8|u16|u32|u64|u)
+    </define-regex>
+
+    <define-regex id="exponent" extended="true">
+      ([eE][+-]?[0-9_]+)
+    </define-regex>
+
+    <define-regex id="float_suffix" extended="true">
+      (\%{exponent}?(f32|f64)?)|(\.[0-9][0-9_]*\%{exponent}?)?(f32|f64)?|\.
+    </define-regex>
+
+    <define-regex id="num_suffix" extended="true">
+      \%{int_suffix}|\%{float_suffix}
+    </define-regex>
+
+    <define-regex id="hex_digit" extended="true">
+      [0-9a-fA-F]
+    </define-regex>
+
+    <define-regex id="oct_digit" extended="true">
+      [0-7]
+    </define-regex>
+
     <context id="number" style-ref="number">
       <match extended="true">
-        (?&lt;![\w\.])
+        ((?&lt;=\.\.)|(?&lt;![\w\.]))
         (
-        0x[0-9a-fA-F_]+(u8|u16|u32|u64|i8|i16|i32|i64|u|i)?|
-        0b[0-1_]+(u8|u16|u32|u64|i8|i16|i32|i64|u|i)?|
-        [0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?(f32|f64|f)?|
-        [0-9][0-9_]*(u8|u16|u32|u64|i8|i16|i32|i64|u|i)?
+        [1-9][0-9_]*\%{num_suffix}?|
+        0[0-9_]*\%{num_suffix}?|
+        0b[01_]+\%{int_suffix}?|
+        0o(\%{oct_digit}|_)+\%{int_suffix}?|
+        0x(\%{hex_digit}|_)+\%{int_suffix}?
         )
-        (?![\w\.])
+        ((?![\w\.].)|(?=\.\.))
       </match>
     </context>
 
+    <define-regex id="ident" extended="true">
+      ([^[:cntrl:][:space:][:punct:][:digit:]]|_)([^[:cntrl:][:punct:][:space:]]|_)*
+    </define-regex>
+
     <context id="scope" style-ref="scope">
       <match extended="true">
-        [a-zA-Z_][a-zA-Z0-9_]*::
+        \%{ident}::
       </match>
+    </context>
+
+    <context id="macro" style-ref="macro">
+      <match extended="true">
+        \%{ident}!
+      </match>
+    </context>
+
+    <context id="lifetime" style-ref="keyword">
+      <match extended="true">
+        '\%{ident}
+      </match>
+    </context>
+
+    <define-regex id="common_escape" extended="true">
+      '|"|
+      \\|n|r|t|0|
+      x\%{hex_digit}{2}|
+      u{\%{hex_digit}{1,6}}|
+      u\%{hex_digit}{4}|
+      U\%{hex_digit}{8}
+    </define-regex>
+
+    <context id="string_escape" style-ref="def:special-char">
+      <match>\\\%{common_escape}</match>
+    </context>
+
+    <context id="raw-string" style-ref="string" class="string" class-disabled="no-spell-check">
+      <start>r(#*)"</start>
+      <end>"\%{1@start}</end>
+      <include>
+        <context ref="def:line-continue"/>
+      </include>
     </context>
 
     <context id="string" style-ref="string" class="string" class-disabled="no-spell-check">
       <start>"</start>
       <end>"</end>
       <include>
-        <context ref="def:escape"/>
+        <context ref="string_escape"/>
         <context ref="def:line-continue"/>
       </include>
     </context>
 
-    <context id="char" style-ref="char" end-at-line-end="true" class="char" class-disabled="no-spell-check">
-      <start>'</start>
-      <end>'</end>
+    <context id="char" style-ref="char">
+      <match extended="true">'([^\\']|\\\%{common_escape})'</match>
+    </context>
+
+    <context id="attribute" style-ref="attribute" class="attribute">
+      <start extended="true">\#!?\[</start>
+      <end>\]</end>
       <include>
-        <context ref="def:escape"/>
+        <context ref="def:in-comment"/>
+        <context ref="string"/>
+        <context ref="raw-string"/>
       </include>
     </context>
 
@@ -247,6 +320,7 @@
         <context ref="types"/>
         <context ref="ctypes"/>
         <context ref="self"/>
+        <context ref="macro"/>
         <context ref="constants"/>
         <context ref="cconstants"/>
         <context ref="line-comment"/>
@@ -254,7 +328,10 @@
         <context ref="number"/>
         <context ref="scope"/>
         <context ref="string"/>
+        <context ref="raw-string"/>
         <context ref="char"/>
+        <context ref="lifetime"/>
+        <context ref="attribute"/>
       </include>
     </context>
 

@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,28 +8,33 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// does the second one subsume the first?
-// xfail-test
-// xfail-fast
+// ignore-test
+// ignore-lexer-test FIXME #15881
 
 // notes on this test case:
-// On Thu, Apr 18, 2013 at 6:30 PM, John Clements <clements@brinckerhoff.org> wrote:
-// the "issue-2185.rs" test was xfailed with a ref to #2263. Issue #2263 is now fixed, so I tried it again, and after adding some &self parameters, I got this error:
+// On Thu, Apr 18, 2013-2014 at 6:30 PM, John Clements <clements@brinckerhoff.org> wrote:
+// the "issue-2185.rs" test was ignored with a ref to #2263. Issue #2263 is now fixed,
+// so I tried it again, and after adding some &self parameters, I got this error:
 //
 // Running /usr/local/bin/rustc:
 // issue-2185.rs:24:0: 26:1 error: conflicting implementations for a trait
-// issue-2185.rs:24 impl iterable<uint> for @fn(&fn(uint)) {
-// issue-2185.rs:25     fn iter(&self, blk: &fn(v: uint)) { self( |i| blk(i) ) }
+// issue-2185.rs:24 impl iterable<uint> for 'static ||uint|| {
+// issue-2185.rs:25     fn iter(&self, blk: |v: uint|) { self( |i| blk(i) ) }
 // issue-2185.rs:26 }
 // issue-2185.rs:20:0: 22:1 note: note conflicting implementation here
-// issue-2185.rs:20 impl<A> iterable<A> for @fn(&fn(A)) {
-// issue-2185.rs:21     fn iter(&self, blk: &fn(A)) { self(blk); }
+// issue-2185.rs:20 impl<A> iterable<A> for 'static ||A|| {
+// issue-2185.rs:21     fn iter(&self, blk: |A|) { self(blk); }
 // issue-2185.rs:22 }
 //
-// … so it looks like it's just not possible to implement both the generic iterable<uint> and iterable<A> for the type iterable<uint>. Is it okay if I just remove this test?
+// … so it looks like it's just not possible to implement both
+// the generic iterable<uint> and iterable<A> for the type iterable<uint>.
+// Is it okay if I just remove this test?
 //
 // but Niko responded:
-// think it's fine to remove this test, just because it's old and cruft and not hard to reproduce. *However* it should eventually be possible to implement the same interface for the same type multiple times with different type parameters, it's just that our current trait implementation has accidental limitations.
+// think it's fine to remove this test, just because it's old and cruft and not hard to reproduce.
+// *However* it should eventually be possible to implement the same interface for the same type
+// multiple times with different type parameters, it's just that our current trait implementation
+// has accidental limitations.
 
 // so I'm leaving it in.
 // actually, it looks like this is related to bug #3429. I'll rename this bug.
@@ -39,32 +44,32 @@
 // warrant still having a test, so I inlined the old definitions.
 
 trait iterable<A> {
-    fn iter(&self, blk: &fn(A));
+    fn iter(&self, blk: |A|);
 }
 
-impl<A> iterable<A> for @fn(&fn(A)) {
-    fn iter(&self, blk: &fn(A)) { self(blk); }
+impl<A> iterable<A> for 'static ||A|| {
+    fn iter(&self, blk: |A|) { self(blk); }
 }
 
-impl iterable<uint> for @fn(&fn(uint)) {
-    fn iter(&self, blk: &fn(v: uint)) { self( |i| blk(i) ) }
+impl iterable<uint> for 'static ||uint|| {
+    fn iter(&self, blk: |v: uint|) { self( |i| blk(i) ) }
 }
 
-fn filter<A,IA:iterable<A>>(self: IA, prd: @fn(A) -> bool, blk: &fn(A)) {
-    do self.iter |a| {
+fn filter<A,IA:iterable<A>>(self: IA, prd: 'static |A| -> bool, blk: |A|) {
+    self.iter(|a| {
         if prd(a) { blk(a) }
-    }
+    });
 }
 
-fn foldl<A,B,IA:iterable<A>>(self: IA, b0: B, blk: &fn(B, A) -> B) -> B {
+fn foldl<A,B,IA:iterable<A>>(self: IA, b0: B, blk: |B, A| -> B) -> B {
     let mut b = b0;
-    do self.iter |a| {
+    self.iter(|a| {
         b = blk(b, a);
-    }
+    });
     b
 }
 
-fn range(lo: uint, hi: uint, it: &fn(uint)) {
+fn range(lo: uint, hi: uint, it: |uint|) {
     let mut i = lo;
     while i < hi {
         it(i);
@@ -73,12 +78,12 @@ fn range(lo: uint, hi: uint, it: &fn(uint)) {
 }
 
 pub fn main() {
-    let range: @fn(&fn(uint)) = |a| range(0u, 1000u, a);
-    let filt: @fn(&fn(v: uint)) = |a| filter(
+    let range: 'static ||uint|| = |a| range(0u, 1000u, a);
+    let filt: 'static ||v: uint|| = |a| filter(
         range,
         |&&n: uint| n % 3u != 0u && n % 5u != 0u,
         a);
     let sum = foldl(filt, 0u, |accum, &&n: uint| accum + n );
 
-    io::println(fmt!("%u", sum));
+    println!("{}", sum);
 }

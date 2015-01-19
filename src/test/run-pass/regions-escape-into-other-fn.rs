@@ -8,10 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn foo<'r>(x: &'r uint) -> &'r uint { x }
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+fn foo(x: &uint) -> &uint { x }
 fn bar(x: &uint) -> uint { *x }
 
 pub fn main() {
-    let p = @3u;
-    assert_eq!(bar(foo(p)), 3);
+    let p = box 3u;
+    assert_eq!(bar(foo(&*p)), 3);
 }

@@ -15,16 +15,17 @@ add_llvm_target(XCoreCodeGen
   XCoreInstrInfo.cpp
   XCoreISelDAGToDAG.cpp
   XCoreISelLowering.cpp
+  XCoreLowerThreadLocal.cpp
   XCoreMachineFunctionInfo.cpp
   XCoreMCInstLower.cpp
   XCoreRegisterInfo.cpp
   XCoreSubtarget.cpp
   XCoreTargetMachine.cpp
   XCoreTargetObjectFile.cpp
+  XCoreTargetTransformInfo.cpp
   XCoreSelectionDAGInfo.cpp
+  XCoreFrameToArgsOffsetElim.cpp
   )
-
-add_dependencies(LLVMXCoreCodeGen intrinsics_gen)
 
 add_subdirectory(Disassembler)
 add_subdirectory(InstPrinter)

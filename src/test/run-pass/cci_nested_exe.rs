@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,22 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast - check-fast doesn't understand aux-build
 // aux-build:cci_nested_lib.rs
 
-extern mod cci_nested_lib;
+#![feature(globs)]
+
+extern crate cci_nested_lib;
 use cci_nested_lib::*;
 
 pub fn main() {
     let lst = new_int_alist();
-    alist_add(&lst, 22, ~"hi");
-    alist_add(&lst, 44, ~"ho");
-    assert_eq!(alist_get(&lst, 22), ~"hi");
-    assert_eq!(alist_get(&lst, 44), ~"ho");
+    alist_add(&lst, 22, "hi".to_string());
+    alist_add(&lst, 44, "ho".to_string());
+    assert_eq!(alist_get(&lst, 22), "hi".to_string());
+    assert_eq!(alist_get(&lst, 44), "ho".to_string());
 
     let lst = new_int_alist_2();
-    alist_add(&lst, 22, ~"hi");
-    alist_add(&lst, 44, ~"ho");
-    assert_eq!(alist_get(&lst, 22), ~"hi");
-    assert_eq!(alist_get(&lst, 44), ~"ho");
+    alist_add(&lst, 22, "hi".to_string());
+    alist_add(&lst, 44, "ho".to_string());
+    assert_eq!(alist_get(&lst, 22), "hi".to_string());
+    assert_eq!(alist_get(&lst, 44), "ho".to_string());
 }

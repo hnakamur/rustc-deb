@@ -12,25 +12,51 @@
 //===----------------------------------------------------------------------===//
 
 
-#ifndef SIMACHINEFUNCTIONINFO_H_
-#define SIMACHINEFUNCTIONINFO_H_
+#ifndef LLVM_LIB_TARGET_R600_SIMACHINEFUNCTIONINFO_H
+#define LLVM_LIB_TARGET_R600_SIMACHINEFUNCTIONINFO_H
 
-#include "llvm/CodeGen/MachineFunction.h"
+#include "AMDGPUMachineFunction.h"
+#include "SIRegisterInfo.h"
+#include <map>
 
 namespace llvm {
 
+class MachineRegisterInfo;
+
 /// This class keeps track of the SPI_SP_INPUT_ADDR config register, which
 /// tells the hardware which interpolation parameters to load.
-class SIMachineFunctionInfo : public MachineFunctionInfo {
+class SIMachineFunctionInfo : public AMDGPUMachineFunction {
+  void anchor() override;
+
+  unsigned TIDReg;
+
 public:
-  static const char *ShaderTypeAttribute;
+
+  struct SpilledReg {
+    unsigned VGPR;
+    int Lane;
+    SpilledReg(unsigned R, int L) : VGPR (R), Lane (L) { }
+    SpilledReg() : VGPR(0), Lane(-1) { }
+    bool hasLane() { return Lane != -1;}
+  };
+
+  // SIMachineFunctionInfo definition
 
   SIMachineFunctionInfo(const MachineFunction &MF);
-  unsigned ShaderType;
+  SpilledReg getSpilledReg(MachineFunction *MF, unsigned FrameIndex,
+                           unsigned SubIdx);
   unsigned PSInputAddr;
+  unsigned NumUserSGPRs;
+  std::map<unsigned, unsigned> LaneVGPRs;
+  unsigned LDSWaveSpillSize;
+  bool hasCalculatedTID() const { return TIDReg != AMDGPU::NoRegister; };
+  unsigned getTIDReg() const { return TIDReg; };
+  void setTIDReg(unsigned Reg) { TIDReg = Reg; }
+
+  unsigned getMaximumWorkGroupSize(const MachineFunction &MF) const;
 };
 
 } // End namespace llvm
 
 
-#endif //_SIMACHINEFUNCTIONINFO_H_
+#endif

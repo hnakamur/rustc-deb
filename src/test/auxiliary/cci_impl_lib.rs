@@ -8,15 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name="cci_impl_lib", vers="0.0")];
+#![crate_name="cci_impl_lib"]
 
-trait uint_helpers {
-    fn to(&self, v: uint, f: &fn(uint));
+pub trait uint_helpers {
+    fn to<F>(&self, v: uint, f: F) where F: FnMut(uint);
 }
 
 impl uint_helpers for uint {
     #[inline]
-    fn to(&self, v: uint, f: &fn(uint)) {
+    fn to<F>(&self, v: uint, mut f: F) where F: FnMut(uint) {
         let mut i = *self;
         while i < v {
             f(i);

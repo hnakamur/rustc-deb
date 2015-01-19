@@ -9,13 +9,14 @@
 // except according to those terms.
 
 // This should typecheck even though the type of e is not fully
-// resolved when we finish typechecking the @fn.
+// resolved when we finish typechecking the ||.
 
 
-struct Refs { refs: ~[int], n: int }
+struct Refs { refs: Vec<int> , n: int }
 
 pub fn main() {
-    let e = @mut Refs{refs: ~[], n: 0};
-    let f: @fn() = || error!(copy e.n);
-    e.refs.push(1);
+    let mut e = Refs{refs: vec!(), n: 0};
+    let _f = |&:| println!("{}", e.n);
+    let x: &[int] = e.refs.as_slice();
+    assert_eq!(x.len(), 0);
 }

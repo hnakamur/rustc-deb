@@ -10,7 +10,7 @@
 
 // Test that a class with only sendable fields can be sent
 
-use std::comm;
+use std::sync::mpsc::channel;
 
 struct foo {
   i: int,
@@ -25,6 +25,6 @@ fn foo(i:int, j: char) -> foo {
 }
 
 pub fn main() {
-    let (_po, ch) = comm::stream();
-    ch.send(foo(42, 'c'));
+    let (tx, rx) = channel();
+    tx.send(foo(42, 'c'));
 }

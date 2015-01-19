@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f(_: &const [int]) {}
+fn f(_: &[int]) {}
 
 pub fn main() {
     let v = [ 1, 2, 3 ];
-    f(v);
+    f(&v);
 }

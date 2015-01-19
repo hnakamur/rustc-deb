@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern:task failed at 'test-assert-fmt 42 rust'
+// error-pattern:panicked at 'test-assert-fmt 42 rust'
 
 fn main() {
-    assert!(false, "test-assert-fmt %d %s", 42, "rust");
+    assert!(false, "test-assert-fmt {} {}", 42i, "rust");
 }

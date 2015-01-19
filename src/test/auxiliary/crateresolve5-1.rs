@@ -8,15 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name = "crateresolve5",
-       vers = "0.1")];
+#![crate_name="crateresolve5#0.1"]
 
-#[crate_type = "lib"];
+#![crate_type = "lib"]
 
-pub struct NameVal { name: ~str, val: int }
+pub struct NameVal { pub name: String, pub val: int }
 
 pub fn struct_nameval() -> NameVal {
-    NameVal { name: ~"crateresolve5", val: 10 }
+    NameVal { name: "crateresolve5".to_string(), val: 10 }
 }
 
 pub enum e {
@@ -25,9 +24,9 @@ pub enum e {
 
 pub fn nominal() -> e { e_val }
 
-pub fn nominal_eq(e1: e, e2: e) -> bool { true }
+pub fn nominal_eq(_e1: e, _e2: e) -> bool { true }
 
-impl Eq for e {
+impl PartialEq for e {
     fn eq(&self, other: &e) -> bool { nominal_eq(*self, *other) }
     fn ne(&self, other: &e) -> bool { !nominal_eq(*self, *other) }
 }

@@ -11,14 +11,13 @@
 
 
 
-// -*- rust -*-
 
 // Issue #50.
 
-struct X { foo: ~str, bar: ~str }
+struct X { foo: String, bar: String }
 
 pub fn main() {
-    let x = X {foo: ~"hello", bar: ~"world"};
-    debug!(x.foo.clone());
-    debug!(x.bar.clone());
+    let x = X {foo: "hello".to_string(), bar: "world".to_string()};
+    println!("{}", x.foo.clone());
+    println!("{}", x.bar.clone());
 }

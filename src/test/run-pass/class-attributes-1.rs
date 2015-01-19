@@ -9,18 +9,19 @@
 // except according to those terms.
 
 // pp-exact - Make sure we actually print the attributes
+#![allow(unused_attribute)]
 
 struct cat {
-    name: ~str,
+    name: String,
 }
 
 impl Drop for cat {
     #[cat_dropper]
-    fn drop(&self) { error!("%s landed on hir feet" , self . name); }
+    fn drop(&mut self) { println!("{} landed on hir feet" , self . name); }
 }
 
 
 #[cat_maker]
-fn cat(name: ~str) -> cat { cat{name: name,} }
+fn cat(name: String) -> cat { cat{name: name,} }
 
-pub fn main() { let _kitty = cat(~"Spotty"); }
+pub fn main() { let _kitty = cat("Spotty".to_string()); }

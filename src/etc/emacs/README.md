@@ -1,40 +1,30 @@
-rust-mode: A major emacs mode for editing Rust source code
-==========================================================
+`rust-mode`: A major Emacs mode for editing Rust source code
+============================================================
 
-`rust-mode` makes editing [Rust](http://rust-lang.org) code with emacs
+`rust-mode` makes editing [Rust](http://rust-lang.org) code with Emacs
 enjoyable.
 
 
 ### Manual Installation
 
-To install manually, check out this repository and add this to your .emacs
-file:
+To install manually, check out this repository and add this to your
+`.emacs` file:
 
-    (add-to-list 'load-path "/path/to/rust-mode/")
-    (require 'rust-mode)
+```lisp
+(add-to-list 'load-path "/path/to/rust-mode/")
+(autoload 'rust-mode "rust-mode" nil t)
+(add-to-list 'auto-mode-alist '("\\.rs\\'" . rust-mode))
+```
 
-Make sure you byte-compile the .el files first, or the mode will be
-painfully slow. There is an included `Makefile` which will do it for
-you, so in the simplest case you can just run `make` and everything
-should Just Work.
+This associates `rust-mode` with `.rs` files. To enable it explicitly, do
+<kbd>M-x rust-mode</kbd>.
 
-If for some reason that doesn't work, you can byte compile manually,
-by pasting this in your `*scratch*` buffer, moving the cursor below
-it, and pressing `C-j`:
-
-    (progn
-      (byte-compile-file "/path/to/rust-mode/cm-mode.el" t)
-      (byte-compile-file "/path/to/rust-mode/rust-mode.el" t))
-
-Rust mode will automatically be associated with .rs and .rc files. To
-enable it explicitly, do `M-x rust-mode`.
-
-### package.el installation via Marmalade or MELPA
+### `package.el` installation via Marmalade or MELPA
 
 It can be more convenient to use Emacs's package manager to handle
 installation for you if you use many elisp libraries. If you have
-package.el but haven't added Marmalade or MELPA, the community package source,
-yet, add this to ~/.emacs.d/init.el:
+`package.el` but haven't added Marmalade or MELPA, the community
+package source, yet, add this to `~/.emacs.d/init.el`:
 
 Using Marmalade:
 
@@ -60,41 +50,30 @@ Then do this to load the package listing:
 * <kbd>M-x package-refresh-contents</kbd>
 
 If you use a version of Emacs prior to 24 that doesn't include
-package.el, you can get it from http://bit.ly/pkg-el23.
+`package.el`, you can get it from [here](http://bit.ly/pkg-el23).
 
-If you have an older ELPA package.el installed from tromey.com, you
+If you have an older ELPA `package.el` installed from tromey.com, you
 should upgrade in order to support installation from multiple sources.
 The ELPA archive is deprecated and no longer accepting new packages,
 so the version there (1.7.1) is very outdated.
 
-#### Important
+#### Install `rust-mode`
 
-In order to have cm-mode properly initialized after compilation prior
-to rust-mode.el compilation you will need to add these `advices` to
-your init file or if you are a melpa user install the `melpa` package.
-
-```lisp
-(defadvice package-download-tar
-  (after package-download-tar-initialize activate compile)
-  "initialize the package after compilation"
-  (package-initialize))
-
-(defadvice package-download-single
-  (after package-download-single-initialize activate compile)
-  "initialize the package after compilation"
-  (package-initialize))
-```
-
-#### Install rust-mode
-
-From there you can install rust-mode or any other modes by choosing
-them from a list:
+One you have `package.el`, you can install `rust-mode` or any other
+modes by choosing them from a list:
 
 * <kbd>M-x package-list-packages</kbd>
 
-Now, to install packages, move your cursor to them and press i. This
-will mark the packages for installation. When you're done with
-marking, press x, and ELPA will install the packages for you (under
-~/.emacs.d/elpa/).
+Now, to install packages, move your cursor to them and press
+<kbd>i</kbd>. This will mark the packages for installation. When
+you're done with marking, press <kbd>x</kbd>, and ELPA will install
+the packages for you (under `~/.emacs.d/elpa/`).
 
-* or using <kbd>M-x package-install rust-mode
+* or using <kbd>M-x package-install rust-mode</kbd>
+
+### Tests via ERT
+
+The file `rust-mode-tests.el` contains tests that can be run via
+[ERT](http://www.gnu.org/software/emacs/manual/html_node/ert/index.html).
+You can use `run_rust_emacs_tests.sh` to run them in batch mode, if
+Emacs is somewhere in your `$PATH`.

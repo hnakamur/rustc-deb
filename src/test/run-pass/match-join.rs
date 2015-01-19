@@ -8,12 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-extern mod extra;
-
 fn foo<T>(y: Option<T>) {
     let mut x: int;
-    let mut rs: ~[int] = ~[];
+    let mut rs: Vec<int> = Vec::new();
     /* tests that x doesn't get put in the precondition for the
        entire if expression */
 
@@ -28,4 +25,4 @@ fn foo<T>(y: Option<T>) {
     return;
 }
 
-pub fn main() { debug!("hello"); foo::<int>(Some::<int>(5)); }
+pub fn main() { println!("hello"); foo::<int>(Some::<int>(5)); }

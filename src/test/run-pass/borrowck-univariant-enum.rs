@@ -8,21 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
+use std::cell::Cell;
+
 enum newtype {
-    newtype(int)
+    newvar(int)
 }
+
+impl Copy for newtype {}
 
 pub fn main() {
 
     // Test that borrowck treats enums with a single variant
     // specially.
 
-    let x = @mut 5;
-    let y = @mut newtype(3);
-    let z = match *y {
-      newtype(b) => {
-        *x += 1;
-        *x * b
+    let x = &Cell::new(5);
+    let y = &Cell::new(newtype::newvar(3));
+    let z = match y.get() {
+      newtype::newvar(b) => {
+        x.set(x.get() + 1);
+        x.get() * b
       }
     };
     assert_eq!(z, 18);

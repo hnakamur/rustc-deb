@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "asm-printer"
 #include "X86IntelInstPrinter.h"
 #include "MCTargetDesc/X86BaseInfo.h"
 #include "MCTargetDesc/X86MCTargetDesc.h"
@@ -24,6 +23,8 @@
 #include "llvm/Support/FormattedStream.h"
 #include <cctype>
 using namespace llvm;
+
+#define DEBUG_TYPE "asm-printer"
 
 #include "X86GenAsmWriter1.inc"
 
@@ -113,13 +114,24 @@ void X86IntelInstPrinter::printAVXCC(const MCInst *MI, unsigned Op,
   }
 }
 
+void X86IntelInstPrinter::printRoundingControl(const MCInst *MI, unsigned Op,
+                                   raw_ostream &O) {
+  int64_t Imm = MI->getOperand(Op).getImm() & 0x3;
+  switch (Imm) {
+  case 0: O << "{rn-sae}"; break;
+  case 1: O << "{rd-sae}"; break;
+  case 2: O << "{ru-sae}"; break;
+  case 3: O << "{rz-sae}"; break;
+  }
+}
+
 /// printPCRelImm - This is used to print an immediate value that ends up
 /// being encoded as a pc-relative value.
 void X86IntelInstPrinter::printPCRelImm(const MCInst *MI, unsigned OpNo,
                                         raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isImm())
-    O << Op.getImm();
+    O << formatImm(Op.getImm());
   else {
     assert(Op.isExpr() && "unknown pcrel immediate operand");
     // If a symbolic branch target was added as a constant expression then print
@@ -127,8 +139,7 @@ void X86IntelInstPrinter::printPCRelImm(const MCInst *MI, unsigned OpNo,
     const MCConstantExpr *BranchTarget = dyn_cast<MCConstantExpr>(Op.getExpr());
     int64_t Address;
     if (BranchTarget && BranchTarget->EvaluateAsAbsolute(Address)) {
-      O << "0x";
-      O.write_hex(Address);
+      O << formatHex((uint64_t)Address);
     }
     else {
       // Otherwise, just print the expression.
@@ -137,18 +148,13 @@ void X86IntelInstPrinter::printPCRelImm(const MCInst *MI, unsigned OpNo,
   }
 }
 
-static void PrintRegName(raw_ostream &O, StringRef RegName) {
-  for (unsigned i = 0, e = RegName.size(); i != e; ++i)
-    O << (char)toupper(RegName[i]);
-}
-
 void X86IntelInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
                                        raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isReg()) {
-    PrintRegName(O, getRegisterName(Op.getReg()));
+    printRegName(O, Op.getReg());
   } else if (Op.isImm()) {
-    O << Op.getImm();
+    O << formatImm((int64_t)Op.getImm());
   } else {
     assert(Op.isExpr() && "unknown operand kind in printOperand");
     O << *Op.getExpr();
@@ -157,15 +163,15 @@ void X86IntelInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
 
 void X86IntelInstPrinter::printMemReference(const MCInst *MI, unsigned Op,
                                             raw_ostream &O) {
-  const MCOperand &BaseReg  = MI->getOperand(Op);
-  unsigned ScaleVal         = MI->getOperand(Op+1).getImm();
-  const MCOperand &IndexReg = MI->getOperand(Op+2);
-  const MCOperand &DispSpec = MI->getOperand(Op+3);
-  const MCOperand &SegReg   = MI->getOperand(Op+4);
+  const MCOperand &BaseReg  = MI->getOperand(Op+X86::AddrBaseReg);
+  unsigned ScaleVal         = MI->getOperand(Op+X86::AddrScaleAmt).getImm();
+  const MCOperand &IndexReg = MI->getOperand(Op+X86::AddrIndexReg);
+  const MCOperand &DispSpec = MI->getOperand(Op+X86::AddrDisp);
+  const MCOperand &SegReg   = MI->getOperand(Op+X86::AddrSegmentReg);
   
   // If this has a segment register, print it.
   if (SegReg.getReg()) {
-    printOperand(MI, Op+4, O);
+    printOperand(MI, Op+X86::AddrSegmentReg, O);
     O << ':';
   }
   
@@ -173,7 +179,7 @@ void X86IntelInstPrinter::printMemReference(const MCInst *MI, unsigned Op,
   
   bool NeedPlus = false;
   if (BaseReg.getReg()) {
-    printOperand(MI, Op, O);
+    printOperand(MI, Op+X86::AddrBaseReg, O);
     NeedPlus = true;
   }
   
@@ -181,7 +187,7 @@ void X86IntelInstPrinter::printMemReference(const MCInst *MI, unsigned Op,
     if (NeedPlus) O << " + ";
     if (ScaleVal != 1)
       O << ScaleVal << '*';
-    printOperand(MI, Op+2, O);
+    printOperand(MI, Op+X86::AddrIndexReg, O);
     NeedPlus = true;
   }
 
@@ -200,9 +206,54 @@ void X86IntelInstPrinter::printMemReference(const MCInst *MI, unsigned Op,
           DispVal = -DispVal;
         }
       }
-      O << DispVal;
+      O << formatImm(DispVal);
     }
   }
   
+  O << ']';
+}
+
+void X86IntelInstPrinter::printSrcIdx(const MCInst *MI, unsigned Op,
+                                      raw_ostream &O) {
+  const MCOperand &SegReg   = MI->getOperand(Op+1);
+
+  // If this has a segment register, print it.
+  if (SegReg.getReg()) {
+    printOperand(MI, Op+1, O);
+    O << ':';
+  }
+  O << '[';
+  printOperand(MI, Op, O);
+  O << ']';
+}
+
+void X86IntelInstPrinter::printDstIdx(const MCInst *MI, unsigned Op,
+                                      raw_ostream &O) {
+  // DI accesses are always ES-based.
+  O << "es:[";
+  printOperand(MI, Op, O);
+  O << ']';
+}
+
+void X86IntelInstPrinter::printMemOffset(const MCInst *MI, unsigned Op,
+                                         raw_ostream &O) {
+  const MCOperand &DispSpec = MI->getOperand(Op);
+  const MCOperand &SegReg   = MI->getOperand(Op+1);
+
+  // If this has a segment register, print it.
+  if (SegReg.getReg()) {
+    printOperand(MI, Op+1, O);
+    O << ':';
+  }
+
+  O << '[';
+
+  if (DispSpec.isImm()) {
+    O << formatImm(DispSpec.getImm());
+  } else {
+    assert(DispSpec.isExpr() && "non-immediate displacement?");
+    O << *DispSpec.getExpr();
+  }
+
   O << ']';
 }

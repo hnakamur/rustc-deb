@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::libc;
+extern crate libc;
 
 fn main() {
-    let x : *~[int] = &~[1,2,3];
-    let y : *libc::c_void = x as *libc::c_void;
+    let x : *const Vec<isize> = &vec!(1,2,3);
+    let y : *const libc::c_void = x as *const libc::c_void;
     unsafe {
-        let _z = copy *y;
-        //~^ ERROR copying a value of non-copyable type
+        let _z = (*y).clone();
+        //~^ ERROR does not implement any method in scope
     }
 }

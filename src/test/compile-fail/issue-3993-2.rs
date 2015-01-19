@@ -8,13 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use zoo::{duck, goose}; //~ ERROR failed to resolve import
-                        //~^ ERROR unresolved import: found `goose` in `zoo` but it is private
+use zoo::bird::{duck, goose};
 
 mod zoo {
     pub enum bird {
-        pub duck,
-        priv goose
+        pub duck, //~ ERROR: unnecessary `pub` visibility
+        goose
     }
 }
 

@@ -15,7 +15,6 @@
 #ifndef LLVM_BITCODE_BITSTREAMREADER_H
 #define LLVM_BITCODE_BITSTREAMREADER_H
 
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/Bitcode/BitCodes.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/StreamableMemoryObject.h"
@@ -38,13 +37,13 @@ public:
   /// These describe abbreviations that all blocks of the specified ID inherit.
   struct BlockInfo {
     unsigned BlockID;
-    std::vector<BitCodeAbbrev*> Abbrevs;
+    std::vector<IntrusiveRefCntPtr<BitCodeAbbrev>> Abbrevs;
     std::string Name;
 
     std::vector<std::pair<unsigned, std::string> > RecordNames;
   };
 private:
-  OwningPtr<StreamableMemoryObject> BitcodeBytes;
+  std::unique_ptr<StreamableMemoryObject> BitcodeBytes;
 
   std::vector<BlockInfo> BlockInfoRecords;
 
@@ -59,13 +58,25 @@ public:
   BitstreamReader() : IgnoreBlockInfoNames(true) {
   }
 
-  BitstreamReader(const unsigned char *Start, const unsigned char *End) {
-    IgnoreBlockInfoNames = true;
+  BitstreamReader(const unsigned char *Start, const unsigned char *End)
+      : IgnoreBlockInfoNames(true) {
     init(Start, End);
   }
 
-  BitstreamReader(StreamableMemoryObject *bytes) {
+  BitstreamReader(StreamableMemoryObject *bytes) : IgnoreBlockInfoNames(true) {
     BitcodeBytes.reset(bytes);
+  }
+
+  BitstreamReader(BitstreamReader &&Other) {
+    *this = std::move(Other);
+  }
+
+  BitstreamReader &operator=(BitstreamReader &&Other) {
+    BitcodeBytes = std::move(Other.BitcodeBytes);
+    // Explicitly swap block info, so that nothing gets destroyed twice.
+    std::swap(BlockInfoRecords, Other.BlockInfoRecords);
+    IgnoreBlockInfoNames = Other.IgnoreBlockInfoNames;
+    return *this;
   }
 
   void init(const unsigned char *Start, const unsigned char *End) {
@@ -74,18 +85,6 @@ public:
   }
 
   StreamableMemoryObject &getBitcodeBytes() { return *BitcodeBytes; }
-
-  ~BitstreamReader() {
-    // Free the BlockInfoRecords.
-    while (!BlockInfoRecords.empty()) {
-      BlockInfo &Info = BlockInfoRecords.back();
-      // Free blockinfo abbrev info.
-      for (unsigned i = 0, e = static_cast<unsigned>(Info.Abbrevs.size());
-           i != e; ++i)
-        Info.Abbrevs[i]->dropRef();
-      BlockInfoRecords.pop_back();
-    }
-  }
 
   /// CollectBlockInfoNames - This is called by clients that want block/record
   /// name information.
@@ -112,7 +111,7 @@ public:
          i != e; ++i)
       if (BlockInfoRecords[i].BlockID == BlockID)
         return &BlockInfoRecords[i];
-    return 0;
+    return nullptr;
   }
 
   BlockInfo &getOrCreateBlockInfo(unsigned BlockID) {
@@ -124,9 +123,18 @@ public:
     BlockInfoRecords.back().BlockID = BlockID;
     return BlockInfoRecords.back();
   }
+
+  /// Takes block info from the other bitstream reader.
+  ///
+  /// This is a "take" operation because BlockInfo records are non-trivial, and
+  /// indeed rather expensive.
+  void takeBlockInfo(BitstreamReader &&Other) {
+    assert(!hasBlockInfoRecords());
+    BlockInfoRecords = std::move(Other.BlockInfoRecords);
+  }
 };
 
-  
+
 /// BitstreamEntry - When advancing through a bitstream cursor, each advance can
 /// discover a few different kinds of entries:
 ///   Error    - Malformed bitcode was found.
@@ -142,7 +150,7 @@ struct BitstreamEntry {
     SubBlock,
     Record
   } Kind;
-  
+
   unsigned ID;
 
   static BitstreamEntry getError() {
@@ -170,7 +178,7 @@ class BitstreamCursor {
   BitstreamReader *BitStream;
   size_t NextChar;
 
-  
+
   /// CurWord/word_t - This is the current data we have pulled from the stream
   /// but have not returned to the client.  This is specifically and
   /// intentionally defined to follow the word size of the host machine for
@@ -188,24 +196,20 @@ class BitstreamCursor {
   unsigned CurCodeSize;
 
   /// CurAbbrevs - Abbrevs installed at in this block.
-  std::vector<BitCodeAbbrev*> CurAbbrevs;
+  std::vector<IntrusiveRefCntPtr<BitCodeAbbrev>> CurAbbrevs;
 
   struct Block {
     unsigned PrevCodeSize;
-    std::vector<BitCodeAbbrev*> PrevAbbrevs;
+    std::vector<IntrusiveRefCntPtr<BitCodeAbbrev>> PrevAbbrevs;
     explicit Block(unsigned PCS) : PrevCodeSize(PCS) {}
   };
 
   /// BlockScope - This tracks the codesize of parent blocks.
   SmallVector<Block, 8> BlockScope;
 
-  
+
 public:
-  BitstreamCursor() : BitStream(0), NextChar(0) {
-  }
-  BitstreamCursor(const BitstreamCursor &RHS) : BitStream(0), NextChar(0) {
-    operator=(RHS);
-  }
+  BitstreamCursor() : BitStream(nullptr), NextChar(0) {}
 
   explicit BitstreamCursor(BitstreamReader &R) : BitStream(&R) {
     NextChar = 0;
@@ -224,14 +228,8 @@ public:
     CurCodeSize = 2;
   }
 
-  ~BitstreamCursor() {
-    freeState();
-  }
-
-  void operator=(const BitstreamCursor &RHS);
-
   void freeState();
-  
+
   bool isEndPos(size_t pos) {
     return BitStream->getBitcodeBytes().isObjectEnd(static_cast<uint64_t>(pos));
   }
@@ -244,7 +242,7 @@ public:
 
   uint32_t getWord(size_t pos) {
     uint8_t buf[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
-    BitStream->getBitcodeBytes().readBytes(pos, sizeof(buf), buf, NULL);
+    BitStream->getBitcodeBytes().readBytes(pos, sizeof(buf), buf);
     return *reinterpret_cast<support::ulittle32_t *>(buf);
   }
 
@@ -278,7 +276,7 @@ public:
     /// returned just like normal records.
     AF_DontAutoprocessAbbrevs = 2
   };
-  
+
   /// advance - Advance the current bitstream, returning the next entry in the
   /// stream.
   BitstreamEntry advance(unsigned Flags = 0) {
@@ -290,10 +288,10 @@ public:
           return BitstreamEntry::getError();
         return BitstreamEntry::getEndBlock();
       }
-      
+
       if (Code == bitc::ENTER_SUBBLOCK)
         return BitstreamEntry::getSubBlock(ReadSubBlockID());
-      
+
       if (Code == bitc::DEFINE_ABBREV &&
           !(Flags & AF_DontAutoprocessAbbrevs)) {
         // We read and accumulate abbrev's, the client can't do anything with
@@ -314,7 +312,7 @@ public:
       BitstreamEntry Entry = advance(Flags);
       if (Entry.Kind != BitstreamEntry::SubBlock)
         return Entry;
-      
+
       // If we found a sub-block, just skip over it and check the next entry.
       if (SkipBlock())
         return BitstreamEntry::getError();
@@ -345,7 +343,7 @@ public:
   uint32_t Read(unsigned NumBits) {
     assert(NumBits && NumBits <= 32 &&
            "Cannot return zero or more than 32 bits!");
-    
+
     // If the field is fully contained by CurWord, return it quickly.
     if (BitsInCurWord >= NumBits) {
       uint32_t R = uint32_t(CurWord) & (~0U >> (32-NumBits));
@@ -365,15 +363,14 @@ public:
 
     // Read the next word from the stream.
     uint8_t Array[sizeof(word_t)] = {0};
-    
-    BitStream->getBitcodeBytes().readBytes(NextChar, sizeof(Array),
-                                           Array, NULL);
-    
+
+    BitStream->getBitcodeBytes().readBytes(NextChar, sizeof(Array), Array);
+
     // Handle big-endian byte-swapping if necessary.
     support::detail::packed_endian_specific_integral
       <word_t, support::little, support::unaligned> EndianValue;
     memcpy(&EndianValue, Array, sizeof(Array));
-    
+
     CurWord = EndianValue;
 
     NextChar += sizeof(word_t);
@@ -450,7 +447,7 @@ private:
       BitsInCurWord = 32;
       return;
     }
-    
+
     BitsInCurWord = 0;
     CurWord = 0;
   }
@@ -492,8 +489,8 @@ public:
 
   /// EnterSubBlock - Having read the ENTER_SUBBLOCK abbrevid, enter
   /// the block, and return true if the block has an error.
-  bool EnterSubBlock(unsigned BlockID, unsigned *NumWordsP = 0);
-  
+  bool EnterSubBlock(unsigned BlockID, unsigned *NumWordsP = nullptr);
+
   bool ReadBlockEnd() {
     if (BlockScope.empty()) return true;
 
@@ -510,12 +507,7 @@ private:
   void popBlockScope() {
     CurCodeSize = BlockScope.back().PrevCodeSize;
 
-    // Delete abbrevs from popped scope.
-    for (unsigned i = 0, e = static_cast<unsigned>(CurAbbrevs.size());
-         i != e; ++i)
-      CurAbbrevs[i]->dropRef();
-
-    BlockScope.back().PrevAbbrevs.swap(CurAbbrevs);
+    CurAbbrevs = std::move(BlockScope.back().PrevAbbrevs);
     BlockScope.pop_back();
   }
 
@@ -529,27 +521,27 @@ private:
   void readAbbreviatedField(const BitCodeAbbrevOp &Op,
                             SmallVectorImpl<uint64_t> &Vals);
   void skipAbbreviatedField(const BitCodeAbbrevOp &Op);
-  
+
 public:
 
   /// getAbbrev - Return the abbreviation for the specified AbbrevId.
   const BitCodeAbbrev *getAbbrev(unsigned AbbrevID) {
     unsigned AbbrevNo = AbbrevID-bitc::FIRST_APPLICATION_ABBREV;
     assert(AbbrevNo < CurAbbrevs.size() && "Invalid abbrev #!");
-    return CurAbbrevs[AbbrevNo];
+    return CurAbbrevs[AbbrevNo].get();
   }
 
   /// skipRecord - Read the current record and discard it.
   void skipRecord(unsigned AbbrevID);
-  
+
   unsigned readRecord(unsigned AbbrevID, SmallVectorImpl<uint64_t> &Vals,
-                      StringRef *Blob = 0);
+                      StringRef *Blob = nullptr);
 
   //===--------------------------------------------------------------------===//
   // Abbrev Processing
   //===--------------------------------------------------------------------===//
   void ReadAbbrevRecord();
-  
+
   bool ReadBlockInfoBlock();
 };
 

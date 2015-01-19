@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,18 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
-
-fn iter_vec<T>(v: ~[T], f: &fn(&T)) { for v.iter().advance |x| { f(x); } }
+fn iter_vec<T, F>(v: Vec<T>, mut f: F) where F: FnMut(&T) { for x in v.iter() { f(x); } }
 
 pub fn main() {
-    let v = ~[1, 2, 3, 4, 5];
+    let v = vec!(1i, 2, 3, 4, 5);
     let mut sum = 0;
     iter_vec(v.clone(), |i| {
         iter_vec(v.clone(), |j| {
             sum += *i * *j;
         });
     });
-    error!(sum);
+    println!("{}", sum);
     assert_eq!(sum, 225);
 }

@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,23 +8,29 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
 struct Point {
-    x: float,
-    y: float,
+    x: f64,
+    y: f64,
 }
 
-impl ToStr for Point { //~ ERROR implements a method not defined in the trait
-    fn new(x: float, y: float) -> Point {
+trait ToString_ {
+    fn to_string(&self) -> String;
+}
+
+impl ToString_ for Point {
+    fn new(x: f64, y: f64) -> Point {
+    //~^ ERROR method `new` is not a member of trait `ToString_`
         Point { x: x, y: y }
     }
 
-    fn to_str(&self) -> ~str {
-        fmt!("(%f, %f)", self.x, self.y)
+    fn to_string(&self) -> String {
+        format!("({}, {})", self.x, self.y)
     }
 }
 
 fn main() {
-    let p = Point::new(0.0f, 0.0f);
-    io::println(p.to_str());
+    let p = Point::new(0.0, 0.0);
+    //~^ ERROR unresolved name `Point::new`
+    //~^^ ERROR failed to resolve. Use of undeclared type or module `Point`
+    println!("{}", p.to_string());
 }

@@ -8,31 +8,33 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(unsafe_destructor)]
+
+use std::cell::Cell;
+
 // Make sure that destructors get run on slice literals
-struct foo {
-    x: @mut int,
+struct foo<'a> {
+    x: &'a Cell<int>,
 }
 
 #[unsafe_destructor]
-impl Drop for foo {
-    fn drop(&self) {
-        unsafe {
-            *self.x += 1;
-        }
+impl<'a> Drop for foo<'a> {
+    fn drop(&mut self) {
+        self.x.set(self.x.get() + 1);
     }
 }
 
-fn foo(x: @mut int) -> foo {
+fn foo(x: &Cell<int>) -> foo {
     foo {
         x: x
     }
 }
 
 pub fn main() {
-    let x = @mut 0;
+    let x = &Cell::new(0);
     {
         let l = &[foo(x)];
-        assert_eq!(*l[0].x, 0);
+        assert_eq!(l[0].x.get(), 0);
     }
-    assert_eq!(*x, 1);
+    assert_eq!(x.get(), 1);
 }

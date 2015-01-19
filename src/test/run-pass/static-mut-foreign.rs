@@ -12,12 +12,12 @@
 // statics cannot. This ensures that there's some form of error if this is
 // attempted.
 
-use std::libc;
+extern crate libc;
 
-#[nolink]
+#[link(name = "rust_test_helpers")]
 extern {
-    static mut debug_static_mut: libc::c_int;
-    pub fn debug_static_mut_check_four();
+    static mut rust_dbg_static_mut: libc::c_int;
+    pub fn rust_dbg_static_mut_check_four();
 }
 
 unsafe fn static_bound(_: &'static libc::c_int) {}
@@ -27,18 +27,18 @@ fn static_bound_set(a: &'static mut libc::c_int) {
 }
 
 unsafe fn run() {
-    assert!(debug_static_mut == 3);
-    debug_static_mut = 4;
-    assert!(debug_static_mut == 4);
-    debug_static_mut_check_four();
-    debug_static_mut += 1;
-    assert!(debug_static_mut == 5);
-    debug_static_mut *= 3;
-    assert!(debug_static_mut == 15);
-    debug_static_mut = -3;
-    assert!(debug_static_mut == -3);
-    static_bound(&debug_static_mut);
-    static_bound_set(&mut debug_static_mut);
+    assert!(rust_dbg_static_mut == 3);
+    rust_dbg_static_mut = 4;
+    assert!(rust_dbg_static_mut == 4);
+    rust_dbg_static_mut_check_four();
+    rust_dbg_static_mut += 1;
+    assert!(rust_dbg_static_mut == 5);
+    rust_dbg_static_mut *= 3;
+    assert!(rust_dbg_static_mut == 15);
+    rust_dbg_static_mut = -3;
+    assert!(rust_dbg_static_mut == -3);
+    static_bound(&rust_dbg_static_mut);
+    static_bound_set(&mut rust_dbg_static_mut);
 }
 
 pub fn main() {

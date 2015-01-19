@@ -21,31 +21,37 @@
 #include "llvm/Transforms/Scalar.h"
 
 using namespace llvm;
+
+namespace llvm {
+  void initializeHexagonRemoveExtendArgsPass(PassRegistry&);
+}
+
 namespace {
   struct HexagonRemoveExtendArgs : public FunctionPass {
   public:
     static char ID;
-    HexagonRemoveExtendArgs() : FunctionPass(ID) {}
-    virtual bool runOnFunction(Function &F);
+    HexagonRemoveExtendArgs() : FunctionPass(ID) {
+      initializeHexagonRemoveExtendArgsPass(*PassRegistry::getPassRegistry());
+    }
+    bool runOnFunction(Function &F) override;
 
-    const char *getPassName() const {
+    const char *getPassName() const override {
       return "Remove sign extends";
     }
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.addRequired<MachineFunctionAnalysis>();
       AU.addPreserved<MachineFunctionAnalysis>();
+      AU.addPreserved("stack-protector");
       FunctionPass::getAnalysisUsage(AU);
     }
   };
 }
 
 char HexagonRemoveExtendArgs::ID = 0;
-RegisterPass<HexagonRemoveExtendArgs> X("reargs",
-                                        "Remove Sign and Zero Extends for Args"
-                                        );
 
-
+INITIALIZE_PASS(HexagonRemoveExtendArgs, "reargs",
+                "Remove Sign and Zero Extends for Args", false, false)
 
 bool HexagonRemoveExtendArgs::runOnFunction(Function &F) {
   unsigned Idx = 1;
@@ -54,18 +60,17 @@ bool HexagonRemoveExtendArgs::runOnFunction(Function &F) {
     if (F.getAttributes().hasAttribute(Idx, Attribute::SExt)) {
       Argument* Arg = AI;
       if (!isa<PointerType>(Arg->getType())) {
-        for (Instruction::use_iterator UI = Arg->use_begin();
-             UI != Arg->use_end();) {
+        for (auto UI = Arg->user_begin(); UI != Arg->user_end();) {
           if (isa<SExtInst>(*UI)) {
-            Instruction* Use = cast<Instruction>(*UI);
-            SExtInst* SI = new SExtInst(Arg, Use->getType());
+            Instruction* I = cast<Instruction>(*UI);
+            SExtInst* SI = new SExtInst(Arg, I->getType());
             assert (EVT::getEVT(SI->getType()) ==
-                    (EVT::getEVT(Use->getType())));
+                    (EVT::getEVT(I->getType())));
             ++UI;
-            Use->replaceAllUsesWith(SI);
+            I->replaceAllUsesWith(SI);
             Instruction* First = F.getEntryBlock().begin();
             SI->insertBefore(First);
-            Use->eraseFromParent();
+            I->eraseFromParent();
           } else {
             ++UI;
           }
@@ -78,6 +83,7 @@ bool HexagonRemoveExtendArgs::runOnFunction(Function &F) {
 
 
 
-FunctionPass *llvm::createHexagonRemoveExtendOps(HexagonTargetMachine &TM) {
+FunctionPass*
+llvm::createHexagonRemoveExtendArgs(const HexagonTargetMachine &TM) {
   return new HexagonRemoveExtendArgs();
 }

@@ -10,4 +10,8 @@
 
 
 
-pub fn main() { if false { error!(~"foo" + ~"bar"); } }
+pub fn main() {
+    if false {
+        println!("{}", "foobar");
+    }
+}

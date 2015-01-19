@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
+
 fn main() {
-let x = Some(~1);
-match x {
-  Some(ref y) => {
-    let _b = *y; //~ ERROR cannot move out
-  }
-  _ => {}
-}
+    let x = Some(box 1is);
+    match x {
+      Some(ref y) => {
+        let _b = *y; //~ ERROR cannot move out
+      }
+      _ => {}
+    }
 }

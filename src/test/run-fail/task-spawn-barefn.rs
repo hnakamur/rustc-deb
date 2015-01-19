@@ -8,17 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern:Ensure that the child task runs by failing
+// error-pattern:Ensure that the child task runs by panicking
 
-use std::str;
-use std::task;
+use std::thread::Thread;
 
 fn main() {
     // the purpose of this test is to make sure that task::spawn()
     // works when provided with a bare function:
-    task::spawn(startfn);
+    let r = Thread::scoped(startfn).join();
+    if r.is_err() {
+        panic!()
+    }
 }
 
 fn startfn() {
-    assert!("Ensure that the child task runs by failing".is_empty());
+    assert!("Ensure that the child task runs by panicking".is_empty());
 }

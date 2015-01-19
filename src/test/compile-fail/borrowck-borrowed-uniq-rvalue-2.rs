@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct defer<'self> {
-    x: &'self [&'self str],
+#![feature(unsafe_destructor)]
+
+struct defer<'a> {
+    x: &'a [&'a str],
 }
 
 #[unsafe_destructor]
-impl<'self> Drop for defer<'self> {
-    fn drop(&self) {
+impl<'a> Drop for defer<'a> {
+    fn drop(&mut self) {
         unsafe {
-            error!("%?", self.x);
+            println!("{:?}", self.x);
         }
     }
 }
@@ -28,6 +30,7 @@ fn defer<'r>(x: &'r [&'r str]) -> defer<'r> {
 }
 
 fn main() {
-    let x = defer(~["Goodbye", "world!"]); //~ ERROR borrowed value does not live long enough
+    let x = defer(vec!("Goodbye", "world!").as_slice());
+    //~^ ERROR borrowed value does not live long enough
     x.x[0];
 }

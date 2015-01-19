@@ -11,50 +11,58 @@
 enum t { a, b, }
 
 fn main() {
-    let x = a;
-    match x { b => { } } //~ ERROR non-exhaustive patterns
-    match true { //~ ERROR non-exhaustive patterns
+    let x = t::a;
+    match x { t::b => { } } //~ ERROR non-exhaustive patterns: `a` not covered
+    match true { //~ ERROR non-exhaustive patterns: `false` not covered
       true => {}
     }
-    match @Some(10) { //~ ERROR non-exhaustive patterns
-      @None => {}
+    match Some(10is) { //~ ERROR non-exhaustive patterns: `Some(_)` not covered
+      None => {}
     }
-    match (2, 3, 4) { //~ ERROR non-exhaustive patterns
+    match (2is, 3is, 4is) { //~ ERROR non-exhaustive patterns: `(_, _, _)` not covered
       (_, _, 4) => {}
     }
-    match (a, a) { //~ ERROR non-exhaustive patterns
-      (a, b) => {}
-      (b, a) => {}
+    match (t::a, t::a) { //~ ERROR non-exhaustive patterns: `(a, a)` not covered
+      (t::a, t::b) => {}
+      (t::b, t::a) => {}
     }
-    match a { //~ ERROR b not covered
-      a => {}
+    match t::a { //~ ERROR non-exhaustive patterns: `b` not covered
+      t::a => {}
     }
     // This is exhaustive, though the algorithm got it wrong at one point
-    match (a, b) {
-      (a, _) => {}
-      (_, a) => {}
-      (b, b) => {}
+    match (t::a, t::b) {
+      (t::a, _) => {}
+      (_, t::a) => {}
+      (t::b, t::b) => {}
     }
-    match ~[Some(42), None, Some(21)] { //~ ERROR non-exhaustive patterns: vectors of length 0 not covered
-        [Some(*), None, ..tail] => {}
-        [Some(*), Some(*), ..tail] => {}
+    let vec = vec!(Some(42is), None, Some(21is));
+    let vec: &[Option<isize>] = vec.as_slice();
+    match vec { //~ ERROR non-exhaustive patterns: `[]` not covered
+        [Some(..), None, tail..] => {}
+        [Some(..), Some(..), tail..] => {}
         [None] => {}
     }
-    match ~[1] {
-        [_, ..tail] => (),
+    let vec = vec!(1is);
+    let vec: &[isize] = vec.as_slice();
+    match vec {
+        [_, tail..] => (),
         [] => ()
     }
-    match ~[0.5] { //~ ERROR non-exhaustive patterns: vectors of length 4 not covered
+    let vec = vec!(0.5f32);
+    let vec: &[f32] = vec.as_slice();
+    match vec { //~ ERROR non-exhaustive patterns: `[_, _, _, _]` not covered
         [0.1, 0.2, 0.3] => (),
         [0.1, 0.2] => (),
         [0.1] => (),
         [] => ()
     }
-    match ~[Some(42), None, Some(21)] {
-        [Some(*), None, ..tail] => {}
-        [Some(*), Some(*), ..tail] => {}
-        [None, None, ..tail] => {}
-        [None, Some(*), ..tail] => {}
+    let vec = vec!(Some(42is), None, Some(21is));
+    let vec: &[Option<isize>] = vec.as_slice();
+    match vec {
+        [Some(..), None, tail..] => {}
+        [Some(..), Some(..), tail..] => {}
+        [None, None, tail..] => {}
+        [None, Some(..), tail..] => {}
         [Some(_)] => {}
         [None] => {}
         [] => {}

@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
+
 struct HTMLImageData {
-    image: Option<~str>
+    image: Option<String>
 }
 
 struct ElementData {
-    kind: ~ElementKind
+    kind: Box<ElementKind>
 }
 
 enum ElementKind {
@@ -25,18 +27,18 @@ enum NodeKind {
 }
 
 struct NodeData {
-    kind: ~NodeKind
+    kind: Box<NodeKind>,
 }
 
 fn main() {
     let mut id = HTMLImageData { image: None };
-    let ed = ElementData { kind: ~HTMLImageElement(id) };
-    let n = NodeData {kind : ~Element(ed)};
+    let ed = ElementData { kind: box ElementKind::HTMLImageElement(id) };
+    let n = NodeData {kind : box NodeKind::Element(ed)};
     // n.b. span could be better
     match n.kind {
-        ~Element(ed) => match ed.kind { //~ ERROR non-exhaustive patterns
-            ~HTMLImageElement(ref d) if d.image.is_some() => { true }
+        box NodeKind::Element(ed) => match ed.kind { //~ ERROR non-exhaustive patterns
+            box ElementKind::HTMLImageElement(ref d) if d.image.is_some() => { true }
         },
-        _ => fail!("WAT") //~ ERROR unreachable pattern
+        _ => panic!("WAT") //~ ERROR unreachable pattern
     };
 }

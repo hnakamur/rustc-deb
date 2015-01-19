@@ -10,15 +10,13 @@
 
 // Tests that auto-ref can't create mutable aliases to immutable memory.
 
-use std::io;
-
 struct Foo {
-    x: int
+    x: isize
 }
 
 impl Foo {
     pub fn printme(&mut self) {
-        io::println(fmt!("%d", self.x));
+        println!("{}", self.x);
     }
 }
 

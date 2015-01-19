@@ -8,14 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 struct Point {x: int, y: int}
 
-fn x_coord<'r>(p: &'r Point) -> &'r int {
+fn x_coord(p: &Point) -> &int {
     return &p.x;
 }
 
 pub fn main() {
-    let p = @Point {x: 3, y: 4};
-    let xc = x_coord(p);
+    let p = box Point {x: 3, y: 4};
+    let xc = x_coord(&*p);
     assert_eq!(*xc, 3);
 }

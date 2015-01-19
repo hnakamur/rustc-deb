@@ -46,7 +46,7 @@ class ImmPredicateSet {
   DenseMap<TreePattern *, unsigned> ImmIDs;
   std::vector<TreePredicateFn> PredsByName;
 public:
-  
+
   unsigned getIDFor(TreePredicateFn Pred) {
     unsigned &Entry = ImmIDs[Pred.getOrigPatFragRecord()];
     if (Entry == 0) {
@@ -55,16 +55,16 @@ public:
     }
     return Entry-1;
   }
-  
+
   const TreePredicateFn &getPredicate(unsigned i) {
     assert(i < PredsByName.size());
     return PredsByName[i];
   }
-  
+
   typedef std::vector<TreePredicateFn>::const_iterator iterator;
   iterator begin() const { return PredsByName.begin(); }
   iterator end() const { return PredsByName.end(); }
-  
+
 };
 } // End anonymous namespace
 
@@ -77,9 +77,9 @@ struct OperandsSignature {
     enum { OK_Reg, OK_FP, OK_Imm, OK_Invalid = -1 };
     char Repr;
   public:
-    
+
     OpKind() : Repr(OK_Invalid) {}
-    
+
     bool operator<(OpKind RHS) const { return Repr < RHS.Repr; }
     bool operator==(OpKind RHS) const { return Repr == RHS.Repr; }
 
@@ -90,13 +90,13 @@ struct OperandsSignature {
              "Too many integer predicates for the 'Repr' char");
       OpKind K; K.Repr = OK_Imm+V; return K;
     }
-    
+
     bool isReg() const { return Repr == OK_Reg; }
     bool isFP() const  { return Repr == OK_FP; }
     bool isImm() const { return Repr >= OK_Imm; }
-    
+
     unsigned getImmCode() const { assert(isImm()); return Repr-OK_Imm; }
-    
+
     void printManglingSuffix(raw_ostream &OS, ImmPredicateSet &ImmPredicates,
                              bool StripImmCodes) const {
       if (isReg())
@@ -111,8 +111,8 @@ struct OperandsSignature {
       }
     }
   };
-  
-  
+
+
   SmallVector<OpKind, 3> Operands;
 
   bool operator<(const OperandsSignature &O) const {
@@ -130,7 +130,7 @@ struct OperandsSignature {
         return true;
     return false;
   }
-  
+
   /// getWithoutImmCodes - Return a copy of this with any immediate codes forced
   /// to zero.
   OperandsSignature getWithoutImmCodes() const {
@@ -142,52 +142,53 @@ struct OperandsSignature {
         Result.Operands.push_back(OpKind::getImm(0));
     return Result;
   }
-  
+
   void emitImmediatePredicate(raw_ostream &OS, ImmPredicateSet &ImmPredicates) {
     bool EmittedAnything = false;
     for (unsigned i = 0, e = Operands.size(); i != e; ++i) {
       if (!Operands[i].isImm()) continue;
-      
+
       unsigned Code = Operands[i].getImmCode();
       if (Code == 0) continue;
-      
+
       if (EmittedAnything)
         OS << " &&\n        ";
-      
+
       TreePredicateFn PredFn = ImmPredicates.getPredicate(Code-1);
-      
+
       // Emit the type check.
       OS << "VT == "
          << getEnumName(PredFn.getOrigPatFragRecord()->getTree(0)->getType(0))
          << " && ";
-      
-      
+
+
       OS << PredFn.getFnName() << "(imm" << i <<')';
       EmittedAnything = true;
     }
   }
-  
+
   /// initialize - Examine the given pattern and initialize the contents
   /// of the Operands array accordingly. Return true if all the operands
   /// are supported, false otherwise.
   ///
   bool initialize(TreePatternNode *InstPatNode, const CodeGenTarget &Target,
                   MVT::SimpleValueType VT,
-                  ImmPredicateSet &ImmediatePredicates) {
+                  ImmPredicateSet &ImmediatePredicates,
+                  const CodeGenRegisterClass *OrigDstRC) {
     if (InstPatNode->isLeaf())
       return false;
-    
+
     if (InstPatNode->getOperator()->getName() == "imm") {
       Operands.push_back(OpKind::getImm(0));
       return true;
     }
-    
+
     if (InstPatNode->getOperator()->getName() == "fpimm") {
       Operands.push_back(OpKind::getFP());
       return true;
     }
 
-    const CodeGenRegisterClass *DstRC = 0;
+    const CodeGenRegisterClass *DstRC = nullptr;
 
     for (unsigned i = 0, e = InstPatNode->getNumChildren(); i != e; ++i) {
       TreePatternNode *Op = InstPatNode->getChild(i);
@@ -210,19 +211,19 @@ struct OperandsSignature {
           Record *Rec = PredFn.getOrigPatFragRecord()->getRecord();
           if (Rec->getValueAsBit("FastIselShouldIgnore"))
             return false;
-        
+
           PredNo = ImmediatePredicates.getIDFor(PredFn)+1;
         }
-        
+
         // Handle unmatched immediate sizes here.
         //if (Op->getType(0) != VT)
         //  return false;
-        
+
         Operands.push_back(OpKind::getImm(PredNo));
         continue;
       }
 
-      
+
       // For now, filter out any operand with a predicate.
       // For now, filter out any operand with multiple values.
       if (!Op->getPredicateFns().empty() || Op->getNumTypes() != 1)
@@ -236,7 +237,7 @@ struct OperandsSignature {
         // For now, ignore other non-leaf nodes.
         return false;
       }
-      
+
       assert(Op->hasTypeSet(0) && "Type infererence not done?");
 
       // For now, all the operands must have the same type (if they aren't
@@ -249,16 +250,18 @@ struct OperandsSignature {
       if (!OpDI)
         return false;
       Record *OpLeafRec = OpDI->getDef();
-      
+
       // For now, the only other thing we accept is register operands.
-      const CodeGenRegisterClass *RC = 0;
+      const CodeGenRegisterClass *RC = nullptr;
       if (OpLeafRec->isSubClassOf("RegisterOperand"))
         OpLeafRec = OpLeafRec->getValueAsDef("RegClass");
       if (OpLeafRec->isSubClassOf("RegisterClass"))
         RC = &Target.getRegisterClass(OpLeafRec);
       else if (OpLeafRec->isSubClassOf("Register"))
         RC = Target.getRegBank().getRegClassForRegister(OpLeafRec);
-      else
+      else if (OpLeafRec->isSubClassOf("ValueType")) {
+        RC = OrigDstRC;
+      } else
         return false;
 
       // For now, this needs to be a register class of some sort.
@@ -344,7 +347,7 @@ struct OperandsSignature {
         // Implicit physical register operand. e.g. Instruction::Mul expect to
         // select to a binary op. On x86, mul may take a single operand with
         // the other operand being implicit. We must emit something that looks
-        // like a binary instruction except for the very inner FastEmitInst_*
+        // like a binary instruction except for the very inner fastEmitInst_*
         // call.
         continue;
       Operands[i].printManglingSuffix(OS, ImmPredicates, StripImmCodes);
@@ -372,7 +375,7 @@ class FastISelMap {
 
   std::map<OperandsSignature, std::vector<OperandsSignature> >
     SignaturesWithConstantForms;
-  
+
   std::string InstNS;
   ImmPredicateSet ImmediatePredicates;
 public:
@@ -456,7 +459,7 @@ void FastISelMap::collectPatterns(CodeGenDAGPatterns &CGP) {
 
     // For now, ignore instructions where the first operand is not an
     // output register.
-    const CodeGenRegisterClass *DstRC = 0;
+    const CodeGenRegisterClass *DstRC = nullptr;
     std::string SubRegNo;
     if (Op->getName() != "EXTRACT_SUBREG") {
       Record *Op0Rec = II.Operands[0].Rec;
@@ -503,7 +506,8 @@ void FastISelMap::collectPatterns(CodeGenDAGPatterns &CGP) {
 
     // Check all the operands.
     OperandsSignature Operands;
-    if (!Operands.initialize(InstPatNode, Target, VT, ImmediatePredicates))
+    if (!Operands.initialize(InstPatNode, Target, VT, ImmediatePredicates,
+                             DstRC))
       continue;
 
     std::vector<std::string>* PhysRegInputs = new std::vector<std::string>();
@@ -547,13 +551,13 @@ void FastISelMap::collectPatterns(CodeGenDAGPatterns &CGP) {
       SubRegNo,
       PhysRegInputs
     };
-    
+
     if (SimplePatterns[Operands][OpcodeName][VT][RetVT].count(PredicateCheck))
       PrintFatalError(Pattern.getSrcRecord()->getLoc(),
                     "Duplicate record in FastISel table!");
 
     SimplePatterns[Operands][OpcodeName][VT][RetVT][PredicateCheck] = Memo;
-    
+
     // If any of the operands were immediates with predicates on them, strip
     // them down to a signature that doesn't have predicates so that we can
     // associate them with the stripped predicate version.
@@ -567,14 +571,14 @@ void FastISelMap::collectPatterns(CodeGenDAGPatterns &CGP) {
 void FastISelMap::printImmediatePredicates(raw_ostream &OS) {
   if (ImmediatePredicates.begin() == ImmediatePredicates.end())
     return;
-  
+
   OS << "\n// FastEmit Immediate Predicate functions.\n";
   for (ImmPredicateSet::iterator I = ImmediatePredicates.begin(),
        E = ImmediatePredicates.end(); I != E; ++I) {
     OS << "static bool " << I->getFnName() << "(int64_t Imm) {\n";
     OS << I->getImmediatePredicateCode() << "\n}\n";
   }
-  
+
   OS << "\n\n";
 }
 
@@ -606,7 +610,7 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
             const PredMap &PM = RI->second;
             bool HasPred = false;
 
-            OS << "unsigned FastEmit_"
+            OS << "unsigned fastEmit_"
                << getLegalCName(Opcode)
                << "_" << getLegalCName(getName(VT))
                << "_" << getLegalCName(getName(RetVT)) << "_";
@@ -634,12 +638,12 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
 
               for (unsigned i = 0; i < Memo.PhysRegs->size(); ++i) {
                 if ((*Memo.PhysRegs)[i] != "")
-                  OS << "  BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, "
+                  OS << "  BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, "
                      << "TII.get(TargetOpcode::COPY), "
                      << (*Memo.PhysRegs)[i] << ").addReg(Op" << i << ");\n";
               }
 
-              OS << "  return FastEmitInst_";
+              OS << "  return fastEmitInst_";
               if (Memo.SubRegNo.empty()) {
                 Operands.PrintManglingSuffix(OS, *Memo.PhysRegs,
                                              ImmediatePredicates, true);
@@ -666,7 +670,7 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
           }
 
           // Emit one function for the type that demultiplexes on return type.
-          OS << "unsigned FastEmit_"
+          OS << "unsigned fastEmit_"
              << getLegalCName(Opcode) << "_"
              << getLegalCName(getName(VT)) << "_";
           Operands.PrintManglingSuffix(OS, ImmediatePredicates);
@@ -678,7 +682,7 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
           for (RetPredMap::const_iterator RI = RM.begin(), RE = RM.end();
                RI != RE; ++RI) {
             MVT::SimpleValueType RetVT = RI->first;
-            OS << "  case " << getName(RetVT) << ": return FastEmit_"
+            OS << "  case " << getName(RetVT) << ": return fastEmit_"
                << getLegalCName(Opcode) << "_" << getLegalCName(getName(VT))
                << "_" << getLegalCName(getName(RetVT)) << "_";
             Operands.PrintManglingSuffix(OS, ImmediatePredicates);
@@ -690,7 +694,7 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
 
         } else {
           // Non-variadic return type.
-          OS << "unsigned FastEmit_"
+          OS << "unsigned fastEmit_"
              << getLegalCName(Opcode) << "_"
              << getLegalCName(getName(VT)) << "_";
           Operands.PrintManglingSuffix(OS, ImmediatePredicates);
@@ -725,12 +729,12 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
 
             for (unsigned i = 0; i < Memo.PhysRegs->size(); ++i) {
               if ((*Memo.PhysRegs)[i] != "")
-                OS << "  BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, "
+                OS << "  BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, "
                    << "TII.get(TargetOpcode::COPY), "
                    << (*Memo.PhysRegs)[i] << ").addReg(Op" << i << ");\n";
             }
 
-            OS << "  return FastEmitInst_";
+            OS << "  return fastEmitInst_";
 
             if (Memo.SubRegNo.empty()) {
               Operands.PrintManglingSuffix(OS, *Memo.PhysRegs,
@@ -760,7 +764,7 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
       }
 
       // Emit one function for the opcode that demultiplexes based on the type.
-      OS << "unsigned FastEmit_"
+      OS << "unsigned fastEmit_"
          << getLegalCName(Opcode) << "_";
       Operands.PrintManglingSuffix(OS, ImmediatePredicates);
       OS << "(MVT VT, MVT RetVT";
@@ -773,7 +777,7 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
            TI != TE; ++TI) {
         MVT::SimpleValueType VT = TI->first;
         std::string TypeName = getName(VT);
-        OS << "  case " << TypeName << ": return FastEmit_"
+        OS << "  case " << TypeName << ": return fastEmit_"
            << getLegalCName(Opcode) << "_" << getLegalCName(TypeName) << "_";
         Operands.PrintManglingSuffix(OS, ImmediatePredicates);
         OS << "(RetVT";
@@ -793,18 +797,18 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
 
     // Emit one function for the operand signature that demultiplexes based
     // on opcode and type.
-    OS << "unsigned FastEmit_";
+    OS << "unsigned fastEmit_";
     Operands.PrintManglingSuffix(OS, ImmediatePredicates);
     OS << "(MVT VT, MVT RetVT, unsigned Opcode";
     if (!Operands.empty())
       OS << ", ";
     Operands.PrintParameters(OS);
     OS << ") {\n";
-    
-    // If there are any forms of this signature available that operand on
-    // constrained forms of the immediate (e.g. 32-bit sext immediate in a
+
+    // If there are any forms of this signature available that operate on
+    // constrained forms of the immediate (e.g., 32-bit sext immediate in a
     // 64-bit operand), check them first.
-    
+
     std::map<OperandsSignature, std::vector<OperandsSignature> >::iterator MI
       = SignaturesWithConstantForms.find(Operands);
     if (MI != SignaturesWithConstantForms.end()) {
@@ -812,14 +816,14 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
       std::sort(MI->second.begin(), MI->second.end());
       MI->second.erase(std::unique(MI->second.begin(), MI->second.end()),
                        MI->second.end());
-      
+
       // Check each in order it was seen.  It would be nice to have a good
       // relative ordering between them, but we're not going for optimality
       // here.
       for (unsigned i = 0, e = MI->second.size(); i != e; ++i) {
         OS << "  if (";
         MI->second[i].emitImmediatePredicate(OS, ImmediatePredicates);
-        OS << ")\n    if (unsigned Reg = FastEmit_";
+        OS << ")\n    if (unsigned Reg = fastEmit_";
         MI->second[i].PrintManglingSuffix(OS, ImmediatePredicates);
         OS << "(VT, RetVT, Opcode";
         if (!MI->second[i].empty())
@@ -827,17 +831,17 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
         MI->second[i].PrintArguments(OS);
         OS << "))\n      return Reg;\n\n";
       }
-      
+
       // Done with this, remove it.
       SignaturesWithConstantForms.erase(MI);
     }
-    
+
     OS << "  switch (Opcode) {\n";
     for (OpcodeTypeRetPredMap::const_iterator I = OTM.begin(), E = OTM.end();
          I != E; ++I) {
       const std::string &Opcode = I->first;
 
-      OS << "  case " << Opcode << ": return FastEmit_"
+      OS << "  case " << Opcode << ": return fastEmit_"
          << getLegalCName(Opcode) << "_";
       Operands.PrintManglingSuffix(OS, ImmediatePredicates);
       OS << "(VT, RetVT";
@@ -851,7 +855,7 @@ void FastISelMap::printFunctionDefinitions(raw_ostream &OS) {
     OS << "}\n";
     OS << "\n";
   }
-  
+
   // TODO: SignaturesWithConstantForms should be empty here.
 }
 

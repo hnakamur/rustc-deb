@@ -9,9 +9,9 @@
 // except according to those terms.
 
 mod a {
-    priv fn f() {}
+    fn f() {}
 }
 
 fn main() {
-    a::f(); //~ ERROR unresolved name
+    a::f(); //~ ERROR function `f` is private
 }

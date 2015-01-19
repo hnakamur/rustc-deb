@@ -1,4 +1,8 @@
-set(LLVM_LINK_COMPONENTS support asmparser bitreader)
+set(LLVM_LINK_COMPONENTS
+  Core
+  IRReader
+  Support
+  )
 
 add_llvm_tool(llvm-diff
   llvm-diff.cpp

@@ -10,11 +10,11 @@
 
 mod a {
     pub struct Foo {
-        x: int
+        pub x: isize
     }
 
     impl Foo {
-        priv fn foo(&self) {}
+        fn foo(&self) {}
     }
 }
 

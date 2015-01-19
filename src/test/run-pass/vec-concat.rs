@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -9,11 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::vec;
+
 pub fn main() {
-    let a: ~[int] = ~[1, 2, 3, 4, 5];
-    let b: ~[int] = ~[6, 7, 8, 9, 0];
-    let v: ~[int] = a + b;
-    debug!(v[9]);
+    let a: Vec<int> = vec!(1, 2, 3, 4, 5);
+    let b: Vec<int> = vec!(6, 7, 8, 9, 0);
+    let mut v: Vec<int> = a;
+    v.push_all(b.as_slice());
+    println!("{}", v[9]);
     assert_eq!(v[0], 1);
     assert_eq!(v[7], 8);
     assert_eq!(v[9], 0);

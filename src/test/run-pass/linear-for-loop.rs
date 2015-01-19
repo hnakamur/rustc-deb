@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// no-pretty-expanded FIXME #15189
+
 pub fn main() {
-    let x = ~[1, 2, 3];
-    let mut y = 0;
-    for x.iter().advance |i| { debug!(*i); y += *i; }
-    debug!(y);
+    let x = vec!(1i, 2i, 3i);
+    let mut y = 0i;
+    for i in x.iter() { println!("{}", *i); y += *i; }
+    println!("{}", y);
     assert_eq!(y, 6);
-    let s = ~"hello there";
+    let s = "hello there".to_string();
     let mut i: int = 0;
-    for s.bytes_iter().advance |c| {
+    for c in s.as_slice().bytes() {
         if i == 0 { assert!((c == 'h' as u8)); }
         if i == 1 { assert!((c == 'e' as u8)); }
         if i == 2 { assert!((c == 'l' as u8)); }
@@ -25,8 +27,8 @@ pub fn main() {
         // ...
 
         i += 1;
-        debug!(i);
-        debug!(c);
+        println!("{}", i);
+        println!("{}", c);
     }
     assert_eq!(i, 11);
 }

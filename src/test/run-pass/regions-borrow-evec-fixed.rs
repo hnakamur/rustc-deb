@@ -8,13 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
-
 fn foo(x: &[int]) -> int {
     x[0]
 }
 
 pub fn main() {
-    let p = [1,2,3,4,5];
+    let p = &[1,2,3,4,5];
     assert_eq!(foo(p), 1);
 }

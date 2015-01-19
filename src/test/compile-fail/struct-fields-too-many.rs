@@ -9,12 +9,12 @@
 // except according to those terms.
 
 struct BuildData {
-    foo: int,
+    foo: isize,
 }
 
 fn main() {
     let foo = BuildData {
         foo: 0,
-        bar: 0 //~ ERROR structure has no field named `bar`
+        bar: 0 //~ ERROR structure `BuildData` has no field named `bar`
     };
 }

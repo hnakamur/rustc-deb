@@ -9,18 +9,18 @@
 // except according to those terms.
 
 struct foo {
-    a: int,
-    b: int,
+    a: isize,
+    b: isize,
 }
 
 struct bar {
-    a: int,
-    b: uint,
+    a: isize,
+    b: usize,
 }
 
 fn want_foo(f: foo) {}
 fn have_bar(b: bar) {
-    want_foo(b); //~ ERROR (expected struct foo but found struct bar)
+    want_foo(b); //~ ERROR (expected struct foo, found struct bar)
 }
 
 fn main() {}

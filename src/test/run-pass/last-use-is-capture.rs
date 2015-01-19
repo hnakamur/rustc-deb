@@ -10,11 +10,14 @@
 
 // Make sure #1399 stays fixed
 
-struct A { a: ~int }
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+struct A { a: Box<int> }
 
 pub fn main() {
-    fn invoke(f: @fn()) { f(); }
-    let k = ~22;
+    fn invoke<F>(f: F) where F: FnOnce() { f(); }
+    let k = box 22i;
     let _u = A {a: k.clone()};
-    invoke(|| error!(k.clone()) )
+    invoke(|| println!("{}", k.clone()) )
 }

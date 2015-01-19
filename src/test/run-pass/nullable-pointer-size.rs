@@ -8,22 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::sys;
+use std::mem;
 
-enum E<T> { Thing(int, T), Nothing((), ((), ()), [i8, ..0]) }
+enum E<T> { Thing(int, T), Nothing((), ((), ()), [i8; 0]) }
 struct S<T>(int, T);
 
 // These are macros so we get useful assert messages.
 
 macro_rules! check_option {
     ($T:ty) => {
-        assert_eq!(sys::size_of::<Option<$T>>(), sys::size_of::<$T>());
+        assert_eq!(mem::size_of::<Option<$T>>(), mem::size_of::<$T>());
     }
 }
 
 macro_rules! check_fancy {
     ($T:ty) => {
-        assert_eq!(sys::size_of::<E<$T>>(), sys::size_of::<S<$T>>());
+        assert_eq!(mem::size_of::<E<$T>>(), mem::size_of::<S<$T>>());
     }
 }
 
@@ -36,11 +36,6 @@ macro_rules! check_type {
 
 pub fn main() {
     check_type!(&'static int);
-    check_type!(~int);
-    check_type!(@int);
-    check_type!(~str);
-    check_type!(@str);
-    check_type!(~[int]);
-    check_type!(@[int]);
+    check_type!(Box<int>);
     check_type!(extern fn());
 }

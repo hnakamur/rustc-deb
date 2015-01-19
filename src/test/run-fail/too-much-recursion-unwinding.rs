@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test leaks
+// ignore-test leaks
 // error-pattern:ran out of stack
 
-// Test that the task fails after hitting the recursion limit
+// Test that the task panicks after hitting the recursion limit
 // during unwinding
 
 fn recurse() {
-    log(debug, "don't optimize me out");
+    println!("don't optimize me out");
     recurse();
 }
 
@@ -24,7 +24,7 @@ struct r {
 }
 
 impl Drop for r {
-    fn drop(&self) {
+    fn drop(&mut self) {
         unsafe {
             if !*(self.recursed) {
                 *(self.recursed) = true;
@@ -35,9 +35,7 @@ impl Drop for r {
 }
 
 fn r(recursed: *mut bool) -> r {
-    unsafe {
-        r { recursed: recursed }
-    }
+    r { recursed: recursed }
 }
 
 fn main() {

@@ -12,10 +12,13 @@
 
 fn foo<T>(o: myoption<T>) -> int {
     let mut x: int;
-    match o { none::<T> => { fail!(); } some::<T>(t) => { x = 5; } }
+    match o {
+        myoption::none::<T> => { panic!(); }
+        myoption::some::<T>(_t) => { x = 5; }
+    }
     return x;
 }
 
 enum myoption<T> { none, some(T), }
 
-pub fn main() { debug!(5); }
+pub fn main() { println!("{}", 5i); }

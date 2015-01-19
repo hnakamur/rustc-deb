@@ -10,10 +10,10 @@
 
 mod a {
     pub struct Foo {
-        priv x: int
+        x: isize
     }
 }
 
 fn main() {
-    let s = a::Foo { x: 1 };    //~ ERROR field `x` is private
+    let s = a::Foo { x: 1 };    //~ ERROR field `x` of struct `a::Foo` is private
 }

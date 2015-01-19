@@ -14,7 +14,7 @@ fn forever() -> ! {
   loop {
     break;
   }
-  return 42i; //~ ERROR expected `!` but found `int`
+  return 42is; //~ ERROR `return` in a function declared as diverging
 }
 
 fn main() {

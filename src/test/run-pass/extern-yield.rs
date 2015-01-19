@@ -8,39 +8,41 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::libc;
-use std::task;
+extern crate libc;
+use std::thread::Thread;
 
 mod rustrt {
-    use std::libc;
+    extern crate libc;
 
-    pub extern {
-        pub fn rust_dbg_call(cb: *u8, data: libc::uintptr_t)
+    #[link(name = "rust_test_helpers")]
+    extern {
+        pub fn rust_dbg_call(cb: extern "C" fn (libc::uintptr_t) -> libc::uintptr_t,
+                             data: libc::uintptr_t)
                              -> libc::uintptr_t;
     }
 }
 
 extern fn cb(data: libc::uintptr_t) -> libc::uintptr_t {
-    if data == 1u {
+    if data == 1 {
         data
     } else {
-        count(data - 1u) + count(data - 1u)
+        count(data - 1) + count(data - 1)
     }
 }
 
-fn count(n: uint) -> uint {
+fn count(n: libc::uintptr_t) -> libc::uintptr_t {
     unsafe {
-        task::yield();
+        Thread::yield_now();
         rustrt::rust_dbg_call(cb, n)
     }
 }
 
 pub fn main() {
-    for 10u.times {
-        do task::spawn {
-            let result = count(5u);
-            debug!("result = %?", result);
-            assert_eq!(result, 16u);
-        };
-    }
+    range(0, 10u).map(|i| {
+        Thread::scoped(move|| {
+            let result = count(5);
+            println!("result = {}", result);
+            assert_eq!(result, 16);
+        })
+    }).collect::<Vec<_>>();
 }

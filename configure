@@ -22,12 +22,12 @@ err() {
 need_ok() {
     if [ $? -ne 0 ]
     then
-        err $1
+        err "$1"
     fi
 }
 
 need_cmd() {
-    if which $1 >/dev/null 2>&1
+    if command -v $1 >/dev/null 2>&1
     then msg "found $1"
     else err "need $1"
     fi
@@ -76,6 +76,24 @@ putvar() {
     printf "%-20s := %s\n" $1 "$T" >>config.tmp
 }
 
+putpathvar() {
+    local T
+    eval T=\$$1
+    eval TLEN=\${#$1}
+    if [ $TLEN -gt 35 ]
+    then
+        printf "configure: %-20s := %.35s ...\n" $1 "$T"
+    else
+        printf "configure: %-20s := %s %s\n" $1 "$T" "$2"
+    fi
+    if [ -z "$T" ]
+    then
+        printf "%-20s := \n" $1 >>config.tmp
+    else
+        printf "%-20s := \"%s\"\n" $1 "$T" >>config.tmp
+    fi
+}
+
 probe() {
     local V=$1
     shift
@@ -83,7 +101,7 @@ probe() {
     local T
     for P
     do
-        T=$(which $P 2>&1)
+        T=$(command -v $P 2>&1)
         if [ $? -eq 0 ]
         then
             VER0=$($P --version 2>/dev/null | head -1 \
@@ -101,7 +119,7 @@ probe() {
         fi
     done
     eval $V=\$T
-    putvar $V "$VER"
+    putpathvar $V "$VER"
 }
 
 probe_need() {
@@ -151,11 +169,22 @@ validate_opt () {
     done
 }
 
-valopt() {
-    VAL_OPTIONS="$VAL_OPTIONS $1"
+# `valopt OPTION_NAME DEFAULT DOC` extracts a string-valued option
+# from command line, using provided default value for the option if
+# not present, and saves it to the generated config.mk.
+#
+# `valopt_nosave` is much the same, except that it does not save the
+# result to config.mk (instead the script should use `putvar` itself
+# later on to save it).  `valopt_core` is the core upon which the
+# other two are built.
 
-    local OP=$1
-    local DEFAULT=$2
+valopt_core() {
+    VAL_OPTIONS="$VAL_OPTIONS $2"
+
+    local SAVE=$1
+    local OP=$2
+    local DEFAULT=$3
+    shift
     shift
     shift
     local DOC="$*"
@@ -172,7 +201,10 @@ valopt() {
                 eval $V=$val
             fi
         done
-        putvar $V
+        if [ "$SAVE" = "save" ]
+        then
+            putvar $V
+        fi
     else
         if [ -z "$DEFAULT" ]
         then
@@ -183,11 +215,30 @@ valopt() {
     fi
 }
 
-opt() {
-    BOOL_OPTIONS="$BOOL_OPTIONS $1"
+valopt_nosave() {
+    valopt_core nosave "$@"
+}
 
-    local OP=$1
-    local DEFAULT=$2
+valopt() {
+    valopt_core save "$@"
+}
+
+# `opt OPTION_NAME DEFAULT DOC` extracts a boolean-valued option from
+# command line, using the provided default value (0/1) for the option
+# if not present, and saves it to the generated config.mk.
+#
+# `opt_nosave` is much the same, except that it does not save the
+# result to config.mk (instead the script should use `putvar` itself
+# later on to save it).  `opt_core` is the core upon which the other
+# two are built.
+
+opt_core() {
+    BOOL_OPTIONS="$BOOL_OPTIONS $2"
+
+    local SAVE=$1
+    local OP=$2
+    local DEFAULT=$3
+    shift
     shift
     shift
     local DOC="$*"
@@ -211,7 +262,10 @@ opt() {
                 FLAG=$(echo $FLAG | tr 'a-z' 'A-Z')
                 local V="CFG_${FLAG}_${OP}"
                 eval $V=1
-                putvar $V
+                if [ "$SAVE" = "save" ]
+                then
+                   putvar $V
+                fi
             fi
         done
     else
@@ -221,6 +275,54 @@ opt() {
         fi
         printf "    --%-30s %s\n" "$FLAG-$OP" "$DOC"
      fi
+}
+
+opt_nosave() {
+    opt_core nosave "$@"
+}
+
+opt() {
+    opt_core save "$@"
+}
+
+envopt() {
+    local NAME=$1
+    local V="CFG_${NAME}"
+    eval VV=\$$V
+
+    # If configure didn't set a value already, then check environment.
+    #
+    # (It is recommended that the configure script always check the
+    # environment before setting any values to envopt variables; see
+    # e.g.  how CFG_CC is handled, where it first checks `-z "$CC"`,
+    # and issues msg if it ends up employing that provided value.)
+    if [ -z "$VV" ]
+    then
+        eval $V=\$$NAME
+        eval VV=\$$V
+    fi
+
+    # If script or environment provided a value, save it.
+    if [ ! -z "$VV" ]
+    then
+        putvar $V
+    fi
+}
+
+to_llvm_triple() {
+    case $1 in
+        i686-w64-mingw32) echo i686-pc-windows-gnu ;;
+        x86_64-w64-mingw32) echo x86_64-pc-windows-gnu ;;
+        *) echo $1 ;;
+    esac
+}
+
+to_gnu_triple() {
+    case $1 in
+        i686-pc-windows-gnu) echo i686-w64-mingw32 ;;
+        x86_64-pc-windows-gnu) echo x86_64-w64-mingw32 ;;
+        *) echo $1 ;;
+    esac
 }
 
 msg "looking for configure programs"
@@ -267,36 +369,55 @@ case $CFG_OSTYPE in
         CFG_OSTYPE=unknown-freebsd
         ;;
 
+    DragonFly)
+        CFG_OSTYPE=unknown-dragonfly
+        ;;
+
     Darwin)
         CFG_OSTYPE=apple-darwin
         ;;
 
-    MINGW32*)
-        CFG_OSTYPE=pc-mingw32
+    MINGW*)
+        # msys' `uname` does not print gcc configuration, but prints msys
+        # configuration. so we cannot believe `uname -m`:
+        # msys1 is always i686 and msys2 is always x86_64.
+        # instead, msys defines $MSYSTEM which is MINGW32 on i686 and
+        # MINGW64 on x86_64.
+        CFG_CPUTYPE=i686
+        CFG_OSTYPE=pc-windows-gnu
+        if [ "$MSYSTEM" = MINGW64 ]
+        then
+            CFG_CPUTYPE=x86_64
+        fi
         ;;
+
+    MSYS*)
+        CFG_OSTYPE=pc-windows-gnu
+        ;;
+
 # Thad's Cygwin identifers below
 
 #   Vista 32 bit
     CYGWIN_NT-6.0)
-        CFG_OSTYPE=pc-mingw32
+        CFG_OSTYPE=pc-windows-gnu
         CFG_CPUTYPE=i686
         ;;
 
 #   Vista 64 bit
     CYGWIN_NT-6.0-WOW64)
-        CFG_OSTYPE=w64-mingw32
+        CFG_OSTYPE=pc-windows-gnu
         CFG_CPUTYPE=x86_64
         ;;
 
 #   Win 7 32 bit
     CYGWIN_NT-6.1)
-        CFG_OSTYPE=pc-mingw32
+        CFG_OSTYPE=pc-windows-gnu
         CFG_CPUTYPE=i686
         ;;
 
 #   Win 7 64 bit
     CYGWIN_NT-6.1-WOW64)
-        CFG_OSTYPE=w64-mingw32
+        CFG_OSTYPE=pc-windows-gnu
         CFG_CPUTYPE=x86_64
         ;;
 
@@ -318,6 +439,15 @@ case $CFG_CPUTYPE in
         CFG_CPUTYPE=arm
         ;;
 
+    armv7l)
+        CFG_CPUTYPE=arm
+        CFG_OSTYPE="${CFG_OSTYPE}eabihf"
+        ;;
+
+    aarch64)
+        CFG_CPUTYPE=aarch64
+        ;;
+
     x86_64 | x86-64 | x64 | amd64)
         CFG_CPUTYPE=x86_64
         ;;
@@ -336,11 +466,11 @@ then
 fi
 
 
-DEFAULT_BUILD_TRIPLE="${CFG_CPUTYPE}-${CFG_OSTYPE}"
+DEFAULT_BUILD="${CFG_CPUTYPE}-${CFG_OSTYPE}"
 
 CFG_SRC_DIR="$(cd $(dirname $0) && pwd)/"
 CFG_BUILD_DIR="$(pwd)/"
-CFG_SELF=${CFG_SRC_DIR}$(basename $0)
+CFG_SELF="$0"
 CFG_CONFIGURE_ARGS="$@"
 
 OPTIONS=""
@@ -364,33 +494,83 @@ fi
 BOOL_OPTIONS=""
 VAL_OPTIONS=""
 
-opt sharedstd 1 "build libstd as a shared library"
 opt valgrind 0 "run tests with valgrind (memcheck by default)"
 opt helgrind 0 "run tests with helgrind instead of memcheck"
+opt valgrind-rpass 1 "run rpass-valgrind tests with valgrind"
 opt docs     1 "build documentation"
 opt optimize 1 "build optimized rust code"
 opt optimize-cxx 1 "build optimized C++ code"
 opt optimize-llvm 1 "build optimized LLVM"
-opt debug 0 "build with extra debug fun"
+opt optimize-tests 1 "build tests with optimizations"
+opt libcpp 1 "build with llvm with libc++ instead of libstdc++ when using clang"
+opt llvm-assertions 1 "build LLVM with assertions"
+opt debug 1 "build with extra debug fun"
+opt ratchet-bench 0 "ratchet benchmarks"
 opt fast-make 0 "use .gitmodules as timestamp for submodule deps"
-opt manage-submodules 1 "let the build manage the git submodules"
-opt mingw-cross 0 "cross-compile for win32 using mingw"
-opt clang 0 "prefer clang to gcc for building the runtime"
 opt ccache 0 "invoke gcc/clang via ccache to reuse object files between builds"
 opt local-rust 0 "use an installed rustc rather than downloading a snapshot"
-opt pax-flags 0 "apply PaX flags to rustc binaries (required for GRSecurity/PaX-patched kernels)"
-valopt prefix "/usr/local" "set installation prefix"
-valopt local-rust-root "/usr/local" "set prefix for local rust binary"
-valopt llvm-root "" "set LLVM root"
-valopt build-triple "${DEFAULT_BUILD_TRIPLE}" "LLVM build triple"
-valopt host-triples "${CFG_BUILD_TRIPLE}" "LLVM host triples"
-valopt target-triples "${CFG_HOST_TRIPLES}" "LLVM target triples"
-valopt android-cross-path "/opt/ndk_standalone" "Android NDK standalone path"
-valopt mingw32-cross-path "" "MinGW32 cross compiler path"
+opt llvm-static-stdcpp 0 "statically link to libstdc++ for LLVM"
+opt rpath 0 "build rpaths into rustc itself"
+opt nightly 0 "build nightly packages"
+opt verify-install 1 "verify installed binaries work"
+# This is used by the automation to produce single-target nightlies
+opt dist-host-only 0 "only install bins for the host architecture"
+opt inject-std-version 1 "inject the current compiler version of libstd into programs"
+opt jemalloc 1 "build liballoc with jemalloc"
 
-# Validate Options
-step_msg "validating $CFG_SELF args"
-validate_opt
+valopt localstatedir "/var/lib" "local state directory"
+valopt sysconfdir "/etc" "install system configuration files"
+
+valopt datadir "${CFG_PREFIX}/share" "install data"
+valopt infodir "${CFG_PREFIX}/share/info" "install additional info"
+valopt llvm-root "" "set LLVM root"
+valopt jemalloc-root "" "set directory where libjemalloc_pic.a is located"
+valopt build "${DEFAULT_BUILD}" "GNUs ./configure syntax LLVM build triple"
+valopt android-cross-path "/opt/ndk_standalone" "Android NDK standalone path"
+
+# Many of these are saved below during the "writing configuration" step
+# (others are conditionally saved).
+opt_nosave manage-submodules 1 "let the build manage the git submodules"
+opt_nosave clang 0 "prefer clang to gcc for building the runtime"
+
+valopt_nosave prefix "/usr/local" "set installation prefix"
+valopt_nosave local-rust-root "/usr/local" "set prefix for local rust binary"
+valopt_nosave host "${CFG_BUILD}" "GNUs ./configure syntax LLVM host triples"
+valopt_nosave target "${CFG_HOST}" "GNUs ./configure syntax LLVM target triples"
+valopt_nosave mandir "${CFG_PREFIX}/share/man" "install man pages in PATH"
+valopt_nosave release-channel "dev" "the name of the release channel to build"
+
+# Temporarily support old triples until buildbots get updated
+CFG_BUILD=$(to_llvm_triple $CFG_BUILD)
+putvar CFG_BUILD # Yes, this creates a duplicate entry, but the last one wins.
+CFG_HOST=$(to_llvm_triple $CFG_HOST)
+CFG_TARGET=$(to_llvm_triple $CFG_TARGET)
+
+# On windows we just store the libraries in the bin directory because
+# there's no rpath. This is where the build system itself puts libraries;
+# --libdir is used to configure the installation directory.
+# FIXME: This needs to parameterized over target triples. Do it in platform.mk
+if [ "$CFG_OSTYPE" = "pc-windows-gnu" ]
+then
+    CFG_LIBDIR_RELATIVE=bin
+else
+    CFG_LIBDIR_RELATIVE=lib
+fi
+
+valopt libdir "${CFG_PREFIX}/${CFG_LIBDIR_RELATIVE}" "install libraries (do not set it on windows platform)"
+
+case "$CFG_LIBDIR" in
+    "$CFG_PREFIX"/*) CAT_INC=2;;
+    "$CFG_PREFIX"*)  CAT_INC=1;;
+    *)
+        err "libdir must begin with the prefix. Use --prefix to set it accordingly.";;
+esac
+
+CFG_LIBDIR_RELATIVE=`echo ${CFG_LIBDIR} | cut -c$((${#CFG_PREFIX}+${CAT_INC}))-`
+
+if [ "$CFG_OSTYPE" = "pc-windows-gnu" ] && [ "$CFG_LIBDIR_RELATIVE" != "bin" ]; then
+    err "libdir on windows should be set to 'bin'"
+fi
 
 if [ $HELP -eq 1 ]
 then
@@ -398,11 +578,43 @@ then
     exit 0
 fi
 
+# Validate Options
+step_msg "validating $CFG_SELF args"
+validate_opt
+
+# Validate the release channel
+case "$CFG_RELEASE_CHANNEL" in
+    (dev | nightly | beta | stable)
+	;;
+    (*)
+        err "release channel must be 'dev', 'nightly', 'beta' or 'stable'"
+        ;;
+esac
+
+# Continue supporting the old --enable-nightly flag to transition the bots
+# XXX Remove me
+if [ ! -z "$CFG_ENABLE_NIGHTLY" ]
+then
+    CFG_RELEASE_CHANNEL=nightly
+fi
+putvar CFG_RELEASE_CHANNEL
+
+# A magic value that allows the compiler to use unstable features
+# during the bootstrap even when doing so would normally be an error
+# because of feature staging or because the build turns on
+# warnings-as-errors and unstable features default to warnings.  The
+# build has to match this key in an env var. Meant to be a mild
+# deterrent from users just turning on unstable features on the stable
+# channel.
+# Basing CFG_BOOTSTRAP_KEY on CFG_BOOTSTRAP_KEY lets it get picked up
+# during a Makefile reconfig.
+CFG_BOOTSTRAP_KEY="${CFG_BOOTSTRAP_KEY-`date +%N`}"
+putvar CFG_BOOTSTRAP_KEY
 
 step_msg "looking for build programs"
 
 probe_need CFG_PERL        perl
-probe_need CFG_CURL        curl
+probe_need CFG_CURLORWGET  curl wget
 probe_need CFG_PYTHON      python2.7 python2.6 python2 python
 
 python_version=$($CFG_PYTHON -V 2>&1)
@@ -428,17 +640,43 @@ probe CFG_LD               ld
 probe CFG_VALGRIND         valgrind
 probe CFG_PERF             perf
 probe CFG_ISCC             iscc
-probe CFG_LLNEXTGEN        LLnextgen
+probe CFG_JAVAC            javac
+probe CFG_ANTLR4           antlr4
+probe CFG_GRUN             grun
 probe CFG_PANDOC           pandoc
 probe CFG_PDFLATEX         pdflatex
-probe CFG_XETEX            xetex
-probe CFG_LUATEX           luatex
-probe CFG_NODE             nodejs node
+probe CFG_XELATEX          xelatex
+probe CFG_LUALATEX         lualatex
 probe CFG_GDB              gdb
-if [ "$CFG_OSTYPE" = "unknown-linux-gnu" ]
+probe CFG_LLDB             lldb
+
+if [ ! -z "$CFG_GDB" ]
 then
-    probe CFG_PAXCTL           paxctl /sbin/paxctl
-    probe CFG_ZCAT             zcat
+    # Store GDB's version
+    CFG_GDB_VERSION=$($CFG_GDB --version 2>/dev/null | head -1)
+    putvar CFG_GDB_VERSION
+fi
+
+if [ ! -z "$CFG_LLDB" ]
+then
+    # Store LLDB's version
+    CFG_LLDB_VERSION=$($CFG_LLDB --version 2>/dev/null | head -1)
+    putvar CFG_LLDB_VERSION
+
+    # If CFG_LLDB_PYTHON_DIR is not already set from the outside and valid, try to read it from
+    # LLDB via the -P commandline options.
+    if [ -z "$CFG_LLDB_PYTHON_DIR" ] || [ ! -d "$CFG_LLDB_PYTHON_DIR" ]
+    then
+        CFG_LLDB_PYTHON_DIR=$($CFG_LLDB -P)
+
+        # If CFG_LLDB_PYTHON_DIR is not a valid directory, set it to something more readable
+        if [ ! -d "$CFG_LLDB_PYTHON_DIR" ]
+        then
+            CFG_LLDB_PYTHON_DIR="LLDB_PYTHON_DIRECTORY_NOT_FOUND"
+        fi
+
+        putvar CFG_LLDB_PYTHON_DIR
+    fi
 fi
 
 step_msg "looking for target specific programs"
@@ -447,74 +685,51 @@ probe CFG_ADB        adb
 
 if [ ! -z "$CFG_PANDOC" ]
 then
-    PV_MAJOR_MINOR=$(pandoc --version | grep '^pandoc ' |
+    PV_MAJOR_MINOR=$(pandoc --version | grep '^pandoc\(.exe\)\? ' |
         # extract the first 2 version fields, ignore everything else
-        sed 's/pandoc \([0-9]*\)\.\([0-9]*\).*/\1 \2/')
+        sed 's/pandoc\(.exe\)\? \([0-9]*\)\.\([0-9]*\).*/\2 \3/')
 
+    MIN_PV_MAJOR="1"
+    MIN_PV_MINOR="9"
     # these patterns are shell globs, *not* regexps
     PV_MAJOR=${PV_MAJOR_MINOR% *}
     PV_MINOR=${PV_MAJOR_MINOR#* }
-    if [ "$PV_MAJOR" -lt "1" ] || [ "$PV_MINOR" -lt "8" ]
+    if [ "$PV_MAJOR" -lt "$MIN_PV_MAJOR" ] || [ "$PV_MINOR" -lt "$MIN_PV_MINOR" ]
     then
-		step_msg "pandoc $PV_MAJOR.$PV_MINOR is too old. disabling"
-		BAD_PANDOC=1
+        step_msg "pandoc $PV_MAJOR.$PV_MINOR is too old. Need at least $MIN_PV_MAJOR.$MIN_PV_MINOR. Disabling"
+        BAD_PANDOC=1
     fi
 fi
 
-if [ "$CFG_OSTYPE" = "unknown-linux-gnu" ]
+BIN_SUF=
+if [ "$CFG_OSTYPE" = "pc-windows-gnu" ]
 then
-    if [ ! -z "$CFG_ENABLE_PAX_FLAGS" -a -z "$CFG_PAXCTL" ]
-    then
-        err "enabled PaX markings but no paxctl binary found"
-    fi
-
-    if [ -z "$CFG_DISABLE_PAX_FLAGS" ]
-    then
-        # GRSecurity/PaX detection. This can be very flaky.
-        GRSEC_DETECTED=
-
-        # /dev/grsec only exists if CONFIG_GRKERNSEC_NO_RBAC is not set.
-        # /proc/sys/kernel/grsecurity is not available if ÇONFIG_GRKERNSEC_SYSCTL is not set.
-        if [ -e /dev/grsec -o -d /proc/sys/kernel/grsecurity ]
-        then
-            GRSEC_DETECTED=1
-        # /proc/config.gz is normally only available to root, and only if CONFIG_IKCONFIG_PROC has been set.
-        elif [ -r /proc/config.gz -a ! -z "$CFG_ZCAT" ]
-        then
-            if "$CFG_ZCAT" /proc/config.gz | grep --quiet "CONFIG_GRKERNSEC=y"
-            then
-                GRSEC_DETECTED=1
-            fi
-        # Flaky.
-        elif grep --quiet grsec /proc/version
-        then
-            GRSEC_DETECTED=1
-        fi
-
-        if [ ! -z "$GRSEC_DETECTED" ]
-        then
-            step_msg "GRSecurity: yes"
-            if [ ! -z "$CFG_PAXCTL" ]
-            then
-                CFG_ENABLE_PAX_FLAGS=1
-            else
-                warn "GRSecurity kernel detected but no paxctl binary found: not setting CFG_ENABLE_PAX_FLAGS"
-            fi
-        else
-            step_msg "GRSecurity: no"
-        fi
-    fi
+    BIN_SUF=.exe
 fi
 
 if [ ! -z "$CFG_ENABLE_LOCAL_RUST" ]
 then
-    if [ ! -f ${CFG_LOCAL_RUST_ROOT}/bin/rustc ]
+    system_rustc=$(which rustc)
+    if [ -f ${CFG_LOCAL_RUST_ROOT}/bin/rustc${BIN_SUF} ]
     then
-        err "no local rust to use"
+        : # everything already configured
+    elif [ -n "$system_rustc" ]
+    then
+        # we assume that rustc is in a /bin directory
+        CFG_LOCAL_RUST_ROOT=${system_rustc%/bin/rustc}
     else
-        LRV=`${CFG_LOCAL_RUST_ROOT}/bin/rustc --version`
-        step_msg "using rustc at: ${CFG_LOCAL_RUST_ROOT} with version: " $LRV
+        err "no local rust to use"
     fi
+
+    CMD="${CFG_LOCAL_RUST_ROOT}/bin/rustc${BIN_SUF}"
+    LRV=`$CMD --version`
+    if [ $? -ne 0 ]
+    then
+        step_msg "failure while running $CMD --version"
+        exit 1
+    fi
+    step_msg "using rustc at: ${CFG_LOCAL_RUST_ROOT} with version: $LRV"
+    putvar CFG_LOCAL_RUST_ROOT
 fi
 
 # Force freebsd to build with clang; gcc doesn't like us there
@@ -522,13 +737,56 @@ if [ $CFG_OSTYPE = unknown-freebsd ]
 then
     step_msg "on FreeBSD, forcing use of clang"
     CFG_ENABLE_CLANG=1
-    putvar CFG_ENABLE_CLANG
 fi
-
 
 if [ -z "$CFG_ENABLE_CLANG" -a -z "$CFG_GCC" ]
 then
     err "either clang or gcc is required"
+fi
+
+# OS X 10.9, gcc is actually clang. This can cause some confusion in the build
+# system, so if we find that gcc is clang, we should just use clang directly.
+if [ $CFG_OSTYPE = apple-darwin -a -z "$CFG_ENABLE_CLANG" ]
+then
+    CFG_OSX_GCC_VERSION=$("$CFG_GCC" --version 2>&1 | grep "Apple LLVM version")
+    if [ $? -eq 0 ]
+    then
+        step_msg "on OS X 10.9, forcing use of clang"
+        CFG_ENABLE_CLANG=1
+    else
+        if [ $("$CFG_GCC" --version 2>&1 | grep -c ' 4\.[0-6]') -ne 0 ]; then
+            step_msg "older GCC found, using clang instead"
+            CFG_ENABLE_CLANG=1
+        else
+            # on OS X, with xcode 5 and newer, certain developers may have
+            # cc, gcc and g++ point to a  mixture of clang and gcc
+            # if so, this will create very strange build errors
+            # this last stanza is to detect some such problems and save the future rust
+            # contributor some time solving that issue.
+            # this detection could be generalized to other OSes aside from OS X
+            # but the issue seems most likely to happen on OS X
+
+            chk_cc () {
+                $1 --version 2> /dev/null | grep -q $2
+            }
+            # check that gcc, cc and g++ all point to the same compiler.
+            # note that for xcode 5, g++ points to clang, not clang++
+            if !((chk_cc gcc clang  && chk_cc g++ clang) ||
+                (chk_cc gcc gcc  &&( chk_cc g++ g++ || chk g++ gcc))); then
+                err "the gcc and g++ in your path point to different compilers.
+    Check which versions are in your path with gcc --version and g++ --version.
+    To resolve this problem, either fix your PATH  or run configure with --enable-clang"
+            fi
+
+        fi
+    fi
+fi
+
+# Okay, at this point, we have made up our minds about whether we are
+# going to force CFG_ENABLE_CLANG or not; save the setting if so.
+if [ ! -z "$CFG_ENABLE_CLANG" ]
+then
+    putvar CFG_ENABLE_CLANG
 fi
 
 if [ ! -z "$CFG_LLVM_ROOT" -a -e "$CFG_LLVM_ROOT/bin/llvm-config" ]
@@ -539,70 +797,134 @@ then
     LLVM_VERSION=$($LLVM_CONFIG --version)
 
     case $LLVM_VERSION in
-	(3.3|3.3svn|3.2|3.2svn)
-	    msg "found ok version of LLVM: $LLVM_VERSION"
-	    ;;
-	(*)
-	    err "bad LLVM version: $LLVM_VERSION, need >=3.0svn"
-	    ;;
+        (3.[2-6]*)
+            msg "found ok version of LLVM: $LLVM_VERSION"
+            ;;
+        (*)
+            err "bad LLVM version: $LLVM_VERSION, need >=3.0svn"
+            ;;
     esac
+fi
+
+# Even when the user overrides the choice of CC, still try to detect
+# clang to disable some clang-specific warnings.  We here draw a
+# distinction between:
+#
+#  CFG_ENABLE_CLANG : passed --enable-clang, or host "requires" clang,
+#  CFG_USING_CLANG : compiler (clang / gcc / $CC) looks like clang.
+#
+# This distinction is important because there are some safeguards we
+# would prefer to skip when merely CFG_USING_CLANG is set; but when
+# CFG_ENABLE_CLANG is set, that indicates that we are opting into
+# running such safeguards.
+
+if [ ! -z "$CC" ]
+then
+    msg "skipping compiler inference steps; using provided CC=$CC"
+    CFG_CC="$CC"
+
+    CFG_OSX_CC_VERSION=$("$CFG_CC" --version 2>&1 | grep "clang")
+    if [ $? -eq 0 ]
+    then
+        step_msg "note, user-provided CC looks like clang; CC=$CC."
+        CFG_USING_CLANG=1
+        putvar CFG_USING_CLANG
+    fi
+else
+    if [ ! -z "$CFG_ENABLE_CLANG" ]
+    then
+        if [ -z "$CFG_CLANG" ]
+        then
+            err "clang requested but not found"
+        fi
+        CFG_CC="$CFG_CLANG"
+        CFG_USING_CLANG=1
+        putvar CFG_USING_CLANG
+    else
+        CFG_CC="gcc"
+    fi
 fi
 
 if [ ! -z "$CFG_ENABLE_CLANG" ]
 then
-    if [ -z "$CFG_CLANG" ]
+    if [ -z "$CC" ] || [[ $CC == *clang ]]
     then
-	err "clang requested but not found"
-    fi
-    CFG_CLANG_VERSION=$("$CFG_CLANG" \
-                      --version \
-                      | grep version \
-                      | sed 's/.*\(version .*\)/\1/; s/.*based on \(LLVM .*\))/\1/' \
-                      | cut -d ' ' -f 2)
+        CFG_CLANG_VERSION=$($CFG_CC \
+            --version \
+            | grep version \
+            | sed 's/.*\(version .*\)/\1/; s/.*based on \(LLVM .*\))/\1/' \
+            | cut -d ' ' -f 2)
 
-    case $CFG_CLANG_VERSION in
-        (3.0svn | 3.0 | 3.1* | 3.2* | 3.3* | 3.4* )
-        step_msg "found ok version of CLANG: $CFG_CLANG_VERSION"
-        CFG_C_COMPILER="clang"
-        ;;
-        (*)
-        err "bad CLANG version: $CFG_CLANG_VERSION, need >=3.0svn"
-        ;;
-    esac
-else
-    CFG_C_COMPILER="gcc"
+        case $CFG_CLANG_VERSION in
+            (3.0svn | 3.0 | 3.1* | 3.2* | 3.3* | 3.4* | 3.5* | 3.6*)
+            step_msg "found ok version of CLANG: $CFG_CLANG_VERSION"
+            if [ -z "$CC" ]
+            then
+                CFG_CC="clang"
+                CFG_CXX="clang++"
+            fi
+            ;;
+            (*)
+            err "bad CLANG version: $CFG_CLANG_VERSION, need >=3.0svn"
+            ;;
+        esac
+    else
+        msg "skipping CFG_ENABLE_CLANG version check; provided CC=$CC"
+    fi
 fi
 
 if [ ! -z "$CFG_ENABLE_CCACHE" ]
 then
-    if [ -z "$CFG_CCACHE" ]
+    if [ -z "$CC" ]
     then
-        err "ccache requested but not found"
-    fi
+        if [ -z "$CFG_CCACHE" ]
+        then
+            err "ccache requested but not found"
+        fi
 
-    CFG_C_COMPILER="ccache $CFG_C_COMPILER"
+        CFG_CC="ccache $CFG_CC"
+    fi
 fi
 
-# a little post-processing of various config values
+if [ -z "$CC" -a -z "$CFG_ENABLE_CLANG" -a -z "$CFG_GCC" ]
+then
+    err "either clang or gcc is required"
+fi
 
+# All safeguards based on $CFG_ENABLE_CLANG should occur before this
+# point in the script; after this point, script logic should inspect
+# $CFG_USING_CLANG rather than $CFG_ENABLE_CLANG.
+
+# Set CFG_{CC,CXX,CPP,CFLAGS,CXXFLAGS}
+envopt CC
+envopt CXX
+envopt CPP
+envopt CFLAGS
+envopt CXXFLAGS
+
+# a little post-processing of various config values
 CFG_PREFIX=${CFG_PREFIX%/}
-CFG_HOST_TRIPLES="$(echo $CFG_HOST_TRIPLES | tr ',' ' ')"
-CFG_TARGET_TRIPLES="$(echo $CFG_TARGET_TRIPLES | tr ',' ' ')"
-CFG_SUPPORTED_TARGET_TRIPLES="$(grep ^CC_*=* $CFG_SRC_DIR/mk/platform.mk | sed -e 's/^CC_//' -e 's/\([^=]*\).*/\1/' | xargs)"
+CFG_MANDIR=${CFG_MANDIR%/}
+CFG_HOST="$(echo $CFG_HOST | tr ',' ' ')"
+CFG_TARGET="$(echo $CFG_TARGET | tr ',' ' ')"
+CFG_SUPPORTED_TARGET=""
+for target_file in ${CFG_SRC_DIR}mk/cfg/*.mk; do
+  CFG_SUPPORTED_TARGET="${CFG_SUPPORTED_TARGET} $(basename "$target_file" .mk)"
+done
 
 # copy host-triples to target-triples so that hosts are a subset of targets
 V_TEMP=""
-for i in $CFG_HOST_TRIPLES $CFG_TARGET_TRIPLES;
+for i in $CFG_HOST $CFG_TARGET;
 do
    echo "$V_TEMP" | grep -qF $i || V_TEMP="$V_TEMP${V_TEMP:+ }$i"
 done
-CFG_TARGET_TRIPLES=$V_TEMP
+CFG_TARGET=$V_TEMP
 
 # check target-specific tool-chains
-for i in $CFG_TARGET_TRIPLES
+for i in $CFG_TARGET
 do
     L_CHECK=false
-    for j in $CFG_SUPPORTED_TARGET_TRIPLES
+    for j in $CFG_SUPPORTED_TARGET
     do
         if [ $i = $j ]
         then
@@ -632,15 +954,17 @@ do
             fi
             ;;
 
+        arm-apple-darwin)
+            if [ $CFG_OSTYPE != apple-darwin ]
+            then
+                err "The iOS target is only supported on Mac OS X"
+            fi
+            ;;
+
         *)
             ;;
     esac
 done
-
-if [ -z "$CFG_ENABLE_CLANG" -a -z "$CFG_GCC" ]
-then
-    err "either clang or gcc is required"
-fi
 
 if [ ! -z "$CFG_PERF" ]
 then
@@ -656,87 +980,81 @@ step_msg "making directories"
 
 for i in \
     doc doc/std doc/extra \
-    dl tmp
+    dl tmp dist
 do
     make_dir $i
 done
 
-make_dir llvm
-for t in $CFG_HOST_TRIPLES
+for t in $CFG_HOST
 do
-    make_dir llvm/$t
+    make_dir $t/llvm
 done
 
-make_dir rustllvm
-for t in $CFG_HOST_TRIPLES
+for t in $CFG_HOST
 do
-    make_dir rustllvm/$t
+    make_dir $t/rustllvm
 done
 
-make_dir rt
-for t in $CFG_TARGET_TRIPLES
+for t in $CFG_TARGET
 do
-  make_dir rt/$t
+  make_dir $t/rt
   for s in 0 1 2 3
   do
-    make_dir rt/$t/stage$s
+    make_dir $t/rt/stage$s
+    make_dir $t/rt/jemalloc
     for i in                                          \
-      isaac linenoise sync test \
-      arch/i386 arch/x86_64 arch/arm arch/mips  \
-      libuv libuv/src/ares libuv/src/eio libuv/src/ev \
-      jemalloc
+      isaac sync test \
+      arch/i386 arch/x86_64 arch/arm arch/aarch64 arch/mips
     do
-      make_dir rt/$t/stage$s/$i
+      make_dir $t/rt/stage$s/$i
     done
   done
 done
 
-# On windows we just store the libraries in the bin directory because
-# there's no rpath
-# FIXME: Thise needs to parameterized over target triples. Do it in platform.mk
-CFG_LIBDIR=lib
-if [ "$CFG_OSTYPE" = "pc-mingw32" ]
-then
-    CFG_LIBDIR=bin
-fi
-
-for h in $CFG_HOST_TRIPLES
+for h in $CFG_HOST
 do
-    for t in $CFG_TARGET_TRIPLES
+    for t in $CFG_TARGET
     do
+        # host lib dir stage0
+        make_dir $h/stage0/lib
+
+        # target bin dir stage0
+        make_dir $h/stage0/lib/rustlib/$t/bin
+
+        # target lib dir stage0
+        make_dir $h/stage0/lib/rustlib/$t/lib
+
         for i in 0 1 2 3
         do
             # host bin dir
             make_dir $h/stage$i/bin
 
             # host lib dir
-            make_dir $h/stage$i/$CFG_LIBDIR
+            make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE
 
             # host test dir
             make_dir $h/stage$i/test
 
             # target bin dir
-            make_dir $h/stage$i/$CFG_LIBDIR/rustc/$t/bin
+            make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE/rustlib/$t/bin
 
             # target lib dir
-            make_dir $h/stage$i/$CFG_LIBDIR/rustc/$t/$CFG_LIBDIR
+            make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE/rustlib/$t/lib
         done
     done
 
     make_dir $h/test/run-pass
+    make_dir $h/test/run-pass-valgrind
     make_dir $h/test/run-pass-fulldeps
     make_dir $h/test/run-fail
     make_dir $h/test/compile-fail
+    make_dir $h/test/compile-fail-fulldeps
     make_dir $h/test/bench
     make_dir $h/test/perf
     make_dir $h/test/pretty
-    make_dir $h/test/debug-info
-    make_dir $h/test/doc-tutorial
-    make_dir $h/test/doc-tutorial-ffi
-    make_dir $h/test/doc-tutorial-macros
-    make_dir $h/test/doc-tutorial-borrowed-ptr
-    make_dir $h/test/doc-tutorial-tasks
-    make_dir $h/test/doc-rust
+    make_dir $h/test/debuginfo-gdb
+    make_dir $h/test/debuginfo-lldb
+    make_dir $h/test/codegen
 done
 
 # Configure submodules
@@ -748,18 +1066,31 @@ then
     cd ${CFG_SRC_DIR}
 
     msg "git: submodule sync"
-    "${CFG_GIT}" submodule --quiet sync
+    "${CFG_GIT}" submodule sync
+
+    msg "git: submodule init"
+    "${CFG_GIT}" submodule init
+
+    # Disable submodules that we're not using
+    if [ ! -z "${CFG_LLVM_ROOT}" ]; then
+        msg "git: submodule deinit src/llvm"
+        "${CFG_GIT}" submodule deinit src/llvm
+    fi
+    if [ ! -z "${CFG_JEMALLOC_ROOT}" ]; then
+        msg "git: submodule deinit src/jemalloc"
+        "${CFG_GIT}" submodule deinit src/jemalloc
+    fi
 
     msg "git: submodule update"
-    "${CFG_GIT}" submodule --quiet update --init
+    "${CFG_GIT}" submodule update
     need_ok "git failed"
 
     msg "git: submodule foreach sync"
-    "${CFG_GIT}" submodule --quiet foreach --recursive 'if test -e .gitmodules; then git submodule sync; fi'
+    "${CFG_GIT}" submodule foreach --recursive 'if test -e .gitmodules; then git submodule sync; fi'
     need_ok "git failed"
 
     msg "git: submodule foreach update"
-    "${CFG_GIT}" submodule --quiet update --init --recursive
+    "${CFG_GIT}" submodule update --recursive
     need_ok "git failed"
 
     # NB: this is just for the sake of getting the submodule SHA1 values
@@ -768,9 +1099,9 @@ then
     "${CFG_GIT}" submodule status --recursive
 
     msg "git: submodule clobber"
-    "${CFG_GIT}" submodule --quiet foreach --recursive git clean -dxf
+    "${CFG_GIT}" submodule foreach --recursive git clean -dxf
     need_ok "git failed"
-    "${CFG_GIT}" submodule --quiet foreach --recursive git checkout .
+    "${CFG_GIT}" submodule foreach --recursive git checkout .
     need_ok "git failed"
 
     cd ${CFG_BUILD_DIR}
@@ -779,22 +1110,29 @@ fi
 # Configure llvm, only if necessary
 step_msg "looking at LLVM"
 CFG_LLVM_SRC_DIR=${CFG_SRC_DIR}src/llvm/
-for t in $CFG_HOST_TRIPLES
+for t in $CFG_HOST
 do
     do_reconfigure=1
 
     if [ -z $CFG_LLVM_ROOT ]
     then
-        LLVM_BUILD_DIR=${CFG_BUILD_DIR}llvm/$t
+        LLVM_BUILD_DIR=${CFG_BUILD_DIR}$t/llvm
         if [ ! -z "$CFG_DISABLE_OPTIMIZE_LLVM" ]
         then
             LLVM_DBG_OPTS="--enable-debug-symbols --disable-optimized"
             # Just use LLVM straight from its build directory to
             # avoid 'make install' time
-            LLVM_INST_DIR=$LLVM_BUILD_DIR/Debug+Asserts
+            LLVM_INST_DIR=$LLVM_BUILD_DIR/Debug
         else
             LLVM_DBG_OPTS="--enable-optimized"
-            LLVM_INST_DIR=$LLVM_BUILD_DIR/Release+Asserts
+            LLVM_INST_DIR=$LLVM_BUILD_DIR/Release
+        fi
+        if [ ! -z "$CFG_DISABLE_LLVM_ASSERTIONS" ]
+        then
+            LLVM_ASSERTION_OPTS="--disable-assertions"
+        else
+            LLVM_ASSERTION_OPTS="--enable-assertions"
+            LLVM_INST_DIR=${LLVM_INST_DIR}+Asserts
         fi
     else
         msg "not reconfiguring LLVM, external LLVM root"
@@ -813,7 +1151,7 @@ do
         index2="${CFG_SRC_DIR}src/llvm/.git/index"
         for index in ${index1} ${index2}
         do
-            config_status="${CFG_BUILD_DIR}llvm/$t/config.status"
+            config_status="${LLVM_BUILD_DIR}/config.status"
             if test -e ${index} -a \
                     -e ${config_status} -a \
                     ${config_status} -nt ${index}
@@ -826,53 +1164,100 @@ do
 
     if [ ${do_reconfigure} -ne 0 ]
     then
-        msg "configuring LLVM for $t"
+        # LLVM's configure doesn't recognize the new Windows triples yet
+        gnu_t=$(to_gnu_triple $t)
 
-        LLVM_TARGETS="--enable-targets=x86,x86_64,arm,mips"
-        LLVM_BUILD="--build=$t"
-        LLVM_HOST="--host=$t"
-        LLVM_TARGET="--target=$t"
+        msg "configuring LLVM for $gnu_t"
+
+        LLVM_TARGETS="--enable-targets=x86,x86_64,arm,aarch64,mips"
+        LLVM_BUILD="--build=$gnu_t"
+        LLVM_HOST="--host=$gnu_t"
+        LLVM_TARGET="--target=$gnu_t"
 
         # Disable unused LLVM features
-        LLVM_OPTS="$LLVM_DBG_OPTS --disable-docs --enable-bindings=none"
+        LLVM_OPTS="$LLVM_DBG_OPTS $LLVM_ASSERTION_OPTS --disable-docs --enable-bindings=none"
+        # Disable term-info, linkage of which comes in multiple forms,
+        # making our snapshots incompatible (#9334)
+        LLVM_OPTS="$LLVM_OPTS --disable-terminfo"
+        # Try to have LLVM pull in as few dependencies as possible (#9397)
+        LLVM_OPTS="$LLVM_OPTS --disable-zlib --disable-libffi"
 
-        case "$CFG_C_COMPILER" in
+        # Use win32 native thread/lock apis instead of pthread wrapper.
+        # (llvm's configure tries to find pthread first, so we have to disable it explicitly.)
+        # Also note that pthreads works badly on mingw-w64 systems: #8996
+        case "$CFG_BUILD" in
+            (*-windows-*)
+            LLVM_OPTS="$LLVM_OPTS --disable-pthreads"
+            ;;
+        esac
+
+        case "$CFG_CC" in
             ("ccache clang")
-            LLVM_CXX_32="ccache clang++ -m32 -Qunused-arguments"
-            LLVM_CC_32="ccache clang -m32 -Qunused-arguments"
+            LLVM_CXX_32="ccache clang++ -Qunused-arguments"
+            LLVM_CC_32="ccache clang -Qunused-arguments"
 
             LLVM_CXX_64="ccache clang++ -Qunused-arguments"
             LLVM_CC_64="ccache clang -Qunused-arguments"
             ;;
             ("clang")
-            LLVM_CXX_32="clang++ -m32"
-            LLVM_CC_32="clang -m32"
+            LLVM_CXX_32="clang++ -Qunused-arguments"
+            LLVM_CC_32="clang -Qunused-arguments"
 
-            LLVM_CXX_64="clang++"
-            LLVM_CC_64="clang"
+            LLVM_CXX_64="clang++ -Qunused-arguments"
+            LLVM_CC_64="clang -Qunused-arguments"
             ;;
             ("ccache gcc")
-            LLVM_CXX_32="ccache g++ -m32"
-            LLVM_CC_32="ccache gcc -m32"
+            LLVM_CXX_32="ccache g++"
+            LLVM_CC_32="ccache gcc"
 
             LLVM_CXX_64="ccache g++"
             LLVM_CC_64="ccache gcc"
             ;;
             ("gcc")
-            LLVM_CXX_32="g++ -m32"
-            LLVM_CC_32="gcc -m32"
+            LLVM_CXX_32="g++"
+            LLVM_CC_32="gcc"
 
             LLVM_CXX_64="g++"
             LLVM_CC_64="gcc"
+            ;;
+
+            (*)
+            msg "inferring LLVM_CXX/CC from CXX/CC = $CXX/$CC"
+            LLVM_CXX_32="$CXX"
+            LLVM_CC_32="$CC"
+
+            LLVM_CXX_64="$CXX"
+            LLVM_CC_64="$CC"
+            ;;
         esac
 
-        LLVM_CFLAGS_32="-m32"
-        LLVM_CXXFLAGS_32="-m32"
-        LLVM_LDFLAGS_32="-m32"
+        case "$CFG_CPUTYPE" in
+            (x86*)
+                LLVM_CXX_32="$LLVM_CXX_32 -m32"
+                LLVM_CC_32="$LLVM_CC_32 -m32"
 
-        LLVM_CFLAGS_64=""
-        LLVM_CXXFLAGS_64=""
-        LLVM_LDFLAGS_64=""
+                LLVM_CFLAGS_32="-m32"
+                LLVM_CXXFLAGS_32="-m32"
+                LLVM_LDFLAGS_32="-m32"
+
+                LLVM_CFLAGS_64=""
+                LLVM_CXXFLAGS_64=""
+                LLVM_LDFLAGS_64=""
+
+                LLVM_CXX_32="$LLVM_CXX_32 -m32"
+                LLVM_CC_32="$LLVM_CC_32 -m32"
+                ;;
+
+            (*)
+                LLVM_CFLAGS_32=""
+                LLVM_CXXFLAGS_32=""
+                LLVM_LDFLAGS_32=""
+
+                LLVM_CFLAGS_64=""
+                LLVM_CXXFLAGS_64=""
+                LLVM_LDFLAGS_64=""
+                ;;
+        esac
 
         if echo $t | grep -q x86_64
         then
@@ -894,6 +1279,10 @@ do
         CFLAGS=$LLVM_CFLAGS
         CXXFLAGS=$LLVM_CXXFLAGS
         LDFLAGS=$LLVM_LDFLAGS
+
+        if [ -z "$CFG_DISABLE_LIBCPP" ] && [ -n "$CFG_USING_CLANG" ]; then
+            LLVM_OPTS="$LLVM_OPTS --enable-libcpp"
+        fi
 
         LLVM_FLAGS="$LLVM_TARGETS $LLVM_OPTS $LLVM_BUILD \
                         $LLVM_HOST $LLVM_TARGET --with-python=$CFG_PYTHON"
@@ -919,9 +1308,6 @@ do
         esac
         need_ok "LLVM configure failed"
 
-        # Hack the tools Makefile to turn off the clang build
-        sed -i 's/clang//g' tools/Makefile
-
         cd $CFG_BUILD_DIR
     fi
 
@@ -946,24 +1332,16 @@ putvar CFG_OSTYPE
 putvar CFG_CPUTYPE
 putvar CFG_CONFIGURE_ARGS
 putvar CFG_PREFIX
-putvar CFG_BUILD_TRIPLE
-putvar CFG_HOST_TRIPLES
-putvar CFG_TARGET_TRIPLES
-putvar CFG_C_COMPILER
-putvar CFG_LIBDIR
+putvar CFG_HOST
+putvar CFG_TARGET
+putvar CFG_LIBDIR_RELATIVE
 putvar CFG_DISABLE_MANAGE_SUBMODULES
 putvar CFG_ANDROID_CROSS_PATH
-putvar CFG_MINGW32_CROSS_PATH
-
-if [ ! -z "$CFG_ENABLE_PAX_FLAGS" ]
-then
-    putvar CFG_ENABLE_PAX_FLAGS
-    putvar CFG_PAXCTL
-fi
+putvar CFG_MANDIR
 
 # Avoid spurious warnings from clang by feeding it original source on
 # ccache-miss rather than preprocessed input.
-if [ ! -z "$CFG_ENABLE_CCACHE" ] && [ ! -z "$CFG_ENABLE_CLANG" ]
+if [ ! -z "$CFG_ENABLE_CCACHE" ] && [ ! -z "$CFG_USING_CLANG" ]
 then
     CFG_CCACHE_CPP2=1
     putvar CFG_CCACHE_CPP2
@@ -982,25 +1360,9 @@ then
     putvar CFG_PANDOC
 fi
 
-if head -n 1 ${CFG_SRC_DIR}src/snapshots.txt | grep -q '^T'
-then
-    CFG_IN_TRANSITION=1
-    putvar CFG_IN_TRANSITION
-fi
-
-# Valgrind is only reliable on Linux. On Windows it doesn't work at all, and
-# on the Mac the dynamic linker causes Valgrind to emit a huge stream of
-# errors.
-if [ $CFG_OSTYPE != unknown-linux-gnu ] && [ $CFG_OSTYPE != apple-darwin ]
-then
-    CFG_BAD_VALGRIND=1
-    putvar CFG_BAD_VALGRIND
-fi
-
-putvar CFG_LLVM_ROOT
 putvar CFG_LLVM_SRC_DIR
 
-for t in $CFG_HOST_TRIPLES
+for t in $CFG_HOST
 do
     CFG_LLVM_BUILD_DIR=$(echo CFG_LLVM_BUILD_DIR_${t} | tr - _)
     CFG_LLVM_INST_DIR=$(echo CFG_LLVM_INST_DIR_${t} | tr - _)
@@ -1009,8 +1371,7 @@ do
 done
 
 # Munge any paths that appear in config.mk back to posix-y
-perl -i.bak -p -e 's@ ([a-zA-Z]):[/\\]@ /\1/@go;' \
-               -e 's@\\@/@go;' config.tmp
+perl -i.bak -p -e 's@ ([a-zA-Z]):[/\\]@ /\1/@go;' config.tmp
 rm -f config.tmp.bak
 
 msg
@@ -1020,3 +1381,5 @@ rm -f config.tmp
 touch config.stamp
 
 step_msg "complete"
+msg "run \`make help\`"
+msg

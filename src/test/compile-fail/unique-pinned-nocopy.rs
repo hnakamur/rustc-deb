@@ -8,16 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
+
+#[derive(Show)]
 struct r {
-  b:bool,
+  b: bool,
 }
 
 impl Drop for r {
-    fn drop(&self) {}
+    fn drop(&mut self) {}
 }
 
 fn main() {
-    let i = ~r { b: true };
-    let _j = copy i; //~ ERROR copying a value of non-copyable type
-    debug!(i);
+    let i = box r { b: true };
+    let _j = i.clone(); //~ ERROR not implement
+    println!("{:?}", i);
 }

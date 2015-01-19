@@ -8,30 +8,32 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct r {
-  b: @mut int,
+#![feature(unsafe_destructor)]
+
+use std::cell::Cell;
+
+struct r<'a> {
+    b: &'a Cell<int>,
 }
 
 #[unsafe_destructor]
-impl Drop for r {
-    fn drop(&self) {
-        unsafe {
-            *(self.b) += 1;
-        }
+impl<'a> Drop for r<'a> {
+    fn drop(&mut self) {
+        self.b.set(self.b.get() + 1);
     }
 }
 
-fn r(b: @mut int) -> r {
+fn r(b: &Cell<int>) -> r {
     r {
         b: b
     }
 }
 
 pub fn main() {
-    let b = @mut 0;
+    let b = &Cell::new(0);
     {
-        let p = Some(r(b));
+        let _p = Some(r(b));
     }
 
-    assert_eq!(*b, 1);
+    assert_eq!(b.get(), 1);
 }

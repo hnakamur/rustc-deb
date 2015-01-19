@@ -8,37 +8,60 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ast::{meta_item, item, expr};
-use codemap::span;
+use ast::{MetaItem, Item, Expr};
+use codemap::Span;
 use ext::base::ExtCtxt;
 use ext::build::AstBuilder;
 use ext::deriving::generic::*;
+use ext::deriving::generic::ty::*;
+use parse::token::InternedString;
+use ptr::P;
 
-pub fn expand_deriving_totaleq(cx: @ExtCtxt,
-                          span: span,
-                          mitem: @meta_item,
-                          in_items: ~[@item]) -> ~[@item] {
-
-    fn cs_equals(cx: @ExtCtxt, span: span, substr: &Substructure) -> @expr {
-        cs_and(|cx, span, _, _| cx.expr_bool(span, false),
-               cx, span, substr)
+pub fn expand_deriving_totaleq<F>(cx: &mut ExtCtxt,
+                                  span: Span,
+                                  mitem: &MetaItem,
+                                  item: &Item,
+                                  push: F) where
+    F: FnOnce(P<Item>),
+{
+    fn cs_total_eq_assert(cx: &mut ExtCtxt, span: Span, substr: &Substructure) -> P<Expr> {
+        cs_same_method(|cx, span, exprs| {
+            // create `a.<method>(); b.<method>(); c.<method>(); ...`
+            // (where method is `assert_receiver_is_total_eq`)
+            let stmts = exprs.into_iter().map(|e| cx.stmt_expr(e)).collect();
+            let block = cx.block(span, stmts, None);
+            cx.expr_block(block)
+        },
+                       box |cx, sp, _, _| cx.span_bug(sp, "non matching enums in deriving(Eq)?"),
+                       cx,
+                       span,
+                       substr)
     }
 
+    let inline = cx.meta_word(span, InternedString::new("inline"));
+    let hidden = cx.meta_word(span, InternedString::new("hidden"));
+    let doc = cx.meta_list(span, InternedString::new("doc"), vec!(hidden));
+    let attrs = vec!(cx.attribute(span, inline),
+                     cx.attribute(span, doc));
     let trait_def = TraitDef {
-        path: Path::new(~["std", "cmp", "TotalEq"]),
-        additional_bounds: ~[],
+        span: span,
+        attributes: Vec::new(),
+        path: Path::new(vec!("std", "cmp", "Eq")),
+        additional_bounds: Vec::new(),
         generics: LifetimeBounds::empty(),
-        methods: ~[
+        methods: vec!(
             MethodDef {
-                name: "equals",
+                name: "assert_receiver_is_total_eq",
                 generics: LifetimeBounds::empty(),
                 explicit_self: borrowed_explicit_self(),
-                args: ~[borrowed_self()],
-                ret_ty: Literal(Path::new(~["bool"])),
-                const_nonmatching: true,
-                combine_substructure: cs_equals
+                args: vec!(),
+                ret_ty: nil_ty(),
+                attributes: attrs,
+                combine_substructure: combine_substructure(box |a, b, c| {
+                    cs_total_eq_assert(a, b, c)
+                })
             }
-        ]
+        )
     };
-    trait_def.expand(cx, span, mitem, in_items)
+    trait_def.expand(cx, mitem, item, push)
 }

@@ -8,10 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
-use std::int;
-use std::io;
 use std::os;
 
 fn ack(m: int, n: int) -> int {
@@ -28,13 +24,13 @@ fn ack(m: int, n: int) -> int {
 
 fn main() {
     let args = os::args();
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"12"]
+    let args = if os::getenv("RUST_BENCH").is_some() {
+        vec!("".to_string(), "12".to_string())
     } else if args.len() <= 1u {
-        ~[~"", ~"8"]
+        vec!("".to_string(), "8".to_string())
     } else {
-        args
+        args.into_iter().collect()
     };
-    let n = int::from_str(args[1]).get();
-    io::println(fmt!("Ack(3,%d): %d\n", n, ack(3, n)));
+    let n = args[1].parse().unwrap();
+    println!("Ack(3,{}): {}\n", n, ack(3, n));
 }

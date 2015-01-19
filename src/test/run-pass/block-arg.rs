@@ -8,57 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::vec;
-
 // Check usage and precedence of block arguments in expressions:
 pub fn main() {
-    let v = ~[-1f, 0f, 1f, 2f, 3f];
+    let v = vec!(-1.0f64, 0.0, 1.0, 2.0, 3.0);
 
     // Statement form does not require parentheses:
-    for v.iter().advance |i| {
-        info!("%?", *i);
+    for i in v.iter() {
+        println!("{}", *i);
     }
 
-    // Usable at all:
-    let mut any_negative = do v.iter().any_ |e| { e.is_negative() };
-    assert!(any_negative);
-
-    // Higher precedence than assignments:
-    any_negative = do v.iter().any_ |e| { e.is_negative() };
-    assert!(any_negative);
-
-    // Higher precedence than unary operations:
-    let abs_v = do v.iter().transform |e| { e.abs() }.collect::<~[float]>();
-    assert!(do abs_v.iter().all |e| { e.is_positive() });
-    assert!(!do abs_v.iter().any_ |e| { e.is_negative() });
-
-    // Usable in funny statement-like forms:
-    if !do v.iter().any_ |e| { e.is_positive() } {
-        assert!(false);
-    }
-    match do v.iter().all |e| { e.is_negative() } {
-        true => { fail!("incorrect answer."); }
-        false => { }
-    }
-    match 3 {
-      _ if do v.iter().any_ |e| { e.is_negative() } => {
-      }
-      _ => {
-        fail!("wrong answer.");
-      }
-    }
-
-
-    // Lower precedence than binary operations:
-    let w = do v.iter().fold(0f) |x, y| { x + *y } + 10f;
-    let y = do v.iter().fold(0f) |x, y| { x + *y } + 10f;
-    let z = 10f + do v.iter().fold(0f) |x, y| { x + *y };
-    assert_eq!(w, y);
-    assert_eq!(y, z);
-
-    // In the tail of a block
-    let w =
-        if true { do abs_v.iter().any_ |e| { e.is_positive() } }
-      else { false };
-    assert!(w);
 }

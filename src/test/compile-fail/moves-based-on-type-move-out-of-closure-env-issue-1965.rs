@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::uint;
+#![feature(box_syntax)]
 
-fn test(_x: ~uint) {}
+use std::usize;
+
+fn test(_x: Box<usize>) {}
 
 fn main() {
-    let i = ~3;
-    for uint::range(0, 10) |_x| {
-        test(i); //~ ERROR cannot move out
-    }
+    let i = box 3;
+    let _f = |&:| test(i); //~ ERROR cannot move out
 }
