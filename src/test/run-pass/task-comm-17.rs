@@ -12,13 +12,11 @@
 
 // This test is specifically about spawning temporary closures.
 
-extern mod extra;
-
-use std::task;
+use std::thread::Thread;
 
 fn f() {
 }
 
 pub fn main() {
-    task::spawn(|| f() );
+    let _t = Thread::scoped(move|| f() ).join();
 }

@@ -9,7 +9,7 @@
 // except according to those terms.
 
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-
-// -*- rust -*-
-pub fn main() { let x = { ~100 }; assert!((*x == 100)); }
+pub fn main() { let x = { box 100i }; assert!((*x == 100)); }

@@ -8,12 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f(i: &mut ~int) {
-    *i = ~200;
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+fn f(i: &mut Box<int>) {
+    *i = box 200;
 }
 
 pub fn main() {
-    let mut i = ~100;
+    let mut i = box 100;
     f(&mut i);
     assert_eq!(*i, 200);
 }

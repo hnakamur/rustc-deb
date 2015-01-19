@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(dead_assignment)]
+
 pub fn main() {
-    let x : ~str = ~"hello";
-    let _y : ~str = ~"there";
-    let mut z = ~"thing";
+    let x : String = "hello".to_string();
+    let _y : String = "there".to_string();
+    let mut z = "thing".to_string();
     z = x;
-    assert_eq!(z[0], ('h' as u8));
-    assert_eq!(z[4], ('o' as u8));
+    assert_eq!(z.as_bytes()[0], ('h' as u8));
+    assert_eq!(z.as_bytes()[4], ('o' as u8));
 }

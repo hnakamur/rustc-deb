@@ -8,8 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod std;
-use std::sys::size_of;
+use std::mem::size_of;
 
 struct t {a: u8, b: i8}
 struct u {a: u8, b: i8, c: u8}
@@ -18,6 +17,17 @@ struct v2 {u: char, v: u8}
 struct w {a: int, b: ()}
 struct x {a: int, b: (), c: ()}
 struct y {x: int}
+
+enum e1 {
+    a(u8, u32), b(u32), c
+}
+enum e2 {
+    a(u32), b
+}
+
+enum e3 {
+    a([u16; 0], u8), b
+}
 
 pub fn main() {
     assert_eq!(size_of::<u8>(), 1 as uint);
@@ -35,4 +45,11 @@ pub fn main() {
     assert_eq!(size_of::<w>(), size_of::<int>());
     assert_eq!(size_of::<x>(), size_of::<int>());
     assert_eq!(size_of::<int>(), size_of::<y>());
+
+    // Make sure enum types are the appropriate size, mostly
+    // around ensuring alignment is handled properly
+
+    assert_eq!(size_of::<e1>(), 8 as uint);
+    assert_eq!(size_of::<e2>(), 8 as uint);
+    assert_eq!(size_of::<e3>(), 4 as uint);
 }

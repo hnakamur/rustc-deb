@@ -12,8 +12,8 @@
 // mismatch between the # of params, and not other
 // unrelated errors.
 
-fn foo(a: int, b: int, c: int, d:int) {
-  fail!();
+fn foo(a: isize, b: isize, c: isize, d:isize) {
+  panic!();
 }
 
 fn main() {

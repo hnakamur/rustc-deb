@@ -9,8 +9,8 @@
 // except according to those terms.
 
 pub fn main() {
-    match -5 {
+    match -5i {
       -5 => {}
-      _ => { fail!() }
+      _ => { panic!() }
     }
 }

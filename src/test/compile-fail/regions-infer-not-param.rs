@@ -8,21 +8,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct direct<'self> {
-    f: &'self int
+struct direct<'a> {
+    f: &'a isize
 }
 
 struct indirect1 {
     // Here the lifetime parameter of direct is bound by the fn()
-    g: @fn(direct)
+    g: Box<FnOnce(direct) + 'static>
 }
 
-struct indirect2<'self> {
-    // But here it is set to 'self
-    g: @fn(direct<'self>)
+struct indirect2<'a> {
+    // But here it is set to 'a
+    g: Box<FnOnce(direct<'a>) + 'static>
 }
 
-fn take_direct(p: direct) -> direct { p } //~ ERROR mismatched types
+fn take_direct<'a,'b>(p: direct<'a>) -> direct<'b> { p } //~ ERROR mismatched types
+
 fn take_indirect1(p: indirect1) -> indirect1 { p }
-fn take_indirect2(p: indirect2) -> indirect2 { p } //~ ERROR mismatched types
+
+fn take_indirect2<'a,'b>(p: indirect2<'a>) -> indirect2<'b> { p } //~ ERROR mismatched types
+
 fn main() {}

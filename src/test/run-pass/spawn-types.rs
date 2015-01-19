@@ -14,16 +14,17 @@
   Arnold.
  */
 
-use std::comm::*;
-use std::task;
+use std::thread::Thread;
+use std::sync::mpsc::{channel, Sender};
 
-type ctx = Chan<int>;
+type ctx = Sender<int>;
 
-fn iotask(cx: &ctx, ip: ~str) {
-    assert_eq!(ip, ~"localhost");
+fn iotask(_tx: &ctx, ip: String) {
+    assert_eq!(ip, "localhost".to_string());
 }
 
 pub fn main() {
-    let (p, ch) = stream::<int>();
-    task::spawn(|| iotask(&ch, ~"localhost") );
+    let (tx, _rx) = channel::<int>();
+    let t = Thread::scoped(move|| iotask(&tx, "localhost".to_string()) );
+    t.join().ok().unwrap();
 }

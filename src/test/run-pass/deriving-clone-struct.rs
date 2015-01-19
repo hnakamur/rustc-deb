@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Clone, DeepClone)]
+#[derive(Clone)]
 struct S {
     _int: int,
     _i8: i8,
@@ -22,7 +22,6 @@ struct S {
     _u32: u32,
     _u64: u64,
 
-    _float: float,
     _f32: f32,
     _f64: f64,
 
@@ -31,4 +30,4 @@ struct S {
     _nil: ()
 }
 
-fn main() {}
+pub fn main() {}

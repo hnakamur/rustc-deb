@@ -11,14 +11,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ARMMACHINEFUNCTIONINFO_H
-#define ARMMACHINEFUNCTIONINFO_H
+#ifndef LLVM_LIB_TARGET_ARM_ARMMACHINEFUNCTIONINFO_H
+#define LLVM_LIB_TARGET_ARM_ARMMACHINEFUNCTIONINFO_H
 
 #include "ARMSubtarget.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/ADT/DenseMap.h"
 
 namespace llvm {
 
@@ -36,9 +37,19 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   /// 'isThumb'.
   bool hasThumb2;
 
+  /// StByValParamsPadding - For parameter that is split between
+  /// GPRs and memory; while recovering GPRs part, when
+  /// StackAlignment > 4, and GPRs-part-size mod StackAlignment != 0,
+  /// we need to insert gap before parameter start address. It allows to
+  /// "attach" GPR-part to the part that was passed via stack.
+  unsigned StByValParamsPadding;
+
   /// VarArgsRegSaveSize - Size of the register save area for vararg functions.
   ///
-  unsigned VarArgsRegSaveSize;
+  unsigned ArgRegsSaveSize;
+
+  /// ReturnRegsCount - Number of registers used up in the return.
+  unsigned ReturnRegsCount;
 
   /// HasStackFrame - True if this function has a stack frame. Set by
   /// processFunctionBeforeCalleeSavedScan().
@@ -77,12 +88,6 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   unsigned GPRCS2Size;
   unsigned DPRCSSize;
 
-  /// GPRCS1Frames, GPRCS2Frames, DPRCSFrames - Keeps track of frame indices
-  /// which belong to these spill areas.
-  BitVector GPRCS1Frames;
-  BitVector GPRCS2Frames;
-  BitVector DPRCSFrames;
-
   /// NumAlignedDPRCS2Regs - The number of callee-saved DPRs that are saved in
   /// the aligned portion of the stack frame.  This is always a contiguous
   /// sequence of D-registers starting from d8.
@@ -117,36 +122,41 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   /// being passed on the stack
   unsigned ArgumentStackSize;
 
+  /// CoalescedWeights - mapping of basic blocks to the rolling counter of
+  /// coalesced weights.
+  DenseMap<const MachineBasicBlock*, unsigned> CoalescedWeights;
+
 public:
   ARMFunctionInfo() :
     isThumb(false),
     hasThumb2(false),
-    VarArgsRegSaveSize(0), HasStackFrame(false), RestoreSPFromFP(false),
+    ArgRegsSaveSize(0), ReturnRegsCount(0), HasStackFrame(false),
+    RestoreSPFromFP(false),
     LRSpilledForFarJump(false),
     FramePtrSpillOffset(0), GPRCS1Offset(0), GPRCS2Offset(0), DPRCSOffset(0),
     GPRCS1Size(0), GPRCS2Size(0), DPRCSSize(0),
-    GPRCS1Frames(0), GPRCS2Frames(0), DPRCSFrames(0),
     NumAlignedDPRCS2Regs(0),
     JumpTableUId(0), PICLabelUId(0),
     VarArgsFrameIndex(0), HasITBlocks(false), GlobalBaseReg(0) {}
 
-  explicit ARMFunctionInfo(MachineFunction &MF) :
-    isThumb(MF.getTarget().getSubtarget<ARMSubtarget>().isThumb()),
-    hasThumb2(MF.getTarget().getSubtarget<ARMSubtarget>().hasThumb2()),
-    VarArgsRegSaveSize(0), HasStackFrame(false), RestoreSPFromFP(false),
-    LRSpilledForFarJump(false),
-    FramePtrSpillOffset(0), GPRCS1Offset(0), GPRCS2Offset(0), DPRCSOffset(0),
-    GPRCS1Size(0), GPRCS2Size(0), DPRCSSize(0),
-    GPRCS1Frames(32), GPRCS2Frames(32), DPRCSFrames(32),
-    JumpTableUId(0), PICLabelUId(0),
-    VarArgsFrameIndex(0), HasITBlocks(false), GlobalBaseReg(0) {}
+  explicit ARMFunctionInfo(MachineFunction &MF);
 
   bool isThumbFunction() const { return isThumb; }
   bool isThumb1OnlyFunction() const { return isThumb && !hasThumb2; }
   bool isThumb2Function() const { return isThumb && hasThumb2; }
 
-  unsigned getVarArgsRegSaveSize() const { return VarArgsRegSaveSize; }
-  void setVarArgsRegSaveSize(unsigned s) { VarArgsRegSaveSize = s; }
+  unsigned getStoredByValParamsPadding() const { return StByValParamsPadding; }
+  void setStoredByValParamsPadding(unsigned p) { StByValParamsPadding = p; }
+
+  unsigned getArgRegsSaveSize(unsigned Align = 0) const {
+    if (!Align)
+      return ArgRegsSaveSize;
+    return (ArgRegsSaveSize + Align - 1) & ~(Align - 1);
+  }
+  void setArgRegsSaveSize(unsigned s) { ArgRegsSaveSize = s; }
+
+  unsigned getReturnRegsCount() const { return ReturnRegsCount; }
+  void setReturnRegsCount(unsigned s) { ReturnRegsCount = s; }
 
   bool hasStackFrame() const { return HasStackFrame; }
   void setHasStackFrame(bool s) { HasStackFrame = s; }
@@ -182,59 +192,6 @@ public:
   unsigned getArgumentStackSize() const { return ArgumentStackSize; }
   void setArgumentStackSize(unsigned size) { ArgumentStackSize = size; }
 
-  bool isGPRCalleeSavedArea1Frame(int fi) const {
-    if (fi < 0 || fi >= (int)GPRCS1Frames.size())
-      return false;
-    return GPRCS1Frames[fi];
-  }
-  bool isGPRCalleeSavedArea2Frame(int fi) const {
-    if (fi < 0 || fi >= (int)GPRCS2Frames.size())
-      return false;
-    return GPRCS2Frames[fi];
-  }
-  bool isDPRCalleeSavedAreaFrame(int fi) const {
-    if (fi < 0 || fi >= (int)DPRCSFrames.size())
-      return false;
-    return DPRCSFrames[fi];
-  }
-
-  void addGPRCalleeSavedArea1Frame(int fi) {
-    if (fi >= 0) {
-      int Size = GPRCS1Frames.size();
-      if (fi >= Size) {
-        Size *= 2;
-        if (fi >= Size)
-          Size = fi+1;
-        GPRCS1Frames.resize(Size);
-      }
-      GPRCS1Frames[fi] = true;
-    }
-  }
-  void addGPRCalleeSavedArea2Frame(int fi) {
-    if (fi >= 0) {
-      int Size = GPRCS2Frames.size();
-      if (fi >= Size) {
-        Size *= 2;
-        if (fi >= Size)
-          Size = fi+1;
-        GPRCS2Frames.resize(Size);
-      }
-      GPRCS2Frames[fi] = true;
-    }
-  }
-  void addDPRCalleeSavedAreaFrame(int fi) {
-    if (fi >= 0) {
-      int Size = DPRCSFrames.size();
-      if (fi >= Size) {
-        Size *= 2;
-        if (fi >= Size)
-          Size = fi+1;
-        DPRCSFrames.resize(Size);
-      }
-      DPRCSFrames[fi] = true;
-    }
-  }
-
   unsigned createJumpTableUId() {
     return JumpTableUId++;
   }
@@ -266,7 +223,7 @@ public:
 
   void recordCPEClone(unsigned CPIdx, unsigned CPCloneIdx) {
     if (!CPEClones.insert(std::make_pair(CPCloneIdx, CPIdx)).second)
-      assert(0 && "Duplicate entries!");
+      llvm_unreachable("Duplicate entries!");
   }
 
   unsigned getOriginalCPIdx(unsigned CloneIdx) const {
@@ -276,7 +233,16 @@ public:
     else
       return -1U;
   }
+
+  DenseMap<const MachineBasicBlock*, unsigned>::iterator getCoalescedWeight(
+                                                  MachineBasicBlock* MBB) {
+    auto It = CoalescedWeights.find(MBB);
+    if (It == CoalescedWeights.end()) {
+      It = CoalescedWeights.insert(std::make_pair(MBB, 0)).first;
+    }
+    return It;
+  }
 };
 } // End llvm namespace
 
-#endif // ARMMACHINEFUNCTIONINFO_H
+#endif

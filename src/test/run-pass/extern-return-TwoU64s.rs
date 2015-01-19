@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,11 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct TwoU64s {
+pub struct TwoU64s {
     one: u64, two: u64
 }
 
-pub extern {
+#[link(name = "rust_test_helpers")]
+extern {
     pub fn rust_dbg_extern_return_TwoU64s() -> TwoU64s;
 }
 

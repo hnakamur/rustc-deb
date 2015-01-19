@@ -10,7 +10,7 @@
 
 mod cat {
     pub struct Cat {
-        priv meows: uint
+        meows: usize
     }
 
     pub fn new_cat() -> Cat {
@@ -20,5 +20,5 @@ mod cat {
 
 fn main() {
     let nyan = cat::new_cat();
-    assert!(nyan.meows == 52);    //~ ERROR field `meows` is private
+    assert!(nyan.meows == 52);    //~ ERROR field `meows` of struct `cat::Cat` is private
 }

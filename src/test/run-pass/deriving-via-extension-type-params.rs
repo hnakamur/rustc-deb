@@ -1,6 +1,5 @@
-// xfail-fast
 
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,8 +9,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Eq)]
-#[deriving(IterBytes)]
+#[derive(PartialEq, Hash, Show)]
 struct Foo<T> {
     x: int,
     y: T,
@@ -19,8 +17,8 @@ struct Foo<T> {
 }
 
 pub fn main() {
-    let a = Foo { x: 1, y: 2.0, z: 3 };
-    let b = Foo { x: 1, y: 2.0, z: 3 };
+    let a = Foo { x: 1, y: 2.0f64, z: 3 };
+    let b = Foo { x: 1, y: 2.0f64, z: 3 };
     assert_eq!(a, b);
     assert!(!(a != b));
     assert!(a.eq(&b));

@@ -1,25 +1,36 @@
-use std::cast;
-use std::libc;
-use std::unstable::run_in_bare_thread;
+// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
+extern crate libc;
+
+use std::mem;
+use std::thread::Thread;
+
+#[link(name = "rust_test_helpers")]
 extern {
-    pub fn rust_dbg_call(cb: *u8, data: libc::uintptr_t) -> libc::uintptr_t;
+    fn rust_dbg_call(cb: extern "C" fn(libc::uintptr_t),
+                     data: libc::uintptr_t) -> libc::uintptr_t;
 }
 
 pub fn main() {
     unsafe {
-        do run_in_bare_thread() {
-            unsafe {
-                let i = &100;
-                rust_dbg_call(callback, cast::transmute(i));
-            }
-        }
+        Thread::scoped(move|| {
+            let i = &100i;
+            rust_dbg_call(callback, mem::transmute(i));
+        }).join();
     }
 }
 
 extern fn callback(data: libc::uintptr_t) {
     unsafe {
-        let data: *int = cast::transmute(data);
-        assert_eq!(*data, 100);
+        let data: *const int = mem::transmute(data);
+        assert_eq!(*data, 100i);
     }
 }

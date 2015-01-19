@@ -8,16 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn borrow<'r, T>(x: &'r T) -> &'r T {x}
 
-fn foo(cond: &fn() -> bool, box: &fn() -> @int) {
-    let mut y: &int;
+fn borrow<T>(x: &T) -> &T {x}
+
+fn foo<C, M>(mut cond: C, mut make_box: M) where
+    C: FnMut() -> bool,
+    M: FnMut() -> Box<isize>,
+{
+    let mut y: &isize;
     loop {
-        let x = box();
+        let x = make_box();
 
         // Here we complain because the resulting region
         // of this borrow is the fn body as a whole.
-        y = borrow(x); //~ ERROR cannot root
+        y = borrow(&*x); //~ ERROR `*x` does not live long enough
 
         assert_eq!(*x, *y);
         if cond() { break; }

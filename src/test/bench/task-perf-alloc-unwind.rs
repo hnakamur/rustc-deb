@@ -8,21 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-win32
+#![feature(unsafe_destructor, box_syntax)]
 
-extern mod extra;
-
-use extra::list::{List, Cons, Nil};
-use extra::time::precise_time_s;
 use std::os;
-use std::task;
+use std::thread::Thread;
+use std::time::Duration;
+
+#[derive(Clone)]
+enum List<T> {
+    Nil, Cons(T, Box<List<T>>)
+}
 
 enum UniqueList {
-    ULNil, ULCons(~UniqueList)
+    ULNil, ULCons(Box<UniqueList>)
 }
 
 fn main() {
-    let (repeat, depth) = if os::getenv(~"RUST_BENCH").is_some() {
+    let (repeat, depth) = if os::getenv("RUST_BENCH").is_some() {
         (50, 1000)
     } else {
         (10, 10)
@@ -32,12 +34,13 @@ fn main() {
 }
 
 fn run(repeat: int, depth: int) {
-    for (repeat as uint).times {
-        debug!("starting %.4f", precise_time_s());
-        do task::try {
-            recurse_or_fail(depth, None)
-        };
-        debug!("stopping %.4f", precise_time_s());
+    for _ in range(0, repeat) {
+        let dur = Duration::span(|| {
+            let _ = Thread::scoped(move|| {
+                recurse_or_panic(depth, None)
+            }).join();
+        });
+        println!("iter: {}", dur);
     }
 }
 
@@ -46,62 +49,51 @@ type nillist = List<()>;
 // Filled with things that have to be unwound
 
 struct State {
-    box: @nillist,
-    unique: ~nillist,
-    fn_box: @fn() -> @nillist,
-    tuple: (@nillist, ~nillist),
-    vec: ~[@nillist],
+    unique: Box<nillist>,
+    vec: Vec<Box<nillist>>,
     res: r
 }
 
 struct r {
-  _l: @nillist,
+  _l: Box<nillist>,
 }
 
 #[unsafe_destructor]
 impl Drop for r {
-    fn drop(&self) {}
+    fn drop(&mut self) {}
 }
 
-fn r(l: @nillist) -> r {
+fn r(l: Box<nillist>) -> r {
     r {
         _l: l
     }
 }
 
-fn recurse_or_fail(depth: int, st: Option<State>) {
+fn recurse_or_panic(depth: int, st: Option<State>) {
     if depth == 0 {
-        debug!("unwinding %.4f", precise_time_s());
-        fail!();
+        panic!();
     } else {
         let depth = depth - 1;
 
         let st = match st {
-          None => {
-            State {
-                box: @Nil,
-                unique: ~Nil,
-                fn_box: || @Nil::<()>,
-                tuple: (@Nil, ~Nil),
-                vec: ~[@Nil],
-                res: r(@Nil)
+            None => {
+                State {
+                    unique: box List::Nil,
+                    vec: vec!(box List::Nil),
+                    res: r(box List::Nil)
+                }
             }
-          }
-          Some(st) => {
-            let fn_box = st.fn_box;
-
-            State {
-                box: @Cons((), st.box),
-                unique: ~Cons((), @*st.unique),
-                fn_box: || @Cons((), fn_box()),
-                tuple: (@Cons((), st.tuple.first()),
-                        ~Cons((), @*st.tuple.second())),
-                vec: st.vec + [@Cons((), *st.vec.last())],
-                res: r(@Cons((), st.res._l))
+            Some(st) => {
+                let mut v = st.vec.clone();
+                v.push_all(&[box List::Cons((), st.vec.last().unwrap().clone())]);
+                State {
+                    unique: box List::Cons((), box *st.unique),
+                    vec: v,
+                    res: r(box List::Cons((), st.res._l.clone())),
+                }
             }
-          }
         };
 
-        recurse_or_fail(depth, Some(st));
+        recurse_or_panic(depth, Some(st));
     }
 }

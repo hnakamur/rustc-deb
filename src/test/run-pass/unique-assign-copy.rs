@@ -8,8 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 pub fn main() {
-    let mut i = ~1;
+    let mut i = box 1i;
     // Should be a copy
     let mut j;
     j = i.clone();

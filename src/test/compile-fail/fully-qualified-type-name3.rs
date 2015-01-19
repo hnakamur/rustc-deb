@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,13 +10,14 @@
 
 // Test that we use fully-qualified type names in error messages.
 
-// xfail-test
-type T1 = uint;
-type T2 = int;
+// ignore-test
+
+type T1 = usize;
+type T2 = isize;
 
 fn bar(x: T1) -> T2 {
     return x;
-    //~^ ERROR mismatched types: expected `T2` but found `T1`
+    //~^ ERROR mismatched types: expected `T2`, found `T1`
 }
 
 fn main() {

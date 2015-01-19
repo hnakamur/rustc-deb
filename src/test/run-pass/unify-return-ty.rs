@@ -11,13 +11,12 @@
 // Tests that the tail expr in null() has its type
 // unified with the type *T, and so the type variable
 // in that type gets resolved.
-extern mod extra;
 
-use std::cast;
+use std::mem;
 
-fn null<T>() -> *T {
+fn null<T>() -> *const T {
     unsafe {
-        cast::transmute(0)
+        mem::transmute(0u)
     }
 }
 

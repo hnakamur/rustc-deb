@@ -8,16 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn foo<T>() {
-    1u.bar::<T>(); //~ ERROR: does not fulfill `Copy`
+fn foo<T:'static>() {
+    1us.bar::<T>(); //~ ERROR `core::marker::Send` is not implemented
 }
 
 trait bar {
-    fn bar<T:Copy>(&self);
+    fn bar<T:Send>(&self);
 }
 
-impl bar for uint {
-    fn bar<T:Copy>(&self) {
+impl bar for usize {
+    fn bar<T:Send>(&self) {
     }
 }
 

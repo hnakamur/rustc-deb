@@ -8,22 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-
-// -*- rust -*-
-type compare<T> = @fn(~T, ~T) -> bool;
-
-fn test_generic<T:Copy+Clone>(expected: ~T, eq: compare<T>) {
-    let actual: ~T = match true {
+fn test_generic<T: Clone, F>(expected: Box<T>, eq: F) where F: FnOnce(Box<T>, Box<T>) -> bool {
+    let actual: Box<T> = match true {
         true => { expected.clone() },
-        _ => fail!("wat")
+        _ => panic!("wat")
     };
-    assert!((eq(expected, actual)));
+    assert!(eq(expected, actual));
 }
 
 fn test_box() {
-    fn compare_box(b1: ~bool, b2: ~bool) -> bool { return *b1 == *b2; }
-    test_generic::<bool>(~true, compare_box);
+    fn compare_box(b1: Box<bool>, b2: Box<bool>) -> bool {
+        return *b1 == *b2;
+    }
+    test_generic::<bool, _>(box true, compare_box);
 }
 
 pub fn main() { test_box(); }

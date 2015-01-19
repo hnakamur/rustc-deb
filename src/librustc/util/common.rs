@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,109 +8,216 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(non_camel_case_types)]
+
+use std::cell::{RefCell, Cell};
+use std::collections::HashMap;
+use std::fmt::Show;
+use std::hash::{Hash, Hasher};
+use std::iter::repeat;
+use std::time::Duration;
+use std::collections::hash_state::HashState;
 
 use syntax::ast;
-use syntax::codemap::{span};
 use syntax::visit;
+use syntax::visit::Visitor;
 
-use std::hashmap::HashSet;
-use std::io;
-use extra;
+// Useful type to use with `Result<>` indicate that an error has already
+// been reported to the user, so no need to continue checking.
+#[derive(Clone, Copy, Show)]
+pub struct ErrorReported;
 
-pub fn time<T>(do_it: bool, what: ~str, thunk: &fn() -> T) -> T {
-    if !do_it { return thunk(); }
-    let start = extra::time::precise_time_s();
-    let rv = thunk();
-    let end = extra::time::precise_time_s();
-    io::println(fmt!("time: %3.3f s\t%s", end - start, what));
+pub fn time<T, U, F>(do_it: bool, what: &str, u: U, f: F) -> T where
+    F: FnOnce(U) -> T,
+{
+    thread_local!(static DEPTH: Cell<uint> = Cell::new(0));
+    if !do_it { return f(u); }
+
+    let old = DEPTH.with(|slot| {
+        let r = slot.get();
+        slot.set(r + 1);
+        r
+    });
+
+    let mut u = Some(u);
+    let mut rv = None;
+    let dur = {
+        let ref mut rvp = rv;
+
+        Duration::span(move || {
+            *rvp = Some(f(u.take().unwrap()))
+        })
+    };
+    let rv = rv.unwrap();
+
+    println!("{}time: {}.{:03} \t{}", repeat("  ").take(old).collect::<String>(),
+             dur.num_seconds(), dur.num_milliseconds() % 1000, what);
+    DEPTH.with(|slot| slot.set(old));
+
     rv
 }
 
-pub fn indent<R>(op: &fn() -> R) -> R {
+pub fn indent<R, F>(op: F) -> R where
+    R: Show,
+    F: FnOnce() -> R,
+{
     // Use in conjunction with the log post-processor like `src/etc/indenter`
     // to make debug output more readable.
     debug!(">>");
     let r = op();
-    debug!("<< (Result = %?)", r);
+    debug!("<< (Result = {:?})", r);
     r
 }
 
-pub struct _indenter {
-    _i: (),
+pub struct Indenter {
+    _cannot_construct_outside_of_this_module: ()
 }
 
-impl Drop for _indenter {
-    fn drop(&self) { debug!("<<"); }
+impl Drop for Indenter {
+    fn drop(&mut self) { debug!("<<"); }
 }
 
-pub fn _indenter(_i: ()) -> _indenter {
-    _indenter {
-        _i: ()
-    }
-}
-
-pub fn indenter() -> _indenter {
+pub fn indenter() -> Indenter {
     debug!(">>");
-    _indenter(())
+    Indenter { _cannot_construct_outside_of_this_module: () }
 }
 
-pub fn field_expr(f: ast::field) -> @ast::expr { return f.node.expr; }
-
-pub fn field_exprs(fields: ~[ast::field]) -> ~[@ast::expr] {
-    fields.map(|f| f.node.expr)
+struct LoopQueryVisitor<P> where P: FnMut(&ast::Expr_) -> bool {
+    p: P,
+    flag: bool,
 }
 
-// Takes a predicate p, returns true iff p is true for any subexpressions
-// of b -- skipping any inner loops (loop, while, loop_body)
-pub fn loop_query(b: &ast::blk, p: @fn(&ast::expr_) -> bool) -> bool {
-    let rs = @mut false;
-    let visit_expr: @fn(@ast::expr,
-                        (@mut bool,
-                         visit::vt<@mut bool>)) = |e, (flag, v)| {
-        *flag |= p(&e.node);
+impl<'v, P> Visitor<'v> for LoopQueryVisitor<P> where P: FnMut(&ast::Expr_) -> bool {
+    fn visit_expr(&mut self, e: &ast::Expr) {
+        self.flag |= (self.p)(&e.node);
         match e.node {
           // Skip inner loops, since a break in the inner loop isn't a
           // break inside the outer loop
-          ast::expr_loop(*) | ast::expr_while(*)
-          | ast::expr_loop_body(*) => {}
-          _ => visit::visit_expr(e, (flag, v))
+          ast::ExprLoop(..) | ast::ExprWhile(..) | ast::ExprForLoop(..) => {}
+          _ => visit::walk_expr(self, e)
         }
-    };
-    let v = visit::mk_vt(@visit::Visitor {
-        visit_expr: visit_expr,
-        .. *visit::default_visitor()});
-    visit::visit_block(b, (rs, v));
-    return *rs;
+    }
 }
 
 // Takes a predicate p, returns true iff p is true for any subexpressions
 // of b -- skipping any inner loops (loop, while, loop_body)
-pub fn block_query(b: &ast::blk, p: @fn(@ast::expr) -> bool) -> bool {
-    let rs = @mut false;
-    let visit_expr: @fn(@ast::expr,
-                        (@mut bool,
-                         visit::vt<@mut bool>)) = |e, (flag, v)| {
-        *flag |= p(e);
-        visit::visit_expr(e, (flag, v))
+pub fn loop_query<P>(b: &ast::Block, p: P) -> bool where P: FnMut(&ast::Expr_) -> bool {
+    let mut v = LoopQueryVisitor {
+        p: p,
+        flag: false,
     };
-    let v = visit::mk_vt(@visit::Visitor{
-        visit_expr: visit_expr,
-        .. *visit::default_visitor()});
-    visit::visit_block(b, (rs, v));
-    return *rs;
+    visit::walk_block(&mut v, b);
+    return v.flag;
 }
 
-pub fn local_rhs_span(l: @ast::local, def: span) -> span {
-    match l.node.init {
-      Some(i) => return i.span,
-      _ => return def
+struct BlockQueryVisitor<P> where P: FnMut(&ast::Expr) -> bool {
+    p: P,
+    flag: bool,
+}
+
+impl<'v, P> Visitor<'v> for BlockQueryVisitor<P> where P: FnMut(&ast::Expr) -> bool {
+    fn visit_expr(&mut self, e: &ast::Expr) {
+        self.flag |= (self.p)(e);
+        visit::walk_expr(self, e)
     }
 }
 
-pub fn pluralize(n: uint, s: ~str) -> ~str {
-    if n == 1 { s }
-    else { fmt!("%ss", s) }
+// Takes a predicate p, returns true iff p is true for any subexpressions
+// of b -- skipping any inner loops (loop, while, loop_body)
+pub fn block_query<P>(b: &ast::Block, p: P) -> bool where P: FnMut(&ast::Expr) -> bool {
+    let mut v = BlockQueryVisitor {
+        p: p,
+        flag: false,
+    };
+    visit::walk_block(&mut v, &*b);
+    return v.flag;
 }
 
-// A set of node IDs (used to keep track of which node IDs are for statements)
-pub type stmt_set = @mut HashSet<ast::node_id>;
+/// K: Eq + Hash<S>, V, S, H: Hasher<S>
+///
+/// Determines whether there exists a path from `source` to `destination`.  The graph is defined by
+/// the `edges_map`, which maps from a node `S` to a list of its adjacent nodes `T`.
+///
+/// Efficiency note: This is implemented in an inefficient way because it is typically invoked on
+/// very small graphs. If the graphs become larger, a more efficient graph representation and
+/// algorithm would probably be advised.
+pub fn can_reach<T, S>(edges_map: &HashMap<T, Vec<T>, S>, source: T,
+                       destination: T) -> bool
+    where S: HashState,
+          <S as HashState>::Hasher: Hasher<Output=u64>,
+          T: Hash< <S as HashState>::Hasher> + Eq + Clone,
+{
+    if source == destination {
+        return true;
+    }
+
+    // Do a little breadth-first-search here.  The `queue` list
+    // doubles as a way to detect if we've seen a particular FR
+    // before.  Note that we expect this graph to be an *extremely
+    // shallow* tree.
+    let mut queue = vec!(source);
+    let mut i = 0;
+    while i < queue.len() {
+        match edges_map.get(&queue[i]) {
+            Some(edges) => {
+                for target in edges.iter() {
+                    if *target == destination {
+                        return true;
+                    }
+
+                    if !queue.iter().any(|x| x == target) {
+                        queue.push((*target).clone());
+                    }
+                }
+            }
+            None => {}
+        }
+        i += 1;
+    }
+    return false;
+}
+
+/// Memoizes a one-argument closure using the given RefCell containing
+/// a type implementing MutableMap to serve as a cache.
+///
+/// In the future the signature of this function is expected to be:
+/// ```
+/// pub fn memoized<T: Clone, U: Clone, M: MutableMap<T, U>>(
+///    cache: &RefCell<M>,
+///    f: &|&: T| -> U
+/// ) -> impl |&: T| -> U {
+/// ```
+/// but currently it is not possible.
+///
+/// # Example
+/// ```
+/// struct Context {
+///    cache: RefCell<HashMap<uint, uint>>
+/// }
+///
+/// fn factorial(ctxt: &Context, n: uint) -> uint {
+///     memoized(&ctxt.cache, n, |n| match n {
+///         0 | 1 => n,
+///         _ => factorial(ctxt, n - 2) + factorial(ctxt, n - 1)
+///     })
+/// }
+/// ```
+#[inline(always)]
+pub fn memoized<T, U, S, F>(cache: &RefCell<HashMap<T, U, S>>, arg: T, f: F) -> U
+    where T: Clone + Hash<<S as HashState>::Hasher> + Eq,
+          U: Clone,
+          S: HashState,
+          <S as HashState>::Hasher: Hasher<Output=u64>,
+          F: FnOnce(T) -> U,
+{
+    let key = arg.clone();
+    let result = cache.borrow().get(&key).map(|result| result.clone());
+    match result {
+        Some(result) => result,
+        None => {
+            let result = f(arg);
+            cache.borrow_mut().insert(key, result.clone());
+            result
+        }
+    }
+}

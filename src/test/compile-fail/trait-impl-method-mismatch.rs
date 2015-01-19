@@ -8,14 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 trait Mumbo {
-    fn jumbo(&self, x: @uint) -> uint;
+    fn jumbo(&self, x: &usize) -> usize;
 }
 
-impl Mumbo for uint {
+impl Mumbo for usize {
     // Cannot have a larger effect than the trait:
-    unsafe fn jumbo(&self, x: @uint) { *self + *x; }
-    //~^ ERROR expected impure fn but found unsafe fn
+    unsafe fn jumbo(&self, x: &usize) { *self + *x; }
+    //~^ ERROR expected normal fn, found unsafe fn
 }
 
 fn main() {}

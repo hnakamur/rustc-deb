@@ -10,20 +10,13 @@
 
 // Tests for the new |args| expr lambda syntax
 
-fn f(i: int, f: &fn(int) -> int) -> int { f(i) }
+fn f<F>(i: int, f: F) -> int where F: FnOnce(int) -> int { f(i) }
 
-fn g(g: &fn()) { }
-
-fn ff() -> @fn(int) -> int {
-    return |x| x + 1;
-}
+fn g<G>(_g: G) where G: FnOnce() { }
 
 pub fn main() {
     assert_eq!(f(10, |a| a), 10);
     g(||());
-    assert_eq!(do f(10) |a| { a }, 10);
-    do g() { }
-    let _x: @fn() -> int = || 10;
-    let _y: @fn(int) -> int = |a| a;
-    assert_eq!(ff()(10), 11);
+    assert_eq!(f(10, |a| a), 10);
+    g(||{});
 }

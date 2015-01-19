@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,20 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
+// ignore-test
 // error-pattern:index out of bounds
 
-fn main() {
-    let x = ~[1u,2u,3u];
+use std::uint;
 
-    // This should cause a bounds-check failure, but may not if we do our
+fn main() {
+    let x = vec!(1u,2u,3u);
+
+    // This should cause a bounds-check panic, but may not if we do our
     // bounds checking by comparing a scaled index value to the vector's
     // length (in bytes), because the scaling of the index will cause it to
     // wrap around to a small number.
 
-    let idx = uint::max_value & !(uint::max_value >> 1u);
-    error!("ov2 idx = 0x%x", idx);
+    let idx = uint::MAX & !(uint::MAX >> 1u);
+    println!("ov2 idx = 0x%x", idx);
 
-    // This should fail.
-    error!("ov2 0x%x",  x[idx]);
+    // This should panic.
+    println!("ov2 0x%x",  x[idx]);
 }

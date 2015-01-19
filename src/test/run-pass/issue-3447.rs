@@ -8,27 +8,33 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct list<'self, T> {
-    element: &'self T,
-    next: Option<@mut list<'self, T>>
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+use std::cell::RefCell;
+
+static S: &'static str = "str";
+
+struct list<T> {
+    element: T,
+    next: Option<Box<RefCell<list<T>>>>
 }
 
-impl<'self, T> list<'self, T>{
-    pub fn addEnd(&mut self, element: &'self T) {
+impl<T:'static> list<T> {
+    pub fn addEnd(&mut self, element: T) {
         let newList = list {
             element: element,
             next: None
         };
 
-        self.next = Some(@mut newList);
+        self.next = Some(box RefCell::new(newList));
     }
 }
 
 pub fn main() {
-    let s = @"str";
     let ls = list {
-        element: &s,
+        element: S,
         next: None
     };
-    println(*ls.element);
+    println!("{}", ls.element);
 }

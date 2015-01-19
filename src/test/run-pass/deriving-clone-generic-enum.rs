@@ -8,14 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Clone, DeepClone)]
+#[derive(Clone)]
 enum E<T,U> {
     A(T),
     B(T,U),
     C
 }
 
-fn main() {
-    let _ = A::<int, int>(1i).clone();
-    let _ = B(1i, 1.234).deep_clone();
+pub fn main() {
+    let _ = E::A::<int, int>(1i).clone();
 }

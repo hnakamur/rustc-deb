@@ -14,18 +14,13 @@
 //
 // I *think* it's the same, more or less.
 
-extern mod extra;
-
-use std::comm::{Port, PortSet, Chan, stream};
-use std::io::{Writer, WriterUtil};
-use std::io;
+use std::sync::mpsc::{channel, Sender, Receiver};
 use std::os;
-use std::ptr;
-use std::task;
+use std::thread::Thread;
+use std::time::Duration;
 use std::uint;
-use std::vec;
 
-fn move_out<T>(x: T) {}
+fn move_out<T>(_x: T) {}
 
 enum request {
     get_count,
@@ -33,79 +28,90 @@ enum request {
     stop
 }
 
-fn server(requests: &PortSet<request>, responses: &Chan<uint>) {
-    let mut count = 0;
+fn server(requests: &Receiver<request>, responses: &Sender<uint>) {
+    let mut count: uint = 0;
     let mut done = false;
     while !done {
-        match requests.try_recv() {
-          Some(get_count) => { responses.send(copy count); }
-          Some(bytes(b)) => {
-            //error!("server: received %? bytes", b);
+        match requests.recv() {
+          Ok(request::get_count) => { responses.send(count.clone()); }
+          Ok(request::bytes(b)) => {
+            //println!("server: received {} bytes", b);
             count += b;
           }
-          None => { done = true; }
+          Err(..) => { done = true; }
           _ => { }
         }
     }
     responses.send(count);
-    //error!("server exiting");
+    //println!("server exiting");
 }
 
-fn run(args: &[~str]) {
-    let (from_child, to_parent) = stream();
-    let (from_parent_, to_child) = stream();
-    let from_parent = PortSet::new();
-    from_parent.add(from_parent_);
+fn run(args: &[String]) {
+    let (to_parent, from_child) = channel();
 
-    let size = uint::from_str(args[1]).get();
-    let workers = uint::from_str(args[2]).get();
+    let size = args[1].parse::<uint>().unwrap();
+    let workers = args[2].parse::<uint>().unwrap();
     let num_bytes = 100;
-    let start = extra::time::precise_time_s();
-    let mut worker_results = ~[];
-    for uint::range(0, workers) |_i| {
-        let (from_parent_, to_child) = stream();
-        from_parent.add(from_parent_);
-        let mut builder = task::task();
-        builder.future_result(|r| worker_results.push(r));
-        do builder.spawn {
-            for uint::range(0, size / workers) |_i| {
-                //error!("worker %?: sending %? bytes", i, num_bytes);
-                to_child.send(bytes(num_bytes));
+    let mut result = None;
+    let mut to_parent = Some(to_parent);
+    let dur = Duration::span(|| {
+        let to_parent = to_parent.take().unwrap();
+        let mut worker_results = Vec::new();
+        let from_parent = if workers == 1 {
+            let (to_child, from_parent) = channel();
+            worker_results.push(Thread::scoped(move|| {
+                for _ in range(0u, size / workers) {
+                    //println!("worker {}: sending {} bytes", i, num_bytes);
+                    to_child.send(request::bytes(num_bytes));
+                }
+                //println!("worker {} exiting", i);
+            }));
+            from_parent
+        } else {
+            let (to_child, from_parent) = channel();
+            for _ in range(0u, workers) {
+                let to_child = to_child.clone();
+                worker_results.push(Thread::scoped(move|| {
+                    for _ in range(0u, size / workers) {
+                        //println!("worker {}: sending {} bytes", i, num_bytes);
+                        to_child.send(request::bytes(num_bytes));
+                    }
+                    //println!("worker {} exiting", i);
+                }));
             }
-            //error!("worker %? exiting", i);
+            from_parent
         };
-    }
-    do task::spawn || {
-        server(&from_parent, &to_parent);
-    }
+        Thread::spawn(move|| {
+            server(&from_parent, &to_parent);
+        });
 
-    for worker_results.iter().advance |r| {
-        r.recv();
-    }
+        for r in worker_results.into_iter() {
+            let _ = r.join();
+        }
 
-    //error!("sending stop message");
-    to_child.send(stop);
-    move_out(to_child);
-    let result = from_child.recv();
-    let end = extra::time::precise_time_s();
-    let elapsed = end - start;
-    io::stdout().write_str(fmt!("Count is %?\n", result));
-    io::stdout().write_str(fmt!("Test took %? seconds\n", elapsed));
-    let thruput = ((size / workers * workers) as float) / (elapsed as float);
-    io::stdout().write_str(fmt!("Throughput=%f per sec\n", thruput));
+        //println!("sending stop message");
+        //to_child.send(stop);
+        //move_out(to_child);
+        result = Some(from_child.recv().unwrap());
+    });
+    let result = result.unwrap();
+    print!("Count is {}\n", result);
+    print!("Test took {} ms\n", dur.num_milliseconds());
+    let thruput = ((size / workers * workers) as f64) / (dur.num_milliseconds() as f64);
+    print!("Throughput={} per sec\n", thruput / 1000.0);
     assert_eq!(result, num_bytes * size);
 }
 
 fn main() {
     let args = os::args();
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"1000000", ~"8"]
+    let args = if os::getenv("RUST_BENCH").is_some() {
+        vec!("".to_string(), "1000000".to_string(), "8".to_string())
     } else if args.len() <= 1u {
-        ~[~"", ~"10000", ~"4"]
+        vec!("".to_string(), "10000".to_string(), "4".to_string())
     } else {
-        copy args
+        args.clone().into_iter().map(|x| x.to_string()).collect()
     };
 
-    debug!("%?", args);
-    run(args);
+    println!("{:?}", args);
+    run(args.as_slice());
 }

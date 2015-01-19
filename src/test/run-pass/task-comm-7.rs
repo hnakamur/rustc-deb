@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,52 +8,51 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
+#![allow(dead_assignment)]
 
-extern mod extra;
-
-use std::comm;
-use std::task;
+use std::sync::mpsc::{channel, Sender};
+use std::thread::Thread;
 
 pub fn main() { test00(); }
 
-fn test00_start(c: &comm::Chan<int>, start: int, number_of_messages: int) {
+fn test00_start(c: &Sender<int>, start: int,
+                number_of_messages: int) {
     let mut i: int = 0;
-    while i < number_of_messages { c.send(start + i); i += 1; }
+    while i < number_of_messages { c.send(start + i).unwrap(); i += 1; }
 }
 
 fn test00() {
     let mut r: int = 0;
     let mut sum: int = 0;
-    let p = comm::PortSet::new();
+    let (tx, rx) = channel();
     let number_of_messages: int = 10;
 
-    let c = p.chan();
-    do task::spawn || {
-        test00_start(&c, number_of_messages * 0, number_of_messages);
-    }
-    let c = p.chan();
-    do task::spawn || {
-        test00_start(&c, number_of_messages * 1, number_of_messages);
-    }
-    let c = p.chan();
-    do task::spawn || {
-        test00_start(&c, number_of_messages * 2, number_of_messages);
-    }
-    let c = p.chan();
-    do task::spawn || {
-        test00_start(&c, number_of_messages * 3, number_of_messages);
-    }
+    let tx2 = tx.clone();
+    let _t = Thread::spawn(move|| {
+        test00_start(&tx2, number_of_messages * 0, number_of_messages);
+    });
+    let tx2 = tx.clone();
+    let _t = Thread::spawn(move|| {
+        test00_start(&tx2, number_of_messages * 1, number_of_messages);
+    });
+    let tx2 = tx.clone();
+    let _t = Thread::spawn(move|| {
+        test00_start(&tx2, number_of_messages * 2, number_of_messages);
+    });
+    let tx2 = tx.clone();
+    let _t = Thread::spawn(move|| {
+        test00_start(&tx2, number_of_messages * 3, number_of_messages);
+    });
 
     let mut i: int = 0;
     while i < number_of_messages {
-        r = p.recv();
+        r = rx.recv().unwrap();
         sum += r;
-        r = p.recv();
+        r = rx.recv().unwrap();
         sum += r;
-        r = p.recv();
+        r = rx.recv().unwrap();
         sum += r;
-        r = p.recv();
+        r = rx.recv().unwrap();
         sum += r;
         i += 1;
     }

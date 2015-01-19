@@ -1,15 +1,22 @@
 set(LLVM_LINK_COMPONENTS
-  asmparser
-  bitreader
-  bitwriter
-  jit
-  mcjit
+  Analysis
+  Core
+  ExecutionEngine
+  IPO
+  MC
+  MCJIT
+  ScalarOpts
+  Support
+  Target
   nativecodegen
   )
 
 set(MCJITTestsSources
   MCJITTest.cpp
+  MCJITCAPITest.cpp
   MCJITMemoryManagerTest.cpp
+  MCJITMultipleModuleTest.cpp
+  MCJITObjectCacheTest.cpp
   )
 
 if(MSVC)

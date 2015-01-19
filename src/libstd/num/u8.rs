@@ -8,7 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Operations and constants for `u8`
+//! Operations and constants for unsigned 8-bits integers (`u8` type)
 
-pub use self::generated::*;
-uint_module!(u8, i8, 8)
+#![stable]
+#![doc(primitive = "u8")]
+
+pub use core::u8::{BITS, BYTES, MIN, MAX};
+
+uint_module! { u8 }

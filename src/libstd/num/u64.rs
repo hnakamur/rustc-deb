@@ -8,7 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Operations and constants for `u64`
+//! Operations and constants for unsigned 64-bits integer (`u64` type)
 
-pub use self::generated::*;
-uint_module!(u64, i64, 64)
+#![stable]
+#![doc(primitive = "u64")]
+
+pub use core::u64::{BITS, BYTES, MIN, MAX};
+
+uint_module! { u64 }

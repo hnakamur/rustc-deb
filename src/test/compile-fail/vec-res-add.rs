@@ -8,22 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern: instantiating a type parameter with an incompatible type
-
+#[derive(Show)]
 struct r {
-  i:int
+  i:isize
 }
 
-fn r(i:int) -> r { r { i: i } }
+fn r(i:isize) -> r { r { i: i } }
 
 impl Drop for r {
-    fn drop(&self) {}
+    fn drop(&mut self) {}
 }
 
 fn main() {
     // This can't make sense as it would copy the classes
-    let i = ~[r(0)];
-    let j = ~[r(1)];
+    let i = vec!(r(0));
+    let j = vec!(r(1));
     let k = i + j;
-    debug!(j);
+    //~^ ERROR binary operation `+` cannot be applied to type
+    println!("{:?}", j);
 }

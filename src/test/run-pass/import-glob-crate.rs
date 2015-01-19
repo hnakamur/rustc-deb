@@ -1,6 +1,4 @@
-// xfail-fast
-
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(dead_assignment)]
 
-extern mod extra;
-use std::vec::*;
+use std::mem::*;
 
 pub fn main() {
-    let mut v = from_elem(0u, 0);
-    v = append(v, ~[4, 2]);
-    assert_eq!(reversed(v), ~[2, 4]);
+    assert_eq!(size_of::<u8>(), 1);
+    let (mut x, mut y) = (1i, 2i);
+    swap(&mut x, &mut y);
+    assert_eq!(x, 2);
+    assert_eq!(y, 1);
 }

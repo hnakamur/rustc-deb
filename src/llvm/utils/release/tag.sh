@@ -17,6 +17,7 @@ set -e
 release=""
 rc=""
 rebranch="no"
+projects="llvm cfe dragonegg test-suite compiler-rt libcxx libcxxabi clang-tools-extra polly lldb lld openmp"
 
 base_url="https://llvm.org/svn/llvm-project"
 
@@ -32,31 +33,31 @@ function usage() {
 
 function tag_version() {
     set -x
-    for proj in llvm cfe dragonegg test-suite compiler-rt ; do
-        if svn ls $base_url/$proj/branches/release_$release > /dev/null 2>&1 ; then
+    for proj in  $projects; do
+        if svn ls $base_url/$proj/branches/release_$branch_release > /dev/null 2>&1 ; then
             if [ $rebranch = "no" ]; then
                 continue
             fi
-            svn remove -m "Removing old release_$release branch for rebranching." \
-                $base_url/$proj/branches/release_$release
+            svn remove -m "Removing old release_$branch_release branch for rebranching." \
+                $base_url/$proj/branches/release_$branch_release
         fi
-        svn copy -m "Creating release_$release branch" \
+        svn copy -m "Creating release_$branch_release branch" \
             $base_url/$proj/trunk \
-            $base_url/$proj/branches/release_$release
+            $base_url/$proj/branches/release_$branch_release
     done
     set +x
 }
 
 function tag_release_candidate() {
     set -x
-    for proj in llvm cfe dragonegg test-suite compiler-rt ; do
-        if ! svn ls $base_url/$proj/tags/RELEASE_$release > /dev/null 2>&1 ; then
-            svn mkdir -m "Creating release directory for release_$release." $base_url/$proj/tags/RELEASE_$release
+    for proj in $projects ; do
+        if ! svn ls $base_url/$proj/tags/RELEASE_$tag_release > /dev/null 2>&1 ; then
+            svn mkdir -m "Creating release directory for release_$tag_release." $base_url/$proj/tags/RELEASE_$tag_release
         fi
-        if ! svn ls $base_url/$proj/tags/RELEASE_$release/$rc > /dev/null 2>&1 ; then
-            svn copy -m "Creating release candidate $rc from release_$release branch" \
-                $base_url/$proj/branches/release_$release \
-                $base_url/$proj/tags/RELEASE_$release/$rc
+        if ! svn ls $base_url/$proj/tags/RELEASE_$tag_release/$rc > /dev/null 2>&1 ; then
+            svn copy -m "Creating release candidate $rc from release_$tag_release branch" \
+                $base_url/$proj/branches/release_$branch_release \
+                $base_url/$proj/tags/RELEASE_$tag_release/$rc
         fi
     done
     set +x
@@ -98,7 +99,8 @@ if [ "x$release" = "x" ]; then
     exit 1
 fi
 
-release=`echo $release | sed -e 's,\.,,g'`
+branch_release=`echo $release | sed -e 's,\([0-9]*\.[0-9]*\).*,\1,' | sed -e 's,\.,,g'`
+tag_release=`echo $release | sed -e 's,\.,,g'`
 
 if [ "x$rc" = "x" ]; then
     tag_version
@@ -106,4 +108,4 @@ else
     tag_release_candidate
 fi
 
-exit 1
+exit 0

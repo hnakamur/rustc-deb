@@ -1,78 +1,78 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
+// The Computer Language Benchmarks Game
+// http://benchmarksgame.alioth.debian.org/
 //
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
+// contributed by the Rust Project Developers
 
-// Based on threadring.erlang by Jira Isa
+// Copyright (c) 2012-2014 The Rust Project Developers
+//
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// - Redistributions of source code must retain the above copyright
+//   notice, this list of conditions and the following disclaimer.
+//
+// - Redistributions in binary form must reproduce the above copyright
+//   notice, this list of conditions and the following disclaimer in
+//   the documentation and/or other materials provided with the
+//   distribution.
+//
+// - Neither the name of "The Computer Language Benchmarks Game" nor
+//   the name of "The Computer Language Shootout Benchmarks" nor the
+//   names of its contributors may be used to endorse or promote
+//   products derived from this software without specific prior
+//   written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+// OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use std::os;
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::thread::Thread;
 
 fn start(n_tasks: int, token: int) {
-    let (p, ch1) = stream();
-    let mut p = p;
-    let mut ch1 = ch1;
-    ch1.send(token);
-    //  XXX could not get this to work with a range closure
-    let mut i = 2;
-    while i <= n_tasks {
-        let (next_p, ch) = stream();
-        let imm_i = i;
-        let imm_p = p;
-        do spawn {
-            roundtrip(imm_i, n_tasks, &imm_p, &ch);
-        };
-        p = next_p;
-        i += 1;
+    let (tx, mut rx) = channel();
+    tx.send(token);
+    for i in range(2, n_tasks + 1) {
+        let (tx, next_rx) = channel();
+        Thread::spawn(move|| roundtrip(i, tx, rx));
+        rx = next_rx;
     }
-    let imm_p = p;
-    let imm_ch = ch1;
-    do spawn {
-        roundtrip(1, n_tasks, &imm_p, &imm_ch);
-    }
+    Thread::spawn(move|| roundtrip(1, tx, rx));
 }
 
-fn roundtrip(id: int, n_tasks: int, p: &Port<int>, ch: &Chan<int>) {
-    while (true) {
-        match p.recv() {
-          1 => {
-            println(fmt!("%d\n", id));
-            return;
-          }
-          token => {
-            debug!("thread: %d   got token: %d", id, token);
-            ch.send(token - 1);
-            if token <= n_tasks {
-                return;
-            }
-          }
+fn roundtrip(id: int, tx: Sender<int>, rx: Receiver<int>) {
+    for token in rx.iter() {
+        if token == 1 {
+            println!("{}", id);
+            break;
         }
+        tx.send(token - 1);
     }
 }
 
 fn main() {
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"2000000", ~"503"]
-    }
-    else {
-        os::args()
+    let args = std::os::args();
+    let args = args.as_slice();
+    let token = if std::os::getenv("RUST_BENCH").is_some() {
+        2000000
+    } else {
+        args.get(1).and_then(|arg| arg.parse()).unwrap_or(1000)
     };
-    let token = if args.len() > 1u {
-        FromStr::from_str(args[1]).get()
-    }
-    else {
-        1000
-    };
-    let n_tasks = if args.len() > 2u {
-        FromStr::from_str(args[2]).get()
-    }
-    else {
-        503
-    };
-    start(n_tasks, token);
+    let n_tasks = args.get(2)
+                      .and_then(|arg| arg.parse())
+                      .unwrap_or(503);
 
+    start(n_tasks, token);
 }

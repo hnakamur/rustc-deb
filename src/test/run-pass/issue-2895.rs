@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::sys;
+use std::mem;
 
 struct Cat {
     x: int
@@ -19,18 +19,17 @@ struct Kitty {
 }
 
 impl Drop for Kitty {
-    fn drop(&self) {}
+    fn drop(&mut self) {}
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch="aarch64"))]
 pub fn main() {
-    assert_eq!(sys::size_of::<Cat>(), 8 as uint);
-    assert_eq!(sys::size_of::<Kitty>(), 16 as uint);
+    assert_eq!(mem::size_of::<Cat>(), 8 as uint);
+    assert_eq!(mem::size_of::<Kitty>(), 16 as uint);
 }
 
-#[cfg(target_arch = "x86")]
-#[cfg(target_arch = "arm")]
+#[cfg(any(target_arch = "x86", target_arch = "arm"))]
 pub fn main() {
-    assert_eq!(sys::size_of::<Cat>(), 4 as uint);
-    assert_eq!(sys::size_of::<Kitty>(), 8 as uint);
+    assert_eq!(mem::size_of::<Cat>(), 4 as uint);
+    assert_eq!(mem::size_of::<Kitty>(), 8 as uint);
 }

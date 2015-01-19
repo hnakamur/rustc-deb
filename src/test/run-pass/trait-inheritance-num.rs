@@ -1,6 +1,5 @@
-// xfail-fast
 
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,16 +9,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
-use std::cmp::{Eq, Ord};
+use std::cmp::{PartialEq, PartialOrd};
 use std::num::NumCast;
 
-pub trait NumExt: Num + NumCast + Eq + Ord {}
+pub trait NumExt: NumCast + PartialEq + PartialOrd {}
 
-pub trait FloatExt: NumExt + ApproxEq<Self> {}
+pub trait FloatExt: NumExt {}
 
-fn greater_than_one<T:NumExt>(n: &T) -> bool { *n > NumCast::from(1) }
-fn greater_than_one_float<T:FloatExt>(n: &T) -> bool { *n > NumCast::from(1) }
+fn greater_than_one<T: NumExt>(n: &T) -> bool { *n > NumCast::from(1i).unwrap() }
+fn greater_than_one_float<T: FloatExt>(n: &T) -> bool { *n > NumCast::from(1i).unwrap() }
 
 pub fn main() {}

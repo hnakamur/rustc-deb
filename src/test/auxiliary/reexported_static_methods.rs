@@ -9,29 +9,29 @@
 // except according to those terms.
 
 pub use sub_foo::Foo;
-pub use Baz = self::Bar;
+pub use self::Bar as Baz;
 pub use sub_foo::Boz;
 pub use sub_foo::Bort;
 
 pub trait Bar {
-    pub fn bar() -> Self;
+    fn bar() -> Self;
 }
 
 impl Bar for int {
-    pub fn bar() -> int { 84 }
+    fn bar() -> int { 84 }
 }
 
 pub mod sub_foo {
     pub trait Foo {
-        pub fn foo() -> Self;
+        fn foo() -> Self;
     }
 
     impl Foo for int {
-        pub fn foo() -> int { 42 }
+        fn foo() -> int { 42 }
     }
 
     pub struct Boz {
-        unused_str: ~str
+        unused_str: String
     }
 
     impl Boz {
@@ -46,8 +46,8 @@ pub mod sub_foo {
     }
 
     impl Bort {
-        pub fn bort() -> ~str {
-            ~"bort()"
+        pub fn bort() -> String {
+            "bort()".to_string()
         }
     }
 }

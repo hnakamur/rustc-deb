@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -11,6 +10,7 @@
 
 // error-pattern: illegal recursive type
 
-type x = ~[x];
 
-fn main() { let b: x = ~[]; }
+type x = Vec<x>;
+
+fn main() { let b: x = Vec::new(); }

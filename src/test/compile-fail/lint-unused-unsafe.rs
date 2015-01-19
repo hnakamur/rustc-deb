@@ -10,21 +10,23 @@
 
 // Exercise the unused_unsafe attribute in some positive and negative cases
 
-#[deny(unused_unsafe)];
+#![allow(dead_code)]
+#![deny(unused_unsafe)]
+
 
 mod foo {
-    pub extern {
+    extern {
         pub fn bar();
     }
 }
 
-fn callback<T>(_f: &fn() -> T) -> T { fail!() }
+fn callback<T, F>(_f: F) -> T where F: FnOnce() -> T { panic!() }
 unsafe fn unsf() {}
 
 fn bad1() { unsafe {} }                  //~ ERROR: unnecessary `unsafe` block
 fn bad2() { unsafe { bad1() } }          //~ ERROR: unnecessary `unsafe` block
 unsafe fn bad3() { unsafe {} }           //~ ERROR: unnecessary `unsafe` block
-fn bad4() { unsafe { do callback {} } }  //~ ERROR: unnecessary `unsafe` block
+fn bad4() { unsafe { callback(||{}) } }  //~ ERROR: unnecessary `unsafe` block
 unsafe fn bad5() { unsafe { unsf() } }   //~ ERROR: unnecessary `unsafe` block
 fn bad6() {
     unsafe {                             // don't put the warning here
@@ -48,13 +50,14 @@ fn good2() {
        sure that when purity is inherited that the source of the unsafe-ness
        is tracked correctly */
     unsafe {
-        unsafe fn what() -> ~[~str] { fail!() }
+        unsafe fn what() -> Vec<String> { panic!() }
 
-        do callback {
+        callback(|| {
             what();
-        }
+        });
     }
 }
+
 unsafe fn good3() { foo::bar() }
 fn good4() { unsafe { foo::bar() } }
 

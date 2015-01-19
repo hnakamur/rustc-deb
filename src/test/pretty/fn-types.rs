@@ -10,8 +10,6 @@
 
 // pp-exact
 
-fn from_foreign_fn(x: extern "Rust" fn()) { }
-fn from_stack_closure(x: &fn()) { }
-fn from_box_closure(x: @fn()) { }
-fn from_unique_closure(x: ~fn()) { }
+fn from_foreign_fn(_x: fn()) { }
+fn from_stack_closure<F>(_x: F) where F: Fn() { }
 fn main() { }

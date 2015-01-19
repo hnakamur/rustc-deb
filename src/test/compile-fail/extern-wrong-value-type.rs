@@ -11,7 +11,10 @@
 extern fn f() {
 }
 
+fn is_fn<F>(_: F) where F: Fn() {}
+
 fn main() {
-    // extern functions are *u8 types
-    let _x: &fn() = f; //~ ERROR found `*u8`
+    // extern functions are extern "C" fn
+    let _x: extern "C" fn() = f; // OK
+    is_fn(f); //~ ERROR the trait `core::ops::Fn()` is not implemented for the type `extern "C" fn()
 }

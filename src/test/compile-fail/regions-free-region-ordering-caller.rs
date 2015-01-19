@@ -12,28 +12,22 @@
 // than the thing it points at and ensure that they result in
 // errors. See also regions-free-region-ordering-callee.rs
 
-struct Paramd<'self> { x: &'self uint }
+struct Paramd<'a> { x: &'a usize }
 
-fn call1<'a>(x: &'a uint) {
-    let y: uint = 3;
-    let z: &'a &'blk uint = &(&y);
-    //~^ ERROR pointer has a longer lifetime than the data it references
+fn call2<'a, 'b>(a: &'a usize, b: &'b usize) {
+    let z: Option<&'b &'a usize> = None;
+    //~^ ERROR reference has a longer lifetime than the data it references
 }
 
-fn call2<'a, 'b>(a: &'a uint, b: &'b uint) {
-    let z: Option<&'b &'a uint> = None;
-    //~^ ERROR pointer has a longer lifetime than the data it references
-}
-
-fn call3<'a, 'b>(a: &'a uint, b: &'b uint) {
+fn call3<'a, 'b>(a: &'a usize, b: &'b usize) {
     let y: Paramd<'a> = Paramd { x: a };
     let z: Option<&'b Paramd<'a>> = None;
-    //~^ ERROR pointer has a longer lifetime than the data it references
+    //~^ ERROR reference has a longer lifetime than the data it references
 }
 
-fn call4<'a, 'b>(a: &'a uint, b: &'b uint) {
-    let z: Option<&fn(&'a &'b uint)> = None;
-    //~^ ERROR pointer has a longer lifetime than the data it references
+fn call4<'a, 'b>(a: &'a usize, b: &'b usize) {
+    let z: Option<&'a &'b usize> = None;
+    //~^ ERROR reference has a longer lifetime than the data it references
 }
 
 

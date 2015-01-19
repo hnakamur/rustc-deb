@@ -8,11 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::str;
-
-struct S { f0: ~str, f1: ~str }
+struct S {
+    f0: String,
+    f1: String,
+}
 
 pub fn main() {
-    let s = ~"Hello, world!";
-    let _s = S { f1: str::to_owned(s), f0: s };
+    let s = "Hello, world!".to_string();
+    let _s = S {
+        f1: s.to_string(),
+        f0: s
+    };
 }

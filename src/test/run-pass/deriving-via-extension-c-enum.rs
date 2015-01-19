@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Eq)]
+#[derive(PartialEq, Show)]
 enum Foo {
     Bar,
     Baz,
@@ -16,8 +16,8 @@ enum Foo {
 }
 
 pub fn main() {
-    let a = Bar;
-    let b = Bar;
+    let a = Foo::Bar;
+    let b = Foo::Bar;
     assert_eq!(a, b);
     assert!(!(a != b));
     assert!(a.eq(&b));

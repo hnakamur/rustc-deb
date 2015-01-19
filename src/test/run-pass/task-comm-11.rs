@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,20 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
+use std::sync::mpsc::{channel, Sender};
+use std::thread::Thread;
 
-extern mod extra;
-
-use std::comm;
-use std::task;
-
-fn start(c: &comm::Chan<comm::Chan<int>>) {
-    let (p, ch) = comm::stream();
-    c.send(ch);
+fn start(tx: &Sender<Sender<int>>) {
+    let (tx2, _rx) = channel();
+    tx.send(tx2).unwrap();
 }
 
 pub fn main() {
-    let (p, ch) = comm::stream();
-    let child = task::spawn(|| start(&ch) );
-    let c = p.recv();
+    let (tx, rx) = channel();
+    let _child = Thread::spawn(move|| {
+        start(&tx)
+    });
+    let _tx = rx.recv().unwrap();
 }

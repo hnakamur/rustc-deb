@@ -13,11 +13,11 @@
   message.
  */
 
-use std::comm;
+use std::sync::mpsc::channel;
 
 pub fn main() {
-    let (po, ch) = comm::stream();
-    ch.send(42);
-    let r = po.recv();
-    error!(r);
+    let (tx, rx) = channel();
+    tx.send(42i);
+    let r = rx.recv();
+    println!("{:?}", r);
 }

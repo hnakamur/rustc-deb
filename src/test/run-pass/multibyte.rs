@@ -7,8 +7,10 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+//
+// ignore-lexer-test FIXME #15679
 
 // Test that multibyte characters don't crash the compiler
-fn main() {
-    println("마이너스 사인이 없으면");
+pub fn main() {
+    println!("마이너스 사인이 없으면");
 }

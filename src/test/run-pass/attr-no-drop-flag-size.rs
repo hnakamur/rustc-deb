@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::sys::size_of;
+#![feature(unsafe_destructor)]
+
+use std::mem::size_of;
 
 #[unsafe_no_drop_flag]
 struct Test<T> {
@@ -17,9 +19,9 @@ struct Test<T> {
 
 #[unsafe_destructor]
 impl<T> Drop for Test<T> {
-    fn drop(&self) { }
+    fn drop(&mut self) { }
 }
 
-fn main() {
+pub fn main() {
     assert_eq!(size_of::<int>(), size_of::<Test<int>>());
 }

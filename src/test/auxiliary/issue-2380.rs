@@ -8,13 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name = "a", vers = "0.0")];
-#[crate_type = "lib"];
+#![crate_name="a"]
+#![crate_type = "lib"]
+
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
 pub trait i<T> { }
 
-pub fn f<T>() -> @i<T> {
+pub fn f<T>() -> Box<i<T>+'static> {
     impl<T> i<T> for () { }
 
-    @() as @i<T>
+    box() () as Box<i<T>+'static>
 }

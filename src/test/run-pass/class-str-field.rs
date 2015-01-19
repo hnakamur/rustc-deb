@@ -10,16 +10,16 @@
 
 struct cat {
 
-  name : ~str,
+  name : String,
 
 }
 
-fn cat(in_name: ~str) -> cat {
+fn cat(in_name: String) -> cat {
     cat {
         name: in_name
     }
 }
 
 pub fn main() {
-  let nyan = cat(~"nyan");
+  let _nyan = cat("nyan".to_string());
 }

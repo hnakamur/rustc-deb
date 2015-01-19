@@ -8,10 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 fn f() {
-    let a = ~"hello";
-    let b: &str = a;
-    println(b);
+    let a = box 1;
+    let b: &int = &*a;
+    println!("{}", b);
 }
 
 pub fn main() {

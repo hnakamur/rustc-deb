@@ -84,15 +84,51 @@ def getPredOpcode : InstrMapping {
 }
 
 //===----------------------------------------------------------------------===//
+// Generate mapping table to relate predicate-true instructions with their
+// predicate-false forms
+//
+def getFalsePredOpcode : InstrMapping {
+  let FilterClass = "PredRel";
+  let RowFields = ["BaseOpcode", "PNewValue", "isNVStore", "isBrTaken"];
+  let ColFields = ["PredSense"];
+  let KeyCol = ["true"];
+  let ValueCols = [["false"]];
+}
+
+//===----------------------------------------------------------------------===//
+// Generate mapping table to relate predicate-false instructions with their
+// predicate-true forms
+//
+def getTruePredOpcode : InstrMapping {
+  let FilterClass = "PredRel";
+  let RowFields = ["BaseOpcode", "PNewValue", "isNVStore", "isBrTaken"];
+  let ColFields = ["PredSense"];
+  let KeyCol = ["false"];
+  let ValueCols = [["true"]];
+}
+
+//===----------------------------------------------------------------------===//
 // Generate mapping table to relate predicated instructions with their .new
 // format.
 //
 def getPredNewOpcode : InstrMapping {
   let FilterClass = "PredNewRel";
-  let RowFields = ["BaseOpcode", "PredSense", "isNVStore"];
+  let RowFields = ["BaseOpcode", "PredSense", "isNVStore", "isBrTaken"];
   let ColFields = ["PNewValue"];
   let KeyCol = [""];
   let ValueCols = [["new"]];
+}
+
+//===----------------------------------------------------------------------===//
+// Generate mapping table to relate .new predicated instructions with their old
+// format.
+//
+def getPredOldOpcode : InstrMapping {
+  let FilterClass = "PredNewRel";
+  let RowFields = ["BaseOpcode", "PredSense", "isNVStore"];
+  let ColFields = ["PNewValue"];
+  let KeyCol = ["new"];
+  let ValueCols = [[""]];
 }
 
 //===----------------------------------------------------------------------===//
@@ -102,9 +138,21 @@ def getPredNewOpcode : InstrMapping {
 def getNewValueOpcode : InstrMapping {
   let FilterClass = "NewValueRel";
   let RowFields = ["BaseOpcode", "PredSense", "PNewValue"];
-  let ColFields = ["isNVStore"];
-  let KeyCol = ["0"];
-  let ValueCols = [["1"]];
+  let ColFields = ["NValueST"];
+  let KeyCol = ["false"];
+  let ValueCols = [["true"]];
+}
+
+//===----------------------------------------------------------------------===//
+// Generate mapping table to relate new-value store instructions with their old
+// format.
+//
+def getNonNVStore : InstrMapping {
+  let FilterClass = "NewValueRel";
+  let RowFields = ["BaseOpcode", "PredSense", "PNewValue"];
+  let ColFields = ["NValueST"];
+  let KeyCol = ["true"];
+  let ValueCols = [["false"]];
 }
 
 def getBasedWithImmOffset : InstrMapping {
@@ -152,18 +200,8 @@ class Proc<string Name, SchedMachineModel Model,
            list<SubtargetFeature> Features>
  : ProcessorModel<Name, Model, Features>;
 
-def : Proc<"hexagonv2", HexagonModel,   [ArchV2]>;
-def : Proc<"hexagonv3", HexagonModel,   [ArchV2, ArchV3]>;
 def : Proc<"hexagonv4", HexagonModelV4, [ArchV2, ArchV3, ArchV4]>;
 def : Proc<"hexagonv5", HexagonModelV4, [ArchV2, ArchV3, ArchV4, ArchV5]>;
-
-
-// Hexagon Uses the MC printer for assembler output, so make sure the TableGen
-// AsmWriter bits get associated with the correct class.
-def HexagonAsmWriter : AsmWriter {
-  string AsmWriterClassName  = "InstPrinter";
-  bit isMCAsmWriter = 1;
-}
 
 //===----------------------------------------------------------------------===//
 // Declare the target which we are implementing
@@ -172,6 +210,4 @@ def HexagonAsmWriter : AsmWriter {
 def Hexagon : Target {
   // Pull in Instruction Info:
   let InstructionSet = HexagonInstrInfo;
-
-  let AssemblyWriters = [HexagonAsmWriter];
 }

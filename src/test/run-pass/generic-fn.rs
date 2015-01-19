@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(dead_assignment)]
 
-
-
-// -*- rust -*-
-fn id<T:Copy>(x: T) -> T { return x; }
+fn id<T>(x: T) -> T { return x; }
 
 struct Triple {x: int, y: int, z: int}
+
+impl Copy for Triple {}
 
 pub fn main() {
     let mut x = 62;
@@ -24,14 +24,14 @@ pub fn main() {
     let p: Triple = Triple {x: 65, y: 66, z: 67};
     let mut q: Triple = Triple {x: 68, y: 69, z: 70};
     y = id::<int>(x);
-    debug!(y);
+    println!("{}", y);
     assert_eq!(x, y);
     b = id::<char>(a);
-    debug!(b);
+    println!("{}", b);
     assert_eq!(a, b);
     q = id::<Triple>(p);
     x = p.z;
     y = q.z;
-    debug!(y);
+    println!("{}", y);
     assert_eq!(x, y);
 }

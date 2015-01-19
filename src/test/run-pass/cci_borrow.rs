@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast - check-fast doesn't understand aux-build
 // aux-build:cci_borrow_lib.rs
 
-extern mod cci_borrow_lib;
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+extern crate cci_borrow_lib;
 use cci_borrow_lib::foo;
 
 pub fn main() {
-    let p = @22u;
-    let r = foo(p);
-    debug!("r=%u", r);
+    let p = box 22u;
+    let r = foo(&*p);
+    println!("r={}", r);
     assert_eq!(r, 22u);
 }

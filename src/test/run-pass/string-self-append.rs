@@ -8,19 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
-use std::str;
-
 pub fn main() {
     // Make sure we properly handle repeated self-appends.
-    let mut a: ~str = ~"A";
-    let mut i = 20;
+    let mut a: String = "A".to_string();
+    let mut i = 20i;
     let mut expected_len = 1u;
     while i > 0 {
-        error!(a.len());
+        println!("{}", a.len());
         assert_eq!(a.len(), expected_len);
-        a = a + a; // FIXME(#3387)---can't write a += a
+        a = format!("{}{}", a, a);
         i -= 1;
         expected_len *= 2u;
     }

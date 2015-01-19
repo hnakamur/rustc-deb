@@ -10,7 +10,9 @@ DESCRIPTION
 -----------
 
 :program:`llvm-symbolizer` reads object file names and addresses from standard
-input and prints corresponding source code locations to standard output. This
+input and prints corresponding source code locations to standard output.
+If object file is specified in command line, :program:`llvm-symbolizer` reads
+only addresses from standard input. This
 program uses debug info sections and symbol table in the object files.
 
 EXAMPLE
@@ -22,6 +24,8 @@ EXAMPLE
   a.out 0x4004f4
   /tmp/b.out 0x400528
   /tmp/c.so 0x710
+  /tmp/mach_universal_binary:i386 0x1f84
+  /tmp/mach_universal_binary:x86_64 0x100000f24
   $ llvm-symbolizer < addr.txt
   main
   /tmp/a.cc:4
@@ -38,12 +42,33 @@ EXAMPLE
   main
   /tmp/source.cc:8
 
+  _main
+  /tmp/source_i386.cc:8
+
+  _main
+  /tmp/source_x86_64.cc:8
+  $ cat addr2.txt
+  0x4004f4
+  0x401000
+  $ llvm-symbolizer -obj=a.out < addr2.txt
+  main
+  /tmp/a.cc:4
+
+  foo(int)
+  /tmp/a.cc:12
+
 OPTIONS
 -------
 
-.. option:: -functions
+.. option:: -obj
 
-  Print function names as well as source file/line locations. Defaults to true.
+  Path to object file to be symbolized.
+
+.. option:: -functions=[none|short|linkage]
+
+  Specify the way function names are printed (omit function name,
+  print short function name, or print full linkage name, respectively).
+  Defaults to ``linkage``.
 
 .. option:: -use-symbol-table
 
@@ -58,6 +83,14 @@ OPTIONS
 
  If a source code location is in an inlined function, prints all the
  inlnied frames. Defaults to true.
+
+.. option:: -default-arch
+
+ If a binary contains object files for multiple architectures (e.g. it is a
+ Mach-O universal binary), symbolize the object file for a given architecture.
+ You can also specify architecture by writing ``binary_name:arch_name`` in the
+ input (see example above). If architecture is not specified in either way,
+ address will not be symbolized. Defaults to empty string.
 
 EXIT STATUS
 -----------

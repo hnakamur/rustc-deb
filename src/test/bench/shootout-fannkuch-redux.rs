@@ -1,97 +1,192 @@
-use std::from_str::FromStr;
-use std::i32::range;
-use std::os;
-use std::vec::MutableVector;
-use std::vec;
+// The Computer Language Benchmarks Game
+// http://benchmarksgame.alioth.debian.org/
+//
+// contributed by the Rust Project Developers
 
-fn max(a: i32, b: i32) -> i32 {
-    if a > b {
-        a
-    } else {
-        b
+// Copyright (c) 2014 The Rust Project Developers
+//
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// - Redistributions of source code must retain the above copyright
+//   notice, this list of conditions and the following disclaimer.
+//
+// - Redistributions in binary form must reproduce the above copyright
+//   notice, this list of conditions and the following disclaimer in
+//   the documentation and/or other materials provided with the
+//   distribution.
+//
+// - Neither the name of "The Computer Language Benchmarks Game" nor
+//   the name of "The Computer Language Shootout Benchmarks" nor the
+//   names of its contributors may be used to endorse or promote
+//   products derived from this software without specific prior
+//   written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+// OF THE POSSIBILITY OF SUCH DAMAGE.
+
+use std::{cmp, iter, mem};
+use std::thread::Thread;
+
+fn rotate(x: &mut [i32]) {
+    let mut prev = x[0];
+    for place in x.iter_mut().rev() {
+        prev = mem::replace(place, prev)
     }
 }
 
-#[inline(never)]
-fn fannkuch_redux(n: i32) -> i32 {
-    let mut perm = vec::from_elem(n as uint, 0i32);
-    let mut perm1 = vec::from_fn(n as uint, |i| i as i32);
-    let mut count = vec::from_elem(n as uint, 0i32);
-    let mut max_flips_count = 0i32;
-    let mut perm_count = 0i32;
-    let mut checksum = 0i32;
-
-    let mut r = n;
-    loop {
-        unsafe {
-            while r != 1 {
-                count.unsafe_set((r-1) as uint, r);
-                r -= 1;
-            }
-
-            for perm.mut_iter().zip(perm1.iter()).advance |(perm_i, perm1_i)| {
-                *perm_i = *perm1_i;
-            }
-
-            let mut flips_count: i32 = 0;
-            let mut k: i32;
-            loop {
-                k = perm.unsafe_get(0);
-                if k == 0 {
-                    break;
-                }
-
-                let k2 = (k+1) >> 1;
-                for range(0, k2) |i| {
-                    let (perm_i, perm_k_i) = {
-                        (perm.unsafe_get(i as uint),
-                            perm.unsafe_get((k-i) as uint))
-                    };
-                    perm.unsafe_set(i as uint, perm_k_i);
-                    perm.unsafe_set((k-i) as uint, perm_i);
-                }
-                flips_count += 1;
-            }
-
-            max_flips_count = max(max_flips_count, flips_count);
-            checksum += if perm_count % 2 == 0 {
-                flips_count
-            } else {
-                -flips_count
-            };
-
-            // Use incremental change to generate another permutation.
-            loop {
-                if r == n {
-                    println(checksum.to_str());
-                    return max_flips_count;
-                }
-
-                let perm0 = perm1[0];
-                let mut i: i32 = 0;
-                while i < r {
-                    let j = i + 1;
-                    let perm1_j = { perm1.unsafe_get(j as uint) };
-                    perm1.unsafe_set(i as uint, perm1_j);
-                    i = j;
-                }
-                perm1.unsafe_set(r as uint, perm0);
-
-                let count_r = { count.unsafe_get(r as uint) };
-                count.unsafe_set(r as uint, count_r - 1);
-                if count.unsafe_get(r as uint) > 0 {
-                    break;
-                }
-                r += 1;
-            }
-
-            perm_count += 1;
+fn next_permutation(perm: &mut [i32], count: &mut [i32]) {
+    for i in range(1, perm.len()) {
+        rotate(perm.slice_to_mut(i + 1));
+        let count_i = &mut count[i];
+        if *count_i >= i as i32 {
+            *count_i = 0;
+        } else {
+            *count_i += 1;
+            break
         }
     }
 }
 
-#[fixed_stack_segment]
+struct P {
+    p: [i32; 16],
+}
+
+impl Copy for P {}
+
+struct Perm {
+    cnt: [i32; 16],
+    fact: [u32; 16],
+    n: u32,
+    permcount: u32,
+    perm: P,
+}
+
+impl Copy for Perm {}
+
+impl Perm {
+    fn new(n: u32) -> Perm {
+        let mut fact = [1; 16];
+        for i in range(1, n as uint + 1) {
+            fact[i] = fact[i - 1] * i as u32;
+        }
+        Perm {
+            cnt: [0; 16],
+            fact: fact,
+            n: n,
+            permcount: 0,
+            perm: P { p: [0; 16 ] }
+        }
+    }
+
+    fn get(&mut self, mut idx: i32) -> P {
+        let mut pp = [0u8; 16];
+        self.permcount = idx as u32;
+        for (i, place) in self.perm.p.iter_mut().enumerate() {
+            *place = i as i32 + 1;
+        }
+
+        for i in range(1, self.n as uint).rev() {
+            let d = idx / self.fact[i] as i32;
+            self.cnt[i] = d;
+            idx %= self.fact[i] as i32;
+            for (place, val) in pp.iter_mut().zip(self.perm.p[..(i+1)].iter()) {
+                *place = (*val) as u8
+            }
+
+            let d = d as uint;
+            for j in range(0, i + 1) {
+                self.perm.p[j] = if j + d <= i {pp[j + d]} else {pp[j+d-i-1]} as i32;
+            }
+        }
+
+        self.perm
+    }
+
+    fn count(&self) -> u32 { self.permcount }
+    fn max(&self) -> u32 { self.fact[self.n as uint] }
+
+    fn next(&mut self) -> P {
+        next_permutation(&mut self.perm.p, &mut self.cnt);
+        self.permcount += 1;
+
+        self.perm
+    }
+}
+
+
+fn reverse(tperm: &mut [i32], mut k: uint) {
+    tperm.slice_to_mut(k).reverse()
+}
+
+fn work(mut perm: Perm, n: uint, max: uint) -> (i32, i32) {
+    let mut checksum = 0;
+    let mut maxflips = 0;
+
+    let mut p = perm.get(n as i32);
+
+    while perm.count() < max as u32 {
+        let mut flips = 0;
+
+        while p.p[0] != 1 {
+            let k = p.p[0] as uint;
+            reverse(&mut p.p, k);
+            flips += 1;
+        }
+
+        checksum += if perm.count() % 2 == 0 {flips} else {-flips};
+        maxflips = cmp::max(maxflips, flips);
+
+        p = perm.next();
+    }
+
+    (checksum, maxflips)
+}
+
+fn fannkuch(n: i32) -> (i32, i32) {
+    let perm = Perm::new(n as u32);
+
+    let N = 4;
+    let mut futures = vec![];
+    let k = perm.max() / N;
+
+    for (i, j) in range(0, N).zip(iter::count(0, k)) {
+        let max = cmp::min(j+k, perm.max());
+
+        futures.push(Thread::scoped(move|| {
+            work(perm, j as uint, max as uint)
+        }))
+    }
+
+    let mut checksum = 0;
+    let mut maxflips = 0;
+    for fut in futures.into_iter() {
+        let (cs, mf) = fut.join().ok().unwrap();
+        checksum += cs;
+        maxflips = cmp::max(maxflips, mf);
+    }
+    (checksum, maxflips)
+}
+
 fn main() {
-    let n: i32 = FromStr::from_str(os::args()[1]).get();
-    println(fmt!("Pfannkuchen(%d) = %d", n as int, fannkuch_redux(n) as int));
+    let n = std::os::args().as_slice()
+        .get(1)
+        .and_then(|arg| arg.parse())
+        .unwrap_or(2i32);
+
+    let (checksum, maxflips) = fannkuch(n);
+    println!("{}\nPfannkuchen({}) = {}", checksum, n, maxflips);
 }

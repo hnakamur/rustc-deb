@@ -1,9 +1,18 @@
+// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Test for issue #4183: use of Self in supertraits.
 
-use std::f32;
-use std::f64;
+use std::num::Float as StdFloat;
 
-pub static FUZZY_EPSILON: float = 0.1;
+pub static FUZZY_EPSILON: f64 = 0.1;
 
 pub trait FuzzyEq<Eps> {
     fn fuzzy_eq(&self, other: &Self) -> bool;
@@ -20,7 +29,7 @@ impl FuzzyEq<f32> for f32 {
     }
 
     fn fuzzy_eq_eps(&self, other: &f32, epsilon: &f32) -> bool {
-        f32::abs(*self - *other) < *epsilon
+        (*self - *other).abs() < *epsilon
     }
 }
 
@@ -34,7 +43,7 @@ impl FuzzyEq<f64> for f64 {
     }
 
     fn fuzzy_eq_eps(&self, other: &f64, epsilon: &f64) -> bool {
-        f64::abs(*self - *other) < *epsilon
+        (*self - *other).abs() < *epsilon
     }
 }
 

@@ -8,53 +8,51 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f1(ref_string: &str) -> ~str {
+#![allow(unnecessary_allocation)]
+
+fn f1(ref_string: &str) -> String {
     match ref_string {
-        "a" => ~"found a",
-        "b" => ~"found b",
-        _ => ~"not found"
+        "a" => "found a".to_string(),
+        "b" => "found b".to_string(),
+        _ => "not found".to_string()
     }
 }
 
-fn f2(ref_string: &str) -> ~str {
+fn f2(ref_string: &str) -> String {
     match ref_string {
-        "a" => ~"found a",
-        "b" => ~"found b",
-        s => fmt!("not found (%s)", s)
+        "a" => "found a".to_string(),
+        "b" => "found b".to_string(),
+        s => format!("not found ({})", s)
     }
 }
 
-fn g1(ref_1: &str, ref_2: &str) -> ~str {
+fn g1(ref_1: &str, ref_2: &str) -> String {
     match (ref_1, ref_2) {
-        ("a", "b") => ~"found a,b",
-        ("b", "c") => ~"found b,c",
-        _ => ~"not found"
+        ("a", "b") => "found a,b".to_string(),
+        ("b", "c") => "found b,c".to_string(),
+        _ => "not found".to_string()
     }
 }
 
-fn g2(ref_1: &str, ref_2: &str) -> ~str {
+fn g2(ref_1: &str, ref_2: &str) -> String {
     match (ref_1, ref_2) {
-        ("a", "b") => ~"found a,b",
-        ("b", "c") => ~"found b,c",
-        (s1, s2) => fmt!("not found (%s, %s)", s1, s2)
+        ("a", "b") => "found a,b".to_string(),
+        ("b", "c") => "found b,c".to_string(),
+        (s1, s2) => format!("not found ({}, {})", s1, s2)
     }
 }
 
 pub fn main() {
-    assert_eq!(f1(@"a"), ~"found a");
-    assert_eq!(f1(~"b"), ~"found b");
-    assert_eq!(f1(&"c"), ~"not found");
-    assert_eq!(f1("d"), ~"not found");
-    assert_eq!(f2(@"a"), ~"found a");
-    assert_eq!(f2(~"b"), ~"found b");
-    assert_eq!(f2(&"c"), ~"not found (c)");
-    assert_eq!(f2("d"), ~"not found (d)");
-    assert_eq!(g1(@"a", @"b"), ~"found a,b");
-    assert_eq!(g1(~"b", ~"c"), ~"found b,c");
-    assert_eq!(g1(&"c", &"d"), ~"not found");
-    assert_eq!(g1("d", "e"), ~"not found");
-    assert_eq!(g2(@"a", @"b"), ~"found a,b");
-    assert_eq!(g2(~"b", ~"c"), ~"found b,c");
-    assert_eq!(g2(&"c", &"d"), ~"not found (c, d)");
-    assert_eq!(g2("d", "e"), ~"not found (d, e)");
+    assert_eq!(f1("b"), "found b".to_string());
+    assert_eq!(f1("c"), "not found".to_string());
+    assert_eq!(f1("d"), "not found".to_string());
+    assert_eq!(f2("b"), "found b".to_string());
+    assert_eq!(f2("c"), "not found (c)".to_string());
+    assert_eq!(f2("d"), "not found (d)".to_string());
+    assert_eq!(g1("b", "c"), "found b,c".to_string());
+    assert_eq!(g1("c", "d"), "not found".to_string());
+    assert_eq!(g1("d", "e"), "not found".to_string());
+    assert_eq!(g2("b", "c"), "found b,c".to_string());
+    assert_eq!(g2("c", "d"), "not found (c, d)".to_string());
+    assert_eq!(g2("d", "e"), "not found (d, e)".to_string());
 }

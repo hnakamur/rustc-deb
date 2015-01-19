@@ -1,39 +1,27 @@
+// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-fn take_any(_: &fn:()) {
+
+fn take_any<F>(_: F) where F: FnOnce() {
 }
 
-fn take_copyable(_: &fn:Copy()) {
+fn take_const_owned<F>(_: F) where F: FnOnce() + Sync + Send {
 }
 
-fn take_copyable_owned(_: &fn:Copy+Send()) {
-}
-
-fn take_const_owned(_: &fn:Freeze+Send()) {
-}
-
-fn give_any(f: &fn:()) {
+fn give_any<F>(f: F) where F: FnOnce() {
     take_any(f);
-    take_copyable(f); //~ ERROR expected bounds `Copy` but found no bounds
-    take_copyable_owned(f); //~ ERROR expected bounds `Copy+Send` but found no bounds
 }
 
-fn give_copyable(f: &fn:Copy()) {
+fn give_owned<F>(f: F) where F: FnOnce() + Send {
     take_any(f);
-    take_copyable(f);
-    take_copyable_owned(f); //~ ERROR expected bounds `Copy+Send` but found bounds `Copy`
-}
-
-fn give_owned(f: &fn:Send()) {
-    take_any(f);
-    take_copyable(f); //~ ERROR expected bounds `Copy` but found bounds `Send`
-    take_copyable_owned(f); //~ ERROR expected bounds `Copy+Send` but found bounds `Send`
-}
-
-fn give_copyable_owned(f: &fn:Copy+Send()) {
-    take_any(f);
-    take_copyable(f);
-    take_copyable_owned(f);
-    take_const_owned(f); //~ ERROR expected bounds `Send+Freeze` but found bounds `Copy+Send`
+    take_const_owned(f); //~ ERROR the trait `core::marker::Sync` is not implemented for the type
 }
 
 fn main() {}

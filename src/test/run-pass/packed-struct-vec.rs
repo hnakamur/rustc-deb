@@ -1,4 +1,4 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,26 +8,29 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::sys;
-use std::uint;
+// ignore-android: FIXME(#9116) Bus error
 
-#[packed]
-#[deriving(Eq)]
+use std::mem;
+
+#[repr(packed)]
+#[derive(PartialEq, Show)]
 struct Foo {
     bar: u8,
     baz: u64
 }
 
-fn main() {
-    let foos = [Foo { bar: 1, baz: 2 }, .. 10];
+impl Copy for Foo {}
 
-    assert_eq!(sys::size_of::<[Foo, .. 10]>(), 90);
+pub fn main() {
+    let foos = [Foo { bar: 1, baz: 2 }; 10];
 
-    for uint::range(0, 10) |i| {
+    assert_eq!(mem::size_of::<[Foo; 10]>(), 90);
+
+    for i in range(0u, 10) {
         assert_eq!(foos[i], Foo { bar: 1, baz: 2});
     }
 
-    for foos.iter().advance |&foo| {
+    for &foo in foos.iter() {
         assert_eq!(foo, Foo { bar: 1, baz: 2 });
     }
 }

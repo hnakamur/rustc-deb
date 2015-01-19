@@ -9,20 +9,20 @@
 // except according to those terms.
 
 struct X {
-    x: ~str,
+    x: String,
 }
 
 impl Drop for X {
-    fn drop(&self) {
-        error!("value: %s", self.x);
+    fn drop(&mut self) {
+        println!("value: {}", self.x);
     }
 }
 
 fn main() {
-    let x = X { x: ~"hello" };
+    let x = X { x: "hello".to_string() };
 
     match x {
-        X { x: y } => error!("contents: %s", y)
+        X { x: y } => println!("contents: {}", y)
         //~^ ERROR cannot move out of type `X`, which defines the `Drop` trait
     }
 }

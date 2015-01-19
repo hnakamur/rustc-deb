@@ -8,29 +8,33 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::str;
+// ignore-fast doesn't like extern crate
 
-mod libc {
-    #[abi = "cdecl"]
-    #[nolink]
-    pub extern {
-        pub fn atol(x: *u8) -> int;
-        pub fn atoll(x: *u8) -> i64;
+extern crate libc;
+
+use std::ffi::CString;
+
+mod mlibc {
+    use libc::{c_char, c_long, c_longlong};
+
+    extern {
+        pub fn atol(x: *const c_char) -> c_long;
+        pub fn atoll(x: *const c_char) -> c_longlong;
     }
 }
 
-fn atol(s: ~str) -> int {
-    return str::as_buf(s, { |x, _len| unsafe { libc::atol(x) } });
+fn atol(s: String) -> int {
+    let c = CString::from_slice(s.as_bytes());
+    unsafe { mlibc::atol(c.as_ptr()) as int }
 }
 
-fn atoll(s: ~str) -> i64 {
-    return str::as_buf(s, { |x, _len| unsafe { libc::atoll(x) } });
+fn atoll(s: String) -> i64 {
+    let c = CString::from_slice(s.as_bytes());
+    unsafe { mlibc::atoll(c.as_ptr()) as i64 }
 }
 
 pub fn main() {
-    unsafe {
-        assert_eq!(atol(~"1024") * 10, atol(~"10240"));
-        assert!((atoll(~"11111111111111111") * 10i64)
-            == atoll(~"111111111111111110"));
-    }
+    assert_eq!(atol("1024".to_string()) * 10, atol("10240".to_string()));
+    assert!((atoll("11111111111111111".to_string()) * 10) ==
+             atoll("111111111111111110".to_string()));
 }

@@ -2,9 +2,9 @@ set(LLVM_LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
   DebugInfo
   MC
-  MCParser
   MCDisassembler
   Object
+  Support
   )
 
 add_llvm_tool(llvm-objdump
@@ -12,5 +12,4 @@ add_llvm_tool(llvm-objdump
   COFFDump.cpp
   ELFDump.cpp
   MachODump.cpp
-  MCFunction.cpp
   )

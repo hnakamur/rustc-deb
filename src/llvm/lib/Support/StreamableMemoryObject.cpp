@@ -10,6 +10,7 @@
 #include "llvm/Support/StreamableMemoryObject.h"
 #include "llvm/Support/Compiler.h"
 #include <cassert>
+#include <cstddef>
 #include <cstring>
 
 
@@ -24,21 +25,18 @@ public:
     assert(LastChar >= FirstChar && "Invalid start/end range");
   }
 
-  virtual uint64_t getBase() const LLVM_OVERRIDE { return 0; }
-  virtual uint64_t getExtent() const LLVM_OVERRIDE {
+  uint64_t getBase() const override { return 0; }
+  uint64_t getExtent() const override {
     return LastChar - FirstChar;
   }
-  virtual int readByte(uint64_t address, uint8_t* ptr) const LLVM_OVERRIDE;
-  virtual int readBytes(uint64_t address,
-                        uint64_t size,
-                        uint8_t* buf,
-                        uint64_t* copied) const LLVM_OVERRIDE;
-  virtual const uint8_t *getPointer(uint64_t address,
-                                    uint64_t size) const LLVM_OVERRIDE;
-  virtual bool isValidAddress(uint64_t address) const LLVM_OVERRIDE {
+  int readByte(uint64_t address, uint8_t* ptr) const override;
+  int readBytes(uint64_t address, uint64_t size,
+                uint8_t *buf) const override;
+  const uint8_t *getPointer(uint64_t address, uint64_t size) const override;
+  bool isValidAddress(uint64_t address) const override {
     return validAddress(address);
   }
-  virtual bool isObjectEnd(uint64_t address) const LLVM_OVERRIDE {
+  bool isObjectEnd(uint64_t address) const override {
     return objectEnd(address);
   }
 
@@ -49,10 +47,10 @@ private:
   // These are implemented as inline functions here to avoid multiple virtual
   // calls per public function
   bool validAddress(uint64_t address) const {
-    return static_cast<ptrdiff_t>(address) < LastChar - FirstChar;
+    return static_cast<std::ptrdiff_t>(address) < LastChar - FirstChar;
   }
   bool objectEnd(uint64_t address) const {
-    return static_cast<ptrdiff_t>(address) == LastChar - FirstChar;
+    return static_cast<std::ptrdiff_t>(address) == LastChar - FirstChar;
   }
 
   RawMemoryObject(const RawMemoryObject&) LLVM_DELETED_FUNCTION;
@@ -67,11 +65,9 @@ int RawMemoryObject::readByte(uint64_t address, uint8_t* ptr) const {
 
 int RawMemoryObject::readBytes(uint64_t address,
                                uint64_t size,
-                               uint8_t* buf,
-                               uint64_t* copied) const {
+                               uint8_t *buf) const {
   if (!validAddress(address) || !validAddress(address + size - 1)) return -1;
   memcpy(buf, (uint8_t *)(uintptr_t)(address + FirstChar), size);
-  if (copied) *copied = size;
   return size;
 }
 
@@ -111,11 +107,9 @@ int StreamingMemoryObject::readByte(uint64_t address, uint8_t* ptr) const {
 
 int StreamingMemoryObject::readBytes(uint64_t address,
                                      uint64_t size,
-                                     uint8_t* buf,
-                                     uint64_t* copied) const {
+                                     uint8_t *buf) const {
   if (!fetchToPos(address + size - 1)) return -1;
   memcpy(buf, &Bytes[address + BytesSkipped], size);
-  if (copied) *copied = size;
   return 0;
 }
 

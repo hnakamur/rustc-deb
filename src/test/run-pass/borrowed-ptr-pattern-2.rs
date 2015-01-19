@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn foo(s: &~str) -> bool {
-    match s {
-        &~"kitty" => true,
+fn foo(s: &String) -> bool {
+    match s.as_slice() {
+        "kitty" => true,
         _ => false
     }
 }
 
 pub fn main() {
-    assert!(foo(&~"kitty"));
-    assert!(!foo(&~"gata"));
+    assert!(foo(&"kitty".to_string()));
+    assert!(!foo(&"gata".to_string()));
 }

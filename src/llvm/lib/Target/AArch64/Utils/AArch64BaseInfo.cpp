@@ -18,7 +18,7 @@
 
 using namespace llvm;
 
-StringRef NamedImmMapper::toString(uint32_t Value, bool &Valid) const {
+StringRef AArch64NamedImmMapper::toString(uint32_t Value, bool &Valid) const {
   for (unsigned i = 0; i < NumPairs; ++i) {
     if (Pairs[i].Value == Value) {
       Valid = true;
@@ -30,7 +30,7 @@ StringRef NamedImmMapper::toString(uint32_t Value, bool &Valid) const {
   return StringRef();
 }
 
-uint32_t NamedImmMapper::fromString(StringRef Name, bool &Valid) const {
+uint32_t AArch64NamedImmMapper::fromString(StringRef Name, bool &Valid) const {
   std::string LowerCaseName = Name.lower();
   for (unsigned i = 0; i < NumPairs; ++i) {
     if (Pairs[i].Name == LowerCaseName) {
@@ -43,11 +43,11 @@ uint32_t NamedImmMapper::fromString(StringRef Name, bool &Valid) const {
   return -1;
 }
 
-bool NamedImmMapper::validImm(uint32_t Value) const {
+bool AArch64NamedImmMapper::validImm(uint32_t Value) const {
   return Value < TooBigImm;
 }
 
-const NamedImmMapper::Mapping A64AT::ATMapper::ATPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64AT::ATMapper::ATPairs[] = {
   {"s1e1r", S1E1R},
   {"s1e2r", S1E2R},
   {"s1e3r", S1E3R},
@@ -62,10 +62,10 @@ const NamedImmMapper::Mapping A64AT::ATMapper::ATPairs[] = {
   {"s12e0w", S12E0W},
 };
 
-A64AT::ATMapper::ATMapper()
-  : NamedImmMapper(ATPairs, 0) {}
+AArch64AT::ATMapper::ATMapper()
+  : AArch64NamedImmMapper(ATPairs, 0) {}
 
-const NamedImmMapper::Mapping A64DB::DBarrierMapper::DBarrierPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64DB::DBarrierMapper::DBarrierPairs[] = {
   {"oshld", OSHLD},
   {"oshst", OSHST},
   {"osh", OSH},
@@ -80,10 +80,10 @@ const NamedImmMapper::Mapping A64DB::DBarrierMapper::DBarrierPairs[] = {
   {"sy", SY}
 };
 
-A64DB::DBarrierMapper::DBarrierMapper()
-  : NamedImmMapper(DBarrierPairs, 16u) {}
+AArch64DB::DBarrierMapper::DBarrierMapper()
+  : AArch64NamedImmMapper(DBarrierPairs, 16u) {}
 
-const NamedImmMapper::Mapping A64DC::DCMapper::DCPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64DC::DCMapper::DCPairs[] = {
   {"zva", ZVA},
   {"ivac", IVAC},
   {"isw", ISW},
@@ -94,26 +94,26 @@ const NamedImmMapper::Mapping A64DC::DCMapper::DCPairs[] = {
   {"cisw", CISW}
 };
 
-A64DC::DCMapper::DCMapper()
-  : NamedImmMapper(DCPairs, 0) {}
+AArch64DC::DCMapper::DCMapper()
+  : AArch64NamedImmMapper(DCPairs, 0) {}
 
-const NamedImmMapper::Mapping A64IC::ICMapper::ICPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64IC::ICMapper::ICPairs[] = {
   {"ialluis",  IALLUIS},
   {"iallu", IALLU},
   {"ivau", IVAU}
 };
 
-A64IC::ICMapper::ICMapper()
-  : NamedImmMapper(ICPairs, 0) {}
+AArch64IC::ICMapper::ICMapper()
+  : AArch64NamedImmMapper(ICPairs, 0) {}
 
-const NamedImmMapper::Mapping A64ISB::ISBMapper::ISBPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64ISB::ISBMapper::ISBPairs[] = {
   {"sy",  SY},
 };
 
-A64ISB::ISBMapper::ISBMapper()
-  : NamedImmMapper(ISBPairs, 16) {}
+AArch64ISB::ISBMapper::ISBMapper()
+  : AArch64NamedImmMapper(ISBPairs, 16) {}
 
-const NamedImmMapper::Mapping A64PRFM::PRFMMapper::PRFMPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64PRFM::PRFMMapper::PRFMPairs[] = {
   {"pldl1keep", PLDL1KEEP},
   {"pldl1strm", PLDL1STRM},
   {"pldl2keep", PLDL2KEEP},
@@ -134,19 +134,19 @@ const NamedImmMapper::Mapping A64PRFM::PRFMMapper::PRFMPairs[] = {
   {"pstl3strm", PSTL3STRM}
 };
 
-A64PRFM::PRFMMapper::PRFMMapper()
-  : NamedImmMapper(PRFMPairs, 32) {}
+AArch64PRFM::PRFMMapper::PRFMMapper()
+  : AArch64NamedImmMapper(PRFMPairs, 32) {}
 
-const NamedImmMapper::Mapping A64PState::PStateMapper::PStatePairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64PState::PStateMapper::PStatePairs[] = {
   {"spsel", SPSel},
   {"daifset", DAIFSet},
   {"daifclr", DAIFClr}
 };
 
-A64PState::PStateMapper::PStateMapper()
-  : NamedImmMapper(PStatePairs, 0) {}
+AArch64PState::PStateMapper::PStateMapper()
+  : AArch64NamedImmMapper(PStatePairs, 0) {}
 
-const NamedImmMapper::Mapping A64SysReg::MRSMapper::MRSPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64SysReg::MRSMapper::MRSPairs[] = {
   {"mdccsr_el0", MDCCSR_EL0},
   {"dbgdtrrx_el0", DBGDTRRX_EL0},
   {"mdrar_el1", MDRAR_EL1},
@@ -176,16 +176,16 @@ const NamedImmMapper::Mapping A64SysReg::MRSMapper::MRSPairs[] = {
   {"id_isar3_el1", ID_ISAR3_EL1},
   {"id_isar4_el1", ID_ISAR4_EL1},
   {"id_isar5_el1", ID_ISAR5_EL1},
-  {"id_aa64pfr0_el1", ID_AA64PFR0_EL1},
-  {"id_aa64pfr1_el1", ID_AA64PFR1_EL1},
-  {"id_aa64dfr0_el1", ID_AA64DFR0_EL1},
-  {"id_aa64dfr1_el1", ID_AA64DFR1_EL1},
-  {"id_aa64afr0_el1", ID_AA64AFR0_EL1},
-  {"id_aa64afr1_el1", ID_AA64AFR1_EL1},
-  {"id_aa64isar0_el1", ID_AA64ISAR0_EL1},
-  {"id_aa64isar1_el1", ID_AA64ISAR1_EL1},
-  {"id_aa64mmfr0_el1", ID_AA64MMFR0_EL1},
-  {"id_aa64mmfr1_el1", ID_AA64MMFR1_EL1},
+  {"id_aa64pfr0_el1", ID_A64PFR0_EL1},
+  {"id_aa64pfr1_el1", ID_A64PFR1_EL1},
+  {"id_aa64dfr0_el1", ID_A64DFR0_EL1},
+  {"id_aa64dfr1_el1", ID_A64DFR1_EL1},
+  {"id_aa64afr0_el1", ID_A64AFR0_EL1},
+  {"id_aa64afr1_el1", ID_A64AFR1_EL1},
+  {"id_aa64isar0_el1", ID_A64ISAR0_EL1},
+  {"id_aa64isar1_el1", ID_A64ISAR1_EL1},
+  {"id_aa64mmfr0_el1", ID_A64MMFR0_EL1},
+  {"id_aa64mmfr1_el1", ID_A64MMFR1_EL1},
   {"mvfr0_el1", MVFR0_EL1},
   {"mvfr1_el1", MVFR1_EL1},
   {"mvfr2_el1", MVFR2_EL1},
@@ -194,27 +194,89 @@ const NamedImmMapper::Mapping A64SysReg::MRSMapper::MRSPairs[] = {
   {"rvbar_el3", RVBAR_EL3},
   {"isr_el1", ISR_EL1},
   {"cntpct_el0", CNTPCT_EL0},
-  {"cntvct_el0", CNTVCT_EL0}
+  {"cntvct_el0", CNTVCT_EL0},
+
+  // Trace registers
+  {"trcstatr", TRCSTATR},
+  {"trcidr8", TRCIDR8},
+  {"trcidr9", TRCIDR9},
+  {"trcidr10", TRCIDR10},
+  {"trcidr11", TRCIDR11},
+  {"trcidr12", TRCIDR12},
+  {"trcidr13", TRCIDR13},
+  {"trcidr0", TRCIDR0},
+  {"trcidr1", TRCIDR1},
+  {"trcidr2", TRCIDR2},
+  {"trcidr3", TRCIDR3},
+  {"trcidr4", TRCIDR4},
+  {"trcidr5", TRCIDR5},
+  {"trcidr6", TRCIDR6},
+  {"trcidr7", TRCIDR7},
+  {"trcoslsr", TRCOSLSR},
+  {"trcpdsr", TRCPDSR},
+  {"trcdevaff0", TRCDEVAFF0},
+  {"trcdevaff1", TRCDEVAFF1},
+  {"trclsr", TRCLSR},
+  {"trcauthstatus", TRCAUTHSTATUS},
+  {"trcdevarch", TRCDEVARCH},
+  {"trcdevid", TRCDEVID},
+  {"trcdevtype", TRCDEVTYPE},
+  {"trcpidr4", TRCPIDR4},
+  {"trcpidr5", TRCPIDR5},
+  {"trcpidr6", TRCPIDR6},
+  {"trcpidr7", TRCPIDR7},
+  {"trcpidr0", TRCPIDR0},
+  {"trcpidr1", TRCPIDR1},
+  {"trcpidr2", TRCPIDR2},
+  {"trcpidr3", TRCPIDR3},
+  {"trccidr0", TRCCIDR0},
+  {"trccidr1", TRCCIDR1},
+  {"trccidr2", TRCCIDR2},
+  {"trccidr3", TRCCIDR3},
+
+  // GICv3 registers
+  {"icc_iar1_el1", ICC_IAR1_EL1},
+  {"icc_iar0_el1", ICC_IAR0_EL1},
+  {"icc_hppir1_el1", ICC_HPPIR1_EL1},
+  {"icc_hppir0_el1", ICC_HPPIR0_EL1},
+  {"icc_rpr_el1", ICC_RPR_EL1},
+  {"ich_vtr_el2", ICH_VTR_EL2},
+  {"ich_eisr_el2", ICH_EISR_EL2},
+  {"ich_elsr_el2", ICH_ELSR_EL2}
 };
 
-A64SysReg::MRSMapper::MRSMapper() {
+AArch64SysReg::MRSMapper::MRSMapper(uint64_t FeatureBits)
+  : SysRegMapper(FeatureBits) {
     InstPairs = &MRSPairs[0];
     NumInstPairs = llvm::array_lengthof(MRSPairs);
 }
 
-const NamedImmMapper::Mapping A64SysReg::MSRMapper::MSRPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64SysReg::MSRMapper::MSRPairs[] = {
   {"dbgdtrtx_el0", DBGDTRTX_EL0},
   {"oslar_el1", OSLAR_EL1},
-  {"pmswinc_el0", PMSWINC_EL0}
+  {"pmswinc_el0", PMSWINC_EL0},
+
+  // Trace registers
+  {"trcoslar", TRCOSLAR},
+  {"trclar", TRCLAR},
+
+  // GICv3 registers
+  {"icc_eoir1_el1", ICC_EOIR1_EL1},
+  {"icc_eoir0_el1", ICC_EOIR0_EL1},
+  {"icc_dir_el1", ICC_DIR_EL1},
+  {"icc_sgi1r_el1", ICC_SGI1R_EL1},
+  {"icc_asgi1r_el1", ICC_ASGI1R_EL1},
+  {"icc_sgi0r_el1", ICC_SGI0R_EL1}
 };
 
-A64SysReg::MSRMapper::MSRMapper() {
+AArch64SysReg::MSRMapper::MSRMapper(uint64_t FeatureBits)
+  : SysRegMapper(FeatureBits) {
     InstPairs = &MSRPairs[0];
     NumInstPairs = llvm::array_lengthof(MSRPairs);
 }
 
 
-const NamedImmMapper::Mapping A64SysReg::SysRegMapper::SysRegPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64SysReg::SysRegMapper::SysRegPairs[] = {
   {"osdtrrx_el1", OSDTRRX_EL1},
   {"osdtrtx_el1",  OSDTRTX_EL1},
   {"teecr32_el1", TEECR32_EL1},
@@ -467,16 +529,256 @@ const NamedImmMapper::Mapping A64SysReg::SysRegMapper::SysRegPairs[] = {
   {"pmevtyper28_el0", PMEVTYPER28_EL0},
   {"pmevtyper29_el0", PMEVTYPER29_EL0},
   {"pmevtyper30_el0", PMEVTYPER30_EL0},
+
+  // Trace registers
+  {"trcprgctlr", TRCPRGCTLR},
+  {"trcprocselr", TRCPROCSELR},
+  {"trcconfigr", TRCCONFIGR},
+  {"trcauxctlr", TRCAUXCTLR},
+  {"trceventctl0r", TRCEVENTCTL0R},
+  {"trceventctl1r", TRCEVENTCTL1R},
+  {"trcstallctlr", TRCSTALLCTLR},
+  {"trctsctlr", TRCTSCTLR},
+  {"trcsyncpr", TRCSYNCPR},
+  {"trcccctlr", TRCCCCTLR},
+  {"trcbbctlr", TRCBBCTLR},
+  {"trctraceidr", TRCTRACEIDR},
+  {"trcqctlr", TRCQCTLR},
+  {"trcvictlr", TRCVICTLR},
+  {"trcviiectlr", TRCVIIECTLR},
+  {"trcvissctlr", TRCVISSCTLR},
+  {"trcvipcssctlr", TRCVIPCSSCTLR},
+  {"trcvdctlr", TRCVDCTLR},
+  {"trcvdsacctlr", TRCVDSACCTLR},
+  {"trcvdarcctlr", TRCVDARCCTLR},
+  {"trcseqevr0", TRCSEQEVR0},
+  {"trcseqevr1", TRCSEQEVR1},
+  {"trcseqevr2", TRCSEQEVR2},
+  {"trcseqrstevr", TRCSEQRSTEVR},
+  {"trcseqstr", TRCSEQSTR},
+  {"trcextinselr", TRCEXTINSELR},
+  {"trccntrldvr0", TRCCNTRLDVR0},
+  {"trccntrldvr1", TRCCNTRLDVR1},
+  {"trccntrldvr2", TRCCNTRLDVR2},
+  {"trccntrldvr3", TRCCNTRLDVR3},
+  {"trccntctlr0", TRCCNTCTLR0},
+  {"trccntctlr1", TRCCNTCTLR1},
+  {"trccntctlr2", TRCCNTCTLR2},
+  {"trccntctlr3", TRCCNTCTLR3},
+  {"trccntvr0", TRCCNTVR0},
+  {"trccntvr1", TRCCNTVR1},
+  {"trccntvr2", TRCCNTVR2},
+  {"trccntvr3", TRCCNTVR3},
+  {"trcimspec0", TRCIMSPEC0},
+  {"trcimspec1", TRCIMSPEC1},
+  {"trcimspec2", TRCIMSPEC2},
+  {"trcimspec3", TRCIMSPEC3},
+  {"trcimspec4", TRCIMSPEC4},
+  {"trcimspec5", TRCIMSPEC5},
+  {"trcimspec6", TRCIMSPEC6},
+  {"trcimspec7", TRCIMSPEC7},
+  {"trcrsctlr2", TRCRSCTLR2},
+  {"trcrsctlr3", TRCRSCTLR3},
+  {"trcrsctlr4", TRCRSCTLR4},
+  {"trcrsctlr5", TRCRSCTLR5},
+  {"trcrsctlr6", TRCRSCTLR6},
+  {"trcrsctlr7", TRCRSCTLR7},
+  {"trcrsctlr8", TRCRSCTLR8},
+  {"trcrsctlr9", TRCRSCTLR9},
+  {"trcrsctlr10", TRCRSCTLR10},
+  {"trcrsctlr11", TRCRSCTLR11},
+  {"trcrsctlr12", TRCRSCTLR12},
+  {"trcrsctlr13", TRCRSCTLR13},
+  {"trcrsctlr14", TRCRSCTLR14},
+  {"trcrsctlr15", TRCRSCTLR15},
+  {"trcrsctlr16", TRCRSCTLR16},
+  {"trcrsctlr17", TRCRSCTLR17},
+  {"trcrsctlr18", TRCRSCTLR18},
+  {"trcrsctlr19", TRCRSCTLR19},
+  {"trcrsctlr20", TRCRSCTLR20},
+  {"trcrsctlr21", TRCRSCTLR21},
+  {"trcrsctlr22", TRCRSCTLR22},
+  {"trcrsctlr23", TRCRSCTLR23},
+  {"trcrsctlr24", TRCRSCTLR24},
+  {"trcrsctlr25", TRCRSCTLR25},
+  {"trcrsctlr26", TRCRSCTLR26},
+  {"trcrsctlr27", TRCRSCTLR27},
+  {"trcrsctlr28", TRCRSCTLR28},
+  {"trcrsctlr29", TRCRSCTLR29},
+  {"trcrsctlr30", TRCRSCTLR30},
+  {"trcrsctlr31", TRCRSCTLR31},
+  {"trcssccr0", TRCSSCCR0},
+  {"trcssccr1", TRCSSCCR1},
+  {"trcssccr2", TRCSSCCR2},
+  {"trcssccr3", TRCSSCCR3},
+  {"trcssccr4", TRCSSCCR4},
+  {"trcssccr5", TRCSSCCR5},
+  {"trcssccr6", TRCSSCCR6},
+  {"trcssccr7", TRCSSCCR7},
+  {"trcsscsr0", TRCSSCSR0},
+  {"trcsscsr1", TRCSSCSR1},
+  {"trcsscsr2", TRCSSCSR2},
+  {"trcsscsr3", TRCSSCSR3},
+  {"trcsscsr4", TRCSSCSR4},
+  {"trcsscsr5", TRCSSCSR5},
+  {"trcsscsr6", TRCSSCSR6},
+  {"trcsscsr7", TRCSSCSR7},
+  {"trcsspcicr0", TRCSSPCICR0},
+  {"trcsspcicr1", TRCSSPCICR1},
+  {"trcsspcicr2", TRCSSPCICR2},
+  {"trcsspcicr3", TRCSSPCICR3},
+  {"trcsspcicr4", TRCSSPCICR4},
+  {"trcsspcicr5", TRCSSPCICR5},
+  {"trcsspcicr6", TRCSSPCICR6},
+  {"trcsspcicr7", TRCSSPCICR7},
+  {"trcpdcr", TRCPDCR},
+  {"trcacvr0", TRCACVR0},
+  {"trcacvr1", TRCACVR1},
+  {"trcacvr2", TRCACVR2},
+  {"trcacvr3", TRCACVR3},
+  {"trcacvr4", TRCACVR4},
+  {"trcacvr5", TRCACVR5},
+  {"trcacvr6", TRCACVR6},
+  {"trcacvr7", TRCACVR7},
+  {"trcacvr8", TRCACVR8},
+  {"trcacvr9", TRCACVR9},
+  {"trcacvr10", TRCACVR10},
+  {"trcacvr11", TRCACVR11},
+  {"trcacvr12", TRCACVR12},
+  {"trcacvr13", TRCACVR13},
+  {"trcacvr14", TRCACVR14},
+  {"trcacvr15", TRCACVR15},
+  {"trcacatr0", TRCACATR0},
+  {"trcacatr1", TRCACATR1},
+  {"trcacatr2", TRCACATR2},
+  {"trcacatr3", TRCACATR3},
+  {"trcacatr4", TRCACATR4},
+  {"trcacatr5", TRCACATR5},
+  {"trcacatr6", TRCACATR6},
+  {"trcacatr7", TRCACATR7},
+  {"trcacatr8", TRCACATR8},
+  {"trcacatr9", TRCACATR9},
+  {"trcacatr10", TRCACATR10},
+  {"trcacatr11", TRCACATR11},
+  {"trcacatr12", TRCACATR12},
+  {"trcacatr13", TRCACATR13},
+  {"trcacatr14", TRCACATR14},
+  {"trcacatr15", TRCACATR15},
+  {"trcdvcvr0", TRCDVCVR0},
+  {"trcdvcvr1", TRCDVCVR1},
+  {"trcdvcvr2", TRCDVCVR2},
+  {"trcdvcvr3", TRCDVCVR3},
+  {"trcdvcvr4", TRCDVCVR4},
+  {"trcdvcvr5", TRCDVCVR5},
+  {"trcdvcvr6", TRCDVCVR6},
+  {"trcdvcvr7", TRCDVCVR7},
+  {"trcdvcmr0", TRCDVCMR0},
+  {"trcdvcmr1", TRCDVCMR1},
+  {"trcdvcmr2", TRCDVCMR2},
+  {"trcdvcmr3", TRCDVCMR3},
+  {"trcdvcmr4", TRCDVCMR4},
+  {"trcdvcmr5", TRCDVCMR5},
+  {"trcdvcmr6", TRCDVCMR6},
+  {"trcdvcmr7", TRCDVCMR7},
+  {"trccidcvr0", TRCCIDCVR0},
+  {"trccidcvr1", TRCCIDCVR1},
+  {"trccidcvr2", TRCCIDCVR2},
+  {"trccidcvr3", TRCCIDCVR3},
+  {"trccidcvr4", TRCCIDCVR4},
+  {"trccidcvr5", TRCCIDCVR5},
+  {"trccidcvr6", TRCCIDCVR6},
+  {"trccidcvr7", TRCCIDCVR7},
+  {"trcvmidcvr0", TRCVMIDCVR0},
+  {"trcvmidcvr1", TRCVMIDCVR1},
+  {"trcvmidcvr2", TRCVMIDCVR2},
+  {"trcvmidcvr3", TRCVMIDCVR3},
+  {"trcvmidcvr4", TRCVMIDCVR4},
+  {"trcvmidcvr5", TRCVMIDCVR5},
+  {"trcvmidcvr6", TRCVMIDCVR6},
+  {"trcvmidcvr7", TRCVMIDCVR7},
+  {"trccidcctlr0", TRCCIDCCTLR0},
+  {"trccidcctlr1", TRCCIDCCTLR1},
+  {"trcvmidcctlr0", TRCVMIDCCTLR0},
+  {"trcvmidcctlr1", TRCVMIDCCTLR1},
+  {"trcitctrl", TRCITCTRL},
+  {"trcclaimset", TRCCLAIMSET},
+  {"trcclaimclr", TRCCLAIMCLR},
+
+  // GICv3 registers
+  {"icc_bpr1_el1", ICC_BPR1_EL1},
+  {"icc_bpr0_el1", ICC_BPR0_EL1},
+  {"icc_pmr_el1", ICC_PMR_EL1},
+  {"icc_ctlr_el1", ICC_CTLR_EL1},
+  {"icc_ctlr_el3", ICC_CTLR_EL3},
+  {"icc_sre_el1", ICC_SRE_EL1},
+  {"icc_sre_el2", ICC_SRE_EL2},
+  {"icc_sre_el3", ICC_SRE_EL3},
+  {"icc_igrpen0_el1", ICC_IGRPEN0_EL1},
+  {"icc_igrpen1_el1", ICC_IGRPEN1_EL1},
+  {"icc_igrpen1_el3", ICC_IGRPEN1_EL3},
+  {"icc_seien_el1", ICC_SEIEN_EL1},
+  {"icc_ap0r0_el1", ICC_AP0R0_EL1},
+  {"icc_ap0r1_el1", ICC_AP0R1_EL1},
+  {"icc_ap0r2_el1", ICC_AP0R2_EL1},
+  {"icc_ap0r3_el1", ICC_AP0R3_EL1},
+  {"icc_ap1r0_el1", ICC_AP1R0_EL1},
+  {"icc_ap1r1_el1", ICC_AP1R1_EL1},
+  {"icc_ap1r2_el1", ICC_AP1R2_EL1},
+  {"icc_ap1r3_el1", ICC_AP1R3_EL1},
+  {"ich_ap0r0_el2", ICH_AP0R0_EL2},
+  {"ich_ap0r1_el2", ICH_AP0R1_EL2},
+  {"ich_ap0r2_el2", ICH_AP0R2_EL2},
+  {"ich_ap0r3_el2", ICH_AP0R3_EL2},
+  {"ich_ap1r0_el2", ICH_AP1R0_EL2},
+  {"ich_ap1r1_el2", ICH_AP1R1_EL2},
+  {"ich_ap1r2_el2", ICH_AP1R2_EL2},
+  {"ich_ap1r3_el2", ICH_AP1R3_EL2},
+  {"ich_hcr_el2", ICH_HCR_EL2},
+  {"ich_misr_el2", ICH_MISR_EL2},
+  {"ich_vmcr_el2", ICH_VMCR_EL2},
+  {"ich_vseir_el2", ICH_VSEIR_EL2},
+  {"ich_lr0_el2", ICH_LR0_EL2},
+  {"ich_lr1_el2", ICH_LR1_EL2},
+  {"ich_lr2_el2", ICH_LR2_EL2},
+  {"ich_lr3_el2", ICH_LR3_EL2},
+  {"ich_lr4_el2", ICH_LR4_EL2},
+  {"ich_lr5_el2", ICH_LR5_EL2},
+  {"ich_lr6_el2", ICH_LR6_EL2},
+  {"ich_lr7_el2", ICH_LR7_EL2},
+  {"ich_lr8_el2", ICH_LR8_EL2},
+  {"ich_lr9_el2", ICH_LR9_EL2},
+  {"ich_lr10_el2", ICH_LR10_EL2},
+  {"ich_lr11_el2", ICH_LR11_EL2},
+  {"ich_lr12_el2", ICH_LR12_EL2},
+  {"ich_lr13_el2", ICH_LR13_EL2},
+  {"ich_lr14_el2", ICH_LR14_EL2},
+  {"ich_lr15_el2", ICH_LR15_EL2}
+};
+
+const AArch64NamedImmMapper::Mapping
+AArch64SysReg::SysRegMapper::CycloneSysRegPairs[] = {
+  {"cpm_ioacc_ctl_el3", CPM_IOACC_CTL_EL3}
 };
 
 uint32_t
-A64SysReg::SysRegMapper::fromString(StringRef Name, bool &Valid) const {
-  // First search the registers shared by all
+AArch64SysReg::SysRegMapper::fromString(StringRef Name, bool &Valid) const {
   std::string NameLower = Name.lower();
+
+  // First search the registers shared by all
   for (unsigned i = 0; i < array_lengthof(SysRegPairs); ++i) {
     if (SysRegPairs[i].Name == NameLower) {
       Valid = true;
       return SysRegPairs[i].Value;
+    }
+  }
+
+  // Next search for target specific registers
+  if (FeatureBits & AArch64::ProcCyclone) {
+    for (unsigned i = 0; i < array_lengthof(CycloneSysRegPairs); ++i) {
+      if (CycloneSysRegPairs[i].Name == NameLower) {
+        Valid = true;
+        return CycloneSysRegPairs[i].Value;
+      }
     }
   }
 
@@ -489,22 +791,22 @@ A64SysReg::SysRegMapper::fromString(StringRef Name, bool &Valid) const {
     }
   }
 
-  // Try to parse an S<op0>_<op1>_<Cn>_<Cm>_<op2> register name, where the bits
-  // are: 11 xxx 1x11 xxxx xxx
-  Regex GenericRegPattern("^s3_([0-7])_c(1[15])_c([0-9]|1[0-5])_([0-7])$");
+  // Try to parse an S<op0>_<op1>_<Cn>_<Cm>_<op2> register name
+  Regex GenericRegPattern("^s([0-3])_([0-7])_c([0-9]|1[0-5])_c([0-9]|1[0-5])_([0-7])$");
 
-  SmallVector<StringRef, 4> Ops;
+  SmallVector<StringRef, 5> Ops;
   if (!GenericRegPattern.match(NameLower, &Ops)) {
     Valid = false;
     return -1;
   }
 
-  uint32_t Op0 = 3, Op1 = 0, CRn = 0, CRm = 0, Op2 = 0;
+  uint32_t Op0 = 0, Op1 = 0, CRn = 0, CRm = 0, Op2 = 0;
   uint32_t Bits;
-  Ops[1].getAsInteger(10, Op1);
-  Ops[2].getAsInteger(10, CRn);
-  Ops[3].getAsInteger(10, CRm);
-  Ops[4].getAsInteger(10, Op2);
+  Ops[1].getAsInteger(10, Op0);
+  Ops[2].getAsInteger(10, Op1);
+  Ops[3].getAsInteger(10, CRn);
+  Ops[4].getAsInteger(10, CRm);
+  Ops[5].getAsInteger(10, Op2);
   Bits = (Op0 << 14) | (Op1 << 11) | (CRn << 7) | (CRm << 3) | Op2;
 
   Valid = true;
@@ -512,42 +814,43 @@ A64SysReg::SysRegMapper::fromString(StringRef Name, bool &Valid) const {
 }
 
 std::string
-A64SysReg::SysRegMapper::toString(uint32_t Bits, bool &Valid) const {
+AArch64SysReg::SysRegMapper::toString(uint32_t Bits) const {
+  // First search the registers shared by all
   for (unsigned i = 0; i < array_lengthof(SysRegPairs); ++i) {
     if (SysRegPairs[i].Value == Bits) {
-      Valid = true;
       return SysRegPairs[i].Name;
     }
   }
 
+  // Next search for target specific registers
+  if (FeatureBits & AArch64::ProcCyclone) {
+    for (unsigned i = 0; i < array_lengthof(CycloneSysRegPairs); ++i) {
+      if (CycloneSysRegPairs[i].Value == Bits) {
+        return CycloneSysRegPairs[i].Name;
+      }
+    }
+  }
+
+  // Now try the instruction-specific registers (either read-only or
+  // write-only).
   for (unsigned i = 0; i < NumInstPairs; ++i) {
     if (InstPairs[i].Value == Bits) {
-      Valid = true;
       return InstPairs[i].Name;
     }
   }
 
+  assert(Bits < 0x10000);
   uint32_t Op0 = (Bits >> 14) & 0x3;
   uint32_t Op1 = (Bits >> 11) & 0x7;
   uint32_t CRn = (Bits >> 7) & 0xf;
   uint32_t CRm = (Bits >> 3) & 0xf;
   uint32_t Op2 = Bits & 0x7;
 
-  // Only combinations matching: 11 xxx 1x11 xxxx xxx are valid for a generic
-  // name.
-  if (Op0 != 3 || (CRn != 11 && CRn != 15)) {
-      Valid = false;
-      return "";
-  }
-
-  assert(Op0 == 3 && (CRn == 11 || CRn == 15) && "Invalid generic sysreg");
-
-  Valid = true;
-  return "s3_" + utostr(Op1) + "_c" + utostr(CRn)
+  return "s" + utostr(Op0)+ "_" + utostr(Op1) + "_c" + utostr(CRn)
                + "_c" + utostr(CRm) + "_" + utostr(Op2);
 }
 
-const NamedImmMapper::Mapping A64TLBI::TLBIMapper::TLBIPairs[] = {
+const AArch64NamedImmMapper::Mapping AArch64TLBI::TLBIMapper::TLBIPairs[] = {
   {"ipas2e1is", IPAS2E1IS},
   {"ipas2le1is", IPAS2LE1IS},
   {"vmalle1is", VMALLE1IS},
@@ -582,238 +885,5 @@ const NamedImmMapper::Mapping A64TLBI::TLBIMapper::TLBIPairs[] = {
   {"vaale1", VAALE1}
 };
 
-A64TLBI::TLBIMapper::TLBIMapper()
-  : NamedImmMapper(TLBIPairs, 0) {}
-
-bool A64Imms::isFPImm(const APFloat &Val, uint32_t &Imm8Bits) {
-  const fltSemantics &Sem = Val.getSemantics();
-  unsigned FracBits = APFloat::semanticsPrecision(Sem) - 1;
-
-  uint32_t ExpMask;
-  switch (FracBits) {
-  case 10: // IEEE half-precision
-    ExpMask = 0x1f;
-    break;
-  case 23: // IEEE single-precision
-    ExpMask = 0xff;
-    break;
-  case 52: // IEEE double-precision
-    ExpMask = 0x7ff;
-    break;
-  case 112: // IEEE quad-precision
-    // No immediates are valid for double precision.
-    return false;
-  default:
-    llvm_unreachable("Only half, single and double precision supported");
-  }
-
-  uint32_t ExpStart = FracBits;
-  uint64_t FracMask = (1ULL << FracBits) - 1;
-
-  uint32_t Sign = Val.isNegative();
-
-  uint64_t Bits= Val.bitcastToAPInt().getLimitedValue();
-  uint64_t Fraction = Bits & FracMask;
-  int32_t Exponent = ((Bits >> ExpStart) & ExpMask);
-  Exponent -= ExpMask >> 1;
-
-  // S[d] = imm8<7>:NOT(imm8<6>):Replicate(imm8<6>, 5):imm8<5:0>:Zeros(19)
-  // D[d] = imm8<7>:NOT(imm8<6>):Replicate(imm8<6>, 8):imm8<5:0>:Zeros(48)
-  // This translates to: only 4 bits of fraction; -3 <= exp <= 4.
-  uint64_t A64FracStart = FracBits - 4;
-  uint64_t A64FracMask = 0xf;
-
-  // Are there too many fraction bits?
-  if (Fraction & ~(A64FracMask << A64FracStart))
-    return false;
-
-  if (Exponent < -3 || Exponent > 4)
-    return false;
-
-  uint32_t PackedFraction = (Fraction >> A64FracStart) & A64FracMask;
-  uint32_t PackedExp = (Exponent + 7) & 0x7;
-
-  Imm8Bits = (Sign << 7) | (PackedExp << 4) | PackedFraction;
-  return true;
-}
-
-// Encoding of the immediate for logical (immediate) instructions:
-//
-// | N | imms   | immr   | size | R            | S            |
-// |---+--------+--------+------+--------------+--------------|
-// | 1 | ssssss | rrrrrr |   64 | UInt(rrrrrr) | UInt(ssssss) |
-// | 0 | 0sssss | xrrrrr |   32 | UInt(rrrrr)  | UInt(sssss)  |
-// | 0 | 10ssss | xxrrrr |   16 | UInt(rrrr)   | UInt(ssss)   |
-// | 0 | 110sss | xxxrrr |    8 | UInt(rrr)    | UInt(sss)    |
-// | 0 | 1110ss | xxxxrr |    4 | UInt(rr)     | UInt(ss)     |
-// | 0 | 11110s | xxxxxr |    2 | UInt(r)      | UInt(s)      |
-// | 0 | 11111x | -      |      | UNALLOCATED  |              |
-//
-// Columns 'R', 'S' and 'size' specify a "bitmask immediate" of size bits in
-// which the lower S+1 bits are ones and the remaining bits are zero, then
-// rotated right by R bits, which is then replicated across the datapath.
-//
-// + Values of 'N', 'imms' and 'immr' which do not match the above table are
-//   RESERVED.
-// + If all 's' bits in the imms field are set then the instruction is
-//   RESERVED.
-// + The 'x' bits in the 'immr' field are IGNORED.
-
-bool A64Imms::isLogicalImm(unsigned RegWidth, uint64_t Imm, uint32_t &Bits) {
-  int RepeatWidth;
-  int Rotation = 0;
-  int Num1s = 0;
-
-  // Because there are S+1 ones in the replicated mask, an immediate of all
-  // zeros is not allowed. Filtering it here is probably more efficient.
-  if (Imm == 0) return false;
-
-  for (RepeatWidth = RegWidth; RepeatWidth > 1; RepeatWidth /= 2) {
-    uint64_t RepeatMask = RepeatWidth == 64 ? -1 : (1ULL << RepeatWidth) - 1;
-    uint64_t ReplicatedMask = Imm & RepeatMask;
-
-    if (ReplicatedMask == 0) continue;
-
-    // First we have to make sure the mask is actually repeated in each slot for
-    // this width-specifier.
-    bool IsReplicatedMask = true;
-    for (unsigned i = RepeatWidth; i < RegWidth; i += RepeatWidth) {
-      if (((Imm >> i) & RepeatMask) != ReplicatedMask) {
-        IsReplicatedMask = false;
-        break;
-      }
-    }
-    if (!IsReplicatedMask) continue;
-
-    // Now we have to work out the amount of rotation needed. The first part of
-    // this calculation is actually independent of RepeatWidth, but the complex
-    // case will depend on it.
-    Rotation = CountTrailingZeros_64(Imm);
-    if (Rotation == 0) {
-      // There were no leading zeros, which means it's either in place or there
-      // are 1s at each end (e.g. 0x8003 needs rotating).
-      Rotation = RegWidth == 64 ? CountLeadingOnes_64(Imm)
-                                : CountLeadingOnes_32(Imm);
-      Rotation = RepeatWidth - Rotation;
-    }
-
-    uint64_t ReplicatedOnes = (ReplicatedMask >> Rotation)
-      | ((ReplicatedMask << (RepeatWidth - Rotation)) & RepeatMask);
-    // Of course, they may not actually be ones, so we have to check that:
-    if (!isMask_64(ReplicatedOnes))
-      continue;
-
-    Num1s = CountTrailingOnes_64(ReplicatedOnes);
-
-    // We know we've got an almost valid encoding (certainly, if this is invalid
-    // no other parameters would work).
-    break;
-  }
-
-  // The encodings which would produce all 1s are RESERVED.
-  if (RepeatWidth == 1 || Num1s == RepeatWidth) return false;
-
-  uint32_t N = RepeatWidth == 64;
-  uint32_t ImmR = RepeatWidth - Rotation;
-  uint32_t ImmS = Num1s - 1;
-
-  switch (RepeatWidth) {
-  default: break; // No action required for other valid rotations.
-  case 16: ImmS |= 0x20; break; // 10ssss
-  case 8: ImmS |= 0x30; break;  // 110sss
-  case 4: ImmS |= 0x38; break;  // 1110ss
-  case 2: ImmS |= 0x3c; break;  // 11110s
-  }
-
-  Bits = ImmS | (ImmR << 6) | (N << 12);
-
-  return true;
-}
-
-
-bool A64Imms::isLogicalImmBits(unsigned RegWidth, uint32_t Bits,
-                               uint64_t &Imm) {
-  uint32_t N = Bits >> 12;
-  uint32_t ImmR = (Bits >> 6) & 0x3f;
-  uint32_t ImmS = Bits & 0x3f;
-
-  // N=1 encodes a 64-bit replication and is invalid for the 32-bit
-  // instructions.
-  if (RegWidth == 32 && N != 0) return false;
-
-  int Width = 0;
-  if (N == 1)
-    Width = 64;
-  else if ((ImmS & 0x20) == 0)
-    Width = 32;
-  else if ((ImmS & 0x10) == 0)
-    Width = 16;
-  else if ((ImmS & 0x08) == 0)
-    Width = 8;
-  else if ((ImmS & 0x04) == 0)
-    Width = 4;
-  else if ((ImmS & 0x02) == 0)
-    Width = 2;
-  else {
-    // ImmS  is 0b11111x: UNALLOCATED
-    return false;
-  }
-
-  int Num1s = (ImmS & (Width - 1)) + 1;
-
-  // All encodings which would map to -1 (signed) are RESERVED.
-  if (Num1s == Width) return false;
-
-  int Rotation = (ImmR & (Width - 1));
-  uint64_t Mask = (1ULL << Num1s) - 1;
-  uint64_t WidthMask = Width == 64 ? -1 : (1ULL << Width) - 1;
-  Mask = (Mask >> Rotation)
-    | ((Mask << (Width - Rotation)) & WidthMask);
-
-  Imm = 0;
-  for (unsigned i = 0; i < RegWidth / Width; ++i) {
-    Imm |= Mask;
-    Mask <<= Width;
-  }
-
-  return true;
-}
-
-bool A64Imms::isMOVZImm(int RegWidth, uint64_t Value, int &UImm16, int &Shift) {
-  // If high bits are set then a 32-bit MOVZ can't possibly work.
-  if (RegWidth == 32 && (Value & ~0xffffffffULL))
-    return false;
-
-  for (int i = 0; i < RegWidth; i += 16) {
-    // If the value is 0 when we mask out all the bits that could be set with
-    // the current LSL value then it's representable.
-    if ((Value & ~(0xffffULL << i)) == 0) {
-      Shift = i / 16;
-      UImm16 = (Value >> i) & 0xffff;
-      return true;
-    }
-  }
-  return false;
-}
-
-bool A64Imms::isMOVNImm(int RegWidth, uint64_t Value, int &UImm16, int &Shift) {
-  // MOVN is defined to set its register to NOT(LSL(imm16, shift)).
-
-  // We have to be a little careful about a 32-bit register: 0xffff_1234 *is*
-  // representable, but ~0xffff_1234 == 0xffff_ffff_0000_edcb which is not
-  // a valid input for isMOVZImm.
-  if (RegWidth == 32 && (Value & ~0xffffffffULL))
-    return false;
-
-  uint64_t MOVZEquivalent = RegWidth == 32 ? ~Value & 0xffffffff : ~Value;
-
-  return isMOVZImm(RegWidth, MOVZEquivalent, UImm16, Shift);
-}
-
-bool A64Imms::isOnlyMOVNImm(int RegWidth, uint64_t Value,
-                            int &UImm16, int &Shift) {
-  if (isMOVZImm(RegWidth, Value, UImm16, Shift))
-    return false;
-
-  return isMOVNImm(RegWidth, Value, UImm16, Shift);
-}
+AArch64TLBI::TLBIMapper::TLBIMapper()
+  : AArch64NamedImmMapper(TLBIPairs, 0) {}

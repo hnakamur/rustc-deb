@@ -8,15 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::cmp::{Eq, Ord};
+use std::cmp::{PartialEq, PartialOrd};
 use std::num::NumCast;
 
-pub trait NumExt: Eq + Ord + Num + NumCast {}
+pub trait NumExt: PartialEq + PartialOrd + NumCast {}
 
 impl NumExt for f32 {}
 
-fn num_eq_one<T:NumExt>(n: T) {
-    println(fmt!("%?", n == NumCast::from(1)))
+fn num_eq_one<T: NumExt>(n: T) {
+    println!("{}", n == NumCast::from(1i).unwrap())
 }
 
 pub fn main() {

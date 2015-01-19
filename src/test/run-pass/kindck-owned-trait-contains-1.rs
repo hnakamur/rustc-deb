@@ -8,19 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 trait repeat<A> { fn get(&self) -> A; }
 
-impl<A:Copy> repeat<A> for @A {
-    fn get(&self) -> A { copy **self }
+impl<A:Clone + 'static> repeat<A> for Box<A> {
+    fn get(&self) -> A {
+        (**self).clone()
+    }
 }
 
-fn repeater<A:Copy>(v: @A) -> @repeat:<A> {
-    // Note: owned kind is not necessary as A appears in the trait type
-    @v as @repeat:<A> // No
+fn repeater<A:Clone + 'static>(v: Box<A>) -> Box<repeat<A>+'static> {
+    box v as Box<repeat<A>+'static> // No
 }
 
 pub fn main() {
-    let x = &3;
-    let y = repeater(@x);
-    assert_eq!(*x, *(y.get()));
+    let x = 3i;
+    let y = repeater(box x);
+    assert_eq!(x, y.get());
 }

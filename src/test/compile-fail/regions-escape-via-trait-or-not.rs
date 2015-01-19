@@ -8,22 +8,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-trait deref {
-    fn get(self) -> int;
+#![allow(dead_code)]
+
+trait Deref {
+    fn get(self) -> isize;
 }
 
-impl<'self> deref for &'self int {
-    fn get(self) -> int {
+impl<'a> Deref for &'a isize {
+    fn get(self) -> isize {
         *self
     }
 }
 
-fn with<R:deref>(f: &fn(x: &int) -> R) -> int {
+fn with<R:Deref, F>(f: F) -> isize where F: FnOnce(&isize) -> R {
     f(&3).get()
 }
 
-fn return_it() -> int {
-    with(|o| o) //~ ERROR reference is not valid outside of its lifetime
+fn return_it() -> isize {
+    with(|o| o) //~ ERROR cannot infer
 }
 
 fn main() {

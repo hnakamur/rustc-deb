@@ -8,23 +8,27 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 trait Foo {
-    fn foo(&self) -> ~str;
+    fn foo(&self) -> String;
 }
 
-impl<T:Foo> Foo for @T {
-    fn foo(&self) -> ~str {
-        fmt!("@%s", (**self).foo())
+impl<T:Foo> Foo for Box<T> {
+    fn foo(&self) -> String {
+        format!("box {}", (**self).foo())
     }
 }
 
 impl Foo for uint {
-    fn foo(&self) -> ~str {
-        fmt!("%u", *self)
+    fn foo(&self) -> String {
+        format!("{}", *self)
     }
 }
 
 pub fn main() {
-    let x = @3u;
-    assert_eq!(x.foo(), ~"@3");
+    let x = box 3u;
+    assert_eq!(x.foo(), "box 3".to_string());
 }

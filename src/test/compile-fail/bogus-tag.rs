@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -12,12 +11,12 @@
 
 // error-pattern: unresolved
 
-enum color { rgb(int, int, int), rgba(int, int, int, int), }
+enum color { rgb(isize, isize, isize), rgba(isize, isize, isize, isize), }
 
 fn main() {
     let red: color = rgb(255, 0, 0);
     match red {
-      rgb(r, g, b) => { debug!("rgb"); }
-      hsl(h, s, l) => { debug!("hsl"); }
+      rgb(r, g, b) => { println!("rgb"); }
+      hsl(h, s, l) => { println!("hsl"); }
     }
 }

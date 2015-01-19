@@ -8,25 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Operations and constants for `i32`
+//! Operations and constants for signed 32-bits integers (`i32` type)
 
-use num::BitCount;
-use unstable::intrinsics;
+#![stable]
+#![doc(primitive = "i32")]
 
-pub use self::generated::*;
+pub use core::i32::{BITS, BYTES, MIN, MAX};
 
-int_module!(i32, 32)
-
-impl BitCount for i32 {
-    /// Counts the number of bits set. Wraps LLVM's `ctpop` intrinsic.
-    #[inline]
-    fn population_count(&self) -> i32 { unsafe { intrinsics::ctpop32(*self) } }
-
-    /// Counts the number of leading zeros. Wraps LLVM's `ctlz` intrinsic.
-    #[inline]
-    fn leading_zeros(&self) -> i32 { unsafe { intrinsics::ctlz32(*self) } }
-
-    /// Counts the number of trailing zeros. Wraps LLVM's `cttz` intrinsic.
-    #[inline]
-    fn trailing_zeros(&self) -> i32 { unsafe { intrinsics::cttz32(*self) } }
-}
+int_module! { i32 }

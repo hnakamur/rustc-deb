@@ -8,39 +8,30 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 trait get {
     fn get(self) -> int;
 }
 
-// FIXME #7302: Note: impl on a slice
-impl<'self> get for &'self int {
+// Note: impl on a slice; we're checking that the pointers below
+// correctly get borrowed to `&`. (similar to impling for `int`, with
+// `&self` instead of `self`.)
+impl<'a> get for &'a int {
     fn get(self) -> int {
         return *self;
     }
 }
 
 pub fn main() {
-    let x = @mut 6;
+    let x = box 6;
     let y = x.get();
-    assert_eq!(y, 6);
-
-    let x = @6;
-    let y = x.get();
-    debug!("y=%d", y);
-    assert_eq!(y, 6);
-
-    let x = ~6;
-    let y = x.get();
-    debug!("y=%d", y);
-    assert_eq!(y, 6);
-
-    let x = ~6;
-    let y = x.get();
-    debug!("y=%d", y);
+    println!("y={}", y);
     assert_eq!(y, 6);
 
     let x = &6;
     let y = x.get();
-    debug!("y=%d", y);
+    println!("y={}", y);
     assert_eq!(y, 6);
 }

@@ -8,8 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
+fn leaky<T>(_t: T) { }
 
-fn leaky<T>(t: T) { }
-
-pub fn main() { let x = ~10; leaky::<~int>(x); }
+pub fn main() { let x = box 10; leaky::<Box<int>>(x); }

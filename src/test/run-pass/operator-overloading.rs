@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,47 +8,60 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
-
 use std::cmp;
 use std::ops;
 
+#[derive(Copy, Show)]
 struct Point {
     x: int,
     y: int
 }
 
-impl ops::Add<Point,Point> for Point {
-    fn add(&self, other: &Point) -> Point {
-        Point {x: self.x + (*other).x, y: self.y + (*other).y}
+impl ops::Add for Point {
+    type Output = Point;
+
+    fn add(self, other: Point) -> Point {
+        Point {x: self.x + other.x, y: self.y + other.y}
     }
 }
 
-impl ops::Sub<Point,Point> for Point {
-    fn sub(&self, other: &Point) -> Point {
-        Point {x: self.x - (*other).x, y: self.y - (*other).y}
+impl ops::Sub for Point {
+    type Output = Point;
+
+    fn sub(self, other: Point) -> Point {
+        Point {x: self.x - other.x, y: self.y - other.y}
     }
 }
 
-impl ops::Neg<Point> for Point {
-    fn neg(&self) -> Point {
+impl ops::Neg for Point {
+    type Output = Point;
+
+    fn neg(self) -> Point {
         Point {x: -self.x, y: -self.y}
     }
 }
 
-impl ops::Not<Point> for Point {
-    fn not(&self) -> Point {
+impl ops::Not for Point {
+    type Output = Point;
+
+    fn not(self) -> Point {
         Point {x: !self.x, y: !self.y }
     }
 }
 
-impl ops::Index<bool,int> for Point {
-    fn index(&self, x: &bool) -> int {
-        if *x { self.x } else { self.y }
+impl ops::Index<bool> for Point {
+    type Output = int;
+
+    fn index(&self, x: &bool) -> &int {
+        if *x {
+            &self.x
+        } else {
+            &self.y
+        }
     }
 }
 
-impl cmp::Eq for Point {
+impl cmp::PartialEq for Point {
     fn eq(&self, other: &Point) -> bool {
         (*self).x == (*other).x && (*self).y == (*other).y
     }
@@ -69,6 +82,7 @@ pub fn main() {
     assert_eq!(q.y, !(p.y));
 
     // Issue #1733
-    let result: ~fn(int) = |_|();
     result(p[true]);
 }
+
+fn result(i: int) { }

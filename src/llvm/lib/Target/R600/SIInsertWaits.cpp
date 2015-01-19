@@ -17,6 +17,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
+#include "AMDGPUSubtarget.h"
+#include "SIDefines.h"
 #include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -47,7 +49,7 @@ class SIInsertWaits : public MachineFunctionPass {
 private:
   static char ID;
   const SIInstrInfo *TII;
-  const SIRegisterInfo &TRI;
+  const SIRegisterInfo *TRI;
   const MachineRegisterInfo *MRI;
 
   /// \brief Constant hardware limits
@@ -97,12 +99,13 @@ private:
 public:
   SIInsertWaits(TargetMachine &tm) :
     MachineFunctionPass(ID),
-    TII(static_cast<const SIInstrInfo*>(tm.getInstrInfo())),
-    TRI(TII->getRegisterInfo()) { }
+    TII(nullptr),
+    TRI(nullptr),
+    ExpInstrTypesSeen(0) { }
 
-  virtual bool runOnMachineFunction(MachineFunction &MF);
+  bool runOnMachineFunction(MachineFunction &MF) override;
 
-  const char *getPassName() const {
+  const char *getPassName() const override {
     return "SI insert wait  instructions";
   }
 
@@ -133,12 +136,19 @@ Counters SIInsertWaits::getHwCounts(MachineInstr &MI) {
   // LGKM may uses larger values
   if (TSFlags & SIInstrFlags::LGKM_CNT) {
 
-    MachineOperand &Op = MI.getOperand(0);
-    assert(Op.isReg() && "First LGKM operand must be a register!");
+    if (TII->isSMRD(MI.getOpcode())) {
 
-    unsigned Reg = Op.getReg();
-    unsigned Size = TRI.getMinimalPhysRegClass(Reg)->getSize();
-    Result.Named.LGKM = Size > 4 ? 2 : 1;
+      MachineOperand &Op = MI.getOperand(0);
+      assert(Op.isReg() && "First LGKM operand must be a register!");
+
+      unsigned Reg = Op.getReg();
+      unsigned Size = TRI->getMinimalPhysRegClass(Reg)->getSize();
+      Result.Named.LGKM = Size > 4 ? 2 : 1;
+
+    } else {
+      // DS
+      Result.Named.LGKM = 1;
+    }
 
   } else {
     Result.Named.LGKM = 0;
@@ -178,16 +188,16 @@ bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
 
 RegInterval SIInsertWaits::getRegInterval(MachineOperand &Op) {
 
-  if (!Op.isReg())
+  if (!Op.isReg() || !TRI->isInAllocatableClass(Op.getReg()))
     return std::make_pair(0, 0);
 
   unsigned Reg = Op.getReg();
-  unsigned Size = TRI.getMinimalPhysRegClass(Reg)->getSize();
+  unsigned Size = TRI->getMinimalPhysRegClass(Reg)->getSize();
 
   assert(Size >= 4);
 
   RegInterval Result;
-  Result.first = TRI.getEncodingValue(Reg);
+  Result.first = TRI->getEncodingValue(Reg);
   Result.second = Result.first + Size / 4;
 
   return Result;
@@ -265,17 +275,17 @@ bool SIInsertWaits::insertWait(MachineBasicBlock &MBB,
       continue;
 
     NeedWait = true;
-    
+
     if (Ordered[i]) {
       unsigned Value = LastIssued.Array[i] - Required.Array[i];
 
-      // adjust the value to the real hardware posibilities
+      // Adjust the value to the real hardware possibilities.
       Counts.Array[i] = std::min(Value, WaitCounts.Array[i]);
 
     } else
       Counts.Array[i] = 0;
 
-    // Remember on what we have waited on
+    // Remember on what we have waited on.
     WaitedOn.Array[i] = LastIssued.Array[i] - Counts.Array[i];
   }
 
@@ -306,6 +316,12 @@ Counters SIInsertWaits::handleOperands(MachineInstr &MI) {
 
   Counters Result = ZeroCounts;
 
+  // S_SENDMSG implicitly waits for all outstanding LGKM transfers to finish,
+  // but we also want to wait for any other outstanding transfers before
+  // signalling other hardware blocks
+  if (MI.getOpcode() == AMDGPU::S_SENDMSG)
+    return LastIssued;
+
   // For each register affected by this
   // instruction increase the result sequence
   for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
@@ -327,9 +343,14 @@ Counters SIInsertWaits::handleOperands(MachineInstr &MI) {
   return Result;
 }
 
+// FIXME: Insert waits listed in Table 4.2 "Required User-Inserted Wait States"
+// around other non-memory instructions.
 bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
-
   bool Changes = false;
+
+  TII = static_cast<const SIInstrInfo *>(MF.getSubtarget().getInstrInfo());
+  TRI =
+      static_cast<const SIRegisterInfo *>(MF.getSubtarget().getRegisterInfo());
 
   MRI = &MF.getRegInfo();
 

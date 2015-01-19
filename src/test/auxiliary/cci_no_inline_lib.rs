@@ -8,10 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name="cci_no_inline_lib", vers="0.0")];
+#![crate_name="cci_no_inline_lib"]
+
 
 // same as cci_iter_lib, more-or-less, but not marked inline
-pub fn iter(v: ~[uint], f: &fn(uint)) {
+pub fn iter<F>(v: Vec<uint> , mut f: F) where F: FnMut(uint) {
     let mut i = 0u;
     let n = v.len();
     while i < n {

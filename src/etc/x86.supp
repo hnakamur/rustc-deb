@@ -374,14 +374,6 @@
 }
 
 {
-   libuv-0-byte-realloc
-   Memcheck:Leak
-   fun:malloc
-   ...
-   fun:*uv_loop_delete*
-}
-
-{
    race-or-something-ask-pcwalton-0
    Memcheck:Value4
    fun:*task_start_wrapper*

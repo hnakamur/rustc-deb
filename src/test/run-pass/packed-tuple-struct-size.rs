@@ -8,39 +8,39 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::sys;
 
-#[packed]
-struct S4(u8,[u8, .. 3]);
+use std::mem;
 
-#[packed]
+#[repr(packed)]
+struct S4(u8,[u8;  3]);
+
+#[repr(packed)]
 struct S5(u8, u32);
 
-#[packed]
-struct S13_str(i64, f32, u8, ~str);
+#[repr(packed)]
+struct S13(i64, f32, u8);
 
 enum Foo {
     Bar = 1,
     Baz = 2
 }
 
-#[packed]
+#[repr(packed)]
 struct S3_Foo(u8, u16, Foo);
 
-#[packed]
-struct S7_Option(f32, u8, u16, Option<@mut f64>);
+#[repr(packed)]
+struct S7_Option(f32, u8, u16, Option<Box<f64>>);
 
-fn main() {
-    assert_eq!(sys::size_of::<S4>(), 4);
+pub fn main() {
+    assert_eq!(mem::size_of::<S4>(), 4);
 
-    assert_eq!(sys::size_of::<S5>(), 5);
+    assert_eq!(mem::size_of::<S5>(), 5);
 
-    assert_eq!(sys::size_of::<S13_str>(),
-               13 + sys::size_of::<~str>());
+    assert_eq!(mem::size_of::<S13>(), 13);
 
-    assert_eq!(sys::size_of::<S3_Foo>(),
-               3 + sys::size_of::<Foo>());
+    assert_eq!(mem::size_of::<S3_Foo>(),
+               3 + mem::size_of::<Foo>());
 
-    assert_eq!(sys::size_of::<S7_Option>(),
-              7 + sys::size_of::<Option<@mut f64>>());
+    assert_eq!(mem::size_of::<S7_Option>(),
+              7 + mem::size_of::<Option<Box<f64>>>());
 }

@@ -16,10 +16,7 @@ struct Box {
 
 impl Box {
     pub fn set_many(&mut self, xs: &[uint]) {
-        for xs.iter().advance |x| { self.x = *x; }
-    }
-    pub fn set_many2(@mut self, xs: &[uint]) {
-        for xs.iter().advance |x| { self.x = *x; }
+        for x in xs.iter() { self.x = *x; }
     }
 }
 

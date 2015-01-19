@@ -8,15 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[abi = "cdecl"];
-#[link_name = "rustrt"];
-#[link(name = "anonexternmod",
-       vers = "0.1")];
+#![crate_name="anonexternmod"]
 
-#[crate_type = "lib"];
+extern crate libc;
 
-use std::libc;
-
+#[link(name="rust_test_helpers")]
 extern {
-    pub fn rust_get_argc() -> libc::c_int;
+    pub fn rust_get_test_int() -> libc::intptr_t;
 }

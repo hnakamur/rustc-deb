@@ -19,11 +19,53 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
-#include "llvm/TableGen/TableGenBackend.h"
 #include <map>
 
 using namespace llvm;
 using namespace X86Disassembler;
+
+/// stringForContext - Returns a string containing the name of a particular
+///   InstructionContext, usually for diagnostic purposes.
+///
+/// @param insnContext  - The instruction class to transform to a string.
+/// @return           - A statically-allocated string constant that contains the
+///                     name of the instruction class.
+static inline const char* stringForContext(InstructionContext insnContext) {
+  switch (insnContext) {
+  default:
+    llvm_unreachable("Unhandled instruction class");
+#define ENUM_ENTRY(n, r, d)   case n: return #n; break;
+#define ENUM_ENTRY_K_B(n, r, d) ENUM_ENTRY(n, r, d) ENUM_ENTRY(n##_K_B, r, d)\
+        ENUM_ENTRY(n##_KZ, r, d) ENUM_ENTRY(n##_K, r, d) ENUM_ENTRY(n##_B, r, d)\
+        ENUM_ENTRY(n##_KZ_B, r, d)
+  INSTRUCTION_CONTEXTS
+#undef ENUM_ENTRY
+#undef ENUM_ENTRY_K_B
+  }
+}
+
+/// stringForOperandType - Like stringForContext, but for OperandTypes.
+static inline const char* stringForOperandType(OperandType type) {
+  switch (type) {
+  default:
+    llvm_unreachable("Unhandled type");
+#define ENUM_ENTRY(i, d) case i: return #i;
+  TYPES
+#undef ENUM_ENTRY
+  }
+}
+
+/// stringForOperandEncoding - like stringForContext, but for
+///   OperandEncodings.
+static inline const char* stringForOperandEncoding(OperandEncoding encoding) {
+  switch (encoding) {
+  default:
+    llvm_unreachable("Unhandled encoding");
+#define ENUM_ENTRY(i, d) case i: return #i;
+  ENCODINGS
+#undef ENUM_ENTRY
+  }
+}
 
 /// inheritsFrom - Indicates whether all instructions in one class also belong
 ///   to another class.
@@ -81,31 +123,172 @@ static inline bool inheritsFrom(InstructionContext child,
   case IC_64BIT_REXW_OPSIZE:
     return false;
   case IC_VEX:
-    return inheritsFrom(child, IC_VEX_W) ||
+    return (VEX_LIG && inheritsFrom(child, IC_VEX_L_W)) ||
+           inheritsFrom(child, IC_VEX_W) ||
            (VEX_LIG && inheritsFrom(child, IC_VEX_L));
   case IC_VEX_XS:
-    return inheritsFrom(child, IC_VEX_W_XS) ||
+    return (VEX_LIG && inheritsFrom(child, IC_VEX_L_W_XS)) ||
+           inheritsFrom(child, IC_VEX_W_XS) ||
            (VEX_LIG && inheritsFrom(child, IC_VEX_L_XS));
   case IC_VEX_XD:
-    return inheritsFrom(child, IC_VEX_W_XD) ||
+    return (VEX_LIG && inheritsFrom(child, IC_VEX_L_W_XD)) ||
+           inheritsFrom(child, IC_VEX_W_XD) ||
            (VEX_LIG && inheritsFrom(child, IC_VEX_L_XD));
   case IC_VEX_OPSIZE:
-    return inheritsFrom(child, IC_VEX_W_OPSIZE) ||
+    return (VEX_LIG && inheritsFrom(child, IC_VEX_L_W_OPSIZE)) ||
+           inheritsFrom(child, IC_VEX_W_OPSIZE) ||
            (VEX_LIG && inheritsFrom(child, IC_VEX_L_OPSIZE));
   case IC_VEX_W:
+    return VEX_LIG && inheritsFrom(child, IC_VEX_L_W);
   case IC_VEX_W_XS:
+    return VEX_LIG && inheritsFrom(child, IC_VEX_L_W_XS);
   case IC_VEX_W_XD:
+    return VEX_LIG && inheritsFrom(child, IC_VEX_L_W_XD);
   case IC_VEX_W_OPSIZE:
-    return false;
+    return VEX_LIG && inheritsFrom(child, IC_VEX_L_W_OPSIZE);
   case IC_VEX_L:
+    return inheritsFrom(child, IC_VEX_L_W);
   case IC_VEX_L_XS:
+    return inheritsFrom(child, IC_VEX_L_W_XS);
   case IC_VEX_L_XD:
-    return false;
+    return inheritsFrom(child, IC_VEX_L_W_XD);
   case IC_VEX_L_OPSIZE:
     return inheritsFrom(child, IC_VEX_L_W_OPSIZE);
+  case IC_VEX_L_W:
+  case IC_VEX_L_W_XS:
+  case IC_VEX_L_W_XD:
   case IC_VEX_L_W_OPSIZE:
     return false;
+  case IC_EVEX:
+    return inheritsFrom(child, IC_EVEX_W) ||
+           inheritsFrom(child, IC_EVEX_L_W);
+  case IC_EVEX_XS:
+    return inheritsFrom(child, IC_EVEX_W_XS) ||
+           inheritsFrom(child, IC_EVEX_L_W_XS);
+  case IC_EVEX_XD:
+    return inheritsFrom(child, IC_EVEX_W_XD) ||
+           inheritsFrom(child, IC_EVEX_L_W_XD);
+  case IC_EVEX_OPSIZE:
+    return inheritsFrom(child, IC_EVEX_W_OPSIZE) ||
+           inheritsFrom(child, IC_EVEX_L_W_OPSIZE);
+  case IC_EVEX_W:
+  case IC_EVEX_W_XS:
+  case IC_EVEX_W_XD:
+  case IC_EVEX_W_OPSIZE:
+    return false;
+  case IC_EVEX_L:
+  case IC_EVEX_L_XS:
+  case IC_EVEX_L_XD:
+  case IC_EVEX_L_OPSIZE:
+    return false;
+  case IC_EVEX_L_W:
+  case IC_EVEX_L_W_XS:
+  case IC_EVEX_L_W_XD:
+  case IC_EVEX_L_W_OPSIZE:
+    return false;
+  case IC_EVEX_L2:
+  case IC_EVEX_L2_XS:
+  case IC_EVEX_L2_XD:
+  case IC_EVEX_L2_OPSIZE:
+    return false;
+  case IC_EVEX_L2_W:
+  case IC_EVEX_L2_W_XS:
+  case IC_EVEX_L2_W_XD:
+  case IC_EVEX_L2_W_OPSIZE:
+    return false;
+  case IC_EVEX_K:
+    return inheritsFrom(child, IC_EVEX_W_K) ||
+           inheritsFrom(child, IC_EVEX_L_W_K);
+  case IC_EVEX_XS_K:
+    return inheritsFrom(child, IC_EVEX_W_XS_K) ||
+           inheritsFrom(child, IC_EVEX_L_W_XS_K);
+  case IC_EVEX_XD_K:
+    return inheritsFrom(child, IC_EVEX_W_XD_K) ||
+           inheritsFrom(child, IC_EVEX_L_W_XD_K);
+  case IC_EVEX_K_B:
+  case IC_EVEX_KZ:
+    return false;
+  case IC_EVEX_XS_KZ:
+    return inheritsFrom(child, IC_EVEX_W_XS_KZ) ||
+           inheritsFrom(child, IC_EVEX_L_W_XS_KZ);
+  case IC_EVEX_XD_KZ:
+    return inheritsFrom(child, IC_EVEX_W_XD_KZ) ||
+           inheritsFrom(child, IC_EVEX_L_W_XD_KZ);
+  case IC_EVEX_KZ_B:
+  case IC_EVEX_OPSIZE_K:
+  case IC_EVEX_OPSIZE_B:
+  case IC_EVEX_OPSIZE_K_B:
+  case IC_EVEX_OPSIZE_KZ:
+    return false;
+  case IC_EVEX_W_K:
+  case IC_EVEX_W_XS_K:
+  case IC_EVEX_W_XD_K:
+  case IC_EVEX_W_OPSIZE_K:
+  case IC_EVEX_W_OPSIZE_B:
+  case IC_EVEX_W_OPSIZE_K_B:
+    return false;
+  case IC_EVEX_L_K:
+  case IC_EVEX_L_XS_K:
+  case IC_EVEX_L_XD_K:
+  case IC_EVEX_L_OPSIZE_K:
+  case IC_EVEX_L_OPSIZE_B:
+  case IC_EVEX_L_OPSIZE_K_B:
+    return false;
+  case IC_EVEX_W_KZ:
+  case IC_EVEX_W_XS_KZ:
+  case IC_EVEX_W_XD_KZ:
+  case IC_EVEX_W_OPSIZE_KZ:
+    return false;
+  case IC_EVEX_L_KZ:
+  case IC_EVEX_L_XS_KZ:
+  case IC_EVEX_L_XD_KZ:
+  case IC_EVEX_L_OPSIZE_KZ:
+    return false;
+  case IC_EVEX_L_W_K:
+  case IC_EVEX_L_W_XS_K:
+  case IC_EVEX_L_W_XD_K:
+  case IC_EVEX_L_W_OPSIZE_K:
+  case IC_EVEX_L_W_OPSIZE_B:
+  case IC_EVEX_L_W_OPSIZE_K_B:
+  case IC_EVEX_L_W_KZ:
+  case IC_EVEX_L_W_XS_KZ:
+  case IC_EVEX_L_W_XD_KZ:
+  case IC_EVEX_L_W_OPSIZE_KZ:
+    return false;
+  case IC_EVEX_L2_K:
+  case IC_EVEX_L2_B:
+  case IC_EVEX_L2_K_B:
+  case IC_EVEX_L2_KZ_B:
+  case IC_EVEX_L2_XS_K:
+  case IC_EVEX_L2_XS_B:
+  case IC_EVEX_L2_XD_B:
+  case IC_EVEX_L2_XD_K:
+  case IC_EVEX_L2_OPSIZE_K:
+  case IC_EVEX_L2_OPSIZE_B:
+  case IC_EVEX_L2_OPSIZE_K_B:
+  case IC_EVEX_L2_KZ:
+  case IC_EVEX_L2_XS_KZ:
+  case IC_EVEX_L2_XD_KZ:
+  case IC_EVEX_L2_OPSIZE_KZ:
+  case IC_EVEX_L2_OPSIZE_KZ_B:
+    return false;
+  case IC_EVEX_L2_W_K:
+  case IC_EVEX_L2_W_B:
+  case IC_EVEX_L2_W_XS_K:
+  case IC_EVEX_L2_W_XD_K:
+  case IC_EVEX_L2_W_XD_B:
+  case IC_EVEX_L2_W_OPSIZE_K:
+  case IC_EVEX_L2_W_OPSIZE_B:
+  case IC_EVEX_L2_W_OPSIZE_K_B:
+  case IC_EVEX_L2_W_KZ:
+  case IC_EVEX_L2_W_XS_KZ:
+  case IC_EVEX_L2_W_XD_KZ:
+  case IC_EVEX_L2_W_OPSIZE_KZ:
+  case IC_EVEX_L2_W_OPSIZE_KZ_B:
+    return false;
   default:
+    errs() << "Unknown instruction class: " <<
+      stringForContext((InstructionContext)parent) << "\n";
     llvm_unreachable("Unknown instruction class");
   }
 }
@@ -123,80 +306,16 @@ static inline bool outranks(InstructionContext upper,
   assert(lower < IC_max);
 
 #define ENUM_ENTRY(n, r, d) r,
+#define ENUM_ENTRY_K_B(n, r, d) ENUM_ENTRY(n, r, d) \
+  ENUM_ENTRY(n##_K_B, r, d) ENUM_ENTRY(n##_KZ_B, r, d) \
+  ENUM_ENTRY(n##_KZ, r, d) ENUM_ENTRY(n##_K, r, d) ENUM_ENTRY(n##_B, r, d)
   static int ranks[IC_max] = {
     INSTRUCTION_CONTEXTS
   };
 #undef ENUM_ENTRY
+#undef ENUM_ENTRY_K_B
 
   return (ranks[upper] > ranks[lower]);
-}
-
-/// stringForContext - Returns a string containing the name of a particular
-///   InstructionContext, usually for diagnostic purposes.
-///
-/// @param insnContext  - The instruction class to transform to a string.
-/// @return           - A statically-allocated string constant that contains the
-///                     name of the instruction class.
-static inline const char* stringForContext(InstructionContext insnContext) {
-  switch (insnContext) {
-  default:
-    llvm_unreachable("Unhandled instruction class");
-#define ENUM_ENTRY(n, r, d)   case n: return #n; break;
-  INSTRUCTION_CONTEXTS
-#undef ENUM_ENTRY
-  }
-}
-
-/// stringForOperandType - Like stringForContext, but for OperandTypes.
-static inline const char* stringForOperandType(OperandType type) {
-  switch (type) {
-  default:
-    llvm_unreachable("Unhandled type");
-#define ENUM_ENTRY(i, d) case i: return #i;
-  TYPES
-#undef ENUM_ENTRY
-  }
-}
-
-/// stringForOperandEncoding - like stringForContext, but for
-///   OperandEncodings.
-static inline const char* stringForOperandEncoding(OperandEncoding encoding) {
-  switch (encoding) {
-  default:
-    llvm_unreachable("Unhandled encoding");
-#define ENUM_ENTRY(i, d) case i: return #i;
-  ENCODINGS
-#undef ENUM_ENTRY
-  }
-}
-
-void DisassemblerTables::emitOneID(raw_ostream &o, unsigned &i, InstrUID id,
-                                   bool addComma) const {
-  if (id)
-    o.indent(i * 2) << format("0x%hx", id);
-  else
-    o.indent(i * 2) << 0;
-
-  if (addComma)
-    o << ", ";
-  else
-    o << "  ";
-
-  o << "/* ";
-  o << InstructionSpecifiers[id].name;
-  o << "*/";
-
-  o << "\n";
-}
-
-/// emitEmptyTable - Emits the modRMEmptyTable, which is used as a ID table by
-///   all ModR/M decisions for instructions that are invalid for all possible
-///   ModR/M byte values.
-///
-/// @param o        - The output stream on which to emit the table.
-/// @param i        - The indentation level for that output stream.
-static void emitEmptyTable(raw_ostream &o, unsigned &i) {
-  o.indent(i * 2) << "0x0, /* EmptyTable */\n";
 }
 
 /// getDecisionType - Determines whether a ModRM decision with 255 entries can
@@ -262,22 +381,6 @@ static const char* stringForDecisionType(ModRMDecisionType dt) {
 #undef ENUM_ENTRY
 }
 
-/// stringForModifierType - Returns a statically-allocated string corresponding
-///   to an opcode modifier type.
-///
-/// @param mt - The modifier type.
-/// @return   - A pointer to the statically-allocated string (e.g.,
-///             "MODIFIER_NONE" for MODIFIER_NONE).
-static const char* stringForModifierType(ModifierType mt) {
-#define ENUM_ENTRY(n) case n: return #n;
-  switch(mt) {
-    default:
-      llvm_unreachable("Unknown modifier type");
-    MODIFIER_TYPES
-  };
-#undef ENUM_ENTRY
-}
-
 DisassemblerTables::DisassemblerTables() {
   unsigned i;
 
@@ -298,6 +401,7 @@ DisassemblerTables::~DisassemblerTables() {
 
 void DisassemblerTables::emitModRMDecision(raw_ostream &o1, raw_ostream &o2,
                                            unsigned &i1, unsigned &i2,
+                                           unsigned &ModRMTableNum,
                                            ModRMDecision &decision) const {
   static uint32_t sTableNumber = 0;
   static uint32_t sEntryNumber = 1;
@@ -316,44 +420,56 @@ void DisassemblerTables::emitModRMDecision(raw_ostream &o1, raw_ostream &o2,
     return;
   }
 
-  o1 << "/* Table" << sTableNumber << " */\n";
-  i1++;
+  std::vector<unsigned> ModRMDecision;
 
   switch (dt) {
     default:
       llvm_unreachable("Unknown decision type");
     case MODRM_ONEENTRY:
-      emitOneID(o1, i1, decision.instructionIDs[0], true);
+      ModRMDecision.push_back(decision.instructionIDs[0]);
       break;
     case MODRM_SPLITRM:
-      emitOneID(o1, i1, decision.instructionIDs[0x00], true); // mod = 0b00
-      emitOneID(o1, i1, decision.instructionIDs[0xc0], true); // mod = 0b11
+      ModRMDecision.push_back(decision.instructionIDs[0x00]);
+      ModRMDecision.push_back(decision.instructionIDs[0xc0]);
       break;
     case MODRM_SPLITREG:
       for (unsigned index = 0; index < 64; index += 8)
-        emitOneID(o1, i1, decision.instructionIDs[index], true);
+        ModRMDecision.push_back(decision.instructionIDs[index]);
       for (unsigned index = 0xc0; index < 256; index += 8)
-        emitOneID(o1, i1, decision.instructionIDs[index], true);
+        ModRMDecision.push_back(decision.instructionIDs[index]);
       break;
     case MODRM_SPLITMISC:
       for (unsigned index = 0; index < 64; index += 8)
-        emitOneID(o1, i1, decision.instructionIDs[index], true);
+        ModRMDecision.push_back(decision.instructionIDs[index]);
       for (unsigned index = 0xc0; index < 256; ++index)
-        emitOneID(o1, i1, decision.instructionIDs[index], true);
+        ModRMDecision.push_back(decision.instructionIDs[index]);
       break;
     case MODRM_FULL:
       for (unsigned index = 0; index < 256; ++index)
-        emitOneID(o1, i1, decision.instructionIDs[index], true);
+        ModRMDecision.push_back(decision.instructionIDs[index]);
       break;
   }
 
-  i1--;
+  unsigned &EntryNumber = ModRMTable[ModRMDecision];
+  if (EntryNumber == 0) {
+    EntryNumber = ModRMTableNum;
+
+    ModRMTableNum += ModRMDecision.size();
+    o1 << "/* Table" << EntryNumber << " */\n";
+    i1++;
+    for (std::vector<unsigned>::const_iterator I = ModRMDecision.begin(),
+           E = ModRMDecision.end(); I != E; ++I) {
+      o1.indent(i1 * 2) << format("0x%hx", *I) << ", /* "
+                        << InstructionSpecifiers[*I].name << " */\n";
+    }
+    i1--;
+  }
 
   o2.indent(i2) << "{ /* struct ModRMDecision */" << "\n";
   i2++;
 
   o2.indent(i2) << stringForDecisionType(dt) << "," << "\n";
-  o2.indent(i2) << sEntryNumber << " /* Table" << sTableNumber << " */\n";
+  o2.indent(i2) << EntryNumber << " /* Table" << EntryNumber << " */\n";
 
   i2--;
   o2.indent(i2) << "}";
@@ -387,6 +503,7 @@ void DisassemblerTables::emitModRMDecision(raw_ostream &o1, raw_ostream &o2,
 
 void DisassemblerTables::emitOpcodeDecision(raw_ostream &o1, raw_ostream &o2,
                                             unsigned &i1, unsigned &i2,
+                                            unsigned &ModRMTableNum,
                                             OpcodeDecision &decision) const {
   o2.indent(i2) << "{ /* struct OpcodeDecision */" << "\n";
   i2++;
@@ -398,7 +515,8 @@ void DisassemblerTables::emitOpcodeDecision(raw_ostream &o1, raw_ostream &o2,
 
     o2 << "/* 0x" << format("%02hhx", index) << " */" << "\n";
 
-    emitModRMDecision(o1, o2, i1, i2, decision.modRMDecisions[index]);
+    emitModRMDecision(o1, o2, i1, i2, ModRMTableNum,
+                      decision.modRMDecisions[index]);
 
     if (index <  255)
       o2 << ",";
@@ -414,6 +532,7 @@ void DisassemblerTables::emitOpcodeDecision(raw_ostream &o1, raw_ostream &o2,
 
 void DisassemblerTables::emitContextDecision(raw_ostream &o1, raw_ostream &o2,
                                              unsigned &i1, unsigned &i2,
+                                             unsigned &ModRMTableNum,
                                              ContextDecision &decision,
                                              const char* name) const {
   o2.indent(i2) << "static const struct ContextDecision " << name << " = {\n";
@@ -427,7 +546,8 @@ void DisassemblerTables::emitContextDecision(raw_ostream &o1, raw_ostream &o2,
     o2 << " */";
     o2 << "\n";
 
-    emitOpcodeDecision(o1, o2, i1, i2, decision.opcodeDecisions[index]);
+    emitOpcodeDecision(o1, o2, i1, i2, ModRMTableNum,
+                       decision.opcodeDecisions[index]);
 
     if (index + 1 < IC_max)
       o2 << ", ";
@@ -486,14 +606,6 @@ void DisassemblerTables::emitInstructionInfo(raw_ostream &o,
     o.indent(i * 2) << "{ /* " << index << " */" << "\n";
     i++;
 
-    o.indent(i * 2) << stringForModifierType(
-                       (ModifierType)InstructionSpecifiers[index].modifierType);
-    o << ",\n";
-
-    o.indent(i * 2) << "0x";
-    o << format("%02hhx", (uint16_t)InstructionSpecifiers[index].modifierBase);
-    o << ",\n";
-
     OperandListTy OperandList;
     for (unsigned OperandIndex = 0; OperandIndex < X86_MAX_OPERANDS;
          ++OperandIndex) {
@@ -524,15 +636,43 @@ void DisassemblerTables::emitInstructionInfo(raw_ostream &o,
 }
 
 void DisassemblerTables::emitContextTable(raw_ostream &o, unsigned &i) const {
+  const unsigned int tableSize = 16384;
   o.indent(i * 2) << "static const uint8_t " CONTEXTS_STR
-                     "[256] = {\n";
+                     "[" << tableSize << "] = {\n";
   i++;
 
-  for (unsigned index = 0; index < 256; ++index) {
+  for (unsigned index = 0; index < tableSize; ++index) {
     o.indent(i * 2);
 
-    if ((index & ATTR_VEXL) && (index & ATTR_REXW) && (index & ATTR_OPSIZE))
+    if (index & ATTR_EVEX) {
+      o << "IC_EVEX";
+      if (index & ATTR_EVEXL2)
+        o << "_L2";
+      else if (index & ATTR_EVEXL)
+        o << "_L";
+      if (index & ATTR_REXW)
+        o << "_W";
+      if (index & ATTR_OPSIZE)
+        o << "_OPSIZE";
+      else if (index & ATTR_XD)
+        o << "_XD";
+      else if (index & ATTR_XS)
+        o << "_XS";
+      if (index & ATTR_EVEXKZ)
+        o << "_KZ";
+      else if (index & ATTR_EVEXK)
+        o << "_K";
+      if (index & ATTR_EVEXB)
+        o << "_B";
+    }
+    else if ((index & ATTR_VEXL) && (index & ATTR_REXW) && (index & ATTR_OPSIZE))
       o << "IC_VEX_L_W_OPSIZE";
+    else if ((index & ATTR_VEXL) && (index & ATTR_REXW) && (index & ATTR_XD))
+      o << "IC_VEX_L_W_XD";
+    else if ((index & ATTR_VEXL) && (index & ATTR_REXW) && (index & ATTR_XS))
+      o << "IC_VEX_L_W_XS";
+    else if ((index & ATTR_VEXL) && (index & ATTR_REXW))
+      o << "IC_VEX_L_W";
     else if ((index & ATTR_VEXL) && (index & ATTR_OPSIZE))
       o << "IC_VEX_L_OPSIZE";
     else if ((index & ATTR_VEXL) && (index & ATTR_XD))
@@ -595,7 +735,7 @@ void DisassemblerTables::emitContextTable(raw_ostream &o, unsigned &i) const {
     else
       o << "IC";
 
-    if (index < 255)
+    if (index < tableSize - 1)
       o << ",";
     else
       o << " ";
@@ -610,13 +750,15 @@ void DisassemblerTables::emitContextTable(raw_ostream &o, unsigned &i) const {
 }
 
 void DisassemblerTables::emitContextDecisions(raw_ostream &o1, raw_ostream &o2,
-                                             unsigned &i1, unsigned &i2) const {
-  emitContextDecision(o1, o2, i1, i2, *Tables[0], ONEBYTE_STR);
-  emitContextDecision(o1, o2, i1, i2, *Tables[1], TWOBYTE_STR);
-  emitContextDecision(o1, o2, i1, i2, *Tables[2], THREEBYTE38_STR);
-  emitContextDecision(o1, o2, i1, i2, *Tables[3], THREEBYTE3A_STR);
-  emitContextDecision(o1, o2, i1, i2, *Tables[4], THREEBYTEA6_STR);
-  emitContextDecision(o1, o2, i1, i2, *Tables[5], THREEBYTEA7_STR);
+                                              unsigned &i1, unsigned &i2,
+                                              unsigned &ModRMTableNum) const {
+  emitContextDecision(o1, o2, i1, i2, ModRMTableNum, *Tables[0], ONEBYTE_STR);
+  emitContextDecision(o1, o2, i1, i2, ModRMTableNum, *Tables[1], TWOBYTE_STR);
+  emitContextDecision(o1, o2, i1, i2, ModRMTableNum, *Tables[2], THREEBYTE38_STR);
+  emitContextDecision(o1, o2, i1, i2, ModRMTableNum, *Tables[3], THREEBYTE3A_STR);
+  emitContextDecision(o1, o2, i1, i2, ModRMTableNum, *Tables[4], XOP8_MAP_STR);
+  emitContextDecision(o1, o2, i1, i2, ModRMTableNum, *Tables[5], XOP9_MAP_STR);
+  emitContextDecision(o1, o2, i1, i2, ModRMTableNum, *Tables[6], XOPA_MAP_STR);
 }
 
 void DisassemblerTables::emit(raw_ostream &o) const {
@@ -635,11 +777,17 @@ void DisassemblerTables::emit(raw_ostream &o) const {
   emitContextTable(o, i2);
   o << "\n";
 
+  unsigned ModRMTableNum = 0;
+
   o << "static const InstrUID modRMTable[] = {\n";
   i1++;
-  emitEmptyTable(o1, i1);
+  std::vector<unsigned> EmptyTable(1, 0);
+  ModRMTable[EmptyTable] = ModRMTableNum;
+  ModRMTableNum += EmptyTable.size();
+  o1 << "/* EmptyTable */\n";
+  o1.indent(i1 * 2) << "0x0,\n";
   i1--;
-  emitContextDecisions(o1, o2, i1, i2);
+  emitContextDecisions(o1, o2, i1, i2, ModRMTableNum);
 
   o << o1.str();
   o << "  0x0\n";
@@ -665,8 +813,14 @@ void DisassemblerTables::setTableFields(ModRMDecision     &decision,
         InstructionSpecifier &previousInfo =
           InstructionSpecifiers[decision.instructionIDs[index]];
 
-        if(newInfo.filtered)
-          continue; // filtered instructions get lowest priority
+        // Instructions such as MOV8ao8 and MOV8ao8_16 differ only in the
+        // presence of the AdSize prefix. However, the disassembler doesn't
+        // care about that difference in the instruction definition; it
+        // handles 16-bit vs. 32-bit addressing for itself based purely
+        // on the 0x67 prefix and the CPU mode. So there's no need to
+        // disambiguate between them; just let them conflict/coexist.
+        if (previousInfo.name + "_16" == newInfo.name)
+          continue;
 
         if(previousInfo.name == "NOOP" && (newInfo.name == "XCHG16ar" ||
                                            newInfo.name == "XCHG32ar" ||
@@ -677,8 +831,7 @@ void DisassemblerTables::setTableFields(ModRMDecision     &decision,
         if (outranks(previousInfo.insnContext, newInfo.insnContext))
           continue;
 
-        if (previousInfo.insnContext == newInfo.insnContext &&
-            !previousInfo.filtered) {
+        if (previousInfo.insnContext == newInfo.insnContext) {
           errs() << "Error: Primary decode conflict: ";
           errs() << newInfo.name << " would overwrite " << previousInfo.name;
           errs() << "\n";

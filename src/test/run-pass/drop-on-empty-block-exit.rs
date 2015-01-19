@@ -8,8 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
+enum t { foo(Box<int>), }
 
-enum t { foo(@int), }
-
-pub fn main() { let tt = foo(@10); match tt { foo(z) => { } } }
+pub fn main() {
+    let tt = t::foo(box 10);
+    match tt { t::foo(_z) => { } }
+}

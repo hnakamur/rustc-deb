@@ -8,17 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-fn baz() -> ! { fail!(); }
+fn baz() -> ! { panic!(); }
 
 fn foo() {
     match Some::<int>(5) {
-      Some::<int>(x) => {
+      Some::<int>(_x) => {
         let mut bar;
-        match None::<int> { None::<int> => { bar = 5; } _ => { baz(); } }
-        debug!(bar);
+        match None::<int> { None::<int> => { bar = 5i; } _ => { baz(); } }
+        println!("{}", bar);
       }
-      None::<int> => { debug!("hello"); }
+      None::<int> => { println!("hello"); }
     }
 }
 

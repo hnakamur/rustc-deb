@@ -11,7 +11,7 @@
 
 
 
-// This causes memory corruption in stage0.
+// This used to cause memory corruption in stage 0.
 enum thing<K> { some(K), }
 
-pub fn main() { let x = some(~"hi"); }
+pub fn main() { let _x = thing::some("hi".to_string()); }

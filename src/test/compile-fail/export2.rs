@@ -15,7 +15,7 @@ mod foo {
 }
 
 mod bar {
-    fn x() { debug!("x"); }
+    fn x() { println!("x"); }
 
     pub fn y() { }
 }

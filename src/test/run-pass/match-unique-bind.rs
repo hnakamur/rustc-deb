@@ -8,10 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 pub fn main() {
-    match ~100 {
-      ~x => {
-        debug!("%?", x);
+    match box 100i {
+      box x => {
+        println!("{}", x);
         assert_eq!(x, 100);
       }
     }

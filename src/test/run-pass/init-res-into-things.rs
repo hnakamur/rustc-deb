@@ -8,89 +8,84 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+#![feature(unsafe_destructor)]
+
+use std::cell::Cell;
+
 // Resources can't be copied, but storing into data structures counts
 // as a move unless the stored thing is used afterwards.
 
-struct r {
-  i: @mut int,
+struct r<'a> {
+    i: &'a Cell<int>,
 }
 
-struct Box { x: r }
+struct BoxR<'a> { x: r<'a> }
 
 #[unsafe_destructor]
-impl Drop for r {
-    fn drop(&self) {
-        unsafe {
-            *(self.i) = *(self.i) + 1;
-        }
+impl<'a> Drop for r<'a> {
+    fn drop(&mut self) {
+        self.i.set(self.i.get() + 1)
     }
 }
 
-fn r(i: @mut int) -> r {
+fn r(i: &Cell<int>) -> r {
     r {
         i: i
     }
 }
 
-fn test_box() {
-    let i = @mut 0;
-    {
-        let a = @r(i);
-    }
-    assert_eq!(*i, 1);
-}
-
 fn test_rec() {
-    let i = @mut 0;
+    let i = &Cell::new(0i);
     {
-        let a = Box {x: r(i)};
+        let _a = BoxR {x: r(i)};
     }
-    assert_eq!(*i, 1);
+    assert_eq!(i.get(), 1);
 }
 
 fn test_tag() {
-    enum t {
-        t0(r),
+    enum t<'a> {
+        t0(r<'a>),
     }
 
-    let i = @mut 0;
+    let i = &Cell::new(0i);
     {
-        let a = t0(r(i));
+        let _a = t::t0(r(i));
     }
-    assert_eq!(*i, 1);
+    assert_eq!(i.get(), 1);
 }
 
 fn test_tup() {
-    let i = @mut 0;
+    let i = &Cell::new(0i);
     {
-        let a = (r(i), 0);
+        let _a = (r(i), 0i);
     }
-    assert_eq!(*i, 1);
+    assert_eq!(i.get(), 1);
 }
 
 fn test_unique() {
-    let i = @mut 0;
+    let i = &Cell::new(0i);
     {
-        let a = ~r(i);
+        let _a = box r(i);
     }
-    assert_eq!(*i, 1);
+    assert_eq!(i.get(), 1);
 }
 
-fn test_box_rec() {
-    let i = @mut 0;
+fn test_unique_rec() {
+    let i = &Cell::new(0i);
     {
-        let a = @Box {
+        let _a = box BoxR {
             x: r(i)
         };
     }
-    assert_eq!(*i, 1);
+    assert_eq!(i.get(), 1);
 }
 
 pub fn main() {
-    test_box();
     test_rec();
     test_tag();
     test_tup();
     test_unique();
-    test_box_rec();
+    test_unique_rec();
 }

@@ -8,8 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct invariant<'self> {
-    f: @fn() -> @mut &'self int
+
+struct invariant<'a> {
+    f: Box<for<'b> FnOnce() -> &'b mut &'a isize + 'static>,
 }
 
 fn to_same_lifetime<'r>(bi: invariant<'r>) {

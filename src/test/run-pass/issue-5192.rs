@@ -8,6 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 pub trait EventLoop {
 }
 
@@ -27,18 +30,18 @@ impl EventLoop for UvEventLoop {
 }
 
 pub struct Scheduler {
-    event_loop: ~EventLoop,
+    event_loop: Box<EventLoop+'static>,
 }
 
 impl Scheduler {
 
-    pub fn new(event_loop: ~EventLoop) -> Scheduler {
+    pub fn new(event_loop: Box<EventLoop+'static>) -> Scheduler {
         Scheduler {
             event_loop: event_loop,
         }
     }
 }
 
-fn main() {
-    let mut sched = Scheduler::new(~UvEventLoop::new() as ~EventLoop);
+pub fn main() {
+    let _sched = Scheduler::new(box UvEventLoop::new() as Box<EventLoop>);
 }

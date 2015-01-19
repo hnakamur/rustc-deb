@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -11,8 +10,8 @@
 
 // error-pattern: not all control paths return a value
 
-fn god_exists(a: int) -> bool { return god_exists(a); }
+fn god_exists(a: isize) -> bool { return god_exists(a); }
 
-fn f(a: int) -> int { if god_exists(a) { return 5; }; }
+fn f(a: isize) -> isize { if god_exists(a) { return 5; }; }
 
 fn main() { f(12); }

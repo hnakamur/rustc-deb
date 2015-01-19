@@ -8,15 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//error-pattern:libc::c_int or libc::c_long should be used
+#![forbid(improper_ctypes)]
+#![allow(dead_code)]
+
 mod xx {
-    pub extern {
-        pub fn strlen(str: *u8) -> uint;
-        pub fn foo(x: int, y: uint);
+    extern {
+        pub fn strlen(str: *const u8) -> usize; //~ ERROR found rust type `usize`
+        pub fn foo(x: isize, y: usize); //~ ERROR found rust type `isize`
+        //~^ ERROR found rust type `usize`
     }
 }
 
 fn main() {
-  // let it fail to verify warning message
-  fail!()
 }

@@ -8,40 +8,42 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// This creates a bunch of yielding tasks that run concurrently
+// This creates a bunch of descheduling tasks that run concurrently
 // while holding onto C stacks
 
-use std::libc;
-use std::task;
+extern crate libc;
+use std::thread::Thread;
 
 mod rustrt {
-    use std::libc;
+    extern crate libc;
 
-    pub extern {
-        pub fn rust_dbg_call(cb: *u8, data: libc::uintptr_t)
+    #[link(name = "rust_test_helpers")]
+    extern {
+        pub fn rust_dbg_call(cb: extern "C" fn(libc::uintptr_t) -> libc::uintptr_t,
+                             data: libc::uintptr_t)
                              -> libc::uintptr_t;
     }
 }
 
 extern fn cb(data: libc::uintptr_t) -> libc::uintptr_t {
-    if data == 1u {
+    if data == 1 {
         data
     } else {
-        task::yield();
-        count(data - 1u) + count(data - 1u)
+        Thread::yield_now();
+        count(data - 1) + count(data - 1)
     }
 }
 
-fn count(n: uint) -> uint {
+fn count(n: libc::uintptr_t) -> libc::uintptr_t {
     unsafe {
         rustrt::rust_dbg_call(cb, n)
     }
 }
 
 pub fn main() {
-    for 100u.times {
-        do task::spawn {
-            assert_eq!(count(5u), 16u);
-        };
-    }
+    range(0u, 100).map(|_| {
+        Thread::scoped(move|| {
+            assert_eq!(count(5), 16);
+        })
+    }).collect::<Vec<_>>();
 }

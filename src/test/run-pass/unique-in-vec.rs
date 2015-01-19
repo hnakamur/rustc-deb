@@ -8,6 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 pub fn main() {
-    assert!((~[~100])[0] == ~100);
+    let vect = vec!(box 100i);
+    assert!(vect[0] == box 100);
 }

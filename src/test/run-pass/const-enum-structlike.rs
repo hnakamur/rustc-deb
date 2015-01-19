@@ -9,15 +9,15 @@
 // except according to those terms.
 
 enum E {
-    S0 { s: ~str },
+    S0 { s: String },
     S1 { u: uint }
 }
 
-static C: E = S1 { u: 23 };
+static C: E = E::S1 { u: 23 };
 
 pub fn main() {
     match C {
-        S0 { _ } => fail!(),
-        S1 { u } => assert!(u == 23)
+        E::S0 { .. } => panic!(),
+        E::S1 { u } => assert!(u == 23)
     }
 }

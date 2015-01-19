@@ -11,7 +11,6 @@
 
 
 
-// -*- rust -*-
 
 // Tests for using match as an expression
 fn test_basic() {
@@ -22,7 +21,7 @@ fn test_basic() {
 }
 
 fn test_inferrence() {
-    let mut rs = match true { true => { true } false => { false } };
+    let rs = match true { true => { true } false => { false } };
     assert!((rs));
 }
 

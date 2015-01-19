@@ -8,19 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 fn test_int() {
     fn f() -> int { 10 }
     assert_eq!(f(), 10);
 }
 
 fn test_vec() {
-    fn f() -> ~[int] { ~[10, 11] }
-    assert_eq!(f()[1], 11);
+    fn f() -> Vec<int> { vec!(10, 11) }
+    let vect = f();
+    assert_eq!(vect[1], 11);
 }
 
 fn test_generic() {
-    fn f<T:Copy>(t: T) -> T { t }
-    assert_eq!(f(10), 10);
+    fn f<T>(t: T) -> T { t }
+    assert_eq!(f(10i), 10);
 }
 
 fn test_alt() {

@@ -8,14 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::container::Map;
-use std::hashmap::HashMap;
+#![feature(box_syntax)]
+
+extern crate collections;
+
+use std::collections::HashMap;
+
+trait Map<K, V> {}
+
+impl<K, V> Map<K, V> for HashMap<K, V> {}
 
 // Test that trait types printed in error msgs include the type arguments.
 
 fn main() {
-    let x: @Map<~str, ~str> = @HashMap::new::<~str, ~str>() as
-        @Map<~str, ~str>;
-    let y: @Map<uint, ~str> = @x;
-    //~^ ERROR expected trait std::container::Map but found @-ptr
+    let x: Box<HashMap<isize, isize>> = box HashMap::new();
+    let x: Box<Map<isize, isize>> = x;
+    let y: Box<Map<usize, isize>> = box x;
+    //~^ ERROR the trait `Map<usize, isize>` is not implemented
 }

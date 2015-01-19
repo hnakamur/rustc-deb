@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,61 +10,61 @@
 
 // Test for concurrent tasks
 
-// xfail-test OOM on linux-32 without opts
+// ignore-test OOM on linux-32 without opts
 
-use std::comm::*;
 use std::os;
 use std::task;
 use std::uint;
-use std::vec;
+use std::slice;
 
-fn calc(children: uint, parent_wait_chan: &Chan<Chan<Chan<int>>>) {
+fn calc(children: uint, parent_wait_chan: &Sender<Sender<Sender<int>>>) {
 
-    let wait_ports: ~[Port<Chan<Chan<int>>>] = do vec::from_fn(children) |_| {
-        let (wait_port, wait_chan) = stream::<Chan<Chan<int>>>();
-        do task::spawn {
+    let wait_ports: Vec<Reciever<Sender<Sender<int>>>> = vec::from_fn(children, |_| {
+        let (wait_port, wait_chan) = stream::<Sender<Sender<int>>>();
+        task::spawn(move|| {
             calc(children / 2, &wait_chan);
-        }
+        });
         wait_port
-    };
+    });
 
-    let child_start_chans: ~[Chan<Chan<int>>] = vec::map_consume(wait_ports, |port| port.recv());
+    let child_start_chans: Vec<Sender<Sender<int>>> =
+        wait_ports.into_iter().map(|port| port.recv()).collect();
 
-    let (start_port, start_chan) = stream::<Chan<int>>();
+    let (start_port, start_chan) = stream::<Sender<int>>();
     parent_wait_chan.send(start_chan);
-    let parent_result_chan: Chan<int> = start_port.recv();
+    let parent_result_chan: Sender<int> = start_port.recv();
 
-    let child_sum_ports: ~[Port<int>] = do vec::map_consume(child_start_chans) |child_start_chan| {
-        let (child_sum_port, child_sum_chan) = stream::<int>();
-        child_start_chan.send(child_sum_chan);
-        child_sum_port
-    };
+    let child_sum_ports: Vec<Reciever<int>> =
+        child_start_chans.into_iter().map(|child_start_chan| {
+            let (child_sum_port, child_sum_chan) = stream::<int>();
+            child_start_chan.send(child_sum_chan);
+            child_sum_port
+    }).collect();
 
-    let mut sum = 0;
-    vec::consume(child_sum_ports, |_, sum_port| sum += sum_port.recv() );
+    let sum = child_sum_ports.into_iter().fold(0, |sum, sum_port| sum + sum_port.recv() );
 
     parent_result_chan.send(sum + 1);
 }
 
 fn main() {
     let args = os::args();
-    let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"30"]
+    let args = if os::getenv("RUST_BENCH").is_some() {
+        vec!("".to_string(), "30".to_string())
     } else if args.len() <= 1u {
-        ~[~"", ~"10"]
+        vec!("".to_string(), "10".to_string())
     } else {
         args
     };
 
-    let children = uint::from_str(args[1]).get();
+    let children = from_str::<uint>(args[1]).unwrap();
     let (wait_port, wait_chan) = stream();
-    do task::spawn {
+    task::spawn(move|| {
         calc(children, &wait_chan);
-    };
+    });
 
     let start_chan = wait_port.recv();
     let (sum_port, sum_chan) = stream::<int>();
     start_chan.send(sum_chan);
     let sum = sum_port.recv();
-    error!("How many tasks? %d tasks.", sum);
+    println!("How many tasks? {} tasks.", sum);
 }

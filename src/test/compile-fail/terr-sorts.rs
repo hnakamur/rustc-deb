@@ -8,16 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 struct foo {
-    a: int,
-    b: int,
+    a: isize,
+    b: isize,
 }
 
-type bar = @foo;
+type bar = Box<foo>;
 
 fn want_foo(f: foo) {}
 fn have_bar(b: bar) {
-    want_foo(b); //~ ERROR (expected struct foo but found @-ptr)
+    want_foo(b); //~ ERROR (expected struct foo, found box)
 }
 
 fn main() {}

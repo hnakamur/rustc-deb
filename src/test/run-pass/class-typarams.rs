@@ -9,7 +9,7 @@
 // except according to those terms.
 
 struct cat<U> {
-    priv meows : uint,
+    meows : uint,
 
     how_hungry : int,
 }
@@ -28,6 +28,6 @@ fn cat<U>(in_x : uint, in_y : int) -> cat<U> {
 
 
 pub fn main() {
-  let mut _nyan : cat<int> = cat::<int>(52u, 99);
+  let _nyan : cat<int> = cat::<int>(52u, 99);
   //  let mut kitty = cat(1000u, 2);
 }

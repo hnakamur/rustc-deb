@@ -6,12 +6,14 @@ Auto-Vectorization in LLVM
    :local:
 
 LLVM has two vectorizers: The :ref:`Loop Vectorizer <loop-vectorizer>`,
-which operates on Loops, and the :ref:`Basic Block Vectorizer
-<bb-vectorizer>`, which optimizes straight-line code. These vectorizers
+which operates on Loops, and the :ref:`SLP Vectorizer
+<slp-vectorizer>`. These vectorizers
 focus on different optimization opportunities and use different techniques.
-The BB vectorizer merges multiple scalars that are found in the code into
-vectors while the Loop Vectorizer widens instructions in the original loop
-to operate on multiple consecutive loop iterations.
+The SLP vectorizer merges multiple scalars that are found in the code into
+vectors while the Loop Vectorizer widens instructions in loops
+to operate on multiple consecutive iterations.
+
+Both the Loop Vectorizer and the SLP Vectorizer are enabled by default.
 
 .. _loop-vectorizer:
 
@@ -21,19 +23,12 @@ The Loop Vectorizer
 Usage
 -----
 
-LLVM's Loop Vectorizer is now available and will be useful for many people.
-It is not enabled by default, but can be enabled through clang using the
-command line flag:
+The Loop Vectorizer is enabled by default, but it can be disabled
+through clang using the command line flag:
 
 .. code-block:: console
 
-   $ clang -fvectorize -O3 file.c
-
-If the ``-fvectorize`` flag is used then the loop vectorizer will be enabled
-when running with ``-O3``, ``-O2``. When ``-Os`` is used, the loop vectorizer
-will only vectorize loops that do not require a major increase in code size.
-
-We plan to enable the Loop Vectorizer by default as part of the LLVM 3.3 release.
+   $ clang ... -fno-vectorize  file.c
 
 Command line flags
 ^^^^^^^^^^^^^^^^^^
@@ -55,6 +50,89 @@ Users can control the unroll factor using the command line flag "-force-vector-u
 
   $ clang  -mllvm -force-vector-unroll=2 ...
   $ opt -loop-vectorize -force-vector-unroll=2 ...
+
+Pragma loop hint directives
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The ``#pragma clang loop`` directive allows loop vectorization hints to be
+specified for the subsequent for, while, do-while, or c++11 range-based for
+loop. The directive allows vectorization and interleaving to be enabled or
+disabled. Vector width as well as interleave count can also be manually
+specified. The following example explicitly enables vectorization and
+interleaving:
+
+.. code-block:: c++
+
+  #pragma clang loop vectorize(enable) interleave(enable)
+  while(...) {
+    ...
+  }
+
+The following example implicitly enables vectorization and interleaving by
+specifying a vector width and interleaving count:
+
+.. code-block:: c++
+
+  #pragma clang loop vectorize_width(2) interleave_count(2)
+  for(...) {
+    ...
+  }
+
+See the Clang
+`language extensions
+<http://clang.llvm.org/docs/LanguageExtensions.html#extensions-for-loop-hint-optimizations>`_
+for details.
+
+Diagnostics
+-----------
+
+Many loops cannot be vectorized including loops with complicated control flow,
+unvectorizable types, and unvectorizable calls. The loop vectorizer generates
+optimization remarks which can be queried using command line options to identify
+and diagnose loops that are skipped by the loop-vectorizer.
+
+Optimization remarks are enabled using:
+
+``-Rpass=loop-vectorize`` identifies loops that were successfully vectorized.
+
+``-Rpass-missed=loop-vectorize`` identifies loops that failed vectorization and
+indicates if vectorization was specified.
+
+``-Rpass-analysis=loop-vectorize`` identifies the statements that caused
+vectorization to fail.
+
+Consider the following loop:
+
+.. code-block:: c++
+
+  #pragma clang loop vectorize(enable)
+  for (int i = 0; i < Length; i++) {
+    switch(A[i]) {
+    case 0: A[i] = i*2; break;
+    case 1: A[i] = i;   break;
+    default: A[i] = 0;
+    }
+  }
+
+The command line ``-Rpass-missed=loop-vectorized`` prints the remark:
+
+.. code-block:: console
+
+  no_switch.cpp:4:5: remark: loop not vectorized: vectorization is explicitly enabled [-Rpass-missed=loop-vectorize]
+
+And the command line ``-Rpass-analysis=loop-vectorize`` indicates that the
+switch statement cannot be vectorized.
+
+.. code-block:: console
+
+  no_switch.cpp:4:5: remark: loop not vectorized: loop contains a switch statement [-Rpass-analysis=loop-vectorize]
+    switch(A[i]) {
+    ^
+
+To ensure line and column numbers are produced include the command line options
+``-gline-tables-only`` and ``-gcolumn-info``. See the Clang `user manual
+<http://clang.llvm.org/docs/UsersManual.html#options-to-emit-optimization-reports>`_
+for details
 
 Features
 --------
@@ -187,10 +265,13 @@ that scatter/gathers memory.
 
 .. code-block:: c++
 
-  int foo(int *A, int *B, int n, int k) {
-    for (int i = 0; i < n; ++i)
-      A[i*7] += B[i*k];
+  int foo(int * A, int * B, int n) {
+    for (intptr_t i = 0; i < n; ++i)
+        A[i] += B[i * 4];
   }
+
+In many situations the cost model will inform LLVM that this is not beneficial
+and LLVM will only vectorize such code if forced with "-mllvm -force-vector-width=#".
 
 Vectorization of Mixed Types
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -299,29 +380,18 @@ And Linpack-pc with the same configuration. Result is Mflops, higher is better.
 
 .. image:: linpack-pc.png
 
-.. _bb-vectorizer:
+.. _slp-vectorizer:
 
-The Basic Block Vectorizer
-==========================
-
-Usage
-------
-
-The Basic Block Vectorizer is not enabled by default, but it can be enabled
-through clang using the command line flag:
-
-.. code-block:: console
-
-   $ clang -fslp-vectorize file.c
+The SLP Vectorizer
+==================
 
 Details
 -------
 
-The goal of basic-block vectorization (a.k.a. superword-level parallelism) is
-to combine similar independent instructions within simple control-flow regions
-into vector instructions. Memory accesses, arithemetic operations, comparison
-operations and some math functions can all be vectorized using this technique
-(subject to the capabilities of the target architecture).
+The goal of SLP vectorization (a.k.a. superword-level parallelism) is
+to combine similar independent instructions
+into vector instructions. Memory accesses, arithmetic operations, comparison
+operations, PHI-nodes, can all be vectorized using this technique.
 
 For example, the following function performs very similar operations on its
 inputs (a1, b1) and (a2, b2). The basic-block vectorizer may combine these
@@ -329,10 +399,28 @@ into vector operations.
 
 .. code-block:: c++
 
-  int foo(int a1, int a2, int b1, int b2) {
-    int r1 = a1*(a1 + b1)/b1 + 50*b1/a1;
-    int r2 = a2*(a2 + b2)/b2 + 50*b2/a2;
-    return r1 + r2;
+  void foo(int a1, int a2, int b1, int b2, int *A) {
+    A[0] = a1*(a1 + b1)/b1 + 50*b1/a1;
+    A[1] = a2*(a2 + b2)/b2 + 50*b2/a2;
   }
 
+The SLP-vectorizer processes the code bottom-up, across basic blocks, in search of scalars to combine.
+
+Usage
+------
+
+The SLP Vectorizer is enabled by default, but it can be disabled
+through clang using the command line flag:
+
+.. code-block:: console
+
+   $ clang -fno-slp-vectorize file.c
+
+LLVM has a second basic block vectorization phase
+which is more compile-time intensive (The BB vectorizer). This optimization
+can be enabled through clang using the command line flag:
+
+.. code-block:: console
+
+   $ clang -fslp-vectorize-aggressive file.c
 

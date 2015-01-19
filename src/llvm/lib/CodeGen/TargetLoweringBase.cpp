@@ -18,11 +18,15 @@
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -30,12 +34,13 @@
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/Target/TargetSubtargetInfo.h"
 #include <cctype>
 using namespace llvm;
 
 /// InitLibcallNames - Set default libcall names.
 ///
-static void InitLibcallNames(const char **Names, const TargetMachine &TM) {
+static void InitLibcallNames(const char **Names, const Triple &TT) {
   Names[RTLIB::SHL_I16] = "__ashlhi3";
   Names[RTLIB::SHL_I32] = "__ashlsi3";
   Names[RTLIB::SHL_I64] = "__ashldi3";
@@ -78,16 +83,16 @@ static void InitLibcallNames(const char **Names, const TargetMachine &TM) {
   Names[RTLIB::UREM_I128] = "__umodti3";
 
   // These are generally not available.
-  Names[RTLIB::SDIVREM_I8] = 0;
-  Names[RTLIB::SDIVREM_I16] = 0;
-  Names[RTLIB::SDIVREM_I32] = 0;
-  Names[RTLIB::SDIVREM_I64] = 0;
-  Names[RTLIB::SDIVREM_I128] = 0;
-  Names[RTLIB::UDIVREM_I8] = 0;
-  Names[RTLIB::UDIVREM_I16] = 0;
-  Names[RTLIB::UDIVREM_I32] = 0;
-  Names[RTLIB::UDIVREM_I64] = 0;
-  Names[RTLIB::UDIVREM_I128] = 0;
+  Names[RTLIB::SDIVREM_I8] = nullptr;
+  Names[RTLIB::SDIVREM_I16] = nullptr;
+  Names[RTLIB::SDIVREM_I32] = nullptr;
+  Names[RTLIB::SDIVREM_I64] = nullptr;
+  Names[RTLIB::SDIVREM_I128] = nullptr;
+  Names[RTLIB::UDIVREM_I8] = nullptr;
+  Names[RTLIB::UDIVREM_I16] = nullptr;
+  Names[RTLIB::UDIVREM_I32] = nullptr;
+  Names[RTLIB::UDIVREM_I64] = nullptr;
+  Names[RTLIB::UDIVREM_I128] = nullptr;
 
   Names[RTLIB::NEG_I32] = "__negsi2";
   Names[RTLIB::NEG_I64] = "__negdi2";
@@ -191,11 +196,21 @@ static void InitLibcallNames(const char **Names, const TargetMachine &TM) {
   Names[RTLIB::NEARBYINT_F80] = "nearbyintl";
   Names[RTLIB::NEARBYINT_F128] = "nearbyintl";
   Names[RTLIB::NEARBYINT_PPCF128] = "nearbyintl";
+  Names[RTLIB::ROUND_F32] = "roundf";
+  Names[RTLIB::ROUND_F64] = "round";
+  Names[RTLIB::ROUND_F80] = "roundl";
+  Names[RTLIB::ROUND_F128] = "roundl";
+  Names[RTLIB::ROUND_PPCF128] = "roundl";
   Names[RTLIB::FLOOR_F32] = "floorf";
   Names[RTLIB::FLOOR_F64] = "floor";
   Names[RTLIB::FLOOR_F80] = "floorl";
   Names[RTLIB::FLOOR_F128] = "floorl";
   Names[RTLIB::FLOOR_PPCF128] = "floorl";
+  Names[RTLIB::ROUND_F32] = "roundf";
+  Names[RTLIB::ROUND_F64] = "round";
+  Names[RTLIB::ROUND_F80] = "roundl";
+  Names[RTLIB::ROUND_F128] = "roundl";
+  Names[RTLIB::ROUND_PPCF128] = "roundl";
   Names[RTLIB::COPYSIGN_F32] = "copysignf";
   Names[RTLIB::COPYSIGN_F64] = "copysign";
   Names[RTLIB::COPYSIGN_F80] = "copysignl";
@@ -206,6 +221,10 @@ static void InitLibcallNames(const char **Names, const TargetMachine &TM) {
   Names[RTLIB::FPEXT_F32_F64] = "__extendsfdf2";
   Names[RTLIB::FPEXT_F16_F32] = "__gnu_h2f_ieee";
   Names[RTLIB::FPROUND_F32_F16] = "__gnu_f2h_ieee";
+  Names[RTLIB::FPROUND_F64_F16] = "__truncdfhf2";
+  Names[RTLIB::FPROUND_F80_F16] = "__truncxfhf2";
+  Names[RTLIB::FPROUND_F128_F16] = "__trunctfhf2";
+  Names[RTLIB::FPROUND_PPCF128_F16] = "__trunctfhf2";
   Names[RTLIB::FPROUND_F64_F32] = "__truncdfsf2";
   Names[RTLIB::FPROUND_F80_F32] = "__truncxfsf2";
   Names[RTLIB::FPROUND_F128_F32] = "__trunctfsf2";
@@ -313,36 +332,64 @@ static void InitLibcallNames(const char **Names, const TargetMachine &TM) {
   Names[RTLIB::SYNC_VAL_COMPARE_AND_SWAP_2] = "__sync_val_compare_and_swap_2";
   Names[RTLIB::SYNC_VAL_COMPARE_AND_SWAP_4] = "__sync_val_compare_and_swap_4";
   Names[RTLIB::SYNC_VAL_COMPARE_AND_SWAP_8] = "__sync_val_compare_and_swap_8";
+  Names[RTLIB::SYNC_VAL_COMPARE_AND_SWAP_16] = "__sync_val_compare_and_swap_16";
   Names[RTLIB::SYNC_LOCK_TEST_AND_SET_1] = "__sync_lock_test_and_set_1";
   Names[RTLIB::SYNC_LOCK_TEST_AND_SET_2] = "__sync_lock_test_and_set_2";
   Names[RTLIB::SYNC_LOCK_TEST_AND_SET_4] = "__sync_lock_test_and_set_4";
   Names[RTLIB::SYNC_LOCK_TEST_AND_SET_8] = "__sync_lock_test_and_set_8";
+  Names[RTLIB::SYNC_LOCK_TEST_AND_SET_16] = "__sync_lock_test_and_set_16";
   Names[RTLIB::SYNC_FETCH_AND_ADD_1] = "__sync_fetch_and_add_1";
   Names[RTLIB::SYNC_FETCH_AND_ADD_2] = "__sync_fetch_and_add_2";
   Names[RTLIB::SYNC_FETCH_AND_ADD_4] = "__sync_fetch_and_add_4";
   Names[RTLIB::SYNC_FETCH_AND_ADD_8] = "__sync_fetch_and_add_8";
+  Names[RTLIB::SYNC_FETCH_AND_ADD_16] = "__sync_fetch_and_add_16";
   Names[RTLIB::SYNC_FETCH_AND_SUB_1] = "__sync_fetch_and_sub_1";
   Names[RTLIB::SYNC_FETCH_AND_SUB_2] = "__sync_fetch_and_sub_2";
   Names[RTLIB::SYNC_FETCH_AND_SUB_4] = "__sync_fetch_and_sub_4";
   Names[RTLIB::SYNC_FETCH_AND_SUB_8] = "__sync_fetch_and_sub_8";
+  Names[RTLIB::SYNC_FETCH_AND_SUB_16] = "__sync_fetch_and_sub_16";
   Names[RTLIB::SYNC_FETCH_AND_AND_1] = "__sync_fetch_and_and_1";
   Names[RTLIB::SYNC_FETCH_AND_AND_2] = "__sync_fetch_and_and_2";
   Names[RTLIB::SYNC_FETCH_AND_AND_4] = "__sync_fetch_and_and_4";
   Names[RTLIB::SYNC_FETCH_AND_AND_8] = "__sync_fetch_and_and_8";
+  Names[RTLIB::SYNC_FETCH_AND_AND_16] = "__sync_fetch_and_and_16";
   Names[RTLIB::SYNC_FETCH_AND_OR_1] = "__sync_fetch_and_or_1";
   Names[RTLIB::SYNC_FETCH_AND_OR_2] = "__sync_fetch_and_or_2";
   Names[RTLIB::SYNC_FETCH_AND_OR_4] = "__sync_fetch_and_or_4";
   Names[RTLIB::SYNC_FETCH_AND_OR_8] = "__sync_fetch_and_or_8";
+  Names[RTLIB::SYNC_FETCH_AND_OR_16] = "__sync_fetch_and_or_16";
   Names[RTLIB::SYNC_FETCH_AND_XOR_1] = "__sync_fetch_and_xor_1";
   Names[RTLIB::SYNC_FETCH_AND_XOR_2] = "__sync_fetch_and_xor_2";
   Names[RTLIB::SYNC_FETCH_AND_XOR_4] = "__sync_fetch_and_xor_4";
   Names[RTLIB::SYNC_FETCH_AND_XOR_8] = "__sync_fetch_and_xor_8";
+  Names[RTLIB::SYNC_FETCH_AND_XOR_16] = "__sync_fetch_and_xor_16";
   Names[RTLIB::SYNC_FETCH_AND_NAND_1] = "__sync_fetch_and_nand_1";
   Names[RTLIB::SYNC_FETCH_AND_NAND_2] = "__sync_fetch_and_nand_2";
   Names[RTLIB::SYNC_FETCH_AND_NAND_4] = "__sync_fetch_and_nand_4";
   Names[RTLIB::SYNC_FETCH_AND_NAND_8] = "__sync_fetch_and_nand_8";
+  Names[RTLIB::SYNC_FETCH_AND_NAND_16] = "__sync_fetch_and_nand_16";
+  Names[RTLIB::SYNC_FETCH_AND_MAX_1] = "__sync_fetch_and_max_1";
+  Names[RTLIB::SYNC_FETCH_AND_MAX_2] = "__sync_fetch_and_max_2";
+  Names[RTLIB::SYNC_FETCH_AND_MAX_4] = "__sync_fetch_and_max_4";
+  Names[RTLIB::SYNC_FETCH_AND_MAX_8] = "__sync_fetch_and_max_8";
+  Names[RTLIB::SYNC_FETCH_AND_MAX_16] = "__sync_fetch_and_max_16";
+  Names[RTLIB::SYNC_FETCH_AND_UMAX_1] = "__sync_fetch_and_umax_1";
+  Names[RTLIB::SYNC_FETCH_AND_UMAX_2] = "__sync_fetch_and_umax_2";
+  Names[RTLIB::SYNC_FETCH_AND_UMAX_4] = "__sync_fetch_and_umax_4";
+  Names[RTLIB::SYNC_FETCH_AND_UMAX_8] = "__sync_fetch_and_umax_8";
+  Names[RTLIB::SYNC_FETCH_AND_UMAX_16] = "__sync_fetch_and_umax_16";
+  Names[RTLIB::SYNC_FETCH_AND_MIN_1] = "__sync_fetch_and_min_1";
+  Names[RTLIB::SYNC_FETCH_AND_MIN_2] = "__sync_fetch_and_min_2";
+  Names[RTLIB::SYNC_FETCH_AND_MIN_4] = "__sync_fetch_and_min_4";
+  Names[RTLIB::SYNC_FETCH_AND_MIN_8] = "__sync_fetch_and_min_8";
+  Names[RTLIB::SYNC_FETCH_AND_MIN_16] = "__sync_fetch_and_min_16";
+  Names[RTLIB::SYNC_FETCH_AND_UMIN_1] = "__sync_fetch_and_umin_1";
+  Names[RTLIB::SYNC_FETCH_AND_UMIN_2] = "__sync_fetch_and_umin_2";
+  Names[RTLIB::SYNC_FETCH_AND_UMIN_4] = "__sync_fetch_and_umin_4";
+  Names[RTLIB::SYNC_FETCH_AND_UMIN_8] = "__sync_fetch_and_umin_8";
+  Names[RTLIB::SYNC_FETCH_AND_UMIN_16] = "__sync_fetch_and_umin_16";
   
-  if (Triple(TM.getTargetTriple()).getEnvironment() == Triple::GNU) {
+  if (TT.getEnvironment() == Triple::GNU) {
     Names[RTLIB::SINCOS_F32] = "sincosf";
     Names[RTLIB::SINCOS_F64] = "sincos";
     Names[RTLIB::SINCOS_F80] = "sincosl";
@@ -350,11 +397,18 @@ static void InitLibcallNames(const char **Names, const TargetMachine &TM) {
     Names[RTLIB::SINCOS_PPCF128] = "sincosl";
   } else {
     // These are generally not available.
-    Names[RTLIB::SINCOS_F32] = 0;
-    Names[RTLIB::SINCOS_F64] = 0;
-    Names[RTLIB::SINCOS_F80] = 0;
-    Names[RTLIB::SINCOS_F128] = 0;
-    Names[RTLIB::SINCOS_PPCF128] = 0;
+    Names[RTLIB::SINCOS_F32] = nullptr;
+    Names[RTLIB::SINCOS_F64] = nullptr;
+    Names[RTLIB::SINCOS_F80] = nullptr;
+    Names[RTLIB::SINCOS_F128] = nullptr;
+    Names[RTLIB::SINCOS_PPCF128] = nullptr;
+  }
+
+  if (TT.getOS() != Triple::OpenBSD) {
+    Names[RTLIB::STACKPROTECTOR_CHECK_FAIL] = "__stack_chk_fail";
+  } else {
+    // These are generally not available.
+    Names[RTLIB::STACKPROTECTOR_CHECK_FAIL] = nullptr;
   }
 }
 
@@ -369,7 +423,10 @@ static void InitLibcallCallingConvs(CallingConv::ID *CCs) {
 /// getFPEXT - Return the FPEXT_*_* value for the given types, or
 /// UNKNOWN_LIBCALL if there is none.
 RTLIB::Libcall RTLIB::getFPEXT(EVT OpVT, EVT RetVT) {
-  if (OpVT == MVT::f32) {
+  if (OpVT == MVT::f16) {
+    if (RetVT == MVT::f32)
+      return FPEXT_F16_F32;
+  } else if (OpVT == MVT::f32) {
     if (RetVT == MVT::f64)
       return FPEXT_F32_F64;
     if (RetVT == MVT::f128)
@@ -385,7 +442,18 @@ RTLIB::Libcall RTLIB::getFPEXT(EVT OpVT, EVT RetVT) {
 /// getFPROUND - Return the FPROUND_*_* value for the given types, or
 /// UNKNOWN_LIBCALL if there is none.
 RTLIB::Libcall RTLIB::getFPROUND(EVT OpVT, EVT RetVT) {
-  if (RetVT == MVT::f32) {
+  if (RetVT == MVT::f16) {
+    if (OpVT == MVT::f32)
+      return FPROUND_F32_F16;
+    if (OpVT == MVT::f64)
+      return FPROUND_F64_F16;
+    if (OpVT == MVT::f80)
+      return FPROUND_F80_F16;
+    if (OpVT == MVT::f128)
+      return FPROUND_F128_F16;
+    if (OpVT == MVT::ppcf128)
+      return FPROUND_PPCF128_F16;
+  } else if (RetVT == MVT::f32) {
     if (OpVT == MVT::f64)
       return FPROUND_F64_F32;
     if (OpVT == MVT::f80)
@@ -619,13 +687,59 @@ static void InitCmpLibcallCCs(ISD::CondCode *CCs) {
 /// NOTE: The constructor takes ownership of TLOF.
 TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm,
                                        const TargetLoweringObjectFile *tlof)
-  : TM(tm), TD(TM.getDataLayout()), TLOF(*tlof) {
+    : TM(tm), DL(TM.getSubtargetImpl()->getDataLayout()), TLOF(*tlof) {
+  initActions();
+
+  // Perform these initializations only once.
+  IsLittleEndian = DL->isLittleEndian();
+  MaxStoresPerMemset = MaxStoresPerMemcpy = MaxStoresPerMemmove = 8;
+  MaxStoresPerMemsetOptSize = MaxStoresPerMemcpyOptSize
+    = MaxStoresPerMemmoveOptSize = 4;
+  UseUnderscoreSetJmp = false;
+  UseUnderscoreLongJmp = false;
+  SelectIsExpensive = false;
+  HasMultipleConditionRegisters = false;
+  HasExtractBitsInsn = false;
+  IntDivIsCheap = false;
+  Pow2SDivIsCheap = false;
+  JumpIsExpensive = false;
+  PredictableSelectIsExpensive = false;
+  MaskAndBranchFoldingIsLegal = false;
+  HasFloatingPointExceptions = true;
+  StackPointerRegisterToSaveRestore = 0;
+  ExceptionPointerRegister = 0;
+  ExceptionSelectorRegister = 0;
+  BooleanContents = UndefinedBooleanContent;
+  BooleanFloatContents = UndefinedBooleanContent;
+  BooleanVectorContents = UndefinedBooleanContent;
+  SchedPreferenceInfo = Sched::ILP;
+  JumpBufSize = 0;
+  JumpBufAlignment = 0;
+  MinFunctionAlignment = 0;
+  PrefFunctionAlignment = 0;
+  PrefLoopAlignment = 0;
+  MinStackArgumentAlignment = 1;
+  InsertFencesForAtomic = false;
+  MinimumJumpTableEntries = 4;
+
+  InitLibcallNames(LibcallRoutineNames, Triple(TM.getTargetTriple()));
+  InitCmpLibcallCCs(CmpLibcallCCs);
+  InitLibcallCallingConvs(LibcallCallingConvs);
+}
+
+TargetLoweringBase::~TargetLoweringBase() {
+  delete &TLOF;
+}
+
+void TargetLoweringBase::initActions() {
   // All operations default to being supported.
   memset(OpActions, 0, sizeof(OpActions));
   memset(LoadExtActions, 0, sizeof(LoadExtActions));
   memset(TruncStoreActions, 0, sizeof(TruncStoreActions));
   memset(IndexedModeActions, 0, sizeof(IndexedModeActions));
   memset(CondCodeActions, 0, sizeof(CondCodeActions));
+  memset(RegClassForVT, 0,MVT::LAST_VALUETYPE*sizeof(TargetRegisterClass*));
+  memset(TargetDAGCombineArray, 0, array_lengthof(TargetDAGCombineArray));
 
   // Set default actions for various operations.
   for (unsigned VT = 0; VT != (unsigned)MVT::LAST_VALUETYPE; ++VT) {
@@ -636,9 +750,28 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm,
       setIndexedStoreAction(IM, (MVT::SimpleValueType)VT, Expand);
     }
 
+    // Most backends expect to see the node which just returns the value loaded.
+    setOperationAction(ISD::ATOMIC_CMP_SWAP_WITH_SUCCESS,
+                       (MVT::SimpleValueType)VT, Expand);
+
     // These operations default to expand.
     setOperationAction(ISD::FGETSIGN, (MVT::SimpleValueType)VT, Expand);
     setOperationAction(ISD::CONCAT_VECTORS, (MVT::SimpleValueType)VT, Expand);
+
+    // These library functions default to expand.
+    setOperationAction(ISD::FROUND, (MVT::SimpleValueType)VT, Expand);
+
+    // These operations default to expand for vector types.
+    if (VT >= MVT::FIRST_VECTOR_VALUETYPE &&
+        VT <= MVT::LAST_VECTOR_VALUETYPE) {
+      setOperationAction(ISD::FCOPYSIGN, (MVT::SimpleValueType)VT, Expand);
+      setOperationAction(ISD::ANY_EXTEND_VECTOR_INREG,
+                         (MVT::SimpleValueType)VT, Expand);
+      setOperationAction(ISD::SIGN_EXTEND_VECTOR_INREG,
+                         (MVT::SimpleValueType)VT, Expand);
+      setOperationAction(ISD::ZERO_EXTEND_VECTOR_INREG,
+                         (MVT::SimpleValueType)VT, Expand);
+    }
   }
 
   // Most targets ignore the @llvm.prefetch intrinsic.
@@ -664,6 +797,7 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm,
   setOperationAction(ISD::FCEIL,  MVT::f16, Expand);
   setOperationAction(ISD::FRINT,  MVT::f16, Expand);
   setOperationAction(ISD::FTRUNC, MVT::f16, Expand);
+  setOperationAction(ISD::FROUND, MVT::f16, Expand);
   setOperationAction(ISD::FLOG ,  MVT::f32, Expand);
   setOperationAction(ISD::FLOG2,  MVT::f32, Expand);
   setOperationAction(ISD::FLOG10, MVT::f32, Expand);
@@ -674,6 +808,7 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm,
   setOperationAction(ISD::FCEIL,  MVT::f32, Expand);
   setOperationAction(ISD::FRINT,  MVT::f32, Expand);
   setOperationAction(ISD::FTRUNC, MVT::f32, Expand);
+  setOperationAction(ISD::FROUND, MVT::f32, Expand);
   setOperationAction(ISD::FLOG ,  MVT::f64, Expand);
   setOperationAction(ISD::FLOG2,  MVT::f64, Expand);
   setOperationAction(ISD::FLOG10, MVT::f64, Expand);
@@ -684,6 +819,7 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm,
   setOperationAction(ISD::FCEIL,  MVT::f64, Expand);
   setOperationAction(ISD::FRINT,  MVT::f64, Expand);
   setOperationAction(ISD::FTRUNC, MVT::f64, Expand);
+  setOperationAction(ISD::FROUND, MVT::f64, Expand);
   setOperationAction(ISD::FLOG ,  MVT::f128, Expand);
   setOperationAction(ISD::FLOG2,  MVT::f128, Expand);
   setOperationAction(ISD::FLOG10, MVT::f128, Expand);
@@ -694,6 +830,7 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm,
   setOperationAction(ISD::FCEIL,  MVT::f128, Expand);
   setOperationAction(ISD::FRINT,  MVT::f128, Expand);
   setOperationAction(ISD::FTRUNC, MVT::f128, Expand);
+  setOperationAction(ISD::FROUND, MVT::f128, Expand);
 
   // Default ISD::TRAP to expand (which turns it into abort).
   setOperationAction(ISD::TRAP, MVT::Other, Expand);
@@ -702,50 +839,23 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm,
   // here is to inform DAG Legalizer to replace DEBUGTRAP with TRAP.
   //
   setOperationAction(ISD::DEBUGTRAP, MVT::Other, Expand);
-
-  IsLittleEndian = TD->isLittleEndian();
-  PointerTy = MVT::getIntegerVT(8*TD->getPointerSize(0));
-  memset(RegClassForVT, 0,MVT::LAST_VALUETYPE*sizeof(TargetRegisterClass*));
-  memset(TargetDAGCombineArray, 0, array_lengthof(TargetDAGCombineArray));
-  MaxStoresPerMemset = MaxStoresPerMemcpy = MaxStoresPerMemmove = 8;
-  MaxStoresPerMemsetOptSize = MaxStoresPerMemcpyOptSize
-    = MaxStoresPerMemmoveOptSize = 4;
-  BenefitFromCodePlacementOpt = false;
-  UseUnderscoreSetJmp = false;
-  UseUnderscoreLongJmp = false;
-  SelectIsExpensive = false;
-  IntDivIsCheap = false;
-  Pow2DivIsCheap = false;
-  JumpIsExpensive = false;
-  PredictableSelectIsExpensive = false;
-  StackPointerRegisterToSaveRestore = 0;
-  ExceptionPointerRegister = 0;
-  ExceptionSelectorRegister = 0;
-  BooleanContents = UndefinedBooleanContent;
-  BooleanVectorContents = UndefinedBooleanContent;
-  SchedPreferenceInfo = Sched::ILP;
-  JumpBufSize = 0;
-  JumpBufAlignment = 0;
-  MinFunctionAlignment = 0;
-  PrefFunctionAlignment = 0;
-  PrefLoopAlignment = 0;
-  MinStackArgumentAlignment = 1;
-  ShouldFoldAtomicFences = false;
-  InsertFencesForAtomic = false;
-  SupportJumpTables = true;
-  MinimumJumpTableEntries = 4;
-
-  InitLibcallNames(LibcallRoutineNames, TM);
-  InitCmpLibcallCCs(CmpLibcallCCs);
-  InitLibcallCallingConvs(LibcallCallingConvs);
 }
 
-TargetLoweringBase::~TargetLoweringBase() {
-  delete &TLOF;
+MVT TargetLoweringBase::getPointerTy(uint32_t AS) const {
+  return MVT::getIntegerVT(getPointerSizeInBits(AS));
+}
+
+unsigned TargetLoweringBase::getPointerSizeInBits(uint32_t AS) const {
+  return DL->getPointerSizeInBits(AS);
+}
+
+unsigned TargetLoweringBase::getPointerTypeSizeInBits(Type *Ty) const {
+  assert(Ty->isPointerTy());
+  return getPointerSizeInBits(Ty->getPointerAddressSpace());
 }
 
 MVT TargetLoweringBase::getScalarShiftAmountTy(EVT LHSTy) const {
-  return MVT::getIntegerVT(8*TD->getPointerSize(0));
+  return MVT::getIntegerVT(8*DL->getPointerSize(0));
 }
 
 EVT TargetLoweringBase::getShiftAmountTy(EVT LHSTy) const {
@@ -831,11 +941,63 @@ bool TargetLoweringBase::isLegalRC(const TargetRegisterClass *RC) const {
   return false;
 }
 
+/// Replace/modify any TargetFrameIndex operands with a targte-dependent
+/// sequence of memory operands that is recognized by PrologEpilogInserter.
+MachineBasicBlock*
+TargetLoweringBase::emitPatchPoint(MachineInstr *MI,
+                                   MachineBasicBlock *MBB) const {
+  MachineFunction &MF = *MI->getParent()->getParent();
+
+  // MI changes inside this loop as we grow operands.
+  for(unsigned OperIdx = 0; OperIdx != MI->getNumOperands(); ++OperIdx) {
+    MachineOperand &MO = MI->getOperand(OperIdx);
+    if (!MO.isFI())
+      continue;
+
+    // foldMemoryOperand builds a new MI after replacing a single FI operand
+    // with the canonical set of five x86 addressing-mode operands.
+    int FI = MO.getIndex();
+    MachineInstrBuilder MIB = BuildMI(MF, MI->getDebugLoc(), MI->getDesc());
+
+    // Copy operands before the frame-index.
+    for (unsigned i = 0; i < OperIdx; ++i)
+      MIB.addOperand(MI->getOperand(i));
+    // Add frame index operands: direct-mem-ref tag, #FI, offset.
+    MIB.addImm(StackMaps::DirectMemRefOp);
+    MIB.addOperand(MI->getOperand(OperIdx));
+    MIB.addImm(0);
+    // Copy the operands after the frame index.
+    for (unsigned i = OperIdx + 1; i != MI->getNumOperands(); ++i)
+      MIB.addOperand(MI->getOperand(i));
+
+    // Inherit previous memory operands.
+    MIB->setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
+    assert(MIB->mayLoad() && "Folded a stackmap use to a non-load!");
+
+    // Add a new memory operand for this FI.
+    const MachineFrameInfo &MFI = *MF.getFrameInfo();
+    assert(MFI.getObjectOffset(FI) != -1);
+    MachineMemOperand *MMO = MF.getMachineMemOperand(
+        MachinePointerInfo::getFixedStack(FI), MachineMemOperand::MOLoad,
+        TM.getSubtargetImpl()->getDataLayout()->getPointerSize(),
+        MFI.getObjectAlignment(FI));
+    MIB->addMemOperand(MF, MMO);
+
+    // Replace the instruction and update the operand index.
+    MBB->insert(MachineBasicBlock::iterator(MI), MIB);
+    OperIdx += (MIB->getNumOperands() - MI->getNumOperands()) - 1;
+    MI->eraseFromParent();
+    MI = MIB;
+  }
+  return MBB;
+}
+
 /// findRepresentativeClass - Return the largest legal super-reg register class
 /// of the register class for the specified type and its associated "cost".
 std::pair<const TargetRegisterClass*, uint8_t>
 TargetLoweringBase::findRepresentativeClass(MVT VT) const {
-  const TargetRegisterInfo *TRI = getTargetMachine().getRegisterInfo();
+  const TargetRegisterInfo *TRI =
+      getTargetMachine().getSubtargetImpl()->getRegisterInfo();
   const TargetRegisterClass *RC = RegClassForVT[VT.SimpleTy];
   if (!RC)
     return std::make_pair(RC, 0);
@@ -875,7 +1037,7 @@ void TargetLoweringBase::computeRegisterProperties() {
 
   // Find the largest integer register class.
   unsigned LargestIntReg = MVT::LAST_INTEGER_VALUETYPE;
-  for (; RegClassForVT[LargestIntReg] == 0; --LargestIntReg)
+  for (; RegClassForVT[LargestIntReg] == nullptr; --LargestIntReg)
     assert(LargestIntReg != MVT::i1 && "No integer registers defined!");
 
   // Every integer value type larger than this largest register takes twice as
@@ -946,27 +1108,35 @@ void TargetLoweringBase::computeRegisterProperties() {
     }
   }
 
+  if (!isTypeLegal(MVT::f16)) {
+    NumRegistersForVT[MVT::f16] = NumRegistersForVT[MVT::i16];
+    RegisterTypeForVT[MVT::f16] = RegisterTypeForVT[MVT::i16];
+    TransformToType[MVT::f16] = MVT::i16;
+    ValueTypeActions.setTypeAction(MVT::f16, TypeSoftenFloat);
+  }
+
   // Loop over all of the vector value types to see which need transformations.
   for (unsigned i = MVT::FIRST_VECTOR_VALUETYPE;
        i <= (unsigned)MVT::LAST_VECTOR_VALUETYPE; ++i) {
-    MVT VT = (MVT::SimpleValueType)i;
-    if (isTypeLegal(VT)) continue;
+    MVT VT = (MVT::SimpleValueType) i;
+    if (isTypeLegal(VT))
+      continue;
 
-    // Determine if there is a legal wider type.  If so, we should promote to
-    // that wider vector type.
     MVT EltVT = VT.getVectorElementType();
     unsigned NElts = VT.getVectorNumElements();
-    if (NElts != 1 && !shouldSplitVectorElementType(EltVT)) {
-      bool IsLegalWiderType = false;
-      // First try to promote the elements of integer vectors. If no legal
-      // promotion was found, fallback to the widen-vector method.
-      for (unsigned nVT = i+1; nVT <= MVT::LAST_VECTOR_VALUETYPE; ++nVT) {
-        MVT SVT = (MVT::SimpleValueType)nVT;
+    bool IsLegalWiderType = false;
+    LegalizeTypeAction PreferredAction = getPreferredVectorAction(VT);
+    switch (PreferredAction) {
+    case TypePromoteInteger: {
+      // Try to promote the elements of integer vectors. If no legal
+      // promotion was found, fall through to the widen-vector method.
+      for (unsigned nVT = i + 1; nVT <= MVT::LAST_VECTOR_VALUETYPE; ++nVT) {
+        MVT SVT = (MVT::SimpleValueType) nVT;
         // Promote vectors of integers to vectors with the same number
         // of elements, with a wider element type.
         if (SVT.getVectorElementType().getSizeInBits() > EltVT.getSizeInBits()
-            && SVT.getVectorNumElements() == NElts &&
-            isTypeLegal(SVT) && SVT.getScalarType().isInteger()) {
+            && SVT.getVectorNumElements() == NElts && isTypeLegal(SVT)
+            && SVT.getScalarType().isInteger()) {
           TransformToType[i] = SVT;
           RegisterTypeForVT[i] = SVT;
           NumRegistersForVT[i] = 1;
@@ -975,15 +1145,15 @@ void TargetLoweringBase::computeRegisterProperties() {
           break;
         }
       }
-
-      if (IsLegalWiderType) continue;
-
+      if (IsLegalWiderType)
+        break;
+    }
+    case TypeWidenVector: {
       // Try to widen the vector.
-      for (unsigned nVT = i+1; nVT <= MVT::LAST_VECTOR_VALUETYPE; ++nVT) {
-        MVT SVT = (MVT::SimpleValueType)nVT;
-        if (SVT.getVectorElementType() == EltVT &&
-            SVT.getVectorNumElements() > NElts &&
-            isTypeLegal(SVT)) {
+      for (unsigned nVT = i + 1; nVT <= MVT::LAST_VECTOR_VALUETYPE; ++nVT) {
+        MVT SVT = (MVT::SimpleValueType) nVT;
+        if (SVT.getVectorElementType() == EltVT
+            && SVT.getVectorNumElements() > NElts && isTypeLegal(SVT)) {
           TransformToType[i] = SVT;
           RegisterTypeForVT[i] = SVT;
           NumRegistersForVT[i] = 1;
@@ -992,27 +1162,34 @@ void TargetLoweringBase::computeRegisterProperties() {
           break;
         }
       }
-      if (IsLegalWiderType) continue;
+      if (IsLegalWiderType)
+        break;
     }
+    case TypeSplitVector:
+    case TypeScalarizeVector: {
+      MVT IntermediateVT;
+      MVT RegisterVT;
+      unsigned NumIntermediates;
+      NumRegistersForVT[i] = getVectorTypeBreakdownMVT(VT, IntermediateVT,
+          NumIntermediates, RegisterVT, this);
+      RegisterTypeForVT[i] = RegisterVT;
 
-    MVT IntermediateVT;
-    MVT RegisterVT;
-    unsigned NumIntermediates;
-    NumRegistersForVT[i] =
-      getVectorTypeBreakdownMVT(VT, IntermediateVT, NumIntermediates,
-                                RegisterVT, this);
-    RegisterTypeForVT[i] = RegisterVT;
-
-    MVT NVT = VT.getPow2VectorType();
-    if (NVT == VT) {
-      // Type is already a power of 2.  The default action is to split.
-      TransformToType[i] = MVT::Other;
-      unsigned NumElts = VT.getVectorNumElements();
-      ValueTypeActions.setTypeAction(VT,
-            NumElts > 1 ? TypeSplitVector : TypeScalarizeVector);
-    } else {
-      TransformToType[i] = NVT;
-      ValueTypeActions.setTypeAction(VT, TypeWidenVector);
+      MVT NVT = VT.getPow2VectorType();
+      if (NVT == VT) {
+        // Type is already a power of 2.  The default action is to split.
+        TransformToType[i] = MVT::Other;
+        if (PreferredAction == TypeScalarizeVector)
+          ValueTypeActions.setTypeAction(VT, TypeScalarizeVector);
+        else
+          ValueTypeActions.setTypeAction(VT, TypeSplitVector);
+      } else {
+        TransformToType[i] = NVT;
+        ValueTypeActions.setTypeAction(VT, TypeWidenVector);
+      }
+      break;
+    }
+    default:
+      llvm_unreachable("Unknown vector legalization action!");
     }
   }
 
@@ -1024,13 +1201,13 @@ void TargetLoweringBase::computeRegisterProperties() {
   for (unsigned i = 0; i != MVT::LAST_VALUETYPE; ++i) {
     const TargetRegisterClass* RRC;
     uint8_t Cost;
-    tie(RRC, Cost) =  findRepresentativeClass((MVT::SimpleValueType)i);
+    std::tie(RRC, Cost) = findRepresentativeClass((MVT::SimpleValueType)i);
     RepRegClassForVT[i] = RRC;
     RepRegClassCostForVT[i] = Cost;
   }
 }
 
-EVT TargetLoweringBase::getSetCCResultType(EVT VT) const {
+EVT TargetLoweringBase::getSetCCResultType(LLVMContext &, EVT VT) const {
   assert(!VT.isVector() && "No default SetCC type for vectors!");
   return getPointerTy(0).SimpleTy;
 }
@@ -1159,7 +1336,7 @@ void llvm::GetReturnInfo(Type* ReturnType, AttributeSet attr,
       Flags.setZExt();
 
     for (unsigned i = 0; i < NumParts; ++i)
-      Outs.push_back(ISD::OutputArg(Flags, PartVT, /*isFixed=*/true, 0, 0));
+      Outs.push_back(ISD::OutputArg(Flags, PartVT, VT, /*isFixed=*/true, 0, 0));
   }
 }
 
@@ -1167,7 +1344,7 @@ void llvm::GetReturnInfo(Type* ReturnType, AttributeSet attr,
 /// function arguments in the caller parameter area.  This is the actual
 /// alignment, not its logarithm.
 unsigned TargetLoweringBase::getByValTypeAlignment(Type *Ty) const {
-  return TD->getCallFrameTypeAlignment(Ty);
+  return DL->getABITypeAlignment(Ty);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1195,7 +1372,7 @@ int TargetLoweringBase::InstructionOpcodeToISD(unsigned Opcode) const {
   case Mul:            return ISD::MUL;
   case FMul:           return ISD::FMUL;
   case UDiv:           return ISD::UDIV;
-  case SDiv:           return ISD::UDIV;
+  case SDiv:           return ISD::SDIV;
   case FDiv:           return ISD::FDIV;
   case URem:           return ISD::UREM;
   case SRem:           return ISD::SREM;
@@ -1225,6 +1402,7 @@ int TargetLoweringBase::InstructionOpcodeToISD(unsigned Opcode) const {
   case PtrToInt:       return ISD::BITCAST;
   case IntToPtr:       return ISD::BITCAST;
   case BitCast:        return ISD::BITCAST;
+  case AddrSpaceCast:  return ISD::ADDRSPACECAST;
   case ICmp:           return ISD::SETCC;
   case FCmp:           return ISD::SETCC;
   case PHI:            return 0;
@@ -1300,6 +1478,8 @@ bool TargetLoweringBase::isLegalAddressingMode(const AddrMode &AM,
       return false;
     // Allow 2*r as r+r.
     break;
+  default: // Don't allow n * r
+    return false;
   }
 
   return true;

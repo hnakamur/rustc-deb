@@ -8,7 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern: instantiating a type parameter with an incompatible type
-fn bar<T: Sized>() { }
-fn foo<T>() { bar::<Option<T>>() }
+
+fn is_sized<T:Sized>() { }
+fn not_sized<T: ?Sized>() { }
+
+enum Foo<U> { FooSome(U), FooNone }
+fn foo1<T>() { not_sized::<Foo<T>>() } // Hunky dory.
+fn foo2<T: ?Sized>() { not_sized::<Foo<T>>() }
+//~^ ERROR the trait `core::marker::Sized` is not implemented
+//
+// Not OK: `T` is not sized.
+
+enum Bar<U: ?Sized> { BarSome(U), BarNone }
+fn bar1<T: ?Sized>() { not_sized::<Bar<T>>() }
+fn bar2<T: ?Sized>() { is_sized::<Bar<T>>() }
+//~^ ERROR the trait `core::marker::Sized` is not implemented
+//
+// Not OK: `Bar<T>` is not sized, but it should be.
+
 fn main() { }

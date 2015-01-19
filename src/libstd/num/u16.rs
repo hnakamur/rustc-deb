@@ -8,7 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Operations and constants for `u16`
+//! Operations and constants for unsigned 16-bits integers (`u16` type)
 
-pub use self::generated::*;
-uint_module!(u16, i16, 16)
+#![stable]
+#![doc(primitive = "u16")]
+
+pub use core::u16::{BITS, BYTES, MIN, MAX};
+
+uint_module! { u16 }

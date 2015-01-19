@@ -8,6 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-static mut a: ~int = ~3; //~ ERROR: disallowed operator in constant
+#![feature(box_syntax)]
+
+static mut a: Box<isize> = box 3;
+//~^ ERROR statics are not allowed to have custom pointers
+//~^^ ERROR mutable statics are not allowed to have owned pointers
 
 fn main() {}

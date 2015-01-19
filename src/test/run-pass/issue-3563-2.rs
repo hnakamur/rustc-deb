@@ -8,11 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[allow(default_methods)]
 trait Canvas {
     fn add_point(&self, point: &int);
     fn add_points(&self, shapes: &[int]) {
-        for shapes.iter().advance |pt| {
+        for pt in shapes.iter() {
             self.add_point(pt)
         }
     }

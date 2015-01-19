@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,10 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test Can't use syntax crate here
+// ignore-test Can't use syntax crate here
 
-extern mod extra;
-extern mod syntax;
+#![feature(quote)]
+
+extern crate syntax;
 
 use io::*;
 
@@ -23,7 +24,7 @@ use syntax::print::*;
 
 
 trait fake_ext_ctxt {
-    fn cfg() -> ast::crate_cfg;
+    fn cfg() -> ast::CrateConfig;
     fn parse_sess() -> parse::parse_sess;
     fn call_site() -> span;
     fn ident_of(st: &str) -> ast::ident;
@@ -32,13 +33,13 @@ trait fake_ext_ctxt {
 type fake_session = parse::parse_sess;
 
 impl fake_ext_ctxt for fake_session {
-    fn cfg() -> ast::crate_cfg { ~[] }
+    fn cfg() -> ast::CrateConfig { Vec::new() }
     fn parse_sess() -> parse::parse_sess { self }
     fn call_site() -> span {
         codemap::span {
             lo: codemap::BytePos(0),
             hi: codemap::BytePos(0),
-            expn_info: None
+            expn_id: NO_EXPANSION
         }
     }
     fn ident_of(st: &str) -> ast::ident {
@@ -53,15 +54,15 @@ fn mk_ctxt() -> fake_ext_ctxt {
 
 
 fn main() {
-    let ext_cx = mk_ctxt();
+    let cx = mk_ctxt();
 
-    let abc = quote_expr!(23);
+    let abc = quote_expr!(cx, 23);
     check_pp(abc,  pprust::print_expr, "23");
 
-    let expr3 = quote_expr!(2 - $abcd + 7); //~ ERROR unresolved name: abcd
+    let expr3 = quote_expr!(cx, 2 - $abcd + 7); //~ ERROR unresolved name: abcd
     check_pp(expr3,  pprust::print_expr, "2 - 23 + 7");
 }
 
-fn check_pp<T>(expr: T, f: &fn(pprust::ps, T), expect: str) {
-    fail!();
+fn check_pp<T>(expr: T, f: |pprust::ps, T|, expect: str) {
+    panic!();
 }

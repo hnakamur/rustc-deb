@@ -1,4 +1,4 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -11,31 +11,33 @@
 // This actually tests a lot more than just encodable/decodable, but it gets the
 // job done at least
 
-// xfail-fast
+// ignore-test FIXME(#5121)
 
-extern mod extra;
+extern crate rand;
+extern crate rbml;
+extern crate serialize;
 
-use std::io;
-use std::rand::{random, Rand};
-use extra::serialize::*;
-use extra::ebml;
-use extra::ebml::writer::Encoder;
-use extra::ebml::reader::Decoder;
+use rand::{random, Rand};
+use rbml;
+use rbml::Doc;
+use rbml::writer::Encoder;
+use rbml::reader::Decoder;
+use serialize::{Encodable, Decodable};
 
-#[deriving(Encodable, Decodable, Eq, Rand)]
+#[derive(Encodable, Decodable, Eq, Rand)]
 struct A;
-#[deriving(Encodable, Decodable, Eq, Rand)]
+#[derive(Encodable, Decodable, Eq, Rand)]
 struct B(int);
-#[deriving(Encodable, Decodable, Eq, Rand)]
+#[derive(Encodable, Decodable, Eq, Rand)]
 struct C(int, int, uint);
 
-#[deriving(Encodable, Decodable, Eq, Rand)]
+#[derive(Encodable, Decodable, Eq, Rand)]
 struct D {
     a: int,
     b: uint,
 }
 
-#[deriving(Encodable, Decodable, Eq, Rand)]
+#[derive(Encodable, Decodable, Eq, Rand)]
 enum E {
     E1,
     E2(uint),
@@ -43,22 +45,22 @@ enum E {
     E4{ x: uint },
 }
 
-#[deriving(Encodable, Decodable, Eq, Rand)]
+#[derive(Encodable, Decodable, Eq, Rand)]
 enum F { F1 }
 
-#[deriving(Encodable, Decodable, Eq, Rand)]
+#[derive(Encodable, Decodable, Eq, Rand)]
 struct G<T> {
     t: T
 }
 
-fn roundtrip<T: Rand + Eq + Encodable<Encoder> + Decodable<Decoder>>() {
+fn roundtrip<'a, T: Rand + Eq + Encodable<Encoder<'a>> +
+                    Decodable<Decoder<'a>>>() {
     let obj: T = random();
-    let bytes = do io::with_bytes_writer |w| {
-        let mut e = Encoder(w);
-        obj.encode(&mut e);
-    };
-    let doc = ebml::reader::Doc(@bytes);
-    let mut dec = Decoder(doc);
+    let mut w = Vec::new();
+    let mut e = Encoder::new(&mut w);
+    obj.encode(&mut e);
+    let doc = rbml::Doc::new(&w[]);
+    let mut dec = Decoder::new(doc);
     let obj2 = Decodable::decode(&mut dec);
     assert!(obj == obj2);
 }
@@ -69,7 +71,7 @@ pub fn main() {
     roundtrip::<C>();
     roundtrip::<D>();
 
-    for 20.times {
+    for _ in range(0, 20) {
         roundtrip::<E>();
         roundtrip::<F>();
         roundtrip::<G<int>>();

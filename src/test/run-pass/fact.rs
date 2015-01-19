@@ -11,28 +11,27 @@
 
 
 
-// -*- rust -*-
 fn f(x: int) -> int {
-    // debug!("in f:");
+    // println!("in f:");
 
-    debug!(x);
+    println!("{}", x);
     if x == 1 {
-        // debug!("bottoming out");
+        // println!("bottoming out");
 
         return 1;
     } else {
-        // debug!("recurring");
+        // println!("recurring");
 
         let y: int = x * f(x - 1);
-        // debug!("returned");
+        // println!("returned");
 
-        debug!(y);
+        println!("{}", y);
         return y;
     }
 }
 
 pub fn main() {
     assert_eq!(f(5), 120);
-    // debug!("all done");
+    // println!("all done");
 
 }

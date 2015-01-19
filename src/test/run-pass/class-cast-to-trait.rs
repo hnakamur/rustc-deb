@@ -8,14 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-freebsd FIXME fails on BSD
+
+
 trait noisy {
   fn speak(&mut self);
 }
 
 struct cat {
-  priv meows: uint,
+  meows: uint,
   how_hungry: int,
-  name: ~str,
+  name: String,
 }
 
 impl noisy for cat {
@@ -25,12 +28,12 @@ impl noisy for cat {
 impl cat {
   pub fn eat(&mut self) -> bool {
     if self.how_hungry > 0 {
-        error!("OM NOM NOM");
+        println!("OM NOM NOM");
         self.how_hungry -= 2;
         return true;
     }
     else {
-        error!("Not hungry!");
+        println!("Not hungry!");
         return false;
     }
   }
@@ -38,7 +41,7 @@ impl cat {
 
 impl cat {
     fn meow(&mut self) {
-      error!("Meow");
+      println!("Meow");
       self.meows += 1u;
       if self.meows % 5u == 0u {
           self.how_hungry += 1;
@@ -46,7 +49,7 @@ impl cat {
     }
 }
 
-fn cat(in_x : uint, in_y : int, in_name: ~str) -> cat {
+fn cat(in_x : uint, in_y : int, in_name: String) -> cat {
     cat {
         meows: in_x,
         how_hungry: in_y,
@@ -56,6 +59,7 @@ fn cat(in_x : uint, in_y : int, in_name: ~str) -> cat {
 
 
 pub fn main() {
-  let mut nyan: @noisy = @cat(0u, 2, ~"nyan") as @noisy;
-  nyan.speak();
+    let mut nyan = cat(0u, 2, "nyan".to_string());
+    let mut nyan: &mut noisy = &mut nyan;
+    nyan.speak();
 }

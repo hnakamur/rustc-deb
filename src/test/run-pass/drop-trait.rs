@@ -13,11 +13,11 @@ struct Foo {
 }
 
 impl Drop for Foo {
-    fn drop(&self) {
-        println("bye");
+    fn drop(&mut self) {
+        println!("bye");
     }
 }
 
 pub fn main() {
-    let x: Foo = Foo { x: 3 };
+    let _x: Foo = Foo { x: 3 };
 }

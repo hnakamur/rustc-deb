@@ -1,6 +1,5 @@
-// xfail-fast
 
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,17 +9,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[no_std];
-extern mod std;
-extern mod zed(name = "std");
-extern mod bar(name = "std", vers = "0.7");
+
+#![allow(unused_imports)]
+
+#![no_std]
+extern crate std;
+extern crate "std" as zed;
 
 
 use std::str;
-use x = zed::str;
+use zed::str as x;
 mod baz {
-    pub use bar::str;
-    pub use x = std::str;
+    pub use std::str as x;
 }
 
-pub fn main() { }
+#[start]
+pub fn start(_: int, _: *const *const u8) -> int { 0 }

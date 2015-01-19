@@ -8,35 +8,33 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-win32 leaks
+
 // Issue #787
 // Don't try to clean up uninitialized locals
 
-extern mod extra;
+use std::thread::Thread;
 
-use std::task;
+fn test_break() { loop { let _x: Box<int> = break; } }
 
-fn test_break() { loop { let x: @int = break; } }
+fn test_cont() { let mut i = 0i; while i < 1 { i += 1; let _x: Box<int> = continue; } }
 
-fn test_cont() { let mut i = 0; while i < 1 { i += 1; let x: @int = loop; } }
+fn test_ret() { let _x: Box<int> = return; }
 
-fn test_ret() { let x: @int = return; }
-
-fn test_fail() {
-    fn f() { let x: @int = fail!(); }
-    task::try(|| f() );
+fn test_panic() {
+    fn f() { let _x: Box<int> = panic!(); }
+    Thread::scoped(move|| f() ).join().err().unwrap();
 }
 
-fn test_fail_indirect() {
-    fn f() -> ! { fail!(); }
-    fn g() { let x: @int = f(); }
-    task::try(|| g() );
+fn test_panic_indirect() {
+    fn f() -> ! { panic!(); }
+    fn g() { let _x: Box<int> = f(); }
+    Thread::scoped(move|| g() ).join().err().unwrap();
 }
 
 pub fn main() {
     test_break();
     test_cont();
     test_ret();
-    test_fail();
-    test_fail_indirect();
+    test_panic();
+    test_panic_indirect();
 }

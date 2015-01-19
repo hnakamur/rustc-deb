@@ -8,15 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-
-
 // Regression test for issue #152.
 pub fn main() {
     let mut b: uint = 1u;
     while b <= 32u {
         0u << b;
         b <<= 1u;
-        debug!(b);
+        println!("{}", b);
     }
 }

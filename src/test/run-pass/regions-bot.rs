@@ -10,9 +10,9 @@
 
 // A very limited test of the "bottom" region
 
-fn produce_static<T>() -> &'static T { fail!(); }
+fn produce_static<T>() -> &'static T { panic!(); }
 
-fn foo<T>(x: &T) -> &uint { produce_static() }
+fn foo<T>(_x: &T) -> &uint { produce_static() }
 
 pub fn main() {
 }

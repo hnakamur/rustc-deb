@@ -8,12 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name="foreign_lib", vers="0.0")];
+#![crate_name="foreign_lib"]
 
 pub mod rustrt {
-    use std::libc;
+    extern crate libc;
 
-    pub extern {
-        pub fn rust_get_argc() -> libc::c_int;
+    #[link(name = "rust_test_helpers")]
+    extern {
+        pub fn rust_get_test_int() -> libc::intptr_t;
     }
 }

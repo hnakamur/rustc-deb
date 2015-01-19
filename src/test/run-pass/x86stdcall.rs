@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -9,27 +9,30 @@
 // except according to those terms.
 
 // GetLastError doesn't seem to work with stack switching
-// xfail-test
 
-#[cfg(target_os = "win32")]
-extern "stdcall" mod kernel32 {
-    fn SetLastError(err: uint);
-    fn GetLastError() -> uint;
+#[cfg(windows)]
+mod kernel32 {
+  extern "system" {
+    pub fn SetLastError(err: uint);
+    pub fn GetLastError() -> uint;
+  }
 }
 
 
-#[cfg(target_os = "win32")]
+#[cfg(windows)]
 pub fn main() {
     unsafe {
         let expected = 1234u;
         kernel32::SetLastError(expected);
         let actual = kernel32::GetLastError();
-        log(error, actual);
+        println!("actual = {}", actual);
         assert_eq!(expected, actual);
     }
 }
 
-#[cfg(target_os = "macos")]
-#[cfg(target_os = "linux")]
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "macos",
+          target_os = "linux",
+          target_os = "freebsd",
+          target_os = "dragonfly",
+          target_os = "android"))]
 pub fn main() { }

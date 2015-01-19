@@ -8,7 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Operations and constants for `u32`
+//! Operations and constants for unsigned 32-bits integers (`u32` type)
 
-pub use self::generated::*;
-uint_module!(u32, i32, 32)
+#![stable]
+#![doc(primitive = "u32")]
+
+pub use core::u32::{BITS, BYTES, MIN, MAX};
+
+uint_module! { u32 }

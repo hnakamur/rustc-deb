@@ -8,15 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct P { child: Option<@mut P> }
+struct P { child: Option<Box<P>> }
 trait PTrait {
-   fn getChildOption(&self) -> Option<@P>;
+   fn getChildOption(&self) -> Option<Box<P>>;
 }
 
 impl PTrait for P {
-   fn getChildOption(&self) -> Option<@P> {
-       static childVal: @P = self.child.get(); //~ ERROR attempt to use a non-constant value in a constant
-       fail!();
+   fn getChildOption(&self) -> Option<Box<P>> {
+       static childVal: Box<P> = self.child.get();
+       //~^ ERROR attempt to use a non-constant value in a constant
+       panic!();
    }
 }
 

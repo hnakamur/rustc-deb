@@ -1,6 +1,4 @@
-// xfail-fast
-
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -14,10 +12,10 @@ use module_of_many_things::*;
 use dug::too::greedily::and::too::deep::*;
 
 mod module_of_many_things {
-    pub fn f1() { debug!("f1"); }
-    pub fn f2() { debug!("f2"); }
-    fn f3() { debug!("f3"); }
-    pub fn f4() { debug!("f4"); }
+    pub fn f1() { println!("f1"); }
+    pub fn f2() { println!("f2"); }
+    fn f3() { println!("f3"); }
+    pub fn f4() { println!("f4"); }
 }
 
 mod dug {
@@ -26,8 +24,8 @@ mod dug {
             pub mod and {
                 pub mod too {
                     pub mod deep {
-                        pub fn nameless_fear() { debug!("Boo!"); }
-                        pub fn also_redstone() { debug!("Whatever."); }
+                        pub fn nameless_fear() { println!("Boo!"); }
+                        pub fn also_redstone() { println!("Whatever."); }
                     }
                 }
             }

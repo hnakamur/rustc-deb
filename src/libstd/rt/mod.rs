@@ -8,236 +8,164 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-/*! The Rust Runtime, including the task scheduler and I/O
+//! Runtime services
+//!
+//! The `rt` module provides a narrow set of runtime services,
+//! including the global heap (exported in `heap`) and unwinding and
+//! backtrace support. The APIs in this module are highly unstable,
+//! and should be considered as private implementation details for the
+//! time being.
 
-The `rt` module provides the private runtime infrastructure necessary
-to support core language features like the exchange and local heap,
-the garbage collector, logging, local data and unwinding. It also
-implements the default task scheduler and task model. Initialization
-routines are provided for setting up runtime resources in common
-configurations, including that used by `rustc` when generating
-executables.
+#![unstable]
 
-It is intended that the features provided by `rt` can be factored in a
-way such that the core library can be built with different 'profiles'
-for different use cases, e.g. excluding the task scheduler. A number
-of runtime features though are critical to the functioning of the
-language and an implementation must be provided regardless of the
-execution environment.
+// FIXME: this should not be here.
+#![allow(missing_docs)]
 
-Of foremost importance is the global exchange heap, in the module
-`global_heap`. Very little practical Rust code can be written without
-access to the global heap. Unlike most of `rt` the global heap is
-truly a global resource and generally operates independently of the
-rest of the runtime.
+#![allow(dead_code)]
 
-All other runtime features are task-local, including the local heap,
-the garbage collector, local storage, logging and the stack unwinder.
+use marker::Send;
+use ops::FnOnce;
+use sys;
+use thunk::Thunk;
 
-The relationship between `rt` and the rest of the core library is
-not entirely clear yet and some modules will be moving into or
-out of `rt` as development proceeds.
+// Reexport some of our utilities which are expected by other crates.
+pub use self::util::{default_sched_threads, min_stack, running_on_valgrind};
+pub use self::unwind::{begin_unwind, begin_unwind_fmt};
 
-Several modules in `core` are clients of `rt`:
+// Reexport some functionality from liballoc.
+pub use alloc::heap;
 
-* `core::task` - The user-facing interface to the Rust task model.
-* `core::task::local_data` - The interface to local data.
-* `core::gc` - The garbage collector.
-* `core::unstable::lang` - Miscellaneous lang items, some of which rely on `core::rt`.
-* `core::condition` - Uses local data.
-* `core::cleanup` - Local heap destruction.
-* `core::io` - In the future `core::io` will use an `rt` implementation.
-* `core::logging`
-* `core::pipes`
-* `core::comm`
-* `core::stackwalk`
+// Simple backtrace functionality (to print on panic)
+pub mod backtrace;
 
-*/
+// Internals
+#[macro_use]
+mod macros;
 
-#[doc(hidden)];
+// These should be refactored/moved/made private over time
+pub mod util;
+pub mod unwind;
+pub mod args;
 
-use ptr::RawPtr;
+mod at_exit_imp;
+mod libunwind;
 
-/// The global (exchange) heap.
-pub mod global_heap;
+/// The default error code of the rust runtime if the main thread panics instead
+/// of exiting cleanly.
+pub const DEFAULT_ERROR_CODE: int = 101;
 
-/// Implementations of language-critical runtime features like @.
-pub mod task;
+#[cfg(any(windows, android))]
+const OS_DEFAULT_STACK_ESTIMATE: uint = 1 << 20;
+#[cfg(all(unix, not(android)))]
+const OS_DEFAULT_STACK_ESTIMATE: uint = 2 * (1 << 20);
 
-/// The coroutine task scheduler, built on the `io` event loop.
-mod sched;
+#[cfg(not(test))]
+#[lang = "start"]
+fn lang_start(main: *const u8, argc: int, argv: *const *const u8) -> int {
+    use prelude::v1::*;
 
-/// Synchronous I/O.
-#[path = "io/mod.rs"]
-pub mod io;
+    use mem;
+    use os;
+    use rt;
+    use sys_common::thread_info::{self, NewThread};
+    use sys_common;
+    use thread::Thread;
 
-/// The EventLoop and internal synchronous I/O interface.
-mod rtio;
+    let something_around_the_top_of_the_stack = 1;
+    let addr = &something_around_the_top_of_the_stack as *const int;
+    let my_stack_top = addr as uint;
 
-/// libuv and default rtio implementation.
-#[path = "uv/mod.rs"]
-pub mod uv;
+    // FIXME #11359 we just assume that this thread has a stack of a
+    // certain size, and estimate that there's at most 20KB of stack
+    // frames above our current position.
+    let my_stack_bottom = my_stack_top + 20000 - OS_DEFAULT_STACK_ESTIMATE;
 
-/// The Local trait for types that are accessible via thread-local
-/// or task-local storage.
-pub mod local;
+    let failed = unsafe {
+        // First, make sure we don't trigger any __morestack overflow checks,
+        // and next set up our stack to have a guard page and run through our
+        // own fault handlers if we hit it.
+        sys_common::stack::record_os_managed_stack_bounds(my_stack_bottom,
+                                                          my_stack_top);
+        sys::thread::guard::init();
+        sys::stack_overflow::init();
 
-/// A parallel work-stealing deque.
-mod work_queue;
+        // Next, set up the current Thread with the guard information we just
+        // created. Note that this isn't necessary in general for new threads,
+        // but we just do this to name the main thread and to give it correct
+        // info about the stack bounds.
+        let thread: Thread = NewThread::new(Some("<main>".to_string()));
+        thread_info::set((my_stack_bottom, my_stack_top),
+                         sys::thread::guard::main(),
+                         thread);
 
-/// A parallel queue.
-mod message_queue;
-
-/// Stack segments and caching.
-mod stack;
-
-/// CPU context swapping.
-mod context;
-
-/// Bindings to system threading libraries.
-mod thread;
-
-/// The runtime configuration, read from environment variables
-pub mod env;
-
-/// The local, managed heap
-mod local_heap;
-
-/// The Logger trait and implementations
-pub mod logging;
-
-/// Tools for testing the runtime
-pub mod test;
-
-/// Reference counting
-pub mod rc;
-
-/// A simple single-threaded channel type for passing buffered data between
-/// scheduler and task context
-pub mod tube;
-
-/// Simple reimplementation of core::comm
-pub mod comm;
-
-// FIXME #5248 shouldn't be pub
-/// The runtime needs to be able to put a pointer into thread-local storage.
-pub mod local_ptr;
-
-// FIXME #5248: The import in `sched` doesn't resolve unless this is pub!
-/// Bindings to pthread/windows thread-local storage.
-pub mod thread_local_storage;
-
-
-/// Set up a default runtime configuration, given compiler-supplied arguments.
-///
-/// This is invoked by the `start` _language item_ (unstable::lang) to
-/// run a Rust executable.
-///
-/// # Arguments
-///
-/// * `argc` & `argv` - The argument vector. On Unix this information is used
-///   by os::args.
-/// * `crate_map` - Runtime information about the executing crate, mostly for logging
-///
-/// # Return value
-///
-/// The return value is used as the process return code. 0 on success, 101 on error.
-pub fn start(_argc: int, _argv: **u8, crate_map: *u8, main: ~fn()) -> int {
-
-    use self::sched::{Scheduler, Coroutine};
-    use self::uv::uvio::UvEventLoop;
-
-    init(crate_map);
-
-    let loop_ = ~UvEventLoop::new();
-    let mut sched = ~Scheduler::new(loop_);
-    let main_task = ~Coroutine::new(&mut sched.stack_pool, main);
-
-    sched.enqueue_task(main_task);
-    sched.run();
-
-    return 0;
-}
-
-/// One-time runtime initialization. Currently all this does is set up logging
-/// based on the RUST_LOG environment variable.
-pub fn init(crate_map: *u8) {
-    logging::init(crate_map);
-}
-
-/// Possible contexts in which Rust code may be executing.
-/// Different runtime services are available depending on context.
-/// Mostly used for determining if we're using the new scheduler
-/// or the old scheduler.
-#[deriving(Eq)]
-pub enum RuntimeContext {
-    // Only the exchange heap is available
-    GlobalContext,
-    // The scheduler may be accessed
-    SchedulerContext,
-    // Full task services, e.g. local heap, unwinding
-    TaskContext,
-    // Running in an old-style task
-    OldTaskContext
-}
-
-/// Determine the current RuntimeContext
-pub fn context() -> RuntimeContext {
-
-    use task::rt::rust_task;
-    use self::local::Local;
-    use self::sched::Scheduler;
-
-    // XXX: Hitting TLS twice to check if the scheduler exists
-    // then to check for the task is not good for perf
-    if unsafe { rust_try_get_task().is_not_null() } {
-        return OldTaskContext;
-    } else {
-        if Local::exists::<Scheduler>() {
-            let context = ::cell::Cell::new_empty();
-            do Local::borrow::<Scheduler> |sched| {
-                if sched.in_task_context() {
-                    context.put_back(TaskContext);
-                } else {
-                    context.put_back(SchedulerContext);
-                }
+        // By default, some platforms will send a *signal* when a EPIPE error
+        // would otherwise be delivered. This runtime doesn't install a SIGPIPE
+        // handler, causing it to kill the program, which isn't exactly what we
+        // want!
+        //
+        // Hence, we set SIGPIPE to ignore when the program starts up in order
+        // to prevent this problem.
+        #[cfg(windows)] fn ignore_sigpipe() {}
+        #[cfg(unix)] fn ignore_sigpipe() {
+            use libc;
+            use libc::funcs::posix01::signal::signal;
+            unsafe {
+                assert!(signal(libc::SIGPIPE, libc::SIG_IGN) != -1);
             }
-            return context.take();
-        } else {
-            return GlobalContext;
         }
-    }
+        ignore_sigpipe();
 
-    pub extern {
-        #[rust_stack]
-        fn rust_try_get_task() -> *rust_task;
+        // Store our args if necessary in a squirreled away location
+        args::init(argc, argv);
+
+        // And finally, let's run some code!
+        let res = unwind::try(|| {
+            let main: fn() = mem::transmute(main);
+            main();
+        });
+        cleanup();
+        res.is_err()
+    };
+
+    // If the exit code wasn't set, then the try block must have panicked.
+    if failed {
+        rt::DEFAULT_ERROR_CODE
+    } else {
+        os::get_exit_status()
     }
 }
 
-#[test]
-fn test_context() {
-    use unstable::run_in_bare_thread;
-    use self::sched::{Scheduler, Coroutine};
-    use rt::uv::uvio::UvEventLoop;
-    use cell::Cell;
-    use rt::local::Local;
+/// Enqueues a procedure to run when the runtime is cleaned up
+///
+/// The procedure passed to this function will be executed as part of the
+/// runtime cleanup phase. For normal rust programs, this means that it will run
+/// after all other threads have exited.
+///
+/// The procedure is *not* executed with a local `Thread` available to it, so
+/// primitives like logging, I/O, channels, spawning, etc, are *not* available.
+/// This is meant for "bare bones" usage to clean up runtime details, this is
+/// not meant as a general-purpose "let's clean everything up" function.
+///
+/// It is forbidden for procedures to register more `at_exit` handlers when they
+/// are running, and doing so will lead to a process abort.
+pub fn at_exit<F:FnOnce()+Send>(f: F) {
+    at_exit_imp::push(Thunk::new(f));
+}
 
-    assert_eq!(context(), OldTaskContext);
-    do run_in_bare_thread {
-        assert_eq!(context(), GlobalContext);
-        let mut sched = ~UvEventLoop::new_scheduler();
-        let task = ~do Coroutine::new(&mut sched.stack_pool) {
-            assert_eq!(context(), TaskContext);
-            let sched = Local::take::<Scheduler>();
-            do sched.deschedule_running_task_and_then() |task| {
-                assert_eq!(context(), SchedulerContext);
-                let task = Cell::new(task);
-                do Local::borrow::<Scheduler> |sched| {
-                    sched.enqueue_task(task.take());
-                }
-            }
-        };
-        sched.enqueue_task(task);
-        sched.run();
-    }
+/// One-time runtime cleanup.
+///
+/// This function is unsafe because it performs no checks to ensure that the
+/// runtime has completely ceased running. It is the responsibility of the
+/// caller to ensure that the runtime is entirely shut down and nothing will be
+/// poking around at the internal components.
+///
+/// Invoking cleanup while portions of the runtime are still in use may cause
+/// undefined behavior.
+pub unsafe fn cleanup() {
+    args::cleanup();
+    sys::stack_overflow::cleanup();
+    // FIXME: (#20012): the resources being cleaned up by at_exit
+    // currently are not prepared for cleanup to happen asynchronously
+    // with detached threads using the resources; for now, we leak.
+    // at_exit_imp::cleanup();
 }

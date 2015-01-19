@@ -9,11 +9,11 @@
 // except according to those terms.
 
 use std::cmp;
-use std::io;
 
+#[derive(Show)]
 struct foo { a: int, b: int, c: int }
 
-impl cmp::Eq for foo {
+impl cmp::PartialEq for foo {
     fn eq(&self, other: &foo) -> bool {
         (*self).a == (*other).a &&
         (*self).b == (*other).b &&
@@ -22,14 +22,17 @@ impl cmp::Eq for foo {
     fn ne(&self, other: &foo) -> bool { !(*self).eq(other) }
 }
 
-static x : foo = foo { a:1, b:2, c: 3 };
-static y : foo = foo { b:2, c:3, a: 1 };
-static z : &'static foo = &foo { a: 10, b: 22, c: 12 };
+const x : foo = foo { a:1, b:2, c: 3 };
+const y : foo = foo { b:2, c:3, a: 1 };
+const z : &'static foo = &foo { a: 10, b: 22, c: 12 };
+const w : foo = foo { a:5, ..x };
 
 pub fn main() {
     assert_eq!(x.b, 2);
     assert_eq!(x, y);
     assert_eq!(z.b, 22);
-    io::println(fmt!("0x%x", x.b as uint));
-    io::println(fmt!("0x%x", z.c as uint));
+    assert_eq!(w.a, 5);
+    assert_eq!(w.c, 3);
+    println!("{:#x}", x.b);
+    println!("{:#x}", z.c);
 }

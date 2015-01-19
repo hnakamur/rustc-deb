@@ -1,151 +1,153 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
+// The Computer Language Benchmarks Game
+// http://benchmarksgame.alioth.debian.org/
 //
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
+// contributed by the Rust Project Developers
 
+// Copyright (c) 2012-2014 The Rust Project Developers
+//
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// - Redistributions of source code must retain the above copyright
+//   notice, this list of conditions and the following disclaimer.
+//
+// - Redistributions in binary form must reproduce the above copyright
+//   notice, this list of conditions and the following disclaimer in
+//   the documentation and/or other materials provided with the
+//   distribution.
+//
+// - Neither the name of "The Computer Language Benchmarks Game" nor
+//   the name of "The Computer Language Shootout Benchmarks" nor the
+//   names of its contributors may be used to endorse or promote
+//   products derived from this software without specific prior
+//   written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+// OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
-/* -*- mode: rust; indent-tabs-mode: nil -*-
- * Implementation of 'fasta' benchmark from
- * Computer Language Benchmarks Game
- * http://shootout.alioth.debian.org/
- */
-extern mod extra;
-
-use std::int;
+use std::cmp::min;
+use std::io::{BufferedWriter, File};
 use std::io;
+use std::num::Float;
 use std::os;
-use std::rand::Rng;
-use std::rand;
-use std::result;
-use std::str;
-use std::uint;
 
-static LINE_LENGTH: uint = 60u;
+const LINE_LENGTH: uint = 60;
+const IM: u32 = 139968;
 
 struct MyRandom {
     last: u32
 }
-
-fn myrandom_next(r: @mut MyRandom, mx: u32) -> u32 {
-    r.last = (r.last * 3877u32 + 29573u32) % 139968u32;
-    mx * r.last / 139968u32
-}
-
-struct AminoAcids {
-    ch: char,
-    prob: u32
-}
-
-fn make_cumulative(aa: ~[AminoAcids]) -> ~[AminoAcids] {
-    let mut cp: u32 = 0u32;
-    let mut ans: ~[AminoAcids] = ~[];
-    for aa.iter().advance |a| {
-        cp += a.prob;
-        ans.push(AminoAcids {ch: a.ch, prob: cp});
+impl MyRandom {
+    fn new() -> MyRandom { MyRandom { last: 42 } }
+    fn normalize(p: f32) -> u32 {(p * IM as f32).floor() as u32}
+    fn gen(&mut self) -> u32 {
+        self.last = (self.last * 3877 + 29573) % IM;
+        self.last
     }
-    ans
 }
 
-fn select_random(r: u32, genelist: ~[AminoAcids]) -> char {
-    if r < genelist[0].prob { return genelist[0].ch; }
-    fn bisect(v: ~[AminoAcids], lo: uint, hi: uint, target: u32) -> char {
-        if hi > lo + 1u {
-            let mid: uint = lo + (hi - lo) / 2u;
-            if target < v[mid].prob {
-                return bisect(v, lo, mid, target);
-            } else { return bisect(v, mid, hi, target); }
-        } else { return v[hi].ch; }
+struct AAGen<'a> {
+    rng: &'a mut MyRandom,
+    data: Vec<(u32, u8)>
+}
+impl<'a> AAGen<'a> {
+    fn new<'b>(rng: &'b mut MyRandom, aa: &[(char, f32)]) -> AAGen<'b> {
+        let mut cum = 0.;
+        let data = aa.iter()
+            .map(|&(ch, p)| { cum += p; (MyRandom::normalize(cum), ch as u8) })
+            .collect();
+        AAGen { rng: rng, data: data }
     }
-    bisect(copy genelist, 0, genelist.len() - 1, r)
+}
+impl<'a> Iterator for AAGen<'a> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<u8> {
+        let r = self.rng.gen();
+        self.data.iter()
+            .skip_while(|pc| pc.0 < r)
+            .map(|&(_, c)| c)
+            .next()
+    }
 }
 
-fn make_random_fasta(wr: @io::Writer,
-                     id: ~str,
-                     desc: ~str,
-                     genelist: ~[AminoAcids],
-                     n: int) {
-    wr.write_line(~">" + id + " " + desc);
-    let mut rng = rand::rng();
-    let rng = @mut MyRandom {
-        last: rng.next()
+fn make_fasta<W: Writer, I: Iterator<Item=u8>>(
+    wr: &mut W, header: &str, mut it: I, mut n: uint)
+    -> std::io::IoResult<()>
+{
+    try!(wr.write(header.as_bytes()));
+    let mut line = [0u8; LINE_LENGTH + 1];
+    while n > 0 {
+        let nb = min(LINE_LENGTH, n);
+        for i in range(0, nb) {
+            line[i] = it.next().unwrap();
+        }
+        n -= nb;
+        line[nb] = '\n' as u8;
+        try!(wr.write(&line[..(nb+1)]));
+    }
+    Ok(())
+}
+
+fn run<W: Writer>(writer: &mut W) -> std::io::IoResult<()> {
+    let args = os::args();
+    let args = args.as_slice();
+    let n = if os::getenv("RUST_BENCH").is_some() {
+        25000000
+    } else if args.len() <= 1u {
+        1000
+    } else {
+        args[1].parse().unwrap()
     };
-    let mut op: ~str = ~"";
-    for uint::range(0u, n as uint) |_i| {
-        op.push_char(select_random(myrandom_next(rng, 100u32),
-                                              copy genelist));
-        if op.len() >= LINE_LENGTH {
-            wr.write_line(op);
-            op = ~"";
-        }
-    }
-    if op.len() > 0u { wr.write_line(op); }
-}
 
-fn make_repeat_fasta(wr: @io::Writer, id: ~str, desc: ~str, s: ~str, n: int) {
-    wr.write_line(~">" + id + " " + desc);
-    let mut op = str::with_capacity( LINE_LENGTH );
-    let sl = s.len();
-    for uint::range(0u, n as uint) |i| {
-        if (op.len() >= LINE_LENGTH) {
-            wr.write_line( op );
-            op = str::with_capacity( LINE_LENGTH );
-        }
-        op.push_char( s[i % sl] as char );
-    }
-    if op.len() > 0 {
-        wr.write_line(op)
-    }
-}
+    let rng = &mut MyRandom::new();
+    let alu =
+        "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG\
+        GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA\
+        CCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT\
+        ACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCA\
+        GCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG\
+        AGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC\
+        AGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+    let iub = &[('a', 0.27), ('c', 0.12), ('g', 0.12),
+                ('t', 0.27), ('B', 0.02), ('D', 0.02),
+                ('H', 0.02), ('K', 0.02), ('M', 0.02),
+                ('N', 0.02), ('R', 0.02), ('S', 0.02),
+                ('V', 0.02), ('W', 0.02), ('Y', 0.02)];
+    let homosapiens = &[('a', 0.3029549426680),
+                        ('c', 0.1979883004921),
+                        ('g', 0.1975473066391),
+                        ('t', 0.3015094502008)];
 
-fn acid(ch: char, prob: u32) -> AminoAcids {
-    AminoAcids {ch: ch, prob: prob}
+    try!(make_fasta(writer, ">ONE Homo sapiens alu\n",
+                    alu.as_bytes().iter().cycle().map(|c| *c), n * 2));
+    try!(make_fasta(writer, ">TWO IUB ambiguity codes\n",
+                    AAGen::new(rng, iub), n * 3));
+    try!(make_fasta(writer, ">THREE Homo sapiens frequency\n",
+                    AAGen::new(rng, homosapiens), n * 5));
+
+    writer.flush()
 }
 
 fn main() {
-    let args = os::args();
-    let args = if os::getenv("RUST_BENCH").is_some() {
-        // alioth tests k-nucleotide with this data at 25,000,000
-        ~[~"", ~"5000000"]
-    } else if args.len() <= 1u {
-        ~[~"", ~"1000"]
+    let res = if os::getenv("RUST_BENCH").is_some() {
+        let mut file = BufferedWriter::new(File::create(&Path::new("./shootout-fasta.data")));
+        run(&mut file)
     } else {
-        args
+        run(&mut io::stdout())
     };
-
-    let writer = if os::getenv("RUST_BENCH").is_some() {
-        result::get(&io::file_writer(&Path("./shootout-fasta.data"),
-                                    [io::Truncate, io::Create]))
-    } else {
-        io::stdout()
-    };
-
-    let n = int::from_str(args[1]).get();
-
-    let iub: ~[AminoAcids] =
-        make_cumulative(~[acid('a', 27u32), acid('c', 12u32), acid('g', 12u32),
-                         acid('t', 27u32), acid('B', 2u32), acid('D', 2u32),
-                         acid('H', 2u32), acid('K', 2u32), acid('M', 2u32),
-                         acid('N', 2u32), acid('R', 2u32), acid('S', 2u32),
-                         acid('V', 2u32), acid('W', 2u32), acid('Y', 2u32)]);
-    let homosapiens: ~[AminoAcids] =
-        make_cumulative(~[acid('a', 30u32), acid('c', 20u32), acid('g', 20u32),
-                         acid('t', 30u32)]);
-    let alu: ~str =
-        ~"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG\
-          GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA\
-          CCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT\
-          ACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCA\
-          GCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG\
-          AGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC\
-          AGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
-    make_repeat_fasta(writer, ~"ONE", ~"Homo sapiens alu", alu, n * 2);
-    make_random_fasta(writer, ~"TWO", ~"IUB ambiguity codes", iub, n * 3);
-    make_random_fasta(writer, ~"THREE",
-                      ~"Homo sapiens frequency", homosapiens, n * 5);
+    res.unwrap()
 }

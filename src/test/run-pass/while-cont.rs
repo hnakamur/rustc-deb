@@ -10,11 +10,11 @@
 
 // Issue #825: Should recheck the loop condition after continuing
 pub fn main() {
-    let mut i = 1;
+    let mut i = 1i;
     while i > 0 {
         assert!((i > 0));
-        debug!(i);
+        println!("{}", i);
         i -= 1;
-        loop;
+        continue;
     }
 }

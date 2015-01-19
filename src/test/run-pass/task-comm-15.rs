@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,18 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
-// xfail-win32
+use std::sync::mpsc::{channel, Sender};
+use std::thread::Thread;
 
-extern mod extra;
-
-use std::comm;
-use std::task;
-
-fn start(c: &comm::Chan<int>, i0: int) {
+fn start(tx: &Sender<int>, i0: int) {
     let mut i = i0;
     while i > 0 {
-        c.send(0);
+        tx.send(0).unwrap();
         i = i - 1;
     }
 }
@@ -29,7 +24,9 @@ pub fn main() {
     // is likely to terminate before the child completes, so from
     // the child's point of view the receiver may die. We should
     // drop messages on the floor in this case, and not crash!
-    let (p, ch) = comm::stream();
-    task::spawn(|| start(&ch, 10));
-    p.recv();
+    let (tx, rx) = channel();
+    let _t = Thread::spawn(move|| {
+        start(&tx, 10)
+    });
+    rx.recv();
 }

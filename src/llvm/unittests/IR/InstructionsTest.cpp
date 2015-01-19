@@ -14,11 +14,14 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "gtest/gtest.h"
+#include <memory>
 
 namespace llvm {
 namespace {
@@ -47,6 +50,58 @@ TEST(InstructionsTest, ReturnInst) {
   delete r1;
 }
 
+// Test fixture that provides a module and a single function within it. Useful
+// for tests that need to refer to the function in some way.
+class ModuleWithFunctionTest : public testing::Test {
+protected:
+  ModuleWithFunctionTest() : M(new Module("MyModule", Ctx)) {
+    FArgTypes.push_back(Type::getInt8Ty(Ctx));
+    FArgTypes.push_back(Type::getInt32Ty(Ctx));
+    FArgTypes.push_back(Type::getInt64Ty(Ctx));
+    FunctionType *FTy =
+        FunctionType::get(Type::getVoidTy(Ctx), FArgTypes, false);
+    F = Function::Create(FTy, Function::ExternalLinkage, "", M.get());
+  }
+
+  LLVMContext Ctx;
+  std::unique_ptr<Module> M;
+  SmallVector<Type *, 3> FArgTypes;
+  Function *F;
+};
+
+TEST_F(ModuleWithFunctionTest, CallInst) {
+  Value *Args[] = {ConstantInt::get(Type::getInt8Ty(Ctx), 20),
+                   ConstantInt::get(Type::getInt32Ty(Ctx), 9999),
+                   ConstantInt::get(Type::getInt64Ty(Ctx), 42)};
+  std::unique_ptr<CallInst> Call(CallInst::Create(F, Args));
+
+  // Make sure iteration over a call's arguments works as expected.
+  unsigned Idx = 0;
+  for (Value *Arg : Call->arg_operands()) {
+    EXPECT_EQ(FArgTypes[Idx], Arg->getType());
+    EXPECT_EQ(Call->getArgOperand(Idx)->getType(), Arg->getType());
+    Idx++;
+  }
+}
+
+TEST_F(ModuleWithFunctionTest, InvokeInst) {
+  BasicBlock *BB1 = BasicBlock::Create(Ctx, "", F);
+  BasicBlock *BB2 = BasicBlock::Create(Ctx, "", F);
+
+  Value *Args[] = {ConstantInt::get(Type::getInt8Ty(Ctx), 20),
+                   ConstantInt::get(Type::getInt32Ty(Ctx), 9999),
+                   ConstantInt::get(Type::getInt64Ty(Ctx), 42)};
+  std::unique_ptr<InvokeInst> Invoke(InvokeInst::Create(F, BB1, BB2, Args));
+
+  // Make sure iteration over invoke's arguments works as expected.
+  unsigned Idx = 0;
+  for (Value *Arg : Invoke->arg_operands()) {
+    EXPECT_EQ(FArgTypes[Idx], Arg->getType());
+    EXPECT_EQ(Invoke->getArgOperand(Idx)->getType(), Arg->getType());
+    Idx++;
+  }
+}
+
 TEST(InstructionsTest, BranchInst) {
   LLVMContext &C(getGlobalContext());
 
@@ -65,9 +120,9 @@ TEST(InstructionsTest, BranchInst) {
   EXPECT_EQ(1U, b0->getNumOperands());
 
   EXPECT_NE(b0->op_begin(), b0->op_end());
-  EXPECT_EQ(b0->op_end(), llvm::next(b0->op_begin()));
+  EXPECT_EQ(b0->op_end(), std::next(b0->op_begin()));
 
-  EXPECT_EQ(b0->op_end(), llvm::next(b0->op_begin()));
+  EXPECT_EQ(b0->op_end(), std::next(b0->op_begin()));
 
   IntegerType* Int1 = IntegerType::get(C, 1);
   Constant* One = ConstantInt::get(Int1, 1, true);
@@ -116,14 +171,41 @@ TEST(InstructionsTest, BranchInst) {
 TEST(InstructionsTest, CastInst) {
   LLVMContext &C(getGlobalContext());
 
-  Type* Int8Ty = Type::getInt8Ty(C);
-  Type* Int64Ty = Type::getInt64Ty(C);
-  Type* V8x8Ty = VectorType::get(Int8Ty, 8);
-  Type* V8x64Ty = VectorType::get(Int64Ty, 8);
-  Type* X86MMXTy = Type::getX86_MMXTy(C);
+  Type *Int8Ty = Type::getInt8Ty(C);
+  Type *Int16Ty = Type::getInt16Ty(C);
+  Type *Int32Ty = Type::getInt32Ty(C);
+  Type *Int64Ty = Type::getInt64Ty(C);
+  Type *V8x8Ty = VectorType::get(Int8Ty, 8);
+  Type *V8x64Ty = VectorType::get(Int64Ty, 8);
+  Type *X86MMXTy = Type::getX86_MMXTy(C);
+
+  Type *HalfTy = Type::getHalfTy(C);
+  Type *FloatTy = Type::getFloatTy(C);
+  Type *DoubleTy = Type::getDoubleTy(C);
+
+  Type *V2Int32Ty = VectorType::get(Int32Ty, 2);
+  Type *V2Int64Ty = VectorType::get(Int64Ty, 2);
+  Type *V4Int16Ty = VectorType::get(Int16Ty, 4);
+
+  Type *Int32PtrTy = PointerType::get(Int32Ty, 0);
+  Type *Int64PtrTy = PointerType::get(Int64Ty, 0);
+
+  Type *Int32PtrAS1Ty = PointerType::get(Int32Ty, 1);
+  Type *Int64PtrAS1Ty = PointerType::get(Int64Ty, 1);
+
+  Type *V2Int32PtrAS1Ty = VectorType::get(Int32PtrAS1Ty, 2);
+  Type *V2Int64PtrAS1Ty = VectorType::get(Int64PtrAS1Ty, 2);
+  Type *V4Int32PtrAS1Ty = VectorType::get(Int32PtrAS1Ty, 4);
+  Type *V4Int64PtrAS1Ty = VectorType::get(Int64PtrAS1Ty, 4);
+
+  Type *V2Int64PtrTy = VectorType::get(Int64PtrTy, 2);
+  Type *V2Int32PtrTy = VectorType::get(Int32PtrTy, 2);
+  Type *V4Int32PtrTy = VectorType::get(Int32PtrTy, 4);
 
   const Constant* c8 = Constant::getNullValue(V8x8Ty);
   const Constant* c64 = Constant::getNullValue(V8x64Ty);
+
+  const Constant *v2ptr32 = Constant::getNullValue(V2Int32PtrTy);
 
   EXPECT_TRUE(CastInst::isCastable(V8x8Ty, X86MMXTy));
   EXPECT_TRUE(CastInst::isCastable(X86MMXTy, V8x8Ty));
@@ -132,16 +214,85 @@ TEST(InstructionsTest, CastInst) {
   EXPECT_TRUE(CastInst::isCastable(V8x8Ty, V8x64Ty));
   EXPECT_EQ(CastInst::Trunc, CastInst::getCastOpcode(c64, true, V8x8Ty, true));
   EXPECT_EQ(CastInst::SExt, CastInst::getCastOpcode(c8, true, V8x64Ty, true));
+
+  EXPECT_FALSE(CastInst::isBitCastable(V8x8Ty, X86MMXTy));
+  EXPECT_FALSE(CastInst::isBitCastable(X86MMXTy, V8x8Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(Int64Ty, X86MMXTy));
+  EXPECT_FALSE(CastInst::isBitCastable(V8x64Ty, V8x8Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(V8x8Ty, V8x64Ty));
+
+  // Check address space casts are rejected since we don't know the sizes here
+  EXPECT_FALSE(CastInst::isBitCastable(Int32PtrTy, Int32PtrAS1Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(Int32PtrAS1Ty, Int32PtrTy));
+  EXPECT_FALSE(CastInst::isBitCastable(V2Int32PtrTy, V2Int32PtrAS1Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(V2Int32PtrAS1Ty, V2Int32PtrTy));
+  EXPECT_TRUE(CastInst::isBitCastable(V2Int32PtrAS1Ty, V2Int64PtrAS1Ty));
+  EXPECT_TRUE(CastInst::isCastable(V2Int32PtrAS1Ty, V2Int32PtrTy));
+  EXPECT_EQ(CastInst::AddrSpaceCast, CastInst::getCastOpcode(v2ptr32, true,
+                                                             V2Int32PtrAS1Ty,
+                                                             true));
+
+  // Test mismatched number of elements for pointers
+  EXPECT_FALSE(CastInst::isBitCastable(V2Int32PtrAS1Ty, V4Int64PtrAS1Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(V4Int64PtrAS1Ty, V2Int32PtrAS1Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(V2Int32PtrAS1Ty, V4Int32PtrAS1Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(Int32PtrTy, V2Int32PtrTy));
+  EXPECT_FALSE(CastInst::isBitCastable(V2Int32PtrTy, Int32PtrTy));
+
+  EXPECT_TRUE(CastInst::isBitCastable(Int32PtrTy, Int64PtrTy));
+  EXPECT_FALSE(CastInst::isBitCastable(DoubleTy, FloatTy));
+  EXPECT_FALSE(CastInst::isBitCastable(FloatTy, DoubleTy));
+  EXPECT_TRUE(CastInst::isBitCastable(FloatTy, FloatTy));
+  EXPECT_TRUE(CastInst::isBitCastable(FloatTy, FloatTy));
+  EXPECT_TRUE(CastInst::isBitCastable(FloatTy, Int32Ty));
+  EXPECT_TRUE(CastInst::isBitCastable(Int16Ty, HalfTy));
+  EXPECT_TRUE(CastInst::isBitCastable(Int32Ty, FloatTy));
+  EXPECT_TRUE(CastInst::isBitCastable(V2Int32Ty, Int64Ty));
+
+  EXPECT_TRUE(CastInst::isBitCastable(V2Int32Ty, V4Int16Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(Int32Ty, Int64Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(Int64Ty, Int32Ty));
+
+  EXPECT_FALSE(CastInst::isBitCastable(V2Int32PtrTy, Int64Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(Int64Ty, V2Int32PtrTy));
+  EXPECT_TRUE(CastInst::isBitCastable(V2Int64PtrTy, V2Int32PtrTy));
+  EXPECT_TRUE(CastInst::isBitCastable(V2Int32PtrTy, V2Int64PtrTy));
+  EXPECT_FALSE(CastInst::isBitCastable(V2Int32Ty, V2Int64Ty));
+  EXPECT_FALSE(CastInst::isBitCastable(V2Int64Ty, V2Int32Ty));
+
+
+  EXPECT_FALSE(CastInst::castIsValid(Instruction::BitCast,
+                                     Constant::getNullValue(V4Int32PtrTy),
+                                     V2Int32PtrTy));
+  EXPECT_FALSE(CastInst::castIsValid(Instruction::BitCast,
+                                     Constant::getNullValue(V2Int32PtrTy),
+                                     V4Int32PtrTy));
+
+  EXPECT_FALSE(CastInst::castIsValid(Instruction::AddrSpaceCast,
+                                     Constant::getNullValue(V4Int32PtrAS1Ty),
+                                     V2Int32PtrTy));
+  EXPECT_FALSE(CastInst::castIsValid(Instruction::AddrSpaceCast,
+                                     Constant::getNullValue(V2Int32PtrTy),
+                                     V4Int32PtrAS1Ty));
+
+
+  // Check that assertion is not hit when creating a cast with a vector of
+  // pointers
+  // First form
+  BasicBlock *BB = BasicBlock::Create(C);
+  Constant *NullV2I32Ptr = Constant::getNullValue(V2Int32PtrTy);
+  CastInst::CreatePointerCast(NullV2I32Ptr, V2Int32Ty, "foo", BB);
+
+  // Second form
+  CastInst::CreatePointerCast(NullV2I32Ptr, V2Int32Ty);
 }
-
-
 
 TEST(InstructionsTest, VectorGep) {
   LLVMContext &C(getGlobalContext());
 
   // Type Definitions
   PointerType *Ptri8Ty = PointerType::get(IntegerType::get(C, 8), 0);
-  PointerType *Ptri32Ty = PointerType::get(IntegerType::get(C, 8), 0);
+  PointerType *Ptri32Ty = PointerType::get(IntegerType::get(C, 32), 0);
 
   VectorType *V2xi8PTy = VectorType::get(Ptri8Ty, 2);
   VectorType *V2xi32PTy = VectorType::get(Ptri32Ty, 2);
@@ -189,7 +340,7 @@ TEST(InstructionsTest, VectorGep) {
 
   int64_t Offset;
   DataLayout TD("e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f3"
-                "2:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-s0:64:64-f80"
+                "2:32:32-f64:64:64-v64:64:64-v128:128:128-a:0:64-s:64:64-f80"
                 ":128:128-n8:16:32:64-S128");
   // Make sure we don't crash
   GetPointerBaseWithConstantOffset(Gep0, Offset, &TD);
@@ -255,6 +406,7 @@ TEST(InstructionsTest, FPMathOperator) {
 TEST(InstructionsTest, isEliminableCastPair) {
   LLVMContext &C(getGlobalContext());
 
+  Type* Int16Ty = Type::getInt16Ty(C);
   Type* Int32Ty = Type::getInt32Ty(C);
   Type* Int64Ty = Type::getInt64Ty(C);
   Type* Int64PtrTy = Type::getInt64PtrTy(C);
@@ -263,30 +415,108 @@ TEST(InstructionsTest, isEliminableCastPair) {
   EXPECT_EQ(CastInst::isEliminableCastPair(CastInst::PtrToInt,
                                            CastInst::IntToPtr,
                                            Int64PtrTy, Int64Ty, Int64PtrTy,
-                                           Int32Ty, 0, Int32Ty),
+                                           Int32Ty, nullptr, Int32Ty),
             CastInst::BitCast);
 
-  // Source and destination pointers have different sizes -> fail.
+  // Source and destination have unknown sizes, but the same address space and
+  // the intermediate int is the maximum pointer size -> bitcast
   EXPECT_EQ(CastInst::isEliminableCastPair(CastInst::PtrToInt,
                                            CastInst::IntToPtr,
                                            Int64PtrTy, Int64Ty, Int64PtrTy,
-                                           Int32Ty, 0, Int64Ty),
+                                           nullptr, nullptr, nullptr),
+            CastInst::BitCast);
+
+  // Source and destination have unknown sizes, but the same address space and
+  // the intermediate int is not the maximum pointer size -> nothing
+  EXPECT_EQ(CastInst::isEliminableCastPair(CastInst::PtrToInt,
+                                           CastInst::IntToPtr,
+                                           Int64PtrTy, Int32Ty, Int64PtrTy,
+                                           nullptr, nullptr, nullptr),
             0U);
 
   // Middle pointer big enough -> bitcast.
   EXPECT_EQ(CastInst::isEliminableCastPair(CastInst::IntToPtr,
                                            CastInst::PtrToInt,
                                            Int64Ty, Int64PtrTy, Int64Ty,
-                                           0, Int64Ty, 0),
+                                           nullptr, Int64Ty, nullptr),
             CastInst::BitCast);
 
   // Middle pointer too small -> fail.
   EXPECT_EQ(CastInst::isEliminableCastPair(CastInst::IntToPtr,
                                            CastInst::PtrToInt,
                                            Int64Ty, Int64PtrTy, Int64Ty,
-                                           0, Int32Ty, 0),
+                                           nullptr, Int32Ty, nullptr),
             0U);
+
+  // Test that we don't eliminate bitcasts between different address spaces,
+  // or if we don't have available pointer size information.
+  DataLayout DL("e-p:32:32:32-p1:16:16:16-p2:64:64:64-i1:8:8-i8:8:8-i16:16:16"
+                "-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64"
+                "-v128:128:128-a:0:64-s:64:64-f80:128:128-n8:16:32:64-S128");
+
+  Type* Int64PtrTyAS1 = Type::getInt64PtrTy(C, 1);
+  Type* Int64PtrTyAS2 = Type::getInt64PtrTy(C, 2);
+
+  IntegerType *Int16SizePtr = DL.getIntPtrType(C, 1);
+  IntegerType *Int64SizePtr = DL.getIntPtrType(C, 2);
+
+  // Cannot simplify inttoptr, addrspacecast
+  EXPECT_EQ(CastInst::isEliminableCastPair(CastInst::IntToPtr,
+                                           CastInst::AddrSpaceCast,
+                                           Int16Ty, Int64PtrTyAS1, Int64PtrTyAS2,
+                                           nullptr, Int16SizePtr, Int64SizePtr),
+            0U);
+
+  // Cannot simplify addrspacecast, ptrtoint
+  EXPECT_EQ(CastInst::isEliminableCastPair(CastInst::AddrSpaceCast,
+                                           CastInst::PtrToInt,
+                                           Int64PtrTyAS1, Int64PtrTyAS2, Int16Ty,
+                                           Int64SizePtr, Int16SizePtr, nullptr),
+            0U);
+
+  // Pass since the bitcast address spaces are the same
+  EXPECT_EQ(CastInst::isEliminableCastPair(CastInst::IntToPtr,
+                                           CastInst::BitCast,
+                                           Int16Ty, Int64PtrTyAS1, Int64PtrTyAS1,
+                                           nullptr, nullptr, nullptr),
+            CastInst::IntToPtr);
+
+}
+
+TEST(InstructionsTest, CloneCall) {
+  LLVMContext &C(getGlobalContext());
+  Type *Int32Ty = Type::getInt32Ty(C);
+  Type *ArgTys[] = {Int32Ty, Int32Ty, Int32Ty};
+  Type *FnTy = FunctionType::get(Int32Ty, ArgTys, /*isVarArg=*/false);
+  Value *Callee = Constant::getNullValue(FnTy->getPointerTo());
+  Value *Args[] = {
+    ConstantInt::get(Int32Ty, 1),
+    ConstantInt::get(Int32Ty, 2),
+    ConstantInt::get(Int32Ty, 3)
+  };
+  std::unique_ptr<CallInst> Call(CallInst::Create(Callee, Args, "result"));
+
+  // Test cloning the tail call kind.
+  CallInst::TailCallKind Kinds[] = {CallInst::TCK_None, CallInst::TCK_Tail,
+                                    CallInst::TCK_MustTail};
+  for (CallInst::TailCallKind TCK : Kinds) {
+    Call->setTailCallKind(TCK);
+    std::unique_ptr<CallInst> Clone(cast<CallInst>(Call->clone()));
+    EXPECT_EQ(Call->getTailCallKind(), Clone->getTailCallKind());
+  }
+  Call->setTailCallKind(CallInst::TCK_None);
+
+  // Test cloning an attribute.
+  {
+    AttrBuilder AB;
+    AB.addAttribute(Attribute::ReadOnly);
+    Call->setAttributes(AttributeSet::get(C, AttributeSet::FunctionIndex, AB));
+    std::unique_ptr<CallInst> Clone(cast<CallInst>(Call->clone()));
+    EXPECT_TRUE(Clone->onlyReadsMemory());
+  }
 }
 
 }  // end anonymous namespace
 }  // end namespace llvm
+
+

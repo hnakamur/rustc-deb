@@ -8,25 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Operations and constants for `i16`
+//! Operations and constants for signed 16-bits integers (`i16` type)
 
-use num::BitCount;
-use unstable::intrinsics;
+#![stable]
+#![doc(primitive = "i16")]
 
-pub use self::generated::*;
+pub use core::i16::{BITS, BYTES, MIN, MAX};
 
-int_module!(i16, 16)
-
-impl BitCount for i16 {
-    /// Counts the number of bits set. Wraps LLVM's `ctpop` intrinsic.
-    #[inline]
-    fn population_count(&self) -> i16 { unsafe { intrinsics::ctpop16(*self) } }
-
-    /// Counts the number of leading zeros. Wraps LLVM's `ctlz` intrinsic.
-    #[inline]
-    fn leading_zeros(&self) -> i16 { unsafe { intrinsics::ctlz16(*self) } }
-
-    /// Counts the number of trailing zeros. Wraps LLVM's `cttz` intrinsic.
-    #[inline]
-    fn trailing_zeros(&self) -> i16 { unsafe { intrinsics::cttz16(*self) } }
-}
+int_module! { i16 }

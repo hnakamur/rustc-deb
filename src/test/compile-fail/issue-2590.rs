@@ -8,17 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 struct parser {
-    tokens: ~[int],
+    tokens: Vec<isize> ,
 }
 
 trait parse {
-    fn parse(&self) -> ~[int];
+    fn parse(&self) -> Vec<isize> ;
 }
 
 impl parse for parser {
-    fn parse(&self) -> ~[int] {
-        self.tokens //~ ERROR cannot move out of dereference of & pointer
+    fn parse(&self) -> Vec<isize> {
+        self.tokens //~ ERROR cannot move out of borrowed content
     }
 }
 

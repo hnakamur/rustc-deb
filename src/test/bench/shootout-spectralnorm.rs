@@ -1,66 +1,136 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
+// The Computer Language Benchmarks Game
+// http://benchmarksgame.alioth.debian.org/
 //
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
+// contributed by the Rust Project Developers
 
-use std::f64;
-use std::from_str::FromStr;
+// Copyright (c) 2012-2014 The Rust Project Developers
+//
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// - Redistributions of source code must retain the above copyright
+//   notice, this list of conditions and the following disclaimer.
+//
+// - Redistributions in binary form must reproduce the above copyright
+//   notice, this list of conditions and the following disclaimer in
+//   the documentation and/or other materials provided with the
+//   distribution.
+//
+// - Neither the name of "The Computer Language Benchmarks Game" nor
+//   the name of "The Computer Language Shootout Benchmarks" nor the
+//   names of its contributors may be used to endorse or promote
+//   products derived from this software without specific prior
+//   written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+// OF THE POSSIBILITY OF SUCH DAMAGE.
+
+// no-pretty-expanded FIXME #15189
+
+#![allow(non_snake_case)]
+#![feature(unboxed_closures)]
+
+use std::iter::{repeat, AdditiveIterator};
+use std::thread::Thread;
+use std::mem;
+use std::num::Float;
 use std::os;
-use std::vec;
+use std::raw::Repr;
+use std::simd::f64x2;
 
-#[inline]
-fn A(i: i32, j: i32) -> i32 {
-    (i+j) * (i+j+1) / 2 + i + 1
+fn main() {
+    let args = os::args();
+    let answer = spectralnorm(if os::getenv("RUST_BENCH").is_some() {
+        5500
+    } else if args.len() < 2 {
+        2000
+    } else {
+        args[1].parse().unwrap()
+    });
+    println!("{:.9}", answer);
 }
 
-fn dot(v: &[f64], u: &[f64]) -> f64 {
-    let mut sum = 0.0;
-    for v.iter().enumerate().advance |(i, &v_i)| {
-        sum += v_i * u[i];
+fn spectralnorm(n: uint) -> f64 {
+    assert!(n % 2 == 0, "only even lengths are accepted");
+    let mut u = repeat(1.0).take(n).collect::<Vec<_>>();
+    let mut v = u.clone();
+    let mut tmp = v.clone();
+    for _ in range(0u, 10) {
+        mult_AtAv(u.as_slice(), v.as_mut_slice(), tmp.as_mut_slice());
+        mult_AtAv(v.as_slice(), u.as_mut_slice(), tmp.as_mut_slice());
     }
-    sum
+    (dot(u.as_slice(), v.as_slice()) / dot(v.as_slice(), v.as_slice())).sqrt()
 }
 
-fn mult_Av(v: &mut [f64], out: &mut [f64]) {
-    for out.mut_iter().enumerate().advance |(i, out_i)| {
-        let mut sum = 0.0;
-        for v.mut_iter().enumerate().advance |(j, &v_j)| {
-            sum += v_j / (A(i as i32, j as i32) as f64);
-        }
-        *out_i = sum;
-    }
-}
-
-fn mult_Atv(v: &mut [f64], out: &mut [f64]) {
-    for out.mut_iter().enumerate().advance |(i, out_i)| {
-        let mut sum = 0.0;
-        for v.mut_iter().enumerate().advance |(j, &v_j)| {
-            sum += v_j / (A(j as i32, i as i32) as f64);
-        }
-        *out_i = sum;
-    }
-}
-
-fn mult_AtAv(v: &mut [f64], out: &mut [f64], tmp: &mut [f64]) {
+fn mult_AtAv(v: &[f64], out: &mut [f64], tmp: &mut [f64]) {
     mult_Av(v, tmp);
     mult_Atv(tmp, out);
 }
 
-#[fixed_stack_segment]
-fn main() {
-    let n: uint = FromStr::from_str(os::args()[1]).get();
-    let mut u = vec::from_elem(n, 1f64);
-    let mut v = u.clone();
-    let mut tmp = u.clone();
-    for 8.times {
-        mult_AtAv(u, v, tmp);
-        mult_AtAv(v, u, tmp);
-    }
+fn mult_Av(v: &[f64], out: &mut [f64]) {
+    parallel(out, |start, out| mult(v, out, start, |i, j| A(i, j)));
+}
 
-    println(fmt!("%.9f", f64::sqrt(dot(u,v) / dot(v,v)) as float));
+fn mult_Atv(v: &[f64], out: &mut [f64]) {
+    parallel(out, |start, out| mult(v, out, start, |i, j| A(j, i)));
+}
+
+fn mult<F>(v: &[f64], out: &mut [f64], start: uint, a: F)
+           where F: Fn(uint, uint) -> f64 {
+    for (i, slot) in out.iter_mut().enumerate().map(|(i, s)| (i + start, s)) {
+        let mut sum = f64x2(0.0, 0.0);
+        for (j, chunk) in v.chunks(2).enumerate().map(|(j, s)| (2 * j, s)) {
+            let top = f64x2(chunk[0], chunk[1]);
+            let bot = f64x2(a(i, j), a(i, j + 1));
+            sum += top / bot;
+        }
+        let f64x2(a, b) = sum;
+        *slot = a + b;
+    }
+}
+
+fn A(i: uint, j: uint) -> f64 {
+    ((i + j) * (i + j + 1) / 2 + i + 1) as f64
+}
+
+fn dot(v: &[f64], u: &[f64]) -> f64 {
+    v.iter().zip(u.iter()).map(|(a, b)| *a * *b).sum()
+}
+
+
+struct Racy<T>(T);
+
+unsafe impl<T: 'static> Send for Racy<T> {}
+
+// Executes a closure in parallel over the given mutable slice. The closure `f`
+// is run in parallel and yielded the starting index within `v` as well as a
+// sub-slice of `v`.
+fn parallel<T, F>(v: &mut [T], f: F)
+                  where T: Send + Sync,
+                        F: Fn(uint, &mut [T]) + Sync {
+    let size = v.len() / os::num_cpus() + 1;
+
+    v.chunks_mut(size).enumerate().map(|(i, chunk)| {
+        // Need to convert `f` and `chunk` to something that can cross the task
+        // boundary.
+        let f = Racy(&f as *const _ as *const uint);
+        let raw = Racy(chunk.repr());
+        Thread::scoped(move|| {
+            let f = f.0 as *const F;
+            unsafe { (*f)(i * size, mem::transmute(raw.0)) }
+        })
+    }).collect::<Vec<_>>();
 }

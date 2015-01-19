@@ -9,17 +9,16 @@
 // except according to those terms.
 
 struct C {
-    x: int,
+    x: isize,
 }
 
 impl Drop for C {
-    fn drop(&self) {
-        error!("dropping: %?", self.x);
+    fn drop(&mut self) {
+        println!("dropping: {}", self.x);
     }
 }
 
 fn main() {
     let c = C{ x: 2};
-    let d = copy c; //~ ERROR copying a value of non-copyable type `C`
-    error!("%?", d.x);
+    let _d = c.clone(); //~ ERROR does not implement any method in scope
 }

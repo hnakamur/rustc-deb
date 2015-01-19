@@ -8,10 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
+enum list { cons(int, Box<list>), nil, }
 
-
-// -*- rust -*-
-enum list { cons(int, @list), nil, }
-
-pub fn main() { cons(10, @cons(11, @cons(12, @nil))); }
+pub fn main() { list::cons(10, box list::cons(11, box list::cons(12, box list::nil))); }

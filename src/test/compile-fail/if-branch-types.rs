@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern:mismatched types
-
-fn main() { let x = if true { 10i } else { 10u }; }
+fn main() {
+    let x = if true { 10is } else { 10us };
+    //~^ ERROR if and else have incompatible types: expected `isize`, found `usize`
+}

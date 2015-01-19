@@ -8,33 +8,33 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name = "externcallback",
-       vers = "0.1")];
+#![crate_name="externcallback"]
+#![crate_type = "lib"]
 
-#[crate_type = "lib"];
-
-use std::libc;
+extern crate libc;
 
 pub mod rustrt {
-    use std::libc;
+    extern crate libc;
 
-    pub extern {
-        pub fn rust_dbg_call(cb: *u8, data: libc::uintptr_t)
+    #[link(name = "rust_test_helpers")]
+    extern {
+        pub fn rust_dbg_call(cb: extern "C" fn(libc::uintptr_t) -> libc::uintptr_t,
+                             data: libc::uintptr_t)
                              -> libc::uintptr_t;
     }
 }
 
-pub fn fact(n: uint) -> uint {
+pub fn fact(n: libc::uintptr_t) -> libc::uintptr_t {
     unsafe {
-        debug!("n = %?", n);
+        println!("n = {}", n);
         rustrt::rust_dbg_call(cb, n)
     }
 }
 
 pub extern fn cb(data: libc::uintptr_t) -> libc::uintptr_t {
-    if data == 1u {
+    if data == 1 {
         data
     } else {
-        fact(data - 1u) * data
+        fact(data - 1) * data
     }
 }

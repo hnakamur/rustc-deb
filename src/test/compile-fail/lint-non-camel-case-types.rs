@@ -8,27 +8,37 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[forbid(non_camel_case_types)];
+#![forbid(non_camel_case_types)]
+#![allow(dead_code)]
 
-struct foo { //~ ERROR type, variant, or trait should have a camel case identifier
-    bar: int,
+struct foo { //~ ERROR type `foo` should have a camel case name such as `Foo`
+    bar: isize,
 }
 
-enum foo2 { //~ ERROR type, variant, or trait should have a camel case identifier
+enum foo2 { //~ ERROR type `foo2` should have a camel case name such as `Foo2`
     Bar
 }
 
-struct foo3 { //~ ERROR type, variant, or trait should have a camel case identifier
-    bar: int
+struct foo3 { //~ ERROR type `foo3` should have a camel case name such as `Foo3`
+    bar: isize
 }
 
-type foo4 = int; //~ ERROR type, variant, or trait should have a camel case identifier
+type foo4 = isize; //~ ERROR type `foo4` should have a camel case name such as `Foo4`
 
 enum Foo5 {
-    bar //~ ERROR type, variant, or trait should have a camel case identifier
+    bar //~ ERROR variant `bar` should have a camel case name such as `Bar`
 }
 
-trait foo6 { //~ ERROR type, variant, or trait should have a camel case identifier
+trait foo6 { //~ ERROR trait `foo6` should have a camel case name such as `Foo6`
 }
+
+fn f<ty>(_: ty) {} //~ ERROR type parameter `ty` should have a camel case name such as `Ty`
+
+#[repr(C)]
+struct foo7 {
+    bar: isize,
+}
+
+type __ = isize; //~ ERROR type `__` should have a camel case name such as `CamelCase`
 
 fn main() { }

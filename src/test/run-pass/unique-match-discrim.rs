@@ -10,8 +10,11 @@
 
 // Issue #961
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 fn altsimple() {
-    match ~true {
+    match box true {
       _ => { }
     }
 }

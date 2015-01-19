@@ -8,13 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn ignore(_f: &fn<'z>(&'z int) -> &'z int) {}
+fn ignore<F>(_f: F) where F: for<'z> FnOnce(&'z isize) -> &'z isize {}
 
 fn nested() {
     let y = 3;
-    ignore(|z| {
-        if false { &y } else { z } //~ ERROR borrowed value does not live long enough
-    });
+    ignore(
+        |z| { //~ ERROR `y` does not live long enough
+            if false { &y } else { z }
+        });
 }
 
 fn main() {}

@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -11,14 +11,15 @@
 // Test a foreign function that accepts and returns a struct
 // by value.
 
-// xfail-test #5744
-
-#[deriving(Eq)]
-struct TwoU16s {
+#[derive(PartialEq, Show)]
+pub struct TwoU16s {
     one: u16, two: u16
 }
 
-pub extern {
+impl Copy for TwoU16s {}
+
+#[link(name = "rust_test_helpers")]
+extern {
     pub fn rust_dbg_extern_identity_TwoU16s(v: TwoU16s) -> TwoU16s;
 }
 

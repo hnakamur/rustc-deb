@@ -11,17 +11,19 @@
 // Make sure const bounds work on things, and test that a few types
 // are const.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-fn foo<T:Copy + Freeze>(x: T) -> T { x }
+fn foo<T: Sync>(x: T) -> T { x }
 
 struct F { field: int }
 
 pub fn main() {
     /*foo(1);
-    foo(~"hi");
+    foo("hi".to_string());
     foo(~[1, 2, 3]);
     foo(F{field: 42});
     foo((1, 2u));
     foo(@1);*/
-    foo(~1);
+    foo(box 1i);
 }

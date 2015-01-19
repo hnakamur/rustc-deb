@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE language SYSTEM "language.dtd"
 [
-	<!-- TODO: Kate's regex engine has very limited support for
+	<!-- FIXME: Kate's regex engine has very limited support for
 	predefined char classes, so making rustIdent consistent with actual
 	Rust identifiers will be a bit difficult -->
 	<!ENTITY rustIdent "[a-zA-Z_][a-zA-Z_0-9]*">
 	<!ENTITY rustIntSuf "([iu](8|16|32|64)?)?">
 ]>
-<language name="Rust" version="0.7" kateversion="2.4" section="Sources" extensions="*.rs;*.rc" mimetype="text/x-rust" priority="15">
+<language name="Rust" version="1.0.0" kateversion="2.4" section="Sources" extensions="*.rs" mimetype="text/x-rust" priority="15">
 <highlighting>
 	<list name="fn">
 		<item> fn </item>
@@ -15,24 +15,41 @@
 	<list name="type">
 		<item> type </item>
 	</list>
+	<list name="reserved">
+		<item> abstract </item>
+		<item> alignof </item>
+		<item> be </item>
+		<item> do </item>
+		<item> final </item>
+		<item> offsetof </item>
+		<item> override </item>
+		<item> priv </item>
+		<item> pure </item>
+		<item> sizeof </item>
+		<item> typeof </item>
+		<item> unsized </item>
+		<item> yield </item>
+	</list>
 	<list name="keywords">
 		<item> as </item>
+		<item> box </item>
 		<item> break </item>
-		<item> copy </item>
-		<item> do </item>
-		<item> drop </item>
+		<item> const </item>
+		<item> continue </item>
+		<item> crate </item>
 		<item> else </item>
 		<item> enum </item>
 		<item> extern </item>
 		<item> for </item>
 		<item> if </item>
 		<item> impl </item>
+		<item> in </item>
 		<item> let </item>
 		<item> loop </item>
 		<item> match </item>
 		<item> mod </item>
+		<item> move </item>
 		<item> mut </item>
-		<item> priv </item>
 		<item> pub </item>
 		<item> ref </item>
 		<item> return </item>
@@ -42,6 +59,8 @@
 		<item> trait </item>
 		<item> unsafe </item>
 		<item> use </item>
+		<item> virtual </item>
+		<item> where </item>
 		<item> while </item>
 	</list>
 	<list name="traits">
@@ -72,7 +91,9 @@
 	<list name="types">
 		<item> bool </item>
 		<item> int </item>
+		<item> isize </item>
 		<item> uint </item>
+		<item> usize </item>
 		<item> i8 </item>
 		<item> i16 </item>
 		<item> i32 </item>
@@ -86,7 +107,6 @@
 		<item> float </item>
 		<item> char </item>
 		<item> str </item>
-		<item> Either </item>
 		<item> Option </item>
 		<item> Result </item>
 		<item> Self </item>
@@ -131,8 +151,6 @@
 		<item> false </item>
 		<item> Some </item>
 		<item> None </item>
-		<item> Left </item>
-		<item> Right </item>
 		<item> Ok </item>
 		<item> Err </item>
 		<item> Success </item>
@@ -189,6 +207,7 @@
 			<DetectSpaces/>
 			<keyword String="fn" attribute="Keyword" context="Function"/>
 			<keyword String="type" attribute="Keyword" context="Type"/>
+			<keyword String="reserved" attribute="Keyword" context="#stay"/>
 			<keyword String="keywords" attribute="Keyword" context="#stay"/>
 			<keyword String="types" attribute="Type" context="#stay"/>
 			<keyword String="traits" attribute="Trait" context="#stay"/>
@@ -199,10 +218,12 @@
 			<Detect2Chars char="/" char1="/" attribute="Comment" context="Commentar 1"/>
 			<Detect2Chars char="/" char1="*" attribute="Comment" context="Commentar 2" beginRegion="Comment"/>
 			<RegExpr String="0x[0-9a-fA-F_]+&rustIntSuf;" attribute="Number" context="#stay"/>
+			<RegExpr String="0o[0-7_]+&rustIntSuf;" attribute="Number" context="#stay"/>
 			<RegExpr String="0b[0-1_]+&rustIntSuf;" attribute="Number" context="#stay"/>
 			<RegExpr String="[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?(f32|f64|f)?" attribute="Number" context="#stay"/>
 			<RegExpr String="[0-9][0-9_]*&rustIntSuf;" attribute="Number" context="#stay"/>
 			<Detect2Chars char="#" char1="[" attribute="Attribute" context="Attribute" beginRegion="Attribute"/>
+			<StringDetect String="#![" attribute="Attribute" context="Attribute" beginRegion="Attribute"/>
 			<RegExpr String="&rustIdent;::" attribute="Scope"/>
 			<RegExpr String="&rustIdent;!" attribute="Macro"/>
 			<RegExpr String="&apos;&rustIdent;(?!&apos;)" attribute="Lifetime"/>
@@ -240,6 +261,7 @@
 		<context attribute="CharEscape" lineEndContext="#pop" name="CharEscape">
 			<AnyChar String="nrt\&apos;&quot;" attribute="CharEscape" context="#pop"/>
 			<RegExpr String="x[0-9a-fA-F]{2}" attribute="CharEscape" context="#pop"/>
+			<RegExpr String="u\{[0-9a-fA-F]{1,6}\}" attribute="CharEscape" context="#pop"/>
 			<RegExpr String="u[0-9a-fA-F]{4}" attribute="CharEscape" context="#pop"/>
 			<RegExpr String="U[0-9a-fA-F]{8}" attribute="CharEscape" context="#pop"/>
 			<RegExpr String="." attribute="Error" context="#pop"/>
@@ -250,7 +272,7 @@
 			<Detect2Chars char="*" char1="/" attribute="Comment" context="#pop" endRegion="Comment"/>
 		</context>
 	</contexts>
-    <itemDatas>
+	<itemDatas>
 		<itemData name="Normal Text"  defStyleNum="dsNormal"/>
 		<itemData name="Keyword"      defStyleNum="dsKeyword" color="#770088" bold="1"/>
 		<itemData name="Self"         defStyleNum="dsKeyword" color="#FF0000" bold="1"/>

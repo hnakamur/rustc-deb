@@ -8,9 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
-use std::io;
 
 trait Serializer {
 }
@@ -25,21 +22,19 @@ impl Serializable for int {
 
 struct F<A> { a: A }
 
-impl<A:Copy + Serializable> Serializable for F<A> {
+impl<A:Serializable> Serializable for F<A> {
     fn serialize<S:Serializer>(&self, s: S) {
         self.a.serialize(s);
     }
 }
 
-impl Serializer for @io::Writer {
+impl Serializer for int {
 }
 
 pub fn main() {
-    do io::with_str_writer |wr| {
-        let foo = F { a: 1 };
-        foo.serialize(wr);
+    let foo = F { a: 1i };
+    foo.serialize(1i);
 
-        let bar = F { a: F {a: 1 } };
-        bar.serialize(wr);
-    };
+    let bar = F { a: F {a: 1i } };
+    bar.serialize(2i);
 }

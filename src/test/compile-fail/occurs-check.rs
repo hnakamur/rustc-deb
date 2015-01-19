@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
+
 fn main() {
-    let f; //~ ERROR cyclic type of infinite size
-    f = @f;
+    let f;
+    f = box f; //~ ERROR cyclic type of infinite size
 }

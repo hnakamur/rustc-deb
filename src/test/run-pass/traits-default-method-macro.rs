@@ -8,11 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[allow(default_methods)];
 
 trait Foo {
-    fn bar(&self) -> ~str {
-        fmt!("test")
+    fn bar(&self) -> String {
+        format!("test")
     }
 }
 
@@ -24,6 +23,6 @@ impl Foo for Baz {
 }
 
 pub fn main() {
-    let q = Quux;
-    assert_eq!(q.bar(), ~"test");
+    let q = Baz::Quux;
+    assert_eq!(q.bar(), "test".to_string());
 }

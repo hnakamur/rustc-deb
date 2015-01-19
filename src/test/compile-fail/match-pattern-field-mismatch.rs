@@ -10,17 +10,17 @@
 
 fn main() {
     enum color {
-        rgb(uint, uint, uint),
-        cmyk(uint, uint, uint, uint),
+        rgb(usize, usize, usize),
+        cmyk(usize, usize, usize, usize),
         no_color,
     }
 
     fn foo(c: color) {
         match c {
-          rgb(_, _) => { }
+          color::rgb(_, _) => { }
           //~^ ERROR this pattern has 2 fields, but the corresponding variant has 3 fields
-          cmyk(_, _, _, _) => { }
-          no_color => { }
+          color::cmyk(_, _, _, _) => { }
+          color::no_color => { }
         }
     }
 }

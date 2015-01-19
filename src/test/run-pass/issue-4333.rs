@@ -10,7 +10,7 @@
 
 use std::io;
 
-fn main() {
-    let stdout = &io::stdout() as &io::WriterUtil;
-    stdout.write_line("Hello!");
+pub fn main() {
+    let stdout = &mut io::stdout() as &mut io::Writer;
+    stdout.write(b"Hello!");
 }

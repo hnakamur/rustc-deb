@@ -8,17 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 struct point {
-    x: int,
-    y: int,
+    x: isize,
+    y: isize,
 }
 
-fn x_coord<'r>(p: &'r point) -> &'r int {
+fn x_coord<'r>(p: &'r point) -> &'r isize {
     return &p.x;
 }
 
-fn foo(p: @point) -> &int {
-    let xc = x_coord(p); //~ ERROR cannot root
+fn foo<'a>(p: Box<point>) -> &'a isize {
+    let xc = x_coord(&*p); //~ ERROR `*p` does not live long enough
     assert_eq!(*xc, 3);
     return xc;
 }

@@ -8,19 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct parameterized1<'self> {
-    g: &'self fn()
+struct parameterized1<'a> {
+    g: Box<FnMut() + 'a>
 }
 
 struct not_parameterized1 {
-    g: @fn()
+    g: Box<FnMut() + 'static>
 }
 
 struct not_parameterized2 {
-    g: @fn()
+    g: Box<FnMut() + 'static>
 }
 
-fn take1(p: parameterized1) -> parameterized1 { p } //~ ERROR mismatched types
+fn take1<'a>(p: parameterized1) -> parameterized1<'a> { p }
+//~^ ERROR mismatched types
+
 fn take3(p: not_parameterized1) -> not_parameterized1 { p }
 fn take4(p: not_parameterized2) -> not_parameterized2 { p }
 

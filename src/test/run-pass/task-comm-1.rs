@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::task;
+use std::thread::Thread;
 
 pub fn main() { test00(); }
 
-fn start() { debug!("Started / Finished task."); }
+fn start() { println!("Started / Finished task."); }
 
 fn test00() {
-    task::try(|| start() );
-    debug!("Completing.");
+    let _ = Thread::scoped(move|| start() ).join();
+    println!("Completing.");
 }

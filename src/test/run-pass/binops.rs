@@ -10,8 +10,6 @@
 
 // Binop corner cases
 
-use std::libc;
-
 fn test_nil() {
     assert_eq!((), ());
     assert!((!(() != ())));
@@ -44,31 +42,11 @@ fn test_bool() {
     assert_eq!(true ^ true, false);
 }
 
-fn test_char() {
-    let ch10 = 10 as char;
-    let ch4 = 4 as char;
-    let ch2 = 2 as char;
-    assert_eq!(ch10 + ch4, 14 as char);
-    assert_eq!(ch10 - ch4, 6 as char);
-    assert_eq!(ch10 * ch4, 40 as char);
-    assert_eq!(ch10 / ch4, ch2);
-    assert_eq!(ch10 % ch4, ch2);
-    assert_eq!(ch10 >> ch2, ch2);
-    assert_eq!(ch10 << ch4, 160 as char);
-    assert_eq!(ch10 | ch4, 14 as char);
-    assert_eq!(ch10 & ch2, ch2);
-    assert_eq!(ch10 ^ ch2, 8 as char);
-}
-
-fn test_box() {
-    assert_eq!(@10, @10);
-}
-
 fn test_ptr() {
     unsafe {
-        let p1: *u8 = ::std::cast::transmute(0);
-        let p2: *u8 = ::std::cast::transmute(0);
-        let p3: *u8 = ::std::cast::transmute(1);
+        let p1: *const u8 = ::std::mem::transmute(0u);
+        let p2: *const u8 = ::std::mem::transmute(0u);
+        let p3: *const u8 = ::std::mem::transmute(1u);
 
         assert_eq!(p1, p2);
         assert!(p1 != p3);
@@ -81,18 +59,7 @@ fn test_ptr() {
     }
 }
 
-mod test {
-    use std::libc;
-
-    #[abi = "cdecl"]
-    #[nolink]
-    pub extern {
-        pub fn rust_get_sched_id() -> libc::intptr_t;
-        pub fn get_task_id() -> libc::intptr_t;
-    }
-}
-
-#[deriving(Eq)]
+#[derive(PartialEq, Show)]
 struct p {
   x: int,
   y: int,
@@ -106,13 +73,13 @@ fn p(x: int, y: int) -> p {
 }
 
 fn test_class() {
-  let mut q = p(1, 2);
+  let q = p(1, 2);
   let mut r = p(1, 2);
 
   unsafe {
-  error!("q = %x, r = %x",
-         (::std::cast::transmute::<*p, uint>(&q)),
-         (::std::cast::transmute::<*p, uint>(&r)));
+  println!("q = {:x}, r = {:x}",
+         (::std::mem::transmute::<*const p, uint>(&q)),
+         (::std::mem::transmute::<*const p, uint>(&r)));
   }
   assert_eq!(q, r);
   r.y = 17;
@@ -124,8 +91,6 @@ fn test_class() {
 pub fn main() {
     test_nil();
     test_bool();
-    test_char();
-    test_box();
     test_ptr();
     test_class();
 }

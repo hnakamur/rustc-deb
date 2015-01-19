@@ -14,11 +14,11 @@ enum Foo {
         b: int
     },
     Baz {
-        c: float,
-        d: float
+        c: f64,
+        d: f64
     }
 }
 
 pub fn main() {
-    let x = Bar { a: 2, b: 3 };
+    let _x = Foo::Bar { a: 2, b: 3 };
 }

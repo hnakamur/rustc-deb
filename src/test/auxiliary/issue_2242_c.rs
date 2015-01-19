@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name = "c", vers = "0.1")];
-#[crate_type = "lib"];
+#![crate_name="c#0.1"]
+#![crate_type = "lib"]
 
-extern mod a;
+extern crate a;
 
 use a::to_strz;
 
 impl to_strz for bool {
-    fn to_strz() -> ~str { fmt!("%b", self) }
+    fn to_strz() -> String { fmt!("%b", self) }
 }

@@ -16,6 +16,7 @@
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/GCMetadataPrinter.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -23,9 +24,9 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/Target/Mangler.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetSubtargetInfo.h"
 #include <cctype>
 using namespace llvm;
 
@@ -33,8 +34,8 @@ namespace {
 
   class OcamlGCMetadataPrinter : public GCMetadataPrinter {
   public:
-    void beginAssembly(AsmPrinter &AP);
-    void finishAssembly(AsmPrinter &AP);
+    void beginAssembly(AsmPrinter &AP) override;
+    void finishAssembly(AsmPrinter &AP) override;
   };
 
 }
@@ -91,7 +92,8 @@ void OcamlGCMetadataPrinter::beginAssembly(AsmPrinter &AP) {
 /// either condition is detected in a function which uses the GC.
 ///
 void OcamlGCMetadataPrinter::finishAssembly(AsmPrinter &AP) {
-  unsigned IntPtrSize = AP.TM.getDataLayout()->getPointerSize();
+  unsigned IntPtrSize =
+      AP.TM.getSubtargetImpl()->getDataLayout()->getPointerSize();
 
   AP.OutStreamer.SwitchSection(AP.getObjFileLowering().getTextSection());
   EmitCamlGlobal(getModule(), AP, "code_end");

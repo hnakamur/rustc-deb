@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
 fn siphash(k0 : u64) {
 
     struct siphash {
@@ -18,8 +16,8 @@ fn siphash(k0 : u64) {
 
     impl siphash {
         pub fn reset(&mut self) {
-           self.v0 = k0 ^ 0x736f6d6570736575; //~ ERROR attempted dynamic environment-capture
-           //~^ ERROR unresolved name `k0`.
+           self.v0 = k0 ^ 0x736f6d6570736575; //~ ERROR can't capture dynamic environment
+           //~^ ERROR unresolved name `k0`
         }
     }
 }

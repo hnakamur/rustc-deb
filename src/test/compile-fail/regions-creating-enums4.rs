@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-enum ast<'self> {
-    num(uint),
-    add(&'self ast<'self>, &'self ast<'self>)
+enum ast<'a> {
+    num(usize),
+    add(&'a ast<'a>, &'a ast<'a>)
 }
 
-fn mk_add_bad2<'a>(x: &'a ast<'a>, y: &'a ast<'a>, z: &ast) -> ast {
-    add(x, y) //~ ERROR cannot infer an appropriate lifetime
+fn mk_add_bad2<'a,'b>(x: &'a ast<'a>, y: &'a ast<'a>, z: &ast) -> ast<'b> {
+    ast::add(x, y) //~ ERROR cannot infer
 }
 
 fn main() {

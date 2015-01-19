@@ -8,17 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
+#![allow(dead_assignment)]
+#![allow(unused_variable)]
 
 enum thing { a, b, c, }
 
-fn foo(it: &fn(int)) { it(10); }
+fn foo<F>(it: F) where F: FnOnce(int) { it(10); }
 
 pub fn main() {
     let mut x = true;
-    match a {
-      a => { x = true; foo(|_i| { } ) }
-      b => { x = false; }
-      c => { x = false; }
+    match thing::a {
+      thing::a => { x = true; foo(|_i| { } ) }
+      thing::b => { x = false; }
+      thing::c => { x = false; }
     }
 }

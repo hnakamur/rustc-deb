@@ -1,4 +1,4 @@
-//===---- InstrEmitter.h - Emit MachineInstrs for the SelectionDAG class ---==//
+//===- InstrEmitter.h - Emit MachineInstrs for the SelectionDAG -*- C++ -*--==//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -13,8 +13,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef INSTREMITTER_H
-#define INSTREMITTER_H
+#ifndef LLVM_LIB_CODEGEN_SELECTIONDAG_INSTREMITTER_H
+#define LLVM_LIB_CODEGEN_SELECTIONDAG_INSTREMITTER_H
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"

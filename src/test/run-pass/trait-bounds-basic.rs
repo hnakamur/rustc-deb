@@ -8,25 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 trait Foo {
 }
 
-fn a(_x: ~Foo:) {
+fn b(_x: Box<Foo+Send>) {
 }
 
-fn b(_x: ~Foo:Send) {
+fn c(x: Box<Foo+Sync+Send>) {
+    e(x);
 }
 
-fn c(x: ~Foo:Freeze+Send) {
-    a(x);
+fn d(x: Box<Foo+Send>) {
+    e(x);
 }
 
-fn d(x: ~Foo:Send+Copy) {
-    b(x);
+fn e(x: Box<Foo>) {
+    e(x);
 }
 
-fn e(x: ~Foo) { // sugar for ~Foo:Owned
-    b(x);
-}
-
-fn main() { }
+pub fn main() { }

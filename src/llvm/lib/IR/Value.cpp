@@ -15,20 +15,22 @@
 #include "LLVMContextImpl.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/LeakDetector.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
-#include "llvm/Support/LeakDetector.h"
 #include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/ValueHandle.h"
 #include <algorithm>
 using namespace llvm;
 
@@ -38,13 +40,12 @@ using namespace llvm;
 
 static inline Type *checkType(Type *Ty) {
   assert(Ty && "Value defined with a null type: Error!");
-  return const_cast<Type*>(Ty);
+  return Ty;
 }
 
 Value::Value(Type *ty, unsigned scid)
-  : SubclassID(scid), HasValueHandle(0),
-    SubclassOptionalData(0), SubclassData(0), VTy((Type*)checkType(ty)),
-    UseList(0), Name(0) {
+    : VTy(checkType(ty)), UseList(nullptr), Name(nullptr), SubclassID(scid),
+      HasValueHandle(0), SubclassOptionalData(0), SubclassData(0) {
   // FIXME: Why isn't this in the subclass gunk??
   // Note, we cannot call isa<CallInst> before the CallInst has been
   // constructed.
@@ -112,21 +113,20 @@ bool Value::hasNUsesOrMore(unsigned N) const {
 /// isUsedInBasicBlock - Return true if this value is used in the specified
 /// basic block.
 bool Value::isUsedInBasicBlock(const BasicBlock *BB) const {
-  // Start by scanning over the instructions looking for a use before we start
-  // the expensive use iteration.
-  unsigned MaxBlockSize = 3;
-  for (BasicBlock::const_iterator I = BB->begin(), E = BB->end(); I != E; ++I) {
-    if (std::find(I->op_begin(), I->op_end(), this) != I->op_end())
+  // This can be computed either by scanning the instructions in BB, or by
+  // scanning the use list of this Value. Both lists can be very long, but
+  // usually one is quite short.
+  //
+  // Scan both lists simultaneously until one is exhausted. This limits the
+  // search to the shorter list.
+  BasicBlock::const_iterator BI = BB->begin(), BE = BB->end();
+  const_user_iterator UI = user_begin(), UE = user_end();
+  for (; BI != BE && UI != UE; ++BI, ++UI) {
+    // Scan basic block: Check if this Value is used by the instruction at BI.
+    if (std::find(BI->op_begin(), BI->op_end(), this) != BI->op_end())
       return true;
-    if (MaxBlockSize-- == 0) // If the block is larger fall back to use_iterator
-      break;
-  }
-
-  if (MaxBlockSize != 0) // We scanned the entire block and found no use.
-    return false;
-
-  for (const_use_iterator I = use_begin(), E = use_end(); I != E; ++I) {
-    const Instruction *User = dyn_cast<Instruction>(*I);
+    // Scan use list: Check if the use at UI is in BB.
+    const Instruction *User = dyn_cast<Instruction>(*UI);
     if (User && User->getParent() == BB)
       return true;
   }
@@ -142,7 +142,7 @@ unsigned Value::getNumUses() const {
 }
 
 static bool getSymTab(Value *V, ValueSymbolTable *&ST) {
-  ST = 0;
+  ST = nullptr;
   if (Instruction *I = dyn_cast<Instruction>(V)) {
     if (BasicBlock *P = I->getParent())
       if (Function *PP = P->getParent())
@@ -183,6 +183,8 @@ void Value::setName(const Twine &NewName) {
 
   SmallString<256> NameData;
   StringRef NameRef = NewName.toStringRef(NameData);
+  assert(NameRef.find_first_of(0) == StringRef::npos &&
+         "Null bytes are not allowed in names");
 
   // Name isn't changing?
   if (getName() == NameRef)
@@ -202,7 +204,7 @@ void Value::setName(const Twine &NewName) {
     if (NameRef.empty()) {
       // Free the name for this value.
       Name->Destroy();
-      Name = 0;
+      Name = nullptr;
       return;
     }
 
@@ -213,7 +215,7 @@ void Value::setName(const Twine &NewName) {
     // then reallocated.
 
     // Create the new name.
-    Name = ValueName::Create(NameRef.begin(), NameRef.end());
+    Name = ValueName::Create(NameRef);
     Name->setValue(this);
     return;
   }
@@ -224,7 +226,7 @@ void Value::setName(const Twine &NewName) {
     // Remove old name.
     ST->removeValueName(Name);
     Name->Destroy();
-    Name = 0;
+    Name = nullptr;
 
     if (NameRef.empty())
       return;
@@ -240,7 +242,7 @@ void Value::setName(const Twine &NewName) {
 void Value::takeName(Value *V) {
   assert(SubclassID != MDStringVal && "Cannot take the name of an MDString!");
 
-  ValueSymbolTable *ST = 0;
+  ValueSymbolTable *ST = nullptr;
   // If this value has a name, drop it.
   if (hasName()) {
     // Get the symtab this is in.
@@ -255,7 +257,7 @@ void Value::takeName(Value *V) {
     if (ST)
       ST->removeValueName(Name);
     Name->Destroy();
-    Name = 0;
+    Name = nullptr;
   }
 
   // Now we know that this has no name.
@@ -282,7 +284,7 @@ void Value::takeName(Value *V) {
   if (ST == VST) {
     // Take the name!
     Name = V->Name;
-    V->Name = 0;
+    V->Name = nullptr;
     Name->setValue(this);
     return;
   }
@@ -293,17 +295,52 @@ void Value::takeName(Value *V) {
   if (VST)
     VST->removeValueName(V->Name);
   Name = V->Name;
-  V->Name = 0;
+  V->Name = nullptr;
   Name->setValue(this);
 
   if (ST)
     ST->reinsertValue(this);
 }
 
+#ifndef NDEBUG
+static bool contains(SmallPtrSetImpl<ConstantExpr *> &Cache, ConstantExpr *Expr,
+                     Constant *C) {
+  if (!Cache.insert(Expr))
+    return false;
+
+  for (auto &O : Expr->operands()) {
+    if (O == C)
+      return true;
+    auto *CE = dyn_cast<ConstantExpr>(O);
+    if (!CE)
+      continue;
+    if (contains(Cache, CE, C))
+      return true;
+  }
+  return false;
+}
+
+static bool contains(Value *Expr, Value *V) {
+  if (Expr == V)
+    return true;
+
+  auto *C = dyn_cast<Constant>(V);
+  if (!C)
+    return false;
+
+  auto *CE = dyn_cast<ConstantExpr>(Expr);
+  if (!CE)
+    return false;
+
+  SmallPtrSet<ConstantExpr *, 4> Cache;
+  return contains(Cache, CE, C);
+}
+#endif
 
 void Value::replaceAllUsesWith(Value *New) {
   assert(New && "Value::replaceAllUsesWith(<null>) is invalid!");
-  assert(New != this && "this->replaceAllUsesWith(this) is NOT valid!");
+  assert(!contains(New, this) &&
+         "this->replaceAllUsesWith(expr(this)) is NOT valid!");
   assert(New->getType() == getType() &&
          "replaceAllUses of value with new value of different type!");
 
@@ -315,7 +352,7 @@ void Value::replaceAllUsesWith(Value *New) {
     Use &U = *UseList;
     // Must handle Constants specially, we cannot call replaceUsesOfWith on a
     // constant because they are uniqued.
-    if (Constant *C = dyn_cast<Constant>(U.getUser())) {
+    if (auto *C = dyn_cast<Constant>(U.getUser())) {
       if (!isa<GlobalValue>(C)) {
         C->replaceUsesOfWithOnConstant(this, New, &U);
         continue;
@@ -333,6 +370,7 @@ namespace {
 // Various metrics for how much to strip off of pointers.
 enum PointerStripKind {
   PSK_ZeroIndices,
+  PSK_ZeroIndicesAndAliases,
   PSK_InBoundsConstantIndices,
   PSK_InBounds
 };
@@ -350,6 +388,7 @@ static Value *stripPointerCastsAndOffsets(Value *V) {
   do {
     if (GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
       switch (StripKind) {
+      case PSK_ZeroIndicesAndAliases:
       case PSK_ZeroIndices:
         if (!GEP->hasAllZeroIndices())
           return V;
@@ -364,10 +403,11 @@ static Value *stripPointerCastsAndOffsets(Value *V) {
         break;
       }
       V = GEP->getPointerOperand();
-    } else if (Operator::getOpcode(V) == Instruction::BitCast) {
+    } else if (Operator::getOpcode(V) == Instruction::BitCast ||
+               Operator::getOpcode(V) == Instruction::AddrSpaceCast) {
       V = cast<Operator>(V)->getOperand(0);
     } else if (GlobalAlias *GA = dyn_cast<GlobalAlias>(V)) {
-      if (GA->mayBeOverridden())
+      if (StripKind == PSK_ZeroIndices || GA->mayBeOverridden())
         return V;
       V = GA->getAliasee();
     } else {
@@ -381,11 +421,52 @@ static Value *stripPointerCastsAndOffsets(Value *V) {
 } // namespace
 
 Value *Value::stripPointerCasts() {
+  return stripPointerCastsAndOffsets<PSK_ZeroIndicesAndAliases>(this);
+}
+
+Value *Value::stripPointerCastsNoFollowAliases() {
   return stripPointerCastsAndOffsets<PSK_ZeroIndices>(this);
 }
 
 Value *Value::stripInBoundsConstantOffsets() {
   return stripPointerCastsAndOffsets<PSK_InBoundsConstantIndices>(this);
+}
+
+Value *Value::stripAndAccumulateInBoundsConstantOffsets(const DataLayout &DL,
+                                                        APInt &Offset) {
+  if (!getType()->isPointerTy())
+    return this;
+
+  assert(Offset.getBitWidth() == DL.getPointerSizeInBits(cast<PointerType>(
+                                     getType())->getAddressSpace()) &&
+         "The offset must have exactly as many bits as our pointer.");
+
+  // Even though we don't look through PHI nodes, we could be called on an
+  // instruction in an unreachable block, which may be on a cycle.
+  SmallPtrSet<Value *, 4> Visited;
+  Visited.insert(this);
+  Value *V = this;
+  do {
+    if (GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
+      if (!GEP->isInBounds())
+        return V;
+      APInt GEPOffset(Offset);
+      if (!GEP->accumulateConstantOffset(DL, GEPOffset))
+        return V;
+      Offset = GEPOffset;
+      V = GEP->getPointerOperand();
+    } else if (Operator::getOpcode(V) == Instruction::BitCast ||
+               Operator::getOpcode(V) == Instruction::AddrSpaceCast) {
+      V = cast<Operator>(V)->getOperand(0);
+    } else if (GlobalAlias *GA = dyn_cast<GlobalAlias>(V)) {
+      V = GA->getAliasee();
+    } else {
+      return V;
+    }
+    assert(V->getType()->isPointerTy() && "Unexpected operand type!");
+  } while (Visited.insert(V));
+
+  return V;
 }
 
 Value *Value::stripInBoundsOffsets() {
@@ -394,32 +475,67 @@ Value *Value::stripInBoundsOffsets() {
 
 /// isDereferenceablePointer - Test if this value is always a pointer to
 /// allocated and suitably aligned memory for a simple load or store.
-static bool isDereferenceablePointer(const Value *V,
-                                     SmallPtrSet<const Value *, 32> &Visited) {
+static bool isDereferenceablePointer(const Value *V, const DataLayout *DL,
+                                     SmallPtrSetImpl<const Value *> &Visited) {
   // Note that it is not safe to speculate into a malloc'd region because
   // malloc may return null.
-  // It's also not always safe to follow a bitcast, for example:
-  //   bitcast i8* (alloca i8) to i32*
-  // would result in a 4-byte load from a 1-byte alloca. Some cases could
-  // be handled using DataLayout to check sizes and alignments though.
 
   // These are obviously ok.
   if (isa<AllocaInst>(V)) return true;
+
+  // It's not always safe to follow a bitcast, for example:
+  //   bitcast i8* (alloca i8) to i32*
+  // would result in a 4-byte load from a 1-byte alloca. However,
+  // if we're casting from a pointer from a type of larger size
+  // to a type of smaller size (or the same size), and the alignment
+  // is at least as large as for the resulting pointer type, then
+  // we can look through the bitcast.
+  if (DL)
+    if (const BitCastInst* BC = dyn_cast<BitCastInst>(V)) {
+      Type *STy = BC->getSrcTy()->getPointerElementType(),
+           *DTy = BC->getDestTy()->getPointerElementType();
+      if (STy->isSized() && DTy->isSized() &&
+          (DL->getTypeStoreSize(STy) >=
+           DL->getTypeStoreSize(DTy)) &&
+          (DL->getABITypeAlignment(STy) >=
+           DL->getABITypeAlignment(DTy)))
+        return isDereferenceablePointer(BC->getOperand(0), DL, Visited);
+    }
 
   // Global variables which can't collapse to null are ok.
   if (const GlobalVariable *GV = dyn_cast<GlobalVariable>(V))
     return !GV->hasExternalWeakLinkage();
 
-  // byval arguments are ok.
-  if (const Argument *A = dyn_cast<Argument>(V))
-    return A->hasByValAttr();
+  // byval arguments are okay. Arguments specifically marked as
+  // dereferenceable are okay too.
+  if (const Argument *A = dyn_cast<Argument>(V)) {
+    if (A->hasByValAttr())
+      return true;
+    else if (uint64_t Bytes = A->getDereferenceableBytes()) {
+      Type *Ty = V->getType()->getPointerElementType();
+      if (Ty->isSized() && DL && DL->getTypeStoreSize(Ty) <= Bytes)
+        return true;
+    }
+
+    return false;
+  }
+
+  // Return values from call sites specifically marked as dereferenceable are
+  // also okay.
+  if (ImmutableCallSite CS = V) {
+    if (uint64_t Bytes = CS.getDereferenceableBytes(0)) {
+      Type *Ty = V->getType()->getPointerElementType();
+      if (Ty->isSized() && DL && DL->getTypeStoreSize(Ty) <= Bytes)
+        return true;
+    }
+  }
 
   // For GEPs, determine if the indexing lands within the allocated object.
   if (const GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
     // Conservatively require that the base pointer be fully dereferenceable.
     if (!Visited.insert(GEP->getOperand(0)))
       return false;
-    if (!isDereferenceablePointer(GEP->getOperand(0), Visited))
+    if (!isDereferenceablePointer(GEP->getOperand(0), DL, Visited))
       return false;
     // Check the indices.
     gep_type_iterator GTI = gep_type_begin(GEP);
@@ -449,15 +565,39 @@ static bool isDereferenceablePointer(const Value *V,
     return true;
   }
 
+  if (const AddrSpaceCastInst *ASC = dyn_cast<AddrSpaceCastInst>(V))
+    return isDereferenceablePointer(ASC->getOperand(0), DL, Visited);
+
   // If we don't know, assume the worst.
   return false;
 }
 
 /// isDereferenceablePointer - Test if this value is always a pointer to
 /// allocated and suitably aligned memory for a simple load or store.
-bool Value::isDereferenceablePointer() const {
+bool Value::isDereferenceablePointer(const DataLayout *DL) const {
+  // When dereferenceability information is provided by a dereferenceable
+  // attribute, we know exactly how many bytes are dereferenceable. If we can
+  // determine the exact offset to the attributed variable, we can use that
+  // information here.
+  Type *Ty = getType()->getPointerElementType();
+  if (Ty->isSized() && DL) {
+    APInt Offset(DL->getTypeStoreSizeInBits(getType()), 0);
+    const Value *BV = stripAndAccumulateInBoundsConstantOffsets(*DL, Offset);
+
+    APInt DerefBytes(Offset.getBitWidth(), 0);
+    if (const Argument *A = dyn_cast<Argument>(BV))
+      DerefBytes = A->getDereferenceableBytes();
+    else if (ImmutableCallSite CS = BV)
+      DerefBytes = CS.getDereferenceableBytes(0);
+
+    if (DerefBytes.getBoolValue() && Offset.isNonNegative()) {
+      if (DerefBytes.uge(Offset + DL->getTypeStoreSize(Ty)))
+        return true;
+    }
+  }
+
   SmallPtrSet<const Value *, 32> Visited;
-  return ::isDereferenceablePointer(this, Visited);
+  return ::isDereferenceablePointer(this, DL, Visited);
 }
 
 /// DoPHITranslation - If this value is a PHI node with CurBB as its parent,
@@ -473,6 +613,25 @@ Value *Value::DoPHITranslation(const BasicBlock *CurBB,
 }
 
 LLVMContext &Value::getContext() const { return VTy->getContext(); }
+
+void Value::reverseUseList() {
+  if (!UseList || !UseList->Next)
+    // No need to reverse 0 or 1 uses.
+    return;
+
+  Use *Head = UseList;
+  Use *Current = UseList->Next;
+  Head->Next = nullptr;
+  while (Current) {
+    Use *Next = Current->Next;
+    Current->Next = Head;
+    Head->setPrev(&Current->Next);
+    Head = Current;
+    Current = Next;
+  }
+  UseList = Head;
+  Head->setPrev(&UseList);
+}
 
 //===----------------------------------------------------------------------===//
 //                             ValueHandleBase Class
@@ -513,7 +672,7 @@ void ValueHandleBase::AddToUseList() {
     // If this value already has a ValueHandle, then it must be in the
     // ValueHandles map already.
     ValueHandleBase *&Entry = pImpl->ValueHandles[VP.getPointer()];
-    assert(Entry != 0 && "Value doesn't have any handles?");
+    assert(Entry && "Value doesn't have any handles?");
     AddToExistingUseList(&Entry);
     return;
   }
@@ -527,7 +686,7 @@ void ValueHandleBase::AddToUseList() {
   const void *OldBucketPtr = Handles.getPointerIntoBucketsArray();
 
   ValueHandleBase *&Entry = Handles[VP.getPointer()];
-  assert(Entry == 0 && "Value really did already have handles?");
+  assert(!Entry && "Value really did already have handles?");
   AddToExistingUseList(&Entry);
   VP.getPointer()->HasValueHandle = true;
 
@@ -608,7 +767,7 @@ void ValueHandleBase::ValueIsDeleted(Value *V) {
       break;
     case Weak:
       // Weak just goes to null, which will unlink it from the list.
-      Entry->operator=(0);
+      Entry->operator=(nullptr);
       break;
     case Callback:
       // Forward to the subclass's implementation.
@@ -693,9 +852,5 @@ void ValueHandleBase::ValueIsRAUWd(Value *Old, Value *New) {
 #endif
 }
 
-// Default implementation for CallbackVH.
-void CallbackVH::allUsesReplacedWith(Value *) {}
-
-void CallbackVH::deleted() {
-  setValPtr(NULL);
-}
+// Pin the vtable to this file.
+void CallbackVH::anchor() {}

@@ -15,16 +15,18 @@ mod foo {
     // not exported
     enum t { t1, t2, }
 
-    impl Eq for t {
+    impl Copy for t {}
+
+    impl PartialEq for t {
         fn eq(&self, other: &t) -> bool {
             ((*self) as uint) == ((*other) as uint)
         }
         fn ne(&self, other: &t) -> bool { !(*self).eq(other) }
     }
 
-    pub fn f() -> t { return t1; }
+    pub fn f() -> t { return t::t1; }
 
-    pub fn g(v: t) { assert!((v == t1)); }
+    pub fn g(v: t) { assert!((v == t::t1)); }
 }
 
 pub fn main() { foo::g(foo::f()); }

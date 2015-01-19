@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,34 +8,28 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
-
-extern mod extra;
-
-use std::comm::Chan;
-use std::comm::Port;
-use std::comm;
-use std::task;
+use std::thread::Thread;
+use std::sync::mpsc::{channel, Sender};
 
 pub fn main() { test05(); }
 
-fn test05_start(ch : &Chan<int>) {
-    ch.send(10);
-    error!("sent 10");
-    ch.send(20);
-    error!("sent 20");
-    ch.send(30);
-    error!("sent 30");
+fn test05_start(tx : &Sender<int>) {
+    tx.send(10).unwrap();
+    println!("sent 10");
+    tx.send(20).unwrap();
+    println!("sent 20");
+    tx.send(30).unwrap();
+    println!("sent 30");
 }
 
 fn test05() {
-    let (po, ch) = comm::stream();
-    task::spawn(|| test05_start(&ch) );
-    let mut value: int = po.recv();
-    error!(value);
-    value = po.recv();
-    error!(value);
-    value = po.recv();
-    error!(value);
+    let (tx, rx) = channel();
+    let _t = Thread::spawn(move|| { test05_start(&tx) });
+    let mut value: int = rx.recv().unwrap();
+    println!("{}", value);
+    value = rx.recv().unwrap();
+    println!("{}", value);
+    value = rx.recv().unwrap();
+    println!("{}", value);
     assert_eq!(value, 30);
 }

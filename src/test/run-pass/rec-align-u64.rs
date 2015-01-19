@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,32 +10,36 @@
 
 // Issue #2303
 
-use std::sys;
+#![feature(intrinsics)]
+
+use std::mem;
 
 mod rusti {
-    #[abi = "rust-intrinsic"]
-    pub extern "rust-intrinsic" {
+    extern "rust-intrinsic" {
         pub fn pref_align_of<T>() -> uint;
         pub fn min_align_of<T>() -> uint;
     }
 }
 
 // This is the type with the questionable alignment
+#[derive(Show)]
 struct Inner {
     c64: u64
 }
 
 // This is the type that contains the type with the
 // questionable alignment, for testing
+#[derive(Show)]
 struct Outer {
     c8: u8,
     t: Inner
 }
 
 
-#[cfg(target_os = "linux")]
-#[cfg(target_os = "macos")]
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "linux",
+          target_os = "macos",
+          target_os = "freebsd",
+          target_os = "dragonfly"))]
 mod m {
     #[cfg(target_arch = "x86")]
     pub mod m {
@@ -43,16 +47,22 @@ mod m {
         pub fn size() -> uint { 12u }
     }
 
-    #[cfg(target_arch = "x86_64")]
-    mod m {
+    #[cfg(any(target_arch = "x86_64", target_arch = "arm", target_arch = "aarch64"))]
+    pub mod m {
         pub fn align() -> uint { 8u }
         pub fn size() -> uint { 16u }
     }
 }
 
-#[cfg(target_os = "win32")]
+#[cfg(target_os = "windows")]
 mod m {
     #[cfg(target_arch = "x86")]
+    pub mod m {
+        pub fn align() -> uint { 8u }
+        pub fn size() -> uint { 16u }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     pub mod m {
         pub fn align() -> uint { 8u }
         pub fn size() -> uint { 16u }
@@ -72,20 +82,19 @@ pub fn main() {
     unsafe {
         let x = Outer {c8: 22u8, t: Inner {c64: 44u64}};
 
-        // Send it through the shape code
-        let y = fmt!("%?", x);
+        let y = format!("{:?}", x);
 
-        debug!("align inner = %?", rusti::min_align_of::<Inner>());
-        debug!("size outer = %?", sys::size_of::<Outer>());
-        debug!("y = %s", y);
+        println!("align inner = {:?}", rusti::min_align_of::<Inner>());
+        println!("size outer = {:?}", mem::size_of::<Outer>());
+        println!("y = {:?}", y);
 
         // per clang/gcc the alignment of `Inner` is 4 on x86.
         assert_eq!(rusti::min_align_of::<Inner>(), m::m::align());
 
         // per clang/gcc the size of `Outer` should be 12
         // because `Inner`s alignment was 4.
-        assert_eq!(sys::size_of::<Outer>(), m::m::size());
+        assert_eq!(mem::size_of::<Outer>(), m::m::size());
 
-        assert_eq!(y, ~"{c8: 22, t: {c64: 44}}");
+        assert_eq!(y, "Outer { c8: 22u8, t: Inner { c64: 44u64 } }".to_string());
     }
 }

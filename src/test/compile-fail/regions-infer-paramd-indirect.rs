@@ -8,28 +8,30 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 // Check that we correctly infer that b and c must be region
 // parameterized because they reference a which requires a region.
 
-type a<'self> = &'self int;
-type b<'self> = @a<'self>;
+type a<'a> = &'a isize;
+type b<'a> = Box<a<'a>>;
 
-struct c<'self> {
-    f: @b<'self>
+struct c<'a> {
+    f: Box<b<'a>>
 }
 
-trait set_f<'self> {
-    fn set_f_ok(&self, b: @b<'self>);
-    fn set_f_bad(&self, b: @b);
+trait set_f<'a> {
+    fn set_f_ok(&mut self, b: Box<b<'a>>);
+    fn set_f_bad(&mut self, b: Box<b>);
 }
 
-impl<'self> set_f<'self> for c<'self> {
-    fn set_f_ok(&self, b: @b<'self>) {
+impl<'a> set_f<'a> for c<'a> {
+    fn set_f_ok(&mut self, b: Box<b<'a>>) {
         self.f = b;
     }
 
-    fn set_f_bad(&self, b: @b) {
-        self.f = b; //~ ERROR mismatched types: expected `@@&'self int` but found `@@&int`
+    fn set_f_bad(&mut self, b: Box<b>) {
+        self.f = b;
+        //~^ ERROR mismatched types: expected `Box<Box<&'a isize>>`, found `Box<Box<&isize>>`
     }
 }
 

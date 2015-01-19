@@ -1,6 +1,14 @@
-# xfail-license
+# Copyright 2011-2014 The Rust Project Developers. See the COPYRIGHT
+# file at the top-level directory of this distribution and at
+# http://rust-lang.org/COPYRIGHT.
+#
+# Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+# http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+# <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+# option. This file may not be copied, modified, or distributed
+# except according to those terms.
 
-import re, os, sys, glob, tarfile, shutil, subprocess, tempfile
+import re, os, sys, glob, tarfile, shutil, subprocess, tempfile, distutils.spawn
 
 try:
   import hashlib
@@ -20,40 +28,22 @@ if not src_dir:
   raise Exception("missing env var CFG_SRC_DIR")
 
 snapshotfile = os.path.join(src_dir, "src", "snapshots.txt")
-download_url_base = "http://static.rust-lang.org/stage0-snapshots"
+download_url_base = "https://static.rust-lang.org/stage0-snapshots"
 download_dir_base = "dl"
 download_unpack_base = os.path.join(download_dir_base, "unpack")
 
 snapshot_files = {
-    "linux": ["bin/rustc",
-              "lib/libstd-*.so",
-              "lib/libextra-*.so",
-              "lib/librustc-*.so",
-              "lib/libsyntax-*.so",
-              "lib/librustrt.so",
-              "lib/librustllvm.so"],
-    "macos": ["bin/rustc",
-              "lib/libstd-*.dylib",
-              "lib/libextra-*.dylib",
-              "lib/librustc-*.dylib",
-              "lib/libsyntax-*.dylib",
-              "lib/librustrt.dylib",
-              "lib/librustllvm.dylib"],
-    "winnt": ["bin/rustc.exe",
-              "bin/std-*.dll",
-              "bin/extra-*.dll",
-              "bin/rustc-*.dll",
-              "bin/syntax-*.dll",
-              "bin/rustrt.dll",
-              "bin/rustllvm.dll"],
-    "freebsd": ["bin/rustc",
-                "lib/libstd-*.so",
-                "lib/libextra-*.so",
-                "lib/librustc-*.so",
-                "lib/libsyntax-*.so",
-                "lib/librustrt.so",
-                "lib/librustllvm.so"]
+    "linux": ["bin/rustc"],
+    "macos": ["bin/rustc"],
+    "winnt": ["bin/rustc.exe"],
+    "freebsd": ["bin/rustc"],
+    "dragonfly": ["bin/rustc"],
     }
+
+winnt_runtime_deps_32 = ["libgcc_s_dw2-1.dll",
+                         "libstdc++-6.dll"]
+winnt_runtime_deps_64 = ["libgcc_s_seh-1.dll",
+                         "libstdc++-6.dll"]
 
 def parse_line(n, line):
   global snapshotfile
@@ -86,14 +76,19 @@ def full_snapshot_name(date, rev, platform, hsh):
 
 
 def get_kernel(triple):
-    os_name = triple.split('-')[-1]
-    #scrub(os.getenv("CFG_ENABLE_MINGW_CROSS")):
-    if os_name == "nt" or os_name == "mingw32":
+    t = triple.split('-')
+    if len(t) == 2:
+      os_name = t[1]
+    else:
+      os_name = t[2]
+    if os_name == "windows":
         return "winnt"
     if os_name == "darwin":
         return "macos"
     if os_name == "freebsd":
         return "freebsd"
+    if os_name == "dragonfly":
+        return "dragonfly"
     return "linux"
 
 def get_cpu(triple):
@@ -132,10 +127,19 @@ def local_rev_committer_date():
 def get_url_to_file(u,f):
     # no security issue, just to stop partial download leaving a stale file
     tmpf = f + '.tmp'
-    returncode = subprocess.call(["curl", "-o", tmpf, u])
+
+    returncode = -1
+    if distutils.spawn.find_executable("curl"):
+        returncode = subprocess.call(["curl", "-o", tmpf, u])
+    elif distutils.spawn.find_executable("wget"):
+        returncode = subprocess.call(["wget", "-O", tmpf, u])
+
     if returncode != 0:
-        os.unlink(tmpf)
-        raise
+        try:
+            os.unlink(tmpf)
+        except OSError as e:
+            pass
+        raise Exception("failed to fetch url")
     os.rename(tmpf, f)
 
 def snap_filename_hash_part(snap):
@@ -149,8 +153,25 @@ def hash_file(x):
     h.update(open(x, "rb").read())
     return scrub(h.hexdigest())
 
+# Returns a list of paths of Rust's system runtime dependencies
+def get_winnt_runtime_deps(platform):
+    if platform == "winnt-x86_64":
+      deps = winnt_runtime_deps_64
+    else:
+      deps = winnt_runtime_deps_32
+    runtime_deps = []
+    path_dirs = os.environ["PATH"].split(os.pathsep)
+    for name in deps:
+      for dir in path_dirs:
+        filepath = os.path.join(dir, name)
+        if os.path.isfile(filepath):
+          runtime_deps.append(filepath)
+          break
+      else:
+        raise Exception("Could not find runtime dependency: %s" % name)
+    return runtime_deps
 
-def make_snapshot(stage, triple, flag):
+def make_snapshot(stage, triple):
     kernel = get_kernel(triple)
     platform = get_platform(triple)
     rev = local_rev_short_sha()
@@ -164,6 +185,7 @@ def make_snapshot(stage, triple, flag):
         return os.sep.join(cs[-2:])
 
     tar = tarfile.open(file0, "w:bz2")
+
     for name in snapshot_files[kernel]:
       dir = stage
       if stage == "stage1" and re.match(r"^lib/(lib)?std.*", name):
@@ -175,8 +197,15 @@ def make_snapshot(stage, triple, flag):
       if len(matches) == 1:
         tar.add(matches[0], "rust-stage0/" + in_tar_name(matches[0]))
       else:
-        raise Exception("Found stale files: \n  %s\n\
-Please make a clean build." % "\n  ".join(matches))
+        raise Exception("Found stale files: \n  %s\n"
+                        "Please make a clean build." % "\n  ".join(matches))
+
+    if kernel=="winnt":
+      for path in get_winnt_runtime_deps(platform):
+        tar.add(path, "rust-stage0/bin/" + os.path.basename(path))
+      tar.add(os.path.join(os.path.dirname(__file__), "third-party"),
+              "rust-stage0/bin/third-party")
+
     tar.close()
 
     h = hash_file(file0)
@@ -184,33 +213,62 @@ Please make a clean build." % "\n  ".join(matches))
 
     shutil.move(file0, file1)
 
-    if flag == "install":
-      # FIXME (#2664): this is an ugly quick hack; pls make it better
-      path  = file1
-      comps = path.split("-")
-      parts = { 'year': comps[2], \
-                'month': comps[3], \
-                'date': comps[4], \
-                'check': comps[5], \
-                'plat': comps[6], \
-                'arch': comps[7], \
-                'sha': comps[8].split(".")[0] }
-
-      shutil.move(path, "dl/" + path)
-      shutil.move('src/snapshots.txt', 'src/snapshots-old.txt')
-
-      newf = open('src/snapshots.txt', 'w')
-      newf.write("T %(year)s-%(month)s-%(date)s %(check)s\n" % parts)
-      newf.write("  %(plat)s-%(arch)s %(sha)s\n\n" % parts)
-
-      oldf = open('src/snapshots-old.txt', 'r')
-      for line in oldf:
-        newf.write(line)
-      oldf.close()
-
-      newf.close()
-
-      os.remove('src/snapshots-old.txt')
-
-
     return file1
+
+def curr_snapshot_rev():
+  i = 0
+  found_snap = False
+  date = None
+  rev = None
+
+  f = open(snapshotfile)
+  for line in f.readlines():
+    i += 1
+    parsed = parse_line(i, line)
+    if (not parsed): continue
+
+    if parsed["type"] == "snapshot":
+      date = parsed["date"]
+      rev = parsed["rev"]
+      found_snap = True
+      break
+
+  if not found_snap:
+    raise Exception("no snapshot entries in file")
+
+  return (date, rev)
+
+def determine_curr_snapshot(triple):
+  i = 0
+  platform = get_platform(triple)
+
+  found_file = False
+  found_snap = False
+  hsh = None
+  date = None
+  rev = None
+
+  f = open(snapshotfile)
+  for line in f.readlines():
+    i += 1
+    parsed = parse_line(i, line)
+    if (not parsed): continue
+
+    if found_snap and parsed["type"] == "file":
+      if parsed["platform"] == platform:
+        hsh = parsed["hash"]
+        found_file = True
+        break;
+    elif parsed["type"] == "snapshot":
+      date = parsed["date"]
+      rev = parsed["rev"]
+      found_snap = True
+
+  if not found_snap:
+    raise Exception("no snapshot entries in file")
+
+  if not found_file:
+    raise Exception("no snapshot file found for platform %s, rev %s" %
+                    (platform, rev))
+
+  return full_snapshot_name(date, rev, platform, hsh)

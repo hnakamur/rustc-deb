@@ -8,17 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-static INVALID_ENUM : u32 = 0;
-static INVALID_VALUE : u32 = 1;
+const INVALID_ENUM : u32 = 0;
+const INVALID_VALUE : u32 = 1;
 
-fn gl_err_str(err: u32) -> ~str
+fn gl_err_str(err: u32) -> String
 {
   match err
   {
-    INVALID_ENUM => { ~"Invalid enum" },
-    INVALID_VALUE => { ~"Invalid value" },
-    _ => { ~"Unknown error" }
+    INVALID_ENUM => { "Invalid enum".to_string() },
+    INVALID_VALUE => { "Invalid value".to_string() },
+    _ => { "Unknown error".to_string() }
   }
 }
 
-fn main() {}
+pub fn main() {}

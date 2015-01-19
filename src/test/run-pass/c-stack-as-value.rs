@@ -8,19 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::libc;
-
 mod rustrt {
-    use std::libc;
+    extern crate libc;
 
-    #[abi = "cdecl"]
-    pub extern {
-        pub fn get_task_id() -> libc::intptr_t;
+    #[link(name = "rust_test_helpers")]
+    extern {
+        pub fn rust_get_test_int() -> libc::intptr_t;
     }
 }
 
 pub fn main() {
-    unsafe {
-        let _foo = rustrt::get_task_id;
-    }
+    let _foo = rustrt::rust_get_test_int;
 }

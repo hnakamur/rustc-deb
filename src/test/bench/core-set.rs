@@ -1,4 +1,4 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,129 +8,153 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
+// ignore-pretty very bad with line comments
 
-use extra::bitv::BitvSet;
-use extra::treemap::TreeSet;
-use std::hashmap::HashSet;
-use std::io;
+#![feature(unboxed_closures)]
+
+extern crate collections;
+extern crate rand;
+
+use std::collections::BTreeSet;
+use std::collections::BitvSet;
+use std::collections::HashSet;
+use std::collections::hash_map::Hasher;
+use std::hash::Hash;
 use std::os;
-use std::rand;
+use std::time::Duration;
 use std::uint;
 
 struct Results {
-    sequential_ints: float,
-    random_ints: float,
-    delete_ints: float,
+    sequential_ints: Duration,
+    random_ints: Duration,
+    delete_ints: Duration,
 
-    sequential_strings: float,
-    random_strings: float,
-    delete_strings: float
+    sequential_strings: Duration,
+    random_strings: Duration,
+    delete_strings: Duration,
 }
 
-fn timed(result: &mut float, op: &fn()) {
-    let start = extra::time::precise_time_s();
-    op();
-    let end = extra::time::precise_time_s();
-    *result = (end - start);
+fn timed<F>(result: &mut Duration, op: F) where F: FnOnce() {
+    *result = Duration::span(op);
+}
+
+trait MutableSet<T> {
+    fn insert(&mut self, k: T);
+    fn remove(&mut self, k: &T) -> bool;
+    fn contains(&self, k: &T) -> bool;
+}
+
+impl<T: Hash<Hasher> + Eq> MutableSet<T> for HashSet<T> {
+    fn insert(&mut self, k: T) { self.insert(k); }
+    fn remove(&mut self, k: &T) -> bool { self.remove(k) }
+    fn contains(&self, k: &T) -> bool { self.contains(k) }
+}
+impl<T: Ord> MutableSet<T> for BTreeSet<T> {
+    fn insert(&mut self, k: T) { self.insert(k); }
+    fn remove(&mut self, k: &T) -> bool { self.remove(k) }
+    fn contains(&self, k: &T) -> bool { self.contains(k) }
+}
+impl MutableSet<uint> for BitvSet {
+    fn insert(&mut self, k: uint) { self.insert(k); }
+    fn remove(&mut self, k: &uint) -> bool { self.remove(k) }
+    fn contains(&self, k: &uint) -> bool { self.contains(k) }
 }
 
 impl Results {
-    pub fn bench_int<T:Set<uint>,
-                 R: rand::Rng>(
-                 &mut self,
-                 rng: &mut R,
-                 num_keys: uint,
-                 rand_cap: uint,
-                 f: &fn() -> T) {
+    pub fn bench_int<T:MutableSet<uint>,
+                     R:rand::Rng,
+                     F:FnMut() -> T>(
+                     &mut self,
+                     rng: &mut R,
+                     num_keys: uint,
+                     rand_cap: uint,
+                     mut f: F) {
         {
             let mut set = f();
-            do timed(&mut self.sequential_ints) {
-                for uint::range(0, num_keys) |i| {
+            timed(&mut self.sequential_ints, || {
+                for i in range(0u, num_keys) {
                     set.insert(i);
                 }
 
-                for uint::range(0, num_keys) |i| {
+                for i in range(0u, num_keys) {
                     assert!(set.contains(&i));
                 }
-            }
+            })
         }
 
         {
             let mut set = f();
-            do timed(&mut self.random_ints) {
-                for num_keys.times {
-                    set.insert((rng.next() as uint) % rand_cap);
+            timed(&mut self.random_ints, || {
+                for _ in range(0, num_keys) {
+                    set.insert(rng.gen::<uint>() % rand_cap);
                 }
-            }
+            })
         }
 
         {
             let mut set = f();
-            for uint::range(0, num_keys) |i| {
+            for i in range(0u, num_keys) {
                 set.insert(i);
             }
 
-            do timed(&mut self.delete_ints) {
-                for uint::range(0, num_keys) |i| {
+            timed(&mut self.delete_ints, || {
+                for i in range(0u, num_keys) {
                     assert!(set.remove(&i));
                 }
-            }
+            })
         }
     }
 
-    pub fn bench_str<T:Set<~str>,
-                 R:rand::Rng>(
-                 &mut self,
-                 rng: &mut R,
-                 num_keys: uint,
-                 f: &fn() -> T) {
+    pub fn bench_str<T:MutableSet<String>,
+                     R:rand::Rng,
+                     F:FnMut() -> T>(
+                     &mut self,
+                     rng: &mut R,
+                     num_keys: uint,
+                     mut f: F) {
         {
             let mut set = f();
-            do timed(&mut self.sequential_strings) {
-                for uint::range(0, num_keys) |i| {
-                    let s = uint::to_str(i);
-                    set.insert(s);
+            timed(&mut self.sequential_strings, || {
+                for i in range(0u, num_keys) {
+                    set.insert(i.to_string());
                 }
 
-                for uint::range(0, num_keys) |i| {
-                    let s = uint::to_str(i);
-                    assert!(set.contains(&s));
+                for i in range(0u, num_keys) {
+                    assert!(set.contains(&i.to_string()));
                 }
-            }
+            })
         }
 
         {
             let mut set = f();
-            do timed(&mut self.random_strings) {
-                for num_keys.times {
-                    let s = uint::to_str(rng.next() as uint);
+            timed(&mut self.random_strings, || {
+                for _ in range(0, num_keys) {
+                    let s = rng.gen::<uint>().to_string();
                     set.insert(s);
                 }
-            }
+            })
         }
 
         {
             let mut set = f();
-            for uint::range(0, num_keys) |i| {
-                set.insert(uint::to_str(i));
+            for i in range(0u, num_keys) {
+                set.insert(i.to_string());
             }
-            do timed(&mut self.delete_strings) {
-                for uint::range(0, num_keys) |i| {
-                    assert!(set.remove(&uint::to_str(i)));
+            timed(&mut self.delete_strings, || {
+                for i in range(0u, num_keys) {
+                    assert!(set.remove(&i.to_string()));
                 }
-            }
+            })
         }
     }
 }
 
 fn write_header(header: &str) {
-    io::stdout().write_str(header);
-    io::stdout().write_str("\n");
+    println!("{}", header);
 }
 
-fn write_row(label: &str, value: float) {
-    io::stdout().write_str(fmt!("%30s %f s\n", label, value));
+fn write_row(label: &str, value: Duration) {
+    println!("{:30} {} s\n", label, value);
 }
 
 fn write_results(label: &str, results: &Results) {
@@ -145,49 +169,62 @@ fn write_results(label: &str, results: &Results) {
 
 fn empty_results() -> Results {
     Results {
-        sequential_ints: 0f,
-        random_ints: 0f,
-        delete_ints: 0f,
+        sequential_ints: Duration::seconds(0),
+        random_ints: Duration::seconds(0),
+        delete_ints: Duration::seconds(0),
 
-        sequential_strings: 0f,
-        random_strings: 0f,
-        delete_strings: 0f,
+        sequential_strings: Duration::seconds(0),
+        random_strings: Duration::seconds(0),
+        delete_strings: Duration::seconds(0),
     }
 }
 
 fn main() {
     let args = os::args();
+    let args = args.as_slice();
     let num_keys = {
         if args.len() == 2 {
-            uint::from_str(args[1]).get()
+            args[1].parse::<uint>().unwrap()
         } else {
             100 // woefully inadequate for any real measurement
         }
     };
 
-    let seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let seed: &[_] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     let max = 200000;
 
     {
-        let mut rng = rand::IsaacRng::new_seeded(seed);
+        let mut rng: rand::IsaacRng = rand::SeedableRng::from_seed(seed);
         let mut results = empty_results();
-        results.bench_int(&mut rng, num_keys, max, || HashSet::new::<uint>());
-        results.bench_str(&mut rng, num_keys, || HashSet::new::<~str>());
-        write_results("std::hashmap::HashSet", &results);
+        results.bench_int(&mut rng, num_keys, max, || {
+            let s: HashSet<uint> = HashSet::new();
+            s
+        });
+        results.bench_str(&mut rng, num_keys, || {
+            let s: HashSet<String> = HashSet::new();
+            s
+        });
+        write_results("collections::HashSet", &results);
     }
 
     {
-        let mut rng = rand::IsaacRng::new_seeded(seed);
+        let mut rng: rand::IsaacRng = rand::SeedableRng::from_seed(seed);
         let mut results = empty_results();
-        results.bench_int(&mut rng, num_keys, max, || TreeSet::new::<uint>());
-        results.bench_str(&mut rng, num_keys, || TreeSet::new::<~str>());
-        write_results("extra::treemap::TreeSet", &results);
+        results.bench_int(&mut rng, num_keys, max, || {
+            let s: BTreeSet<uint> = BTreeSet::new();
+            s
+        });
+        results.bench_str(&mut rng, num_keys, || {
+            let s: BTreeSet<String> = BTreeSet::new();
+            s
+        });
+        write_results("collections::BTreeSet", &results);
     }
 
     {
-        let mut rng = rand::IsaacRng::new_seeded(seed);
+        let mut rng: rand::IsaacRng = rand::SeedableRng::from_seed(seed);
         let mut results = empty_results();
         results.bench_int(&mut rng, num_keys, max, || BitvSet::new());
-        write_results("extra::bitv::BitvSet", &results);
+        write_results("collections::bitv::BitvSet", &results);
     }
 }

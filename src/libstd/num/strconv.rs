@@ -1,4 +1,4 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -7,147 +7,104 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+//
+// ignore-lexer-test FIXME #15679
 
-#[allow(missing_doc)];
+#![allow(missing_docs)]
 
-use container::Container;
-use core::cmp::{Ord, Eq};
-use ops::{Add, Sub, Mul, Div, Rem, Neg};
-use option::{None, Option, Some};
-use char;
-use str;
-use str::StrSlice;
-use kinds::Copy;
-use vec::{CopyableVector, ImmutableVector, MutableVector};
-use vec::OwnedVector;
-use num::{NumCast, Zero, One, cast, pow_with_uint, Integer};
-use num::{Round, Float, FPNaN, FPInfinite};
+use self::ExponentFormat::*;
+use self::SignificantDigits::*;
+use self::SignFormat::*;
 
+use char::{self, CharExt};
+use num::{self, Int, Float, ToPrimitive};
+use num::FpCategory as Fp;
+use ops::FnMut;
+use slice::SliceExt;
+use str::StrExt;
+use string::String;
+use vec::Vec;
+
+/// A flag that specifies whether to use exponential (scientific) notation.
+#[derive(Copy)]
 pub enum ExponentFormat {
+    /// Do not use exponential notation.
     ExpNone,
+    /// Use exponential notation with the exponent having a base of 10 and the
+    /// exponent sign being `e` or `E`. For example, 1000 would be printed
+    /// 1e3.
     ExpDec,
-    ExpBin
+    /// Use exponential notation with the exponent having a base of 2 and the
+    /// exponent sign being `p` or `P`. For example, 8 would be printed 1p3.
+    ExpBin,
 }
 
+/// The number of digits used for emitting the fractional part of a number, if
+/// any.
+#[derive(Copy)]
 pub enum SignificantDigits {
+    /// All calculable digits will be printed.
+    ///
+    /// Note that bignums or fractions may cause a surprisingly large number
+    /// of digits to be printed.
     DigAll,
+
+    /// At most the given number of digits will be printed, truncating any
+    /// trailing zeroes.
     DigMax(uint),
+
+    /// Precisely the given number of digits will be printed.
     DigExact(uint)
 }
 
+/// How to emit the sign of a number.
+#[derive(Copy)]
 pub enum SignFormat {
+    /// No sign will be printed. The exponent sign will also be emitted.
     SignNone,
+    /// `-` will be printed for negative values, but no sign will be emitted
+    /// for positive numbers.
     SignNeg,
-    SignAll
+    /// `+` will be printed for positive values, and `-` will be printed for
+    /// negative values.
+    SignAll,
 }
 
-pub trait NumStrConv {
-    fn NaN()      -> Option<Self>;
-    fn inf()      -> Option<Self>;
-    fn neg_inf()  -> Option<Self>;
-    fn neg_zero() -> Option<Self>;
-
-    fn round_to_zero(&self)   -> Self;
-    fn fractional_part(&self) -> Self;
-}
-
-macro_rules! impl_NumStrConv_Floating (($t:ty) => (
-    impl NumStrConv for $t {
-        #[inline]
-        fn NaN()      -> Option<$t> { Some( 0.0 / 0.0) }
-        #[inline]
-        fn inf()      -> Option<$t> { Some( 1.0 / 0.0) }
-        #[inline]
-        fn neg_inf()  -> Option<$t> { Some(-1.0 / 0.0) }
-        #[inline]
-        fn neg_zero() -> Option<$t> { Some(-0.0      ) }
-
-        #[inline]
-        fn round_to_zero(&self) -> $t { self.trunc() }
-        #[inline]
-        fn fractional_part(&self) -> $t { self.fract() }
-    }
-))
-
-macro_rules! impl_NumStrConv_Integer (($t:ty) => (
-    impl NumStrConv for $t {
-        #[inline] fn NaN()      -> Option<$t> { None }
-        #[inline] fn inf()      -> Option<$t> { None }
-        #[inline] fn neg_inf()  -> Option<$t> { None }
-        #[inline] fn neg_zero() -> Option<$t> { None }
-
-        #[inline] fn round_to_zero(&self)   -> $t { *self }
-        #[inline] fn fractional_part(&self) -> $t {     0 }
-    }
-))
-
-// FIXME: #4955
-// Replace by two generic impls for traits 'Integral' and 'Floating'
-impl_NumStrConv_Floating!(float)
-impl_NumStrConv_Floating!(f32)
-impl_NumStrConv_Floating!(f64)
-
-impl_NumStrConv_Integer!(int)
-impl_NumStrConv_Integer!(i8)
-impl_NumStrConv_Integer!(i16)
-impl_NumStrConv_Integer!(i32)
-impl_NumStrConv_Integer!(i64)
-
-impl_NumStrConv_Integer!(uint)
-impl_NumStrConv_Integer!(u8)
-impl_NumStrConv_Integer!(u16)
-impl_NumStrConv_Integer!(u32)
-impl_NumStrConv_Integer!(u64)
-
-
-// Special value strings as [u8] consts.
-static inf_buf:          [u8, ..3] = ['i' as u8, 'n' as u8, 'f' as u8];
-static positive_inf_buf: [u8, ..4] = ['+' as u8, 'i' as u8, 'n' as u8,
-                                      'f' as u8];
-static negative_inf_buf: [u8, ..4] = ['-' as u8, 'i' as u8, 'n' as u8,
-                                      'f' as u8];
-static nan_buf:          [u8, ..3] = ['N' as u8, 'a' as u8, 'N' as u8];
-
-/**
- * Converts an integral number to its string representation as a byte vector.
- * This is meant to be a common base implementation for all integral string
- * conversion functions like `to_str()` or `to_str_radix()`.
- *
- * # Arguments
- * - `num`           - The number to convert. Accepts any number that
- *                     implements the numeric traits.
- * - `radix`         - Base to use. Accepts only the values 2-36.
- * - `sign`          - How to emit the sign. Options are:
- *     - `SignNone`: No sign at all. Basically emits `abs(num)`.
- *     - `SignNeg`:  Only `-` on negative values.
- *     - `SignAll`:  Both `+` on positive, and `-` on negative numbers.
- * - `f`             - a callback which will be invoked for each ascii character
- *                     which composes the string representation of this integer
- *
- * # Return value
- * A tuple containing the byte vector, and a boolean flag indicating
- * whether it represents a special value like `inf`, `-inf`, `NaN` or not.
- * It returns a tuple because there can be ambiguity between a special value
- * and a number representation at higher bases.
- *
- * # Failure
- * - Fails if `radix` < 2 or `radix` > 36.
- */
-pub fn int_to_str_bytes_common<T:NumCast+Zero+Eq+Ord+Integer+
-                                 Div<T,T>+Neg<T>+Rem<T,T>+Mul<T,T>>(
-        num: T, radix: uint, sign: SignFormat, f: &fn(u8)) {
+/// Converts an integral number to its string representation as a byte vector.
+/// This is meant to be a common base implementation for all integral string
+/// conversion functions like `to_string()` or `to_str_radix()`.
+///
+/// # Arguments
+///
+/// - `num`           - The number to convert. Accepts any number that
+///                     implements the numeric traits.
+/// - `radix`         - Base to use. Accepts only the values 2-36.
+/// - `sign`          - How to emit the sign. Options are:
+///     - `SignNone`: No sign at all. Basically emits `abs(num)`.
+///     - `SignNeg`:  Only `-` on negative values.
+///     - `SignAll`:  Both `+` on positive, and `-` on negative numbers.
+/// - `f`             - a callback which will be invoked for each ascii character
+///                     which composes the string representation of this integer
+///
+/// # Panics
+///
+/// - Panics if `radix` < 2 or `radix` > 36.
+fn int_to_str_bytes_common<T, F>(num: T, radix: uint, sign: SignFormat, mut f: F) where
+    T: Int,
+    F: FnMut(u8),
+{
     assert!(2 <= radix && radix <= 36);
 
-    let _0: T = Zero::zero();
+    let _0: T = Int::zero();
 
     let neg = num < _0;
-    let radix_gen: T = cast(radix);
+    let radix_gen: T = num::cast(radix).unwrap();
 
     let mut deccum = num;
     // This is just for integral types, the largest of which is a u64. The
     // smallest base that we can have is 2, so the most number of digits we're
     // ever going to have is 64
-    let mut buf = [0u8, ..64];
+    let mut buf = [0u8; 64];
     let mut cur = 0;
 
     // Loop at least once to make sure at least a `0` gets emitted.
@@ -160,13 +117,13 @@ pub fn int_to_str_bytes_common<T:NumCast+Zero+Eq+Ord+Integer+
         // numbers [-35 .. 0] we always have [0 .. 35].
         let current_digit_signed = deccum % radix_gen;
         let current_digit = if current_digit_signed < _0 {
-            -current_digit_signed
+            _0 - current_digit_signed
         } else {
             current_digit_signed
         };
-        buf[cur] = match current_digit.to_u8() {
-            i @ 0..9 => '0' as u8 + i,
-            i        => 'a' as u8 + (i - 10),
+        buf[cur] = match current_digit.to_u8().unwrap() {
+            i @ 0...9 => b'0' + i,
+            i         => b'a' + (i - 10),
         };
         cur += 1;
 
@@ -177,8 +134,8 @@ pub fn int_to_str_bytes_common<T:NumCast+Zero+Eq+Ord+Integer+
 
     // Decide what sign to put in front
     match sign {
-        SignNeg | SignAll if neg => { f('-' as u8); }
-        SignAll => { f('+' as u8); }
+        SignNeg | SignAll if neg => { f(b'-'); }
+        SignAll => { f(b'+'); }
         _ => ()
     }
 
@@ -189,66 +146,96 @@ pub fn int_to_str_bytes_common<T:NumCast+Zero+Eq+Ord+Integer+
     }
 }
 
-/**
- * Converts a number to its string representation as a byte vector.
- * This is meant to be a common base implementation for all numeric string
- * conversion functions like `to_str()` or `to_str_radix()`.
- *
- * # Arguments
- * - `num`           - The number to convert. Accepts any number that
- *                     implements the numeric traits.
- * - `radix`         - Base to use. Accepts only the values 2-36.
- * - `negative_zero` - Whether to treat the special value `-0` as
- *                     `-0` or as `+0`.
- * - `sign`          - How to emit the sign. Options are:
- *     - `SignNone`: No sign at all. Basically emits `abs(num)`.
- *     - `SignNeg`:  Only `-` on negative values.
- *     - `SignAll`:  Both `+` on positive, and `-` on negative numbers.
- * - `digits`        - The amount of digits to use for emitting the
- *                     fractional part, if any. Options are:
- *     - `DigAll`:         All calculatable digits. Beware of bignums or
- *                         fractions!
- *     - `DigMax(uint)`:   Maximum N digits, truncating any trailing zeros.
- *     - `DigExact(uint)`: Exactly N digits.
- *
- * # Return value
- * A tuple containing the byte vector, and a boolean flag indicating
- * whether it represents a special value like `inf`, `-inf`, `NaN` or not.
- * It returns a tuple because there can be ambiguity between a special value
- * and a number representation at higher bases.
- *
- * # Failure
- * - Fails if `radix` < 2 or `radix` > 36.
- */
-pub fn float_to_str_bytes_common<T:NumCast+Zero+One+Eq+Ord+Float+Round+
-                                  Div<T,T>+Neg<T>+Rem<T,T>+Mul<T,T>>(
+/// Converts a number to its string representation as a byte vector.
+/// This is meant to be a common base implementation for all numeric string
+/// conversion functions like `to_string()` or `to_str_radix()`.
+///
+/// # Arguments
+///
+/// - `num`           - The number to convert. Accepts any number that
+///                     implements the numeric traits.
+/// - `radix`         - Base to use. Accepts only the values 2-36. If the exponential notation
+///                     is used, then this base is only used for the significand. The exponent
+///                     itself always printed using a base of 10.
+/// - `negative_zero` - Whether to treat the special value `-0` as
+///                     `-0` or as `+0`.
+/// - `sign`          - How to emit the sign. See `SignFormat`.
+/// - `digits`        - The amount of digits to use for emitting the fractional
+///                     part, if any. See `SignificantDigits`.
+/// - `exp_format`   - Whether or not to use the exponential (scientific) notation.
+///                    See `ExponentFormat`.
+/// - `exp_capital`   - Whether or not to use a capital letter for the exponent sign, if
+///                     exponential notation is desired.
+///
+/// # Return value
+///
+/// A tuple containing the byte vector, and a boolean flag indicating
+/// whether it represents a special value like `inf`, `-inf`, `NaN` or not.
+/// It returns a tuple because there can be ambiguity between a special value
+/// and a number representation at higher bases.
+///
+/// # Panics
+///
+/// - Panics if `radix` < 2 or `radix` > 36.
+/// - Panics if `radix` > 14 and `exp_format` is `ExpDec` due to conflict
+///   between digit and exponent sign `'e'`.
+/// - Panics if `radix` > 25 and `exp_format` is `ExpBin` due to conflict
+///   between digit and exponent sign `'p'`.
+pub fn float_to_str_bytes_common<T: Float>(
         num: T, radix: uint, negative_zero: bool,
-        sign: SignFormat, digits: SignificantDigits) -> (~[u8], bool) {
+        sign: SignFormat, digits: SignificantDigits, exp_format: ExponentFormat, exp_upper: bool
+        ) -> (Vec<u8>, bool) {
     assert!(2 <= radix && radix <= 36);
+    match exp_format {
+        ExpDec if radix >= DIGIT_E_RADIX       // decimal exponent 'e'
+          => panic!("float_to_str_bytes_common: radix {} incompatible with \
+                    use of 'e' as decimal exponent", radix),
+        ExpBin if radix >= DIGIT_P_RADIX       // binary exponent 'p'
+          => panic!("float_to_str_bytes_common: radix {} incompatible with \
+                    use of 'p' as binary exponent", radix),
+        _ => ()
+    }
 
-    let _0: T = Zero::zero();
-    let _1: T = One::one();
+    let _0: T = Float::zero();
+    let _1: T = Float::one();
 
     match num.classify() {
-        FPNaN => { return ("NaN".as_bytes().to_owned(), true); }
-        FPInfinite if num > _0 => {
+        Fp::Nan => { return (b"NaN".to_vec(), true); }
+        Fp::Infinite if num > _0 => {
             return match sign {
-                SignAll => ("+inf".as_bytes().to_owned(), true),
-                _       => ("inf".as_bytes().to_owned(), true)
+                SignAll => (b"+inf".to_vec(), true),
+                _       => (b"inf".to_vec(), true)
             };
         }
-        FPInfinite if num < _0 => {
+        Fp::Infinite if num < _0 => {
             return match sign {
-                SignNone => ("inf".as_bytes().to_owned(), true),
-                _        => ("-inf".as_bytes().to_owned(), true),
+                SignNone => (b"inf".to_vec(), true),
+                _        => (b"-inf".to_vec(), true),
             };
         }
         _ => {}
     }
 
     let neg = num < _0 || (negative_zero && _1 / num == Float::neg_infinity());
-    let mut buf: ~[u8] = ~[];
-    let radix_gen: T   = cast(radix as int);
+    let mut buf = Vec::new();
+    let radix_gen: T = num::cast(radix as int).unwrap();
+
+    let (num, exp) = match exp_format {
+        ExpNone => (num, 0i32),
+        ExpDec | ExpBin => {
+            if num == _0 {
+                (num, 0i32)
+            } else {
+                let (exp, exp_base) = match exp_format {
+                    ExpDec => (num.abs().log10().floor(), num::cast::<f64, T>(10.0f64).unwrap()),
+                    ExpBin => (num.abs().log2().floor(), num::cast::<f64, T>(2.0f64).unwrap()),
+                    ExpNone => unreachable!()
+                };
+
+                (num / exp_base.powf(exp), num::cast::<T, i32>(exp).unwrap())
+            }
+        }
+    };
 
     // First emit the non-fractional part, looping at least once to make
     // sure at least a `0` gets emitted.
@@ -266,7 +253,7 @@ pub fn float_to_str_bytes_common<T:NumCast+Zero+One+Eq+Ord+Float+Round+
         deccum = deccum / radix_gen;
         deccum = deccum.trunc();
 
-        buf.push(char::from_digit(current_digit.to_int() as uint, radix)
+        buf.push(char::from_digit(current_digit.to_int().unwrap() as uint, radix)
              .unwrap() as u8);
 
         // No more digits to calculate for the non-fractional part -> break
@@ -283,10 +270,10 @@ pub fn float_to_str_bytes_common<T:NumCast+Zero+One+Eq+Ord+Float+Round+
     // Decide what sign to put in front
     match sign {
         SignNeg | SignAll if neg => {
-            buf.push('-' as u8);
+            buf.push(b'-');
         }
         SignAll => {
-            buf.push('+' as u8);
+            buf.push(b'+');
         }
         _ => ()
     }
@@ -301,7 +288,7 @@ pub fn float_to_str_bytes_common<T:NumCast+Zero+One+Eq+Ord+Float+Round+
     // Now emit the fractional part, if any
     deccum = num.fract();
     if deccum != _0 || (limit_digits && exact && digit_count > 0) {
-        buf.push('.' as u8);
+        buf.push(b'.');
         let mut dig = 0u;
 
         // calculate new digits while
@@ -323,7 +310,7 @@ pub fn float_to_str_bytes_common<T:NumCast+Zero+One+Eq+Ord+Float+Round+
             let current_digit = deccum.trunc().abs();
 
             buf.push(char::from_digit(
-                current_digit.to_int() as uint, radix).unwrap() as u8);
+                current_digit.to_int().unwrap() as uint, radix).unwrap() as u8);
 
             // Decrease the deccumulator one fractional digit at a time
             deccum = deccum.fract();
@@ -334,37 +321,37 @@ pub fn float_to_str_bytes_common<T:NumCast+Zero+One+Eq+Ord+Float+Round+
         // cut off the one extra digit, and depending on its value
         // round the remaining ones.
         if limit_digits && dig == digit_count {
-            let ascii2value = |chr: u8| {
-                char::to_digit(chr as char, radix).unwrap() as uint
+            let ascii2value = |&: chr: u8| {
+                (chr as char).to_digit(radix).unwrap()
             };
-            let value2ascii = |val: uint| {
+            let value2ascii = |&: val: uint| {
                 char::from_digit(val, radix).unwrap() as u8
             };
 
-            let extra_digit = ascii2value(buf.pop());
+            let extra_digit = ascii2value(buf.pop().unwrap());
             if extra_digit >= radix / 2 { // -> need to round
                 let mut i: int = buf.len() as int - 1;
                 loop {
                     // If reached left end of number, have to
                     // insert additional digit:
                     if i < 0
-                    || buf[i] == '-' as u8
-                    || buf[i] == '+' as u8 {
+                    || buf[i as uint] == b'-'
+                    || buf[i as uint] == b'+' {
                         buf.insert((i + 1) as uint, value2ascii(1));
                         break;
                     }
 
                     // Skip the '.'
-                    if buf[i] == '.' as u8 { i -= 1; loop; }
+                    if buf[i as uint] == b'.' { i -= 1; continue; }
 
                     // Either increment the digit,
                     // or set to 0 if max and carry the 1.
-                    let current_digit = ascii2value(buf[i]);
+                    let current_digit = ascii2value(buf[i as uint]);
                     if current_digit < (radix - 1) {
-                        buf[i] = value2ascii(current_digit+1);
+                        buf[i as uint] = value2ascii(current_digit+1);
                         break;
                     } else {
-                        buf[i] = value2ascii(0);
+                        buf[i as uint] = value2ascii(0);
                         i -= 1;
                     }
                 }
@@ -381,325 +368,190 @@ pub fn float_to_str_bytes_common<T:NumCast+Zero+One+Eq+Ord+Float+Round+
         let mut i = buf_max_i;
 
         // discover trailing zeros of fractional part
-        while i > start_fractional_digits && buf[i] == '0' as u8 {
+        while i > start_fractional_digits && buf[i] == b'0' {
             i -= 1;
         }
 
         // Only attempt to truncate digits if buf has fractional digits
         if i >= start_fractional_digits {
             // If buf ends with '.', cut that too.
-            if buf[i] == '.' as u8 { i -= 1 }
+            if buf[i] == b'.' { i -= 1 }
 
             // only resize buf if we actually remove digits
             if i < buf_max_i {
-                buf = buf.slice(0, i + 1).to_owned();
+                buf = buf.slice(0, i + 1).to_vec();
             }
         }
     } // If exact and trailing '.', just cut that
     else {
         let max_i = buf.len() - 1;
-        if buf[max_i] == '.' as u8 {
-            buf = buf.slice(0, max_i).to_owned();
+        if buf[max_i] == b'.' {
+            buf = buf.slice(0, max_i).to_vec();
+        }
+    }
+
+    match exp_format {
+        ExpNone => (),
+        _ => {
+            buf.push(match exp_format {
+                ExpDec if exp_upper => 'E',
+                ExpDec if !exp_upper => 'e',
+                ExpBin if exp_upper => 'P',
+                ExpBin if !exp_upper => 'p',
+                _ => unreachable!()
+            } as u8);
+
+            int_to_str_bytes_common(exp, 10, sign, |c| buf.push(c));
         }
     }
 
     (buf, false)
 }
 
-/**
- * Converts a number to its string representation. This is a wrapper for
- * `to_str_bytes_common()`, for details see there.
- */
+/// Converts a number to its string representation. This is a wrapper for
+/// `to_str_bytes_common()`, for details see there.
 #[inline]
-pub fn float_to_str_common<T:NumCast+Zero+One+Eq+Ord+NumStrConv+Float+Round+
-                             Div<T,T>+Neg<T>+Rem<T,T>+Mul<T,T>>(
+pub fn float_to_str_common<T: Float>(
         num: T, radix: uint, negative_zero: bool,
-        sign: SignFormat, digits: SignificantDigits) -> (~str, bool) {
+        sign: SignFormat, digits: SignificantDigits, exp_format: ExponentFormat, exp_capital: bool
+        ) -> (String, bool) {
     let (bytes, special) = float_to_str_bytes_common(num, radix,
-                               negative_zero, sign, digits);
-    (str::from_bytes(bytes), special)
+                               negative_zero, sign, digits, exp_format, exp_capital);
+    (String::from_utf8(bytes).unwrap(), special)
 }
 
 // Some constants for from_str_bytes_common's input validation,
 // they define minimum radix values for which the character is a valid digit.
-priv static DIGIT_P_RADIX: uint = ('p' as uint) - ('a' as uint) + 11u;
-priv static DIGIT_I_RADIX: uint = ('i' as uint) - ('a' as uint) + 11u;
-priv static DIGIT_E_RADIX: uint = ('e' as uint) - ('a' as uint) + 11u;
+static DIGIT_P_RADIX: uint = ('p' as uint) - ('a' as uint) + 11u;
+static DIGIT_E_RADIX: uint = ('e' as uint) - ('a' as uint) + 11u;
 
-/**
- * Parses a byte slice as a number. This is meant to
- * be a common base implementation for all numeric string conversion
- * functions like `from_str()` or `from_str_radix()`.
- *
- * # Arguments
- * - `buf`        - The byte slice to parse.
- * - `radix`      - Which base to parse the number as. Accepts 2-36.
- * - `negative`   - Whether to accept negative numbers.
- * - `fractional` - Whether to accept numbers with fractional parts.
- * - `special`    - Whether to accept special values like `inf`
- *                  and `NaN`. Can conflict with `radix`, see Failure.
- * - `exponent`   - Which exponent format to accept. Options are:
- *     - `ExpNone`: No Exponent, accepts just plain numbers like `42` or
- *                  `-8.2`.
- *     - `ExpDec`:  Accepts numbers with a decimal exponent like `42e5` or
- *                  `8.2E-2`. The exponent string itself is always base 10.
- *                  Can conflict with `radix`, see Failure.
- *     - `ExpBin`:  Accepts numbers with a binary exponent like `42P-8` or
- *                  `FFp128`. The exponent string itself is always base 10.
- *                  Can conflict with `radix`, see Failure.
- * - `empty_zero` - Whether to accept a empty `buf` as a 0 or not.
- * - `ignore_underscores` - Whether all underscores within the string should
- *                          be ignored.
- *
- * # Return value
- * Returns `Some(n)` if `buf` parses to a number n without overflowing, and
- * `None` otherwise, depending on the constraints set by the remaining
- * arguments.
- *
- * # Failure
- * - Fails if `radix` < 2 or `radix` > 36.
- * - Fails if `radix` > 14 and `exponent` is `ExpDec` due to conflict
- *   between digit and exponent sign `'e'`.
- * - Fails if `radix` > 25 and `exponent` is `ExpBin` due to conflict
- *   between digit and exponent sign `'p'`.
- * - Fails if `radix` > 18 and `special == true` due to conflict
- *   between digit and lowest first character in `inf` and `NaN`, the `'i'`.
- */
-pub fn from_str_bytes_common<T:NumCast+Zero+One+Eq+Ord+Copy+Div<T,T>+
-                                    Mul<T,T>+Sub<T,T>+Neg<T>+Add<T,T>+
-                                    NumStrConv>(
-        buf: &[u8], radix: uint, negative: bool, fractional: bool,
-        special: bool, exponent: ExponentFormat, empty_zero: bool,
-        ignore_underscores: bool
-        ) -> Option<T> {
-    match exponent {
-        ExpDec if radix >= DIGIT_E_RADIX       // decimal exponent 'e'
-          => fail!("from_str_bytes_common: radix %? incompatible with \
-                    use of 'e' as decimal exponent", radix),
-        ExpBin if radix >= DIGIT_P_RADIX       // binary exponent 'p'
-          => fail!("from_str_bytes_common: radix %? incompatible with \
-                    use of 'p' as binary exponent", radix),
-        _ if special && radix >= DIGIT_I_RADIX // first digit of 'inf'
-          => fail!("from_str_bytes_common: radix %? incompatible with \
-                    special values 'inf' and 'NaN'", radix),
-        _ if (radix as int) < 2
-          => fail!("from_str_bytes_common: radix %? to low, \
-                    must lie in the range [2, 36]", radix),
-        _ if (radix as int) > 36
-          => fail!("from_str_bytes_common: radix %? to high, \
-                    must lie in the range [2, 36]", radix),
-        _ => ()
+#[cfg(test)]
+mod tests {
+    use string::ToString;
+
+    #[test]
+    fn test_int_to_str_overflow() {
+        let mut i8_val: i8 = 127_i8;
+        assert_eq!(i8_val.to_string(), "127");
+
+        i8_val += 1 as i8;
+        assert_eq!(i8_val.to_string(), "-128");
+
+        let mut i16_val: i16 = 32_767_i16;
+        assert_eq!(i16_val.to_string(), "32767");
+
+        i16_val += 1 as i16;
+        assert_eq!(i16_val.to_string(), "-32768");
+
+        let mut i32_val: i32 = 2_147_483_647_i32;
+        assert_eq!(i32_val.to_string(), "2147483647");
+
+        i32_val += 1 as i32;
+        assert_eq!(i32_val.to_string(), "-2147483648");
+
+        let mut i64_val: i64 = 9_223_372_036_854_775_807_i64;
+        assert_eq!(i64_val.to_string(), "9223372036854775807");
+
+        i64_val += 1 as i64;
+        assert_eq!(i64_val.to_string(), "-9223372036854775808");
     }
-
-    let _0: T = Zero::zero();
-    let _1: T = One::one();
-    let radix_gen: T = cast(radix as int);
-
-    let len = buf.len();
-
-    if len == 0 {
-        if empty_zero {
-            return Some(_0);
-        } else {
-            return None;
-        }
-    }
-
-    if special {
-        if buf == inf_buf || buf == positive_inf_buf {
-            return NumStrConv::inf();
-        } else if buf == negative_inf_buf {
-            if negative {
-                return NumStrConv::neg_inf();
-            } else {
-                return None;
-            }
-        } else if buf == nan_buf {
-            return NumStrConv::NaN();
-        }
-    }
-
-    let (start, accum_positive) = match buf[0] as char {
-      '-' if !negative => return None,
-      '-' => (1u, false),
-      '+' => (1u, true),
-       _  => (0u, true)
-    };
-
-    // Initialize accumulator with signed zero for floating point parsing to
-    // work
-    let mut accum      = if accum_positive { copy _0 } else { -_1 * _0};
-    let mut last_accum = copy accum; // Necessary to detect overflow
-    let mut i          = start;
-    let mut exp_found  = false;
-
-    // Parse integer part of number
-    while i < len {
-        let c = buf[i] as char;
-
-        match char::to_digit(c, radix) {
-            Some(digit) => {
-                // shift accum one digit left
-                accum = accum * copy radix_gen;
-
-                // add/subtract current digit depending on sign
-                if accum_positive {
-                    accum = accum + cast(digit as int);
-                } else {
-                    accum = accum - cast(digit as int);
-                }
-
-                // Detect overflow by comparing to last value, except
-                // if we've not seen any non-zero digits.
-                if last_accum != _0 {
-                    if accum_positive && accum <= last_accum { return None; }
-                    if !accum_positive && accum >= last_accum { return None; }
-                }
-                last_accum = copy accum;
-            }
-            None => match c {
-                '_' if ignore_underscores => {}
-                'e' | 'E' | 'p' | 'P' => {
-                    exp_found = true;
-                    break;                       // start of exponent
-                }
-                '.' if fractional => {
-                    i += 1u;                     // skip the '.'
-                    break;                       // start of fractional part
-                }
-                _ => return None                 // invalid number
-            }
-        }
-
-        i += 1u;
-    }
-
-    // Parse fractional part of number
-    // Skip if already reached start of exponent
-    if !exp_found {
-        let mut power = copy _1;
-
-        while i < len {
-            let c = buf[i] as char;
-
-            match char::to_digit(c, radix) {
-                Some(digit) => {
-                    // Decrease power one order of magnitude
-                    power = power / radix_gen;
-
-                    let digit_t: T = cast(digit);
-
-                    // add/subtract current digit depending on sign
-                    if accum_positive {
-                        accum = accum + digit_t * power;
-                    } else {
-                        accum = accum - digit_t * power;
-                    }
-
-                    // Detect overflow by comparing to last value
-                    if accum_positive && accum < last_accum { return None; }
-                    if !accum_positive && accum > last_accum { return None; }
-                    last_accum = copy accum;
-                }
-                None => match c {
-                    '_' if ignore_underscores => {}
-                    'e' | 'E' | 'p' | 'P' => {
-                        exp_found = true;
-                        break;                   // start of exponent
-                    }
-                    _ => return None             // invalid number
-                }
-            }
-
-            i += 1u;
-        }
-    }
-
-    // Special case: buf not empty, but does not contain any digit in front
-    // of the exponent sign -> number is empty string
-    if i == start {
-        if empty_zero {
-            return Some(_0);
-        } else {
-            return None;
-        }
-    }
-
-    let mut multiplier = copy _1;
-
-    if exp_found {
-        let c = buf[i] as char;
-        let base = match (c, exponent) {
-            // c is never _ so don't need to handle specially
-            ('e', ExpDec) | ('E', ExpDec) => 10u,
-            ('p', ExpBin) | ('P', ExpBin) => 2u,
-            _ => return None // char doesn't fit given exponent format
-        };
-
-        // parse remaining bytes as decimal integer,
-        // skipping the exponent char
-        let exp: Option<int> = from_str_bytes_common(
-            buf.slice(i+1, len), 10, true, false, false, ExpNone, false,
-            ignore_underscores);
-
-        match exp {
-            Some(exp_pow) => {
-                multiplier = if exp_pow < 0 {
-                    _1 / pow_with_uint::<T>(base, (-exp_pow.to_int()) as uint)
-                } else {
-                    pow_with_uint::<T>(base, exp_pow.to_int() as uint)
-                }
-            }
-            None => return None // invalid exponent -> invalid number
-        }
-    }
-
-    Some(accum * multiplier)
-}
-
-/**
- * Parses a string as a number. This is a wrapper for
- * `from_str_bytes_common()`, for details see there.
- */
-#[inline]
-pub fn from_str_common<T:NumCast+Zero+One+Eq+Ord+Copy+Div<T,T>+Mul<T,T>+
-                              Sub<T,T>+Neg<T>+Add<T,T>+NumStrConv>(
-        buf: &str, radix: uint, negative: bool, fractional: bool,
-        special: bool, exponent: ExponentFormat, empty_zero: bool,
-        ignore_underscores: bool
-        ) -> Option<T> {
-    from_str_bytes_common(buf.as_bytes(), radix, negative,
-                          fractional, special, exponent, empty_zero,
-                          ignore_underscores)
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
-    use option::*;
+mod bench {
+    extern crate test;
 
-    #[test]
-    fn from_str_ignore_underscores() {
-        let s : Option<u8> = from_str_common("__1__", 2, false, false, false,
-                                             ExpNone, false, true);
-        assert_eq!(s, Some(1u8));
+    mod uint {
+        use super::test::Bencher;
+        use rand::{weak_rng, Rng};
+        use std::fmt;
 
-        let n : Option<u8> = from_str_common("__1__", 2, false, false, false,
-                                             ExpNone, false, false);
-        assert_eq!(n, None);
+        #[inline]
+        fn to_string(x: uint, base: u8) {
+            format!("{}", fmt::radix(x, base));
+        }
 
-        let f : Option<f32> = from_str_common("_1_._5_e_1_", 10, false, true, false,
-                                              ExpDec, false, true);
-        assert_eq!(f, Some(1.5e1f32));
+        #[bench]
+        fn to_str_bin(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<uint>(), 2); })
+        }
+
+        #[bench]
+        fn to_str_oct(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<uint>(), 8); })
+        }
+
+        #[bench]
+        fn to_str_dec(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<uint>(), 10); })
+        }
+
+        #[bench]
+        fn to_str_hex(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<uint>(), 16); })
+        }
+
+        #[bench]
+        fn to_str_base_36(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<uint>(), 36); })
+        }
     }
 
-    #[test]
-    fn from_str_issue5770() {
-        // try to parse 0b1_1111_1111 = 511 as a u8. Caused problems
-        // since 255*2+1 == 255 (mod 256) so the overflow wasn't
-        // detected.
-        let n : Option<u8> = from_str_common("111111111", 2, false, false, false,
-                                             ExpNone, false, false);
-        assert_eq!(n, None);
+    mod int {
+        use super::test::Bencher;
+        use rand::{weak_rng, Rng};
+        use std::fmt;
+
+        #[inline]
+        fn to_string(x: int, base: u8) {
+            format!("{}", fmt::radix(x, base));
+        }
+
+        #[bench]
+        fn to_str_bin(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<int>(), 2); })
+        }
+
+        #[bench]
+        fn to_str_oct(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<int>(), 8); })
+        }
+
+        #[bench]
+        fn to_str_dec(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<int>(), 10); })
+        }
+
+        #[bench]
+        fn to_str_hex(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<int>(), 16); })
+        }
+
+        #[bench]
+        fn to_str_base_36(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { to_string(rng.gen::<int>(), 36); })
+        }
+    }
+
+    mod f64 {
+        use super::test::Bencher;
+        use rand::{weak_rng, Rng};
+        use f64;
+
+        #[bench]
+        fn float_to_string(b: &mut Bencher) {
+            let mut rng = weak_rng();
+            b.iter(|| { f64::to_string(rng.gen()); })
+        }
     }
 }

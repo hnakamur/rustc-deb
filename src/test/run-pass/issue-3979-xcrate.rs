@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,10 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test // tjc: ???
 // aux-build:issue_3979_traits.rs
-extern mod issue_3979_traits;
-use issue_3979_traits::*;
+extern crate issue_3979_traits;
+use issue_3979_traits::{Positioned, Movable};
 
 struct Point { x: int, y: int }
 
@@ -24,7 +23,7 @@ impl Positioned for Point {
     }
 }
 
-impl Movable for Point;
+impl Movable for Point {}
 
 pub fn main() {
     let mut p = Point{ x: 1, y: 2};

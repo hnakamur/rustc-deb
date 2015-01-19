@@ -10,8 +10,12 @@
 
 // Issue #6155
 
-fn first((value, _): (int, float)) -> int { value }
+fn first((value, _): (isize, f64)) -> isize { value }
 
 fn main() {
-    let y = first ((1,2,3)); //~ ERROR expected a tuple with 2 elements but found one with 3 elements
+    let y = first ((1,2.0,3));
+    //~^ ERROR expected a tuple with 2 elements, found one with 3 elements
+
+    let y = first ((1,));
+    //~^ ERROR expected `(isize, f64)`, found `(isize,)`
 }

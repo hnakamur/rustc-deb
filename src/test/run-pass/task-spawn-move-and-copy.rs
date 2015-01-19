@@ -8,21 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::comm::*;
-use std::ptr;
-use std::task;
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+use std::thread::Thread;
+use std::sync::mpsc::channel;
 
 pub fn main() {
-    let (p, ch) = stream::<uint>();
+    let (tx, rx) = channel::<uint>();
 
-    let x = ~1;
-    let x_in_parent = ptr::to_unsafe_ptr(&(*x)) as uint;
+    let x = box 1;
+    let x_in_parent = &(*x) as *const int as uint;
 
-    task::spawn(|| {
-        let x_in_child = ptr::to_unsafe_ptr(&(*x)) as uint;
-        ch.send(x_in_child);
+    let _t = Thread::spawn(move || {
+        let x_in_child = &(*x) as *const int as uint;
+        tx.send(x_in_child).unwrap();
     });
 
-    let x_in_child = p.recv();
+    let x_in_child = rx.recv().unwrap();
     assert_eq!(x_in_parent, x_in_child);
 }

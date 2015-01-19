@@ -9,14 +9,14 @@
 // except according to those terms.
 
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-
-// -*- rust -*-
 
 // Tests for if as expressions returning boxed types
 fn test_box() {
-    let rs = if true { ~100 } else { ~101 };
-    assert_eq!(*rs, 100);
+    let rs = if true { box 100i } else { box 101i };
+    assert_eq!(*rs, 100i);
 }
 
 pub fn main() { test_box(); }

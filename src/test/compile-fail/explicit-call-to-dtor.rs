@@ -9,16 +9,16 @@
 // except according to those terms.
 
 struct Foo {
-    x: int
+    x: isize
 }
 
 impl Drop for Foo {
-    fn drop(&self) {
-        println("kaboom");
+    fn drop(&mut self) {
+        println!("kaboom");
     }
 }
 
 fn main() {
     let x = Foo { x: 3 };
-    x.drop();   //~ ERROR explicit call to destructor
+    x.drop();   //~ ERROR explicit use of destructor method
 }

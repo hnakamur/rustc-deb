@@ -8,15 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern:mismatched types: expected `char` but found
+// error-pattern:mismatched types: expected `char`, found
 // Issue #876
 
-#[no_std];
+#![no_implicit_prelude]
+use std::vec::Vec;
 
-extern mod std;
-
-fn last<T>(v: ~[&T]) -> std::option::Option<T> {
-    fail!();
+fn last<T>(v: Vec<&T> ) -> std::option::Option<T> {
+    panic!();
 }
 
 fn main() {

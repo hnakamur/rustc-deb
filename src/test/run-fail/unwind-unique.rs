@@ -10,11 +10,14 @@
 
 // error-pattern:fail
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 fn failfn() {
-    fail!();
+    panic!();
 }
 
 fn main() {
-    ~0;
+    box 0i;
     failfn();
 }

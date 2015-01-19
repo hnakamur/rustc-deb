@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,34 +8,25 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
-
-extern mod extra;
-
-use extra::tempfile;
-use std::io::WriterUtil;
-use std::io;
-use std::os;
-use std::uint;
+use std::io::fs::PathExtensions;
+use std::io::{File, TempDir};
 
 pub fn main() {
-    let dir = tempfile::mkdtemp(&Path("."), "").unwrap();
-    let path = dir.push("file");
+    let dir = TempDir::new_in(&Path::new("."), "").unwrap();
+    let path = dir.path().join("file");
 
     {
-        match io::file_writer(&path, [io::Create, io::Truncate]) {
-            Err(ref e) => fail!(e.clone()),
+        match File::create(&path) {
+            Err(..) => unreachable!(),
             Ok(f) => {
-                for uint::range(0, 1000) |_i| {
-                    f.write_u8(0);
+                let mut f = f;
+                for _ in range(0u, 1000) {
+                    f.write(&[0]);
                 }
             }
         }
     }
 
     assert!(path.exists());
-    assert_eq!(path.get_size(), Some(1000));
-
-    os::remove_file(&path);
-    os::remove_dir(&dir);
+    assert_eq!(path.stat().unwrap().size, 1000);
 }

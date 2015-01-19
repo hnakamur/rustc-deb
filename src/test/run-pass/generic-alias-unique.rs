@@ -8,13 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-
-fn id<T:Copy + Send>(t: T) -> T { return t; }
+fn id<T:Send>(t: T) -> T { return t; }
 
 pub fn main() {
-    let expected = ~100;
-    let actual = id::<~int>(expected.clone());
-    debug!(*actual);
+    let expected = box 100i;
+    let actual = id::<Box<int>>(expected.clone());
+    println!("{}", *actual);
     assert_eq!(*expected, *actual);
 }

@@ -12,7 +12,7 @@ use a::Foo;
 
 mod a {
     pub struct Foo {
-        priv x: int
+        x: isize
     }
 
     pub fn make() -> Foo {
@@ -22,6 +22,6 @@ mod a {
 
 fn main() {
     match a::make() {
-        Foo { x: _ } => {}  //~ ERROR field `x` is private
+        Foo { x: _ } => {}  //~ ERROR field `x` of struct `a::Foo` is private
     }
 }

@@ -8,18 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 struct S<T> {
     a: T,
     b: uint,
 }
 
-fn range(lo: uint, hi: uint, it: &fn(uint)) {
+fn range_<F>(lo: uint, hi: uint, mut it: F) where F: FnMut(uint) {
     let mut lo_ = lo;
     while lo_ < hi { it(lo_); lo_ += 1u; }
 }
 
-fn create_index<T>(index: ~[S<T>], hash_fn: extern fn(T) -> uint) {
-    range(0u, 256u, |_i| { let bucket: ~[T] = ~[]; } )
+fn create_index<T>(_index: Vec<S<T>> , _hash_fn: extern fn(T) -> uint) {
+    range_(0u, 256u, |_i| {
+        let _bucket: Vec<T> = Vec::new();
+    })
 }
 
 pub fn main() { }

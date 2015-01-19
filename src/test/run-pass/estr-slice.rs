@@ -10,27 +10,27 @@
 
 
 pub fn main() {
-    let x = &"hello";
-    let v = &"hello";
-    let mut y : &str = &"there";
+    let x = "hello";
+    let v = "hello";
+    let y : &str = "there";
 
-    debug!(x);
-    debug!(y);
+    println!("{}", x);
+    println!("{}", y);
 
-    assert_eq!(x[0], 'h' as u8);
-    assert_eq!(x[4], 'o' as u8);
+    assert_eq!(x.as_bytes()[0], 'h' as u8);
+    assert_eq!(x.as_bytes()[4], 'o' as u8);
 
-    let z : &str = &"thing";
+    let z : &str = "thing";
     assert_eq!(v, x);
     assert!(x != z);
 
-    let a = &"aaaa";
-    let b = &"bbbb";
+    let a = "aaaa";
+    let b = "bbbb";
 
-    let c = &"cccc";
-    let cc = &"ccccc";
+    let c = "cccc";
+    let cc = "ccccc";
 
-    debug!(a);
+    println!("{}", a);
 
     assert!(a < b);
     assert!(a <= b);
@@ -38,7 +38,7 @@ pub fn main() {
     assert!(b >= a);
     assert!(b > a);
 
-    debug!(b);
+    println!("{}", b);
 
     assert!(a < c);
     assert!(a <= c);
@@ -46,7 +46,7 @@ pub fn main() {
     assert!(c >= a);
     assert!(c > a);
 
-    debug!(c);
+    println!("{}", c);
 
     assert!(c < cc);
     assert!(c <= cc);
@@ -54,5 +54,5 @@ pub fn main() {
     assert!(cc >= c);
     assert!(cc > c);
 
-    debug!(cc);
+    println!("{}", cc);
 }

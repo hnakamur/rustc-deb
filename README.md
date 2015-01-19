@@ -3,65 +3,114 @@
 This is a compiler for Rust, including standard libraries, tools and
 documentation.
 
+## Quick Start
 
-## Installation
+1. Download a [binary installer][installer] for your platform.
+2. Read [The Rust Programming Language][trpl].
+3. Enjoy!
 
-The Rust compiler currently must be built from a [tarball], unless you
-are on Windows, in which case using the [installer][win-exe] is
-recommended.
+> ***Note:*** Windows users can read the detailed
+> [using Rust on Windows][win-wiki] notes on the wiki.
 
-Since the Rust compiler is written in Rust, it must be built by
-a precompiled "snapshot" version of itself (made in an earlier state
-of development). As such, source builds require a connection to
-the Internet, to fetch snapshots, and an OS that can execute the
-available snapshot binaries.
+[installer]: http://www.rust-lang.org/install.html
+[trpl]: http://doc.rust-lang.org/book/index.html
+[win-wiki]: https://github.com/rust-lang/rust/wiki/Using-Rust-on-Windows
+
+## Building from Source
+
+1. Make sure you have installed the dependencies:
+    * `g++` 4.7 or `clang++` 3.x
+    * `python` 2.6 or later (but not 3.x)
+    * `perl` 5.0 or later
+    * GNU `make` 3.81 or later
+    * `curl`
+    * `git`
+2. Download and build Rust:
+
+    You can either download a [tarball] or build directly from the [repo].
+
+    To build from the [tarball] do:
+
+        $ curl -O https://static.rust-lang.org/dist/rust-nightly.tar.gz
+        $ tar -xzf rust-nightly.tar.gz
+        $ cd rust-nightly
+
+    Or to build from the [repo] do:
+
+        $ git clone https://github.com/rust-lang/rust.git
+        $ cd rust
+
+    Now that you have Rust's source code, you can configure and build it:
+
+        $ ./configure
+        $ make && make install
+
+    > ***Note:*** You may need to use `sudo make install` if you do not normally have
+    > permission to modify the destination directory. The install locations can
+    > be adjusted by passing a `--prefix` argument to `configure`. Various other
+    > options are also supported, pass `--help` for more information on them.
+
+    When complete, `make install` will place several programs into
+    `/usr/local/bin`: `rustc`, the Rust compiler, and `rustdoc`, the
+    API-documentation tool.
+3. Read [The Rust Programming Language][trpl].
+4. Enjoy!
+
+### Building on Windows
+
+To easily build on windows we can use [MSYS2](http://sourceforge.net/projects/msys2/):
+
+1. Grab the latest MSYS2 installer and go through the installer.
+2. Now from the MSYS2 terminal we want to install the mingw64 toolchain and the other
+   tools we need.
+
+        $ pacman -S mingw-w64-i686-toolchain
+        $ pacman -S base-devel
+
+3. With that now start `mingw32_shell.bat` from where you installed MSYS2 (i.e. `C:\msys`).
+4. From there just navigate to where you have Rust's source code, configure and build it:
+
+        $ ./configure
+        $ make && make install
+
+[repo]: https://github.com/rust-lang/rust
+[tarball]: https://static.rust-lang.org/dist/rust-nightly.tar.gz
+[trpl]: http://doc.rust-lang.org/book/index.html
+
+## Notes
+
+Since the Rust compiler is written in Rust, it must be built by a
+precompiled "snapshot" version of itself (made in an earlier state of
+development). As such, source builds require a connection to the Internet, to
+fetch snapshots, and an OS that can execute the available snapshot binaries.
 
 Snapshot binaries are currently built and tested on several platforms:
 
-* Windows (7, Server 2008 R2), x86 only
-* Linux (various distributions), x86 and x86-64
-* OSX 10.6 ("Snow Leopard") or greater, x86 and x86-64
+* Windows (7, 8, Server 2008 R2), x86 and x86-64 (64-bit support added in Rust 0.12.0)
+* Linux (2.6.18 or later, various distributions), x86 and x86-64
+* OSX 10.7 (Lion) or greater, x86 and x86-64
 
-You may find that other platforms work, but these are our "tier 1"
+You may find that other platforms work, but these are our officially
 supported build environments that are most likely to work.
 
-> ***Note:*** Windows users should read the detailed
-> [getting started][wiki-start] notes on the wiki. Even when using
-> the binary installer the Windows build requires a MinGW installation,
-> the precise details of which are not discussed here.
+Rust currently needs about 1.5 GiB of RAM to build without swapping; if it hits
+swap, it will take a very long time to build.
 
-To build from source you will also need the following prerequisite
-packages:
+There is a lot more documentation in the [wiki].
 
-* g++ 4.4 or clang++ 3.x
-* python 2.6 or later (but not 3.x)
-* perl 5.0 or later
-* gnu make 3.81 or later
-* curl
+[wiki]: https://github.com/rust-lang/rust/wiki
 
-Assuming you're on a relatively modern *nix system and have met the
-prerequisites, something along these lines should work.
+## Getting help and getting involved
 
-    $ curl -O http://static.rust-lang.org/dist/rust-0.7.tar.gz
-    $ tar -xzf rust-0.7.tar.gz
-    $ cd rust-0.7
-    $ ./configure
-    $ make && make install
+The Rust community congregates in a few places:
 
-You may need to use `sudo make install` if you do not normally have
-permission to modify the destination directory. The install locations
-can be adjusted by passing a `--prefix` argument to
-`configure`. Various other options are also supported, pass `--help`
-for more information on them.
+* [StackOverflow] - Get help here.
+* [/r/rust] - General discussion.
+* [discuss.rust-lang.org] - For development of the Rust language itself.
 
-When complete, `make install` will place several programs into
-`/usr/local/bin`: `rustc`, the Rust compiler; `rustdoc`, the
-API-documentation tool, and `rustpkg`, the Rust package manager and build system.
-
-[wiki-start]: https://github.com/mozilla/rust/wiki/Note-getting-started-developing-Rust
-[tarball]: http://static.rust-lang.org/dist/rust-0.7.tar.gz
-[win-exe]: http://static.rust-lang.org/dist/rust-0.7-install.exe
-
+[StackOverflow]: http://stackoverflow.com/questions/tagged/rust
+[/r/rust]: http://reddit.com/r/rust
+[discuss.rust-lang.org]: http://discuss.rust-lang.org/
 
 ## License
 
@@ -70,9 +119,3 @@ and the Apache License (Version 2.0), with portions covered by various
 BSD-like licenses.
 
 See LICENSE-APACHE, LICENSE-MIT, and COPYRIGHT for details.
-
-## More help
-
-The [tutorial] is a good starting point.
-
-[tutorial]: http://static.rust-lang.org/doc/tutorial.html

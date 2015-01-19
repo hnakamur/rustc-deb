@@ -8,9 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-
 pub fn main() {
-    let i: int = if false { fail!() } else { 5 };
-    debug!(i);
+    let i: int = if false { panic!() } else { 5 };
+    println!("{}", i);
 }

@@ -9,39 +9,39 @@
 // except according to those terms.
 
 struct Point {
-    x: int,
-    y: int,
+    x: isize,
+    y: isize,
 }
 
 fn a() {
-    let mut p = ~[1];
+    let mut p = vec!(1);
 
     // Create an immutable pointer into p's contents:
-    let q: &int = &p[0];
+    let q: &isize = &p[0];
 
-    p[0] = 5; //~ ERROR cannot assign
+    p[0] = 5; //~ ERROR cannot borrow
 
-    debug!("%d", *q);
+    println!("{}", *q);
 }
 
-fn borrow(_x: &[int], _f: &fn()) {}
+fn borrow<F>(_x: &[isize], _f: F) where F: FnOnce() {}
 
 fn b() {
     // here we alias the mutable vector into an imm slice and try to
     // modify the original:
 
-    let mut p = ~[1];
+    let mut p = vec!(1);
 
-    do borrow(p) {
-        p[0] = 5; //~ ERROR cannot assign to
-    }
+    borrow(
+        p.as_slice(),
+        || p[0] = 5); //~ ERROR cannot borrow `p` as mutable
 }
 
 fn c() {
     // Legal because the scope of the borrow does not include the
     // modification:
-    let mut p = ~[1];
-    borrow(p, ||{});
+    let mut p = vec!(1);
+    borrow(p.as_slice(), ||{});
     p[0] = 5;
 }
 

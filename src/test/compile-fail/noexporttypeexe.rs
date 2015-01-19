@@ -10,13 +10,13 @@
 
 // aux-build:noexporttypelib.rs
 
-extern mod noexporttypelib;
+extern crate noexporttypelib;
 
 fn main() {
     // Here, the type returned by foo() is not exported.
     // This used to cause internal errors when serializing
     // because the def_id associated with the type was
     // not convertible to a path.
-  let x: int = noexporttypelib::foo();
-    //~^ ERROR expected `int` but found `std::option::Option<int>`
+  let x: isize = noexporttypelib::foo();
+    //~^ ERROR expected `isize`, found `core::option::Option<isize>`
 }

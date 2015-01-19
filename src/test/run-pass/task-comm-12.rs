@@ -8,32 +8,27 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
-use std::task;
+use std::thread::Thread;
 
 pub fn main() { test00(); }
 
-fn start(task_number: int) { debug!("Started / Finished task."); }
+fn start(_task_number: int) { println!("Started / Finished task."); }
 
 fn test00() {
     let i: int = 0;
-    let mut result = None;
-    let mut builder = task::task();
-    builder.future_result(|r| result = Some(r));
-    do builder.spawn {
+    let mut result = Thread::scoped(move|| {
         start(i)
-    }
+    });
 
     // Sleep long enough for the task to finish.
-    let mut i = 0;
+    let mut i = 0u;
     while i < 10000 {
-        task::yield();
+        Thread::yield_now();
         i += 1;
     }
 
     // Try joining tasks that have already finished.
-    result.unwrap().recv();
+    result.join();
 
-    debug!("Joined task.");
+    println!("Joined task.");
 }

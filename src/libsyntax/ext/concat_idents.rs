@@ -9,42 +9,54 @@
 // except according to those terms.
 
 use ast;
-use codemap::span;
+use codemap::Span;
 use ext::base::*;
 use ext::base;
 use parse::token;
 use parse::token::{str_to_ident};
+use ptr::P;
 
-pub fn expand_syntax_ext(cx: @ExtCtxt, sp: span, tts: &[ast::token_tree])
-    -> base::MacResult {
-    let mut res_str = ~"";
-    for tts.iter().enumerate().advance |(i, e)| {
+pub fn expand_syntax_ext<'cx>(cx: &mut ExtCtxt, sp: Span, tts: &[ast::TokenTree])
+                              -> Box<base::MacResult+'cx> {
+    let mut res_str = String::new();
+    for (i, e) in tts.iter().enumerate() {
         if i & 1 == 1 {
             match *e {
-                ast::tt_tok(_, token::COMMA) => (),
-                _ => cx.span_fatal(sp, "concat_idents! expecting comma.")
+                ast::TtToken(_, token::Comma) => {},
+                _ => {
+                    cx.span_err(sp, "concat_idents! expecting comma.");
+                    return DummyResult::expr(sp);
+                },
             }
         } else {
             match *e {
-                ast::tt_tok(_, token::IDENT(ident,_)) => res_str.push_str(cx.str_of(ident)),
-                _ => cx.span_fatal(sp, "concat_idents! requires ident args.")
+                ast::TtToken(_, token::Ident(ident, _)) => {
+                    res_str.push_str(token::get_ident(ident).get())
+                },
+                _ => {
+                    cx.span_err(sp, "concat_idents! requires ident args.");
+                    return DummyResult::expr(sp);
+                },
             }
         }
     }
-    let res = str_to_ident(res_str);
+    let res = str_to_ident(&res_str[]);
 
-    let e = @ast::expr {
-        id: cx.next_id(),
-        node: ast::expr_path(
-            @ast::Path {
+    let e = P(ast::Expr {
+        id: ast::DUMMY_NODE_ID,
+        node: ast::ExprPath(
+            ast::Path {
                  span: sp,
                  global: false,
-                 idents: ~[res],
-                 rp: None,
-                 types: ~[],
+                 segments: vec!(
+                    ast::PathSegment {
+                        identifier: res,
+                        parameters: ast::PathParameters::none(),
+                    }
+                )
             }
         ),
         span: sp,
-    };
-    MRExpr(e)
+    });
+    MacExpr::new(e)
 }

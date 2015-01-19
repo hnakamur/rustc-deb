@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deny(unreachable_code)];
-#[allow(unused_variable)];
+#![deny(unreachable_code)]
+#![allow(unused_variables)]
 
 fn main() {
   loop{}
 
-  let a = 3; //~ ERROR: unreachable statement
+  let a = 3is; //~ ERROR: unreachable statement
 }

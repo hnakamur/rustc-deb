@@ -8,15 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-
 fn incr(x: &mut int) -> bool { *x += 1; assert!((false)); return false; }
 
 pub fn main() {
-    let x = 1 == 2 || 3 == 3;
+    let x = 1i == 2 || 3i == 3;
     assert!((x));
     let mut y: int = 10;
-    debug!(x || incr(&mut y));
+    println!("{}", x || incr(&mut y));
     assert_eq!(y, 10);
     if true && x { assert!((true)); } else { assert!((false)); }
 }

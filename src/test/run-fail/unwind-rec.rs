@@ -10,14 +10,15 @@
 
 // error-pattern:fail
 
-fn build() -> ~[int] {
-    fail!();
+
+fn build() -> Vec<int> {
+    panic!();
 }
 
-struct Blk { node: ~[int] }
+struct Blk { node: Vec<int> }
 
 fn main() {
-    let blk = Blk {
+    let _blk = Blk {
         node: build()
     };
 }

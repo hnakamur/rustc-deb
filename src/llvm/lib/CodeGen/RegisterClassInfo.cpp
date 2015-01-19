@@ -8,13 +8,12 @@
 //===----------------------------------------------------------------------===//
 //
 // This file implements the RegisterClassInfo class which provides dynamic
-// information about target register classes. Callee saved and reserved
-// registers depends on calling conventions and other dynamic information, so
-// some things cannot be determined statically.
+// information about target register classes. Callee-saved vs. caller-saved and
+// reserved registers depend on calling conventions and other dynamic
+// information, so some things cannot be determined statically.
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "regalloc"
 #include "llvm/CodeGen/RegisterClassInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -25,21 +24,26 @@
 
 using namespace llvm;
 
+#define DEBUG_TYPE "regalloc"
+
 static cl::opt<unsigned>
 StressRA("stress-regalloc", cl::Hidden, cl::init(0), cl::value_desc("N"),
          cl::desc("Limit all regclasses to N registers"));
 
-RegisterClassInfo::RegisterClassInfo() : Tag(0), MF(0), TRI(0), CalleeSaved(0)
-{}
+RegisterClassInfo::RegisterClassInfo()
+  : Tag(0), MF(nullptr), TRI(nullptr), CalleeSaved(nullptr) {}
 
 void RegisterClassInfo::runOnMachineFunction(const MachineFunction &mf) {
   bool Update = false;
   MF = &mf;
 
   // Allocate new array the first time we see a new target.
-  if (MF->getTarget().getRegisterInfo() != TRI) {
-    TRI = MF->getTarget().getRegisterInfo();
+  if (MF->getSubtarget().getRegisterInfo() != TRI) {
+    TRI = MF->getSubtarget().getRegisterInfo();
     RegClass.reset(new RCInfo[TRI->getNumRegClasses()]);
+    unsigned NumPSets = TRI->getNumRegPressureSets();
+    PSetLimits.reset(new unsigned[NumPSets]);
+    std::fill(&PSetLimits[0], &PSetLimits[NumPSets], 0);
     Update = true;
   }
 
@@ -144,3 +148,32 @@ void RegisterClassInfo::compute(const TargetRegisterClass *RC) const {
   RCI.Tag = Tag;
 }
 
+/// This is not accurate because two overlapping register sets may have some
+/// nonoverlapping reserved registers. However, computing the allocation order
+/// for all register classes would be too expensive.
+unsigned RegisterClassInfo::computePSetLimit(unsigned Idx) const {
+  const TargetRegisterClass *RC = nullptr;
+  unsigned NumRCUnits = 0;
+  for (TargetRegisterInfo::regclass_iterator
+         RI = TRI->regclass_begin(), RE = TRI->regclass_end(); RI != RE; ++RI) {
+    const int *PSetID = TRI->getRegClassPressureSets(*RI);
+    for (; *PSetID != -1; ++PSetID) {
+      if ((unsigned)*PSetID == Idx)
+        break;
+    }
+    if (*PSetID == -1)
+      continue;
+
+    // Found a register class that counts against this pressure set.
+    // For efficiency, only compute the set order for the largest set.
+    unsigned NUnits = TRI->getRegClassWeight(*RI).WeightLimit;
+    if (!RC || NUnits > NumRCUnits) {
+      RC = *RI;
+      NumRCUnits = NUnits;
+    }
+  }
+  compute(RC);
+  unsigned NReserved = RC->getNumRegs() - getNumAllocatableRegs(RC);
+  return TRI->getRegPressureSetLimit(Idx)
+    - TRI->getRegClassWeight(RC).RegWeight * NReserved;
+}

@@ -25,14 +25,9 @@ XCoreTargetMachine::XCoreTargetMachine(const Target &T, StringRef TT,
                                        const TargetOptions &Options,
                                        Reloc::Model RM, CodeModel::Model CM,
                                        CodeGenOpt::Level OL)
-  : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
-    Subtarget(TT, CPU, FS),
-    DL("e-p:32:32:32-a0:0:32-f32:32:32-f64:32:32-i1:8:32-i8:8:32-"
-               "i16:16:32-i32:32:32-i64:32:32-n32"),
-    InstrInfo(),
-    FrameLowering(Subtarget),
-    TLInfo(*this),
-    TSInfo(*this) {
+    : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
+      Subtarget(TT, CPU, FS, *this) {
+  initAsmInfo();
 }
 
 namespace {
@@ -46,7 +41,9 @@ public:
     return getTM<XCoreTargetMachine>();
   }
 
-  virtual bool addInstSelector();
+  bool addPreISel() override;
+  bool addInstSelector() override;
+  bool addPreEmitPass() override;
 };
 } // namespace
 
@@ -54,12 +51,30 @@ TargetPassConfig *XCoreTargetMachine::createPassConfig(PassManagerBase &PM) {
   return new XCorePassConfig(this, PM);
 }
 
+bool XCorePassConfig::addPreISel() {
+  addPass(createXCoreLowerThreadLocalPass());
+  return false;
+}
+
 bool XCorePassConfig::addInstSelector() {
   addPass(createXCoreISelDag(getXCoreTargetMachine(), getOptLevel()));
+  return false;
+}
+
+bool XCorePassConfig::addPreEmitPass() {
+  addPass(createXCoreFrameToArgsOffsetEliminationPass());
   return false;
 }
 
 // Force static initialization.
 extern "C" void LLVMInitializeXCoreTarget() {
   RegisterTargetMachine<XCoreTargetMachine> X(TheXCoreTarget);
+}
+
+void XCoreTargetMachine::addAnalysisPasses(PassManagerBase &PM) {
+  // Add first the target-independent BasicTTI pass, then our XCore pass. This
+  // allows the XCore pass to delegate to the target independent layer when
+  // appropriate.
+  PM.add(createBasicTargetTransformInfoPass(this));
+  PM.add(createXCoreTargetTransformInfoPass(this));
 }

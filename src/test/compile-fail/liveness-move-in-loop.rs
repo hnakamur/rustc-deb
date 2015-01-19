@@ -8,16 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
+
 fn main() {
-    let y: ~int = ~42;
-    let mut x: ~int;
+    let y: Box<isize> = box 42;
+    let mut x: Box<isize>;
     loop {
-        debug!(y);
+        println!("{}", y);
         loop {
             loop {
                 loop {
                     x = y; //~ ERROR use of moved value
-                    copy x;
+                    x.clone();
                 }
             }
         }

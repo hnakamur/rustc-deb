@@ -7,6 +7,9 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+//
+// ignore-lexer-test FIXME #15679
+// no-pretty-expanded FIXME #15189
 
 pub fn main() {
     let yen: char = '¥'; // 0xa5
@@ -24,28 +27,28 @@ pub fn main() {
     assert_eq!(pi as int, '\u03a0' as int);
     assert_eq!('\x0a' as int, '\n' as int);
 
-    let bhutan: ~str = ~"འབྲུག་ཡུལ།";
-    let japan: ~str = ~"日本";
-    let uzbekistan: ~str = ~"Ўзбекистон";
-    let austria: ~str = ~"Österreich";
+    let bhutan: String = "འབྲུག་ཡུལ།".to_string();
+    let japan: String = "日本".to_string();
+    let uzbekistan: String = "Ўзбекистон".to_string();
+    let austria: String = "Österreich".to_string();
 
-    let bhutan_e: ~str =
-        ~"\u0f60\u0f56\u0fb2\u0f74\u0f42\u0f0b\u0f61\u0f74\u0f63\u0f0d";
-    let japan_e: ~str = ~"\u65e5\u672c";
-    let uzbekistan_e: ~str =
-        ~"\u040e\u0437\u0431\u0435\u043a\u0438\u0441\u0442\u043e\u043d";
-    let austria_e: ~str = ~"\u00d6sterreich";
+    let bhutan_e: String =
+        "\u0f60\u0f56\u0fb2\u0f74\u0f42\u0f0b\u0f61\u0f74\u0f63\u0f0d".to_string();
+    let japan_e: String = "\u65e5\u672c".to_string();
+    let uzbekistan_e: String =
+        "\u040e\u0437\u0431\u0435\u043a\u0438\u0441\u0442\u043e\u043d".to_string();
+    let austria_e: String = "\u00d6sterreich".to_string();
 
     let oo: char = 'Ö';
     assert_eq!(oo as int, 0xd6);
 
-    fn check_str_eq(a: ~str, b: ~str) {
+    fn check_str_eq(a: String, b: String) {
         let mut i: int = 0;
-        for a.bytes_iter().advance |ab| {
-            debug!(i);
-            debug!(ab);
-            let bb: u8 = b[i];
-            debug!(bb);
+        for ab in a.as_slice().bytes() {
+            println!("{}", i);
+            println!("{}", ab);
+            let bb: u8 = b.as_bytes()[i as uint];
+            println!("{}", bb);
             assert_eq!(ab, bb);
             i += 1;
         }

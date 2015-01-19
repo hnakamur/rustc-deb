@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct S<'self, T> {
-    o: &'self Option<T>
+struct S<'a, T:'a> {
+    o: &'a Option<T>
 }
 
 fn main() {
-    S { o: &None }; //~ ERROR cannot determine a type for this expression: unconstrained type
+    S { o: &None }; //~ ERROR type annotations required
 }

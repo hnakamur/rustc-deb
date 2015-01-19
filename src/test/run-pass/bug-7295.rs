@@ -8,11 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[allow(default_methods)];
 pub trait Foo<T> {
-    pub fn func1<U>(&self, t: U);
+    fn func1<U>(&self, t: U);
 
-    pub fn func2<U>(&self, t: U) {
+    fn func2<U>(&self, t: U) {
         self.func1(t);
     }
 }

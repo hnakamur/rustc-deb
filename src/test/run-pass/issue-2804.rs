@@ -1,6 +1,5 @@
-// xfail-fast
 
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,10 +9,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
+extern crate collections;
+extern crate serialize;
 
-use extra::json;
-use std::hashmap::HashMap;
+use std::collections::HashMap;
+use serialize::json::{self, Json};
 use std::option;
 
 enum object {
@@ -21,60 +21,55 @@ enum object {
     int_value(i64),
 }
 
-fn lookup(table: ~json::Object, key: ~str, default: ~str) -> ~str
+fn lookup(table: json::Object, key: String, default: String) -> String
 {
-    match table.find(&key)
-    {
-        option::Some(&extra::json::String(ref s)) =>
-        {
-            copy *s
+    match table.get(&key) {
+        option::Option::Some(&Json::String(ref s)) => {
+            s.to_string()
         }
-        option::Some(value) =>
-        {
-            error!("%s was expected to be a string but is a %?", key, value);
+        option::Option::Some(value) => {
+            println!("{} was expected to be a string but is a {}", key, value);
             default
         }
-        option::None =>
-        {
+        option::Option::None => {
             default
         }
     }
 }
 
-fn add_interface(store: int, managed_ip: ~str, data: extra::json::Json) -> (~str, object)
+fn add_interface(_store: int, managed_ip: String, data: json::Json) -> (String, object)
 {
-    match &data
-    {
-        &extra::json::Object(ref interface) =>
-        {
-            let name = lookup(copy *interface, ~"ifDescr", ~"");
-            let label = fmt!("%s-%s", managed_ip, name);
+    match &data {
+        &Json::Object(ref interface) => {
+            let name = lookup(interface.clone(),
+                              "ifDescr".to_string(),
+                              "".to_string());
+            let label = format!("{}-{}", managed_ip, name);
 
-            (label, bool_value(false))
+            (label, object::bool_value(false))
         }
-        _ =>
-        {
-            error!("Expected dict for %s interfaces but found %?", managed_ip, data);
-            (~"gnos:missing-interface", bool_value(true))
+        _ => {
+            println!("Expected dict for {} interfaces, found {}", managed_ip, data);
+            ("gnos:missing-interface".to_string(), object::bool_value(true))
         }
     }
 }
 
-fn add_interfaces(store: int, managed_ip: ~str, device: HashMap<~str, extra::json::Json>) -> ~[(~str, object)]
-{
-    match device.get(&~"interfaces")
+fn add_interfaces(store: int, managed_ip: String, device: HashMap<String, json::Json>)
+-> Vec<(String, object)> {
+    match device["interfaces".to_string()]
     {
-        &extra::json::List(ref interfaces) =>
+        Json::Array(ref interfaces) =>
         {
-          do interfaces.map |interface| {
-                add_interface(store, copy managed_ip, copy *interface)
-          }
+          interfaces.iter().map(|interface| {
+                add_interface(store, managed_ip.clone(), (*interface).clone())
+          }).collect()
         }
         _ =>
         {
-            error!("Expected list for %s interfaces but found %?", managed_ip,
-                   device.get(&~"interfaces"));
-            ~[]
+            println!("Expected list for {} interfaces, found {}", managed_ip,
+                   device["interfaces".to_string()]);
+            Vec::new()
         }
     }
 }

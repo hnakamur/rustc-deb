@@ -9,9 +9,9 @@
 // except according to those terms.
 
 // Issue #922
-fn f2(thing: @fn()) { }
+fn f2<F>(_thing: F) where F: FnOnce() { }
 
-fn f(thing: @fn()) {
+fn f<F>(thing: F) where F: FnOnce() {
     f2(thing);
 }
 

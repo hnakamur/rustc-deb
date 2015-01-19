@@ -1,4 +1,4 @@
-# Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+# Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
 # file at the top-level directory of this distribution and at
 # http://rust-lang.org/COPYRIGHT.
 #
@@ -9,228 +9,274 @@
 # except according to those terms.
 
 ######################################################################
-# Doc variables and rules
+# The various pieces of standalone documentation.
+#
+# The DOCS variable is their names (with no file extension).
+#
+# PDF_DOCS lists the targets for which PDF documentation should be
+# build.
+#
+# RUSTDOC_FLAGS_xyz variables are extra arguments to pass to the
+# rustdoc invocation for xyz.
+#
+# RUSTDOC_DEPS_xyz are extra dependencies for the rustdoc invocation
+# on xyz.
+#
+# L10N_LANGS are the languages for which the docs have been
+# translated.
 ######################################################################
+DOCS := index intro tutorial complement-bugreport \
+    complement-lang-faq complement-design-faq complement-project-faq \
+    rustdoc reference
 
-DOCS :=
+PDF_DOCS := reference
 
+RUSTDOC_DEPS_reference := doc/full-toc.inc
+RUSTDOC_FLAGS_reference := --html-in-header=doc/full-toc.inc
 
-######################################################################
-# Docs, from pandoc, rustdoc (which runs pandoc), and node
-######################################################################
+L10N_LANGS := ja
 
-doc/rust.css: rust.css
-	@$(call E, cp: $@)
-	$(Q)cp -a $< $@ 2> /dev/null
+# Generally no need to edit below here.
 
-doc/manual.css: manual.css
-	@$(call E, cp: $@)
-	$(Q)cp -a $< $@ 2> /dev/null
+# The options are passed to the documentation generators.
+RUSTDOC_HTML_OPTS_NO_CSS = --html-before-content=doc/version_info.html \
+	--html-in-header=doc/favicon.inc \
+	--html-after-content=doc/footer.inc \
+	--markdown-playground-url='http://play.rust-lang.org/'
+
+RUSTDOC_HTML_OPTS = $(RUSTDOC_HTML_OPTS_NO_CSS) --markdown-css rust.css
+
+PANDOC_BASE_OPTS := --standalone --toc --number-sections
+PANDOC_TEX_OPTS = $(PANDOC_BASE_OPTS) --from=markdown --to=latex \
+	--include-before-body=doc/version.tex \
+	--include-before-body=doc/footer.tex \
+	--include-in-header=doc/uptack.tex
+PANDOC_EPUB_OPTS = $(PANDOC_BASE_OPTS) --to=epub
+
+# The rustdoc executable...
+RUSTDOC_EXE = $(HBIN2_H_$(CFG_BUILD))/rustdoc$(X_$(CFG_BUILD))
+# ...with rpath included in case --disable-rpath was provided to
+# ./configure
+RUSTDOC = $(RPATH_VAR2_T_$(CFG_BUILD)_H_$(CFG_BUILD)) $(RUSTDOC_EXE)
+
+# The rustbook executable...
+RUSTBOOK_EXE = $(HBIN2_H_$(CFG_BUILD))/rustbook$(X_$(CFG_BUILD))
+# ...with rpath included in case --disable-rpath was provided to
+# ./configure
+RUSTBOOK = $(RPATH_VAR2_T_$(CFG_BUILD)_H_$(CFG_BUILD)) $(RUSTBOOK_EXE)
+
+D := $(S)src/doc
+
+DOC_TARGETS := trpl
+COMPILER_DOC_TARGETS :=
+DOC_L10N_TARGETS :=
+
+# If NO_REBUILD is set then break the dependencies on rustdoc so we
+# build the documentation without having to rebuild rustdoc.
+ifeq ($(NO_REBUILD),)
+HTML_DEPS := $(RUSTDOC_EXE)
+else
+HTML_DEPS :=
+endif
+
+# Check for the various external utilities for the EPUB/PDF docs:
+
+ifeq ($(CFG_LUALATEX),)
+  $(info cfg: no lualatex found, deferring to xelatex)
+  ifeq ($(CFG_XELATEX),)
+    $(info cfg: no xelatex found, deferring to pdflatex)
+    ifeq ($(CFG_PDFLATEX),)
+      $(info cfg: no pdflatex found, disabling LaTeX docs)
+      NO_PDF_DOCS = 1
+	else
+      CFG_LATEX := $(CFG_PDFLATEX)
+    endif
+  else
+    CFG_LATEX := $(CFG_XELATEX)
+    XELATEX = 1
+  endif
+else
+  CFG_LATEX := $(CFG_LUALATEX)
+endif
+
 
 ifeq ($(CFG_PANDOC),)
-  $(info cfg: no pandoc found, omitting docs)
-  NO_DOCS = 1
+$(info cfg: no pandoc found, omitting PDF and EPUB docs)
+ONLY_HTML_DOCS = 1
 endif
 
-ifeq ($(CFG_NODE),)
-  $(info cfg: no node found, omitting docs)
-  NO_DOCS = 1
-endif
-
-ifneq ($(NO_DOCS),1)
-
-DOCS += doc/rust.html
-doc/rust.html: rust.md doc/version_info.html doc/rust.css doc/manual.css
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
-	"$(CFG_PANDOC)" \
-         --standalone --toc \
-         --section-divs \
-         --number-sections \
-         --from=markdown --to=html \
-         --css=rust.css \
-         --css=manual.css \
-	     --include-before-body=doc/version_info.html \
-         --output=$@
-
-DOCS += doc/rust.tex
-doc/rust.tex: rust.md doc/version.md
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js $< | \
-	"$(CFG_PANDOC)" \
-         --standalone --toc \
-         --number-sections \
-	     --include-before-body=doc/version.md \
-         --from=markdown --to=latex \
-         --output=$@
-
-DOCS += doc/rustpkg.html
-doc/rustpkg.html: rustpkg.md doc/version_info.html doc/rust.css doc/manual.css
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
-	"$(CFG_PANDOC)" \
-         --standalone --toc \
-         --section-divs \
-         --number-sections \
-         --from=markdown --to=html \
-         --css=rust.css \
-         --css=manual.css \
-	     --include-before-body=doc/version_info.html \
-         --output=$@
-
-DOCS += doc/tutorial.html
-doc/tutorial.html: tutorial.md doc/version_info.html doc/rust.css
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
-          $(CFG_PANDOC) --standalone --toc \
-           --section-divs --number-sections \
-           --from=markdown --to=html --css=rust.css \
-	   --include-before-body=doc/version_info.html \
-           --output=$@
-
-DOCS += doc/tutorial-macros.html
-doc/tutorial-macros.html: tutorial-macros.md doc/version_info.html \
-						  doc/rust.css
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
-          $(CFG_PANDOC) --standalone --toc \
-           --section-divs --number-sections \
-           --from=markdown --to=html --css=rust.css \
-	   --include-before-body=doc/version_info.html \
-           --output=$@
-
-DOCS += doc/tutorial-container.html
-doc/tutorial-container.html: tutorial-container.md doc/version_info.html doc/rust.css
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
-          $(CFG_PANDOC) --standalone --toc \
-           --section-divs --number-sections \
-           --from=markdown --to=html --css=rust.css \
-	   --include-before-body=doc/version_info.html \
-           --output=$@
-
-DOCS += doc/tutorial-ffi.html
-doc/tutorial-ffi.html: tutorial-ffi.md doc/version_info.html doc/rust.css
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
-          $(CFG_PANDOC) --standalone --toc \
-           --section-divs --number-sections \
-           --from=markdown --to=html --css=rust.css \
-	   --include-before-body=doc/version_info.html \
-           --output=$@
-
-DOCS += doc/tutorial-borrowed-ptr.html
-doc/tutorial-borrowed-ptr.html: tutorial-borrowed-ptr.md doc/version_info.html doc/rust.css
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
-          $(CFG_PANDOC) --standalone --toc \
-           --section-divs --number-sections \
-           --from=markdown --to=html --css=rust.css \
-	   --include-before-body=doc/version_info.html \
-           --output=$@
-
-DOCS += doc/tutorial-tasks.html
-doc/tutorial-tasks.html: tutorial-tasks.md doc/version_info.html doc/rust.css
-	@$(call E, pandoc: $@)
-	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
-          $(CFG_PANDOC) --standalone --toc \
-           --section-divs --number-sections \
-           --from=markdown --to=html --css=rust.css \
-	   --include-before-body=doc/version_info.html \
-           --output=$@
-
-  ifeq ($(CFG_PDFLATEX),)
-    $(info cfg: no pdflatex found, omitting doc/rust.pdf)
-  else
-    ifeq ($(CFG_XETEX),)
-      $(info cfg: no xetex found, disabling doc/rust.pdf)
-    else
-      ifeq ($(CFG_LUATEX),)
-        $(info cfg: lacking luatex, disabling pdflatex)
-      else
-
-DOCS += doc/rust.pdf
-doc/rust.pdf: doc/rust.tex
-	@$(call E, pdflatex: $@)
-	$(Q)$(CFG_PDFLATEX) \
-        -interaction=batchmode \
-        -output-directory=doc \
-        $<
-
-      endif
-    endif
-  endif
-
-endif # No pandoc / node
 
 ######################################################################
-# LLnextgen (grammar analysis from refman)
+# Rust version
 ######################################################################
-ifeq ($(CFG_LLNEXTGEN),)
-  $(info cfg: no llnextgen found, omitting grammar-verification)
+
+doc/version.tex: $(MKFILE_DEPS) $(wildcard $(D)/*.*) | doc/
+	@$(call E, version-stamp: $@)
+	$(Q)echo "$(CFG_VERSION)" >$@
+
+HTML_DEPS += doc/version_info.html
+doc/version_info.html: $(D)/version_info.html.template $(MKFILE_DEPS) \
+                       $(wildcard $(D)/*.*) | doc/
+	@$(call E, version-info: $@)
+	$(Q)sed -e "s/VERSION/$(CFG_RELEASE)/; \
+                s/SHORT_HASH/$(CFG_SHORT_VER_HASH)/; \
+                s/STAMP/$(CFG_VER_HASH)/;" $< >$@
+
+GENERATED += doc/version.tex doc/version_info.html
+
+######################################################################
+# Docs, from rustdoc and sometimes pandoc
+######################################################################
+
+doc/:
+	@mkdir -p $@
+
+HTML_DEPS += doc/rust.css
+doc/rust.css: $(D)/rust.css | doc/
+	@$(call E, cp: $@)
+	$(Q)cp -a $< $@ 2> /dev/null
+
+HTML_DEPS += doc/favicon.inc
+doc/favicon.inc: $(D)/favicon.inc | doc/
+	@$(call E, cp: $@)
+	$(Q)cp -a $< $@ 2> /dev/null
+
+doc/full-toc.inc: $(D)/full-toc.inc | doc/
+	@$(call E, cp: $@)
+	$(Q)cp -a $< $@ 2> /dev/null
+
+HTML_DEPS += doc/footer.inc
+doc/footer.inc: $(D)/footer.inc | doc/
+	@$(call E, cp: $@)
+	$(Q)cp -a $< $@ 2> /dev/null
+
+# The (english) documentation for each doc item.
+
+define DEF_SHOULD_BUILD_PDF_DOC
+SHOULD_BUILD_PDF_DOC_$(1) = 1
+endef
+$(foreach docname,$(PDF_DOCS),$(eval $(call DEF_SHOULD_BUILD_PDF_DOC,$(docname))))
+
+doc/footer.tex: $(D)/footer.inc | doc/
+	@$(call E, pandoc: $@)
+	$(CFG_PANDOC) --from=html --to=latex $< --output=$@
+
+doc/uptack.tex: $(D)/uptack.tex | doc/
+	$(Q)cp $< $@
+
+# HTML (rustdoc)
+DOC_TARGETS += doc/not_found.html
+doc/not_found.html: $(D)/not_found.md $(HTML_DEPS) | doc/
+	@$(call E, rustdoc: $@)
+	$(Q)$(RUSTDOC) $(RUSTDOC_HTML_OPTS_NO_CSS) \
+		--markdown-css http://doc.rust-lang.org/rust.css $<
+
+define DEF_DOC
+
+# HTML (rustdoc)
+DOC_TARGETS += doc/$(1).html
+doc/$(1).html: $$(D)/$(1).md $$(HTML_DEPS) $$(RUSTDOC_DEPS_$(1)) | doc/
+	@$$(call E, rustdoc: $$@)
+	$$(Q)$$(RUSTDOC) $$(RUSTDOC_HTML_OPTS) $$(RUSTDOC_FLAGS_$(1)) $$<
+
+ifneq ($(ONLY_HTML_DOCS),1)
+
+# EPUB (pandoc directly)
+DOC_TARGETS += doc/$(1).epub
+doc/$(1).epub: $$(D)/$(1).md | doc/
+	@$$(call E, pandoc: $$@)
+	$$(CFG_PANDOC) $$(PANDOC_EPUB_OPTS) $$< --output=$$@
+
+# PDF (md =(pandoc)=> tex =(pdflatex)=> pdf)
+DOC_TARGETS += doc/$(1).tex
+doc/$(1).tex: $$(D)/$(1).md doc/uptack.tex doc/footer.tex doc/version.tex | doc/
+	@$$(call E, pandoc: $$@)
+	$$(CFG_PANDOC) $$(PANDOC_TEX_OPTS) $$< --output=$$@
+
+ifneq ($(NO_PDF_DOCS),1)
+ifeq ($$(SHOULD_BUILD_PDF_DOC_$(1)),1)
+DOC_TARGETS += doc/$(1).pdf
+ifneq ($(XELATEX),1)
+doc/$(1).pdf: doc/$(1).tex
+	@$$(call E, latex compiler: $$@)
+	$$(Q)$$(CFG_LATEX) \
+	-interaction=batchmode \
+	-output-directory=doc \
+	$$<
 else
-.PHONY: verify-grammar
+# The version of xelatex on the snap bots seemingly ingores -output-directory
+# So we'll output to . and move to the doc directory manually.
+# This will leave some intermediate files in the build directory.
+doc/$(1).pdf: doc/$(1).tex
+	@$$(call E, latex compiler: $$@)
+	$$(Q)$$(CFG_LATEX) \
+	-interaction=batchmode \
+	-output-directory=. \
+	$$<
+	$$(Q)mv ./$(1).pdf $$@
+endif # XELATEX
+endif # SHOULD_BUILD_PDF_DOCS_$(1)
+endif # NO_PDF_DOCS
 
-doc/rust.g: rust.md $(S)src/etc/extract_grammar.py
-	@$(call E, extract_grammar: $@)
-	$(Q)$(CFG_PYTHON) $(S)src/etc/extract_grammar.py $< >$@
+endif # ONLY_HTML_DOCS
 
-verify-grammar: doc/rust.g
-	@$(call E, LLnextgen: $<)
-	$(Q)$(CFG_LLNEXTGEN) --generate-lexer-wrapper=no $< >$@
-	$(Q)rm -f doc/rust.c doc/rust.h
-endif
+endef
+
+$(foreach docname,$(DOCS),$(eval $(call DEF_DOC,$(docname))))
 
 
 ######################################################################
 # Rustdoc (libstd/extra)
 ######################################################################
 
-ifeq ($(CFG_PANDOC),)
-  $(info cfg: no pandoc found, omitting library doc build)
-else
-
-# The rustdoc executable
-RUSTDOC = $(HBIN2_H_$(CFG_BUILD_TRIPLE))/rustdoc$(X_$(CFG_BUILD_TRIPLE))
 
 # The library documenting macro
-# $(1) - The output directory
-# $(2) - The crate file
-# $(3) - The crate soruce files
-define libdoc
-doc/$(1)/index.html: $(2) $(3) $$(RUSTDOC) doc/$(1)/rust.css
-	@$$(call E, rustdoc: $$@)
-	$(Q)$(RUSTDOC) $(2) --output-dir=doc/$(1)
+#
+# $(1) - The crate name (std/extra)
+#
+# Passes --cfg stage2 to rustdoc because it uses the stage2 librustc.
+define DEF_LIB_DOC
 
-doc/$(1)/rust.css: rust.css
-	@$$(call E, cp: $$@)
-	$(Q)cp $$< $$@
-
-DOCS += doc/$(1)/index.html
-endef
-
-$(eval $(call libdoc,std,$(STDLIB_CRATE),$(STDLIB_INPUTS)))
-$(eval $(call libdoc,extra,$(EXTRALIB_CRATE),$(EXTRALIB_INPUTS)))
+# If NO_REBUILD is set then break the dependencies on rustdoc so we
+# build crate documentation without having to rebuild rustdoc.
+ifeq ($(NO_REBUILD),)
+LIB_DOC_DEP_$(1) = \
+	$$(CRATEFILE_$(1)) \
+	$$(RSINPUTS_$(1)) \
+	$$(RUSTDOC_EXE) \
+	$$(foreach dep,$$(RUST_DEPS_$(1)), \
+		$$(TLIB2_T_$(CFG_BUILD)_H_$(CFG_BUILD))/stamp.$$(dep)) \
+	$$(foreach dep,$$(filter $$(DOC_CRATES), $$(RUST_DEPS_$(1))), \
+		doc/$$(dep)/)
+else
+LIB_DOC_DEP_$(1) = $$(CRATEFILE_$(1)) $$(RSINPUTS_$(1))
 endif
 
+doc/$(1)/:
+	$$(Q)mkdir -p $$@
+
+$(2) += doc/$(1)/index.html
+doc/$(1)/index.html: CFG_COMPILER_HOST_TRIPLE = $(CFG_TARGET)
+doc/$(1)/index.html: $$(LIB_DOC_DEP_$(1)) doc/$(1)/
+	@$$(call E, rustdoc: $$@)
+	$$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(CFG_BUILD)) \
+		$$(RUSTDOC) --cfg dox --cfg stage2 $$<
+endef
+
+$(foreach crate,$(DOC_CRATES),$(eval $(call DEF_LIB_DOC,$(crate),DOC_TARGETS)))
+$(foreach crate,$(COMPILER_DOC_CRATES),$(eval $(call DEF_LIB_DOC,$(crate),COMPILER_DOC_TARGETS)))
 
 ifdef CFG_DISABLE_DOCS
   $(info cfg: disabling doc build (CFG_DISABLE_DOCS))
-  DOCS :=
+  DOC_TARGETS :=
+  COMPILER_DOC_TARGETS :=
 endif
 
+docs: $(DOC_TARGETS)
+compiler-docs: $(COMPILER_DOC_TARGETS)
 
-doc/version.md: $(MKFILE_DEPS) $(wildcard $(S)doc/*.*)
-	@$(call E, version-stamp: $@)
-	$(Q)echo "$(CFG_VERSION)" >$@
+trpl: doc/book/index.html
 
-doc/version_info.html: version_info.html.template $(MKFILE_DEPS) \
-                       $(wildcard $(S)doc/*.*)
-	@$(call E, version-info: $@)
-	sed -e "s/VERSION/$(CFG_RELEASE)/; s/SHORT_HASH/$(shell echo \
-                    $(CFG_VER_HASH) | head -c 8)/;\
-	            s/STAMP/$(CFG_VER_HASH)/;" $< >$@
-
-GENERATED += doc/version.md doc/version_info.html
-
-docs: $(DOCS)
+doc/book/index.html: $(RUSTBOOK_EXE) $(wildcard $(S)/src/doc/trpl/*.md)
+	$(Q)rm -rf doc/book
+	$(Q)$(RUSTBOOK) build $(S)src/doc/trpl doc/book

@@ -8,11 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test FIXME #3874
-enum PureCounter { PureCounter(uint) }
+enum PureCounter { PureCounterVariant(uint) }
 
-fn each(self: PureCounter, blk: &fn(v: &uint)) {
-    let PureCounter(ref x) = self;
+fn each<F>(thing: PureCounter, blk: F) where F: FnOnce(&uint) {
+    let PureCounter::PureCounterVariant(ref x) = thing;
     blk(x);
 }
 

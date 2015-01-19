@@ -11,9 +11,10 @@
 // Test that the lambda kind is inferred correctly as a return
 // expression
 
-fn shared() -> @fn() { || () }
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-fn unique() -> ~fn() { || () }
+fn unique() -> Box<FnMut()+'static> { box || () }
 
 pub fn main() {
 }

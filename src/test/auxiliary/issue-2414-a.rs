@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[link(name = "a", vers = "0.1")];
-#[crate_type = "lib"];
+#![crate_name="a"]
+#![crate_type = "lib"]
 
 type t1 = uint;
 
@@ -17,6 +17,6 @@ trait foo {
     fn foo(&self);
 }
 
-impl foo for ~str {
+impl foo for String {
     fn foo(&self) {}
 }

@@ -1,4 +1,3 @@
-// -*- rust -*-
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -9,18 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern mod extra;
-
 // error-pattern: mismatched types
 
-enum bar { t1((), Option<~[int]>), t2, }
+enum bar { t1((), Option<Vec<isize> >), t2, }
 
 fn foo(t: bar) {
     match t {
-      t1(_, Some::<int>(x)) => {
-        debug!(x);
+      bar::t1(_, Some::<isize>(x)) => {
+        println!("{}", x);
       }
-      _ => { fail!(); }
+      _ => { panic!(); }
     }
 }
 

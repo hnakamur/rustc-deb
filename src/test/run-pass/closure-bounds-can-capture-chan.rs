@@ -8,16 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::comm;
+#![feature(unboxed_closures)]
 
-fn foo(blk: ~fn:Send()) {
+use std::sync::mpsc::channel;
+
+fn foo<F:FnOnce()+Send>(blk: F) {
     blk();
 }
 
-fn main() {
-    let (p,c) = comm::stream();
-    do foo {
-        c.send(());
-    }
-    p.recv();
+pub fn main() {
+    let (tx, rx) = channel();
+    foo(move || {
+        tx.send(()).unwrap();
+    });
+    rx.recv().unwrap();
 }

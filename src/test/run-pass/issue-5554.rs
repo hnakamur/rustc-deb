@@ -8,30 +8,28 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::num::Zero;
+use std::default::Default;
 
 pub struct X<T> {
-  a: T
+    a: T,
 }
 
 // reordering these bounds stops the ICE
-impl<T: Zero + Eq + Zero>
-  Zero for X<T> {
-    fn zero() -> X<T> {
-      X { a: Zero::zero() }
-    }
-    fn is_zero(&self) -> bool {
-        self.a.is_zero()
+//
+// nmatsakis: This test used to have the bounds Default + PartialEq +
+// Default, but having duplicate bounds became illegal.
+impl<T: Default + PartialEq> Default for X<T> {
+    fn default() -> X<T> {
+        X { a: Default::default() }
     }
 }
 
 macro_rules! constants {
-  () => {
-    let _0 : X<int> = Zero::zero();
-   }
+    () => {
+        let _ : X<int> = Default::default();
+    }
 }
 
-
 pub fn main() {
-  constants!();
+    constants!();
 }

@@ -10,6 +10,6 @@
 
 
 
-fn foo(x: int) { debug!(x); }
+fn foo(x: int) { println!("{}", x); }
 
-pub fn main() { let mut x: int; if 1 > 2 { x = 12; } else { x = 10; } foo(x); }
+pub fn main() { let mut x: int; if 1i > 2 { x = 12; } else { x = 10; } foo(x); }

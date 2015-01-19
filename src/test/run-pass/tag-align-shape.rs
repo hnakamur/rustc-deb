@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,18 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#[derive(Show)]
 enum a_tag {
-    a_tag(u64)
+    a_tag_var(u64)
 }
 
+#[derive(Show)]
 struct t_rec {
     c8: u8,
     t: a_tag
 }
 
 pub fn main() {
-    let x = t_rec {c8: 22u8, t: a_tag(44u64)};
-    let y = fmt!("%?", x);
-    debug!("y = %s", y);
-    assert_eq!(y, ~"{c8: 22, t: a_tag(44)}");
+    let x = t_rec {c8: 22u8, t: a_tag::a_tag_var(44u64)};
+    let y = format!("{:?}", x);
+    println!("y = {:?}", y);
+    assert_eq!(y, "t_rec { c8: 22u8, t: a_tag_var(44u64) }".to_string());
 }

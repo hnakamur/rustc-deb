@@ -11,19 +11,23 @@
 
 
 
-// -*- rust -*-
 
 // Tests for match as expressions resulting in struct types
 struct R { i: int }
 
+impl Copy for R {}
+
 fn test_rec() {
-    let rs = match true { true => R {i: 100}, _ => fail!() };
+    let rs = match true { true => R {i: 100}, _ => panic!() };
     assert_eq!(rs.i, 100);
 }
 
+#[derive(Show)]
 enum mood { happy, sad, }
 
-impl Eq for mood {
+impl Copy for mood {}
+
+impl PartialEq for mood {
     fn eq(&self, other: &mood) -> bool {
         ((*self) as uint) == ((*other) as uint)
     }
@@ -31,8 +35,8 @@ impl Eq for mood {
 }
 
 fn test_tag() {
-    let rs = match true { true => { happy } false => { sad } };
-    assert_eq!(rs, happy);
+    let rs = match true { true => { mood::happy } false => { mood::sad } };
+    assert_eq!(rs, mood::happy);
 }
 
 pub fn main() { test_rec(); test_tag(); }

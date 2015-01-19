@@ -8,16 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-win32
-extern mod extra;
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
-use std::task;
+use std::thread::Thread;
 
 fn f() {
-    let a = ~0;
-    fail!();
+    let _a = box 0i;
+    panic!();
 }
 
 pub fn main() {
-    task::spawn_unlinked(f);
+    let _t = Thread::spawn(f);
 }

@@ -8,21 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::io;
-
-macro_rules! print_hd_tl (
+macro_rules! print_hd_tl {
     ($field_hd:ident, $($field_tl:ident),+) => ({
-        io::print(stringify!($field_hd));
-        io::print("::[");
+        print!("{}", stringify!($field_hd));
+        print!("::[");
         $(
-            io::print(stringify!($field_tl));
-            io::print(", ");
+            print!("{}", stringify!($field_tl));
+            print!(", ");
         )+
-        io::print("]\n");
+        // FIXME: #9970
+        print!("{}", "]\n");
     })
-)
+}
 
-fn main() {
+pub fn main() {
     print_hd_tl!(x, y, z, w)
 }
 

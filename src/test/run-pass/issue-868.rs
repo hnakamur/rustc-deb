@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f<T>(g: &fn() -> T) -> T { g() }
+fn f<T, F>(g: F) -> T where F: FnOnce() -> T { g() }
 
 pub fn main() {
-  let _x = f( | | { 10 });
+  let _x = f( | | { 10i });
     // used to be: cannot determine a type for this expression
     f(| | { });
     // ditto
@@ -20,5 +20,5 @@ pub fn main() {
     let _: () = f(| | { });
     // empty block with no type info should compile too
     let _ = f(||{});
-    let _ = (||{});
+    let _ = (|&:|{});
 }

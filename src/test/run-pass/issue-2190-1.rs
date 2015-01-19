@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,17 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-test
+use std::thread::Builder;
+use std::thunk::Thunk;
+
 static generations: uint = 1024+256+128+49;
 
-fn child_no(x: uint) -> ~fn() {
-     || {
+fn spawn(f: Thunk) {
+    Builder::new().stack_size(32 * 1024).spawn(move|| f.invoke(()));
+}
+
+fn child_no(x: uint) -> Thunk {
+    Thunk::new(move|| {
         if x < generations {
-            task::spawn(child_no(x+1));
+            spawn(child_no(x+1));
         }
-    }
+    })
 }
 
 pub fn main() {
-    task::spawn(child_no(0));
+    spawn(child_no(0));
 }

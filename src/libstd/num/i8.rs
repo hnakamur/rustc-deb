@@ -8,25 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Operations and constants for `i8`
+//! Operations and constants for signed 8-bits integers (`i8` type)
 
-use num::BitCount;
-use unstable::intrinsics;
+#![stable]
+#![doc(primitive = "i8")]
 
-pub use self::generated::*;
+pub use core::i8::{BITS, BYTES, MIN, MAX};
 
-int_module!(i8, 8)
-
-impl BitCount for i8 {
-    /// Counts the number of bits set. Wraps LLVM's `ctpop` intrinsic.
-    #[inline]
-    fn population_count(&self) -> i8 { unsafe { intrinsics::ctpop8(*self) } }
-
-    /// Counts the number of leading zeros. Wraps LLVM's `ctlz` intrinsic.
-    #[inline]
-    fn leading_zeros(&self) -> i8 { unsafe { intrinsics::ctlz8(*self) } }
-
-    /// Counts the number of trailing zeros. Wraps LLVM's `cttz` intrinsic.
-    #[inline]
-    fn trailing_zeros(&self) -> i8 { unsafe { intrinsics::cttz8(*self) } }
-}
+int_module! { i8 }

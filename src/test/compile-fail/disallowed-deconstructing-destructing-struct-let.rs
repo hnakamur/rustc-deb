@@ -1,4 +1,3 @@
-// xfail-test #3024
 // Copyright 2012 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -10,22 +9,22 @@
 // except according to those terms.
 
 struct X {
-    x: ~str,
+    x: String,
 }
 
 impl Drop for X {
-    fn drop(&self) {
-        error!("value: %s", self.x);
+    fn drop(&mut self) {
+        println!("value: {}", self.x);
     }
 }
 
-fn unwrap(x: X) -> ~str {
-    let X { x: y } = x; //~ ERROR cannot bind by-move within struct
+fn unwrap(x: X) -> String {
+    let X { x: y } = x; //~ ERROR cannot move out of type
     y
 }
 
 fn main() {
-    let x = X { x: ~"hello" };
+    let x = X { x: "hello".to_string() };
     let y = unwrap(x);
-    error!("contents: %s", y);
+    println!("contents: {}", y);
 }

@@ -8,12 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct thing<'self, Q> {
-    x: &'self Q
+struct thing<'a, Q:'a> {
+    x: &'a Q
 }
 
-fn thing<Q>(x: &Q) -> thing<Q> {
-    thing{ x: x } //~ ERROR cannot infer an appropriate lifetime
+fn thing<'a,Q>(x: &Q) -> thing<'a,Q> {
+    thing{ x: x } //~ ERROR cannot infer
 }
 
 fn main() {

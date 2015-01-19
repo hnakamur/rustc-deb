@@ -1,8 +1,17 @@
 #!/usr/bin/env python
-# xfail-license
+#
+# Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+# file at the top-level directory of this distribution and at
+# http://rust-lang.org/COPYRIGHT.
+#
+# Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+# http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+# <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+# option. This file may not be copied, modified, or distributed
+# except according to those terms.
 
 # This creates the tables used for distributions implemented using the
-# ziggurat algorithm in `core::rand::distributions;`. They are
+# ziggurat algorithm in `rand::distributions;`. They are
 # (basically) the tables as used in the ZIGNOR variant (Doornik 2005).
 # They are changed rarely, so the generated file should be checked in
 # to git.
@@ -19,7 +28,7 @@ from math import exp, sqrt, log, floor
 import random
 
 # The order should match the return value of `tables`
-TABLE_NAMES = ['X', 'F', 'F_DIFF']
+TABLE_NAMES = ['X', 'F']
 
 # The actual length of the table is 1 more, to stop
 # index-out-of-bounds errors. This should match the bitwise operation
@@ -43,13 +52,10 @@ def tables(r, v, f, f_inv):
 
     # cache the f's
     fvec = [0]*(TABLE_LEN+1)
-    fdiff = [0]*(TABLE_LEN+1)
     for i in range(TABLE_LEN+1):
         fvec[i] = f(xvec[i])
-        if i > 0:
-            fdiff[i] = fvec[i] - fvec[i-1]
 
-    return xvec, fvec, fdiff
+    return xvec, fvec
 
 # Distributions
 # N(0, 1)

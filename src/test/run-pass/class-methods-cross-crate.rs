@@ -1,4 +1,4 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,14 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// xfail-fast
 // aux-build:cci_class_3.rs
-extern mod cci_class_3;
-use cci_class_3::kitties::*;
+extern crate cci_class_3;
+use cci_class_3::kitties::cat;
 
 pub fn main() {
     let mut nyan : cat = cat(52u, 99);
-    let mut kitty = cat(1000u, 2);
+    let kitty = cat(1000u, 2);
     assert_eq!(nyan.how_hungry, 99);
     assert_eq!(kitty.how_hungry, 2);
     nyan.speak();

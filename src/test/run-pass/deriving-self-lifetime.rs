@@ -1,4 +1,4 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Eq,Ord)]
-struct A<'self> {
-    x: &'self int
+// ignore-test FIXME #11820: & is unreliable in deriving
+
+#[derive(Eq,Ord)]
+struct A<'a> {
+    x: &'a int
 }
 
-fn main() {
+pub fn main() {
     let a = A { x: &1 };
     let b = A { x: &2 };
 

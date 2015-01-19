@@ -8,8 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 pub fn main() {
-    let mut i = ~0;
+    let mut i = box 0i;
     *i = 1;
     assert_eq!(*i, 1);
 }

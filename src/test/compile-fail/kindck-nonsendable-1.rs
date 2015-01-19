@@ -8,11 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn foo(_x: @uint) {}
+
+use std::rc::Rc;
+
+fn foo(_x: Rc<usize>) {}
+
+fn bar<F:FnOnce() + Send>(_: F) { }
 
 fn main() {
-    let x = @3u;
-    let _: ~fn() = || foo(x); //~ ERROR does not fulfill `Send`
-    let _: ~fn() = || foo(x); //~ ERROR does not fulfill `Send`
-    let _: ~fn() = || foo(x); //~ ERROR does not fulfill `Send`
+    let x = Rc::new(3us);
+    bar(move|| foo(x));
+    //~^ ERROR `core::marker::Send` is not implemented
+    //~^^ ERROR `core::marker::Send` is not implemented
 }
+

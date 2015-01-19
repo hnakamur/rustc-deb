@@ -8,14 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
 struct Foo {a: int, b: uint}
 
-enum bar { u(~Foo), w(int), }
+enum bar { u(Box<Foo>), w(int), }
 
 pub fn main() {
-    assert!(match u(~Foo{a: 10, b: 40u}) {
-              u(~Foo{a: a, b: b}) => { a + (b as int) }
+    assert!(match bar::u(box Foo{a: 10, b: 40u}) {
+              bar::u(box Foo{a: a, b: b}) => { a + (b as int) }
               _ => { 66 }
             } == 50);
 }

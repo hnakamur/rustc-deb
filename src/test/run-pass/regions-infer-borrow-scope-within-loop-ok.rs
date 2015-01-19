@@ -8,12 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn borrow<'r, T>(x: &'r T) -> &'r T {x}
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+fn borrow<T>(x: &T) -> &T {x}
 
 pub fn main() {
-    let x = @3;
+    let x = box 3i;
     loop {
-        let y = borrow(x);
+        let y = borrow(&*x);
         assert_eq!(*x, *y);
         break;
     }

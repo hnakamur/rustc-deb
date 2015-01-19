@@ -1,6 +1,5 @@
-// xfail-fast
 
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -17,8 +16,7 @@
 // begin failing.
 
 mod m {
-    use std::vec;
-    pub fn f() -> ~[int] { vec::from_elem(1u, 0) }
+    pub fn f() -> Vec<int> { Vec::new() }
 }
 
-pub fn main() { let x = m::f(); }
+pub fn main() { let _x = m::f(); }
