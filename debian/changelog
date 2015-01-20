@@ -5,6 +5,7 @@ rust (1.0.0~0alpha-0.1) unstable; urgency=low
   [ Sylvestre Ledru ]
   * Move package to the Rust maintainers team
   * Update the uploaders/maintainer fields
+  * Update of the vcs-* fields
 
  -- Jordan Justen <jordan.l.justen@intel.com>  Mon, 12 Jan 2015 00:35:31 -0800
 
