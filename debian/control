@@ -16,7 +16,8 @@ Build-Depends: debhelper (>= 9),
                texlive-latex-recommended,
                lmodern,
                texlive-luatex,
-               texlive-xetex 
+               texlive-xetex,
+               valgrind
 Standards-Version: 3.9.6
 Homepage: http://www.rust-lang.org/
 Vcs-Git: git://git.debian.org/pkg-rust/rust.git
