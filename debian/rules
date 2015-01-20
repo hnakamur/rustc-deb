@@ -21,7 +21,7 @@ DEBIAN_RUST_VERSION := \
 DEBIAN_RUST_VERSION_TYPE := \
 	$(shell echo $(UPSTREAM_RUST_VERSION) | cut -f 2 -d '-')
 RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(DEBIAN_RUST_VERSION)
-DEB_DESTDIR := $(CURDIR)/debian/rust
+DEB_DESTDIR := $(CURDIR)/debian/tmp
 RUST_TMP_PREFIX := $(DEB_DESTDIR)/$(RUST_PREFIX)
 
 # These are the normal build flags

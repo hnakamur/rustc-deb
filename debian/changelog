@@ -3,6 +3,9 @@ rust (1.0.0~0alpha-0.1) unstable; urgency=low
   * New upstream release (Closes: #689207)
 
   [ Sylvestre Ledru ]
+  * Update the make install logic to install in debian/tmp/
+    instead of debian/rust and use the *.install files
+  * Introduce the rust-doc package
   * Move package to the Rust maintainers team
   * Update the uploaders/maintainer fields
   * Update of the vcs-* fields
