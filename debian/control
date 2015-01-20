@@ -1,7 +1,9 @@
 Source: rust
 Section: devel
 Priority: extra
-Maintainer: Luca Bruno <lucab@debian.org>
+Maintainer: Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
+Uploaders: Jordan Justen <jordan.l.justen@intel.com>,  Luca Bruno <lucab@debian.org>,
+ Sylvestre Ledru <sylvestre@debian.org>
 Build-Depends: debhelper (>= 9),
                autotools-dev,
                curl,

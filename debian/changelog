@@ -1,8 +1,10 @@
 rust (1.0.0~0alpha-0.1) unstable; urgency=low
 
-  * New upstream release
-  * Non-maintainer upload
-  * Closes #689207
+  * New upstream release (Closes: #689207)
+
+  [ Sylvestre Ledru ]
+  * Move package to the Rust maintainers team
+  * Update the uploaders/maintainer fields
 
  -- Jordan Justen <jordan.l.justen@intel.com>  Mon, 12 Jan 2015 00:35:31 -0800
 
