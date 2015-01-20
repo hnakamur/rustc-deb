@@ -61,9 +61,10 @@ override_dh_auto_test:
 	true
 
 LD_TMP1 := $(RUST_TMP_PREFIX)/lib
-LD_TMP2 := $(LD_TMP1)/rustlib/i686-unknown-linux-gnu/lib
-LD_TMP3 := $(LD_TMP1)/rustlib/x86_64-unknown-linux-gnu/lib
-RUST_TMP_LD_PATH := $(LD_TMP1):$(LD_TMP2):$(LD_TMP3)
+# TODO improve this stuff to make it dynamic
+LD_TMP_i386 := $(LD_TMP1)/rustlib/i686-unknown-linux-gnu/lib
+LD_TMP_AMD64 := $(LD_TMP1)/rustlib/x86_64-unknown-linux-gnu/lib
+RUST_TMP_LD_PATH := $(LD_TMP1):$(LD_TMP_i386):$(LD_TMP_AMD64)
 
 override_dh_shlibdeps:
 	LD_LIBRARY_PATH=$(RUST_TMP_LD_PATH):$(LD_LIBRARY_PATH) \
