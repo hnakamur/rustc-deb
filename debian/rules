@@ -56,6 +56,9 @@ override_dh_auto_configure:
 		    # $(SELF_BOOTSTRAP) 
 		    # $(SYSTEM_LLVM)
 
+override_dh_auto_build:
+	make VERBOSE=1
+
 # Skip test since it fails on rust 0.12
 override_dh_auto_test:
 	true

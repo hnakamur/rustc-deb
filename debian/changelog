@@ -7,6 +7,7 @@ rust (1.0.0~0alpha-0.1) unstable; urgency=low
   * Update the uploaders/maintainer fields
   * Update of the vcs-* fields
   * Update the list of build dep to build the doc
+  * Force the verbose mode during the build
   * Add a TODO list
 
  -- Jordan Justen <jordan.l.justen@intel.com>  Mon, 12 Jan 2015 00:35:31 -0800
