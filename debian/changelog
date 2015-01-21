@@ -14,6 +14,7 @@ rust (1.0.0~0alpha-0.1) unstable; urgency=low
   * Add a TODO list
   * Enable the testsuite
   * Use rust.manpages
+  * Disable the favicon (lintian complains about it)
 
  -- Jordan Justen <jordan.l.justen@intel.com>  Mon, 12 Jan 2015 00:35:31 -0800
 

@@ -1,0 +1,13 @@
+Index: debian-rust/doc/favicon.inc
+===================================================================
+--- debian-rust.orig/doc/favicon.inc
++++ debian-rust/doc/favicon.inc
+@@ -1 +1 @@
+-<link rel="shortcut icon" href="http://www.rust-lang.org/favicon.ico">
++
+Index: debian-rust/src/doc/favicon.inc
+===================================================================
+--- debian-rust.orig/src/doc/favicon.inc
++++ debian-rust/src/doc/favicon.inc
+@@ -1 +0,0 @@
+-<link rel="shortcut icon" href="http://www.rust-lang.org/favicon.ico">
