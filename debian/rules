@@ -86,4 +86,6 @@ override_dh_install:
 	# We could have updated the upstream sources but it would complexify
 	# the rebase
 	sed -i '/rel="shortcut icon" href="http:\/\/www.rust-lang.org\/favicon.ico"/d' `find $(DEB_DESTDIR) -iname '*.html'`
+	# Remove the empty doc files
+	rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust/html/.lock
 	dh_install
