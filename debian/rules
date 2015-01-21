@@ -57,10 +57,6 @@ override_dh_auto_configure:
 override_dh_auto_build:
 	make VERBOSE=1
 
-# Skip test since it fails on rust 0.12
-override_dh_auto_test:
-	true
-
 LD_TMP1 := $(RUST_TMP_PREFIX)/lib
 # TODO improve this stuff to make it dynamic
 LD_TMP_i386 := $(LD_TMP1)/rustlib/i686-unknown-linux-gnu/lib

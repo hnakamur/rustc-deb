@@ -2,7 +2,6 @@
  * Use Compiler-rt package
  * Improve the bootstrap (do the local build first on our systems, upload
    to Debian and use the packages)
- * Plug the testsuite
  * Port on other archs
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Tue, 20 Jan 2015 08:50:28 +0100
