@@ -14,7 +14,7 @@ rust (1.0.0~alpha-0~exp1) experimental; urgency=low
   * Add a TODO list
   * Enable the testsuite
   * Use rust.manpages
-  * Disable the favicon (lintian complains about it)
+  * Remove the favicon from the doc
 
  -- Jordan Justen <jordan.l.justen@intel.com>  Mon, 12 Jan 2015 00:35:31 -0800
 
