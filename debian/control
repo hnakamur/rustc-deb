@@ -36,6 +36,7 @@ Description: Rust systems programming language
  matching; type inference; minimal runtime; efficient C bindings
 
 Package: rust-doc
+Section: doc
 Architecture: all
 Depends: ${misc:Depends}
 Description: Rust systems programming language - Documentation
