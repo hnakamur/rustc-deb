@@ -87,6 +87,11 @@ Copyright: 2008 Natacha Porté
            2013 Devin Torres and the Hoedown authors
 License: ISC
 
+Files: src/libbacktrace/*
+Copyright: 2012-2014 Free Software Foundation, Inc.
+           (written by Ian Lance Taylor, Google.)
+License: BSD-3-Clause
+
 License: BSD-1-clause
  Redistribution and use in source and binary forms, with
  or without modification, are permitted provided that the
