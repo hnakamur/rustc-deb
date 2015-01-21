@@ -9,6 +9,11 @@
 # the SUDO_USER variable.
 unexport SUDO_USER
 
+ifneq (,$(filter parallel=%,$(subst $(COMMA), ,$(DEB_BUILD_OPTIONS))))
+  NJOBS := -j $(subst parallel=,,$(filter parallel=%,$(subst $(COMMA), ,$(DEB_B
+UILD_OPTIONS))))
+endif
+
 UPSTREAM_RUST_VERSION := \
 	$(shell dpkg-parsechangelog | \
 	egrep '^Version:' | \
@@ -55,7 +60,7 @@ override_dh_auto_configure:
 		    # $(SYSTEM_LLVM)
 
 override_dh_auto_build:
-	make VERBOSE=1
+	make $(NJOBS) VERBOSE=1
 
 LD_TMP1 := $(RUST_TMP_PREFIX)/lib
 # TODO improve this stuff to make it dynamic
