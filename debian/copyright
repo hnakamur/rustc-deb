@@ -15,7 +15,7 @@ License: Expat or Apache-2.0
  according to those terms. 
 
 Files: src/rt/miniz.c
-Copyright: 1996 Rich Geldreich
+Copyright: 1996-2012 Rich Geldreich
 License: unlicense
  This is free and unencumbered software released into the public domain.
  .
