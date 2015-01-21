@@ -47,8 +47,6 @@ SYSTEM_LLVM = --llvm-root=/usr
 
 # Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
-	mkdir -p $(CURDIR)/dl
-	cp $(CURDIR)/debian/dl/*.tar.bz2 $(CURDIR)/dl
 	SHELL=/bin/sh \
 	    ./configure \
 		    $(COMMON_FLAGS) \
