@@ -1,4 +1,4 @@
-rust (1.0.0~0alpha-0.1) unstable; urgency=low
+rust (1.0.0~alpha-0~exp1) experimental; urgency=low
 
   * New upstream release (Closes: #689207)
 
