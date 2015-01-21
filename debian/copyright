@@ -54,10 +54,6 @@ Files: src/rt/vg/*.h
 Copyright: 2000-2010 Julian Seward
 License: BSD-3-clause
 
-Files: src/libuv/*
-Copyright: 2011-2013 Joyent, Inc. and other Node contributors
-License: BSD-3-clause
-
 Files: src/llvm/*
 Copyright: 2003-2012 University of Illinois at Urbana-Champaign
 License: BSD-3-clause
