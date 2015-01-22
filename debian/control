@@ -18,7 +18,9 @@ Build-Depends: debhelper (>= 9),
                lmodern,
                texlive-luatex,
                texlive-xetex,
-               valgrind
+               valgrind,
+               git
+# git is necessary for 'make check'
 Standards-Version: 3.9.6
 Homepage: http://www.rust-lang.org/
 Vcs-Git: git://git.debian.org/pkg-rust/rust.git
