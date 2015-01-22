@@ -1,32 +1,6 @@
 rust (1.0.0~alpha-0~exp1) experimental; urgency=low
 
-  * New upstream release (Closes: #689207)
+  * Initial package (Closes: #689207)
+    Work done by Luca Bruno, Jordan Justen and Sylvestre Ledru
 
-  [ Sylvestre Ledru ]
-  * Update the make install logic to install in debian/tmp/
-    instead of debian/rust and use the *.install files
-  * Introduce the rust-doc package
-  * Move package to the Rust maintainers team
-  * Update the uploaders/maintainer fields
-  * Update of the vcs-* fields
-  * Update the list of build dep to build the doc
-  * Force the verbose mode during the build
-  * Add a TODO list
-  * Enable the testsuite
-  * Use rust.manpages
-  * Remove the favicon from the doc
-
- -- Jordan Justen <jordan.l.justen@intel.com>  Mon, 12 Jan 2015 00:35:31 -0800
-
-rust (0.7-0~exp1) experimental; urgency=low
-
-  * New upstream release
-  * Enable parallel building of LLVM
-
- -- Luca Bruno <lucab@debian.org>  Mon, 26 Aug 2013 15:46:23 +0200
-
-rust (0.6-0~exp1) experimental; urgency=low
-
-  * Initial packaging
-
- -- Luca Bruno <lucab@debian.org>  Sun, 07 Apr 2013 13:53:22 +0200
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 22 Jan 2015 09:08:26 +0100
