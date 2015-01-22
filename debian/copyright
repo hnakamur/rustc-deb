@@ -14,6 +14,10 @@ License: Expat or Apache-2.0
  notice may not be copied, modified, or distributed except
  according to those terms.
 
+Files: src/librustc_trans/trans/cabi_x86_64.rs
+Copyright: 2008-2010 Tachyon Technologies
+License: BSD-2-clause
+
 Files: src/rt/miniz.c
 Copyright: 1996-2012 Rich Geldreich
 License: unlicense
