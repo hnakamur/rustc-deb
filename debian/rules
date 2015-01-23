@@ -27,7 +27,7 @@ MAIN_RUST_VERSION := $(shell echo $(DEB_VERSION_UPSTREAM) | egrep -o '^[^\.]+\.[
 UPSTREAM_RUST_SUFFIX := $(shell echo $(DEB_VERSION_UPSTREAM) | egrep -o '[^\~]+$$')
 
 # Private dir for rust .so and .rlib
-RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(DEBIAN_RUST_VERSION)
+RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(MAIN_RUST_VERSION)
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 RUST_TMP_PREFIX := $(DEB_DESTDIR)/$(RUST_PREFIX)
@@ -79,12 +79,12 @@ override_dh_shlibdeps:
 
 override_dh_auto_install:
 	dh_auto_install
-	dh_link $(RUST_PREFIX)/bin/rustc usr/bin/rustc-$(DEBIAN_RUST_VERSION)
-	dh_link usr/bin/rustc-$(DEBIAN_RUST_VERSION) usr/bin/rustc
-	dh_link $(RUST_PREFIX)/bin/rustdoc usr/bin/rustdoc-$(DEBIAN_RUST_VERSION)
-	dh_link usr/bin/rustdoc-$(DEBIAN_RUST_VERSION) usr/bin/rustdoc
-	dh_link $(RUST_PREFIX)/bin/rust-gdb usr/bin/rust-gdb-$(DEBIAN_RUST_VERSION)
-	dh_link usr/bin/rust-gdb-$(DEBIAN_RUST_VERSION) usr/bin/rust-gdb
+	dh_link $(RUST_PREFIX)/bin/rustc usr/bin/rustc-$(MAIN_RUST_VERSION)
+	dh_link usr/bin/rustc-$(MAIN_RUST_VERSION) usr/bin/rustc
+	dh_link $(RUST_PREFIX)/bin/rustdoc usr/bin/rustdoc-$(MAIN_RUST_VERSION)
+	dh_link usr/bin/rustdoc-$(MAIN_RUST_VERSION) usr/bin/rustdoc
+	dh_link $(RUST_PREFIX)/bin/rust-gdb usr/bin/rust-gdb-$(MAIN_RUST_VERSION)
+	dh_link usr/bin/rust-gdb-$(MAIN_RUST_VERSION) usr/bin/rust-gdb
 
 override_dh_install:
 	# Brute force to remove privacy-breach-logo lintian warning.
