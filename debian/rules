@@ -63,7 +63,9 @@ override_dh_auto_configure:
 		    # $(SYSTEM_LLVM)
 
 override_dh_auto_build:
-	make $(NJOBS) VERBOSE=1
+	make VERBOSE=1
+# Comment the parallel build since it failed on test
+#	make $(NJOBS) VERBOSE=1
 
 LD_TMP1 := $(RUST_TMP_PREFIX)/lib
 # TODO improve this stuff to make it dynamic
