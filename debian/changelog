@@ -3,4 +3,4 @@ rust (1.0.0~alpha-0~exp1) experimental; urgency=low
   * Initial package (Closes: #689207)
     Work done by Luca Bruno, Jordan Justen and Sylvestre Ledru
 
- -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 22 Jan 2015 09:08:26 +0100
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 23 Jan 2015 15:47:37 +0100
