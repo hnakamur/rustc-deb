@@ -1,6 +1,8 @@
 #!/usr/bin/make -f
 # -*- makefile -*-
 
+include /usr/share/dpkg/pkg-info.mk
+
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
@@ -13,18 +15,20 @@ ifneq (,$(filter parallel=%,$(subst $(COMMA), ,$(DEB_BUILD_OPTIONS))))
   NJOBS := -j $(subst parallel=,,$(filter parallel=%,$(subst $(COMMA), ,$(DEB_BUILD_OPTIONS))))
 endif
 
-UPSTREAM_RUST_VERSION := \
-	$(shell dpkg-parsechangelog | \
-	egrep '^Version:' | \
-	cut -f 2 -d ' ' | \
-	cut -f 1 -d '-' | \
-	tr '~' -)
-DEBIAN_RUST_VERSION := \
-	$(shell echo $(UPSTREAM_RUST_VERSION) | \
-	cut -f 1 -d '-' | cut -f 1-2 -d .)
-DEBIAN_RUST_VERSION_TYPE := \
-	$(shell echo $(UPSTREAM_RUST_VERSION) | cut -f 2 -d '-')
+# $DEB_VERSION_UPSTREAM is the full upstream version (eg. 1.0.0~alpha)
+
+# This is original/unmangled upstream version (eg. 1.0.0-alpha)
+UPSTREAM_RUST_VERSION := $(subst ~,-,$(DEB_VERSION_UPSTREAM))
+
+# Main (major.minor) upstream version (eg. 1.0)
+MAIN_RUST_VERSION := $(shell echo $(DEB_VERSION_UPSTREAM) | egrep -o '^[^\.]+\.[^\.]+')
+
+# Upstream version suffix, if any (eg. alpha)
+UPSTREAM_RUST_SUFFIX := $(shell echo $(DEB_VERSION_UPSTREAM) | egrep -o '[^\~]+$$')
+
+# Private dir for rust .so and .rlib
 RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(DEBIAN_RUST_VERSION)
+
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 RUST_TMP_PREFIX := $(DEB_DESTDIR)/$(RUST_PREFIX)
 
