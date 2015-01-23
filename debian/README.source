@@ -70,6 +70,8 @@ Here below the remaining ones, with the technical reasons.
 
  * LLVM from https://github.com/rust-lang/llvm
    -> minimum required LLVM is now 3.6, not yet released
+   Moreover, the code does not seem to build against 3.6 rc1
+    - https://github.com/rust-lang/rust/issues/21512
 
    Rust fork delta is minimal and mostly performance/optimizations only.
    Declared goal is to get in synch with vanilla LLVM.
