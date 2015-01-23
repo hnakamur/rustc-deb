@@ -1,0 +1,12 @@
+For now, the shared libraries of Rust are private.
+The rational is the following:
+ * Upstream prefers static linking for now
+   - https://github.com/rust-lang/rust/issues/10209
+ * rust is still under heavy development. As far as we know, there is
+   no commitement from upstream to provide a stable ABI for now.
+   Until we know more, we cannot take the chance to have Rust-built packages
+   failing at each release of the compiler.
+ * Static builds are working out of the box just fine
+ * However, LD_LIBRARY_PATH has to be updated when -C prefer-dynamic is used
+
+ -- Sylvestre Ledru <sylvestre@debian.org>, Fri, 23 Jan 2015 16:02:29 +0100
