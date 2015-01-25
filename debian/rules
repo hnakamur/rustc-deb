@@ -29,12 +29,16 @@ UPSTREAM_RUST_SUFFIX := $(shell echo $(DEB_VERSION_UPSTREAM) | egrep -o '[^\~]+$
 # Private dir for rust .so and .rlib
 RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(MAIN_RUST_VERSION)
 
+# Release type (one of beta, stable or nightly)
+RELEASE_CHANNEL := beta
+
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 RUST_TMP_PREFIX := $(DEB_DESTDIR)/$(RUST_PREFIX)
 
 # These are the normal build flags
 COMMON_FLAGS = \
                --disable-manage-submodules \
+               --release-channel=$(RELEASE_CHANNEL) \
                --mandir=/usr/share/man \
                --enable-rpath \
                --prefix=/$(RUST_PREFIX)
