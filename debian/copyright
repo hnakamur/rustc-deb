@@ -46,21 +46,9 @@ License: unlicense
  .
  For more information, please refer to <http://unlicense.org/>
 
-Files: src/rt/uthash/*
-Copyright: 2003-2009, Troy D. Hanson
-License: BSD-1-clause
-
-Files: src/rt/bigint/*
-Copyright: 2000 Jef Poskanzer
-License: BSD-2-clause
-
 Files: src/rt/valgrind/*.h
 Copyright: 2000-2013 Julian Seward
 License: Valgrind-BSD-style
-
-Files: src/llvm/*
-Copyright: 2003-2012 University of Illinois at Urbana-Champaign
-License: BSD-3-clause
 
 Files: src/jemalloc/*
 Copyright: 2002-2014 Jason Evans <jasone@canonware.com>
@@ -96,14 +84,13 @@ Copyright: 2012-2014 Free Software Foundation, Inc.
            (written by Ian Lance Taylor, Google.)
 License: BSD-3-Clause
 
-
 Files: src/llvm/*
-Copyright: 2003-2007 University of Illinois at Urbana-Champaign.
+Copyright: 2003-2013 University of Illinois at Urbana-Champaign.
 License: U-OF-I-BSD-LIKE
 
 Files: src/llvm/install-sh
 Copyright: 1994 X Consortium
-License:
+License: LLVM-MIT
  This script is licensed under the LLVM license, with the following
  additional copyrights and restrictions:
  .
@@ -175,7 +162,7 @@ License: BSD-3-clause
 
 Files: src/llvm/lib/Target/ARM/*
 Copyright: ARM Limited
-License:
+License: ARM-LLVM
  ARM Limited
  .
  Software Grant License Agreement ("Agreement")
@@ -226,7 +213,7 @@ License:
 
 Files: src/llvm/test/YAMLParser/*
 Copyright: 2006 Kirill Simonov
-License: MIT
+License: Expat
 
 Files: src/llvm/utils/unittest/googletest/*
 Copyright: 2006-2008, Google Inc.
