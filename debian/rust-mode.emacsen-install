@@ -1,0 +1,20 @@
+#!/bin/sh -e
+
+FLAVOR=$1
+PACKAGE=rust-mode
+ELDIR=/usr/share/emacs/site-lisp/
+ELCDIR=/usr/share/${FLAVOR}/site-lisp/${PACKAGE}
+ELFILE="rust-mode.el"
+FLAGS="-batch -no-site-file -f batch-byte-compile"
+
+if [ ${FLAVOR} != emacs ]; then
+    echo install/${PACKAGE}: Byte-compiling for ${FLAVOR}
+
+    install -m 755 -d ${ELCDIR}
+
+    # Source file symlink (emacsen policy 5C)
+    ln -s "${ELDIR}/${ELFILE}" "${ELCDIR}/${ELFILE}"
+
+    # Compile
+    (cd ${ELCDIR}; ${FLAVOR} ${FLAGS} ${ELFILE})
+fi

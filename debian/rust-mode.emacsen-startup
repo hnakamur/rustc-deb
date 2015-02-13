@@ -1,0 +1,22 @@
+;; -*- emacs-lisp -*-
+;;
+;; Emacs startup file for the Debian GNU/Linux rust-mode package
+
+(cond
+ ((not (file-exists-p "/usr/share/emacs/site-lisp/rust-mode"))
+  (message "Package rust-mode removed but not purged.  Skipping setup."))
+ ((not (file-exists-p (concat "/usr/share/"
+                              (symbol-name debian-emacs-flavor)
+                              "/site-lisp/rust-mode/rust-mode.elc")))
+  (message "Package rust-mode not fully installed.  Skipping setup."))
+ (t
+
+  (debian-pkg-add-load-path-item
+   (concat "/usr/share/"
+           (symbol-name debian-emacs-flavor)
+           "/site-lisp/rust-mode"))
+
+  ;; autoloads for rust-mode
+  (autoload 'rust-mode "rust-mode" "Major mode for Rust code." t)
+
+  (add-to-list 'auto-mode-alist '("\\.rs\\'" . rust-mode))))

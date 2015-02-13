@@ -1,0 +1,2 @@
+src/etc/emacs/rust-mode.el usr/share/emacs/site-lisp/rust-mode/
+src/etc/emacs/rust-mode-tests.el usr/share/emacs/site-lisp/rust-mode/
