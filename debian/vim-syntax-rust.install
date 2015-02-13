@@ -1,0 +1,2 @@
+debian/vim-syntax-rust.yaml usr/share/vim/registry/
+src/etc/vim usr/share/vim/addons/

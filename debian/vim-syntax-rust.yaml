@@ -1,0 +1,14 @@
+addon: rust-syntax
+description: "Addon support for the Rust language"
+files:
+  - after/syntax/rust.vim
+  - syntax/rust.vim
+  - compiler/rustc.vim
+  - compiler/cargo.vim
+  - ftdetect/rust.vim
+  - plugin/rust.vim
+  - autoload/rust.vim
+  - doc/rust.txt
+  - indent/rust.vim
+  - ftplugin/rust.vim
+  - syntax_checkers/rust/rustc.vim
