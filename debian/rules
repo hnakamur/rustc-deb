@@ -11,9 +11,11 @@ include /usr/share/dpkg/pkg-info.mk
 # the SUDO_USER variable.
 unexport SUDO_USER
 
-ifneq (,$(filter parallel=%,$(subst $(COMMA), ,$(DEB_BUILD_OPTIONS))))
-  NJOBS := -j $(subst parallel=,,$(filter parallel=%,$(subst $(COMMA), ,$(DEB_BUILD_OPTIONS))))
-endif
+# Debhelper clears MAKEFLAGS, so we have to do this again for any
+# target where we call $(MAKE) directly.  Boo.
+DEB_PARALLEL_JOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+DEB_MAKE_PARALLEL = $(if $(DEB_PARALLEL_JOBS),-j$(DEB_PARALLEL_JOBS))
+
 
 # $DEB_VERSION_UPSTREAM is the full upstream version (eg. 1.0.0~alpha)
 
@@ -54,6 +56,24 @@ SELF_BOOTSTRAP = \
 # These flags will enable the system-wide LLVM
 SYSTEM_LLVM = --llvm-root=/usr
 
+
+ifeq (,$(findstring dlstage0,$(DEB_BUILD_PROFILES)))
+# Without these options, a pre-built stage0 will be downloaded from
+# rust-lang.org at build time.
+	DEB_CONFIGURE_EXTRA_FLAGS += --enable-local-rust --local-rust-root=/usr
+endif
+
+BUILD_DOCS = 1
+ifneq (,$(findstring nodocs,$(DEB_BUILD_PROFILES)))
+  DEB_CONFIGURE_EXTRA_FLAGS += --disable-docs
+  BUILD_DOCS = 0
+endif
+
+ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
+  DEB_CONFIGURE_EXTRA_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
+endif
+
+
 %:
 	dh $@ --parallel
 
@@ -62,14 +82,17 @@ override_dh_auto_configure:
 	SHELL=/bin/sh \
 	    ./configure \
 		    $(COMMON_FLAGS) \
+			$(DEB_CONFIGURE_EXTRA_FLAGS) \
 		    # TODO
 		    # $(SELF_BOOTSTRAP) 
 		    # $(SYSTEM_LLVM)
 
-override_dh_auto_build:
-	make VERBOSE=1
-# Comment the parallel build since it failed on test
-#	make $(NJOBS) VERBOSE=1
+
+override_dh_auto_build-arch:
+	dh_auto_build -- all VERBOSE=1
+
+override_dh_auto_build-indep:
+	$(if $(BUILD_DOCS),dh_auto_build -- docs)
 
 LD_TMP1 := $(RUST_TMP_PREFIX)/lib
 # TODO improve this stuff to make it dynamic
@@ -94,7 +117,13 @@ override_dh_install:
 	# Brute force to remove privacy-breach-logo lintian warning.
 	# We could have updated the upstream sources but it would complexify
 	# the rebase
-	sed -i '/rel="shortcut icon" href="http:\/\/www.rust-lang.org\/favicon.ico"/d' `find $(DEB_DESTDIR) -iname '*.html'`
-	# Remove the empty doc files
-	rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust/html/.lock
+	if test "$(BUILD)" = "1"; then \
+		sed -i '/rel="shortcut icon" href="http:\/\/www.rust-lang.org\/favicon.ico"/d' `find $(DEB_DESTDIR) -iname '*.html'`; \
+		rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust/html/.lock; \
+	fi
 	dh_install
+
+override_dh_auto_test:
+	# NB: not parallel - there is some race that leads to failures like:
+	# note: cc: error: x86_64-unknown-linux-gnu/test/run-pass/generic-default-type-params-cross-crate.stage2-x86_64-unknown-linux-gnulibaux/default_type_params_xc.o: No such file or directory
+	$(MAKE) check-notidy

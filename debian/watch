@@ -1,5 +1,5 @@
 version=3
-# mangle the alpha/beta/rc tags
-opts=uversionmangle=s/(\d)[_\.\-\+]?((RC|rc|pre|dev|beta|alpha)\d*)$/$1~$2/ \
-http://www.rust-lang.org/install.html \
-https://static.rust-lang.org/dist/rustc-(\d+\.\d+\.\d+-+.+)-src\.tar\.gz
+
+opts="pgpsigurlmangle=s/$/.asc/" \
+ http://www.rust-lang.org/install.html \
+ (?:.*/)rustc?-(\d[\d\.]*(?:-\w+)?)-src\.tar\.gz

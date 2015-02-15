@@ -2,24 +2,28 @@ Source: rust
 Section: devel
 Priority: extra
 Maintainer: Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
-Uploaders: Jordan Justen <jordan.l.justen@intel.com>, Luca Bruno <lucab@debian.org>,
- Sylvestre Ledru <sylvestre@debian.org>
+Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
+ Luca Bruno <lucab@debian.org>,
+ Sylvestre Ledru <sylvestre@debian.org>,
+ Angus Lees <gus@debian.org>
 Build-Depends: debhelper (>= 9),
+#               rust <!dlstage0>,
                autotools-dev,
                curl,
                python,
-               pandoc,
                nodejs,
-               po4a,
                zlib1g-dev,
                libedit-dev,
-               texlive-latex-recommended,
-               texlive-generic-recommended,
-               lmodern,
-               texlive-luatex,
-               texlive-xetex,
                valgrind,
-               git
+               git,
+               ca-certificates <dlstage0>
+Build-Depends-Indep: pandoc (>=1.9) <!nodocs>,
+                     po4a <!nodocs>,
+                     texlive-luatex <!nodocs>,
+                     texlive-xetex <!nodocs>,
+                     texlive-latex-base <!nodocs>,
+                     texlive-generic-recommended <!nodocs>,
+                     lmodern <!nodocs>
 # git is necessary for 'make check'
 Standards-Version: 3.9.6
 Homepage: http://www.rust-lang.org/
@@ -30,24 +34,59 @@ Package: rust
 Architecture: amd64 i386
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: Rust systems programming language
- Rust is a systems programming language that runs blazingly fast,
- prevents almost all crashes, and eliminates data races.
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
  .
- Features: zero-cost abstractions; move semantics; guaranteed memory
- safety; threads without data races; trait-based generics; pattern
- matching; type inference; minimal runtime; efficient C bindings
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
 
 Package: rust-doc
 Section: doc
 Architecture: all
+Build-Profiles: <!nodocs>
 Depends: ${misc:Depends}
 Description: Rust systems programming language - Documentation
- Rust is a systems programming language that runs blazingly fast,
- prevents almost all crashes, and eliminates data races.
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
  .
- Features: zero-cost abstractions; move semantics; guaranteed memory
- safety; threads without data races; trait-based generics; pattern
- matching; type inference; minimal runtime; efficient C bindings
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
  .
  This package contains the documentation.
 
+Package: rust-mode
+Architecture: all
+Depends: emacs24 | emacsen, ${misc:Depends}
+Suggests: rustc
+Description: Rust mode for emacs
+ This package provides a GNU Emacs major mode for editing code in the
+ Rust programming language.
+
+Package: vim-syntax-rust
+Architecture: all
+Depends: vim, ${misc:Depends}
+Recommends: vim-addon-manager
+Suggests: rustc, vim-syntastic
+Description: Vim highlighting syntax files for Rust
+ This package provides syntax files for the Vim editor for editing code
+ in the Rust programming language.
+
+Package: kate-syntax-rust
+Architecture: all
+Depends: kate, ${misc:Depends}
+Suggests: rustc
+Description: Kate highlighting syntax files for Rust
+ This package provides syntax files for the Kate editor for editing
+ code in the Rust programming language.
