@@ -44,10 +44,10 @@
 
 extern crate libc;
 
-use std::io::stdio::{stdin_raw, stdout_raw};
-use std::io::{IoResult, EndOfFile};
+use std::old_io::stdio::{stdin_raw, stdout_raw};
+use std::old_io::{IoResult, EndOfFile};
 use std::ptr::{copy_memory, Unique};
-use std::thread::Thread;
+use std::thread;
 
 struct Tables {
     table8: [u8;1 << 8],
@@ -90,12 +90,12 @@ impl Tables {
         }
     }
 
-    /// Retreives the complement for `i`.
+    /// Retrieves the complement for `i`.
     fn cpl8(&self, i: u8) -> u8 {
         self.table8[i as uint]
     }
 
-    /// Retreives the complement for `i`.
+    /// Retrieves the complement for `i`.
     fn cpl16(&self, i: u16) -> u16 {
         self.table16[i as uint]
     }
@@ -155,7 +155,7 @@ impl<'a> Iterator for MutDnaSeqs<'a> {
     fn next(&mut self) -> Option<&'a mut [u8]> {
         let tmp = std::mem::replace(&mut self.s, &mut []);
         let tmp = match memchr(tmp, b'\n') {
-            Some(i) => tmp.slice_from_mut(i + 1),
+            Some(i) => &mut tmp[i + 1..],
             None => return None,
         };
         let (seq, tmp) = match memchr(tmp, b'>') {
@@ -229,21 +229,12 @@ unsafe impl<T: 'static> Send for Racy<T> {}
 
 /// Executes a closure in parallel over the given iterator over mutable slice.
 /// The closure `f` is run in parallel with an element of `iter`.
-fn parallel<'a, I, T, F>(mut iter: I, f: F)
-        where T: 'a+Send + Sync,
-              I: Iterator<Item=&'a mut [T]>,
-              F: Fn(&mut [T]) + Sync {
-    use std::mem;
-    use std::raw::Repr;
-
-    iter.map(|chunk| {
-        // Need to convert `f` and `chunk` to something that can cross the task
-        // boundary.
-        let f = Racy(&f as *const F as *const uint);
-        let raw = Racy(chunk.repr());
-        Thread::scoped(move|| {
-            let f = f.0 as *const F;
-            unsafe { (*f)(mem::transmute(raw.0)) }
+fn parallel<'a, I: Iterator, F>(iter: I, ref f: F)
+        where I::Item: Send + 'a,
+              F: Fn(I::Item) + Sync + 'a {
+    iter.map(|x| {
+        thread::scoped(move|| {
+            f(x)
         })
     }).collect::<Vec<_>>();
 }
@@ -251,6 +242,6 @@ fn parallel<'a, I, T, F>(mut iter: I, f: F)
 fn main() {
     let mut data = read_to_end(&mut stdin_raw()).unwrap();
     let tables = &Tables::new();
-    parallel(mut_dna_seqs(data.as_mut_slice()), |&: seq| reverse_complement(seq, tables));
-    stdout_raw().write(data.as_mut_slice()).unwrap();
+    parallel(mut_dna_seqs(&mut data), |seq| reverse_complement(seq, tables));
+    stdout_raw().write(&data).unwrap();
 }

@@ -37,16 +37,19 @@ impl<'tcx> TypeWalker<'tcx> {
             ty::ty_projection(ref data) => {
                 self.push_reversed(data.trait_ref.substs.types.as_slice());
             }
-            ty::ty_trait(box ty::TyTrait { ref principal, .. }) => {
+            ty::ty_trait(box ty::TyTrait { ref principal, ref bounds }) => {
                 self.push_reversed(principal.substs().types.as_slice());
+                self.push_reversed(&bounds.projection_bounds.iter().map(|pred| {
+                    pred.0.ty
+                }).collect::<Vec<_>>());
             }
             ty::ty_enum(_, ref substs) |
             ty::ty_struct(_, ref substs) |
-            ty::ty_unboxed_closure(_, _, ref substs) => {
+            ty::ty_closure(_, _, ref substs) => {
                 self.push_reversed(substs.types.as_slice());
             }
             ty::ty_tup(ref ts) => {
-                self.push_reversed(ts.as_slice());
+                self.push_reversed(ts);
             }
             ty::ty_bare_fn(_, ref ft) => {
                 self.push_sig_subtypes(&ft.sig);
@@ -59,7 +62,7 @@ impl<'tcx> TypeWalker<'tcx> {
             ty::FnConverging(output) => { self.stack.push(output); }
             ty::FnDiverging => { }
         }
-        self.push_reversed(sig.0.inputs.as_slice());
+        self.push_reversed(&sig.0.inputs);
     }
 
     fn push_reversed(&mut self, tys: &[Ty<'tcx>]) {

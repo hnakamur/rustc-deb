@@ -14,9 +14,10 @@
 //! representation to hold C-like enum variants.
 
 use core::prelude::*;
+use core::marker;
 use core::fmt;
 use core::num::Int;
-use core::iter::FromIterator;
+use core::iter::{FromIterator, IntoIterator};
 use core::ops::{Sub, BitOr, BitAnd, BitXor};
 
 // FIXME(contentions): implement union family of methods? (general design may be wrong here)
@@ -26,16 +27,18 @@ use core::ops::{Sub, BitOr, BitAnd, BitXor};
 pub struct EnumSet<E> {
     // We must maintain the invariant that no bits are set
     // for which no variant exists
-    bits: uint
+    bits: usize,
+    marker: marker::PhantomData<E>,
 }
 
 impl<E> Copy for EnumSet<E> {}
 
-impl<E:CLike+fmt::Show> fmt::Show for EnumSet<E> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<E:CLike + fmt::Debug> fmt::Debug for EnumSet<E> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(fmt, "EnumSet {{"));
         let mut first = true;
-        for e in self.iter() {
+        for e in self {
             if !first {
                 try!(write!(fmt, ", "));
             }
@@ -46,55 +49,58 @@ impl<E:CLike+fmt::Show> fmt::Show for EnumSet<E> {
     }
 }
 
-/// An interface for casting C-like enum to uint and back.
+/// An interface for casting C-like enum to usize and back.
 /// A typically implementation is as below.
 ///
 /// ```{rust,ignore}
-/// #[repr(uint)]
+/// #[repr(usize)]
 /// enum Foo {
 ///     A, B, C
 /// }
 ///
 /// impl CLike for Foo {
-///     fn to_uint(&self) -> uint {
-///         *self as uint
+///     fn to_usize(&self) -> usize {
+///         *self as usize
 ///     }
 ///
-///     fn from_uint(v: uint) -> Foo {
+///     fn from_usize(v: usize) -> Foo {
 ///         unsafe { mem::transmute(v) }
 ///     }
 /// }
 /// ```
 pub trait CLike {
-    /// Converts a C-like enum to a `uint`.
-    fn to_uint(&self) -> uint;
-    /// Converts a `uint` to a C-like enum.
-    fn from_uint(uint) -> Self;
+    /// Converts a C-like enum to a `usize`.
+    fn to_usize(&self) -> usize;
+    /// Converts a `usize` to a C-like enum.
+    fn from_usize(usize) -> Self;
 }
 
-fn bit<E:CLike>(e: &E) -> uint {
-    use core::uint;
-    let value = e.to_uint();
-    assert!(value < uint::BITS,
-            "EnumSet only supports up to {} variants.", uint::BITS - 1);
+fn bit<E:CLike>(e: &E) -> usize {
+    use core::usize;
+    let value = e.to_usize();
+    assert!(value < usize::BITS,
+            "EnumSet only supports up to {} variants.", usize::BITS - 1);
     1 << value
 }
 
 impl<E:CLike> EnumSet<E> {
     /// Returns an empty `EnumSet`.
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn new() -> EnumSet<E> {
-        EnumSet {bits: 0}
+        EnumSet {bits: 0, marker: marker::PhantomData}
     }
 
     /// Returns the number of elements in the given `EnumSet`.
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn len(&self) -> uint {
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
+    pub fn len(&self) -> usize {
         self.bits.count_ones()
     }
 
     /// Returns true if the `EnumSet` is empty.
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn is_empty(&self) -> bool {
         self.bits == 0
     }
@@ -104,35 +110,41 @@ impl<E:CLike> EnumSet<E> {
     }
 
     /// Returns `false` if the `EnumSet` contains any enum of the given `EnumSet`.
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn is_disjoint(&self, other: &EnumSet<E>) -> bool {
         (self.bits & other.bits) == 0
     }
 
     /// Returns `true` if a given `EnumSet` is included in this `EnumSet`.
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn is_superset(&self, other: &EnumSet<E>) -> bool {
         (self.bits & other.bits) == other.bits
     }
 
     /// Returns `true` if this `EnumSet` is included in the given `EnumSet`.
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn is_subset(&self, other: &EnumSet<E>) -> bool {
         other.is_superset(self)
     }
 
     /// Returns the union of both `EnumSets`.
     pub fn union(&self, e: EnumSet<E>) -> EnumSet<E> {
-        EnumSet {bits: self.bits | e.bits}
+        EnumSet {bits: self.bits | e.bits,
+                 marker: marker::PhantomData}
     }
 
     /// Returns the intersection of both `EnumSets`.
     pub fn intersection(&self, e: EnumSet<E>) -> EnumSet<E> {
-        EnumSet {bits: self.bits & e.bits}
+        EnumSet {bits: self.bits & e.bits,
+                 marker: marker::PhantomData}
     }
 
     /// Adds an enum to the `EnumSet`, and returns `true` if it wasn't there before
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn insert(&mut self, e: E) -> bool {
         let result = !self.contains(&e);
         self.bits |= bit(&e);
@@ -140,7 +152,8 @@ impl<E:CLike> EnumSet<E> {
     }
 
     /// Removes an enum from the EnumSet
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn remove(&mut self, e: &E) -> bool {
         let result = self.contains(e);
         self.bits &= !bit(e);
@@ -148,13 +161,15 @@ impl<E:CLike> EnumSet<E> {
     }
 
     /// Returns `true` if an `EnumSet` contains a given enum.
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn contains(&self, e: &E) -> bool {
         (self.bits & bit(e)) != 0
     }
 
     /// Returns an iterator over an `EnumSet`.
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn iter(&self) -> Iter<E> {
         Iter::new(self.bits)
     }
@@ -164,7 +179,7 @@ impl<E:CLike> Sub for EnumSet<E> {
     type Output = EnumSet<E>;
 
     fn sub(self, e: EnumSet<E>) -> EnumSet<E> {
-        EnumSet {bits: self.bits & !e.bits}
+        EnumSet {bits: self.bits & !e.bits, marker: marker::PhantomData}
     }
 }
 
@@ -172,7 +187,7 @@ impl<E:CLike> BitOr for EnumSet<E> {
     type Output = EnumSet<E>;
 
     fn bitor(self, e: EnumSet<E>) -> EnumSet<E> {
-        EnumSet {bits: self.bits | e.bits}
+        EnumSet {bits: self.bits | e.bits, marker: marker::PhantomData}
     }
 }
 
@@ -180,7 +195,7 @@ impl<E:CLike> BitAnd for EnumSet<E> {
     type Output = EnumSet<E>;
 
     fn bitand(self, e: EnumSet<E>) -> EnumSet<E> {
-        EnumSet {bits: self.bits & e.bits}
+        EnumSet {bits: self.bits & e.bits, marker: marker::PhantomData}
     }
 }
 
@@ -188,14 +203,15 @@ impl<E:CLike> BitXor for EnumSet<E> {
     type Output = EnumSet<E>;
 
     fn bitxor(self, e: EnumSet<E>) -> EnumSet<E> {
-        EnumSet {bits: self.bits ^ e.bits}
+        EnumSet {bits: self.bits ^ e.bits, marker: marker::PhantomData}
     }
 }
 
 /// An iterator over an EnumSet
 pub struct Iter<E> {
-    index: uint,
-    bits: uint,
+    index: usize,
+    bits: usize,
+    marker: marker::PhantomData<E>,
 }
 
 // FIXME(#19839) Remove in favor of `#[derive(Clone)]`
@@ -204,13 +220,14 @@ impl<E> Clone for Iter<E> {
         Iter {
             index: self.index,
             bits: self.bits,
+            marker: marker::PhantomData,
         }
     }
 }
 
 impl<E:CLike> Iter<E> {
-    fn new(bits: uint) -> Iter<E> {
-        Iter { index: 0, bits: bits }
+    fn new(bits: usize) -> Iter<E> {
+        Iter { index: 0, bits: bits, marker: marker::PhantomData }
     }
 }
 
@@ -226,29 +243,39 @@ impl<E:CLike> Iterator for Iter<E> {
             self.index += 1;
             self.bits >>= 1;
         }
-        let elem = CLike::from_uint(self.index);
+        let elem = CLike::from_usize(self.index);
         self.index += 1;
         self.bits >>= 1;
         Some(elem)
     }
 
-    fn size_hint(&self) -> (uint, Option<uint>) {
+    fn size_hint(&self) -> (usize, Option<usize>) {
         let exact = self.bits.count_ones();
         (exact, Some(exact))
     }
 }
 
 impl<E:CLike> FromIterator<E> for EnumSet<E> {
-    fn from_iter<I:Iterator<Item=E>>(iterator: I) -> EnumSet<E> {
+    fn from_iter<I: IntoIterator<Item=E>>(iter: I) -> EnumSet<E> {
         let mut ret = EnumSet::new();
-        ret.extend(iterator);
+        ret.extend(iter);
         ret
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, E> IntoIterator for &'a EnumSet<E> where E: CLike {
+    type Item = E;
+    type IntoIter = Iter<E>;
+
+    fn into_iter(self) -> Iter<E> {
+        self.iter()
+    }
+}
+
 impl<E:CLike> Extend<E> for EnumSet<E> {
-    fn extend<I: Iterator<Item=E>>(&mut self, mut iterator: I) {
-        for element in iterator {
+    fn extend<I: IntoIterator<Item=E>>(&mut self, iter: I) {
+        for element in iter {
             self.insert(element);
         }
     }
@@ -262,18 +289,18 @@ mod test {
 
     use super::{EnumSet, CLike};
 
-    #[derive(Copy, PartialEq, Show)]
-    #[repr(uint)]
+    #[derive(Copy, PartialEq, Debug)]
+    #[repr(usize)]
     enum Foo {
         A, B, C
     }
 
     impl CLike for Foo {
-        fn to_uint(&self) -> uint {
-            *self as uint
+        fn to_usize(&self) -> usize {
+            *self as usize
         }
 
-        fn from_uint(v: uint) -> Foo {
+        fn from_usize(v: usize) -> Foo {
             unsafe { mem::transmute(v) }
         }
     }
@@ -467,7 +494,7 @@ mod test {
     fn test_overflow() {
         #[allow(dead_code)]
         #[derive(Copy)]
-        #[repr(uint)]
+        #[repr(usize)]
         enum Bar {
             V00, V01, V02, V03, V04, V05, V06, V07, V08, V09,
             V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
@@ -479,11 +506,11 @@ mod test {
         }
 
         impl CLike for Bar {
-            fn to_uint(&self) -> uint {
-                *self as uint
+            fn to_usize(&self) -> usize {
+                *self as usize
             }
 
-            fn from_uint(v: uint) -> Bar {
+            fn from_usize(v: usize) -> Bar {
                 unsafe { mem::transmute(v) }
             }
         }

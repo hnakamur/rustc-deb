@@ -12,15 +12,17 @@
 // in this file all test the "kind" violates detected during kindck.
 // See all `regions-bounded-by-send.rs`
 
+use std::marker::MarkerTrait;
+
 fn assert_send<T:Send>() { }
-trait Dummy { }
+trait Dummy : MarkerTrait { }
 trait Message : Send { }
 
 // careful with object types, who knows what they close over...
 
 fn object_ref_with_static_bound_not_ok() {
     assert_send::<&'static (Dummy+'static)>();
-    //~^ ERROR the trait `core::marker::Send` is not implemented
+    //~^ ERROR the trait `core::marker::Sync` is not implemented
 }
 
 fn box_object_with_no_bound_not_ok<'a>() {
@@ -28,7 +30,7 @@ fn box_object_with_no_bound_not_ok<'a>() {
 }
 
 fn object_with_send_bound_ok() {
-    assert_send::<&'static (Dummy+Send)>();
+    assert_send::<&'static (Dummy+Sync)>();
     assert_send::<Box<Dummy+Send>>();
 }
 

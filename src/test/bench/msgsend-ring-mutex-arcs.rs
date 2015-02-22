@@ -18,10 +18,9 @@
 // no-pretty-expanded FIXME #15189
 // ignore-lexer-test FIXME #15679
 
-use std::os;
+use std::env;
 use std::sync::{Arc, Future, Mutex, Condvar};
 use std::time::Duration;
-use std::uint;
 
 // A poor man's pipe.
 type pipe = Arc<(Mutex<Vec<uint>>, Condvar)>;
@@ -51,7 +50,7 @@ fn thread_ring(i: uint, count: uint, num_chan: pipe, num_port: pipe) {
     let mut num_chan = Some(num_chan);
     let mut num_port = Some(num_port);
     // Send/Receive lots of messages.
-    for j in range(0u, count) {
+    for j in 0..count {
         //println!("task %?, iter %?", i, j);
         let num_chan2 = num_chan.take().unwrap();
         let num_port2 = num_port.take().unwrap();
@@ -64,19 +63,19 @@ fn thread_ring(i: uint, count: uint, num_chan: pipe, num_port: pipe) {
 }
 
 fn main() {
-    let args = os::args();
-    let args = if os::getenv("RUST_BENCH").is_some() {
+    let args = env::args();
+    let args = if env::var_os("RUST_BENCH").is_some() {
         vec!("".to_string(), "100".to_string(), "10000".to_string())
-    } else if args.len() <= 1u {
+    } else if args.len() <= 1 {
         vec!("".to_string(), "10".to_string(), "100".to_string())
     } else {
-        args.clone().into_iter().collect()
+        args.collect()
     };
 
     let num_tasks = args[1].parse::<uint>().unwrap();
     let msg_per_task = args[2].parse::<uint>().unwrap();
 
-    let (mut num_chan, num_port) = init();
+    let (num_chan, num_port) = init();
 
     let mut p = Some((num_chan, num_port));
     let dur = Duration::span(|| {
@@ -85,7 +84,7 @@ fn main() {
         // create the ring
         let mut futures = Vec::new();
 
-        for i in range(1u, num_tasks) {
+        for i in 1..num_tasks {
             //println!("spawning %?", i);
             let (new_chan, num_port) = init();
             let num_chan_2 = num_chan.clone();
@@ -100,7 +99,7 @@ fn main() {
         thread_ring(0, msg_per_task, num_chan, num_port);
 
         // synchronize
-        for f in futures.iter_mut() {
+        for f in &mut futures {
             f.get()
         }
     });

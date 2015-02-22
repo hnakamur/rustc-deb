@@ -20,7 +20,7 @@ struct X;
 impl Foo for X {}
 
 pub fn main() {
-    let (a, mut b) = (23i, 4i);
+    let (a, mut b) = (23, 4);
     assert_eq!(a, 23);
     assert_eq!(b, 4);
     b = a + b;
@@ -34,7 +34,7 @@ pub fn main() {
        Baz(f32, u8)
     }
 
-    let (x, mut y) = (32i, Bar::Foo(21));
+    let (x, mut y) = (32, Bar::Foo(21));
 
     match x {
         mut z @ 32 => {
@@ -75,6 +75,6 @@ pub fn main() {
     x = 30;
     assert_eq!(x, 30);
 
-    (|&: A { x: mut t }: A| { t = t+1; t })(A { x: 34 });
+    (|A { x: mut t }: A| { t = t+1; t })(A { x: 34 });
 
 }

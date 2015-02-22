@@ -9,12 +9,12 @@
 // except according to those terms.
 
 pub fn main() {
-    let x = [1i; 100];
-    let y = [2i; 100];
-    let mut p = 0i;
-    let mut q = 0i;
-    for i in x.iter() {
-        for j in y.iter() {
+    let x = [1; 100];
+    let y = [2; 100];
+    let mut p = 0;
+    let mut q = 0;
+    for i in &x[..] {
+        for j in &y[..] {
             p += *j;
         }
         q += *i + p;

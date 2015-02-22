@@ -11,18 +11,17 @@
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-use std::io;
+use std::old_io;
 
 trait Trait {
     fn f(&self);
 }
 
+#[derive(Copy)]
 struct Struct {
     x: int,
     y: int,
 }
-
-impl Copy for Struct {}
 
 impl Trait for Struct {
     fn f(&self) {
@@ -41,7 +40,7 @@ pub fn main() {
     let c: &Trait = &a;
     c.f();
 
-    let out = io::stdout();
+    let out = old_io::stdout();
     foo(box out);
 }
 

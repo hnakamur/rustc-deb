@@ -8,30 +8,32 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::sync::atomic::{AtomicUint, ATOMIC_UINT_INIT, Ordering};
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use std::rand::{thread_rng, Rng, Rand};
-use std::thread::Thread;
+use std::thread;
 
-const REPEATS: uint = 5;
-const MAX_LEN: uint = 32;
-static drop_counts: [AtomicUint;  MAX_LEN] =
-    // FIXME #5244: AtomicUint is not Copy.
+const REPEATS: usize = 5;
+const MAX_LEN: usize = 32;
+static drop_counts: [AtomicUsize;  MAX_LEN] =
+    // FIXME #5244: AtomicUsize is not Copy.
     [
-        ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT,
-        ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT,
-        ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT,
-        ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT,
-
-        ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT,
-        ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT,
-        ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT,
-        ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT, ATOMIC_UINT_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
+        ATOMIC_USIZE_INIT, ATOMIC_USIZE_INIT,
      ];
 
-static creation_count: AtomicUint = ATOMIC_UINT_INIT;
+static creation_count: AtomicUsize = ATOMIC_USIZE_INIT;
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
-struct DropCounter { x: uint, creation_id: uint }
+struct DropCounter { x: usize, creation_id: usize }
 
 impl Rand for DropCounter {
     fn rand<R: Rng>(rng: &mut R) -> DropCounter {
@@ -51,10 +53,10 @@ impl Drop for DropCounter {
 }
 
 pub fn main() {
-    assert!(MAX_LEN <= std::uint::BITS);
+    assert!(MAX_LEN <= std::usize::BITS);
     // len can't go above 64.
-    for len in range(2, MAX_LEN) {
-        for _ in range(0, REPEATS) {
+    for len in 2..MAX_LEN {
+        for _ in 0..REPEATS {
             // reset the count for these new DropCounters, so their
             // IDs start from 0.
             creation_count.store(0, Ordering::Relaxed);
@@ -65,22 +67,22 @@ pub fn main() {
 
             // work out the total number of comparisons required to sort
             // this array...
-            let mut count = 0;
-            main.clone().as_mut_slice().sort_by(|a, b| { count += 1; a.cmp(b) });
+            let mut count = 0_usize;
+            main.clone().sort_by(|a, b| { count += 1; a.cmp(b) });
 
             // ... and then panic on each and every single one.
-            for panic_countdown in range(0i, count) {
+            for panic_countdown in 0..count {
                 // refresh the counters.
-                for c in drop_counts.iter() {
+                for c in &drop_counts {
                     c.store(0, Ordering::Relaxed);
                 }
 
                 let v = main.clone();
 
-                let _ = Thread::scoped(move|| {
+                let _ = thread::spawn(move|| {
                     let mut v = v;
                     let mut panic_countdown = panic_countdown;
-                    v.as_mut_slice().sort_by(|a, b| {
+                    v.sort_by(|a, b| {
                         if panic_countdown == 0 {
                             panic!()
                         }

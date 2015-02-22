@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -135,13 +134,13 @@ struct Struct {
 
 fn main() {
 
-    let shadowed = 231i;
-    let not_shadowed = 232i;
+    let shadowed = 231;
+    let not_shadowed = 232;
 
     zzz(); // #break
     sentinel();
 
-    match (233i, 234i) {
+    match (233, 234) {
         (shadowed, local_to_arm) => {
 
             zzz(); // #break
@@ -149,7 +148,7 @@ fn main() {
         }
     }
 
-    match (235i, 236i) {
+    match (235, 236) {
         // with literal
         (235, shadowed) => {
 
@@ -186,7 +185,7 @@ fn main() {
         _ => {}
     }
 
-    match (243i, 244i) {
+    match (243, 244) {
         (shadowed, ref local_to_arm) => {
 
             zzz(); // #break

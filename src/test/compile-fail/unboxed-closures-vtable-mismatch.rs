@@ -12,13 +12,17 @@
 
 use std::ops::FnMut;
 
-fn call_it<F:FnMut<(isize,isize),isize>>(y: isize, mut f: F) -> isize {
+fn to_fn_mut<A,F:FnMut<A>>(f: F) -> F { f }
+
+fn call_it<F:FnMut(isize,isize)->isize>(y: isize, mut f: F) -> isize {
     f(2, y)
 }
 
 pub fn main() {
-    let f = |&mut: x: usize, y: isize| -> isize { (x as isize) + y };
-    let z = call_it(3, f);  //~ ERROR type mismatch
+    let f = to_fn_mut(|x: usize, y: isize| -> isize { (x as isize) + y });
+    let z = call_it(3, f);
+    //~^ ERROR type mismatch
+    //~| ERROR type mismatch
     println!("{}", z);
 }
 

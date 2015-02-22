@@ -10,8 +10,7 @@
 
 #![allow(non_upper_case_globals)]
 
-use llvm;
-use llvm::{Integer, Pointer, Float, Double, Struct, Array};
+use llvm::{Integer, Pointer, Float, Double, Struct, Array, Vector};
 use llvm::{StructRetAttribute, ZExtAttribute};
 use trans::cabi::{FnType, ArgType};
 use trans::context::CrateContext;
@@ -19,22 +18,25 @@ use trans::type_::Type;
 
 use std::cmp;
 
-fn align_up_to(off: uint, a: uint) -> uint {
-    return (off + a - 1u) / a * a;
+pub enum Flavor {
+    General,
+    Ios
 }
 
-fn align(off: uint, ty: Type) -> uint {
-    let a = ty_align(ty);
+type TyAlignFn = fn(ty: Type) -> uint;
+
+fn align_up_to(off: uint, a: uint) -> uint {
+    return (off + a - 1) / a * a;
+}
+
+fn align(off: uint, ty: Type, align_fn: TyAlignFn) -> uint {
+    let a = align_fn(ty);
     return align_up_to(off, a);
 }
 
-fn ty_align(ty: Type) -> uint {
+fn general_ty_align(ty: Type) -> uint {
     match ty.kind() {
-        Integer => {
-            unsafe {
-                ((llvm::LLVMGetIntTypeWidth(ty.to_ref()) as uint) + 7) / 8
-            }
-        }
+        Integer => ((ty.int_width() as uint) + 7) / 8,
         Pointer => 4,
         Float => 4,
         Double => 8,
@@ -43,53 +45,97 @@ fn ty_align(ty: Type) -> uint {
                 1
             } else {
                 let str_tys = ty.field_types();
-                str_tys.iter().fold(1, |a, t| cmp::max(a, ty_align(*t)))
+                str_tys.iter().fold(1, |a, t| cmp::max(a, general_ty_align(*t)))
             }
         }
         Array => {
             let elt = ty.element_type();
-            ty_align(elt)
+            general_ty_align(elt)
+        }
+        Vector => {
+            let len = ty.vector_length();
+            let elt = ty.element_type();
+            general_ty_align(elt) * len
         }
         _ => panic!("ty_align: unhandled type")
     }
 }
 
-fn ty_size(ty: Type) -> uint {
+// For more information see:
+// ARMv7
+// https://developer.apple.com/library/ios/documentation/Xcode/Conceptual
+//    /iPhoneOSABIReference/Articles/ARMv7FunctionCallingConventions.html
+// ARMv6
+// https://developer.apple.com/library/ios/documentation/Xcode/Conceptual
+//    /iPhoneOSABIReference/Articles/ARMv6FunctionCallingConventions.html
+fn ios_ty_align(ty: Type) -> uint {
     match ty.kind() {
-        Integer => {
-            unsafe {
-                ((llvm::LLVMGetIntTypeWidth(ty.to_ref()) as uint) + 7) / 8
+        Integer => cmp::min(4, ((ty.int_width() as uint) + 7) / 8),
+        Pointer => 4,
+        Float => 4,
+        Double => 4,
+        Struct => {
+            if ty.is_packed() {
+                1
+            } else {
+                let str_tys = ty.field_types();
+                str_tys.iter().fold(1, |a, t| cmp::max(a, ios_ty_align(*t)))
             }
         }
+        Array => {
+            let elt = ty.element_type();
+            ios_ty_align(elt)
+        }
+        Vector => {
+            let len = ty.vector_length();
+            let elt = ty.element_type();
+            ios_ty_align(elt) * len
+        }
+        _ => panic!("ty_align: unhandled type")
+    }
+}
+
+fn ty_size(ty: Type, align_fn: TyAlignFn) -> uint {
+    match ty.kind() {
+        Integer => ((ty.int_width() as uint) + 7) / 8,
         Pointer => 4,
         Float => 4,
         Double => 8,
         Struct => {
             if ty.is_packed() {
                 let str_tys = ty.field_types();
-                str_tys.iter().fold(0, |s, t| s + ty_size(*t))
+                str_tys.iter().fold(0, |s, t| s + ty_size(*t, align_fn))
             } else {
                 let str_tys = ty.field_types();
-                let size = str_tys.iter().fold(0, |s, t| align(s, *t) + ty_size(*t));
-                align(size, ty)
+                let size = str_tys.iter()
+                                  .fold(0, |s, t| {
+                                      align(s, *t, align_fn) + ty_size(*t, align_fn)
+                                  });
+                align(size, ty, align_fn)
             }
         }
         Array => {
             let len = ty.array_length();
             let elt = ty.element_type();
-            let eltsz = ty_size(elt);
+            let eltsz = ty_size(elt, align_fn);
+            len * eltsz
+        }
+        Vector => {
+            let len = ty.vector_length();
+            let elt = ty.element_type();
+            let eltsz = ty_size(elt, align_fn);
             len * eltsz
         }
         _ => panic!("ty_size: unhandled type")
     }
 }
 
-fn classify_ret_ty(ccx: &CrateContext, ty: Type) -> ArgType {
+fn classify_ret_ty(ccx: &CrateContext, ty: Type, align_fn: TyAlignFn) -> ArgType {
     if is_reg_ty(ty) {
         let attr = if ty == Type::i1(ccx) { Some(ZExtAttribute) } else { None };
         return ArgType::direct(ty, None, None, attr);
     }
-    let size = ty_size(ty);
+    let size = ty_size(ty, align_fn);
     if size <= 4 {
         let llty = if size <= 1 {
             Type::i8(ccx)
@@ -103,13 +149,13 @@ fn classify_ret_ty(ccx: &CrateContext, ty: Type) -> ArgType {
     ArgType::indirect(ty, Some(StructRetAttribute))
 }
 
-fn classify_arg_ty(ccx: &CrateContext, ty: Type) -> ArgType {
+fn classify_arg_ty(ccx: &CrateContext, ty: Type, align_fn: TyAlignFn) -> ArgType {
     if is_reg_ty(ty) {
         let attr = if ty == Type::i1(ccx) { Some(ZExtAttribute) } else { None };
         return ArgType::direct(ty, None, None, attr);
     }
-    let align = ty_align(ty);
-    let size = ty_size(ty);
+    let align = align_fn(ty);
+    let size = ty_size(ty, align_fn);
     let llty = if align <= 4 {
         Type::array(&Type::i32(ccx), ((size + 3) / 4) as u64)
     } else {
@@ -123,7 +169,8 @@ fn is_reg_ty(ty: Type) -> bool {
         Integer
         | Pointer
         | Float
-        | Double => true,
+        | Double
+        | Vector => true,
         _ => false
     }
 }
@@ -131,15 +178,21 @@ fn is_reg_ty(ty: Type) -> bool {
 pub fn compute_abi_info(ccx: &CrateContext,
                         atys: &[Type],
                         rty: Type,
-                        ret_def: bool) -> FnType {
+                        ret_def: bool,
+                        flavor: Flavor) -> FnType {
+    let align_fn = match flavor {
+        Flavor::General => general_ty_align as TyAlignFn,
+        Flavor::Ios => ios_ty_align as TyAlignFn,
+    };
+
     let mut arg_tys = Vec::new();
-    for &aty in atys.iter() {
-        let ty = classify_arg_ty(ccx, aty);
+    for &aty in atys {
+        let ty = classify_arg_ty(ccx, aty, align_fn);
         arg_tys.push(ty);
     }
 
     let ret_ty = if ret_def {
-        classify_ret_ty(ccx, rty)
+        classify_ret_ty(ccx, rty, align_fn)
     } else {
         ArgType::direct(Type::void(ccx), None, None, None)
     };

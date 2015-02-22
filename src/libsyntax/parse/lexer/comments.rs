@@ -19,10 +19,10 @@ use parse::lexer::is_block_doc_comment;
 use parse::lexer;
 use print::pprust;
 
-use std::io;
+use std::old_io;
 use std::str;
 use std::string::String;
-use std::uint;
+use std::usize;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum CommentStyle {
@@ -61,8 +61,8 @@ pub fn doc_comment_style(comment: &str) -> ast::AttrStyle {
 
 pub fn strip_doc_comment_decoration(comment: &str) -> String {
     /// remove whitespace-only lines from the start/end of lines
-    fn vertical_trim(lines: Vec<String> ) -> Vec<String> {
-        let mut i = 0u;
+    fn vertical_trim(lines: Vec<String>) -> Vec<String> {
+        let mut i = 0;
         let mut j = lines.len();
         // first line of all-stars should be omitted
         if lines.len() > 0 &&
@@ -82,15 +82,15 @@ pub fn strip_doc_comment_decoration(comment: &str) -> String {
         while j > i && lines[j - 1].trim().is_empty() {
             j -= 1;
         }
-        return lines[i..j].iter().map(|x| (*x).clone()).collect();
+        lines[i..j].iter().cloned().collect()
     }
 
     /// remove a "[ \t]*\*" block from each line, if possible
     fn horizontal_trim(lines: Vec<String> ) -> Vec<String> {
-        let mut i = uint::MAX;
+        let mut i = usize::MAX;
         let mut can_trim = true;
         let mut first = true;
-        for line in lines.iter() {
+        for line in &lines {
             for (j, c) in line.chars().enumerate() {
                 if j > i || !"* \t".contains_char(c) {
                     can_trim = false;
@@ -116,7 +116,7 @@ pub fn strip_doc_comment_decoration(comment: &str) -> String {
 
         if can_trim {
             lines.iter().map(|line| {
-                (&line[(i + 1)..line.len()]).to_string()
+                (&line[i + 1..line.len()]).to_string()
             }).collect()
         } else {
             lines
@@ -125,14 +125,14 @@ pub fn strip_doc_comment_decoration(comment: &str) -> String {
 
     // one-line comments lose their prefix
     static ONLINERS: &'static [&'static str] = &["///!", "///", "//!", "//"];
-    for prefix in ONLINERS.iter() {
+    for prefix in ONLINERS {
         if comment.starts_with(*prefix) {
             return (&comment[prefix.len()..]).to_string();
         }
     }
 
     if comment.starts_with("/*") {
-        let lines = comment[3u..(comment.len() - 2u)]
+        let lines = comment[3..comment.len() - 2]
             .lines_any()
             .map(|s| s.to_string())
             .collect::<Vec<String> >();
@@ -158,7 +158,7 @@ fn push_blank_line_comment(rdr: &StringReader, comments: &mut Vec<Comment>) {
 fn consume_whitespace_counting_blank_lines(rdr: &mut StringReader,
                                            comments: &mut Vec<Comment>) {
     while is_whitespace(rdr.curr) && !rdr.is_eof() {
-        if rdr.col == CharPos(0u) && rdr.curr_is('\n') {
+        if rdr.col == CharPos(0) && rdr.curr_is('\n') {
             push_blank_line_comment(rdr, &mut *comments);
         }
         rdr.bump();
@@ -187,7 +187,7 @@ fn read_line_comments(rdr: &mut StringReader, code_to_the_left: bool,
         let line = rdr.read_one_line_comment();
         debug!("{}", line);
         // Doc comments are not put in comments.
-        if is_doc_comment(&line[]) {
+        if is_doc_comment(&line[..]) {
             break;
         }
         lines.push(line);
@@ -206,10 +206,10 @@ fn read_line_comments(rdr: &mut StringReader, code_to_the_left: bool,
 /// Returns None if the first col chars of s contain a non-whitespace char.
 /// Otherwise returns Some(k) where k is first char offset after that leading
 /// whitespace.  Note k may be outside bounds of s.
-fn all_whitespace(s: &str, col: CharPos) -> Option<uint> {
+fn all_whitespace(s: &str, col: CharPos) -> Option<usize> {
     let len = s.len();
-    let mut col = col.to_uint();
-    let mut cursor: uint = 0;
+    let mut col = col.to_usize();
+    let mut cursor: usize = 0;
     while col > 0 && cursor < len {
         let r: str::CharRange = s.char_range_at(cursor);
         if !r.ch.is_whitespace() {
@@ -224,7 +224,7 @@ fn all_whitespace(s: &str, col: CharPos) -> Option<uint> {
 fn trim_whitespace_prefix_and_push_line(lines: &mut Vec<String> ,
                                         s: String, col: CharPos) {
     let len = s.len();
-    let s1 = match all_whitespace(&s[], col) {
+    let s1 = match all_whitespace(&s[..], col) {
         Some(col) => {
             if col < len {
                 (&s[col..len]).to_string()
@@ -261,13 +261,13 @@ fn read_block_comment(rdr: &mut StringReader,
             rdr.bump();
             rdr.bump();
         }
-        if is_block_doc_comment(&curr_line[]) {
+        if is_block_doc_comment(&curr_line[..]) {
             return
         }
         assert!(!curr_line.contains_char('\n'));
         lines.push(curr_line);
     } else {
-        let mut level: int = 1;
+        let mut level: isize = 1;
         while level > 0 {
             debug!("=== block comment level {}", level);
             if rdr.is_eof() {
@@ -305,7 +305,7 @@ fn read_block_comment(rdr: &mut StringReader,
 
     let mut style = if code_to_the_left { Trailing } else { Isolated };
     rdr.consume_non_eol_whitespace();
-    if !rdr.is_eof() && !rdr.curr_is('\n') && lines.len() == 1u {
+    if !rdr.is_eof() && !rdr.curr_is('\n') && lines.len() == 1 {
         style = Mixed;
     }
     debug!("<<< block comment");
@@ -337,7 +337,7 @@ pub struct Literal {
 // probably not a good thing.
 pub fn gather_comments_and_literals(span_diagnostic: &diagnostic::SpanHandler,
                                     path: String,
-                                    srdr: &mut io::Reader)
+                                    srdr: &mut old_io::Reader)
                                  -> (Vec<Comment>, Vec<Literal>) {
     let src = srdr.read_to_end().unwrap();
     let src = String::from_utf8(src).unwrap();
@@ -399,9 +399,9 @@ mod test {
     }
 
     #[test] fn test_block_doc_comment_3() {
-        let comment = "/**\n let a: *int;\n *a = 5;\n*/";
+        let comment = "/**\n let a: *i32;\n *a = 5;\n*/";
         let stripped = strip_doc_comment_decoration(comment);
-        assert_eq!(stripped, " let a: *int;\n *a = 5;");
+        assert_eq!(stripped, " let a: *i32;\n *a = 5;");
     }
 
     #[test] fn test_block_doc_comment_4() {

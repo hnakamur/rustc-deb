@@ -17,14 +17,13 @@ with the representation of [int; n] and [int] somehow, or at least
 failed to typecheck correctly.
 */
 
+#[derive(Copy)]
 struct X { vec: &'static [int] }
-
-impl Copy for X {}
 
 static V: &'static [X] = &[X { vec: &[1, 2, 3] }];
 
 pub fn main() {
-    for &v in V.iter() {
+    for &v in V {
         println!("{:?}", v.vec);
     }
 }

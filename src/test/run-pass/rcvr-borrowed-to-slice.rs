@@ -24,17 +24,17 @@ fn call_sum(x: &[int]) -> int { x.sum_() }
 
 pub fn main() {
     let x = vec!(1, 2, 3);
-    let y = call_sum(x.as_slice());
+    let y = call_sum(&x);
     println!("y=={}", y);
     assert_eq!(y, 6);
 
     let x = vec!(1, 2, 3);
-    let y = x.as_slice().sum_();
+    let y = x.sum_();
     println!("y=={}", y);
     assert_eq!(y, 6);
 
     let x = vec!(1, 2, 3);
-    let y = x.as_slice().sum_();
+    let y = x.sum_();
     println!("y=={}", y);
     assert_eq!(y, 6);
 }

@@ -12,7 +12,6 @@
 
 use astconv::AstConv;
 use check::{FnCtxt};
-use check::{impl_self_ty};
 use check::vtable;
 use check::vtable::select_new_fcx_obligations;
 use middle::subst;
@@ -20,7 +19,7 @@ use middle::traits;
 use middle::ty::*;
 use middle::ty;
 use middle::infer;
-use util::ppaux::{Repr, UserString};
+use util::ppaux::Repr;
 
 use std::rc::Rc;
 use syntax::ast::{DefId};
@@ -30,17 +29,23 @@ use syntax::codemap::Span;
 pub use self::MethodError::*;
 pub use self::CandidateSource::*;
 
+pub use self::suggest::{report_error, AllTraitsVec};
+
 mod confirm;
-mod doc;
 mod probe;
+mod suggest;
 
 pub enum MethodError {
     // Did not find an applicable method, but we did find various
-    // static methods that may apply.
-    NoMatch(Vec<CandidateSource>),
+    // static methods that may apply, as well as a list of
+    // not-in-scope traits which may work.
+    NoMatch(Vec<CandidateSource>, Vec<ast::DefId>),
 
     // Multiple methods might apply.
     Ambiguity(Vec<CandidateSource>),
+
+    // Using a `Fn`/`FnMut`/etc method on a raw closure type before we have inferred its kind.
+    ClosureAmbiguity(/* DefId of fn trait */ ast::DefId),
 }
 
 // A pared down enum describing just the places from which a method
@@ -62,9 +67,10 @@ pub fn exists<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                         -> bool
 {
     match probe::probe(fcx, span, method_name, self_ty, call_expr_id) {
-        Ok(_) => true,
-        Err(NoMatch(_)) => false,
-        Err(Ambiguity(_)) => true,
+        Ok(..) => true,
+        Err(NoMatch(..)) => false,
+        Err(Ambiguity(..)) => true,
+        Err(ClosureAmbiguity(..)) => true,
     }
 }
 
@@ -87,8 +93,8 @@ pub fn lookup<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                         method_name: ast::Name,
                         self_ty: Ty<'tcx>,
                         supplied_method_types: Vec<Ty<'tcx>>,
-                        call_expr: &ast::Expr,
-                        self_expr: &ast::Expr)
+                        call_expr: &'tcx ast::Expr,
+                        self_expr: &'tcx ast::Expr)
                         -> Result<MethodCallee<'tcx>, MethodError>
 {
     debug!("lookup(method_name={}, self_ty={}, call_expr={}, self_expr={})",
@@ -214,7 +220,7 @@ pub fn lookup_in_trait_adjusted<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     //
     // Note that as the method comes from a trait, it should not have
     // any late-bound regions appearing in its bounds.
-    let method_bounds = fcx.instantiate_bounds(span, trait_ref.substs, &method_ty.generics);
+    let method_bounds = fcx.instantiate_bounds(span, trait_ref.substs, &method_ty.predicates);
     assert!(!method_bounds.has_escaping_regions());
     fcx.add_obligations_for_parameters(
         traits::ObligationCause::misc(span, fcx.body_id),
@@ -284,7 +290,8 @@ pub fn lookup_in_trait_adjusted<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 
     let callee = MethodCallee {
         origin: MethodTypeParam(MethodParam{trait_ref: trait_ref.clone(),
-                                            method_num: method_num}),
+                                            method_num: method_num,
+                                            impl_def_id: None}),
         ty: fty,
         substs: trait_ref.substs.clone()
     };
@@ -294,105 +301,6 @@ pub fn lookup_in_trait_adjusted<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     Some(callee)
 }
 
-pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
-                              span: Span,
-                              rcvr_ty: Ty<'tcx>,
-                              method_name: ast::Name,
-                              error: MethodError)
-{
-    match error {
-        NoMatch(static_sources) => {
-            let cx = fcx.tcx();
-            let method_ustring = method_name.user_string(cx);
-
-            // True if the type is a struct and contains a field with
-            // the same name as the not-found method
-            let is_field = match rcvr_ty.sty {
-                ty_struct(did, _) =>
-                    ty::lookup_struct_fields(cx, did)
-                        .iter()
-                        .any(|f| f.name.user_string(cx) == method_ustring),
-                _ => false
-            };
-
-            fcx.type_error_message(
-                span,
-                |actual| {
-                    format!("type `{}` does not implement any \
-                             method in scope named `{}`",
-                            actual,
-                            method_ustring)
-                },
-                rcvr_ty,
-                None);
-
-            // If the method has the name of a field, give a help note
-            if is_field {
-                cx.sess.span_note(span,
-                    &format!("use `(s.{0})(...)` if you meant to call the \
-                            function stored in the `{0}` field", method_ustring)[]);
-            }
-
-            if static_sources.len() > 0 {
-                fcx.tcx().sess.fileline_note(
-                    span,
-                    "found defined static methods, maybe a `self` is missing?");
-
-                report_candidates(fcx, span, method_name, static_sources);
-            }
-        }
-
-        Ambiguity(sources) => {
-            span_err!(fcx.sess(), span, E0034,
-                      "multiple applicable methods in scope");
-
-            report_candidates(fcx, span, method_name, sources);
-        }
-    }
-
-    fn report_candidates(fcx: &FnCtxt,
-                         span: Span,
-                         method_name: ast::Name,
-                         mut sources: Vec<CandidateSource>) {
-        sources.sort();
-        sources.dedup();
-
-        for (idx, source) in sources.iter().enumerate() {
-            match *source {
-                ImplSource(impl_did) => {
-                    // Provide the best span we can. Use the method, if local to crate, else
-                    // the impl, if local to crate (method may be defaulted), else the call site.
-                    let method = impl_method(fcx.tcx(), impl_did, method_name).unwrap();
-                    let impl_span = fcx.tcx().map.def_id_span(impl_did, span);
-                    let method_span = fcx.tcx().map.def_id_span(method.def_id, impl_span);
-
-                    let impl_ty = impl_self_ty(fcx, span, impl_did).ty;
-
-                    let insertion = match impl_trait_ref(fcx.tcx(), impl_did) {
-                        None => format!(""),
-                        Some(trait_ref) => format!(" of the trait `{}`",
-                                                   ty::item_path_str(fcx.tcx(),
-                                                                     trait_ref.def_id)),
-                    };
-
-                    span_note!(fcx.sess(), method_span,
-                               "candidate #{} is defined in an impl{} for the type `{}`",
-                               idx + 1u,
-                               insertion,
-                               impl_ty.user_string(fcx.tcx()));
-                }
-                TraitSource(trait_did) => {
-                    let (_, method) = trait_method(fcx.tcx(), trait_did, method_name).unwrap();
-                    let method_span = fcx.tcx().map.def_id_span(method.def_id, span);
-                    span_note!(fcx.sess(), method_span,
-                               "candidate #{} is defined in the trait `{}`",
-                               idx + 1u,
-                               ty::item_path_str(fcx.tcx(), trait_did));
-                }
-            }
-        }
-    }
-}
 
 /// Find method with name `method_name` defined in `trait_def_id` and return it, along with its
 /// index (or `None`, if no such method).

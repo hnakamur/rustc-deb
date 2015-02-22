@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -94,7 +93,7 @@ fn main() {
     let owned = box 6;
 
     {
-        let mut first_closure = |&mut:| {
+        let mut first_closure = || {
             zzz(); // #break
             variable = constant + a_struct.a + struct_ref.a + *owned;
         };
@@ -103,7 +102,7 @@ fn main() {
     }
 
     {
-        let mut second_closure = |&mut:| {
+        let mut second_closure = || {
             zzz(); // #break
             variable = constant + a_struct.a + struct_ref.a + *owned;
         };

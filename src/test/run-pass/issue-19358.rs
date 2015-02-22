@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-trait Trait {}
+trait Trait { fn dummy(&self) { } }
 
-#[derive(Show)]
+#[derive(Debug)]
 struct Foo<T: Trait> {
     foo: T,
 }
 
-#[derive(Show)]
+#[derive(Debug)]
 struct Bar<T> where T: Trait {
     bar: T,
 }
@@ -23,7 +23,7 @@ struct Bar<T> where T: Trait {
 impl Trait for int {}
 
 fn main() {
-    let a = Foo { foo: 12i };
-    let b = Bar { bar: 12i };
+    let a = Foo { foo: 12 };
+    let b = Bar { bar: 12 };
     println!("{:?} {:?}", a, b);
 }

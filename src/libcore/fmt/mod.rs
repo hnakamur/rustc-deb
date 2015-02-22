@@ -10,14 +10,13 @@
 
 //! Utilities for formatting and printing strings
 
-#![allow(unused_variables)]
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 
 use any;
-use cell::{Cell, RefCell, Ref, RefMut};
+use cell::{Cell, RefCell, Ref, RefMut, BorrowState};
 use char::CharExt;
-use iter::{Iterator, IteratorExt, range};
-use marker::{Copy, Sized};
+use iter::{Iterator, IteratorExt};
+use marker::{Copy, PhantomData, Sized};
 use mem;
 use option::Option;
 use option::Option::{Some, None};
@@ -26,7 +25,8 @@ use ops::{Deref, FnOnce};
 use result;
 use slice::SliceExt;
 use slice;
-use str::{self, StrExt, Utf8Error};
+use str::{self, StrExt};
+use self::rt::v1::Alignment;
 
 pub use self::num::radix;
 pub use self::num::Radix;
@@ -34,9 +34,14 @@ pub use self::num::RadixFmt;
 
 mod num;
 mod float;
-pub mod rt;
 
-#[unstable = "core and I/O reconciliation may alter this definition"]
+#[stable(feature = "rust1", since = "1.0.0")]
+#[doc(hidden)]
+pub mod rt {
+    pub mod v1;
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
 /// The type returned by formatter methods.
 pub type Result = result::Result<(), Error>;
 
@@ -45,21 +50,21 @@ pub type Result = result::Result<(), Error>;
 /// This type does not support transmission of an error other than that an error
 /// occurred. Any extra information must be arranged to be transmitted through
 /// some other means.
-#[unstable = "core and I/O reconciliation may alter this definition"]
-#[derive(Copy)]
+#[stable(feature = "rust1", since = "1.0.0")]
+#[derive(Copy, Debug)]
 pub struct Error;
 
 /// A collection of methods that are required to format a message into a stream.
 ///
 /// This trait is the type which this modules requires when formatting
-/// information. This is similar to the standard library's `io::Writer` trait,
+/// information. This is similar to the standard library's `io::Write` trait,
 /// but it is only intended for use in libcore.
 ///
 /// This trait should generally not be implemented by consumers of the standard
-/// library. The `write!` macro accepts an instance of `io::Writer`, and the
-/// `io::Writer` trait is favored over implementing this trait.
-#[unstable = "waiting for core and I/O reconciliation"]
-pub trait Writer {
+/// library. The `write!` macro accepts an instance of `io::Write`, and the
+/// `io::Write` trait is favored over implementing this trait.
+#[stable(feature = "rust1", since = "1.0.0")]
+pub trait Write {
     /// Writes a slice of bytes into this writer, returning whether the write
     /// succeeded.
     ///
@@ -70,20 +75,22 @@ pub trait Writer {
     /// # Errors
     ///
     /// This function will return an instance of `FormatError` on error.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn write_str(&mut self, s: &str) -> Result;
 
     /// Glue for usage of the `write!` macro with implementers of this trait.
     ///
     /// This method should generally not be invoked manually, but rather through
     /// the `write!` macro itself.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn write_fmt(&mut self, args: Arguments) -> Result {
         // This Adapter is needed to allow `self` (of type `&mut
-        // Self`) to be cast to a FormatWriter (below) without
+        // Self`) to be cast to a Write (below) without
         // requiring a `Sized` bound.
         struct Adapter<'a,T: ?Sized +'a>(&'a mut T);
 
-        impl<'a, T: ?Sized> Writer for Adapter<'a, T>
-            where T: Writer
+        impl<'a, T: ?Sized> Write for Adapter<'a, T>
+            where T: Write
         {
             fn write_str(&mut self, s: &str) -> Result {
                 self.0.write_str(s)
@@ -101,17 +108,17 @@ pub trait Writer {
 /// A struct to represent both where to emit formatting strings to and how they
 /// should be formatted. A mutable version of this is passed to all formatting
 /// traits.
-#[unstable = "name may change and implemented traits are also unstable"]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Formatter<'a> {
     flags: uint,
     fill: char,
-    align: rt::Alignment,
+    align: rt::v1::Alignment,
     width: Option<uint>,
     precision: Option<uint>,
 
-    buf: &'a mut (Writer+'a),
-    curarg: slice::Iter<'a, Argument<'a>>,
-    args: &'a [Argument<'a>],
+    buf: &'a mut (Write+'a),
+    curarg: slice::Iter<'a, ArgumentV1<'a>>,
+    args: &'a [ArgumentV1<'a>],
 }
 
 // NB. Argument is essentially an optimized partially applied formatting function,
@@ -123,34 +130,40 @@ enum Void {}
 /// family of functions. It contains a function to format the given value. At
 /// compile time it is ensured that the function and the value have the correct
 /// types, and then this struct is used to canonicalize arguments to one type.
-#[unstable = "implementation detail of the `format_args!` macro"]
 #[derive(Copy)]
-pub struct Argument<'a> {
+#[stable(feature = "rust1", since = "1.0.0")]
+#[doc(hidden)]
+pub struct ArgumentV1<'a> {
     value: &'a Void,
     formatter: fn(&Void, &mut Formatter) -> Result,
 }
 
-impl<'a> Argument<'a> {
+impl<'a> ArgumentV1<'a> {
     #[inline(never)]
     fn show_uint(x: &uint, f: &mut Formatter) -> Result {
-        Show::fmt(x, f)
+        Display::fmt(x, f)
     }
 
-    fn new<'b, T>(x: &'b T, f: fn(&T, &mut Formatter) -> Result) -> Argument<'b> {
+    #[doc(hidden)]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn new<'b, T>(x: &'b T,
+                      f: fn(&T, &mut Formatter) -> Result) -> ArgumentV1<'b> {
         unsafe {
-            Argument {
+            ArgumentV1 {
                 formatter: mem::transmute(f),
                 value: mem::transmute(x)
             }
         }
     }
 
-    fn from_uint(x: &uint) -> Argument {
-        Argument::new(x, Argument::show_uint)
+    #[doc(hidden)]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn from_uint(x: &uint) -> ArgumentV1 {
+        ArgumentV1::new(x, ArgumentV1::show_uint)
     }
 
     fn as_uint(&self) -> Option<uint> {
-        if self.formatter as uint == Argument::show_uint as uint {
+        if self.formatter as uint == ArgumentV1::show_uint as uint {
             Some(unsafe { *(self.value as *const _ as *const uint) })
         } else {
             None
@@ -158,13 +171,18 @@ impl<'a> Argument<'a> {
     }
 }
 
+// flags available in the v1 format of format_args
+#[derive(Copy)]
+#[allow(dead_code)] // SignMinus isn't currently used
+enum FlagV1 { SignPlus, SignMinus, Alternate, SignAwareZeroPad, }
+
 impl<'a> Arguments<'a> {
     /// When using the format_args!() macro, this function is used to generate the
     /// Arguments structure.
     #[doc(hidden)] #[inline]
-    #[unstable = "implementation detail of the `format_args!` macro"]
-    pub fn new(pieces: &'a [&'a str],
-               args: &'a [Argument<'a>]) -> Arguments<'a> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn new_v1(pieces: &'a [&'a str],
+                  args: &'a [ArgumentV1<'a>]) -> Arguments<'a> {
         Arguments {
             pieces: pieces,
             fmt: None,
@@ -179,10 +197,10 @@ impl<'a> Arguments<'a> {
     /// created with `argumentuint`. However, failing to do so doesn't cause
     /// unsafety, but will ignore invalid .
     #[doc(hidden)] #[inline]
-    #[unstable = "implementation detail of the `format_args!` macro"]
-    pub fn with_placeholders(pieces: &'a [&'a str],
-                             fmt: &'a [rt::Argument<'a>],
-                             args: &'a [Argument<'a>]) -> Arguments<'a> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn new_v1_formatted(pieces: &'a [&'a str],
+                            args: &'a [ArgumentV1<'a>],
+                            fmt: &'a [rt::v1::Argument]) -> Arguments<'a> {
         Arguments {
             pieces: pieces,
             fmt: Some(fmt),
@@ -200,96 +218,144 @@ impl<'a> Arguments<'a> {
 /// and pass it to a function or closure, passed as the first argument. The
 /// macro validates the format string at compile-time so usage of the `write`
 /// and `format` functions can be safely performed.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Copy)]
 pub struct Arguments<'a> {
     // Format string pieces to print.
     pieces: &'a [&'a str],
 
     // Placeholder specs, or `None` if all specs are default (as in "{}{}").
-    fmt: Option<&'a [rt::Argument<'a>]>,
+    fmt: Option<&'a [rt::v1::Argument]>,
 
     // Dynamic arguments for interpolation, to be interleaved with string
     // pieces. (Every argument is preceded by a string piece.)
-    args: &'a [Argument<'a>],
+    args: &'a [ArgumentV1<'a>],
 }
 
-impl<'a> Show for Arguments<'a> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a> Debug for Arguments<'a> {
     fn fmt(&self, fmt: &mut Formatter) -> Result {
-        String::fmt(self, fmt)
+        Display::fmt(self, fmt)
     }
 }
 
-#[stable]
-impl<'a> String for Arguments<'a> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a> Display for Arguments<'a> {
     fn fmt(&self, fmt: &mut Formatter) -> Result {
         write(fmt.buf, *self)
     }
 }
 
-/// Format trait for the `:?` format. Useful for debugging, most all types
+/// Format trait for the `:?` format. Useful for debugging, all types
 /// should implement this.
-#[unstable = "I/O and core have yet to be reconciled"]
+#[deprecated(since = "1.0.0", reason = "renamed to Debug")]
+#[unstable(feature = "old_fmt")]
 pub trait Show {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn fmt(&self, &mut Formatter) -> Result;
+}
+
+/// Format trait for the `:?` format. Useful for debugging, all types
+/// should implement this.
+#[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "`{Self}` cannot be formatted using `:?`; if it is \
+                            defined in your crate, add `#[derive(Debug)]` or \
+                            manually implement it"]
+#[lang = "debug_trait"]
+pub trait Debug {
+    /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn fmt(&self, &mut Formatter) -> Result;
+}
+
+#[allow(deprecated)]
+impl<T: Show + ?Sized> Debug for T {
+    #[allow(deprecated)]
+    fn fmt(&self, f: &mut Formatter) -> Result { Show::fmt(self, f) }
+}
+
+/// When a value can be semantically expressed as a String, this trait may be
+/// used. It corresponds to the default format, `{}`.
+#[deprecated(since = "1.0.0", reason = "renamed to Display")]
+#[unstable(feature = "old_fmt")]
+pub trait String {
+    /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
 /// When a value can be semantically expressed as a String, this trait may be
 /// used. It corresponds to the default format, `{}`.
-#[unstable = "I/O and core have yet to be reconciled"]
-pub trait String {
+#[rustc_on_unimplemented = "`{Self}` cannot be formatted with the default \
+                            formatter; try using `:?` instead if you are using \
+                            a format string"]
+#[stable(feature = "rust1", since = "1.0.0")]
+pub trait Display {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
+#[allow(deprecated)]
+impl<T: String + ?Sized> Display for T {
+    #[allow(deprecated)]
+    fn fmt(&self, f: &mut Formatter) -> Result { String::fmt(self, f) }
+}
 
 /// Format trait for the `o` character
-#[unstable = "I/O and core have yet to be reconciled"]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait Octal {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
 /// Format trait for the `b` character
-#[unstable = "I/O and core have yet to be reconciled"]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait Binary {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
 /// Format trait for the `x` character
-#[unstable = "I/O and core have yet to be reconciled"]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait LowerHex {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
 /// Format trait for the `X` character
-#[unstable = "I/O and core have yet to be reconciled"]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait UpperHex {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
 /// Format trait for the `p` character
-#[unstable = "I/O and core have yet to be reconciled"]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait Pointer {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
 /// Format trait for the `e` character
-#[unstable = "I/O and core have yet to be reconciled"]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait LowerExp {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
 /// Format trait for the `E` character
-#[unstable = "I/O and core have yet to be reconciled"]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait UpperExp {
     /// Formats the value using the given formatter.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
 }
 
@@ -301,15 +367,14 @@ pub trait UpperExp {
 ///
 ///   * output - the buffer to write output to
 ///   * args - the precompiled arguments generated by `format_args!`
-#[unstable = "libcore and I/O have yet to be reconciled, and this is an \
-                  implementation detail which should not otherwise be exported"]
-pub fn write(output: &mut Writer, args: Arguments) -> Result {
+#[stable(feature = "rust1", since = "1.0.0")]
+pub fn write(output: &mut Write, args: Arguments) -> Result {
     let mut formatter = Formatter {
         flags: 0,
         width: None,
         precision: None,
         buf: output,
-        align: rt::AlignUnknown,
+        align: Alignment::Unknown,
         fill: ' ',
         args: args.args,
         curarg: args.args.iter(),
@@ -351,7 +416,7 @@ impl<'a> Formatter<'a> {
     // First up is the collection of functions used to execute a format string
     // at runtime. This consumes all of the compile-time statics generated by
     // the format! syntax extension.
-    fn run(&mut self, arg: &rt::Argument) -> Result {
+    fn run(&mut self, arg: &rt::v1::Argument) -> Result {
         // Fill in the format parameters into the formatter
         self.fill = arg.format.fill;
         self.align = arg.format.align;
@@ -361,22 +426,22 @@ impl<'a> Formatter<'a> {
 
         // Extract the correct argument
         let value = match arg.position {
-            rt::ArgumentNext => { *self.curarg.next().unwrap() }
-            rt::ArgumentIs(i) => self.args[i],
+            rt::v1::Position::Next => { *self.curarg.next().unwrap() }
+            rt::v1::Position::At(i) => self.args[i],
         };
 
         // Then actually do some printing
         (value.formatter)(value.value, self)
     }
 
-    fn getcount(&mut self, cnt: &rt::Count) -> Option<uint> {
+    fn getcount(&mut self, cnt: &rt::v1::Count) -> Option<uint> {
         match *cnt {
-            rt::CountIs(n) => Some(n),
-            rt::CountImplied => None,
-            rt::CountIsParam(i) => {
+            rt::v1::Count::Is(n) => Some(n),
+            rt::v1::Count::Implied => None,
+            rt::v1::Count::Param(i) => {
                 self.args[i].as_uint()
             }
-            rt::CountIsNextParam => {
+            rt::v1::Count::NextParam => {
                 self.curarg.next().and_then(|arg| arg.as_uint())
             }
         }
@@ -386,8 +451,8 @@ impl<'a> Formatter<'a> {
     // all formatting traits can use.
 
     /// Performs the correct padding for an integer which has already been
-    /// emitted into a byte-array. The byte-array should *not* contain the sign
-    /// for the integer, that will be added by this method.
+    /// emitted into a str. The str should *not* contain the sign for the
+    /// integer, that will be added by this method.
     ///
     /// # Arguments
     ///
@@ -398,35 +463,34 @@ impl<'a> Formatter<'a> {
     ///
     /// This function will correctly account for the flags provided as well as
     /// the minimum width. It will not take precision into account.
-    #[unstable = "definition may change slightly over time"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn pad_integral(&mut self,
                         is_positive: bool,
                         prefix: &str,
                         buf: &str)
                         -> Result {
         use char::CharExt;
-        use fmt::rt::{FlagAlternate, FlagSignPlus, FlagSignAwareZeroPad};
 
         let mut width = buf.len();
 
         let mut sign = None;
         if !is_positive {
             sign = Some('-'); width += 1;
-        } else if self.flags & (1 << (FlagSignPlus as uint)) != 0 {
+        } else if self.flags & (1 << (FlagV1::SignPlus as uint)) != 0 {
             sign = Some('+'); width += 1;
         }
 
         let mut prefixed = false;
-        if self.flags & (1 << (FlagAlternate as uint)) != 0 {
+        if self.flags & (1 << (FlagV1::Alternate as uint)) != 0 {
             prefixed = true; width += prefix.char_len();
         }
 
         // Writes the sign if it exists, and then the prefix if it was requested
-        let write_prefix = |&: f: &mut Formatter| {
-            for c in sign.into_iter() {
+        let write_prefix = |f: &mut Formatter| {
+            if let Some(c) = sign {
                 let mut b = [0; 4];
                 let n = c.encode_utf8(&mut b).unwrap_or(0);
-                let b = unsafe { str::from_utf8_unchecked(&b[0..n]) };
+                let b = unsafe { str::from_utf8_unchecked(&b[..n]) };
                 try!(f.buf.write_str(b));
             }
             if prefixed { f.buf.write_str(prefix) }
@@ -447,16 +511,16 @@ impl<'a> Formatter<'a> {
             }
             // The sign and prefix goes before the padding if the fill character
             // is zero
-            Some(min) if self.flags & (1 << (FlagSignAwareZeroPad as uint)) != 0 => {
+            Some(min) if self.flags & (1 << (FlagV1::SignAwareZeroPad as uint)) != 0 => {
                 self.fill = '0';
                 try!(write_prefix(self));
-                self.with_padding(min - width, rt::AlignRight, |f| {
+                self.with_padding(min - width, Alignment::Right, |f| {
                     f.buf.write_str(buf)
                 })
             }
             // Otherwise, the sign and prefix goes after the padding
             Some(min) => {
-                self.with_padding(min - width, rt::AlignRight, |f| {
+                self.with_padding(min - width, Alignment::Right, |f| {
                     try!(write_prefix(f)); f.buf.write_str(buf)
                 })
             }
@@ -474,7 +538,7 @@ impl<'a> Formatter<'a> {
     ///               is longer than this length
     ///
     /// Notably this function ignored the `flag` parameters
-    #[unstable = "definition may change slightly over time"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn pad(&mut self, s: &str) -> Result {
         // Make sure there's a fast path up front
         if self.width.is_none() && self.precision.is_none() {
@@ -508,7 +572,7 @@ impl<'a> Formatter<'a> {
             // If we're under both the maximum and the minimum width, then fill
             // up the minimum width with the specified string + some alignment.
             Some(width) => {
-                self.with_padding(width - s.char_len(), rt::AlignLeft, |me| {
+                self.with_padding(width - s.char_len(), Alignment::Left, |me| {
                     me.buf.write_str(s)
                 })
             }
@@ -517,32 +581,33 @@ impl<'a> Formatter<'a> {
 
     /// Runs a callback, emitting the correct padding either before or
     /// afterwards depending on whether right or left alignment is requested.
-    fn with_padding<F>(&mut self, padding: uint, default: rt::Alignment, f: F) -> Result where
-        F: FnOnce(&mut Formatter) -> Result,
+    fn with_padding<F>(&mut self, padding: uint, default: Alignment,
+                       f: F) -> Result
+        where F: FnOnce(&mut Formatter) -> Result,
     {
         use char::CharExt;
         let align = match self.align {
-            rt::AlignUnknown => default,
+            Alignment::Unknown => default,
             _ => self.align
         };
 
         let (pre_pad, post_pad) = match align {
-            rt::AlignLeft => (0u, padding),
-            rt::AlignRight | rt::AlignUnknown => (padding, 0u),
-            rt::AlignCenter => (padding / 2, (padding + 1) / 2),
+            Alignment::Left => (0, padding),
+            Alignment::Right | Alignment::Unknown => (padding, 0),
+            Alignment::Center => (padding / 2, (padding + 1) / 2),
         };
 
         let mut fill = [0u8; 4];
         let len = self.fill.encode_utf8(&mut fill).unwrap_or(0);
         let fill = unsafe { str::from_utf8_unchecked(&fill[..len]) };
 
-        for _ in range(0, pre_pad) {
+        for _ in 0..pre_pad {
             try!(self.buf.write_str(fill));
         }
 
         try!(f(self));
 
-        for _ in range(0, post_pad) {
+        for _ in 0..post_pad {
             try!(self.buf.write_str(fill));
         }
 
@@ -551,59 +616,43 @@ impl<'a> Formatter<'a> {
 
     /// Writes some data to the underlying buffer contained within this
     /// formatter.
-    #[unstable = "reconciling core and I/O may alter this definition"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn write_str(&mut self, data: &str) -> Result {
         self.buf.write_str(data)
     }
 
     /// Writes some formatted information into this instance
-    #[unstable = "reconciling core and I/O may alter this definition"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn write_fmt(&mut self, fmt: Arguments) -> Result {
         write(self.buf, fmt)
     }
 
     /// Flags for formatting (packed version of rt::Flag)
-    #[unstable = "return type may change and method was just created"]
-    pub fn flags(&self) -> uint { self.flags }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn flags(&self) -> usize { self.flags }
 
     /// Character used as 'fill' whenever there is alignment
-    #[unstable = "method was just created"]
+    #[unstable(feature = "core", reason = "method was just created")]
     pub fn fill(&self) -> char { self.fill }
 
     /// Flag indicating what form of alignment was requested
-    #[unstable = "method was just created"]
-    pub fn align(&self) -> rt::Alignment { self.align }
+    #[unstable(feature = "core", reason = "method was just created")]
+    pub fn align(&self) -> Alignment { self.align }
 
     /// Optionally specified integer width that the output should be
-    #[unstable = "method was just created"]
+    #[unstable(feature = "core", reason = "method was just created")]
     pub fn width(&self) -> Option<uint> { self.width }
 
     /// Optionally specified precision for numeric types
-    #[unstable = "method was just created"]
+    #[unstable(feature = "core", reason = "method was just created")]
     pub fn precision(&self) -> Option<uint> { self.precision }
 }
 
-impl Show for Error {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        String::fmt("an error occurred when formatting an argument", f)
+        Display::fmt("an error occurred when formatting an argument", f)
     }
-}
-
-/// This is a function which calls are emitted to by the compiler itself to
-/// create the Argument structures that are passed into the `format` function.
-#[doc(hidden)] #[inline]
-#[unstable = "implementation detail of the `format_args!` macro"]
-pub fn argument<'a, T>(f: fn(&T, &mut Formatter) -> Result,
-                       t: &'a T) -> Argument<'a> {
-    Argument::new(t, f)
-}
-
-/// When the compiler determines that the type of an argument *must* be a uint
-/// (such as for width and precision), then it invokes this method.
-#[doc(hidden)] #[inline]
-#[unstable = "implementation detail of the `format_args!` macro"]
-pub fn argumentuint<'a>(s: &'a uint) -> Argument<'a> {
-    Argument::from_uint(s)
 }
 
 // Implementations of the core formatting traits
@@ -611,9 +660,11 @@ pub fn argumentuint<'a>(s: &'a uint) -> Argument<'a> {
 macro_rules! fmt_refs {
     ($($tr:ident),*) => {
         $(
+        #[stable(feature = "rust1", since = "1.0.0")]
         impl<'a, T: ?Sized + $tr> $tr for &'a T {
             fn fmt(&self, f: &mut Formatter) -> Result { $tr::fmt(&**self, f) }
         }
+        #[stable(feature = "rust1", since = "1.0.0")]
         impl<'a, T: ?Sized + $tr> $tr for &'a mut T {
             fn fmt(&self, f: &mut Formatter) -> Result { $tr::fmt(&**self, f) }
         }
@@ -621,22 +672,24 @@ macro_rules! fmt_refs {
     }
 }
 
-fmt_refs! { Show, String, Octal, Binary, LowerHex, UpperHex, LowerExp, UpperExp }
+fmt_refs! { Debug, Display, Octal, Binary, LowerHex, UpperHex, LowerExp, UpperExp }
 
-impl Show for bool {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Debug for bool {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        String::fmt(self, f)
+        Display::fmt(self, f)
     }
 }
 
-#[stable]
-impl String for bool {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Display for bool {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        String::fmt(if *self { "true" } else { "false" }, f)
+        Display::fmt(if *self { "true" } else { "false" }, f)
     }
 }
 
-impl Show for str {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Debug for str {
     fn fmt(&self, f: &mut Formatter) -> Result {
         try!(write!(f, "\""));
         for c in self.chars().flat_map(|c| c.escape_default()) {
@@ -646,14 +699,15 @@ impl Show for str {
     }
 }
 
-#[stable]
-impl String for str {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Display for str {
     fn fmt(&self, f: &mut Formatter) -> Result {
         f.pad(self)
     }
 }
 
-impl Show for char {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Debug for char {
     fn fmt(&self, f: &mut Formatter) -> Result {
         use char::CharExt;
         try!(write!(f, "'"));
@@ -664,37 +718,41 @@ impl Show for char {
     }
 }
 
-#[stable]
-impl String for char {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Display for char {
     fn fmt(&self, f: &mut Formatter) -> Result {
         let mut utf8 = [0u8; 4];
         let amt = self.encode_utf8(&mut utf8).unwrap_or(0);
-        let s: &str = unsafe { mem::transmute(&utf8[0..amt]) };
-        String::fmt(s, f)
+        let s: &str = unsafe { mem::transmute(&utf8[..amt]) };
+        Display::fmt(s, f)
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Pointer for *const T {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        f.flags |= 1 << (rt::FlagAlternate as uint);
+        f.flags |= 1 << (FlagV1::Alternate as uint);
         let ret = LowerHex::fmt(&(*self as uint), f);
-        f.flags &= !(1 << (rt::FlagAlternate as uint));
+        f.flags &= !(1 << (FlagV1::Alternate as uint));
         ret
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Pointer for *mut T {
     fn fmt(&self, f: &mut Formatter) -> Result {
         Pointer::fmt(&(*self as *const T), f)
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Pointer for &'a T {
     fn fmt(&self, f: &mut Formatter) -> Result {
         Pointer::fmt(&(*self as *const T), f)
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Pointer for &'a mut T {
     fn fmt(&self, f: &mut Formatter) -> Result {
         Pointer::fmt(&(&**self as *const T), f)
@@ -703,15 +761,15 @@ impl<'a, T> Pointer for &'a mut T {
 
 macro_rules! floating { ($ty:ident) => {
 
-    impl Show for $ty {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    impl Debug for $ty {
         fn fmt(&self, fmt: &mut Formatter) -> Result {
-            try!(String::fmt(self, fmt));
-            fmt.write_str(stringify!($ty))
+            Display::fmt(self, fmt)
         }
     }
 
-    #[stable]
-    impl String for $ty {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    impl Display for $ty {
         fn fmt(&self, fmt: &mut Formatter) -> Result {
             use num::Float;
 
@@ -732,6 +790,7 @@ macro_rules! floating { ($ty:ident) => {
         }
     }
 
+    #[stable(feature = "rust1", since = "1.0.0")]
     impl LowerExp for $ty {
         fn fmt(&self, fmt: &mut Formatter) -> Result {
             use num::Float;
@@ -753,6 +812,7 @@ macro_rules! floating { ($ty:ident) => {
         }
     }
 
+    #[stable(feature = "rust1", since = "1.0.0")]
     impl UpperExp for $ty {
         fn fmt(&self, fmt: &mut Formatter) -> Result {
             use num::Float;
@@ -777,12 +837,14 @@ macro_rules! floating { ($ty:ident) => {
 floating! { f32 }
 floating! { f64 }
 
-// Implementation of Show for various core types
+// Implementation of Display/Debug for various core types
 
-impl<T> Show for *const T {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> Debug for *const T {
     fn fmt(&self, f: &mut Formatter) -> Result { Pointer::fmt(self, f) }
 }
-impl<T> Show for *mut T {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> Debug for *mut T {
     fn fmt(&self, f: &mut Formatter) -> Result { Pointer::fmt(self, f) }
 }
 
@@ -793,12 +855,13 @@ macro_rules! peel {
 macro_rules! tuple {
     () => ();
     ( $($name:ident,)+ ) => (
-        impl<$($name:Show),*> Show for ($($name,)*) {
+        #[stable(feature = "rust1", since = "1.0.0")]
+        impl<$($name:Debug),*> Debug for ($($name,)*) {
             #[allow(non_snake_case, unused_assignments)]
             fn fmt(&self, f: &mut Formatter) -> Result {
                 try!(write!(f, "("));
                 let ($(ref $name,)*) = *self;
-                let mut n = 0i;
+                let mut n = 0;
                 $(
                     if n > 0 {
                         try!(write!(f, ", "));
@@ -818,17 +881,19 @@ macro_rules! tuple {
 
 tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
 
-impl<'a> Show for &'a (any::Any+'a) {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a> Debug for &'a (any::Any+'a) {
     fn fmt(&self, f: &mut Formatter) -> Result { f.pad("&Any") }
 }
 
-impl<T: Show> Show for [T] {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: Debug> Debug for [T] {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        if f.flags & (1 << (rt::FlagAlternate as uint)) == 0 {
+        if f.flags & (1 << (FlagV1::Alternate as uint)) == 0 {
             try!(write!(f, "["));
         }
         let mut is_first = true;
-        for x in self.iter() {
+        for x in self {
             if is_first {
                 is_first = false;
             } else {
@@ -836,58 +901,55 @@ impl<T: Show> Show for [T] {
             }
             try!(write!(f, "{:?}", *x))
         }
-        if f.flags & (1 << (rt::FlagAlternate as uint)) == 0 {
+        if f.flags & (1 << (FlagV1::Alternate as uint)) == 0 {
             try!(write!(f, "]"));
         }
         Ok(())
     }
 }
 
-impl Show for () {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Debug for () {
     fn fmt(&self, f: &mut Formatter) -> Result {
         f.pad("()")
     }
 }
+impl<T> Debug for PhantomData<T> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        f.pad("PhantomData")
+    }
+}
 
-impl<T: Copy + Show> Show for Cell<T> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: Copy + Debug> Debug for Cell<T> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         write!(f, "Cell {{ value: {:?} }}", self.get())
     }
 }
 
-#[unstable]
-impl<T: Show> Show for RefCell<T> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: Debug> Debug for RefCell<T> {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        match self.try_borrow() {
-            Some(val) => write!(f, "RefCell {{ value: {:?} }}", val),
-            None => write!(f, "RefCell {{ <borrowed> }}")
+        match self.borrow_state() {
+            BorrowState::Unused | BorrowState::Reading => {
+                write!(f, "RefCell {{ value: {:?} }}", self.borrow())
+            }
+            BorrowState::Writing => write!(f, "RefCell {{ <borrowed> }}"),
         }
     }
 }
 
-impl<'b, T: Show> Show for Ref<'b, T> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'b, T: Debug> Debug for Ref<'b, T> {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        Show::fmt(&**self, f)
+        Debug::fmt(&**self, f)
     }
 }
 
-impl<'b, T: Show> Show for RefMut<'b, T> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'b, T: Debug> Debug for RefMut<'b, T> {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        Show::fmt(&*(self.deref()), f)
-    }
-}
-
-#[stable]
-impl String for Utf8Error {
-    fn fmt(&self, f: &mut Formatter) -> Result {
-        match *self {
-            Utf8Error::InvalidByte(n) => {
-                write!(f, "invalid utf-8: invalid byte at index {}", n)
-            }
-            Utf8Error::TooShort => {
-                write!(f, "invalid utf-8: byte slice too short")
-            }
-        }
+        Debug::fmt(&*(self.deref()), f)
     }
 }
 

@@ -21,16 +21,16 @@ use codemap::{Span, Spanned, spanned, dummy_spanned};
 use codemap::BytePos;
 use diagnostic::SpanHandler;
 use parse::lexer::comments::{doc_comment_style, strip_doc_comment_decoration};
-use parse::token::InternedString;
+use parse::token::{InternedString, intern_and_get_ident};
 use parse::token;
 use ptr::P;
 
 use std::cell::{RefCell, Cell};
-use std::collections::BitvSet;
+use std::collections::BitSet;
 use std::collections::HashSet;
 use std::fmt;
 
-thread_local! { static USED_ATTRS: RefCell<BitvSet> = RefCell::new(BitvSet::new()) }
+thread_local! { static USED_ATTRS: RefCell<BitSet> = RefCell::new(BitSet::new()) }
 
 pub fn mark_used(attr: &Attribute) {
     let AttrId(id) = attr.node.id;
@@ -44,7 +44,7 @@ pub fn is_used(attr: &Attribute) -> bool {
 
 pub trait AttrMetaMethods {
     fn check_name(&self, name: &str) -> bool {
-        name == self.name().get()
+        name == &self.name()[..]
     }
 
     /// Retrieve the name of the meta item, e.g. `foo` in `#[foo]`,
@@ -56,11 +56,13 @@ pub trait AttrMetaMethods {
     fn value_str(&self) -> Option<InternedString>;
     /// Gets a list of inner meta items from a list MetaItem type.
     fn meta_item_list<'a>(&'a self) -> Option<&'a [P<MetaItem>]>;
+
+    fn span(&self) -> Span;
 }
 
 impl AttrMetaMethods for Attribute {
     fn check_name(&self, name: &str) -> bool {
-        let matches = name == self.name().get();
+        let matches = name == &self.name()[..];
         if matches {
             mark_used(self);
         }
@@ -73,6 +75,7 @@ impl AttrMetaMethods for Attribute {
     fn meta_item_list<'a>(&'a self) -> Option<&'a [P<MetaItem>]> {
         self.node.value.meta_item_list()
     }
+    fn span(&self) -> Span { self.meta().span }
 }
 
 impl AttrMetaMethods for MetaItem {
@@ -98,10 +101,11 @@ impl AttrMetaMethods for MetaItem {
 
     fn meta_item_list<'a>(&'a self) -> Option<&'a [P<MetaItem>]> {
         match self.node {
-            MetaList(_, ref l) => Some(&l[]),
+            MetaList(_, ref l) => Some(&l[..]),
             _ => None
         }
     }
+    fn span(&self) -> Span { self.span }
 }
 
 // Annoying, but required to get test_cfg to work
@@ -111,6 +115,7 @@ impl AttrMetaMethods for P<MetaItem> {
     fn meta_item_list<'a>(&'a self) -> Option<&'a [P<MetaItem>]> {
         (**self).meta_item_list()
     }
+    fn span(&self) -> Span { (**self).span() }
 }
 
 
@@ -137,7 +142,7 @@ impl AttributeMethods for Attribute {
             let meta = mk_name_value_item_str(
                 InternedString::new("doc"),
                 token::intern_and_get_ident(&strip_doc_comment_decoration(
-                        comment.get())[]));
+                        &comment)));
             if self.node.style == ast::AttrOuter {
                 f(&mk_attr_outer(self.node.id, meta))
             } else {
@@ -170,7 +175,7 @@ pub fn mk_word_item(name: InternedString) -> P<MetaItem> {
     P(dummy_spanned(MetaWord(name)))
 }
 
-thread_local! { static NEXT_ATTR_ID: Cell<uint> = Cell::new(0) }
+thread_local! { static NEXT_ATTR_ID: Cell<usize> = Cell::new(0) }
 
 pub fn mk_attr_id() -> AttrId {
     let id = NEXT_ATTR_ID.with(|slot| {
@@ -204,7 +209,7 @@ pub fn mk_attr_outer(id: AttrId, item: P<MetaItem>) -> Attribute {
 pub fn mk_sugared_doc_attr(id: AttrId, text: InternedString, lo: BytePos,
                            hi: BytePos)
                            -> Attribute {
-    let style = doc_comment_style(text.get());
+    let style = doc_comment_style(&text);
     let lit = spanned(lo, hi, ast::LitStr(text, ast::CookedStr));
     let attr = Attribute_ {
         id: id,
@@ -297,9 +302,9 @@ pub fn find_inline_attr(attrs: &[Attribute]) -> InlineAttr {
             }
             MetaList(ref n, ref items) if *n == "inline" => {
                 mark_used(attr);
-                if contains_name(&items[], "always") {
+                if contains_name(&items[..], "always") {
                     InlineAlways
-                } else if contains_name(&items[], "never") {
+                } else if contains_name(&items[..], "never") {
                     InlineNever
                 } else {
                     InlineHint
@@ -321,11 +326,11 @@ pub fn requests_inline(attrs: &[Attribute]) -> bool {
 /// Tests if a cfg-pattern matches the cfg set
 pub fn cfg_matches(diagnostic: &SpanHandler, cfgs: &[P<MetaItem>], cfg: &ast::MetaItem) -> bool {
     match cfg.node {
-        ast::MetaList(ref pred, ref mis) if pred.get() == "any" =>
+        ast::MetaList(ref pred, ref mis) if &pred[..] == "any" =>
             mis.iter().any(|mi| cfg_matches(diagnostic, cfgs, &**mi)),
-        ast::MetaList(ref pred, ref mis) if pred.get() == "all" =>
+        ast::MetaList(ref pred, ref mis) if &pred[..] == "all" =>
             mis.iter().all(|mi| cfg_matches(diagnostic, cfgs, &**mi)),
-        ast::MetaList(ref pred, ref mis) if pred.get() == "not" => {
+        ast::MetaList(ref pred, ref mis) if &pred[..] == "not" => {
             if mis.len() != 1 {
                 diagnostic.span_err(cfg.span, "expected 1 cfg-pattern");
                 return false;
@@ -333,77 +338,170 @@ pub fn cfg_matches(diagnostic: &SpanHandler, cfgs: &[P<MetaItem>], cfg: &ast::Me
             !cfg_matches(diagnostic, cfgs, &*mis[0])
         }
         ast::MetaList(ref pred, _) => {
-            diagnostic.span_err(cfg.span, format!("invalid predicate `{}`", pred).as_slice());
+            diagnostic.span_err(cfg.span, &format!("invalid predicate `{}`", pred));
             false
         },
         ast::MetaWord(_) | ast::MetaNameValue(..) => contains(cfgs, cfg),
     }
 }
 
-/// Represents the #[deprecated="foo"] and friends attributes.
-#[derive(RustcEncodable,RustcDecodable,Clone,Show)]
+/// Represents the #[deprecated] and friends attributes.
+#[derive(RustcEncodable,RustcDecodable,Clone,Debug)]
 pub struct Stability {
     pub level: StabilityLevel,
-    pub text: Option<InternedString>
+    pub feature: InternedString,
+    pub since: Option<InternedString>,
+    pub deprecated_since: Option<InternedString>,
+    // The reason for the current stability level. If deprecated, the
+    // reason for deprecation.
+    pub reason: Option<InternedString>,
 }
 
 /// The available stability levels.
-#[derive(RustcEncodable,RustcDecodable,PartialEq,PartialOrd,Clone,Show,Copy)]
+#[derive(RustcEncodable,RustcDecodable,PartialEq,PartialOrd,Clone,Debug,Copy)]
 pub enum StabilityLevel {
-    Deprecated,
-    Experimental,
     Unstable,
     Stable,
-    Frozen,
-    Locked
 }
 
-impl fmt::String for StabilityLevel {
+impl fmt::Display for StabilityLevel {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Show::fmt(self, f)
+        fmt::Debug::fmt(self, f)
     }
 }
 
-pub fn find_stability_generic<'a,
+fn find_stability_generic<'a,
                               AM: AttrMetaMethods,
                               I: Iterator<Item=&'a AM>>
-                             (mut attrs: I)
-                             -> Option<(Stability, &'a AM)> {
-    for attr in attrs {
-        let level = match attr.name().get() {
-            "deprecated" => Deprecated,
-            "experimental" => Experimental,
-            "unstable" => Unstable,
-            "stable" => Stable,
-            "frozen" => Frozen,
-            "locked" => Locked,
-            _ => continue // not a stability level
+                             (diagnostic: &SpanHandler, attrs: I, item_sp: Span)
+                             -> (Option<Stability>, Vec<&'a AM>) {
+
+    let mut stab: Option<Stability> = None;
+    let mut deprecated: Option<(InternedString, Option<InternedString>)> = None;
+    let mut used_attrs: Vec<&'a AM> = vec![];
+
+    'outer: for attr in attrs {
+        let tag = attr.name();
+        let tag = &tag[..];
+        if tag != "deprecated" && tag != "unstable" && tag != "stable" {
+            continue // not a stability level
+        }
+
+        used_attrs.push(attr);
+
+        let (feature, since, reason) = match attr.meta_item_list() {
+            Some(metas) => {
+                let mut feature = None;
+                let mut since = None;
+                let mut reason = None;
+                for meta in metas.iter() {
+                    if meta.name() == "feature" {
+                        match meta.value_str() {
+                            Some(v) => feature = Some(v),
+                            None => {
+                                diagnostic.span_err(meta.span, "incorrect meta item");
+                                continue 'outer;
+                            }
+                        }
+                    }
+                    if &meta.name()[..] == "since" {
+                        match meta.value_str() {
+                            Some(v) => since = Some(v),
+                            None => {
+                                diagnostic.span_err(meta.span, "incorrect meta item");
+                                continue 'outer;
+                            }
+                        }
+                    }
+                    if &meta.name()[..] == "reason" {
+                        match meta.value_str() {
+                            Some(v) => reason = Some(v),
+                            None => {
+                                diagnostic.span_err(meta.span, "incorrect meta item");
+                                continue 'outer;
+                            }
+                        }
+                    }
+                }
+                (feature, since, reason)
+            }
+            None => {
+                diagnostic.span_err(attr.span(), "incorrect stability attribute type");
+                continue
+            }
         };
 
-        return Some((Stability {
-            level: level,
-                text: attr.value_str()
-            }, attr));
+        // Deprecated tags don't require feature names
+        if feature == None && tag != "deprecated" {
+            diagnostic.span_err(attr.span(), "missing 'feature'");
+        }
+
+        // Unstable tags don't require a version
+        if since == None && tag != "unstable" {
+            diagnostic.span_err(attr.span(), "missing 'since'");
+        }
+
+        if tag == "unstable" || tag == "stable" {
+            if stab.is_some() {
+                diagnostic.span_err(item_sp, "multiple stability levels");
+            }
+
+            let level = match tag {
+                "unstable" => Unstable,
+                "stable" => Stable,
+                _ => unreachable!()
+            };
+
+            stab = Some(Stability {
+                level: level,
+                feature: feature.unwrap_or(intern_and_get_ident("bogus")),
+                since: since,
+                deprecated_since: None,
+                reason: reason
+            });
+        } else { // "deprecated"
+            if deprecated.is_some() {
+                diagnostic.span_err(item_sp, "multiple deprecated attributes");
+            }
+
+            deprecated = Some((since.unwrap_or(intern_and_get_ident("bogus")), reason));
+        }
     }
-    None
+
+    // Merge the deprecation info into the stability info
+    if deprecated.is_some() {
+        match stab {
+            Some(ref mut s) => {
+                let (since, reason) = deprecated.unwrap();
+                s.deprecated_since = Some(since);
+                s.reason = reason;
+            }
+            None => {
+                diagnostic.span_err(item_sp, "deprecated attribute must be paired with \
+                                              either stable or unstable attribute");
+            }
+        }
+    }
+
+    (stab, used_attrs)
 }
 
 /// Find the first stability attribute. `None` if none exists.
-pub fn find_stability(attrs: &[Attribute]) -> Option<Stability> {
-    find_stability_generic(attrs.iter()).map(|(s, attr)| {
-        mark_used(attr);
-        s
-    })
+pub fn find_stability(diagnostic: &SpanHandler, attrs: &[Attribute],
+                      item_sp: Span) -> Option<Stability> {
+    let (s, used) = find_stability_generic(diagnostic, attrs.iter(), item_sp);
+    for used in used { mark_used(used) }
+    return s;
 }
 
 pub fn require_unique_names(diagnostic: &SpanHandler, metas: &[P<MetaItem>]) {
     let mut set = HashSet::new();
-    for meta in metas.iter() {
+    for meta in metas {
         let name = meta.name();
 
         if !set.insert(name.clone()) {
             diagnostic.span_fatal(meta.span,
-                                  &format!("duplicate meta item `{}`", name)[]);
+                                  &format!("duplicate meta item `{}`", name));
         }
     }
 }
@@ -420,14 +518,14 @@ pub fn find_repr_attrs(diagnostic: &SpanHandler, attr: &Attribute) -> Vec<ReprAt
     match attr.node.value.node {
         ast::MetaList(ref s, ref items) if *s == "repr" => {
             mark_used(attr);
-            for item in items.iter() {
+            for item in items {
                 match item.node {
                     ast::MetaWord(ref word) => {
-                        let hint = match word.get() {
+                        let hint = match &word[..] {
                             // Can't use "extern" because it's not a lexical identifier.
                             "C" => Some(ReprExtern),
                             "packed" => Some(ReprPacked),
-                            _ => match int_type_of_word(word.get()) {
+                            _ => match int_type_of_word(&word) {
                                 Some(ity) => Some(ReprInt(item.span, ity)),
                                 None => {
                                     // Not a word we recognize
@@ -472,7 +570,7 @@ fn int_type_of_word(s: &str) -> Option<IntType> {
     }
 }
 
-#[derive(PartialEq, Show, RustcEncodable, RustcDecodable, Copy)]
+#[derive(PartialEq, Debug, RustcEncodable, RustcDecodable, Copy)]
 pub enum ReprAttr {
     ReprAny,
     ReprInt(Span, IntType),
@@ -491,7 +589,7 @@ impl ReprAttr {
     }
 }
 
-#[derive(Eq, Hash, PartialEq, Show, RustcEncodable, RustcDecodable, Copy)]
+#[derive(Eq, Hash, PartialEq, Debug, RustcEncodable, RustcDecodable, Copy)]
 pub enum IntType {
     SignedInt(ast::IntTy),
     UnsignedInt(ast::UintTy)

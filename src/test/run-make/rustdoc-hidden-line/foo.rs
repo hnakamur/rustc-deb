@@ -30,3 +30,6 @@
 /// }
 /// ```
 pub fn foo() {}
+
+// @!has foo/fn.foo.html invisible
+// @matches - //pre "#\[derive\(PartialEq\)\] // Bar"

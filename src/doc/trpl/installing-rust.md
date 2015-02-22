@@ -24,11 +24,11 @@ installer](https://static.rust-lang.org/dist/rust-nightly-x86_64-pc-windows-gnu.
 and run it.
 
 If you decide you don't want Rust anymore, we'll be a bit sad, but that's okay.
-Not every programming language is great for everyone. Just pass an argument to
-the script:
+Not every programming language is great for everyone. Just run the uninstall
+script:
 
 ```bash
-$ curl -s https://static.rust-lang.org/rustup.sh | sudo sh -s -- --uninstall
+$ sudo /usr/local/lib/rustlib/uninstall.sh
 ```
 
 If you used the Windows installer, just re-run the `.exe` and it will give you
@@ -83,7 +83,6 @@ If not, there are a number of places where you can get help. The easiest is
 you can access through
 [Mibbit](http://chat.mibbit.com/?server=irc.mozilla.org&channel=%23rust). Click
 that link, and you'll be chatting with other Rustaceans (a silly nickname we
-call ourselves), and we can help you out. Other great resources include [our
-forum](http://discuss.rust-lang.org/), [the /r/rust
-subreddit](http://www.reddit.com/r/rust), and [Stack
+call ourselves), and we can help you out. Other great resources include [the
+/r/rust subreddit](http://www.reddit.com/r/rust), and [Stack
 Overflow](http://stackoverflow.com/questions/tagged/rust).

@@ -1,4 +1,4 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,6 +10,7 @@
 
 // ignore-linux see joyent/libuv#1189
 // ignore-android needs extra network permissions
+// ignore-openbsd system ulimit (Too many open files)
 // exec-env:RUST_LOG=debug
 
 #[macro_use]
@@ -17,15 +18,15 @@ extern crate log;
 extern crate libc;
 
 use std::sync::mpsc::channel;
-use std::io::net::tcp::{TcpListener, TcpStream};
-use std::io::{Acceptor, Listener};
+use std::old_io::net::tcp::{TcpListener, TcpStream};
+use std::old_io::{Acceptor, Listener};
 use std::thread::{Builder, Thread};
 use std::time::Duration;
 
 fn main() {
     // This test has a chance to time out, try to not let it time out
     Thread::spawn(move|| -> () {
-        use std::io::timer;
+        use std::old_io::timer;
         timer::sleep(Duration::milliseconds(30 * 1000));
         println!("timed out!");
         unsafe { libc::exit(1) }
@@ -51,7 +52,7 @@ fn main() {
     let addr = rx.recv().unwrap();
 
     let (tx, rx) = channel();
-    for _ in range(0u, 1000) {
+    for _ in 0_usize..1000 {
         let tx = tx.clone();
         Builder::new().stack_size(64 * 1024).spawn(move|| {
             match TcpStream::connect(addr) {
@@ -70,7 +71,7 @@ fn main() {
     // Wait for all clients to exit, but don't wait for the server to exit. The
     // server just runs infinitely.
     drop(tx);
-    for _ in range(0u, 1000) {
+    for _ in 0_usize..1000 {
         rx.recv().unwrap();
     }
     unsafe { libc::exit(0) }

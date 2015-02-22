@@ -12,28 +12,24 @@ use test::Bencher;
 
 #[test]
 fn size_of_basic() {
-    assert_eq!(size_of::<u8>(), 1u);
-    assert_eq!(size_of::<u16>(), 2u);
-    assert_eq!(size_of::<u32>(), 4u);
-    assert_eq!(size_of::<u64>(), 8u);
+    assert_eq!(size_of::<u8>(), 1);
+    assert_eq!(size_of::<u16>(), 2);
+    assert_eq!(size_of::<u32>(), 4);
+    assert_eq!(size_of::<u64>(), 8);
 }
 
 #[test]
-#[cfg(any(target_arch = "x86",
-          target_arch = "arm",
-          target_arch = "mips",
-          target_arch = "mipsel"))]
+#[cfg(target_pointer_width = "32")]
 fn size_of_32() {
-    assert_eq!(size_of::<uint>(), 4u);
-    assert_eq!(size_of::<*const uint>(), 4u);
+    assert_eq!(size_of::<uint>(), 4);
+    assert_eq!(size_of::<*const uint>(), 4);
 }
 
 #[test]
-#[cfg(any(target_arch = "x86_64",
-          target_arch = "aarch64"))]
+#[cfg(target_pointer_width = "64")]
 fn size_of_64() {
-    assert_eq!(size_of::<uint>(), 8u);
-    assert_eq!(size_of::<*const uint>(), 8u);
+    assert_eq!(size_of::<uint>(), 8);
+    assert_eq!(size_of::<*const uint>(), 8);
 }
 
 #[test]
@@ -46,40 +42,36 @@ fn size_of_val_basic() {
 
 #[test]
 fn align_of_basic() {
-    assert_eq!(align_of::<u8>(), 1u);
-    assert_eq!(align_of::<u16>(), 2u);
-    assert_eq!(align_of::<u32>(), 4u);
+    assert_eq!(align_of::<u8>(), 1);
+    assert_eq!(align_of::<u16>(), 2);
+    assert_eq!(align_of::<u32>(), 4);
 }
 
 #[test]
-#[cfg(any(target_arch = "x86",
-          target_arch = "arm",
-          target_arch = "mips",
-          target_arch = "mipsel"))]
+#[cfg(target_pointer_width = "32")]
 fn align_of_32() {
-    assert_eq!(align_of::<uint>(), 4u);
-    assert_eq!(align_of::<*const uint>(), 4u);
+    assert_eq!(align_of::<uint>(), 4);
+    assert_eq!(align_of::<*const uint>(), 4);
 }
 
 #[test]
-#[cfg(any(target_arch = "x86_64",
-          target_arch = "aarch64"))]
+#[cfg(target_pointer_width = "64")]
 fn align_of_64() {
-    assert_eq!(align_of::<uint>(), 8u);
-    assert_eq!(align_of::<*const uint>(), 8u);
+    assert_eq!(align_of::<uint>(), 8);
+    assert_eq!(align_of::<*const uint>(), 8);
 }
 
 #[test]
 fn align_of_val_basic() {
-    assert_eq!(align_of_val(&1u8), 1u);
-    assert_eq!(align_of_val(&1u16), 2u);
-    assert_eq!(align_of_val(&1u32), 4u);
+    assert_eq!(align_of_val(&1u8), 1);
+    assert_eq!(align_of_val(&1u16), 2);
+    assert_eq!(align_of_val(&1u32), 4);
 }
 
 #[test]
 fn test_swap() {
-    let mut x = 31337i;
-    let mut y = 42i;
+    let mut x = 31337;
+    let mut y = 42;
     swap(&mut x, &mut y);
     assert_eq!(x, 42);
     assert_eq!(y, 31337);
@@ -95,15 +87,15 @@ fn test_replace() {
 
 #[test]
 fn test_transmute_copy() {
-    assert_eq!(1u, unsafe { transmute_copy(&1i) });
+    assert_eq!(1, unsafe { transmute_copy(&1) });
 }
 
 #[test]
 fn test_transmute() {
-    trait Foo {}
+    trait Foo { fn dummy(&self) { } }
     impl Foo for int {}
 
-    let a = box 100i as Box<Foo>;
+    let a = box 100 as Box<Foo>;
     unsafe {
         let x: ::core::raw::TraitObject = transmute(a);
         assert!(*(x.data as *const int) == 100);
@@ -154,7 +146,7 @@ fn trait_static_method_call(b: &mut Bencher) {
 
 #[bench]
 fn match_option_some(b: &mut Bencher) {
-    let x = Some(10i);
+    let x = Some(10);
     b.iter(|| {
         match x {
             Some(y) => y,
@@ -165,11 +157,11 @@ fn match_option_some(b: &mut Bencher) {
 
 #[bench]
 fn match_vec_pattern(b: &mut Bencher) {
-    let x = [1i,2,3,4,5,6];
+    let x = [1,2,3,4,5,6];
     b.iter(|| {
         match x {
-            [1,2,3,..] => 10i,
-            _ => 11i,
+            [1,2,3,..] => 10,
+            _ => 11,
         }
     });
 }

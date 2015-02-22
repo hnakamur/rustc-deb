@@ -22,14 +22,14 @@ mod rusti {
 }
 
 // This is the type with the questionable alignment
-#[derive(Show)]
+#[derive(Debug)]
 struct Inner {
     c64: u32
 }
 
 // This is the type that contains the type with the
 // questionable alignment, for testing
-#[derive(Show)]
+#[derive(Debug)]
 struct Outer {
     c8: u8,
     t: Inner
@@ -38,14 +38,14 @@ struct Outer {
 
 #[cfg(any(target_arch = "x86", target_arch = "arm", target_arch = "aarch64"))]
 mod m {
-    pub fn align() -> uint { 4u }
-    pub fn size() -> uint { 8u }
+    pub fn align() -> uint { 4_usize }
+    pub fn size() -> uint { 8_usize }
 }
 
 #[cfg(target_arch = "x86_64")]
 mod m {
-    pub fn align() -> uint { 4u }
-    pub fn size() -> uint { 8u }
+    pub fn align() -> uint { 4_usize }
+    pub fn size() -> uint { 8_usize }
 }
 
 pub fn main() {
@@ -66,6 +66,6 @@ pub fn main() {
         // because `inner`s alignment was 4.
         assert_eq!(mem::size_of::<Outer>(), m::size());
 
-        assert_eq!(y, "Outer { c8: 22u8, t: Inner { c64: 44u32 } }".to_string());
+        assert_eq!(y, "Outer { c8: 22, t: Inner { c64: 44 } }".to_string());
     }
 }

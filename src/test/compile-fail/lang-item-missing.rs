@@ -13,6 +13,7 @@
 
 // error-pattern: requires `sized` lang_item
 
+#![feature(start, no_std)]
 #![no_std]
 
 #[start]

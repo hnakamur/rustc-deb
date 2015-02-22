@@ -8,13 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(slicing_syntax, box_syntax)]
-
-extern crate regex;
+#![feature(box_syntax)]
+#![feature(collections)]
+#![feature(core)]
+#![feature(old_io)]
+#![feature(os)]
+#![feature(env)]
+#![feature(old_path)]
+#![feature(rustdoc)]
 
 extern crate rustdoc;
 
-use std::os;
+use std::env;
 use subcommand::Subcommand;
 use term::Term;
 
@@ -39,13 +44,14 @@ mod serve;
 mod test;
 
 mod css;
+mod javascript;
 
 #[cfg(not(test))] // thanks #12327
 fn main() {
     let mut term = Term::new();
-    let cmd = os::args();
+    let cmd: Vec<_> = env::args().collect();
 
-    if cmd.len() < 1 {
+    if cmd.len() <= 1 {
         help::usage()
     } else {
         match subcommand::parse_name(&cmd[1][]) {
@@ -54,7 +60,12 @@ fn main() {
                     Ok(_) => {
                         match subcmd.execute(&mut term) {
                             Ok(_) => (),
-                            Err(_) => os::set_exit_status(-1),
+                            Err(err) => {
+                                term.err(&format!("error: {}", err.description())[]);
+                                err.detail().map(|detail| {
+                                    term.err(&format!("detail: {}", detail)[]);
+                                });
+                            }
                         }
                     }
                     Err(err) => {

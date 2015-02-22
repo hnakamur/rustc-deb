@@ -8,8 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::marker::MarkerTrait;
 
-trait Serializer {
+trait Serializer : MarkerTrait {
 }
 
 trait Serializable {
@@ -32,9 +33,9 @@ impl Serializer for int {
 }
 
 pub fn main() {
-    let foo = F { a: 1i };
-    foo.serialize(1i);
+    let foo = F { a: 1 };
+    foo.serialize(1);
 
-    let bar = F { a: F {a: 1i } };
-    bar.serialize(2i);
+    let bar = F { a: F {a: 1 } };
+    bar.serialize(2);
 }

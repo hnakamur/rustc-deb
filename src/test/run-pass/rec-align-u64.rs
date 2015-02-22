@@ -22,14 +22,14 @@ mod rusti {
 }
 
 // This is the type with the questionable alignment
-#[derive(Show)]
+#[derive(Debug)]
 struct Inner {
     c64: u64
 }
 
 // This is the type that contains the type with the
 // questionable alignment, for testing
-#[derive(Show)]
+#[derive(Debug)]
 struct Outer {
     c8: u8,
     t: Inner
@@ -39,18 +39,19 @@ struct Outer {
 #[cfg(any(target_os = "linux",
           target_os = "macos",
           target_os = "freebsd",
-          target_os = "dragonfly"))]
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
 mod m {
     #[cfg(target_arch = "x86")]
     pub mod m {
-        pub fn align() -> uint { 4u }
-        pub fn size() -> uint { 12u }
+        pub fn align() -> uint { 4_usize }
+        pub fn size() -> uint { 12_usize }
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "arm", target_arch = "aarch64"))]
     pub mod m {
-        pub fn align() -> uint { 8u }
-        pub fn size() -> uint { 16u }
+        pub fn align() -> uint { 8_usize }
+        pub fn size() -> uint { 16_usize }
     }
 }
 
@@ -58,23 +59,23 @@ mod m {
 mod m {
     #[cfg(target_arch = "x86")]
     pub mod m {
-        pub fn align() -> uint { 8u }
-        pub fn size() -> uint { 16u }
+        pub fn align() -> uint { 8_usize }
+        pub fn size() -> uint { 16_usize }
     }
 
     #[cfg(target_arch = "x86_64")]
     pub mod m {
-        pub fn align() -> uint { 8u }
-        pub fn size() -> uint { 16u }
+        pub fn align() -> uint { 8_usize }
+        pub fn size() -> uint { 16_usize }
     }
 }
 
 #[cfg(target_os = "android")]
 mod m {
-    #[cfg(target_arch = "arm")]
+    #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
     pub mod m {
-        pub fn align() -> uint { 8u }
-        pub fn size() -> uint { 16u }
+        pub fn align() -> uint { 8_usize }
+        pub fn size() -> uint { 16_usize }
     }
 }
 
@@ -95,6 +96,6 @@ pub fn main() {
         // because `Inner`s alignment was 4.
         assert_eq!(mem::size_of::<Outer>(), m::m::size());
 
-        assert_eq!(y, "Outer { c8: 22u8, t: Inner { c64: 44u64 } }".to_string());
+        assert_eq!(y, "Outer { c8: 22, t: Inner { c64: 44 } }".to_string());
     }
 }

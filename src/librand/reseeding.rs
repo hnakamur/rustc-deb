@@ -134,16 +134,20 @@ pub trait Reseeder<R> {
 /// Reseed an RNG using a `Default` instance. This reseeds by
 /// replacing the RNG with the result of a `Default::default` call.
 #[derive(Copy)]
-pub struct ReseedWithDefault;
+pub struct ReseedWithDefault { __hack: [u8; 0] }
+// FIXME(#21721) used to be an unit struct but that can cause
+// certain LLVM versions to abort during optimizations.
+#[allow(non_upper_case_globals)]
+pub const ReseedWithDefault: ReseedWithDefault = ReseedWithDefault { __hack: [] };
 
 impl<R: Rng + Default> Reseeder<R> for ReseedWithDefault {
     fn reseed(&mut self, rng: &mut R) {
         *rng = Default::default();
     }
 }
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Default for ReseedWithDefault {
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn default() -> ReseedWithDefault { ReseedWithDefault }
 }
 
@@ -187,7 +191,7 @@ mod test {
         let mut rs = ReseedingRng::new(Counter {i:0}, 400, ReseedWithDefault);
 
         let mut i = 0;
-        for _ in range(0u, 1000) {
+        for _ in 0..1000 {
             assert_eq!(rs.next_u32(), i % 100);
             i += 1;
         }
@@ -216,7 +220,7 @@ mod test {
     #[test]
     fn test_rng_fill_bytes() {
         let mut v = repeat(0u8).take(FILL_BYTES_V_LEN).collect::<Vec<_>>();
-        ::test::rng().fill_bytes(v.as_mut_slice());
+        ::test::rng().fill_bytes(&mut v);
 
         // Sanity test: if we've gotten here, `fill_bytes` has not infinitely
         // recursed.
@@ -225,7 +229,7 @@ mod test {
         // To test that `fill_bytes` actually did something, check that the
         // average of `v` is not 0.
         let mut sum = 0.0;
-        for &x in v.iter() {
+        for &x in &v {
             sum += x as f64;
         }
         assert!(sum / v.len() as f64 != 0.0);

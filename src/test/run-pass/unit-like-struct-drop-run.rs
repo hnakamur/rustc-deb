@@ -11,7 +11,7 @@
 // Make sure the destructor is run for unit-like structs.
 
 use std::boxed::BoxAny;
-use std::thread::Thread;
+use std::thread;
 
 struct Foo;
 
@@ -22,10 +22,10 @@ impl Drop for Foo {
 }
 
 pub fn main() {
-    let x = Thread::scoped(move|| {
+    let x = thread::spawn(move|| {
         let _b = Foo;
     }).join();
 
-    let s = x.unwrap_err().downcast::<&'static str>().unwrap();
-    assert_eq!(s.as_slice(), "This panic should happen.");
+    let s = x.err().unwrap().downcast::<&'static str>().ok().unwrap();
+    assert_eq!(&**s, "This panic should happen.");
 }

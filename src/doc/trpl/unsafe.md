@@ -1,4 +1,4 @@
-% Writing Unsafe and Low-Level Code in Rust
+% Unsafe and Low-Level Code
 
 # Introduction
 
@@ -78,7 +78,7 @@ let ref_2: &mut u8 = unsafe { mem::transmute(&mut *ref_1) };
 
 ## Raw pointers
 
-Rust offers two additional pointer types "raw pointers", written as
+Rust offers two additional pointer types (*raw pointers*), written as
 `*const T` and `*mut T`. They're an approximation of C's `const T*` and `T*`
 respectively; indeed, one of their most common uses is for FFI,
 interfacing with external C libraries.
@@ -95,7 +95,7 @@ offered by the Rust language and libraries. For example, they
   use-after-free;
 - are considered sendable (if their contents is considered sendable),
   so the compiler offers no assistance with ensuring their use is
-  thread-safe; for example, one can concurrently access a `*mut int`
+  thread-safe; for example, one can concurrently access a `*mut i32`
   from two threads without synchronization.
 - lack any form of lifetimes, unlike `&`, and so the compiler cannot
   reason about dangling pointers; and
@@ -182,7 +182,7 @@ code:
 - implement the `Drop` for resource clean-up via a destructor, and use
   RAII (Resource Acquisition Is Initialization). This reduces the need
   for any manual memory management by users, and automatically ensures
-  that clean-up is always run, even when the task panics.
+  that clean-up is always run, even when the thread panics.
 - ensure that any data stored behind a raw pointer is destroyed at the
   appropriate time.
 
@@ -197,7 +197,6 @@ extern crate libc;
 use libc::{c_void, size_t, malloc, free};
 use std::mem;
 use std::ptr;
-# use std::boxed::Box;
 
 // Define a wrapper around the handle returned by the foreign code.
 // Unique<T> has the same semantics as Box<T>
@@ -255,7 +254,7 @@ impl<T: Send> Drop for Unique<T> {
             // Copy the object out from the pointer onto the stack,
             // where it is covered by normal Rust destructor semantics
             // and cleans itself up, if necessary
-            ptr::read(self.ptr as *const T);
+            ptr::read(self.ptr);
 
             // clean-up our allocation
             free(self.ptr as *mut c_void)
@@ -266,12 +265,12 @@ impl<T: Send> Drop for Unique<T> {
 // A comparison between the built-in `Box` and this reimplementation
 fn main() {
     {
-        let mut x = Box::new(5i);
+        let mut x = Box::new(5);
         *x = 10;
     } // `x` is freed here
 
     {
-        let mut y = Unique::new(5i);
+        let mut y = Unique::new(5);
         *y.borrow_mut() = 10;
     } // `y` is freed here
 }
@@ -309,7 +308,7 @@ crate to allow) and of course requires an `unsafe` block.
 ## Assembly template
 
 The `assembly template` is the only required parameter and must be a
-literal string (i.e `""`)
+literal string (i.e. `""`)
 
 ```
 #![feature(asm)]
@@ -368,7 +367,7 @@ expressions must be mutable lvalues:
 ```
 # #![feature(asm)]
 # #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-fn add(a: int, b: int) -> int {
+fn add(a: i32, b: i32) -> i32 {
     let mut c = 0;
     unsafe {
         asm!("add $2, $0"
@@ -379,7 +378,7 @@ fn add(a: int, b: int) -> int {
     c
 }
 # #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-# fn add(a: int, b: int) -> int { a + b }
+# fn add(a: i32, b: i32) -> i32 { a + b }
 
 fn main() {
     assert_eq!(add(3, 14159), 14162)
@@ -413,16 +412,17 @@ memory, `memory` should also be specified.
 ## Options
 
 The last section, `options` is specific to Rust. The format is comma
-separated literal strings (i.e `:"foo", "bar", "baz"`). It's used to
+separated literal strings (i.e. `:"foo", "bar", "baz"`). It's used to
 specify some extra info about the inline assembly:
 
 Current valid options are:
 
-1. **volatile** - specifying this is analogous to `__asm__ __volatile__ (...)` in gcc/clang.
-2. **alignstack** - certain instructions expect the stack to be
-   aligned a certain way (i.e SSE) and specifying this indicates to
+1. *volatile* - specifying this is analogous to
+   `__asm__ __volatile__ (...)` in gcc/clang.
+2. *alignstack* - certain instructions expect the stack to be
+   aligned a certain way (i.e. SSE) and specifying this indicates to
    the compiler to insert its usual stack alignment code
-3. **intel** - use intel syntax instead of the default AT&T.
+3. *intel* - use intel syntax instead of the default AT&T.
 
 # Avoiding the standard library
 
@@ -433,6 +433,7 @@ attribute attached to the crate.
 ```ignore
 // a minimal library
 #![crate_type="lib"]
+#![feature(no_std)]
 #![no_std]
 # // fn main() {} tricked you, rustdoc!
 ```
@@ -446,15 +447,15 @@ The function marked `#[start]` is passed the command line parameters
 in the same format as C:
 
 ```
+#![feature(lang_items, start, no_std)]
 #![no_std]
-#![feature(lang_items)]
 
 // Pull in the system libc library for what crt0.o likely requires
 extern crate libc;
 
 // Entry point for this program
 #[start]
-fn start(_argc: int, _argv: *const *const u8) -> int {
+fn start(_argc: isize, _argv: *const *const u8) -> isize {
     0
 }
 
@@ -473,14 +474,15 @@ correct ABI and the correct name, which requires overriding the
 compiler's name mangling too:
 
 ```ignore
+#![feature(no_std)]
 #![no_std]
 #![no_main]
-#![feature(lang_items)]
+#![feature(lang_items, start)]
 
 extern crate libc;
 
 #[no_mangle] // ensure that this symbol is called `main` in the output
-pub extern fn main(argc: int, argv: *const *const u8) -> int {
+pub extern fn main(argc: i32, argv: *const *const u8) -> i32 {
     0
 }
 
@@ -498,7 +500,7 @@ library, but without it you must define your own.
 The first of these three functions, `stack_exhausted`, is invoked whenever stack
 overflow is detected.  This function has a number of restrictions about how it
 can be called and what it must do, but if the stack limit register is not being
-maintained then a task always has an "infinite stack" and this function
+maintained then a thread always has an "infinite stack" and this function
 shouldn't get triggered.
 
 The second of these three functions, `eh_personality`, is used by the
@@ -528,9 +530,8 @@ As an example, here is a program that will calculate the dot product of two
 vectors provided from C, using idiomatic Rust practices.
 
 ```
+#![feature(lang_items, start, no_std)]
 #![no_std]
-#![feature(globs)]
-#![feature(lang_items)]
 
 # extern crate libc;
 extern crate core;
@@ -553,8 +554,8 @@ pub extern fn dot_product(a: *const u32, a_len: u32,
     // cannot tell the pointers are valid.
     let (a_slice, b_slice): (&[u32], &[u32]) = unsafe {
         mem::transmute((
-            Slice { data: a, len: a_len as uint },
-            Slice { data: b, len: b_len as uint },
+            Slice { data: a, len: a_len as usize },
+            Slice { data: b, len: b_len as usize },
         ))
     };
 
@@ -568,14 +569,14 @@ pub extern fn dot_product(a: *const u32, a_len: u32,
 
 #[lang = "panic_fmt"]
 extern fn panic_fmt(args: &core::fmt::Arguments,
-                       file: &str,
-                       line: uint) -> ! {
+                    file: &str,
+                    line: u32) -> ! {
     loop {}
 }
 
 #[lang = "stack_exhausted"] extern fn stack_exhausted() {}
 #[lang = "eh_personality"] extern fn eh_personality() {}
-# #[start] fn start(argc: int, argv: *const *const u8) -> int { 0 }
+# #[start] fn start(argc: isize, argv: *const *const u8) -> isize { 0 }
 # fn main() {}
 ```
 
@@ -629,7 +630,7 @@ via a declaration like
 extern "rust-intrinsic" {
     fn transmute<T, U>(x: T) -> U;
 
-    fn offset<T>(dst: *const T, offset: int) -> *const T;
+    fn offset<T>(dst: *const T, offset: isize) -> *const T;
 }
 ```
 
@@ -645,16 +646,16 @@ The `rustc` compiler has certain pluggable operations, that is,
 functionality that isn't hard-coded into the language, but is
 implemented in libraries, with a special marker to tell the compiler
 it exists. The marker is the attribute `#[lang="..."]` and there are
-various different values of `...`, i.e. various different "lang
-items".
+various different values of `...`, i.e. various different 'lang
+items'.
 
 For example, `Box` pointers require two lang items, one for allocation
 and one for deallocation. A freestanding program that uses the `Box`
 sugar for dynamic allocations via `malloc` and `free`:
 
 ```
+#![feature(lang_items, box_syntax, start, no_std)]
 #![no_std]
-#![feature(lang_items, box_syntax)]
 
 extern crate libc;
 
@@ -666,24 +667,24 @@ extern {
 pub struct Box<T>(*mut T);
 
 #[lang="exchange_malloc"]
-unsafe fn allocate(size: uint, _align: uint) -> *mut u8 {
+unsafe fn allocate(size: usize, _align: usize) -> *mut u8 {
     let p = libc::malloc(size as libc::size_t) as *mut u8;
 
     // malloc failed
-    if p as uint == 0 {
+    if p as usize == 0 {
         abort();
     }
 
     p
 }
 #[lang="exchange_free"]
-unsafe fn deallocate(ptr: *mut u8, _size: uint, _align: uint) {
+unsafe fn deallocate(ptr: *mut u8, _size: usize, _align: usize) {
     libc::free(ptr as *mut libc::c_void)
 }
 
 #[start]
-fn main(argc: int, argv: *const *const u8) -> int {
-    let x = box 1i;
+fn main(argc: isize, argv: *const *const u8) -> isize {
+    let x = box 1;
 
     0
 }
@@ -704,11 +705,11 @@ Other features provided by lang items include:
   `deref`, and `add` respectively.
 - stack unwinding and general failure; the `eh_personality`, `fail`
   and `fail_bounds_checks` lang items.
-- the traits in `std::markers` used to indicate types of
+- the traits in `std::marker` used to indicate types of
   various kinds; lang items `send`, `sync` and `copy`.
 - the marker types and variance indicators found in
-  `std::markers`; lang items `covariant_type`,
-  `contravariant_lifetime`, `no_sync_bound`, etc.
+  `std::marker`; lang items `covariant_type`,
+  `contravariant_lifetime`, etc.
 
 Lang items are loaded lazily by the compiler; e.g. if one never uses
 `Box` then there is no need to define functions for `exchange_malloc`

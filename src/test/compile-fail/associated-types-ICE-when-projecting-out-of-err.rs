@@ -13,10 +13,15 @@
 
 #![crate_type = "lib"]
 #![feature(lang_items)]
+#![feature(no_std)]
 #![no_std]
 
+#[lang="phantom_fn"]
+pub trait PhantomFn<A:?Sized,R:?Sized=()> { }
+impl<A:?Sized, R:?Sized, U:?Sized> PhantomFn<A,R> for U { }
+
 #[lang="sized"]
-pub trait Sized {
+pub trait Sized : PhantomFn<Self> {
     // Empty.
 }
 
@@ -29,6 +34,6 @@ trait Add<RHS=Self> {
 
 fn ice<A>(a: A) {
     let r = loop {};
-    r = r + a; // here the type `r` is not yet inferred, hence `r+a` generates an error.
-    //~^ ERROR type of this value must be known
+    r = r + a;
+    //~^ ERROR binary operation `+` cannot be applied to type `A`
 }

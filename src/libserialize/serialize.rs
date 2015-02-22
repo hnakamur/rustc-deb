@@ -14,7 +14,7 @@
 Core encoding and decoding interfaces.
 */
 
-use std::path;
+use std::old_path;
 use std::rc::Rc;
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
@@ -98,7 +98,7 @@ pub trait Encoder {
     fn emit_map<F>(&mut self, len: uint, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error>;
     fn emit_map_elt_key<F>(&mut self, idx: uint, f: F) -> Result<(), Self::Error>
-        where F: FnMut(&mut Self) -> Result<(), Self::Error>;
+        where F: FnOnce(&mut Self) -> Result<(), Self::Error>;
     fn emit_map_elt_val<F>(&mut self, idx: uint, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error>;
 }
@@ -326,7 +326,7 @@ impl Encodable for str {
 
 impl Encodable for String {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        s.emit_str(&self[])
+        s.emit_str(&self[..])
     }
 }
 
@@ -461,7 +461,7 @@ impl<T:Decodable> Decodable for Vec<T> {
     fn decode<D: Decoder>(d: &mut D) -> Result<Vec<T>, D::Error> {
         d.read_seq(|d, len| {
             let mut v = Vec::with_capacity(len);
-            for i in range(0, len) {
+            for i in 0..len {
                 v.push(try!(d.read_seq_elt(i, |d| Decodable::decode(d))));
             }
             Ok(v)
@@ -498,7 +498,7 @@ macro_rules! peel {
 
 /// Evaluates to the number of identifiers passed to it, for example: `count_idents!(a, b, c) == 3
 macro_rules! count_idents {
-    () => { 0u };
+    () => { 0 };
     ($_i:ident, $($rest:ident,)*) => { 1 + count_idents!($($rest,)*) }
 }
 
@@ -538,29 +538,29 @@ macro_rules! tuple {
 
 tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
 
-impl Encodable for path::posix::Path {
+impl Encodable for old_path::posix::Path {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
         self.as_vec().encode(e)
     }
 }
 
-impl Decodable for path::posix::Path {
-    fn decode<D: Decoder>(d: &mut D) -> Result<path::posix::Path, D::Error> {
+impl Decodable for old_path::posix::Path {
+    fn decode<D: Decoder>(d: &mut D) -> Result<old_path::posix::Path, D::Error> {
         let bytes: Vec<u8> = try!(Decodable::decode(d));
-        Ok(path::posix::Path::new(bytes))
+        Ok(old_path::posix::Path::new(bytes))
     }
 }
 
-impl Encodable for path::windows::Path {
+impl Encodable for old_path::windows::Path {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
         self.as_vec().encode(e)
     }
 }
 
-impl Decodable for path::windows::Path {
-    fn decode<D: Decoder>(d: &mut D) -> Result<path::windows::Path, D::Error> {
+impl Decodable for old_path::windows::Path {
+    fn decode<D: Decoder>(d: &mut D) -> Result<old_path::windows::Path, D::Error> {
         let bytes: Vec<u8> = try!(Decodable::decode(d));
-        Ok(path::windows::Path::new(bytes))
+        Ok(old_path::windows::Path::new(bytes))
     }
 }
 
@@ -641,7 +641,7 @@ impl<D: Decoder> DecoderHelpers for D {
     {
         self.read_seq(|this, len| {
             let mut v = Vec::with_capacity(len);
-            for i in range(0, len) {
+            for i in 0..len {
                 v.push(try!(this.read_seq_elt(i, |this| f(this))));
             }
             Ok(v)

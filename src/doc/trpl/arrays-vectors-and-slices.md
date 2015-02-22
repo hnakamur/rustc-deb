@@ -1,11 +1,11 @@
 % Arrays, Vectors, and Slices
 
 Like many programming languages, Rust has list types to represent a sequence of
-things. The most basic is the **array**, a fixed-size list of elements of the
+things. The most basic is the *array*, a fixed-size list of elements of the
 same type. By default, arrays are immutable.
 
 ```{rust}
-let a = [1, 2, 3];     // a: [i32; 3]
+let a = [1, 2, 3]; // a: [i32; 3]
 let mut m = [1, 2, 3]; // mut m: [i32; 3]
 ```
 
@@ -32,7 +32,7 @@ for e in a.iter() {
 }
 ```
 
-You can access a particular element of an array with **subscript notation**:
+You can access a particular element of an array with *subscript notation*:
 
 ```{rust}
 let names = ["Graydon", "Brian", "Niko"]; // names: [&str; 3]
@@ -47,10 +47,10 @@ array, you will get an error: array access is bounds-checked at run-time. Such
 errant access is the source of many bugs in other systems programming
 languages.
 
-A **vector** is a dynamic or "growable" array, implemented as the standard
+A *vector* is a dynamic or "growable" array, implemented as the standard
 library type [`Vec<T>`](../std/vec/) (we'll talk about what the `<T>` means
-later). Vectors are to arrays what `String` is to `&str`. You can create them
-with the `vec!` macro:
+later). Vectors always allocate their data on the heap. Vectors are to slices 
+what `String` is to `&str`. You can create them with the `vec!` macro:
 
 ```{rust}
 let v = vec![1, 2, 3]; // v: Vec<i32>
@@ -68,12 +68,12 @@ let mut nums = vec![1, 2, 3]; // mut nums: Vec<i32>
 
 nums.push(4);
 
-println!("The length of nums is now {}", nums.len());   // Prints 4
+println!("The length of nums is now {}", nums.len()); // Prints 4
 ```
 
 Vectors have many more useful methods.
 
-A **slice** is a reference to (or "view" into) an array. They are useful for
+A *slice* is a reference to (or "view" into) an array. They are useful for
 allowing safe, efficient access to a portion of an array without copying. For
 example, you might want to reference just one line of a file read into memory.
 By nature, a slice is not created directly, but from an existing variable.
@@ -82,10 +82,10 @@ arrays:
 
 ```{rust}
 let a = [0, 1, 2, 3, 4];
-let middle = a.slice(1, 4);     // A slice of a: just the elements [1,2,3]
+let middle = &a[1..4]; // A slice of a: just the elements 1, 2, and 3
 
 for e in middle.iter() {
-    println!("{}", e);          // Prints 1, 2, 3
+    println!("{}", e); // Prints 1, 2, 3
 }
 ```
 
@@ -94,6 +94,6 @@ backed by arrays. Slices have type `&[T]`, which we'll talk about when we cover
 generics.
 
 We have now learned all of the most basic Rust concepts. We're ready to start
-building our guessing game, we just need to know one last thing: how to get
-input from the keyboard. You can't have a guessing game without the ability to
-guess!
+building ourselves a guessing game, we just need to know one last thing: how to
+get input from the keyboard. You can't have a guessing game without the ability
+to guess!

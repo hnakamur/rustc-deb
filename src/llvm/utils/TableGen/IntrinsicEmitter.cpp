@@ -225,7 +225,7 @@ EmitIntrinsicToOverloadTable(const std::vector<CodeGenIntrinsic> &Ints,
 
 // NOTE: This must be kept in synch with the copy in lib/VMCore/Function.cpp!
 enum IIT_Info {
-  // Common values should be encoded with 0-16.
+  // Common values should be encoded with 0-15.
   IIT_Done = 0,
   IIT_I1   = 1,
   IIT_I8   = 2,
@@ -240,11 +240,11 @@ enum IIT_Info {
   IIT_V8   = 11,
   IIT_V16  = 12,
   IIT_V32  = 13,
-  IIT_V64  = 14,
-  IIT_PTR  = 15,
-  IIT_ARG  = 16,
+  IIT_PTR  = 14,
+  IIT_ARG  = 15,
 
-  // Values from 17+ are only encodable with the inefficient encoding.
+  // Values from 16+ are only encodable with the inefficient encoding.
+  IIT_V64  = 16,
   IIT_MMX  = 17,
   IIT_METADATA = 18,
   IIT_EMPTYSTRUCT = 19,
@@ -257,7 +257,9 @@ enum IIT_Info {
   IIT_ANYPTR = 26,
   IIT_V1   = 27,
   IIT_VARARG = 28,
-  IIT_HALF_VEC_ARG = 29
+  IIT_HALF_VEC_ARG = 29,
+  IIT_SAME_VEC_WIDTH_ARG = 30,
+  IIT_PTR_TO_ARG = 31
 };
 
 
@@ -305,6 +307,16 @@ static void EncodeFixedType(Record *R, std::vector<unsigned char> &ArgCodes,
       Sig.push_back(IIT_TRUNC_ARG);
     else if (R->isSubClassOf("LLVMHalfElementsVectorType"))
       Sig.push_back(IIT_HALF_VEC_ARG);
+    else if (R->isSubClassOf("LLVMVectorSameWidth")) {
+      Sig.push_back(IIT_SAME_VEC_WIDTH_ARG);
+      Sig.push_back((Number << 2) | ArgCodes[Number]);
+      MVT::SimpleValueType VT = getValueType(R->getValueAsDef("ElTy"));
+      EncodeFixedValueType(VT, Sig);
+      return;
+    }
+    else if (R->isSubClassOf("LLVMPointerTo")) {
+      Sig.push_back(IIT_PTR_TO_ARG);
+    }
     else
       Sig.push_back(IIT_ARG);
     return Sig.push_back((Number << 2) | ArgCodes[Number]);

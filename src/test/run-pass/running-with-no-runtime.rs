@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(start)]
+
 use std::ffi;
-use std::io::process::{Command, ProcessOutput};
+use std::old_io::process::{Command, ProcessOutput};
 use std::os;
 use std::rt::unwind::try;
 use std::rt;
@@ -34,12 +36,12 @@ fn start(argc: int, argv: *const *const u8) -> int {
     }
 
     let args = unsafe {
-        range(0, argc as uint).map(|i| {
+        (0..argc as uint).map(|i| {
             let ptr = *argv.offset(i as int) as *const _;
             ffi::c_str_to_bytes(&ptr).to_vec()
         }).collect::<Vec<_>>()
     };
-    let me = args[0].as_slice();
+    let me = &*args[0];
 
     let x: &[u8] = &[1u8];
     pass(Command::new(me).arg(x).output().unwrap());
@@ -57,7 +59,7 @@ fn start(argc: int, argv: *const *const u8) -> int {
 
 fn pass(output: ProcessOutput) {
     if !output.status.success() {
-        println!("{:?}", str::from_utf8(output.output.as_slice()));
-        println!("{:?}", str::from_utf8(output.error.as_slice()));
+        println!("{:?}", str::from_utf8(&output.output));
+        println!("{:?}", str::from_utf8(&output.error));
     }
 }

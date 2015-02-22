@@ -53,11 +53,11 @@ fn field_invoke2<'l, 'm, 'n>(x: &'n Struct2<'l,'m>) -> int {
     x.f.short()
 }
 
-trait MakerTrait<'o> {
+trait MakerTrait {
     fn mk() -> Self;
 }
 
-fn make_val<'p, T:MakerTrait<'p>>() -> T {
+fn make_val<T:MakerTrait>() -> T {
     MakerTrait::mk()
 }
 
@@ -80,8 +80,8 @@ impl<'s> Trait<'s> for (int,int) {
     }
 }
 
-impl<'t> MakerTrait<'t> for Box<Trait<'t>+'static> {
-    fn mk() -> Box<Trait<'t>+'static> { box() (4i,5i) as Box<Trait> }
+impl<'t> MakerTrait for Box<Trait<'t>+'static> {
+    fn mk() -> Box<Trait<'t>+'static> { box() (4,5) as Box<Trait> }
 }
 
 enum List<'l> {
@@ -111,7 +111,7 @@ impl<'t> RefMakerTrait<'t> for List<'t> {
 }
 
 pub fn main() {
-    let t = (2i,3i);
+    let t = (2,3);
     let o = &t as &Trait;
     let s1 = Struct1 { f: o };
     let s2 = Struct2 { f: o };

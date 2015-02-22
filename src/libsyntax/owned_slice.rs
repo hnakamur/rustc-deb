@@ -10,7 +10,7 @@
 
 use std::default::Default;
 use std::fmt;
-use std::iter::FromIterator;
+use std::iter::{IntoIterator, FromIterator};
 use std::ops::Deref;
 use std::vec;
 use serialize::{Encodable, Decodable, Encoder, Decoder};
@@ -22,7 +22,7 @@ pub struct OwnedSlice<T> {
     data: Box<[T]>
 }
 
-impl<T:fmt::Show> fmt::Show for OwnedSlice<T> {
+impl<T:fmt::Debug> fmt::Debug for OwnedSlice<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         self.data.fmt(fmt)
     }
@@ -72,19 +72,19 @@ impl<T> Default for OwnedSlice<T> {
 
 impl<T: Clone> Clone for OwnedSlice<T> {
     fn clone(&self) -> OwnedSlice<T> {
-        OwnedSlice::from_vec(self.as_slice().to_vec())
+        OwnedSlice::from_vec(self.to_vec())
     }
 }
 
 impl<T> FromIterator<T> for OwnedSlice<T> {
-    fn from_iter<I: Iterator<Item=T>>(iter: I) -> OwnedSlice<T> {
-        OwnedSlice::from_vec(iter.collect())
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> OwnedSlice<T> {
+        OwnedSlice::from_vec(iter.into_iter().collect())
     }
 }
 
 impl<T: Encodable> Encodable for OwnedSlice<T> {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-       self.as_slice().encode(s)
+        Encodable::encode(&**self, s)
     }
 }
 

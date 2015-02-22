@@ -23,7 +23,8 @@ use libc;
 #[cfg(any(target_os = "macos",
           target_os = "ios",
           target_os = "freebsd",
-          target_os = "dragonfly"))]
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
 pub const FIONBIO: libc::c_ulong = 0x8004667e;
 #[cfg(any(all(target_os = "linux",
               any(target_arch = "x86",
@@ -33,13 +34,16 @@ pub const FIONBIO: libc::c_ulong = 0x8004667e;
           target_os = "android"))]
 pub const FIONBIO: libc::c_ulong = 0x5421;
 #[cfg(all(target_os = "linux",
-          any(target_arch = "mips", target_arch = "mipsel")))]
+          any(target_arch = "mips",
+              target_arch = "mipsel",
+              target_arch = "powerpc")))]
 pub const FIONBIO: libc::c_ulong = 0x667e;
 
 #[cfg(any(target_os = "macos",
           target_os = "ios",
           target_os = "freebsd",
-          target_os = "dragonfly"))]
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
 pub const FIOCLEX: libc::c_ulong = 0x20006601;
 #[cfg(any(all(target_os = "linux",
               any(target_arch = "x86",
@@ -49,18 +53,73 @@ pub const FIOCLEX: libc::c_ulong = 0x20006601;
           target_os = "android"))]
 pub const FIOCLEX: libc::c_ulong = 0x5451;
 #[cfg(all(target_os = "linux",
-          any(target_arch = "mips", target_arch = "mipsel")))]
+          any(target_arch = "mips",
+              target_arch = "mipsel",
+              target_arch = "powerpc")))]
 pub const FIOCLEX: libc::c_ulong = 0x6601;
 
 #[cfg(any(target_os = "macos",
           target_os = "ios",
           target_os = "freebsd",
-          target_os = "dragonfly"))]
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
 pub const MSG_DONTWAIT: libc::c_int = 0x80;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub const MSG_DONTWAIT: libc::c_int = 0x40;
 
 pub const WNOHANG: libc::c_int = 1;
+
+#[cfg(target_os = "linux")]
+pub const _SC_GETPW_R_SIZE_MAX: libc::c_int = 70;
+#[cfg(any(target_os = "macos",
+          target_os = "freebsd",
+          target_os = "dragonfly"))]
+pub const _SC_GETPW_R_SIZE_MAX: libc::c_int = 71;
+#[cfg(target_os = "openbsd")]
+pub const _SC_GETPW_R_SIZE_MAX: libc::c_int = 101;
+#[cfg(target_os = "android")]
+pub const _SC_GETPW_R_SIZE_MAX: libc::c_int = 0x0048;
+
+#[repr(C)]
+#[cfg(target_os = "linux")]
+pub struct passwd {
+    pub pw_name: *mut libc::c_char,
+    pub pw_passwd: *mut libc::c_char,
+    pub pw_uid: libc::uid_t,
+    pub pw_gid: libc::gid_t,
+    pub pw_gecos: *mut libc::c_char,
+    pub pw_dir: *mut libc::c_char,
+    pub pw_shell: *mut libc::c_char,
+}
+
+#[repr(C)]
+#[cfg(any(target_os = "macos",
+          target_os = "freebsd",
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
+pub struct passwd {
+    pub pw_name: *mut libc::c_char,
+    pub pw_passwd: *mut libc::c_char,
+    pub pw_uid: libc::uid_t,
+    pub pw_gid: libc::gid_t,
+    pub pw_change: libc::time_t,
+    pub pw_class: *mut libc::c_char,
+    pub pw_gecos: *mut libc::c_char,
+    pub pw_dir: *mut libc::c_char,
+    pub pw_shell: *mut libc::c_char,
+    pub pw_expire: libc::time_t,
+}
+
+#[repr(C)]
+#[cfg(target_os = "android")]
+pub struct passwd {
+    pub pw_name: *mut libc::c_char,
+    pub pw_passwd: *mut libc::c_char,
+    pub pw_uid: libc::uid_t,
+    pub pw_gid: libc::gid_t,
+    pub pw_dir: *mut libc::c_char,
+    pub pw_shell: *mut libc::c_char,
+}
 
 extern {
     pub fn gettimeofday(timeval: *mut libc::timeval,
@@ -88,6 +147,17 @@ extern {
     pub fn sigaddset(set: *mut sigset_t, signum: libc::c_int) -> libc::c_int;
     pub fn sigdelset(set: *mut sigset_t, signum: libc::c_int) -> libc::c_int;
     pub fn sigemptyset(set: *mut sigset_t) -> libc::c_int;
+
+    #[cfg(not(target_os = "ios"))]
+    pub fn getpwuid_r(uid: libc::uid_t,
+                      pwd: *mut passwd,
+                      buf: *mut libc::c_char,
+                      buflen: libc::size_t,
+                      result: *mut *mut passwd) -> libc::c_int;
+
+    pub fn utimes(filename: *const libc::c_char,
+                  times: *const libc::timeval) -> libc::c_int;
+    pub fn gai_strerror(errcode: libc::c_int) -> *const libc::c_char;
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -107,22 +177,23 @@ mod select {
 #[cfg(any(target_os = "android",
           target_os = "freebsd",
           target_os = "dragonfly",
+          target_os = "openbsd",
           target_os = "linux"))]
 mod select {
-    use uint;
+    use usize;
     use libc;
 
-    pub const FD_SETSIZE: uint = 1024;
+    pub const FD_SETSIZE: usize = 1024;
 
     #[repr(C)]
     pub struct fd_set {
         // FIXME: shouldn't this be a c_ulong?
-        fds_bits: [libc::uintptr_t; (FD_SETSIZE / uint::BITS)]
+        fds_bits: [libc::uintptr_t; (FD_SETSIZE / usize::BITS)]
     }
 
     pub fn fd_set(set: &mut fd_set, fd: i32) {
         let fd = fd as uint;
-        set.fds_bits[fd / uint::BITS] |= 1 << (fd % uint::BITS);
+        set.fds_bits[fd / usize::BITS] |= 1 << (fd % usize::BITS);
     }
 }
 
@@ -169,20 +240,22 @@ mod signal {
     unsafe impl ::marker::Sync for sigaction { }
 
     #[repr(C)]
-    #[cfg(any(all(stage0, target_word_size = "32"), all(not(stage0), target_pointer_width = "32")))]
+    #[cfg(target_pointer_width = "32")]
     pub struct sigset_t {
         __val: [libc::c_ulong; 32],
     }
 
     #[repr(C)]
-    #[cfg(any(all(stage0, target_word_size = "64"), all(not(stage0), target_pointer_width = "64")))]
+    #[cfg(target_pointer_width = "64")]
     pub struct sigset_t {
         __val: [libc::c_ulong; 16],
     }
 }
 
 #[cfg(all(target_os = "linux",
-          any(target_arch = "mips", target_arch = "mipsel")))]
+          any(target_arch = "mips",
+              target_arch = "mipsel",
+              target_arch = "powerpc")))]
 mod signal {
     use libc;
 
@@ -229,7 +302,8 @@ mod signal {
 #[cfg(any(target_os = "macos",
           target_os = "ios",
           target_os = "freebsd",
-          target_os = "dragonfly"))]
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
 mod signal {
     use libc;
 
@@ -242,7 +316,9 @@ mod signal {
     pub const SA_SIGINFO: libc::c_int = 0x0040;
     pub const SIGCHLD: libc::c_int = 20;
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(any(target_os = "macos",
+              target_os = "ios",
+              target_os = "openbsd"))]
     pub type sigset_t = u32;
     #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
     #[repr(C)]

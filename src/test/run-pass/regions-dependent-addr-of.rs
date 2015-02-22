@@ -12,6 +12,7 @@
 // Issue #3148.
 
 #![allow(unknown_features)]
+#![feature(box_patterns)]
 #![feature(box_syntax)]
 
 struct A {
@@ -27,11 +28,10 @@ struct B {
     v6: Option<C>
 }
 
+#[derive(Copy)]
 struct C {
     f: int
 }
-
-impl Copy for C {}
 
 fn get_v1(a: &A) -> &int {
     // Region inferencer must deduce that &v < L2 < L1

@@ -145,8 +145,7 @@ impl TocBuilder {
                     (0, &self.top_level)
                 }
                 Some(entry) => {
-                    sec_number = String::from_str(entry.sec_number
-                                                       .as_slice());
+                    sec_number = String::from_str(&entry.sec_number);
                     sec_number.push_str(".");
                     (entry.level, &entry.children)
                 }
@@ -154,11 +153,11 @@ impl TocBuilder {
             // fill in any missing zeros, e.g. for
             // # Foo (1)
             // ### Bar (1.0.1)
-            for _ in range(toc_level, level - 1) {
+            for _ in toc_level..level - 1 {
                 sec_number.push_str("0.");
             }
             let number = toc.count_entries_with_level(level);
-            sec_number.push_str(format!("{}", number + 1).as_slice())
+            sec_number.push_str(&format!("{}", number + 1))
         }
 
         self.chain.push(TocEntry {
@@ -172,20 +171,20 @@ impl TocBuilder {
         // get the thing we just pushed, so we can borrow the string
         // out of it with the right lifetime
         let just_inserted = self.chain.last_mut().unwrap();
-        just_inserted.sec_number.as_slice()
+        &just_inserted.sec_number
     }
 }
 
-impl fmt::Show for Toc {
+impl fmt::Debug for Toc {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::String::fmt(self, f)
+        fmt::Display::fmt(self, f)
     }
 }
 
-impl fmt::String for Toc {
+impl fmt::Display for Toc {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(fmt, "<ul>"));
-        for entry in self.entries.iter() {
+        for entry in &self.entries {
             // recursively format this table of contents (the
             // `{children}` is the key).
             try!(write!(fmt,

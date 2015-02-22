@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 
 // compile-flags:-g
 // min-lldb-version: 310
@@ -115,6 +114,7 @@
 #![feature(box_syntax)]
 #![omit_gdb_pretty_printer_section]
 
+#[derive(Copy)]
 struct Struct<T> {
     x: T
 }
@@ -149,6 +149,4 @@ fn main() {
 }
 
 fn zzz() {()}
-
-impl<T:Copy> Copy for Struct<T> {}
 

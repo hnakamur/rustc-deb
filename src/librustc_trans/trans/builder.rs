@@ -22,6 +22,7 @@ use util::nodemap::FnvHashMap;
 use libc::{c_uint, c_char};
 
 use std::ffi::CString;
+use std::ptr;
 use syntax::codemap::Span;
 
 pub struct Builder<'a, 'tcx: 'a> {
@@ -33,7 +34,7 @@ pub struct Builder<'a, 'tcx: 'a> {
 // lot more efficient) than doing str::as_c_str("", ...) every time.
 pub fn noname() -> *const c_char {
     static CNULL: c_char = 0;
-    &CNULL as *const c_char
+    &CNULL
 }
 
 impl<'a, 'tcx> Builder<'a, 'tcx> {
@@ -59,24 +60,24 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 // Build version of path with cycles removed.
 
                 // Pass 1: scan table mapping str -> rightmost pos.
-                let mut mm = FnvHashMap::new();
+                let mut mm = FnvHashMap();
                 let len = v.len();
-                let mut i = 0u;
+                let mut i = 0;
                 while i < len {
                     mm.insert(v[i], i);
-                    i += 1u;
+                    i += 1;
                 }
 
                 // Pass 2: concat strings for each elt, skipping
                 // forwards over any cycles by advancing to rightmost
                 // occurrence of each element in path.
                 let mut s = String::from_str(".");
-                i = 0u;
+                i = 0;
                 while i < len {
                     i = mm[v[i]];
                     s.push('/');
                     s.push_str(v[i]);
-                    i += 1u;
+                    i += 1;
                 }
 
                 s.push('/');
@@ -84,9 +85,9 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
                 let n = match h.get(&s) {
                     Some(&n) => n,
-                    _ => 0u
+                    _ => 0
                 };
-                h.insert(s, n+1u);
+                h.insert(s, n+1);
             })
         }
     }
@@ -430,7 +431,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             if name.is_empty() {
                 llvm::LLVMBuildAlloca(self.llbuilder, ty.to_ref(), noname())
             } else {
-                let name = CString::from_slice(name.as_bytes());
+                let name = CString::new(name).unwrap();
                 llvm::LLVMBuildAlloca(self.llbuilder, ty.to_ref(),
                                       name.as_ptr())
             }
@@ -498,6 +499,16 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         value
     }
 
+    pub fn load_nonnull(&self, ptr: ValueRef) -> ValueRef {
+        let value = self.load(ptr);
+        unsafe {
+            llvm::LLVMSetMetadata(value, llvm::MD_nonnull as c_uint,
+                                  llvm::LLVMMDNodeInContext(self.ccx.llcx(), ptr::null(), 0));
+        }
+
+        value
+    }
+
     pub fn store(&self, val: ValueRef, ptr: ValueRef) {
         debug!("Store {} -> {}",
                self.ccx.tn().val_to_string(val),
@@ -552,11 +563,11 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             for (small_vec_e, &ix) in small_vec.iter_mut().zip(ixs.iter()) {
                 *small_vec_e = C_i32(self.ccx, ix as i32);
             }
-            self.inbounds_gep(base, &small_vec[0..ixs.len()])
+            self.inbounds_gep(base, &small_vec[..ixs.len()])
         } else {
             let v = ixs.iter().map(|i| C_i32(self.ccx, *i as i32)).collect::<Vec<ValueRef>>();
             self.count_insn("gepi");
-            self.inbounds_gep(base, &v[])
+            self.inbounds_gep(base, &v[..])
         }
     }
 
@@ -764,8 +775,8 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             let s = format!("{} ({})",
                             text,
                             self.ccx.sess().codemap().span_to_string(sp));
-            debug!("{}", &s[]);
-            self.add_comment(&s[]);
+            debug!("{}", &s[..]);
+            self.add_comment(&s[..]);
         }
     }
 
@@ -775,7 +786,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             let comment_text = format!("{} {}", "#",
                                        sanitized.replace("\n", "\n\t# "));
             self.count_insn("inlineasm");
-            let comment_text = CString::from_vec(comment_text.into_bytes());
+            let comment_text = CString::new(comment_text).unwrap();
             let asm = unsafe {
                 llvm::LLVMConstInlineAsm(Type::func(&[], &Type::void(self.ccx)).to_ref(),
                                          comment_text.as_ptr(), noname(), False,
@@ -802,7 +813,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         }).collect::<Vec<_>>();
 
         debug!("Asm Output Type: {}", self.ccx.tn().type_to_string(output));
-        let fty = Type::func(&argtys[], &output);
+        let fty = Type::func(&argtys[..], &output);
         unsafe {
             let v = llvm::LLVMInlineAsm(
                 fty.to_ref(), asm, cons, volatile, alignstack, dia as c_uint);

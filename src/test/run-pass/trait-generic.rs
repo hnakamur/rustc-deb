@@ -29,7 +29,7 @@ trait map<T> {
 impl<T> map<T> for Vec<T> {
     fn map<U, F>(&self, mut f: F) -> Vec<U> where F: FnMut(&T) -> U {
         let mut r = Vec::new();
-        for i in self.iter() {
+        for i in self {
             r.push(f(i));
         }
         r
@@ -44,7 +44,7 @@ fn bar<U:to_str,T:map<U>>(x: T) -> Vec<String> {
 }
 
 pub fn main() {
-    assert_eq!(foo(vec!(1i)), vec!("hi".to_string()));
+    assert_eq!(foo(vec!(1)), vec!("hi".to_string()));
     assert_eq!(bar::<int, Vec<int> >(vec!(4, 5)), vec!("4".to_string(), "5".to_string()));
     assert_eq!(bar::<String, Vec<String> >(vec!("x".to_string(), "y".to_string())),
                vec!("x".to_string(), "y".to_string()));

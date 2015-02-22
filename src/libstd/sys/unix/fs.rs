@@ -12,13 +12,14 @@
 
 use prelude::v1::*;
 
-use ffi::{self, CString};
-use io::{FilePermission, Write, UnstableFileStat, Open, FileAccess, FileMode};
-use io::{IoResult, FileStat, SeekStyle};
-use io::{Read, Truncate, SeekCur, SeekSet, ReadWrite, SeekEnd, Append};
-use io;
+use ffi::{CString, CStr};
+use old_io::{FilePermission, Write, UnstableFileStat, Open, FileAccess, FileMode};
+use old_io::{IoResult, FileStat, SeekStyle};
+use old_io::{Read, Truncate, SeekCur, SeekSet, ReadWrite, SeekEnd, Append};
+use old_io;
 use libc::{self, c_int, c_void};
 use mem;
+use ptr;
 use sys::retry;
 use sys_common::{keep_going, eof, mkerr_libc};
 
@@ -150,8 +151,8 @@ impl Drop for FileDesc {
     }
 }
 
-fn cstr(path: &Path) -> CString {
-    CString::from_slice(path.as_vec())
+fn cstr(path: &Path) -> IoResult<CString> {
+    Ok(try!(CString::new(path.as_vec())))
 }
 
 pub fn open(path: &Path, fm: FileMode, fa: FileAccess) -> IoResult<FileDesc> {
@@ -169,7 +170,7 @@ pub fn open(path: &Path, fm: FileMode, fa: FileAccess) -> IoResult<FileDesc> {
                             libc::S_IRUSR | libc::S_IWUSR),
     };
 
-    let path = cstr(path);
+    let path = try!(cstr(path));
     match retry(|| unsafe { libc::open(path.as_ptr(), flags, mode) }) {
         -1 => Err(super::last_error()),
         fd => Ok(FileDesc::new(fd, true)),
@@ -177,7 +178,7 @@ pub fn open(path: &Path, fm: FileMode, fa: FileAccess) -> IoResult<FileDesc> {
 }
 
 pub fn mkdir(p: &Path, mode: uint) -> IoResult<()> {
-    let p = cstr(p);
+    let p = try!(cstr(p));
     mkerr_libc(unsafe { libc::mkdir(p.as_ptr(), mode as libc::mode_t) })
 }
 
@@ -202,16 +203,16 @@ pub fn readdir(p: &Path) -> IoResult<Vec<Path>> {
     let mut buf = Vec::<u8>::with_capacity(size as uint);
     let ptr = buf.as_mut_ptr() as *mut dirent_t;
 
-    let p = CString::from_slice(p.as_vec());
+    let p = try!(CString::new(p.as_vec()));
     let dir_ptr = unsafe {opendir(p.as_ptr())};
 
     if dir_ptr as uint != 0 {
         let mut paths = vec!();
-        let mut entry_ptr = 0 as *mut dirent_t;
+        let mut entry_ptr = ptr::null_mut();
         while unsafe { readdir_r(dir_ptr, ptr, &mut entry_ptr) == 0 } {
             if entry_ptr.is_null() { break }
             paths.push(unsafe {
-                Path::new(ffi::c_str_to_bytes(&rust_list_dir_val(entry_ptr)))
+                Path::new(CStr::from_ptr(rust_list_dir_val(entry_ptr)).to_bytes())
             });
         }
         assert_eq!(unsafe { closedir(dir_ptr) }, 0);
@@ -222,39 +223,39 @@ pub fn readdir(p: &Path) -> IoResult<Vec<Path>> {
 }
 
 pub fn unlink(p: &Path) -> IoResult<()> {
-    let p = cstr(p);
+    let p = try!(cstr(p));
     mkerr_libc(unsafe { libc::unlink(p.as_ptr()) })
 }
 
 pub fn rename(old: &Path, new: &Path) -> IoResult<()> {
-    let old = cstr(old);
-    let new = cstr(new);
+    let old = try!(cstr(old));
+    let new = try!(cstr(new));
     mkerr_libc(unsafe {
         libc::rename(old.as_ptr(), new.as_ptr())
     })
 }
 
 pub fn chmod(p: &Path, mode: uint) -> IoResult<()> {
-    let p = cstr(p);
+    let p = try!(cstr(p));
     mkerr_libc(retry(|| unsafe {
         libc::chmod(p.as_ptr(), mode as libc::mode_t)
     }))
 }
 
 pub fn rmdir(p: &Path) -> IoResult<()> {
-    let p = cstr(p);
+    let p = try!(cstr(p));
     mkerr_libc(unsafe { libc::rmdir(p.as_ptr()) })
 }
 
 pub fn chown(p: &Path, uid: int, gid: int) -> IoResult<()> {
-    let p = cstr(p);
+    let p = try!(cstr(p));
     mkerr_libc(retry(|| unsafe {
         libc::chown(p.as_ptr(), uid as libc::uid_t, gid as libc::gid_t)
     }))
 }
 
 pub fn readlink(p: &Path) -> IoResult<Path> {
-    let c_path = cstr(p);
+    let c_path = try!(cstr(p));
     let p = c_path.as_ptr();
     let mut len = unsafe { libc::pathconf(p as *mut _, libc::_PC_NAME_MAX) };
     if len == -1 {
@@ -275,14 +276,14 @@ pub fn readlink(p: &Path) -> IoResult<Path> {
 }
 
 pub fn symlink(src: &Path, dst: &Path) -> IoResult<()> {
-    let src = cstr(src);
-    let dst = cstr(dst);
+    let src = try!(cstr(src));
+    let dst = try!(cstr(dst));
     mkerr_libc(unsafe { libc::symlink(src.as_ptr(), dst.as_ptr()) })
 }
 
 pub fn link(src: &Path, dst: &Path) -> IoResult<()> {
-    let src = cstr(src);
-    let dst = cstr(dst);
+    let src = try!(cstr(src));
+    let dst = try!(cstr(dst));
     mkerr_libc(unsafe { libc::link(src.as_ptr(), dst.as_ptr()) })
 }
 
@@ -303,12 +304,12 @@ fn mkstat(stat: &libc::stat) -> FileStat {
     FileStat {
         size: stat.st_size as u64,
         kind: match (stat.st_mode as libc::mode_t) & libc::S_IFMT {
-            libc::S_IFREG => io::FileType::RegularFile,
-            libc::S_IFDIR => io::FileType::Directory,
-            libc::S_IFIFO => io::FileType::NamedPipe,
-            libc::S_IFBLK => io::FileType::BlockSpecial,
-            libc::S_IFLNK => io::FileType::Symlink,
-            _ => io::FileType::Unknown,
+            libc::S_IFREG => old_io::FileType::RegularFile,
+            libc::S_IFDIR => old_io::FileType::Directory,
+            libc::S_IFIFO => old_io::FileType::NamedPipe,
+            libc::S_IFBLK => old_io::FileType::BlockSpecial,
+            libc::S_IFLNK => old_io::FileType::Symlink,
+            _ => old_io::FileType::Unknown,
         },
         perm: FilePermission::from_bits_truncate(stat.st_mode as u32),
         created: mktime(stat.st_ctime as u64, stat.st_ctime_nsec as u64),
@@ -330,7 +331,7 @@ fn mkstat(stat: &libc::stat) -> FileStat {
 }
 
 pub fn stat(p: &Path) -> IoResult<FileStat> {
-    let p = cstr(p);
+    let p = try!(cstr(p));
     let mut stat: libc::stat = unsafe { mem::zeroed() };
     match unsafe { libc::stat(p.as_ptr(), &mut stat) } {
         0 => Ok(mkstat(&stat)),
@@ -339,7 +340,7 @@ pub fn stat(p: &Path) -> IoResult<FileStat> {
 }
 
 pub fn lstat(p: &Path) -> IoResult<FileStat> {
-    let p = cstr(p);
+    let p = try!(cstr(p));
     let mut stat: libc::stat = unsafe { mem::zeroed() };
     match unsafe { libc::lstat(p.as_ptr(), &mut stat) } {
         0 => Ok(mkstat(&stat)),
@@ -348,7 +349,7 @@ pub fn lstat(p: &Path) -> IoResult<FileStat> {
 }
 
 pub fn utime(p: &Path, atime: u64, mtime: u64) -> IoResult<()> {
-    let p = cstr(p);
+    let p = try!(cstr(p));
     let buf = libc::utimbuf {
         actime: (atime / 1000) as libc::time_t,
         modtime: (mtime / 1000) as libc::time_t,
@@ -363,7 +364,10 @@ mod tests {
     use os;
     use prelude::v1::*;
 
-    #[cfg_attr(target_os = "freebsd", ignore)] // hmm, maybe pipes have a tiny buffer
+    #[cfg_attr(any(target_os = "freebsd",
+                   target_os = "openbsd"),
+               ignore)]
+    // under some system, pipe(2) will return a bidrectionnal pipe
     #[test]
     fn test_file_desc() {
         // Run this test with some pipes so we don't have to mess around with

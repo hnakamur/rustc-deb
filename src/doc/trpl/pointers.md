@@ -1,4 +1,4 @@
-% The Rust Pointer Guide
+% Pointers
 
 Rust's pointers are one of its more unique and compelling features. Pointers
 are also one of the more confusing topics for newcomers to Rust. They can also
@@ -23,14 +23,15 @@ languages, so it's important to understand them.
 
 When you create a new variable binding, you're giving a name to a value that's
 stored at a particular location on the stack. (If you're not familiar with the
-"heap" vs. "stack", please check out [this Stack Overflow
+*heap* vs. *stack*, please check out [this Stack Overflow
 question](http://stackoverflow.com/questions/79923/what-and-where-are-the-stack-and-heap),
 as the rest of this guide assumes you know the difference.) Like this:
 
 ```{rust}
-let x = 5i;
-let y = 8i;
+let x = 5;
+let y = 8;
 ```
+
 | location | value |
 |----------|-------|
 | 0xd3e030 | 5	   |
@@ -43,13 +44,14 @@ refer to `x`, we get the corresponding value. Hence, `x` is `5`.
 
 Let's introduce a pointer. In some languages, there is just one type of
 'pointer,' but in Rust, we have many types. In this case, we'll use a Rust
-**reference**, which is the simplest kind of pointer.
+*reference*, which is the simplest kind of pointer.
 
 ```{rust}
-let x = 5i;
-let y = 8i;
+let x = 5;
+let y = 8;
 let z = &y;
 ```
+
 |location | value    |
 |-------- |----------|
 |0xd3e030 | 5        |
@@ -58,12 +60,12 @@ let z = &y;
 
 See the difference? Rather than contain a value, the value of a pointer is a
 location in memory. In this case, the location of `y`. `x` and `y` have the
-type `int`, but `z` has the type `&int`. We can print this location using the
+type `i32`, but `z` has the type `&i32`. We can print this location using the
 `{:p}` format string:
 
 ```{rust}
-let x = 5i;
-let y = 8i;
+let x = 5;
+let y = 8;
 let z = &y;
 
 println!("{:p}", z);
@@ -71,12 +73,12 @@ println!("{:p}", z);
 
 This would print `0xd3e028`, with our fictional memory addresses.
 
-Because `int` and `&int` are different types, we can't, for example, add them
+Because `i32` and `&i32` are different types, we can't, for example, add them
 together:
 
 ```{rust,ignore}
-let x = 5i;
-let y = 8i;
+let x = 5;
+let y = 8;
 let z = &y;
 
 println!("{}", x + z);
@@ -85,18 +87,18 @@ println!("{}", x + z);
 This gives us an error:
 
 ```text
-hello.rs:6:24: 6:25 error: mismatched types: expected `int` but found `&int` (expected int but found &-ptr)
+hello.rs:6:24: 6:25 error: mismatched types: expected `_`, found `&_` (expected integral variable, found &-ptr)
 hello.rs:6     println!("{}", x + z);
                                   ^
 ```
 
-We can **dereference** the pointer by using the `*` operator. Dereferencing a
+We can *dereference* the pointer by using the `*` operator. Dereferencing a
 pointer means accessing the value at the location stored in the pointer. This
 will work:
 
 ```{rust}
-let x = 5i;
-let y = 8i;
+let x = 5;
+let y = 8;
 let z = &y;
 
 println!("{}", x + *z);
@@ -105,8 +107,8 @@ println!("{}", x + *z);
 It prints `13`.
 
 That's it! That's all pointers are: they point to some memory location. Not
-much else to them. Now that we've discussed the 'what' of pointers, let's
-talk about the 'why.'
+much else to them. Now that we've discussed the *what* of pointers, let's
+talk about the *why*.
 
 ## Pointer uses
 
@@ -153,7 +155,7 @@ So what do pointers have to do with this? Well, since pointers point to a
 location in memory...
 
 ```text
-func foo(&int x) {
+func foo(&i32 x) {
     *x = 5
 }
 
@@ -168,7 +170,7 @@ Even in a language which is pass by value, `i` will be `5` at the comment. You
 see, because the argument `x` is a pointer, we do send a copy over to `foo`,
 but because it points at a memory location, which we then assign to, the
 original value is still changed. This pattern is called
-'pass-reference-by-value.' Tricky!
+*pass-reference-by-value*. Tricky!
 
 ## Common pointer problems
 
@@ -209,7 +211,7 @@ as `make_pointer` returns. But we return a pointer to its memory location, and
 so back in `main`, we try to use that pointer, and it's a very similar
 situation to our first one. Setting invalid memory locations is bad.
 
-As one last example of a big problem with pointers, **aliasing** can be an
+As one last example of a big problem with pointers, *aliasing* can be an
 issue. Two pointers are said to alias when they point at the same location
 in memory. Like this:
 
@@ -248,11 +250,11 @@ it's worth it to not have the problems that simple pointers have.
 
 # References
 
-The most basic type of pointer that Rust has is called a 'reference.' Rust
+The most basic type of pointer that Rust has is called a *reference*. Rust
 references look like this:
 
 ```{rust}
-let x = 5i;
+let x = 5;
 let y = &x;
 
 println!("{}", *y);
@@ -269,18 +271,18 @@ referent, because `println!` will automatically dereference it for us.
 Here's a function that takes a reference:
 
 ```{rust}
-fn succ(x: &int) -> int { *x + 1 }
+fn succ(x: &i32) -> i32 { *x + 1 }
 ```
 
 You can also use `&` as an operator to create a reference, so we can
 call this function in two different ways:
 
 ```{rust}
-fn succ(x: &int) -> int { *x + 1 }
+fn succ(x: &i32) -> i32 { *x + 1 }
 
 fn main() {
 
-    let x = 5i;
+    let x = 5;
     let y = &x;
 
     println!("{}", succ(y));
@@ -294,37 +296,37 @@ Of course, if this were real code, we wouldn't bother with the reference, and
 just write:
 
 ```{rust}
-fn succ(x: int) -> int { x + 1 }
+fn succ(x: i32) -> i32 { x + 1 }
 ```
 
 References are immutable by default:
 
 ```{rust,ignore}
-let x = 5i;
+let x = 5;
 let y = &x;
 
-*y = 5; // error: cannot assign to immutable dereference of `&`-pointer `*y`
+*y = 5; // error: cannot assign to immutable borrowed content `*y`
 ```
 
 They can be made mutable with `mut`, but only if its referent is also mutable.
 This works:
 
 ```{rust}
-let mut x = 5i;
+let mut x = 5;
 let y = &mut x;
 ```
 
 This does not:
 
 ```{rust,ignore}
-let x = 5i;
+let x = 5;
 let y = &mut x; // error: cannot borrow immutable local variable `x` as mutable
 ```
 
 Immutable pointers are allowed to alias:
 
 ```{rust}
-let x = 5i;
+let x = 5;
 let y = &x;
 let z = &x;
 ```
@@ -332,7 +334,7 @@ let z = &x;
 Mutable ones, however, are not:
 
 ```{rust,ignore}
-let mut x = 5i;
+let mut x = 5;
 let y = &mut x;
 let z = &mut x; // error: cannot borrow `x` as mutable more than once at a time
 ```
@@ -340,8 +342,8 @@ let z = &mut x; // error: cannot borrow `x` as mutable more than once at a time
 Despite their complete safety, a reference's representation at runtime is the
 same as that of an ordinary pointer in a C program. They introduce zero
 overhead. The compiler does all safety checks at compile time. The theory that
-allows for this was originally called **region pointers**. Region pointers
-evolved into what we know today as **lifetimes**.
+allows for this was originally called *region pointers*. Region pointers
+evolved into what we know today as *lifetimes*.
 
 Here's the simple explanation: would you expect this code to compile?
 
@@ -355,11 +357,11 @@ fn main() {
 Probably not. That's because you know that the name `x` is valid from where
 it's declared to when it goes out of scope. In this case, that's the end of
 the `main` function. So you know this code will cause an error. We call this
-duration a 'lifetime'. Let's try a more complex example:
+duration a *lifetime*. Let's try a more complex example:
 
 ```{rust}
 fn main() {
-    let x = &mut 5i;
+    let x = &mut 5;
 
     if *x < 10 {
         let y = &x;
@@ -380,7 +382,7 @@ mutated, and therefore, lets us pass. This wouldn't work:
 
 ```{rust,ignore}
 fn main() {
-    let x = &mut 5i;
+    let x = &mut 5;
 
     if *x < 10 {
         let y = &x;
@@ -425,13 +427,13 @@ References just borrow ownership, which is more polite if you don't need the
 ownership. In other words, prefer:
 
 ```{rust}
-fn succ(x: &int) -> int { *x + 1 }
+fn succ(x: &i32) -> i32 { *x + 1 }
 ```
 
 to
 
 ```{rust}
-fn succ(x: Box<int>) -> int { *x + 1 }
+fn succ(x: Box<i32>) -> i32 { *x + 1 }
 ```
 
 As a corollary to that rule, references allow you to accept a wide variety of
@@ -439,7 +441,7 @@ other pointers, and so are useful so that you don't have to write a number
 of variants per pointer. In other words, prefer:
 
 ```{rust}
-fn succ(x: &int) -> int { *x + 1 }
+fn succ(x: &i32) -> i32 { *x + 1 }
 ```
 
 to
@@ -447,22 +449,21 @@ to
 ```{rust}
 use std::rc::Rc;
 
-fn box_succ(x: Box<int>) -> int { *x + 1 }
+fn box_succ(x: Box<i32>) -> i32 { *x + 1 }
 
-fn rc_succ(x: Rc<int>) -> int { *x + 1 }
+fn rc_succ(x: Rc<i32>) -> i32 { *x + 1 }
 ```
 
 Note that the caller of your function will have to modify their calls slightly:
 
 ```{rust}
-# use std::boxed::Box;
 use std::rc::Rc;
 
-fn succ(x: &int) -> int { *x + 1 }
+fn succ(x: &i32) -> i32 { *x + 1 }
 
-let ref_x = &5i;
-let box_x = Box::new(5i);
-let rc_x  = Rc::new(5i);
+let ref_x = &5;
+let box_x = Box::new(5);
+let rc_x = Rc::new(5);
 
 succ(ref_x);
 succ(&*box_x);
@@ -474,21 +475,19 @@ those contents.
 
 # Boxes
 
-`Box<T>` is Rust's 'boxed pointer' type. Boxes provide the simplest form of
+`Box<T>` is Rust's *boxed pointer* type. Boxes provide the simplest form of
 heap allocation in Rust. Creating a box looks like this:
 
 ```{rust}
-# use std::boxed::Box;
-let x = Box::new(5i);
+let x = Box::new(5);
 ```
 
 Boxes are heap allocated and they are deallocated automatically by Rust when
 they go out of scope:
 
 ```{rust}
-# use std::boxed::Box;
 {
-    let x = Box::new(5i);
+    let x = Box::new(5);
 
     // stuff happens
 
@@ -496,10 +495,10 @@ they go out of scope:
 ```
 
 However, boxes do _not_ use reference counting or garbage collection. Boxes are
-what's called an **affine type**. This means that the Rust compiler, at compile
+what's called an *affine type*. This means that the Rust compiler, at compile
 time, determines when the box comes into and goes out of scope, and inserts the
 appropriate calls there. Furthermore, boxes are a specific kind of affine type,
-known as a **region**. You can read more about regions [in this paper on the
+known as a *region*. You can read more about regions [in this paper on the
 Cyclone programming
 language](http://www.cs.umd.edu/projects/cyclone/papers/cyclone-regions.pdf).
 
@@ -507,9 +506,8 @@ You don't need to fully grok the theory of affine types or regions to grok
 boxes, though. As a rough approximation, you can treat this Rust code:
 
 ```{rust}
-# use std::boxed::Box;
 {
-    let x = Box::new(5i);
+    let x = Box::new(5);
 
     // stuff happens
 }
@@ -548,31 +546,29 @@ for more detail on how lifetimes work.
 Using boxes and references together is very common. For example:
 
 ```{rust}
-# use std::boxed::Box;
-fn add_one(x: &int) -> int {
+fn add_one(x: &i32) -> i32 {
     *x + 1
 }
 
 fn main() {
-    let x = Box::new(5i);
+    let x = Box::new(5);
 
     println!("{}", add_one(&*x));
 }
 ```
 
-In this case, Rust knows that `x` is being 'borrowed' by the `add_one()`
+In this case, Rust knows that `x` is being *borrowed* by the `add_one()`
 function, and since it's only reading the value, allows it.
 
 We can borrow `x` multiple times, as long as it's not simultaneous:
 
 ```{rust}
-# use std::boxed::Box;
-fn add_one(x: &int) -> int {
+fn add_one(x: &i32) -> i32 {
     *x + 1
 }
 
 fn main() {
-    let x = Box::new(5i);
+    let x = Box::new(5);
 
     println!("{}", add_one(&*x));
     println!("{}", add_one(&*x));
@@ -583,13 +579,12 @@ fn main() {
 Or as long as it's not a mutable borrow. This will error:
 
 ```{rust,ignore}
-# use std::boxed::Box;
-fn add_one(x: &mut int) -> int {
+fn add_one(x: &mut i32) -> i32 {
     *x + 1
 }
 
 fn main() {
-    let x = Box::new(5i);
+    let x = Box::new(5);
 
     println!("{}", add_one(&*x)); // error: cannot borrow immutable dereference
                                   // of `&`-pointer as mutable
@@ -606,19 +601,18 @@ and occasionally, when returning data.
 ### Recursive data structures
 
 Sometimes, you need a recursive data structure. The simplest is known as a
-'cons list':
+*cons list*:
 
 
 ```{rust}
-# use std::boxed::Box;
-#[derive(Show)]
+#[derive(Debug)]
 enum List<T> {
     Cons(T, Box<List<T>>),
     Nil,
 }
 
 fn main() {
-    let list: List<int> = List::Cons(1, Box::new(List::Cons(2, Box::new(List::Cons(3, Box::new(List::Nil))))));
+    let list: List<i32> = List::Cons(1, Box::new(List::Cons(2, Box::new(List::Cons(3, Box::new(List::Nil))))));
     println!("{:?}", list);
 }
 ```
@@ -666,16 +660,15 @@ In many languages with pointers, you'd return a pointer from a function
 so as to avoid copying a large data structure. For example:
 
 ```{rust}
-# use std::boxed::Box;
 struct BigStruct {
-    one: int,
-    two: int,
+    one: i32,
+    two: i32,
     // etc
-    one_hundred: int,
+    one_hundred: i32,
 }
 
 fn foo(x: Box<BigStruct>) -> Box<BigStruct> {
-    return Box::new(*x);
+    Box::new(*x)
 }
 
 fn main() {
@@ -695,16 +688,15 @@ than the hundred `int`s that make up the `BigStruct`.
 This is an antipattern in Rust. Instead, write this:
 
 ```{rust}
-# use std::boxed::Box;
 struct BigStruct {
-    one: int,
-    two: int,
+    one: i32,
+    two: i32,
     // etc
-    one_hundred: int,
+    one_hundred: i32,
 }
 
 fn foo(x: Box<BigStruct>) -> BigStruct {
-    return *x;
+    *x
 }
 
 fn main() {
@@ -721,11 +713,10 @@ fn main() {
 This gives you flexibility without sacrificing performance.
 
 You may think that this gives us terrible performance: return a value and then
-immediately box it up ?! Isn't that the worst of both worlds? Rust is smarter
-than that. There is no copy in this code. `main` allocates enough room for the
-`box`, passes a pointer to that memory into `foo` as `x`, and then `foo` writes
-the value straight into that pointer. This writes the return value directly into
-the allocated box.
+immediately box it up ?! Isn't this pattern the worst of both worlds? Rust is
+smarter than that. There is no copy in this code. `main` allocates enough room
+for the `box`, passes a pointer to that memory into `foo` as `x`, and then
+`foo` writes the value straight into the `Box<T>`.
 
 This is important enough that it bears repeating: pointers are not for
 optimizing returning values from your code. Allow the caller to choose how they

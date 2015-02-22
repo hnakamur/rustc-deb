@@ -25,14 +25,14 @@ use visit::{self, Visitor};
 use arena::TypedArena;
 use std::cell::RefCell;
 use std::fmt;
-use std::io::IoResult;
+use std::old_io::IoResult;
 use std::iter::{self, repeat};
 use std::mem;
 use std::slice;
 
 pub mod blocks;
 
-#[derive(Clone, Copy, PartialEq, Show)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum PathElem {
     PathMod(Name),
     PathName(Name)
@@ -46,7 +46,7 @@ impl PathElem {
     }
 }
 
-impl fmt::String for PathElem {
+impl fmt::Display for PathElem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let slot = token::get_name(self.name());
         write!(f, "{}", slot)
@@ -75,21 +75,8 @@ impl<'a> Iterator for LinkedPath<'a> {
     }
 }
 
-// HACK(eddyb) move this into libstd (value wrapper for slice::Iter).
-#[derive(Clone)]
-pub struct Values<'a, T:'a>(pub slice::Iter<'a, T>);
-
-impl<'a, T: Copy> Iterator for Values<'a, T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<T> {
-        let &mut Values(ref mut items) = self;
-        items.next().map(|&x| x)
-    }
-}
-
 /// The type of the iterator used by with_path.
-pub type PathElems<'a, 'b> = iter::Chain<Values<'a, PathElem>, LinkedPath<'b>>;
+pub type PathElems<'a, 'b> = iter::Chain<iter::Cloned<slice::Iter<'a, PathElem>>, LinkedPath<'b>>;
 
 pub fn path_to_string<PI: Iterator<Item=PathElem>>(path: PI) -> String {
     let itr = token::get_ident_interner();
@@ -99,12 +86,12 @@ pub fn path_to_string<PI: Iterator<Item=PathElem>>(path: PI) -> String {
         if !s.is_empty() {
             s.push_str("::");
         }
-        s.push_str(&e[]);
+        s.push_str(&e[..]);
         s
-    }).to_string()
+    })
 }
 
-#[derive(Copy, Show)]
+#[derive(Copy, Debug)]
 pub enum Node<'ast> {
     NodeItem(&'ast Item),
     NodeForeignItem(&'ast ForeignItem),
@@ -126,7 +113,7 @@ pub enum Node<'ast> {
 
 /// Represents an entry and its parent Node ID
 /// The odd layout is to bring down the total size.
-#[derive(Copy, Show)]
+#[derive(Copy, Debug)]
 enum MapEntry<'ast> {
     /// Placeholder for holes in the map.
     NotPresent,
@@ -157,7 +144,7 @@ impl<'ast> Clone for MapEntry<'ast> {
     }
 }
 
-#[derive(Show)]
+#[derive(Debug)]
 struct InlinedParent {
     path: Vec<PathElem>,
     ii: InlinedItem
@@ -259,12 +246,12 @@ pub struct Map<'ast> {
 }
 
 impl<'ast> Map<'ast> {
-    fn entry_count(&self) -> uint {
+    fn entry_count(&self) -> usize {
         self.map.borrow().len()
     }
 
     fn find_entry(&self, id: NodeId) -> Option<MapEntry<'ast>> {
-        self.map.borrow().get(id as uint).map(|e| *e)
+        self.map.borrow().get(id as usize).cloned()
     }
 
     pub fn krate(&self) -> &'ast Crate {
@@ -458,9 +445,9 @@ impl<'ast> Map<'ast> {
         if parent == id {
             match self.find_entry(id) {
                 Some(RootInlinedParent(data)) => {
-                    f(Values(data.path.iter()).chain(next))
+                    f(data.path.iter().cloned().chain(next))
                 }
-                _ => f(Values([].iter()).chain(next))
+                _ => f([].iter().cloned().chain(next))
             }
         } else {
             self.with_path_next(parent, Some(&LinkedPathNode {
@@ -476,20 +463,20 @@ impl<'ast> Map<'ast> {
         F: FnOnce(Option<&[Attribute]>) -> T,
     {
         let attrs = match self.get(id) {
-            NodeItem(i) => Some(&i.attrs[]),
-            NodeForeignItem(fi) => Some(&fi.attrs[]),
+            NodeItem(i) => Some(&i.attrs[..]),
+            NodeForeignItem(fi) => Some(&fi.attrs[..]),
             NodeTraitItem(ref tm) => match **tm {
-                RequiredMethod(ref type_m) => Some(&type_m.attrs[]),
-                ProvidedMethod(ref m) => Some(&m.attrs[]),
-                TypeTraitItem(ref typ) => Some(&typ.attrs[]),
+                RequiredMethod(ref type_m) => Some(&type_m.attrs[..]),
+                ProvidedMethod(ref m) => Some(&m.attrs[..]),
+                TypeTraitItem(ref typ) => Some(&typ.attrs[..]),
             },
             NodeImplItem(ref ii) => {
                 match **ii {
-                    MethodImplItem(ref m) => Some(&m.attrs[]),
-                    TypeImplItem(ref t) => Some(&t.attrs[]),
+                    MethodImplItem(ref m) => Some(&m.attrs[..]),
+                    TypeImplItem(ref t) => Some(&t.attrs[..]),
                 }
             }
-            NodeVariant(ref v) => Some(&v.node.attrs[]),
+            NodeVariant(ref v) => Some(&v.node.attrs[..]),
             // unit/tuple structs take the attributes straight from
             // the struct definition.
             // FIXME(eddyb) make this work again (requires access to the map).
@@ -513,7 +500,7 @@ impl<'ast> Map<'ast> {
         NodesMatchingSuffix {
             map: self,
             item_name: parts.last().unwrap(),
-            in_which: &parts[0..(parts.len() - 1)],
+            in_which: &parts[..parts.len() - 1],
             idx: 0,
         }
     }
@@ -590,7 +577,7 @@ impl<'a, 'ast> NodesMatchingSuffix<'a, 'ast> {
                 None => return false,
                 Some((node_id, name)) => (node_id, name),
             };
-            if &part[] != mod_name.as_str() {
+            if &part[..] != mod_name.as_str() {
                 return false;
             }
             cursor = self.map.get_parent(mod_id);
@@ -628,7 +615,7 @@ impl<'a, 'ast> NodesMatchingSuffix<'a, 'ast> {
     // We are looking at some node `n` with a given name and parent
     // id; do their names match what I am seeking?
     fn matches_names(&self, parent_of_n: NodeId, name: Name) -> bool {
-        name.as_str() == &self.item_name[] &&
+        name.as_str() == &self.item_name[..] &&
             self.suffix_matches(parent_of_n)
     }
 }
@@ -639,7 +626,7 @@ impl<'a, 'ast> Iterator for NodesMatchingSuffix<'a, 'ast> {
     fn next(&mut self) -> Option<NodeId> {
         loop {
             let idx = self.idx;
-            if idx as uint >= self.map.entry_count() {
+            if idx as usize >= self.map.entry_count() {
                 return None;
             }
             self.idx += 1;
@@ -731,10 +718,10 @@ impl<'ast> NodeCollector<'ast> {
     fn insert_entry(&mut self, id: NodeId, entry: MapEntry<'ast>) {
         debug!("ast_map: {:?} => {:?}", id, entry);
         let len = self.map.len();
-        if id as uint >= len {
-            self.map.extend(repeat(NotPresent).take(id as uint - len + 1));
+        if id as usize >= len {
+            self.map.extend(repeat(NotPresent).take(id as usize - len + 1));
         }
-        self.map[id as uint] = entry;
+        self.map[id as usize] = entry;
     }
 
     fn insert(&mut self, id: NodeId, node: Node<'ast>) {
@@ -743,7 +730,7 @@ impl<'ast> NodeCollector<'ast> {
     }
 
     fn visit_fn_decl(&mut self, decl: &'ast FnDecl) {
-        for a in decl.inputs.iter() {
+        for a in &decl.inputs {
             self.insert(a.id, NodeArg(&*a.pat));
         }
     }
@@ -756,7 +743,7 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
         self.parent = i.id;
         match i.node {
             ItemImpl(_, _, _, _, _, ref impl_items) => {
-                for impl_item in impl_items.iter() {
+                for impl_item in impl_items {
                     match *impl_item {
                         MethodImplItem(ref m) => {
                             self.insert(m.id, NodeImplItem(impl_item));
@@ -768,12 +755,12 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
                 }
             }
             ItemEnum(ref enum_definition, _) => {
-                for v in enum_definition.variants.iter() {
+                for v in &enum_definition.variants {
                     self.insert(v.node.id, NodeVariant(&**v));
                 }
             }
             ItemForeignMod(ref nm) => {
-                for nitem in nm.items.iter() {
+                for nitem in &nm.items {
                     self.insert(nitem.id, NodeForeignItem(&**nitem));
                 }
             }
@@ -787,13 +774,13 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
                 }
             }
             ItemTrait(_, _, ref bounds, ref trait_items) => {
-                for b in bounds.iter() {
+                for b in &**bounds {
                     if let TraitTyParamBound(ref t, TraitBoundModifier::None) = *b {
                         self.insert(t.trait_ref.ref_id, NodeItem(i));
                     }
                 }
 
-                for tm in trait_items.iter() {
+                for tm in trait_items {
                     match *tm {
                         RequiredMethod(ref m) => {
                             self.insert(m.id, NodeTraitItem(tm));
@@ -886,7 +873,6 @@ pub fn map_crate<'ast, F: FoldOps>(forest: &'ast mut Forest, fold_ops: F) -> Map
     let krate = mem::replace(&mut forest.krate, Crate {
         module: Mod {
             inner: DUMMY_SP,
-            view_items: vec![],
             items: vec![],
         },
         attrs: vec![],
@@ -1040,12 +1026,14 @@ impl<'a> NodePrinter for pprust::State<'a> {
 
 fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
     let id_str = format!(" (id={})", id);
-    let id_str = if include_id { &id_str[] } else { "" };
+    let id_str = if include_id { &id_str[..] } else { "" };
 
     match map.find(id) {
         Some(NodeItem(item)) => {
             let path_str = map.path_to_str_with_ident(id, item.ident);
             let item_str = match item.node {
+                ItemExternCrate(..) => "extern crate",
+                ItemUse(..) => "use",
                 ItemStatic(..) => "static",
                 ItemConst(..) => "const",
                 ItemFn(..) => "fn",

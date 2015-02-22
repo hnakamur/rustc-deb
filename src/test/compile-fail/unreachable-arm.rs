@@ -10,8 +10,9 @@
 
 // error-pattern:unreachable pattern
 
+#![feature(box_patterns)]
 #![feature(box_syntax)]
 
 enum foo { a(Box<foo>, isize), b(usize), }
 
-fn main() { match foo::b(1us) { foo::b(_) | foo::a(box _, 1) => { } foo::a(_, 1) => { } } }
+fn main() { match foo::b(1_usize) { foo::b(_) | foo::a(box _, 1) => { } foo::a(_, 1) => { } } }

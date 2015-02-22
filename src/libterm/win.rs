@@ -14,7 +14,7 @@
 
 extern crate libc;
 
-use std::io::IoResult;
+use std::old_io::IoResult;
 
 use attr;
 use color;
@@ -86,7 +86,7 @@ fn bits_to_color(bits: u16) -> color::Color {
     color | (bits & 0x8) // copy the hi-intensity bit
 }
 
-impl<T: Writer+Send> WinConsole<T> {
+impl<T: Writer+Send+'static> WinConsole<T> {
     fn apply(&mut self) {
         let _unused = self.buf.flush();
         let mut accum: libc::WORD = 0;
@@ -130,8 +130,8 @@ impl<T: Writer+Send> WinConsole<T> {
 }
 
 impl<T: Writer> Writer for WinConsole<T> {
-    fn write(&mut self, buf: &[u8]) -> IoResult<()> {
-        self.buf.write(buf)
+    fn write_all(&mut self, buf: &[u8]) -> IoResult<()> {
+        self.buf.write_all(buf)
     }
 
     fn flush(&mut self) -> IoResult<()> {
@@ -139,7 +139,7 @@ impl<T: Writer> Writer for WinConsole<T> {
     }
 }
 
-impl<T: Writer+Send> Terminal<T> for WinConsole<T> {
+impl<T: Writer+Send+'static> Terminal<T> for WinConsole<T> {
     fn fg(&mut self, color: color::Color) -> IoResult<bool> {
         self.foreground = color;
         self.apply();
@@ -192,6 +192,6 @@ impl<T: Writer+Send> Terminal<T> for WinConsole<T> {
     fn get_mut<'a>(&'a mut self) -> &'a mut T { &mut self.buf }
 }
 
-impl<T: Writer+Send> UnwrappableTerminal<T> for WinConsole<T> {
+impl<T: Writer+Send+'static> UnwrappableTerminal<T> for WinConsole<T> {
     fn unwrap(self) -> T { self.buf }
 }

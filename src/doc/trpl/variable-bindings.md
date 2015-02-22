@@ -1,6 +1,6 @@
-% Variable bindings
+% Variable Bindings
 
-The first thing we'll learn about are 'variable bindings.' They look like this:
+The first thing we'll learn about are *variable bindings*. They look like this:
 
 ```{rust}
 fn main() {
@@ -12,9 +12,9 @@ Putting `fn main() {` in each example is a bit tedious, so we'll leave that out
 in the future. If you're following along, make sure to edit your `main()`
 function, rather than leaving it off. Otherwise, you'll get an error.
 
-In many languages, this is called a 'variable.' But Rust's variable bindings
+In many languages, this is called a *variable*. But Rust's variable bindings
 have a few tricks up their sleeves. Rust has a very powerful feature called
-'pattern matching' that we'll get into detail with later, but the left
+*pattern matching* that we'll get into detail with later, but the left
 hand side of a `let` expression is a full pattern, not just a variable name.
 This means we can do things like:
 
@@ -28,7 +28,7 @@ So let's just keep this in the back of our minds as we go forward.
 
 Rust is a statically typed language, which means that we specify our types up
 front. So why does our first example compile? Well, Rust has this thing called
-"type inference." If it can figure out what the type of something is, Rust
+*type inference*. If it can figure out what the type of something is, Rust
 doesn't require you to actually type it out.
 
 We can add the type if we want to, though. Types come after a colon (`:`):
@@ -39,6 +39,11 @@ let x: i32 = 5;
 
 If I asked you to read this out loud to the rest of the class, you'd say "`x`
 is a binding with the type `i32` and the value `five`."
+
+In this case we chose to represent `x` as a 32-bit signed integer. Rust has
+many different primitive integer types. They begin with `i` for signed integers
+and `u` for unsigned integers. The possible integer sizes are 8, 16, 32, and 64
+bits.
 
 In future examples, we may annotate the type in a comment. The examples will
 look like this:
@@ -53,7 +58,7 @@ Note the similarities between this annotation and the syntax you use with `let`.
 Including these kinds of comments is not idiomatic Rust, but we'll occasionally
 include them to help you understand what the types that Rust infers are.
 
-By default, bindings are **immutable**. This code will not compile:
+By default, bindings are *immutable*. This code will not compile:
 
 ```{ignore}
 let x = 5;
@@ -89,25 +94,7 @@ what you need, so it's not verboten.
 
 Let's get back to bindings. Rust variable bindings have one more aspect that
 differs from other languages: bindings are required to be initialized with a
-value before you're allowed to use them. If we try...
-
-```{ignore}
-let x;
-```
-
-...we'll get an error:
-
-```text
-src/main.rs:2:9: 2:10 error: cannot determine a type for this local variable: unconstrained type
-src/main.rs:2     let x;
-                      ^
-```
-
-Giving it a type will compile, though:
-
-```{rust}
-let x: i32;
-```
+value before you're allowed to use them.
 
 Let's try it out. Change your `src/main.rs` file to look like this:
 
@@ -162,7 +149,7 @@ talk about this stuff we've added to `println!`.
 
 If you include two curly braces (`{}`, some call them moustaches...) in your
 string to print, Rust will interpret this as a request to interpolate some sort
-of value. **String interpolation** is a computer science term that means "stick
+of value. *String interpolation* is a computer science term that means "stick
 in the middle of a string." We add a comma, and then `x`, to indicate that we
 want `x` to be the value we're interpolating. The comma is used to separate
 arguments we pass to functions and macros, if you're passing more than one.

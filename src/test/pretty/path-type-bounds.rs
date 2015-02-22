@@ -11,7 +11,9 @@
 // pp-exact
 
 
-trait Tr { }
+trait Tr {
+    fn dummy(&self) { }
+}
 impl Tr for int { }
 
 fn foo<'a>(x: Box<Tr+ Sync + 'a>) -> Box<Tr+ Sync + 'a> { x }
@@ -19,6 +21,6 @@ fn foo<'a>(x: Box<Tr+ Sync + 'a>) -> Box<Tr+ Sync + 'a> { x }
 fn main() {
     let x: Box<Tr+ Sync>;
 
-    Box::new(1i) as Box<Tr+ Sync>;
+    Box::new(1) as Box<Tr+ Sync>;
 }
 

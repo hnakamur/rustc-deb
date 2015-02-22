@@ -44,21 +44,22 @@
 #![feature(unboxed_closures)]
 
 use std::iter::{repeat, AdditiveIterator};
-use std::thread::Thread;
+use std::thread;
 use std::mem;
 use std::num::Float;
 use std::os;
+use std::env;
 use std::raw::Repr;
 use std::simd::f64x2;
 
 fn main() {
-    let args = os::args();
-    let answer = spectralnorm(if os::getenv("RUST_BENCH").is_some() {
+    let mut args = env::args();
+    let answer = spectralnorm(if env::var_os("RUST_BENCH").is_some() {
         5500
     } else if args.len() < 2 {
         2000
     } else {
-        args[1].parse().unwrap()
+        args.nth(1).unwrap().parse().unwrap()
     });
     println!("{:.9}", answer);
 }
@@ -68,11 +69,11 @@ fn spectralnorm(n: uint) -> f64 {
     let mut u = repeat(1.0).take(n).collect::<Vec<_>>();
     let mut v = u.clone();
     let mut tmp = v.clone();
-    for _ in range(0u, 10) {
-        mult_AtAv(u.as_slice(), v.as_mut_slice(), tmp.as_mut_slice());
-        mult_AtAv(v.as_slice(), u.as_mut_slice(), tmp.as_mut_slice());
+    for _ in 0..10 {
+        mult_AtAv(&u, &mut v, &mut tmp);
+        mult_AtAv(&v, &mut u, &mut tmp);
     }
-    (dot(u.as_slice(), v.as_slice()) / dot(v.as_slice(), v.as_slice())).sqrt()
+    (dot(&u, &v) / dot(&v, &v)).sqrt()
 }
 
 fn mult_AtAv(v: &[f64], out: &mut [f64], tmp: &mut [f64]) {
@@ -111,26 +112,16 @@ fn dot(v: &[f64], u: &[f64]) -> f64 {
 }
 
 
-struct Racy<T>(T);
-
-unsafe impl<T: 'static> Send for Racy<T> {}
-
 // Executes a closure in parallel over the given mutable slice. The closure `f`
 // is run in parallel and yielded the starting index within `v` as well as a
 // sub-slice of `v`.
-fn parallel<T, F>(v: &mut [T], f: F)
-                  where T: Send + Sync,
-                        F: Fn(uint, &mut [T]) + Sync {
+fn parallel<'a,T, F>(v: &mut [T], ref f: F)
+                  where T: Send + Sync + 'a,
+                        F: Fn(uint, &mut [T]) + Sync + 'a {
     let size = v.len() / os::num_cpus() + 1;
-
     v.chunks_mut(size).enumerate().map(|(i, chunk)| {
-        // Need to convert `f` and `chunk` to something that can cross the task
-        // boundary.
-        let f = Racy(&f as *const _ as *const uint);
-        let raw = Racy(chunk.repr());
-        Thread::scoped(move|| {
-            let f = f.0 as *const F;
-            unsafe { (*f)(i * size, mem::transmute(raw.0)) }
+        thread::scoped(move|| {
+            f(i * size, chunk)
         })
     }).collect::<Vec<_>>();
 }

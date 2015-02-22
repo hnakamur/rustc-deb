@@ -27,7 +27,7 @@ use std::collections::HashMap;
 #[derive(Clone)]
 struct TtFrame {
     forest: TokenTree,
-    idx: uint,
+    idx: usize,
     dotdotdoted: bool,
     sep: Option<Token>,
 }
@@ -43,8 +43,8 @@ pub struct TtReader<'a> {
 
     // Some => return imported_from as the next token
     crate_name_next: Option<Span>,
-    repeat_idx: Vec<uint>,
-    repeat_len: Vec<uint>,
+    repeat_idx: Vec<usize>,
+    repeat_len: Vec<usize>,
     /* cached: */
     pub cur_tok: Token,
     pub cur_span: Span,
@@ -124,7 +124,7 @@ fn lookup_cur_matched(r: &TtReader, name: Ident) -> Option<Rc<NamedMatch>> {
 #[derive(Clone)]
 enum LockstepIterSize {
     LisUnconstrained,
-    LisConstraint(uint, Ident),
+    LisConstraint(usize, Ident),
     LisContradiction(String),
 }
 
@@ -223,7 +223,7 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
                 r.repeat_len.pop();
             }
         } else { /* repeat */
-            *r.repeat_idx.last_mut().unwrap() += 1u;
+            *r.repeat_idx.last_mut().unwrap() += 1;
             r.stack.last_mut().unwrap().idx = 0;
             match r.stack.last().unwrap().sep.clone() {
                 Some(tk) => {
@@ -255,7 +255,7 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
                     }
                     LisContradiction(ref msg) => {
                         // FIXME #2887 blame macro invoker instead
-                        r.sp_diag.span_fatal(sp.clone(), &msg[]);
+                        r.sp_diag.span_fatal(sp.clone(), &msg[..]);
                     }
                     LisConstraint(len, _) => {
                         if len == 0 {
@@ -309,7 +309,7 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
                                 r.sp_diag.span_fatal(
                                     r.cur_span, /* blame the macro writer */
                                     &format!("variable '{:?}' is still repeating at this depth",
-                                            token::get_ident(ident))[]);
+                                            token::get_ident(ident)));
                             }
                         }
                     }

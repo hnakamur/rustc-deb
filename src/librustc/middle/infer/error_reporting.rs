@@ -170,7 +170,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                             errors: &Vec<RegionResolutionError<'tcx>>) {
         let p_errors = self.process_errors(errors);
         let errors = if p_errors.is_empty() { errors } else { &p_errors };
-        for error in errors.iter() {
+        for error in errors {
             match error.clone() {
                 ConcreteFailure(origin, sub, sup) => {
                     self.report_concrete_failure(origin, sub, sup);
@@ -200,9 +200,9 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                                 ref trace_origins,
                                 ref same_regions) => {
                     if !same_regions.is_empty() {
-                        self.report_processed_errors(&var_origins[],
-                                                     &trace_origins[],
-                                                     &same_regions[]);
+                        self.report_processed_errors(&var_origins[..],
+                                                     &trace_origins[..],
+                                                     &same_regions[..]);
                     }
                 }
             }
@@ -222,7 +222,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
         let mut trace_origins = Vec::new();
         let mut same_regions = Vec::new();
         let mut processed_errors = Vec::new();
-        for error in errors.iter() {
+        for error in errors {
             match error.clone() {
                 ConcreteFailure(origin, sub, sup) => {
                     debug!("processing ConcreteFailure");
@@ -242,7 +242,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     }
                 }
                 SubSupConflict(var_origin, _, sub_r, _, sup_r) => {
-                    debug!("processing SubSupConflict");
+                    debug!("processing SubSupConflict sub: {:?} sup: {:?}", sub_r, sup_r);
                     match free_regions_from_same_fn(self.tcx, sub_r, sup_r) {
                         Some(ref same_frs) => {
                             var_origins.push(var_origin);
@@ -257,7 +257,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
         }
         if !same_regions.is_empty() {
             let common_scope_id = same_regions[0].scope_id;
-            for sr in same_regions.iter() {
+            for sr in &same_regions {
                 // Since ProcessedErrors is used to reconstruct the function
                 // declaration, we want to make sure that they are, in fact,
                 // from the same scope
@@ -304,7 +304,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                         return None
                     }
                     assert!(fr1.scope == fr2.scope);
-                    (fr1.scope.node_id(), fr1, fr2)
+                    (fr1.scope.node_id, fr1, fr2)
                 },
                 _ => return None
             };
@@ -335,7 +335,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                                   same_frs: &FreeRegionsFromSameFn) {
             let scope_id = same_frs.scope_id;
             let (sub_fr, sup_fr) = (same_frs.sub_fr, same_frs.sup_fr);
-            for sr in same_regions.iter_mut() {
+            for sr in &mut *same_regions {
                 if sr.contains(&sup_fr.bound_region)
                    && scope_id == sr.scope_id {
                     sr.push(sub_fr.bound_region);
@@ -371,12 +371,11 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
             infer::EquatePredicate(_) => "equality predicate not satisfied",
         };
 
-        self.tcx.sess.span_err(
-            trace.origin.span(),
-            &format!("{}: {} ({})",
+        span_err!(self.tcx.sess, trace.origin.span(), E0308,
+            "{}: {} ({})",
                  message_root_str,
                  expected_found_str,
-                 ty::type_err_to_str(self.tcx, terr))[]);
+                 ty::type_err_to_str(self.tcx, terr));
 
         match trace.origin {
             infer::MatchExpressionArm(_, arm_span) =>
@@ -443,9 +442,8 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
         match sub {
             ty::ReFree(ty::FreeRegion {bound_region: ty::BrNamed(..), ..}) => {
                 // Does the required lifetime have a nice name we can print?
-                self.tcx.sess.span_err(
-                    origin.span(),
-                    &format!("{} may not live long enough", labeled_user_string)[]);
+                span_err!(self.tcx.sess, origin.span(), E0309,
+                    "{} may not live long enough", labeled_user_string);
                 self.tcx.sess.span_help(
                     origin.span(),
                     &format!(
@@ -456,9 +454,8 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
 
             ty::ReStatic => {
                 // Does the required lifetime have a nice name we can print?
-                self.tcx.sess.span_err(
-                    origin.span(),
-                    &format!("{} may not live long enough", labeled_user_string)[]);
+                span_err!(self.tcx.sess, origin.span(), E0310,
+                    "{} may not live long enough", labeled_user_string);
                 self.tcx.sess.span_help(
                     origin.span(),
                     &format!(
@@ -468,11 +465,9 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
 
             _ => {
                 // If not, be less specific.
-                self.tcx.sess.span_err(
-                    origin.span(),
-                    &format!(
+                span_err!(self.tcx.sess, origin.span(), E0311,
                         "{} may not live long enough",
-                        labeled_user_string)[]);
+                        labeled_user_string);
                 self.tcx.sess.span_help(
                     origin.span(),
                     &format!(
@@ -499,8 +494,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                 self.report_and_explain_type_error(trace, &terr);
             }
             infer::Reborrow(span) => {
-                self.tcx.sess.span_err(
-                    span,
+                span_err!(self.tcx.sess, span, E0312,
                     "lifetime of reference outlines \
                      lifetime of borrowed content...");
                 note_and_explain_region(
@@ -515,14 +509,12 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     "");
             }
             infer::ReborrowUpvar(span, ref upvar_id) => {
-                self.tcx.sess.span_err(
-                    span,
-                    &format!("lifetime of borrowed pointer outlives \
+                span_err!(self.tcx.sess, span, E0313,
+                    "lifetime of borrowed pointer outlives \
                             lifetime of captured variable `{}`...",
                             ty::local_var_name_str(self.tcx,
                                                    upvar_id.var_id)
-                                .get()
-                                .to_string())[]);
+                                .to_string());
                 note_and_explain_region(
                     self.tcx,
                     "...the borrowed pointer is valid for ",
@@ -533,14 +525,12 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     &format!("...but `{}` is only valid for ",
                             ty::local_var_name_str(self.tcx,
                                                    upvar_id.var_id)
-                                .get()
                                 .to_string())[],
                     sup,
                     "");
             }
             infer::InfStackClosure(span) => {
-                self.tcx.sess.span_err(
-                    span,
+                span_err!(self.tcx.sess, span, E0314,
                     "closure outlives stack frame");
                 note_and_explain_region(
                     self.tcx,
@@ -554,8 +544,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     "");
             }
             infer::InvokeClosure(span) => {
-                self.tcx.sess.span_err(
-                    span,
+                span_err!(self.tcx.sess, span, E0315,
                     "cannot invoke closure outside of its lifetime");
                 note_and_explain_region(
                     self.tcx,
@@ -579,8 +568,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     &format!("captured variable `{}` does not \
                             outlive the enclosing closure",
                             ty::local_var_name_str(self.tcx,
-                                                   id).get()
-                                                      .to_string())[]);
+                                                   id).to_string())[]);
                 note_and_explain_region(
                     self.tcx,
                     "captured variable is valid for ",
@@ -631,7 +619,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
             infer::RelateRegionParamBound(span) => {
                 self.tcx.sess.span_err(
                     span,
-                    "declared lifetime bound not satisfied");
+                    "lifetime bound not satisfied");
                 note_and_explain_region(
                     self.tcx,
                     "lifetime parameter instantiated with ",
@@ -687,6 +675,17 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     sup,
                     "");
             }
+            infer::Operand(span) => {
+                self.tcx.sess.span_err(
+                    span,
+                    "lifetime of operand does not outlive \
+                     the operation");
+                note_and_explain_region(
+                    self.tcx,
+                    "the operand is only valid for ",
+                    sup,
+                    "");
+            }
             infer::AddrOf(span) => {
                 self.tcx.sess.span_err(
                     span,
@@ -719,6 +718,23 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     self.tcx,
                     "type is only valid for ",
                     sup,
+                    "");
+            }
+            infer::SafeDestructor(span) => {
+                self.tcx.sess.span_err(
+                    span,
+                    "unsafe use of destructor: destructor might be called \
+                     while references are dead");
+                // FIXME (22171): terms "super/subregion" are suboptimal
+                note_and_explain_region(
+                    self.tcx,
+                    "superregion: ",
+                    sup,
+                    "");
+                note_and_explain_region(
+                    self.tcx,
+                    "subregion: ",
+                    sub,
                     "");
             }
             infer::BindingTypeIsNotValidAtDecl(span) => {
@@ -805,11 +821,11 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                                var_origins: &[RegionVariableOrigin],
                                trace_origins: &[(TypeTrace<'tcx>, ty::type_err<'tcx>)],
                                same_regions: &[SameRegions]) {
-        for vo in var_origins.iter() {
+        for vo in var_origins {
             self.report_inference_failure(vo.clone());
         }
         self.give_suggestion(same_regions);
-        for &(ref trace, terr) in trace_origins.iter() {
+        for &(ref trace, terr) in trace_origins {
             self.report_type_error(trace.clone(), &terr);
         }
     }
@@ -818,6 +834,8 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
         let scope_id = same_regions[0].scope_id;
         let parent = self.tcx.map.get_parent(scope_id);
         let parent_node = self.tcx.map.find(parent);
+        let taken = lifetimes_in_scope(self.tcx, scope_id);
+        let life_giver = LifeGiver::with_taken(&taken[..]);
         let node_inner = match parent_node {
             Some(ref node) => match *node {
                 ast_map::NodeItem(ref item) => {
@@ -860,8 +878,6 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
         };
         let (fn_decl, generics, unsafety, ident, expl_self, span)
                                     = node_inner.expect("expect item fn");
-        let taken = lifetimes_in_scope(self.tcx, scope_id);
-        let life_giver = LifeGiver::with_taken(&taken[]);
         let rebuilder = Rebuilder::new(self.tcx, fn_decl, expl_self,
                                        generics, same_regions, &life_giver);
         let (fn_decl, expl_self, generics) = rebuilder.rebuild();
@@ -919,13 +935,13 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
 
     fn rebuild(&self)
                -> (ast::FnDecl, Option<ast::ExplicitSelf_>, ast::Generics) {
-        let mut expl_self_opt = self.expl_self_opt.map(|x| x.clone());
+        let mut expl_self_opt = self.expl_self_opt.cloned();
         let mut inputs = self.fn_decl.inputs.clone();
         let mut output = self.fn_decl.output.clone();
         let mut ty_params = self.generics.ty_params.clone();
         let where_clause = self.generics.where_clause.clone();
         let mut kept_lifetimes = HashSet::new();
-        for sr in self.same_regions.iter() {
+        for sr in self.same_regions {
             self.cur_anon.set(0);
             self.offset_cur_anon();
             let (anon_nums, region_names) =
@@ -937,7 +953,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
             }
             expl_self_opt = self.rebuild_expl_self(expl_self_opt, lifetime,
                                                    &anon_nums, &region_names);
-            inputs = self.rebuild_args_ty(&inputs[], lifetime,
+            inputs = self.rebuild_args_ty(&inputs[..], lifetime,
                                           &anon_nums, &region_names);
             output = self.rebuild_output(&output, lifetime, &anon_nums, &region_names);
             ty_params = self.rebuild_ty_params(ty_params, lifetime,
@@ -967,8 +983,8 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
             // vector of string and then sort them. However, it makes the
             // choice of lifetime name deterministic and thus easier to test.
             let mut names = Vec::new();
-            for rn in region_names.iter() {
-                let lt_name = token::get_name(*rn).get().to_string();
+            for rn in region_names {
+                let lt_name = token::get_name(*rn).to_string();
                 names.push(lt_name);
             }
             names.sort();
@@ -982,7 +998,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                                    -> (HashSet<u32>, HashSet<ast::Name>) {
         let mut anon_nums = HashSet::new();
         let mut region_names = HashSet::new();
-        for br in same_regions.regions.iter() {
+        for br in &same_regions.regions {
             match *br {
                 ty::BrAnon(i) => {
                     anon_nums.insert(i);
@@ -998,8 +1014,8 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
 
     fn extract_all_region_names(&self) -> HashSet<ast::Name> {
         let mut all_region_names = HashSet::new();
-        for sr in self.same_regions.iter() {
-            for br in sr.regions.iter() {
+        for sr in self.same_regions {
+            for br in &sr.regions {
                 match *br {
                     ty::BrNamed(_, name) => {
                         all_region_names.insert(name);
@@ -1088,7 +1104,8 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                         trait_ref: ast::TraitRef {
                             path: new_path,
                             ref_id: tr.ref_id,
-                        }
+                        },
+                        span: poly_tr.span,
                     }, modifier)
                 }
             }
@@ -1132,11 +1149,11 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                         where_clause: ast::WhereClause)
                         -> ast::Generics {
         let mut lifetimes = Vec::new();
-        for lt in add.iter() {
+        for lt in add {
             lifetimes.push(ast::LifetimeDef { lifetime: *lt,
                                               bounds: Vec::new() });
         }
-        for lt in generics.lifetimes.iter() {
+        for lt in &generics.lifetimes {
             if keep.contains(&lt.lifetime.name) ||
                 !remove.contains(&lt.lifetime.name) {
                 lifetimes.push((*lt).clone());
@@ -1156,7 +1173,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                        region_names: &HashSet<ast::Name>)
                        -> Vec<ast::Arg> {
         let mut new_inputs = Vec::new();
-        for arg in inputs.iter() {
+        for arg in inputs {
             let new_ty = self.rebuild_arg_ty_or_output(&*arg.ty, lifetime,
                                                        anon_nums, region_names);
             let possibly_new_arg = ast::Arg {
@@ -1177,6 +1194,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
             ast::Return(ref ret_ty) => ast::Return(
                 self.rebuild_arg_ty_or_output(&**ret_ty, lifetime, anon_nums, region_names)
             ),
+            ast::DefaultReturn(span) => ast::DefaultReturn(span),
             ast::NoReturn(span) => ast::NoReturn(span)
         }
     }
@@ -1237,8 +1255,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                             let mut insert = Vec::new();
                             if lifetimes.len() == 0 {
                                 let anon = self.cur_anon.get();
-                                for (i, a) in range(anon,
-                                                    anon+expected).enumerate() {
+                                for (i, a) in (anon..anon+expected).enumerate() {
                                     if anon_nums.contains(&a) {
                                         insert.push(i as u32);
                                     }
@@ -1351,11 +1368,11 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                 let mut new_lts = Vec::new();
                 if data.lifetimes.len() == 0 {
                     // traverse once to see if there's a need to insert lifetime
-                    let need_insert = range(0, expected).any(|i| {
+                    let need_insert = (0..expected).any(|i| {
                         indexes.contains(&i)
                     });
                     if need_insert {
-                        for i in range(0, expected) {
+                        for i in 0..expected {
                             if indexes.contains(&i) {
                                 new_lts.push(lifetime);
                             } else {
@@ -1420,7 +1437,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                                               opt_explicit_self, generics);
         let msg = format!("consider using an explicit lifetime \
                            parameter as shown: {}", suggested_fn);
-        self.tcx.sess.span_help(span, &msg[]);
+        self.tcx.sess.span_help(span, &msg[..]);
     }
 
     fn report_inference_failure(&self,
@@ -1429,7 +1446,6 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
             infer::MiscVariable(_) => "".to_string(),
             infer::PatternRegion(_) => " for pattern".to_string(),
             infer::AddrOfRegion(_) => " for borrow expression".to_string(),
-            infer::AddrOfSlice(_) => " for slice expression".to_string(),
             infer::Autoref(_) => " for autoref".to_string(),
             infer::Coercion(_) => " for automatic coercion".to_string(),
             infer::LateBoundRegion(_, br, infer::FnCall) => {
@@ -1447,15 +1463,15 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
             }
             infer::EarlyBoundRegion(_, name) => {
                 format!(" for lifetime parameter `{}`",
-                        token::get_name(name).get())
+                        &token::get_name(name))
             }
             infer::BoundRegionInCoherence(name) => {
                 format!(" for lifetime parameter `{}` in coherence check",
-                        token::get_name(name).get())
+                        &token::get_name(name))
             }
             infer::UpvarRegion(ref upvar_id, _) => {
                 format!(" for capture of `{}` by closure",
-                        ty::local_var_name_str(self.tcx, upvar_id.var_id).get().to_string())
+                        ty::local_var_name_str(self.tcx, upvar_id.var_id).to_string())
             }
         };
 
@@ -1536,7 +1552,6 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                     &format!(
                         "...so that closure can access `{}`",
                         ty::local_var_name_str(self.tcx, upvar_id.var_id)
-                            .get()
                             .to_string())[])
             }
             infer::InfStackClosure(span) => {
@@ -1562,7 +1577,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                             does not outlive the enclosing closure",
                             ty::local_var_name_str(
                                 self.tcx,
-                                id).get().to_string())[]);
+                                id).to_string())[]);
             }
             infer::IndexSlice(span) => {
                 self.tcx.sess.span_note(
@@ -1588,6 +1603,11 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                 self.tcx.sess.span_note(
                     span,
                     "...so that return value is valid for the call");
+            }
+            infer::Operand(span) => {
+                self.tcx.sess.span_err(
+                    span,
+                    "...so that operand is valid for operation");
             }
             infer::AddrOf(span) => {
                 self.tcx.sess.span_note(
@@ -1624,7 +1644,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                 self.tcx.sess.span_note(
                     span,
                     &format!("...so that the type `{}` \
-                             will meet the declared lifetime bounds",
+                             will meet its required lifetime bounds",
                             self.ty_to_string(t))[]);
             }
             infer::RelateDefaultParamBound(span, t) => {
@@ -1640,6 +1660,12 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                     span,
                     &format!("...so that the declared lifetime parameter bounds \
                                 are satisfied")[]);
+            }
+            infer::SafeDestructor(span) => {
+                self.tcx.sess.span_note(
+                    span,
+                    "...so that references are valid when the destructor \
+                     runs")
             }
         }
     }
@@ -1716,7 +1742,7 @@ fn lifetimes_in_scope(tcx: &ty::ctxt,
             Some(node) => match node {
                 ast_map::NodeItem(item) => match item.node {
                     ast::ItemImpl(_, _, ref gen, _, _, _) => {
-                        taken.push_all(gen.lifetimes.as_slice());
+                        taken.push_all(&gen.lifetimes);
                     }
                     _ => ()
                 },
@@ -1738,8 +1764,8 @@ struct LifeGiver {
 impl LifeGiver {
     fn with_taken(taken: &[ast::LifetimeDef]) -> LifeGiver {
         let mut taken_ = HashSet::new();
-        for lt in taken.iter() {
-            let lt_name = token::get_name(lt.lifetime.name).get().to_string();
+        for lt in taken {
+            let lt_name = token::get_name(lt.lifetime.name).to_string();
             taken_.insert(lt_name);
         }
         LifeGiver {
@@ -1761,7 +1787,7 @@ impl LifeGiver {
             s.push_str(&num_to_string(self.counter.get())[]);
             if !self.taken.contains(&s) {
                 lifetime = name_to_dummy_lifetime(
-                                    token::str_to_ident(&s[]).name);
+                                    token::str_to_ident(&s[..]).name);
                 self.generated.borrow_mut().push(lifetime);
                 break;
             }
@@ -1775,7 +1801,7 @@ impl LifeGiver {
             let mut s = String::new();
             let (n, r) = (counter/26 + 1, counter % 26);
             let letter: char = from_u32((r+97) as u32).unwrap();
-            for _ in range(0, n) {
+            for _ in 0..n {
                 s.push(letter);
             }
             s

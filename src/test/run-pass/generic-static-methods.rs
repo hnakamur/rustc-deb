@@ -16,7 +16,7 @@ trait vec_utils<T> {
 impl<T> vec_utils<T> for Vec<T> {
     fn map_<U, F>(x: &Vec<T> , mut f: F) -> Vec<U> where F: FnMut(&T) -> U {
         let mut r = Vec::new();
-        for elt in x.iter() {
+        for elt in x {
             r.push(f(elt));
         }
         r
@@ -24,5 +24,5 @@ impl<T> vec_utils<T> for Vec<T> {
 }
 
 pub fn main() {
-    assert_eq!(vec_utils::map_(&vec!(1i,2i,3i), |&x| x+1), vec!(2i,3i,4i));
+    assert_eq!(vec_utils::map_(&vec!(1,2,3), |&x| x+1), vec!(2,3,4));
 }

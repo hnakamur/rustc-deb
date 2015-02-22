@@ -10,6 +10,7 @@
 
 trait Foo {
     fn new() -> bool { false }
+    fn dummy(&self) { }
 }
 
 trait Bar {
@@ -20,5 +21,5 @@ impl Bar for int {}
 impl Foo for int {}
 
 fn main() {
-    assert!(1i.new());
+    assert!(1.new());
 }

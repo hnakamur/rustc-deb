@@ -28,6 +28,8 @@ pub struct LabelledCFG<'a, 'ast: 'a> {
     pub ast_map: &'a ast_map::Map<'ast>,
     pub cfg: &'a cfg::CFG,
     pub name: String,
+    /// `labelled_edges` controls whether we emit labels on the edges
+    pub labelled_edges: bool,
 }
 
 fn replace_newline_with_backslash_l(s: String) -> String {
@@ -52,10 +54,10 @@ fn replace_newline_with_backslash_l(s: String) -> String {
 }
 
 impl<'a, 'ast> dot::Labeller<'a, Node<'a>, Edge<'a>> for LabelledCFG<'a, 'ast> {
-    fn graph_id(&'a self) -> dot::Id<'a> { dot::Id::new(&self.name[]).unwrap() }
+    fn graph_id(&'a self) -> dot::Id<'a> { dot::Id::new(&self.name[]).ok().unwrap() }
 
     fn node_id(&'a self, &(i,_): &Node<'a>) -> dot::Id<'a> {
-        dot::Id::new(format!("N{}", i.node_id())).unwrap()
+        dot::Id::new(format!("N{}", i.node_id())).ok().unwrap()
     }
 
     fn node_label(&'a self, &(i, n): &Node<'a>) -> dot::LabelText<'a> {
@@ -75,6 +77,9 @@ impl<'a, 'ast> dot::Labeller<'a, Node<'a>, Edge<'a>> for LabelledCFG<'a, 'ast> {
 
     fn edge_label(&self, e: &Edge<'a>) -> dot::LabelText<'a> {
         let mut label = String::new();
+        if !self.labelled_edges {
+            return dot::LabelText::EscStr(label.into_cow());
+        }
         let mut put_one = false;
         for (i, &node_id) in e.data.exiting_scopes.iter().enumerate() {
             if put_one {
@@ -87,7 +92,7 @@ impl<'a, 'ast> dot::Labeller<'a, Node<'a>, Edge<'a>> for LabelledCFG<'a, 'ast> {
             let s = replace_newline_with_backslash_l(s);
             label.push_str(&format!("exiting scope_{} {}",
                                    i,
-                                   &s[])[]);
+                                   &s[..])[]);
         }
         dot::LabelText::EscStr(label.into_cow())
     }

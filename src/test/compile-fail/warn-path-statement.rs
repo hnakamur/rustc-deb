@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: -D path-statement
+// compile-flags: -D path-statements
 fn main() {
 
-    let x = 10is;
+    let x = 10;
     x; //~ ERROR path statement with no effect
 }

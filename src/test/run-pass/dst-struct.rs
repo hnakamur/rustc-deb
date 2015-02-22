@@ -49,10 +49,8 @@ fn foo3(x: &Fat<Fat<[int]>>) {
 }
 
 
-#[derive(PartialEq,Eq)]
+#[derive(Copy, PartialEq, Eq)]
 struct Bar;
-
-impl Copy for Bar {}
 
 trait ToBar {
     fn to_bar(&self) -> Bar;
@@ -117,7 +115,7 @@ pub fn main() {
     foo3(f5);
 
     // Box.
-    let f1 = box [1i, 2, 3];
+    let f1 = box [1, 2, 3];
     assert!((*f1)[1] == 2);
     let f2: Box<[int]> = f1;
     assert!((*f2)[1] == 2);

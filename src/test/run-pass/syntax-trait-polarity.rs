@@ -10,22 +10,20 @@
 
 #![feature(optin_builtin_traits)]
 
-use std::marker::Send;
+use std::marker::{MarkerTrait, Send};
 
 struct TestType;
 
 impl TestType {}
 
-trait TestTrait {}
+trait TestTrait : MarkerTrait {}
 
-unsafe impl !Send for TestType {}
-impl !TestTrait for TestType {}
+impl !Send for TestType {}
 
-struct TestType2<T>;
+struct TestType2<T>(T);
 
 impl<T> TestType2<T> {}
 
-unsafe impl<T> !Send for TestType2<T> {}
-impl<T> !TestTrait for TestType2<T> {}
+impl<T> !Send for TestType2<T> {}
 
 fn main() {}

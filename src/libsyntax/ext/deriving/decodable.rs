@@ -49,6 +49,12 @@ fn expand_deriving_decodable_imp<F>(cx: &mut ExtCtxt,
                                     krate: &'static str) where
     F: FnOnce(P<Item>),
 {
+    if !cx.use_std {
+        // FIXME(#21880): lift this requirement.
+        cx.span_err(span, "this trait cannot be derived with #![no_std]");
+        return;
+    }
+
     let trait_def = TraitDef {
         span: span,
         attributes: Vec::new(),
@@ -68,9 +74,9 @@ fn expand_deriving_decodable_imp<F>(cx: &mut ExtCtxt,
                 args: vec!(Ptr(box Literal(Path::new_local("__D")),
                             Borrowed(None, MutMutable))),
                 ret_ty: Literal(Path::new_(
-                    vec!("std", "result", "Result"),
+                    pathvec_std!(cx, core::result::Result),
                     None,
-                    vec!(box Self, box Literal(Path::new_(
+                    vec!(box Self_, box Literal(Path::new_(
                         vec!["__D", "Error"], None, vec![], false
                     ))),
                     true
@@ -79,7 +85,9 @@ fn expand_deriving_decodable_imp<F>(cx: &mut ExtCtxt,
                 combine_substructure: combine_substructure(box |a, b, c| {
                     decodable_substructure(a, b, c, krate)
                 }),
-            })
+            }
+        ),
+        associated_types: Vec::new(),
     };
 
     trait_def.expand(cx, mitem, item, push)
@@ -92,11 +100,10 @@ fn decodable_substructure(cx: &mut ExtCtxt, trait_span: Span,
     let recurse = vec!(cx.ident_of(krate),
                     cx.ident_of("Decodable"),
                     cx.ident_of("decode"));
+    let exprdecode = cx.expr_path(cx.path_global(trait_span, recurse));
     // throw an underscore in front to suppress unused variable warnings
     let blkarg = cx.ident_of("_d");
     let blkdecoder = cx.expr_ident(trait_span, blkarg);
-    let calldecode = cx.expr_call_global(trait_span, recurse, vec!(blkdecoder.clone()));
-    let lambdadecode = cx.lambda_expr_1(trait_span, calldecode, blkarg);
 
     return match *substr.fields {
         StaticStruct(_, ref summary) => {
@@ -115,8 +122,8 @@ fn decodable_substructure(cx: &mut ExtCtxt, trait_span: Span,
                 cx.expr_try(span,
                     cx.expr_method_call(span, blkdecoder.clone(), read_struct_field,
                                         vec!(cx.expr_str(span, name),
-                                          cx.expr_uint(span, field),
-                                          lambdadecode.clone())))
+                                          cx.expr_usize(span, field),
+                                          exprdecode.clone())))
             });
             let result = cx.expr_ok(trait_span, result);
             cx.expr_method_call(trait_span,
@@ -124,7 +131,7 @@ fn decodable_substructure(cx: &mut ExtCtxt, trait_span: Span,
                                 cx.ident_of("read_struct"),
                                 vec!(
                 cx.expr_str(trait_span, token::get_ident(substr.type_ident)),
-                cx.expr_uint(trait_span, nfields),
+                cx.expr_usize(trait_span, nfields),
                 cx.lambda_expr_1(trait_span, result, blkarg)
             ))
         }
@@ -144,14 +151,14 @@ fn decodable_substructure(cx: &mut ExtCtxt, trait_span: Span,
                                                    path,
                                                    parts,
                                                    |cx, span, _, field| {
-                    let idx = cx.expr_uint(span, field);
+                    let idx = cx.expr_usize(span, field);
                     cx.expr_try(span,
                         cx.expr_method_call(span, blkdecoder.clone(), rvariant_arg,
-                                            vec!(idx, lambdadecode.clone())))
+                                            vec!(idx, exprdecode.clone())))
                 });
 
                 arms.push(cx.arm(v_span,
-                                 vec!(cx.pat_lit(v_span, cx.expr_uint(v_span, i))),
+                                 vec!(cx.pat_lit(v_span, cx.expr_usize(v_span, i))),
                                  decoded));
             }
 
@@ -174,20 +181,20 @@ fn decodable_substructure(cx: &mut ExtCtxt, trait_span: Span,
                 cx.lambda_expr_1(trait_span, result, blkarg)
             ))
         }
-        _ => cx.bug("expected StaticEnum or StaticStruct in deriving(Decodable)")
+        _ => cx.bug("expected StaticEnum or StaticStruct in derive(Decodable)")
     };
 }
 
 /// Create a decoder for a single enum variant/struct:
 /// - `outer_pat_path` is the path to this enum variant/struct
-/// - `getarg` should retrieve the `uint`-th field with name `@str`.
+/// - `getarg` should retrieve the `usize`-th field with name `@str`.
 fn decode_static_fields<F>(cx: &mut ExtCtxt,
                            trait_span: Span,
                            outer_pat_path: ast::Path,
                            fields: &StaticFields,
                            mut getarg: F)
                            -> P<Expr> where
-    F: FnMut(&mut ExtCtxt, Span, InternedString, uint) -> P<Expr>,
+    F: FnMut(&mut ExtCtxt, Span, InternedString, usize) -> P<Expr>,
 {
     match *fields {
         Unnamed(ref fields) => {

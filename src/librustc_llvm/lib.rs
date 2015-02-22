@@ -14,7 +14,7 @@
 #![allow(dead_code)]
 
 #![crate_name = "rustc_llvm"]
-#![unstable]
+#![unstable(feature = "rustc_private")]
 #![staged_api]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
@@ -22,12 +22,18 @@
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/")]
 
-#![allow(unknown_features)]
-#![feature(link_args)]
 #![feature(box_syntax)]
-#![allow(unknown_features)] #![feature(int_uint)]
+#![feature(collections)]
+#![feature(core)]
+#![feature(int_uint)]
+#![feature(libc)]
+#![feature(link_args)]
+#![feature(old_path)]
+#![feature(staged_api)]
+#![feature(std_misc)]
 
 extern crate libc;
+#[macro_use] #[no_link] extern crate rustc_bitflags;
 
 pub use self::OtherAttribute::*;
 pub use self::SpecialAttribute::*;
@@ -56,8 +62,9 @@ use libc::{c_uint, c_ushort, uint64_t, c_int, size_t, c_char};
 use libc::{c_longlong, c_ulonglong, c_void};
 use debuginfo::{DIBuilderRef, DIDescriptor,
                 DIFile, DILexicalBlock, DISubprogram, DIType,
-                DIBasicType, DIDerivedType, DICompositeType,
-                DIVariable, DIGlobalVariable, DIArray, DISubrange};
+                DIBasicType, DIDerivedType, DICompositeType, DIScope,
+                DIVariable, DIGlobalVariable, DIArray, DISubrange,
+                DITemplateTypeParameter, DIEnumerator, DINameSpace};
 
 pub mod archive_ro;
 pub mod diagnostic;
@@ -107,7 +114,7 @@ pub enum Linkage {
 }
 
 #[repr(C)]
-#[derive(Copy, Show)]
+#[derive(Copy, Debug)]
 pub enum DiagnosticSeverity {
     Error,
     Warning,
@@ -254,13 +261,13 @@ impl AttrBuilder {
     }
 
     pub fn apply_llfn(&self, llfn: ValueRef) {
-        for &(idx, ref attr) in self.attrs.iter() {
+        for &(idx, ref attr) in &self.attrs {
             attr.apply_llfn(idx as c_uint, llfn);
         }
     }
 
     pub fn apply_callsite(&self, callsite: ValueRef) {
-        for &(idx, ref attr) in self.attrs.iter() {
+        for &(idx, ref attr) in &self.attrs {
             attr.apply_callsite(idx as c_uint, callsite);
         }
     }
@@ -304,7 +311,7 @@ pub enum RealPredicate {
 
 // The LLVM TypeKind type - must stay in sync with the def of
 // LLVMTypeKind in llvm/include/llvm-c/Core.h
-#[derive(Copy, PartialEq)]
+#[derive(Copy, PartialEq, Debug)]
 #[repr(C)]
 pub enum TypeKind {
     Void      = 0,
@@ -369,7 +376,13 @@ pub enum MetadataType {
     MD_prof = 2,
     MD_fpmath = 3,
     MD_range = 4,
-    MD_tbaa_struct = 5
+    MD_tbaa_struct = 5,
+    MD_invariant_load = 6,
+    MD_alias_scope = 7,
+    MD_noalias = 8,
+    MD_nontemporal = 9,
+    MD_mem_parallel_loop_access = 10,
+    MD_nonnull = 11,
 }
 
 // Inline Asm Dialect
@@ -435,6 +448,9 @@ pub type TypeRef = *mut Type_opaque;
 pub enum Value_opaque {}
 pub type ValueRef = *mut Value_opaque;
 #[allow(missing_copy_implementations)]
+pub enum Metadata_opaque {}
+pub type MetadataRef = *mut Metadata_opaque;
+#[allow(missing_copy_implementations)]
 pub enum BasicBlock_opaque {}
 pub type BasicBlockRef = *mut BasicBlock_opaque;
 #[allow(missing_copy_implementations)]
@@ -494,18 +510,19 @@ pub type InlineAsmDiagHandler = unsafe extern "C" fn(SMDiagnosticRef, *const c_v
 
 pub mod debuginfo {
     pub use self::DIDescriptorFlags::*;
-    use super::{ValueRef};
+    use super::{MetadataRef};
 
     #[allow(missing_copy_implementations)]
     pub enum DIBuilder_opaque {}
     pub type DIBuilderRef = *mut DIBuilder_opaque;
 
-    pub type DIDescriptor = ValueRef;
+    pub type DIDescriptor = MetadataRef;
     pub type DIScope = DIDescriptor;
     pub type DILocation = DIDescriptor;
     pub type DIFile = DIScope;
     pub type DILexicalBlock = DIScope;
     pub type DISubprogram = DIScope;
+    pub type DINameSpace = DIScope;
     pub type DIType = DIDescriptor;
     pub type DIBasicType = DIType;
     pub type DIDerivedType = DIType;
@@ -514,6 +531,8 @@ pub mod debuginfo {
     pub type DIGlobalVariable = DIDescriptor;
     pub type DIArray = DIDescriptor;
     pub type DISubrange = DIDescriptor;
+    pub type DIEnumerator = DIDescriptor;
+    pub type DITemplateTypeParameter = DIDescriptor;
 
     #[derive(Copy)]
     pub enum DIDescriptorFlags {
@@ -885,6 +904,7 @@ extern {
 
 
     /* Operations on global variables */
+    pub fn LLVMIsAGlobalVariable(GlobalVar: ValueRef) -> ValueRef;
     pub fn LLVMAddGlobal(M: ModuleRef, Ty: TypeRef, Name: *const c_char)
                          -> ValueRef;
     pub fn LLVMAddGlobalInAddressSpace(M: ModuleRef,
@@ -1771,8 +1791,8 @@ extern {
                                        Flags: c_uint,
                                        isOptimized: bool,
                                        Fn: ValueRef,
-                                       TParam: ValueRef,
-                                       Decl: ValueRef)
+                                       TParam: DIArray,
+                                       Decl: DIDescriptor)
                                        -> DISubprogram;
 
     pub fn LLVMDIBuilderCreateBasicType(Builder: DIBuilderRef,
@@ -1800,7 +1820,7 @@ extern {
                                          DerivedFrom: DIType,
                                          Elements: DIArray,
                                          RunTimeLang: c_uint,
-                                         VTableHolder: ValueRef,
+                                         VTableHolder: DIType,
                                          UniqueId: *const c_char)
                                          -> DICompositeType;
 
@@ -1817,14 +1837,14 @@ extern {
                                          -> DIDerivedType;
 
     pub fn LLVMDIBuilderCreateLexicalBlock(Builder: DIBuilderRef,
-                                           Scope: DIDescriptor,
+                                           Scope: DIScope,
                                            File: DIFile,
                                            Line: c_uint,
                                            Col: c_uint)
                                            -> DILexicalBlock;
 
     pub fn LLVMDIBuilderCreateStaticVariable(Builder: DIBuilderRef,
-                                             Context: DIDescriptor,
+                                             Context: DIScope,
                                              Name: *const c_char,
                                              LinkageName: *const c_char,
                                              File: DIFile,
@@ -1832,10 +1852,10 @@ extern {
                                              Ty: DIType,
                                              isLocalToUnit: bool,
                                              Val: ValueRef,
-                                             Decl: ValueRef)
+                                             Decl: DIDescriptor)
                                              -> DIGlobalVariable;
 
-    pub fn LLVMDIBuilderCreateLocalVariable(Builder: DIBuilderRef,
+    pub fn LLVMDIBuilderCreateVariable(Builder: DIBuilderRef,
                                             Tag: c_uint,
                                             Scope: DIDescriptor,
                                             Name: *const c_char,
@@ -1844,6 +1864,8 @@ extern {
                                             Ty: DIType,
                                             AlwaysPreserve: bool,
                                             Flags: c_uint,
+                                            AddrOps: *const i64,
+                                            AddrOpsCount: c_uint,
                                             ArgNo: c_uint)
                                             -> DIVariable;
 
@@ -1874,79 +1896,80 @@ extern {
     pub fn LLVMDIBuilderInsertDeclareAtEnd(Builder: DIBuilderRef,
                                            Val: ValueRef,
                                            VarInfo: DIVariable,
+                                           AddrOps: *const i64,
+                                           AddrOpsCount: c_uint,
                                            InsertAtEnd: BasicBlockRef)
                                            -> ValueRef;
 
     pub fn LLVMDIBuilderInsertDeclareBefore(Builder: DIBuilderRef,
                                             Val: ValueRef,
                                             VarInfo: DIVariable,
+                                            AddrOps: *const i64,
+                                            AddrOpsCount: c_uint,
                                             InsertBefore: ValueRef)
                                             -> ValueRef;
 
     pub fn LLVMDIBuilderCreateEnumerator(Builder: DIBuilderRef,
                                          Name: *const c_char,
                                          Val: c_ulonglong)
-                                         -> ValueRef;
+                                         -> DIEnumerator;
 
     pub fn LLVMDIBuilderCreateEnumerationType(Builder: DIBuilderRef,
-                                              Scope: ValueRef,
+                                              Scope: DIScope,
                                               Name: *const c_char,
-                                              File: ValueRef,
+                                              File: DIFile,
                                               LineNumber: c_uint,
                                               SizeInBits: c_ulonglong,
                                               AlignInBits: c_ulonglong,
-                                              Elements: ValueRef,
-                                              ClassType: ValueRef)
-                                              -> ValueRef;
+                                              Elements: DIArray,
+                                              ClassType: DIType)
+                                              -> DIType;
 
     pub fn LLVMDIBuilderCreateUnionType(Builder: DIBuilderRef,
-                                        Scope: ValueRef,
+                                        Scope: DIScope,
                                         Name: *const c_char,
-                                        File: ValueRef,
+                                        File: DIFile,
                                         LineNumber: c_uint,
                                         SizeInBits: c_ulonglong,
                                         AlignInBits: c_ulonglong,
                                         Flags: c_uint,
-                                        Elements: ValueRef,
+                                        Elements: DIArray,
                                         RunTimeLang: c_uint,
                                         UniqueId: *const c_char)
-                                        -> ValueRef;
+                                        -> DIType;
 
     pub fn LLVMSetUnnamedAddr(GlobalVar: ValueRef, UnnamedAddr: Bool);
 
     pub fn LLVMDIBuilderCreateTemplateTypeParameter(Builder: DIBuilderRef,
-                                                    Scope: ValueRef,
+                                                    Scope: DIScope,
                                                     Name: *const c_char,
-                                                    Ty: ValueRef,
-                                                    File: ValueRef,
+                                                    Ty: DIType,
+                                                    File: DIFile,
                                                     LineNo: c_uint,
                                                     ColumnNo: c_uint)
-                                                    -> ValueRef;
+                                                    -> DITemplateTypeParameter;
 
-    pub fn LLVMDIBuilderCreateOpDeref(IntType: TypeRef) -> ValueRef;
+    pub fn LLVMDIBuilderCreateOpDeref() -> i64;
 
-    pub fn LLVMDIBuilderCreateOpPlus(IntType: TypeRef) -> ValueRef;
-
-    pub fn LLVMDIBuilderCreateComplexVariable(Builder: DIBuilderRef,
-                                              Tag: c_uint,
-                                              Scope: ValueRef,
-                                              Name: *const c_char,
-                                              File: ValueRef,
-                                              LineNo: c_uint,
-                                              Ty: ValueRef,
-                                              AddrOps: *const ValueRef,
-                                              AddrOpsCount: c_uint,
-                                              ArgNo: c_uint)
-                                              -> ValueRef;
+    pub fn LLVMDIBuilderCreateOpPlus() -> i64;
 
     pub fn LLVMDIBuilderCreateNameSpace(Builder: DIBuilderRef,
-                                        Scope: ValueRef,
+                                        Scope: DIScope,
                                         Name: *const c_char,
-                                        File: ValueRef,
+                                        File: DIFile,
                                         LineNo: c_uint)
-                                        -> ValueRef;
+                                        -> DINameSpace;
 
-    pub fn LLVMDICompositeTypeSetTypeArray(CompositeType: ValueRef, TypeArray: ValueRef);
+    pub fn LLVMDIBuilderCreateDebugLocation(Context: ContextRef,
+                                            Line: c_uint,
+                                            Column: c_uint,
+                                            Scope: DIScope,
+                                            InlinedAt: MetadataRef)
+                                            -> ValueRef;
+
+    pub fn LLVMDICompositeTypeSetTypeArray(Builder: DIBuilderRef,
+                                           CompositeType: DIType,
+                                           TypeArray: DIArray);
     pub fn LLVMWriteTypeToString(Type: TypeRef, s: RustStringRef);
     pub fn LLVMWriteValueToString(value_ref: ValueRef, s: RustStringRef);
 
@@ -1974,6 +1997,11 @@ extern {
     pub fn LLVMInitializeMipsTargetMC();
     pub fn LLVMInitializeMipsAsmPrinter();
     pub fn LLVMInitializeMipsAsmParser();
+    pub fn LLVMInitializePowerPCTargetInfo();
+    pub fn LLVMInitializePowerPCTarget();
+    pub fn LLVMInitializePowerPCTargetMC();
+    pub fn LLVMInitializePowerPCAsmPrinter();
+    pub fn LLVMInitializePowerPCAsmParser();
 
     pub fn LLVMRustAddPass(PM: PassManagerRef, Pass: *const c_char) -> bool;
     pub fn LLVMRustCreateTargetMachine(Triple: *const c_char,
@@ -2042,6 +2070,10 @@ extern {
                                             function_out: *mut ValueRef,
                                             debugloc_out: *mut DebugLocRef,
                                             message_out: *mut TwineRef);
+    pub fn LLVMUnpackInlineAsmDiagnostic(DI: DiagnosticInfoRef,
+                                            cookie_out: *mut c_uint,
+                                            message_out: *mut TwineRef,
+                                            instruction_out: *mut ValueRef);
 
     pub fn LLVMWriteDiagnosticInfoToString(DI: DiagnosticInfoRef, s: RustStringRef);
     pub fn LLVMGetDiagInfoSeverity(DI: DiagnosticInfoRef) -> DiagnosticSeverity;
@@ -2116,7 +2148,7 @@ impl Drop for TargetData {
 }
 
 pub fn mk_target_data(string_rep: &str) -> TargetData {
-    let string_rep = CString::from_slice(string_rep.as_bytes());
+    let string_rep = CString::new(string_rep).unwrap();
     TargetData {
         lltd: unsafe { LLVMCreateTargetData(string_rep.as_ptr()) }
     }
@@ -2216,60 +2248,6 @@ pub unsafe fn twine_to_string(tr: TwineRef) -> String {
 pub unsafe fn debug_loc_to_string(c: ContextRef, tr: DebugLocRef) -> String {
     build_string(|s| LLVMWriteDebugLocToString(c, tr, s))
         .expect("got a non-UTF8 DebugLoc from LLVM")
-}
-
-// FIXME #15460 - create a public function that actually calls our
-// static LLVM symbols. Otherwise the linker will just throw llvm
-// away.  We're just calling lots of stuff until we transitively get
-// all of LLVM. This is worse than anything.
-pub unsafe fn static_link_hack_this_sucks() {
-    LLVMInitializePasses();
-
-    LLVMInitializeX86TargetInfo();
-    LLVMInitializeX86Target();
-    LLVMInitializeX86TargetMC();
-    LLVMInitializeX86AsmPrinter();
-    LLVMInitializeX86AsmParser();
-
-    LLVMInitializeARMTargetInfo();
-    LLVMInitializeARMTarget();
-    LLVMInitializeARMTargetMC();
-    LLVMInitializeARMAsmPrinter();
-    LLVMInitializeARMAsmParser();
-
-    LLVMInitializeAArch64TargetInfo();
-    LLVMInitializeAArch64Target();
-    LLVMInitializeAArch64TargetMC();
-    LLVMInitializeAArch64AsmPrinter();
-    LLVMInitializeAArch64AsmParser();
-
-    LLVMInitializeMipsTargetInfo();
-    LLVMInitializeMipsTarget();
-    LLVMInitializeMipsTargetMC();
-    LLVMInitializeMipsAsmPrinter();
-    LLVMInitializeMipsAsmParser();
-
-    LLVMRustSetLLVMOptions(0 as c_int,
-                                       0 as *const _);
-
-    LLVMPassManagerBuilderPopulateModulePassManager(0 as *mut _, 0 as *mut _);
-    LLVMPassManagerBuilderPopulateLTOPassManager(0 as *mut _, 0 as *mut _, False, False);
-    LLVMPassManagerBuilderPopulateFunctionPassManager(0 as *mut _, 0 as *mut _);
-    LLVMPassManagerBuilderSetOptLevel(0 as *mut _, 0 as c_uint);
-    LLVMPassManagerBuilderUseInlinerWithThreshold(0 as *mut _, 0 as c_uint);
-    LLVMWriteBitcodeToFile(0 as *mut _, 0 as *const _);
-    LLVMPassManagerBuilderCreate();
-    LLVMPassManagerBuilderDispose(0 as *mut _);
-
-    LLVMRustLinkInExternalBitcode(0 as *mut _, 0 as *const _, 0 as size_t);
-
-    LLVMLinkInMCJIT();
-    LLVMLinkInInterpreter();
-
-    extern {
-        fn LLVMLinkInMCJIT();
-        fn LLVMLinkInInterpreter();
-    }
 }
 
 // The module containing the native LLVM dependencies, generated by the build system

@@ -24,12 +24,13 @@ use prelude::v1::*;
 
 use cell::UnsafeCell;
 use mem;
+use ptr;
 use rt;
 use sync::{StaticMutex, StaticCondvar};
 use sync::mpsc::{channel, Sender, Receiver};
 use sys::helper_signal;
 
-use thread::Thread;
+use thread;
 
 /// A structure for management of a helper thread.
 ///
@@ -80,7 +81,7 @@ impl<M: Send> Helper<M> {
     ///
     /// This function is safe to be called many times.
     pub fn boot<T, F>(&'static self, f: F, helper: fn(helper_signal::signal, Receiver<M>, T)) where
-        T: Send,
+        T: Send + 'static,
         F: FnOnce() -> T,
     {
         unsafe {
@@ -94,14 +95,14 @@ impl<M: Send> Helper<M> {
                 let receive = RaceBox(receive);
 
                 let t = f();
-                Thread::spawn(move |:| {
+                thread::spawn(move || {
                     helper(receive.0, rx, t);
                     let _g = self.lock.lock().unwrap();
                     *self.shutdown.get() = true;
                     self.cond.notify_one()
                 });
 
-                rt::at_exit(move|:| { self.shutdown() });
+                rt::at_exit(move|| { self.shutdown() });
                 *self.initialized.get() = true;
             }
         }
@@ -132,7 +133,7 @@ impl<M: Send> Helper<M> {
 
             // Close the channel by destroying it
             let chan: Box<Sender<M>> = mem::transmute(*self.chan.get());
-            *self.chan.get() = 0 as *mut Sender<M>;
+            *self.chan.get() = ptr::null_mut();
             drop(chan);
             helper_signal::signal(*self.signal.get() as helper_signal::signal);
 

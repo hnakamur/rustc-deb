@@ -52,7 +52,7 @@ use std::iter::range_step;
 use syntax::ast;
 use syntax::visit;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Svh {
     hash: String,
 }
@@ -79,7 +79,7 @@ impl Svh {
         //        avoid collisions.
         let mut state = SipHasher::new();
 
-        for data in metadata.iter() {
+        for data in metadata {
             data.hash(&mut state);
         }
 
@@ -97,13 +97,13 @@ impl Svh {
         //
         // We hash only the MetaItems instead of the entire Attribute
         // to avoid hashing the AttrId
-        for attr in krate.attrs.iter() {
+        for attr in &krate.attrs {
             attr.node.value.hash(&mut state);
         }
 
         let hash = state.finish();
         return Svh {
-            hash: range_step(0u, 64u, 4u).map(|i| hex(hash >> i)).collect()
+            hash: range_step(0, 64, 4).map(|i| hex(hash >> i)).collect()
         };
 
         fn hex(b: u64) -> char {
@@ -117,13 +117,7 @@ impl Svh {
     }
 }
 
-impl fmt::Show for Svh {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Svh {{ {} }}", self.as_str())
-    }
-}
-
-impl fmt::String for Svh {
+impl fmt::Display for Svh {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.pad(self.as_str())
     }
@@ -156,7 +150,7 @@ mod svh_visitor {
         StrictVersionHashVisitor { st: st }
     }
 
-    // To off-load the bulk of the hash-computation on deriving(Hash),
+    // To off-load the bulk of the hash-computation on #[derive(Hash)],
     // we define a set of enums corresponding to the content that our
     // crate visitor will encounter as it traverses the ast.
     //
@@ -188,7 +182,6 @@ mod svh_visitor {
         SawLifetimeDef(token::InternedString),
 
         SawMod,
-        SawViewItem,
         SawForeignItem,
         SawItem,
         SawDecl,
@@ -238,7 +231,7 @@ mod svh_visitor {
         SawExprCall,
         SawExprMethodCall,
         SawExprTup,
-        SawExprBinary(ast::BinOp),
+        SawExprBinary(ast::BinOp_),
         SawExprUnary(ast::UnOp),
         SawExprLit(ast::Lit_),
         SawExprCast,
@@ -248,17 +241,17 @@ mod svh_visitor {
         SawExprClosure,
         SawExprBlock,
         SawExprAssign,
-        SawExprAssignOp(ast::BinOp),
+        SawExprAssignOp(ast::BinOp_),
         SawExprIndex,
         SawExprRange,
         SawExprPath,
+        SawExprQPath,
         SawExprAddrOf(ast::Mutability),
         SawExprRet,
         SawExprInlineAsm(&'a ast::InlineAsm),
         SawExprStruct,
         SawExprRepeat,
         SawExprParen,
-        SawExprForLoop,
     }
 
     fn saw_expr<'a>(node: &'a Expr_) -> SawExprComponent<'a> {
@@ -268,7 +261,7 @@ mod svh_visitor {
             ExprCall(..)             => SawExprCall,
             ExprMethodCall(..)       => SawExprMethodCall,
             ExprTup(..)              => SawExprTup,
-            ExprBinary(op, _, _)     => SawExprBinary(op),
+            ExprBinary(op, _, _)     => SawExprBinary(op.node),
             ExprUnary(op, _)         => SawExprUnary(op),
             ExprLit(ref lit)         => SawExprLit(lit.node.clone()),
             ExprCast(..)             => SawExprCast,
@@ -279,12 +272,13 @@ mod svh_visitor {
             ExprClosure(..)          => SawExprClosure,
             ExprBlock(..)            => SawExprBlock,
             ExprAssign(..)           => SawExprAssign,
-            ExprAssignOp(op, _, _)   => SawExprAssignOp(op),
+            ExprAssignOp(op, _, _)   => SawExprAssignOp(op.node),
             ExprField(_, id)         => SawExprField(content(id.node)),
             ExprTupField(_, id)      => SawExprTupField(id.node),
             ExprIndex(..)            => SawExprIndex,
             ExprRange(..)            => SawExprRange,
             ExprPath(..)             => SawExprPath,
+            ExprQPath(..)            => SawExprQPath,
             ExprAddrOf(m, _)         => SawExprAddrOf(m),
             ExprBreak(id)            => SawExprBreak(id.map(content)),
             ExprAgain(id)            => SawExprAgain(id.map(content)),
@@ -293,9 +287,9 @@ mod svh_visitor {
             ExprStruct(..)           => SawExprStruct,
             ExprRepeat(..)           => SawExprRepeat,
             ExprParen(..)            => SawExprParen,
-            ExprForLoop(..)          => SawExprForLoop,
 
             // just syntactic artifacts, expanded away by time of SVH.
+            ExprForLoop(..)          => unreachable!(),
             ExprIfLet(..)            => unreachable!(),
             ExprWhileLet(..)         => unreachable!(),
             ExprMac(..)              => unreachable!(),
@@ -335,7 +329,7 @@ mod svh_visitor {
             // macro invocations, namely macro_rules definitions,
             // *can* appear as items, even in the expanded crate AST.
 
-            if macro_name(mac).get() == "macro_rules" {
+            if &macro_name(mac)[] == "macro_rules" {
                 // Pretty-printing definition to a string strips out
                 // surface artifacts (currently), such as the span
                 // information, yielding a content-based hash.
@@ -432,19 +426,6 @@ mod svh_visitor {
 
         fn visit_stmt(&mut self, s: &Stmt) {
             SawStmt(saw_stmt(&s.node)).hash(self.st); visit::walk_stmt(self, s)
-        }
-
-        fn visit_view_item(&mut self, i: &ViewItem) {
-            // Two kinds of view items can affect the ABI for a crate:
-            // exported `pub use` view items (since that may expose
-            // items that downstream crates can call), and `use
-            // foo::Trait`, since changing that may affect method
-            // resolution.
-            //
-            // The simplest approach to handling both of the above is
-            // just to adopt the same simple-minded (fine-grained)
-            // hash that I am deploying elsewhere here.
-            SawViewItem.hash(self.st); visit::walk_view_item(self, i)
         }
 
         fn visit_foreign_item(&mut self, i: &ForeignItem) {

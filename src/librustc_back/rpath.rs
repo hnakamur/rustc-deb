@@ -1,4 +1,4 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,8 +10,8 @@
 
 
 use std::collections::HashSet;
-use std::os;
-use std::io::IoError;
+use std::env;
+use std::old_io::IoError;
 use syntax::ast;
 
 pub struct RPathConfig<F, G> where
@@ -40,18 +40,15 @@ pub fn get_rpath_flags<F, G>(config: RPathConfig<F, G>) -> Vec<String> where
     debug!("preparing the RPATH!");
 
     let libs = config.used_crates.clone();
-    let libs = libs.into_iter().filter_map(|(_, l)| {
-        l.map(|p| p.clone())
-    }).collect::<Vec<_>>();
-
-    let rpaths = get_rpaths(config, &libs[]);
-    flags.push_all(&rpaths_to_flags(&rpaths[])[]);
+    let libs = libs.into_iter().filter_map(|(_, l)| l).collect::<Vec<_>>();
+    let rpaths = get_rpaths(config, &libs[..]);
+    flags.push_all(&rpaths_to_flags(&rpaths[..]));
     flags
 }
 
 fn rpaths_to_flags(rpaths: &[String]) -> Vec<String> {
     let mut ret = Vec::new();
-    for rpath in rpaths.iter() {
+    for rpath in rpaths {
         ret.push(format!("-Wl,-rpath,{}", &(*rpath)[]));
     }
     return ret;
@@ -63,7 +60,7 @@ fn get_rpaths<F, G>(mut config: RPathConfig<F, G>, libs: &[Path]) -> Vec<String>
 {
     debug!("output: {:?}", config.out_filename.display());
     debug!("libs:");
-    for libpath in libs.iter() {
+    for libpath in libs {
         debug!("    {:?}", libpath.display());
     }
 
@@ -77,19 +74,19 @@ fn get_rpaths<F, G>(mut config: RPathConfig<F, G>, libs: &[Path]) -> Vec<String>
 
     fn log_rpaths(desc: &str, rpaths: &[String]) {
         debug!("{} rpaths:", desc);
-        for rpath in rpaths.iter() {
+        for rpath in rpaths {
             debug!("    {}", *rpath);
         }
     }
 
-    log_rpaths("relative", &rel_rpaths[]);
-    log_rpaths("fallback", &fallback_rpaths[]);
+    log_rpaths("relative", &rel_rpaths[..]);
+    log_rpaths("fallback", &fallback_rpaths[..]);
 
     let mut rpaths = rel_rpaths;
-    rpaths.push_all(&fallback_rpaths[]);
+    rpaths.push_all(&fallback_rpaths[..]);
 
     // Remove duplicates
-    let rpaths = minimize_rpaths(&rpaths[]);
+    let rpaths = minimize_rpaths(&rpaths[..]);
     return rpaths;
 }
 
@@ -105,8 +102,6 @@ fn get_rpath_relative_to_output<F, G>(config: &mut RPathConfig<F, G>, lib: &Path
     F: FnOnce() -> Path,
     G: FnMut(&Path) -> Result<Path, IoError>,
 {
-    use std::os;
-
     // Mac doesn't appear to support $ORIGIN
     let prefix = if config.is_like_osx {
         "@loader_path"
@@ -114,9 +109,10 @@ fn get_rpath_relative_to_output<F, G>(config: &mut RPathConfig<F, G>, lib: &Path
         "$ORIGIN"
     };
 
-    let mut lib = (config.realpath)(&os::make_absolute(lib).unwrap()).unwrap();
+    let cwd = env::current_dir().unwrap();
+    let mut lib = (config.realpath)(&cwd.join(lib)).unwrap();
     lib.pop();
-    let mut output = (config.realpath)(&os::make_absolute(&config.out_filename).unwrap()).unwrap();
+    let mut output = (config.realpath)(&cwd.join(&config.out_filename)).unwrap();
     output.pop();
     let relative = lib.path_relative_from(&output);
     let relative = relative.expect("could not create rpath relative to output");
@@ -131,7 +127,7 @@ fn get_install_prefix_rpath<F, G>(config: RPathConfig<F, G>) -> String where
     G: FnMut(&Path) -> Result<Path, IoError>,
 {
     let path = (config.get_install_prefix_lib_path)();
-    let path = os::make_absolute(&path).unwrap();
+    let path = env::current_dir().unwrap().join(&path);
     // FIXME (#9639): This needs to handle non-utf8 paths
     path.as_str().expect("non-utf8 component in rpath").to_string()
 }
@@ -139,8 +135,8 @@ fn get_install_prefix_rpath<F, G>(config: RPathConfig<F, G>) -> String where
 fn minimize_rpaths(rpaths: &[String]) -> Vec<String> {
     let mut set = HashSet::new();
     let mut minimized = Vec::new();
-    for rpath in rpaths.iter() {
-        if set.insert(&rpath[]) {
+    for rpath in rpaths {
+        if set.insert(&rpath[..]) {
             minimized.push(rpath.clone());
         }
     }
@@ -151,7 +147,6 @@ fn minimize_rpaths(rpaths: &[String]) -> Vec<String> {
 mod test {
     use super::{RPathConfig};
     use super::{minimize_rpaths, rpaths_to_flags, get_rpath_relative_to_output};
-    use syntax::abi;
 
     #[test]
     fn test_rpaths_to_flags() {
@@ -215,7 +210,9 @@ mod test {
     }
 
     #[test]
-    #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+    #[cfg(any(target_os = "freebsd",
+              target_os = "dragonfly",
+              target_os = "openbsd"))]
     fn test_rpath_relative() {
         let config = &mut RPathConfig {
             used_crates: Vec::new(),

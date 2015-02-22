@@ -67,7 +67,7 @@ pub fn untuple_arguments_if_necessary<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                                 abi: abi::Abi)
                                                 -> Vec<Ty<'tcx>> {
     if abi != abi::RustCall {
-        return inputs.iter().map(|x| (*x).clone()).collect()
+        return inputs.iter().cloned().collect()
     }
 
     if inputs.len() == 0 {
@@ -84,7 +84,7 @@ pub fn untuple_arguments_if_necessary<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     match inputs[inputs.len() - 1].sty {
         ty::ty_tup(ref tupled_arguments) => {
             debug!("untuple_arguments_if_necessary(): untupling arguments");
-            for &tupled_argument in tupled_arguments.iter() {
+            for &tupled_argument in tupled_arguments {
                 result.push(tupled_argument);
             }
         }
@@ -103,13 +103,17 @@ pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                  abi: abi::Abi)
                                  -> Type
 {
+    debug!("type_of_rust_fn(sig={},abi={:?})",
+           sig.repr(cx.tcx()),
+           abi);
+
     let sig = ty::erase_late_bound_regions(cx.tcx(), sig);
     assert!(!sig.variadic); // rust fns are never variadic
 
     let mut atys: Vec<Type> = Vec::new();
 
     // First, munge the inputs, if this has the `rust-call` ABI.
-    let inputs = untuple_arguments_if_necessary(cx, sig.inputs.as_slice(), abi);
+    let inputs = untuple_arguments_if_necessary(cx, &sig.inputs, abi);
 
     // Arg 0: Output pointer.
     // (if the output type is non-immediate)
@@ -140,7 +144,7 @@ pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     let input_tys = inputs.iter().map(|&arg_ty| type_of_explicit_arg(cx, arg_ty));
     atys.extend(input_tys);
 
-    Type::func(&atys[], &lloutputtype)
+    Type::func(&atys[..], &lloutputtype)
 }
 
 // Given a function type and a count of ty params, construct an llvm type
@@ -211,7 +215,7 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
             Type::nil(cx)
         }
 
-        ty::ty_tup(..) | ty::ty_enum(..) | ty::ty_unboxed_closure(..) => {
+        ty::ty_tup(..) | ty::ty_enum(..) | ty::ty_closure(..) => {
             let repr = adt::represent_type(cx, t);
             adt::sizing_type_of(cx, &*repr, false)
         }
@@ -243,9 +247,24 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
     llsizingty
 }
 
+pub fn foreign_arg_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Type {
+    if ty::type_is_bool(t) {
+        Type::i1(cx)
+    } else {
+        type_of(cx, t)
+    }
+}
+
 pub fn arg_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Type {
     if ty::type_is_bool(t) {
         Type::i1(cx)
+    } else if type_is_immediate(cx, t) && type_of(cx, t).is_aggregate() {
+        // We want to pass small aggregates as immediate values, but using an aggregate LLVM type
+        // for this leads to bad optimizations, so its arg type is an appropriately sized integer
+        match machine::llsize_of_alloc(cx, sizing_type_of(cx, t)) {
+            0 => type_of(cx, t),
+            n => Type::ix(cx, n * 8),
+        }
     } else {
         type_of(cx, t)
     }
@@ -313,9 +332,9 @@ pub fn type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Type {
           let repr = adt::represent_type(cx, t);
           let tps = substs.types.get_slice(subst::TypeSpace);
           let name = llvm_type_name(cx, an_enum, did, tps);
-          adt::incomplete_type_of(cx, &*repr, &name[])
+          adt::incomplete_type_of(cx, &*repr, &name[..])
       }
-      ty::ty_unboxed_closure(did, _, ref substs) => {
+      ty::ty_closure(did, _, ref substs) => {
           // Only create the named struct, but don't fill it in. We
           // fill it in *after* placing it into the type cache.
           let repr = adt::represent_type(cx, t);
@@ -323,8 +342,8 @@ pub fn type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Type {
           // inherited from their environment, so we use entire
           // contents of the VecPerParamSpace to to construct the llvm
           // name
-          let name = llvm_type_name(cx, an_unboxed_closure, did, substs.types.as_slice());
-          adt::incomplete_type_of(cx, &*repr, &name[])
+          let name = llvm_type_name(cx, a_closure, did, substs.types.as_slice());
+          adt::incomplete_type_of(cx, &*repr, &name[..])
       }
 
       ty::ty_uniq(ty) | ty::ty_rptr(_, ty::mt{ty, ..}) | ty::ty_ptr(ty::mt{ty, ..}) => {
@@ -380,7 +399,7 @@ pub fn type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Type {
               let repr = adt::represent_type(cx, t);
               let tps = substs.types.get_slice(subst::TypeSpace);
               let name = llvm_type_name(cx, a_struct, did, tps);
-              adt::incomplete_type_of(cx, &*repr, &name[])
+              adt::incomplete_type_of(cx, &*repr, &name[..])
           }
       }
 
@@ -417,7 +436,7 @@ pub fn type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Type {
 
     // If this was an enum or struct, fill in the type now.
     match t.sty {
-        ty::ty_enum(..) | ty::ty_struct(..) | ty::ty_unboxed_closure(..)
+        ty::ty_enum(..) | ty::ty_struct(..) | ty::ty_closure(..)
                 if !ty::type_is_simd(cx.tcx(), t) => {
             let repr = adt::represent_type(cx, t);
             adt::finish_type_of(cx, &*repr, &mut llty);
@@ -439,7 +458,7 @@ pub fn align_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>)
 pub enum named_ty {
     a_struct,
     an_enum,
-    an_unboxed_closure,
+    a_closure,
 }
 
 pub fn llvm_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
@@ -450,7 +469,7 @@ pub fn llvm_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     let name = match what {
         a_struct => "struct",
         an_enum => "enum",
-        an_unboxed_closure => return "closure".to_string(),
+        a_closure => return "closure".to_string(),
     };
 
     let base = ty::item_path_str(cx.tcx(), did);

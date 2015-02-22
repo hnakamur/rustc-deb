@@ -16,7 +16,7 @@ use error::CommandResult;
 use error::Error;
 use term::Term;
 use book;
-use std::io::{Command, File};
+use std::old_io::{Command, File};
 use std::os;
 
 struct Test;
@@ -64,8 +64,8 @@ impl Subcommand for Test {
                 }
             }
             Err(errors) => {
-                for err in errors.into_iter() {
-                    term.err(&err[]);
+                for err in errors {
+                    term.err(&err[..]);
                 }
                 return Err(box "There was an error." as Box<Error>);
             }

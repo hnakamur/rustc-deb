@@ -13,15 +13,11 @@ use middle::ty::{self, Ty};
 use middle::ty::TyVar;
 use middle::infer::combine::*;
 use middle::infer::{cres};
-use middle::infer::glb::Glb;
-use middle::infer::InferCtxt;
-use middle::infer::lub::Lub;
-use middle::infer::sub::Sub;
-use middle::infer::{TypeTrace, Subtype};
+use middle::infer::{Subtype};
 use middle::infer::type_variable::{EqTo};
 use util::ppaux::{Repr};
 
-use syntax::ast::{Onceness, Unsafety};
+use syntax::ast::Unsafety;
 
 pub struct Equate<'f, 'tcx: 'f> {
     fields: CombineFields<'f, 'tcx>
@@ -33,21 +29,20 @@ pub fn Equate<'f, 'tcx>(cf: CombineFields<'f, 'tcx>) -> Equate<'f, 'tcx> {
 }
 
 impl<'f, 'tcx> Combine<'tcx> for Equate<'f, 'tcx> {
-    fn infcx<'a>(&'a self) -> &'a InferCtxt<'a, 'tcx> { self.fields.infcx }
-    fn tag(&self) -> String { "eq".to_string() }
-    fn a_is_expected(&self) -> bool { self.fields.a_is_expected }
-    fn trace(&self) -> TypeTrace<'tcx> { self.fields.trace.clone() }
+    fn tag(&self) -> String { "Equate".to_string() }
+    fn fields<'a>(&'a self) -> &'a CombineFields<'a, 'tcx> { &self.fields }
 
-    fn equate<'a>(&'a self) -> Equate<'a, 'tcx> { Equate(self.fields.clone()) }
-    fn sub<'a>(&'a self) -> Sub<'a, 'tcx> { Sub(self.fields.clone()) }
-    fn lub<'a>(&'a self) -> Lub<'a, 'tcx> { Lub(self.fields.clone()) }
-    fn glb<'a>(&'a self) -> Glb<'a, 'tcx> { Glb(self.fields.clone()) }
-
-    fn contratys(&self, a: Ty<'tcx>, b: Ty<'tcx>) -> cres<'tcx, Ty<'tcx>> {
+    fn tys_with_variance(&self, _: ty::Variance, a: Ty<'tcx>, b: Ty<'tcx>)
+                         -> cres<'tcx, Ty<'tcx>>
+    {
+        // Once we're equating, it doesn't matter what the variance is.
         self.tys(a, b)
     }
 
-    fn contraregions(&self, a: ty::Region, b: ty::Region) -> cres<'tcx, ty::Region> {
+    fn regions_with_variance(&self, _: ty::Variance, a: ty::Region, b: ty::Region)
+                             -> cres<'tcx, ty::Region>
+    {
+        // Once we're equating, it doesn't matter what the variance is.
         self.regions(a, b)
     }
 
@@ -73,14 +68,6 @@ impl<'f, 'tcx> Combine<'tcx> for Equate<'f, 'tcx> {
     fn unsafeties(&self, a: Unsafety, b: Unsafety) -> cres<'tcx, Unsafety> {
         if a != b {
             Err(ty::terr_unsafety_mismatch(expected_found(self, a, b)))
-        } else {
-            Ok(a)
-        }
-    }
-
-    fn oncenesses(&self, a: Onceness, b: Onceness) -> cres<'tcx, Onceness> {
-        if a != b {
-            Err(ty::terr_onceness_mismatch(expected_found(self, a, b)))
         } else {
             Ok(a)
         }

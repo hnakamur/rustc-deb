@@ -18,12 +18,12 @@ trait Foo : Send { }
 
 impl <T: Send> Foo for T { }
 
-fn foo<T: Foo>(val: T, chan: Sender<T>) {
+fn foo<T: Foo + 'static>(val: T, chan: Sender<T>) {
     chan.send(val).unwrap();
 }
 
 pub fn main() {
     let (tx, rx): (Sender<int>, Receiver<int>) = channel();
-    foo(31337i, tx);
-    assert!(rx.recv().unwrap() == 31337i);
+    foo(31337, tx);
+    assert!(rx.recv().unwrap() == 31337);
 }

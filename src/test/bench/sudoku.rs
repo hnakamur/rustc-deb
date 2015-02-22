@@ -13,12 +13,12 @@
 #![feature(box_syntax)]
 #![allow(non_snake_case)]
 
-use std::io::BufferedReader;
-use std::io::stdio::StdReader;
-use std::io;
+use std::old_io::BufferedReader;
+use std::old_io::stdio::StdReader;
+use std::old_io;
 use std::iter::repeat;
 use std::num::Int;
-use std::os;
+use std::env;
 
 // Computes a single solution to a given 9x9 sudoku
 //
@@ -49,22 +49,10 @@ impl Sudoku {
     }
 
     pub fn from_vec(vec: &[[u8;9];9]) -> Sudoku {
-        let g = range(0, 9u).map(|i| {
-            range(0, 9u).map(|j| { vec[i][j] }).collect()
+        let g = (0..9).map(|i| {
+            (0..9).map(|j| { vec[i][j] }).collect()
         }).collect();
         return Sudoku::new(g)
-    }
-
-    pub fn equal(&self, other: &Sudoku) -> bool {
-        for row in range(0u8, 9u8) {
-            for col in range(0u8, 9u8) {
-                if self.grid[row as uint][col as uint] !=
-                        other.grid[row as uint][col as uint] {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     pub fn read(mut reader: &mut BufferedReader<StdReader>) -> Sudoku {
@@ -75,12 +63,12 @@ impl Sudoku {
                           .take(10).collect::<Vec<_>>();
         for line in reader.lines() {
             let line = line.unwrap();
-            let comps: Vec<&str> = line.as_slice()
+            let comps: Vec<&str> = line
                                        .trim()
                                        .split(',')
                                        .collect();
 
-            if comps.len() == 3u {
+            if comps.len() == 3 {
                 let row = comps[0].parse::<u8>().unwrap();
                 let col = comps[1].parse::<u8>().unwrap();
                 g[row as uint][col as uint] = comps[2].parse().unwrap();
@@ -92,10 +80,10 @@ impl Sudoku {
         return Sudoku::new(g)
     }
 
-    pub fn write(&self, writer: &mut io::Writer) {
-        for row in range(0u8, 9u8) {
+    pub fn write(&self, writer: &mut old_io::Writer) {
+        for row in 0u8..9u8 {
             write!(writer, "{}", self.grid[row as uint][0]);
-            for col in range(1u8, 9u8) {
+            for col in 1u8..9u8 {
                 write!(writer, " {}", self.grid[row as uint][col as uint]);
             }
             write!(writer, "\n");
@@ -105,8 +93,8 @@ impl Sudoku {
     // solve sudoku grid
     pub fn solve(&mut self) {
         let mut work: Vec<(u8, u8)> = Vec::new(); /* queue of uncolored fields */
-        for row in range(0u8, 9u8) {
-            for col in range(0u8, 9u8) {
+        for row in 0u8..9u8 {
+            for col in 0u8..9u8 {
                 let color = self.grid[row as uint][col as uint];
                 if color == 0u8 {
                     work.push((row, col));
@@ -114,7 +102,7 @@ impl Sudoku {
             }
         }
 
-        let mut ptr = 0u;
+        let mut ptr = 0;
         let end = work.len();
         while ptr < end {
             let (row, col) = work[ptr];
@@ -123,11 +111,11 @@ impl Sudoku {
                                 (1 as u8);
             if self.next_color(row, col, the_color) {
                 //  yes: advance work list
-                ptr = ptr + 1u;
+                ptr = ptr + 1;
             } else {
                 // no: redo this field aft recoloring pred; unless there is none
-                if ptr == 0u { panic!("No solution found for this sudoku"); }
-                ptr = ptr - 1u;
+                if ptr == 0 { panic!("No solution found for this sudoku"); }
+                ptr = ptr - 1;
             }
         }
     }
@@ -151,7 +139,7 @@ impl Sudoku {
 
     // find colors available in neighbourhood of (row, col)
     fn drop_colors(&mut self, avail: &mut Colors, row: u8, col: u8) {
-        for idx in range(0u8, 9u8) {
+        for idx in 0u8..9u8 {
             /* check same column fields */
             avail.remove(self.grid[idx as uint][col as uint]);
             /* check same row fields */
@@ -161,8 +149,8 @@ impl Sudoku {
         // check same block fields
         let row0 = (row / 3u8) * 3u8;
         let col0 = (col / 3u8) * 3u8;
-        for alt_row in range(row0, row0 + 3u8) {
-            for alt_col in range(col0, col0 + 3u8) {
+        for alt_row in row0..row0 + 3u8 {
+            for alt_col in col0..col0 + 3u8 {
                 avail.remove(self.grid[alt_row as uint][alt_col as uint]);
             }
         }
@@ -184,7 +172,7 @@ impl Colors {
     fn next(&self) -> u8 {
         let Colors(c) = *self;
         let val = c & HEADS;
-        if (0u16 == val) {
+        if 0u16 == val {
             return 0u8;
         } else {
             return val.trailing_zeros() as u8
@@ -281,13 +269,15 @@ fn check_DEFAULT_SUDOKU_solution() {
 }
 
 fn main() {
-    let args        = os::args();
-    let use_default = args.len() == 1u;
+    let args        = env::args();
+    let use_default = args.len() == 1;
     let mut sudoku = if use_default {
         Sudoku::from_vec(&DEFAULT_SUDOKU)
     } else {
-        Sudoku::read(&mut *io::stdin().lock())
+        let mut stdin = old_io::stdin();
+        let mut stdin = stdin.lock();
+        Sudoku::read(&mut *stdin)
     };
     sudoku.solve();
-    sudoku.write(&mut io::stdout());
+    sudoku.write(&mut old_io::stdout());
 }

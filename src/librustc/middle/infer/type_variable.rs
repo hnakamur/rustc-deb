@@ -14,12 +14,13 @@ use self::UndoEntry::*;
 
 use middle::ty::{self, Ty};
 use std::cmp::min;
+use std::marker::PhantomData;
 use std::mem;
 use std::u32;
 use util::snapshot_vec as sv;
 
 pub struct TypeVariableTable<'tcx> {
-    values: sv::SnapshotVec<TypeVariableData<'tcx>,UndoEntry,Delegate>,
+    values: sv::SnapshotVec<Delegate<'tcx>>,
 }
 
 struct TypeVariableData<'tcx> {
@@ -42,13 +43,13 @@ enum UndoEntry {
     Relate(ty::TyVid, ty::TyVid),
 }
 
-struct Delegate;
+struct Delegate<'tcx>(PhantomData<&'tcx ()>);
 
 type Relation = (RelationDir, ty::TyVid);
 
-#[derive(Copy, PartialEq, Show)]
+#[derive(Copy, PartialEq, Debug)]
 pub enum RelationDir {
-    SubtypeOf, SupertypeOf, EqTo
+    SubtypeOf, SupertypeOf, EqTo, BiTo
 }
 
 impl RelationDir {
@@ -56,14 +57,15 @@ impl RelationDir {
         match self {
             SubtypeOf => SupertypeOf,
             SupertypeOf => SubtypeOf,
-            EqTo => EqTo
+            EqTo => EqTo,
+            BiTo => BiTo,
         }
     }
 }
 
 impl<'tcx> TypeVariableTable<'tcx> {
     pub fn new() -> TypeVariableTable<'tcx> {
-        TypeVariableTable { values: sv::SnapshotVec::new(Delegate) }
+        TypeVariableTable { values: sv::SnapshotVec::new(Delegate(PhantomData)) }
     }
 
     fn relations<'a>(&'a mut self, a: ty::TyVid) -> &'a mut Vec<Relation> {
@@ -105,7 +107,7 @@ impl<'tcx> TypeVariableTable<'tcx> {
                                already instantiated")
         };
 
-        for &(dir, vid) in relations.iter() {
+        for &(dir, vid) in &relations {
             stack.push((ty, dir, vid));
         }
 
@@ -165,7 +167,7 @@ impl<'tcx> TypeVariableTable<'tcx> {
         let mut escaping_types = Vec::new();
         let actions_since_snapshot = self.values.actions_since_snapshot(&s.snapshot);
         debug!("actions_since_snapshot.len() = {}", actions_since_snapshot.len());
-        for action in actions_since_snapshot.iter() {
+        for action in actions_since_snapshot {
             match *action {
                 sv::UndoLog::NewElem(index) => {
                     // if any new variables were created during the
@@ -195,9 +197,12 @@ impl<'tcx> TypeVariableTable<'tcx> {
     }
 }
 
-impl<'tcx> sv::SnapshotVecDelegate<TypeVariableData<'tcx>,UndoEntry> for Delegate {
+impl<'tcx> sv::SnapshotVecDelegate for Delegate<'tcx> {
+    type Value = TypeVariableData<'tcx>;
+    type Undo = UndoEntry;
+
     fn reverse(&mut self,
-               values: &mut Vec<TypeVariableData>,
+               values: &mut Vec<TypeVariableData<'tcx>>,
                action: UndoEntry) {
         match action {
             SpecifyVar(vid, relations) => {

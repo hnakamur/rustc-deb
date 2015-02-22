@@ -48,7 +48,7 @@
 // separate crate, libcoretest, to avoid bizarre issues.
 
 #![crate_name = "core"]
-#![unstable]
+#![unstable(feature = "core")]
 #![staged_api]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -56,14 +56,18 @@
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
 
+#![feature(no_std)]
 #![no_std]
-#![allow(unknown_features, raw_pointer_derive)]
-#![cfg_attr(stage0, allow(unused_attributes))]
-#![allow(unknown_features)] #![feature(intrinsics, lang_items)]
-#![feature(simd, unsafe_destructor, slicing_syntax)]
-#![feature(unboxed_closures)]
-#![allow(unknown_features)] #![feature(int_uint)]
+#![allow(raw_pointer_derive)]
 #![deny(missing_docs)]
+
+#![feature(int_uint)]
+#![feature(intrinsics, lang_items)]
+#![feature(on_unimplemented)]
+#![feature(simd, unsafe_destructor)]
+#![feature(staged_api)]
+#![feature(unboxed_closures)]
+#![feature(rustc_attrs)]
 
 #[macro_use]
 mod macros;
@@ -122,7 +126,6 @@ pub mod default;
 
 pub mod any;
 pub mod atomic;
-pub mod borrow;
 pub mod cell;
 pub mod char;
 pub mod panicking;
@@ -136,6 +139,11 @@ pub mod slice;
 pub mod str;
 pub mod hash;
 pub mod fmt;
+pub mod error;
+
+#[doc(primitive = "bool")]
+mod bool {
+}
 
 // note: does not need to be public
 mod tuple;
@@ -145,14 +153,16 @@ mod array;
 mod core {
     pub use panicking;
     pub use fmt;
+    pub use clone;
+    pub use cmp;
+    pub use hash;
+    pub use marker;
+    pub use option;
+    pub use iter;
 }
 
 #[doc(hidden)]
 mod std {
-    pub use clone;
-    pub use cmp;
-    pub use marker;
-    pub use option;
-    pub use fmt;
-    pub use hash;
+    // range syntax
+    pub use ops;
 }

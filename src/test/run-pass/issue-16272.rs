@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::io::{process, Command};
-use std::os;
+use std::old_io::{process, Command};
+use std::env;
 
 fn main() {
-    let len = os::args().len();
+    let len = env::args().len();
 
     if len == 1 {
         test();
@@ -22,7 +22,7 @@ fn main() {
 }
 
 fn test() {
-    let status = Command::new(os::self_exe_name().unwrap())
+    let status = Command::new(env::current_exe().unwrap())
                          .arg("foo").arg("")
                          .stdout(process::InheritFd(1))
                          .stderr(process::InheritFd(2))

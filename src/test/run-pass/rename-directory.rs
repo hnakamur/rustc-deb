@@ -14,10 +14,10 @@
 extern crate libc;
 
 use std::ffi::CString;
-use std::io::TempDir;
-use std::io::fs::PathExtensions;
-use std::io::fs;
-use std::io;
+use std::old_io::TempDir;
+use std::old_io::fs::PathExtensions;
+use std::old_io::fs;
+use std::old_io;
 use std::os;
 
 fn rename_directory() {
@@ -27,25 +27,25 @@ fn rename_directory() {
         let tmpdir = TempDir::new("rename_directory").ok().expect("rename_directory failed");
         let tmpdir = tmpdir.path();
         let old_path = tmpdir.join_many(&["foo", "bar", "baz"]);
-        fs::mkdir_recursive(&old_path, io::USER_RWX);
+        fs::mkdir_recursive(&old_path, old_io::USER_RWX);
         let test_file = &old_path.join("temp.txt");
 
         /* Write the temp input file */
-        let fromp = CString::from_slice(test_file.as_vec());
-        let modebuf = CString::from_slice(b"w+b");
+        let fromp = CString::new(test_file.as_vec()).unwrap();
+        let modebuf = CString::new(b"w+b").unwrap();
         let ostream = libc::fopen(fromp.as_ptr(), modebuf.as_ptr());
-        assert!((ostream as uint != 0u));
+        assert!((ostream as uint != 0_usize));
         let s = "hello".to_string();
-        let buf = CString::from_slice(b"hello");
+        let buf = CString::new(b"hello").unwrap();
         let write_len = libc::fwrite(buf.as_ptr() as *mut _,
-                                     1u as libc::size_t,
-                                     (s.len() + 1u) as libc::size_t,
+                                     1_usize as libc::size_t,
+                                     (s.len() + 1_usize) as libc::size_t,
                                      ostream);
         assert_eq!(write_len, (s.len() + 1) as libc::size_t);
-        assert_eq!(libc::fclose(ostream), (0u as libc::c_int));
+        assert_eq!(libc::fclose(ostream), (0_usize as libc::c_int));
 
         let new_path = tmpdir.join_many(&["quux", "blat"]);
-        fs::mkdir_recursive(&new_path, io::USER_RWX);
+        fs::mkdir_recursive(&new_path, old_io::USER_RWX);
         fs::rename(&old_path, &new_path.join("newdir"));
         assert!(new_path.join("newdir").is_dir());
         assert!(new_path.join_many(&["newdir", "temp.txt"]).exists());

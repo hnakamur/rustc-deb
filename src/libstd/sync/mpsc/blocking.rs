@@ -10,11 +10,10 @@
 
 //! Generic support for building blocking abstractions.
 
-use thread::Thread;
+use thread::{self, Thread};
 use sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 use sync::Arc;
 use marker::{Sync, Send};
-use marker::{NoSend, NoSync};
 use mem;
 use clone::Clone;
 
@@ -33,19 +32,19 @@ pub struct SignalToken {
 
 pub struct WaitToken {
     inner: Arc<Inner>,
-    no_send: NoSend,
-    no_sync: NoSync,
 }
+
+impl !Send for WaitToken {}
+
+impl !Sync for WaitToken {}
 
 pub fn tokens() -> (WaitToken, SignalToken) {
     let inner = Arc::new(Inner {
-        thread: Thread::current(),
+        thread: thread::current(),
         woken: ATOMIC_BOOL_INIT,
     });
     let wait_token = WaitToken {
         inner: inner.clone(),
-        no_send: NoSend,
-        no_sync: NoSync,
     };
     let signal_token = SignalToken {
         inner: inner
@@ -81,7 +80,7 @@ impl SignalToken {
 impl WaitToken {
     pub fn wait(self) {
         while !self.inner.woken.load(Ordering::SeqCst) {
-            Thread::park()
+            thread::park()
         }
     }
 }

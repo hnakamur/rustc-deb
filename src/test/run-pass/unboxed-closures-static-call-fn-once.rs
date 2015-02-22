@@ -11,7 +11,7 @@
 #![feature(unboxed_closures)]
 
 fn main() {
-    let onetime = |: x| x;
-    onetime(0i);
+    let onetime = |x| x;
+    onetime(0);
 }
 

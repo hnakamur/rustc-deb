@@ -17,7 +17,7 @@ struct Foo {
 }
 
 fn main() {
-    let mut y = 1is;
+    let mut y = 1;
     let x = Some(&mut y);
     for &a in x.iter() {    //~ ERROR cannot move out
     }
@@ -25,10 +25,10 @@ fn main() {
     let f = Foo {
         a: [box 3, box 4, box 5],
     };
-    for &a in f.a.iter() {  //~ ERROR cannot move out
+    for &a in &f.a {  //~ ERROR cannot move out
     }
 
-    let x = Some(box 1is);
+    let x = Some(box 1);
     for &a in x.iter() {    //~ ERROR cannot move out
     }
 }

@@ -10,11 +10,11 @@
 
 #![allow(dead_code)]
 
-// compile-flags: -D type-limits
+// compile-flags: -D unused-comparisons
 fn main() { }
 
 fn foo() {
-    let mut i = 100us;
+    let mut i = 100_usize;
     while i >= 0 { //~ ERROR comparison is useless due to type limits
         i -= 1;
     }
@@ -26,7 +26,7 @@ fn bar() -> i8 {
 
 fn baz() -> bool {
     128 > bar() //~ ERROR comparison is useless due to type limits
-                //~^ WARNING literal out of range for its type
+                //~^ WARNING literal out of range for i8
 }
 
 fn bleh() {
@@ -44,18 +44,18 @@ fn bleh() {
 fn qux() {
     let mut i = 1i8;
     while 200 != i { //~ ERROR comparison is useless due to type limits
-                     //~^ WARNING literal out of range for its type
+                     //~^ WARNING literal out of range for i8
         i += 1;
     }
 }
 
 fn quy() {
-    let i = -23us; //~ WARNING negation of unsigned int literal may be unintentional
+    let i = -23_usize; //~ WARNING negation of unsigned int literal may be unintentional
                   //~^ WARNING unused variable
 }
 
 fn quz() {
-    let i = 23us;
+    let i = 23_usize;
     let j = -i;   //~ WARNING negation of unsigned int variable may be unintentional
                   //~^ WARNING unused variable
 }

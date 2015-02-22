@@ -12,8 +12,8 @@
 
 fn main() {
     let mut foo = Vec::new();
-    'foo: for i in [1i, 2, 3].iter() {
-        foo.push(i);
+    'foo: for i in &[1, 2, 3] {
+        foo.push(*i);
     }
 }
 

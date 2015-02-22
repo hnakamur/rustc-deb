@@ -15,7 +15,8 @@ Core encoding and decoding interfaces.
 */
 
 #![crate_name = "serialize"]
-#![unstable = "deprecated in favor of rustc-serialize on crates.io"]
+#![unstable(feature = "rustc_private",
+            reason = "deprecated in favor of rustc-serialize on crates.io")]
 #![staged_api]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
@@ -23,12 +24,18 @@ Core encoding and decoding interfaces.
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
-#![allow(unknown_features)]
-#![cfg_attr(stage0, allow(unused_attributes))]
+
 #![feature(box_syntax)]
-#![feature(old_impl_check)]
-#![feature(slicing_syntax)]
-#![allow(unknown_features)] #![feature(int_uint)]
+#![feature(collections)]
+#![feature(core)]
+#![feature(int_uint)]
+#![feature(old_io)]
+#![feature(old_path)]
+#![feature(rustc_private)]
+#![feature(staged_api)]
+#![feature(std_misc)]
+#![feature(unicode)]
+#![cfg_attr(test, feature(test))]
 
 // test harness access
 #[cfg(test)] extern crate test;
@@ -43,7 +50,6 @@ pub use self::serialize::{Decoder, Encoder, Decodable, Encodable,
 mod serialize;
 mod collection_impls;
 
-pub mod base64;
 pub mod hex;
 pub mod json;
 

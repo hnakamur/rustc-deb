@@ -8,14 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn send<T:Send + std::fmt::Show>(ch: _chan<T>, data: T) {
+use std::marker;
+
+fn send<T:Send + std::fmt::Debug>(ch: _chan<T>, data: T) {
     println!("{:?}", ch);
     println!("{:?}", data);
     panic!();
 }
 
-#[derive(Show)]
-struct _chan<T>(isize);
+#[derive(Debug)]
+struct _chan<T>(isize, marker::PhantomData<T>);
 
 // Tests that "log(debug, message);" is flagged as using
 // message after the send deinitializes it

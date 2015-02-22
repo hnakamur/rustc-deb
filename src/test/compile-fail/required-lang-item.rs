@@ -8,10 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(lang_items)]
+#![feature(lang_items, no_std)]
 #![no_std]
 
-#[lang="sized"] pub trait Sized {}
+#[lang="phantom_fn"]
+pub trait PhantomFn<T:?Sized> { }
+impl<T:?Sized, U:?Sized> PhantomFn<T> for U { }
+
+#[lang="sized"] pub trait Sized : PhantomFn<Self> {}
 
 // error-pattern:requires `start` lang_item
 

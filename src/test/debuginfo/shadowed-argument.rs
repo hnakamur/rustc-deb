@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -65,13 +64,13 @@ fn a_function(x: bool, y: bool) {
     zzz(); // #break
     sentinel();
 
-    let x = 10i;
+    let x = 10;
 
     zzz(); // #break
     sentinel();
 
     let x = 10.5f64;
-    let y = 20i;
+    let y = 20;
 
     zzz(); // #break
     sentinel();

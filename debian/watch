@@ -1,5 +1,0 @@
-version=3
-
-opts="pgpsigurlmangle=s/$/.asc/" \
- http://www.rust-lang.org/install.html \
- (?:.*/)rustc?-(\d[\d\.]*(?:-\w+)?)-src\.tar\.gz

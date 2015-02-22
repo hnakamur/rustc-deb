@@ -82,8 +82,6 @@ public:
   unsigned getNumberOfRegisters(bool Vector) const override;
   unsigned getRegisterBitWidth(bool Vector) const override;
   unsigned getMaxInterleaveFactor() const override;
-
-  /// @}
 };
 
 } // end anonymous namespace
@@ -102,7 +100,7 @@ bool AMDGPUTTI::hasBranchDivergence() const { return true; }
 void AMDGPUTTI::getUnrollingPreferences(const Function *, Loop *L,
                                         UnrollingPreferences &UP) const {
   UP.Threshold = 300; // Twice the default.
-  UP.Count = UINT_MAX;
+  UP.MaxCount = UINT_MAX;
   UP.Partial = true;
 
   // TODO: Do we want runtime unrolling?

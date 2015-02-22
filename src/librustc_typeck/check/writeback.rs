@@ -39,7 +39,7 @@ pub fn resolve_type_vars_in_expr(fcx: &FnCtxt, e: &ast::Expr) {
     let mut wbcx = WritebackCx::new(fcx);
     wbcx.visit_expr(e);
     wbcx.visit_upvar_borrow_map();
-    wbcx.visit_unboxed_closures();
+    wbcx.visit_closures();
     wbcx.visit_object_cast_map();
 }
 
@@ -49,7 +49,7 @@ pub fn resolve_type_vars_in_fn(fcx: &FnCtxt,
     assert_eq!(fcx.writeback_errors.get(), false);
     let mut wbcx = WritebackCx::new(fcx);
     wbcx.visit_block(blk);
-    for arg in decl.inputs.iter() {
+    for arg in &decl.inputs {
         wbcx.visit_node_id(ResolvingPattern(arg.pat.span), arg.id);
         wbcx.visit_pat(&*arg.pat);
 
@@ -60,7 +60,7 @@ pub fn resolve_type_vars_in_fn(fcx: &FnCtxt,
         }
     }
     wbcx.visit_upvar_borrow_map();
-    wbcx.visit_unboxed_closures();
+    wbcx.visit_closures();
     wbcx.visit_object_cast_map();
 }
 
@@ -118,8 +118,8 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
                                     MethodCall::expr(e.id));
 
         match e.node {
-            ast::ExprClosure(_, _, ref decl, _) => {
-                for input in decl.inputs.iter() {
+            ast::ExprClosure(_, ref decl, _) => {
+                for input in &decl.inputs {
                     let _ = self.visit_node_id(ResolvingExpr(e.span),
                                                input.id);
                 }
@@ -182,40 +182,35 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
             return;
         }
 
-        for (upvar_id, upvar_borrow) in self.fcx.inh.upvar_borrow_map.borrow().iter() {
-            let r = upvar_borrow.region;
-            let r = self.resolve(&r, ResolvingUpvar(*upvar_id));
-            let new_upvar_borrow = ty::UpvarBorrow { kind: upvar_borrow.kind,
-                                                     region: r };
-            debug!("Upvar borrow for {} resolved to {}",
+        for (upvar_id, upvar_capture) in &*self.fcx.inh.upvar_capture_map.borrow() {
+            let new_upvar_capture = match *upvar_capture {
+                ty::UpvarCapture::ByValue => ty::UpvarCapture::ByValue,
+                ty::UpvarCapture::ByRef(ref upvar_borrow) => {
+                    let r = upvar_borrow.region;
+                    let r = self.resolve(&r, ResolvingUpvar(*upvar_id));
+                    ty::UpvarCapture::ByRef(
+                        ty::UpvarBorrow { kind: upvar_borrow.kind, region: r })
+                }
+            };
+            debug!("Upvar capture for {} resolved to {}",
                    upvar_id.repr(self.tcx()),
-                   new_upvar_borrow.repr(self.tcx()));
-            self.fcx.tcx().upvar_borrow_map.borrow_mut().insert(
-                *upvar_id, new_upvar_borrow);
+                   new_upvar_capture.repr(self.tcx()));
+            self.fcx.tcx().upvar_capture_map.borrow_mut().insert(*upvar_id, new_upvar_capture);
         }
     }
 
-    fn visit_unboxed_closures(&self) {
+    fn visit_closures(&self) {
         if self.fcx.writeback_errors.get() {
             return
         }
 
-        for (def_id, unboxed_closure) in self.fcx
-                                             .inh
-                                             .unboxed_closures
-                                             .borrow()
-                                             .iter() {
-            let closure_ty = self.resolve(&unboxed_closure.closure_type,
-                                          ResolvingUnboxedClosure(*def_id));
-            let unboxed_closure = ty::UnboxedClosure {
-                closure_type: closure_ty,
-                kind: unboxed_closure.kind,
-            };
-            self.fcx
-                .tcx()
-                .unboxed_closures
-                .borrow_mut()
-                .insert(*def_id, unboxed_closure);
+        for (def_id, closure_ty) in &*self.fcx.inh.closure_tys.borrow() {
+            let closure_ty = self.resolve(closure_ty, ResolvingClosure(*def_id));
+            self.fcx.tcx().closure_tys.borrow_mut().insert(*def_id, closure_ty);
+        }
+
+        for (def_id, &closure_kind) in &*self.fcx.inh.closure_kinds.borrow() {
+            self.fcx.tcx().closure_kinds.borrow_mut().insert(*def_id, closure_kind);
         }
     }
 
@@ -271,7 +266,7 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
                     }
 
                     ty::AdjustDerefRef(adj) => {
-                        for autoderef in range(0, adj.autoderefs) {
+                        for autoderef in 0..adj.autoderefs {
                             let method_call = MethodCall::autoderef(id, autoderef);
                             self.visit_method_map_entry(reason, method_call);
                         }
@@ -331,7 +326,7 @@ enum ResolveReason {
     ResolvingLocal(Span),
     ResolvingPattern(Span),
     ResolvingUpvar(ty::UpvarId),
-    ResolvingUnboxedClosure(ast::DefId),
+    ResolvingClosure(ast::DefId),
 }
 
 impl ResolveReason {
@@ -343,7 +338,7 @@ impl ResolveReason {
             ResolvingUpvar(upvar_id) => {
                 ty::expr_span(tcx, upvar_id.closure_expr_id)
             }
-            ResolvingUnboxedClosure(did) => {
+            ResolvingClosure(did) => {
                 if did.krate == ast::LOCAL_CRATE {
                     ty::expr_span(tcx, did.node)
                 } else {
@@ -410,15 +405,14 @@ impl<'cx, 'tcx> Resolver<'cx, 'tcx> {
                     let span = self.reason.span(self.tcx);
                     span_err!(self.tcx.sess, span, E0104,
                         "cannot resolve lifetime for captured variable `{}`: {}",
-                        ty::local_var_name_str(self.tcx, upvar_id.var_id).get().to_string(),
+                        ty::local_var_name_str(self.tcx, upvar_id.var_id).to_string(),
                         infer::fixup_err_to_string(e));
                 }
 
-                ResolvingUnboxedClosure(_) => {
+                ResolvingClosure(_) => {
                     let span = self.reason.span(self.tcx);
-                    self.tcx.sess.span_err(span,
-                                           "cannot determine a type for this \
-                                            unboxed closure")
+                    span_err!(self.tcx.sess, span, E0196,
+                              "cannot determine a type for this closure")
                 }
             }
         }

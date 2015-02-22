@@ -9,16 +9,16 @@
 // except according to those terms.
 
 
-struct invariant<'a> {
+struct Invariant<'a> {
     f: Box<for<'b> FnOnce() -> &'b mut &'a isize + 'static>,
 }
 
-fn to_same_lifetime<'r>(bi: invariant<'r>) {
-    let bj: invariant<'r> = bi;
+fn to_same_lifetime<'r>(b_isize: Invariant<'r>) {
+    let bj: Invariant<'r> = b_isize;
 }
 
-fn to_longer_lifetime<'r>(bi: invariant<'r>) -> invariant<'static> {
-    bi //~ ERROR mismatched types
+fn to_longer_lifetime<'r>(b_isize: Invariant<'r>) -> Invariant<'static> {
+    b_isize //~ ERROR mismatched types
 }
 
 fn main() {

@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::io::Command;
-use std::os;
+use std::old_io::Command;
+use std::env;
 
 #[cfg(all(unix, not(target_os="android")))]
 pub fn env_cmd() -> Command {
@@ -31,23 +31,23 @@ pub fn env_cmd() -> Command {
 
 fn main() {
     // save original environment
-    let old_env = os::getenv("RUN_TEST_NEW_ENV");
+    let old_env = env::var_os("RUN_TEST_NEW_ENV");
 
-    os::setenv("RUN_TEST_NEW_ENV", "123");
+    env::set_var("RUN_TEST_NEW_ENV", "123");
 
     let mut cmd = env_cmd();
     cmd.env_remove("RUN_TEST_NEW_ENV");
 
     // restore original environment
     match old_env {
-        None => os::unsetenv("RUN_TEST_NEW_ENV"),
-        Some(val) => os::setenv("RUN_TEST_NEW_ENV", val.as_slice())
+        None => env::remove_var("RUN_TEST_NEW_ENV"),
+        Some(val) => env::set_var("RUN_TEST_NEW_ENV", &val)
     }
 
     let prog = cmd.spawn().unwrap();
     let result = prog.wait_with_output().unwrap();
-    let output = String::from_utf8_lossy(result.output.as_slice());
+    let output = String::from_utf8_lossy(&result.output);
 
-    assert!(!output.as_slice().contains("RUN_TEST_NEW_ENV"),
+    assert!(!output.contains("RUN_TEST_NEW_ENV"),
             "found RUN_TEST_NEW_ENV inside of:\n\n{}", output);
 }

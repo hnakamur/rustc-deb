@@ -19,7 +19,6 @@ pub use self::common::gensym_name;
 #[macro_use]
 mod macros;
 
-mod doc;
 mod inline;
 mod monomorphize;
 mod controlflow;
@@ -45,6 +44,7 @@ mod cabi_x86_win64;
 mod cabi_arm;
 mod cabi_aarch64;
 mod cabi_mips;
+mod cabi_powerpc;
 mod foreign;
 mod intrinsic;
 mod debuginfo;

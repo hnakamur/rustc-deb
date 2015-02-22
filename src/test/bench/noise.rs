@@ -16,12 +16,11 @@ use std::f32::consts::PI;
 use std::num::Float;
 use std::rand::{Rng, StdRng};
 
+#[derive(Copy)]
 struct Vec2 {
     x: f32,
     y: f32,
 }
-
-impl Copy for Vec2 {}
 
 fn lerp(a: f32, b: f32, v: f32) -> f32 { a * (1.0 - v) + b * v }
 
@@ -46,7 +45,7 @@ impl Noise2DContext {
         let mut rng = StdRng::new().unwrap();
 
         let mut rgradients = [Vec2 { x: 0.0, y: 0.0 }; 256];
-        for x in rgradients.iter_mut() {
+        for x in &mut rgradients[] {
             *x = random_gradient(&mut rng);
         }
 
@@ -105,17 +104,17 @@ fn main() {
     let mut pixels = [0f32; 256*256];
     let n2d = Noise2DContext::new();
 
-    for _ in range(0u, 100) {
-        for y in range(0u, 256) {
-            for x in range(0u, 256) {
+    for _ in 0..100 {
+        for y in 0..256 {
+            for x in 0..256 {
                 let v = n2d.get(x as f32 * 0.1, y as f32 * 0.1);
                 pixels[y*256+x] = v * 0.5 + 0.5;
             }
         }
     }
 
-    for y in range(0u, 256) {
-        for x in range(0u, 256) {
+    for y in 0..256 {
+        for x in 0..256 {
             let idx = (pixels[y*256+x] / 0.2) as uint;
             print!("{}", symbols[idx]);
         }

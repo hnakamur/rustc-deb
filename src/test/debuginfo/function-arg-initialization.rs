@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // This test case checks if function arguments already have the correct value when breaking at the
@@ -226,7 +225,7 @@
 #![omit_gdb_pretty_printer_section]
 
 fn immediate_args(a: int, b: bool, c: f64) {
-    ::std::io::print("") // #break
+    ::std::old_io::print("") // #break
 }
 
 struct BigStruct {
@@ -241,21 +240,21 @@ struct BigStruct {
 }
 
 fn non_immediate_args(a: BigStruct, b: BigStruct) {
-    ::std::io::print("") // #break
+    ::std::old_io::print("") // #break
 }
 
 fn binding(a: i64, b: u64, c: f64) {
-    let x = 0i; // #break
-    ::std::io::print("")
+    let x = 0; // #break
+    ::std::old_io::print("")
 }
 
 fn assignment(mut a: u64, b: u64, c: f64) {
     a = b; // #break
-    ::std::io::print("")
+    ::std::old_io::print("")
 }
 
 fn function_call(x: u64, y: u64, z: f64) {
-    std::io::stdio::print("Hi!") // #break
+    std::old_io::stdio::print("Hi!") // #break
 }
 
 fn identifier(x: u64, y: u64, z: f64) -> u64 {

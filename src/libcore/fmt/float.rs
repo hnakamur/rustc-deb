@@ -17,7 +17,7 @@ pub use self::SignFormat::*;
 use char;
 use char::CharExt;
 use fmt;
-use iter::{IteratorExt, range};
+use iter::IteratorExt;
 use num::{cast, Float, ToPrimitive};
 use num::FpCategory as Fp;
 use ops::FnOnce;
@@ -53,7 +53,7 @@ pub enum SignFormat {
     SignNeg
 }
 
-static DIGIT_E_RADIX: uint = ('e' as uint) - ('a' as uint) + 11u;
+static DIGIT_E_RADIX: u32 = ('e' as u32) - ('a' as u32) + 11;
 
 /// Converts a number to its string representation as a byte vector.
 /// This is meant to be a common base implementation for all numeric string
@@ -87,7 +87,7 @@ static DIGIT_E_RADIX: uint = ('e' as uint) - ('a' as uint) + 11u;
 ///   between digit and exponent sign `'p'`.
 pub fn float_to_str_bytes_common<T: Float, U, F>(
     num: T,
-    radix: uint,
+    radix: u32,
     negative_zero: bool,
     sign: SignFormat,
     digits: SignificantDigits,
@@ -156,7 +156,7 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
         deccum = deccum / radix_gen;
         deccum = deccum.trunc();
 
-        let c = char::from_digit(current_digit.to_int().unwrap() as uint, radix);
+        let c = char::from_digit(current_digit.to_int().unwrap() as u32, radix);
         buf[end] = c.unwrap() as u8;
         end += 1;
 
@@ -179,7 +179,7 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
         _ => ()
     }
 
-    buf.slice_to_mut(end).reverse();
+    buf[..end].reverse();
 
     // Remember start of the fractional digits.
     // Points one beyond end of buf if none get generated,
@@ -191,7 +191,7 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
     if deccum != _0 || (limit_digits && exact && digit_count > 0) {
         buf[end] = b'.';
         end += 1;
-        let mut dig = 0u;
+        let mut dig = 0;
 
         // calculate new digits while
         // - there is no limit and there are digits left
@@ -211,24 +211,24 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
             // See note in first loop.
             let current_digit = deccum.trunc().abs();
 
-            let c = char::from_digit(current_digit.to_int().unwrap() as uint,
+            let c = char::from_digit(current_digit.to_int().unwrap() as u32,
                                      radix);
             buf[end] = c.unwrap() as u8;
             end += 1;
 
             // Decrease the deccumulator one fractional digit at a time
             deccum = deccum.fract();
-            dig += 1u;
+            dig += 1;
         }
 
         // If digits are limited, and that limit has been reached,
         // cut off the one extra digit, and depending on its value
         // round the remaining ones.
         if limit_digits && dig == digit_count {
-            let ascii2value = |&: chr: u8| {
+            let ascii2value = |chr: u8| {
                 (chr as char).to_digit(radix).unwrap()
             };
-            let value2ascii = |&: val: uint| {
+            let value2ascii = |val: u32| {
                 char::from_digit(val, radix).unwrap() as u8
             };
 
@@ -242,7 +242,7 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
                     if i < 0
                     || buf[i as uint] == b'-'
                     || buf[i as uint] == b'+' {
-                        for j in range(i as uint + 1, end).rev() {
+                        for j in (i as uint + 1..end).rev() {
                             buf[j + 1] = buf[j];
                         }
                         buf[(i + 1) as uint] = value2ascii(1);
@@ -314,9 +314,9 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
                 end: &'a mut uint,
             }
 
-            impl<'a> fmt::Writer for Filler<'a> {
+            impl<'a> fmt::Write for Filler<'a> {
                 fn write_str(&mut self, s: &str) -> fmt::Result {
-                    slice::bytes::copy_memory(self.buf.slice_from_mut(*self.end),
+                    slice::bytes::copy_memory(&mut self.buf[(*self.end)..],
                                               s.as_bytes());
                     *self.end += s.len();
                     Ok(())
@@ -332,5 +332,5 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
         }
     }
 
-    f(unsafe { str::from_utf8_unchecked(&buf[0..end]) })
+    f(unsafe { str::from_utf8_unchecked(&buf[..end]) })
 }

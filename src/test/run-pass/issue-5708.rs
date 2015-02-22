@@ -41,14 +41,16 @@ impl<'a> Outer<'a> {
 }
 
 pub fn main() {
-    let inner = 5i;
+    let inner = 5;
     let outer = Outer::new(&inner as &Inner);
     outer.inner.print();
 }
 
 
 // minimal
-pub trait MyTrait<T> { }
+pub trait MyTrait<T> {
+    fn dummy(&self, t: T) -> T { panic!() }
+}
 
 pub struct MyContainer<'a, T> {
     foos: Vec<&'a (MyTrait<T>+'a)> ,

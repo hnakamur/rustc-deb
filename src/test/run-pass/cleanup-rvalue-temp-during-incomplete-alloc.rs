@@ -27,7 +27,7 @@
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-use std::thread::Thread;
+use std::thread;
 
 enum Conzabble {
     Bickwick(Foo)
@@ -44,9 +44,9 @@ fn get_bar(x: uint) -> Vec<uint> { vec!(x * 2) }
 pub fn fails() {
     let x = 2;
     let mut y = Vec::new();
-    y.push(box Conzabble::Bickwick(do_it(get_bar(x).as_slice())));
+    y.push(box Conzabble::Bickwick(do_it(&get_bar(x))));
 }
 
 pub fn main() {
-    Thread::scoped(fails).join();
+    thread::spawn(fails).join();
 }

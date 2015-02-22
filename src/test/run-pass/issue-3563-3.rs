@@ -27,28 +27,25 @@ use std::iter::repeat;
 use std::slice;
 
 // Represents a position on a canvas.
+#[derive(Copy)]
 struct Point {
     x: int,
     y: int,
 }
 
-impl Copy for Point {}
-
 // Represents an offset on a canvas. (This has the same structure as a Point.
 // but different semantics).
+#[derive(Copy)]
 struct Size {
     width: int,
     height: int,
 }
 
-impl Copy for Size {}
-
+#[derive(Copy)]
 struct Rect {
     top_left: Point,
     size: Size,
 }
-
-impl Copy for Rect {}
 
 // Contains the information needed to do shape rendering via ASCII art.
 struct AsciiArt {
@@ -72,7 +69,7 @@ fn AsciiArt(width: uint, height: uint, fill: char) -> AsciiArt {
     // Use an anonymous function to build a vector of vectors containing
     // blank characters for each position in our canvas.
     let mut lines = Vec::new();
-    for _ in range(0, height) {
+    for _ in 0..height {
         lines.push(repeat('.').take(width).collect::<Vec<_>>());
     }
 
@@ -125,7 +122,7 @@ trait Canvas {
     // Unlike interfaces traits support default implementations.
     // Got an ICE as soon as I added this method.
     fn add_points(&mut self, shapes: &[Point]) {
-        for pt in shapes.iter() {self.add_point(*pt)};
+        for pt in shapes {self.add_point(*pt)};
     }
 }
 
@@ -139,13 +136,13 @@ impl Canvas for AsciiArt {
 
     fn add_rect(&mut self, shape: Rect) {
         // Add the top and bottom lines.
-        for x in range(shape.top_left.x, shape.top_left.x + shape.size.width) {
+        for x in shape.top_left.x..shape.top_left.x + shape.size.width {
             self.add_pt(x, shape.top_left.y);
             self.add_pt(x, shape.top_left.y + shape.size.height - 1);
         }
 
         // Add the left and right lines.
-        for y in range(shape.top_left.y, shape.top_left.y + shape.size.height) {
+        for y in shape.top_left.y..shape.top_left.y + shape.size.height {
             self.add_pt(shape.top_left.x, y);
             self.add_pt(shape.top_left.x + shape.size.width - 1, y);
         }
@@ -165,7 +162,7 @@ pub fn check_strs(actual: &str, expected: &str) -> bool {
 
 fn test_ascii_art_ctor() {
     let art = AsciiArt(3, 3, '*');
-    assert!(check_strs(art.to_string().as_slice(), "...\n...\n..."));
+    assert!(check_strs(&art.to_string(), "...\n...\n..."));
 }
 
 
@@ -174,7 +171,7 @@ fn test_add_pt() {
     art.add_pt(0, 0);
     art.add_pt(0, -10);
     art.add_pt(1, 2);
-    assert!(check_strs(art.to_string().as_slice(), "*..\n...\n.*."));
+    assert!(check_strs(&art.to_string(), "*..\n...\n.*."));
 }
 
 
@@ -182,7 +179,7 @@ fn test_shapes() {
     let mut art = AsciiArt(4, 4, '*');
     art.add_rect(Rect {top_left: Point {x: 0, y: 0}, size: Size {width: 4, height: 4}});
     art.add_point(Point {x: 2, y: 2});
-    assert!(check_strs(art.to_string().as_slice(), "****\n*..*\n*.**\n****"));
+    assert!(check_strs(&art.to_string(), "****\n*..*\n*.**\n****"));
 }
 
 pub fn main() {

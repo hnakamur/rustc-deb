@@ -17,11 +17,12 @@
 
 use prelude::v1::*;
 
-use ffi;
-use io::{self, IoResult, IoError};
+use ffi::CStr;
+use io::{self, ErrorKind};
 use libc;
 use num::{Int, SignedInt};
 use num;
+use old_io::{self, IoResult, IoError};
 use str;
 use sys_common::mkerr_libc;
 
@@ -38,20 +39,27 @@ macro_rules! helper_init { (static $name:ident: Helper<$m:ty>) => (
 
 pub mod backtrace;
 pub mod c;
-pub mod ext;
 pub mod condvar;
-pub mod fs;
+pub mod ext;
+pub mod fd;
+pub mod fs;  // support for std::old_io
+pub mod fs2; // support for std::fs
 pub mod helper_signal;
 pub mod mutex;
+pub mod net;
 pub mod os;
+pub mod os_str;
 pub mod pipe;
+pub mod pipe2;
 pub mod process;
+pub mod process2;
 pub mod rwlock;
 pub mod stack_overflow;
 pub mod sync;
 pub mod tcp;
 pub mod thread;
 pub mod thread_local;
+pub mod time;
 pub mod timer;
 pub mod tty;
 pub mod udp;
@@ -83,7 +91,8 @@ pub fn last_gai_error(s: libc::c_int) -> IoError {
 
     let mut err = decode_error(s);
     err.detail = Some(unsafe {
-        str::from_utf8(ffi::c_str_to_bytes(&gai_strerror(s))).unwrap().to_string()
+        let data = CStr::from_ptr(gai_strerror(s));
+        str::from_utf8(data.to_bytes()).unwrap().to_string()
     });
     err
 }
@@ -92,35 +101,35 @@ pub fn last_gai_error(s: libc::c_int) -> IoError {
 pub fn decode_error(errno: i32) -> IoError {
     // FIXME: this should probably be a bit more descriptive...
     let (kind, desc) = match errno {
-        libc::EOF => (io::EndOfFile, "end of file"),
-        libc::ECONNREFUSED => (io::ConnectionRefused, "connection refused"),
-        libc::ECONNRESET => (io::ConnectionReset, "connection reset"),
+        libc::EOF => (old_io::EndOfFile, "end of file"),
+        libc::ECONNREFUSED => (old_io::ConnectionRefused, "connection refused"),
+        libc::ECONNRESET => (old_io::ConnectionReset, "connection reset"),
         libc::EPERM | libc::EACCES =>
-            (io::PermissionDenied, "permission denied"),
-        libc::EPIPE => (io::BrokenPipe, "broken pipe"),
-        libc::ENOTCONN => (io::NotConnected, "not connected"),
-        libc::ECONNABORTED => (io::ConnectionAborted, "connection aborted"),
-        libc::EADDRNOTAVAIL => (io::ConnectionRefused, "address not available"),
-        libc::EADDRINUSE => (io::ConnectionRefused, "address in use"),
-        libc::ENOENT => (io::FileNotFound, "no such file or directory"),
-        libc::EISDIR => (io::InvalidInput, "illegal operation on a directory"),
-        libc::ENOSYS => (io::IoUnavailable, "function not implemented"),
-        libc::EINVAL => (io::InvalidInput, "invalid argument"),
+            (old_io::PermissionDenied, "permission denied"),
+        libc::EPIPE => (old_io::BrokenPipe, "broken pipe"),
+        libc::ENOTCONN => (old_io::NotConnected, "not connected"),
+        libc::ECONNABORTED => (old_io::ConnectionAborted, "connection aborted"),
+        libc::EADDRNOTAVAIL => (old_io::ConnectionRefused, "address not available"),
+        libc::EADDRINUSE => (old_io::ConnectionRefused, "address in use"),
+        libc::ENOENT => (old_io::FileNotFound, "no such file or directory"),
+        libc::EISDIR => (old_io::InvalidInput, "illegal operation on a directory"),
+        libc::ENOSYS => (old_io::IoUnavailable, "function not implemented"),
+        libc::EINVAL => (old_io::InvalidInput, "invalid argument"),
         libc::ENOTTY =>
-            (io::MismatchedFileTypeForOperation,
+            (old_io::MismatchedFileTypeForOperation,
              "file descriptor is not a TTY"),
-        libc::ETIMEDOUT => (io::TimedOut, "operation timed out"),
-        libc::ECANCELED => (io::TimedOut, "operation aborted"),
+        libc::ETIMEDOUT => (old_io::TimedOut, "operation timed out"),
+        libc::ECANCELED => (old_io::TimedOut, "operation aborted"),
         libc::consts::os::posix88::EEXIST =>
-            (io::PathAlreadyExists, "path already exists"),
+            (old_io::PathAlreadyExists, "path already exists"),
 
         // These two constants can have the same value on some systems,
         // but different values on others, so we can't use a match
         // clause
         x if x == libc::EAGAIN || x == libc::EWOULDBLOCK =>
-            (io::ResourceUnavailable, "resource temporarily unavailable"),
+            (old_io::ResourceUnavailable, "resource temporarily unavailable"),
 
-        _ => (io::OtherIoError, "unknown error")
+        _ => (old_io::OtherIoError, "unknown error")
     };
     IoError { kind: kind, desc: desc, detail: None }
 }
@@ -131,6 +140,35 @@ pub fn decode_error_detailed(errno: i32) -> IoError {
     err
 }
 
+pub fn decode_error_kind(errno: i32) -> ErrorKind {
+    match errno as libc::c_int {
+        libc::ECONNREFUSED => ErrorKind::ConnectionRefused,
+        libc::ECONNRESET => ErrorKind::ConnectionReset,
+        libc::EPERM | libc::EACCES => ErrorKind::PermissionDenied,
+        libc::EPIPE => ErrorKind::BrokenPipe,
+        libc::ENOTCONN => ErrorKind::NotConnected,
+        libc::ECONNABORTED => ErrorKind::ConnectionAborted,
+        libc::EADDRNOTAVAIL => ErrorKind::ConnectionRefused,
+        libc::EADDRINUSE => ErrorKind::ConnectionRefused,
+        libc::ENOENT => ErrorKind::FileNotFound,
+        libc::EISDIR => ErrorKind::InvalidInput,
+        libc::EINTR => ErrorKind::Interrupted,
+        libc::EINVAL => ErrorKind::InvalidInput,
+        libc::ENOTTY => ErrorKind::MismatchedFileTypeForOperation,
+        libc::ETIMEDOUT => ErrorKind::TimedOut,
+        libc::ECANCELED => ErrorKind::TimedOut,
+        libc::consts::os::posix88::EEXIST => ErrorKind::PathAlreadyExists,
+
+        // These two constants can have the same value on some systems,
+        // but different values on others, so we can't use a match
+        // clause
+        x if x == libc::EAGAIN || x == libc::EWOULDBLOCK =>
+            ErrorKind::ResourceUnavailable,
+
+        _ => ErrorKind::Other,
+    }
+}
+
 #[inline]
 pub fn retry<T, F> (mut f: F) -> T where
     T: SignedInt,
@@ -139,8 +177,28 @@ pub fn retry<T, F> (mut f: F) -> T where
     let one: T = Int::one();
     loop {
         let n = f();
-        if n == -one && os::errno() == libc::EINTR as int { }
+        if n == -one && os::errno() == libc::EINTR as i32 { }
         else { return n }
+    }
+}
+
+pub fn cvt<T: SignedInt>(t: T) -> io::Result<T> {
+    let one: T = Int::one();
+    if t == -one {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(t)
+    }
+}
+
+pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
+    where T: SignedInt, F: FnMut() -> T
+{
+    loop {
+        match cvt(f()) {
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+            other => return other,
+        }
     }
 }
 
@@ -153,7 +211,7 @@ pub fn ms_to_timeval(ms: u64) -> libc::timeval {
 
 pub fn wouldblock() -> bool {
     let err = os::errno();
-    err == libc::EWOULDBLOCK as int || err == libc::EAGAIN as int
+    err == libc::EWOULDBLOCK as i32 || err == libc::EAGAIN as i32
 }
 
 pub fn set_nonblocking(fd: sock_t, nb: bool) -> IoResult<()> {

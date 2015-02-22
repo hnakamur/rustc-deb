@@ -25,12 +25,12 @@ struct X<T>(T);
 impl <T: Sync> RequiresShare for X<T> { }
 impl <T: Sync+Send> RequiresRequiresShareAndSend for X<T> { }
 
-fn foo<T: RequiresRequiresShareAndSend>(val: T, chan: Sender<T>) {
+fn foo<T: RequiresRequiresShareAndSend + 'static>(val: T, chan: Sender<T>) {
     chan.send(val).unwrap();
 }
 
 pub fn main() {
     let (tx, rx): (Sender<X<int>>, Receiver<X<int>>) = channel();
-    foo(X(31337i), tx);
-    assert!(rx.recv().unwrap() == X(31337i));
+    foo(X(31337), tx);
+    assert!(rx.recv().unwrap() == X(31337));
 }

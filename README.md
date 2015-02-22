@@ -1,46 +1,34 @@
 # The Rust Programming Language
 
 This is a compiler for Rust, including standard libraries, tools and
-documentation.
+documentation. Rust is a systems programming language that is fast,
+memory safe and multithreaded, but does not employ a garbage collector
+or otherwise impose significant runtime overhead.
 
 ## Quick Start
 
-1. Download a [binary installer][installer] for your platform.
-2. Read [The Rust Programming Language][trpl].
-3. Enjoy!
+Read ["Installing Rust"] from [The Book].
 
-> ***Note:*** Windows users can read the detailed
-> [using Rust on Windows][win-wiki] notes on the wiki.
-
-[installer]: http://www.rust-lang.org/install.html
-[trpl]: http://doc.rust-lang.org/book/index.html
-[win-wiki]: https://github.com/rust-lang/rust/wiki/Using-Rust-on-Windows
+["Installing Rust"]: http://doc.rust-lang.org/book/installing-rust.html
+[The Book]: http://doc.rust-lang.org/book/index.html
 
 ## Building from Source
 
 1. Make sure you have installed the dependencies:
     * `g++` 4.7 or `clang++` 3.x
     * `python` 2.6 or later (but not 3.x)
-    * `perl` 5.0 or later
     * GNU `make` 3.81 or later
     * `curl`
     * `git`
-2. Download and build Rust:
 
-    You can either download a [tarball] or build directly from the [repo].
-
-    To build from the [tarball] do:
-
-        $ curl -O https://static.rust-lang.org/dist/rust-nightly.tar.gz
-        $ tar -xzf rust-nightly.tar.gz
-        $ cd rust-nightly
-
-    Or to build from the [repo] do:
+2. Clone the [source] with `git`:
 
         $ git clone https://github.com/rust-lang/rust.git
         $ cd rust
 
-    Now that you have Rust's source code, you can configure and build it:
+[source]: https://github.com/rust-lang/rust
+
+3. Build and install:
 
         $ ./configure
         $ make && make install
@@ -52,30 +40,34 @@ documentation.
 
     When complete, `make install` will place several programs into
     `/usr/local/bin`: `rustc`, the Rust compiler, and `rustdoc`, the
-    API-documentation tool.
-3. Read [The Rust Programming Language][trpl].
-4. Enjoy!
+    API-documentation tool. This install does not include [Cargo],
+    Rust's package manager, which you may also want to build.
+
+[Cargo]: https://github.com/rust-lang/cargo
 
 ### Building on Windows
 
-To easily build on windows we can use [MSYS2](http://sourceforge.net/projects/msys2/):
+To easily build on windows we can use [MSYS2](http://msys2.github.io/):
 
 1. Grab the latest MSYS2 installer and go through the installer.
 2. Now from the MSYS2 terminal we want to install the mingw64 toolchain and the other
    tools we need.
 
-        $ pacman -S mingw-w64-i686-toolchain
-        $ pacman -S base-devel
+```bash
+# choose one based on platform
+$ pacman -S mingw-w64-i686-toolchain
+$ pacman -S mingw-w64-x86_64-toolchain
 
-3. With that now start `mingw32_shell.bat` from where you installed MSYS2 (i.e. `C:\msys`).
+$ pacman -S base-devel
+```
+
+3. With that now start `mingw32_shell.bat` or `mingw64_shell.bat`
+   from where you installed MSYS2 (i.e. `C:\msys`). Which one you
+   choose depends on if you want 32 or 64 bit Rust.
 4. From there just navigate to where you have Rust's source code, configure and build it:
 
         $ ./configure
         $ make && make install
-
-[repo]: https://github.com/rust-lang/rust
-[tarball]: https://static.rust-lang.org/dist/rust-nightly.tar.gz
-[trpl]: http://doc.rust-lang.org/book/index.html
 
 ## Notes
 
@@ -96,21 +88,33 @@ supported build environments that are most likely to work.
 Rust currently needs about 1.5 GiB of RAM to build without swapping; if it hits
 swap, it will take a very long time to build.
 
-There is a lot more documentation in the [wiki].
+There is more advice about hacking on Rust in [CONTRIBUTING.md].
 
-[wiki]: https://github.com/rust-lang/rust/wiki
+[CONTRIBUTING.md]: https://github.com/rust-lang/rust/blob/master/CONTRIBUTING.md
 
-## Getting help and getting involved
+## Getting help
 
 The Rust community congregates in a few places:
 
-* [StackOverflow] - Get help here.
-* [/r/rust] - General discussion.
-* [discuss.rust-lang.org] - For development of the Rust language itself.
+* [StackOverflow] - Direct questions about using the language here.
+* [users.rust-lang.org] - General discussion, broader questions.
+* [/r/rust] - News and general discussion.
 
 [StackOverflow]: http://stackoverflow.com/questions/tagged/rust
 [/r/rust]: http://reddit.com/r/rust
-[discuss.rust-lang.org]: http://discuss.rust-lang.org/
+[users.rust-lang.org]: http://users.rust-lang.org/
+
+## Contributing
+
+To contribute to Rust, please see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Rust has an [IRC] culture and most real-time collaboration happens in a
+variety of channels on Mozilla's IRC network, irc.mozilla.org. The
+most popular channel is [#rust], a venue for general discussion about
+Rust, and a good place to ask for help,
+
+[IRC]: https://en.wikipedia.org/wiki/Internet_Relay_Chat
+[#rust]: irc://irc.mozilla.org/rust
 
 ## License
 

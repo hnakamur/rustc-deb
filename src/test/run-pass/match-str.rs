@@ -18,12 +18,12 @@ pub fn main() {
 
     match t::tag1("test".to_string()) {
       t::tag2 => panic!(),
-      t::tag1(ref s) if "test" != s.as_slice() => panic!(),
-      t::tag1(ref s) if "test" == s.as_slice() => (),
+      t::tag1(ref s) if "test" != &**s => panic!(),
+      t::tag1(ref s) if "test" == &**s => (),
       _ => panic!()
     }
 
-    let x = match "a" { "a" => 1i, "b" => 2i, _ => panic!() };
+    let x = match "a" { "a" => 1, "b" => 2, _ => panic!() };
     assert_eq!(x, 1);
 
     match "a" { "a" => { } "b" => { }, _ => panic!() }

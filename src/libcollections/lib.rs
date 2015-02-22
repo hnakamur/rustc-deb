@@ -14,7 +14,7 @@
 
 
 #![crate_name = "collections"]
-#![unstable]
+#![unstable(feature = "collections")]
 #![staged_api]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -22,12 +22,19 @@
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
 
-#![allow(unknown_features)]
-#![feature(unsafe_destructor, slicing_syntax)]
+#![feature(alloc)]
 #![feature(box_syntax)]
+#![feature(box_patterns)]
+#![feature(core)]
+#![feature(staged_api)]
 #![feature(unboxed_closures)]
-#![feature(old_impl_check)]
-#![allow(unknown_features)] #![feature(int_uint)]
+#![feature(unicode)]
+#![feature(unsafe_destructor)]
+#![feature(unsafe_no_drop_flag)]
+#![cfg_attr(test, feature(rand, rustc_private, test))]
+#![cfg_attr(test, allow(deprecated))] // rand
+
+#![feature(no_std)]
 #![no_std]
 
 #[macro_use]
@@ -41,16 +48,32 @@ extern crate alloc;
 #[cfg(test)] #[macro_use] extern crate log;
 
 pub use binary_heap::BinaryHeap;
-pub use bitv::Bitv;
-pub use bitv_set::BitvSet;
+pub use bit_vec::BitVec;
+pub use bit_set::BitSet;
 pub use btree_map::BTreeMap;
 pub use btree_set::BTreeSet;
-pub use dlist::DList;
+pub use linked_list::LinkedList;
 pub use enum_set::EnumSet;
-pub use ring_buf::RingBuf;
+pub use vec_deque::VecDeque;
 pub use string::String;
 pub use vec::Vec;
 pub use vec_map::VecMap;
+
+#[deprecated(since = "1.0.0", reason = "renamed to vec_deque")]
+#[unstable(feature = "collections")]
+pub use vec_deque as ring_buf;
+
+#[deprecated(since = "1.0.0", reason = "renamed to linked_list")]
+#[unstable(feature = "collections")]
+pub use linked_list as dlist;
+
+#[deprecated(since = "1.0.0", reason = "renamed to bit_vec")]
+#[unstable(feature = "collections")]
+pub use bit_vec as bitv;
+
+#[deprecated(since = "1.0.0", reason = "renamed to bit_set")]
+#[unstable(feature = "collections")]
+pub use bit_set as bitv_set;
 
 // Needed for the vec! macro
 pub use alloc::boxed;
@@ -58,41 +81,59 @@ pub use alloc::boxed;
 #[macro_use]
 mod macros;
 
+#[cfg(test)] #[macro_use] mod bench;
+
 pub mod binary_heap;
 mod bit;
 mod btree;
-pub mod dlist;
+pub mod linked_list;
 pub mod enum_set;
-pub mod ring_buf;
+pub mod fmt;
+pub mod vec_deque;
 pub mod slice;
 pub mod str;
 pub mod string;
 pub mod vec;
 pub mod vec_map;
 
-#[stable]
-pub mod bitv {
-    pub use bit::{Bitv, Iter};
+#[cfg(stage0)]
+#[path = "borrow_stage0.rs"]
+pub mod borrow;
+
+#[cfg(not(stage0))]
+pub mod borrow;
+
+#[unstable(feature = "collections",
+           reason = "RFC 509")]
+pub mod bit_vec {
+    pub use bit::{BitVec, Iter};
+
+    #[deprecated(since = "1.0.0", reason = "renamed to BitVec")]
+    #[unstable(feature = "collections")]
+    pub use bit::BitVec as Bitv;
 }
 
-#[stable]
-pub mod bitv_set {
-    pub use bit::{BitvSet, Union, Intersection, Difference, SymmetricDifference};
+#[unstable(feature = "collections",
+           reason = "RFC 509")]
+pub mod bit_set {
+    pub use bit::{BitSet, Union, Intersection, Difference, SymmetricDifference};
     pub use bit::SetIter as Iter;
+
+    #[deprecated(since = "1.0.0", reason = "renamed to BitSet")]
+    #[unstable(feature = "collections")]
+    pub use bit::BitSet as BitvSet;
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub mod btree_map {
     pub use btree::map::*;
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub mod btree_set {
     pub use btree::set::*;
 }
 
-
-#[cfg(test)] mod bench;
 
 // FIXME(#14344) this shouldn't be necessary
 #[doc(hidden)]
@@ -100,18 +141,12 @@ pub fn fixme_14344_be_sure_to_link_to_collections() {}
 
 #[cfg(not(test))]
 mod std {
-    pub use core::fmt;      // necessary for panic!()
-    pub use core::option;   // necessary for panic!()
-    pub use core::clone;    // deriving(Clone)
-    pub use core::cmp;      // deriving(Eq, Ord, etc.)
-    pub use core::marker;  // deriving(Copy)
-    pub use core::hash;     // deriving(Hash)
+    pub use core::ops;      // RangeFull
 }
 
 #[cfg(test)]
 mod prelude {
     // from core.
-    pub use core::borrow::IntoCow;
     pub use core::clone::Clone;
     pub use core::cmp::{PartialEq, Eq, PartialOrd, Ord};
     pub use core::cmp::Ordering::{Less, Equal, Greater};
@@ -137,7 +172,18 @@ mod prelude {
     pub use unicode::char::CharExt;
 
     // from collections.
+    pub use borrow::IntoCow;
     pub use slice::SliceConcatExt;
     pub use string::{String, ToString};
     pub use vec::Vec;
+}
+
+/// An endpoint of a range of keys.
+pub enum Bound<T> {
+    /// An inclusive bound.
+    Included(T),
+    /// An exclusive bound.
+    Excluded(T),
+    /// An infinite endpoint. Indicates that there is no bound in this direction.
+    Unbounded,
 }

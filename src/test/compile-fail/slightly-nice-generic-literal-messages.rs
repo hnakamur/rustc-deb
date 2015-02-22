@@ -8,12 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct Foo<T,U>(T);
+use std::marker;
+
+struct Foo<T,U>(T, marker::PhantomData<U>);
 
 fn main() {
-    match Foo(1.1) {
+    match Foo(1.1, marker::PhantomData) {
         1 => {}
-    //~^ ERROR expected `Foo<_, _>`, found `_`
+    //~^ ERROR mismatched types
+    //~| expected `Foo<_, _>`
+    //~| found `_`
+    //~| expected struct `Foo`
+    //~| found integral variable
     }
 
 }

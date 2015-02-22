@@ -1,4 +1,4 @@
-// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -12,13 +12,30 @@
 // ignore-stage1
 
 #![feature(plugin)]
+#![plugin(macro_crate_test)]
 
-#[macro_use] #[plugin] #[no_link]
+#[macro_use] #[no_link]
 extern crate macro_crate_test;
 
 #[into_foo]
-#[derive(PartialEq, Clone, Show)]
+#[derive(PartialEq, Clone, Debug)]
 fn foo() -> AFakeTypeThatHadBetterGoAway {}
+
+#[into_multi_foo]
+#[derive(PartialEq, Clone, Debug)]
+fn foo() -> AnotherFakeTypeThatHadBetterGoAway {}
+
+trait Qux {
+    #[into_multi_foo]
+    fn bar();
+}
+
+impl Qux for i32 {
+    #[into_multi_foo]
+    fn bar() {}
+}
+
+impl Qux for u8 {}
 
 pub fn main() {
     assert_eq!(1, make_a_1!());
@@ -26,6 +43,14 @@ pub fn main() {
 
     assert_eq!(Foo::Bar, Foo::Bar);
     test(None::<Foo>);
+
+    assert_eq!(Foo2::Bar2, Foo2::Bar2);
+    test(None::<Foo2>);
+
+    let x = 10i32;
+    assert_eq!(x.foo(), 42);
+    let x = 10u8;
+    assert_eq!(x.foo(), 0);
 }
 
 fn test<T: PartialEq+Clone>(_: Option<T>) {}

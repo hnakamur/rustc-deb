@@ -40,7 +40,7 @@
 //! this module defines the format the JSON file should take, though each
 //! underscore in the field names should be replaced with a hyphen (`-`) in the
 //! JSON file. Some fields are required in every target specification, such as
-//! `data-layout`, `llvm-target`, `target-endian`, `target-word-size`, and
+//! `data-layout`, `llvm-target`, `target-endian`, `target-pointer-width`, and
 //! `arch`. In general, options passed to rustc with `-C` override the target's
 //! settings, though `target-feature` and `link-args` will *add* to the list
 //! specified by the target, rather than replace.
@@ -48,36 +48,45 @@
 use serialize::json::Json;
 use syntax::{diagnostic, abi};
 use std::default::Default;
-use std::io::fs::PathExtensions;
+use std::old_io::fs::PathExtensions;
 
 mod windows_base;
 mod linux_base;
 mod apple_base;
+mod apple_ios_base;
 mod freebsd_base;
 mod dragonfly_base;
+mod openbsd_base;
 
-mod arm_apple_ios;
+mod armv7_apple_ios;
+mod armv7s_apple_ios;
+mod i386_apple_ios;
+
 mod arm_linux_androideabi;
 mod arm_unknown_linux_gnueabi;
 mod arm_unknown_linux_gnueabihf;
+mod aarch64_apple_ios;
+mod aarch64_linux_android;
 mod aarch64_unknown_linux_gnu;
 mod i686_apple_darwin;
-mod i386_apple_ios;
 mod i686_pc_windows_gnu;
 mod i686_unknown_dragonfly;
 mod i686_unknown_linux_gnu;
 mod mips_unknown_linux_gnu;
 mod mipsel_unknown_linux_gnu;
+mod powerpc_unknown_linux_gnu;
 mod x86_64_apple_darwin;
+mod x86_64_apple_ios;
 mod x86_64_pc_windows_gnu;
 mod x86_64_unknown_freebsd;
 mod x86_64_unknown_dragonfly;
 mod x86_64_unknown_linux_gnu;
+mod x86_64_unknown_openbsd;
 
 /// Everything `rustc` knows about how to compile for a specific target.
 ///
 /// Every field here must be specified, and has no default value.
-#[derive(Clone, Show)]
+#[derive(Clone, Debug)]
 pub struct Target {
     /// [Data layout](http://llvm.org/docs/LangRef.html#data-layout) to pass to LLVM.
     pub data_layout: String,
@@ -90,7 +99,7 @@ pub struct Target {
     /// OS name to use for conditional compilation.
     pub target_os: String,
     /// Architecture to use for ABI considerations. Valid options: "x86", "x86_64", "arm",
-    /// "aarch64", and "mips". "mips" includes "mipsel".
+    /// "aarch64", "mips", and "powerpc". "mips" includes "mipsel".
     pub arch: String,
     /// Optional settings with defaults.
     pub options: TargetOptions,
@@ -100,7 +109,7 @@ pub struct Target {
 ///
 /// This has an implementation of `Default`, see each field for what the default is. In general,
 /// these try to take "minimal defaults" that don't assume anything about the runtime they run in.
-#[derive(Clone, Show)]
+#[derive(Clone, Debug)]
 pub struct TargetOptions {
     /// Linker to invoke. Defaults to "cc".
     pub linker: String,
@@ -149,6 +158,9 @@ pub struct TargetOptions {
     /// only realy used for figuring out how to find libraries, since Windows uses its own
     /// library naming convention. Defaults to false.
     pub is_like_windows: bool,
+    /// Whether the target toolchain is like Android's. Only useful for compiling against Android.
+    /// Defaults to false.
+    pub is_like_android: bool,
     /// Whether the linker support GNU-like arguments such as -O. Defaults to false.
     pub linker_is_gnu: bool,
     /// Whether the linker support rpaths or not. Defaults to false.
@@ -188,6 +200,7 @@ impl Default for TargetOptions {
             staticlib_suffix: ".a".to_string(),
             is_like_osx: false,
             is_like_windows: false,
+            is_like_android: false,
             linker_is_gnu: false,
             has_rpath: false,
             no_compiler_rt: false,
@@ -216,9 +229,9 @@ impl Target {
         // this is 1. ugly, 2. error prone.
 
 
-        let handler = diagnostic::default_handler(diagnostic::Auto, None);
+        let handler = diagnostic::default_handler(diagnostic::Auto, None, true);
 
-        let get_req_field = |&: name: &str| {
+        let get_req_field = |name: &str| {
             match obj.find(name)
                      .map(|s| s.as_string())
                      .and_then(|os| os.map(|s| s.to_string())) {
@@ -232,7 +245,7 @@ impl Target {
             data_layout: get_req_field("data-layout"),
             llvm_target: get_req_field("llvm-target"),
             target_endian: get_req_field("target-endian"),
-            target_pointer_width: get_req_field("target-word-size"),
+            target_pointer_width: get_req_field("target-pointer-width"),
             arch: get_req_field("arch"),
             target_os: get_req_field("os"),
             options: Default::default(),
@@ -241,18 +254,18 @@ impl Target {
         macro_rules! key {
             ($key_name:ident) => ( {
                 let name = (stringify!($key_name)).replace("_", "-");
-                obj.find(&name[]).map(|o| o.as_string()
+                obj.find(&name[..]).map(|o| o.as_string()
                                     .map(|s| base.options.$key_name = s.to_string()));
             } );
             ($key_name:ident, bool) => ( {
                 let name = (stringify!($key_name)).replace("_", "-");
-                obj.find(&name[])
+                obj.find(&name[..])
                     .map(|o| o.as_boolean()
                          .map(|s| base.options.$key_name = s));
             } );
             ($key_name:ident, list) => ( {
                 let name = (stringify!($key_name)).replace("_", "-");
-                obj.find(&name[]).map(|o| o.as_array()
+                obj.find(&name[..]).map(|o| o.as_array()
                     .map(|v| base.options.$key_name = v.iter()
                         .map(|a| a.as_string().unwrap().to_string()).collect()
                         )
@@ -294,9 +307,10 @@ impl Target {
     /// The error string could come from any of the APIs called, including filesystem access and
     /// JSON decoding.
     pub fn search(target: &str) -> Result<Target, String> {
-        use std::os;
-        use std::io::File;
-        use std::path::Path;
+        use std::env;
+        use std::ffi::OsString;
+        use std::old_io::File;
+        use std::old_path::Path;
         use serialize::json;
 
         fn load_file(path: &Path) -> Result<Target, String> {
@@ -334,20 +348,29 @@ impl Target {
             i686_unknown_linux_gnu,
             mips_unknown_linux_gnu,
             mipsel_unknown_linux_gnu,
-            arm_linux_androideabi,
+            powerpc_unknown_linux_gnu,
             arm_unknown_linux_gnueabi,
             arm_unknown_linux_gnueabihf,
             aarch64_unknown_linux_gnu,
+
+            arm_linux_androideabi,
+            aarch64_linux_android,
 
             x86_64_unknown_freebsd,
 
             i686_unknown_dragonfly,
             x86_64_unknown_dragonfly,
 
+            x86_64_unknown_openbsd,
+
             x86_64_apple_darwin,
             i686_apple_darwin,
+
             i386_apple_ios,
-            arm_apple_ios,
+            x86_64_apple_ios,
+            aarch64_apple_ios,
+            armv7_apple_ios,
+            armv7s_apple_ios,
 
             x86_64_pc_windows_gnu,
             i686_pc_windows_gnu
@@ -366,12 +389,11 @@ impl Target {
             Path::new(target)
         };
 
-        let target_path = os::getenv("RUST_TARGET_PATH").unwrap_or(String::new());
+        let target_path = env::var_os("RUST_TARGET_PATH").unwrap_or(OsString::from_str(""));
 
-        let paths = os::split_paths(&target_path[]);
         // FIXME 16351: add a sane default search path?
 
-        for dir in paths.iter() {
+        for dir in env::split_paths(&target_path) {
             let p =  dir.join(path.clone());
             if p.is_file() {
                 return load_file(&p);

@@ -11,9 +11,9 @@
 use prelude::v1::*;
 
 use cell::UnsafeCell;
-use error::FromError;
+use error::{Error, FromError};
 use fmt;
-use thread::Thread;
+use thread;
 
 pub struct Flag { failed: UnsafeCell<bool> }
 pub const FLAG_INIT: Flag = Flag { failed: UnsafeCell { value: false } };
@@ -21,9 +21,9 @@ pub const FLAG_INIT: Flag = Flag { failed: UnsafeCell { value: false } };
 impl Flag {
     #[inline]
     pub fn borrow(&self) -> LockResult<Guard> {
-        let ret = Guard { panicking: Thread::panicking() };
+        let ret = Guard { panicking: thread::panicking() };
         if unsafe { *self.failed.get() } {
-            Err(new_poison_error(ret))
+            Err(PoisonError::new(ret))
         } else {
             Ok(ret)
         }
@@ -31,7 +31,7 @@ impl Flag {
 
     #[inline]
     pub fn done(&self, guard: &Guard) {
-        if !guard.panicking && Thread::panicking() {
+        if !guard.panicking && thread::panicking() {
             unsafe { *self.failed.get() = true; }
         }
     }
@@ -42,7 +42,6 @@ impl Flag {
     }
 }
 
-#[allow(missing_copy_implementations)]
 pub struct Guard {
     panicking: bool,
 }
@@ -53,22 +52,22 @@ pub struct Guard {
 /// is held. The precise semantics for when a lock is poisoned is documented on
 /// each lock, but once a lock is poisoned then all future acquisitions will
 /// return this error.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct PoisonError<T> {
     guard: T,
 }
 
 /// An enumeration of possible errors which can occur while calling the
 /// `try_lock` method.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub enum TryLockError<T> {
     /// The lock could not be acquired because another task failed while holding
     /// the lock.
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     Poisoned(PoisonError<T>),
     /// The lock could not be acquired at this time because the operation would
     /// otherwise block.
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     WouldBlock,
 }
 
@@ -79,7 +78,7 @@ pub enum TryLockError<T> {
 /// that the primitive was poisoned. Note that the `Err` variant *also* carries
 /// the associated guard, and it can be acquired through the `into_inner`
 /// method.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub type LockResult<Guard> = Result<Guard, PoisonError<Guard>>;
 
 /// A type alias for the result of a nonblocking locking method.
@@ -87,20 +86,56 @@ pub type LockResult<Guard> = Result<Guard, PoisonError<Guard>>;
 /// For more information, see `LockResult`. A `TryLockResult` doesn't
 /// necessarily hold the associated guard in the `Err` type as the lock may not
 /// have been acquired for other reasons.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub type TryLockResult<Guard> = Result<Guard, TryLockError<Guard>>;
 
-impl<T> fmt::Show for PoisonError<T> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> fmt::Debug for PoisonError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        "poisoned lock: another task failed inside".fmt(f)
+        "PoisonError { inner: .. }".fmt(f)
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> fmt::Display for PoisonError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.description().fmt(f)
+    }
+}
+
+impl<T> Error for PoisonError<T> {
+    fn description(&self) -> &str {
+        "poisoned lock: another task failed inside"
     }
 }
 
 impl<T> PoisonError<T> {
+    /// Create a `PoisonError`.
+    #[unstable(feature = "std_misc")]
+    pub fn new(guard: T) -> PoisonError<T> {
+        PoisonError { guard: guard }
+    }
+
     /// Consumes this error indicating that a lock is poisoned, returning the
     /// underlying guard to allow access regardless.
-    #[stable]
+    #[unstable(feature = "std_misc")]
+    #[deprecated(since = "1.0.0", reason = "renamed to into_inner")]
     pub fn into_guard(self) -> T { self.guard }
+
+    /// Consumes this error indicating that a lock is poisoned, returning the
+    /// underlying guard to allow access regardless.
+    #[unstable(feature = "std_misc")]
+    pub fn into_inner(self) -> T { self.guard }
+
+    /// Reaches into this error indicating that a lock is poisoned, returning a
+    /// reference to the underlying guard to allow access regardless.
+    #[unstable(feature = "std_misc")]
+    pub fn get_ref(&self) -> &T { &self.guard }
+
+    /// Reaches into this error indicating that a lock is poisoned, returning a
+    /// mutable reference to the underlying guard to allow access regardless.
+    #[unstable(feature = "std_misc")]
+    pub fn get_mut(&mut self) -> &mut T { &mut self.guard }
 }
 
 impl<T> FromError<PoisonError<T>> for TryLockError<T> {
@@ -109,19 +144,37 @@ impl<T> FromError<PoisonError<T>> for TryLockError<T> {
     }
 }
 
-impl<T> fmt::Show for TryLockError<T> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> fmt::Debug for TryLockError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            TryLockError::Poisoned(ref p) => p.fmt(f),
-            TryLockError::WouldBlock => {
-                "try_lock failed because the operation would block".fmt(f)
-            }
+            TryLockError::Poisoned(..) => "Poisoned(..)".fmt(f),
+            TryLockError::WouldBlock => "WouldBlock".fmt(f)
         }
     }
 }
 
-pub fn new_poison_error<T>(guard: T) -> PoisonError<T> {
-    PoisonError { guard: guard }
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> fmt::Display for TryLockError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.description().fmt(f)
+    }
+}
+
+impl<T> Error for TryLockError<T> {
+    fn description(&self) -> &str {
+        match *self {
+            TryLockError::Poisoned(ref p) => p.description(),
+            TryLockError::WouldBlock => "try_lock failed because the operation would block"
+        }
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        match *self {
+            TryLockError::Poisoned(ref p) => Some(p),
+            _ => None
+        }
+    }
 }
 
 pub fn map_result<T, U, F>(result: LockResult<T>, f: F)
@@ -129,6 +182,6 @@ pub fn map_result<T, U, F>(result: LockResult<T>, f: F)
                            where F: FnOnce(T) -> U {
     match result {
         Ok(t) => Ok(f(t)),
-        Err(PoisonError { guard }) => Err(new_poison_error(f(guard)))
+        Err(PoisonError { guard }) => Err(PoisonError::new(f(guard)))
     }
 }

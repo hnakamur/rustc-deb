@@ -18,7 +18,7 @@
 //!
 //! The [`ptr`](ptr/index.html) and [`mem`](mem/index.html)
 //! modules deal with unsafe pointers and memory manipulation.
-//! [`markers`](markers/index.html) defines the special built-in traits,
+//! [`marker`](marker/index.html) defines the special built-in traits,
 //! and [`raw`](raw/index.html) the runtime representation of Rust types.
 //! These are some of the lowest-level building blocks in Rust.
 //!
@@ -73,13 +73,14 @@
 //!
 //! ## Concurrency, I/O, and the runtime
 //!
-//! The [`task`](task/index.html) module contains Rust's threading abstractions,
+//! The [`thread`](thread/index.html) module contains Rust's threading abstractions,
 //! while [`comm`](comm/index.html) contains the channel types for message
 //! passing. [`sync`](sync/index.html) contains further, primitive, shared
 //! memory types, including [`atomic`](sync/atomic/index.html).
 //!
 //! Common types of I/O, including files, TCP, UDP, pipes, Unix domain sockets,
-//! timers, and process spawning, are defined in the [`io`](io/index.html) module.
+//! timers, and process spawning, are defined in the
+//! [`old_io`](old_io/index.html) module.
 //!
 //! Rust's I/O and concurrency depends on a small runtime interface
 //! that lives, along with its support code, in mod [`rt`](rt/index.html).
@@ -95,7 +96,7 @@
 //! and `format!`, also available to all Rust code.
 
 #![crate_name = "std"]
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 #![staged_api]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
@@ -104,35 +105,50 @@
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
 
-#![allow(unknown_features)]
-#![feature(linkage, thread_local, asm)]
-#![feature(lang_items, unsafe_destructor)]
-#![feature(slicing_syntax, unboxed_closures)]
+#![feature(alloc)]
 #![feature(box_syntax)]
+#![feature(collections)]
+#![feature(core)]
+#![feature(hash)]
+#![feature(int_uint)]
+#![feature(lang_items)]
+#![feature(libc)]
+#![feature(linkage, thread_local, asm)]
 #![feature(old_impl_check)]
-#![allow(unknown_features)] #![feature(int_uint)]
+#![feature(optin_builtin_traits)]
+#![feature(rand)]
+#![feature(staged_api)]
+#![feature(unboxed_closures)]
+#![feature(unicode)]
+#![feature(unsafe_destructor)]
+#![feature(unsafe_no_drop_flag)]
+#![feature(macro_reexport)]
+#![cfg_attr(test, feature(test))]
 
 // Don't link to std. We are std.
+#![feature(no_std)]
 #![no_std]
 
 #![deny(missing_docs)]
 
-#[cfg(test)]
-#[macro_use]
-extern crate log;
+#[cfg(test)] extern crate test;
+#[cfg(test)] #[macro_use] extern crate log;
 
 #[macro_use]
-#[macro_reexport(write, writeln)]
+#[macro_reexport(assert, assert_eq, debug_assert, debug_assert_eq,
+    unreachable, unimplemented, write, writeln)]
 extern crate core;
 
 #[macro_use]
-#[macro_reexport(vec)]
+#[macro_reexport(vec, format)]
 extern crate "collections" as core_collections;
 
-extern crate "rand" as core_rand;
+#[allow(deprecated)] extern crate "rand" as core_rand;
 extern crate alloc;
 extern crate unicode;
 extern crate libc;
+
+#[macro_use] #[no_link] extern crate rustc_bitflags;
 
 // Make std testable by not duplicating lang items. See #2912
 #[cfg(test)] extern crate "std" as realstd;
@@ -145,11 +161,11 @@ extern crate libc;
 // NB: These reexports are in the order they should be listed in rustdoc
 
 pub use core::any;
-pub use core::borrow;
 pub use core::cell;
 pub use core::clone;
 #[cfg(not(test))] pub use core::cmp;
 pub use core::default;
+#[allow(deprecated)]
 pub use core::finally;
 pub use core::hash;
 pub use core::intrinsics;
@@ -162,14 +178,17 @@ pub use core::raw;
 pub use core::simd;
 pub use core::result;
 pub use core::option;
+pub use core::error;
 
 #[cfg(not(test))] pub use alloc::boxed;
 pub use alloc::rc;
 
+pub use core_collections::borrow;
+pub use core_collections::fmt;
 pub use core_collections::slice;
 pub use core_collections::str;
 pub use core_collections::string;
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub use core_collections::vec;
 
 pub use unicode::char;
@@ -178,9 +197,6 @@ pub use unicode::char;
 
 #[macro_use]
 mod macros;
-
-#[macro_use]
-pub mod bitflags;
 
 mod rtdeps;
 
@@ -225,7 +241,6 @@ pub mod thunk;
 
 /* Common traits */
 
-pub mod error;
 pub mod num;
 
 /* Runtime and platform support */
@@ -235,10 +250,15 @@ pub mod thread_local;
 
 pub mod dynamic_lib;
 pub mod ffi;
-pub mod fmt;
+pub mod old_io;
 pub mod io;
+pub mod fs;
+pub mod net;
 pub mod os;
+pub mod env;
 pub mod path;
+pub mod old_path;
+pub mod process;
 pub mod rand;
 pub mod time;
 
@@ -259,7 +279,7 @@ pub mod sync;
 #[path = "sys/common/mod.rs"] mod sys_common;
 
 pub mod rt;
-mod failure;
+mod panicking;
 
 // Documentation for primitive types
 
@@ -272,16 +292,10 @@ mod tuple;
 // can be resolved within libstd.
 #[doc(hidden)]
 mod std {
-    // mods used for deriving
-    pub use clone;
-    pub use cmp;
-    pub use hash;
-    pub use default;
-
     pub use sync; // used for select!()
     pub use error; // used for try!()
     pub use fmt; // used for any formatting strings
-    pub use io; // used for println!()
+    pub use old_io; // used for println!()
     pub use option; // used for bitflags!{}
     pub use rt; // used for panic!()
     pub use vec; // used for vec![]
@@ -290,13 +304,12 @@ mod std {
     pub use marker;  // used for tls!
     pub use ops; // used for bitflags!
 
-    // The test runner calls ::std::os::args() but really wants realstd
-    #[cfg(test)] pub use realstd::os as os;
+    // The test runner calls ::std::env::args() but really wants realstd
+    #[cfg(test)] pub use realstd::env as env;
     // The test runner requires std::slice::Vector, so re-export std::slice just for it.
     //
     // It is also used in vec![]
     pub use slice;
 
     pub use boxed; // used for vec![]
-
 }
