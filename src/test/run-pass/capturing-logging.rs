@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android (FIXME #11419)
 // exec-env:RUST_LOG=info
 
 #![allow(unknown_features)]
@@ -20,7 +19,7 @@ extern crate log;
 use log::{set_logger, Logger, LogRecord};
 use std::sync::mpsc::channel;
 use std::fmt;
-use std::io::{ChanReader, ChanWriter};
+use std::old_io::{ChanReader, ChanWriter};
 use std::thread::Thread;
 
 struct MyWriter(ChanWriter);
@@ -41,6 +40,6 @@ fn main() {
         info!("info");
     });
     let s = r.read_to_string().unwrap();
-    assert!(s.as_slice().contains("info"));
-    assert!(!s.as_slice().contains("debug"));
+    assert!(s.contains("info"));
+    assert!(!s.contains("debug"));
 }

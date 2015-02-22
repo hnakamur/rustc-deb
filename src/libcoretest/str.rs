@@ -10,16 +10,16 @@
 
 #[test]
 fn test_bool_from_str() {
-    assert_eq!("true".parse(), Some(true));
-    assert_eq!("false".parse(), Some(false));
-    assert_eq!("not even a boolean".parse::<bool>(), None);
+    assert_eq!("true".parse().ok(), Some(true));
+    assert_eq!("false".parse().ok(), Some(false));
+    assert_eq!("not even a boolean".parse::<bool>().ok(), None);
 }
 
 fn check_contains_all_substrings(s: &str) {
     assert!(s.contains(""));
-    for i in range(0, s.len()) {
+    for i in 0..s.len() {
         for j in range(i+1, s.len() + 1) {
-            assert!(s.contains(s.slice(i, j)));
+            assert!(s.contains(&s[i..j]));
         }
     }
 }
@@ -54,7 +54,7 @@ fn test_rsplitn_char_iterator() {
     split.reverse();
     assert_eq!(split, vec!["\nMäry häd ä", "little", "lämb\nLittle", "lämb\n"]);
 
-    let mut split: Vec<&str> = data.rsplitn(3, |&: c: char| c == ' ').collect();
+    let mut split: Vec<&str> = data.rsplitn(3, |c: char| c == ' ').collect();
     split.reverse();
     assert_eq!(split, vec!["\nMäry häd ä", "little", "lämb\nLittle", "lämb\n"]);
 
@@ -63,7 +63,7 @@ fn test_rsplitn_char_iterator() {
     split.reverse();
     assert_eq!(split, vec!["\nMäry häd ", " little l", "mb\nLittle l", "mb\n"]);
 
-    let mut split: Vec<&str> = data.rsplitn(3, |&: c: char| c == 'ä').collect();
+    let mut split: Vec<&str> = data.rsplitn(3, |c: char| c == 'ä').collect();
     split.reverse();
     assert_eq!(split, vec!["\nMäry häd ", " little l", "mb\nLittle l", "mb\n"]);
 }
@@ -79,10 +79,10 @@ fn test_split_char_iterator() {
     rsplit.reverse();
     assert_eq!(rsplit, vec!["\nMäry", "häd", "ä", "little", "lämb\nLittle", "lämb\n"]);
 
-    let split: Vec<&str> = data.split(|&: c: char| c == ' ').collect();
+    let split: Vec<&str> = data.split(|c: char| c == ' ').collect();
     assert_eq!( split, vec!["\nMäry", "häd", "ä", "little", "lämb\nLittle", "lämb\n"]);
 
-    let mut rsplit: Vec<&str> = data.split(|&: c: char| c == ' ').rev().collect();
+    let mut rsplit: Vec<&str> = data.split(|c: char| c == ' ').rev().collect();
     rsplit.reverse();
     assert_eq!(rsplit, vec!["\nMäry", "häd", "ä", "little", "lämb\nLittle", "lämb\n"]);
 
@@ -94,10 +94,10 @@ fn test_split_char_iterator() {
     rsplit.reverse();
     assert_eq!(rsplit, vec!["\nM", "ry h", "d ", " little l", "mb\nLittle l", "mb\n"]);
 
-    let split: Vec<&str> = data.split(|&: c: char| c == 'ä').collect();
+    let split: Vec<&str> = data.split(|c: char| c == 'ä').collect();
     assert_eq!( split, vec!["\nM", "ry h", "d ", " little l", "mb\nLittle l", "mb\n"]);
 
-    let mut rsplit: Vec<&str> = data.split(|&: c: char| c == 'ä').rev().collect();
+    let mut rsplit: Vec<&str> = data.split(|c: char| c == 'ä').rev().collect();
     rsplit.reverse();
     assert_eq!(rsplit, vec!["\nM", "ry h", "d ", " little l", "mb\nLittle l", "mb\n"]);
 }

@@ -15,7 +15,7 @@ use libc;
 use mem;
 use sync::{Arc, Mutex};
 use sync::atomic::{AtomicBool, Ordering};
-use io::{self, IoResult, IoError};
+use old_io::{self, IoResult, IoError};
 
 use sys::{self, timer, retry, c, set_nonblocking, wouldblock};
 use sys::fs::{fd_t, FileDesc};
@@ -38,17 +38,17 @@ fn addr_to_sockaddr_un(addr: &CString,
             mem::size_of::<libc::sockaddr_un>());
     let s = unsafe { &mut *(storage as *mut _ as *mut libc::sockaddr_un) };
 
-    let len = addr.len();
+    let len = addr.as_bytes().len();
     if len > s.sun_path.len() - 1 {
         return Err(IoError {
-            kind: io::InvalidInput,
+            kind: old_io::InvalidInput,
             desc: "invalid argument: path must be smaller than SUN_LEN",
             detail: None,
         })
     }
     s.sun_family = libc::AF_UNIX as libc::sa_family_t;
-    for (slot, value) in s.sun_path.iter_mut().zip(addr.iter()) {
-        *slot = *value;
+    for (slot, value) in s.sun_path.iter_mut().zip(addr.as_bytes().iter()) {
+        *slot = *value as libc::c_char;
     }
 
     // count the null terminator
@@ -151,8 +151,8 @@ impl UnixStream {
 
     pub fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
         let fd = self.fd();
-        let dolock = |&:| self.lock_nonblocking();
-        let doread = |&mut: nb| unsafe {
+        let dolock = || self.lock_nonblocking();
+        let doread = |nb| unsafe {
             let flags = if nb {c::MSG_DONTWAIT} else {0};
             libc::recv(fd,
                        buf.as_mut_ptr() as *mut libc::c_void,
@@ -164,8 +164,8 @@ impl UnixStream {
 
     pub fn write(&mut self, buf: &[u8]) -> IoResult<()> {
         let fd = self.fd();
-        let dolock = |&: | self.lock_nonblocking();
-        let dowrite = |&: nb: bool, buf: *const u8, len: uint| unsafe {
+        let dolock = || self.lock_nonblocking();
+        let dowrite = |nb: bool, buf: *const u8, len: uint| unsafe {
             let flags = if nb {c::MSG_DONTWAIT} else {0};
             libc::send(fd,
                        buf as *const _,

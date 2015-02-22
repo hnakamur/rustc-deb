@@ -27,18 +27,18 @@
 //! # Examples
 //!
 //! Consider a situation where we want to log out a value passed to a function.
-//! We know the value we're working on implements Show, but we don't know its
+//! We know the value we're working on implements Debug, but we don't know its
 //! concrete type.  We want to give special treatment to certain types: in this
 //! case printing out the length of String values prior to their value.
 //! We don't know the concrete type of our value at compile time, so we need to
 //! use runtime reflection instead.
 //!
 //! ```rust
-//! use std::fmt::Show;
+//! use std::fmt::Debug;
 //! use std::any::Any;
 //!
-//! // Logger function for any type that implements Show.
-//! fn log<T: Any+Show>(value: &T) {
+//! // Logger function for any type that implements Debug.
+//! fn log<T: Any + Debug>(value: &T) {
 //!     let value_any = value as &Any;
 //!
 //!     // try to convert our value to a String.  If successful, we want to
@@ -55,7 +55,7 @@
 //! }
 //!
 //! // This function wants to log its parameter out prior to doing work with it.
-//! fn do_work<T: Show+'static>(value: &T) {
+//! fn do_work<T: Debug + 'static>(value: &T) {
 //!     log(value);
 //!     // ...do some other work
 //! }
@@ -69,13 +69,13 @@
 //! }
 //! ```
 
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 
-use mem::{transmute};
-use option::Option;
-use option::Option::{Some, None};
+use mem::transmute;
+use option::Option::{self, Some, None};
 use raw::TraitObject;
-use intrinsics::TypeId;
+use intrinsics;
+use marker::Sized;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Any trait
@@ -86,10 +86,11 @@ use intrinsics::TypeId;
 ///
 /// Every type with no non-`'static` references implements `Any`, so `Any` can
 /// be used as a trait object to emulate the effects dynamic typing.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait Any: 'static {
     /// Get the `TypeId` of `self`
-    #[unstable = "this method will likely be replaced by an associated static"]
+    #[unstable(feature = "core",
+               reason = "this method will likely be replaced by an associated static")]
     fn get_type_id(&self) -> TypeId;
 }
 
@@ -99,12 +100,11 @@ impl<T: 'static> Any for T {
 
 ///////////////////////////////////////////////////////////////////////////////
 // Extension methods for Any trait objects.
-// Implemented as three extension traits so that the methods can be generic.
 ///////////////////////////////////////////////////////////////////////////////
 
 impl Any {
     /// Returns true if the boxed type is the same as `T`
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn is<T: 'static>(&self) -> bool {
         // Get TypeId of the type this function is instantiated with
@@ -119,9 +119,9 @@ impl Any {
 
     /// Returns some reference to the boxed value if it is of type `T`, or
     /// `None` if it isn't.
-    #[unstable = "naming conventions around acquiring references may change"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn downcast_ref<'a, T: 'static>(&'a self) -> Option<&'a T> {
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
         if self.is::<T>() {
             unsafe {
                 // Get the raw representation of the trait object
@@ -137,9 +137,9 @@ impl Any {
 
     /// Returns some mutable reference to the boxed value if it is of type `T`, or
     /// `None` if it isn't.
-    #[unstable = "naming conventions around acquiring references may change"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn downcast_mut<'a, T: 'static>(&'a mut self) -> Option<&'a mut T> {
+    pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
         if self.is::<T>() {
             unsafe {
                 // Get the raw representation of the trait object
@@ -150,6 +150,36 @@ impl Any {
             }
         } else {
             None
+        }
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// TypeID and its methods
+///////////////////////////////////////////////////////////////////////////////
+
+/// A `TypeId` represents a globally unique identifier for a type.
+///
+/// Each `TypeId` is an opaque object which does not allow inspection of what's
+/// inside but does allow basic operations such as cloning, comparison,
+/// printing, and showing.
+///
+/// A `TypeId` is currently only available for types which ascribe to `'static`,
+/// but this limitation may be removed in the future.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct TypeId {
+    t: u64,
+}
+
+impl TypeId {
+    /// Returns the `TypeId` of the type this generic function has been
+    /// instantiated with
+    #[unstable(feature = "core",
+               reason = "may grow a `Reflect` bound soon via marker traits")]
+    pub fn of<T: ?Sized + 'static>() -> TypeId {
+        TypeId {
+            t: unsafe { intrinsics::type_id::<T>() },
         }
     }
 }

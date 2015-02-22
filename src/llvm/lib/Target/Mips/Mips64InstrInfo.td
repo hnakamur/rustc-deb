@@ -290,7 +290,8 @@ class ExtsCins<string opstr, SDPatternOperator Op = null_frag>:
 class SetCC64_R<string opstr, PatFrag cond_op> :
   InstSE<(outs GPR64Opnd:$rd), (ins GPR64Opnd:$rs, GPR64Opnd:$rt),
          !strconcat(opstr, "\t$rd, $rs, $rt"),
-         [(set GPR64Opnd:$rd, (cond_op GPR64Opnd:$rs, GPR64Opnd:$rt))],
+         [(set GPR64Opnd:$rd, (zext (cond_op GPR64Opnd:$rs,
+                                             GPR64Opnd:$rt)))],
          II_SEQ_SNE, FrmR, opstr> {
   let TwoOperandAliasConstraint = "$rd = $rs";
 }
@@ -298,7 +299,8 @@ class SetCC64_R<string opstr, PatFrag cond_op> :
 class SetCC64_I<string opstr, PatFrag cond_op>:
   InstSE<(outs GPR64Opnd:$rt), (ins GPR64Opnd:$rs, simm10_64:$imm10),
          !strconcat(opstr, "\t$rt, $rs, $imm10"),
-         [(set GPR64Opnd:$rt, (cond_op GPR64Opnd:$rs, immSExt10_64:$imm10))],
+         [(set GPR64Opnd:$rt, (zext (cond_op GPR64Opnd:$rs,
+                                             immSExt10_64:$imm10)))],
          II_SEQI_SNEI, FrmI, opstr> {
   let TwoOperandAliasConstraint = "$rt = $rs";
 }
@@ -419,6 +421,10 @@ defm : SetgePats<GPR64, SLT64, SLTu64>;
 defm : SetgeImmPats<GPR64, SLTi64, SLTiu64>;
 
 // truncate
+def : MipsPat<(trunc (assertsext GPR64:$src)),
+              (EXTRACT_SUBREG GPR64:$src, sub_32)>;
+def : MipsPat<(trunc (assertzext GPR64:$src)),
+              (EXTRACT_SUBREG GPR64:$src, sub_32)>;
 def : MipsPat<(i32 (trunc GPR64:$src)),
               (SLL (EXTRACT_SUBREG GPR64:$src, sub_32), 0)>;
 

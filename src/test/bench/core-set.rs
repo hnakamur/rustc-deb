@@ -16,13 +16,11 @@ extern crate collections;
 extern crate rand;
 
 use std::collections::BTreeSet;
-use std::collections::BitvSet;
+use std::collections::BitSet;
 use std::collections::HashSet;
-use std::collections::hash_map::Hasher;
 use std::hash::Hash;
-use std::os;
+use std::env;
 use std::time::Duration;
-use std::uint;
 
 struct Results {
     sequential_ints: Duration,
@@ -44,7 +42,7 @@ trait MutableSet<T> {
     fn contains(&self, k: &T) -> bool;
 }
 
-impl<T: Hash<Hasher> + Eq> MutableSet<T> for HashSet<T> {
+impl<T: Hash + Eq> MutableSet<T> for HashSet<T> {
     fn insert(&mut self, k: T) { self.insert(k); }
     fn remove(&mut self, k: &T) -> bool { self.remove(k) }
     fn contains(&self, k: &T) -> bool { self.contains(k) }
@@ -54,29 +52,29 @@ impl<T: Ord> MutableSet<T> for BTreeSet<T> {
     fn remove(&mut self, k: &T) -> bool { self.remove(k) }
     fn contains(&self, k: &T) -> bool { self.contains(k) }
 }
-impl MutableSet<uint> for BitvSet {
-    fn insert(&mut self, k: uint) { self.insert(k); }
-    fn remove(&mut self, k: &uint) -> bool { self.remove(k) }
-    fn contains(&self, k: &uint) -> bool { self.contains(k) }
+impl MutableSet<usize> for BitSet {
+    fn insert(&mut self, k: usize) { self.insert(k); }
+    fn remove(&mut self, k: &usize) -> bool { self.remove(k) }
+    fn contains(&self, k: &usize) -> bool { self.contains(k) }
 }
 
 impl Results {
-    pub fn bench_int<T:MutableSet<uint>,
+    pub fn bench_int<T:MutableSet<usize>,
                      R:rand::Rng,
                      F:FnMut() -> T>(
                      &mut self,
                      rng: &mut R,
-                     num_keys: uint,
-                     rand_cap: uint,
+                     num_keys: usize,
+                     rand_cap: usize,
                      mut f: F) {
         {
             let mut set = f();
             timed(&mut self.sequential_ints, || {
-                for i in range(0u, num_keys) {
+                for i in 0..num_keys {
                     set.insert(i);
                 }
 
-                for i in range(0u, num_keys) {
+                for i in 0..num_keys {
                     assert!(set.contains(&i));
                 }
             })
@@ -85,20 +83,20 @@ impl Results {
         {
             let mut set = f();
             timed(&mut self.random_ints, || {
-                for _ in range(0, num_keys) {
-                    set.insert(rng.gen::<uint>() % rand_cap);
+                for _ in 0..num_keys {
+                    set.insert(rng.gen::<usize>() % rand_cap);
                 }
             })
         }
 
         {
             let mut set = f();
-            for i in range(0u, num_keys) {
+            for i in 0..num_keys {
                 set.insert(i);
             }
 
             timed(&mut self.delete_ints, || {
-                for i in range(0u, num_keys) {
+                for i in 0..num_keys {
                     assert!(set.remove(&i));
                 }
             })
@@ -110,16 +108,16 @@ impl Results {
                      F:FnMut() -> T>(
                      &mut self,
                      rng: &mut R,
-                     num_keys: uint,
+                     num_keys: usize,
                      mut f: F) {
         {
             let mut set = f();
             timed(&mut self.sequential_strings, || {
-                for i in range(0u, num_keys) {
+                for i in 0..num_keys {
                     set.insert(i.to_string());
                 }
 
-                for i in range(0u, num_keys) {
+                for i in 0..num_keys {
                     assert!(set.contains(&i.to_string()));
                 }
             })
@@ -128,8 +126,8 @@ impl Results {
         {
             let mut set = f();
             timed(&mut self.random_strings, || {
-                for _ in range(0, num_keys) {
-                    let s = rng.gen::<uint>().to_string();
+                for _ in 0..num_keys {
+                    let s = rng.gen::<usize>().to_string();
                     set.insert(s);
                 }
             })
@@ -137,11 +135,11 @@ impl Results {
 
         {
             let mut set = f();
-            for i in range(0u, num_keys) {
+            for i in 0..num_keys {
                 set.insert(i.to_string());
             }
             timed(&mut self.delete_strings, || {
-                for i in range(0u, num_keys) {
+                for i in 0..num_keys {
                     assert!(set.remove(&i.to_string()));
                 }
             })
@@ -180,11 +178,10 @@ fn empty_results() -> Results {
 }
 
 fn main() {
-    let args = os::args();
-    let args = args.as_slice();
+    let mut args = env::args();
     let num_keys = {
         if args.len() == 2 {
-            args[1].parse::<uint>().unwrap()
+            args.nth(1).unwrap().parse::<usize>().unwrap()
         } else {
             100 // woefully inadequate for any real measurement
         }
@@ -197,7 +194,7 @@ fn main() {
         let mut rng: rand::IsaacRng = rand::SeedableRng::from_seed(seed);
         let mut results = empty_results();
         results.bench_int(&mut rng, num_keys, max, || {
-            let s: HashSet<uint> = HashSet::new();
+            let s: HashSet<usize> = HashSet::new();
             s
         });
         results.bench_str(&mut rng, num_keys, || {
@@ -211,7 +208,7 @@ fn main() {
         let mut rng: rand::IsaacRng = rand::SeedableRng::from_seed(seed);
         let mut results = empty_results();
         results.bench_int(&mut rng, num_keys, max, || {
-            let s: BTreeSet<uint> = BTreeSet::new();
+            let s: BTreeSet<usize> = BTreeSet::new();
             s
         });
         results.bench_str(&mut rng, num_keys, || {
@@ -224,7 +221,7 @@ fn main() {
     {
         let mut rng: rand::IsaacRng = rand::SeedableRng::from_seed(seed);
         let mut results = empty_results();
-        results.bench_int(&mut rng, num_keys, max, || BitvSet::new());
-        write_results("collections::bitv::BitvSet", &results);
+        results.bench_int(&mut rng, num_keys, max, || BitSet::new());
+        write_results("collections::bit_vec::BitSet", &results);
     }
 }

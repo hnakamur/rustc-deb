@@ -23,7 +23,7 @@
 //!
 //! Rust's collections can be grouped into four major categories:
 //!
-//! * Sequences: `Vec`, `RingBuf`, `DList`, `BitV`
+//! * Sequences: `Vec`, `VecDeque`, `LinkedList`, `BitV`
 //! * Maps: `HashMap`, `BTreeMap`, `VecMap`
 //! * Sets: `HashSet`, `BTreeSet`, `BitVSet`
 //! * Misc: `BinaryHeap`
@@ -43,14 +43,14 @@
 //! * You want a resizable array.
 //! * You want a heap-allocated array.
 //!
-//! ### Use a `RingBuf` when:
+//! ### Use a `VecDeque` when:
 //! * You want a `Vec` that supports efficient insertion at both ends of the sequence.
 //! * You want a queue.
 //! * You want a double-ended queue (deque).
 //!
-//! ### Use a `DList` when:
-//! * You want a `Vec` or `RingBuf` of unknown size, and can't tolerate inconsistent
-//! performance during insertions.
+//! ### Use a `LinkedList` when:
+//! * You want a `Vec` or `VecDeque` of unknown size, and can't tolerate amortization.
+//! * You want to efficiently split and append lists.
 //! * You are *absolutely* certain you *really*, *truly*, want a doubly linked list.
 //!
 //! ### Use a `HashMap` when:
@@ -65,8 +65,8 @@
 //! * You want a sorted map.
 //!
 //! ### Use a `VecMap` when:
-//! * You want a `HashMap` but with known to be small `uint` keys.
-//! * You want a `BTreeMap`, but with known to be small `uint` keys.
+//! * You want a `HashMap` but with known to be small `usize` keys.
+//! * You want a `BTreeMap`, but with known to be small `usize` keys.
 //!
 //! ### Use the `Set` variant of any of these `Map`s when:
 //! * You just want to remember which keys you've seen.
@@ -75,7 +75,7 @@
 //!
 //! ### Use a `BitV` when:
 //! * You want to store an unbounded number of booleans in a small space.
-//! * You want a bitvector.
+//! * You want a bit vector.
 //!
 //! ### Use a `BitVSet` when:
 //! * You want a `VecSet`.
@@ -84,6 +84,56 @@
 //! * You want to store a bunch of elements, but only ever want to process the "biggest"
 //! or "most important" one at any given time.
 //! * You want a priority queue.
+//!
+//! # Performance
+//!
+//! Choosing the right collection for the job requires an understanding of what each collection
+//! is good at. Here we briefly summarize the performance of different collections for certain
+//! important operations. For further details, see each type's documentation.
+//!
+//! Throughout the documentation, we will follow a few conventions. For all operations,
+//! the collection's size is denoted by n. If another collection is involved in the operation, it
+//! contains m elements. Operations which have an *amortized* cost are suffixed with a `*`.
+//! Operations with an *expected* cost are suffixed with a `~`.
+//!
+//! All amortized costs are for the potential need to resize when capacity is exhausted.
+//! If a resize occurs it will take O(n) time. Our collections never automatically shrink,
+//! so removal operations aren't amortized. Over a sufficiently large series of
+//! operations, the average cost per operation will deterministically equal the given cost.
+//!
+//! Only HashMap has expected costs, due to the probabilistic nature of hashing. It is
+//! theoretically possible, though very unlikely, for HashMap to experience worse performance.
+//!
+//! ## Sequences
+//!
+//! |              | get(i)         | insert(i)       | remove(i)      | append | split_off(i)   |
+//! |--------------|----------------|-----------------|----------------|--------|----------------|
+//! | Vec          | O(1)           | O(n-i)*         | O(n-i)         | O(m)*  | O(n-i)         |
+//! | VecDeque     | O(1)           | O(min(i, n-i))* | O(min(i, n-i)) | O(m)*  | O(min(i, n-i)) |
+//! | LinkedList   | O(min(i, n-i)) | O(min(i, n-i))  | O(min(i, n-i)) | O(1)   | O(min(i, n-i)) |
+//! | BitVec       | O(1)           | O(n-i)*         | O(n-i)         | O(m)*  | O(n-i)         |
+//!
+//! Note that where ties occur, Vec is generally going to be faster than VecDeque, and VecDeque
+//! is generally going to be faster than LinkedList. BitVec is not a general purpose collection, and
+//! therefore cannot reasonably be compared.
+//!
+//! ## Maps
+//!
+//! For Sets, all operations have the cost of the equivalent Map operation. For BitSet,
+//! refer to VecMap.
+//!
+//! |          | get       | insert   | remove   | predecessor |
+//! |----------|-----------|----------|----------|-------------|
+//! | HashMap  | O(1)~     | O(1)~*   | O(1)~    | N/A         |
+//! | BTreeMap | O(log n)  | O(log n) | O(log n) | O(log n)    |
+//! | VecMap   | O(1)      | O(1)?    | O(1)     | O(n)        |
+//!
+//! Note that VecMap is *incredibly* inefficient in terms of space. The O(1) insertion time
+//! assumes space for the element is already allocated. Otherwise, a large key may require a
+//! massive reallocation, with no direct relation to the number of elements in the collection.
+//! VecMap should only be seriously considered for small keys.
+//!
+//! Note also that BTreeMap's precise preformance depends on the value of B.
 //!
 //! # Correct and Efficient Usage of Collections
 //!
@@ -116,7 +166,7 @@
 //!
 //! Any `with_capacity` constructor will instruct the collection to allocate enough space
 //! for the specified number of elements. Ideally this will be for exactly that many
-//! elements, but some implementation details may prevent this. `Vec` and `RingBuf` can
+//! elements, but some implementation details may prevent this. `Vec` and `VecDeque` can
 //! be relied on to allocate exactly the requested amount, though. Use `with_capacity`
 //! when you know exactly how many elements will be inserted, or at least have a
 //! reasonable upper-bound on that number.
@@ -159,7 +209,7 @@
 //! all the contents of the collection.
 //!
 //! ```
-//! let vec = vec![1u, 2, 3, 4];
+//! let vec = vec![1, 2, 3, 4];
 //! for x in vec.iter() {
 //!    println!("vec contained {}", x);
 //! }
@@ -169,7 +219,7 @@
 //! This is great for mutating all the contents of the collection.
 //!
 //! ```
-//! let mut vec = vec![1u, 2, 3, 4];
+//! let mut vec = vec![1, 2, 3, 4];
 //! for x in vec.iter_mut() {
 //!    *x += 1;
 //! }
@@ -184,16 +234,16 @@
 //! previous section to do this as efficiently as possible.
 //!
 //! ```
-//! let mut vec1 = vec![1u, 2, 3, 4];
-//! let vec2 = vec![10u, 20, 30, 40];
+//! let mut vec1 = vec![1, 2, 3, 4];
+//! let vec2 = vec![10, 20, 30, 40];
 //! vec1.extend(vec2.into_iter());
 //! ```
 //!
 //! ```
-//! use std::collections::RingBuf;
+//! use std::collections::VecDeque;
 //!
-//! let vec = vec![1u, 2, 3, 4];
-//! let buf: RingBuf<uint> = vec.into_iter().collect();
+//! let vec = vec![1, 2, 3, 4];
+//! let buf: VecDeque<_> = vec.into_iter().collect();
 //! ```
 //!
 //! Iterators also provide a series of *adapter* methods for performing common tasks to
@@ -203,7 +253,7 @@
 //! iterators as the way to iterate over them in reverse order.
 //!
 //! ```
-//! let vec = vec![1u, 2, 3, 4];
+//! let vec = vec![1, 2, 3, 4];
 //! for x in vec.iter().rev() {
 //!    println!("vec contained {}", x);
 //! }
@@ -249,21 +299,21 @@
 //! #### Counting the number of times each character in a string occurs
 //!
 //! ```
-//! use std::collections::btree_map::{BTreeMap, Occupied, Vacant};
+//! use std::collections::btree_map::{BTreeMap, Entry};
 //!
 //! let mut count = BTreeMap::new();
 //! let message = "she sells sea shells by the sea shore";
 //!
 //! for c in message.chars() {
 //!     match count.entry(c) {
-//!         Vacant(entry) => { entry.insert(1u); },
-//!         Occupied(mut entry) => *entry.get_mut() += 1,
+//!         Entry::Vacant(entry) => { entry.insert(1); },
+//!         Entry::Occupied(mut entry) => *entry.get_mut() += 1,
 //!     }
 //! }
 //!
 //! assert_eq!(count.get(&'s'), Some(&8));
 //!
-//! println!("Number of occurences of each character");
+//! println!("Number of occurrences of each character");
 //! for (char, count) in count.iter() {
 //!     println!("{}: {}", char, count);
 //! }
@@ -276,7 +326,7 @@
 //! #### Tracking the inebriation of customers at a bar
 //!
 //! ```
-//! use std::collections::btree_map::{BTreeMap, Occupied, Vacant};
+//! use std::collections::btree_map::{BTreeMap, Entry};
 //!
 //! // A client of the bar. They have an id and a blood alcohol level.
 //! struct Person { id: u32, blood_alcohol: f32 };
@@ -291,8 +341,8 @@
 //!     // If this is the first time we've seen this customer, initialize them
 //!     // with no blood alcohol. Otherwise, just retrieve them.
 //!     let person = match blood_alcohol.entry(id) {
-//!         Vacant(entry) => entry.insert(Person{id: id, blood_alcohol: 0.0}),
-//!         Occupied(entry) => entry.into_mut(),
+//!         Entry::Vacant(entry) => entry.insert(Person{id: id, blood_alcohol: 0.0}),
+//!         Entry::Occupied(entry) => entry.into_mut(),
 //!     };
 //!
 //!     // Reduce their blood alcohol level. It takes time to order and drink a beer!
@@ -309,26 +359,27 @@
 //! }
 //! ```
 
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 
-pub use core_collections::{BinaryHeap, Bitv, BitvSet, BTreeMap, BTreeSet};
-pub use core_collections::{DList, RingBuf, VecMap};
+pub use core_collections::Bound;
+pub use core_collections::{BinaryHeap, BitVec, BitSet, BTreeMap, BTreeSet};
+pub use core_collections::{LinkedList, VecDeque, VecMap};
 
-pub use core_collections::{binary_heap, bitv, bitv_set, btree_map, btree_set};
-pub use core_collections::{dlist, ring_buf, vec_map};
+pub use core_collections::{binary_heap, bit_vec, bit_set, btree_map, btree_set};
+pub use core_collections::{linked_list, vec_deque, vec_map};
 
 pub use self::hash_map::HashMap;
 pub use self::hash_set::HashSet;
 
 mod hash;
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub mod hash_map {
     //! A hashmap
     pub use super::hash::map::*;
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub mod hash_set {
     //! A hashset
     pub use super::hash::set::*;
@@ -336,7 +387,7 @@ pub mod hash_set {
 
 /// Experimental support for providing custom hash algorithms to a HashMap and
 /// HashSet.
-#[unstable = "module was recently added"]
+#[unstable(feature = "std_misc", reason = "module was recently added")]
 pub mod hash_state {
     pub use super::hash::state::*;
 }

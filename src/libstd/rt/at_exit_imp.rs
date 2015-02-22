@@ -20,7 +20,7 @@ use mem;
 use thunk::Thunk;
 use sys_common::mutex::{Mutex, MUTEX_INIT};
 
-type Queue = Vec<Thunk>;
+type Queue = Vec<Thunk<'static>>;
 
 // NB these are specifically not types from `std::sync` as they currently rely
 // on poisoning and this module needs to operate at a lower level than requiring
@@ -58,14 +58,14 @@ pub fn cleanup() {
         // If we never called init, not need to cleanup!
         if queue as uint != 0 {
             let queue: Box<Queue> = mem::transmute(queue);
-            for to_run in queue.into_iter() {
+            for to_run in *queue {
                 to_run.invoke(());
             }
         }
     }
 }
 
-pub fn push(f: Thunk) {
+pub fn push(f: Thunk<'static>) {
     unsafe {
         LOCK.lock();
         init();

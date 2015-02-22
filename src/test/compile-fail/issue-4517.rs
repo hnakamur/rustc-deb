@@ -11,8 +11,11 @@
 fn bar(int_param: usize) {}
 
 fn main() {
-    let foo: [u8; 4] = [1u8; 4us];
+    let foo: [u8; 4] = [1u8; 4_usize];
     bar(foo);
-    //~^ ERROR mismatched types: expected `usize`, found `[u8; 4]`
-    //         (expected usize, found vector)
+    //~^ ERROR mismatched types
+    //~| expected `usize`
+    //~| found `[u8; 4]`
+    //~| expected usize
+    //~| found array of 4 elements
 }

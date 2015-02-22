@@ -121,7 +121,11 @@ class MachineFrameInfo {
         isSpillSlot(isSS), Alloca(Val), PreAllocated(false), isAliased(A) {}
   };
 
-  const TargetMachine &TM;
+  /// StackAlignment - The alignment of the stack.
+  unsigned StackAlignment;
+
+  /// StackRealignable - Can the stack be realigned.
+  bool StackRealignable;
 
   /// Objects - The list of stack objects allocated...
   ///
@@ -242,10 +246,11 @@ class MachineFrameInfo {
   /// True if this is a varargs function that contains a musttail call.
   bool HasMustTailInVarArgFunc;
 
-  const TargetFrameLowering *getFrameLowering() const;
 public:
-    explicit MachineFrameInfo(const TargetMachine &TM, bool RealignOpt)
-    : TM(TM), RealignOption(RealignOpt) {
+  explicit MachineFrameInfo(unsigned StackAlign, bool isStackRealign,
+                            bool RealignOpt)
+      : StackAlignment(StackAlign), StackRealignable(isStackRealign),
+        RealignOption(RealignOpt) {
     StackSize = NumFixedObjects = OffsetAdjustment = MaxAlignment = 0;
     HasVarSizedObjects = false;
     FrameAddressTaken = false;
@@ -510,6 +515,10 @@ public:
   /// CreateFixedSpillStackObject - Create a spill slot at a fixed location
   /// on the stack.  Returns an index with a negative value.
   int CreateFixedSpillStackObject(uint64_t Size, int64_t SPOffset);
+
+  /// Allocates memory at a fixed, target-specific offset from the frame
+  /// pointer. Marks the function as having its frame address taken.
+  int CreateFrameAllocation(uint64_t Size);
 
   /// isFixedObjectIndex - Returns true if the specified index corresponds to a
   /// fixed stack object.

@@ -13,9 +13,9 @@
 //              quite quickly and it takes a few seconds for the sockets to get
 //              recycled.
 
-use std::io::{TcpListener, Listener, Acceptor, EndOfFile, TcpStream};
+use std::old_io::{TcpListener, Listener, Acceptor, EndOfFile, TcpStream};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUint, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
 use std::thread::Thread;
 
@@ -30,11 +30,11 @@ fn test() {
     let mut l = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.socket_name().unwrap();
     let mut a = l.listen().unwrap();
-    let cnt = Arc::new(AtomicUint::new(0));
+    let cnt = Arc::new(AtomicUsize::new(0));
 
     let (srv_tx, srv_rx) = channel();
     let (cli_tx, cli_rx) = channel();
-    let _t = range(0, N).map(|_| {
+    let _t = (0..N).map(|_| {
         let a = a.clone();
         let cnt = cnt.clone();
         let srv_tx = srv_tx.clone();
@@ -55,10 +55,10 @@ fn test() {
         })
     }).collect::<Vec<_>>();
 
-    let _t = range(0, N).map(|_| {
+    let _t = (0..N).map(|_| {
         let cli_tx = cli_tx.clone();
         Thread::scoped(move|| {
-            for _ in range(0, M) {
+            for _ in 0..M {
                 let _s = TcpStream::connect(addr).unwrap();
             }
             cli_tx.send(());

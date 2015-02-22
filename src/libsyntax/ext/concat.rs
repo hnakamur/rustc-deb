@@ -25,14 +25,14 @@ pub fn expand_syntax_ext(cx: &mut base::ExtCtxt,
         None => return base::DummyResult::expr(sp)
     };
     let mut accumulator = String::new();
-    for e in es.into_iter() {
+    for e in es {
         match e.node {
             ast::ExprLit(ref lit) => {
                 match lit.node {
                     ast::LitStr(ref s, _) |
                     ast::LitFloat(ref s, _) |
                     ast::LitFloatUnsuffixed(ref s) => {
-                        accumulator.push_str(s.get());
+                        accumulator.push_str(&s);
                     }
                     ast::LitChar(c) => {
                         accumulator.push(c);
@@ -62,5 +62,5 @@ pub fn expand_syntax_ext(cx: &mut base::ExtCtxt,
     }
     base::MacExpr::new(cx.expr_str(
             sp,
-            token::intern_and_get_ident(&accumulator[])))
+            token::intern_and_get_ident(&accumulator[..])))
 }

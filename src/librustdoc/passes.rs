@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use rustc::util::nodemap::NodeSet;
 use std::cmp;
 use std::string::String;
-use std::uint;
+use std::usize;
 use syntax::ast;
 use syntax::ast_util;
 
@@ -149,7 +149,7 @@ impl<'a> fold::DocFolder for Stripper<'a> {
                 }
             }
 
-            clean::ViewItemItem(..) => {
+            clean::ExternCrateItem(..) | clean::ImportItem(_) => {
                 if i.visibility != Some(ast::Public) {
                     return None
                 }
@@ -255,12 +255,12 @@ pub fn unindent_comments(krate: clean::Crate) -> plugins::PluginResult {
         fn fold_item(&mut self, i: Item) -> Option<Item> {
             let mut i = i;
             let mut avec: Vec<clean::Attribute> = Vec::new();
-            for attr in i.attrs.iter() {
+            for attr in &i.attrs {
                 match attr {
                     &clean::NameValue(ref x, ref s)
                             if "doc" == *x => {
                         avec.push(clean::NameValue("doc".to_string(),
-                                                   unindent(s.as_slice())))
+                                                   unindent(s)))
                     }
                     x => avec.push(x.clone())
                 }
@@ -280,11 +280,11 @@ pub fn collapse_docs(krate: clean::Crate) -> plugins::PluginResult {
         fn fold_item(&mut self, i: Item) -> Option<Item> {
             let mut docstr = String::new();
             let mut i = i;
-            for attr in i.attrs.iter() {
+            for attr in &i.attrs {
                 match *attr {
                     clean::NameValue(ref x, ref s)
                             if "doc" == *x => {
-                        docstr.push_str(s.as_slice());
+                        docstr.push_str(s);
                         docstr.push('\n');
                     },
                     _ => ()
@@ -293,7 +293,7 @@ pub fn collapse_docs(krate: clean::Crate) -> plugins::PluginResult {
             let mut a: Vec<clean::Attribute> = i.attrs.iter().filter(|&a| match a {
                 &clean::NameValue(ref x, _) if "doc" == *x => false,
                 _ => true
-            }).map(|x| x.clone()).collect();
+            }).cloned().collect();
             if docstr.len() > 0 {
                 a.push(clean::NameValue("doc".to_string(), docstr));
             }
@@ -310,7 +310,7 @@ pub fn unindent(s: &str) -> String {
     let lines = s.lines_any().collect::<Vec<&str> >();
     let mut saw_first_line = false;
     let mut saw_second_line = false;
-    let min_indent = lines.iter().fold(uint::MAX, |min_indent, line| {
+    let min_indent = lines.iter().fold(usize::MAX, |min_indent, line| {
 
         // After we see the first non-whitespace line, look at
         // the line we have. If it is not whitespace, and therefore
@@ -322,7 +322,7 @@ pub fn unindent(s: &str) -> String {
             !line.chars().all(|c| c.is_whitespace());
 
         let min_indent = if ignore_previous_indents {
-            uint::MAX
+            usize::MAX
         } else {
             min_indent
         };
@@ -352,14 +352,14 @@ pub fn unindent(s: &str) -> String {
 
     if lines.len() >= 1 {
         let mut unindented = vec![ lines[0].trim().to_string() ];
-        unindented.push_all(lines.tail().iter().map(|&line| {
+        unindented.push_all(&lines.tail().iter().map(|&line| {
             if line.chars().all(|c| c.is_whitespace()) {
                 line.to_string()
             } else {
                 assert!(line.len() >= min_indent);
-                line.slice_from(min_indent).to_string()
+                line[min_indent..].to_string()
             }
-        }).collect::<Vec<_>>().as_slice());
+        }).collect::<Vec<_>>());
         unindented.connect("\n")
     } else {
         s.to_string()
@@ -373,14 +373,14 @@ mod unindent_tests {
     #[test]
     fn should_unindent() {
         let s = "    line1\n    line2".to_string();
-        let r = unindent(s.as_slice());
+        let r = unindent(&s);
         assert_eq!(r, "line1\nline2");
     }
 
     #[test]
     fn should_unindent_multiple_paragraphs() {
         let s = "    line1\n\n    line2".to_string();
-        let r = unindent(s.as_slice());
+        let r = unindent(&s);
         assert_eq!(r, "line1\n\nline2");
     }
 
@@ -389,7 +389,7 @@ mod unindent_tests {
         // Line 2 is indented another level beyond the
         // base indentation and should be preserved
         let s = "    line1\n\n        line2".to_string();
-        let r = unindent(s.as_slice());
+        let r = unindent(&s);
         assert_eq!(r, "line1\n\n    line2");
     }
 
@@ -401,14 +401,14 @@ mod unindent_tests {
         // #[doc = "Start way over here
         //          and continue here"]
         let s = "line1\n    line2".to_string();
-        let r = unindent(s.as_slice());
+        let r = unindent(&s);
         assert_eq!(r, "line1\nline2");
     }
 
     #[test]
     fn should_not_ignore_first_line_indent_in_a_single_line_para() {
         let s = "line1\n\n    line2".to_string();
-        let r = unindent(s.as_slice());
+        let r = unindent(&s);
         assert_eq!(r, "line1\n\n    line2");
     }
 }

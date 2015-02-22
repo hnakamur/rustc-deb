@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::io::{File, Command};
+use std::old_io::{File, Command};
 use std::iter::repeat;
 use std::rand::{thread_rng, Rng};
-use std::{char, os};
+use std::{char, env};
 
 // creates a file with `fn main() { <random ident> }` and checks the
 // compiler emits a span of the appropriate length (for the
@@ -33,36 +33,68 @@ fn random_char() -> char {
 }
 
 fn main() {
-    let args = os::args();
-    let rustc = args[1].as_slice();
-    let tmpdir = Path::new(args[2].as_slice());
+    let args: Vec<String> = env::args().collect();
+    let rustc = &args[1];
+    let tmpdir = Path::new(&args[2]);
     let main_file = tmpdir.join("span_main.rs");
 
-    for _ in range(0u, 100) {
-        let n = thread_rng().gen_range(3u, 20);
+    for _ in 0..100 {
+        let n = thread_rng().gen_range(3, 20);
 
         {
             let _ = write!(&mut File::create(&main_file).unwrap(),
                            "#![feature(non_ascii_idents)] fn main() {{ {} }}",
                            // random string of length n
-                           range(0, n).map(|_| random_char()).collect::<String>());
+                           (0..n).map(|_| random_char()).collect::<String>());
         }
 
         // rustc is passed to us with --out-dir and -L etc., so we
         // can't exec it directly
         let result = Command::new("sh")
                              .arg("-c")
-                             .arg(format!("{} {}",
-                                          rustc,
-                                          main_file.as_str()
-                                                   .unwrap()).as_slice())
+                             .arg(&format!("{} {}",
+                                           rustc,
+                                           main_file.as_str()
+                                                    .unwrap()))
                              .output().unwrap();
 
-        let err = String::from_utf8_lossy(result.error.as_slice());
+        let err = String::from_utf8_lossy(&result.error);
 
         // the span should end the line (e.g no extra ~'s)
         let expected_span = format!("^{}\n", repeat("~").take(n - 1)
                                                         .collect::<String>());
-        assert!(err.as_slice().contains(expected_span.as_slice()));
+        assert!(err.contains(&expected_span));
     }
+
+    // Test multi-column characters and tabs
+    {
+        let _ = write!(&mut File::create(&main_file).unwrap(),
+                       r#"extern "路濫狼á́́" fn foo() {{}} extern "路濫狼á́" fn bar() {{}}"#);
+    }
+
+    // Extra characters. Every line is preceded by `filename:lineno <actual code>`
+    let offset = main_file.as_str().unwrap().len() + 3;
+
+    let result = Command::new("sh")
+                         .arg("-c")
+                         .arg(format!("{} {}",
+                                      rustc,
+                                      main_file.as_str()
+                                               .unwrap()).as_slice())
+                         .output().unwrap();
+
+    let err = String::from_utf8_lossy(result.error.as_slice());
+
+    // Test both the length of the snake and the leading spaces up to it
+
+    // First snake is 8 ~s long, with 7 preceding spaces (excluding file name/line offset)
+    let expected_span = format!("\n{}^{}\n",
+                                repeat(" ").take(offset + 7).collect::<String>(),
+                                repeat("~").take(8).collect::<String>());
+    assert!(err.contains(expected_span.as_slice()));
+    // Second snake is 8 ~s long, with 36 preceding spaces
+    let expected_span = format!("\n{}^{}\n",
+                                repeat(" ").take(offset + 36).collect::<String>(),
+                                repeat("~").take(8).collect::<String>());
+    assert!(err.contains(expected_span.as_slice()));
 }

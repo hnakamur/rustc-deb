@@ -113,14 +113,14 @@ impl LanguageItems {
         }
     }
 
-    pub fn fn_trait_kind(&self, id: ast::DefId) -> Option<ty::UnboxedClosureKind> {
+    pub fn fn_trait_kind(&self, id: ast::DefId) -> Option<ty::ClosureKind> {
         let def_id_kinds = [
-            (self.fn_trait(), ty::FnUnboxedClosureKind),
-            (self.fn_mut_trait(), ty::FnMutUnboxedClosureKind),
-            (self.fn_once_trait(), ty::FnOnceUnboxedClosureKind),
+            (self.fn_trait(), ty::FnClosureKind),
+            (self.fn_mut_trait(), ty::FnMutClosureKind),
+            (self.fn_once_trait(), ty::FnOnceClosureKind),
             ];
 
-        for &(opt_def_id, kind) in def_id_kinds.iter() {
+        for &(opt_def_id, kind) in &def_id_kinds {
             if Some(id) == opt_def_id {
                 return Some(kind);
             }
@@ -147,18 +147,12 @@ struct LanguageItemCollector<'a> {
 
 impl<'a, 'v> Visitor<'v> for LanguageItemCollector<'a> {
     fn visit_item(&mut self, item: &ast::Item) {
-        match extract(item.attrs.as_slice()) {
-            Some(value) => {
-                let item_index = self.item_refs.get(value.get()).map(|x| *x);
+        if let Some(value) = extract(&item.attrs) {
+            let item_index = self.item_refs.get(&value[..]).cloned();
 
-                match item_index {
-                    Some(item_index) => {
-                        self.collect_item(item_index, local_def(item.id), item.span)
-                    }
-                    None => {}
-                }
+            if let Some(item_index) = item_index {
+                self.collect_item(item_index, local_def(item.id), item.span)
             }
-            None => {}
         }
 
         visit::walk_item(self, item);
@@ -167,7 +161,7 @@ impl<'a, 'v> Visitor<'v> for LanguageItemCollector<'a> {
 
 impl<'a> LanguageItemCollector<'a> {
     pub fn new(session: &'a Session) -> LanguageItemCollector<'a> {
-        let mut item_refs = FnvHashMap::new();
+        let mut item_refs = FnvHashMap();
 
         $( item_refs.insert($name, $variant as uint); )*
 
@@ -217,7 +211,7 @@ impl<'a> LanguageItemCollector<'a> {
 }
 
 pub fn extract(attrs: &[ast::Attribute]) -> Option<InternedString> {
-    for attribute in attrs.iter() {
+    for attribute in attrs {
         match attribute.value_str() {
             Some(ref value) if attribute.check_name("lang") => {
                 return Some(value.clone());
@@ -269,9 +263,9 @@ lets_do_this! {
     RangeStructLangItem,             "range",                   range_struct;
     RangeFromStructLangItem,         "range_from",              range_from_struct;
     RangeToStructLangItem,           "range_to",                range_to_struct;
-    FullRangeStructLangItem,         "full_range",              full_range_struct;
+    RangeFullStructLangItem,         "range_full",              range_full_struct;
 
-    UnsafeTypeLangItem,              "unsafe",                  unsafe_type;
+    UnsafeCellTypeLangItem,          "unsafe_cell",             unsafe_cell_type;
 
     DerefTraitLangItem,              "deref",                   deref_trait;
     DerefMutTraitLangItem,           "deref_mut",               deref_mut_trait;
@@ -307,29 +301,28 @@ lets_do_this! {
     TyDescStructLangItem,            "ty_desc",                 ty_desc;
     OpaqueStructLangItem,            "opaque",                  opaque;
 
-    TypeIdLangItem,                  "type_id",                 type_id;
-
     EhPersonalityLangItem,           "eh_personality",          eh_personality;
 
     ExchangeHeapLangItem,            "exchange_heap",           exchange_heap;
     OwnedBoxLangItem,                "owned_box",               owned_box;
 
+    PhantomFnItem,                   "phantom_fn",              phantom_fn;
+    PhantomDataItem,                 "phantom_data",            phantom_data;
+
+    // Deprecated:
     CovariantTypeItem,               "covariant_type",          covariant_type;
     ContravariantTypeItem,           "contravariant_type",      contravariant_type;
     InvariantTypeItem,               "invariant_type",          invariant_type;
-
     CovariantLifetimeItem,           "covariant_lifetime",      covariant_lifetime;
     ContravariantLifetimeItem,       "contravariant_lifetime",  contravariant_lifetime;
     InvariantLifetimeItem,           "invariant_lifetime",      invariant_lifetime;
 
-    NoSendItem,                      "no_send_bound",           no_send_bound;
     NoCopyItem,                      "no_copy_bound",           no_copy_bound;
-    NoSyncItem,                      "no_sync_bound",           no_sync_bound;
     ManagedItem,                     "managed_bound",           managed_bound;
 
     NonZeroItem,                     "non_zero",                non_zero;
 
-    IteratorItem,                    "iterator",                iterator;
-
     StackExhaustedLangItem,          "stack_exhausted",         stack_exhausted;
+
+    DebugTraitLangItem,              "debug_trait",             debug_trait;
 }

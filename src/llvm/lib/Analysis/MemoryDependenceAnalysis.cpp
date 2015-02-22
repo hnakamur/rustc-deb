@@ -18,7 +18,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/AssumptionTracker.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/PHITransAddr.h"
@@ -49,14 +49,17 @@ STATISTIC(NumCacheCompleteNonLocalPtr,
           "Number of block queries that were completely cached");
 
 // Limit for the number of instructions to scan in a block.
-static const int BlockScanLimit = 100;
+static const unsigned int BlockScanLimit = 100;
+
+// Limit on the number of memdep results to process.
+static const unsigned int NumResultsLimit = 100;
 
 char MemoryDependenceAnalysis::ID = 0;
 
 // Register this pass...
 INITIALIZE_PASS_BEGIN(MemoryDependenceAnalysis, "memdep",
                 "Memory Dependence Analysis", false, true)
-INITIALIZE_PASS_DEPENDENCY(AssumptionTracker)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(MemoryDependenceAnalysis, "memdep",
                       "Memory Dependence Analysis", false, true)
@@ -85,13 +88,13 @@ void MemoryDependenceAnalysis::releaseMemory() {
 ///
 void MemoryDependenceAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
-  AU.addRequired<AssumptionTracker>();
+  AU.addRequired<AssumptionCacheTracker>();
   AU.addRequiredTransitive<AliasAnalysis>();
 }
 
-bool MemoryDependenceAnalysis::runOnFunction(Function &) {
+bool MemoryDependenceAnalysis::runOnFunction(Function &F) {
   AA = &getAnalysis<AliasAnalysis>();
-  AT = &getAnalysis<AssumptionTracker>();
+  AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
   DL = DLP ? &DLP->getDataLayout() : nullptr;
   DominatorTreeWrapperPass *DTWP =
@@ -773,7 +776,7 @@ MemoryDependenceAnalysis::getNonLocalCallDependency(CallSite QueryCS) {
     DirtyBlocks.pop_back();
 
     // Already processed this block?
-    if (!Visited.insert(DirtyBB))
+    if (!Visited.insert(DirtyBB).second)
       continue;
 
     // Do a binary search to see if we already have an entry for this block in
@@ -856,14 +859,65 @@ MemoryDependenceAnalysis::getNonLocalCallDependency(CallSite QueryCS) {
 /// own block.
 ///
 void MemoryDependenceAnalysis::
-getNonLocalPointerDependency(const AliasAnalysis::Location &Loc, bool isLoad,
-                             BasicBlock *FromBB,
+getNonLocalPointerDependency(Instruction *QueryInst,
                              SmallVectorImpl<NonLocalDepResult> &Result) {
+
+  auto getLocation = [](AliasAnalysis *AA, Instruction *Inst) {
+    if (auto *I = dyn_cast<LoadInst>(Inst))
+      return AA->getLocation(I);
+    else if (auto *I = dyn_cast<StoreInst>(Inst))
+      return AA->getLocation(I);
+    else if (auto *I = dyn_cast<VAArgInst>(Inst))
+      return AA->getLocation(I);
+    else if (auto *I = dyn_cast<AtomicCmpXchgInst>(Inst))
+      return AA->getLocation(I);
+    else if (auto *I = dyn_cast<AtomicRMWInst>(Inst))
+      return AA->getLocation(I);
+    else
+      llvm_unreachable("unsupported memory instruction");
+  };
+   
+  const AliasAnalysis::Location Loc = getLocation(AA, QueryInst);
+  bool isLoad = isa<LoadInst>(QueryInst);
+  BasicBlock *FromBB = QueryInst->getParent();
+  assert(FromBB);
+
   assert(Loc.Ptr->getType()->isPointerTy() &&
          "Can't get pointer deps of a non-pointer!");
   Result.clear();
+  
+  // This routine does not expect to deal with volatile instructions.
+  // Doing so would require piping through the QueryInst all the way through.
+  // TODO: volatiles can't be elided, but they can be reordered with other
+  // non-volatile accesses.
+  auto isVolatile = [](Instruction *Inst) {
+    if (LoadInst *LI = dyn_cast<LoadInst>(Inst)) {
+      return LI->isVolatile();
+    } else if (StoreInst *SI = dyn_cast<StoreInst>(Inst)) {
+      return SI->isVolatile();
+    }
+    return false;
+  };
+  // We currently give up on any instruction which is ordered, but we do handle
+  // atomic instructions which are unordered.
+  // TODO: Handle ordered instructions
+  auto isOrdered = [](Instruction *Inst) {
+    if (LoadInst *LI = dyn_cast<LoadInst>(Inst)) {
+      return !LI->isUnordered();
+    } else if (StoreInst *SI = dyn_cast<StoreInst>(Inst)) {
+      return !SI->isUnordered();
+    }
+    return false;
+  };
+  if (isVolatile(QueryInst) || isOrdered(QueryInst)) {
+    Result.push_back(NonLocalDepResult(FromBB,
+                                       MemDepResult::getUnknown(),
+                                       const_cast<Value *>(Loc.Ptr)));
+    return;
+  }
 
-  PHITransAddr Address(const_cast<Value *>(Loc.Ptr), DL, AT);
+
+  PHITransAddr Address(const_cast<Value *>(Loc.Ptr), DL, AC);
 
   // This is the set of blocks we've inspected, and the pointer we consider in
   // each block.  Because of critical edges, we currently bail out if querying
@@ -1133,6 +1187,24 @@ getNonLocalPointerDepFromBB(const PHITransAddr &Pointer,
   while (!Worklist.empty()) {
     BasicBlock *BB = Worklist.pop_back_val();
 
+    // If we do process a large number of blocks it becomes very expensive and
+    // likely it isn't worth worrying about
+    if (Result.size() > NumResultsLimit) {
+      Worklist.clear();
+      // Sort it now (if needed) so that recursive invocations of
+      // getNonLocalPointerDepFromBB and other routines that could reuse the
+      // cache value will only see properly sorted cache arrays.
+      if (Cache && NumSortedEntries != Cache->size()) {
+        SortNonLocalDepInfoCache(*Cache, NumSortedEntries);
+      }
+      // Since we bail out, the "Cache" set won't contain all of the
+      // results for the query.  This is ok (we can still use it to accelerate
+      // specific block queries) but we can't do the fastpath "return all
+      // results from the set".  Clear out the indicator for this.
+      CacheInfo->Pair = BBSkipFirstBlockPair();
+      return true;
+    }
+
     // Skip the first block if we have it.
     if (!SkipFirstBlock) {
       // Analyze the dependency of *Pointer in FromBB.  See if we already have
@@ -1339,7 +1411,7 @@ getNonLocalPointerDepFromBB(const PHITransAddr &Pointer,
       if (I->getBB() != BB)
         continue;
 
-      assert(I->getResult().isNonLocal() &&
+      assert((I->getResult().isNonLocal() || !DT->isReachableFromEntry(BB)) &&
              "Should only be here with transparent block");
       I->setResult(MemDepResult::getUnknown());
       Result.push_back(NonLocalDepResult(I->getBB(), I->getResult(),

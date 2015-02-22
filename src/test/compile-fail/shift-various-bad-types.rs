@@ -29,14 +29,18 @@ fn foo(p: &Panolpy) {
     // known to be an integer, but meh.
     let x;
     22 >> x;
-    //~^ ERROR right-hand-side of a shift operation must have integral type
+    //~^ ERROR the type of this value must be known in this context
 
     22 >> 1;
     // Integer literal types are OK
 
     // Type of the result follows the LHS, not the RHS:
     let _: i32 = 22_i64 >> 1_i32;
-    //~^ ERROR mismatched types: expected `i32`, found `i64`
+    //~^ ERROR mismatched types
+    //~| expected `i32`
+    //~| found `i64`
+    //~| expected i32
+    //~| found i64)
 }
 
 fn main() {

@@ -35,18 +35,18 @@ pub trait ItemDecorator {
               sp: Span,
               meta_item: &ast::MetaItem,
               item: &ast::Item,
-              push: Box<FnMut(P<ast::Item>)>);
+              push: &mut FnMut(P<ast::Item>));
 }
 
 impl<F> ItemDecorator for F
-    where F : Fn(&mut ExtCtxt, Span, &ast::MetaItem, &ast::Item, Box<FnMut(P<ast::Item>)>)
+    where F : Fn(&mut ExtCtxt, Span, &ast::MetaItem, &ast::Item, &mut FnMut(P<ast::Item>))
 {
     fn expand(&self,
               ecx: &mut ExtCtxt,
               sp: Span,
               meta_item: &ast::MetaItem,
               item: &ast::Item,
-              push: Box<FnMut(P<ast::Item>)>) {
+              push: &mut FnMut(P<ast::Item>)) {
         (*self)(ecx, sp, meta_item, item, push)
     }
 }
@@ -69,6 +69,108 @@ impl<F> ItemModifier for F
               meta_item: &ast::MetaItem,
               item: P<ast::Item>)
               -> P<ast::Item> {
+        (*self)(ecx, span, meta_item, item)
+    }
+}
+
+#[derive(Debug,Clone)]
+pub enum Annotatable {
+    Item(P<ast::Item>),
+    TraitItem(ast::TraitItem),
+    ImplItem(ast::ImplItem),
+}
+
+impl Annotatable {
+    pub fn attrs(&self) -> &[ast::Attribute] {
+        match *self {
+            Annotatable::Item(ref i) => &i.attrs[],
+            Annotatable::TraitItem(ref i) => match *i {
+                ast::TraitItem::RequiredMethod(ref tm) => &tm.attrs[],
+                ast::TraitItem::ProvidedMethod(ref m) => &m.attrs[],
+                ast::TraitItem::TypeTraitItem(ref at) => &at.attrs[],
+            },
+            Annotatable::ImplItem(ref i) => match *i {
+                ast::ImplItem::MethodImplItem(ref m) => &m.attrs[],
+                ast::ImplItem::TypeImplItem(ref t) => &t.attrs[],
+            }
+        }
+    }
+
+    pub fn fold_attrs(self, attrs: Vec<ast::Attribute>) -> Annotatable {
+        match self {
+            Annotatable::Item(i) => Annotatable::Item(P(ast::Item {
+                attrs: attrs,
+                ..(*i).clone()
+            })),
+            Annotatable::TraitItem(i) => match i {
+                ast::TraitItem::RequiredMethod(tm) => Annotatable::TraitItem(
+                    ast::TraitItem::RequiredMethod(
+                        ast::TypeMethod { attrs: attrs, ..tm })),
+                ast::TraitItem::ProvidedMethod(m) => Annotatable::TraitItem(
+                    ast::TraitItem::ProvidedMethod(P(
+                        ast::Method { attrs: attrs, ..(*m).clone() }))),
+                ast::TraitItem::TypeTraitItem(at) => Annotatable::TraitItem(
+                    ast::TraitItem::TypeTraitItem(P(
+                        ast::AssociatedType { attrs: attrs, ..(*at).clone() }))),
+            },
+            Annotatable::ImplItem(i) => match i {
+                ast::ImplItem::MethodImplItem(m) => Annotatable::ImplItem(
+                    ast::ImplItem::MethodImplItem(P(
+                        ast::Method { attrs: attrs, ..(*m).clone() }))),
+                ast::ImplItem::TypeImplItem(t) => Annotatable::ImplItem(
+                    ast::ImplItem::TypeImplItem(P(
+                        ast::Typedef { attrs: attrs, ..(*t).clone() }))),
+            }
+        }
+    }
+
+    pub fn expect_item(self) -> P<ast::Item> {
+        match self {
+            Annotatable::Item(i) => i,
+            _ => panic!("expected Item")
+        }
+    }
+
+    pub fn expect_trait_item(self) -> ast::TraitItem {
+        match self {
+            Annotatable::TraitItem(i) => i,
+            _ => panic!("expected Item")
+        }
+    }
+
+    pub fn expect_impl_item(self) -> ast::ImplItem {
+        match self {
+            Annotatable::ImplItem(i) => i,
+            _ => panic!("expected Item")
+        }
+    }
+}
+
+// A more flexible ItemModifier (ItemModifier should go away, eventually, FIXME).
+// meta_item is the annotation, item is the item being modified, parent_item
+// is the impl or trait item is declared in if item is part of such a thing.
+// FIXME Decorators should follow the same pattern too.
+pub trait MultiItemModifier {
+    fn expand(&self,
+              ecx: &mut ExtCtxt,
+              span: Span,
+              meta_item: &ast::MetaItem,
+              item: Annotatable)
+              -> Annotatable;
+}
+
+impl<F> MultiItemModifier for F
+    where F: Fn(&mut ExtCtxt,
+                Span,
+                &ast::MetaItem,
+                Annotatable) -> Annotatable
+{
+    fn expand(&self,
+              ecx: &mut ExtCtxt,
+              span: Span,
+              meta_item: &ast::MetaItem,
+              item: Annotatable)
+              -> Annotatable {
         (*self)(ecx, span, meta_item, item)
     }
 }
@@ -299,6 +401,10 @@ pub enum SyntaxExtension {
     /// in-place.
     Modifier(Box<ItemModifier + 'static>),
 
+    /// A syntax extension that is attached to an item and modifies it
+    /// in-place. More flexible version than Modifier.
+    MultiModifier(Box<MultiItemModifier + 'static>),
+
     /// A normal, function-like syntax extension.
     ///
     /// `bytes!` is a `NormalTT`.
@@ -333,7 +439,8 @@ impl BlockInfo {
 
 /// The base map of methods for expanding syntax extension
 /// AST nodes into full ASTs
-fn initial_syntax_expander_table(ecfg: &expand::ExpansionConfig) -> SyntaxEnv {
+fn initial_syntax_expander_table<'feat>(ecfg: &expand::ExpansionConfig<'feat>)
+                                        -> SyntaxEnv {
     // utility function to simplify creating NormalTT syntax extensions
     fn builtin_normal_expander(f: MacroExpanderFn) -> SyntaxExtension {
         NormalTT(box f, None)
@@ -361,8 +468,10 @@ fn initial_syntax_expander_table(ecfg: &expand::ExpansionConfig) -> SyntaxEnv {
                                     ext::log_syntax::expand_syntax_ext));
     syntax_expanders.insert(intern("derive"),
                             Decorator(box ext::deriving::expand_meta_derive));
+    syntax_expanders.insert(intern("deriving"),
+                            Decorator(box ext::deriving::expand_deprecated_deriving));
 
-    if ecfg.enable_quotes {
+    if ecfg.enable_quotes() {
         // Quasi-quoting expanders
         syntax_expanders.insert(intern("quote_tokens"),
                            builtin_normal_expander(
@@ -420,8 +529,6 @@ fn initial_syntax_expander_table(ecfg: &expand::ExpansionConfig) -> SyntaxEnv {
     syntax_expanders.insert(intern("cfg"),
                             builtin_normal_expander(
                                     ext::cfg::expand_cfg));
-    syntax_expanders.insert(intern("cfg_attr"),
-                            Modifier(box ext::cfg_attr::expand));
     syntax_expanders.insert(intern("trace_macros"),
                             builtin_normal_expander(
                                     ext::trace_macros::expand_trace_macros));
@@ -435,19 +542,20 @@ pub struct ExtCtxt<'a> {
     pub parse_sess: &'a parse::ParseSess,
     pub cfg: ast::CrateConfig,
     pub backtrace: ExpnId,
-    pub ecfg: expand::ExpansionConfig,
+    pub ecfg: expand::ExpansionConfig<'a>,
+    pub use_std: bool,
 
     pub mod_path: Vec<ast::Ident> ,
     pub trace_mac: bool,
     pub exported_macros: Vec<ast::MacroDef>,
 
     pub syntax_env: SyntaxEnv,
-    pub recursion_count: uint,
+    pub recursion_count: usize,
 }
 
 impl<'a> ExtCtxt<'a> {
     pub fn new(parse_sess: &'a parse::ParseSess, cfg: ast::CrateConfig,
-               ecfg: expand::ExpansionConfig) -> ExtCtxt<'a> {
+               ecfg: expand::ExpansionConfig<'a>) -> ExtCtxt<'a> {
         let env = initial_syntax_expander_table(&ecfg);
         ExtCtxt {
             parse_sess: parse_sess,
@@ -455,6 +563,7 @@ impl<'a> ExtCtxt<'a> {
             backtrace: NO_EXPANSION,
             mod_path: Vec::new(),
             ecfg: ecfg,
+            use_std: true,
             trace_mac: false,
             exported_macros: Vec::new(),
             syntax_env: env,
@@ -462,7 +571,9 @@ impl<'a> ExtCtxt<'a> {
         }
     }
 
-    #[deprecated = "Replaced with `expander().fold_expr()`"]
+    #[unstable(feature = "rustc_private")]
+    #[deprecated(since = "1.0.0",
+                 reason = "Replaced with `expander().fold_expr()`")]
     pub fn expand_expr(&mut self, e: P<ast::Expr>) -> P<ast::Expr> {
         self.expander().fold_expr(e)
     }
@@ -529,7 +640,7 @@ impl<'a> ExtCtxt<'a> {
     pub fn mod_path(&self) -> Vec<ast::Ident> {
         let mut v = Vec::new();
         v.push(token::str_to_ident(&self.ecfg.crate_name[]));
-        v.extend(self.mod_path.iter().map(|a| *a));
+        v.extend(self.mod_path.iter().cloned());
         return v;
     }
     pub fn bt_push(&mut self, ei: ExpnInfo) {
@@ -627,6 +738,9 @@ impl<'a> ExtCtxt<'a> {
     pub fn ident_of(&self, st: &str) -> ast::Ident {
         str_to_ident(st)
     }
+    pub fn ident_of_std(&self, st: &str) -> ast::Ident {
+        self.ident_of(if self.use_std { "std" } else { st })
+    }
     pub fn name_of(&self, st: &str) -> ast::Name {
         token::intern(st)
     }
@@ -680,7 +794,7 @@ pub fn get_single_str_from_tts(cx: &mut ExtCtxt,
         cx.span_err(sp, &format!("{} takes 1 argument", name)[]);
     }
     expr_to_string(cx, ret, "argument must be a string literal").map(|(s, _)| {
-        s.get().to_string()
+        s.to_string()
     })
 }
 

@@ -19,6 +19,7 @@
 use self::UseError::*;
 
 use borrowck::*;
+use borrowck::InteriorKind::{InteriorElement, InteriorField};
 use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::mem_categorization as mc;
 use rustc::middle::region;
@@ -279,7 +280,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
         let loan_path = owned_ptr_base_path(loan_path);
         let cont = self.each_in_scope_loan(scope, |loan| {
             let mut ret = true;
-            for restr_path in loan.restricted_paths.iter() {
+            for restr_path in &loan.restricted_paths {
                 if **restr_path == *loan_path {
                     if !op(loan) {
                         ret = false;
@@ -361,7 +362,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
         debug!("new_loan_indices = {:?}", new_loan_indices);
 
         self.each_issued_loan(scope, |issued_loan| {
-            for &new_loan_index in new_loan_indices.iter() {
+            for &new_loan_index in &new_loan_indices {
                 let new_loan = &self.all_loans[new_loan_index];
                 self.report_error_if_loans_conflict(issued_loan, new_loan);
             }
@@ -370,7 +371,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
 
         for (i, &x) in new_loan_indices.iter().enumerate() {
             let old_loan = &self.all_loans[x];
-            for &y in new_loan_indices.slice_from(i+1).iter() {
+            for &y in &new_loan_indices[(i+1) ..] {
                 let new_loan = &self.all_loans[y];
                 self.report_error_if_loans_conflict(old_loan, new_loan);
             }
@@ -416,7 +417,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
         }
 
         let loan2_base_path = owned_ptr_base_path_rc(&loan2.loan_path);
-        for restr_path in loan1.restricted_paths.iter() {
+        for restr_path in &loan1.restricted_paths {
             if *restr_path != loan2_base_path { continue; }
 
             // If new_loan is something like `x.a`, and old_loan is something like `x.b`, we would
@@ -655,7 +656,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                                 &self.bccx.loan_path_to_string(move_path)[])
                 };
 
-                self.bccx.span_err(span, &err_message[]);
+                self.bccx.span_err(span, &err_message[..]);
                 self.bccx.span_note(
                     loan_span,
                     &format!("borrow of `{}` occurs here",
@@ -698,6 +699,11 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                               lp: &Rc<LoanPath<'tcx>>) {
         debug!("check_if_path_is_moved(id={}, use_kind={:?}, lp={})",
                id, use_kind, lp.repr(self.bccx.tcx));
+
+        // FIXME (22079): if you find yourself tempted to cut and paste
+        // the body below and then specializing the error reporting,
+        // consider refactoring this instead!
+
         let base_lp = owned_ptr_base_path_rc(lp);
         self.move_data.each_move_of(id, &base_lp, |the_move, moved_lp| {
             self.bccx.report_use_of_moved_value(
@@ -743,15 +749,39 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                 self.check_if_assigned_path_is_moved(id, span,
                                                      use_kind, lp_base);
             }
-            LpExtend(ref lp_base, _, LpInterior(_)) => {
+            LpExtend(ref lp_base, _, LpInterior(InteriorField(_))) => {
+                match lp_base.to_type().sty {
+                    ty::ty_struct(def_id, _) | ty::ty_enum(def_id, _) => {
+                        if ty::has_dtor(self.tcx(), def_id) {
+                            // In the case where the owner implements drop, then
+                            // the path must be initialized to prevent a case of
+                            // partial reinitialization
+                            //
+                            // FIXME (22079): could refactor via hypothetical
+                            // generalized check_if_path_is_moved
+                            let loan_path = owned_ptr_base_path_rc(lp_base);
+                            self.move_data.each_move_of(id, &loan_path, |_, _| {
+                                self.bccx
+                                    .report_partial_reinitialization_of_uninitialized_structure(
+                                        span,
+                                        &*loan_path);
+                                false
+                            });
+                            return;
+                        }
+                    },
+                    _ => {},
+                }
+
                 // assigning to `P.f` is ok if assigning to `P` is ok
                 self.check_if_assigned_path_is_moved(id, span,
                                                      use_kind, lp_base);
             }
+            LpExtend(ref lp_base, _, LpInterior(InteriorElement(..))) |
             LpExtend(ref lp_base, _, LpDeref(_)) => {
-                // assigning to `(*P)` requires that `P` be initialized
-                self.check_if_path_is_moved(id, span,
-                                            use_kind, lp_base);
+                // assigning to `P[i]` requires `P` is initialized
+                // assigning to `(*P)` requires `P` is initialized
+                self.check_if_path_is_moved(id, span, use_kind, lp_base);
             }
         }
     }
@@ -773,10 +803,12 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                     mark_variable_as_used_mut(self, assignee_cmt);
                 }
             }
+
             return;
         }
 
-        // Initializations are OK.
+        // Initializations are OK if and only if they aren't partial
+        // reinitialization of a partially-uninitialized structure.
         if mode == euv::Init {
             return
         }
@@ -806,7 +838,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                     mc::cat_upvar(mc::Upvar { kind, .. }) => kind,
                     _ => unreachable!()
                 };
-                if kind == ty::FnUnboxedClosureKind {
+                if kind == ty::FnClosureKind {
                     self.bccx.span_err(
                         assignment_span,
                         &format!("cannot assign to {}",

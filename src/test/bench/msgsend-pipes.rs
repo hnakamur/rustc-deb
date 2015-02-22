@@ -15,12 +15,9 @@
 // I *think* it's the same, more or less.
 
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::os;
-use std::thread::Thread;
+use std::env;
+use std::thread;
 use std::time::Duration;
-use std::uint;
-
-fn move_out<T>(_x: T) {}
 
 enum request {
     get_count,
@@ -42,7 +39,7 @@ fn server(requests: &Receiver<request>, responses: &Sender<uint>) {
           _ => { }
         }
     }
-    responses.send(count);
+    responses.send(count).unwrap();
     //println!("server exiting");
 }
 
@@ -59,8 +56,8 @@ fn run(args: &[String]) {
         let mut worker_results = Vec::new();
         let from_parent = if workers == 1 {
             let (to_child, from_parent) = channel();
-            worker_results.push(Thread::scoped(move|| {
-                for _ in range(0u, size / workers) {
+            worker_results.push(thread::spawn(move|| {
+                for _ in 0..size / workers {
                     //println!("worker {}: sending {} bytes", i, num_bytes);
                     to_child.send(request::bytes(num_bytes));
                 }
@@ -69,10 +66,10 @@ fn run(args: &[String]) {
             from_parent
         } else {
             let (to_child, from_parent) = channel();
-            for _ in range(0u, workers) {
+            for _ in 0..workers {
                 let to_child = to_child.clone();
-                worker_results.push(Thread::scoped(move|| {
-                    for _ in range(0u, size / workers) {
+                worker_results.push(thread::spawn(move|| {
+                    for _ in 0..size / workers {
                         //println!("worker {}: sending {} bytes", i, num_bytes);
                         to_child.send(request::bytes(num_bytes));
                     }
@@ -81,11 +78,11 @@ fn run(args: &[String]) {
             }
             from_parent
         };
-        Thread::spawn(move|| {
+        thread::spawn(move|| {
             server(&from_parent, &to_parent);
         });
 
-        for r in worker_results.into_iter() {
+        for r in worker_results {
             let _ = r.join();
         }
 
@@ -103,15 +100,15 @@ fn run(args: &[String]) {
 }
 
 fn main() {
-    let args = os::args();
-    let args = if os::getenv("RUST_BENCH").is_some() {
+    let args = env::args();
+    let args = if env::var_os("RUST_BENCH").is_some() {
         vec!("".to_string(), "1000000".to_string(), "8".to_string())
-    } else if args.len() <= 1u {
+    } else if args.len() <= 1 {
         vec!("".to_string(), "10000".to_string(), "4".to_string())
     } else {
-        args.clone().into_iter().map(|x| x.to_string()).collect()
+        args.map(|x| x.to_string()).collect()
     };
 
     println!("{:?}", args);
-    run(args.as_slice());
+    run(&args);
 }

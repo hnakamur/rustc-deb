@@ -65,7 +65,7 @@ error: type `T` does not implement any method in scope named `area`
 ```
 
 Because `T` can be any type, we can't be sure that it implements the `area`
-method. But we can add a **trait constraint** to our generic `T`, ensuring
+method. But we can add a *trait constraint* to our generic `T`, ensuring
 that it does:
 
 ```{rust}
@@ -145,7 +145,7 @@ As you can see, `print_area` is now generic, but also ensures that we
 have passed in the correct types. If we pass in an incorrect type:
 
 ```{rust,ignore}
-print_area(5i);
+print_area(5);
 ```
 
 We get a compile-time error:
@@ -156,14 +156,14 @@ error: failed to find an implementation of trait main::HasArea for int
 
 So far, we've only added trait implementations to structs, but you can
 implement a trait for any type. So technically, we _could_ implement
-`HasArea` for `int`:
+`HasArea` for `i32`:
 
 ```{rust}
 trait HasArea {
     fn area(&self) -> f64;
 }
 
-impl HasArea for int {
+impl HasArea for i32 {
     fn area(&self) -> f64 {
         println!("this is silly");
 
@@ -171,7 +171,7 @@ impl HasArea for int {
     }
 }
 
-5i.area();
+5.area();
 ```
 
 It is considered poor style to implement methods on such primitive types, even
@@ -264,54 +264,174 @@ it won't affect you, unless you `use` that trait.
 
 There's one more restriction on implementing traits. Either the trait or the
 type you're writing the `impl` for must be inside your crate. So, we could
-implement the `HasArea` type for `int`, because `HasArea` is in our crate.  But
-if we tried to implement `Float`, a trait provided by Rust, for `int`, we could
+implement the `HasArea` type for `i32`, because `HasArea` is in our crate.  But
+if we tried to implement `Float`, a trait provided by Rust, for `i32`, we could
 not, because both the trait and the type aren't in our crate.
 
 One last thing about traits: generic functions with a trait bound use
-**monomorphization** ("mono": one, "morph": form), so they are statically
-dispatched. What's that mean? Well, let's take a look at `print_area` again:
+*monomorphization* (*mono*: one, *morph*: form), so they are statically
+dispatched. What's that mean? Check out the chapter on [static and dynamic
+dispatch](static-and-dynamic-dispatch.html) for more.
 
-```{rust,ignore}
-fn print_area<T: HasArea>(shape: T) {
-    println!("This shape has an area of {}", shape.area());
-}
+## Where clause
 
-fn main() {
-    let c = Circle { ... };
+Writing functions with only a few generic types and a small number of trait
+bounds isn't too bad, but as the number increases, the syntax gets increasingly
+awkward:
 
-    let s = Square { ... };
+```
+use std::fmt::Debug;
 
-    print_area(c);
-    print_area(s);
+fn foo<T: Clone, K: Clone + Debug>(x: T, y: K) {
+    x.clone();
+    y.clone();
+    println!("{:?}", y);
 }
 ```
 
-When we use this trait with `Circle` and `Square`, Rust ends up generating
-two different functions with the concrete type, and replacing the call sites with
-calls to the concrete implementations. In other words, you get something like
+The name of the function is on the far left, and the parameter list is on the
+far right. The bounds are getting in the way.
+
+Rust has a solution, and it's called a '`where` clause':
+
+```
+use std::fmt::Debug;
+
+fn foo<T: Clone, K: Clone + Debug>(x: T, y: K) {
+    x.clone();
+    y.clone();
+    println!("{:?}", y);
+}
+
+fn bar<T, K>(x: T, y: K) where T: Clone, K: Clone + Debug {
+    x.clone();
+    y.clone();
+    println!("{:?}", y);
+}
+
+fn main() {
+    foo("Hello", "world");
+    bar("Hello", "workd");
+}
+```
+
+`foo()` uses the syntax we showed earlier, and `bar()` uses a `where` clause.
+All you need to do is leave off the bounds when defining your type parameters,
+and then add `where` after the parameter list. For longer lists, whitespace can
+be added:
+
+```
+use std::fmt::Debug;
+
+fn bar<T, K>(x: T, y: K)
+    where T: Clone,
+          K: Clone + Debug {
+
+    x.clone();
+    y.clone();
+    println!("{:?}", y);
+}
+```
+
+This flexibility can add clarity in complex situations.
+
+`where` is also more powerful than the simpler syntax. For example:
+
+```
+trait ConvertTo<Output> {
+    fn convert(&self) -> Output;
+}
+
+impl ConvertTo<i64> for i32 {
+    fn convert(&self) -> i64 { *self as i64 }
+}
+
+// can be called with T == i32
+fn normal<T: ConvertTo<i64>>(x: &T) -> i64 {
+    x.convert()
+}
+
+// can be called with T == i64
+fn inverse<T>() -> T
+        // this is using ConvertTo as if it were "ConvertFrom<i32>"
+        where i32: ConvertTo<T> {
+    1i32.convert()
+}
+```
+
+This shows off the additional feature of `where` clauses: they allow bounds
+where the left-hand side is an arbitrary type (`i32` in this case), not just a
+plain type parameter (like `T`).
+
+## Our `inverse` Example
+
+Back in [Generics](generics.html), we were trying to write code like this:
+
+```{rust,ignore}
+fn inverse<T>(x: T) -> Result<T, String> {
+    if x == 0.0 { return Err("x cannot be zero!".to_string()); }
+
+    Ok(1.0 / x)
+}
+```
+
+If we try to compile it, we get this error:
+
+```text
+error: binary operation `==` cannot be applied to type `T`
+```
+
+This is because `T` is too generic: we don't know if a random `T` can be
+compared. For that, we can use trait bounds. It doesn't quite work, but try
 this:
 
 ```{rust,ignore}
-fn __print_area_circle(shape: Circle) {
-    println!("This shape has an area of {}", shape.area());
-}
+fn inverse<T: PartialEq>(x: T) -> Result<T, String> {
+    if x == 0.0 { return Err("x cannot be zero!".to_string()); }
 
-fn __print_area_square(shape: Square) {
-    println!("This shape has an area of {}", shape.area());
-}
-
-fn main() {
-    let c = Circle { ... };
-
-    let s = Square { ... };
-
-    __print_area_circle(c);
-    __print_area_square(s);
+    Ok(1.0 / x)
 }
 ```
 
-The names don't actually change to this, it's just for illustration. But
-as you can see, there's no overhead of deciding which version to call here,
-hence 'statically dispatched.' The downside is that we have two copies of
-the same function, so our binary is a little bit larger.
+You should get this error:
+
+```text
+error: mismatched types:
+ expected `T`,
+    found `_`
+(expected type parameter,
+    found floating-point variable)
+```
+
+So this won't work. While our `T` is `PartialEq`, we expected to have another `T`,
+but instead, we found a floating-point variable. We need a different bound. `Float`
+to the rescue:
+
+```
+use std::num::Float;
+
+fn inverse<T: Float>(x: T) -> Result<T, String> {
+    if x == Float::zero() { return Err("x cannot be zero!".to_string()) }
+
+    let one: T = Float::one();
+    Ok(one / x)
+}
+```
+
+We've had to replace our generic `0.0` and `1.0` with the appropriate methods
+from the `Float` trait. Both `f32` and `f64` implement `Float`, so our function
+works just fine:
+
+```
+# use std::num::Float;
+# fn inverse<T: Float>(x: T) -> Result<T, String> {
+#     if x == Float::zero() { return Err("x cannot be zero!".to_string()) }
+#     let one: T = Float::one();
+#     Ok(one / x)
+# }
+println!("the inverse of {} is {:?}", 2.0f32, inverse(2.0f32));
+println!("the inverse of {} is {:?}", 2.0f64, inverse(2.0f64));
+
+println!("the inverse of {} is {:?}", 0.0f32, inverse(0.0f32));
+println!("the inverse of {} is {:?}", 0.0f64, inverse(0.0f64));
+```

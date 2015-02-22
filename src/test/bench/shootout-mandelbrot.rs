@@ -39,22 +39,21 @@
 // OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #![feature(simd)]
-#![allow(unstable)]
 
 // ignore-pretty very bad with line comments
 
-use std::io;
-use std::os;
+use std::old_io;
+use std::env;
 use std::simd::f64x2;
 use std::sync::Arc;
-use std::thread::Thread;
+use std::thread;
 
-const ITER: int = 50;
+const ITER: usize = 50;
 const LIMIT: f64 = 2.0;
-const WORKERS: uint = 16;
+const WORKERS: usize = 16;
 
 #[inline(always)]
-fn mandelbrot<W: io::Writer>(w: uint, mut out: W) -> io::IoResult<()> {
+fn mandelbrot<W: old_io::Writer>(w: usize, mut out: W) -> old_io::IoResult<()> {
     assert!(WORKERS % 2 == 0);
 
     // Ensure w and h are multiples of 8.
@@ -81,8 +80,8 @@ fn mandelbrot<W: io::Writer>(w: uint, mut out: W) -> io::IoResult<()> {
     let mut precalc_r = Vec::with_capacity(w);
     let mut precalc_i = Vec::with_capacity(h);
 
-    let precalc_futures = range(0, WORKERS).map(|i| {
-        Thread::scoped(move|| {
+    let precalc_futures = (0..WORKERS).map(|i| {
+        thread::scoped(move|| {
             let mut rs = Vec::with_capacity(w / WORKERS);
             let mut is = Vec::with_capacity(w / WORKERS);
 
@@ -94,7 +93,7 @@ fn mandelbrot<W: io::Writer>(w: uint, mut out: W) -> io::IoResult<()> {
             };
 
             // This assumes w == h
-            for x in range(start, end) {
+            for x in start..end {
                 let xf = x as f64;
                 let xy = f64x2(xf, xf);
 
@@ -107,8 +106,8 @@ fn mandelbrot<W: io::Writer>(w: uint, mut out: W) -> io::IoResult<()> {
         })
     }).collect::<Vec<_>>();
 
-    for res in precalc_futures.into_iter() {
-        let (rs, is) = res.join().ok().unwrap();
+    for res in precalc_futures {
+        let (rs, is) = res.join();
         precalc_r.extend(rs.into_iter());
         precalc_i.extend(is.into_iter());
     }
@@ -119,13 +118,13 @@ fn mandelbrot<W: io::Writer>(w: uint, mut out: W) -> io::IoResult<()> {
     let arc_init_r = Arc::new(precalc_r);
     let arc_init_i = Arc::new(precalc_i);
 
-    let data = range(0, WORKERS).map(|i| {
+    let data = (0..WORKERS).map(|i| {
         let vec_init_r = arc_init_r.clone();
         let vec_init_i = arc_init_i.clone();
 
-        Thread::scoped(move|| {
+        thread::scoped(move|| {
             let mut res: Vec<u8> = Vec::with_capacity((chunk_size * w) / 8);
-            let init_r_slice = vec_init_r.as_slice();
+            let init_r_slice = vec_init_r;
 
             let start = i * chunk_size;
             let end = if i == (WORKERS - 1) {
@@ -134,8 +133,8 @@ fn mandelbrot<W: io::Writer>(w: uint, mut out: W) -> io::IoResult<()> {
                 (i + 1) * chunk_size
             };
 
-            for &init_i in vec_init_i.slice(start, end).iter() {
-                write_line(init_i, init_r_slice, &mut res);
+            for &init_i in &vec_init_i[start..end] {
+                write_line(init_i, &init_r_slice, &mut res);
             }
 
             res
@@ -143,8 +142,8 @@ fn mandelbrot<W: io::Writer>(w: uint, mut out: W) -> io::IoResult<()> {
     }).collect::<Vec<_>>();
 
     try!(writeln!(&mut out as &mut Writer, "P4\n{} {}", w, h));
-    for res in data.into_iter() {
-        try!(out.write(res.join().ok().unwrap().as_slice()));
+    for res in data {
+        try!(out.write(&res.join()));
     }
     out.flush()
 }
@@ -166,7 +165,7 @@ fn write_line(init_i: f64, vec_init_r: &[f64], res: &mut Vec<u8>) {
             let mut i_sq = v_init_i * v_init_i;
 
             let mut b = 0;
-            for _ in range(0, ITER) {
+            for _ in 0..ITER {
                 let r = cur_r;
                 let i = cur_i;
 
@@ -198,14 +197,13 @@ fn write_line(init_i: f64, vec_init_r: &[f64], res: &mut Vec<u8>) {
 }
 
 fn main() {
-    let args = os::args();
-    let args = args.as_slice();
+    let mut args = env::args();
     let res = if args.len() < 2 {
         println!("Test mode: do not dump the image because it's not utf8, \
                   which interferes with the test runner.");
-        mandelbrot(1000, io::util::NullWriter)
+        mandelbrot(1000, old_io::util::NullWriter)
     } else {
-        mandelbrot(args[1].parse().unwrap(), io::stdout())
+        mandelbrot(args.nth(1).unwrap().parse().unwrap(), old_io::stdout())
     };
     res.unwrap();
 }

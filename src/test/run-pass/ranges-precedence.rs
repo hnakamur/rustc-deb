@@ -10,7 +10,6 @@
 
 // Test that the precedence of ranges is correct
 
-#![feature(slicing_syntax)]
 
 struct Foo {
     foo: uint,
@@ -48,5 +47,15 @@ fn main() {
     assert!(x == &a[3..]);
 
     for _i in 2+4..10-3 {}
+
+    let i = 42;
+    for _ in 1..i {}
+    for _ in 1.. { break; }
+
+    let x = [1]..[2];
+    assert!(x == (([1])..([2])));
+
+    let y = ..;
+    assert!(y == (..));
 }
 

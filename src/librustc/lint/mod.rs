@@ -40,7 +40,7 @@ use syntax::ast;
 pub use lint::context::{Context, LintStore, raw_emit_lint, check_crate, gather_attrs};
 
 /// Specification of a single lint.
-#[derive(Copy, Show)]
+#[derive(Copy, Debug)]
 pub struct Lint {
     /// A string identifier for the lint.
     ///
@@ -128,7 +128,6 @@ pub trait LintPass {
     fn check_crate(&mut self, _: &Context, _: &ast::Crate) { }
     fn check_ident(&mut self, _: &Context, _: Span, _: ast::Ident) { }
     fn check_mod(&mut self, _: &Context, _: &ast::Mod, _: Span, _: ast::NodeId) { }
-    fn check_view_item(&mut self, _: &Context, _: &ast::ViewItem) { }
     fn check_foreign_item(&mut self, _: &Context, _: &ast::ForeignItem) { }
     fn check_item(&mut self, _: &Context, _: &ast::Item) { }
     fn check_local(&mut self, _: &Context, _: &ast::Local) { }
@@ -186,8 +185,16 @@ impl PartialEq for LintId {
 
 impl Eq for LintId { }
 
+#[cfg(stage0)]
 impl<S: hash::Writer + hash::Hasher> hash::Hash<S> for LintId {
     fn hash(&self, state: &mut S) {
+        let ptr = self.lint as *const Lint;
+        ptr.hash(state);
+    }
+}
+#[cfg(not(stage0))]
+impl hash::Hash for LintId {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
         let ptr = self.lint as *const Lint;
         ptr.hash(state);
     }
@@ -208,7 +215,7 @@ impl LintId {
 }
 
 /// Setting for how to handle a lint.
-#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Show)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Debug)]
 pub enum Level {
     Allow, Warn, Deny, Forbid
 }

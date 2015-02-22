@@ -13,11 +13,11 @@
 //! This primitive is meant to be used to run one-time initialization. An
 //! example use case would be for initializing an FFI library.
 
-use int;
+use isize;
 use marker::Sync;
 use mem::drop;
 use ops::FnOnce;
-use sync::atomic::{AtomicInt, Ordering, ATOMIC_INT_INIT};
+use sync::atomic::{AtomicIsize, Ordering, ATOMIC_ISIZE_INIT};
 use sync::{StaticMutex, MUTEX_INIT};
 
 /// A synchronization primitive which can be used to run a one-time global
@@ -36,21 +36,21 @@ use sync::{StaticMutex, MUTEX_INIT};
 ///     // run initialization here
 /// });
 /// ```
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Once {
     mutex: StaticMutex,
-    cnt: AtomicInt,
-    lock_cnt: AtomicInt,
+    cnt: AtomicIsize,
+    lock_cnt: AtomicIsize,
 }
 
 unsafe impl Sync for Once {}
 
 /// Initialization value for static `Once` values.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub const ONCE_INIT: Once = Once {
     mutex: MUTEX_INIT,
-    cnt: ATOMIC_INT_INIT,
-    lock_cnt: ATOMIC_INT_INIT,
+    cnt: ATOMIC_ISIZE_INIT,
+    lock_cnt: ATOMIC_ISIZE_INIT,
 };
 
 impl Once {
@@ -63,7 +63,7 @@ impl Once {
     ///
     /// When this function returns, it is guaranteed that some initialization
     /// has run and completed (it may not be the closure specified).
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn call_once<F>(&'static self, f: F) where F: FnOnce() {
         // Optimize common path: load is much cheaper than fetch_add.
         if self.cnt.load(Ordering::SeqCst) < 0 {
@@ -99,9 +99,9 @@ impl Once {
 
         let prev = self.cnt.fetch_add(1, Ordering::SeqCst);
         if prev < 0 {
-            // Make sure we never overflow, we'll never have int::MIN
+            // Make sure we never overflow, we'll never have isize::MIN
             // simultaneous calls to `call_once` to make this value go back to 0
-            self.cnt.store(int::MIN, Ordering::SeqCst);
+            self.cnt.store(isize::MIN, Ordering::SeqCst);
             return
         }
 
@@ -111,7 +111,7 @@ impl Once {
         let guard = self.mutex.lock();
         if self.cnt.load(Ordering::SeqCst) > 0 {
             f();
-            let prev = self.cnt.swap(int::MIN, Ordering::SeqCst);
+            let prev = self.cnt.swap(isize::MIN, Ordering::SeqCst);
             self.lock_cnt.store(prev, Ordering::SeqCst);
         }
         drop(guard);
@@ -127,14 +127,14 @@ impl Once {
 mod test {
     use prelude::v1::*;
 
-    use thread::Thread;
+    use thread;
     use super::{ONCE_INIT, Once};
     use sync::mpsc::channel;
 
     #[test]
     fn smoke_once() {
         static O: Once = ONCE_INIT;
-        let mut a = 0i;
+        let mut a = 0;
         O.call_once(|| a += 1);
         assert_eq!(a, 1);
         O.call_once(|| a += 1);
@@ -147,10 +147,10 @@ mod test {
         static mut run: bool = false;
 
         let (tx, rx) = channel();
-        for _ in range(0u, 10) {
+        for _ in 0..10 {
             let tx = tx.clone();
-            Thread::spawn(move|| {
-                for _ in range(0u, 4) { Thread::yield_now() }
+            thread::spawn(move|| {
+                for _ in 0..4 { thread::yield_now() }
                 unsafe {
                     O.call_once(|| {
                         assert!(!run);
@@ -170,7 +170,7 @@ mod test {
             assert!(run);
         }
 
-        for _ in range(0u, 10) {
+        for _ in 0..10 {
             rx.recv().unwrap();
         }
     }

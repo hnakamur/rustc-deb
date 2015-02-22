@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use std::fmt;
-use std::io;
+use std::old_io;
 
 use externalfiles::ExternalHtml;
 
@@ -30,9 +30,9 @@ pub struct Page<'a> {
     pub keywords: &'a str
 }
 
-pub fn render<T: fmt::String, S: fmt::String>(
-    dst: &mut io::Writer, layout: &Layout, page: &Page, sidebar: &S, t: &T)
-    -> io::IoResult<()>
+pub fn render<T: fmt::Display, S: fmt::Display>(
+    dst: &mut old_io::Writer, layout: &Layout, page: &Page, sidebar: &S, t: &T)
+    -> old_io::IoResult<()>
 {
     write!(dst,
 r##"<!DOCTYPE html>
@@ -159,7 +159,7 @@ r##"<!DOCTYPE html>
     )
 }
 
-pub fn redirect(dst: &mut io::Writer, url: &str) -> io::IoResult<()> {
+pub fn redirect(dst: &mut old_io::Writer, url: &str) -> old_io::IoResult<()> {
     // <script> triggers a redirect before refresh, so this is fine.
     write!(dst,
 r##"<!DOCTYPE html>

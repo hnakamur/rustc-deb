@@ -15,7 +15,7 @@
 //! generated instead.
 
 #![crate_name = "fmt_macros"]
-#![unstable]
+#![unstable(feature = "rustc_private")]
 #![staged_api]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
@@ -24,8 +24,9 @@
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
 
-#![feature(slicing_syntax)]
-#![allow(unknown_features)] #![feature(int_uint)]
+#![feature(int_uint)]
+#![feature(staged_api)]
+#![feature(unicode)]
 
 pub use self::Piece::*;
 pub use self::Position::*;
@@ -214,11 +215,11 @@ impl<'a> Parser<'a> {
             }
             Some((_, other)) => {
                 self.err(&format!("expected `{:?}`, found `{:?}`", c,
-                                  other)[]);
+                                  other));
             }
             None => {
                 self.err(&format!("expected `{:?}` but string was terminated",
-                                  c)[]);
+                                  c));
             }
         }
     }
@@ -286,7 +287,7 @@ impl<'a> Parser<'a> {
             flags: 0,
             precision: CountImplied,
             width: CountImplied,
-            ty: &self.input[0..0],
+            ty: &self.input[..0],
         };
         if !self.consume(':') { return spec }
 
@@ -395,7 +396,7 @@ impl<'a> Parser<'a> {
                 self.cur.next();
                 pos
             }
-            Some(..) | None => { return &self.input[0..0]; }
+            Some(..) | None => { return &self.input[..0]; }
         };
         let mut end;
         loop {
@@ -420,7 +421,7 @@ impl<'a> Parser<'a> {
                 Some((_, c)) => {
                     match c.to_digit(10) {
                         Some(i) => {
-                            cur = cur * 10 + i;
+                            cur = cur * 10 + i as usize;
                             found = true;
                             self.cur.next();
                         }
@@ -443,7 +444,7 @@ mod tests {
     use super::*;
 
     fn same(fmt: &'static str, p: &[Piece<'static>]) {
-        let mut parser = Parser::new(fmt);
+        let parser = Parser::new(fmt);
         assert!(p == parser.collect::<Vec<Piece<'static>>>());
     }
 

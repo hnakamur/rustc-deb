@@ -11,6 +11,7 @@
 #![allow(unused_variables)]
 #![allow(non_camel_case_types)]
 #![deny(dead_code)]
+#![feature(libc)]
 
 #![crate_type="lib"]
 
@@ -85,6 +86,6 @@ mod inner {
 }
 
 pub fn foo() {
-    let a = &1is as &inner::Trait;
+    let a = &1 as &inner::Trait;
     a.f();
 }

@@ -30,7 +30,7 @@ use trans::build;
 use trans::cleanup;
 use trans::consts;
 use trans::datum;
-use trans::debuginfo;
+use trans::debuginfo::{self, DebugLoc};
 use trans::machine;
 use trans::monomorphize;
 use trans::type_::Type;
@@ -176,7 +176,7 @@ pub fn unsized_part_of_type<'tcx>(cx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> Ty<'tcx>
 // cleanups.
 pub fn type_needs_unwind_cleanup<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
     return memoized(ccx.needs_unwind_cleanup_cache(), ty, |ty| {
-        type_needs_unwind_cleanup_(ccx.tcx(), ty, &mut FnvHashSet::new())
+        type_needs_unwind_cleanup_(ccx.tcx(), ty, &mut FnvHashSet())
     });
 
     fn type_needs_unwind_cleanup_<'tcx>(tcx: &ty::ctxt<'tcx>,
@@ -217,15 +217,15 @@ pub fn type_needs_drop<'tcx>(cx: &ty::ctxt<'tcx>,
     ty::type_contents(cx, ty).needs_drop(cx)
 }
 
-fn type_is_newtype_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                                   ty: Ty<'tcx>) -> bool {
+fn type_is_newtype_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
     match ty.sty {
         ty::ty_struct(def_id, substs) => {
-            let fields = ty::struct_fields(ccx.tcx(), def_id, substs);
-            fields.len() == 1 &&
-                fields[0].name ==
-                    token::special_idents::unnamed_field.name &&
-                type_is_immediate(ccx, fields[0].mt.ty)
+            let fields = ty::lookup_struct_fields(ccx.tcx(), def_id);
+            fields.len() == 1 && {
+                let ty = ty::lookup_field_type(ccx.tcx(), def_id, fields[0].id, substs);
+                let ty = monomorphize::normalize_associated_type(ccx.tcx(), &ty);
+                type_is_immediate(ccx, ty)
+            }
         }
         _ => false
     }
@@ -247,8 +247,8 @@ pub fn type_is_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -
         return false;
     }
     match ty.sty {
-        ty::ty_struct(..) | ty::ty_enum(..) | ty::ty_tup(..) |
-        ty::ty_unboxed_closure(..) => {
+        ty::ty_struct(..) | ty::ty_enum(..) | ty::ty_tup(..) | ty::ty_vec(_, Some(_)) |
+        ty::ty_closure(..) => {
             let llty = sizing_type_of(ccx, ty);
             llsize_of_alloc(ccx, llty) <= llsize_of_alloc(ccx, ccx.int_type())
         }
@@ -275,7 +275,7 @@ pub fn return_type_is_void(ccx: &CrateContext, ty: Ty) -> bool {
 /// Generates a unique symbol based off the name given. This is used to create
 /// unique symbols for things like closures.
 pub fn gensym_name(name: &str) -> PathElem {
-    let num = token::gensym(name).uint();
+    let num = token::gensym(name).usize();
     // use one colon which will get translated to a period by the mangler, and
     // we're guaranteed that `num` is globally unique for this crate.
     PathName(token::gensym(&format!("{}:{}", name, num)[]))
@@ -317,13 +317,13 @@ pub struct tydesc_info<'tcx> {
 */
 
 #[derive(Copy)]
-pub struct NodeInfo {
+pub struct NodeIdAndSpan {
     pub id: ast::NodeId,
     pub span: Span,
 }
 
-pub fn expr_info(expr: &ast::Expr) -> NodeInfo {
-    NodeInfo { id: expr.id, span: expr.span }
+pub fn expr_info(expr: &ast::Expr) -> NodeIdAndSpan {
+    NodeIdAndSpan { id: expr.id, span: expr.span }
 }
 
 pub struct BuilderRef_res {
@@ -410,7 +410,7 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 
     // If this function is being monomorphized, this contains the type
     // substitutions used.
-    pub param_substs: &'a Substs<'tcx>,
+    pub param_substs: &'tcx Substs<'tcx>,
 
     // The source span and nesting context where this function comes from, for
     // error reporting and symbol generation.
@@ -443,9 +443,9 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
 
     pub fn env_arg_pos(&self) -> uint {
         if self.caller_expects_out_pointer {
-            1u
+            1
         } else {
-            0u
+            0
         }
     }
 
@@ -488,7 +488,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
                      opt_node_id: Option<ast::NodeId>)
                      -> Block<'a, 'tcx> {
         unsafe {
-            let name = CString::from_slice(name.as_bytes());
+            let name = CString::new(name).unwrap();
             let llbb = llvm::LLVMAppendBasicBlockInContext(self.ccx.llcx(),
                                                            self.llfn,
                                                            name.as_ptr());
@@ -515,9 +515,9 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
                        -> Block<'a, 'tcx> {
         let out = self.new_id_block("join", id);
         let mut reachable = false;
-        for bcx in in_cxs.iter() {
+        for bcx in in_cxs {
             if !bcx.unreachable.get() {
-                build::Br(*bcx, out.llbb);
+                build::Br(*bcx, out.llbb, DebugLoc::None);
                 reachable = true;
             }
         }
@@ -590,7 +590,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     pub fn sess(&self) -> &'blk Session { self.fcx.ccx.sess() }
 
     pub fn ident(&self, ident: Ident) -> String {
-        token::get_ident(ident).get().to_string()
+        token::get_ident(ident).to_string()
     }
 
     pub fn node_id_to_string(&self, id: ast::NodeId) -> String {
@@ -637,10 +637,6 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
 }
 
 impl<'blk, 'tcx> mc::Typer<'tcx> for BlockS<'blk, 'tcx> {
-    fn tcx<'a>(&'a self) -> &'a ty::ctxt<'tcx> {
-        self.tcx()
-    }
-
     fn node_ty(&self, id: ast::NodeId) -> mc::McResult<Ty<'tcx>> {
         Ok(node_id_type(self, id))
     }
@@ -679,13 +675,8 @@ impl<'blk, 'tcx> mc::Typer<'tcx> for BlockS<'blk, 'tcx> {
         self.tcx().region_maps.temporary_scope(rvalue_id)
     }
 
-    fn upvar_borrow(&self, upvar_id: ty::UpvarId) -> Option<ty::UpvarBorrow> {
-        Some(self.tcx().upvar_borrow_map.borrow()[upvar_id].clone())
-    }
-
-    fn capture_mode(&self, closure_expr_id: ast::NodeId)
-                    -> ast::CaptureClause {
-        self.tcx().capture_modes.borrow()[closure_expr_id].clone()
+    fn upvar_capture(&self, upvar_id: ty::UpvarId) -> Option<ty::UpvarCapture> {
+        Some(self.tcx().upvar_capture_map.borrow()[upvar_id].clone())
     }
 
     fn type_moves_by_default(&self, span: Span, ty: Ty<'tcx>) -> bool {
@@ -693,35 +684,35 @@ impl<'blk, 'tcx> mc::Typer<'tcx> for BlockS<'blk, 'tcx> {
     }
 }
 
-impl<'blk, 'tcx> ty::UnboxedClosureTyper<'tcx> for BlockS<'blk, 'tcx> {
+impl<'blk, 'tcx> ty::ClosureTyper<'tcx> for BlockS<'blk, 'tcx> {
     fn param_env<'a>(&'a self) -> &'a ty::ParameterEnvironment<'a, 'tcx> {
         &self.fcx.param_env
     }
 
-    fn unboxed_closure_kind(&self,
-                            def_id: ast::DefId)
-                            -> ty::UnboxedClosureKind
+    fn closure_kind(&self,
+                    def_id: ast::DefId)
+                    -> Option<ty::ClosureKind>
     {
-        let typer = NormalizingUnboxedClosureTyper::new(self.tcx());
-        typer.unboxed_closure_kind(def_id)
+        let typer = NormalizingClosureTyper::new(self.tcx());
+        typer.closure_kind(def_id)
     }
 
-    fn unboxed_closure_type(&self,
-                            def_id: ast::DefId,
-                            substs: &subst::Substs<'tcx>)
-                            -> ty::ClosureTy<'tcx>
+    fn closure_type(&self,
+                    def_id: ast::DefId,
+                    substs: &subst::Substs<'tcx>)
+                    -> ty::ClosureTy<'tcx>
     {
-        let typer = NormalizingUnboxedClosureTyper::new(self.tcx());
-        typer.unboxed_closure_type(def_id, substs)
+        let typer = NormalizingClosureTyper::new(self.tcx());
+        typer.closure_type(def_id, substs)
     }
 
-    fn unboxed_closure_upvars(&self,
-                              def_id: ast::DefId,
-                              substs: &Substs<'tcx>)
-                              -> Option<Vec<ty::UnboxedClosureUpvar<'tcx>>>
+    fn closure_upvars(&self,
+                      def_id: ast::DefId,
+                      substs: &Substs<'tcx>)
+                      -> Option<Vec<ty::ClosureUpvar<'tcx>>>
     {
-        let typer = NormalizingUnboxedClosureTyper::new(self.tcx());
-        typer.unboxed_closure_upvars(def_id, substs)
+        let typer = NormalizingClosureTyper::new(self.tcx());
+        typer.closure_upvars(def_id, substs)
     }
 }
 
@@ -766,7 +757,7 @@ pub fn C_integral(t: Type, u: u64, sign_extend: bool) -> ValueRef {
 
 pub fn C_floating(s: &str, t: Type) -> ValueRef {
     unsafe {
-        let s = CString::from_slice(s.as_bytes());
+        let s = CString::new(s).unwrap();
         llvm::LLVMConstRealOfString(t.to_ref(), s.as_ptr())
     }
 }
@@ -781,10 +772,6 @@ pub fn C_bool(ccx: &CrateContext, val: bool) -> ValueRef {
 
 pub fn C_i32(ccx: &CrateContext, i: i32) -> ValueRef {
     C_integral(Type::i32(ccx), i as u64, true)
-}
-
-pub fn C_i64(ccx: &CrateContext, i: i64) -> ValueRef {
-    C_integral(Type::i64(ccx), i as u64, true)
 }
 
 pub fn C_u64(ccx: &CrateContext, i: u64) -> ValueRef {
@@ -843,12 +830,13 @@ pub fn C_cstr(cx: &CrateContext, s: InternedString, null_terminated: bool) -> Va
         }
 
         let sc = llvm::LLVMConstStringInContext(cx.llcx(),
-                                                s.get().as_ptr() as *const c_char,
-                                                s.get().len() as c_uint,
+                                                s.as_ptr() as *const c_char,
+                                                s.len() as c_uint,
                                                 !null_terminated as Bool);
 
         let gsym = token::gensym("str");
-        let buf = CString::from_vec(format!("str{}", gsym.uint()).into_bytes());
+        let buf = CString::new(format!("str{}", gsym.usize()));
+        let buf = buf.unwrap();
         let g = llvm::LLVMAddGlobal(cx.llmod(), val_ty(sc).to_ref(), buf.as_ptr());
         llvm::LLVMSetInitializer(g, sc);
         llvm::LLVMSetGlobalConstant(g, True);
@@ -862,28 +850,9 @@ pub fn C_cstr(cx: &CrateContext, s: InternedString, null_terminated: bool) -> Va
 // NB: Do not use `do_spill_noroot` to make this into a constant string, or
 // you will be kicked off fast isel. See issue #4352 for an example of this.
 pub fn C_str_slice(cx: &CrateContext, s: InternedString) -> ValueRef {
-    let len = s.get().len();
+    let len = s.len();
     let cs = consts::ptrcast(C_cstr(cx, s, false), Type::i8p(cx));
     C_named_struct(cx.tn().find_type("str_slice").unwrap(), &[cs, C_uint(cx, len)])
-}
-
-pub fn C_binary_slice(cx: &CrateContext, data: &[u8]) -> ValueRef {
-    unsafe {
-        let len = data.len();
-        let lldata = C_bytes(cx, data);
-
-        let gsym = token::gensym("binary");
-        let name = format!("binary{}", gsym.uint());
-        let name = CString::from_vec(name.into_bytes());
-        let g = llvm::LLVMAddGlobal(cx.llmod(), val_ty(lldata).to_ref(),
-                                    name.as_ptr());
-        llvm::LLVMSetInitializer(g, lldata);
-        llvm::LLVMSetGlobalConstant(g, True);
-        llvm::SetLinkage(g, llvm::InternalLinkage);
-
-        let cs = consts::ptrcast(g, Type::i8p(cx));
-        C_struct(cx, &[cs, C_uint(cx, len)], false)
-    }
 }
 
 pub fn C_struct(cx: &CrateContext, elts: &[ValueRef], packed: bool) -> ValueRef {
@@ -907,6 +876,12 @@ pub fn C_named_struct(t: Type, elts: &[ValueRef]) -> ValueRef {
 pub fn C_array(ty: Type, elts: &[ValueRef]) -> ValueRef {
     unsafe {
         return llvm::LLVMConstArray(ty.to_ref(), elts.as_ptr(), elts.len() as c_uint);
+    }
+}
+
+pub fn C_vector(elts: &[ValueRef]) -> ValueRef {
+    unsafe {
+        return llvm::LLVMConstVector(elts.as_ptr(), elts.len() as c_uint);
     }
 }
 
@@ -1011,7 +986,7 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     // Do the initial selection for the obligation. This yields the
     // shallow result we are looking for -- that is, what specific impl.
-    let typer = NormalizingUnboxedClosureTyper::new(tcx);
+    let typer = NormalizingClosureTyper::new(tcx);
     let mut selcx = traits::SelectionContext::new(&infcx, &typer);
     let obligation = traits::Obligation::new(traits::ObligationCause::dummy(),
                                              trait_ref.to_poly_trait_predicate());
@@ -1056,49 +1031,49 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     vtable
 }
 
-pub struct NormalizingUnboxedClosureTyper<'a,'tcx:'a> {
+pub struct NormalizingClosureTyper<'a,'tcx:'a> {
     param_env: ty::ParameterEnvironment<'a, 'tcx>
 }
 
-impl<'a,'tcx> NormalizingUnboxedClosureTyper<'a,'tcx> {
-    pub fn new(tcx: &'a ty::ctxt<'tcx>) -> NormalizingUnboxedClosureTyper<'a,'tcx> {
+impl<'a,'tcx> NormalizingClosureTyper<'a,'tcx> {
+    pub fn new(tcx: &'a ty::ctxt<'tcx>) -> NormalizingClosureTyper<'a,'tcx> {
         // Parameter environment is used to give details about type parameters,
         // but since we are in trans, everything is fully monomorphized.
-        NormalizingUnboxedClosureTyper { param_env: ty::empty_parameter_environment(tcx) }
+        NormalizingClosureTyper { param_env: ty::empty_parameter_environment(tcx) }
     }
 }
 
-impl<'a,'tcx> ty::UnboxedClosureTyper<'tcx> for NormalizingUnboxedClosureTyper<'a,'tcx> {
+impl<'a,'tcx> ty::ClosureTyper<'tcx> for NormalizingClosureTyper<'a,'tcx> {
     fn param_env<'b>(&'b self) -> &'b ty::ParameterEnvironment<'b,'tcx> {
         &self.param_env
     }
 
-    fn unboxed_closure_kind(&self,
-                            def_id: ast::DefId)
-                            -> ty::UnboxedClosureKind
+    fn closure_kind(&self,
+                    def_id: ast::DefId)
+                    -> Option<ty::ClosureKind>
     {
-        self.param_env.tcx.unboxed_closure_kind(def_id)
+        self.param_env.closure_kind(def_id)
     }
 
-    fn unboxed_closure_type(&self,
-                            def_id: ast::DefId,
-                            substs: &subst::Substs<'tcx>)
-                            -> ty::ClosureTy<'tcx>
+    fn closure_type(&self,
+                    def_id: ast::DefId,
+                    substs: &subst::Substs<'tcx>)
+                    -> ty::ClosureTy<'tcx>
     {
         // the substitutions in `substs` are already monomorphized,
         // but we still must normalize associated types
-        let closure_ty = self.param_env.tcx.unboxed_closure_type(def_id, substs);
+        let closure_ty = self.param_env.tcx.closure_type(def_id, substs);
         monomorphize::normalize_associated_type(self.param_env.tcx, &closure_ty)
     }
 
-    fn unboxed_closure_upvars(&self,
-                              def_id: ast::DefId,
-                              substs: &Substs<'tcx>)
-                              -> Option<Vec<ty::UnboxedClosureUpvar<'tcx>>>
+    fn closure_upvars(&self,
+                      def_id: ast::DefId,
+                      substs: &Substs<'tcx>)
+                      -> Option<Vec<ty::ClosureUpvar<'tcx>>>
     {
         // the substitutions in `substs` are already monomorphized,
         // but we still must normalize associated types
-        let result = ty::unboxed_closure_upvars(&self.param_env, def_id, substs);
+        let result = ty::closure_upvars(&self.param_env, def_id, substs);
         monomorphize::normalize_associated_type(self.param_env.tcx, &result)
     }
 }
@@ -1116,7 +1091,7 @@ pub fn drain_fulfillment_cx<'a,'tcx,T>(span: Span,
     // In principle, we only need to do this so long as `result`
     // contains unbound type parameters. It could be a slight
     // optimization to stop iterating early.
-    let typer = NormalizingUnboxedClosureTyper::new(infcx.tcx);
+    let typer = NormalizingClosureTyper::new(infcx.tcx);
     match fulfill_cx.select_all_or_error(infcx, &typer) {
         Ok(()) => { }
         Err(errors) => {
@@ -1143,7 +1118,7 @@ pub fn drain_fulfillment_cx<'a,'tcx,T>(span: Span,
 }
 
 // Key used to lookup values supplied for type parameters in an expr.
-#[derive(Copy, PartialEq, Show)]
+#[derive(Copy, PartialEq, Debug)]
 pub enum ExprOrMethodCall {
     // Type parameters for a path like `None::<int>`
     ExprId(ast::NodeId),
@@ -1187,8 +1162,8 @@ pub fn langcall(bcx: Block,
         Err(s) => {
             let msg = format!("{} {}", msg, s);
             match span {
-                Some(span) => bcx.tcx().sess.span_fatal(span, &msg[]),
-                None => bcx.tcx().sess.fatal(&msg[]),
+                Some(span) => bcx.tcx().sess.span_fatal(span, &msg[..]),
+                None => bcx.tcx().sess.fatal(&msg[..]),
             }
         }
     }

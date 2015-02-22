@@ -22,7 +22,7 @@ impl<'a, T, S> Set<&'a [T]> for S where
     }
 
     fn set(&mut self, bits: &[T]) {
-        for &bit in bits.iter() {
+        for &bit in bits {
             self.set(bit)
         }
     }
@@ -32,5 +32,8 @@ fn main() {
     let bits: &[_] = &[0, 1];
 
     0.contains(bits);
-//~^ ERROR the trait `Set<_>` is not implemented for the type `_`
+    //~^ ERROR overflow
+    //~| ERROR overflow
+    //~| ERROR overflow
+    //~| ERROR mismatched types
 }

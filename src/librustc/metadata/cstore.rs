@@ -20,6 +20,7 @@ pub use self::NativeLibraryKind::*;
 use back::svh::Svh;
 use metadata::decoder;
 use metadata::loader;
+use session::search_paths::PathKind;
 use util::nodemap::{FnvHashMap, NodeMap};
 
 use std::cell::RefCell;
@@ -48,7 +49,7 @@ pub struct crate_metadata {
     pub span: Span,
 }
 
-#[derive(Copy, Show, PartialEq, Clone)]
+#[derive(Copy, Debug, PartialEq, Clone)]
 pub enum LinkagePreference {
     RequireDynamic,
     RequireStatic,
@@ -65,8 +66,8 @@ pub enum NativeLibraryKind {
 // must be non-None.
 #[derive(PartialEq, Clone)]
 pub struct CrateSource {
-    pub dylib: Option<Path>,
-    pub rlib: Option<Path>,
+    pub dylib: Option<(Path, PathKind)>,
+    pub rlib: Option<(Path, PathKind)>,
     pub cnum: ast::CrateNum,
 }
 
@@ -83,8 +84,8 @@ pub struct CStore {
 impl CStore {
     pub fn new(intr: Rc<IdentInterner>) -> CStore {
         CStore {
-            metas: RefCell::new(FnvHashMap::new()),
-            extern_mod_crate_map: RefCell::new(FnvHashMap::new()),
+            metas: RefCell::new(FnvHashMap()),
+            extern_mod_crate_map: RefCell::new(FnvHashMap()),
             used_crate_sources: RefCell::new(Vec::new()),
             used_libraries: RefCell::new(Vec::new()),
             used_link_args: RefCell::new(Vec::new()),
@@ -112,7 +113,7 @@ impl CStore {
     pub fn iter_crate_data<I>(&self, mut i: I) where
         I: FnMut(ast::CrateNum, &crate_metadata),
     {
-        for (&k, v) in self.metas.borrow().iter() {
+        for (&k, v) in &*self.metas.borrow() {
             i(k, &**v);
         }
     }
@@ -121,7 +122,7 @@ impl CStore {
     pub fn iter_crate_data_origins<I>(&self, mut i: I) where
         I: FnMut(ast::CrateNum, &crate_metadata, Option<CrateSource>),
     {
-        for (&k, v) in self.metas.borrow().iter() {
+        for (&k, v) in &*self.metas.borrow() {
             let origin = self.get_used_crate_source(k);
             origin.as_ref().map(|cs| { assert!(k == cs.cnum); });
             i(k, &**v, origin);
@@ -138,8 +139,7 @@ impl CStore {
     pub fn get_used_crate_source(&self, cnum: ast::CrateNum)
                                      -> Option<CrateSource> {
         self.used_crate_sources.borrow_mut()
-            .iter().find(|source| source.cnum == cnum)
-            .map(|source| source.clone())
+            .iter().find(|source| source.cnum == cnum).cloned()
     }
 
     pub fn reset(&self) {
@@ -166,22 +166,22 @@ impl CStore {
                  ordering: &mut Vec<ast::CrateNum>) {
             if ordering.contains(&cnum) { return }
             let meta = cstore.get_crate_data(cnum);
-            for (_, &dep) in meta.cnum_map.iter() {
+            for (_, &dep) in &meta.cnum_map {
                 visit(cstore, dep, ordering);
             }
             ordering.push(cnum);
         };
-        for (&num, _) in self.metas.borrow().iter() {
+        for (&num, _) in &*self.metas.borrow() {
             visit(self, num, &mut ordering);
         }
         ordering.reverse();
         let mut libs = self.used_crate_sources.borrow()
             .iter()
             .map(|src| (src.cnum, match prefer {
-                RequireDynamic => src.dylib.clone(),
-                RequireStatic => src.rlib.clone(),
+                RequireDynamic => src.dylib.clone().map(|p| p.0),
+                RequireStatic => src.rlib.clone().map(|p| p.0),
             }))
-            .collect::<Vec<(ast::CrateNum, Option<Path>)>>();
+            .collect::<Vec<_>>();
         libs.sort_by(|&(a, _), &(b, _)| {
             ordering.position_elem(&a).cmp(&ordering.position_elem(&b))
         });
@@ -217,7 +217,7 @@ impl CStore {
 
     pub fn find_extern_mod_stmt_cnum(&self, emod_id: ast::NodeId)
                                      -> Option<ast::CrateNum> {
-        self.extern_mod_crate_map.borrow().get(&emod_id).map(|x| *x)
+        self.extern_mod_crate_map.borrow().get(&emod_id).cloned()
     }
 }
 
@@ -241,7 +241,7 @@ impl MetadataBlob {
                        ((slice[2] as u32) << 8) |
                        ((slice[3] as u32) << 0)) as uint;
             if len + 4 <= slice.len() {
-                slice.slice(4, len + 4)
+                &slice[4.. len + 4]
             } else {
                 &[] // corrupt or old metadata
             }

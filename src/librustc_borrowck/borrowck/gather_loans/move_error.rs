@@ -10,6 +10,7 @@
 
 use borrowck::BorrowckCtxt;
 use rustc::middle::mem_categorization as mc;
+use rustc::middle::mem_categorization::InteriorOffsetKind as Kind;
 use rustc::middle::ty;
 use rustc::util::ppaux::UserString;
 use std::cell::RefCell;
@@ -67,10 +68,10 @@ pub struct GroupedMoveErrors<'tcx> {
 fn report_move_errors<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                 errors: &Vec<MoveError<'tcx>>) {
     let grouped_errors = group_errors_with_same_origin(errors);
-    for error in grouped_errors.iter() {
+    for error in &grouped_errors {
         report_cannot_move_out_of(bccx, error.move_from.clone());
         let mut is_first_note = true;
-        for move_to in error.move_to_places.iter() {
+        for move_to in &error.move_to_places {
             note_move_destination(bccx, move_to.span,
                                   &move_to.ident, is_first_note);
             is_first_note = false;
@@ -81,7 +82,7 @@ fn report_move_errors<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
 fn group_errors_with_same_origin<'tcx>(errors: &Vec<MoveError<'tcx>>)
                                        -> Vec<GroupedMoveErrors<'tcx>> {
     let mut grouped_errors = Vec::new();
-    for error in errors.iter() {
+    for error in errors {
         append_to_grouped_errors(&mut grouped_errors, error)
     }
     return grouped_errors;
@@ -95,7 +96,7 @@ fn group_errors_with_same_origin<'tcx>(errors: &Vec<MoveError<'tcx>>)
         } else {
             Vec::new()
         };
-        for ge in grouped_errors.iter_mut() {
+        for ge in &mut *grouped_errors {
             if move_from_id == ge.move_from.id && error.move_to.is_some() {
                 debug!("appending move_to to list");
                 ge.move_to_places.extend(move_to.into_iter());
@@ -110,19 +111,31 @@ fn group_errors_with_same_origin<'tcx>(errors: &Vec<MoveError<'tcx>>)
     }
 }
 
+// (keep in sync with gather_moves::check_and_get_illegal_move_origin )
 fn report_cannot_move_out_of<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                        move_from: mc::cmt<'tcx>) {
     match move_from.cat {
         mc::cat_deref(_, _, mc::BorrowedPtr(..)) |
         mc::cat_deref(_, _, mc::Implicit(..)) |
+        mc::cat_deref(_, _, mc::UnsafePtr(..)) |
         mc::cat_static_item => {
             bccx.span_err(move_from.span,
                           &format!("cannot move out of {}",
                                   move_from.descriptive_string(bccx.tcx))[]);
         }
 
+        mc::cat_interior(ref b, mc::InteriorElement(Kind::Index, _)) => {
+            let expr = bccx.tcx.map.expect_expr(move_from.id);
+            if let ast::ExprIndex(..) = expr.node {
+                bccx.span_err(move_from.span,
+                              &format!("cannot move out of type `{}`, \
+                                        a non-copy fixed-size array",
+                                       b.ty.user_string(bccx.tcx))[]);
+            }
+        }
+
         mc::cat_downcast(ref b, _) |
-        mc::cat_interior(ref b, _) => {
+        mc::cat_interior(ref b, mc::InteriorField(_)) => {
             match b.ty.sty {
                 ty::ty_struct(did, _) |
                 ty::ty_enum(did, _) if ty::has_dtor(bccx.tcx, did) => {

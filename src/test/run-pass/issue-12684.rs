@@ -9,14 +9,14 @@
 // except according to those terms.
 
 use std::time::Duration;
-use std::thread::Thread;
+use std::thread;
 
 fn main() {
-    Thread::scoped(move|| customtask()).join().ok().unwrap();
+    thread::spawn(move|| customtask()).join().ok().unwrap();
 }
 
 fn customtask() {
-    let mut timer = std::io::timer::Timer::new().unwrap();
+    let mut timer = std::old_io::timer::Timer::new().unwrap();
     let periodic = timer.periodic(Duration::milliseconds(10));
     periodic.recv();
 }

@@ -11,12 +11,11 @@
 use std::rc::Rc;
 use std::ops::Deref;
 
+#[derive(Copy)]
 struct DerefWrapper<X, Y> {
     x: X,
     y: Y
 }
-
-impl<X:Copy,Y:Copy> Copy for DerefWrapper<X,Y> {}
 
 impl<X, Y> DerefWrapper<X, Y> {
     fn get_x(self) -> X {
@@ -35,12 +34,11 @@ impl<X, Y> Deref for DerefWrapper<X, Y> {
 mod priv_test {
     use std::ops::Deref;
 
+    #[derive(Copy)]
     pub struct DerefWrapperHideX<X, Y> {
         x: X,
         pub y: Y
     }
-
-    impl<X:Copy,Y:Copy> Copy for DerefWrapperHideX<X,Y> {}
 
     impl<X, Y> DerefWrapperHideX<X, Y> {
         pub fn new(x: X, y: Y) -> DerefWrapperHideX<X, Y> {
@@ -61,7 +59,7 @@ mod priv_test {
 }
 
 pub fn main() {
-    let nested = DerefWrapper {x: true, y: DerefWrapper {x: 0i, y: 1i}};
+    let nested = DerefWrapper {x: true, y: DerefWrapper {x: 0, y: 1}};
 
     // Use the first field that you can find.
     assert_eq!(nested.x, true);
@@ -75,7 +73,7 @@ pub fn main() {
     // Also go through multiple levels of indirection.
     assert_eq!(Rc::new(nested).x, true);
 
-    let nested_priv = priv_test::DerefWrapperHideX::new(true, DerefWrapper {x: 0i, y: 1i});
+    let nested_priv = priv_test::DerefWrapperHideX::new(true, DerefWrapper {x: 0, y: 1});
     // FIXME(eddyb) #12808 should skip private fields.
     // assert_eq!(nested_priv.x, 0);
     assert_eq!((*nested_priv).x, 0);

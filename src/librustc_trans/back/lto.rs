@@ -34,7 +34,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
     }
 
     // Make sure we actually can run LTO
-    for crate_type in sess.crate_types.borrow().iter() {
+    for crate_type in &*sess.crate_types.borrow() {
         match *crate_type {
             config::CrateTypeExecutable | config::CrateTypeStaticlib => {}
             _ => {
@@ -48,7 +48,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
     // load the bitcode from the archive. Then merge it into the current LLVM
     // module that we've got.
     let crates = sess.cstore.get_used_crates(cstore::RequireStatic);
-    for (cnum, path) in crates.into_iter() {
+    for (cnum, path) in crates {
         let name = sess.cstore.get_crate_data(cnum).name.clone();
         let path = match path {
             Some(p) => p,
@@ -60,11 +60,11 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
 
         let archive = ArchiveRO::open(&path).expect("wanted an rlib");
         let file = path.filename_str().unwrap();
-        let file = &file[3..(file.len() - 5)]; // chop off lib/.rlib
+        let file = &file[3..file.len() - 5]; // chop off lib/.rlib
         debug!("reading {}", file);
-        for i in iter::count(0u, 1) {
+        for i in iter::count(0, 1) {
             let bc_encoded = time(sess.time_passes(),
-                                  format!("check for {}.{}.bytecode.deflate", name, i).as_slice(),
+                                  &format!("check for {}.{}.bytecode.deflate", name, i),
                                   (),
                                   |_| {
                                       archive.read(&format!("{}.{}.bytecode.deflate",
@@ -84,7 +84,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
             };
 
             let bc_decoded = if is_versioned_bytecode_format(bc_encoded) {
-                time(sess.time_passes(), format!("decode {}.{}.bc", file, i).as_slice(), (), |_| {
+                time(sess.time_passes(), &format!("decode {}.{}.bc", file, i), (), |_| {
                     // Read the version
                     let version = extract_bytecode_format_version(bc_encoded);
 
@@ -108,7 +108,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
                     }
                 })
             } else {
-                time(sess.time_passes(), format!("decode {}.{}.bc", file, i).as_slice(), (), |_| {
+                time(sess.time_passes(), &format!("decode {}.{}.bc", file, i), (), |_| {
                 // the object must be in the old, pre-versioning format, so simply
                 // inflate everything and let LLVM decide if it can make sense of it
                     match flate::inflate_bytes(bc_encoded) {
@@ -121,7 +121,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
                 })
             };
 
-            let ptr = bc_decoded.as_slice().as_ptr();
+            let ptr = bc_decoded.as_ptr();
             debug!("linking {}, part {}", name, i);
             time(sess.time_passes(),
                  &format!("ll link {}.{}", name, i)[],
@@ -132,7 +132,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
                                                         bc_decoded.len() as libc::size_t) {
                     write::llvm_err(sess.diagnostic().handler(),
                                     format!("failed to load bc of `{}`",
-                                            &name[]));
+                                            &name[..]));
                 }
             });
         }
@@ -140,7 +140,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
 
     // Internalize everything but the reachable symbols of the current module
     let cstrs: Vec<CString> = reachable.iter().map(|s| {
-        CString::from_slice(s.as_bytes())
+        CString::new(s.clone()).unwrap()
     }).collect();
     let arr: Vec<*const libc::c_char> = cstrs.iter().map(|c| c.as_ptr()).collect();
     let ptr = arr.as_ptr();
@@ -167,7 +167,10 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
         llvm::LLVMRustAddAnalysisPasses(tm, pm, llmod);
         llvm::LLVMRustAddPass(pm, "verify\0".as_ptr() as *const _);
 
+        let opt = sess.opts.cg.opt_level.unwrap_or(0) as libc::c_uint;
+
         let builder = llvm::LLVMPassManagerBuilderCreate();
+        llvm::LLVMPassManagerBuilderSetOptLevel(builder, opt);
         llvm::LLVMPassManagerBuilderPopulateLTOPassManager(builder, pm,
             /* Internalize = */ False,
             /* RunInliner = */ True);
@@ -186,7 +189,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
 fn is_versioned_bytecode_format(bc: &[u8]) -> bool {
     let magic_id_byte_count = link::RLIB_BYTECODE_OBJECT_MAGIC.len();
     return bc.len() > magic_id_byte_count &&
-           &bc[0..magic_id_byte_count] == link::RLIB_BYTECODE_OBJECT_MAGIC;
+           &bc[..magic_id_byte_count] == link::RLIB_BYTECODE_OBJECT_MAGIC;
 }
 
 fn extract_bytecode_format_version(bc: &[u8]) -> u32 {
@@ -198,7 +201,7 @@ fn extract_compressed_bytecode_size_v1(bc: &[u8]) -> u64 {
 }
 
 fn read_from_le_bytes<T: Int>(bytes: &[u8], position_in_bytes: uint) -> T {
-    let byte_data = &bytes[position_in_bytes..(position_in_bytes + mem::size_of::<T>())];
+    let byte_data = &bytes[position_in_bytes..position_in_bytes + mem::size_of::<T>()];
     let data = unsafe {
         *(byte_data.as_ptr() as *const T)
     };

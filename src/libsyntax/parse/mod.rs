@@ -18,7 +18,7 @@ use parse::parser::Parser;
 use ptr::P;
 
 use std::cell::{Cell, RefCell};
-use std::io::File;
+use std::old_io::File;
 use std::rc::Rc;
 use std::num::Int;
 use std::str;
@@ -45,7 +45,7 @@ pub struct ParseSess {
 
 pub fn new_parse_sess() -> ParseSess {
     ParseSess {
-        span_diagnostic: mk_span_handler(default_handler(Auto, None), CodeMap::new()),
+        span_diagnostic: mk_span_handler(default_handler(Auto, None, true), CodeMap::new()),
         included_mod_stack: RefCell::new(Vec::new()),
         node_id: Cell::new(1),
     }
@@ -181,7 +181,7 @@ pub fn parse_tts_from_source_str(name: String,
         name,
         source
     );
-    p.quote_depth += 1u;
+    p.quote_depth += 1;
     // right now this is re-creating the token trees from ... token trees.
     maybe_aborted(p.parse_all_token_trees(),p)
 }
@@ -244,7 +244,7 @@ pub fn new_parser_from_tts<'a>(sess: &'a ParseSess,
 /// add the path to the session's codemap and return the new filemap.
 pub fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
     -> Rc<FileMap> {
-    let err = |&: msg: &str| {
+    let err = |msg: &str| {
         match spanopt {
             Some(sp) => sess.span_diagnostic.span_fatal(sp, msg),
             None => sess.span_diagnostic.handler().fatal(msg),
@@ -253,13 +253,12 @@ pub fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
     let bytes = match File::open(path).read_to_end() {
         Ok(bytes) => bytes,
         Err(e) => {
-            err(&format!("couldn't read {:?}: {:?}",
-                        path.display(),
-                        e)[]);
+            err(&format!("couldn't read {:?}: {}",
+                        path.display(), e)[]);
             unreachable!()
         }
     };
-    match str::from_utf8(&bytes[]).ok() {
+    match str::from_utf8(&bytes[..]).ok() {
         Some(s) => {
             return string_to_filemap(sess, s.to_string(),
                                      path.as_str().unwrap().to_string())
@@ -325,7 +324,7 @@ pub mod with_hygiene {
             name,
             source
         );
-        p.quote_depth += 1u;
+        p.quote_depth += 1;
         // right now this is re-creating the token trees from ... token trees.
         maybe_aborted(p.parse_all_token_trees(),p)
     }
@@ -365,7 +364,7 @@ pub mod with_hygiene {
 }
 
 /// Abort if necessary
-pub fn maybe_aborted<T>(result: T, mut p: Parser) -> T {
+pub fn maybe_aborted<T>(result: T, p: Parser) -> T {
     p.abort_if_errors();
     result
 }
@@ -374,7 +373,7 @@ pub fn maybe_aborted<T>(result: T, mut p: Parser) -> T {
 /// Rather than just accepting/rejecting a given literal, unescapes it as
 /// well. Can take any slice prefixed by a character escape. Returns the
 /// character and the number of characters consumed.
-pub fn char_lit(lit: &str) -> (char, int) {
+pub fn char_lit(lit: &str) -> (char, isize) {
     use std::{num, char};
 
     let mut chars = lit.chars();
@@ -399,21 +398,21 @@ pub fn char_lit(lit: &str) -> (char, int) {
     }
 
     let msg = format!("lexer should have rejected a bad character escape {}", lit);
-    let msg2 = &msg[];
+    let msg2 = &msg[..];
 
-    fn esc(len: uint, lit: &str) -> Option<(char, int)> {
-        num::from_str_radix(&lit[2..len], 16)
+    fn esc(len: usize, lit: &str) -> Option<(char, isize)> {
+        num::from_str_radix(&lit[2..len], 16).ok()
         .and_then(char::from_u32)
-        .map(|x| (x, len as int))
+        .map(|x| (x, len as isize))
     }
 
-    let unicode_escape = |&: | -> Option<(char, int)>
+    let unicode_escape = || -> Option<(char, isize)>
         if lit.as_bytes()[2] == b'{' {
             let idx = lit.find('}').expect(msg2);
             let subslice = &lit[3..idx];
-            num::from_str_radix(subslice, 16)
+            num::from_str_radix(subslice, 16).ok()
                 .and_then(char::from_u32)
-                .map(|x| (x, subslice.chars().count() as int + 4))
+                .map(|x| (x, subslice.chars().count() as isize + 4))
         } else {
             esc(6, lit)
         };
@@ -434,10 +433,10 @@ pub fn str_lit(lit: &str) -> String {
     let mut res = String::with_capacity(lit.len());
 
     // FIXME #8372: This could be a for-loop if it didn't borrow the iterator
-    let error = |&: i| format!("lexer should have rejected {} at {}", lit, i);
+    let error = |i| format!("lexer should have rejected {} at {}", lit, i);
 
     /// Eat everything up to a non-whitespace
-    fn eat<'a>(it: &mut iter::Peekable<(uint, char), str::CharIndices<'a>>) {
+    fn eat<'a>(it: &mut iter::Peekable<str::CharIndices<'a>>) {
         loop {
             match it.peek().map(|x| x.1) {
                 Some(' ') | Some('\n') | Some('\r') | Some('\t') => {
@@ -455,7 +454,7 @@ pub fn str_lit(lit: &str) -> String {
                 match c {
                     '\\' => {
                         let ch = chars.peek().unwrap_or_else(|| {
-                            panic!("{}", error(i).as_slice())
+                            panic!("{}", error(i))
                         }).1;
 
                         if ch == '\n' {
@@ -463,7 +462,7 @@ pub fn str_lit(lit: &str) -> String {
                         } else if ch == '\r' {
                             chars.next();
                             let ch = chars.peek().unwrap_or_else(|| {
-                                panic!("{}", error(i).as_slice())
+                                panic!("{}", error(i))
                             }).1;
 
                             if ch != '\n' {
@@ -473,7 +472,7 @@ pub fn str_lit(lit: &str) -> String {
                         } else {
                             // otherwise, a normal escape
                             let (c, n) = char_lit(&lit[i..]);
-                            for _ in range(0, n - 1) { // we don't need to move past the first \
+                            for _ in 0..n - 1 { // we don't need to move past the first \
                                 chars.next();
                             }
                             res.push(c);
@@ -481,7 +480,7 @@ pub fn str_lit(lit: &str) -> String {
                     },
                     '\r' => {
                         let ch = chars.peek().unwrap_or_else(|| {
-                            panic!("{}", error(i).as_slice())
+                            panic!("{}", error(i))
                         }).1;
 
                         if ch != '\n' {
@@ -561,20 +560,20 @@ fn filtered_float_lit(data: token::InternedString, suffix: Option<&str>,
 }
 pub fn float_lit(s: &str, suffix: Option<&str>, sd: &SpanHandler, sp: Span) -> ast::Lit_ {
     debug!("float_lit: {:?}, {:?}", s, suffix);
-    // FIXME #2252: bounds checking float literals is defered until trans
+    // FIXME #2252: bounds checking float literals is deferred until trans
     let s = s.chars().filter(|&c| c != '_').collect::<String>();
     let data = token::intern_and_get_ident(&*s);
     filtered_float_lit(data, suffix, sd, sp)
 }
 
 /// Parse a string representing a byte literal into its final form. Similar to `char_lit`
-pub fn byte_lit(lit: &str) -> (u8, uint) {
-    let err = |&: i| format!("lexer accepted invalid byte literal {} step {}", lit, i);
+pub fn byte_lit(lit: &str) -> (u8, usize) {
+    let err = |i| format!("lexer accepted invalid byte literal {} step {}", lit, i);
 
     if lit.len() == 1 {
         (lit.as_bytes()[0], 1)
     } else {
-        assert!(lit.as_bytes()[0] == b'\\', err(0i));
+        assert!(lit.as_bytes()[0] == b'\\', err(0));
         let b = match lit.as_bytes()[1] {
             b'"' => b'"',
             b'n' => b'\n',
@@ -584,7 +583,7 @@ pub fn byte_lit(lit: &str) -> (u8, uint) {
             b'\'' => b'\'',
             b'0' => b'\0',
             _ => {
-                match ::std::num::from_str_radix::<u64>(&lit[2..4], 16) {
+                match ::std::num::from_str_radix::<u64>(&lit[2..4], 16).ok() {
                     Some(c) =>
                         if c > 0xFF {
                             panic!(err(2))
@@ -603,10 +602,10 @@ pub fn binary_lit(lit: &str) -> Rc<Vec<u8>> {
     let mut res = Vec::with_capacity(lit.len());
 
     // FIXME #8372: This could be a for-loop if it didn't borrow the iterator
-    let error = |&: i| format!("lexer should have rejected {} at {}", lit, i);
+    let error = |i| format!("lexer should have rejected {} at {}", lit, i);
 
     /// Eat everything up to a non-whitespace
-    fn eat<'a, I: Iterator<Item=(uint, u8)>>(it: &mut iter::Peekable<(uint, u8), I>) {
+    fn eat<'a, I: Iterator<Item=(usize, u8)>>(it: &mut iter::Peekable<I>) {
         loop {
             match it.peek().map(|x| x.1) {
                 Some(b' ') | Some(b'\n') | Some(b'\r') | Some(b'\t') => {
@@ -623,11 +622,11 @@ pub fn binary_lit(lit: &str) -> Rc<Vec<u8>> {
         match chars.next() {
             Some((i, b'\\')) => {
                 let em = error(i);
-                match chars.peek().expect(em.as_slice()).1 {
+                match chars.peek().expect(&em).1 {
                     b'\n' => eat(&mut chars),
                     b'\r' => {
                         chars.next();
-                        if chars.peek().expect(em.as_slice()).1 != b'\n' {
+                        if chars.peek().expect(&em).1 != b'\n' {
                             panic!("lexer accepted bare CR");
                         }
                         eat(&mut chars);
@@ -636,7 +635,7 @@ pub fn binary_lit(lit: &str) -> Rc<Vec<u8>> {
                         // otherwise, a normal escape
                         let (c, n) = byte_lit(&lit[i..]);
                         // we don't need to move past the first \
-                        for _ in range(0, n - 1) {
+                        for _ in 0..n - 1 {
                             chars.next();
                         }
                         res.push(c);
@@ -645,7 +644,7 @@ pub fn binary_lit(lit: &str) -> Rc<Vec<u8>> {
             },
             Some((i, b'\r')) => {
                 let em = error(i);
-                if chars.peek().expect(em.as_slice()).1 != b'\n' {
+                if chars.peek().expect(&em).1 != b'\n' {
                     panic!("lexer accepted bare CR");
                 }
                 chars.next();
@@ -663,7 +662,7 @@ pub fn integer_lit(s: &str, suffix: Option<&str>, sd: &SpanHandler, sp: Span) ->
     // s can only be ascii, byte indexing is fine
 
     let s2 = s.chars().filter(|&c| c != '_').collect::<String>();
-    let mut s = &s2[];
+    let mut s = &s2[..];
 
     debug!("integer_lit: {}, {:?}", s, suffix);
 
@@ -684,9 +683,9 @@ pub fn integer_lit(s: &str, suffix: Option<&str>, sd: &SpanHandler, sp: Span) ->
     match suffix {
         Some(suf) if looks_like_width_suffix(&['f'], suf) => {
             match base {
-                16u => sd.span_err(sp, "hexadecimal float literal is not supported"),
-                8u => sd.span_err(sp, "octal float literal is not supported"),
-                2u => sd.span_err(sp, "binary float literal is not supported"),
+                16 => sd.span_err(sp, "hexadecimal float literal is not supported"),
+                8 => sd.span_err(sp, "octal float literal is not supported"),
+                2 => sd.span_err(sp, "binary float literal is not supported"),
                 _ => ()
             }
             let ident = token::intern_and_get_ident(&*s);
@@ -702,18 +701,18 @@ pub fn integer_lit(s: &str, suffix: Option<&str>, sd: &SpanHandler, sp: Span) ->
     if let Some(suf) = suffix {
         if suf.is_empty() { sd.span_bug(sp, "found empty literal suffix in Some")}
         ty = match suf {
-            "i"   => ast::SignedIntLit(ast::TyIs(true), ast::Plus),
-            "is"   => ast::SignedIntLit(ast::TyIs(false), ast::Plus),
+            "isize" => ast::SignedIntLit(ast::TyIs(false), ast::Plus),
             "i8"  => ast::SignedIntLit(ast::TyI8, ast::Plus),
             "i16" => ast::SignedIntLit(ast::TyI16, ast::Plus),
             "i32" => ast::SignedIntLit(ast::TyI32, ast::Plus),
             "i64" => ast::SignedIntLit(ast::TyI64, ast::Plus),
-            "u"   => ast::UnsignedIntLit(ast::TyUs(true)),
-            "us"   => ast::UnsignedIntLit(ast::TyUs(false)),
+            "usize" => ast::UnsignedIntLit(ast::TyUs(false)),
             "u8"  => ast::UnsignedIntLit(ast::TyU8),
             "u16" => ast::UnsignedIntLit(ast::TyU16),
             "u32" => ast::UnsignedIntLit(ast::TyU32),
             "u64" => ast::UnsignedIntLit(ast::TyU64),
+            "i" | "is" => ast::SignedIntLit(ast::TyIs(true), ast::Plus),
+            "u" | "us" => ast::UnsignedIntLit(ast::TyUs(true)),
             _ => {
                 // i<digits> and u<digits> look like widths, so lets
                 // give an error message along those lines
@@ -723,6 +722,8 @@ pub fn integer_lit(s: &str, suffix: Option<&str>, sd: &SpanHandler, sp: Span) ->
                                               &suf[1..]));
                 } else {
                     sd.span_err(sp, &*format!("illegal suffix `{}` for numeric literal", suf));
+                    sd.span_help(sp, "the suffix must be one of the integral types \
+                                      (`u32`, `isize`, etc)");
                 }
 
                 ty
@@ -733,7 +734,7 @@ pub fn integer_lit(s: &str, suffix: Option<&str>, sd: &SpanHandler, sp: Span) ->
     debug!("integer_lit: the type is {:?}, base {:?}, the new string is {:?}, the original \
            string was {:?}, the original suffix was {:?}", ty, base, s, orig, suffix);
 
-    let res: u64 = match ::std::num::from_str_radix(s, base) {
+    let res: u64 = match ::std::num::from_str_radix(s, base).ok() {
         Some(r) => r,
         None => { sd.span_err(sp, "int literal is too large"); 0 }
     };
@@ -756,13 +757,13 @@ mod test {
     use ast;
     use abi;
     use attr::{first_attr_value_str_by_name, AttrMetaMethods};
+    use parse;
     use parse::parser::Parser;
     use parse::token::{str_to_ident};
-    use print::pprust::view_item_to_string;
+    use print::pprust::item_to_string;
     use ptr::P;
     use util::parser_testing::{string_to_tts, string_to_parser};
-    use util::parser_testing::{string_to_expr, string_to_item};
-    use util::parser_testing::{string_to_stmt, string_to_view_item};
+    use util::parser_testing::{string_to_expr, string_to_item, string_to_stmt};
 
     // produce a codemap::span
     fn sp(a: u32, b: u32) -> Span {
@@ -818,7 +819,7 @@ mod test {
     #[test]
     fn string_to_tts_macro () {
         let tts = string_to_tts("macro_rules! zip (($a)=>($a))".to_string());
-        let tts: &[ast::TokenTree] = &tts[];
+        let tts: &[ast::TokenTree] = &tts[..];
         match tts {
             [ast::TtToken(_, token::Ident(name_macro_rules, token::Plain)),
              ast::TtToken(_, token::Not),
@@ -855,8 +856,8 @@ mod test {
 
     #[test]
     fn string_to_tts_1 () {
-        let tts = string_to_tts("fn a (b : int) { b; }".to_string());
-        assert_eq!(json::encode(&tts),
+        let tts = string_to_tts("fn a (b : i32) { b; }".to_string());
+        assert_eq!(json::encode(&tts).unwrap(),
         "[\
     {\
         \"variant\":\"TtToken\",\
@@ -919,7 +920,7 @@ mod test {
                             {\
                                 \"variant\":\"Ident\",\
                                 \"fields\":[\
-                                    \"int\",\
+                                    \"i32\",\
                                     \"Plain\"\
                                 ]\
                             }\
@@ -1031,8 +1032,8 @@ mod test {
 
     // check the contents of the tt manually:
     #[test] fn parse_fundecl () {
-        // this test depends on the intern order of "fn" and "int"
-        assert!(string_to_item("fn a (b : int) { b; }".to_string()) ==
+        // this test depends on the intern order of "fn" and "i32"
+        assert_eq!(string_to_item("fn a (b : i32) { b; }".to_string()),
                   Some(
                       P(ast::Item{ident:str_to_ident("a"),
                             attrs:Vec::new(),
@@ -1046,7 +1047,7 @@ mod test {
                                         segments: vec!(
                                             ast::PathSegment {
                                                 identifier:
-                                                    str_to_ident("int"),
+                                                    str_to_ident("i32"),
                                                 parameters: ast::PathParameters::none(),
                                             }
                                         ),
@@ -1066,9 +1067,7 @@ mod test {
                                     }),
                                         id: ast::DUMMY_NODE_ID
                                     }),
-                                output: ast::Return(P(ast::Ty{id: ast::DUMMY_NODE_ID,
-                                                  node: ast::TyTup(vec![]),
-                                                  span:sp(15,15)})), // not sure
+                                output: ast::DefaultReturn(sp(15, 15)),
                                 variadic: false
                             }),
                                     ast::Unsafety::Normal,
@@ -1082,7 +1081,6 @@ mod test {
                                         }
                                     },
                                     P(ast::Block {
-                                        view_items: Vec::new(),
                                         stmts: vec!(P(Spanned{
                                             node: ast::StmtSemi(P(ast::Expr{
                                                 id: ast::DUMMY_NODE_ID,
@@ -1114,26 +1112,26 @@ mod test {
 
     #[test] fn parse_use() {
         let use_s = "use foo::bar::baz;";
-        let vitem = string_to_view_item(use_s.to_string());
-        let vitem_s = view_item_to_string(&vitem);
-        assert_eq!(&vitem_s[], use_s);
+        let vitem = string_to_item(use_s.to_string()).unwrap();
+        let vitem_s = item_to_string(&*vitem);
+        assert_eq!(&vitem_s[..], use_s);
 
         let use_s = "use foo::bar as baz;";
-        let vitem = string_to_view_item(use_s.to_string());
-        let vitem_s = view_item_to_string(&vitem);
-        assert_eq!(&vitem_s[], use_s);
+        let vitem = string_to_item(use_s.to_string()).unwrap();
+        let vitem_s = item_to_string(&*vitem);
+        assert_eq!(&vitem_s[..], use_s);
     }
 
     #[test] fn parse_extern_crate() {
         let ex_s = "extern crate foo;";
-        let vitem = string_to_view_item(ex_s.to_string());
-        let vitem_s = view_item_to_string(&vitem);
-        assert_eq!(&vitem_s[], ex_s);
+        let vitem = string_to_item(ex_s.to_string()).unwrap();
+        let vitem_s = item_to_string(&*vitem);
+        assert_eq!(&vitem_s[..], ex_s);
 
         let ex_s = "extern crate \"foo\" as bar;";
-        let vitem = string_to_view_item(ex_s.to_string());
-        let vitem_s = view_item_to_string(&vitem);
-        assert_eq!(&vitem_s[], ex_s);
+        let vitem = string_to_item(ex_s.to_string()).unwrap();
+        let vitem_s = item_to_string(&*vitem);
+        assert_eq!(&vitem_s[..], ex_s);
     }
 
     fn get_spans_of_pat_idents(src: &str) -> Vec<Span> {
@@ -1161,19 +1159,19 @@ mod test {
 
     #[test] fn span_of_self_arg_pat_idents_are_correct() {
 
-        let srcs = ["impl z { fn a (&self, &myarg: int) {} }",
-                    "impl z { fn a (&mut self, &myarg: int) {} }",
-                    "impl z { fn a (&'a self, &myarg: int) {} }",
-                    "impl z { fn a (self, &myarg: int) {} }",
-                    "impl z { fn a (self: Foo, &myarg: int) {} }",
+        let srcs = ["impl z { fn a (&self, &myarg: i32) {} }",
+                    "impl z { fn a (&mut self, &myarg: i32) {} }",
+                    "impl z { fn a (&'a self, &myarg: i32) {} }",
+                    "impl z { fn a (self, &myarg: i32) {} }",
+                    "impl z { fn a (self: Foo, &myarg: i32) {} }",
                     ];
 
-        for &src in srcs.iter() {
+        for &src in &srcs {
             let spans = get_spans_of_pat_idents(src);
             let Span{ lo, hi, .. } = spans[0];
-            assert!("self" == &src[lo.to_uint()..hi.to_uint()],
+            assert!("self" == &src[lo.to_usize()..hi.to_usize()],
                     "\"{}\" != \"self\". src=\"{}\"",
-                    &src[lo.to_uint()..hi.to_uint()], src)
+                    &src[lo.to_usize()..hi.to_usize()], src)
         }
     }
 
@@ -1204,19 +1202,41 @@ mod test {
         let name = "<source>".to_string();
         let source = "/// doc comment\r\nfn foo() {}".to_string();
         let item = parse_item_from_source_str(name.clone(), source, Vec::new(), &sess).unwrap();
-        let doc = first_attr_value_str_by_name(item.attrs.as_slice(), "doc").unwrap();
-        assert_eq!(doc.get(), "/// doc comment");
+        let doc = first_attr_value_str_by_name(&item.attrs, "doc").unwrap();
+        assert_eq!(&doc[..], "/// doc comment");
 
         let source = "/// doc comment\r\n/// line 2\r\nfn foo() {}".to_string();
         let item = parse_item_from_source_str(name.clone(), source, Vec::new(), &sess).unwrap();
-        let docs = item.attrs.iter().filter(|a| a.name().get() == "doc")
-                    .map(|a| a.value_str().unwrap().get().to_string()).collect::<Vec<_>>();
+        let docs = item.attrs.iter().filter(|a| &a.name()[] == "doc")
+                    .map(|a| a.value_str().unwrap().to_string()).collect::<Vec<_>>();
         let b: &[_] = &["/// doc comment".to_string(), "/// line 2".to_string()];
-        assert_eq!(&docs[], b);
+        assert_eq!(&docs[..], b);
 
         let source = "/** doc comment\r\n *  with CRLF */\r\nfn foo() {}".to_string();
         let item = parse_item_from_source_str(name, source, Vec::new(), &sess).unwrap();
-        let doc = first_attr_value_str_by_name(item.attrs.as_slice(), "doc").unwrap();
-        assert_eq!(doc.get(), "/** doc comment\n *  with CRLF */");
+        let doc = first_attr_value_str_by_name(&item.attrs, "doc").unwrap();
+        assert_eq!(&doc[..], "/** doc comment\n *  with CRLF */");
+    }
+
+    #[test]
+    fn ttdelim_span() {
+        let sess = parse::new_parse_sess();
+        let expr = parse::parse_expr_from_source_str("foo".to_string(),
+            "foo!( fn main() { body } )".to_string(), vec![], &sess);
+
+        let tts = match expr.node {
+            ast::ExprMac(ref mac) => {
+                let ast::MacInvocTT(_, ref tts, _) = mac.node;
+                tts.clone()
+            }
+            _ => panic!("not a macro"),
+        };
+
+        let span = tts.iter().rev().next().unwrap().get_span();
+
+        match sess.span_diagnostic.cm.span_to_snippet(span) {
+            Ok(s) => assert_eq!(&s[..], "{ body }"),
+            Err(_) => panic!("could not get snippet"),
+        }
     }
 }

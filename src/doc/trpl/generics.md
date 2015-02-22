@@ -5,7 +5,7 @@ multiple types of arguments. For example, remember our `OptionalInt` type?
 
 ```{rust}
 enum OptionalInt {
-    Value(int),
+    Value(i32),
     Missing,
 }
 ```
@@ -20,9 +20,9 @@ enum OptionalFloat64 {
 ```
 
 This is really unfortunate. Luckily, Rust has a feature that gives us a better
-way: generics. Generics are called **parametric polymorphism** in type theory,
-which means that they are types or functions that have multiple forms ("poly"
-is multiple, "morph" is form) over a given parameter ("parametric").
+way: generics. Generics are called *parametric polymorphism* in type theory,
+which means that they are types or functions that have multiple forms (*poly*
+is multiple, *morph* is form) over a given parameter (*parametric*).
 
 Anyway, enough with type theory declarations, let's check out the generic form
 of `OptionalInt`. It is actually provided by Rust itself, and looks like this:
@@ -40,26 +40,26 @@ we substitute that type for the same type used in the generic. Here's an
 example of using `Option<T>`, with some extra type annotations:
 
 ```{rust}
-let x: Option<int> = Some(5i);
+let x: Option<i32> = Some(5);
 ```
 
-In the type declaration, we say `Option<int>`. Note how similar this looks to
-`Option<T>`. So, in this particular `Option`, `T` has the value of `int`. On
-the right-hand side of the binding, we do make a `Some(T)`, where `T` is `5i`.
-Since that's an `int`, the two sides match, and Rust is happy. If they didn't
+In the type declaration, we say `Option<i32>`. Note how similar this looks to
+`Option<T>`. So, in this particular `Option`, `T` has the value of `i32`. On
+the right-hand side of the binding, we do make a `Some(T)`, where `T` is `5`.
+Since that's an `i32`, the two sides match, and Rust is happy. If they didn't
 match, we'd get an error:
 
 ```{rust,ignore}
-let x: Option<f64> = Some(5i);
-// error: mismatched types: expected `core::option::Option<f64>`
-// but found `core::option::Option<int>` (expected f64 but found int)
+let x: Option<f64> = Some(5);
+// error: mismatched types: expected `core::option::Option<f64>`,
+// found `core::option::Option<_>` (expected f64 but found integral variable)
 ```
 
 That doesn't mean we can't make `Option<T>`s that hold an `f64`! They just have to
 match up:
 
 ```{rust}
-let x: Option<int> = Some(5i);
+let x: Option<i32> = Some(5);
 let y: Option<f64> = Some(5.0f64);
 ```
 
@@ -79,18 +79,18 @@ This type is generic over _two_ types: `T` and `E`. By the way, the capital lett
 can be any letter you'd like. We could define `Result<T, E>` as:
 
 ```{rust}
-enum Result<H, N> {
-    Ok(H),
-    Err(N),
+enum Result<A, Z> {
+    Ok(A),
+    Err(Z),
 }
 ```
 
 if we wanted to. Convention says that the first generic parameter should be
 `T`, for 'type,' and that we use `E` for 'error.' Rust doesn't care, however.
 
-The `Result<T, E>` type is intended to
-be used to return the result of a computation, and to have the ability to
-return an error if it didn't work out. Here's an example:
+The `Result<T, E>` type is intended to be used to return the result of a
+computation, and to have the ability to return an error if it didn't work out.
+Here's an example:
 
 ```{rust}
 let x: Result<f64, String> = Ok(2.3f64);
@@ -150,7 +150,7 @@ fn inverse32(x: f32) -> Result<f32, String> {
 }
 ```
 
-Bummer. What we need is a **generic function**. Luckily, we can write one!
+Bummer. What we need is a *generic function*. Luckily, we can write one!
 However, it won't _quite_ work yet. Before we get into that, let's talk syntax.
 A generic version of `inverse` would look something like this:
 

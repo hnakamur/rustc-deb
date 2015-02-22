@@ -10,25 +10,26 @@
 
 //! Abstraction of a thread pool for basic parallelism.
 
-#![unstable = "the semantics of a failing task and whether a thread is \
-               re-attached to a thread pool are somewhat unclear, and the \
-               utility of this type in `std::sync` is questionable with \
-               respect to the jobs of other primitives"]
+#![unstable(feature = "std_misc",
+            reason = "the semantics of a failing task and whether a thread is \
+                      re-attached to a thread pool are somewhat unclear, and the \
+                      utility of this type in `std::sync` is questionable with \
+                      respect to the jobs of other primitives")]
 
 use core::prelude::*;
 
 use sync::{Arc, Mutex};
 use sync::mpsc::{channel, Sender, Receiver};
-use thread::Thread;
+use thread;
 use thunk::Thunk;
 
 struct Sentinel<'a> {
-    jobs: &'a Arc<Mutex<Receiver<Thunk>>>,
+    jobs: &'a Arc<Mutex<Receiver<Thunk<'static>>>>,
     active: bool
 }
 
 impl<'a> Sentinel<'a> {
-    fn new(jobs: &Arc<Mutex<Receiver<Thunk>>>) -> Sentinel {
+    fn new(jobs: &'a Arc<Mutex<Receiver<Thunk<'static>>>>) -> Sentinel<'a> {
         Sentinel {
             jobs: jobs,
             active: true
@@ -62,24 +63,24 @@ impl<'a> Drop for Sentinel<'a> {
 /// use std::iter::AdditiveIterator;
 /// use std::sync::mpsc::channel;
 ///
-/// let pool = TaskPool::new(4u);
+/// let pool = TaskPool::new(4);
 ///
 /// let (tx, rx) = channel();
-/// for _ in range(0, 8u) {
+/// for _ in 0..8 {
 ///     let tx = tx.clone();
 ///     pool.execute(move|| {
-///         tx.send(1u).unwrap();
+///         tx.send(1_u32).unwrap();
 ///     });
 /// }
 ///
-/// assert_eq!(rx.iter().take(8u).sum(), 8u);
+/// assert_eq!(rx.iter().take(8).sum(), 8);
 /// ```
 pub struct TaskPool {
     // How the threadpool communicates with subthreads.
     //
     // This is the only such Sender, so when it is dropped all subthreads will
     // quit.
-    jobs: Sender<Thunk>
+    jobs: Sender<Thunk<'static>>
 }
 
 impl TaskPool {
@@ -95,7 +96,7 @@ impl TaskPool {
         let rx = Arc::new(Mutex::new(rx));
 
         // Threadpool threads
-        for _ in range(0, threads) {
+        for _ in 0..threads {
             spawn_in_pool(rx.clone());
         }
 
@@ -104,14 +105,14 @@ impl TaskPool {
 
     /// Executes the function `job` on a thread in the pool.
     pub fn execute<F>(&self, job: F)
-        where F : FnOnce(), F : Send
+        where F : FnOnce(), F : Send + 'static
     {
         self.jobs.send(Thunk::new(job)).unwrap();
     }
 }
 
-fn spawn_in_pool(jobs: Arc<Mutex<Receiver<Thunk>>>) {
-    Thread::spawn(move |:| {
+fn spawn_in_pool(jobs: Arc<Mutex<Receiver<Thunk<'static>>>>) {
+    thread::spawn(move || {
         // Will spawn a new thread on panic unless it is cancelled.
         let sentinel = Sentinel::new(&jobs);
 
@@ -141,7 +142,7 @@ mod test {
     use super::*;
     use sync::mpsc::channel;
 
-    const TEST_TASKS: uint = 4u;
+    const TEST_TASKS: uint = 4;
 
     #[test]
     fn test_works() {
@@ -150,10 +151,10 @@ mod test {
         let pool = TaskPool::new(TEST_TASKS);
 
         let (tx, rx) = channel();
-        for _ in range(0, TEST_TASKS) {
+        for _ in 0..TEST_TASKS {
             let tx = tx.clone();
             pool.execute(move|| {
-                tx.send(1u).unwrap();
+                tx.send(1).unwrap();
             });
         }
 
@@ -173,16 +174,16 @@ mod test {
         let pool = TaskPool::new(TEST_TASKS);
 
         // Panic all the existing threads.
-        for _ in range(0, TEST_TASKS) {
+        for _ in 0..TEST_TASKS {
             pool.execute(move|| -> () { panic!() });
         }
 
         // Ensure new threads were spawned to compensate.
         let (tx, rx) = channel();
-        for _ in range(0, TEST_TASKS) {
+        for _ in 0..TEST_TASKS {
             let tx = tx.clone();
             pool.execute(move|| {
-                tx.send(1u).unwrap();
+                tx.send(1).unwrap();
             });
         }
 
@@ -197,7 +198,7 @@ mod test {
         let waiter = Arc::new(Barrier::new(TEST_TASKS + 1));
 
         // Panic all the existing threads in a bit.
-        for _ in range(0, TEST_TASKS) {
+        for _ in 0..TEST_TASKS {
             let waiter = waiter.clone();
             pool.execute(move|| {
                 waiter.wait();

@@ -14,13 +14,13 @@ use std::collections::HashMap;
 
 pub fn main() {
     let mut h = HashMap::new();
-    let kvs = [(1i, 10i), (2i, 20i), (3i, 30i)];
-    for &(k,v) in kvs.iter() {
+    let kvs = [(1, 10), (2, 20), (3, 30)];
+    for &(k,v) in &kvs {
         h.insert(k,v);
     }
-    let mut x = 0i;
-    let mut y = 0i;
-    for (&k,&v) in h.iter() {
+    let mut x = 0;
+    let mut y = 0;
+    for (&k,&v) in &h {
         x += k;
         y += v;
     }

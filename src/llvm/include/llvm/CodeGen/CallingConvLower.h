@@ -158,6 +158,16 @@ public:
   }
 };
 
+/// Describes a register that needs to be forwarded from the prologue to a
+/// musttail call.
+struct ForwardedRegister {
+  ForwardedRegister(unsigned VReg, MCPhysReg PReg, MVT VT)
+      : VReg(VReg), PReg(PReg), VT(VT) {}
+  unsigned VReg;
+  MCPhysReg PReg;
+  MVT VT;
+};
+
 /// CCAssignFn - This function assigns a location for Val, updating State to
 /// reflect the change.  It returns 'true' if it failed to handle Val.
 typedef bool CCAssignFn(unsigned ValNo, MVT ValVT,
@@ -217,10 +227,10 @@ private:
   // while "%t" goes to the stack: it wouldn't be described in ByValRegs.
   //
   // Supposed use-case for this collection:
-  // 1. Initially ByValRegs is empty, InRegsParamsProceed is 0.
+  // 1. Initially ByValRegs is empty, InRegsParamsProcessed is 0.
   // 2. HandleByVal fillups ByValRegs.
   // 3. Argument analysis (LowerFormatArguments, for example). After
-  // some byval argument was analyzed, InRegsParamsProceed is increased.
+  // some byval argument was analyzed, InRegsParamsProcessed is increased.
   struct ByValInfo {
     ByValInfo(unsigned B, unsigned E, bool IsWaste = false) :
       Begin(B), End(E), Waste(IsWaste) {}
@@ -238,9 +248,9 @@ private:
   };
   SmallVector<ByValInfo, 4 > ByValRegs;
 
-  // InRegsParamsProceed - shows how many instances of ByValRegs was proceed
+  // InRegsParamsProcessed - shows how many instances of ByValRegs was proceed
   // during argument analysis.
-  unsigned InRegsParamsProceed;
+  unsigned InRegsParamsProcessed;
 
 protected:
   ParmContext CallOrPrologue;
@@ -345,8 +355,12 @@ public:
   /// AllocateRegBlock - Attempt to allocate a block of RegsRequired consecutive
   /// registers. If this is not possible, return zero. Otherwise, return the first
   /// register of the block that were allocated, marking the entire block as allocated.
-  unsigned AllocateRegBlock(const uint16_t *Regs, unsigned NumRegs, unsigned RegsRequired) {
-    for (unsigned StartIdx = 0; StartIdx <= NumRegs - RegsRequired; ++StartIdx) {
+  unsigned AllocateRegBlock(ArrayRef<uint16_t> Regs, unsigned RegsRequired) {
+    if (RegsRequired > Regs.size())
+      return 0;
+
+    for (unsigned StartIdx = 0; StartIdx <= Regs.size() - RegsRequired;
+         ++StartIdx) {
       bool BlockAvailable = true;
       // Check for already-allocated regs in this block
       for (unsigned BlockIdx = 0; BlockIdx < RegsRequired; ++BlockIdx) {
@@ -419,7 +433,7 @@ public:
   unsigned getInRegsParamsCount() const { return ByValRegs.size(); }
 
   // Returns count of byval in-regs arguments proceed.
-  unsigned getInRegsParamsProceed() const { return InRegsParamsProceed; }
+  unsigned getInRegsParamsProcessed() const { return InRegsParamsProcessed; }
 
   // Get information about N-th byval parameter that is stored in registers.
   // Here "ByValParamIndex" is N.
@@ -443,20 +457,20 @@ public:
   // Returns false, if end is reached.
   bool nextInRegsParam() {
     unsigned e = ByValRegs.size();
-    if (InRegsParamsProceed < e)
-      ++InRegsParamsProceed;
-    return InRegsParamsProceed < e;
+    if (InRegsParamsProcessed < e)
+      ++InRegsParamsProcessed;
+    return InRegsParamsProcessed < e;
   }
 
   // Clear byval registers tracking info.
   void clearByValRegsInfo() {
-    InRegsParamsProceed = 0;
+    InRegsParamsProcessed = 0;
     ByValRegs.clear();
   }
 
   // Rewind byval registers tracking info.
   void rewindByValRegsInfo() {
-    InRegsParamsProceed = 0;
+    InRegsParamsProcessed = 0;
   }
 
   ParmContext getCallOrPrologue() const { return CallOrPrologue; }
@@ -465,6 +479,19 @@ public:
   SmallVectorImpl<llvm::CCValAssign> &getPendingLocs() {
     return PendingLocs;
   }
+
+  /// Compute the remaining unused register parameters that would be used for
+  /// the given value type. This is useful when varargs are passed in the
+  /// registers that normal prototyped parameters would be passed in, or for
+  /// implementing perfect forwarding.
+  void getRemainingRegParmsForType(SmallVectorImpl<MCPhysReg> &Regs, MVT VT,
+                                   CCAssignFn Fn);
+
+  /// Compute the set of registers that need to be preserved and forwarded to
+  /// any musttail calls.
+  void analyzeMustTailForwardedRegisters(
+      SmallVectorImpl<ForwardedRegister> &Forwards, ArrayRef<MVT> RegParmTypes,
+      CCAssignFn Fn);
 
 private:
   /// MarkAllocated - Mark a register and all of its aliases as allocated.

@@ -9,7 +9,15 @@
 // except according to those terms.
 
 // Checking that the compiler reports multiple type errors at once
-// error-pattern:mismatched types: expected `bool`
-// error-pattern:mismatched types: expected `isize`
 
-fn main() { let a: bool = 1is; let b: isize = true; }
+fn main() { let a: bool = 1i32; let b: i32 = true; }
+//~^ ERROR mismatched types
+//~| expected `bool`
+//~| found `i32`
+//~| expected bool
+//~| found i32
+//~| ERROR mismatched types
+//~| expected `i32`
+//~| found `bool`
+//~| expected i32
+//~| found bool

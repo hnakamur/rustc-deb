@@ -1,4 +1,4 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -15,7 +15,7 @@ pub use self::AbiArchitecture::*;
 
 use std::fmt;
 
-#[derive(Copy, PartialEq)]
+#[derive(Copy, PartialEq, Eq, Debug)]
 pub enum Os {
     OsWindows,
     OsMacos,
@@ -24,9 +24,10 @@ pub enum Os {
     OsFreebsd,
     OsiOS,
     OsDragonfly,
+    OsOpenbsd,
 }
 
-#[derive(PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Clone, Copy, Debug)]
 pub enum Abi {
     // NB: This ordering MUST match the AbiDatas array below.
     // (This is ensured by the test indices_are_correct().)
@@ -47,7 +48,7 @@ pub enum Abi {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Copy, PartialEq, Show)]
+#[derive(Copy, PartialEq, Debug)]
 pub enum Architecture {
     X86,
     X86_64,
@@ -105,8 +106,8 @@ pub fn all_names() -> Vec<&'static str> {
 
 impl Abi {
     #[inline]
-    pub fn index(&self) -> uint {
-        *self as uint
+    pub fn index(&self) -> usize {
+        *self as usize
     }
 
     #[inline]
@@ -119,25 +120,13 @@ impl Abi {
     }
 }
 
-impl fmt::Show for Abi {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::String::fmt(self, f)
-    }
-}
-
-impl fmt::String for Abi {
+impl fmt::Display for Abi {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "\"{}\"", self.name())
     }
 }
 
-impl fmt::Show for Os {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::String::fmt(self, f)
-    }
-}
-
-impl fmt::String for Os {
+impl fmt::Display for Os {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             OsLinux => "linux".fmt(f),
@@ -146,7 +135,8 @@ impl fmt::String for Os {
             OsiOS => "ios".fmt(f),
             OsAndroid => "android".fmt(f),
             OsFreebsd => "freebsd".fmt(f),
-            OsDragonfly => "dragonfly".fmt(f)
+            OsDragonfly => "dragonfly".fmt(f),
+            OsOpenbsd => "openbsd".fmt(f),
         }
     }
 }

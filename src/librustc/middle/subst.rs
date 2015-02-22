@@ -18,8 +18,9 @@ use middle::ty_fold::{self, TypeFoldable, TypeFolder};
 use util::ppaux::Repr;
 
 use std::fmt;
+use std::iter::IntoIterator;
 use std::slice::Iter;
-use std::vec::Vec;
+use std::vec::{Vec, IntoIter};
 use syntax::codemap::{Span, DUMMY_SP};
 
 ///////////////////////////////////////////////////////////////////////////
@@ -28,7 +29,7 @@ use syntax::codemap::{Span, DUMMY_SP};
 /// identify each in-scope parameter by an *index* and a *parameter
 /// space* (which indices where the parameter is defined; see
 /// `ParamSpace`).
-#[derive(Clone, PartialEq, Eq, Hash, Show)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Substs<'tcx> {
     pub types: VecPerParamSpace<Ty<'tcx>>,
     pub regions: RegionSubsts,
@@ -37,7 +38,7 @@ pub struct Substs<'tcx> {
 /// Represents the values to use when substituting lifetime parameters.
 /// If the value is `ErasedRegions`, then this subst is occurring during
 /// trans, and all region parameters will be replaced with `ty::ReStatic`.
-#[derive(Clone, PartialEq, Eq, Hash, Show)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum RegionSubsts {
     ErasedRegions,
     NonerasedRegions(VecPerParamSpace<ty::Region>)
@@ -112,7 +113,7 @@ impl<'tcx> Substs<'tcx> {
     }
 
     pub fn self_ty(&self) -> Option<Ty<'tcx>> {
-        self.types.get_self().map(|&t| t)
+        self.types.get_self().cloned()
     }
 
     pub fn with_self_ty(&self, self_ty: Ty<'tcx>) -> Substs<'tcx> {
@@ -180,7 +181,7 @@ impl RegionSubsts {
 // ParamSpace
 
 #[derive(PartialOrd, Ord, PartialEq, Eq, Copy,
-           Clone, Hash, RustcEncodable, RustcDecodable, Show)]
+           Clone, Hash, RustcEncodable, RustcDecodable, Debug)]
 pub enum ParamSpace {
     TypeSpace,  // Type parameters attached to a type definition, trait, or impl
     SelfSpace,  // Self parameter on a trait
@@ -238,10 +239,10 @@ pub struct SeparateVecsPerParamSpace<T> {
     pub fns: Vec<T>,
 }
 
-impl<T:fmt::Show> fmt::Show for VecPerParamSpace<T> {
+impl<T: fmt::Debug> fmt::Debug for VecPerParamSpace<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(fmt, "VecPerParamSpace {{"));
-        for space in ParamSpace::all().iter() {
+        for space in &ParamSpace::all() {
             try!(write!(fmt, "{:?}: {:?}, ", *space, self.get_slice(*space)));
         }
         try!(write!(fmt, "}}"));
@@ -317,7 +318,7 @@ impl<T> VecPerParamSpace<T> {
     ///
     /// Unlike the `extend` method in `Vec`, this should not be assumed
     /// to be a cheap operation (even when amortized over many calls).
-    pub fn extend<I:Iterator<Item=T>>(&mut self, space: ParamSpace, mut values: I) {
+    pub fn extend<I:Iterator<Item=T>>(&mut self, space: ParamSpace, values: I) {
         // This could be made more efficient, obviously.
         for item in values {
             self.push(space, item);
@@ -352,7 +353,7 @@ impl<T> VecPerParamSpace<T> {
     pub fn replace(&mut self, space: ParamSpace, elems: Vec<T>) {
         // FIXME (#15435): slow; O(n^2); could enhance vec to make it O(n).
         self.truncate(space, 0);
-        for t in elems.into_iter() {
+        for t in elems {
             self.push(space, t);
         }
     }
@@ -373,12 +374,12 @@ impl<T> VecPerParamSpace<T> {
 
     pub fn get_slice<'a>(&'a self, space: ParamSpace) -> &'a [T] {
         let (start, limit) = self.limits(space);
-        self.content.slice(start, limit)
+        &self.content[start.. limit]
     }
 
     pub fn get_mut_slice<'a>(&'a mut self, space: ParamSpace) -> &'a mut [T] {
         let (start, limit) = self.limits(space);
-        self.content.slice_mut(start, limit)
+        &mut self.content[start.. limit]
     }
 
     pub fn opt_get<'a>(&'a self,
@@ -397,12 +398,16 @@ impl<T> VecPerParamSpace<T> {
         self.content.iter()
     }
 
+    pub fn into_iter(self) -> IntoIter<T> {
+        self.content.into_iter()
+    }
+
     pub fn iter_enumerated<'a>(&'a self) -> EnumeratedItems<'a,T> {
         EnumeratedItems::new(self)
     }
 
     pub fn as_slice(&self) -> &[T] {
-        self.content.as_slice()
+        &self.content
     }
 
     pub fn into_vec(self) -> Vec<T> {
@@ -524,6 +529,25 @@ impl<'a,T> Iterator for EnumeratedItems<'a,T> {
         }
     }
 }
+
+impl<T> IntoIterator for VecPerParamSpace<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    fn into_iter(self) -> IntoIter<T> {
+        self.into_vec().into_iter()
+    }
+}
+
+impl<'a,T> IntoIterator for &'a VecPerParamSpace<T> {
+    type Item = &'a T;
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Iter<'a, T> {
+        self.as_slice().into_iter()
+    }
+}
+
 
 ///////////////////////////////////////////////////////////////////////////
 // Public trait `Subst`

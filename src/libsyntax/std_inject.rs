@@ -20,8 +20,6 @@ use parse::token;
 use ptr::P;
 use util::small_vector::SmallVector;
 
-use std::mem;
-
 pub fn maybe_inject_crates_ref(krate: ast::Crate, alt_std_name: Option<String>)
                                -> ast::Crate {
     if use_std(&krate) {
@@ -39,7 +37,7 @@ pub fn maybe_inject_prelude(krate: ast::Crate) -> ast::Crate {
     }
 }
 
-fn use_std(krate: &ast::Crate) -> bool {
+pub fn use_std(krate: &ast::Crate) -> bool {
     !attr::contains_name(&krate.attrs[], "no_std")
 }
 
@@ -47,36 +45,29 @@ fn no_prelude(attrs: &[ast::Attribute]) -> bool {
     attr::contains_name(attrs, "no_implicit_prelude")
 }
 
-struct StandardLibraryInjector<'a> {
-    alt_std_name: Option<String>
+struct StandardLibraryInjector {
+    alt_std_name: Option<String>,
 }
 
-impl<'a> fold::Folder for StandardLibraryInjector<'a> {
+impl fold::Folder for StandardLibraryInjector {
     fn fold_crate(&mut self, mut krate: ast::Crate) -> ast::Crate {
 
         // The name to use in `extern crate "name" as std;`
         let actual_crate_name = match self.alt_std_name {
-            Some(ref s) => token::intern_and_get_ident(&s[]),
+            Some(ref s) => token::intern_and_get_ident(&s[..]),
             None => token::intern_and_get_ident("std"),
         };
 
-        let mut vis = vec!(ast::ViewItem {
-            node: ast::ViewItemExternCrate(token::str_to_ident("std"),
-                                           Some((actual_crate_name, ast::CookedStr)),
-                                           ast::DUMMY_NODE_ID),
+        krate.module.items.insert(0, P(ast::Item {
+            id: ast::DUMMY_NODE_ID,
+            ident: token::str_to_ident("std"),
             attrs: vec!(
                 attr::mk_attr_outer(attr::mk_attr_id(), attr::mk_word_item(
                         InternedString::new("macro_use")))),
+            node: ast::ItemExternCrate(Some((actual_crate_name, ast::CookedStr))),
             vis: ast::Inherited,
             span: DUMMY_SP
-        });
-
-        // `extern crate` must be precede `use` items
-        mem::swap(&mut vis, &mut krate.module.view_items);
-        krate.module.view_items.extend(vis.into_iter());
-
-        // don't add #![no_std] here, that will block the prelude injection later.
-        // Add it during the prelude injection instead.
+        }));
 
         krate
     }
@@ -89,20 +80,11 @@ fn inject_crates_ref(krate: ast::Crate, alt_std_name: Option<String>) -> ast::Cr
     fold.fold_crate(krate)
 }
 
-struct PreludeInjector<'a>;
+struct PreludeInjector;
 
-impl<'a> fold::Folder for PreludeInjector<'a> {
+
+impl fold::Folder for PreludeInjector {
     fn fold_crate(&mut self, mut krate: ast::Crate) -> ast::Crate {
-        // Add #![no_std] here, so we don't re-inject when compiling pretty-printed source.
-        // This must happen here and not in StandardLibraryInjector because this
-        // fold happens second.
-
-        let no_std_attr = attr::mk_attr_inner(attr::mk_attr_id(),
-                                              attr::mk_word_item(InternedString::new("no_std")));
-        // std_inject runs after feature checking so manually mark this attr
-        attr::mark_used(&no_std_attr);
-        krate.attrs.push(no_std_attr);
-
         // only add `use std::prelude::*;` if there wasn't a
         // `#![no_implicit_prelude]` at the crate level.
         // fold_mod() will insert glob path.
@@ -123,7 +105,7 @@ impl<'a> fold::Folder for PreludeInjector<'a> {
         }
     }
 
-    fn fold_mod(&mut self, ast::Mod {inner, view_items, items}: ast::Mod) -> ast::Mod {
+    fn fold_mod(&mut self, mut mod_: ast::Mod) -> ast::Mod {
         let prelude_path = ast::Path {
             span: DUMMY_SP,
             global: false,
@@ -143,18 +125,11 @@ impl<'a> fold::Folder for PreludeInjector<'a> {
             ],
         };
 
-        let (crates, uses): (Vec<_>, _) = view_items.iter().cloned().partition(|x| {
-            match x.node {
-                ast::ViewItemExternCrate(..) => true,
-                _ => false,
-            }
-        });
-
-        // add prelude after any `extern crate` but before any `use`
-        let mut view_items = crates;
-        let vp = P(codemap::dummy_spanned(ast::ViewPathGlob(prelude_path, ast::DUMMY_NODE_ID)));
-        view_items.push(ast::ViewItem {
-            node: ast::ViewItemUse(vp),
+        let vp = P(codemap::dummy_spanned(ast::ViewPathGlob(prelude_path)));
+        mod_.items.insert(0, P(ast::Item {
+            id: ast::DUMMY_NODE_ID,
+            ident: special_idents::invalid,
+            node: ast::ItemUse(vp),
             attrs: vec![ast::Attribute {
                 span: DUMMY_SP,
                 node: ast::Attribute_ {
@@ -170,14 +145,9 @@ impl<'a> fold::Folder for PreludeInjector<'a> {
             }],
             vis: ast::Inherited,
             span: DUMMY_SP,
-        });
-        view_items.extend(uses.into_iter());
+        }));
 
-        fold::noop_fold_mod(ast::Mod {
-            inner: inner,
-            view_items: view_items,
-            items: items
-        }, self)
+        fold::noop_fold_mod(mod_, self)
     }
 }
 

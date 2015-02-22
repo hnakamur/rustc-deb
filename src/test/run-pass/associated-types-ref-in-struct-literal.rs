@@ -12,6 +12,8 @@
 
 pub trait Foo {
     type Bar;
+
+    fn dummy(&self) { }
 }
 
 impl Foo for int {
@@ -24,6 +26,6 @@ struct Thing<F: Foo> {
 }
 
 fn main() {
-    let thing = Thing{a: 1i, b: 2i};
+    let thing = Thing{a: 1, b: 2};
     assert_eq!(thing.a + 1, thing.b);
 }

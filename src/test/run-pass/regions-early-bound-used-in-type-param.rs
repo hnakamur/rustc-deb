@@ -15,11 +15,10 @@ trait Get<T> {
     fn get(&self) -> T;
 }
 
+#[derive(Copy)]
 struct Box<T> {
     t: T
 }
-
-impl<T:Copy> Copy for Box<T> {}
 
 impl<T:Clone> Get<T> for Box<T> {
     fn get(&self) -> T {
@@ -32,6 +31,6 @@ fn add<'a,G:Get<&'a int>>(g1: G, g2: G) -> int {
 }
 
 pub fn main() {
-    let b1 = Box { t: &3i };
-    assert_eq!(add(b1, b1), 6i);
+    let b1 = Box { t: &3 };
+    assert_eq!(add(b1, b1), 6);
 }

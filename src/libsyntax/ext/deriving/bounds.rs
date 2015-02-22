@@ -24,18 +24,18 @@ pub fn expand_deriving_bound<F>(cx: &mut ExtCtxt,
 {
     let name = match mitem.node {
         MetaWord(ref tname) => {
-            match tname.get() {
+            match &tname[..] {
                 "Copy" => "Copy",
                 "Send" | "Sync" => {
                     return cx.span_err(span,
-                                       format!("{} is an unsafe trait and it \
-                                                should be implemented explicitly",
-                                               *tname).as_slice())
+                                       &format!("{} is an unsafe trait and it \
+                                                 should be implemented explicitly",
+                                                *tname))
                 }
                 ref tname => {
                     cx.span_bug(span,
-                                format!("expected built-in trait name but \
-                                         found {}", *tname).as_slice())
+                                &format!("expected built-in trait name but \
+                                          found {}", *tname))
                 }
             }
         },
@@ -45,13 +45,20 @@ pub fn expand_deriving_bound<F>(cx: &mut ExtCtxt,
         }
     };
 
+    let path = Path::new(vec![
+        if cx.use_std { "std" } else { "core" },
+        "marker",
+        name
+    ]);
+
     let trait_def = TraitDef {
         span: span,
         attributes: Vec::new(),
-        path: Path::new(vec!("std", "marker", name)),
+        path: path,
         additional_bounds: Vec::new(),
         generics: LifetimeBounds::empty(),
-        methods: vec!()
+        methods: Vec::new(),
+        associated_types: Vec::new(),
     };
 
     trait_def.expand(cx, mitem, item, push)

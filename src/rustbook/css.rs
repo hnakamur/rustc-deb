@@ -11,41 +11,68 @@
 // The rust-book CSS in string form.
 
 pub static STYLE: &'static str = r#"
-@import url("//static.rust-lang.org/doc/master/rust.css");
+@import url("../rust.css");
 
 body {
     max-width:none;
 }
 
-#toc {
-    position: absolute;
-    left: 0px;
-    top: 0px;
-    bottom: 0px;
-    width: 250px;
-    overflow-y: auto;
-    border-right: 1px solid rgba(0, 0, 0, 0.07);
-    padding: 10px 10px;
-    font-size: 16px;
-    background: none repeat scroll 0% 0% #FFF;
-    box-sizing: border-box;
+@media only screen {
+    #toc {
+        position: absolute;
+        left: 0px;
+        top: 0px;
+        bottom: 0px;
+        width: 250px;
+        overflow-y: auto;
+        border-right: 1px solid rgba(0, 0, 0, 0.07);
+        padding: 10px 10px;
+        font-size: 16px;
+        background: none repeat scroll 0% 0% #FFF;
+        box-sizing: border-box;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    #page-wrapper {
+        position: absolute;
+        overflow-y: auto;
+        left: 260px;
+        right: 0px;
+        top: 0px;
+        bottom: 0px;
+        box-sizing: border-box;
+        background: none repeat scroll 0% 0% #FFF;
+        -webkit-overflow-scrolling: touch;
+    }
 }
 
-#page-wrapper {
-    position: absolute;
-    overflow-y: auto;
-    left: 260px;
-    right: 0px;
-    top: 0px;
-    bottom: 0px;
-    box-sizing: border-box;
-    background: none repeat scroll 0% 0% #FFF;
+@media only print {
+    #toc, #nav {
+        display: none;
+    }
+}
+
+@media only screen and (max-width: 1060px) {
+    #toc {
+        width: 100%;
+        margin-right: 0;
+        top: 40px;
+    }
+    #page-wrapper {
+        top: 40px;
+        left: 15px;
+        padding-right: 15px;
+    }
+    .mobile-hidden {
+        display: none;
+    }
 }
 
 #page {
     margin-left: auto;
     margin-right:auto;
-    width: 750px;
+    max-width: 750px;
+    padding-bottom: 50px;
 }
 
 .chapter {
@@ -68,5 +95,49 @@ body {
 
 .chapter li a {
     color: #000000;
+}
+
+#toggle-nav {
+    height: 20px;
+    width:  30px;
+    padding: 3px 3px 0 3px;
+}
+
+#toggle-nav {
+    margin-top: 5px;
+    width: 30px;
+    height: 30px;
+    background-color: #FFF;
+    border: 1px solid #666;
+    border-radius: 3px 3px 3px 3px;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+}
+
+.bar {
+    display: block;
+    background-color: #000;
+    border-radius: 2px;
+    width: 100%;
+    height: 2px;
+    margin: 2px 0 3px;
+    padding: 0;
+}
+
+.left {
+    float: left;
+}
+
+.right {
+    float: right;
 }
 "#;

@@ -9,7 +9,7 @@
 // except according to those terms.
 
 #![crate_name = "rustdoc"]
-#![unstable]
+#![unstable(feature = "rustdoc")]
 #![staged_api]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
@@ -17,9 +17,23 @@
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
-#![feature(slicing_syntax)]
+
+#![feature(box_patterns)]
 #![feature(box_syntax)]
-#![allow(unknown_features)] #![feature(int_uint)]
+#![feature(collections)]
+#![feature(core)]
+#![feature(env)]
+#![feature(int_uint)]
+#![feature(old_io)]
+#![feature(libc)]
+#![feature(os)]
+#![feature(old_path)]
+#![feature(rustc_private)]
+#![feature(staged_api)]
+#![feature(std_misc)]
+#![feature(test)]
+#![feature(unicode)]
+#![feature(str_words)]
 
 extern crate arena;
 extern crate getopts;
@@ -27,6 +41,7 @@ extern crate libc;
 extern crate rustc;
 extern crate rustc_trans;
 extern crate rustc_driver;
+extern crate rustc_resolve;
 extern crate serialize;
 extern crate syntax;
 extern crate "test" as testing;
@@ -36,9 +51,11 @@ extern crate "serialize" as rustc_serialize; // used by deriving
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::File;
-use std::io;
+use std::env;
+use std::old_io::File;
+use std::old_io;
 use std::rc::Rc;
+use std::sync::mpsc::channel;
 use externalfiles::ExternalHtml;
 use serialize::Decodable;
 use serialize::json::{self, Json};
@@ -105,11 +122,12 @@ struct Output {
 }
 
 pub fn main() {
-    static STACK_SIZE: uint = 32000000; // 32MB
+    const STACK_SIZE: usize = 32000000; // 32MB
     let res = std::thread::Builder::new().stack_size(STACK_SIZE).scoped(move || {
-        main_args(std::os::args().as_slice())
-    }).join();
-    std::os::set_exit_status(res.map_err(|_| ()).unwrap());
+        let s = env::args().collect::<Vec<_>>();
+        main_args(&s)
+    }).unwrap().join();
+    env::set_exit_status(res as i32);
 }
 
 pub fn opts() -> Vec<getopts::OptGroup> {
@@ -161,12 +179,12 @@ pub fn opts() -> Vec<getopts::OptGroup> {
 
 pub fn usage(argv0: &str) {
     println!("{}",
-             getopts::usage(format!("{} [options] <input>", argv0).as_slice(),
-                            opts().as_slice()));
+             getopts::usage(&format!("{} [options] <input>", argv0),
+                            &opts()));
 }
 
 pub fn main_args(args: &[String]) -> int {
-    let matches = match getopts::getopts(args.tail(), opts().as_slice()) {
+    let matches = match getopts::getopts(args.tail(), &opts()) {
         Ok(m) => m,
         Err(err) => {
             println!("{}", err);
@@ -174,7 +192,7 @@ pub fn main_args(args: &[String]) -> int {
         }
     };
     if matches.opt_present("h") || matches.opt_present("help") {
-        usage(args[0].as_slice());
+        usage(&args[0]);
         return 0;
     } else if matches.opt_present("version") {
         rustc_driver::version("rustdoc", &matches);
@@ -183,11 +201,11 @@ pub fn main_args(args: &[String]) -> int {
 
     if matches.opt_strs("passes") == ["list"] {
         println!("Available passes for running rustdoc:");
-        for &(name, _, description) in PASSES.iter() {
+        for &(name, _, description) in PASSES {
             println!("{:>20} - {}", name, description);
         }
         println!("{}", "\nDefault passes for rustdoc:"); // FIXME: #9970
-        for &name in DEFAULT_PASSES.iter() {
+        for &name in DEFAULT_PASSES {
             println!("{:>20}", name);
         }
         return 0;
@@ -200,11 +218,11 @@ pub fn main_args(args: &[String]) -> int {
         println!("only one input file may be specified");
         return 1;
     }
-    let input = matches.free[0].as_slice();
+    let input = &matches.free[0];
 
     let mut libs = SearchPaths::new();
-    for s in matches.opt_strs("L").iter() {
-        libs.add_path(s.as_slice());
+    for s in &matches.opt_strs("L") {
+        libs.add_path(s);
     }
     let externs = match parse_externs(&matches) {
         Ok(ex) => ex,
@@ -216,7 +234,7 @@ pub fn main_args(args: &[String]) -> int {
 
     let test_args = matches.opt_strs("test-args");
     let test_args: Vec<String> = test_args.iter()
-                                          .flat_map(|s| s.as_slice().words())
+                                          .flat_map(|s| s.words())
                                           .map(|s| s.to_string())
                                           .collect();
 
@@ -227,9 +245,9 @@ pub fn main_args(args: &[String]) -> int {
     let cfgs = matches.opt_strs("cfg");
 
     let external_html = match ExternalHtml::load(
-            matches.opt_strs("html-in-header").as_slice(),
-            matches.opt_strs("html-before-content").as_slice(),
-            matches.opt_strs("html-after-content").as_slice()) {
+            &matches.opt_strs("html-in-header"),
+            &matches.opt_strs("html-before-content"),
+            &matches.opt_strs("html-after-content")) {
         Some(eh) => eh,
         None => return 3
     };
@@ -257,7 +275,7 @@ pub fn main_args(args: &[String]) -> int {
     };
     let Output { krate, json_plugins, passes, } = out;
     info!("going to format");
-    match matches.opt_str("w").as_ref().map(|s| s.as_slice()) {
+    match matches.opt_str("w").as_ref().map(|s| &**s) {
         Some("html") | None => {
             match html::render::run(krate, &external_html, output.unwrap_or(Path::new("doc")),
                                     passes.into_iter().collect()) {
@@ -286,7 +304,7 @@ pub fn main_args(args: &[String]) -> int {
 fn acquire_input(input: &str,
                  externs: core::Externs,
                  matches: &getopts::Matches) -> Result<Output, String> {
-    match matches.opt_str("r").as_ref().map(|s| s.as_slice()) {
+    match matches.opt_str("r").as_ref().map(|s| &**s) {
         Some("rust") => Ok(rust_input(input, externs, matches)),
         Some("json") => json_input(input),
         Some(s) => Err(format!("unknown input format: {}", s)),
@@ -305,7 +323,7 @@ fn acquire_input(input: &str,
 /// error message.
 fn parse_externs(matches: &getopts::Matches) -> Result<core::Externs, String> {
     let mut externs = HashMap::new();
-    for arg in matches.opt_strs("extern").iter() {
+    for arg in &matches.opt_strs("extern") {
         let mut parts = arg.splitn(1, '=');
         let name = match parts.next() {
             Some(s) => s,
@@ -339,8 +357,8 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
 
     // First, parse the crate and extract all relevant information.
     let mut paths = SearchPaths::new();
-    for s in matches.opt_strs("L").iter() {
-        paths.add_path(s.as_slice());
+    for s in &matches.opt_strs("L") {
+        paths.add_path(s);
     }
     let cfgs = matches.opt_strs("cfg");
     let triple = matches.opt_str("target");
@@ -348,10 +366,14 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
     let cr = Path::new(cratefile);
     info!("starting to run rustc");
 
-    let (mut krate, analysis) = std::thread::Thread::scoped(move |:| {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        use rustc::session::config::Input;
+
         let cr = cr;
-        core::run_core(paths, cfgs, externs, &cr, triple)
+        tx.send(core::run_core(paths, cfgs, externs, Input::File(cr), triple)).unwrap();
     }).join().map_err(|_| "rustc failed").unwrap();
+    let (mut krate, analysis) = rx.recv().unwrap();
     info!("finished with rustc");
     let mut analysis = Some(analysis);
     ANALYSISKEY.with(|s| {
@@ -367,7 +389,7 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
     // with the passes which we are supposed to run.
     match krate.module.as_ref().unwrap().doc_list() {
         Some(nested) => {
-            for inner in nested.iter() {
+            for inner in nested {
                 match *inner {
                     clean::Word(ref x)
                             if "no_default_passes" == *x => {
@@ -401,7 +423,7 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
     let path = matches.opt_str("plugin-path")
                       .unwrap_or("/tmp/rustdoc/plugins".to_string());
     let mut pm = plugins::PluginManager::new(Path::new(path));
-    for pass in passes.iter() {
+    for pass in &passes {
         let plugin = match PASSES.iter()
                                  .position(|&(p, _, _)| {
                                      p == *pass
@@ -415,7 +437,7 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
         pm.add_plugin(plugin);
     }
     info!("loading plugins...");
-    for pname in plugins.into_iter() {
+    for pname in plugins {
         pm.load_plugin(pname);
     }
 
@@ -472,7 +494,7 @@ fn json_input(input: &str) -> Result<Output, String> {
 /// Outputs the crate/plugin json as a giant json blob at the specified
 /// destination.
 fn json_output(krate: clean::Crate, res: Vec<plugins::PluginJson> ,
-               dst: Path) -> io::IoResult<()> {
+               dst: Path) -> old_io::IoResult<()> {
     // {
     //   "schema": version,
     //   "crate": { parsed crate ... },
@@ -493,7 +515,7 @@ fn json_output(krate: clean::Crate, res: Vec<plugins::PluginJson> ,
     // FIXME #8335: yuck, Rust -> str -> JSON round trip! No way to .encode
     // straight to the Rust JSON representation.
     let crate_json_str = format!("{}", json::as_json(&krate));
-    let crate_json = match json::from_str(crate_json_str.as_slice()) {
+    let crate_json = match json::from_str(&crate_json_str) {
         Ok(j) => j,
         Err(e) => panic!("Rust generated JSON is invalid: {:?}", e)
     };

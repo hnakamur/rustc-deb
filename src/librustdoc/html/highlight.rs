@@ -15,7 +15,7 @@
 
 use html::escape::Escape;
 
-use std::io;
+use std::old_io;
 use syntax::parse::lexer;
 use syntax::parse::token;
 use syntax::parse;
@@ -34,7 +34,7 @@ pub fn highlight(src: &str, class: Option<&str>, id: Option<&str>) -> String {
          class,
          id,
          &mut out).unwrap();
-    String::from_utf8_lossy(&out[]).into_owned()
+    String::from_utf8_lossy(&out[..]).into_owned()
 }
 
 /// Exhausts the `lexer` writing the output into `out`.
@@ -46,7 +46,7 @@ pub fn highlight(src: &str, class: Option<&str>, id: Option<&str>) -> String {
 /// source.
 fn doit(sess: &parse::ParseSess, mut lexer: lexer::StringReader,
         class: Option<&str>, id: Option<&str>,
-        out: &mut Writer) -> io::IoResult<()> {
+        out: &mut Writer) -> old_io::IoResult<()> {
     use syntax::parse::lexer::Reader;
 
     try!(write!(out, "<pre "));
@@ -61,18 +61,18 @@ fn doit(sess: &parse::ParseSess, mut lexer: lexer::StringReader,
     loop {
         let next = lexer.next_token();
 
-        let snip = |&: sp| sess.span_diagnostic.cm.span_to_snippet(sp).unwrap();
+        let snip = |sp| sess.span_diagnostic.cm.span_to_snippet(sp).unwrap();
 
         if next.tok == token::Eof { break }
 
         let klass = match next.tok {
             token::Whitespace => {
-                try!(write!(out, "{}", Escape(snip(next.sp).as_slice())));
+                try!(write!(out, "{}", Escape(&snip(next.sp))));
                 continue
             },
             token::Comment => {
                 try!(write!(out, "<span class='comment'>{}</span>",
-                            Escape(snip(next.sp).as_slice())));
+                            Escape(&snip(next.sp))));
                 continue
             },
             token::Shebang(s) => {
@@ -142,7 +142,7 @@ fn doit(sess: &parse::ParseSess, mut lexer: lexer::StringReader,
 
             // keywords are also included in the identifier set
             token::Ident(ident, _is_mod_sep) => {
-                match token::get_ident(ident).get() {
+                match &token::get_ident(ident)[] {
                     "ref" | "mut" => "kw-2",
 
                     "self" => "self",
@@ -179,10 +179,10 @@ fn doit(sess: &parse::ParseSess, mut lexer: lexer::StringReader,
         // stringifying this token
         let snip = sess.span_diagnostic.cm.span_to_snippet(next.sp).unwrap();
         if klass == "" {
-            try!(write!(out, "{}", Escape(snip.as_slice())));
+            try!(write!(out, "{}", Escape(&snip)));
         } else {
             try!(write!(out, "<span class='{}'>{}</span>", klass,
-                          Escape(snip.as_slice())));
+                          Escape(&snip)));
         }
     }
 

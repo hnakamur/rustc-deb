@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[derive(Show)]
+#[derive(Debug)]
 struct Pair<T, V> (T, V);
 
 impl Pair<
@@ -16,12 +16,15 @@ impl Pair<
     isize
 > {
     fn say(self: &Pair<&str, isize>) {
-//~^ ERROR mismatched types: expected `Pair<&'static str, isize>`, found `Pair<&str, isize>`
+//~^ ERROR mismatched types
+//~| expected `Pair<&'static str, isize>`
+//~| found `Pair<&str, isize>`
+//~| lifetime mismatch
         println!("{}", self);
     }
 }
 
 fn main() {
-    let result = &Pair("shane", 1is);
+    let result = &Pair("shane", 1);
     result.say();
 }

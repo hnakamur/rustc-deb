@@ -40,8 +40,6 @@ class MachineInstrBuilder;
 class AMDGPUInstrInfo : public AMDGPUGenInstrInfo {
 private:
   const AMDGPURegisterInfo RI;
-  bool getNextBranchInstr(MachineBasicBlock::iterator &iter,
-                          MachineBasicBlock &MBB) const;
   virtual void anchor();
 protected:
   const AMDGPUSubtarget &ST;
@@ -136,6 +134,11 @@ public:
   // Helper functions that check the opcode for status information
   bool isRegisterStore(const MachineInstr &MI) const;
   bool isRegisterLoad(const MachineInstr &MI) const;
+
+  /// \brief Return a target-specific opcode if Opcode is a pseudo instruction.
+  /// Return -1 if the target-specific opcode for the pseudo instruction does
+  /// not exist. If Opcode is not a pseudo instruction, this is identity.
+  int pseudoToMCOpcode(int Opcode) const;
 
 //===---------------------------------------------------------------------===//
 // Pure virtual funtions to be implemented by sub-classes.

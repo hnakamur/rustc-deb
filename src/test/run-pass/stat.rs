@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::io::fs::PathExtensions;
-use std::io::{File, TempDir};
+use std::old_io::fs::PathExtensions;
+use std::old_io::{File, TempDir};
 
 pub fn main() {
     let dir = TempDir::new_in(&Path::new("."), "").unwrap();
@@ -20,7 +20,7 @@ pub fn main() {
             Err(..) => unreachable!(),
             Ok(f) => {
                 let mut f = f;
-                for _ in range(0u, 1000) {
+                for _ in 0_usize..1000 {
                     f.write(&[0]);
                 }
             }

@@ -44,7 +44,9 @@ extern {
     pub fn pthread_rwlock_unlock(lock: *mut pthread_rwlock_t) -> libc::c_int;
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+#[cfg(any(target_os = "freebsd",
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
 mod os {
     use libc;
 
@@ -61,19 +63,22 @@ mod os {
 mod os {
     use libc;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64",
+              target_arch = "aarch64"))]
     const __PTHREAD_MUTEX_SIZE__: uint = 56;
     #[cfg(any(target_arch = "x86",
               target_arch = "arm"))]
     const __PTHREAD_MUTEX_SIZE__: uint = 40;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64",
+              target_arch = "aarch64"))]
     const __PTHREAD_COND_SIZE__: uint = 40;
     #[cfg(any(target_arch = "x86",
               target_arch = "arm"))]
     const __PTHREAD_COND_SIZE__: uint = 24;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64",
+              target_arch = "aarch64"))]
     const __PTHREAD_RWLOCK_SIZE__: uint = 192;
     #[cfg(any(target_arch = "x86",
               target_arch = "arm"))]
@@ -123,7 +128,8 @@ mod os {
     #[cfg(any(target_arch = "x86",
               target_arch = "arm",
               target_arch = "mips",
-              target_arch = "mipsel"))]
+              target_arch = "mipsel",
+              target_arch = "powerpc"))]
     const __SIZEOF_PTHREAD_MUTEX_T: uint = 24 - 8;
     #[cfg(target_arch = "aarch64")]
     const __SIZEOF_PTHREAD_MUTEX_T: uint = 48 - 8;
@@ -133,7 +139,8 @@ mod os {
               target_arch = "arm",
               target_arch = "aarch64",
               target_arch = "mips",
-              target_arch = "mipsel"))]
+              target_arch = "mipsel",
+              target_arch = "powerpc"))]
     const __SIZEOF_PTHREAD_COND_T: uint = 48 - 8;
 
     #[cfg(any(target_arch = "x86_64",
@@ -143,7 +150,8 @@ mod os {
     #[cfg(any(target_arch = "x86",
               target_arch = "arm",
               target_arch = "mips",
-              target_arch = "mipsel"))]
+              target_arch = "mipsel",
+              target_arch = "powerpc"))]
     const __SIZEOF_PTHREAD_RWLOCK_T: uint = 32 - 8;
 
     #[repr(C)]

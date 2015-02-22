@@ -19,13 +19,12 @@ use rustc::middle::dataflow::DataFlowContext;
 use rustc::middle::dataflow::BitwiseOperator;
 use rustc::middle::dataflow::DataFlowOperator;
 use rustc::middle::expr_use_visitor as euv;
-use rustc::middle::mem_categorization as mc;
 use rustc::middle::ty;
 use rustc::util::nodemap::{FnvHashMap, NodeSet};
 use rustc::util::ppaux::Repr;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::uint;
+use std::usize;
 use syntax::ast;
 use syntax::ast_util;
 use syntax::codemap::Span;
@@ -76,7 +75,7 @@ pub struct FlowedMoveData<'a, 'tcx: 'a> {
 }
 
 /// Index into `MoveData.paths`, used like a pointer
-#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Show)]
+#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct MovePathIndex(uint);
 
 impl MovePathIndex {
@@ -93,7 +92,7 @@ impl Clone for MovePathIndex {
 
 #[allow(non_upper_case_globals)]
 static InvalidMovePathIndex: MovePathIndex =
-    MovePathIndex(uint::MAX);
+    MovePathIndex(usize::MAX);
 
 /// Index into `MoveData.moves`, used like a pointer
 #[derive(Copy, PartialEq)]
@@ -107,7 +106,7 @@ impl MoveIndex {
 
 #[allow(non_upper_case_globals)]
 static InvalidMoveIndex: MoveIndex =
-    MoveIndex(uint::MAX);
+    MoveIndex(usize::MAX);
 
 pub struct MovePath<'tcx> {
     /// Loan path corresponding to this move path
@@ -128,7 +127,7 @@ pub struct MovePath<'tcx> {
     pub next_sibling: MovePathIndex,
 }
 
-#[derive(Copy, PartialEq, Show)]
+#[derive(Copy, PartialEq, Debug)]
 pub enum MoveKind {
     Declared,   // When declared, variables start out "moved".
     MoveExpr,   // Expression or binding that moves a variable
@@ -193,9 +192,13 @@ fn loan_path_is_precise(loan_path: &LoanPath) -> bool {
         LpVar(_) | LpUpvar(_) => {
             true
         }
-        LpExtend(_, _, LpInterior(mc::InteriorElement(_))) => {
-            // Paths involving element accesses do not refer to a unique
+        LpExtend(_, _, LpInterior(InteriorKind::InteriorElement(..))) => {
+            // Paths involving element accesses a[i] do not refer to a unique
             // location, as there is no accurate tracking of the indices.
+            //
+            // (Paths involving element accesses via slice pattern bindings
+            // can in principle be tracked precisely, but that is future
+            // work. For now, continue claiming that they are imprecise.)
             false
         }
         LpDowncast(ref lp_base, _) |
@@ -209,12 +212,12 @@ impl<'tcx> MoveData<'tcx> {
     pub fn new() -> MoveData<'tcx> {
         MoveData {
             paths: RefCell::new(Vec::new()),
-            path_map: RefCell::new(FnvHashMap::new()),
+            path_map: RefCell::new(FnvHashMap()),
             moves: RefCell::new(Vec::new()),
             path_assignments: RefCell::new(Vec::new()),
             var_assignments: RefCell::new(Vec::new()),
             variant_matches: RefCell::new(Vec::new()),
-            assignee_ids: RefCell::new(NodeSet::new()),
+            assignee_ids: RefCell::new(NodeSet()),
             fragments: RefCell::new(fragments::FragmentSets::new()),
         }
     }
@@ -475,13 +478,13 @@ impl<'tcx> MoveData<'tcx> {
             self.kill_moves(assignment.path, assignment.id, dfcx_moves);
         }
 
-        for assignment in self.path_assignments.borrow().iter() {
+        for assignment in &*self.path_assignments.borrow() {
             self.kill_moves(assignment.path, assignment.id, dfcx_moves);
         }
 
         // Kill all moves related to a variable `x` when
         // it goes out of scope:
-        for path in self.paths.borrow().iter() {
+        for path in &*self.paths.borrow() {
             match path.loan_path.kind {
                 LpVar(..) | LpUpvar(..) | LpDowncast(..) => {
                     let kill_scope = path.loan_path.kill_scope(tcx);
@@ -633,11 +636,11 @@ impl<'a, 'tcx> FlowedMoveData<'a, 'tcx> {
         //! Returns the kind of a move of `loan_path` by `id`, if one exists.
 
         let mut ret = None;
-        for loan_path_index in self.move_data.path_map.borrow().get(&*loan_path).iter() {
+        if let Some(loan_path_index) = self.move_data.path_map.borrow().get(&*loan_path) {
             self.dfcx_moves.each_gen_bit(id, |move_index| {
                 let the_move = self.move_data.moves.borrow();
                 let the_move = (*the_move)[move_index];
-                if the_move.path == **loan_path_index {
+                if the_move.path == *loan_path_index {
                     ret = Some(the_move.kind);
                     false
                 } else {
@@ -688,7 +691,7 @@ impl<'a, 'tcx> FlowedMoveData<'a, 'tcx> {
                     ret = false;
                 }
             } else {
-                for &loan_path_index in opt_loan_path_index.iter() {
+                if let Some(loan_path_index) = opt_loan_path_index {
                     let cont = self.move_data.each_base_path(moved_path, |p| {
                         if p == loan_path_index {
                             // Scenario 3: some extension of `loan_path`
@@ -699,7 +702,7 @@ impl<'a, 'tcx> FlowedMoveData<'a, 'tcx> {
                             true
                         }
                     });
-                    if !cont { ret = false; break }
+                    if !cont { ret = false; }
                 }
             }
             ret

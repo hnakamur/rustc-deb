@@ -19,9 +19,11 @@ use rustc::middle::ty;
 use rustc::util::ppaux::Repr;
 use syntax::codemap::Span;
 
+use borrowck::ToInteriorKind;
+
 use std::rc::Rc;
 
-#[derive(Show)]
+#[derive(Debug)]
 pub enum RestrictionResult<'tcx> {
     Safe,
     SafeIf(Rc<LoanPath<'tcx>>, Vec<Rc<LoanPath<'tcx>>>)
@@ -58,7 +60,7 @@ impl<'a, 'tcx> RestrictionsContext<'a, 'tcx> {
                 cmt: mc::cmt<'tcx>) -> RestrictionResult<'tcx> {
         debug!("restrict(cmt={})", cmt.repr(self.bccx.tcx));
 
-        let new_lp = |&: v: LoanPathKind<'tcx>| Rc::new(LoanPath::new(v, cmt.ty));
+        let new_lp = |v: LoanPathKind<'tcx>| Rc::new(LoanPath::new(v, cmt.ty));
 
         match cmt.cat.clone() {
             mc::cat_rvalue(..) => {
@@ -96,7 +98,7 @@ impl<'a, 'tcx> RestrictionsContext<'a, 'tcx> {
                 // the memory, so no additional restrictions are
                 // needed.
                 let result = self.restrict(cmt_base);
-                self.extend(result, &cmt, LpInterior(i))
+                self.extend(result, &cmt, LpInterior(i.cleaned()))
             }
 
             mc::cat_static_item(..) => {

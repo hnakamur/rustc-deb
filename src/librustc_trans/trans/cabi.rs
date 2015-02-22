@@ -18,6 +18,7 @@ use trans::cabi_x86_64;
 use trans::cabi_x86_win64;
 use trans::cabi_arm;
 use trans::cabi_aarch64;
+use trans::cabi_powerpc;
 use trans::cabi_mips;
 use trans::type_::Type;
 
@@ -115,9 +116,17 @@ pub fn compute_abi_info(ccx: &CrateContext,
         } else {
             cabi_x86_64::compute_abi_info(ccx, atys, rty, ret_def)
         },
-        "arm" => cabi_arm::compute_abi_info(ccx, atys, rty, ret_def),
         "aarch64" => cabi_aarch64::compute_abi_info(ccx, atys, rty, ret_def),
+        "arm" => {
+            let flavor = if ccx.sess().target.target.target_os == "ios" {
+                cabi_arm::Flavor::Ios
+            } else {
+                cabi_arm::Flavor::General
+            };
+            cabi_arm::compute_abi_info(ccx, atys, rty, ret_def, flavor)
+        },
         "mips" => cabi_mips::compute_abi_info(ccx, atys, rty, ret_def),
+        "powerpc" => cabi_powerpc::compute_abi_info(ccx, atys, rty, ret_def),
         a => ccx.sess().fatal(&format!("unrecognized arch \"{}\" in target specification", a)
                               []),
     }

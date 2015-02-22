@@ -38,11 +38,10 @@ use std::iter::repeat;
 use std::u32;
 use syntax::ast;
 
-mod doc;
 mod graphviz;
 
 // A constraint that influences the inference process.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Show)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Constraint {
     // One region variable is subregion of another
     ConstrainVarSubVar(RegionVid, RegionVid),
@@ -69,7 +68,7 @@ pub enum Verify<'tcx> {
     VerifyGenericBound(GenericKind<'tcx>, SubregionOrigin<'tcx>, Region, Vec<Region>),
 }
 
-#[derive(Clone, Show, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GenericKind<'tcx> {
     Param(ty::ParamTy),
     Projection(ty::ProjectionTy<'tcx>),
@@ -97,7 +96,7 @@ pub enum CombineMapType {
     Lub, Glb
 }
 
-#[derive(Clone, Show)]
+#[derive(Clone, Debug)]
 pub enum RegionResolutionError<'tcx> {
     /// `ConcreteFailure(o, a, b)`:
     ///
@@ -149,7 +148,7 @@ pub enum RegionResolutionError<'tcx> {
 /// ```
 /// would report an error because we expect 'a and 'b to match, and so we group
 /// 'a and 'b together inside a SameRegions struct
-#[derive(Clone, Show)]
+#[derive(Clone, Debug)]
 pub struct SameRegions {
     pub scope_id: ast::NodeId,
     pub regions: Vec<BoundRegion>
@@ -223,8 +222,7 @@ pub struct RegionVarBindings<'a, 'tcx: 'a> {
     values: RefCell<Option<Vec<VarValue>>>,
 }
 
-#[derive(Show)]
-#[allow(missing_copy_implementations)]
+#[derive(Debug)]
 pub struct RegionSnapshot {
     length: uint,
     skolemization_count: u32,
@@ -236,11 +234,11 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             tcx: tcx,
             var_origins: RefCell::new(Vec::new()),
             values: RefCell::new(None),
-            constraints: RefCell::new(FnvHashMap::new()),
+            constraints: RefCell::new(FnvHashMap()),
             verifys: RefCell::new(Vec::new()),
-            givens: RefCell::new(FnvHashSet::new()),
-            lubs: RefCell::new(FnvHashMap::new()),
-            glbs: RefCell::new(FnvHashMap::new()),
+            givens: RefCell::new(FnvHashSet()),
+            lubs: RefCell::new(FnvHashMap()),
+            glbs: RefCell::new(FnvHashMap()),
             skolemization_count: Cell::new(0),
             bound_count: Cell::new(0),
             undo_log: RefCell::new(Vec::new())
@@ -609,8 +607,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
     pub fn vars_created_since_snapshot(&self, mark: &RegionSnapshot)
                                        -> Vec<RegionVid>
     {
-        self.undo_log.borrow()
-            .slice_from(mark.length)
+        self.undo_log.borrow()[mark.length..]
             .iter()
             .filter_map(|&elt| match elt {
                 AddVar(vid) => Some(vid),
@@ -637,7 +634,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             debug!("result_index={}, r={:?}", result_index, r);
 
             for undo_entry in
-                self.undo_log.borrow().slice_from(mark.length).iter()
+                self.undo_log.borrow()[mark.length..].iter()
             {
                 match undo_entry {
                     &AddConstraint(ConstrainVarSubVar(a, b)) => {
@@ -668,7 +665,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
                                     a, b);
                             }
                             VerifyGenericBound(_, _, a, ref bs) => {
-                                for &b in bs.iter() {
+                                for &b in bs {
                                     consider_adding_bidirectional_edges(
                                         &mut result_set, r,
                                         a, b);
@@ -762,11 +759,12 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             // A "free" region can be interpreted as "some region
             // at least as big as the block fr.scope_id".  So, we can
             // reasonably compare free regions and scopes:
-            match self.tcx.region_maps.nearest_common_ancestor(fr.scope, s_id) {
+            let fr_scope = fr.scope.to_code_extent();
+            match self.tcx.region_maps.nearest_common_ancestor(fr_scope, s_id) {
               // if the free region's scope `fr.scope_id` is bigger than
               // the scope region `s_id`, then the LUB is the free
               // region itself:
-              Some(r_id) if r_id == fr.scope => f,
+              Some(r_id) if r_id == fr_scope => f,
 
               // otherwise, we don't know what the free region is,
               // so we must conservatively say the LUB is static:
@@ -867,8 +865,9 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
                 // than the scope `s_id`, then we can say that the GLB
                 // is the scope `s_id`.  Otherwise, as we do not know
                 // big the free region is precisely, the GLB is undefined.
-                match self.tcx.region_maps.nearest_common_ancestor(fr.scope, s_id) {
-                    Some(r_id) if r_id == fr.scope => Ok(s),
+                let fr_scope = fr.scope.to_code_extent();
+                match self.tcx.region_maps.nearest_common_ancestor(fr_scope, s_id) {
+                    Some(r_id) if r_id == fr_scope => Ok(s),
                     _ => Err(ty::terr_regions_no_overlap(b, a))
                 }
             }
@@ -917,7 +916,8 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
                 Ok(ty::ReFree(*b))
             } else {
                 this.intersect_scopes(ty::ReFree(*a), ty::ReFree(*b),
-                                      a.scope, b.scope)
+                                      a.scope.to_code_extent(),
+                                      b.scope.to_code_extent())
             }
         }
     }
@@ -944,7 +944,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
 
 // ______________________________________________________________________
 
-#[derive(Copy, PartialEq, Show)]
+#[derive(Copy, PartialEq, Debug)]
 enum Classification { Expanding, Contracting }
 
 #[derive(Copy)]
@@ -974,17 +974,17 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
         debug!("----() End constraint listing {:?}---", self.dump_constraints());
         graphviz::maybe_print_constraints_for(self, subject);
 
-        self.expansion(var_data.as_mut_slice());
-        self.contraction(var_data.as_mut_slice());
+        self.expansion(&mut var_data);
+        self.contraction(&mut var_data);
         let values =
-            self.extract_values_and_collect_conflicts(&var_data[],
+            self.extract_values_and_collect_conflicts(&var_data[..],
                                                       errors);
         self.collect_concrete_region_errors(&values, errors);
         values
     }
 
     fn construct_var_data(&self) -> Vec<VarData> {
-        range(0, self.num_vars() as uint).map(|_| {
+        (0..self.num_vars() as uint).map(|_| {
             VarData {
                 // All nodes are initially classified as contracting; during
                 // the expansion phase, we will shift the classification for
@@ -1200,8 +1200,8 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
                                       values: &Vec<VarValue>,
                                       errors: &mut Vec<RegionResolutionError<'tcx>>)
     {
-        let mut reg_reg_dups = FnvHashSet::new();
-        for verify in self.verifys.borrow().iter() {
+        let mut reg_reg_dups = FnvHashSet();
+        for verify in &*self.verifys.borrow() {
             match *verify {
                 VerifyRegSubReg(ref origin, sub, sup) => {
                     if self.is_subregion_of(sub, sup) {
@@ -1260,7 +1260,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
 
         let mut opt_graph = None;
 
-        for idx in range(0u, self.num_vars() as uint) {
+        for idx in 0..self.num_vars() as uint {
             match var_data[idx].value {
                 Value(_) => {
                     /* Inference successful */
@@ -1304,12 +1304,12 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
                     match var_data[idx].classification {
                         Expanding => {
                             self.collect_error_for_expanding_node(
-                                graph, var_data, dup_vec.as_mut_slice(),
+                                graph, var_data, &mut dup_vec,
                                 node_vid, errors);
                         }
                         Contracting => {
                             self.collect_error_for_contracting_node(
-                                graph, var_data, dup_vec.as_mut_slice(),
+                                graph, var_data, &mut dup_vec,
                                 node_vid, errors);
                         }
                     }
@@ -1317,7 +1317,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             }
         }
 
-        range(0, self.num_vars() as uint).map(|idx| var_data[idx].value).collect()
+        (0..self.num_vars() as uint).map(|idx| var_data[idx].value).collect()
     }
 
     fn construct_graph(&self) -> RegionGraph {
@@ -1329,12 +1329,12 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
         let mut graph = graph::Graph::with_capacity(num_vars as uint + 1,
                                                     num_edges);
 
-        for _ in range(0, num_vars) {
+        for _ in 0..num_vars {
             graph.add_node(());
         }
         let dummy_idx = graph.add_node(());
 
-        for (constraint, _) in constraints.iter() {
+        for (constraint, _) in &*constraints {
             match *constraint {
                 ConstrainVarSubVar(a_id, b_id) => {
                     graph.add_edge(NodeIndex(a_id.index as uint),
@@ -1394,10 +1394,12 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
         lower_bounds.sort_by(|a, b| { free_regions_first(a, b) });
         upper_bounds.sort_by(|a, b| { free_regions_first(a, b) });
 
-        for lower_bound in lower_bounds.iter() {
-            for upper_bound in upper_bounds.iter() {
+        for lower_bound in &lower_bounds {
+            for upper_bound in &upper_bounds {
                 if !self.is_subregion_of(lower_bound.region,
                                          upper_bound.region) {
+                    debug!("pushing SubSupConflict sub: {:?} sup: {:?}",
+                           lower_bound.region, upper_bound.region);
                     errors.push(SubSupConflict(
                         (*self.var_origins.borrow())[node_idx.index as uint].clone(),
                         lower_bound.origin.clone(),
@@ -1436,8 +1438,8 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             return;
         }
 
-        for upper_bound_1 in upper_bounds.iter() {
-            for upper_bound_2 in upper_bounds.iter() {
+        for upper_bound_1 in &upper_bounds {
+            for upper_bound_2 in &upper_bounds {
                 match self.glb_concrete_regions(upper_bound_1.region,
                                                 upper_bound_2.region) {
                   Ok(_) => {}
@@ -1476,7 +1478,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             dup_found: bool
         }
         let mut state = WalkState {
-            set: FnvHashSet::new(),
+            set: FnvHashSet(),
             stack: vec!(orig_node_idx),
             result: Vec::new(),
             dup_found: false
@@ -1549,13 +1551,13 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
     fn iterate_until_fixed_point<F>(&self, tag: &str, mut body: F) where
         F: FnMut(&Constraint) -> bool,
     {
-        let mut iteration = 0u;
+        let mut iteration = 0;
         let mut changed = true;
         while changed {
             changed = false;
             iteration += 1;
             debug!("---- {} Iteration {}{}", "#", tag, iteration);
-            for (constraint, _) in self.constraints.borrow().iter() {
+            for (constraint, _) in &*self.constraints.borrow() {
                 let edge_changed = body(constraint);
                 if edge_changed {
                     debug!("Updated due to constraint {}",

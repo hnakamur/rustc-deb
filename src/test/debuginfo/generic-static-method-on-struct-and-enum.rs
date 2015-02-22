@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -61,8 +60,8 @@ impl Enum {
 }
 
 fn main() {
-    Struct::static_method(1i, 2i);
-    Enum::static_method(-3i, 4.5f64, 5i);
+    Struct::static_method(1, 2);
+    Enum::static_method(-3, 4.5f64, 5);
 }
 
 fn zzz() {()}

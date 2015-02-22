@@ -20,7 +20,7 @@ use syntax::ast_util::local_def;
 
 use std::cell::RefCell;
 
-#[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Show)]
+#[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Def {
     DefFn(ast::DefId, bool /* is_ctor */),
     DefStaticMethod(/* method */ ast::DefId, MethodProvenance),
@@ -43,9 +43,7 @@ pub enum Def {
     DefTyParam(ParamSpace, u32, ast::DefId, ast::Name),
     DefUse(ast::DefId),
     DefUpvar(ast::NodeId,  // id of closed over local
-             ast::NodeId,  // expr node that creates the closure
-             ast::NodeId), // block node for the closest enclosing proc
-                           // or unboxed closure, DUMMY_NODE_ID otherwise
+             ast::NodeId), // expr node that creates the closure
 
     /// Note that if it's a tuple struct's definition, the node id of the ast::DefId
     /// may either refer to the item definition's id or the StructDef.ctor_id.
@@ -74,13 +72,13 @@ pub struct Export {
     pub def_id: ast::DefId, // The definition of the target.
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Show)]
+#[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum MethodProvenance {
     FromTrait(ast::DefId),
     FromImpl(ast::DefId),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Show)]
+#[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum TyParamProvenance {
     FromSelf(ast::DefId),
     FromParam(ast::DefId),
@@ -145,7 +143,7 @@ impl Def {
             }
             DefLocal(id) |
             DefSelfTy(id) |
-            DefUpvar(id, _, _) |
+            DefUpvar(id, _) |
             DefRegion(id) |
             DefTyParamBinder(id) |
             DefLabel(id) => {

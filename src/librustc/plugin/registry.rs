@@ -14,7 +14,7 @@ use lint::{LintPassObject, LintId, Lint};
 use session::Session;
 
 use syntax::ext::base::{SyntaxExtension, NamedSyntaxExtension, NormalTT};
-use syntax::ext::base::{IdentTT, Decorator, Modifier, MacroRulesTT};
+use syntax::ext::base::{IdentTT, Decorator, Modifier, MultiModifier, MacroRulesTT};
 use syntax::ext::base::{MacroExpanderFn};
 use syntax::codemap::Span;
 use syntax::parse::token;
@@ -37,7 +37,7 @@ pub struct Registry<'a> {
     pub sess: &'a Session,
 
     #[doc(hidden)]
-    pub args_hidden: Option<P<ast::MetaItem>>,
+    pub args_hidden: Option<Vec<P<ast::MetaItem>>>,
 
     #[doc(hidden)]
     pub krate_span: Span,
@@ -65,11 +65,14 @@ impl<'a> Registry<'a> {
         }
     }
 
-    /// Get the `#[plugin]` attribute used to load this plugin.
+    /// Get the plugin's arguments, if any.
     ///
-    /// This gives access to arguments passed via `#[plugin=...]` or
-    /// `#[plugin(...)]`.
-    pub fn args<'b>(&'b self) -> &'b P<ast::MetaItem> {
+    /// These are specified inside the `plugin` crate attribute as
+    ///
+    /// ```no_run
+    /// #![plugin(my_plugin_name(... args ...))]
+    /// ```
+    pub fn args<'b>(&'b self) -> &'b Vec<P<ast::MetaItem>> {
         self.args_hidden.as_ref().expect("args not set")
     }
 
@@ -82,7 +85,7 @@ impl<'a> Registry<'a> {
             IdentTT(ext, _) => IdentTT(ext, Some(self.krate_span)),
             Decorator(ext) => Decorator(ext),
             Modifier(ext) => Modifier(ext),
-
+            MultiModifier(ext) => MultiModifier(ext),
             MacroRulesTT => {
                 self.sess.err("plugin tried to register a new MacroRulesTT");
                 return;

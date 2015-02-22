@@ -244,10 +244,9 @@ Mips16TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   }
 }
 
-bool Mips16TargetLowering::
-isEligibleForTailCallOptimization(const MipsCC &MipsCCInfo,
-                                  unsigned NextStackOffset,
-                                  const MipsFunctionInfo& FI) const {
+bool Mips16TargetLowering::isEligibleForTailCallOptimization(
+    const CCState &CCInfo, unsigned NextStackOffset,
+    const MipsFunctionInfo &FI) const {
   // No tail call optimization for mips16.
   return false;
 }
@@ -498,14 +497,14 @@ getOpndList(SmallVectorImpl<SDValue> &Ops,
   SDValue JumpTarget = Callee;
 
   // T9 should contain the address of the callee function if
-  // -reloction-model=pic or it is an indirect call.
+  // -relocation-model=pic or it is an indirect call.
   if (IsPICCall || !GlobalOrExternal) {
     unsigned V0Reg = Mips::V0;
     if (NeedMips16Helper) {
       RegsToPass.push_front(std::make_pair(V0Reg, Callee));
       JumpTarget = DAG.getExternalSymbol(Mips16HelperFunction, getPointerTy());
       ExternalSymbolSDNode *S = cast<ExternalSymbolSDNode>(JumpTarget);
-      JumpTarget = getAddrGlobal(S, JumpTarget.getValueType(), DAG,
+      JumpTarget = getAddrGlobal(S, CLI.DL, JumpTarget.getValueType(), DAG,
                                  MipsII::MO_GOT, Chain,
                                  FuncInfo->callPtrInfo(S->getSymbol()));
     } else

@@ -9,7 +9,6 @@
 // except according to those terms.
 
 // ignore-tidy-linelength
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -116,6 +115,7 @@
 #![feature(box_syntax)]
 #![omit_gdb_pretty_printer_section]
 
+#[derive(Copy)]
 enum Enum {
     Variant1 { x: u16, y: u16 },
     Variant2 (u32)
@@ -151,6 +151,4 @@ fn main() {
 }
 
 fn zzz() {()}
-
-impl Copy for Enum {}
 

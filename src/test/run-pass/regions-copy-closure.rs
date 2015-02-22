@@ -21,10 +21,10 @@ fn box_it<'a>(x: Box<FnMut() + 'a>) -> closure_box<'a> {
 }
 
 pub fn main() {
-    let mut i = 3i;
+    let mut i = 3i32;
     assert_eq!(i, 3);
     {
-        let cl = |&mut:| i += 1;
+        let cl = || i += 1;
         let mut cl_box = box_it(box cl);
         cl_box.cl.call_mut(());
     }

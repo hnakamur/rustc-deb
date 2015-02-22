@@ -21,12 +21,13 @@ use syntax::ast;
 
 use std::ffi::CString;
 use std::mem;
+use std::ptr;
 use std::cell::RefCell;
 use std::iter::repeat;
 
 use libc::c_uint;
 
-#[derive(Clone, Copy, PartialEq, Show)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 #[repr(C)]
 pub struct Type {
     rf: TypeRef
@@ -80,6 +81,11 @@ impl Type {
 
     pub fn i64(ccx: &CrateContext) -> Type {
         ty!(llvm::LLVMInt64TypeInContext(ccx.llcx()))
+    }
+
+    // Creates an integer type with the given number of bits, e.g. i24
+    pub fn ix(ccx: &CrateContext, num_bits: u64) -> Type {
+        ty!(llvm::LLVMIntTypeInContext(ccx.llcx(), num_bits as c_uint))
     }
 
     pub fn f32(ccx: &CrateContext) -> Type {
@@ -157,7 +163,7 @@ impl Type {
     }
 
     pub fn named_struct(ccx: &CrateContext, name: &str) -> Type {
-        let name = CString::from_slice(name.as_bytes());
+        let name = CString::new(name).unwrap();
         ty!(llvm::LLVMStructCreateNamed(ccx.llcx(), name.as_ptr()))
     }
 
@@ -222,14 +228,6 @@ impl Type {
         Type::vec(ccx, &Type::i8(ccx))
     }
 
-    // The box pointed to by @T.
-    pub fn at_box(ccx: &CrateContext, ty: Type) -> Type {
-        Type::struct_(ccx, &[
-            ccx.int_type(), Type::glue_fn(ccx, Type::i8p(ccx)).ptr_to(),
-            Type::i8p(ccx), Type::i8p(ccx), ty
-        ], false)
-    }
-
     pub fn vtable_ptr(ccx: &CrateContext) -> Type {
         Type::glue_fn(ccx, Type::i8p(ccx)).ptr_to().ptr_to()
     }
@@ -260,6 +258,13 @@ impl Type {
         ty!(llvm::LLVMPointerType(self.to_ref(), 0))
     }
 
+    pub fn is_aggregate(&self) -> bool {
+        match self.kind() {
+            TypeKind::Struct | TypeKind::Array => true,
+            _ =>  false
+        }
+    }
+
     pub fn is_packed(&self) -> bool {
         unsafe {
             llvm::LLVMIsPackedStruct(self.to_ref()) == True
@@ -269,6 +274,13 @@ impl Type {
     pub fn element_type(&self) -> Type {
         unsafe {
             Type::from_ref(llvm::LLVMGetElementType(self.to_ref()))
+        }
+    }
+
+    /// Return the number of elements in `self` if it is a LLVM vector type.
+    pub fn vector_length(&self) -> uint {
+        unsafe {
+            llvm::LLVMGetVectorSize(self.to_ref()) as uint
         }
     }
 
@@ -284,7 +296,7 @@ impl Type {
             if n_elts == 0 {
                 return Vec::new();
             }
-            let mut elts: Vec<_> = repeat(Type { rf: 0 as TypeRef }).take(n_elts).collect();
+            let mut elts: Vec<_> = repeat(Type { rf: ptr::null_mut() }).take(n_elts).collect();
             llvm::LLVMGetStructElementTypes(self.to_ref(),
                                             elts.as_mut_ptr() as *mut TypeRef);
             elts
@@ -298,7 +310,7 @@ impl Type {
     pub fn func_params(&self) -> Vec<Type> {
         unsafe {
             let n_args = llvm::LLVMCountParamTypes(self.to_ref()) as uint;
-            let mut args: Vec<_> = repeat(Type { rf: 0 as TypeRef }).take(n_args).collect();
+            let mut args: Vec<_> = repeat(Type { rf: ptr::null_mut() }).take(n_args).collect();
             llvm::LLVMGetParamTypes(self.to_ref(),
                                     args.as_mut_ptr() as *mut TypeRef);
             args
@@ -314,6 +326,13 @@ impl Type {
             _ => panic!("llvm_float_width called on a non-float type")
         }
     }
+
+    /// Retrieve the bit width of the integer type `self`.
+    pub fn int_width(&self) -> u64 {
+        unsafe {
+            llvm::LLVMGetIntTypeWidth(self.to_ref()) as u64
+        }
+    }
 }
 
 
@@ -326,7 +345,7 @@ pub struct TypeNames {
 impl TypeNames {
     pub fn new() -> TypeNames {
         TypeNames {
-            named_types: RefCell::new(FnvHashMap::new())
+            named_types: RefCell::new(FnvHashMap())
         }
     }
 

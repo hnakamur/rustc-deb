@@ -12,7 +12,7 @@
 #![feature(box_syntax)]
 
 use std::sync::mpsc::{channel, Sender};
-use std::thread::Thread;
+use std::thread;
 
 fn child(tx: &Sender<Box<uint>>, i: uint) {
     tx.send(box i).unwrap();
@@ -20,18 +20,18 @@ fn child(tx: &Sender<Box<uint>>, i: uint) {
 
 pub fn main() {
     let (tx, rx) = channel();
-    let n = 100u;
-    let mut expected = 0u;
-    let _t = range(0u, n).map(|i| {
+    let n = 100_usize;
+    let mut expected = 0_usize;
+    let _t = (0_usize..n).map(|i| {
         expected += i;
         let tx = tx.clone();
-        Thread::scoped(move|| {
+        thread::spawn(move|| {
             child(&tx, i)
         })
     }).collect::<Vec<_>>();
 
-    let mut actual = 0u;
-    for _ in range(0u, n) {
+    let mut actual = 0_usize;
+    for _ in 0_usize..n {
         let j = rx.recv().unwrap();
         actual += *j;
     }

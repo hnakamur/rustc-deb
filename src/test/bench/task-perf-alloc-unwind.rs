@@ -10,8 +10,8 @@
 
 #![feature(unsafe_destructor, box_syntax)]
 
-use std::os;
-use std::thread::Thread;
+use std::env;
+use std::thread;
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -19,12 +19,8 @@ enum List<T> {
     Nil, Cons(T, Box<List<T>>)
 }
 
-enum UniqueList {
-    ULNil, ULCons(Box<UniqueList>)
-}
-
 fn main() {
-    let (repeat, depth) = if os::getenv("RUST_BENCH").is_some() {
+    let (repeat, depth) = if env::var_os("RUST_BENCH").is_some() {
         (50, 1000)
     } else {
         (10, 10)
@@ -34,9 +30,9 @@ fn main() {
 }
 
 fn run(repeat: int, depth: int) {
-    for _ in range(0, repeat) {
+    for _ in 0..repeat {
         let dur = Duration::span(|| {
-            let _ = Thread::scoped(move|| {
+            let _ = thread::spawn(move|| {
                 recurse_or_panic(depth, None)
             }).join();
         });
@@ -44,7 +40,9 @@ fn run(repeat: int, depth: int) {
     }
 }
 
-type nillist = List<()>;
+// FIXME(#21721) used to be `List<()>` but that can cause
+// certain LLVM versions to abort during optimizations.
+type nillist = List<[u8; 0]>;
 
 // Filled with things that have to be unwound
 
@@ -85,11 +83,11 @@ fn recurse_or_panic(depth: int, st: Option<State>) {
             }
             Some(st) => {
                 let mut v = st.vec.clone();
-                v.push_all(&[box List::Cons((), st.vec.last().unwrap().clone())]);
+                v.push_all(&[box List::Cons([], st.vec.last().unwrap().clone())]);
                 State {
-                    unique: box List::Cons((), box *st.unique),
+                    unique: box List::Cons([], box *st.unique),
                     vec: v,
-                    res: r(box List::Cons((), st.res._l.clone())),
+                    res: r(box List::Cons([], st.res._l.clone())),
                 }
             }
         };

@@ -9,14 +9,14 @@
 // except according to those terms.
 
 
-use std::io::process;
-use std::io::Command;
-use std::io;
-use std::os;
+use std::old_io::process;
+use std::old_io::Command;
+use std::old_io;
+use std::env;
 
 fn main() {
-    let args = os::args();
-    if args.len() > 1 && args[1].as_slice() == "child" {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && args[1] == "child" {
         return child()
     }
 
@@ -25,14 +25,15 @@ fn main() {
 }
 
 fn child() {
-    io::stdout().write_line("foo").unwrap();
-    io::stderr().write_line("bar").unwrap();
-    assert_eq!(io::stdin().lock().read_line().err().unwrap().kind, io::EndOfFile);
+    old_io::stdout().write_line("foo").unwrap();
+    old_io::stderr().write_line("bar").unwrap();
+    let mut stdin = old_io::stdin();
+    assert_eq!(stdin.lock().read_line().err().unwrap().kind, old_io::EndOfFile);
 }
 
 fn test() {
-    let args = os::args();
-    let mut p = Command::new(args[0].as_slice()).arg("child")
+    let args: Vec<String> = env::args().collect();
+    let mut p = Command::new(&args[0]).arg("child")
                                      .stdin(process::Ignored)
                                      .stdout(process::Ignored)
                                      .stderr(process::Ignored)

@@ -12,10 +12,10 @@ pub use self::MaybeTyped::*;
 use rustc_driver::driver;
 use rustc::session::{self, config};
 use rustc::session::config::UnstableFeatures;
-use rustc::session::search_paths::SearchPaths;
 use rustc::middle::{privacy, ty};
 use rustc::lint;
 use rustc_trans::back::link;
+use rustc_resolve as resolve;
 
 use syntax::{ast, ast_map, codemap, diagnostic};
 
@@ -25,6 +25,9 @@ use std::collections::{HashMap, HashSet};
 use visit_ast::RustdocVisitor;
 use clean;
 use clean::Clean;
+
+pub use rustc::session::config::Input;
+pub use rustc::session::search_paths::SearchPaths;
 
 /// Are we generating documentation (`Typed`) or tests (`NotTyped`)?
 pub enum MaybeTyped<'tcx> {
@@ -38,7 +41,7 @@ pub type ExternalPaths = RefCell<Option<HashMap<ast::DefId,
 pub struct DocContext<'tcx> {
     pub krate: &'tcx ast::Crate,
     pub maybe_typed: MaybeTyped<'tcx>,
-    pub src: Path,
+    pub input: Input,
     pub external_paths: ExternalPaths,
     pub external_traits: RefCell<Option<HashMap<ast::DefId, clean::Trait>>>,
     pub external_typarams: RefCell<Option<HashMap<ast::DefId, String>>>,
@@ -79,12 +82,15 @@ pub struct CrateAnalysis {
 pub type Externs = HashMap<String, Vec<String>>;
 
 pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
-                cpath: &Path, triple: Option<String>)
+                input: Input, triple: Option<String>)
                 -> (clean::Crate, CrateAnalysis) {
 
     // Parse, resolve, and typecheck the given crate.
 
-    let input = config::Input::File(cpath.clone());
+    let cpath = match input {
+        Input::File(ref p) => Some(p.clone()),
+        _ => None
+    };
 
     let warning_lint = lint::builtin::WARNINGS.name_lower();
 
@@ -102,36 +108,39 @@ pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
     };
 
     let codemap = codemap::CodeMap::new();
-    let diagnostic_handler = diagnostic::default_handler(diagnostic::Auto, None);
+    let diagnostic_handler = diagnostic::default_handler(diagnostic::Auto, None, true);
     let span_diagnostic_handler =
         diagnostic::mk_span_handler(diagnostic_handler, codemap);
 
-    let sess = session::build_session_(sessopts,
-                                       Some(cpath.clone()),
+    let sess = session::build_session_(sessopts, cpath,
                                        span_diagnostic_handler);
 
     let cfg = config::build_configuration(&sess);
 
     let krate = driver::phase_1_parse_input(&sess, cfg, &input);
 
-    let name = link::find_crate_name(Some(&sess), krate.attrs.as_slice(),
+    let name = link::find_crate_name(Some(&sess), &krate.attrs,
                                      &input);
 
-    let krate = driver::phase_2_configure_and_expand(&sess, krate, name.as_slice(), None)
+    let krate = driver::phase_2_configure_and_expand(&sess, krate, &name, None)
                     .expect("phase_2_configure_and_expand aborted in rustdoc!");
 
     let mut forest = ast_map::Forest::new(krate);
+    let arenas = ty::CtxtArenas::new();
     let ast_map = driver::assign_node_ids_and_map(&sess, &mut forest);
 
-    let arenas = ty::CtxtArenas::new();
     let ty::CrateAnalysis {
         exported_items, public_items, ty_cx, ..
-    } = driver::phase_3_run_analysis_passes(sess, ast_map, &arenas, name);
+    } = driver::phase_3_run_analysis_passes(sess,
+                                            ast_map,
+                                            &arenas,
+                                            name,
+                                            resolve::MakeGlobMap::No);
 
     let ctxt = DocContext {
         krate: ty_cx.map.krate(),
         maybe_typed: Typed(ty_cx),
-        src: cpath.clone(),
+        input: input,
         external_traits: RefCell::new(Some(HashMap::new())),
         external_typarams: RefCell::new(Some(HashMap::new())),
         external_paths: RefCell::new(Some(HashMap::new())),

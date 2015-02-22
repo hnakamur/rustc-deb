@@ -12,7 +12,7 @@ use attr::AttrMetaMethods;
 use diagnostic::SpanHandler;
 use fold::Folder;
 use {ast, fold, attr};
-use codemap::Spanned;
+use codemap::{Spanned, respan};
 use ptr::P;
 
 use util::small_vector::SmallVector;
@@ -26,8 +26,9 @@ struct Context<F> where F: FnMut(&[ast::Attribute]) -> bool {
 // Support conditional compilation by transforming the AST, stripping out
 // any items that do not belong in the current configuration
 pub fn strip_unconfigured_items(diagnostic: &SpanHandler, krate: ast::Crate) -> ast::Crate {
+    let krate = process_cfg_attr(diagnostic, krate);
     let config = krate.config.clone();
-    strip_items(krate, |attrs| in_cfg(diagnostic, config.as_slice(), attrs))
+    strip_items(krate, |attrs| in_cfg(diagnostic, &config, attrs))
 }
 
 impl<F> fold::Folder for Context<F> where F: FnMut(&[ast::Attribute]) -> bool {
@@ -63,28 +64,13 @@ pub fn strip_items<F>(krate: ast::Crate, in_cfg: F) -> ast::Crate where
     ctxt.fold_crate(krate)
 }
 
-fn filter_view_item<F>(cx: &mut Context<F>,
-                       view_item: ast::ViewItem)
-                       -> Option<ast::ViewItem> where
-    F: FnMut(&[ast::Attribute]) -> bool
-{
-    if view_item_in_cfg(cx, &view_item) {
-        Some(view_item)
-    } else {
-        None
-    }
-}
-
 fn fold_mod<F>(cx: &mut Context<F>,
-               ast::Mod {inner,
-               view_items, items}: ast::Mod) -> ast::Mod where
+               ast::Mod {inner, items}: ast::Mod)
+               -> ast::Mod where
     F: FnMut(&[ast::Attribute]) -> bool
 {
     ast::Mod {
         inner: inner,
-        view_items: view_items.into_iter().filter_map(|a| {
-            filter_view_item(cx, a).map(|x| cx.fold_view_item(x))
-        }).collect(),
         items: items.into_iter().flat_map(|a| {
             cx.fold_item(a).into_iter()
         }).collect()
@@ -104,15 +90,12 @@ fn filter_foreign_item<F>(cx: &mut Context<F>,
 }
 
 fn fold_foreign_mod<F>(cx: &mut Context<F>,
-                       ast::ForeignMod {abi, view_items, items}: ast::ForeignMod)
+                       ast::ForeignMod {abi, items}: ast::ForeignMod)
                        -> ast::ForeignMod where
     F: FnMut(&[ast::Attribute]) -> bool
 {
     ast::ForeignMod {
         abi: abi,
-        view_items: view_items.into_iter().filter_map(|a| {
-            filter_view_item(cx, a).map(|x| cx.fold_view_item(x))
-        }).collect(),
         items: items.into_iter()
                     .filter_map(|a| filter_foreign_item(cx, a))
                     .collect()
@@ -150,7 +133,7 @@ fn fold_item_underscore<F>(cx: &mut Context<F>, item: ast::Item_) -> ast::Item_ 
         }
         ast::ItemEnum(def, generics) => {
             let variants = def.variants.into_iter().filter_map(|v| {
-                if !(cx.in_cfg)(v.node.attrs.as_slice()) {
+                if !(cx.in_cfg)(&v.node.attrs) {
                     None
                 } else {
                     Some(v.map(|Spanned {node: ast::Variant_ {id, name, attrs, kind,
@@ -190,7 +173,7 @@ fn fold_struct<F>(cx: &mut Context<F>, def: P<ast::StructDef>) -> P<ast::StructD
     def.map(|ast::StructDef { fields, ctor_id }| {
         ast::StructDef {
             fields: fields.into_iter().filter(|m| {
-                (cx.in_cfg)(m.node.attrs.as_slice())
+                (cx.in_cfg)(&m.node.attrs)
             }).collect(),
             ctor_id: ctor_id,
         }
@@ -216,18 +199,14 @@ fn retain_stmt<F>(cx: &mut Context<F>, stmt: &ast::Stmt) -> bool where
 fn fold_block<F>(cx: &mut Context<F>, b: P<ast::Block>) -> P<ast::Block> where
     F: FnMut(&[ast::Attribute]) -> bool
 {
-    b.map(|ast::Block {id, view_items, stmts, expr, rules, span}| {
+    b.map(|ast::Block {id, stmts, expr, rules, span}| {
         let resulting_stmts: Vec<P<ast::Stmt>> =
             stmts.into_iter().filter(|a| retain_stmt(cx, &**a)).collect();
         let resulting_stmts = resulting_stmts.into_iter()
             .flat_map(|stmt| cx.fold_stmt(stmt).into_iter())
             .collect();
-        let filtered_view_items = view_items.into_iter().filter_map(|a| {
-            filter_view_item(cx, a).map(|x| cx.fold_view_item(x))
-        }).collect();
         ast::Block {
             id: id,
-            view_items: filtered_view_items,
             stmts: resulting_stmts,
             expr: expr.map(|x| cx.fold_expr(x)),
             rules: rules,
@@ -245,7 +224,7 @@ fn fold_expr<F>(cx: &mut Context<F>, expr: P<ast::Expr>) -> P<ast::Expr> where
             node: match node {
                 ast::ExprMatch(m, arms, source) => {
                     ast::ExprMatch(m, arms.into_iter()
-                                        .filter(|a| (cx.in_cfg)(a.attrs.as_slice()))
+                                        .filter(|a| (cx.in_cfg)(&a.attrs))
                                         .collect(), source)
                 }
                 _ => node
@@ -258,28 +237,22 @@ fn fold_expr<F>(cx: &mut Context<F>, expr: P<ast::Expr>) -> P<ast::Expr> where
 fn item_in_cfg<F>(cx: &mut Context<F>, item: &ast::Item) -> bool where
     F: FnMut(&[ast::Attribute]) -> bool
 {
-    return (cx.in_cfg)(item.attrs.as_slice());
+    return (cx.in_cfg)(&item.attrs);
 }
 
 fn foreign_item_in_cfg<F>(cx: &mut Context<F>, item: &ast::ForeignItem) -> bool where
     F: FnMut(&[ast::Attribute]) -> bool
 {
-    return (cx.in_cfg)(item.attrs.as_slice());
-}
-
-fn view_item_in_cfg<F>(cx: &mut Context<F>, item: &ast::ViewItem) -> bool where
-    F: FnMut(&[ast::Attribute]) -> bool
-{
-    return (cx.in_cfg)(item.attrs.as_slice());
+    return (cx.in_cfg)(&item.attrs);
 }
 
 fn trait_method_in_cfg<F>(cx: &mut Context<F>, meth: &ast::TraitItem) -> bool where
     F: FnMut(&[ast::Attribute]) -> bool
 {
     match *meth {
-        ast::RequiredMethod(ref meth) => (cx.in_cfg)(meth.attrs.as_slice()),
-        ast::ProvidedMethod(ref meth) => (cx.in_cfg)(meth.attrs.as_slice()),
-        ast::TypeTraitItem(ref typ) => (cx.in_cfg)(typ.attrs.as_slice()),
+        ast::RequiredMethod(ref meth) => (cx.in_cfg)(&meth.attrs),
+        ast::ProvidedMethod(ref meth) => (cx.in_cfg)(&meth.attrs),
+        ast::TypeTraitItem(ref typ) => (cx.in_cfg)(&typ.attrs),
     }
 }
 
@@ -287,8 +260,8 @@ fn impl_item_in_cfg<F>(cx: &mut Context<F>, impl_item: &ast::ImplItem) -> bool w
     F: FnMut(&[ast::Attribute]) -> bool
 {
     match *impl_item {
-        ast::MethodImplItem(ref meth) => (cx.in_cfg)(meth.attrs.as_slice()),
-        ast::TypeImplItem(ref typ) => (cx.in_cfg)(typ.attrs.as_slice()),
+        ast::MethodImplItem(ref meth) => (cx.in_cfg)(&meth.attrs),
+        ast::TypeImplItem(ref typ) => (cx.in_cfg)(&typ.attrs),
     }
 }
 
@@ -308,4 +281,50 @@ fn in_cfg(diagnostic: &SpanHandler, cfg: &[P<ast::MetaItem>], attrs: &[ast::Attr
 
         attr::cfg_matches(diagnostic, cfg, &*mis[0])
     })
+}
+
+struct CfgAttrFolder<'a> {
+    diag: &'a SpanHandler,
+    config: ast::CrateConfig,
+}
+
+// Process `#[cfg_attr]`.
+fn process_cfg_attr(diagnostic: &SpanHandler, krate: ast::Crate) -> ast::Crate {
+    let mut fld = CfgAttrFolder {
+        diag: diagnostic,
+        config: krate.config.clone(),
+    };
+    fld.fold_crate(krate)
+}
+
+impl<'a> fold::Folder for CfgAttrFolder<'a> {
+    fn fold_attribute(&mut self, attr: ast::Attribute) -> Option<ast::Attribute> {
+        if !attr.check_name("cfg_attr") {
+            return fold::noop_fold_attribute(attr, self);
+        }
+
+        let (cfg, mi) = match attr.meta_item_list() {
+            Some([ref cfg, ref mi]) => (cfg, mi),
+            _ => {
+                self.diag.span_err(attr.span, "expected `#[cfg_attr(<cfg pattern>, <attr>)]`");
+                return None;
+            }
+        };
+
+        if attr::cfg_matches(self.diag, &self.config[..], &cfg) {
+            Some(respan(mi.span, ast::Attribute_ {
+                id: attr::mk_attr_id(),
+                style: attr.node.style,
+                value: mi.clone(),
+                is_sugared_doc: false,
+            }))
+        } else {
+            None
+        }
+    }
+
+    // Need the ability to run pre-expansion.
+    fn fold_mac(&mut self, mac: ast::Mac) -> ast::Mac {
+        fold::noop_fold_mac(mac, self)
+    }
 }

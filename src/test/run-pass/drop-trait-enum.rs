@@ -11,10 +11,10 @@
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-use std::thread::Thread;
+use std::thread;
 use std::sync::mpsc::{channel, Sender};
 
-#[derive(PartialEq, Show)]
+#[derive(PartialEq, Debug)]
 enum Message {
     Dropped,
     DestructorRan
@@ -62,26 +62,29 @@ pub fn main() {
 
     let (sender, receiver) = channel();
     {
-        let v = Foo::NestedVariant(box 42u, SendOnDrop { sender: sender.clone() }, sender);
+        let v = Foo::NestedVariant(box 42_usize, SendOnDrop { sender: sender.clone() }, sender);
     }
     assert_eq!(receiver.recv().unwrap(), Message::DestructorRan);
     assert_eq!(receiver.recv().unwrap(), Message::Dropped);
     assert_eq!(receiver.recv().ok(), None);
 
     let (sender, receiver) = channel();
-    let _t = Thread::scoped(move|| {
+    let t = thread::spawn(move|| {
         let v = Foo::FailingVariant { on_drop: SendOnDrop { sender: sender } };
     });
     assert_eq!(receiver.recv().unwrap(), Message::Dropped);
     assert_eq!(receiver.recv().ok(), None);
+    drop(t.join());
 
     let (sender, receiver) = channel();
-    let _t = {
-        Thread::scoped(move|| {
-            let mut v = Foo::NestedVariant(box 42u, SendOnDrop {
+    let t = {
+        thread::spawn(move|| {
+            let mut v = Foo::NestedVariant(box 42usize, SendOnDrop {
                 sender: sender.clone()
             }, sender.clone());
-            v = Foo::NestedVariant(box 42u, SendOnDrop { sender: sender.clone() }, sender.clone());
+            v = Foo::NestedVariant(box 42_usize,
+                                   SendOnDrop { sender: sender.clone() },
+                                   sender.clone());
             v = Foo::SimpleVariant(sender.clone());
             v = Foo::FailingVariant { on_drop: SendOnDrop { sender: sender } };
         })
@@ -93,4 +96,5 @@ pub fn main() {
     assert_eq!(receiver.recv().unwrap(), Message::DestructorRan);
     assert_eq!(receiver.recv().unwrap(), Message::Dropped);
     assert_eq!(receiver.recv().ok(), None);
+    drop(t.join());
 }

@@ -8,13 +8,12 @@ used by a future combined installer of Rust + Cargo.
 
 ```
 ./gen-installer.sh --product-name=Rust \
-                   --verify-bin=rustc \
                    --rel-manifest-dir=rustlib \
                    --success-message=Rust-is-ready-to-roll. \
                    --image-dir=./install-image \
                    --work-dir=./temp \
                    --output-dir=./dist \
-                   --non-installed-prefixes=foo,bin/bar,lib/baz \
+                   --non-installed-overlay=./overlay \
                    --package-name=rustc-nightly-i686-apple-darwin \
                    --component-name=rustc \
                    --legacy-manifest-dirs=rustlib \
@@ -25,7 +24,6 @@ Or, to just generate the script.
 
 ```
 ./gen-install-script.sh --product-name=Rust \
-                        --verify-bin=rustc \
                         --rel-manifest-dir=rustlib \
                         --success-message=Rust-is-ready-to-roll. \
                         --output-script=install.sh \
@@ -39,7 +37,6 @@ To combine installers.
 
 ```
 ./combine-installers.sh --product-name=Rust \
-                        --verify-bin=rustc \
                         --rel-manifest-dir=rustlib \
                         --success-message=Rust-is-ready-to-roll. \
                         --work-dir=./temp \
@@ -49,3 +46,19 @@ To combine installers.
                         --legacy-manifest-dirs=rustlib \
                         --input-tarballs=./rustc.tar.gz,cargo.tar.gz
 ```
+
+# Future work
+
+* Make install.sh not have to be customized, pull it's data from a
+  config file.
+* Be more resiliant to installation failures, particularly if the disk
+  is full.
+* Pre-install and post-uninstall scripts.
+* Allow components to depend on or contradict other components.
+* Sanity check that expected destination dirs (bin, lib, share exist)?
+* Add --docdir flag. Is there a standard name for this?
+* Remove empty directories on uninstall.
+* Detect mismatches in --prefix, --mandir, etc. in follow-on
+  installs/uninstalls.
+* Fix argument handling for spaces.
+* Add --bindir.

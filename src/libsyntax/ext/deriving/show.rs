@@ -29,28 +29,29 @@ pub fn expand_deriving_show<F>(cx: &mut ExtCtxt,
     F: FnOnce(P<Item>),
 {
     // &mut ::std::fmt::Formatter
-    let fmtr = Ptr(box Literal(Path::new(vec!("std", "fmt", "Formatter"))),
+    let fmtr = Ptr(box Literal(path_std!(cx, core::fmt::Formatter)),
                    Borrowed(None, ast::MutMutable));
 
     let trait_def = TraitDef {
         span: span,
         attributes: Vec::new(),
-        path: Path::new(vec!("std", "fmt", "Show")),
+        path: path_std!(cx, core::fmt::Debug),
         additional_bounds: Vec::new(),
         generics: LifetimeBounds::empty(),
-        methods: vec!(
+        methods: vec![
             MethodDef {
                 name: "fmt",
                 generics: LifetimeBounds::empty(),
                 explicit_self: borrowed_explicit_self(),
                 args: vec!(fmtr),
-                ret_ty: Literal(Path::new(vec!("std", "fmt", "Result"))),
+                ret_ty: Literal(path_std!(cx, core::fmt::Result)),
                 attributes: Vec::new(),
                 combine_substructure: combine_substructure(box |a, b, c| {
                     show_substructure(a, b, c)
                 })
             }
-        )
+        ],
+        associated_types: Vec::new(),
     };
     trait_def.expand(cx, mitem, item, push)
 }
@@ -67,11 +68,11 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
         Struct(_) => substr.type_ident,
         EnumMatching(_, v, _) => v.node.name,
         EnumNonMatchingCollapsed(..) | StaticStruct(..) | StaticEnum(..) => {
-            cx.span_bug(span, "nonsensical .fields in `#[derive(Show)]`")
+            cx.span_bug(span, "nonsensical .fields in `#[derive(Debug)]`")
         }
     };
 
-    let mut format_string = String::from_str(token::get_ident(name).get());
+    let mut format_string = String::from_str(&token::get_ident(name));
     // the internal fields we're actually formatting
     let mut exprs = Vec::new();
 
@@ -106,7 +107,7 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
 
                     let name = token::get_ident(field.name.unwrap());
                     format_string.push_str(" ");
-                    format_string.push_str(name.get());
+                    format_string.push_str(&name);
                     format_string.push_str(": {:?}");
 
                     exprs.push(field.self_.clone());
@@ -127,7 +128,7 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
     let formatter = substr.nonself_args[0].clone();
 
     let meth = cx.ident_of("write_fmt");
-    let s = token::intern_and_get_ident(&format_string[]);
+    let s = token::intern_and_get_ident(&format_string[..]);
     let format_string = cx.expr_str(span, s);
 
     // phew, not our responsibility any more!

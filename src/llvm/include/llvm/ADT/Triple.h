@@ -60,6 +60,7 @@ public:
     ppc64,      // PPC64: powerpc64, ppu
     ppc64le,    // PPC64LE: powerpc64le
     r600,       // R600: AMD GPUs HD2XXX - HD6XXX
+    amdgcn,     // AMDGCN: AMD GCN GPUs
     sparc,      // Sparc: sparc
     sparcv9,    // Sparcv9: Sparcv9
     systemz,    // SystemZ: s390x
@@ -138,7 +139,8 @@ public:
     Bitrig,
     AIX,
     CUDA,       // NVIDIA CUDA
-    NVCL        // NVIDIA OpenCL
+    NVCL,       // NVIDIA OpenCL
+    AMDHSA      // AMD HSA Runtime
   };
   enum EnvironmentType {
     UnknownEnvironment,
@@ -364,8 +366,26 @@ public:
     return isMacOSX() || isiOS();
   }
 
+  bool isOSNetBSD() const {
+    return getOS() == Triple::NetBSD;
+  }
+
+  bool isOSOpenBSD() const {
+    return getOS() == Triple::OpenBSD;
+  }
+
   bool isOSFreeBSD() const {
     return getOS() == Triple::FreeBSD;
+  }
+
+  bool isOSDragonFly() const { return getOS() == Triple::DragonFly; }
+
+  bool isOSSolaris() const {
+    return getOS() == Triple::Solaris;
+  }
+
+  bool isOSBitrig() const {
+    return getOS() == Triple::Bitrig;
   }
 
   bool isWindowsMSVCEnvironment() const {
@@ -397,7 +417,8 @@ public:
 
   /// \brief Is this a "Windows" OS targeting a "MSVCRT.dll" environment.
   bool isOSMSVCRT() const {
-    return isWindowsMSVCEnvironment() || isWindowsGNUEnvironment();
+    return isWindowsMSVCEnvironment() || isWindowsGNUEnvironment() ||
+           isWindowsItaniumEnvironment();
   }
 
   /// \brief Tests whether the OS is Windows.

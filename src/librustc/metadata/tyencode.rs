@@ -51,7 +51,7 @@ pub type abbrev_map<'tcx> = RefCell<FnvHashMap<Ty<'tcx>, ty_abbrev>>;
 
 pub fn enc_ty<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>, t: Ty<'tcx>) {
     match cx.abbrevs.borrow_mut().get(&t) {
-        Some(a) => { w.write(a.s.as_bytes()); return; }
+        Some(a) => { w.write_all(a.s.as_bytes()); return; }
         None => {}
     }
     let pos = w.tell().unwrap();
@@ -97,7 +97,7 @@ pub fn enc_ty<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>, t: Ty<'t
         }
         ty::ty_tup(ref ts) => {
             mywrite!(w, "T[");
-            for t in ts.iter() { enc_ty(w, cx, *t); }
+            for t in ts { enc_ty(w, cx, *t); }
             mywrite!(w, "]");
         }
         ty::ty_uniq(typ) => { mywrite!(w, "~"); enc_ty(w, cx, typ); }
@@ -139,7 +139,7 @@ pub fn enc_ty<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>, t: Ty<'t
             enc_substs(w, cx, substs);
             mywrite!(w, "]");
         }
-        ty::ty_unboxed_closure(def, region, substs) => {
+        ty::ty_closure(def, region, substs) => {
             mywrite!(w, "k[{}|", (cx.ds)(def));
             enc_region(w, cx, *region);
             enc_substs(w, cx, substs);
@@ -206,9 +206,9 @@ fn enc_vec_per_param_space<'a, 'tcx, T, F>(w: &mut SeekableMemWriter,
                                            mut op: F) where
     F: FnMut(&mut SeekableMemWriter, &ctxt<'a, 'tcx>, &T),
 {
-    for &space in subst::ParamSpace::all().iter() {
+    for &space in &subst::ParamSpace::all() {
         mywrite!(w, "[");
-        for t in v.get_slice(space).iter() {
+        for t in v.get_slice(space) {
             op(w, cx, t);
         }
         mywrite!(w, "]");
@@ -251,7 +251,7 @@ pub fn enc_region(w: &mut SeekableMemWriter, cx: &ctxt, r: ty::Region) {
         }
         ty::ReFree(ref fr) => {
             mywrite!(w, "f[");
-            enc_scope(w, cx, fr.scope);
+            enc_destruction_scope_data(w, fr.scope);
             mywrite!(w, "|");
             enc_bound_region(w, cx, fr.bound_region);
             mywrite!(w, "]");
@@ -276,8 +276,16 @@ pub fn enc_region(w: &mut SeekableMemWriter, cx: &ctxt, r: ty::Region) {
 
 fn enc_scope(w: &mut SeekableMemWriter, _cx: &ctxt, scope: region::CodeExtent) {
     match scope {
-        region::CodeExtent::Misc(node_id) => mywrite!(w, "M{}", node_id)
+        region::CodeExtent::Misc(node_id) => mywrite!(w, "M{}", node_id),
+        region::CodeExtent::Remainder(region::BlockRemainder {
+            block: b, first_statement_index: i }) => mywrite!(w, "B{}{}", b, i),
+        region::CodeExtent::DestructionScope(node_id) => mywrite!(w, "D{}", node_id),
     }
+}
+
+fn enc_destruction_scope_data(w: &mut SeekableMemWriter,
+                              d: region::DestructionScopeData) {
+    mywrite!(w, "{}", d.node_id);
 }
 
 fn enc_bound_region(w: &mut SeekableMemWriter, cx: &ctxt, br: ty::BoundRegion) {
@@ -305,17 +313,6 @@ pub fn enc_trait_ref<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>,
     enc_substs(w, cx, s.substs);
 }
 
-pub fn enc_trait_store(w: &mut SeekableMemWriter, cx: &ctxt, s: ty::TraitStore) {
-    match s {
-        ty::UniqTraitStore => mywrite!(w, "~"),
-        ty::RegionTraitStore(re, m) => {
-            mywrite!(w, "&");
-            enc_region(w, cx, re);
-            enc_mutability(w, m);
-        }
-    }
-}
-
 fn enc_unsafety(w: &mut SeekableMemWriter, p: ast::Unsafety) {
     match p {
         ast::Unsafety::Normal => mywrite!(w, "n"),
@@ -329,13 +326,6 @@ fn enc_abi(w: &mut SeekableMemWriter, abi: Abi) {
     mywrite!(w, "]")
 }
 
-fn enc_onceness(w: &mut SeekableMemWriter, o: ast::Onceness) {
-    match o {
-        ast::Once => mywrite!(w, "o"),
-        ast::Many => mywrite!(w, "m")
-    }
-}
-
 pub fn enc_bare_fn_ty<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>,
                                 ft: &ty::BareFnTy<'tcx>) {
     enc_unsafety(w, ft.unsafety);
@@ -346,9 +336,6 @@ pub fn enc_bare_fn_ty<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>,
 pub fn enc_closure_ty<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>,
                                 ft: &ty::ClosureTy<'tcx>) {
     enc_unsafety(w, ft.unsafety);
-    enc_onceness(w, ft.onceness);
-    enc_trait_store(w, cx, ft.store);
-    enc_existential_bounds(w, cx, &ft.bounds);
     enc_fn_sig(w, cx, &ft.sig);
     enc_abi(w, ft.abi);
 }
@@ -356,7 +343,7 @@ pub fn enc_closure_ty<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>,
 fn enc_fn_sig<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>,
                         fsig: &ty::PolyFnSig<'tcx>) {
     mywrite!(w, "[");
-    for ty in fsig.0.inputs.iter() {
+    for ty in &fsig.0.inputs {
         enc_ty(w, cx, *ty);
     }
     mywrite!(w, "]");
@@ -376,7 +363,7 @@ fn enc_fn_sig<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>,
 }
 
 pub fn enc_builtin_bounds(w: &mut SeekableMemWriter, _cx: &ctxt, bs: &ty::BuiltinBounds) {
-    for bound in bs.iter() {
+    for bound in bs {
         match bound {
             ty::BoundSend => mywrite!(w, "S"),
             ty::BoundSized => mywrite!(w, "Z"),
@@ -402,17 +389,17 @@ pub fn enc_bounds<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tcx>,
                             bs: &ty::ParamBounds<'tcx>) {
     enc_builtin_bounds(w, cx, &bs.builtin_bounds);
 
-    for &r in bs.region_bounds.iter() {
+    for &r in &bs.region_bounds {
         mywrite!(w, "R");
         enc_region(w, cx, r);
     }
 
-    for tp in bs.trait_bounds.iter() {
+    for tp in &bs.trait_bounds {
         mywrite!(w, "I");
         enc_trait_ref(w, cx, &*tp.0);
     }
 
-    for tp in bs.projection_bounds.iter() {
+    for tp in &bs.projection_bounds {
         mywrite!(w, "P");
         enc_projection_predicate(w, cx, &tp.0);
     }
@@ -427,6 +414,21 @@ pub fn enc_type_param_def<'a, 'tcx>(w: &mut SeekableMemWriter, cx: &ctxt<'a, 'tc
              v.space.to_uint(), v.index);
     enc_bounds(w, cx, &v.bounds);
     enc_opt(w, v.default, |w, t| enc_ty(w, cx, t));
+    enc_object_lifetime_default(w, cx, v.object_lifetime_default);
+}
+
+fn enc_object_lifetime_default<'a, 'tcx>(w: &mut SeekableMemWriter,
+                                         cx: &ctxt<'a, 'tcx>,
+                                         default: Option<ty::ObjectLifetimeDefault>)
+{
+    match default {
+        None => mywrite!(w, "n"),
+        Some(ty::ObjectLifetimeDefault::Ambiguous) => mywrite!(w, "a"),
+        Some(ty::ObjectLifetimeDefault::Specific(r)) => {
+            mywrite!(w, "s");
+            enc_region(w, cx, r);
+        }
+    }
 }
 
 pub fn enc_predicate<'a, 'tcx>(w: &mut SeekableMemWriter,

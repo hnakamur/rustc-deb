@@ -10,6 +10,7 @@
 
 #![allow(unknown_features)]
 #![feature(box_syntax)]
+#![feature(box_patterns)]
 #![feature(unboxed_closures)]
 
 use std::ops::{Deref, DerefMut};
@@ -45,9 +46,9 @@ impl DerefMut for X {
 
 fn main() {
     {
-        let mut test = X(box 5i);
+        let mut test = X(box 5);
         {
-            let mut change = |&mut:| { *test = 10 };
+            let mut change = || { *test = 10 };
             change();
         }
         assert_eq!(*test, 10);

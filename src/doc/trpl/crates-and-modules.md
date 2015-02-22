@@ -1,4 +1,4 @@
-% The Rust Crates and Modules Guide
+% Crates and Modules
 
 When a project starts getting large, it's considered a good software
 engineering practice to split it up into a bunch of smaller pieces, and then
@@ -8,19 +8,19 @@ these kinds of things, Rust has a module system.
 
 # Basic terminology: Crates and Modules
 
-Rust has two distinct terms that relate to the module system: "crate" and
-"module." A crate is synonymous with a 'library' or 'package' in other
+Rust has two distinct terms that relate to the module system: *crate* and
+*module*. A crate is synonymous with a *library* or *package* in other
 languages. Hence "Cargo" as the name of Rust's package management tool: you
 ship your crates to others with Cargo. Crates can produce an executable or a
 shared library, depending on the project.
 
-Each crate has an implicit "root module" that contains the code for that crate.
+Each crate has an implicit *root module* that contains the code for that crate.
 You can then define a tree of sub-modules under that root module. Modules allow
 you to partition your code within the crate itself.
 
-As an example, let's make a "phrases" crate, which will give us various phrases
+As an example, let's make a *phrases* crate, which will give us various phrases
 in different languages. To keep things simple, we'll stick to "greetings" and
-"farewells" as two kinds of phrases, and use English and Japanese (日本語） as
+"farewells" as two kinds of phrases, and use English and Japanese (日本語) as
 two languages for those phrases to be in. We'll use this module layout:
 
 ```text
@@ -45,7 +45,7 @@ two languages for those phrases to be in. We'll use this module layout:
 
 In this example, `phrases` is the name of our crate. All of the rest are
 modules.  You can see that they form a tree, branching out from the crate
-"root", which is the root of the tree: `phrases` itself.
+*root*, which is the root of the tree: `phrases` itself.
 
 Now that we have a plan, let's define these modules in code. To start,
 generate a new crate with Cargo:
@@ -208,9 +208,8 @@ Again, these declarations tell Rust to look for either
 these sub-modules don't have their own sub-modules, we've chosen to make them
 `src/english/greetings.rs` and `src/japanese/farewells.rs`. Whew!
 
-Right now, the contents of `src/english/greetings.rs` and
-`src/japanese/farewells.rs` are both empty at the moment. Let's add some
-functions.
+The contents of `src/english/greetings.rs` and `src/japanese/farewells.rs` are
+both empty at the moment. Let's add some functions.
 
 Put this in `src/english/greetings.rs`:
 
@@ -256,9 +255,9 @@ fn goodbye() -> String {
 }
 ```
 
-(This is "Sayoonara", if you're curious.)
+(This is "Sayōnara", if you're curious.)
 
-Now that we have our some functionality in our crate, let's try to use it from
+Now that we have some functionality in our crate, let's try to use it from
 another crate.
 
 # Importing External Crates
@@ -288,8 +287,7 @@ mentioned earlier, you can use double colons to refer to sub-modules and the
 functions inside of them.
 
 Also, Cargo assumes that `src/main.rs` is the crate root of a binary crate,
-rather than a library crate. Once we compile `src/main.rs`, we'll get an
-executable that we can run. Our package now has two crates: `src/lib.rs` and
+rather than a library crate. Our package now has two crates: `src/lib.rs` and
 `src/main.rs`. This pattern is quite common for executable crates: most
 functionality is in a library crate, and the executable crate uses that
 library. This way, other programs can also use the library crate, and it's also
@@ -553,13 +551,17 @@ module, we now have a `phrases::japanese::hello()` function and a
 `phrases::japanese::farewells::goodbye()`. Our internal organization doesn't
 define our external interface.
 
+Here we have a `pub use` for each function we want to bring into the 
+`japanese` scope. We could alternatively use the wildcard syntax to include
+everything from `greetings` into the current scope: `pub use self::greetings::*`. 
+
 Also, note that we `pub use`d before we declared our `mod`s. Rust requires that
 `use` declarations go first.
 
 This will build and run:
 
 ```bash
-$ cargo build
+$ cargo run
    Compiling phrases v0.0.1 (file:///home/you/projects/phrases)
      Running `target/phrases`
 Hello in English: Hello!

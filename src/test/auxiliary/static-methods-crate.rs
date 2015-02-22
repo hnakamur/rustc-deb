@@ -19,13 +19,13 @@ pub trait read {
 
 impl read for int {
     fn readMaybe(s: String) -> Option<int> {
-        s.parse()
+        s.parse().ok()
     }
 }
 
 impl read for bool {
     fn readMaybe(s: String) -> Option<bool> {
-        match s.as_slice() {
+        match &*s {
           "true" => Some(true),
           "false" => Some(false),
           _ => None

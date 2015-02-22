@@ -39,10 +39,9 @@
 //!   guaranteed to happen in order. This is the standard mode for working
 //!   with atomic types and is equivalent to Java's `volatile`.
 
-#![unstable]
+#![unstable(feature = "core")]
 #![allow(missing_docs)]
 
-#[cfg(not(stage0))]
 use marker::Sized;
 
 pub type GlueFn = extern "Rust" fn(*const i8);
@@ -51,10 +50,10 @@ pub type GlueFn = extern "Rust" fn(*const i8);
 #[derive(Copy)]
 pub struct TyDesc {
     // sizeof(T)
-    pub size: uint,
+    pub size: usize,
 
     // alignof(T)
-    pub align: uint,
+    pub align: usize,
 
     // Called when a value of type `T` is no longer needed
     pub drop_glue: GlueFn,
@@ -187,27 +186,23 @@ extern "rust-intrinsic" {
     /// would *exactly* overwrite a value. When laid out in vectors
     /// and structures there may be additional padding between
     /// elements.
-    pub fn size_of<T>() -> uint;
+    pub fn size_of<T>() -> usize;
 
     /// Move a value to an uninitialized memory location.
     ///
     /// Drop glue is not run on the destination.
     pub fn move_val_init<T>(dst: &mut T, src: T);
 
-    pub fn min_align_of<T>() -> uint;
-    pub fn pref_align_of<T>() -> uint;
+    pub fn min_align_of<T>() -> usize;
+    pub fn pref_align_of<T>() -> usize;
 
     /// Get a static pointer to a type descriptor.
-    pub fn get_tydesc<T>() -> *const TyDesc;
+    pub fn get_tydesc<T: ?Sized>() -> *const TyDesc;
 
     /// Gets an identifier which is globally unique to the specified type. This
     /// function will return the same value for a type regardless of whichever
     /// crate it is invoked in.
-    #[cfg(not(stage0))]
-    pub fn type_id<T: ?Sized + 'static>() -> TypeId;
-
-    #[cfg(stage0)]
-    pub fn type_id<T: 'static>() -> TypeId;
+    pub fn type_id<T: ?Sized + 'static>() -> u64;
 
     /// Create a value initialized to zero.
     ///
@@ -222,23 +217,22 @@ extern "rust-intrinsic" {
     ///
     /// `forget` is unsafe because the caller is responsible for
     /// ensuring the argument is deallocated already.
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn forget<T>(_: T) -> ();
 
     /// Unsafely transforms a value of one type into a value of another type.
     ///
-    /// Both types must have the same size and alignment, and this guarantee
-    /// is enforced at compile-time.
+    /// Both types must have the same size.
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use std::mem;
     ///
     /// let v: &[u8] = unsafe { mem::transmute("L") };
     /// assert!(v == [76u8]);
     /// ```
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn transmute<T,U>(e: T) -> U;
 
     /// Gives the address for the return value of the enclosing function.
@@ -259,7 +253,7 @@ extern "rust-intrinsic" {
     ///
     /// This is implemented as an intrinsic to avoid converting to and from an
     /// integer, since the conversion would throw away aliasing information.
-    pub fn offset<T>(dst: *const T, offset: int) -> *const T;
+    pub fn offset<T>(dst: *const T, offset: isize) -> *const T;
 
     /// Copies `count * size_of<T>` bytes from `src` to `dst`. The source
     /// and destination may *not* overlap.
@@ -268,11 +262,12 @@ extern "rust-intrinsic" {
     ///
     /// # Safety
     ///
-    /// Beyond requiring that both regions of memory be allocated, it is Undefined Behaviour
-    /// for source and destination to overlap. Care must also be taken with the ownership of
-    /// `src` and `dst`. This method semantically moves the values of `src` into `dst`.
-    /// However it does not drop the contents of `dst`, or prevent the contents of `src`
-    /// from being dropped or used.
+    /// Beyond requiring that the program must be allowed to access both regions
+    /// of memory, it is Undefined Behaviour for source and destination to
+    /// overlap. Care must also be taken with the ownership of `src` and
+    /// `dst`. This method semantically moves the values of `src` into `dst`.
+    /// However it does not drop the contents of `dst`, or prevent the contents
+    /// of `src` from being dropped or used.
     ///
     /// # Examples
     ///
@@ -298,8 +293,8 @@ extern "rust-intrinsic" {
     ///     }
     /// }
     /// ```
-    #[unstable]
-    pub fn copy_nonoverlapping_memory<T>(dst: *mut T, src: *const T, count: uint);
+    #[unstable(feature = "core")]
+    pub fn copy_nonoverlapping_memory<T>(dst: *mut T, src: *const T, count: usize);
 
     /// Copies `count * size_of<T>` bytes from `src` to `dst`. The source
     /// and destination may overlap.
@@ -328,13 +323,14 @@ extern "rust-intrinsic" {
     /// }
     /// ```
     ///
-    #[unstable]
-    pub fn copy_memory<T>(dst: *mut T, src: *const T, count: uint);
+    #[unstable(feature = "core")]
+    pub fn copy_memory<T>(dst: *mut T, src: *const T, count: usize);
 
     /// Invokes memset on the specified pointer, setting `count * size_of::<T>()`
     /// bytes of memory starting at `dst` to `c`.
-    #[unstable = "uncertain about naming and semantics"]
-    pub fn set_memory<T>(dst: *mut T, val: u8, count: uint);
+    #[unstable(feature = "core",
+               reason = "uncertain about naming and semantics")]
+    pub fn set_memory<T>(dst: *mut T, val: u8, count: usize);
 
     /// Equivalent to the appropriate `llvm.memcpy.p0i8.0i8.*` intrinsic, with
     /// a size of `count` * `size_of::<T>()` and an alignment of
@@ -342,19 +338,19 @@ extern "rust-intrinsic" {
     ///
     /// The volatile parameter parameter is set to `true`, so it will not be optimized out.
     pub fn volatile_copy_nonoverlapping_memory<T>(dst: *mut T, src: *const T,
-                                                  count: uint);
+                                                  count: usize);
     /// Equivalent to the appropriate `llvm.memmove.p0i8.0i8.*` intrinsic, with
     /// a size of `count` * `size_of::<T>()` and an alignment of
     /// `min_align_of::<T>()`
     ///
     /// The volatile parameter parameter is set to `true`, so it will not be optimized out.
-    pub fn volatile_copy_memory<T>(dst: *mut T, src: *const T, count: uint);
+    pub fn volatile_copy_memory<T>(dst: *mut T, src: *const T, count: usize);
     /// Equivalent to the appropriate `llvm.memset.p0i8.*` intrinsic, with a
     /// size of `count` * `size_of::<T>()` and an alignment of
     /// `min_align_of::<T>()`.
     ///
     /// The volatile parameter parameter is set to `true`, so it will not be optimized out.
-    pub fn volatile_set_memory<T>(dst: *mut T, val: u8, count: uint);
+    pub fn volatile_set_memory<T>(dst: *mut T, val: u8, count: usize);
 
     /// Perform a volatile load from the `src` pointer.
     pub fn volatile_load<T>(src: *const T) -> T;
@@ -545,28 +541,4 @@ extern "rust-intrinsic" {
     pub fn u32_mul_with_overflow(x: u32, y: u32) -> (u32, bool);
     /// Performs checked `u64` multiplication.
     pub fn u64_mul_with_overflow(x: u64, y: u64) -> (u64, bool);
-}
-
-
-/// `TypeId` represents a globally unique identifier for a type
-#[lang="type_id"] // This needs to be kept in lockstep with the code in trans/intrinsic.rs and
-                  // middle/lang_items.rs
-#[derive(Clone, Copy, PartialEq, Eq, Show)]
-pub struct TypeId {
-    t: u64,
-}
-
-impl TypeId {
-    /// Returns the `TypeId` of the type this generic function has been instantiated with
-    #[cfg(not(stage0))]
-    pub fn of<T: ?Sized + 'static>() -> TypeId {
-        unsafe { type_id::<T>() }
-    }
-
-    #[cfg(stage0)]
-    pub fn of<T: 'static>() -> TypeId {
-        unsafe { type_id::<T>() }
-    }
-
-    pub fn hash(&self) -> u64 { self.t }
 }

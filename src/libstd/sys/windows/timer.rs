@@ -26,10 +26,8 @@ use prelude::v1::*;
 use libc;
 use ptr;
 
-use io::IoResult;
+use old_io::IoResult;
 use sync::mpsc::{channel, Sender, Receiver, TryRecvError};
-use sys::c;
-use sys::fs::FileDesc;
 use sys_common::helper_thread::Helper;
 
 helper_init! { static HELPER: Helper<Req> }
@@ -48,8 +46,8 @@ pub enum Req {
     RemoveTimer(libc::HANDLE, Sender<()>),
 }
 
+unsafe impl Send for Timer {}
 unsafe impl Send for Req {}
-
 
 fn helper(input: libc::HANDLE, messages: Receiver<Req>, _: ()) {
     let mut objs = vec![input];

@@ -44,7 +44,7 @@ priv fn parse_data(len: uint, io: @io::Reader) -> Result {
 
 priv fn parse_list(len: uint, io: @io::Reader) -> Result {
     let mut list: ~[Result] = ~[];
-    for _ in range(0, len) {
+    for _ in 0..len {
         let v = match io.read_char() {
             '$' => parse_bulk(io),
             ':' => parse_int(io),
@@ -100,7 +100,7 @@ priv fn cmd_to_string(cmd: ~[String]) -> String {
   let mut res = "*".to_string();
   res.push_str(cmd.len().to_string());
   res.push_str("\r\n");
-    for s in cmd.iter() {
+    for s in &cmd {
     res.push_str(["$".to_string(), s.len().to_string(), "\r\n".to_string(),
                   (*s).clone(), "\r\n".to_string()].concat() );
     }

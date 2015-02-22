@@ -32,7 +32,7 @@ pub enum PtrTy<'a> {
     Raw(ast::Mutability),
 }
 
-/// A path, e.g. `::std::option::Option::<int>` (global). Has support
+/// A path, e.g. `::std::option::Option::<i32>` (global). Has support
 /// for type parameters and a lifetime.
 #[derive(Clone)]
 pub struct Path<'a> {
@@ -87,11 +87,11 @@ impl<'a> Path<'a> {
 /// A type. Supports pointers, Self, and literals
 #[derive(Clone)]
 pub enum Ty<'a> {
-    Self,
+    Self_,
     /// &/Box/ Ty
     Ptr(Box<Ty<'a>>, PtrTy<'a>),
     /// mod::mod::Type<[lifetime], [Params...]>, including a plain type
-    /// parameter, and things like `int`
+    /// parameter, and things like `i32`
     Literal(Path<'a>),
     /// includes unit
     Tuple(Vec<Ty<'a>> )
@@ -109,7 +109,7 @@ pub fn borrowed_explicit_self<'r>() -> Option<Option<PtrTy<'r>>> {
 }
 
 pub fn borrowed_self<'r>() -> Ty<'r> {
-    borrowed(box Self)
+    borrowed(box Self_)
 }
 
 pub fn nil_ty<'r>() -> Ty<'r> {
@@ -149,7 +149,7 @@ impl<'a> Ty<'a> {
                 }
             }
             Literal(ref p) => { p.to_ty(cx, span, self_ty, self_generics) }
-            Self  => {
+            Self_  => {
                 cx.ty_path(self.to_path(cx, span, self_ty, self_generics))
             }
             Tuple(ref fields) => {
@@ -168,7 +168,7 @@ impl<'a> Ty<'a> {
                    self_generics: &Generics)
                    -> ast::Path {
         match *self {
-            Self => {
+            Self_ => {
                 let self_params = self_generics.ty_params.map(|ty_param| {
                     cx.ty_ident(span, ty_param.ident)
                 });
@@ -182,8 +182,8 @@ impl<'a> Ty<'a> {
             Literal(ref p) => {
                 p.to_path(cx, span, self_ty, self_generics)
             }
-            Ptr(..) => { cx.span_bug(span, "pointer in a path in generic `deriving`") }
-            Tuple(..) => { cx.span_bug(span, "tuple in a path in generic `deriving`") }
+            Ptr(..) => { cx.span_bug(span, "pointer in a path in generic `derive`") }
+            Tuple(..) => { cx.span_bug(span, "tuple in a path in generic `derive`") }
         }
     }
 }
@@ -247,7 +247,7 @@ impl<'a> LifetimeBounds<'a> {
                     mk_ty_param(cx,
                                 span,
                                 *name,
-                                bounds.as_slice(),
+                                bounds,
                                 self_ty,
                                 self_generics)
                 }
