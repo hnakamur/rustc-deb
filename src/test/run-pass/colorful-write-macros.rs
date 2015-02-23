@@ -11,7 +11,7 @@
 // no-pretty-expanded
 
 #![allow(unused_must_use, dead_code, deprecated)]
-use std::io::MemWriter;
+use std::old_io::MemWriter;
 use std::fmt;
 
 struct Foo<'a> {
@@ -21,7 +21,7 @@ struct Foo<'a> {
 
 struct Bar;
 
-impl fmt::Writer for Bar {
+impl fmt::Write for Bar {
     fn write_str(&mut self, _: &str) -> fmt::Result {
         Ok(())
     }
@@ -39,7 +39,7 @@ fn main() {
 
     let mut s = Bar;
     {
-        use std::fmt::Writer;
+        use std::fmt::Write;
         write!(&mut s, "test");
     }
 }

@@ -16,8 +16,8 @@
 
 #![feature(asm)]
 
-use std::io::process::Command;
-use std::os;
+use std::old_io::process::Command;
+use std::env;
 
 // lifted from the test module
 // Inlining to avoid llvm turning the recursive functions into tail calls,
@@ -28,20 +28,19 @@ pub fn black_box<T>(dummy: T) { unsafe { asm!("" : : "r"(&dummy)) } }
 
 #[no_stack_check]
 fn recurse() {
-    let buf = [0i; 10];
+    let buf = [0; 10];
     black_box(buf);
     recurse();
 }
 
 fn main() {
-    let args = os::args();
-    let args = args.as_slice();
-    if args.len() > 1 && args[1].as_slice() == "recurse" {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && args[1] == "recurse" {
         recurse();
     } else {
-        let recurse = Command::new(args[0].as_slice()).arg("recurse").output().unwrap();
+        let recurse = Command::new(&args[0]).arg("recurse").output().unwrap();
         assert!(!recurse.status.success());
-        let error = String::from_utf8_lossy(recurse.error.as_slice());
-        assert!(error.as_slice().contains("has overflowed its stack"));
+        let error = String::from_utf8_lossy(&recurse.error);
+        assert!(error.contains("has overflowed its stack"));
     }
 }

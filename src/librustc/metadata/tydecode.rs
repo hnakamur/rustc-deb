@@ -43,7 +43,7 @@ use syntax::parse::token;
 // def-id will depend on where it originated from.  Therefore, the conversion
 // function is given an indicator of the source of the def-id.  See
 // astencode.rs for more information.
-#[derive(Copy, Show)]
+#[derive(Copy, Debug)]
 pub enum DefIdSource {
     // Identifies a struct, trait, enum, etc.
     NominalType,
@@ -57,8 +57,8 @@ pub enum DefIdSource {
     // Identifies a region parameter (`fn foo<'X>() { ... }`).
     RegionParameter,
 
-    // Identifies an unboxed closure
-    UnboxedClosureSource
+    // Identifies a closure
+    ClosureSource
 }
 
 // type conv_did = impl FnMut(DefIdSource, ast::DefId) -> ast::DefId;
@@ -76,13 +76,13 @@ fn peek(st: &PState) -> char {
 
 fn next(st: &mut PState) -> char {
     let ch = st.data[st.pos] as char;
-    st.pos = st.pos + 1u;
+    st.pos = st.pos + 1;
     return ch;
 }
 
 fn next_byte(st: &mut PState) -> u8 {
     let b = st.data[st.pos];
-    st.pos = st.pos + 1u;
+    st.pos = st.pos + 1;
     return b;
 }
 
@@ -132,7 +132,7 @@ pub fn parse_state_from_data<'a, 'tcx>(data: &'a [u8], crate_num: ast::CrateNum,
 fn data_log_string(data: &[u8], pos: uint) -> String {
     let mut buf = String::new();
     buf.push_str("<<");
-    for i in range(pos, data.len()) {
+    for i in pos..data.len() {
         let c = data[i];
         if c > 0x20 && c <= 0x7F {
             buf.push(c as char);
@@ -243,26 +243,13 @@ fn parse_size(st: &mut PState) -> Option<uint> {
     }
 }
 
-fn parse_trait_store_<F>(st: &mut PState, conv: &mut F) -> ty::TraitStore where
-    F: FnMut(DefIdSource, ast::DefId) -> ast::DefId,
-{
-    match next(st) {
-        '~' => ty::UniqTraitStore,
-        '&' => ty::RegionTraitStore(parse_region_(st, conv), parse_mutability(st)),
-        c => {
-            st.tcx.sess.bug(&format!("parse_trait_store(): bad input '{}'",
-                                    c)[])
-        }
-    }
-}
-
 fn parse_vec_per_param_space<'a, 'tcx, T, F>(st: &mut PState<'a, 'tcx>,
                                              mut f: F)
                                              -> VecPerParamSpace<T> where
     F: FnMut(&mut PState<'a, 'tcx>) -> T,
 {
     let mut r = VecPerParamSpace::empty();
-    for &space in subst::ParamSpace::all().iter() {
+    for &space in &subst::ParamSpace::all() {
         assert_eq!(next(st), '[');
         while peek(st) != ']' {
             r.push(space, f(st));
@@ -362,7 +349,7 @@ fn parse_region_<F>(st: &mut PState, conv: &mut F) -> ty::Region where
       }
       'f' => {
         assert_eq!(next(st), '[');
-        let scope = parse_scope(st);
+        let scope = parse_destruction_scope_data(st);
         assert_eq!(next(st), '|');
         let br = parse_bound_region_(st, conv);
         assert_eq!(next(st), ']');
@@ -390,8 +377,25 @@ fn parse_scope(st: &mut PState) -> region::CodeExtent {
             let node_id = parse_uint(st) as ast::NodeId;
             region::CodeExtent::Misc(node_id)
         }
+        'D' => {
+            let node_id = parse_uint(st) as ast::NodeId;
+            region::CodeExtent::DestructionScope(node_id)
+        }
+        'B' => {
+            let node_id = parse_uint(st) as ast::NodeId;
+            let first_stmt_index = parse_uint(st);
+            let block_remainder = region::BlockRemainder {
+                block: node_id, first_statement_index: first_stmt_index,
+            };
+            region::CodeExtent::Remainder(block_remainder)
+        }
         _ => panic!("parse_scope: bad input")
     }
+}
+
+fn parse_destruction_scope_data(st: &mut PState) -> region::DestructionScopeData {
+    let node_id = parse_uint(st) as ast::NodeId;
+    region::DestructionScopeData::new(node_id)
 }
 
 fn parse_opt<'a, 'tcx, T, F>(st: &mut PState<'a, 'tcx>, f: F) -> Option<T> where
@@ -503,7 +507,7 @@ fn parse_ty_<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>, conv: &mut F) -> Ty<'tcx> w
         assert_eq!(next(st), '[');
         let mut params = Vec::new();
         while peek(st) != ']' { params.push(parse_ty_(st, conv)); }
-        st.pos = st.pos + 1u;
+        st.pos = st.pos + 1;
         return ty::mk_tup(tcx, params);
       }
       'F' => {
@@ -550,17 +554,17 @@ fn parse_ty_<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>, conv: &mut F) -> Ty<'tcx> w
       }
       'k' => {
           assert_eq!(next(st), '[');
-          let did = parse_def_(st, UnboxedClosureSource, conv);
+          let did = parse_def_(st, ClosureSource, conv);
           let region = parse_region_(st, conv);
           let substs = parse_substs_(st, conv);
           assert_eq!(next(st), ']');
-          return ty::mk_unboxed_closure(st.tcx, did,
+          return ty::mk_closure(st.tcx, did,
                   st.tcx.mk_region(region), st.tcx.mk_substs(substs));
       }
       'P' => {
           assert_eq!(next(st), '[');
           let trait_ref = parse_trait_ref_(st, conv);
-          let name = token::intern(parse_str(st, ']').as_slice());
+          let name = token::intern(&parse_str(st, ']'));
           return ty::mk_projection(tcx, trait_ref, name);
       }
       'e' => {
@@ -595,7 +599,7 @@ fn parse_uint(st: &mut PState) -> uint {
     loop {
         let cur = peek(st);
         if cur < '0' || cur > '9' { return n; }
-        st.pos = st.pos + 1u;
+        st.pos = st.pos + 1;
         n *= 10;
         n += (cur as uint) - ('0' as uint);
     };
@@ -613,15 +617,15 @@ fn parse_param_space(st: &mut PState) -> subst::ParamSpace {
 }
 
 fn parse_hex(st: &mut PState) -> uint {
-    let mut n = 0u;
+    let mut n = 0;
     loop {
         let cur = peek(st);
         if (cur < '0' || cur > '9') && (cur < 'a' || cur > 'f') { return n; }
-        st.pos = st.pos + 1u;
-        n *= 16u;
+        st.pos = st.pos + 1;
+        n *= 16;
         if '0' <= cur && cur <= '9' {
             n += (cur as uint) - ('0' as uint);
-        } else { n += 10u + (cur as uint) - ('a' as uint); }
+        } else { n += 10 + (cur as uint) - ('a' as uint); }
     };
 }
 
@@ -637,16 +641,8 @@ fn parse_abi_set(st: &mut PState) -> abi::Abi {
     assert_eq!(next(st), '[');
     scan(st, |c| c == ']', |bytes| {
         let abi_str = str::from_utf8(bytes).unwrap();
-        abi::lookup(&abi_str[]).expect(abi_str)
+        abi::lookup(&abi_str[..]).expect(abi_str)
     })
-}
-
-fn parse_onceness(c: char) -> ast::Onceness {
-    match c {
-        'o' => ast::Once,
-        'm' => ast::Many,
-        _ => panic!("parse_onceness: bad onceness")
-    }
 }
 
 fn parse_closure_ty<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>,
@@ -661,16 +657,10 @@ fn parse_closure_ty_<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>,
     F: FnMut(DefIdSource, ast::DefId) -> ast::DefId,
 {
     let unsafety = parse_unsafety(next(st));
-    let onceness = parse_onceness(next(st));
-    let store = parse_trait_store_(st, conv);
-    let bounds = parse_existential_bounds_(st, conv);
     let sig = parse_sig_(st, conv);
     let abi = parse_abi_set(st);
     ty::ClosureTy {
         unsafety: unsafety,
-        onceness: onceness,
-        store: store,
-        bounds: bounds,
         sig: sig,
         abi: abi,
     }
@@ -705,7 +695,7 @@ fn parse_sig_<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>, conv: &mut F) -> ty::PolyF
     while peek(st) != ']' {
         inputs.push(parse_ty_(st, conv));
     }
-    st.pos += 1u; // eat the ']'
+    st.pos += 1; // eat the ']'
     let variadic = match next(st) {
         'V' => true,
         'N' => false,
@@ -713,7 +703,7 @@ fn parse_sig_<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>, conv: &mut F) -> ty::PolyF
     };
     let output = match peek(st) {
         'z' => {
-          st.pos += 1u;
+          st.pos += 1;
           ty::FnDiverging
         }
         _ => ty::FnConverging(parse_ty_(st, conv))
@@ -725,23 +715,27 @@ fn parse_sig_<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>, conv: &mut F) -> ty::PolyF
 
 // Rust metadata parsing
 pub fn parse_def_id(buf: &[u8]) -> ast::DefId {
-    let mut colon_idx = 0u;
+    let mut colon_idx = 0;
     let len = buf.len();
-    while colon_idx < len && buf[colon_idx] != ':' as u8 { colon_idx += 1u; }
+    while colon_idx < len && buf[colon_idx] != ':' as u8 { colon_idx += 1; }
     if colon_idx == len {
         error!("didn't find ':' when parsing def id");
         panic!();
     }
 
-    let crate_part = &buf[0u..colon_idx];
-    let def_part = &buf[(colon_idx + 1u)..len];
+    let crate_part = &buf[0..colon_idx];
+    let def_part = &buf[colon_idx + 1..len];
 
-    let crate_num = match str::from_utf8(crate_part).ok().and_then(|s| s.parse::<uint>()) {
+    let crate_num = match str::from_utf8(crate_part).ok().and_then(|s| {
+        s.parse::<uint>().ok()
+    }) {
        Some(cn) => cn as ast::CrateNum,
        None => panic!("internal error: parse_def_id: crate number expected, found {:?}",
                      crate_part)
     };
-    let def_num = match str::from_utf8(def_part).ok().and_then(|s| s.parse::<uint>()) {
+    let def_num = match str::from_utf8(def_part).ok().and_then(|s| {
+        s.parse::<uint>().ok()
+    }) {
        Some(dn) => dn as ast::NodeId,
        None => panic!("internal error: parse_def_id: id expected, found {:?}",
                      def_part)
@@ -796,7 +790,7 @@ fn parse_projection_predicate_<'a,'tcx, F>(
     ty::ProjectionPredicate {
         projection_ty: ty::ProjectionTy {
             trait_ref: parse_trait_ref_(st, conv),
-            item_name: token::str_to_ident(parse_str(st, '|').as_slice()).name,
+            item_name: token::str_to_ident(&parse_str(st, '|')).name,
         },
         ty: parse_ty_(st, conv),
     }
@@ -830,6 +824,7 @@ fn parse_type_param_def_<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>, conv: &mut F)
     assert_eq!(next(st), '|');
     let bounds = parse_bounds_(st, conv);
     let default = parse_opt(st, |st| parse_ty_(st, conv));
+    let object_lifetime_default = parse_object_lifetime_default(st, conv);
 
     ty::TypeParameterDef {
         name: name,
@@ -837,7 +832,24 @@ fn parse_type_param_def_<'a, 'tcx, F>(st: &mut PState<'a, 'tcx>, conv: &mut F)
         space: space,
         index: index,
         bounds: bounds,
-        default: default
+        default: default,
+        object_lifetime_default: object_lifetime_default,
+    }
+}
+
+fn parse_object_lifetime_default<'a,'tcx, F>(st: &mut PState<'a,'tcx>,
+                                             conv: &mut F)
+                                             -> Option<ty::ObjectLifetimeDefault>
+    where F: FnMut(DefIdSource, ast::DefId) -> ast::DefId,
+{
+    match next(st) {
+        'n' => None,
+        'a' => Some(ty::ObjectLifetimeDefault::Ambiguous),
+        's' => {
+            let region = parse_region_(st, conv);
+            Some(ty::ObjectLifetimeDefault::Specific(region))
+        }
+        _ => panic!("parse_object_lifetime_default: bad input")
     }
 }
 

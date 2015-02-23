@@ -19,8 +19,8 @@ pub use self::EntryOrExit::*;
 use middle::cfg;
 use middle::cfg::CFGIndex;
 use middle::ty;
-use std::io;
-use std::uint;
+use std::old_io;
+use std::usize;
 use std::iter::repeat;
 use syntax::ast;
 use syntax::ast_util::IdRange;
@@ -28,7 +28,7 @@ use syntax::visit;
 use syntax::print::{pp, pprust};
 use util::nodemap::NodeMap;
 
-#[derive(Copy, Show)]
+#[derive(Copy, Debug)]
 pub enum EntryOrExit {
     Entry,
     Exit,
@@ -48,7 +48,7 @@ pub struct DataFlowContext<'a, 'tcx: 'a, O> {
     bits_per_id: uint,
 
     /// number of words we will use to store bits_per_id.
-    /// equal to bits_per_id/uint::BITS rounded up.
+    /// equal to bits_per_id/usize::BITS rounded up.
     words_per_id: uint,
 
     // mapping from node to cfg node index
@@ -89,7 +89,7 @@ struct PropagationContext<'a, 'b: 'a, 'tcx: 'b, O: 'a> {
 }
 
 fn to_cfgidx_or_die(id: ast::NodeId, index: &NodeMap<CFGIndex>) -> CFGIndex {
-    let opt_cfgindex = index.get(&id).map(|&i|i);
+    let opt_cfgindex = index.get(&id).cloned();
     opt_cfgindex.unwrap_or_else(|| {
         panic!("nodeid_to_index does not have entry for NodeId {}", id);
     })
@@ -105,7 +105,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
 impl<'a, 'tcx, O:DataFlowOperator> pprust::PpAnn for DataFlowContext<'a, 'tcx, O> {
     fn pre(&self,
            ps: &mut pprust::State,
-           node: pprust::AnnNode) -> io::IoResult<()> {
+           node: pprust::AnnNode) -> old_io::IoResult<()> {
         let id = match node {
             pprust::NodeIdent(_) | pprust::NodeName(_) => 0,
             pprust::NodeExpr(expr) => expr.id,
@@ -118,17 +118,17 @@ impl<'a, 'tcx, O:DataFlowOperator> pprust::PpAnn for DataFlowContext<'a, 'tcx, O
             assert!(self.bits_per_id > 0);
             let cfgidx = to_cfgidx_or_die(id, &self.nodeid_to_index);
             let (start, end) = self.compute_id_range(cfgidx);
-            let on_entry = self.on_entry.slice(start, end);
+            let on_entry = &self.on_entry[start.. end];
             let entry_str = bits_to_string(on_entry);
 
-            let gens = self.gens.slice(start, end);
+            let gens = &self.gens[start.. end];
             let gens_str = if gens.iter().any(|&u| u != 0) {
                 format!(" gen: {}", bits_to_string(gens))
             } else {
                 "".to_string()
             };
 
-            let kills = self.kills.slice(start, end);
+            let kills = &self.kills[start .. end];
             let kills_str = if kills.iter().any(|&u| u != 0) {
                 format!(" kill: {}", bits_to_string(kills))
             } else {
@@ -145,7 +145,7 @@ impl<'a, 'tcx, O:DataFlowOperator> pprust::PpAnn for DataFlowContext<'a, 'tcx, O
 
 fn build_nodeid_to_index(decl: Option<&ast::FnDecl>,
                          cfg: &cfg::CFG) -> NodeMap<CFGIndex> {
-    let mut index = NodeMap::new();
+    let mut index = NodeMap();
 
     // FIXME (#6298): Would it be better to fold formals from decl
     // into cfg itself?  i.e. introduce a fn-based flow-graph in
@@ -193,7 +193,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
                oper: O,
                id_range: IdRange,
                bits_per_id: uint) -> DataFlowContext<'a, 'tcx, O> {
-        let words_per_id = (bits_per_id + uint::BITS - 1) / uint::BITS;
+        let words_per_id = (bits_per_id + usize::BITS - 1) / usize::BITS;
         let num_nodes = cfg.graph.all_nodes().len();
 
         debug!("DataFlowContext::new(analysis_name: {}, id_range={:?}, \
@@ -202,7 +202,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
                analysis_name, id_range, bits_per_id, words_per_id,
                num_nodes);
 
-        let entry = if oper.initial_value() { uint::MAX } else {0};
+        let entry = if oper.initial_value() { usize::MAX } else {0};
 
         let gens: Vec<_> = repeat(0).take(num_nodes * words_per_id).collect();
         let kills: Vec<_> = repeat(0).take(num_nodes * words_per_id).collect();
@@ -232,7 +232,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
 
         let cfgidx = to_cfgidx_or_die(id, &self.nodeid_to_index);
         let (start, end) = self.compute_id_range(cfgidx);
-        let gens = self.gens.slice_mut(start, end);
+        let gens = &mut self.gens[start.. end];
         set_bit(gens, bit);
     }
 
@@ -245,7 +245,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
 
         let cfgidx = to_cfgidx_or_die(id, &self.nodeid_to_index);
         let (start, end) = self.compute_id_range(cfgidx);
-        let kills = self.kills.slice_mut(start, end);
+        let kills = &mut self.kills[start.. end];
         set_bit(kills, bit);
     }
 
@@ -256,9 +256,9 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
         assert!(self.bits_per_id > 0);
 
         let (start, end) = self.compute_id_range(cfgidx);
-        let gens = self.gens.slice(start, end);
+        let gens = &self.gens[start.. end];
         bitwise(bits, gens, &Union);
-        let kills = self.kills.slice(start, end);
+        let kills = &self.kills[start.. end];
         bitwise(bits, kills, &Subtract);
 
         debug!("{} apply_gen_kill(cfgidx={:?}, bits={}) [after]",
@@ -304,15 +304,15 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
         }
 
         let (start, end) = self.compute_id_range(cfgidx);
-        let on_entry = self.on_entry.slice(start, end);
+        let on_entry = &self.on_entry[start.. end];
         let temp_bits;
         let slice = match e {
             Entry => on_entry,
             Exit => {
                 let mut t = on_entry.to_vec();
-                self.apply_gen_kill(cfgidx, t.as_mut_slice());
+                self.apply_gen_kill(cfgidx, &mut t);
                 temp_bits = t;
-                &temp_bits[]
+                &temp_bits[..]
             }
         };
         debug!("{} each_bit_for_node({:?}, cfgidx={:?}) bits={}",
@@ -336,7 +336,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
 
         let cfgidx = to_cfgidx_or_die(id, &self.nodeid_to_index);
         let (start, end) = self.compute_id_range(cfgidx);
-        let gens = self.gens.slice(start, end);
+        let gens = &self.gens[start.. end];
         debug!("{} each_gen_bit(id={}, gens={})",
                self.analysis_name, id, bits_to_string(gens));
         self.each_bit(gens, f)
@@ -351,13 +351,13 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
 
         for (word_index, &word) in words.iter().enumerate() {
             if word != 0 {
-                let base_index = word_index * uint::BITS;
-                for offset in range(0u, uint::BITS) {
+                let base_index = word_index * usize::BITS;
+                for offset in 0..usize::BITS {
                     let bit = 1 << offset;
                     if (word & bit) != 0 {
                         // NB: we round up the total number of bits
                         // that we store in any given bit set so that
-                        // it is an even multiple of uint::BITS.  This
+                        // it is an even multiple of usize::BITS.  This
                         // means that there may be some stray bits at
                         // the end that do not correspond to any
                         // actual value.  So before we callback, check
@@ -396,16 +396,16 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
         cfg.graph.each_edge(|_edge_index, edge| {
             let flow_exit = edge.source();
             let (start, end) = self.compute_id_range(flow_exit);
-            let mut orig_kills = self.kills.slice(start, end).to_vec();
+            let mut orig_kills = self.kills[start.. end].to_vec();
 
             let mut changed = false;
-            for &node_id in edge.data.exiting_scopes.iter() {
-                let opt_cfg_idx = self.nodeid_to_index.get(&node_id).map(|&i|i);
+            for &node_id in &edge.data.exiting_scopes {
+                let opt_cfg_idx = self.nodeid_to_index.get(&node_id).cloned();
                 match opt_cfg_idx {
                     Some(cfg_idx) => {
                         let (start, end) = self.compute_id_range(cfg_idx);
-                        let kills = self.kills.slice(start, end);
-                        if bitwise(orig_kills.as_mut_slice(), kills, &Union) {
+                        let kills = &self.kills[start.. end];
+                        if bitwise(&mut orig_kills, kills, &Union) {
                             changed = true;
                         }
                     }
@@ -418,10 +418,10 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
             }
 
             if changed {
-                let bits = self.kills.slice_mut(start, end);
+                let bits = &mut self.kills[start.. end];
                 debug!("{} add_kills_from_flow_exits flow_exit={:?} bits={} [before]",
                        self.analysis_name, flow_exit, mut_bits_to_string(bits));
-                bits.clone_from_slice(&orig_kills[]);
+                bits.clone_from_slice(&orig_kills[..]);
                 debug!("{} add_kills_from_flow_exits flow_exit={:?} bits={} [after]",
                        self.analysis_name, flow_exit, mut_bits_to_string(bits));
             }
@@ -447,26 +447,26 @@ impl<'a, 'tcx, O:DataFlowOperator+Clone+'static> DataFlowContext<'a, 'tcx, O> {
                 changed: true
             };
 
-            let mut temp: Vec<_> = repeat(0u).take(words_per_id).collect();
+            let mut temp: Vec<_> = repeat(0).take(words_per_id).collect();
             while propcx.changed {
                 propcx.changed = false;
-                propcx.reset(temp.as_mut_slice());
-                propcx.walk_cfg(cfg, temp.as_mut_slice());
+                propcx.reset(&mut temp);
+                propcx.walk_cfg(cfg, &mut temp);
             }
         }
 
         debug!("Dataflow result for {}:", self.analysis_name);
         debug!("{}", {
-            self.pretty_print_to(box io::stderr(), blk).unwrap();
+            self.pretty_print_to(box old_io::stderr(), blk).unwrap();
             ""
         });
     }
 
-    fn pretty_print_to(&self, wr: Box<io::Writer+'static>,
-                       blk: &ast::Block) -> io::IoResult<()> {
+    fn pretty_print_to(&self, wr: Box<old_io::Writer+'static>,
+                       blk: &ast::Block) -> old_io::IoResult<()> {
         let mut ps = pprust::rust_printer_annotated(wr, self);
         try!(ps.cbox(pprust::indent_unit));
-        try!(ps.ibox(0u));
+        try!(ps.ibox(0));
         try!(ps.print_block(blk));
         pp::eof(&mut ps.s)
     }
@@ -487,7 +487,7 @@ impl<'a, 'b, 'tcx, O:DataFlowOperator> PropagationContext<'a, 'b, 'tcx, O> {
             let (start, end) = self.dfcx.compute_id_range(node_index);
 
             // Initialize local bitvector with state on-entry.
-            in_out.clone_from_slice(self.dfcx.on_entry.slice(start, end));
+            in_out.clone_from_slice(&self.dfcx.on_entry[start.. end]);
 
             // Compute state on-exit by applying transfer function to
             // state on-entry.
@@ -500,8 +500,8 @@ impl<'a, 'b, 'tcx, O:DataFlowOperator> PropagationContext<'a, 'b, 'tcx, O> {
     }
 
     fn reset(&mut self, bits: &mut [uint]) {
-        let e = if self.dfcx.oper.initial_value() {uint::MAX} else {0};
-        for b in bits.iter_mut() {
+        let e = if self.dfcx.oper.initial_value() {usize::MAX} else {0};
+        for b in bits {
             *b = e;
         }
     }
@@ -528,13 +528,13 @@ impl<'a, 'b, 'tcx, O:DataFlowOperator> PropagationContext<'a, 'b, 'tcx, O> {
         let (start, end) = self.dfcx.compute_id_range(cfgidx);
         let changed = {
             // (scoping mutable borrow of self.dfcx.on_entry)
-            let on_entry = self.dfcx.on_entry.slice_mut(start, end);
+            let on_entry = &mut self.dfcx.on_entry[start.. end];
             bitwise(on_entry, pred_bits, &self.dfcx.oper)
         };
         if changed {
             debug!("{} changed entry set for {:?} to {}",
                    self.dfcx.analysis_name, cfgidx,
-                   bits_to_string(self.dfcx.on_entry.slice(start, end)));
+                   bits_to_string(&self.dfcx.on_entry[start.. end]));
             self.changed = true;
         }
     }
@@ -550,9 +550,9 @@ fn bits_to_string(words: &[uint]) -> String {
 
     // Note: this is a little endian printout of bytes.
 
-    for &word in words.iter() {
+    for &word in words {
         let mut v = word;
-        for _ in range(0u, uint::BYTES) {
+        for _ in 0..usize::BYTES {
             result.push(sep);
             result.push_str(&format!("{:02x}", v & 0xFF)[]);
             v >>= 8;
@@ -581,8 +581,8 @@ fn bitwise<Op:BitwiseOperator>(out_vec: &mut [uint],
 fn set_bit(words: &mut [uint], bit: uint) -> bool {
     debug!("set_bit: words={} bit={}",
            mut_bits_to_string(words), bit_str(bit));
-    let word = bit / uint::BITS;
-    let bit_in_word = bit % uint::BITS;
+    let word = bit / usize::BITS;
+    let bit_in_word = bit % usize::BITS;
     let bit_mask = 1 << bit_in_word;
     debug!("word={} bit_in_word={} bit_mask={}", word, bit_in_word, word);
     let oldv = words[word];
@@ -593,7 +593,7 @@ fn set_bit(words: &mut [uint], bit: uint) -> bool {
 
 fn bit_str(bit: uint) -> String {
     let byte = bit >> 8;
-    let lobits = 1u << (bit & 0xFF);
+    let lobits = 1 << (bit & 0xFF);
     format!("[{}:{}-{:02x}]", bit, byte, lobits)
 }
 

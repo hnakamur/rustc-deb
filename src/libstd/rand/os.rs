@@ -19,8 +19,8 @@ mod imp {
 
     use self::OsRngInner::*;
 
-    use io::{IoResult, File};
-    use path::Path;
+    use old_io::{IoResult, File};
+    use old_path::Path;
     use rand::Rng;
     use rand::reader::ReaderRng;
     use result::Result::Ok;
@@ -32,7 +32,8 @@ mod imp {
               any(target_arch = "x86_64",
                   target_arch = "x86",
                   target_arch = "arm",
-                  target_arch = "aarch64")))]
+                  target_arch = "aarch64",
+                  target_arch = "powerpc")))]
     fn getrandom(buf: &mut [u8]) -> libc::c_long {
         extern "C" {
             fn syscall(number: libc::c_long, ...) -> libc::c_long;
@@ -44,9 +45,11 @@ mod imp {
         const NR_GETRANDOM: libc::c_long = 355;
         #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
         const NR_GETRANDOM: libc::c_long = 384;
+        #[cfg(target_arch = "powerpc")]
+        const NR_GETRANDOM: libc::c_long = 384;
 
         unsafe {
-            syscall(NR_GETRANDOM, buf.as_mut_ptr(), buf.len(), 0u)
+            syscall(NR_GETRANDOM, buf.as_mut_ptr(), buf.len(), 0)
         }
     }
 
@@ -54,14 +57,15 @@ mod imp {
                   any(target_arch = "x86_64",
                       target_arch = "x86",
                       target_arch = "arm",
-                      target_arch = "aarch64"))))]
+                      target_arch = "aarch64",
+                      target_arch = "powerpc"))))]
     fn getrandom(_buf: &mut [u8]) -> libc::c_long { -1 }
 
     fn getrandom_fill_bytes(v: &mut [u8]) {
         let mut read = 0;
         let len = v.len();
         while read < len {
-            let result = getrandom(v.slice_from_mut(read));
+            let result = getrandom(&mut v[read..]);
             if result == -1 {
                 let err = errno() as libc::c_int;
                 if err == libc::EINTR {
@@ -70,7 +74,7 @@ mod imp {
                     panic!("unexpected getrandom error: {}", err);
                 }
             } else {
-                read += result as uint;
+                read += result as usize;
             }
         }
     }
@@ -91,7 +95,8 @@ mod imp {
               any(target_arch = "x86_64",
                   target_arch = "x86",
                   target_arch = "arm",
-                  target_arch = "aarch64")))]
+                  target_arch = "aarch64",
+                  target_arch = "powerpc")))]
     fn is_getrandom_available() -> bool {
         use sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 
@@ -119,7 +124,8 @@ mod imp {
                   any(target_arch = "x86_64",
                       target_arch = "x86",
                       target_arch = "arm",
-                      target_arch = "aarch64"))))]
+                      target_arch = "aarch64",
+                      target_arch = "powerpc"))))]
     fn is_getrandom_available() -> bool { false }
 
     /// A random number generator that retrieves randomness straight from
@@ -181,7 +187,7 @@ mod imp {
 mod imp {
     extern crate libc;
 
-    use io::{IoResult};
+    use old_io::{IoResult};
     use marker::Sync;
     use mem;
     use os;
@@ -200,7 +206,6 @@ mod imp {
     /// - iOS: calls SecRandomCopyBytes as /dev/(u)random is sandboxed.
     ///
     /// This does not block.
-    #[allow(missing_copy_implementations)]
     pub struct OsRng {
         // dummy field to ensure that this struct cannot be constructed outside of this module
         _dummy: (),
@@ -253,7 +258,7 @@ mod imp {
 mod imp {
     extern crate libc;
 
-    use io::{IoResult, IoError};
+    use old_io::{IoResult, IoError};
     use mem;
     use ops::Drop;
     use os;
@@ -355,7 +360,7 @@ mod test {
     use sync::mpsc::channel;
     use rand::Rng;
     use super::OsRng;
-    use thread::Thread;
+    use thread;
 
     #[test]
     fn test_os_rng() {
@@ -372,33 +377,33 @@ mod test {
     fn test_os_rng_tasks() {
 
         let mut txs = vec!();
-        for _ in range(0u, 20) {
+        for _ in 0..20 {
             let (tx, rx) = channel();
             txs.push(tx);
 
-            Thread::spawn(move|| {
+            thread::spawn(move|| {
                 // wait until all the tasks are ready to go.
                 rx.recv().unwrap();
 
                 // deschedule to attempt to interleave things as much
                 // as possible (XXX: is this a good test?)
                 let mut r = OsRng::new().unwrap();
-                Thread::yield_now();
+                thread::yield_now();
                 let mut v = [0u8; 1000];
 
-                for _ in range(0u, 100) {
+                for _ in 0..100 {
                     r.next_u32();
-                    Thread::yield_now();
+                    thread::yield_now();
                     r.next_u64();
-                    Thread::yield_now();
+                    thread::yield_now();
                     r.fill_bytes(&mut v);
-                    Thread::yield_now();
+                    thread::yield_now();
                 }
             });
         }
 
         // start all the tasks
-        for tx in txs.iter() {
+        for tx in &txs {
             tx.send(()).unwrap();
         }
     }

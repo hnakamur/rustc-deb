@@ -24,17 +24,11 @@ use ptr::P;
 pub enum ObsoleteSyntax {
     Sized,
     ForSized,
-    OwnedType,
-    OwnedExpr,
-    OwnedPattern,
-    OwnedVector,
-    OwnedSelf,
-    ImportRenaming,
-    SubsliceMatch,
-    ExternCrateRenaming,
     ProcType,
     ProcExpr,
     ClosureType,
+    ClosureKind,
+    EmptyIndex,
 }
 
 pub trait ParserObsoleteMethods {
@@ -47,7 +41,8 @@ pub trait ParserObsoleteMethods {
               sp: Span,
               kind: ObsoleteSyntax,
               kind_str: &str,
-              desc: &str);
+              desc: &str,
+              error: bool);
     fn is_obsolete_ident(&mut self, ident: &str) -> bool;
     fn eat_obsolete_ident(&mut self, ident: &str) -> bool;
 }
@@ -55,63 +50,46 @@ pub trait ParserObsoleteMethods {
 impl<'a> ParserObsoleteMethods for parser::Parser<'a> {
     /// Reports an obsolete syntax non-fatal error.
     fn obsolete(&mut self, sp: Span, kind: ObsoleteSyntax) {
-        let (kind_str, desc) = match kind {
+        let (kind_str, desc, error) = match kind {
             ObsoleteSyntax::ForSized => (
                 "for Sized?",
                 "no longer required. Traits (and their `Self` type) do not have the `Sized` bound \
                  by default",
+                true,
             ),
             ObsoleteSyntax::ProcType => (
                 "the `proc` type",
                 "use unboxed closures instead",
+                true,
             ),
             ObsoleteSyntax::ProcExpr => (
                 "`proc` expression",
                 "use a `move ||` expression instead",
-            ),
-            ObsoleteSyntax::OwnedType => (
-                "`~` notation for owned pointers",
-                "use `Box<T>` in `std::owned` instead"
-            ),
-            ObsoleteSyntax::OwnedExpr => (
-                "`~` notation for owned pointer allocation",
-                "use the `box` operator instead of `~`"
-            ),
-            ObsoleteSyntax::OwnedPattern => (
-                "`~` notation for owned pointer patterns",
-                "use the `box` operator instead of `~`"
-            ),
-            ObsoleteSyntax::OwnedVector => (
-                "`~[T]` is no longer a type",
-                "use the `Vec` type instead"
-            ),
-            ObsoleteSyntax::OwnedSelf => (
-                "`~self` is no longer supported",
-                "write `self: Box<Self>` instead"
-            ),
-            ObsoleteSyntax::ImportRenaming => (
-                "`use foo = bar` syntax",
-                "write `use bar as foo` instead"
-            ),
-            ObsoleteSyntax::SubsliceMatch => (
-                "subslice match syntax",
-                "instead of `..xs`, write `xs..` in a pattern"
-            ),
-            ObsoleteSyntax::ExternCrateRenaming => (
-                "`extern crate foo = bar` syntax",
-                "write `extern crate bar as foo` instead"
+                true,
             ),
             ObsoleteSyntax::ClosureType => (
-                "`|uint| -> bool` closure type syntax",
-                "use unboxed closures instead, no type annotation needed"
+                "`|usize| -> bool` closure type",
+                "use unboxed closures instead, no type annotation needed",
+                true,
+            ),
+            ObsoleteSyntax::ClosureKind => (
+                "`:`, `&mut:`, or `&:`",
+                "rely on inference instead",
+                true,
             ),
             ObsoleteSyntax::Sized => (
-                "`Sized? T` syntax for removing the `Sized` bound",
-                "write `T: ?Sized` instead"
+                "`Sized? T` for removing the `Sized` bound",
+                "write `T: ?Sized` instead",
+                true,
+            ),
+            ObsoleteSyntax::EmptyIndex => (
+                "[]",
+                "write `[..]` instead",
+                false, // warning for now
             ),
         };
 
-        self.report(sp, kind, kind_str, desc);
+        self.report(sp, kind, kind_str, desc, error);
     }
 
     /// Reports an obsolete syntax non-fatal error, and returns
@@ -125,9 +103,13 @@ impl<'a> ParserObsoleteMethods for parser::Parser<'a> {
               sp: Span,
               kind: ObsoleteSyntax,
               kind_str: &str,
-              desc: &str) {
-        self.span_err(sp,
-                      &format!("obsolete syntax: {}", kind_str)[]);
+              desc: &str,
+              error: bool) {
+        if error {
+            self.span_err(sp, &format!("obsolete syntax: {}", kind_str)[]);
+        } else {
+            self.span_warn(sp, &format!("obsolete syntax: {}", kind_str)[]);
+        }
 
         if !self.obsolete_set.contains(&kind) {
             self.sess

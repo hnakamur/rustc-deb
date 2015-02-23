@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-trait Trait {}
+trait Trait {
+    fn dummy(&self) { }
+}
 
 struct Foo<T:Trait> {
     x: T,
@@ -17,7 +19,7 @@ struct Foo<T:Trait> {
 fn main() {
     let foo = Foo {
     //~^ ERROR not implemented
-        x: 3is
+        x: 3
     };
 
     let baz: Foo<usize> = panic!();

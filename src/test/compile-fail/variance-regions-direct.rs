@@ -11,6 +11,8 @@
 // Test that we correctly infer variance for region parameters in
 // various self-contained types.
 
+#![feature(rustc_attrs)]
+
 // Regions that just appear in normal spots are contravariant:
 
 #[rustc_variance]
@@ -58,6 +60,7 @@ struct Test6<'a, 'b> { //~ ERROR regions=[[-, o];[];[]]
 
 #[rustc_variance]
 struct Test7<'a> { //~ ERROR regions=[[*];[];[]]
+    //~^ ERROR parameter `'a` is never used
     x: isize
 }
 

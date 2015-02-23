@@ -11,6 +11,8 @@
 // These are attributes of the implicit crate. Really this just needs to parse
 // for completeness since .rs files linked from .rc files support this
 // notation to specify their module's attributes
+
+#![feature(custom_attribute)]
 #![allow(unused_attribute)]
 #![attr1 = "val"]
 #![attr2 = "val"]
@@ -173,7 +175,7 @@ mod test_foreign_items {
     #![str = "s"]
     #![char = 'c']
     #![int = 100]
-    #![uint = 100u]
+    #![uint = 100_usize]
     #![mach_int = 100u32]
     #![float = 1.0]
     #![mach_float = 1.0f32]

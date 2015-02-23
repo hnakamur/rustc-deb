@@ -59,7 +59,7 @@ fn roundtrip<'a, T: Rand + Eq + Encodable<Encoder<'a>> +
     let mut w = Vec::new();
     let mut e = Encoder::new(&mut w);
     obj.encode(&mut e);
-    let doc = rbml::Doc::new(&w[]);
+    let doc = rbml::Doc::new(&w);
     let mut dec = Decoder::new(doc);
     let obj2 = Decodable::decode(&mut dec);
     assert!(obj == obj2);
@@ -71,7 +71,7 @@ pub fn main() {
     roundtrip::<C>();
     roundtrip::<D>();
 
-    for _ in range(0, 20) {
+    for _ in 0..20 {
         roundtrip::<E>();
         roundtrip::<F>();
         roundtrip::<G<int>>();

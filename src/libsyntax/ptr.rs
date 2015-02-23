@@ -36,9 +36,8 @@
 //!   implementation changes (using a special thread-local heap, for example).
 //!   Moreover, a switch to, e.g. `P<'a, T>` would be easy and mostly automated.
 
-use std::fmt::{self, Show};
+use std::fmt::{self, Display, Debug};
 use std::hash::{Hash, Hasher};
-#[cfg(stage0)] use std::hash::Writer;
 use std::ops::Deref;
 use std::ptr;
 
@@ -101,21 +100,26 @@ impl<T: PartialEq> PartialEq for P<T> {
 
 impl<T: Eq> Eq for P<T> {}
 
-impl<T: Show> Show for P<T> {
+impl<T: Debug> Debug for P<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (**self).fmt(f)
+        Debug::fmt(&**self, f)
+    }
+}
+impl<T: Display> Display for P<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&**self, f)
     }
 }
 
 #[cfg(stage0)]
-impl<S: Writer, T: Hash<S>> Hash<S> for P<T> {
+impl<S: Hasher, T: Hash<S>> Hash<S> for P<T> {
     fn hash(&self, state: &mut S) {
         (**self).hash(state);
     }
 }
 #[cfg(not(stage0))]
-impl<S: Hasher, T: Hash<S>> Hash<S> for P<T> {
-    fn hash(&self, state: &mut S) {
+impl<T: Hash> Hash for P<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         (**self).hash(state);
     }
 }

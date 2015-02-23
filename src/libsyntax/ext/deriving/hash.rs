@@ -14,7 +14,6 @@ use ext::base::ExtCtxt;
 use ext::build::AstBuilder;
 use ext::deriving::generic::*;
 use ext::deriving::generic::ty::*;
-use parse::token::InternedString;
 use ptr::P;
 
 pub fn expand_deriving_hash<F>(cx: &mut ExtCtxt,
@@ -25,36 +24,33 @@ pub fn expand_deriving_hash<F>(cx: &mut ExtCtxt,
     F: FnOnce(P<Item>),
 {
 
-    let path = Path::new_(vec!("std", "hash", "Hash"), None,
-                          vec!(box Literal(Path::new_local("__S"))), true);
-    let generics = LifetimeBounds {
-        lifetimes: Vec::new(),
-        bounds: vec!(("__S",
-                      vec!(Path::new(vec!("std", "hash", "Writer")),
-                           Path::new(vec!("std", "hash", "Hasher"))))),
-    };
-    let args = Path::new_local("__S");
-    let inline = cx.meta_word(span, InternedString::new("inline"));
-    let attrs = vec!(cx.attribute(span, inline));
+    let path = Path::new_(pathvec_std!(cx, core::hash::Hash), None,
+                          vec!(), true);
+    let arg = Path::new_local("__H");
     let hash_trait_def = TraitDef {
         span: span,
         attributes: Vec::new(),
         path: path,
         additional_bounds: Vec::new(),
-        generics: generics,
+        generics: LifetimeBounds::empty(),
         methods: vec!(
             MethodDef {
                 name: "hash",
-                generics: LifetimeBounds::empty(),
+                generics: LifetimeBounds {
+                    lifetimes: Vec::new(),
+                    bounds: vec![("__H",
+                                  vec![path_std!(cx, core::hash::Hasher)])],
+                },
                 explicit_self: borrowed_explicit_self(),
-                args: vec!(Ptr(box Literal(args), Borrowed(None, MutMutable))),
+                args: vec!(Ptr(box Literal(arg), Borrowed(None, MutMutable))),
                 ret_ty: nil_ty(),
-                attributes: attrs,
+                attributes: vec![],
                 combine_substructure: combine_substructure(box |a, b, c| {
                     hash_substructure(a, b, c)
                 })
             }
-        )
+        ),
+        associated_types: Vec::new(),
     };
 
     hash_trait_def.expand(cx, mitem, item, push);
@@ -63,11 +59,21 @@ pub fn expand_deriving_hash<F>(cx: &mut ExtCtxt,
 fn hash_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substructure) -> P<Expr> {
     let state_expr = match substr.nonself_args {
         [ref state_expr] => state_expr,
-        _ => cx.span_bug(trait_span, "incorrect number of arguments in `deriving(Hash)`")
+        _ => cx.span_bug(trait_span, "incorrect number of arguments in `derive(Hash)`")
     };
-    let hash_ident = substr.method_ident;
-    let call_hash = |&: span, thing_expr| {
-        let expr = cx.expr_method_call(span, thing_expr, hash_ident, vec!(state_expr.clone()));
+    let call_hash = |span, thing_expr| {
+        let hash_path = {
+            let strs = vec![
+                cx.ident_of_std("core"),
+                cx.ident_of("hash"),
+                cx.ident_of("Hash"),
+                cx.ident_of("hash"),
+            ];
+
+            cx.expr_path(cx.path_global(span, strs))
+        };
+        let ref_thing = cx.expr_addr_of(span, thing_expr);
+        let expr = cx.expr_call(span, hash_path, vec!(ref_thing, state_expr.clone()));
         cx.stmt_expr(expr)
     };
     let mut stmts = Vec::new();
@@ -79,22 +85,18 @@ fn hash_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substructure) 
             // iteration function.
             let discriminant = match variant.node.disr_expr {
                 Some(ref d) => d.clone(),
-                None => cx.expr_uint(trait_span, index)
+                None => cx.expr_usize(trait_span, index)
             };
 
             stmts.push(call_hash(trait_span, discriminant));
 
             fs
         }
-        _ => cx.span_bug(trait_span, "impossible substructure in `deriving(Hash)`")
+        _ => cx.span_bug(trait_span, "impossible substructure in `derive(Hash)`")
     };
 
-    for &FieldInfo { ref self_, span, .. } in fields.iter() {
+    for &FieldInfo { ref self_, span, .. } in fields {
         stmts.push(call_hash(span, self_.clone()));
-    }
-
-    if stmts.len() == 0 {
-        cx.span_bug(trait_span, "#[derive(Hash)] needs at least one field");
     }
 
     cx.expr_block(cx.block(trait_span, stmts, None))

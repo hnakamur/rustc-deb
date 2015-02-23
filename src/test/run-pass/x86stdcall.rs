@@ -1,4 +1,4 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -22,7 +22,7 @@ mod kernel32 {
 #[cfg(windows)]
 pub fn main() {
     unsafe {
-        let expected = 1234u;
+        let expected = 1234_usize;
         kernel32::SetLastError(expected);
         let actual = kernel32::GetLastError();
         println!("actual = {}", actual);
@@ -34,5 +34,6 @@ pub fn main() {
           target_os = "linux",
           target_os = "freebsd",
           target_os = "dragonfly",
+          target_os = "openbsd",
           target_os = "android"))]
 pub fn main() { }

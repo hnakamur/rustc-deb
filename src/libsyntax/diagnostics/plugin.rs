@@ -9,7 +9,8 @@
 // except according to those terms.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+
 use ast;
 use ast::{Ident, Name, TokenTree};
 use codemap::Span;
@@ -19,18 +20,18 @@ use parse::token;
 use ptr::P;
 
 thread_local! {
-    static REGISTERED_DIAGNOSTICS: RefCell<HashMap<Name, Option<Name>>> = {
-        RefCell::new(HashMap::new())
+    static REGISTERED_DIAGNOSTICS: RefCell<BTreeMap<Name, Option<Name>>> = {
+        RefCell::new(BTreeMap::new())
     }
 }
 thread_local! {
-    static USED_DIAGNOSTICS: RefCell<HashMap<Name, Span>> = {
-        RefCell::new(HashMap::new())
+    static USED_DIAGNOSTICS: RefCell<BTreeMap<Name, Span>> = {
+        RefCell::new(BTreeMap::new())
     }
 }
 
 fn with_registered_diagnostics<T, F>(f: F) -> T where
-    F: FnOnce(&mut HashMap<Name, Option<Name>>) -> T,
+    F: FnOnce(&mut BTreeMap<Name, Option<Name>>) -> T,
 {
     REGISTERED_DIAGNOSTICS.with(move |slot| {
         f(&mut *slot.borrow_mut())
@@ -38,7 +39,7 @@ fn with_registered_diagnostics<T, F>(f: F) -> T where
 }
 
 fn with_used_diagnostics<T, F>(f: F) -> T where
-    F: FnOnce(&mut HashMap<Name, Span>) -> T,
+    F: FnOnce(&mut BTreeMap<Name, Span>) -> T,
 {
     USED_DIAGNOSTICS.with(move |slot| {
         f(&mut *slot.borrow_mut())
@@ -57,13 +58,20 @@ pub fn expand_diagnostic_used<'cx>(ecx: &'cx mut ExtCtxt,
         match diagnostics.insert(code.name, span) {
             Some(previous_span) => {
                 ecx.span_warn(span, &format!(
-                    "diagnostic code {} already used", token::get_ident(code).get()
-                )[]);
+                    "diagnostic code {} already used", &token::get_ident(code)
+                ));
                 ecx.span_note(previous_span, "previous invocation");
             },
             None => ()
         }
         ()
+    });
+    with_registered_diagnostics(|diagnostics| {
+        if !diagnostics.contains_key(&code.name) {
+            ecx.span_err(span, &format!(
+                "used diagnostic code {} not registered", &token::get_ident(code)
+            ));
+        }
     });
     MacExpr::new(quote_expr!(ecx, ()))
 }
@@ -86,13 +94,13 @@ pub fn expand_register_diagnostic<'cx>(ecx: &'cx mut ExtCtxt,
     with_registered_diagnostics(|diagnostics| {
         if diagnostics.insert(code.name, description).is_some() {
             ecx.span_err(span, &format!(
-                "diagnostic code {} already registered", token::get_ident(*code).get()
-            )[]);
+                "diagnostic code {} already registered", &token::get_ident(*code)
+            ));
         }
     });
     let sym = Ident::new(token::gensym(&(
-        "__register_diagnostic_".to_string() + token::get_ident(*code).get()
-    )[]));
+        "__register_diagnostic_".to_string() + &token::get_ident(*code)
+    )));
     MacItems::new(vec![quote_item!(ecx, mod $sym {}).unwrap()].into_iter())
 }
 

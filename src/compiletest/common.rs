@@ -11,11 +11,11 @@ pub use self::Mode::*;
 
 use std::fmt;
 use std::str::FromStr;
-use regex::Regex;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Mode {
     CompileFail,
+    ParseFail,
     RunFail,
     RunPass,
     RunPassValgrind,
@@ -25,28 +25,29 @@ pub enum Mode {
     Codegen
 }
 
-impl Copy for Mode {}
-
 impl FromStr for Mode {
-    fn from_str(s: &str) -> Option<Mode> {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Mode, ()> {
         match s {
-          "compile-fail" => Some(CompileFail),
-          "run-fail" => Some(RunFail),
-          "run-pass" => Some(RunPass),
-          "run-pass-valgrind" => Some(RunPassValgrind),
-          "pretty" => Some(Pretty),
-          "debuginfo-lldb" => Some(DebugInfoLldb),
-          "debuginfo-gdb" => Some(DebugInfoGdb),
-          "codegen" => Some(Codegen),
-          _ => None,
+          "compile-fail" => Ok(CompileFail),
+          "parse-fail" => Ok(ParseFail),
+          "run-fail" => Ok(RunFail),
+          "run-pass" => Ok(RunPass),
+          "run-pass-valgrind" => Ok(RunPassValgrind),
+          "pretty" => Ok(Pretty),
+          "debuginfo-lldb" => Ok(DebugInfoLldb),
+          "debuginfo-gdb" => Ok(DebugInfoGdb),
+          "codegen" => Ok(Codegen),
+          _ => Err(()),
         }
     }
 }
 
-impl fmt::String for Mode {
+impl fmt::Display for Mode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::String::fmt(match *self {
+        fmt::Display::fmt(match *self {
             CompileFail => "compile-fail",
+            ParseFail => "parse-fail",
             RunFail => "run-fail",
             RunPass => "run-pass",
             RunPassValgrind => "run-pass-valgrind",
@@ -55,12 +56,6 @@ impl fmt::String for Mode {
             DebugInfoLldb => "debuginfo-lldb",
             Codegen => "codegen",
         }, f)
-    }
-}
-
-impl fmt::Show for Mode {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::String::fmt(self, f)
     }
 }
 
@@ -107,27 +102,10 @@ pub struct Config {
     pub run_ignored: bool,
 
     // Only run tests that match this filter
-    pub filter: Option<Regex>,
-
-    // Precompiled regex for finding expected errors in cfail
-    pub cfail_regex: Regex,
+    pub filter: Option<String>,
 
     // Write out a parseable log of tests that were run
     pub logfile: Option<Path>,
-
-    // Write out a json file containing any metrics of the run
-    pub save_metrics: Option<Path>,
-
-    // Write and ratchet a metrics file
-    pub ratchet_metrics: Option<Path>,
-
-    // Percent change in metrics to consider noise
-    pub ratchet_noise_percent: Option<f64>,
-
-    // "Shard" of the testsuite to pub run: this has the form of
-    // two numbers (a,b), and causes only those tests with
-    // positional order equal to a mod b to run.
-    pub test_shard: Option<(uint,uint)>,
 
     // A command line to prefix program execution with,
     // for running under valgrind

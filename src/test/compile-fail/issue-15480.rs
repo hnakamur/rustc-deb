@@ -10,11 +10,11 @@
 
 fn main() {
     let v = vec![
-        &3is
+        &3
 //~^ ERROR borrowed value does not live long enough
     ];
 
-    for &&x in v.iter() {
+    for &&x in &v {
         println!("{}", x + 3);
     }
 }

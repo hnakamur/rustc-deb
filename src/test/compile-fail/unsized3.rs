@@ -10,6 +10,7 @@
 
 // Test sized-ness checking in substitution within fn bodies..
 
+use std::marker;
 
 // Unbounded.
 fn f1<X: ?Sized>(x: &X) {
@@ -20,7 +21,9 @@ fn f2<X>(x: &X) {
 }
 
 // Bounded.
-trait T {}
+trait T {
+    fn foo(&self) { }
+}
 fn f3<X: ?Sized + T>(x: &X) {
     f4::<X>(x);
     //~^ ERROR the trait `core::marker::Sized` is not implemented
@@ -55,12 +58,12 @@ fn f8<X: ?Sized>(x1: &S<X>, x2: &S<X>) {
 
 // Test some tuples.
 fn f9<X: ?Sized>(x1: Box<S<X>>, x2: Box<E<X>>) {
-    f5(&(*x1, 34is));
+    f5(&(*x1, 34));
     //~^ ERROR the trait `core::marker::Sized` is not implemented
 }
 
 fn f10<X: ?Sized>(x1: Box<S<X>>, x2: Box<E<X>>) {
-    f5(&(32is, *x2));
+    f5(&(32, *x2));
     //~^ ERROR the trait `core::marker::Sized` is not implemented
 }
 

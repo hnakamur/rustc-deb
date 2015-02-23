@@ -22,9 +22,9 @@ use syntax::codemap;
 use syntax::diagnostic;
 use syntax::diagnostic::{Emitter, Handler, Level, mk_handler};
 
-use std::ffi::{self, CString};
-use std::io::Command;
-use std::io::fs;
+use std::ffi::{CStr, CString};
+use std::old_io::Command;
+use std::old_io::fs;
 use std::iter::Unfold;
 use std::ptr;
 use std::str;
@@ -47,14 +47,14 @@ pub fn llvm_err(handler: &diagnostic::Handler, msg: String) -> ! {
     unsafe {
         let cstr = llvm::LLVMRustGetLastError();
         if cstr == ptr::null() {
-            handler.fatal(&msg[]);
+            handler.fatal(&msg[..]);
         } else {
-            let err = ffi::c_str_to_bytes(&cstr);
-            let err = String::from_utf8_lossy(err.as_slice()).to_string();
+            let err = CStr::from_ptr(cstr).to_bytes();
+            let err = String::from_utf8_lossy(err).to_string();
             libc::free(cstr as *mut _);
             handler.fatal(&format!("{}: {}",
-                                  &msg[],
-                                  &err[])[]);
+                                  &msg[..],
+                                  &err[..])[]);
         }
     }
 }
@@ -67,11 +67,11 @@ pub fn write_output_file(
         output: &Path,
         file_type: llvm::FileType) {
     unsafe {
-        let output = CString::from_slice(output.as_vec());
+        let output_c = CString::new(output.as_vec()).unwrap();
         let result = llvm::LLVMRustWriteOutputFile(
-                target, pm, m, output.as_ptr(), file_type);
+                target, pm, m, output_c.as_ptr(), file_type);
         if !result {
-            llvm_err(handler, "could not write output".to_string());
+            llvm_err(handler, format!("could not write output to {}", output.display()));
         }
     }
 }
@@ -100,12 +100,12 @@ impl SharedEmitter {
 
     fn dump(&mut self, handler: &Handler) {
         let mut buffer = self.buffer.lock().unwrap();
-        for diag in buffer.iter() {
+        for diag in &*buffer {
             match diag.code {
                 Some(ref code) => {
                     handler.emit_with_code(None,
                                            &diag.msg[],
-                                           &code[],
+                                           &code[..],
                                            diag.lvl);
                 },
                 None => {
@@ -165,7 +165,7 @@ fn get_llvm_opt_level(optimize: config::OptLevel) -> llvm::CodeGenOptLevel {
 
 fn create_target_machine(sess: &Session) -> TargetMachineRef {
     let reloc_model_arg = match sess.opts.cg.relocation_model {
-        Some(ref s) => &s[],
+        Some(ref s) => &s[..],
         None => &sess.target.target.options.relocation_model[]
     };
     let reloc_model = match reloc_model_arg {
@@ -198,7 +198,7 @@ fn create_target_machine(sess: &Session) -> TargetMachineRef {
     let fdata_sections = ffunction_sections;
 
     let code_model_arg = match sess.opts.cg.code_model {
-        Some(ref s) => &s[],
+        Some(ref s) => &s[..],
         None => &sess.target.target.options.code_model[]
     };
 
@@ -221,13 +221,13 @@ fn create_target_machine(sess: &Session) -> TargetMachineRef {
     let triple = &sess.target.target.llvm_target[];
 
     let tm = unsafe {
-        let triple = CString::from_slice(triple.as_bytes());
+        let triple = CString::new(triple.as_bytes()).unwrap();
         let cpu = match sess.opts.cg.target_cpu {
-            Some(ref s) => s.as_slice(),
-            None => sess.target.target.options.cpu.as_slice()
+            Some(ref s) => &**s,
+            None => &*sess.target.target.options.cpu
         };
-        let cpu = CString::from_slice(cpu.as_bytes());
-        let features = CString::from_slice(target_feature(sess).as_bytes());
+        let cpu = CString::new(cpu.as_bytes()).unwrap();
+        let features = CString::new(target_feature(sess).as_bytes()).unwrap();
         llvm::LLVMRustCreateTargetMachine(
             triple.as_ptr(), cpu.as_ptr(), features.as_ptr(),
             code_model,
@@ -336,30 +336,36 @@ struct HandlerFreeVars<'a> {
     cgcx: &'a CodegenContext<'a>,
 }
 
+unsafe extern "C" fn report_inline_asm<'a, 'b>(cgcx: &'a CodegenContext<'a>,
+                                           msg: &'b str,
+                                           cookie: c_uint) {
+    use syntax::codemap::ExpnId;
+
+    match cgcx.lto_ctxt {
+        Some((sess, _)) => {
+            sess.codemap().with_expn_info(ExpnId::from_llvm_cookie(cookie), |info| match info {
+                Some(ei) => sess.span_err(ei.call_site, msg),
+                None     => sess.err(msg),
+            });
+        }
+
+        None => {
+            cgcx.handler.err(msg);
+            cgcx.handler.note("build without -C codegen-units for more exact errors");
+        }
+    }
+}
+
 unsafe extern "C" fn inline_asm_handler(diag: SMDiagnosticRef,
                                         user: *const c_void,
                                         cookie: c_uint) {
-    use syntax::codemap::ExpnId;
-
     let HandlerFreeVars { cgcx, .. }
         = *mem::transmute::<_, *const HandlerFreeVars>(user);
 
     let msg = llvm::build_string(|s| llvm::LLVMWriteSMDiagnosticToString(diag, s))
         .expect("non-UTF8 SMDiagnostic");
 
-    match cgcx.lto_ctxt {
-        Some((sess, _)) => {
-            sess.codemap().with_expn_info(ExpnId::from_llvm_cookie(cookie), |info| match info {
-                Some(ei) => sess.span_err(ei.call_site, &msg[]),
-                None     => sess.err(&msg[]),
-            });
-        }
-
-        None => {
-            cgcx.handler.err(&msg[]);
-            cgcx.handler.note("build without -C codegen-units for more exact errors");
-        }
-    }
+    report_inline_asm(cgcx, &msg[..], cookie);
 }
 
 unsafe extern "C" fn diagnostic_handler(info: DiagnosticInfoRef, user: *mut c_void) {
@@ -367,8 +373,14 @@ unsafe extern "C" fn diagnostic_handler(info: DiagnosticInfoRef, user: *mut c_vo
         = *mem::transmute::<_, *const HandlerFreeVars>(user);
 
     match llvm::diagnostic::Diagnostic::unpack(info) {
+        llvm::diagnostic::InlineAsm(inline) => {
+            report_inline_asm(cgcx,
+                              &*llvm::twine_to_string(inline.message),
+                              inline.cookie);
+        }
+
         llvm::diagnostic::Optimization(opt) => {
-            let pass_name = str::from_utf8(ffi::c_str_to_bytes(&opt.pass_name))
+            let pass_name = str::from_utf8(CStr::from_ptr(opt.pass_name).to_bytes())
                                 .ok()
                                 .expect("got a non-UTF8 pass name from LLVM");
             let enabled = match cgcx.remark {
@@ -378,11 +390,11 @@ unsafe extern "C" fn diagnostic_handler(info: DiagnosticInfoRef, user: *mut c_vo
 
             if enabled {
                 let loc = llvm::debug_loc_to_string(llcx, opt.debug_loc);
-                cgcx.handler.note(format!("optimization {} for {} at {}: {}",
-                                          opt.kind.describe(),
-                                          pass_name,
-                                          if loc.is_empty() { "[unknown]" } else { loc.as_slice() },
-                                          llvm::twine_to_string(opt.message)).as_slice());
+                cgcx.handler.note(&format!("optimization {} for {} at {}: {}",
+                                           opt.kind.describe(),
+                                           pass_name,
+                                           if loc.is_empty() { "[unknown]" } else { &*loc },
+                                           llvm::twine_to_string(opt.message)));
             }
         }
 
@@ -407,15 +419,12 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
     let fv = &fv as *const HandlerFreeVars as *mut c_void;
 
     llvm::LLVMSetInlineAsmDiagnosticHandler(llcx, inline_asm_handler, fv);
-
-    if !cgcx.remark.is_empty() {
-        llvm::LLVMContextSetDiagnosticHandler(llcx, diagnostic_handler, fv);
-    }
+    llvm::LLVMContextSetDiagnosticHandler(llcx, diagnostic_handler, fv);
 
     if config.emit_no_opt_bc {
         let ext = format!("{}.no-opt.bc", name_extra);
-        let out = output_names.with_extension(ext.as_slice());
-        let out = CString::from_slice(out.as_vec());
+        let out = output_names.with_extension(&ext);
+        let out = CString::new(out.as_vec()).unwrap();
         llvm::LLVMWriteBitcodeToFile(llmod, out.as_ptr());
     }
 
@@ -430,8 +439,8 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 
             // If we're verifying or linting, add them to the function pass
             // manager.
-            let addpass = |&: pass: &str| {
-                let pass = CString::from_slice(pass.as_bytes());
+            let addpass = |pass: &str| {
+                let pass = CString::new(pass).unwrap();
                 llvm::LLVMRustAddPass(fpm, pass.as_ptr())
             };
             if !config.no_verify { assert!(addpass("verify")); }
@@ -443,11 +452,10 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
                                      config.no_builtins);
             }
 
-            for pass in config.passes.iter() {
-                let pass = CString::from_slice(pass.as_bytes());
+            for pass in &config.passes {
+                let pass = CString::new(pass.clone()).unwrap();
                 if !llvm::LLVMRustAddPass(mpm, pass.as_ptr()) {
-                    cgcx.handler.warn(format!("unknown pass {:?}, ignoring",
-                                              pass).as_slice());
+                    cgcx.handler.warn(&format!("unknown pass {:?}, ignoring", pass));
                 }
             }
 
@@ -468,8 +476,8 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 
                     if config.emit_lto_bc {
                         let name = format!("{}.lto.bc", name_extra);
-                        let out = output_names.with_extension(name.as_slice());
-                        let out = CString::from_slice(out.as_vec());
+                        let out = output_names.with_extension(&name);
+                        let out = CString::new(out.as_vec()).unwrap();
                         llvm::LLVMWriteBitcodeToFile(llmod, out.as_ptr());
                     }
                 },
@@ -502,16 +510,16 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 
     if config.emit_bc {
         let ext = format!("{}.bc", name_extra);
-        let out = output_names.with_extension(ext.as_slice());
-        let out = CString::from_slice(out.as_vec());
+        let out = output_names.with_extension(&ext);
+        let out = CString::new(out.as_vec()).unwrap();
         llvm::LLVMWriteBitcodeToFile(llmod, out.as_ptr());
     }
 
     time(config.time_passes, "codegen passes", (), |()| {
         if config.emit_ir {
             let ext = format!("{}.ll", name_extra);
-            let out = output_names.with_extension(ext.as_slice());
-            let out = CString::from_slice(out.as_vec());
+            let out = output_names.with_extension(&ext);
+            let out = CString::new(out.as_vec()).unwrap();
             with_codegen(tm, llmod, config.no_builtins, |cpm| {
                 llvm::LLVMRustPrintModule(cpm, llmod, out.as_ptr());
             })
@@ -588,7 +596,7 @@ pub fn run_passes(sess: &Session,
         modules_config.emit_bc = true;
     }
 
-    for output_type in output_types.iter() {
+    for output_type in output_types {
         match *output_type {
             config::OutputTypeBitcode => { modules_config.emit_bc = true; },
             config::OutputTypeLlvmAssembly => { modules_config.emit_ir = true; },
@@ -650,14 +658,18 @@ pub fn run_passes(sess: &Session,
     }
 
     // Produce final compile outputs.
+    let copy_gracefully = |from: &Path, to: &Path| {
+        if let Err(e) = fs::copy(from, to) {
+            sess.err(&format!("could not copy {:?} to {:?}: {}", from, to, e));
+        }
+    };
 
-    let copy_if_one_unit = |&: ext: &str, output_type: config::OutputType, keep_numbered: bool| {
+    let copy_if_one_unit = |ext: &str, output_type: config::OutputType, keep_numbered: bool| {
         // Three cases:
         if sess.opts.cg.codegen_units == 1 {
             // 1) Only one codegen unit.  In this case it's no difficulty
             //    to copy `foo.0.x` to `foo.x`.
-            fs::copy(&crate_output.with_extension(ext),
-                     &crate_output.path(output_type)).unwrap();
+            copy_gracefully(&crate_output.with_extension(ext), &crate_output.path(output_type));
             if !sess.opts.cg.save_temps && !keep_numbered {
                 // The user just wants `foo.x`, not `foo.0.x`.
                 remove(sess, &crate_output.with_extension(ext));
@@ -676,11 +688,10 @@ pub fn run_passes(sess: &Session,
         }
     };
 
-    let link_obj = |&: output_path: &Path| {
+    let link_obj = |output_path: &Path| {
         // Running `ld -r` on a single input is kind of pointless.
         if sess.opts.cg.codegen_units == 1 {
-            fs::copy(&crate_output.with_extension("0.o"),
-                     output_path).unwrap();
+            copy_gracefully(&crate_output.with_extension("0.o"), output_path);
             // Leave the .0.o file around, to mimic the behavior of the normal
             // code path.
             return;
@@ -700,12 +711,12 @@ pub fn run_passes(sess: &Session,
             };
 
         let pname = get_cc_prog(sess);
-        let mut cmd = Command::new(&pname[]);
+        let mut cmd = Command::new(&pname[..]);
 
         cmd.args(&sess.target.target.options.pre_link_args[]);
         cmd.arg("-nostdlib");
 
-        for index in range(0, trans.modules.len()) {
+        for index in 0..trans.modules.len() {
             cmd.arg(crate_output.with_extension(&format!("{}.o", index)[]));
         }
 
@@ -716,16 +727,16 @@ pub fn run_passes(sess: &Session,
         cmd.args(&sess.target.target.options.post_link_args[]);
 
         if sess.opts.debugging_opts.print_link_args {
-            println!("{}", &cmd);
+            println!("{:?}", &cmd);
         }
 
-        cmd.stdin(::std::io::process::Ignored)
-           .stdout(::std::io::process::InheritFd(1))
-           .stderr(::std::io::process::InheritFd(2));
+        cmd.stdin(::std::old_io::process::Ignored)
+           .stdout(::std::old_io::process::InheritFd(1))
+           .stderr(::std::old_io::process::InheritFd(2));
         match cmd.status() {
             Ok(status) => {
                 if !status.success() {
-                    sess.err(&format!("linking of {} with `{}` failed",
+                    sess.err(&format!("linking of {} with `{:?}` failed",
                                      output_path.display(), cmd)[]);
                     sess.abort_if_errors();
                 }
@@ -752,7 +763,7 @@ pub fn run_passes(sess: &Session,
     // Otherwise, we produced it only as a temporary output, and will need
     // to get rid of it.
     let mut user_wants_bitcode = false;
-    for output_type in output_types.iter() {
+    for output_type in output_types {
         match *output_type {
             config::OutputTypeBitcode => {
                 user_wants_bitcode = true;
@@ -815,15 +826,15 @@ pub fn run_passes(sess: &Session,
         let keep_numbered_bitcode = needs_crate_bitcode ||
                 (user_wants_bitcode && sess.opts.cg.codegen_units > 1);
 
-        for i in range(0, trans.modules.len()) {
+        for i in 0..trans.modules.len() {
             if modules_config.emit_obj {
                 let ext = format!("{}.o", i);
-                remove(sess, &crate_output.with_extension(&ext[]));
+                remove(sess, &crate_output.with_extension(&ext[..]));
             }
 
             if modules_config.emit_bc && !keep_numbered_bitcode {
                 let ext = format!("{}.bc", i);
-                remove(sess, &crate_output.with_extension(&ext[]));
+                remove(sess, &crate_output.with_extension(&ext[..]));
             }
         }
 
@@ -892,7 +903,7 @@ fn run_work_multithreaded(sess: &Session,
     let mut diag_emitter = SharedEmitter::new();
     let mut futures = Vec::with_capacity(num_workers);
 
-    for i in range(0, num_workers) {
+    for i in 0..num_workers {
         let work_items_arc = work_items_arc.clone();
         let diag_emitter = diag_emitter.clone();
         let remark = sess.opts.cg.remark.clone();
@@ -901,8 +912,8 @@ fn run_work_multithreaded(sess: &Session,
         let mut tx = Some(tx);
         futures.push(rx);
 
-        thread::Builder::new().name(format!("codegen-{}", i)).spawn(move |:| {
-            let diag_handler = mk_handler(box diag_emitter);
+        thread::Builder::new().name(format!("codegen-{}", i)).spawn(move || {
+            let diag_handler = mk_handler(true, box diag_emitter);
 
             // Must construct cgcx inside the proc because it has non-Send
             // fields.
@@ -928,11 +939,11 @@ fn run_work_multithreaded(sess: &Session,
             }
 
             tx.take().unwrap().send(()).unwrap();
-        });
+        }).unwrap();
     }
 
     let mut panicked = false;
-    for rx in futures.into_iter() {
+    for rx in futures {
         match rx.recv() {
             Ok(()) => {},
             Err(_) => {
@@ -949,11 +960,11 @@ fn run_work_multithreaded(sess: &Session,
 
 pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
     let pname = get_cc_prog(sess);
-    let mut cmd = Command::new(&pname[]);
+    let mut cmd = Command::new(&pname[..]);
 
     cmd.arg("-c").arg("-o").arg(outputs.path(config::OutputTypeObject))
                            .arg(outputs.temp_path(config::OutputTypeAssembly));
-    debug!("{}", &cmd);
+    debug!("{:?}", &cmd);
 
     match cmd.output() {
         Ok(prog) => {
@@ -961,10 +972,10 @@ pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
                 sess.err(&format!("linking with `{}` failed: {}",
                                  pname,
                                  prog.status)[]);
-                sess.note(&format!("{}", &cmd)[]);
+                sess.note(&format!("{:?}", &cmd)[]);
                 let mut note = prog.error.clone();
                 note.push_all(&prog.output[]);
-                sess.note(str::from_utf8(&note[]).unwrap());
+                sess.note(str::from_utf8(&note[..]).unwrap());
                 sess.abort_if_errors();
             }
         },
@@ -992,8 +1003,8 @@ unsafe fn configure_llvm(sess: &Session) {
     let mut llvm_c_strs = Vec::new();
     let mut llvm_args = Vec::new();
     {
-        let mut add = |&mut : arg: &str| {
-            let s = CString::from_slice(arg.as_bytes());
+        let mut add = |arg: &str| {
+            let s = CString::new(arg).unwrap();
             llvm_args.push(s.as_ptr());
             llvm_c_strs.push(s);
         };
@@ -1003,7 +1014,10 @@ unsafe fn configure_llvm(sess: &Session) {
         if sess.time_llvm_passes() { add("-time-passes"); }
         if sess.print_llvm_passes() { add("-debug-pass=Structure"); }
 
-        for arg in sess.opts.cg.llvm_args.iter() {
+        // FIXME #21627 disable faulty FastISel on AArch64 (even for -O0)
+        if sess.target.target.arch == "aarch64" { add("-fast-isel=0"); }
+
+        for arg in &sess.opts.cg.llvm_args {
             add(&(*arg)[]);
         }
     }
@@ -1038,6 +1052,12 @@ unsafe fn configure_llvm(sess: &Session) {
         llvm::LLVMInitializeMipsTargetMC();
         llvm::LLVMInitializeMipsAsmPrinter();
         llvm::LLVMInitializeMipsAsmParser();
+
+        llvm::LLVMInitializePowerPCTargetInfo();
+        llvm::LLVMInitializePowerPCTarget();
+        llvm::LLVMInitializePowerPCTargetMC();
+        llvm::LLVMInitializePowerPCAsmPrinter();
+        llvm::LLVMInitializePowerPCAsmParser();
 
         llvm::LLVMRustSetLLVMOptions(llvm_args.len() as c_int,
                                      llvm_args.as_ptr());

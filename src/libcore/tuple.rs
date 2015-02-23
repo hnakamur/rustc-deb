@@ -33,10 +33,8 @@
 //! * `Ord`
 //! * `Default`
 
-#![stable]
-
-#[unstable = "this is just a documentation module and should not be part \
-              of the public api"]
+#![stable(feature = "rust1", since = "1.0.0")]
+#![doc(primitive = "tuple")]
 
 use clone::Clone;
 use cmp::*;
@@ -58,14 +56,14 @@ macro_rules! tuple_impls {
         }
     )+) => {
         $(
-            #[stable]
+            #[stable(feature = "rust1", since = "1.0.0")]
             impl<$($T:Clone),+> Clone for ($($T,)+) {
                 fn clone(&self) -> ($($T,)+) {
                     ($(e!(self.$idx.clone()),)+)
                 }
             }
 
-            #[stable]
+            #[stable(feature = "rust1", since = "1.0.0")]
             impl<$($T:PartialEq),+> PartialEq for ($($T,)+) {
                 #[inline]
                 fn eq(&self, other: &($($T,)+)) -> bool {
@@ -77,10 +75,10 @@ macro_rules! tuple_impls {
                 }
             }
 
-            #[stable]
+            #[stable(feature = "rust1", since = "1.0.0")]
             impl<$($T:Eq),+> Eq for ($($T,)+) {}
 
-            #[stable]
+            #[stable(feature = "rust1", since = "1.0.0")]
             impl<$($T:PartialOrd + PartialEq),+> PartialOrd for ($($T,)+) {
                 #[inline]
                 fn partial_cmp(&self, other: &($($T,)+)) -> Option<Ordering> {
@@ -104,7 +102,7 @@ macro_rules! tuple_impls {
                 }
             }
 
-            #[stable]
+            #[stable(feature = "rust1", since = "1.0.0")]
             impl<$($T:Ord),+> Ord for ($($T,)+) {
                 #[inline]
                 fn cmp(&self, other: &($($T,)+)) -> Ordering {
@@ -112,9 +110,9 @@ macro_rules! tuple_impls {
                 }
             }
 
-            #[stable]
+            #[stable(feature = "rust1", since = "1.0.0")]
             impl<$($T:Default),+> Default for ($($T,)+) {
-                #[stable]
+                #[stable(feature = "rust1", since = "1.0.0")]
                 #[inline]
                 fn default() -> ($($T,)+) {
                     ($({ let x: $T = Default::default(); x},)+)

@@ -12,7 +12,6 @@
 
 pub use self::astencode_tag::*;
 
-use std::mem;
 use back::svh::Svh;
 
 // EBML enum definitions and utils shared by the encoder and decoder
@@ -113,7 +112,7 @@ pub const tag_items_data_item_reexport_def_id: uint = 0x39;
 pub const tag_items_data_item_reexport_name: uint = 0x3a;
 
 // used to encode crate_ctxt side tables
-#[derive(Copy, PartialEq)]
+#[derive(Copy, PartialEq, FromPrimitive)]
 #[repr(uint)]
 pub enum astencode_tag { // Reserves 0x40 -- 0x5f
     tag_ast = 0x40,
@@ -139,21 +138,12 @@ pub enum astencode_tag { // Reserves 0x40 -- 0x5f
     tag_table_adjustments = 0x51,
     tag_table_moves_map = 0x52,
     tag_table_capture_map = 0x53,
-    tag_table_unboxed_closures = 0x54,
-    tag_table_upvar_borrow_map = 0x55,
-    tag_table_capture_modes = 0x56,
-    tag_table_object_cast_map = 0x57,
-}
-
-static first_astencode_tag: uint = tag_ast as uint;
-static last_astencode_tag: uint = tag_table_object_cast_map as uint;
-impl astencode_tag {
-    pub fn from_uint(value : uint) -> Option<astencode_tag> {
-        let is_a_tag = first_astencode_tag <= value && value <= last_astencode_tag;
-        if !is_a_tag { None } else {
-            Some(unsafe { mem::transmute::<uint, astencode_tag>(value) })
-        }
-    }
+    tag_table_closure_tys = 0x54,
+    tag_table_closure_kinds = 0x55,
+    tag_table_upvar_capture_map = 0x56,
+    tag_table_capture_modes = 0x57,
+    tag_table_object_cast_map = 0x58,
+    tag_table_const_qualif = 0x59,
 }
 
 pub const tag_item_trait_item_sort: uint = 0x60;
@@ -219,16 +209,13 @@ pub const tag_items_data_item_stability: uint = 0x92;
 
 pub const tag_items_data_item_repr: uint = 0x93;
 
-#[derive(Clone, Show)]
+#[derive(Clone, Debug)]
 pub struct LinkMeta {
     pub crate_name: String,
     pub crate_hash: Svh,
 }
 
-pub const tag_unboxed_closures: uint = 0x95;
-pub const tag_unboxed_closure: uint = 0x96;
-pub const tag_unboxed_closure_type: uint = 0x97;
-pub const tag_unboxed_closure_kind: uint = 0x98;
+// GAP 0x94...0x98
 
 pub const tag_struct_fields: uint = 0x99;
 pub const tag_struct_field: uint = 0x9a;
@@ -265,3 +252,5 @@ pub const tag_polarity: uint = 0xb4;
 pub const tag_macro_defs: uint = 0xb5;
 pub const tag_macro_def: uint = 0xb6;
 pub const tag_macro_def_body: uint = 0xb7;
+
+pub const tag_paren_sugar: uint = 0xb8;

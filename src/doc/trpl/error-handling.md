@@ -1,6 +1,6 @@
-% Error Handling in Rust
+% Error Handling
 
-> The best-laid plans of mice and men
+> The best-laid plans of mice and men  
 > Often go awry
 >
 > "Tae a Moose", Robert Burns
@@ -16,10 +16,10 @@ how to handle each. Then, we'll discuss upgrading failures to panics.
 # Failure vs. Panic
 
 Rust uses two terms to differentiate between two forms of error: failure, and
-panic. A **failure** is an error that can be recovered from in some way. A
-**panic** is an error that cannot be recovered from.
+panic. A *failure* is an error that can be recovered from in some way. A
+*panic* is an error that cannot be recovered from.
 
-What do we mean by 'recover'? Well, in most cases, the possibility of an error
+What do we mean by "recover"? Well, in most cases, the possibility of an error
 is expected. For example, consider the `from_str` function:
 
 ```{rust,ignore}
@@ -35,7 +35,7 @@ from_str("hello5world");
 ```
 
 This won't work. So we know that this function will only work properly for some
-inputs. It's expected behavior. We call this kind of error 'failure.'
+inputs. It's expected behavior. We call this kind of error a *failure*.
 
 On the other hand, sometimes, there are errors that are unexpected, or which
 we cannot recover from. A classic example is an `assert!`:
@@ -46,7 +46,7 @@ assert!(x == 5);
 
 We use `assert!` to declare that something is true. If it's not true, something
 is very wrong. Wrong enough that we can't continue with things in the current
-state. Another example is using the `unreachable!()` macro
+state. Another example is using the `unreachable!()` macro:
 
 ```{rust,ignore}
 enum Event {
@@ -60,12 +60,12 @@ fn probability(_: &Event) -> f64 {
 
 fn descriptive_probability(event: Event) -> &'static str {
     match probability(&event) {
-        1.00          => "certain",
-        0.00          => "impossible",
+        1.00 => "certain",
+        0.00 => "impossible",
         0.00 ... 0.25 => "very unlikely",
         0.25 ... 0.50 => "unlikely",
         0.50 ... 0.75 => "likely",
-        0.75 ... 1.00  => "very likely",
+        0.75 ... 1.00 => "very likely",
     }
 }
 
@@ -97,12 +97,12 @@ fn probability(_: &Event) -> f64 {
 
 fn descriptive_probability(event: Event) -> &'static str {
     match probability(&event) {
-        1.00          => "certain",
-        0.00          => "impossible",
+        1.00 => "certain",
+        0.00 => "impossible",
         0.00 ... 0.25 => "very unlikely",
         0.25 ... 0.50 => "unlikely",
         0.50 ... 0.75 => "likely",
-        0.75 ... 1.00  => "very likely",
+        0.75 ... 1.00 => "very likely",
         _ => unreachable!()
     }
 }
@@ -114,7 +114,7 @@ fn main() {
 
 We shouldn't ever hit the `_` case, so we use the `unreachable!()` macro to
 indicate this. `unreachable!()` gives a different kind of error than `Result`.
-Rust calls these sorts of errors 'panics.'
+Rust calls these sorts of errors *panics*.
 
 # Handling errors with `Option` and `Result`
 
@@ -147,10 +147,10 @@ for all but the most trivial of situations.
 Here's an example of using `Result`:
 
 ```rust
-#[derive(Show)]
+#[derive(Debug)]
 enum Version { Version1, Version2 }
 
-#[derive(Show)]
+#[derive(Debug)]
 enum ParseError { InvalidHeaderLength, InvalidVersion }
 
 fn parse_version(header: &[u8]) -> Result<Version, ParseError> {
@@ -181,7 +181,7 @@ errors that can occur.
 # Non-recoverable errors with `panic!`
 
 In the case of an error that is unexpected and not recoverable, the `panic!`
-macro will induce a panic. This will crash the current task, and give an error:
+macro will induce a panic. This will crash the current thread, and give an error:
 
 ```{rust,ignore}
 panic!("boom");
@@ -190,7 +190,7 @@ panic!("boom");
 gives
 
 ```text
-task '<main>' panicked at 'boom', hello.rs:2
+thread '<main>' panicked at 'boom', hello.rs:2
 ```
 
 when you run it.

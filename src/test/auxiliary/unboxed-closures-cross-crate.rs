@@ -14,15 +14,15 @@ use std::ops::Add;
 
 #[inline]
 pub fn has_closures() -> uint {
-    let x = 1u;
-    let mut f = move |&mut:| x;
-    let y = 1u;
-    let g = |:| y;
+    let x = 1_usize;
+    let mut f = move || x;
+    let y = 1_usize;
+    let g = || y;
     f() + g()
 }
 
 pub fn has_generic_closures<T: Add<Output=T> + Copy>(x: T, y: T) -> T {
-    let mut f = move |&mut:| x;
-    let g = |:| y;
+    let mut f = move || x;
+    let g = || y;
     f() + g()
 }

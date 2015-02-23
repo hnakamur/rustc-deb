@@ -30,15 +30,14 @@ struct UnsafetyChecker<'cx, 'tcx:'cx> {
 impl<'cx, 'tcx,'v> visit::Visitor<'v> for UnsafetyChecker<'cx, 'tcx> {
     fn visit_item(&mut self, item: &'v ast::Item) {
         match item.node {
-            ast::ItemImpl(unsafety, _, _, _, _, _) => {
+            ast::ItemImpl(unsafety, polarity, _, _, _, _) => {
                 match ty::impl_trait_ref(self.tcx, ast_util::local_def(item.id)) {
                     None => {
                         // Inherent impl.
                         match unsafety {
                             ast::Unsafety::Normal => { /* OK */ }
                             ast::Unsafety::Unsafe => {
-                                self.tcx.sess.span_err(
-                                    item.span,
+                                span_err!(self.tcx.sess, item.span, E0197,
                                     "inherent impls cannot be declared as unsafe");
                             }
                         }
@@ -46,23 +45,31 @@ impl<'cx, 'tcx,'v> visit::Visitor<'v> for UnsafetyChecker<'cx, 'tcx> {
 
                     Some(trait_ref) => {
                         let trait_def = ty::lookup_trait_def(self.tcx, trait_ref.def_id);
-                        match (trait_def.unsafety, unsafety) {
-                            (ast::Unsafety::Normal, ast::Unsafety::Unsafe) => {
-                                self.tcx.sess.span_err(
-                                    item.span,
-                                    format!("implementing the trait `{}` is not unsafe",
-                                            trait_ref.user_string(self.tcx)).as_slice());
+                        match (trait_def.unsafety, unsafety, polarity) {
+                            (ast::Unsafety::Unsafe,
+                             ast::Unsafety::Unsafe, ast::ImplPolarity::Negative) => {
+                                span_err!(self.tcx.sess, item.span, E0198,
+                                    "negative implementations are not unsafe");
                             }
 
-                            (ast::Unsafety::Unsafe, ast::Unsafety::Normal) => {
-                                self.tcx.sess.span_err(
-                                    item.span,
-                                    format!("the trait `{}` requires an `unsafe impl` declaration",
-                                            trait_ref.user_string(self.tcx)).as_slice());
+                            (ast::Unsafety::Normal, ast::Unsafety::Unsafe, _) => {
+                                span_err!(self.tcx.sess, item.span, E0199,
+                                    "implementing the trait `{}` is not unsafe",
+                                            trait_ref.user_string(self.tcx));
                             }
 
-                            (ast::Unsafety::Unsafe, ast::Unsafety::Unsafe) |
-                            (ast::Unsafety::Normal, ast::Unsafety::Normal) => {
+                            (ast::Unsafety::Unsafe,
+                             ast::Unsafety::Normal, ast::ImplPolarity::Positive) => {
+                                span_err!(self.tcx.sess, item.span, E0200,
+                                    "the trait `{}` requires an `unsafe impl` declaration",
+                                            trait_ref.user_string(self.tcx));
+                            }
+
+                            (ast::Unsafety::Unsafe,
+                             ast::Unsafety::Normal, ast::ImplPolarity::Negative) |
+                            (ast::Unsafety::Unsafe,
+                             ast::Unsafety::Unsafe, ast::ImplPolarity::Positive) |
+                            (ast::Unsafety::Normal, ast::Unsafety::Normal, _) => {
                                 /* OK */
                             }
                         }

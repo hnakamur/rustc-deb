@@ -13,9 +13,9 @@
 pub use self::FileMatch::*;
 
 use std::collections::HashSet;
-use std::io::fs::PathExtensions;
-use std::io::fs;
-use std::os;
+use std::env;
+use std::old_io::fs::PathExtensions;
+use std::old_io::fs;
 
 use util::fs as myfs;
 use session::search_paths::{SearchPaths, PathKind};
@@ -39,13 +39,13 @@ pub struct FileSearch<'a> {
 
 impl<'a> FileSearch<'a> {
     pub fn for_each_lib_search_path<F>(&self, mut f: F) where
-        F: FnMut(&Path) -> FileMatch,
+        F: FnMut(&Path, PathKind) -> FileMatch,
     {
         let mut visited_dirs = HashSet::new();
         let mut found = false;
 
-        for path in self.search_paths.iter(self.kind) {
-            match f(path) {
+        for (path, kind) in self.search_paths.iter(self.kind) {
+            match f(path, kind) {
                 FileMatches => found = true,
                 FileDoesntMatch => ()
             }
@@ -54,9 +54,9 @@ impl<'a> FileSearch<'a> {
 
         debug!("filesearch: searching lib path");
         let tlib_path = make_target_lib_path(self.sysroot,
-                                    self.triple);
+                                             self.triple);
         if !visited_dirs.contains(tlib_path.as_vec()) {
-            match f(&tlib_path) {
+            match f(&tlib_path, PathKind::All) {
                 FileMatches => found = true,
                 FileDoesntMatch => ()
             }
@@ -66,7 +66,7 @@ impl<'a> FileSearch<'a> {
         // Try RUST_PATH
         if !found {
             let rustpath = rust_path();
-            for path in rustpath.iter() {
+            for path in &rustpath {
                 let tlib_path = make_rustpkg_lib_path(
                     self.sysroot, path, self.triple);
                 debug!("is {} in visited_dirs? {}", tlib_path.display(),
@@ -76,7 +76,7 @@ impl<'a> FileSearch<'a> {
                     visited_dirs.insert(tlib_path.as_vec().to_vec());
                     // Don't keep searching the RUST_PATH if one match turns up --
                     // if we did, we'd get a "multiple matching crates" error
-                    match f(&tlib_path) {
+                    match f(&tlib_path, PathKind::All) {
                        FileMatches => {
                            break;
                        }
@@ -91,8 +91,10 @@ impl<'a> FileSearch<'a> {
         make_target_lib_path(self.sysroot, self.triple)
     }
 
-    pub fn search<F>(&self, mut pick: F) where F: FnMut(&Path) -> FileMatch {
-        self.for_each_lib_search_path(|lib_search_path| {
+    pub fn search<F>(&self, mut pick: F)
+        where F: FnMut(&Path, PathKind) -> FileMatch
+    {
+        self.for_each_lib_search_path(|lib_search_path, kind| {
             debug!("searching {}", lib_search_path.display());
             match fs::readdir(lib_search_path) {
                 Ok(files) => {
@@ -108,7 +110,7 @@ impl<'a> FileSearch<'a> {
                     let files2 = files.iter().filter(|p| !is_rlib(p));
                     for path in files1.chain(files2) {
                         debug!("testing {}", path.display());
-                        let maybe_picked = pick(path);
+                        let maybe_picked = pick(path, kind);
                         match maybe_picked {
                             FileMatches => {
                                 debug!("picked {}", path.display());
@@ -142,7 +144,7 @@ impl<'a> FileSearch<'a> {
     // Returns a list of directories where target-specific dylibs might be located.
     pub fn get_dylib_search_paths(&self) -> Vec<Path> {
         let mut paths = Vec::new();
-        self.for_each_lib_search_path(|lib_search_path| {
+        self.for_each_lib_search_path(|lib_search_path, _| {
             paths.push(lib_search_path.clone());
             FileDoesntMatch
         });
@@ -192,7 +194,7 @@ pub fn get_or_default_sysroot() -> Path {
             })
     }
 
-    match canonicalize(os::self_exe_name()) {
+    match canonicalize(env::current_exe().ok()) {
         Some(mut p) => { p.pop(); p.pop(); p }
         None => panic!("can't determine value for sysroot")
     }
@@ -205,7 +207,7 @@ static PATH_ENTRY_SEPARATOR: &'static str = ":";
 
 /// Returns RUST_PATH as a string, without default paths added
 pub fn get_rust_path() -> Option<String> {
-    os::getenv("RUST_PATH").map(|x| x.to_string())
+    env::var("RUST_PATH").ok()
 }
 
 /// Returns the value of RUST_PATH, as a list
@@ -222,7 +224,7 @@ pub fn rust_path() -> Vec<Path> {
         }
         None => Vec::new()
     };
-    let mut cwd = os::getcwd().unwrap();
+    let mut cwd = env::current_dir().unwrap();
     // now add in default entries
     let cwd_dot_rust = cwd.join(".rust");
     if !env_rust_path.contains(&cwd_dot_rust) {
@@ -241,8 +243,7 @@ pub fn rust_path() -> Vec<Path> {
         }
         cwd.pop();
     }
-    let h = os::homedir();
-    for h in h.iter() {
+    if let Some(h) = env::home_dir() {
         let p = h.join(".rust");
         if !env_rust_path.contains(&p) && p.exists() {
             env_rust_path.push(p);
@@ -272,12 +273,12 @@ fn find_libdir(sysroot: &Path) -> String {
         }
     }
 
-    #[cfg(any(all(stage0, target_word_size = "64"), all(not(stage0), target_pointer_width = "64")))]
+    #[cfg(target_pointer_width = "64")]
     fn primary_libdir_name() -> String {
         "lib64".to_string()
     }
 
-    #[cfg(any(all(stage0, target_word_size = "32"), all(not(stage0), target_pointer_width = "32")))]
+    #[cfg(target_pointer_width = "32")]
     fn primary_libdir_name() -> String {
         "lib32".to_string()
     }

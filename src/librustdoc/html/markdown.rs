@@ -30,7 +30,7 @@
 use libc;
 use std::ascii::AsciiExt;
 use std::ffi::CString;
-use std::cell::{RefCell, Cell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::slice;
@@ -72,16 +72,40 @@ type blockcodefn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
 type headerfn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
                               libc::c_int, *mut libc::c_void);
 
+type linkfn = extern "C" fn (*mut hoedown_buffer, *const hoedown_buffer,
+                             *const hoedown_buffer, *const hoedown_buffer,
+                             *mut libc::c_void) -> libc::c_int;
+
+type normaltextfn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
+                                  *mut libc::c_void);
+
 #[repr(C)]
 struct hoedown_renderer {
-    opaque: *mut hoedown_html_renderer_state,
+    opaque: *mut libc::c_void,
+
     blockcode: Option<blockcodefn>,
     blockquote: Option<extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
                                      *mut libc::c_void)>,
     blockhtml: Option<extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
                                     *mut libc::c_void)>,
     header: Option<headerfn>,
-    other: [libc::size_t; 28],
+
+    other_block_level_callbacks: [libc::size_t; 9],
+
+    /* span level callbacks - NULL or return 0 prints the span verbatim */
+    other_span_level_callbacks_1: [libc::size_t; 9],
+    link: Option<linkfn>,
+    other_span_level_callbacks_2: [libc::size_t; 5],
+    // hoedown will add `math` callback here, but we use an old version of it.
+
+    /* low level callbacks - NULL copies input directly into the output */
+    entity: Option<extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
+                                 *mut libc::c_void)>,
+    normal_text: Option<normaltextfn>,
+
+    /* header and footer */
+    doc_header: Option<extern "C" fn(*mut hoedown_buffer, *mut libc::c_void)>,
+    doc_footer: Option<extern "C" fn(*mut hoedown_buffer, *mut libc::c_void)>,
 }
 
 #[repr(C)]
@@ -134,9 +158,18 @@ extern {
     fn hoedown_document_free(md: *mut hoedown_document);
 
     fn hoedown_buffer_new(unit: libc::size_t) -> *mut hoedown_buffer;
+    fn hoedown_buffer_put(b: *mut hoedown_buffer, c: *const libc::c_char,
+                          n: libc::size_t);
     fn hoedown_buffer_puts(b: *mut hoedown_buffer, c: *const libc::c_char);
     fn hoedown_buffer_free(b: *mut hoedown_buffer);
 
+}
+
+// hoedown_buffer helpers
+impl hoedown_buffer {
+    fn as_bytes(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.data, self.size as usize) }
+    }
 }
 
 /// Returns Some(code) if `s` is a line that should be stripped from
@@ -146,7 +179,7 @@ extern {
 fn stripped_filtered_line<'a>(s: &'a str) -> Option<&'a str> {
     let trimmed = s.trim();
     if trimmed.starts_with("# ") {
-        Some(trimmed.slice_from(2))
+        Some(&trimmed[2..])
     } else {
         None
     }
@@ -155,7 +188,6 @@ fn stripped_filtered_line<'a>(s: &'a str) -> Option<&'a str> {
 thread_local!(static USED_HEADER_MAP: RefCell<HashMap<String, uint>> = {
     RefCell::new(HashMap::new())
 });
-thread_local!(static TEST_IDX: Cell<uint> = Cell::new(0));
 
 thread_local!(pub static PLAYGROUND_KRATE: RefCell<Option<Option<String>>> = {
     RefCell::new(None)
@@ -169,15 +201,13 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
 
             let opaque = opaque as *mut hoedown_html_renderer_state;
             let my_opaque: &MyOpaque = &*((*opaque).opaque as *const MyOpaque);
-            let text = slice::from_raw_buf(&(*orig_text).data,
-                                           (*orig_text).size as uint);
+            let text = (*orig_text).as_bytes();
             let origtext = str::from_utf8(text).unwrap();
             debug!("docblock: ==============\n{:?}\n=======", text);
             let rendered = if lang.is_null() {
                 false
             } else {
-                let rlang = slice::from_raw_buf(&(*lang).data,
-                                                (*lang).size as uint);
+                let rlang = (*lang).as_bytes();
                 let rlang = str::from_utf8(rlang).unwrap();
                 if !LangString::parse(rlang).rust {
                     (my_opaque.dfltblk)(ob, orig_text, lang,
@@ -195,27 +225,18 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
             if rendered { return }
             PLAYGROUND_KRATE.with(|krate| {
                 let mut s = String::new();
-                let id = krate.borrow().as_ref().map(|krate| {
-                    let idx = TEST_IDX.with(|slot| {
-                        let i = slot.get();
-                        slot.set(i + 1);
-                        i
-                    });
-
+                krate.borrow().as_ref().map(|krate| {
                     let test = origtext.lines().map(|l| {
                         stripped_filtered_line(l).unwrap_or(l)
                     }).collect::<Vec<&str>>().connect("\n");
-                    let krate = krate.as_ref().map(|s| s.as_slice());
-                    let test = test::maketest(test.as_slice(), krate, false, false);
-                    s.push_str(format!("<span id='rust-example-raw-{}' \
-                                         class='rusttest'>{}</span>",
-                                       idx, Escape(test.as_slice())).as_slice());
-                    format!("rust-example-rendered-{}", idx)
+                    let krate = krate.as_ref().map(|s| &**s);
+                    let test = test::maketest(&test, krate, false, false);
+                    s.push_str(&format!("<span class='rusttest'>{}</span>", Escape(&test)));
                 });
-                let id = id.as_ref().map(|a| a.as_slice());
-                s.push_str(highlight::highlight(text.as_slice(), None, id)
-                                     .as_slice());
-                let output = CString::from_vec(s.into_bytes());
+                s.push_str(&highlight::highlight(&text,
+                                                 None,
+                                                 Some("rust-example-rendered")));
+                let output = CString::new(s).unwrap();
                 hoedown_buffer_puts(ob, output.as_ptr());
             })
         }
@@ -230,9 +251,7 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
         let s = if text.is_null() {
             "".to_string()
         } else {
-            let s = unsafe {
-                slice::from_raw_buf(&(*text).data, (*text).size as uint)
-            };
+            let s = unsafe { (*text).as_bytes() };
             str::from_utf8(s).unwrap().to_string()
         };
 
@@ -274,7 +293,7 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
                                format!("{} ", sec)
                            });
 
-        let text = CString::from_vec(text.into_bytes());
+        let text = CString::new(text).unwrap();
         unsafe { hoedown_buffer_puts(ob, text.as_ptr()) }
     }
 
@@ -287,7 +306,8 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
             dfltblk: (*renderer).blockcode.unwrap(),
             toc_builder: if print_toc {Some(TocBuilder::new())} else {None}
         };
-        (*(*renderer).opaque).opaque = &mut opaque as *mut _ as *mut libc::c_void;
+        (*((*renderer).opaque as *mut hoedown_html_renderer_state)).opaque
+                = &mut opaque as *mut _ as *mut libc::c_void;
         (*renderer).blockcode = Some(block as blockcodefn);
         (*renderer).header = Some(header as headerfn);
 
@@ -304,7 +324,7 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
         };
 
         if ret.is_ok() {
-            let buf = slice::from_raw_buf(&(*ob).data, (*ob).size as uint);
+            let buf = (*ob).as_bytes();
             ret = w.write_str(str::from_utf8(buf).unwrap());
         }
         hoedown_buffer_free(ob);
@@ -322,13 +342,12 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector) {
             let block_info = if lang.is_null() {
                 LangString::all_false()
             } else {
-                let lang = slice::from_raw_buf(&(*lang).data,
-                                               (*lang).size as uint);
+                let lang = (*lang).as_bytes();
                 let s = str::from_utf8(lang).unwrap();
                 LangString::parse(s)
             };
             if !block_info.rust { return }
-            let text = slice::from_raw_buf(&(*text).data, (*text).size as uint);
+            let text = (*text).as_bytes();
             let opaque = opaque as *mut hoedown_html_renderer_state;
             let tests = &mut *((*opaque).opaque as *mut ::test::Collector);
             let text = str::from_utf8(text).unwrap();
@@ -351,7 +370,7 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector) {
             if text.is_null() {
                 tests.register_header("", level as u32);
             } else {
-                let text = slice::from_raw_buf(&(*text).data, (*text).size as uint);
+                let text = (*text).as_bytes();
                 let text = str::from_utf8(text).unwrap();
                 tests.register_header(text, level as u32);
             }
@@ -363,7 +382,8 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector) {
         let renderer = hoedown_html_renderer_new(0, 0);
         (*renderer).blockcode = Some(block as blockcodefn);
         (*renderer).header = Some(header as headerfn);
-        (*(*renderer).opaque).opaque = tests as *mut _ as *mut libc::c_void;
+        (*((*renderer).opaque as *mut hoedown_html_renderer_state)).opaque
+                = tests as *mut _ as *mut libc::c_void;
 
         let document = hoedown_document_new(renderer, HOEDOWN_EXTENSIONS, 16);
         hoedown_document_render(document, ob, doc.as_ptr(),
@@ -375,7 +395,7 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector) {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Show)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 struct LangString {
     should_fail: bool,
     no_run: bool,
@@ -400,7 +420,7 @@ impl LangString {
         let mut seen_other_tags = false;
         let mut data = LangString::all_false();
 
-        let mut tokens = string.split(|&: c: char|
+        let tokens = string.split(|c: char|
             !(c == '_' || c == '-' || c.is_alphanumeric())
         );
 
@@ -432,28 +452,78 @@ impl LangString {
 /// previous state (if any).
 pub fn reset_headers() {
     USED_HEADER_MAP.with(|s| s.borrow_mut().clear());
-    TEST_IDX.with(|s| s.set(0));
 }
 
-impl<'a> fmt::String for Markdown<'a> {
+impl<'a> fmt::Display for Markdown<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let Markdown(md) = *self;
         // This is actually common enough to special-case
         if md.len() == 0 { return Ok(()) }
-        render(fmt, md.as_slice(), false)
+        render(fmt, md, false)
     }
 }
 
-impl<'a> fmt::String for MarkdownWithToc<'a> {
+impl<'a> fmt::Display for MarkdownWithToc<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let MarkdownWithToc(md) = *self;
-        render(fmt, md.as_slice(), true)
+        render(fmt, md, true)
+    }
+}
+
+pub fn plain_summary_line(md: &str) -> String {
+    extern fn link(_ob: *mut hoedown_buffer,
+                       _link: *const hoedown_buffer,
+                       _title: *const hoedown_buffer,
+                       content: *const hoedown_buffer,
+                       opaque: *mut libc::c_void) -> libc::c_int
+    {
+        unsafe {
+            if !content.is_null() && (*content).size > 0 {
+                let ob = opaque as *mut hoedown_buffer;
+                hoedown_buffer_put(ob, (*content).data as *const libc::c_char,
+                                   (*content).size);
+            }
+        }
+        1
+    }
+
+    extern fn normal_text(_ob: *mut hoedown_buffer,
+                              text: *const hoedown_buffer,
+                              opaque: *mut libc::c_void)
+    {
+        unsafe {
+            let ob = opaque as *mut hoedown_buffer;
+            hoedown_buffer_put(ob, (*text).data as *const libc::c_char,
+                               (*text).size);
+        }
+    }
+
+    unsafe {
+        let ob = hoedown_buffer_new(DEF_OUNIT);
+        let mut plain_renderer: hoedown_renderer = ::std::mem::zeroed();
+        let renderer = &mut plain_renderer as *mut hoedown_renderer;
+        (*renderer).opaque = ob as *mut libc::c_void;
+        (*renderer).link = Some(link as linkfn);
+        (*renderer).normal_text = Some(normal_text as normaltextfn);
+
+        let document = hoedown_document_new(renderer, HOEDOWN_EXTENSIONS, 16);
+        hoedown_document_render(document, ob, md.as_ptr(),
+                                md.len() as libc::size_t);
+        hoedown_document_free(document);
+        let plain_slice = (*ob).as_bytes();
+        let plain = match str::from_utf8(plain_slice) {
+            Ok(s) => s.to_string(),
+            Err(_) => "".to_string(),
+        };
+        hoedown_buffer_free(ob);
+        plain
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{LangString, Markdown};
+    use super::plain_summary_line;
 
     #[test]
     fn test_lang_string_parse() {
@@ -485,6 +555,20 @@ mod tests {
     #[test]
     fn issue_17736() {
         let markdown = "# title";
-        format!("{}", Markdown(markdown.as_slice()));
+        format!("{}", Markdown(markdown));
+    }
+
+    #[test]
+    fn test_plain_summary_line() {
+        fn t(input: &str, expect: &str) {
+            let output = plain_summary_line(input);
+            assert_eq!(output, expect);
+        }
+
+        t("hello [Rust](http://rust-lang.org) :)", "hello Rust :)");
+        t("code `let x = i32;` ...", "code `let x = i32;` ...");
+        t("type `Type<'static>` ...", "type `Type<'static>` ...");
+        t("# top header", "top header");
+        t("## header", "header");
     }
 }

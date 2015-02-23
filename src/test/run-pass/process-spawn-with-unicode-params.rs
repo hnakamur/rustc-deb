@@ -16,16 +16,17 @@
 // non-ASCII characters.  The child process ensures all the strings are
 // intact.
 
-use std::io;
-use std::io::fs;
-use std::io::Command;
+use std::old_io;
+use std::old_io::fs;
+use std::old_io::Command;
 use std::os;
-use std::path::Path;
+use std::env;
+use std::old_path::Path;
 
 fn main() {
-    let my_args = os::args();
+    let my_args = env::args().collect::<Vec<_>>();
     let my_cwd  = os::getcwd().unwrap();
-    let my_env  = os::env();
+    let my_env  = env::vars().collect::<Vec<_>>();
     let my_path = Path::new(os::self_exe_name().unwrap());
     let my_dir  = my_path.dir_path();
     let my_ext  = my_path.extension_str().unwrap_or("");
@@ -49,7 +50,7 @@ fn main() {
         let child_path     = cwd.join(child_filename);
 
         // make a separate directory for the child
-        drop(fs::mkdir(&cwd, io::USER_RWX).is_ok());
+        drop(fs::mkdir(&cwd, old_io::USER_RWX).is_ok());
         assert!(fs::copy(&my_path, &child_path).is_ok());
         let mut my_env = my_env;
         my_env.push(env);
@@ -58,12 +59,12 @@ fn main() {
         let p = Command::new(&child_path)
                         .arg(arg)
                         .cwd(&cwd)
-                        .env_set_all(my_env.as_slice())
+                        .env_set_all(&my_env)
                         .spawn().unwrap().wait_with_output().unwrap();
 
         // display the output
-        assert!(io::stdout().write(p.output.as_slice()).is_ok());
-        assert!(io::stderr().write(p.error.as_slice()).is_ok());
+        assert!(old_io::stdout().write(&p.output).is_ok());
+        assert!(old_io::stderr().write(&p.error).is_ok());
 
         // make sure the child succeeded
         assert!(p.status.success());
@@ -74,7 +75,7 @@ fn main() {
         assert!(my_cwd.ends_with_path(&Path::new(child_dir)));
 
         // check arguments
-        assert_eq!(my_args[1].as_slice(), arg);
+        assert_eq!(&*my_args[1], arg);
 
         // check environment variable
         assert!(my_env.contains(&env));

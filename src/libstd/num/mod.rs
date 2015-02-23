@@ -13,10 +13,10 @@
 //! These are implemented for the primitive numeric types in `std::{u8, u16,
 //! u32, u64, uint, i8, i16, i32, i64, int, f32, f64}`.
 
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 #![allow(missing_docs)]
 
-#[cfg(test)] use fmt::Show;
+#[cfg(test)] use fmt::Debug;
 use ops::{Add, Sub, Mul, Div, Rem, Neg};
 
 use marker::Copy;
@@ -29,15 +29,15 @@ pub use core::num::{from_int, from_i8, from_i16, from_i32, from_i64};
 pub use core::num::{from_uint, from_u8, from_u16, from_u32, from_u64};
 pub use core::num::{from_f32, from_f64};
 pub use core::num::{FromStrRadix, from_str_radix};
-pub use core::num::{FpCategory};
+pub use core::num::{FpCategory, ParseIntError, ParseFloatError};
 
 use option::Option;
 
-#[unstable = "may be removed or relocated"]
+#[unstable(feature = "std_misc", reason = "may be removed or relocated")]
 pub mod strconv;
 
 /// Mathematical operations on primitive floating point numbers.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait Float
     : Copy + Clone
     + NumCast
@@ -51,268 +51,1034 @@ pub trait Float
     + Rem<Output=Self>
 {
     // inlined methods from `num::Float`
-    /// Returns the NaN value.
-    #[unstable = "unsure about its place in the world"]
+    /// Returns the `NaN` value.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let nan: f32 = Float::nan();
+    ///
+    /// assert!(nan.is_nan());
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn nan() -> Self;
     /// Returns the infinite value.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f32;
+    ///
+    /// let infinity: f32 = Float::infinity();
+    ///
+    /// assert!(infinity.is_infinite());
+    /// assert!(!infinity.is_finite());
+    /// assert!(infinity > f32::MAX);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn infinity() -> Self;
     /// Returns the negative infinite value.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f32;
+    ///
+    /// let neg_infinity: f32 = Float::neg_infinity();
+    ///
+    /// assert!(neg_infinity.is_infinite());
+    /// assert!(!neg_infinity.is_finite());
+    /// assert!(neg_infinity < f32::MIN);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn neg_infinity() -> Self;
-    /// Returns the `0` value.
-    #[unstable = "unsure about its place in the world"]
+    /// Returns `0.0`.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let inf: f32 = Float::infinity();
+    /// let zero: f32 = Float::zero();
+    /// let neg_zero: f32 = Float::neg_zero();
+    ///
+    /// assert_eq!(zero, neg_zero);
+    /// assert_eq!(7.0f32/inf, zero);
+    /// assert_eq!(zero * 10.0, zero);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn zero() -> Self;
-    /// Returns -0.0.
-    #[unstable = "unsure about its place in the world"]
+    /// Returns `-0.0`.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let inf: f32 = Float::infinity();
+    /// let zero: f32 = Float::zero();
+    /// let neg_zero: f32 = Float::neg_zero();
+    ///
+    /// assert_eq!(zero, neg_zero);
+    /// assert_eq!(7.0f32/inf, zero);
+    /// assert_eq!(zero * 10.0, zero);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn neg_zero() -> Self;
-    /// Returns the `1` value.
-    #[unstable = "unsure about its place in the world"]
+    /// Returns `1.0`.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let one: f32 = Float::one();
+    ///
+    /// assert_eq!(one, 1.0f32);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn one() -> Self;
 
     // FIXME (#5527): These should be associated constants
 
-    /// Returns the number of binary digits of mantissa that this type supports.
-    #[deprecated = "use `std::f32::MANTISSA_DIGITS` or `std::f64::MANTISSA_DIGITS` as appropriate"]
+    /// Deprecated: use `std::f32::MANTISSA_DIGITS` or `std::f64::MANTISSA_DIGITS`
+    /// instead.
+    #[unstable(feature = "std_misc")]
+    #[deprecated(since = "1.0.0",
+                 reason = "use `std::f32::MANTISSA_DIGITS` or \
+                           `std::f64::MANTISSA_DIGITS` as appropriate")]
     fn mantissa_digits(unused_self: Option<Self>) -> uint;
-    /// Returns the number of base-10 digits of precision that this type supports.
-    #[deprecated = "use `std::f32::DIGITS` or `std::f64::DIGITS` as appropriate"]
+    /// Deprecated: use `std::f32::DIGITS` or `std::f64::DIGITS` instead.
+    #[unstable(feature = "std_misc")]
+    #[deprecated(since = "1.0.0",
+                 reason = "use `std::f32::DIGITS` or `std::f64::DIGITS` as appropriate")]
     fn digits(unused_self: Option<Self>) -> uint;
-    /// Returns the difference between 1.0 and the smallest representable number larger than 1.0.
-    #[deprecated = "use `std::f32::EPSILON` or `std::f64::EPSILON` as appropriate"]
+    /// Deprecated: use `std::f32::EPSILON` or `std::f64::EPSILON` instead.
+    #[unstable(feature = "std_misc")]
+    #[deprecated(since = "1.0.0",
+                 reason = "use `std::f32::EPSILON` or `std::f64::EPSILON` as appropriate")]
     fn epsilon() -> Self;
-    /// Returns the minimum binary exponent that this type can represent.
-    #[deprecated = "use `std::f32::MIN_EXP` or `std::f64::MIN_EXP` as appropriate"]
+    /// Deprecated: use `std::f32::MIN_EXP` or `std::f64::MIN_EXP` instead.
+    #[unstable(feature = "std_misc")]
+    #[deprecated(since = "1.0.0",
+                 reason = "use `std::f32::MIN_EXP` or `std::f64::MIN_EXP` as appropriate")]
     fn min_exp(unused_self: Option<Self>) -> int;
-    /// Returns the maximum binary exponent that this type can represent.
-    #[deprecated = "use `std::f32::MAX_EXP` or `std::f64::MAX_EXP` as appropriate"]
+    /// Deprecated: use `std::f32::MAX_EXP` or `std::f64::MAX_EXP` instead.
+    #[unstable(feature = "std_misc")]
+    #[deprecated(since = "1.0.0",
+                 reason = "use `std::f32::MAX_EXP` or `std::f64::MAX_EXP` as appropriate")]
     fn max_exp(unused_self: Option<Self>) -> int;
-    /// Returns the minimum base-10 exponent that this type can represent.
-    #[deprecated = "use `std::f32::MIN_10_EXP` or `std::f64::MIN_10_EXP` as appropriate"]
+    /// Deprecated: use `std::f32::MIN_10_EXP` or `std::f64::MIN_10_EXP` instead.
+    #[unstable(feature = "std_misc")]
+    #[deprecated(since = "1.0.0",
+                 reason = "use `std::f32::MIN_10_EXP` or `std::f64::MIN_10_EXP` as appropriate")]
     fn min_10_exp(unused_self: Option<Self>) -> int;
-    /// Returns the maximum base-10 exponent that this type can represent.
-    #[deprecated = "use `std::f32::MAX_10_EXP` or `std::f64::MAX_10_EXP` as appropriate"]
+    /// Deprecated: use `std::f32::MAX_10_EXP` or `std::f64::MAX_10_EXP` instead.
+    #[unstable(feature = "std_misc")]
+    #[deprecated(since = "1.0.0",
+                 reason = "use `std::f32::MAX_10_EXP` or `std::f64::MAX_10_EXP` as appropriate")]
     fn max_10_exp(unused_self: Option<Self>) -> int;
 
     /// Returns the smallest finite value that this type can represent.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let x: f64 = Float::min_value();
+    ///
+    /// assert_eq!(x, f64::MIN);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn min_value() -> Self;
     /// Returns the smallest normalized positive number that this type can represent.
-    #[unstable = "unsure about its place in the world"]
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn min_pos_value(unused_self: Option<Self>) -> Self;
     /// Returns the largest finite value that this type can represent.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let x: f64 = Float::max_value();
+    /// assert_eq!(x, f64::MAX);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn max_value() -> Self;
-
-    /// Returns true if this value is NaN and false otherwise.
-    #[unstable = "position is undecided"]
+    /// Returns `true` if this value is `NaN` and false otherwise.
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let nan = f64::NAN;
+    /// let f = 7.0;
+    ///
+    /// assert!(nan.is_nan());
+    /// assert!(!f.is_nan());
+    /// ```
+    #[unstable(feature = "std_misc", reason = "position is undecided")]
     fn is_nan(self) -> bool;
-    /// Returns true if this value is positive infinity or negative infinity and
+    /// Returns `true` if this value is positive infinity or negative infinity and
     /// false otherwise.
-    #[unstable = "position is undecided"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f32;
+    ///
+    /// let f = 7.0f32;
+    /// let inf: f32 = Float::infinity();
+    /// let neg_inf: f32 = Float::neg_infinity();
+    /// let nan: f32 = f32::NAN;
+    ///
+    /// assert!(!f.is_infinite());
+    /// assert!(!nan.is_infinite());
+    ///
+    /// assert!(inf.is_infinite());
+    /// assert!(neg_inf.is_infinite());
+    /// ```
+    #[unstable(feature = "std_misc", reason = "position is undecided")]
     fn is_infinite(self) -> bool;
-    /// Returns true if this number is neither infinite nor NaN.
-    #[unstable = "position is undecided"]
+    /// Returns `true` if this number is neither infinite nor `NaN`.
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f32;
+    ///
+    /// let f = 7.0f32;
+    /// let inf: f32 = Float::infinity();
+    /// let neg_inf: f32 = Float::neg_infinity();
+    /// let nan: f32 = f32::NAN;
+    ///
+    /// assert!(f.is_finite());
+    ///
+    /// assert!(!nan.is_finite());
+    /// assert!(!inf.is_finite());
+    /// assert!(!neg_inf.is_finite());
+    /// ```
+    #[unstable(feature = "std_misc", reason = "position is undecided")]
     fn is_finite(self) -> bool;
-    /// Returns true if this number is neither zero, infinite, denormal, or NaN.
-    #[unstable = "position is undecided"]
+    /// Returns `true` if the number is neither zero, infinite,
+    /// [subnormal][subnormal], or `NaN`.
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f32;
+    ///
+    /// let min = f32::MIN_POSITIVE; // 1.17549435e-38f32
+    /// let max = f32::MAX;
+    /// let lower_than_min = 1.0e-40_f32;
+    /// let zero = 0.0f32;
+    ///
+    /// assert!(min.is_normal());
+    /// assert!(max.is_normal());
+    ///
+    /// assert!(!zero.is_normal());
+    /// assert!(!f32::NAN.is_normal());
+    /// assert!(!f32::INFINITY.is_normal());
+    /// // Values between `0` and `min` are Subnormal.
+    /// assert!(!lower_than_min.is_normal());
+    /// ```
+    /// [subnormal]: http://en.wikipedia.org/wiki/Denormal_number
+    #[unstable(feature = "std_misc", reason = "position is undecided")]
     fn is_normal(self) -> bool;
-    /// Returns the category that this number falls into.
-    #[stable]
+
+    /// Returns the floating point category of the number. If only one property
+    /// is going to be tested, it is generally faster to use the specific
+    /// predicate instead.
+    ///
+    /// ```
+    /// use std::num::{Float, FpCategory};
+    /// use std::f32;
+    ///
+    /// let num = 12.4f32;
+    /// let inf = f32::INFINITY;
+    ///
+    /// assert_eq!(num.classify(), FpCategory::Normal);
+    /// assert_eq!(inf.classify(), FpCategory::Infinite);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn classify(self) -> FpCategory;
 
-    /// Returns the mantissa, exponent and sign as integers, respectively.
-    #[unstable = "signature is undecided"]
+    /// Returns the mantissa, base 2 exponent, and sign as integers, respectively.
+    /// The original number can be recovered by `sign * mantissa * 2 ^ exponent`.
+    /// The floating point encoding is documented in the [Reference][floating-point].
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let num = 2.0f32;
+    ///
+    /// // (8388608u64, -22i16, 1i8)
+    /// let (mantissa, exponent, sign) = num.integer_decode();
+    /// let sign_f = sign as f32;
+    /// let mantissa_f = mantissa as f32;
+    /// let exponent_f = num.powf(exponent as f32);
+    ///
+    /// // 1 * 8388608 * 2^(-22) == 2
+    /// let abs_difference = (sign_f * mantissa_f * exponent_f - num).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    /// [floating-point]: ../../../../../reference.html#machine-types
+    #[unstable(feature = "std_misc", reason = "signature is undecided")]
     fn integer_decode(self) -> (u64, i16, i8);
 
-    /// Return the largest integer less than or equal to a number.
-    #[stable]
+    /// Returns the largest integer less than or equal to a number.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let f = 3.99;
+    /// let g = 3.0;
+    ///
+    /// assert_eq!(f.floor(), 3.0);
+    /// assert_eq!(g.floor(), 3.0);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn floor(self) -> Self;
-    /// Return the smallest integer greater than or equal to a number.
-    #[stable]
+    /// Returns the smallest integer greater than or equal to a number.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let f = 3.01;
+    /// let g = 4.0;
+    ///
+    /// assert_eq!(f.ceil(), 4.0);
+    /// assert_eq!(g.ceil(), 4.0);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn ceil(self) -> Self;
-    /// Return the nearest integer to a number. Round half-way cases away from
+    /// Returns the nearest integer to a number. Round half-way cases away from
     /// `0.0`.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let f = 3.3;
+    /// let g = -3.3;
+    ///
+    /// assert_eq!(f.round(), 3.0);
+    /// assert_eq!(g.round(), -3.0);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn round(self) -> Self;
     /// Return the integer part of a number.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let f = 3.3;
+    /// let g = -3.7;
+    ///
+    /// assert_eq!(f.trunc(), 3.0);
+    /// assert_eq!(g.trunc(), -3.0);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn trunc(self) -> Self;
-    /// Return the fractional part of a number.
-    #[stable]
+    /// Returns the fractional part of a number.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 3.5;
+    /// let y = -3.5;
+    /// let abs_difference_x = (x.fract() - 0.5).abs();
+    /// let abs_difference_y = (y.fract() - (-0.5)).abs();
+    ///
+    /// assert!(abs_difference_x < 1e-10);
+    /// assert!(abs_difference_y < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fract(self) -> Self;
-
     /// Computes the absolute value of `self`. Returns `Float::nan()` if the
     /// number is `Float::nan()`.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let x = 3.5;
+    /// let y = -3.5;
+    ///
+    /// let abs_difference_x = (x.abs() - x).abs();
+    /// let abs_difference_y = (y.abs() - (-y)).abs();
+    ///
+    /// assert!(abs_difference_x < 1e-10);
+    /// assert!(abs_difference_y < 1e-10);
+    ///
+    /// assert!(f64::NAN.abs().is_nan());
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn abs(self) -> Self;
     /// Returns a number that represents the sign of `self`.
     ///
     /// - `1.0` if the number is positive, `+0.0` or `Float::infinity()`
     /// - `-1.0` if the number is negative, `-0.0` or `Float::neg_infinity()`
     /// - `Float::nan()` if the number is `Float::nan()`
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let f = 3.5;
+    ///
+    /// assert_eq!(f.signum(), 1.0);
+    /// assert_eq!(f64::NEG_INFINITY.signum(), -1.0);
+    ///
+    /// assert!(f64::NAN.signum().is_nan());
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn signum(self) -> Self;
     /// Returns `true` if `self` is positive, including `+0.0` and
     /// `Float::infinity()`.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let nan: f64 = f64::NAN;
+    ///
+    /// let f = 7.0;
+    /// let g = -7.0;
+    ///
+    /// assert!(f.is_positive());
+    /// assert!(!g.is_positive());
+    /// // Requires both tests to determine if is `NaN`
+    /// assert!(!nan.is_positive() && !nan.is_negative());
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn is_positive(self) -> bool;
     /// Returns `true` if `self` is negative, including `-0.0` and
     /// `Float::neg_infinity()`.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let nan = f64::NAN;
+    ///
+    /// let f = 7.0;
+    /// let g = -7.0;
+    ///
+    /// assert!(!f.is_negative());
+    /// assert!(g.is_negative());
+    /// // Requires both tests to determine if is `NaN`.
+    /// assert!(!nan.is_positive() && !nan.is_negative());
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn is_negative(self) -> bool;
 
     /// Fused multiply-add. Computes `(self * a) + b` with only one rounding
     /// error. This produces a more accurate result with better performance than
     /// a separate multiplication operation followed by an add.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let m = 10.0;
+    /// let x = 4.0;
+    /// let b = 60.0;
+    ///
+    /// // 100.0
+    /// let abs_difference = (m.mul_add(x, b) - (m*x + b)).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn mul_add(self, a: Self, b: Self) -> Self;
     /// Take the reciprocal (inverse) of a number, `1/x`.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 2.0;
+    /// let abs_difference = (x.recip() - (1.0/x)).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn recip(self) -> Self;
 
     /// Raise a number to an integer power.
     ///
     /// Using this function is generally faster than using `powf`
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 2.0;
+    /// let abs_difference = (x.powi(2) - x*x).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn powi(self, n: i32) -> Self;
     /// Raise a number to a floating point power.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 2.0;
+    /// let abs_difference = (x.powf(2.0) - x*x).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn powf(self, n: Self) -> Self;
-
     /// Take the square root of a number.
     ///
     /// Returns NaN if `self` is a negative number.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let positive = 4.0;
+    /// let negative = -4.0;
+    ///
+    /// let abs_difference = (positive.sqrt() - 2.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// assert!(negative.sqrt().is_nan());
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn sqrt(self) -> Self;
+
     /// Take the reciprocal (inverse) square root of a number, `1/sqrt(x)`.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let f = 4.0;
+    ///
+    /// let abs_difference = (f.rsqrt() - 0.5).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn rsqrt(self) -> Self;
 
     /// Returns `e^(self)`, (the exponential function).
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let one = 1.0;
+    /// // e^1
+    /// let e = one.exp();
+    ///
+    /// // ln(e) - 1 == 0
+    /// let abs_difference = (e.ln() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn exp(self) -> Self;
-    /// Returns 2 raised to the power of the number, `2^(self)`.
-    #[stable]
+    /// Returns `2^(self)`.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let f = 2.0;
+    ///
+    /// // 2^2 - 4 == 0
+    /// let abs_difference = (f.exp2() - 4.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn exp2(self) -> Self;
     /// Returns the natural logarithm of the number.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let one = 1.0;
+    /// // e^1
+    /// let e = one.exp();
+    ///
+    /// // ln(e) - 1 == 0
+    /// let abs_difference = (e.ln() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn ln(self) -> Self;
     /// Returns the logarithm of the number with respect to an arbitrary base.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let ten = 10.0;
+    /// let two = 2.0;
+    ///
+    /// // log10(10) - 1 == 0
+    /// let abs_difference_10 = (ten.log(10.0) - 1.0).abs();
+    ///
+    /// // log2(2) - 1 == 0
+    /// let abs_difference_2 = (two.log(2.0) - 1.0).abs();
+    ///
+    /// assert!(abs_difference_10 < 1e-10);
+    /// assert!(abs_difference_2 < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn log(self, base: Self) -> Self;
     /// Returns the base 2 logarithm of the number.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let two = 2.0;
+    ///
+    /// // log2(2) - 1 == 0
+    /// let abs_difference = (two.log2() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn log2(self) -> Self;
     /// Returns the base 10 logarithm of the number.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let ten = 10.0;
+    ///
+    /// // log10(10) - 1 == 0
+    /// let abs_difference = (ten.log10() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn log10(self) -> Self;
 
     /// Convert radians to degrees.
-    #[unstable = "desirability is unclear"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64::consts;
+    ///
+    /// let angle = consts::PI;
+    ///
+    /// let abs_difference = (angle.to_degrees() - 180.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc", reason = "desirability is unclear")]
     fn to_degrees(self) -> Self;
     /// Convert degrees to radians.
-    #[unstable = "desirability is unclear"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64::consts;
+    ///
+    /// let angle = 180.0;
+    ///
+    /// let abs_difference = (angle.to_radians() - consts::PI).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc", reason = "desirability is unclear")]
     fn to_radians(self) -> Self;
-
-    /// Constructs a floating point number created by multiplying `x` by 2
-    /// raised to the power of `exp`.
-    #[unstable = "pending integer conventions"]
+    /// Constructs a floating point number of `x*2^exp`.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// // 3*2^2 - 12 == 0
+    /// let abs_difference = (Float::ldexp(3.0, 2) - 12.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "pending integer conventions")]
     fn ldexp(x: Self, exp: int) -> Self;
     /// Breaks the number into a normalized fraction and a base-2 exponent,
     /// satisfying:
     ///
-    ///  * `self = x * pow(2, exp)`
-    ///
+    ///  * `self = x * 2^exp`
     ///  * `0.5 <= abs(x) < 1.0`
-    #[unstable = "pending integer conventions"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 4.0;
+    ///
+    /// // (1/2)*2^3 -> 1 * 8/2 -> 4.0
+    /// let f = x.frexp();
+    /// let abs_difference_0 = (f.0 - 0.5).abs();
+    /// let abs_difference_1 = (f.1 as f64 - 3.0).abs();
+    ///
+    /// assert!(abs_difference_0 < 1e-10);
+    /// assert!(abs_difference_1 < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "pending integer conventions")]
     fn frexp(self) -> (Self, int);
-
     /// Returns the next representable floating-point value in the direction of
     /// `other`.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 1.0f32;
+    ///
+    /// let abs_diff = (x.next_after(2.0) - 1.00000011920928955078125_f32).abs();
+    ///
+    /// assert!(abs_diff < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn next_after(self, other: Self) -> Self;
 
     /// Returns the maximum of the two numbers.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 1.0;
+    /// let y = 2.0;
+    ///
+    /// assert_eq!(x.max(y), y);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn max(self, other: Self) -> Self;
     /// Returns the minimum of the two numbers.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 1.0;
+    /// let y = 2.0;
+    ///
+    /// assert_eq!(x.min(y), x);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn min(self, other: Self) -> Self;
 
-    /// The positive difference of two numbers. Returns `0.0` if the number is
-    /// less than or equal to `other`, otherwise the difference between`self`
-    /// and `other` is returned.
-    #[unstable = "may be renamed"]
+    /// The positive difference of two numbers.
+    ///
+    /// * If `self <= other`: `0:0`
+    /// * Else: `self - other`
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 3.0;
+    /// let y = -3.0;
+    ///
+    /// let abs_difference_x = (x.abs_sub(1.0) - 2.0).abs();
+    /// let abs_difference_y = (y.abs_sub(1.0) - 0.0).abs();
+    ///
+    /// assert!(abs_difference_x < 1e-10);
+    /// assert!(abs_difference_y < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc", reason = "may be renamed")]
     fn abs_sub(self, other: Self) -> Self;
-
     /// Take the cubic root of a number.
-    #[unstable = "may be renamed"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 8.0;
+    ///
+    /// // x^(1/3) - 2 == 0
+    /// let abs_difference = (x.cbrt() - 2.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc", reason = "may be renamed")]
     fn cbrt(self) -> Self;
     /// Calculate the length of the hypotenuse of a right-angle triangle given
     /// legs of length `x` and `y`.
-    #[unstable = "unsure about its place in the world"]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 2.0;
+    /// let y = 3.0;
+    ///
+    /// // sqrt(x^2 + y^2)
+    /// let abs_difference = (x.hypot(y) - (x.powi(2) + y.powi(2)).sqrt()).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc",
+               reason = "unsure about its place in the world")]
     fn hypot(self, other: Self) -> Self;
 
     /// Computes the sine of a number (in radians).
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let x = f64::consts::PI/2.0;
+    ///
+    /// let abs_difference = (x.sin() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn sin(self) -> Self;
     /// Computes the cosine of a number (in radians).
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let x = 2.0*f64::consts::PI;
+    ///
+    /// let abs_difference = (x.cos() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn cos(self) -> Self;
     /// Computes the tangent of a number (in radians).
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let x = f64::consts::PI/4.0;
+    /// let abs_difference = (x.tan() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-14);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn tan(self) -> Self;
-
     /// Computes the arcsine of a number. Return value is in radians in
     /// the range [-pi/2, pi/2] or NaN if the number is outside the range
     /// [-1, 1].
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let f = f64::consts::PI / 2.0;
+    ///
+    /// // asin(sin(pi/2))
+    /// let abs_difference = (f.sin().asin() - f64::consts::PI / 2.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn asin(self) -> Self;
     /// Computes the arccosine of a number. Return value is in radians in
     /// the range [0, pi] or NaN if the number is outside the range
     /// [-1, 1].
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let f = f64::consts::PI / 4.0;
+    ///
+    /// // acos(cos(pi/4))
+    /// let abs_difference = (f.cos().acos() - f64::consts::PI / 4.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn acos(self) -> Self;
     /// Computes the arctangent of a number. Return value is in radians in the
     /// range [-pi/2, pi/2];
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let f = 1.0;
+    ///
+    /// // atan(tan(1))
+    /// let abs_difference = (f.tan().atan() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn atan(self) -> Self;
-    /// Computes the four quadrant arctangent of a number, `y`, and another
-    /// number `x`. Return value is in radians in the range [-pi, pi].
-    #[stable]
+    /// Computes the four quadrant arctangent of `self` (`y`) and `other` (`x`).
+    ///
+    /// * `x = 0`, `y = 0`: `0`
+    /// * `x >= 0`: `arctan(y/x)` -> `[-pi/2, pi/2]`
+    /// * `y >= 0`: `arctan(y/x) + pi` -> `(pi/2, pi]`
+    /// * `y < 0`: `arctan(y/x) - pi` -> `(-pi, -pi/2)`
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let pi = f64::consts::PI;
+    /// // All angles from horizontal right (+x)
+    /// // 45 deg counter-clockwise
+    /// let x1 = 3.0;
+    /// let y1 = -3.0;
+    ///
+    /// // 135 deg clockwise
+    /// let x2 = -3.0;
+    /// let y2 = 3.0;
+    ///
+    /// let abs_difference_1 = (y1.atan2(x1) - (-pi/4.0)).abs();
+    /// let abs_difference_2 = (y2.atan2(x2) - 3.0*pi/4.0).abs();
+    ///
+    /// assert!(abs_difference_1 < 1e-10);
+    /// assert!(abs_difference_2 < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn atan2(self, other: Self) -> Self;
     /// Simultaneously computes the sine and cosine of the number, `x`. Returns
     /// `(sin(x), cos(x))`.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let x = f64::consts::PI/4.0;
+    /// let f = x.sin_cos();
+    ///
+    /// let abs_difference_0 = (f.0 - x.sin()).abs();
+    /// let abs_difference_1 = (f.1 - x.cos()).abs();
+    ///
+    /// assert!(abs_difference_0 < 1e-10);
+    /// assert!(abs_difference_0 < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn sin_cos(self) -> (Self, Self);
 
-    /// Returns the exponential of the number, minus 1, in a way that is
-    /// accurate even if the number is close to zero.
-    #[unstable = "may be renamed"]
+    /// Returns `e^(self) - 1` in a way that is accurate even if the
+    /// number is close to zero.
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 7.0;
+    ///
+    /// // e^(ln(7)) - 1
+    /// let abs_difference = (x.ln().exp_m1() - 6.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc", reason = "may be renamed")]
     fn exp_m1(self) -> Self;
-    /// Returns the natural logarithm of the number plus 1 (`ln(1+n)`) more
-    /// accurately than if the operations were performed separately.
-    #[unstable = "may be renamed"]
+    /// Returns `ln(1+n)` (natural logarithm) more accurately than if
+    /// the operations were performed separately.
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let x = f64::consts::E - 1.0;
+    ///
+    /// // ln(1 + (e - 1)) == ln(e) == 1
+    /// let abs_difference = (x.ln_1p() - 1.0).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[unstable(feature = "std_misc", reason = "may be renamed")]
     fn ln_1p(self) -> Self;
 
     /// Hyperbolic sine function.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let e = f64::consts::E;
+    /// let x = 1.0;
+    ///
+    /// let f = x.sinh();
+    /// // Solving sinh() at 1 gives `(e^2-1)/(2e)`
+    /// let g = (e*e - 1.0)/(2.0*e);
+    /// let abs_difference = (f - g).abs();
+    ///
+    /// assert!(abs_difference < 1e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn sinh(self) -> Self;
     /// Hyperbolic cosine function.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let e = f64::consts::E;
+    /// let x = 1.0;
+    /// let f = x.cosh();
+    /// // Solving cosh() at 1 gives this result
+    /// let g = (e*e + 1.0)/(2.0*e);
+    /// let abs_difference = (f - g).abs();
+    ///
+    /// // Same result
+    /// assert!(abs_difference < 1.0e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn cosh(self) -> Self;
     /// Hyperbolic tangent function.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let e = f64::consts::E;
+    /// let x = 1.0;
+    ///
+    /// let f = x.tanh();
+    /// // Solving tanh() at 1 gives `(1 - e^(-2))/(1 + e^(-2))`
+    /// let g = (1.0 - e.powi(-2))/(1.0 + e.powi(-2));
+    /// let abs_difference = (f - g).abs();
+    ///
+    /// assert!(abs_difference < 1.0e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn tanh(self) -> Self;
     /// Inverse hyperbolic sine function.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 1.0;
+    /// let f = x.sinh().asinh();
+    ///
+    /// let abs_difference = (f - x).abs();
+    ///
+    /// assert!(abs_difference < 1.0e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn asinh(self) -> Self;
     /// Inverse hyperbolic cosine function.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    ///
+    /// let x = 1.0;
+    /// let f = x.cosh().acosh();
+    ///
+    /// let abs_difference = (f - x).abs();
+    ///
+    /// assert!(abs_difference < 1.0e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn acosh(self) -> Self;
     /// Inverse hyperbolic tangent function.
-    #[stable]
+    ///
+    /// ```
+    /// use std::num::Float;
+    /// use std::f64;
+    ///
+    /// let e = f64::consts::E;
+    /// let f = e.tanh().atanh();
+    ///
+    /// let abs_difference = (f - e).abs();
+    ///
+    /// assert!(abs_difference < 1.0e-10);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn atanh(self) -> Self;
 }
 
@@ -322,14 +1088,14 @@ pub fn test_num<T>(ten: T, two: T) where
     T: PartialEq + NumCast
      + Add<Output=T> + Sub<Output=T>
      + Mul<Output=T> + Div<Output=T>
-     + Rem<Output=T> + Show
+     + Rem<Output=T> + Debug
      + Copy
 {
-    assert_eq!(ten.add(two),  cast(12i).unwrap());
-    assert_eq!(ten.sub(two),  cast(8i).unwrap());
-    assert_eq!(ten.mul(two),  cast(20i).unwrap());
-    assert_eq!(ten.div(two),  cast(5i).unwrap());
-    assert_eq!(ten.rem(two),  cast(0i).unwrap());
+    assert_eq!(ten.add(two),  cast(12).unwrap());
+    assert_eq!(ten.sub(two),  cast(8).unwrap());
+    assert_eq!(ten.mul(two),  cast(20).unwrap());
+    assert_eq!(ten.div(two),  cast(5).unwrap());
+    assert_eq!(ten.rem(two),  cast(0).unwrap());
 
     assert_eq!(ten.add(two),  ten + two);
     assert_eq!(ten.sub(two),  ten - two);
@@ -357,25 +1123,25 @@ mod tests {
         ($_20:expr) => ({
             let _20 = $_20;
 
-            assert_eq!(20u,   _20.to_uint().unwrap());
-            assert_eq!(20u8,  _20.to_u8().unwrap());
-            assert_eq!(20u16, _20.to_u16().unwrap());
-            assert_eq!(20u32, _20.to_u32().unwrap());
-            assert_eq!(20u64, _20.to_u64().unwrap());
-            assert_eq!(20i,   _20.to_int().unwrap());
-            assert_eq!(20i8,  _20.to_i8().unwrap());
-            assert_eq!(20i16, _20.to_i16().unwrap());
-            assert_eq!(20i32, _20.to_i32().unwrap());
-            assert_eq!(20i64, _20.to_i64().unwrap());
-            assert_eq!(20f32, _20.to_f32().unwrap());
-            assert_eq!(20f64, _20.to_f64().unwrap());
+            assert_eq!(20usize, _20.to_uint().unwrap());
+            assert_eq!(20u8,    _20.to_u8().unwrap());
+            assert_eq!(20u16,   _20.to_u16().unwrap());
+            assert_eq!(20u32,   _20.to_u32().unwrap());
+            assert_eq!(20u64,   _20.to_u64().unwrap());
+            assert_eq!(20,      _20.to_int().unwrap());
+            assert_eq!(20i8,    _20.to_i8().unwrap());
+            assert_eq!(20i16,   _20.to_i16().unwrap());
+            assert_eq!(20i32,   _20.to_i32().unwrap());
+            assert_eq!(20i64,   _20.to_i64().unwrap());
+            assert_eq!(20f32,   _20.to_f32().unwrap());
+            assert_eq!(20f64,   _20.to_f64().unwrap());
 
-            assert_eq!(_20, NumCast::from(20u).unwrap());
+            assert_eq!(_20, NumCast::from(20usize).unwrap());
             assert_eq!(_20, NumCast::from(20u8).unwrap());
             assert_eq!(_20, NumCast::from(20u16).unwrap());
             assert_eq!(_20, NumCast::from(20u32).unwrap());
             assert_eq!(_20, NumCast::from(20u64).unwrap());
-            assert_eq!(_20, NumCast::from(20i).unwrap());
+            assert_eq!(_20, NumCast::from(20).unwrap());
             assert_eq!(_20, NumCast::from(20i8).unwrap());
             assert_eq!(_20, NumCast::from(20i16).unwrap());
             assert_eq!(_20, NumCast::from(20i32).unwrap());
@@ -383,12 +1149,12 @@ mod tests {
             assert_eq!(_20, NumCast::from(20f32).unwrap());
             assert_eq!(_20, NumCast::from(20f64).unwrap());
 
-            assert_eq!(_20, cast(20u).unwrap());
+            assert_eq!(_20, cast(20usize).unwrap());
             assert_eq!(_20, cast(20u8).unwrap());
             assert_eq!(_20, cast(20u16).unwrap());
             assert_eq!(_20, cast(20u32).unwrap());
             assert_eq!(_20, cast(20u64).unwrap());
-            assert_eq!(_20, cast(20i).unwrap());
+            assert_eq!(_20, cast(20).unwrap());
             assert_eq!(_20, cast(20i8).unwrap());
             assert_eq!(_20, cast(20i16).unwrap());
             assert_eq!(_20, cast(20i32).unwrap());
@@ -398,18 +1164,18 @@ mod tests {
         })
     }
 
-    #[test] fn test_u8_cast()    { test_cast_20!(20u8)  }
-    #[test] fn test_u16_cast()   { test_cast_20!(20u16) }
-    #[test] fn test_u32_cast()   { test_cast_20!(20u32) }
-    #[test] fn test_u64_cast()   { test_cast_20!(20u64) }
-    #[test] fn test_uint_cast()  { test_cast_20!(20u)   }
-    #[test] fn test_i8_cast()    { test_cast_20!(20i8)  }
-    #[test] fn test_i16_cast()   { test_cast_20!(20i16) }
-    #[test] fn test_i32_cast()   { test_cast_20!(20i32) }
-    #[test] fn test_i64_cast()   { test_cast_20!(20i64) }
-    #[test] fn test_int_cast()   { test_cast_20!(20i)   }
-    #[test] fn test_f32_cast()   { test_cast_20!(20f32) }
-    #[test] fn test_f64_cast()   { test_cast_20!(20f64) }
+    #[test] fn test_u8_cast()    { test_cast_20!(20u8)    }
+    #[test] fn test_u16_cast()   { test_cast_20!(20u16)   }
+    #[test] fn test_u32_cast()   { test_cast_20!(20u32)   }
+    #[test] fn test_u64_cast()   { test_cast_20!(20u64)   }
+    #[test] fn test_uint_cast()  { test_cast_20!(20usize) }
+    #[test] fn test_i8_cast()    { test_cast_20!(20i8)    }
+    #[test] fn test_i16_cast()   { test_cast_20!(20i16)   }
+    #[test] fn test_i32_cast()   { test_cast_20!(20i32)   }
+    #[test] fn test_i64_cast()   { test_cast_20!(20i64)   }
+    #[test] fn test_int_cast()   { test_cast_20!(20)      }
+    #[test] fn test_f32_cast()   { test_cast_20!(20f32)   }
+    #[test] fn test_f64_cast()   { test_cast_20!(20f64)   }
 
     #[test]
     fn test_cast_range_int_min() {
@@ -424,14 +1190,12 @@ mod tests {
         assert_eq!(int::MIN.to_u32(),  None);
         assert_eq!(int::MIN.to_u64(),  None);
 
-        #[cfg(any(all(stage0, target_word_size = "32"),
-                  all(not(stage0), target_pointer_width = "32")))]
+        #[cfg(target_pointer_width = "32")]
         fn check_word_size() {
             assert_eq!(int::MIN.to_i32(), Some(int::MIN as i32));
         }
 
-        #[cfg(any(all(stage0, target_word_size = "64"),
-                  all(not(stage0), target_pointer_width = "64")))]
+        #[cfg(target_pointer_width = "64")]
         fn check_word_size() {
             assert_eq!(int::MIN.to_i32(), None);
         }
@@ -494,14 +1258,12 @@ mod tests {
         assert_eq!(i64::MIN.to_u32(),  None);
         assert_eq!(i64::MIN.to_u64(),  None);
 
-        #[cfg(any(all(stage0, target_word_size = "32"),
-                  all(not(stage0), target_pointer_width = "32")))]
+        #[cfg(target_pointer_width = "32")]
         fn check_word_size() {
             assert_eq!(i64::MIN.to_int(), None);
         }
 
-        #[cfg(any(all(stage0, target_word_size = "64"),
-                  all(not(stage0), target_pointer_width = "64")))]
+        #[cfg(target_pointer_width = "64")]
         fn check_word_size() {
             assert_eq!(i64::MIN.to_int(), Some(i64::MIN as int));
         }
@@ -521,15 +1283,13 @@ mod tests {
         // int::MAX.to_u32() is word-size specific
         assert_eq!(int::MAX.to_u64(),  Some(int::MAX as u64));
 
-        #[cfg(any(all(stage0, target_word_size = "32"),
-                  all(not(stage0), target_pointer_width = "32")))]
+        #[cfg(target_pointer_width = "32")]
         fn check_word_size() {
             assert_eq!(int::MAX.to_i32(), Some(int::MAX as i32));
             assert_eq!(int::MAX.to_u32(), Some(int::MAX as u32));
         }
 
-        #[cfg(any(all(stage0, target_word_size = "64"),
-                  all(not(stage0), target_pointer_width = "64")))]
+        #[cfg(target_pointer_width = "64")]
         fn check_word_size() {
             assert_eq!(int::MAX.to_i32(), None);
             assert_eq!(int::MAX.to_u32(), None);
@@ -593,15 +1353,13 @@ mod tests {
         assert_eq!(i64::MAX.to_u32(),  None);
         assert_eq!(i64::MAX.to_u64(),  Some(i64::MAX as u64));
 
-        #[cfg(any(all(stage0, target_word_size = "32"),
-                  all(not(stage0), target_pointer_width = "32")))]
+        #[cfg(target_pointer_width = "32")]
         fn check_word_size() {
             assert_eq!(i64::MAX.to_int(),  None);
             assert_eq!(i64::MAX.to_uint(), None);
         }
 
-        #[cfg(any(all(stage0, target_word_size = "64"),
-                  all(not(stage0), target_pointer_width = "64")))]
+        #[cfg(target_pointer_width = "64")]
         fn check_word_size() {
             assert_eq!(i64::MAX.to_int(),  Some(i64::MAX as int));
             assert_eq!(i64::MAX.to_uint(), Some(i64::MAX as uint));
@@ -692,15 +1450,13 @@ mod tests {
         // uint::MAX.to_u32() is word-size specific
         assert_eq!(uint::MAX.to_u64(),  Some(uint::MAX as u64));
 
-        #[cfg(any(all(stage0, target_word_size = "32"),
-                  all(not(stage0), target_pointer_width = "32")))]
+        #[cfg(target_pointer_width = "32")]
         fn check_word_size() {
             assert_eq!(uint::MAX.to_u32(), Some(uint::MAX as u32));
             assert_eq!(uint::MAX.to_i64(), Some(uint::MAX as i64));
         }
 
-        #[cfg(any(all(stage0, target_word_size = "64"),
-                  all(not(stage0), target_pointer_width = "64")))]
+        #[cfg(target_pointer_width = "64")]
         fn check_word_size() {
             assert_eq!(uint::MAX.to_u32(), None);
             assert_eq!(uint::MAX.to_i64(), None);
@@ -750,14 +1506,12 @@ mod tests {
         assert_eq!(u32::MAX.to_u32(),  Some(u32::MAX as u32));
         assert_eq!(u32::MAX.to_u64(),  Some(u32::MAX as u64));
 
-        #[cfg(any(all(stage0, target_word_size = "32"),
-                  all(not(stage0), target_pointer_width = "32")))]
+        #[cfg(target_pointer_width = "32")]
         fn check_word_size() {
             assert_eq!(u32::MAX.to_int(),  None);
         }
 
-        #[cfg(any(all(stage0, target_word_size = "64"),
-                  all(not(stage0), target_pointer_width = "64")))]
+        #[cfg(target_pointer_width = "64")]
         fn check_word_size() {
             assert_eq!(u32::MAX.to_int(),  Some(u32::MAX as int));
         }
@@ -778,14 +1532,12 @@ mod tests {
         assert_eq!(u64::MAX.to_u32(),  None);
         assert_eq!(u64::MAX.to_u64(),  Some(u64::MAX as u64));
 
-        #[cfg(any(all(stage0, target_word_size = "32"),
-                  all(not(stage0), target_pointer_width = "32")))]
+        #[cfg(target_pointer_width = "32")]
         fn check_word_size() {
             assert_eq!(u64::MAX.to_uint(), None);
         }
 
-        #[cfg(any(all(stage0, target_word_size = "64"),
-                  all(not(stage0), target_pointer_width = "64")))]
+        #[cfg(target_pointer_width = "64")]
         fn check_word_size() {
             assert_eq!(u64::MAX.to_uint(), Some(u64::MAX as uint));
         }
@@ -796,8 +1548,8 @@ mod tests {
     #[test]
     fn test_saturating_add_uint() {
         use uint::MAX;
-        assert_eq!(3u.saturating_add(5u), 8u);
-        assert_eq!(3u.saturating_add(MAX-1), MAX);
+        assert_eq!(3_usize.saturating_add(5_usize), 8_usize);
+        assert_eq!(3_usize.saturating_add(MAX-1), MAX);
         assert_eq!(MAX.saturating_add(MAX), MAX);
         assert_eq!((MAX-2).saturating_add(1), MAX-1);
     }
@@ -805,32 +1557,32 @@ mod tests {
     #[test]
     fn test_saturating_sub_uint() {
         use uint::MAX;
-        assert_eq!(5u.saturating_sub(3u), 2u);
-        assert_eq!(3u.saturating_sub(5u), 0u);
-        assert_eq!(0u.saturating_sub(1u), 0u);
+        assert_eq!(5_usize.saturating_sub(3_usize), 2_usize);
+        assert_eq!(3_usize.saturating_sub(5_usize), 0_usize);
+        assert_eq!(0_usize.saturating_sub(1_usize), 0_usize);
         assert_eq!((MAX-1).saturating_sub(MAX), 0);
     }
 
     #[test]
     fn test_saturating_add_int() {
         use int::{MIN,MAX};
-        assert_eq!(3i.saturating_add(5i), 8i);
-        assert_eq!(3i.saturating_add(MAX-1), MAX);
+        assert_eq!(3.saturating_add(5), 8);
+        assert_eq!(3.saturating_add(MAX-1), MAX);
         assert_eq!(MAX.saturating_add(MAX), MAX);
         assert_eq!((MAX-2).saturating_add(1), MAX-1);
-        assert_eq!(3i.saturating_add(-5i), -2i);
-        assert_eq!(MIN.saturating_add(-1i), MIN);
-        assert_eq!((-2i).saturating_add(-MAX), MIN);
+        assert_eq!(3.saturating_add(-5), -2);
+        assert_eq!(MIN.saturating_add(-1), MIN);
+        assert_eq!((-2).saturating_add(-MAX), MIN);
     }
 
     #[test]
     fn test_saturating_sub_int() {
         use int::{MIN,MAX};
-        assert_eq!(3i.saturating_sub(5i), -2i);
-        assert_eq!(MIN.saturating_sub(1i), MIN);
-        assert_eq!((-2i).saturating_sub(MAX), MIN);
-        assert_eq!(3i.saturating_sub(-5i), 8i);
-        assert_eq!(3i.saturating_sub(-(MAX-1)), MAX);
+        assert_eq!(3.saturating_sub(5), -2);
+        assert_eq!(MIN.saturating_sub(1), MIN);
+        assert_eq!((-2).saturating_sub(MAX), MIN);
+        assert_eq!(3.saturating_sub(-5), 8);
+        assert_eq!(3.saturating_sub(-(MAX-1)), MAX);
         assert_eq!(MAX.saturating_sub(-MAX), MAX);
         assert_eq!((MAX-2).saturating_sub(-1), MAX-1);
     }
@@ -850,14 +1602,14 @@ mod tests {
 
     #[test]
     fn test_checked_sub() {
-        assert_eq!(5u.checked_sub(0), Some(5));
-        assert_eq!(5u.checked_sub(1), Some(4));
-        assert_eq!(5u.checked_sub(2), Some(3));
-        assert_eq!(5u.checked_sub(3), Some(2));
-        assert_eq!(5u.checked_sub(4), Some(1));
-        assert_eq!(5u.checked_sub(5), Some(0));
-        assert_eq!(5u.checked_sub(6), None);
-        assert_eq!(5u.checked_sub(7), None);
+        assert_eq!(5_usize.checked_sub(0), Some(5));
+        assert_eq!(5_usize.checked_sub(1), Some(4));
+        assert_eq!(5_usize.checked_sub(2), Some(3));
+        assert_eq!(5_usize.checked_sub(3), Some(2));
+        assert_eq!(5_usize.checked_sub(4), Some(1));
+        assert_eq!(5_usize.checked_sub(5), Some(0));
+        assert_eq!(5_usize.checked_sub(6), None);
+        assert_eq!(5_usize.checked_sub(7), None);
     }
 
     #[test]
@@ -934,7 +1686,7 @@ mod tests {
     test_checked_next_power_of_two! { test_checked_next_power_of_two_u64, u64 }
     test_checked_next_power_of_two! { test_checked_next_power_of_two_uint, uint }
 
-    #[derive(PartialEq, Show)]
+    #[derive(PartialEq, Debug)]
     struct Value { x: int }
 
     impl ToPrimitive for Value {
@@ -984,7 +1736,7 @@ mod tests {
     fn test_pow() {
         fn naive_pow<T: Int>(base: T, exp: uint) -> T {
             let one: T = Int::one();
-            range(0, exp).fold(one, |acc, _| acc * base)
+            (0..exp).fold(one, |acc, _| acc * base)
         }
         macro_rules! assert_pow {
             (($num:expr, $exp:expr) => $expected:expr) => {{
@@ -993,10 +1745,10 @@ mod tests {
                 assert_eq!(result, naive_pow($num, $exp));
             }}
         }
-        assert_pow!((3i,     0 ) => 1);
-        assert_pow!((5i,     1 ) => 5);
-        assert_pow!((-4i,    2 ) => 16);
-        assert_pow!((8i,     3 ) => 512);
+        assert_pow!((3,     0 ) => 1);
+        assert_pow!((5,     1 ) => 5);
+        assert_pow!((-4,    2 ) => 16);
+        assert_pow!((8,     3 ) => 512);
         assert_pow!((2u64,   50) => 1125899906842624);
     }
 }
@@ -1011,7 +1763,7 @@ mod bench {
 
     #[bench]
     fn bench_pow_function(b: &mut Bencher) {
-        let v = range(0, 1024u).collect::<Vec<_>>();
-        b.iter(|| {v.iter().fold(0u, |old, new| old.pow(*new));});
+        let v = (0..1024).collect::<Vec<_>>();
+        b.iter(|| {v.iter().fold(0, |old, new| old.pow(*new));});
     }
 }

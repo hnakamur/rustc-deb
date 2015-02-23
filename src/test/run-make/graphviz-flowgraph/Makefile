@@ -13,7 +13,7 @@ all: $(patsubst %.rs,$(TMPDIR)/%.check,$(FILES))
 RUSTC_LIB=$(RUSTC) --crate-type=lib
 
 define FIND_LAST_BLOCK
-LASTBLOCKNUM_$(1) := $(shell $(RUSTC_LIB) --pretty=expanded,identified $(1) \
+LASTBLOCKNUM_$(1) := $(shell $(RUSTC_LIB) -Z unstable-options --pretty=expanded,identified $(1) \
 			 | grep block
 			 | tail -1
 			 | sed -e 's@.*/\* block \([0-9]*\) \*/.*@\1@')
@@ -28,7 +28,7 @@ $(TMPDIR)/%.pp: %.rs
 
 $(TMPDIR)/%.dot: %.rs
 	$(eval $(call FIND_LAST_BLOCK,$<))
-	$(RUSTC_LIB) -Z unstable-options --xpretty flowgraph=$(LASTBLOCKNUM_$<) $< -o $@.tmp
+	$(RUSTC_LIB) -Z unstable-options --xpretty flowgraph,unlabelled=$(LASTBLOCKNUM_$<) $< -o $@.tmp
 	cat $@.tmp | sed -e 's@ (id=[0-9]*)@@g' \
                          -e 's@\[label=""\]@@' \
                          -e 's@digraph [a-zA-Z0-9_]* @digraph block @' \

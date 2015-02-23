@@ -32,9 +32,9 @@
 
 #![allow(dead_code)] // still WIP
 
-use std::fmt::{Formatter, Error, Show};
-use std::uint;
-use std::collections::BitvSet;
+use std::fmt::{Formatter, Error, Debug};
+use std::usize;
+use std::collections::BitSet;
 
 pub struct Graph<N,E> {
     nodes: Vec<Node<N>> ,
@@ -53,7 +53,7 @@ pub struct Edge<E> {
     pub data: E,
 }
 
-impl<E: Show> Show for Edge<E> {
+impl<E: Debug> Debug for Edge<E> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         write!(f, "Edge {{ next_edge: [{:?}, {:?}], source: {:?}, target: {:?}, data: {:?} }}",
                self.next_edge[0], self.next_edge[1], self.source,
@@ -61,18 +61,18 @@ impl<E: Show> Show for Edge<E> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Show)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct NodeIndex(pub uint);
 #[allow(non_upper_case_globals)]
-pub const InvalidNodeIndex: NodeIndex = NodeIndex(uint::MAX);
+pub const InvalidNodeIndex: NodeIndex = NodeIndex(usize::MAX);
 
-#[derive(Copy, PartialEq, Show)]
+#[derive(Copy, PartialEq, Debug)]
 pub struct EdgeIndex(pub uint);
 #[allow(non_upper_case_globals)]
-pub const InvalidEdgeIndex: EdgeIndex = EdgeIndex(uint::MAX);
+pub const InvalidEdgeIndex: EdgeIndex = EdgeIndex(usize::MAX);
 
 // Use a private field here to guarantee no more instances are created:
-#[derive(Copy, Show)]
+#[derive(Copy, Debug)]
 pub struct Direction { repr: uint }
 #[allow(non_upper_case_globals)]
 pub const Outgoing: Direction = Direction { repr: 0 };
@@ -112,14 +112,12 @@ impl<N,E> Graph<N,E> {
 
     #[inline]
     pub fn all_nodes<'a>(&'a self) -> &'a [Node<N>] {
-        let nodes: &'a [Node<N>] = self.nodes.as_slice();
-        nodes
+        &self.nodes
     }
 
     #[inline]
     pub fn all_edges<'a>(&'a self) -> &'a [Edge<E>] {
-        let edges: &'a [Edge<E>] = self.edges.as_slice();
-        edges
+        &self.edges
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -294,7 +292,7 @@ impl<N,E> Graph<N,E> {
         DepthFirstTraversal {
             graph: self,
             stack: vec![start],
-            visited: BitvSet::new()
+            visited: BitSet::new()
         }
     }
 }
@@ -302,7 +300,7 @@ impl<N,E> Graph<N,E> {
 pub struct DepthFirstTraversal<'g, N:'g, E:'g> {
     graph: &'g Graph<N, E>,
     stack: Vec<NodeIndex>,
-    visited: BitvSet
+    visited: BitSet
 }
 
 impl<'g, N, E> Iterator for DepthFirstTraversal<'g, N, E> {
@@ -353,7 +351,7 @@ impl<E> Edge<E> {
 #[cfg(test)]
 mod test {
     use middle::graph::*;
-    use std::fmt::Show;
+    use std::fmt::Debug;
 
     type TestNode = Node<&'static str>;
     type TestEdge = Edge<&'static str>;
@@ -408,7 +406,7 @@ mod test {
         });
     }
 
-    fn test_adjacent_edges<N:PartialEq+Show,E:PartialEq+Show>(graph: &Graph<N,E>,
+    fn test_adjacent_edges<N:PartialEq+Debug,E:PartialEq+Debug>(graph: &Graph<N,E>,
                                       start_index: NodeIndex,
                                       start_data: N,
                                       expected_incoming: &[(E,N)],

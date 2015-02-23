@@ -13,22 +13,26 @@ mod a {
         A(T),
     }
 
-    pub trait X {}
+    pub trait X {
+        fn dummy(&self) { }
+    }
     impl X for int {}
 
     pub struct Z<'a>(Enum<&'a (X+'a)>);
-    fn foo() { let x = 42i; let z = Z(Enum::A(&x as &X)); let _ = z; }
+    fn foo() { let x = 42; let z = Z(Enum::A(&x as &X)); let _ = z; }
 }
 
 mod b {
-    trait X {}
+    trait X {
+        fn dummy(&self) { }
+    }
     impl X for int {}
     struct Y<'a>{
         x:Option<&'a (X+'a)>,
     }
 
     fn bar() {
-        let x = 42i;
+        let x = 42;
         let _y = Y { x: Some(&x as &X) };
     }
 }
@@ -37,7 +41,7 @@ mod c {
     pub trait X { fn f(&self); }
     impl X for int { fn f(&self) {} }
     pub struct Z<'a>(Option<&'a (X+'a)>);
-    fn main() { let x = 42i; let z = Z(Some(&x as &X)); let _ = z; }
+    fn main() { let x = 42; let z = Z(Some(&x as &X)); let _ = z; }
 }
 
 pub fn main() {}

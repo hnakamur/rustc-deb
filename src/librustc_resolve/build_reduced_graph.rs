@@ -39,9 +39,9 @@ use rustc::middle::subst::FnSpace;
 use syntax::ast::{Block, Crate};
 use syntax::ast::{DeclItem, DefId};
 use syntax::ast::{ForeignItem, ForeignItemFn, ForeignItemStatic};
-use syntax::ast::{Item, ItemConst, ItemEnum, ItemFn};
+use syntax::ast::{Item, ItemConst, ItemEnum, ItemExternCrate, ItemFn};
 use syntax::ast::{ItemForeignMod, ItemImpl, ItemMac, ItemMod, ItemStatic};
-use syntax::ast::{ItemStruct, ItemTrait, ItemTy};
+use syntax::ast::{ItemStruct, ItemTrait, ItemTy, ItemUse};
 use syntax::ast::{MethodImplItem, Name, NamedField, NodeId};
 use syntax::ast::{PathListIdent, PathListMod};
 use syntax::ast::{Public, SelfStatic};
@@ -50,8 +50,7 @@ use syntax::ast::StructVariantKind;
 use syntax::ast::TupleVariantKind;
 use syntax::ast::TyObjectSum;
 use syntax::ast::{TypeImplItem, UnnamedField};
-use syntax::ast::{Variant, ViewItem, ViewItemExternCrate};
-use syntax::ast::{ViewItemUse, ViewPathGlob, ViewPathList, ViewPathSimple};
+use syntax::ast::{Variant, ViewPathGlob, ViewPathList, ViewPathSimple};
 use syntax::ast::{Visibility};
 use syntax::ast::TyPath;
 use syntax::ast;
@@ -224,8 +223,8 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                              token::get_name(name))[]);
                     {
                         let r = child.span_for_namespace(ns);
-                        for sp in r.iter() {
-                            self.session.span_note(*sp,
+                        if let Some(sp) = r {
+                            self.session.span_note(sp,
                                  &format!("first definition of {} `{}` here",
                                       namespace_error_to_string(duplicate_type),
                                       token::get_name(name))[]);
@@ -238,13 +237,8 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
     }
 
     fn block_needs_anonymous_module(&mut self, block: &Block) -> bool {
-        // If the block has view items, we need an anonymous module.
-        if block.view_items.len() > 0 {
-            return true;
-        }
-
         // Check each statement.
-        for statement in block.stmts.iter() {
+        for statement in &block.stmts {
             match statement.node {
                 StmtDecl(ref declaration, _) => {
                     match declaration.node {
@@ -262,7 +256,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
             }
         }
 
-        // If we found neither view items nor items, we don't need to create
+        // If we found no items, we don't need to create
         // an anonymous module.
 
         return false;
@@ -280,6 +274,133 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
         let modifiers = if is_public { PUBLIC } else { DefModifiers::empty() } | IMPORTABLE;
 
         match item.node {
+            ItemUse(ref view_path) => {
+                // Extract and intern the module part of the path. For
+                // globs and lists, the path is found directly in the AST;
+                // for simple paths we have to munge the path a little.
+                let module_path = match view_path.node {
+                    ViewPathSimple(_, ref full_path) => {
+                        full_path.segments
+                            .init()
+                            .iter().map(|ident| ident.identifier.name)
+                            .collect()
+                    }
+
+                    ViewPathGlob(ref module_ident_path) |
+                    ViewPathList(ref module_ident_path, _) => {
+                        module_ident_path.segments
+                            .iter().map(|ident| ident.identifier.name).collect()
+                    }
+                };
+
+                // Build up the import directives.
+                let shadowable = item.attrs.iter().any(|attr| {
+                    attr.name() == token::get_name(special_idents::prelude_import.name)
+                });
+                let shadowable = if shadowable {
+                    Shadowable::Always
+                } else {
+                    Shadowable::Never
+                };
+
+                match view_path.node {
+                    ViewPathSimple(binding, ref full_path) => {
+                        let source_name =
+                            full_path.segments.last().unwrap().identifier.name;
+                        if &token::get_name(source_name)[] == "mod" ||
+                           &token::get_name(source_name)[] == "self" {
+                            self.resolve_error(view_path.span,
+                                "`self` imports are only allowed within a { } list");
+                        }
+
+                        let subclass = SingleImport(binding.name,
+                                                    source_name);
+                        self.build_import_directive(&**parent,
+                                                    module_path,
+                                                    subclass,
+                                                    view_path.span,
+                                                    item.id,
+                                                    is_public,
+                                                    shadowable);
+                    }
+                    ViewPathList(_, ref source_items) => {
+                        // Make sure there's at most one `mod` import in the list.
+                        let mod_spans = source_items.iter().filter_map(|item| match item.node {
+                            PathListMod { .. } => Some(item.span),
+                            _ => None
+                        }).collect::<Vec<Span>>();
+                        if mod_spans.len() > 1 {
+                            self.resolve_error(mod_spans[0],
+                                "`self` import can only appear once in the list");
+                            for other_span in mod_spans.iter().skip(1) {
+                                self.session.span_note(*other_span,
+                                    "another `self` import appears here");
+                            }
+                        }
+
+                        for source_item in source_items {
+                            let (module_path, name) = match source_item.node {
+                                PathListIdent { name, .. } =>
+                                    (module_path.clone(), name.name),
+                                PathListMod { .. } => {
+                                    let name = match module_path.last() {
+                                        Some(name) => *name,
+                                        None => {
+                                            self.resolve_error(source_item.span,
+                                                "`self` import can only appear in an import list \
+                                                 with a non-empty prefix");
+                                            continue;
+                                        }
+                                    };
+                                    let module_path = module_path.init();
+                                    (module_path.to_vec(), name)
+                                }
+                            };
+                            self.build_import_directive(
+                                &**parent,
+                                module_path,
+                                SingleImport(name, name),
+                                source_item.span,
+                                source_item.node.id(),
+                                is_public,
+                                shadowable);
+                        }
+                    }
+                    ViewPathGlob(_) => {
+                        self.build_import_directive(&**parent,
+                                                    module_path,
+                                                    GlobImport,
+                                                    view_path.span,
+                                                    item.id,
+                                                    is_public,
+                                                    shadowable);
+                    }
+                }
+                parent.clone()
+            }
+
+            ItemExternCrate(_) => {
+                // n.b. we don't need to look at the path option here, because cstore already did
+                for &crate_id in self.session.cstore
+                                     .find_extern_mod_stmt_cnum(item.id).iter() {
+                    let def_id = DefId { krate: crate_id, node: 0 };
+                    self.external_exports.insert(def_id);
+                    let parent_link = ModuleParentLink(parent.downgrade(), name);
+                    let external_module = Rc::new(Module::new(parent_link,
+                                                              Some(def_id),
+                                                              NormalModuleKind,
+                                                              false,
+                                                              true));
+                    debug!("(build reduced graph for item) found extern `{}`",
+                            self.module_to_string(&*external_module));
+                    self.check_for_conflicts_between_external_crates(&**parent, name, sp);
+                    parent.external_module_children.borrow_mut()
+                          .insert(name, external_module.clone());
+                    self.build_reduced_graph_for_external_crate(&external_module);
+                }
+                parent.clone()
+            }
+
             ItemMod(..) => {
                 let name_bindings = self.add_child(name, parent, ForbidDuplicateModules, sp);
 
@@ -321,9 +442,19 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
             // These items live in the type namespace.
             ItemTy(..) => {
                 let name_bindings =
-                    self.add_child(name, parent, ForbidDuplicateTypesAndModules, sp);
+                    self.add_child(name, parent, ForbidDuplicateTypesAndModules,
+                                   sp);
 
-                name_bindings.define_type(DefTy(local_def(item.id), false), sp, modifiers);
+                name_bindings.define_type(DefTy(local_def(item.id), false), sp,
+                                          modifiers);
+
+                let parent_link = self.get_parent_link(parent, name);
+                name_bindings.set_module_kind(parent_link,
+                                              Some(local_def(item.id)),
+                                              TypeModuleKind,
+                                              false,
+                                              is_public,
+                                              sp);
                 parent.clone()
             }
 
@@ -346,7 +477,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
                 let module = name_bindings.get_module();
 
-                for variant in (*enum_definition).variants.iter() {
+                for variant in &(*enum_definition).variants {
                     self.build_reduced_graph_for_variant(
                         &**variant,
                         local_def(item.id),
@@ -412,118 +543,116 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                     }
                 };
 
-                match mod_name {
+                let mod_name = match mod_name {
+                    Some(mod_name) => mod_name,
                     None => {
                         self.resolve_error(ty.span,
                                            "inherent implementations may \
                                             only be implemented in the same \
                                             module as the type they are \
-                                            implemented for")
+                                            implemented for");
+                        return parent.clone();
                     }
-                    Some(mod_name) => {
-                        // Create the module and add all methods.
-                        let parent_opt = parent.children.borrow().get(&mod_name).cloned();
-                        let new_parent = match parent_opt {
-                            // It already exists
-                            Some(ref child) if child.get_module_if_available()
-                                .is_some() &&
-                                (child.get_module().kind.get() == ImplModuleKind ||
-                                 child.get_module().kind.get() == TraitModuleKind) => {
-                                    child.get_module()
-                                }
-                            Some(ref child) if child.get_module_if_available()
-                                .is_some() &&
-                                child.get_module().kind.get() ==
-                                EnumModuleKind => child.get_module(),
-                            // Create the module
-                            _ => {
-                                let name_bindings =
-                                    self.add_child(mod_name, parent, ForbidDuplicateModules, sp);
+                };
+                // Create the module and add all methods.
+                let child_opt = parent.children.borrow().get(&mod_name)
+                                       .and_then(|m| m.get_module_if_available());
+                let new_parent = match child_opt {
+                    // It already exists
+                    Some(ref child) if (child.kind.get() == ImplModuleKind ||
+                                        child.kind.get() == TraitModuleKind) => {
+                        child.clone()
+                    }
+                    Some(ref child) if child.kind.get() == EnumModuleKind ||
+                                       child.kind.get() == TypeModuleKind => {
+                        child.clone()
+                    }
+                    // Create the module
+                    _ => {
+                        let name_bindings =
+                            self.add_child(mod_name, parent, ForbidDuplicateModules, sp);
 
-                                let parent_link = self.get_parent_link(parent, name);
-                                let def_id = local_def(item.id);
-                                let ns = TypeNS;
-                                let is_public =
-                                    !name_bindings.defined_in_namespace(ns) ||
-                                    name_bindings.defined_in_public_namespace(ns);
+                        let parent_link = self.get_parent_link(parent, name);
+                        let def_id = local_def(item.id);
+                        let ns = TypeNS;
+                        let is_public =
+                            !name_bindings.defined_in_namespace(ns) ||
+                            name_bindings.defined_in_public_namespace(ns);
 
-                                name_bindings.define_module(parent_link,
-                                                            Some(def_id),
-                                                            ImplModuleKind,
-                                                            false,
-                                                            is_public,
-                                                            sp);
+                        name_bindings.define_module(parent_link,
+                                                    Some(def_id),
+                                                    ImplModuleKind,
+                                                    false,
+                                                    is_public,
+                                                    sp);
 
-                                name_bindings.get_module()
-                            }
-                        };
+                        name_bindings.get_module()
+                    }
+                };
 
-                        // For each implementation item...
-                        for impl_item in impl_items.iter() {
-                            match *impl_item {
-                                MethodImplItem(ref method) => {
-                                    // Add the method to the module.
-                                    let name = method.pe_ident().name;
-                                    let method_name_bindings =
-                                        self.add_child(name,
-                                                       &new_parent,
-                                                       ForbidDuplicateValues,
-                                                       method.span);
-                                    let def = match method.pe_explicit_self()
-                                        .node {
-                                            SelfStatic => {
-                                                // Static methods become
-                                                // `DefStaticMethod`s.
-                                                DefStaticMethod(local_def(method.id),
-                                                                FromImpl(local_def(item.id)))
-                                            }
-                                            _ => {
-                                                // Non-static methods become
-                                                // `DefMethod`s.
-                                                DefMethod(local_def(method.id),
-                                                          None,
-                                                          FromImpl(local_def(item.id)))
-                                            }
-                                        };
+                // For each implementation item...
+                for impl_item in impl_items {
+                    match *impl_item {
+                        MethodImplItem(ref method) => {
+                            // Add the method to the module.
+                            let name = method.pe_ident().name;
+                            let method_name_bindings =
+                                self.add_child(name,
+                                               &new_parent,
+                                               ForbidDuplicateValues,
+                                               method.span);
+                            let def = match method.pe_explicit_self()
+                                .node {
+                                    SelfStatic => {
+                                        // Static methods become
+                                        // `DefStaticMethod`s.
+                                        DefStaticMethod(local_def(method.id),
+                                                        FromImpl(local_def(item.id)))
+                                    }
+                                    _ => {
+                                        // Non-static methods become
+                                        // `DefMethod`s.
+                                        DefMethod(local_def(method.id),
+                                                  None,
+                                                  FromImpl(local_def(item.id)))
+                                    }
+                                };
 
-                                    // NB: not IMPORTABLE
-                                    let modifiers = if method.pe_vis() == ast::Public {
-                                        PUBLIC
-                                    } else {
-                                        DefModifiers::empty()
-                                    };
-                                    method_name_bindings.define_value(
-                                        def,
-                                        method.span,
-                                        modifiers);
-                                }
-                                TypeImplItem(ref typedef) => {
-                                    // Add the typedef to the module.
-                                    let name = typedef.ident.name;
-                                    let typedef_name_bindings =
-                                        self.add_child(
-                                            name,
-                                            &new_parent,
-                                            ForbidDuplicateTypesAndModules,
-                                            typedef.span);
-                                    let def = DefAssociatedTy(local_def(
-                                        typedef.id));
-                                    // NB: not IMPORTABLE
-                                    let modifiers = if typedef.vis == ast::Public {
-                                        PUBLIC
-                                    } else {
-                                        DefModifiers::empty()
-                                    };
-                                    typedef_name_bindings.define_type(
-                                        def,
-                                        typedef.span,
-                                        modifiers);
-                                }
-                            }
+                            // NB: not IMPORTABLE
+                            let modifiers = if method.pe_vis() == ast::Public {
+                                PUBLIC
+                            } else {
+                                DefModifiers::empty()
+                            };
+                            method_name_bindings.define_value(
+                                def,
+                                method.span,
+                                modifiers);
+                        }
+                        TypeImplItem(ref typedef) => {
+                            // Add the typedef to the module.
+                            let name = typedef.ident.name;
+                            let typedef_name_bindings =
+                                self.add_child(
+                                    name,
+                                    &new_parent,
+                                    ForbidDuplicateTypesAndModules,
+                                    typedef.span);
+                            let def = DefAssociatedTy(local_def(
+                                typedef.id));
+                            // NB: not IMPORTABLE
+                            let modifiers = if typedef.vis == ast::Public {
+                                PUBLIC
+                            } else {
+                                DefModifiers::empty()
+                            };
+                            typedef_name_bindings.define_type(
+                                def,
+                                typedef.span,
+                                modifiers);
                         }
                     }
                 }
-
                 parent.clone()
             }
 
@@ -546,7 +675,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                 let def_id = local_def(item.id);
 
                 // Add the names of all the items to the trait info.
-                for trait_item in items.iter() {
+                for trait_item in items {
                     let (name, kind) = match *trait_item {
                         ast::RequiredMethod(_) |
                         ast::ProvidedMethod(_) => {
@@ -642,145 +771,6 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                           variant.span, PUBLIC | IMPORTABLE);
     }
 
-    /// Constructs the reduced graph for one 'view item'. View items consist
-    /// of imports and use directives.
-    fn build_reduced_graph_for_view_item(&mut self, view_item: &ViewItem, parent: &Rc<Module>) {
-        match view_item.node {
-            ViewItemUse(ref view_path) => {
-                // Extract and intern the module part of the path. For
-                // globs and lists, the path is found directly in the AST;
-                // for simple paths we have to munge the path a little.
-                let module_path = match view_path.node {
-                    ViewPathSimple(_, ref full_path, _) => {
-                        full_path.segments
-                            .init()
-                            .iter().map(|ident| ident.identifier.name)
-                            .collect()
-                    }
-
-                    ViewPathGlob(ref module_ident_path, _) |
-                    ViewPathList(ref module_ident_path, _, _) => {
-                        module_ident_path.segments
-                            .iter().map(|ident| ident.identifier.name).collect()
-                    }
-                };
-
-                // Build up the import directives.
-                let is_public = view_item.vis == ast::Public;
-                let shadowable =
-                    view_item.attrs
-                             .iter()
-                             .any(|attr| {
-                                 attr.name() == token::get_name(
-                                    special_idents::prelude_import.name)
-                             });
-                let shadowable = if shadowable {
-                    Shadowable::Always
-                } else {
-                    Shadowable::Never
-                };
-
-                match view_path.node {
-                    ViewPathSimple(binding, ref full_path, id) => {
-                        let source_name =
-                            full_path.segments.last().unwrap().identifier.name;
-                        if token::get_name(source_name).get() == "mod" ||
-                           token::get_name(source_name).get() == "self" {
-                            self.resolve_error(view_path.span,
-                                "`self` imports are only allowed within a { } list");
-                        }
-
-                        let subclass = SingleImport(binding.name,
-                                                    source_name);
-                        self.build_import_directive(&**parent,
-                                                    module_path,
-                                                    subclass,
-                                                    view_path.span,
-                                                    id,
-                                                    is_public,
-                                                    shadowable);
-                    }
-                    ViewPathList(_, ref source_items, _) => {
-                        // Make sure there's at most one `mod` import in the list.
-                        let mod_spans = source_items.iter().filter_map(|item| match item.node {
-                            PathListMod { .. } => Some(item.span),
-                            _ => None
-                        }).collect::<Vec<Span>>();
-                        if mod_spans.len() > 1 {
-                            self.resolve_error(mod_spans[0],
-                                "`self` import can only appear once in the list");
-                            for other_span in mod_spans.iter().skip(1) {
-                                self.session.span_note(*other_span,
-                                    "another `self` import appears here");
-                            }
-                        }
-
-                        for source_item in source_items.iter() {
-                            let (module_path, name) = match source_item.node {
-                                PathListIdent { name, .. } =>
-                                    (module_path.clone(), name.name),
-                                PathListMod { .. } => {
-                                    let name = match module_path.last() {
-                                        Some(name) => *name,
-                                        None => {
-                                            self.resolve_error(source_item.span,
-                                                "`self` import can only appear in an import list \
-                                                 with a non-empty prefix");
-                                            continue;
-                                        }
-                                    };
-                                    let module_path = module_path.init();
-                                    (module_path.to_vec(), name)
-                                }
-                            };
-                            self.build_import_directive(
-                                &**parent,
-                                module_path,
-                                SingleImport(name, name),
-                                source_item.span,
-                                source_item.node.id(),
-                                is_public,
-                                shadowable);
-                        }
-                    }
-                    ViewPathGlob(_, id) => {
-                        self.build_import_directive(&**parent,
-                                                    module_path,
-                                                    GlobImport,
-                                                    view_path.span,
-                                                    id,
-                                                    is_public,
-                                                    shadowable);
-                    }
-                }
-            }
-
-            ViewItemExternCrate(name, _, node_id) => {
-                // n.b. we don't need to look at the path option here, because cstore already did
-                for &crate_id in self.session.cstore
-                                     .find_extern_mod_stmt_cnum(node_id).iter() {
-                    let def_id = DefId { krate: crate_id, node: 0 };
-                    self.external_exports.insert(def_id);
-                    let parent_link = ModuleParentLink(parent.downgrade(), name.name);
-                    let external_module = Rc::new(Module::new(parent_link,
-                                                              Some(def_id),
-                                                              NormalModuleKind,
-                                                              false,
-                                                              true));
-                    debug!("(build reduced graph for item) found extern `{}`",
-                            self.module_to_string(&*external_module));
-                    self.check_for_conflicts_between_external_crates(
-                        &**parent,
-                        name.name,
-                        view_item.span);
-                    parent.external_module_children.borrow_mut()
-                          .insert(name.name, external_module.clone());
-                    self.build_reduced_graph_for_external_crate(&external_module);
-                }
-            }
-        }
-    }
-
     /// Constructs the reduced graph for one foreign item.
     fn build_reduced_graph_for_foreign_item<F>(&mut self,
                                                foreign_item: &ForeignItem,
@@ -859,7 +849,8 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
         let kind = match def {
             DefTy(_, true) => EnumModuleKind,
-            DefStruct(..) | DefTy(..) => ImplModuleKind,
+            DefTy(_, false) => TypeModuleKind,
+            DefStruct(..) => ImplModuleKind,
             _ => NormalModuleKind
         };
 
@@ -935,7 +926,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
               let trait_item_def_ids =
                 csearch::get_trait_item_def_ids(&self.session.cstore, def_id);
-              for trait_item_def_id in trait_item_def_ids.iter() {
+              for trait_item_def_id in &trait_item_def_ids {
                   let (trait_item_name, trait_item_kind) =
                       csearch::get_trait_item_name_and_kind(
                           &self.session.cstore,
@@ -999,7 +990,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                                   root: &Rc<Module>,
                                                   def_like: DefLike,
                                                   name: Name,
-                                                  visibility: Visibility) {
+                                                  def_visibility: Visibility) {
         match def_like {
             DlDef(def) => {
                 // Add the new child item, if necessary.
@@ -1027,9 +1018,9 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                            DUMMY_SP);
 
                         self.handle_external_def(def,
-                                                 visibility,
+                                                 def_visibility,
                                                  &*child_name_bindings,
-                                                 token::get_name(name).get(),
+                                                 &token::get_name(name),
                                                  name,
                                                  root);
                     }
@@ -1091,7 +1082,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
                                 // Add each static method to the module.
                                 let new_parent = type_module;
-                                for method_info in methods.iter() {
+                                for method_info in methods {
                                     let name = method_info.name;
                                     debug!("(building reduced graph for \
                                              external crate) creating \
@@ -1106,7 +1097,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                     let def = DefFn(method_info.def_id, false);
 
                                     // NB: not IMPORTABLE
-                                    let modifiers = if visibility == ast::Public {
+                                    let modifiers = if method_info.vis == ast::Public {
                                         PUBLIC
                                     } else {
                                         DefModifiers::empty()
@@ -1259,10 +1250,6 @@ impl<'a, 'b, 'v, 'tcx> Visitor<'v> for BuildReducedGraphVisitor<'a, 'b, 'tcx> {
             };
             visit::walk_foreign_item(&mut v, foreign_item);
         })
-    }
-
-    fn visit_view_item(&mut self, view_item: &ViewItem) {
-        self.builder.build_reduced_graph_for_view_item(view_item, &self.parent);
     }
 
     fn visit_block(&mut self, block: &Block) {

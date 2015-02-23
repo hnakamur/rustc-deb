@@ -21,20 +21,14 @@
 //!   (e.g. `Option<T>`), the parameters are automatically given the
 //!   current trait as a bound. (This includes separate type parameters
 //!   and lifetimes for methods.)
-//! - Additional bounds on the type parameters, e.g. the `Ord` instance
-//!   requires an explicit `PartialEq` bound at the
-//!   moment. (`TraitDef.additional_bounds`)
-//!
-//! Unsupported: FIXME #6257: calling methods on reference fields,
-//! e.g. derive Eq/Ord/Clone don't work on `struct A(&int)`,
-//! because of how the auto-dereferencing happens.
+//! - Additional bounds on the type parameters (`TraitDef.additional_bounds`)
 //!
 //! The most important thing for implementers is the `Substructure` and
 //! `SubstructureFields` objects. The latter groups 5 possibilities of the
 //! arguments:
 //!
 //! - `Struct`, when `Self` is a struct (including tuple structs, e.g
-//!   `struct T(int, char)`).
+//!   `struct T(i32, char)`).
 //! - `EnumMatching`, when `Self` is an enum and all the arguments are the
 //!   same variant of the enum (e.g. `Some(1)`, `Some(3)` and `Some(4)`)
 //! - `EnumNonMatchingCollapsed` when `Self` is an enum and the arguments
@@ -60,17 +54,17 @@
 //! following snippet
 //!
 //! ```rust
-//! struct A { x : int }
+//! struct A { x : i32 }
 //!
-//! struct B(int);
+//! struct B(i32);
 //!
 //! enum C {
-//!     C0(int),
-//!     C1 { x: int }
+//!     C0(i32),
+//!     C1 { x: i32 }
 //! }
 //! ```
 //!
-//! The `int`s in `B` and `C0` don't have an identifier, so the
+//! The `i32`s in `B` and `C0` don't have an identifier, so the
 //! `Option<ident>`s would be `None` for them.
 //!
 //! In the static cases, the structure is summarised, either into the just
@@ -78,6 +72,15 @@
 //! structs and record structs, respectively), or a list of these, for
 //! enums (one for each variant). For empty struct and empty enum
 //! variants, it is represented as a count of 0.
+//!
+//! # "`cs`" functions
+//!
+//! The `cs_...` functions ("combine substructure) are designed to
+//! make life easier by providing some pre-made recipes for common
+//! tasks; mostly calling the function being derived on all the
+//! arguments and then combining them back together in some way (or
+//! letting the user chose that). They are not meant to be the only
+//! way to handle the structures that this code creates.
 //!
 //! # Examples
 //!
@@ -87,8 +90,8 @@
 //! trait PartialEq {
 //!     fn eq(&self, other: &Self);
 //! }
-//! impl PartialEq for int {
-//!     fn eq(&self, other: &int) -> bool {
+//! impl PartialEq for i32 {
+//!     fn eq(&self, other: &i32) -> bool {
 //!         *self == *other
 //!     }
 //! }
@@ -102,22 +105,22 @@
 //! When generating the `expr` for the `A` impl, the `SubstructureFields` is
 //!
 //! ```{.text}
-//! Struct(~[FieldInfo {
+//! Struct(vec![FieldInfo {
 //!            span: <span of x>
 //!            name: Some(<ident of x>),
 //!            self_: <expr for &self.x>,
-//!            other: ~[<expr for &other.x]
+//!            other: vec![<expr for &other.x]
 //!          }])
 //! ```
 //!
 //! For the `B` impl, called with `B(a)` and `B(b)`,
 //!
 //! ```{.text}
-//! Struct(~[FieldInfo {
-//!           span: <span of `int`>,
+//! Struct(vec![FieldInfo {
+//!           span: <span of `i32`>,
 //!           name: None,
-//!           <expr for &a>
-//!           ~[<expr for &b>]
+//!           self_: <expr for &a>
+//!           other: vec![<expr for &b>]
 //!          }])
 //! ```
 //!
@@ -128,11 +131,11 @@
 //!
 //! ```{.text}
 //! EnumMatching(0, <ast::Variant for C0>,
-//!              ~[FieldInfo {
-//!                 span: <span of int>
+//!              vec![FieldInfo {
+//!                 span: <span of i32>
 //!                 name: None,
 //!                 self_: <expr for &a>,
-//!                 other: ~[<expr for &b>]
+//!                 other: vec![<expr for &b>]
 //!               }])
 //! ```
 //!
@@ -140,11 +143,11 @@
 //!
 //! ```{.text}
 //! EnumMatching(1, <ast::Variant for C1>,
-//!              ~[FieldInfo {
+//!              vec![FieldInfo {
 //!                 span: <span of x>
 //!                 name: Some(<ident of x>),
 //!                 self_: <expr for &self.x>,
-//!                 other: ~[<expr for &other.x>]
+//!                 other: vec![<expr for &other.x>]
 //!                }])
 //! ```
 //!
@@ -152,7 +155,7 @@
 //!
 //! ```{.text}
 //! EnumNonMatchingCollapsed(
-//!     ~[<ident of self>, <ident of __arg_1>],
+//!     vec![<ident of self>, <ident of __arg_1>],
 //!     &[<ast::Variant for C0>, <ast::Variant for C1>],
 //!     &[<ident for self index value>, <ident of __arg_1 index value>])
 //! ```
@@ -168,16 +171,16 @@
 //!
 //! ## Static
 //!
-//! A static method on the above would result in,
+//! A static method on the types above would result in,
 //!
 //! ```{.text}
-//! StaticStruct(<ast::StructDef of A>, Named(~[(<ident of x>, <span of x>)]))
+//! StaticStruct(<ast::StructDef of A>, Named(vec![(<ident of x>, <span of x>)]))
 //!
-//! StaticStruct(<ast::StructDef of B>, Unnamed(~[<span of x>]))
+//! StaticStruct(<ast::StructDef of B>, Unnamed(vec![<span of x>]))
 //!
-//! StaticEnum(<ast::EnumDef of C>, ~[(<ident of C0>, <span of C0>, Unnamed(~[<span of int>])),
-//!                                   (<ident of C1>, <span of C1>,
-//!                                    Named(~[(<ident of x>, <span of x>)]))])
+//! StaticEnum(<ast::EnumDef of C>,
+//!            vec![(<ident of C0>, <span of C0>, Unnamed(vec![<span of i32>])),
+//!                 (<ident of C1>, <span of C1>, Named(vec![(<ident of x>, <span of x>)]))])
 //! ```
 
 pub use self::StaticFields::*;
@@ -204,7 +207,7 @@ use parse::token::InternedString;
 use parse::token::special_idents;
 use ptr::P;
 
-use self::ty::{LifetimeBounds, Path, Ptr, PtrTy, Self, Ty};
+use self::ty::{LifetimeBounds, Path, Ptr, PtrTy, Self_, Ty};
 
 pub mod ty;
 
@@ -225,6 +228,8 @@ pub struct TraitDef<'a> {
     pub generics: LifetimeBounds<'a>,
 
     pub methods: Vec<MethodDef<'a>>,
+
+    pub associated_types: Vec<(ast::Ident, Ty<'a>)>,
 }
 
 
@@ -256,7 +261,7 @@ pub struct Substructure<'a> {
     pub type_ident: Ident,
     /// ident of the method
     pub method_ident: Ident,
-    /// dereferenced access to any `Self` or `Ptr(Self, _)` arguments
+    /// dereferenced access to any `Self_` or `Ptr(Self_, _)` arguments
     pub self_args: &'a [P<Expr>],
     /// verbatim access to any other arguments
     pub nonself_args: &'a [P<Expr>],
@@ -291,7 +296,7 @@ pub enum SubstructureFields<'a> {
     /// Matching variants of the enum: variant index, ast::Variant,
     /// fields: the field name is only non-`None` in the case of a struct
     /// variant.
-    EnumMatching(uint, &'a ast::Variant, Vec<FieldInfo>),
+    EnumMatching(usize, &'a ast::Variant, Vec<FieldInfo>),
 
     /// Non-matching variants of the enum, but with all state hidden from
     /// the consequent code.  The first component holds `Ident`s for all of
@@ -358,11 +363,11 @@ impl<'a> TraitDef<'a> {
         // generated implementations are linted
         let mut attrs = newitem.attrs.clone();
         attrs.extend(item.attrs.iter().filter(|a| {
-            match a.name().get() {
+            match &a.name()[] {
                 "allow" | "warn" | "deny" | "forbid" => true,
                 _ => false,
             }
-        }).map(|a| a.clone()));
+        }).cloned());
         push(P(ast::Item {
             attrs: attrs,
             ..(*newitem).clone()
@@ -384,12 +389,28 @@ impl<'a> TraitDef<'a> {
                            methods: Vec<P<ast::Method>>) -> P<ast::Item> {
         let trait_path = self.path.to_path(cx, self.span, type_ident, generics);
 
+        // Transform associated types from `deriving::ty::Ty` into `ast::Typedef`
+        let associated_types = self.associated_types.iter().map(|&(ident, ref type_def)| {
+            P(ast::Typedef {
+                id: ast::DUMMY_NODE_ID,
+                span: self.span,
+                ident: ident,
+                vis: ast::Inherited,
+                attrs: Vec::new(),
+                typ: type_def.to_ty(cx,
+                    self.span,
+                    type_ident,
+                    generics
+                ),
+            })
+        });
+
         let Generics { mut lifetimes, ty_params, mut where_clause } =
             self.generics.to_generics(cx, self.span, type_ident, generics);
         let mut ty_params = ty_params.into_vec();
 
         // Copy the lifetimes
-        lifetimes.extend(generics.lifetimes.iter().map(|l| (*l).clone()));
+        lifetimes.extend(generics.lifetimes.iter().cloned());
 
         // Create the type parameters.
         ty_params.extend(generics.ty_params.iter().map(|ty_param| {
@@ -406,7 +427,7 @@ impl<'a> TraitDef<'a> {
             bounds.push(cx.typarambound(trait_path.clone()));
 
             // also add in any bounds from the declaration
-            for declared_bound in ty_param.bounds.iter() {
+            for declared_bound in &*ty_param.bounds {
                 bounds.push((*declared_bound).clone());
             }
 
@@ -422,15 +443,16 @@ impl<'a> TraitDef<'a> {
                 ast::WherePredicate::BoundPredicate(ref wb) => {
                     ast::WherePredicate::BoundPredicate(ast::WhereBoundPredicate {
                         span: self.span,
+                        bound_lifetimes: wb.bound_lifetimes.clone(),
                         bounded_ty: wb.bounded_ty.clone(),
-                        bounds: OwnedSlice::from_vec(wb.bounds.iter().map(|b| b.clone()).collect())
+                        bounds: OwnedSlice::from_vec(wb.bounds.iter().cloned().collect())
                     })
                 }
                 ast::WherePredicate::RegionPredicate(ref rb) => {
                     ast::WherePredicate::RegionPredicate(ast::WhereRegionPredicate {
                         span: self.span,
                         lifetime: rb.lifetime,
-                        bounds: rb.bounds.iter().map(|b| b.clone()).collect()
+                        bounds: rb.bounds.iter().cloned().collect()
                     })
                 }
                 ast::WherePredicate::EqPredicate(ref we) => {
@@ -478,7 +500,7 @@ impl<'a> TraitDef<'a> {
         let opt_trait_ref = Some(trait_ref);
         let ident = ast_util::impl_pretty_name(&opt_trait_ref, &*self_type);
         let mut a = vec![attr];
-        a.extend(self.attributes.iter().map(|a| a.clone()));
+        a.extend(self.attributes.iter().cloned());
         cx.item(
             self.span,
             ident,
@@ -491,7 +513,11 @@ impl<'a> TraitDef<'a> {
                           methods.into_iter()
                                  .map(|method| {
                                      ast::MethodImplItem(method)
-                                 }).collect()))
+                                 }).chain(
+                                     associated_types.map(|type_| {
+                                         ast::TypeImplItem(type_)
+                                     })
+                                 ).collect()))
     }
 
     fn expand_struct_def(&self,
@@ -510,15 +536,15 @@ impl<'a> TraitDef<'a> {
                     self,
                     struct_def,
                     type_ident,
-                    &self_args[],
-                    &nonself_args[])
+                    &self_args[..],
+                    &nonself_args[..])
             } else {
                 method_def.expand_struct_method_body(cx,
                                                      self,
                                                      struct_def,
                                                      type_ident,
-                                                     &self_args[],
-                                                     &nonself_args[])
+                                                     &self_args[..],
+                                                     &nonself_args[..])
             };
 
             method_def.create_method(cx,
@@ -550,15 +576,15 @@ impl<'a> TraitDef<'a> {
                     self,
                     enum_def,
                     type_ident,
-                    &self_args[],
-                    &nonself_args[])
+                    &self_args[..],
+                    &nonself_args[..])
             } else {
                 method_def.expand_enum_method_body(cx,
                                                    self,
                                                    enum_def,
                                                    type_ident,
                                                    self_args,
-                                                   &nonself_args[])
+                                                   &nonself_args[..])
             };
 
             method_def.create_method(cx,
@@ -653,10 +679,10 @@ impl<'a> MethodDef<'a> {
             match *ty {
                 // for static methods, just treat any Self
                 // arguments as a normal arg
-                Self if nonstatic  => {
+                Self_ if nonstatic  => {
                     self_args.push(arg_expr);
                 }
-                Ptr(box Self, _) if nonstatic => {
+                Ptr(box Self_, _) if nonstatic => {
                     self_args.push(cx.expr_deref(trait_.span, arg_expr))
                 }
                 _ => {
@@ -716,7 +742,7 @@ impl<'a> MethodDef<'a> {
 
     /// ```
     /// #[derive(PartialEq)]
-    /// struct A { x: int, y: int }
+    /// struct A { x: i32, y: i32 }
     ///
     /// // equivalent to:
     /// impl PartialEq for A {
@@ -745,7 +771,7 @@ impl<'a> MethodDef<'a> {
         let mut raw_fields = Vec::new(); // ~[[fields of self],
                                  // [fields of next Self arg], [etc]]
         let mut patterns = Vec::new();
-        for i in range(0u, self_args.len()) {
+        for i in 0..self_args.len() {
             let struct_path= cx.path(DUMMY_SP, vec!( type_ident ));
             let (pat, ident_expr) =
                 trait_.create_struct_pattern(cx,
@@ -822,7 +848,7 @@ impl<'a> MethodDef<'a> {
     /// #[derive(PartialEq)]
     /// enum A {
     ///     A1,
-    ///     A2(int)
+    ///     A2(i32)
     /// }
     ///
     /// // is equivalent to
@@ -834,8 +860,8 @@ impl<'a> MethodDef<'a> {
     ///             (&A2(ref __self_0),
     ///              &A2(ref __arg_1_0)) => (*__self_0).eq(&(*__arg_1_0)),
     ///             _ => {
-    ///                 let __self_vi = match *self { A1(..) => 0u, A2(..) => 1u };
-    ///                 let __arg_1_vi = match *__arg_1 { A1(..) => 0u, A2(..) => 1u };
+    ///                 let __self_vi = match *self { A1(..) => 0, A2(..) => 1 };
+    ///                 let __arg_1_vi = match *__arg_1 { A1(..) => 0, A2(..) => 1 };
     ///                 false
     ///             }
     ///         }
@@ -879,8 +905,8 @@ impl<'a> MethodDef<'a> {
     ///   (Variant2, Variant2, Variant2) => ... // delegate Matching on Variant2
     ///   ...
     ///   _ => {
-    ///     let __this_vi = match this { Variant1 => 0u, Variant2 => 1u, ... };
-    ///     let __that_vi = match that { Variant1 => 0u, Variant2 => 1u, ... };
+    ///     let __this_vi = match this { Variant1 => 0, Variant2 => 1, ... };
+    ///     let __that_vi = match that { Variant1 => 0, Variant2 => 1, ... };
     ///     ... // catch-all remainder can inspect above variant index values.
     ///   }
     /// }
@@ -908,22 +934,22 @@ impl<'a> MethodDef<'a> {
             .collect::<Vec<String>>();
 
         let self_arg_idents = self_arg_names.iter()
-            .map(|name|cx.ident_of(&name[]))
+            .map(|name|cx.ident_of(&name[..]))
             .collect::<Vec<ast::Ident>>();
 
         // The `vi_idents` will be bound, solely in the catch-all, to
-        // a series of let statements mapping each self_arg to a uint
+        // a series of let statements mapping each self_arg to a usize
         // corresponding to its variant index.
         let vi_idents: Vec<ast::Ident> = self_arg_names.iter()
-            .map(|name| { let vi_suffix = format!("{}_vi", &name[]);
-                          cx.ident_of(&vi_suffix[]) })
+            .map(|name| { let vi_suffix = format!("{}_vi", &name[..]);
+                          cx.ident_of(&vi_suffix[..]) })
             .collect::<Vec<ast::Ident>>();
 
         // Builds, via callback to call_substructure_method, the
         // delegated expression that handles the catch-all case,
         // using `__variants_tuple` to drive logic if necessary.
         let catch_all_substructure = EnumNonMatchingCollapsed(
-            self_arg_idents, &variants[], &vi_idents[]);
+            self_arg_idents, &variants[..], &vi_idents[..]);
 
         // These arms are of the form:
         // (Variant1, Variant1, ...) => Body1
@@ -932,7 +958,7 @@ impl<'a> MethodDef<'a> {
         // where each tuple has length = self_args.len()
         let mut match_arms: Vec<ast::Arm> = variants.iter().enumerate()
             .map(|(index, variant)| {
-                let mk_self_pat = |&: cx: &mut ExtCtxt, self_arg_name: &str| {
+                let mk_self_pat = |cx: &mut ExtCtxt, self_arg_name: &str| {
                     let (p, idents) = trait_.create_enum_variant_pattern(cx, type_ident,
                                                                          &**variant,
                                                                          self_arg_name,
@@ -949,8 +975,8 @@ impl<'a> MethodDef<'a> {
                     subpats.push(p);
                     idents
                 };
-                for self_arg_name in self_arg_names.tail().iter() {
-                    let (p, idents) = mk_self_pat(cx, &self_arg_name[]);
+                for self_arg_name in self_arg_names.tail() {
+                    let (p, idents) = mk_self_pat(cx, &self_arg_name[..]);
                     subpats.push(p);
                     self_pats_idents.push(idents);
                 }
@@ -1006,7 +1032,7 @@ impl<'a> MethodDef<'a> {
                                                 &**variant,
                                                 field_tuples);
                 let arm_expr = self.call_substructure_method(
-                    cx, trait_, type_ident, &self_args[], nonself_args,
+                    cx, trait_, type_ident, &self_args[..], nonself_args,
                     &substructure);
 
                 cx.arm(sp, vec![single_pat], arm_expr)
@@ -1036,19 +1062,19 @@ impl<'a> MethodDef<'a> {
                 }).collect();
 
             // Build a series of let statements mapping each self_arg
-            // to a uint corresponding to its variant index.
+            // to a usize corresponding to its variant index.
             // i.e. for `enum E<T> { A, B(1), C(T, T) }`, and a deriving
             // with three Self args, builds three statements:
             //
             // ```
             // let __self0_vi = match   self {
-            //     A => 0u, B(..) => 1u, C(..) => 2u
+            //     A => 0, B(..) => 1, C(..) => 2
             // };
             // let __self1_vi = match __arg1 {
-            //     A => 0u, B(..) => 1u, C(..) => 2u
+            //     A => 0, B(..) => 1, C(..) => 2
             // };
             // let __self2_vi = match __arg2 {
-            //     A => 0u, B(..) => 1u, C(..) => 2u
+            //     A => 0, B(..) => 1, C(..) => 2
             // };
             // ```
             let mut index_let_stmts: Vec<P<ast::Stmt>> = Vec::new();
@@ -1059,7 +1085,7 @@ impl<'a> MethodDef<'a> {
             }
 
             let arm_expr = self.call_substructure_method(
-                cx, trait_, type_ident, &self_args[], nonself_args,
+                cx, trait_, type_ident, &self_args[..], nonself_args,
                 &catch_all_substructure);
 
             // Builds the expression:
@@ -1070,7 +1096,7 @@ impl<'a> MethodDef<'a> {
             //   <delegated expression referring to __self0_vi, et al.>
             // }
             let arm_expr = cx.expr_block(
-                cx.block_all(sp, Vec::new(), index_let_stmts, Some(arm_expr)));
+                cx.block_all(sp, index_let_stmts, Some(arm_expr)));
 
             // Builds arm:
             // _ => { let __self0_vi = ...;
@@ -1129,7 +1155,7 @@ impl<'a> MethodDef<'a> {
             // to an uninhabited type (e.g. a zero-variant enum or a
             // type holding such an enum), but do not feature-gate
             // zero-variant enums themselves, then attempting to
-            // derive Show on such a type could here generate code
+            // derive Debug on such a type could here generate code
             // that needs the feature gate enabled.)
 
             return cx.expr_unreachable(sp);
@@ -1188,7 +1214,7 @@ impl<'a> TraitDef<'a> {
         to_set.expn_id = cx.codemap().record_expansion(codemap::ExpnInfo {
             call_site: to_set,
             callee: codemap::NameAndSpan {
-                name: format!("deriving({})", trait_name),
+                name: format!("derive({})", trait_name),
                 format: codemap::MacroAttribute,
                 span: Some(self.span)
             }
@@ -1365,7 +1391,7 @@ pub fn cs_fold<F>(use_foldl: bool,
             }
         },
         EnumNonMatchingCollapsed(ref all_args, _, tuple) =>
-            enum_nonmatch_f(cx, trait_span, (&all_args[], tuple),
+            enum_nonmatch_f(cx, trait_span, (&all_args[..], tuple),
                             substructure.nonself_args),
         StaticEnum(..) | StaticStruct(..) => {
             cx.span_bug(trait_span, "static function in `derive`")
@@ -1378,8 +1404,8 @@ pub fn cs_fold<F>(use_foldl: bool,
 /// process the collected results. i.e.
 ///
 /// ```
-/// f(cx, span, ~[self_1.method(__arg_1_1, __arg_2_1),
-///              self_2.method(__arg_1_2, __arg_2_2)])
+/// f(cx, span, vec![self_1.method(__arg_1_1, __arg_2_1),
+///                  self_2.method(__arg_1_2, __arg_2_2)])
 /// ```
 #[inline]
 pub fn cs_same_method<F>(f: F,
@@ -1405,7 +1431,7 @@ pub fn cs_same_method<F>(f: F,
             f(cx, trait_span, called)
         },
         EnumNonMatchingCollapsed(ref all_self_args, _, tuple) =>
-            enum_nonmatch_f(cx, trait_span, (&all_self_args[], tuple),
+            enum_nonmatch_f(cx, trait_span, (&all_self_args[..], tuple),
                             substructure.nonself_args),
         StaticEnum(..) | StaticStruct(..) => {
             cx.span_bug(trait_span, "static function in `derive`")
@@ -1446,7 +1472,7 @@ pub fn cs_same_method_fold<F>(use_foldl: bool,
 /// Use a given binop to combine the result of calling the derived method
 /// on all the fields.
 #[inline]
-pub fn cs_binop(binop: ast::BinOp, base: P<Expr>,
+pub fn cs_binop(binop: ast::BinOp_, base: P<Expr>,
                 enum_nonmatch_f: EnumNonMatchCollapsedFunc,
                 cx: &mut ExtCtxt, trait_span: Span,
                 substructure: &Substructure) -> P<Expr> {

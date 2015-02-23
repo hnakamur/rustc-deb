@@ -10,6 +10,7 @@
 //
 
 #include "AMDGPU.h"
+#include "AMDGPUMCInstLower.h"
 #include "AMDGPUSubtarget.h"
 #include "SIInstrInfo.h"
 #include "llvm/ADT/Statistic.h"
@@ -97,20 +98,19 @@ static bool canShrink(MachineInstr &MI, const SIInstrInfo *TII,
   if (Src1 && (!isVGPR(Src1, TRI, MRI) || (Src1Mod && Src1Mod->getImm() != 0)))
     return false;
 
-  // We don't need to check src0, all input types are legal, so just make
-  // sure src0 isn't using any modifiers.
-  const MachineOperand *Src0Mod =
-      TII->getNamedOperand(MI, AMDGPU::OpName::src0_modifiers);
-  if (Src0Mod && Src0Mod->getImm() != 0)
+  // We don't need to check src0, all input types are legal, so just make sure
+  // src0 isn't using any modifiers.
+  if (TII->hasModifiersSet(MI, AMDGPU::OpName::src0_modifiers))
     return false;
 
   // Check output modifiers
-  const MachineOperand *Omod = TII->getNamedOperand(MI, AMDGPU::OpName::omod);
-  if (Omod && Omod->getImm() != 0)
+  if (TII->hasModifiersSet(MI, AMDGPU::OpName::omod))
     return false;
 
-  const MachineOperand *Clamp = TII->getNamedOperand(MI, AMDGPU::OpName::clamp);
-  return !Clamp || Clamp->getImm() == 0;
+  if (TII->hasModifiersSet(MI, AMDGPU::OpName::clamp))
+    return false;
+
+  return true;
 }
 
 /// \brief This function checks \p MI for operands defined by a move immediate
@@ -152,13 +152,6 @@ static void foldImmediates(MachineInstr &MI, const SIInstrInfo *TII,
       if (MovSrc.isImm() && isUInt<32>(MovSrc.getImm())) {
         Src0->ChangeToImmediate(MovSrc.getImm());
         ConstantFolded = true;
-      } else if (MovSrc.isFPImm()) {
-        const APFloat &APF = MovSrc.getFPImm()->getValueAPF();
-        if (&APF.getSemantics() == &APFloat::IEEEsingle) {
-          MRI.removeRegOperandFromUseList(Src0);
-          Src0->ChangeToImmediate(APF.bitcastToAPInt().getZExtValue());
-          ConstantFolded = true;
-        }
       }
       if (ConstantFolded) {
         if (MRI.use_empty(Reg))
@@ -191,6 +184,18 @@ bool SIShrinkInstructions::runOnMachineFunction(MachineFunction &MF) {
       Next = std::next(I);
       MachineInstr &MI = *I;
 
+      // Try to use S_MOVK_I32, which will save 4 bytes for small immediates.
+      if (MI.getOpcode() == AMDGPU::S_MOV_B32) {
+        const MachineOperand &Src = MI.getOperand(1);
+
+        if (Src.isImm()) {
+          if (isInt<16>(Src.getImm()) && !TII->isInlineConstant(Src))
+            MI.setDesc(TII->get(AMDGPU::S_MOVK_I32));
+        }
+
+        continue;
+      }
+
       if (!TII->hasVALU32BitEncoding(MI.getOpcode()))
         continue;
 
@@ -202,12 +207,12 @@ bool SIShrinkInstructions::runOnMachineFunction(MachineFunction &MF) {
           continue;
       }
 
-      int Op32 = AMDGPU::getVOPe32(MI.getOpcode());
-
-      // Op32 could be -1 here if we started with an instruction that had a
+      // getVOPe32 could be -1 here if we started with an instruction that had
       // a 32-bit encoding and then commuted it to an instruction that did not.
-      if (Op32 == -1)
+      if (!TII->hasVALU32BitEncoding(MI.getOpcode()))
         continue;
+
+      int Op32 = AMDGPU::getVOPe32(MI.getOpcode());
 
       if (TII->isVOPC(Op32)) {
         unsigned DstReg = MI.getOperand(0).getReg();

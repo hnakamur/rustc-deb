@@ -42,10 +42,10 @@ use core::prelude::*;
 use sync::mpsc::Receiver;
 use sync::mpsc::blocking::{self, SignalToken};
 use core::mem;
-use sync::atomic::{AtomicUint, Ordering};
+use sync::atomic::{AtomicUsize, Ordering};
 
 // Various states you can find a port in.
-const EMPTY: uint = 0;          // initial state: no data, no blocked reciever
+const EMPTY: uint = 0;          // initial state: no data, no blocked receiver
 const DATA: uint = 1;           // data ready for receiver to take
 const DISCONNECTED: uint = 2;   // channel is disconnected OR upgraded
 // Any other value represents a pointer to a SignalToken value. The
@@ -56,7 +56,7 @@ const DISCONNECTED: uint = 2;   // channel is disconnected OR upgraded
 
 pub struct Packet<T> {
     // Internal state of the chan/port pair (stores the blocked task as well)
-    state: AtomicUint,
+    state: AtomicUsize,
     // One-shot data slot location
     data: Option<T>,
     // when used for the second time, a oneshot channel must be upgraded, and
@@ -88,12 +88,12 @@ enum MyUpgrade<T> {
     GoUp(Receiver<T>),
 }
 
-impl<T: Send> Packet<T> {
+impl<T: Send + 'static> Packet<T> {
     pub fn new() -> Packet<T> {
         Packet {
             data: None,
             upgrade: NothingSent,
-            state: AtomicUint::new(EMPTY),
+            state: AtomicUsize::new(EMPTY),
         }
     }
 
@@ -368,7 +368,7 @@ impl<T: Send> Packet<T> {
 }
 
 #[unsafe_destructor]
-impl<T: Send> Drop for Packet<T> {
+impl<T: Send + 'static> Drop for Packet<T> {
     fn drop(&mut self) {
         assert_eq!(self.state.load(Ordering::SeqCst), DISCONNECTED);
     }

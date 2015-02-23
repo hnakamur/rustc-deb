@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use middle::infer::{InferCtxt};
-use middle::mem_categorization::Typer;
 use middle::ty::{self, RegionEscape, Ty};
 use std::collections::HashSet;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
@@ -84,6 +83,7 @@ pub struct FulfillmentContext<'tcx> {
     region_obligations: NodeMap<Vec<RegionObligation<'tcx>>>,
 }
 
+#[derive(Clone)]
 pub struct RegionObligation<'tcx> {
     pub sub_region: ty::Region,
     pub sup_type: Ty<'tcx>,
@@ -96,7 +96,7 @@ impl<'tcx> FulfillmentContext<'tcx> {
             duplicate_set: HashSet::new(),
             predicates: Vec::new(),
             attempted_mark: 0,
-            region_obligations: NodeMap::new(),
+            region_obligations: NodeMap(),
         }
     }
 
@@ -109,7 +109,7 @@ impl<'tcx> FulfillmentContext<'tcx> {
     /// `projection_ty` again.
     pub fn normalize_projection_type<'a>(&mut self,
                                          infcx: &InferCtxt<'a,'tcx>,
-                                         typer: &ty::UnboxedClosureTyper<'tcx>,
+                                         typer: &ty::ClosureTyper<'tcx>,
                                          projection_ty: ty::ProjectionTy<'tcx>,
                                          cause: ObligationCause<'tcx>)
                                          -> Ty<'tcx>
@@ -124,7 +124,7 @@ impl<'tcx> FulfillmentContext<'tcx> {
         let mut selcx = SelectionContext::new(infcx, typer);
         let normalized = project::normalize_projection_type(&mut selcx, projection_ty, cause, 0);
 
-        for obligation in normalized.obligations.into_iter() {
+        for obligation in normalized.obligations {
             self.register_predicate_obligation(infcx, obligation);
         }
 
@@ -179,13 +179,13 @@ impl<'tcx> FulfillmentContext<'tcx> {
     {
         match self.region_obligations.get(&body_id) {
             None => Default::default(),
-            Some(vec) => vec.as_slice(),
+            Some(vec) => vec,
         }
     }
 
     pub fn select_all_or_error<'a>(&mut self,
                                    infcx: &InferCtxt<'a,'tcx>,
-                                   typer: &ty::UnboxedClosureTyper<'tcx>)
+                                   typer: &ty::ClosureTyper<'tcx>)
                                    -> Result<(),Vec<FulfillmentError<'tcx>>>
     {
         try!(self.select_where_possible(infcx, typer));
@@ -210,7 +210,7 @@ impl<'tcx> FulfillmentContext<'tcx> {
     /// results in `O(n^2)` performance (#18208).
     pub fn select_new_obligations<'a>(&mut self,
                                       infcx: &InferCtxt<'a,'tcx>,
-                                      typer: &ty::UnboxedClosureTyper<'tcx>)
+                                      typer: &ty::ClosureTyper<'tcx>)
                                       -> Result<(),Vec<FulfillmentError<'tcx>>>
     {
         let mut selcx = SelectionContext::new(infcx, typer);
@@ -219,7 +219,7 @@ impl<'tcx> FulfillmentContext<'tcx> {
 
     pub fn select_where_possible<'a>(&mut self,
                                      infcx: &InferCtxt<'a,'tcx>,
-                                     typer: &ty::UnboxedClosureTyper<'tcx>)
+                                     typer: &ty::ClosureTyper<'tcx>)
                                      -> Result<(),Vec<FulfillmentError<'tcx>>>
     {
         let mut selcx = SelectionContext::new(infcx, typer);
@@ -288,7 +288,7 @@ impl<'tcx> FulfillmentContext<'tcx> {
 
             // Now go through all the successful ones,
             // registering any nested obligations for the future.
-            for new_obligation in new_obligations.into_iter() {
+            for new_obligation in new_obligations {
                 self.register_predicate_obligation(selcx.infcx(), new_obligation);
             }
         }
@@ -393,7 +393,7 @@ fn process_predicate<'a,'tcx>(selcx: &mut SelectionContext<'a,'tcx>,
         ty::Predicate::Projection(ref data) => {
             let project_obligation = obligation.with(data.clone());
             let result = project::poly_project_and_unify_type(selcx, &project_obligation);
-            debug!("poly_project_and_unify_type({}) = {}",
+            debug!("process_predicate: poly_project_and_unify_type({}) returned {}",
                    project_obligation.repr(tcx),
                    result.repr(tcx));
             match result {

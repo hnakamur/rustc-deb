@@ -99,10 +99,10 @@
 //!    let between = Range::new(-1f64, 1.);
 //!    let mut rng = rand::thread_rng();
 //!
-//!    let total = 1_000_000u;
-//!    let mut in_circle = 0u;
+//!    let total = 1_000_000;
+//!    let mut in_circle = 0;
 //!
-//!    for _ in range(0u, total) {
+//!    for _ in 0..total {
 //!        let a = between.ind_sample(&mut rng);
 //!        let b = between.ind_sample(&mut rng);
 //!        if a*a + b*b <= 1. {
@@ -176,21 +176,21 @@
 //! }
 //!
 //! fn free_doors(blocked: &[uint]) -> Vec<uint> {
-//!     range(0u, 3).filter(|x| !blocked.contains(x)).collect()
+//!     (0..3).filter(|x| !blocked.contains(x)).collect()
 //! }
 //!
 //! fn main() {
 //!     // The estimation will be more accurate with more simulations
-//!     let num_simulations = 10000u;
+//!     let num_simulations = 10000;
 //!
 //!     let mut rng = rand::thread_rng();
-//!     let random_door = Range::new(0u, 3);
+//!     let random_door = Range::new(0, 3);
 //!
-//!     let (mut switch_wins, mut switch_losses) = (0u, 0u);
-//!     let (mut keep_wins, mut keep_losses) = (0u, 0u);
+//!     let (mut switch_wins, mut switch_losses) = (0, 0);
+//!     let (mut keep_wins, mut keep_losses) = (0, 0);
 //!
 //!     println!("Running {} simulations...", num_simulations);
-//!     for _ in range(0, num_simulations) {
+//!     for _ in 0..num_simulations {
 //!         let result = simulate(&random_door, &mut rng);
 //!
 //!         match (result.win, result.switch) {
@@ -219,20 +219,23 @@
 //! }
 //! ```
 
-#![unstable]
+#![unstable(feature = "rand")]
+#![deprecated(reason = "use the crates.io `rand` library instead",
+              since = "1.0.0-alpha")]
+#![allow(deprecated)]
 
 use cell::RefCell;
 use clone::Clone;
-use io::IoResult;
+use old_io::IoResult;
 use iter::{Iterator, IteratorExt};
 use mem;
 use rc::Rc;
 use result::Result::{Ok, Err};
 use vec::Vec;
 
-#[cfg(any(all(stage0, target_word_size = "32"), all(not(stage0), target_pointer_width = "32")))]
+#[cfg(target_pointer_width = "32")]
 use core_rand::IsaacRng as IsaacWordRng;
-#[cfg(any(all(stage0, target_word_size = "64"), all(not(stage0), target_pointer_width = "64")))]
+#[cfg(target_pointer_width = "64")]
 use core_rand::Isaac64Rng as IsaacWordRng;
 
 pub use core_rand::{Rand, Rng, SeedableRng, Open01, Closed01};
@@ -279,14 +282,14 @@ impl Rng for StdRng {
     }
 }
 
-impl<'a> SeedableRng<&'a [uint]> for StdRng {
-    fn reseed(&mut self, seed: &'a [uint]) {
+impl<'a> SeedableRng<&'a [usize]> for StdRng {
+    fn reseed(&mut self, seed: &'a [usize]) {
         // the internal RNG can just be seeded from the above
         // randomness.
         self.rng.reseed(unsafe {mem::transmute(seed)})
     }
 
-    fn from_seed(seed: &'a [uint]) -> StdRng {
+    fn from_seed(seed: &'a [usize]) -> StdRng {
         StdRng { rng: SeedableRng::from_seed(unsafe {mem::transmute(seed)}) }
     }
 }
@@ -318,7 +321,7 @@ impl reseeding::Reseeder<StdRng> for ThreadRngReseeder {
         }
     }
 }
-static THREAD_RNG_RESEED_THRESHOLD: uint = 32_768;
+static THREAD_RNG_RESEED_THRESHOLD: usize = 32_768;
 type ThreadRngInner = reseeding::ReseedingRng<StdRng, ThreadRngReseeder>;
 
 /// The thread-local RNG.
@@ -374,19 +377,44 @@ impl Rng for ThreadRng {
 /// `random()` can generate various types of random things, and so may require
 /// type hinting to generate the specific type you want.
 ///
+/// This function uses the thread local random number generator. This means
+/// that if you're calling `random()` in a loop, caching the generator can
+/// increase performance. An example is shown below.
+///
 /// # Examples
 ///
-/// ```rust
+/// ```
 /// use std::rand;
 ///
 /// let x = rand::random();
-/// println!("{}", 2u * x);
+/// println!("{}", 2u8 * x);
 ///
 /// let y = rand::random::<f64>();
 /// println!("{}", y);
 ///
 /// if rand::random() { // generates a boolean
 ///     println!("Better lucky than good!");
+/// }
+/// ```
+///
+/// Caching the thread local random number generator:
+///
+/// ```
+/// use std::rand;
+/// use std::rand::Rng;
+///
+/// let mut v = vec![1, 2, 3];
+///
+/// for x in v.iter_mut() {
+///     *x = rand::random()
+/// }
+///
+/// // would be faster as
+///
+/// let mut rng = rand::thread_rng();
+///
+/// for x in v.iter_mut() {
+///     *x = rng.gen();
 /// }
 /// ```
 #[inline]
@@ -402,12 +430,12 @@ pub fn random<T: Rand>() -> T {
 /// use std::rand::{thread_rng, sample};
 ///
 /// let mut rng = thread_rng();
-/// let sample = sample(&mut rng, range(1i, 100), 5);
+/// let sample = sample(&mut rng, 1..100, 5);
 /// println!("{:?}", sample);
 /// ```
 pub fn sample<T, I: Iterator<Item=T>, R: Rng>(rng: &mut R,
                                          mut iter: I,
-                                         amount: uint) -> Vec<T> {
+                                         amount: usize) -> Vec<T> {
     let mut reservoir: Vec<T> = iter.by_ref().take(amount).collect();
     for (i, elem) in iter.enumerate() {
         let k = rng.gen_range(0, i + 1 + amount);
@@ -439,9 +467,9 @@ mod test {
         // check every remainder mod 8, both in small and big vectors.
         let lengths = [0, 1, 2, 3, 4, 5, 6, 7,
                        80, 81, 82, 83, 84, 85, 86, 87];
-        for &n in lengths.iter() {
+        for &n in &lengths {
             let mut v = repeat(0u8).take(n).collect::<Vec<_>>();
-            r.fill_bytes(v.as_mut_slice());
+            r.fill_bytes(&mut v);
 
             // use this to get nicer error messages.
             for (i, &byte) in v.iter().enumerate() {
@@ -455,18 +483,18 @@ mod test {
     #[test]
     fn test_gen_range() {
         let mut r = thread_rng();
-        for _ in range(0u, 1000) {
-            let a = r.gen_range(-3i, 42);
+        for _ in 0..1000 {
+            let a = r.gen_range(-3, 42);
             assert!(a >= -3 && a < 42);
-            assert_eq!(r.gen_range(0i, 1), 0);
-            assert_eq!(r.gen_range(-12i, -11), -12);
+            assert_eq!(r.gen_range(0, 1), 0);
+            assert_eq!(r.gen_range(-12, -11), -12);
         }
 
-        for _ in range(0u, 1000) {
-            let a = r.gen_range(10i, 42);
+        for _ in 0..1000 {
+            let a = r.gen_range(10, 42);
             assert!(a >= 10 && a < 42);
-            assert_eq!(r.gen_range(0i, 1), 0);
-            assert_eq!(r.gen_range(3_000_000u, 3_000_001), 3_000_000);
+            assert_eq!(r.gen_range(0, 1), 0);
+            assert_eq!(r.gen_range(3_000_000, 3_000_001), 3_000_000);
         }
 
     }
@@ -475,14 +503,14 @@ mod test {
     #[should_fail]
     fn test_gen_range_panic_int() {
         let mut r = thread_rng();
-        r.gen_range(5i, -2);
+        r.gen_range(5, -2);
     }
 
     #[test]
     #[should_fail]
     fn test_gen_range_panic_uint() {
         let mut r = thread_rng();
-        r.gen_range(5u, 2u);
+        r.gen_range(5, 2);
     }
 
     #[test]
@@ -496,30 +524,30 @@ mod test {
     #[test]
     fn test_gen_weighted_bool() {
         let mut r = thread_rng();
-        assert_eq!(r.gen_weighted_bool(0u), true);
-        assert_eq!(r.gen_weighted_bool(1u), true);
+        assert_eq!(r.gen_weighted_bool(0), true);
+        assert_eq!(r.gen_weighted_bool(1), true);
     }
 
     #[test]
     fn test_gen_ascii_str() {
         let mut r = thread_rng();
-        assert_eq!(r.gen_ascii_chars().take(0).count(), 0u);
-        assert_eq!(r.gen_ascii_chars().take(10).count(), 10u);
-        assert_eq!(r.gen_ascii_chars().take(16).count(), 16u);
+        assert_eq!(r.gen_ascii_chars().take(0).count(), 0);
+        assert_eq!(r.gen_ascii_chars().take(10).count(), 10);
+        assert_eq!(r.gen_ascii_chars().take(16).count(), 16);
     }
 
     #[test]
     fn test_gen_vec() {
         let mut r = thread_rng();
-        assert_eq!(r.gen_iter::<u8>().take(0).count(), 0u);
-        assert_eq!(r.gen_iter::<u8>().take(10).count(), 10u);
-        assert_eq!(r.gen_iter::<f64>().take(16).count(), 16u);
+        assert_eq!(r.gen_iter::<u8>().take(0).count(), 0);
+        assert_eq!(r.gen_iter::<u8>().take(10).count(), 10);
+        assert_eq!(r.gen_iter::<f64>().take(16).count(), 16);
     }
 
     #[test]
     fn test_choose() {
         let mut r = thread_rng();
-        assert_eq!(r.choose(&[1i, 1, 1]).map(|&x|x), Some(1));
+        assert_eq!(r.choose(&[1, 1, 1]).cloned(), Some(1));
 
         let v: &[int] = &[];
         assert_eq!(r.choose(v), None);
@@ -530,16 +558,16 @@ mod test {
         let mut r = thread_rng();
         let empty: &mut [int] = &mut [];
         r.shuffle(empty);
-        let mut one = [1i];
+        let mut one = [1];
         r.shuffle(&mut one);
         let b: &[_] = &[1];
         assert_eq!(one, b);
 
-        let mut two = [1i, 2];
+        let mut two = [1, 2];
         r.shuffle(&mut two);
         assert!(two == [1, 2] || two == [2, 1]);
 
-        let mut x = [1i, 1, 1];
+        let mut x = [1, 1, 1];
         r.shuffle(&mut x);
         let b: &[_] = &[1, 1, 1];
         assert_eq!(x, b);
@@ -549,11 +577,11 @@ mod test {
     fn test_thread_rng() {
         let mut r = thread_rng();
         r.gen::<int>();
-        let mut v = [1i, 1, 1];
+        let mut v = [1, 1, 1];
         r.shuffle(&mut v);
         let b: &[_] = &[1, 1, 1];
         assert_eq!(v, b);
-        assert_eq!(r.gen_range(0u, 1u), 0u);
+        assert_eq!(r.gen_range(0, 1), 0);
     }
 
     #[test]
@@ -572,11 +600,11 @@ mod test {
 
     #[test]
     fn test_sample() {
-        let min_val = 1i;
-        let max_val = 100i;
+        let min_val = 1;
+        let max_val = 100;
 
         let mut r = thread_rng();
-        let vals = range(min_val, max_val).collect::<Vec<int>>();
+        let vals = (min_val..max_val).collect::<Vec<int>>();
         let small_sample = sample(&mut r, vals.iter(), 5);
         let large_sample = sample(&mut r, vals.iter(), vals.len() + 5);
 
@@ -591,8 +619,8 @@ mod test {
     #[test]
     fn test_std_rng_seeded() {
         let s = thread_rng().gen_iter::<uint>().take(256).collect::<Vec<uint>>();
-        let mut ra: StdRng = SeedableRng::from_seed(s.as_slice());
-        let mut rb: StdRng = SeedableRng::from_seed(s.as_slice());
+        let mut ra: StdRng = SeedableRng::from_seed(&*s);
+        let mut rb: StdRng = SeedableRng::from_seed(&*s);
         assert!(order::equals(ra.gen_ascii_chars().take(100),
                               rb.gen_ascii_chars().take(100)));
     }
@@ -600,10 +628,10 @@ mod test {
     #[test]
     fn test_std_rng_reseed() {
         let s = thread_rng().gen_iter::<uint>().take(256).collect::<Vec<uint>>();
-        let mut r: StdRng = SeedableRng::from_seed(s.as_slice());
+        let mut r: StdRng = SeedableRng::from_seed(&*s);
         let string1 = r.gen_ascii_chars().take(100).collect::<String>();
 
-        r.reseed(s.as_slice());
+        r.reseed(&s);
 
         let string2 = r.gen_ascii_chars().take(100).collect::<String>();
         assert_eq!(string1, string2);
@@ -627,7 +655,7 @@ mod bench {
     fn rand_xorshift(b: &mut Bencher) {
         let mut rng: XorShiftRng = OsRng::new().unwrap().gen();
         b.iter(|| {
-            for _ in range(0, RAND_BENCH_N) {
+            for _ in 0..RAND_BENCH_N {
                 rng.gen::<uint>();
             }
         });
@@ -638,7 +666,7 @@ mod bench {
     fn rand_isaac(b: &mut Bencher) {
         let mut rng: IsaacRng = OsRng::new().unwrap().gen();
         b.iter(|| {
-            for _ in range(0, RAND_BENCH_N) {
+            for _ in 0..RAND_BENCH_N {
                 rng.gen::<uint>();
             }
         });
@@ -649,7 +677,7 @@ mod bench {
     fn rand_isaac64(b: &mut Bencher) {
         let mut rng: Isaac64Rng = OsRng::new().unwrap().gen();
         b.iter(|| {
-            for _ in range(0, RAND_BENCH_N) {
+            for _ in 0..RAND_BENCH_N {
                 rng.gen::<uint>();
             }
         });
@@ -660,7 +688,7 @@ mod bench {
     fn rand_std(b: &mut Bencher) {
         let mut rng = StdRng::new().unwrap();
         b.iter(|| {
-            for _ in range(0, RAND_BENCH_N) {
+            for _ in 0..RAND_BENCH_N {
                 rng.gen::<uint>();
             }
         });

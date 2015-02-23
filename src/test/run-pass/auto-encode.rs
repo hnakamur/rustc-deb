@@ -35,7 +35,7 @@ fn test_rbml<'a, 'b, A:
     let mut rbml_w = EBwriter::Encoder::new(&mut wr);
     a1.encode(&mut rbml_w);
 
-    let d: serialize::rbml::Doc<'a> = EBDoc::new(&wr[]);
+    let d: serialize::rbml::Doc<'a> = EBDoc::new(&wr);
     let mut decoder: EBReader::Decoder<'a> = EBreader::Decoder::new(d);
     let a2: A = Decodable::decode(&mut decoder);
     assert!(*a1 == a2);
@@ -131,19 +131,19 @@ enum Quark<T> {
 enum CLike { A, B, C }
 
 pub fn main() {
-    let a = &Plus(@Minus(@Val(3u), @Val(10u)), @Plus(@Val(22u), @Val(5u)));
+    let a = &Plus(@Minus(@Val(3_usize), @Val(10_usize)), @Plus(@Val(22_usize), @Val(5_usize)));
     test_rbml(a);
 
-    let a = &Spanned {lo: 0u, hi: 5u, node: 22u};
+    let a = &Spanned {lo: 0_usize, hi: 5_usize, node: 22_usize};
     test_rbml(a);
 
-    let a = &Point {x: 3u, y: 5u};
+    let a = &Point {x: 3_usize, y: 5_usize};
     test_rbml(a);
 
-    let a = &Top(22u);
+    let a = &Top(22_usize);
     test_rbml(a);
 
-    let a = &Bottom(222u);
+    let a = &Bottom(222_usize);
     test_rbml(a);
 
     let a = &A;

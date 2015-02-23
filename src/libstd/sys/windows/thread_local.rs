@@ -13,6 +13,7 @@ use prelude::v1::*;
 use libc::types::os::arch::extra::{DWORD, LPVOID, BOOL};
 
 use mem;
+use ptr;
 use rt;
 use sys_common::mutex::{MUTEX_INIT, Mutex};
 
@@ -137,7 +138,7 @@ unsafe fn init_dtors() {
     rt::at_exit(move|| {
         DTOR_LOCK.lock();
         let dtors = DTORS;
-        DTORS = 0 as *mut _;
+        DTORS = ptr::null_mut();
         mem::transmute::<_, Box<Vec<(Key, Dtor)>>>(dtors);
         assert!(DTORS.is_null()); // can't re-init after destructing
         DTOR_LOCK.unlock();
@@ -190,7 +191,7 @@ unsafe fn unregister_dtor(key: Key) -> bool {
 // # What's up with this callback?
 //
 // The callback specified receives a number of parameters from... someone!
-// (the kernel? the runtime? I'm not qute sure!) There are a few events that
+// (the kernel? the runtime? I'm not quite sure!) There are a few events that
 // this gets invoked for, but we're currently only interested on when a
 // thread or a process "detaches" (exits). The process part happens for the
 // last thread and the thread part happens for any normal thread.
@@ -232,9 +233,10 @@ unsafe extern "system" fn on_tls_callback(h: LPVOID,
     }
 }
 
+#[allow(dead_code)] // actually called above
 unsafe fn run_dtors() {
     let mut any_run = true;
-    for _ in range(0, 5i) {
+    for _ in 0..5 {
         if !any_run { break }
         any_run = false;
         let dtors = {
@@ -247,10 +249,10 @@ unsafe fn run_dtors() {
             DTOR_LOCK.unlock();
             ret
         };
-        for &(key, dtor) in dtors.iter() {
+        for &(key, dtor) in &dtors {
             let ptr = TlsGetValue(key);
             if !ptr.is_null() {
-                TlsSetValue(key, 0 as *mut _);
+                TlsSetValue(key, ptr::null_mut());
                 dtor(ptr as *mut _);
                 any_run = true;
             }

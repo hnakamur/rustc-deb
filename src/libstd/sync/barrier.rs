@@ -15,21 +15,21 @@ use sync::{Mutex, Condvar};
 ///
 /// ```rust
 /// use std::sync::{Arc, Barrier};
-/// use std::thread::Thread;
+/// use std::thread;
 ///
 /// let barrier = Arc::new(Barrier::new(10));
-/// for _ in range(0u, 10) {
+/// for _ in 0..10 {
 ///     let c = barrier.clone();
 ///     // The same messages will be printed together.
 ///     // You will NOT see any interleaving.
-///     Thread::spawn(move|| {
+///     thread::spawn(move|| {
 ///         println!("before wait");
 ///         c.wait();
 ///         println!("after wait");
 ///     });
 /// }
 /// ```
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Barrier {
     lock: Mutex<BarrierState>,
     cvar: Condvar,
@@ -46,7 +46,6 @@ struct BarrierState {
 ///
 /// Currently this opaque structure only has one method, `.is_leader()`. Only
 /// one thread will receive a result that will return `true` from this function.
-#[allow(missing_copy_implementations)]
 pub struct BarrierWaitResult(bool);
 
 impl Barrier {
@@ -54,7 +53,7 @@ impl Barrier {
     ///
     /// A barrier will block `n`-1 threads which call `wait` and then wake up
     /// all threads at once when the `n`th thread calls `wait`.
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new(n: uint) -> Barrier {
         Barrier {
             lock: Mutex::new(BarrierState {
@@ -75,7 +74,7 @@ impl Barrier {
     /// returns `true` from `is_leader` when returning from this function, and
     /// all other threads will receive a result that will return `false` from
     /// `is_leader`
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn wait(&self) -> BarrierWaitResult {
         let mut lock = self.lock.lock().unwrap();
         let local_gen = lock.generation_id;
@@ -102,7 +101,7 @@ impl BarrierWaitResult {
     ///
     /// Only one thread will have `true` returned from their result, all other
     /// threads will have `false` returned.
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn is_leader(&self) -> bool { self.0 }
 }
 
@@ -112,7 +111,7 @@ mod tests {
 
     use sync::{Arc, Barrier};
     use sync::mpsc::{channel, TryRecvError};
-    use thread::Thread;
+    use thread;
 
     #[test]
     fn test_barrier() {
@@ -121,10 +120,10 @@ mod tests {
         let barrier = Arc::new(Barrier::new(N));
         let (tx, rx) = channel();
 
-        for _ in range(0u, N - 1) {
+        for _ in 0..N - 1 {
             let c = barrier.clone();
             let tx = tx.clone();
-            Thread::spawn(move|| {
+            thread::spawn(move|| {
                 tx.send(c.wait().is_leader()).unwrap();
             });
         }
@@ -139,7 +138,7 @@ mod tests {
         let mut leader_found = barrier.wait().is_leader();
 
         // Now, the barrier is cleared and we should get data.
-        for _ in range(0u, N - 1) {
+        for _ in 0..N - 1 {
             if rx.recv().unwrap() {
                 assert!(!leader_found);
                 leader_found = true;

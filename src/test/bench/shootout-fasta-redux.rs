@@ -39,13 +39,13 @@
 // OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use std::cmp::min;
-use std::io::{stdout, IoResult};
+use std::old_io::{stdout, IoResult};
 use std::iter::repeat;
-use std::os;
+use std::env;
 use std::slice::bytes::copy_memory;
 
-const LINE_LEN: uint = 60;
-const LOOKUP_SIZE: uint = 4 * 1024;
+const LINE_LEN: usize = 60;
+const LOOKUP_SIZE: usize = 4 * 1024;
 const LOOKUP_SCALE: f32 = (LOOKUP_SIZE - 1) as f32;
 
 // Random number generator constants
@@ -92,7 +92,7 @@ static HOMO_SAPIENS: [AminoAcid;4] = [
 fn sum_and_scale(a: &'static [AminoAcid]) -> Vec<AminoAcid> {
     let mut result = Vec::new();
     let mut p = 0f32;
-    for a_i in a.iter() {
+    for a_i in a {
         let mut a_i = *a_i;
         p += a_i.p;
         a_i.p = p * LOOKUP_SCALE;
@@ -103,12 +103,11 @@ fn sum_and_scale(a: &'static [AminoAcid]) -> Vec<AminoAcid> {
     result
 }
 
+#[derive(Copy)]
 struct AminoAcid {
     c: u8,
     p: f32,
 }
-
-impl Copy for AminoAcid {}
 
 struct RepeatFasta<'a, W:'a> {
     alu: &'static str,
@@ -120,22 +119,22 @@ impl<'a, W: Writer> RepeatFasta<'a, W> {
         RepeatFasta { alu: alu, out: w }
     }
 
-    fn make(&mut self, n: uint) -> IoResult<()> {
+    fn make(&mut self, n: usize) -> IoResult<()> {
         let alu_len = self.alu.len();
         let mut buf = repeat(0u8).take(alu_len + LINE_LEN).collect::<Vec<_>>();
         let alu: &[u8] = self.alu.as_bytes();
 
-        copy_memory(buf.as_mut_slice(), alu);
+        copy_memory(&mut buf, alu);
         let buf_len = buf.len();
-        copy_memory(buf.slice_mut(alu_len, buf_len),
-                    &alu[0..LINE_LEN]);
+        copy_memory(&mut buf[alu_len..buf_len],
+                    &alu[..LINE_LEN]);
 
         let mut pos = 0;
         let mut bytes;
         let mut n = n;
         while n > 0 {
             bytes = min(LINE_LEN, n);
-            try!(self.out.write(buf.slice(pos, pos + bytes)));
+            try!(self.out.write(&buf[pos..pos + bytes]));
             try!(self.out.write_u8('\n' as u8));
             pos += bytes;
             if pos > alu_len {
@@ -181,7 +180,7 @@ impl<'a, W: Writer> RandomFasta<'a, W> {
 
     fn nextc(&mut self) -> u8 {
         let r = self.rng(1.0);
-        for a in self.lookup.iter() {
+        for a in &self.lookup[..] {
             if a.p >= r {
                 return a.c;
             }
@@ -189,30 +188,29 @@ impl<'a, W: Writer> RandomFasta<'a, W> {
         0
     }
 
-    fn make(&mut self, n: uint) -> IoResult<()> {
+    fn make(&mut self, n: usize) -> IoResult<()> {
         let lines = n / LINE_LEN;
         let chars_left = n % LINE_LEN;
         let mut buf = [0;LINE_LEN + 1];
 
-        for _ in range(0, lines) {
-            for i in range(0u, LINE_LEN) {
+        for _ in 0..lines {
+            for i in 0..LINE_LEN {
                 buf[i] = self.nextc();
             }
             buf[LINE_LEN] = '\n' as u8;
             try!(self.out.write(&buf));
         }
-        for i in range(0u, chars_left) {
+        for i in 0..chars_left {
             buf[i] = self.nextc();
         }
-        self.out.write(&buf[0..chars_left])
+        self.out.write(&buf[..chars_left])
     }
 }
 
 fn main() {
-    let args = os::args();
-    let args = args.as_slice();
+    let mut args = env::args();
     let n = if args.len() > 1 {
-        args[1].parse::<uint>().unwrap()
+        args.nth(1).unwrap().parse::<usize>().unwrap()
     } else {
         5
     };
@@ -227,12 +225,12 @@ fn main() {
 
     out.write_line(">TWO IUB ambiguity codes").unwrap();
     let iub = sum_and_scale(&IUB);
-    let mut random = RandomFasta::new(&mut out, iub.as_slice());
+    let mut random = RandomFasta::new(&mut out, &iub);
     random.make(n * 3).unwrap();
 
     random.out.write_line(">THREE Homo sapiens frequency").unwrap();
     let homo_sapiens = sum_and_scale(&HOMO_SAPIENS);
-    random.lookup = make_lookup(homo_sapiens.as_slice());
+    random.lookup = make_lookup(&homo_sapiens);
     random.make(n * 5).unwrap();
 
     random.out.write_str("\n").unwrap();

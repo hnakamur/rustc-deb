@@ -18,8 +18,8 @@ use std::collections::HashMap;
 
 pub fn main() {
     let mut h = HashMap::new();
-    let kvs = [(1i, 10i), (2i, 20i), (3i, 30i)];
-    for &(k,v) in kvs.iter() {
+    let kvs = [(1, 10), (2, 20), (3, 30)];
+    for &(k,v) in &kvs {
         h.insert(k,v);
     }
     let mut x = 0;
@@ -27,7 +27,7 @@ pub fn main() {
 
     let mut i = h.iter();
 
-    for (&k,&v) in i {
+    for (&k,&v) in i.by_ref() {
         x += k;
         y += v;
         break;

@@ -43,26 +43,25 @@
 use self::Color::{Red, Yellow, Blue};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::fmt;
-use std::thread::Thread;
+use std::thread;
 
 fn print_complements() {
     let all = [Blue, Red, Yellow];
-    for aa in all.iter() {
-        for bb in all.iter() {
+    for aa in &all {
+        for bb in &all {
             println!("{:?} + {:?} -> {:?}", *aa, *bb, transform(*aa, *bb));
         }
     }
 }
 
+#[derive(Copy)]
 enum Color {
     Red,
     Yellow,
     Blue,
 }
 
-impl Copy for Color {}
-
-impl fmt::Show for Color {
+impl fmt::Debug for Color {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let str = match *self {
             Red => "red",
@@ -73,18 +72,17 @@ impl fmt::Show for Color {
     }
 }
 
+#[derive(Copy)]
 struct CreatureInfo {
     name: uint,
     color: Color
 }
 
-impl Copy for CreatureInfo {}
-
 fn show_color_list(set: Vec<Color>) -> String {
     let mut out = String::new();
-    for col in set.iter() {
+    for col in &set {
         out.push(' ');
-        out.push_str(format!("{:?}", col).as_slice());
+        out.push_str(&format!("{:?}", col));
     }
     out
 }
@@ -106,7 +104,7 @@ fn show_digit(nn: uint) -> &'static str {
 }
 
 struct Number(uint);
-impl fmt::Show for Number {
+impl fmt::Debug for Number {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut out = vec![];
         let Number(mut num) = *self;
@@ -182,14 +180,14 @@ fn rendezvous(nn: uint, set: Vec<Color>) {
     let (to_rendezvous_log, from_creatures_log) = channel::<String>();
 
     // these channels will allow us to talk to each creature by 'name'/index
-    let mut to_creature: Vec<Sender<CreatureInfo>> =
+    let to_creature: Vec<Sender<CreatureInfo>> =
         set.iter().enumerate().map(|(ii, &col)| {
             // create each creature as a listener with a port, and
             // give us a channel to talk to each
             let to_rendezvous = to_rendezvous.clone();
             let to_rendezvous_log = to_rendezvous_log.clone();
             let (to_creature, from_rendezvous) = channel();
-            Thread::spawn(move|| {
+            thread::spawn(move|| {
                 creature(ii,
                          col,
                          from_rendezvous,
@@ -202,7 +200,7 @@ fn rendezvous(nn: uint, set: Vec<Color>) {
     let mut creatures_met = 0;
 
     // set up meetings...
-    for _ in range(0, nn) {
+    for _ in 0..nn {
         let fst_creature = from_creatures.recv().unwrap();
         let snd_creature = from_creatures.recv().unwrap();
 
@@ -229,13 +227,13 @@ fn rendezvous(nn: uint, set: Vec<Color>) {
 }
 
 fn main() {
-    let nn = if std::os::getenv("RUST_BENCH").is_some() {
+    let nn = if std::env::var_os("RUST_BENCH").is_some() {
         200000
     } else {
-        std::os::args().as_slice()
-                       .get(1)
-                       .and_then(|arg| arg.parse())
-                       .unwrap_or(600u)
+        std::env::args()
+                       .nth(1)
+                       .and_then(|arg| arg.parse().ok())
+                       .unwrap_or(600)
     };
 
     print_complements();

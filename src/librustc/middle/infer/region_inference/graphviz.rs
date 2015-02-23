@@ -19,15 +19,17 @@
 use graphviz as dot;
 
 use middle::ty;
+use middle::region::CodeExtent;
 use super::Constraint;
 use middle::infer::SubregionOrigin;
 use middle::infer::region_inference::RegionVarBindings;
 use util::nodemap::{FnvHashMap, FnvHashSet};
 use util::ppaux::Repr;
 
+use std::borrow::Cow;
 use std::collections::hash_map::Entry::Vacant;
-use std::io::{self, File};
-use std::os;
+use std::old_io::{self, File};
+use std::env;
 use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
 use syntax::ast;
 
@@ -59,19 +61,19 @@ pub fn maybe_print_constraints_for<'a, 'tcx>(region_vars: &RegionVarBindings<'a,
     }
 
     let requested_node : Option<ast::NodeId> =
-        os::getenv("RUST_REGION_GRAPH_NODE").and_then(|s| s.parse());
+        env::var("RUST_REGION_GRAPH_NODE").ok().and_then(|s| s.parse().ok());
 
     if requested_node.is_some() && requested_node != Some(subject_node) {
         return;
     }
 
-    let requested_output = os::getenv("RUST_REGION_GRAPH");
+    let requested_output = env::var("RUST_REGION_GRAPH").ok();
     debug!("requested_output: {:?} requested_node: {:?}",
            requested_output, requested_node);
 
     let output_path = {
         let output_template = match requested_output {
-            Some(ref s) if s.as_slice() == "help" => {
+            Some(ref s) if &**s == "help" => {
                 static PRINTED_YET: AtomicBool = ATOMIC_BOOL_INIT;
                 if !PRINTED_YET.load(Ordering::SeqCst) {
                     print_help_message();
@@ -92,7 +94,7 @@ pub fn maybe_print_constraints_for<'a, 'tcx>(region_vars: &RegionVarBindings<'a,
             let mut new_str = String::new();
             for c in output_template.chars() {
                 if c == '%' {
-                    new_str.push_str(subject_node.to_string().as_slice());
+                    new_str.push_str(&subject_node.to_string());
                 } else {
                     new_str.push(c);
                 }
@@ -104,11 +106,11 @@ pub fn maybe_print_constraints_for<'a, 'tcx>(region_vars: &RegionVarBindings<'a,
     };
 
     let constraints = &*region_vars.constraints.borrow();
-    match dump_region_constraints_to(tcx, constraints, output_path.as_slice()) {
+    match dump_region_constraints_to(tcx, constraints, &output_path) {
         Ok(()) => {}
         Err(e) => {
             let msg = format!("io error dumping region constraints: {}", e);
-            region_vars.tcx.sess.err(msg.as_slice())
+            region_vars.tcx.sess.err(&msg)
         }
     }
 }
@@ -120,22 +122,27 @@ struct ConstraintGraph<'a, 'tcx: 'a> {
     node_ids: FnvHashMap<Node, uint>,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq, Show)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Copy)]
 enum Node {
     RegionVid(ty::RegionVid),
     Region(ty::Region),
 }
 
-type Edge = Constraint;
+// type Edge = Constraint;
+#[derive(Clone, PartialEq, Eq, Debug, Copy)]
+enum Edge {
+    Constraint(Constraint),
+    EnclScope(CodeExtent, CodeExtent),
+}
 
 impl<'a, 'tcx> ConstraintGraph<'a, 'tcx> {
     fn new(tcx: &'a ty::ctxt<'tcx>,
            name: String,
            map: &'a ConstraintMap<'tcx>) -> ConstraintGraph<'a, 'tcx> {
         let mut i = 0;
-        let mut node_ids = FnvHashMap::new();
+        let mut node_ids = FnvHashMap();
         {
-            let mut add_node = |&mut : node| {
+            let mut add_node = |node| {
                 if let Vacant(e) = node_ids.entry(node) {
                     e.insert(i);
                     i += 1;
@@ -146,6 +153,11 @@ impl<'a, 'tcx> ConstraintGraph<'a, 'tcx> {
                 add_node(n1);
                 add_node(n2);
             }
+
+            tcx.region_maps.each_encl_scope(|sub, sup| {
+                add_node(Node::Region(ty::ReScope(*sub)));
+                add_node(Node::Region(ty::ReScope(*sup)));
+            });
         }
 
         ConstraintGraph { tcx: tcx,
@@ -157,10 +169,20 @@ impl<'a, 'tcx> ConstraintGraph<'a, 'tcx> {
 
 impl<'a, 'tcx> dot::Labeller<'a, Node, Edge> for ConstraintGraph<'a, 'tcx> {
     fn graph_id(&self) -> dot::Id {
-        dot::Id::new(self.graph_name.as_slice()).unwrap()
+        dot::Id::new(&*self.graph_name).ok().unwrap()
     }
     fn node_id(&self, n: &Node) -> dot::Id {
-        dot::Id::new(format!("node_{}", self.node_ids.get(n).unwrap())).unwrap()
+        let node_id = match self.node_ids.get(n) {
+            Some(node_id) => node_id,
+            None => panic!("no node_id found for node: {:?}", n),
+        };
+        let name = || format!("node_{}", node_id);
+        match dot::Id::new(name()) {
+            Ok(id) => id,
+            Err(_) => {
+                panic!("failed to create graphviz node identified by {}", name());
+            }
+        }
     }
     fn node_label(&self, n: &Node) -> dot::LabelText {
         match *n {
@@ -171,7 +193,12 @@ impl<'a, 'tcx> dot::Labeller<'a, Node, Edge> for ConstraintGraph<'a, 'tcx> {
         }
     }
     fn edge_label(&self, e: &Edge) -> dot::LabelText {
-        dot::LabelText::label(format!("{}", self.map.get(e).unwrap().repr(self.tcx)))
+        match *e {
+            Edge::Constraint(ref c) =>
+                dot::LabelText::label(format!("{}", self.map.get(c).unwrap().repr(self.tcx))),
+            Edge::EnclScope(..) =>
+                dot::LabelText::label(format!("(enclosed)")),
+        }
     }
 }
 
@@ -186,28 +213,40 @@ fn constraint_to_nodes(c: &Constraint) -> (Node, Node) {
     }
 }
 
+fn edge_to_nodes(e: &Edge) -> (Node, Node) {
+    match *e {
+        Edge::Constraint(ref c) => constraint_to_nodes(c),
+        Edge::EnclScope(sub, sup) => {
+            (Node::Region(ty::ReScope(sub)), Node::Region(ty::ReScope(sup)))
+        }
+    }
+}
+
 impl<'a, 'tcx> dot::GraphWalk<'a, Node, Edge> for ConstraintGraph<'a, 'tcx> {
     fn nodes(&self) -> dot::Nodes<Node> {
-        let mut set = FnvHashSet::new();
-        for constraint in self.map.keys() {
-            let (n1, n2) = constraint_to_nodes(constraint);
-            set.insert(n1);
-            set.insert(n2);
+        let mut set = FnvHashSet();
+        for node in self.node_ids.keys() {
+            set.insert(*node);
         }
         debug!("constraint graph has {} nodes", set.len());
         set.into_iter().collect()
     }
     fn edges(&self) -> dot::Edges<Edge> {
         debug!("constraint graph has {} edges", self.map.len());
-        self.map.keys().map(|e|*e).collect()
+        let mut v : Vec<_> = self.map.keys().map(|e| Edge::Constraint(*e)).collect();
+        self.tcx.region_maps.each_encl_scope(|sub, sup| {
+            v.push(Edge::EnclScope(*sub, *sup))
+        });
+        debug!("region graph has {} edges", v.len());
+        Cow::Owned(v)
     }
     fn source(&self, edge: &Edge) -> Node {
-        let (n1, _) = constraint_to_nodes(edge);
+        let (n1, _) = edge_to_nodes(edge);
         debug!("edge {:?} has source {:?}", edge, n1);
         n1
     }
     fn target(&self, edge: &Edge) -> Node {
-        let (_, n2) = constraint_to_nodes(edge);
+        let (_, n2) = edge_to_nodes(edge);
         debug!("edge {:?} has target {:?}", edge, n2);
         n2
     }
@@ -217,7 +256,7 @@ pub type ConstraintMap<'tcx> = FnvHashMap<Constraint, SubregionOrigin<'tcx>>;
 
 fn dump_region_constraints_to<'a, 'tcx:'a >(tcx: &'a ty::ctxt<'tcx>,
                                             map: &ConstraintMap<'tcx>,
-                                            path: &str) -> io::IoResult<()> {
+                                            path: &str) -> old_io::IoResult<()> {
     debug!("dump_region_constraints map (len: {}) path: {}", map.len(), path);
     let g = ConstraintGraph::new(tcx, format!("region_constraints"), map);
     let mut f = File::create(&Path::new(path));

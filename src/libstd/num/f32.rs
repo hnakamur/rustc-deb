@@ -10,7 +10,7 @@
 
 //! Operations and constants for 32-bits floats (`f32` type)
 
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 #![allow(missing_docs)]
 #![allow(unsigned_negation)]
 #![doc(primitive = "f32")]
@@ -30,6 +30,7 @@ use core::num;
 pub use core::f32::{RADIX, MANTISSA_DIGITS, DIGITS, EPSILON, MIN_VALUE};
 pub use core::f32::{MIN_POS_VALUE, MAX_VALUE, MIN_EXP, MAX_EXP, MIN_10_EXP};
 pub use core::f32::{MAX_10_EXP, NAN, INFINITY, NEG_INFINITY};
+pub use core::f32::{MIN, MIN_POSITIVE, MAX};
 pub use core::f32::consts;
 
 #[allow(dead_code)]
@@ -73,7 +74,7 @@ mod cmath {
     }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Float for f32 {
     #[inline]
     fn nan() -> f32 { num::Float::nan() }
@@ -173,7 +174,7 @@ impl Float for f32 {
     #[inline]
     fn exp(self) -> f32 { num::Float::exp(self) }
     #[inline]
-    fn exp2(self) -> f32 { num::Float::exp(self) }
+    fn exp2(self) -> f32 { num::Float::exp2(self) }
     #[inline]
     fn ln(self) -> f32 { num::Float::ln(self) }
     #[inline]
@@ -366,10 +367,10 @@ impl Float for f32 {
 ///
 /// * num - The float value
 #[inline]
-#[unstable = "may be removed or relocated"]
+#[unstable(feature = "std_misc", reason = "may be removed or relocated")]
 pub fn to_string(num: f32) -> String {
     let (r, _) = strconv::float_to_str_common(
-        num, 10u, true, SignNeg, DigAll, ExpNone, false);
+        num, 10, true, SignNeg, DigAll, ExpNone, false);
     r
 }
 
@@ -379,10 +380,10 @@ pub fn to_string(num: f32) -> String {
 ///
 /// * num - The float value
 #[inline]
-#[unstable = "may be removed or relocated"]
+#[unstable(feature = "std_misc", reason = "may be removed or relocated")]
 pub fn to_str_hex(num: f32) -> String {
     let (r, _) = strconv::float_to_str_common(
-        num, 16u, true, SignNeg, DigAll, ExpNone, false);
+        num, 16, true, SignNeg, DigAll, ExpNone, false);
     r
 }
 
@@ -394,8 +395,8 @@ pub fn to_str_hex(num: f32) -> String {
 /// * num - The float value
 /// * radix - The base to use
 #[inline]
-#[unstable = "may be removed or relocated"]
-pub fn to_str_radix_special(num: f32, rdx: uint) -> (String, bool) {
+#[unstable(feature = "std_misc", reason = "may be removed or relocated")]
+pub fn to_str_radix_special(num: f32, rdx: u32) -> (String, bool) {
     strconv::float_to_str_common(num, rdx, true, SignNeg, DigAll, ExpNone, false)
 }
 
@@ -407,10 +408,10 @@ pub fn to_str_radix_special(num: f32, rdx: uint) -> (String, bool) {
 /// * num - The float value
 /// * digits - The number of significant digits
 #[inline]
-#[unstable = "may be removed or relocated"]
+#[unstable(feature = "std_misc", reason = "may be removed or relocated")]
 pub fn to_str_exact(num: f32, dig: uint) -> String {
     let (r, _) = strconv::float_to_str_common(
-        num, 10u, true, SignNeg, DigExact(dig), ExpNone, false);
+        num, 10, true, SignNeg, DigExact(dig), ExpNone, false);
     r
 }
 
@@ -422,10 +423,10 @@ pub fn to_str_exact(num: f32, dig: uint) -> String {
 /// * num - The float value
 /// * digits - The number of significant digits
 #[inline]
-#[unstable = "may be removed or relocated"]
+#[unstable(feature = "std_misc", reason = "may be removed or relocated")]
 pub fn to_str_digits(num: f32, dig: uint) -> String {
     let (r, _) = strconv::float_to_str_common(
-        num, 10u, true, SignNeg, DigMax(dig), ExpNone, false);
+        num, 10, true, SignNeg, DigMax(dig), ExpNone, false);
     r
 }
 
@@ -438,10 +439,10 @@ pub fn to_str_digits(num: f32, dig: uint) -> String {
 /// * digits - The number of digits after the decimal point
 /// * upper - Use `E` instead of `e` for the exponent sign
 #[inline]
-#[unstable = "may be removed or relocated"]
+#[unstable(feature = "std_misc", reason = "may be removed or relocated")]
 pub fn to_str_exp_exact(num: f32, dig: uint, upper: bool) -> String {
     let (r, _) = strconv::float_to_str_common(
-        num, 10u, true, SignNeg, DigExact(dig), ExpDec, upper);
+        num, 10, true, SignNeg, DigExact(dig), ExpDec, upper);
     r
 }
 
@@ -454,10 +455,10 @@ pub fn to_str_exp_exact(num: f32, dig: uint, upper: bool) -> String {
 /// * digits - The number of digits after the decimal point
 /// * upper - Use `E` instead of `e` for the exponent sign
 #[inline]
-#[unstable = "may be removed or relocated"]
+#[unstable(feature = "std_misc", reason = "may be removed or relocated")]
 pub fn to_str_exp_digits(num: f32, dig: uint, upper: bool) -> String {
     let (r, _) = strconv::float_to_str_common(
-        num, 10u, true, SignNeg, DigMax(dig), ExpDec, upper);
+        num, 10, true, SignNeg, DigMax(dig), ExpDec, upper);
     r
 }
 
@@ -552,6 +553,33 @@ mod tests {
         assert_approx_eq!((-1.3f32).fract(), -0.3f32);
         assert_approx_eq!((-1.5f32).fract(), -0.5f32);
         assert_approx_eq!((-1.7f32).fract(), -0.7f32);
+    }
+
+    #[test]
+    fn test_exp() {
+        assert_eq!(1.0, 0.0f32.exp());
+        assert_approx_eq!(2.718282, 1.0f32.exp());
+        assert_approx_eq!(148.413162, 5.0f32.exp());
+
+        let inf: f32 = Float::infinity();
+        let neg_inf: f32 = Float::neg_infinity();
+        let nan: f32 = Float::nan();
+        assert_eq!(inf, inf.exp());
+        assert_eq!(0.0, neg_inf.exp());
+        assert!(nan.exp().is_nan());
+    }
+
+    #[test]
+    fn test_exp2() {
+        assert_eq!(32.0, 5.0f32.exp2());
+        assert_eq!(1.0, 0.0f32.exp2());
+
+        let inf: f32 = Float::infinity();
+        let neg_inf: f32 = Float::neg_infinity();
+        let nan: f32 = Float::nan();
+        assert_eq!(inf, inf.exp2());
+        assert_eq!(0.0, neg_inf.exp2());
+        assert!(nan.exp2().is_nan());
     }
 
     #[test]

@@ -161,7 +161,7 @@ pub mod rt {
 
     impl ToSource for ast::Ident {
         fn to_source(&self) -> String {
-            token::get_ident(*self).get().to_string()
+            token::get_ident(*self).to_string()
         }
     }
 
@@ -352,18 +352,11 @@ pub mod rt {
     impl<'a> ExtParseUtils for ExtCtxt<'a> {
 
         fn parse_item(&self, s: String) -> P<ast::Item> {
-            let res = parse::parse_item_from_source_str(
+            parse::parse_item_from_source_str(
                 "<quote expansion>".to_string(),
                 s,
                 self.cfg(),
-                self.parse_sess());
-            match res {
-                Some(ast) => ast,
-                None => {
-                    error!("parse error");
-                    panic!()
-                }
-            }
+                self.parse_sess()).expect("parse error")
         }
 
         fn parse_stmt(&self, s: String) -> P<ast::Stmt> {
@@ -588,7 +581,7 @@ fn mk_token(cx: &ExtCtxt, sp: Span, tok: &token::Token) -> P<ast::Expr> {
         }
 
         token::Literal(token::StrRaw(ident, n), suf) => {
-            return mk_lit!("StrRaw", suf, mk_name(cx, sp, ident.ident()), cx.expr_uint(sp, n))
+            return mk_lit!("StrRaw", suf, mk_name(cx, sp, ident.ident()), cx.expr_usize(sp, n))
         }
 
         token::Ident(ident, style) => {
@@ -672,10 +665,10 @@ fn mk_tt(cx: &ExtCtxt, tt: &ast::TokenTree) -> Vec<P<ast::Stmt>> {
         }
         ref tt @ ast::TtToken(_, MatchNt(..)) => {
             let mut seq = vec![];
-            for i in range(0, tt.len()) {
+            for i in 0..tt.len() {
                 seq.push(tt.get_tt(i));
             }
-            mk_tts(cx, &seq[])
+            mk_tts(cx, &seq[..])
         }
         ast::TtToken(sp, ref tok) => {
             let e_sp = cx.expr_ident(sp, id_ext("_sp"));
@@ -701,7 +694,7 @@ fn mk_tt(cx: &ExtCtxt, tt: &ast::TokenTree) -> Vec<P<ast::Stmt>> {
 
 fn mk_tts(cx: &ExtCtxt, tts: &[ast::TokenTree]) -> Vec<P<ast::Stmt>> {
     let mut ss = Vec::new();
-    for tt in tts.iter() {
+    for tt in tts {
         ss.extend(mk_tt(cx, tt).into_iter());
     }
     ss
@@ -716,7 +709,7 @@ fn expand_tts(cx: &ExtCtxt, sp: Span, tts: &[ast::TokenTree])
     // try removing it when enough of them are gone.
 
     let mut p = cx.new_parser_from_tts(tts);
-    p.quote_depth += 1u;
+    p.quote_depth += 1;
 
     let cx_expr = p.parse_expr();
     if !p.eat(&token::Comma) {
@@ -764,10 +757,9 @@ fn expand_tts(cx: &ExtCtxt, sp: Span, tts: &[ast::TokenTree])
     let stmt_let_tt = cx.stmt_let(sp, true, id_ext("tt"), cx.expr_vec_ng(sp));
 
     let mut vector = vec!(stmt_let_sp, stmt_let_tt);
-    vector.extend(mk_tts(cx, &tts[]).into_iter());
+    vector.extend(mk_tts(cx, &tts[..]).into_iter());
     let block = cx.expr_block(
         cx.block_all(sp,
-                     Vec::new(),
                      vector,
                      Some(cx.expr_ident(sp, id_ext("tt")))));
 
@@ -778,18 +770,18 @@ fn expand_wrapper(cx: &ExtCtxt,
                   sp: Span,
                   cx_expr: P<ast::Expr>,
                   expr: P<ast::Expr>) -> P<ast::Expr> {
-    let uses = [
-        &["syntax", "ext", "quote", "rt"],
-    ].iter().map(|path| {
-        let path = path.iter().map(|s| s.to_string()).collect();
-        cx.view_use_glob(sp, ast::Inherited, ids_ext(path))
-    }).collect();
-
     // Explicitly borrow to avoid moving from the invoker (#16992)
     let cx_expr_borrow = cx.expr_addr_of(sp, cx.expr_deref(sp, cx_expr));
     let stmt_let_ext_cx = cx.stmt_let(sp, false, id_ext("ext_cx"), cx_expr_borrow);
 
-    cx.expr_block(cx.block_all(sp, uses, vec!(stmt_let_ext_cx), Some(expr)))
+    let stmts = [
+        &["syntax", "ext", "quote", "rt"],
+    ].iter().map(|path| {
+        let path = path.iter().map(|s| s.to_string()).collect();
+        cx.stmt_item(sp, cx.item_use_glob(sp, ast::Inherited, ids_ext(path)))
+    }).chain(Some(stmt_let_ext_cx).into_iter()).collect();
+
+    cx.expr_block(cx.block_all(sp, stmts, Some(expr)))
 }
 
 fn expand_parse_call(cx: &ExtCtxt,
@@ -799,11 +791,11 @@ fn expand_parse_call(cx: &ExtCtxt,
                      tts: &[ast::TokenTree]) -> P<ast::Expr> {
     let (cx_expr, tts_expr) = expand_tts(cx, sp, tts);
 
-    let cfg_call = |&:| cx.expr_method_call(
+    let cfg_call = || cx.expr_method_call(
         sp, cx.expr_ident(sp, id_ext("ext_cx")),
         id_ext("cfg"), Vec::new());
 
-    let parse_sess_call = |&:| cx.expr_method_call(
+    let parse_sess_call = || cx.expr_method_call(
         sp, cx.expr_ident(sp, id_ext("ext_cx")),
         id_ext("parse_sess"), Vec::new());
 

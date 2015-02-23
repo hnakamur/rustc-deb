@@ -41,18 +41,18 @@ fn test_is_whitespace() {
 
 #[test]
 fn test_to_digit() {
-    assert_eq!('0'.to_digit(10u), Some(0u));
-    assert_eq!('1'.to_digit(2u), Some(1u));
-    assert_eq!('2'.to_digit(3u), Some(2u));
-    assert_eq!('9'.to_digit(10u), Some(9u));
-    assert_eq!('a'.to_digit(16u), Some(10u));
-    assert_eq!('A'.to_digit(16u), Some(10u));
-    assert_eq!('b'.to_digit(16u), Some(11u));
-    assert_eq!('B'.to_digit(16u), Some(11u));
-    assert_eq!('z'.to_digit(36u), Some(35u));
-    assert_eq!('Z'.to_digit(36u), Some(35u));
-    assert_eq!(' '.to_digit(10u), None);
-    assert_eq!('$'.to_digit(36u), None);
+    assert_eq!('0'.to_digit(10), Some(0));
+    assert_eq!('1'.to_digit(2), Some(1));
+    assert_eq!('2'.to_digit(3), Some(2));
+    assert_eq!('9'.to_digit(10), Some(9));
+    assert_eq!('a'.to_digit(16), Some(10));
+    assert_eq!('A'.to_digit(16), Some(10));
+    assert_eq!('b'.to_digit(16), Some(11));
+    assert_eq!('B'.to_digit(16), Some(11));
+    assert_eq!('z'.to_digit(36), Some(35));
+    assert_eq!('Z'.to_digit(36), Some(35));
+    assert_eq!(' '.to_digit(10), None);
+    assert_eq!('$'.to_digit(36), None);
 }
 
 #[test]
@@ -166,8 +166,8 @@ fn test_escape_unicode() {
 fn test_encode_utf8() {
     fn check(input: char, expect: &[u8]) {
         let mut buf = [0u8; 4];
-        let n = input.encode_utf8(buf.as_mut_slice()).unwrap_or(0);
-        assert_eq!(&buf[0..n], expect);
+        let n = input.encode_utf8(&mut buf).unwrap_or(0);
+        assert_eq!(&buf[..n], expect);
     }
 
     check('x', &[0x78]);
@@ -180,8 +180,8 @@ fn test_encode_utf8() {
 fn test_encode_utf16() {
     fn check(input: char, expect: &[u16]) {
         let mut buf = [0u16; 2];
-        let n = input.encode_utf16(buf.as_mut_slice()).unwrap_or(0);
-        assert_eq!(&buf[0..n], expect);
+        let n = input.encode_utf16(&mut buf).unwrap_or(0);
+        assert_eq!(&buf[..n], expect);
     }
 
     check('x', &[0x0078]);

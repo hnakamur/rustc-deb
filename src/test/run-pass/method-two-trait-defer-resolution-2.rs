@@ -34,14 +34,14 @@ impl<T> Foo for Vec<Box<T>> {
 fn call_foo_copy() -> int {
     let mut x = Vec::new();
     let y = x.foo();
-    x.push(0u);
+    x.push(0_usize);
     y
 }
 
 fn call_foo_other() -> int {
     let mut x = Vec::new();
     let y = x.foo();
-    x.push(box 0i);
+    x.push(box 0);
     y
 }
 

@@ -5,8 +5,10 @@ HOST_RPATH_ENV = \
 TARGET_RPATH_ENV = \
     $(LD_LIB_PATH_ENVVAR)="$(TMPDIR):$(TARGET_RPATH_DIR):$($(LD_LIB_PATH_ENVVAR))"
 
-RUSTC := $(HOST_RPATH_ENV) $(RUSTC) --out-dir $(TMPDIR) -L $(TMPDIR)
+BARE_RUSTC := $(HOST_RPATH_ENV) $(RUSTC)
+RUSTC := $(BARE_RUSTC) --out-dir $(TMPDIR) -L $(TMPDIR)
 CC := $(CC) -L $(TMPDIR)
+HTMLDOCCK := $(PYTHON) $(S)/src/etc/htmldocck.py
 
 # This is the name of the binary we will generate and run; use this
 # e.g. for `$(CC) -o $(RUN_BINFILE)`.
@@ -51,14 +53,18 @@ endif
 
 # Extra flags needed to compile a working executable with the standard library
 ifdef IS_WINDOWS
-	EXTRACFLAGS :=
+	EXTRACFLAGS := -lws2_32 -luserenv
 else
 ifeq ($(shell uname),Darwin)
 else
 ifeq ($(shell uname),FreeBSD)
 	EXTRACFLAGS := -lm -lpthread -lgcc_s
 else
+ifeq ($(shell uname),OpenBSD)
+	EXTRACFLAGS := -lm -lpthread
+else
 	EXTRACFLAGS := -lm -lrt -ldl -lpthread
+endif
 endif
 endif
 endif

@@ -12,6 +12,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCAsmBackend.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCAsmLayout.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
@@ -20,6 +21,7 @@
 #include "llvm/MC/MCFixupKindInfo.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSection.h"
+#include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCValue.h"
 #include "llvm/Support/Debug.h"
@@ -27,7 +29,6 @@
 #include "llvm/Support/LEB128.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/MC/MCSectionELF.h"
 #include <tuple>
 using namespace llvm;
 
@@ -291,7 +292,9 @@ MCSectionData::MCSectionData(const MCSection &_Section, MCAssembler *A)
   : Section(&_Section),
     Ordinal(~UINT32_C(0)),
     Alignment(1),
-    BundleLockState(NotBundleLocked), BundleGroupBeforeFirstInst(false),
+    BundleLockState(NotBundleLocked),
+    BundleLockNestingDepth(0),
+    BundleGroupBeforeFirstInst(false),
     HasInstructions(false)
 {
   if (A)
@@ -328,17 +331,33 @@ MCSectionData::getSubsectionInsertionPoint(unsigned Subsection) {
   return IP;
 }
 
+void MCSectionData::setBundleLockState(BundleLockStateType NewState) {
+  if (NewState == NotBundleLocked) {
+    if (BundleLockNestingDepth == 0) {
+      report_fatal_error("Mismatched bundle_lock/unlock directives");
+    }
+    if (--BundleLockNestingDepth == 0) {
+      BundleLockState = NotBundleLocked;
+    }
+    return;
+  }
+
+  // If any of the directives is an align_to_end directive, the whole nested
+  // group is align_to_end. So don't downgrade from align_to_end to just locked.
+  if (BundleLockState != BundleLockedAlignToEnd) {
+    BundleLockState = NewState;
+  }
+  ++BundleLockNestingDepth;
+}
+
 /* *** */
 
 MCSymbolData::MCSymbolData() : Symbol(nullptr) {}
 
 MCSymbolData::MCSymbolData(const MCSymbol &_Symbol, MCFragment *_Fragment,
                            uint64_t _Offset, MCAssembler *A)
-  : Symbol(&_Symbol), Fragment(_Fragment), Offset(_Offset),
-    IsExternal(false), IsPrivateExtern(false),
-    CommonSize(0), SymbolSize(nullptr), CommonAlign(0),
-    Flags(0), Index(0)
-{
+    : Symbol(&_Symbol), Fragment(_Fragment), Offset(_Offset),
+      SymbolSize(nullptr), CommonAlign(-1U), Flags(0), Index(0) {
   if (A)
     A->getSymbolList().push_back(this);
 }
@@ -348,9 +367,9 @@ MCSymbolData::MCSymbolData(const MCSymbol &_Symbol, MCFragment *_Fragment,
 MCAssembler::MCAssembler(MCContext &Context_, MCAsmBackend &Backend_,
                          MCCodeEmitter &Emitter_, MCObjectWriter &Writer_,
                          raw_ostream &OS_)
-  : Context(Context_), Backend(Backend_), Emitter(Emitter_), Writer(Writer_),
-    OS(OS_), BundleAlignSize(0), RelaxAll(false), NoExecStack(false),
-    SubsectionsViaSymbols(false), ELFHeaderEFlags(0) {
+    : Context(Context_), Backend(Backend_), Emitter(Emitter_), Writer(Writer_),
+      OS(OS_), BundleAlignSize(0), RelaxAll(false),
+      SubsectionsViaSymbols(false), ELFHeaderEFlags(0) {
   VersionMinInfo.Major = 0; // Major version == 0 for "none specified"
 }
 
@@ -369,7 +388,6 @@ void MCAssembler::reset() {
   ThumbFuncs.clear();
   BundleAlignSize = 0;
   RelaxAll = false;
-  NoExecStack = false;
   SubsectionsViaSymbols = false;
   ELFHeaderEFlags = 0;
   LOHContainer.reset();
@@ -431,8 +449,8 @@ const MCSymbolData *MCAssembler::getAtom(const MCSymbolData *SD) const {
 
   // Non-linker visible symbols in sections which can't be atomized have no
   // defining atom.
-  if (!getBackend().isSectionAtomizable(
-        SD->getFragment()->getParent()->getSection()))
+  if (!getContext().getAsmInfo()->isSectionAtomizableBySymbols(
+          SD->getFragment()->getParent()->getSection()))
     return nullptr;
 
   // Otherwise, return the atom for the containing fragment.
@@ -1244,8 +1262,10 @@ void MCSymbolData::dump() const {
   raw_ostream &OS = llvm::errs();
 
   OS << "<MCSymbolData Symbol:" << getSymbol()
-     << " Fragment:" << getFragment() << " Offset:" << getOffset()
-     << " Flags:" << getFlags() << " Index:" << getIndex();
+     << " Fragment:" << getFragment();
+  if (!isCommon())
+    OS << " Offset:" << getOffset();
+  OS << " Flags:" << getFlags() << " Index:" << getIndex();
   if (isCommon())
     OS << " (common, size:" << getCommonSize()
        << " align: " << getCommonAlignment() << ")";

@@ -40,8 +40,9 @@ use self::Blocker::*;
 
 use vec::Vec;
 use core::mem;
+use core::ptr;
 
-use sync::atomic::{Ordering, AtomicUint};
+use sync::atomic::{Ordering, AtomicUsize};
 use sync::mpsc::blocking::{self, WaitToken, SignalToken};
 use sync::mpsc::select::StartResult::{self, Installed, Abort};
 use sync::{Mutex, MutexGuard};
@@ -49,14 +50,14 @@ use sync::{Mutex, MutexGuard};
 pub struct Packet<T> {
     /// Only field outside of the mutex. Just done for kicks, but mainly because
     /// the other shared channel already had the code implemented
-    channels: AtomicUint,
+    channels: AtomicUsize,
 
     lock: Mutex<State<T>>,
 }
 
-unsafe impl<T:Send> Send for Packet<T> { }
+unsafe impl<T: Send + 'static> Send for Packet<T> { }
 
-unsafe impl<T:Send> Sync for Packet<T> { }
+unsafe impl<T: Send + 'static> Sync for Packet<T> { }
 
 struct State<T> {
     disconnected: bool, // Is the channel disconnected yet?
@@ -74,7 +75,7 @@ struct State<T> {
     canceled: Option<&'static mut bool>,
 }
 
-unsafe impl<T: Send> Send for State<T> {}
+unsafe impl<T: Send + 'static> Send for State<T> {}
 
 /// Possible flavors of threads who can be blocked on this channel.
 enum Blocker {
@@ -104,7 +105,7 @@ struct Buffer<T> {
     size: uint,
 }
 
-#[derive(Show)]
+#[derive(Debug)]
 pub enum Failure {
     Empty,
     Disconnected,
@@ -112,7 +113,7 @@ pub enum Failure {
 
 /// Atomically blocks the current thread, placing it into `slot`, unlocking `lock`
 /// in the meantime. This re-locks the mutex upon returning.
-fn wait<'a, 'b, T: Send>(lock: &'a Mutex<State<T>>,
+fn wait<'a, 'b, T: Send + 'static>(lock: &'a Mutex<State<T>>,
                          mut guard: MutexGuard<'b, State<T>>,
                          f: fn(SignalToken) -> Blocker)
                          -> MutexGuard<'a, State<T>>
@@ -135,21 +136,21 @@ fn wakeup<T>(token: SignalToken, guard: MutexGuard<State<T>>) {
     token.signal();
 }
 
-impl<T: Send> Packet<T> {
+impl<T: Send + 'static> Packet<T> {
     pub fn new(cap: uint) -> Packet<T> {
         Packet {
-            channels: AtomicUint::new(1),
+            channels: AtomicUsize::new(1),
             lock: Mutex::new(State {
                 disconnected: false,
                 blocker: NoneBlocked,
                 cap: cap,
                 canceled: None,
                 queue: Queue {
-                    head: 0 as *mut Node,
-                    tail: 0 as *mut Node,
+                    head: ptr::null_mut(),
+                    tail: ptr::null_mut(),
                 },
                 buf: Buffer {
-                    buf: range(0, cap + if cap == 0 {1} else {0}).map(|_| None).collect(),
+                    buf: (0..cap + if cap == 0 {1} else {0}).map(|_| None).collect(),
                     start: 0,
                     size: 0,
                 },
@@ -160,7 +161,7 @@ impl<T: Send> Packet<T> {
     // wait until a send slot is available, returning locked access to
     // the channel state.
     fn acquire_send_slot(&self) -> MutexGuard<State<T>> {
-        let mut node = Node { token: None, next: 0 as *mut Node };
+        let mut node = Node { token: None, next: ptr::null_mut() };
         loop {
             let mut guard = self.lock.lock().unwrap();
             // are we ready to go?
@@ -343,8 +344,8 @@ impl<T: Send> Packet<T> {
             Vec::new()
         };
         let mut queue = mem::replace(&mut guard.queue, Queue {
-            head: 0 as *mut Node,
-            tail: 0 as *mut Node,
+            head: ptr::null_mut(),
+            tail: ptr::null_mut(),
         });
 
         let waiter = match mem::replace(&mut guard.blocker, NoneBlocked) {
@@ -411,7 +412,7 @@ impl<T: Send> Packet<T> {
 }
 
 #[unsafe_destructor]
-impl<T: Send> Drop for Packet<T> {
+impl<T: Send + 'static> Drop for Packet<T> {
     fn drop(&mut self) {
         assert_eq!(self.channels.load(Ordering::SeqCst), 0);
         let mut guard = self.lock.lock().unwrap();
@@ -453,7 +454,7 @@ impl Queue {
     fn enqueue(&mut self, node: &mut Node) -> WaitToken {
         let (wait_token, signal_token) = blocking::tokens();
         node.token = Some(signal_token);
-        node.next = 0 as *mut Node;
+        node.next = ptr::null_mut();
 
         if self.tail.is_null() {
             self.head = node as *mut Node;
@@ -475,10 +476,10 @@ impl Queue {
         let node = self.head;
         self.head = unsafe { (*node).next };
         if self.head.is_null() {
-            self.tail = 0 as *mut Node;
+            self.tail = ptr::null_mut();
         }
         unsafe {
-            (*node).next = 0 as *mut Node;
+            (*node).next = ptr::null_mut();
             Some((*node).token.take().unwrap())
         }
     }

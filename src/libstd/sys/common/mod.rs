@@ -11,12 +11,12 @@
 #![allow(missing_docs)]
 #![allow(dead_code)]
 
-use io::{self, IoError, IoResult};
+use old_io::{self, IoError, IoResult};
 use prelude::v1::*;
 use sys::{last_error, retry};
 use ffi::CString;
 use num::Int;
-use path::BytesContainer;
+use old_path::BytesContainer;
 use collections;
 
 pub mod backtrace;
@@ -24,17 +24,19 @@ pub mod condvar;
 pub mod helper_thread;
 pub mod mutex;
 pub mod net;
+pub mod net2;
 pub mod rwlock;
 pub mod stack;
 pub mod thread;
 pub mod thread_info;
 pub mod thread_local;
+pub mod wtf8;
 
 // common error constructors
 
 pub fn eof() -> IoError {
     IoError {
-        kind: io::EndOfFile,
+        kind: old_io::EndOfFile,
         desc: "end of file",
         detail: None,
     }
@@ -42,7 +44,7 @@ pub fn eof() -> IoError {
 
 pub fn timeout(desc: &'static str) -> IoError {
     IoError {
-        kind: io::TimedOut,
+        kind: old_io::TimedOut,
         desc: desc,
         detail: None,
     }
@@ -50,7 +52,7 @@ pub fn timeout(desc: &'static str) -> IoError {
 
 pub fn short_write(n: uint, desc: &'static str) -> IoError {
     IoError {
-        kind: if n == 0 { io::TimedOut } else { io::ShortWrite(n) },
+        kind: if n == 0 { old_io::TimedOut } else { old_io::ShortWrite(n) },
         desc: desc,
         detail: None,
     }
@@ -58,7 +60,7 @@ pub fn short_write(n: uint, desc: &'static str) -> IoError {
 
 pub fn unimpl() -> IoError {
     IoError {
-        kind: io::IoUnavailable,
+        kind: old_io::IoUnavailable,
         desc: "operations not yet supported",
         detail: None,
     }
@@ -93,11 +95,31 @@ pub fn keep_going<F>(data: &[u8], mut f: F) -> i64 where
     return (origamt - amt) as i64;
 }
 
-// A trait for extracting representations from std::io types
-pub trait AsInner<Inner> {
+/// A trait for viewing representations from std types
+#[doc(hidden)]
+pub trait AsInner<Inner: ?Sized> {
     fn as_inner(&self) -> &Inner;
 }
 
+/// A trait for viewing representations from std types
+#[doc(hidden)]
+pub trait AsInnerMut<Inner: ?Sized> {
+    fn as_inner_mut(&mut self) -> &mut Inner;
+}
+
+/// A trait for extracting representations from std types
+#[doc(hidden)]
+pub trait IntoInner<Inner> {
+    fn into_inner(self) -> Inner;
+}
+
+/// A trait for creating std types from internal representations
+#[doc(hidden)]
+pub trait FromInner<Inner> {
+    fn from_inner(inner: Inner) -> Self;
+}
+
+#[doc(hidden)]
 pub trait ProcessConfig<K: BytesContainer, V: BytesContainer> {
     fn program(&self) -> &CString;
     fn args(&self) -> &[CString];

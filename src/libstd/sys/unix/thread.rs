@@ -1,4 +1,4 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2014-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,6 +10,7 @@
 
 use core::prelude::*;
 
+use io;
 use boxed::Box;
 use cmp;
 use mem;
@@ -17,6 +18,7 @@ use ptr;
 use libc::consts::os::posix01::{PTHREAD_CREATE_JOINABLE, PTHREAD_STACK_MIN};
 use libc;
 use thunk::Thunk;
+use ffi::CString;
 
 use sys_common::stack::RED_ZONE;
 use sys_common::thread::*;
@@ -30,7 +32,9 @@ pub extern fn thread_start(main: *mut libc::c_void) -> rust_thread_return {
     return start_thread(main);
 }
 
-#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
+#[cfg(all(not(target_os = "linux"),
+          not(target_os = "macos"),
+          not(target_os = "openbsd")))]
 pub mod guard {
     pub unsafe fn current() -> uint {
         0
@@ -44,10 +48,15 @@ pub mod guard {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+
+#[cfg(any(target_os = "linux",
+          target_os = "macos",
+          target_os = "openbsd"))]
 pub mod guard {
     use super::*;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux",
+              target_os = "android",
+              target_os = "openbsd"))]
     use mem;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use ptr;
@@ -63,7 +72,7 @@ pub mod guard {
     static mut PAGE_SIZE: uint = 0;
     static mut GUARD_PAGE: uint = 0;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "openbsd"))]
     unsafe fn get_stack_start() -> *mut libc::c_void {
         current() as *mut libc::c_void
     }
@@ -93,7 +102,19 @@ pub mod guard {
 
         PAGE_SIZE = psize as uint;
 
-        let stackaddr = get_stack_start();
+        let mut stackaddr = get_stack_start();
+
+        // Ensure stackaddr is page aligned! A parent process might
+        // have reset RLIMIT_STACK to be non-page aligned. The
+        // pthread_attr_getstack() reports the usable stack area
+        // stackaddr < stackaddr + stacksize, so if stackaddr is not
+        // page-aligned, calculate the fix such that stackaddr <
+        // new_page_aligned_stackaddr < stackaddr + stacksize
+        let remainder = (stackaddr as usize) % (PAGE_SIZE as usize);
+        if remainder != 0 {
+            stackaddr = ((stackaddr as usize) + (PAGE_SIZE as usize) - remainder)
+                as *mut libc::c_void;
+        }
 
         // Rellocate the last page of the stack.
         // This ensures SIGBUS will be raised on
@@ -128,6 +149,23 @@ pub mod guard {
          pthread_get_stacksize_np(pthread_self())) as uint
     }
 
+    #[cfg(target_os = "openbsd")]
+    pub unsafe fn current() -> uint {
+        let mut current_stack: stack_t = mem::zeroed();
+        if pthread_stackseg_np(pthread_self(), &mut current_stack) != 0 {
+            panic!("failed to get current stack: pthread_stackseg_np")
+        }
+
+        if pthread_main_np() == 1 {
+            // main thread
+            current_stack.ss_sp as uint - current_stack.ss_size as uint + 3 * PAGE_SIZE as uint
+
+        } else {
+            // new thread
+            current_stack.ss_sp as uint - current_stack.ss_size as uint
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub unsafe fn current() -> uint {
         let mut attr: libc::pthread_attr_t = mem::zeroed();
@@ -154,7 +192,7 @@ pub mod guard {
     }
 }
 
-pub unsafe fn create(stack: uint, p: Thunk) -> rust_thread {
+pub unsafe fn create(stack: uint, p: Thunk) -> io::Result<rust_thread> {
     let mut native: libc::pthread_t = mem::zeroed();
     let mut attr: libc::pthread_attr_t = mem::zeroed();
     assert_eq!(pthread_attr_init(&mut attr), 0);
@@ -189,9 +227,43 @@ pub unsafe fn create(stack: uint, p: Thunk) -> rust_thread {
     if ret != 0 {
         // be sure to not leak the closure
         let _p: Box<Box<FnOnce()+Send>> = mem::transmute(arg);
-        panic!("failed to spawn native thread: {}", ret);
+        Err(io::Error::from_os_error(ret))
+    } else {
+        Ok(native)
     }
-    native
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub unsafe fn set_name(name: &str) {
+    // pthread_setname_np() since glibc 2.12
+    // availability autodetected via weak linkage
+    let cname = CString::new(name).unwrap();
+    type F = unsafe extern "C" fn(libc::pthread_t, *const libc::c_char) -> libc::c_int;
+    extern {
+        #[linkage = "extern_weak"]
+        static pthread_setname_np: *const ();
+    }
+    if !pthread_setname_np.is_null() {
+        unsafe {
+            mem::transmute::<*const (), F>(pthread_setname_np)(pthread_self(), cname.as_ptr());
+        }
+    }
+}
+
+#[cfg(any(target_os = "freebsd",
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
+pub unsafe fn set_name(name: &str) {
+    // pthread_set_name_np() since almost forever on all BSDs
+    let cname = CString::new(name).unwrap();
+    pthread_set_name_np(pthread_self(), cname.as_ptr());
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub unsafe fn set_name(name: &str) {
+    // pthread_setname_np() since OS X 10.6 and iOS 3.2
+    let cname = CString::new(name).unwrap();
+    pthread_setname_np(cname.as_ptr());
 }
 
 pub unsafe fn join(native: rust_thread) {
@@ -234,7 +306,7 @@ fn min_stack_size(_: *const libc::pthread_attr_t) -> libc::size_t {
     PTHREAD_STACK_MIN
 }
 
-#[cfg(any(target_os = "linux"))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 extern {
     pub fn pthread_self() -> libc::pthread_t;
     pub fn pthread_getattr_np(native: libc::pthread_t,
@@ -246,11 +318,35 @@ extern {
                                  stacksize: *mut libc::size_t) -> libc::c_int;
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "freebsd",
+          target_os = "dragonfly",
+          target_os = "openbsd"))]
+extern {
+    pub fn pthread_self() -> libc::pthread_t;
+    fn pthread_set_name_np(tid: libc::pthread_t, name: *const libc::c_char);
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 extern {
     pub fn pthread_self() -> libc::pthread_t;
     pub fn pthread_get_stackaddr_np(thread: libc::pthread_t) -> *mut libc::c_void;
     pub fn pthread_get_stacksize_np(thread: libc::pthread_t) -> libc::size_t;
+    fn pthread_setname_np(name: *const libc::c_char) -> libc::c_int;
+}
+
+#[cfg(target_os = "openbsd")]
+extern {
+        pub fn pthread_stackseg_np(thread: libc::pthread_t,
+                                   sinfo: *mut stack_t) -> libc::c_uint;
+        pub fn pthread_main_np() -> libc::c_uint;
+}
+
+#[cfg(target_os = "openbsd")]
+#[repr(C)]
+pub struct stack_t {
+    pub ss_sp: *mut libc::c_void,
+    pub ss_size: libc::size_t,
+    pub ss_flags: libc::c_int,
 }
 
 extern {

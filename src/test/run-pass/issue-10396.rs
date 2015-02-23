@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[derive(Show)]
+#[derive(Debug)]
 enum Foo<'s> {
     V(&'s str)
 }
 
 fn f(arr: &[&Foo]) {
-    for &f in arr.iter() {
+    for &f in arr {
         println!("{:?}", f);
     }
 }

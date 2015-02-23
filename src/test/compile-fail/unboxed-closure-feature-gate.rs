@@ -11,7 +11,12 @@
 // Check that parenthetical notation is feature-gated except with the
 // `Fn` traits.
 
-trait Foo<A,R> {
+use std::marker;
+
+trait Foo<A> {
+    type Output;
+
+    fn dummy(&self, a: A) { }
 }
 
 fn main() {

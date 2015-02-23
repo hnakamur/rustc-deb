@@ -71,19 +71,19 @@ pub fn trans_inline_asm<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, ia: &ast::InlineAsm)
                                     callee::DontAutorefArg)
         })
     }).collect::<Vec<_>>();
-    inputs.push_all(&ext_inputs[]);
+    inputs.push_all(&ext_inputs[..]);
 
     // no failure occurred preparing operands, no need to cleanup
     fcx.pop_custom_cleanup_scope(temp_scope);
 
     let mut constraints = constraints.iter()
-                                     .map(|s| s.get().to_string())
+                                     .map(|s| s.to_string())
                                      .chain(ext_constraints.into_iter())
                                      .collect::<Vec<String>>()
                                      .connect(",");
 
     let mut clobbers = ia.clobbers.iter()
-                                  .map(|s| format!("~{{{}}}", s.get()))
+                                  .map(|s| format!("~{{{}}}", &s))
                                   .collect::<Vec<String>>()
                                   .connect(",");
     let more_clobbers = get_clobbers();
@@ -91,18 +91,18 @@ pub fn trans_inline_asm<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, ia: &ast::InlineAsm)
         if !clobbers.is_empty() {
             clobbers.push(',');
         }
-        clobbers.push_str(&more_clobbers[]);
+        clobbers.push_str(&more_clobbers[..]);
     }
 
     // Add the clobbers to our constraints list
     if clobbers.len() != 0 && constraints.len() != 0 {
         constraints.push(',');
-        constraints.push_str(&clobbers[]);
+        constraints.push_str(&clobbers[..]);
     } else {
-        constraints.push_str(&clobbers[]);
+        constraints.push_str(&clobbers[..]);
     }
 
-    debug!("Asm Constraints: {}", &constraints[]);
+    debug!("Asm Constraints: {}", &constraints[..]);
 
     let num_outputs = outputs.len();
 
@@ -112,7 +112,7 @@ pub fn trans_inline_asm<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, ia: &ast::InlineAsm)
     } else if num_outputs == 1 {
         output_types[0]
     } else {
-        Type::struct_(bcx.ccx(), &output_types[], false)
+        Type::struct_(bcx.ccx(), &output_types[..], false)
     };
 
     let dialect = match ia.dialect {
@@ -120,12 +120,12 @@ pub fn trans_inline_asm<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, ia: &ast::InlineAsm)
         ast::AsmIntel => llvm::AD_Intel
     };
 
-    let asm = CString::from_slice(ia.asm.get().as_bytes());
-    let constraints = CString::from_slice(constraints.as_bytes());
+    let asm = CString::new(ia.asm.as_bytes()).unwrap();
+    let constraints = CString::new(constraints).unwrap();
     let r = InlineAsmCall(bcx,
                           asm.as_ptr(),
                           constraints.as_ptr(),
-                          inputs.as_slice(),
+                          &inputs,
                           output_type,
                           ia.volatile,
                           ia.alignstack,
@@ -161,10 +161,7 @@ pub fn trans_inline_asm<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, ia: &ast::InlineAsm)
 // Default per-arch clobbers
 // Basically what clang does
 
-#[cfg(any(target_arch = "arm",
-          target_arch = "aarch64",
-          target_arch = "mips",
-          target_arch = "mipsel"))]
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 fn get_clobbers() -> String {
     "".to_string()
 }

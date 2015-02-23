@@ -120,6 +120,7 @@ namespace {
     bool MayThrow;           // The current loop contains an instruction which
                              // may throw, thus preventing code motion of
                              // instructions with side effects.
+    bool HeaderMayThrow;     // Same as previous, but specific to loop header
     DenseMap<Loop*, AliasSetTracker*> LoopToAliasSetMap;
 
     /// cloneBasicBlockAnalysis - Simple Analysis hook. Clone alias set info.
@@ -273,7 +274,12 @@ bool LICM::runOnLoop(Loop *L, LPPassManager &LPM) {
       CurAST->add(*BB);                 // Incorporate the specified basic block
   }
 
-  MayThrow = false;
+  HeaderMayThrow = false;
+  BasicBlock *Header = L->getHeader();
+  for (BasicBlock::iterator I = Header->begin(), E = Header->end();
+       (I != E) && !HeaderMayThrow; ++I)
+    HeaderMayThrow |= I->mayThrow();
+  MayThrow = HeaderMayThrow;
   // TODO: We've already searched for instructions which may throw in subloops.
   // We may want to reuse this information.
   for (Loop::block_iterator BB = L->block_begin(), BBE = L->block_end();
@@ -316,7 +322,8 @@ bool LICM::runOnLoop(Loop *L, LPPassManager &LPM) {
     // SSAUpdater strategy during promotion that was LCSSA aware and reformed
     // it as it went.
     if (Changed)
-      formLCSSARecursively(*L, *DT, getAnalysisIfAvailable<ScalarEvolution>());
+      formLCSSARecursively(*L, *DT, LI,
+                           getAnalysisIfAvailable<ScalarEvolution>());
   }
 
   // Check that neither this loop nor its parent have had LCSSA broken. LICM is
@@ -444,7 +451,7 @@ bool LICM::canSinkOrHoistInst(Instruction &I) {
     // in the same alias set as something that ends up being modified.
     if (AA->pointsToConstantMemory(LI->getOperand(0)))
       return true;
-    if (LI->getMetadata("invariant.load"))
+    if (LI->getMetadata(LLVMContext::MD_invariant_load))
       return true;
 
     // Don't hoist loads which have may-aliased stores in loop.
@@ -658,12 +665,7 @@ bool LICM::isSafeToExecuteUnconditionally(Instruction &Inst) {
 
 bool LICM::isGuaranteedToExecute(Instruction &Inst) {
 
-  // Somewhere in this loop there is an instruction which may throw and make us
-  // exit the loop.
-  if (MayThrow)
-    return false;
-
-  // Otherwise we have to check to make sure that the instruction dominates all
+  // We have to check to make sure that the instruction dominates all
   // of the exit blocks.  If it doesn't, then there is a path out of the loop
   // which does not execute this instruction, so we can't hoist it.
 
@@ -671,7 +673,14 @@ bool LICM::isGuaranteedToExecute(Instruction &Inst) {
   // common), it is always guaranteed to dominate the exit blocks.  Since this
   // is a common case, and can save some work, check it now.
   if (Inst.getParent() == CurLoop->getHeader())
-    return true;
+    // If there's a throw in the header block, we can't guarantee we'll reach
+    // Inst.
+    return !HeaderMayThrow;
+
+  // Somewhere in this loop there is an instruction which may throw and make us
+  // exit the loop.
+  if (MayThrow)
+    return false;
 
   // Get the exit blocks for the current loop.
   SmallVector<BasicBlock*, 8> ExitBlocks;
@@ -810,6 +819,7 @@ void LICM::PromoteAliasSet(AliasSet &AS,
   // us to prove better alignment.
   unsigned Alignment = 1;
   AAMDNodes AATags;
+  bool HasDedicatedExits = CurLoop->hasDedicatedExits();
 
   // Check that all of the pointers in the alias set have the same type.  We
   // cannot (yet) promote a memory location that is loaded and stored in
@@ -843,6 +853,13 @@ void LICM::PromoteAliasSet(AliasSet &AS,
           continue;
         assert(!store->isVolatile() && "AST broken");
         if (!store->isSimple())
+          return;
+        // Don't sink stores from loops without dedicated block exits. Exits
+        // containing indirect branches are not transformed by loop simplify,
+        // make sure we catch that. An additional load may be generated in the
+        // preheader for SSA updater, so also avoid sinking when no preheader
+        // is available.
+        if (!HasDedicatedExits || !Preheader)
           return;
 
         // Note that we only check GuaranteedToExecute inside the store case

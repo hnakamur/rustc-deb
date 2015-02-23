@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::fmt::Show;
+use std::fmt::Debug;
 use std::default::Default;
 
 trait MyTrait<T> {
@@ -23,25 +23,24 @@ impl<T> MyTrait<T> for T
     }
 }
 
+#[derive(Copy)]
 struct MyType {
     dummy: uint
 }
-
-impl Copy for MyType {}
 
 impl MyTrait<uint> for MyType {
     fn get(&self) -> uint { self.dummy }
 }
 
 fn test_eq<T,M>(m: M, v: T)
-where T : Eq + Show,
+where T : Eq + Debug,
       M : MyTrait<T>
 {
     assert_eq!(m.get(), v);
 }
 
 pub fn main() {
-    test_eq(22u, 0u);
+    test_eq(22_usize, 0_usize);
 
     let value = MyType { dummy: 256 + 22 };
     test_eq(value, value.dummy);

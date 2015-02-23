@@ -8,12 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(no_std)]
 #![no_std]
 #![allow(unused_variables)]
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
-#![allow(missing_copy_implementations)]
 #![deny(dead_code)]
+#![feature(core)]
 
 #![crate_type="lib"]
 
@@ -90,7 +91,7 @@ pub fn pub_fn() {
     let e = used_enum::foo3;
     SemiUsedStruct::la_la_la();
 
-    let i = 1is;
+    let i = 1;
     match i {
         USED_STATIC => (),
         USED_CONST => (),

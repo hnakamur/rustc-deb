@@ -24,7 +24,13 @@
 
 namespace llvm {
 
+//===----------------------------------------------------------------------===//
+// AMDGPU Target Machine (R600+)
+//===----------------------------------------------------------------------===//
+
 class AMDGPUTargetMachine : public LLVMTargetMachine {
+protected:
+  TargetLoweringObjectFile *TLOF;
   AMDGPUSubtarget Subtarget;
   AMDGPUIntrinsicInfo IntrinsicInfo;
 
@@ -43,6 +49,21 @@ public:
 
   /// \brief Register R600 analysis passes with a pass manager.
   void addAnalysisPasses(PassManagerBase &PM) override;
+  TargetLoweringObjectFile *getObjFileLowering() const override {
+    return TLOF;
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// GCN Target Machine (SI+)
+//===----------------------------------------------------------------------===//
+
+class GCNTargetMachine : public AMDGPUTargetMachine {
+
+public:
+  GCNTargetMachine(const Target &T, StringRef TT, StringRef FS,
+                    StringRef CPU, TargetOptions Options, Reloc::Model RM,
+                    CodeModel::Model CM, CodeGenOpt::Level OL);
 };
 
 } // End namespace llvm

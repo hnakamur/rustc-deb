@@ -85,7 +85,7 @@ pub type Dependencies = FnvHashMap<config::CrateType, DependencyList>;
 
 pub fn calculate(tcx: &ty::ctxt) {
     let mut fmts = tcx.dependency_formats.borrow_mut();
-    for &ty in tcx.sess.crate_types.borrow().iter() {
+    for &ty in &*tcx.sess.crate_types.borrow() {
         fmts.insert(ty, calculate_type(&tcx.sess, ty));
     }
     tcx.sess.abort_if_errors();
@@ -137,7 +137,7 @@ fn calculate_type(sess: &session::Session,
         config::CrateTypeExecutable | config::CrateTypeDylib => {},
     }
 
-    let mut formats = FnvHashMap::new();
+    let mut formats = FnvHashMap();
 
     // Sweep all crates for found dylibs. Add all dylibs, as well as their
     // dependencies, ensuring there are no conflicts. The only valid case for a
@@ -148,7 +148,7 @@ fn calculate_type(sess: &session::Session,
             debug!("adding dylib: {}", data.name);
             add_library(sess, cnum, cstore::RequireDynamic, &mut formats);
             let deps = csearch::get_dylib_dependency_formats(&sess.cstore, cnum);
-            for &(depnum, style) in deps.iter() {
+            for &(depnum, style) in &deps {
                 debug!("adding {:?}: {}", style,
                        sess.cstore.get_crate_data(depnum).name.clone());
                 add_library(sess, depnum, style, &mut formats);
@@ -157,8 +157,8 @@ fn calculate_type(sess: &session::Session,
     });
 
     // Collect what we've got so far in the return vector.
-    let mut ret = range(1, sess.cstore.next_crate_num()).map(|i| {
-        match formats.get(&i).map(|v| *v) {
+    let mut ret = (1..sess.cstore.next_crate_num()).map(|i| {
+        match formats.get(&i).cloned() {
             v @ Some(cstore::RequireDynamic) => v,
             _ => None,
         }

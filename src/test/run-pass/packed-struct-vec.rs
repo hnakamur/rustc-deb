@@ -13,24 +13,22 @@
 use std::mem;
 
 #[repr(packed)]
-#[derive(PartialEq, Show)]
+#[derive(Copy, PartialEq, Debug)]
 struct Foo {
     bar: u8,
     baz: u64
 }
-
-impl Copy for Foo {}
 
 pub fn main() {
     let foos = [Foo { bar: 1, baz: 2 }; 10];
 
     assert_eq!(mem::size_of::<[Foo; 10]>(), 90);
 
-    for i in range(0u, 10) {
+    for i in 0_usize..10 {
         assert_eq!(foos[i], Foo { bar: 1, baz: 2});
     }
 
-    for &foo in foos.iter() {
+    for &foo in &foos {
         assert_eq!(foo, Foo { bar: 1, baz: 2 });
     }
 }

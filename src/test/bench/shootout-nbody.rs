@@ -94,23 +94,22 @@ static BODIES: [Planet;N_BODIES] = [
     },
 ];
 
+#[derive(Copy)]
 struct Planet {
     x: f64, y: f64, z: f64,
     vx: f64, vy: f64, vz: f64,
     mass: f64,
 }
 
-impl Copy for Planet {}
-
 fn advance(bodies: &mut [Planet;N_BODIES], dt: f64, steps: int) {
-    for _ in range(0, steps) {
-        let mut b_slice = bodies.as_mut_slice();
+    for _ in 0..steps {
+        let mut b_slice: &mut [_] = bodies;
         loop {
             let bi = match shift_mut_ref(&mut b_slice) {
                 Some(bi) => bi,
                 None => break
             };
-            for bj in b_slice.iter_mut() {
+            for bj in &mut *b_slice {
                 let dx = bi.x - bj.x;
                 let dy = bi.y - bj.y;
                 let dz = bi.z - bj.z;
@@ -159,7 +158,7 @@ fn offset_momentum(bodies: &mut [Planet;N_BODIES]) {
     let mut px = 0.0;
     let mut py = 0.0;
     let mut pz = 0.0;
-    for bi in bodies.iter() {
+    for bi in &*bodies {
         px += bi.vx * bi.mass;
         py += bi.vy * bi.mass;
         pz += bi.vz * bi.mass;
@@ -171,11 +170,11 @@ fn offset_momentum(bodies: &mut [Planet;N_BODIES]) {
 }
 
 fn main() {
-    let n = if std::os::getenv("RUST_BENCH").is_some() {
+    let n = if std::env::var_os("RUST_BENCH").is_some() {
         5000000
     } else {
-        std::os::args().as_slice().get(1)
-            .and_then(|arg| arg.parse())
+        std::env::args().nth(1)
+            .and_then(|arg| arg.parse().ok())
             .unwrap_or(1000)
     };
     let mut bodies = BODIES;
@@ -202,6 +201,6 @@ fn shift_mut_ref<'a, T>(r: &mut &'a mut [T]) -> Option<&'a mut T> {
         raw.data = raw.data.offset(1);
         raw.len -= 1;
         *r = mem::transmute(raw);
-        Some(unsafe { &mut *ret })
+        Some({ &mut *ret })
     }
 }

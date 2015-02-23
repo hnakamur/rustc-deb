@@ -24,7 +24,7 @@
 //! # Usage
 //!
 //! This module should likely not be used directly unless other primitives are
-//! being built on. types such as `thread_local::scoped::Key` are likely much
+//! being built on. types such as `thread_local::spawn::Key` are likely much
 //! more useful in practice than this OS-based version which likely requires
 //! unsafe code to interoperate with.
 //!
@@ -58,7 +58,7 @@
 
 use prelude::v1::*;
 
-use sync::atomic::{self, AtomicUint, Ordering};
+use sync::atomic::{self, AtomicUsize, Ordering};
 use sync::{Mutex, Once, ONCE_INIT};
 
 use sys::thread_local as imp;
@@ -84,20 +84,23 @@ use sys::thread_local as imp;
 ///     KEY.set(1 as *mut u8);
 /// }
 /// ```
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct StaticKey {
     /// Inner static TLS key (internals), created with by `INIT_INNER` in this
     /// module.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub inner: StaticKeyInner,
     /// Destructor for the TLS value.
     ///
     /// See `Key::new` for information about when the destructor runs and how
     /// it runs.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub dtor: Option<unsafe extern fn(*mut u8)>,
 }
 
 /// Inner contents of `StaticKey`, created by the `INIT_INNER` constant.
 pub struct StaticKeyInner {
-    key: AtomicUint,
+    key: AtomicUsize,
 }
 
 /// A type for a safely managed OS-based TLS slot.
@@ -128,6 +131,7 @@ pub struct Key {
 /// Constant initialization value for static TLS keys.
 ///
 /// This value specifies no destructor by default.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub const INIT: StaticKey = StaticKey {
     inner: INIT_INNER,
     dtor: None,
@@ -136,8 +140,9 @@ pub const INIT: StaticKey = StaticKey {
 /// Constant initialization value for the inner part of static TLS keys.
 ///
 /// This value allows specific configuration of the destructor for a TLS key.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub const INIT_INNER: StaticKeyInner = StaticKeyInner {
-    key: atomic::ATOMIC_UINT_INIT,
+    key: atomic::ATOMIC_USIZE_INIT,
 };
 
 static INIT_KEYS: Once = ONCE_INIT;

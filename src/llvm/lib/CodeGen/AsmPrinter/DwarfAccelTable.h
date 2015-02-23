@@ -14,9 +14,9 @@
 #ifndef LLVM_LIB_CODEGEN_ASMPRINTER_DWARFACCELTABLE_H
 #define LLVM_LIB_CODEGEN_ASMPRINTER_DWARFACCELTABLE_H
 
-#include "DIE.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/CodeGen/DIE.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/DataTypes.h"
@@ -62,7 +62,7 @@
 namespace llvm {
 
 class AsmPrinter;
-class DwarfFile;
+class DwarfDebug;
 
 class DwarfAccelTable {
 
@@ -223,7 +223,7 @@ private:
   void EmitBuckets(AsmPrinter *);
   void EmitHashes(AsmPrinter *);
   void EmitOffsets(AsmPrinter *, MCSymbol *);
-  void EmitData(AsmPrinter *, DwarfFile *D, MCSymbol *StrSym);
+  void EmitData(AsmPrinter *, DwarfDebug *D, MCSymbol *StrSym);
 
   // Allocator for HashData and HashDataContents.
   BumpPtrAllocator Allocator;
@@ -248,7 +248,7 @@ public:
   void AddName(StringRef Name, MCSymbol *StrSym, const DIE *Die,
                char Flags = 0);
   void FinalizeTable(AsmPrinter *, StringRef);
-  void Emit(AsmPrinter *, MCSymbol *, DwarfFile *, MCSymbol *StrSym);
+  void Emit(AsmPrinter *, MCSymbol *, DwarfDebug *, MCSymbol *StrSym);
 #ifndef NDEBUG
   void print(raw_ostream &O);
   void dump() { print(dbgs()); }

@@ -15,8 +15,10 @@
 # The version number
 CFG_RELEASE_NUM=1.0.0
 
-# An optional number to put after the label, e.g. '2' -> '-beta2'
-CFG_BETA_CYCLE=
+# An optional number to put after the label, e.g. '.2' -> '-beta.2'
+# NB Make sure it starts with a dot to conform to semver pre-release
+# versions (section 9)
+CFG_PRERELEASE_VERSION=.2
 
 CFG_FILENAME_EXTRA=4e7c5e5c
 
@@ -28,9 +30,8 @@ CFG_PACKAGE_VERS=$(CFG_RELEASE_NUM)
 CFG_DISABLE_UNSTABLE_FEATURES=1
 endif
 ifeq ($(CFG_RELEASE_CHANNEL),beta)
-# The beta channel is temporarily called 'alpha'
-CFG_RELEASE=$(CFG_RELEASE_NUM)-alpha$(CFG_BETA_CYCLE)
-CFG_PACKAGE_VERS=$(CFG_RELEASE_NUM)-alpha$(CFG_BETA_CYCLE)
+CFG_RELEASE=$(CFG_RELEASE_NUM)-alpha$(CFG_PRERELEASE_VERSION)
+CFG_PACKAGE_VERS=$(CFG_RELEASE_NUM)-alpha$(CFG_PRERELEASE_VERSION)
 CFG_DISABLE_UNSTABLE_FEATURES=1
 endif
 ifeq ($(CFG_RELEASE_CHANNEL),nightly)
@@ -60,17 +61,21 @@ SPACE :=
 SPACE +=
 ifneq ($(CFG_GIT),)
 ifneq ($(wildcard $(subst $(SPACE),\$(SPACE),$(CFG_GIT_DIR))),)
-    CFG_VER_DATE = $(shell git --git-dir='$(CFG_GIT_DIR)' log -1 --pretty=format:'%ci')
+    CFG_VER_DATE = $(shell git --git-dir='$(CFG_GIT_DIR)' log -1 --date=short --pretty=format:'%cd')
     CFG_VER_HASH = $(shell git --git-dir='$(CFG_GIT_DIR)' rev-parse HEAD)
     CFG_SHORT_VER_HASH = $(shell git --git-dir='$(CFG_GIT_DIR)' rev-parse --short=9 HEAD)
     CFG_VERSION += ($(CFG_SHORT_VER_HASH) $(CFG_VER_DATE))
 endif
 endif
 
+CFG_BUILD_DATE = $(shell date +%F)
+CFG_VERSION += (built $(CFG_BUILD_DATE))
+
 # Windows exe's need numeric versions - don't use anything but
 # numbers and dots here
 CFG_VERSION_WIN = $(CFG_RELEASE_NUM)
 
+CFG_INFO := $(info cfg: version $(CFG_VERSION))
 
 ######################################################################
 # More configuration
@@ -178,6 +183,7 @@ endif
 
 ifndef CFG_DISABLE_VALGRIND_RPASS
   $(info cfg: enabling valgrind run-pass tests (CFG_ENABLE_VALGRIND_RPASS))
+  $(info cfg: valgrind-rpass command set to $(CFG_VALGRIND))
   CFG_VALGRIND_RPASS :=$(CFG_VALGRIND)
 else
   CFG_VALGRIND_RPASS :=
@@ -261,7 +267,7 @@ endif
 ######################################################################
 
 # FIXME: x86-ism
-LLVM_COMPONENTS=x86 arm aarch64 mips ipo bitreader bitwriter linker asmparser mcjit \
+LLVM_COMPONENTS=x86 arm aarch64 mips powerpc ipo bitreader bitwriter linker asmparser mcjit \
                 interpreter instrumentation
 
 # Only build these LLVM tools
@@ -314,6 +320,7 @@ endif
 ifdef CFG_VER_HASH
 export CFG_VER_HASH
 endif
+export CFG_BUILD_DATE
 export CFG_VERSION
 export CFG_VERSION_WIN
 export CFG_RELEASE
@@ -329,10 +336,10 @@ ifdef CFG_DISABLE_UNSTABLE_FEATURES
 CFG_INFO := $(info cfg: disabling unstable features (CFG_DISABLE_UNSTABLE_FEATURES))
 # Turn on feature-staging
 export CFG_DISABLE_UNSTABLE_FEATURES
-endif
 # Subvert unstable feature lints to do the self-build
-export CFG_BOOTSTRAP_KEY
 export RUSTC_BOOTSTRAP_KEY:=$(CFG_BOOTSTRAP_KEY)
+endif
+export CFG_BOOTSTRAP_KEY
 
 ######################################################################
 # Per-stage targets and runner

@@ -12,18 +12,21 @@
 
 #![feature(unboxed_closures)]
 
+use std::marker::PhantomData;
 use std::ops::Fn;
 use std::ops::Add;
 
-struct G<A>;
+struct G<A>(PhantomData<A>);
 
-impl<'a, A: Add<int, Output=int>> Fn<(A,), int> for G<A> {
-    extern "rust-call" fn call(&self, (arg,): (A,)) -> int {
+impl<'a, A: Add<i32, Output=i32>> Fn<(A,)> for G<A> {
+    type Output = i32;
+
+    extern "rust-call" fn call(&self, (arg,): (A,)) -> i32 {
         arg.add(1)
     }
 }
 
 fn main() {
     // ICE trigger
-    G(1i);
+    (G(PhantomData))(1_i32);
 }

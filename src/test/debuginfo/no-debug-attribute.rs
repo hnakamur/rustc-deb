@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // ignore-lldb
 
 // compile-flags:-g
@@ -27,7 +26,7 @@
 #![omit_gdb_pretty_printer_section]
 
 fn function_with_debuginfo() {
-    let abc = 10u;
+    let abc = 10_usize;
     return (); // #break
 }
 

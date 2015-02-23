@@ -75,14 +75,14 @@ Let's get to it! The first thing we need to do for our guessing game is
 allow our player to input a guess. Put this in your `src/main.rs`:
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 
 fn main() {
     println!("Guess the number!");
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
 
@@ -111,7 +111,7 @@ Enter the docs. Rust has a page specifically to document the standard library.
 You can find that page [here](../std/index.html). There's a lot of information on
 that page, but the best part is the search bar. Right up at the top, there's
 a box that you can enter in a search term. The search is pretty primitive
-right now, but is getting better all the time. If you type 'random' in that
+right now, but is getting better all the time. If you type "random" in that
 box, the page will update to [this one](../std/index.html?search=random). The very
 first result is a link to [`std::rand::random`](../std/rand/fn.random.html). If we
 click on that result, we'll be taken to its documentation page.
@@ -121,7 +121,7 @@ explanatory text, and then an example. Let's try to modify our code to add in th
 `random` function and see what happens:
 
 ```{rust,ignore}
-use std::io;
+use std::old_io;
 use std::rand;
 
 fn main() {
@@ -133,7 +133,7 @@ fn main() {
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
 
@@ -147,7 +147,7 @@ explained.  We then added in a `let` expression to create a variable binding
 named `secret_number`, and we printed out its result.
 
 Also, you may wonder why we are using `%` on the result of `rand::random()`.
-This operator is called 'modulo', and it returns the remainder of a division.
+This operator is called *modulo*, and it returns the remainder of a division.
 By taking the modulo of the result of `rand::random()`, we're limiting the
 values to be between 0 and 99. Then, we add one to the result, making it from 1
 to 100. Using modulo can give you a very, very small bias in the result, but
@@ -180,7 +180,7 @@ This says "please give me a random `i32` value." We can change our code to use
 this hint:
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 use std::rand;
 
 fn main() {
@@ -192,7 +192,7 @@ fn main() {
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
 
@@ -233,19 +233,19 @@ unsigned integer approach. If we want a random positive number, we should ask fo
 a random positive number. Our code looks like this now:
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 use std::rand;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
 
@@ -276,20 +276,20 @@ two numbers. Let's add that in, along with a `match` statement to compare our
 guess to the secret number:
 
 ```{rust,ignore}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
 
@@ -297,9 +297,9 @@ fn main() {
     println!("You guessed: {}", input);
 
     match cmp(input, secret_number) {
-        Ordering::Less    => println!("Too small!"),
+        Ordering::Less => println!("Too small!"),
         Ordering::Greater => println!("Too big!"),
-        Ordering::Equal   => println!("You win!"),
+        Ordering::Equal => println!("You win!"),
     }
 }
 
@@ -318,7 +318,7 @@ $ cargo build
 src/main.rs:20:15: 20:20 error: mismatched types: expected `i32` but found `collections::string::String` (expected i32 but found struct collections::string::String)
 src/main.rs:20     match cmp(input, secret_number) {
                              ^~~~~
-src/main.rs:20:22: 20:35 error: mismatched types: expected `i32` but found `uint` (expected i32 but found uint)
+src/main.rs:20:22: 20:35 error: mismatched types: expected `i32` but found `u32` (expected i32 but found u32)
 src/main.rs:20     match cmp(input, secret_number) {
                                     ^~~~~~~~~~~~~
 error: aborting due to 2 previous errors
@@ -328,23 +328,23 @@ This often happens when writing Rust programs, and is one of Rust's greatest
 strengths. You try out some code, see if it compiles, and Rust tells you that
 you've done something wrong. In this case, our `cmp` function works on integers,
 but we've given it unsigned integers. In this case, the fix is easy, because
-we wrote the `cmp` function! Let's change it to take `uint`s:
+we wrote the `cmp` function! Let's change it to take `u32`s:
 
 ```{rust,ignore}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
 
@@ -352,13 +352,13 @@ fn main() {
     println!("You guessed: {}", input);
 
     match cmp(input, secret_number) {
-        Ordering::Less    => println!("Too small!"),
+        Ordering::Less => println!("Too small!"),
         Ordering::Greater => println!("Too big!"),
-        Ordering::Equal   => println!("You win!"),
+        Ordering::Equal => println!("You win!"),
     }
 }
 
-fn cmp(a: uint, b: uint) -> Ordering {
+fn cmp(a: u32, b: u32) -> Ordering {
     if a < b { Ordering::Less }
     else if a > b { Ordering::Greater }
     else { Ordering::Equal }
@@ -370,13 +370,13 @@ And try compiling again:
 ```bash
 $ cargo build
    Compiling guessing_game v0.0.1 (file:///home/you/projects/guessing_game)
-src/main.rs:20:15: 20:20 error: mismatched types: expected `uint` but found `collections::string::String` (expected uint but found struct collections::string::String)
+src/main.rs:20:15: 20:20 error: mismatched types: expected `u32` but found `collections::string::String` (expected u32 but found struct collections::string::String)
 src/main.rs:20     match cmp(input, secret_number) {
                              ^~~~~
 error: aborting due to previous error
 ```
 
-This error is similar to the last one: we expected to get a `uint`, but we got
+This error is similar to the last one: we expected to get a `u32`, but we got
 a `String` instead! That's because our `input` variable is coming from the
 standard input, and you can guess anything. Try it:
 
@@ -393,14 +393,14 @@ Oops! Also, you'll note that we just ran our program even though it didn't compi
 This works because the older version we did successfully compile was still lying
 around. Gotta be careful!
 
-Anyway, we have a `String`, but we need a `uint`. What to do? Well, there's
+Anyway, we have a `String`, but we need a `u32`. What to do? Well, there's
 a function for that:
 
 ```{rust,ignore}
-let input = io::stdin().read_line()
+let input = old_io::stdin().read_line()
                        .ok()
                        .expect("Failed to read line");
-let input_num: Option<uint> = input.parse();
+let input_num: Result<u32, _> = input.parse();
 ```
 
 The `parse` function takes in a `&str` value and converts it into something.
@@ -408,55 +408,57 @@ We tell it what kind of something with a type hint. Remember our type hint with
 `random()`? It looked like this:
 
 ```{rust,ignore}
-rand::random::<uint>();
+rand::random::<u32>();
 ```
 
 There's an alternate way of providing a hint too, and that's declaring the type
 in a `let`:
 
 ```{rust,ignore}
-let x: uint = rand::random();
+let x: u32 = rand::random();
 ```
 
-In this case, we say `x` is a `uint` explicitly, so Rust is able to properly
+In this case, we say `x` is a `u32` explicitly, so Rust is able to properly
 tell `random()` what to generate. In a similar fashion, both of these work:
 
 ```{rust,ignore}
-let input_num = "5".parse::<uint>();         // input_num: Option<uint>
-let input_num: Option<uint> = "5".parse();   // input_num: Option<uint>
+let input_num = "5".parse::<u32>(); // input_num: Option<u32>
+let input_num: Result<u32, _> = "5".parse(); // input_num: Result<u32, <u32 as FromStr>::Err>
 ```
 
-Anyway, with us now converting our input to a number, our code looks like this:
+Here we're converting the `Result` returned by `parse` to an `Option` by using
+the `ok` method as well.  Anyway, with us now converting our input to a number,
+our code looks like this:
 
 ```{rust,ignore}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
-    let input_num: Option<uint> = input.parse();
+    let input_num: Result<u32, _> = input.parse();
 
-    println!("You guessed: {}", input_num);
+    println!("You guessed: {:?}", input_num);
 
     match cmp(input_num, secret_number) {
-        Ordering::Less    => println!("Too small!"),
+        Ordering::Less => println!("Too small!"),
         Ordering::Greater => println!("Too big!"),
-        Ordering::Equal   => println!("You win!"),
+        Ordering::Equal => println!("You win!"),
     }
 }
 
-fn cmp(a: uint, b: uint) -> Ordering {
+fn cmp(a: u32, b: u32) -> Ordering {
     if a < b { Ordering::Less }
     else if a > b { Ordering::Greater }
     else { Ordering::Equal }
@@ -468,38 +470,38 @@ Let's try it out!
 ```bash
 $ cargo build
    Compiling guessing_game v0.0.1 (file:///home/you/projects/guessing_game)
-src/main.rs:22:15: 22:24 error: mismatched types: expected `uint` but found `core::option::Option<uint>` (expected uint but found enum core::option::Option)
+src/main.rs:22:15: 22:24 error: mismatched types: expected `u32` but found `core::option::Option<u32>` (expected u32 but found enum core::option::Option)
 src/main.rs:22     match cmp(input_num, secret_number) {
                              ^~~~~~~~~
 error: aborting due to previous error
 ```
 
-Oh yeah! Our `input_num` has the type `Option<uint>`, rather than `uint`. We
+Oh yeah! Our `input_num` has the type `Option<u32>`, rather than `u32`. We
 need to unwrap the Option. If you remember from before, `match` is a great way
 to do that. Try this code:
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
-    let input_num: Option<uint> = input.parse();
+    let input_num: Result<u32, _> = input.parse();
 
     let num = match input_num {
-        Some(num) => num,
-        None      => {
+        Ok(num) => num,
+        Err(_) => {
             println!("Please input a number!");
             return;
         }
@@ -509,20 +511,20 @@ fn main() {
     println!("You guessed: {}", num);
 
     match cmp(num, secret_number) {
-        Ordering::Less    => println!("Too small!"),
+        Ordering::Less => println!("Too small!"),
         Ordering::Greater => println!("Too big!"),
-        Ordering::Equal   => println!("You win!"),
+        Ordering::Equal => println!("You win!"),
     }
 }
 
-fn cmp(a: uint, b: uint) -> Ordering {
+fn cmp(a: u32, b: u32) -> Ordering {
     if a < b { Ordering::Less }
     else if a > b { Ordering::Greater }
     else { Ordering::Equal }
 }
 ```
 
-We use a `match` to either give us the `uint` inside of the `Option`, or else
+We use a `match` to either give us the `u32` inside of the `Option`, or else
 print an error message and return. Let's give this a shot:
 
 ```bash
@@ -546,27 +548,27 @@ method we can use defined on them: `trim()`. One small modification, and our
 code looks like this:
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
     println!("Please input your guess.");
 
-    let input = io::stdin().read_line()
+    let input = old_io::stdin().read_line()
                            .ok()
                            .expect("Failed to read line");
-    let input_num: Option<uint> = input.trim().parse();
+    let input_num: Result<u32, _> = input.trim().parse();
 
     let num = match input_num {
-        Some(num) => num,
-        None      => {
+        Ok(num) => num,
+        Err(_) => {
             println!("Please input a number!");
             return;
         }
@@ -576,13 +578,13 @@ fn main() {
     println!("You guessed: {}", num);
 
     match cmp(num, secret_number) {
-        Ordering::Less    => println!("Too small!"),
+        Ordering::Less => println!("Too small!"),
         Ordering::Greater => println!("Too big!"),
-        Ordering::Equal   => println!("You win!"),
+        Ordering::Equal => println!("You win!"),
     }
 }
 
-fn cmp(a: uint, b: uint) -> Ordering {
+fn cmp(a: u32, b: u32) -> Ordering {
     if a < b { Ordering::Less }
     else if a > b { Ordering::Greater }
     else { Ordering::Equal }
@@ -608,8 +610,8 @@ out that I guessed 76. Run the program a few times, and verify that guessing
 the number works, as well as guessing a number too small.
 
 The Rust compiler helped us out quite a bit there! This technique is called
-"lean on the compiler", and it's often useful when working on some code. Let
-the error messages help guide you towards the correct types.
+"leaning on the compiler", and it's often useful when working on some code.
+Let the error messages help guide you towards the correct types.
 
 Now we've got most of the game working, but we can only make one guess. Let's
 change that by adding loops!
@@ -620,14 +622,14 @@ As we already discussed, the `loop` keyword gives us an infinite loop.
 Let's add that in:
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
@@ -635,14 +637,14 @@ fn main() {
 
         println!("Please input your guess.");
 
-        let input = io::stdin().read_line()
+        let input = old_io::stdin().read_line()
                                .ok()
                                .expect("Failed to read line");
-        let input_num: Option<uint> = input.trim().parse();
+        let input_num: Result<u32, _> = input.trim().parse();
 
         let num = match input_num {
-            Some(num) => num,
-            None      => {
+            Ok(num) => num,
+            Err(_) => {
                 println!("Please input a number!");
                 return;
             }
@@ -652,14 +654,14 @@ fn main() {
         println!("You guessed: {}", num);
 
         match cmp(num, secret_number) {
-            Ordering::Less    => println!("Too small!"),
+            Ordering::Less => println!("Too small!"),
             Ordering::Greater => println!("Too big!"),
-            Ordering::Equal   => println!("You win!"),
+            Ordering::Equal => println!("You win!"),
         }
     }
 }
 
-fn cmp(a: uint, b: uint) -> Ordering {
+fn cmp(a: u32, b: u32) -> Ordering {
     if a < b { Ordering::Less }
     else if a > b { Ordering::Greater }
     else { Ordering::Equal }
@@ -696,14 +698,14 @@ Ha! `quit` actually quits. As does any other non-number input. Well, this is
 suboptimal to say the least. First, let's actually quit when you win the game:
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
@@ -711,14 +713,14 @@ fn main() {
 
         println!("Please input your guess.");
 
-        let input = io::stdin().read_line()
+        let input = old_io::stdin().read_line()
                                .ok()
                                .expect("Failed to read line");
-        let input_num: Option<uint> = input.trim().parse();
+        let input_num: Result<u32, _> = input.trim().parse();
 
         let num = match input_num {
-            Some(num) => num,
-            None      => {
+            Ok(num) => num,
+            Err(_) => {
                 println!("Please input a number!");
                 return;
             }
@@ -728,9 +730,9 @@ fn main() {
         println!("You guessed: {}", num);
 
         match cmp(num, secret_number) {
-            Ordering::Less    => println!("Too small!"),
+            Ordering::Less => println!("Too small!"),
             Ordering::Greater => println!("Too big!"),
-            Ordering::Equal   => {
+            Ordering::Equal => {
                 println!("You win!");
                 return;
             },
@@ -738,7 +740,7 @@ fn main() {
     }
 }
 
-fn cmp(a: uint, b: uint) -> Ordering {
+fn cmp(a: u32, b: u32) -> Ordering {
     if a < b { Ordering::Less }
     else if a > b { Ordering::Greater }
     else { Ordering::Equal }
@@ -752,14 +754,14 @@ we don't want to quit, we just want to ignore it. Change that `return` to
 
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     println!("The secret number is: {}", secret_number);
 
@@ -767,14 +769,14 @@ fn main() {
 
         println!("Please input your guess.");
 
-        let input = io::stdin().read_line()
+        let input = old_io::stdin().read_line()
                                .ok()
                                .expect("Failed to read line");
-        let input_num: Option<uint> = input.trim().parse();
+        let input_num: Result<u32, _> = input.trim().parse();
 
         let num = match input_num {
-            Some(num) => num,
-            None      => {
+            Ok(num) => num,
+            Err(_) => {
                 println!("Please input a number!");
                 continue;
             }
@@ -784,9 +786,9 @@ fn main() {
         println!("You guessed: {}", num);
 
         match cmp(num, secret_number) {
-            Ordering::Less    => println!("Too small!"),
+            Ordering::Less => println!("Too small!"),
             Ordering::Greater => println!("Too big!"),
-            Ordering::Equal   => {
+            Ordering::Equal => {
                 println!("You win!");
                 return;
             },
@@ -794,7 +796,7 @@ fn main() {
     }
 }
 
-fn cmp(a: uint, b: uint) -> Ordering {
+fn cmp(a: u32, b: u32) -> Ordering {
     if a < b { Ordering::Less }
     else if a > b { Ordering::Greater }
     else { Ordering::Equal }
@@ -831,27 +833,27 @@ think of what it is? That's right, we don't want to print out the secret number.
 It was good for testing, but it kind of ruins the game. Here's our final source:
 
 ```{rust,no_run}
-use std::io;
+use std::old_io;
 use std::rand;
 use std::cmp::Ordering;
 
 fn main() {
     println!("Guess the number!");
 
-    let secret_number = (rand::random::<uint>() % 100u) + 1u;
+    let secret_number = (rand::random::<u32>() % 100) + 1;
 
     loop {
 
         println!("Please input your guess.");
 
-        let input = io::stdin().read_line()
+        let input = old_io::stdin().read_line()
                                .ok()
                                .expect("Failed to read line");
-        let input_num: Option<uint> = input.trim().parse();
+        let input_num: Result<u32, _> = input.trim().parse();
 
         let num = match input_num {
-            Some(num) => num,
-            None      => {
+            Ok(num) => num,
+            Err(_) => {
                 println!("Please input a number!");
                 continue;
             }
@@ -861,9 +863,9 @@ fn main() {
         println!("You guessed: {}", num);
 
         match cmp(num, secret_number) {
-            Ordering::Less    => println!("Too small!"),
+            Ordering::Less => println!("Too small!"),
             Ordering::Greater => println!("Too big!"),
-            Ordering::Equal   => {
+            Ordering::Equal => {
                 println!("You win!");
                 return;
             },
@@ -871,7 +873,7 @@ fn main() {
     }
 }
 
-fn cmp(a: uint, b: uint) -> Ordering {
+fn cmp(a: u32, b: u32) -> Ordering {
     if a < b { Ordering::Less }
     else if a > b { Ordering::Greater }
     else { Ordering::Equal }

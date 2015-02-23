@@ -14,12 +14,10 @@
 //! new type will gradually take place over the alpha cycle along with
 //! the development of clearer conventions around integer types.
 
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 #![doc(primitive = "isize")]
 
-#[cfg(any(all(stage0, target_word_size = "32"),
-          all(not(stage0), target_pointer_width = "32")))]
+#[cfg(target_pointer_width = "32")]
 int_module! { isize, 32 }
-#[cfg(any(all(stage0, target_word_size = "64"),
-          all(not(stage0), target_pointer_width = "64")))]
+#[cfg(target_pointer_width = "64")]
 int_module! { isize, 64 }

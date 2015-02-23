@@ -46,7 +46,7 @@ pub fn construct(tcx: &ty::ctxt,
     let block_exit;
 
     let mut cfg_builder = CFGBuilder {
-        exit_map: NodeMap::new(),
+        exit_map: NodeMap(),
         graph: graph,
         fn_exit: fn_exit,
         tcx: tcx,
@@ -68,7 +68,7 @@ fn add_initial_dummy_node(g: &mut CFGGraph) -> CFGIndex {
 impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
     fn block(&mut self, blk: &ast::Block, pred: CFGIndex) -> CFGIndex {
         let mut stmts_exit = pred;
-        for stmt in blk.stmts.iter() {
+        for stmt in &blk.stmts {
             stmts_exit = self.stmt(&**stmt, stmts_exit);
         }
 
@@ -166,7 +166,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             self.pat(&*pats[0], pred)
         } else {
             let collect = self.add_dummy_node(&[]);
-            for pat in pats.iter() {
+            for pat in pats {
                 let pat_exit = self.pat(&**pat, pred);
                 self.add_contained_edge(pat_exit, collect);
             }
@@ -263,43 +263,8 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                 self.tcx.sess.span_bug(expr.span, "non-desugared ExprWhileLet");
             }
 
-            ast::ExprForLoop(ref pat, ref head, ref body, _) => {
-                //
-                //          [pred]
-                //            |
-                //            v 1
-                //          [head]
-                //            |
-                //            v 2
-                //        [loopback] <--+ 7
-                //            |         |
-                //            v 3       |
-                //   +------[cond]      |
-                //   |        |         |
-                //   |        v 5       |
-                //   |       [pat]      |
-                //   |        |         |
-                //   |        v 6       |
-                //   v 4    [body] -----+
-                // [expr]
-                //
-                // Note that `break` and `continue` statements
-                // may cause additional edges.
-
-                let head = self.expr(&**head, pred);             // 1
-                let loopback = self.add_dummy_node(&[head]);     // 2
-                let cond = self.add_dummy_node(&[loopback]);     // 3
-                let expr_exit = self.add_node(expr.id, &[cond]); // 4
-                self.loop_scopes.push(LoopScope {
-                    loop_id: expr.id,
-                    continue_index: loopback,
-                    break_index: expr_exit,
-                });
-                let pat = self.pat(&**pat, cond);               // 5
-                let body = self.block(&**body, pat);            // 6
-                self.add_contained_edge(body, loopback);        // 7
-                self.loop_scopes.pop();
-                expr_exit
+            ast::ExprForLoop(..) => {
+                self.tcx.sess.span_bug(expr.span, "non-desugared ExprForLoop");
             }
 
             ast::ExprLoop(ref body, _) => {
@@ -360,7 +325,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
 
                 let expr_exit = self.add_node(expr.id, &[]);
                 let mut cond_exit = discr_exit;
-                for arm in arms.iter() {
+                for arm in arms {
                     cond_exit = self.add_dummy_node(&[cond_exit]);        // 2
                     let pats_exit = self.pats_any(&arm.pats[],
                                                   cond_exit);            // 3
@@ -372,7 +337,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                 expr_exit
             }
 
-            ast::ExprBinary(op, ref l, ref r) if ast_util::lazy_binop(op) => {
+            ast::ExprBinary(op, ref l, ref r) if ast_util::lazy_binop(op.node) => {
                 //
                 //     [pred]
                 //       |
@@ -424,7 +389,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             }
 
             ast::ExprMethodCall(_, _, ref args) => {
-                self.call(expr, pred, &*args[0], args.slice_from(1).iter().map(|e| &**e))
+                self.call(expr, pred, &*args[0], args[1..].iter().map(|e| &**e))
             }
 
             ast::ExprIndex(ref l, ref r) |
@@ -495,7 +460,8 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             ast::ExprMac(..) |
             ast::ExprClosure(..) |
             ast::ExprLit(..) |
-            ast::ExprPath(..) => {
+            ast::ExprPath(..) |
+            ast::ExprQPath(..) => {
                 self.straightline(expr, pred, None::<ast::Expr>.iter())
             }
         }
@@ -556,7 +522,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             assert!(!self.exit_map.contains_key(&id));
             self.exit_map.insert(id, node);
         }
-        for &pred in preds.iter() {
+        for &pred in preds {
             self.add_contained_edge(pred, node);
         }
         node
@@ -608,7 +574,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             Some(_) => {
                 match self.tcx.def_map.borrow().get(&expr.id) {
                     Some(&def::DefLabel(loop_id)) => {
-                        for l in self.loop_scopes.iter() {
+                        for l in &self.loop_scopes {
                             if l.loop_id == loop_id {
                                 return *l;
                             }

@@ -12,8 +12,8 @@
 
 #![feature(asm)]
 
-use std::io::process::Command;
-use std::os;
+use std::old_io::process::Command;
+use std::env;
 
 // lifted from the test module
 // Inlining to avoid llvm turning the recursive functions into tail calls,
@@ -22,7 +22,7 @@ use std::os;
 pub fn black_box<T>(dummy: T) { unsafe { asm!("" : : "r"(&dummy)) } }
 
 fn silent_recurse() {
-    let buf = [0i; 1000];
+    let buf = [0; 1000];
     black_box(buf);
     silent_recurse();
 }
@@ -34,21 +34,20 @@ fn loud_recurse() {
 }
 
 fn main() {
-    let args = os::args();
-    let args = args.as_slice();
-    if args.len() > 1 && args[1].as_slice() == "silent" {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && args[1] == "silent" {
         silent_recurse();
-    } else if args.len() > 1 && args[1].as_slice() == "loud" {
+    } else if args.len() > 1 && args[1] == "loud" {
         loud_recurse();
     } else {
-        let silent = Command::new(args[0].as_slice()).arg("silent").output().unwrap();
+        let silent = Command::new(&args[0]).arg("silent").output().unwrap();
         assert!(!silent.status.success());
-        let error = String::from_utf8_lossy(silent.error.as_slice());
-        assert!(error.as_slice().contains("has overflowed its stack"));
+        let error = String::from_utf8_lossy(&silent.error);
+        assert!(error.contains("has overflowed its stack"));
 
-        let loud = Command::new(args[0].as_slice()).arg("loud").output().unwrap();
+        let loud = Command::new(&args[0]).arg("loud").output().unwrap();
         assert!(!loud.status.success());
-        let error = String::from_utf8_lossy(silent.error.as_slice());
-        assert!(error.as_slice().contains("has overflowed its stack"));
+        let error = String::from_utf8_lossy(&silent.error);
+        assert!(error.contains("has overflowed its stack"));
     }
 }

@@ -182,7 +182,7 @@ fn int_to_str_bytes_common<T, F>(num: T, radix: uint, sign: SignFormat, mut f: F
 /// - Panics if `radix` > 25 and `exp_format` is `ExpBin` due to conflict
 ///   between digit and exponent sign `'p'`.
 pub fn float_to_str_bytes_common<T: Float>(
-        num: T, radix: uint, negative_zero: bool,
+        num: T, radix: u32, negative_zero: bool,
         sign: SignFormat, digits: SignificantDigits, exp_format: ExponentFormat, exp_upper: bool
         ) -> (Vec<u8>, bool) {
     assert!(2 <= radix && radix <= 36);
@@ -253,7 +253,7 @@ pub fn float_to_str_bytes_common<T: Float>(
         deccum = deccum / radix_gen;
         deccum = deccum.trunc();
 
-        buf.push(char::from_digit(current_digit.to_int().unwrap() as uint, radix)
+        buf.push(char::from_digit(current_digit.to_int().unwrap() as u32, radix)
              .unwrap() as u8);
 
         // No more digits to calculate for the non-fractional part -> break
@@ -262,7 +262,7 @@ pub fn float_to_str_bytes_common<T: Float>(
 
     // If limited digits, calculate one digit more for rounding.
     let (limit_digits, digit_count, exact) = match digits {
-        DigAll          => (false, 0u,      false),
+        DigAll          => (false, 0,       false),
         DigMax(count)   => (true,  count+1, false),
         DigExact(count) => (true,  count+1, true)
     };
@@ -289,7 +289,7 @@ pub fn float_to_str_bytes_common<T: Float>(
     deccum = num.fract();
     if deccum != _0 || (limit_digits && exact && digit_count > 0) {
         buf.push(b'.');
-        let mut dig = 0u;
+        let mut dig = 0;
 
         // calculate new digits while
         // - there is no limit and there are digits left
@@ -310,21 +310,21 @@ pub fn float_to_str_bytes_common<T: Float>(
             let current_digit = deccum.trunc().abs();
 
             buf.push(char::from_digit(
-                current_digit.to_int().unwrap() as uint, radix).unwrap() as u8);
+                current_digit.to_int().unwrap() as u32, radix).unwrap() as u8);
 
             // Decrease the deccumulator one fractional digit at a time
             deccum = deccum.fract();
-            dig += 1u;
+            dig += 1;
         }
 
         // If digits are limited, and that limit has been reached,
         // cut off the one extra digit, and depending on its value
         // round the remaining ones.
         if limit_digits && dig == digit_count {
-            let ascii2value = |&: chr: u8| {
+            let ascii2value = |chr: u8| {
                 (chr as char).to_digit(radix).unwrap()
             };
-            let value2ascii = |&: val: uint| {
+            let value2ascii = |val: u32| {
                 char::from_digit(val, radix).unwrap() as u8
             };
 
@@ -379,14 +379,14 @@ pub fn float_to_str_bytes_common<T: Float>(
 
             // only resize buf if we actually remove digits
             if i < buf_max_i {
-                buf = buf.slice(0, i + 1).to_vec();
+                buf = buf[.. (i + 1)].to_vec();
             }
         }
     } // If exact and trailing '.', just cut that
     else {
         let max_i = buf.len() - 1;
         if buf[max_i] == b'.' {
-            buf = buf.slice(0, max_i).to_vec();
+            buf = buf[.. max_i].to_vec();
         }
     }
 
@@ -412,7 +412,7 @@ pub fn float_to_str_bytes_common<T: Float>(
 /// `to_str_bytes_common()`, for details see there.
 #[inline]
 pub fn float_to_str_common<T: Float>(
-        num: T, radix: uint, negative_zero: bool,
+        num: T, radix: u32, negative_zero: bool,
         sign: SignFormat, digits: SignificantDigits, exp_format: ExponentFormat, exp_capital: bool
         ) -> (String, bool) {
     let (bytes, special) = float_to_str_bytes_common(num, radix,
@@ -422,8 +422,8 @@ pub fn float_to_str_common<T: Float>(
 
 // Some constants for from_str_bytes_common's input validation,
 // they define minimum radix values for which the character is a valid digit.
-static DIGIT_P_RADIX: uint = ('p' as uint) - ('a' as uint) + 11u;
-static DIGIT_E_RADIX: uint = ('e' as uint) - ('a' as uint) + 11u;
+static DIGIT_P_RADIX: u32 = ('p' as u32) - ('a' as u32) + 11;
+static DIGIT_E_RADIX: u32 = ('e' as u32) - ('a' as u32) + 11;
 
 #[cfg(test)]
 mod tests {
@@ -459,6 +459,7 @@ mod tests {
 
 #[cfg(test)]
 mod bench {
+    #![allow(deprecated)] // rand
     extern crate test;
 
     mod uint {

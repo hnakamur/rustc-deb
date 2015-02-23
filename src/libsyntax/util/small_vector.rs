@@ -11,7 +11,7 @@
 use self::SmallVectorRepr::*;
 use self::IntoIterRepr::*;
 
-use std::iter::FromIterator;
+use std::iter::{IntoIterator, FromIterator};
 use std::mem;
 use std::slice;
 use std::vec;
@@ -30,7 +30,7 @@ enum SmallVectorRepr<T> {
 }
 
 impl<T> FromIterator<T> for SmallVector<T> {
-    fn from_iter<I: Iterator<Item=T>>(iter: I) -> SmallVector<T> {
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> SmallVector<T> {
         let mut v = SmallVector::zero();
         v.extend(iter);
         v
@@ -38,7 +38,7 @@ impl<T> FromIterator<T> for SmallVector<T> {
 }
 
 impl<T> Extend<T> for SmallVector<T> {
-    fn extend<I: Iterator<Item=T>>(&mut self, mut iter: I) {
+    fn extend<I: IntoIterator<Item=T>>(&mut self, iter: I) {
         for val in iter {
             self.push(val);
         }
@@ -65,7 +65,7 @@ impl<T> SmallVector<T> {
                 result
             }
             One(ref v) => slice::ref_slice(v),
-            Many(ref vs) => vs.as_slice()
+            Many(ref vs) => vs
         }
     }
 
@@ -89,7 +89,7 @@ impl<T> SmallVector<T> {
         }
     }
 
-    pub fn get<'a>(&'a self, idx: uint) -> &'a T {
+    pub fn get<'a>(&'a self, idx: usize) -> &'a T {
         match self.repr {
             One(ref v) if idx == 0 => v,
             Many(ref vs) => &vs[idx],
@@ -112,7 +112,8 @@ impl<T> SmallVector<T> {
     }
 
     /// Deprecated: use `into_iter`.
-    #[deprecated = "use into_iter"]
+    #[unstable(feature = "rustc_private")]
+    #[deprecated(since = "1.0.0", reason = "use into_iter")]
     pub fn move_iter(self) -> IntoIter<T> {
         self.into_iter()
     }
@@ -126,7 +127,7 @@ impl<T> SmallVector<T> {
         IntoIter { repr: repr }
     }
 
-    pub fn len(&self) -> uint {
+    pub fn len(&self) -> usize {
         match self.repr {
             Zero => 0,
             One(..) => 1,
@@ -165,7 +166,7 @@ impl<T> Iterator for IntoIter<T> {
         }
     }
 
-    fn size_hint(&self) -> (uint, Option<uint>) {
+    fn size_hint(&self) -> (usize, Option<usize>) {
         match self.repr {
             ZeroIterator => (0, Some(0)),
             OneIterator(..) => (1, Some(1)),
@@ -191,17 +192,17 @@ mod test {
 
     #[test]
     fn test_len() {
-        let v: SmallVector<int> = SmallVector::zero();
+        let v: SmallVector<isize> = SmallVector::zero();
         assert_eq!(0, v.len());
 
-        assert_eq!(1, SmallVector::one(1i).len());
-        assert_eq!(5, SmallVector::many(vec!(1i, 2, 3, 4, 5)).len());
+        assert_eq!(1, SmallVector::one(1).len());
+        assert_eq!(5, SmallVector::many(vec![1, 2, 3, 4, 5]).len());
     }
 
     #[test]
     fn test_push_get() {
         let mut v = SmallVector::zero();
-        v.push(1i);
+        v.push(1);
         assert_eq!(1, v.len());
         assert_eq!(&1, v.get(0));
         v.push(2);
@@ -214,7 +215,7 @@ mod test {
 
     #[test]
     fn test_from_iter() {
-        let v: SmallVector<int> = (vec!(1i, 2, 3)).into_iter().collect();
+        let v: SmallVector<isize> = (vec![1, 2, 3]).into_iter().collect();
         assert_eq!(3, v.len());
         assert_eq!(&1, v.get(0));
         assert_eq!(&2, v.get(1));
@@ -224,31 +225,31 @@ mod test {
     #[test]
     fn test_move_iter() {
         let v = SmallVector::zero();
-        let v: Vec<int> = v.into_iter().collect();
+        let v: Vec<isize> = v.into_iter().collect();
         assert_eq!(Vec::new(), v);
 
-        let v = SmallVector::one(1i);
-        assert_eq!(vec!(1i), v.into_iter().collect::<Vec<_>>());
+        let v = SmallVector::one(1);
+        assert_eq!(vec![1], v.into_iter().collect::<Vec<_>>());
 
-        let v = SmallVector::many(vec!(1i, 2i, 3i));
-        assert_eq!(vec!(1i, 2i, 3i), v.into_iter().collect::<Vec<_>>());
+        let v = SmallVector::many(vec![1, 2, 3]);
+        assert_eq!(vec!(1, 2, 3), v.into_iter().collect::<Vec<_>>());
     }
 
     #[test]
     #[should_fail]
     fn test_expect_one_zero() {
-        let _: int = SmallVector::zero().expect_one("");
+        let _: isize = SmallVector::zero().expect_one("");
     }
 
     #[test]
     #[should_fail]
     fn test_expect_one_many() {
-        SmallVector::many(vec!(1i, 2)).expect_one("");
+        SmallVector::many(vec!(1, 2)).expect_one("");
     }
 
     #[test]
     fn test_expect_one_one() {
-        assert_eq!(1i, SmallVector::one(1i).expect_one(""));
-        assert_eq!(1i, SmallVector::many(vec!(1i)).expect_one(""));
+        assert_eq!(1, SmallVector::one(1).expect_one(""));
+        assert_eq!(1, SmallVector::many(vec!(1)).expect_one(""));
     }
 }

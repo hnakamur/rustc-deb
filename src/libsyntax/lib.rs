@@ -15,7 +15,7 @@
 //! This API is completely unstable and subject to change.
 
 #![crate_name = "syntax"]
-#![unstable]
+#![unstable(feature = "rustc_private")]
 #![staged_api]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
@@ -23,11 +23,20 @@
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/")]
 
-#![allow(unknown_features)]
-#![feature(slicing_syntax)]
+#![feature(box_patterns)]
 #![feature(box_syntax)]
+#![feature(collections)]
+#![feature(core)]
+#![feature(env)]
+#![feature(int_uint)]
+#![feature(old_io)]
+#![feature(libc)]
+#![feature(old_path)]
 #![feature(quote, unsafe_destructor)]
-#![allow(unknown_features)] #![feature(int_uint)]
+#![feature(rustc_private)]
+#![feature(staged_api)]
+#![feature(std_misc)]
+#![feature(unicode)]
 
 extern crate arena;
 extern crate fmt_macros;
@@ -35,6 +44,7 @@ extern crate serialize;
 extern crate term;
 extern crate libc;
 #[macro_use] extern crate log;
+#[macro_use] #[no_link] extern crate rustc_bitflags;
 
 extern crate "serialize" as rustc_serialize; // used by deriving
 
@@ -85,7 +95,6 @@ pub mod ext {
     pub mod base;
     pub mod build;
     pub mod cfg;
-    pub mod cfg_attr;
     pub mod concat;
     pub mod concat_idents;
     pub mod deriving;

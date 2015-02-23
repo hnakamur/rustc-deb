@@ -28,12 +28,12 @@
 //! ```
 //! use std::cmp::Ordering;
 //! use std::collections::BinaryHeap;
-//! use std::uint;
+//! use std::usize;
 //!
 //! #[derive(Copy, Eq, PartialEq)]
 //! struct State {
-//!     cost: uint,
-//!     position: uint,
+//!     cost: usize,
+//!     position: usize,
 //! }
 //!
 //! // The priority queue depends on `Ord`.
@@ -53,21 +53,21 @@
 //!     }
 //! }
 //!
-//! // Each node is represented as an `uint`, for a shorter implementation.
+//! // Each node is represented as an `usize`, for a shorter implementation.
 //! struct Edge {
-//!     node: uint,
-//!     cost: uint,
+//!     node: usize,
+//!     cost: usize,
 //! }
 //!
 //! // Dijkstra's shortest path algorithm.
 //!
 //! // Start at `start` and use `dist` to track the current shortest distance
 //! // to each node. This implementation isn't memory-efficient as it may leave duplicate
-//! // nodes in the queue. It also uses `uint::MAX` as a sentinel value,
+//! // nodes in the queue. It also uses `usize::MAX` as a sentinel value,
 //! // for a simpler implementation.
-//! fn shortest_path(adj_list: &Vec<Vec<Edge>>, start: uint, goal: uint) -> uint {
+//! fn shortest_path(adj_list: &Vec<Vec<Edge>>, start: usize, goal: usize) -> usize {
 //!     // dist[node] = current shortest distance from `start` to `node`
-//!     let mut dist: Vec<_> = range(0, adj_list.len()).map(|_| uint::MAX).collect();
+//!     let mut dist: Vec<_> = (0..adj_list.len()).map(|_| usize::MAX).collect();
 //!
 //!     let mut heap = BinaryHeap::new();
 //!
@@ -98,7 +98,7 @@
 //!     }
 //!
 //!     // Goal not reachable
-//!     uint::MAX
+//!     usize::MAX
 //! }
 //!
 //! fn main() {
@@ -143,17 +143,17 @@
 //!     assert_eq!(shortest_path(&graph, 0, 3), 3);
 //!     assert_eq!(shortest_path(&graph, 3, 0), 7);
 //!     assert_eq!(shortest_path(&graph, 0, 4), 5);
-//!     assert_eq!(shortest_path(&graph, 4, 0), uint::MAX);
+//!     assert_eq!(shortest_path(&graph, 4, 0), usize::MAX);
 //! }
 //! ```
 
 #![allow(missing_docs)]
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 
 use core::prelude::*;
 
 use core::default::Default;
-use core::iter::FromIterator;
+use core::iter::{FromIterator, IntoIterator};
 use core::mem::{zeroed, replace, swap};
 use core::ptr;
 
@@ -164,12 +164,12 @@ use vec::{self, Vec};
 ///
 /// This will be a max-heap.
 #[derive(Clone)]
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct BinaryHeap<T> {
     data: Vec<T>,
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Ord> Default for BinaryHeap<T> {
     #[inline]
     fn default() -> BinaryHeap<T> { BinaryHeap::new() }
@@ -183,9 +183,9 @@ impl<T: Ord> BinaryHeap<T> {
     /// ```
     /// use std::collections::BinaryHeap;
     /// let mut heap = BinaryHeap::new();
-    /// heap.push(4u);
+    /// heap.push(4);
     /// ```
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new() -> BinaryHeap<T> { BinaryHeap { data: vec![] } }
 
     /// Creates an empty `BinaryHeap` with a specific capacity.
@@ -198,10 +198,10 @@ impl<T: Ord> BinaryHeap<T> {
     /// ```
     /// use std::collections::BinaryHeap;
     /// let mut heap = BinaryHeap::with_capacity(10);
-    /// heap.push(4u);
+    /// heap.push(4);
     /// ```
-    #[stable]
-    pub fn with_capacity(capacity: uint) -> BinaryHeap<T> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn with_capacity(capacity: usize) -> BinaryHeap<T> {
         BinaryHeap { data: Vec::with_capacity(capacity) }
     }
 
@@ -212,7 +212,7 @@ impl<T: Ord> BinaryHeap<T> {
     ///
     /// ```
     /// use std::collections::BinaryHeap;
-    /// let heap = BinaryHeap::from_vec(vec![9i, 1, 2, 7, 3, 2]);
+    /// let heap = BinaryHeap::from_vec(vec![9, 1, 2, 7, 3, 2]);
     /// ```
     pub fn from_vec(vec: Vec<T>) -> BinaryHeap<T> {
         let mut heap = BinaryHeap { data: vec };
@@ -231,14 +231,14 @@ impl<T: Ord> BinaryHeap<T> {
     ///
     /// ```
     /// use std::collections::BinaryHeap;
-    /// let heap = BinaryHeap::from_vec(vec![1i, 2, 3, 4]);
+    /// let heap = BinaryHeap::from_vec(vec![1, 2, 3, 4]);
     ///
     /// // Print 1, 2, 3, 4 in arbitrary order
     /// for x in heap.iter() {
     ///     println!("{}", x);
     /// }
     /// ```
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn iter(&self) -> Iter<T> {
         Iter { iter: self.data.iter() }
     }
@@ -251,15 +251,15 @@ impl<T: Ord> BinaryHeap<T> {
     ///
     /// ```
     /// use std::collections::BinaryHeap;
-    /// let heap = BinaryHeap::from_vec(vec![1i, 2, 3, 4]);
+    /// let heap = BinaryHeap::from_vec(vec![1, 2, 3, 4]);
     ///
     /// // Print 1, 2, 3, 4 in arbitrary order
     /// for x in heap.into_iter() {
-    ///     // x has type int, not &int
+    ///     // x has type i32, not &i32
     ///     println!("{}", x);
     /// }
     /// ```
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn into_iter(self) -> IntoIter<T> {
         IntoIter { iter: self.data.into_iter() }
     }
@@ -273,13 +273,13 @@ impl<T: Ord> BinaryHeap<T> {
     /// let mut heap = BinaryHeap::new();
     /// assert_eq!(heap.peek(), None);
     ///
-    /// heap.push(1i);
+    /// heap.push(1);
     /// heap.push(5);
     /// heap.push(2);
     /// assert_eq!(heap.peek(), Some(&5));
     ///
     /// ```
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn peek(&self) -> Option<&T> {
         self.data.get(0)
     }
@@ -292,10 +292,10 @@ impl<T: Ord> BinaryHeap<T> {
     /// use std::collections::BinaryHeap;
     /// let mut heap = BinaryHeap::with_capacity(100);
     /// assert!(heap.capacity() >= 100);
-    /// heap.push(4u);
+    /// heap.push(4);
     /// ```
-    #[stable]
-    pub fn capacity(&self) -> uint { self.data.capacity() }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn capacity(&self) -> usize { self.data.capacity() }
 
     /// Reserves the minimum capacity for exactly `additional` more elements to be inserted in the
     /// given `BinaryHeap`. Does nothing if the capacity is already sufficient.
@@ -306,7 +306,7 @@ impl<T: Ord> BinaryHeap<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the new capacity overflows `uint`.
+    /// Panics if the new capacity overflows `usize`.
     ///
     /// # Examples
     ///
@@ -315,10 +315,10 @@ impl<T: Ord> BinaryHeap<T> {
     /// let mut heap = BinaryHeap::new();
     /// heap.reserve_exact(100);
     /// assert!(heap.capacity() >= 100);
-    /// heap.push(4u);
+    /// heap.push(4);
     /// ```
-    #[stable]
-    pub fn reserve_exact(&mut self, additional: uint) {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn reserve_exact(&mut self, additional: usize) {
         self.data.reserve_exact(additional);
     }
 
@@ -327,7 +327,7 @@ impl<T: Ord> BinaryHeap<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the new capacity overflows `uint`.
+    /// Panics if the new capacity overflows `usize`.
     ///
     /// # Examples
     ///
@@ -336,15 +336,15 @@ impl<T: Ord> BinaryHeap<T> {
     /// let mut heap = BinaryHeap::new();
     /// heap.reserve(100);
     /// assert!(heap.capacity() >= 100);
-    /// heap.push(4u);
+    /// heap.push(4);
     /// ```
-    #[stable]
-    pub fn reserve(&mut self, additional: uint) {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn reserve(&mut self, additional: usize) {
         self.data.reserve(additional);
     }
 
     /// Discards as much additional capacity as possible.
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn shrink_to_fit(&mut self) {
         self.data.shrink_to_fit();
     }
@@ -356,13 +356,13 @@ impl<T: Ord> BinaryHeap<T> {
     ///
     /// ```
     /// use std::collections::BinaryHeap;
-    /// let mut heap = BinaryHeap::from_vec(vec![1i, 3]);
+    /// let mut heap = BinaryHeap::from_vec(vec![1, 3]);
     ///
     /// assert_eq!(heap.pop(), Some(3));
     /// assert_eq!(heap.pop(), Some(1));
     /// assert_eq!(heap.pop(), None);
     /// ```
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn pop(&mut self) -> Option<T> {
         self.data.pop().map(|mut item| {
             if !self.is_empty() {
@@ -380,14 +380,14 @@ impl<T: Ord> BinaryHeap<T> {
     /// ```
     /// use std::collections::BinaryHeap;
     /// let mut heap = BinaryHeap::new();
-    /// heap.push(3i);
+    /// heap.push(3);
     /// heap.push(5);
     /// heap.push(1);
     ///
     /// assert_eq!(heap.len(), 3);
     /// assert_eq!(heap.peek(), Some(&5));
     /// ```
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn push(&mut self, item: T) {
         let old_len = self.len();
         self.data.push(item);
@@ -402,7 +402,7 @@ impl<T: Ord> BinaryHeap<T> {
     /// ```
     /// use std::collections::BinaryHeap;
     /// let mut heap = BinaryHeap::new();
-    /// heap.push(1i);
+    /// heap.push(1);
     /// heap.push(5);
     ///
     /// assert_eq!(heap.push_pop(3), 5);
@@ -434,7 +434,7 @@ impl<T: Ord> BinaryHeap<T> {
     /// use std::collections::BinaryHeap;
     /// let mut heap = BinaryHeap::new();
     ///
-    /// assert_eq!(heap.replace(1i), None);
+    /// assert_eq!(heap.replace(1), None);
     /// assert_eq!(heap.replace(3), Some(1));
     /// assert_eq!(heap.len(), 1);
     /// assert_eq!(heap.peek(), Some(&3));
@@ -457,7 +457,7 @@ impl<T: Ord> BinaryHeap<T> {
     ///
     /// ```
     /// use std::collections::BinaryHeap;
-    /// let heap = BinaryHeap::from_vec(vec![1i, 2, 3, 4, 5, 6, 7]);
+    /// let heap = BinaryHeap::from_vec(vec![1, 2, 3, 4, 5, 6, 7]);
     /// let vec = heap.into_vec();
     ///
     /// // Will print in some order
@@ -475,12 +475,12 @@ impl<T: Ord> BinaryHeap<T> {
     /// ```
     /// use std::collections::BinaryHeap;
     ///
-    /// let mut heap = BinaryHeap::from_vec(vec![1i, 2, 4, 5, 7]);
+    /// let mut heap = BinaryHeap::from_vec(vec![1, 2, 4, 5, 7]);
     /// heap.push(6);
     /// heap.push(3);
     ///
     /// let vec = heap.into_sorted_vec();
-    /// assert_eq!(vec, vec![1i, 2, 3, 4, 5, 6, 7]);
+    /// assert_eq!(vec, vec![1, 2, 3, 4, 5, 6, 7]);
     /// ```
     pub fn into_sorted_vec(mut self) -> Vec<T> {
         let mut end = self.len();
@@ -497,7 +497,7 @@ impl<T: Ord> BinaryHeap<T> {
     // zeroed element), shift along the others and move it back into the
     // vector over the junk element. This reduces the constant factor
     // compared to using swaps, which involves twice as many moves.
-    fn sift_up(&mut self, start: uint, mut pos: uint) {
+    fn sift_up(&mut self, start: usize, mut pos: usize) {
         unsafe {
             let new = replace(&mut self.data[pos], zeroed());
 
@@ -514,7 +514,7 @@ impl<T: Ord> BinaryHeap<T> {
         }
     }
 
-    fn sift_down_range(&mut self, mut pos: uint, end: uint) {
+    fn sift_down_range(&mut self, mut pos: usize, end: usize) {
         unsafe {
             let start = pos;
             let new = replace(&mut self.data[pos], zeroed());
@@ -536,46 +536,47 @@ impl<T: Ord> BinaryHeap<T> {
         }
     }
 
-    fn sift_down(&mut self, pos: uint) {
+    fn sift_down(&mut self, pos: usize) {
         let len = self.len();
         self.sift_down_range(pos, len);
     }
 
     /// Returns the length of the binary heap.
-    #[stable]
-    pub fn len(&self) -> uint { self.data.len() }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn len(&self) -> usize { self.data.len() }
 
     /// Checks if the binary heap is empty.
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// Clears the binary heap, returning an iterator over the removed elements.
     #[inline]
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[unstable(feature = "collections",
+               reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn drain(&mut self) -> Drain<T> {
         Drain { iter: self.data.drain() }
     }
 
     /// Drops all items from the binary heap.
-    #[stable]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn clear(&mut self) { self.drain(); }
 }
 
 /// `BinaryHeap` iterator.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Iter <'a, T: 'a> {
     iter: slice::Iter<'a, T>,
 }
 
 // FIXME(#19839) Remove in favor of `#[derive(Clone)]`
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Clone for Iter<'a, T> {
     fn clone(&self) -> Iter<'a, T> {
         Iter { iter: self.iter.clone() }
     }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
 
@@ -583,25 +584,25 @@ impl<'a, T> Iterator for Iter<'a, T> {
     fn next(&mut self) -> Option<&'a T> { self.iter.next() }
 
     #[inline]
-    fn size_hint(&self) -> (uint, Option<uint>) { self.iter.size_hint() }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<&'a T> { self.iter.next_back() }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
 
 /// An iterator that moves out of a `BinaryHeap`.
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct IntoIter<T> {
     iter: vec::IntoIter<T>,
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Iterator for IntoIter<T> {
     type Item = T;
 
@@ -609,25 +610,25 @@ impl<T> Iterator for IntoIter<T> {
     fn next(&mut self) -> Option<T> { self.iter.next() }
 
     #[inline]
-    fn size_hint(&self) -> (uint, Option<uint>) { self.iter.size_hint() }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T> DoubleEndedIterator for IntoIter<T> {
     #[inline]
     fn next_back(&mut self) -> Option<T> { self.iter.next_back() }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ExactSizeIterator for IntoIter<T> {}
 
 /// An iterator that drains a `BinaryHeap`.
-#[unstable = "recent addition"]
+#[unstable(feature = "collections", reason = "recent addition")]
 pub struct Drain<'a, T: 'a> {
     iter: vec::Drain<'a, T>,
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: 'a> Iterator for Drain<'a, T> {
     type Item = T;
 
@@ -635,28 +636,49 @@ impl<'a, T: 'a> Iterator for Drain<'a, T> {
     fn next(&mut self) -> Option<T> { self.iter.next() }
 
     #[inline]
-    fn size_hint(&self) -> (uint, Option<uint>) { self.iter.size_hint() }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: 'a> DoubleEndedIterator for Drain<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<T> { self.iter.next_back() }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: 'a> ExactSizeIterator for Drain<'a, T> {}
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Ord> FromIterator<T> for BinaryHeap<T> {
-    fn from_iter<Iter: Iterator<Item=T>>(iter: Iter) -> BinaryHeap<T> {
-        BinaryHeap::from_vec(iter.collect())
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> BinaryHeap<T> {
+        BinaryHeap::from_vec(iter.into_iter().collect())
     }
 }
 
-#[stable]
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: Ord> IntoIterator for BinaryHeap<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    fn into_iter(self) -> IntoIter<T> {
+        self.into_iter()
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T> IntoIterator for &'a BinaryHeap<T> where T: Ord {
+    type Item = &'a T;
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Iter<'a, T> {
+        self.iter()
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Ord> Extend<T> for BinaryHeap<T> {
-    fn extend<Iter: Iterator<Item=T>>(&mut self, mut iter: Iter) {
+    fn extend<I: IntoIterator<Item=T>>(&mut self, iterable: I) {
+        let iter = iterable.into_iter();
         let (lower, _) = iter.size_hint();
 
         self.reserve(lower);
@@ -675,11 +697,11 @@ mod tests {
 
     #[test]
     fn test_iterator() {
-        let data = vec!(5i, 9, 3);
-        let iterout = [9i, 5, 3];
+        let data = vec![5, 9, 3];
+        let iterout = [9, 5, 3];
         let heap = BinaryHeap::from_vec(data);
         let mut i = 0;
-        for el in heap.iter() {
+        for el in &heap {
             assert_eq!(*el, iterout[i]);
             i += 1;
         }
@@ -687,36 +709,36 @@ mod tests {
 
     #[test]
     fn test_iterator_reverse() {
-        let data = vec!(5i, 9, 3);
-        let iterout = vec!(3i, 5, 9);
+        let data = vec![5, 9, 3];
+        let iterout = vec![3, 5, 9];
         let pq = BinaryHeap::from_vec(data);
 
-        let v: Vec<int> = pq.iter().rev().map(|&x| x).collect();
+        let v: Vec<_> = pq.iter().rev().cloned().collect();
         assert_eq!(v, iterout);
     }
 
     #[test]
     fn test_move_iter() {
-        let data = vec!(5i, 9, 3);
-        let iterout = vec!(9i, 5, 3);
+        let data = vec![5, 9, 3];
+        let iterout = vec![9, 5, 3];
         let pq = BinaryHeap::from_vec(data);
 
-        let v: Vec<int> = pq.into_iter().collect();
+        let v: Vec<_> = pq.into_iter().collect();
         assert_eq!(v, iterout);
     }
 
     #[test]
     fn test_move_iter_size_hint() {
-        let data = vec!(5i, 9);
+        let data = vec![5, 9];
         let pq = BinaryHeap::from_vec(data);
 
         let mut it = pq.into_iter();
 
         assert_eq!(it.size_hint(), (2, Some(2)));
-        assert_eq!(it.next(), Some(9i));
+        assert_eq!(it.next(), Some(9));
 
         assert_eq!(it.size_hint(), (1, Some(1)));
-        assert_eq!(it.next(), Some(5i));
+        assert_eq!(it.next(), Some(5));
 
         assert_eq!(it.size_hint(), (0, Some(0)));
         assert_eq!(it.next(), None);
@@ -724,17 +746,17 @@ mod tests {
 
     #[test]
     fn test_move_iter_reverse() {
-        let data = vec!(5i, 9, 3);
-        let iterout = vec!(3i, 5, 9);
+        let data = vec![5, 9, 3];
+        let iterout = vec![3, 5, 9];
         let pq = BinaryHeap::from_vec(data);
 
-        let v: Vec<int> = pq.into_iter().rev().collect();
+        let v: Vec<_> = pq.into_iter().rev().collect();
         assert_eq!(v, iterout);
     }
 
     #[test]
     fn test_peek_and_pop() {
-        let data = vec!(2u, 4, 6, 2, 1, 8, 10, 3, 5, 7, 0, 9, 1);
+        let data = vec![2, 4, 6, 2, 1, 8, 10, 3, 5, 7, 0, 9, 1];
         let mut sorted = data.clone();
         sorted.sort();
         let mut heap = BinaryHeap::from_vec(data);
@@ -746,7 +768,7 @@ mod tests {
 
     #[test]
     fn test_push() {
-        let mut heap = BinaryHeap::from_vec(vec!(2i, 4, 9));
+        let mut heap = BinaryHeap::from_vec(vec![2, 4, 9]);
         assert_eq!(heap.len(), 3);
         assert!(*heap.peek().unwrap() == 9);
         heap.push(11);
@@ -768,7 +790,7 @@ mod tests {
 
     #[test]
     fn test_push_unique() {
-        let mut heap = BinaryHeap::from_vec(vec!(box 2i, box 4, box 9));
+        let mut heap = BinaryHeap::from_vec(vec![box 2, box 4, box 9]);
         assert_eq!(heap.len(), 3);
         assert!(*heap.peek().unwrap() == box 9);
         heap.push(box 11);
@@ -790,7 +812,7 @@ mod tests {
 
     #[test]
     fn test_push_pop() {
-        let mut heap = BinaryHeap::from_vec(vec!(5i, 5, 2, 1, 3));
+        let mut heap = BinaryHeap::from_vec(vec![5, 5, 2, 1, 3]);
         assert_eq!(heap.len(), 5);
         assert_eq!(heap.push_pop(6), 6);
         assert_eq!(heap.len(), 5);
@@ -804,7 +826,7 @@ mod tests {
 
     #[test]
     fn test_replace() {
-        let mut heap = BinaryHeap::from_vec(vec!(5i, 5, 2, 1, 3));
+        let mut heap = BinaryHeap::from_vec(vec![5, 5, 2, 1, 3]);
         assert_eq!(heap.len(), 5);
         assert_eq!(heap.replace(6).unwrap(), 5);
         assert_eq!(heap.len(), 5);
@@ -816,7 +838,7 @@ mod tests {
         assert_eq!(heap.len(), 5);
     }
 
-    fn check_to_vec(mut data: Vec<int>) {
+    fn check_to_vec(mut data: Vec<i32>) {
         let heap = BinaryHeap::from_vec(data.clone());
         let mut v = heap.clone().into_vec();
         v.sort();
@@ -828,54 +850,53 @@ mod tests {
 
     #[test]
     fn test_to_vec() {
-        check_to_vec(vec!());
-        check_to_vec(vec!(5i));
-        check_to_vec(vec!(3i, 2));
-        check_to_vec(vec!(2i, 3));
-        check_to_vec(vec!(5i, 1, 2));
-        check_to_vec(vec!(1i, 100, 2, 3));
-        check_to_vec(vec!(1i, 3, 5, 7, 9, 2, 4, 6, 8, 0));
-        check_to_vec(vec!(2i, 4, 6, 2, 1, 8, 10, 3, 5, 7, 0, 9, 1));
-        check_to_vec(vec!(9i, 11, 9, 9, 9, 9, 11, 2, 3, 4, 11, 9, 0, 0, 0, 0));
-        check_to_vec(vec!(0i, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
-        check_to_vec(vec!(10i, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0));
-        check_to_vec(vec!(0i, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 1, 2));
-        check_to_vec(vec!(5i, 4, 3, 2, 1, 5, 4, 3, 2, 1, 5, 4, 3, 2, 1));
+        check_to_vec(vec![]);
+        check_to_vec(vec![5]);
+        check_to_vec(vec![3, 2]);
+        check_to_vec(vec![2, 3]);
+        check_to_vec(vec![5, 1, 2]);
+        check_to_vec(vec![1, 100, 2, 3]);
+        check_to_vec(vec![1, 3, 5, 7, 9, 2, 4, 6, 8, 0]);
+        check_to_vec(vec![2, 4, 6, 2, 1, 8, 10, 3, 5, 7, 0, 9, 1]);
+        check_to_vec(vec![9, 11, 9, 9, 9, 9, 11, 2, 3, 4, 11, 9, 0, 0, 0, 0]);
+        check_to_vec(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        check_to_vec(vec![10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+        check_to_vec(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 1, 2]);
+        check_to_vec(vec![5, 4, 3, 2, 1, 5, 4, 3, 2, 1, 5, 4, 3, 2, 1]);
     }
 
     #[test]
     fn test_empty_pop() {
-        let mut heap = BinaryHeap::<int>::new();
+        let mut heap = BinaryHeap::<i32>::new();
         assert!(heap.pop().is_none());
     }
 
     #[test]
     fn test_empty_peek() {
-        let empty = BinaryHeap::<int>::new();
+        let empty = BinaryHeap::<i32>::new();
         assert!(empty.peek().is_none());
     }
 
     #[test]
     fn test_empty_replace() {
-        let mut heap = BinaryHeap::<int>::new();
+        let mut heap = BinaryHeap::new();
         assert!(heap.replace(5).is_none());
     }
 
     #[test]
     fn test_from_iter() {
-        let xs = vec!(9u, 8, 7, 6, 5, 4, 3, 2, 1);
+        let xs = vec![9, 8, 7, 6, 5, 4, 3, 2, 1];
 
-        let mut q: BinaryHeap<uint> = xs.iter().rev().map(|&x| x).collect();
+        let mut q: BinaryHeap<_> = xs.iter().rev().cloned().collect();
 
-        for &x in xs.iter() {
+        for &x in &xs {
             assert_eq!(q.pop().unwrap(), x);
         }
     }
 
     #[test]
     fn test_drain() {
-        let mut q: BinaryHeap<_> =
-            [9u, 8, 7, 6, 5, 4, 3, 2, 1].iter().cloned().collect();
+        let mut q: BinaryHeap<_> = [9, 8, 7, 6, 5, 4, 3, 2, 1].iter().cloned().collect();
 
         assert_eq!(q.drain().take(5).count(), 5);
 

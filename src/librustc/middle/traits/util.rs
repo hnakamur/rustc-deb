@@ -11,16 +11,57 @@
 use middle::subst::{Substs, VecPerParamSpace};
 use middle::infer::InferCtxt;
 use middle::ty::{self, Ty, AsPredicate, ToPolyTraitRef};
-use std::collections::HashSet;
 use std::fmt;
 use std::rc::Rc;
 use syntax::ast;
 use syntax::codemap::Span;
 use util::common::ErrorReported;
+use util::nodemap::FnvHashSet;
 use util::ppaux::Repr;
 
 use super::{Obligation, ObligationCause, PredicateObligation,
             VtableImpl, VtableParam, VtableImplData};
+
+struct PredicateSet<'a,'tcx:'a> {
+    tcx: &'a ty::ctxt<'tcx>,
+    set: FnvHashSet<ty::Predicate<'tcx>>,
+}
+
+impl<'a,'tcx> PredicateSet<'a,'tcx> {
+    fn new(tcx: &'a ty::ctxt<'tcx>) -> PredicateSet<'a,'tcx> {
+        PredicateSet { tcx: tcx, set: FnvHashSet() }
+    }
+
+    fn insert(&mut self, pred: &ty::Predicate<'tcx>) -> bool {
+        // We have to be careful here because we want
+        //
+        //    for<'a> Foo<&'a int>
+        //
+        // and
+        //
+        //    for<'b> Foo<&'b int>
+        //
+        // to be considered equivalent. So normalize all late-bound
+        // regions before we throw things into the underlying set.
+        let normalized_pred = match *pred {
+            ty::Predicate::Trait(ref data) =>
+                ty::Predicate::Trait(ty::anonymize_late_bound_regions(self.tcx, data)),
+
+            ty::Predicate::Equate(ref data) =>
+                ty::Predicate::Equate(ty::anonymize_late_bound_regions(self.tcx, data)),
+
+            ty::Predicate::RegionOutlives(ref data) =>
+                ty::Predicate::RegionOutlives(ty::anonymize_late_bound_regions(self.tcx, data)),
+
+            ty::Predicate::TypeOutlives(ref data) =>
+                ty::Predicate::TypeOutlives(ty::anonymize_late_bound_regions(self.tcx, data)),
+
+            ty::Predicate::Projection(ref data) =>
+                ty::Predicate::Projection(ty::anonymize_late_bound_regions(self.tcx, data)),
+        };
+        self.set.insert(normalized_pred)
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////////
 // `Elaboration` iterator
@@ -36,7 +77,7 @@ use super::{Obligation, ObligationCause, PredicateObligation,
 pub struct Elaborator<'cx, 'tcx:'cx> {
     tcx: &'cx ty::ctxt<'tcx>,
     stack: Vec<StackEntry<'tcx>>,
-    visited: HashSet<ty::Predicate<'tcx>>,
+    visited: PredicateSet<'cx,'tcx>,
 }
 
 struct StackEntry<'tcx> {
@@ -65,14 +106,11 @@ pub fn elaborate_trait_refs<'cx, 'tcx>(
 
 pub fn elaborate_predicates<'cx, 'tcx>(
     tcx: &'cx ty::ctxt<'tcx>,
-    predicates: Vec<ty::Predicate<'tcx>>)
+    mut predicates: Vec<ty::Predicate<'tcx>>)
     -> Elaborator<'cx, 'tcx>
 {
-    let visited: HashSet<ty::Predicate<'tcx>> =
-        predicates.iter()
-                  .map(|b| (*b).clone())
-                  .collect();
-
+    let mut visited = PredicateSet::new(tcx);
+    predicates.retain(|pred| visited.insert(pred));
     let entry = StackEntry { position: 0, predicates: predicates };
     Elaborator { tcx: tcx, stack: vec![entry], visited: visited }
 }
@@ -94,7 +132,7 @@ impl<'cx, 'tcx> Elaborator<'cx, 'tcx> {
                 // recursion in some cases.  One common case is when
                 // people define `trait Sized: Sized { }` rather than `trait
                 // Sized { }`.
-                predicates.retain(|r| self.visited.insert(r.clone()));
+                predicates.retain(|r| self.visited.insert(r));
 
                 self.stack.push(StackEntry { position: 0,
                                              predicates: predicates });
@@ -236,13 +274,13 @@ pub fn fresh_substs_for_impl<'a, 'tcx>(infcx: &InferCtxt<'a, 'tcx>,
     infcx.fresh_substs_for_generics(span, &impl_generics)
 }
 
-impl<'tcx, N> fmt::Show for VtableImplData<'tcx, N> {
+impl<'tcx, N> fmt::Debug for VtableImplData<'tcx, N> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "VtableImpl({:?})", self.impl_def_id)
     }
 }
 
-impl<'tcx> fmt::Show for super::VtableObjectData<'tcx> {
+impl<'tcx> fmt::Debug for super::VtableObjectData<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "VtableObject(...)")
     }
@@ -252,7 +290,7 @@ impl<'tcx> fmt::Show for super::VtableObjectData<'tcx> {
 pub fn predicates_for_generics<'tcx>(tcx: &ty::ctxt<'tcx>,
                                      cause: ObligationCause<'tcx>,
                                      recursion_depth: uint,
-                                     generic_bounds: &ty::GenericBounds<'tcx>)
+                                     generic_bounds: &ty::InstantiatedPredicates<'tcx>)
                                      -> VecPerParamSpace<PredicateObligation<'tcx>>
 {
     debug!("predicates_for_generics(generic_bounds={})",
@@ -279,7 +317,7 @@ pub fn trait_ref_for_builtin_bound<'tcx>(
             }))
         }
         Err(e) => {
-            tcx.sess.err(e.as_slice());
+            tcx.sess.err(&e);
             Err(ErrorReported)
         }
     }
@@ -329,28 +367,67 @@ pub fn upcast<'tcx>(tcx: &ty::ctxt<'tcx>,
 pub fn get_vtable_index_of_object_method<'tcx>(tcx: &ty::ctxt<'tcx>,
                                                object_trait_ref: ty::PolyTraitRef<'tcx>,
                                                trait_def_id: ast::DefId,
-                                               method_index_in_trait: uint) -> uint {
+                                               method_offset_in_trait: uint) -> uint {
     // We need to figure the "real index" of the method in a
     // listing of all the methods of an object. We do this by
     // iterating down the supertraits of the object's trait until
     // we find the trait the method came from, counting up the
     // methods from them.
     let mut method_count = 0;
-    ty::each_bound_trait_and_supertraits(tcx, &[object_trait_ref], |bound_ref| {
+
+    for bound_ref in transitive_bounds(tcx, &[object_trait_ref]) {
         if bound_ref.def_id() == trait_def_id {
-            false
-        } else {
-            let trait_items = ty::trait_items(tcx, bound_ref.def_id());
-            for trait_item in trait_items.iter() {
-                match *trait_item {
-                    ty::MethodTraitItem(_) => method_count += 1,
-                    ty::TypeTraitItem(_) => {}
-                }
-            }
-            true
+            break;
         }
+
+        let trait_items = ty::trait_items(tcx, bound_ref.def_id());
+        for trait_item in &**trait_items {
+            match *trait_item {
+                ty::MethodTraitItem(_) => method_count += 1,
+                ty::TypeTraitItem(_) => {}
+            }
+        }
+    }
+
+    // count number of methods preceding the one we are selecting and
+    // add them to the total offset; skip over associated types.
+    let trait_items = ty::trait_items(tcx, trait_def_id);
+    for trait_item in trait_items.iter().take(method_offset_in_trait) {
+        match *trait_item {
+            ty::MethodTraitItem(_) => method_count += 1,
+            ty::TypeTraitItem(_) => {}
+        }
+    }
+
+    // the item at the offset we were given really ought to be a method
+    assert!(match trait_items[method_offset_in_trait] {
+        ty::MethodTraitItem(_) => true,
+        ty::TypeTraitItem(_) => false
     });
-    method_count + method_index_in_trait
+
+    method_count
+}
+
+pub enum TupleArgumentsFlag { Yes, No }
+
+pub fn closure_trait_ref_and_return_type<'tcx>(
+    tcx: &ty::ctxt<'tcx>,
+    fn_trait_def_id: ast::DefId,
+    self_ty: Ty<'tcx>,
+    sig: &ty::PolyFnSig<'tcx>,
+    tuple_arguments: TupleArgumentsFlag)
+    -> ty::Binder<(Rc<ty::TraitRef<'tcx>>, Ty<'tcx>)>
+{
+    let arguments_tuple = match tuple_arguments {
+        TupleArgumentsFlag::No => sig.0.inputs[0],
+        TupleArgumentsFlag::Yes => ty::mk_tup(tcx, sig.0.inputs.to_vec()),
+    };
+    let trait_substs = Substs::new_trait(vec![arguments_tuple], vec![], self_ty);
+    let trait_ref = Rc::new(ty::TraitRef {
+        def_id: fn_trait_def_id,
+        substs: tcx.mk_substs(trait_substs),
+    });
+    ty::Binder((trait_ref, sig.0.output.unwrap()))
 }
 
 impl<'tcx,O:Repr<'tcx>> Repr<'tcx> for super::Obligation<'tcx, O> {
@@ -367,8 +444,8 @@ impl<'tcx, N:Repr<'tcx>> Repr<'tcx> for super::Vtable<'tcx, N> {
             super::VtableImpl(ref v) =>
                 v.repr(tcx),
 
-            super::VtableUnboxedClosure(ref d, ref s) =>
-                format!("VtableUnboxedClosure({},{})",
+            super::VtableClosure(ref d, ref s) =>
+                format!("VtableClosure({},{})",
                         d.repr(tcx),
                         s.repr(tcx)),
 
@@ -380,8 +457,9 @@ impl<'tcx, N:Repr<'tcx>> Repr<'tcx> for super::Vtable<'tcx, N> {
                 format!("VtableObject({})",
                         d.repr(tcx)),
 
-            super::VtableParam =>
-                format!("VtableParam"),
+            super::VtableParam(ref n) =>
+                format!("VtableParam({})",
+                        n.repr(tcx)),
 
             super::VtableBuiltin(ref d) =>
                 d.repr(tcx)
@@ -448,7 +526,7 @@ impl<'tcx> Repr<'tcx> for super::FulfillmentErrorCode<'tcx> {
     }
 }
 
-impl<'tcx> fmt::Show for super::FulfillmentErrorCode<'tcx> {
+impl<'tcx> fmt::Debug for super::FulfillmentErrorCode<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             super::CodeSelectionError(ref e) => write!(f, "{:?}", e),
@@ -464,7 +542,7 @@ impl<'tcx> Repr<'tcx> for super::MismatchedProjectionTypes<'tcx> {
     }
 }
 
-impl<'tcx> fmt::Show for super::MismatchedProjectionTypes<'tcx> {
+impl<'tcx> fmt::Debug for super::MismatchedProjectionTypes<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "MismatchedProjectionTypes(..)")
     }

@@ -19,8 +19,11 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
@@ -205,6 +208,8 @@ static Instruction *propagateMetadata(Instruction *I, ArrayRef<Value *> VL) {
         MD = MDNode::getMostGenericTBAA(MD, IMD);
         break;
       case LLVMContext::MD_alias_scope:
+        MD = MDNode::getMostGenericAliasScope(MD, IMD);
+        break;
       case LLVMContext::MD_noalias:
         MD = MDNode::intersect(MD, IMD);
         break;
@@ -386,6 +391,15 @@ static bool InTreeUserNeedToExtract(Value *Scalar, Instruction *UserInst,
   }
 }
 
+/// \returns the AA location that is being access by the instruction.
+static AliasAnalysis::Location getLocation(Instruction *I, AliasAnalysis *AA) {
+  if (StoreInst *SI = dyn_cast<StoreInst>(I))
+    return AA->getLocation(SI);
+  if (LoadInst *LI = dyn_cast<LoadInst>(I))
+    return AA->getLocation(LI);
+  return AliasAnalysis::Location();
+}
+
 /// Bottom Up SLP Vectorizer.
 class BoUpSLP {
 public:
@@ -396,10 +410,12 @@ public:
 
   BoUpSLP(Function *Func, ScalarEvolution *Se, const DataLayout *Dl,
           TargetTransformInfo *Tti, TargetLibraryInfo *TLi, AliasAnalysis *Aa,
-          LoopInfo *Li, DominatorTree *Dt)
-      : NumLoadsWantToKeepOrder(0), NumLoadsWantToChangeOrder(0),
-        F(Func), SE(Se), DL(Dl), TTI(Tti), TLI(TLi), AA(Aa), LI(Li), DT(Dt),
-        Builder(Se->getContext()) {}
+          LoopInfo *Li, DominatorTree *Dt, AssumptionCache *AC)
+      : NumLoadsWantToKeepOrder(0), NumLoadsWantToChangeOrder(0), F(Func),
+        SE(Se), DL(Dl), TTI(Tti), TLI(TLi), AA(Aa), LI(Li), DT(Dt),
+        Builder(Se->getContext()) {
+    CodeMetrics::collectEphemeralValues(F, AC, EphValues);
+  }
 
   /// \brief Vectorize the tree that starts with the elements in \p VL.
   /// Returns the vectorized root.
@@ -551,9 +567,58 @@ private:
   };
   typedef SmallVector<ExternalUser, 16> UserList;
 
+  /// Checks if two instructions may access the same memory.
+  ///
+  /// \p Loc1 is the location of \p Inst1. It is passed explicitly because it
+  /// is invariant in the calling loop.
+  bool isAliased(const AliasAnalysis::Location &Loc1, Instruction *Inst1,
+                 Instruction *Inst2) {
+
+    // First check if the result is already in the cache.
+    AliasCacheKey key = std::make_pair(Inst1, Inst2);
+    Optional<bool> &result = AliasCache[key];
+    if (result.hasValue()) {
+      return result.getValue();
+    }
+    AliasAnalysis::Location Loc2 = getLocation(Inst2, AA);
+    bool aliased = true;
+    if (Loc1.Ptr && Loc2.Ptr) {
+      // Do the alias check.
+      aliased = AA->alias(Loc1, Loc2);
+    }
+    // Store the result in the cache.
+    result = aliased;
+    return aliased;
+  }
+
+  typedef std::pair<Instruction *, Instruction *> AliasCacheKey;
+
+  /// Cache for alias results.
+  /// TODO: consider moving this to the AliasAnalysis itself.
+  DenseMap<AliasCacheKey, Optional<bool>> AliasCache;
+
+  /// Removes an instruction from its block and eventually deletes it.
+  /// It's like Instruction::eraseFromParent() except that the actual deletion
+  /// is delayed until BoUpSLP is destructed.
+  /// This is required to ensure that there are no incorrect collisions in the
+  /// AliasCache, which can happen if a new instruction is allocated at the
+  /// same address as a previously deleted instruction.
+  void eraseInstruction(Instruction *I) {
+    I->removeFromParent();
+    I->dropAllReferences();
+    DeletedInstructions.push_back(std::unique_ptr<Instruction>(I));
+  }
+
+  /// Temporary store for deleted instructions. Instructions will be deleted
+  /// eventually when the BoUpSLP is destructed.
+  SmallVector<std::unique_ptr<Instruction>, 8> DeletedInstructions;
+
   /// A list of values that need to extracted out of the tree.
   /// This list holds pairs of (Internal Scalar : External User).
   UserList ExternalUses;
+
+  /// Values used only by @llvm.assume calls.
+  SmallPtrSet<const Value *, 32> EphValues;
 
   /// Holds all of the instructions that we gathered.
   SetVector<Instruction *> GatherSeq;
@@ -784,7 +849,7 @@ private:
     /// Checks if a bundle of instructions can be scheduled, i.e. has no
     /// cyclic dependencies. This is only a dry-run, no instructions are
     /// actually moved at this stage.
-    bool tryScheduleBundle(ArrayRef<Value *> VL, AliasAnalysis *AA);
+    bool tryScheduleBundle(ArrayRef<Value *> VL, BoUpSLP *SLP);
 
     /// Un-bundles a group of instructions.
     void cancelScheduling(ArrayRef<Value *> VL);
@@ -801,7 +866,7 @@ private:
     /// Updates the dependency information of a bundle and of all instructions/
     /// bundles which depend on the original bundle.
     void calculateDependencies(ScheduleData *SD, bool InsertInReadyList,
-                               AliasAnalysis *AA);
+                               BoUpSLP *SLP);
 
     /// Sets all instruction in the scheduling region to un-scheduled.
     void resetSchedule();
@@ -850,7 +915,7 @@ private:
   };
 
   /// Attaches the BlockScheduling structures to basic blocks.
-  DenseMap<BasicBlock *, std::unique_ptr<BlockScheduling>> BlocksSchedules;
+  MapVector<BasicBlock *, std::unique_ptr<BlockScheduling>> BlocksSchedules;
 
   /// Performs the "real" scheduling. Done before vectorization is actually
   /// performed in a basic block.
@@ -988,6 +1053,16 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
   // We now know that this is a vector of instructions of the same type from
   // the same block.
 
+  // Don't vectorize ephemeral values.
+  for (unsigned i = 0, e = VL.size(); i != e; ++i) {
+    if (EphValues.count(VL[i])) {
+      DEBUG(dbgs() << "SLP: The instruction (" << *VL[i] <<
+            ") is ephemeral.\n");
+      newTreeEntry(VL, false);
+      return;
+    }
+  }
+
   // Check if this is a duplicate of another entry.
   if (ScalarToTreeEntry.count(VL[0])) {
     int Idx = ScalarToTreeEntry[VL[0]];
@@ -1014,11 +1089,11 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
     }
   }
 
-  // If any of the scalars appears in the table OR it is marked as a value that
-  // needs to stat scalar then we need to gather the scalars.
+  // If any of the scalars is marked as a value that needs to stay scalar then
+  // we need to gather the scalars.
   for (unsigned i = 0, e = VL.size(); i != e; ++i) {
-    if (ScalarToTreeEntry.count(VL[i]) || MustGather.count(VL[i])) {
-      DEBUG(dbgs() << "SLP: Gathering due to gathered scalar. \n");
+    if (MustGather.count(VL[i])) {
+      DEBUG(dbgs() << "SLP: Gathering due to gathered scalar.\n");
       newTreeEntry(VL, false);
       return;
     }
@@ -1052,7 +1127,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
   }
   BlockScheduling &BS = *BSRef.get();
 
-  if (!BS.tryScheduleBundle(VL, AA)) {
+  if (!BS.tryScheduleBundle(VL, this)) {
     DEBUG(dbgs() << "SLP: We are not able to schedule this bundle!\n");
     BS.cancelScheduling(VL);
     newTreeEntry(VL, false);
@@ -1707,7 +1782,13 @@ int BoUpSLP::getTreeCost() {
   for (UserList::iterator I = ExternalUses.begin(), E = ExternalUses.end();
        I != E; ++I) {
     // We only add extract cost once for the same scalar.
-    if (!ExtractCostCalculated.insert(I->Scalar))
+    if (!ExtractCostCalculated.insert(I->Scalar).second)
+      continue;
+
+    // Uses by ephemeral values are free (because the ephemeral value will be
+    // removed prior to code generation, and so the extraction will be
+    // removed as well).
+    if (EphValues.count(I->User))
       continue;
 
     VectorType *VecTy = VectorType::get(I->Scalar->getType(), BundleWidth);
@@ -1899,7 +1980,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
         ValueList Operands;
         BasicBlock *IBB = PH->getIncomingBlock(i);
 
-        if (!VisitedBBs.insert(IBB)) {
+        if (!VisitedBBs.insert(IBB).second) {
           NewPhi->addIncoming(NewPhi->getIncomingValueForBlock(IBB), IBB);
           continue;
         }
@@ -2337,7 +2418,7 @@ Value *BoUpSLP::vectorizeTree() {
         Scalar->replaceAllUsesWith(Undef);
       }
       DEBUG(dbgs() << "SLP: \tErasing scalar:" << *Scalar << ".\n");
-      cast<Instruction>(Scalar)->eraseFromParent();
+      eraseInstruction(cast<Instruction>(Scalar));
     }
   }
 
@@ -2419,7 +2500,7 @@ void BoUpSLP::optimizeGatherSequence() {
         if (In->isIdenticalTo(*v) &&
             DT->dominates((*v)->getParent(), In->getParent())) {
           In->replaceAllUsesWith(*v);
-          In->eraseFromParent();
+          eraseInstruction(In);
           In = nullptr;
           break;
         }
@@ -2437,7 +2518,7 @@ void BoUpSLP::optimizeGatherSequence() {
 // Groups the instructions to a bundle (which is then a single scheduling entity)
 // and schedules instructions until the bundle gets ready.
 bool BoUpSLP::BlockScheduling::tryScheduleBundle(ArrayRef<Value *> VL,
-                                                 AliasAnalysis *AA) {
+                                                 BoUpSLP *SLP) {
   if (isa<PHINode>(VL[0]))
     return true;
 
@@ -2494,7 +2575,7 @@ bool BoUpSLP::BlockScheduling::tryScheduleBundle(ArrayRef<Value *> VL,
   DEBUG(dbgs() << "SLP: try schedule bundle " << *Bundle << " in block "
                << BB->getName() << "\n");
 
-  calculateDependencies(Bundle, true, AA);
+  calculateDependencies(Bundle, true, SLP);
 
   // Now try to schedule the new bundle. As soon as the bundle is "ready" it
   // means that there are no cyclic dependencies and we can schedule it.
@@ -2625,18 +2706,9 @@ void BoUpSLP::BlockScheduling::initScheduleData(Instruction *FromI,
   }
 }
 
-/// \returns the AA location that is being access by the instruction.
-static AliasAnalysis::Location getLocation(Instruction *I, AliasAnalysis *AA) {
-  if (StoreInst *SI = dyn_cast<StoreInst>(I))
-    return AA->getLocation(SI);
-  if (LoadInst *LI = dyn_cast<LoadInst>(I))
-    return AA->getLocation(LI);
-  return AliasAnalysis::Location();
-}
-
 void BoUpSLP::BlockScheduling::calculateDependencies(ScheduleData *SD,
                                                      bool InsertInReadyList,
-                                                     AliasAnalysis *AA) {
+                                                     BoUpSLP *SLP) {
   assert(SD->isSchedulingEntity());
 
   SmallVector<ScheduleData *, 10> WorkList;
@@ -2681,14 +2753,14 @@ void BoUpSLP::BlockScheduling::calculateDependencies(ScheduleData *SD,
         // Handle the memory dependencies.
         ScheduleData *DepDest = BundleMember->NextLoadStore;
         if (DepDest) {
-          AliasAnalysis::Location SrcLoc = getLocation(BundleMember->Inst, AA);
+          Instruction *SrcInst = BundleMember->Inst;
+          AliasAnalysis::Location SrcLoc = getLocation(SrcInst, SLP->AA);
           bool SrcMayWrite = BundleMember->Inst->mayWriteToMemory();
 
           while (DepDest) {
             assert(isInSchedulingRegion(DepDest));
             if (SrcMayWrite || DepDest->Inst->mayWriteToMemory()) {
-              AliasAnalysis::Location DstLoc = getLocation(DepDest->Inst, AA);
-              if (!SrcLoc.Ptr || !DstLoc.Ptr || AA->alias(SrcLoc, DstLoc)) {
+              if (SLP->isAliased(SrcLoc, SrcInst, DepDest->Inst)) {
                 DepDest->MemoryDependencies.push_back(BundleMember);
                 BundleMember->Dependencies++;
                 ScheduleData *DestBundle = DepDest->FirstInBundle;
@@ -2756,7 +2828,7 @@ void BoUpSLP::scheduleBlock(BlockScheduling *BS) {
         "scheduler and vectorizer have different opinion on what is a bundle");
     SD->FirstInBundle->SchedulingPriority = Idx++;
     if (SD->isSchedulingEntity()) {
-      BS->calculateDependencies(SD, false, AA);
+      BS->calculateDependencies(SD, false, this);
       NumToSchedule++;
     }
   }
@@ -2810,6 +2882,7 @@ struct SLPVectorizer : public FunctionPass {
   AliasAnalysis *AA;
   LoopInfo *LI;
   DominatorTree *DT;
+  AssumptionCache *AC;
 
   bool runOnFunction(Function &F) override {
     if (skipOptnoneFunction(F))
@@ -2823,6 +2896,7 @@ struct SLPVectorizer : public FunctionPass {
     AA = &getAnalysis<AliasAnalysis>();
     LI = &getAnalysis<LoopInfo>();
     DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+    AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
 
     StoreRefs.clear();
     bool Changed = false;
@@ -2845,7 +2919,10 @@ struct SLPVectorizer : public FunctionPass {
 
     // Use the bottom up slp vectorizer to construct chains that start with
     // store instructions.
-    BoUpSLP R(&F, SE, DL, TTI, TLI, AA, LI, DT);
+    BoUpSLP R(&F, SE, DL, TTI, TLI, AA, LI, DT, AC);
+
+    // A general note: the vectorizer must use BoUpSLP::eraseInstruction() to
+    // delete instructions.
 
     // Scan the blocks in the function in post order.
     for (po_iterator<BasicBlock*> it = po_begin(&F.getEntryBlock()),
@@ -2872,6 +2949,7 @@ struct SLPVectorizer : public FunctionPass {
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     FunctionPass::getAnalysisUsage(AU);
+    AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<ScalarEvolution>();
     AU.addRequired<AliasAnalysis>();
     AU.addRequired<TargetTransformInfo>();
@@ -3476,11 +3554,10 @@ private:
   /// \brief Emit a horizontal reduction of the vectorized value.
   Value *emitReduction(Value *VectorizedValue, IRBuilder<> &Builder) {
     assert(VectorizedValue && "Need to have a vectorized tree node");
-    Instruction *ValToReduce = dyn_cast<Instruction>(VectorizedValue);
     assert(isPowerOf2_32(ReduxWidth) &&
            "We only handle power-of-two reductions for now");
 
-    Value *TmpVec = ValToReduce;
+    Value *TmpVec = VectorizedValue;
     for (unsigned i = ReduxWidth / 2; i != 0; i >>= 1) {
       if (IsPairwiseReduction) {
         Value *LeftMask =
@@ -3606,7 +3683,7 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
 
   for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; it++) {
     // We may go through BB multiple times so skip the one we have checked.
-    if (!VisitedInstrs.insert(it))
+    if (!VisitedInstrs.insert(it).second)
       continue;
 
     if (isa<DbgInfoIntrinsic>(it))
@@ -3663,6 +3740,21 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
           if (((HorRdx.matchAssociativeReduction(nullptr, BinOp, DL) &&
                 HorRdx.tryToReduce(R, TTI)) ||
                tryToVectorize(BinOp, R))) {
+            Changed = true;
+            it = BB->begin();
+            e = BB->end();
+            continue;
+          }
+        }
+
+    // Try to vectorize horizontal reductions feeding into a return.
+    if (ReturnInst *RI = dyn_cast<ReturnInst>(it))
+      if (RI->getNumOperands() != 0)
+        if (BinaryOperator *BinOp =
+                dyn_cast<BinaryOperator>(RI->getOperand(0))) {
+          DEBUG(dbgs() << "SLP: Found a return to vectorize.\n");
+          if (tryToVectorizePair(BinOp->getOperand(0),
+                                 BinOp->getOperand(1), R)) {
             Changed = true;
             it = BB->begin();
             e = BB->end();
@@ -3746,6 +3838,7 @@ static const char lv_name[] = "SLP Vectorizer";
 INITIALIZE_PASS_BEGIN(SLPVectorizer, SV_NAME, lv_name, false, false)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_AG_DEPENDENCY(TargetTransformInfo)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
 INITIALIZE_PASS_END(SLPVectorizer, SV_NAME, lv_name, false, false)

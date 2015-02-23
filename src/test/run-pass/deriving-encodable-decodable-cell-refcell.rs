@@ -35,8 +35,8 @@ fn main() {
         foo: Cell::new(true),
         bar: RefCell::new( A { baz: 2 } )
     };
-    let s = json::encode(&obj);
-    let obj2: B = json::decode(s.as_slice()).unwrap();
+    let s = json::encode(&obj).unwrap();
+    let obj2: B = json::decode(&s).unwrap();
     assert!(obj.foo.get() == obj2.foo.get());
     assert!(obj.bar.borrow().baz == obj2.bar.borrow().baz);
 }

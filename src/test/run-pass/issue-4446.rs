@@ -8,16 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::io::println;
+use std::old_io::println;
 use std::sync::mpsc::channel;
-use std::thread::Thread;
+use std::thread;
 
 pub fn main() {
     let (tx, rx) = channel();
 
     tx.send("hello, world").unwrap();
 
-    Thread::scoped(move|| {
+    thread::spawn(move|| {
         println(rx.recv().unwrap());
     }).join().ok().unwrap();
 }

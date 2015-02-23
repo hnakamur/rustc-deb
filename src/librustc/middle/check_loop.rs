@@ -45,11 +45,7 @@ impl<'a, 'v> Visitor<'v> for CheckLoopVisitor<'a> {
             ast::ExprLoop(ref b, _) => {
                 self.with_context(Loop, |v| v.visit_block(&**b));
             }
-            ast::ExprForLoop(_, ref e, ref b, _) => {
-                self.visit_expr(&**e);
-                self.with_context(Loop, |v| v.visit_block(&**b));
-            }
-            ast::ExprClosure(_, _, _, ref b) => {
+            ast::ExprClosure(_, _, ref b) => {
                 self.with_context(Closure, |v| v.visit_block(&**b));
             }
             ast::ExprBreak(_) => self.require_loop("break", e.span),
@@ -73,12 +69,12 @@ impl<'a> CheckLoopVisitor<'a> {
         match self.cx {
             Loop => {}
             Closure => {
-                self.sess.span_err(span,
-                                   &format!("`{}` inside of a closure", name)[]);
+                span_err!(self.sess, span, E0267,
+                                   "`{}` inside of a closure", name);
             }
             Normal => {
-                self.sess.span_err(span,
-                                   &format!("`{}` outside of loop", name)[]);
+                span_err!(self.sess, span, E0268,
+                                   "`{}` outside of loop", name);
             }
         }
     }

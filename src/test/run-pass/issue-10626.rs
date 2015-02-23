@@ -12,23 +12,22 @@
 // Make sure that if a process doesn't have its stdio/stderr descriptors set up
 // that we don't die in a large ball of fire
 
-use std::os;
-use std::io::process;
+use std::env;
+use std::old_io::process;
 
 pub fn main () {
-    let args = os::args();
-    let args = args.as_slice();
-    if args.len() > 1 && args[1].as_slice() == "child" {
-        for _ in range(0i, 1000i) {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && args[1] == "child" {
+        for _ in 0..1000 {
             println!("hello?");
         }
-        for _ in range(0i, 1000i) {
+        for _ in 0..1000 {
             println!("hello?");
         }
         return;
     }
 
-    let mut p = process::Command::new(args[0].as_slice());
+    let mut p = process::Command::new(&args[0]);
     p.arg("child").stdout(process::Ignored).stderr(process::Ignored);
     println!("{:?}", p.spawn().unwrap().wait());
 }

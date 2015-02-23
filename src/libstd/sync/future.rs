@@ -11,21 +11,26 @@
 //! A type representing values that may be computed concurrently and operations
 //! for working with them.
 //!
-//! # Example
+//! # Examples
 //!
-//! ```rust
+//! ```
 //! use std::sync::Future;
-//! # fn fib(n: uint) -> uint {42};
-//! # fn make_a_sandwich() {};
-//! let mut delayed_fib = Future::spawn(move|| { fib(5000) });
-//! make_a_sandwich();
+//!
+//! // a fake, for now
+//! fn fib(n: u32) -> u32 { 42 };
+//!
+//! let mut delayed_fib = Future::spawn(move || fib(5000));
+//!
+//! // do stuff...
+//!
 //! println!("fib(5000) = {}", delayed_fib.get())
 //! ```
 
 #![allow(missing_docs)]
-#![unstable = "futures as-is have yet to be deeply reevaluated with recent \
-               core changes to Rust's synchronization story, and will likely \
-               become stable in the future but are unstable until that time"]
+#![unstable(feature = "std_misc",
+            reason = "futures as-is have yet to be deeply reevaluated with recent \
+                      core changes to Rust's synchronization story, and will likely \
+                      become stable in the future but are unstable until that time")]
 
 use core::prelude::*;
 use core::mem::replace;
@@ -33,7 +38,7 @@ use core::mem::replace;
 use self::FutureState::*;
 use sync::mpsc::{Receiver, channel};
 use thunk::{Thunk};
-use thread::Thread;
+use thread;
 
 /// A type encapsulating the result of a computation which may not be complete
 pub struct Future<A> {
@@ -41,7 +46,7 @@ pub struct Future<A> {
 }
 
 enum FutureState<A> {
-    Pending(Thunk<(),A>),
+    Pending(Thunk<'static,(),A>),
     Evaluating,
     Forced(A)
 }
@@ -98,7 +103,7 @@ impl<A> Future<A> {
     }
 
     pub fn from_fn<F>(f: F) -> Future<A>
-        where F : FnOnce() -> A, F : Send
+        where F : FnOnce() -> A, F : Send + 'static
     {
         /*!
          * Create a future from a function.
@@ -112,7 +117,7 @@ impl<A> Future<A> {
     }
 }
 
-impl<A:Send> Future<A> {
+impl<A:Send+'static> Future<A> {
     pub fn from_receiver(rx: Receiver<A>) -> Future<A> {
         /*!
          * Create a future from a port
@@ -121,13 +126,13 @@ impl<A:Send> Future<A> {
          * waiting for the result to be received on the port.
          */
 
-        Future::from_fn(move |:| {
+        Future::from_fn(move || {
             rx.recv().unwrap()
         })
     }
 
     pub fn spawn<F>(blk: F) -> Future<A>
-        where F : FnOnce() -> A, F : Send
+        where F : FnOnce() -> A, F : Send + 'static
     {
         /*!
          * Create a future from a unique closure.
@@ -138,7 +143,7 @@ impl<A:Send> Future<A> {
 
         let (tx, rx) = channel();
 
-        Thread::spawn(move |:| {
+        thread::spawn(move || {
             // Don't panic if the other end has hung up
             let _ = tx.send(blk());
         });
@@ -152,7 +157,7 @@ mod test {
     use prelude::v1::*;
     use sync::mpsc::channel;
     use sync::Future;
-    use thread::Thread;
+    use thread;
 
     #[test]
     fn test_from_value() {
@@ -188,7 +193,7 @@ mod test {
 
     #[test]
     fn test_get_ref_method() {
-        let mut f = Future::from_value(22i);
+        let mut f = Future::from_value(22);
         assert_eq!(*f.get_ref(), 22);
     }
 
@@ -210,7 +215,7 @@ mod test {
         let expected = "schlorf";
         let (tx, rx) = channel();
         let f = Future::spawn(move|| { expected });
-        let _t = Thread::spawn(move|| {
+        let _t = thread::spawn(move|| {
             let mut f = f;
             tx.send(f.get()).unwrap();
         });

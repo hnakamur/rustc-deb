@@ -12,8 +12,9 @@
 // doesn't die in a ball of fire, but rather it's gracefully handled.
 
 use std::os;
-use std::io::PipeStream;
-use std::io::Command;
+use std::env;
+use std::old_io::PipeStream;
+use std::old_io::Command;
 
 fn test() {
     let os::Pipe { reader, writer } = unsafe { os::pipe().unwrap() };
@@ -25,13 +26,12 @@ fn test() {
 }
 
 fn main() {
-    let args = os::args();
-    let args = args.as_slice();
-    if args.len() > 1 && args[1].as_slice() == "test" {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && args[1] == "test" {
         return test();
     }
 
-    let mut p = Command::new(args[0].as_slice())
+    let mut p = Command::new(&args[0])
                         .arg("test").spawn().unwrap();
     assert!(p.wait().unwrap().success());
 }

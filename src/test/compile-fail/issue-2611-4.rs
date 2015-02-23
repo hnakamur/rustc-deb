@@ -12,7 +12,7 @@
 // than the trait method it's implementing
 
 trait A {
-  fn b<C,D>(x: C) -> C;
+  fn b<C,D>(&self, x: C) -> C;
 }
 
 struct E {
@@ -20,7 +20,8 @@ struct E {
 }
 
 impl A for E {
-  fn b<F: Sync, G>(_x: F) -> F { panic!() } //~ ERROR type parameter 0 requires `Sync`
+    fn b<F: Sync, G>(&self, _x: F) -> F { panic!() }
+    //~^ ERROR `F : core::marker::Sync` appears on the impl method
 }
 
 fn main() {}

@@ -8,7 +8,7 @@ and then prints it back out:
 fn main() {
     println!("Type something!");
 
-    let input = std::io::stdin().read_line().ok().expect("Failed to read line");
+    let input = std::old_io::stdin().read_line().ok().expect("Failed to read line");
 
     println!("{}", input);
 }
@@ -17,10 +17,10 @@ fn main() {
 Let's go over these chunks, one by one:
 
 ```{rust,ignore}
-std::io::stdin();
+std::old_io::stdin();
 ```
 
-This calls a function, `stdin()`, that lives inside the `std::io` module. As
+This calls a function, `stdin()`, that lives inside the `std::old_io` module. As
 you can imagine, everything in `std` is provided by Rust, the 'standard
 library.' We'll talk more about the module system later.
 
@@ -28,7 +28,7 @@ Since writing the fully qualified name all the time is annoying, we can use
 the `use` statement to import it in:
 
 ```{rust}
-use std::io::stdin;
+use std::old_io::stdin;
 
 stdin();
 ```
@@ -37,20 +37,20 @@ However, it's considered better practice to not import individual functions, but
 to import the module, and only use one level of qualification:
 
 ```{rust}
-use std::io;
+use std::old_io;
 
-io::stdin();
+old_io::stdin();
 ```
 
 Let's update our example to use this style:
 
 ```{rust,ignore}
-use std::io;
+use std::old_io;
 
 fn main() {
     println!("Type something!");
 
-    let input = io::stdin().read_line().ok().expect("Failed to read line");
+    let input = old_io::stdin().read_line().ok().expect("Failed to read line");
 
     println!("{}", input);
 }
@@ -83,12 +83,12 @@ fn main() {
 
     match x {
         OptionalInt::Value(n) => println!("x is {}", n),
-        OptionalInt::Missing  => println!("x is missing!"),
+        OptionalInt::Missing => println!("x is missing!"),
     }
 
     match y {
         OptionalInt::Value(n) => println!("y is {}", n),
-        OptionalInt::Missing  => println!("y is missing!"),
+        OptionalInt::Missing => println!("y is missing!"),
     }
 }
 ```
@@ -103,7 +103,7 @@ line of input, though it might also fail to do so. This could happen if our prog
 isn't running in a terminal, but as part of a cron job, or some other context
 where there's no standard input. Because of this, `read_line` returns a type
 very similar to our `OptionalInt`: an `IoResult<T>`. We haven't talked about
-`IoResult<T>` yet because it is the **generic** form of our `OptionalInt`.
+`IoResult<T>` yet because it is the *generic* form of our `OptionalInt`.
 Until then, you can think of it as being the same thing, just for any type –
 not just `i32`s.
 
@@ -121,12 +121,12 @@ For now, this gives you enough of a basic understanding to work with.
 Back to the code we were working on! Here's a refresher:
 
 ```{rust,ignore}
-use std::io;
+use std::old_io;
 
 fn main() {
     println!("Type something!");
 
-    let input = io::stdin().read_line().ok().expect("Failed to read line");
+    let input = old_io::stdin().read_line().ok().expect("Failed to read line");
 
     println!("{}", input);
 }
@@ -136,16 +136,16 @@ With long lines like this, Rust gives you some flexibility with the whitespace.
 We _could_ write the example like this:
 
 ```{rust,ignore}
-use std::io;
+use std::old_io;
 
 fn main() {
     println!("Type something!");
 
-                                                  // here, we'll show the types at each step
+    // here, we'll show the types at each step
 
-    let input = io::stdin()                       // std::io::stdio::StdinReader
-                  .read_line()                    // IoResult<String>
-                  .ok()                           // Option<String>
+    let input = old_io::stdin() // std::old_io::stdio::StdinReader
+                  .read_line() // IoResult<String>
+                  .ok() // Option<String>
                   .expect("Failed to read line"); // String
 
     println!("{}", input);

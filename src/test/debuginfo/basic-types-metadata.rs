@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -67,7 +66,7 @@ fn main() {
     let f32: f32 = 2.5;
     let f64: f64 = 3.5;
     _zzz(); // #break
-    if 1i == 1 { _yyy(); }
+    if 1 == 1 { _yyy(); }
 }
 
 fn _zzz() {()}

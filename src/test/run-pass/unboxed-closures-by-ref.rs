@@ -25,11 +25,11 @@ fn call_fn_once<F: FnOnce()>(f: F) {
 }
 
 fn main() {
-    let mut x = 0u;
-    let y = 2u;
+    let mut x = 0_usize;
+    let y = 2_usize;
 
-    call_fn(|&:| assert_eq!(x, 0));
-    call_fn_mut(|&mut:| x += y);
-    call_fn_once(|:| x += y);
+    call_fn(|| assert_eq!(x, 0));
+    call_fn_mut(|| x += y);
+    call_fn_once(|| x += y);
     assert_eq!(x, y * 2);
 }

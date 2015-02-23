@@ -11,7 +11,6 @@
 // Need a fix for LLDB first...
 // ignore-lldb
 
-// ignore-android: FIXME(#10381)
 
 // compile-flags:-g
 // gdb-command:run
@@ -41,7 +40,6 @@
 
 // gdb-command:continue
 
-#![allow(unstable)]
 #![allow(unused_variables)]
 #![omit_gdb_pretty_printer_section]
 

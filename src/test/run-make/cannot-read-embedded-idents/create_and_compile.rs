@@ -8,22 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::os;
-use std::io::{File, Command};
+use std::env;
+use std::old_io::{File, Command};
 
 // creates broken.rs, which has the Ident \x00name_0,ctxt_0\x00
 // embedded within it, and then attempts to compile broken.rs with the
 // provided `rustc`
 
 fn main() {
-    let args = os::args();
-    let rustc = args[1].as_slice();
-    let tmpdir = Path::new(args[2].as_slice());
+    let args: Vec<String> = env::args().collect();
+    let rustc = &args[1];
+    let tmpdir = Path::new(&args[2]);
 
     let main_file = tmpdir.join("broken.rs");
     let _ = File::create(&main_file).unwrap()
         .write_str("pub fn main() {
-                   let \x00name_0,ctxt_0\x00 = 3i;
+                   let \x00name_0,ctxt_0\x00 = 3;
                    println!(\"{}\", \x00name_0,ctxt_0\x00);
         }");
 
@@ -31,14 +31,14 @@ fn main() {
     // can't exec it directly
     let result = Command::new("sh")
         .arg("-c")
-        .arg(format!("{} {}",
-                     rustc,
-                     main_file.as_str()
-                     .unwrap()).as_slice())
+        .arg(&format!("{} {}",
+                      rustc,
+                      main_file.as_str()
+                      .unwrap()))
         .output().unwrap();
-    let err = String::from_utf8_lossy(result.error.as_slice());
+    let err = String::from_utf8_lossy(&result.error);
 
     // positive test so that this test will be updated when the
     // compiler changes.
-    assert!(err.as_slice().contains("unknown start of token"))
+    assert!(err.contains("unknown start of token"))
 }

@@ -41,41 +41,56 @@
 extern crate arena;
 
 use std::iter::range_step;
-use std::thread::Thread;
+use std::thread;
 use arena::TypedArena;
 
-enum Tree<'a> {
-    Nil,
-    Node(&'a Tree<'a>, &'a Tree<'a>, int)
+struct Tree<'a> {
+    l: Option<&'a Tree<'a>>,
+    r: Option<&'a Tree<'a>>,
+    i: i32
 }
 
-fn item_check(t: &Tree) -> int {
+fn item_check(t: &Option<&Tree>) -> i32 {
     match *t {
-        Tree::Nil => 0,
-        Tree::Node(l, r, i) => i + item_check(l) - item_check(r)
+        None => 0,
+        Some(&Tree { ref l, ref r, i }) => i + item_check(l) - item_check(r)
     }
 }
 
-fn bottom_up_tree<'r>(arena: &'r TypedArena<Tree<'r>>, item: int, depth: int)
-                  -> &'r Tree<'r> {
+fn bottom_up_tree<'r>(arena: &'r TypedArena<Tree<'r>>, item: i32, depth: i32)
+                  -> Option<&'r Tree<'r>> {
     if depth > 0 {
-        arena.alloc(Tree::Node(bottom_up_tree(arena, 2 * item - 1, depth - 1),
-                               bottom_up_tree(arena, 2 * item, depth - 1),
-                               item))
+        let t: &Tree<'r> = arena.alloc(Tree {
+            l: bottom_up_tree(arena, 2 * item - 1, depth - 1),
+            r: bottom_up_tree(arena, 2 * item, depth - 1),
+            i: item
+        });
+        Some(t)
     } else {
-        arena.alloc(Tree::Nil)
+        None
     }
+}
+
+fn inner(depth: i32, iterations: i32) -> String {
+    let mut chk = 0;
+    for i in 1 .. iterations + 1 {
+        let arena = TypedArena::new();
+        let a = bottom_up_tree(&arena, i, depth);
+        let b = bottom_up_tree(&arena, -i, depth);
+        chk += item_check(&a) + item_check(&b);
+    }
+    format!("{}\t trees of depth {}\t check: {}",
+            iterations * 2, depth, chk)
 }
 
 fn main() {
-    let args = std::os::args();
-    let args = args.as_slice();
-    let n = if std::os::getenv("RUST_BENCH").is_some() {
+    let mut args = std::env::args();
+    let n = if std::env::var_os("RUST_BENCH").is_some() {
         17
-    } else if args.len() <= 1u {
+    } else if args.len() <= 1 {
         8
     } else {
-        args[1].parse().unwrap()
+        args.nth(1).unwrap().parse().unwrap()
     };
     let min_depth = 4;
     let max_depth = if min_depth + 2 > n {min_depth + 2} else {n};
@@ -86,32 +101,22 @@ fn main() {
         let tree = bottom_up_tree(&arena, 0, depth);
 
         println!("stretch tree of depth {}\t check: {}",
-                 depth, item_check(tree));
+                 depth, item_check(&tree));
     }
 
     let long_lived_arena = TypedArena::new();
     let long_lived_tree = bottom_up_tree(&long_lived_arena, 0, max_depth);
 
-    let mut messages = range_step(min_depth, max_depth + 1, 2).map(|depth| {
-            use std::num::Int;
-            let iterations = 2i.pow((max_depth - depth + min_depth) as uint);
-            Thread::scoped(move|| {
-                let mut chk = 0;
-                for i in range(1, iterations + 1) {
-                    let arena = TypedArena::new();
-                    let a = bottom_up_tree(&arena, i, depth);
-                    let b = bottom_up_tree(&arena, -i, depth);
-                    chk += item_check(a) + item_check(b);
-                }
-                format!("{}\t trees of depth {}\t check: {}",
-                        iterations * 2, depth, chk)
-            })
-        }).collect::<Vec<_>>();
+    let messages = range_step(min_depth, max_depth + 1, 2).map(|depth| {
+        use std::num::Int;
+        let iterations = 2.pow((max_depth - depth + min_depth) as usize);
+        thread::scoped(move || inner(depth, iterations))
+    }).collect::<Vec<_>>();
 
-    for message in messages.into_iter() {
-        println!("{}", message.join().ok().unwrap());
+    for message in messages {
+        println!("{}", message.join());
     }
 
     println!("long lived tree of depth {}\t check: {}",
-             max_depth, item_check(long_lived_tree));
+             max_depth, item_check(&long_lived_tree));
 }

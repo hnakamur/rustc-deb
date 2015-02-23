@@ -11,6 +11,7 @@
 use super::probe;
 
 use check::{self, FnCtxt, NoPreference, PreferMutLvalue, callee, demand};
+use check::UnresolvedTypeAction;
 use middle::mem_categorization::Typer;
 use middle::subst::{self};
 use middle::traits;
@@ -30,8 +31,8 @@ use util::ppaux::Repr;
 struct ConfirmContext<'a, 'tcx:'a> {
     fcx: &'a FnCtxt<'a, 'tcx>,
     span: Span,
-    self_expr: &'a ast::Expr,
-    call_expr: &'a ast::Expr,
+    self_expr: &'tcx ast::Expr,
+    call_expr: &'tcx ast::Expr,
 }
 
 struct InstantiatedMethodSig<'tcx> {
@@ -45,13 +46,13 @@ struct InstantiatedMethodSig<'tcx> {
 
     /// Generic bounds on the method's parameters which must be added
     /// as pending obligations.
-    method_bounds: ty::GenericBounds<'tcx>,
+    method_predicates: ty::InstantiatedPredicates<'tcx>,
 }
 
 pub fn confirm<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                          span: Span,
-                         self_expr: &ast::Expr,
-                         call_expr: &ast::Expr,
+                         self_expr: &'tcx ast::Expr,
+                         call_expr: &'tcx ast::Expr,
                          unadjusted_self_ty: Ty<'tcx>,
                          pick: probe::Pick<'tcx>,
                          supplied_method_types: Vec<Ty<'tcx>>)
@@ -69,8 +70,8 @@ pub fn confirm<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 impl<'a,'tcx> ConfirmContext<'a,'tcx> {
     fn new(fcx: &'a FnCtxt<'a, 'tcx>,
            span: Span,
-           self_expr: &'a ast::Expr,
-           call_expr: &'a ast::Expr)
+           self_expr: &'tcx ast::Expr,
+           call_expr: &'tcx ast::Expr)
            -> ConfirmContext<'a, 'tcx>
     {
         ConfirmContext { fcx: fcx, span: span, self_expr: self_expr, call_expr: call_expr }
@@ -98,7 +99,7 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
 
         // Create the final signature for the method, replacing late-bound regions.
         let InstantiatedMethodSig {
-            method_sig, all_substs, method_bounds
+            method_sig, all_substs, method_predicates
         } = self.instantiate_method_sig(&pick, all_substs);
         let method_self_ty = method_sig.inputs[0];
 
@@ -106,7 +107,7 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
         self.unify_receivers(self_ty, method_self_ty);
 
         // Add any trait/regions obligations specified on the method's type parameters.
-        self.add_obligations(&pick, &all_substs, &method_bounds);
+        self.add_obligations(&pick, &all_substs, &method_predicates);
 
         // Create the final `MethodCallee`.
         let fty = ty::mk_bare_fn(self.tcx(), None, self.tcx().mk_bare_fn(ty::BareFnTy {
@@ -141,10 +142,19 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
 
         // Commit the autoderefs by calling `autoderef again, but this
         // time writing the results into the various tables.
-        let (autoderefd_ty, n, result) =
-            check::autoderef(
-                self.fcx, self.span, unadjusted_self_ty, Some(self.self_expr), NoPreference,
-                |_, n| if n == auto_deref_ref.autoderefs { Some(()) } else { None });
+        let (autoderefd_ty, n, result) = check::autoderef(self.fcx,
+                                                          self.span,
+                                                          unadjusted_self_ty,
+                                                          Some(self.self_expr),
+                                                          UnresolvedTypeAction::Error,
+                                                          NoPreference,
+                                                          |_, n| {
+            if n == auto_deref_ref.autoderefs {
+                Some(())
+            } else {
+                None
+            }
+        });
         assert_eq!(n, auto_deref_ref.autoderefs);
         assert_eq!(result, Some(()));
 
@@ -206,7 +216,7 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                 (impl_polytype.substs, MethodStatic(pick.method_ty.def_id))
             }
 
-            probe::ObjectPick(trait_def_id, method_num, real_index) => {
+            probe::ObjectPick(trait_def_id, method_num, vtable_index) => {
                 self.extract_trait_ref(self_ty, |this, object_ty, data| {
                     // The object data has no entry for the Self
                     // Type. For the purposes of this method call, we
@@ -233,7 +243,7 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                         trait_ref: upcast_trait_ref,
                         object_trait_id: trait_def_id,
                         method_num: method_num,
-                        real_index: real_index,
+                        vtable_index: vtable_index,
                     });
                     (substs, origin)
                 })
@@ -256,7 +266,8 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                         &impl_polytype.substs,
                         &ty::impl_trait_ref(self.tcx(), impl_def_id).unwrap());
                 let origin = MethodTypeParam(MethodParam { trait_ref: impl_trait_ref.clone(),
-                                                           method_num: method_num });
+                                                           method_num: method_num,
+                                                           impl_def_id: Some(impl_def_id) });
                 (impl_trait_ref.substs.clone(), origin)
             }
 
@@ -275,7 +286,8 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                 let trait_ref =
                     Rc::new(ty::TraitRef::new(trait_def_id, self.tcx().mk_substs(substs.clone())));
                 let origin = MethodTypeParam(MethodParam { trait_ref: trait_ref,
-                                                           method_num: method_num });
+                                                           method_num: method_num,
+                                                           impl_def_id: None });
                 (substs, origin)
             }
 
@@ -285,7 +297,8 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                 let trait_ref = self.replace_late_bound_regions_with_fresh_var(&*poly_trait_ref);
                 let substs = trait_ref.substs.clone();
                 let origin = MethodTypeParam(MethodParam { trait_ref: trait_ref,
-                                                           method_num: method_num });
+                                                           method_num: method_num,
+                                                           impl_def_id: None });
                 (substs, origin)
             }
         }
@@ -299,15 +312,18 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
         // yield an object-type (e.g., `&Object` or `Box<Object>`
         // etc).
 
-        let (_, _, result) =
-            check::autoderef(
-                self.fcx, self.span, self_ty, None, NoPreference,
-                |ty, _| {
-                    match ty.sty {
-                        ty::ty_trait(ref data) => Some(closure(self, ty, &**data)),
-                        _ => None,
-                    }
-                });
+        let (_, _, result) = check::autoderef(self.fcx,
+                                              self.span,
+                                              self_ty,
+                                              None,
+                                              UnresolvedTypeAction::Error,
+                                              NoPreference,
+                                              |ty, _| {
+            match ty.sty {
+                ty::ty_trait(ref data) => Some(closure(self, ty, &**data)),
+                _ => None,
+            }
+        });
 
         match result {
             Some(r) => r,
@@ -331,9 +347,9 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
         let num_supplied_types = supplied_method_types.len();
         let num_method_types = pick.method_ty.generics.types.len(subst::FnSpace);
         let method_types = {
-            if num_supplied_types == 0u {
+            if num_supplied_types == 0 {
                 self.fcx.infcx().next_ty_vars(num_method_types)
-            } else if num_method_types == 0u {
+            } else if num_method_types == 0 {
                 span_err!(self.tcx().sess, self.span, E0035,
                     "does not take type parameters");
                 self.fcx.infcx().next_ty_vars(num_method_types)
@@ -400,18 +416,19 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
         // that obligation is not necessarily satisfied. (In the
         // future, it would be.) But we know that the true `Self` DOES implement
         // the trait. So we just delete this requirement. Hack hack hack.
-        let mut method_bounds = pick.method_ty.generics.to_bounds(self.tcx(), &all_substs);
+        let mut method_predicates = pick.method_ty.predicates.instantiate(self.tcx(), &all_substs);
         match pick.kind {
             probe::ObjectPick(..) => {
-                assert_eq!(method_bounds.predicates.get_slice(subst::SelfSpace).len(), 1);
-                method_bounds.predicates.pop(subst::SelfSpace);
+                assert_eq!(method_predicates.predicates.get_slice(subst::SelfSpace).len(), 1);
+                method_predicates.predicates.pop(subst::SelfSpace);
             }
             _ => { }
         }
-        let method_bounds = self.fcx.normalize_associated_types_in(self.span, &method_bounds);
+        let method_predicates = self.fcx.normalize_associated_types_in(self.span,
+                                                                       &method_predicates);
 
-        debug!("method_bounds after subst = {}",
-               method_bounds.repr(self.tcx()));
+        debug!("method_predicates after subst = {}",
+               method_predicates.repr(self.tcx()));
 
         // Instantiate late-bound regions and substitute the trait
         // parameters into the method type to get the actual method type.
@@ -430,22 +447,22 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
         InstantiatedMethodSig {
             method_sig: method_sig,
             all_substs: all_substs,
-            method_bounds: method_bounds,
+            method_predicates: method_predicates,
         }
     }
 
     fn add_obligations(&mut self,
                        pick: &probe::Pick<'tcx>,
                        all_substs: &subst::Substs<'tcx>,
-                       method_bounds: &ty::GenericBounds<'tcx>) {
-        debug!("add_obligations: pick={} all_substs={} method_bounds={}",
+                       method_predicates: &ty::InstantiatedPredicates<'tcx>) {
+        debug!("add_obligations: pick={} all_substs={} method_predicates={}",
                pick.repr(self.tcx()),
                all_substs.repr(self.tcx()),
-               method_bounds.repr(self.tcx()));
+               method_predicates.repr(self.tcx()));
 
         self.fcx.add_obligations_for_parameters(
             traits::ObligationCause::misc(self.span, self.fcx.body_id),
-            method_bounds);
+            method_predicates);
 
         self.fcx.add_default_region_param_bounds(
             all_substs,
@@ -514,6 +531,7 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                                  expr.span,
                                  self.fcx.expr_ty(expr),
                                  Some(expr),
+                                 UnresolvedTypeAction::Error,
                                  PreferMutLvalue,
                                  |_, autoderefs| {
                                      if autoderefs == autoderef_count + 1 {
@@ -638,9 +656,9 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
             None => {
                 self.tcx().sess.span_bug(
                     self.span,
-                    format!("cannot upcast `{}` to `{}`",
-                            source_trait_ref.repr(self.tcx()),
-                            target_trait_def_id.repr(self.tcx())).as_slice());
+                    &format!("cannot upcast `{}` to `{}`",
+                             source_trait_ref.repr(self.tcx()),
+                             target_trait_def_id.repr(self.tcx())));
             }
         }
     }

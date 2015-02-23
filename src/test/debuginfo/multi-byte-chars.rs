@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -24,5 +23,5 @@ struct C { θ: u8 }
 
 fn main() {
     let x =  C { θ: 0 };
-    (|&: c: C| c.θ )(x);
+    (|c: C| c.θ )(x);
 }

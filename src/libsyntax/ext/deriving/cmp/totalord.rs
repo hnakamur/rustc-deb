@@ -30,7 +30,7 @@ pub fn expand_deriving_totalord<F>(cx: &mut ExtCtxt,
     let trait_def = TraitDef {
         span: span,
         attributes: Vec::new(),
-        path: Path::new(vec!("std", "cmp", "Ord")),
+        path: path_std!(cx, core::cmp::Ord),
         additional_bounds: Vec::new(),
         generics: LifetimeBounds::empty(),
         methods: vec!(
@@ -39,13 +39,14 @@ pub fn expand_deriving_totalord<F>(cx: &mut ExtCtxt,
                 generics: LifetimeBounds::empty(),
                 explicit_self: borrowed_explicit_self(),
                 args: vec!(borrowed_self()),
-                ret_ty: Literal(Path::new(vec!("std", "cmp", "Ordering"))),
+                ret_ty: Literal(path_std!(cx, core::cmp::Ordering)),
                 attributes: attrs,
                 combine_substructure: combine_substructure(box |a, b, c| {
                     cs_cmp(a, b, c)
                 }),
             }
-        )
+        ),
+        associated_types: Vec::new(),
     };
 
     trait_def.expand(cx, mitem, item, push)
@@ -64,13 +65,13 @@ pub fn cs_cmp(cx: &mut ExtCtxt, span: Span,
               substr: &Substructure) -> P<Expr> {
     let test_id = cx.ident_of("__test");
     let equals_path = cx.path_global(span,
-                                     vec!(cx.ident_of("std"),
+                                     vec!(cx.ident_of_std("core"),
                                           cx.ident_of("cmp"),
                                           cx.ident_of("Ordering"),
                                           cx.ident_of("Equal")));
 
     let cmp_path = vec![
-        cx.ident_of("std"),
+        cx.ident_of_std("core"),
         cx.ident_of("cmp"),
         cx.ident_of("Ord"),
         cx.ident_of("cmp"),
@@ -108,7 +109,7 @@ pub fn cs_cmp(cx: &mut ExtCtxt, span: Span,
             let new = {
                 let other_f = match other_fs {
                     [ref o_f] => o_f,
-                    _ => cx.span_bug(span, "not exactly 2 arguments in `deriving(PartialOrd)`"),
+                    _ => cx.span_bug(span, "not exactly 2 arguments in `derive(PartialOrd)`"),
                 };
 
                 let args = vec![
@@ -132,7 +133,7 @@ pub fn cs_cmp(cx: &mut ExtCtxt, span: Span,
         cx.expr_path(equals_path.clone()),
         box |cx, span, (self_args, tag_tuple), _non_self_args| {
             if self_args.len() != 2 {
-                cx.span_bug(span, "not exactly 2 arguments in `deriving(Ord)`")
+                cx.span_bug(span, "not exactly 2 arguments in `derives(Ord)`")
             } else {
                 ordering_collapsed(cx, span, tag_tuple)
             }

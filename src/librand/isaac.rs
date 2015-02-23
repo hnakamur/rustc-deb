@@ -82,7 +82,7 @@ impl IsaacRng {
             }}
         }
 
-        for _ in range(0u, 4) {
+        for _ in 0..4 {
             mix!();
         }
 
@@ -134,7 +134,7 @@ impl IsaacRng {
         }
 
         let r = [(0, MIDPOINT), (MIDPOINT, 0)];
-        for &(mr_offset, m2_offset) in r.iter() {
+        for &(mr_offset, m2_offset) in &r {
 
             macro_rules! rngstepp {
                 ($j:expr, $shift:expr) => {{
@@ -166,7 +166,7 @@ impl IsaacRng {
                 }}
             }
 
-            for i in range_step(0u, MIDPOINT, 4) {
+            for i in range_step(0, MIDPOINT, 4) {
                 rngstepp!(i + 0, 13);
                 rngstepn!(i + 1, 6);
                 rngstepp!(i + 2, 2);
@@ -215,7 +215,7 @@ impl<'a> SeedableRng<&'a [u32]> for IsaacRng {
     fn reseed(&mut self, seed: &'a [u32]) {
         // make the seed into [seed[0], seed[1], ..., seed[seed.len()
         // - 1], 0, 0, ...], to fill rng.rsl.
-        let seed_iter = seed.iter().map(|&x| x).chain(repeat(0u32));
+        let seed_iter = seed.iter().cloned().chain(repeat(0u32));
 
         for (rsl_elem, seed_elem) in self.rsl.iter_mut().zip(seed_iter) {
             *rsl_elem = seed_elem;
@@ -246,7 +246,7 @@ impl Rand for IsaacRng {
         unsafe {
             let ptr = ret.rsl.as_mut_ptr() as *mut u8;
 
-            let slice = slice::from_raw_mut_buf(&ptr, (RAND_SIZE * 4) as uint);
+            let slice = slice::from_raw_parts_mut(ptr, (RAND_SIZE * 4) as uint);
             other.fill_bytes(slice);
         }
         ret.cnt = 0;
@@ -323,14 +323,14 @@ impl Isaac64Rng {
             }}
         }
 
-        for _ in range(0u, 4) {
+        for _ in 0..4 {
             mix!();
         }
 
         if use_rsl {
             macro_rules! memloop {
                 ($arr:expr) => {{
-                    for i in range(0, RAND_SIZE_64 / 8).map(|i| i * 8) {
+                    for i in (0..RAND_SIZE_64 / 8).map(|i| i * 8) {
                         a+=$arr[i  ]; b+=$arr[i+1];
                         c+=$arr[i+2]; d+=$arr[i+3];
                         e+=$arr[i+4]; f+=$arr[i+5];
@@ -347,7 +347,7 @@ impl Isaac64Rng {
             memloop!(self.rsl);
             memloop!(self.mem);
         } else {
-            for i in range(0, RAND_SIZE_64 / 8).map(|i| i * 8) {
+            for i in (0..RAND_SIZE_64 / 8).map(|i| i * 8) {
                 mix!();
                 self.mem[i  ]=a; self.mem[i+1]=b;
                 self.mem[i+2]=c; self.mem[i+3]=d;
@@ -373,8 +373,8 @@ impl Isaac64Rng {
             }
         }
 
-        for &(mr_offset, m2_offset) in MP_VEC.iter() {
-            for base in range(0, MIDPOINT / 4).map(|i| i * 4) {
+        for &(mr_offset, m2_offset) in &MP_VEC {
+            for base in (0..MIDPOINT / 4).map(|i| i * 4) {
 
                 macro_rules! rngstepp {
                     ($j:expr, $shift:expr) => {{
@@ -412,10 +412,10 @@ impl Isaac64Rng {
                     }}
                 }
 
-                rngstepp!(0u, 21);
-                rngstepn!(1u, 5);
-                rngstepp!(2u, 12);
-                rngstepn!(3u, 33);
+                rngstepp!(0, 21);
+                rngstepn!(1, 5);
+                rngstepp!(2, 12);
+                rngstepn!(3, 33);
             }
         }
 
@@ -458,7 +458,7 @@ impl<'a> SeedableRng<&'a [u64]> for Isaac64Rng {
     fn reseed(&mut self, seed: &'a [u64]) {
         // make the seed into [seed[0], seed[1], ..., seed[seed.len()
         // - 1], 0, 0, ...], to fill rng.rsl.
-        let seed_iter = seed.iter().map(|&x| x).chain(repeat(0u64));
+        let seed_iter = seed.iter().cloned().chain(repeat(0u64));
 
         for (rsl_elem, seed_elem) in self.rsl.iter_mut().zip(seed_iter) {
             *rsl_elem = seed_elem;
@@ -489,7 +489,7 @@ impl Rand for Isaac64Rng {
         unsafe {
             let ptr = ret.rsl.as_mut_ptr() as *mut u8;
 
-            let slice = slice::from_raw_mut_buf(&ptr, (RAND_SIZE_64 * 8) as uint);
+            let slice = slice::from_raw_parts_mut(ptr, (RAND_SIZE_64 * 8) as uint);
             other.fill_bytes(slice);
         }
         ret.cnt = 0;
@@ -514,16 +514,16 @@ mod test {
     #[test]
     fn test_rng_32_rand_seeded() {
         let s = ::test::rng().gen_iter::<u32>().take(256).collect::<Vec<u32>>();
-        let mut ra: IsaacRng = SeedableRng::from_seed(s.as_slice());
-        let mut rb: IsaacRng = SeedableRng::from_seed(s.as_slice());
+        let mut ra: IsaacRng = SeedableRng::from_seed(&*s);
+        let mut rb: IsaacRng = SeedableRng::from_seed(&*s);
         assert!(order::equals(ra.gen_ascii_chars().take(100),
                               rb.gen_ascii_chars().take(100)));
     }
     #[test]
     fn test_rng_64_rand_seeded() {
         let s = ::test::rng().gen_iter::<u64>().take(256).collect::<Vec<u64>>();
-        let mut ra: Isaac64Rng = SeedableRng::from_seed(s.as_slice());
-        let mut rb: Isaac64Rng = SeedableRng::from_seed(s.as_slice());
+        let mut ra: Isaac64Rng = SeedableRng::from_seed(&*s);
+        let mut rb: Isaac64Rng = SeedableRng::from_seed(&*s);
         assert!(order::equals(ra.gen_ascii_chars().take(100),
                               rb.gen_ascii_chars().take(100)));
     }
@@ -548,10 +548,10 @@ mod test {
     #[test]
     fn test_rng_32_reseed() {
         let s = ::test::rng().gen_iter::<u32>().take(256).collect::<Vec<u32>>();
-        let mut r: IsaacRng = SeedableRng::from_seed(s.as_slice());
+        let mut r: IsaacRng = SeedableRng::from_seed(&*s);
         let string1: String = r.gen_ascii_chars().take(100).collect();
 
-        r.reseed(s.as_slice());
+        r.reseed(&s);
 
         let string2: String = r.gen_ascii_chars().take(100).collect();
         assert_eq!(string1, string2);
@@ -559,10 +559,10 @@ mod test {
     #[test]
     fn test_rng_64_reseed() {
         let s = ::test::rng().gen_iter::<u64>().take(256).collect::<Vec<u64>>();
-        let mut r: Isaac64Rng = SeedableRng::from_seed(s.as_slice());
+        let mut r: Isaac64Rng = SeedableRng::from_seed(&*s);
         let string1: String = r.gen_ascii_chars().take(100).collect();
 
-        r.reseed(s.as_slice());
+        r.reseed(&s);
 
         let string2: String = r.gen_ascii_chars().take(100).collect();
         assert_eq!(string1, string2);
@@ -573,7 +573,7 @@ mod test {
         let seed: &[_] = &[1, 23, 456, 7890, 12345];
         let mut ra: IsaacRng = SeedableRng::from_seed(seed);
         // Regression test that isaac is actually using the above vector
-        let v = range(0, 10).map(|_| ra.next_u32()).collect::<Vec<_>>();
+        let v = (0..10).map(|_| ra.next_u32()).collect::<Vec<_>>();
         assert_eq!(v,
                    vec!(2558573138, 873787463, 263499565, 2103644246, 3595684709,
                         4203127393, 264982119, 2765226902, 2737944514, 3900253796));
@@ -581,9 +581,9 @@ mod test {
         let seed: &[_] = &[12345, 67890, 54321, 9876];
         let mut rb: IsaacRng = SeedableRng::from_seed(seed);
         // skip forward to the 10000th number
-        for _ in range(0u, 10000) { rb.next_u32(); }
+        for _ in 0..10000 { rb.next_u32(); }
 
-        let v = range(0, 10).map(|_| rb.next_u32()).collect::<Vec<_>>();
+        let v = (0..10).map(|_| rb.next_u32()).collect::<Vec<_>>();
         assert_eq!(v,
                    vec!(3676831399, 3183332890, 2834741178, 3854698763, 2717568474,
                         1576568959, 3507990155, 179069555, 141456972, 2478885421));
@@ -593,7 +593,7 @@ mod test {
         let seed: &[_] = &[1, 23, 456, 7890, 12345];
         let mut ra: Isaac64Rng = SeedableRng::from_seed(seed);
         // Regression test that isaac is actually using the above vector
-        let v = range(0, 10).map(|_| ra.next_u64()).collect::<Vec<_>>();
+        let v = (0..10).map(|_| ra.next_u64()).collect::<Vec<_>>();
         assert_eq!(v,
                    vec!(547121783600835980, 14377643087320773276, 17351601304698403469,
                         1238879483818134882, 11952566807690396487, 13970131091560099343,
@@ -603,9 +603,9 @@ mod test {
         let seed: &[_] = &[12345, 67890, 54321, 9876];
         let mut rb: Isaac64Rng = SeedableRng::from_seed(seed);
         // skip forward to the 10000th number
-        for _ in range(0u, 10000) { rb.next_u64(); }
+        for _ in 0..10000 { rb.next_u64(); }
 
-        let v = range(0, 10).map(|_| rb.next_u64()).collect::<Vec<_>>();
+        let v = (0..10).map(|_| rb.next_u64()).collect::<Vec<_>>();
         assert_eq!(v,
                    vec!(18143823860592706164, 8491801882678285927, 2699425367717515619,
                         17196852593171130876, 2606123525235546165, 15790932315217671084,
@@ -618,7 +618,7 @@ mod test {
         let seed: &[_] = &[1, 23, 456, 7890, 12345];
         let mut rng: Isaac64Rng = SeedableRng::from_seed(seed);
         let mut clone = rng.clone();
-        for _ in range(0u, 16) {
+        for _ in 0..16 {
             assert_eq!(rng.next_u64(), clone.next_u64());
         }
     }
