@@ -65,28 +65,3 @@ Description: Rust systems programming language - Documentation
  styles.
  .
  This package contains the documentation.
-
-Package: rust-mode
-Architecture: all
-Depends: emacs24 | emacsen, ${misc:Depends}
-Suggests: rustc
-Description: Rust mode for emacs
- This package provides a GNU Emacs major mode for editing code in the
- Rust programming language.
-
-Package: vim-syntax-rust
-Architecture: all
-Depends: vim, ${misc:Depends}
-Recommends: vim-addon-manager
-Suggests: rustc, vim-syntastic
-Description: Vim highlighting syntax files for Rust
- This package provides syntax files for the Vim editor for editing code
- in the Rust programming language.
-
-Package: kate-syntax-rust
-Architecture: all
-Depends: kate, ${misc:Depends}
-Suggests: rustc
-Description: Kate highlighting syntax files for Rust
- This package provides syntax files for the Kate editor for editing
- code in the Rust programming language.

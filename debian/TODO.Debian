@@ -6,5 +6,6 @@
  * Create a runtime package (rust-runtime)
  * Move the runtime library into a public directory
  * Fix the parallel build (failing on tests)
+ * Package the various editors plugins (emacs, kate & vim)
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Tue, 20 Jan 2015 08:50:28 +0100

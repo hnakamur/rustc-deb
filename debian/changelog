@@ -6,7 +6,6 @@ rust (1.0.0~alpha-0~exp2) experimental; urgency=medium
     - Improving of the parallel syntax
     - Use override_dh_auto_build-arch
     - Use override_dh_auto_build-indep
-    - Introduction of rust-mode, vim-syntax-rust & kate-syntax-rust packages
     - Better declarations of the doc
     - Update of the description
     - Watch file updated (with key check)
