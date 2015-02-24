@@ -1,5 +1,6 @@
-rust (1.0.0~alpha-0~exp2) experimental; urgency=medium
+rust (1.0.0~alpha-2~exp2) experimental; urgency=medium
 
+  * New testing release
   * Introduce some changes by Angus Lees
     - Introduction of build stages
     - Disable the parallel execution of tests
