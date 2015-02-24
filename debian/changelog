@@ -1,6 +1,7 @@
-rust (1.0.0~alpha-2~exp2) experimental; urgency=medium
+rustc (1.0.0~alpha-2~exp2) experimental; urgency=medium
 
   * New testing release
+  * Renaming of the source package
   * Introduce some changes by Angus Lees
     - Introduction of build stages
     - Disable the parallel execution of tests

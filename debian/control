@@ -1,4 +1,4 @@
-Source: rust
+Source: rustc
 Section: devel
 Priority: extra
 Maintainer: Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
