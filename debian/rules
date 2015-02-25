@@ -117,11 +117,17 @@ override_dh_install:
 	# Brute force to remove privacy-breach-logo lintian warning.
 	# We could have updated the upstream sources but it would complexify
 	# the rebase
-	if test "$(BUILD)" = "1"; then \
+	if test "$(BUILD_DOCS)" = "1"; then \
 		sed -i '/rel="shortcut icon" href="http:\/\/www.rust-lang.org\/favicon.ico"/d' `find $(DEB_DESTDIR) -iname '*.html'`; \
-		rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust/html/.lock; \
+		rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust-doc/html/.lock; \
 	fi
 	dh_install
+
+override_dh_installchangelogs:
+	dh_installchangelogs RELEASES.md
+
+override_dh_installdocs:
+	dh_installdocs -X.tex -X.aux -X.log -X.out -X.toc
 
 override_dh_auto_test:
 	# NB: not parallel - there is some race that leads to failures like:

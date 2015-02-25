@@ -7,6 +7,6 @@ Abstract:
  accomplishes these goals by being memory safe without using garbage
  collection.
 
-
 Format: HTML
-Index: /usr/share/doc/rust/book.html
+Index: /usr/share/doc/rust-doc/html/book/index.html
+Files: /usr/share/doc/rust-doc/html/book/*.html
