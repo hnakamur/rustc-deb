@@ -1,0 +1,4 @@
+# Rust uses libraries that are not directly linked to libc.
+# libstd (at least) looks like it uses symbols from libc, so we may
+# need to selectively fix this.
+rustc binary: library-not-linked-against-libc

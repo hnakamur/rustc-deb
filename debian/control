@@ -30,9 +30,11 @@ Homepage: http://www.rust-lang.org/
 Vcs-Git: git://git.debian.org/pkg-rust/rust.git
 Vcs-Browser: http://git.debian.org/?p=pkg-rust/rust.git;a=summary
 
-Package: rust
+Package: rustc
 Architecture: amd64 i386
+Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Suggests: rust-doc
 Description: Rust systems programming language
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
