@@ -19,10 +19,10 @@ Build-Depends: debhelper (>= 9),
                ca-certificates <dlstage0>
 Build-Depends-Indep: pandoc (>=1.9) <!nodocs>,
                      po4a <!nodocs>,
-                     texlive-luatex <!nodocs>,
                      texlive-xetex <!nodocs>,
                      texlive-latex-base <!nodocs>,
                      texlive-generic-recommended <!nodocs>,
+                     texlive-fonts-recommended <!nodocs>,
                      lmodern <!nodocs>
 # git is necessary for 'make check'
 Standards-Version: 3.9.6
