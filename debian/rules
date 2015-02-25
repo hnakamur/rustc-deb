@@ -84,9 +84,13 @@ override_dh_auto_configure:
 		    $(COMMON_FLAGS) \
 			$(DEB_CONFIGURE_EXTRA_FLAGS) \
 		    # TODO
-		    # $(SELF_BOOTSTRAP) 
+		    # $(SELF_BOOTSTRAP)
 		    # $(SYSTEM_LLVM)
 
+
+override_dh_auto_clean:
+	-$(MAKE) $(DEB_MAKE_PARALLEL) clean-all
+	-$(RM) Makefile
 
 override_dh_auto_build-arch:
 	dh_auto_build -- all VERBOSE=1
