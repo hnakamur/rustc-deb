@@ -5,8 +5,9 @@ rustc (1.0.0~alpha.2-1~exp2) UNRELEASED; urgency=low
   * Rename primary 'rust' binary package to 'rustc'
   * Fix potential FTBFS: rust-doc requires texlive-fonts-recommended (for
     pzdr.tfm)
+  * Build against system LLVM
 
- -- Angus Lees <gus@debian.org>  Thu, 26 Feb 2015 23:01:28 +1100
+ -- Angus Lees <gus@debian.org>  Thu, 26 Feb 2015 23:10:52 +1100
 
 rustc (1.0.0~alpha.2-1~exp1) experimental; urgency=medium
 

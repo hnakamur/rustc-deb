@@ -45,16 +45,7 @@ COMMON_FLAGS = \
                --enable-rpath \
                --prefix=/$(RUST_PREFIX)
 
-# TODO
-# These flags will be used to avoid external
-# stage0 bootstrap binaries
-SELF_BOOTSTRAP = \
-		 --enable-local-rust \
-		 --local-rust-root=/usr
-
-# TODO
-# These flags will enable the system-wide LLVM
-SYSTEM_LLVM = --llvm-root=/usr
+SYSTEM_LLVM = --llvm-root=/usr/lib/llvm-3.6
 
 
 ifeq (,$(findstring dlstage0,$(DEB_BUILD_PROFILES)))
@@ -82,10 +73,8 @@ override_dh_auto_configure:
 	SHELL=/bin/sh \
 	    ./configure \
 		    $(COMMON_FLAGS) \
-			$(DEB_CONFIGURE_EXTRA_FLAGS) \
-		    # TODO
-		    # $(SELF_BOOTSTRAP)
-		    # $(SYSTEM_LLVM)
+		    $(DEB_CONFIGURE_EXTRA_FLAGS) \
+		    $(SYSTEM_LLVM)
 
 
 override_dh_auto_clean:
