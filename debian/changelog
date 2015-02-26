@@ -1,3 +1,13 @@
+rustc (1.0.0~alpha.2-1~exp2) UNRELEASED; urgency=low
+
+  * Patch upstream manpages to address minor troff issues
+  * Make 'debian/rules clean' also clean LLVM source
+  * Rename primary 'rust' binary package to 'rustc'
+  * Fix potential FTBFS: rust-doc requires texlive-fonts-recommended (for
+    pzdr.tfm)
+
+ -- Angus Lees <gus@debian.org>  Thu, 26 Feb 2015 23:01:28 +1100
+
 rustc (1.0.0~alpha.2-1~exp1) experimental; urgency=medium
 
   * New testing release
