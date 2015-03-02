@@ -1,0 +1,70 @@
+Description: Set CFLAGS/LDFLAGS/etc according to Debian policy
+ Debian wants to build all binaries with particular hardening flags.
+ The Rust makefiles are inconsistent in which architectures they
+ correctly include CFLAGS/etc from the enivoronment (see mk/cfg/*).
+ .
+ This patch adds LDFLAGS, and then unconditionally prepends
+ CFLAGS/LDFLAGS/etc to the build commands.
+Author: Angus Lees <gus@debian.org>
+Forwarded: no
+
+--- rustc-1.0.0~alpha.2.orig/configure
++++ rustc-1.0.0~alpha.2/configure
+@@ -903,12 +903,13 @@ fi
+ # point in the script; after this point, script logic should inspect
+ # $CFG_USING_CLANG rather than $CFG_ENABLE_CLANG.
+
+-# Set CFG_{CC,CXX,CPP,CFLAGS,CXXFLAGS}
++# Set CFG_{CC,CXX,CPP,CFLAGS,CXXFLAGS,LDFLAGS}
+ envopt CC
+ envopt CXX
+ envopt CPP
+ envopt CFLAGS
+ envopt CXXFLAGS
++envopt LDFLAGS
+
+ # a little post-processing of various config values
+ CFG_PREFIX=${CFG_PREFIX%/}
+@@ -1285,9 +1286,9 @@ do
+
+         CXX=$LLVM_CXX
+         CC=$LLVM_CC
+-        CFLAGS=$LLVM_CFLAGS
+-        CXXFLAGS=$LLVM_CXXFLAGS
+-        LDFLAGS=$LLVM_LDFLAGS
++        CFLAGS="$CFLAGS $LLVM_CFLAGS"
++        CXXFLAGS="$CXXFLAGS $LLVM_CXXFLAGS"
++        LDFLAGS="$LDFLAGS $LLVM_LDFLAGS"
+
+         if [ -z "$CFG_DISABLE_LIBCPP" ] && [ -n "$CFG_USING_CLANG" ]; then
+             LLVM_OPTS="$LLVM_OPTS --enable-libcpp"
+--- rustc-1.0.0~alpha.2.orig/mk/platform.mk
++++ rustc-1.0.0~alpha.2/mk/platform.mk
+@@ -155,16 +155,19 @@ define CFG_MAKE_TOOLCHAIN
+   endif
+
+   CFG_COMPILE_C_$(1) = $$(CC_$(1)) \
++        $$(CFLAGS) \
+         $$(CFG_GCCISH_CFLAGS) \
+         $$(CFG_GCCISH_CFLAGS_$(1)) \
+         $$(CFG_DEPEND_FLAGS) \
+         -c -o $$(1) $$(2)
+   CFG_LINK_C_$(1) = $$(CC_$(1)) \
++        $$(LDFLAGS) \
+         $$(CFG_GCCISH_LINK_FLAGS) -o $$(1) \
+         $$(CFG_GCCISH_LINK_FLAGS_$(1)) \
+         $$(CFG_GCCISH_DEF_FLAG_$(1))$$(3) $$(2) \
+         $$(call CFG_INSTALL_NAME_$(1),$$(4))
+   CFG_COMPILE_CXX_$(1) = $$(CXX_$(1)) \
++        $$(CXXFLAGS) \
+         $$(CFG_GCCISH_CFLAGS) \
+         $$(CFG_GCCISH_CXXFLAGS) \
+         $$(CFG_GCCISH_CFLAGS_$(1)) \
+@@ -172,6 +175,7 @@ define CFG_MAKE_TOOLCHAIN
+         $$(CFG_DEPEND_FLAGS) \
+         -c -o $$(1) $$(2)
+   CFG_LINK_CXX_$(1) = $$(CXX_$(1)) \
++        $$(LDFLAGS) \
+         $$(CFG_GCCISH_LINK_FLAGS) -o $$(1) \
+         $$(CFG_GCCISH_LINK_FLAGS_$(1)) \
+         $$(CFG_GCCISH_DEF_FLAG_$(1))$$(3) $$(2) \
