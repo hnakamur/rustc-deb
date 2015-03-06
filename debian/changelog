@@ -1,5 +1,6 @@
-rustc (1.0.0~alpha.2-1~exp2) UNRELEASED; urgency=low
+rustc (1.0.0~alpha.2-0~exp1) UNRELEASED; urgency=low
 
+  [ Angus Lees ]
   * Patch upstream manpages to address minor troff issues
   * Make 'debian/rules clean' also clean LLVM source
   * Rename primary 'rust' binary package to 'rustc'
@@ -7,10 +8,7 @@ rustc (1.0.0~alpha.2-1~exp2) UNRELEASED; urgency=low
     pzdr.tfm)
   * Build against system LLVM
 
- -- Angus Lees <gus@debian.org>  Thu, 26 Feb 2015 23:10:52 +1100
-
-rustc (1.0.0~alpha.2-1~exp1) experimental; urgency=medium
-
+  [ Sylvestre Ledru ]
   * New testing release
   * Renaming of the source package
   * Introduce some changes by Angus Lees
@@ -23,7 +21,10 @@ rustc (1.0.0~alpha.2-1~exp1) experimental; urgency=medium
     - Update of the description
     - Watch file updated (with key check)
 
- -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 13 Feb 2015 15:00:45 +0100
+  [ Luca Bruno ]
+  * rules: respect 'nocheck' DEB_BUILD_OPTIONS
+
+ -- Angus Lees <gus@debian.org>  Thu, 26 Feb 2015 23:10:52 +1100
 
 rust (1.0.0~alpha-0~exp1) experimental; urgency=low
 
