@@ -58,7 +58,7 @@ ifeq (,$(findstring dlstage0,$(DEB_BUILD_PROFILES)))
 endif
 
 BUILD_DOCS = 1
-ifneq (,$(findstring nodocs,$(DEB_BUILD_PROFILES)))
+ifneq (,$(findstring nodoc,$(DEB_BUILD_PROFILES)))
   DEB_CONFIGURE_EXTRA_FLAGS += --disable-docs
   BUILD_DOCS = 0
 endif
