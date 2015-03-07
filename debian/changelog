@@ -1,4 +1,4 @@
-rustc (1.0.0~alpha.2-0~exp1) UNRELEASED; urgency=low
+rustc (1.0.0~alpha.2-0~exp1) experimental; urgency=low
 
   [ Angus Lees ]
   * Patch upstream manpages to address minor troff issues
@@ -24,7 +24,7 @@ rustc (1.0.0~alpha.2-0~exp1) UNRELEASED; urgency=low
   [ Luca Bruno ]
   * rules: respect 'nocheck' DEB_BUILD_OPTIONS
 
- -- Angus Lees <gus@debian.org>  Thu, 26 Feb 2015 23:10:52 +1100
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 07 Mar 2015 09:25:47 +0100
 
 rust (1.0.0~alpha-0~exp1) experimental; urgency=low
 
