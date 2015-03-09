@@ -34,7 +34,7 @@ for arch in ('i386', 'x86_64'):
 http = urllib3.PoolManager()
 
 def create_dl_tarball():
-    dl_tarfile = 'rust_' + upstream_version  + '.orig-dl.tar.gz'
+    dl_tarfile = 'rustc_' + upstream_version  + '.orig-dl.tar.gz'
     dl_tarfile = os.path.join(src_root_parent_dir, dl_tarfile)
     tar = tarfile.open(dl_tarfile, 'w:gz')
     url_base = 'https://static.rust-lang.org/stage0-snapshots/'
