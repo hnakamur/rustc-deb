@@ -101,7 +101,7 @@ override_dh_shlibdeps:
 		dh_shlibdeps -l$(RUST_TMP_LD_PATH)
 
 override_dh_auto_install:
-	dh_auto_install
+	dh_auto_install --destdir=$(DEB_DESTDIR)
 	dh_link $(RUST_PREFIX)/bin/rustc usr/bin/rustc-$(MAIN_RUST_VERSION)
 	dh_link usr/bin/rustc-$(MAIN_RUST_VERSION) usr/bin/rustc
 	dh_link $(RUST_PREFIX)/bin/rustdoc usr/bin/rustdoc-$(MAIN_RUST_VERSION)
