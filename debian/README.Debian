@@ -14,6 +14,9 @@ The rational is the following:
 Bootstrapping from nothing
 --------------------------
 
+WARNING: This does not work for now as rust cannot bootstrap itself
+
+
 You need a "stage0" rust compiler from somewhere.  You can download a
 pre-built minimal stage0 from http://www.rust-lang.org/ at build time,
 or use a rustc that was already in /usr/bin via whatever black magic
