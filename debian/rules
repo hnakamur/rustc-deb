@@ -54,7 +54,7 @@ SYSTEM_LLVM = --llvm-root=/usr/lib/llvm-3.6
 ifeq (,$(findstring dlstage0,$(DEB_BUILD_PROFILES)))
 # Without these options, a pre-built stage0 will be downloaded from
 # rust-lang.org at build time.
-	DEB_CONFIGURE_EXTRA_FLAGS += --enable-local-rust --local-rust-root=/usr
+#	DEB_CONFIGURE_EXTRA_FLAGS += --enable-local-rust --local-rust-root=/usr
 endif
 
 BUILD_DOCS = 1
