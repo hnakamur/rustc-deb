@@ -1,4 +1,4 @@
-rustc (1.0.0~alpha.2-0~exp1) experimental; urgency=low
+rustc (1.0.0~alpha.2-1) unstable; urgency=low
 
   [ Angus Lees ]
   * Patch upstream manpages to address minor troff issues
