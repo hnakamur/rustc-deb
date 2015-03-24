@@ -11,6 +11,7 @@ rustc (1.0.0~alpha.2-1) unstable; urgency=low
   [ Sylvestre Ledru ]
   * New testing release
   * Renaming of the source package
+  * Set a minimal version for dpkg-dev and debhelper (for profiles)
   * Introduce some changes by Angus Lees
     - Introduction of build stages
     - Disable the parallel execution of tests
