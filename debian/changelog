@@ -1,4 +1,4 @@
-rustc (1.0.0~alpha.2-1) unstable; urgency=low
+rustc (1.0.0~alpha.2-1~exp1) experimental; urgency=low
 
   [ Angus Lees ]
   * Patch upstream manpages to address minor troff issues
@@ -12,6 +12,7 @@ rustc (1.0.0~alpha.2-1) unstable; urgency=low
   * New testing release
   * Renaming of the source package
   * Set a minimal version for dpkg-dev and debhelper (for profiles)
+  * For now, disable build profiles as they are not supported in Debian
   * Introduce some changes by Angus Lees
     - Introduction of build stages
     - Disable the parallel execution of tests

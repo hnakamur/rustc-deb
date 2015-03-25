@@ -17,16 +17,24 @@ Build-Depends: debhelper (>= 9.20141010),
                libedit-dev,
                valgrind,
                git,
-               ca-certificates <dlstage0>,
+               ca-certificates,
+# <dlstage0>,
 	       llvm-3.6-dev (>= 1:3.6~+rc4)
-Build-Depends-Indep: pandoc (>=1.9) <!nodoc>,
-                     po4a <!nodoc>,
-                     texlive-xetex <!nodoc>,
-                     texlive-latex-base <!nodoc>,
-                     texlive-generic-recommended <!nodoc>,
-                     texlive-fonts-recommended <!nodoc>,
-                     lmodern <!nodoc>
 # git is necessary for 'make check'
+Build-Depends-Indep: pandoc (>=1.9),
+# <!nodoc>,
+                     po4a,
+# <!nodoc>,
+                     texlive-xetex,
+# <!nodoc>,
+                     texlive-latex-base,
+# <!nodoc>,
+                     texlive-generic-recommended,
+# <!nodoc>,
+                     texlive-fonts-recommended,
+# <!nodoc>,
+                     lmodern
+# <!nodoc>
 Standards-Version: 3.9.6
 Homepage: http://www.rust-lang.org/
 Vcs-Git: git://git.debian.org/pkg-rust/rust.git
