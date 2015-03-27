@@ -1,3 +1,5 @@
+Document by Luca Bruno & Sylvestre Ledru
+
 This source package is unfortunately quite tricky and with
 several cutting edges, due to the complexity of rust-lang
 bootstrapping system and the high rate of language changes
@@ -68,22 +70,9 @@ Here below the remaining ones, with the technical reasons.
     - https://github.com/rust-lang/rust/issues/15054
     - https://github.com/rust-lang/rust/issues/15708
 
- * LLVM from https://github.com/rust-lang/llvm
-   -> minimum required LLVM is now 3.6, not yet released
-   Moreover, the code does not seem to build against 3.6 rc1
-    - https://github.com/rust-lang/rust/issues/21512
-
-   Rust fork delta is minimal and mostly performance/optimizations only.
-   Declared goal is to get in synch with vanilla LLVM.
-   However, rust depends on some features not available in LLVM-3.5,
-   while LLVM-3.6 is still pending release. See:
-    - https://github.com/rust-lang/rust/issues/20010
-    - http://discuss.rust-lang.org/t/targeted-llvm-for-1-0/1371
-
 As a summary, we plan to:
  * keep embedding jemalloc (probably forever)
- * wait for a stable LLVM-3.6 to try the switch
  * work with upstream to fix compiler-rt linkage soon.
 
- -- Luca Bruno <lucab@debian.org>  Wed, 21 Jan 2015 14:24:35 +0100
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 27 Mar 2015 14:27:12 +0100
 
