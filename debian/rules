@@ -81,7 +81,7 @@ override_dh_auto_configure:
 
 
 override_dh_auto_clean:
-	-$(MAKE) $(DEB_MAKE_PARALLEL) clean-all
+	[ ! -f Makefile ] ||  $(MAKE) $(DEB_MAKE_PARALLEL) clean-all
 	-$(RM) Makefile
 
 override_dh_auto_build-arch:
