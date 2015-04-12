@@ -116,6 +116,8 @@ override_dh_install:
 	if test "$(BUILD_DOCS)" = "1"; then \
 		sed -i '/rel="shortcut icon" href="http:\/\/www.rust-lang.org\/favicon.ico"/d' `find $(DEB_DESTDIR) -iname '*.html'`; \
 		rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust-doc/html/.lock; \
+	        cd $(DEB_DESTDIR)/usr/lib/*/rust/*/share/doc/rust/html/ && rm -f jquery.js && \
+	        ln -s /usr/share/javascript/jquery/jquery.js; \
 	fi
 	dh_install
 
