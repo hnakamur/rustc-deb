@@ -1,0 +1,3 @@
+# stored in debian/missing-sources/jquery.js
+source: source-is-missing src/librustdoc/html/static/jquery-2.1.0.min.js
+
