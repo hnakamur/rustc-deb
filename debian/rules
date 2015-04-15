@@ -61,7 +61,7 @@ endif
 BUILD_DOCS = 1
 ifneq (,$(findstring nodoc,$(DEB_BUILD_PROFILES)))
   DEB_CONFIGURE_EXTRA_FLAGS += --disable-docs
-  BUILD_DOCS = 0
+  BUILD_DOCS =
 endif
 
 ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
@@ -122,12 +122,11 @@ override_dh_install:
 	# Brute force to remove privacy-breach-logo lintian warning.
 	# We could have updated the upstream sources but it would complexify
 	# the rebase
-	if test "$(BUILD_DOCS)" = "1"; then \
-		sed -i '/rel="shortcut icon" href="http:\/\/www.rust-lang.org\/favicon.ico"/d' `find $(DEB_DESTDIR) -iname '*.html'`; \
-		rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust-doc/html/.lock; \
-	        cd $(DEB_DESTDIR)/usr/lib/*/rust/*/share/doc/rust/html/ && rm -f jquery.js && \
-	        ln -s /usr/share/javascript/jquery/jquery.js; \
-	fi
+ifneq (,$(BUILD_DOCS))
+	sed -i '/rel="shortcut icon" href="http:\/\/www.rust-lang.org\/favicon.ico"/d' `find $(DEB_DESTDIR) -iname '*.html'`
+	rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust-doc/html/.lock
+	ln -sf /usr/share/javascript/jquery/jquery.js $(DEB_DESTDIR)/usr/lib/*/rust/*/share/doc/rust/html/jquery.js
+endif
 	dh_install
 
 override_dh_installchangelogs:
