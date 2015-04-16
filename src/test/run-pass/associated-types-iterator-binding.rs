@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn pairwise_sub<T:DoubleEndedIterator<Item=int>>(mut t: T) -> int {
+// pretty-expanded FIXME #23616
+
+fn pairwise_sub<T:DoubleEndedIterator<Item=isize>>(mut t: T) -> isize {
     let mut result = 0;
     loop {
         let front = t.next();

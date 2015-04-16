@@ -46,6 +46,7 @@ use arena::TypedArena;
 use libc::{c_uint, c_char};
 use std::ffi::CString;
 use std::cell::{Cell, RefCell};
+use std::result::Result as StdResult;
 use std::vec::Vec;
 use syntax::ast::Ident;
 use syntax::ast;
@@ -120,14 +121,16 @@ pub fn erase_regions<'tcx,T>(cx: &ty::ctxt<'tcx>, value: &T) -> T
 // Is the type's representation size known at compile time?
 pub fn type_is_sized<'tcx>(tcx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
     let param_env = ty::empty_parameter_environment(tcx);
-    ty::type_is_sized(&param_env, DUMMY_SP, ty)
-}
-
-pub fn lltype_is_sized<'tcx>(cx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    match ty.sty {
-        ty::ty_open(_) => true,
-        _ => type_is_sized(cx, ty),
+    // FIXME(#4287) This can cause errors due to polymorphic recursion,
+    // a better span should be provided, if available.
+    let err_count = tcx.sess.err_count();
+    let is_sized = ty::type_is_sized(&param_env, DUMMY_SP, ty);
+    // Those errors aren't fatal, but an incorrect result can later
+    // trip over asserts in both rustc's trans and LLVM.
+    if err_count < tcx.sess.err_count() {
+        tcx.sess.abort_if_errors();
     }
+    is_sized
 }
 
 pub fn type_is_fat_ptr<'tcx>(cx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
@@ -211,10 +214,43 @@ pub fn type_needs_unwind_cleanup<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<
     }
 }
 
-pub fn type_needs_drop<'tcx>(cx: &ty::ctxt<'tcx>,
-                         ty: Ty<'tcx>)
-                         -> bool {
-    ty::type_contents(cx, ty).needs_drop(cx)
+/// If `type_needs_drop` returns true, then `ty` is definitely
+/// non-copy and *might* have a destructor attached; if it returns
+/// false, then `ty` definitely has no destructor (i.e. no drop glue).
+///
+/// (Note that this implies that if `ty` has a destructor attached,
+/// then `type_needs_drop` will definitely return `true` for `ty`.)
+pub fn type_needs_drop<'tcx>(cx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    type_needs_drop_given_env(cx, ty, &ty::empty_parameter_environment(cx))
+}
+
+/// Core implementation of type_needs_drop, potentially making use of
+/// and/or updating caches held in the `param_env`.
+fn type_needs_drop_given_env<'a,'tcx>(cx: &ty::ctxt<'tcx>,
+                                      ty: Ty<'tcx>,
+                                      param_env: &ty::ParameterEnvironment<'a,'tcx>) -> bool {
+    // Issue #22536: We first query type_moves_by_default.  It sees a
+    // normalized version of the type, and therefore will definitely
+    // know whether the type implements Copy (and thus needs no
+    // cleanup/drop/zeroing) ...
+    let implements_copy = !ty::type_moves_by_default(&param_env, DUMMY_SP, ty);
+
+    if implements_copy { return false; }
+
+    // ... (issue #22536 continued) but as an optimization, still use
+    // prior logic of asking if the `needs_drop` bit is set; we need
+    // not zero non-Copy types if they have no destructor.
+
+    // FIXME(#22815): Note that calling `ty::type_contents` is a
+    // conservative heuristic; it may report that `needs_drop` is set
+    // when actual type does not actually have a destructor associated
+    // with it. But since `ty` absolutely did not have the `Copy`
+    // bound attached (see above), it is sound to treat it as having a
+    // destructor (e.g. zero its memory on move).
+
+    let contents = ty::type_contents(cx, ty);
+    debug!("type_needs_drop ty={} contents={:?}", ty.repr(cx), contents);
+    contents.needs_drop(cx)
 }
 
 fn type_is_newtype_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
@@ -278,16 +314,7 @@ pub fn gensym_name(name: &str) -> PathElem {
     let num = token::gensym(name).usize();
     // use one colon which will get translated to a period by the mangler, and
     // we're guaranteed that `num` is globally unique for this crate.
-    PathName(token::gensym(&format!("{}:{}", name, num)[]))
-}
-
-#[derive(Copy)]
-pub struct tydesc_info<'tcx> {
-    pub ty: Ty<'tcx>,
-    pub tydesc: ValueRef,
-    pub size: ValueRef,
-    pub align: ValueRef,
-    pub name: ValueRef,
+    PathName(token::gensym(&format!("{}:{}", name, num)))
 }
 
 /*
@@ -316,7 +343,7 @@ pub struct tydesc_info<'tcx> {
 *
 */
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct NodeIdAndSpan {
     pub id: ast::NodeId,
     pub span: Span,
@@ -352,7 +379,7 @@ pub fn validate_substs(substs: &Substs) {
 
 // work around bizarre resolve errors
 type RvalueDatum<'tcx> = datum::Datum<'tcx, datum::Rvalue>;
-type LvalueDatum<'tcx> = datum::Datum<'tcx, datum::Lvalue>;
+pub type LvalueDatum<'tcx> = datum::Datum<'tcx, datum::Lvalue>;
 
 // Function context.  Every LLVM function we create will have one of
 // these.
@@ -432,7 +459,7 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
-    pub fn arg_pos(&self, arg: uint) -> uint {
+    pub fn arg_pos(&self, arg: usize) -> usize {
         let arg = self.env_arg_pos() + arg;
         if self.llenv.is_some() {
             arg + 1
@@ -441,7 +468,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         }
     }
 
-    pub fn env_arg_pos(&self) -> uint {
+    pub fn env_arg_pos(&self) -> usize {
         if self.caller_expects_out_pointer {
             1
         } else {
@@ -534,6 +561,12 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
                                          self.param_substs,
                                          value)
     }
+
+    /// This is the same as `common::type_needs_drop`, except that it
+    /// may use or update caches within this `FunctionContext`.
+    pub fn type_needs_drop(&self, ty: Ty<'tcx>) -> bool {
+        type_needs_drop_given_env(self.ccx.tcx(), ty, &self.param_env)
+    }
 }
 
 // Basic block context.  We create a block context for each basic block
@@ -603,10 +636,10 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
 
     pub fn def(&self, nid: ast::NodeId) -> def::Def {
         match self.tcx().def_map.borrow().get(&nid) {
-            Some(v) => v.clone(),
+            Some(v) => v.full_def(),
             None => {
                 self.tcx().sess.bug(&format!(
-                    "no def associated with node id {}", nid)[]);
+                    "no def associated with node id {}", nid));
             }
         }
     }
@@ -676,7 +709,7 @@ impl<'blk, 'tcx> mc::Typer<'tcx> for BlockS<'blk, 'tcx> {
     }
 
     fn upvar_capture(&self, upvar_id: ty::UpvarId) -> Option<ty::UpvarCapture> {
-        Some(self.tcx().upvar_capture_map.borrow()[upvar_id].clone())
+        Some(self.tcx().upvar_capture_map.borrow().get(&upvar_id).unwrap().clone())
     }
 
     fn type_moves_by_default(&self, span: Span, ty: Ty<'tcx>) -> bool {
@@ -774,6 +807,10 @@ pub fn C_i32(ccx: &CrateContext, i: i32) -> ValueRef {
     C_integral(Type::i32(ccx), i as u64, true)
 }
 
+pub fn C_u32(ccx: &CrateContext, i: u32) -> ValueRef {
+    C_integral(Type::i32(ccx), i as u64, false)
+}
+
 pub fn C_u64(ccx: &CrateContext, i: u64) -> ValueRef {
     C_integral(Type::i64(ccx), i, false)
 }
@@ -809,13 +846,13 @@ pub trait AsU64 { fn as_u64(self) -> u64; }
 // are host-architecture-dependent
 impl AsI64 for i64 { fn as_i64(self) -> i64 { self as i64 }}
 impl AsI64 for i32 { fn as_i64(self) -> i64 { self as i64 }}
-impl AsI64 for int { fn as_i64(self) -> i64 { self as i64 }}
+impl AsI64 for isize { fn as_i64(self) -> i64 { self as i64 }}
 
 impl AsU64 for u64  { fn as_u64(self) -> u64 { self as u64 }}
 impl AsU64 for u32  { fn as_u64(self) -> u64 { self as u64 }}
-impl AsU64 for uint { fn as_u64(self) -> u64 { self as u64 }}
+impl AsU64 for usize { fn as_u64(self) -> u64 { self as u64 }}
 
-pub fn C_u8(ccx: &CrateContext, i: uint) -> ValueRef {
+pub fn C_u8(ccx: &CrateContext, i: usize) -> ValueRef {
     C_integral(Type::i8(ccx), i as u64, false)
 }
 
@@ -926,6 +963,32 @@ pub fn const_to_uint(v: ValueRef) -> u64 {
     }
 }
 
+fn is_const_integral(v: ValueRef) -> bool {
+    unsafe {
+        !llvm::LLVMIsAConstantInt(v).is_null()
+    }
+}
+
+pub fn const_to_opt_int(v: ValueRef) -> Option<i64> {
+    unsafe {
+        if is_const_integral(v) {
+            Some(llvm::LLVMConstIntGetSExtValue(v))
+        } else {
+            None
+        }
+    }
+}
+
+pub fn const_to_opt_uint(v: ValueRef) -> Option<u64> {
+    unsafe {
+        if is_const_integral(v) {
+            Some(llvm::LLVMConstIntGetZExtValue(v))
+        } else {
+            None
+        }
+    }
+}
+
 pub fn is_undef(val: ValueRef) -> bool {
     unsafe {
         llvm::LLVMIsUndef(val) != False
@@ -961,9 +1024,9 @@ pub fn expr_ty_adjusted<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, ex: &ast::Expr) ->
 /// do not (necessarily) resolve all nested obligations on the impl. Note that type check should
 /// guarantee to us that all nested obligations *could be* resolved if we wanted to.
 pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                                span: Span,
-                                trait_ref: ty::PolyTraitRef<'tcx>)
-                                -> traits::Vtable<'tcx, ()>
+                                    span: Span,
+                                    trait_ref: ty::PolyTraitRef<'tcx>)
+                                    -> traits::Vtable<'tcx, ()>
 {
     let tcx = ccx.tcx();
 
@@ -988,8 +1051,9 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     // shallow result we are looking for -- that is, what specific impl.
     let typer = NormalizingClosureTyper::new(tcx);
     let mut selcx = traits::SelectionContext::new(&infcx, &typer);
-    let obligation = traits::Obligation::new(traits::ObligationCause::dummy(),
-                                             trait_ref.to_poly_trait_predicate());
+    let obligation =
+        traits::Obligation::new(traits::ObligationCause::misc(span, ast::DUMMY_NODE_ID),
+                                trait_ref.to_poly_trait_predicate());
     let selection = match selcx.select(&obligation) {
         Ok(Some(selection)) => selection,
         Ok(None) => {
@@ -1011,7 +1075,7 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                 span,
                 &format!("Encountered error `{}` selecting `{}` during trans",
                         e.repr(tcx),
-                        trait_ref.repr(tcx))[])
+                        trait_ref.repr(tcx)))
         }
     };
 
@@ -1022,13 +1086,42 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let vtable = selection.map_move_nested(|predicate| {
         fulfill_cx.register_predicate_obligation(&infcx, predicate);
     });
-    let vtable = drain_fulfillment_cx(span, &infcx, &mut fulfill_cx, &vtable);
+    let vtable = drain_fulfillment_cx_or_panic(span, &infcx, &mut fulfill_cx, &vtable);
 
     info!("Cache miss: {}", trait_ref.repr(ccx.tcx()));
     ccx.trait_cache().borrow_mut().insert(trait_ref,
                                           vtable.clone());
 
     vtable
+}
+
+/// Normalizes the predicates and checks whether they hold.  If this
+/// returns false, then either normalize encountered an error or one
+/// of the predicates did not hold. Used when creating vtables to
+/// check for unsatisfiable methods.
+pub fn normalize_and_test_predicates<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                                               predicates: Vec<ty::Predicate<'tcx>>)
+                                               -> bool
+{
+    debug!("normalize_and_test_predicates(predicates={})",
+           predicates.repr(ccx.tcx()));
+
+    let tcx = ccx.tcx();
+    let infcx = infer::new_infer_ctxt(tcx);
+    let typer = NormalizingClosureTyper::new(tcx);
+    let mut selcx = traits::SelectionContext::new(&infcx, &typer);
+    let mut fulfill_cx = traits::FulfillmentContext::new();
+    let cause = traits::ObligationCause::dummy();
+    let traits::Normalized { value: predicates, obligations } =
+        traits::normalize(&mut selcx, cause.clone(), &predicates);
+    for obligation in obligations {
+        fulfill_cx.register_predicate_obligation(&infcx, obligation);
+    }
+    for predicate in predicates {
+        let obligation = traits::Obligation::new(cause.clone(), predicate);
+        fulfill_cx.register_predicate_obligation(&infcx, obligation);
+    }
+    drain_fulfillment_cx(&infcx, &mut fulfill_cx, &()).is_ok()
 }
 
 pub struct NormalizingClosureTyper<'a,'tcx:'a> {
@@ -1078,11 +1171,35 @@ impl<'a,'tcx> ty::ClosureTyper<'tcx> for NormalizingClosureTyper<'a,'tcx> {
     }
 }
 
-pub fn drain_fulfillment_cx<'a,'tcx,T>(span: Span,
-                                   infcx: &infer::InferCtxt<'a,'tcx>,
-                                   fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
-                                   result: &T)
-                                   -> T
+pub fn drain_fulfillment_cx_or_panic<'a,'tcx,T>(span: Span,
+                                                infcx: &infer::InferCtxt<'a,'tcx>,
+                                                fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
+                                                result: &T)
+                                                -> T
+    where T : TypeFoldable<'tcx> + Repr<'tcx>
+{
+    match drain_fulfillment_cx(infcx, fulfill_cx, result) {
+        Ok(v) => v,
+        Err(errors) => {
+            infcx.tcx.sess.span_bug(
+                span,
+                &format!("Encountered errors `{}` fulfilling during trans",
+                         errors.repr(infcx.tcx)));
+        }
+    }
+}
+
+/// Finishes processes any obligations that remain in the fulfillment
+/// context, and then "freshens" and returns `result`. This is
+/// primarily used during normalization and other cases where
+/// processing the obligations in `fulfill_cx` may cause type
+/// inference variables that appear in `result` to be unified, and
+/// hence we need to process those obligations to get the complete
+/// picture of the type.
+pub fn drain_fulfillment_cx<'a,'tcx,T>(infcx: &infer::InferCtxt<'a,'tcx>,
+                                       fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
+                                       result: &T)
+                                       -> StdResult<T,Vec<traits::FulfillmentError<'tcx>>>
     where T : TypeFoldable<'tcx> + Repr<'tcx>
 {
     debug!("drain_fulfillment_cx(result={})",
@@ -1095,17 +1212,7 @@ pub fn drain_fulfillment_cx<'a,'tcx,T>(span: Span,
     match fulfill_cx.select_all_or_error(infcx, &typer) {
         Ok(()) => { }
         Err(errors) => {
-            if errors.iter().all(|e| e.is_overflow()) {
-                // See Ok(None) case above.
-                infcx.tcx.sess.span_fatal(
-                    span,
-                    "reached the recursion limit during monomorphization");
-            } else {
-                infcx.tcx.sess.span_bug(
-                    span,
-                    &format!("Encountered errors `{}` fulfilling during trans",
-                            errors.repr(infcx.tcx))[]);
-            }
+            return Err(errors);
         }
     }
 
@@ -1114,11 +1221,11 @@ pub fn drain_fulfillment_cx<'a,'tcx,T>(span: Span,
     // sort of overkill because we do not expect there to be any
     // unbound type variables, hence no `TyFresh` types should ever be
     // inserted.
-    result.fold_with(&mut infcx.freshener())
+    Ok(result.fold_with(&mut infcx.freshener()))
 }
 
 // Key used to lookup values supplied for type parameters in an expr.
-#[derive(Copy, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum ExprOrMethodCall {
     // Type parameters for a path like `None::<int>`
     ExprId(ast::NodeId),
@@ -1138,13 +1245,13 @@ pub fn node_id_substs<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
             ty::node_id_item_substs(tcx, id).substs
         }
         MethodCallKey(method_call) => {
-            (*tcx.method_map.borrow())[method_call].substs.clone()
+            tcx.method_map.borrow().get(&method_call).unwrap().substs.clone()
         }
     };
 
     if substs.types.any(|t| ty::type_needs_infer(*t)) {
             tcx.sess.bug(&format!("type parameters for node {:?} include inference types: {:?}",
-                                 node, substs.repr(tcx))[]);
+                                 node, substs.repr(tcx)));
         }
 
         monomorphize::apply_param_substs(tcx,

@@ -8,6 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(collections)]
+
 extern crate collections;
 
 use std::collections::BitVec;
@@ -15,9 +19,9 @@ use std::num::Float;
 
 fn main() {
     // Generate sieve of Eratosthenes for n up to 1e6
-    let n = 1000000_usize;
+    let n = 1000000;
     let mut sieve = BitVec::from_elem(n+1, true);
-    let limit: uint = (n as f32).sqrt() as uint;
+    let limit: usize = (n as f32).sqrt() as usize;
     for i in 2..limit+1 {
         if sieve[i] {
             let mut j = 0;
@@ -32,4 +36,3 @@ fn main() {
         }
     }
 }
-

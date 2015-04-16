@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(asm)]
 
 type History = Vec<&'static str>;
@@ -20,8 +22,8 @@ fn wrap<A>(x:A, which: &'static str, history: &mut History) -> A {
 macro_rules! demo {
     ( $output_constraint:tt ) => {
         {
-            let mut x: int = 0;
-            let y: int = 1;
+            let mut x: isize = 0;
+            let y: isize = 1;
 
             let mut history: History = vec!();
             unsafe {

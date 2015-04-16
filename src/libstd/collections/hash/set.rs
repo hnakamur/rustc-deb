@@ -18,9 +18,7 @@ use default::Default;
 use fmt::Debug;
 use fmt;
 use hash::Hash;
-use iter::{
-    Iterator, IntoIterator, ExactSizeIterator, IteratorExt, FromIterator, Map, Chain, Extend,
-};
+use iter::{Iterator, IntoIterator, ExactSizeIterator, FromIterator, Map, Chain, Extend};
 use ops::{BitOr, BitAnd, BitXor, Sub};
 use option::Option::{Some, None, self};
 
@@ -36,9 +34,24 @@ use super::state::HashState;
 
 /// An implementation of a hash set using the underlying representation of a
 /// HashMap where the value is (). As with the `HashMap` type, a `HashSet`
-/// requires that the elements implement the `Eq` and `Hash` traits.
+/// requires that the elements implement the `Eq` and `Hash` traits. This can
+/// frequently be achieved by using `#[derive(Eq, Hash)]`. If you implement
+/// these yourself, it is important that the following property holds:
 ///
-/// # Example
+/// ```text
+/// k1 == k2 -> hash(k1) == hash(k2)
+/// ```
+///
+/// In other words, if two keys are equal, their hashes must be equal.
+///
+///
+/// It is a logic error for an item to be modified in such a way that the
+/// item's hash, as determined by the `Hash` trait, or its equality, as
+/// determined by the `Eq` trait, changes while it is in the set. This is
+/// normally only possible through `Cell`, `RefCell`, global state, I/O, or
+/// unsafe code.
+///
+/// # Examples
 ///
 /// ```
 /// use std::collections::HashSet;
@@ -100,7 +113,7 @@ pub struct HashSet<T, S = RandomState> {
 impl<T: Hash + Eq> HashSet<T, RandomState> {
     /// Create an empty HashSet.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -115,7 +128,7 @@ impl<T: Hash + Eq> HashSet<T, RandomState> {
     /// Create an empty HashSet with space for at least `n` elements in
     /// the hash table.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -136,9 +149,10 @@ impl<T, S> HashSet<T, S>
     ///
     /// The hash set is also created with the default initial capacity.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(std_misc)]
     /// use std::collections::HashSet;
     /// use std::collections::hash_map::RandomState;
     ///
@@ -160,9 +174,10 @@ impl<T, S> HashSet<T, S>
     /// cause many collisions and very poor performance. Setting it
     /// manually using this function can expose a DoS attack vector.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(std_misc)]
     /// use std::collections::HashSet;
     /// use std::collections::hash_map::RandomState;
     ///
@@ -181,7 +196,7 @@ impl<T, S> HashSet<T, S>
 
     /// Returns the number of elements the set can hold without reallocating.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -202,7 +217,7 @@ impl<T, S> HashSet<T, S>
     ///
     /// Panics if the new allocation size overflows `usize`.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -218,7 +233,7 @@ impl<T, S> HashSet<T, S>
     /// down as much as possible while maintaining the internal rules
     /// and possibly leaving some space in accordance with the resize policy.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -238,7 +253,7 @@ impl<T, S> HashSet<T, S>
     /// An iterator visiting all elements in arbitrary order.
     /// Iterator element type is &'a T.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -260,7 +275,7 @@ impl<T, S> HashSet<T, S>
     /// of the set in arbitrary order. The set cannot be used after calling
     /// this.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -286,9 +301,10 @@ impl<T, S> HashSet<T, S>
 
     /// Visit the values representing the difference.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::collections::HashSet;
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
@@ -316,9 +332,10 @@ impl<T, S> HashSet<T, S>
 
     /// Visit the values representing the symmetric difference.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::collections::HashSet;
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
@@ -342,9 +359,10 @@ impl<T, S> HashSet<T, S>
 
     /// Visit the values representing the intersection.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::collections::HashSet;
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
@@ -367,9 +385,10 @@ impl<T, S> HashSet<T, S>
 
     /// Visit the values representing the union.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::collections::HashSet;
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
@@ -389,7 +408,7 @@ impl<T, S> HashSet<T, S>
 
     /// Return the number of elements in the set
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -404,7 +423,7 @@ impl<T, S> HashSet<T, S>
 
     /// Returns true if the set contains no elements
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -430,7 +449,7 @@ impl<T, S> HashSet<T, S>
 
     /// Clears the set, removing all values.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -449,9 +468,10 @@ impl<T, S> HashSet<T, S>
     /// `Hash` and `Eq` on the borrowed form *must* match those for
     /// the value type.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::collections::HashSet;
     ///
     /// let set: HashSet<_> = [1, 2, 3].iter().cloned().collect();
@@ -468,9 +488,10 @@ impl<T, S> HashSet<T, S>
     /// Returns `true` if the set has no elements in common with `other`.
     /// This is equivalent to checking for an empty intersection.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::collections::HashSet;
     ///
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
@@ -489,9 +510,10 @@ impl<T, S> HashSet<T, S>
 
     /// Returns `true` if the set is a subset of another.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::collections::HashSet;
     ///
     /// let sup: HashSet<_> = [1, 2, 3].iter().cloned().collect();
@@ -510,9 +532,10 @@ impl<T, S> HashSet<T, S>
 
     /// Returns `true` if the set is a superset of another.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::collections::HashSet;
     ///
     /// let sub: HashSet<_> = [1, 2].iter().cloned().collect();
@@ -536,7 +559,7 @@ impl<T, S> HashSet<T, S>
     /// Adds a value to the set. Returns `true` if the value was not already
     /// present in the set.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -557,7 +580,7 @@ impl<T, S> HashSet<T, S>
     /// `Hash` and `Eq` on the borrowed form *must* match those for
     /// the value type.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -598,14 +621,7 @@ impl<T, S> fmt::Debug for HashSet<T, S>
           S: HashState
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "HashSet {{"));
-
-        for (i, x) in self.iter().enumerate() {
-            if i != 0 { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}", *x));
-        }
-
-        write!(f, "}}")
+        self.iter().fold(f.debug_set(), |b, e| b.entry(e)).finish()
     }
 }
 
@@ -847,6 +863,9 @@ impl<T, S> IntoIterator for HashSet<T, S>
     }
 }
 
+impl<'a, K> Clone for Iter<'a, K> {
+    fn clone(&self) -> Iter<'a, K> { Iter { iter: self.iter.clone() } }
+}
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K> Iterator for Iter<'a, K> {
     type Item = &'a K;
@@ -883,6 +902,12 @@ impl<'a, K> ExactSizeIterator for Drain<'a, K> {
     fn len(&self) -> usize { self.iter.len() }
 }
 
+impl<'a, T, S> Clone for Intersection<'a, T, S> {
+    fn clone(&self) -> Intersection<'a, T, S> {
+        Intersection { iter: self.iter.clone(), ..*self }
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T, S> Iterator for Intersection<'a, T, S>
     where T: Eq + Hash, S: HashState
@@ -903,6 +928,12 @@ impl<'a, T, S> Iterator for Intersection<'a, T, S>
     fn size_hint(&self) -> (usize, Option<usize>) {
         let (_, upper) = self.iter.size_hint();
         (0, upper)
+    }
+}
+
+impl<'a, T, S> Clone for Difference<'a, T, S> {
+    fn clone(&self) -> Difference<'a, T, S> {
+        Difference { iter: self.iter.clone(), ..*self }
     }
 }
 
@@ -929,6 +960,12 @@ impl<'a, T, S> Iterator for Difference<'a, T, S>
     }
 }
 
+impl<'a, T, S> Clone for SymmetricDifference<'a, T, S> {
+    fn clone(&self) -> SymmetricDifference<'a, T, S> {
+        SymmetricDifference { iter: self.iter.clone() }
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T, S> Iterator for SymmetricDifference<'a, T, S>
     where T: Eq + Hash, S: HashState
@@ -937,6 +974,10 @@ impl<'a, T, S> Iterator for SymmetricDifference<'a, T, S>
 
     fn next(&mut self) -> Option<&'a T> { self.iter.next() }
     fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
+}
+
+impl<'a, T, S> Clone for Union<'a, T, S> {
+    fn clone(&self) -> Union<'a, T, S> { Union { iter: self.iter.clone() } }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1151,7 +1192,7 @@ mod test_set {
         };
 
         let v = hs.into_iter().collect::<Vec<char>>();
-        assert!(['a', 'b'] == v || ['b', 'a'] == v);
+        assert!(v == ['a', 'b'] || v == ['b', 'a']);
     }
 
     #[test]
@@ -1186,8 +1227,8 @@ mod test_set {
 
         let set_str = format!("{:?}", set);
 
-        assert!(set_str == "HashSet {1, 2}" || set_str == "HashSet {2, 1}");
-        assert_eq!(format!("{:?}", empty), "HashSet {}");
+        assert!(set_str == "{1, 2}" || set_str == "{2, 1}");
+        assert_eq!(format!("{:?}", empty), "{}");
     }
 
     #[test]

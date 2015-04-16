@@ -8,17 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(std_misc)]
+
 use std::thread::Builder;
 use std::thunk::Thunk;
 
-static generations: uint = 1024+256+128+49;
+static generations: usize = 1024+256+128+49;
 
 fn spawn(f: Thunk<'static>) {
-    Builder::new().stack_size(32 * 1024).spawn(move|| f.invoke(()));
+    Builder::new().stack_size(32 * 1024).spawn(move|| f());
 }
 
-fn child_no(x: uint) -> Thunk<'static> {
-    Thunk::new(move|| {
+fn child_no(x: usize) -> Thunk<'static> {
+    Box::new(move|| {
         if x < generations {
             spawn(child_no(x+1));
         }

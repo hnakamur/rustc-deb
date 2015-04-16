@@ -8,6 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(rand, core)]
+
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use std::rand::{thread_rng, Rng, Rand};
 use std::thread;
@@ -53,7 +57,7 @@ impl Drop for DropCounter {
 }
 
 pub fn main() {
-    assert!(MAX_LEN <= std::usize::BITS);
+    assert!(MAX_LEN <= std::usize::BITS as usize);
     // len can't go above 64.
     for len in 2..MAX_LEN {
         for _ in 0..REPEATS {

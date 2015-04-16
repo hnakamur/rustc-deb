@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-static mut n_mut: uint = 0;
+// pretty-expanded FIXME #23616
 
-static n: &'static uint = unsafe{ &n_mut };
+static mut n_mut: usize = 0;
+
+static n: &'static usize = unsafe{ &n_mut };
 
 fn main() {}

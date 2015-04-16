@@ -14,22 +14,24 @@
 // boxes. Make sure that we don't free the box as we match the
 // pattern.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 
-fn getaddr(box ref x: Box<uint>) -> *const uint {
-    let addr: *const uint = &*x;
+fn getaddr(box ref x: Box<usize>) -> *const usize {
+    let addr: *const usize = &*x;
     addr
 }
 
-fn checkval(box ref x: Box<uint>) -> uint {
+fn checkval(box ref x: Box<usize>) -> usize {
     *x
 }
 
 pub fn main() {
-    let obj = box 1;
-    let objptr: *const uint = &*obj;
+    let obj: Box<_> = box 1;
+    let objptr: *const usize = &*obj;
     let xptr = getaddr(obj);
     assert_eq!(objptr, xptr);
 

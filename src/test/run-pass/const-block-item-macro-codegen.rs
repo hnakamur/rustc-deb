@@ -11,14 +11,16 @@
 // General test that function items in static blocks
 // can be generated with a macro.
 
+// pretty-expanded FIXME #23616
+
 struct MyType {
     desc: &'static str,
-    data: uint,
-    code: fn(uint, uint) -> uint
+    data: usize,
+    code: fn(usize, usize) -> usize
 }
 
 impl MyType {
-    fn eval(&self, a: uint) -> uint {
+    fn eval(&self, a: usize) -> usize {
         (self.code)(self.data, a)
     }
 }
@@ -26,7 +28,7 @@ impl MyType {
 macro_rules! codegen {
     ($e:expr, $v:expr) => {
         {
-            fn generated(a: uint, b: uint) -> uint {
+            fn generated(a: usize, b: usize) -> usize {
                 a - ($e * b)
             }
             MyType {

@@ -7,9 +7,11 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+// pretty-expanded FIXME #23616
+
 use color::{red, green, blue, black, white, imaginary, purple, orange};
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 enum color {
     red = 0xff0000,
     green = 0x00ff00,
@@ -23,7 +25,7 @@ enum color {
 
 impl PartialEq for color {
     fn eq(&self, other: &color) -> bool {
-        ((*self) as uint) == ((*other) as uint)
+        ((*self) as usize) == ((*other) as usize)
     }
     fn ne(&self, other: &color) -> bool { !(*self).eq(other) }
 }
@@ -39,9 +41,9 @@ pub fn main() {
     test_color(orange, 4, "orange".to_string());
 }
 
-fn test_color(color: color, val: int, name: String) {
+fn test_color(color: color, val: isize, name: String) {
     //assert!(unsafe::transmute(color) == val);
-    assert_eq!(color as int, val);
+    assert_eq!(color as isize, val);
     assert!(get_color_alt(color) == name);
     assert!(get_color_if(color) == name);
 }

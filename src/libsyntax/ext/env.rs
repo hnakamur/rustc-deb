@@ -59,7 +59,7 @@ pub fn expand_option_env<'cx>(cx: &'cx mut ExtCtxt, sp: Span, tts: &[ast::TokenT
                                           &s[..]))))
       }
     };
-    MacExpr::new(e)
+    MacEager::expr(e)
 }
 
 pub fn expand_env<'cx>(cx: &'cx mut ExtCtxt, sp: Span, tts: &[ast::TokenTree])
@@ -83,7 +83,7 @@ pub fn expand_env<'cx>(cx: &'cx mut ExtCtxt, sp: Span, tts: &[ast::TokenTree])
         None => {
             token::intern_and_get_ident(&format!("environment variable `{}` \
                                                  not defined",
-                                                var)[])
+                                                var))
         }
         Some(second) => {
             match expr_to_string(cx, second, "expected string literal") {
@@ -108,5 +108,5 @@ pub fn expand_env<'cx>(cx: &'cx mut ExtCtxt, sp: Span, tts: &[ast::TokenTree])
         }
         Ok(s) => cx.expr_str(sp, token::intern_and_get_ident(&s))
     };
-    MacExpr::new(e)
+    MacEager::expr(e)
 }

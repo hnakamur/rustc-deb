@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 enum test { thing = -5 >> 1_usize }
 pub fn main() {
-    assert_eq!(test::thing as int, -3);
+    assert_eq!(test::thing as isize, -3);
 }

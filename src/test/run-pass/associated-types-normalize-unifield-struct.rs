@@ -12,16 +12,18 @@
 // various special paths in the `type_is_immediate` function.
 
 
+// pretty-expanded FIXME #23616
+
 pub trait OffsetState: Sized {}
 pub trait Offset {
     type State: OffsetState;
     fn dummy(&self) { }
 }
 
-#[derive(Copy)] pub struct X;
+#[derive(Copy, Clone)] pub struct X;
 impl Offset for X { type State = Y; }
 
-#[derive(Copy)] pub struct Y;
+#[derive(Copy, Clone)] pub struct Y;
 impl OffsetState for Y {}
 
 pub fn now() -> DateTime<X> { from_utc(Y) }

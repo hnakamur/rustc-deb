@@ -8,16 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::any::TypeId;
+#![feature(core)]
+
+use std::any::{Any, TypeId};
 
 pub struct A;
 pub struct B(Option<A>);
-pub struct C(Option<int>);
+pub struct C(Option<isize>);
 pub struct D(Option<&'static str>);
-pub struct E(Result<&'static str, int>);
+pub struct E(Result<&'static str, isize>);
 
-pub type F = Option<int>;
-pub type G = uint;
+pub type F = Option<isize>;
+pub type G = usize;
 pub type H = &'static str;
 
 pub unsafe fn id_A() -> TypeId { TypeId::of::<A>() }
@@ -29,4 +31,4 @@ pub unsafe fn id_F() -> TypeId { TypeId::of::<F>() }
 pub unsafe fn id_G() -> TypeId { TypeId::of::<G>() }
 pub unsafe fn id_H() -> TypeId { TypeId::of::<H>() }
 
-pub unsafe fn foo<T: 'static>() -> TypeId { TypeId::of::<T>() }
+pub unsafe fn foo<T:Any>() -> TypeId { TypeId::of::<T>() }

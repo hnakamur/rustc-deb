@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![deny(type_limits)]
 
 pub fn main() {
-    let i: uint = 0;
-    assert!(i <= 0xFFFF_FFFF_usize);
+    let i: usize = 0;
+    assert!(i <= 0xFFFF_FFFF);
 
-    let i: int = 0;
-    assert!(i >= -0x8000_0000__isize);
-    assert!(i <= 0x7FFF_FFFF__isize);
+    let i: isize = 0;
+    assert!(i >= -0x8000_0000);
+    assert!(i <= 0x7FFF_FFFF);
 }

@@ -15,19 +15,18 @@
 use self::PathPrefix::*;
 
 use ascii::AsciiExt;
-use char::CharExt;
 use clone::Clone;
 use cmp::{Ordering, Eq, Ord, PartialEq, PartialOrd};
 use fmt;
 use hash;
 use old_io::Writer;
 use iter::{AdditiveIterator, Extend};
-use iter::{Iterator, IteratorExt, Map, repeat};
+use iter::{Iterator, Map, repeat};
 use mem;
 use option::Option::{self, Some, None};
 use result::Result::{self, Ok, Err};
-use slice::{SliceExt, SliceConcatExt};
-use str::{SplitTerminator, FromStr, StrExt};
+use slice::SliceConcatExt;
+use str::{SplitTerminator, FromStr};
 use string::{String, ToString};
 use vec::Vec;
 
@@ -82,7 +81,7 @@ pub type Components<'a> =
 pub struct Path {
     repr: String, // assumed to never be empty
     prefix: Option<PathPrefix>,
-    sepidx: Option<uint> // index of the final separator in the non-prefix portion of repr
+    sepidx: Option<usize> // index of the final separator in the non-prefix portion of repr
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -127,21 +126,6 @@ impl FromStr for Path {
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct ParsePathError;
 
-#[cfg(stage0)]
-impl<S: hash::Writer + hash::Hasher> hash::Hash<S> for Path {
-    #[cfg(not(test))]
-    #[inline]
-    fn hash(&self, state: &mut S) {
-        self.repr.hash(state)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    fn hash(&self, _: &mut S) {
-        // No-op because the `hash` implementation will be wrong.
-    }
-}
-#[cfg(not(stage0))]
 #[stable(feature = "rust1", since = "1.0.0")]
 impl hash::Hash for Path {
     #[cfg(not(test))]
@@ -522,7 +506,7 @@ impl GenericPath for Path {
 
     fn path_relative_from(&self, base: &Path) -> Option<Path> {
         fn comp_requires_verbatim(s: &str) -> bool {
-            s == "." || s == ".." || s.contains_char(SEP2)
+            s == "." || s == ".." || s.contains(SEP2)
         }
 
         if !self.equiv_prefix(base) {
@@ -618,9 +602,11 @@ impl Path {
     ///
     /// Panics if the vector contains a `NUL`, or if it contains invalid UTF-8.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(old_path)]
+    /// use std::old_path::{Path, GenericPath};
     /// println!("{}", Path::new(r"C:\some\path").display());
     /// ```
     #[inline]
@@ -632,9 +618,11 @@ impl Path {
     ///
     /// Returns `None` if the vector contains a `NUL`, or if it contains invalid UTF-8.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(old_path)]
+    /// use std::old_path::{Path, GenericPath};
     /// let path = Path::new_opt(r"C:\some\path");
     ///
     /// match path {
@@ -761,7 +749,7 @@ impl Path {
                     if prefix.is_some() && comps.is_empty() {
                         match prefix.unwrap() {
                             DiskPrefix => {
-                                let len = prefix_len(prefix) + is_abs as uint;
+                                let len = prefix_len(prefix) + is_abs as usize;
                                 let mut s = String::from_str(&s[..len]);
                                 unsafe {
                                     let v = s.as_mut_vec();
@@ -776,7 +764,7 @@ impl Path {
                                 Some(s)
                             }
                             VerbatimDiskPrefix => {
-                                let len = prefix_len(prefix) + is_abs as uint;
+                                let len = prefix_len(prefix) + is_abs as usize;
                                 let mut s = String::from_str(&s[..len]);
                                 unsafe {
                                     let v = s.as_mut_vec();
@@ -850,7 +838,7 @@ impl Path {
         self.sepidx = idx.and_then(|x| if x < prefixlen { None } else { Some(x) });
     }
 
-    fn prefix_len(&self) -> uint {
+    fn prefix_len(&self) -> usize {
         prefix_len(self.prefix)
     }
 
@@ -859,7 +847,7 @@ impl Path {
     // end is the length of the string, normally, or the index of the final character if it is
     // a non-semantic trailing separator in a verbatim string.
     // If the prefix is considered the separator, before and after are the same.
-    fn sepidx_or_prefix_len(&self) -> Option<(uint,uint,uint)> {
+    fn sepidx_or_prefix_len(&self) -> Option<(usize,usize,usize)> {
         match self.sepidx {
             None => match self.prefix_len() { 0 => None, x => Some((x,x,self.repr.len())) },
             Some(x) => {
@@ -985,16 +973,16 @@ pub fn is_sep_byte_verbatim(u: &u8) -> bool {
 /// Prefix types for Path
 #[derive(Copy, PartialEq, Clone, Debug)]
 pub enum PathPrefix {
-    /// Prefix `\\?\`, uint is the length of the following component
-    VerbatimPrefix(uint),
+    /// Prefix `\\?\`, usize is the length of the following component
+    VerbatimPrefix(usize),
     /// Prefix `\\?\UNC\`, uints are the lengths of the UNC components
-    VerbatimUNCPrefix(uint, uint),
+    VerbatimUNCPrefix(usize, usize),
     /// Prefix `\\?\C:\` (for any alphabetic character)
     VerbatimDiskPrefix,
-    /// Prefix `\\.\`, uint is the length of the following component
-    DeviceNSPrefix(uint),
+    /// Prefix `\\.\`, usize is the length of the following component
+    DeviceNSPrefix(usize),
     /// UNC prefix `\\server\share`, uints are the lengths of the server/share
-    UNCPrefix(uint, uint),
+    UNCPrefix(usize, usize),
     /// Prefix `C:` for any alphabetic character
     DiskPrefix
 }
@@ -1049,7 +1037,7 @@ fn parse_prefix<'a>(mut path: &'a str) -> Option<PathPrefix> {
     }
     return None;
 
-    fn parse_two_comps(mut path: &str, f: fn(char) -> bool) -> Option<(uint, uint)> {
+    fn parse_two_comps(mut path: &str, f: fn(char) -> bool) -> Option<(usize, usize)> {
         let idx_a = match path.find(f) {
             None => return None,
             Some(x) => x
@@ -1119,7 +1107,7 @@ fn prefix_is_verbatim(p: Option<PathPrefix>) -> bool {
     }
 }
 
-fn prefix_len(p: Option<PathPrefix>) -> uint {
+fn prefix_len(p: Option<PathPrefix>) -> usize {
     match p {
         None => 0,
         Some(VerbatimPrefix(x)) => 4 + x,
@@ -1138,11 +1126,9 @@ mod tests {
     use super::*;
 
     use clone::Clone;
-    use iter::IteratorExt;
+    use iter::Iterator;
     use option::Option::{self, Some, None};
     use old_path::GenericPath;
-    use slice::{AsSlice, SliceExt};
-    use str::Str;
     use string::ToString;
     use vec::Vec;
 
@@ -1225,8 +1211,8 @@ mod tests {
     fn test_paths() {
         let empty: &[u8] = &[];
         t!(v: Path::new(empty), b".");
-        t!(v: Path::new(b"\\"), b"\\");
-        t!(v: Path::new(b"a\\b\\c"), b"a\\b\\c");
+        t!(v: Path::new(&b"\\"[..]), b"\\");
+        t!(v: Path::new(&b"a\\b\\c"[..]), b"a\\b\\c");
 
         t!(s: Path::new(""), ".");
         t!(s: Path::new("\\"), "\\");
@@ -1258,8 +1244,8 @@ mod tests {
         t!(s: Path::new("foo\\..\\..\\.."), "..\\..");
         t!(s: Path::new("foo\\..\\..\\bar"), "..\\bar");
 
-        assert_eq!(Path::new(b"foo\\bar").into_vec(), b"foo\\bar");
-        assert_eq!(Path::new(b"\\foo\\..\\..\\bar").into_vec(), b"\\bar");
+        assert_eq!(Path::new(&b"foo\\bar"[..]).into_vec(), b"foo\\bar");
+        assert_eq!(Path::new(&b"\\foo\\..\\..\\bar"[..]).into_vec(), b"\\bar");
 
         t!(s: Path::new("\\\\a"), "\\a");
         t!(s: Path::new("\\\\a\\"), "\\a");
@@ -1312,9 +1298,9 @@ mod tests {
 
     #[test]
     fn test_opt_paths() {
-        assert!(Path::new_opt(b"foo\\bar\0") == None);
-        assert!(Path::new_opt(b"foo\\bar\x80") == None);
-        t!(v: Path::new_opt(b"foo\\bar").unwrap(), b"foo\\bar");
+        assert!(Path::new_opt(&b"foo\\bar\0"[..]) == None);
+        assert!(Path::new_opt(&b"foo\\bar\x80"[..]) == None);
+        t!(v: Path::new_opt(&b"foo\\bar"[..]).unwrap(), b"foo\\bar");
         assert!(Path::new_opt("foo\\bar\0") == None);
         t!(s: Path::new_opt("foo\\bar").unwrap(), "foo\\bar");
     }
@@ -1323,38 +1309,38 @@ mod tests {
     fn test_null_byte() {
         use thread;
         let result = thread::spawn(move|| {
-            Path::new(b"foo/bar\0");
+            Path::new(&b"foo/bar\0"[..]);
         }).join();
         assert!(result.is_err());
 
         let result = thread::spawn(move|| {
-            Path::new("test").set_filename(b"f\0o")
+            Path::new("test").set_filename(&b"f\0o"[..])
         }).join();
         assert!(result.is_err());
 
         let result = thread::spawn(move || {
-            Path::new("test").push(b"f\0o");
+            Path::new("test").push(&b"f\0o"[..]);
         }).join();
         assert!(result.is_err());
     }
 
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn test_not_utf8_panics() {
-        Path::new(b"hello\x80.txt");
+        Path::new(&b"hello\x80.txt"[..]);
     }
 
     #[test]
     fn test_display_str() {
         let path = Path::new("foo");
         assert_eq!(path.display().to_string(), "foo");
-        let path = Path::new(b"\\");
+        let path = Path::new(&b"\\"[..]);
         assert_eq!(path.filename_display().to_string(), "");
 
         let path = Path::new("foo");
         let mo = path.display().as_cow();
         assert_eq!(mo, "foo");
-        let path = Path::new(b"\\");
+        let path = Path::new(&b"\\"[..]);
         let mo = path.filename_display().as_cow();
         assert_eq!(mo, "");
     }
@@ -1405,7 +1391,7 @@ mod tests {
             )
         }
 
-        t!(v: b"a\\b\\c", filename, Some(b"c"));
+        t!(v: &b"a\\b\\c"[..], filename, Some(&b"c"[..]));
         t!(s: "a\\b\\c", filename_str, "c");
         t!(s: "\\a\\b\\c", filename_str, "c");
         t!(s: "a", filename_str, "a");
@@ -1438,7 +1424,7 @@ mod tests {
         t!(s: "\\\\.\\", filename_str, None, opt);
         t!(s: "\\\\?\\a\\b\\", filename_str, "b");
 
-        t!(v: b"a\\b\\c", dirname, b"a\\b");
+        t!(v: &b"a\\b\\c"[..], dirname, b"a\\b");
         t!(s: "a\\b\\c", dirname_str, "a\\b");
         t!(s: "\\a\\b\\c", dirname_str, "\\a\\b");
         t!(s: "a", dirname_str, ".");
@@ -1469,7 +1455,7 @@ mod tests {
         t!(s: "\\\\.\\foo", dirname_str, "\\\\.\\foo");
         t!(s: "\\\\?\\a\\b\\", dirname_str, "\\\\?\\a");
 
-        t!(v: b"hi\\there.txt", filestem, Some(b"there"));
+        t!(v: &b"hi\\there.txt"[..], filestem, Some(&b"there"[..]));
         t!(s: "hi\\there.txt", filestem_str, "there");
         t!(s: "hi\\there", filestem_str, "there");
         t!(s: "there.txt", filestem_str, "there");
@@ -1484,8 +1470,8 @@ mod tests {
         t!(s: "..\\..", filestem_str, None, opt);
         // filestem is based on filename, so we don't need the full set of prefix tests
 
-        t!(v: b"hi\\there.txt", extension, Some(b"txt"));
-        t!(v: b"hi\\there", extension, None);
+        t!(v: &b"hi\\there.txt"[..], extension, Some(&b"txt"[..]));
+        t!(v: &b"hi\\there"[..], extension, None);
         t!(s: "hi\\there.txt", extension_str, Some("txt"), opt);
         t!(s: "hi\\there", extension_str, None, opt);
         t!(s: "there.txt", extension_str, Some("txt"), opt);
@@ -1611,9 +1597,9 @@ mod tests {
         t!(s: "a\\b\\c", ["d", "\\e"], "\\e");
         t!(s: "a\\b\\c", ["d", "\\e", "f"], "\\e\\f");
         t!(s: "a\\b\\c", ["d".to_string(), "e".to_string()], "a\\b\\c\\d\\e");
-        t!(v: b"a\\b\\c", [b"d", b"e"], b"a\\b\\c\\d\\e");
-        t!(v: b"a\\b\\c", [b"d", b"\\e", b"f"], b"\\e\\f");
-        t!(v: b"a\\b\\c", [b"d".to_vec(), b"e".to_vec()],
+        t!(v: &b"a\\b\\c"[..], [&b"d"[..], &b"e"[..]], b"a\\b\\c\\d\\e");
+        t!(v: &b"a\\b\\c"[..], [&b"d"[..], &b"\\e"[..], &b"f"[..]], b"\\e\\f");
+        t!(v: &b"a\\b\\c"[..], [b"d".to_vec(), b"e".to_vec()],
            b"a\\b\\c\\d\\e");
     }
 
@@ -1645,11 +1631,11 @@ mod tests {
         t!(s: ".", ".", false);
         t!(s: "\\a", "\\", true);
         t!(s: "\\", "\\", false);
-        t!(b: b"a\\b\\c", b"a\\b", true);
-        t!(b: b"a", b".", true);
-        t!(b: b".", b".", false);
-        t!(b: b"\\a", b"\\", true);
-        t!(b: b"\\", b"\\", false);
+        t!(b: &b"a\\b\\c"[..], b"a\\b", true);
+        t!(b: &b"a"[..], b".", true);
+        t!(b: &b"."[..], b".", false);
+        t!(b: &b"\\a"[..], b"\\", true);
+        t!(b: &b"\\"[..], b"\\", false);
 
         t!(s: "C:\\a\\b", "C:\\a", true);
         t!(s: "C:\\a", "C:\\", true);
@@ -1698,8 +1684,8 @@ mod tests {
         t!(s: Path::new("a\\b").join("\\c\\d"), "\\c\\d");
         t!(s: Path::new(".").join("a\\b"), "a\\b");
         t!(s: Path::new("\\").join("a\\b"), "\\a\\b");
-        t!(v: Path::new(b"a\\b\\c").join(b".."), b"a\\b");
-        t!(v: Path::new(b"\\a\\b\\c").join(b"d"), b"\\a\\b\\c\\d");
+        t!(v: Path::new(&b"a\\b\\c"[..]).join(&b".."[..]), b"a\\b");
+        t!(v: Path::new(&b"\\a\\b\\c"[..]).join(&b"d"[..]), b"\\a\\b\\c\\d");
         // full join testing is covered under test_push_path, so no need for
         // the full set of prefix tests
     }
@@ -1750,8 +1736,8 @@ mod tests {
         t!(s: "a\\b\\c", ["..", "d"], "a\\b\\d");
         t!(s: "a\\b\\c", ["d", "\\e", "f"], "\\e\\f");
         t!(s: "a\\b\\c", ["d".to_string(), "e".to_string()], "a\\b\\c\\d\\e");
-        t!(v: b"a\\b\\c", [b"d", b"e"], b"a\\b\\c\\d\\e");
-        t!(v: b"a\\b\\c", [b"d".to_vec(), b"e".to_vec()],
+        t!(v: &b"a\\b\\c"[..], [&b"d"[..], &b"e"[..]], b"a\\b\\c\\d\\e");
+        t!(v: &b"a\\b\\c"[..], [b"d".to_vec(), b"e".to_vec()],
            b"a\\b\\c\\d\\e");
     }
 
@@ -1863,15 +1849,15 @@ mod tests {
             )
         }
 
-        t!(v: b"a\\b\\c", set_filename, with_filename, b"d");
-        t!(v: b"\\", set_filename, with_filename, b"foo");
+        t!(v: &b"a\\b\\c"[..], set_filename, with_filename, &b"d"[..]);
+        t!(v: &b"\\"[..], set_filename, with_filename, &b"foo"[..]);
         t!(s: "a\\b\\c", set_filename, with_filename, "d");
         t!(s: "\\", set_filename, with_filename, "foo");
         t!(s: ".", set_filename, with_filename, "foo");
         t!(s: "a\\b", set_filename, with_filename, "");
         t!(s: "a", set_filename, with_filename, "");
 
-        t!(v: b"hi\\there.txt", set_extension, with_extension, b"exe");
+        t!(v: &b"hi\\there.txt"[..], set_extension, with_extension, &b"exe"[..]);
         t!(s: "hi\\there.txt", set_extension, with_extension, "exe");
         t!(s: "hi\\there.", set_extension, with_extension, "txt");
         t!(s: "hi\\there", set_extension, with_extension, "txt");
@@ -1906,7 +1892,7 @@ mod tests {
             )
         }
 
-        t!(v: Path::new(b"a\\b\\c"), Some(b"c"), b"a\\b", Some(b"c"), None);
+        t!(v: Path::new(&b"a\\b\\c"[..]), Some(&b"c"[..]), b"a\\b", Some(&b"c"[..]), None);
         t!(s: Path::new("a\\b\\c"), Some("c"), Some("a\\b"), Some("c"), None);
         t!(s: Path::new("."), None, Some("."), None, None);
         t!(s: Path::new("\\"), None, Some("\\"), None, None);
@@ -2248,7 +2234,7 @@ mod tests {
             );
         }
 
-        t!(s: b"a\\b\\c", ["a", "b", "c"]);
+        t!(s: &b"a\\b\\c"[..], ["a", "b", "c"]);
         t!(s: "a\\b\\c", ["a", "b", "c"]);
         t!(s: "a\\b\\d", ["a", "b", "d"]);
         t!(s: "a\\b\\cd", ["a", "b", "cd"]);

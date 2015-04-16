@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 fn test_generic<T: Clone, F>(expected: T, eq: F) where F: FnOnce(T, T) -> bool {
     let actual: T = { expected.clone() };
     assert!(eq(expected, actual));
@@ -20,8 +22,8 @@ fn test_bool() {
 
 #[derive(Clone)]
 struct Pair {
-    a: int,
-    b: int,
+    a: isize,
+    b: isize,
 }
 
 fn test_rec() {

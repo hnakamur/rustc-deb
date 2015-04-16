@@ -100,14 +100,22 @@ pub trait UnstableTrait { fn dummy(&self) { } }
 
 #[stable(feature = "test_feature", since = "1.0.0")]
 #[deprecated(since = "1.0.0")]
-pub struct DeprecatedStruct { pub i: int }
+pub struct DeprecatedStruct {
+    #[stable(feature = "test_feature", since = "1.0.0")] pub i: isize
+}
 #[unstable(feature = "test_feature")]
 #[deprecated(since = "1.0.0")]
-pub struct DeprecatedUnstableStruct { pub i: int }
+pub struct DeprecatedUnstableStruct {
+    #[stable(feature = "test_feature", since = "1.0.0")] pub i: isize
+}
 #[unstable(feature = "test_feature")]
-pub struct UnstableStruct { pub i: int }
+pub struct UnstableStruct {
+    #[stable(feature = "test_feature", since = "1.0.0")] pub i: isize
+}
 #[stable(feature = "rust1", since = "1.0.0")]
-pub struct StableStruct { pub i: int }
+pub struct StableStruct {
+    #[stable(feature = "test_feature", since = "1.0.0")] pub i: isize
+}
 
 #[stable(feature = "test_feature", since = "1.0.0")]
 #[deprecated(since = "1.0.0")]
@@ -137,14 +145,14 @@ pub enum Enum {
 
 #[stable(feature = "test_feature", since = "1.0.0")]
 #[deprecated(since = "1.0.0")]
-pub struct DeprecatedTupleStruct(pub int);
+pub struct DeprecatedTupleStruct(#[stable(feature = "rust1", since = "1.0.0")] pub isize);
 #[unstable(feature = "test_feature")]
 #[deprecated(since = "1.0.0")]
-pub struct DeprecatedUnstableTupleStruct(pub int);
+pub struct DeprecatedUnstableTupleStruct(#[stable(feature = "rust1", since = "1.0.0")] pub isize);
 #[unstable(feature = "test_feature")]
-pub struct UnstableTupleStruct(pub int);
+pub struct UnstableTupleStruct(#[stable(feature = "rust1", since = "1.0.0")] pub isize);
 #[stable(feature = "rust1", since = "1.0.0")]
-pub struct StableTupleStruct(pub int);
+pub struct StableTupleStruct(#[stable(feature = "rust1", since = "1.0.0")] pub isize);
 
 #[macro_export]
 macro_rules! macro_test {

@@ -8,7 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![forbid(warnings)]
+#![feature(std_misc)]
 
 // Pretty printing tests complain about `use std::predule::*`
 #![allow(unused_imports)]
@@ -19,6 +22,6 @@
 use std::thunk::Thunk;
 
 pub fn main() {
-    let mut x = 1i32;
-    let _thunk = Thunk::new(move|| { x = 2; });
+    let mut x = 1;
+    let _thunk = Box::new(move|| { x = 2; });
 }

@@ -44,24 +44,6 @@
 
 use marker::Sized;
 
-pub type GlueFn = extern "Rust" fn(*const i8);
-
-#[lang="ty_desc"]
-#[derive(Copy)]
-pub struct TyDesc {
-    // sizeof(T)
-    pub size: usize,
-
-    // alignof(T)
-    pub align: usize,
-
-    // Called when a value of type `T` is no longer needed
-    pub drop_glue: GlueFn,
-
-    // Name corresponding to the type
-    pub name: &'static str,
-}
-
 extern "rust-intrinsic" {
 
     // NB: These intrinsics take unsafe pointers because they mutate aliased
@@ -196,21 +178,42 @@ extern "rust-intrinsic" {
     pub fn min_align_of<T>() -> usize;
     pub fn pref_align_of<T>() -> usize;
 
-    /// Get a static pointer to a type descriptor.
-    pub fn get_tydesc<T: ?Sized>() -> *const TyDesc;
+    /// Gets a static string slice containing the name of a type.
+    pub fn type_name<T: ?Sized>() -> &'static str;
 
     /// Gets an identifier which is globally unique to the specified type. This
     /// function will return the same value for a type regardless of whichever
     /// crate it is invoked in.
     pub fn type_id<T: ?Sized + 'static>() -> u64;
 
+    /// Create a value initialized to so that its drop flag,
+    /// if any, says that it has been dropped.
+    ///
+    /// `init_dropped` is unsafe because it returns a datum with all
+    /// of its bytes set to the drop flag, which generally does not
+    /// correspond to a valid value.
+    ///
+    /// This intrinsic is likely to be deprecated in the future when
+    /// Rust moves to non-zeroing dynamic drop (and thus removes the
+    /// embedded drop flags that are being established by this
+    /// intrinsic).
+    pub fn init_dropped<T>() -> T;
+
     /// Create a value initialized to zero.
     ///
     /// `init` is unsafe because it returns a zeroed-out datum,
-    /// which is unsafe unless T is Copy.
+    /// which is unsafe unless T is `Copy`.  Also, even if T is
+    /// `Copy`, an all-zero value may not correspond to any legitimate
+    /// state for the type in question.
     pub fn init<T>() -> T;
 
     /// Create an uninitialized value.
+    ///
+    /// `uninit` is unsafe because there is no guarantee of what its
+    /// contents are. In particular its drop-flag may be set to any
+    /// state, which means it may claim either dropped or
+    /// undropped. In the general case one must use `ptr::write` to
+    /// initialize memory previous set to the result of `uninit`.
     pub fn uninit<T>() -> T;
 
     /// Move a value out of scope without running drop glue.
@@ -230,7 +233,7 @@ extern "rust-intrinsic" {
     /// use std::mem;
     ///
     /// let v: &[u8] = unsafe { mem::transmute("L") };
-    /// assert!(v == [76u8]);
+    /// assert!(v == [76]);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn transmute<T,U>(e: T) -> U;
@@ -241,7 +244,12 @@ extern "rust-intrinsic" {
     /// will trigger a compiler error.
     pub fn return_address() -> *const u8;
 
-    /// Returns `true` if a type requires drop glue.
+    /// Returns `true` if the actual type given as `T` requires drop
+    /// glue; returns `false` if the actual type provided for `T`
+    /// implements `Copy`.
+    ///
+    /// If the actual type neither requires drop glue nor implements
+    /// `Copy`, then may return `true` or `false`.
     pub fn needs_drop<T>() -> bool;
 
     /// Returns `true` if a type is managed (will be allocated on the local heap)
@@ -258,7 +266,7 @@ extern "rust-intrinsic" {
     /// Copies `count * size_of<T>` bytes from `src` to `dst`. The source
     /// and destination may *not* overlap.
     ///
-    /// `copy_nonoverlapping_memory` is semantically equivalent to C's `memcpy`.
+    /// `copy_nonoverlapping` is semantically equivalent to C's `memcpy`.
     ///
     /// # Safety
     ///
@@ -274,6 +282,7 @@ extern "rust-intrinsic" {
     /// A safe swap function:
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::mem;
     /// use std::ptr;
     ///
@@ -283,9 +292,9 @@ extern "rust-intrinsic" {
     ///         let mut t: T = mem::uninitialized();
     ///
     ///         // Perform the swap, `&mut` pointers never alias
-    ///         ptr::copy_nonoverlapping_memory(&mut t, &*x, 1);
-    ///         ptr::copy_nonoverlapping_memory(x, &*y, 1);
-    ///         ptr::copy_nonoverlapping_memory(y, &t, 1);
+    ///         ptr::copy_nonoverlapping(x, &mut t, 1);
+    ///         ptr::copy_nonoverlapping(y, x, 1);
+    ///         ptr::copy_nonoverlapping(&t, y, 1);
     ///
     ///         // y and t now point to the same thing, but we need to completely forget `tmp`
     ///         // because it's no longer relevant.
@@ -293,13 +302,19 @@ extern "rust-intrinsic" {
     ///     }
     /// }
     /// ```
-    #[unstable(feature = "core")]
-    pub fn copy_nonoverlapping_memory<T>(dst: *mut T, src: *const T, count: usize);
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[cfg(not(stage0))]
+    pub fn copy_nonoverlapping<T>(src: *const T, dst: *mut T, count: usize);
+
+    /// dox
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[cfg(stage0)]
+    pub fn copy_nonoverlapping<T>(dst: *mut T, src: *const T, count: usize);
 
     /// Copies `count * size_of<T>` bytes from `src` to `dst`. The source
     /// and destination may overlap.
     ///
-    /// `copy_memory` is semantically equivalent to C's `memmove`.
+    /// `copy` is semantically equivalent to C's `memmove`.
     ///
     /// # Safety
     ///
@@ -313,24 +328,30 @@ extern "rust-intrinsic" {
     /// Efficiently create a Rust vector from an unsafe buffer:
     ///
     /// ```
+    /// # #![feature(core)]
     /// use std::ptr;
     ///
-    /// unsafe fn from_buf_raw<T>(ptr: *const T, elts: uint) -> Vec<T> {
+    /// unsafe fn from_buf_raw<T>(ptr: *const T, elts: usize) -> Vec<T> {
     ///     let mut dst = Vec::with_capacity(elts);
     ///     dst.set_len(elts);
-    ///     ptr::copy_memory(dst.as_mut_ptr(), ptr, elts);
+    ///     ptr::copy(ptr, dst.as_mut_ptr(), elts);
     ///     dst
     /// }
     /// ```
     ///
-    #[unstable(feature = "core")]
-    pub fn copy_memory<T>(dst: *mut T, src: *const T, count: usize);
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[cfg(not(stage0))]
+    pub fn copy<T>(src: *const T, dst: *mut T, count: usize);
+
+    /// dox
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[cfg(stage0)]
+    pub fn copy<T>(dst: *mut T, src: *const T, count: usize);
 
     /// Invokes memset on the specified pointer, setting `count * size_of::<T>()`
     /// bytes of memory starting at `dst` to `c`.
-    #[unstable(feature = "core",
-               reason = "uncertain about naming and semantics")]
-    pub fn set_memory<T>(dst: *mut T, val: u8, count: usize);
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn write_bytes<T>(dst: *mut T, val: u8, count: usize);
 
     /// Equivalent to the appropriate `llvm.memcpy.p0i8.0i8.*` intrinsic, with
     /// a size of `count` * `size_of::<T>()` and an alignment of
@@ -541,4 +562,11 @@ extern "rust-intrinsic" {
     pub fn u32_mul_with_overflow(x: u32, y: u32) -> (u32, bool);
     /// Performs checked `u64` multiplication.
     pub fn u64_mul_with_overflow(x: u64, y: u64) -> (u64, bool);
+
+    /// Returns (a + b) mod 2^N, where N is the width of N in bits.
+    pub fn overflowing_add<T>(a: T, b: T) -> T;
+    /// Returns (a - b) mod 2^N, where N is the width of N in bits.
+    pub fn overflowing_sub<T>(a: T, b: T) -> T;
+    /// Returns (a * b) mod 2^N, where N is the width of N in bits.
+    pub fn overflowing_mul<T>(a: T, b: T) -> T;
 }

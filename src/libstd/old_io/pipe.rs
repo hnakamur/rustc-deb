@@ -17,7 +17,7 @@
 
 use prelude::v1::*;
 
-use old_io::IoResult;
+use old_io::{IoResult, Reader, Writer};
 use libc;
 use sync::Arc;
 
@@ -43,13 +43,14 @@ impl PipeStream {
     /// This operation consumes ownership of the file descriptor and it will be
     /// closed once the object is deallocated.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```{rust,no_run}
+    /// # #![feature(old_io, libc, io)]
     /// # #![allow(unused_must_use)]
     /// extern crate libc;
     ///
-    /// use std::old_io::pipe::PipeStream;
+    /// use std::old_io::*;
     ///
     /// fn main() {
     ///     let mut pipe = PipeStream::open(libc::STDERR_FILENO);
@@ -99,7 +100,7 @@ impl Clone for PipeStream {
 }
 
 impl Reader for PipeStream {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.inner.read(buf)
     }
 }
@@ -114,6 +115,7 @@ impl Writer for PipeStream {
 mod test {
     use prelude::v1::*;
 
+    use old_io::{Writer, Reader};
     use sync::mpsc::channel;
     use thread;
 
@@ -122,9 +124,9 @@ mod test {
         use os;
         use old_io::pipe::PipeStream;
 
-        let os::Pipe { reader, writer } = unsafe { os::pipe().unwrap() };
-        let out = PipeStream::open(writer);
-        let mut input = PipeStream::open(reader);
+        let (reader, writer) = unsafe { ::sys::os::pipe().unwrap() };
+        let out = PipeStream::open(writer.unwrap());
+        let mut input = PipeStream::open(reader.unwrap());
         let (tx, rx) = channel();
         let _t = thread::spawn(move|| {
             let mut out = out;

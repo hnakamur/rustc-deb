@@ -10,7 +10,7 @@
 
 // ignore-pretty
 // compile-flags:--test
-// exec-env:RUST_TEST_TASKS=1
+// exec-env:RUST_TEST_THREADS=1
 
 // Tests for the connect_timeout() function on a TcpStream. This runs with only
 // one test task to ensure that errors are timeouts, not file descriptor
@@ -19,13 +19,14 @@
 #![reexport_test_harness_main = "test_main"]
 
 #![allow(unused_imports)]
+#![feature(old_io, std_misc, io)]
 
 use std::old_io::*;
 use std::old_io::test::*;
 use std::old_io;
 use std::time::Duration;
 use std::sync::mpsc::channel;
-use std::thread::Thread;
+use std::thread;
 
 #[cfg_attr(target_os = "freebsd", ignore)]
 fn eventual_timeout() {
@@ -33,7 +34,7 @@ fn eventual_timeout() {
 
     let (tx1, rx1) = channel();
     let (_tx2, rx2) = channel::<()>();
-    let _t = Thread::spawn(move|| {
+    let _t = thread::scoped(move|| {
         let _l = TcpListener::bind(addr).unwrap().listen();
         tx1.send(()).unwrap();
         let _ = rx2.recv();

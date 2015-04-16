@@ -8,12 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![unstable(feature = "udp", reason = "remaining functions have not been \
+                                       scrutinized enough to be stabilized")]
+
 use prelude::v1::*;
 
 use io::{self, Error, ErrorKind};
 use net::{ToSocketAddrs, SocketAddr, IpAddr};
 use sys_common::net2 as net_imp;
-use sys_common::AsInner;
+use sys_common::{AsInner, FromInner};
 
 /// A User Datagram Protocol socket.
 ///
@@ -21,9 +24,10 @@ use sys_common::AsInner;
 /// IPv6 addresses, and there is no corresponding notion of a server because UDP
 /// is a datagram protocol.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```no_run
+/// # #![feature(net)]
 /// use std::net::UdpSocket;
 ///
 /// # fn foo() -> std::io::Result<()> {
@@ -41,6 +45,7 @@ use sys_common::AsInner;
 /// # Ok(())
 /// # }
 /// ```
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct UdpSocket(net_imp::UdpSocket);
 
 impl UdpSocket {
@@ -48,12 +53,14 @@ impl UdpSocket {
     ///
     /// Address type can be any implementor of `ToSocketAddr` trait. See its
     /// documentation for concrete examples.
-    pub fn bind<A: ToSocketAddrs + ?Sized>(addr: &A) -> io::Result<UdpSocket> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<UdpSocket> {
         super::each_addr(addr, net_imp::UdpSocket::bind).map(UdpSocket)
     }
 
     /// Receives data from the socket. On success, returns the number of bytes
     /// read and the address from whence the data came.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.0.recv_from(buf)
     }
@@ -63,17 +70,19 @@ impl UdpSocket {
     ///
     /// Address type can be any implementor of `ToSocketAddrs` trait. See its
     /// documentation for concrete examples.
-    pub fn send_to<A: ToSocketAddrs + ?Sized>(&self, buf: &[u8], addr: &A)
-                                              -> io::Result<usize> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn send_to<A: ToSocketAddrs>(&self, buf: &[u8], addr: A)
+                                     -> io::Result<usize> {
         match try!(addr.to_socket_addrs()).next() {
             Some(addr) => self.0.send_to(buf, &addr),
             None => Err(Error::new(ErrorKind::InvalidInput,
-                                   "no addresses to send data to", None)),
+                                   "no addresses to send data to")),
         }
     }
 
     /// Returns the socket address that this socket was created from.
-    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.0.socket_addr()
     }
 
@@ -82,6 +91,7 @@ impl UdpSocket {
     /// The returned `UdpSocket` is a reference to the same socket that this
     /// object references. Both handles will read and write the same port, and
     /// options set on one socket will be propagated to the other.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn try_clone(&self) -> io::Result<UdpSocket> {
         self.0.duplicate().map(UdpSocket)
     }
@@ -123,6 +133,10 @@ impl AsInner<net_imp::UdpSocket> for UdpSocket {
     fn as_inner(&self) -> &net_imp::UdpSocket { &self.0 }
 }
 
+impl FromInner<net_imp::UdpSocket> for UdpSocket {
+    fn from_inner(inner: net_imp::UdpSocket) -> UdpSocket { UdpSocket(inner) }
+}
+
 #[cfg(test)]
 mod tests {
     use prelude::v1::*;
@@ -151,7 +165,7 @@ mod tests {
     #[cfg_attr(any(windows, target_os = "android"), ignore)]
     #[test]
     fn bind_error() {
-        let addr = SocketAddr::new(IpAddr::new_v4(0, 0, 0, 0), 1);
+        let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 1);
         match UdpSocket::bind(&addr) {
             Ok(..) => panic!(),
             Err(e) => assert_eq!(e.kind(), ErrorKind::PermissionDenied),
@@ -186,7 +200,7 @@ mod tests {
     fn socket_name_ip4() {
         each_ip(&mut |addr, _| {
             let server = t!(UdpSocket::bind(&addr));
-            assert_eq!(addr, t!(server.socket_addr()));
+            assert_eq!(addr, t!(server.local_addr()));
         })
     }
 
@@ -198,7 +212,7 @@ mod tests {
 
             let _t = thread::spawn(move|| {
                 let mut buf = [0, 0];
-                assert_eq!(sock2.recv_from(&mut buf), Ok((1, addr1)));
+                assert_eq!(sock2.recv_from(&mut buf).unwrap(), (1, addr1));
                 assert_eq!(buf[0], 1);
                 t!(sock2.send_to(&[2], &addr1));
             });
@@ -214,7 +228,7 @@ mod tests {
             });
             tx1.send(()).unwrap();
             let mut buf = [0, 0];
-            assert_eq!(sock1.recv_from(&mut buf), Ok((1, addr2)));
+            assert_eq!(sock1.recv_from(&mut buf).unwrap(), (1, addr2));
             rx2.recv().unwrap();
         })
     }

@@ -10,6 +10,8 @@
 
 // Test that we can use `Self` types in impls in the expected way.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
@@ -32,7 +34,7 @@ trait Bar<X> {
     fn dummy(&self, x: X) { }
 }
 
-impl Bar<int> for Box<Baz<int>> {
+impl Bar<isize> for Box<Baz<isize>> {
     fn bar(_x: Self, _y: &Self, _z: Box<Self>) -> Self {
         box Baz { f: 42 }
     }
@@ -40,7 +42,7 @@ impl Bar<int> for Box<Baz<int>> {
 
 fn main() {
     let _: Foo = Foo::foo(Foo, &Foo, box Foo);
-    let _: Box<Baz<int>> = Bar::bar(box Baz { f: 42 },
+    let _: Box<Baz<isize>> = Bar::bar(box Baz { f: 42 },
                                     &box Baz { f: 42 },
                                     box box Baz { f: 42 });
 }

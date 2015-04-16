@@ -19,9 +19,7 @@ use parse::lexer::is_block_doc_comment;
 use parse::lexer;
 use print::pprust;
 
-use std::old_io;
-use std::str;
-use std::string::String;
+use std::io::Read;
 use std::usize;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -92,7 +90,7 @@ pub fn strip_doc_comment_decoration(comment: &str) -> String {
         let mut first = true;
         for line in &lines {
             for (j, c) in line.chars().enumerate() {
-                if j > i || !"* \t".contains_char(c) {
+                if j > i || !"* \t".contains(c) {
                     can_trim = false;
                     break;
                 }
@@ -124,8 +122,8 @@ pub fn strip_doc_comment_decoration(comment: &str) -> String {
     }
 
     // one-line comments lose their prefix
-    static ONLINERS: &'static [&'static str] = &["///!", "///", "//!", "//"];
-    for prefix in ONLINERS {
+    const ONELINERS: &'static [&'static str] = &["///!", "///", "//!", "//"];
+    for prefix in ONELINERS {
         if comment.starts_with(*prefix) {
             return (&comment[prefix.len()..]).to_string();
         }
@@ -211,11 +209,11 @@ fn all_whitespace(s: &str, col: CharPos) -> Option<usize> {
     let mut col = col.to_usize();
     let mut cursor: usize = 0;
     while col > 0 && cursor < len {
-        let r: str::CharRange = s.char_range_at(cursor);
-        if !r.ch.is_whitespace() {
+        let ch = s.char_at(cursor);
+        if !ch.is_whitespace() {
             return None;
         }
-        cursor = r.next;
+        cursor += ch.len_utf8();
         col -= 1;
     }
     return Some(cursor);
@@ -264,7 +262,7 @@ fn read_block_comment(rdr: &mut StringReader,
         if is_block_doc_comment(&curr_line[..]) {
             return
         }
-        assert!(!curr_line.contains_char('\n'));
+        assert!(!curr_line.contains('\n'));
         lines.push(curr_line);
     } else {
         let mut level: isize = 1;
@@ -337,9 +335,10 @@ pub struct Literal {
 // probably not a good thing.
 pub fn gather_comments_and_literals(span_diagnostic: &diagnostic::SpanHandler,
                                     path: String,
-                                    srdr: &mut old_io::Reader)
+                                    srdr: &mut Read)
                                  -> (Vec<Comment>, Vec<Literal>) {
-    let src = srdr.read_to_end().unwrap();
+    let mut src = Vec::new();
+    srdr.read_to_end(&mut src).unwrap();
     let src = String::from_utf8(src).unwrap();
     let cm = CodeMap::new();
     let filemap = cm.new_filemap(path, src);

@@ -8,10 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags:-l :static
+// compile-flags:-l static=
 // error-pattern: empty library name given via `-l`
 
 fn main() {
 }
-
-

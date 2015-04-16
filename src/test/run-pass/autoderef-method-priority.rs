@@ -8,22 +8,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 trait double {
-    fn double(self) -> uint;
+    fn double(self) -> usize;
 }
 
-impl double for uint {
-    fn double(self) -> uint { self }
+impl double for usize {
+    fn double(self) -> usize { self }
 }
 
-impl double for Box<uint> {
-    fn double(self) -> uint { *self * 2_usize }
+impl double for Box<usize> {
+    fn double(self) -> usize { *self * 2 }
 }
 
 pub fn main() {
-    let x = box 3_usize;
-    assert_eq!(x.double(), 6_usize);
+    let x: Box<_> = box 3;
+    assert_eq!(x.double(), 6);
 }

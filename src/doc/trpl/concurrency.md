@@ -40,14 +40,14 @@ us enforce that it can't leave the current thread.
 
 ### `Sync`
 
-The second of these two trait is called [`Sync`](../std/marker/trait.Sync.html).
+The second of these traits is called [`Sync`](../std/marker/trait.Sync.html).
 When a type `T` implements `Sync`, it indicates to the compiler that something
 of this type has no possibility of introducing memory unsafety when used from
 multiple threads concurrently.
 
 For example, sharing immutable data with an atomic reference count is
 threadsafe. Rust provides a type like this, `Arc<T>`, and it implements `Sync`,
-so that it could be safely shared between threads.
+so it is safe to share between threads.
 
 These two traits allow you to use the type system to make strong guarantees
 about the properties of your code under concurrency. Before we demonstrate
@@ -69,7 +69,7 @@ fn main() {
 }
 ```
 
-The `Thread::scoped()` method accepts a closure, which is executed in a new
+The `thread::scoped()` method accepts a closure, which is executed in a new
 thread. It's called `scoped` because this thread returns a join guard:
 
 ```
@@ -88,6 +88,7 @@ When `guard` goes out of scope, it will block execution until the thread is
 finished. If we didn't want this behaviour, we could use `thread::spawn()`:
 
 ```
+# #![feature(old_io, std_misc)]
 use std::thread;
 use std::old_io::timer;
 use std::time::Duration;
@@ -146,6 +147,7 @@ As an example, here is a Rust program that would have a data race in many
 languages. It will not compile:
 
 ```ignore
+# #![feature(old_io, std_misc)]
 use std::thread;
 use std::old_io::timer;
 use std::time::Duration;
@@ -185,6 +187,7 @@ only one person at a time can mutate what's inside. For that, we can use the
 but for a different reason:
 
 ```ignore
+# #![feature(old_io, std_misc)]
 use std::thread;
 use std::old_io::timer;
 use std::time::Duration;
@@ -208,10 +211,10 @@ Here's the error:
 
 ```text
 <anon>:11:9: 11:22 error: the trait `core::marker::Send` is not implemented for the type `std::sync::mutex::MutexGuard<'_, collections::vec::Vec<u32>>` [E0277]
-<anon>:11         Thread::spawn(move || {
+<anon>:11         thread::spawn(move || {
                   ^~~~~~~~~~~~~
 <anon>:11:9: 11:22 note: `std::sync::mutex::MutexGuard<'_, collections::vec::Vec<u32>>` cannot be sent between threads safely
-<anon>:11         Thread::spawn(move || {
+<anon>:11         thread::spawn(move || {
                   ^~~~~~~~~~~~~
 ```
 
@@ -223,19 +226,13 @@ method which has this signature:
 fn lock(&self) -> LockResult<MutexGuard<T>>
 ```
 
-If we [look at the code for MutexGuard](https://github.com/rust-lang/rust/blob/ca4b9674c26c1de07a2042cb68e6a062d7184cef/src/libstd/sync/mutex.rs#L172), we'll see
-this:
-
-```ignore
-__marker: marker::NoSend,
-```
-
-Because our guard is `NoSend`, it's not `Send`. Which means we can't actually
-transfer the guard across thread boundaries, which gives us our error.
+Because `Send` is not implemented for `MutexGuard<T>`, we can't transfer the
+guard across thread boundaries, which gives us our error.
 
 We can use `Arc<T>` to fix this. Here's the working version:
 
 ```
+# #![feature(old_io, std_misc)]
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::old_io::timer;
@@ -261,6 +258,7 @@ handle is then moved into the new thread. Let's examine the body of the
 thread more closely:
 
 ```
+# #![feature(old_io, std_misc)]
 # use std::sync::{Arc, Mutex};
 # use std::thread;
 # use std::old_io::timer;
@@ -282,13 +280,15 @@ it returns an `Result<T, E>`, and because this is just an example, we `unwrap()`
 it to get a reference to the data. Real code would have more robust error handling
 here. We're then free to mutate it, since we have the lock.
 
-This timer bit is a bit awkward, however. We have picked a reasonable amount of
-time to wait, but it's entirely possible that we've picked too high, and that
-we could be taking less time. It's also possible that we've picked too low,
-and that we aren't actually finishing this computation.
+Lastly, while the threads are running, we wait on a short timer. But
+this is not ideal: we may have picked a reasonable amount of time to
+wait but it's more likely we'll either be waiting longer than
+necessary or not long enough, depending on just how much time the
+threads actually take to finish computing when the program runs.
 
-Rust's standard library provides a few more mechanisms for two threads to
-synchronize with each other. Let's talk about one: channels.
+A more precise alternative to the timer would be to use one of the
+mechanisms provided by the Rust standard library for synchronizing
+threads with each other. Let's talk about one of them: channels.
 
 ## Channels
 
@@ -329,7 +329,6 @@ While this channel is just sending a generic signal, we can send any data that
 is `Send` over the channel!
 
 ```
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::sync::mpsc;
 
@@ -346,7 +345,7 @@ fn main() {
         });
     }
 
-   rx.recv().ok().expect("Could not recieve answer");
+   rx.recv().ok().expect("Could not receive answer");
 }
 ```
 

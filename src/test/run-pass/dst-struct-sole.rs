@@ -10,12 +10,14 @@
 
 // As dst-struct.rs, but the unsized field is the only field in the struct.
 
+// pretty-expanded FIXME #23616
+
 struct Fat<T: ?Sized> {
     ptr: T
 }
 
 // x is a fat pointer
-fn foo(x: &Fat<[int]>) {
+fn foo(x: &Fat<[isize]>) {
     let y = &x.ptr;
     assert!(x.ptr.len() == 3);
     assert!(y[0] == 1);
@@ -30,7 +32,7 @@ fn foo2<T:ToBar>(x: &Fat<[T]>) {
     assert!(x.ptr[1].to_bar() == bar);
 }
 
-#[derive(Copy, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 struct Bar;
 
 trait ToBar {
@@ -49,11 +51,11 @@ pub fn main() {
     foo(&f1);
     let f2 = &f1;
     foo(f2);
-    let f3: &Fat<[int]> = f2;
+    let f3: &Fat<[isize]> = f2;
     foo(f3);
-    let f4: &Fat<[int]> = &f1;
+    let f4: &Fat<[isize]> = &f1;
     foo(f4);
-    let f5: &Fat<[int]> = &Fat { ptr: [1, 2, 3] };
+    let f5: &Fat<[isize]> = &Fat { ptr: [1, 2, 3] };
     foo(f5);
 
     // With a vec of Bars.
@@ -70,14 +72,14 @@ pub fn main() {
     foo2(f5);
 
     // Assignment.
-    let f5: &mut Fat<[int]> = &mut Fat { ptr: [1, 2, 3] };
+    let f5: &mut Fat<[isize]> = &mut Fat { ptr: [1, 2, 3] };
     f5.ptr[1] = 34;
     assert!(f5.ptr[0] == 1);
     assert!(f5.ptr[1] == 34);
     assert!(f5.ptr[2] == 3);
 
     // Zero size vec.
-    let f5: &Fat<[int]> = &Fat { ptr: [] };
+    let f5: &Fat<[isize]> = &Fat { ptr: [] };
     assert!(f5.ptr.len() == 0);
     let f5: &Fat<[Bar]> = &Fat { ptr: [] };
     assert!(f5.ptr.len() == 0);

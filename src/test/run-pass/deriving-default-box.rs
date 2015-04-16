@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
@@ -20,6 +22,7 @@ struct A {
 
 pub fn main() {
     let a: A = Default::default();
-    let b: Box<[_]> = box [];
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    let b: Box<[_]> = Box::<[bool; 0]>::new([]);
     assert_eq!(a.foo, b);
 }

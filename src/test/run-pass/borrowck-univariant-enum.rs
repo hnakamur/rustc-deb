@@ -9,11 +9,13 @@
 // except according to those terms.
 
 
+// pretty-expanded FIXME #23616
+
 use std::cell::Cell;
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 enum newtype {
-    newvar(int)
+    newvar(isize)
 }
 
 pub fn main() {

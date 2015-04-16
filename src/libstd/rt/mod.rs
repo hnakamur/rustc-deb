@@ -17,19 +17,14 @@
 //! time being.
 
 #![unstable(feature = "std_misc")]
-
-// FIXME: this should not be here.
 #![allow(missing_docs)]
 
-#![allow(dead_code)]
-
-use marker::Send;
-use ops::FnOnce;
+use prelude::v1::*;
 use sys;
-use thunk::Thunk;
+use usize;
 
 // Reexport some of our utilities which are expected by other crates.
-pub use self::util::{default_sched_threads, min_stack, running_on_valgrind};
+pub use self::util::{min_stack, running_on_valgrind};
 pub use self::unwind::{begin_unwind, begin_unwind_fmt};
 
 // Reexport some functionality from liballoc.
@@ -52,16 +47,16 @@ mod libunwind;
 
 /// The default error code of the rust runtime if the main thread panics instead
 /// of exiting cleanly.
-pub const DEFAULT_ERROR_CODE: int = 101;
+pub const DEFAULT_ERROR_CODE: isize = 101;
 
 #[cfg(any(windows, android))]
-const OS_DEFAULT_STACK_ESTIMATE: uint = 1 << 20;
+const OS_DEFAULT_STACK_ESTIMATE: usize = 1 << 20;
 #[cfg(all(unix, not(android)))]
-const OS_DEFAULT_STACK_ESTIMATE: uint = 2 * (1 << 20);
+const OS_DEFAULT_STACK_ESTIMATE: usize = 2 * (1 << 20);
 
 #[cfg(not(test))]
 #[lang = "start"]
-fn lang_start(main: *const u8, argc: int, argv: *const *const u8) -> int {
+fn lang_start(main: *const u8, argc: isize, argv: *const *const u8) -> isize {
     use prelude::v1::*;
 
     use mem;
@@ -72,13 +67,26 @@ fn lang_start(main: *const u8, argc: int, argv: *const *const u8) -> int {
     use thread::Thread;
 
     let something_around_the_top_of_the_stack = 1;
-    let addr = &something_around_the_top_of_the_stack as *const int;
-    let my_stack_top = addr as uint;
+    let addr = &something_around_the_top_of_the_stack as *const _ as *const isize;
+    let my_stack_top = addr as usize;
 
     // FIXME #11359 we just assume that this thread has a stack of a
     // certain size, and estimate that there's at most 20KB of stack
     // frames above our current position.
-    let my_stack_bottom = my_stack_top + 20000 - OS_DEFAULT_STACK_ESTIMATE;
+    const TWENTY_KB: usize = 20000;
+
+    // saturating-add to sidestep overflow
+    let top_plus_spill = if usize::MAX - TWENTY_KB < my_stack_top {
+        usize::MAX
+    } else {
+        my_stack_top + TWENTY_KB
+    };
+    // saturating-sub to sidestep underflow
+    let my_stack_bottom = if top_plus_spill < OS_DEFAULT_STACK_ESTIMATE {
+        0
+    } else {
+        top_plus_spill - OS_DEFAULT_STACK_ESTIMATE
+    };
 
     let failed = unsafe {
         // First, make sure we don't trigger any __morestack overflow checks,
@@ -94,9 +102,7 @@ fn lang_start(main: *const u8, argc: int, argv: *const *const u8) -> int {
         // but we just do this to name the main thread and to give it correct
         // info about the stack bounds.
         let thread: Thread = NewThread::new(Some("<main>".to_string()));
-        thread_info::set((my_stack_bottom, my_stack_top),
-                         sys::thread::guard::main(),
-                         thread);
+        thread_info::set(sys::thread::guard::main(), thread);
 
         // By default, some platforms will send a *signal* when a EPIPE error
         // would otherwise be delivered. This runtime doesn't install a SIGPIPE
@@ -110,7 +116,7 @@ fn lang_start(main: *const u8, argc: int, argv: *const *const u8) -> int {
             use libc;
             use libc::funcs::posix01::signal::signal;
             unsafe {
-                assert!(signal(libc::SIGPIPE, libc::SIG_IGN) != -1);
+                assert!(signal(libc::SIGPIPE, libc::SIG_IGN) != !0);
             }
         }
         ignore_sigpipe();
@@ -135,21 +141,18 @@ fn lang_start(main: *const u8, argc: int, argv: *const *const u8) -> int {
     }
 }
 
-/// Enqueues a procedure to run when the runtime is cleaned up
+/// Enqueues a procedure to run when the main thread exits.
 ///
-/// The procedure passed to this function will be executed as part of the
-/// runtime cleanup phase. For normal rust programs, this means that it will run
-/// after all other threads have exited.
+/// Currently these closures are only run once the main *Rust* thread exits.
+/// Once the `at_exit` handlers begin running, more may be enqueued, but not
+/// infinitely so. Eventually a handler registration will be forced to fail.
 ///
-/// The procedure is *not* executed with a local `Thread` available to it, so
-/// primitives like logging, I/O, channels, spawning, etc, are *not* available.
-/// This is meant for "bare bones" usage to clean up runtime details, this is
-/// not meant as a general-purpose "let's clean everything up" function.
-///
-/// It is forbidden for procedures to register more `at_exit` handlers when they
-/// are running, and doing so will lead to a process abort.
-pub fn at_exit<F:FnOnce()+Send+'static>(f: F) {
-    at_exit_imp::push(Thunk::new(f));
+/// Returns `Ok` if the handler was successfully registered, meaning that the
+/// closure will be run once the main thread exits. Returns `Err` to indicate
+/// that the closure could not be registered, meaning that it is not scheduled
+/// to be rune.
+pub fn at_exit<F: FnOnce() + Send + 'static>(f: F) -> Result<(), ()> {
+    if at_exit_imp::push(Box::new(f)) {Ok(())} else {Err(())}
 }
 
 /// One-time runtime cleanup.
@@ -164,8 +167,5 @@ pub fn at_exit<F:FnOnce()+Send+'static>(f: F) {
 pub unsafe fn cleanup() {
     args::cleanup();
     sys::stack_overflow::cleanup();
-    // FIXME: (#20012): the resources being cleaned up by at_exit
-    // currently are not prepared for cleanup to happen asynchronously
-    // with detached threads using the resources; for now, we leak.
-    // at_exit_imp::cleanup();
+    at_exit_imp::cleanup();
 }

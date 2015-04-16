@@ -10,20 +10,23 @@
 
 //! A helper class for dealing with static archives
 
-use std::old_io::fs::PathExtensions;
-use std::old_io::process::{Command, ProcessOutput};
-use std::old_io::{fs, TempDir};
-use std::old_io;
 use std::env;
+use std::fs;
+use std::io::prelude::*;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
 use std::str;
 use syntax::diagnostic::Handler as ErrorHandler;
 
-pub static METADATA_FILENAME: &'static str = "rust.metadata.bin";
+use tempdir::TempDir;
+
+pub const METADATA_FILENAME: &'static str = "rust.metadata.bin";
 
 pub struct ArchiveConfig<'a> {
     pub handler: &'a ErrorHandler,
-    pub dst: Path,
-    pub lib_search_paths: Vec<Path>,
+    pub dst: PathBuf,
+    pub lib_search_paths: Vec<PathBuf>,
     pub slib_prefix: String,
     pub slib_suffix: String,
     pub maybe_ar_prog: Option<String>
@@ -31,8 +34,8 @@ pub struct ArchiveConfig<'a> {
 
 pub struct Archive<'a> {
     handler: &'a ErrorHandler,
-    dst: Path,
-    lib_search_paths: Vec<Path>,
+    dst: PathBuf,
+    lib_search_paths: Vec<PathBuf>,
     slib_prefix: String,
     slib_suffix: String,
     maybe_ar_prog: Option<String>
@@ -45,25 +48,25 @@ pub struct ArchiveBuilder<'a> {
     archive: Archive<'a>,
     work_dir: TempDir,
     /// Filename of each member that should be added to the archive.
-    members: Vec<Path>,
+    members: Vec<PathBuf>,
     should_update_symbols: bool,
 }
 
 fn run_ar(handler: &ErrorHandler, maybe_ar_prog: &Option<String>,
           args: &str, cwd: Option<&Path>,
-          paths: &[&Path]) -> ProcessOutput {
+          paths: &[&Path]) -> Output {
     let ar = match *maybe_ar_prog {
         Some(ref ar) => &ar[..],
         None => "ar"
     };
     let mut cmd = Command::new(ar);
 
-    cmd.arg(args).args(paths);
+    cmd.arg(args).args(paths).stdout(Stdio::piped()).stderr(Stdio::piped());
     debug!("{:?}", cmd);
 
     match cwd {
         Some(p) => {
-            cmd.cwd(p);
+            cmd.current_dir(p);
             debug!("inside {:?}", p.display());
         }
         None => {}
@@ -73,19 +76,19 @@ fn run_ar(handler: &ErrorHandler, maybe_ar_prog: &Option<String>,
         Ok(prog) => {
             let o = prog.wait_with_output().unwrap();
             if !o.status.success() {
-                handler.err(&format!("{:?} failed with: {}", cmd, o.status)[]);
+                handler.err(&format!("{:?} failed with: {}", cmd, o.status));
                 handler.note(&format!("stdout ---\n{}",
-                                  str::from_utf8(&o.output[]).unwrap())[]);
+                                  str::from_utf8(&o.stdout).unwrap()));
                 handler.note(&format!("stderr ---\n{}",
-                                  str::from_utf8(&o.error[]).unwrap())
-                             []);
+                                  str::from_utf8(&o.stderr).unwrap())
+                             );
                 handler.abort_if_errors();
             }
             o
         },
         Err(e) => {
             handler.err(&format!("could not exec `{}`: {}", &ar[..],
-                             e)[]);
+                             e));
             handler.abort_if_errors();
             panic!("rustc::back::archive::run_ar() should not reach this point");
         }
@@ -93,14 +96,15 @@ fn run_ar(handler: &ErrorHandler, maybe_ar_prog: &Option<String>,
 }
 
 pub fn find_library(name: &str, osprefix: &str, ossuffix: &str,
-                    search_paths: &[Path], handler: &ErrorHandler) -> Path {
+                    search_paths: &[PathBuf],
+                    handler: &ErrorHandler) -> PathBuf {
     // On Windows, static libraries sometimes show up as libfoo.a and other
     // times show up as foo.lib
     let oslibname = format!("{}{}{}", osprefix, name, ossuffix);
     let unixlibname = format!("lib{}.a", name);
 
     for path in search_paths {
-        debug!("looking for {} inside {:?}", name, path.display());
+        debug!("looking for {} inside {:?}", name, path);
         let test = path.join(&oslibname[..]);
         if test.exists() { return test }
         if oslibname != unixlibname {
@@ -110,7 +114,7 @@ pub fn find_library(name: &str, osprefix: &str, ossuffix: &str,
     }
     handler.fatal(&format!("could not find native static library `{}`, \
                            perhaps an -L flag is missing?",
-                          name)[]);
+                          name));
 }
 
 impl<'a> Archive<'a> {
@@ -142,7 +146,7 @@ impl<'a> Archive<'a> {
     /// Lists all files in an archive
     pub fn files(&self) -> Vec<String> {
         let output = run_ar(self.handler, &self.maybe_ar_prog, "t", None, &[&self.dst]);
-        let output = str::from_utf8(&output.output[]).unwrap();
+        let output = str::from_utf8(&output.stdout).unwrap();
         // use lines_any because windows delimits output with `\r\n` instead of
         // just `\n`
         output.lines_any().map(|s| s.to_string()).collect()
@@ -172,11 +176,11 @@ impl<'a> ArchiveBuilder<'a> {
 
     /// Adds all of the contents of a native library to this archive. This will
     /// search in the relevant locations for a library named `name`.
-    pub fn add_native_library(&mut self, name: &str) -> old_io::IoResult<()> {
+    pub fn add_native_library(&mut self, name: &str) -> io::Result<()> {
         let location = find_library(name,
-                                    &self.archive.slib_prefix[],
-                                    &self.archive.slib_suffix[],
-                                    &self.archive.lib_search_paths[],
+                                    &self.archive.slib_prefix,
+                                    &self.archive.slib_suffix,
+                                    &self.archive.lib_search_paths,
                                     self.archive.handler);
         self.add_archive(&location, name, |_| false)
     }
@@ -187,7 +191,7 @@ impl<'a> ArchiveBuilder<'a> {
     /// This ignores adding the bytecode from the rlib, and if LTO is enabled
     /// then the object file also isn't added.
     pub fn add_rlib(&mut self, rlib: &Path, name: &str,
-                    lto: bool) -> old_io::IoResult<()> {
+                    lto: bool) -> io::Result<()> {
         // Ignoring obj file starting with the crate name
         // as simple comparison is not enough - there
         // might be also an extra name suffix
@@ -205,11 +209,11 @@ impl<'a> ArchiveBuilder<'a> {
     }
 
     /// Adds an arbitrary file to this archive
-    pub fn add_file(&mut self, file: &Path) -> old_io::IoResult<()> {
-        let filename = Path::new(file.filename().unwrap());
+    pub fn add_file(&mut self, file: &Path) -> io::Result<()> {
+        let filename = Path::new(file.file_name().unwrap());
         let new_file = self.work_dir.path().join(&filename);
         try!(fs::copy(file, &new_file));
-        self.members.push(filename);
+        self.members.push(filename.to_path_buf());
         Ok(())
     }
 
@@ -226,8 +230,8 @@ impl<'a> ArchiveBuilder<'a> {
         // though we run it from `self.work_dir`.
         let abs_dst = env::current_dir().unwrap().join(&self.archive.dst);
         assert!(!abs_dst.is_relative());
-        let mut args = vec![&abs_dst];
-        let mut total_len = abs_dst.as_vec().len();
+        let mut args = vec![&*abs_dst];
+        let mut total_len = abs_dst.to_string_lossy().len();
 
         if self.members.is_empty() {
             // OSX `ar` does not allow using `r` with no members, but it does
@@ -242,10 +246,10 @@ impl<'a> ArchiveBuilder<'a> {
         // Don't allow the total size of `args` to grow beyond 32,000 bytes.
         // Windows will raise an error if the argument string is longer than
         // 32,768, and we leave a bit of extra space for the program name.
-        static ARG_LENGTH_LIMIT: uint = 32000;
+        const ARG_LENGTH_LIMIT: usize = 32_000;
 
         for member_name in &self.members {
-            let len = member_name.as_vec().len();
+            let len = member_name.to_string_lossy().len();
 
             // `len + 1` to account for the space that's inserted before each
             // argument.  (Windows passes command-line arguments as a single
@@ -258,7 +262,7 @@ impl<'a> ArchiveBuilder<'a> {
 
                 args.clear();
                 args.push(&abs_dst);
-                total_len = abs_dst.as_vec().len();
+                total_len = abs_dst.to_string_lossy().len();
             }
 
             args.push(member_name);
@@ -275,7 +279,7 @@ impl<'a> ArchiveBuilder<'a> {
     }
 
     fn add_archive<F>(&mut self, archive: &Path, name: &str,
-                      mut skip: F) -> old_io::IoResult<()>
+                      mut skip: F) -> io::Result<()>
         where F: FnMut(&str) -> bool,
     {
         let loc = TempDir::new("rsar").unwrap();
@@ -296,9 +300,10 @@ impl<'a> ArchiveBuilder<'a> {
         // We skip any files explicitly desired for skipping, and we also skip
         // all SYMDEF files as these are just magical placeholders which get
         // re-created when we make a new archive anyway.
-        let files = try!(fs::readdir(loc.path()));
-        for file in &files {
-            let filename = file.filename_str().unwrap();
+        let files = try!(fs::read_dir(loc.path()));
+        for file in files {
+            let file = try!(file).path();
+            let filename = file.file_name().unwrap().to_str().unwrap();
             if skip(filename) { continue }
             if filename.contains(".SYMDEF") { continue }
 
@@ -313,10 +318,9 @@ impl<'a> ArchiveBuilder<'a> {
                 filename
             };
             let new_filename = self.work_dir.path().join(&filename[..]);
-            try!(fs::rename(file, &new_filename));
-            self.members.push(Path::new(filename));
+            try!(fs::rename(&file, &new_filename));
+            self.members.push(PathBuf::from(filename));
         }
         Ok(())
     }
 }
-

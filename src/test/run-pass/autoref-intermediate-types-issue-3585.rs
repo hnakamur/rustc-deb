@@ -9,6 +9,8 @@
 // except according to those terms.
 
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
@@ -22,13 +24,13 @@ impl<T:Foo> Foo for Box<T> {
     }
 }
 
-impl Foo for uint {
+impl Foo for usize {
     fn foo(&self) -> String {
         format!("{}", *self)
     }
 }
 
 pub fn main() {
-    let x = box 3_usize;
+    let x: Box<_> = box 3;
     assert_eq!(x.foo(), "box 3".to_string());
 }

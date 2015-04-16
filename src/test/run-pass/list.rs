@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-enum list { cons(int, Box<list>), nil, }
+enum list { cons(isize, Box<list>), nil, }
 
 pub fn main() { list::cons(10, box list::cons(11, box list::cons(12, box list::nil))); }

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 use std::cmp::Ordering;
 
 // Test default methods in PartialOrd and PartialEq
@@ -22,7 +24,7 @@ impl PartialEq for Fool {
     }
 }
 
-struct Int(int);
+struct Int(isize);
 
 impl PartialEq for Int {
     fn eq(&self, other: &Int) -> bool {
@@ -40,7 +42,7 @@ impl PartialOrd for Int {
     }
 }
 
-struct RevInt(int);
+struct RevInt(isize);
 
 impl PartialEq for RevInt {
     fn eq(&self, other: &RevInt) -> bool {

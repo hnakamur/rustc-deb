@@ -8,10 +8,25 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![feature(box_syntax)]
 #![feature(int_uint)]
 #![feature(unboxed_closures)]
 #![feature(unsafe_destructor)]
+#![feature(core)]
+#![feature(test)]
+#![feature(rand)]
+#![feature(unicode)]
+#![feature(std_misc)]
+#![feature(libc)]
+#![feature(hash)]
+#![feature(io)]
+#![feature(collections)]
+#![feature(debug_builders)]
+#![feature(unique)]
+#![feature(step_by)]
+#![feature(slice_patterns)]
 #![allow(deprecated)] // rand
 
 extern crate core;
@@ -24,7 +39,6 @@ mod atomic;
 mod cell;
 mod char;
 mod cmp;
-mod finally;
 mod fmt;
 mod hash;
 mod iter;

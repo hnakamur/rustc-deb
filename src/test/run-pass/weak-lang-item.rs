@@ -10,7 +10,9 @@
 
 // aux-build:weak-lang-items.rs
 
-extern crate "weak-lang-items" as other;
+// pretty-expanded FIXME #23616
+
+extern crate weak_lang_items as other;
 
 use std::thread;
 

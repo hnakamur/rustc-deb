@@ -13,13 +13,13 @@
 
 pub use private::P;
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct S {
     p: P,
 }
 
 mod private {
-    #[derive(Copy)]
+    #[derive(Copy, Clone)]
     pub struct P {
         p: i32,
     }
@@ -27,4 +27,3 @@ mod private {
 }
 
 pub static A: S = S { p: private::THREE };
-

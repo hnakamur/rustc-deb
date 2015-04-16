@@ -223,7 +223,7 @@ opt() {
             fi
         done
     else
-        if [ ! -z "$META" ]
+        if [ ! -z "${META-}" ]
         then
             op="$op=<$META>"
         fi
@@ -251,7 +251,7 @@ flag() {
             fi
         done
     else
-        if [ ! -z "$META" ]
+        if [ ! -z "${META-}" ]
         then
             op="$op=<$META>"
         fi
@@ -326,6 +326,10 @@ get_host_triple() {
 	DragonFly)
             _ostype=unknown-dragonfly
             ;;
+
+        OpenBSD)
+            _ostype=unknown-openbsd
+	    ;;
 
 	Darwin)
             _ostype=apple-darwin
@@ -753,7 +757,7 @@ need_cmd tr
 need_cmd sed
 need_cmd chmod
 
-CFG_ARGS="$@"
+CFG_ARGS="${@:-}"
 
 HELP=0
 if [ "${1-}" = "--help" ]
@@ -778,8 +782,9 @@ valopt destdir "" "set installation root"
 valopt prefix "/usr/local" "set installation prefix"
 
 # Avoid prepending an extra / to the prefix path if there's no destdir
-if [ -z "$CFG_DESTDIR" ]; then
-    CFG_DESTDIR_PREFIX="$CFG_PREFIX"
+# NB: CFG vars here are undefined when passing --help
+if [ -z "${CFG_DESTDIR-}" ]; then
+    CFG_DESTDIR_PREFIX="${CFG_PREFIX-}"
 else
     CFG_DESTDIR_PREFIX="$CFG_DESTDIR/$CFG_PREFIX"
 fi
@@ -831,7 +836,7 @@ src_basename="$(basename "$0")"
 # then we're doing a full uninstall, as opposed to the --uninstall flag
 # which just means 'uninstall my components'.
 if [ "$src_basename" = "uninstall.sh" ]; then
-    if [ "$*" != "" ]; then
+    if [ "${*:-}" != "" ]; then
 	# Currently don't know what to do with arguments in this mode
 	err "uninstall.sh does not take any arguments"
     fi

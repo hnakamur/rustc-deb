@@ -10,6 +10,8 @@
 
 
 
+// pretty-expanded FIXME #23616
+
 trait vec_monad<A> {
     fn bind<B, F>(&self, f: F ) -> Vec<B> where F: FnMut(&A) -> Vec<B> ;
 }
@@ -37,18 +39,18 @@ impl<A> option_monad<A> for Option<A> {
     }
 }
 
-fn transform(x: Option<int>) -> Option<String> {
+fn transform(x: Option<isize>) -> Option<String> {
     x.bind(|n| Some(*n + 1) ).bind(|n| Some(n.to_string()) )
 }
 
 pub fn main() {
     assert_eq!(transform(Some(10)), Some("11".to_string()));
     assert_eq!(transform(None), None);
-    assert!((vec!("hi".to_string()))
+    assert_eq!((vec!("hi".to_string()))
         .bind(|x| vec!(x.clone(), format!("{}!", x)) )
-        .bind(|x| vec!(x.clone(), format!("{}?", x)) ) ==
-        vec!("hi".to_string(),
-             "hi?".to_string(),
-             "hi!".to_string(),
-             "hi!?".to_string()));
+        .bind(|x| vec!(x.clone(), format!("{}?", x)) ),
+        ["hi".to_string(),
+         "hi?".to_string(),
+         "hi!".to_string(),
+         "hi!?".to_string()]);
 }

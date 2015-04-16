@@ -10,12 +10,14 @@
 
 // Test that the call operator autoderefs when calling a bounded type parameter.
 
+// pretty-expanded FIXME #23616
+
 #![feature(unboxed_closures)]
 
 use std::ops::FnMut;
 
-fn call_with_2<F>(x: &mut F) -> int
-    where F : FnMut(int) -> int
+fn call_with_2<F>(x: &mut F) -> isize
+    where F : FnMut(isize) -> isize
 {
     x(2) // look ma, no `*`
 }

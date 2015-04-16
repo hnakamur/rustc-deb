@@ -11,12 +11,14 @@
 // Test that the precedence of ranges is correct
 
 
+// pretty-expanded FIXME #23616
+
 struct Foo {
-    foo: uint,
+    foo: usize,
 }
 
 impl Foo {
-    fn bar(&self) -> uint { 5 }
+    fn bar(&self) -> usize { 5 }
 }
 
 fn main() {
@@ -38,7 +40,7 @@ fn main() {
     let x = ..1+3;
     assert!(x == (..4));
 
-    let a = &[0i32, 1, 2, 3, 4, 5, 6];
+    let a = &[0, 1, 2, 3, 4, 5, 6];
     let x = &a[1+1..2+2];
     assert!(x == &a[2..4]);
     let x = &a[..1+2];
@@ -58,4 +60,3 @@ fn main() {
     let y = ..;
     assert!(y == (..));
 }
-

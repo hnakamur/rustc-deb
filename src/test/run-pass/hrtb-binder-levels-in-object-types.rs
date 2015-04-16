@@ -13,12 +13,14 @@
 // `&Typer<'tcx>` was getting an incorrect binder level, yielding
 // weird compilation ICEs and so forth.
 
+// pretty-expanded FIXME #23616
+
 trait Typer<'tcx> {
-    fn method(&self, data: &'tcx int) -> &'tcx int { data }
+    fn method(&self, data: &'tcx isize) -> &'tcx isize { data }
 }
 
 struct Tcx<'tcx> {
-    fields: &'tcx int
+    fields: &'tcx isize
 }
 
 impl<'tcx> Typer<'tcx> for Tcx<'tcx> {

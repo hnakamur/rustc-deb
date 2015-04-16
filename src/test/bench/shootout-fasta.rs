@@ -38,9 +38,12 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
 // OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#![feature(old_io, old_path, io, core)]
+
 use std::cmp::min;
-use std::old_io::{BufferedWriter, File};
+use std::old_io::*;
 use std::old_io;
+use std::old_path::Path;
 use std::num::Float;
 use std::env;
 
@@ -89,7 +92,7 @@ fn make_fasta<W: Writer, I: Iterator<Item=u8>>(
     -> std::old_io::IoResult<()>
 {
     try!(wr.write(header.as_bytes()));
-    let mut line = [0u8; LINE_LENGTH + 1];
+    let mut line = [0; LINE_LENGTH + 1];
     while n > 0 {
         let nb = min(LINE_LENGTH, n);
         for i in 0..nb {

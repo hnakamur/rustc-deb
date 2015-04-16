@@ -10,32 +10,32 @@
 
 // Test that a custom deref with a fat pointer return type does not ICE
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+// pretty-expanded FIXME #23616
 
 use std::ops::Deref;
 
 pub struct Arr {
-    ptr: Box<[uint]>
+    ptr: Box<[usize]>
 }
 
 impl Deref for Arr {
-    type Target = [uint];
+    type Target = [usize];
 
-    fn deref(&self) -> &[uint] {
+    fn deref(&self) -> &[usize] {
         &*self.ptr
     }
 }
 
 pub fn foo(arr: &Arr) {
     assert!(arr.len() == 3);
-    let x: &[uint] = &**arr;
+    let x: &[usize] = &**arr;
     assert!(x[0] == 1);
     assert!(x[1] == 2);
     assert!(x[2] == 3);
 }
 
 fn main() {
-    let a = Arr { ptr: box [1, 2, 3] };
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    let a = Arr { ptr: Box::new([1, 2, 3]) };
     foo(&a);
 }

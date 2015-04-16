@@ -12,12 +12,11 @@
 
 //! An implementation of SipHash 2-4.
 
+#![allow(deprecated)] // until the next snapshot for inherent wrapping ops
+
 use prelude::*;
 use default::Default;
-
 use super::Hasher;
-#[cfg(stage0)]
-use super::Writer;
 
 /// An implementation of SipHash 2-4.
 ///
@@ -36,13 +35,13 @@ use super::Writer;
 pub struct SipHasher {
     k0: u64,
     k1: u64,
-    length: uint, // how many bytes we've processed
+    length: usize, // how many bytes we've processed
     v0: u64,      // hash state
     v1: u64,
     v2: u64,
     v3: u64,
     tail: u64, // unprocessed bytes le
-    ntail: uint,  // how many bytes in tail are valid
+    ntail: usize,  // how many bytes in tail are valid
 }
 
 // sadly, these macro definitions can't appear later,
@@ -62,7 +61,7 @@ macro_rules! u8to64_le {
     ($buf:expr, $i:expr, $len:expr) =>
     ({
         let mut t = 0;
-        let mut out = 0u64;
+        let mut out = 0;
         while t < $len {
             out |= ($buf[t+$i] as u64) << t*8;
             t += 1;
@@ -73,17 +72,17 @@ macro_rules! u8to64_le {
 
 macro_rules! rotl {
     ($x:expr, $b:expr) =>
-    (($x << $b) | ($x >> (64 - $b)))
+    (($x << $b) | ($x >> (64_i32.wrapping_sub($b))))
 }
 
 macro_rules! compress {
     ($v0:expr, $v1:expr, $v2:expr, $v3:expr) =>
     ({
-        $v0 += $v1; $v1 = rotl!($v1, 13); $v1 ^= $v0;
+        $v0 = $v0.wrapping_add($v1); $v1 = rotl!($v1, 13); $v1 ^= $v0;
         $v0 = rotl!($v0, 32);
-        $v2 += $v3; $v3 = rotl!($v3, 16); $v3 ^= $v2;
-        $v0 += $v3; $v3 = rotl!($v3, 21); $v3 ^= $v0;
-        $v2 += $v1; $v1 = rotl!($v1, 17); $v1 ^= $v2;
+        $v2 = $v2.wrapping_add($v3); $v3 = rotl!($v3, 16); $v3 ^= $v2;
+        $v0 = $v0.wrapping_add($v3); $v3 = rotl!($v3, 21); $v3 ^= $v0;
+        $v2 = $v2.wrapping_add($v1); $v1 = rotl!($v1, 17); $v1 ^= $v2;
         $v2 = rotl!($v2, 32);
     })
 }
@@ -114,11 +113,6 @@ impl SipHasher {
         state.reset();
         state
     }
-
-    /// Returns the computed hash.
-    #[unstable(feature = "hash")]
-    #[deprecated(since = "1.0.0", reason = "renamed to finish")]
-    pub fn result(&self) -> u64 { self.finish() }
 
     fn reset(&mut self) {
         self.length = 0;
@@ -175,26 +169,9 @@ impl SipHasher {
     }
 }
 
-#[cfg(stage0)]
-impl Writer for SipHasher {
-    #[inline]
-    fn write(&mut self, msg: &[u8]) {
-        self.write(msg)
-    }
-}
-
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Hasher for SipHasher {
-    #[cfg(stage0)]
-    type Output = u64;
-
-    #[cfg(stage0)]
-    fn reset(&mut self) {
-        self.reset();
-    }
-
     #[inline]
-    #[cfg(not(stage0))]
     fn write(&mut self, msg: &[u8]) {
         self.write(msg)
     }

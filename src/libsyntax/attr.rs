@@ -10,7 +10,6 @@
 
 // Functions dealing with attributes and meta items
 
-pub use self::InlineAttr::*;
 pub use self::StabilityLevel::*;
 pub use self::ReprAttr::*;
 pub use self::IntType::*;
@@ -283,31 +282,35 @@ pub fn find_crate_name(attrs: &[Attribute]) -> Option<InternedString> {
     first_attr_value_str_by_name(attrs, "crate_name")
 }
 
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum InlineAttr {
-    InlineNone,
-    InlineHint,
-    InlineAlways,
-    InlineNever,
+    None,
+    Hint,
+    Always,
+    Never,
 }
 
 /// Determine what `#[inline]` attribute is present in `attrs`, if any.
-pub fn find_inline_attr(attrs: &[Attribute]) -> InlineAttr {
+pub fn find_inline_attr(diagnostic: Option<&SpanHandler>, attrs: &[Attribute]) -> InlineAttr {
     // FIXME (#2809)---validate the usage of #[inline] and #[inline]
-    attrs.iter().fold(InlineNone, |ia,attr| {
+    attrs.iter().fold(InlineAttr::None, |ia,attr| {
         match attr.node.value.node {
             MetaWord(ref n) if *n == "inline" => {
                 mark_used(attr);
-                InlineHint
+                InlineAttr::Hint
             }
             MetaList(ref n, ref items) if *n == "inline" => {
                 mark_used(attr);
-                if contains_name(&items[..], "always") {
-                    InlineAlways
+                if items.len() != 1 {
+                    diagnostic.map(|d|{ d.span_err(attr.span, "expected one argument"); });
+                    InlineAttr::None
+                } else if contains_name(&items[..], "always") {
+                    InlineAttr::Always
                 } else if contains_name(&items[..], "never") {
-                    InlineNever
+                    InlineAttr::Never
                 } else {
-                    InlineHint
+                    diagnostic.map(|d|{ d.span_err((*items[0]).span, "invalid argument"); });
+                    InlineAttr::None
                 }
             }
             _ => ia
@@ -317,9 +320,9 @@ pub fn find_inline_attr(attrs: &[Attribute]) -> InlineAttr {
 
 /// True if `#[inline]` or `#[inline(always)]` is present in `attrs`.
 pub fn requests_inline(attrs: &[Attribute]) -> bool {
-    match find_inline_attr(attrs) {
-        InlineHint | InlineAlways => true,
-        InlineNone | InlineNever => false,
+    match find_inline_attr(None, attrs) {
+        InlineAttr::Hint | InlineAttr::Always => true,
+        InlineAttr::None | InlineAttr::Never => false,
     }
 }
 
@@ -562,15 +565,13 @@ fn int_type_of_word(s: &str) -> Option<IntType> {
         "u32" => Some(UnsignedInt(ast::TyU32)),
         "i64" => Some(SignedInt(ast::TyI64)),
         "u64" => Some(UnsignedInt(ast::TyU64)),
-        "int" => Some(SignedInt(ast::TyIs(true))),
-        "uint" => Some(UnsignedInt(ast::TyUs(true))),
-        "isize" => Some(SignedInt(ast::TyIs(false))),
-        "usize" => Some(UnsignedInt(ast::TyUs(false))),
+        "isize" => Some(SignedInt(ast::TyIs)),
+        "usize" => Some(UnsignedInt(ast::TyUs)),
         _ => None
     }
 }
 
-#[derive(PartialEq, Debug, RustcEncodable, RustcDecodable, Copy)]
+#[derive(PartialEq, Debug, RustcEncodable, RustcDecodable, Copy, Clone)]
 pub enum ReprAttr {
     ReprAny,
     ReprInt(Span, IntType),
@@ -589,7 +590,7 @@ impl ReprAttr {
     }
 }
 
-#[derive(Eq, Hash, PartialEq, Debug, RustcEncodable, RustcDecodable, Copy)]
+#[derive(Eq, Hash, PartialEq, Debug, RustcEncodable, RustcDecodable, Copy, Clone)]
 pub enum IntType {
     SignedInt(ast::IntTy),
     UnsignedInt(ast::UintTy)
@@ -609,7 +610,7 @@ impl IntType {
             SignedInt(ast::TyI16) | UnsignedInt(ast::TyU16) |
             SignedInt(ast::TyI32) | UnsignedInt(ast::TyU32) |
             SignedInt(ast::TyI64) | UnsignedInt(ast::TyU64) => true,
-            SignedInt(ast::TyIs(_)) | UnsignedInt(ast::TyUs(_)) => false
+            SignedInt(ast::TyIs) | UnsignedInt(ast::TyUs) => false
         }
     }
 }

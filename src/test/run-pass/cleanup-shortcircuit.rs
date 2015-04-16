@@ -20,6 +20,8 @@
 
 // Test that cleanups for the RHS of shortcircuiting operators work.
 
+// pretty-expanded FIXME #23616
+
 use std::env;
 
 pub fn main() {
@@ -33,7 +35,6 @@ pub fn main() {
 
     if args.len() >= 2 && args[1] == "signal" {
         // Raise a segfault.
-        unsafe { *(0 as *mut int) = 0; }
+        unsafe { *(0 as *mut isize) = 0; }
     }
 }
-

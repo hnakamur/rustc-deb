@@ -14,6 +14,8 @@
 //! Parsing does not happen at runtime: structures of `std::fmt::rt` are
 //! generated instead.
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "fmt_macros"]
 #![unstable(feature = "rustc_private")]
 #![staged_api]
@@ -24,7 +26,6 @@
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
 
-#![feature(int_uint)]
 #![feature(staged_api)]
 #![feature(unicode)]
 
@@ -39,7 +40,7 @@ use std::string;
 
 /// A piece is a portion of the format string which represents the next part
 /// to emit. These are emitted as a stream by the `Parser` class.
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Piece<'a> {
     /// A literal string which should directly be emitted
     String(&'a str),
@@ -49,7 +50,7 @@ pub enum Piece<'a> {
 }
 
 /// Representation of an argument specification.
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Argument<'a> {
     /// Where to find this argument
     pub position: Position<'a>,
@@ -58,14 +59,14 @@ pub struct Argument<'a> {
 }
 
 /// Specification for the formatting of an argument in the format string.
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct FormatSpec<'a> {
     /// Optionally specified character to fill alignment with
     pub fill: Option<char>,
     /// Optionally specified alignment
     pub align: Alignment,
     /// Packed version of various flags provided
-    pub flags: uint,
+    pub flags: u32,
     /// The integer precision to use
     pub precision: Count<'a>,
     /// The string width requested for the resulting format
@@ -77,18 +78,18 @@ pub struct FormatSpec<'a> {
 }
 
 /// Enum describing where an argument for a format can be located.
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Position<'a> {
     /// The argument will be in the next position. This is the default.
     ArgumentNext,
     /// The argument is located at a specific index.
-    ArgumentIs(uint),
+    ArgumentIs(usize),
     /// The argument has a name.
     ArgumentNamed(&'a str),
 }
 
 /// Enum of alignments which are supported.
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Alignment {
     /// The value will be aligned to the left.
     AlignLeft,
@@ -102,7 +103,7 @@ pub enum Alignment {
 
 /// Various flags which can be applied to format strings. The meaning of these
 /// flags is defined by the formatters themselves.
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Flag {
     /// A `+` will be used to denote positive numbers.
     FlagSignPlus,
@@ -118,14 +119,14 @@ pub enum Flag {
 
 /// A count is used for the precision and width parameters of an integer, and
 /// can reference either an argument or a literal integer.
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Count<'a> {
     /// The count is specified explicitly.
-    CountIs(uint),
+    CountIs(usize),
     /// The count is specified by the argument with the given name.
     CountIsName(&'a str),
     /// The count is specified by the argument at the given index.
-    CountIsParam(uint),
+    CountIsParam(usize),
     /// The count is specified by the next parameter.
     CountIsNextParam,
     /// The count is implied and cannot be explicitly specified.
@@ -237,7 +238,7 @@ impl<'a> Parser<'a> {
 
     /// Parses all of a string which is to be considered a "raw literal" in a
     /// format string. This is everything outside of the braces.
-    fn string(&mut self, start: uint) -> &'a str {
+    fn string(&mut self, start: usize) -> &'a str {
         loop {
             // we may not consume the character, so clone the iterator
             match self.cur.clone().next() {
@@ -314,13 +315,13 @@ impl<'a> Parser<'a> {
         }
         // Sign flags
         if self.consume('+') {
-            spec.flags |= 1 << (FlagSignPlus as uint);
+            spec.flags |= 1 << (FlagSignPlus as u32);
         } else if self.consume('-') {
-            spec.flags |= 1 << (FlagSignMinus as uint);
+            spec.flags |= 1 << (FlagSignMinus as u32);
         }
         // Alternate marker
         if self.consume('#') {
-            spec.flags |= 1 << (FlagAlternate as uint);
+            spec.flags |= 1 << (FlagAlternate as u32);
         }
         // Width and precision
         let mut havewidth = false;
@@ -333,7 +334,7 @@ impl<'a> Parser<'a> {
                 spec.width = CountIsParam(0);
                 havewidth = true;
             } else {
-                spec.flags |= 1 << (FlagSignAwareZeroPad as uint);
+                spec.flags |= 1 << (FlagSignAwareZeroPad as u32);
             }
         }
         if !havewidth {
@@ -413,7 +414,7 @@ impl<'a> Parser<'a> {
 
     /// Optionally parses an integer at the current position. This doesn't deal
     /// with overflow at all, it's just accumulating digits.
-    fn integer(&mut self) -> Option<uint> {
+    fn integer(&mut self) -> Option<usize> {
         let mut cur = 0;
         let mut found = false;
         loop {
@@ -445,7 +446,7 @@ mod tests {
 
     fn same(fmt: &'static str, p: &[Piece<'static>]) {
         let parser = Parser::new(fmt);
-        assert!(p == parser.collect::<Vec<Piece<'static>>>());
+        assert!(parser.collect::<Vec<Piece<'static>>>() == p);
     }
 
     fn fmtdflt() -> FormatSpec<'static> {
@@ -617,7 +618,7 @@ mod tests {
             format: FormatSpec {
                 fill: None,
                 align: AlignUnknown,
-                flags: (1 << FlagSignMinus as uint),
+                flags: (1 << FlagSignMinus as u32),
                 precision: CountImplied,
                 width: CountImplied,
                 ty: "",
@@ -628,7 +629,7 @@ mod tests {
             format: FormatSpec {
                 fill: None,
                 align: AlignUnknown,
-                flags: (1 << FlagSignPlus as uint) | (1 << FlagAlternate as uint),
+                flags: (1 << FlagSignPlus as u32) | (1 << FlagAlternate as u32),
                 precision: CountImplied,
                 width: CountImplied,
                 ty: "",

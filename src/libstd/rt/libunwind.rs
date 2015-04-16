@@ -25,7 +25,7 @@ use libc;
 
 #[cfg(any(not(target_arch = "arm"), target_os = "ios"))]
 #[repr(C)]
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub enum _Unwind_Action {
     _UA_SEARCH_PHASE = 1,
     _UA_CLEANUP_PHASE = 2,
@@ -64,25 +64,25 @@ pub type _Unwind_Exception_Class = u64;
 pub type _Unwind_Word = libc::uintptr_t;
 
 #[cfg(target_arch = "x86")]
-pub const unwinder_private_data_size: uint = 5;
+pub const unwinder_private_data_size: usize = 5;
 
 #[cfg(target_arch = "x86_64")]
-pub const unwinder_private_data_size: uint = 6;
+pub const unwinder_private_data_size: usize = 6;
 
 #[cfg(all(target_arch = "arm", not(target_os = "ios")))]
-pub const unwinder_private_data_size: uint = 20;
+pub const unwinder_private_data_size: usize = 20;
 
 #[cfg(all(target_arch = "arm", target_os = "ios"))]
-pub const unwinder_private_data_size: uint = 5;
+pub const unwinder_private_data_size: usize = 5;
 
 #[cfg(target_arch = "aarch64")]
-pub const unwinder_private_data_size: uint = 2;
+pub const unwinder_private_data_size: usize = 2;
 
 #[cfg(any(target_arch = "mips", target_arch = "mipsel"))]
-pub const unwinder_private_data_size: uint = 2;
+pub const unwinder_private_data_size: usize = 2;
 
 #[cfg(target_arch = "powerpc")]
-pub const unwinder_private_data_size: uint = 2;
+pub const unwinder_private_data_size: usize = 2;
 
 #[repr(C)]
 pub struct _Unwind_Exception {
@@ -107,6 +107,10 @@ extern {}
 
 #[cfg(target_os = "dragonfly")]
 #[link(name = "gcc_pic")]
+extern {}
+
+#[cfg(target_os = "bitrig")]
+#[link(name = "c++abi")]
 extern {}
 
 extern "C" {

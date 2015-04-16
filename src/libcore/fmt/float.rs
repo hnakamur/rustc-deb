@@ -17,7 +17,7 @@ pub use self::SignFormat::*;
 use char;
 use char::CharExt;
 use fmt;
-use iter::IteratorExt;
+use iter::Iterator;
 use num::{cast, Float, ToPrimitive};
 use num::FpCategory as Fp;
 use ops::FnOnce;
@@ -40,10 +40,10 @@ pub enum ExponentFormat {
 pub enum SignificantDigits {
     /// At most the given number of digits will be printed, truncating any
     /// trailing zeroes.
-    DigMax(uint),
+    DigMax(usize),
 
     /// Precisely the given number of digits will be printed.
-    DigExact(uint)
+    DigExact(usize)
 }
 
 /// How to emit the sign of a number.
@@ -53,7 +53,7 @@ pub enum SignFormat {
     SignNeg
 }
 
-static DIGIT_E_RADIX: u32 = ('e' as u32) - ('a' as u32) + 11;
+const DIGIT_E_RADIX: u32 = ('e' as u32) - ('a' as u32) + 11;
 
 /// Converts a number to its string representation as a byte vector.
 /// This is meant to be a common base implementation for all numeric string
@@ -123,13 +123,13 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
     // For an f64 the exponent is in the range of [-1022, 1023] for base 2, so
     // we may have up to that many digits. Give ourselves some extra wiggle room
     // otherwise as well.
-    let mut buf = [0u8; 1536];
+    let mut buf = [0; 1536];
     let mut end = 0;
-    let radix_gen: T = cast(radix as int).unwrap();
+    let radix_gen: T = cast(radix as isize).unwrap();
 
     let (num, exp) = match exp_format {
-        ExpNone => (num, 0i32),
-        ExpDec if num == _0 => (num, 0i32),
+        ExpNone => (num, 0),
+        ExpDec if num == _0 => (num, 0),
         ExpDec => {
             let (exp, exp_base) = match exp_format {
                 ExpDec => (num.abs().log10().floor(), cast::<f64, T>(10.0f64).unwrap()),
@@ -156,7 +156,7 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
         deccum = deccum / radix_gen;
         deccum = deccum.trunc();
 
-        let c = char::from_digit(current_digit.to_int().unwrap() as u32, radix);
+        let c = char::from_digit(current_digit.to_isize().unwrap() as u32, radix);
         buf[end] = c.unwrap() as u8;
         end += 1;
 
@@ -211,7 +211,7 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
             // See note in first loop.
             let current_digit = deccum.trunc().abs();
 
-            let c = char::from_digit(current_digit.to_int().unwrap() as u32,
+            let c = char::from_digit(current_digit.to_isize().unwrap() as u32,
                                      radix);
             buf[end] = c.unwrap() as u8;
             end += 1;
@@ -235,32 +235,32 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
             let extra_digit = ascii2value(buf[end - 1]);
             end -= 1;
             if extra_digit >= radix / 2 { // -> need to round
-                let mut i: int = end as int - 1;
+                let mut i: isize = end as isize - 1;
                 loop {
                     // If reached left end of number, have to
                     // insert additional digit:
                     if i < 0
-                    || buf[i as uint] == b'-'
-                    || buf[i as uint] == b'+' {
-                        for j in (i as uint + 1..end).rev() {
+                    || buf[i as usize] == b'-'
+                    || buf[i as usize] == b'+' {
+                        for j in (i as usize + 1..end).rev() {
                             buf[j + 1] = buf[j];
                         }
-                        buf[(i + 1) as uint] = value2ascii(1);
+                        buf[(i + 1) as usize] = value2ascii(1);
                         end += 1;
                         break;
                     }
 
                     // Skip the '.'
-                    if buf[i as uint] == b'.' { i -= 1; continue; }
+                    if buf[i as usize] == b'.' { i -= 1; continue; }
 
                     // Either increment the digit,
                     // or set to 0 if max and carry the 1.
-                    let current_digit = ascii2value(buf[i as uint]);
+                    let current_digit = ascii2value(buf[i as usize]);
                     if current_digit < (radix - 1) {
-                        buf[i as uint] = value2ascii(current_digit+1);
+                        buf[i as usize] = value2ascii(current_digit+1);
                         break;
                     } else {
-                        buf[i as uint] = value2ascii(0);
+                        buf[i as usize] = value2ascii(0);
                         i -= 1;
                     }
                 }
@@ -311,13 +311,13 @@ pub fn float_to_str_bytes_common<T: Float, U, F>(
 
             struct Filler<'a> {
                 buf: &'a mut [u8],
-                end: &'a mut uint,
+                end: &'a mut usize,
             }
 
             impl<'a> fmt::Write for Filler<'a> {
                 fn write_str(&mut self, s: &str) -> fmt::Result {
-                    slice::bytes::copy_memory(&mut self.buf[(*self.end)..],
-                                              s.as_bytes());
+                    slice::bytes::copy_memory(s.as_bytes(),
+                                              &mut self.buf[(*self.end)..]);
                     *self.end += s.len();
                     Ok(())
                 }

@@ -25,9 +25,10 @@ use util::nodemap::{FnvHashMap, NodeMap};
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::path::PathBuf;
 use flate::Bytes;
 use syntax::ast;
-use syntax::codemap::Span;
+use syntax::codemap;
 use syntax::parse::token::IdentInterner;
 
 // A map from external crate numbers (as decoded from some crate file) to
@@ -41,12 +42,24 @@ pub enum MetadataBlob {
     MetadataArchive(loader::ArchiveMetadata),
 }
 
+/// Holds information about a codemap::FileMap imported from another crate.
+/// See creader::import_codemap() for more information.
+pub struct ImportedFileMap {
+    /// This FileMap's byte-offset within the codemap of its original crate
+    pub original_start_pos: codemap::BytePos,
+    /// The end of this FileMap within the codemap of its original crate
+    pub original_end_pos: codemap::BytePos,
+    /// The imported FileMap's representation within the local codemap
+    pub translated_filemap: Rc<codemap::FileMap>
+}
+
 pub struct crate_metadata {
     pub name: String,
     pub data: MetadataBlob,
     pub cnum_map: cnum_map,
     pub cnum: ast::CrateNum,
-    pub span: Span,
+    pub codemap_import_info: Vec<ImportedFileMap>,
+    pub span: codemap::Span,
 }
 
 #[derive(Copy, Debug, PartialEq, Clone)]
@@ -66,8 +79,8 @@ pub enum NativeLibraryKind {
 // must be non-None.
 #[derive(PartialEq, Clone)]
 pub struct CrateSource {
-    pub dylib: Option<(Path, PathKind)>,
-    pub rlib: Option<(Path, PathKind)>,
+    pub dylib: Option<(PathBuf, PathKind)>,
+    pub rlib: Option<(PathBuf, PathKind)>,
     pub cnum: ast::CrateNum,
 }
 
@@ -98,7 +111,7 @@ impl CStore {
     }
 
     pub fn get_crate_data(&self, cnum: ast::CrateNum) -> Rc<crate_metadata> {
-        (*self.metas.borrow())[cnum].clone()
+        self.metas.borrow().get(&cnum).unwrap().clone()
     }
 
     pub fn get_crate_hash(&self, cnum: ast::CrateNum) -> Svh {
@@ -160,7 +173,7 @@ impl CStore {
     // topological sort of all crates putting the leaves at the right-most
     // positions.
     pub fn get_used_crates(&self, prefer: LinkagePreference)
-                           -> Vec<(ast::CrateNum, Option<Path>)> {
+                           -> Vec<(ast::CrateNum, Option<PathBuf>)> {
         let mut ordering = Vec::new();
         fn visit(cstore: &CStore, cnum: ast::CrateNum,
                  ordering: &mut Vec<ast::CrateNum>) {
@@ -230,7 +243,7 @@ impl crate_metadata {
 impl MetadataBlob {
     pub fn as_slice<'a>(&'a self) -> &'a [u8] {
         let slice = match *self {
-            MetadataVec(ref vec) => vec.as_slice(),
+            MetadataVec(ref vec) => &vec[..],
             MetadataArchive(ref ar) => ar.as_slice(),
         };
         if slice.len() < 4 {
@@ -239,7 +252,7 @@ impl MetadataBlob {
             let len = (((slice[0] as u32) << 24) |
                        ((slice[1] as u32) << 16) |
                        ((slice[2] as u32) << 8) |
-                       ((slice[3] as u32) << 0)) as uint;
+                       ((slice[3] as u32) << 0)) as usize;
             if len + 4 <= slice.len() {
                 &slice[4.. len + 4]
             } else {

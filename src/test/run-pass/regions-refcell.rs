@@ -12,13 +12,15 @@
 // attempting to bootstrap librustc with new destructor lifetime
 // semantics.
 
+// pretty-expanded FIXME #23616
+
 use std::collections::HashMap;
 use std::cell::RefCell;
 
 // This version does not yet work (associated type issues)...
 #[cfg(cannot_use_this_yet)]
 fn foo<'a>(map: RefCell<HashMap<&'static str, &'a [u8]>>) {
-    let one = [1_usize];
+    let one = [1];
     assert_eq!(map.borrow().get("one"), Some(&one[..]));
 }
 
@@ -26,8 +28,8 @@ fn foo<'a>(map: RefCell<HashMap<&'static str, &'a [u8]>>) {
 // ... and this version does not work (the lifetime of `one` is
 // supposed to match the lifetime `'a`) ...
 fn foo<'a>(map: RefCell<HashMap<&'static str, &'a [u8]>>) {
-    let one = [1_usize];
-    assert_eq!(map.borrow().get("one"), Some(&one.as_slice()));
+    let one = [1];
+    assert_eq!(map.borrow().get("one"), Some(&&one[..]));
 }
 
 #[cfg(all(not(cannot_use_this_yet),not(cannot_use_this_yet_either)))]
@@ -41,9 +43,9 @@ fn foo<'a>(map: RefCell<HashMap<&'static str, &'a [u8]>>) {
 }
 
 fn main() {
-    let zer = [0u8];
-    let one = [1u8];
-    let two = [2u8];
+    let zer = [0];
+    let one = [1];
+    let two = [2];
     let mut map = HashMap::new();
     map.insert("zero", &zer[..]);
     map.insert("one",  &one[..]);

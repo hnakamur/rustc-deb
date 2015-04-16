@@ -12,7 +12,7 @@
 
 // ignore-android
 
-#![feature(rustc_private)]
+#![feature(rustc_private, path)]
 #![feature(core)]
 
 extern crate getopts;
@@ -25,6 +25,7 @@ use rustc::session::config::{self, Input};
 use rustc_driver::{driver, CompilerCalls, Compilation};
 use syntax::diagnostics;
 
+use std::path::PathBuf;
 
 struct TestCalls {
     count: u32
@@ -43,14 +44,15 @@ impl<'a> CompilerCalls<'a> for TestCalls {
                      _: &getopts::Matches,
                      _: &Session,
                      _: &Input,
-                     _: &Option<Path>,
-                     _: &Option<Path>)
+                     _: &Option<PathBuf>,
+                     _: &Option<PathBuf>)
                      -> Compilation {
         self.count *= 3;
         Compilation::Stop
     }
 
-    fn some_input(&mut self, input: Input, input_path: Option<Path>) -> (Input, Option<Path>) {
+    fn some_input(&mut self, input: Input, input_path: Option<PathBuf>)
+                  -> (Input, Option<PathBuf>) {
         self.count *= 5;
         (input, input_path)
     }
@@ -58,10 +60,10 @@ impl<'a> CompilerCalls<'a> for TestCalls {
     fn no_input(&mut self,
                 _: &getopts::Matches,
                 _: &config::Options,
-                _: &Option<Path>,
-                _: &Option<Path>,
+                _: &Option<PathBuf>,
+                _: &Option<PathBuf>,
                 _: &diagnostics::registry::Registry)
-                -> Option<(Input, Option<Path>)> {
+                -> Option<(Input, Option<PathBuf>)> {
         panic!("This shouldn't happen");
     }
 
@@ -75,7 +77,6 @@ fn main() {
     let mut tc = TestCalls { count: 1 };
     // we should never get use this filename, but lets make sure they are valid args.
     let args = vec!["compiler-calls".to_string(), "foo.rs".to_string()];
-    rustc_driver::run_compiler(args.as_slice(), &mut tc);
+    rustc_driver::run_compiler(&args, &mut tc);
     assert!(tc.count == 30);
 }
-

@@ -9,15 +9,17 @@
 // except according to those terms.
 
 use std::slice;
+use std::path::{Path, PathBuf};
+use session::early_error;
 
 #[derive(Clone, Debug)]
 pub struct SearchPaths {
-    paths: Vec<(PathKind, Path)>,
+    paths: Vec<(PathKind, PathBuf)>,
 }
 
 pub struct Iter<'a> {
     kind: PathKind,
-    iter: slice::Iter<'a, (PathKind, Path)>,
+    iter: slice::Iter<'a, (PathKind, PathBuf)>,
 }
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
@@ -49,7 +51,10 @@ impl SearchPaths {
         } else {
             (PathKind::All, path)
         };
-        self.paths.push((kind, Path::new(path)));
+        if path.is_empty() {
+            early_error("empty search path given via `-L`");
+        }
+        self.paths.push((kind, PathBuf::from(path)));
     }
 
     pub fn iter(&self, kind: PathKind) -> Iter {

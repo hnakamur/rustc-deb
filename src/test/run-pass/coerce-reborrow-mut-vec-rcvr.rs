@@ -9,7 +9,9 @@
 // except according to those terms.
 
 
-fn bar(v: &mut [uint]) {
+// pretty-expanded FIXME #23616
+
+fn bar(v: &mut [usize]) {
     v.reverse();
     v.reverse();
     v.reverse();
@@ -18,5 +20,5 @@ fn bar(v: &mut [uint]) {
 pub fn main() {
     let mut the_vec = vec!(1, 2, 3, 100);
     bar(&mut the_vec);
-    assert_eq!(the_vec, vec!(100, 3, 2, 1));
+    assert_eq!(the_vec, [100, 3, 2, 1]);
 }

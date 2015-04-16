@@ -12,10 +12,10 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use any;
 use cell::{Cell, RefCell, Ref, RefMut, BorrowState};
 use char::CharExt;
-use iter::{Iterator, IteratorExt};
+use clone::Clone;
+use iter::Iterator;
 use marker::{Copy, PhantomData, Sized};
 use mem;
 use option::Option;
@@ -32,8 +32,11 @@ pub use self::num::radix;
 pub use self::num::Radix;
 pub use self::num::RadixFmt;
 
+pub use self::builders::{DebugStruct, DebugTuple, DebugSet, DebugList, DebugMap};
+
 mod num;
 mod float;
+mod builders;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(hidden)]
@@ -51,7 +54,7 @@ pub type Result = result::Result<(), Error>;
 /// occurred. Any extra information must be arranged to be transmitted through
 /// some other means.
 #[stable(feature = "rust1", since = "1.0.0")]
-#[derive(Copy, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Error;
 
 /// A collection of methods that are required to format a message into a stream.
@@ -110,11 +113,11 @@ pub trait Write {
 /// traits.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Formatter<'a> {
-    flags: uint,
+    flags: u32,
     fill: char,
     align: rt::v1::Alignment,
-    width: Option<uint>,
-    precision: Option<uint>,
+    width: Option<usize>,
+    precision: Option<usize>,
 
     buf: &'a mut (Write+'a),
     curarg: slice::Iter<'a, ArgumentV1<'a>>,
@@ -138,9 +141,15 @@ pub struct ArgumentV1<'a> {
     formatter: fn(&Void, &mut Formatter) -> Result,
 }
 
+impl<'a> Clone for ArgumentV1<'a> {
+    fn clone(&self) -> ArgumentV1<'a> {
+        *self
+    }
+}
+
 impl<'a> ArgumentV1<'a> {
     #[inline(never)]
-    fn show_uint(x: &uint, f: &mut Formatter) -> Result {
+    fn show_usize(x: &usize, f: &mut Formatter) -> Result {
         Display::fmt(x, f)
     }
 
@@ -158,13 +167,13 @@ impl<'a> ArgumentV1<'a> {
 
     #[doc(hidden)]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn from_uint(x: &uint) -> ArgumentV1 {
-        ArgumentV1::new(x, ArgumentV1::show_uint)
+    pub fn from_usize(x: &usize) -> ArgumentV1 {
+        ArgumentV1::new(x, ArgumentV1::show_usize)
     }
 
-    fn as_uint(&self) -> Option<uint> {
-        if self.formatter as uint == ArgumentV1::show_uint as uint {
-            Some(unsafe { *(self.value as *const _ as *const uint) })
+    fn as_usize(&self) -> Option<usize> {
+        if self.formatter as usize == ArgumentV1::show_usize as usize {
+            Some(unsafe { *(self.value as *const _ as *const usize) })
         } else {
             None
         }
@@ -172,7 +181,7 @@ impl<'a> ArgumentV1<'a> {
 }
 
 // flags available in the v1 format of format_args
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 #[allow(dead_code)] // SignMinus isn't currently used
 enum FlagV1 { SignPlus, SignMinus, Alternate, SignAwareZeroPad, }
 
@@ -194,7 +203,7 @@ impl<'a> Arguments<'a> {
     /// The `pieces` array must be at least as long as `fmt` to construct
     /// a valid Arguments structure. Also, any `Count` within `fmt` that is
     /// `CountIsParam` or `CountIsNextParam` has to point to an argument
-    /// created with `argumentuint`. However, failing to do so doesn't cause
+    /// created with `argumentusize`. However, failing to do so doesn't cause
     /// unsafety, but will ignore invalid .
     #[doc(hidden)] #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -219,7 +228,7 @@ impl<'a> Arguments<'a> {
 /// macro validates the format string at compile-time so usage of the `write`
 /// and `format` functions can be safely performed.
 #[stable(feature = "rust1", since = "1.0.0")]
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct Arguments<'a> {
     // Format string pieces to print.
     pieces: &'a [&'a str],
@@ -248,38 +257,12 @@ impl<'a> Display for Arguments<'a> {
 
 /// Format trait for the `:?` format. Useful for debugging, all types
 /// should implement this.
-#[deprecated(since = "1.0.0", reason = "renamed to Debug")]
-#[unstable(feature = "old_fmt")]
-pub trait Show {
-    /// Formats the value using the given formatter.
-    #[stable(feature = "rust1", since = "1.0.0")]
-    fn fmt(&self, &mut Formatter) -> Result;
-}
-
-/// Format trait for the `:?` format. Useful for debugging, all types
-/// should implement this.
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_on_unimplemented = "`{Self}` cannot be formatted using `:?`; if it is \
                             defined in your crate, add `#[derive(Debug)]` or \
                             manually implement it"]
 #[lang = "debug_trait"]
 pub trait Debug {
-    /// Formats the value using the given formatter.
-    #[stable(feature = "rust1", since = "1.0.0")]
-    fn fmt(&self, &mut Formatter) -> Result;
-}
-
-#[allow(deprecated)]
-impl<T: Show + ?Sized> Debug for T {
-    #[allow(deprecated)]
-    fn fmt(&self, f: &mut Formatter) -> Result { Show::fmt(self, f) }
-}
-
-/// When a value can be semantically expressed as a String, this trait may be
-/// used. It corresponds to the default format, `{}`.
-#[deprecated(since = "1.0.0", reason = "renamed to Display")]
-#[unstable(feature = "old_fmt")]
-pub trait String {
     /// Formats the value using the given formatter.
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
@@ -295,12 +278,6 @@ pub trait Display {
     /// Formats the value using the given formatter.
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, &mut Formatter) -> Result;
-}
-
-#[allow(deprecated)]
-impl<T: String + ?Sized> Display for T {
-    #[allow(deprecated)]
-    fn fmt(&self, f: &mut Formatter) -> Result { String::fmt(self, f) }
 }
 
 /// Format trait for the `o` character
@@ -434,15 +411,15 @@ impl<'a> Formatter<'a> {
         (value.formatter)(value.value, self)
     }
 
-    fn getcount(&mut self, cnt: &rt::v1::Count) -> Option<uint> {
+    fn getcount(&mut self, cnt: &rt::v1::Count) -> Option<usize> {
         match *cnt {
             rt::v1::Count::Is(n) => Some(n),
             rt::v1::Count::Implied => None,
             rt::v1::Count::Param(i) => {
-                self.args[i].as_uint()
+                self.args[i].as_usize()
             }
             rt::v1::Count::NextParam => {
-                self.curarg.next().and_then(|arg| arg.as_uint())
+                self.curarg.next().and_then(|arg| arg.as_usize())
             }
         }
     }
@@ -457,7 +434,7 @@ impl<'a> Formatter<'a> {
     /// # Arguments
     ///
     /// * is_positive - whether the original integer was positive or not.
-    /// * prefix - if the '#' character (FlagAlternate) is provided, this
+    /// * prefix - if the '#' character (Alternate) is provided, this
     ///   is the prefix to put in front of the number.
     /// * buf - the byte array that the number has been formatted into
     ///
@@ -476,12 +453,12 @@ impl<'a> Formatter<'a> {
         let mut sign = None;
         if !is_positive {
             sign = Some('-'); width += 1;
-        } else if self.flags & (1 << (FlagV1::SignPlus as uint)) != 0 {
+        } else if self.flags & (1 << (FlagV1::SignPlus as u32)) != 0 {
             sign = Some('+'); width += 1;
         }
 
         let mut prefixed = false;
-        if self.flags & (1 << (FlagV1::Alternate as uint)) != 0 {
+        if self.flags & (1 << (FlagV1::Alternate as u32)) != 0 {
             prefixed = true; width += prefix.char_len();
         }
 
@@ -511,7 +488,7 @@ impl<'a> Formatter<'a> {
             }
             // The sign and prefix goes before the padding if the fill character
             // is zero
-            Some(min) if self.flags & (1 << (FlagV1::SignAwareZeroPad as uint)) != 0 => {
+            Some(min) if self.flags & (1 << (FlagV1::SignAwareZeroPad as u32)) != 0 => {
                 self.fill = '0';
                 try!(write_prefix(self));
                 self.with_padding(min - width, Alignment::Right, |f| {
@@ -581,7 +558,7 @@ impl<'a> Formatter<'a> {
 
     /// Runs a callback, emitting the correct padding either before or
     /// afterwards depending on whether right or left alignment is requested.
-    fn with_padding<F>(&mut self, padding: uint, default: Alignment,
+    fn with_padding<F>(&mut self, padding: usize, default: Alignment,
                        f: F) -> Result
         where F: FnOnce(&mut Formatter) -> Result,
     {
@@ -597,7 +574,7 @@ impl<'a> Formatter<'a> {
             Alignment::Center => (padding / 2, (padding + 1) / 2),
         };
 
-        let mut fill = [0u8; 4];
+        let mut fill = [0; 4];
         let len = self.fill.encode_utf8(&mut fill).unwrap_or(0);
         let fill = unsafe { str::from_utf8_unchecked(&fill[..len]) };
 
@@ -629,7 +606,7 @@ impl<'a> Formatter<'a> {
 
     /// Flags for formatting (packed version of rt::Flag)
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn flags(&self) -> usize { self.flags }
+    pub fn flags(&self) -> u32 { self.flags }
 
     /// Character used as 'fill' whenever there is alignment
     #[unstable(feature = "core", reason = "method was just created")]
@@ -641,11 +618,150 @@ impl<'a> Formatter<'a> {
 
     /// Optionally specified integer width that the output should be
     #[unstable(feature = "core", reason = "method was just created")]
-    pub fn width(&self) -> Option<uint> { self.width }
+    pub fn width(&self) -> Option<usize> { self.width }
 
     /// Optionally specified precision for numeric types
     #[unstable(feature = "core", reason = "method was just created")]
-    pub fn precision(&self) -> Option<uint> { self.precision }
+    pub fn precision(&self) -> Option<usize> { self.precision }
+
+    /// Creates a `DebugStruct` builder designed to assist with creation of
+    /// `fmt::Debug` implementations for structs.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #![feature(debug_builders, core)]
+    /// use std::fmt;
+    ///
+    /// struct Foo {
+    ///     bar: i32,
+    ///     baz: String,
+    /// }
+    ///
+    /// impl fmt::Debug for Foo {
+    ///     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    ///         fmt.debug_struct("Foo")
+    ///             .field("bar", &self.bar)
+    ///             .field("baz", &self.baz)
+    ///             .finish()
+    ///     }
+    /// }
+    ///
+    /// // prints "Foo { bar: 10, baz: "Hello World" }"
+    /// println!("{:?}", Foo { bar: 10, baz: "Hello World".to_string() });
+    /// ```
+    #[unstable(feature = "debug_builders", reason = "method was just created")]
+    #[inline]
+    pub fn debug_struct<'b>(&'b mut self, name: &str) -> DebugStruct<'b, 'a> {
+        builders::debug_struct_new(self, name)
+    }
+
+    /// Creates a `DebugTuple` builder designed to assist with creation of
+    /// `fmt::Debug` implementations for tuple structs.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #![feature(debug_builders, core)]
+    /// use std::fmt;
+    ///
+    /// struct Foo(i32, String);
+    ///
+    /// impl fmt::Debug for Foo {
+    ///     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    ///         fmt.debug_tuple("Foo")
+    ///             .field(&self.0)
+    ///             .field(&self.1)
+    ///             .finish()
+    ///     }
+    /// }
+    ///
+    /// // prints "Foo(10, "Hello World")"
+    /// println!("{:?}", Foo(10, "Hello World".to_string()));
+    /// ```
+    #[unstable(feature = "debug_builders", reason = "method was just created")]
+    #[inline]
+    pub fn debug_tuple<'b>(&'b mut self, name: &str) -> DebugTuple<'b, 'a> {
+        builders::debug_tuple_new(self, name)
+    }
+
+    /// Creates a `DebugList` builder designed to assist with creation of
+    /// `fmt::Debug` implementations for list-like structures.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #![feature(debug_builders, core)]
+    /// use std::fmt;
+    ///
+    /// struct Foo(Vec<i32>);
+    ///
+    /// impl fmt::Debug for Foo {
+    ///     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    ///         self.0.iter().fold(fmt.debug_list(), |b, e| b.entry(e)).finish()
+    ///     }
+    /// }
+    ///
+    /// // prints "[10, 11]"
+    /// println!("{:?}", Foo(vec![10, 11]));
+    /// ```
+    #[unstable(feature = "debug_builders", reason = "method was just created")]
+    #[inline]
+    pub fn debug_list<'b>(&'b mut self) -> DebugList<'b, 'a> {
+        builders::debug_list_new(self)
+    }
+
+    /// Creates a `DebugSet` builder designed to assist with creation of
+    /// `fmt::Debug` implementations for set-like structures.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #![feature(debug_builders, core)]
+    /// use std::fmt;
+    ///
+    /// struct Foo(Vec<i32>);
+    ///
+    /// impl fmt::Debug for Foo {
+    ///     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    ///         self.0.iter().fold(fmt.debug_set(), |b, e| b.entry(e)).finish()
+    ///     }
+    /// }
+    ///
+    /// // prints "{10, 11}"
+    /// println!("{:?}", Foo(vec![10, 11]));
+    /// ```
+    #[unstable(feature = "debug_builders", reason = "method was just created")]
+    #[inline]
+    pub fn debug_set<'b>(&'b mut self) -> DebugSet<'b, 'a> {
+        builders::debug_set_new(self)
+    }
+
+    /// Creates a `DebugMap` builder designed to assist with creation of
+    /// `fmt::Debug` implementations for map-like structures.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #![feature(debug_builders, core)]
+    /// use std::fmt;
+    ///
+    /// struct Foo(Vec<(String, i32)>);
+    ///
+    /// impl fmt::Debug for Foo {
+    ///     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    ///         self.0.iter().fold(fmt.debug_map(), |b, &(ref k, ref v)| b.entry(k, v)).finish()
+    ///     }
+    /// }
+    ///
+    /// // prints "{"A": 10, "B": 11}"
+    /// println!("{:?}", Foo(vec![("A".to_string(), 10), ("B".to_string(), 11)]));
+    /// ```
+    #[unstable(feature = "debug_builders", reason = "method was just created")]
+    #[inline]
+    pub fn debug_map<'b>(&'b mut self) -> DebugMap<'b, 'a> {
+        builders::debug_map_new(self)
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -721,7 +837,7 @@ impl Debug for char {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Display for char {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        let mut utf8 = [0u8; 4];
+        let mut utf8 = [0; 4];
         let amt = self.encode_utf8(&mut utf8).unwrap_or(0);
         let s: &str = unsafe { mem::transmute(&utf8[..amt]) };
         Display::fmt(s, f)
@@ -731,9 +847,9 @@ impl Display for char {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Pointer for *const T {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        f.flags |= 1 << (FlagV1::Alternate as uint);
-        let ret = LowerHex::fmt(&(*self as uint), f);
-        f.flags &= !(1 << (FlagV1::Alternate as uint));
+        f.flags |= 1 << (FlagV1::Alternate as u32);
+        let ret = LowerHex::fmt(&(*self as usize), f);
+        f.flags &= !(1 << (FlagV1::Alternate as u32));
         ret
     }
 }
@@ -741,6 +857,8 @@ impl<T> Pointer for *const T {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Pointer for *mut T {
     fn fmt(&self, f: &mut Formatter) -> Result {
+        // FIXME(#23542) Replace with type ascription.
+        #![allow(trivial_casts)]
         Pointer::fmt(&(*self as *const T), f)
     }
 }
@@ -748,6 +866,8 @@ impl<T> Pointer for *mut T {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Pointer for &'a T {
     fn fmt(&self, f: &mut Formatter) -> Result {
+        // FIXME(#23542) Replace with type ascription.
+        #![allow(trivial_casts)]
         Pointer::fmt(&(*self as *const T), f)
     }
 }
@@ -755,6 +875,8 @@ impl<'a, T> Pointer for &'a T {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Pointer for &'a mut T {
     fn fmt(&self, f: &mut Formatter) -> Result {
+        // FIXME(#23542) Replace with type ascription.
+        #![allow(trivial_casts)]
         Pointer::fmt(&(&**self as *const T), f)
     }
 }
@@ -882,29 +1004,9 @@ macro_rules! tuple {
 tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<'a> Debug for &'a (any::Any+'a) {
-    fn fmt(&self, f: &mut Formatter) -> Result { f.pad("&Any") }
-}
-
-#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Debug> Debug for [T] {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        if f.flags & (1 << (FlagV1::Alternate as uint)) == 0 {
-            try!(write!(f, "["));
-        }
-        let mut is_first = true;
-        for x in self {
-            if is_first {
-                is_first = false;
-            } else {
-                try!(write!(f, ", "));
-            }
-            try!(write!(f, "{:?}", *x))
-        }
-        if f.flags & (1 << (FlagV1::Alternate as uint)) == 0 {
-            try!(write!(f, "]"));
-        }
-        Ok(())
+        self.iter().fold(f.debug_list(), |b, e| b.entry(e)).finish()
     }
 }
 

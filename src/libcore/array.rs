@@ -14,20 +14,64 @@
 
 #![unstable(feature = "core")] // not yet reviewed
 
+#![doc(primitive = "array")]
+
 use clone::Clone;
 use cmp::{PartialEq, Eq, PartialOrd, Ord, Ordering};
+use convert::{AsRef, AsMut};
 use fmt;
 use hash::{Hash, self};
 use iter::IntoIterator;
-use marker::Copy;
-use ops::Deref;
+use marker::{Copy, Sized};
 use option::Option;
 use slice::{Iter, IterMut, SliceExt};
+
+/// Utility trait implemented only on arrays of fixed size
+///
+/// This trait can be used to implement other traits on fixed-size arrays
+/// without causing much metadata bloat.
+#[unstable(feature = "core")]
+pub trait FixedSizeArray<T> {
+    /// Converts the array to immutable slice
+    fn as_slice(&self) -> &[T];
+    /// Converts the array to mutable slice
+    fn as_mut_slice(&mut self) -> &mut [T];
+}
 
 // macro for implementing n-ary tuple functions and operations
 macro_rules! array_impls {
     ($($N:expr)+) => {
         $(
+            #[unstable(feature = "core")]
+            impl<T> FixedSizeArray<T> for [T; $N] {
+                #[inline]
+                fn as_slice(&self) -> &[T] {
+                    &self[..]
+                }
+                #[inline]
+                fn as_mut_slice(&mut self) -> &mut [T] {
+                    &mut self[..]
+                }
+            }
+
+            #[unstable(feature = "array_as_ref",
+                       reason = "should ideally be implemented for all fixed-sized arrays")]
+            impl<T> AsRef<[T]> for [T; $N] {
+                #[inline]
+                fn as_ref(&self) -> &[T] {
+                    &self[..]
+                }
+            }
+
+            #[unstable(feature = "array_as_ref",
+                       reason = "should ideally be implemented for all fixed-sized arrays")]
+            impl<T> AsMut<[T]> for [T; $N] {
+                #[inline]
+                fn as_mut(&mut self) -> &mut [T] {
+                    &mut self[..]
+                }
+            }
+
             #[stable(feature = "rust1", since = "1.0.0")]
             impl<T:Copy> Clone for [T; $N] {
                 fn clone(&self) -> [T; $N] {
@@ -35,13 +79,6 @@ macro_rules! array_impls {
                 }
             }
 
-            #[cfg(stage0)]
-            impl<S: hash::Writer + hash::Hasher, T: Hash<S>> Hash<S> for [T; $N] {
-                fn hash(&self, state: &mut S) {
-                    Hash::hash(&self[..], state)
-                }
-            }
-            #[cfg(not(stage0))]
             #[stable(feature = "rust1", since = "1.0.0")]
             impl<T: Hash> Hash for [T; $N] {
                 fn hash<H: hash::Hasher>(&self, state: &mut H) {
@@ -76,47 +113,13 @@ macro_rules! array_impls {
                 }
             }
 
-            #[stable(feature = "rust1", since = "1.0.0")]
-            impl<A, B> PartialEq<[B; $N]> for [A; $N] where A: PartialEq<B> {
-                #[inline]
-                fn eq(&self, other: &[B; $N]) -> bool {
-                    &self[..] == &other[..]
-                }
-                #[inline]
-                fn ne(&self, other: &[B; $N]) -> bool {
-                    &self[..] != &other[..]
-                }
-            }
-
-            #[stable(feature = "rust1", since = "1.0.0")]
-            impl<'a, A, B, Rhs> PartialEq<Rhs> for [A; $N] where
-                A: PartialEq<B>,
-                Rhs: Deref<Target=[B]>,
-            {
-                #[inline(always)]
-                fn eq(&self, other: &Rhs) -> bool {
-                    PartialEq::eq(&self[..], &**other)
-                }
-                #[inline(always)]
-                fn ne(&self, other: &Rhs) -> bool {
-                    PartialEq::ne(&self[..], &**other)
-                }
-            }
-
-            #[stable(feature = "rust1", since = "1.0.0")]
-            impl<'a, A, B, Lhs> PartialEq<[B; $N]> for Lhs where
-                A: PartialEq<B>,
-                Lhs: Deref<Target=[A]>
-            {
-                #[inline(always)]
-                fn eq(&self, other: &[B; $N]) -> bool {
-                    PartialEq::eq(&**self, &other[..])
-                }
-                #[inline(always)]
-                fn ne(&self, other: &[B; $N]) -> bool {
-                    PartialEq::ne(&**self, &other[..])
-                }
-            }
+            // NOTE: some less important impls are omitted to reduce code bloat
+            __impl_slice_eq1! { [A; $N], [B; $N] }
+            __impl_slice_eq2! { [A; $N], [B] }
+            __impl_slice_eq2! { [A; $N], &'b [B] }
+            __impl_slice_eq2! { [A; $N], &'b mut [B] }
+            // __impl_slice_eq2! { [A; $N], &'b [B; $N] }
+            // __impl_slice_eq2! { [A; $N], &'b mut [B; $N] }
 
             #[stable(feature = "rust1", since = "1.0.0")]
             impl<T:Eq> Eq for [T; $N] { }

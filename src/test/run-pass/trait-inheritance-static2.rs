@@ -8,20 +8,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(core)]
+
 pub trait MyEq : ::std::marker::MarkerTrait { }
 
 pub trait MyNum : ::std::marker::MarkerTrait {
-    fn from_int(int) -> Self;
+    fn from_int(isize) -> Self;
 }
 
 pub trait NumExt: MyEq + MyNum { }
 
-struct S { v: int }
+struct S { v: isize }
 
 impl MyEq for S { }
 
 impl MyNum for S {
-    fn from_int(i: int) -> S {
+    fn from_int(i: isize) -> S {
         S {
             v: i
         }

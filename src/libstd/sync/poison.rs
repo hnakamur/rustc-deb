@@ -11,11 +11,17 @@
 use prelude::v1::*;
 
 use cell::UnsafeCell;
-use error::{Error, FromError};
+use error::{Error};
 use fmt;
 use thread;
 
 pub struct Flag { failed: UnsafeCell<bool> }
+
+// This flag is only ever accessed with a lock previously held. Note that this
+// a totally private structure.
+unsafe impl Send for Flag {}
+unsafe impl Sync for Flag {}
+
 pub const FLAG_INIT: Flag = Flag { failed: UnsafeCell { value: false } };
 
 impl Flag {
@@ -99,11 +105,11 @@ impl<T> fmt::Debug for PoisonError<T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> fmt::Display for PoisonError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.description().fmt(f)
+        "poisoned lock: another task failed inside".fmt(f)
     }
 }
 
-impl<T> Error for PoisonError<T> {
+impl<T: Send> Error for PoisonError<T> {
     fn description(&self) -> &str {
         "poisoned lock: another task failed inside"
     }
@@ -115,12 +121,6 @@ impl<T> PoisonError<T> {
     pub fn new(guard: T) -> PoisonError<T> {
         PoisonError { guard: guard }
     }
-
-    /// Consumes this error indicating that a lock is poisoned, returning the
-    /// underlying guard to allow access regardless.
-    #[unstable(feature = "std_misc")]
-    #[deprecated(since = "1.0.0", reason = "renamed to into_inner")]
-    pub fn into_guard(self) -> T { self.guard }
 
     /// Consumes this error indicating that a lock is poisoned, returning the
     /// underlying guard to allow access regardless.
@@ -138,8 +138,8 @@ impl<T> PoisonError<T> {
     pub fn get_mut(&mut self) -> &mut T { &mut self.guard }
 }
 
-impl<T> FromError<PoisonError<T>> for TryLockError<T> {
-    fn from_error(err: PoisonError<T>) -> TryLockError<T> {
+impl<T> From<PoisonError<T>> for TryLockError<T> {
+    fn from(err: PoisonError<T>) -> TryLockError<T> {
         TryLockError::Poisoned(err)
     }
 }
@@ -155,13 +155,13 @@ impl<T> fmt::Debug for TryLockError<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T> fmt::Display for TryLockError<T> {
+impl<T: Send> fmt::Display for TryLockError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.description().fmt(f)
     }
 }
 
-impl<T> Error for TryLockError<T> {
+impl<T: Send> Error for TryLockError<T> {
     fn description(&self) -> &str {
         match *self {
             TryLockError::Poisoned(ref p) => p.description(),

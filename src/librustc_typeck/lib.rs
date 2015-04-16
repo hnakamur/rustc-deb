@@ -62,7 +62,8 @@ independently:
 This API is completely unstable and subject to change.
 
 */
-
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_typeck"]
 #![unstable(feature = "rustc_private")]
 #![staged_api]
@@ -78,8 +79,6 @@ This API is completely unstable and subject to change.
 #![feature(box_syntax)]
 #![feature(collections)]
 #![feature(core)]
-#![feature(int_uint)]
-#![feature(std_misc)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -127,12 +126,12 @@ mod constrained_type_params;
 mod coherence;
 mod variance;
 
-struct TypeAndSubsts<'tcx> {
+pub struct TypeAndSubsts<'tcx> {
     pub substs: subst::Substs<'tcx>,
     pub ty: Ty<'tcx>,
 }
 
-struct CrateCtxt<'a, 'tcx: 'a> {
+pub struct CrateCtxt<'a, 'tcx: 'a> {
     // A mapping from method call sites to traits that have that method.
     trait_map: ty::TraitMap,
     /// A vector of every trait accessible in the whole crate
@@ -147,7 +146,7 @@ struct CrateCtxt<'a, 'tcx: 'a> {
 fn write_ty_to_tcx<'tcx>(tcx: &ty::ctxt<'tcx>, node_id: ast::NodeId, ty: Ty<'tcx>) {
     debug!("write_ty_to_tcx({}, {})", node_id, ppaux::ty_to_string(tcx, ty));
     assert!(!ty::type_needs_infer(ty));
-    tcx.node_types.borrow_mut().insert(node_id, ty);
+    tcx.node_type_insert(node_id, ty);
 }
 
 fn write_substs_to_tcx<'tcx>(tcx: &ty::ctxt<'tcx>,
@@ -163,18 +162,14 @@ fn write_substs_to_tcx<'tcx>(tcx: &ty::ctxt<'tcx>,
         tcx.item_substs.borrow_mut().insert(node_id, item_substs);
     }
 }
-fn lookup_def_tcx(tcx:&ty::ctxt, sp: Span, id: ast::NodeId) -> def::Def {
+
+fn lookup_full_def(tcx: &ty::ctxt, sp: Span, id: ast::NodeId) -> def::Def {
     match tcx.def_map.borrow().get(&id) {
-        Some(x) => x.clone(),
-        _ => {
+        Some(x) => x.full_def(),
+        None => {
             span_fatal!(tcx.sess, sp, E0242, "internal error looking up a definition")
         }
     }
-}
-
-fn lookup_def_ccx(ccx: &CrateCtxt, sp: Span, id: ast::NodeId)
-                   -> def::Def {
-    lookup_def_tcx(ccx.tcx, sp, id)
 }
 
 fn require_same_types<'a, 'tcx, M>(tcx: &ty::ctxt<'tcx>,
@@ -253,7 +248,7 @@ fn check_main_fn_ty(ccx: &CrateCtxt,
                               &format!("main has a non-function type: found \
                                        `{}`",
                                       ppaux::ty_to_string(tcx,
-                                                       main_t))[]);
+                                                       main_t)));
         }
     }
 }
@@ -285,10 +280,10 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
                 abi: abi::Rust,
                 sig: ty::Binder(ty::FnSig {
                     inputs: vec!(
-                        tcx.types.int,
+                        tcx.types.isize,
                         ty::mk_imm_ptr(tcx, ty::mk_imm_ptr(tcx, tcx.types.u8))
                     ),
-                    output: ty::FnConverging(tcx.types.int),
+                    output: ty::FnConverging(tcx.types.isize),
                     variadic: false,
                 }),
             }));
@@ -304,7 +299,7 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
             tcx.sess.span_bug(start_span,
                               &format!("start has a non-function type: found \
                                        `{}`",
-                                      ppaux::ty_to_string(tcx, start_t))[]);
+                                      ppaux::ty_to_string(tcx, start_t)));
         }
     }
 }

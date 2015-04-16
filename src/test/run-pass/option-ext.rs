@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(collections)]
+
 pub fn main() {
     let thing = "{{ f }}";
-    let f = thing.find_str("{{");
+    let f = thing.find("{{");
 
     if f.is_none() {
         println!("None!");

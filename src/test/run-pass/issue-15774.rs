@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![deny(warnings)]
 #![allow(unused_imports)]
 
-enum Foo { A }
+pub enum Foo { A }
 mod bar {
     pub fn normal(x: ::Foo) {
         use Foo::A;

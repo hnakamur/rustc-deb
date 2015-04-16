@@ -11,4 +11,6 @@
 
 
 
-pub fn main() { let _x: int = 10; }
+// pretty-expanded FIXME #23616
+
+pub fn main() { let _x: isize = 10; }

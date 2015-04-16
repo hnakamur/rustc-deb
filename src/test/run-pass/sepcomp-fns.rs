@@ -17,16 +17,18 @@
 // Generate some code in the first compilation unit before declaring any
 // modules.  This ensures that the first module doesn't go into the same
 // compilation unit as the top-level module.
-fn one() -> uint { 1 }
+// pretty-expanded FIXME #23616
+
+fn one() -> usize { 1 }
 
 mod a {
-    pub fn two() -> uint {
+    pub fn two() -> usize {
         ::one() + ::one()
     }
 }
 
 mod b {
-    pub fn three() -> uint {
+    pub fn three() -> usize {
         ::one() + ::a::two()
     }
 }

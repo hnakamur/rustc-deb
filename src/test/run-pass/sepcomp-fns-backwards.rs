@@ -15,21 +15,23 @@
 // Generate some code in the first compilation unit before declaring any
 // modules.  This ensures that the first module doesn't go into the same
 // compilation unit as the top-level module.
-fn pad() -> uint { 0 }
+// pretty-expanded FIXME #23616
+
+fn pad() -> usize { 0 }
 
 mod b {
-    pub fn three() -> uint {
+    pub fn three() -> usize {
         ::one() + ::a::two()
     }
 }
 
 mod a {
-    pub fn two() -> uint {
+    pub fn two() -> usize {
         ::one() + ::one()
     }
 }
 
-fn one() -> uint {
+fn one() -> usize {
     1
 }
 
@@ -38,4 +40,3 @@ fn main() {
     assert_eq!(a::two(), 2);
     assert_eq!(b::three(), 3);
 }
-

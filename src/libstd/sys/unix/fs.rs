@@ -9,6 +9,9 @@
 // except according to those terms.
 
 //! Blocking posix-based file I/O
+#![allow(deprecated)]
+
+#![allow(deprecated)] // this module itself is essentially deprecated
 
 use prelude::v1::*;
 
@@ -17,6 +20,7 @@ use old_io::{FilePermission, Write, UnstableFileStat, Open, FileAccess, FileMode
 use old_io::{IoResult, FileStat, SeekStyle};
 use old_io::{Read, Truncate, SeekCur, SeekSet, ReadWrite, SeekEnd, Append};
 use old_io;
+use old_path::{Path, GenericPath};
 use libc::{self, c_int, c_void};
 use mem;
 use ptr;
@@ -38,7 +42,7 @@ impl FileDesc {
         FileDesc { fd: fd, close_on_drop: close_on_drop }
     }
 
-    pub fn read(&self, buf: &mut [u8]) -> IoResult<uint> {
+    pub fn read(&self, buf: &mut [u8]) -> IoResult<usize> {
         let ret = retry(|| unsafe {
             libc::read(self.fd(),
                        buf.as_mut_ptr() as *mut libc::c_void,
@@ -49,7 +53,7 @@ impl FileDesc {
         } else if ret < 0 {
             Err(super::last_error())
         } else {
-            Ok(ret as uint)
+            Ok(ret as usize)
         }
     }
     pub fn write(&self, buf: &[u8]) -> IoResult<()> {
@@ -177,7 +181,7 @@ pub fn open(path: &Path, fm: FileMode, fa: FileAccess) -> IoResult<FileDesc> {
     }
 }
 
-pub fn mkdir(p: &Path, mode: uint) -> IoResult<()> {
+pub fn mkdir(p: &Path, mode: usize) -> IoResult<()> {
     let p = try!(cstr(p));
     mkerr_libc(unsafe { libc::mkdir(p.as_ptr(), mode as libc::mode_t) })
 }
@@ -200,13 +204,13 @@ pub fn readdir(p: &Path) -> IoResult<Vec<Path>> {
     }
 
     let size = unsafe { rust_dirent_t_size() };
-    let mut buf = Vec::<u8>::with_capacity(size as uint);
+    let mut buf = Vec::<u8>::with_capacity(size as usize);
     let ptr = buf.as_mut_ptr() as *mut dirent_t;
 
     let p = try!(CString::new(p.as_vec()));
     let dir_ptr = unsafe {opendir(p.as_ptr())};
 
-    if dir_ptr as uint != 0 {
+    if dir_ptr as usize != 0 {
         let mut paths = vec!();
         let mut entry_ptr = ptr::null_mut();
         while unsafe { readdir_r(dir_ptr, ptr, &mut entry_ptr) == 0 } {
@@ -235,7 +239,7 @@ pub fn rename(old: &Path, new: &Path) -> IoResult<()> {
     })
 }
 
-pub fn chmod(p: &Path, mode: uint) -> IoResult<()> {
+pub fn chmod(p: &Path, mode: usize) -> IoResult<()> {
     let p = try!(cstr(p));
     mkerr_libc(retry(|| unsafe {
         libc::chmod(p.as_ptr(), mode as libc::mode_t)
@@ -247,7 +251,7 @@ pub fn rmdir(p: &Path) -> IoResult<()> {
     mkerr_libc(unsafe { libc::rmdir(p.as_ptr()) })
 }
 
-pub fn chown(p: &Path, uid: int, gid: int) -> IoResult<()> {
+pub fn chown(p: &Path, uid: isize, gid: isize) -> IoResult<()> {
     let p = try!(cstr(p));
     mkerr_libc(retry(|| unsafe {
         libc::chown(p.as_ptr(), uid as libc::uid_t, gid as libc::gid_t)
@@ -261,7 +265,7 @@ pub fn readlink(p: &Path) -> IoResult<Path> {
     if len == -1 {
         len = 1024; // FIXME: read PATH_MAX from C ffi?
     }
-    let mut buf: Vec<u8> = Vec::with_capacity(len as uint);
+    let mut buf: Vec<u8> = Vec::with_capacity(len as usize);
     match unsafe {
         libc::readlink(p, buf.as_ptr() as *mut libc::c_char,
                        len as libc::size_t) as libc::c_int
@@ -269,7 +273,7 @@ pub fn readlink(p: &Path) -> IoResult<Path> {
         -1 => Err(super::last_error()),
         n => {
             assert!(n > 0);
-            unsafe { buf.set_len(n as uint); }
+            unsafe { buf.set_len(n as usize); }
             Ok(Path::new(buf))
         }
     }
@@ -290,6 +294,18 @@ pub fn link(src: &Path, dst: &Path) -> IoResult<()> {
 fn mkstat(stat: &libc::stat) -> FileStat {
     // FileStat times are in milliseconds
     fn mktime(secs: u64, nsecs: u64) -> u64 { secs * 1000 + nsecs / 1000000 }
+
+    fn ctime(stat: &libc::stat) -> u64 {
+      mktime(stat.st_ctime as u64, stat.st_ctime_nsec as u64)
+    }
+
+    fn atime(stat: &libc::stat) -> u64 {
+      mktime(stat.st_atime as u64, stat.st_atime_nsec as u64)
+    }
+
+    fn mtime(stat: &libc::stat) -> u64 {
+      mktime(stat.st_mtime as u64, stat.st_mtime_nsec as u64)
+    }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     fn flags(stat: &libc::stat) -> u64 { stat.st_flags as u64 }
@@ -312,9 +328,9 @@ fn mkstat(stat: &libc::stat) -> FileStat {
             _ => old_io::FileType::Unknown,
         },
         perm: FilePermission::from_bits_truncate(stat.st_mode as u32),
-        created: mktime(stat.st_ctime as u64, stat.st_ctime_nsec as u64),
-        modified: mktime(stat.st_mtime as u64, stat.st_mtime_nsec as u64),
-        accessed: mktime(stat.st_atime as u64, stat.st_atime_nsec as u64),
+        created: ctime(stat),
+        modified: mtime(stat),
+        accessed: atime(stat),
         unstable: UnstableFileStat {
             device: stat.st_dev as u64,
             inode: stat.st_ino as u64,
@@ -372,12 +388,10 @@ mod tests {
     fn test_file_desc() {
         // Run this test with some pipes so we don't have to mess around with
         // opening or closing files.
-        let os::Pipe { reader, writer } = unsafe { os::pipe().unwrap() };
-        let mut reader = FileDesc::new(reader, true);
-        let mut writer = FileDesc::new(writer, true);
+        let (mut reader, mut writer) = unsafe { ::sys::os::pipe().unwrap() };
 
-        writer.write(b"test").ok().unwrap();
-        let mut buf = [0u8; 4];
+        writer.write(b"test").unwrap();
+        let mut buf = [0; 4];
         match reader.read(&mut buf) {
             Ok(4) => {
                 assert_eq!(buf[0], 't' as u8);

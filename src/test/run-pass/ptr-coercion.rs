@@ -10,26 +10,28 @@
 
 // Test coercions between pointers which don't do anything fancy like unsizing.
 
+// pretty-expanded FIXME #23616
+
 pub fn main() {
     // &mut -> &
-    let x: &mut int = &mut 42;
-    let x: &int = x;
+    let x: &mut isize = &mut 42;
+    let x: &isize = x;
 
-    let x: &int = &mut 42;
+    let x: &isize = &mut 42;
 
     // & -> *const
-    let x: &int = &42;
-    let x: *const int = x;
+    let x: &isize = &42;
+    let x: *const isize = x;
 
-    let x: *const int = &42;
+    let x: *const isize = &42;
 
     // &mut -> *const
-    let x: &mut int = &mut 42;
-    let x: *const int = x;
+    let x: &mut isize = &mut 42;
+    let x: *const isize = x;
 
-    let x: *const int = &mut 42;
+    let x: *const isize = &mut 42;
 
     // *mut -> *const
-    let x: *mut int = &mut 42;
-    let x: *const int = x;
+    let x: *mut isize = &mut 42;
+    let x: *const isize = x;
 }

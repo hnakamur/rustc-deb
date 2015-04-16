@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use prelude::v1::*;
+
 use cell::UnsafeCell;
-use marker::Sync;
 use sys::sync as ffi;
-use sys_common::mutex;
 
 pub struct Mutex { inner: UnsafeCell<ffi::pthread_mutex_t> }
 
@@ -24,8 +24,10 @@ pub const MUTEX_INIT: Mutex = Mutex {
     inner: UnsafeCell { value: ffi::PTHREAD_MUTEX_INITIALIZER },
 };
 
+unsafe impl Send for Mutex {}
 unsafe impl Sync for Mutex {}
 
+#[allow(dead_code)] // sys isn't exported yet
 impl Mutex {
     #[inline]
     pub unsafe fn new() -> Mutex {

@@ -10,10 +10,12 @@
 
 // just to make sure that `return` is only returning from the closure,
 // not the surrounding function.
-static mut calls: uint = 0;
+// pretty-expanded FIXME #23616
+
+static mut calls: usize = 0;
 
 fn surrounding() {
-    let return_works = |n: int| {
+    let return_works = |n: isize| {
         unsafe { calls += 1 }
 
         if n >= 0 { return; }
@@ -23,7 +25,7 @@ fn surrounding() {
     return_works(10);
     return_works(20);
 
-    let return_works_proc = |n: int| {
+    let return_works_proc = |n: isize| {
         unsafe { calls += 1 }
 
         if n >= 0 { return; }

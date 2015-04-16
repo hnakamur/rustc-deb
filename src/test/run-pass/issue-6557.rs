@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 
-fn foo(box (_x, _y): Box<(int, int)>) {}
+fn foo(box (_x, _y): Box<(isize, isize)>) {}
 
 pub fn main() {}

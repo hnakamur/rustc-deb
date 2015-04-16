@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 enum BogusOption<T> {
     None,
     Some(T),
 }
 
-type Iterator = int;
+type Iterator = isize;
 
 pub fn main() {
     let x = [ 3, 3, 3 ];
@@ -21,4 +23,3 @@ pub fn main() {
         assert_eq!(*i, 3);
     }
 }
-

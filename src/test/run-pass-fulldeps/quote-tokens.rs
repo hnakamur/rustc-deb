@@ -11,7 +11,7 @@
 // ignore-android
 // ignore-pretty: does not work well with `--test`
 
-#![feature(quote)]
+#![feature(quote, rustc_private)]
 
 extern crate syntax;
 
@@ -23,9 +23,9 @@ fn syntax_extension(cx: &ExtCtxt) {
     let p_toks : Vec<syntax::ast::TokenTree> = quote_tokens!(cx, (x, 1 .. 4, *));
 
     let a: P<syntax::ast::Expr> = quote_expr!(cx, 1 + 2);
-    let _b: Option<P<syntax::ast::Item>> = quote_item!(cx, static foo : int = $e_toks; );
+    let _b: Option<P<syntax::ast::Item>> = quote_item!(cx, static foo : isize = $e_toks; );
     let _c: P<syntax::ast::Pat> = quote_pat!(cx, (x, 1 .. 4, *) );
-    let _d: P<syntax::ast::Stmt> = quote_stmt!(cx, let x = $a; );
+    let _d: Option<P<syntax::ast::Stmt>> = quote_stmt!(cx, let x = $a; );
     let _d: syntax::ast::Arm = quote_arm!(cx, (ref x, ref y) = (x, y) );
     let _e: P<syntax::ast::Expr> = quote_expr!(cx, match foo { $p_toks => 10 } );
 
@@ -36,10 +36,12 @@ fn syntax_extension(cx: &ExtCtxt) {
     let i: Option<P<syntax::ast::Item>> = quote_item!(cx, #[derive(Eq)] struct Foo; );
     assert!(i.is_some());
 
-    let _j: P<syntax::ast::Method> = quote_method!(cx, fn foo(&self) {});
-    let _k: P<syntax::ast::Method> = quote_method!(cx, #[doc = "hello"] fn foo(&self) {});
+    let _l: P<syntax::ast::Ty> = quote_ty!(cx, &isize);
 
-    let _l: P<syntax::ast::Ty> = quote_ty!(cx, &int);
+    let _m: Vec<syntax::ast::TokenTree> = quote_matcher!(cx, $($foo:tt,)* bar);
+    let _n: syntax::ast::Attribute = quote_attr!(cx, #![cfg(foo, bar = "baz")]);
+
+    let _o: Option<P<syntax::ast::Item>> = quote_item!(cx, fn foo<T: ?Sized>() {});
 }
 
 fn main() {

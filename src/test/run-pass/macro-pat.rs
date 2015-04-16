@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 macro_rules! mypat {
     () => (
         Some('y')
@@ -38,7 +40,7 @@ macro_rules! ident_pat {
     )
 }
 
-fn f(c: Option<char>) -> uint {
+fn f(c: Option<char>) -> usize {
     match c {
         Some('x') => 1,
         mypat!() => 2,
@@ -47,9 +49,9 @@ fn f(c: Option<char>) -> uint {
 }
 
 pub fn main() {
-    assert_eq!(1_usize, f(Some('x')));
-    assert_eq!(2_usize, f(Some('y')));
-    assert_eq!(3_usize, f(None));
+    assert_eq!(1, f(Some('x')));
+    assert_eq!(2, f(Some('y')));
+    assert_eq!(3, f(None));
 
     assert_eq!(1, match Some('x') {
         Some(char_x!()) => 1,

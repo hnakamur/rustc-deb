@@ -8,24 +8,35 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+// pretty-expanded FIXME #23616
 
-use std::sync::mpsc::channel;
-use std::old_io::{ChanReader, ChanWriter};
+#![allow(unknown_features)]
+#![feature(box_syntax, old_io, std_misc, io, set_panic, set_stdio)]
+
+use std::io::prelude::*;
+use std::io;
+use std::str;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
-fn main() {
-    let (tx, rx) = channel();
-    let mut reader = ChanReader::new(rx);
-    let stderr = ChanWriter::new(tx);
+struct Sink(Arc<Mutex<Vec<u8>>>);
+impl Write for Sink {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        Write::write(&mut *self.0.lock().unwrap(), data)
+    }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
 
-    let res = thread::Builder::new().stderr(box stderr as Box<Writer + Send>)
-                                    .spawn(move|| -> () {
+fn main() {
+    let data = Arc::new(Mutex::new(Vec::new()));
+    let sink = Sink(data.clone());
+    let res = thread::Builder::new().spawn(move|| -> () {
+        io::set_panic(Box::new(sink));
         panic!("Hello, world!")
     }).unwrap().join();
     assert!(res.is_err());
 
-    let output = reader.read_to_string().unwrap();
+    let output = data.lock().unwrap();
+    let output = str::from_utf8(&output).unwrap();
     assert!(output.contains("Hello, world!"));
 }

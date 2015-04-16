@@ -11,6 +11,8 @@
 // Test for using an object with an associated type binding as the
 // instantiation for a generic type with a bound.
 
+// pretty-expanded FIXME #23616
+
 trait SomeTrait {
     type SomeType;
 
@@ -29,7 +31,7 @@ impl SomeTrait for i32 {
 }
 
 fn main() {
-    let x = 22_i32;
+    let x = 22;
     let x1: &SomeTrait<SomeType=i32> = &x;
     let y = get_int(x1);
     assert_eq!(x, y);

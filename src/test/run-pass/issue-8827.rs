@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::thread::Thread;
+#![feature(std_misc)]
+
+use std::thread;
 use std::sync::mpsc::{channel, Receiver};
 
-fn periodical(n: int) -> Receiver<bool> {
+fn periodical(n: isize) -> Receiver<bool> {
     let (chan, port) = channel();
-    Thread::spawn(move|| {
+    thread::spawn(move|| {
         loop {
             for _ in 1..n {
                 match chan.send(false) {
@@ -30,9 +32,9 @@ fn periodical(n: int) -> Receiver<bool> {
     return port;
 }
 
-fn integers() -> Receiver<int> {
+fn integers() -> Receiver<isize> {
     let (chan, port) = channel();
-    Thread::spawn(move|| {
+    thread::spawn(move|| {
         let mut i = 1;
         loop {
             match chan.send(i) {

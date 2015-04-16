@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-const FOO: uint = 3;
+// pretty-expanded FIXME #23616
+
+const FOO: usize = 3;
 
 fn main() {
     assert_eq!(FOO, 3);

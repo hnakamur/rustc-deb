@@ -9,9 +9,11 @@
 // except according to those terms.
 
 // aux-build:static-function-pointer-aux.rs
-extern crate "static-function-pointer-aux" as aux;
+// pretty-expanded FIXME #23616
 
-fn f(x: int) -> int { x }
+extern crate static_function_pointer_aux as aux;
+
+fn f(x: isize) -> isize { x }
 
 pub fn main() {
     assert_eq!(aux::F(42), -42);

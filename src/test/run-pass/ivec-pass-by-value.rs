@@ -9,5 +9,7 @@
 // except according to those terms.
 
 
-fn f(_a: Vec<int> ) { }
+// pretty-expanded FIXME #23616
+
+fn f(_a: Vec<isize> ) { }
 pub fn main() { f(vec!(1, 2, 3, 4, 5)); }

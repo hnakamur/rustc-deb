@@ -11,6 +11,8 @@
 // Test that we correctly normalize the type of a struct field
 // which has an associated type.
 
+// pretty-expanded FIXME #23616
+
 pub trait UnifyKey {
     type Value;
 
@@ -36,8 +38,8 @@ impl UnifyKey for u32 {
 
 pub fn main() {
     let node: Node<i32> = Node { key: 1, value: Some(22) };
-    assert_eq!(foo(&node), Some(22_u32));
+    assert_eq!(foo(&node), Some(22));
 
     let node: Node<u32> = Node { key: 1, value: Some(22) };
-    assert_eq!(foo(&node), Some(22_i32));
+    assert_eq!(foo(&node), Some(22));
 }

@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(asm)]
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn main() {
-    let x: int;
+    let x: isize;
     unsafe {
         // Treat the output as initialization.
         asm!("mov $1, $0" : "=r"(x) : "r"(5_usize));

@@ -10,7 +10,9 @@
 
 // aux-build:issue-19340-1.rs
 
-extern crate "issue-19340-1" as lib;
+// pretty-expanded FIXME #23616
+
+extern crate issue_19340_1 as lib;
 
 use lib::Homura;
 

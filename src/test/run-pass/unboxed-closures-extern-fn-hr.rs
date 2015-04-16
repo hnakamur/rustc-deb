@@ -10,25 +10,27 @@
 
 // Checks that higher-ranked extern fn pointers implement the full range of Fn traits.
 
-#![feature(unboxed_closures)]
+// pretty-expanded FIXME #23616
+
+#![feature(unboxed_closures, core)]
 
 use std::ops::{Fn,FnMut,FnOnce};
 
-fn square(x: &int) -> int { (*x) * (*x) }
+fn square(x: &isize) -> isize { (*x) * (*x) }
 
-fn call_it<F:Fn(&int)->int>(f: &F, x: int) -> int {
+fn call_it<F:Fn(&isize)->isize>(f: &F, x: isize) -> isize {
     (*f)(&x)
 }
 
-fn call_it_boxed(f: &Fn(&int) -> int, x: int) -> int {
+fn call_it_boxed(f: &Fn(&isize) -> isize, x: isize) -> isize {
     f.call((&x,))
 }
 
-fn call_it_mut<F:FnMut(&int)->int>(f: &mut F, x: int) -> int {
+fn call_it_mut<F:FnMut(&isize)->isize>(f: &mut F, x: isize) -> isize {
     (*f)(&x)
 }
 
-fn call_it_once<F:FnOnce(&int)->int>(f: F, x: int) -> int {
+fn call_it_once<F:FnOnce(&isize)->isize>(f: F, x: isize) -> isize {
     f(&x)
 }
 
@@ -42,4 +44,3 @@ fn main() {
     assert_eq!(y, square(&22));
     assert_eq!(z, square(&22));
 }
-

@@ -10,12 +10,11 @@
 
 // aux-build:lang-item-public.rs
 // ignore-android
-// ignore-windows #13361
 
 #![feature(lang_items, start, no_std)]
 #![no_std]
 
-extern crate "lang-item-public" as lang_lib;
+extern crate lang_item_public as lang_lib;
 
 #[cfg(target_os = "linux")]
 #[link(name = "c")]
@@ -37,7 +36,7 @@ extern {}
 #[link(name = "c")]
 extern {}
 
-#[cfg(target_os = "openbsd")]
+#[cfg(any(target_os = "bitrig", target_os = "openbsd"))]
 #[link(name = "c")]
 extern {}
 
@@ -46,6 +45,6 @@ extern {}
 extern {}
 
 #[start]
-fn main(_: int, _: *const *const u8) -> int {
-    1 % 1
+fn main(_: isize, _: *const *const u8) -> isize {
+    1_isize % 1_isize
 }

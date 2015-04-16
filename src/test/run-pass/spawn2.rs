@@ -12,10 +12,10 @@ use std::thread;
 
 pub fn main() {
     let t = thread::spawn(move|| child((10, 20, 30, 40, 50, 60, 70, 80, 90)) );
-    t.join().ok().unwrap();
+    t.join().ok().unwrap(); // forget Err value, since it doesn't implement Debug
 }
 
-fn child(args: (int, int, int, int, int, int, int, int, int)) {
+fn child(args: (isize, isize, isize, isize, isize, isize, isize, isize, isize)) {
     let (i1, i2, i3, i4, i5, i6, i7, i8, i9) = args;
     println!("{}", i1);
     println!("{}", i2);

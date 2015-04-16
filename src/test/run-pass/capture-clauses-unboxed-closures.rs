@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(unboxed_closures)]
 
 fn each<'a,T,F:FnMut(&'a T)>(x: &'a [T], mut f: F) {
@@ -17,8 +19,8 @@ fn each<'a,T,F:FnMut(&'a T)>(x: &'a [T], mut f: F) {
 }
 
 fn main() {
-    let mut sum = 0_usize;
-    let elems = [ 1_usize, 2, 3, 4, 5 ];
-    each(&elems, |val: &uint| sum += *val);
+    let mut sum = 0;
+    let elems = [ 1, 2, 3, 4, 5 ];
+    each(&elems, |val: &usize| sum += *val);
     assert_eq!(sum, 15);
 }

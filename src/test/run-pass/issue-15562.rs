@@ -10,7 +10,9 @@
 
 // aux-build:issue-15562.rs
 
-extern crate "issue-15562" as i;
+// pretty-expanded FIXME #23616
+
+extern crate issue_15562 as i;
 
 pub fn main() {
     extern {

@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 pub fn main() {
     let _foo = 100;
-    const quux: int = 5;
+    const quux: isize = 5;
 
     enum Stuff {
         Bar = quux
     }
 
-    assert_eq!(Stuff::Bar as int, quux);
+    assert_eq!(Stuff::Bar as isize, quux);
 }

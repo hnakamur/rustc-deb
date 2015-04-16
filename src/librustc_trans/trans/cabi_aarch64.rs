@@ -18,18 +18,18 @@ use trans::type_::Type;
 
 use std::cmp;
 
-fn align_up_to(off: uint, a: uint) -> uint {
+fn align_up_to(off: usize, a: usize) -> usize {
     return (off + a - 1) / a * a;
 }
 
-fn align(off: uint, ty: Type) -> uint {
+fn align(off: usize, ty: Type) -> usize {
     let a = ty_align(ty);
     return align_up_to(off, a);
 }
 
-fn ty_align(ty: Type) -> uint {
+fn ty_align(ty: Type) -> usize {
     match ty.kind() {
-        Integer => ((ty.int_width() as uint) + 7) / 8,
+        Integer => ((ty.int_width() as usize) + 7) / 8,
         Pointer => 8,
         Float => 4,
         Double => 8,
@@ -54,9 +54,9 @@ fn ty_align(ty: Type) -> uint {
     }
 }
 
-fn ty_size(ty: Type) -> uint {
+fn ty_size(ty: Type) -> usize {
     match ty.kind() {
-        Integer => ((ty.int_width() as uint) + 7) / 8,
+        Integer => ((ty.int_width() as usize) + 7) / 8,
         Pointer => 8,
         Float => 4,
         Double => 8,
@@ -117,7 +117,7 @@ fn classify_arg_ty(ccx: &CrateContext, ty: Type) -> ArgType {
     let size = ty_size(ty);
     if size <= 16 {
         let llty = if size == 0 {
-            Type::array(&Type::i64(ccx), 0u64)
+            Type::array(&Type::i64(ccx), 0)
         } else if size == 1 {
             Type::i8(ccx)
         } else if size == 2 {

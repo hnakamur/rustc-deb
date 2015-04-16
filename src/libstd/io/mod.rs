@@ -9,29 +9,21 @@
 // except according to those terms.
 
 //! Traits, helpers, and type definitions for core I/O functionality.
-//!
-//! > **NOTE**: This module is very much a work in progress and is under active
-//! > development. At this time it is still recommended to use the `old_io`
-//! > module while the details of this module shake out.
 
-#![unstable(feature = "io",
-            reason = "this new I/O module is still under active deveopment and \
-                      APIs are subject to tweaks fairly regularly")]
+#![stable(feature = "rust1", since = "1.0.0")]
 
 use cmp;
 use unicode::str as core_str;
-use error::Error as StdError;
+use error as std_error;
 use fmt;
-use iter::Iterator;
+use iter::{self, Iterator, Extend};
 use marker::Sized;
 use ops::{Drop, FnOnce};
 use option::Option::{self, Some, None};
-use ptr::PtrExt;
 use result::Result::{Ok, Err};
 use result;
-use slice::{self, SliceExt};
 use string::String;
-use str::{self, StrExt};
+use str;
 use vec::Vec;
 
 pub use self::buffered::{BufReader, BufWriter, BufStream, LineWriter};
@@ -39,6 +31,12 @@ pub use self::buffered::IntoInnerError;
 pub use self::cursor::Cursor;
 pub use self::error::{Result, Error, ErrorKind};
 pub use self::util::{copy, sink, Sink, empty, Empty, repeat, Repeat};
+pub use self::stdio::{stdin, stdout, stderr, _print, Stdin, Stdout, Stderr};
+pub use self::stdio::{StdoutLock, StderrLock, StdinLock};
+#[doc(no_inline, hidden)]
+pub use self::stdio::{set_panic, set_print};
+
+#[macro_use] mod lazy;
 
 pub mod prelude;
 mod buffered;
@@ -46,47 +44,9 @@ mod cursor;
 mod error;
 mod impls;
 mod util;
+mod stdio;
 
 const DEFAULT_BUF_SIZE: usize = 64 * 1024;
-
-// Acquires a slice of the vector `v` from its length to its capacity
-// (uninitialized data), reads into it, and then updates the length.
-//
-// This function is leveraged to efficiently read some bytes into a destination
-// vector without extra copying and taking advantage of the space that's already
-// in `v`.
-//
-// The buffer we're passing down, however, is pointing at uninitialized data
-// (the end of a `Vec`), and many operations will be *much* faster if we don't
-// have to zero it out. In order to prevent LLVM from generating an `undef`
-// value when reads happen from this uninitialized memory, we force LLVM to
-// think it's initialized by sending it through a black box. This should prevent
-// actual undefined behavior after optimizations.
-fn with_end_to_cap<F>(v: &mut Vec<u8>, f: F) -> Result<usize>
-    where F: FnOnce(&mut [u8]) -> Result<usize>
-{
-    unsafe {
-        let n = try!(f({
-            let base = v.as_mut_ptr().offset(v.len() as isize);
-            black_box(slice::from_raw_parts_mut(base,
-                                                v.capacity() - v.len()))
-        }));
-
-        // If the closure (typically a `read` implementation) reported that it
-        // read a larger number of bytes than the vector actually has, we need
-        // to be sure to clamp the vector to at most its capacity.
-        let new_len = cmp::min(v.capacity(), v.len() + n);
-        v.set_len(new_len);
-        return Ok(n);
-    }
-
-    // Semi-hack used to prevent LLVM from retaining any assumptions about
-    // `dummy` over this function call
-    unsafe fn black_box<T>(mut dummy: T) -> T {
-        asm!("" :: "r"(&mut dummy) : "memory");
-        dummy
-    }
-}
 
 // A few methods below (read_to_string, read_line) will append data into a
 // `String` buffer, but we need to be pretty careful when doing this. The
@@ -106,8 +66,8 @@ fn with_end_to_cap<F>(v: &mut Vec<u8>, f: F) -> Result<usize>
 // 2. We're passing a raw buffer to the function `f`, and it is expected that
 //    the function only *appends* bytes to the buffer. We'll get undefined
 //    behavior if existing bytes are overwritten to have non-UTF-8 data.
-fn append_to_string<F>(buf: &mut String, f: F) -> Result<()>
-    where F: FnOnce(&mut Vec<u8>) -> Result<()>
+fn append_to_string<F>(buf: &mut String, f: F) -> Result<usize>
+    where F: FnOnce(&mut Vec<u8>) -> Result<usize>
 {
     struct Guard<'a> { s: &'a mut Vec<u8>, len: usize }
     #[unsafe_destructor]
@@ -121,9 +81,9 @@ fn append_to_string<F>(buf: &mut String, f: F) -> Result<()>
         let mut g = Guard { len: buf.len(), s: buf.as_mut_vec() };
         let ret = f(g.s);
         if str::from_utf8(&g.s[g.len..]).is_err() {
-            ret.and_then(|()| {
+            ret.and_then(|_| {
                 Err(Error::new(ErrorKind::InvalidInput,
-                               "stream did not contain valid UTF-8", None))
+                               "stream did not contain valid UTF-8"))
             })
         } else {
             g.len = g.s.len();
@@ -132,18 +92,41 @@ fn append_to_string<F>(buf: &mut String, f: F) -> Result<()>
     }
 }
 
-fn read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<()> {
+// This uses an adaptive system to extend the vector when it fills. We want to
+// avoid paying to allocate and zero a huge chunk of memory if the reader only
+// has 4 bytes while still making large reads if the reader does have a ton
+// of data to return. Simply tacking on an extra DEFAULT_BUF_SIZE space every
+// time is 4,500 times (!) slower than this if the reader has a very small
+// amount of data to return.
+fn read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize> {
+    let start_len = buf.len();
+    let mut len = start_len;
+    let mut new_write_size = 16;
+    let ret;
     loop {
-        if buf.capacity() == buf.len() {
-            buf.reserve(DEFAULT_BUF_SIZE);
+        if len == buf.len() {
+            if new_write_size < DEFAULT_BUF_SIZE {
+                new_write_size *= 2;
+            }
+            buf.extend(iter::repeat(0).take(new_write_size));
         }
-        match with_end_to_cap(buf, |b| r.read(b)) {
-            Ok(0) => return Ok(()),
-            Ok(_) => {}
+
+        match r.read(&mut buf[len..]) {
+            Ok(0) => {
+                ret = Ok(len - start_len);
+                break;
+            }
+            Ok(n) => len += n,
             Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
+            Err(e) => {
+                ret = Err(e);
+                break;
+            }
         }
     }
+
+    buf.truncate(len);
+    ret
 }
 
 /// A trait for objects which are byte-oriented sources.
@@ -154,6 +137,7 @@ fn read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<()> {
 /// Readers are intended to be composable with one another. Many objects
 /// throughout the I/O and related libraries take and provide types which
 /// implement the `Read` trait.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait Read {
     /// Pull some bytes from this source into the specified buffer, returning
     /// how many bytes were read.
@@ -182,6 +166,7 @@ pub trait Read {
     /// If this function encounters any form of I/O or other error, an error
     /// variant will be returned. If an error is returned then it must be
     /// guaranteed that no bytes were read.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
     /// Read all bytes until EOF in this source, placing them into `buf`.
@@ -193,7 +178,8 @@ pub trait Read {
     /// 2. Returns an error which is not of the kind `ErrorKind::Interrupted`.
     ///
     /// Until one of these conditions is met the function will continuously
-    /// invoke `read` to append more data to `buf`.
+    /// invoke `read` to append more data to `buf`. If successful, this function
+    /// will return the total number of bytes read.
     ///
     /// # Errors
     ///
@@ -204,11 +190,15 @@ pub trait Read {
     /// If any other read error is encountered then this function immediately
     /// returns. Any bytes which have already been read will be appended to
     /// `buf`.
-    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<()> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
         read_to_end(self, buf)
     }
 
     /// Read all bytes until EOF in this source, placing them into `buf`.
+    ///
+    /// If successful, this function returns the number of bytes which were read
+    /// and appended to `buf`.
     ///
     /// # Errors
     ///
@@ -216,7 +206,8 @@ pub trait Read {
     /// returned and `buf` is unchanged.
     ///
     /// See `read_to_end` for other error semantics.
-    fn read_to_string(&mut self, buf: &mut String) -> Result<()> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
         // Note that we do *not* call `.read_to_end()` here. We are passing
         // `&mut Vec<u8>` (the raw contents of `buf`) into the `read_to_end`
         // method to fill it up. An arbitrary implementation could overwrite the
@@ -228,16 +219,13 @@ pub trait Read {
         // know is guaranteed to only read data into the end of the buffer.
         append_to_string(buf, |b| read_to_end(self, b))
     }
-}
 
-/// Extension methods for all instances of `Read`, typically imported through
-/// `std::io::prelude::*`.
-pub trait ReadExt: Read + Sized {
     /// Create a "by reference" adaptor for this instance of `Read`.
     ///
     /// The returned adaptor also implements `Read` and will simply borrow this
     /// current reader.
-    fn by_ref(&mut self) -> &mut Self { self }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn by_ref(&mut self) -> &mut Self where Self: Sized { self }
 
     /// Transform this `Read` instance to an `Iterator` over its bytes.
     ///
@@ -245,7 +233,8 @@ pub trait ReadExt: Read + Sized {
     /// R::Err>`.  The yielded item is `Ok` if a byte was successfully read and
     /// `Err` otherwise for I/O errors. EOF is mapped to returning `None` from
     /// this iterator.
-    fn bytes(self) -> Bytes<Self> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn bytes(self) -> Bytes<Self> where Self: Sized {
         Bytes { inner: self }
     }
 
@@ -259,7 +248,10 @@ pub trait ReadExt: Read + Sized {
     ///
     /// Currently this adaptor will discard intermediate data read, and should
     /// be avoided if this is not desired.
-    fn chars(self) -> Chars<Self> {
+    #[unstable(feature = "io", reason = "the semantics of a partial read/write \
+                                         of where errors happen is currently \
+                                         unclear and may change")]
+    fn chars(self) -> Chars<Self> where Self: Sized {
         Chars { inner: self }
     }
 
@@ -268,7 +260,8 @@ pub trait ReadExt: Read + Sized {
     /// The returned `Read` instance will first read all bytes from this object
     /// until EOF is encountered. Afterwards the output is equivalent to the
     /// output of `next`.
-    fn chain<R: Read>(self, next: R) -> Chain<Self, R> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn chain<R: Read>(self, next: R) -> Chain<Self, R> where Self: Sized {
         Chain { first: self, second: next, done_first: false }
     }
 
@@ -278,7 +271,8 @@ pub trait ReadExt: Read + Sized {
     /// `limit` bytes, after which it will always return EOF (`Ok(0)`). Any
     /// read errors will not count towards the number of bytes read and future
     /// calls to `read` may succeed.
-    fn take(self, limit: u64) -> Take<Self> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn take(self, limit: u64) -> Take<Self> where Self: Sized {
         Take { inner: self, limit: limit }
     }
 
@@ -288,12 +282,13 @@ pub trait ReadExt: Read + Sized {
     /// Whenever the returned `Read` instance is read it will write the read
     /// data to `out`. The current semantics of this implementation imply that
     /// a `write` error will not report how much data was initially read.
-    fn tee<W: Write>(self, out: W) -> Tee<Self, W> {
+    #[unstable(feature = "io", reason = "the semantics of a partial read/write \
+                                         of where errors happen is currently \
+                                         unclear and may change")]
+    fn tee<W: Write>(self, out: W) -> Tee<Self, W> where Self: Sized {
         Tee { reader: self, writer: out }
     }
 }
-
-impl<T: Read> ReadExt for T {}
 
 /// A trait for objects which are byte-oriented sinks.
 ///
@@ -306,6 +301,7 @@ impl<T: Read> ReadExt for T {}
 /// Writers are intended to be composable with one another. Many objects
 /// throughout the I/O and related libraries take and provide types which
 /// implement the `Write` trait.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait Write {
     /// Write a buffer into this object, returning how many bytes were written.
     ///
@@ -331,6 +327,7 @@ pub trait Write {
     ///
     /// It is **not** considered an error if the entire buffer could not be
     /// written to this writer.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn write(&mut self, buf: &[u8]) -> Result<usize>;
 
     /// Flush this output stream, ensuring that all intermediately buffered
@@ -340,6 +337,7 @@ pub trait Write {
     ///
     /// It is considered an error if not all bytes could be written due to
     /// I/O errors or EOF being reached.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn flush(&mut self) -> Result<()>;
 
     /// Attempts to write an entire buffer into this write.
@@ -352,12 +350,12 @@ pub trait Write {
     /// # Errors
     ///
     /// This function will return the first error that `write` returns.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn write_all(&mut self, mut buf: &[u8]) -> Result<()> {
         while buf.len() > 0 {
             match self.write(buf) {
                 Ok(0) => return Err(Error::new(ErrorKind::WriteZero,
-                                               "failed to write whole buffer",
-                                               None)),
+                                               "failed to write whole buffer")),
                 Ok(n) => buf = &buf[n..],
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
@@ -380,6 +378,7 @@ pub trait Write {
     /// # Errors
     ///
     /// This function will return any I/O error reported while formatting.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn write_fmt(&mut self, fmt: fmt::Arguments) -> Result<()> {
         // Create a shim which translates a Write to a fmt::Write and saves
         // off I/O errors. instead of discarding them
@@ -406,16 +405,13 @@ pub trait Write {
             Err(..) => output.error
         }
     }
-}
 
-/// Extension methods for all instances of `Write`, typically imported through
-/// `std::io::prelude::*`.
-pub trait WriteExt: Write + Sized {
     /// Create a "by reference" adaptor for this instance of `Write`.
     ///
     /// The returned adaptor also implements `Write` and will simply borrow this
     /// current writer.
-    fn by_ref(&mut self) -> &mut Self { self }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn by_ref(&mut self) -> &mut Self where Self: Sized { self }
 
     /// Creates a new writer which will write all data to both this writer and
     /// another writer.
@@ -425,18 +421,22 @@ pub trait WriteExt: Write + Sized {
     /// implementation do not precisely track where errors happen. For example
     /// an error on the second call to `write` will not report that the first
     /// call to `write` succeeded.
-    fn broadcast<W: Write>(self, other: W) -> Broadcast<Self, W> {
+    #[unstable(feature = "io", reason = "the semantics of a partial read/write \
+                                         of where errors happen is currently \
+                                         unclear and may change")]
+    fn broadcast<W: Write>(self, other: W) -> Broadcast<Self, W>
+        where Self: Sized
+    {
         Broadcast { first: self, second: other }
     }
 }
-
-impl<T: Write> WriteExt for T {}
 
 /// An object implementing `Seek` internally has some form of cursor which can
 /// be moved within a stream of bytes.
 ///
 /// The stream typically has a fixed size, allowing seeking relative to either
 /// end or the current offset.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait Seek {
     /// Seek to an offset, in bytes, in a stream
     ///
@@ -452,13 +452,16 @@ pub trait Seek {
     /// # Errors
     ///
     /// Seeking to a negative offset is considered an error
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn seek(&mut self, pos: SeekFrom) -> Result<u64>;
 }
 
 /// Enumeration of possible methods to seek within an I/O object.
 #[derive(Copy, PartialEq, Eq, Clone, Debug)]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub enum SeekFrom {
     /// Set the offset to the provided number of bytes.
+    #[stable(feature = "rust1", since = "1.0.0")]
     Start(u64),
 
     /// Set the offset to the size of this object plus the specified number of
@@ -466,6 +469,7 @@ pub enum SeekFrom {
     ///
     /// It is possible to seek beyond the end of an object, but is an error to
     /// seek before byte 0.
+    #[stable(feature = "rust1", since = "1.0.0")]
     End(i64),
 
     /// Set the offset to the current position plus the specified number of
@@ -473,11 +477,13 @@ pub enum SeekFrom {
     ///
     /// It is possible to seek beyond the end of an object, but is an error to
     /// seek before byte 0.
+    #[stable(feature = "rust1", since = "1.0.0")]
     Current(i64),
 }
 
 fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
-                                   -> Result<()> {
+                                   -> Result<usize> {
+    let mut read = 0;
     loop {
         let (done, used) = {
             let available = match r.fill_buf() {
@@ -497,8 +503,9 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
             }
         };
         r.consume(used);
+        read += used;
         if done || used == 0 {
-            return Ok(());
+            return Ok(read);
         }
     }
 }
@@ -508,6 +515,7 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
 ///
 /// This type extends the `Read` trait with a few methods that are not
 /// possible to reasonably implement with purely a read interface.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub trait BufRead: Read {
     /// Fills the internal buffer of this object, returning the buffer contents.
     ///
@@ -524,10 +532,22 @@ pub trait BufRead: Read {
     ///
     /// This function will return an I/O error if the underlying reader was
     /// read, but returned an error.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn fill_buf(&mut self) -> Result<&[u8]>;
 
     /// Tells this buffer that `amt` bytes have been consumed from the buffer,
     /// so they should no longer be returned in calls to `read`.
+    ///
+    /// This function does not perform any I/O, it simply informs this object
+    /// that some amount of its buffer, returned from `fill_buf`, has been
+    /// consumed and should no longer be returned.
+    ///
+    /// This function is used to tell the buffer how many bytes you've consumed
+    /// from the return value of `fill_buf`, and so may do odd things if
+    /// `fill_buf` isn't called before calling this.
+    ///
+    /// The `amt` must be `<=` the number of bytes in the buffer returned by `fill_buf`.
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn consume(&mut self, amt: usize);
 
     /// Read all bytes until the delimiter `byte` is reached.
@@ -538,7 +558,8 @@ pub trait BufRead: Read {
     /// `buf`.
     ///
     /// If this buffered reader is currently at EOF, then this function will not
-    /// place any more bytes into `buf` and will return `Ok(())`.
+    /// place any more bytes into `buf` and will return `Ok(n)` where `n` is the
+    /// number of bytes which were read.
     ///
     /// # Errors
     ///
@@ -547,11 +568,13 @@ pub trait BufRead: Read {
     ///
     /// If an I/O error is encountered then all bytes read so far will be
     /// present in `buf` and its length will have been adjusted appropriately.
-    fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<()> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<usize> {
         read_until(self, byte, buf)
     }
 
-    /// Read all bytes until a newline byte (the 0xA byte) is reached.
+    /// Read all bytes until a newline byte (the 0xA byte) is reached, and
+    /// append them to the provided buffer.
     ///
     /// This function will continue to read (and buffer) bytes from the
     /// underlying stream until the newline delimiter (the 0xA byte) or EOF is
@@ -559,7 +582,8 @@ pub trait BufRead: Read {
     /// found) will be appended to `buf`.
     ///
     /// If this reader is currently at EOF then this function will not modify
-    /// `buf` and will return `Ok(())`.
+    /// `buf` and will return `Ok(n)` where `n` is the number of bytes which
+    /// were read.
     ///
     /// # Errors
     ///
@@ -567,17 +591,14 @@ pub trait BufRead: Read {
     /// return an error if the read bytes are not valid UTF-8. If an I/O error
     /// is encountered then `buf` may contain some bytes already read in the
     /// event that all data read so far was valid UTF-8.
-    fn read_line(&mut self, buf: &mut String) -> Result<()> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn read_line(&mut self, buf: &mut String) -> Result<usize> {
         // Note that we are not calling the `.read_until` method here, but
         // rather our hardcoded implementation. For more details as to why, see
         // the comments in `read_to_end`.
         append_to_string(buf, |b| read_until(self, b'\n', b))
     }
-}
 
-/// Extension methods for all instances of `BufRead`, typically imported through
-/// `std::io::prelude::*`.
-pub trait BufReadExt: BufRead + Sized {
     /// Returns an iterator over the contents of this reader split on the byte
     /// `byte`.
     ///
@@ -587,7 +608,8 @@ pub trait BufReadExt: BufRead + Sized {
     ///
     /// This function will yield errors whenever `read_until` would have also
     /// yielded an error.
-    fn split(self, byte: u8) -> Split<Self> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn split(self, byte: u8) -> Split<Self> where Self: Sized {
         Split { buf: self, delim: byte }
     }
 
@@ -599,21 +621,22 @@ pub trait BufReadExt: BufRead + Sized {
     ///
     /// This function will yield errors whenever `read_string` would have also
     /// yielded an error.
-    fn lines(self) -> Lines<Self> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn lines(self) -> Lines<Self> where Self: Sized {
         Lines { buf: self }
     }
 }
 
-impl<T: BufRead> BufReadExt for T {}
-
 /// A `Write` adaptor which will write data to multiple locations.
 ///
-/// For more information, see `WriteExt::broadcast`.
+/// For more information, see `Write::broadcast`.
+#[unstable(feature = "io", reason = "awaiting stability of Write::broadcast")]
 pub struct Broadcast<T, U> {
     first: T,
     second: U,
 }
 
+#[unstable(feature = "io", reason = "awaiting stability of Write::broadcast")]
 impl<T: Write, U: Write> Write for Broadcast<T, U> {
     fn write(&mut self, data: &[u8]) -> Result<usize> {
         let n = try!(self.first.write(data));
@@ -629,13 +652,15 @@ impl<T: Write, U: Write> Write for Broadcast<T, U> {
 
 /// Adaptor to chain together two instances of `Read`.
 ///
-/// For more information, see `ReadExt::chain`.
+/// For more information, see `Read::chain`.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Chain<T, U> {
     first: T,
     second: U,
     done_first: bool,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Read, U: Read> Read for Chain<T, U> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         if !self.done_first {
@@ -650,12 +675,14 @@ impl<T: Read, U: Read> Read for Chain<T, U> {
 
 /// Reader adaptor which limits the bytes read from an underlying reader.
 ///
-/// For more information, see `ReadExt::take`.
+/// For more information, see `Read::take`.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Take<T> {
     inner: T,
     limit: u64,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Take<T> {
     /// Returns the number of bytes that can be read before this instance will
     /// return EOF.
@@ -664,11 +691,18 @@ impl<T> Take<T> {
     ///
     /// This instance may reach EOF after reading fewer bytes than indicated by
     /// this method if the underlying `Read` instance reaches EOF.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn limit(&self) -> u64 { self.limit }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Read> Read for Take<T> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        // Don't call into inner reader at all at EOF because it may still block
+        if self.limit == 0 {
+            return Ok(0);
+        }
+
         let max = cmp::min(buf.len() as u64, self.limit) as usize;
         let n = try!(self.inner.read(&mut buf[..max]));
         self.limit -= n as u64;
@@ -676,14 +710,32 @@ impl<T: Read> Read for Take<T> {
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: BufRead> BufRead for Take<T> {
+    fn fill_buf(&mut self) -> Result<&[u8]> {
+        let buf = try!(self.inner.fill_buf());
+        let cap = cmp::min(buf.len() as u64, self.limit) as usize;
+        Ok(&buf[..cap])
+    }
+
+    fn consume(&mut self, amt: usize) {
+        // Don't let callers reset the limit by passing an overlarge value
+        let amt = cmp::min(amt as u64, self.limit) as usize;
+        self.limit -= amt as u64;
+        self.inner.consume(amt);
+    }
+}
+
 /// An adaptor which will emit all read data to a specified writer as well.
 ///
-/// For more information see `ReadExt::tee`
+/// For more information see `Read::tee`
+#[unstable(feature = "io", reason = "awaiting stability of Read::tee")]
 pub struct Tee<R, W> {
     reader: R,
     writer: W,
 }
 
+#[unstable(feature = "io", reason = "awaiting stability of Read::tee")]
 impl<R: Read, W: Write> Read for Tee<R, W> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         let n = try!(self.reader.read(buf));
@@ -695,11 +747,13 @@ impl<R: Read, W: Write> Read for Tee<R, W> {
 
 /// A bridge from implementations of `Read` to an `Iterator` of `u8`.
 ///
-/// See `ReadExt::bytes` for more information.
+/// See `Read::bytes` for more information.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Bytes<R> {
     inner: R,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<R: Read> Iterator for Bytes<R> {
     type Item = Result<u8>;
 
@@ -715,14 +769,16 @@ impl<R: Read> Iterator for Bytes<R> {
 
 /// A bridge from implementations of `Read` to an `Iterator` of `char`.
 ///
-/// See `ReadExt::chars` for more information.
+/// See `Read::chars` for more information.
+#[unstable(feature = "io", reason = "awaiting stability of Read::chars")]
 pub struct Chars<R> {
     inner: R,
 }
 
 /// An enumeration of possible errors that can be generated from the `Chars`
 /// adapter.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(Debug)]
+#[unstable(feature = "io", reason = "awaiting stability of Read::chars")]
 pub enum CharsError {
     /// Variant representing that the underlying stream was read successfully
     /// but it did not contain valid utf8 data.
@@ -732,6 +788,7 @@ pub enum CharsError {
     Other(Error),
 }
 
+#[unstable(feature = "io", reason = "awaiting stability of Read::chars")]
 impl<R: Read> Iterator for Chars<R> {
     type Item = result::Result<char, CharsError>;
 
@@ -763,14 +820,15 @@ impl<R: Read> Iterator for Chars<R> {
     }
 }
 
-impl StdError for CharsError {
+#[unstable(feature = "io", reason = "awaiting stability of Read::chars")]
+impl std_error::Error for CharsError {
     fn description(&self) -> &str {
         match *self {
             CharsError::NotUtf8 => "invalid utf8 encoding",
-            CharsError::Other(ref e) => e.description(),
+            CharsError::Other(ref e) => std_error::Error::description(e),
         }
     }
-    fn cause(&self) -> Option<&StdError> {
+    fn cause(&self) -> Option<&std_error::Error> {
         match *self {
             CharsError::NotUtf8 => None,
             CharsError::Other(ref e) => e.cause(),
@@ -778,6 +836,7 @@ impl StdError for CharsError {
     }
 }
 
+#[unstable(feature = "io", reason = "awaiting stability of Read::chars")]
 impl fmt::Display for CharsError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -793,19 +852,21 @@ impl fmt::Display for CharsError {
 /// particular byte.
 ///
 /// See `BufReadExt::split` for more information.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Split<B> {
     buf: B,
     delim: u8,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<B: BufRead> Iterator for Split<B> {
     type Item = Result<Vec<u8>>;
 
     fn next(&mut self) -> Option<Result<Vec<u8>>> {
         let mut buf = Vec::new();
         match self.buf.read_until(self.delim, &mut buf) {
-            Ok(()) if buf.len() == 0 => None,
-            Ok(()) => {
+            Ok(0) => None,
+            Ok(_n) => {
                 if buf[buf.len() - 1] == self.delim {
                     buf.pop();
                 }
@@ -820,18 +881,20 @@ impl<B: BufRead> Iterator for Split<B> {
 /// byte.
 ///
 /// See `BufReadExt::lines` for more information.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Lines<B> {
     buf: B,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<B: BufRead> Iterator for Lines<B> {
     type Item = Result<String>;
 
     fn next(&mut self) -> Option<Result<String>> {
         let mut buf = String::new();
         match self.buf.read_line(&mut buf) {
-            Ok(()) if buf.len() == 0 => None,
-            Ok(()) => {
+            Ok(0) => None,
+            Ok(_n) => {
                 if buf.ends_with("\n") {
                     buf.pop();
                 }
@@ -846,101 +909,116 @@ impl<B: BufRead> Iterator for Lines<B> {
 mod tests {
     use prelude::v1::*;
     use io::prelude::*;
+    use io;
     use super::Cursor;
 
     #[test]
     fn read_until() {
-        let mut buf = Cursor::new(b"12");
+        let mut buf = Cursor::new(&b"12"[..]);
         let mut v = Vec::new();
-        assert_eq!(buf.read_until(b'3', &mut v), Ok(()));
+        assert_eq!(buf.read_until(b'3', &mut v).unwrap(), 2);
         assert_eq!(v, b"12");
 
-        let mut buf = Cursor::new(b"1233");
+        let mut buf = Cursor::new(&b"1233"[..]);
         let mut v = Vec::new();
-        assert_eq!(buf.read_until(b'3', &mut v), Ok(()));
+        assert_eq!(buf.read_until(b'3', &mut v).unwrap(), 3);
         assert_eq!(v, b"123");
         v.truncate(0);
-        assert_eq!(buf.read_until(b'3', &mut v), Ok(()));
+        assert_eq!(buf.read_until(b'3', &mut v).unwrap(), 1);
         assert_eq!(v, b"3");
         v.truncate(0);
-        assert_eq!(buf.read_until(b'3', &mut v), Ok(()));
+        assert_eq!(buf.read_until(b'3', &mut v).unwrap(), 0);
         assert_eq!(v, []);
     }
 
     #[test]
     fn split() {
-        let mut buf = Cursor::new(b"12");
+        let buf = Cursor::new(&b"12"[..]);
         let mut s = buf.split(b'3');
-        assert_eq!(s.next(), Some(Ok(vec![b'1', b'2'])));
-        assert_eq!(s.next(), None);
+        assert_eq!(s.next().unwrap().unwrap(), vec![b'1', b'2']);
+        assert!(s.next().is_none());
 
-        let mut buf = Cursor::new(b"1233");
+        let buf = Cursor::new(&b"1233"[..]);
         let mut s = buf.split(b'3');
-        assert_eq!(s.next(), Some(Ok(vec![b'1', b'2'])));
-        assert_eq!(s.next(), Some(Ok(vec![])));
-        assert_eq!(s.next(), None);
+        assert_eq!(s.next().unwrap().unwrap(), vec![b'1', b'2']);
+        assert_eq!(s.next().unwrap().unwrap(), vec![]);
+        assert!(s.next().is_none());
     }
 
     #[test]
     fn read_line() {
-        let mut buf = Cursor::new(b"12");
+        let mut buf = Cursor::new(&b"12"[..]);
         let mut v = String::new();
-        assert_eq!(buf.read_line(&mut v), Ok(()));
+        assert_eq!(buf.read_line(&mut v).unwrap(), 2);
         assert_eq!(v, "12");
 
-        let mut buf = Cursor::new(b"12\n\n");
+        let mut buf = Cursor::new(&b"12\n\n"[..]);
         let mut v = String::new();
-        assert_eq!(buf.read_line(&mut v), Ok(()));
+        assert_eq!(buf.read_line(&mut v).unwrap(), 3);
         assert_eq!(v, "12\n");
         v.truncate(0);
-        assert_eq!(buf.read_line(&mut v), Ok(()));
+        assert_eq!(buf.read_line(&mut v).unwrap(), 1);
         assert_eq!(v, "\n");
         v.truncate(0);
-        assert_eq!(buf.read_line(&mut v), Ok(()));
+        assert_eq!(buf.read_line(&mut v).unwrap(), 0);
         assert_eq!(v, "");
     }
 
     #[test]
     fn lines() {
-        let mut buf = Cursor::new(b"12");
+        let buf = Cursor::new(&b"12"[..]);
         let mut s = buf.lines();
-        assert_eq!(s.next(), Some(Ok("12".to_string())));
-        assert_eq!(s.next(), None);
+        assert_eq!(s.next().unwrap().unwrap(), "12".to_string());
+        assert!(s.next().is_none());
 
-        let mut buf = Cursor::new(b"12\n\n");
+        let buf = Cursor::new(&b"12\n\n"[..]);
         let mut s = buf.lines();
-        assert_eq!(s.next(), Some(Ok("12".to_string())));
-        assert_eq!(s.next(), Some(Ok(String::new())));
-        assert_eq!(s.next(), None);
+        assert_eq!(s.next().unwrap().unwrap(), "12".to_string());
+        assert_eq!(s.next().unwrap().unwrap(), "".to_string());
+        assert!(s.next().is_none());
     }
 
     #[test]
     fn read_to_end() {
-        let mut c = Cursor::new(b"");
+        let mut c = Cursor::new(&b""[..]);
         let mut v = Vec::new();
-        assert_eq!(c.read_to_end(&mut v), Ok(()));
+        assert_eq!(c.read_to_end(&mut v).unwrap(), 0);
         assert_eq!(v, []);
 
-        let mut c = Cursor::new(b"1");
+        let mut c = Cursor::new(&b"1"[..]);
         let mut v = Vec::new();
-        assert_eq!(c.read_to_end(&mut v), Ok(()));
+        assert_eq!(c.read_to_end(&mut v).unwrap(), 1);
         assert_eq!(v, b"1");
     }
 
     #[test]
     fn read_to_string() {
-        let mut c = Cursor::new(b"");
+        let mut c = Cursor::new(&b""[..]);
         let mut v = String::new();
-        assert_eq!(c.read_to_string(&mut v), Ok(()));
+        assert_eq!(c.read_to_string(&mut v).unwrap(), 0);
         assert_eq!(v, "");
 
-        let mut c = Cursor::new(b"1");
+        let mut c = Cursor::new(&b"1"[..]);
         let mut v = String::new();
-        assert_eq!(c.read_to_string(&mut v), Ok(()));
+        assert_eq!(c.read_to_string(&mut v).unwrap(), 1);
         assert_eq!(v, "1");
 
-        let mut c = Cursor::new(b"\xff");
+        let mut c = Cursor::new(&b"\xff"[..]);
         let mut v = String::new();
         assert!(c.read_to_string(&mut v).is_err());
+    }
+
+    #[test]
+    fn take_eof() {
+        struct R;
+
+        impl Read for R {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::Other, ""))
+            }
+        }
+
+        let mut buf = [0; 1];
+        assert_eq!(0, R.take(0).read(&mut buf).unwrap());
     }
 }

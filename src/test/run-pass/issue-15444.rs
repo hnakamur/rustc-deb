@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait MyTrait {
     fn foo(&self);
 }
@@ -20,11 +22,11 @@ fn bar<T: MyTrait>(t: &T) {
     t.foo()
 }
 
-fn thing(a: int, b: int) -> int {
+fn thing(a: isize, b: isize) -> isize {
     a + b
 }
 
 fn main() {
-    let thing: fn(int, int) -> int = thing; // coerce to fn type
+    let thing: fn(isize, isize) -> isize = thing; // coerce to fn type
     bar(&thing);
 }

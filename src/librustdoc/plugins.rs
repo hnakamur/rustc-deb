@@ -8,12 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(deprecated)] // old path, used for compatibility with dynamic lib
+
 use clean;
 
 use std::dynamic_lib as dl;
 use serialize::json;
 use std::mem;
 use std::string::String;
+use std::path::PathBuf;
 
 pub type PluginJson = Option<(String, json::Json)>;
 pub type PluginResult = (clean::Crate, PluginJson);
@@ -24,12 +27,12 @@ pub struct PluginManager {
     dylibs: Vec<dl::DynamicLibrary> ,
     callbacks: Vec<PluginCallback> ,
     /// The directory plugins will be loaded from
-    pub prefix: Path,
+    pub prefix: PathBuf,
 }
 
 impl PluginManager {
     /// Create a new plugin manager
-    pub fn new(prefix: Path) -> PluginManager {
+    pub fn new(prefix: PathBuf) -> PluginManager {
         PluginManager {
             dylibs: Vec::new(),
             callbacks: Vec::new(),

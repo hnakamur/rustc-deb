@@ -9,6 +9,7 @@
 // except according to those terms.
 
 #![feature(advanced_slice_patterns)]
+#![feature(slice_patterns)]
 
 struct Foo {
     first: bool,
@@ -27,7 +28,7 @@ fn struct_with_a_nested_enum_and_vector() {
         Foo { first: true, second: None } => (),
         Foo { first: true, second: Some(_) } => (),
         Foo { first: false, second: None } => (),
-        Foo { first: false, second: Some([1_usize, 2_usize, 3_usize, 4_usize]) } => ()
+        Foo { first: false, second: Some([1, 2, 3, 4]) } => ()
     }
 }
 

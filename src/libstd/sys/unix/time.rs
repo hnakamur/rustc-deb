@@ -58,11 +58,9 @@ mod inner {
         type Output = Duration;
 
         fn sub(self, other: &SteadyTime) -> Duration {
-            unsafe {
-                let info = info();
-                let diff = self.t as i64 - other.t as i64;
-                Duration::nanoseconds(diff * info.numer as i64 / info.denom as i64)
-            }
+            let info = info();
+            let diff = self.t as i64 - other.t as i64;
+            Duration::nanoseconds(diff * info.numer as i64 / info.denom as i64)
         }
     }
 }
@@ -80,8 +78,11 @@ mod inner {
     }
 
     // Apparently android provides this in some other library?
+    // Bitrig's RT extensions are in the C library, not a separate librt
     // OpenBSD provide it via libc
-    #[cfg(not(any(target_os = "android", target_os = "openbsd")))]
+    #[cfg(not(any(target_os = "android",
+                  target_os = "bitrig",
+                  target_os = "openbsd")))]
     #[link(name = "rt")]
     extern {}
 

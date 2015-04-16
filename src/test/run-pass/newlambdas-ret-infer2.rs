@@ -11,10 +11,10 @@
 // Test that the lambda kind is inferred correctly as a return
 // expression
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+// FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+// pretty-expanded FIXME #23616
 
-fn unique() -> Box<FnMut()+'static> { box || () }
+fn unique() -> Box<FnMut()+'static> { Box::new(|| ()) }
 
 pub fn main() {
 }

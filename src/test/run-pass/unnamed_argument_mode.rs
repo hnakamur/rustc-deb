@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn good(_a: &int) {
+// pretty-expanded FIXME #23616
+
+fn good(_a: &isize) {
 }
 
-// unnamed argument &int is now parse x: &int
+// unnamed argument &isize is now parse x: &isize
 
-fn called<F>(_f: F) where F: FnOnce(&int) {
+fn called<F>(_f: F) where F: FnOnce(&isize) {
 }
 
 pub fn main() {

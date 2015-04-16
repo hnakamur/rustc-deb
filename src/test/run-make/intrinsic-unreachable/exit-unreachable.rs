@@ -8,12 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(asm)]
+#![feature(asm, core)]
 #![crate_type="lib"]
 
 use std::intrinsics;
 
-pub fn exit(n: uint) -> ! {
+pub fn exit(n: usize) -> ! {
     unsafe {
         // Pretend this asm is an exit() syscall.
         asm!("" :: "r"(n) :: "volatile");

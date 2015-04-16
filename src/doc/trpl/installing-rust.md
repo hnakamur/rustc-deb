@@ -6,14 +6,14 @@ Linux or a Mac, all you need to do is this (note that you don't need to type
 in the `$`s, they just indicate the start of each command):
 
 ```bash
-$ curl -L https://static.rust-lang.org/rustup.sh | sudo sh
+$ curl -sf -L https://static.rust-lang.org/rustup.sh | sudo sh
 ```
 
 If you're concerned about the [potential insecurity](http://curlpipesh.tumblr.com/) of using `curl | sudo sh`,
 please keep reading and see our disclaimer below. And feel free to use a two-step version of the installation and examine our installation script:
 
 ```bash
-$ curl -L https://static.rust-lang.org/rustup.sh -O
+$ curl -f -L https://static.rust-lang.org/rustup.sh -O
 $ sudo sh rustup.sh
 ```
 
@@ -70,13 +70,18 @@ If you've got Rust installed, you can open up a shell, and type this:
 $ rustc --version
 ```
 
-You should see some output that looks something like this:
+You should see the version number, commit hash, commit date and build date:
 
 ```bash
-rustc 1.0.0-nightly (f11f3e7ba 2015-01-04 20:02:14 +0000)
+rustc 1.0.0-nightly (f11f3e7ba 2015-01-04) (built 2015-01-06)
 ```
 
 If you did, Rust has been installed successfully! Congrats!
+
+This installer also installs a copy of the documentation locally, so you can
+read it offline. On UNIX systems, `/usr/local/share/doc/rust` is the location.
+On Windows, it's in a `share/doc` directory, inside wherever you installed Rust
+to.
 
 If not, there are a number of places where you can get help. The easiest is
 [the #rust IRC channel on irc.mozilla.org](irc://irc.mozilla.org/#rust), which

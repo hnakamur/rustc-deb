@@ -19,12 +19,19 @@
 //! instances as clients.
 
 #![allow(missing_docs)]
+#![deprecated(since = "1.0.0",
+              reason = "will be removed to be reintroduced at a later date; \
+                        in the meantime consider using the `unix_socket` crate \
+                        for unix sockets; there is currently no replacement \
+                        for named pipes")]
+#![unstable(feature = "old_io")]
 
 use prelude::v1::*;
 
 use ffi::CString;
 use old_path::BytesContainer;
 use old_io::{Listener, Acceptor, IoResult, TimedOut, standard_error};
+use old_io::{Reader, Writer};
 use sys::pipe::UnixAcceptor as UnixAcceptorImp;
 use sys::pipe::UnixListener as UnixListenerImp;
 use sys::pipe::UnixStream as UnixStreamImp;
@@ -44,11 +51,14 @@ impl UnixStream {
     ///
     /// The returned stream will be closed when the object falls out of scope.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(old_io, old_path, io)]
     /// # #![allow(unused_must_use)]
     /// use std::old_io::net::pipe::UnixStream;
+    /// use std::old_io::*;
+    /// use std::old_path::Path;
     ///
     /// let server = Path::new("path/to/my/socket");
     /// let mut stream = UnixStream::connect(&server);
@@ -140,7 +150,7 @@ impl Clone for UnixStream {
 }
 
 impl Reader for UnixStream {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.inner.read(buf)
     }
 }
@@ -169,12 +179,14 @@ impl UnixListener {
     ///
     /// This listener will be closed when it falls out of scope.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(old_io, io, old_path)]
     /// # fn foo() {
     /// use std::old_io::net::pipe::UnixListener;
-    /// use std::old_io::{Listener, Acceptor};
+    /// use std::old_io::*;
+    /// use std::old_path::Path;
     ///
     /// let server = Path::new("/path/to/my/socket");
     /// let stream = UnixListener::bind(&server);
@@ -190,7 +202,7 @@ impl UnixListener {
     }
 }
 
-impl Listener<UnixStream, UnixAcceptor> for UnixListener {
+impl Listener<UnixAcceptor> for UnixListener {
     fn listen(self) -> IoResult<UnixAcceptor> {
         self.inner.listen()
             .map(|inner| UnixAcceptor { inner: inner })
@@ -238,7 +250,8 @@ impl UnixAcceptor {
     }
 }
 
-impl Acceptor<UnixStream> for UnixAcceptor {
+impl Acceptor for UnixAcceptor {
+    type Connection = UnixStream;
     fn accept(&mut self) -> IoResult<UnixStream> {
         self.inner.accept().map(|s| {
             UnixStream { inner: s }
@@ -279,6 +292,7 @@ mod tests {
     use old_io::{EndOfFile, TimedOut, ShortWrite, IoError, ConnectionReset};
     use old_io::{NotConnected, BrokenPipe, FileNotFound, InvalidInput, OtherIoError};
     use old_io::{PermissionDenied, Acceptor, Listener};
+    use old_io::{Reader, Writer};
     use old_io::test::*;
     use super::*;
     use sync::mpsc::channel;

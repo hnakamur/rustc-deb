@@ -46,7 +46,7 @@
 // corresponding prolog, decision was taken to disable segmented
 // stack support on iOS.
 
-pub const RED_ZONE: uint = 20 * 1024;
+pub const RED_ZONE: usize = 20 * 1024;
 
 /// This function is invoked from rust's current __morestack function. Segmented
 /// stacks are currently not enabled as segmented stacks, but rather one giant
@@ -117,39 +117,8 @@ extern fn stack_exhausted() {
 // On all other platforms both variants behave identically.
 
 #[inline(always)]
-pub unsafe fn record_os_managed_stack_bounds(stack_lo: uint, _stack_hi: uint) {
+pub unsafe fn record_os_managed_stack_bounds(stack_lo: usize, _stack_hi: usize) {
     record_sp_limit(stack_lo + RED_ZONE);
-}
-
-#[inline(always)]
-pub unsafe fn record_rust_managed_stack_bounds(stack_lo: uint, stack_hi: uint) {
-    // When the old runtime had segmented stacks, it used a calculation that was
-    // "limit + RED_ZONE + FUDGE". The red zone was for things like dynamic
-    // symbol resolution, llvm function calls, etc. In theory this red zone
-    // value is 0, but it matters far less when we have gigantic stacks because
-    // we don't need to be so exact about our stack budget. The "fudge factor"
-    // was because LLVM doesn't emit a stack check for functions < 256 bytes in
-    // size. Again though, we have giant stacks, so we round all these
-    // calculations up to the nice round number of 20k.
-    record_sp_limit(stack_lo + RED_ZONE);
-
-    return target_record_stack_bounds(stack_lo, stack_hi);
-
-    #[cfg(not(windows))] #[inline(always)]
-    unsafe fn target_record_stack_bounds(_stack_lo: uint, _stack_hi: uint) {}
-
-    #[cfg(all(windows, target_arch = "x86"))] #[inline(always)]
-    unsafe fn target_record_stack_bounds(stack_lo: uint, stack_hi: uint) {
-        // stack range is at TIB: %fs:0x04 (top) and %fs:0x08 (bottom)
-        asm!("mov $0, %fs:0x04" :: "r"(stack_hi) :: "volatile");
-        asm!("mov $0, %fs:0x08" :: "r"(stack_lo) :: "volatile");
-    }
-    #[cfg(all(windows, target_arch = "x86_64"))] #[inline(always)]
-    unsafe fn target_record_stack_bounds(stack_lo: uint, stack_hi: uint) {
-        // stack range is at TIB: %gs:0x08 (top) and %gs:0x10 (bottom)
-        asm!("mov $0, %gs:0x08" :: "r"(stack_hi) :: "volatile");
-        asm!("mov $0, %gs:0x10" :: "r"(stack_lo) :: "volatile");
-    }
 }
 
 /// Records the current limit of the stack as specified by `end`.
@@ -167,30 +136,31 @@ pub unsafe fn record_rust_managed_stack_bounds(stack_lo: uint, stack_hi: uint) {
 /// would be unfortunate for the functions themselves to trigger a morestack
 /// invocation (if they were an actual function call).
 #[inline(always)]
-pub unsafe fn record_sp_limit(limit: uint) {
+pub unsafe fn record_sp_limit(limit: usize) {
     return target_record_sp_limit(limit);
 
     // x86-64
     #[cfg(all(target_arch = "x86_64",
               any(target_os = "macos", target_os = "ios")))]
     #[inline(always)]
-    unsafe fn target_record_sp_limit(limit: uint) {
+    unsafe fn target_record_sp_limit(limit: usize) {
         asm!("movq $$0x60+90*8, %rsi
               movq $0, %gs:(%rsi)" :: "r"(limit) : "rsi" : "volatile")
     }
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))] #[inline(always)]
-    unsafe fn target_record_sp_limit(limit: uint) {
+    unsafe fn target_record_sp_limit(limit: usize) {
         asm!("movq $0, %fs:112" :: "r"(limit) :: "volatile")
     }
     #[cfg(all(target_arch = "x86_64", target_os = "windows"))] #[inline(always)]
-    unsafe fn target_record_sp_limit(_: uint) {
+    unsafe fn target_record_sp_limit(_: usize) {
     }
     #[cfg(all(target_arch = "x86_64", target_os = "freebsd"))] #[inline(always)]
-    unsafe fn target_record_sp_limit(limit: uint) {
+    unsafe fn target_record_sp_limit(limit: usize) {
         asm!("movq $0, %fs:24" :: "r"(limit) :: "volatile")
     }
-    #[cfg(all(target_arch = "x86_64", target_os = "dragonfly"))] #[inline(always)]
-    unsafe fn target_record_sp_limit(limit: uint) {
+    #[cfg(all(target_arch = "x86_64", target_os = "dragonfly"))]
+    #[inline(always)]
+    unsafe fn target_record_sp_limit(limit: usize) {
         asm!("movq $0, %fs:32" :: "r"(limit) :: "volatile")
     }
 
@@ -198,18 +168,18 @@ pub unsafe fn record_sp_limit(limit: uint) {
     #[cfg(all(target_arch = "x86",
               any(target_os = "macos", target_os = "ios")))]
     #[inline(always)]
-    unsafe fn target_record_sp_limit(limit: uint) {
+    unsafe fn target_record_sp_limit(limit: usize) {
         asm!("movl $$0x48+90*4, %eax
               movl $0, %gs:(%eax)" :: "r"(limit) : "eax" : "volatile")
     }
     #[cfg(all(target_arch = "x86",
               any(target_os = "linux", target_os = "freebsd")))]
     #[inline(always)]
-    unsafe fn target_record_sp_limit(limit: uint) {
+    unsafe fn target_record_sp_limit(limit: usize) {
         asm!("movl $0, %gs:48" :: "r"(limit) :: "volatile")
     }
     #[cfg(all(target_arch = "x86", target_os = "windows"))] #[inline(always)]
-    unsafe fn target_record_sp_limit(_: uint) {
+    unsafe fn target_record_sp_limit(_: usize) {
     }
 
     // mips, arm - Some brave soul can port these to inline asm, but it's over
@@ -218,7 +188,7 @@ pub unsafe fn record_sp_limit(limit: uint) {
               target_arch = "mipsel",
               all(target_arch = "arm", not(target_os = "ios"))))]
     #[inline(always)]
-    unsafe fn target_record_sp_limit(limit: uint) {
+    unsafe fn target_record_sp_limit(limit: usize) {
         use libc::c_void;
         return record_sp_limit(limit as *const c_void);
         extern {
@@ -233,8 +203,9 @@ pub unsafe fn record_sp_limit(limit: uint) {
     #[cfg(any(target_arch = "aarch64",
               target_arch = "powerpc",
               all(target_arch = "arm", target_os = "ios"),
+              target_os = "bitrig",
               target_os = "openbsd"))]
-    unsafe fn target_record_sp_limit(_: uint) {
+    unsafe fn target_record_sp_limit(_: usize) {
     }
 }
 
@@ -247,48 +218,48 @@ pub unsafe fn record_sp_limit(limit: uint) {
 /// As with the setter, this function does not have a __morestack header and can
 /// therefore be called in a "we're out of stack" situation.
 #[inline(always)]
-pub unsafe fn get_sp_limit() -> uint {
+pub unsafe fn get_sp_limit() -> usize {
     return target_get_sp_limit();
 
     // x86-64
     #[cfg(all(target_arch = "x86_64",
               any(target_os = "macos", target_os = "ios")))]
     #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         let limit;
         asm!("movq $$0x60+90*8, %rsi
               movq %gs:(%rsi), $0" : "=r"(limit) :: "rsi" : "volatile");
         return limit;
     }
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))] #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         let limit;
         asm!("movq %fs:112, $0" : "=r"(limit) ::: "volatile");
         return limit;
     }
     #[cfg(all(target_arch = "x86_64", target_os = "windows"))] #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         return 1024;
     }
     #[cfg(all(target_arch = "x86_64", target_os = "freebsd"))] #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         let limit;
         asm!("movq %fs:24, $0" : "=r"(limit) ::: "volatile");
         return limit;
     }
-    #[cfg(all(target_arch = "x86_64", target_os = "dragonfly"))] #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    #[cfg(all(target_arch = "x86_64", target_os = "dragonfly"))]
+    #[inline(always)]
+    unsafe fn target_get_sp_limit() -> usize {
         let limit;
         asm!("movq %fs:32, $0" : "=r"(limit) ::: "volatile");
         return limit;
     }
 
-
     // x86
     #[cfg(all(target_arch = "x86",
               any(target_os = "macos", target_os = "ios")))]
     #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         let limit;
         asm!("movl $$0x48+90*4, %eax
               movl %gs:(%eax), $0" : "=r"(limit) :: "eax" : "volatile");
@@ -297,13 +268,13 @@ pub unsafe fn get_sp_limit() -> uint {
     #[cfg(all(target_arch = "x86",
               any(target_os = "linux", target_os = "freebsd")))]
     #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         let limit;
         asm!("movl %gs:48, $0" : "=r"(limit) ::: "volatile");
         return limit;
     }
     #[cfg(all(target_arch = "x86", target_os = "windows"))] #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         return 1024;
     }
 
@@ -313,9 +284,9 @@ pub unsafe fn get_sp_limit() -> uint {
               target_arch = "mipsel",
               all(target_arch = "arm", not(target_os = "ios"))))]
     #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         use libc::c_void;
-        return get_sp_limit() as uint;
+        return get_sp_limit() as usize;
         extern {
             fn get_sp_limit() -> *const c_void;
         }
@@ -331,9 +302,10 @@ pub unsafe fn get_sp_limit() -> uint {
     #[cfg(any(target_arch = "aarch64",
               target_arch = "powerpc",
               all(target_arch = "arm", target_os = "ios"),
+              target_os = "bitrig",
               target_os = "openbsd"))]
     #[inline(always)]
-    unsafe fn target_get_sp_limit() -> uint {
+    unsafe fn target_get_sp_limit() -> usize {
         1024
     }
 }

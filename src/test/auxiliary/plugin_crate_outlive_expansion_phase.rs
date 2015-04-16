@@ -11,7 +11,7 @@
 // force-host
 
 #![feature(plugin_registrar)]
-#![feature(box_syntax)]
+#![feature(box_syntax, rustc_private)]
 
 extern crate rustc;
 
@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use rustc::plugin::Registry;
 
 struct Foo {
-    foo: int
+    foo: isize
 }
 
 impl Drop for Foo {
@@ -32,4 +32,3 @@ pub fn registrar(_: &mut Registry) {
     thread_local!(static FOO: RefCell<Option<Box<Any+Send>>> = RefCell::new(None));
     FOO.with(|s| *s.borrow_mut() = Some(box Foo { foo: 10 } as Box<Any+Send>));
 }
-

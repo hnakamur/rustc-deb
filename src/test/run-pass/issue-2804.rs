@@ -1,4 +1,3 @@
-
 // Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -8,6 +7,9 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+
+#![feature(collections)]
+#![feature(rustc_private)]
 
 extern crate collections;
 extern crate serialize;
@@ -37,7 +39,7 @@ fn lookup(table: json::Object, key: String, default: String) -> String
     }
 }
 
-fn add_interface(_store: int, managed_ip: String, data: json::Json) -> (String, object)
+fn add_interface(_store: isize, managed_ip: String, data: json::Json) -> (String, object)
 {
     match &data {
         &Json::Object(ref interface) => {
@@ -55,10 +57,9 @@ fn add_interface(_store: int, managed_ip: String, data: json::Json) -> (String, 
     }
 }
 
-fn add_interfaces(store: int, managed_ip: String, device: HashMap<String, json::Json>)
+fn add_interfaces(store: isize, managed_ip: String, device: HashMap<String, json::Json>)
 -> Vec<(String, object)> {
-    match device["interfaces".to_string()]
-    {
+    match device["interfaces"] {
         Json::Array(ref interfaces) =>
         {
           interfaces.iter().map(|interface| {
@@ -68,7 +69,7 @@ fn add_interfaces(store: int, managed_ip: String, device: HashMap<String, json::
         _ =>
         {
             println!("Expected list for {} interfaces, found {}", managed_ip,
-                   device["interfaces".to_string()]);
+                     device["interfaces"]);
             Vec::new()
         }
     }

@@ -10,13 +10,17 @@
 
 // no-pretty-expanded FIXME #15189
 
+// pretty-expanded FIXME #23616
+
+#![feature(core)]
+
 use std::iter::Unfold;
 
 // Unfold had a bug with 'a that mean it didn't work
 // cross-crate
 
 pub fn main() {
-    fn count(st: &mut uint) -> Option<uint> {
+    fn count(st: &mut usize) -> Option<usize> {
         if *st < 10 {
             let ret = Some(*st);
             *st += 1;

@@ -13,7 +13,9 @@
 // translating the def ID of the trait during AST decoding.
 
 // aux-build:issue-18501.rs
-extern crate "issue-18501" as issue;
+// pretty-expanded FIXME #23616
+
+extern crate issue_18501 as issue;
 
 fn main() {
     issue::pass_method();

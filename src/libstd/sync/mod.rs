@@ -31,7 +31,6 @@ pub use self::barrier::{Barrier, BarrierWaitResult};
 pub use self::poison::{PoisonError, TryLockError, TryLockResult, LockResult};
 
 pub use self::future::Future;
-pub use self::task_pool::TaskPool;
 
 pub mod mpsc;
 
@@ -43,4 +42,3 @@ mod once;
 mod poison;
 mod rwlock;
 mod semaphore;
-mod task_pool;

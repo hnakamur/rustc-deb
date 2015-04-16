@@ -13,10 +13,10 @@
 use std::ops::Add;
 
 #[inline]
-pub fn has_closures() -> uint {
-    let x = 1_usize;
+pub fn has_closures() -> usize {
+    let x = 1;
     let mut f = move || x;
-    let y = 1_usize;
+    let y = 1;
     let g = || y;
     f() + g()
 }

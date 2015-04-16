@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn int_id(x: int) -> int { return x; }
+// pretty-expanded FIXME #23616
+
+fn int_id(x: isize) -> isize { return x; }
 
 pub fn main() { loop { int_id(break); } }

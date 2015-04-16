@@ -27,12 +27,14 @@
 //! the metadata of a file. This includes getting the `stat` information,
 //! reading off particular bits of it, etc.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
+//! # #![feature(old_io, io, old_path)]
 //! # #![allow(unused_must_use)]
 //! use std::old_io::fs::PathExtensions;
-//! use std::old_io::{File, fs};
+//! use std::old_io::*;
+//! use std::old_path::Path;
 //!
 //! let path = Path::new("foo.txt");
 //!
@@ -64,7 +66,6 @@ use option::Option::{Some, None};
 use old_path::{Path, GenericPath};
 use old_path;
 use result::Result::{Err, Ok};
-use slice::SliceExt;
 use string::String;
 use vec::Vec;
 
@@ -82,10 +83,12 @@ use sys_common;
 /// attempted against it for which its underlying file descriptor was not
 /// configured at creation time, via the `FileAccess` parameter to
 /// `File::open_mode()`.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::File")]
+#[unstable(feature = "old_io")]
 pub struct File {
     fd: fs_imp::FileDesc,
     path: Path,
-    last_nread: int,
+    last_nread: isize,
 }
 
 impl sys_common::AsInner<fs_imp::FileDesc> for File {
@@ -94,14 +97,18 @@ impl sys_common::AsInner<fs_imp::FileDesc> for File {
     }
 }
 
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs")]
+#[unstable(feature = "old_io")]
 impl File {
     /// Open a file at `path` in the mode specified by the `mode` and `access`
     /// arguments
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust,should_fail
-    /// use std::old_io::{File, Open, ReadWrite};
+    /// ```rust,should_panic
+    /// # #![feature(old_io, old_path)]
+    /// use std::old_io::*;
+    /// use std::old_path::Path;
     ///
     /// let p = Path::new("/some/file/path.txt");
     ///
@@ -133,6 +140,8 @@ impl File {
     /// * Attempting to open a file with a `FileAccess` that the user lacks
     ///   permissions for
     /// * Filesystem-level errors (full disk, etc)
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs::OpenOptions")]
+    #[unstable(feature = "old_io")]
     pub fn open_mode(path: &Path,
                      mode: FileMode,
                      access: FileAccess) -> IoResult<File> {
@@ -167,13 +176,17 @@ impl File {
     ///
     /// For more information, see the `File::open_mode` function.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
-    /// use std::old_io::File;
+    /// ```
+    /// # #![feature(old_io, old_path)]
+    /// use std::old_io::*;
+    /// use std::old_path::Path;
     ///
     /// let contents = File::open(&Path::new("foo.txt")).read_to_end();
     /// ```
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs::File::open")]
+    #[unstable(feature = "old_io")]
     pub fn open(path: &Path) -> IoResult<File> {
         File::open_mode(path, Open, Read)
     }
@@ -184,23 +197,29 @@ impl File {
     ///
     /// For more information, see the `File::open_mode` function.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(old_io, old_path, io)]
     /// # #![allow(unused_must_use)]
-    /// use std::old_io::File;
+    /// use std::old_io::*;
+    /// use std::old_path::Path;
     ///
     /// let mut f = File::create(&Path::new("foo.txt"));
     /// f.write(b"This is a sample file");
     /// # drop(f);
     /// # ::std::old_io::fs::unlink(&Path::new("foo.txt"));
     /// ```
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs::File::create")]
+    #[unstable(feature = "old_io")]
     pub fn create(path: &Path) -> IoResult<File> {
         File::open_mode(path, Truncate, Write)
              .update_desc("couldn't create file")
     }
 
     /// Returns the original path that was used to open this file.
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs")]
+    #[unstable(feature = "old_io")]
     pub fn path<'a>(&'a self) -> &'a Path {
         &self.path
     }
@@ -208,6 +227,8 @@ impl File {
     /// Synchronizes all modifications to this file to its permanent storage
     /// device. This will flush any internal buffers necessary to perform this
     /// operation.
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs")]
+    #[unstable(feature = "old_io")]
     pub fn fsync(&mut self) -> IoResult<()> {
         self.fd.fsync()
             .update_err("couldn't fsync file",
@@ -218,6 +239,8 @@ impl File {
     /// file metadata to the filesystem. This is intended for use cases that
     /// must synchronize content, but don't need the metadata on disk. The goal
     /// of this method is to reduce disk operations.
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs")]
+    #[unstable(feature = "old_io")]
     pub fn datasync(&mut self) -> IoResult<()> {
         self.fd.datasync()
             .update_err("couldn't datasync file",
@@ -232,6 +255,8 @@ impl File {
     /// be shrunk. If it is greater than the current file's size, then the file
     /// will be extended to `size` and have all of the intermediate data filled
     /// in with 0s.
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs")]
+    #[unstable(feature = "old_io")]
     pub fn truncate(&mut self, size: i64) -> IoResult<()> {
         self.fd.truncate(size)
             .update_err("couldn't truncate file", |e|
@@ -247,11 +272,15 @@ impl File {
     /// until you have attempted to read past the end of the file, so if
     /// you've read _exactly_ the number of bytes in the file, this will
     /// return `false`, not `true`.
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs")]
+    #[unstable(feature = "old_io")]
     pub fn eof(&self) -> bool {
         self.last_nread == 0
     }
 
     /// Queries information about the underlying file.
+    #[deprecated(since = "1.0.0", reason = "replaced with std::fs")]
+    #[unstable(feature = "old_io")]
     pub fn stat(&self) -> IoResult<FileStat> {
         self.fd.fstat()
             .update_err("couldn't fstat file", |e|
@@ -261,11 +290,13 @@ impl File {
 
 /// Unlink a file from the underlying filesystem.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(old_io, old_path)]
 /// # #![allow(unused_must_use)]
-/// use std::old_io::fs;
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// let p = Path::new("/some/file/path.txt");
 /// fs::unlink(&p);
@@ -280,6 +311,8 @@ impl File {
 /// This function will return an error if `path` points to a directory, if the
 /// user lacks permissions to remove the file, or if some other filesystem-level
 /// error occurs.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::remove_file")]
+#[unstable(feature = "old_io")]
 pub fn unlink(path: &Path) -> IoResult<()> {
     fs_imp::unlink(path)
            .update_err("couldn't unlink path", |e|
@@ -290,10 +323,12 @@ pub fn unlink(path: &Path) -> IoResult<()> {
 /// directory, etc. This function will traverse symlinks to query
 /// information about the destination file.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
-/// use std::old_io::fs;
+/// ```
+/// # #![feature(old_io, old_path)]
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// let p = Path::new("/some/file/path.txt");
 /// match fs::stat(&p) {
@@ -307,6 +342,8 @@ pub fn unlink(path: &Path) -> IoResult<()> {
 /// This function will return an error if the user lacks the requisite permissions
 /// to perform a `stat` call on the given `path` or if there is no entry in the
 /// filesystem at the provided path.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::metadata")]
+#[unstable(feature = "old_io")]
 pub fn stat(path: &Path) -> IoResult<FileStat> {
     fs_imp::stat(path)
            .update_err("couldn't stat path", |e|
@@ -321,6 +358,7 @@ pub fn stat(path: &Path) -> IoResult<FileStat> {
 /// # Error
 ///
 /// See `stat`
+#[unstable(feature = "old_fs")]
 pub fn lstat(path: &Path) -> IoResult<FileStat> {
     fs_imp::lstat(path)
            .update_err("couldn't lstat path", |e|
@@ -329,11 +367,13 @@ pub fn lstat(path: &Path) -> IoResult<FileStat> {
 
 /// Rename a file or directory to a new name.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(old_io, old_path)]
 /// # #![allow(unused_must_use)]
-/// use std::old_io::fs;
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// fs::rename(&Path::new("foo"), &Path::new("bar"));
 /// ```
@@ -343,6 +383,8 @@ pub fn lstat(path: &Path) -> IoResult<FileStat> {
 /// This function will return an error if the provided `from` doesn't exist, if
 /// the process lacks permissions to view the contents, or if some other
 /// intermittent I/O error occurs.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::rename")]
+#[unstable(feature = "old_io")]
 pub fn rename(from: &Path, to: &Path) -> IoResult<()> {
     fs_imp::rename(from, to)
            .update_err("couldn't rename path", |e|
@@ -355,11 +397,13 @@ pub fn rename(from: &Path, to: &Path) -> IoResult<()> {
 /// Note that if `from` and `to` both point to the same file, then the file
 /// will likely get truncated by this operation.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(old_io, old_path)]
 /// # #![allow(unused_must_use)]
-/// use std::old_io::fs;
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// fs::copy(&Path::new("foo.txt"), &Path::new("bar.txt"));
 /// ```
@@ -377,6 +421,8 @@ pub fn rename(from: &Path, to: &Path) -> IoResult<()> {
 /// Note that this copy is not atomic in that once the destination is
 /// ensured to not exist, there is nothing preventing the destination from
 /// being created and then destroyed by this operation.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::copy")]
+#[unstable(feature = "old_io")]
 pub fn copy(from: &Path, to: &Path) -> IoResult<()> {
     fn update_err<T>(result: IoResult<T>, from: &Path, to: &Path) -> IoResult<T> {
         result.update_err("couldn't copy path", |e| {
@@ -403,12 +449,14 @@ pub fn copy(from: &Path, to: &Path) -> IoResult<()> {
 /// Changes the permission mode bits found on a file or a directory. This
 /// function takes a mask from the `io` module
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(old_io, old_path)]
 /// # #![allow(unused_must_use)]
 /// use std::old_io;
-/// use std::old_io::fs;
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// fs::chmod(&Path::new("file.txt"), old_io::USER_FILE);
 /// fs::chmod(&Path::new("file.txt"), old_io::USER_READ | old_io::USER_WRITE);
@@ -421,14 +469,17 @@ pub fn copy(from: &Path, to: &Path) -> IoResult<()> {
 /// This function will return an error if the provided `path` doesn't exist, if
 /// the process lacks permissions to change the attributes of the file, or if
 /// some other I/O error is encountered.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::set_permissions")]
+#[unstable(feature = "old_io")]
 pub fn chmod(path: &Path, mode: old_io::FilePermission) -> IoResult<()> {
-    fs_imp::chmod(path, mode.bits() as uint)
+    fs_imp::chmod(path, mode.bits() as usize)
            .update_err("couldn't chmod path", |e|
                format!("{}; path={}; mode={:?}", e, path.display(), mode))
 }
 
 /// Change the user and group owners of a file at the specified path.
-pub fn chown(path: &Path, uid: int, gid: int) -> IoResult<()> {
+#[unstable(feature = "old_fs")]
+pub fn chown(path: &Path, uid: isize, gid: isize) -> IoResult<()> {
     fs_imp::chown(path, uid, gid)
            .update_err("couldn't chown path", |e|
                format!("{}; path={}; uid={}; gid={}", e, path.display(), uid, gid))
@@ -437,6 +488,8 @@ pub fn chown(path: &Path, uid: int, gid: int) -> IoResult<()> {
 /// Creates a new hard link on the filesystem. The `dst` path will be a
 /// link pointing to the `src` path. Note that systems often require these
 /// two paths to both be located on the same filesystem.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::hard_link")]
+#[unstable(feature = "old_io")]
 pub fn link(src: &Path, dst: &Path) -> IoResult<()> {
     fs_imp::link(src, dst)
            .update_err("couldn't link path", |e|
@@ -445,6 +498,8 @@ pub fn link(src: &Path, dst: &Path) -> IoResult<()> {
 
 /// Creates a new symbolic link on the filesystem. The `dst` path will be a
 /// symlink pointing to the `src` path.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::soft_link")]
+#[unstable(feature = "old_io")]
 pub fn symlink(src: &Path, dst: &Path) -> IoResult<()> {
     fs_imp::symlink(src, dst)
            .update_err("couldn't symlink path", |e|
@@ -457,6 +512,8 @@ pub fn symlink(src: &Path, dst: &Path) -> IoResult<()> {
 ///
 /// This function will return an error on failure. Failure conditions include
 /// reading a file that does not exist or reading a file that is not a symlink.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::read_link")]
+#[unstable(feature = "old_io")]
 pub fn readlink(path: &Path) -> IoResult<Path> {
     fs_imp::readlink(path)
            .update_err("couldn't resolve symlink for path", |e|
@@ -465,12 +522,14 @@ pub fn readlink(path: &Path) -> IoResult<Path> {
 
 /// Create a new, empty directory at the provided path
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(old_io, old_path, old_fs)]
 /// # #![allow(unused_must_use)]
 /// use std::old_io;
-/// use std::old_io::fs;
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// let p = Path::new("/some/dir");
 /// fs::mkdir(&p, old_io::USER_RWX);
@@ -480,19 +539,22 @@ pub fn readlink(path: &Path) -> IoResult<Path> {
 ///
 /// This function will return an error if the user lacks permissions to make a
 /// new directory at the provided `path`, or if the directory already exists.
+#[unstable(feature = "old_fs")]
 pub fn mkdir(path: &Path, mode: FilePermission) -> IoResult<()> {
-    fs_imp::mkdir(path, mode.bits() as uint)
+    fs_imp::mkdir(path, mode.bits() as usize)
            .update_err("couldn't create directory", |e|
                format!("{}; path={}; mode={}", e, path.display(), mode))
 }
 
 /// Remove an existing, empty directory
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(old_io, old_path)]
 /// # #![allow(unused_must_use)]
-/// use std::old_io::fs;
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// let p = Path::new("/some/dir");
 /// fs::rmdir(&p);
@@ -502,6 +564,8 @@ pub fn mkdir(path: &Path, mode: FilePermission) -> IoResult<()> {
 ///
 /// This function will return an error if the user lacks permissions to remove
 /// the directory at the provided `path`, or if the directory isn't empty.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::remove_dir")]
+#[unstable(feature = "old_io")]
 pub fn rmdir(path: &Path) -> IoResult<()> {
     fs_imp::rmdir(path)
            .update_err("couldn't remove directory", |e|
@@ -510,12 +574,14 @@ pub fn rmdir(path: &Path) -> IoResult<()> {
 
 /// Retrieve a vector containing all entries within a provided directory
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(old_io, old_path)]
 /// use std::old_io::fs::PathExtensions;
-/// use std::old_io::fs;
 /// use std::old_io;
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// // one possible implementation of fs::walk_dir only visiting files
 /// fn visit_dirs<F>(dir: &Path, cb: &mut F) -> old_io::IoResult<()> where
@@ -542,6 +608,8 @@ pub fn rmdir(path: &Path) -> IoResult<()> {
 /// This function will return an error if the provided `path` doesn't exist, if
 /// the process lacks permissions to view the contents or if the `path` points
 /// at a non-directory file
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::read_dir")]
+#[unstable(feature = "old_io")]
 pub fn readdir(path: &Path) -> IoResult<Vec<Path>> {
     fs_imp::readdir(path)
            .update_err("couldn't read directory",
@@ -552,6 +620,8 @@ pub fn readdir(path: &Path) -> IoResult<Vec<Path>> {
 /// rooted at `path`. The path given will not be iterated over, and this will
 /// perform iteration in some top-down order.  The contents of unreadable
 /// subdirectories are ignored.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::walk_dir")]
+#[unstable(feature = "old_io")]
 pub fn walk_dir(path: &Path) -> IoResult<Directories> {
     Ok(Directories {
         stack: try!(readdir(path).update_err("couldn't walk directory",
@@ -561,6 +631,8 @@ pub fn walk_dir(path: &Path) -> IoResult<Directories> {
 
 /// An iterator that walks over a directory
 #[derive(Clone)]
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::ReadDir")]
+#[unstable(feature = "old_io")]
 pub struct Directories {
     stack: Vec<Path>,
 }
@@ -590,6 +662,7 @@ impl Iterator for Directories {
 /// # Error
 ///
 /// See `fs::mkdir`.
+#[unstable(feature = "old_fs")]
 pub fn mkdir_recursive(path: &Path, mode: FilePermission) -> IoResult<()> {
     // tjc: if directory exists but with different permissions,
     // should we return false?
@@ -627,6 +700,8 @@ pub fn mkdir_recursive(path: &Path, mode: FilePermission) -> IoResult<()> {
 /// # Error
 ///
 /// See `file::unlink` and `fs::readdir`
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::remove_dir_all")]
+#[unstable(feature = "old_io")]
 pub fn rmdir_recursive(path: &Path) -> IoResult<()> {
     let mut rm_stack = Vec::new();
     rm_stack.push(path.clone());
@@ -689,6 +764,8 @@ pub fn rmdir_recursive(path: &Path) -> IoResult<()> {
 /// `atime` and its modification time set to `mtime`. The times specified should
 /// be in milliseconds.
 // FIXME(#10301) these arguments should not be u64
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::set_file_times")]
+#[unstable(feature = "old_io")]
 pub fn change_file_times(path: &Path, atime: u64, mtime: u64) -> IoResult<()> {
     fs_imp::utime(path, atime, mtime)
            .update_err("couldn't change_file_times", |e|
@@ -696,7 +773,7 @@ pub fn change_file_times(path: &Path, atime: u64, mtime: u64) -> IoResult<()> {
 }
 
 impl Reader for File {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         fn update_err<T>(result: IoResult<T>, file: &File) -> IoResult<T> {
             result.update_err("couldn't read file",
                               |e| format!("{}; path={}",
@@ -707,10 +784,10 @@ impl Reader for File {
 
         match result {
             Ok(read) => {
-                self.last_nread = read as int;
+                self.last_nread = read as isize;
                 match read {
                     0 => update_err(Err(standard_error(old_io::EndOfFile)), self),
-                    _ => Ok(read as uint)
+                    _ => Ok(read as usize)
                 }
             },
             Err(e) => Err(e)
@@ -748,6 +825,8 @@ impl Seek for File {
 }
 
 /// Utility methods for paths.
+#[deprecated(since = "1.0.0", reason = "replaced with std::fs::PathExt")]
+#[unstable(feature = "old_io")]
 pub trait PathExtensions {
     /// Get information on the file, directory, etc at this path.
     ///
@@ -826,7 +905,8 @@ fn access_string(access: FileAccess) -> &'static str {
 mod test {
     use prelude::v1::*;
     use old_io::{SeekSet, SeekCur, SeekEnd, Read, Open, ReadWrite, FileType};
-    use old_io;
+    use old_io::{self, Reader, Writer, Seek};
+    use old_path::{Path, GenericPath};
     use str;
     use old_io::fs::*;
 
@@ -871,7 +951,8 @@ mod test {
     pub fn tmpdir() -> TempDir {
         use os;
         use rand;
-        let ret = os::tmpdir().join(format!("rust-{}", rand::random::<u32>()));
+        let temp = Path::new(::env::temp_dir().to_str().unwrap());
+        let ret = temp.join(format!("rust-{}", rand::random::<u32>()));
         check!(old_io::fs::mkdir(&ret, old_io::USER_RWX));
         TempDir(ret)
     }
@@ -889,7 +970,7 @@ mod test {
             let mut read_stream = File::open_mode(filename, Open, Read);
             let mut read_buf = [0; 1028];
             let read_str = match check!(read_stream.read(&mut read_buf)) {
-                -1|0 => panic!("shouldn't happen"),
+                0 => panic!("shouldn't happen"),
                 n => str::from_utf8(&read_buf[..n]).unwrap().to_string()
             };
             assert_eq!(read_str, message);
@@ -1110,7 +1191,7 @@ mod test {
             check!(w.write(msg));
         }
         let files = check!(readdir(dir));
-        let mut mem = [0u8; 4];
+        let mut mem = [0; 4];
         for f in &files {
             {
                 let n = f.filestem_str();
@@ -1142,13 +1223,13 @@ mod test {
         check!(File::create(&dir2.join("14")));
 
         let mut files = check!(walk_dir(dir));
-        let mut cur = [0u8; 2];
+        let mut cur = [0; 2];
         for f in files {
             let stem = f.filestem_str().unwrap();
             let root = stem.as_bytes()[0] - b'0';
             let name = stem.as_bytes()[1] - b'0';
-            assert!(cur[root as uint] < name);
-            cur[root as uint] = name;
+            assert!(cur[root as usize] < name);
+            cur[root as usize] = name;
         }
 
         check!(rmdir_recursive(dir));
@@ -1452,7 +1533,7 @@ mod test {
                    b"foobar\0\0\0\0".to_vec());
 
         // Truncate to a smaller length, don't seek, and then write something.
-        // Ensure that the intermediate zeroes are all filled in (we're seeked
+        // Ensure that the intermediate zeroes are all filled in (we have `seek`ed
         // past the end of the file).
         check!(file.truncate(2));
         assert_eq!(check!(file.stat()).size, 2);
@@ -1553,13 +1634,13 @@ mod test {
         use rand::{StdRng, Rng};
 
         let mut bytes = [0; 1024];
-        StdRng::new().ok().unwrap().fill_bytes(&mut bytes);
+        StdRng::new().unwrap().fill_bytes(&mut bytes);
 
         let tmpdir = tmpdir();
 
         check!(File::create(&tmpdir.join("test")).write(&bytes));
         let actual = check!(File::open(&tmpdir.join("test")).read_to_end());
-        assert!(actual == bytes.as_slice());
+        assert!(actual == &bytes[..]);
     }
 
     #[test]

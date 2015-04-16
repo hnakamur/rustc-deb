@@ -22,8 +22,7 @@ use util::ppaux::{Repr, UserString};
 
 use std::collections::HashSet;
 use syntax::ast;
-use syntax::ast_util::{local_def};
-use syntax::attr;
+use syntax::ast_util::local_def;
 use syntax::codemap::Span;
 use syntax::parse::token::{self, special_idents};
 use syntax::visit;
@@ -81,14 +80,17 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
             ast::ItemImpl(_, ast::ImplPolarity::Positive, _, _, _, _) => {
                 self.check_impl(item);
             }
-            ast::ItemImpl(_, ast::ImplPolarity::Negative, _, Some(ref tref), _, _) => {
-                let trait_ref = ty::node_id_to_trait_ref(ccx.tcx, tref.ref_id);
+            ast::ItemImpl(_, ast::ImplPolarity::Negative, _, Some(_), _, _) => {
+                let trait_ref = ty::impl_id_to_trait_ref(ccx.tcx, item.id);
+                ty::populate_implementations_for_trait_if_necessary(ccx.tcx, trait_ref.def_id);
                 match ccx.tcx.lang_items.to_builtin_kind(trait_ref.def_id) {
                     Some(ty::BoundSend) | Some(ty::BoundSync) => {}
                     Some(_) | None => {
-                        span_err!(ccx.tcx.sess, item.span, E0192,
-                            "negative impls are currently \
-                                     allowed just for `Send` and `Sync`")
+                        if !ty::trait_has_default_impl(ccx.tcx, trait_ref.def_id) {
+                            span_err!(ccx.tcx.sess, item.span, E0192,
+                                      "negative impls are only allowed for traits with \
+                                       default impls (e.g., `Send` and `Sync`)")
+                        }
                     }
                 }
             }
@@ -115,7 +117,7 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
 
                 self.check_variances_for_type_defn(item, ast_generics);
             }
-            ast::ItemTrait(_, ref ast_generics, _, _) => {
+            ast::ItemTrait(_, ref ast_generics, _, ref items) => {
                 let trait_predicates =
                     ty::lookup_predicates(ccx.tcx, local_def(item.id));
                 reject_non_type_param_bounds(
@@ -124,6 +126,14 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
                     &trait_predicates);
                 self.check_variances(item, ast_generics, &trait_predicates,
                                      self.tcx().lang_items.phantom_fn());
+                if ty::trait_has_default_impl(ccx.tcx, local_def(item.id)) {
+                    if !items.is_empty() {
+                        ccx.tcx.sess.span_err(
+                            item.span,
+                            "traits with default impls (`e.g. unsafe impl Trait for ..`) must \
+                            have no methods or associated items")
+                    }
+                }
             }
             _ => {}
         }
@@ -239,27 +249,6 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
                                                         &fcx.inh.param_env.free_substs,
                                                         &trait_ref);
 
-            // There are special rules that apply to drop.
-            if
-                fcx.tcx().lang_items.drop_trait() == Some(trait_ref.def_id) &&
-                !attr::contains_name(&item.attrs, "unsafe_destructor")
-            {
-                match self_ty.sty {
-                    ty::ty_struct(def_id, _) |
-                    ty::ty_enum(def_id, _) => {
-                        check_struct_safe_for_destructor(fcx, item.span, def_id);
-                    }
-                    _ => {
-                        // Coherence already reports an error in this case.
-                    }
-                }
-            }
-
-            if fcx.tcx().lang_items.copy_trait() == Some(trait_ref.def_id) {
-                // This is checked in coherence.
-                return
-            }
-
             // We are stricter on the trait-ref in an impl than the
             // self-type.  In particular, we enforce region
             // relationships. The reason for this is that (at least
@@ -278,12 +267,13 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
 
             // Find the supertrait bounds. This will add `int:Bar`.
             let poly_trait_ref = ty::Binder(trait_ref);
-            let predicates = ty::predicates_for_trait_ref(fcx.tcx(), &poly_trait_ref);
+            let predicates = ty::lookup_super_predicates(fcx.tcx(), poly_trait_ref.def_id());
+            let predicates = predicates.instantiate_supertrait(fcx.tcx(), &poly_trait_ref);
             let predicates = {
                 let selcx = &mut traits::SelectionContext::new(fcx.infcx(), fcx);
                 traits::normalize(selcx, cause.clone(), &predicates)
             };
-            for predicate in predicates.value {
+            for predicate in predicates.value.predicates {
                 fcx.register_predicate(traits::Obligation::new(cause.clone(), predicate));
             }
             for obligation in predicates.obligations {
@@ -393,15 +383,15 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
         self.tcx().sess.span_err(
             span,
             &format!("parameter `{}` is never used",
-                     param_name.user_string(self.tcx()))[]);
+                     param_name.user_string(self.tcx())));
 
         match suggested_marker_id {
             Some(def_id) => {
-                self.tcx().sess.span_help(
+                self.tcx().sess.fileline_help(
                     span,
-                    format!("consider removing `{}` or using a marker such as `{}`",
-                            param_name.user_string(self.tcx()),
-                            ty::item_path_str(self.tcx(), def_id)).as_slice());
+                    &format!("consider removing `{}` or using a marker such as `{}`",
+                             param_name.user_string(self.tcx()),
+                             ty::item_path_str(self.tcx(), def_id)));
             }
             None => {
                 // no lang items, no help!
@@ -486,28 +476,24 @@ impl<'ccx, 'tcx, 'v> Visitor<'v> for CheckTypeWellFormedVisitor<'ccx, 'tcx> {
         visit::walk_fn(self, fk, fd, b, span)
     }
 
-    fn visit_trait_item(&mut self, t: &'v ast::TraitItem) {
-        match t {
-            &ast::TraitItem::ProvidedMethod(_) |
-            &ast::TraitItem::TypeTraitItem(_) => {},
-            &ast::TraitItem::RequiredMethod(ref method) => {
-                match ty::impl_or_trait_item(self.tcx(), local_def(method.id)) {
-                    ty::ImplOrTraitItem::MethodTraitItem(ty_method) => {
-                        reject_non_type_param_bounds(
-                            self.tcx(),
-                            method.span,
-                            &ty_method.predicates);
-                        reject_shadowing_type_parameters(
-                            self.tcx(),
-                            method.span,
-                            &ty_method.generics);
-                    }
-                    _ => {}
+    fn visit_trait_item(&mut self, trait_item: &'v ast::TraitItem) {
+        if let ast::MethodTraitItem(_, None) = trait_item.node {
+            match ty::impl_or_trait_item(self.tcx(), local_def(trait_item.id)) {
+                ty::ImplOrTraitItem::MethodTraitItem(ty_method) => {
+                    reject_non_type_param_bounds(
+                        self.tcx(),
+                        trait_item.span,
+                        &ty_method.predicates);
+                    reject_shadowing_type_parameters(
+                        self.tcx(),
+                        trait_item.span,
+                        &ty_method.generics);
                 }
+                _ => {}
             }
         }
 
-        visit::walk_trait_item(self, t)
+        visit::walk_trait_item(self, trait_item)
     }
 }
 
@@ -520,7 +506,7 @@ pub struct BoundsChecker<'cx,'tcx:'cx> {
     // has left it as a NodeId rather than porting to CodeExtent.
     scope: ast::NodeId,
 
-    binding_count: uint,
+    binding_count: usize,
     cache: Option<&'cx mut HashSet<Ty<'tcx>>>,
 }
 
@@ -752,23 +738,4 @@ fn filter_to_trait_obligations<'tcx>(bounds: ty::InstantiatedPredicates<'tcx>)
         }
     }
     result
-}
-
-///////////////////////////////////////////////////////////////////////////
-// Special drop trait checking
-
-fn check_struct_safe_for_destructor<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
-                                              span: Span,
-                                              struct_did: ast::DefId) {
-    let struct_tpt = ty::lookup_item_type(fcx.tcx(), struct_did);
-    if struct_tpt.generics.has_type_params(subst::TypeSpace)
-        || struct_tpt.generics.has_region_params(subst::TypeSpace)
-    {
-        span_err!(fcx.tcx().sess, span, E0141,
-                  "cannot implement a destructor on a structure \
-                   with type parameters");
-        span_note!(fcx.tcx().sess, span,
-                   "use \"#[unsafe_destructor]\" on the implementation \
-                    to force the compiler to allow this");
-    }
 }

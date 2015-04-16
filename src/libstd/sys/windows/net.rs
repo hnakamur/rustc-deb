@@ -14,17 +14,20 @@ use io;
 use libc::consts::os::extra::INVALID_SOCKET;
 use libc::{self, c_int, c_void};
 use mem;
-use net::{SocketAddr, IpAddr};
+use net::SocketAddr;
+#[allow(deprecated)]
 use num::{SignedInt, Int};
 use rt;
 use sync::{Once, ONCE_INIT};
 use sys::c;
-use sys_common::AsInner;
+use sys_common::{AsInner, FromInner};
 
 pub type wrlen_t = i32;
 
 pub struct Socket(libc::SOCKET);
 
+/// Checks whether the Windows socket interface has been started already, and
+/// if not, starts it.
 pub fn init() {
     static START: Once = ONCE_INIT;
 
@@ -34,14 +37,21 @@ pub fn init() {
                                 &mut data);
         assert_eq!(ret, 0);
 
-        rt::at_exit(|| { c::WSACleanup(); })
+        let _ = rt::at_exit(|| { c::WSACleanup(); });
     });
 }
 
+/// Returns the last error from the Windows socket interface.
 fn last_error() -> io::Error {
     io::Error::from_os_error(unsafe { c::WSAGetLastError() })
 }
 
+/// Checks if the signed integer is the Windows constant `SOCKET_ERROR` (-1)
+/// and if so, returns the last error from the Windows socket interface. . This
+/// function must be called before another call to the socket API is made.
+///
+/// FIXME: generics needed?
+#[allow(deprecated)]
 pub fn cvt<T: SignedInt>(t: T) -> io::Result<T> {
     let one: T = Int::one();
     if t == -one {
@@ -51,20 +61,24 @@ pub fn cvt<T: SignedInt>(t: T) -> io::Result<T> {
     }
 }
 
+/// Provides the functionality of `cvt` for the return values of `getaddrinfo`
+/// and similar, meaning that they return an error if the return value is 0.
 pub fn cvt_gai(err: c_int) -> io::Result<()> {
     if err == 0 { return Ok(()) }
     cvt(err).map(|_| ())
 }
 
+/// Provides the functionality of `cvt` for a closure.
+#[allow(deprecated)]
 pub fn cvt_r<T: SignedInt, F>(mut f: F) -> io::Result<T> where F: FnMut() -> T {
     cvt(f())
 }
 
 impl Socket {
     pub fn new(addr: &SocketAddr, ty: c_int) -> io::Result<Socket> {
-        let fam = match addr.ip() {
-            IpAddr::V4(..) => libc::AF_INET,
-            IpAddr::V6(..) => libc::AF_INET6,
+        let fam = match *addr {
+            SocketAddr::V4(..) => libc::AF_INET,
+            SocketAddr::V6(..) => libc::AF_INET6,
         };
         match unsafe { libc::socket(fam, ty, 0) } {
             INVALID_SOCKET => Err(last_error()),
@@ -112,10 +126,14 @@ impl Socket {
 
 impl Drop for Socket {
     fn drop(&mut self) {
-        unsafe { let _ = libc::closesocket(self.0); }
+        let _ = unsafe { libc::closesocket(self.0) };
     }
 }
 
 impl AsInner<libc::SOCKET> for Socket {
     fn as_inner(&self) -> &libc::SOCKET { &self.0 }
+}
+
+impl FromInner<libc::SOCKET> for Socket {
+    fn from_inner(sock: libc::SOCKET) -> Socket { Socket(sock) }
 }

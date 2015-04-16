@@ -46,13 +46,16 @@
 //!
 //! Note that all time units in this file are in *milliseconds*.
 
+#![allow(deprecated)]
+
 use prelude::v1::*;
 use self::Req::*;
 
 use old_io::IoResult;
 use libc;
 use mem;
-use os;
+use sys::os;
+use io;
 use ptr;
 use sync::atomic::{self, Ordering};
 use sync::mpsc::{channel, Sender, Receiver, TryRecvError};
@@ -67,7 +70,7 @@ pub trait Callback {
 }
 
 pub struct Timer {
-    id: uint,
+    id: usize,
     inner: Option<Box<Inner>>,
 }
 
@@ -76,7 +79,7 @@ pub struct Inner {
     interval: u64,
     repeat: bool,
     target: u64,
-    id: uint,
+    id: usize,
 }
 
 pub enum Req {
@@ -85,7 +88,7 @@ pub enum Req {
 
     // Remove a timer based on its id and then send it back on the channel
     // provided
-    RemoveTimer(uint, Sender<Box<Inner>>),
+    RemoveTimer(usize, Sender<Box<Inner>>),
 }
 
 // returns the current time (in milliseconds)
@@ -100,7 +103,7 @@ pub fn now() -> u64 {
 fn helper(input: libc::c_int, messages: Receiver<Req>, _: ()) {
     let mut set: c::fd_set = unsafe { mem::zeroed() };
 
-    let mut fd = FileDesc::new(input, true);
+    let fd = FileDesc::new(input, true);
     let mut timeout: libc::timeval = unsafe { mem::zeroed() };
 
     // active timers are those which are able to be selected upon (and it's a
@@ -119,7 +122,7 @@ fn helper(input: libc::c_int, messages: Receiver<Req>, _: ()) {
 
     // signals the first requests in the queue, possible re-enqueueing it.
     fn signal(active: &mut Vec<Box<Inner>>,
-              dead: &mut Vec<(uint, Box<Inner>)>) {
+              dead: &mut Vec<(usize, Box<Inner>)>) {
         if active.is_empty() { return }
 
         let mut timer = active.remove(0);
@@ -168,8 +171,15 @@ fn helper(input: libc::c_int, messages: Receiver<Req>, _: ()) {
             1 => {
                 loop {
                     match messages.try_recv() {
+                        // Once we've been disconnected it means the main thread
+                        // is exiting (at_exit has run). We could still have
+                        // active timers for other threads, so we're just going
+                        // to drop them all on the floor. This is all we can
+                        // really do, however, to prevent resource leakage. The
+                        // remaining timers will likely start panicking quickly
+                        // as they attempt to re-use this thread but are
+                        // disallowed to do so.
                         Err(TryRecvError::Disconnected) => {
-                            assert!(active.len() == 0);
                             break 'outer;
                         }
 
@@ -195,19 +205,19 @@ fn helper(input: libc::c_int, messages: Receiver<Req>, _: ()) {
 
                 // drain the file descriptor
                 let mut buf = [0];
-                assert_eq!(fd.read(&mut buf).ok().unwrap(), 1);
+                assert_eq!(fd.read(&mut buf).unwrap(), 1);
             }
 
             -1 if os::errno() == libc::EINTR as i32 => {}
             n => panic!("helper thread failed in select() with error: {} ({})",
-                       n, os::last_os_error())
+                       n, io::Error::last_os_error())
         }
     }
 }
 
 impl Timer {
     pub fn new() -> IoResult<Timer> {
-        // See notes above regarding using int return value
+        // See notes above regarding using isize return value
         // instead of ()
         HELPER.boot(|| {}, helper);
 
@@ -235,7 +245,7 @@ impl Timer {
             tv_nsec: ((ms % 1000) * 1000000) as libc::c_long,
         };
         while unsafe { libc::nanosleep(&to_sleep, &mut to_sleep) } != 0 {
-            if os::errno() as int != libc::EINTR as int {
+            if os::errno() as isize != libc::EINTR as isize {
                 panic!("failed to sleep, but not because of EINTR?");
             }
         }

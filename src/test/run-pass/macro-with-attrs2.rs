@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #[cfg(foo)]
 macro_rules! foo { () => (1) }
 
@@ -17,4 +19,3 @@ macro_rules! foo { () => (2) }
 pub fn main() {
     assert_eq!(foo!(), 2);
 }
-

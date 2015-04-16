@@ -10,11 +10,10 @@
 
 #![feature(unboxed_closures)]
 
-fn f<F:Nonexist(isize) -> isize>(x: F) {} //~ ERROR nonexistent trait `Nonexist`
+fn f<F:Nonexist(isize) -> isize>(x: F) {} //~ ERROR undeclared trait name `Nonexist`
 
 type Typedef = isize;
 
 fn g<F:Typedef(isize) -> isize>(x: F) {} //~ ERROR `Typedef` is not a trait
 
 fn main() {}
-

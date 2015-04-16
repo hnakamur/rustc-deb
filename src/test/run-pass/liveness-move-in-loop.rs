@@ -9,7 +9,9 @@
 // except according to those terms.
 
 
-fn take(x: int) -> int {x}
+// pretty-expanded FIXME #23616
+
+fn take(x: isize) -> isize {x}
 
 fn the_loop() {
     let mut list = Vec::new();

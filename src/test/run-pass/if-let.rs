@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 pub fn main() {
     let x = Some(3);
     if let Some(y) = x {
@@ -20,7 +22,7 @@ pub fn main() {
         worked = true;
     }
     assert!(worked);
-    let clause: uint;
+    let clause: usize;
     if let None = Some("test") {
         clause = 1;
     } else if 4_usize > 5 {
@@ -40,8 +42,8 @@ pub fn main() {
 
     enum Foo {
         One,
-        Two(uint),
-        Three(String, int)
+        Two(usize),
+        Three(String, isize)
     }
 
     let foo = Foo::Three("three".to_string(), 42);

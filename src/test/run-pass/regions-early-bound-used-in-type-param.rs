@@ -11,11 +11,13 @@
 // Tests that you can use a fn lifetime parameter as part of
 // the value for a type parameter in a bound.
 
+// pretty-expanded FIXME #23616
+
 trait Get<T> {
     fn get(&self) -> T;
 }
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 struct Box<T> {
     t: T
 }
@@ -26,7 +28,7 @@ impl<T:Clone> Get<T> for Box<T> {
     }
 }
 
-fn add<'a,G:Get<&'a int>>(g1: G, g2: G) -> int {
+fn add<'a,G:Get<&'a isize>>(g1: G, g2: G) -> isize {
     *g1.get() + *g2.get()
 }
 

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 use std::ops::{Deref, DerefMut};
 
 // Generic unique/owned smaht pointer.
@@ -30,12 +32,12 @@ impl<T> DerefMut for Own<T> {
 }
 
 struct Point {
-    x: int,
-    y: int
+    x: isize,
+    y: isize
 }
 
 impl Point {
-    fn get(&mut self) -> (int, int) {
+    fn get(&mut self) -> (isize, isize) {
         (self.x, self.y)
     }
 }

@@ -8,7 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::old_io;
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
+use std::path::{PathBuf, Path};
 
 use core;
 use getopts;
@@ -40,10 +43,10 @@ fn extract_leading_metadata<'a>(s: &'a str) -> (Vec<&'a str>, &'a str) {
 
 /// Render `input` (e.g. "foo.md") into an HTML file in `output`
 /// (e.g. output = "bar" => "bar/foo.html").
-pub fn render(input: &str, mut output: Path, matches: &getopts::Matches,
-              external_html: &ExternalHtml, include_toc: bool) -> int {
+pub fn render(input: &str, mut output: PathBuf, matches: &getopts::Matches,
+              external_html: &ExternalHtml, include_toc: bool) -> isize {
     let input_p = Path::new(input);
-    output.push(input_p.filestem().unwrap());
+    output.push(input_p.file_stem().unwrap());
     output.set_extension("html");
 
     let mut css = String::new();
@@ -59,9 +62,9 @@ pub fn render(input: &str, mut output: Path, matches: &getopts::Matches,
     }
     let playground = playground.unwrap_or("".to_string());
 
-    let mut out = match old_io::File::create(&output) {
+    let mut out = match File::create(&output) {
         Err(e) => {
-            let _ = writeln!(&mut old_io::stderr(),
+            let _ = writeln!(&mut io::stderr(),
                              "error opening `{}` for writing: {}",
                              output.display(), e);
             return 4;
@@ -71,7 +74,7 @@ pub fn render(input: &str, mut output: Path, matches: &getopts::Matches,
 
     let (metadata, text) = extract_leading_metadata(&input_str);
     if metadata.len() == 0 {
-        let _ = writeln!(&mut old_io::stderr(),
+        let _ = writeln!(&mut io::stderr(),
                          "invalid markdown file: expecting initial line with `% ...TITLE...`");
         return 5;
     }
@@ -126,7 +129,7 @@ pub fn render(input: &str, mut output: Path, matches: &getopts::Matches,
 
     match err {
         Err(e) => {
-            let _ = writeln!(&mut old_io::stderr(),
+            let _ = writeln!(&mut io::stderr(),
                              "error writing to `{}`: {}",
                              output.display(), e);
             6
@@ -137,10 +140,10 @@ pub fn render(input: &str, mut output: Path, matches: &getopts::Matches,
 
 /// Run any tests/code examples in the markdown file `input`.
 pub fn test(input: &str, libs: SearchPaths, externs: core::Externs,
-            mut test_args: Vec<String>) -> int {
+            mut test_args: Vec<String>) -> isize {
     let input_str = load_or_return!(input, 1, 2);
 
-    let mut collector = Collector::new(input.to_string(), libs, externs, true);
+    let mut collector = Collector::new(input.to_string(), libs, externs, true, false);
     find_testable_code(&input_str, &mut collector);
     test_args.insert(0, "rustdoctest".to_string());
     testing::test_main(&test_args, collector.tests);

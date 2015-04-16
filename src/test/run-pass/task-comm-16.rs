@@ -13,21 +13,21 @@ use std::cmp;
 
 // Tests of ports and channels on various types
 fn test_rec() {
-    struct R {val0: int, val1: u8, val2: char}
+    struct R {val0: isize, val1: u8, val2: char}
 
     let (tx, rx) = channel();
-    let r0: R = R {val0: 0, val1: 1u8, val2: '2'};
+    let r0: R = R {val0: 0, val1: 1, val2: '2'};
     tx.send(r0).unwrap();
     let mut r1: R;
     r1 = rx.recv().unwrap();
     assert_eq!(r1.val0, 0);
-    assert_eq!(r1.val1, 1u8);
+    assert_eq!(r1.val1, 1);
     assert_eq!(r1.val2, '2');
 }
 
 fn test_vec() {
     let (tx, rx) = channel();
-    let v0: Vec<int> = vec!(0, 1, 2);
+    let v0: Vec<isize> = vec!(0, 1, 2);
     tx.send(v0).unwrap();
     let v1 = rx.recv().unwrap();
     assert_eq!(v1[0], 0);
@@ -49,8 +49,8 @@ fn test_str() {
 #[derive(Debug)]
 enum t {
     tag1,
-    tag2(int),
-    tag3(int, u8, char)
+    tag2(isize),
+    tag3(isize, u8, char)
 }
 
 impl cmp::PartialEq for t {
@@ -84,14 +84,14 @@ fn test_tag() {
     let (tx, rx) = channel();
     tx.send(t::tag1).unwrap();
     tx.send(t::tag2(10)).unwrap();
-    tx.send(t::tag3(10, 11u8, 'A')).unwrap();
+    tx.send(t::tag3(10, 11, 'A')).unwrap();
     let mut t1: t;
     t1 = rx.recv().unwrap();
     assert_eq!(t1, t::tag1);
     t1 = rx.recv().unwrap();
     assert_eq!(t1, t::tag2(10));
     t1 = rx.recv().unwrap();
-    assert_eq!(t1, t::tag3(10, 11u8, 'A'));
+    assert_eq!(t1, t::tag3(10, 11, 'A'));
 }
 
 fn test_chan() {
@@ -102,7 +102,7 @@ fn test_chan() {
     // Does the transmitted channel still work?
 
     tx2.send(10).unwrap();
-    let mut i: int;
+    let mut i: isize;
     i = rx2.recv().unwrap();
     assert_eq!(i, 10);
 }

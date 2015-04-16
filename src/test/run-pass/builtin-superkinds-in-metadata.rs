@@ -13,12 +13,14 @@
 
 // Tests (correct) usage of trait super-builtin-kinds cross-crate.
 
+// pretty-expanded FIXME #23616
+
 extern crate trait_superkinds_in_metadata;
 use trait_superkinds_in_metadata::{RequiresRequiresShareAndSend, RequiresShare};
-use trait_superkinds_in_metadata::{RequiresCopy};
+use trait_superkinds_in_metadata::RequiresCopy;
 use std::marker;
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 struct X<T>(T);
 
 impl<T:Sync> RequiresShare for X<T> { }

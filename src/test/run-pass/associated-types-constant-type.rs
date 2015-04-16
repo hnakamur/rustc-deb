@@ -8,32 +8,34 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait SignedUnsigned {
     type Opposite;
     fn convert(self) -> Self::Opposite;
 }
 
-impl SignedUnsigned for int {
-    type Opposite = uint;
+impl SignedUnsigned for isize {
+    type Opposite = usize;
 
-    fn convert(self) -> uint {
-        self as uint
+    fn convert(self) -> usize {
+        self as usize
     }
 }
 
-impl SignedUnsigned for uint {
-    type Opposite = int;
+impl SignedUnsigned for usize {
+    type Opposite = isize;
 
-    fn convert(self) -> int {
-        self as int
+    fn convert(self) -> isize {
+        self as isize
     }
 }
 
-fn get(x: int) -> <int as SignedUnsigned>::Opposite {
+fn get(x: isize) -> <isize as SignedUnsigned>::Opposite {
     x.convert()
 }
 
 fn main() {
     let x = get(22);
-    assert_eq!(22_usize, x);
+    assert_eq!(22, x);
 }

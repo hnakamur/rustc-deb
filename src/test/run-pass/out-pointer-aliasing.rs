@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[derive(Copy)]
+// pretty-expanded FIXME #23616
+
+#[derive(Copy, Clone)]
 pub struct Foo {
-    f1: int,
-    _f2: int,
+    f1: isize,
+    _f2: isize,
 }
 
 #[inline(never)]

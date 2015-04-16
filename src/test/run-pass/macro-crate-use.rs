@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub fn increment(x: uint) -> uint {
+// pretty-expanded FIXME #23616
+
+pub fn increment(x: usize) -> usize {
     x + 1
 }
 

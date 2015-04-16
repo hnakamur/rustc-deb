@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(dead_code)]
-#![allow(unknown_features)]
-#![feature(box_syntax)]
 
 // this code used to cause an ICE
 
@@ -24,9 +24,10 @@ struct S<T> {f: Box<X<T>+'static>,
              g: Box<X<T>+'static>}
 
 struct F;
-impl X<int> for F {
+impl X<isize> for F {
 }
 
 fn main() {
-  S {f: box F, g: box F};
+  // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+  S {f: Box::new(F), g: Box::new(F) };
 }

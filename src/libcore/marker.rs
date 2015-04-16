@@ -32,27 +32,24 @@ use hash::Hash;
 use hash::Hasher;
 
 /// Types able to be transferred across thread boundaries.
-#[unstable(feature = "core",
-           reason = "will be overhauled with new lifetime rules; see RFC 458")]
-#[lang="send"]
-#[rustc_on_unimplemented = "`{Self}` cannot be sent between threads safely"]
-#[cfg(stage0)]
-pub unsafe trait Send: 'static {
-    // empty.
-}
-/// Types able to be transferred across thread boundaries.
 #[stable(feature = "rust1", since = "1.0.0")]
 #[lang="send"]
 #[rustc_on_unimplemented = "`{Self}` cannot be sent between threads safely"]
-#[cfg(not(stage0))]
 pub unsafe trait Send : MarkerTrait {
     // empty.
 }
+
+unsafe impl Send for .. { }
+
+impl<T> !Send for *const T { }
+impl<T> !Send for *mut T { }
+impl !Send for Managed { }
 
 /// Types with a constant size known at compile-time.
 #[stable(feature = "rust1", since = "1.0.0")]
 #[lang="sized"]
 #[rustc_on_unimplemented = "`{Self}` does not have a constant size known at compile-time"]
+#[fundamental] // for Default, for example, which requires that `[T]: !Default` be evaluatable
 pub trait Sized : MarkerTrait {
     // Empty.
 }
@@ -79,7 +76,7 @@ pub trait Sized : MarkerTrait {
 ///
 /// ```
 /// // we can just derive a `Copy` implementation
-/// #[derive(Debug, Copy)]
+/// #[derive(Debug, Copy, Clone)]
 /// struct Foo;
 ///
 /// let x = Foo;
@@ -128,7 +125,7 @@ pub trait Sized : MarkerTrait {
 /// There are two ways to implement `Copy` on your type:
 ///
 /// ```
-/// #[derive(Copy)]
+/// #[derive(Copy, Clone)]
 /// struct MyStruct;
 /// ```
 ///
@@ -137,6 +134,7 @@ pub trait Sized : MarkerTrait {
 /// ```
 /// struct MyStruct;
 /// impl Copy for MyStruct {}
+/// impl Clone for MyStruct { fn clone(&self) -> MyStruct { *self } }
 /// ```
 ///
 /// There is a small difference between the two: the `derive` strategy will also place a `Copy`
@@ -158,7 +156,7 @@ pub trait Sized : MarkerTrait {
 /// change: that second example would fail to compile if we made `Foo` non-`Copy`.
 #[stable(feature = "rust1", since = "1.0.0")]
 #[lang="copy"]
-pub trait Copy : MarkerTrait {
+pub trait Copy : Clone {
     // Empty.
 }
 
@@ -199,20 +197,21 @@ pub trait Copy : MarkerTrait {
 /// the `sync` crate do ensure that any mutation cannot cause data
 /// races.  Hence these types are `Sync`.
 ///
-/// Users writing their own types with interior mutability (or anything
-/// else that is not thread-safe) should use the `NoSync` marker type
-/// (from `std::marker`) to ensure that the compiler doesn't
-/// consider the user-defined type to be `Sync`.  Any types with
-/// interior mutability must also use the `std::cell::UnsafeCell` wrapper
-/// around the value(s) which can be mutated when behind a `&`
-/// reference; not doing this is undefined behaviour (for example,
-/// `transmute`-ing from `&T` to `&mut T` is illegal).
+/// Any types with interior mutability must also use the `std::cell::UnsafeCell` wrapper around the
+/// value(s) which can be mutated when behind a `&` reference; not doing this is undefined
+/// behaviour (for example, `transmute`-ing from `&T` to `&mut T` is illegal).
 #[stable(feature = "rust1", since = "1.0.0")]
 #[lang="sync"]
 #[rustc_on_unimplemented = "`{Self}` cannot be shared between threads safely"]
 pub unsafe trait Sync : MarkerTrait {
     // Empty
 }
+
+unsafe impl Sync for .. { }
+
+impl<T> !Sync for *const T { }
+impl<T> !Sync for *mut T { }
+impl !Sync for Managed { }
 
 /// A type which is considered "not POD", meaning that it is not
 /// implicitly copyable. This is typically embedded in other types to
@@ -233,13 +232,6 @@ pub struct Managed;
 
 macro_rules! impls{
     ($t: ident) => (
-        #[cfg(stage0)]
-        impl<T:?Sized, S: Hasher> Hash<S> for $t<T> {
-            #[inline]
-            fn hash(&self, _: &mut S) {
-            }
-        }
-        #[cfg(not(stage0))]
         impl<T:?Sized> Hash for $t<T> {
             #[inline]
             fn hash<H: Hasher>(&self, _: &mut H) {
@@ -284,7 +276,14 @@ macro_rules! impls{
 /// any methods, but instead is used to gate access to data.
 ///
 /// FIXME. Better documentation needed here!
-pub trait MarkerTrait : PhantomFn<Self> { }
+#[stable(feature = "rust1", since = "1.0.0")]
+pub trait MarkerTrait : PhantomFn<Self,Self> { }
+//                                    ~~~~~ <-- FIXME(#22806)?
+//
+// Marker trait has been made invariant so as to avoid inf recursion,
+// but we should ideally solve the underlying problem. That's a bit
+// complicated.
+
 impl<T:?Sized> MarkerTrait for T { }
 
 /// `PhantomFn` is a marker trait for use with traits that contain
@@ -296,7 +295,7 @@ impl<T:?Sized> MarkerTrait for T { }
 /// can extend `MarkerTrait`, which is equivalent to
 /// `PhantomFn<Self>`.
 ///
-/// # Example
+/// # Examples
 ///
 /// As an example, consider a trait with no methods like `Even`, meant
 /// to represent types that are "even":
@@ -318,7 +317,7 @@ impl<T:?Sized> MarkerTrait for T { }
 ///
 /// Therefore, we can model a method like this as follows:
 ///
-/// ```rust
+/// ```
 /// use std::marker::PhantomFn;
 /// trait Even : PhantomFn<Self> { }
 /// ```
@@ -326,7 +325,8 @@ impl<T:?Sized> MarkerTrait for T { }
 /// Another equivalent, but clearer, option would be to use
 /// `MarkerTrait`:
 ///
-/// ```rust
+/// ```
+/// # #![feature(core)]
 /// use std::marker::MarkerTrait;
 /// trait Even : MarkerTrait { }
 /// ```
@@ -348,40 +348,62 @@ impl<T:?Sized> MarkerTrait for T { }
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait PhantomFn<A:?Sized,R:?Sized=()> { }
 
-#[cfg(stage0)] // built into the trait matching system after stage0
-impl<A:?Sized, R:?Sized, U:?Sized> PhantomFn<A,R> for U { }
-
-/// Specific to stage0. You should not be seeing these docs!
-#[cfg(stage0)]
-#[lang="covariant_type"] // only relevant to stage0
-pub struct PhantomData<T:?Sized>;
-
-/// `PhantomData` is a way to tell the compiler about fake fields.
-/// Phantom data is required whenever type parameters are not used.
-/// The idea is that if the compiler encounters a `PhantomData<T>`
-/// instance, it will behave *as if* an instance of the type `T` were
-/// present for the purpose of various automatic analyses.
+/// `PhantomData<T>` allows you to describe that a type acts as if it stores a value of type `T`,
+/// even though it does not. This allows you to inform the compiler about certain safety properties
+/// of your code.
 ///
-/// For example, embedding a `PhantomData<T>` will inform the compiler
+/// Though they both have scary names, `PhantomData<T>` and "phantom types" are unrelated. 👻👻👻
+///
+/// # Examples
+///
+/// When handling external resources over a foreign function interface, `PhantomData<T>` can
+/// prevent mismatches by enforcing types in the method implementations:
+///
+/// ```
+/// # trait ResType { fn foo(&self); };
+/// # struct ParamType;
+/// # mod foreign_lib {
+/// # pub fn new(_: usize) -> *mut () { 42 as *mut () }
+/// # pub fn do_stuff(_: *mut (), _: usize) {}
+/// # }
+/// # fn convert_params(_: ParamType) -> usize { 42 }
+/// use std::marker::PhantomData;
+/// use std::mem;
+///
+/// struct ExternalResource<R> {
+///    resource_handle: *mut (),
+///    resource_type: PhantomData<R>,
+/// }
+///
+/// impl<R: ResType> ExternalResource<R> {
+///     fn new() -> ExternalResource<R> {
+///         let size_of_res = mem::size_of::<R>();
+///         ExternalResource {
+///             resource_handle: foreign_lib::new(size_of_res),
+///             resource_type: PhantomData,
+///         }
+///     }
+///
+///     fn do_stuff(&self, param: ParamType) {
+///         let foreign_params = convert_params(param);
+///         foreign_lib::do_stuff(self.resource_handle, foreign_params);
+///     }
+/// }
+/// ```
+///
+/// Another example: embedding a `PhantomData<T>` will inform the compiler
 /// that one or more instances of the type `T` could be dropped when
 /// instances of the type itself is dropped, though that may not be
 /// apparent from the other structure of the type itself. This is
 /// commonly necessary if the structure is using an unsafe pointer
 /// like `*mut T` whose referent may be dropped when the type is
 /// dropped, as a `*mut T` is otherwise not treated as owned.
-///
-/// FIXME. Better documentation and examples of common patterns needed
-/// here! For now, please see [RFC 738][738] for more information.
-///
-/// [738]: https://github.com/rust-lang/rfcs/blob/master/text/0738-variance.md
-#[cfg(not(stage0))]
 #[lang="phantom_data"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct PhantomData<T:?Sized>;
 
 impls! { PhantomData }
 
-#[cfg(not(stage0))]
 mod impls {
     use super::{Send, Sync, Sized};
 
@@ -389,39 +411,41 @@ mod impls {
     unsafe impl<'a, T: Send + ?Sized> Send for &'a mut T {}
 }
 
-/// Old-style marker trait. Deprecated.
-#[unstable(feature = "core", reason = "deprecated")]
-#[deprecated(since = "1.0.0", reason = "Replace with `PhantomData<&'a ()>`")]
-#[lang="contravariant_lifetime"]
-pub struct ContravariantLifetime<'a>;
+/// A marker trait indicates a type that can be reflected over. This
+/// trait is implemented for all types. Its purpose is to ensure that
+/// when you write a generic function that will employ reflection,
+/// that must be reflected (no pun intended) in the generic bounds of
+/// that function. Here is an example:
+///
+/// ```
+/// #![feature(core)]
+/// use std::marker::Reflect;
+/// use std::any::Any;
+/// fn foo<T:Reflect+'static>(x: &T) {
+///     let any: &Any = x;
+///     if any.is::<u32>() { println!("u32"); }
+/// }
+/// ```
+///
+/// Without the declaration `T:Reflect`, `foo` would not type check
+/// (note: as a matter of style, it would be preferable to to write
+/// `T:Any`, because `T:Any` implies `T:Reflect` and `T:'static`, but
+/// we use `Reflect` here to show how it works). The `Reflect` bound
+/// thus serves to alert `foo`'s caller to the fact that `foo` may
+/// behave differently depending on whether `T=u32` or not. In
+/// particular, thanks to the `Reflect` bound, callers know that a
+/// function declared like `fn bar<T>(...)` will always act in
+/// precisely the same way no matter what type `T` is supplied,
+/// because there are no bounds declared on `T`. (The ability for a
+/// caller to reason about what a function may do based solely on what
+/// generic bounds are declared is often called the ["parametricity
+/// property"][1].)
+///
+/// [1]: http://en.wikipedia.org/wiki/Parametricity
+#[rustc_reflect_like]
+#[unstable(feature = "core", reason = "requires RFC and more experience")]
+pub trait Reflect : MarkerTrait {
+}
 
-/// Old-style marker trait. Deprecated.
-#[unstable(feature = "core", reason = "deprecated")]
-#[deprecated(since = "1.0.0", reason = "Replace with `PhantomData<fn(&'a ())>`")]
-#[lang="covariant_lifetime"]
-pub struct CovariantLifetime<'a>;
+impl Reflect for .. { }
 
-/// Old-style marker trait. Deprecated.
-#[unstable(feature = "core", reason = "deprecated")]
-#[deprecated(since = "1.0.0", reason = "Replace with `PhantomData<Cell<&'a ()>>`")]
-#[lang="invariant_lifetime"]
-pub struct InvariantLifetime<'a>;
-
-/// Old-style marker trait. Deprecated.
-#[unstable(feature = "core", reason = "deprecated")]
-#[deprecated(since = "1.0.0", reason = "Replace with `PhantomData<fn(T)>`")]
-#[lang="contravariant_type"]
-pub struct ContravariantType<T>;
-
-/// Old-style marker trait. Deprecated.
-#[unstable(feature = "core", reason = "deprecated")]
-#[deprecated(since = "1.0.0", reason = "Replace with `PhantomData<T>`")]
-#[lang="covariant_type"]
-#[cfg(not(stage0))]
-pub struct CovariantType<T>;
-
-/// Old-style marker trait. Deprecated.
-#[unstable(feature = "core", reason = "deprecated")]
-#[deprecated(since = "1.0.0", reason = "Replace with `PhantomData<Cell<T>>`")]
-#[lang="invariant_type"]
-pub struct InvariantType<T>;

@@ -24,25 +24,18 @@ use core::cmp::Ordering;
 use core::default::Default;
 use core::fmt;
 use core::iter::{self, repeat, FromIterator, IntoIterator, RandomAccessIterator};
-use core::marker;
 use core::mem;
-use core::num::{Int, UnsignedInt};
 use core::ops::{Index, IndexMut};
 use core::ptr::{self, Unique};
-use core::raw::Slice as RawSlice;
+use core::slice;
 
 use core::hash::{Hash, Hasher};
-#[cfg(stage0)] use core::hash::Writer;
 use core::cmp;
 
 use alloc::heap;
 
-#[deprecated(since = "1.0.0", reason = "renamed to VecDeque")]
-#[unstable(feature = "collections")]
-pub use VecDeque as RingBuf;
-
-static INITIAL_CAPACITY: usize = 7; // 2^3 - 1
-static MINIMUM_CAPACITY: usize = 1; // 2 - 1
+const INITIAL_CAPACITY: usize = 7; // 2^3 - 1
+const MINIMUM_CAPACITY: usize = 1; // 2 - 1
 
 /// `VecDeque` is a growable ring buffer, which can be used as a
 /// double-ended queue efficiently.
@@ -59,12 +52,6 @@ pub struct VecDeque<T> {
     cap: usize,
     ptr: Unique<T>,
 }
-
-#[stable(feature = "rust1", since = "1.0.0")]
-unsafe impl<T: Send> Send for VecDeque<T> {}
-
-#[stable(feature = "rust1", since = "1.0.0")]
-unsafe impl<T: Sync> Sync for VecDeque<T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Clone> Clone for VecDeque<T> {
@@ -98,13 +85,13 @@ impl<T> VecDeque<T> {
     /// Turn ptr into a slice
     #[inline]
     unsafe fn buffer_as_slice(&self) -> &[T] {
-        mem::transmute(RawSlice { data: *self.ptr as *const T, len: self.cap })
+        slice::from_raw_parts(*self.ptr, self.cap)
     }
 
     /// Turn ptr into a mut slice
     #[inline]
     unsafe fn buffer_as_mut_slice(&mut self) -> &mut [T] {
-        mem::transmute(RawSlice { data: *self.ptr as *const T, len: self.cap })
+        slice::from_raw_parts_mut(*self.ptr, self.cap)
     }
 
     /// Moves an element out of the buffer
@@ -128,6 +115,20 @@ impl<T> VecDeque<T> {
     #[inline]
     fn wrap_index(&self, idx: usize) -> usize { wrap_index(idx, self.cap) }
 
+    /// Returns the index in the underlying buffer for a given logical element
+    /// index + addend.
+    #[inline]
+    fn wrap_add(&self, idx: usize, addend: usize) -> usize {
+        wrap_index(idx.wrapping_add(addend), self.cap)
+    }
+
+    /// Returns the index in the underlying buffer for a given logical element
+    /// index - subtrahend.
+    #[inline]
+    fn wrap_sub(&self, idx: usize, subtrahend: usize) -> usize {
+        wrap_index(idx.wrapping_sub(subtrahend), self.cap)
+    }
+
     /// Copies a contiguous block of memory len long from src to dst
     #[inline]
     unsafe fn copy(&self, dst: usize, src: usize, len: usize) {
@@ -135,9 +136,9 @@ impl<T> VecDeque<T> {
                       self.cap);
         debug_assert!(src + len <= self.cap, "dst={} src={} len={} cap={}", dst, src, len,
                       self.cap);
-        ptr::copy_memory(
-            self.ptr.offset(dst as isize),
+        ptr::copy(
             self.ptr.offset(src as isize),
+            self.ptr.offset(dst as isize),
             len);
     }
 
@@ -148,9 +149,9 @@ impl<T> VecDeque<T> {
                       self.cap);
         debug_assert!(src + len <= self.cap, "dst={} src={} len={} cap={}", dst, src, len,
                       self.cap);
-        ptr::copy_nonoverlapping_memory(
-            self.ptr.offset(dst as isize),
+        ptr::copy_nonoverlapping(
             self.ptr.offset(src as isize),
+            self.ptr.offset(dst as isize),
             len);
     }
 }
@@ -193,7 +194,7 @@ impl<T> VecDeque<T> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -205,7 +206,7 @@ impl<T> VecDeque<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn get(&self, i: usize) -> Option<&T> {
         if i < self.len() {
-            let idx = self.wrap_index(self.tail + i);
+            let idx = self.wrap_add(self.tail, i);
             unsafe { Some(&*self.ptr.offset(idx as isize)) }
         } else {
             None
@@ -216,7 +217,7 @@ impl<T> VecDeque<T> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -235,7 +236,7 @@ impl<T> VecDeque<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn get_mut(&mut self, i: usize) -> Option<&mut T> {
         if i < self.len() {
-            let idx = self.wrap_index(self.tail + i);
+            let idx = self.wrap_add(self.tail, i);
             unsafe { Some(&mut *self.ptr.offset(idx as isize)) }
         } else {
             None
@@ -250,7 +251,8 @@ impl<T> VecDeque<T> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -265,8 +267,8 @@ impl<T> VecDeque<T> {
     pub fn swap(&mut self, i: usize, j: usize) {
         assert!(i < self.len());
         assert!(j < self.len());
-        let ri = self.wrap_index(self.tail + i);
-        let rj = self.wrap_index(self.tail + j);
+        let ri = self.wrap_add(self.tail, i);
+        let rj = self.wrap_add(self.tail, j);
         unsafe {
             ptr::swap(self.ptr.offset(ri as isize), self.ptr.offset(rj as isize))
         }
@@ -278,6 +280,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let buf: VecDeque<i32> = VecDeque::with_capacity(10);
@@ -301,6 +304,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf: VecDeque<i32> = vec![1].into_iter().collect();
@@ -322,6 +326,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf: VecDeque<i32> = vec![1].into_iter().collect();
@@ -397,6 +402,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::with_capacity(15);
@@ -435,7 +441,7 @@ impl<T> VecDeque<T> {
                 //   [. . . o o o o o o o . . . . . . ]
                 //        H T
                 //   [o o . o o o o o ]
-                let len = self.wrap_index(self.head - target_cap);
+                let len = self.wrap_sub(self.head, target_cap);
                 unsafe {
                     self.copy_nonoverlapping(0, target_cap, len);
                 }
@@ -446,7 +452,7 @@ impl<T> VecDeque<T> {
                 //   [o o o o o . . . . . . . . . o o ]
                 //              H T
                 //   [o o o o o . o o ]
-                debug_assert!(self.wrap_index(self.head - 1) < target_cap);
+                debug_assert!(self.wrap_sub(self.head, 1) < target_cap);
                 let len = self.cap - self.tail;
                 let new_tail = target_cap - len;
                 unsafe {
@@ -483,6 +489,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -505,7 +512,8 @@ impl<T> VecDeque<T> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(core)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -513,7 +521,8 @@ impl<T> VecDeque<T> {
     /// buf.push_back(3);
     /// buf.push_back(4);
     /// let b: &[_] = &[&5, &3, &4];
-    /// assert_eq!(buf.iter().collect::<Vec<&i32>>().as_slice(), b);
+    /// let c: Vec<&i32> = buf.iter().collect();
+    /// assert_eq!(&c[..], b);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn iter(&self) -> Iter<T> {
@@ -528,7 +537,8 @@ impl<T> VecDeque<T> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(core)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -539,20 +549,18 @@ impl<T> VecDeque<T> {
     ///     *num = *num - 2;
     /// }
     /// let b: &[_] = &[&mut 3, &mut 1, &mut 2];
-    /// assert_eq!(&buf.iter_mut().collect::<Vec<&mut i32>>()[], b);
+    /// assert_eq!(&buf.iter_mut().collect::<Vec<&mut i32>>()[..], b);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn iter_mut(&mut self) -> IterMut<T> {
         IterMut {
             tail: self.tail,
             head: self.head,
-            cap: self.cap,
-            ptr: *self.ptr,
-            marker: marker::PhantomData,
+            ring: unsafe { self.buffer_as_mut_slice() },
         }
     }
 
-    /// Consumes the list into an iterator yielding elements by value.
+    /// Consumes the list into a front-to-back iterator yielding elements by value.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn into_iter(self) -> IntoIter<T> {
         IntoIter {
@@ -640,6 +648,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut v = VecDeque::new();
@@ -785,7 +794,7 @@ impl<T> VecDeque<T> {
             None
         } else {
             let tail = self.tail;
-            self.tail = self.wrap_index(self.tail + 1);
+            self.tail = self.wrap_add(self.tail, 1);
             unsafe { Some(self.buffer_read(tail)) }
         }
     }
@@ -809,7 +818,7 @@ impl<T> VecDeque<T> {
             debug_assert!(!self.is_full());
         }
 
-        self.tail = self.wrap_index(self.tail - 1);
+        self.tail = self.wrap_sub(self.tail, 1);
         let tail = self.tail;
         unsafe { self.buffer_write(tail, t); }
     }
@@ -818,7 +827,7 @@ impl<T> VecDeque<T> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -834,7 +843,7 @@ impl<T> VecDeque<T> {
         }
 
         let head = self.head;
-        self.head = self.wrap_index(self.head + 1);
+        self.head = self.wrap_add(self.head, 1);
         unsafe { self.buffer_write(head, t) }
     }
 
@@ -843,7 +852,7 @@ impl<T> VecDeque<T> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -857,7 +866,7 @@ impl<T> VecDeque<T> {
         if self.is_empty() {
             None
         } else {
-            self.head = self.wrap_index(self.head - 1);
+            self.head = self.wrap_sub(self.head, 1);
             let head = self.head;
             unsafe { Some(self.buffer_read(head)) }
         }
@@ -878,6 +887,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -911,6 +921,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -943,7 +954,8 @@ impl<T> VecDeque<T> {
     /// Panics if `i` is greater than ringbuf's length
     ///
     /// # Examples
-    /// ```rust
+    /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -981,7 +993,7 @@ impl<T> VecDeque<T> {
         //      A - The element that should be after the insertion point
         //      M - Indicates element was moved
 
-        let idx = self.wrap_index(self.tail + i);
+        let idx = self.wrap_add(self.tail, i);
 
         let distance_to_tail = i;
         let distance_to_head = self.len() - i;
@@ -1000,7 +1012,7 @@ impl<T> VecDeque<T> {
                 //      [A o o o o o o o . . . . . I]
                 //
 
-                self.tail = self.wrap_index(self.tail - 1);
+                self.tail = self.wrap_sub(self.tail, 1);
             },
             (true, true, _) => unsafe {
                 // contiguous, insert closer to tail:
@@ -1022,7 +1034,7 @@ impl<T> VecDeque<T> {
                 //      [o I A o o o o o . . . . . . . o]
                 //       M                             M
 
-                let new_tail = self.wrap_index(self.tail - 1);
+                let new_tail = self.wrap_sub(self.tail, 1);
 
                 self.copy(new_tail, self.tail, 1);
                 // Already moved the tail, so we only copy `i - 1` elements.
@@ -1041,7 +1053,7 @@ impl<T> VecDeque<T> {
                 //                       M M M
 
                 self.copy(idx + 1, idx, self.head - idx);
-                self.head = self.wrap_index(self.head + 1);
+                self.head = self.wrap_add(self.head, 1);
             },
             (false, true, true) => unsafe {
                 // discontiguous, insert closer to tail, tail section:
@@ -1133,7 +1145,7 @@ impl<T> VecDeque<T> {
         }
 
         // tail might've been changed so we need to recalculate
-        let new_idx = self.wrap_index(self.tail + i);
+        let new_idx = self.wrap_add(self.tail, i);
         unsafe {
             self.buffer_write(new_idx, t);
         }
@@ -1145,7 +1157,7 @@ impl<T> VecDeque<T> {
     /// Returns `None` if `i` is out of bounds.
     ///
     /// # Examples
-    /// ```rust
+    /// ```
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -1180,7 +1192,7 @@ impl<T> VecDeque<T> {
         //      R - Indicates element that is being removed
         //      M - Indicates element was moved
 
-        let idx = self.wrap_index(self.tail + i);
+        let idx = self.wrap_add(self.tail, i);
 
         let elem = unsafe {
             Some(self.buffer_read(idx))
@@ -1229,7 +1241,7 @@ impl<T> VecDeque<T> {
                 //                               M M
 
                 self.copy(self.tail + 1, self.tail, i);
-                self.tail = self.wrap_index(self.tail + 1);
+                self.tail = self.wrap_add(self.tail, 1);
             },
             (false, false, false) => unsafe {
                 // discontiguous, remove closer to head, head section:
@@ -1275,7 +1287,7 @@ impl<T> VecDeque<T> {
                     self.copy(0, 1, self.head - 1);
                 }
 
-                self.head = self.wrap_index(self.head - 1);
+                self.head = self.wrap_sub(self.head, 1);
             },
             (false, true, false) => unsafe {
                 // discontiguous, remove closer to tail, head section:
@@ -1296,7 +1308,7 @@ impl<T> VecDeque<T> {
                 // move elements from tail to end forward, excluding the last one
                 self.copy(self.tail + 1, self.tail, self.cap - self.tail - 1);
 
-                self.tail = self.wrap_index(self.tail + 1);
+                self.tail = self.wrap_add(self.tail, 1);
             }
         }
 
@@ -1317,6 +1329,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf: VecDeque<_> = vec![1,2,3].into_iter().collect();
@@ -1344,27 +1357,27 @@ impl<T> VecDeque<T> {
                 // `at` lies in the first half.
                 let amount_in_first = first_len - at;
 
-                ptr::copy_nonoverlapping_memory(*other.ptr,
-                                                first_half.as_ptr().offset(at as isize),
-                                                amount_in_first);
+                ptr::copy_nonoverlapping(first_half.as_ptr().offset(at as isize),
+                                         *other.ptr,
+                                         amount_in_first);
 
                 // just take all of the second half.
-                ptr::copy_nonoverlapping_memory(other.ptr.offset(amount_in_first as isize),
-                                                second_half.as_ptr(),
-                                                second_len);
+                ptr::copy_nonoverlapping(second_half.as_ptr(),
+                                         other.ptr.offset(amount_in_first as isize),
+                                         second_len);
             } else {
                 // `at` lies in the second half, need to factor in the elements we skipped
                 // in the first half.
                 let offset = at - first_len;
                 let amount_in_second = second_len - offset;
-                ptr::copy_nonoverlapping_memory(*other.ptr,
-                                                second_half.as_ptr().offset(offset as isize),
-                                                amount_in_second);
+                ptr::copy_nonoverlapping(second_half.as_ptr().offset(offset as isize),
+                                         *other.ptr,
+                                         amount_in_second);
             }
         }
 
         // Cleanup where the ends of the buffers are
-        self.head = self.wrap_index(self.head - other_len);
+        self.head = self.wrap_sub(self.head, other_len);
         other.head = other.wrap_index(other_len);
 
         other
@@ -1379,6 +1392,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf: VecDeque<_> = vec![1, 2, 3].into_iter().collect();
@@ -1403,6 +1417,7 @@ impl<T: Clone> VecDeque<T> {
     /// # Examples
     ///
     /// ```
+    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -1439,7 +1454,7 @@ fn wrap_index(index: usize, size: usize) -> usize {
 #[inline]
 fn count(tail: usize, head: usize, size: usize) -> usize {
     // size is always a power of 2
-    (head - tail) & (size - 1)
+    (head.wrapping_sub(tail)) & (size - 1)
 }
 
 /// `VecDeque` iterator.
@@ -1471,7 +1486,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
             return None;
         }
         let tail = self.tail;
-        self.tail = wrap_index(self.tail + 1, self.ring.len());
+        self.tail = wrap_index(self.tail.wrapping_add(1), self.ring.len());
         unsafe { Some(self.ring.get_unchecked(tail)) }
     }
 
@@ -1489,7 +1504,7 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
         if self.tail == self.head {
             return None;
         }
-        self.head = wrap_index(self.head - 1, self.ring.len());
+        self.head = wrap_index(self.head.wrapping_sub(1), self.ring.len());
         unsafe { Some(self.ring.get_unchecked(self.head)) }
     }
 }
@@ -1510,23 +1525,18 @@ impl<'a, T> RandomAccessIterator for Iter<'a, T> {
         if j >= self.indexable() {
             None
         } else {
-            let idx = wrap_index(self.tail + j, self.ring.len());
+            let idx = wrap_index(self.tail.wrapping_add(j), self.ring.len());
             unsafe { Some(self.ring.get_unchecked(idx)) }
         }
     }
 }
 
-// FIXME This was implemented differently from Iter because of a problem
-//       with returning the mutable reference. I couldn't find a way to
-//       make the lifetime checker happy so, but there should be a way.
 /// `VecDeque` mutable iterator.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IterMut<'a, T:'a> {
-    ptr: *mut T,
+    ring: &'a mut [T],
     tail: usize,
     head: usize,
-    cap: usize,
-    marker: marker::PhantomData<&'a mut T>,
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1539,16 +1549,17 @@ impl<'a, T> Iterator for IterMut<'a, T> {
             return None;
         }
         let tail = self.tail;
-        self.tail = wrap_index(self.tail + 1, self.cap);
+        self.tail = wrap_index(self.tail.wrapping_add(1), self.ring.len());
 
         unsafe {
-            Some(&mut *self.ptr.offset(tail as isize))
+            let elem = self.ring.get_unchecked_mut(tail);
+            Some(&mut *(elem as *mut _))
         }
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = count(self.tail, self.head, self.cap);
+        let len = count(self.tail, self.head, self.ring.len());
         (len, Some(len))
     }
 }
@@ -1560,10 +1571,11 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
         if self.tail == self.head {
             return None;
         }
-        self.head = wrap_index(self.head - 1, self.cap);
+        self.head = wrap_index(self.head.wrapping_sub(1), self.ring.len());
 
         unsafe {
-            Some(&mut *self.ptr.offset(self.head as isize))
+            let elem = self.ring.get_unchecked_mut(self.head);
+            Some(&mut *(elem as *mut _))
         }
     }
 }
@@ -1572,6 +1584,7 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
 impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
 
 /// A by-value VecDeque iterator
+#[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IntoIter<T> {
     inner: VecDeque<T>,
@@ -1675,17 +1688,6 @@ impl<A: Ord> Ord for VecDeque<A> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-#[cfg(stage0)]
-impl<S: Writer + Hasher, A: Hash<S>> Hash<S> for VecDeque<A> {
-    fn hash(&self, state: &mut S) {
-        self.len().hash(state);
-        for elt in self {
-            elt.hash(state);
-        }
-    }
-}
-#[stable(feature = "rust1", since = "1.0.0")]
-#[cfg(not(stage0))]
 impl<A: Hash> Hash for VecDeque<A> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.len().hash(state);
@@ -1700,16 +1702,16 @@ impl<A> Index<usize> for VecDeque<A> {
     type Output = A;
 
     #[inline]
-    fn index(&self, i: &usize) -> &A {
-        self.get(*i).expect("Out of bounds access")
+    fn index(&self, i: usize) -> &A {
+        self.get(i).expect("Out of bounds access")
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<A> IndexMut<usize> for VecDeque<A> {
     #[inline]
-    fn index_mut(&mut self, i: &usize) -> &mut A {
-        self.get_mut(*i).expect("Out of bounds access")
+    fn index_mut(&mut self, i: usize) -> &mut A {
+        self.get_mut(i).expect("Out of bounds access")
     }
 }
 
@@ -1766,7 +1768,7 @@ impl<A> Extend<A> for VecDeque<A> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: fmt::Debug> fmt::Debug for VecDeque<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "VecDeque ["));
+        try!(write!(f, "["));
 
         for (i, e) in self.iter().enumerate() {
             if i != 0 { try!(write!(f, ", ")); }
@@ -1778,137 +1780,13 @@ impl<T: fmt::Debug> fmt::Debug for VecDeque<T> {
 }
 
 #[cfg(test)]
-mod tests {
-    use self::Taggy::*;
-    use self::Taggypar::*;
-    use prelude::*;
-    use core::iter;
-    use std::fmt::Debug;
-    use std::hash::{self, SipHasher};
-    use test::Bencher;
+mod test {
+    use core::iter::{Iterator, self};
+    use core::option::Option::Some;
+
     use test;
 
     use super::VecDeque;
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_simple() {
-        let mut d = VecDeque::new();
-        assert_eq!(d.len(), 0);
-        d.push_front(17);
-        d.push_front(42);
-        d.push_back(137);
-        assert_eq!(d.len(), 3);
-        d.push_back(137);
-        assert_eq!(d.len(), 4);
-        assert_eq!(*d.front().unwrap(), 42);
-        assert_eq!(*d.back().unwrap(), 137);
-        let mut i = d.pop_front();
-        assert_eq!(i, Some(42));
-        i = d.pop_back();
-        assert_eq!(i, Some(137));
-        i = d.pop_back();
-        assert_eq!(i, Some(137));
-        i = d.pop_back();
-        assert_eq!(i, Some(17));
-        assert_eq!(d.len(), 0);
-        d.push_back(3);
-        assert_eq!(d.len(), 1);
-        d.push_front(2);
-        assert_eq!(d.len(), 2);
-        d.push_back(4);
-        assert_eq!(d.len(), 3);
-        d.push_front(1);
-        assert_eq!(d.len(), 4);
-        debug!("{}", d[0]);
-        debug!("{}", d[1]);
-        debug!("{}", d[2]);
-        debug!("{}", d[3]);
-        assert_eq!(d[0], 1);
-        assert_eq!(d[1], 2);
-        assert_eq!(d[2], 3);
-        assert_eq!(d[3], 4);
-    }
-
-    #[cfg(test)]
-    fn test_parameterized<T:Clone + PartialEq + Debug>(a: T, b: T, c: T, d: T) {
-        let mut deq = VecDeque::new();
-        assert_eq!(deq.len(), 0);
-        deq.push_front(a.clone());
-        deq.push_front(b.clone());
-        deq.push_back(c.clone());
-        assert_eq!(deq.len(), 3);
-        deq.push_back(d.clone());
-        assert_eq!(deq.len(), 4);
-        assert_eq!((*deq.front().unwrap()).clone(), b.clone());
-        assert_eq!((*deq.back().unwrap()).clone(), d.clone());
-        assert_eq!(deq.pop_front().unwrap(), b.clone());
-        assert_eq!(deq.pop_back().unwrap(), d.clone());
-        assert_eq!(deq.pop_back().unwrap(), c.clone());
-        assert_eq!(deq.pop_back().unwrap(), a.clone());
-        assert_eq!(deq.len(), 0);
-        deq.push_back(c.clone());
-        assert_eq!(deq.len(), 1);
-        deq.push_front(b.clone());
-        assert_eq!(deq.len(), 2);
-        deq.push_back(d.clone());
-        assert_eq!(deq.len(), 3);
-        deq.push_front(a.clone());
-        assert_eq!(deq.len(), 4);
-        assert_eq!(deq[0].clone(), a.clone());
-        assert_eq!(deq[1].clone(), b.clone());
-        assert_eq!(deq[2].clone(), c.clone());
-        assert_eq!(deq[3].clone(), d.clone());
-    }
-
-    #[test]
-    fn test_push_front_grow() {
-        let mut deq = VecDeque::new();
-        for i in 0..66 {
-            deq.push_front(i);
-        }
-        assert_eq!(deq.len(), 66);
-
-        for i in 0..66 {
-            assert_eq!(deq[i], 65 - i);
-        }
-
-        let mut deq = VecDeque::new();
-        for i in 0..66 {
-            deq.push_back(i);
-        }
-
-        for i in 0..66 {
-            assert_eq!(deq[i], i);
-        }
-    }
-
-    #[test]
-    fn test_index() {
-        let mut deq = VecDeque::new();
-        for i in 1..4 {
-            deq.push_front(i);
-        }
-        assert_eq!(deq[1], 2);
-    }
-
-    #[test]
-    #[should_fail]
-    fn test_index_out_of_bounds() {
-        let mut deq = VecDeque::new();
-        for i in 1..4 {
-            deq.push_front(i);
-        }
-        deq[3];
-    }
-
-    #[bench]
-    fn bench_new(b: &mut test::Bencher) {
-        b.iter(|| {
-            let ring: VecDeque<i32> = VecDeque::new();
-            test::black_box(ring);
-        })
-    }
 
     #[bench]
     fn bench_push_back_100(b: &mut test::Bencher) {
@@ -1958,666 +1836,6 @@ mod tests {
                 test::black_box(deq.pop_front());
             }
         })
-    }
-
-    #[bench]
-    fn bench_grow_1025(b: &mut test::Bencher) {
-        b.iter(|| {
-            let mut deq = VecDeque::new();
-            for i in 0..1025 {
-                deq.push_front(i);
-            }
-            test::black_box(deq);
-        })
-    }
-
-    #[bench]
-    fn bench_iter_1000(b: &mut test::Bencher) {
-        let ring: VecDeque<_> = (0..1000).collect();
-
-        b.iter(|| {
-            let mut sum = 0;
-            for &i in &ring {
-                sum += i;
-            }
-            test::black_box(sum);
-        })
-    }
-
-    #[bench]
-    fn bench_mut_iter_1000(b: &mut test::Bencher) {
-        let mut ring: VecDeque<_> = (0..1000).collect();
-
-        b.iter(|| {
-            let mut sum = 0;
-            for i in &mut ring {
-                sum += *i;
-            }
-            test::black_box(sum);
-        })
-    }
-
-    #[derive(Clone, PartialEq, Debug)]
-    enum Taggy {
-        One(i32),
-        Two(i32, i32),
-        Three(i32, i32, i32),
-    }
-
-    #[derive(Clone, PartialEq, Debug)]
-    enum Taggypar<T> {
-        Onepar(T),
-        Twopar(T, T),
-        Threepar(T, T, T),
-    }
-
-    #[derive(Clone, PartialEq, Debug)]
-    struct RecCy {
-        x: i32,
-        y: i32,
-        t: Taggy
-    }
-
-    #[test]
-    fn test_param_int() {
-        test_parameterized::<i32>(5, 72, 64, 175);
-    }
-
-    #[test]
-    fn test_param_taggy() {
-        test_parameterized::<Taggy>(One(1), Two(1, 2), Three(1, 2, 3), Two(17, 42));
-    }
-
-    #[test]
-    fn test_param_taggypar() {
-        test_parameterized::<Taggypar<i32>>(Onepar::<i32>(1),
-                                            Twopar::<i32>(1, 2),
-                                            Threepar::<i32>(1, 2, 3),
-                                            Twopar::<i32>(17, 42));
-    }
-
-    #[test]
-    fn test_param_reccy() {
-        let reccy1 = RecCy { x: 1, y: 2, t: One(1) };
-        let reccy2 = RecCy { x: 345, y: 2, t: Two(1, 2) };
-        let reccy3 = RecCy { x: 1, y: 777, t: Three(1, 2, 3) };
-        let reccy4 = RecCy { x: 19, y: 252, t: Two(17, 42) };
-        test_parameterized::<RecCy>(reccy1, reccy2, reccy3, reccy4);
-    }
-
-    #[test]
-    fn test_with_capacity() {
-        let mut d = VecDeque::with_capacity(0);
-        d.push_back(1);
-        assert_eq!(d.len(), 1);
-        let mut d = VecDeque::with_capacity(50);
-        d.push_back(1);
-        assert_eq!(d.len(), 1);
-    }
-
-    #[test]
-    fn test_with_capacity_non_power_two() {
-        let mut d3 = VecDeque::with_capacity(3);
-        d3.push_back(1);
-
-        // X = None, | = lo
-        // [|1, X, X]
-        assert_eq!(d3.pop_front(), Some(1));
-        // [X, |X, X]
-        assert_eq!(d3.front(), None);
-
-        // [X, |3, X]
-        d3.push_back(3);
-        // [X, |3, 6]
-        d3.push_back(6);
-        // [X, X, |6]
-        assert_eq!(d3.pop_front(), Some(3));
-
-        // Pushing the lo past half way point to trigger
-        // the 'B' scenario for growth
-        // [9, X, |6]
-        d3.push_back(9);
-        // [9, 12, |6]
-        d3.push_back(12);
-
-        d3.push_back(15);
-        // There used to be a bug here about how the
-        // VecDeque made growth assumptions about the
-        // underlying Vec which didn't hold and lead
-        // to corruption.
-        // (Vec grows to next power of two)
-        //good- [9, 12, 15, X, X, X, X, |6]
-        //bug-  [15, 12, X, X, X, |6, X, X]
-        assert_eq!(d3.pop_front(), Some(6));
-
-        // Which leads us to the following state which
-        // would be a failure case.
-        //bug-  [15, 12, X, X, X, X, |X, X]
-        assert_eq!(d3.front(), Some(&9));
-    }
-
-    #[test]
-    fn test_reserve_exact() {
-        let mut d = VecDeque::new();
-        d.push_back(0);
-        d.reserve_exact(50);
-        assert!(d.capacity() >= 51);
-    }
-
-    #[test]
-    fn test_reserve() {
-        let mut d = VecDeque::new();
-        d.push_back(0);
-        d.reserve(50);
-        assert!(d.capacity() >= 51);
-    }
-
-    #[test]
-    fn test_swap() {
-        let mut d: VecDeque<_> = (0..5).collect();
-        d.pop_front();
-        d.swap(0, 3);
-        assert_eq!(d.iter().cloned().collect::<Vec<_>>(), vec!(4, 2, 3, 1));
-    }
-
-    #[test]
-    fn test_iter() {
-        let mut d = VecDeque::new();
-        assert_eq!(d.iter().next(), None);
-        assert_eq!(d.iter().size_hint(), (0, Some(0)));
-
-        for i in 0..5 {
-            d.push_back(i);
-        }
-        {
-            let b: &[_] = &[&0,&1,&2,&3,&4];
-            assert_eq!(d.iter().collect::<Vec<_>>(), b);
-        }
-
-        for i in 6..9 {
-            d.push_front(i);
-        }
-        {
-            let b: &[_] = &[&8,&7,&6,&0,&1,&2,&3,&4];
-            assert_eq!(d.iter().collect::<Vec<_>>(), b);
-        }
-
-        let mut it = d.iter();
-        let mut len = d.len();
-        loop {
-            match it.next() {
-                None => break,
-                _ => { len -= 1; assert_eq!(it.size_hint(), (len, Some(len))) }
-            }
-        }
-    }
-
-    #[test]
-    fn test_rev_iter() {
-        let mut d = VecDeque::new();
-        assert_eq!(d.iter().rev().next(), None);
-
-        for i in 0..5 {
-            d.push_back(i);
-        }
-        {
-            let b: &[_] = &[&4,&3,&2,&1,&0];
-            assert_eq!(d.iter().rev().collect::<Vec<_>>(), b);
-        }
-
-        for i in 6..9 {
-            d.push_front(i);
-        }
-        let b: &[_] = &[&4,&3,&2,&1,&0,&6,&7,&8];
-        assert_eq!(d.iter().rev().collect::<Vec<_>>(), b);
-    }
-
-    #[test]
-    fn test_mut_rev_iter_wrap() {
-        let mut d = VecDeque::with_capacity(3);
-        assert!(d.iter_mut().rev().next().is_none());
-
-        d.push_back(1);
-        d.push_back(2);
-        d.push_back(3);
-        assert_eq!(d.pop_front(), Some(1));
-        d.push_back(4);
-
-        assert_eq!(d.iter_mut().rev().cloned().collect::<Vec<_>>(),
-                   vec![4, 3, 2]);
-    }
-
-    #[test]
-    fn test_mut_iter() {
-        let mut d = VecDeque::new();
-        assert!(d.iter_mut().next().is_none());
-
-        for i in 0..3 {
-            d.push_front(i);
-        }
-
-        for (i, elt) in d.iter_mut().enumerate() {
-            assert_eq!(*elt, 2 - i);
-            *elt = i;
-        }
-
-        {
-            let mut it = d.iter_mut();
-            assert_eq!(*it.next().unwrap(), 0);
-            assert_eq!(*it.next().unwrap(), 1);
-            assert_eq!(*it.next().unwrap(), 2);
-            assert!(it.next().is_none());
-        }
-    }
-
-    #[test]
-    fn test_mut_rev_iter() {
-        let mut d = VecDeque::new();
-        assert!(d.iter_mut().rev().next().is_none());
-
-        for i in 0..3 {
-            d.push_front(i);
-        }
-
-        for (i, elt) in d.iter_mut().rev().enumerate() {
-            assert_eq!(*elt, i);
-            *elt = i;
-        }
-
-        {
-            let mut it = d.iter_mut().rev();
-            assert_eq!(*it.next().unwrap(), 0);
-            assert_eq!(*it.next().unwrap(), 1);
-            assert_eq!(*it.next().unwrap(), 2);
-            assert!(it.next().is_none());
-        }
-    }
-
-    #[test]
-    fn test_into_iter() {
-
-        // Empty iter
-        {
-            let d: VecDeque<i32> = VecDeque::new();
-            let mut iter = d.into_iter();
-
-            assert_eq!(iter.size_hint(), (0, Some(0)));
-            assert_eq!(iter.next(), None);
-            assert_eq!(iter.size_hint(), (0, Some(0)));
-        }
-
-        // simple iter
-        {
-            let mut d = VecDeque::new();
-            for i in 0..5 {
-                d.push_back(i);
-            }
-
-            let b = vec![0,1,2,3,4];
-            assert_eq!(d.into_iter().collect::<Vec<_>>(), b);
-        }
-
-        // wrapped iter
-        {
-            let mut d = VecDeque::new();
-            for i in 0..5 {
-                d.push_back(i);
-            }
-            for i in 6..9 {
-                d.push_front(i);
-            }
-
-            let b = vec![8,7,6,0,1,2,3,4];
-            assert_eq!(d.into_iter().collect::<Vec<_>>(), b);
-        }
-
-        // partially used
-        {
-            let mut d = VecDeque::new();
-            for i in 0..5 {
-                d.push_back(i);
-            }
-            for i in 6..9 {
-                d.push_front(i);
-            }
-
-            let mut it = d.into_iter();
-            assert_eq!(it.size_hint(), (8, Some(8)));
-            assert_eq!(it.next(), Some(8));
-            assert_eq!(it.size_hint(), (7, Some(7)));
-            assert_eq!(it.next_back(), Some(4));
-            assert_eq!(it.size_hint(), (6, Some(6)));
-            assert_eq!(it.next(), Some(7));
-            assert_eq!(it.size_hint(), (5, Some(5)));
-        }
-    }
-
-    #[test]
-    fn test_drain() {
-
-        // Empty iter
-        {
-            let mut d: VecDeque<i32> = VecDeque::new();
-
-            {
-                let mut iter = d.drain();
-
-                assert_eq!(iter.size_hint(), (0, Some(0)));
-                assert_eq!(iter.next(), None);
-                assert_eq!(iter.size_hint(), (0, Some(0)));
-            }
-
-            assert!(d.is_empty());
-        }
-
-        // simple iter
-        {
-            let mut d = VecDeque::new();
-            for i in 0..5 {
-                d.push_back(i);
-            }
-
-            assert_eq!(d.drain().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
-            assert!(d.is_empty());
-        }
-
-        // wrapped iter
-        {
-            let mut d = VecDeque::new();
-            for i in 0..5 {
-                d.push_back(i);
-            }
-            for i in 6..9 {
-                d.push_front(i);
-            }
-
-            assert_eq!(d.drain().collect::<Vec<_>>(), [8,7,6,0,1,2,3,4]);
-            assert!(d.is_empty());
-        }
-
-        // partially used
-        {
-            let mut d: VecDeque<_> = VecDeque::new();
-            for i in 0..5 {
-                d.push_back(i);
-            }
-            for i in 6..9 {
-                d.push_front(i);
-            }
-
-            {
-                let mut it = d.drain();
-                assert_eq!(it.size_hint(), (8, Some(8)));
-                assert_eq!(it.next(), Some(8));
-                assert_eq!(it.size_hint(), (7, Some(7)));
-                assert_eq!(it.next_back(), Some(4));
-                assert_eq!(it.size_hint(), (6, Some(6)));
-                assert_eq!(it.next(), Some(7));
-                assert_eq!(it.size_hint(), (5, Some(5)));
-            }
-            assert!(d.is_empty());
-        }
-    }
-
-    #[test]
-    fn test_from_iter() {
-        use core::iter;
-        let v = vec!(1,2,3,4,5,6,7);
-        let deq: VecDeque<_> = v.iter().cloned().collect();
-        let u: Vec<_> = deq.iter().cloned().collect();
-        assert_eq!(u, v);
-
-        let seq = iter::count(0, 2).take(256);
-        let deq: VecDeque<_> = seq.collect();
-        for (i, &x) in deq.iter().enumerate() {
-            assert_eq!(2*i, x);
-        }
-        assert_eq!(deq.len(), 256);
-    }
-
-    #[test]
-    fn test_clone() {
-        let mut d = VecDeque::new();
-        d.push_front(17);
-        d.push_front(42);
-        d.push_back(137);
-        d.push_back(137);
-        assert_eq!(d.len(), 4);
-        let mut e = d.clone();
-        assert_eq!(e.len(), 4);
-        while !d.is_empty() {
-            assert_eq!(d.pop_back(), e.pop_back());
-        }
-        assert_eq!(d.len(), 0);
-        assert_eq!(e.len(), 0);
-    }
-
-    #[test]
-    fn test_eq() {
-        let mut d = VecDeque::new();
-        assert!(d == VecDeque::with_capacity(0));
-        d.push_front(137);
-        d.push_front(17);
-        d.push_front(42);
-        d.push_back(137);
-        let mut e = VecDeque::with_capacity(0);
-        e.push_back(42);
-        e.push_back(17);
-        e.push_back(137);
-        e.push_back(137);
-        assert!(&e == &d);
-        e.pop_back();
-        e.push_back(0);
-        assert!(e != d);
-        e.clear();
-        assert!(e == VecDeque::new());
-    }
-
-    #[test]
-    fn test_hash() {
-      let mut x = VecDeque::new();
-      let mut y = VecDeque::new();
-
-      x.push_back(1);
-      x.push_back(2);
-      x.push_back(3);
-
-      y.push_back(0);
-      y.push_back(1);
-      y.pop_front();
-      y.push_back(2);
-      y.push_back(3);
-
-      assert!(hash::hash::<_, SipHasher>(&x) == hash::hash::<_, SipHasher>(&y));
-    }
-
-    #[test]
-    fn test_ord() {
-        let x = VecDeque::new();
-        let mut y = VecDeque::new();
-        y.push_back(1);
-        y.push_back(2);
-        y.push_back(3);
-        assert!(x < y);
-        assert!(y > x);
-        assert!(x <= x);
-        assert!(x >= x);
-    }
-
-    #[test]
-    fn test_show() {
-        let ringbuf: VecDeque<_> = (0..10).collect();
-        assert_eq!(format!("{:?}", ringbuf), "VecDeque [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]");
-
-        let ringbuf: VecDeque<_> = vec!["just", "one", "test", "more"].iter()
-                                                                        .cloned()
-                                                                        .collect();
-        assert_eq!(format!("{:?}", ringbuf), "VecDeque [\"just\", \"one\", \"test\", \"more\"]");
-    }
-
-    #[test]
-    fn test_drop() {
-        static mut drops: i32 = 0;
-        struct Elem;
-        impl Drop for Elem {
-            fn drop(&mut self) {
-                unsafe { drops += 1; }
-            }
-        }
-
-        let mut ring = VecDeque::new();
-        ring.push_back(Elem);
-        ring.push_front(Elem);
-        ring.push_back(Elem);
-        ring.push_front(Elem);
-        drop(ring);
-
-        assert_eq!(unsafe {drops}, 4);
-    }
-
-    #[test]
-    fn test_drop_with_pop() {
-        static mut drops: i32 = 0;
-        struct Elem;
-        impl Drop for Elem {
-            fn drop(&mut self) {
-                unsafe { drops += 1; }
-            }
-        }
-
-        let mut ring = VecDeque::new();
-        ring.push_back(Elem);
-        ring.push_front(Elem);
-        ring.push_back(Elem);
-        ring.push_front(Elem);
-
-        drop(ring.pop_back());
-        drop(ring.pop_front());
-        assert_eq!(unsafe {drops}, 2);
-
-        drop(ring);
-        assert_eq!(unsafe {drops}, 4);
-    }
-
-    #[test]
-    fn test_drop_clear() {
-        static mut drops: i32 = 0;
-        struct Elem;
-        impl Drop for Elem {
-            fn drop(&mut self) {
-                unsafe { drops += 1; }
-            }
-        }
-
-        let mut ring = VecDeque::new();
-        ring.push_back(Elem);
-        ring.push_front(Elem);
-        ring.push_back(Elem);
-        ring.push_front(Elem);
-        ring.clear();
-        assert_eq!(unsafe {drops}, 4);
-
-        drop(ring);
-        assert_eq!(unsafe {drops}, 4);
-    }
-
-    #[test]
-    fn test_reserve_grow() {
-        // test growth path A
-        // [T o o H] -> [T o o H . . . . ]
-        let mut ring = VecDeque::with_capacity(4);
-        for i in 0..3 {
-            ring.push_back(i);
-        }
-        ring.reserve(7);
-        for i in 0..3 {
-            assert_eq!(ring.pop_front(), Some(i));
-        }
-
-        // test growth path B
-        // [H T o o] -> [. T o o H . . . ]
-        let mut ring = VecDeque::with_capacity(4);
-        for i in 0..1 {
-            ring.push_back(i);
-            assert_eq!(ring.pop_front(), Some(i));
-        }
-        for i in 0..3 {
-            ring.push_back(i);
-        }
-        ring.reserve(7);
-        for i in 0..3 {
-            assert_eq!(ring.pop_front(), Some(i));
-        }
-
-        // test growth path C
-        // [o o H T] -> [o o H . . . . T ]
-        let mut ring = VecDeque::with_capacity(4);
-        for i in 0..3 {
-            ring.push_back(i);
-            assert_eq!(ring.pop_front(), Some(i));
-        }
-        for i in 0..3 {
-            ring.push_back(i);
-        }
-        ring.reserve(7);
-        for i in 0..3 {
-            assert_eq!(ring.pop_front(), Some(i));
-        }
-    }
-
-    #[test]
-    fn test_get() {
-        let mut ring = VecDeque::new();
-        ring.push_back(0);
-        assert_eq!(ring.get(0), Some(&0));
-        assert_eq!(ring.get(1), None);
-
-        ring.push_back(1);
-        assert_eq!(ring.get(0), Some(&0));
-        assert_eq!(ring.get(1), Some(&1));
-        assert_eq!(ring.get(2), None);
-
-        ring.push_back(2);
-        assert_eq!(ring.get(0), Some(&0));
-        assert_eq!(ring.get(1), Some(&1));
-        assert_eq!(ring.get(2), Some(&2));
-        assert_eq!(ring.get(3), None);
-
-        assert_eq!(ring.pop_front(), Some(0));
-        assert_eq!(ring.get(0), Some(&1));
-        assert_eq!(ring.get(1), Some(&2));
-        assert_eq!(ring.get(2), None);
-
-        assert_eq!(ring.pop_front(), Some(1));
-        assert_eq!(ring.get(0), Some(&2));
-        assert_eq!(ring.get(1), None);
-
-        assert_eq!(ring.pop_front(), Some(2));
-        assert_eq!(ring.get(0), None);
-        assert_eq!(ring.get(1), None);
-    }
-
-    #[test]
-    fn test_get_mut() {
-        let mut ring = VecDeque::new();
-        for i in 0..3 {
-            ring.push_back(i);
-        }
-
-        match ring.get_mut(1) {
-            Some(x) => *x = -1,
-            None => ()
-        };
-
-        assert_eq!(ring.get_mut(0), Some(&mut 0));
-        assert_eq!(ring.get_mut(1), Some(&mut -1));
-        assert_eq!(ring.get_mut(2), Some(&mut 2));
-        assert_eq!(ring.get_mut(3), None);
-
-        assert_eq!(ring.pop_front(), Some(0));
-        assert_eq!(ring.get_mut(0), Some(&mut -1));
-        assert_eq!(ring.get_mut(1), Some(&mut 2));
-        assert_eq!(ring.get_mut(2), None);
     }
 
     #[test]
@@ -2679,7 +1897,7 @@ mod tests {
         // len is the length *after* insertion
         for len in 1..cap {
             // 0, 1, 2, .., len - 1
-            let expected = iter::count(0, 1).take(len).collect();
+            let expected = (0..).take(len).collect();
             for tail_pos in 0..cap {
                 for to_insert in 0..len {
                     tester.tail = tail_pos;
@@ -2712,7 +1930,7 @@ mod tests {
         // len is the length *after* removal
         for len in 0..cap - 1 {
             // 0, 1, 2, .., len - 1
-            let expected = iter::count(0, 1).take(len).collect();
+            let expected = (0..).take(len).collect();
             for tail_pos in 0..cap {
                 for to_remove in 0..len + 1 {
                     tester.tail = tail_pos;
@@ -2750,7 +1968,7 @@ mod tests {
 
         for len in 0..cap + 1 {
             // 0, 1, 2, .., len - 1
-            let expected = iter::count(0, 1).take(len).collect();
+            let expected = (0..).take(len).collect();
             for tail_pos in 0..max_cap + 1 {
                 tester.tail = tail_pos;
                 tester.head = tail_pos;
@@ -2765,74 +1983,6 @@ mod tests {
                 assert_eq!(tester, expected);
             }
         }
-    }
-
-    #[test]
-    fn test_front() {
-        let mut ring = VecDeque::new();
-        ring.push_back(10);
-        ring.push_back(20);
-        assert_eq!(ring.front(), Some(&10));
-        ring.pop_front();
-        assert_eq!(ring.front(), Some(&20));
-        ring.pop_front();
-        assert_eq!(ring.front(), None);
-    }
-
-    #[test]
-    fn test_as_slices() {
-        let mut ring: VecDeque<i32> = VecDeque::with_capacity(127);
-        let cap = ring.capacity() as i32;
-        let first = cap/2;
-        let last  = cap - first;
-        for i in 0..first {
-            ring.push_back(i);
-
-            let (left, right) = ring.as_slices();
-            let expected: Vec<_> = (0..i+1).collect();
-            assert_eq!(left, expected);
-            assert_eq!(right, []);
-        }
-
-        for j in -last..0 {
-            ring.push_front(j);
-            let (left, right) = ring.as_slices();
-            let expected_left: Vec<_> = (-last..j+1).rev().collect();
-            let expected_right: Vec<_> = (0..first).collect();
-            assert_eq!(left, expected_left);
-            assert_eq!(right, expected_right);
-        }
-
-        assert_eq!(ring.len() as i32, cap);
-        assert_eq!(ring.capacity() as i32, cap);
-    }
-
-    #[test]
-    fn test_as_mut_slices() {
-        let mut ring: VecDeque<i32> = VecDeque::with_capacity(127);
-        let cap = ring.capacity() as i32;
-        let first = cap/2;
-        let last  = cap - first;
-        for i in 0..first {
-            ring.push_back(i);
-
-            let (left, right) = ring.as_mut_slices();
-            let expected: Vec<_> = (0..i+1).collect();
-            assert_eq!(left, expected);
-            assert_eq!(right, []);
-        }
-
-        for j in -last..0 {
-            ring.push_front(j);
-            let (left, right) = ring.as_mut_slices();
-            let expected_left: Vec<_> = (-last..j+1).rev().collect();
-            let expected_right: Vec<_> = (0..first).collect();
-            assert_eq!(left, expected_left);
-            assert_eq!(right, expected_right);
-        }
-
-        assert_eq!(ring.len() as i32, cap);
-        assert_eq!(ring.capacity() as i32, cap);
     }
 
     #[test]
@@ -2851,9 +2001,9 @@ mod tests {
             // index to split at
             for at in 0..len + 1 {
                 // 0, 1, 2, .., at - 1 (may be empty)
-                let expected_self = iter::count(0, 1).take(at).collect();
+                let expected_self = (0..).take(at).collect();
                 // at, at + 1, .., len - 1 (may be empty)
-                let expected_other = iter::count(at, 1).take(len - at).collect();
+                let expected_other = (at..).take(len - at).collect();
 
                 for tail_pos in 0..cap {
                     tester.tail = tail_pos;
@@ -2871,26 +2021,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn test_append() {
-        let mut a: VecDeque<_> = vec![1, 2, 3].into_iter().collect();
-        let mut b: VecDeque<_> = vec![4, 5, 6].into_iter().collect();
-
-        // normal append
-        a.append(&mut b);
-        assert_eq!(a.iter().cloned().collect(), vec![1, 2, 3, 4, 5, 6]);
-        assert_eq!(b.iter().cloned().collect(), vec![]);
-
-        // append nothing to something
-        a.append(&mut b);
-        assert_eq!(a.iter().cloned().collect(), vec![1, 2, 3, 4, 5, 6]);
-        assert_eq!(b.iter().cloned().collect(), vec![]);
-
-        // append something to nothing
-        b.append(&mut a);
-        assert_eq!(b.iter().cloned().collect(), vec![1, 2, 3, 4, 5, 6]);
-        assert_eq!(a.iter().cloned().collect(), vec![]);
     }
 }

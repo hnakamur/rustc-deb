@@ -10,21 +10,29 @@
 
 //! Utility implementations of Reader and Writer
 
+#![allow(deprecated)]
+
 use prelude::v1::*;
 use cmp;
-use old_io;
+use old_io::{self, Reader, Writer, Buffer};
 use slice::bytes::MutableByteVector;
 
 /// Wraps a `Reader`, limiting the number of bytes that can be read from it.
 #[derive(Debug)]
+#[deprecated(since = "1.0.0", reason = "use std::io::Take")]
+#[unstable(feature = "old_io")]
 pub struct LimitReader<R> {
-    limit: uint,
+    limit: usize,
     inner: R
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io::Take")]
+#[unstable(feature = "old_io")]
 impl<R: Reader> LimitReader<R> {
     /// Creates a new `LimitReader`
-    pub fn new(r: R, limit: uint) -> LimitReader<R> {
+    #[deprecated(since = "1.0.0", reason = "use std::io's take method instead")]
+    #[unstable(feature = "old_io")]
+    pub fn new(r: R, limit: usize) -> LimitReader<R> {
         LimitReader { limit: limit, inner: r }
     }
 
@@ -38,11 +46,13 @@ impl<R: Reader> LimitReader<R> {
     ///
     /// The reader may reach EOF after reading fewer bytes than indicated by
     /// this method if the underlying reader reaches EOF.
-    pub fn limit(&self) -> uint { self.limit }
+    pub fn limit(&self) -> usize { self.limit }
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io's take method instead")]
+#[unstable(feature = "old_io")]
 impl<R: Reader> Reader for LimitReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
         if self.limit == 0 {
             return Err(old_io::standard_error(old_io::EndOfFile));
         }
@@ -57,6 +67,8 @@ impl<R: Reader> Reader for LimitReader<R> {
     }
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io's take method instead")]
+#[unstable(feature = "old_io")]
 impl<R: Buffer> Buffer for LimitReader<R> {
     fn fill_buf<'a>(&'a mut self) -> old_io::IoResult<&'a [u8]> {
         let amt = try!(self.inner.fill_buf());
@@ -68,7 +80,7 @@ impl<R: Buffer> Buffer for LimitReader<R> {
         }
     }
 
-    fn consume(&mut self, amt: uint) {
+    fn consume(&mut self, amt: usize) {
         // Don't let callers reset the limit by passing an overlarge value
         let amt = cmp::min(amt, self.limit);
         self.limit -= amt;
@@ -78,51 +90,67 @@ impl<R: Buffer> Buffer for LimitReader<R> {
 }
 
 /// A `Writer` which ignores bytes written to it, like /dev/null.
-#[derive(Copy, Debug)]
+#[derive(Copy, Clone, Debug)]
+#[deprecated(since = "1.0.0", reason = "use std::io::sink() instead")]
+#[unstable(feature = "old_io")]
 pub struct NullWriter;
 
+#[deprecated(since = "1.0.0", reason = "use std::io::sink() instead")]
+#[unstable(feature = "old_io")]
 impl Writer for NullWriter {
     #[inline]
     fn write_all(&mut self, _buf: &[u8]) -> old_io::IoResult<()> { Ok(()) }
 }
 
 /// A `Reader` which returns an infinite stream of 0 bytes, like /dev/zero.
-#[derive(Copy, Debug)]
+#[derive(Copy, Clone, Debug)]
+#[deprecated(since = "1.0.0", reason = "use std::io::repeat(0) instead")]
+#[unstable(feature = "old_io")]
 pub struct ZeroReader;
 
+#[deprecated(since = "1.0.0", reason = "use std::io::repeat(0) instead")]
+#[unstable(feature = "old_io")]
 impl Reader for ZeroReader {
     #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
         buf.set_memory(0);
         Ok(buf.len())
     }
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io::repeat(0) instead")]
+#[unstable(feature = "old_io")]
 impl Buffer for ZeroReader {
     fn fill_buf<'a>(&'a mut self) -> old_io::IoResult<&'a [u8]> {
         static DATA: [u8; 64] = [0; 64];
         Ok(&DATA)
     }
 
-    fn consume(&mut self, _amt: uint) {}
+    fn consume(&mut self, _amt: usize) {}
 }
 
 /// A `Reader` which is always at EOF, like /dev/null.
-#[derive(Copy, Debug)]
+#[derive(Copy, Clone, Debug)]
+#[deprecated(since = "1.0.0", reason = "use std::io::empty() instead")]
+#[unstable(feature = "old_io")]
 pub struct NullReader;
 
+#[deprecated(since = "1.0.0", reason = "use std::io::empty() instead")]
+#[unstable(feature = "old_io")]
 impl Reader for NullReader {
     #[inline]
-    fn read(&mut self, _buf: &mut [u8]) -> old_io::IoResult<uint> {
+    fn read(&mut self, _buf: &mut [u8]) -> old_io::IoResult<usize> {
         Err(old_io::standard_error(old_io::EndOfFile))
     }
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io::empty() instead")]
+#[unstable(feature = "old_io")]
 impl Buffer for NullReader {
     fn fill_buf<'a>(&'a mut self) -> old_io::IoResult<&'a [u8]> {
         Err(old_io::standard_error(old_io::EndOfFile))
     }
-    fn consume(&mut self, _amt: uint) {}
+    fn consume(&mut self, _amt: usize) {}
 }
 
 /// A `Writer` which multiplexes writes to a set of `Writer`s.
@@ -130,17 +158,23 @@ impl Buffer for NullReader {
 /// The `Writer`s are delegated to in order. If any `Writer` returns an error,
 /// that error is returned immediately and remaining `Writer`s are not called.
 #[derive(Debug)]
+#[deprecated(since = "1.0.0", reason = "use std::io::Broadcast instead")]
+#[unstable(feature = "old_io")]
 pub struct MultiWriter<W> {
     writers: Vec<W>
 }
 
 impl<W> MultiWriter<W> where W: Writer {
     /// Creates a new `MultiWriter`
+    #[deprecated(since = "1.0.0", reason = "use std::io's broadcast method instead")]
+    #[unstable(feature = "old_io")]
     pub fn new(writers: Vec<W>) -> MultiWriter<W> {
         MultiWriter { writers: writers }
     }
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io::Broadcast instead")]
+#[unstable(feature = "old_io")]
 impl<W> Writer for MultiWriter<W> where W: Writer {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> old_io::IoResult<()> {
@@ -162,6 +196,8 @@ impl<W> Writer for MultiWriter<W> where W: Writer {
 /// A `Reader` which chains input from multiple `Reader`s, reading each to
 /// completion before moving onto the next.
 #[derive(Clone, Debug)]
+#[deprecated(since = "1.0.0", reason = "use std::io::Chain instead")]
+#[unstable(feature = "old_io")]
 pub struct ChainedReader<I, R> {
     readers: I,
     cur_reader: Option<R>,
@@ -169,14 +205,18 @@ pub struct ChainedReader<I, R> {
 
 impl<R: Reader, I: Iterator<Item=R>> ChainedReader<I, R> {
     /// Creates a new `ChainedReader`
+    #[deprecated(since = "1.0.0", reason = "use std::io's chain method instead")]
+    #[unstable(feature = "old_io")]
     pub fn new(mut readers: I) -> ChainedReader<I, R> {
         let r = readers.next();
         ChainedReader { readers: readers, cur_reader: r }
     }
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io::Chain instead")]
+#[unstable(feature = "old_io")]
 impl<R: Reader, I: Iterator<Item=R>> Reader for ChainedReader<I, R> {
-    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
         loop {
             let err = match self.cur_reader {
                 Some(ref mut r) => {
@@ -201,13 +241,19 @@ impl<R: Reader, I: Iterator<Item=R>> Reader for ChainedReader<I, R> {
 /// A `Reader` which forwards input from another `Reader`, passing it along to
 /// a `Writer` as well. Similar to the `tee(1)` command.
 #[derive(Debug)]
+#[deprecated(since = "1.0.0", reason = "use std::io::Tee instead")]
+#[unstable(feature = "old_io")]
 pub struct TeeReader<R, W> {
     reader: R,
     writer: W,
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io::Tee instead")]
+#[unstable(feature = "old_io")]
 impl<R: Reader, W: Writer> TeeReader<R, W> {
     /// Creates a new `TeeReader`
+    #[deprecated(since = "1.0.0", reason = "use std::io's tee method instead")]
+    #[unstable(feature = "old_io")]
     pub fn new(r: R, w: W) -> TeeReader<R, W> {
         TeeReader { reader: r, writer: w }
     }
@@ -220,8 +266,10 @@ impl<R: Reader, W: Writer> TeeReader<R, W> {
     }
 }
 
+#[deprecated(since = "1.0.0", reason = "use std::io::Tee instead")]
+#[unstable(feature = "old_io")]
 impl<R: Reader, W: Writer> Reader for TeeReader<R, W> {
-    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
         self.reader.read(buf).and_then(|len| {
             self.writer.write_all(&mut buf[..len]).map(|()| len)
         })
@@ -229,6 +277,8 @@ impl<R: Reader, W: Writer> Reader for TeeReader<R, W> {
 }
 
 /// Copies all data from a `Reader` to a `Writer`.
+#[deprecated(since = "1.0.0", reason = "use std::io's copy function instead")]
+#[unstable(feature = "old_io")]
 pub fn copy<R: Reader, W: Writer>(r: &mut R, w: &mut W) -> old_io::IoResult<()> {
     let mut buf = [0; super::DEFAULT_BUF_SIZE];
     loop {
@@ -257,7 +307,7 @@ impl<T: Iterator<Item=u8>> IterReader<T> {
 
 impl<T: Iterator<Item=u8>> Reader for IterReader<T> {
     #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
         let mut len = 0;
         for (slot, elt) in buf.iter_mut().zip(self.iter.by_ref()) {
             *slot = elt;
@@ -275,7 +325,7 @@ impl<T: Iterator<Item=u8>> Reader for IterReader<T> {
 mod test {
     use prelude::v1::*;
 
-    use old_io::{MemReader, ByRefReader};
+    use old_io::{MemReader, ByRefReader, Reader, Writer, Buffer};
     use old_io;
     use super::*;
 
@@ -284,7 +334,7 @@ mod test {
         let mut r = MemReader::new(vec!(0, 1, 2));
         {
             let mut r = LimitReader::new(r.by_ref(), 4);
-            assert_eq!(vec!(0, 1, 2), r.read_to_end().unwrap());
+            assert_eq!(r.read_to_end().unwrap(), [0, 1, 2]);
         }
     }
 
@@ -293,9 +343,9 @@ mod test {
         let mut r = MemReader::new(vec!(0, 1, 2));
         {
             let mut r = LimitReader::new(r.by_ref(), 2);
-            assert_eq!(vec!(0, 1), r.read_to_end().unwrap());
+            assert_eq!(r.read_to_end().unwrap(), [0, 1]);
         }
-        assert_eq!(vec!(2), r.read_to_end().unwrap());
+        assert_eq!(r.read_to_end().unwrap(), [2]);
     }
 
     #[test]
@@ -305,7 +355,7 @@ mod test {
         assert_eq!(3, r.limit());
         assert_eq!(0, r.read_byte().unwrap());
         assert_eq!(2, r.limit());
-        assert_eq!(vec!(1, 2), r.read_to_end().unwrap());
+        assert_eq!(r.read_to_end().unwrap(), [1, 2]);
         assert_eq!(0, r.limit());
     }
 
@@ -314,7 +364,7 @@ mod test {
         let mut r = MemReader::new(vec![0, 1, 2, 3, 4, 5]);
         let mut r = LimitReader::new(r.by_ref(), 1);
         r.consume(2);
-        assert_eq!(vec![], r.read_to_end().unwrap());
+        assert_eq!(r.read_to_end().unwrap(), []);
     }
 
     #[test]
@@ -330,7 +380,7 @@ mod test {
         let mut s = ZeroReader;
         let mut buf = vec![1, 2, 3];
         assert_eq!(s.read(&mut buf), Ok(3));
-        assert_eq!(vec![0, 0, 0], buf);
+        assert_eq!(buf, [0, 0, 0]);
     }
 
     #[test]
@@ -342,8 +392,8 @@ mod test {
 
     #[test]
     fn test_multi_writer() {
-        static mut writes: uint = 0;
-        static mut flushes: uint = 0;
+        static mut writes: usize = 0;
+        static mut flushes: usize = 0;
 
         struct TestWriter;
         impl Writer for TestWriter {
@@ -373,16 +423,16 @@ mod test {
         let rs = vec!(MemReader::new(vec!(0, 1)), MemReader::new(vec!()),
                       MemReader::new(vec!(2, 3)));
         let mut r = ChainedReader::new(rs.into_iter());
-        assert_eq!(vec!(0, 1, 2, 3), r.read_to_end().unwrap());
+        assert_eq!(r.read_to_end().unwrap(), [0, 1, 2, 3]);
     }
 
     #[test]
     fn test_tee_reader() {
         let mut r = TeeReader::new(MemReader::new(vec!(0, 1, 2)),
                                    Vec::new());
-        assert_eq!(vec!(0, 1, 2), r.read_to_end().unwrap());
+        assert_eq!(r.read_to_end().unwrap(), [0, 1, 2]);
         let (_, w) = r.into_inner();
-        assert_eq!(vec!(0, 1, 2), w);
+        assert_eq!(w, [0, 1, 2]);
     }
 
     #[test]
@@ -390,12 +440,13 @@ mod test {
         let mut r = MemReader::new(vec!(0, 1, 2, 3, 4));
         let mut w = Vec::new();
         copy(&mut r, &mut w).unwrap();
-        assert_eq!(vec!(0, 1, 2, 3, 4), w);
+        assert_eq!(w, [0, 1, 2, 3, 4]);
     }
 
     #[test]
     fn limit_reader_buffer() {
-        let r = &mut b"0123456789\n0123456789\n";
+        let mut r: &[u8] = b"0123456789\n0123456789\n";
+        let r = &mut r;
         {
             let mut r = LimitReader::new(r.by_ref(), 3);
             assert_eq!(r.read_line(), Ok("012".to_string()));
@@ -418,7 +469,7 @@ mod test {
 
     #[test]
     fn test_iter_reader() {
-        let mut r = IterReader::new(0u8..8);
+        let mut r = IterReader::new(0..8);
         let mut buf = [0, 0, 0];
         let len = r.read(&mut buf).unwrap();
         assert_eq!(len, 3);
@@ -437,7 +488,7 @@ mod test {
 
     #[test]
     fn iter_reader_zero_length() {
-        let mut r = IterReader::new(0u8..8);
+        let mut r = IterReader::new(0..8);
         let mut buf = [];
         assert_eq!(Ok(0), r.read(&mut buf));
     }

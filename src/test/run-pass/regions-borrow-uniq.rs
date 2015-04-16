@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-fn foo(x: &uint) -> uint {
+fn foo(x: &usize) -> usize {
     *x
 }
 
 pub fn main() {
-    let p = box 3_usize;
+    let p: Box<_> = box 3;
     let r = foo(&*p);
-    assert_eq!(r, 3_usize);
+    assert_eq!(r, 3);
 }

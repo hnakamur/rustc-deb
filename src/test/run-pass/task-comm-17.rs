@@ -8,15 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(std_misc)]
+
 // Issue #922
 
 // This test is specifically about spawning temporary closures.
 
-use std::thread::Thread;
+use std::thread;
 
 fn f() {
 }
 
 pub fn main() {
-    let _t = Thread::scoped(move|| f() ).join();
+    let _t = thread::scoped(move|| f() ).join();
 }

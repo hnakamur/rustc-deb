@@ -79,12 +79,13 @@ fn main() {
 }
 ```
 
-This has some upsides: static dispatching of any method calls, allowing for
-inlining and hence usually higher performance. It also has some downsides:
-causing code bloat due to many copies of the same function existing in the
-binary, one for each type.
+This has a great upside: static dispatch allows function calls to be
+inlined because the callee is known at compile time, and inlining is
+the key to good optimization. Static dispatch is fast, but it comes at
+a tradeoff: 'code bloat', due to many copies of the same function
+existing in the binary, one for each type.
 
-Furthermore, compilers aren’t perfect and may “optimise” code to become slower.
+Furthermore, compilers aren’t perfect and may “optimize” code to become slower.
 For example, functions inlined too eagerly will bloat the instruction cache
 (cache rules everything around us). This is part of the reason that `#[inline]`
 and `#[inline(always)]` should be used carefully, and one reason why using a
@@ -92,47 +93,20 @@ dynamic dispatch is sometimes more efficient.
 
 However, the common case is that it is more efficient to use static dispatch,
 and one can always have a thin statically-dispatched wrapper function that does
-a dynamic, but not vice versa, meaning static calls are more flexible. The
-standard library tries to be statically dispatched where possible for this
-reason. 
+a dynamic dispatch, but not vice versa, meaning static calls are more flexible.
+The standard library tries to be statically dispatched where possible for this
+reason.
 
 ## Dynamic dispatch
 
 Rust provides dynamic dispatch through a feature called 'trait objects.' Trait
 objects, like `&Foo` or `Box<Foo>`, are normal values that store a value of
 *any* type that implements the given trait, where the precise type can only be
-known at runtime. The methods of the trait can be called on a trait object via
-a special record of function pointers (created and managed by the compiler).
+known at runtime.
 
-A function that takes a trait object is not specialised to each of the types
-that implements `Foo`: only one copy is generated, often (but not always)
-resulting in less code bloat. However, this comes at the cost of requiring
-slower virtual function calls, and effectively inhibiting any chance of
-inlining and related optimisations from occurring.
-
-Trait objects are both simple and complicated: their core representation and
-layout is quite straight-forward, but there are some curly error messages and
-surprising behaviours to discover.
-
-### Obtaining a trait object
-
-There's two similar ways to get a trait object value: casts and coercions. If
-`T` is a type that implements a trait `Foo` (e.g. `u8` for the `Foo` above),
-then the two ways to get a `Foo` trait object out of a pointer to `T` look
-like:
-
-```{rust,ignore}
-let ref_to_t: &T = ...;
-
-// `as` keyword for casting
-let cast = ref_to_t as &Foo;
-
-// using a `&T` in a place that has a known type of `&Foo` will implicitly coerce:
-let coerce: &Foo = ref_to_t;
-
-fn also_coerce(_unused: &Foo) {}
-also_coerce(ref_to_t);
-```
+A trait object can be obtained from a pointer to a concrete type that
+implements the trait by *casting* it (e.g. `&x as &Foo`) or *coercing* it
+(e.g. using `&x` as an argument to a function that takes `&Foo`).
 
 These trait object coercions and casts also work for pointers like `&mut T` to
 `&mut Foo` and `Box<T>` to `Box<Foo>`, but that's all at the moment. Coercions
@@ -140,13 +114,79 @@ and casts are identical.
 
 This operation can be seen as "erasing" the compiler's knowledge about the
 specific type of the pointer, and hence trait objects are sometimes referred to
-"type erasure".
+as "type erasure".
+
+Coming back to the example above, we can use the same trait to perform dynamic
+dispatch with trait objects by casting:
+
+```rust
+# trait Foo { fn method(&self) -> String; }
+# impl Foo for u8 { fn method(&self) -> String { format!("u8: {}", *self) } }
+# impl Foo for String { fn method(&self) -> String { format!("string: {}", *self) } }
+
+fn do_something(x: &Foo) {
+    x.method();
+}
+
+fn main() {
+    let x = 5u8;
+    do_something(&x as &Foo);
+}
+```
+
+or by coercing:
+
+```rust
+# trait Foo { fn method(&self) -> String; }
+# impl Foo for u8 { fn method(&self) -> String { format!("u8: {}", *self) } }
+# impl Foo for String { fn method(&self) -> String { format!("string: {}", *self) } }
+
+fn do_something(x: &Foo) {
+    x.method();
+}
+
+fn main() {
+    let x = "Hello".to_string();
+    do_something(&x);
+}
+```
+
+A function that takes a trait object is not specialized to each of the types
+that implements `Foo`: only one copy is generated, often (but not always)
+resulting in less code bloat. However, this comes at the cost of requiring
+slower virtual function calls, and effectively inhibiting any chance of
+inlining and related optimisations from occurring.
+
+### Why pointers?
+
+Rust does not put things behind a pointer by default, unlike many managed
+languages, so types can have different sizes. Knowing the size of the value at
+compile time is important for things like passing it as an argument to a
+function, moving it about on the stack and allocating (and deallocating) space
+on the heap to store it.
+
+For `Foo`, we would need to have a value that could be at least either a
+`String` (24 bytes) or a `u8` (1 byte), as well as any other type for which
+dependent crates may implement `Foo` (any number of bytes at all). There's no
+way to guarantee that this last point can work if the values are stored without
+a pointer, because those other types can be arbitrarily large.
+
+Putting the value behind a pointer means the size of the value is not relevant
+when we are tossing a trait object around, only the size of the pointer itself.
 
 ### Representation
 
+The methods of the trait can be called on a trait object via a special record
+of function pointers traditionally called a 'vtable' (created and managed by
+the compiler).
+
+Trait objects are both simple and complicated: their core representation and
+layout is quite straight-forward, but there are some curly error messages and
+surprising behaviors to discover.
+
 Let's start simple, with the runtime representation of a trait object. The
 `std::raw` module contains structs with layouts that are the same as the
-complicated build-in types, [including trait objects][stdraw]:
+complicated built-in types, [including trait objects][stdraw]:
 
 ```rust
 # mod foo {
@@ -223,14 +263,14 @@ static Foo_for_String_vtable: FooVtable = FooVtable {
 The `destructor` field in each vtable points to a function that will clean up
 any resources of the vtable's type, for `u8` it is trivial, but for `String` it
 will free the memory. This is necessary for owning trait objects like
-`Box<Foo>`, which need to clean-up both the `Box` allocation and as well as the
+`Box<Foo>`, which need to clean-up both the `Box` allocation as well as the
 internal type when they go out of scope. The `size` and `align` fields store
 the size of the erased type, and its alignment requirements; these are
 essentially unused at the moment since the information is embedded in the
-destructor, but will be used in future, as trait objects are progressively made
-more flexible.
+destructor, but will be used in the future, as trait objects are progressively
+made more flexible.
 
-Suppose we've got some values that implement `Foo`, the explicit form of
+Suppose we've got some values that implement `Foo`, then the explicit form of
 construction and use of `Foo` trait objects might look a bit like (ignoring the
 type mismatches: they're all just pointers anyway):
 
@@ -264,23 +304,3 @@ let y = TraitObject {
 If `b` or `y` were owning trait objects (`Box<Foo>`), there would be a
 `(b.vtable.destructor)(b.data)` (respectively `y`) call when they went out of
 scope.
-
-### Why pointers?
-
-The use of language like "fat pointer" implies that a trait object is
-always a pointer of some form, but why?
-
-Rust does not put things behind a pointer by default, unlike many managed
-languages, so types can have different sizes. Knowing the size of the value at
-compile time is important for things like passing it as an argument to a
-function, moving it about on the stack and allocating (and deallocating) space
-on the heap to store it.
-
-For `Foo`, we would need to have a value that could be at least either a
-`String` (24 bytes) or a `u8` (1 byte), as well as any other type for which
-dependent crates may implement `Foo` (any number of bytes at all). There's no
-way to guarantee that this last point can work if the values are stored without
-a pointer, because those other types can be arbitrarily large.
-
-Putting the value behind a pointer means the size of the value is not relevant
-when we are tossing a trait object around, only the size of the pointer itself.

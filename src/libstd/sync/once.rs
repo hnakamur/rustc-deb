@@ -13,10 +13,9 @@
 //! This primitive is meant to be used to run one-time initialization. An
 //! example use case would be for initializing an FFI library.
 
+use prelude::v1::*;
+
 use isize;
-use marker::Sync;
-use mem::drop;
-use ops::FnOnce;
 use sync::atomic::{AtomicIsize, Ordering, ATOMIC_ISIZE_INIT};
 use sync::{StaticMutex, MUTEX_INIT};
 
@@ -25,9 +24,9 @@ use sync::{StaticMutex, MUTEX_INIT};
 /// functionality. This type can only be constructed with the `ONCE_INIT`
 /// value.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
 /// use std::sync::{Once, ONCE_INIT};
 ///
 /// static START: Once = ONCE_INIT;
@@ -42,8 +41,6 @@ pub struct Once {
     cnt: AtomicIsize,
     lock_cnt: AtomicIsize,
 }
-
-unsafe impl Sync for Once {}
 
 /// Initialization value for static `Once` values.
 #[stable(feature = "rust1", since = "1.0.0")]

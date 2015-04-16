@@ -22,7 +22,7 @@ use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::mem_categorization as mc;
 use rustc::middle::region;
 use rustc::middle::ty;
-use rustc::util::ppaux::{Repr};
+use rustc::util::ppaux::Repr;
 use syntax::ast;
 use syntax::codemap::Span;
 use syntax::visit;
@@ -151,10 +151,11 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for GatherLoanCtxt<'a, 'tcx> {
               assignee_cmt: mc::cmt<'tcx>,
               mode: euv::MutateMode)
     {
-        debug!("mutate(assignment_id={}, assignee_cmt={})",
-               assignment_id, assignee_cmt.repr(self.tcx()));
+        let opt_lp = opt_loan_path(&assignee_cmt);
+        debug!("mutate(assignment_id={}, assignee_cmt={}) opt_lp={:?}",
+               assignment_id, assignee_cmt.repr(self.tcx()), opt_lp);
 
-        match opt_loan_path(&assignee_cmt) {
+        match opt_lp {
             Some(lp) => {
                 gather_moves::gather_assignment(self.bccx, &self.move_data,
                                                 assignment_id, assignment_span,
@@ -173,7 +174,7 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for GatherLoanCtxt<'a, 'tcx> {
     }
 }
 
-/// Implements the A-* rules in doc.rs.
+/// Implements the A-* rules in README.md.
 fn check_aliasability<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                 borrow_span: Span,
                                 loan_cause: euv::LoanCause,
@@ -181,12 +182,16 @@ fn check_aliasability<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                 req_kind: ty::BorrowKind)
                                 -> Result<(),()> {
 
-    match (cmt.freely_aliasable(bccx.tcx), req_kind) {
-        (None, _) => {
+    let aliasability = cmt.freely_aliasable(bccx.tcx);
+    debug!("check_aliasability aliasability={:?} req_kind={:?}",
+           aliasability, req_kind);
+
+    match (aliasability, req_kind) {
+        (mc::Aliasability::NonAliasable, _) => {
             /* Uniquely accessible path -- OK for `&` and `&mut` */
             Ok(())
         }
-        (Some(mc::AliasableStatic(safety)), ty::ImmBorrow) => {
+        (mc::Aliasability::FreelyAliasable(mc::AliasableStatic(safety)), ty::ImmBorrow) => {
             // Borrow of an immutable static item:
             match safety {
                 mc::InteriorUnsafe => {
@@ -202,13 +207,20 @@ fn check_aliasability<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                 }
             }
         }
-        (Some(mc::AliasableStaticMut(..)), _) => {
+        (mc::Aliasability::FreelyAliasable(mc::AliasableStaticMut(..)), _) => {
             // Even touching a static mut is considered unsafe. We assume the
             // user knows what they're doing in these cases.
             Ok(())
         }
-        (Some(alias_cause), ty::UniqueImmBorrow) |
-        (Some(alias_cause), ty::MutBorrow) => {
+        (mc::Aliasability::ImmutableUnique(_), ty::MutBorrow) => {
+            bccx.report_aliasability_violation(
+                        borrow_span,
+                        BorrowViolation(loan_cause),
+                        mc::AliasableReason::UnaliasableImmutable);
+            Err(())
+        }
+        (mc::Aliasability::FreelyAliasable(alias_cause), ty::UniqueImmBorrow) |
+        (mc::Aliasability::FreelyAliasable(alias_cause), ty::MutBorrow) => {
             bccx.report_aliasability_violation(
                         borrow_span,
                         BorrowViolation(loan_cause),
@@ -307,7 +319,7 @@ impl<'a, 'tcx> GatherLoanCtxt<'a, 'tcx> {
                         self.tcx().sess.span_bug(
                             cmt.span,
                             &format!("invalid borrow lifetime: {:?}",
-                                    loan_region)[]);
+                                    loan_region));
                     }
                 };
                 debug!("loan_scope = {:?}", loan_scope);
@@ -375,8 +387,9 @@ impl<'a, 'tcx> GatherLoanCtxt<'a, 'tcx> {
                                       cmt: mc::cmt<'tcx>,
                                       req_kind: ty::BorrowKind)
                                       -> Result<(),()> {
-            //! Implements the M-* rules in doc.rs.
-
+            //! Implements the M-* rules in README.md.
+            debug!("check_mutability(cause={:?} cmt={} req_kind={:?}",
+                   cause, cmt.repr(bccx.tcx), req_kind);
             match req_kind {
                 ty::UniqueImmBorrow | ty::ImmBorrow => {
                     match cmt.mutbl {
@@ -491,7 +504,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for StaticInitializerCtxt<'a, 'tcx> {
         if let ast::ExprAddrOf(mutbl, ref base) = ex.node {
             let param_env = ty::empty_parameter_environment(self.bccx.tcx);
             let mc = mc::MemCategorizationContext::new(&param_env);
-            let base_cmt = mc.cat_expr(&**base).ok().unwrap();
+            let base_cmt = mc.cat_expr(&**base).unwrap();
             let borrow_kind = ty::BorrowKind::from_mutbl(mutbl);
             // Check that we don't allow borrows of unsafe static items.
             if check_aliasability(self.bccx, ex.span, euv::AddrOf,

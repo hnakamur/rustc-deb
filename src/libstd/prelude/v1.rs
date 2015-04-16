@@ -23,41 +23,30 @@
 #[doc(no_inline)] pub use mem::drop;
 
 // Reexported types and traits
-
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use boxed::Box;
-#[stable(feature = "rust1", since = "1.0.0")]
-#[doc(no_inline)] pub use char::CharExt;
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use clone::Clone;
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use cmp::{PartialEq, PartialOrd, Eq, Ord};
+#[unstable(feature = "convert")]
+#[doc(no_inline)] pub use convert::{AsRef, AsMut, Into, From};
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use iter::DoubleEndedIterator;
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use iter::ExactSizeIterator;
 #[stable(feature = "rust1", since = "1.0.0")]
-#[doc(no_inline)] pub use iter::{Iterator, IteratorExt, Extend};
+#[doc(no_inline)] pub use iter::{Iterator, Extend};
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use option::Option::{self, Some, None};
 #[stable(feature = "rust1", since = "1.0.0")]
-#[doc(no_inline)] pub use ptr::{PtrExt, MutPtrExt};
-#[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use result::Result::{self, Ok, Err};
 #[stable(feature = "rust1", since = "1.0.0")]
-#[doc(no_inline)] pub use slice::AsSlice;
-#[stable(feature = "rust1", since = "1.0.0")]
-#[doc(no_inline)] pub use slice::{SliceExt, SliceConcatExt};
-#[stable(feature = "rust1", since = "1.0.0")]
-#[doc(no_inline)] pub use str::{Str, StrExt};
+#[doc(no_inline)] pub use slice::SliceConcatExt;
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use string::{String, ToString};
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(no_inline)] pub use vec::Vec;
 
-// NB: remove when path reform lands
-#[doc(no_inline)] pub use old_path::{Path, GenericPath};
-// NB: remove when I/O reform lands
-#[doc(no_inline)] pub use old_io::{Buffer, Writer, Reader, Seek, BufferPrelude};
-// NB: remove when range syntax lands
-#[doc(no_inline)] pub use iter::range;
+#[allow(deprecated)] pub use slice::AsSlice;
+#[allow(deprecated)] pub use str::Str;

@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct Bar(int, int);
+// pretty-expanded FIXME #23616
+
+struct Bar(isize, isize);
 
 static X: Bar = Bar(1, 2);
 

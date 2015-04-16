@@ -153,7 +153,7 @@ pub fn count_names(ms: &[TokenTree]) -> usize {
                 seq.num_captures
             }
             &TtDelimited(_, ref delim) => {
-                count_names(&delim.tts[])
+                count_names(&delim.tts)
             }
             &TtToken(_, MatchNt(..)) => {
                 1
@@ -243,11 +243,14 @@ pub fn nameize(p_s: &ParseSess, ms: &[TokenTree], res: &[Rc<NamedMatch>])
     ret_val
 }
 
-pub enum ParseResult {
-    Success(HashMap<Ident, Rc<NamedMatch>>),
+pub enum ParseResult<T> {
+    Success(T),
     Failure(codemap::Span, String),
     Error(codemap::Span, String)
 }
+
+pub type NamedParseResult = ParseResult<HashMap<Ident, Rc<NamedMatch>>>;
+pub type PositionalParseResult = ParseResult<Vec<Rc<NamedMatch>>>;
 
 pub fn parse_or_else(sess: &ParseSess,
                      cfg: ast::CrateConfig,
@@ -280,7 +283,7 @@ pub fn parse(sess: &ParseSess,
              cfg: ast::CrateConfig,
              mut rdr: TtReader,
              ms: &[TokenTree])
-             -> ParseResult {
+             -> NamedParseResult {
     let mut cur_eis = Vec::new();
     cur_eis.push(initial_matcher_pos(Rc::new(ms.iter()
                                                 .cloned()
@@ -479,7 +482,7 @@ pub fn parse(sess: &ParseSess,
                 }
                 rdr.next_token();
             } else /* bb_eis.len() == 1 */ {
-                let mut rust_parser = Parser::new(sess, cfg.clone(), box rdr.clone());
+                let mut rust_parser = Parser::new(sess, cfg.clone(), Box::new(rdr.clone()));
 
                 let mut ei = bb_eis.pop().unwrap();
                 match ei.top_elts.get_tt(ei.idx) {
@@ -518,12 +521,15 @@ pub fn parse_nt(p: &mut Parser, sp: Span, name: &str) -> Nonterminal {
     // check at the beginning and the parser checks after each bump
     p.check_unknown_macro_variable();
     match name {
-      "item" => match p.parse_item(Vec::new()) {
+      "item" => match p.parse_item() {
         Some(i) => token::NtItem(i),
         None => p.fatal("expected an item keyword")
       },
       "block" => token::NtBlock(p.parse_block()),
-      "stmt" => token::NtStmt(p.parse_stmt(Vec::new())),
+      "stmt" => match p.parse_stmt() {
+        Some(s) => token::NtStmt(s),
+        None => p.fatal("expected a statement")
+      },
       "pat" => token::NtPat(p.parse_pat()),
       "expr" => token::NtExpr(p.parse_expr()),
       "ty" => token::NtTy(p.parse_ty()),

@@ -11,10 +11,12 @@
 // Regression test for issue #10682
 // Nested `proc` usage can't use outer owned data
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-fn work(_: Box<int>) {}
+fn work(_: Box<isize>) {}
 fn foo<F:FnOnce()>(_: F) {}
 
 pub fn main() {

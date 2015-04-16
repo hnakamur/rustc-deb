@@ -17,11 +17,13 @@
 // changes were caught. However, those uses in the compiler could
 // easily get changed or refactored away in the future.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 struct Ctxt<'tcx> {
-    x: &'tcx Vec<int>
+    x: &'tcx Vec<isize>
 }
 
 struct Foo<'a,'tcx:'a> {
@@ -29,8 +31,9 @@ struct Foo<'a,'tcx:'a> {
 }
 
 impl<'a,'tcx> Foo<'a,'tcx> {
-    fn bother(&mut self) -> int {
-        self.elaborate_bounds(box |this| {
+    fn bother(&mut self) -> isize {
+        // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+        self.elaborate_bounds(Box::new(|this| {
             // (*) Here: type of `this` is `&'f0 Foo<&'f1, '_2>`,
             // where `'f0` and `'f1` are fresh, free regions that
             // result from the bound regions on the closure, and `'2`
@@ -44,17 +47,17 @@ impl<'a,'tcx> Foo<'a,'tcx> {
             // `region_inference.rs` file (and the `givens` field, in
             // particular) for more details.
             this.foo()
-        })
+        }))
     }
 
-    fn foo(&mut self) -> int {
+    fn foo(&mut self) -> isize {
         22
     }
 
     fn elaborate_bounds(
         &mut self,
-        mut mk_cand: Box<for<'b> FnMut(&mut Foo<'b, 'tcx>) -> int>)
-        -> int
+        mut mk_cand: Box<for<'b> FnMut(&mut Foo<'b, 'tcx>) -> isize>)
+        -> isize
     {
         mk_cand(self)
     }

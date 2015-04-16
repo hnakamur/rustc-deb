@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #[derive(Clone)]
 enum E<T,U> {
     A(T),
@@ -16,5 +18,5 @@ enum E<T,U> {
 }
 
 pub fn main() {
-    let _ = E::A::<int, int>(1).clone();
+    let _ = E::A::<isize, isize>(1).clone();
 }

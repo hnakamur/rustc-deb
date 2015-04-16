@@ -10,6 +10,8 @@
 
 // aux-build:namespaced_enum_emulate_flat.rs
 
+// pretty-expanded FIXME #23616
+
 extern crate namespaced_enum_emulate_flat;
 
 use namespaced_enum_emulate_flat::{Foo, A, B, C};
@@ -28,4 +30,3 @@ fn _f2(f: Bar) {
 }
 
 pub fn main() {}
-

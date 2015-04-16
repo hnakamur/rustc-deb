@@ -9,7 +9,9 @@
 // except according to those terms.
 
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-pub fn main() { let x = { box 100 }; assert!((*x == 100)); }
+pub fn main() { let x: Box<_> = { box 100 }; assert!((*x == 100)); }

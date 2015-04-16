@@ -78,16 +78,7 @@ impl<'a, 'v> Visitor<'v> for MacroLoader<'a> {
 
         for attr in &item.attrs {
             let mut used = true;
-            match &attr.name()[] {
-                "phase" => {
-                    self.sess.span_err(attr.span, "#[phase] is deprecated");
-                }
-                "plugin" => {
-                    self.sess.span_err(attr.span, "#[plugin] on `extern crate` is deprecated");
-                    self.sess.span_help(attr.span, &format!("use a crate attribute instead, \
-                                                            i.e. #![plugin({})]",
-                                                            item.ident.as_str())[]);
-                }
+            match &attr.name()[..] {
                 "macro_use" => {
                     let names = attr.meta_item_list();
                     if names.is_none() {
@@ -166,6 +157,9 @@ impl<'a> MacroLoader<'a> {
                 Some(sel) => sel.contains_key(&name),
             };
             def.export = reexport.contains_key(&name);
+            def.allow_internal_unstable = attr::contains_name(&def.attrs,
+                                                              "allow_internal_unstable");
+            debug!("load_macros: loaded: {:?}", def);
             self.macros.push(def);
         }
 

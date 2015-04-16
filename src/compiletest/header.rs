@@ -8,6 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::env;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::prelude::*;
+use std::path::{Path, PathBuf};
+
 use common::Config;
 use common;
 use util;
@@ -21,7 +27,7 @@ pub struct TestProps {
     pub run_flags: Option<String>,
     // If present, the name of a file that this test should match when
     // pretty-printed
-    pub pp_exact: Option<Path>,
+    pub pp_exact: Option<PathBuf>,
     // Modules from aux directory that should be compiled
     pub aux_builds: Vec<String> ,
     // Environment settings to use during execution
@@ -34,8 +40,8 @@ pub struct TestProps {
     pub check_stdout: bool,
     // Don't force a --crate-type=dylib flag on the command line
     pub no_prefer_dynamic: bool,
-    // Don't run --pretty expanded when running pretty printing tests
-    pub no_pretty_expanded: bool,
+    // Run --pretty expanded when running pretty printing tests
+    pub pretty_expanded: bool,
     // Which pretty mode are we testing with, default to 'normal'
     pub pretty_mode: String,
     // Only compare pretty output and don't try compiling
@@ -56,11 +62,11 @@ pub fn load_props(testfile: &Path) -> TestProps {
     let mut force_host = false;
     let mut check_stdout = false;
     let mut no_prefer_dynamic = false;
-    let mut no_pretty_expanded = false;
+    let mut pretty_expanded = false;
     let mut pretty_mode = None;
     let mut pretty_compare_only = false;
     let mut forbid_output = Vec::new();
-    iter_header(testfile, |ln| {
+    iter_header(testfile, &mut |ln| {
         match parse_error_pattern(ln) {
           Some(ep) => error_patterns.push(ep),
           None => ()
@@ -90,8 +96,8 @@ pub fn load_props(testfile: &Path) -> TestProps {
             no_prefer_dynamic = parse_no_prefer_dynamic(ln);
         }
 
-        if !no_pretty_expanded {
-            no_pretty_expanded = parse_no_pretty_expanded(ln);
+        if !pretty_expanded {
+            pretty_expanded = parse_pretty_expanded(ln);
         }
 
         if pretty_mode.is_none() {
@@ -125,6 +131,16 @@ pub fn load_props(testfile: &Path) -> TestProps {
         true
     });
 
+    for key in vec!["RUST_TEST_NOCAPTURE", "RUST_TEST_THREADS"] {
+        match env::var(key) {
+            Ok(val) =>
+                if exec_env.iter().find(|&&(ref x, _)| *x == key.to_string()).is_none() {
+                    exec_env.push((key.to_string(), val))
+                },
+            Err(..) => {}
+        }
+    }
+
     TestProps {
         error_patterns: error_patterns,
         compile_flags: compile_flags,
@@ -136,7 +152,7 @@ pub fn load_props(testfile: &Path) -> TestProps {
         force_host: force_host,
         check_stdout: check_stdout,
         no_prefer_dynamic: no_prefer_dynamic,
-        no_pretty_expanded: no_pretty_expanded,
+        pretty_expanded: pretty_expanded,
         pretty_mode: pretty_mode.unwrap_or("normal".to_string()),
         pretty_compare_only: pretty_compare_only,
         forbid_output: forbid_output,
@@ -146,6 +162,9 @@ pub fn load_props(testfile: &Path) -> TestProps {
 pub fn is_test_ignored(config: &Config, testfile: &Path) -> bool {
     fn ignore_target(config: &Config) -> String {
         format!("ignore-{}", util::get_os(&config.target))
+    }
+    fn ignore_architecture(config: &Config) -> String {
+        format!("ignore-{}", util::get_arch(&config.target))
     }
     fn ignore_stage(config: &Config) -> String {
         format!("ignore-{}",
@@ -207,9 +226,10 @@ pub fn is_test_ignored(config: &Config, testfile: &Path) -> bool {
         }
     }
 
-    let val = iter_header(testfile, |ln| {
+    let val = iter_header(testfile, &mut |ln| {
         !parse_name_directive(ln, "ignore-test") &&
         !parse_name_directive(ln, &ignore_target(config)) &&
+        !parse_name_directive(ln, &ignore_architecture(config)) &&
         !parse_name_directive(ln, &ignore_stage(config)) &&
         !(config.mode == common::Pretty && parse_name_directive(ln, "ignore-pretty")) &&
         !(config.target != config.host && parse_name_directive(ln, "ignore-cross-compile")) &&
@@ -220,12 +240,8 @@ pub fn is_test_ignored(config: &Config, testfile: &Path) -> bool {
     !val
 }
 
-fn iter_header<F>(testfile: &Path, mut it: F) -> bool where
-    F: FnMut(&str) -> bool,
-{
-    use std::old_io::{BufferedReader, File};
-
-    let mut rdr = BufferedReader::new(File::open(testfile).unwrap());
+fn iter_header(testfile: &Path, it: &mut FnMut(&str) -> bool) -> bool {
+    let rdr = BufReader::new(File::open(testfile).unwrap());
     for ln in rdr.lines() {
         // Assume that any directives will be found before the first
         // module or function. This doesn't seem to be an optimization
@@ -279,8 +295,8 @@ fn parse_no_prefer_dynamic(line: &str) -> bool {
     parse_name_directive(line, "no-prefer-dynamic")
 }
 
-fn parse_no_pretty_expanded(line: &str) -> bool {
-    parse_name_directive(line, "no-pretty-expanded")
+fn parse_pretty_expanded(line: &str) -> bool {
+    parse_name_directive(line, "pretty-expanded")
 }
 
 fn parse_pretty_mode(line: &str) -> Option<String> {
@@ -295,7 +311,7 @@ fn parse_exec_env(line: &str) -> Option<(String, String)> {
     parse_name_value_directive(line, "exec-env").map(|nv| {
         // nv is either FOO or FOO=BAR
         let mut strs: Vec<String> = nv
-                                      .splitn(1, '=')
+                                      .splitn(2, '=')
                                       .map(|s| s.to_string())
                                       .collect();
 
@@ -310,12 +326,12 @@ fn parse_exec_env(line: &str) -> Option<(String, String)> {
     })
 }
 
-fn parse_pp_exact(line: &str, testfile: &Path) -> Option<Path> {
+fn parse_pp_exact(line: &str, testfile: &Path) -> Option<PathBuf> {
     match parse_name_value_directive(line, "pp-exact") {
-      Some(s) => Some(Path::new(s)),
+      Some(s) => Some(PathBuf::from(&s)),
       None => {
         if parse_name_directive(line, "pp-exact") {
-            testfile.filename().map(|s| Path::new(s))
+            testfile.file_name().map(|s| PathBuf::from(s))
         } else {
             None
         }
@@ -324,13 +340,14 @@ fn parse_pp_exact(line: &str, testfile: &Path) -> Option<Path> {
 }
 
 fn parse_name_directive(line: &str, directive: &str) -> bool {
-    line.contains(directive)
+    // This 'no-' rule is a quick hack to allow pretty-expanded and no-pretty-expanded to coexist
+    line.contains(directive) && !line.contains(&("no-".to_string() + directive))
 }
 
 pub fn parse_name_value_directive(line: &str, directive: &str)
                                   -> Option<String> {
     let keycolon = format!("{}:", directive);
-    match line.find_str(&keycolon) {
+    match line.find(&keycolon) {
         Some(colon) => {
             let value = line[(colon + keycolon.len()) .. line.len()].to_string();
             debug!("{}: {}", directive, value);
@@ -340,7 +357,7 @@ pub fn parse_name_value_directive(line: &str, directive: &str)
     }
 }
 
-pub fn gdb_version_to_int(version_string: &str) -> int {
+pub fn gdb_version_to_int(version_string: &str) -> isize {
     let error_string = format!(
         "Encountered GDB version string with unexpected format: {}",
         version_string);
@@ -352,17 +369,17 @@ pub fn gdb_version_to_int(version_string: &str) -> int {
         panic!("{}", error_string);
     }
 
-    let major: int = components[0].parse().ok().expect(&error_string);
-    let minor: int = components[1].parse().ok().expect(&error_string);
+    let major: isize = components[0].parse().ok().expect(&error_string);
+    let minor: isize = components[1].parse().ok().expect(&error_string);
 
     return major * 1000 + minor;
 }
 
-pub fn lldb_version_to_int(version_string: &str) -> int {
+pub fn lldb_version_to_int(version_string: &str) -> isize {
     let error_string = format!(
         "Encountered LLDB version string with unexpected format: {}",
         version_string);
     let error_string = error_string;
-    let major: int = version_string.parse().ok().expect(&error_string);
+    let major: isize = version_string.parse().ok().expect(&error_string);
     return major;
 }

@@ -9,11 +9,13 @@
 // except according to those terms.
 
 
+// pretty-expanded FIXME #23616
+
 trait Foo {
     fn foo(self);
 }
 
-impl<'a> Foo for &'a [int] {
+impl<'a> Foo for &'a [isize] {
     fn foo(self) {}
 }
 

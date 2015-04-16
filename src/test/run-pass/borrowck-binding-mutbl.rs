@@ -9,9 +9,11 @@
 // except according to those terms.
 
 
-struct F { f: Vec<int> }
+// pretty-expanded FIXME #23616
 
-fn impure(_v: &[int]) {
+struct F { f: Vec<isize> }
+
+fn impure(_v: &[isize]) {
 }
 
 pub fn main() {

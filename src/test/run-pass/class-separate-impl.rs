@@ -14,9 +14,9 @@
 use std::fmt;
 
 struct cat {
-    meows : uint,
+    meows : usize,
 
-    how_hungry : int,
+    how_hungry : isize,
     name : String,
 }
 
@@ -39,14 +39,14 @@ impl cat {
 impl cat {
     fn meow(&mut self) {
         println!("Meow");
-        self.meows += 1_usize;
-        if self.meows % 5_usize == 0_usize {
+        self.meows += 1;
+        if self.meows % 5 == 0 {
             self.how_hungry += 1;
         }
     }
 }
 
-fn cat(in_x : uint, in_y : int, in_name: String) -> cat {
+fn cat(in_x : usize, in_y : isize, in_name: String) -> cat {
     cat {
         meows: in_x,
         how_hungry: in_y,
@@ -54,7 +54,7 @@ fn cat(in_x : uint, in_y : int, in_name: String) -> cat {
     }
 }
 
-impl fmt::String for cat {
+impl fmt::Display for cat {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.name)
     }
@@ -67,6 +67,6 @@ fn print_out(thing: Box<ToString>, expected: String) {
 }
 
 pub fn main() {
-  let nyan: Box<ToString> = box cat(0_usize, 2, "nyan".to_string()) as Box<ToString>;
+  let nyan: Box<ToString> = box cat(0, 2, "nyan".to_string()) as Box<ToString>;
   print_out(nyan, "nyan".to_string());
 }

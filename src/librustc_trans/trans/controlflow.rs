@@ -12,6 +12,7 @@ use llvm::ValueRef;
 use middle::def;
 use middle::lang_items::{PanicFnLangItem, PanicBoundsCheckFnLangItem};
 use trans::base::*;
+use trans::basic_block::BasicBlock;
 use trans::build::*;
 use trans::callee;
 use trans::cleanup::CleanupMethods;
@@ -39,8 +40,12 @@ pub fn trans_stmt<'blk, 'tcx>(cx: Block<'blk, 'tcx>,
     let fcx = cx.fcx;
     debug!("trans_stmt({})", s.repr(cx.tcx()));
 
+    if cx.unreachable.get() {
+        return cx;
+    }
+
     if cx.sess().asm_comments() {
-        add_span_comment(cx, s.span, &s.repr(cx.tcx())[]);
+        add_span_comment(cx, s.span, &s.repr(cx.tcx()));
     }
 
     let mut bcx = cx;
@@ -75,8 +80,13 @@ pub fn trans_stmt<'blk, 'tcx>(cx: Block<'blk, 'tcx>,
 pub fn trans_stmt_semi<'blk, 'tcx>(cx: Block<'blk, 'tcx>, e: &ast::Expr)
                                    -> Block<'blk, 'tcx> {
     let _icx = push_ctxt("trans_stmt_semi");
+
+    if cx.unreachable.get() {
+        return cx;
+    }
+
     let ty = expr_ty(cx, e);
-    if type_needs_drop(cx.tcx(), ty) {
+    if cx.fcx.type_needs_drop(ty) {
         expr::trans_to_lvalue(cx, e, "stmt").bcx
     } else {
         expr::trans_into(cx, e, expr::Ignore)
@@ -88,6 +98,11 @@ pub fn trans_block<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                mut dest: expr::Dest)
                                -> Block<'blk, 'tcx> {
     let _icx = push_ctxt("trans_block");
+
+    if bcx.unreachable.get() {
+        return bcx;
+    }
+
     let fcx = bcx.fcx;
     let mut bcx = bcx;
 
@@ -140,6 +155,11 @@ pub fn trans_if<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
            bcx.to_str(), if_id, bcx.expr_to_string(cond), thn.id,
            dest.to_string(bcx.ccx()));
     let _icx = push_ctxt("trans_if");
+
+    if bcx.unreachable.get() {
+        return bcx;
+    }
+
     let mut bcx = bcx;
 
     let cond_val = unpack_result!(bcx, expr::trans(bcx, cond).to_llbool());
@@ -213,6 +233,11 @@ pub fn trans_while<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                body: &ast::Block)
                                -> Block<'blk, 'tcx> {
     let _icx = push_ctxt("trans_while");
+
+    if bcx.unreachable.get() {
+        return bcx;
+    }
+
     let fcx = bcx.fcx;
 
     //            bcx
@@ -256,6 +281,11 @@ pub fn trans_loop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                               body: &ast::Block)
                               -> Block<'blk, 'tcx> {
     let _icx = push_ctxt("trans_loop");
+
+    if bcx.unreachable.get() {
+        return bcx;
+    }
+
     let fcx = bcx.fcx;
 
     //            bcx
@@ -280,30 +310,36 @@ pub fn trans_loop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 
     fcx.pop_loop_cleanup_scope(loop_expr.id);
 
+    // If there are no predecessors for the next block, we just translated an endless loop and the
+    // next block is unreachable
+    if BasicBlock(next_bcx_in.llbb).pred_iter().next().is_none() {
+        Unreachable(next_bcx_in);
+    }
+
     return next_bcx_in;
 }
 
 pub fn trans_break_cont<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                     expr: &ast::Expr,
                                     opt_label: Option<Ident>,
-                                    exit: uint)
+                                    exit: usize)
                                     -> Block<'blk, 'tcx> {
     let _icx = push_ctxt("trans_break_cont");
-    let fcx = bcx.fcx;
 
     if bcx.unreachable.get() {
         return bcx;
     }
 
+    let fcx = bcx.fcx;
+
     // Locate loop that we will break to
     let loop_id = match opt_label {
         None => fcx.top_loop_scope(),
         Some(_) => {
-            match bcx.tcx().def_map.borrow().get(&expr.id) {
-                Some(&def::DefLabel(loop_id)) => loop_id,
-                ref r => {
-                    bcx.tcx().sess.bug(&format!("{:?} in def-map for label",
-                                               r)[])
+            match bcx.tcx().def_map.borrow().get(&expr.id).map(|d| d.full_def())  {
+                Some(def::DefLabel(loop_id)) => loop_id,
+                r => {
+                    bcx.tcx().sess.bug(&format!("{:?} in def-map for label", r))
                 }
             }
         }
@@ -335,6 +371,11 @@ pub fn trans_ret<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                              retval_expr: Option<&ast::Expr>)
                              -> Block<'blk, 'tcx> {
     let _icx = push_ctxt("trans_ret");
+
+    if bcx.unreachable.get() {
+        return bcx;
+    }
+
     let fcx = bcx.fcx;
     let mut bcx = bcx;
     let dest = match (fcx.llretslotptr.get(), retval_expr) {
@@ -366,11 +407,15 @@ pub fn trans_fail<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let ccx = bcx.ccx();
     let _icx = push_ctxt("trans_fail_value");
 
+    if bcx.unreachable.get() {
+        return bcx;
+    }
+
     let v_str = C_str_slice(ccx, fail_str);
     let loc = bcx.sess().codemap().lookup_char_pos(call_info.span.lo);
-    let filename = token::intern_and_get_ident(&loc.file.name[]);
+    let filename = token::intern_and_get_ident(&loc.file.name);
     let filename = C_str_slice(ccx, filename);
-    let line = C_uint(ccx, loc.line);
+    let line = C_u32(ccx, loc.line as u32);
     let expr_file_line_const = C_struct(ccx, &[v_str, filename, line], false);
     let expr_file_line = consts::addr_of(ccx, expr_file_line_const,
                                          "panic_loc", call_info.id);
@@ -393,13 +438,17 @@ pub fn trans_fail_bounds_check<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let ccx = bcx.ccx();
     let _icx = push_ctxt("trans_fail_bounds_check");
 
+    if bcx.unreachable.get() {
+        return bcx;
+    }
+
     // Extract the file/line from the span
     let loc = bcx.sess().codemap().lookup_char_pos(call_info.span.lo);
-    let filename = token::intern_and_get_ident(&loc.file.name[]);
+    let filename = token::intern_and_get_ident(&loc.file.name);
 
     // Invoke the lang item
     let filename = C_str_slice(ccx,  filename);
-    let line = C_uint(ccx, loc.line);
+    let line = C_u32(ccx, loc.line as u32);
     let file_line_const = C_struct(ccx, &[filename, line], false);
     let file_line = consts::addr_of(ccx, file_line_const,
                                     "panic_bounds_check_loc", call_info.id);

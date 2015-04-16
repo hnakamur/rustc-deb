@@ -15,9 +15,9 @@ use io;
 use libc::{self, c_int, size_t};
 use str;
 use sys::c;
-use net::{SocketAddr, IpAddr};
+use net::SocketAddr;
 use sys::fd::FileDesc;
-use sys_common::AsInner;
+use sys_common::{AsInner, FromInner};
 
 pub use sys::{cvt, cvt_r};
 
@@ -35,14 +35,15 @@ pub fn cvt_gai(err: c_int) -> io::Result<()> {
             .to_string()
     };
     Err(io::Error::new(io::ErrorKind::Other,
-                       "failed to lookup address information", Some(detail)))
+                       &format!("failed to lookup address information: {}",
+                                detail)[..]))
 }
 
 impl Socket {
     pub fn new(addr: &SocketAddr, ty: c_int) -> io::Result<Socket> {
-        let fam = match addr.ip() {
-            IpAddr::V4(..) => libc::AF_INET,
-            IpAddr::V6(..) => libc::AF_INET6,
+        let fam = match *addr {
+            SocketAddr::V4(..) => libc::AF_INET,
+            SocketAddr::V6(..) => libc::AF_INET6,
         };
         unsafe {
             let fd = try!(cvt(libc::socket(fam, ty, 0)));
@@ -71,4 +72,8 @@ impl Socket {
 
 impl AsInner<c_int> for Socket {
     fn as_inner(&self) -> &c_int { self.0.as_inner() }
+}
+
+impl FromInner<c_int> for Socket {
+    fn from_inner(fd: c_int) -> Socket { Socket(FileDesc::new(fd)) }
 }

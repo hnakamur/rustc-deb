@@ -1,4 +1,4 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -105,7 +105,7 @@ impl LintStore {
     }
 
     pub fn get_lints<'t>(&'t self) -> &'t [(&'static Lint, bool)] {
-        &self.lints[]
+        &self.lints
     }
 
     pub fn get_lint_groups<'t>(&'t self) -> Vec<(&'static str, Vec<LintId>, bool)> {
@@ -159,86 +159,12 @@ impl LintStore {
         }
     }
 
-    fn register_renamed(&mut self, old_name: &str, new_name: &str) {
+    pub fn register_renamed(&mut self, old_name: &str, new_name: &str) {
         let target = match self.by_name.get(new_name) {
             Some(&Id(lint_id)) => lint_id.clone(),
             _ => panic!("invalid lint renaming of {} to {}", old_name, new_name)
         };
         self.by_name.insert(old_name.to_string(), Renamed(new_name.to_string(), target));
-    }
-
-    pub fn register_builtin(&mut self, sess: Option<&Session>) {
-        macro_rules! add_builtin {
-            ($sess:ident, $($name:ident),*,) => (
-                {$(
-                    self.register_pass($sess, false, box builtin::$name as LintPassObject);
-                )*}
-            )
-        }
-
-        macro_rules! add_builtin_with_new {
-            ($sess:ident, $($name:ident),*,) => (
-                {$(
-                    self.register_pass($sess, false, box builtin::$name::new() as LintPassObject);
-                )*}
-            )
-        }
-
-        macro_rules! add_lint_group {
-            ($sess:ident, $name:expr, $($lint:ident),*) => (
-                self.register_group($sess, false, $name, vec![$(LintId::of(builtin::$lint)),*]);
-            )
-        }
-
-        add_builtin!(sess,
-                     HardwiredLints,
-                     WhileTrue,
-                     UnusedCasts,
-                     ImproperCTypes,
-                     BoxPointers,
-                     UnusedAttributes,
-                     PathStatements,
-                     UnusedResults,
-                     NonCamelCaseTypes,
-                     NonSnakeCase,
-                     NonUpperCaseGlobals,
-                     UnusedParens,
-                     UnusedImportBraces,
-                     NonShorthandFieldPatterns,
-                     UnusedUnsafe,
-                     UnsafeBlocks,
-                     UnusedMut,
-                     UnusedAllocation,
-                     MissingCopyImplementations,
-                     UnstableFeatures,
-                     Stability,
-                     UnconditionalRecursion,
-                     InvalidNoMangleItems,
-                     PluginAsLibrary,
-        );
-
-        add_builtin_with_new!(sess,
-                              TypeLimits,
-                              RawPointerDerive,
-                              MissingDoc,
-                              MissingDebugImplementations,
-        );
-
-        add_lint_group!(sess, "bad_style",
-                        NON_CAMEL_CASE_TYPES, NON_SNAKE_CASE, NON_UPPER_CASE_GLOBALS);
-
-        add_lint_group!(sess, "unused",
-                        UNUSED_IMPORTS, UNUSED_VARIABLES, UNUSED_ASSIGNMENTS, DEAD_CODE,
-                        UNUSED_MUT, UNREACHABLE_CODE, UNUSED_MUST_USE,
-                        UNUSED_UNSAFE, PATH_STATEMENTS);
-
-        // We have one lint pass defined in this module.
-        self.register_pass(sess, false, box GatherNodeLevels as LintPassObject);
-
-        // Insert temporary renamings for a one-time deprecation
-        self.register_renamed("raw_pointer_deriving", "raw_pointer_derive");
-
-        self.register_renamed("unknown_features", "unused_features");
     }
 
     #[allow(unused_variables)]
@@ -276,7 +202,7 @@ impl LintStore {
                              .collect::<Vec<()>>();
                         }
                         None => sess.err(&format!("unknown {} flag: {}",
-                                                 level.as_str(), lint_name)[]),
+                                                 level.as_str(), lint_name)),
                     }
                 }
             }
@@ -286,7 +212,7 @@ impl LintStore {
     fn maybe_stage_features(&mut self, sess: &Session) {
         let lvl = match sess.opts.unstable_features {
             UnstableFeatures::Default => return,
-            UnstableFeatures::Disallow => Warn,
+            UnstableFeatures::Disallow => Forbid,
             UnstableFeatures::Cheat => Allow
         };
         match self.by_name.get("unstable_features") {
@@ -527,7 +453,7 @@ impl<'a, 'tcx> Context<'a, 'tcx> {
                     self.tcx.sess.span_err(span,
                                            &format!("{}({}) overruled by outer forbid({})",
                                                    level.as_str(), lint_name,
-                                                   lint_name)[]);
+                                                   lint_name));
                 } else if now != level {
                     let src = self.lints.get_level_source(lint_id).1;
                     self.level_stack.push((lint_id, (now, src)));
@@ -562,7 +488,7 @@ impl<'a, 'tcx> Context<'a, 'tcx> {
 
 impl<'a, 'tcx, 'v> Visitor<'v> for Context<'a, 'tcx> {
     fn visit_item(&mut self, it: &ast::Item) {
-        self.with_lint_attrs(&it.attrs[], |cx| {
+        self.with_lint_attrs(&it.attrs, |cx| {
             run_lints!(cx, check_item, it);
             cx.visit_ids(|v| v.visit_item(it));
             visit::walk_item(cx, it);
@@ -570,7 +496,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for Context<'a, 'tcx> {
     }
 
     fn visit_foreign_item(&mut self, it: &ast::ForeignItem) {
-        self.with_lint_attrs(&it.attrs[], |cx| {
+        self.with_lint_attrs(&it.attrs, |cx| {
             run_lints!(cx, check_foreign_item, it);
             visit::walk_foreign_item(cx, it);
         })
@@ -593,28 +519,8 @@ impl<'a, 'tcx, 'v> Visitor<'v> for Context<'a, 'tcx> {
 
     fn visit_fn(&mut self, fk: FnKind<'v>, decl: &'v ast::FnDecl,
                 body: &'v ast::Block, span: Span, id: ast::NodeId) {
-        match fk {
-            visit::FkMethod(_, _, m) => {
-                self.with_lint_attrs(&m.attrs[], |cx| {
-                    run_lints!(cx, check_fn, fk, decl, body, span, id);
-                    cx.visit_ids(|v| {
-                        v.visit_fn(fk, decl, body, span, id);
-                    });
-                    visit::walk_fn(cx, fk, decl, body, span);
-                })
-            },
-            _ => {
-                run_lints!(self, check_fn, fk, decl, body, span, id);
-                visit::walk_fn(self, fk, decl, body, span);
-            }
-        }
-    }
-
-    fn visit_ty_method(&mut self, t: &ast::TypeMethod) {
-        self.with_lint_attrs(&t.attrs[], |cx| {
-            run_lints!(cx, check_ty_method, t);
-            visit::walk_ty_method(cx, t);
-        })
+        run_lints!(self, check_fn, fk, decl, body, span, id);
+        visit::walk_fn(self, fk, decl, body, span);
     }
 
     fn visit_struct_def(&mut self,
@@ -628,23 +534,23 @@ impl<'a, 'tcx, 'v> Visitor<'v> for Context<'a, 'tcx> {
     }
 
     fn visit_struct_field(&mut self, s: &ast::StructField) {
-        self.with_lint_attrs(&s.node.attrs[], |cx| {
+        self.with_lint_attrs(&s.node.attrs, |cx| {
             run_lints!(cx, check_struct_field, s);
             visit::walk_struct_field(cx, s);
         })
     }
 
     fn visit_variant(&mut self, v: &ast::Variant, g: &ast::Generics) {
-        self.with_lint_attrs(&v.node.attrs[], |cx| {
+        self.with_lint_attrs(&v.node.attrs, |cx| {
             run_lints!(cx, check_variant, v, g);
             visit::walk_variant(cx, v, g);
             run_lints!(cx, check_variant_post, v, g);
         })
     }
 
-    // FIXME(#10894) should continue recursing
     fn visit_ty(&mut self, t: &ast::Ty) {
         run_lints!(self, check_ty, t);
+        visit::walk_ty(self, t);
     }
 
     fn visit_ident(&mut self, sp: Span, id: ast::Ident) {
@@ -685,9 +591,20 @@ impl<'a, 'tcx, 'v> Visitor<'v> for Context<'a, 'tcx> {
         visit::walk_generics(self, g);
     }
 
-    fn visit_trait_item(&mut self, m: &ast::TraitItem) {
-        run_lints!(self, check_trait_method, m);
-        visit::walk_trait_item(self, m);
+    fn visit_trait_item(&mut self, trait_item: &ast::TraitItem) {
+        self.with_lint_attrs(&trait_item.attrs, |cx| {
+            run_lints!(cx, check_trait_item, trait_item);
+            cx.visit_ids(|v| v.visit_trait_item(trait_item));
+            visit::walk_trait_item(cx, trait_item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, impl_item: &ast::ImplItem) {
+        self.with_lint_attrs(&impl_item.attrs, |cx| {
+            run_lints!(cx, check_impl_item, impl_item);
+            cx.visit_ids(|v| v.visit_impl_item(impl_item));
+            visit::walk_impl_item(cx, impl_item);
+        });
     }
 
     fn visit_opt_lifetime_ref(&mut self, sp: Span, lt: &Option<ast::Lifetime>) {
@@ -741,7 +658,7 @@ impl<'a, 'tcx> IdVisitingOperation for Context<'a, 'tcx> {
 // nodes, so that the variant size difference check in trans can call
 // `raw_emit_lint`.
 
-struct GatherNodeLevels;
+pub struct GatherNodeLevels;
 
 impl LintPass for GatherNodeLevels {
     fn get_lints(&self) -> LintArray {
@@ -779,7 +696,7 @@ pub fn check_crate(tcx: &ty::ctxt,
     let mut cx = Context::new(tcx, krate, exported_items);
 
     // Visit the whole crate.
-    cx.with_lint_attrs(&krate.attrs[], |cx| {
+    cx.with_lint_attrs(&krate.attrs, |cx| {
         cx.visit_id(ast::CRATE_NODE_ID);
         cx.visit_ids(|v| {
             v.visited_outermost = true;

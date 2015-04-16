@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 struct cat {
-  done : extern fn(uint),
-  meows : uint,
+  done : extern fn(usize),
+  meows : usize,
 }
 
 impl Drop for cat {
@@ -19,9 +21,9 @@ impl Drop for cat {
     }
 }
 
-fn cat(done: extern fn(uint)) -> cat {
+fn cat(done: extern fn(usize)) -> cat {
     cat {
-        meows: 0_usize,
+        meows: 0,
         done: done
     }
 }

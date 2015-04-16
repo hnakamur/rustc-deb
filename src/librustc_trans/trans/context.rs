@@ -10,7 +10,7 @@
 
 use llvm;
 use llvm::{ContextRef, ModuleRef, ValueRef, BuilderRef};
-use llvm::{TargetData};
+use llvm::TargetData;
 use llvm::mk_target_data;
 use metadata::common::LinkMeta;
 use middle::def::ExportMap;
@@ -18,7 +18,7 @@ use middle::traits;
 use trans::adt;
 use trans::base;
 use trans::builder::Builder;
-use trans::common::{ExternMap,tydesc_info,BuilderRef_res};
+use trans::common::{ExternMap,BuilderRef_res};
 use trans::debuginfo;
 use trans::monomorphize::MonoId;
 use trans::type_::{Type, TypeNames};
@@ -38,18 +38,17 @@ use syntax::ast;
 use syntax::parse::token::InternedString;
 
 pub struct Stats {
-    pub n_static_tydescs: Cell<uint>,
-    pub n_glues_created: Cell<uint>,
-    pub n_null_glues: Cell<uint>,
-    pub n_real_glues: Cell<uint>,
-    pub n_fns: Cell<uint>,
-    pub n_monos: Cell<uint>,
-    pub n_inlines: Cell<uint>,
-    pub n_closures: Cell<uint>,
-    pub n_llvm_insns: Cell<uint>,
-    pub llvm_insns: RefCell<FnvHashMap<String, uint>>,
+    pub n_glues_created: Cell<usize>,
+    pub n_null_glues: Cell<usize>,
+    pub n_real_glues: Cell<usize>,
+    pub n_fns: Cell<usize>,
+    pub n_monos: Cell<usize>,
+    pub n_inlines: Cell<usize>,
+    pub n_closures: Cell<usize>,
+    pub n_llvm_insns: Cell<usize>,
+    pub llvm_insns: RefCell<FnvHashMap<String, usize>>,
     // (ident, llvm-instructions)
-    pub fn_stats: RefCell<Vec<(String, uint)> >,
+    pub fn_stats: RefCell<Vec<(String, usize)> >,
 }
 
 /// The shared portion of a `CrateContext`.  There is one `SharedCrateContext`
@@ -69,6 +68,8 @@ pub struct SharedCrateContext<'tcx> {
     symbol_hasher: RefCell<Sha256>,
     tcx: ty::ctxt<'tcx>,
     stats: Stats,
+    check_overflow: bool,
+    check_drop_flag_for_sanity: bool,
 
     available_monomorphizations: RefCell<FnvHashSet<String>>,
     available_drop_glues: RefCell<FnvHashMap<Ty<'tcx>, String>>,
@@ -88,10 +89,6 @@ pub struct LocalCrateContext<'tcx> {
     needs_unwind_cleanup_cache: RefCell<FnvHashMap<Ty<'tcx>, bool>>,
     fn_pointer_shims: RefCell<FnvHashMap<Ty<'tcx>, ValueRef>>,
     drop_glues: RefCell<FnvHashMap<Ty<'tcx>, ValueRef>>,
-    tydescs: RefCell<FnvHashMap<Ty<'tcx>, Rc<tydesc_info<'tcx>>>>,
-    /// Set when running emit_tydescs to enforce that no more tydescs are
-    /// created.
-    finished_tydescs: Cell<bool>,
     /// Track mapping of external ids to local items imported for inlining
     external: RefCell<DefIdMap<Option<ast::NodeId>>>,
     /// Backwards version of the `external` map (inlined items to where they
@@ -99,9 +96,9 @@ pub struct LocalCrateContext<'tcx> {
     external_srcs: RefCell<NodeMap<ast::DefId>>,
     /// Cache instances of monomorphized functions
     monomorphized: RefCell<FnvHashMap<MonoId<'tcx>, ValueRef>>,
-    monomorphizing: RefCell<DefIdMap<uint>>,
+    monomorphizing: RefCell<DefIdMap<usize>>,
     /// Cache generated vtables
-    vtables: RefCell<FnvHashMap<(Ty<'tcx>, ty::PolyTraitRef<'tcx>), ValueRef>>,
+    vtables: RefCell<FnvHashMap<ty::PolyTraitRef<'tcx>, ValueRef>>,
     /// Cache of constant strings,
     const_cstr_cache: RefCell<FnvHashMap<InternedString, ValueRef>>,
 
@@ -153,7 +150,7 @@ pub struct LocalCrateContext<'tcx> {
     /// Number of LLVM instructions translated into this `LocalCrateContext`.
     /// This is used to perform some basic load-balancing to keep all LLVM
     /// contexts around the same size.
-    n_llvm_insns: Cell<uint>,
+    n_llvm_insns: Cell<usize>,
 
     trait_cache: RefCell<FnvHashMap<ty::PolyTraitRef<'tcx>,
                                     traits::Vtable<'tcx, ()>>>,
@@ -164,12 +161,12 @@ pub struct CrateContext<'a, 'tcx: 'a> {
     local: &'a LocalCrateContext<'tcx>,
     /// The index of `local` in `shared.local_ccxs`.  This is used in
     /// `maybe_iter(true)` to identify the original `LocalCrateContext`.
-    index: uint,
+    index: usize,
 }
 
 pub struct CrateContextIterator<'a, 'tcx: 'a> {
     shared: &'a SharedCrateContext<'tcx>,
-    index: uint,
+    index: usize,
 }
 
 impl<'a, 'tcx> Iterator for CrateContextIterator<'a,'tcx> {
@@ -194,9 +191,9 @@ impl<'a, 'tcx> Iterator for CrateContextIterator<'a,'tcx> {
 /// The iterator produced by `CrateContext::maybe_iter`.
 pub struct CrateContextMaybeIterator<'a, 'tcx: 'a> {
     shared: &'a SharedCrateContext<'tcx>,
-    index: uint,
+    index: usize,
     single: bool,
-    origin: uint,
+    origin: usize,
 }
 
 impl<'a, 'tcx> Iterator for CrateContextMaybeIterator<'a, 'tcx> {
@@ -240,12 +237,14 @@ unsafe fn create_context_and_module(sess: &Session, mod_name: &str) -> (ContextR
 
 impl<'tcx> SharedCrateContext<'tcx> {
     pub fn new(crate_name: &str,
-               local_count: uint,
+               local_count: usize,
                tcx: ty::ctxt<'tcx>,
                export_map: ExportMap,
                symbol_hasher: Sha256,
                link_meta: LinkMeta,
-               reachable: NodeSet)
+               reachable: NodeSet,
+               check_overflow: bool,
+               check_drop_flag_for_sanity: bool)
                -> SharedCrateContext<'tcx> {
         let (metadata_llcx, metadata_llmod) = unsafe {
             create_context_and_module(&tcx.sess, "metadata")
@@ -262,7 +261,6 @@ impl<'tcx> SharedCrateContext<'tcx> {
             symbol_hasher: RefCell::new(symbol_hasher),
             tcx: tcx,
             stats: Stats {
-                n_static_tydescs: Cell::new(0),
                 n_glues_created: Cell::new(0),
                 n_null_glues: Cell::new(0),
                 n_real_glues: Cell::new(0),
@@ -274,6 +272,8 @@ impl<'tcx> SharedCrateContext<'tcx> {
                 llvm_insns: RefCell::new(FnvHashMap()),
                 fn_stats: RefCell::new(Vec::new()),
             },
+            check_overflow: check_overflow,
+            check_drop_flag_for_sanity: check_drop_flag_for_sanity,
             available_monomorphizations: RefCell::new(FnvHashSet()),
             available_drop_glues: RefCell::new(FnvHashMap()),
         };
@@ -302,7 +302,7 @@ impl<'tcx> SharedCrateContext<'tcx> {
         }
     }
 
-    pub fn get_ccx<'a>(&'a self, index: uint) -> CrateContext<'a, 'tcx> {
+    pub fn get_ccx<'a>(&'a self, index: usize) -> CrateContext<'a, 'tcx> {
         CrateContext {
             shared: self,
             local: &self.local_ccxs[index],
@@ -378,7 +378,7 @@ impl<'tcx> LocalCrateContext<'tcx> {
                                           .target
                                           .target
                                           .data_layout
-                                          []);
+                                          );
 
             let dbg_cx = if shared.tcx.sess.opts.debuginfo != NoDebugInfo {
                 Some(debuginfo::CrateDebugContext::new(llmod))
@@ -396,8 +396,6 @@ impl<'tcx> LocalCrateContext<'tcx> {
                 needs_unwind_cleanup_cache: RefCell::new(FnvHashMap()),
                 fn_pointer_shims: RefCell::new(FnvHashMap()),
                 drop_glues: RefCell::new(FnvHashMap()),
-                tydescs: RefCell::new(FnvHashMap()),
-                finished_tydescs: Cell::new(false),
                 external: RefCell::new(DefIdMap()),
                 external_srcs: RefCell::new(NodeMap()),
                 monomorphized: RefCell::new(FnvHashMap()),
@@ -439,8 +437,6 @@ impl<'tcx> LocalCrateContext<'tcx> {
                 str_slice_ty.set_struct_body(&[Type::i8p(&ccx), ccx.int_type()], false);
                 ccx.tn().associate_type("str_slice", &str_slice_ty);
 
-                ccx.tn().associate_type("tydesc", &Type::tydesc(&ccx, str_slice_ty));
-
                 if ccx.sess().count_llvm_insns() {
                     base::init_insn_ctxt()
                 }
@@ -463,7 +459,7 @@ impl<'tcx> LocalCrateContext<'tcx> {
         CrateContext {
             shared: shared,
             local: self,
-            index: -1 as uint,
+            index: !0 as usize,
         }
     }
 }
@@ -514,10 +510,6 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
     pub fn raw_builder<'a>(&'a self) -> BuilderRef {
         self.local.builder.b
-    }
-
-    pub fn tydesc_type(&self) -> Type {
-        self.local.tn.find_type("tydesc").unwrap()
     }
 
     pub fn get_intrinsic(&self, key: & &'static str) -> ValueRef {
@@ -587,14 +579,6 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         &self.local.drop_glues
     }
 
-    pub fn tydescs<'a>(&'a self) -> &'a RefCell<FnvHashMap<Ty<'tcx>, Rc<tydesc_info<'tcx>>>> {
-        &self.local.tydescs
-    }
-
-    pub fn finished_tydescs<'a>(&'a self) -> &'a Cell<bool> {
-        &self.local.finished_tydescs
-    }
-
     pub fn external<'a>(&'a self) -> &'a RefCell<DefIdMap<Option<ast::NodeId>>> {
         &self.local.external
     }
@@ -607,12 +591,11 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         &self.local.monomorphized
     }
 
-    pub fn monomorphizing<'a>(&'a self) -> &'a RefCell<DefIdMap<uint>> {
+    pub fn monomorphizing<'a>(&'a self) -> &'a RefCell<DefIdMap<usize>> {
         &self.local.monomorphizing
     }
 
-    pub fn vtables<'a>(&'a self) -> &'a RefCell<FnvHashMap<(Ty<'tcx>, ty::PolyTraitRef<'tcx>),
-                                                            ValueRef>> {
+    pub fn vtables<'a>(&'a self) -> &'a RefCell<FnvHashMap<ty::PolyTraitRef<'tcx>, ValueRef>> {
         &self.local.vtables
     }
 
@@ -731,7 +714,7 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
     /// currently conservatively bounded to 1 << 47 as that is enough to cover the current usable
     /// address space on 64-bit ARMv8 and x86_64.
     pub fn obj_size_bound(&self) -> u64 {
-        match &self.sess().target.target.target_pointer_width[] {
+        match &self.sess().target.target.target_pointer_width[..] {
             "32" => 1 << 31,
             "64" => 1 << 47,
             _ => unreachable!() // error handled by config::build_target_config
@@ -741,7 +724,18 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
     pub fn report_overbig_object(&self, obj: Ty<'tcx>) -> ! {
         self.sess().fatal(
             &format!("the type `{}` is too big for the current architecture",
-                    obj.repr(self.tcx()))[])
+                    obj.repr(self.tcx())))
+    }
+
+    pub fn check_overflow(&self) -> bool {
+        self.shared.check_overflow
+    }
+
+    pub fn check_drop_flag_for_sanity(&self) -> bool {
+        // This controls whether we emit a conditional llvm.debugtrap
+        // guarded on whether the dropflag is one of its (two) valid
+        // values.
+        self.shared.check_drop_flag_for_sanity
     }
 }
 

@@ -74,9 +74,9 @@
 #![omit_gdb_pretty_printer_section]
 
 struct Struct {
-    a: int,
+    a: isize,
     b: f64,
-    c: uint
+    c: usize
 }
 
 fn main() {
@@ -90,7 +90,7 @@ fn main() {
     };
 
     let struct_ref = &a_struct;
-    let owned = box 6;
+    let owned: Box<_> = box 6;
 
     {
         let mut first_closure = || {

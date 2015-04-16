@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-enum E { V, VV(int) }
+// pretty-expanded FIXME #23616
+
+enum E { V, VV(isize) }
 static C: E = E::V;
 
 impl E {

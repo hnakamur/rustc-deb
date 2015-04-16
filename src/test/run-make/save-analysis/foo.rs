@@ -10,12 +10,12 @@
 
 #![ crate_name = "test" ]
 #![allow(unstable)]
-#![feature(box_syntax)]
+#![feature(box_syntax, old_io, rustc_private, core)]
 
 extern crate graphviz;
 // A simple rust project
 
-extern crate "flate" as myflate;
+extern crate flate as myflate;
 
 use std::collections::{HashMap,HashSet};
 use std::cell::RefCell;
@@ -39,23 +39,23 @@ static bob: Option<&'static [isize]> = None;
 // buglink test - see issue #1337.
 
 fn test_alias<I: Iterator>(i: Option<<I as Iterator>::Item>) {
-    let s = sub_struct{ field2: 45u32, };
+    let s = sub_struct{ field2: 45, };
 
     // import tests
     fn foo(x: &Float) {}
     let _: Option<u8> = from_i32(45);
 
-    let x = 42_usize;
+    let x = 42;
 
     myflate::deflate_bytes(&[]);
 
-    let x = (3, 4_usize);
+    let x = (3, 4);
     let y = x.1;
 }
 
-struct TupStruct(int, int, Box<str>);
+struct TupStruct(isize, isize, Box<str>);
 
-fn test_tup_struct(x: TupStruct) -> int {
+fn test_tup_struct(x: TupStruct) -> isize {
     x.1
 }
 
@@ -179,7 +179,7 @@ enum SomeEnum<'a> {
     MyTypes(MyType, MyType)
 }
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 enum SomeOtherEnum {
     SomeConst1,
     SomeConst2,
@@ -245,9 +245,10 @@ fn hello<X: SomeTrait>((z, a) : (u32, String), ex: X) {
     let x = 32.0f32;
     let _ = (x + ((x * x) + 1.0).sqrt()).ln();
 
-    let s: Box<SomeTrait> = box some_fields {field1: 43};
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    let s: Box<SomeTrait> = Box::new(some_fields {field1: 43});
     let s2: Box<some_fields> =  box some_fields {field1: 43};
-    let s3 = box nofields;
+    let s3: Box<_> = box nofields;
 
     s.Method(43);
     s3.Method(43);
@@ -282,7 +283,7 @@ pub struct blah {
 }
 
 fn main() { // foo
-    let s = box some_fields {field1: 43};
+    let s: Box<_> = box some_fields {field1: 43};
     hello((43, "a".to_string()), *s);
     sub::sub2::hello();
     sub2::sub3::hello();

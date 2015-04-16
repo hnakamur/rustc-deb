@@ -43,7 +43,7 @@ fn test_rbml<'a, 'b, A:
 
 #[derive(Decodable, Encodable)]
 enum Expr {
-    Val(uint),
+    Val(usize),
     Plus(@Expr, @Expr),
     Minus(@Expr, @Expr)
 }
@@ -103,23 +103,23 @@ impl<T:cmp::Eq> cmp::Eq for Quark<T> {
 
 impl cmp::Eq for CLike {
     fn eq(&self, other: &CLike) -> bool {
-        (*self) as int == *other as int
+        (*self) as isize == *other as isize
     }
     fn ne(&self, other: &CLike) -> bool { !self.eq(other) }
 }
 
 #[derive(Decodable, Encodable, Eq)]
 struct Spanned<T> {
-    lo: uint,
-    hi: uint,
+    lo: usize,
+    hi: usize,
     node: T,
 }
 
 #[derive(Decodable, Encodable)]
-struct SomeStruct { v: Vec<uint> }
+struct SomeStruct { v: Vec<usize> }
 
 #[derive(Decodable, Encodable)]
-struct Point {x: uint, y: uint}
+struct Point {x: usize, y: usize}
 
 #[derive(Decodable, Encodable)]
 enum Quark<T> {
@@ -131,19 +131,19 @@ enum Quark<T> {
 enum CLike { A, B, C }
 
 pub fn main() {
-    let a = &Plus(@Minus(@Val(3_usize), @Val(10_usize)), @Plus(@Val(22_usize), @Val(5_usize)));
+    let a = &Plus(@Minus(@Val(3), @Val(10)), @Plus(@Val(22), @Val(5)));
     test_rbml(a);
 
-    let a = &Spanned {lo: 0_usize, hi: 5_usize, node: 22_usize};
+    let a = &Spanned {lo: 0, hi: 5, node: 22};
     test_rbml(a);
 
-    let a = &Point {x: 3_usize, y: 5_usize};
+    let a = &Point {x: 3, y: 5};
     test_rbml(a);
 
-    let a = &Top(22_usize);
+    let a = &Top(22);
     test_rbml(a);
 
-    let a = &Bottom(222_usize);
+    let a = &Bottom(222);
     test_rbml(a);
 
     let a = &A;

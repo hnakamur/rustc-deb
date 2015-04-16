@@ -12,12 +12,12 @@ pub mod kitty {
     use std::fmt;
 
     pub struct cat {
-      meows : uint,
-      pub how_hungry : int,
+      meows : usize,
+      pub how_hungry : isize,
       pub name : String,
     }
 
-    impl fmt::String for cat {
+    impl fmt::Display for cat {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "{}", self.name)
         }
@@ -26,8 +26,8 @@ pub mod kitty {
     impl cat {
         fn meow(&mut self) {
             println!("Meow");
-            self.meows += 1_usize;
-            if self.meows % 5_usize == 0_usize {
+            self.meows += 1;
+            if self.meows % 5 == 0 {
                 self.how_hungry += 1;
             }
         }
@@ -50,7 +50,7 @@ pub mod kitty {
         }
     }
 
-    pub fn cat(in_x : uint, in_y : int, in_name: String) -> cat {
+    pub fn cat(in_x : usize, in_y : isize, in_name: String) -> cat {
         cat {
             meows: in_x,
             how_hungry: in_y,

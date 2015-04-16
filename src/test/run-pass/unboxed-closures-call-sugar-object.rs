@@ -9,13 +9,13 @@
 // except according to those terms.
 
 #![allow(unknown_features)]
-#![feature(box_syntax)]
 #![feature(unboxed_closures)]
 
 use std::ops::FnMut;
 
-fn make_adder(x: int) -> Box<FnMut(int)->int + 'static> {
-    box move |y| { x + y }
+fn make_adder(x: isize) -> Box<FnMut(isize)->isize + 'static> {
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    Box::new(move |y| { x + y })
 }
 
 pub fn main() {
@@ -24,4 +24,3 @@ pub fn main() {
     println!("{}", z);
     assert_eq!(z, 5);
 }
-

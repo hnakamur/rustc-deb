@@ -8,16 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(collections)]
 
 extern crate collections;
 
 use std::collections::HashSet;
 
-#[derive(Copy, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 struct XYZ {
-    x: int,
-    y: int,
-    z: int
+    x: isize,
+    y: isize,
+    z: isize
 }
 
 fn main() {

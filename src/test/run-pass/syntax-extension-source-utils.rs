@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(core)]
+
 // This test is brittle!
 // ignore-pretty - the pretty tests lose path information, breaking include!
 
@@ -22,9 +24,9 @@ pub mod m1 {
 macro_rules! indirect_line { () => ( line!() ) }
 
 pub fn main() {
-    assert_eq!(line!(), 25);
-    //assert!((column!() == 11));
-    assert_eq!(indirect_line!(), 27);
+    assert_eq!(line!(), 27);
+    assert!((column!() == 4));
+    assert_eq!(indirect_line!(), 29);
     assert!((file!().ends_with("syntax-extension-source-utils.rs")));
     assert_eq!(stringify!((2*3) + 5).to_string(), "( 2 * 3 ) + 5".to_string());
     assert!(include!("syntax-extension-source-utils-files/includeme.\
@@ -34,7 +36,6 @@ pub fn main() {
     assert!(
         include_str!("syntax-extension-source-utils-files/includeme.\
                       fragment").to_string()
-        .as_slice()
         .starts_with("/* this is for "));
     assert!(
         include_bytes!("syntax-extension-source-utils-files/includeme.fragment")
@@ -42,8 +43,5 @@ pub fn main() {
     // The Windows tests are wrapped in an extra module for some reason
     assert!((m1::m2::where_am_i().ends_with("m1::m2")));
 
-    assert!(match (45, "( 2 * 3 ) + 5") {
-        (line!(), stringify!((2*3) + 5)) => true,
-        _ => false
-    })
+    assert_eq!((46, "( 2 * 3 ) + 5"), (line!(), stringify!((2*3) + 5)));
 }

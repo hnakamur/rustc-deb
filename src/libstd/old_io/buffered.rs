@@ -15,12 +15,11 @@
 use cmp;
 use fmt;
 use old_io::{Reader, Writer, Stream, Buffer, DEFAULT_BUF_SIZE, IoResult};
-use iter::{IteratorExt, ExactSizeIterator, repeat};
+use iter::{Iterator, ExactSizeIterator, repeat};
 use ops::Drop;
 use option::Option;
 use option::Option::{Some, None};
 use result::Result::Ok;
-use slice::{SliceExt};
 use slice;
 use vec::Vec;
 
@@ -31,10 +30,12 @@ use vec::Vec;
 /// `BufferedReader` performs large, infrequent reads on the underlying
 /// `Reader` and maintains an in-memory buffer of the results.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
-/// use std::old_io::{BufferedReader, File};
+/// ```
+/// # #![feature(old_io, old_path)]
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// let file = File::open(&Path::new("message.txt"));
 /// let mut reader = BufferedReader::new(file);
@@ -48,8 +49,8 @@ use vec::Vec;
 pub struct BufferedReader<R> {
     inner: R,
     buf: Vec<u8>,
-    pos: uint,
-    cap: uint,
+    pos: usize,
+    cap: usize,
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -62,7 +63,7 @@ impl<R> fmt::Debug for BufferedReader<R> where R: fmt::Debug {
 
 impl<R: Reader> BufferedReader<R> {
     /// Creates a new `BufferedReader` with the specified buffer capacity
-    pub fn with_capacity(cap: uint, inner: R) -> BufferedReader<R> {
+    pub fn with_capacity(cap: usize, inner: R) -> BufferedReader<R> {
         BufferedReader {
             inner: inner,
             // We can't use the same trick here as we do for BufferedWriter,
@@ -103,21 +104,21 @@ impl<R: Reader> Buffer for BufferedReader<R> {
         Ok(&self.buf[self.pos..self.cap])
     }
 
-    fn consume(&mut self, amt: uint) {
+    fn consume(&mut self, amt: usize) {
         self.pos += amt;
         assert!(self.pos <= self.cap);
     }
 }
 
 impl<R: Reader> Reader for BufferedReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         if self.pos == self.cap && buf.len() >= self.buf.len() {
             return self.inner.read(buf);
         }
         let nread = {
             let available = try!(self.fill_buf());
             let nread = cmp::min(available.len(), buf.len());
-            slice::bytes::copy_memory(buf, &available[..nread]);
+            slice::bytes::copy_memory(&available[..nread], buf);
             nread
         };
         self.pos += nread;
@@ -134,10 +135,12 @@ impl<R: Reader> Reader for BufferedReader<R> {
 ///
 /// This writer will be flushed when it is dropped.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
-/// use std::old_io::{BufferedWriter, File};
+/// ```
+/// # #![feature(old_io, old_path)]
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// let file = File::create(&Path::new("message.txt")).unwrap();
 /// let mut writer = BufferedWriter::new(file);
@@ -145,14 +148,14 @@ impl<R: Reader> Reader for BufferedReader<R> {
 /// writer.write_str("hello, world").unwrap();
 /// writer.flush().unwrap();
 /// ```
-pub struct BufferedWriter<W> {
+pub struct BufferedWriter<W: Writer> {
     inner: Option<W>,
     buf: Vec<u8>,
-    pos: uint
+    pos: usize
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<W> fmt::Debug for BufferedWriter<W> where W: fmt::Debug {
+impl<W: Writer> fmt::Debug for BufferedWriter<W> where W: fmt::Debug {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "BufferedWriter {{ writer: {:?}, buffer: {}/{} }}",
                self.inner.as_ref().unwrap(), self.pos, self.buf.len())
@@ -161,7 +164,7 @@ impl<W> fmt::Debug for BufferedWriter<W> where W: fmt::Debug {
 
 impl<W: Writer> BufferedWriter<W> {
     /// Creates a new `BufferedWriter` with the specified buffer capacity
-    pub fn with_capacity(cap: uint, inner: W) -> BufferedWriter<W> {
+    pub fn with_capacity(cap: usize, inner: W) -> BufferedWriter<W> {
         // It's *much* faster to create an uninitialized buffer than it is to
         // fill everything in with 0. This buffer is entirely an implementation
         // detail and is never exposed, so we're safe to not initialize
@@ -222,7 +225,7 @@ impl<W: Writer> Writer for BufferedWriter<W> {
             self.inner.as_mut().unwrap().write_all(buf)
         } else {
             let dst = &mut self.buf[self.pos..];
-            slice::bytes::copy_memory(dst, buf);
+            slice::bytes::copy_memory(buf, dst);
             self.pos += buf.len();
             Ok(())
         }
@@ -247,12 +250,12 @@ impl<W: Writer> Drop for BufferedWriter<W> {
 /// `'\n'`) is detected.
 ///
 /// This writer will be flushed when it is dropped.
-pub struct LineBufferedWriter<W> {
+pub struct LineBufferedWriter<W: Writer> {
     inner: BufferedWriter<W>,
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<W> fmt::Debug for LineBufferedWriter<W> where W: fmt::Debug {
+impl<W: Writer> fmt::Debug for LineBufferedWriter<W> where W: fmt::Debug {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "LineBufferedWriter {{ writer: {:?}, buffer: {}/{} }}",
                self.inner.inner, self.inner.pos, self.inner.buf.len())
@@ -296,17 +299,17 @@ impl<W: Writer> Writer for LineBufferedWriter<W> {
     fn flush(&mut self) -> IoResult<()> { self.inner.flush() }
 }
 
-struct InternalBufferedWriter<W>(BufferedWriter<W>);
+struct InternalBufferedWriter<W: Writer>(BufferedWriter<W>);
 
-impl<W> InternalBufferedWriter<W> {
+impl<W: Writer> InternalBufferedWriter<W> {
     fn get_mut<'a>(&'a mut self) -> &'a mut BufferedWriter<W> {
         let InternalBufferedWriter(ref mut w) = *self;
         return w;
     }
 }
 
-impl<W: Reader> Reader for InternalBufferedWriter<W> {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+impl<W: Reader + Writer> Reader for InternalBufferedWriter<W> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.get_mut().inner.as_mut().unwrap().read(buf)
     }
 }
@@ -320,11 +323,13 @@ impl<W: Reader> Reader for InternalBufferedWriter<W> {
 ///
 /// The output half will be flushed when this stream is dropped.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(old_io, old_path)]
 /// # #![allow(unused_must_use)]
-/// use std::old_io::{BufferedStream, File};
+/// use std::old_io::*;
+/// use std::old_path::Path;
 ///
 /// let file = File::open(&Path::new("message.txt"));
 /// let mut stream = BufferedStream::new(file);
@@ -338,12 +343,12 @@ impl<W: Reader> Reader for InternalBufferedWriter<W> {
 ///     Err(e) => println!("error reading: {}", e)
 /// }
 /// ```
-pub struct BufferedStream<S> {
+pub struct BufferedStream<S: Writer> {
     inner: BufferedReader<InternalBufferedWriter<S>>
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<S> fmt::Debug for BufferedStream<S> where S: fmt::Debug {
+impl<S: Writer> fmt::Debug for BufferedStream<S> where S: fmt::Debug {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let reader = &self.inner;
         let writer = &self.inner.inner.0;
@@ -357,7 +362,7 @@ impl<S> fmt::Debug for BufferedStream<S> where S: fmt::Debug {
 impl<S: Stream> BufferedStream<S> {
     /// Creates a new buffered stream with explicitly listed capacities for the
     /// reader/writer buffer.
-    pub fn with_capacities(reader_cap: uint, writer_cap: uint, inner: S)
+    pub fn with_capacities(reader_cap: usize, writer_cap: usize, inner: S)
                            -> BufferedStream<S> {
         let writer = BufferedWriter::with_capacity(writer_cap, inner);
         let internal_writer = InternalBufferedWriter(writer);
@@ -402,11 +407,11 @@ impl<S: Stream> BufferedStream<S> {
 
 impl<S: Stream> Buffer for BufferedStream<S> {
     fn fill_buf<'a>(&'a mut self) -> IoResult<&'a [u8]> { self.inner.fill_buf() }
-    fn consume(&mut self, amt: uint) { self.inner.consume(amt) }
+    fn consume(&mut self, amt: usize) { self.inner.consume(amt) }
 }
 
 impl<S: Stream> Reader for BufferedStream<S> {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.inner.read(buf)
     }
 }
@@ -423,7 +428,7 @@ impl<S: Stream> Writer for BufferedStream<S> {
 #[cfg(test)]
 mod test {
     extern crate test;
-    use old_io;
+    use old_io::{self, Reader, Writer, Buffer, BufferPrelude};
     use prelude::v1::*;
     use super::*;
     use super::super::{IoResult, EndOfFile};
@@ -437,7 +442,7 @@ mod test {
     pub struct NullStream;
 
     impl Reader for NullStream {
-        fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<uint> {
+        fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<usize> {
             Err(old_io::standard_error(old_io::EndOfFile))
         }
     }
@@ -448,11 +453,11 @@ mod test {
 
     /// A dummy reader intended at testing short-reads propagation.
     pub struct ShortReader {
-        lengths: Vec<uint>,
+        lengths: Vec<usize>,
     }
 
     impl Reader for ShortReader {
-        fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<uint> {
+        fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<usize> {
             if self.lengths.is_empty() {
                 Err(old_io::standard_error(old_io::EndOfFile))
             } else {
@@ -505,37 +510,37 @@ mod test {
 
         writer.write_all(&[0, 1]).unwrap();
         let b: &[_] = &[];
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
 
         writer.write_all(&[2]).unwrap();
         let b: &[_] = &[0, 1];
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
 
         writer.write_all(&[3]).unwrap();
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
 
         writer.flush().unwrap();
         let a: &[_] = &[0, 1, 2, 3];
-        assert_eq!(a, &writer.get_ref()[]);
+        assert_eq!(a, &writer.get_ref()[..]);
 
         writer.write_all(&[4]).unwrap();
         writer.write_all(&[5]).unwrap();
-        assert_eq!(a, &writer.get_ref()[]);
+        assert_eq!(a, &writer.get_ref()[..]);
 
         writer.write_all(&[6]).unwrap();
         let a: &[_] = &[0, 1, 2, 3, 4, 5];
-        assert_eq!(a, &writer.get_ref()[]);
+        assert_eq!(a, &writer.get_ref()[..]);
 
         writer.write_all(&[7, 8]).unwrap();
         let a: &[_] = &[0, 1, 2, 3, 4, 5, 6];
-        assert_eq!(a, &writer.get_ref()[]);
+        assert_eq!(a, &writer.get_ref()[..]);
 
         writer.write_all(&[9, 10, 11]).unwrap();
         let a: &[_] = &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-        assert_eq!(a, &writer.get_ref()[]);
+        assert_eq!(a, &writer.get_ref()[..]);
 
         writer.flush().unwrap();
-        assert_eq!(a, &writer.get_ref()[]);
+        assert_eq!(a, &writer.get_ref()[..]);
     }
 
     #[test]
@@ -543,7 +548,7 @@ mod test {
         let mut w = BufferedWriter::with_capacity(3, Vec::new());
         w.write_all(&[0, 1]).unwrap();
         let a: &[_] = &[];
-        assert_eq!(a, &w.get_ref()[]);
+        assert_eq!(&w.get_ref()[..], a);
         let w = w.into_inner();
         let a: &[_] = &[0, 1];
         assert_eq!(a, &w[..]);
@@ -560,7 +565,7 @@ mod test {
         }
 
         impl old_io::Reader for S {
-            fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<uint> {
+            fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<usize> {
                 Err(old_io::standard_error(old_io::EndOfFile))
             }
         }
@@ -588,21 +593,21 @@ mod test {
         let mut writer = LineBufferedWriter::new(Vec::new());
         writer.write_all(&[0]).unwrap();
         let b: &[_] = &[];
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
         writer.write_all(&[1]).unwrap();
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
         writer.flush().unwrap();
         let b: &[_] = &[0, 1];
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
         writer.write_all(&[0, b'\n', 1, b'\n', 2]).unwrap();
         let b: &[_] = &[0, 1, 0, b'\n', 1, b'\n'];
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
         writer.flush().unwrap();
         let b: &[_] = &[0, 1, 0, b'\n', 1, b'\n', 2];
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
         writer.write_all(&[3, b'\n']).unwrap();
         let b: &[_] = &[0, 1, 0, b'\n', 1, b'\n', 2, 3, b'\n'];
-        assert_eq!(&writer.get_ref()[], b);
+        assert_eq!(&writer.get_ref()[..], b);
     }
 
     #[test]
@@ -642,14 +647,14 @@ mod test {
 
     #[test]
     fn read_char_buffered() {
-        let buf = [195u8, 159u8];
+        let buf = [195, 159];
         let mut reader = BufferedReader::with_capacity(1, &buf[..]);
         assert_eq!(reader.read_char(), Ok('ß'));
     }
 
     #[test]
     fn test_chars() {
-        let buf = [195u8, 159u8, b'a'];
+        let buf = [195, 159, b'a'];
         let mut reader = BufferedReader::with_capacity(1, &buf[..]);
         let mut it = reader.chars();
         assert_eq!(it.next(), Some(Ok('ß')));
@@ -658,7 +663,7 @@ mod test {
     }
 
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn dont_panic_in_drop_on_panicked_flush() {
         struct FailFlushWriter;
 

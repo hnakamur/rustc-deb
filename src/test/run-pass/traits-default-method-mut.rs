@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(dead_assignment)]
 #![allow(unused_variable)]
 
 trait Foo {
-    fn foo(&self, mut v: int) { v = 1; }
+    fn foo(&self, mut v: isize) { v = 1; }
 }
 
 pub fn main() {}

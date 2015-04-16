@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(dead_assignment)]
 #![allow(unused_variable)]
 
 enum thing { a, b, c, }
 
-fn foo<F>(it: F) where F: FnOnce(int) { it(10); }
+fn foo<F>(it: F) where F: FnOnce(isize) { it(10); }
 
 pub fn main() {
     let mut x = true;

@@ -9,9 +9,11 @@
 // except according to those terms.
 
 
+// pretty-expanded FIXME #23616
+
 fn f<T>(x: Vec<T>) -> T { return x.into_iter().next().unwrap(); }
 
-fn g<F>(act: F) -> int where F: FnOnce(Vec<int>) -> int { return act(vec!(1, 2, 3)); }
+fn g<F>(act: F) -> isize where F: FnOnce(Vec<isize>) -> isize { return act(vec!(1, 2, 3)); }
 
 pub fn main() {
     assert_eq!(g(f), 1);

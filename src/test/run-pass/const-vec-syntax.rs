@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f(_: &[int]) {}
+// pretty-expanded FIXME #23616
+
+fn f(_: &[isize]) {}
 
 pub fn main() {
     let v = [ 1, 2, 3 ];

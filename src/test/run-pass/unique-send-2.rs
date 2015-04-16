@@ -8,30 +8,32 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 
-fn child(tx: &Sender<Box<uint>>, i: uint) {
+fn child(tx: &Sender<Box<usize>>, i: usize) {
     tx.send(box i).unwrap();
 }
 
 pub fn main() {
     let (tx, rx) = channel();
-    let n = 100_usize;
-    let mut expected = 0_usize;
-    let _t = (0_usize..n).map(|i| {
+    let n = 100;
+    let mut expected = 0;
+    let _t = (0..n).map(|i| {
         expected += i;
         let tx = tx.clone();
-        thread::spawn(move|| {
+        thread::scoped(move|| {
             child(&tx, i)
         })
     }).collect::<Vec<_>>();
 
-    let mut actual = 0_usize;
-    for _ in 0_usize..n {
+    let mut actual = 0;
+    for _ in 0..n {
         let j = rx.recv().unwrap();
         actual += *j;
     }

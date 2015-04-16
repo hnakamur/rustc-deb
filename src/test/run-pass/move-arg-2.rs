@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-fn test(foo: Box<Vec<int>>) { assert!(((*foo)[0] == 10)); }
+fn test(foo: Box<Vec<isize>>) { assert!(((*foo)[0] == 10)); }
 
 pub fn main() {
     let x = box vec!(10);

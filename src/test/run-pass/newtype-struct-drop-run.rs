@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(unsafe_destructor)]
 
 // Make sure the destructor is run for newtype structs.
 
 use std::cell::Cell;
 
-struct Foo<'a>(&'a Cell<int>);
+struct Foo<'a>(&'a Cell<isize>);
 
 #[unsafe_destructor]
 impl<'a> Drop for Foo<'a> {

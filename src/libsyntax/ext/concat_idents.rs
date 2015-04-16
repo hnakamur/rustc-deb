@@ -14,7 +14,7 @@ use ext::base::*;
 use ext::base;
 use feature_gate;
 use parse::token;
-use parse::token::{str_to_ident};
+use parse::token::str_to_ident;
 use ptr::P;
 
 pub fn expand_syntax_ext<'cx>(cx: &mut ExtCtxt, sp: Span, tts: &[ast::TokenTree])
@@ -53,7 +53,7 @@ pub fn expand_syntax_ext<'cx>(cx: &mut ExtCtxt, sp: Span, tts: &[ast::TokenTree]
 
     let e = P(ast::Expr {
         id: ast::DUMMY_NODE_ID,
-        node: ast::ExprPath(
+        node: ast::ExprPath(None,
             ast::Path {
                  span: sp,
                  global: false,
@@ -67,5 +67,5 @@ pub fn expand_syntax_ext<'cx>(cx: &mut ExtCtxt, sp: Span, tts: &[ast::TokenTree]
         ),
         span: sp,
     });
-    MacExpr::new(e)
+    MacEager::expr(e)
 }

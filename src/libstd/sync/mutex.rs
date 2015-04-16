@@ -15,6 +15,7 @@ use marker;
 use ops::{Deref, DerefMut};
 use sync::poison::{self, TryLockError, TryLockResult, LockResult};
 use sys_common::mutex as sys;
+use fmt;
 
 /// A mutual exclusion primitive useful for protecting shared data
 ///
@@ -39,18 +40,18 @@ use sys_common::mutex as sys;
 /// among threads to ensure that a possibly invalid invariant is not witnessed.
 ///
 /// A poisoned mutex, however, does not prevent all access to the underlying
-/// data. The `PoisonError` type has an `into_guard` method which will return
+/// data. The `PoisonError` type has an `into_inner` method which will return
 /// the guard that would have otherwise been returned on a successful lock. This
 /// allows access to the data, despite the lock being poisoned.
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```
 /// use std::sync::{Arc, Mutex};
 /// use std::thread;
 /// use std::sync::mpsc::channel;
 ///
-/// const N: uint = 10;
+/// const N: usize = 10;
 ///
 /// // Spawn a few threads to increment a shared variable (non-atomically), and
 /// // let the main thread know once all increments are done.
@@ -83,7 +84,8 @@ use sys_common::mutex as sys;
 ///
 /// To recover from a poisoned mutex:
 ///
-/// ```rust
+/// ```
+/// # #![feature(std_misc)]
 /// use std::sync::{Arc, Mutex};
 /// use std::thread;
 ///
@@ -104,7 +106,7 @@ use sys_common::mutex as sys;
 /// // pattern matched on to return the underlying guard on both branches.
 /// let mut guard = match lock.lock() {
 ///     Ok(guard) => guard,
-///     Err(poisoned) => poisoned.into_guard(),
+///     Err(poisoned) => poisoned.into_inner(),
 /// };
 ///
 /// *guard += 1;
@@ -120,9 +122,11 @@ pub struct Mutex<T> {
     data: UnsafeCell<T>,
 }
 
-unsafe impl<T: Send + 'static> Send for Mutex<T> { }
+// these are the only places where `T: Send` matters; all other
+// functionality works fine on a single thread.
+unsafe impl<T: Send> Send for Mutex<T> { }
 
-unsafe impl<T: Send + 'static> Sync for Mutex<T> { }
+unsafe impl<T: Send> Sync for Mutex<T> { }
 
 /// The static mutex type is provided to allow for static allocation of mutexes.
 ///
@@ -132,9 +136,10 @@ unsafe impl<T: Send + 'static> Sync for Mutex<T> { }
 /// to a `Mutex`, a `destroy` method. This method is unsafe to call, and
 /// documentation can be found directly on the method.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(std_misc)]
 /// use std::sync::{StaticMutex, MUTEX_INIT};
 ///
 /// static LOCK: StaticMutex = MUTEX_INIT;
@@ -151,8 +156,6 @@ pub struct StaticMutex {
     lock: sys::Mutex,
     poison: poison::Flag,
 }
-
-unsafe impl Sync for StaticMutex {}
 
 /// An RAII implementation of a "scoped lock" of a mutex. When this structure is
 /// dropped (falls out of scope), the lock will be unlocked.
@@ -180,7 +183,7 @@ pub const MUTEX_INIT: StaticMutex = StaticMutex {
     poison: poison::FLAG_INIT,
 };
 
-impl<T: Send + 'static> Mutex<T> {
+impl<T> Mutex<T> {
     /// Creates a new mutex in an unlocked state ready for use.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new(t: T) -> Mutex<T> {
@@ -243,12 +246,25 @@ impl<T: Send + 'static> Mutex<T> {
 
 #[unsafe_destructor]
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Send + 'static> Drop for Mutex<T> {
+impl<T> Drop for Mutex<T> {
     fn drop(&mut self) {
         // This is actually safe b/c we know that there is no further usage of
         // this mutex (it's up to the user to arrange for a mutex to get
         // dropped, that's not our job)
         unsafe { self.inner.lock.destroy() }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: fmt::Debug + 'static> fmt::Debug for Mutex<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.try_lock() {
+            Ok(guard) => write!(f, "Mutex {{ data: {:?} }}", *guard),
+            Err(TryLockError::Poisoned(err)) => {
+                write!(f, "Mutex {{ data: Poisoned({:?}) }}", **err.get_ref())
+            },
+            Err(TryLockError::WouldBlock) => write!(f, "Mutex {{ <locked> }}")
+        }
     }
 }
 
@@ -352,9 +368,9 @@ mod test {
     use sync::{Arc, Mutex, StaticMutex, MUTEX_INIT, Condvar};
     use thread;
 
-    struct Packet<T>(Arc<(Mutex<T>, Condvar)>);
+    struct Packet<T: Send>(Arc<(Mutex<T>, Condvar)>);
 
-    unsafe impl<T:'static+Send> Send for Packet<T> {}
+    unsafe impl<T: Send> Send for Packet<T> {}
     unsafe impl<T> Sync for Packet<T> {}
 
     #[test]
@@ -377,9 +393,9 @@ mod test {
     #[test]
     fn lots_and_lots() {
         static M: StaticMutex = MUTEX_INIT;
-        static mut CNT: uint = 0;
-        static J: uint = 1000;
-        static K: uint = 3;
+        static mut CNT: u32 = 0;
+        const J: u32 = 1000;
+        const K: u32 = 3;
 
         fn inc() {
             for _ in 0..J {
@@ -501,7 +517,7 @@ mod test {
         let arc2 = arc.clone();
         let _ = thread::spawn(move|| -> () {
             struct Unwinder {
-                i: Arc<Mutex<int>>,
+                i: Arc<Mutex<i32>>,
             }
             impl Drop for Unwinder {
                 fn drop(&mut self) {

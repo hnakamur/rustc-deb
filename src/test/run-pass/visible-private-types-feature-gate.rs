@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(visible_private_types)]
 
 trait Foo { fn dummy(&self) { } }
@@ -19,4 +21,3 @@ struct Baz;
 pub fn f(_: Baz) {}
 
 fn main() {}
-

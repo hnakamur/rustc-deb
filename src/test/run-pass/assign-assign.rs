@@ -9,8 +9,10 @@
 // except according to those terms.
 
 // Issue 483 - Assignment expressions result in nil
+// pretty-expanded FIXME #23616
+
 fn test_assign() {
-    let mut x: int;
+    let mut x: isize;
     let y: () = x = 10;
     assert_eq!(x, 10);
     assert_eq!(y, ());
@@ -23,7 +25,7 @@ fn test_assign() {
 }
 
 fn test_assign_op() {
-    let mut x: int = 0;
+    let mut x: isize = 0;
     let y: () = x += 10;
     assert_eq!(x, 10);
     assert_eq!(y, ());

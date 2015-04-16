@@ -109,7 +109,7 @@ impl Type {
     }
 
     pub fn int(ccx: &CrateContext) -> Type {
-        match &ccx.tcx().sess.target.target.target_pointer_width[] {
+        match &ccx.tcx().sess.target.target.target_pointer_width[..] {
             "32" => Type::i32(ccx),
             "64" => Type::i64(ccx),
             tws => panic!("Unsupported target word size for int: {}", tws),
@@ -118,7 +118,7 @@ impl Type {
 
     pub fn int_from_ty(ccx: &CrateContext, t: ast::IntTy) -> Type {
         match t {
-            ast::TyIs(_) => ccx.int_type(),
+            ast::TyIs => ccx.int_type(),
             ast::TyI8 => Type::i8(ccx),
             ast::TyI16 => Type::i16(ccx),
             ast::TyI32 => Type::i32(ccx),
@@ -128,7 +128,7 @@ impl Type {
 
     pub fn uint_from_ty(ccx: &CrateContext, t: ast::UintTy) -> Type {
         match t {
-            ast::TyUs(_) => ccx.int_type(),
+            ast::TyUs => ccx.int_type(),
             ast::TyU8 => Type::i8(ccx),
             ast::TyU16 => Type::i16(ccx),
             ast::TyU32 => Type::i32(ccx),
@@ -175,39 +175,8 @@ impl Type {
         Type::array(&Type::i8p(ccx).ptr_to(), 1)
     }
 
-    pub fn generic_glue_fn(cx: &CrateContext) -> Type {
-        match cx.tn().find_type("glue_fn") {
-            Some(ty) => return ty,
-            None => ()
-        }
-
-        let ty = Type::glue_fn(cx, Type::i8p(cx));
-        cx.tn().associate_type("glue_fn", &ty);
-
-        ty
-    }
-
     pub fn glue_fn(ccx: &CrateContext, t: Type) -> Type {
         Type::func(&[t], &Type::void(ccx))
-    }
-
-    pub fn tydesc(ccx: &CrateContext, str_slice_ty: Type) -> Type {
-        let mut tydesc = Type::named_struct(ccx, "tydesc");
-        let glue_fn_ty = Type::glue_fn(ccx, Type::i8p(ccx)).ptr_to();
-
-        let int_ty = Type::int(ccx);
-
-        // Must mirror:
-        //
-        // std::unstable::intrinsics::TyDesc
-
-        let elems = [int_ty,     // size
-                     int_ty,     // align
-                     glue_fn_ty, // drop
-                     str_slice_ty]; // name
-        tydesc.set_struct_body(&elems, false);
-
-        tydesc
     }
 
     pub fn array(ty: &Type, len: u64) -> Type {
@@ -230,14 +199,6 @@ impl Type {
 
     pub fn vtable_ptr(ccx: &CrateContext) -> Type {
         Type::glue_fn(ccx, Type::i8p(ccx)).ptr_to().ptr_to()
-    }
-
-    pub fn opaque_trait(ccx: &CrateContext) -> Type {
-        Type::struct_(ccx, &[Type::opaque_trait_data(ccx).ptr_to(), Type::vtable_ptr(ccx)], false)
-    }
-
-    pub fn opaque_trait_data(ccx: &CrateContext) -> Type {
-        Type::i8(ccx)
     }
 
     pub fn kind(&self) -> TypeKind {
@@ -278,21 +239,21 @@ impl Type {
     }
 
     /// Return the number of elements in `self` if it is a LLVM vector type.
-    pub fn vector_length(&self) -> uint {
+    pub fn vector_length(&self) -> usize {
         unsafe {
-            llvm::LLVMGetVectorSize(self.to_ref()) as uint
+            llvm::LLVMGetVectorSize(self.to_ref()) as usize
         }
     }
 
-    pub fn array_length(&self) -> uint {
+    pub fn array_length(&self) -> usize {
         unsafe {
-            llvm::LLVMGetArrayLength(self.to_ref()) as uint
+            llvm::LLVMGetArrayLength(self.to_ref()) as usize
         }
     }
 
     pub fn field_types(&self) -> Vec<Type> {
         unsafe {
-            let n_elts = llvm::LLVMCountStructElementTypes(self.to_ref()) as uint;
+            let n_elts = llvm::LLVMCountStructElementTypes(self.to_ref()) as usize;
             if n_elts == 0 {
                 return Vec::new();
             }
@@ -309,7 +270,7 @@ impl Type {
 
     pub fn func_params(&self) -> Vec<Type> {
         unsafe {
-            let n_args = llvm::LLVMCountParamTypes(self.to_ref()) as uint;
+            let n_args = llvm::LLVMCountParamTypes(self.to_ref()) as usize;
             let mut args: Vec<_> = repeat(Type { rf: ptr::null_mut() }).take(n_args).collect();
             llvm::LLVMGetParamTypes(self.to_ref(),
                                     args.as_mut_ptr() as *mut TypeRef);
@@ -317,7 +278,7 @@ impl Type {
         }
     }
 
-    pub fn float_width(&self) -> uint {
+    pub fn float_width(&self) -> usize {
         match self.kind() {
             Float => 32,
             Double => 64,

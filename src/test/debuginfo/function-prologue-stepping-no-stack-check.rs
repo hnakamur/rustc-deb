@@ -20,6 +20,8 @@
 
 // compile-flags:-g
 
+#![feature(old_io)]
+
 // === GDB TESTS ===================================================================================
 
 // gdb-command:rbreak immediate_args
@@ -248,7 +250,7 @@
 #![omit_gdb_pretty_printer_section]
 
 #[no_stack_check]
-fn immediate_args(a: int, b: bool, c: f64) {
+fn immediate_args(a: isize, b: bool, c: f64) {
     ::std::old_io::print("");
 }
 

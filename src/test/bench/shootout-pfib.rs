@@ -18,6 +18,8 @@
 
 */
 
+#![feature(std_misc, rustc_private)]
+
 extern crate getopts;
 
 use std::sync::mpsc::{channel, Sender};
@@ -75,7 +77,7 @@ fn stress_task(id: isize) {
     }
 }
 
-fn stress(num_tasks: int) {
+fn stress(num_tasks: isize) {
     let mut results = Vec::new();
     for i in 0..num_tasks {
         results.push(thread::spawn(move|| {

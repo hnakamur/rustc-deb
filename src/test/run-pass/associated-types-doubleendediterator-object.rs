@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-fn pairwise_sub(mut t: Box<DoubleEndedIterator<Item=int>>) -> int {
+fn pairwise_sub(mut t: Box<DoubleEndedIterator<Item=isize>>) -> isize {
     let mut result = 0;
     loop {
         let front = t.next();
@@ -25,6 +27,7 @@ fn pairwise_sub(mut t: Box<DoubleEndedIterator<Item=int>>) -> int {
 
 fn main() {
     let v = vec!(1, 2, 3, 4, 5, 6);
-    let r = pairwise_sub(box v.into_iter());
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    let r = pairwise_sub(Box::new(v.into_iter()));
     assert_eq!(r, 9);
 }

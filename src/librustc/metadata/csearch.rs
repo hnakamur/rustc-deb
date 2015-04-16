@@ -29,7 +29,7 @@ use syntax::parse::token;
 
 use std::collections::hash_map::HashMap;
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct MethodInfo {
     pub name: ast::Name,
     pub def_id: ast::DefId,
@@ -46,7 +46,7 @@ pub fn each_lang_item<F>(cstore: &cstore::CStore,
                          cnum: ast::CrateNum,
                          f: F)
                          -> bool where
-    F: FnMut(ast::NodeId, uint) -> bool,
+    F: FnMut(ast::NodeId, usize) -> bool,
 {
     let crate_data = cstore.get_crate_data(cnum);
     decoder::each_lang_item(&*crate_data, f)
@@ -92,7 +92,7 @@ pub fn get_item_path(tcx: &ty::ctxt, def: ast::DefId) -> Vec<ast_map::PathElem> 
 
     // FIXME #1920: This path is not always correct if the crate is not linked
     // into the root namespace.
-    let mut r = vec![ast_map::PathMod(token::intern(&cdata.name[]))];
+    let mut r = vec![ast_map::PathMod(token::intern(&cdata.name))];
     r.push_all(&path);
     r
 }
@@ -150,12 +150,9 @@ pub fn get_trait_name(cstore: &cstore::CStore, def: ast::DefId) -> ast::Name {
                             def.node)
 }
 
-pub fn get_trait_item_name_and_kind(cstore: &cstore::CStore, def: ast::DefId)
-                                    -> (ast::Name, def::TraitItemKind) {
+pub fn is_static_method(cstore: &cstore::CStore, def: ast::DefId) -> bool {
     let cdata = cstore.get_crate_data(def.krate);
-    decoder::get_trait_item_name_and_kind(cstore.intr.clone(),
-                                          &*cdata,
-                                          def.node)
+    decoder::is_static_method(&*cdata, def.node)
 }
 
 pub fn get_trait_item_def_ids(cstore: &cstore::CStore, def: ast::DefId)
@@ -176,14 +173,6 @@ pub fn get_provided_trait_methods<'tcx>(tcx: &ty::ctxt<'tcx>,
     let cstore = &tcx.sess.cstore;
     let cdata = cstore.get_crate_data(def.krate);
     decoder::get_provided_trait_methods(cstore.intr.clone(), &*cdata, def.node, tcx)
-}
-
-pub fn get_supertraits<'tcx>(tcx: &ty::ctxt<'tcx>,
-                             def: ast::DefId)
-                             -> Vec<Rc<ty::TraitRef<'tcx>>> {
-    let cstore = &tcx.sess.cstore;
-    let cdata = cstore.get_crate_data(def.krate);
-    decoder::get_supertraits(&*cdata, def.node, tcx)
 }
 
 pub fn get_type_name_if_impl(cstore: &cstore::CStore, def: ast::DefId)
@@ -239,6 +228,14 @@ pub fn get_predicates<'tcx>(tcx: &ty::ctxt<'tcx>, def: ast::DefId)
     let cstore = &tcx.sess.cstore;
     let cdata = cstore.get_crate_data(def.krate);
     decoder::get_predicates(&*cdata, def.node, tcx)
+}
+
+pub fn get_super_predicates<'tcx>(tcx: &ty::ctxt<'tcx>, def: ast::DefId)
+                                  -> ty::GenericPredicates<'tcx>
+{
+    let cstore = &tcx.sess.cstore;
+    let cdata = cstore.get_crate_data(def.krate);
+    decoder::get_super_predicates(&*cdata, def.node, tcx)
 }
 
 pub fn get_field_type<'tcx>(tcx: &ty::ctxt<'tcx>, class_id: ast::DefId,
@@ -391,7 +388,7 @@ pub fn is_staged_api(cstore: &cstore::CStore, def: ast::DefId) -> bool {
     let cdata = cstore.get_crate_data(def.krate);
     let attrs = decoder::get_crate_attributes(cdata.data());
     for attr in &attrs {
-        if &attr.name()[] == "staged_api" {
+        if &attr.name()[..] == "staged_api" {
             match attr.node.value.node { ast::MetaWord(_) => return true, _ => (/*pass*/) }
         }
     }
@@ -410,3 +407,12 @@ pub fn is_associated_type(cstore: &cstore::CStore, def: ast::DefId) -> bool {
     decoder::is_associated_type(&*cdata, def.node)
 }
 
+pub fn is_defaulted_trait(cstore: &cstore::CStore, trait_def_id: ast::DefId) -> bool {
+    let cdata = cstore.get_crate_data(trait_def_id.krate);
+    decoder::is_defaulted_trait(&*cdata, trait_def_id.node)
+}
+
+pub fn is_default_impl(cstore: &cstore::CStore, impl_did: ast::DefId) -> bool {
+    let cdata = cstore.get_crate_data(impl_did.krate);
+    decoder::is_default_impl(&*cdata, impl_did.node)
+}

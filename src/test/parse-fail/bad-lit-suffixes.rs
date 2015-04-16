@@ -9,10 +9,6 @@
 // except according to those terms.
 
 
-extern crate
-    "foo"suffix //~ ERROR extern crate name with a suffix is illegal
-     as foo;
-
 extern
     "C"suffix //~ ERROR ABI spec with a suffix is illegal
     fn foo() {}

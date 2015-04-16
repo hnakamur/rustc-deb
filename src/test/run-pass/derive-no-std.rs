@@ -8,12 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(no_std)]
+#![feature(no_std, core, rand, collections, rustc_private)]
 #![no_std]
 
 extern crate core;
 extern crate rand;
-extern crate "serialize" as rustc_serialize;
+extern crate serialize as rustc_serialize;
 extern crate collections;
 
 // Issue #16803

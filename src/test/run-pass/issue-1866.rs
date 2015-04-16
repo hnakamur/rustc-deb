@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 mod a {
-    pub type rust_task = uint;
+    pub type rust_task = usize;
     pub mod rustrt {
         use super::rust_task;
         extern {

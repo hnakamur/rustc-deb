@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait Trait {
-        fn method(self) -> int;
+        fn method(self) -> isize;
 }
 
 struct Wrapper<T> {
@@ -17,7 +19,7 @@ struct Wrapper<T> {
 }
 
 impl<'a, T> Trait for &'a Wrapper<T> where &'a T: Trait {
-    fn method(self) -> int {
+    fn method(self) -> isize {
         let r: &'a T = &self.field;
         Trait::method(r); // these should both work
         r.method()

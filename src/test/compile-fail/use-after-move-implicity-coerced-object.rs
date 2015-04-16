@@ -18,7 +18,7 @@ struct Number {
     n: i64
 }
 
-impl fmt::String for Number {
+impl fmt::Display for Number {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.n)
     }
@@ -34,8 +34,8 @@ impl List {
 }
 
 fn main() {
-    let n = box Number { n: 42 };
-    let mut l = box List { list: Vec::new() };
+    let n: Box<_> = box Number { n: 42 };
+    let mut l: Box<_> = box List { list: Vec::new() };
     l.push(n);
     let x = n.to_string();
     //~^ ERROR: use of moved value: `n`

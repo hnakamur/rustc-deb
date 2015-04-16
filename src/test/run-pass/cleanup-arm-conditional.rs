@@ -21,20 +21,22 @@
 // Test that cleanup scope for temporaries created in a match
 // arm is confined to the match arm itself.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
-#![feature(box_syntax)]
+#![feature(box_syntax, os)]
 
 use std::os;
 
-struct Test { x: int }
+struct Test { x: isize }
 
 impl Test {
-    fn get_x(&self) -> Option<Box<int>> {
+    fn get_x(&self) -> Option<Box<isize>> {
         Some(box self.x)
     }
 }
 
-fn do_something(t: &Test) -> int {
+fn do_something(t: &Test) -> isize {
 
     // The cleanup scope for the result of `t.get_x()` should be the
     // arm itself and not the match, otherwise we'll (potentially) get
@@ -52,4 +54,3 @@ pub fn main() {
     let t = Test { x: 1 };
     do_something(&t);
 }
-

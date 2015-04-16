@@ -15,11 +15,13 @@
 //! inspected for information about terminal dimensions or for related information
 //! about the stream or terminal to which it is attached.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
+//! # #![feature(old_io)]
 //! # #![allow(unused_must_use)]
 //! use std::old_io;
+//! use std::old_io::*;
 //!
 //! let mut out = old_io::stdout();
 //! out.write_all(b"Hello, world!");
@@ -27,13 +29,13 @@
 
 use self::StdSource::*;
 
+use boxed;
 use boxed::Box;
 use cell::RefCell;
 use clone::Clone;
-use panicking::LOCAL_STDERR;
 use fmt;
 use old_io::{Reader, Writer, IoResult, IoError, OtherIoError, Buffer,
-         standard_error, EndOfFile, LineBufferedWriter, BufferedReader};
+             standard_error, EndOfFile, LineBufferedWriter, BufferedReader};
 use marker::{Sync, Send};
 use libc;
 use mem;
@@ -43,8 +45,6 @@ use ops::{Deref, DerefMut, FnOnce};
 use ptr;
 use result::Result::{Ok, Err};
 use rt;
-use slice::SliceExt;
-use str::StrExt;
 use string::String;
 use sys::{fs, tty};
 use sync::{Arc, Mutex, MutexGuard, Once, ONCE_INIT};
@@ -140,8 +140,10 @@ impl StdinReader {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(old_io)]
     /// use std::old_io;
+    /// use std::old_io::*;
     ///
     /// let mut stdin = old_io::stdin();
     /// for line in stdin.lock().lines() {
@@ -180,7 +182,7 @@ impl StdinReader {
 }
 
 impl Reader for StdinReader {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.inner.lock().unwrap().0.read(buf)
     }
 
@@ -188,11 +190,11 @@ impl Reader for StdinReader {
     // read more than once and we don't want those calls to interleave (or
     // incur the costs of repeated locking).
 
-    fn read_at_least(&mut self, min: uint, buf: &mut [u8]) -> IoResult<uint> {
+    fn read_at_least(&mut self, min: usize, buf: &mut [u8]) -> IoResult<usize> {
         self.inner.lock().unwrap().0.read_at_least(min, buf)
     }
 
-    fn push_at_least(&mut self, min: uint, len: uint, buf: &mut Vec<u8>) -> IoResult<uint> {
+    fn push_at_least(&mut self, min: usize, len: usize, buf: &mut Vec<u8>) -> IoResult<usize> {
         self.inner.lock().unwrap().0.push_at_least(min, len, buf)
     }
 
@@ -200,11 +202,11 @@ impl Reader for StdinReader {
         self.inner.lock().unwrap().0.read_to_end()
     }
 
-    fn read_le_uint_n(&mut self, nbytes: uint) -> IoResult<u64> {
+    fn read_le_uint_n(&mut self, nbytes: usize) -> IoResult<u64> {
         self.inner.lock().unwrap().0.read_le_uint_n(nbytes)
     }
 
-    fn read_be_uint_n(&mut self, nbytes: uint) -> IoResult<u64> {
+    fn read_be_uint_n(&mut self, nbytes: usize) -> IoResult<u64> {
         self.inner.lock().unwrap().0.read_be_uint_n(nbytes)
     }
 }
@@ -218,15 +220,15 @@ impl Reader for StdinReader {
 /// See `stdout()` for more notes about this function.
 pub fn stdin() -> StdinReader {
     // We're following the same strategy as kimundi's lazy_static library
-    static mut STDIN: *const StdinReader = 0 as *const StdinReader;
+    static mut STDIN: *mut StdinReader = 0 as *mut StdinReader;
     static ONCE: Once = ONCE_INIT;
 
     unsafe {
         ONCE.call_once(|| {
-            // The default buffer capacity is 64k, but apparently windows doesn't like
-            // 64k reads on stdin. See #13304 for details, but the idea is that on
-            // windows we use a slightly smaller buffer that's been seen to be
-            // acceptable.
+            // The default buffer capacity is 64k, but apparently windows
+            // doesn't like 64k reads on stdin. See #13304 for details, but the
+            // idea is that on windows we use a slightly smaller buffer that's
+            // been seen to be acceptable.
             let stdin = if cfg!(windows) {
                 BufferedReader::with_capacity(8 * 1024, stdin_raw())
             } else {
@@ -235,12 +237,12 @@ pub fn stdin() -> StdinReader {
             let stdin = StdinReader {
                 inner: Arc::new(Mutex::new(RaceBox(stdin)))
             };
-            STDIN = mem::transmute(box stdin);
+            STDIN = boxed::into_raw(box stdin);
 
             // Make sure to free it at exit
-            rt::at_exit(|| {
-                mem::transmute::<_, Box<StdinReader>>(STDIN);
-                STDIN = ptr::null();
+            let _ = rt::at_exit(|| {
+                Box::from_raw(STDIN);
+                STDIN = ptr::null_mut();
             });
         });
 
@@ -318,14 +320,10 @@ pub fn set_stdout(stdout: Box<Writer + Send>) -> Option<Box<Writer + Send>> {
 ///
 /// Note that this does not need to be called for all new tasks; the default
 /// output handle is to the process's stderr stream.
-pub fn set_stderr(stderr: Box<Writer + Send>) -> Option<Box<Writer + Send>> {
-    let mut new = Some(stderr);
-    LOCAL_STDERR.with(|slot| {
-        mem::replace(&mut *slot.borrow_mut(), new.take())
-    }).and_then(|mut s| {
-        let _ = s.flush();
-        Some(s)
-    })
+#[unstable(feature = "old_io")]
+#[deprecated(since = "1.0.0", reason = "replaced with std::io::set_panic")]
+pub fn set_stderr(_stderr: Box<Writer + Send>) -> Option<Box<Writer + Send>> {
+    None
 }
 
 // Helper to access the local task's stdout handle
@@ -339,10 +337,10 @@ pub fn set_stderr(stderr: Box<Writer + Send>) -> Option<Box<Writer + Send>> {
 //      })
 //  })
 fn with_task_stdout<F>(f: F) where F: FnOnce(&mut Writer) -> IoResult<()> {
-    let mut my_stdout = LOCAL_STDOUT.with(|slot| {
+    let mut my_stdout: Box<Writer + Send> = LOCAL_STDOUT.with(|slot| {
         slot.borrow_mut().take()
     }).unwrap_or_else(|| {
-        box stdout() as Box<Writer + Send>
+        box stdout()
     });
     let result = f(&mut *my_stdout);
     let mut var = Some(my_stdout);
@@ -412,16 +410,16 @@ impl StdReader {
 }
 
 impl Reader for StdReader {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         let ret = match self.inner {
             TTY(ref mut tty) => {
                 // Flush the task-local stdout so that weird issues like a
                 // print!'d prompt not being shown until after the user hits
                 // enter.
                 flush();
-                tty.read(buf).map(|i| i as uint)
+                tty.read(buf).map(|i| i as usize)
             },
-            File(ref mut file) => file.read(buf).map(|i| i as uint),
+            File(ref mut file) => file.read(buf).map(|i| i as usize),
         };
         match ret {
             // When reading a piped stdin, libuv will return 0-length reads when
@@ -454,7 +452,7 @@ impl StdWriter {
     ///
     /// This function will return an error if the output stream is not actually
     /// connected to a TTY instance, or if querying the TTY instance fails.
-    pub fn winsize(&mut self) -> IoResult<(int, int)> {
+    pub fn winsize(&mut self) -> IoResult<(isize, isize)> {
         match self.inner {
             TTY(ref mut tty) => {
                 tty.get_winsize()
@@ -538,32 +536,5 @@ mod tests {
         stdin();
         stdout();
         stderr();
-    }
-
-    #[test]
-    fn capture_stdout() {
-        use old_io::{ChanReader, ChanWriter};
-
-        let (tx, rx) = channel();
-        let (mut r, w) = (ChanReader::new(rx), ChanWriter::new(tx));
-        let _t = thread::spawn(move|| {
-            set_stdout(box w);
-            println!("hello!");
-        });
-        assert_eq!(r.read_to_string().unwrap(), "hello!\n");
-    }
-
-    #[test]
-    fn capture_stderr() {
-        use old_io::{ChanReader, ChanWriter, Reader};
-
-        let (tx, rx) = channel();
-        let (mut r, w) = (ChanReader::new(rx), ChanWriter::new(tx));
-        let _t = thread::spawn(move || -> () {
-            set_stderr(box w);
-            panic!("my special message");
-        });
-        let s = r.read_to_string().unwrap();
-        assert!(s.contains("my special message"));
     }
 }

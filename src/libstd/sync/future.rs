@@ -14,6 +14,7 @@
 //! # Examples
 //!
 //! ```
+//! # #![feature(std_misc)]
 //! use std::sync::Future;
 //!
 //! // a fake, for now
@@ -35,9 +36,10 @@
 use core::prelude::*;
 use core::mem::replace;
 
+use boxed::Box;
 use self::FutureState::*;
 use sync::mpsc::{Receiver, channel};
-use thunk::{Thunk};
+use thunk::Thunk;
 use thread;
 
 /// A type encapsulating the result of a computation which may not be complete
@@ -83,7 +85,7 @@ impl<A> Future<A> {
                 match replace(&mut self.state, Evaluating) {
                     Forced(_) | Evaluating => panic!("Logic error."),
                     Pending(f) => {
-                        self.state = Forced(f.invoke(()));
+                        self.state = Forced(f());
                         self.get_ref()
                     }
                 }
@@ -113,7 +115,7 @@ impl<A> Future<A> {
          * function. It is not spawned into another task.
          */
 
-        Future {state: Pending(Thunk::new(f))}
+        Future {state: Pending(Box::new(f))}
     }
 }
 
@@ -204,7 +206,7 @@ mod test {
     }
 
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn test_future_panic() {
         let mut f = Future::spawn(move|| panic!());
         let _x: String = f.get();

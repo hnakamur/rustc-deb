@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(rustc_private)]
+
 #[macro_use] extern crate log;
 
 pub fn foo<T>() {
-    fn death() -> int { panic!() }
+    fn death() -> isize { panic!() }
     debug!("{}", (||{ death() })());
 }

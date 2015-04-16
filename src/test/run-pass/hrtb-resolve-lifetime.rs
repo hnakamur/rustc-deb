@@ -10,11 +10,13 @@
 
 // A basic test of using a higher-ranked trait bound.
 
+// pretty-expanded FIXME #23616
+
 trait FnLike<A,R> {
     fn call(&self, arg: A) -> R;
 }
 
-type FnObject<'b> = for<'a> FnLike<&'a int, &'a int> + 'b;
+type FnObject<'b> = for<'a> FnLike<&'a isize, &'a isize> + 'b;
 
 fn main() {
 }

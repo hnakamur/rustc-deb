@@ -8,8 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+#![feature(collections)]
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,13 +16,13 @@ use std::string::String;
 
 #[derive(PartialEq, Debug)]
 struct Point {
-    x: int,
-    y: int
+    x: isize,
+    y: isize
 }
 
 pub fn main() {
     assert_eq!(*Rc::new(5), 5);
-    assert_eq!(***Rc::new(box box 5), 5);
+    assert_eq!(***Rc::new(Box::new(Box::new(5))), 5);
     assert_eq!(*Rc::new(Point {x: 2, y: 4}), Point {x: 2, y: 4});
 
     let i = Rc::new(RefCell::new(2));

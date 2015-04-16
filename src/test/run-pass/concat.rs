@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 pub fn main() {
     assert_eq!(format!(concat!("foo", "bar", "{}"), "baz"), "foobarbaz".to_string());
     assert_eq!(format!(concat!()), "".to_string());
@@ -15,12 +17,12 @@ pub fn main() {
     assert_eq!(concat!("qux", "quux",).to_string(), "quxquux".to_string());
 
     assert_eq!(
-        concat!(1, 2, 3_usize, 4f32, 4.0, 'a', true),
+        concat!(1, 2, 3, 4f32, 4.0, 'a', true),
         "12344.0atrue"
     );
 
     assert!(match "12344.0atrue" {
-        concat!(1, 2, 3_usize, 4f32, 4.0, 'a', true) => true,
+        concat!(1, 2, 3, 4f32, 4.0, 'a', true) => true,
         _ => false
     })
 }

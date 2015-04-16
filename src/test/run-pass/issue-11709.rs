@@ -15,6 +15,8 @@
 // when this bug was opened. The cases where the compiler
 // panics before the fix have a comment.
 
+#![feature(std_misc)]
+
 use std::thunk::Thunk;
 
 struct S {x:()}
@@ -23,7 +25,7 @@ fn test(slot: &mut Option<Thunk<(),Thunk>>) -> () {
   let a = slot.take();
   let _a = match a {
     // `{let .. a(); }` would break
-    Some(a) => { let _a = a.invoke(()); },
+    Some(a) => { let _a = a(); },
     None => (),
   };
 }

@@ -8,19 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![unstable(feature = "std_misc")]
+
+use convert::{Into, From};
 use cmp::{PartialEq, Eq, PartialOrd, Ord, Ordering};
-use error::{Error, FromError};
+use error::Error;
 use fmt;
 use io;
-use iter::IteratorExt;
+use iter::Iterator;
 use libc;
 use mem;
+#[allow(deprecated)]
 use old_io;
 use ops::Deref;
 use option::Option::{self, Some, None};
 use result::Result::{self, Ok, Err};
-use slice::{self, SliceExt};
-use str::StrExt;
+use slice;
 use string::String;
 use vec::Vec;
 
@@ -39,9 +42,10 @@ use vec::Vec;
 /// a `CString` do *not* contain the trailing nul terminator unless otherwise
 /// specified.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```no_run
+/// # #![feature(libc)]
 /// # extern crate libc;
 /// # fn main() {
 /// use std::ffi::CString;
@@ -51,7 +55,7 @@ use vec::Vec;
 ///     fn my_printer(s: *const libc::c_char);
 /// }
 ///
-/// let to_print = b"Hello, world!";
+/// let to_print = &b"Hello, world!"[..];
 /// let c_to_print = CString::new(to_print).unwrap();
 /// unsafe {
 ///     my_printer(c_to_print.as_ptr());
@@ -59,6 +63,7 @@ use vec::Vec;
 /// # }
 /// ```
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct CString {
     inner: Vec<u8>,
 }
@@ -79,6 +84,7 @@ pub struct CString {
 /// Inspecting a foreign C string
 ///
 /// ```no_run
+/// # #![feature(libc)]
 /// extern crate libc;
 /// use std::ffi::CStr;
 ///
@@ -95,6 +101,7 @@ pub struct CString {
 /// Passing a Rust-originating C string
 ///
 /// ```no_run
+/// # #![feature(libc)]
 /// extern crate libc;
 /// use std::ffi::{CString, CStr};
 ///
@@ -110,21 +117,20 @@ pub struct CString {
 /// }
 /// ```
 #[derive(Hash)]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct CStr {
+    // FIXME: this should not be represented with a DST slice but rather with
+    //        just a raw `libc::c_char` along with some form of marker to make
+    //        this an unsized type. Essentially `sizeof(&CStr)` should be the
+    //        same as `sizeof(&c_char)` but `CStr` should be an unsized type.
     inner: [libc::c_char]
 }
 
 /// An error returned from `CString::new` to indicate that a nul byte was found
 /// in the vector provided.
 #[derive(Clone, PartialEq, Debug)]
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct NulError(usize, Vec<u8>);
-
-/// A conversion trait used by the constructor of `CString` for types that can
-/// be converted to a vector of bytes.
-pub trait IntoBytes {
-    /// Consumes this container, returning a vector of bytes.
-    fn into_bytes(self) -> Vec<u8>;
-}
 
 impl CString {
     /// Create a new C-compatible string from a container of bytes.
@@ -135,6 +141,7 @@ impl CString {
     /// # Examples
     ///
     /// ```no_run
+    /// # #![feature(libc)]
     /// extern crate libc;
     /// use std::ffi::CString;
     ///
@@ -153,61 +160,12 @@ impl CString {
     /// This function will return an error if the bytes yielded contain an
     /// internal 0 byte. The error returned will contain the bytes as well as
     /// the position of the nul byte.
-    pub fn new<T: IntoBytes>(t: T) -> Result<CString, NulError> {
-        let bytes = t.into_bytes();
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn new<T: Into<Vec<u8>>>(t: T) -> Result<CString, NulError> {
+        let bytes = t.into();
         match bytes.iter().position(|x| *x == 0) {
             Some(i) => Err(NulError(i, bytes)),
             None => Ok(unsafe { CString::from_vec_unchecked(bytes) }),
-        }
-    }
-
-    /// Create a new C-compatible string from a byte slice.
-    ///
-    /// This method will copy the data of the slice provided into a new
-    /// allocation, ensuring that there is a trailing 0 byte.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// extern crate libc;
-    /// use std::ffi::CString;
-    ///
-    /// extern { fn puts(s: *const libc::c_char); }
-    ///
-    /// fn main() {
-    ///     let to_print = CString::new("Hello!").unwrap();
-    ///     unsafe {
-    ///         puts(to_print.as_ptr());
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if the provided slice contains any
-    /// interior nul bytes.
-    #[unstable(feature = "std_misc")]
-    #[deprecated(since = "1.0.0", reason = "use CString::new instead")]
-    #[allow(deprecated)]
-    pub fn from_slice(v: &[u8]) -> CString {
-        CString::from_vec(v.to_vec())
-    }
-
-    /// Create a C-compatible string from a byte vector.
-    ///
-    /// This method will consume ownership of the provided vector, appending a 0
-    /// byte to the end after verifying that there are no interior 0 bytes.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if the provided slice contains any
-    /// interior nul bytes.
-    #[unstable(feature = "std_misc")]
-    #[deprecated(since = "1.0.0", reason = "use CString::new instead")]
-    pub fn from_vec(v: Vec<u8>) -> CString {
-        match v.iter().position(|x| *x == 0) {
-            Some(i) => panic!("null byte found in slice at: {}", i),
-            None => unsafe { CString::from_vec_unchecked(v) },
         }
     }
 
@@ -216,6 +174,7 @@ impl CString {
     ///
     /// This method is equivalent to `from_vec` except that no runtime assertion
     /// is made that `v` contains no 0 bytes.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub unsafe fn from_vec_unchecked(mut v: Vec<u8>) -> CString {
         v.push(0);
         CString { inner: v }
@@ -224,18 +183,21 @@ impl CString {
     /// Returns the contents of this `CString` as a slice of bytes.
     ///
     /// The returned slice does **not** contain the trailing nul separator and
-    /// it is guaranteet to not have any interior nul bytes.
+    /// it is guaranteed to not have any interior nul bytes.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn as_bytes(&self) -> &[u8] {
         &self.inner[..self.inner.len() - 1]
     }
 
     /// Equivalent to the `as_bytes` function except that the returned slice
     /// includes the trailing nul byte.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn as_bytes_with_nul(&self) -> &[u8] {
         &self.inner
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Deref for CString {
     type Target = CStr;
 
@@ -254,32 +216,39 @@ impl fmt::Debug for CString {
 impl NulError {
     /// Returns the position of the nul byte in the slice that was provided to
     /// `CString::from_vec`.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn nul_position(&self) -> usize { self.0 }
 
     /// Consumes this error, returning the underlying vector of bytes which
     /// generated the error in the first place.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn into_vec(self) -> Vec<u8> { self.1 }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Error for NulError {
     fn description(&self) -> &str { "nul byte found in data" }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl fmt::Display for NulError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "nul byte found in provided data at position: {}", self.0)
     }
 }
 
-impl FromError<NulError> for io::Error {
-    fn from_error(_: NulError) -> io::Error {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl From<NulError> for io::Error {
+    fn from(_: NulError) -> io::Error {
         io::Error::new(io::ErrorKind::InvalidInput,
-                       "data provided contains a nul byte", None)
+                       "data provided contains a nul byte")
     }
 }
 
-impl FromError<NulError> for old_io::IoError {
-    fn from_error(_: NulError) -> old_io::IoError {
+#[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
+impl From<NulError> for old_io::IoError {
+    fn from(_: NulError) -> old_io::IoError {
         old_io::IoError {
             kind: old_io::IoErrorKind::InvalidInput,
             desc: "data provided contains a nul byte",
@@ -305,9 +274,10 @@ impl CStr {
     /// > currently implemented with an up-front calculation of the length of
     /// > the string. This is not guaranteed to always be the case.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```no_run
+    /// # #![feature(libc)]
     /// # extern crate libc;
     /// # fn main() {
     /// use std::ffi::CStr;
@@ -325,6 +295,7 @@ impl CStr {
     /// }
     /// # }
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub unsafe fn from_ptr<'a>(ptr: *const libc::c_char) -> &'a CStr {
         let len = libc::strlen(ptr);
         mem::transmute(slice::from_raw_parts(ptr, len as usize + 1))
@@ -333,8 +304,9 @@ impl CStr {
     /// Return the inner pointer to this C string.
     ///
     /// The returned pointer will be valid for as long as `self` is and points
-    /// to a continguous region of memory terminated with a 0 byte to represent
+    /// to a contiguous region of memory terminated with a 0 byte to represent
     /// the end of the string.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn as_ptr(&self) -> *const libc::c_char {
         self.inner.as_ptr()
     }
@@ -351,6 +323,7 @@ impl CStr {
     /// > **Note**: This method is currently implemented as a 0-cost cast, but
     /// > it is planned to alter its definition in the future to perform the
     /// > length calculation whenever this method is called.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn to_bytes(&self) -> &[u8] {
         let bytes = self.to_bytes_with_nul();
         &bytes[..bytes.len() - 1]
@@ -364,57 +337,31 @@ impl CStr {
     /// > **Note**: This method is currently implemented as a 0-cost cast, but
     /// > it is planned to alter its definition in the future to perform the
     /// > length calculation whenever this method is called.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn to_bytes_with_nul(&self) -> &[u8] {
         unsafe { mem::transmute::<&[libc::c_char], &[u8]>(&self.inner) }
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl PartialEq for CStr {
     fn eq(&self, other: &CStr) -> bool {
-        self.to_bytes().eq(&other.to_bytes())
+        self.to_bytes().eq(other.to_bytes())
     }
 }
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Eq for CStr {}
+#[stable(feature = "rust1", since = "1.0.0")]
 impl PartialOrd for CStr {
     fn partial_cmp(&self, other: &CStr) -> Option<Ordering> {
         self.to_bytes().partial_cmp(&other.to_bytes())
     }
 }
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Ord for CStr {
     fn cmp(&self, other: &CStr) -> Ordering {
         self.to_bytes().cmp(&other.to_bytes())
     }
-}
-
-/// Deprecated in favor of `CStr`
-#[unstable(feature = "std_misc")]
-#[deprecated(since = "1.0.0", reason = "use CStr::from_ptr(p).to_bytes() instead")]
-pub unsafe fn c_str_to_bytes<'a>(raw: &'a *const libc::c_char) -> &'a [u8] {
-    let len = libc::strlen(*raw);
-    slice::from_raw_parts(*(raw as *const _ as *const *const u8), len as usize)
-}
-
-/// Deprecated in favor of `CStr`
-#[unstable(feature = "std_misc")]
-#[deprecated(since = "1.0.0",
-             reason = "use CStr::from_ptr(p).to_bytes_with_nul() instead")]
-pub unsafe fn c_str_to_bytes_with_nul<'a>(raw: &'a *const libc::c_char)
-                                          -> &'a [u8] {
-    let len = libc::strlen(*raw) + 1;
-    slice::from_raw_parts(*(raw as *const _ as *const *const u8), len as usize)
-}
-
-impl<'a> IntoBytes for &'a str {
-    fn into_bytes(self) -> Vec<u8> { self.as_bytes().to_vec() }
-}
-impl<'a> IntoBytes for &'a [u8] {
-    fn into_bytes(self) -> Vec<u8> { self.to_vec() }
-}
-impl IntoBytes for String {
-    fn into_bytes(self) -> Vec<u8> { self.into_bytes() }
-}
-impl IntoBytes for Vec<u8> {
-    fn into_bytes(self) -> Vec<u8> { self }
 }
 
 #[cfg(test)]
@@ -422,28 +369,27 @@ mod tests {
     use prelude::v1::*;
     use super::*;
     use libc;
-    use mem;
 
     #[test]
     fn c_to_rust() {
         let data = b"123\0";
         let ptr = data.as_ptr() as *const libc::c_char;
         unsafe {
-            assert_eq!(c_str_to_bytes(&ptr), b"123");
-            assert_eq!(c_str_to_bytes_with_nul(&ptr), b"123\0");
+            assert_eq!(CStr::from_ptr(ptr).to_bytes(), b"123");
+            assert_eq!(CStr::from_ptr(ptr).to_bytes_with_nul(), b"123\0");
         }
     }
 
     #[test]
     fn simple() {
-        let s = CString::new(b"1234").unwrap();
+        let s = CString::new("1234").unwrap();
         assert_eq!(s.as_bytes(), b"1234");
         assert_eq!(s.as_bytes_with_nul(), b"1234\0");
     }
 
     #[test]
     fn build_with_zero1() {
-        assert!(CString::new(b"\0").is_err());
+        assert!(CString::new(&b"\0"[..]).is_err());
     }
     #[test]
     fn build_with_zero2() {
@@ -460,7 +406,7 @@ mod tests {
 
     #[test]
     fn formatted() {
-        let s = CString::new(b"12").unwrap();
+        let s = CString::new(&b"12"[..]).unwrap();
         assert_eq!(format!("{:?}", s), "\"12\"");
     }
 

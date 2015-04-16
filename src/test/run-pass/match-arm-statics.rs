@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 struct NewBool(bool);
 
 enum Direction {
@@ -36,8 +38,8 @@ const VARIANT2_NORTH: EnumWithStructVariants = EnumWithStructVariants::Variant2 
     dir: Direction::North };
 
 pub mod glfw {
-    #[derive(Copy)]
-    pub struct InputState(uint);
+    #[derive(Copy, Clone)]
+    pub struct InputState(usize);
 
     pub const RELEASE  : InputState = InputState(0);
     pub const PRESS    : InputState = InputState(1);
@@ -99,7 +101,7 @@ fn issue_13731() {
 fn issue_15393() {
     #![allow(dead_code)]
     struct Flags {
-        bits: uint
+        bits: usize
     }
 
     const FOO: Flags = Flags { bits: 0x01 };

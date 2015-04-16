@@ -8,13 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 #![feature(unboxed_closures)]
 
 pub fn main() {
-    let bar = box 3;
-    let h = || -> int *bar;
+    let bar: Box<_> = box 3;
+    let h = || -> isize { *bar };
     assert_eq!(h(), 3);
 }
-

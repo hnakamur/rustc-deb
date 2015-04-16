@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-type an_int = int;
+// pretty-expanded FIXME #23616
 
-fn cmp(x: Option<an_int>, y: Option<int>) -> bool {
+type an_int = isize;
+
+fn cmp(x: Option<an_int>, y: Option<isize>) -> bool {
     x == y
 }
 

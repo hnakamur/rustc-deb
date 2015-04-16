@@ -24,7 +24,7 @@ use syntax::parse::token::{keywords, Token};
 #[derive(Clone)]
 pub struct SpanUtils<'a> {
     pub sess: &'a Session,
-    pub err_count: Cell<int>,
+    pub err_count: Cell<isize>,
 }
 
 impl<'a> SpanUtils<'a> {
@@ -219,7 +219,7 @@ impl<'a> SpanUtils<'a> {
             let loc = self.sess.codemap().lookup_char_pos(span.lo);
             self.sess.span_bug(span,
                 &format!("Mis-counted brackets when breaking path? Parsing '{}' in {}, line {}",
-                        self.snippet(span), loc.file.name, loc.line)[]);
+                        self.snippet(span), loc.file.name, loc.line));
         }
         if result.is_none() && prev.tok.is_ident() && bracket_count == 0 {
             return self.make_sub_span(span, Some(prev.sp));
@@ -232,12 +232,13 @@ impl<'a> SpanUtils<'a> {
     // example with Foo<Bar<T,V>, Bar<T,V>>
     // Nesting = 0: all idents outside of brackets: ~[Foo]
     // Nesting = 1: idents within one level of brackets: ~[Bar, Bar]
-    pub fn spans_with_brackets(&self, span: Span, nesting: int, limit: int) -> Vec<Span> {
+    pub fn spans_with_brackets(&self, span: Span, nesting: isize, limit: isize) -> Vec<Span> {
         let mut result: Vec<Span> = vec!();
 
         let mut toks = self.retokenise_span(span);
         // We keep track of how many brackets we're nested in
         let mut bracket_count = 0;
+        let mut found_ufcs_sep = false;
         loop {
             let ts = toks.real_token();
             if ts.tok == token::Eof {
@@ -245,22 +246,29 @@ impl<'a> SpanUtils<'a> {
                     let loc = self.sess.codemap().lookup_char_pos(span.lo);
                     self.sess.span_bug(span, &format!(
                         "Mis-counted brackets when breaking path? Parsing '{}' in {}, line {}",
-                         self.snippet(span), loc.file.name, loc.line)[]);
+                         self.snippet(span), loc.file.name, loc.line));
                 }
                 return result
             }
-            if (result.len() as int) == limit {
+            if (result.len() as isize) == limit {
                 return result;
             }
             bracket_count += match ts.tok {
                 token::Lt => 1,
-                token::Gt => -1,
+                token::Gt => {
+                    // Ignore the `>::` in `<Type as Trait>::AssocTy`.
+                    if !found_ufcs_sep && bracket_count == 0 {
+                        found_ufcs_sep = true;
+                        0
+                    } else {
+                        -1
+                    }
+                }
                 token::BinOp(token::Shl) => 2,
                 token::BinOp(token::Shr) => -2,
                 _ => 0
             };
-            if ts.tok.is_ident() &&
-               bracket_count == nesting {
+            if ts.tok.is_ident() && bracket_count == nesting {
                 result.push(self.make_sub_span(span, Some(ts.sp)).unwrap());
             }
         }
@@ -339,7 +347,7 @@ impl<'a> SpanUtils<'a> {
 
     // Return an owned vector of the subspans of the param identifier
     // tokens found in span.
-    pub fn spans_for_ty_params(&self, span: Span, number: int) -> Vec<Span> {
+    pub fn spans_for_ty_params(&self, span: Span, number: isize) -> Vec<Span> {
         if generated_code(span) {
             return vec!();
         }

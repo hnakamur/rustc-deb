@@ -15,18 +15,16 @@ pub use self::imp::OsRng;
 
 #[cfg(all(unix, not(target_os = "ios")))]
 mod imp {
-    extern crate libc;
-
+    use prelude::v1::*;
     use self::OsRngInner::*;
 
+    use libc;
+    use mem;
     use old_io::{IoResult, File};
     use old_path::Path;
     use rand::Rng;
     use rand::reader::ReaderRng;
-    use result::Result::Ok;
-    use slice::SliceExt;
-    use mem;
-    use os::errno;
+    use sys::os::errno;
 
     #[cfg(all(target_os = "linux",
               any(target_arch = "x86_64",
@@ -80,13 +78,13 @@ mod imp {
     }
 
     fn getrandom_next_u32() -> u32 {
-        let mut buf: [u8; 4] = [0u8; 4];
+        let mut buf: [u8; 4] = [0; 4];
         getrandom_fill_bytes(&mut buf);
         unsafe { mem::transmute::<[u8; 4], u32>(buf) }
     }
 
     fn getrandom_next_u64() -> u64 {
-        let mut buf: [u8; 8] = [0u8; 8];
+        let mut buf: [u8; 8] = [0; 8];
         getrandom_fill_bytes(&mut buf);
         unsafe { mem::transmute::<[u8; 8], u64>(buf) }
     }
@@ -185,16 +183,13 @@ mod imp {
 
 #[cfg(target_os = "ios")]
 mod imp {
-    extern crate libc;
+    use prelude::v1::*;
 
-    use old_io::{IoResult};
-    use marker::Sync;
+    use io;
+    use old_io::IoResult;
     use mem;
-    use os;
     use rand::Rng;
-    use result::Result::{Ok};
-    use self::libc::{c_int, size_t};
-    use slice::SliceExt;
+    use libc::{c_int, size_t};
 
     /// A random number generator that retrieves randomness straight from
     /// the operating system. Platform sources:
@@ -214,10 +209,8 @@ mod imp {
     #[repr(C)]
     struct SecRandom;
 
-    unsafe impl Sync for *const SecRandom {}
-
     #[allow(non_upper_case_globals)]
-    static kSecRandomDefault: *const SecRandom = 0 as *const SecRandom;
+    const kSecRandomDefault: *const SecRandom = 0 as *const SecRandom;
 
     #[link(name = "Security", kind = "framework")]
     extern "C" {
@@ -234,12 +227,12 @@ mod imp {
 
     impl Rng for OsRng {
         fn next_u32(&mut self) -> u32 {
-            let mut v = [0u8; 4];
+            let mut v = [0; 4];
             self.fill_bytes(&mut v);
             unsafe { mem::transmute(v) }
         }
         fn next_u64(&mut self) -> u64 {
-            let mut v = [0u8; 8];
+            let mut v = [0; 8];
             self.fill_bytes(&mut v);
             unsafe { mem::transmute(v) }
         }
@@ -248,7 +241,7 @@ mod imp {
                 SecRandomCopyBytes(kSecRandomDefault, v.len() as size_t, v.as_mut_ptr())
             };
             if ret == -1 {
-                panic!("couldn't generate random bytes: {}", os::last_os_error());
+                panic!("couldn't generate random bytes: {}", io::Error::last_os_error());
             }
         }
     }
@@ -256,17 +249,14 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    extern crate libc;
+    use prelude::v1::*;
 
-    use old_io::{IoResult, IoError};
+    use io;
     use mem;
-    use ops::Drop;
-    use os;
+    use old_io::{IoResult, IoError};
     use rand::Rng;
-    use result::Result::{Ok, Err};
-    use self::libc::{DWORD, BYTE, LPCSTR, BOOL};
-    use self::libc::types::os::arch::extra::{LONG_PTR};
-    use slice::SliceExt;
+    use libc::types::os::arch::extra::{LONG_PTR};
+    use libc::{DWORD, BYTE, LPCSTR, BOOL};
 
     type HCRYPTPROV = LONG_PTR;
 
@@ -284,9 +274,9 @@ mod imp {
         hcryptprov: HCRYPTPROV
     }
 
-    static PROV_RSA_FULL: DWORD = 1;
-    static CRYPT_SILENT: DWORD = 64;
-    static CRYPT_VERIFYCONTEXT: DWORD = 0xF0000000;
+    const PROV_RSA_FULL: DWORD = 1;
+    const CRYPT_SILENT: DWORD = 64;
+    const CRYPT_VERIFYCONTEXT: DWORD = 0xF0000000;
 
     #[allow(non_snake_case)]
     extern "system" {
@@ -321,12 +311,12 @@ mod imp {
 
     impl Rng for OsRng {
         fn next_u32(&mut self) -> u32 {
-            let mut v = [0u8; 4];
+            let mut v = [0; 4];
             self.fill_bytes(&mut v);
             unsafe { mem::transmute(v) }
         }
         fn next_u64(&mut self) -> u64 {
-            let mut v = [0u8; 8];
+            let mut v = [0; 8];
             self.fill_bytes(&mut v);
             unsafe { mem::transmute(v) }
         }
@@ -336,7 +326,8 @@ mod imp {
                                v.as_mut_ptr())
             };
             if ret == 0 {
-                panic!("couldn't generate random bytes: {}", os::last_os_error());
+                panic!("couldn't generate random bytes: {}",
+                       io::Error::last_os_error());
             }
         }
     }
@@ -347,7 +338,8 @@ mod imp {
                 CryptReleaseContext(self.hcryptprov, 0)
             };
             if ret == 0 {
-                panic!("couldn't release context: {}", os::last_os_error());
+                panic!("couldn't release context: {}",
+                       io::Error::last_os_error());
             }
         }
     }
@@ -369,7 +361,7 @@ mod test {
         r.next_u32();
         r.next_u64();
 
-        let mut v = [0u8; 1000];
+        let mut v = [0; 1000];
         r.fill_bytes(&mut v);
     }
 
@@ -389,7 +381,7 @@ mod test {
                 // as possible (XXX: is this a good test?)
                 let mut r = OsRng::new().unwrap();
                 thread::yield_now();
-                let mut v = [0u8; 1000];
+                let mut v = [0; 1000];
 
                 for _ in 0..100 {
                     r.next_u32();

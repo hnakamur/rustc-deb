@@ -13,8 +13,8 @@
 #[cfg(windows)]
 mod kernel32 {
   extern "system" {
-    pub fn SetLastError(err: uint);
-    pub fn GetLastError() -> uint;
+    pub fn SetLastError(err: usize);
+    pub fn GetLastError() -> usize;
   }
 }
 
@@ -22,7 +22,7 @@ mod kernel32 {
 #[cfg(windows)]
 pub fn main() {
     unsafe {
-        let expected = 1234_usize;
+        let expected = 1234;
         kernel32::SetLastError(expected);
         let actual = kernel32::GetLastError();
         println!("actual = {}", actual);
@@ -34,6 +34,7 @@ pub fn main() {
           target_os = "linux",
           target_os = "freebsd",
           target_os = "dragonfly",
+          target_os = "bitrig",
           target_os = "openbsd",
           target_os = "android"))]
 pub fn main() { }

@@ -9,23 +9,18 @@
 // except according to those terms.
 
 use prelude::v1::*;
+use os::unix::prelude::*;
 
 use collections::HashMap;
 use env;
 use ffi::{OsString, OsStr, CString};
 use fmt;
-use hash::Hash;
 use io::{self, Error, ErrorKind};
 use libc::{self, pid_t, c_void, c_int, gid_t, uid_t};
 use mem;
-use old_io;
-use os;
-use os::unix::OsStrExt;
 use ptr;
-use sync::mpsc::{channel, Sender, Receiver};
 use sys::pipe2::AnonPipe;
-use sys::{self, retry, c, wouldblock, set_nonblocking, ms_to_timeval, cvt};
-use sys_common::AsInner;
+use sys::{self, retry, c, cvt};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Command
@@ -59,7 +54,7 @@ impl Command {
         self.args.push(arg.to_cstring().unwrap())
     }
     pub fn args<'a, I: Iterator<Item = &'a OsStr>>(&mut self, args: I) {
-        self.args.extend(args.map(|s| OsStrExt::to_cstring(s).unwrap()))
+        self.args.extend(args.map(|s| s.to_cstring().unwrap()))
     }
     fn init_env_map(&mut self) {
         if self.env.is_none() {
@@ -127,10 +122,6 @@ pub struct Process {
 const CLOEXEC_MSG_FOOTER: &'static [u8] = b"NOEX";
 
 impl Process {
-    pub fn id(&self) -> pid_t {
-        self.pid
-    }
-
     pub unsafe fn kill(&self) -> io::Result<()> {
         try!(cvt(libc::funcs::posix88::signal::kill(self.pid, libc::SIGKILL)));
         Ok(())
@@ -141,7 +132,6 @@ impl Process {
                  -> io::Result<Process>
     {
         use libc::funcs::posix88::unistd::{fork, dup2, close, chdir, execvp};
-        use libc::funcs::bsd44::getdtablesize;
 
         mod rustrt {
             extern {
@@ -152,6 +142,16 @@ impl Process {
         unsafe fn set_cloexec(fd: c_int) {
             let ret = c::ioctl(fd, c::FIOCLEX);
             assert_eq!(ret, 0);
+        }
+
+        #[cfg(all(target_os = "android", target_arch = "aarch64"))]
+        unsafe fn getdtablesize() -> c_int {
+            libc::sysconf(libc::consts::os::sysconf::_SC_OPEN_MAX) as c_int
+        }
+
+        #[cfg(not(all(target_os = "android", target_arch = "aarch64")))]
+        unsafe fn getdtablesize() -> c_int {
+            libc::funcs::bsd44::getdtablesize()
         }
 
         let dirp = cfg.cwd.as_ref().map(|c| c.as_ptr()).unwrap_or(ptr::null());
@@ -265,7 +265,7 @@ impl Process {
                 // file descriptor. Otherwise, the first file descriptor opened
                 // up in the child would be numbered as one of the stdio file
                 // descriptors, which is likely to wreak havoc.
-                let setup = |&: src: Option<AnonPipe>, dst: c_int| {
+                let setup = |src: Option<AnonPipe>, dst: c_int| {
                     let src = match src {
                         None => {
                             let flags = if dst == libc::STDIN_FILENO {
@@ -430,6 +430,7 @@ fn translate_status(status: c_int) -> ExitStatus {
               target_os = "ios",
               target_os = "freebsd",
               target_os = "dragonfly",
+              target_os = "bitrig",
               target_os = "openbsd"))]
     mod imp {
         pub fn WIFEXITED(status: i32) -> bool { (status & 0x7f) == 0 }

@@ -10,6 +10,8 @@
 
 //! Blocking Windows-based file I/O
 
+#![allow(deprecated)] // this module itself is essentially deprecated
+
 use libc::{self, c_int};
 
 use mem;
@@ -18,8 +20,9 @@ use old_io;
 
 use prelude::v1::*;
 use sys;
-use sys_common::{mkerr_libc};
+use sys_common::{self, mkerr_libc};
 
+use old_path::{Path, GenericPath};
 use old_io::{FilePermission, Write, UnstableFileStat, Open, FileAccess, FileMode};
 use old_io::{IoResult, IoError, FileStat, SeekStyle};
 use old_io::{Read, Truncate, SeekCur, SeekSet, ReadWrite, SeekEnd, Append};
@@ -39,7 +42,7 @@ impl FileDesc {
         FileDesc { fd: fd, close_on_drop: close_on_drop }
     }
 
-    pub fn read(&self, buf: &mut [u8]) -> IoResult<uint> {
+    pub fn read(&self, buf: &mut [u8]) -> IoResult<usize> {
         let mut read = 0;
         let ret = unsafe {
             libc::ReadFile(self.handle(), buf.as_ptr() as libc::LPVOID,
@@ -47,7 +50,7 @@ impl FileDesc {
                            ptr::null_mut())
         };
         if ret != 0 {
-            Ok(read as uint)
+            Ok(read as usize)
         } else {
             Err(super::last_error())
         }
@@ -64,8 +67,8 @@ impl FileDesc {
                                 ptr::null_mut())
             };
             if ret != 0 {
-                remaining -= amt as uint;
-                cur = unsafe { cur.offset(amt as int) };
+                remaining -= amt as usize;
+                cur = unsafe { cur.offset(amt as isize) };
             } else {
                 return Err(super::last_error())
             }
@@ -133,7 +136,7 @@ impl FileDesc {
         }
     }
 
-    /// Extract the actual filedescriptor without closing it.
+    #[allow(dead_code)]
     pub fn unwrap(self) -> fd_t {
         let fd = self.fd;
         unsafe { mem::forget(self) };
@@ -231,7 +234,7 @@ pub fn open(path: &Path, fm: FileMode, fa: FileAccess) -> IoResult<FileDesc> {
     }
 }
 
-pub fn mkdir(p: &Path, _mode: uint) -> IoResult<()> {
+pub fn mkdir(p: &Path, _mode: usize) -> IoResult<()> {
     let p = try!(to_utf16(p));
     super::mkerr_winbool(unsafe {
         // FIXME: turn mode into something useful? #2623
@@ -305,11 +308,11 @@ pub fn unlink(p: &Path) -> IoResult<()> {
                 };
                 if stat.perm.intersects(old_io::USER_WRITE) { return Err(e) }
 
-                match chmod(p, (stat.perm | old_io::USER_WRITE).bits() as uint) {
+                match chmod(p, (stat.perm | old_io::USER_WRITE).bits() as usize) {
                     Ok(()) => do_unlink(&p_utf16),
                     Err(..) => {
                         // Try to put it back as we found it
-                        let _ = chmod(p, stat.perm.bits() as uint);
+                        let _ = chmod(p, stat.perm.bits() as usize);
                         Err(e)
                     }
                 }
@@ -328,7 +331,7 @@ pub fn rename(old: &Path, new: &Path) -> IoResult<()> {
     })
 }
 
-pub fn chmod(p: &Path, mode: uint) -> IoResult<()> {
+pub fn chmod(p: &Path, mode: usize) -> IoResult<()> {
     let p = try!(to_utf16(p));
     mkerr_libc(unsafe {
         libc::wchmod(p.as_ptr(), mode as libc::c_int)
@@ -340,7 +343,7 @@ pub fn rmdir(p: &Path) -> IoResult<()> {
     super::mkerr_winbool(unsafe { libc::RemoveDirectoryW(p.as_ptr()) })
 }
 
-pub fn chown(_p: &Path, _uid: int, _gid: int) -> IoResult<()> {
+pub fn chown(_p: &Path, _uid: isize, _gid: isize) -> IoResult<()> {
     // libuv has this as a no-op, so seems like this should as well?
     Ok(())
 }
@@ -368,7 +371,9 @@ pub fn readlink(p: &Path) -> IoResult<Path> {
                                   buf as *const u16,
                                   sz - 1,
                                   libc::VOLUME_NAME_DOS)
-    }, super::os2path);
+    }, |data| {
+        Path::new(String::from_utf16(data).unwrap())
+    });
     assert!(unsafe { libc::CloseHandle(handle) } != 0);
     return ret;
 }
@@ -432,7 +437,7 @@ pub fn stat(p: &Path) -> IoResult<FileStat> {
 // FIXME: move this to platform-specific modules (for now)?
 pub fn lstat(_p: &Path) -> IoResult<FileStat> {
     // FIXME: implementation is missing
-    Err(super::unimpl())
+    Err(sys_common::unimpl())
 }
 
 pub fn utime(p: &Path, atime: u64, mtime: u64) -> IoResult<()> {

@@ -9,11 +9,10 @@
 // except according to those terms.
 
 #![allow(unknown_features)]
-#![feature(box_syntax)]
+#![feature(std_misc)]
 
-use std::thread::Thread;
+use std::thread;
 use std::sync::mpsc::Sender;
-use std::thunk::Invoke;
 
 type RingBuffer = Vec<f64> ;
 type SamplesFn = Box<FnMut(&RingBuffer) + Send>;
@@ -24,12 +23,12 @@ enum Msg
 }
 
 fn foo(name: String, samples_chan: Sender<Msg>) {
-    let _t = Thread::spawn(move|| {
+    let _t = thread::scoped(move|| {
         let mut samples_chan = samples_chan;
 
-        // `box() (...)` syntax is needed to make pretty printer converge in one try:
-        let callback: SamplesFn = box() (move |buffer| {
-            for i in 0_usize..buffer.len() {
+        // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+        let callback: SamplesFn = Box::new(move |buffer| {
+            for i in 0..buffer.len() {
                 println!("{}: {}", i, buffer[i])
             }
         });

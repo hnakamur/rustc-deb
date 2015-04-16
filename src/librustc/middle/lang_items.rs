@@ -46,7 +46,7 @@ macro_rules! lets_do_this {
         $( $variant:ident, $name:expr, $method:ident; )*
     ) => {
 
-#[derive(Copy, FromPrimitive, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq, Hash)]
 pub enum LangItem {
     $($variant),*
 }
@@ -70,8 +70,8 @@ impl LanguageItems {
         self.items.iter().enumerate()
     }
 
-    pub fn item_name(index: uint) -> &'static str {
-        let item: Option<LangItem> = FromPrimitive::from_uint(index);
+    pub fn item_name(index: usize) -> &'static str {
+        let item: Option<LangItem> = FromPrimitive::from_usize(index);
         match item {
             $( Some($variant) => $name, )*
             None => "???"
@@ -79,11 +79,11 @@ impl LanguageItems {
     }
 
     pub fn require(&self, it: LangItem) -> Result<ast::DefId, String> {
-        match self.items[it as uint] {
+        match self.items[it as usize] {
             Some(id) => Ok(id),
             None => {
                 Err(format!("requires `{}` lang_item",
-                            LanguageItems::item_name(it as uint)))
+                            LanguageItems::item_name(it as usize)))
             }
         }
     }
@@ -132,7 +132,7 @@ impl LanguageItems {
     $(
         #[allow(dead_code)]
         pub fn $method(&self) -> Option<ast::DefId> {
-            self.items[$variant as uint]
+            self.items[$variant as usize]
         }
     )*
 }
@@ -142,7 +142,7 @@ struct LanguageItemCollector<'a> {
 
     session: &'a Session,
 
-    item_refs: FnvHashMap<&'static str, uint>,
+    item_refs: FnvHashMap<&'static str, usize>,
 }
 
 impl<'a, 'v> Visitor<'v> for LanguageItemCollector<'a> {
@@ -163,7 +163,7 @@ impl<'a> LanguageItemCollector<'a> {
     pub fn new(session: &'a Session) -> LanguageItemCollector<'a> {
         let mut item_refs = FnvHashMap();
 
-        $( item_refs.insert($name, $variant as uint); )*
+        $( item_refs.insert($name, $variant as usize); )*
 
         LanguageItemCollector {
             session: session,
@@ -172,7 +172,7 @@ impl<'a> LanguageItemCollector<'a> {
         }
     }
 
-    pub fn collect_item(&mut self, item_index: uint,
+    pub fn collect_item(&mut self, item_index: usize,
                         item_def_id: ast::DefId, span: Span) {
         // Check for duplicates.
         match self.items.items[item_index] {
@@ -239,6 +239,24 @@ pub fn collect_language_items(krate: &ast::Crate,
 
 lets_do_this! {
 //  Variant name,                    Name,                      Method name;
+    CharImplItem,                    "char",                    char_impl;
+    StrImplItem,                     "str",                     str_impl;
+    SliceImplItem,                   "slice",                   slice_impl;
+    ConstPtrImplItem,                "const_ptr",               const_ptr_impl;
+    MutPtrImplItem,                  "mut_ptr",                 mut_ptr_impl;
+    I8ImplItem,                      "i8",                      i8_impl;
+    I16ImplItem,                     "i16",                     i16_impl;
+    I32ImplItem,                     "i32",                     i32_impl;
+    I64ImplItem,                     "i64",                     i64_impl;
+    IsizeImplItem,                   "isize",                   isize_impl;
+    U8ImplItem,                      "u8",                      u8_impl;
+    U16ImplItem,                     "u16",                     u16_impl;
+    U32ImplItem,                     "u32",                     u32_impl;
+    U64ImplItem,                     "u64",                     u64_impl;
+    UsizeImplItem,                   "usize",                   usize_impl;
+    F32ImplItem,                     "f32",                     f32_impl;
+    F64ImplItem,                     "f64",                     f64_impl;
+
     SendTraitLangItem,               "send",                    send_trait;
     SizedTraitLangItem,              "sized",                   sized_trait;
     CopyTraitLangItem,               "copy",                    copy_trait;
@@ -297,9 +315,6 @@ lets_do_this! {
     StrDupUniqFnLangItem,            "strdup_uniq",             strdup_uniq_fn;
 
     StartFnLangItem,                 "start",                   start_fn;
-
-    TyDescStructLangItem,            "ty_desc",                 ty_desc;
-    OpaqueStructLangItem,            "opaque",                  opaque;
 
     EhPersonalityLangItem,           "eh_personality",          eh_personality;
 

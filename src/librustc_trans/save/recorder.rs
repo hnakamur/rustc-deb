@@ -13,7 +13,7 @@ pub use self::Row::*;
 use super::escape;
 use super::span_utils::SpanUtils;
 
-use std::vec::Vec;
+use std::io::Write;
 
 use syntax::ast;
 use syntax::ast::{NodeId,DefId};
@@ -23,7 +23,7 @@ const ZERO_DEF_ID: DefId = DefId { node: 0, krate: 0 };
 
 pub struct Recorder {
     // output file
-    pub out: Box<Writer+'static>,
+    pub out: Box<Write+'static>,
     pub dump_spans: bool,
 }
 
@@ -62,7 +62,7 @@ macro_rules! svec {
     })
 }
 
-#[derive(Copy, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Row {
     Variable,
     Enum,
@@ -162,7 +162,7 @@ impl<'a> FmtStrs<'a> {
         if values.len() != fields.len() {
             self.span.sess.span_bug(span, &format!(
                 "Mismatch between length of fields for '{}', expected '{}', found '{}'",
-                kind, fields.len(), values.len())[]);
+                kind, fields.len(), values.len()));
         }
 
         let values = values.iter().map(|s| {
@@ -191,7 +191,7 @@ impl<'a> FmtStrs<'a> {
         if needs_span {
             self.span.sess.span_bug(span, &format!(
                 "Called record_without_span for '{}' which does requires a span",
-                label)[]);
+                label));
         }
         assert!(!dump_spans);
 
@@ -268,7 +268,7 @@ impl<'a> FmtStrs<'a> {
         // variable def's node id
         let mut qualname = String::from_str(name);
         qualname.push_str("$");
-        qualname.push_str(&id.to_string()[]);
+        qualname.push_str(&id.to_string());
         self.check_and_record(Variable,
                               span,
                               sub_span,

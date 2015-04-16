@@ -19,6 +19,8 @@
 //! arena but can only hold objects of a single type, and `Arena`, which is a
 //! more complex, slower arena which can hold objects of any type.
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "arena"]
 #![unstable(feature = "rustc_private")]
 #![staged_api]
@@ -40,11 +42,9 @@ extern crate alloc;
 
 use std::cell::{Cell, RefCell};
 use std::cmp;
-use std::intrinsics::{TyDesc, get_tydesc};
 use std::intrinsics;
 use std::marker;
 use std::mem;
-use std::num::{Int, UnsignedInt};
 use std::ptr;
 use std::rc::Rc;
 use std::rt::heap::{allocate, deallocate};
@@ -181,6 +181,25 @@ fn bitpack_tydesc_ptr(p: *const TyDesc, is_done: bool) -> usize {
 #[inline]
 fn un_bitpack_tydesc_ptr(p: usize) -> (*const TyDesc, bool) {
     ((p & !1) as *const TyDesc, p & 1 == 1)
+}
+
+// HACK(eddyb) TyDesc replacement using a trait object vtable.
+// This could be replaced in the future with a custom DST layout,
+// or `&'static (drop_glue, size, align)` created by a `const fn`.
+struct TyDesc {
+    drop_glue: fn(*const i8),
+    size: usize,
+    align: usize
+}
+
+unsafe fn get_tydesc<T>() -> *const TyDesc {
+    use std::raw::TraitObject;
+
+    let ptr = &*(1 as *const T);
+
+    // Can use any trait that is implemented for all types.
+    let obj = mem::transmute::<&marker::MarkerTrait, TraitObject>(ptr);
+    obj.vtable as *const TyDesc
 }
 
 impl<'longer_than_self> Arena<'longer_than_self> {
@@ -321,7 +340,7 @@ fn test_arena_destructors() {
 }
 
 #[test]
-#[should_fail]
+#[should_panic]
 fn test_arena_destructors_fail() {
     let arena = Arena::new();
     // Put some stuff in the arena.
@@ -410,7 +429,8 @@ impl<T> TypedArenaChunk<T> {
         // Destroy the next chunk.
         let next = self.next;
         let size = calculate_size::<T>(self.capacity);
-        deallocate(self as *mut TypedArenaChunk<T> as *mut u8, size,
+        let self_ptr: *mut TypedArenaChunk<T> = self;
+        deallocate(self_ptr as *mut u8, size,
                    mem::min_align_of::<TypedArenaChunk<T>>());
         if !next.is_null() {
             let capacity = (*next).capacity;
@@ -581,11 +601,11 @@ mod tests {
     #[bench]
     pub fn bench_copy_nonarena(b: &mut Bencher) {
         b.iter(|| {
-            box Point {
+            let _: Box<_> = box Point {
                 x: 1,
                 y: 2,
                 z: 3,
-            }
+            };
         })
     }
 
@@ -634,10 +654,10 @@ mod tests {
     #[bench]
     pub fn bench_noncopy_nonarena(b: &mut Bencher) {
         b.iter(|| {
-            box Noncopy {
+            let _: Box<_> = box Noncopy {
                 string: "hello world".to_string(),
                 array: vec!( 1, 2, 3, 4, 5 ),
-            }
+            };
         })
     }
 

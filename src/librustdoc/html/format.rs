@@ -25,23 +25,24 @@ use clean;
 use stability_summary::ModuleSummary;
 use html::item_type::ItemType;
 use html::render;
+use html::escape::Escape;
 use html::render::{cache, CURRENT_LOCATION_KEY};
 
 /// Helper to render an optional visibility with a space after it (if the
 /// visibility is preset)
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct VisSpace(pub Option<ast::Visibility>);
 /// Similarly to VisSpace, this structure is used to render a function style with a
 /// space after it.
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct UnsafetySpace(pub ast::Unsafety);
 /// Wrapper struct for properly emitting a method declaration.
 pub struct Method<'a>(pub &'a clean::SelfTy, pub &'a clean::FnDecl);
 /// Similar to VisSpace, but used for mutability
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct MutableSpace(pub clean::Mutability);
 /// Similar to VisSpace, but used for mutability
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct RawMutableSpace(pub clean::Mutability);
 /// Wrapper struct for properly emitting the stability level.
 pub struct Stability<'a>(pub &'a Option<clean::Stability>);
@@ -289,7 +290,7 @@ fn resolved_path(w: &mut fmt::Formatter, did: ast::DefId, p: &clean::Path,
             if ast_util::is_local(did) || cache.inlined.contains(&did) {
                 Some(repeat("../").take(loc.len()).collect::<String>())
             } else {
-                match cache.extern_locations[did.krate] {
+                match cache.extern_locations[&did.krate] {
                     render::Remote(ref s) => Some(s.to_string()),
                     render::Local => {
                         Some(repeat("../").take(loc.len()).collect::<String>())
@@ -403,11 +404,11 @@ fn primitive_link(f: &mut fmt::Formatter,
             needs_termination = true;
         }
         Some(&cnum) => {
-            let path = &m.paths[ast::DefId {
+            let path = &m.paths[&ast::DefId {
                 krate: cnum,
                 node: ast::CRATE_NODE_ID,
             }];
-            let loc = match m.extern_locations[cnum] {
+            let loc = match m.extern_locations[&cnum] {
                 render::Remote(ref s) => Some(s.to_string()),
                 render::Local => {
                     let len = CURRENT_LOCATION_KEY.with(|s| s.borrow().len());
@@ -453,9 +454,6 @@ fn tybounds(w: &mut fmt::Formatter,
 impl fmt::Display for clean::Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            clean::TyParamBinder(id) => {
-                f.write_str(&cache().typarams[ast_util::local_def(id)])
-            }
             clean::Generic(ref name) => {
                 f.write_str(name)
             }
@@ -488,7 +486,7 @@ impl fmt::Display for clean::Type {
                 primitive_link(f, clean::Slice, &format!("[{}]", **t))
             }
             clean::FixedVector(ref t, ref s) => {
-                primitive_link(f, clean::Slice,
+                primitive_link(f, clean::PrimitiveType::Array,
                                &format!("[{}; {}]", **t, *s))
             }
             clean::Bottom => f.write_str("!"),
@@ -710,13 +708,14 @@ impl<'a> fmt::Display for Stability<'a> {
         let Stability(stab) = *self;
         match *stab {
             Some(ref stability) => {
+                let lvl = if stability.deprecated_since.is_empty() {
+                    format!("{}", stability.level)
+                } else {
+                    "Deprecated".to_string()
+                };
                 write!(f, "<a class='stability {lvl}' title='{reason}'>{lvl}</a>",
-                       lvl = if stability.deprecated_since.is_empty() {
-                           format!("{}", stability.level)
-                       } else {
-                           "Deprecated".to_string()
-                       },
-                       reason = stability.reason)
+                       lvl = Escape(&*lvl),
+                       reason = Escape(&*stability.reason))
             }
             None => Ok(())
         }
@@ -728,14 +727,15 @@ impl<'a> fmt::Display for ConciseStability<'a> {
         let ConciseStability(stab) = *self;
         match *stab {
             Some(ref stability) => {
+                let lvl = if stability.deprecated_since.is_empty() {
+                    format!("{}", stability.level)
+                } else {
+                    "Deprecated".to_string()
+                };
                 write!(f, "<a class='stability {lvl}' title='{lvl}{colon}{reason}'></a>",
-                       lvl = if stability.deprecated_since.is_empty() {
-                           format!("{}", stability.level)
-                       } else {
-                           "Deprecated".to_string()
-                       },
+                       lvl = Escape(&*lvl),
                        colon = if stability.reason.len() > 0 { ": " } else { "" },
-                       reason = stability.reason)
+                       reason = Escape(&*stability.reason))
             }
             None => {
                 write!(f, "<a class='stability Unmarked' title='No stability level'></a>")

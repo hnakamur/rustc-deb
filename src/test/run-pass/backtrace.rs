@@ -12,7 +12,7 @@
 // ignore-windows FIXME #13259
 
 #![feature(unboxed_closures)]
-#![feature(unsafe_destructor)]
+#![feature(unsafe_destructor, old_io, collections)]
 
 use std::env;
 use std::old_io::process::Command;
@@ -53,7 +53,9 @@ fn runtest(me: &str) {
             "bad output: {}", s);
 
     // Make sure the stack trace is *not* printed
-    let p = template.clone().arg("fail").spawn().unwrap();
+    // (Remove RUST_BACKTRACE from our own environment, in case developer
+    // is running `make check` with it on.)
+    let p = template.clone().arg("fail").env_remove("RUST_BACKTRACE").spawn().unwrap();
     let out = p.wait_with_output().unwrap();
     assert!(!out.status.success());
     let s = str::from_utf8(&out.error).unwrap();
@@ -78,9 +80,9 @@ fn runtest(me: &str) {
     let s = str::from_utf8(&out.error).unwrap();
     let mut i = 0;
     for _ in 0..2 {
-        i += s[i + 10..].find_str("stack backtrace").unwrap() + 10;
+        i += s[i + 10..].find("stack backtrace").unwrap() + 10;
     }
-    assert!(s[i + 10..].find_str("stack backtrace").is_none(),
+    assert!(s[i + 10..].find("stack backtrace").is_none(),
             "bad output4: {}", s);
 }
 

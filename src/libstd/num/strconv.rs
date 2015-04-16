@@ -11,22 +11,21 @@
 // ignore-lexer-test FIXME #15679
 
 #![allow(missing_docs)]
+#![allow(deprecated)]
 
 use self::ExponentFormat::*;
 use self::SignificantDigits::*;
 use self::SignFormat::*;
 
-use char::{self, CharExt};
+use char;
 use num::{self, Int, Float, ToPrimitive};
 use num::FpCategory as Fp;
 use ops::FnMut;
-use slice::SliceExt;
-use str::StrExt;
 use string::String;
 use vec::Vec;
 
 /// A flag that specifies whether to use exponential (scientific) notation.
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub enum ExponentFormat {
     /// Do not use exponential notation.
     ExpNone,
@@ -41,7 +40,7 @@ pub enum ExponentFormat {
 
 /// The number of digits used for emitting the fractional part of a number, if
 /// any.
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub enum SignificantDigits {
     /// All calculable digits will be printed.
     ///
@@ -51,14 +50,14 @@ pub enum SignificantDigits {
 
     /// At most the given number of digits will be printed, truncating any
     /// trailing zeroes.
-    DigMax(uint),
+    DigMax(usize),
 
     /// Precisely the given number of digits will be printed.
-    DigExact(uint)
+    DigExact(usize)
 }
 
 /// How to emit the sign of a number.
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub enum SignFormat {
     /// No sign will be printed. The exponent sign will also be emitted.
     SignNone,
@@ -89,7 +88,7 @@ pub enum SignFormat {
 /// # Panics
 ///
 /// - Panics if `radix` < 2 or `radix` > 36.
-fn int_to_str_bytes_common<T, F>(num: T, radix: uint, sign: SignFormat, mut f: F) where
+fn int_to_str_bytes_common<T, F>(num: T, radix: usize, sign: SignFormat, mut f: F) where
     T: Int,
     F: FnMut(u8),
 {
@@ -104,7 +103,7 @@ fn int_to_str_bytes_common<T, F>(num: T, radix: uint, sign: SignFormat, mut f: F
     // This is just for integral types, the largest of which is a u64. The
     // smallest base that we can have is 2, so the most number of digits we're
     // ever going to have is 64
-    let mut buf = [0u8; 64];
+    let mut buf = [0; 64];
     let mut cur = 0;
 
     // Loop at least once to make sure at least a `0` gets emitted.
@@ -218,13 +217,13 @@ pub fn float_to_str_bytes_common<T: Float>(
 
     let neg = num < _0 || (negative_zero && _1 / num == Float::neg_infinity());
     let mut buf = Vec::new();
-    let radix_gen: T = num::cast(radix as int).unwrap();
+    let radix_gen: T = num::cast(radix as isize).unwrap();
 
     let (num, exp) = match exp_format {
-        ExpNone => (num, 0i32),
+        ExpNone => (num, 0),
         ExpDec | ExpBin => {
             if num == _0 {
-                (num, 0i32)
+                (num, 0)
             } else {
                 let (exp, exp_base) = match exp_format {
                     ExpDec => (num.abs().log10().floor(), num::cast::<f64, T>(10.0f64).unwrap()),
@@ -253,7 +252,7 @@ pub fn float_to_str_bytes_common<T: Float>(
         deccum = deccum / radix_gen;
         deccum = deccum.trunc();
 
-        buf.push(char::from_digit(current_digit.to_int().unwrap() as u32, radix)
+        buf.push(char::from_digit(current_digit.to_isize().unwrap() as u32, radix)
              .unwrap() as u8);
 
         // No more digits to calculate for the non-fractional part -> break
@@ -310,7 +309,7 @@ pub fn float_to_str_bytes_common<T: Float>(
             let current_digit = deccum.trunc().abs();
 
             buf.push(char::from_digit(
-                current_digit.to_int().unwrap() as u32, radix).unwrap() as u8);
+                current_digit.to_isize().unwrap() as u32, radix).unwrap() as u8);
 
             // Decrease the deccumulator one fractional digit at a time
             deccum = deccum.fract();
@@ -330,28 +329,28 @@ pub fn float_to_str_bytes_common<T: Float>(
 
             let extra_digit = ascii2value(buf.pop().unwrap());
             if extra_digit >= radix / 2 { // -> need to round
-                let mut i: int = buf.len() as int - 1;
+                let mut i: isize = buf.len() as isize - 1;
                 loop {
                     // If reached left end of number, have to
                     // insert additional digit:
                     if i < 0
-                    || buf[i as uint] == b'-'
-                    || buf[i as uint] == b'+' {
-                        buf.insert((i + 1) as uint, value2ascii(1));
+                    || buf[i as usize] == b'-'
+                    || buf[i as usize] == b'+' {
+                        buf.insert((i + 1) as usize, value2ascii(1));
                         break;
                     }
 
                     // Skip the '.'
-                    if buf[i as uint] == b'.' { i -= 1; continue; }
+                    if buf[i as usize] == b'.' { i -= 1; continue; }
 
                     // Either increment the digit,
                     // or set to 0 if max and carry the 1.
-                    let current_digit = ascii2value(buf[i as uint]);
+                    let current_digit = ascii2value(buf[i as usize]);
                     if current_digit < (radix - 1) {
-                        buf[i as uint] = value2ascii(current_digit+1);
+                        buf[i as usize] = value2ascii(current_digit+1);
                         break;
                     } else {
-                        buf[i as uint] = value2ascii(0);
+                        buf[i as usize] = value2ascii(0);
                         i -= 1;
                     }
                 }
@@ -422,37 +421,38 @@ pub fn float_to_str_common<T: Float>(
 
 // Some constants for from_str_bytes_common's input validation,
 // they define minimum radix values for which the character is a valid digit.
-static DIGIT_P_RADIX: u32 = ('p' as u32) - ('a' as u32) + 11;
-static DIGIT_E_RADIX: u32 = ('e' as u32) - ('a' as u32) + 11;
+const DIGIT_P_RADIX: u32 = ('p' as u32) - ('a' as u32) + 11;
+const DIGIT_E_RADIX: u32 = ('e' as u32) - ('a' as u32) + 11;
 
 #[cfg(test)]
 mod tests {
+    use core::num::wrapping::WrappingOps;
     use string::ToString;
 
     #[test]
     fn test_int_to_str_overflow() {
-        let mut i8_val: i8 = 127_i8;
+        let mut i8_val: i8 = 127;
         assert_eq!(i8_val.to_string(), "127");
 
-        i8_val += 1 as i8;
+        i8_val = i8_val.wrapping_add(1);
         assert_eq!(i8_val.to_string(), "-128");
 
-        let mut i16_val: i16 = 32_767_i16;
+        let mut i16_val: i16 = 32_767;
         assert_eq!(i16_val.to_string(), "32767");
 
-        i16_val += 1 as i16;
+        i16_val = i16_val.wrapping_add(1);
         assert_eq!(i16_val.to_string(), "-32768");
 
-        let mut i32_val: i32 = 2_147_483_647_i32;
+        let mut i32_val: i32 = 2_147_483_647;
         assert_eq!(i32_val.to_string(), "2147483647");
 
-        i32_val += 1 as i32;
+        i32_val = i32_val.wrapping_add(1);
         assert_eq!(i32_val.to_string(), "-2147483648");
 
-        let mut i64_val: i64 = 9_223_372_036_854_775_807_i64;
+        let mut i64_val: i64 = 9_223_372_036_854_775_807;
         assert_eq!(i64_val.to_string(), "9223372036854775807");
 
-        i64_val += 1 as i64;
+        i64_val = i64_val.wrapping_add(1);
         assert_eq!(i64_val.to_string(), "-9223372036854775808");
     }
 }
@@ -462,85 +462,85 @@ mod bench {
     #![allow(deprecated)] // rand
     extern crate test;
 
-    mod uint {
+    mod usize {
         use super::test::Bencher;
         use rand::{weak_rng, Rng};
         use std::fmt;
 
         #[inline]
-        fn to_string(x: uint, base: u8) {
+        fn to_string(x: usize, base: u8) {
             format!("{}", fmt::radix(x, base));
         }
 
         #[bench]
         fn to_str_bin(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<uint>(), 2); })
+            b.iter(|| { to_string(rng.gen::<usize>(), 2); })
         }
 
         #[bench]
         fn to_str_oct(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<uint>(), 8); })
+            b.iter(|| { to_string(rng.gen::<usize>(), 8); })
         }
 
         #[bench]
         fn to_str_dec(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<uint>(), 10); })
+            b.iter(|| { to_string(rng.gen::<usize>(), 10); })
         }
 
         #[bench]
         fn to_str_hex(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<uint>(), 16); })
+            b.iter(|| { to_string(rng.gen::<usize>(), 16); })
         }
 
         #[bench]
         fn to_str_base_36(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<uint>(), 36); })
+            b.iter(|| { to_string(rng.gen::<usize>(), 36); })
         }
     }
 
-    mod int {
+    mod isize {
         use super::test::Bencher;
         use rand::{weak_rng, Rng};
         use std::fmt;
 
         #[inline]
-        fn to_string(x: int, base: u8) {
+        fn to_string(x: isize, base: u8) {
             format!("{}", fmt::radix(x, base));
         }
 
         #[bench]
         fn to_str_bin(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<int>(), 2); })
+            b.iter(|| { to_string(rng.gen::<isize>(), 2); })
         }
 
         #[bench]
         fn to_str_oct(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<int>(), 8); })
+            b.iter(|| { to_string(rng.gen::<isize>(), 8); })
         }
 
         #[bench]
         fn to_str_dec(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<int>(), 10); })
+            b.iter(|| { to_string(rng.gen::<isize>(), 10); })
         }
 
         #[bench]
         fn to_str_hex(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<int>(), 16); })
+            b.iter(|| { to_string(rng.gen::<isize>(), 16); })
         }
 
         #[bench]
         fn to_str_base_36(b: &mut Bencher) {
             let mut rng = weak_rng();
-            b.iter(|| { to_string(rng.gen::<int>(), 36); })
+            b.iter(|| { to_string(rng.gen::<isize>(), 36); })
         }
     }
 

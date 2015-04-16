@@ -10,6 +10,8 @@
 
 // pp-exact
 
+// pretty-expanded FIXME #23616
+
 enum color { red = 1, green, blue, imaginary = -1, }
 
 pub fn main() {
@@ -19,6 +21,6 @@ pub fn main() {
     test_color(color::imaginary, -1, "imaginary".to_string());
 }
 
-fn test_color(color: color, val: int, _name: String) {
-    assert!(color as int == val);
+fn test_color(color: color, val: isize, _name: String) {
+    assert!(color as isize == val);
 }

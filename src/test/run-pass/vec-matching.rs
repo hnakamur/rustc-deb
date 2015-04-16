@@ -8,7 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(advanced_slice_patterns)]
+#![feature(slice_patterns)]
 
 fn a() {
     let x = [1];
@@ -74,7 +77,7 @@ fn d() {
 }
 
 fn e() {
-    let x: &[int] = &[1, 2, 3];
+    let x: &[isize] = &[1, 2, 3];
     match x {
         [1, 2] => (),
         [..] => ()

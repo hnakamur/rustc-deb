@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-static foo: [uint; 3] = [1, 2, 3];
+// pretty-expanded FIXME #23616
 
-static slice_1: &'static [uint] = &foo;
-static slice_2: &'static [uint] = &foo;
+static foo: [usize; 3] = [1, 2, 3];
+
+static slice_1: &'static [usize] = &foo;
+static slice_2: &'static [usize] = &foo;
 
 fn main() {}

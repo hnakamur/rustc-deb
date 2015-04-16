@@ -11,6 +11,8 @@
 // Issue #1112
 // Alignment of interior pointers to dynamic-size types
 
+// pretty-expanded FIXME #23616
+
 struct X<T> {
     a: T,
     b: u8,
@@ -22,23 +24,23 @@ struct X<T> {
 }
 
 pub fn main() {
-    let x: X<int> = X {
+    let x: X<isize> = X {
         a: 12345678,
-        b: 9u8,
+        b: 9,
         c: true,
-        d: 10u8,
-        e: 11u16,
-        f: 12u8,
-        g: 13u8
+        d: 10,
+        e: 11,
+        f: 12,
+        g: 13
     };
     bar(x);
 }
 
 fn bar<T>(x: X<T>) {
-    assert_eq!(x.b, 9u8);
+    assert_eq!(x.b, 9);
     assert_eq!(x.c, true);
-    assert_eq!(x.d, 10u8);
-    assert_eq!(x.e, 11u16);
-    assert_eq!(x.f, 12u8);
-    assert_eq!(x.g, 13u8);
+    assert_eq!(x.d, 10);
+    assert_eq!(x.e, 11);
+    assert_eq!(x.f, 12);
+    assert_eq!(x.g, 13);
 }

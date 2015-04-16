@@ -8,33 +8,35 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 struct Fat<T: ?Sized> {
-    f1: int,
+    f1: isize,
     f2: &'static str,
     ptr: T
 }
 
-#[derive(Copy, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 struct Bar;
 
-#[derive(Copy, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 struct Bar1 {
-    f: int
+    f: isize
 }
 
 trait ToBar {
     fn to_bar(&self) -> Bar;
-    fn to_val(&self) -> int;
+    fn to_val(&self) -> isize;
 }
 
 impl ToBar for Bar {
     fn to_bar(&self) -> Bar {
         *self
     }
-    fn to_val(&self) -> int {
+    fn to_val(&self) -> isize {
         0
     }
 }
@@ -42,7 +44,7 @@ impl ToBar for Bar1 {
     fn to_bar(&self) -> Bar {
         Bar
     }
-    fn to_val(&self) -> int {
+    fn to_val(&self) -> isize {
         self.f
     }
 }
@@ -95,7 +97,9 @@ pub fn main() {
     assert!(f6.ptr.to_bar() == Bar);
 
     // &*
-    let f7: Box<ToBar> = box Bar1 {f :42};
+    //
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    let f7: Box<ToBar> = Box::new(Bar1 {f :42});
     bar(&*f7);
 
     // Deep nesting

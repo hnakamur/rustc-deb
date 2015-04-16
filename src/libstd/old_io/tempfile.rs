@@ -12,7 +12,7 @@
 #![allow(deprecated)] // rand
 
 use env;
-use iter::{IteratorExt};
+use iter::Iterator;
 use old_io::{fs, IoError, IoErrorKind, IoResult};
 use old_io;
 use ops::Drop;
@@ -21,7 +21,6 @@ use option::Option;
 use old_path::{Path, GenericPath};
 use rand::{Rng, thread_rng};
 use result::Result::{Ok, Err};
-use str::StrExt;
 use string::String;
 
 /// A wrapper for a path to temporary directory implementing automatic
@@ -30,7 +29,9 @@ use string::String;
 /// # Examples
 ///
 /// ```no_run
-/// use std::old_io::TempDir;
+/// # #![feature(old_io, old_path)]
+/// use std::old_io::*;
+/// use std::old_path::{Path, GenericPath};
 ///
 /// {
 ///     // create a temporary directory
@@ -88,7 +89,7 @@ const NUM_RETRIES: u32 = 1 << 31;
 // be enough to dissuade an attacker from trying to preemptively create names
 // of that length, but not so huge that we unnecessarily drain the random number
 // generator of entropy.
-const NUM_RAND_CHARS: uint = 12;
+const NUM_RAND_CHARS: usize = 12;
 
 impl TempDir {
     /// Attempts to make a temporary directory inside of `tmpdir` whose name
@@ -96,9 +97,11 @@ impl TempDir {
     /// deleted once the returned wrapper is destroyed.
     ///
     /// If no directory can be created, `Err` is returned.
+    #[allow(deprecated)]
     pub fn new_in(tmpdir: &Path, prefix: &str) -> IoResult<TempDir> {
         if !tmpdir.is_absolute() {
-            let cur_dir = try!(env::current_dir());
+            let cur_dir = ::env::current_dir().unwrap();
+            let cur_dir = Path::new(cur_dir.to_str().unwrap());
             return TempDir::new_in(&cur_dir.join(tmpdir), prefix);
         }
 
@@ -132,8 +135,10 @@ impl TempDir {
     /// deleted once the returned wrapper is destroyed.
     ///
     /// If no directory can be created, `Err` is returned.
+    #[allow(deprecated)]
     pub fn new(prefix: &str) -> IoResult<TempDir> {
-        TempDir::new_in(&env::temp_dir(), prefix)
+        let tmp = Path::new(::env::temp_dir().to_str().unwrap());
+        TempDir::new_in(&tmp, prefix)
     }
 
     /// Unwrap the wrapped `std::path::Path` from the `TempDir` wrapper.

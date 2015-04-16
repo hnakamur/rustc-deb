@@ -8,16 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// aux-build:coherence-lib.rs
+// aux-build:coherence_lib.rs
 
-// Test that it's not ok for U to appear uncovered
+// Test that it's not ok for T to appear uncovered
 
-extern crate "coherence-lib" as lib;
+extern crate coherence_lib as lib;
 use lib::{Remote,Pair};
 
 pub struct Cover<T>(T);
 
 impl<T,U> Remote for Pair<Cover<T>,U> { }
-//~^ ERROR type parameter `U` must be used as the type parameter for some local type
+//~^ ERROR type parameter `T` must be used as the type parameter for some local type
 
 fn main() { }

@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::thread::Thread;
+#![feature(std_misc)]
+
+use std::thread;
 use std::sync::mpsc::{channel, Sender};
 
 fn start(tx: &Sender<Sender<String>>) {
@@ -27,10 +29,10 @@ fn start(tx: &Sender<Sender<String>>) {
 
 pub fn main() {
     let (tx, rx) = channel();
-    let _child = Thread::spawn(move|| { start(&tx) });
+    let _child = thread::scoped(move|| { start(&tx) });
 
     let mut c = rx.recv().unwrap();
     c.send("A".to_string()).unwrap();
     c.send("B".to_string()).unwrap();
-    Thread::yield_now();
+    thread::yield_now();
 }

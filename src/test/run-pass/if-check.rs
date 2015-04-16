@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn even(x: uint) -> bool {
-    if x < 2_usize {
+fn even(x: usize) -> bool {
+    if x < 2 {
         return false;
-    } else if x == 2_usize { return true; } else { return even(x - 2_usize); }
+    } else if x == 2 { return true; } else { return even(x - 2); }
 }
 
-fn foo(x: uint) {
+fn foo(x: usize) {
     if even(x) {
         println!("{}", x);
     } else {
@@ -22,4 +22,4 @@ fn foo(x: uint) {
     }
 }
 
-pub fn main() { foo(2_usize); }
+pub fn main() { foo(2); }

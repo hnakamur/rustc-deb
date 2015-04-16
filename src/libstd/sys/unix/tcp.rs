@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(deprecated)]
+
 use prelude::v1::*;
 
 use old_io::net::ip;
@@ -62,14 +64,14 @@ impl TcpListener {
 
     pub fn fd(&self) -> sock_t { self.inner.fd() }
 
-    pub fn listen(self, backlog: int) -> IoResult<TcpAcceptor> {
+    pub fn listen(self, backlog: isize) -> IoResult<TcpAcceptor> {
         match unsafe { libc::listen(self.fd(), backlog as libc::c_int) } {
             -1 => Err(last_net_error()),
             _ => {
                 let (reader, writer) = try!(unsafe { sys::os::pipe() });
-                try!(set_nonblocking(reader.fd(), true));
-                try!(set_nonblocking(writer.fd(), true));
-                try!(set_nonblocking(self.fd(), true));
+                set_nonblocking(reader.fd(), true);
+                set_nonblocking(writer.fd(), true);
+                set_nonblocking(self.fd(), true);
                 Ok(TcpAcceptor {
                     inner: Arc::new(AcceptorInner {
                         listener: self,
@@ -135,10 +137,6 @@ impl TcpAcceptor {
         }
 
         Err(sys_common::eof())
-    }
-
-    pub fn socket_name(&mut self) -> IoResult<ip::SocketAddr> {
-        net::sockname(self.fd(), libc::getsockname)
     }
 
     pub fn set_timeout(&mut self, timeout: Option<u64>) {

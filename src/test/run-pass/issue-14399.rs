@@ -13,6 +13,8 @@
 // value was coerced to a trait object. (v.clone() returns Box<B1>
 // which is coerced to Box<A>).
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
@@ -23,6 +25,6 @@ trait A { fn foo(&self) {} }
 impl A for B1 {}
 
 fn main() {
-    let v = box B1;
+    let v: Box<_> = box B1;
     let _c: Box<A> = v.clone();
 }

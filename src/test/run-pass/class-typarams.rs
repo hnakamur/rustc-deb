@@ -8,20 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 use std::marker::PhantomData;
 
 struct cat<U> {
-    meows : uint,
-    how_hungry : int,
+    meows : usize,
+    how_hungry : isize,
     m: PhantomData<U>
 }
 
 impl<U> cat<U> {
-    pub fn speak(&mut self) { self.meows += 1_usize; }
-    pub fn meow_count(&mut self) -> uint { self.meows }
+    pub fn speak(&mut self) { self.meows += 1; }
+    pub fn meow_count(&mut self) -> usize { self.meows }
 }
 
-fn cat<U>(in_x : uint, in_y : int) -> cat<U> {
+fn cat<U>(in_x : usize, in_y : isize) -> cat<U> {
     cat {
         meows: in_x,
         how_hungry: in_y,
@@ -31,6 +33,6 @@ fn cat<U>(in_x : uint, in_y : int) -> cat<U> {
 
 
 pub fn main() {
-  let _nyan : cat<int> = cat::<int>(52_usize, 99);
-  //  let mut kitty = cat(1000_usize, 2);
+  let _nyan : cat<isize> = cat::<isize>(52, 99);
+  //  let mut kitty = cat(1000, 2);
 }

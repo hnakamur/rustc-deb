@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::old_io::{process, Command};
+// ignore-aarch64
+
+use std::process::Command;
 use std::env;
 
 fn main() {
@@ -22,10 +24,8 @@ fn main() {
 }
 
 fn test() {
-    let status = Command::new(env::current_exe().unwrap())
+    let status = Command::new(&env::current_exe().unwrap())
                          .arg("foo").arg("")
-                         .stdout(process::InheritFd(1))
-                         .stderr(process::InheritFd(2))
                          .status().unwrap();
     assert!(status.success());
 }

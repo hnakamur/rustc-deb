@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn foo() -> int { 22 }
+// pretty-expanded FIXME #23616
+
+fn foo() -> isize { 22 }
 
 pub fn main() {
-    let mut x: Vec<extern "Rust" fn() -> int> = Vec::new();
+    let mut x: Vec<extern "Rust" fn() -> isize> = Vec::new();
     x.push(foo);
     assert_eq!((x[0])(), 22);
 }

@@ -71,8 +71,8 @@ impl<T: 'static> P<T> {
     {
         unsafe {
             let p = &mut *self.ptr;
-            // FIXME(#5016) this shouldn't need to zero to be safe.
-            ptr::write(p, f(ptr::read_and_zero(p)));
+            // FIXME(#5016) this shouldn't need to drop-fill to be safe.
+            ptr::write(p, f(ptr::read_and_drop(p)));
         }
         self
     }
@@ -111,13 +111,6 @@ impl<T: Display> Display for P<T> {
     }
 }
 
-#[cfg(stage0)]
-impl<S: Hasher, T: Hash<S>> Hash<S> for P<T> {
-    fn hash(&self, state: &mut S) {
-        (**self).hash(state);
-    }
-}
-#[cfg(not(stage0))]
 impl<T: Hash> Hash for P<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (**self).hash(state);

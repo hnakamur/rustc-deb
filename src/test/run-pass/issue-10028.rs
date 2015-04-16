@@ -10,7 +10,9 @@
 
 // aux-build:issue-10028.rs
 
-extern crate "issue-10028" as issue10028;
+// pretty-expanded FIXME #23616
+
+extern crate issue_10028 as issue10028;
 
 use issue10028::ZeroLengthThingWithDestructor;
 

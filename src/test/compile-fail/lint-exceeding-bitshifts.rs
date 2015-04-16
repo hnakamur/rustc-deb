@@ -8,10 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(negate_unsigned)]
 #![deny(exceeding_bitshifts)]
 #![allow(unused_variables)]
 #![allow(dead_code)]
-#![feature(core)]
+#![feature(core, negate_unsigned)]
 
 fn main() {
       let n = 1u8 << 7;
@@ -60,4 +61,3 @@ fn main() {
       let n = 1_isize << std::isize::BITS; //~ ERROR: bitshift exceeds the type's number of bits
       let n = 1_usize << std::usize::BITS; //~ ERROR: bitshift exceeds the type's number of bits
 }
-

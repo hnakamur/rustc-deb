@@ -8,13 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(old_io)]
+
 use std::old_io::process::Command;
 use std::env;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 && args[1] == "segfault" {
-        unsafe { *(0 as *mut int) = 1 }; // trigger a segfault
+        unsafe { *(0 as *mut isize) = 1 }; // trigger a segfault
     } else {
         let segfault = Command::new(&args[0]).arg("segfault").output().unwrap();
         assert!(!segfault.status.success());

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 use std::ops::Deref;
 
 struct DerefWithHelper<H, T> {
@@ -33,10 +35,10 @@ impl<T, H: Helper<T>> Deref for DerefWithHelper<H, T> {
     }
 }
 
-struct Foo {x: int}
+struct Foo {x: isize}
 
 impl Foo {
-    fn foo(&self) -> int {self.x}
+    fn foo(&self) -> isize {self.x}
 }
 
 pub fn main() {

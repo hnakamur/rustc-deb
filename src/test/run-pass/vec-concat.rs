@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(collections)]
+
 use std::vec;
 
 pub fn main() {
-    let a: Vec<int> = vec!(1, 2, 3, 4, 5);
-    let b: Vec<int> = vec!(6, 7, 8, 9, 0);
-    let mut v: Vec<int> = a;
+    let a: Vec<isize> = vec!(1, 2, 3, 4, 5);
+    let b: Vec<isize> = vec!(6, 7, 8, 9, 0);
+    let mut v: Vec<isize> = a;
     v.push_all(&b);
     println!("{}", v[9]);
     assert_eq!(v[0], 1);

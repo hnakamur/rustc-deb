@@ -40,11 +40,11 @@
 //!
 //! ## Vectors, slices and strings
 //!
-//! The common container type, `Vec`, a growable vector backed by an
-//! array, lives in the [`vec`](vec/index.html) module. References to
-//! arrays, `&[T]`, more commonly called "slices", are built-in types
-//! for which the [`slice`](slice/index.html) module defines many
-//! methods.
+//! The common container type, `Vec`, a growable vector backed by an array,
+//! lives in the [`vec`](vec/index.html) module. Contiguous, unsized regions
+//! of memory, `[T]`, commonly called "slices", and their borrowed versions,
+//! `&[T]`, commonly called "borrowed slices", are built-in types for which the
+//! [`slice`](slice/index.html) module defines many methods.
 //!
 //! `&str`, a UTF-8 string, is a built-in type, and the standard library
 //! defines methods for it on a variety of traits in the
@@ -67,16 +67,15 @@
 //! module encapsulates the platform-specific rules for dealing
 //! with file paths.
 //!
-//! `std` also includes modules for interoperating with the
-//! C language: [`c_str`](c_str/index.html) and
-//! [`c_vec`](c_vec/index.html).
+//! `std` also includes the [`ffi`](ffi/index.html) module for interoperating
+//! with the C language.
 //!
 //! ## Concurrency, I/O, and the runtime
 //!
-//! The [`thread`](thread/index.html) module contains Rust's threading abstractions,
-//! while [`comm`](comm/index.html) contains the channel types for message
-//! passing. [`sync`](sync/index.html) contains further, primitive, shared
-//! memory types, including [`atomic`](sync/atomic/index.html).
+//! The [`thread`](thread/index.html) module contains Rust's threading abstractions.
+//! [`sync`](sync/index.html) contains further, primitive, shared memory types,
+//! including [`atomic`](sync/atomic/index.html), and [`mpsc`](sync/mpsc/index.html),
+//! which contains the channel types for message passing.
 //!
 //! Common types of I/O, including files, TCP, UDP, pipes, Unix domain sockets,
 //! timers, and process spawning, are defined in the
@@ -94,7 +93,8 @@
 //! to all code by default. [`macros`](macros/index.html) contains
 //! all the standard macros, such as `assert!`, `panic!`, `println!`,
 //! and `format!`, also available to all Rust code.
-
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "std"]
 #![stable(feature = "rust1", since = "1.0.0")]
 #![staged_api]
@@ -104,31 +104,37 @@
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
+#![doc(test(no_crate_inject))]
 
 #![feature(alloc)]
 #![feature(box_syntax)]
 #![feature(collections)]
 #![feature(core)]
-#![feature(hash)]
-#![feature(int_uint)]
 #![feature(lang_items)]
 #![feature(libc)]
 #![feature(linkage, thread_local, asm)]
-#![feature(old_impl_check)]
 #![feature(optin_builtin_traits)]
 #![feature(rand)]
 #![feature(staged_api)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
 #![feature(unsafe_destructor)]
-#![feature(unsafe_no_drop_flag)]
+#![feature(unsafe_no_drop_flag, filling_drop)]
 #![feature(macro_reexport)]
-#![cfg_attr(test, feature(test))]
+#![feature(unique)]
+#![feature(allow_internal_unstable)]
+#![feature(str_char)]
+#![feature(into_cow)]
+#![feature(std_misc)]
+#![feature(slice_patterns)]
+#![feature(debug_builders)]
+#![cfg_attr(test, feature(test, rustc_private, std_misc))]
 
 // Don't link to std. We are std.
 #![feature(no_std)]
 #![no_std]
 
+#![allow(trivial_casts)]
 #![deny(missing_docs)]
 
 #[cfg(test)] extern crate test;
@@ -141,9 +147,9 @@ extern crate core;
 
 #[macro_use]
 #[macro_reexport(vec, format)]
-extern crate "collections" as core_collections;
+extern crate collections as core_collections;
 
-#[allow(deprecated)] extern crate "rand" as core_rand;
+#[allow(deprecated)] extern crate rand as core_rand;
 extern crate alloc;
 extern crate unicode;
 extern crate libc;
@@ -151,7 +157,7 @@ extern crate libc;
 #[macro_use] #[no_link] extern crate rustc_bitflags;
 
 // Make std testable by not duplicating lang items. See #2912
-#[cfg(test)] extern crate "std" as realstd;
+#[cfg(test)] extern crate std as realstd;
 #[cfg(test)] pub use realstd::marker;
 #[cfg(test)] pub use realstd::ops;
 #[cfg(test)] pub use realstd::cmp;
@@ -164,9 +170,8 @@ pub use core::any;
 pub use core::cell;
 pub use core::clone;
 #[cfg(not(test))] pub use core::cmp;
+pub use core::convert;
 pub use core::default;
-#[allow(deprecated)]
-pub use core::finally;
 pub use core::hash;
 pub use core::intrinsics;
 pub use core::iter;
@@ -178,7 +183,7 @@ pub use core::raw;
 pub use core::simd;
 pub use core::result;
 pub use core::option;
-pub use core::error;
+pub mod error;
 
 #[cfg(not(test))] pub use alloc::boxed;
 pub use alloc::rc;
@@ -207,6 +212,9 @@ pub mod prelude;
 
 /* Primitive types */
 
+// NB: slice and str are primitive types too, but their module docs + primitive doc pages
+// are inlined from the public re-exports of core_collections::{slice, str} above.
+
 #[path = "num/float_macros.rs"]
 #[macro_use]
 mod float_macros;
@@ -219,14 +227,12 @@ mod int_macros;
 #[macro_use]
 mod uint_macros;
 
-#[path = "num/int.rs"]  pub mod int;
 #[path = "num/isize.rs"]  pub mod isize;
 #[path = "num/i8.rs"]   pub mod i8;
 #[path = "num/i16.rs"]  pub mod i16;
 #[path = "num/i32.rs"]  pub mod i32;
 #[path = "num/i64.rs"]  pub mod i64;
 
-#[path = "num/uint.rs"] pub mod uint;
 #[path = "num/usize.rs"] pub mod usize;
 #[path = "num/u8.rs"]   pub mod u8;
 #[path = "num/u16.rs"]  pub mod u16;
@@ -237,6 +243,7 @@ mod uint_macros;
 #[path = "num/f64.rs"]   pub mod f64;
 
 pub mod ascii;
+
 pub mod thunk;
 
 /* Common traits */
@@ -246,43 +253,38 @@ pub mod num;
 /* Runtime and platform support */
 
 #[macro_use]
-pub mod thread_local;
-
-pub mod dynamic_lib;
-pub mod ffi;
-pub mod old_io;
-pub mod io;
-pub mod fs;
-pub mod net;
-pub mod os;
-pub mod env;
-pub mod path;
-pub mod old_path;
-pub mod process;
-pub mod rand;
-pub mod time;
-
-/* Common data structures */
+pub mod thread;
 
 pub mod collections;
-
-/* Threads and communication */
-
-pub mod thread;
+pub mod dynamic_lib;
+pub mod env;
+pub mod ffi;
+pub mod fs;
+pub mod io;
+pub mod net;
+pub mod old_io;
+pub mod old_path;
+pub mod os;
+pub mod path;
+pub mod process;
+pub mod rand;
 pub mod sync;
+pub mod time;
+
+#[macro_use]
+#[path = "sys/common/mod.rs"] mod sys_common;
 
 #[cfg(unix)]
 #[path = "sys/unix/mod.rs"] mod sys;
 #[cfg(windows)]
 #[path = "sys/windows/mod.rs"] mod sys;
 
-#[path = "sys/common/mod.rs"] mod sys_common;
-
 pub mod rt;
 mod panicking;
 
-// Documentation for primitive types
+// Modules that exist purely to document + host impl docs for primitive types
 
+mod array;
 mod bool;
 mod unit;
 mod tuple;
@@ -295,12 +297,13 @@ mod std {
     pub use sync; // used for select!()
     pub use error; // used for try!()
     pub use fmt; // used for any formatting strings
+    #[allow(deprecated)]
     pub use old_io; // used for println!()
     pub use option; // used for bitflags!{}
     pub use rt; // used for panic!()
     pub use vec; // used for vec![]
     pub use cell; // used for tls!
-    pub use thread_local; // used for thread_local!
+    pub use thread; // used for thread_local!
     pub use marker;  // used for tls!
     pub use ops; // used for bitflags!
 

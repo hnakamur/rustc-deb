@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(deprecated)]
+
 use prelude::v1::*;
 
 use ffi::CString;
@@ -143,13 +145,13 @@ impl UnixStream {
     fn lock_nonblocking<'a>(&'a self) -> Guard<'a> {
         let ret = Guard {
             fd: self.fd(),
-            guard: unsafe { self.inner.lock.lock().unwrap() },
+            guard: self.inner.lock.lock().unwrap(),
         };
-        assert!(set_nonblocking(self.fd(), true).is_ok());
+        set_nonblocking(self.fd(), true);
         ret
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    pub fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         let fd = self.fd();
         let dolock = || self.lock_nonblocking();
         let doread = |nb| unsafe {
@@ -165,7 +167,7 @@ impl UnixStream {
     pub fn write(&mut self, buf: &[u8]) -> IoResult<()> {
         let fd = self.fd();
         let dolock = || self.lock_nonblocking();
-        let dowrite = |nb: bool, buf: *const u8, len: uint| unsafe {
+        let dowrite = |nb: bool, buf: *const u8, len: usize| unsafe {
             let flags = if nb {c::MSG_DONTWAIT} else {0};
             libc::send(fd,
                        buf as *const _,
@@ -235,9 +237,9 @@ impl UnixListener {
 
             _ => {
                 let (reader, writer) = try!(unsafe { sys::os::pipe() });
-                try!(set_nonblocking(reader.fd(), true));
-                try!(set_nonblocking(writer.fd(), true));
-                try!(set_nonblocking(self.fd(), true));
+                set_nonblocking(reader.fd(), true);
+                set_nonblocking(writer.fd(), true);
+                set_nonblocking(self.fd(), true);
                 Ok(UnixAcceptor {
                     inner: Arc::new(AcceptorInner {
                         listener: self,

@@ -10,7 +10,9 @@
 
 // aux-build:static_fn_inline_xc_aux.rs
 
-extern crate "static_fn_inline_xc_aux" as mycore;
+// pretty-expanded FIXME #23616
+
+extern crate static_fn_inline_xc_aux as mycore;
 
 use mycore::num;
 

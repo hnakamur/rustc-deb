@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-fn foo(x: Option<Box<int>>, b: bool) -> int {
+fn foo(x: Option<Box<isize>>, b: bool) -> isize {
     match x {
       None => { 1 }
       Some(ref x) if b => { *x.clone() }

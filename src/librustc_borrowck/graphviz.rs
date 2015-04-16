@@ -20,13 +20,13 @@ use rustc::middle::cfg::graphviz as cfg_dot;
 use borrowck;
 use borrowck::{BorrowckCtxt, LoanPath};
 use dot;
-use rustc::middle::cfg::{CFGIndex};
+use rustc::middle::cfg::CFGIndex;
 use rustc::middle::dataflow::{DataFlowOperator, DataFlowContext, EntryOrExit};
 use rustc::middle::dataflow;
 use std::rc::Rc;
 use std::borrow::IntoCow;
 
-#[derive(Debug, Copy)]
+#[derive(Debug, Copy, Clone)]
 pub enum Variant {
     Loans,
     Moves,
@@ -52,7 +52,7 @@ pub struct DataflowLabeller<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx> DataflowLabeller<'a, 'tcx> {
     fn dataflow_for(&self, e: EntryOrExit, n: &Node<'a>) -> String {
-        let id = n.1.data.id;
+        let id = n.1.data.id();
         debug!("dataflow_for({:?}, id={}) {:?}", e, id, self.variants);
         let mut sets = "".to_string();
         let mut seen_one = false;
@@ -60,7 +60,7 @@ impl<'a, 'tcx> DataflowLabeller<'a, 'tcx> {
             if seen_one { sets.push_str(" "); } else { seen_one = true; }
             sets.push_str(variant.short_name());
             sets.push_str(": ");
-            sets.push_str(&self.dataflow_for_variant(e, n, variant)[]);
+            sets.push_str(&self.dataflow_for_variant(e, n, variant));
         }
         sets
     }
@@ -79,7 +79,7 @@ impl<'a, 'tcx> DataflowLabeller<'a, 'tcx> {
                                         cfgidx: CFGIndex,
                                         dfcx: &DataFlowContext<'a, 'tcx, O>,
                                         mut to_lp: F) -> String where
-        F: FnMut(uint) -> Rc<LoanPath<'tcx>>,
+        F: FnMut(usize) -> Rc<LoanPath<'tcx>>,
     {
         let mut saw_some = false;
         let mut set = "{".to_string();
