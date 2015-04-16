@@ -110,6 +110,14 @@ override_dh_auto_install:
 	dh_link $(RUST_PREFIX)/bin/rust-gdb usr/bin/rust-gdb-$(MAIN_RUST_VERSION)
 	dh_link usr/bin/rust-gdb-$(MAIN_RUST_VERSION) usr/bin/rust-gdb
 
+	# Replace duplicated compile-time/run-time dylibs with symlinks
+	for f in $(RUST_TMP_PREFIX)/lib/rustlib/*/lib/lib*.so; do \
+		name=$${f##*/}; \
+		if [ -f $(RUST_TMP_PREFIX)/lib/$$name ]; then \
+			ln -sf ../../../$$name $$f; \
+		fi; \
+	done
+
 override_dh_install:
 	# Brute force to remove privacy-breach-logo lintian warning.
 	# We could have updated the upstream sources but it would complexify

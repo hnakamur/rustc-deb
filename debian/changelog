@@ -3,6 +3,8 @@ rustc (1.0.0~beta-1~exp1) UNRELEASED; urgency=low
   [ Angus Lees ]
   * New upstream release
     - Drop manpage patch - now included upstream
+  * Replace duplicated compile-time dylibs with symlinks to run-time libs
+    (reduces installed size by ~68MB)
 
  -- Angus Lees <gus@debian.org>  Thu, 16 Apr 2015 20:13:54 +1000
 
