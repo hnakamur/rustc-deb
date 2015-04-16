@@ -15,6 +15,7 @@
 
 // FIXME: These functions take Durations but only pass ms to the backend impls.
 
+use boxed::Box;
 use sync::mpsc::{Receiver, Sender, channel};
 use time::Duration;
 use old_io::IoResult;
@@ -30,6 +31,7 @@ use sys::timer::Timer as TimerImp;
 /// # Examples
 ///
 /// ```
+/// # #![feature(old_io, std_misc)]
 /// # fn foo() {
 /// use std::old_io::Timer;
 /// use std::time::Duration;
@@ -53,6 +55,7 @@ use sys::timer::Timer as TimerImp;
 /// the `old_io::timer` module.
 ///
 /// ```
+/// # #![feature(old_io, std_misc)]
 /// # fn foo() {
 /// use std::old_io::timer;
 /// use std::time::Duration;
@@ -112,9 +115,10 @@ impl Timer {
     /// invalidated at the end of that statement, and all `recv` calls will
     /// fail.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(old_io, std_misc)]
     /// use std::old_io::Timer;
     /// use std::time::Duration;
     ///
@@ -127,7 +131,8 @@ impl Timer {
     /// ten_milliseconds.recv().unwrap();
     /// ```
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(old_io, std_misc)]
     /// use std::old_io::Timer;
     /// use std::time::Duration;
     ///
@@ -143,7 +148,7 @@ impl Timer {
         let (tx, rx) = channel();
         // Short-circuit the timer backend for 0 duration
         if in_ms_u64(duration) != 0 {
-            self.inner.oneshot(in_ms_u64(duration), box TimerCallback { tx: tx });
+            self.inner.oneshot(in_ms_u64(duration), Box::new(TimerCallback { tx: tx }));
         } else {
             tx.send(()).unwrap();
         }
@@ -164,9 +169,10 @@ impl Timer {
     /// invalidated at the end of that statement, and all `recv` calls will
     /// fail.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(old_io, std_misc)]
     /// use std::old_io::Timer;
     /// use std::time::Duration;
     ///
@@ -185,7 +191,8 @@ impl Timer {
     /// ten_milliseconds.recv().unwrap();
     /// ```
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(old_io, std_misc)]
     /// use std::old_io::Timer;
     /// use std::time::Duration;
     ///
@@ -204,7 +211,7 @@ impl Timer {
         // not clear what use a 0ms period is anyway...
         let ms = if ms == 0 { 1 } else { ms };
         let (tx, rx) = channel();
-        self.inner.period(ms, box TimerCallback { tx: tx });
+        self.inner.period(ms, Box::new(TimerCallback { tx: tx }));
         return rx
     }
 }
@@ -332,7 +339,7 @@ mod test {
     }
 
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn oneshot_fail() {
         let mut timer = Timer::new().unwrap();
         let _rx = timer.oneshot(Duration::milliseconds(1));
@@ -340,7 +347,7 @@ mod test {
     }
 
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn period_fail() {
         let mut timer = Timer::new().unwrap();
         let _rx = timer.periodic(Duration::milliseconds(1));
@@ -348,7 +355,7 @@ mod test {
     }
 
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn normal_fail() {
         let _timer = Timer::new().unwrap();
         panic!();

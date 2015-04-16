@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(lang_items, start, no_std)]
+// pretty-expanded FIXME #23616
+
+#![feature(lang_items, start, no_std, core, libc, collections)]
 #![no_std]
 
-extern crate "std" as other;
+extern crate std as other;
 
 #[macro_use]
 extern crate core;
@@ -27,7 +29,7 @@ use collections::vec::Vec;
 // Issue #16806
 
 #[start]
-fn start(_argc: int, _argv: *const *const u8) -> int {
+fn start(_argc: isize, _argv: *const *const u8) -> isize {
     let x: Vec<u8> = vec![0, 1, 2];
     match x.last() {
         Some(&2) => (),

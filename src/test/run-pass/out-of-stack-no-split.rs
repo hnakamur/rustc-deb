@@ -13,8 +13,9 @@
 //ignore-freebsd
 //ignore-ios
 //ignore-dragonfly
+//ignore-bitrig
 
-#![feature(asm)]
+#![feature(asm, old_io)]
 
 use std::old_io::process::Command;
 use std::env;

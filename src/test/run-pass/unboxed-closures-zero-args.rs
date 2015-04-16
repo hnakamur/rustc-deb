@@ -8,10 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(unboxed_closures)]
 
 fn main() {
     let mut zero = || {};
     let () = zero();
 }
-

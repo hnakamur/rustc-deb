@@ -11,6 +11,8 @@
 // Test that we are able to infer a suitable kind for this closure
 // that is just called (`FnMut`).
 
+// pretty-expanded FIXME #23616
+
 fn main() {
     let mut counter = 0;
 
@@ -26,4 +28,3 @@ fn main() {
 
     assert_eq!(counter, 2);
 }
-

@@ -28,7 +28,7 @@ use syntax::ast;
 use syntax::codemap::Span;
 use syntax::parse::token::special_idents;
 use syntax::parse::token;
-use syntax::print::pprust::{lifetime_to_string};
+use syntax::print::pprust::lifetime_to_string;
 use syntax::visit;
 use syntax::visit::Visitor;
 use util::nodemap::NodeMap;
@@ -115,6 +115,7 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
                 ast::ItemUse(_) |
                 ast::ItemMod(..) |
                 ast::ItemMac(..) |
+                ast::ItemDefaultImpl(..) |
                 ast::ItemForeignMod(..) |
                 ast::ItemStatic(..) |
                 ast::ItemConst(..) => {
@@ -141,9 +142,13 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
     fn visit_fn(&mut self, fk: visit::FnKind<'v>, fd: &'v ast::FnDecl,
                 b: &'v ast::Block, s: Span, _: ast::NodeId) {
         match fk {
-            visit::FkItemFn(_, generics, _, _) |
-            visit::FkMethod(_, generics, _) => {
+            visit::FkItemFn(_, generics, _, _) => {
                 self.visit_early_late(subst::FnSpace, generics, |this| {
+                    visit::walk_fn(this, fk, fd, b, s)
+                })
+            }
+            visit::FkMethod(_, sig) => {
+                self.visit_early_late(subst::FnSpace, &sig.generics, |this| {
                     visit::walk_fn(this, fk, fd, b, s)
                 })
             }
@@ -164,13 +169,13 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
                     visit::walk_ty(this, ty);
                 });
             }
-            ast::TyPath(ref path, id) => {
+            ast::TyPath(None, ref path) => {
                 // if this path references a trait, then this will resolve to
                 // a trait ref, which introduces a binding scope.
-                match self.def_map.borrow().get(&id) {
-                    Some(&def::DefTrait(..)) => {
+                match self.def_map.borrow().get(&ty.id).map(|d| (d.base_def, d.depth)) {
+                    Some((def::DefTrait(..), 0)) => {
                         self.with(LateScope(&Vec::new(), self.scope), |_, this| {
-                            this.visit_path(path, id);
+                            this.visit_path(path, ty.id);
                         });
                     }
                     _ => {
@@ -184,10 +189,14 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
         }
     }
 
-    fn visit_ty_method(&mut self, m: &ast::TypeMethod) {
-        self.visit_early_late(
-            subst::FnSpace, &m.generics,
-            |this| visit::walk_ty_method(this, m))
+    fn visit_trait_item(&mut self, trait_item: &ast::TraitItem) {
+        if let ast::MethodTraitItem(ref sig, None) = trait_item.node {
+            self.visit_early_late(
+                subst::FnSpace, &sig.generics,
+                |this| visit::walk_trait_item(this, trait_item))
+        } else {
+            visit::walk_trait_item(self, trait_item);
+        }
     }
 
     fn visit_block(&mut self, b: &ast::Block) {
@@ -269,15 +278,11 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
                 for lifetime in &trait_ref.bound_lifetimes {
                     this.visit_lifetime_def(lifetime);
                 }
-                this.visit_trait_ref(&trait_ref.trait_ref)
+                visit::walk_path(this, &trait_ref.trait_ref.path)
             })
         } else {
             self.visit_trait_ref(&trait_ref.trait_ref)
         }
-    }
-
-    fn visit_trait_ref(&mut self, trait_ref: &ast::TraitRef) {
-        self.visit_path(&trait_ref.path, trait_ref.ref_id);
     }
 }
 

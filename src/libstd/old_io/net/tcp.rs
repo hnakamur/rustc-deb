@@ -38,10 +38,11 @@ use sys_common;
 ///
 /// The socket will be closed when the value is dropped.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```no_run
-/// use std::old_io::TcpStream;
+/// # #![feature(old_io, io)]
+/// use std::old_io::*;
 ///
 /// {
 ///     let mut stream = TcpStream::connect("127.0.0.1:34254");
@@ -121,7 +122,7 @@ impl TcpStream {
     /// this connection. Otherwise, the keepalive timeout will be set to the
     /// specified time, in seconds.
     #[unstable(feature = "io")]
-    pub fn set_keepalive(&mut self, delay_in_seconds: Option<uint>) -> IoResult<()> {
+    pub fn set_keepalive(&mut self, delay_in_seconds: Option<usize>) -> IoResult<()> {
         self.inner.set_keepalive(delay_in_seconds)
     }
 
@@ -130,12 +131,12 @@ impl TcpStream {
     /// This method will close the reading portion of this connection, causing
     /// all pending and future reads to immediately return with an error.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```no_run
+    /// # #![feature(old_io, std_misc)]
     /// # #![allow(unused_must_use)]
-    /// use std::old_io::timer;
-    /// use std::old_io::TcpStream;
+    /// use std::old_io::*;
     /// use std::time::Duration;
     /// use std::thread;
     ///
@@ -256,7 +257,7 @@ impl Clone for TcpStream {
 }
 
 impl Reader for TcpStream {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.inner.read(buf)
     }
 }
@@ -279,9 +280,9 @@ impl sys_common::AsInner<TcpStreamImp> for TcpStream {
 /// # Examples
 ///
 /// ```
+/// # #![feature(old_io)]
 /// # fn foo() {
-/// use std::old_io::{TcpListener, TcpStream};
-/// use std::old_io::{Acceptor, Listener};
+/// use std::old_io::*;
 /// use std::thread;
 ///
 /// let listener = TcpListener::bind("127.0.0.1:80").unwrap();
@@ -337,7 +338,7 @@ impl TcpListener {
     }
 }
 
-impl Listener<TcpStream, TcpAcceptor> for TcpListener {
+impl Listener<TcpAcceptor> for TcpListener {
     fn listen(self) -> IoResult<TcpAcceptor> {
         self.inner.listen(128).map(|a| TcpAcceptor { inner: a })
     }
@@ -373,11 +374,11 @@ impl TcpAcceptor {
     /// regardless of whether the timeout has expired or not (the accept will
     /// not block in this case).
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```no_run
-    /// use std::old_io::TcpListener;
-    /// use std::old_io::{Listener, Acceptor, TimedOut};
+    /// # #![feature(old_io, io)]
+    /// use std::old_io::*;
     ///
     /// let mut a = TcpListener::bind("127.0.0.1:8482").listen().unwrap();
     ///
@@ -417,10 +418,11 @@ impl TcpAcceptor {
     /// This is useful for waking up a thread in an accept loop to indicate that
     /// it should exit.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
-    /// use std::old_io::{TcpListener, Listener, Acceptor, EndOfFile};
+    /// # #![feature(old_io, io)]
+    /// use std::old_io::*;
     /// use std::thread;
     ///
     /// let mut a = TcpListener::bind("127.0.0.1:8482").listen().unwrap();
@@ -451,7 +453,8 @@ impl TcpAcceptor {
     }
 }
 
-impl Acceptor<TcpStream> for TcpAcceptor {
+impl Acceptor for TcpAcceptor {
+    type Connection = TcpStream;
     fn accept(&mut self) -> IoResult<TcpStream> {
         self.inner.accept().map(TcpStream::new)
     }
@@ -496,6 +499,7 @@ mod test {
     use old_io::{ConnectionReset, NotConnected, PermissionDenied, OtherIoError};
     use old_io::{InvalidInput};
     use old_io::{Acceptor, Listener};
+    use old_io::{Reader, Writer};
 
     // FIXME #11530 this fails on android because tests are run as root
     #[cfg_attr(any(windows, target_os = "android"), ignore)]
@@ -786,12 +790,12 @@ mod test {
     #[test]
     fn multiple_connect_interleaved_greedy_schedule_ip4() {
         let addr = next_test_ip4();
-        static MAX: int = 10;
+        static MAX: isize = 10;
         let acceptor = TcpListener::bind(addr).listen();
 
         let _t = thread::spawn(move|| {
             let mut acceptor = acceptor;
-            for (i, stream) in acceptor.incoming().enumerate().take(MAX as uint) {
+            for (i, stream) in acceptor.incoming().enumerate().take(MAX as usize) {
                 // Start another task to handle the connection
                 let _t = thread::spawn(move|| {
                     let mut stream = stream;
@@ -805,7 +809,7 @@ mod test {
 
         connect(0, addr);
 
-        fn connect(i: int, addr: SocketAddr) {
+        fn connect(i: isize, addr: SocketAddr) {
             if i == MAX { return }
 
             let _t = thread::spawn(move|| {
@@ -822,12 +826,12 @@ mod test {
     #[test]
     fn multiple_connect_interleaved_greedy_schedule_ip6() {
         let addr = next_test_ip6();
-        static MAX: int = 10;
+        static MAX: isize = 10;
         let acceptor = TcpListener::bind(addr).listen();
 
         let _t = thread::spawn(move|| {
             let mut acceptor = acceptor;
-            for (i, stream) in acceptor.incoming().enumerate().take(MAX as uint) {
+            for (i, stream) in acceptor.incoming().enumerate().take(MAX as usize) {
                 // Start another task to handle the connection
                 let _t = thread::spawn(move|| {
                     let mut stream = stream;
@@ -841,7 +845,7 @@ mod test {
 
         connect(0, addr);
 
-        fn connect(i: int, addr: SocketAddr) {
+        fn connect(i: isize, addr: SocketAddr) {
             if i == MAX { return }
 
             let _t = thread::spawn(move|| {
@@ -857,13 +861,13 @@ mod test {
 
     #[test]
     fn multiple_connect_interleaved_lazy_schedule_ip4() {
-        static MAX: int = 10;
+        static MAX: isize = 10;
         let addr = next_test_ip4();
         let acceptor = TcpListener::bind(addr).listen();
 
         let _t = thread::spawn(move|| {
             let mut acceptor = acceptor;
-            for stream in acceptor.incoming().take(MAX as uint) {
+            for stream in acceptor.incoming().take(MAX as usize) {
                 // Start another task to handle the connection
                 let _t = thread::spawn(move|| {
                     let mut stream = stream;
@@ -877,7 +881,7 @@ mod test {
 
         connect(0, addr);
 
-        fn connect(i: int, addr: SocketAddr) {
+        fn connect(i: isize, addr: SocketAddr) {
             if i == MAX { return }
 
             let _t = thread::spawn(move|| {
@@ -893,13 +897,13 @@ mod test {
 
     #[test]
     fn multiple_connect_interleaved_lazy_schedule_ip6() {
-        static MAX: int = 10;
+        static MAX: isize = 10;
         let addr = next_test_ip6();
         let acceptor = TcpListener::bind(addr).listen();
 
         let _t = thread::spawn(move|| {
             let mut acceptor = acceptor;
-            for stream in acceptor.incoming().take(MAX as uint) {
+            for stream in acceptor.incoming().take(MAX as usize) {
                 // Start another task to handle the connection
                 let _t = thread::spawn(move|| {
                     let mut stream = stream;
@@ -913,7 +917,7 @@ mod test {
 
         connect(0, addr);
 
-        fn connect(i: int, addr: SocketAddr) {
+        fn connect(i: isize, addr: SocketAddr) {
             if i == MAX { return }
 
             let _t = thread::spawn(move|| {
@@ -1162,7 +1166,7 @@ mod test {
                 tx.send(TcpStream::connect(addr).unwrap()).unwrap();
             });
             let _l = rx.recv().unwrap();
-            for i in 0i32..1001 {
+            for i in 0..1001 {
                 match a.accept() {
                     Ok(..) => break,
                     Err(ref e) if e.kind == TimedOut => {}
@@ -1262,7 +1266,7 @@ mod test {
         assert_eq!(s.read(&mut [0]).err().unwrap().kind, TimedOut);
 
         s.set_timeout(Some(20));
-        for i in 0i32..1001 {
+        for i in 0..1001 {
             match s.write(&[0; 128 * 1024]) {
                 Ok(()) | Err(IoError { kind: ShortWrite(..), .. }) => {},
                 Err(IoError { kind: TimedOut, .. }) => break,
@@ -1320,7 +1324,7 @@ mod test {
 
         let mut s = a.accept().unwrap();
         s.set_write_timeout(Some(20));
-        for i in 0i32..1001 {
+        for i in 0..1001 {
             match s.write(&[0; 128 * 1024]) {
                 Ok(()) | Err(IoError { kind: ShortWrite(..), .. }) => {},
                 Err(IoError { kind: TimedOut, .. }) => break,

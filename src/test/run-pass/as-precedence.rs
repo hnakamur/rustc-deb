@@ -8,11 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn main() {
-    assert_eq!(3 as uint * 3, 9);
-    assert_eq!(3 as (uint) * 3, 9);
-    assert_eq!(3 as (uint) / 3, 1);
-    assert_eq!(3 as uint + 3, 6);
-    assert_eq!(3 as (uint) + 3, 6);
-}
+// pretty-expanded FIXME #23616
 
+fn main() {
+    assert_eq!(3 as usize * 3, 9);
+    assert_eq!(3 as (usize) * 3, 9);
+    assert_eq!(3 as (usize) / 3, 1);
+    assert_eq!(3 as usize + 3, 6);
+    assert_eq!(3 as (usize) + 3, 6);
+}

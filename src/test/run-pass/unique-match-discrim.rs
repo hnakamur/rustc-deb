@@ -10,11 +10,10 @@
 
 // Issue #961
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+// pretty-expanded FIXME #23616
 
 fn altsimple() {
-    match box true {
+    match Box::new(true) {
       _ => { }
     }
 }

@@ -8,10 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::thread::Thread;
+// pretty-expanded FIXME #23616
+
+#![feature(std_misc)]
+
+use std::thread;
 
 pub fn main() {
-    let _t = Thread::spawn(move|| child("Hello".to_string()) );
+    let _t = thread::scoped(move|| child("Hello".to_string()) );
 }
 
 fn child(_s: String) {

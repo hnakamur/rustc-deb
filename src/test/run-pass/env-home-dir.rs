@@ -8,14 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(path)]
+
 use std::env::*;
+use std::path::PathBuf;
 
 #[cfg(unix)]
 fn main() {
     let oldhome = var("HOME");
 
     set_var("HOME", "/home/MountainView");
-    assert!(home_dir() == Some(Path::new("/home/MountainView")));
+    assert!(home_dir() == Some(PathBuf::from("/home/MountainView")));
 
     remove_var("HOME");
     if cfg!(target_os = "android") {
@@ -36,14 +41,14 @@ fn main() {
     assert!(home_dir().is_some());
 
     set_var("HOME", "/home/MountainView");
-    assert!(home_dir() == Some(Path::new("/home/MountainView")));
+    assert!(home_dir() == Some(PathBuf::from("/home/MountainView")));
 
     remove_var("HOME");
 
     set_var("USERPROFILE", "/home/MountainView");
-    assert!(home_dir() == Some(Path::new("/home/MountainView")));
+    assert!(home_dir() == Some(PathBuf::from("/home/MountainView")));
 
     set_var("HOME", "/home/MountainView");
     set_var("USERPROFILE", "/home/PaloAlto");
-    assert!(home_dir() == Some(Path::new("/home/MountainView")));
+    assert!(home_dir() == Some(PathBuf::from("/home/MountainView")));
 }

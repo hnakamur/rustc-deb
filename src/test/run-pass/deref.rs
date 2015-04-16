@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 pub fn main() {
-    let x: Box<int> = box 10;
-    let _y: int = *x;
+    let x: Box<isize> = box 10;
+    let _y: isize = *x;
 }

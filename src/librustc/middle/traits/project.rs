@@ -11,9 +11,9 @@
 //! Code for projecting associated types out of trait references.
 
 use super::elaborate_predicates;
+use super::report_overflow_error;
 use super::Obligation;
 use super::ObligationCause;
-use super::Overflow;
 use super::PredicateObligation;
 use super::SelectionContext;
 use super::SelectionError;
@@ -81,7 +81,7 @@ pub fn poly_project_and_unify_type<'cx,'tcx>(
            obligation.repr(selcx.tcx()));
 
     let infcx = selcx.infcx();
-    infcx.try(|snapshot| {
+    infcx.commit_if_ok(|snapshot| {
         let (skol_predicate, skol_map) =
             infcx.skolemize_late_bound_regions(&obligation.predicate, snapshot);
 
@@ -154,7 +154,7 @@ fn consider_unification_despite_ambiguity<'cx,'tcx>(selcx: &mut SelectionContext
     debug!("consider_unification_despite_ambiguity: self_ty.sty={:?}",
            self_ty.sty);
     match self_ty.sty {
-        ty::ty_closure(closure_def_id, _, substs) => {
+        ty::ty_closure(closure_def_id, substs) => {
             let closure_typer = selcx.closure_typer();
             let closure_type = closure_typer.closure_type(closure_def_id, substs);
             let ty::Binder((_, ret_type)) =
@@ -197,7 +197,7 @@ pub fn normalize<'a,'b,'tcx,T>(selcx: &'a mut SelectionContext<'b,'tcx>,
 /// As `normalize`, but with a custom depth.
 pub fn normalize_with_depth<'a,'b,'tcx,T>(selcx: &'a mut SelectionContext<'b,'tcx>,
                                           cause: ObligationCause<'tcx>,
-                                          depth: uint,
+                                          depth: usize,
                                           value: &T)
                                           -> Normalized<'tcx, T>
     where T : TypeFoldable<'tcx> + HasProjectionTypes + Clone + Repr<'tcx>
@@ -214,13 +214,13 @@ struct AssociatedTypeNormalizer<'a,'b:'a,'tcx:'b> {
     selcx: &'a mut SelectionContext<'b,'tcx>,
     cause: ObligationCause<'tcx>,
     obligations: Vec<PredicateObligation<'tcx>>,
-    depth: uint,
+    depth: usize,
 }
 
 impl<'a,'b,'tcx> AssociatedTypeNormalizer<'a,'b,'tcx> {
     fn new(selcx: &'a mut SelectionContext<'b,'tcx>,
            cause: ObligationCause<'tcx>,
-           depth: uint)
+           depth: usize)
            -> AssociatedTypeNormalizer<'a,'b,'tcx>
     {
         AssociatedTypeNormalizer {
@@ -291,6 +291,7 @@ impl<'a,'b,'tcx> TypeFolder<'tcx> for AssociatedTypeNormalizer<'a,'b,'tcx> {
     }
 }
 
+#[derive(Clone)]
 pub struct Normalized<'tcx,T> {
     pub value: T,
     pub obligations: Vec<PredicateObligation<'tcx>>,
@@ -314,7 +315,7 @@ pub fn normalize_projection_type<'a,'b,'tcx>(
     selcx: &'a mut SelectionContext<'b,'tcx>,
     projection_ty: ty::ProjectionTy<'tcx>,
     cause: ObligationCause<'tcx>,
-    depth: uint)
+    depth: usize)
     -> NormalizedTy<'tcx>
 {
     opt_normalize_projection_type(selcx, projection_ty.clone(), cause.clone(), depth)
@@ -344,7 +345,7 @@ fn opt_normalize_projection_type<'a,'b,'tcx>(
     selcx: &'a mut SelectionContext<'b,'tcx>,
     projection_ty: ty::ProjectionTy<'tcx>,
     cause: ObligationCause<'tcx>,
-    depth: uint)
+    depth: usize)
     -> Option<NormalizedTy<'tcx>>
 {
     debug!("normalize_projection_type(\
@@ -412,7 +413,7 @@ fn opt_normalize_projection_type<'a,'b,'tcx>(
 fn normalize_to_error<'a,'tcx>(selcx: &mut SelectionContext<'a,'tcx>,
                                projection_ty: ty::ProjectionTy<'tcx>,
                                cause: ObligationCause<'tcx>,
-                               depth: uint)
+                               depth: usize)
                                -> NormalizedTy<'tcx>
 {
     let trait_ref = projection_ty.trait_ref.to_poly_trait_ref();
@@ -442,7 +443,7 @@ fn project_type<'cx,'tcx>(
     let recursion_limit = selcx.tcx().sess.recursion_limit.get();
     if obligation.recursion_depth >= recursion_limit {
         debug!("project: overflow!");
-        return Err(ProjectionTyError::TraitSelectionError(Overflow));
+        report_overflow_error(selcx.infcx(), &obligation);
     }
 
     let obligation_trait_ref =
@@ -535,7 +536,7 @@ fn assemble_candidates_from_param_env<'cx,'tcx>(
 /// In the case of a nested projection like <<A as Foo>::FooT as Bar>::BarT, we may find
 /// that the definition of `Foo` has some clues:
 ///
-/// ```rust
+/// ```
 /// trait Foo {
 ///     type FooT : Bar<BarT=i32>
 /// }
@@ -699,16 +700,17 @@ fn assemble_candidates_from_impls<'cx,'tcx>(
             // But wait, you say! What about an example like this:
             //
             // ```
-            // fn bar<T:SomeTrait<Foo=uint>>(...) { ... }
+            // fn bar<T:SomeTrait<Foo=usize>>(...) { ... }
             // ```
             //
-            // Doesn't the `T : Sometrait<Foo=uint>` predicate help
+            // Doesn't the `T : Sometrait<Foo=usize>` predicate help
             // resolve `T::Foo`? And of course it does, but in fact
             // that single predicate is desugared into two predicates
             // in the compiler: a trait predicate (`T : SomeTrait`) and a
             // projection. And the projection where clause is handled
             // in `assemble_candidates_from_param_env`.
         }
+        super::VtableDefaultImpl(..) |
         super::VtableBuiltin(..) => {
             // These traits have no associated types.
             selcx.tcx().sess.span_bug(
@@ -788,10 +790,13 @@ fn confirm_callable_candidate<'cx,'tcx>(
            obligation.repr(tcx),
            fn_sig.repr(tcx));
 
+    // the `Output` associated type is declared on `FnOnce`
+    let fn_once_def_id = tcx.lang_items.fn_once_trait().unwrap();
+
     // Note: we unwrap the binder here but re-create it below (1)
     let ty::Binder((trait_ref, ret_type)) =
         util::closure_trait_ref_and_return_type(tcx,
-                                                obligation.predicate.trait_ref.def_id,
+                                                fn_once_def_id,
                                                 obligation.predicate.trait_ref.self_ty(),
                                                 fn_sig,
                                                 flag);
@@ -853,10 +858,10 @@ fn confirm_impl_candidate<'cx,'tcx>(
     let impl_items_map = selcx.tcx().impl_items.borrow();
     let impl_or_trait_items_map = selcx.tcx().impl_or_trait_items.borrow();
 
-    let impl_items = &impl_items_map[impl_vtable.impl_def_id];
+    let impl_items = impl_items_map.get(&impl_vtable.impl_def_id).unwrap();
     let mut impl_ty = None;
     for impl_item in impl_items {
-        let assoc_type = match impl_or_trait_items_map[impl_item.def_id()] {
+        let assoc_type = match *impl_or_trait_items_map.get(&impl_item.def_id()).unwrap() {
             ty::TypeTraitItem(ref assoc_type) => assoc_type.clone(),
             ty::MethodTraitItem(..) => { continue; }
         };

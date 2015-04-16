@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-struct A { a: int, b: Box<int> }
+struct A { a: isize, b: Box<isize> }
 
 fn field_copy_after_field_borrow() {
     let mut x = A { a: 1, b: box 2 };
@@ -57,4 +59,3 @@ fn main() {
     field_move_after_field_borrow();
     fu_field_move_after_field_borrow();
 }
-

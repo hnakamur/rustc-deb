@@ -12,12 +12,13 @@
 //ignore-freebsd
 //ignore-ios
 //ignore-dragonfly
+//ignore-bitrig
 
-#![feature(asm)]
+#![feature(asm, old_io, std_misc)]
 
 use std::old_io::process::Command;
 use std::env;
-use std::thread::Thread;
+use std::thread;
 
 // lifted from the test module
 // Inlining to avoid llvm turning the recursive functions into tail calls,
@@ -36,7 +37,7 @@ fn recurse() {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 && args[1] == "recurse" {
-        let _t = Thread::scoped(recurse);
+        let _t = thread::scoped(recurse);
     } else {
         let recurse = Command::new(&args[0]).arg("recurse").output().unwrap();
         assert!(!recurse.status.success());

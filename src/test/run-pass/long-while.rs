@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unused_variable)]
 
 pub fn main() {
-    let mut i: int = 0;
+    let mut i: isize = 0;
     while i < 1000000 {
         i += 1;
         let x = 3;

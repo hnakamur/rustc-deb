@@ -155,6 +155,8 @@
 //! they're turned off (just a load and an integer comparison). This also means that
 //! if logging is disabled, none of the components of the log will be executed.
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "log"]
 #![unstable(feature = "rustc_private",
             reason = "use the crates.io `log` library instead")]
@@ -167,24 +169,22 @@
        html_playground_url = "http://play.rust-lang.org/")]
 #![deny(missing_docs)]
 
+#![feature(alloc)]
 #![feature(staged_api)]
 #![feature(box_syntax)]
-#![feature(int_uint)]
 #![feature(core)]
-#![feature(old_io)]
 #![feature(std_misc)]
-#![feature(env)]
 
+use std::boxed;
 use std::cell::RefCell;
 use std::fmt;
-use std::old_io::LineBufferedWriter;
-use std::old_io;
+use std::io::{self, Stderr};
+use std::io::prelude::*;
 use std::mem;
 use std::env;
-use std::ptr;
 use std::rt;
 use std::slice;
-use std::sync::{Once, ONCE_INIT};
+use std::sync::{Once, ONCE_INIT, StaticMutex, MUTEX_INIT};
 
 use directive::LOG_LEVEL_NAMES;
 
@@ -200,16 +200,18 @@ pub const MAX_LOG_LEVEL: u32 = 255;
 /// The default logging level of a crate if no other is specified.
 const DEFAULT_LOG_LEVEL: u32 = 1;
 
+static LOCK: StaticMutex = MUTEX_INIT;
+
 /// An unsafe constant that is the maximum logging level of any module
 /// specified. This is the first line of defense to determining whether a
 /// logging statement should be run.
 static mut LOG_LEVEL: u32 = MAX_LOG_LEVEL;
 
-static mut DIRECTIVES: *const Vec<directive::LogDirective> =
-    0 as *const Vec<directive::LogDirective>;
+static mut DIRECTIVES: *mut Vec<directive::LogDirective> =
+    0 as *mut Vec<directive::LogDirective>;
 
 /// Optional filter.
-static mut FILTER: *const String = 0 as *const _;
+static mut FILTER: *mut String = 0 as *mut _;
 
 /// Debug log level
 pub const DEBUG: u32 = 4;
@@ -234,18 +236,16 @@ pub trait Logger {
     fn log(&mut self, record: &LogRecord);
 }
 
-struct DefaultLogger {
-    handle: LineBufferedWriter<old_io::stdio::StdWriter>,
-}
+struct DefaultLogger { handle: Stderr }
 
 /// Wraps the log level with fmt implementations.
-#[derive(Copy, PartialEq, PartialOrd, Debug)]
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
 pub struct LogLevel(pub u32);
 
 impl fmt::Display for LogLevel {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let LogLevel(level) = *self;
-        match LOG_LEVEL_NAMES.get(level as uint - 1) {
+        match LOG_LEVEL_NAMES.get(level as usize - 1) {
             Some(ref name) => fmt::Display::fmt(name, fmt),
             None => fmt::Display::fmt(&level, fmt)
         }
@@ -286,18 +286,27 @@ impl Drop for DefaultLogger {
 pub fn log(level: u32, loc: &'static LogLocation, args: fmt::Arguments) {
     // Test the literal string from args against the current filter, if there
     // is one.
-    match unsafe { FILTER.as_ref() } {
-        Some(filter) if !args.to_string().contains(&filter[..]) => return,
-        _ => {}
+    unsafe {
+        let _g = LOCK.lock();
+        match FILTER as usize {
+            0 => {}
+            1 => panic!("cannot log after main thread has exited"),
+            n => {
+                let filter = mem::transmute::<_, &String>(n);
+                if !args.to_string().contains(&filter[..]) {
+                    return
+                }
+            }
+        }
     }
 
     // Completely remove the local logger from TLS in case anyone attempts to
     // frob the slot while we're doing the logging. This will destroy any logger
     // set during logging.
-    let mut logger = LOCAL_LOGGER.with(|s| {
+    let mut logger: Box<Logger + Send> = LOCAL_LOGGER.with(|s| {
         s.borrow_mut().take()
     }).unwrap_or_else(|| {
-        box DefaultLogger { handle: old_io::stderr() } as Box<Logger + Send>
+        box DefaultLogger { handle: io::stderr() }
     });
     logger.log(&LogRecord {
         level: LogLevel(level),
@@ -342,15 +351,15 @@ pub struct LogRecord<'a> {
     pub file: &'a str,
 
     /// The line number of where the LogRecord originated.
-    pub line: uint,
+    pub line: u32,
 }
 
 #[doc(hidden)]
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub struct LogLocation {
     pub module_path: &'static str,
     pub file: &'static str,
-    pub line: uint,
+    pub line: u32,
 }
 
 /// Tests whether a given module's name is enabled for a particular level of
@@ -370,9 +379,15 @@ pub fn mod_enabled(level: u32, module: &str) -> bool {
 
     // This assertion should never get tripped unless we're in an at_exit
     // handler after logging has been torn down and a logging attempt was made.
-    assert!(unsafe { !DIRECTIVES.is_null() });
 
-    enabled(level, module, unsafe { (*DIRECTIVES).iter() })
+    let _g = LOCK.lock();
+    unsafe {
+        assert!(DIRECTIVES as usize != 0);
+        assert!(DIRECTIVES as usize != 1,
+                "cannot log after the main thread has exited");
+
+        enabled(level, module, (*DIRECTIVES).iter())
+    }
 }
 
 fn enabled(level: u32,
@@ -419,23 +434,23 @@ fn init() {
 
         assert!(FILTER.is_null());
         match filter {
-            Some(f) => FILTER = mem::transmute(box f),
+            Some(f) => FILTER = boxed::into_raw(box f),
             None => {}
         }
 
         assert!(DIRECTIVES.is_null());
-        DIRECTIVES = mem::transmute(box directives);
+        DIRECTIVES = boxed::into_raw(box directives);
 
         // Schedule the cleanup for the globals for when the runtime exits.
-        rt::at_exit(move || {
+        let _ = rt::at_exit(move || {
+            let _g = LOCK.lock();
             assert!(!DIRECTIVES.is_null());
-            let _directives: Box<Vec<directive::LogDirective>> =
-                mem::transmute(DIRECTIVES);
-            DIRECTIVES = ptr::null();
+            let _directives = Box::from_raw(DIRECTIVES);
+            DIRECTIVES = 1 as *mut _;
 
             if !FILTER.is_null() {
-                let _filter: Box<String> = mem::transmute(FILTER);
-                FILTER = 0 as *const _;
+                let _filter = Box::from_raw(FILTER);
+                FILTER = 1 as *mut _;
             }
         });
     }

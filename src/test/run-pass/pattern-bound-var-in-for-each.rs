@@ -12,7 +12,9 @@
 // pattern-bound var is an upvar (when translating
 // the for-each body)
 
-fn foo(src: uint) {
+// pretty-expanded FIXME #23616
+
+fn foo(src: usize) {
 
     match Some(src) {
       Some(src_id) => {

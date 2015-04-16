@@ -60,6 +60,7 @@
 use prelude::v1::*;
 
 use any::Any;
+use boxed;
 use cell::Cell;
 use cmp;
 use panicking;
@@ -68,7 +69,7 @@ use intrinsics;
 use libc::c_void;
 use mem;
 use sync::atomic::{self, Ordering};
-use sync::{Once, ONCE_INIT};
+use sys_common::mutex::{Mutex, MUTEX_INIT};
 
 use rt::libunwind as uw;
 
@@ -77,12 +78,12 @@ struct Exception {
     cause: Option<Box<Any + Send + 'static>>,
 }
 
-pub type Callback = fn(msg: &(Any + Send), file: &'static str, line: uint);
+pub type Callback = fn(msg: &(Any + Send), file: &'static str, line: usize);
 
 // Variables used for invoking callbacks when a thread starts to unwind.
 //
 // For more information, see below.
-const MAX_CALLBACKS: uint = 16;
+const MAX_CALLBACKS: usize = 16;
 static CALLBACKS: [atomic::AtomicUsize; MAX_CALLBACKS] =
         [atomic::ATOMIC_USIZE_INIT, atomic::ATOMIC_USIZE_INIT,
          atomic::ATOMIC_USIZE_INIT, atomic::ATOMIC_USIZE_INIT,
@@ -165,7 +166,7 @@ fn rust_panic(cause: Box<Any + Send + 'static>) -> ! {
     rtdebug!("begin_unwind()");
 
     unsafe {
-        let exception = box Exception {
+        let exception: Box<_> = box Exception {
             uwe: uw::_Unwind_Exception {
                 exception_class: rust_exception_class(),
                 exception_cleanup: exception_cleanup,
@@ -173,15 +174,16 @@ fn rust_panic(cause: Box<Any + Send + 'static>) -> ! {
             },
             cause: Some(cause),
         };
-        let error = uw::_Unwind_RaiseException(mem::transmute(exception));
-        rtabort!("Could not unwind stack, error = {}", error as int)
+        let exception_param = boxed::into_raw(exception) as *mut uw::_Unwind_Exception;
+        let error = uw::_Unwind_RaiseException(exception_param);
+        rtabort!("Could not unwind stack, error = {}", error as isize)
     }
 
     extern fn exception_cleanup(_unwind_code: uw::_Unwind_Reason_Code,
                                 exception: *mut uw::_Unwind_Exception) {
         rtdebug!("exception_cleanup()");
         unsafe {
-            let _: Box<Exception> = mem::transmute(exception);
+            let _: Box<Exception> = Box::from_raw(exception as *mut Exception);
         }
     }
 }
@@ -396,7 +398,7 @@ pub mod eabi {
     pub struct DISPATCHER_CONTEXT;
 
     #[repr(C)]
-    #[derive(Copy)]
+    #[derive(Copy, Clone)]
     pub enum EXCEPTION_DISPOSITION {
         ExceptionContinueExecution,
         ExceptionContinueSearch,
@@ -482,7 +484,7 @@ pub mod eabi {
 /// Entry point of panic from the libcore crate.
 #[lang = "panic_fmt"]
 pub extern fn rust_begin_unwind(msg: fmt::Arguments,
-                                file: &'static str, line: uint) -> ! {
+                                file: &'static str, line: usize) -> ! {
     begin_unwind_fmt(msg, &(file, line))
 }
 
@@ -494,7 +496,7 @@ pub extern fn rust_begin_unwind(msg: fmt::Arguments,
 /// the actual formatting into this shared place.
 #[inline(never)] #[cold]
 #[stable(since = "1.0.0", feature = "rust1")]
-pub fn begin_unwind_fmt(msg: fmt::Arguments, file_line: &(&'static str, uint)) -> ! {
+pub fn begin_unwind_fmt(msg: fmt::Arguments, file_line: &(&'static str, usize)) -> ! {
     use fmt::Write;
 
     // We do two allocations here, unfortunately. But (a) they're
@@ -504,13 +506,13 @@ pub fn begin_unwind_fmt(msg: fmt::Arguments, file_line: &(&'static str, uint)) -
 
     let mut s = String::new();
     let _ = write!(&mut s, "{}", msg);
-    begin_unwind_inner(box s, file_line)
+    begin_unwind_inner(Box::new(s), file_line)
 }
 
 /// This is the entry point of unwinding for panic!() and assert!().
 #[inline(never)] #[cold] // avoid code bloat at the call sites as much as possible
 #[stable(since = "1.0.0", feature = "rust1")]
-pub fn begin_unwind<M: Any + Send>(msg: M, file_line: &(&'static str, uint)) -> ! {
+pub fn begin_unwind<M: Any + Send>(msg: M, file_line: &(&'static str, usize)) -> ! {
     // Note that this should be the only allocation performed in this code path.
     // Currently this means that panic!() on OOM will invoke this code path,
     // but then again we're not really ready for panic on OOM anyway. If
@@ -519,7 +521,7 @@ pub fn begin_unwind<M: Any + Send>(msg: M, file_line: &(&'static str, uint)) -> 
     // panicking.
 
     // see below for why we do the `Any` coercion here.
-    begin_unwind_inner(box msg, file_line)
+    begin_unwind_inner(Box::new(msg), file_line)
 }
 
 /// The core of the unwinding.
@@ -532,11 +534,22 @@ pub fn begin_unwind<M: Any + Send>(msg: M, file_line: &(&'static str, uint)) -> 
 /// Doing this split took the LLVM IR line counts of `fn main() { panic!()
 /// }` from ~1900/3700 (-O/no opts) to 180/590.
 #[inline(never)] #[cold] // this is the slow path, please never inline this
-fn begin_unwind_inner(msg: Box<Any + Send>, file_line: &(&'static str, uint)) -> ! {
-    // Make sure the default panic handler is registered before we look at the
-    // callbacks.
-    static INIT: Once = ONCE_INIT;
-    INIT.call_once(|| unsafe { register(panicking::on_panic); });
+fn begin_unwind_inner(msg: Box<Any + Send>,
+                      file_line: &(&'static str, usize)) -> ! {
+    // Make sure the default failure handler is registered before we look at the
+    // callbacks. We also use a raw sys-based mutex here instead of a
+    // `std::sync` one as accessing TLS can cause weird recursive problems (and
+    // we don't need poison checking).
+    unsafe {
+        static LOCK: Mutex = MUTEX_INIT;
+        static mut INIT: bool = false;
+        LOCK.lock();
+        if !INIT {
+            register(panicking::on_panic);
+            INIT = true;
+        }
+        LOCK.unlock();
+    }
 
     // First, invoke call the user-defined callbacks triggered on thread panic.
     //

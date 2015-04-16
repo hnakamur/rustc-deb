@@ -7,10 +7,10 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-//
-// ignore-lexer-test FIXME #15879
 
 // Test syntax checks for `?Sized` syntax.
+
+// pretty-expanded FIXME #23616
 
 use std::marker::{PhantomData, PhantomFn};
 

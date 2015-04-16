@@ -13,20 +13,22 @@ use back::abi;
 use back::link;
 use llvm::{ValueRef, get_param};
 use metadata::csearch;
-use middle::subst::Substs;
+use middle::subst::{Subst, Substs};
 use middle::subst::VecPerParamSpace;
 use middle::subst;
 use middle::traits;
+use middle::ty::ClosureTyper;
 use trans::base::*;
 use trans::build::*;
 use trans::callee::*;
 use trans::callee;
 use trans::cleanup;
+use trans::closure;
 use trans::common::*;
 use trans::consts;
 use trans::datum::*;
 use trans::debuginfo::DebugLoc;
-use trans::expr::{SaveIn, Ignore};
+use trans::expr::SaveIn;
 use trans::expr;
 use trans::glue;
 use trans::machine;
@@ -41,11 +43,11 @@ use std::rc::Rc;
 use syntax::abi::{Rust, RustCall};
 use syntax::parse::token;
 use syntax::{ast, ast_map, attr, visit};
-use syntax::ast_util::PostExpansionMethod;
 use syntax::codemap::DUMMY_SP;
+use syntax::ptr::P;
 
 // drop_glue pointer, size, align.
-static VTABLE_OFFSET: uint = 3;
+const VTABLE_OFFSET: usize = 3;
 
 /// The main "translation" pass for methods.  Generates code
 /// for non-monomorphized methods only.  Other methods will
@@ -53,7 +55,7 @@ static VTABLE_OFFSET: uint = 3;
 /// see `trans::base::lval_static_fn()` or `trans::base::monomorphic_fn()`.
 pub fn trans_impl(ccx: &CrateContext,
                   name: ast::Ident,
-                  impl_items: &[ast::ImplItem],
+                  impl_items: &[P<ast::ImplItem>],
                   generics: &ast::Generics,
                   id: ast::NodeId) {
     let _icx = push_ctxt("meth::trans_impl");
@@ -61,47 +63,42 @@ pub fn trans_impl(ccx: &CrateContext,
 
     debug!("trans_impl(name={}, id={})", name.repr(tcx), id);
 
+    let mut v = TransItemVisitor { ccx: ccx };
+
     // Both here and below with generic methods, be sure to recurse and look for
     // items that we need to translate.
     if !generics.ty_params.is_empty() {
-        let mut v = TransItemVisitor{ ccx: ccx };
         for impl_item in impl_items {
-            match *impl_item {
-                ast::MethodImplItem(ref method) => {
-                    visit::walk_method_helper(&mut v, &**method);
+            match impl_item.node {
+                ast::MethodImplItem(..) => {
+                    visit::walk_impl_item(&mut v, impl_item);
                 }
-                ast::TypeImplItem(_) => {}
+                ast::TypeImplItem(_) |
+                ast::MacImplItem(_) => {}
             }
         }
         return;
     }
     for impl_item in impl_items {
-        match *impl_item {
-            ast::MethodImplItem(ref method) => {
-                if method.pe_generics().ty_params.len() == 0 {
-                    let trans_everywhere = attr::requests_inline(&method.attrs[]);
+        match impl_item.node {
+            ast::MethodImplItem(ref sig, ref body) => {
+                if sig.generics.ty_params.len() == 0 {
+                    let trans_everywhere = attr::requests_inline(&impl_item.attrs);
                     for (ref ccx, is_origin) in ccx.maybe_iter(trans_everywhere) {
-                        let llfn = get_item_val(ccx, method.id);
+                        let llfn = get_item_val(ccx, impl_item.id);
                         let empty_substs = tcx.mk_substs(Substs::trans_empty());
-                        trans_fn(ccx,
-                                 method.pe_fn_decl(),
-                                 method.pe_body(),
-                                 llfn,
-                                 empty_substs,
-                                 method.id,
-                                 &[]);
+                        trans_fn(ccx, &sig.decl, body, llfn,
+                                 empty_substs, impl_item.id, &[]);
                         update_linkage(ccx,
                                        llfn,
-                                       Some(method.id),
+                                       Some(impl_item.id),
                                        if is_origin { OriginalTranslation } else { InlinedCopy });
                     }
                 }
-                let mut v = TransItemVisitor {
-                    ccx: ccx,
-                };
-                visit::walk_method_helper(&mut v, &**method);
+                visit::walk_impl_item(&mut v, impl_item);
             }
-            ast::TypeImplItem(_) => {}
+            ast::TypeImplItem(_) |
+            ast::MacImplItem(_) => {}
         }
     }
 }
@@ -189,17 +186,7 @@ pub fn trans_static_method_callee<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     let mname = if method_id.krate == ast::LOCAL_CRATE {
         match tcx.map.get(method_id.node) {
-            ast_map::NodeTraitItem(method) => {
-                let ident = match *method {
-                    ast::RequiredMethod(ref m) => m.ident,
-                    ast::ProvidedMethod(ref m) => m.pe_ident(),
-                    ast::TypeTraitItem(_) => {
-                        tcx.sess.bug("trans_static_method_callee() on \
-                                      an associated type?!")
-                    }
-                };
-                ident.name
-            }
+            ast_map::NodeTraitItem(trait_item) => trait_item.ident.name,
             _ => panic!("callee is not a trait method")
         }
     } else {
@@ -300,12 +287,15 @@ pub fn trans_static_method_callee<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                   .position(|item| item.def_id() == method_id)
                                   .unwrap();
             let (llfn, ty) =
-                trans_object_shim(ccx, data.object_ty, trait_id, method_offset_in_trait);
+                trans_object_shim(ccx,
+                                  data.object_ty,
+                                  data.upcast_trait_ref.clone(),
+                                  method_offset_in_trait);
             immediate_rvalue(llfn, ty)
         }
         _ => {
             tcx.sess.bug(&format!("static call to invalid vtable: {}",
-                                 vtbl.repr(tcx))[]);
+                                 vtbl.repr(tcx)));
         }
     }
 }
@@ -335,7 +325,7 @@ fn method_with_name(ccx: &CrateContext, impl_id: ast::DefId, name: ast::Name)
 fn trans_monomorphized_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                           method_call: MethodCall,
                                           trait_id: ast::DefId,
-                                          n_method: uint,
+                                          n_method: usize,
                                           vtable: traits::Vtable<'tcx, ()>)
                                           -> Callee<'blk, 'tcx> {
     let _icx = push_ctxt("meth::trans_monomorphized_callee");
@@ -370,30 +360,36 @@ fn trans_monomorphized_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         traits::VtableClosure(closure_def_id, substs) => {
             // The substitutions should have no type parameters remaining
             // after passing through fulfill_obligation
-            let llfn = trans_fn_ref_with_substs(bcx.ccx(),
-                                                closure_def_id,
-                                                MethodCallKey(method_call),
-                                                bcx.fcx.param_substs,
-                                                substs).val;
-
+            let trait_closure_kind = bcx.tcx().lang_items.fn_trait_kind(trait_id).unwrap();
+            let llfn = closure::trans_closure_method(bcx.ccx(),
+                                                     closure_def_id,
+                                                     substs,
+                                                     MethodCallKey(method_call),
+                                                     bcx.fcx.param_substs,
+                                                     trait_closure_kind);
             Callee {
                 bcx: bcx,
                 data: Fn(llfn),
             }
         }
         traits::VtableFnPointer(fn_ty) => {
-            let llfn = trans_fn_pointer_shim(bcx.ccx(), fn_ty);
+            let trait_closure_kind = bcx.tcx().lang_items.fn_trait_kind(trait_id).unwrap();
+            let llfn = trans_fn_pointer_shim(bcx.ccx(), trait_closure_kind, fn_ty);
             Callee { bcx: bcx, data: Fn(llfn) }
         }
         traits::VtableObject(ref data) => {
-            let (llfn, _) = trans_object_shim(bcx.ccx(), data.object_ty, trait_id, n_method);
+            let (llfn, _) = trans_object_shim(bcx.ccx(),
+                                              data.object_ty,
+                                              data.upcast_trait_ref.clone(),
+                                              n_method);
             Callee { bcx: bcx, data: Fn(llfn) }
         }
         traits::VtableBuiltin(..) |
+        traits::VtableDefaultImpl(..) |
         traits::VtableParam(..) => {
             bcx.sess().bug(
                 &format!("resolved vtable bad vtable {} in trans",
-                        vtable.repr(bcx.tcx()))[]);
+                        vtable.repr(bcx.tcx())));
         }
     }
 }
@@ -441,7 +437,7 @@ fn combine_impl_and_methods_tps<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 /// extract the self data and vtable out of the pair.
 fn trans_trait_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                   method_ty: Ty<'tcx>,
-                                  vtable_index: uint,
+                                  vtable_index: usize,
                                   self_expr: &ast::Expr,
                                   arg_cleanup_scope: cleanup::ScopeId)
                                   -> Callee<'blk, 'tcx> {
@@ -453,7 +449,7 @@ fn trans_trait_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let self_datum = unpack_datum!(
         bcx, expr::trans(bcx, self_expr));
 
-    let llval = if type_needs_drop(bcx.tcx(), self_datum.ty) {
+    let llval = if bcx.fcx.type_needs_drop(self_datum.ty) {
         let self_datum = unpack_datum!(
             bcx, self_datum.to_rvalue_datum(bcx, "trait_callee"));
 
@@ -478,7 +474,7 @@ fn trans_trait_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 /// pair.
 pub fn trans_trait_callee_from_llval<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                                  callee_ty: Ty<'tcx>,
-                                                 vtable_index: uint,
+                                                 vtable_index: usize,
                                                  llpair: ValueRef)
                                                  -> Callee<'blk, 'tcx> {
     let _icx = push_ctxt("meth::trans_trait_callee");
@@ -550,16 +546,17 @@ pub fn trans_trait_callee_from_llval<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 pub fn trans_object_shim<'a, 'tcx>(
     ccx: &'a CrateContext<'a, 'tcx>,
     object_ty: Ty<'tcx>,
-    trait_id: ast::DefId,
-    method_offset_in_trait: uint)
+    upcast_trait_ref: ty::PolyTraitRef<'tcx>,
+    method_offset_in_trait: usize)
     -> (ValueRef, Ty<'tcx>)
 {
     let _icx = push_ctxt("trans_object_shim");
     let tcx = ccx.tcx();
+    let trait_id = upcast_trait_ref.def_id();
 
-    debug!("trans_object_shim(object_ty={}, trait_id={}, method_offset_in_trait={})",
+    debug!("trans_object_shim(object_ty={}, upcast_trait_ref={}, method_offset_in_trait={})",
            object_ty.repr(tcx),
-           trait_id.repr(tcx),
+           upcast_trait_ref.repr(tcx),
            method_offset_in_trait);
 
     let object_trait_ref =
@@ -574,7 +571,6 @@ pub fn trans_object_shim<'a, 'tcx>(
         };
 
     // Upcast to the trait in question and extract out the substitutions.
-    let upcast_trait_ref = traits::upcast(ccx.tcx(), object_trait_ref.clone(), trait_id).unwrap();
     let upcast_trait_ref = ty::erase_late_bound_regions(tcx, &upcast_trait_ref);
     let object_substs = upcast_trait_ref.substs.clone().erase_regions();
     debug!("trans_object_shim: object_substs={}", object_substs.repr(tcx));
@@ -588,15 +584,16 @@ pub fn trans_object_shim<'a, 'tcx>(
     };
     let fty = monomorphize::apply_param_substs(tcx, &object_substs, &method_ty.fty);
     let fty = tcx.mk_bare_fn(fty);
-    debug!("trans_object_shim: fty={}", fty.repr(tcx));
+    let method_ty = opaque_method_ty(tcx, fty);
+    debug!("trans_object_shim: fty={} method_ty={}", fty.repr(tcx), method_ty.repr(tcx));
 
     //
-    let method_bare_fn_ty =
-        ty::mk_bare_fn(tcx, None, fty);
+    let shim_fn_ty = ty::mk_bare_fn(tcx, None, fty);
+    let method_bare_fn_ty = ty::mk_bare_fn(tcx, None, method_ty);
     let function_name =
-        link::mangle_internal_name_by_type_and_seq(ccx, method_bare_fn_ty, "object_shim");
+        link::mangle_internal_name_by_type_and_seq(ccx, shim_fn_ty, "object_shim");
     let llfn =
-        decl_internal_rust_fn(ccx, method_bare_fn_ty, &function_name);
+        decl_internal_rust_fn(ccx, shim_fn_ty, &function_name);
 
     let sig = ty::erase_late_bound_regions(ccx.tcx(), &fty.sig);
 
@@ -652,9 +649,6 @@ pub fn trans_object_shim<'a, 'tcx>(
 
     assert!(!fcx.needs_ret_allocas);
 
-    let sig =
-        ty::erase_late_bound_regions(bcx.tcx(), &fty.sig);
-
     let dest =
         fcx.llretslotptr.get().map(
             |_| expr::SaveIn(fcx.get_ret_slot(bcx, sig.output, "ret_slot")));
@@ -687,11 +681,8 @@ pub fn trans_object_shim<'a, 'tcx>(
 ///
 /// The `trait_ref` encodes the erased self type. Hence if we are
 /// making an object `Foo<Trait>` from a value of type `Foo<T>`, then
-/// `trait_ref` would map `T:Trait`, but `box_ty` would be
-/// `Foo<T>`. This `box_ty` is primarily used to encode the destructor.
-/// This will hopefully change now that DST is underway.
+/// `trait_ref` would map `T:Trait`.
 pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                            box_ty: Ty<'tcx>,
                             trait_ref: ty::PolyTraitRef<'tcx>,
                             param_substs: &'tcx subst::Substs<'tcx>)
                             -> ValueRef
@@ -699,13 +690,10 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let tcx = ccx.tcx();
     let _icx = push_ctxt("meth::get_vtable");
 
-    debug!("get_vtable(box_ty={}, trait_ref={})",
-           box_ty.repr(tcx),
-           trait_ref.repr(tcx));
+    debug!("get_vtable(trait_ref={})", trait_ref.repr(tcx));
 
     // Check the cache.
-    let cache_key = (box_ty, trait_ref.clone());
-    match ccx.vtables().borrow().get(&cache_key) {
+    match ccx.vtables().borrow().get(&trait_ref) {
         Some(&val) => { return val }
         None => { }
     }
@@ -714,6 +702,8 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let methods = traits::supertraits(tcx, trait_ref.clone()).flat_map(|trait_ref| {
         let vtable = fulfill_obligation(ccx, DUMMY_SP, trait_ref.clone());
         match vtable {
+            // Should default trait error here?
+            traits::VtableDefaultImpl(_) |
             traits::VtableBuiltin(_) => {
                 Vec::new().into_iter()
             }
@@ -725,17 +715,18 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                 emit_vtable_methods(ccx, id, substs, param_substs).into_iter()
             }
             traits::VtableClosure(closure_def_id, substs) => {
-                let llfn = trans_fn_ref_with_substs(
-                    ccx,
-                    closure_def_id,
-                    ExprId(0),
-                    param_substs,
-                    substs).val;
-
+                let trait_closure_kind = tcx.lang_items.fn_trait_kind(trait_ref.def_id()).unwrap();
+                let llfn = closure::trans_closure_method(ccx,
+                                                         closure_def_id,
+                                                         substs,
+                                                         ExprId(0),
+                                                         param_substs,
+                                                         trait_closure_kind);
                 vec![llfn].into_iter()
             }
             traits::VtableFnPointer(bare_fn_ty) => {
-                vec![trans_fn_pointer_shim(ccx, bare_fn_ty)].into_iter()
+                let trait_closure_kind = tcx.lang_items.fn_trait_kind(trait_ref.def_id()).unwrap();
+                vec![trans_fn_pointer_shim(ccx, trait_closure_kind, bare_fn_ty)].into_iter()
             }
             traits::VtableObject(ref data) => {
                 // this would imply that the Self type being erased is
@@ -749,7 +740,7 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                 tcx.sess.bug(
                     &format!("resolved vtable for {} to bad vtable {} in trans",
                             trait_ref.repr(tcx),
-                            vtable.repr(tcx))[]);
+                            vtable.repr(tcx)));
             }
         }
     });
@@ -760,7 +751,7 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     let components: Vec<_> = vec![
         // Generate a destructor for the vtable.
-        glue::get_drop_glue(ccx, box_ty),
+        glue::get_drop_glue(ccx, trait_ref.self_ty()),
         C_uint(ccx, size),
         C_uint(ccx, align)
     ].into_iter().chain(methods).collect();
@@ -768,7 +759,7 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let vtable = consts::addr_of(ccx, C_struct(ccx, &components, false),
                                  "vtable", trait_ref.def_id().node);
 
-    ccx.vtables().borrow_mut().insert(cache_key, vtable);
+    ccx.vtables().borrow_mut().insert(trait_ref, vtable);
     vtable
 }
 
@@ -776,8 +767,14 @@ fn emit_vtable_methods<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                  impl_id: ast::DefId,
                                  substs: subst::Substs<'tcx>,
                                  param_substs: &'tcx subst::Substs<'tcx>)
-                                 -> Vec<ValueRef> {
+                                 -> Vec<ValueRef>
+{
     let tcx = ccx.tcx();
+
+    debug!("emit_vtable_methods(impl_id={}, substs={}, param_substs={})",
+           impl_id.repr(tcx),
+           substs.repr(tcx),
+           param_substs.repr(tcx));
 
     let trt_id = match ty::impl_trait_ref(tcx, impl_id) {
         Some(t_id) => t_id.def_id,
@@ -787,82 +784,87 @@ fn emit_vtable_methods<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     ty::populate_implementations_for_trait_if_necessary(tcx, trt_id);
 
+    let nullptr = C_null(Type::nil(ccx).ptr_to());
     let trait_item_def_ids = ty::trait_item_def_ids(tcx, trt_id);
-    trait_item_def_ids.iter().flat_map(|method_def_id| {
-        let method_def_id = method_def_id.def_id();
-        let name = ty::impl_or_trait_item(tcx, method_def_id).name();
-        // The substitutions we have are on the impl, so we grab
-        // the method type from the impl to substitute into.
-        let m_id = method_with_name(ccx, impl_id, name);
-        let ti = ty::impl_or_trait_item(tcx, m_id);
-        match ti {
-            ty::MethodTraitItem(m) => {
-                debug!("(making impl vtable) emitting method {} at subst {}",
-                       m.repr(tcx),
-                       substs.repr(tcx));
-                if m.generics.has_type_params(subst::FnSpace) ||
-                    ty::type_has_self(ty::mk_bare_fn(tcx, None, tcx.mk_bare_fn(m.fty.clone())))
-                {
-                    debug!("(making impl vtable) method has self or type \
-                            params: {}",
-                           token::get_name(name));
-                    Some(C_null(Type::nil(ccx).ptr_to())).into_iter()
-                } else {
-                    let fn_ref = trans_fn_ref_with_substs(
-                        ccx,
-                        m_id,
-                        ExprId(0),
-                        param_substs,
-                        substs.clone()).val;
+    trait_item_def_ids
+        .iter()
 
-                    // currently, at least, by-value self is not object safe
-                    assert!(m.explicit_self != ty::ByValueExplicitSelfCategory);
+        // Filter out the associated types.
+        .filter_map(|item_def_id| {
+            match *item_def_id {
+                ty::MethodTraitItemId(def_id) => Some(def_id),
+                ty::TypeTraitItemId(_) => None,
+            }
+        })
 
-                    Some(fn_ref).into_iter()
+        // Now produce pointers for each remaining method. If the
+        // method could never be called from this object, just supply
+        // null.
+        .map(|trait_method_def_id| {
+            debug!("emit_vtable_methods: trait_method_def_id={}",
+                   trait_method_def_id.repr(tcx));
+
+            let trait_method_type = match ty::impl_or_trait_item(tcx, trait_method_def_id) {
+                ty::MethodTraitItem(m) => m,
+                ty::TypeTraitItem(_) => ccx.sess().bug("should be a method, not assoc type")
+            };
+            let name = trait_method_type.name;
+
+            // Some methods cannot be called on an object; skip those.
+            if !traits::is_vtable_safe_method(tcx, trt_id, &trait_method_type) {
+                debug!("emit_vtable_methods: not vtable safe");
+                return nullptr;
+            }
+
+            debug!("emit_vtable_methods: trait_method_type={}",
+                   trait_method_type.repr(tcx));
+
+            // The substitutions we have are on the impl, so we grab
+            // the method type from the impl to substitute into.
+            let impl_method_def_id = method_with_name(ccx, impl_id, name);
+            let impl_method_type = match ty::impl_or_trait_item(tcx, impl_method_def_id) {
+                ty::MethodTraitItem(m) => m,
+                ty::TypeTraitItem(_) => ccx.sess().bug("should be a method, not assoc type")
+            };
+
+            debug!("emit_vtable_methods: impl_method_type={}",
+                   impl_method_type.repr(tcx));
+
+            // If this is a default method, it's possible that it
+            // relies on where clauses that do not hold for this
+            // particular set of type parameters. Note that this
+            // method could then never be called, so we do not want to
+            // try and trans it, in that case. Issue #23435.
+            if ty::provided_source(tcx, impl_method_def_id).is_some() {
+                let predicates = impl_method_type.predicates.predicates.subst(tcx, &substs);
+                if !normalize_and_test_predicates(ccx, predicates.into_vec()) {
+                    debug!("emit_vtable_methods: predicates do not hold");
+                    return nullptr;
                 }
             }
-            ty::TypeTraitItem(_) => {
-                None.into_iter()
-            }
-        }
-    }).collect()
+
+            trans_fn_ref_with_substs(ccx,
+                                     impl_method_def_id,
+                                     ExprId(0),
+                                     param_substs,
+                                     substs.clone()).val
+        })
+        .collect()
 }
 
-/// Generates the code to convert from a pointer (`Box<T>`, `&T`, etc) into an object
-/// (`Box<Trait>`, `&Trait`, etc). This means creating a pair where the first word is the vtable
-/// and the second word is the pointer.
-pub fn trans_trait_cast<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                                    datum: Datum<'tcx, Expr>,
-                                    id: ast::NodeId,
-                                    trait_ref: ty::PolyTraitRef<'tcx>,
-                                    dest: expr::Dest)
-                                    -> Block<'blk, 'tcx> {
-    let mut bcx = bcx;
-    let _icx = push_ctxt("meth::trans_trait_cast");
+/// Replace the self type (&Self or Box<Self>) with an opaque pointer.
+pub fn opaque_method_ty<'tcx>(tcx: &ty::ctxt<'tcx>, method_ty: &ty::BareFnTy<'tcx>)
+        -> &'tcx ty::BareFnTy<'tcx> {
+    let mut inputs = method_ty.sig.0.inputs.clone();
+    inputs[0] = ty::mk_mut_ptr(tcx, ty::mk_mach_int(tcx, ast::TyI8));
 
-    let lldest = match dest {
-        Ignore => {
-            return datum.clean(bcx, "trait_trait_cast", id);
-        }
-        SaveIn(dest) => dest
-    };
-
-    debug!("trans_trait_cast: trait_ref={}",
-           trait_ref.repr(bcx.tcx()));
-
-    let datum_ty = datum.ty;
-    let llbox_ty = type_of(bcx.ccx(), datum_ty);
-
-    // Store the pointer into the first half of pair.
-    let llboxdest = GEPi(bcx, lldest, &[0, abi::FAT_PTR_ADDR]);
-    let llboxdest = PointerCast(bcx, llboxdest, llbox_ty.ptr_to());
-    bcx = datum.store_to(bcx, llboxdest);
-
-    // Store the vtable into the second half of pair.
-    let vtable = get_vtable(bcx.ccx(), datum_ty, trait_ref, bcx.fcx.param_substs);
-    let llvtabledest = GEPi(bcx, lldest, &[0, abi::FAT_PTR_EXTRA]);
-    let llvtabledest = PointerCast(bcx, llvtabledest, val_ty(vtable).ptr_to());
-    Store(bcx, vtable, llvtabledest);
-
-    bcx
+    tcx.mk_bare_fn(ty::BareFnTy {
+        unsafety: method_ty.unsafety,
+        abi: method_ty.abi,
+        sig: ty::Binder(ty::FnSig {
+            inputs: inputs,
+            output: method_ty.sig.0.output,
+            variadic: method_ty.sig.0.variadic,
+        }),
+    })
 }

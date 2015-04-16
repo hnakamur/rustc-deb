@@ -14,8 +14,10 @@
 // Note: see compile-fail/variance-regions-*.rs for the tests that check that the
 // variance inference works in the first place.
 
+// pretty-expanded FIXME #23616
+
 struct Contravariant<'a> {
-    f: &'a int
+    f: &'a isize
 }
 
 fn use_<'a>(c: Contravariant<'a>) {
@@ -26,7 +28,7 @@ fn use_<'a>(c: Contravariant<'a>) {
     // if 'call <= 'a, which is true, so no error.
     collapse(&x, c);
 
-    fn collapse<'b>(x: &'b int, c: Contravariant<'b>) { }
+    fn collapse<'b>(x: &'b isize, c: Contravariant<'b>) { }
 }
 
 pub fn main() {}

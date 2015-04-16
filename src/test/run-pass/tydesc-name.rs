@@ -8,8 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
 
-use std::intrinsics::get_tydesc;
+#![feature(core)]
+
+use std::intrinsics::type_name;
 
 struct Foo<T> {
     x: T
@@ -17,7 +20,7 @@ struct Foo<T> {
 
 pub fn main() {
     unsafe {
-        assert_eq!((*get_tydesc::<int>()).name, "isize");
-        assert_eq!((*get_tydesc::<Foo<uint>>()).name, "Foo<usize>");
+        assert_eq!(type_name::<isize>(), "isize");
+        assert_eq!(type_name::<Foo<usize>>(), "Foo<usize>");
     }
 }

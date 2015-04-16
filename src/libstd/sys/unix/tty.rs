@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(deprecated)]
+
 use prelude::v1::*;
 
 use sys::fs::FileDesc;
-use libc::{self, c_int, c_ulong, funcs};
+use libc::{self, c_int, c_ulong};
 use old_io::{self, IoResult, IoError};
 use sys::c;
 use sys_common;
@@ -21,7 +23,10 @@ pub struct TTY {
 }
 
 #[cfg(any(target_os = "macos",
+          target_os = "ios",
+          target_os = "dragonfly",
           target_os = "freebsd",
+          target_os = "bitrig",
           target_os = "openbsd"))]
 const TIOCGWINSZ: c_ulong = 0x40087468;
 
@@ -41,7 +46,7 @@ impl TTY {
         }
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    pub fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.fd.read(buf)
     }
     pub fn write(&mut self, buf: &[u8]) -> IoResult<()> {
@@ -51,12 +56,7 @@ impl TTY {
         Err(sys_common::unimpl())
     }
 
-    #[cfg(any(target_os = "linux",
-              target_os = "android",
-              target_os = "macos",
-              target_os = "freebsd",
-              target_os = "openbsd"))]
-    pub fn get_winsize(&mut self) -> IoResult<(int, int)> {
+    pub fn get_winsize(&mut self) -> IoResult<(isize, isize)> {
         unsafe {
             #[repr(C)]
             struct winsize {
@@ -74,16 +74,8 @@ impl TTY {
                     detail: None,
                 })
             } else {
-                Ok((size.ws_col as int, size.ws_row as int))
+                Ok((size.ws_col as isize, size.ws_row as isize))
             }
         }
     }
-
-    #[cfg(any(target_os = "ios",
-              target_os = "dragonfly"))]
-    pub fn get_winsize(&mut self) -> IoResult<(int, int)> {
-        Err(sys_common::unimpl())
-    }
-
-    pub fn isatty(&self) -> bool { false }
 }

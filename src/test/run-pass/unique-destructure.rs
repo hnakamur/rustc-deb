@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 
-struct Foo { a: int, b: int }
+struct Foo { a: isize, b: isize }
 
 pub fn main() {
     let box Foo{a, b} = box Foo{a: 100, b: 200};

@@ -23,7 +23,7 @@ use core::prelude::*;
 use vec::Vec;
 
 /// One-time global initialization.
-pub unsafe fn init(argc: int, argv: *const *const u8) { imp::init(argc, argv) }
+pub unsafe fn init(argc: isize, argv: *const *const u8) { imp::init(argc, argv) }
 
 /// One-time global cleanup.
 pub unsafe fn cleanup() { imp::cleanup() }
@@ -43,6 +43,7 @@ pub fn clone() -> Option<Vec<Vec<u8>>> { imp::clone() }
           target_os = "android",
           target_os = "freebsd",
           target_os = "dragonfly",
+          target_os = "bitrig",
           target_os = "openbsd"))]
 mod imp {
     use prelude::v1::*;
@@ -53,10 +54,10 @@ mod imp {
 
     use sync::{StaticMutex, MUTEX_INIT};
 
-    static mut GLOBAL_ARGS_PTR: uint = 0;
+    static mut GLOBAL_ARGS_PTR: usize = 0;
     static LOCK: StaticMutex = MUTEX_INIT;
 
-    pub unsafe fn init(argc: int, argv: *const *const u8) {
+    pub unsafe fn init(argc: isize, argv: *const *const u8) {
         let args = load_argc_and_argv(argc, argv);
         put(args);
     }
@@ -107,7 +108,6 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use prelude::v1::*;
-        use finally::Finally;
 
         use super::*;
 
@@ -126,14 +126,11 @@ mod imp {
             assert!(take() == Some(expected.clone()));
             assert!(take() == None);
 
-            (|| {
-            }).finally(|| {
-                // Restore the actual global state.
-                match saved_value {
-                    Some(ref args) => put(args.clone()),
-                    None => ()
-                }
-            })
+            // Restore the actual global state.
+            match saved_value {
+                Some(ref args) => put(args.clone()),
+                None => ()
+            }
         }
     }
 }
@@ -145,7 +142,7 @@ mod imp {
     use core::prelude::*;
     use vec::Vec;
 
-    pub unsafe fn init(_argc: int, _argv: *const *const u8) {
+    pub unsafe fn init(_argc: isize, _argv: *const *const u8) {
     }
 
     pub fn cleanup() {

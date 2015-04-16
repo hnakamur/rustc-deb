@@ -76,7 +76,7 @@ bitflags! {
     }
 }
 
-#[derive(Copy, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 enum Mode {
     Const,
     Static,
@@ -176,7 +176,7 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
         };
 
         self.tcx.sess.span_err(e.span, &format!("mutable statics are not allowed \
-                                                 to have {}", suffix)[]);
+                                                 to have {}", suffix));
     }
 
     fn check_static_type(&self, e: &ast::Expr) {
@@ -307,8 +307,9 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                             match const_eval::eval_const_expr_partial(self.tcx, ex, None) {
                                 Ok(_) => {}
                                 Err(msg) => {
-                                    span_err!(self.tcx.sess, ex.span, E0020,
-                                              "{} in a constant expression", msg)
+                                    span_err!(self.tcx.sess, msg.span, E0020,
+                                              "{} in a constant expression",
+                                              msg.description())
                                 }
                             }
                         }
@@ -382,7 +383,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
             if v.mode != Mode::Var {
                 v.tcx.sess.span_err(e.span,
                                     &format!("{}s are not allowed to have destructors",
-                                             v.msg())[]);
+                                             v.msg()));
             }
         }
         _ => {}
@@ -439,8 +440,8 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                 }
             }
         }
-        ast::ExprPath(_) | ast::ExprQPath(_) => {
-            let def = v.tcx.def_map.borrow().get(&e.id).cloned();
+        ast::ExprPath(..) => {
+            let def = v.tcx.def_map.borrow().get(&e.id).map(|d| d.full_def());
             match def {
                 Some(def::DefVariant(_, _, _)) => {
                     // Count the discriminator or function pointer.
@@ -452,8 +453,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                         v.add_qualif(NON_ZERO_SIZED);
                     }
                 }
-                Some(def::DefFn(..)) |
-                Some(def::DefStaticMethod(..)) | Some(def::DefMethod(..)) => {
+                Some(def::DefFn(..)) | Some(def::DefMethod(..)) => {
                     // Count the function pointer.
                     v.add_qualif(NON_ZERO_SIZED);
                 }
@@ -500,7 +500,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                     _ => break
                 };
             }
-            let def = v.tcx.def_map.borrow().get(&callee.id).cloned();
+            let def = v.tcx.def_map.borrow().get(&callee.id).map(|d| d.full_def());
             match def {
                 Some(def::DefStruct(..)) => {}
                 Some(def::DefVariant(..)) => {

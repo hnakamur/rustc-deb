@@ -10,12 +10,12 @@
 
 use prelude::v1::*;
 
-use ffi::CString;
+use ffi::{CStr, CString};
 use io::{self, Error, ErrorKind};
 use libc::{self, c_int, c_char, c_void, socklen_t};
 use mem;
-use net::{IpAddr, SocketAddr, Shutdown};
-use num::Int;
+use net::{SocketAddr, Shutdown, IpAddr};
+use str::from_utf8;
 use sys::c;
 use sys::net::{cvt, cvt_r, cvt_gai, Socket, init, wrlen_t};
 use sys_common::{AsInner, FromInner, IntoInner};
@@ -23,9 +23,6 @@ use sys_common::{AsInner, FromInner, IntoInner};
 ////////////////////////////////////////////////////////////////////////////////
 // sockaddr and misc bindings
 ////////////////////////////////////////////////////////////////////////////////
-
-fn hton<I: Int>(i: I) -> I { i.to_be() }
-fn ntoh<I: Int>(i: I) -> I { Int::from_be(i) }
 
 fn setsockopt<T>(sock: &Socket, opt: c_int, val: c_int,
                      payload: T) -> io::Result<()> {
@@ -39,7 +36,7 @@ fn setsockopt<T>(sock: &Socket, opt: c_int, val: c_int,
 
 #[allow(dead_code)]
 fn getsockopt<T: Copy>(sock: &Socket, opt: c_int,
-                           val: c_int) -> io::Result<T> {
+                       val: c_int) -> io::Result<T> {
     unsafe {
         let mut slot: T = mem::zeroed();
         let mut len = mem::size_of::<T>() as socklen_t;
@@ -67,18 +64,18 @@ fn sockaddr_to_addr(storage: &libc::sockaddr_storage,
     match storage.ss_family as libc::c_int {
         libc::AF_INET => {
             assert!(len as usize >= mem::size_of::<libc::sockaddr_in>());
-            Ok(FromInner::from_inner(unsafe {
+            Ok(SocketAddr::V4(FromInner::from_inner(unsafe {
                 *(storage as *const _ as *const libc::sockaddr_in)
-            }))
+            })))
         }
         libc::AF_INET6 => {
             assert!(len as usize >= mem::size_of::<libc::sockaddr_in6>());
-            Ok(FromInner::from_inner(unsafe {
+            Ok(SocketAddr::V6(FromInner::from_inner(unsafe {
                 *(storage as *const _ as *const libc::sockaddr_in6)
-            }))
+            })))
         }
         _ => {
-            Err(Error::new(ErrorKind::InvalidInput, "invalid argument", None))
+            Err(Error::new(ErrorKind::InvalidInput, "invalid argument"))
         }
     }
 }
@@ -127,6 +124,41 @@ pub fn lookup_host(host: &str) -> io::Result<LookupHost> {
         try!(cvt_gai(getaddrinfo(c_host.as_ptr(), 0 as *const _, 0 as *const _,
                                  &mut res)));
         Ok(LookupHost { original: res, cur: res })
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// lookup_addr
+////////////////////////////////////////////////////////////////////////////////
+
+extern "system" {
+    fn getnameinfo(sa: *const libc::sockaddr, salen: socklen_t,
+                   host: *mut c_char, hostlen: libc::size_t,
+                   serv: *mut c_char, servlen: libc::size_t,
+                   flags: c_int) -> c_int;
+}
+
+const NI_MAXHOST: usize = 1025;
+
+pub fn lookup_addr(addr: &IpAddr) -> io::Result<String> {
+    init();
+
+    let saddr = SocketAddr::new(*addr, 0);
+    let (inner, len) = saddr.into_inner();
+    let mut hostbuf = [0 as c_char; NI_MAXHOST];
+
+    let data = unsafe {
+        try!(cvt_gai(getnameinfo(inner, len,
+                                 hostbuf.as_mut_ptr(), NI_MAXHOST as libc::size_t,
+                                 0 as *mut _, 0, 0)));
+
+        CStr::from_ptr(hostbuf.as_ptr())
+    };
+
+    match from_utf8(data.to_bytes()) {
+        Ok(name) => Ok(name.to_string()),
+        Err(_) => Err(io::Error::new(io::ErrorKind::Other,
+                                     "failed to lookup address information"))
     }
 }
 
@@ -226,6 +258,12 @@ impl TcpStream {
     }
 }
 
+impl FromInner<Socket> for TcpStream {
+    fn from_inner(socket: Socket) -> TcpStream {
+        TcpStream { inner: socket }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // TCP listeners
 ////////////////////////////////////////////////////////////////////////////////
@@ -276,6 +314,12 @@ impl TcpListener {
 
     pub fn duplicate(&self) -> io::Result<TcpListener> {
         self.inner.duplicate().map(|s| TcpListener { inner: s })
+    }
+}
+
+impl FromInner<Socket> for TcpListener {
+    fn from_inner(socket: Socket) -> TcpListener {
+        TcpListener { inner: socket }
     }
 }
 
@@ -389,5 +433,11 @@ impl UdpSocket {
 
     pub fn duplicate(&self) -> io::Result<UdpSocket> {
         self.inner.duplicate().map(|s| UdpSocket { inner: s })
+    }
+}
+
+impl FromInner<Socket> for UdpSocket {
+    fn from_inner(socket: Socket) -> UdpSocket {
+        UdpSocket { inner: socket }
     }
 }

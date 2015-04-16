@@ -229,14 +229,14 @@ cases mentioned in [Number literals](#number-literals) below.
 
 ##### Characters and strings
 
-|   | Example | Number of `#` pairs allowed | Available characters | Escapes | Equivalent to |
-|---|---------|-----------------------------|----------------------|---------|---------------|
-| [Character](#character-literals) | `'H'` | `N/A` | All unicode | `\'` & [Byte escapes](#byte-escapes) & [Unicode escapes](#unicode-escapes) | `N/A` |
-| [String](#string-literals) | `"hello"` | `N/A` | All unicode | `\"` & [Byte escapes](#byte-escapes) & [Unicode escapes](#unicode-escapes) | `N/A` |
-| [Raw](#raw-string-literals) | `r##"hello"##`  | `0...` | All unicode | `N/A` | `N/A` |
-| [Byte](#byte-literals) | `b'H'` | `N/A` | All ASCII | `\'` & [Byte escapes](#byte-escapes) | `u8` |
-| [Byte string](#byte-string-literals) | `b"hello"` | `N/A`  | All ASCII | `\"` & [Byte escapes](#byte-escapes) | `&'static [u8]` |
-| [Raw byte string](#raw-byte-string-literals) | `br##"hello"##` | `0...` | All ASCII | `N/A` | `&'static [u8]` (unsure...not stated) |
+|                                              | Example         | `#` sets   | Characters  | Escapes             |
+|----------------------------------------------|-----------------|------------|-------------|---------------------|
+| [Character](#character-literals)             | `'H'`           | `N/A`      | All Unicode | `\'` & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
+| [String](#string-literals)                   | `"hello"`       | `N/A`      | All Unicode | `\"` & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
+| [Raw](#raw-string-literals)                  | `r#"hello"#`    | `0...`     | All Unicode | `N/A`                                                      |
+| [Byte](#byte-literals)                       | `b'H'`          | `N/A`      | All ASCII   | `\'` & [Byte](#byte-escapes)                               |
+| [Byte string](#byte-string-literals)         | `b"hello"`      | `N/A`      | All ASCII   | `\"` & [Byte](#byte-escapes)                               |
+| [Raw byte string](#raw-byte-string-literals) | `br#"hello"#`   | `0...`     | All ASCII   | `N/A`                                                      |
 
 ##### Byte escapes
 
@@ -302,7 +302,7 @@ nonzero_dec: '1' | '2' | '3' | '4'
 
 A _character literal_ is a single Unicode character enclosed within two
 `U+0027` (single-quote) characters, with the exception of `U+0027` itself,
-which must be _escaped_ by a preceding U+005C character (`\`).
+which must be _escaped_ by a preceding `U+005C` character (`\`).
 
 ##### String literals
 
@@ -310,6 +310,19 @@ A _string literal_ is a sequence of any Unicode characters enclosed within two
 `U+0022` (double-quote) characters, with the exception of `U+0022` itself,
 which must be _escaped_ by a preceding `U+005C` character (`\`), or a _raw
 string literal_.
+
+A multi-line string literal may be defined by terminating each line with a
+`U+005C` character (`\`) immediately before the newline. This causes the
+`U+005C` character, the newline, and all whitespace at the beginning of the
+next line to be ignored.
+
+```rust
+let a = "foobar";
+let b = "foo\
+         bar";
+
+assert_eq!(a,b);
+```
 
 ##### Character escapes
 
@@ -515,6 +528,9 @@ This last example is different because it is not possible to use the suffix
 syntax with a floating point literal ending in a period. `2.f64` would attempt
 to call a method named `f64` on `2`.
 
+The representation semantics of floating-point numbers are described in
+["Machine Types"](#machine-types).
+
 #### Boolean literals
 
 The two values of the boolean type are written `true` and `false`.
@@ -629,18 +645,7 @@ fn bar() {
 
 A number of minor features of Rust are not central enough to have their own
 syntax, and yet are not implementable as functions. Instead, they are given
-names, and invoked through a consistent syntax: `name!(...)`. Examples include:
-
-* `format!` : format data into a string
-* `env!` : look up an environment variable's value at compile time
-* `file!`: return the path to the file being compiled
-* `stringify!` : pretty-print the Rust expression given as an argument
-* `include!` : include the Rust expression in the given file
-* `include_str!` : include the contents of the given file as a string
-* `include_bytes!` : include the contents of the given file as a binary blob
-* `error!`, `warn!`, `info!`, `debug!` : provide diagnostic information.
-
-All of the above extensions are expressions with values.
+names, and invoked through a consistent syntax: `some_extension!(...)`.
 
 Users of `rustc` can define new syntax extensions in two ways:
 
@@ -728,23 +733,6 @@ Rust syntax is restricted in two ways:
    pairs when they occur at the beginning of, or immediately after, a `$(...)*`;
    requiring a distinctive token in front can solve the problem.
 
-## Syntax extensions useful for the macro author
-
-* `log_syntax!` : print out the arguments at compile time
-* `trace_macros!` : supply `true` or `false` to enable or disable macro expansion logging
-* `stringify!` : turn the identifier argument into a string literal
-* `concat!` : concatenates a comma-separated list of literals
-* `concat_idents!` : create a new identifier by concatenating the arguments
-
-The following attributes are used for quasiquoting in procedural macros:
-
-* `quote_expr!`
-* `quote_item!`
-* `quote_pat!`
-* `quote_stmt!`
-* `quote_tokens!`
-* `quote_ty!`
-
 # Crates and source files
 
 Rust is a *compiled* language. Its semantics obey a *phase distinction*
@@ -785,8 +773,7 @@ may optionally begin with any number of `attributes` that apply to the
 containing module. Attributes on the anonymous crate module define important
 metadata that influences the behavior of the compiler.
 
-```{.rust}
-# #![allow(unused_attribute)]
+```no_run
 // Crate name
 #![crate_name = "projx"]
 
@@ -950,7 +937,7 @@ extern crate pcre;
 
 extern crate std; // equivalent to: extern crate std as std;
 
-extern crate "std" as ruststd; // linking to 'std' under another name
+extern crate std as ruststd; // linking to 'std' under another name
 ```
 
 ##### Use declarations
@@ -989,7 +976,7 @@ Use declarations support a number of convenient shortcuts:
 An example of `use` declarations:
 
 ```
-use std::iter::range_step;
+# #![feature(core)]
 use std::option::Option::{Some, None};
 use std::collections::hash_map::{self, HashMap};
 
@@ -997,9 +984,6 @@ fn foo<T>(_: T){}
 fn bar(map1: HashMap<String, usize>, map2: hash_map::HashMap<String, usize>){}
 
 fn main() {
-    // Equivalent to 'std::iter::range_step(0, 10, 2);'
-    range_step(0, 10, 2);
-
     // Equivalent to 'foo(vec![std::option::Option::Some(1.0f64),
     // std::option::Option::None]);'
     foo(vec![Some(1.0f64), None]);
@@ -1049,6 +1033,7 @@ declarations.
 An example of what will and will not work for `use` items:
 
 ```
+# #![feature(core)]
 # #![allow(unused_imports)]
 use foo::core::iter;  // good: foo is at the root of the crate
 use foo::baz::foobaz;    // good: foo is at the root of the crate
@@ -1199,12 +1184,15 @@ the guarantee that these issues are never caused by safe code.
 
 * Data races
 * Dereferencing a null/dangling raw pointer
-* Mutating an immutable value/reference without `UnsafeCell`
 * Reads of [undef](http://llvm.org/docs/LangRef.html#undefined-values)
   (uninitialized) memory
 * Breaking the [pointer aliasing
   rules](http://llvm.org/docs/LangRef.html#pointer-aliasing-rules)
   with raw pointers (a subset of the rules used by C)
+* `&mut` and `&` follow LLVM’s scoped [noalias] model, except if the `&T`
+  contains an `UnsafeCell<U>`. Unsafe code must not violate these aliasing
+  guarantees.
+* Mutating an immutable value/reference without `UnsafeCell<U>`
 * Invoking undefined behavior via compiler intrinsics:
   * Indexing outside of the bounds of an object with `std::ptr::offset`
     (`offset` intrinsic), with
@@ -1221,6 +1209,8 @@ the guarantee that these issues are never caused by safe code.
   code. Rust's failure system is not compatible with exception handling in
   other languages. Unwinding must be caught and handled at FFI boundaries.
 
+[noalias]: http://llvm.org/docs/LangRef.html#noalias
+
 ##### Behaviour not considered unsafe
 
 This is a list of behaviour not considered *unsafe* in Rust terms, but that may
@@ -1233,7 +1223,7 @@ be undesired.
 * Sending signals
 * Accessing/modifying the file system
 * Unsigned integer overflow (well-defined as wrapping)
-* Signed integer overflow (well-defined as two's complement representation
+* Signed integer overflow (well-defined as two’s complement representation
   wrapping)
 
 #### Diverging functions
@@ -1489,22 +1479,6 @@ statics:
 Constants should in general be preferred over statics, unless large amounts of
 data are being stored, or single-address and mutability properties are required.
 
-```
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
-
-// Note that ATOMIC_USIZE_INIT is a *const*, but it may be used to initialize a
-// static. This static can be modified, so it is not placed in read-only memory.
-static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
-
-// This table is a candidate to be placed in read-only memory.
-static TABLE: &'static [usize] = &[1, 2, 3, /* ... */];
-
-for slot in TABLE.iter() {
-    println!("{}", slot);
-}
-COUNTER.fetch_add(1, Ordering::SeqCst);
-```
-
 #### Mutable statics
 
 If a static item is declared with the `mut` keyword, then it is allowed to
@@ -1674,7 +1648,7 @@ specific type.
 Implementations are defined with the keyword `impl`.
 
 ```
-# #[derive(Copy)]
+# #[derive(Copy, Clone)]
 # struct Point {x: f64, y: f64};
 # type Surface = i32;
 # struct BoundingBox {x: f64, y: f64, width: f64, height: f64};
@@ -1686,6 +1660,10 @@ struct Circle {
 }
 
 impl Copy for Circle {}
+
+impl Clone for Circle {
+    fn clone(&self) -> Circle { *self }
+}
 
 impl Shape for Circle {
     fn draw(&self, s: Surface) { do_draw_circle(s, *self); }
@@ -1750,6 +1728,7 @@ functions, with the exception that they may not have a body and are instead
 terminated by a semicolon.
 
 ```
+# #![feature(libc)]
 extern crate libc;
 use libc::{c_char, FILE};
 
@@ -1930,16 +1909,18 @@ module through the rules above. It essentially allows public access into the
 re-exported item. For example, this program is valid:
 
 ```
-pub use self::implementation as api;
+pub use self::implementation::api;
 
 mod implementation {
-    pub fn f() {}
+    pub mod api {
+        pub fn f() {}
+    }
 }
 
 # fn main() {}
 ```
 
-This means that any external crate referencing `implementation::f` would
+This means that any external crate referencing `implementation::api::f` would
 receive a privacy violation, while the path `api::f` would be allowed.
 
 When re-exporting a private item, it can be thought of as allowing the "privacy
@@ -1949,7 +1930,7 @@ the namespace hierarchy as it normally would.
 ## Attributes
 
 ```{.ebnf .gram}
-attribute : "#!" ? '[' meta_item ']' ;
+attribute : '#' '!' ? '[' meta_item ']' ;
 meta_item : ident [ '=' literal
                   | '(' meta_seq ')' ] ? ;
 meta_seq : meta_item [ ',' meta_seq ] ? ;
@@ -2035,7 +2016,7 @@ type int8_t = i8;
   item](#language-items) for more details.
 - `test` - indicates that this function is a test function, to only be compiled
   in case of `--test`.
-- `should_fail` - indicates that this test function should panic, inverting the success condition.
+- `should_panic` - indicates that this test function should panic, inverting the success condition.
 - `cold` - The function is unlikely to be executed, so optimize it (and calls
   to it) differently.
 
@@ -2162,7 +2143,7 @@ fn needs_foo_or_bar() {
 
 // This function is only included when compiling for a unixish OS with a 32-bit
 // architecture
-#[cfg(all(unix, target_word_size = "32"))]
+#[cfg(all(unix, target_pointer_width = "32"))]
 fn on_32bit_unix() {
   // ...
 }
@@ -2188,11 +2169,11 @@ The following configurations must be defined by the implementation:
   `"unix"` or `"windows"`. The value of this configuration option is defined
   as a configuration itself, like `unix` or `windows`.
 * `target_os = "..."`. Operating system of the target, examples include
-  `"win32"`, `"macos"`, `"linux"`, `"android"`, `"freebsd"`, `"dragonfly"` or
-  `"openbsd"`.
-* `target_word_size = "..."`. Target word size in bits. This is set to `"32"`
-  for targets with 32-bit pointers, and likewise set to `"64"` for 64-bit
-  pointers.
+  `"win32"`, `"macos"`, `"linux"`, `"android"`, `"freebsd"`, `"dragonfly"`,
+  `"bitrig"` or `"openbsd"`.
+* `target_pointer_width = "..."`. Target pointer width in bits. This is set
+  to `"32"` for targets with 32-bit pointers, and likewise set to `"64"` for
+  64-bit pointers.
 * `unix`. See `target_family`.
 * `windows`. See `target_family`.
 
@@ -2341,18 +2322,6 @@ impl<T: PartialEq> PartialEq for Foo<T> {
 }
 ```
 
-Supported traits for `derive` are:
-
-* Comparison traits: `PartialEq`, `Eq`, `PartialOrd`, `Ord`.
-* Serialization: `Encodable`, `Decodable`. These require `serialize`.
-* `Clone`, to create `T` from `&T` via a copy.
-* `Default`, to create an empty instance of a data type.
-* `FromPrimitive`, to create an instance from a numeric primitive.
-* `Hash`, to iterate over the bytes in a data type.
-* `Rand`, to create a random instance of a data type.
-* `Debug`, to format a value using the `{:?}` formatter.
-* `Copy`, for "Plain Old Data" types which can be copied by simply moving bits.
-
 ### Compiler Features
 
 Certain aspects of Rust may be implemented in the compiler, but they're not
@@ -2373,9 +2342,13 @@ considered off, and using the features will result in a compiler error.
 
 The currently implemented features of the reference compiler are:
 
-* `advanced_slice_patterns` - see the [match expressions](#match-expressions)
+* `advanced_slice_patterns` - See the [match expressions](#match-expressions)
                               section for discussion; the exact semantics of
-                              slice patterns are subject to change.
+                              slice patterns are subject to change, so some types
+			      are still unstable.
+
+* `slice_patterns` - OK, actually, slice patterns are just scary and
+                     completely unstable.
 
 * `asm` - The `asm!` macro provides a means for inline assembly. This is often
           useful, but the exact syntax for this feature along with its
@@ -2398,11 +2371,12 @@ The currently implemented features of the reference compiler are:
                        so that new attributes can be added in a bacwards compatible
                        manner (RFC 572).
 
+* `custom_derive` - Allows the use of `#[derive(Foo,Bar)]` as sugar for
+                    `#[derive_Foo] #[derive_Bar]`, which can be user-defined syntax
+                    extensions.
+
 * `intrinsics` - Allows use of the "rust-intrinsics" ABI. Compiler intrinsics
                  are inherently unstable and no promise about them is made.
-
-* `int_uint` - Allows the use of the `int` and `uint` types, which are deprecated.
-               Use `isize` and `usize` instead.
 
 * `lang_items` - Allows use of the `#[lang]` attribute. Like `intrinsics`,
                  lang items are inherently unstable and no promise about them
@@ -2472,6 +2446,12 @@ The currently implemented features of the reference compiler are:
 
 * `staged_api` - Allows usage of stability markers and `#![staged_api]` in a crate
 
+* `static_assert` - The `#[static_assert]` functionality is experimental and
+                    unstable. The attribute can be attached to a `static` of
+                    type `bool` and the compiler will error if the `bool` is
+                    `false` at compile time. This version of this functionality
+                    is unintuitive and suboptimal.
+
 * `start` - Allows use of the `#[start]` attribute, which changes the entry point
             into a Rust program. This capabiilty, especially the signature for the
             annotated function, is subject to change.
@@ -2517,6 +2497,14 @@ The currently implemented features of the reference compiler are:
 * `visible_private_types` - Allows public APIs to expose otherwise private
                             types, e.g. as the return type of a public function.
                             This capability may be removed in the future.
+
+* `allow_internal_unstable` - Allows `macro_rules!` macros to be tagged with the
+                              `#[allow_internal_unstable]` attribute, designed
+                              to allow `std` macros to call
+                              `#[unstable]`/feature-gated functionality
+                              internally without imposing on callers
+                              (i.e. making them behave like function calls in
+                              terms of encapsulation).
 
 If a feature is promoted to a language feature, then all existing programs will
 start to receive compilation warnings about #[feature] directives which enabled
@@ -2706,7 +2694,7 @@ The following are examples of structure expressions:
 ```
 # struct Point { x: f64, y: f64 }
 # struct TuplePoint(f64, f64);
-# mod game { pub struct User<'a> { pub name: &'a str, pub age: u32, pub score: uint } }
+# mod game { pub struct User<'a> { pub name: &'a str, pub age: u32, pub score: usize } }
 # struct Cookie; fn some_fn<T>(t: T) {}
 Point {x: 10.0, y: 20.0};
 TuplePoint(10.0, 20.0);
@@ -2798,7 +2786,7 @@ automatically dereferenced to make the field access possible.
 ### Array expressions
 
 ```{.ebnf .gram}
-array_expr : '[' "mut" ? vec_elems? ']' ;
+array_expr : '[' "mut" ? array_elems? ']' ;
 
 array_elems : [expr [',' expr]*] | [expr ';' expr] ;
 ```
@@ -2908,10 +2896,10 @@ meaning of the operators on standard types is given here.
   : Exclusive or.
     Calls the `bitxor` method of the `std::ops::BitXor` trait.
 * `<<`
-  : Logical left shift.
+  : Left shift.
     Calls the `shl` method of the `std::ops::Shl` trait.
 * `>>`
-  : Logical right shift.
+  : Right shift.
     Calls the `shr` method of the `std::ops::Shr` trait.
 
 #### Lazy boolean operators
@@ -2957,10 +2945,6 @@ A type cast expression is denoted with the binary operator `as`.
 
 Executing an `as` expression casts the value on the left-hand side to the type
 on the right-hand side.
-
-A numeric value can be cast to any numeric type. A raw pointer value can be
-cast to or from any integral type or raw pointer type. Any other cast is
-unsupported and will fail to compile.
 
 An example of an `as` expression:
 
@@ -3111,7 +3095,7 @@ ten_times(|j| println!("hello, {}", j));
 ### While loops
 
 ```{.ebnf .gram}
-while_expr : "while" no_struct_literal_expr '{' block '}' ;
+while_expr : [ lifetime ':' ] "while" no_struct_literal_expr '{' block '}' ;
 ```
 
 A `while` loop begins by evaluating the boolean loop conditional expression.
@@ -3176,7 +3160,7 @@ A `continue` expression is only permitted in the body of a loop.
 ### For expressions
 
 ```{.ebnf .gram}
-for_expr : "for" pat "in" no_struct_literal_expr '{' block '}' ;
+for_expr : [ lifetime ':' ] "for" pat "in" no_struct_literal_expr '{' block '}' ;
 ```
 
 A `for` expression is a syntactic construct for looping over elements provided
@@ -3280,7 +3264,7 @@ array, like `[.., 42, ..]`. If preceded by a variable name, it will bind the
 corresponding slice to the variable. Example:
 
 ```
-# #![feature(advanced_slice_patterns)]
+# #![feature(advanced_slice_patterns, slice_patterns)]
 fn is_symmetric(list: &[u32]) -> bool {
     match list {
         [] | [_]                   => true,
@@ -3353,7 +3337,7 @@ subpattern`. For example:
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 
-enum List { Nil, Cons(uint, Box<List>) }
+enum List { Nil, Cons(u32, Box<List>) }
 
 fn is_sorted(list: &List) -> bool {
     match *list {
@@ -3554,7 +3538,8 @@ Tuple types and values are denoted by listing the types or values of their
 elements, respectively, in a parenthesized, comma-separated list.
 
 Because tuple elements don't have a name, they can only be accessed by
-pattern-matching.
+pattern-matching or by using `N` directly as a field to access the
+`N`th element.
 
 An example of a tuple type and its use:
 
@@ -3563,6 +3548,7 @@ type Pair<'a> = (i32, &'a str);
 let p: Pair<'static> = (10, "hello");
 let (a, b) = p;
 assert!(b != "world");
+assert!(p.0 == 10);
 ```
 
 ### Array, and Slice types
@@ -3740,9 +3726,9 @@ An example of creating and calling a closure:
 ```rust
 let captured_var = 10;
 
-let closure_no_args = |&:| println!("captured_var={}", captured_var);
+let closure_no_args = || println!("captured_var={}", captured_var);
 
-let closure_args = |&: arg: i32| -> i32 {
+let closure_args = |arg: i32| -> i32 {
   println!("captured_var={}, arg={}", captured_var, arg);
   arg // Note lack of semicolon after 'arg'
 };
@@ -3835,75 +3821,27 @@ impl Printable for String {
 `self` refers to the value of type `String` that is the receiver for a call to
 the method `make_string`.
 
-## Type kinds
+# The `Copy` trait
 
-Types in Rust are categorized into kinds, based on various properties of the
-components of the type. The kinds are:
+Rust has a special trait, `Copy`, which when implemented changes the semantics
+of a value. Values whose type implements `Copy` are copied rather than moved
+upon assignment.
 
-* `Send`
-  : Types of this kind can be safely sent between threads.
-    This kind includes scalars, boxes, procs, and
-    structural types containing only other owned types.
-    All `Send` types are `'static`.
-* `Copy`
-  : Types of this kind consist of "Plain Old Data"
-    which can be copied by simply moving bits.
-    All values of this kind can be implicitly copied.
-    This kind includes scalars and immutable references,
-    as well as structural types containing other `Copy` types.
-* `'static`
-  : Types of this kind do not contain any references (except for
-    references with the `static` lifetime, which are allowed).
-    This can be a useful guarantee for code
-    that breaks borrowing assumptions
-    using [`unsafe` operations](#unsafe-functions).
-* `Drop`
-  : This is not strictly a kind,
-    but its presence interacts with kinds:
-    the `Drop` trait provides a single method `drop`
-    that takes no parameters,
-    and is run when values of the type are dropped.
-    Such a method is called a "destructor",
-    and are always executed in "top-down" order:
-    a value is completely destroyed
-    before any of the values it owns run their destructors.
-    Only `Send` types can implement `Drop`.
+# The `Sized` trait
 
-* _Default_
-  : Types with destructors, closure environments,
-    and various other _non-first-class_ types,
-    are not copyable at all.
-    Such types can usually only be accessed through pointers,
-    or in some cases, moved between mutable locations.
+`Sized` is a special trait which indicates that the size of this type is known
+at compile-time.
 
-Kinds can be supplied as _bounds_ on type parameters, like traits, in which
-case the parameter is constrained to types satisfying that kind.
+# The `Drop` trait
 
-By default, type parameters do not carry any assumed kind-bounds at all. When
-instantiating a type parameter, the kind bounds on the parameter are checked to
-be the same or narrower than the kind of the type that it is instantiated with.
+The `Drop` trait provides a destructor, to be run whenever a value of this type
+is to be destroyed.
 
-Sending operations are not part of the Rust language, but are implemented in
-the library. Generic functions that send values bound the kind of these values
-to sendable.
+# Memory model
 
-# Memory and concurrency models
-
-Rust has a memory model centered around concurrently-executing _threads_. Thus
-its memory model and its concurrency model are best discussed simultaneously,
-as parts of each only make sense when considered from the perspective of the
-other.
-
-When reading about the memory model, keep in mind that it is partitioned in
-order to support threads; and when reading about threads, keep in mind that their
-isolation and communication mechanisms are only possible due to the ownership
-and lifetime semantics of the memory model.
-
-## Memory model
-
-A Rust program's memory consists of a static set of *items*, a set of
-[threads](#threads) each with its own *stack*, and a *heap*. Immutable portions of
-the heap may be shared between threads, mutable portions may not.
+A Rust program's memory consists of a static set of *items* and a *heap*.
+Immutable portions of the heap may be shared between threads, mutable portions
+may not.
 
 Allocations in the stack consist of *slots*, and allocations in the heap
 consist of *boxes*.
@@ -3914,10 +3852,6 @@ The _items_ of a program are those functions, modules and types that have their
 value calculated at compile-time and stored uniquely in the memory image of the
 rust process. Items are neither dynamically allocated nor freed.
 
-A thread's _stack_ consists of activation frames automatically allocated on entry
-to each function as the thread executes. A stack allocation is reclaimed when
-control leaves the frame containing it.
-
 The _heap_ is a general term that describes boxes.  The lifetime of an
 allocation in the heap depends on the lifetime of the box values pointing to
 it. Since box values may themselves be passed in and out of frames, or stored
@@ -3925,24 +3859,10 @@ in the heap, heap allocations may outlive the frame they are allocated within.
 
 ### Memory ownership
 
-A thread owns all memory it can *safely* reach through local variables, as well
-as boxes and references.
-
-When a thread sends a value that has the `Send` trait to another thread, it loses
-ownership of the value sent and can no longer refer to it. This is statically
-guaranteed by the combined use of "move semantics", and the compiler-checked
-_meaning_ of the `Send` trait: it is only instantiated for (transitively)
-sendable kinds of data constructor and pointers, never including references.
-
 When a stack frame is exited, its local allocations are all released, and its
 references to boxes are dropped.
 
-When a thread finishes, its stack is necessarily empty and it therefore has no
-references to any boxes; the remainder of its heap is immediately freed.
-
 ### Memory slots
-
-A thread's stack contains slots.
 
 A _slot_ is a component of a stack frame, either a function parameter, a
 [temporary](#lvalues,-rvalues-and-temporaries), or a local variable.
@@ -3972,86 +3892,6 @@ local variables are allocated at once, on frame-entry, in an uninitialized
 state. Subsequent statements within a function may or may not initialize the
 local variables. Local variables can be used only after they have been
 initialized; this is enforced by the compiler.
-
-### Boxes
-
-A _box_ is a reference to a heap allocation holding another value, which is
-constructed by the prefix operator `box`. When the standard library is in use,
-the type of a box is `std::owned::Box<T>`.
-
-An example of a box type and value:
-
-```
-let x: Box<i32> = Box::new(10);
-```
-
-Box values exist in 1:1 correspondence with their heap allocation, copying a
-box value makes a shallow copy of the pointer. Rust will consider a shallow
-copy of a box to move ownership of the value. After a value has been moved,
-the source location cannot be used unless it is reinitialized.
-
-```
-let x: Box<i32> = Box::new(10);
-let y = x;
-// attempting to use `x` will result in an error here
-```
-
-## Threads
-
-Rust's primary concurrency mechanism is called a **thread**.
-
-### Communication between threads
-
-Rust threads are isolated and generally unable to interfere with one another's
-memory directly, except through [`unsafe` code](#unsafe-functions).  All
-contact between threads is mediated by safe forms of ownership transfer, and data
-races on memory are prohibited by the type system.
-
-When you wish to send data between threads, the values are restricted to the
-[`Send` type-kind](#type-kinds). Restricting communication interfaces to this
-kind ensures that no references move between threads. Thus access to an entire
-data structure can be mediated through its owning "root" value; no further
-locking or copying is required to avoid data races within the substructure of
-such a value.
-
-### Thread
-
-The _lifecycle_ of a threads consists of a finite set of states and events that
-cause transitions between the states. The lifecycle states of a thread are:
-
-* running
-* blocked
-* panicked
-* dead
-
-A thread begins its lifecycle &mdash; once it has been spawned &mdash; in the
-*running* state. In this state it executes the statements of its entry
-function, and any functions called by the entry function.
-
-A thread may transition from the *running* state to the *blocked* state any time
-it makes a blocking communication call. When the call can be completed &mdash;
-when a message arrives at a sender, or a buffer opens to receive a message
-&mdash; then the blocked thread will unblock and transition back to *running*.
-
-A thread may transition to the *panicked* state at any time, due being killed by
-some external event or internally, from the evaluation of a `panic!()` macro.
-Once *panicking*, a thread unwinds its stack and transitions to the *dead* state.
-Unwinding the stack of a thread is done by the thread itself, on its own control
-stack. If a value with a destructor is freed during unwinding, the code for the
-destructor is run, also on the thread's control stack. Running the destructor
-code causes a temporary transition to a *running* state, and allows the
-destructor code to cause any subsequent state transitions. The original thread
-of unwinding and panicking thereby may suspend temporarily, and may involve
-(recursive) unwinding of the stack of a failed destructor. Nonetheless, the
-outermost unwinding activity will continue until the stack is unwound and the
-thread transitions to the *dead* state. There is no way to "recover" from thread
-panics. Once a thread has temporarily suspended its unwinding in the *panicking*
-state, a panic occurring from within this destructor results in *hard* panic.
-A hard panic currently results in the process aborting.
-
-A thread in the *dead* state cannot transition to other states; it exists only to
-have its termination status inspected by other threads, and/or to await
-reclamation when the last reference to it drops.
 
 # Runtime services, linkage and debugging
 

@@ -11,33 +11,35 @@
 // Issue 4691: Ensure that functional-struct-updates operates
 // correctly and moves rather than copy when appropriate.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
-#![feature(box_syntax)]
+#![feature(box_syntax, core)]
 
 use std::marker::NoCopy as NP;
 
-struct ncint { np: NP, v: int }
-fn ncint(v: int) -> ncint { ncint { np: NP, v: v } }
+struct ncint { np: NP, v: isize }
+fn ncint(v: isize) -> ncint { ncint { np: NP, v: v } }
 
-struct NoFoo { copied: int, nocopy: ncint, }
+struct NoFoo { copied: isize, nocopy: ncint, }
 impl NoFoo {
-    fn new(x:int,y:int) -> NoFoo { NoFoo { copied: x, nocopy: ncint(y) } }
+    fn new(x:isize,y:isize) -> NoFoo { NoFoo { copied: x, nocopy: ncint(y) } }
 }
 
-struct MoveFoo { copied: int, moved: Box<int>, }
+struct MoveFoo { copied: isize, moved: Box<isize>, }
 impl MoveFoo {
-    fn new(x:int,y:int) -> MoveFoo { MoveFoo { copied: x, moved: box y } }
+    fn new(x:isize,y:isize) -> MoveFoo { MoveFoo { copied: x, moved: box y } }
 }
 
 struct DropNoFoo { inner: NoFoo }
 impl DropNoFoo {
-    fn new(x:int,y:int) -> DropNoFoo { DropNoFoo { inner: NoFoo::new(x,y) } }
+    fn new(x:isize,y:isize) -> DropNoFoo { DropNoFoo { inner: NoFoo::new(x,y) } }
 }
 impl Drop for DropNoFoo { fn drop(&mut self) { } }
 
 struct DropMoveFoo { inner: MoveFoo }
 impl DropMoveFoo {
-    fn new(x:int,y:int) -> DropMoveFoo { DropMoveFoo { inner: MoveFoo::new(x,y) } }
+    fn new(x:isize,y:isize) -> DropMoveFoo { DropMoveFoo { inner: MoveFoo::new(x,y) } }
 }
 impl Drop for DropMoveFoo { fn drop(&mut self) { } }
 

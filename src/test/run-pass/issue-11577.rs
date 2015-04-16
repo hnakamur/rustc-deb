@@ -1,3 +1,5 @@
+// pretty-expanded FIXME #23616
+
  // Copyright 2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -11,10 +13,10 @@
 // Destructuring struct variants would ICE where regular structs wouldn't
 
 enum Foo {
-    VBar { num: int }
+    VBar { num: isize }
 }
 
-struct SBar { num: int }
+struct SBar { num: isize }
 
 pub fn main() {
     let vbar = Foo::VBar { num: 1 };

@@ -8,17 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn sum(x: &[int]) -> int {
+// pretty-expanded FIXME #23616
+
+fn sum(x: &[isize]) -> isize {
     let mut sum = 0;
     for y in x { sum += *y; }
     return sum;
 }
 
-fn sum_mut(y: &mut [int]) -> int {
+fn sum_mut(y: &mut [isize]) -> isize {
     sum(y)
 }
 
-fn sum_imm(y: &[int]) -> int {
+fn sum_imm(y: &[isize]) -> isize {
     sum(y)
 }
 

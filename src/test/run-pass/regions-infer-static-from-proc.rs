@@ -12,9 +12,11 @@
 // region variables contained within (otherwise, region inference will
 // give `x` a very short lifetime).
 
-static i: uint = 3;
+// pretty-expanded FIXME #23616
+
+static i: usize = 3;
 fn foo<F:FnOnce()+'static>(_: F) {}
-fn read(_: uint) { }
+fn read(_: usize) { }
 pub fn main() {
     let x = &i;
     foo(move|| {

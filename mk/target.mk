@@ -72,9 +72,11 @@ $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$(4): CFG_COMPILER_HOST_TRIPLE = $(2)
 $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$(4): \
 		$$(CRATEFILE_$(4)) \
 		$$(CRATE_FULLDEPS_$(1)_T_$(2)_H_$(3)_$(4)) \
+		$$(LLVM_CONFIG_$(2)) \
 		$$(TSREQ$(1)_T_$(2)_H_$(3)) \
 		| $$(TLIB$(1)_T_$(2)_H_$(3))/
 	@$$(call E, rustc: $$(@D)/lib$(4))
+	@touch $$@.start_time
 	$$(call REMOVE_ALL_OLD_GLOB_MATCHES, \
 	    $$(dir $$@)$$(call CFG_LIB_GLOB_$(2),$(4)))
 	$$(call REMOVE_ALL_OLD_GLOB_MATCHES, \
@@ -83,13 +85,13 @@ $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$(4): \
 	    $$(subst @,,$$(STAGE$(1)_T_$(2)_H_$(3))) \
 		$$(RUST_LIB_FLAGS_ST$(1)) \
 		-L "$$(RT_OUTPUT_DIR_$(2))" \
-		-L "$$(LLVM_LIBDIR_$(2))" \
-		-L "$$(dir $$(LLVM_STDCPP_LOCATION_$(2)))" \
+		$$(LLVM_LIBDIR_RUSTFLAGS_$(2)) \
+		$$(LLVM_STDCPP_RUSTFLAGS_$(2)) \
 		$$(RUSTFLAGS_$(4)) \
 		--out-dir $$(@D) \
 		-C extra-filename=-$$(CFG_FILENAME_EXTRA) \
 		$$<
-	@touch $$@
+	@touch -r $$@.start_time $$@ && rm $$@.start_time
 	$$(call LIST_ALL_OLD_GLOB_MATCHES, \
 	    $$(dir $$@)$$(call CFG_LIB_GLOB_$(2),$(4)))
 	$$(call LIST_ALL_OLD_GLOB_MATCHES, \
@@ -130,7 +132,7 @@ endef
 # on $$(TSREQ$(1)_T_$(2)_H_$(3)), to ensure that no products will be
 # put into the target area until after the get-snapshot.py script has
 # had its chance to clean it out; otherwise the other products will be
-# inadvertantly included in the clean out.
+# inadvertently included in the clean out.
 SNAPSHOT_RUSTC_POST_CLEANUP=$(HBIN0_H_$(CFG_BUILD))/rustc$(X_$(CFG_BUILD))
 
 define TARGET_HOST_RULES

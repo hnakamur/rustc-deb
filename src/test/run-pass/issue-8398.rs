@@ -8,6 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(old_io, io)]
+
 use std::old_io;
 
 fn foo(a: &mut old_io::Writer) {
@@ -15,4 +19,3 @@ fn foo(a: &mut old_io::Writer) {
 }
 
 pub fn main(){}
-

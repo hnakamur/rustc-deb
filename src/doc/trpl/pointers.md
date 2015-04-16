@@ -361,16 +361,16 @@ duration a *lifetime*. Let's try a more complex example:
 
 ```{rust}
 fn main() {
-    let x = &mut 5;
+    let mut x = 5;
 
-    if *x < 10 {
+    if x < 10 {
         let y = &x;
 
         println!("Oh no: {}", y);
         return;
     }
 
-    *x -= 1;
+    x -= 1;
 
     println!("Oh no: {}", x);
 }
@@ -382,17 +382,18 @@ mutated, and therefore, lets us pass. This wouldn't work:
 
 ```{rust,ignore}
 fn main() {
-    let x = &mut 5;
+    let mut x = 5;
 
-    if *x < 10 {
+    if x < 10 {
         let y = &x;
-        *x -= 1;
+
+        x -= 1;
 
         println!("Oh no: {}", y);
         return;
     }
 
-    *x -= 1;
+    x -= 1;
 
     println!("Oh no: {}", x);
 }
@@ -401,12 +402,12 @@ fn main() {
 It gives this error:
 
 ```text
-test.rs:5:8: 5:10 error: cannot assign to `*x` because it is borrowed
-test.rs:5         *x -= 1;
-                  ^~
-test.rs:4:16: 4:18 note: borrow of `*x` occurs here
-test.rs:4         let y = &x;
-                          ^~
+test.rs:7:9: 7:15 error: cannot assign to `x` because it is borrowed
+test.rs:7         x -= 1;
+                  ^~~~~~
+test.rs:5:18: 5:19 note: borrow of `x` occurs here
+test.rs:5         let y = &x;
+                           ^
 ```
 
 As you might guess, this kind of analysis is complex for a human, and therefore
@@ -497,13 +498,10 @@ they go out of scope:
 However, boxes do _not_ use reference counting or garbage collection. Boxes are
 what's called an *affine type*. This means that the Rust compiler, at compile
 time, determines when the box comes into and goes out of scope, and inserts the
-appropriate calls there. Furthermore, boxes are a specific kind of affine type,
-known as a *region*. You can read more about regions [in this paper on the
-Cyclone programming
-language](http://www.cs.umd.edu/projects/cyclone/papers/cyclone-regions.pdf).
+appropriate calls there.
 
-You don't need to fully grok the theory of affine types or regions to grok
-boxes, though. As a rough approximation, you can treat this Rust code:
+You don't need to fully grok the theory of affine types to grok boxes, though.
+As a rough approximation, you can treat this Rust code:
 
 ```{rust}
 {
@@ -560,43 +558,44 @@ fn main() {
 In this case, Rust knows that `x` is being *borrowed* by the `add_one()`
 function, and since it's only reading the value, allows it.
 
-We can borrow `x` multiple times, as long as it's not simultaneous:
+We can borrow `x` as read-only multiple times, even simultaneously:
 
 ```{rust}
-fn add_one(x: &i32) -> i32 {
-    *x + 1
+fn add(x: &i32, y: &i32) -> i32 {
+    *x + *y
 }
 
 fn main() {
     let x = Box::new(5);
 
-    println!("{}", add_one(&*x));
-    println!("{}", add_one(&*x));
-    println!("{}", add_one(&*x));
+    println!("{}", add(&*x, &*x));
+    println!("{}", add(&*x, &*x));
 }
 ```
 
-Or as long as it's not a mutable borrow. This will error:
+We can mutably borrow `x` multiple times, but only if x itself is mutable, and
+it may not be *simultaneously* borrowed:
 
 ```{rust,ignore}
-fn add_one(x: &mut i32) -> i32 {
-    *x + 1
+fn increment(x: &mut i32) {
+    *x += 1;
 }
 
 fn main() {
-    let x = Box::new(5);
+    // If variable x is not "mut", this will not compile
+    let mut x = Box::new(5);
 
-    println!("{}", add_one(&*x)); // error: cannot borrow immutable dereference
-                                  // of `&`-pointer as mutable
+    increment(&mut x);
+    increment(&mut x);
+    println!("{}", x);
 }
 ```
 
-Notice we changed the signature of `add_one()` to request a mutable reference.
+Notice the signature of `increment()` requests a mutable reference.
 
 ## Best practices
 
-Boxes are appropriate to use in two situations: Recursive data structures,
-and occasionally, when returning data.
+Boxes are most appropriate to use when defining recursive data structures.
 
 ### Recursive data structures
 
@@ -630,14 +629,6 @@ we don't know the size, and therefore, we need to heap allocate our list.
 Working with recursive or other unknown-sized data structures is the primary
 use-case for boxes.
 
-### Returning data
-
-This is important enough to have its own section entirely. The TL;DR is this:
-you don't generally want to return pointers, even when you might in a language
-like C or C++.
-
-See [Returning Pointers](#returning-pointers) below for more.
-
 # Rc and Arc
 
 This part is coming soon.
@@ -653,74 +644,6 @@ This part is coming soon.
 ## Best practices
 
 This part is coming soon.
-
-# Returning Pointers
-
-In many languages with pointers, you'd return a pointer from a function
-so as to avoid copying a large data structure. For example:
-
-```{rust}
-struct BigStruct {
-    one: i32,
-    two: i32,
-    // etc
-    one_hundred: i32,
-}
-
-fn foo(x: Box<BigStruct>) -> Box<BigStruct> {
-    Box::new(*x)
-}
-
-fn main() {
-    let x = Box::new(BigStruct {
-        one: 1,
-        two: 2,
-        one_hundred: 100,
-    });
-
-    let y = foo(x);
-}
-```
-
-The idea is that by passing around a box, you're only copying a pointer, rather
-than the hundred `int`s that make up the `BigStruct`.
-
-This is an antipattern in Rust. Instead, write this:
-
-```{rust}
-struct BigStruct {
-    one: i32,
-    two: i32,
-    // etc
-    one_hundred: i32,
-}
-
-fn foo(x: Box<BigStruct>) -> BigStruct {
-    *x
-}
-
-fn main() {
-    let x = Box::new(BigStruct {
-        one: 1,
-        two: 2,
-        one_hundred: 100,
-    });
-
-    let y = Box::new(foo(x));
-}
-```
-
-This gives you flexibility without sacrificing performance.
-
-You may think that this gives us terrible performance: return a value and then
-immediately box it up ?! Isn't this pattern the worst of both worlds? Rust is
-smarter than that. There is no copy in this code. `main` allocates enough room
-for the `box`, passes a pointer to that memory into `foo` as `x`, and then
-`foo` writes the value straight into the `Box<T>`.
-
-This is important enough that it bears repeating: pointers are not for
-optimizing returning values from your code. Allow the caller to choose how they
-want to use your output.
 
 # Creating your own Pointers
 

@@ -374,8 +374,12 @@ case $CFG_OSTYPE in
         CFG_OSTYPE=unknown-dragonfly
         ;;
 
+    Bitrig)
+        CFG_OSTYPE=unknown-bitrig
+        ;;
+
     OpenBSD)
-	CFG_OSTYPE=unknown-openbsd
+        CFG_OSTYPE=unknown-openbsd
        ;;
 
     Darwin)
@@ -400,7 +404,7 @@ case $CFG_OSTYPE in
         CFG_OSTYPE=pc-windows-gnu
         ;;
 
-# Thad's Cygwin identifers below
+# Thad's Cygwin identifiers below
 
 #   Vista 32 bit
     CYGWIN_NT-6.0)
@@ -426,6 +430,10 @@ case $CFG_OSTYPE in
         CFG_CPUTYPE=x86_64
         ;;
 
+#   Win 8 # uname -s on 64-bit cygwin does not contain WOW64, so simply use uname -m to detect arch (works in my install)
+    CYGWIN_NT-6.3)
+    	CFG_OSTYPE=pc-windows-gnu
+    	;;
 # We do not detect other OS such as XP/2003 using 64 bit using uname.
 # If we want to in the future, we will need to use Cygwin - Chuck's csih helper in /usr/lib/csih/winProductName.exe or alternative.
     *)
@@ -453,7 +461,10 @@ case $CFG_CPUTYPE in
         CFG_CPUTYPE=aarch64
         ;;
 
-    powerpc)
+    # At some point, when ppc64[le] support happens, this will need to do
+    # something clever. For now it's safe to assume that we're only ever
+    # interested in building 32 bit.
+    powerpc | ppc | ppc64)
         CFG_CPUTYPE=powerpc
         ;;
 
@@ -468,10 +479,19 @@ esac
 # Detect 64 bit linux systems with 32 bit userland and force 32 bit compilation
 if [ $CFG_OSTYPE = unknown-linux-gnu -a $CFG_CPUTYPE = x86_64 ]
 then
-    file -L "$SHELL" | grep -q "x86[_-]64"
-    if [ $? != 0 ]; then
-        CFG_CPUTYPE=i686
+    # $SHELL does not exist in standard 'sh', so probably only exists
+    # if configure is running in an interactive bash shell. /usr/bin/env
+    # exists *everywhere*.
+    BIN_TO_PROBE="$SHELL"
+    if [ -z "$BIN_TO_PROBE" -a -e "/usr/bin/env" ]; then
+       BIN_TO_PROBE="/usr/bin/env"
     fi
+    if [ -n "$BIN_TO_PROBE" ]; then
+       file -L "$BIN_TO_PROBE" | grep -q "x86[_-]64"
+       if [ $? != 0 ]; then
+            CFG_CPUTYPE=i686
+       fi
+     fi
 fi
 
 
@@ -506,7 +526,8 @@ VAL_OPTIONS=""
 opt valgrind 0 "run tests with valgrind (memcheck by default)"
 opt helgrind 0 "run tests with helgrind instead of memcheck"
 opt valgrind-rpass 1 "run rpass-valgrind tests with valgrind"
-opt docs     1 "build documentation"
+opt docs     1 "build standard library documentation"
+opt compiler-docs     0 "build compiler documentation"
 opt optimize 1 "build optimized rust code"
 opt optimize-cxx 1 "build optimized C++ code"
 opt optimize-llvm 1 "build optimized LLVM"
@@ -693,15 +714,17 @@ probe CFG_ADB        adb
 
 if [ ! -z "$CFG_PANDOC" ]
 then
-    PV_MAJOR_MINOR=$(pandoc --version | grep '^pandoc\(.exe\)\? ' |
-        # extract the first 2 version fields, ignore everything else
-        sed 's/pandoc\(.exe\)\? \([0-9]*\)\.\([0-9]*\).*/\2 \3/')
+    # Extract "MAJOR MINOR" from Pandoc's version number
+    PV_MAJOR_MINOR=$(pandoc --version | grep '^pandoc' |
+        sed -E 's/pandoc(.exe)? ([0-9]+)\.([0-9]+).*/\2 \3/')
 
     MIN_PV_MAJOR="1"
     MIN_PV_MINOR="9"
+
     # these patterns are shell globs, *not* regexps
     PV_MAJOR=${PV_MAJOR_MINOR% *}
     PV_MINOR=${PV_MAJOR_MINOR#* }
+
     if [ "$PV_MAJOR" -lt "$MIN_PV_MAJOR" ] || [ "$PV_MINOR" -lt "$MIN_PV_MINOR" ]
     then
         step_msg "pandoc $PV_MAJOR.$PV_MINOR is too old. Need at least $MIN_PV_MAJOR.$MIN_PV_MINOR. Disabling"
@@ -745,6 +768,14 @@ if [ $CFG_OSTYPE = unknown-freebsd ]
 then
     step_msg "on FreeBSD, forcing use of clang"
     CFG_ENABLE_CLANG=1
+fi
+
+# Force bitrig to build with clang; gcc doesn't like us there
+if [ $CFG_OSTYPE = unknown-bitrig ]
+then
+    step_msg "on Bitrig, forcing use of clang, disabling jemalloc"
+    CFG_ENABLE_CLANG=1
+    CFG_ENABLE_JEMALLOC=0
 fi
 
 if [ -z "$CFG_ENABLE_CLANG" -a -z "$CFG_GCC" ]
@@ -805,11 +836,11 @@ then
     LLVM_VERSION=$($LLVM_CONFIG --version)
 
     case $LLVM_VERSION in
-        (3.[2-6]*)
+        (3.[5-6]*)
             msg "found ok version of LLVM: $LLVM_VERSION"
             ;;
         (*)
-            err "bad LLVM version: $LLVM_VERSION, need >=3.0svn"
+            err "bad LLVM version: $LLVM_VERSION, need >=3.5"
             ;;
     esac
 fi
@@ -864,7 +895,7 @@ then
             | cut -d ' ' -f 2)
 
         case $CFG_CLANG_VERSION in
-            (3.0svn | 3.0 | 3.1* | 3.2* | 3.3* | 3.4* | 3.5* | 3.6*)
+            (3.2* | 3.3* | 3.4* | 3.5* | 3.6*)
             step_msg "found ok version of CLANG: $CFG_CLANG_VERSION"
             if [ -z "$CC" ]
             then

@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(start)]
+#![feature(start, os, std_misc, old_io)]
 
-use std::ffi;
+use std::ffi::CStr;
 use std::old_io::process::{Command, ProcessOutput};
 use std::os;
 use std::rt::unwind::try;
@@ -20,7 +20,7 @@ use std::thread::Thread;
 use std::thunk::Thunk;
 
 #[start]
-fn start(argc: int, argv: *const *const u8) -> int {
+fn start(argc: isize, argv: *const *const u8) -> isize {
     if argc > 1 {
         unsafe {
             match **argv.offset(1) {
@@ -36,22 +36,22 @@ fn start(argc: int, argv: *const *const u8) -> int {
     }
 
     let args = unsafe {
-        (0..argc as uint).map(|i| {
-            let ptr = *argv.offset(i as int) as *const _;
-            ffi::c_str_to_bytes(&ptr).to_vec()
+        (0..argc as usize).map(|i| {
+            let ptr = *argv.offset(i as isize) as *const _;
+            CStr::from_ptr(ptr).to_bytes().to_vec()
         }).collect::<Vec<_>>()
     };
     let me = &*args[0];
 
-    let x: &[u8] = &[1u8];
+    let x: &[u8] = &[1];
     pass(Command::new(me).arg(x).output().unwrap());
-    let x: &[u8] = &[2u8];
+    let x: &[u8] = &[2];
     pass(Command::new(me).arg(x).output().unwrap());
-    let x: &[u8] = &[3u8];
+    let x: &[u8] = &[3];
     pass(Command::new(me).arg(x).output().unwrap());
-    let x: &[u8] = &[4u8];
+    let x: &[u8] = &[4];
     pass(Command::new(me).arg(x).output().unwrap());
-    let x: &[u8] = &[5u8];
+    let x: &[u8] = &[5];
     pass(Command::new(me).arg(x).output().unwrap());
 
     0

@@ -1,4 +1,3 @@
-
 // Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -9,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unused_imports)]
 #![feature(start, no_std)]
 #![no_std]
 
 extern crate std;
-extern crate "std" as zed;
+extern crate std as zed;
 
 use std::str;
 use zed::str as x;
@@ -23,4 +24,4 @@ mod baz {
 }
 
 #[start]
-pub fn start(_: int, _: *const *const u8) -> int { 0 }
+pub fn start(_: isize, _: *const *const u8) -> isize { 0 }

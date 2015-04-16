@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+// pretty-expanded FIXME #23616
 
 type Connection = Box<FnMut(Vec<u8>) + 'static>;
 
 fn f() -> Option<Connection> {
-    let mock_connection: Connection = box |_| {};
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    let mock_connection: Connection = Box::new(|_| {});
     Some(mock_connection)
 }
 

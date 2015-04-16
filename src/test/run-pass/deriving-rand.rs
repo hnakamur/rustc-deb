@@ -8,13 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(rand)]
+
 use std::rand;
 
 #[derive(Rand)]
 struct A;
 
 #[derive(Rand)]
-struct B(int, int);
+struct B(isize, isize);
 
 #[derive(Rand)]
 struct C {
@@ -25,7 +29,7 @@ struct C {
 #[derive(Rand)]
 enum D {
     D0,
-    D1(uint),
+    D1(usize),
     D2 { x: (), y: () }
 }
 

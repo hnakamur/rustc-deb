@@ -8,19 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-trait Foo { fn f(&self) -> int; }
-trait Bar : Foo { fn g(&self) -> int; }
-trait Baz : Bar { fn h(&self) -> int; }
+// pretty-expanded FIXME #23616
 
-struct A { x: int }
+trait Foo { fn f(&self) -> isize; }
+trait Bar : Foo { fn g(&self) -> isize; }
+trait Baz : Bar { fn h(&self) -> isize; }
 
-impl Foo for A { fn f(&self) -> int { 10 } }
-impl Bar for A { fn g(&self) -> int { 20 } }
-impl Baz for A { fn h(&self) -> int { 30 } }
+struct A { x: isize }
+
+impl Foo for A { fn f(&self) -> isize { 10 } }
+impl Bar for A { fn g(&self) -> isize { 20 } }
+impl Baz for A { fn h(&self) -> isize { 30 } }
 
 // Call a function on Foo, given a T: Baz,
 // which is inherited via Bar
-fn gg<T:Baz>(a: &T) -> int {
+fn gg<T:Baz>(a: &T) -> isize {
     a.f()
 }
 

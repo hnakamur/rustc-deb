@@ -11,12 +11,14 @@
 // Tests that impls are allowed to have looser, more permissive bounds
 // than the traits require.
 
+// pretty-expanded FIXME #23616
+
 trait A {
   fn b<C:Sync,D>(&self, x: C) -> C;
 }
 
 struct E {
- f: int
+ f: isize
 }
 
 impl A for E {

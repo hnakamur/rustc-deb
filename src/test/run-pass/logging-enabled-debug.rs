@@ -8,8 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags:--cfg ndebug
+// compile-flags:-C debug-assertions=no
 // exec-env:RUST_LOG=logging-enabled-debug=debug
+
+// pretty-expanded FIXME #23616
+
+#![feature(rustc_private)]
 
 #[macro_use]
 extern crate log;

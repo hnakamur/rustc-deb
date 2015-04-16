@@ -12,7 +12,7 @@ use prelude::v1::*;
 
 use libc::types::os::arch::extra::{DWORD, LPVOID, BOOL};
 
-use mem;
+use boxed;
 use ptr;
 use rt;
 use sys_common::mutex::{MUTEX_INIT, Mutex};
@@ -133,21 +133,28 @@ unsafe fn init_dtors() {
     if !DTORS.is_null() { return }
 
     let dtors = box Vec::<(Key, Dtor)>::new();
-    DTORS = mem::transmute(dtors);
 
-    rt::at_exit(move|| {
+    let res = rt::at_exit(move|| {
         DTOR_LOCK.lock();
         let dtors = DTORS;
-        DTORS = ptr::null_mut();
-        mem::transmute::<_, Box<Vec<(Key, Dtor)>>>(dtors);
-        assert!(DTORS.is_null()); // can't re-init after destructing
+        DTORS = 1 as *mut _;
+        Box::from_raw(dtors);
+        assert!(DTORS as usize == 1); // can't re-init after destructing
         DTOR_LOCK.unlock();
     });
+    if res.is_ok() {
+        DTORS = boxed::into_raw(dtors);
+    } else {
+        DTORS = 1 as *mut _;
+    }
 }
 
 unsafe fn register_dtor(key: Key, dtor: Dtor) {
     DTOR_LOCK.lock();
     init_dtors();
+    assert!(DTORS as usize != 0);
+    assert!(DTORS as usize != 1,
+            "cannot create new TLS keys after the main thread has exited");
     (*DTORS).push((key, dtor));
     DTOR_LOCK.unlock();
 }
@@ -155,6 +162,9 @@ unsafe fn register_dtor(key: Key, dtor: Dtor) {
 unsafe fn unregister_dtor(key: Key) -> bool {
     DTOR_LOCK.lock();
     init_dtors();
+    assert!(DTORS as usize != 0);
+    assert!(DTORS as usize != 1,
+            "cannot unregister destructors after the main thread has exited");
     let ret = {
         let dtors = &mut *DTORS;
         let before = dtors.len();
@@ -241,7 +251,7 @@ unsafe fn run_dtors() {
         any_run = false;
         let dtors = {
             DTOR_LOCK.lock();
-            let ret = if DTORS.is_null() {
+            let ret = if DTORS as usize <= 1 {
                 Vec::new()
             } else {
                 (*DTORS).iter().map(|s| *s).collect()

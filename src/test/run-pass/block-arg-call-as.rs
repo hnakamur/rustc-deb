@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn asBlock<F>(f: F) -> uint where F: FnOnce() -> uint {
+// pretty-expanded FIXME #23616
+
+fn asBlock<F>(f: F) -> usize where F: FnOnce() -> usize {
    return f();
 }
 
 pub fn main() {
-   let x = asBlock(|| 22_usize);
-   assert_eq!(x, 22_usize);
+   let x = asBlock(|| 22);
+   assert_eq!(x, 22);
 }

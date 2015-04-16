@@ -10,9 +10,9 @@
 
 pub mod kitties {
     pub struct cat {
-        meows : uint,
+        meows : usize,
 
-        pub how_hungry : int,
+        pub how_hungry : isize,
         pub name : String,
     }
 
@@ -34,14 +34,14 @@ pub mod kitties {
     impl cat {
         pub fn meow(&mut self) {
             println!("Meow");
-            self.meows += 1_usize;
-            if self.meows % 5_usize == 0_usize {
+            self.meows += 1;
+            if self.meows % 5 == 0 {
                 self.how_hungry += 1;
             }
         }
     }
 
-    pub fn cat(in_x : uint, in_y : int, in_name: String) -> cat {
+    pub fn cat(in_x : usize, in_y : isize, in_name: String) -> cat {
         cat {
             meows: in_x,
             how_hungry: in_y,

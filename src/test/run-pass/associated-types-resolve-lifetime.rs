@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait Get<T> {
     fn get(&self) -> T;
 }
 
 trait Trait<'a> {
     type T: 'static;
-    type U: Get<&'a int>;
+    type U: Get<&'a isize>;
 
     fn dummy(&'a self) { }
 }

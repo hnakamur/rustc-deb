@@ -12,6 +12,8 @@
 // attempting to bootstrap libsyntax; it is adapted from
 // `syntax::ext::tt::generic_extension`.
 
+// pretty-expanded FIXME #23616
+
 pub struct E<'a> {
     pub f: &'a u8,
 }
@@ -37,7 +39,7 @@ fn extension<'e>(x: &'e E<'e>) -> Box<M+'e> {
 }
 
 fn main() {
-    let w = E { f: &10u8 };
+    let w = E { f: &10 };
     let o = extension(&w);
-    assert_eq!(o.n(), 10u8);
+    assert_eq!(o.n(), 10);
 }

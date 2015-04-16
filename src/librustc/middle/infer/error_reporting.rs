@@ -83,7 +83,7 @@ use std::rc::Rc;
 use std::string::String;
 use syntax::ast;
 use syntax::ast_map;
-use syntax::ast_util::{name_to_dummy_lifetime, PostExpansionMethod};
+use syntax::ast_util::name_to_dummy_lifetime;
 use syntax::owned_slice::OwnedSlice;
 use syntax::codemap;
 use syntax::parse::token;
@@ -357,23 +357,9 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
             }
         };
 
-        let message_root_str = match trace.origin {
-            infer::Misc(_) => "mismatched types",
-            infer::MethodCompatCheck(_) => "method not compatible with trait",
-            infer::ExprAssignable(_) => "mismatched types",
-            infer::RelateTraitRefs(_) => "mismatched traits",
-            infer::RelateSelfType(_) => "mismatched types",
-            infer::RelateOutputImplTypes(_) => "mismatched types",
-            infer::MatchExpressionArm(_, _) => "match arms have incompatible types",
-            infer::IfExpression(_) => "if and else have incompatible types",
-            infer::IfExpressionWithNoElse(_) => "if may be missing an else clause",
-            infer::RangeExpression(_) => "start and end of range have incompatible types",
-            infer::EquatePredicate(_) => "equality predicate not satisfied",
-        };
-
         span_err!(self.tcx.sess, trace.origin.span(), E0308,
             "{}: {} ({})",
-                 message_root_str,
+                 trace.origin,
                  expected_found_str,
                  ty::type_err_to_str(self.tcx, terr));
 
@@ -444,23 +430,23 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                 // Does the required lifetime have a nice name we can print?
                 span_err!(self.tcx.sess, origin.span(), E0309,
                     "{} may not live long enough", labeled_user_string);
-                self.tcx.sess.span_help(
+                self.tcx.sess.fileline_help(
                     origin.span(),
                     &format!(
                         "consider adding an explicit lifetime bound `{}: {}`...",
                         bound_kind.user_string(self.tcx),
-                        sub.user_string(self.tcx))[]);
+                        sub.user_string(self.tcx)));
             }
 
             ty::ReStatic => {
                 // Does the required lifetime have a nice name we can print?
                 span_err!(self.tcx.sess, origin.span(), E0310,
                     "{} may not live long enough", labeled_user_string);
-                self.tcx.sess.span_help(
+                self.tcx.sess.fileline_help(
                     origin.span(),
                     &format!(
                         "consider adding an explicit lifetime bound `{}: 'static`...",
-                        bound_kind.user_string(self.tcx))[]);
+                        bound_kind.user_string(self.tcx)));
             }
 
             _ => {
@@ -468,14 +454,14 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                 span_err!(self.tcx.sess, origin.span(), E0311,
                         "{} may not live long enough",
                         labeled_user_string);
-                self.tcx.sess.span_help(
+                self.tcx.sess.fileline_help(
                     origin.span(),
                     &format!(
                         "consider adding an explicit lifetime bound for `{}`",
-                        bound_kind.user_string(self.tcx))[]);
+                        bound_kind.user_string(self.tcx)));
                 note_and_explain_region(
                     self.tcx,
-                    &format!("{} must be valid for ", labeled_user_string)[],
+                    &format!("{} must be valid for ", labeled_user_string),
                     sub,
                     "...");
             }
@@ -525,7 +511,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     &format!("...but `{}` is only valid for ",
                             ty::local_var_name_str(self.tcx,
                                                    upvar_id.var_id)
-                                .to_string())[],
+                                .to_string()),
                     sup,
                     "");
             }
@@ -568,7 +554,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     &format!("captured variable `{}` does not \
                             outlive the enclosing closure",
                             ty::local_var_name_str(self.tcx,
-                                                   id).to_string())[]);
+                                                   id).to_string()));
                 note_and_explain_region(
                     self.tcx,
                     "captured variable is valid for ",
@@ -610,7 +596,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     span,
                     &format!("the type `{}` does not fulfill the \
                              required lifetime",
-                            self.ty_to_string(ty))[]);
+                            self.ty_to_string(ty)));
                 note_and_explain_region(self.tcx,
                                         "type must outlive ",
                                         sub,
@@ -636,7 +622,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     span,
                     &format!("the type `{}` (provided as the value of \
                              a type parameter) is not valid at this point",
-                            self.ty_to_string(ty))[]);
+                            self.ty_to_string(ty)));
                 note_and_explain_region(self.tcx,
                                         "type must outlive ",
                                         sub,
@@ -713,7 +699,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     span,
                     &format!("type of expression contains references \
                              that are not valid during the expression: `{}`",
-                            self.ty_to_string(t))[]);
+                            self.ty_to_string(t)));
                 note_and_explain_region(
                     self.tcx,
                     "type is only valid for ",
@@ -752,7 +738,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                     span,
                     &format!("in type `{}`, reference has a longer lifetime \
                              than the data it references",
-                            self.ty_to_string(ty))[]);
+                            self.ty_to_string(ty)));
                 note_and_explain_region(
                     self.tcx,
                     "the pointer is valid for ",
@@ -841,33 +827,34 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                 ast_map::NodeItem(ref item) => {
                     match item.node {
                         ast::ItemFn(ref fn_decl, pur, _, ref gen, _) => {
-                            Some((&**fn_decl, gen, pur, item.ident, None, item.span))
+                            Some((fn_decl, gen, pur, item.ident, None, item.span))
                         },
                         _ => None
                     }
                 }
-                ast_map::NodeImplItem(ref item) => {
-                    match **item {
-                        ast::MethodImplItem(ref m) => {
-                            Some((m.pe_fn_decl(),
-                                  m.pe_generics(),
-                                  m.pe_unsafety(),
-                                  m.pe_ident(),
-                                  Some(&m.pe_explicit_self().node),
-                                  m.span))
+                ast_map::NodeImplItem(item) => {
+                    match item.node {
+                        ast::MethodImplItem(ref sig, _) => {
+                            Some((&sig.decl,
+                                  &sig.generics,
+                                  sig.unsafety,
+                                  item.ident,
+                                  Some(&sig.explicit_self.node),
+                                  item.span))
                         }
                         ast::TypeImplItem(_) => None,
+                        ast::MacImplItem(_) => self.tcx.sess.bug("unexpanded macro")
                     }
                 },
-                ast_map::NodeTraitItem(ref item) => {
-                    match **item {
-                        ast::ProvidedMethod(ref m) => {
-                            Some((m.pe_fn_decl(),
-                                  m.pe_generics(),
-                                  m.pe_unsafety(),
-                                  m.pe_ident(),
-                                  Some(&m.pe_explicit_self().node),
-                                  m.span))
+                ast_map::NodeTraitItem(item) => {
+                    match item.node {
+                        ast::MethodTraitItem(ref sig, Some(_)) => {
+                            Some((&sig.decl,
+                                  &sig.generics,
+                                  sig.unsafety,
+                                  item.ident,
+                                  Some(&sig.explicit_self.node),
+                                  item.span))
                         }
                         _ => None
                     }
@@ -988,7 +975,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                 names.push(lt_name);
             }
             names.sort();
-            let name = token::str_to_ident(&names[0][]).name;
+            let name = token::str_to_ident(&names[0]).name;
             return (name_to_dummy_lifetime(name), Kept);
         }
         return (self.life_giver.give_lifetime(), Fresh);
@@ -1233,16 +1220,16 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                     }
                     ty_queue.push(&*mut_ty.ty);
                 }
-                ast::TyPath(ref path, id) => {
-                    let a_def = match self.tcx.def_map.borrow().get(&id) {
+                ast::TyPath(ref maybe_qself, ref path) => {
+                    let a_def = match self.tcx.def_map.borrow().get(&cur_ty.id) {
                         None => {
                             self.tcx
                                 .sess
                                 .fatal(&format!(
                                         "unbound path {}",
-                                        pprust::path_to_string(path))[])
+                                        pprust::path_to_string(path)))
                         }
-                        Some(&d) => d
+                        Some(d) => d.full_def()
                     };
                     match a_def {
                         def::DefTy(did, _) | def::DefStruct(did) => {
@@ -1277,9 +1264,16 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                                 region_names: region_names
                             };
                             let new_path = self.rebuild_path(rebuild_info, lifetime);
+                            let qself = maybe_qself.as_ref().map(|qself| {
+                                ast::QSelf {
+                                    ty: self.rebuild_arg_ty_or_output(&qself.ty, lifetime,
+                                                                      anon_nums, region_names),
+                                    position: qself.position
+                                }
+                            });
                             let to = ast::Ty {
                                 id: cur_ty.id,
-                                node: ast::TyPath(new_path, id),
+                                node: ast::TyPath(qself, new_path),
                                 span: cur_ty.span
                             };
                             new_ty = self.rebuild_ty(new_ty, P(to));
@@ -1479,7 +1473,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
             var_origin.span(),
             &format!("cannot infer an appropriate lifetime{} \
                     due to conflicting requirements",
-                    var_description)[]);
+                    var_description));
     }
 
     fn note_region_origin(&self, origin: &SubregionOrigin<'tcx>) {
@@ -1487,38 +1481,38 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
             infer::Subtype(ref trace) => {
                 let desc = match trace.origin {
                     infer::Misc(_) => {
-                        format!("types are compatible")
+                        "types are compatible"
                     }
                     infer::MethodCompatCheck(_) => {
-                        format!("method type is compatible with trait")
+                        "method type is compatible with trait"
                     }
                     infer::ExprAssignable(_) => {
-                        format!("expression is assignable")
+                        "expression is assignable"
                     }
                     infer::RelateTraitRefs(_) => {
-                        format!("traits are compatible")
+                        "traits are compatible"
                     }
                     infer::RelateSelfType(_) => {
-                        format!("self type matches impl self type")
+                        "self type matches impl self type"
                     }
                     infer::RelateOutputImplTypes(_) => {
-                        format!("trait type parameters matches those \
-                                 specified on the impl")
+                        "trait type parameters matches those \
+                                 specified on the impl"
                     }
                     infer::MatchExpressionArm(_, _) => {
-                        format!("match arms have compatible types")
+                        "match arms have compatible types"
                     }
                     infer::IfExpression(_) => {
-                        format!("if and else have compatible types")
+                        "if and else have compatible types"
                     }
                     infer::IfExpressionWithNoElse(_) => {
-                        format!("if may be missing an else clause")
+                        "if may be missing an else clause"
                     }
                     infer::RangeExpression(_) => {
-                        format!("start and end of range have compatible types")
+                        "start and end of range have compatible types"
                     }
                     infer::EquatePredicate(_) => {
-                        format!("equality where clause is satisfied")
+                        "equality where clause is satisfied"
                     }
                 };
 
@@ -1527,7 +1521,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                         self.tcx.sess.span_note(
                             trace.origin.span(),
                             &format!("...so that {} ({})",
-                                    desc, values_str)[]);
+                                    desc, values_str));
                     }
                     None => {
                         // Really should avoid printing this error at
@@ -1536,7 +1530,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                         // doing right now. - nmatsakis
                         self.tcx.sess.span_note(
                             trace.origin.span(),
-                            &format!("...so that {}", desc)[]);
+                            &format!("...so that {}", desc));
                     }
                 }
             }
@@ -1552,7 +1546,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                     &format!(
                         "...so that closure can access `{}`",
                         ty::local_var_name_str(self.tcx, upvar_id.var_id)
-                            .to_string())[])
+                            .to_string()))
             }
             infer::InfStackClosure(span) => {
                 self.tcx.sess.span_note(
@@ -1577,7 +1571,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                             does not outlive the enclosing closure",
                             ty::local_var_name_str(
                                 self.tcx,
-                                id).to_string())[]);
+                                id).to_string()));
             }
             infer::IndexSlice(span) => {
                 self.tcx.sess.span_note(
@@ -1626,7 +1620,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                     span,
                     &format!("...so type `{}` of expression is valid during the \
                              expression",
-                            self.ty_to_string(t))[]);
+                            self.ty_to_string(t)));
             }
             infer::BindingTypeIsNotValidAtDecl(span) => {
                 self.tcx.sess.span_note(
@@ -1638,14 +1632,14 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                     span,
                     &format!("...so that the reference type `{}` \
                              does not outlive the data it points at",
-                            self.ty_to_string(ty))[]);
+                            self.ty_to_string(ty)));
             }
             infer::RelateParamBound(span, t) => {
                 self.tcx.sess.span_note(
                     span,
                     &format!("...so that the type `{}` \
                              will meet its required lifetime bounds",
-                            self.ty_to_string(t))[]);
+                            self.ty_to_string(t)));
             }
             infer::RelateDefaultParamBound(span, t) => {
                 self.tcx.sess.span_note(
@@ -1653,13 +1647,13 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
                     &format!("...so that type parameter \
                              instantiated with `{}`, \
                              will meet its declared lifetime bounds",
-                            self.ty_to_string(t))[]);
+                            self.ty_to_string(t)));
             }
             infer::RelateRegionParamBound(span) => {
                 self.tcx.sess.span_note(
                     span,
-                    &format!("...so that the declared lifetime parameter bounds \
-                                are satisfied")[]);
+                    "...so that the declared lifetime parameter bounds \
+                                are satisfied");
             }
             infer::SafeDestructor(span) => {
                 self.tcx.sess.span_note(
@@ -1717,18 +1711,19 @@ fn lifetimes_in_scope(tcx: &ty::ctxt,
         Some(node) => match node {
             ast_map::NodeItem(item) => match item.node {
                 ast::ItemFn(_, _, _, ref gen, _) => {
-                    taken.push_all(&gen.lifetimes[]);
+                    taken.push_all(&gen.lifetimes);
                     None
                 },
                 _ => None
             },
             ast_map::NodeImplItem(ii) => {
-                match *ii {
-                    ast::MethodImplItem(ref m) => {
-                        taken.push_all(&m.pe_generics().lifetimes[]);
-                        Some(m.id)
+                match ii.node {
+                    ast::MethodImplItem(ref sig, _) => {
+                        taken.push_all(&sig.generics.lifetimes);
+                        Some(ii.id)
                     }
                     ast::TypeImplItem(_) => None,
+                    ast::MacImplItem(_) => tcx.sess.bug("unexpanded macro")
                 }
             }
             _ => None
@@ -1757,7 +1752,7 @@ fn lifetimes_in_scope(tcx: &ty::ctxt,
 // LifeGiver is responsible for generating fresh lifetime names
 struct LifeGiver {
     taken: HashSet<String>,
-    counter: Cell<uint>,
+    counter: Cell<usize>,
     generated: RefCell<Vec<ast::Lifetime>>,
 }
 
@@ -1784,7 +1779,7 @@ impl LifeGiver {
         let mut lifetime;
         loop {
             let mut s = String::from_str("'");
-            s.push_str(&num_to_string(self.counter.get())[]);
+            s.push_str(&num_to_string(self.counter.get()));
             if !self.taken.contains(&s) {
                 lifetime = name_to_dummy_lifetime(
                                     token::str_to_ident(&s[..]).name);
@@ -1797,7 +1792,7 @@ impl LifeGiver {
         return lifetime;
 
         // 0 .. 25 generates a .. z, 26 .. 51 generates aa .. zz, and so on
-        fn num_to_string(counter: uint) -> String {
+        fn num_to_string(counter: usize) -> String {
             let mut s = String::new();
             let (n, r) = (counter/26 + 1, counter % 26);
             let letter: char = from_u32((r+97) as u32).unwrap();

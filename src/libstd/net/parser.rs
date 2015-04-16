@@ -16,7 +16,7 @@
 use prelude::v1::*;
 
 use str::FromStr;
-use net::{Ipv4Addr, Ipv6Addr, IpAddr, SocketAddr};
+use net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 struct Parser<'a> {
     // parsing as ASCII, so can use byte array
@@ -136,7 +136,7 @@ impl<'a> Parser<'a> {
     }
 
     fn read_number_impl(&mut self, radix: u8, max_digits: u32, upto: u32) -> Option<u32> {
-        let mut r = 0u32;
+        let mut r = 0;
         let mut digit_count = 0;
         loop {
             match self.read_digit(radix) {
@@ -164,7 +164,7 @@ impl<'a> Parser<'a> {
     }
 
     fn read_ipv4_addr_impl(&mut self) -> Option<Ipv4Addr> {
-        let mut bs = [0u8; 4];
+        let mut bs = [0; 4];
         let mut i = 0;
         while i < 4 {
             if i != 0 && self.read_given_char('.').is_none() {
@@ -189,7 +189,7 @@ impl<'a> Parser<'a> {
     fn read_ipv6_addr_impl(&mut self) -> Option<Ipv6Addr> {
         fn ipv6_addr_from_head_tail(head: &[u16], tail: &[u16]) -> Ipv6Addr {
             assert!(head.len() + tail.len() <= 8);
-            let mut gs = [0u16; 8];
+            let mut gs = [0; 8];
             gs.clone_from_slice(head);
             gs[(8 - tail.len()) .. 8].clone_from_slice(tail);
             Ipv6Addr::new(gs[0], gs[1], gs[2], gs[3], gs[4], gs[5], gs[6], gs[7])
@@ -231,7 +231,7 @@ impl<'a> Parser<'a> {
             (i, false)
         }
 
-        let mut head = [0u16; 8];
+        let mut head = [0; 8];
         let (head_size, head_ipv4) = read_groups(self, &mut head, 8);
 
         if head_size == 8 {
@@ -250,7 +250,7 @@ impl<'a> Parser<'a> {
             return None;
         }
 
-        let mut tail = [0u16; 8];
+        let mut tail = [0; 8];
         let (tail_size, _) = read_groups(self, &mut tail, 8 - head_size);
         Some(ipv6_addr_from_head_tail(&head[..head_size], &tail[..tail_size]))
     }
@@ -281,50 +281,61 @@ impl<'a> Parser<'a> {
         let port  = |p: &mut Parser| p.read_number(10, 5, 0x10000).map(|n| n as u16);
 
         // host, colon, port
-        self.read_seq_3::<IpAddr, char, u16, _, _, _>(ip_addr, colon, port)
-                .map(|t| match t { (ip, _, port) => SocketAddr::new(ip, port) })
+        self.read_seq_3(ip_addr, colon, port).map(|t| {
+            let (ip, _, port): (IpAddr, char, u16) = t;
+            match ip {
+                IpAddr::V4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
+                IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+            }
+        })
     }
 }
 
+#[unstable(feature = "ip_addr", reason = "recent addition")]
 impl FromStr for IpAddr {
-    type Err = ParseError;
-    fn from_str(s: &str) -> Result<IpAddr, ParseError> {
+    type Err = AddrParseError;
+    fn from_str(s: &str) -> Result<IpAddr, AddrParseError> {
         match Parser::new(s).read_till_eof(|p| p.read_ip_addr()) {
             Some(s) => Ok(s),
-            None => Err(ParseError),
+            None => Err(AddrParseError(()))
         }
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl FromStr for Ipv4Addr {
-    type Err = ParseError;
-    fn from_str(s: &str) -> Result<Ipv4Addr, ParseError> {
+    type Err = AddrParseError;
+    fn from_str(s: &str) -> Result<Ipv4Addr, AddrParseError> {
         match Parser::new(s).read_till_eof(|p| p.read_ipv4_addr()) {
             Some(s) => Ok(s),
-            None => Err(ParseError)
+            None => Err(AddrParseError(()))
         }
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl FromStr for Ipv6Addr {
-    type Err = ParseError;
-    fn from_str(s: &str) -> Result<Ipv6Addr, ParseError> {
+    type Err = AddrParseError;
+    fn from_str(s: &str) -> Result<Ipv6Addr, AddrParseError> {
         match Parser::new(s).read_till_eof(|p| p.read_ipv6_addr()) {
             Some(s) => Ok(s),
-            None => Err(ParseError)
+            None => Err(AddrParseError(()))
         }
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl FromStr for SocketAddr {
-    type Err = ParseError;
-    fn from_str(s: &str) -> Result<SocketAddr, ParseError> {
+    type Err = AddrParseError;
+    fn from_str(s: &str) -> Result<SocketAddr, AddrParseError> {
         match Parser::new(s).read_till_eof(|p| p.read_socket_addr()) {
             Some(s) => Ok(s),
-            None => Err(ParseError),
+            None => Err(AddrParseError(())),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
-pub struct ParseError;
+/// An error returned when parsing an IP address or a socket address.
+#[stable(feature = "rust1", since = "1.0.0")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddrParseError(());

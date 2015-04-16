@@ -8,7 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::{old_io, str};
+use std::fs::File;
+use std::io::prelude::*;
+use std::io;
+use std::path::{PathBuf, Path};
+use std::str;
 
 #[derive(Clone)]
 pub struct ExternalHtml{
@@ -33,24 +37,25 @@ impl ExternalHtml {
     }
 }
 
-pub fn load_string(input: &Path) -> old_io::IoResult<Option<String>> {
-    let mut f = try!(old_io::File::open(input));
-    let d = try!(f.read_to_end());
+pub fn load_string(input: &Path) -> io::Result<Option<String>> {
+    let mut f = try!(File::open(input));
+    let mut d = Vec::new();
+    try!(f.read_to_end(&mut d));
     Ok(str::from_utf8(&d).map(|s| s.to_string()).ok())
 }
 
 macro_rules! load_or_return {
     ($input: expr, $cant_read: expr, $not_utf8: expr) => {
         {
-            let input = Path::new($input);
+            let input = PathBuf::from(&$input[..]);
             match ::externalfiles::load_string(&input) {
                 Err(e) => {
-                    let _ = writeln!(&mut old_io::stderr(),
+                    let _ = writeln!(&mut io::stderr(),
                                      "error reading `{}`: {}", input.display(), e);
                     return $cant_read;
                 }
                 Ok(None) => {
-                    let _ = writeln!(&mut old_io::stderr(),
+                    let _ = writeln!(&mut io::stderr(),
                                      "error reading `{}`: not UTF-8", input.display());
                     return $not_utf8;
                 }

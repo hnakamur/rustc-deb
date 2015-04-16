@@ -16,9 +16,11 @@
 // around this problem locally by renaming the constant in the `use`
 // form to an uppercase identifier that placates the lint.
 
+// pretty-expanded FIXME #23616
+
 #![deny(non_upper_case_globals)]
 
-pub const A : int = 97;
+pub const A : isize = 97;
 
 fn f() {
     let r = match (0,0) {
@@ -35,7 +37,7 @@ fn f() {
 
 mod m {
     #[allow(non_upper_case_globals)]
-    pub const aha : int = 7;
+    pub const aha : isize = 7;
 }
 
 fn g() {

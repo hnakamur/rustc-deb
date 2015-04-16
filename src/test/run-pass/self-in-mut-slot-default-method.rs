@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 struct X {
-    a: int
+    a: isize
 }
 
 trait Changer : Sized {
@@ -26,11 +28,11 @@ trait Changer : Sized {
         self
     }
 
-    fn set_to(&mut self, a: int);
+    fn set_to(&mut self, a: isize);
 }
 
 impl Changer for X {
-    fn set_to(&mut self, a: int) {
+    fn set_to(&mut self, a: isize) {
         self.a = a;
     }
 }
@@ -40,7 +42,7 @@ pub fn main() {
     let new_x = x.change();
     assert_eq!(new_x.a, 55);
 
-    let x = box new_x;
+    let x: Box<_> = box new_x;
     let new_x = x.change_again();
     assert_eq!(new_x.a, 45);
 }

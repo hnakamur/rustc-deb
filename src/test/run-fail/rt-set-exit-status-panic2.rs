@@ -10,12 +10,14 @@
 
 // error-pattern:whatever
 
+#![feature(exit_status, rustc_private)]
+
 #[macro_use] extern crate log;
-use std::os;
+use std::env;
 use std::thread;
 
 struct r {
-  x:int,
+  x:isize,
 }
 
 // Setting the exit status after the runtime has already
@@ -23,11 +25,11 @@ struct r {
 // runtime's exit code
 impl Drop for r {
     fn drop(&mut self) {
-        os::set_exit_status(50);
+        env::set_exit_status(50);
     }
 }
 
-fn r(x:int) -> r {
+fn r(x:isize) -> r {
     r {
         x: x
     }
@@ -35,7 +37,7 @@ fn r(x:int) -> r {
 
 fn main() {
     error!("whatever");
-    let _t = thread::spawn(move|| {
+    let _t = thread::scoped(move|| {
       let _i = r(5);
     });
     panic!();

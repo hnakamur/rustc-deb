@@ -12,7 +12,7 @@
 
 use astconv::object_region_bounds;
 use middle::infer::{InferCtxt, GenericKind};
-use middle::subst::{Substs};
+use middle::subst::Substs;
 use middle::traits;
 use middle::ty::{self, ToPolyTraitRef, Ty};
 use middle::ty_fold::{TypeFoldable, TypeFolder};
@@ -22,6 +22,7 @@ use syntax::ast;
 use syntax::codemap::Span;
 
 use util::common::ErrorReported;
+use util::nodemap::FnvHashSet;
 use util::ppaux::Repr;
 
 // Helper functions related to manipulating region types.
@@ -29,6 +30,7 @@ use util::ppaux::Repr;
 pub enum Implication<'tcx> {
     RegionSubRegion(Option<Ty<'tcx>>, ty::Region, ty::Region),
     RegionSubGeneric(Option<Ty<'tcx>>, ty::Region, GenericKind<'tcx>),
+    RegionSubClosure(Option<Ty<'tcx>>, ty::Region, ast::DefId, &'tcx Substs<'tcx>),
     Predicate(ast::DefId, ty::Predicate<'tcx>),
 }
 
@@ -39,6 +41,7 @@ struct Implicator<'a, 'tcx: 'a> {
     stack: Vec<(ty::Region, Option<Ty<'tcx>>)>,
     span: Span,
     out: Vec<Implication<'tcx>>,
+    visited: FnvHashSet<Ty<'tcx>>,
 }
 
 /// This routine computes the well-formedness constraints that must hold for the type `ty` to
@@ -64,7 +67,8 @@ pub fn implications<'a,'tcx>(
                               body_id: body_id,
                               span: span,
                               stack: stack,
-                              out: Vec::new() };
+                              out: Vec::new(),
+                              visited: FnvHashSet() };
     wf.accumulate_from_ty(ty);
     debug!("implications: out={}", wf.out.repr(closure_typer.tcx()));
     wf.out
@@ -79,6 +83,12 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
         debug!("accumulate_from_ty(ty={})",
                ty.repr(self.tcx()));
 
+        // When expanding out associated types, we can visit a cyclic
+        // set of types. Issue #23003.
+        if !self.visited.insert(ty) {
+            return;
+        }
+
         match ty.sty {
             ty::ty_bool |
             ty::ty_char |
@@ -91,29 +101,9 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
                 // No borrowed content reachable here.
             }
 
-            ty::ty_closure(_, region, _) => {
-                // An "closure type" is basically
-                // modeled here as equivalent to a struct like
-                //
-                //     struct TheClosure<'b> {
-                //         ...
-                //     }
-                //
-                // where the `'b` is the lifetime bound of the
-                // contents (i.e., all contents must outlive 'b).
-                //
-                // Even though closures are glorified structs
-                // of upvars, we do not need to consider them as they
-                // can't generate any new constraints.  The
-                // substitutions on the closure are equal to the free
-                // substitutions of the enclosing parameter
-                // environment.  An upvar captured by value has the
-                // same type as the original local variable which is
-                // already checked for consistency.  If the upvar is
-                // captured by reference it must also outlive the
-                // region bound on the closure, but this is explicitly
-                // handled by logic in regionck.
-                self.push_region_constraint_from_top(*region);
+            ty::ty_closure(def_id, substs) => {
+                let &(r_a, opt_ty) = self.stack.last().unwrap();
+                self.out.push(Implication::RegionSubClosure(opt_ty, r_a, def_id, substs));
             }
 
             ty::ty_trait(ref t) => {
@@ -160,12 +150,6 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
                 //   Currently we uncover region relationships on
                 //   entering the fn check. We should do this after
                 //   the fn check, then we can call this case a bug().
-            }
-
-            ty::ty_open(_) => {
-                self.tcx().sess.bug(
-                    &format!("Unexpected type encountered while doing wf check: {}",
-                            ty.repr(self.tcx()))[]);
             }
         }
     }
@@ -452,6 +436,13 @@ impl<'tcx> Repr<'tcx> for Implication<'tcx> {
                 format!("RegionSubGeneric({}, {})",
                         r.repr(tcx),
                         p.repr(tcx))
+            }
+
+            Implication::RegionSubClosure(_, ref a, ref b, ref c) => {
+                format!("RegionSubClosure({}, {}, {})",
+                        a.repr(tcx),
+                        b.repr(tcx),
+                        c.repr(tcx))
             }
 
             Implication::Predicate(ref def_id, ref p) => {

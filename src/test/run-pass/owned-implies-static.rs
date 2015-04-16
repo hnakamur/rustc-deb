@@ -8,11 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+// pretty-expanded FIXME #23616
 
 fn f<T: 'static>(_x: T) {}
 
 pub fn main() {
-    f(box 5);
+    f(Box::new(5));
 }

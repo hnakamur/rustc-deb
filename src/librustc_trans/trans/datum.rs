@@ -113,7 +113,7 @@ use trans::expr;
 use trans::tvec;
 use trans::type_of;
 use middle::ty::{self, Ty};
-use util::ppaux::{ty_to_string};
+use util::ppaux::ty_to_string;
 
 use std::fmt;
 use syntax::ast;
@@ -122,7 +122,7 @@ use syntax::codemap::DUMMY_SP;
 /// A `Datum` encapsulates the result of evaluating an expression.  It
 /// describes where the value is stored, what Rust type the value has,
 /// whether it is addressed by reference, and so forth. Please refer
-/// the section on datums in `doc.rs` for more details.
+/// the section on datums in `README.md` for more details.
 #[derive(Clone, Copy)]
 pub struct Datum<'tcx, K> {
     /// The llvm value.  This is either a pointer to the Rust value or
@@ -172,7 +172,7 @@ impl Drop for Rvalue {
     fn drop(&mut self) { }
 }
 
-#[derive(Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum RvalueMode {
     /// `val` is a pointer to the actual value (and thus has type *T)
     ByRef,
@@ -195,24 +195,18 @@ pub fn immediate_rvalue_bcx<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 
 /// Allocates temporary space on the stack using alloca() and returns a by-ref Datum pointing to
 /// it. The memory will be dropped upon exit from `scope`. The callback `populate` should
-/// initialize the memory. If `zero` is true, the space will be zeroed when it is allocated; this
-/// is not necessary unless `bcx` does not dominate the end of `scope`.
+/// initialize the memory.
 pub fn lvalue_scratch_datum<'blk, 'tcx, A, F>(bcx: Block<'blk, 'tcx>,
                                               ty: Ty<'tcx>,
                                               name: &str,
-                                              zero: bool,
                                               scope: cleanup::ScopeId,
                                               arg: A,
                                               populate: F)
                                               -> DatumBlock<'blk, 'tcx, Lvalue> where
     F: FnOnce(A, Block<'blk, 'tcx>, ValueRef) -> Block<'blk, 'tcx>,
 {
-    let scratch = if zero {
-        alloca_zeroed(bcx, ty, name)
-    } else {
-        let llty = type_of::type_of(bcx.ccx(), ty);
-        alloca(bcx, llty, name)
-    };
+    let llty = type_of::type_of(bcx.ccx(), ty);
+    let scratch = alloca(bcx, llty, name);
 
     // Subtle. Populate the scratch memory *before* scheduling cleanup.
     let bcx = populate(arg, bcx, scratch);
@@ -311,9 +305,10 @@ impl KindOps for Lvalue {
                               val: ValueRef,
                               ty: Ty<'tcx>)
                               -> Block<'blk, 'tcx> {
-        if type_needs_drop(bcx.tcx(), ty) {
-            // cancel cleanup of affine values by zeroing out
-            let () = zero_mem(bcx, val, ty);
+        let _icx = push_ctxt("<Lvalue as KindOps>::post_store");
+        if bcx.fcx.type_needs_drop(ty) {
+            // cancel cleanup of affine values by drop-filling the memory
+            let () = drop_done_fill_mem(bcx, val, ty);
             bcx
         } else {
             bcx
@@ -382,7 +377,7 @@ impl<'tcx> Datum<'tcx, Rvalue> {
 
             ByValue => {
                 lvalue_scratch_datum(
-                    bcx, self.ty, name, false, scope, self,
+                    bcx, self.ty, name, scope, self,
                     |this, bcx, llval| this.store_to(bcx, llval))
             }
         }
@@ -476,15 +471,6 @@ impl<'tcx> Datum<'tcx, Expr> {
             })
     }
 
-    /// Ensures that `self` will get cleaned up, if it is not an lvalue already.
-    pub fn clean<'blk>(self,
-                       bcx: Block<'blk, 'tcx>,
-                       name: &'static str,
-                       expr_id: ast::NodeId)
-                       -> Block<'blk, 'tcx> {
-        self.to_lvalue_datum(bcx, name, expr_id).bcx
-    }
-
     pub fn to_lvalue_datum<'blk>(self,
                                  bcx: Block<'blk, 'tcx>,
                                  name: &str,
@@ -492,8 +478,6 @@ impl<'tcx> Datum<'tcx, Expr> {
                                  -> DatumBlock<'blk, 'tcx, Lvalue> {
         debug!("to_lvalue_datum self: {}", self.to_string(bcx.ccx()));
 
-        assert!(lltype_is_sized(bcx.tcx(), self.ty),
-                "Trying to convert unsized value to lval");
         self.match_kind(
             |l| DatumBlock::new(bcx, l),
             |r| {
@@ -549,15 +533,10 @@ impl<'tcx> Datum<'tcx, Lvalue> {
                                 -> Datum<'tcx, Lvalue> where
         F: FnOnce(ValueRef) -> ValueRef,
     {
-        let val = match self.ty.sty {
-            _ if type_is_sized(bcx.tcx(), self.ty) => gep(self.val),
-            ty::ty_open(_) => {
-                let base = Load(bcx, expr::get_dataptr(bcx, self.val));
-                gep(base)
-            }
-            _ => bcx.tcx().sess.bug(
-                &format!("Unexpected unsized type in get_element: {}",
-                        bcx.ty_to_string(self.ty))[])
+        let val = if type_is_sized(bcx.tcx(), self.ty) {
+            gep(self.val)
+        } else {
+            gep(Load(bcx, expr::get_dataptr(bcx, self.val)))
         };
         Datum {
             val: val,
@@ -566,7 +545,8 @@ impl<'tcx> Datum<'tcx, Lvalue> {
         }
     }
 
-    pub fn get_vec_base_and_len(&self, bcx: Block) -> (ValueRef, ValueRef) {
+    pub fn get_vec_base_and_len<'blk>(&self, bcx: Block<'blk, 'tcx>)
+                                      -> (ValueRef, ValueRef) {
         //! Converts a vector into the slice pair.
 
         tvec::get_base_and_len(bcx, self.val, self.ty)
@@ -662,7 +642,7 @@ impl<'tcx, K: KindOps + fmt::Debug> Datum<'tcx, K> {
     /// scalar-ish (like an int or a pointer) which (1) does not require drop glue and (2) is
     /// naturally passed around by value, and not by reference.
     pub fn to_llscalarish<'blk>(self, bcx: Block<'blk, 'tcx>) -> ValueRef {
-        assert!(!type_needs_drop(bcx.tcx(), self.ty));
+        assert!(!bcx.fcx.type_needs_drop(self.ty));
         assert!(self.appropriate_rvalue_mode(bcx.ccx()) == ByValue);
         if self.kind.is_by_ref() {
             load_ty(bcx, self.val, self.ty)

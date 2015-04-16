@@ -14,23 +14,24 @@ use sync::mpsc::{Sender, Receiver};
 use old_io;
 use option::Option::{None, Some};
 use result::Result::{Ok, Err};
-use slice::{bytes, SliceExt};
+use slice::bytes;
 use super::{Buffer, Reader, Writer, IoResult};
 use vec::Vec;
 
 /// Allows reading from a rx.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
+/// # #![feature(old_io)]
 /// use std::sync::mpsc::channel;
-/// use std::old_io::ChanReader;
+/// use std::old_io::*;
 ///
 /// let (tx, rx) = channel();
 /// # drop(tx);
 /// let mut reader = ChanReader::new(rx);
 ///
-/// let mut buf = [0u8; 100];
+/// let mut buf = [0; 100];
 /// match reader.read(&mut buf) {
 ///     Ok(nread) => println!("Read {} bytes", nread),
 ///     Err(e) => println!("read error: {}", e),
@@ -38,7 +39,7 @@ use vec::Vec;
 /// ```
 pub struct ChanReader {
     buf: Vec<u8>,          // A buffer of bytes received but not consumed.
-    pos: uint,             // How many of the buffered bytes have already be consumed.
+    pos: usize,             // How many of the buffered bytes have already be consumed.
     rx: Receiver<Vec<u8>>, // The Receiver to pull data from.
     closed: bool,          // Whether the channel this Receiver connects to has been closed.
 }
@@ -76,21 +77,21 @@ impl Buffer for ChanReader {
         }
     }
 
-    fn consume(&mut self, amt: uint) {
+    fn consume(&mut self, amt: usize) {
         self.pos += amt;
         assert!(self.pos <= self.buf.len());
     }
 }
 
 impl Reader for ChanReader {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         let mut num_read = 0;
         loop {
             let count = match self.fill_buf().ok() {
                 Some(src) => {
                     let dst = &mut buf[num_read..];
                     let count = cmp::min(src.len(), dst.len());
-                    bytes::copy_memory(dst, &src[..count]);
+                    bytes::copy_memory(&src[..count], dst);
                     count
                 },
                 None => 0,
@@ -111,12 +112,13 @@ impl Reader for ChanReader {
 
 /// Allows writing to a tx.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
+/// # #![feature(old_io, io)]
 /// # #![allow(unused_must_use)]
 /// use std::sync::mpsc::channel;
-/// use std::old_io::ChanWriter;
+/// use std::old_io::*;
 ///
 /// let (tx, rx) = channel();
 /// # drop(rx);
@@ -160,22 +162,22 @@ mod test {
 
     use sync::mpsc::channel;
     use super::*;
-    use old_io;
+    use old_io::{self, Reader, Writer, Buffer};
     use thread;
 
     #[test]
     fn test_rx_reader() {
         let (tx, rx) = channel();
         thread::spawn(move|| {
-          tx.send(vec![1u8, 2u8]).unwrap();
+          tx.send(vec![1, 2]).unwrap();
           tx.send(vec![]).unwrap();
-          tx.send(vec![3u8, 4u8]).unwrap();
-          tx.send(vec![5u8, 6u8]).unwrap();
-          tx.send(vec![7u8, 8u8]).unwrap();
+          tx.send(vec![3, 4]).unwrap();
+          tx.send(vec![5, 6]).unwrap();
+          tx.send(vec![7, 8]).unwrap();
         });
 
         let mut reader = ChanReader::new(rx);
-        let mut buf = [0u8; 3];
+        let mut buf = [0; 3];
 
         assert_eq!(Ok(0), reader.read(&mut []));
 
@@ -233,7 +235,7 @@ mod test {
         let mut writer = ChanWriter::new(tx);
         writer.write_be_u32(42).unwrap();
 
-        let wanted = vec![0u8, 0u8, 0u8, 42u8];
+        let wanted = vec![0, 0, 0, 42];
         let got = thread::scoped(move|| { rx.recv().unwrap() }).join();
         assert_eq!(wanted, got);
 

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 #![feature(unsafe_destructor)]
@@ -18,7 +20,7 @@ use std::cell::Cell;
 // as a move unless the stored thing is used afterwards.
 
 struct r<'a> {
-    i: &'a Cell<int>,
+    i: &'a Cell<isize>,
 }
 
 struct BoxR<'a> { x: r<'a> }
@@ -30,7 +32,7 @@ impl<'a> Drop for r<'a> {
     }
 }
 
-fn r(i: &Cell<int>) -> r {
+fn r(i: &Cell<isize>) -> r {
     r {
         i: i
     }
@@ -67,7 +69,7 @@ fn test_tup() {
 fn test_unique() {
     let i = &Cell::new(0);
     {
-        let _a = box r(i);
+        let _a: Box<_> = box r(i);
     }
     assert_eq!(i.get(), 1);
 }
@@ -75,7 +77,7 @@ fn test_unique() {
 fn test_unique_rec() {
     let i = &Cell::new(0);
     {
-        let _a = box BoxR {
+        let _a: Box<_> = box BoxR {
             x: r(i)
         };
     }

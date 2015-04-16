@@ -12,16 +12,13 @@
 
 #![feature(box_syntax)]
 #![feature(collections)]
-#![feature(int_uint)]
 #![feature(old_io)]
-#![feature(old_path)]
 #![feature(rustc_private)]
 #![feature(unboxed_closures)]
 #![feature(std_misc)]
 #![feature(test)]
-#![feature(unicode)]
-#![feature(env)]
-#![feature(core)]
+#![feature(path_ext)]
+#![feature(str_char)]
 
 #![deny(warnings)]
 
@@ -32,9 +29,8 @@ extern crate getopts;
 extern crate log;
 
 use std::env;
-use std::old_io;
-use std::old_io::fs;
-use std::thunk::Thunk;
+use std::fs;
+use std::path::{Path, PathBuf};
 use getopts::{optopt, optflag, reqopt};
 use common::Config;
 use common::{Pretty, DebugInfoGdb, DebugInfoLldb, Codegen};
@@ -115,9 +111,9 @@ pub fn parse_config(args: Vec<String> ) -> Config {
         panic!()
     }
 
-    fn opt_path(m: &getopts::Matches, nm: &str) -> Path {
+    fn opt_path(m: &getopts::Matches, nm: &str) -> PathBuf {
         match m.opt_str(nm) {
-            Some(s) => Path::new(s),
+            Some(s) => PathBuf::from(&s),
             None => panic!("no option (=path) found for {}", nm),
         }
     }
@@ -132,10 +128,10 @@ pub fn parse_config(args: Vec<String> ) -> Config {
         compile_lib_path: matches.opt_str("compile-lib-path").unwrap(),
         run_lib_path: matches.opt_str("run-lib-path").unwrap(),
         rustc_path: opt_path(matches, "rustc-path"),
-        clang_path: matches.opt_str("clang-path").map(|s| Path::new(s)),
+        clang_path: matches.opt_str("clang-path").map(|s| PathBuf::from(&s)),
         valgrind_path: matches.opt_str("valgrind-path"),
         force_valgrind: matches.opt_present("force-valgrind"),
-        llvm_bin_path: matches.opt_str("llvm-bin-path").map(|s| Path::new(s)),
+        llvm_bin_path: matches.opt_str("llvm-bin-path").map(|s| PathBuf::from(&s)),
         src_base: opt_path(matches, "src-base"),
         build_base: opt_path(matches, "build-base"),
         aux_base: opt_path(matches, "aux-base"),
@@ -143,7 +139,7 @@ pub fn parse_config(args: Vec<String> ) -> Config {
         mode: matches.opt_str("mode").unwrap().parse().ok().expect("invalid mode"),
         run_ignored: matches.opt_present("ignored"),
         filter: filter,
-        logfile: matches.opt_str("logfile").map(|s| Path::new(s)),
+        logfile: matches.opt_str("logfile").map(|s| PathBuf::from(&s)),
         runtool: matches.opt_str("runtool"),
         host_rustcflags: matches.opt_str("host-rustcflags"),
         target_rustcflags: matches.opt_str("target-rustcflags"),
@@ -226,7 +222,7 @@ pub fn run_tests(config: &Config) {
         // android debug-info test uses remote debugger
         // so, we test 1 task at once.
         // also trying to isolate problems with adb_run_wrapper.sh ilooping
-        env::set_var("RUST_TEST_TASKS","1");
+        env::set_var("RUST_TEST_THREADS","1");
     }
 
     match config.mode {
@@ -234,7 +230,7 @@ pub fn run_tests(config: &Config) {
             // Some older versions of LLDB seem to have problems with multiple
             // instances running in parallel, so only run one test task at a
             // time.
-            env::set_var("RUST_TEST_TASKS", "1");
+            env::set_var("RUST_TEST_THREADS", "1");
         }
         _ => { /* proceed */ }
     }
@@ -244,7 +240,11 @@ pub fn run_tests(config: &Config) {
     // sadly osx needs some file descriptor limits raised for running tests in
     // parallel (especially when we have lots and lots of child processes).
     // For context, see #8904
-    old_io::test::raise_fd_limit();
+    #[allow(deprecated)]
+    fn raise_fd_limit() {
+        std::old_io::test::raise_fd_limit();
+    }
+    raise_fd_limit();
     // Prevent issue #21352 UAC blocking .exe containing 'patch' etc. on Windows
     // If #11207 is resolved (adding manifest to .exe) this becomes unnecessary
     env::set_var("__COMPAT_LAYER", "RunAsInvoker");
@@ -268,7 +268,7 @@ pub fn test_opts(config: &Config) -> test::TestOpts {
         logfile: config.logfile.clone(),
         run_tests: true,
         run_benchmarks: true,
-        nocapture: false,
+        nocapture: env::var("RUST_TEST_NOCAPTURE").is_ok(),
         color: test::AutoColor,
     }
 }
@@ -277,9 +277,9 @@ pub fn make_tests(config: &Config) -> Vec<test::TestDescAndFn> {
     debug!("making tests from {:?}",
            config.src_base.display());
     let mut tests = Vec::new();
-    let dirs = fs::readdir(&config.src_base).unwrap();
-    for file in &dirs {
-        let file = file.clone();
+    let dirs = fs::read_dir(&config.src_base).unwrap();
+    for file in dirs {
+        let file = file.unwrap().path();
         debug!("inspecting file {:?}", file.display());
         if is_test(config, &file) {
             let t = make_test(config, &file, || {
@@ -302,7 +302,7 @@ pub fn is_test(config: &Config, testfile: &Path) -> bool {
           _ => vec!(".rc".to_string(), ".rs".to_string())
         };
     let invalid_prefixes = vec!(".".to_string(), "#".to_string(), "~".to_string());
-    let name = testfile.filename_str().unwrap();
+    let name = testfile.file_name().unwrap().to_str().unwrap();
 
     let mut valid = false;
 
@@ -328,7 +328,7 @@ pub fn make_test<F>(config: &Config, testfile: &Path, f: F) -> test::TestDescAnd
         desc: test::TestDesc {
             name: make_test_name(config, testfile),
             ignore: header::is_test_ignored(config, testfile),
-            should_fail: test::ShouldFail::No,
+            should_panic: test::ShouldPanic::No,
         },
         testfn: f(),
     }
@@ -338,9 +338,9 @@ pub fn make_test_name(config: &Config, testfile: &Path) -> test::TestName {
 
     // Try to elide redundant long paths
     fn shorten(path: &Path) -> String {
-        let filename = path.filename_str();
-        let p = path.dir_path();
-        let dir = p.filename_str();
+        let filename = path.file_name().unwrap().to_str();
+        let p = path.parent().unwrap();
+        let dir = p.file_name().unwrap().to_str();
         format!("{}/{}", dir.unwrap_or(""), filename.unwrap_or(""))
     }
 
@@ -349,19 +349,17 @@ pub fn make_test_name(config: &Config, testfile: &Path) -> test::TestName {
 
 pub fn make_test_closure(config: &Config, testfile: &Path) -> test::TestFn {
     let config = (*config).clone();
-    // FIXME (#9639): This needs to handle non-utf8 paths
-    let testfile = testfile.as_str().unwrap().to_string();
-    test::DynTestFn(Thunk::new(move || {
-        runtest::run(config, testfile)
+    let testfile = testfile.to_path_buf();
+    test::DynTestFn(Box::new(move || {
+        runtest::run(config, &testfile)
     }))
 }
 
 pub fn make_metrics_test_closure(config: &Config, testfile: &Path) -> test::TestFn {
     let config = (*config).clone();
-    // FIXME (#9639): This needs to handle non-utf8 paths
-    let testfile = testfile.as_str().unwrap().to_string();
+    let testfile = testfile.to_path_buf();
     test::DynMetricFn(box move |mm: &mut test::MetricMap| {
-        runtest::run_metrics(config, testfile, mm)
+        runtest::run_metrics(config, &testfile, mm)
     })
 }
 

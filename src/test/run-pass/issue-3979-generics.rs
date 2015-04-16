@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 use std::ops::Add;
 
 trait Positioned<S> {
@@ -22,18 +24,18 @@ trait Movable<S: Add<Output=S>>: Positioned<S> {
   }
 }
 
-struct Point { x: int, y: int }
+struct Point { x: isize, y: isize }
 
-impl Positioned<int> for Point {
-    fn SetX(&mut self, x: int) {
+impl Positioned<isize> for Point {
+    fn SetX(&mut self, x: isize) {
         self.x = x;
     }
-    fn X(&self) -> int {
+    fn X(&self) -> isize {
         self.x
     }
 }
 
-impl Movable<int> for Point {}
+impl Movable<isize> for Point {}
 
 pub fn main() {
     let mut p = Point{ x: 1, y: 2};

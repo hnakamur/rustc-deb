@@ -17,7 +17,6 @@ use core::clone::Clone;
 
 use std::boxed;
 use std::boxed::Box;
-use std::boxed::BoxAny;
 
 #[test]
 fn test_owned_clone() {
@@ -56,29 +55,29 @@ fn test_show() {
     let b = Box::new(Test) as Box<Any>;
     let a_str = format!("{:?}", a);
     let b_str = format!("{:?}", b);
-    assert_eq!(a_str, "Box<Any>");
-    assert_eq!(b_str, "Box<Any>");
+    assert_eq!(a_str, "Any");
+    assert_eq!(b_str, "Any");
 
     static EIGHT: usize = 8;
     static TEST: Test = Test;
     let a = &EIGHT as &Any;
     let b = &TEST as &Any;
     let s = format!("{:?}", a);
-    assert_eq!(s, "&Any");
+    assert_eq!(s, "Any");
     let s = format!("{:?}", b);
-    assert_eq!(s, "&Any");
+    assert_eq!(s, "Any");
 }
 
 #[test]
 fn deref() {
     fn homura<T: Deref<Target=i32>>(_: T) { }
-    homura(Box::new(765i32));
+    homura(Box::new(765));
 }
 
 #[test]
 fn raw_sized() {
     unsafe {
-        let x = Box::new(17i32);
+        let x = Box::new(17);
         let p = boxed::into_raw(x);
         assert_eq!(17, *p);
         *p = 19;

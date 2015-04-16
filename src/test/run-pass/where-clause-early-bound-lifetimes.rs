@@ -8,16 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait TheTrait { fn dummy(&self) { } }
 
-impl TheTrait for &'static int { }
+impl TheTrait for &'static isize { }
 
 fn foo<'a,T>(_: &'a T) where &'a T : TheTrait { }
 
 fn bar<T>(_: &'static T) where &'static T : TheTrait { }
 
 fn main() {
-    static x: int = 1;
+    static x: isize = 1;
     foo(&x);
     bar(&x);
 }

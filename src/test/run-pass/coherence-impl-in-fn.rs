@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 pub fn main() {
-    #[derive(Copy)]
+    #[derive(Copy, Clone)]
     enum x { foo }
     impl ::std::cmp::PartialEq for x {
         fn eq(&self, other: &x) -> bool {
-            (*self) as int == (*other) as int
+            (*self) as isize == (*other) as isize
         }
         fn ne(&self, other: &x) -> bool { !(*self).eq(other) }
     }

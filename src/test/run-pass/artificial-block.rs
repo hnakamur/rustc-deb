@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f() -> int { { return 3; } }
+// pretty-expanded FIXME #23616
+
+fn f() -> isize { { return 3; } }
 
 pub fn main() { assert!((f() == 3)); }

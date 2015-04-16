@@ -8,7 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(advanced_slice_patterns,)]
+#![feature(slice_patterns)]
 
 fn f<T,>(_: T,) {}
 
@@ -17,24 +20,24 @@ struct Foo<T,>(T);
 struct Bar;
 
 impl Bar {
-    fn f(_: int,) {}
-    fn g(self, _: int,) {}
+    fn f(_: isize,) {}
+    fn g(self, _: isize,) {}
     fn h(self,) {}
 }
 
 enum Baz {
-    Qux(int,),
+    Qux(isize,),
 }
 
 #[allow(unused,)]
 pub fn main() {
-    f::<int,>(0,);
+    f::<isize,>(0,);
     let (_, _,) = (1, 1,);
     let [_, _,] = [1, 1,];
     let [_, _, .., _,] = [1, 1, 1, 1,];
     let [_, _, _.., _,] = [1, 1, 1, 1,];
 
-    let x: Foo<int,> = Foo::<int,>(1);
+    let x: Foo<isize,> = Foo::<isize,>(1);
 
     Bar::f(0,);
     Bar.g(0,);

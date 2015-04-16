@@ -8,16 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-fn f(mut y: Box<int>) {
+fn f(mut y: Box<isize>) {
     *y = 5;
     assert_eq!(*y, 5);
 }
 
 fn g() {
-    let frob = |mut q: Box<int>| { *q = 2; assert!(*q == 2); };
+    let frob = |mut q: Box<isize>| { *q = 2; assert!(*q == 2); };
     let w = box 37;
     frob(w);
 

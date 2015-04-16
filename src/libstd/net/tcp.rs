@@ -8,22 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![unstable(feature = "tcp", reason = "remaining functions have not been \
+                                       scrutinized enough to be stabilized")]
+
 use prelude::v1::*;
 use io::prelude::*;
 
 use io;
 use net::{ToSocketAddrs, SocketAddr, Shutdown};
 use sys_common::net2 as net_imp;
-use sys_common::AsInner;
+use sys_common::{AsInner, FromInner};
 
 /// A structure which represents a TCP stream between a local socket and a
 /// remote socket.
 ///
 /// The socket will be closed when the value is dropped.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```no_run
+/// # #![feature(net)]
 /// use std::io::prelude::*;
 /// use std::net::TcpStream;
 ///
@@ -35,6 +39,7 @@ use sys_common::AsInner;
 ///     let _ = stream.read(&mut [0; 128]); // ignore here too
 /// } // the stream is closed here
 /// ```
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct TcpStream(net_imp::TcpStream);
 
 /// A structure representing a socket server.
@@ -42,6 +47,7 @@ pub struct TcpStream(net_imp::TcpStream);
 /// # Examples
 ///
 /// ```no_run
+/// # #![feature(net)]
 /// use std::net::{TcpListener, TcpStream};
 /// use std::thread;
 ///
@@ -67,12 +73,14 @@ pub struct TcpStream(net_imp::TcpStream);
 /// // close the socket server
 /// drop(listener);
 /// ```
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct TcpListener(net_imp::TcpListener);
 
 /// An infinite iterator over the connections from a `TcpListener`.
 ///
 /// This iterator will infinitely yield `Some` of the accepted connections. It
 /// is equivalent to calling `accept` in a loop.
+#[stable(feature = "rust1", since = "1.0.0")]
 pub struct Incoming<'a> { listener: &'a TcpListener }
 
 impl TcpStream {
@@ -81,17 +89,20 @@ impl TcpStream {
     /// `addr` is an address of the remote host. Anything which implements
     /// `ToSocketAddrs` trait can be supplied for the address; see this trait
     /// documentation for concrete examples.
-    pub fn connect<A: ToSocketAddrs + ?Sized>(addr: &A) -> io::Result<TcpStream> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn connect<A: ToSocketAddrs>(addr: A) -> io::Result<TcpStream> {
         super::each_addr(addr, net_imp::TcpStream::connect).map(TcpStream)
     }
 
     /// Returns the socket address of the remote peer of this TCP connection.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
         self.0.peer_addr()
     }
 
     /// Returns the socket address of the local half of this TCP connection.
-    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.0.socket_addr()
     }
 
@@ -100,6 +111,7 @@ impl TcpStream {
     /// This function will cause all pending and future I/O on the specified
     /// portions to return immediately with an appropriate value (see the
     /// documentation of `Shutdown`).
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
         self.0.shutdown(how)
     }
@@ -110,6 +122,7 @@ impl TcpStream {
     /// object references. Both handles will read and write the same stream of
     /// data, and options set on one stream will be propagated to the other
     /// stream.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn try_clone(&self) -> io::Result<TcpStream> {
         self.0.duplicate().map(TcpStream)
     }
@@ -129,16 +142,20 @@ impl TcpStream {
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Read for TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
 }
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Write for TcpStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Read for &'a TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
 }
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Write for &'a TcpStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
@@ -146,6 +163,10 @@ impl<'a> Write for &'a TcpStream {
 
 impl AsInner<net_imp::TcpStream> for TcpStream {
     fn as_inner(&self) -> &net_imp::TcpStream { &self.0 }
+}
+
+impl FromInner<net_imp::TcpStream> for TcpStream {
+    fn from_inner(inner: net_imp::TcpStream) -> TcpStream { TcpStream(inner) }
 }
 
 impl TcpListener {
@@ -160,12 +181,14 @@ impl TcpListener {
     ///
     /// The address type can be any implementer of `ToSocketAddrs` trait. See
     /// its documentation for concrete examples.
-    pub fn bind<A: ToSocketAddrs + ?Sized>(addr: &A) -> io::Result<TcpListener> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<TcpListener> {
         super::each_addr(addr, net_imp::TcpListener::bind).map(TcpListener)
     }
 
     /// Returns the local socket address of this listener.
-    pub fn socket_addr(&self) -> io::Result<SocketAddr> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.0.socket_addr()
     }
 
@@ -174,6 +197,7 @@ impl TcpListener {
     /// The returned `TcpListener` is a reference to the same socket that this
     /// object references. Both handles can be used to accept incoming
     /// connections and options set on one listener will affect the other.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn try_clone(&self) -> io::Result<TcpListener> {
         self.0.duplicate().map(TcpListener)
     }
@@ -183,6 +207,7 @@ impl TcpListener {
     /// This function will block the calling thread until a new TCP connection
     /// is established. When established, the corresponding `TcpStream` and the
     /// remote peer's address will be returned.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
         self.0.accept().map(|(a, b)| (TcpStream(a), b))
     }
@@ -192,11 +217,13 @@ impl TcpListener {
     ///
     /// The returned iterator will never returned `None` and will also not yield
     /// the peer's `SocketAddr` structure.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn incoming(&self) -> Incoming {
         Incoming { listener: self }
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Iterator for Incoming<'a> {
     type Item = io::Result<TcpStream>;
     fn next(&mut self) -> Option<io::Result<TcpStream>> {
@@ -206,6 +233,12 @@ impl<'a> Iterator for Incoming<'a> {
 
 impl AsInner<net_imp::TcpListener> for TcpListener {
     fn as_inner(&self) -> &net_imp::TcpListener { &self.0 }
+}
+
+impl FromInner<net_imp::TcpListener> for TcpListener {
+    fn from_inner(inner: net_imp::TcpListener) -> TcpListener {
+        TcpListener(inner)
+    }
 }
 
 #[cfg(test)]
@@ -233,13 +266,12 @@ mod tests {
         }
     }
 
-    // FIXME #11530 this fails on android because tests are run as root
-    #[cfg_attr(any(windows, target_os = "android"), ignore)]
     #[test]
     fn bind_error() {
-        match TcpListener::bind("0.0.0.0:1") {
+        match TcpListener::bind("1.1.1.1:9999") {
             Ok(..) => panic!(),
-            Err(e) => assert_eq!(e.kind(), ErrorKind::PermissionDenied),
+            Err(e) =>
+                assert_eq!(e.kind(), ErrorKind::AddrNotAvailable),
         }
     }
 
@@ -247,8 +279,11 @@ mod tests {
     fn connect_error() {
         match TcpStream::connect("0.0.0.0:1") {
             Ok(..) => panic!(),
-            Err(e) => assert!((e.kind() == ErrorKind::ConnectionRefused)
-                              || (e.kind() == ErrorKind::InvalidInput)),
+            Err(e) => assert!(e.kind() == ErrorKind::ConnectionRefused ||
+                              e.kind() == ErrorKind::InvalidInput ||
+                              e.kind() == ErrorKind::AddrInUse ||
+                              e.kind() == ErrorKind::AddrNotAvailable,
+                              "bad error: {} {:?}", e, e.kind()),
         }
     }
 
@@ -310,7 +345,7 @@ mod tests {
             let _t = thread::spawn(move|| {
                 let mut stream = t!(TcpStream::connect(&addr));
                 t!(stream.write(&[99]));
-                tx.send(t!(stream.socket_addr())).unwrap();
+                tx.send(t!(stream.local_addr())).unwrap();
             });
 
             let (mut stream, addr) = t!(acceptor.accept());
@@ -425,7 +460,7 @@ mod tests {
 
     #[test]
     fn multiple_connect_interleaved_lazy_schedule_ip4() {
-        static MAX: usize = 10;
+        const MAX: usize = 10;
         each_ip(&mut |addr| {
             let acceptor = t!(TcpListener::bind(&addr));
 
@@ -456,17 +491,11 @@ mod tests {
         }
     }
 
-    pub fn socket_name(addr: SocketAddr) {
-    }
-
-    pub fn peer_name(addr: SocketAddr) {
-    }
-
     #[test]
     fn socket_and_peer_name_ip4() {
         each_ip(&mut |addr| {
             let listener = t!(TcpListener::bind(&addr));
-            let so_name = t!(listener.socket_addr());
+            let so_name = t!(listener.local_addr());
             assert_eq!(addr, so_name);
             let _t = thread::spawn(move|| {
                 t!(listener.accept());
@@ -492,7 +521,7 @@ mod tests {
 
             let mut c = t!(TcpStream::connect(&addr));
             let mut b = [0; 10];
-            assert_eq!(c.read(&mut b), Ok(1));
+            assert_eq!(c.read(&mut b).unwrap(), 1);
             t!(c.write(&[1]));
             rx.recv().unwrap();
         })
@@ -506,7 +535,8 @@ mod tests {
                 Ok(..) => panic!(),
                 Err(e) => {
                     assert!(e.kind() == ErrorKind::ConnectionRefused ||
-                            e.kind() == ErrorKind::Other,
+                            e.kind() == ErrorKind::Other ||
+                            e.kind() == ErrorKind::AddrInUse,
                             "unknown error: {} {:?}", e, e.kind());
                 }
             }
@@ -536,7 +566,7 @@ mod tests {
             let _t = thread::spawn(move|| {
                 let mut s = t!(TcpStream::connect(&addr));
                 let mut buf = [0, 0];
-                assert_eq!(s.read(&mut buf), Ok(1));
+                assert_eq!(s.read(&mut buf).unwrap(), 1);
                 assert_eq!(buf[0], 1);
                 t!(s.write(&[2]));
             });
@@ -554,7 +584,7 @@ mod tests {
             });
             tx1.send(()).unwrap();
             let mut buf = [0, 0];
-            assert_eq!(s1.read(&mut buf), Ok(1));
+            assert_eq!(s1.read(&mut buf).unwrap(), 1);
             rx2.recv().unwrap();
         })
     }
@@ -627,7 +657,7 @@ mod tests {
             let _t = thread::spawn(move|| {
                 let mut c = t!(a.accept()).0;
                 let mut b = [0];
-                assert_eq!(c.read(&mut b), Ok(0));
+                assert_eq!(c.read(&mut b).unwrap(), 0);
                 t!(c.write(&[1]));
             });
 
@@ -658,16 +688,16 @@ mod tests {
             t!(s.shutdown(Shutdown::Write));
             assert!(s.write(&[0]).is_err());
             t!(s.shutdown(Shutdown::Read));
-            assert_eq!(s.read(&mut b), Ok(0));
+            assert_eq!(s.read(&mut b).unwrap(), 0);
 
             // closing should affect previous handles
             assert!(s2.write(&[0]).is_err());
-            assert_eq!(s2.read(&mut b), Ok(0));
+            assert_eq!(s2.read(&mut b).unwrap(), 0);
 
             // closing should affect new handles
             let mut s3 = t!(s.try_clone());
             assert!(s3.write(&[0]).is_err());
-            assert_eq!(s3.read(&mut b), Ok(0));
+            assert_eq!(s3.read(&mut b).unwrap(), 0);
 
             // make sure these don't die
             let _ = s2.shutdown(Shutdown::Read);

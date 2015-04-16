@@ -14,6 +14,8 @@
 // Tests "capabilities" granted by traits with super-builtin-kinds,
 // even when using them cross-crate.
 
+// pretty-expanded FIXME #23616
+
 extern crate trait_superkinds_in_metadata;
 
 use std::sync::mpsc::{channel, Sender, Receiver};
@@ -30,7 +32,7 @@ fn foo<T: RequiresRequiresShareAndSend + 'static>(val: T, chan: Sender<T>) {
 }
 
 pub fn main() {
-    let (tx, rx): (Sender<X<int>>, Receiver<X<int>>) = channel();
+    let (tx, rx): (Sender<X<isize>>, Receiver<X<isize>>) = channel();
     foo(X(31337), tx);
     assert!(rx.recv().unwrap() == X(31337));
 }

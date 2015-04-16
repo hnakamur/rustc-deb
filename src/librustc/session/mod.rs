@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
 use lint;
 use metadata::cstore::CStore;
 use metadata::filesearch;
@@ -27,8 +26,9 @@ use syntax::{ast, codemap};
 
 use rustc_back::target::Target;
 
-use std::env;
+use std::path::{Path, PathBuf};
 use std::cell::{Cell, RefCell};
+use std::env;
 
 pub mod config;
 pub mod search_paths;
@@ -45,11 +45,11 @@ pub struct Session {
     pub entry_fn: RefCell<Option<(NodeId, codemap::Span)>>,
     pub entry_type: Cell<Option<config::EntryFnType>>,
     pub plugin_registrar_fn: Cell<Option<ast::NodeId>>,
-    pub default_sysroot: Option<Path>,
+    pub default_sysroot: Option<PathBuf>,
     // The name of the root source file of the crate, in the local file system. The path is always
     // expected to be absolute. `None` means that there is no source file.
-    pub local_crate_source_file: Option<Path>,
-    pub working_dir: Path,
+    pub local_crate_source_file: Option<PathBuf>,
+    pub working_dir: PathBuf,
     pub lint_store: RefCell<lint::LintStore>,
     pub lints: RefCell<NodeMap<Vec<(lint::LintId, codemap::Span, String)>>>,
     pub crate_types: RefCell<Vec<config::CrateType>>,
@@ -58,37 +58,55 @@ pub struct Session {
 
     /// The maximum recursion limit for potentially infinitely recursive
     /// operations such as auto-dereference and monomorphization.
-    pub recursion_limit: Cell<uint>,
+    pub recursion_limit: Cell<usize>,
 
     pub can_print_warnings: bool
 }
 
 impl Session {
     pub fn span_fatal(&self, sp: Span, msg: &str) -> ! {
+        if self.opts.treat_err_as_bug {
+            self.span_bug(sp, msg);
+        }
         self.diagnostic().span_fatal(sp, msg)
     }
     pub fn span_fatal_with_code(&self, sp: Span, msg: &str, code: &str) -> ! {
+        if self.opts.treat_err_as_bug {
+            self.span_bug(sp, msg);
+        }
         self.diagnostic().span_fatal_with_code(sp, msg, code)
     }
     pub fn fatal(&self, msg: &str) -> ! {
+        if self.opts.treat_err_as_bug {
+            self.bug(msg);
+        }
         self.diagnostic().handler().fatal(msg)
     }
     pub fn span_err(&self, sp: Span, msg: &str) {
+        if self.opts.treat_err_as_bug {
+            self.span_bug(sp, msg);
+        }
         match split_msg_into_multilines(msg) {
             Some(msg) => self.diagnostic().span_err(sp, &msg[..]),
             None => self.diagnostic().span_err(sp, msg)
         }
     }
     pub fn span_err_with_code(&self, sp: Span, msg: &str, code: &str) {
+        if self.opts.treat_err_as_bug {
+            self.span_bug(sp, msg);
+        }
         match split_msg_into_multilines(msg) {
             Some(msg) => self.diagnostic().span_err_with_code(sp, &msg[..], code),
             None => self.diagnostic().span_err_with_code(sp, msg, code)
         }
     }
     pub fn err(&self, msg: &str) {
+        if self.opts.treat_err_as_bug {
+            self.bug(msg);
+        }
         self.diagnostic().handler().err(msg)
     }
-    pub fn err_count(&self) -> uint {
+    pub fn err_count(&self) -> usize {
         self.diagnostic().handler().err_count()
     }
     pub fn has_errors(&self) -> bool {
@@ -186,7 +204,7 @@ impl Session {
     // cases later on
     pub fn impossible_case(&self, sp: Span, msg: &str) -> ! {
         self.span_bug(sp,
-                      &format!("impossible case reached: {}", msg)[]);
+                      &format!("impossible case reached: {}", msg));
     }
     pub fn verbose(&self) -> bool { self.opts.debugging_opts.verbose }
     pub fn time_passes(&self) -> bool { self.opts.debugging_opts.time_passes }
@@ -228,7 +246,7 @@ impl Session {
     }
     pub fn target_filesearch(&self, kind: PathKind) -> filesearch::FileSearch {
         filesearch::FileSearch::new(self.sysroot(),
-                                    &self.opts.target_triple[],
+                                    &self.opts.target_triple,
                                     &self.opts.search_paths,
                                     kind)
     }
@@ -280,9 +298,9 @@ fn split_msg_into_multilines(msg: &str) -> Option<String> {
     }
 
     let mut tail = &msg[head..];
-    let third = tail.find_str("(values differ")
-                   .or(tail.find_str("(lifetime"))
-                   .or(tail.find_str("(cyclic type of infinite size"));
+    let third = tail.find("(values differ")
+                   .or(tail.find("(lifetime"))
+                   .or(tail.find("(cyclic type of infinite size"));
     // Insert `\n` before any remaining messages which match.
     if let Some(pos) = third {
         // The end of the message may just be wrapped in `()` without
@@ -302,7 +320,7 @@ fn split_msg_into_multilines(msg: &str) -> Option<String> {
 }
 
 pub fn build_session(sopts: config::Options,
-                     local_crate_source_file: Option<Path>,
+                     local_crate_source_file: Option<PathBuf>,
                      registry: diagnostics::registry::Registry)
                      -> Session {
     // FIXME: This is not general enough to make the warning lint completely override
@@ -325,7 +343,7 @@ pub fn build_session(sopts: config::Options,
 }
 
 pub fn build_session_(sopts: config::Options,
-                      local_crate_source_file: Option<Path>,
+                      local_crate_source_file: Option<PathBuf>,
                       span_diagnostic: diagnostic::SpanHandler)
                       -> Session {
     let host = match Target::search(config::host_triple()) {
@@ -380,7 +398,6 @@ pub fn build_session_(sopts: config::Options,
         can_print_warnings: can_print_warnings
     };
 
-    sess.lint_store.borrow_mut().register_builtin(Some(&sess));
     sess
 }
 

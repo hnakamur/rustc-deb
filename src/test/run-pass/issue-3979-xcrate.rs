@@ -9,16 +9,18 @@
 // except according to those terms.
 
 // aux-build:issue_3979_traits.rs
+// pretty-expanded FIXME #23616
+
 extern crate issue_3979_traits;
 use issue_3979_traits::{Positioned, Movable};
 
-struct Point { x: int, y: int }
+struct Point { x: isize, y: isize }
 
 impl Positioned for Point {
-    fn SetX(&mut self, x: int) {
+    fn SetX(&mut self, x: isize) {
         self.x = x;
     }
-    fn X(&self) -> int {
+    fn X(&self) -> isize {
         self.x
     }
 }

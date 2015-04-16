@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f() -> int {
+// pretty-expanded FIXME #23616
+
+fn f() -> isize {
     mod m {
-        pub fn g() -> int { 720 }
+        pub fn g() -> isize { 720 }
     }
 
     m::g()

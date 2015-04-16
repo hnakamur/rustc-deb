@@ -10,7 +10,9 @@
 
 // aux-build:priv-impl-prim-ty.rs
 
-extern crate "priv-impl-prim-ty" as bar;
+// pretty-expanded FIXME #23616
+
+extern crate priv_impl_prim_ty as bar;
 
 pub fn main() {
     bar::frob(1);

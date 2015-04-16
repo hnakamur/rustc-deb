@@ -22,12 +22,11 @@ use syntax::codemap::{Span, DUMMY_SP};
 use syntax::{attr, visit};
 use syntax::ast;
 use syntax::ast::{Attribute, Block, Crate, DefId, FnDecl, NodeId, Variant};
-use syntax::ast::{Item, RequiredMethod, ProvidedMethod, TraitItem};
-use syntax::ast::{TypeMethod, Method, Generics, StructField, TypeTraitItem};
+use syntax::ast::{Item, Generics, StructField};
 use syntax::ast_util::is_local;
 use syntax::attr::{Stability, AttrMetaMethods};
-use syntax::visit::{FnKind, FkMethod, Visitor};
-use syntax::feature_gate::emit_feature_warn;
+use syntax::visit::{FnKind, Visitor};
+use syntax::feature_gate::emit_feature_err;
 use util::nodemap::{NodeMap, DefIdMap, FnvHashSet, FnvHashMap};
 use util::ppaux::Repr;
 
@@ -58,8 +57,10 @@ impl<'a> Annotator<'a> {
                    attrs: &Vec<Attribute>, item_sp: Span, f: F, required: bool) where
         F: FnOnce(&mut Annotator),
     {
+        debug!("annotate(id = {:?}, attrs = {:?})", id, attrs);
         match attr::find_stability(self.sess.diagnostic(), attrs, item_sp) {
             Some(stab) => {
+                debug!("annotate: found {:?}", stab);
                 self.index.local.insert(id, stab.clone());
 
                 // Don't inherit #[stable(feature = "rust1", since = "1.0.0")]
@@ -72,6 +73,8 @@ impl<'a> Annotator<'a> {
                 }
             }
             None => {
+                debug!("annotate: not found, use_parent = {:?}, parent = {:?}",
+                       use_parent, self.parent);
                 if use_parent {
                     if let Some(stab) = self.parent.clone() {
                         self.index.local.insert(id, stab);
@@ -120,31 +123,20 @@ impl<'a, 'v> Visitor<'v> for Annotator<'a> {
         }
     }
 
-    fn visit_fn(&mut self, fk: FnKind<'v>, _: &'v FnDecl,
-                _: &'v Block, sp: Span, _: NodeId) {
-        if let FkMethod(_, _, meth) = fk {
-            // Methods are not already annotated, so we annotate it
-            self.annotate(meth.id, true, &meth.attrs, sp, |_| {}, true);
-        }
+    fn visit_fn(&mut self, _: FnKind<'v>, _: &'v FnDecl,
+                _: &'v Block, _: Span, _: NodeId) {
         // Items defined in a function body have no reason to have
         // a stability attribute, so we don't recurse.
     }
 
-    fn visit_trait_item(&mut self, t: &TraitItem) {
-        let (id, attrs, sp) = match *t {
-            RequiredMethod(TypeMethod {id, ref attrs, span, ..}) => (id, attrs, span),
+    fn visit_trait_item(&mut self, ti: &ast::TraitItem) {
+        self.annotate(ti.id, true, &ti.attrs, ti.span,
+                      |v| visit::walk_trait_item(v, ti), true);
+    }
 
-            // work around lack of pattern matching for @ types
-            ProvidedMethod(ref method) => {
-                match **method {
-                    Method {ref attrs, id, span, ..} => (id, attrs, span),
-                }
-            }
-
-            TypeTraitItem(ref typedef) => (typedef.ty_param.id, &typedef.attrs,
-                                           typedef.ty_param.span),
-        };
-        self.annotate(id, true, attrs, sp, |v| visit::walk_trait_item(v, t), true);
+    fn visit_impl_item(&mut self, ii: &ast::ImplItem) {
+        self.annotate(ii.id, true, &ii.attrs, ii.span,
+                      |v| visit::walk_impl_item(v, ii), true);
     }
 
     fn visit_variant(&mut self, var: &Variant, g: &'v Generics) {
@@ -181,7 +173,7 @@ impl Index {
     pub fn new(krate: &Crate) -> Index {
         let mut staged_api = false;
         for attr in &krate.attrs {
-            if &attr.name()[] == "staged_api" {
+            if &attr.name()[..] == "staged_api" {
                 match attr.node.value.node {
                     ast::MetaWord(_) => {
                         attr::mark_used(attr);
@@ -245,7 +237,7 @@ impl<'a, 'tcx> Checker<'a, 'tcx> {
                         None => format!("use of unstable library feature '{}'", &feature)
                     };
 
-                    emit_feature_warn(&self.tcx.sess.parse_sess.span_diagnostic,
+                    emit_feature_err(&self.tcx.sess.parse_sess.span_diagnostic,
                                       &feature, span, &msg);
                 }
             }
@@ -299,6 +291,12 @@ impl<'a, 'v, 'tcx> Visitor<'v> for Checker<'a, 'tcx> {
                    &mut |id, sp, stab| self.check(id, sp, stab));
         visit::walk_path(self, path)
     }
+
+    fn visit_pat(&mut self, pat: &ast::Pat) {
+        check_pat(self.tcx, pat,
+                  &mut |id, sp, stab| self.check(id, sp, stab));
+        visit::walk_pat(self, pat)
+    }
 }
 
 /// Helper for discovering nodes to check for stability
@@ -321,26 +319,15 @@ pub fn check_item(tcx: &ty::ctxt, item: &ast::Item, warn_about_defns: bool,
         // individually as it's possible to have a stable trait with unstable
         // items.
         ast::ItemImpl(_, _, _, Some(ref t), _, ref impl_items) => {
-            let trait_did = tcx.def_map.borrow()[t.ref_id].def_id();
+            let trait_did = tcx.def_map.borrow().get(&t.ref_id).unwrap().def_id();
             let trait_items = ty::trait_items(tcx, trait_did);
 
             for impl_item in impl_items {
-                let (ident, span) = match *impl_item {
-                    ast::MethodImplItem(ref method) => {
-                        (match method.node {
-                            ast::MethDecl(ident, _, _, _, _, _, _, _) => ident,
-                            ast::MethMac(..) => unreachable!(),
-                        }, method.span)
-                    }
-                    ast::TypeImplItem(ref typedef) => {
-                        (typedef.ident, typedef.span)
-                    }
-                };
                 let item = trait_items.iter().find(|item| {
-                    item.name() == ident.name
+                    item.name() == impl_item.ident.name
                 }).unwrap();
                 if warn_about_defns {
-                    maybe_do_stability_check(tcx, item.def_id(), span, cb);
+                    maybe_do_stability_check(tcx, item.def_id(), impl_item.span, cb);
                 }
             }
         }
@@ -352,8 +339,6 @@ pub fn check_item(tcx: &ty::ctxt, item: &ast::Item, warn_about_defns: bool,
 /// Helper for discovering nodes to check for stability
 pub fn check_expr(tcx: &ty::ctxt, e: &ast::Expr,
                   cb: &mut FnMut(ast::DefId, Span, &Option<Stability>)) {
-    if is_internal(tcx, e.span) { return; }
-
     let span;
     let id = match e.node {
         ast::ExprMethodCall(i, _, _) => {
@@ -385,6 +370,76 @@ pub fn check_expr(tcx: &ty::ctxt, e: &ast::Expr,
                 None => return
             }
         }
+        ast::ExprField(ref base_e, ref field) => {
+            span = field.span;
+            match ty::expr_ty_adjusted(tcx, base_e).sty {
+                ty::ty_struct(did, _) => {
+                    ty::lookup_struct_fields(tcx, did)
+                        .iter()
+                        .find(|f| f.name == field.node.name)
+                        .unwrap_or_else(|| {
+                            tcx.sess.span_bug(field.span,
+                                              "stability::check_expr: unknown named field access")
+                        })
+                        .id
+                }
+                _ => tcx.sess.span_bug(e.span,
+                                       "stability::check_expr: named field access on non-struct")
+            }
+        }
+        ast::ExprTupField(ref base_e, ref field) => {
+            span = field.span;
+            match ty::expr_ty_adjusted(tcx, base_e).sty {
+                ty::ty_struct(did, _) => {
+                    ty::lookup_struct_fields(tcx, did)
+                        .get(field.node)
+                        .unwrap_or_else(|| {
+                            tcx.sess.span_bug(field.span,
+                                              "stability::check_expr: unknown unnamed field access")
+                        })
+                        .id
+                }
+                ty::ty_tup(..) => return,
+                _ => tcx.sess.span_bug(e.span,
+                                       "stability::check_expr: unnamed field access on \
+                                        something other than a tuple or struct")
+            }
+        }
+        ast::ExprStruct(_, ref expr_fields, _) => {
+            let type_ = ty::expr_ty(tcx, e);
+            match type_.sty {
+                ty::ty_struct(did, _) => {
+                    let struct_fields = ty::lookup_struct_fields(tcx, did);
+                    // check the stability of each field that appears
+                    // in the construction expression.
+                    for field in expr_fields {
+                        let did = struct_fields
+                            .iter()
+                            .find(|f| f.name == field.ident.node.name)
+                            .unwrap_or_else(|| {
+                                tcx.sess.span_bug(field.span,
+                                                  "stability::check_expr: unknown named \
+                                                   field access")
+                            })
+                            .id;
+                        maybe_do_stability_check(tcx, did, field.span, cb);
+                    }
+
+                    // we're done.
+                    return
+                }
+                // we don't look at stability attributes on
+                // struct-like enums (yet...), but it's definitely not
+                // a bug to have construct one.
+                ty::ty_enum(..) => return,
+                _ => {
+                    tcx.sess.span_bug(e.span,
+                                      &format!("stability::check_expr: struct construction \
+                                                of non-struct, type {:?}",
+                                               type_.repr(tcx)));
+                }
+            }
+        }
         _ => return
     };
 
@@ -393,23 +448,67 @@ pub fn check_expr(tcx: &ty::ctxt, e: &ast::Expr,
 
 pub fn check_path(tcx: &ty::ctxt, path: &ast::Path, id: ast::NodeId,
                   cb: &mut FnMut(ast::DefId, Span, &Option<Stability>)) {
-    let did = match tcx.def_map.borrow().get(&id) {
-        Some(&def::DefPrimTy(..)) => return,
-        Some(def) => def.def_id(),
-        None => return
+    match tcx.def_map.borrow().get(&id).map(|d| d.full_def()) {
+        Some(def::DefPrimTy(..)) => {}
+        Some(def) => {
+            maybe_do_stability_check(tcx, def.def_id(), path.span, cb);
+        }
+        None => {}
+    }
+
+}
+
+pub fn check_pat(tcx: &ty::ctxt, pat: &ast::Pat,
+                 cb: &mut FnMut(ast::DefId, Span, &Option<Stability>)) {
+    debug!("check_pat(pat = {:?})", pat);
+    if is_internal(tcx, pat.span) { return; }
+
+    let did = match ty::pat_ty_opt(tcx, pat) {
+        Some(&ty::TyS { sty: ty::ty_struct(did, _), .. }) => did,
+        Some(_) | None => return,
     };
-    maybe_do_stability_check(tcx, did, path.span, cb)
+    let struct_fields = ty::lookup_struct_fields(tcx, did);
+    match pat.node {
+        // Foo(a, b, c)
+        ast::PatEnum(_, Some(ref pat_fields)) => {
+            for (field, struct_field) in pat_fields.iter().zip(struct_fields.iter()) {
+                // a .. pattern is fine, but anything positional is
+                // not.
+                if let ast::PatWild(ast::PatWildMulti) = field.node {
+                    continue
+                }
+                maybe_do_stability_check(tcx, struct_field.id, field.span, cb)
+            }
+        }
+        // Foo { a, b, c }
+        ast::PatStruct(_, ref pat_fields, _) => {
+            for field in pat_fields {
+                let did = struct_fields
+                    .iter()
+                    .find(|f| f.name == field.node.ident.name)
+                    .unwrap_or_else(|| {
+                        tcx.sess.span_bug(field.span,
+                                          "stability::check_pat: unknown named field access")
+                    })
+                    .id;
+                maybe_do_stability_check(tcx, did, field.span, cb);
+            }
+        }
+        // everything else is fine.
+        _ => {}
+    }
 }
 
 fn maybe_do_stability_check(tcx: &ty::ctxt, id: ast::DefId, span: Span,
                             cb: &mut FnMut(ast::DefId, Span, &Option<Stability>)) {
     if !is_staged_api(tcx, id) { return  }
+    if is_internal(tcx, span) { return }
     let ref stability = lookup(tcx, id);
     cb(id, span, stability);
 }
 
 fn is_internal(tcx: &ty::ctxt, span: Span) -> bool {
-    tcx.sess.codemap().span_is_internal(span)
+    tcx.sess.codemap().span_allows_unstable(span)
 }
 
 fn is_staged_api(tcx: &ty::ctxt, id: DefId) -> bool {

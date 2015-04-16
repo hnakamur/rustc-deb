@@ -11,6 +11,10 @@
 //! Utility mixins that apply to all Readers and Writers
 
 #![allow(missing_docs)]
+#![unstable(feature = "old_io")]
+#![deprecated(since = "1.0.0",
+              reason = "functionality will be removed with no immediate \
+                        replacement")]
 
 // FIXME: Not sure how this should be structured
 // FIXME: Iteration should probably be considered separately
@@ -22,9 +26,7 @@ use num::Int;
 use ops::FnOnce;
 use option::Option;
 use option::Option::{Some, None};
-use ptr::PtrExt;
 use result::Result::{Ok, Err};
-use slice::SliceExt;
 
 /// An iterator that reads a single byte on each iteration,
 /// until `.read_byte()` returns `EndOfFile`.
@@ -79,7 +81,7 @@ impl<'r, R: Reader> Iterator for Bytes<'r, R> {
 /// * `f`: A callback that receives the value.
 ///
 /// This function returns the value returned by the callback, for convenience.
-pub fn u64_to_le_bytes<T, F>(n: u64, size: uint, f: F) -> T where
+pub fn u64_to_le_bytes<T, F>(n: u64, size: usize, f: F) -> T where
     F: FnOnce(&[u8]) -> T,
 {
     use mem::transmute;
@@ -97,7 +99,7 @@ pub fn u64_to_le_bytes<T, F>(n: u64, size: uint, f: F) -> T where
         let mut i = size;
         let mut n = n;
         while i > 0 {
-            bytes.push((n & 255_u64) as u8);
+            bytes.push((n & 255) as u8);
             n >>= 8;
             i -= 1;
         }
@@ -120,7 +122,7 @@ pub fn u64_to_le_bytes<T, F>(n: u64, size: uint, f: F) -> T where
 /// * `f`: A callback that receives the value.
 ///
 /// This function returns the value returned by the callback, for convenience.
-pub fn u64_to_be_bytes<T, F>(n: u64, size: uint, f: F) -> T where
+pub fn u64_to_be_bytes<T, F>(n: u64, size: usize, f: F) -> T where
     F: FnOnce(&[u8]) -> T,
 {
     use mem::transmute;
@@ -156,9 +158,8 @@ pub fn u64_to_be_bytes<T, F>(n: u64, size: uint, f: F) -> T where
 ///           less, or task panic occurs. If this is less than 8, then only
 ///           that many bytes are parsed. For example, if `size` is 4, then a
 ///           32-bit value is parsed.
-pub fn u64_from_be_bytes(data: &[u8], start: uint, size: uint) -> u64 {
-    use ptr::{copy_nonoverlapping_memory};
-    use slice::SliceExt;
+pub fn u64_from_be_bytes(data: &[u8], start: usize, size: usize) -> u64 {
+    use ptr::{copy_nonoverlapping};
 
     assert!(size <= 8);
 
@@ -166,11 +167,11 @@ pub fn u64_from_be_bytes(data: &[u8], start: uint, size: uint) -> u64 {
         panic!("index out of bounds");
     }
 
-    let mut buf = [0u8; 8];
+    let mut buf = [0; 8];
     unsafe {
-        let ptr = data.as_ptr().offset(start as int);
+        let ptr = data.as_ptr().offset(start as isize);
         let out = buf.as_mut_ptr();
-        copy_nonoverlapping_memory(out.offset((8 - size) as int), ptr, size);
+        copy_nonoverlapping(ptr, out.offset((8 - size) as isize), size);
         (*(out as *const u64)).to_be()
     }
 }
@@ -178,15 +179,15 @@ pub fn u64_from_be_bytes(data: &[u8], start: uint, size: uint) -> u64 {
 #[cfg(test)]
 mod test {
     use prelude::v1::*;
-    use old_io;
+    use old_io::{self, Reader, Writer};
     use old_io::{MemReader, BytesReader};
 
     struct InitialZeroByteReader {
-        count: int,
+        count: isize,
     }
 
     impl Reader for InitialZeroByteReader {
-        fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+        fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
             if self.count == 0 {
                 self.count = 1;
                 Ok(0)
@@ -200,7 +201,7 @@ mod test {
     struct EofReader;
 
     impl Reader for EofReader {
-        fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<uint> {
+        fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<usize> {
             Err(old_io::standard_error(old_io::EndOfFile))
         }
     }
@@ -208,17 +209,17 @@ mod test {
     struct ErroringReader;
 
     impl Reader for ErroringReader {
-        fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<uint> {
+        fn read(&mut self, _: &mut [u8]) -> old_io::IoResult<usize> {
             Err(old_io::standard_error(old_io::InvalidInput))
         }
     }
 
     struct PartialReader {
-        count: int,
+        count: isize,
     }
 
     impl Reader for PartialReader {
-        fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+        fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
             if self.count == 0 {
                 self.count = 1;
                 buf[0] = 10;
@@ -233,11 +234,11 @@ mod test {
     }
 
     struct ErroringLaterReader {
-        count: int,
+        count: isize,
     }
 
     impl Reader for ErroringLaterReader {
-        fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+        fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
             if self.count == 0 {
                 self.count = 1;
                 buf[0] = 10;
@@ -249,11 +250,11 @@ mod test {
     }
 
     struct ThreeChunkReader {
-        count: int,
+        count: isize,
     }
 
     impl Reader for ThreeChunkReader {
-        fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<uint> {
+        fn read(&mut self, buf: &mut [u8]) -> old_io::IoResult<usize> {
             if self.count == 0 {
                 self.count = 1;
                 buf[0] = 10;
@@ -328,7 +329,7 @@ mod test {
     fn read_bytes() {
         let mut reader = MemReader::new(vec!(10, 11, 12, 13));
         let bytes = reader.read_exact(4).unwrap();
-        assert!(bytes == vec!(10, 11, 12, 13));
+        assert_eq!(bytes, [10, 11, 12, 13]);
     }
 
     #[test]
@@ -337,7 +338,7 @@ mod test {
             count: 0,
         };
         let bytes = reader.read_exact(4).unwrap();
-        assert!(bytes == vec!(10, 11, 12, 13));
+        assert_eq!(bytes, [10, 11, 12, 13]);
     }
 
     #[test]
@@ -351,7 +352,7 @@ mod test {
         let mut reader = MemReader::new(vec![10, 11, 12, 13]);
         let mut buf = vec![8, 9];
         assert!(reader.push_at_least(4, 4, &mut buf).is_ok());
-        assert!(buf == vec![8, 9, 10, 11, 12, 13]);
+        assert_eq!(buf, [8, 9, 10, 11, 12, 13]);
     }
 
     #[test]
@@ -361,7 +362,7 @@ mod test {
         };
         let mut buf = vec![8, 9];
         assert!(reader.push_at_least(4, 4, &mut buf).is_ok());
-        assert!(buf == vec![8, 9, 10, 11, 12, 13]);
+        assert_eq!(buf, [8, 9, 10, 11, 12, 13]);
     }
 
     #[test]
@@ -369,7 +370,7 @@ mod test {
         let mut reader = MemReader::new(vec![10, 11]);
         let mut buf = vec![8, 9];
         assert!(reader.push_at_least(4, 4, &mut buf).is_err());
-        assert!(buf == vec![8, 9, 10, 11]);
+        assert_eq!(buf, [8, 9, 10, 11]);
     }
 
     #[test]
@@ -379,7 +380,7 @@ mod test {
         };
         let mut buf = vec![8, 9];
         assert!(reader.push_at_least(4, 4, &mut buf).is_err());
-        assert!(buf == vec![8, 9, 10]);
+        assert_eq!(buf, [8, 9, 10]);
     }
 
     #[test]
@@ -388,17 +389,17 @@ mod test {
             count: 0,
         };
         let buf = reader.read_to_end().unwrap();
-        assert!(buf == vec!(10, 11, 12, 13));
+        assert_eq!(buf, [10, 11, 12, 13]);
     }
 
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn read_to_end_error() {
         let mut reader = ThreeChunkReader {
             count: 0,
         };
         let buf = reader.read_to_end().unwrap();
-        assert!(buf == vec!(10, 11));
+        assert_eq!(buf, [10, 11]);
     }
 
     #[test]
@@ -518,8 +519,9 @@ mod bench {
         ({
             use super::u64_from_be_bytes;
 
-            let data = (0u8..$stride*100+$start_index).collect::<Vec<_>>();
-            let mut sum = 0u64;
+            let len = ($stride as u8).wrapping_mul(100).wrapping_add($start_index);
+            let data = (0..len).collect::<Vec<_>>();
+            let mut sum = 0;
             $b.iter(|| {
                 let mut i = $start_index;
                 while i < data.len() {

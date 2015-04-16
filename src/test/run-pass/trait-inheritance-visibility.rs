@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-mod traits {
-    pub trait Foo { fn f(&self) -> int; }
+// pretty-expanded FIXME #23616
 
-    impl Foo for int { fn f(&self) -> int { 10 } }
+mod traits {
+    pub trait Foo { fn f(&self) -> isize; }
+
+    impl Foo for isize { fn f(&self) -> isize { 10 } }
 }
 
 trait Quux: traits::Foo { }

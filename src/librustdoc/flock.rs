@@ -20,9 +20,11 @@ pub use self::imp::Lock;
 
 #[cfg(unix)]
 mod imp {
-    use std::ffi::CString;
+    use std::ffi::{CString, OsStr};
+    use std::os::unix::prelude::*;
+    use std::path::Path;
+    use std::io;
     use libc;
-    use std::os as stdos;
 
     #[cfg(target_os = "linux")]
     mod os {
@@ -64,7 +66,9 @@ mod imp {
         pub const F_SETLKW: libc::c_int = 13;
     }
 
-    #[cfg(any(target_os = "dragonfly", target_os = "openbsd"))]
+    #[cfg(any(target_os = "dragonfly",
+              target_os = "bitrig",
+              target_os = "openbsd"))]
     mod os {
         use libc;
 
@@ -112,13 +116,14 @@ mod imp {
 
     impl Lock {
         pub fn new(p: &Path) -> Lock {
-            let buf = CString::new(p.as_vec()).unwrap();
+            let os: &OsStr = p.as_ref();
+            let buf = CString::new(os.as_bytes()).unwrap();
             let fd = unsafe {
                 libc::open(buf.as_ptr(), libc::O_RDWR | libc::O_CREAT,
                            libc::S_IRWXU)
             };
-            assert!(fd > 0, "failed to open lockfile: [{}] {}",
-                    stdos::errno(), stdos::last_os_error());
+            assert!(fd > 0, "failed to open lockfile: {}",
+                    io::Error::last_os_error());
             let flock = os::flock {
                 l_start: 0,
                 l_len: 0,
@@ -131,10 +136,9 @@ mod imp {
                 libc::fcntl(fd, os::F_SETLKW, &flock)
             };
             if ret == -1 {
-                let errno = stdos::errno();
+                let err = io::Error::last_os_error();
                 unsafe { libc::close(fd); }
-                panic!("could not lock `{}`: [{}] {}", p.display(),
-                       errno, stdos::error_string(errno))
+                panic!("could not lock `{}`: {}", p.display(), err);
             }
             Lock { fd: fd }
         }
@@ -161,11 +165,14 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use libc;
+    use std::io;
     use std::mem;
-    use std::os;
+    use std::ffi::OsStr;
+    use std::os::windows::prelude::*;
+    use std::path::Path;
     use std::ptr;
 
-    static LOCKFILE_EXCLUSIVE_LOCK: libc::DWORD = 0x00000002;
+    const LOCKFILE_EXCLUSIVE_LOCK: libc::DWORD = 0x00000002;
 
     #[allow(non_snake_case)]
     extern "system" {
@@ -188,7 +195,8 @@ mod imp {
 
     impl Lock {
         pub fn new(p: &Path) -> Lock {
-            let mut p_16: Vec<u16> = p.as_str().unwrap().utf16_units().collect();
+            let os: &OsStr = p.as_ref();
+            let mut p_16: Vec<_> = os.encode_wide().collect();
             p_16.push(0);
             let handle = unsafe {
                 libc::CreateFileW(p_16.as_ptr(),
@@ -203,8 +211,7 @@ mod imp {
                                   ptr::null_mut())
             };
             if handle == libc::INVALID_HANDLE_VALUE {
-                panic!("create file error: [{}] {}",
-                       os::errno(), os::last_os_error());
+                panic!("create file error: {}", io::Error::last_os_error());
             }
             let mut overlapped: libc::OVERLAPPED = unsafe { mem::zeroed() };
             let ret = unsafe {
@@ -212,10 +219,9 @@ mod imp {
                            &mut overlapped)
             };
             if ret == 0 {
-                let errno = os::errno();
+                let err = io::Error::last_os_error();
                 unsafe { libc::CloseHandle(handle); }
-                panic!("could not lock `{}`: [{}] {}", p.display(),
-                       errno, os::error_string(errno));
+                panic!("could not lock `{}`: {}", p.display(), err);
             }
             Lock { handle: handle }
         }

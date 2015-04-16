@@ -14,25 +14,16 @@
 
 use prelude::v1::*;
 
-use ffi::OsStr;
+use ffi::{OsStr, OsString};
 use io::{self, ErrorKind};
 use libc;
 use mem;
-use old_io::{self, IoResult, IoError};
+#[allow(deprecated)]
 use num::Int;
-use os::windows::OsStrExt;
+use old_io::{self, IoResult, IoError};
+use os::windows::ffi::{OsStrExt, OsStringExt};
+use path::PathBuf;
 use sync::{Once, ONCE_INIT};
-
-macro_rules! helper_init { (static $name:ident: Helper<$m:ty>) => (
-    static $name: Helper<$m> = Helper {
-        lock: ::sync::MUTEX_INIT,
-        cond: ::sync::CONDVAR_INIT,
-        chan: ::cell::UnsafeCell { value: 0 as *mut ::sync::mpsc::Sender<$m> },
-        signal: ::cell::UnsafeCell { value: 0 },
-        initialized: ::cell::UnsafeCell { value: false },
-        shutdown: ::cell::UnsafeCell { value: false },
-    };
-) }
 
 pub mod backtrace;
 pub mod c;
@@ -60,6 +51,7 @@ pub mod time;
 pub mod timer;
 pub mod tty;
 pub mod udp;
+pub mod stdio;
 
 pub mod addrinfo {
     pub use sys_common::net::get_host_addresses;
@@ -73,6 +65,7 @@ pub type msglen_t = libc::c_int;
 pub unsafe fn close_sock(sock: sock_t) { let _ = libc::closesocket(sock); }
 
 // windows has zero values as errors
+#[allow(deprecated)]
 fn mkerr_winbool(ret: libc::c_int) -> IoResult<()> {
     if ret == 0 {
         Err(last_error())
@@ -81,6 +74,7 @@ fn mkerr_winbool(ret: libc::c_int) -> IoResult<()> {
     }
 }
 
+#[allow(deprecated)]
 pub fn last_error() -> IoError {
     let errno = os::errno() as i32;
     let mut err = decode_error(errno);
@@ -88,6 +82,7 @@ pub fn last_error() -> IoError {
     err
 }
 
+#[allow(deprecated)]
 pub fn last_net_error() -> IoError {
     let errno = unsafe { c::WSAGetLastError() as i32 };
     let mut err = decode_error(errno);
@@ -95,11 +90,13 @@ pub fn last_net_error() -> IoError {
     err
 }
 
+#[allow(deprecated)]
 pub fn last_gai_error(_errno: i32) -> IoError {
     last_net_error()
 }
 
 /// Convert an `errno` value into a high-level error variant and description.
+#[allow(deprecated)]
 pub fn decode_error(errno: i32) -> IoError {
     let (kind, desc) = match errno {
         libc::EOF => (old_io::EndOfFile, "end of file"),
@@ -143,6 +140,7 @@ pub fn decode_error(errno: i32) -> IoError {
     IoError { kind: kind, desc: desc, detail: None }
 }
 
+#[allow(deprecated)]
 pub fn decode_error_detailed(errno: i32) -> IoError {
     let mut err = decode_error(errno);
     err.detail = Some(os::error_string(errno));
@@ -152,25 +150,21 @@ pub fn decode_error_detailed(errno: i32) -> IoError {
 pub fn decode_error_kind(errno: i32) -> ErrorKind {
     match errno as libc::c_int {
         libc::ERROR_ACCESS_DENIED => ErrorKind::PermissionDenied,
-        libc::ERROR_ALREADY_EXISTS => ErrorKind::PathAlreadyExists,
+        libc::ERROR_ALREADY_EXISTS => ErrorKind::AlreadyExists,
         libc::ERROR_BROKEN_PIPE => ErrorKind::BrokenPipe,
-        libc::ERROR_FILE_NOT_FOUND => ErrorKind::FileNotFound,
-        libc::ERROR_INVALID_FUNCTION => ErrorKind::InvalidInput,
-        libc::ERROR_INVALID_HANDLE => ErrorKind::MismatchedFileTypeForOperation,
-        libc::ERROR_INVALID_NAME => ErrorKind::InvalidInput,
-        libc::ERROR_NOTHING_TO_TERMINATE => ErrorKind::InvalidInput,
+        libc::ERROR_FILE_NOT_FOUND => ErrorKind::NotFound,
         libc::ERROR_NO_DATA => ErrorKind::BrokenPipe,
         libc::ERROR_OPERATION_ABORTED => ErrorKind::TimedOut,
 
         libc::WSAEACCES => ErrorKind::PermissionDenied,
-        libc::WSAEADDRINUSE => ErrorKind::ConnectionRefused,
-        libc::WSAEADDRNOTAVAIL => ErrorKind::ConnectionRefused,
+        libc::WSAEADDRINUSE => ErrorKind::AddrInUse,
+        libc::WSAEADDRNOTAVAIL => ErrorKind::AddrNotAvailable,
         libc::WSAECONNABORTED => ErrorKind::ConnectionAborted,
         libc::WSAECONNREFUSED => ErrorKind::ConnectionRefused,
         libc::WSAECONNRESET => ErrorKind::ConnectionReset,
         libc::WSAEINVAL => ErrorKind::InvalidInput,
         libc::WSAENOTCONN => ErrorKind::NotConnected,
-        libc::WSAEWOULDBLOCK => ErrorKind::ResourceUnavailable,
+        libc::WSAEWOULDBLOCK => ErrorKind::WouldBlock,
 
         _ => ErrorKind::Other,
     }
@@ -187,17 +181,19 @@ pub fn ms_to_timeval(ms: u64) -> libc::timeval {
     }
 }
 
+#[allow(deprecated)]
 pub fn wouldblock() -> bool {
     let err = os::errno();
     err == libc::WSAEWOULDBLOCK as i32
 }
 
-pub fn set_nonblocking(fd: sock_t, nb: bool) -> IoResult<()> {
+#[allow(deprecated)]
+pub fn set_nonblocking(fd: sock_t, nb: bool) {
     let mut set = nb as libc::c_ulong;
-    if unsafe { c::ioctlsocket(fd, c::FIONBIO, &mut set) != 0 } {
-        Err(last_error())
-    } else {
-        Ok(())
+    if unsafe { c::ioctlsocket(fd, c::FIONBIO, &mut set) } != 0 {
+        // The above function should not return an error unless we passed it
+        // invalid parameters. Panic on errors.
+        panic!("set_nonblocking called with invalid parameters: {}", last_error());
     }
 }
 
@@ -214,15 +210,8 @@ pub fn init_net() {
     }
 }
 
-pub fn unimpl() -> IoError {
-    IoError {
-        kind: old_io::IoUnavailable,
-        desc: "operation is not implemented",
-        detail: None,
-    }
-}
-
-fn to_utf16(s: Option<&str>) -> IoResult<Vec<u16>> {
+#[allow(deprecated)]
+pub fn to_utf16(s: Option<&str>) -> IoResult<Vec<u16>> {
     match s {
         Some(s) => Ok(to_utf16_os(OsStr::from_str(s))),
         None => Err(IoError {
@@ -300,6 +289,7 @@ fn fill_utf16_buf_base<F1, F2, T>(mut f1: F1, f2: F2) -> Result<T, ()>
     }
 }
 
+#[allow(deprecated)]
 fn fill_utf16_buf<F1, F2, T>(f1: F1, f2: F2) -> IoResult<T>
     where F1: FnMut(*mut u16, libc::DWORD) -> libc::DWORD,
           F2: FnOnce(&[u16]) -> T
@@ -314,9 +304,8 @@ fn fill_utf16_buf_new<F1, F2, T>(f1: F1, f2: F2) -> io::Result<T>
     fill_utf16_buf_base(f1, f2).map_err(|()| io::Error::last_os_error())
 }
 
-fn os2path(s: &[u16]) -> Path {
-    // FIXME: this should not be a panicking conversion (aka path reform)
-    Path::new(String::from_utf16(s).unwrap())
+fn os2path(s: &[u16]) -> PathBuf {
+    PathBuf::from(OsString::from_wide(s))
 }
 
 pub fn truncate_utf16_at_nul<'a>(v: &'a [u16]) -> &'a [u16] {
@@ -327,6 +316,7 @@ pub fn truncate_utf16_at_nul<'a>(v: &'a [u16]) -> &'a [u16] {
     }
 }
 
+#[allow(deprecated)]
 fn cvt<I: Int>(i: I) -> io::Result<I> {
     if i == Int::zero() {
         Err(io::Error::last_os_error())

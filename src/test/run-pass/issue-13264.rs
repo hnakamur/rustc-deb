@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 use std::ops::Deref;
 
 struct Root {
@@ -22,7 +24,7 @@ impl Deref for Root {
     }
 }
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 struct JSRef {
     node: *const Node
 }
@@ -60,10 +62,10 @@ impl JSRef {
 struct Node;
 
 impl Node {
-    fn RemoveChild(&self, _a: uint) {
+    fn RemoveChild(&self, _a: usize) {
     }
 
-    fn AddChild(&self, _a: uint) {
+    fn AddChild(&self, _a: usize) {
     }
 }
 

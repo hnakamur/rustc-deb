@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(intrinsics)]
 
 mod rusti {
@@ -16,5 +18,5 @@ mod rusti {
     }
 }
 pub fn main() {
-    let _a : int = unsafe {rusti::uninit()};
+    let _a : isize = unsafe {rusti::uninit()};
 }

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(dead_assignment)]
 #![allow(unused_variable)]
 #![allow(unknown_features)]
@@ -16,6 +18,6 @@
 enum option<T> { some(Box<T>), none, }
 
 pub fn main() {
-    let mut a: option<int> = option::some::<int>(box 10);
-    a = option::none::<int>;
+    let mut a: option<isize> = option::some::<isize>(box 10);
+    a = option::none::<isize>;
 }

@@ -18,7 +18,7 @@ use std::ascii::OwnedAsciiExt;
 use std::mem::replace;
 use std::iter::repeat;
 
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 enum States {
     Nothing,
     Percent,
@@ -27,15 +27,15 @@ enum States {
     PushParam,
     CharConstant,
     CharClose,
-    IntConstant(int),
+    IntConstant(isize),
     FormatPattern(Flags, FormatState),
-    SeekIfElse(int),
-    SeekIfElsePercent(int),
-    SeekIfEnd(int),
-    SeekIfEndPercent(int)
+    SeekIfElse(isize),
+    SeekIfElsePercent(isize),
+    SeekIfEnd(isize),
+    SeekIfEndPercent(isize)
 }
 
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 enum FormatState {
     FormatStateFlags,
     FormatStateWidth,
@@ -47,7 +47,7 @@ enum FormatState {
 #[derive(Clone)]
 pub enum Param {
     Words(String),
-    Number(int)
+    Number(isize)
 }
 
 /// Container for static and dynamic variable arrays
@@ -128,7 +128,7 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
                             // if c is 0, use 0200 (128) for ncurses compatibility
                             Number(c) => {
                                 output.push(if c == 0 {
-                                    128u8
+                                    128
                                 } else {
                                     c as u8
                                 })
@@ -143,7 +143,7 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
                     '{' => state = IntConstant(0),
                     'l' => if stack.len() > 0 {
                         match stack.pop().unwrap() {
-                            Words(s) => stack.push(Number(s.len() as int)),
+                            Words(s) => stack.push(Number(s.len() as isize)),
                             _        => return Err("a non-str was used with %l".to_string())
                         }
                     } else { return Err("stack is empty".to_string()) },
@@ -268,7 +268,7 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
                             ' ' => flags.space = true,
                             '.' => fstate = FormatStatePrecision,
                             '0'...'9' => {
-                                flags.width = cur as uint - '0' as uint;
+                                flags.width = cur as usize - '0' as usize;
                                 fstate = FormatStateWidth;
                             }
                             _ => unreachable!()
@@ -305,12 +305,12 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
                 if cur >= 'A' && cur <= 'Z' {
                     if stack.len() > 0 {
                         let idx = (cur as u8) - b'A';
-                        vars.sta[idx as uint] = stack.pop().unwrap();
+                        vars.sta[idx as usize] = stack.pop().unwrap();
                     } else { return Err("stack is empty".to_string()) }
                 } else if cur >= 'a' && cur <= 'z' {
                     if stack.len() > 0 {
                         let idx = (cur as u8) - b'a';
-                        vars.dyn[idx as uint] = stack.pop().unwrap();
+                        vars.dyn[idx as usize] = stack.pop().unwrap();
                     } else { return Err("stack is empty".to_string()) }
                 } else {
                     return Err("bad variable name in %P".to_string());
@@ -319,16 +319,16 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
             GetVar => {
                 if cur >= 'A' && cur <= 'Z' {
                     let idx = (cur as u8) - b'A';
-                    stack.push(vars.sta[idx as uint].clone());
+                    stack.push(vars.sta[idx as usize].clone());
                 } else if cur >= 'a' && cur <= 'z' {
                     let idx = (cur as u8) - b'a';
-                    stack.push(vars.dyn[idx as uint].clone());
+                    stack.push(vars.dyn[idx as usize].clone());
                 } else {
                     return Err("bad variable name in %g".to_string());
                 }
             },
             CharConstant => {
-                stack.push(Number(c as int));
+                stack.push(Number(c as isize));
                 state = CharClose;
             },
             CharClose => {
@@ -343,10 +343,10 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
                         state = Nothing;
                     }
                     '0'...'9' => {
-                        state = IntConstant(i*10 + (cur as int - '0' as int));
+                        state = IntConstant(i*10 + (cur as isize - '0' as isize));
                         old_state = Nothing;
                     }
-                    _ => return Err("bad int constant".to_string())
+                    _ => return Err("bad isize constant".to_string())
                 }
             }
             FormatPattern(ref mut flags, ref mut fstate) => {
@@ -372,7 +372,7 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
                         flags.space = true;
                     }
                     (FormatStateFlags,'0'...'9') => {
-                        flags.width = cur as uint - '0' as uint;
+                        flags.width = cur as usize - '0' as usize;
                         *fstate = FormatStateWidth;
                     }
                     (FormatStateFlags,'.') => {
@@ -380,7 +380,7 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
                     }
                     (FormatStateWidth,'0'...'9') => {
                         let old = flags.width;
-                        flags.width = flags.width * 10 + (cur as uint - '0' as uint);
+                        flags.width = flags.width * 10 + (cur as usize - '0' as usize);
                         if flags.width < old { return Err("format width overflow".to_string()) }
                     }
                     (FormatStateWidth,'.') => {
@@ -388,7 +388,7 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
                     }
                     (FormatStatePrecision,'0'...'9') => {
                         let old = flags.precision;
-                        flags.precision = flags.precision * 10 + (cur as uint - '0' as uint);
+                        flags.precision = flags.precision * 10 + (cur as usize - '0' as usize);
                         if flags.precision < old {
                             return Err("format precision overflow".to_string())
                         }
@@ -444,10 +444,10 @@ pub fn expand(cap: &[u8], params: &[Param], vars: &mut Variables)
     Ok(output)
 }
 
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 struct Flags {
-    width: uint,
-    precision: uint,
+    width: usize,
+    precision: usize,
     alternate: bool,
     left: bool,
     sign: bool,
@@ -461,7 +461,7 @@ impl Flags {
     }
 }
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 enum FormatOp {
     FormatDigit,
     FormatOctal,
@@ -647,20 +647,20 @@ mod test {
 
     #[test]
     fn test_comparison_ops() {
-        let v = [('<', [1u8, 0u8, 0u8]), ('=', [0u8, 1u8, 0u8]), ('>', [0u8, 0u8, 1u8])];
+        let v = [('<', [1, 0, 0]), ('=', [0, 1, 0]), ('>', [0, 0, 1])];
         for &(op, bs) in &v {
             let s = format!("%{{1}}%{{2}}%{}%d", op);
             let res = expand(s.as_bytes(), &[], &mut Variables::new());
             assert!(res.is_ok(), res.err().unwrap());
-            assert_eq!(res.unwrap(), vec!(b'0' + bs[0]));
+            assert_eq!(res.unwrap(), [b'0' + bs[0]]);
             let s = format!("%{{1}}%{{1}}%{}%d", op);
             let res = expand(s.as_bytes(), &[], &mut Variables::new());
             assert!(res.is_ok(), res.err().unwrap());
-            assert_eq!(res.unwrap(), vec!(b'0' + bs[1]));
+            assert_eq!(res.unwrap(), [b'0' + bs[1]]);
             let s = format!("%{{2}}%{{1}}%{}%d", op);
             let res = expand(s.as_bytes(), &[], &mut Variables::new());
             assert!(res.is_ok(), res.err().unwrap());
-            assert_eq!(res.unwrap(), vec!(b'0' + bs[2]));
+            assert_eq!(res.unwrap(), [b'0' + bs[2]]);
         }
     }
 

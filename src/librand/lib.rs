@@ -16,21 +16,25 @@
 //! is not recommended to use this library directly, but rather the official
 //! interface through `std::rand`.
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rand"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk.png",
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
-#![feature(int_uint)]
 #![feature(no_std)]
 #![no_std]
 #![unstable(feature = "rand")]
 #![feature(staged_api)]
 #![staged_api]
 #![feature(core)]
+#![feature(step_by)]
 #![deprecated(reason = "use the crates.io `rand` library instead",
               since = "1.0.0-alpha")]
+
+#![cfg_attr(test, feature(test, rand, rustc_private))]
 
 #![allow(deprecated)]
 
@@ -50,7 +54,7 @@ use distributions::{Range, IndependentSample};
 use distributions::range::SampleRange;
 
 #[cfg(test)]
-static RAND_BENCH_N: u64 = 100;
+const RAND_BENCH_N: u64 = 100;
 
 pub mod distributions;
 pub mod isaac;
@@ -95,8 +99,8 @@ pub trait Rng : Sized {
     /// See `Closed01` for the closed interval `[0,1]`, and
     /// `Open01` for the open interval `(0,1)`.
     fn next_f32(&mut self) -> f32 {
-        const MANTISSA_BITS: uint = 24;
-        const IGNORED_BITS: uint = 8;
+        const MANTISSA_BITS: usize = 24;
+        const IGNORED_BITS: usize = 8;
         const SCALE: f32 = (1u64 << MANTISSA_BITS) as f32;
 
         // using any more than `MANTISSA_BITS` bits will
@@ -117,8 +121,8 @@ pub trait Rng : Sized {
     /// See `Closed01` for the closed interval `[0,1]`, and
     /// `Open01` for the open interval `(0,1)`.
     fn next_f64(&mut self) -> f64 {
-        const MANTISSA_BITS: uint = 53;
-        const IGNORED_BITS: uint = 11;
+        const MANTISSA_BITS: usize = 53;
+        const IGNORED_BITS: usize = 11;
         const SCALE: f64 = (1u64 << MANTISSA_BITS) as f64;
 
         (self.next_u64() >> IGNORED_BITS) as f64 / SCALE
@@ -142,14 +146,15 @@ pub trait Rng : Sized {
     /// (e.g. reading past the end of a file that is being used as the
     /// source of randomness).
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(rand, core)]
     /// use std::rand::{thread_rng, Rng};
     ///
-    /// let mut v = [0u8; 13579];
+    /// let mut v = [0; 13579];
     /// thread_rng().fill_bytes(&mut v);
-    /// println!("{:?}", v.as_slice());
+    /// println!("{:?}", &v[..]);
     /// ```
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         // this could, in theory, be done by transmuting dest to a
@@ -177,13 +182,14 @@ pub trait Rng : Sized {
 
     /// Return a random value of a `Rand` type.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(rand)]
     /// use std::rand::{thread_rng, Rng};
     ///
     /// let mut rng = thread_rng();
-    /// let x: uint = rng.gen();
+    /// let x: usize = rng.gen();
     /// println!("{}", x);
     /// println!("{:?}", rng.gen::<(f64, bool)>());
     /// ```
@@ -195,13 +201,14 @@ pub trait Rng : Sized {
     /// Return an iterator that will yield an infinite number of randomly
     /// generated items.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(rand)]
     /// use std::rand::{thread_rng, Rng};
     ///
     /// let mut rng = thread_rng();
-    /// let x = rng.gen_iter::<uint>().take(10).collect::<Vec<uint>>();
+    /// let x = rng.gen_iter::<usize>().take(10).collect::<Vec<usize>>();
     /// println!("{:?}", x);
     /// println!("{:?}", rng.gen_iter::<(f64, bool)>().take(5)
     ///                     .collect::<Vec<(f64, bool)>>());
@@ -222,13 +229,14 @@ pub trait Rng : Sized {
     ///
     /// Panics if `low >= high`.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(rand)]
     /// use std::rand::{thread_rng, Rng};
     ///
     /// let mut rng = thread_rng();
-    /// let n: uint = rng.gen_range(0, 10);
+    /// let n: usize = rng.gen_range(0, 10);
     /// println!("{}", n);
     /// let m: f64 = rng.gen_range(-40.0f64, 1.3e5f64);
     /// println!("{}", m);
@@ -240,23 +248,25 @@ pub trait Rng : Sized {
 
     /// Return a bool with a 1 in n chance of true
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(rand)]
     /// use std::rand::{thread_rng, Rng};
     ///
     /// let mut rng = thread_rng();
     /// println!("{}", rng.gen_weighted_bool(3));
     /// ```
-    fn gen_weighted_bool(&mut self, n: uint) -> bool {
+    fn gen_weighted_bool(&mut self, n: usize) -> bool {
         n <= 1 || self.gen_range(0, n) == 0
     }
 
     /// Return an iterator of random characters from the set A-Z,a-z,0-9.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(rand)]
     /// use std::rand::{thread_rng, Rng};
     ///
     /// let s: String = thread_rng().gen_ascii_chars().take(10).collect();
@@ -270,9 +280,10 @@ pub trait Rng : Sized {
     ///
     /// Return `None` if `values` is empty.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # #![feature(rand)]
     /// use std::rand::{thread_rng, Rng};
     ///
     /// let choices = [1, 2, 4, 8, 16, 32];
@@ -290,17 +301,18 @@ pub trait Rng : Sized {
 
     /// Shuffle a mutable slice in place.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(rand, core)]
     /// use std::rand::{thread_rng, Rng};
     ///
     /// let mut rng = thread_rng();
     /// let mut y = [1, 2, 3];
     /// rng.shuffle(&mut y);
-    /// println!("{:?}", y.as_slice());
+    /// println!("{:?}", y);
     /// rng.shuffle(&mut y);
-    /// println!("{:?}", y.as_slice());
+    /// println!("{:?}", y);
     /// ```
     fn shuffle<T>(&mut self, values: &mut [T]) {
         let mut i = values.len();
@@ -340,7 +352,7 @@ impl<'a, R: Rng> Iterator for AsciiGenerator<'a, R> {
     type Item = char;
 
     fn next(&mut self) -> Option<char> {
-        static GEN_ASCII_STR_CHARSET: &'static [u8] =
+        const GEN_ASCII_STR_CHARSET: &'static [u8] =
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
               abcdefghijklmnopqrstuvwxyz\
               0123456789";
@@ -353,9 +365,10 @@ impl<'a, R: Rng> Iterator for AsciiGenerator<'a, R> {
 pub trait SeedableRng<Seed>: Rng {
     /// Reseed an RNG with the given seed.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(rand)]
     /// use std::rand::{Rng, SeedableRng, StdRng};
     ///
     /// let seed: &[_] = &[1, 2, 3, 4];
@@ -368,9 +381,10 @@ pub trait SeedableRng<Seed>: Rng {
 
     /// Create a new RNG with the given seed.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// # #![feature(rand)]
     /// use std::rand::{Rng, SeedableRng, StdRng};
     ///
     /// let seed: &[_] = &[1, 2, 3, 4];
@@ -473,8 +487,10 @@ impl Rand for XorShiftRng {
 /// `Rand` implementation for `f32` and `f64` for the half-open
 /// `[0,1)`.
 ///
-/// # Example
-/// ```rust
+/// # Examples
+///
+/// ```
+/// # #![feature(rand)]
 /// use std::rand::{random, Open01};
 ///
 /// let Open01(val) = random::<Open01<f32>>();
@@ -489,9 +505,10 @@ pub struct Open01<F>(pub F);
 /// `Rand` implementation of `f32` and `f64` for the half-open
 /// `[0,1)`.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(rand)]
 /// use std::rand::{random, Closed01};
 ///
 /// let Closed01(val) = random::<Closed01<f32>>();

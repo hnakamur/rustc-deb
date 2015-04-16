@@ -64,6 +64,7 @@ impl ItemType {
             clean::MacroItem(..)           => ItemType::Macro,
             clean::PrimitiveItem(..)       => ItemType::Primitive,
             clean::AssociatedTypeItem(..)  => ItemType::AssociatedType,
+            clean::DefaultImplItem(..)     => ItemType::Impl,
         }
     }
 
@@ -110,4 +111,3 @@ impl fmt::Display for ItemType {
         self.to_static_str().fmt(f)
     }
 }
-

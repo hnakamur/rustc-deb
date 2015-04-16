@@ -8,16 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// exec-env:RUST_LOG=rust-log-filter/foo
+// exec-env:RUST_LOG=rust_log_filter/foo
+
+// pretty-expanded FIXME #23616
 
 #![allow(unknown_features)]
-#![feature(box_syntax)]
+#![feature(box_syntax, std_misc, rustc_private)]
 
 #[macro_use]
 extern crate log;
 
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::thread::Thread;
+use std::thread;
 
 pub struct ChannelLogger {
     tx: Sender<String>
@@ -39,7 +41,7 @@ impl log::Logger for ChannelLogger {
 pub fn main() {
     let (logger, rx) = ChannelLogger::new();
 
-    let _t = Thread::spawn(move|| {
+    let _t = thread::scoped(move|| {
         log::set_logger(logger);
 
         info!("foo");

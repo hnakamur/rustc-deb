@@ -8,6 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(core)]
+
 use std::marker::MarkerTrait;
 
 trait Serializer : MarkerTrait {
@@ -17,7 +21,7 @@ trait Serializable {
     fn serialize<S:Serializer>(&self, s: S);
 }
 
-impl Serializable for int {
+impl Serializable for isize {
     fn serialize<S:Serializer>(&self, _s: S) { }
 }
 
@@ -29,7 +33,7 @@ impl<A:Serializable> Serializable for F<A> {
     }
 }
 
-impl Serializer for int {
+impl Serializer for isize {
 }
 
 pub fn main() {

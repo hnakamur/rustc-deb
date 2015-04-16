@@ -40,6 +40,8 @@
 
 // no-pretty-expanded FIXME #15189
 
+#![feature(core)]
+
 use std::iter::repeat;
 use std::sync::Arc;
 use std::sync::mpsc::channel;
@@ -169,7 +171,7 @@ fn make_masks() -> Vec<Vec<Vec<u64> > > {
         .map(|(id, p)| transform(p, id != 3))
         .collect();
 
-    (0i32..50).map(|yx| {
+    (0..50).map(|yx| {
         transforms.iter().enumerate().map(|(id, t)| {
             t.iter().filter_map(|p| mask(yx / 5, yx % 5, id, p)).collect()
         }).collect()
@@ -211,7 +213,7 @@ fn filter_masks(masks: &mut Vec<Vec<Vec<u64>>>) {
 
 // Gets the identifier of a mask.
 fn get_id(m: u64) -> u8 {
-    for id in 0u8..10 {
+    for id in 0..10 {
         if m & (1 << (id + 50) as usize) != 0 {return id;}
     }
     panic!("{:016x} does not have a valid identifier", m);

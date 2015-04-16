@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn destructure(x: Option<int>) -> int {
+// pretty-expanded FIXME #23616
+
+fn destructure(x: Option<isize>) -> isize {
     match x {
       None => 0,
       Some(ref v) => *v

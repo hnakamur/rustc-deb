@@ -12,9 +12,11 @@
 // UFCS-style calls to a method in `Trait` where `Self` was bound to a
 // trait object of type `Trait`. See also `ufcs-trait-object.rs`.
 
+// pretty-expanded FIXME #23616
+
 use std::fmt;
 
 fn main() {
-    let a: &fmt::Debug = &1_i32;
+    let a: &fmt::Debug = &1;
     format!("{:?}", a);
 }

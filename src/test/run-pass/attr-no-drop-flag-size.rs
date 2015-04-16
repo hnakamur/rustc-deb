@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(unsafe_destructor)]
 #![feature(unsafe_no_drop_flag)]
 
@@ -24,5 +26,5 @@ impl<T> Drop for Test<T> {
 }
 
 pub fn main() {
-    assert_eq!(size_of::<int>(), size_of::<Test<int>>());
+    assert_eq!(size_of::<isize>(), size_of::<Test<isize>>());
 }

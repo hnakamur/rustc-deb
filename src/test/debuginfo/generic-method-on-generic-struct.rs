@@ -114,24 +114,24 @@
 #![feature(box_syntax)]
 #![omit_gdb_pretty_printer_section]
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 struct Struct<T> {
     x: T
 }
 
 impl<T1> Struct<T1> {
 
-    fn self_by_ref<T2>(&self, arg1: int, arg2: T2) -> int {
+    fn self_by_ref<T2>(&self, arg1: isize, arg2: T2) -> isize {
         zzz(); // #break
         arg1
     }
 
-    fn self_by_val<T2>(self, arg1: int, arg2: T2) -> int {
+    fn self_by_val<T2>(self, arg1: isize, arg2: T2) -> isize {
         zzz(); // #break
         arg1
     }
 
-    fn self_owned<T2>(self: Box<Struct<T1>>, arg1: int, arg2: T2) -> int {
+    fn self_owned<T2>(self: Box<Struct<T1>>, arg1: isize, arg2: T2) -> isize {
         zzz(); // #break
         arg1
     }
@@ -142,11 +142,10 @@ fn main() {
     let _ = stack.self_by_ref(-1, 2_u16);
     let _ = stack.self_by_val(-3, -4_i16);
 
-    let owned = box Struct { x: 1234.5f64 };
+    let owned: Box<_> = box Struct { x: 1234.5f64 };
     let _ = owned.self_by_ref(-5, -6_i32);
     let _ = owned.self_by_val(-7, -8_i64);
     let _ = owned.self_owned(-9, -10.5_f32);
 }
 
 fn zzz() {()}
-

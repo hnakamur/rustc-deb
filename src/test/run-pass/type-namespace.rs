@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct A { a: int }
+// pretty-expanded FIXME #23616
 
-fn a(a: A) -> int { return a.a; }
+struct A { a: isize }
+
+fn a(a: A) -> isize { return a.a; }
 
 pub fn main() { let x: A = A {a: 1}; assert!((a(x) == 1)); }

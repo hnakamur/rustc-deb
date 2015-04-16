@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Test that we are able to infer that the type of `x` is `int` based
+// Test that we are able to infer that the type of `x` is `isize` based
 // on the expected type from the object.
 
-#![feature(unboxed_closures)]
+// pretty-expanded FIXME #23616
+
+#![feature(unboxed_closures, core)]
 
 use std::num::ToPrimitive;
 
 fn doit<T>(val: T, f: &Fn(T)) { f.call((val,)) }
 
 pub fn main() {
-    doit(0, &|x /*: int*/ | { x.to_int(); });
+    doit(0, &|x /*: isize*/ | { x.to_int(); });
 }

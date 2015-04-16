@@ -8,16 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-trait Foo { fn f(&self) -> int; }
-trait Bar : Foo { fn g(&self) -> int; }
+// pretty-expanded FIXME #23616
 
-struct A { x: int }
+trait Foo { fn f(&self) -> isize; }
+trait Bar : Foo { fn g(&self) -> isize; }
 
-impl Foo for A { fn f(&self) -> int { 10 } }
+struct A { x: isize }
+
+impl Foo for A { fn f(&self) -> isize { 10 } }
 
 impl Bar for A {
     // Testing that this impl can call the impl of Foo
-    fn g(&self) -> int { self.f() }
+    fn g(&self) -> isize { self.f() }
 }
 
 pub fn main() {

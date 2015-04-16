@@ -8,13 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::old_io::{Command, IoError, OtherIoError};
+use std::io;
+use std::process::Command;
 use target::TargetOptions;
 
 use self::Arch::*;
 
 #[allow(non_camel_case_types)]
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub enum Arch {
     Armv7,
     Armv7s,
@@ -40,16 +41,16 @@ pub fn get_sdk_root(sdk_name: &str) -> String {
                       .arg("--show-sdk-path")
                       .arg("-sdk")
                       .arg(sdk_name)
-                      .spawn()
-                      .and_then(|c| c.wait_with_output())
+                      .output()
                       .and_then(|output| {
                           if output.status.success() {
-                              Ok(String::from_utf8(output.output).unwrap())
+                              Ok(String::from_utf8(output.stdout).unwrap())
                           } else {
-                              Err(IoError {
-                                  kind: OtherIoError,
-                                  desc: "process exit with error",
-                                  detail: String::from_utf8(output.error).ok()})
+                              let error = String::from_utf8(output.stderr);
+                              let error = format!("process exit with error: {}",
+                                                  error.unwrap());
+                              Err(io::Error::new(io::ErrorKind::Other,
+                                                 &error[..]))
                           }
                       });
 

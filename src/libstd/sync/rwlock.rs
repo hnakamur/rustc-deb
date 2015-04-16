@@ -15,6 +15,7 @@ use marker;
 use ops::{Deref, DerefMut};
 use sync::poison::{self, LockResult, TryLockError, TryLockResult};
 use sys_common::rwlock as sys;
+use fmt;
 
 /// A reader-writer lock
 ///
@@ -64,8 +65,8 @@ pub struct RwLock<T> {
     data: UnsafeCell<T>,
 }
 
-unsafe impl<T:'static+Send> Send for RwLock<T> {}
-unsafe impl<T> Sync for RwLock<T> {}
+unsafe impl<T: Send + Sync> Send for RwLock<T> {}
+unsafe impl<T: Send + Sync> Sync for RwLock<T> {}
 
 /// Structure representing a statically allocated RwLock.
 ///
@@ -73,9 +74,10 @@ unsafe impl<T> Sync for RwLock<T> {}
 /// automatic global access as well as lazy initialization. The internal
 /// resources of this RwLock, however, must be manually deallocated.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
+/// # #![feature(std_misc)]
 /// use std::sync::{StaticRwLock, RW_LOCK_INIT};
 ///
 /// static LOCK: StaticRwLock = RW_LOCK_INIT;
@@ -96,9 +98,6 @@ pub struct StaticRwLock {
     lock: sys::RWLock,
     poison: poison::Flag,
 }
-
-unsafe impl Send for StaticRwLock {}
-unsafe impl Sync for StaticRwLock {}
 
 /// Constant initialization for a statically-initialized rwlock.
 #[unstable(feature = "std_misc",
@@ -131,7 +130,7 @@ pub struct RwLockWriteGuard<'a, T: 'a> {
 
 impl<'a, T> !marker::Send for RwLockWriteGuard<'a, T> {}
 
-impl<T: Send + Sync> RwLock<T> {
+impl<T> RwLock<T> {
     /// Creates a new instance of an `RwLock<T>` which is unlocked.
     ///
     /// # Examples
@@ -255,6 +254,19 @@ impl<T: Send + Sync> RwLock<T> {
 impl<T> Drop for RwLock<T> {
     fn drop(&mut self) {
         unsafe { self.inner.lock.destroy() }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: fmt::Debug> fmt::Debug for RwLock<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.try_read() {
+            Ok(guard) => write!(f, "RwLock {{ data: {:?} }}", *guard),
+            Err(TryLockError::Poisoned(err)) => {
+                write!(f, "RwLock {{ data: Poisoned({:?}) }}", **err.get_ref())
+            },
+            Err(TryLockError::WouldBlock) => write!(f, "RwLock {{ <locked> }}")
+        }
     }
 }
 
@@ -425,8 +437,8 @@ mod tests {
     #[test]
     fn frob() {
         static R: StaticRwLock = RW_LOCK_INIT;
-        static N: usize = 10;
-        static M: usize = 1000;
+        const N: usize = 10;
+        const M: usize = 1000;
 
         let (tx, rx) = channel::<()>();
         for _ in 0..N {
@@ -539,7 +551,7 @@ mod tests {
         let arc2 = arc.clone();
         let _ = thread::spawn(move|| -> () {
             struct Unwinder {
-                i: Arc<RwLock<int>>,
+                i: Arc<RwLock<isize>>,
             }
             impl Drop for Unwinder {
                 fn drop(&mut self) {

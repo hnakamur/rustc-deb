@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(intrinsics, main)]
 
 mod rusti {
     extern "rust-intrinsic" {
-        pub fn pref_align_of<T>() -> uint;
-        pub fn min_align_of<T>() -> uint;
+        pub fn pref_align_of<T>() -> usize;
+        pub fn min_align_of<T>() -> usize;
     }
 }
 
@@ -27,8 +29,8 @@ mod m {
     #[cfg(target_arch = "x86")]
     pub fn main() {
         unsafe {
-            assert_eq!(::rusti::pref_align_of::<u64>(), 8_usize);
-            assert_eq!(::rusti::min_align_of::<u64>(), 4_usize);
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8);
+            assert_eq!(::rusti::min_align_of::<u64>(), 4);
         }
     }
 
@@ -36,8 +38,20 @@ mod m {
     #[cfg(any(target_arch = "x86_64", target_arch = "arm", target_arch = "aarch64"))]
     pub fn main() {
         unsafe {
-            assert_eq!(::rusti::pref_align_of::<u64>(), 8_usize);
-            assert_eq!(::rusti::min_align_of::<u64>(), 8_usize);
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8);
+            assert_eq!(::rusti::min_align_of::<u64>(), 8);
+        }
+    }
+}
+
+#[cfg(target_os = "bitrig")]
+mod m {
+    #[main]
+    #[cfg(target_arch = "x86_64")]
+    pub fn main() {
+        unsafe {
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8);
+            assert_eq!(::rusti::min_align_of::<u64>(), 8);
         }
     }
 }
@@ -48,8 +62,8 @@ mod m {
     #[cfg(target_arch = "x86")]
     pub fn main() {
         unsafe {
-            assert_eq!(::rusti::pref_align_of::<u64>(), 8_usize);
-            assert_eq!(::rusti::min_align_of::<u64>(), 8_usize);
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8);
+            assert_eq!(::rusti::min_align_of::<u64>(), 8);
         }
     }
 
@@ -57,8 +71,8 @@ mod m {
     #[cfg(target_arch = "x86_64")]
     pub fn main() {
         unsafe {
-            assert_eq!(::rusti::pref_align_of::<u64>(), 8_usize);
-            assert_eq!(::rusti::min_align_of::<u64>(), 8_usize);
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8);
+            assert_eq!(::rusti::min_align_of::<u64>(), 8);
         }
     }
 }
@@ -69,8 +83,8 @@ mod m {
     #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
     pub fn main() {
         unsafe {
-            assert_eq!(::rusti::pref_align_of::<u64>(), 8_usize);
-            assert_eq!(::rusti::min_align_of::<u64>(), 8_usize);
+            assert_eq!(::rusti::pref_align_of::<u64>(), 8);
+            assert_eq!(::rusti::min_align_of::<u64>(), 8);
         }
     }
 }

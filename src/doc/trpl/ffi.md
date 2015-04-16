@@ -12,6 +12,7 @@ The following is a minimal example of calling a foreign function which will
 compile if snappy is installed:
 
 ```no_run
+# #![feature(libc)]
 extern crate libc;
 use libc::size_t;
 
@@ -45,6 +46,7 @@ keeping the binding correct at runtime.
 The `extern` block can be extended to cover the entire snappy API:
 
 ```no_run
+# #![feature(libc)]
 extern crate libc;
 use libc::{c_int, size_t};
 
@@ -80,6 +82,7 @@ length is number of elements currently contained, and the capacity is the total 
 the allocated memory. The length is less than or equal to the capacity.
 
 ```
+# #![feature(libc)]
 # extern crate libc;
 # use libc::{c_int, size_t};
 # unsafe fn snappy_validate_compressed_buffer(_: *const u8, _: size_t) -> c_int { 0 }
@@ -104,6 +107,7 @@ required capacity to hold the compressed output. The vector can then be passed t
 the true length after compression for setting the length.
 
 ```
+# #![feature(libc)]
 # extern crate libc;
 # use libc::{size_t, c_int};
 # unsafe fn snappy_compress(a: *const u8, b: size_t, c: *mut u8,
@@ -130,6 +134,7 @@ Decompression is similar, because snappy stores the uncompressed size as part of
 format and `snappy_uncompressed_length` will retrieve the exact buffer size required.
 
 ```
+# #![feature(libc)]
 # extern crate libc;
 # use libc::{size_t, c_int};
 # unsafe fn snappy_uncompress(compressed: *const u8,
@@ -169,6 +174,8 @@ GitHub](https://github.com/thestinger/rust-snappy).
 Foreign libraries often hand off ownership of resources to the calling code.
 When this occurs, we must use Rust's destructors to provide safety and guarantee
 the release of these resources (especially in the case of panic).
+
+For more about destructors, see the [Drop trait](../std/ops/trait.Drop.html).
 
 # Callbacks from C code to Rust functions
 
@@ -359,31 +366,6 @@ A few examples of how this model can be used are:
 
 On OSX, frameworks behave with the same semantics as a dynamic library.
 
-## The `link_args` attribute
-
-There is one other way to tell rustc how to customize linking, and that is via
-the `link_args` attribute. This attribute is applied to `extern` blocks and
-specifies raw flags which need to get passed to the linker when producing an
-artifact. An example usage would be:
-
-``` no_run
-#![feature(link_args)]
-
-#[link_args = "-foo -bar -baz"]
-extern {}
-# fn main() {}
-```
-
-Note that this feature is currently hidden behind the `feature(link_args)` gate
-because this is not a sanctioned way of performing linking. Right now rustc
-shells out to the system linker, so it makes sense to provide extra command line
-arguments, but this will not always be the case. In the future rustc may use
-LLVM directly to link native libraries in which case `link_args` will have no
-meaning.
-
-It is highly recommended to *not* use this attribute, and rather use the more
-formal `#[link(...)]` attribute on `extern` blocks instead.
-
 # Unsafe blocks
 
 Some operations, like dereferencing unsafe pointers or calling functions that have been marked
@@ -394,7 +376,7 @@ Unsafe functions, on the other hand, advertise it to the world. An unsafe functi
 this:
 
 ```
-unsafe fn kaboom(ptr: *const int) -> int { *ptr }
+unsafe fn kaboom(ptr: *const i32) -> i32 { *ptr }
 ```
 
 This function can only be called from an `unsafe` block or another `unsafe` function.
@@ -406,6 +388,7 @@ global state. In order to access these variables, you declare them in `extern`
 blocks with the `static` keyword:
 
 ```no_run
+# #![feature(libc)]
 extern crate libc;
 
 #[link(name = "readline")]
@@ -415,7 +398,7 @@ extern {
 
 fn main() {
     println!("You have readline version {} installed.",
-             rl_readline_version as int);
+             rl_readline_version as i32);
 }
 ```
 
@@ -424,6 +407,7 @@ interface. To do this, statics can be declared with `mut` so we can mutate
 them.
 
 ```no_run
+# #![feature(libc)]
 extern crate libc;
 
 use std::ffi::CString;
@@ -456,6 +440,7 @@ calling foreign functions. Some foreign functions, most notably the Windows API,
 conventions. Rust provides a way to tell the compiler which convention to use:
 
 ```
+# #![feature(libc)]
 extern crate libc;
 
 #[cfg(all(target_os = "win32", target_arch = "x86"))]
@@ -543,4 +528,3 @@ The `extern` makes this function adhere to the C calling convention, as
 discussed above in "[Foreign Calling
 Conventions](ffi.html#foreign-calling-conventions)". The `no_mangle`
 attribute turns off Rust's name mangling, so that it is easier to link to.
-

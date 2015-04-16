@@ -51,8 +51,6 @@ register_diagnostics! {
     E0075,
     E0076,
     E0077,
-    E0079,
-    E0080,
     E0081,
     E0082,
     E0083,
@@ -80,6 +78,7 @@ register_diagnostics! {
     E0120,
     E0121,
     E0122,
+    E0123,
     E0124,
     E0127,
     E0128,
@@ -171,8 +170,16 @@ register_diagnostics! {
     E0247, // found module name used as a type
     E0248, // found value name used as a type
     E0249, // expected constant expr for array length
-    E0250  // expected constant expr for array length
+    E0250, // expected constant expr for array length
+    E0318, // can't create default impls for traits outside their crates
+    E0319, // trait impls for defaulted traits allowed just for structs/enums
+    E0320, // recursive overflow during dropck
+    E0321, // extended coherence rules for defaulted traits violated
+    E0322, // cannot implement Sized explicitly
+    E0366, // dropck forbid specialization to concrete type or region
+    E0367, // dropck forbid specialization to predicate not in struct/enum
+    E0368, // binary operation `<op>=` cannot be applied to types
+    E0369  // binary operation `<op>` cannot be applied to types
 }
 
 __build_diagnostic_array! { DIAGNOSTICS }
-

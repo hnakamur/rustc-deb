@@ -9,7 +9,7 @@
 // except according to those terms.
 
 //! Enforces the Rust effect system. Currently there is just one effect,
-/// `unsafe`.
+//! `unsafe`.
 use self::UnsafeContext::*;
 
 use middle::def;
@@ -18,12 +18,11 @@ use middle::ty::MethodCall;
 use util::ppaux;
 
 use syntax::ast;
-use syntax::ast_util::PostExpansionMethod;
 use syntax::codemap::Span;
 use syntax::visit;
 use syntax::visit::Visitor;
 
-#[derive(Copy, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 enum UnsafeContext {
     SafeContext,
     UnsafeFn,
@@ -90,8 +89,8 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
         let (is_item_fn, is_unsafe_fn) = match fn_kind {
             visit::FkItemFn(_, _, fn_style, _) =>
                 (true, fn_style == ast::Unsafety::Unsafe),
-            visit::FkMethod(_, _, method) =>
-                (true, method.pe_unsafety() == ast::Unsafety::Unsafe),
+            visit::FkMethod(_, sig) =>
+                (true, sig.unsafety == ast::Unsafety::Unsafe),
             _ => (false, false),
         };
 
@@ -142,7 +141,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
         match expr.node {
             ast::ExprMethodCall(_, _, _) => {
                 let method_call = MethodCall::expr(expr.id);
-                let base_type = (*self.tcx.method_map.borrow())[method_call].ty;
+                let base_type = self.tcx.method_map.borrow().get(&method_call).unwrap().ty;
                 debug!("effect: method call case, base type is {}",
                        ppaux::ty_to_string(self.tcx, base_type));
                 if type_is_unsafe_function(base_type) {
@@ -175,7 +174,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
             ast::ExprInlineAsm(..) => {
                 self.require_unsafe(expr.span, "use of inline assembly");
             }
-            ast::ExprPath(_) | ast::ExprQPath(_) => {
+            ast::ExprPath(..) => {
                 if let def::DefStatic(_, true) = ty::resolve_expr(self.tcx, expr) {
                     self.require_unsafe(expr.span, "use of mutable static");
                 }

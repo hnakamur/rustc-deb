@@ -24,14 +24,14 @@ impl<T:Copy> Foo for T {
 fn take_param<T:Foo>(foo: &T) { }
 
 fn a() {
-    let x = box 3;
-    take_param(&x); //~ ERROR `core::marker::Copy` is not implemented
+    let x: Box<_> = box 3;
+    take_param(&x); //~ ERROR E0277
 }
 
 fn b() {
-    let x = box 3;
+    let x: Box<_> = box 3;
     let y = &x;
-    let z = &x as &Foo; //~ ERROR `core::marker::Copy` is not implemented
+    let z = &x as &Foo; //~ ERROR E0038
 }
 
 fn main() { }

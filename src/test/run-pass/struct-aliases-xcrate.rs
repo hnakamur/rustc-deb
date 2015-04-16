@@ -9,6 +9,8 @@
 // except according to those terms.
 
 // aux-build:xcrate_struct_aliases.rs
+// pretty-expanded FIXME #23616
+
 extern crate xcrate_struct_aliases;
 
 use xcrate_struct_aliases::{S, S2};
@@ -28,4 +30,3 @@ fn main() {
         }
     }
 }
-

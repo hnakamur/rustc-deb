@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 fn f<T>() -> bool {
     enum E<T> { V(T) }
 
@@ -17,6 +19,6 @@ fn f<T>() -> bool {
 }
 
 fn main() {
-    let b = f::<int>();
+    let b = f::<isize>();
     assert!(b);
 }

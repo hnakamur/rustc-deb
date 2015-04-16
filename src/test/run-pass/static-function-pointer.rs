@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f(x: int) -> int { x }
-fn g(x: int) -> int { 2 * x }
+// pretty-expanded FIXME #23616
 
-static F: fn(int) -> int = f;
-static mut G: fn(int) -> int = f;
+fn f(x: isize) -> isize { x }
+fn g(x: isize) -> isize { 2 * x }
+
+static F: fn(isize) -> isize = f;
+static mut G: fn(isize) -> isize = f;
 
 pub fn main() {
     assert_eq!(F(42), 42);

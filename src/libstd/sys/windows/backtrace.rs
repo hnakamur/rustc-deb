@@ -24,19 +24,18 @@
 
 #![allow(dead_code)]
 
+use prelude::v1::*;
+use io::prelude::*;
+
 use dynamic_lib::DynamicLibrary;
 use ffi::CStr;
 use intrinsics;
-use old_io::{IoResult, Writer};
+use io;
 use libc;
 use mem;
-use ops::Drop;
-use option::Option::{Some};
-use old_path::Path;
+use path::Path;
 use ptr;
-use result::Result::{Ok, Err};
-use slice::SliceExt;
-use str::{self, StrExt};
+use str;
 use sync::{StaticMutex, MUTEX_INIT};
 
 use sys_common::backtrace::*;
@@ -63,7 +62,7 @@ type StackWalk64Fn =
                        *mut libc::c_void, *mut libc::c_void,
                        *mut libc::c_void, *mut libc::c_void) -> libc::BOOL;
 
-const MAX_SYM_NAME: uint = 2000;
+const MAX_SYM_NAME: usize = 2000;
 const IMAGE_FILE_MACHINE_I386: libc::DWORD = 0x014c;
 const IMAGE_FILE_MACHINE_IA64: libc::DWORD = 0x0200;
 const IMAGE_FILE_MACHINE_AMD64: libc::DWORD = 0x8664;
@@ -105,7 +104,7 @@ struct ADDRESS64 {
     Mode: ADDRESS_MODE,
 }
 
-struct STACKFRAME64 {
+pub struct STACKFRAME64 {
     AddrPC: ADDRESS64,
     AddrReturn: ADDRESS64,
     AddrFrame: ADDRESS64,
@@ -138,7 +137,7 @@ struct KDHELP64 {
 mod arch {
     use libc;
 
-    const MAXIMUM_SUPPORTED_EXTENSION: uint = 512;
+    const MAXIMUM_SUPPORTED_EXTENSION: usize = 512;
 
     #[repr(C)]
     pub struct CONTEXT {
@@ -294,7 +293,7 @@ impl Drop for Cleanup {
     fn drop(&mut self) { (self.SymCleanup)(self.handle); }
 }
 
-pub fn write(w: &mut Writer) -> IoResult<()> {
+pub fn write(w: &mut Write) -> io::Result<()> {
     // According to windows documentation, all dbghelp functions are
     // single-threaded.
     static LOCK: StaticMutex = MUTEX_INIT;

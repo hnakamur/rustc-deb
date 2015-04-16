@@ -56,6 +56,8 @@
 //! The [`heap`](heap/index.html) module defines the low-level interface to the
 //! default global allocator. It is not compatible with the libc allocator API.
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "alloc"]
 #![unstable(feature = "alloc")]
 #![feature(staged_api)]
@@ -64,15 +66,21 @@
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/")]
+#![doc(test(no_crate_inject))]
 
 #![feature(no_std)]
 #![no_std]
+#![feature(allocator)]
+#![feature(custom_attribute)]
+#![feature(fundamental)]
 #![feature(lang_items, unsafe_destructor)]
 #![feature(box_syntax)]
 #![feature(optin_builtin_traits)]
 #![feature(unboxed_closures)]
-#![feature(unsafe_no_drop_flag)]
+#![feature(unsafe_no_drop_flag, filling_drop)]
 #![feature(core)]
+#![feature(unique)]
+#![cfg_attr(test, feature(test, alloc, rustc_private))]
 #![cfg_attr(all(not(feature = "external_funcs"), not(feature = "external_crate")),
             feature(libc))]
 
@@ -94,8 +102,14 @@ pub mod heap;
 
 // Primitive types using the heaps above
 
+// Need to conditionally define the mod from `boxed.rs` to avoid
+// duplicating the lang-items when building in test cfg; but also need
+// to allow code to have `use boxed::HEAP;`
+// and `use boxed::Box;` declarations.
 #[cfg(not(test))]
 pub mod boxed;
+#[cfg(test)]
+mod boxed { pub use std::boxed::{Box, HEAP}; }
 #[cfg(test)]
 mod boxed_test;
 pub mod arc;

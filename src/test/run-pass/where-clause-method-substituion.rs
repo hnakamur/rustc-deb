@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait Foo<T> { fn dummy(&self, arg: T) { } }
 
 trait Bar<A> {
@@ -27,4 +29,3 @@ impl Bar<X> for i32 {
 fn main() {
     1.method::<S>();
 }
-

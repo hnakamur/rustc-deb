@@ -57,14 +57,13 @@ for i in 0..nums.len() {
 }
 ```
 
-This is strictly worse than using an actual iterator. The `.iter()` method on
-vectors returns an iterator which iterates through a reference to each element
-of the vector in turn. So write this:
+This is strictly worse than using an actual iterator. You can iterate over vectors
+directly, so write this:
 
 ```rust
 let nums = vec![1, 2, 3];
 
-for num in nums.iter() {
+for num in &nums {
     println!("{}", num);
 }
 ```
@@ -86,16 +85,17 @@ see it. This code works fine too:
 ```rust
 let nums = vec![1, 2, 3];
 
-for num in nums.iter() {
+for num in &nums {
     println!("{}", *num);
 }
 ```
 
-Now we're explicitly dereferencing `num`. Why does `iter()` give us references?
-Well, if it gave us the data itself, we would have to be its owner, which would
-involve making a copy of the data and giving us the copy. With references,
-we're just borrowing a reference to the data, and so it's just passing
-a reference, without needing to do the copy.
+Now we're explicitly dereferencing `num`. Why does `&nums` give us
+references?  Firstly, because we explicitly asked it to with
+`&`. Secondly, if it gave us the data itself, we would have to be its
+owner, which would involve making a copy of the data and giving us the
+copy. With references, we're just borrowing a reference to the data,
+and so it's just passing a reference, without needing to do the move.
 
 So, now that we've established that ranges are often not what you want, let's
 talk about what you do want instead.
@@ -230,9 +230,9 @@ let nums = (1..100).collect::<Vec<i32>>();
 Now, `collect()` will require that the range gives it some numbers, and so
 it will do the work of generating the sequence.
 
-Ranges are one of two basic iterators that you'll see. The other is `iter()`,
-which you've used before. `iter()` can turn a vector into a simple iterator
-that gives you each element in turn:
+Ranges are one of two basic iterators that you'll see. The other is `iter()`.
+`iter()` can turn a vector into a simple iterator that gives you each element
+in turn:
 
 ```rust
 let nums = [1, 2, 3];
@@ -243,10 +243,12 @@ for num in nums.iter() {
 ```
 
 These two basic iterators should serve you well. There are some more
-advanced iterators, including ones that are infinite. Like `count`:
+advanced iterators, including ones that are infinite. Like using range syntax
+and `step_by`:
 
 ```rust
-std::iter::count(1, 5);
+# #![feature(step_by)]
+(1..).step_by(5);
 ```
 
 This iterator counts up from one, adding five each time. It will give
@@ -291,10 +293,11 @@ just use `for` instead.
 There are tons of interesting iterator adapters. `take(n)` will return an
 iterator over the next `n` elements of the original iterator, note that this
 has no side effect on the original iterator. Let's try it out with our infinite
-iterator from before, `count()`:
+iterator from before:
 
 ```rust
-for i in std::iter::count(1, 5).take(5) {
+# #![feature(step_by)]
+for i in (1..).step_by(5).take(5) {
     println!("{}", i);
 }
 ```

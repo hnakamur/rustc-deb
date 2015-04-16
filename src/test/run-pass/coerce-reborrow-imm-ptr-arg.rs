@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn negate(x: &int) -> int {
+// pretty-expanded FIXME #23616
+
+fn negate(x: &isize) -> isize {
     -*x
 }
 
-fn negate_mut(y: &mut int) -> int {
+fn negate_mut(y: &mut isize) -> isize {
     negate(y)
 }
 
-fn negate_imm(y: &int) -> int {
+fn negate_imm(y: &isize) -> isize {
     negate(y)
 }
 

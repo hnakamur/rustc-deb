@@ -39,6 +39,7 @@ pub struct Module {
     pub vis: ast::Visibility,
     pub stab: Option<attr::Stability>,
     pub impls: Vec<Impl>,
+    pub def_traits: Vec<DefaultImpl>,
     pub foreigns: Vec<ast::ForeignMod>,
     pub macros: Vec<Macro>,
     pub is_crate: bool,
@@ -65,6 +66,7 @@ impl Module {
             constants  : Vec::new(),
             traits     : Vec::new(),
             impls      : Vec::new(),
+            def_traits : Vec::new(),
             foreigns   : Vec::new(),
             macros     : Vec::new(),
             is_crate   : false,
@@ -172,7 +174,7 @@ pub struct Constant {
 pub struct Trait {
     pub unsafety: ast::Unsafety,
     pub name: Ident,
-    pub items: Vec<ast::TraitItem>, //should be TraitItem
+    pub items: Vec<P<ast::TraitItem>>, //should be TraitItem
     pub generics: ast::Generics,
     pub bounds: Vec<ast::TyParamBound>,
     pub attrs: Vec<ast::Attribute>,
@@ -188,12 +190,20 @@ pub struct Impl {
     pub generics: ast::Generics,
     pub trait_: Option<ast::TraitRef>,
     pub for_: P<ast::Ty>,
-    pub items: Vec<ast::ImplItem>,
+    pub items: Vec<P<ast::ImplItem>>,
     pub attrs: Vec<ast::Attribute>,
     pub whence: Span,
     pub vis: ast::Visibility,
     pub stab: Option<attr::Stability>,
     pub id: ast::NodeId,
+}
+
+pub struct DefaultImpl {
+    pub unsafety: ast::Unsafety,
+    pub trait_: ast::TraitRef,
+    pub id: ast::NodeId,
+    pub attrs: Vec<ast::Attribute>,
+    pub whence: Span,
 }
 
 pub struct Macro {

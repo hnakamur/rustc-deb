@@ -10,14 +10,16 @@
 
 // Test that a class with only sendable fields can be sent
 
+// pretty-expanded FIXME #23616
+
 use std::sync::mpsc::channel;
 
 struct foo {
-  i: int,
+  i: isize,
   j: char,
 }
 
-fn foo(i:int, j: char) -> foo {
+fn foo(i:isize, j: char) -> foo {
     foo {
         i: i,
         j: j

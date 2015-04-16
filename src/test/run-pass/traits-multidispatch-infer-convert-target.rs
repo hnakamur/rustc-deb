@@ -10,6 +10,8 @@
 
 // Test that we can infer the Target based on the Self or vice versa.
 
+// pretty-expanded FIXME #23616
+
 use std::mem;
 
 trait Convert<Target> {
@@ -28,7 +30,7 @@ impl Convert<i16> for u32 {
     }
 }
 
-fn test<T,U>(_: T, _: U, t_size: uint, u_size: uint)
+fn test<T,U>(_: T, _: U, t_size: usize, u_size: usize)
 where T : Convert<U>
 {
     assert_eq!(mem::size_of::<T>(), t_size);

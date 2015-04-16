@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_borrowck"]
 #![unstable(feature = "rustc_private")]
 #![staged_api]
@@ -19,20 +21,19 @@
 
 #![allow(non_camel_case_types)]
 
-#![feature(core)]
-#![feature(int_uint)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
 #![feature(unsafe_destructor)]
+#![feature(into_cow)]
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
 
 // for "clarity", rename the graphviz crate to dot; graphviz within `borrowck`
 // refers to the borrowck-specific graphviz adapter traits.
-extern crate "graphviz" as dot;
+extern crate graphviz as dot;
 extern crate rustc;
 
 pub use borrowck::check_crate;

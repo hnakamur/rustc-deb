@@ -9,7 +9,9 @@
 // except according to those terms.
 
 
-enum colour { red(int, int), green, }
+// pretty-expanded FIXME #23616
+
+enum colour { red(isize, isize), green, }
 
 impl PartialEq for colour {
     fn eq(&self, other: &colour) -> bool {

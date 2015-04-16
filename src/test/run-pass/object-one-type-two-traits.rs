@@ -17,25 +17,25 @@
 use std::any::Any;
 
 trait Wrap {
-    fn get(&self) -> int;
+    fn get(&self) -> isize;
     fn wrap(self: Box<Self>) -> Box<Any+'static>;
 }
 
-impl Wrap for int {
-    fn get(&self) -> int {
+impl Wrap for isize {
+    fn get(&self) -> isize {
         *self
     }
-    fn wrap(self: Box<int>) -> Box<Any+'static> {
+    fn wrap(self: Box<isize>) -> Box<Any+'static> {
         self as Box<Any+'static>
     }
 }
 
-fn is<T:'static>(x: &Any) -> bool {
+fn is<T:Any>(x: &Any) -> bool {
     x.is::<T>()
 }
 
 fn main() {
-    let x = box 22 as Box<Wrap>;
+    let x = box 22isize as Box<Wrap>;
     println!("x={}", x.get());
     let y = x.wrap();
 }

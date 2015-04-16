@@ -11,12 +11,14 @@
 // Ensures that destructors are run for expressions of the form "e;" where
 // `e` is a type which requires a destructor.
 
+// pretty-expanded FIXME #23616
+
 #![allow(path_statement)]
 
-struct A { n: int }
+struct A { n: isize }
 struct B;
 
-static mut NUM_DROPS: uint = 0;
+static mut NUM_DROPS: usize = 0;
 
 impl Drop for A {
     fn drop(&mut self) {

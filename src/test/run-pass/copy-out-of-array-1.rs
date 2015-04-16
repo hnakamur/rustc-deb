@@ -12,9 +12,10 @@
 //
 // (Compare with compile-fail/move-out-of-array-1.rs)
 
-struct C { _x: u8 }
+// pretty-expanded FIXME #23616
 
-impl Copy for C { }
+#[derive(Copy, Clone)]
+struct C { _x: u8 }
 
 fn main() {
     fn d() -> C { C { _x: 0 } }

@@ -10,6 +10,8 @@
 
 // Issue #5041 - avoid overlapping memcpy when src and dest of a swap are the same
 
+// pretty-expanded FIXME #23616
+
 use std::ptr;
 
 pub fn main() {
@@ -34,8 +36,8 @@ pub enum TestName {
 }
 
 pub enum TestFn {
-    DynTestFn(int),
-    DynBenchFn(int),
+    DynTestFn(isize),
+    DynBenchFn(isize),
 }
 
 pub struct TestDesc {

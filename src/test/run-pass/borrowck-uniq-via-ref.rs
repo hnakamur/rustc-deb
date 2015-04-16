@@ -9,8 +9,10 @@
 // except according to those terms.
 
 
+// pretty-expanded FIXME #23616
+
 struct Rec {
-    f: Box<int>,
+    f: Box<isize>,
 }
 
 struct Outer {
@@ -22,12 +24,12 @@ struct Inner {
 }
 
 struct Innermost {
-    h: Box<int>,
+    h: Box<isize>,
 }
 
-fn borrow(_v: &int) {}
+fn borrow(_v: &isize) {}
 
-fn box_mut(v: &mut Box<int>) {
+fn box_mut(v: &mut Box<isize>) {
     borrow(&**v); // OK: &mut -> &imm
 }
 
@@ -39,7 +41,7 @@ fn box_mut_recs(v: &mut Outer) {
     borrow(&*v.f.g.h); // OK: &mut -> &imm
 }
 
-fn box_imm(v: &Box<int>) {
+fn box_imm(v: &Box<isize>) {
     borrow(&**v); // OK
 }
 

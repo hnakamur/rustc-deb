@@ -8,9 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+// pretty-expanded FIXME #23616
 
 pub fn main() {
-    let x = *box() ();
+    let x = *Box::new(());
 }

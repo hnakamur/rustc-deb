@@ -10,8 +10,10 @@
 
 // exec-env:RUST_LOG=info
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
-#![feature(box_syntax)]
+#![feature(box_syntax, old_io, rustc_private, std_misc)]
 
 #[macro_use]
 extern crate log;
@@ -19,8 +21,8 @@ extern crate log;
 use log::{set_logger, Logger, LogRecord};
 use std::sync::mpsc::channel;
 use std::fmt;
-use std::old_io::{ChanReader, ChanWriter};
-use std::thread::Thread;
+use std::old_io::{ChanReader, ChanWriter, Reader, Writer};
+use std::thread;
 
 struct MyWriter(ChanWriter);
 
@@ -34,7 +36,7 @@ impl Logger for MyWriter {
 fn main() {
     let (tx, rx) = channel();
     let (mut r, w) = (ChanReader::new(rx), ChanWriter::new(tx));
-    let _t = Thread::spawn(move|| {
+    let _t = thread::scoped(move|| {
         set_logger(box MyWriter(w) as Box<Logger+Send>);
         debug!("debug");
         info!("info");

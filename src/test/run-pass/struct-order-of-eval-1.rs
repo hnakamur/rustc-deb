@@ -8,15 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct S { f0: String, f1: int }
+// pretty-expanded FIXME #23616
+
+struct S { f0: String, f1: isize }
 
 pub fn main() {
     let s = "Hello, world!".to_string();
-    let _s = S {
+    let s = S {
         f0: s.to_string(),
         ..S {
             f0: s,
             f1: 23
         }
     };
+    assert_eq!(s.f0, "Hello, world!");
 }

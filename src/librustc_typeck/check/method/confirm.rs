@@ -176,13 +176,13 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
             probe::AutoDeref(num) => {
                 ty::AutoDerefRef {
                     autoderefs: num,
-                    autoref: None
+                    autoref: None,
                 }
             }
             probe::AutoUnsizeLength(autoderefs, len) => {
                 ty::AutoDerefRef {
                     autoderefs: autoderefs,
-                    autoref: Some(ty::AutoUnsize(ty::UnsizeLength(len)))
+                    autoref: Some(ty::AutoUnsize(ty::UnsizeLength(len))),
                 }
             }
             probe::AutoRef(mutability, ref sub_adjustment) => {
@@ -331,7 +331,7 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                 self.tcx().sess.span_bug(
                     self.span,
                     &format!("self-type `{}` for ObjectPick never dereferenced to an object",
-                            self_ty.repr(self.tcx()))[])
+                            self_ty.repr(self.tcx())))
             }
         }
     }
@@ -386,7 +386,7 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                     &format!(
                         "{} was a subtype of {} but now is not?",
                         self_ty.repr(self.tcx()),
-                        method_self_ty.repr(self.tcx()))[]);
+                        method_self_ty.repr(self.tcx())));
             }
         }
     }
@@ -404,26 +404,9 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
                all_substs.repr(self.tcx()));
 
         // Instantiate the bounds on the method with the
-        // type/early-bound-regions substitutions performed.  The only
-        // late-bound-regions that can appear in bounds are from the
-        // impl, and those were already instantiated above.
-        //
-        // FIXME(DST). Super hack. For a method on a trait object
-        // `Trait`, the generic signature requires that
-        // `Self:Trait`. Since, for an object, we bind `Self` to the
-        // type `Trait`, this leads to an obligation
-        // `Trait:Trait`. Until such time we DST is fully implemented,
-        // that obligation is not necessarily satisfied. (In the
-        // future, it would be.) But we know that the true `Self` DOES implement
-        // the trait. So we just delete this requirement. Hack hack hack.
-        let mut method_predicates = pick.method_ty.predicates.instantiate(self.tcx(), &all_substs);
-        match pick.kind {
-            probe::ObjectPick(..) => {
-                assert_eq!(method_predicates.predicates.get_slice(subst::SelfSpace).len(), 1);
-                method_predicates.predicates.pop(subst::SelfSpace);
-            }
-            _ => { }
-        }
+        // type/early-bound-regions substitutions performed. There can
+        // be no late-bound regions appearing here.
+        let method_predicates = pick.method_ty.predicates.instantiate(self.tcx(), &all_substs);
         let method_predicates = self.fcx.normalize_associated_types_in(self.span,
                                                                        &method_predicates);
 
@@ -651,16 +634,21 @@ impl<'a,'tcx> ConfirmContext<'a,'tcx> {
               target_trait_def_id: ast::DefId)
               -> ty::PolyTraitRef<'tcx>
     {
-        match traits::upcast(self.tcx(), source_trait_ref.clone(), target_trait_def_id) {
-            Some(super_trait_ref) => super_trait_ref,
-            None => {
-                self.tcx().sess.span_bug(
-                    self.span,
-                    &format!("cannot upcast `{}` to `{}`",
-                             source_trait_ref.repr(self.tcx()),
-                             target_trait_def_id.repr(self.tcx())));
-            }
+        let upcast_trait_refs = traits::upcast(self.tcx(),
+                                               source_trait_ref.clone(),
+                                               target_trait_def_id);
+
+        // must be exactly one trait ref or we'd get an ambig error etc
+        if upcast_trait_refs.len() != 1 {
+            self.tcx().sess.span_bug(
+                self.span,
+                &format!("cannot uniquely upcast `{}` to `{}`: `{}`",
+                         source_trait_ref.repr(self.tcx()),
+                         target_trait_def_id.repr(self.tcx()),
+                         upcast_trait_refs.repr(self.tcx())));
         }
+
+        upcast_trait_refs.into_iter().next().unwrap()
     }
 
     fn replace_late_bound_regions_with_fresh_var<T>(&self, value: &ty::Binder<T>) -> T

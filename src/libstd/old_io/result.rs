@@ -35,7 +35,7 @@ impl<W: Writer> Writer for IoResult<W> {
 }
 
 impl<R: Reader> Reader for IoResult<R> {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         match *self {
             Ok(ref mut reader) => reader.read(buf),
             Err(ref e) => Err(e.clone()),
@@ -58,7 +58,7 @@ impl<S: Seek> Seek for IoResult<S> {
     }
 }
 
-impl<T, A: Acceptor<T>, L: Listener<T, A>> Listener<T, A> for IoResult<L> {
+impl<A: Acceptor, L: Listener<A>> Listener<A> for IoResult<L> {
     fn listen(self) -> IoResult<A> {
         match self {
             Ok(listener) => listener.listen(),
@@ -67,8 +67,9 @@ impl<T, A: Acceptor<T>, L: Listener<T, A>> Listener<T, A> for IoResult<L> {
     }
 }
 
-impl<T, A: Acceptor<T>> Acceptor<T> for IoResult<A> {
-    fn accept(&mut self) -> IoResult<T> {
+impl<A: Acceptor> Acceptor for IoResult<A> {
+    type Connection = A::Connection;
+    fn accept(&mut self) -> IoResult<A::Connection> {
         match *self {
             Ok(ref mut acceptor) => acceptor.accept(),
             Err(ref e) => Err(e.clone()),
@@ -80,14 +81,14 @@ impl<T, A: Acceptor<T>> Acceptor<T> for IoResult<A> {
 mod test {
     use prelude::v1::*;
     use super::super::mem::*;
-    use old_io;
+    use old_io::{self, Reader, Writer};
 
     #[test]
     fn test_option_writer() {
         let mut writer: old_io::IoResult<Vec<u8>> = Ok(Vec::new());
         writer.write_all(&[0, 1, 2]).unwrap();
         writer.flush().unwrap();
-        assert_eq!(writer.unwrap(), vec!(0, 1, 2));
+        assert_eq!(writer.unwrap(), [0, 1, 2]);
     }
 
     #[test]

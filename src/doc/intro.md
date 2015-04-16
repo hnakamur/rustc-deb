@@ -140,7 +140,7 @@ right at home if you've used tools like [Bundler](http://bundler.io/),
 [npm](https://www.npmjs.org/), or [pip](https://pip.pypa.io/en/latest/).
 There's no `Makefile`s or endless `autotools` output here. (Rust's tooling does
 [play nice with external libraries written in those
-tools](http://crates.io/native-build.html), if you need to.)
+tools](http://doc.crates.io/build-script.html), if you need to.)
 
 Enough about tools, let's talk code!
 
@@ -389,11 +389,11 @@ safe concurrent programs.
 Here's an example of a concurrent Rust program:
 
 ```{rust}
-use std::thread::Thread;
+use std::thread;
 
 fn main() {
     let guards: Vec<_> = (0..10).map(|_| {
-        Thread::scoped(|| {
+        thread::scoped(|| {
             println!("Hello, world!");
         })
     }).collect();
@@ -421,44 +421,41 @@ problem.
 Let's see an example. This Rust code will not compile:
 
 ```{rust,ignore}
-use std::thread::Thread;
+use std::thread;
 
 fn main() {
     let mut numbers = vec![1, 2, 3];
 
-    for i in 0..3 {
-        Thread::spawn(move || {
-            for j in 0..3 { numbers[j] += 1 }
-        });
-    }
+    let guards: Vec<_> = (0..3).map(|i| {
+        thread::scoped(move || {
+            numbers[i] += 1;
+            println!("numbers[{}] is {}", i, numbers[i]);
+        })
+    }).collect();
 }
 ```
 
 It gives us this error:
 
 ```text
-6:71 error: capture of moved value: `numbers`
-    for j in 0..3 { numbers[j] += 1 }
-                    ^~~~~~~
-7:50 note: `numbers` moved into closure environment here
-    spawn(move || {
-        for j in 0..3 { numbers[j] += 1 }
-    });
-6:79 error: cannot assign to immutable dereference (dereference is implicit, due to indexing)
-        for j in 0..3 { numbers[j] += 1 }
-                        ^~~~~~~~~~~~~~~
+7:25: 10:6 error: cannot move out of captured outer variable in an `FnMut` closure
+7     thread::scoped(move || {
+8       numbers[i] += 1;
+9       println!("numbers[{}] is {}", i, numbers[i]);
+10     })
+error: aborting due to previous error
 ```
 
-It mentions that "numbers moved into closure environment". Because we
-declared the closure as a moving closure, and it referred to
-`numbers`, the closure will try to take ownership of the vector. But
-the closure itself is created in a loop, and hence we will actually
-create three closures, one for every iteration of the loop. This means
-that all three of those closures would try to own `numbers`, which is
-impossible -- `numbers` must have just one owner. Rust detects this
-and gives us the error: we claim that `numbers` has ownership, but our
-code tries to make three owners. This may cause a safety problem, so
-Rust disallows it.
+This is a little confusing because there are two closures here: the one passed
+to `map`, and the one passed to `thread::scoped`. In this case, the closure for
+`thread::scoped` is attempting to reference `numbers`, a `Vec<i32>`. This
+closure is a `FnOnce` closure, as that’s what `thread::scoped` takes as an
+argument. `FnOnce` closures take ownership of their environment. That’s fine,
+but there’s one detail: because of `map`, we’re going to make three of these
+closures. And since all three try to take ownership of `numbers`, that would be
+a problem. That’s what it means by ‘cannot move out of captured outer
+variable’: our `thread::scoped` closure wants to take ownership, and it can’t,
+because the closure for `map` won’t let it.
 
 What to do here? Rust has two types that helps us: `Arc<T>` and `Mutex<T>`.
 *Arc* stands for "atomically reference counted". In other words, an Arc will
@@ -474,20 +471,20 @@ mutation doesn't cause a data race.
 Here's what using an Arc with a Mutex looks like:
 
 ```{rust}
-use std::thread::Thread;
+use std::thread;
 use std::sync::{Arc,Mutex};
 
 fn main() {
     let numbers = Arc::new(Mutex::new(vec![1, 2, 3]));
 
-    for i in 0..3 {
+    let guards: Vec<_> = (0..3).map(|i| {
         let number = numbers.clone();
-        Thread::spawn(move || {
+        thread::scoped(move || {
             let mut array = number.lock().unwrap();
             array[i] += 1;
             println!("numbers[{}] is {}", i, array[i]);
-        });
-    }
+        })
+    }).collect();
 }
 ```
 
@@ -516,8 +513,10 @@ numbers[1] is 3
 numbers[0] is 2
 ```
 
-Each time, we get a slightly different output, because each thread works in a
-different order. You may not get the same output as this sample, even.
+Each time, we can get a slightly different output because the threads are not
+guaranteed to run in any set order. If you get the same order every time it is
+because each of these threads are very small and complete too fast for their
+indeterminate behavior to surface.
 
 The important part here is that the Rust compiler was able to use ownership to
 give us assurance _at compile time_ that we weren't doing something incorrect
@@ -536,16 +535,16 @@ As an example, Rust's ownership system is _entirely_ at compile time. The
 safety check that makes this an error about moved values:
 
 ```{rust,ignore}
-use std::thread::Thread;
+use std::thread;
 
 fn main() {
-    let vec = vec![1, 2, 3];
+    let numbers = vec![1, 2, 3];
 
-    for i in 0..3 {
-        Thread::spawn(move || {
-            println!("{}", vec[i]);
-        });
-    }
+    let guards: Vec<_> = (0..3).map(|i| {
+        thread::scoped(move || {
+            println!("{}", numbers[i]);
+        })
+    }).collect();
 }
 ```
 
@@ -569,7 +568,7 @@ while retaining safety. The answer is iterators:
 ```{rust}
 let vec = vec![1, 2, 3];
 
-for x in vec.iter() {
+for x in &vec {
     println!("{}", x);
 }
 ```

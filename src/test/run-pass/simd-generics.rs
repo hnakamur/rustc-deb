@@ -9,12 +9,14 @@
 // except according to those terms.
 
 
+// pretty-expanded FIXME #23616
+
 #![feature(simd)]
 
 use std::ops;
 
 #[simd]
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 struct f32x4(f32, f32, f32, f32);
 
 fn add<T: ops::Add<Output=T>>(lhs: T, rhs: T) -> T {

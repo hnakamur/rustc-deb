@@ -8,7 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-fast doesn't like extern crate
+
+// pretty-expanded FIXME #23616
+
+#![feature(libc)]
 
 extern crate libc;
 

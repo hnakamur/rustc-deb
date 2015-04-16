@@ -12,12 +12,14 @@
 // This test verifies that temporaries created for `while`'s and `if`
 // conditions are dropped after the condition is evaluated.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 struct Temporary;
 
-static mut DROPPED: int = 0;
+static mut DROPPED: isize = 0;
 
 impl Drop for Temporary {
     fn drop(&mut self) {

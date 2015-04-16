@@ -18,11 +18,10 @@
 //! ```
 //!
 //! This module contains reexports of many core I/O traits such as `Read`,
-//! `Write`, `ReadExt`, and `WriteExt`. Structures and functions are not
+//! `Write` and `BufRead`. Structures and functions are not
 //! contained in this module.
 
-pub use super::{Read, ReadExt, Write, WriteExt, BufRead, BufReadExt};
-pub use fs::PathExt;
+#![stable(feature = "rust1", since = "1.0.0")]
 
-// FIXME: pub use as `Seek` when the name isn't in the actual prelude any more
-pub use super::Seek as NewSeek;
+pub use super::{Read, Write, BufRead, Seek};
+pub use fs::PathExt;

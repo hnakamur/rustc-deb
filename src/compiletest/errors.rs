@@ -9,16 +9,19 @@
 // except according to those terms.
 use self::WhichLine::*;
 
-use std::old_io::{BufferedReader, File};
+use std::fs::File;
+use std::io::BufReader;
+use std::io::prelude::*;
+use std::path::Path;
 
 pub struct ExpectedError {
-    pub line: uint,
+    pub line: usize,
     pub kind: String,
     pub msg: String,
 }
 
 #[derive(PartialEq, Debug)]
-enum WhichLine { ThisLine, FollowPrevious(uint), AdjustBackward(uint) }
+enum WhichLine { ThisLine, FollowPrevious(usize), AdjustBackward(usize) }
 
 /// Looks for either "//~| KIND MESSAGE" or "//~^^... KIND MESSAGE"
 /// The former is a "follow" that inherits its target from the preceding line;
@@ -29,7 +32,7 @@ enum WhichLine { ThisLine, FollowPrevious(uint), AdjustBackward(uint) }
 ///          //~| ERROR message two for that same line.
 // Load any test directives embedded in the file
 pub fn load_errors(testfile: &Path) -> Vec<ExpectedError> {
-    let mut rdr = BufferedReader::new(File::open(testfile).unwrap());
+    let rdr = BufReader::new(File::open(testfile).unwrap());
 
     // `last_nonfollow_error` tracks the most recently seen
     // line with an error template that did not use the
@@ -55,10 +58,10 @@ pub fn load_errors(testfile: &Path) -> Vec<ExpectedError> {
     }).collect()
 }
 
-fn parse_expected(last_nonfollow_error: Option<uint>,
-                  line_num: uint,
+fn parse_expected(last_nonfollow_error: Option<usize>,
+                  line_num: usize,
                   line: &str) -> Option<(WhichLine, ExpectedError)> {
-    let start = match line.find_str("//~") { Some(i) => i, None => return None };
+    let start = match line.find("//~") { Some(i) => i, None => return None };
     let (follow, adjusts) = if line.char_at(start + 3) == '|' {
         (true, 0)
     } else {
@@ -68,7 +71,7 @@ fn parse_expected(last_nonfollow_error: Option<uint>,
     let letters = line[kind_start..].chars();
     let kind = letters.skip_while(|c| c.is_whitespace())
                       .take_while(|c| !c.is_whitespace())
-                      .map(|c| c.to_lowercase())
+                      .flat_map(|c| c.to_lowercase())
                       .collect::<String>();
     let letters = line[kind_start..].chars();
     let msg = letters.skip_while(|c| c.is_whitespace())

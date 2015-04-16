@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(path_statement)]
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 pub fn main() {
-    let y = box 1;
+    let y: Box<_> = box 1;
     y;
 }

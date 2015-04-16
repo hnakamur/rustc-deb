@@ -8,6 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(slice_patterns)]
+
 fn main() {
     let mut x: &[_] = &[1, 2, 3, 4];
 

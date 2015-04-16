@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 struct SpeechMaker {
-    speeches: uint
+    speeches: usize
 }
 
 fn talk(x: &mut SpeechMaker) {

@@ -4,6 +4,7 @@ Do you remember the `impl` keyword, used to call a function with method
 syntax?
 
 ```{rust}
+# #![feature(core)]
 struct Circle {
     x: f64,
     y: f64,
@@ -21,6 +22,7 @@ Traits are similar, except that we define a trait with just the method
 signature, then implement the trait for that struct. Like this:
 
 ```{rust}
+# #![feature(core)]
 struct Circle {
     x: f64,
     y: f64,
@@ -84,6 +86,7 @@ which implements `HasArea` will have an `.area()` method.
 Here's an extended example of how this works:
 
 ```{rust}
+# #![feature(core)]
 trait HasArea {
     fn area(&self) -> f64;
 }
@@ -225,6 +228,7 @@ If we add a `use` line right above `main` and make the right things public,
 everything is fine:
 
 ```{rust}
+# #![feature(core)]
 use shapes::HasArea;
 
 mod shapes {
@@ -272,6 +276,29 @@ One last thing about traits: generic functions with a trait bound use
 *monomorphization* (*mono*: one, *morph*: form), so they are statically
 dispatched. What's that mean? Check out the chapter on [static and dynamic
 dispatch](static-and-dynamic-dispatch.html) for more.
+
+## Multiple trait bounds
+
+You’ve seen that you can bound a generic type parameter with a trait:
+
+```rust
+fn foo<T: Clone>(x: T) {
+    x.clone();
+}
+```
+
+If you need more than one bound, you can use `+`:
+
+```rust
+use std::fmt::Debug;
+
+fn foo<T: Clone + Debug>(x: T) {
+    x.clone();
+    println!("{:?}", x);
+}
+```
+
+`T` now needs to be both `Clone` as well as `Debug`.
 
 ## Where clause
 
@@ -408,6 +435,7 @@ but instead, we found a floating-point variable. We need a different bound. `Flo
 to the rescue:
 
 ```
+# #![feature(std_misc)]
 use std::num::Float;
 
 fn inverse<T: Float>(x: T) -> Result<T, String> {
@@ -423,6 +451,7 @@ from the `Float` trait. Both `f32` and `f64` implement `Float`, so our function
 works just fine:
 
 ```
+# #![feature(std_misc)]
 # use std::num::Float;
 # fn inverse<T: Float>(x: T) -> Result<T, String> {
 #     if x == Float::zero() { return Err("x cannot be zero!".to_string()) }
@@ -434,4 +463,47 @@ println!("the inverse of {} is {:?}", 2.0f64, inverse(2.0f64));
 
 println!("the inverse of {} is {:?}", 0.0f32, inverse(0.0f32));
 println!("the inverse of {} is {:?}", 0.0f64, inverse(0.0f64));
+```
+
+## Default methods
+
+There's one last feature of traits we should cover: default methods. It's
+easiest just to show an example:
+
+```rust
+trait Foo {
+    fn bar(&self);
+
+    fn baz(&self) { println!("We called baz."); }
+}
+```
+
+Implementors of the `Foo` trait need to implement `bar()`, but they don't
+need to implement `baz()`. They'll get this default behavior. They can
+override the default if they so choose:
+
+```rust
+# trait Foo {
+# fn bar(&self);
+# fn baz(&self) { println!("We called baz."); }
+# }
+struct UseDefault;
+
+impl Foo for UseDefault {
+    fn bar(&self) { println!("We called bar."); }
+}
+
+struct OverrideDefault;
+
+impl Foo for OverrideDefault {
+    fn bar(&self) { println!("We called bar."); }
+
+    fn baz(&self) { println!("Override baz!"); }
+}
+
+let default = UseDefault;
+default.baz(); // prints "We called baz."
+
+let over = OverrideDefault;
+over.baz(); // prints "Override baz!"
 ```

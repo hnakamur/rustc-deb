@@ -9,12 +9,14 @@
 // except according to those terms.
 
 
+// pretty-expanded FIXME #23616
+
 enum colour { red, green, blue, }
 
 enum tree { children(Box<list>), leaf(colour), }
 
 enum list { cons(Box<tree>, Box<list>), nil, }
 
-enum small_list { kons(int, Box<small_list>), neel, }
+enum small_list { kons(isize, Box<small_list>), neel, }
 
 pub fn main() { }

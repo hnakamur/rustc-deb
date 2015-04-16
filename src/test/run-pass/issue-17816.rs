@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(unboxed_closures)]
 
 use std::marker::PhantomData;
 
 fn main() {
     struct Symbol<'a, F: Fn(Vec<&'a str>) -> &'a str> { function: F, marker: PhantomData<&'a ()> }
-    let f = |x: Vec<&str>| -> &str "foobar";
+    let f = |x: Vec<&str>| -> &str { "foobar" };
     let sym = Symbol { function: f, marker: PhantomData };
     (sym.function)(vec![]);
 }

@@ -9,9 +9,13 @@
 // except according to those terms.
 
 // Regression test for type inference failure around shifting. In this
-// case, the iteration yields an int, but we hadn't run the full type
+// case, the iteration yields an isize, but we hadn't run the full type
 // propagation yet, and so we just saw a type variable, yielding an
 // error.
+
+// pretty-expanded FIXME #23616
+
+#![feature(core)]
 
 use std::u8;
 
@@ -31,7 +35,7 @@ impl<I> IntoIterator for I where I: Iterator {
 
 fn desugared_for_loop_bad(byte: u8) -> u8 {
     let mut result = 0;
-    let mut x = IntoIterator::into_iter(range(0, u8::BITS));
+    let mut x = IntoIterator::into_iter(0..u8::BITS);
     let mut y = Iterator::next(&mut x);
     let mut z = y.unwrap();
     byte >> z;

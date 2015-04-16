@@ -8,15 +8,29 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::old_io;
-use std::old_io::fs;
+use std::io;
 use std::env;
+#[allow(deprecated)] use std::old_path::{self, GenericPath};
+#[allow(deprecated)] use std::old_io;
+use std::path::{Path, PathBuf};
 
 /// Returns an absolute path in the filesystem that `path` points to. The
 /// returned path does not contain any symlinks in its hierarchy.
-pub fn realpath(original: &Path) -> old_io::IoResult<Path> {
-    static MAX_LINKS_FOLLOWED: uint = 256;
-    let original = try!(env::current_dir()).join(original);
+#[allow(deprecated)] // readlink is deprecated
+pub fn realpath(original: &Path) -> io::Result<PathBuf> {
+    let old = old_path::Path::new(original.to_str().unwrap());
+    match old_realpath(&old) {
+        Ok(p) => Ok(PathBuf::from(p.as_str().unwrap())),
+        Err(e) => Err(io::Error::new(io::ErrorKind::Other, e))
+    }
+}
+
+#[allow(deprecated)]
+fn old_realpath(original: &old_path::Path) -> old_io::IoResult<old_path::Path> {
+    use std::old_io::fs;
+    const MAX_LINKS_FOLLOWED: usize = 256;
+    let original = old_path::Path::new(env::current_dir().unwrap()
+                                           .to_str().unwrap()).join(original);
 
     // Right now lstat on windows doesn't work quite well
     if cfg!(windows) {
@@ -55,8 +69,9 @@ pub fn realpath(original: &Path) -> old_io::IoResult<Path> {
 mod test {
     use std::old_io;
     use std::old_io::fs::{File, symlink, mkdir, mkdir_recursive};
-    use super::realpath;
+    use super::old_realpath as realpath;
     use std::old_io::TempDir;
+    use std::old_path::{Path, GenericPath};
 
     #[test]
     fn realpath_works() {

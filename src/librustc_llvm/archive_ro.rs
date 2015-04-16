@@ -14,8 +14,8 @@ use libc;
 use ArchiveRef;
 
 use std::ffi::CString;
-use std::mem;
-use std::raw;
+use std::slice;
+use std::path::Path;
 
 pub struct ArchiveRO {
     ptr: ArchiveRef,
@@ -29,14 +29,26 @@ impl ArchiveRO {
     /// If this archive is used with a mutable method, then an error will be
     /// raised.
     pub fn open(dst: &Path) -> Option<ArchiveRO> {
-        unsafe {
-            let s = CString::new(dst.as_vec()).unwrap();
+        return unsafe {
+            let s = path2cstr(dst);
             let ar = ::LLVMRustOpenArchive(s.as_ptr());
             if ar.is_null() {
                 None
             } else {
                 Some(ArchiveRO { ptr: ar })
             }
+        };
+
+        #[cfg(unix)]
+        fn path2cstr(p: &Path) -> CString {
+            use std::os::unix::prelude::*;
+            use std::ffi::OsStr;
+            let p: &OsStr = p.as_ref();
+            CString::new(p.as_bytes()).unwrap()
+        }
+        #[cfg(windows)]
+        fn path2cstr(p: &Path) -> CString {
+            CString::new(p.to_str().unwrap()).unwrap()
         }
     }
 
@@ -50,10 +62,7 @@ impl ArchiveRO {
             if ptr.is_null() {
                 None
             } else {
-                Some(mem::transmute(raw::Slice {
-                    data: ptr,
-                    len: size as uint,
-                }))
+                Some(slice::from_raw_parts(ptr as *const u8, size as usize))
             }
         }
     }

@@ -10,9 +10,11 @@
 
 // Test implicit coercions from a fn item type to a fn pointer type.
 
-fn foo(x: int) -> int { x * 2 }
-fn bar(x: int) -> int { x * 4 }
-type IntMap = fn(int) -> int;
+// pretty-expanded FIXME #23616
+
+fn foo(x: isize) -> isize { x * 2 }
+fn bar(x: isize) -> isize { x * 4 }
+type IntMap = fn(isize) -> isize;
 
 fn eq<T>(x: T, y: T) { }
 

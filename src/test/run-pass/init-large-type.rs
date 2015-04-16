@@ -12,9 +12,11 @@
 // Doing it incorrectly causes massive slowdown in LLVM during
 // optimisation.
 
-#![feature(intrinsics)]
+// pretty-expanded FIXME #23616
 
-use std::thread::Thread;
+#![feature(intrinsics, std_misc)]
+
+use std::thread;
 
 extern "rust-intrinsic" {
     pub fn init<T>() -> T;
@@ -24,7 +26,7 @@ const SIZE: usize = 1024 * 1024;
 
 fn main() {
     // do the test in a new thread to avoid (spurious?) stack overflows
-    let _ = Thread::scoped(|| {
+    let _ = thread::scoped(|| {
         let _memory: [u8; SIZE] = unsafe { init() };
     }).join();
 }

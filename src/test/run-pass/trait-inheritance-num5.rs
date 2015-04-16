@@ -8,18 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(core)]
+
 use std::cmp::PartialEq;
 use std::num::NumCast;
 
 pub trait NumExt: PartialEq + NumCast {}
 
 impl NumExt for f32 {}
-impl NumExt for int {}
+impl NumExt for isize {}
 
 fn num_eq_one<T:NumExt>() -> T {
     NumCast::from(1).unwrap()
 }
 
 pub fn main() {
-    num_eq_one::<int>(); // you need to actually use the function to trigger the ICE
+    num_eq_one::<isize>(); // you need to actually use the function to trigger the ICE
 }

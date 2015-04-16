@@ -10,12 +10,13 @@
 
 // ignore-windows failing on 64-bit bots FIXME #17638
 // ignore-lldb
+// ignore-aarch64
 
 // compile-flags:-g
 
 // gdb-command:run
 // gdb-command:next
-// gdb-check:[...]33[...]s
+// gdb-check:[...]34[...]s
 // gdb-command:continue
 
 #![omit_gdb_pretty_printer_section]
@@ -28,7 +29,7 @@
 // contained in the output, after calling `next` just once, we can be sure that we did not stop in
 // unwrap(). (The testing framework doesn't allow for checking that some text is *not* contained in
 // the output, which is why we have to make the test in this kind of roundabout way)
-fn bar() -> int {
+fn bar() -> isize {
     let s = Some(5).unwrap(); // #break
     s
 }

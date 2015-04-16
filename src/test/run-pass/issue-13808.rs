@@ -8,8 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+// pretty-expanded FIXME #23616
 
 struct Foo<'a> {
     listener: Box<FnMut() + 'a>,
@@ -17,7 +16,8 @@ struct Foo<'a> {
 
 impl<'a> Foo<'a> {
     fn new<F>(listener: F) -> Foo<'a> where F: FnMut() + 'a {
-        Foo { listener: box listener }
+        // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+        Foo { listener: Box::new(listener) }
     }
 }
 

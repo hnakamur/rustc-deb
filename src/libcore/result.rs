@@ -60,25 +60,25 @@
 //! that make working with it more succinct.
 //!
 //! ```
-//! let good_result: Result<int, int> = Ok(10);
-//! let bad_result: Result<int, int> = Err(10);
+//! let good_result: Result<i32, i32> = Ok(10);
+//! let bad_result: Result<i32, i32> = Err(10);
 //!
 //! // The `is_ok` and `is_err` methods do what they say.
 //! assert!(good_result.is_ok() && !good_result.is_err());
 //! assert!(bad_result.is_err() && !bad_result.is_ok());
 //!
 //! // `map` consumes the `Result` and produces another.
-//! let good_result: Result<int, int> = good_result.map(|i| i + 1);
-//! let bad_result: Result<int, int> = bad_result.map(|i| i - 1);
+//! let good_result: Result<i32, i32> = good_result.map(|i| i + 1);
+//! let bad_result: Result<i32, i32> = bad_result.map(|i| i - 1);
 //!
 //! // Use `and_then` to continue the computation.
-//! let good_result: Result<bool, int> = good_result.and_then(|i| Ok(i == 11));
+//! let good_result: Result<bool, i32> = good_result.and_then(|i| Ok(i == 11));
 //!
 //! // Use `or_else` to handle the error.
-//! let bad_result: Result<int, int> = bad_result.or_else(|i| Ok(11));
+//! let bad_result: Result<i32, i32> = bad_result.or_else(|i| Ok(11));
 //!
 //! // Consume the result and return the contents with `unwrap`.
-//! let final_awesome_result = good_result.ok().unwrap();
+//! let final_awesome_result = good_result.unwrap();
 //! ```
 //!
 //! # Results must be used
@@ -92,9 +92,10 @@
 //! useful value.
 //!
 //! Consider the `write_line` method defined for I/O types
-//! by the [`Writer`](../io/trait.Writer.html) trait:
+//! by the [`Writer`](../old_io/trait.Writer.html) trait:
 //!
 //! ```
+//! # #![feature(old_io)]
 //! use std::old_io::IoError;
 //!
 //! trait Writer {
@@ -110,7 +111,9 @@
 //! something like this:
 //!
 //! ```{.ignore}
-//! use std::old_io::{File, Open, Write};
+//! # #![feature(old_io)]
+//! use std::old_io::*;
+//! use std::old_path::Path;
 //!
 //! let mut file = File::open_mode(&Path::new("valuable_data.txt"), Open, Write);
 //! // If `write_line` errors, then we'll never know, because the return
@@ -128,7 +131,9 @@
 //! a marginally useful message indicating why:
 //!
 //! ```{.no_run}
-//! use std::old_io::{File, Open, Write};
+//! # #![feature(old_io, old_path)]
+//! use std::old_io::*;
+//! use std::old_path::Path;
 //!
 //! let mut file = File::open_mode(&Path::new("valuable_data.txt"), Open, Write);
 //! file.write_line("important message").ok().expect("failed to write message");
@@ -138,7 +143,9 @@
 //! You might also simply assert success:
 //!
 //! ```{.no_run}
-//! # use std::old_io::{File, Open, Write};
+//! # #![feature(old_io, old_path)]
+//! # use std::old_io::*;
+//! # use std::old_path::Path;
 //!
 //! # let mut file = File::open_mode(&Path::new("valuable_data.txt"), Open, Write);
 //! assert!(file.write_line("important message").is_ok());
@@ -148,7 +155,9 @@
 //! Or propagate the error up the call stack with `try!`:
 //!
 //! ```
-//! # use std::old_io::{File, Open, Write, IoError};
+//! # #![feature(old_io, old_path)]
+//! # use std::old_io::*;
+//! # use std::old_path::Path;
 //! fn write_message() -> Result<(), IoError> {
 //!     let mut file = File::open_mode(&Path::new("valuable_data.txt"), Open, Write);
 //!     try!(file.write_line("important message"));
@@ -167,44 +176,48 @@
 //! It replaces this:
 //!
 //! ```
-//! use std::old_io::{File, Open, Write, IoError};
+//! # #![feature(old_io, old_path)]
+//! use std::old_io::*;
+//! use std::old_path::Path;
 //!
 //! struct Info {
 //!     name: String,
-//!     age: int,
-//!     rating: int
+//!     age: i32,
+//!     rating: i32,
 //! }
 //!
 //! fn write_info(info: &Info) -> Result<(), IoError> {
 //!     let mut file = File::open_mode(&Path::new("my_best_friends.txt"), Open, Write);
 //!     // Early return on error
-//!     if let Err(e) = file.write_line(format!("name: {}", info.name).as_slice()) {
+//!     if let Err(e) = file.write_line(&format!("name: {}", info.name)) {
 //!         return Err(e)
 //!     }
-//!     if let Err(e) = file.write_line(format!("age: {}", info.age).as_slice()) {
+//!     if let Err(e) = file.write_line(&format!("age: {}", info.age)) {
 //!         return Err(e)
 //!     }
-//!     return file.write_line(format!("rating: {}", info.rating).as_slice());
+//!     return file.write_line(&format!("rating: {}", info.rating));
 //! }
 //! ```
 //!
 //! With this:
 //!
 //! ```
-//! use std::old_io::{File, Open, Write, IoError};
+//! # #![feature(old_io, old_path)]
+//! use std::old_io::*;
+//! use std::old_path::Path;
 //!
 //! struct Info {
 //!     name: String,
-//!     age: int,
-//!     rating: int
+//!     age: i32,
+//!     rating: i32,
 //! }
 //!
 //! fn write_info(info: &Info) -> Result<(), IoError> {
 //!     let mut file = File::open_mode(&Path::new("my_best_friends.txt"), Open, Write);
 //!     // Early return on error
-//!     try!(file.write_line(format!("name: {}", info.name).as_slice()));
-//!     try!(file.write_line(format!("age: {}", info.age).as_slice()));
-//!     try!(file.write_line(format!("rating: {}", info.rating).as_slice()));
+//!     try!(file.write_line(&format!("name: {}", info.name)));
+//!     try!(file.write_line(&format!("age: {}", info.age)));
+//!     try!(file.write_line(&format!("rating: {}", info.rating)));
 //!     return Ok(());
 //! }
 //! ```
@@ -230,10 +243,10 @@ use self::Result::{Ok, Err};
 
 use clone::Clone;
 use fmt;
-use iter::{Iterator, IteratorExt, DoubleEndedIterator,
-           FromIterator, ExactSizeIterator, IntoIterator};
+use iter::{Iterator, DoubleEndedIterator, FromIterator, ExactSizeIterator, IntoIterator};
 use ops::{FnMut, FnOnce};
 use option::Option::{self, None, Some};
+#[allow(deprecated)]
 use slice::AsSlice;
 use slice;
 
@@ -265,13 +278,13 @@ impl<T, E> Result<T, E> {
 
     /// Returns true if the result is `Ok`
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
-    /// let x: Result<int, &str> = Ok(-3);
+    /// let x: Result<i32, &str> = Ok(-3);
     /// assert_eq!(x.is_ok(), true);
     ///
-    /// let x: Result<int, &str> = Err("Some error message");
+    /// let x: Result<i32, &str> = Err("Some error message");
     /// assert_eq!(x.is_ok(), false);
     /// ```
     #[inline]
@@ -285,13 +298,13 @@ impl<T, E> Result<T, E> {
 
     /// Returns true if the result is `Err`
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
-    /// let x: Result<int, &str> = Ok(-3);
+    /// let x: Result<i32, &str> = Ok(-3);
     /// assert_eq!(x.is_err(), false);
     ///
-    /// let x: Result<int, &str> = Err("Some error message");
+    /// let x: Result<i32, &str> = Err("Some error message");
     /// assert_eq!(x.is_err(), true);
     /// ```
     #[inline]
@@ -309,7 +322,7 @@ impl<T, E> Result<T, E> {
     /// Converts `self` into an `Option<T>`, consuming `self`,
     /// and discarding the error, if any.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let x: Result<u32, &str> = Ok(2);
@@ -330,9 +343,9 @@ impl<T, E> Result<T, E> {
     /// Convert from `Result<T, E>` to `Option<E>`
     ///
     /// Converts `self` into an `Option<E>`, consuming `self`,
-    /// and discarding the value, if any.
+    /// and discarding the success value, if any.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let x: Result<u32, &str> = Ok(2);
@@ -378,18 +391,18 @@ impl<T, E> Result<T, E> {
     /// Convert from `Result<T, E>` to `Result<&mut T, &mut E>`
     ///
     /// ```
-    /// fn mutate(r: &mut Result<int, int>) {
+    /// fn mutate(r: &mut Result<i32, i32>) {
     ///     match r.as_mut() {
     ///         Ok(&mut ref mut v) => *v = 42,
     ///         Err(&mut ref mut e) => *e = 0,
     ///     }
     /// }
     ///
-    /// let mut x: Result<int, int> = Ok(2);
+    /// let mut x: Result<i32, i32> = Ok(2);
     /// mutate(&mut x);
     /// assert_eq!(x.unwrap(), 42);
     ///
-    /// let mut x: Result<int, int> = Err(13);
+    /// let mut x: Result<i32, i32> = Err(13);
     /// mutate(&mut x);
     /// assert_eq!(x.unwrap_err(), 0);
     /// ```
@@ -402,9 +415,24 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    /// Convert from `Result<T, E>` to `&[T]` (without copying)
+    #[inline]
+    #[unstable(feature = "as_slice", since = "unsure of the utility here")]
+    pub fn as_slice(&self) -> &[T] {
+        match *self {
+            Ok(ref x) => slice::ref_slice(x),
+            Err(_) => {
+                // work around lack of implicit coercion from fixed-size array to slice
+                let emp: &[_] = &[];
+                emp
+            }
+        }
+    }
+
     /// Convert from `Result<T, E>` to `&mut [T]` (without copying)
     ///
     /// ```
+    /// # #![feature(core)]
     /// let mut x: Result<&str, u32> = Ok("Gold");
     /// {
     ///     let v = x.as_mut_slice();
@@ -440,26 +468,28 @@ impl<T, E> Result<T, E> {
     ///
     /// This function can be used to compose the results of two functions.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// Sum the lines of a buffer by mapping strings to numbers,
     /// ignoring I/O and parse errors:
     ///
     /// ```
-    /// use std::old_io::IoResult;
+    /// # #![feature(old_io)]
+    /// use std::old_io::*;
     ///
-    /// let mut buffer = &mut b"1\n2\n3\n4\n";
+    /// let mut buffer: &[u8] = b"1\n2\n3\n4\n";
+    /// let mut buffer = &mut buffer;
     ///
     /// let mut sum = 0;
     ///
     /// while !buffer.is_empty() {
     ///     let line: IoResult<String> = buffer.read_line();
     ///     // Convert the string line to a number using `map` and `from_str`
-    ///     let val: IoResult<int> = line.map(|line| {
-    ///         line.trim_right().parse::<int>().unwrap_or(0)
+    ///     let val: IoResult<i32> = line.map(|line| {
+    ///         line.trim_right().parse::<i32>().unwrap_or(0)
     ///     });
     ///     // Add the value if there were no errors, otherwise add 0
-    ///     sum += val.ok().unwrap_or(0);
+    ///     sum += val.unwrap_or(0);
     /// }
     ///
     /// assert!(sum == 10);
@@ -479,7 +509,7 @@ impl<T, E> Result<T, E> {
     /// This function can be used to pass through a successful result while handling
     /// an error.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// fn stringify(x: u32) -> String { format!("error code: {}", x) }
@@ -505,7 +535,7 @@ impl<T, E> Result<T, E> {
 
     /// Returns an iterator over the possibly contained value.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let x: Result<u32, &str> = Ok(7);
@@ -522,7 +552,7 @@ impl<T, E> Result<T, E> {
 
     /// Returns a mutable iterator over the possibly contained value.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let mut x: Result<u32, &str> = Ok(7);
@@ -543,16 +573,16 @@ impl<T, E> Result<T, E> {
 
     /// Returns a consuming iterator over the possibly contained value.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let x: Result<u32, &str> = Ok(5);
     /// let v: Vec<u32> = x.into_iter().collect();
-    /// assert_eq!(v, vec![5]);
+    /// assert_eq!(v, [5]);
     ///
     /// let x: Result<u32, &str> = Err("nothing!");
     /// let v: Vec<u32> = x.into_iter().collect();
-    /// assert_eq!(v, vec![]);
+    /// assert_eq!(v, []);
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -566,7 +596,7 @@ impl<T, E> Result<T, E> {
 
     /// Returns `res` if the result is `Ok`, otherwise returns the `Err` value of `self`.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let x: Result<u32, &str> = Ok(2);
@@ -598,7 +628,7 @@ impl<T, E> Result<T, E> {
     ///
     /// This function can be used for control flow based on result values.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// fn sq(x: u32) -> Result<u32, u32> { Ok(x * x) }
@@ -620,7 +650,7 @@ impl<T, E> Result<T, E> {
 
     /// Returns `res` if the result is `Err`, otherwise returns the `Ok` value of `self`.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let x: Result<u32, &str> = Ok(2);
@@ -641,9 +671,9 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn or(self, res: Result<T, E>) -> Result<T, E> {
+    pub fn or<F>(self, res: Result<T, F>) -> Result<T, F> {
         match self {
-            Ok(_) => self,
+            Ok(v) => Ok(v),
             Err(_) => res,
         }
     }
@@ -652,7 +682,7 @@ impl<T, E> Result<T, E> {
     ///
     /// This function can be used for control flow based on result values.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// fn sq(x: u32) -> Result<u32, u32> { Ok(x * x) }
@@ -675,7 +705,7 @@ impl<T, E> Result<T, E> {
     /// Unwraps a result, yielding the content of an `Ok`.
     /// Else it returns `optb`.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let optb = 2;
@@ -697,7 +727,7 @@ impl<T, E> Result<T, E> {
     /// Unwraps a result, yielding the content of an `Ok`.
     /// If the value is an `Err` then it calls `op` with its value.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// fn count(x: &str) -> usize { x.len() }
@@ -724,14 +754,14 @@ impl<T, E: fmt::Debug> Result<T, E> {
     /// Panics if the value is an `Err`, with a custom panic message provided
     /// by the `Err`'s value.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// let x: Result<u32, &str> = Ok(2);
     /// assert_eq!(x.unwrap(), 2);
     /// ```
     ///
-    /// ```{.should_fail}
+    /// ```{.should_panic}
     /// let x: Result<u32, &str> = Err("emergency failure");
     /// x.unwrap(); // panics with `emergency failure`
     /// ```
@@ -755,9 +785,9 @@ impl<T: fmt::Debug, E> Result<T, E> {
     /// Panics if the value is an `Ok`, with a custom panic message provided
     /// by the `Ok`'s value.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```{.should_fail}
+    /// ```{.should_panic}
     /// let x: Result<u32, &str> = Ok(2);
     /// x.unwrap_err(); // panics with `2`
     /// ```
@@ -781,10 +811,14 @@ impl<T: fmt::Debug, E> Result<T, E> {
 // Trait implementations
 /////////////////////////////////////////////////////////////////////////////
 
+#[unstable(feature = "core",
+           reason = "waiting on the stability of the trait itself")]
+#[deprecated(since = "1.0.0",
+             reason = "use inherent method instead")]
+#[allow(deprecated)]
 impl<T, E> AsSlice<T> for Result<T, E> {
     /// Convert from `Result<T, E>` to `&[T]` (without copying)
     #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
     fn as_slice<'a>(&'a self) -> &'a [T] {
         match *self {
             Ok(ref x) => slice::ref_slice(x),
@@ -896,7 +930,7 @@ impl<A, E, V: FromIterator<A>> FromIterator<Result<A, E>> for Result<V, E> {
     /// Here is an example which increments every integer in a vector,
     /// checking for overflow:
     ///
-    /// ```rust
+    /// ```
     /// use std::u32;
     ///
     /// let v = vec!(1, 2);

@@ -16,6 +16,7 @@ use {fmt, i64};
 use ops::{Add, Sub, Mul, Div, Neg, FnOnce};
 use option::Option;
 use option::Option::{Some, None};
+#[allow(deprecated)] // Int
 use num::Int;
 use result::Result::Ok;
 
@@ -68,7 +69,7 @@ pub const MAX: Duration = Duration {
 
 impl Duration {
     /// Makes a new `Duration` with given number of weeks.
-    /// Equivalent to `Duration::seconds(weeks * 7 * 24 * 60 * 60), with overflow checks.
+    /// Equivalent to `Duration::seconds(weeks * 7 * 24 * 60 * 60)` with overflow checks.
     /// Panics when the duration is out of bounds.
     #[inline]
     #[unstable(feature = "std_misc")]

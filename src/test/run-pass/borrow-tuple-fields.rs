@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct Foo(int, int);
+// pretty-expanded FIXME #23616
+
+struct Foo(isize, isize);
 
 fn main() {
     let x = (1, 2);

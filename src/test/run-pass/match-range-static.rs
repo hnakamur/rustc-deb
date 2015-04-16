@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-const s: int = 1;
-const e: int = 42;
+// pretty-expanded FIXME #23616
+
+const s: isize = 1;
+const e: isize = 42;
 
 pub fn main() {
     match 7 {

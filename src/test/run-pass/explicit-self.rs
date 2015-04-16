@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
@@ -50,7 +52,7 @@ struct thing {
 
 #[derive(Clone)]
 struct A {
-    a: int
+    a: isize
 }
 
 fn thing(x: A) -> thing {
@@ -60,17 +62,17 @@ fn thing(x: A) -> thing {
 }
 
 impl thing {
-    pub fn bar(self: Box<thing>) -> int { self.x.a }
-    pub fn quux(&self) -> int { self.x.a }
+    pub fn bar(self: Box<thing>) -> isize { self.x.a }
+    pub fn quux(&self) -> isize { self.x.a }
     pub fn baz<'a>(&'a self) -> &'a A { &self.x }
-    pub fn spam(self) -> int { self.x.a }
+    pub fn spam(self) -> isize { self.x.a }
 }
 
 trait Nus { fn f(&self); }
 impl Nus for thing { fn f(&self) {} }
 
 pub fn main() {
-    let y = box thing(A {a: 10});
+    let y: Box<_> = box thing(A {a: 10});
     assert_eq!(y.clone().bar(), 10);
     assert_eq!(y.quux(), 10);
 

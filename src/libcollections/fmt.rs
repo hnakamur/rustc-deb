@@ -16,7 +16,7 @@
 //! This macro is implemented in the compiler to emit calls to this module in
 //! order to format arguments at runtime into strings and streams.
 //!
-//! ## Usage
+//! # Usage
 //!
 //! The `format!` macro is intended to be familiar to those coming from C's
 //! printf/fprintf functions or Python's `str.format` function. In its current
@@ -41,7 +41,7 @@
 //! will then parse the format string and determine if the list of arguments
 //! provided is suitable to pass to this format string.
 //!
-//! ### Positional parameters
+//! ## Positional parameters
 //!
 //! Each formatting argument is allowed to specify which value argument it's
 //! referencing, and if omitted it is assumed to be "the next argument". For
@@ -54,7 +54,7 @@
 //! iterator over the argument. Each time a "next argument" specifier is seen,
 //! the iterator advances. This leads to behavior like this:
 //!
-//! ```rust
+//! ```
 //! format!("{1} {} {0} {}", 1, 2); // => "2 1 1 2"
 //! ```
 //!
@@ -68,7 +68,7 @@
 //! compile-time error. You may refer to the same argument more than once in the
 //! format string, although it must always be referred to with the same type.
 //!
-//! ### Named parameters
+//! ## Named parameters
 //!
 //! Rust itself does not have a Python-like equivalent of named parameters to a
 //! function, but the `format!` macro is a syntax extension which allows it to
@@ -91,7 +91,7 @@
 //! arguments which have names. Like with positional parameters, it is illegal
 //! to provide named parameters that are unused by the format string.
 //!
-//! ### Argument types
+//! ## Argument types
 //!
 //! Each argument's type is dictated by the format string. It is a requirement
 //! that every argument is only ever referred to by one type. For example, this
@@ -105,18 +105,25 @@
 //! hexadecimal as well as an
 //! octal.
 //!
-//! There are various parameters which do require a particular type, however.
-//! Namely if the syntax `{:.*}` is used, then the number of characters to print
-//! precedes the actual object being formatted, and the number of characters
-//! must have the type `usize`. Although a `usize` can be printed with `{}`, it is
-//! illegal to reference an argument as such. For example this is another
+//! There are various parameters which do require a particular type, however. Namely, the `{:.*}`
+//! syntax, which sets the number of numbers after the decimal in floating-point types:
+//!
+//! ```
+//! let formatted_number = format!("{:.*}", 2, 1.234567);
+//!
+//! assert_eq!("1.23", formatted_number)
+//! ```
+//!
+//! If this syntax is used, then the number of characters to print precedes the actual object being
+//! formatted, and the number of characters must have the type `usize`. Although a `usize` can be
+//! printed with `{}`, it is illegal to reference an argument as such. For example this is another
 //! invalid format string:
 //!
 //! ```text
 //! {:.*} {0}
 //! ```
 //!
-//! ### Formatting traits
+//! ## Formatting traits
 //!
 //! When requesting that an argument be formatted with a particular type, you
 //! are actually requesting that an argument ascribes to a particular trait.
@@ -142,7 +149,7 @@
 //! When implementing a format trait for your own type, you will have to
 //! implement a method of the signature:
 //!
-//! ```rust
+//! ```
 //! # use std::fmt;
 //! # struct Foo; // our custom type
 //! # impl fmt::Display for Foo {
@@ -166,7 +173,8 @@
 //! An example of implementing the formatting traits would look
 //! like:
 //!
-//! ```rust
+//! ```
+//! # #![feature(core, std_misc)]
 //! use std::fmt;
 //! use std::f64;
 //! use std::num::Float;
@@ -198,7 +206,7 @@
 //!         // for details, and the function `pad` can be used to pad strings.
 //!         let decimals = f.precision().unwrap_or(3);
 //!         let string = f64::to_str_exact(magnitude, decimals);
-//!         f.pad_integral(true, "", string.as_slice())
+//!         f.pad_integral(true, "", &string)
 //!     }
 //! }
 //!
@@ -211,7 +219,7 @@
 //! }
 //! ```
 //!
-//! #### fmt::Display vs fmt::Debug
+//! ### fmt::Display vs fmt::Debug
 //!
 //! These two formatting traits have distinct purposes:
 //!
@@ -226,12 +234,12 @@
 //! Some examples of the output from both traits:
 //!
 //! ```
-//! assert_eq!(format!("{} {:?}", 3i32, 4i32), "3 4");
+//! assert_eq!(format!("{} {:?}", 3, 4), "3 4");
 //! assert_eq!(format!("{} {:?}", 'a', 'b'), "a 'b'");
 //! assert_eq!(format!("{} {:?}", "foo\n", "bar\n"), "foo\n \"bar\\n\"");
 //! ```
 //!
-//! ### Related macros
+//! ## Related macros
 //!
 //! There are a number of related macros in the `format!` family. The ones that
 //! are currently implemented are:
@@ -245,7 +253,7 @@
 //! format_args! // described below.
 //! ```
 //!
-//! #### `write!`
+//! ### `write!`
 //!
 //! This and `writeln` are two macros which are used to emit the format string
 //! to a specified stream. This is used to prevent intermediate allocations of
@@ -253,24 +261,27 @@
 //! function is actually invoking the `write` function defined in this module.
 //! Example usage is:
 //!
-//! ```rust
+//! ```
+//! # #![feature(old_io)]
 //! # #![allow(unused_must_use)]
+//! use std::io::Write;
 //! let mut w = Vec::new();
 //! write!(&mut w, "Hello {}!", "world");
 //! ```
 //!
-//! #### `print!`
+//! ### `print!`
 //!
 //! This and `println` emit their output to stdout. Similarly to the `write!`
 //! macro, the goal of these macros is to avoid intermediate allocations when
 //! printing output. Example usage is:
 //!
-//! ```rust
+//! ```
 //! print!("Hello {}!", "world");
 //! println!("I have a newline {}", "character at the end");
 //! ```
 //!
-//! #### `format_args!`
+//! ### `format_args!`
+//!
 //! This is a curious macro which is used to safely pass around
 //! an opaque object describing the format string. This object
 //! does not require any heap allocations to create, and it only
@@ -279,16 +290,17 @@
 //! off, some example usage is:
 //!
 //! ```
+//! # #![feature(old_io)]
 //! use std::fmt;
-//! use std::old_io;
+//! use std::io::{self, Write};
 //!
 //! fmt::format(format_args!("this returns {}", "String"));
 //!
-//! let mut some_writer = old_io::stdout();
+//! let mut some_writer = io::stdout();
 //! write!(&mut some_writer, "{}", format_args!("print with a {}", "macro"));
 //!
 //! fn my_fmt_fn(args: fmt::Arguments) {
-//!     write!(&mut old_io::stdout(), "{}", args);
+//!     write!(&mut io::stdout(), "{}", args);
 //! }
 //! my_fmt_fn(format_args!("or a {} too", "function"));
 //! ```
@@ -303,7 +315,7 @@
 //! it would internally pass around this structure until it has been determined
 //! where output should go to.
 //!
-//! ## Syntax
+//! # Syntax
 //!
 //! The syntax for the formatting language used is drawn from other languages,
 //! so it should not be too alien. Arguments are formatted with python-like
@@ -326,14 +338,14 @@
 //! parameter := integer '$'
 //! ```
 //!
-//! ## Formatting Parameters
+//! # Formatting Parameters
 //!
 //! Each argument being formatted can be transformed by a number of formatting
 //! parameters (corresponding to `format_spec` in the syntax above). These
 //! parameters affect the string representation of what's being formatted. This
 //! syntax draws heavily from Python's, so it may seem a bit familiar.
 //!
-//! ### Fill/Alignment
+//! ## Fill/Alignment
 //!
 //! The fill character is provided normally in conjunction with the `width`
 //! parameter. This indicates that if the value being formatted is smaller than
@@ -345,7 +357,7 @@
 //! * `^` - the argument is center-aligned in `width` columns
 //! * `>` - the argument is right-aligned in `width` columns
 //!
-//! ### Sign/#/0
+//! ## Sign/#/0
 //!
 //! These can all be interpreted as flags for a particular formatter.
 //!
@@ -356,19 +368,19 @@
 //!         should always be printed.
 //! * '-' - Currently not used
 //! * '#' - This flag is indicates that the "alternate" form of printing should
-//!         be used. By default, this only applies to the integer formatting
-//!         traits and performs like:
-//!     * `x` - precedes the argument with a "0x"
-//!     * `X` - precedes the argument with a "0x"
-//!     * `t` - precedes the argument with a "0b"
-//!     * `o` - precedes the argument with a "0o"
+//!         be used.  For array slices, the alternate form omits the brackets.
+//!         For the integer formatting traits, the alternate forms are:
+//!     * `#x` - precedes the argument with a "0x"
+//!     * `#X` - precedes the argument with a "0x"
+//!     * `#t` - precedes the argument with a "0b"
+//!     * `#o` - precedes the argument with a "0o"
 //! * '0' - This is used to indicate for integer formats that the padding should
 //!         both be done with a `0` character as well as be sign-aware. A format
-//!         like `{:08d}` would yield `00000001` for the integer `1`, while the
+//!         like `{:08}` would yield `00000001` for the integer `1`, while the
 //!         same format would yield `-0000001` for the integer `-1`. Notice that
 //!         the negative version has one fewer zero than the positive version.
 //!
-//! ### Width
+//! ## Width
 //!
 //! This is a parameter for the "minimum width" that the format should take up.
 //! If the value's string does not fill up this many characters, then the
@@ -384,7 +396,7 @@
 //! parameters by using the `2$` syntax indicating that the second argument is a
 //! `usize` specifying the width.
 //!
-//! ### Precision
+//! ## Precision
 //!
 //! For non-numeric types, this can be considered a "maximum width". If the
 //! resulting string is longer than this width, then it is truncated down to
@@ -395,7 +407,7 @@
 //! For floating-point types, this indicates how many digits after the decimal
 //! point should be printed.
 //!
-//! ## Escaping
+//! # Escaping
 //!
 //! The literal characters `{` and `}` may be included in a string by preceding
 //! them with the same character. For example, the `{` character is escaped with
@@ -404,7 +416,7 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 pub use core::fmt::{Formatter, Result, Write, rt};
-pub use core::fmt::{Show, String, Octal, Binary};
+pub use core::fmt::{Octal, Binary};
 pub use core::fmt::{Display, Debug};
 pub use core::fmt::{LowerHex, UpperHex, Pointer};
 pub use core::fmt::{LowerExp, UpperExp};
@@ -420,9 +432,9 @@ use string;
 ///
 ///   * args - a structure of arguments generated via the `format_args!` macro.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
 /// use std::fmt;
 ///
 /// let s = fmt::format(format_args!("Hello, {}!", "world"));
@@ -433,16 +445,4 @@ pub fn format(args: Arguments) -> string::String {
     let mut output = string::String::new();
     let _ = write!(&mut output, "{}", args);
     output
-}
-
-#[cfg(test)]
-mod tests {
-    use prelude::*;
-    use fmt;
-
-    #[test]
-    fn test_format() {
-        let s = fmt::format(format_args!("Hello, {}!", "world"));
-        assert_eq!(s.as_slice(), "Hello, world!");
-    }
 }

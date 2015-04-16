@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn foo() -> int {
+// pretty-expanded FIXME #23616
+
+fn foo() -> isize {
     return 0xca7f000d;
 }
 
-struct Bar<F> where F: FnMut() -> int { f: F }
+struct Bar<F> where F: FnMut() -> isize { f: F }
 
-static mut b : Bar<fn() -> int> = Bar { f: foo as fn() -> int};
+static mut b : Bar<fn() -> isize> = Bar { f: foo as fn() -> isize};
 
 pub fn main() {
     unsafe { assert_eq!((b.f)(), 0xca7f000d); }

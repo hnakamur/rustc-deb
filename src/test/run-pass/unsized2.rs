@@ -7,8 +7,8 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-//
-// ignore-lexer-test FIXME #15879
+
+// pretty-expanded FIXME #23616
 
 #![allow(unknown_features)]
 #![feature(box_syntax)]
@@ -96,14 +96,14 @@ struct S2<X: ?Sized> {
     f: X,
 }
 struct S3<X: ?Sized> {
-    f1: int,
+    f1: isize,
     f2: X,
 }
 enum E<X: ?Sized> {
     V1(X),
     V2{x: X},
-    V3(int, X),
-    V4{u: int, x: X},
+    V3(isize, X),
+    V4{u: isize, x: X},
 }
 
 pub fn main() {

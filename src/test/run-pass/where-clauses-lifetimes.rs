@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn foo<'a, I>(mut it: I) where I: Iterator<Item=&'a int> {}
+// pretty-expanded FIXME #23616
+
+fn foo<'a, I>(mut it: I) where I: Iterator<Item=&'a isize> {}
 
 fn main() {
     foo([1, 2].iter());

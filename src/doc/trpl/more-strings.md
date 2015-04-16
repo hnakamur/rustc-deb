@@ -12,7 +12,7 @@ Additionally, strings are not null-terminated and can contain null bytes.
 
 Rust has two main types of strings: `&str` and `String`.
 
-# &str
+# `&str`
 
 The first kind is a `&str`. This is pronounced a 'string slice'.
 String literals are of the type `&str`:
@@ -36,10 +36,40 @@ Like vector slices, string slices are simply a pointer plus a length. This
 means that they're a 'view' into an already-allocated string, such as a
 string literal or a `String`.
 
-# String
+## `str`
 
-A `String` is a heap-allocated string. This string is growable, and is also
-guaranteed to be UTF-8.
+You may occasionally see references to a `str` type, without the `&`. While
+this type does exist, it’s not something you want to use yourself. Sometimes,
+people confuse `str` for `String`, and write this:
+
+```rust
+struct S {
+    s: str,
+}
+```
+
+This leads to ugly errors:
+
+```text
+error: the trait `core::marker::Sized` is not implemented for the type `str` [E0277]
+note: `str` does not have a constant size known at compile-time
+```
+
+Instead, this `struct` should be
+
+```rust
+struct S {
+    s: String,
+}
+```
+
+So let’s talk about `String`s.
+
+# `String`
+
+A `String` is a heap-allocated string. This string is growable, and is
+also guaranteed to be UTF-8. `String`s are commonly created by
+converting from a string slice using the `to_string` method.
 
 ```
 let mut s = "Hello".to_string();
@@ -49,7 +79,7 @@ s.push_str(", world.");
 println!("{}", s);
 ```
 
-You can coerce a `String` into a `&str` by dereferencing it:
+A reference to a `String` will automatically coerce to a string slice:
 
 ```
 fn takes_slice(slice: &str) {
@@ -58,7 +88,7 @@ fn takes_slice(slice: &str) {
 
 fn main() {
     let s = "Hello".to_string();
-    takes_slice(&*s);
+    takes_slice(&s);
 }
 ```
 
@@ -99,7 +129,7 @@ need, and it can make your lifetimes more complex.
 To write a function that's generic over types of strings, use `&str`.
 
 ```
-fn some_string_length(x: &str) -> uint {
+fn some_string_length(x: &str) -> usize {
     x.len()
 }
 
@@ -147,6 +177,7 @@ Rust provides iterators for each of these situations:
 Usually, the `graphemes()` method on `&str` is what you want:
 
 ```
+# #![feature(unicode)]
 let s = "u͔n͈̰̎i̙̮͚̦c͚̉o̼̩̰͗d͔̆̓ͥé";
 
 for l in s.graphemes(true) {
@@ -277,7 +308,18 @@ This will print:
 
 Many more bytes than graphemes!
 
-# Other Documentation
+# `Deref` coercions
 
-* [the `&str` API documentation](../std/str/index.html)
-* [the `String` API documentation](../std/string/index.html)
+References to `String`s will automatically coerce into `&str`s. Like this:
+
+```
+fn hello(s: &str) {
+   println!("Hello, {}!", s);
+}
+
+let slice = "Steve";
+let string = "Steve".to_string();
+
+hello(slice);
+hello(&string);
+```

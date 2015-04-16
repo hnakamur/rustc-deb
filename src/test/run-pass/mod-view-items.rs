@@ -1,4 +1,3 @@
-
 // Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -15,8 +14,10 @@
 // pretty-print such view items. If that happens again, this should
 // begin failing.
 
+// pretty-expanded FIXME #23616
+
 mod m {
-    pub fn f() -> Vec<int> { Vec::new() }
+    pub fn f() -> Vec<isize> { Vec::new() }
 }
 
 pub fn main() { let _x = m::f(); }

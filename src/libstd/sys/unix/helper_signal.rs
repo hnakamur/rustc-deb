@@ -8,20 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(deprecated)]
+
 use libc;
-use os;
+use sys::os;
 
 use sys::fs::FileDesc;
 
 pub type signal = libc::c_int;
 
 pub fn new() -> (signal, signal) {
-    let os::Pipe { reader, writer } = unsafe { os::pipe().unwrap() };
-    (reader, writer)
+    let (a, b) = unsafe { os::pipe().unwrap() };
+    (a.unwrap(), b.unwrap())
 }
 
 pub fn signal(fd: libc::c_int) {
-    FileDesc::new(fd, false).write(&[0]).ok().unwrap();
+    FileDesc::new(fd, false).write(&[0]).unwrap();
 }
 
 pub fn close(fd: libc::c_int) {

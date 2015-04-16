@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 macro_rules! sty {
     ($t:ty) => (stringify!($t))
 }
@@ -17,6 +19,6 @@ macro_rules! spath {
 }
 
 fn main() {
-    assert_eq!(sty!(int), "int");
+    assert_eq!(sty!(isize), "isize");
     assert_eq!(spath!(std::option), "std::option");
 }

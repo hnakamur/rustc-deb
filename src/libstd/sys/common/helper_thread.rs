@@ -22,9 +22,8 @@
 
 use prelude::v1::*;
 
+use boxed;
 use cell::UnsafeCell;
-use mem;
-use ptr;
 use rt;
 use sync::{StaticMutex, StaticCondvar};
 use sync::mpsc::{channel, Sender, Receiver};
@@ -39,7 +38,7 @@ use thread;
 ///
 /// The fields of this helper are all public, but they should not be used, this
 /// is for static initialization.
-pub struct Helper<M> {
+pub struct Helper<M:Send> {
     /// Internal lock which protects the remaining fields
     pub lock: StaticMutex,
     pub cond: StaticCondvar,
@@ -52,7 +51,7 @@ pub struct Helper<M> {
     pub chan: UnsafeCell<*mut Sender<M>>,
 
     /// OS handle used to wake up a blocked helper thread
-    pub signal: UnsafeCell<uint>,
+    pub signal: UnsafeCell<usize>,
 
     /// Flag if this helper thread has booted and been initialized yet.
     pub initialized: UnsafeCell<bool>,
@@ -70,6 +69,17 @@ struct RaceBox(helper_signal::signal);
 unsafe impl Send for RaceBox {}
 unsafe impl Sync for RaceBox {}
 
+macro_rules! helper_init { (static $name:ident: Helper<$m:ty>) => (
+    static $name: Helper<$m> = Helper {
+        lock: ::sync::MUTEX_INIT,
+        cond: ::sync::CONDVAR_INIT,
+        chan: ::cell::UnsafeCell { value: 0 as *mut Sender<$m> },
+        signal: ::cell::UnsafeCell { value: 0 },
+        initialized: ::cell::UnsafeCell { value: false },
+        shutdown: ::cell::UnsafeCell { value: false },
+    };
+) }
+
 impl<M: Send> Helper<M> {
     /// Lazily boots a helper thread, becoming a no-op if the helper has already
     /// been spawned.
@@ -86,11 +96,11 @@ impl<M: Send> Helper<M> {
     {
         unsafe {
             let _guard = self.lock.lock().unwrap();
-            if !*self.initialized.get() {
+            if *self.chan.get() as usize == 0 {
                 let (tx, rx) = channel();
-                *self.chan.get() = mem::transmute(box tx);
+                *self.chan.get() = boxed::into_raw(box tx);
                 let (receive, send) = helper_signal::new();
-                *self.signal.get() = send as uint;
+                *self.signal.get() = send as usize;
 
                 let receive = RaceBox(receive);
 
@@ -102,8 +112,10 @@ impl<M: Send> Helper<M> {
                     self.cond.notify_one()
                 });
 
-                rt::at_exit(move|| { self.shutdown() });
+                let _ = rt::at_exit(move || { self.shutdown() });
                 *self.initialized.get() = true;
+            } else if *self.chan.get() as usize == 1 {
+                panic!("cannot continue usage after shutdown");
             }
         }
     }
@@ -118,7 +130,9 @@ impl<M: Send> Helper<M> {
             // Must send and *then* signal to ensure that the child receives the
             // message. Otherwise it could wake up and go to sleep before we
             // send the message.
-            assert!(!self.chan.get().is_null());
+            assert!(*self.chan.get() as usize != 0);
+            assert!(*self.chan.get() as usize != 1,
+                    "cannot continue usage after shutdown");
             (**self.chan.get()).send(msg).unwrap();
             helper_signal::signal(*self.signal.get() as helper_signal::signal);
         }
@@ -131,9 +145,13 @@ impl<M: Send> Helper<M> {
             // returns.
             let mut guard = self.lock.lock().unwrap();
 
+            let ptr = *self.chan.get();
+            if ptr as usize == 1 {
+                panic!("cannot continue usage after shutdown");
+            }
             // Close the channel by destroying it
-            let chan: Box<Sender<M>> = mem::transmute(*self.chan.get());
-            *self.chan.get() = ptr::null_mut();
+            let chan = Box::from_raw(*self.chan.get());
+            *self.chan.get() = 1 as *mut Sender<M>;
             drop(chan);
             helper_signal::signal(*self.signal.get() as helper_signal::signal);
 

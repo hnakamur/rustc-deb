@@ -48,7 +48,7 @@
 use serialize::json::Json;
 use syntax::{diagnostic, abi};
 use std::default::Default;
-use std::old_io::fs::PathExtensions;
+use std::io::prelude::*;
 
 mod windows_base;
 mod linux_base;
@@ -56,6 +56,7 @@ mod apple_base;
 mod apple_ios_base;
 mod freebsd_base;
 mod dragonfly_base;
+mod bitrig_base;
 mod openbsd_base;
 
 mod armv7_apple_ios;
@@ -80,6 +81,7 @@ mod x86_64_apple_ios;
 mod x86_64_pc_windows_gnu;
 mod x86_64_unknown_freebsd;
 mod x86_64_unknown_dragonfly;
+mod x86_64_unknown_bitrig;
 mod x86_64_unknown_linux_gnu;
 mod x86_64_unknown_openbsd;
 
@@ -155,7 +157,7 @@ pub struct TargetOptions {
     /// particular running dsymutil and some other stuff like `-dead_strip`. Defaults to false.
     pub is_like_osx: bool,
     /// Whether the target toolchain is like Windows'. Only useful for compiling against Windows,
-    /// only realy used for figuring out how to find libraries, since Windows uses its own
+    /// only really used for figuring out how to find libraries, since Windows uses its own
     /// library naming convention. Defaults to false.
     pub is_like_windows: bool,
     /// Whether the target toolchain is like Android's. Only useful for compiling against Android.
@@ -237,7 +239,7 @@ impl Target {
                      .and_then(|os| os.map(|s| s.to_string())) {
                 Some(val) => val,
                 None =>
-                    handler.fatal(&format!("Field {} in target specification is required", name)[])
+                    handler.fatal(&format!("Field {} in target specification is required", name))
             }
         };
 
@@ -300,22 +302,26 @@ impl Target {
         base
     }
 
-    /// Search RUST_TARGET_PATH for a JSON file specifying the given target triple. Note that it
-    /// could also just be a bare filename already, so also check for that. If one of the hardcoded
-    /// targets we know about, just return it directly.
+    /// Search RUST_TARGET_PATH for a JSON file specifying the given target
+    /// triple. Note that it could also just be a bare filename already, so also
+    /// check for that. If one of the hardcoded targets we know about, just
+    /// return it directly.
     ///
-    /// The error string could come from any of the APIs called, including filesystem access and
-    /// JSON decoding.
+    /// The error string could come from any of the APIs called, including
+    /// filesystem access and JSON decoding.
     pub fn search(target: &str) -> Result<Target, String> {
         use std::env;
         use std::ffi::OsString;
-        use std::old_io::File;
-        use std::old_path::Path;
+        use std::fs::File;
+        use std::path::{Path, PathBuf};
         use serialize::json;
 
         fn load_file(path: &Path) -> Result<Target, String> {
-            let mut f = try!(File::open(path).map_err(|e| format!("{:?}", e)));
-            let obj = try!(json::from_reader(&mut f).map_err(|e| format!("{:?}", e)));
+            let mut f = try!(File::open(path).map_err(|e| e.to_string()));
+            let mut contents = Vec::new();
+            try!(f.read_to_end(&mut contents).map_err(|e| e.to_string()));
+            let obj = try!(json::from_reader(&mut &contents[..])
+                                .map_err(|e| e.to_string()));
             Ok(Target::from_json(obj))
         }
 
@@ -361,6 +367,7 @@ impl Target {
             i686_unknown_dragonfly,
             x86_64_unknown_dragonfly,
 
+            x86_64_unknown_bitrig,
             x86_64_unknown_openbsd,
 
             x86_64_apple_darwin,
@@ -386,15 +393,16 @@ impl Target {
         let path = {
             let mut target = target.to_string();
             target.push_str(".json");
-            Path::new(target)
+            PathBuf::from(target)
         };
 
-        let target_path = env::var_os("RUST_TARGET_PATH").unwrap_or(OsString::from_str(""));
+        let target_path = env::var_os("RUST_TARGET_PATH")
+                              .unwrap_or(OsString::new());
 
         // FIXME 16351: add a sane default search path?
 
         for dir in env::split_paths(&target_path) {
-            let p =  dir.join(path.clone());
+            let p =  dir.join(&path);
             if p.is_file() {
                 return load_file(&p);
             }

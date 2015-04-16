@@ -11,21 +11,23 @@
 // Tests that you can use an early-bound lifetime parameter as
 // on of the generic parameters in a trait.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 trait Trait<'a> {
-    fn long(&'a self) -> int;
-    fn short<'b>(&'b self) -> int;
+    fn long(&'a self) -> isize;
+    fn short<'b>(&'b self) -> isize;
 }
 
-fn poly_invoke<'c, T: Trait<'c>>(x: &'c T) -> (int, int) {
+fn poly_invoke<'c, T: Trait<'c>>(x: &'c T) -> (isize, isize) {
     let l = x.long();
     let s = x.short();
     (l,s)
 }
 
-fn object_invoke1<'d>(x: &'d Trait<'d>) -> (int, int) {
+fn object_invoke1<'d>(x: &'d Trait<'d>) -> (isize, isize) {
     let l = x.long();
     let s = x.short();
     (l,s)
@@ -35,7 +37,7 @@ struct Struct1<'e> {
     f: &'e (Trait<'e>+'e)
 }
 
-fn field_invoke1<'f, 'g>(x: &'g Struct1<'f>) -> (int,int) {
+fn field_invoke1<'f, 'g>(x: &'g Struct1<'f>) -> (isize,isize) {
     let l = x.f.long();
     let s = x.f.short();
     (l,s)
@@ -45,11 +47,11 @@ struct Struct2<'h, 'i> {
     f: &'h (Trait<'i>+'h)
 }
 
-fn object_invoke2<'j, 'k>(x: &'k Trait<'j>) -> int {
+fn object_invoke2<'j, 'k>(x: &'k Trait<'j>) -> isize {
     x.short()
 }
 
-fn field_invoke2<'l, 'm, 'n>(x: &'n Struct2<'l,'m>) -> int {
+fn field_invoke2<'l, 'm, 'n>(x: &'n Struct2<'l,'m>) -> isize {
     x.f.short()
 }
 
@@ -69,28 +71,31 @@ fn make_ref<'r, T:RefMakerTrait<'r>>(t:T) -> &'r T {
     RefMakerTrait::mk(t)
 }
 
-impl<'s> Trait<'s> for (int,int) {
-    fn long(&'s self) -> int {
+impl<'s> Trait<'s> for (isize,isize) {
+    fn long(&'s self) -> isize {
         let &(x,_) = self;
         x
     }
-    fn short<'b>(&'b self) -> int {
+    fn short<'b>(&'b self) -> isize {
         let &(_,y) = self;
         y
     }
 }
 
 impl<'t> MakerTrait for Box<Trait<'t>+'static> {
-    fn mk() -> Box<Trait<'t>+'static> { box() (4,5) as Box<Trait> }
+    fn mk() -> Box<Trait<'t>+'static> {
+        let tup: Box<(isize, isize)> = box() (4,5);
+        tup as Box<Trait>
+    }
 }
 
 enum List<'l> {
-    Cons(int, &'l List<'l>),
+    Cons(isize, &'l List<'l>),
     Null
 }
 
 impl<'l> List<'l> {
-    fn car<'m>(&'m self) -> int {
+    fn car<'m>(&'m self) -> isize {
         match self {
             &List::Cons(car, _) => car,
             &List::Null => panic!(),

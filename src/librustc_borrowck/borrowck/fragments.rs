@@ -10,15 +10,15 @@
 
 //! Helper routines used for fragmenting structural paths due to moves for
 //! tracking drop obligations. Please see the extensive comments in the
-//! section "Structural fragments" in `doc.rs`.
+//! section "Structural fragments" in `README.md`.
 
 use self::Fragment::*;
 
 use borrowck::InteriorKind::{InteriorField, InteriorElement};
-use borrowck::{LoanPath};
+use borrowck::LoanPath;
 use borrowck::LoanPathKind::{LpVar, LpUpvar, LpDowncast, LpExtend};
 use borrowck::LoanPathElem::{LpDeref, LpInterior};
-use borrowck::move_data::{InvalidMovePathIndex};
+use borrowck::move_data::InvalidMovePathIndex;
 use borrowck::move_data::{MoveData, MovePathIndex};
 use rustc::middle::ty;
 use rustc::middle::mem_categorization as mc;
@@ -26,7 +26,6 @@ use rustc::util::ppaux::{Repr, UserString};
 use std::mem;
 use std::rc::Rc;
 use syntax::ast;
-use syntax::ast_map;
 use syntax::attr::AttrMetaMethods;
 use syntax::codemap::Span;
 
@@ -119,24 +118,9 @@ pub fn instrument_move_fragments<'tcx>(this: &MoveData<'tcx>,
                                        tcx: &ty::ctxt<'tcx>,
                                        sp: Span,
                                        id: ast::NodeId) {
-    let (span_err, print) = {
-        let attrs : &[ast::Attribute];
-        attrs = match tcx.map.find(id) {
-            Some(ast_map::NodeItem(ref item)) =>
-                &item.attrs[],
-            Some(ast_map::NodeImplItem(&ast::MethodImplItem(ref m))) =>
-                &m.attrs[],
-            Some(ast_map::NodeTraitItem(&ast::ProvidedMethod(ref m))) =>
-                &m.attrs[],
-            _ => &[][],
-        };
-
-        let span_err =
-            attrs.iter().any(|a| a.check_name("rustc_move_fragments"));
-        let print = tcx.sess.opts.debugging_opts.print_move_fragments;
-
-        (span_err, print)
-    };
+    let span_err = tcx.map.attrs(id).iter()
+                          .any(|a| a.check_name("rustc_move_fragments"));
+    let print = tcx.sess.opts.debugging_opts.print_move_fragments;
 
     if !span_err && !print { return; }
 
@@ -144,7 +128,7 @@ pub fn instrument_move_fragments<'tcx>(this: &MoveData<'tcx>,
         for (i, mpi) in vec_rc.iter().enumerate() {
             let render = || this.path_loan_path(*mpi).user_string(tcx);
             if span_err {
-                tcx.sess.span_err(sp, &format!("{}: `{}`", kind, render())[]);
+                tcx.sess.span_err(sp, &format!("{}: `{}`", kind, render()));
             }
             if print {
                 println!("id:{} {}[{}] `{}`", id, kind, i, render());
@@ -156,7 +140,7 @@ pub fn instrument_move_fragments<'tcx>(this: &MoveData<'tcx>,
         for (i, f) in vec_rc.iter().enumerate() {
             let render = || f.loan_path_user_string(this, tcx);
             if span_err {
-                tcx.sess.span_err(sp, &format!("{}: `{}`", kind, render())[]);
+                tcx.sess.span_err(sp, &format!("{}: `{}`", kind, render()));
             }
             if print {
                 println!("id:{} {}[{}] `{}`", id, kind, i, render());

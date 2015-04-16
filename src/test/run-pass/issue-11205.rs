@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(dead_code)]
-#![allow(unknown_features)]
-#![feature(box_syntax)]
+
+// FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
 
 trait Foo { fn dummy(&self) { } }
-impl Foo for int {}
+impl Foo for isize {}
 fn foo(_: [&Foo; 2]) {}
 fn foos(_: &[&Foo]) {}
 fn foog<T>(_: &[T], _: &[T]) {}
@@ -39,16 +41,16 @@ fn main() {
     let r = &1;
     foog(x, &[r]);
 
-    let x: [Box<Foo>; 2] = [box 1, box 2];
+    let x: [Box<Foo>; 2] = [Box::new(1), Box::new(2)];
     bar(x);
-    bar([box 1, box 2]);
+    bar([Box::new(1), Box::new(2)]);
 
-    let x: &[Box<Foo>] = &[box 1, box 2];
+    let x: &[Box<Foo>] = &[Box::new(1), Box::new(2)];
     bars(x);
-    bars(&[box 1, box 2]);
+    bars(&[Box::new(1), Box::new(2)]);
 
-    let x: &[Box<Foo>] = &[box 1, box 2];
-    foog(x, &[box 1]);
+    let x: &[Box<Foo>] = &[Box::new(1), Box::new(2)];
+    foog(x, &[Box::new(1)]);
 
     struct T<'a> {
         t: [&'a (Foo+'a); 2]
@@ -85,9 +87,9 @@ fn main() {
         t: &'a [Box<Foo+'static>]
     }
     let _n = M {
-        t: &[box 1, box 2]
+        t: &[Box::new(1), Box::new(2)]
     };
-    let x: [Box<Foo>; 2] = [box 1, box 2];
+    let x: [Box<Foo>; 2] = [Box::new(1), Box::new(2)];
     let _n = M {
         t: &x
     };

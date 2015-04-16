@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(unsafe_destructor)]
 
 use std::cell::Cell;
 
 struct dtor<'a> {
-    x: &'a Cell<int>,
+    x: &'a Cell<isize>,
 }
 
 #[unsafe_destructor]

@@ -48,6 +48,11 @@ pub const WSAESHUTDOWN: libc::c_int = 10058;
 pub const ERROR_NO_MORE_FILES: libc::DWORD = 18;
 pub const TOKEN_READ: libc::DWORD = 0x20008;
 
+// Note that these are not actually HANDLEs, just values to pass to GetStdHandle
+pub const STD_INPUT_HANDLE: libc::DWORD = -10i32 as libc::DWORD;
+pub const STD_OUTPUT_HANDLE: libc::DWORD = -11i32 as libc::DWORD;
+pub const STD_ERROR_HANDLE: libc::DWORD = -12i32 as libc::DWORD;
+
 #[repr(C)]
 #[cfg(target_arch = "x86")]
 pub struct WSADATA {
@@ -84,7 +89,6 @@ pub type LPWSANETWORKEVENTS = *mut WSANETWORKEVENTS;
 pub type WSAEVENT = libc::HANDLE;
 
 #[repr(C)]
-#[derive(Copy)]
 pub struct WSAPROTOCOL_INFO {
     pub dwServiceFlags1: libc::DWORD,
     pub dwServiceFlags2: libc::DWORD,
@@ -295,7 +299,7 @@ pub mod compat {
 
     /// Macro for creating a compatibility fallback for a Windows function
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// compat_fn!(adll32::SomeFunctionW(_arg: LPCWSTR) {
     ///     // Fallback implementation
@@ -427,6 +431,8 @@ extern "system" {
                             DesiredAccess: libc::DWORD,
                             TokenHandle: *mut libc::HANDLE) -> libc::BOOL;
     pub fn GetCurrentProcess() -> libc::HANDLE;
+    pub fn GetStdHandle(which: libc::DWORD) -> libc::HANDLE;
+    pub fn ExitProcess(uExitCode: libc::c_uint) -> !;
 }
 
 #[link(name = "userenv")]

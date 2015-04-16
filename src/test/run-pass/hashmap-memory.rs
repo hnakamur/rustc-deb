@@ -9,8 +9,7 @@
 // except according to those terms.
 
 #![allow(unknown_features)]
-#![feature(box_syntax)]
-#![feature(unboxed_closures)]
+#![feature(unboxed_closures, std_misc)]
 
 /**
    A somewhat reduced test case to expose some Valgrind issues.
@@ -26,26 +25,26 @@ mod map_reduce {
     use std::collections::HashMap;
     use std::sync::mpsc::{channel, Sender};
     use std::str;
-    use std::thread::Thread;
+    use std::thread;
 
     pub type putter<'a> = Box<FnMut(String, String) + 'a>;
 
     pub type mapper = extern fn(String, putter);
 
-    enum ctrl_proto { find_reducer(Vec<u8>, Sender<int>), mapper_done, }
+    enum ctrl_proto { find_reducer(Vec<u8>, Sender<isize>), mapper_done, }
 
     fn start_mappers(ctrl: Sender<ctrl_proto>, inputs: Vec<String>) {
         for i in &inputs {
             let ctrl = ctrl.clone();
             let i = i.clone();
-            Thread::spawn(move|| map_task(ctrl.clone(), i.clone()) );
+            thread::spawn(move|| map_task(ctrl.clone(), i.clone()) );
         }
     }
 
     fn map_task(ctrl: Sender<ctrl_proto>, input: String) {
         let mut intermediates = HashMap::new();
 
-        fn emit(im: &mut HashMap<String, int>,
+        fn emit(im: &mut HashMap<String, isize>,
                 ctrl: Sender<ctrl_proto>, key: String,
                 _val: String) {
             if im.contains_key(&key) {
@@ -61,7 +60,8 @@ mod map_reduce {
         }
 
         let ctrl_clone = ctrl.clone();
-        ::map(input, box |a,b| emit(&mut intermediates, ctrl.clone(), a, b) );
+        // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+        ::map(input, Box::new(|a,b| emit(&mut intermediates, ctrl.clone(), a, b)));
         ctrl_clone.send(ctrl_proto::mapper_done).unwrap();
     }
 
@@ -71,13 +71,13 @@ mod map_reduce {
         // This task becomes the master control task. It spawns others
         // to do the rest.
 
-        let mut reducers: HashMap<String, int>;
+        let mut reducers: HashMap<String, isize>;
 
         reducers = HashMap::new();
 
         start_mappers(tx, inputs.clone());
 
-        let mut num_mappers = inputs.len() as int;
+        let mut num_mappers = inputs.len() as isize;
 
         while num_mappers > 0 {
             match rx.recv().unwrap() {

@@ -13,21 +13,25 @@
 #![allow(bad_style)]
 
 use prelude::v1::*;
-use os::windows::*;
+use os::windows::prelude::*;
 
 use error::Error as StdError;
-use ffi::{OsString, OsStr, AsOsStr};
+use ffi::{OsString, OsStr};
 use fmt;
-use ops::Range;
+use io;
 use libc::types::os::arch::extra::LPWCH;
 use libc::{self, c_int, c_void};
 use mem;
+#[allow(deprecated)]
 use old_io::{IoError, IoResult};
+use ops::Range;
+use os::windows::ffi::EncodeWide;
+use path::{self, PathBuf};
 use ptr;
 use slice;
 use sys::c;
 use sys::fs::FileDesc;
-use sys::handle::Handle as RawHandle;
+use sys::handle::Handle;
 
 use libc::funcs::extra::kernel32::{
     GetEnvironmentStringsW,
@@ -57,8 +61,8 @@ pub fn error_string(errnum: i32) -> String {
                           -> DWORD;
     }
 
-    static FORMAT_MESSAGE_FROM_SYSTEM: DWORD = 0x00001000;
-    static FORMAT_MESSAGE_IGNORE_INSERTS: DWORD = 0x00000200;
+    const FORMAT_MESSAGE_FROM_SYSTEM: DWORD = 0x00001000;
+    const FORMAT_MESSAGE_IGNORE_INSERTS: DWORD = 0x00000200;
 
     // This value is calculated from the macro
     // MAKELANGID(LANG_SYSTEM_DEFAULT, SUBLANG_SYS_DEFAULT)
@@ -105,7 +109,7 @@ impl Iterator for Env {
             if *self.cur == 0 { return None }
             let p = &*self.cur;
             let mut len = 0;
-            while *(p as *const _).offset(len) != 0 {
+            while *(p as *const u16).offset(len) != 0 {
                 len += 1;
             }
             let p = p as *const u16;
@@ -132,7 +136,7 @@ pub fn env() -> Env {
         let ch = GetEnvironmentStringsW();
         if ch as usize == 0 {
             panic!("failure getting env string from OS: {}",
-                   IoError::last_error());
+                   io::Error::last_os_error());
         }
         Env { base: ch, cur: ch }
     }
@@ -151,8 +155,8 @@ pub fn split_paths(unparsed: &OsStr) -> SplitPaths {
 }
 
 impl<'a> Iterator for SplitPaths<'a> {
-    type Item = Path;
-    fn next(&mut self) -> Option<Path> {
+    type Item = PathBuf;
+    fn next(&mut self) -> Option<PathBuf> {
         // On Windows, the PATH environment variable is semicolon separated.
         // Double quotes are used as a way of introducing literal semicolons
         // (since c:\some;dir is a valid Windows path). Double quotes are not
@@ -186,7 +190,7 @@ impl<'a> Iterator for SplitPaths<'a> {
         if !must_yield && in_progress.is_empty() {
             None
         } else {
-            Some(super::os2path(&in_progress[..]))
+            Some(super::os2path(&in_progress))
         }
     }
 }
@@ -195,13 +199,13 @@ impl<'a> Iterator for SplitPaths<'a> {
 pub struct JoinPathsError;
 
 pub fn join_paths<I, T>(paths: I) -> Result<OsString, JoinPathsError>
-    where I: Iterator<Item=T>, T: AsOsStr
+    where I: Iterator<Item=T>, T: AsRef<OsStr>
 {
     let mut joined = Vec::new();
     let sep = b';' as u16;
 
     for (i, path) in paths.enumerate() {
-        let path = path.as_os_str();
+        let path = path.as_ref();
         if i > 0 { joined.push(sep) }
         let v = path.encode_wide().collect::<Vec<u16>>();
         if v.contains(&(b'"' as u16)) {
@@ -228,33 +232,34 @@ impl StdError for JoinPathsError {
     fn description(&self) -> &str { "failed to join paths" }
 }
 
-pub fn current_exe() -> IoResult<Path> {
-    super::fill_utf16_buf(|buf, sz| unsafe {
+pub fn current_exe() -> io::Result<PathBuf> {
+    super::fill_utf16_buf_new(|buf, sz| unsafe {
         libc::GetModuleFileNameW(ptr::null_mut(), buf, sz)
     }, super::os2path)
 }
 
-pub fn getcwd() -> IoResult<Path> {
-    super::fill_utf16_buf(|buf, sz| unsafe {
+pub fn getcwd() -> io::Result<PathBuf> {
+    super::fill_utf16_buf_new(|buf, sz| unsafe {
         libc::GetCurrentDirectoryW(sz, buf)
     }, super::os2path)
 }
 
-pub fn chdir(p: &Path) -> IoResult<()> {
-    let mut p = p.as_os_str().encode_wide().collect::<Vec<_>>();
+pub fn chdir(p: &path::Path) -> io::Result<()> {
+    let p: &OsStr = p.as_ref();
+    let mut p = p.encode_wide().collect::<Vec<_>>();
     p.push(0);
 
     unsafe {
         match libc::SetCurrentDirectoryW(p.as_ptr()) != (0 as libc::BOOL) {
             true => Ok(()),
-            false => Err(IoError::last_error()),
+            false => Err(io::Error::last_os_error()),
         }
     }
 }
 
 pub fn getenv(k: &OsStr) -> Option<OsString> {
     let k = super::to_utf16_os(k);
-    super::fill_utf16_buf(|buf, sz| unsafe {
+    super::fill_utf16_buf_new(|buf, sz| unsafe {
         libc::GetEnvironmentVariableW(k.as_ptr(), buf, sz)
     }, |buf| {
         OsStringExt::from_wide(buf)
@@ -267,7 +272,7 @@ pub fn setenv(k: &OsStr, v: &OsStr) {
 
     unsafe {
         if libc::SetEnvironmentVariableW(k.as_ptr(), v.as_ptr()) == 0 {
-            panic!("failed to set env: {}", IoError::last_error());
+            panic!("failed to set env: {}", io::Error::last_os_error());
         }
     }
 }
@@ -276,7 +281,7 @@ pub fn unsetenv(n: &OsStr) {
     let v = super::to_utf16_os(n);
     unsafe {
         if libc::SetEnvironmentVariableW(v.as_ptr(), ptr::null()) == 0 {
-            panic!("failed to unset env: {}", IoError::last_error());
+            panic!("failed to unset env: {}", io::Error::last_os_error());
         }
     }
 }
@@ -331,6 +336,7 @@ pub fn page_size() -> usize {
     }
 }
 
+#[allow(deprecated)]
 pub unsafe fn pipe() -> IoResult<(FileDesc, FileDesc)> {
     // Windows pipes work subtly differently than unix pipes, and their
     // inheritance has to be handled in a different way that I do not
@@ -349,26 +355,23 @@ pub unsafe fn pipe() -> IoResult<(FileDesc, FileDesc)> {
     }
 }
 
-pub fn temp_dir() -> Path {
-    super::fill_utf16_buf(|buf, sz| unsafe {
+pub fn temp_dir() -> PathBuf {
+    super::fill_utf16_buf_new(|buf, sz| unsafe {
         c::GetTempPathW(sz, buf)
     }, super::os2path).unwrap()
 }
 
-pub fn home_dir() -> Option<Path> {
-    getenv("HOME".as_os_str()).or_else(|| {
-        getenv("USERPROFILE".as_os_str())
-    }).map(|os| {
-        // FIXME: OsString => Path
-        Path::new(os.to_str().unwrap())
-    }).or_else(|| unsafe {
+pub fn home_dir() -> Option<PathBuf> {
+    getenv("HOME".as_ref()).or_else(|| {
+        getenv("USERPROFILE".as_ref())
+    }).map(PathBuf::from).or_else(|| unsafe {
         let me = c::GetCurrentProcess();
         let mut token = ptr::null_mut();
         if c::OpenProcessToken(me, c::TOKEN_READ, &mut token) == 0 {
             return None
         }
-        let _handle = RawHandle::new(token);
-        super::fill_utf16_buf(|buf, mut sz| {
+        let _handle = Handle::new(token);
+        super::fill_utf16_buf_new(|buf, mut sz| {
             match c::GetUserProfileDirectoryW(token, buf, &mut sz) {
                 0 if libc::GetLastError() != 0 => 0,
                 0 => sz,
@@ -376,4 +379,8 @@ pub fn home_dir() -> Option<Path> {
             }
         }, super::os2path).ok()
     })
+}
+
+pub fn exit(code: i32) -> ! {
+    unsafe { c::ExitProcess(code as libc::c_uint) }
 }

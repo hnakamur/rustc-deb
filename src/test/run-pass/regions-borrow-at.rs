@@ -11,13 +11,13 @@
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-fn foo(x: &uint) -> uint {
+fn foo(x: &usize) -> usize {
     *x
 }
 
 pub fn main() {
-    let p = box 22_usize;
+    let p: Box<_> = box 22;
     let r = foo(&*p);
     println!("r={}", r);
-    assert_eq!(r, 22_usize);
+    assert_eq!(r, 22);
 }

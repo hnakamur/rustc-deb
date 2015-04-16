@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![feature(unboxed_closures)]
 
 use std::ops::FnMut;
 
 pub fn main() {
-    let mut f = |x: int, y: int| -> int { x + y };
+    let mut f = |x: isize, y: isize| -> isize { x + y };
     let z = f(1, 2);
     assert_eq!(z, 3);
 }

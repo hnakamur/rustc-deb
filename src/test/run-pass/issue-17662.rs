@@ -10,14 +10,16 @@
 
 // aux-build:issue-17662.rs
 
-extern crate "issue-17662" as i;
+// pretty-expanded FIXME #23616
+
+extern crate issue_17662 as i;
 
 use std::marker;
 
 struct Bar<'a> { m: marker::PhantomData<&'a ()> }
 
-impl<'a> i::Foo<'a, uint> for Bar<'a> {
-    fn foo(&self) -> uint { 5_usize }
+impl<'a> i::Foo<'a, usize> for Bar<'a> {
+    fn foo(&self) -> usize { 5 }
 }
 
 pub fn main() {

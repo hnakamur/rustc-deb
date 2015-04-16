@@ -8,18 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait Get {
     type Value;
     fn get(&self) -> &<Self as Get>::Value;
 }
 
 struct Struct {
-    x: int,
+    x: isize,
 }
 
 impl Get for Struct {
-    type Value = int;
-    fn get(&self) -> &int {
+    type Value = isize;
+    fn get(&self) -> &isize {
         &self.x
     }
 }

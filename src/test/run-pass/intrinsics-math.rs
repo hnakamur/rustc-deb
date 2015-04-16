@@ -1,4 +1,3 @@
-
 // Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -9,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(intrinsics)]
+// pretty-expanded FIXME #23616
+
+#![feature(intrinsics, core)]
 
 macro_rules! assert_approx_eq {
     ($a:expr, $b:expr) => ({
@@ -65,8 +66,8 @@ pub fn main() {
         assert_approx_eq!(sqrtf32(64f32), 8f32);
         assert_approx_eq!(sqrtf64(64f64), 8f64);
 
-        assert_approx_eq!(powif32(25f32, -2i32), 0.0016f32);
-        assert_approx_eq!(powif64(23.2f64, 2i32), 538.24f64);
+        assert_approx_eq!(powif32(25f32, -2), 0.0016f32);
+        assert_approx_eq!(powif64(23.2f64, 2), 538.24f64);
 
         assert_approx_eq!(sinf32(0f32), 0f32);
         assert_approx_eq!(sinf64(f64::consts::PI / 2f64), 1f64);

@@ -10,10 +10,6 @@
 
 #![allow(missing_docs)]
 #![allow(non_camel_case_types)]
-#![allow(unused_imports)]
-#![allow(dead_code)]
-#![allow(unused_unsafe)]
-#![allow(unused_mut)]
 
 use prelude::v1::*;
 
@@ -21,21 +17,9 @@ use ffi::CStr;
 use io::{self, ErrorKind};
 use libc;
 use num::{Int, SignedInt};
-use num;
-use old_io::{self, IoResult, IoError};
+use old_io::{self, IoError};
 use str;
 use sys_common::mkerr_libc;
-
-macro_rules! helper_init { (static $name:ident: Helper<$m:ty>) => (
-    static $name: Helper<$m> = Helper {
-        lock: ::sync::MUTEX_INIT,
-        cond: ::sync::CONDVAR_INIT,
-        chan: ::cell::UnsafeCell { value: 0 as *mut Sender<$m> },
-        signal: ::cell::UnsafeCell { value: 0 },
-        initialized: ::cell::UnsafeCell { value: false },
-        shutdown: ::cell::UnsafeCell { value: false },
-    };
-) }
 
 pub mod backtrace;
 pub mod c;
@@ -63,6 +47,7 @@ pub mod time;
 pub mod timer;
 pub mod tty;
 pub mod udp;
+pub mod stdio;
 
 pub mod addrinfo {
     pub use sys_common::net::get_host_addresses;
@@ -75,10 +60,12 @@ pub type wrlen = libc::size_t;
 pub type msglen_t = libc::size_t;
 pub unsafe fn close_sock(sock: sock_t) { let _ = libc::close(sock); }
 
+#[allow(deprecated)]
 pub fn last_error() -> IoError {
     decode_error_detailed(os::errno() as i32)
 }
 
+#[allow(deprecated)]
 pub fn last_net_error() -> IoError {
     last_error()
 }
@@ -87,6 +74,7 @@ extern "system" {
     fn gai_strerror(errcode: libc::c_int) -> *const libc::c_char;
 }
 
+#[allow(deprecated)]
 pub fn last_gai_error(s: libc::c_int) -> IoError {
 
     let mut err = decode_error(s);
@@ -98,6 +86,7 @@ pub fn last_gai_error(s: libc::c_int) -> IoError {
 }
 
 /// Convert an `errno` value into a high-level error variant and description.
+#[allow(deprecated)]
 pub fn decode_error(errno: i32) -> IoError {
     // FIXME: this should probably be a bit more descriptive...
     let (kind, desc) = match errno {
@@ -134,12 +123,14 @@ pub fn decode_error(errno: i32) -> IoError {
     IoError { kind: kind, desc: desc, detail: None }
 }
 
+#[allow(deprecated)]
 pub fn decode_error_detailed(errno: i32) -> IoError {
     let mut err = decode_error(errno);
     err.detail = Some(os::error_string(errno));
     err
 }
 
+#[allow(deprecated)]
 pub fn decode_error_kind(errno: i32) -> ErrorKind {
     match errno as libc::c_int {
         libc::ECONNREFUSED => ErrorKind::ConnectionRefused,
@@ -148,28 +139,26 @@ pub fn decode_error_kind(errno: i32) -> ErrorKind {
         libc::EPIPE => ErrorKind::BrokenPipe,
         libc::ENOTCONN => ErrorKind::NotConnected,
         libc::ECONNABORTED => ErrorKind::ConnectionAborted,
-        libc::EADDRNOTAVAIL => ErrorKind::ConnectionRefused,
-        libc::EADDRINUSE => ErrorKind::ConnectionRefused,
-        libc::ENOENT => ErrorKind::FileNotFound,
-        libc::EISDIR => ErrorKind::InvalidInput,
+        libc::EADDRNOTAVAIL => ErrorKind::AddrNotAvailable,
+        libc::EADDRINUSE => ErrorKind::AddrInUse,
+        libc::ENOENT => ErrorKind::NotFound,
         libc::EINTR => ErrorKind::Interrupted,
         libc::EINVAL => ErrorKind::InvalidInput,
-        libc::ENOTTY => ErrorKind::MismatchedFileTypeForOperation,
         libc::ETIMEDOUT => ErrorKind::TimedOut,
-        libc::ECANCELED => ErrorKind::TimedOut,
-        libc::consts::os::posix88::EEXIST => ErrorKind::PathAlreadyExists,
+        libc::consts::os::posix88::EEXIST => ErrorKind::AlreadyExists,
 
         // These two constants can have the same value on some systems,
         // but different values on others, so we can't use a match
         // clause
         x if x == libc::EAGAIN || x == libc::EWOULDBLOCK =>
-            ErrorKind::ResourceUnavailable,
+            ErrorKind::WouldBlock,
 
         _ => ErrorKind::Other,
     }
 }
 
 #[inline]
+#[allow(deprecated)]
 pub fn retry<T, F> (mut f: F) -> T where
     T: SignedInt,
     F: FnMut() -> T,
@@ -182,6 +171,7 @@ pub fn retry<T, F> (mut f: F) -> T where
     }
 }
 
+#[allow(deprecated)]
 pub fn cvt<T: SignedInt>(t: T) -> io::Result<T> {
     let one: T = Int::one();
     if t == -one {
@@ -191,6 +181,7 @@ pub fn cvt<T: SignedInt>(t: T) -> io::Result<T> {
     }
 }
 
+#[allow(deprecated)]
 pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
     where T: SignedInt, F: FnMut() -> T
 {
@@ -209,14 +200,16 @@ pub fn ms_to_timeval(ms: u64) -> libc::timeval {
     }
 }
 
+#[allow(deprecated)]
 pub fn wouldblock() -> bool {
     let err = os::errno();
     err == libc::EWOULDBLOCK as i32 || err == libc::EAGAIN as i32
 }
 
-pub fn set_nonblocking(fd: sock_t, nb: bool) -> IoResult<()> {
+#[allow(deprecated)]
+pub fn set_nonblocking(fd: sock_t, nb: bool) {
     let set = nb as libc::c_int;
-    mkerr_libc(retry(|| unsafe { c::ioctl(fd, c::FIONBIO, &set) }))
+    mkerr_libc(retry(|| unsafe { c::ioctl(fd, c::FIONBIO, &set) })).unwrap();
 }
 
 // nothing needed on unix platforms

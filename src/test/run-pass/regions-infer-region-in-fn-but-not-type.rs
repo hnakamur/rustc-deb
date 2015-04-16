@@ -9,9 +9,11 @@
 // except according to those terms.
 
 
-// check that the &int here does not cause us to think that `foo`
+// check that the &isize here does not cause us to think that `foo`
 // contains region pointers
-struct foo(Box<FnMut(&int)+'static>);
+// pretty-expanded FIXME #23616
+
+struct foo(Box<FnMut(&isize)+'static>);
 
 fn take_foo<T:'static>(x: T) {}
 

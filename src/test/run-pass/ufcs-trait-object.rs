@@ -11,6 +11,8 @@
 // Test that when you use ufcs form to invoke a trait method (on a
 // trait object) everything works fine.
 
+// pretty-expanded FIXME #23616
+
 trait Foo {
     fn test(&self) -> i32;
 }
@@ -20,6 +22,6 @@ impl Foo for i32 {
 }
 
 fn main() {
-    let a: &Foo = &22_i32;
+    let a: &Foo = &22;
     assert_eq!(Foo::test(a), 22);
 }

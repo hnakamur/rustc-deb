@@ -8,8 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #[forbid(raw_pointer_derive)]
 #[derive(Copy)]
 struct Test(*const i32);
+
+impl Clone for Test {
+    fn clone(&self) -> Test { *self }
+}
 
 fn main() {}

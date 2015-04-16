@@ -11,8 +11,10 @@
 
 
 
+// pretty-expanded FIXME #23616
+
 pub fn main() {
-    let mut word: u32 = 200000u32;
-    word = word - 1u32;
-    assert_eq!(word, 199999u32);
+    let mut word: u32 = 200000;
+    word = word - 1;
+    assert_eq!(word, 199999);
 }

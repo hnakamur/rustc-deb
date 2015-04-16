@@ -8,5 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn wsucc(n: int) -> int { 0 + { return n + 1 } }
+// pretty-expanded FIXME #23616
+
+use std::num::Int;
+
+fn wsucc<T:Int>(n: T) -> T { n + { return n } }
+
 pub fn main() { }

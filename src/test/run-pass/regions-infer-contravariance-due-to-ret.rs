@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 struct boxed_int<'a> {
-    f: &'a int,
+    f: &'a isize,
 }
 
-fn max<'r>(bi: &'r boxed_int, f: &'r int) -> int {
+fn max<'r>(bi: &'r boxed_int, f: &'r isize) -> isize {
     if *bi.f > *f {*bi.f} else {*f}
 }
 
-fn with(bi: &boxed_int) -> int {
+fn with(bi: &boxed_int) -> isize {
     let i = 22;
     max(bi, &i)
 }

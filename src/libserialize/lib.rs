@@ -14,6 +14,8 @@
 Core encoding and decoding interfaces.
 */
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "serialize"]
 #![unstable(feature = "rustc_private",
             reason = "deprecated in favor of rustc-serialize on crates.io")]
@@ -28,14 +30,13 @@ Core encoding and decoding interfaces.
 #![feature(box_syntax)]
 #![feature(collections)]
 #![feature(core)]
-#![feature(int_uint)]
-#![feature(old_io)]
 #![feature(old_path)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
 #![feature(std_misc)]
 #![feature(unicode)]
-#![cfg_attr(test, feature(test))]
+#![feature(str_char)]
+#![cfg_attr(test, feature(test, old_io))]
 
 // test harness access
 #[cfg(test)] extern crate test;

@@ -13,9 +13,11 @@
 
 
 // Tests for standalone blocks as expressions
+// pretty-expanded FIXME #23616
+
 fn test_basic() { let rs: bool = { true }; assert!((rs)); }
 
-struct RS { v1: int, v2: int }
+struct RS { v1: isize, v2: isize }
 
 fn test_rec() { let rs = { RS {v1: 10, v2: 20} }; assert!((rs.v2 == 20)); }
 

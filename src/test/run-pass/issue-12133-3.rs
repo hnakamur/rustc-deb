@@ -12,6 +12,8 @@
 // aux-build:issue-12133-dylib.rs
 // aux-build:issue-12133-dylib2.rs
 
-extern crate "issue-12133-dylib2" as other;
+// pretty-expanded FIXME #23616
+
+extern crate issue_12133_dylib2 as other;
 
 fn main() {}

@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 pub fn main()
 {
-    let all_nuls1 = "\0\x00\u0000\U00000000";
-    let all_nuls2 = "\U00000000\u0000\x00\0";
-    let all_nuls3 = "\u0000\U00000000\x00\0";
-    let all_nuls4 = "\x00\u0000\0\U00000000";
+    let all_nuls1 = "\0\x00\u{0}\u{0}";
+    let all_nuls2 = "\u{0}\u{0}\x00\0";
+    let all_nuls3 = "\u{0}\u{0}\x00\0";
+    let all_nuls4 = "\x00\u{0}\0\u{0}";
 
     // sizes for two should suffice
     assert_eq!(all_nuls1.len(), 4);
@@ -35,8 +37,8 @@ pub fn main()
 
     // testing equality between explicit character literals
     assert_eq!('\0', '\x00');
-    assert_eq!('\u0000', '\x00');
-    assert_eq!('\u0000', '\U00000000');
+    assert_eq!('\u{0}', '\x00');
+    assert_eq!('\u{0}', '\u{0}');
 
     // NUL characters should make a difference
     assert!("Hello World" != "Hello \0World");

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
@@ -18,6 +20,6 @@ fn f<T>(t: T) -> T {
 }
 
 pub fn main() {
-    let t = f(box 100);
+    let t = f::<Box<_>>(box 100);
     assert_eq!(t, box 100);
 }

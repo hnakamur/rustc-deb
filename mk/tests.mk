@@ -19,9 +19,12 @@
 DEPS_coretest :=
 $(eval $(call RUST_CRATE,coretest))
 
-TEST_TARGET_CRATES = $(filter-out core unicode,$(TARGET_CRATES)) coretest
+DEPS_collectionstest :=
+$(eval $(call RUST_CRATE,collectionstest))
+
+TEST_TARGET_CRATES = $(filter-out core unicode,$(TARGET_CRATES)) collectionstest coretest
 TEST_DOC_CRATES = $(DOC_CRATES)
-TEST_HOST_CRATES = $(filter-out rustc_typeck rustc_borrowck rustc_resolve rustc_trans,\
+TEST_HOST_CRATES = $(filter-out rustc_typeck rustc_borrowck rustc_resolve rustc_trans rustc_lint,\
                      $(HOST_CRATES))
 TEST_CRATES = $(TEST_TARGET_CRATES) $(TEST_HOST_CRATES)
 
@@ -163,7 +166,7 @@ $(foreach file,$(wildcard $(S)src/doc/trpl/*.md), \
 ######################################################################
 
 # The main testing target. Tests lots of stuff.
-check: cleantmptestlogs cleantestlibs all check-stage2 tidy
+check: check-sanitycheck cleantmptestlogs cleantestlibs all check-stage2 tidy
 	$(Q)$(CFG_PYTHON) $(S)src/etc/check-summary.py tmp/*.log
 
 # As above but don't bother running tidy.
@@ -189,6 +192,11 @@ check-docs: cleantestlibs cleantmptestlogs check-stage2-docs
 # Some less critical tests that are not prone to breakage.
 # Not run as part of the normal test suite, but tested by bors on checkin.
 check-secondary: check-build-compiletest check-build-lexer-verifier check-lexer check-pretty
+
+.PHONY: check-sanitycheck
+
+check-sanitycheck:
+	$(Q)$(CFG_PYTHON) $(S)src/etc/check-sanitycheck.py
 
 # check + check-secondary.
 #
@@ -372,7 +380,7 @@ $(3)/stage$(1)/test/$(4)test-$(2)$$(X_$(2)): \
 	$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(3)) \
 	    $$(subst @,,$$(STAGE$(1)_T_$(2)_H_$(3))) -o $$@ $$< --test \
 		-L "$$(RT_OUTPUT_DIR_$(2))" \
-		-L "$$(LLVM_LIBDIR_$(2))" \
+		$$(LLVM_LIBDIR_RUSTFLAGS_$(2)) \
 		$$(RUSTFLAGS_$(4))
 
 endef
@@ -389,10 +397,11 @@ check-stage$(1)-T-$(2)-H-$(3)-$(4)-exec: $$(call TEST_OK_FILE,$(1),$(2),$(3),$(4
 $$(call TEST_OK_FILE,$(1),$(2),$(3),$(4)): \
 		$(3)/stage$(1)/test/$(4)test-$(2)$$(X_$(2))
 	@$$(call E, run: $$<)
+	$$(Q)touch $$@.start_time
 	$$(Q)$$(call CFG_RUN_TEST_$(2),$$<,$(1),$(2),$(3)) $$(TESTARGS) \
 	    --logfile $$(call TEST_LOG_FILE,$(1),$(2),$(3),$(4)) \
 	    $$(call CRATE_TEST_EXTRA_ARGS,$(1),$(2),$(3),$(4)) \
-	    && touch $$@
+	    && touch -r $$@.start_time $$@ && rm $$@.start_time
 endef
 
 define DEF_TEST_CRATE_RULES_android
@@ -401,6 +410,7 @@ check-stage$(1)-T-$(2)-H-$(3)-$(4)-exec: $$(call TEST_OK_FILE,$(1),$(2),$(3),$(4
 $$(call TEST_OK_FILE,$(1),$(2),$(3),$(4)): \
 		$(3)/stage$(1)/test/$(4)test-$(2)$$(X_$(2))
 	@$$(call E, run: $$< via adb)
+	$$(Q)touch $$@.start_time
 	$$(Q)$(CFG_ADB) push $$< $(CFG_ADB_TEST_DIR)
 	$$(Q)$(CFG_ADB) shell '(cd $(CFG_ADB_TEST_DIR); LD_LIBRARY_PATH=./$(2) \
 		./$$(notdir $$<) \
@@ -414,7 +424,7 @@ $$(call TEST_OK_FILE,$(1),$(2),$(3),$(4)): \
 	@if grep -q "result: ok" tmp/check-stage$(1)-T-$(2)-H-$(3)-$(4).tmp; \
 	then \
 		rm tmp/check-stage$(1)-T-$(2)-H-$(3)-$(4).tmp; \
-		touch $$@; \
+		touch -r $$@.start_time $$@ && rm $$@.start_time; \
 	else \
 		rm tmp/check-stage$(1)-T-$(2)-H-$(3)-$(4).tmp; \
 		exit 101; \
@@ -564,6 +574,11 @@ ifeq ($(CFG_OSTYPE),apple-darwin)
 CTEST_DISABLE_debuginfo-gdb = "gdb on darwin needs root"
 endif
 
+ifeq ($(findstring android, $(CFG_TARGET)), android)
+CTEST_DISABLE_debuginfo-gdb =
+CTEST_DISABLE_debuginfo-lldb = "lldb tests are disabled on android"
+endif
+
 # CTEST_DISABLE_NONSELFHOST_$(TEST_GROUP), if set, will cause that
 # test group to be disabled *unless* the target is able to build a
 # compiler (i.e. when the target triple is in the set of of host
@@ -588,7 +603,7 @@ TEST_SREQ$(1)_T_$(2)_H_$(3) = \
 
 # The tests select when to use debug configuration on their own;
 # remove directive, if present, from CFG_RUSTC_FLAGS (issue #7898).
-CTEST_RUSTC_FLAGS := $$(subst --cfg ndebug,,$$(CFG_RUSTC_FLAGS))
+CTEST_RUSTC_FLAGS := $$(subst -C debug-assertions,,$$(subst -C debug-assertions=on,,$$(CFG_RUSTC_FLAGS)))
 
 # The tests cannot be optimized while the rest of the compiler is optimized, so
 # filter out the optimization (if any) from rustc and then figure out if we need
@@ -690,10 +705,11 @@ $$(call TEST_OK_FILE,$(1),$(2),$(3),$(4)): \
 		$$(TEST_SREQ$(1)_T_$(2)_H_$(3)) \
                 $$(CTEST_DEPS_$(4)_$(1)-T-$(2)-H-$(3))
 	@$$(call E, run $(4) [$(2)]: $$<)
+	$$(Q)touch $$@.start_time
 	$$(Q)$$(call CFG_RUN_CTEST_$(2),$(1),$$<,$(3)) \
 		$$(CTEST_ARGS$(1)-T-$(2)-H-$(3)-$(4)) \
 		--logfile $$(call TEST_LOG_FILE,$(1),$(2),$(3),$(4)) \
-                && touch $$@
+                && touch -r $$@.start_time $$@ && rm $$@.start_time
 
 else
 
@@ -750,10 +766,11 @@ $$(call TEST_OK_FILE,$(1),$(2),$(3),$(4)): \
 	        $$(PRETTY_DEPS_$(4)) \
 	        $$(PRETTY_DEPS$(1)_H_$(3)_$(4))
 	@$$(call E, run pretty-rpass [$(2)]: $$<)
+	$$(Q)touch $$@.start_time
 	$$(Q)$$(call CFG_RUN_CTEST_$(2),$(1),$$<,$(3)) \
 		$$(PRETTY_ARGS$(1)-T-$(2)-H-$(3)-$(4)) \
 		--logfile $$(call TEST_LOG_FILE,$(1),$(2),$(3),$(4)) \
-                && touch $$@
+                && touch -r $$@.start_time $$@ && rm $$@.start_time
 
 endef
 
@@ -799,8 +816,10 @@ endif
 ifeq ($(2),$$(CFG_BUILD))
 $$(call TEST_OK_FILE,$(1),$(2),$(3),doc-$(4)): $$(DOCTESTDEP_$(1)_$(2)_$(3)_$(4))
 	@$$(call E, run doc-$(4) [$(2)])
+	$$(Q)touch $$@.start_time
 	$$(Q)$$(RUSTDOC_$(1)_T_$(2)_H_$(3)) --cfg dox --test $$< \
-		--test-args "$$(TESTARGS)" && touch $$@
+		--test-args "$$(TESTARGS)" && \
+		touch -r $$@.start_time $$@ && rm $$@.start_time
 else
 $$(call TEST_OK_FILE,$(1),$(2),$(3),doc-$(4)):
 	touch $$@
@@ -835,9 +854,11 @@ check-stage$(1)-T-$(2)-H-$(3)-doc-crate-$(4)-exec: \
 ifeq ($(2),$$(CFG_BUILD))
 $$(call TEST_OK_FILE,$(1),$(2),$(3),doc-crate-$(4)): $$(CRATEDOCTESTDEP_$(1)_$(2)_$(3)_$(4))
 	@$$(call E, run doc-crate-$(4) [$(2)])
+	$$(Q)touch $$@.start_time
 	$$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(3)) \
 	    $$(RUSTDOC_$(1)_T_$(2)_H_$(3)) --test --cfg dox \
-	    	$$(CRATEFILE_$(4)) --test-args "$$(TESTARGS)" && touch $$@
+	        $$(CRATEFILE_$(4)) --test-args "$$(TESTARGS)" && \
+	        touch -r $$@.start_time $$@ && rm $$@.start_time
 else
 $$(call TEST_OK_FILE,$(1),$(2),$(3),doc-crate-$(4)):
 	touch $$@
@@ -984,6 +1005,7 @@ $(3)/test/run-make/%-$(1)-T-$(2)-H-$(3).ok: \
 		$$(CSREQ$(1)_T_$(2)_H_$(3))
 	@rm -rf $(3)/test/run-make/$$*
 	@mkdir -p $(3)/test/run-make/$$*
+	$$(Q)touch $$@.start_time
 	$$(Q)$$(CFG_PYTHON) $(S)src/etc/maketest.py $$(dir $$<) \
         $$(MAKE) \
 	    $$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
@@ -996,7 +1018,7 @@ $(3)/test/run-make/%-$(1)-T-$(2)-H-$(3).ok: \
 	    "$$(LD_LIBRARY_PATH_ENV_TARGETDIR$(1)_T_$(2)_H_$(3))" \
 	    $(1) \
 	    $$(S)
-	@touch $$@
+	@touch -r $$@.start_time $$@ && rm $$@.start_time
 else
 # FIXME #11094 - The above rule doesn't work right for multiple targets
 check-stage$(1)-T-$(2)-H-$(3)-rmake-exec:

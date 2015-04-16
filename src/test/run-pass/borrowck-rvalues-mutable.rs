@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 struct Counter {
-    value: uint
+    value: usize
 }
 
 impl Counter {
-    fn new(v: uint) -> Counter {
+    fn new(v: usize) -> Counter {
         Counter {value: v}
     }
 
@@ -22,11 +24,11 @@ impl Counter {
         self
     }
 
-    fn get(&self) -> uint {
+    fn get(&self) -> usize {
         self.value
     }
 
-    fn get_and_inc(&mut self) -> uint {
+    fn get_and_inc(&mut self) -> usize {
         let v = self.value;
         self.value += 1;
         v

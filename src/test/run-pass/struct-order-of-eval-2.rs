@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 struct S {
     f0: String,
     f1: String,
@@ -15,8 +17,9 @@ struct S {
 
 pub fn main() {
     let s = "Hello, world!".to_string();
-    let _s = S {
+    let s = S {
         f1: s.to_string(),
         f0: s
     };
+    assert_eq!(s.f0, "Hello, world!");
 }

@@ -10,18 +10,21 @@
 
 // Make sure #1399 stays fixed
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
-#![feature(unboxed_closures)]
+#![feature(unboxed_closures, core)]
 
 struct A { a: Box<isize> }
 
 fn foo() -> Box<FnMut() -> isize + 'static> {
-    let k = box 22;
+    let k: Box<_> = box 22;
     let _u = A {a: k.clone()};
-    // FIXME(#16640) suffix in `22_isize` suffix shouldn't be necessary
-    let result  = || 22_isize;
-    box result
+    // FIXME(#16640) suffix in `22` suffix shouldn't be necessary
+    let result  = || 22;
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    Box::new(result)
 }
 
 pub fn main() {

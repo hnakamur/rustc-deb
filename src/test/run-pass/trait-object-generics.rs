@@ -10,6 +10,8 @@
 
 // test for #8664
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
@@ -40,14 +42,14 @@ impl<A1, A2, A3> Impl<A1, A2, A3> {
 enum Type<T> { Constant(T) }
 
 trait Trait<K,V> {
-    fn method(&self,Type<(K,V)>) -> int;
+    fn method(&self,Type<(K,V)>) -> isize;
 }
 
 impl<V> Trait<u8,V> for () {
-    fn method(&self, _x: Type<(u8,V)>) -> int { 0 }
+    fn method(&self, _x: Type<(u8,V)>) -> isize { 0 }
 }
 
 pub fn main() {
     let a = box() () as Box<Trait<u8, u8>>;
-    assert_eq!(a.method(Type::Constant((1u8, 2u8))), 0);
+    assert_eq!(a.method(Type::Constant((1, 2))), 0);
 }

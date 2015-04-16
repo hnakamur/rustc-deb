@@ -14,8 +14,10 @@
 // in ORDER matching up to when it ran.
 // Correct order is: matched, inner, outer
 
-static mut ORDER: [uint; 3] = [0, 0, 0];
-static mut INDEX: uint = 0;
+// pretty-expanded FIXME #23616
+
+static mut ORDER: [usize; 3] = [0, 0, 0];
+static mut INDEX: usize = 0;
 
 struct A;
 impl Drop for A {

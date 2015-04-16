@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn f(a: *const int) -> *const int { return a; }
+// pretty-expanded FIXME #23616
 
-fn g(a: *const int) -> *const int { let b = f(a); return b; }
+fn f(a: *const isize) -> *const isize { return a; }
+
+fn g(a: *const isize) -> *const isize { let b = f(a); return b; }
 
 pub fn main() { return; }

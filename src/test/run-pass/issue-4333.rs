@@ -8,9 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::old_io;
+// pretty-expanded FIXME #23616
+
+#![feature(io)]
+
+use std::io;
 
 pub fn main() {
-    let stdout = &mut old_io::stdout() as &mut old_io::Writer;
+    let stdout = &mut io::stdout() as &mut io::Write;
     stdout.write(b"Hello!");
 }

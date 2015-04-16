@@ -14,6 +14,7 @@
 //! (#14132).
 
 #![crate_name = "a"]
+#![feature(core)]
 
 use std::marker::MarkerTrait;
 
@@ -26,9 +27,9 @@ pub trait V : MarkerTrait {}
 impl U for () {}
 impl V for () {}
 
-static A_CONSTANT : int = 2;
+static A_CONSTANT : isize = 2;
 
-pub fn foo<T:U>(_: int) -> i64 {
+pub fn foo<T:U>(_: isize) -> i64 {
     3
 }
 

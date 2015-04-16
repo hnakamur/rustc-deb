@@ -10,11 +10,13 @@
 
 // This is what the signature to spawn should look like with bare functions
 
+// pretty-expanded FIXME #23616
+
 fn spawn<T:Send>(val: T, f: fn(T)) {
     f(val);
 }
 
-fn f(i: int) {
+fn f(i: isize) {
     assert_eq!(i, 100);
 }
 

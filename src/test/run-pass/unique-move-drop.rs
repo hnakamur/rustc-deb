@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unused_variable)]
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 pub fn main() {
-    let i = box 100;
-    let j = box 200;
+    let i: Box<_> = box 100;
+    let j: Box<_> = box 200;
     let j = i;
     assert_eq!(*j, 100);
 }

@@ -94,7 +94,7 @@ pub trait Delegate<'tcx> {
               mode: MutateMode);
 }
 
-#[derive(Copy, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum LoanCause {
     ClosureCapture(Span),
     AddrOf,
@@ -106,20 +106,20 @@ pub enum LoanCause {
     MatchDiscriminant
 }
 
-#[derive(Copy, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum ConsumeMode {
     Copy,                // reference to x where x has a type that copies
     Move(MoveReason),    // reference to x where x has a type that moves
 }
 
-#[derive(Copy, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum MoveReason {
     DirectRefMove,
     PatBindingMove,
     CaptureMove,
 }
 
-#[derive(Copy, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum MatchMode {
     NonBindingMatch,
     BorrowingMatch,
@@ -127,7 +127,7 @@ pub enum MatchMode {
     MovingMatch,
 }
 
-#[derive(Copy, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 enum TrackMatchMode {
     Unknown,
     Definite(MatchMode),
@@ -194,14 +194,14 @@ impl TrackMatchMode {
     }
 }
 
-#[derive(Copy, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum MutateMode {
     Init,
     JustWrite,    // x = y
     WriteAndRead, // x += y
 }
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 enum OverloadedCallType {
     FnOverloadedCall,
     FnMutOverloadedCall,
@@ -422,7 +422,7 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
                 self.walk_expr(&**subexpr)
             }
 
-            ast::ExprPath(_) | ast::ExprQPath(_) => { }
+            ast::ExprPath(..) => { }
 
             ast::ExprUnary(ast::UnDeref, ref base) => {      // *base
                 if !self.walk_overloaded_operator(expr, &**base, Vec::new(), PassArgs::ByRef) {
@@ -442,7 +442,7 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
                 if !self.walk_overloaded_operator(expr,
                                                   &**lhs,
                                                   vec![&**rhs],
-                                                  PassArgs::ByRef) {
+                                                  PassArgs::ByValue) {
                     self.select_from_expr(&**lhs);
                     self.consume_expr(&**rhs);
                 }
@@ -790,7 +790,8 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
             None => { }
             Some(adjustment) => {
                 match *adjustment {
-                    ty::AdjustReifyFnPointer(..) => {
+                    ty::AdjustReifyFnPointer(..) |
+                    ty::AdjustUnsafeFnPointer(..) => {
                         // Creating a closure/fn-pointer consumes the
                         // input and stores it into the resulting
                         // rvalue.
@@ -822,7 +823,7 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
     /// `deref()` is declared with `&self`, this is an autoref of `x`.
     fn walk_autoderefs(&mut self,
                        expr: &ast::Expr,
-                       autoderefs: uint) {
+                       autoderefs: usize) {
         debug!("walk_autoderefs expr={} autoderefs={}", expr.repr(self.tcx()), autoderefs);
 
         for i in 0..autoderefs {
@@ -841,7 +842,7 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
                         ty::ty_rptr(r, ref m) => (m.mutbl, r),
                         _ => self.tcx().sess.span_bug(expr.span,
                                 &format!("bad overloaded deref type {}",
-                                    method_ty.repr(self.tcx()))[])
+                                    method_ty.repr(self.tcx())))
                     };
                     let bk = ty::BorrowKind::from_mutbl(m);
                     self.delegate.borrow(expr.id, expr.span, cmt,
@@ -854,31 +855,16 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
     fn walk_autoref(&mut self,
                     expr: &ast::Expr,
                     autoref: &ty::AutoRef,
-                    n: uint) {
+                    n: usize) {
         debug!("walk_autoref expr={}", expr.repr(self.tcx()));
-
-        // Match for unique trait coercions first, since we don't need the
-        // call to cat_expr_autoderefd.
-        match *autoref {
-            ty::AutoUnsizeUniq(ty::UnsizeVtable(..)) |
-            ty::AutoUnsize(ty::UnsizeVtable(..)) => {
-                assert!(n == 1, format!("Expected exactly 1 deref with Uniq \
-                                         AutoRefs, found: {}", n));
-                let cmt_unadjusted =
-                    return_if_err!(self.mc.cat_expr_unadjusted(expr));
-                self.delegate_consume(expr.id, expr.span, cmt_unadjusted);
-                return;
-            }
-            _ => {}
-        }
-
-        let cmt_derefd = return_if_err!(
-            self.mc.cat_expr_autoderefd(expr, n));
-        debug!("walk_adjustment: cmt_derefd={}",
-               cmt_derefd.repr(self.tcx()));
 
         match *autoref {
             ty::AutoPtr(r, m, _) => {
+                let cmt_derefd = return_if_err!(
+                    self.mc.cat_expr_autoderefd(expr, n));
+                debug!("walk_adjustment: cmt_derefd={}",
+                       cmt_derefd.repr(self.tcx()));
+
                 self.delegate.borrow(expr.id,
                                      expr.span,
                                      cmt_derefd,
@@ -886,10 +872,24 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
                                      ty::BorrowKind::from_mutbl(m),
                                      AutoRef);
             }
-            ty::AutoUnsizeUniq(_) | ty::AutoUnsize(_) | ty::AutoUnsafe(..) => {}
+            ty::AutoUnsize(_) |
+            ty::AutoUnsizeUniq(_) => {
+                assert!(n == 1, format!("Expected exactly 1 deref with Uniq \
+                                         AutoRefs, found: {}", n));
+                let cmt_unadjusted =
+                    return_if_err!(self.mc.cat_expr_unadjusted(expr));
+                self.delegate_consume(expr.id, expr.span, cmt_unadjusted);
+            }
+            ty::AutoUnsafe(..) => {
+            }
         }
     }
 
+    // When this returns true, it means that the expression *is* a
+    // method-call (i.e. via the operator-overload).  This true result
+    // also implies that walk_overloaded_operator already took care of
+    // recursively processing the input arguments, and thus the caller
+    // should not do so.
     fn walk_overloaded_operator(&mut self,
                                 expr: &ast::Expr,
                                 receiver: &ast::Expr,
@@ -1017,7 +1017,7 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
 
                 // Each match binding is effectively an assignment to the
                 // binding being produced.
-                let def = def_map.borrow()[pat.id].clone();
+                let def = def_map.borrow().get(&pat.id).unwrap().full_def();
                 match mc.cat_def(pat.id, pat.span, pat_ty, def) {
                     Ok(binding_cmt) => {
                         delegate.mutate(pat.id, pat.span, binding_cmt, Init);
@@ -1097,13 +1097,13 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
 
             match pat.node {
                 ast::PatEnum(_, _) | ast::PatIdent(_, _, None) | ast::PatStruct(..) => {
-                    match def_map.get(&pat.id) {
+                    match def_map.get(&pat.id).map(|d| d.full_def()) {
                         None => {
                             // no definition found: pat is not a
                             // struct or enum pattern.
                         }
 
-                        Some(&def::DefVariant(enum_did, variant_did, _is_struct)) => {
+                        Some(def::DefVariant(enum_did, variant_did, _is_struct)) => {
                             let downcast_cmt =
                                 if ty::enum_is_univariant(tcx, enum_did) {
                                     cmt_pat
@@ -1119,7 +1119,7 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
                             delegate.matched_pat(pat, downcast_cmt, match_mode);
                         }
 
-                        Some(&def::DefStruct(..)) | Some(&def::DefTy(_, false)) => {
+                        Some(def::DefStruct(..)) | Some(def::DefTy(_, false)) => {
                             // A struct (in either the value or type
                             // namespace; we encounter the former on
                             // e.g. patterns for unit structs).
@@ -1131,14 +1131,14 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,'tcx,TYPER> {
                             delegate.matched_pat(pat, cmt_pat, match_mode);
                         }
 
-                        Some(&def::DefConst(..)) |
-                        Some(&def::DefLocal(..)) => {
+                        Some(def::DefConst(..)) |
+                        Some(def::DefLocal(..)) => {
                             // This is a leaf (i.e. identifier binding
                             // or constant value to match); thus no
                             // `matched_pat` call.
                         }
 
-                        Some(def @ &def::DefTy(_, true)) => {
+                        Some(def @ def::DefTy(_, true)) => {
                             // An enum's type -- should never be in a
                             // pattern.
 

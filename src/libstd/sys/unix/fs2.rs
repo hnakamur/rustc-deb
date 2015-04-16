@@ -12,13 +12,13 @@ use core::prelude::*;
 use io::prelude::*;
 use os::unix::prelude::*;
 
-use ffi::{CString, CStr, OsString, AsOsStr, OsStr};
-use io::{self, Error, Seek, SeekFrom};
-use libc::{self, c_int, c_void, size_t, off_t, c_char, mode_t};
+use ffi::{CString, CStr, OsString, OsStr};
+use io::{self, Error, SeekFrom};
+use libc::{self, c_int, size_t, off_t, c_char, mode_t};
 use mem;
 use path::{Path, PathBuf};
 use ptr;
-use rc::Rc;
+use sync::Arc;
 use sys::fd::FileDesc;
 use sys::{c, cvt, cvt_r};
 use sys_common::FromInner;
@@ -31,14 +31,18 @@ pub struct FileAttr {
 }
 
 pub struct ReadDir {
-    dirp: *mut libc::DIR,
-    root: Rc<PathBuf>,
+    dirp: Dir,
+    root: Arc<PathBuf>,
 }
 
+struct Dir(*mut libc::DIR);
+
+unsafe impl Send for Dir {}
+unsafe impl Sync for Dir {}
+
 pub struct DirEntry {
-    buf: Vec<u8>,
-    dirent: *mut libc::dirent_t,
-    root: Rc<PathBuf>,
+    buf: Vec<u8>, // actually *mut libc::dirent_t
+    root: Arc<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -86,6 +90,7 @@ impl FilePermissions {
             self.mode |= 0o222;
         }
     }
+    pub fn mode(&self) -> i32 { self.mode as i32 }
 }
 
 impl FromInner<i32> for FilePermissions {
@@ -109,7 +114,7 @@ impl Iterator for ReadDir {
 
         let mut entry_ptr = ptr::null_mut();
         loop {
-            if unsafe { libc::readdir_r(self.dirp, ptr, &mut entry_ptr) != 0 } {
+            if unsafe { libc::readdir_r(self.dirp.0, ptr, &mut entry_ptr) != 0 } {
                 return Some(Err(Error::last_os_error()))
             }
             if entry_ptr.is_null() {
@@ -118,7 +123,6 @@ impl Iterator for ReadDir {
 
             let entry = DirEntry {
                 buf: buf,
-                dirent: entry_ptr,
                 root: self.root.clone()
             };
             if entry.name_bytes() == b"." || entry.name_bytes() == b".." {
@@ -130,9 +134,9 @@ impl Iterator for ReadDir {
     }
 }
 
-impl Drop for ReadDir {
+impl Drop for Dir {
     fn drop(&mut self) {
-        let r = unsafe { libc::closedir(self.dirp) };
+        let r = unsafe { libc::closedir(self.0) };
         debug_assert_eq!(r, 0);
     }
 }
@@ -147,8 +151,12 @@ impl DirEntry {
             fn rust_list_dir_val(ptr: *mut libc::dirent_t) -> *const c_char;
         }
         unsafe {
-            CStr::from_ptr(rust_list_dir_val(self.dirent)).to_bytes()
+            CStr::from_ptr(rust_list_dir_val(self.dirent())).to_bytes()
         }
+    }
+
+    fn dirent(&self) -> *mut libc::dirent_t {
+        self.buf.as_ptr() as *mut _
     }
 }
 
@@ -268,8 +276,14 @@ impl File {
 }
 
 fn cstr(path: &Path) -> io::Result<CString> {
-    let cstring = try!(path.as_os_str().to_cstring());
-    Ok(cstring)
+    path.as_os_str().to_cstring().ok_or(
+        io::Error::new(io::ErrorKind::InvalidInput, "path contained a null"))
+}
+
+impl FromInner<c_int> for File {
+    fn from_inner(fd: c_int) -> File {
+        File(FileDesc::new(fd))
+    }
 }
 
 pub fn mkdir(p: &Path) -> io::Result<()> {
@@ -279,14 +293,14 @@ pub fn mkdir(p: &Path) -> io::Result<()> {
 }
 
 pub fn readdir(p: &Path) -> io::Result<ReadDir> {
-    let root = Rc::new(p.to_path_buf());
+    let root = Arc::new(p.to_path_buf());
     let p = try!(cstr(p));
     unsafe {
         let ptr = libc::opendir(p.as_ptr());
         if ptr.is_null() {
             Err(Error::last_os_error())
         } else {
-            Ok(ReadDir { dirp: ptr, root: root })
+            Ok(ReadDir { dirp: Dir(ptr), root: root })
         }
     }
 }
@@ -316,14 +330,6 @@ pub fn rmdir(p: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub fn chown(p: &Path, uid: isize, gid: isize) -> io::Result<()> {
-    let p = try!(cstr(p));
-    try!(cvt_r(|| unsafe {
-        libc::chown(p.as_ptr(), uid as libc::uid_t, gid as libc::gid_t)
-    }));
-    Ok(())
-}
-
 pub fn readlink(p: &Path) -> io::Result<PathBuf> {
     let c_path = try!(cstr(p));
     let p = c_path.as_ptr();
@@ -338,8 +344,7 @@ pub fn readlink(p: &Path) -> io::Result<PathBuf> {
         }));
         buf.set_len(n as usize);
     }
-    let s: OsString = OsStringExt::from_vec(buf);
-    Ok(PathBuf::new(&s))
+    Ok(PathBuf::from(OsString::from_vec(buf)))
 }
 
 pub fn symlink(src: &Path, dst: &Path) -> io::Result<()> {

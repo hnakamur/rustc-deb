@@ -8,6 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-aarch64
+#![feature(libc)]
+
 extern crate libc;
 
 use std::mem;
@@ -30,7 +33,7 @@ pub fn main() {
 
 extern fn callback(data: libc::uintptr_t) {
     unsafe {
-        let data: *const int = mem::transmute(data);
+        let data: *const isize = mem::transmute(data);
         assert_eq!(*data, 100);
     }
 }

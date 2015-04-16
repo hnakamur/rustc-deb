@@ -10,8 +10,10 @@
 
 // Test that you can insert an explicit lifetime in explicit self.
 
+// pretty-expanded FIXME #23616
+
 struct Foo {
-    f: uint
+    f: usize
 }
 
 impl Foo {

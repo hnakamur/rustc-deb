@@ -11,13 +11,15 @@
 // Ensure assigning an owned or managed variable to itself works. In particular,
 // that we do not glue_drop before we glue_take (#3290).
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 use std::rc::Rc;
 
 pub fn main() {
-   let mut x = box 3;
+   let mut x: Box<_> = box 3;
    x = x;
    assert!(*x == 3);
 

@@ -12,18 +12,20 @@
 // PrinterSupport<'b>`, gets properly expanded when it appears in a
 // closure type. This used to result in messed up De Bruijn indices.
 
+// pretty-expanded FIXME #23616
+
 trait PrinterSupport<'ast> {
-    fn ast_map(&self) -> Option<&'ast uint> { None }
+    fn ast_map(&self) -> Option<&'ast usize> { None }
 }
 
 struct NoAnn<'ast> {
-    f: Option<&'ast uint>
+    f: Option<&'ast usize>
 }
 
 impl<'ast> PrinterSupport<'ast> for NoAnn<'ast> {
 }
 
-fn foo<'ast, G>(f: Option<&'ast uint>, g: G) where G: FnOnce(&PrinterSupport) {
+fn foo<'ast, G>(f: Option<&'ast usize>, g: G) where G: FnOnce(&PrinterSupport) {
     let annotation = NoAnn { f: f };
     g(&annotation)
 }

@@ -37,7 +37,7 @@
 //! Each node label is derived directly from the int representing the node,
 //! while the edge labels are all empty strings.
 //!
-//! This example also illustrates how to use `CowVec` to return
+//! This example also illustrates how to use `Cow<[T]>` to return
 //! an owned vector or a borrowed slice as appropriate: we construct the
 //! node vector from scratch, but borrow the edge list (rather than
 //! constructing a copy of all the edges from scratch).
@@ -47,14 +47,16 @@
 //! which is cyclic.
 //!
 //! ```rust
+//! # #![feature(rustc_private, core, into_cow)]
 //! use std::borrow::IntoCow;
+//! use std::io::Write;
 //! use graphviz as dot;
 //!
-//! type Nd = int;
-//! type Ed = (int,int);
+//! type Nd = isize;
+//! type Ed = (isize,isize);
 //! struct Edges(Vec<Ed>);
 //!
-//! pub fn render_to<W:Writer>(output: &mut W) {
+//! pub fn render_to<W: Write>(output: &mut W) {
 //!     let edges = Edges(vec!((0,1), (0,2), (1,3), (2,3), (3,4), (4,4)));
 //!     dot::render(&edges, output).unwrap()
 //! }
@@ -82,7 +84,7 @@
 //!
 //!     fn edges(&'a self) -> dot::Edges<'a,Ed> {
 //!         let &Edges(ref edges) = self;
-//!         edges.as_slice().into_cow()
+//!         (&edges[..]).into_cow()
 //!     }
 //!
 //!     fn source(&self, e: &Ed) -> Nd { let &(s,_) = e; s }
@@ -94,10 +96,10 @@
 //! ```
 //!
 //! ```no_run
-//! # pub fn render_to<W:Writer>(output: &mut W) { unimplemented!() }
+//! # pub fn render_to<W:std::io::Write>(output: &mut W) { unimplemented!() }
 //! pub fn main() {
-//!     use std::old_io::File;
-//!     let mut f = File::create(&Path::new("example1.dot"));
+//!     use std::fs::File;
+//!     let mut f = File::create("example1.dot").unwrap();
 //!     render_to(&mut f)
 //! }
 //! ```
@@ -131,7 +133,7 @@
 //! direct reference to the `(source,target)` pair stored in the graph's
 //! internal vector (rather than passing around a copy of the pair
 //! itself). Note that this implies that `fn edges(&'a self)` must
-//! construct a fresh `Vec<&'a (uint,uint)>` from the `Vec<(uint,uint)>`
+//! construct a fresh `Vec<&'a (usize,usize)>` from the `Vec<(usize,usize)>`
 //! edges stored in `self`.
 //!
 //! Since both the set of nodes and the set of edges are always
@@ -147,14 +149,16 @@
 //! entity `&sube`).
 //!
 //! ```rust
+//! # #![feature(rustc_private, core, into_cow)]
 //! use std::borrow::IntoCow;
+//! use std::io::Write;
 //! use graphviz as dot;
 //!
-//! type Nd = uint;
-//! type Ed<'a> = &'a (uint, uint);
-//! struct Graph { nodes: Vec<&'static str>, edges: Vec<(uint,uint)> }
+//! type Nd = usize;
+//! type Ed<'a> = &'a (usize, usize);
+//! struct Graph { nodes: Vec<&'static str>, edges: Vec<(usize,usize)> }
 //!
-//! pub fn render_to<W:Writer>(output: &mut W) {
+//! pub fn render_to<W: Write>(output: &mut W) {
 //!     let nodes = vec!("{x,y}","{x}","{y}","{}");
 //!     let edges = vec!((0,1), (0,2), (1,3), (2,3));
 //!     let graph = Graph { nodes: nodes, edges: edges };
@@ -186,10 +190,10 @@
 //! ```
 //!
 //! ```no_run
-//! # pub fn render_to<W:Writer>(output: &mut W) { unimplemented!() }
+//! # pub fn render_to<W:std::io::Write>(output: &mut W) { unimplemented!() }
 //! pub fn main() {
-//!     use std::old_io::File;
-//!     let mut f = File::create(&Path::new("example2.dot"));
+//!     use std::fs::File;
+//!     let mut f = File::create("example2.dot").unwrap();
 //!     render_to(&mut f)
 //! }
 //! ```
@@ -203,14 +207,16 @@
 //! Hasse-diagram for the subsets of the set `{x, y}`.
 //!
 //! ```rust
+//! # #![feature(rustc_private, core, into_cow)]
 //! use std::borrow::IntoCow;
+//! use std::io::Write;
 //! use graphviz as dot;
 //!
-//! type Nd<'a> = (uint, &'a str);
+//! type Nd<'a> = (usize, &'a str);
 //! type Ed<'a> = (Nd<'a>, Nd<'a>);
-//! struct Graph { nodes: Vec<&'static str>, edges: Vec<(uint,uint)> }
+//! struct Graph { nodes: Vec<&'static str>, edges: Vec<(usize,usize)> }
 //!
-//! pub fn render_to<W:Writer>(output: &mut W) {
+//! pub fn render_to<W: Write>(output: &mut W) {
 //!     let nodes = vec!("{x,y}","{x}","{y}","{}");
 //!     let edges = vec!((0,1), (0,2), (1,3), (2,3));
 //!     let graph = Graph { nodes: nodes, edges: edges };
@@ -225,7 +231,7 @@
 //!     }
 //!     fn node_label<'b>(&'b self, n: &Nd<'b>) -> dot::LabelText<'b> {
 //!         let &(i, _) = n;
-//!         dot::LabelText::LabelStr(self.nodes[i].as_slice().into_cow())
+//!         dot::LabelText::LabelStr(self.nodes[i].into_cow())
 //!     }
 //!     fn edge_label<'b>(&'b self, _: &Ed<'b>) -> dot::LabelText<'b> {
 //!         dot::LabelText::LabelStr("&sube;".into_cow())
@@ -234,12 +240,12 @@
 //!
 //! impl<'a> dot::GraphWalk<'a, Nd<'a>, Ed<'a>> for Graph {
 //!     fn nodes(&'a self) -> dot::Nodes<'a,Nd<'a>> {
-//!         self.nodes.iter().map(|s|s.as_slice()).enumerate().collect()
+//!         self.nodes.iter().map(|s| &s[..]).enumerate().collect()
 //!     }
 //!     fn edges(&'a self) -> dot::Edges<'a,Ed<'a>> {
 //!         self.edges.iter()
-//!             .map(|&(i,j)|((i, self.nodes[i].as_slice()),
-//!                           (j, self.nodes[j].as_slice())))
+//!             .map(|&(i,j)|((i, &self.nodes[i][..]),
+//!                           (j, &self.nodes[j][..])))
 //!             .collect()
 //!     }
 //!     fn source(&self, e: &Ed<'a>) -> Nd<'a> { let &(s,_) = e; s }
@@ -250,10 +256,10 @@
 //! ```
 //!
 //! ```no_run
-//! # pub fn render_to<W:Writer>(output: &mut W) { unimplemented!() }
+//! # pub fn render_to<W:std::io::Write>(output: &mut W) { unimplemented!() }
 //! pub fn main() {
-//!     use std::old_io::File;
-//!     let mut f = File::create(&Path::new("example3.dot"));
+//!     use std::fs::File;
+//!     let mut f = File::create("example3.dot").unwrap();
 //!     render_to(&mut f)
 //! }
 //! ```
@@ -264,6 +270,8 @@
 //!
 //! * [DOT language](http://www.graphviz.org/doc/info/lang.html)
 
+// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
+#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "graphviz"]
 #![unstable(feature = "rustc_private")]
 #![feature(staged_api)]
@@ -273,14 +281,14 @@
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/")]
-#![feature(int_uint)]
 #![feature(collections)]
-#![feature(old_io)]
+#![feature(into_cow)]
 
 use self::LabelText::*;
 
 use std::borrow::{IntoCow, Cow};
-use std::old_io;
+use std::io::prelude::*;
+use std::io;
 
 /// The text for a graphviz label on a node or edge.
 pub enum LabelText<'a> {
@@ -376,7 +384,7 @@ impl<'a> Id<'a> {
             is_letter_or_underscore(c) || in_range('0', c, '9')
         }
         fn in_range(low: char, c: char, high: char) -> bool {
-            low as uint <= c as uint && c as uint <= high as uint
+            low as usize <= c as usize && c as usize <= high as usize
         }
     }
 
@@ -463,7 +471,7 @@ impl<'a> LabelText<'a> {
     fn pre_escaped_content(self) -> Cow<'a, str> {
         match self {
             EscStr(s) => s,
-            LabelStr(s) => if s.contains_char('\\') {
+            LabelStr(s) => if s.contains('\\') {
                 (&*s).escape_default().into_cow()
             } else {
                 s
@@ -502,7 +510,7 @@ pub type Edges<'a,E> = Cow<'a,[E]>;
 /// that is bound by the self lifetime `'a`.
 ///
 /// The `nodes` and `edges` method each return instantiations of
-/// `CowVec` to leave implementers the freedom to create
+/// `Cow<[T]>` to leave implementers the freedom to create
 /// entirely new vectors or to pass back slices into internally owned
 /// vectors.
 pub trait GraphWalk<'a, N, E> {
@@ -516,7 +524,7 @@ pub trait GraphWalk<'a, N, E> {
     fn target(&'a self, edge: &E) -> N;
 }
 
-#[derive(Copy, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RenderOption {
     NoEdgeLabels,
     NoNodeLabels,
@@ -527,26 +535,26 @@ pub fn default_options() -> Vec<RenderOption> { vec![] }
 
 /// Renders directed graph `g` into the writer `w` in DOT syntax.
 /// (Simple wrapper around `render_opts` that passes a default set of options.)
-pub fn render<'a, N:Clone+'a, E:Clone+'a, G:Labeller<'a,N,E>+GraphWalk<'a,N,E>, W:Writer>(
+pub fn render<'a, N:Clone+'a, E:Clone+'a, G:Labeller<'a,N,E>+GraphWalk<'a,N,E>, W:Write>(
               g: &'a G,
-              w: &mut W) -> old_io::IoResult<()> {
+              w: &mut W) -> io::Result<()> {
     render_opts(g, w, &[])
 }
 
 /// Renders directed graph `g` into the writer `w` in DOT syntax.
 /// (Main entry point for the library.)
-pub fn render_opts<'a, N:Clone+'a, E:Clone+'a, G:Labeller<'a,N,E>+GraphWalk<'a,N,E>, W:Writer>(
+pub fn render_opts<'a, N:Clone+'a, E:Clone+'a, G:Labeller<'a,N,E>+GraphWalk<'a,N,E>, W:Write>(
               g: &'a G,
               w: &mut W,
-              options: &[RenderOption]) -> old_io::IoResult<()>
+              options: &[RenderOption]) -> io::Result<()>
 {
-    fn writeln<W:Writer>(w: &mut W, arg: &[&str]) -> old_io::IoResult<()> {
-        for &s in arg { try!(w.write_str(s)); }
-        w.write_char('\n')
+    fn writeln<W:Write>(w: &mut W, arg: &[&str]) -> io::Result<()> {
+        for &s in arg { try!(w.write_all(s.as_bytes())); }
+        write!(w, "\n")
     }
 
-    fn indent<W:Writer>(w: &mut W) -> old_io::IoResult<()> {
-        w.write_str("    ")
+    fn indent<W:Write>(w: &mut W) -> io::Result<()> {
+        w.write_all(b"    ")
     }
 
     try!(writeln(w, &["digraph ", g.graph_id().as_slice(), " {"]));
@@ -587,17 +595,18 @@ mod tests {
     use self::NodeLabels::*;
     use super::{Id, Labeller, Nodes, Edges, GraphWalk, render};
     use super::LabelText::{self, LabelStr, EscStr};
-    use std::old_io::IoResult;
+    use std::io;
+    use std::io::prelude::*;
     use std::borrow::IntoCow;
     use std::iter::repeat;
 
     /// each node is an index in a vector in the graph.
-    type Node = uint;
+    type Node = usize;
     struct Edge {
-        from: uint, to: uint, label: &'static str
+        from: usize, to: usize, label: &'static str
     }
 
-    fn edge(from: uint, to: uint, label: &'static str) -> Edge {
+    fn edge(from: usize, to: usize, label: &'static str) -> Edge {
         Edge { from: from, to: to, label: label }
     }
 
@@ -627,7 +636,7 @@ mod tests {
 
     enum NodeLabels<L> {
         AllNodesLabelled(Vec<L>),
-        UnlabelledNodes(uint),
+        UnlabelledNodes(usize),
         SomeNodesLabelled(Vec<Option<L>>),
     }
 
@@ -736,10 +745,12 @@ mod tests {
         }
     }
 
-    fn test_input(g: LabelledGraph) -> IoResult<String> {
+    fn test_input(g: LabelledGraph) -> io::Result<String> {
         let mut writer = Vec::new();
         render(&g, &mut writer).unwrap();
-        (&mut &*writer).read_to_string()
+        let mut s = String::new();
+        try!(Read::read_to_string(&mut &*writer, &mut s));
+        Ok(s)
     }
 
     // All of the tests use raw-strings as the format for the expected outputs,
@@ -851,9 +862,10 @@ r#"digraph hasse_diagram {
                  edge(1, 3, ";"),    edge(2, 3, ";"   )));
 
         render(&g, &mut writer).unwrap();
-        let r = (&mut &*writer).read_to_string();
+        let mut r = String::new();
+        Read::read_to_string(&mut &*writer, &mut r).unwrap();
 
-        assert_eq!(r.unwrap(),
+        assert_eq!(r,
 r#"digraph syntax_tree {
     N0[label="if test {\l    branch1\l} else {\l    branch2\l}\lafterward\l"];
     N1[label="branch1"];

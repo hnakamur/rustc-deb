@@ -25,15 +25,14 @@ use middle::ty::{ParameterEnvironment, TypeTraitItemId, lookup_item_type};
 use middle::ty::{Ty, ty_bool, ty_char, ty_enum, ty_err};
 use middle::ty::{ty_param, TypeScheme, ty_ptr};
 use middle::ty::{ty_rptr, ty_struct, ty_trait, ty_tup};
-use middle::ty::{ty_str, ty_vec, ty_float, ty_infer, ty_int, ty_open};
+use middle::ty::{ty_str, ty_vec, ty_float, ty_infer, ty_int};
 use middle::ty::{ty_uint, ty_closure, ty_uniq, ty_bare_fn};
-use middle::ty::{ty_projection};
+use middle::ty::ty_projection;
 use middle::ty;
 use CrateCtxt;
-use middle::infer::combine::Combine;
 use middle::infer::InferCtxt;
-use middle::infer::{new_infer_ctxt};
-use std::collections::{HashSet};
+use middle::infer::new_infer_ctxt;
+use std::collections::HashSet;
 use std::cell::RefCell;
 use std::rc::Rc;
 use syntax::ast::{Crate, DefId};
@@ -42,14 +41,13 @@ use syntax::ast::{LOCAL_CRATE, TraitRef};
 use syntax::ast;
 use syntax::ast_map::NodeItem;
 use syntax::ast_map;
-use syntax::ast_util::{local_def};
-use syntax::codemap::{Span};
+use syntax::ast_util::local_def;
+use syntax::codemap::Span;
 use syntax::parse::token;
 use syntax::visit;
 use util::nodemap::{DefIdMap, FnvHashMap};
 use util::ppaux::Repr;
 
-mod impls;
 mod orphan;
 mod overlap;
 mod unsafety;
@@ -75,7 +73,7 @@ fn get_base_type_def_id<'a, 'tcx>(inference_context: &InferCtxt<'a, 'tcx>,
 
         ty_bool | ty_char | ty_int(..) | ty_uint(..) | ty_float(..) |
         ty_str(..) | ty_vec(..) | ty_bare_fn(..) | ty_tup(..) |
-        ty_param(..) | ty_err | ty_open(..) |
+        ty_param(..) | ty_err |
         ty_ptr(_) | ty_rptr(_, _) | ty_projection(..) => {
             None
         }
@@ -86,7 +84,7 @@ fn get_base_type_def_id<'a, 'tcx>(inference_context: &InferCtxt<'a, 'tcx>,
             inference_context.tcx.sess.span_bug(
                 span,
                 &format!("coherence encountered unexpected type searching for base type: {}",
-                        ty.repr(inference_context.tcx))[]);
+                        ty.repr(inference_context.tcx)));
         }
     }
 }
@@ -106,19 +104,9 @@ impl<'a, 'tcx, 'v> visit::Visitor<'v> for CoherenceCheckVisitor<'a, 'tcx> {
 
         //debug!("(checking coherence) item '{}'", token::get_ident(item.ident));
 
-        match item.node {
-            ItemImpl(_, _, _, ref opt_trait, _, _) => {
-                match opt_trait.clone() {
-                    Some(opt_trait) => {
-                        self.cc.check_implementation(item, &[opt_trait]);
-                    }
-                    None => self.cc.check_implementation(item, &[])
-                }
-            }
-            _ => {
-                // Nothing to do.
-            }
-        };
+        if let ItemImpl(_, _, _, ref opt_trait, _, _) = item.node {
+            self.cc.check_implementation(item, opt_trait.as_ref())
+        }
 
         visit::walk_item(self, item);
     }
@@ -155,9 +143,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
         self.check_implementations_of_copy();
     }
 
-    fn check_implementation(&self,
-                            item: &Item,
-                            associated_traits: &[TraitRef]) {
+    fn check_implementation(&self, item: &Item, opt_trait: Option<&TraitRef>) {
         let tcx = self.crate_context.tcx;
         let impl_did = local_def(item.id);
         let self_type = ty::lookup_item_type(tcx, impl_did);
@@ -167,9 +153,8 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
 
         let impl_items = self.create_impl_from_item(item);
 
-        for associated_trait in associated_traits {
-            let trait_ref = ty::node_id_to_trait_ref(self.crate_context.tcx,
-                                                     associated_trait.ref_id);
+        if opt_trait.is_some() {
+            let trait_ref = ty::impl_id_to_trait_ref(self.crate_context.tcx, item.id);
             debug!("(checking implementation) adding impl for trait '{}', item '{}'",
                    trait_ref.repr(self.crate_context.tcx),
                    token::get_ident(item.ident));
@@ -191,7 +176,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
             }
             Some(base_type_def_id) => {
                 // FIXME: Gather up default methods?
-                if associated_traits.len() == 0 {
+                if opt_trait.is_none() {
                     self.add_inherent_impl(base_type_def_id, impl_did);
                 }
             }
@@ -283,34 +268,35 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
 
     fn get_self_type_for_implementation(&self, impl_did: DefId)
                                         -> TypeScheme<'tcx> {
-        self.crate_context.tcx.tcache.borrow()[impl_did].clone()
+        self.crate_context.tcx.tcache.borrow().get(&impl_did).unwrap().clone()
     }
 
     // Converts an implementation in the AST to a vector of items.
     fn create_impl_from_item(&self, item: &Item) -> Vec<ImplOrTraitItemId> {
         match item.node {
-            ItemImpl(_, _, _, ref trait_refs, _, ref ast_items) => {
+            ItemImpl(_, _, _, ref opt_trait, _, ref impl_items) => {
                 let mut items: Vec<ImplOrTraitItemId> =
-                        ast_items.iter()
-                                 .map(|ast_item| {
-                            match *ast_item {
-                                ast::MethodImplItem(ref ast_method) => {
-                                    MethodTraitItemId(
-                                        local_def(ast_method.id))
-                                }
-                                ast::TypeImplItem(ref typedef) => {
-                                    TypeTraitItemId(local_def(typedef.id))
-                                }
-                            }
-                        }).collect();
+                        impl_items.iter().map(|impl_item| {
+                    match impl_item.node {
+                        ast::MethodImplItem(..) => {
+                            MethodTraitItemId(local_def(impl_item.id))
+                        }
+                        ast::TypeImplItem(_) => {
+                            TypeTraitItemId(local_def(impl_item.id))
+                        }
+                        ast::MacImplItem(_) => {
+                            self.crate_context.tcx.sess.span_bug(impl_item.span,
+                                                                 "unexpanded macro");
+                        }
+                    }
+                }).collect();
 
-                if let Some(ref trait_ref) = *trait_refs {
-                    let ty_trait_ref = ty::node_id_to_trait_ref(
-                        self.crate_context.tcx,
-                        trait_ref.ref_id);
+                if opt_trait.is_some() {
+                    let trait_ref = ty::impl_id_to_trait_ref(self.crate_context.tcx,
+                                                             item.id);
 
                     self.instantiate_default_methods(local_def(item.id),
-                                                     &*ty_trait_ref,
+                                                     &*trait_ref,
                                                      &mut items);
                 }
 
@@ -400,7 +386,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
         };
 
         for &impl_did in &*trait_impls.borrow() {
-            let items = &(*impl_items)[impl_did];
+            let items = impl_items.get(&impl_did).unwrap();
             if items.len() < 1 {
                 // We'll error out later. For now, just don't ICE.
                 continue;
@@ -411,7 +397,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
             match self_type.ty.sty {
                 ty::ty_enum(type_def_id, _) |
                 ty::ty_struct(type_def_id, _) |
-                ty::ty_closure(type_def_id, _, _) => {
+                ty::ty_closure(type_def_id, _) => {
                     tcx.destructor_for_type
                        .borrow_mut()
                        .insert(type_def_id, method_def_id.def_id());
@@ -538,7 +524,7 @@ fn enforce_trait_manually_implementable(tcx: &ty::ctxt, sp: Span, trait_def_id: 
         return // everything OK
     };
     span_err!(tcx.sess, sp, E0183, "manual implementations of `{}` are experimental", trait_name);
-    span_help!(tcx.sess, sp,
+    fileline_help!(tcx.sess, sp,
                "add `#![feature(unboxed_closures)]` to the crate attributes to enable");
 }
 
@@ -597,7 +583,6 @@ pub fn check_coherence(crate_context: &CrateCtxt) {
         inference_context: new_infer_ctxt(crate_context.tcx),
         inherent_impls: RefCell::new(FnvHashMap()),
     }.check(crate_context.tcx.map.krate());
-    impls::check(crate_context.tcx);
     unsafety::check(crate_context.tcx);
     orphan::check(crate_context.tcx);
     overlap::check(crate_context.tcx);

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
@@ -42,13 +44,13 @@ impl  Whatever {
 
 fn main() {
     {
-        let f = box DroppableStruct;
+        let f: Box<_> = box DroppableStruct;
         let _a = Whatever::new(box f as Box<MyTrait>);
     }
     assert!(unsafe { DROPPED });
     unsafe { DROPPED = false; }
     {
-        let f = box DroppableEnum::DroppableVariant1;
+        let f: Box<_> = box DroppableEnum::DroppableVariant1;
         let _a = Whatever::new(box f as Box<MyTrait>);
     }
     assert!(unsafe { DROPPED });

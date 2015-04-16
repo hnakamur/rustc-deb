@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait Foo {
     fn new() -> bool { false }
     fn dummy(&self) { }
@@ -17,8 +19,8 @@ trait Bar {
     fn new(&self) -> bool { true }
 }
 
-impl Bar for int {}
-impl Foo for int {}
+impl Bar for isize {}
+impl Foo for isize {}
 
 fn main() {
     assert!(1.new());

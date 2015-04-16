@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #[repr(packed)]
 struct Foo {
     bar: u8,
-    baz: uint
+    baz: usize
 }
 
 pub fn main() {

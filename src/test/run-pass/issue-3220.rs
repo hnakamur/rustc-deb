@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct thing { x: int, }
+// pretty-expanded FIXME #23616
+
+struct thing { x: isize, }
 
 impl Drop for thing {
     fn drop(&mut self) {}

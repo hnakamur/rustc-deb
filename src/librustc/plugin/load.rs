@@ -14,10 +14,11 @@ use session::Session;
 use metadata::creader::CrateReader;
 use plugin::registry::Registry;
 
-use std::mem;
-use std::env;
-use std::dynamic_lib::DynamicLibrary;
 use std::borrow::ToOwned;
+use std::dynamic_lib::DynamicLibrary;
+use std::env;
+use std::mem;
+use std::path::PathBuf;
 use syntax::ast;
 use syntax::codemap::{Span, COMMAND_LINE_SP};
 use syntax::ptr::P;
@@ -98,9 +99,10 @@ impl<'a> PluginLoader<'a> {
     }
 
     // Dynamically link a registrar function into the compiler process.
+    #[allow(deprecated)] // until #23197
     fn dylink_registrar(&mut self,
                         span: Span,
-                        path: Path,
+                        path: PathBuf,
                         symbol: String) -> PluginRegistrarFun {
         // Make sure the path contains a / or the linker will search for it.
         let path = env::current_dir().unwrap().join(&path);

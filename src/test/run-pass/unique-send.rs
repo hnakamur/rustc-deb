@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
 use std::sync::mpsc::channel;
 
 pub fn main() {
-    let (tx, rx) = channel();
+    let (tx, rx) = channel::<Box<_>>();
     tx.send(box 100).unwrap();
     let v = rx.recv().unwrap();
     assert_eq!(v, box 100);

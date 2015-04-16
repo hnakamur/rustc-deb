@@ -8,9 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(not(test))]
-use core::ptr::PtrExt;
-
 // FIXME: #13996: mark the `allocate` and `reallocate` return value as `noalias`
 
 /// Return a pointer to `size` bytes of memory aligned to `align`.
@@ -28,6 +25,9 @@ pub unsafe fn allocate(size: usize, align: usize) -> *mut u8 {
 /// Resize the allocation referenced by `ptr` to `size` bytes.
 ///
 /// On failure, return a null pointer and leave the original allocation intact.
+///
+/// If the allocation was relocated, the memory at the passed-in pointer is
+/// undefined after the call.
 ///
 /// Behavior is undefined if the requested size is 0 or the alignment is not a
 /// power of 2. The alignment must be no larger than the largest supported page
@@ -189,7 +189,6 @@ mod imp {
     use core::option::Option;
     use core::option::Option::None;
     use core::ptr::{null_mut, null};
-    use core::num::Int;
     use libc::{c_char, c_int, c_void, size_t};
     use super::MIN_ALIGN;
 
@@ -198,6 +197,7 @@ mod imp {
     extern {}
 
     extern {
+        #[allocator]
         fn je_mallocx(size: size_t, flags: c_int) -> *mut c_void;
         fn je_rallocx(ptr: *mut c_void, size: size_t, flags: c_int) -> *mut c_void;
         fn je_xallocx(ptr: *mut c_void, size: size_t, extra: size_t, flags: c_int) -> size_t;
@@ -300,7 +300,7 @@ mod imp {
             libc::realloc(ptr as *mut libc::c_void, size as libc::size_t) as *mut u8
         } else {
             let new_ptr = allocate(size, align);
-            ptr::copy_memory(new_ptr, ptr, cmp::min(size, old_size));
+            ptr::copy(ptr, new_ptr, cmp::min(size, old_size));
             deallocate(ptr, old_size, align);
             new_ptr
         }
@@ -386,7 +386,7 @@ mod imp {
 mod test {
     extern crate test;
     use self::test::Bencher;
-    use core::ptr::PtrExt;
+    use boxed::Box;
     use heap;
 
     #[test]
@@ -404,7 +404,7 @@ mod test {
     #[bench]
     fn alloc_owned_small(b: &mut Bencher) {
         b.iter(|| {
-            box 10
+            let _: Box<_> = box 10;
         })
     }
 }

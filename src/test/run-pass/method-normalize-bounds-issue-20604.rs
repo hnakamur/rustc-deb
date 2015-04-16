@@ -14,6 +14,8 @@
 // winnowing stage of method resolution failed to handle an associated
 // type projection.
 
+// pretty-expanded FIXME #23616
+
 #![feature(associated_types)]
 
 trait Hasher {
@@ -36,7 +38,7 @@ impl Hasher for SipHasher {
     fn finish(&self) -> u64 { 4 }
 }
 
-impl Hash<SipHasher> for int {
+impl Hash<SipHasher> for isize {
     fn hash(&self, h: &mut SipHasher) {}
 }
 
@@ -62,4 +64,3 @@ fn foo<K: Hash<SipHasher>>(map: &Map<SipState>) {
 }
 
 fn main() {}
-

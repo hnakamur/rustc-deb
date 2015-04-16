@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 #![allow(unknown_features)]
 #![feature(box_syntax)]
 
-struct J { j: int }
+struct J { j: isize }
 
 pub fn main() {
-    let i = box J {
+    let i: Box<_> = box J {
         j: 100
     };
     assert_eq!(i.j, 100);

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 enum Animal {
     Cat = 0,
     Dog = 1,
@@ -25,6 +27,6 @@ enum Hero {
 pub fn main() {
     let pet: Animal = Animal::Snake;
     let hero: Hero = Hero::Superman;
-    assert!(pet as uint == 3);
-    assert!(hero as int == -2);
+    assert!(pet as usize == 3);
+    assert!(hero as isize == -2);
 }

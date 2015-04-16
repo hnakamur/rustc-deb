@@ -8,13 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(core)]
+
 use std::cmp;
 use std::ops;
 
-#[derive(Copy, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct Point {
-    x: int,
-    y: int
+    x: isize,
+    y: isize
 }
 
 impl ops::Add for Point {
@@ -50,10 +52,10 @@ impl ops::Not for Point {
 }
 
 impl ops::Index<bool> for Point {
-    type Output = int;
+    type Output = isize;
 
-    fn index(&self, x: &bool) -> &int {
-        if *x {
+    fn index(&self, x: bool) -> &isize {
+        if x {
             &self.x
         } else {
             &self.y
@@ -85,4 +87,4 @@ pub fn main() {
     result(p[true]);
 }
 
-fn result(i: int) { }
+fn result(i: isize) { }

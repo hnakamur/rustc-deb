@@ -10,6 +10,8 @@
 
 // aux-build:namespaced_enums.rs
 
+// pretty-expanded FIXME #23616
+
 extern crate namespaced_enums;
 
 use namespaced_enums::Foo;
@@ -21,4 +23,3 @@ fn _foo (f: Foo) {
 }
 
 pub fn main() {}
-

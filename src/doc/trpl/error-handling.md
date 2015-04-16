@@ -200,15 +200,15 @@ Because these kinds of situations are relatively rare, use panics sparingly.
 # Upgrading failures to panics
 
 In certain circumstances, even though a function may fail, we may want to treat
-it as a panic instead. For example, `io::stdin().read_line()` returns an
-`IoResult<String>`, a form of `Result`, when there is an error reading the
-line. This allows us to handle and possibly recover from this sort of error.
+it as a panic instead. For example, `io::stdin().read_line(&mut buffer)` returns
+an `Result<usize>`, when there is an error reading the line. This allows us to
+handle and possibly recover from error.
 
 If we don't want to handle this error, and would rather just abort the program,
 we can use the `unwrap()` method:
 
 ```{rust,ignore}
-io::stdin().read_line().unwrap();
+io::stdin().read_line(&mut buffer).unwrap();
 ```
 
 `unwrap()` will `panic!` if the `Option` is `None`. This basically says "Give
@@ -219,10 +219,83 @@ shorter. Sometimes, just crashing is appropriate.
 There's another way of doing this that's a bit nicer than `unwrap()`:
 
 ```{rust,ignore}
-let input = io::stdin().read_line()
+let mut buffer = String::new();
+let input = io::stdin().read_line(&mut buffer)
                        .ok()
                        .expect("Failed to read line");
 ```
-`ok()` converts the `IoResult` into an `Option`, and `expect()` does the same
+
+`ok()` converts the `Result` into an `Option`, and `expect()` does the same
 thing as `unwrap()`, but takes a message. This message is passed along to the
 underlying `panic!`, providing a better error message if the code errors.
+
+# Using `try!`
+
+When writing code that calls many functions that return the `Result` type, the
+error handling can be tedious. The `try!` macro hides some of the boilerplate
+of propagating errors up the call stack.
+
+It replaces this:
+
+```rust
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
+
+struct Info {
+    name: String,
+    age: i32,
+    rating: i32,
+}
+
+fn write_info(info: &Info) -> io::Result<()> {
+    let mut file = File::open("my_best_friends.txt").unwrap();
+
+    if let Err(e) = writeln!(&mut file, "name: {}", info.name) {
+        return Err(e)
+    }
+    if let Err(e) = writeln!(&mut file, "age: {}", info.age) {
+        return Err(e)
+    }
+    if let Err(e) = writeln!(&mut file, "rating: {}", info.rating) {
+        return Err(e)
+    }
+
+    return Ok(());
+}
+```
+
+With this:
+
+```rust
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
+
+struct Info {
+    name: String,
+    age: i32,
+    rating: i32,
+}
+
+fn write_info(info: &Info) -> io::Result<()> {
+    let mut file = try!(File::open("my_best_friends.txt"));
+
+    try!(writeln!(&mut file, "name: {}", info.name));
+    try!(writeln!(&mut file, "age: {}", info.age));
+    try!(writeln!(&mut file, "rating: {}", info.rating));
+
+    return Ok(());
+}
+```
+
+Wrapping an expression in `try!` will result in the unwrapped success (`Ok`)
+value, unless the result is `Err`, in which case `Err` is returned early from
+the enclosing function.
+
+It's worth noting that you can only use `try!` from a function that returns a
+`Result`, which means that you cannot use `try!` inside of `main()`, because
+`main()` doesn't return anything.
+
+`try!` makes use of [`FromError`](../std/error/#the-fromerror-trait) to determine
+what to return in the error case.

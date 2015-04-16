@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-const a: int = 1;
-const b: int = a + 2;
+// pretty-expanded FIXME #23616
+
+const a: isize = 1;
+const b: isize = a + 2;
 
 pub fn main() {
     assert_eq!(b, 3);

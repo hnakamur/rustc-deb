@@ -10,7 +10,9 @@
 
 // Checks that mutable static items can have mutable slices
 
-static mut TEST: &'static mut [int] = &mut [1];
+// pretty-expanded FIXME #23616
+
+static mut TEST: &'static mut [isize] = &mut [1];
 
 pub fn main() {
     unsafe {

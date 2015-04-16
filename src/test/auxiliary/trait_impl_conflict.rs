@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(core)]
+
 pub trait Foo : ::std::marker::MarkerTrait {
 }
 
-impl Foo for int {
+impl Foo for isize {
 }

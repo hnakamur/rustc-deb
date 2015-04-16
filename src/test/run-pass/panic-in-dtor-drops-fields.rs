@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 use std::thread;
 
 static mut dropped: bool = false;
@@ -17,7 +19,7 @@ struct A {
 }
 
 struct B {
-    foo: int,
+    foo: isize,
 }
 
 impl Drop for A {

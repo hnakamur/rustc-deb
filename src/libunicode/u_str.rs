@@ -22,11 +22,9 @@ use core::char;
 use core::cmp;
 use core::iter::{Filter, AdditiveIterator};
 use core::mem;
-use core::num::Int;
 use core::slice;
 use core::str::Split;
 
-use u_char::CharExt as UCharExt; // conflicts with core::prelude::CharExt
 use tables::grapheme::GraphemeCat;
 
 /// An iterator over the words of a string, separated by a sequence of whitespace
@@ -84,7 +82,7 @@ impl UnicodeStr for str {
 
     #[inline]
     fn trim(&self) -> &str {
-        self.trim_left().trim_right()
+        self.trim_matches(|c: char| c.is_whitespace())
     }
 
     #[inline]
@@ -243,7 +241,7 @@ impl<'a> Iterator for Graphemes<'a> {
         }
 
         self.cat = if take_curr {
-            idx = self.string.char_range_at(idx).next;
+            idx = idx + self.string.char_at(idx).len_utf8();
             None
         } else {
             Some(cat)
@@ -479,22 +477,27 @@ impl<'a> Iterator for Utf16Items<'a> {
 /// Create an iterator over the UTF-16 encoded codepoints in `v`,
 /// returning invalid surrogates as `LoneSurrogate`s.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust
+/// ```
+/// # #![feature(unicode)]
+/// extern crate unicode;
+///
 /// use unicode::str::Utf16Item::{ScalarValue, LoneSurrogate};
 ///
-/// // 𝄞mus<invalid>ic<invalid>
-/// let v = [0xD834, 0xDD1E, 0x006d, 0x0075,
-///          0x0073, 0xDD1E, 0x0069, 0x0063,
-///          0xD834];
+/// fn main() {
+///     // 𝄞mus<invalid>ic<invalid>
+///     let v = [0xD834, 0xDD1E, 0x006d, 0x0075,
+///              0x0073, 0xDD1E, 0x0069, 0x0063,
+///              0xD834];
 ///
-/// assert_eq!(unicode::str::utf16_items(&v).collect::<Vec<_>>(),
-///            vec![ScalarValue('𝄞'),
-///                 ScalarValue('m'), ScalarValue('u'), ScalarValue('s'),
-///                 LoneSurrogate(0xDD1E),
-///                 ScalarValue('i'), ScalarValue('c'),
-///                 LoneSurrogate(0xD834)]);
+///     assert_eq!(unicode::str::utf16_items(&v).collect::<Vec<_>>(),
+///                vec![ScalarValue('𝄞'),
+///                     ScalarValue('m'), ScalarValue('u'), ScalarValue('s'),
+///                     LoneSurrogate(0xDD1E),
+///                     ScalarValue('i'), ScalarValue('c'),
+///                     LoneSurrogate(0xD834)]);
+/// }
 /// ```
 pub fn utf16_items<'a>(v: &'a [u16]) -> Utf16Items<'a> {
     Utf16Items { iter : v.iter() }
@@ -525,7 +528,7 @@ impl<I> Iterator for Utf16Encoder<I> where I: Iterator<Item=char> {
             return Some(tmp);
         }
 
-        let mut buf = [0u16; 2];
+        let mut buf = [0; 2];
         self.chars.next().map(|ch| {
             let n = CharExt::encode_utf16(ch, &mut buf).unwrap_or(0);
             if n == 2 { self.extra = buf[1]; }

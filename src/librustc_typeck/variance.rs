@@ -203,6 +203,56 @@
 //! failure, but rather because the target type `Foo<Y>` is itself just
 //! not well-formed. Basically we get to assume well-formedness of all
 //! types involved before considering variance.
+//!
+//! ### Associated types
+//!
+//! Any trait with an associated type is invariant with respect to all
+//! of its inputs. To see why this makes sense, consider what
+//! subtyping for a trait reference means:
+//!
+//!    <T as Trait> <: <U as Trait>
+//!
+//! means that if I know that `T as Trait`,
+//! I also know that `U as
+//! Trait`. Moreover, if you think of it as
+//! dictionary passing style, it means that
+//! a dictionary for `<T as Trait>` is safe
+//! to use where a dictionary for `<U as
+//! Trait>` is expected.
+//!
+//! The problem is that when you can
+//! project types out from `<T as Trait>`,
+//! the relationship to types projected out
+//! of `<U as Trait>` is completely unknown
+//! unless `T==U` (see #21726 for more
+//! details). Making `Trait` invariant
+//! ensures that this is true.
+//!
+//! *Historical note: we used to preserve this invariant another way,
+//! by tweaking the subtyping rules and requiring that when a type `T`
+//! appeared as part of a projection, that was considered an invariant
+//! location, but this version does away with the need for those
+//! somewhat "special-case-feeling" rules.*
+//!
+//! Another related reason is that if we didn't make traits with
+//! associated types invariant, then projection is no longer a
+//! function with a single result. Consider:
+//!
+//! ```
+//! trait Identity { type Out; fn foo(&self); }
+//! impl<T> Identity for T { type Out = T; ... }
+//! ```
+//!
+//! Now if I have `<&'static () as Identity>::Out`, this can be
+//! validly derived as `&'a ()` for any `'a`:
+//!
+//!    <&'a () as Identity> <: <&'static () as Identity>
+//!    if &'static () < : &'a ()   -- Identity is contravariant in Self
+//!    if 'static : 'a             -- Subtyping rules for relations
+//!
+//! This change otoh means that `<'static () as Identity>::Out` is
+//! always `&'static ()` (which might then be upcast to `'a ()`,
+//! separately). This was helpful in solving #21750.
 
 use self::VarianceTerm::*;
 use self::ParamKind::*;
@@ -245,10 +295,10 @@ pub fn infer_variance(tcx: &ty::ctxt) {
 
 type VarianceTermPtr<'a> = &'a VarianceTerm<'a>;
 
-#[derive(Copy, Debug)]
-struct InferredIndex(uint);
+#[derive(Copy, Clone, Debug)]
+struct InferredIndex(usize);
 
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 enum VarianceTerm<'a> {
     ConstantTerm(ty::Variance),
     TransformTerm(VarianceTermPtr<'a>, VarianceTermPtr<'a>),
@@ -286,7 +336,7 @@ struct TermsContext<'a, 'tcx: 'a> {
     inferred_infos: Vec<InferredInfo<'a>> ,
 }
 
-#[derive(Copy, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum ParamKind {
     TypeParam,
     RegionParam,
@@ -296,7 +346,7 @@ struct InferredInfo<'a> {
     item_id: ast::NodeId,
     kind: ParamKind,
     space: ParamSpace,
-    index: uint,
+    index: usize,
     param_id: ast::NodeId,
     term: VarianceTermPtr<'a>,
 
@@ -407,7 +457,7 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
                     item_id: ast::NodeId,
                     kind: ParamKind,
                     space: ParamSpace,
-                    index: uint,
+                    index: usize,
                     param_id: ast::NodeId) {
         let inf_index = InferredIndex(self.inferred_infos.len());
         let term = self.arena.alloc(InferredTerm(inf_index));
@@ -438,7 +488,7 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
     fn pick_initial_variance(&self,
                              item_id: ast::NodeId,
                              space: ParamSpace,
-                             index: uint)
+                             index: usize)
                              -> ty::Variance
     {
         match space {
@@ -455,7 +505,7 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
         }
     }
 
-    fn num_inferred(&self) -> uint {
+    fn num_inferred(&self) -> usize {
         self.inferred_infos.len()
     }
 }
@@ -476,6 +526,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for TermsContext<'a, 'tcx> {
 
             ast::ItemExternCrate(_) |
             ast::ItemUse(_) |
+            ast::ItemDefaultImpl(..) |
             ast::ItemImpl(..) |
             ast::ItemStatic(..) |
             ast::ItemConst(..) |
@@ -509,7 +560,7 @@ struct ConstraintContext<'a, 'tcx: 'a> {
 
 /// Declares that the variable `decl_id` appears in a location with
 /// variance `variance`.
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 struct Constraint<'a> {
     inferred: InferredIndex,
     variance: &'a VarianceTerm<'a>,
@@ -593,9 +644,9 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
 
             ast::ItemTrait(..) => {
                 let trait_def = ty::lookup_trait_def(tcx, did);
-                let predicates = ty::predicates(tcx, ty::mk_self_type(tcx), &trait_def.bounds);
+                let predicates = ty::lookup_super_predicates(tcx, did);
                 self.add_constraints_from_predicates(&trait_def.generics,
-                                                     &predicates[],
+                                                     predicates.predicates.as_slice(),
                                                      self.covariant);
 
                 let trait_items = ty::trait_items(tcx, did);
@@ -612,7 +663,18 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
                                 &method.fty.sig,
                                 self.covariant);
                         }
-                        ty::TypeTraitItem(_) => {}
+                        ty::TypeTraitItem(ref data) => {
+                            // Any trait with an associated type is
+                            // invariant with respect to all of its
+                            // inputs. See length discussion in the comment
+                            // on this module.
+                            let projection_ty = ty::mk_projection(tcx,
+                                                                  trait_def.trait_ref.clone(),
+                                                                  data.name);
+                            self.add_constraints_from_ty(&trait_def.generics,
+                                                         projection_ty,
+                                                         self.invariant);
+                        }
                     }
                 }
             }
@@ -626,6 +688,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
             ast::ItemForeignMod(..) |
             ast::ItemTy(..) |
             ast::ItemImpl(..) |
+            ast::ItemDefaultImpl(..) |
             ast::ItemMac(..) => {
             }
         }
@@ -652,7 +715,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
             None => {
                 self.tcx().sess.bug(&format!(
                         "no inferred index entry for {}",
-                        self.tcx().map.node_to_string(param_id))[]);
+                        self.tcx().map.node_to_string(param_id)));
             }
         }
     }
@@ -728,7 +791,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                          item_def_id: ast::DefId,
                          kind: ParamKind,
                          space: ParamSpace,
-                         index: uint)
+                         index: usize)
                          -> VarianceTermPtr<'a> {
         assert_eq!(param_def_id.krate, item_def_id.krate);
 
@@ -847,7 +910,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 self.add_constraints_from_mt(generics, mt, variance);
             }
 
-            ty::ty_uniq(typ) | ty::ty_vec(typ, _) | ty::ty_open(typ) => {
+            ty::ty_uniq(typ) | ty::ty_vec(typ, _) => {
                 self.add_constraints_from_ty(generics, typ, variance);
             }
 
@@ -891,7 +954,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                     trait_def.generics.types.as_slice(),
                     trait_def.generics.regions.as_slice(),
                     trait_ref.substs,
-                    self.invariant);
+                    variance);
             }
 
             ty::ty_trait(ref data) => {
@@ -914,7 +977,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
             }
 
             ty::ty_param(ref data) => {
-                let def_id = generics.types.get(data.space, data.idx as uint).def_id;
+                let def_id = generics.types.get(data.space, data.idx as usize).def_id;
                 assert_eq!(def_id.krate, ast::LOCAL_CRATE);
                 match self.terms_cx.inferred_map.get(&def_id.node) {
                     Some(&index) => {
@@ -941,7 +1004,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 self.tcx().sess.bug(
                     &format!("unexpected type encountered in \
                             variance inference: {}",
-                            ty.repr(self.tcx()))[]);
+                            ty.repr(self.tcx())));
             }
         }
     }
@@ -964,9 +1027,9 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
         for p in type_param_defs {
             let variance_decl =
                 self.declared_variance(p.def_id, def_id, TypeParam,
-                                       p.space, p.index as uint);
+                                       p.space, p.index as usize);
             let variance_i = self.xform(variance, variance_decl);
-            let substs_ty = *substs.types.get(p.space, p.index as uint);
+            let substs_ty = *substs.types.get(p.space, p.index as usize);
             debug!("add_constraints_from_substs: variance_decl={:?} variance_i={:?}",
                    variance_decl, variance_i);
             self.add_constraints_from_ty(generics, substs_ty, variance_i);
@@ -975,9 +1038,9 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
         for p in region_param_defs {
             let variance_decl =
                 self.declared_variance(p.def_id, def_id,
-                                       RegionParam, p.space, p.index as uint);
+                                       RegionParam, p.space, p.index as usize);
             let variance_i = self.xform(variance, variance_decl);
-            let substs_r = *substs.regions().get(p.space, p.index as uint);
+            let substs_r = *substs.regions().get(p.space, p.index as usize);
             self.add_constraints_from_region(generics, substs_r, variance_i);
         }
     }
@@ -996,14 +1059,29 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 }
 
                 ty::Predicate::Equate(ty::Binder(ref data)) => {
-                    self.add_constraints_from_ty(generics, data.0, variance);
-                    self.add_constraints_from_ty(generics, data.1, variance);
+                    // A == B is only true if A and B are the same
+                    // types, not subtypes of one another, so this is
+                    // an invariant position:
+                    self.add_constraints_from_ty(generics, data.0, self.invariant);
+                    self.add_constraints_from_ty(generics, data.1, self.invariant);
                 }
 
                 ty::Predicate::TypeOutlives(ty::Binder(ref data)) => {
-                    self.add_constraints_from_ty(generics, data.0, variance);
+                    // Why contravariant on both? Let's consider:
+                    //
+                    // Under what conditions is `(T:'t) <: (U:'u)`,
+                    // meaning that `(T:'t) => (U:'u)`. The answer is
+                    // if `U <: T` or `'u <= 't`. Let's see some examples:
+                    //
+                    //   (T: 'big) => (T: 'small)
+                    //   where 'small <= 'big
+                    //
+                    //   (&'small Foo: 't) => (&'big Foo: 't)
+                    //   where 'small <= 'big
+                    //   note that &'big Foo <: &'small Foo
 
                     let variance_r = self.xform(variance, self.contravariant);
+                    self.add_constraints_from_ty(generics, data.0, variance_r);
                     self.add_constraints_from_region(generics, data.1, variance_r);
                 }
 
@@ -1021,6 +1099,9 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                                                         &*data.projection_ty.trait_ref,
                                                         variance);
 
+                    // as the equality predicate above, a binder is a
+                    // type equality relation, not a subtyping
+                    // relation
                     self.add_constraints_from_ty(generics, data.ty, self.invariant);
                 }
             }
@@ -1071,7 +1152,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                     .sess
                     .bug(&format!("unexpected region encountered in variance \
                                   inference: {}",
-                                 region.repr(self.tcx()))[]);
+                                 region.repr(self.tcx())));
             }
         }
     }
@@ -1287,4 +1368,3 @@ fn glb(v1: ty::Variance, v2: ty::Variance) -> ty::Variance {
         (x, ty::Bivariant) | (ty::Bivariant, x) => x,
     }
 }
-

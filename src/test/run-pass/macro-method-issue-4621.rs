@@ -8,14 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 struct A;
 
-macro_rules! make_thirteen_method {() => (fn thirteen(&self)->int {13})}
+macro_rules! make_thirteen_method {() => (fn thirteen(&self)->isize {13})}
 impl A { make_thirteen_method!(); }
 
 fn main() {
     assert_eq!(A.thirteen(),13);
 }
-
-
-

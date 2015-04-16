@@ -9,6 +9,8 @@
 // except according to those terms.
 
 // Issue #1706
-extern crate "std" as stdlib;
+// pretty-expanded FIXME #23616
+
+extern crate std as stdlib;
 
 pub fn main() {}

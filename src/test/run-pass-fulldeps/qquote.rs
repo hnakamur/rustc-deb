@@ -1,4 +1,4 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -60,11 +60,11 @@ fn main() {
     check_pp(ext_cx, abc,  pprust::print_expr, "23".to_string());
 
 
-    let ty = quote_ty!(cx, int);
-    check_pp(ext_cx, ty, pprust::print_type, "int".to_string());
+    let ty = quote_ty!(cx, isize);
+    check_pp(ext_cx, ty, pprust::print_type, "isize".to_string());
 
-    let item = quote_item!(cx, static x : int = 10;).get();
-    check_pp(ext_cx, item, pprust::print_item, "static x: int = 10;".to_string());
+    let item = quote_item!(cx, static x : isize = 10;).get();
+    check_pp(ext_cx, item, pprust::print_item, "static x: isize = 10;".to_string());
 
     let stmt = quote_stmt!(cx, let x = 20;);
     check_pp(ext_cx, *stmt, pprust::print_stmt, "let x = 20;".to_string());
@@ -74,6 +74,9 @@ fn main() {
 
     let arm = quote_arm!(cx, (ref x, ref y) => (x, y));
     check_pp(ext_cx, arm, pprust::print_stmt, "(ref x, ref y) = (x, y)".to_string());
+
+    let attr = quote_attr!(cx, #![cfg(foo = "bar")]);
+    check_pp(ext_cx, attr, pprust::print_attribute, "#![cfg(foo = "bar")]".to_string());
 }
 
 fn check_pp<T>(cx: fake_ext_ctxt,

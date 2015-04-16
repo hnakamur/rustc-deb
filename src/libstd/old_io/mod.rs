@@ -48,7 +48,9 @@
 //! * Read lines from stdin
 //!
 //!     ```rust
+//!     # #![feature(old_io, old_path)]
 //!     use std::old_io as io;
+//!     use std::old_io::*;
 //!
 //!     let mut stdin = io::stdin();
 //!     for line in stdin.lock().lines() {
@@ -59,7 +61,9 @@
 //! * Read a complete file
 //!
 //!     ```rust
-//!     use std::old_io::File;
+//!     # #![feature(old_io, old_path)]
+//!     use std::old_io::*;
+//!     use std::old_path::Path;
 //!
 //!     let contents = File::open(&Path::new("message.txt")).read_to_end();
 //!     ```
@@ -67,8 +71,10 @@
 //! * Write a line to a file
 //!
 //!     ```rust
+//!     # #![feature(old_io, old_path)]
 //!     # #![allow(unused_must_use)]
-//!     use std::old_io::File;
+//!     use std::old_io::*;
+//!     use std::old_path::Path;
 //!
 //!     let mut file = File::create(&Path::new("message.txt"));
 //!     file.write_all(b"hello, file!\n");
@@ -79,8 +85,9 @@
 //! * Iterate over the lines of a file
 //!
 //!     ```rust,no_run
-//!     use std::old_io::BufferedReader;
-//!     use std::old_io::File;
+//!     # #![feature(old_io, old_path)]
+//!     use std::old_io::*;
+//!     use std::old_path::Path;
 //!
 //!     let path = Path::new("message.txt");
 //!     let mut file = BufferedReader::new(File::open(&path));
@@ -92,8 +99,9 @@
 //! * Pull the lines of a file into a vector of strings
 //!
 //!     ```rust,no_run
-//!     use std::old_io::BufferedReader;
-//!     use std::old_io::File;
+//!     # #![feature(old_io, old_path)]
+//!     use std::old_io::*;
+//!     use std::old_path::Path;
 //!
 //!     let path = Path::new("message.txt");
 //!     let mut file = BufferedReader::new(File::open(&path));
@@ -103,8 +111,9 @@
 //! * Make a simple TCP client connection and request
 //!
 //!     ```rust
+//!     # #![feature(old_io)]
 //!     # #![allow(unused_must_use)]
-//!     use std::old_io::TcpStream;
+//!     use std::old_io::*;
 //!
 //!     # // connection doesn't fail if a server is running on 8080
 //!     # // locally, we still want to be type checking this code, so lets
@@ -119,11 +128,11 @@
 //! * Make a simple TCP server
 //!
 //!     ```rust
+//!     # #![feature(old_io)]
 //!     # fn main() { }
 //!     # fn foo() {
 //!     # #![allow(dead_code)]
-//!     use std::old_io::{TcpListener, TcpStream};
-//!     use std::old_io::{Acceptor, Listener};
+//!     use std::old_io::*;
 //!     use std::thread;
 //!
 //!     let listener = TcpListener::bind("127.0.0.1:80");
@@ -184,8 +193,10 @@
 //! If you wanted to handle the error though you might write:
 //!
 //! ```rust
+//! # #![feature(old_io, old_path)]
 //! # #![allow(unused_must_use)]
-//! use std::old_io::File;
+//! use std::old_io::*;
+//! use std::old_path::Path;
 //!
 //! match File::create(&Path::new("diary.txt")).write_all(b"Met a girl.\n") {
 //!     Ok(()) => (), // succeeded
@@ -218,7 +229,9 @@
 //! If you wanted to read several `u32`s from a file and return their product:
 //!
 //! ```rust
-//! use std::old_io::{File, IoResult};
+//! # #![feature(old_io, old_path)]
+//! use std::old_io::*;
+//! use std::old_path::Path;
 //!
 //! fn file_product(p: &Path) -> IoResult<u32> {
 //!     let mut f = File::open(p);
@@ -240,30 +253,32 @@
 
 #![unstable(feature = "old_io")]
 #![deny(unused_must_use)]
+#![allow(deprecated)] // seriously this is all deprecated
+#![allow(unused_imports)]
+#![deprecated(since = "1.0.0",
+              reasons = "APIs have been replaced with new I/O modules such as \
+                         std::{io, fs, net, process}")]
 
 pub use self::SeekStyle::*;
 pub use self::FileMode::*;
 pub use self::FileAccess::*;
 pub use self::IoErrorKind::*;
 
-use char::CharExt;
 use default::Default;
 use error::Error;
 use fmt;
 use isize;
-use iter::{Iterator, IteratorExt};
+use iter::Iterator;
 use marker::{PhantomFn, Sized};
 use mem::transmute;
 use ops::FnOnce;
 use option::Option;
 use option::Option::{Some, None};
-use os;
+use sys::os;
 use boxed::Box;
 use result::Result;
 use result::Result::{Ok, Err};
 use sys;
-use slice::SliceExt;
-use str::StrExt;
 use str;
 use string::String;
 use usize;
@@ -311,7 +326,7 @@ pub mod test;
 /// The default buffer size for various I/O operations
 // libuv recommends 64k buffers to maximize throughput
 // https://groups.google.com/forum/#!topic/libuv/oQO1HJAIDdA
-const DEFAULT_BUF_SIZE: uint = 1024 * 64;
+const DEFAULT_BUF_SIZE: usize = 1024 * 64;
 
 /// A convenient typedef of the return value of any I/O action.
 pub type IoResult<T> = Result<T, IoError>;
@@ -341,8 +356,7 @@ impl IoError {
     pub fn from_errno(errno: i32, detail: bool) -> IoError {
         let mut err = sys::decode_error(errno as i32);
         if detail && err.kind == OtherIoError {
-            err.detail = Some(os::error_string(errno).chars()
-                                 .map(|c| c.to_lowercase()).collect())
+            err.detail = Some(os::error_string(errno).to_lowercase());
         }
         err
     }
@@ -377,7 +391,7 @@ impl Error for IoError {
 }
 
 /// A list specifying general categories of I/O error.
-#[derive(Copy, PartialEq, Eq, Clone, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum IoErrorKind {
     /// Any I/O error not part of this list.
     OtherIoError,
@@ -427,7 +441,7 @@ pub enum IoErrorKind {
     ///
     /// The payload contained as part of this variant is the number of bytes
     /// which are known to have been successfully written.
-    ShortWrite(uint),
+    ShortWrite(usize),
     /// The Reader returned 0 bytes from `read()` too many times.
     NoProgress,
 }
@@ -469,7 +483,7 @@ impl<T> UpdateIoError for IoResult<T> {
     }
 }
 
-static NO_PROGRESS_LIMIT: uint = 1000;
+static NO_PROGRESS_LIMIT: usize = 1000;
 
 /// A trait for objects which are byte-oriented streams. Readers are defined by
 /// one method, `read`. This function will block until data is available,
@@ -497,7 +511,7 @@ pub trait Reader {
     ///
     /// When implementing this method on a new Reader, you are strongly encouraged
     /// not to return 0 if you can avoid it.
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint>;
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize>;
 
     // Convenient helper methods based on the above methods
 
@@ -512,7 +526,7 @@ pub trait Reader {
     ///
     /// If an error occurs at any point, that error is returned, and no further
     /// bytes are read.
-    fn read_at_least(&mut self, min: uint, buf: &mut [u8]) -> IoResult<uint> {
+    fn read_at_least(&mut self, min: usize, buf: &mut [u8]) -> IoResult<usize> {
         if min > buf.len() {
             return Err(IoError {
                 detail: Some(String::from_str("the buffer is too short")),
@@ -556,7 +570,7 @@ pub trait Reader {
     ///
     /// If an error occurs during this I/O operation, then it is returned
     /// as `Err(IoError)`. See `read()` for more details.
-    fn push(&mut self, len: uint, buf: &mut Vec<u8>) -> IoResult<uint> {
+    fn push(&mut self, len: usize, buf: &mut Vec<u8>) -> IoResult<usize> {
         let start_len = buf.len();
         buf.reserve(len);
 
@@ -580,7 +594,7 @@ pub trait Reader {
     ///
     /// If an error occurs at any point, that error is returned, and no further
     /// bytes are read.
-    fn push_at_least(&mut self, min: uint, len: uint, buf: &mut Vec<u8>) -> IoResult<uint> {
+    fn push_at_least(&mut self, min: usize, len: usize, buf: &mut Vec<u8>) -> IoResult<usize> {
         if min > len {
             return Err(IoError {
                 detail: Some(String::from_str("the buffer is too short")),
@@ -615,7 +629,7 @@ pub trait Reader {
     /// have already been consumed from the underlying reader, and they are lost
     /// (not returned as part of the error). If this is unacceptable, then it is
     /// recommended to use the `push_at_least` or `read` methods.
-    fn read_exact(&mut self, len: uint) -> IoResult<Vec<u8>> {
+    fn read_exact(&mut self, len: usize) -> IoResult<Vec<u8>> {
         let mut buf = Vec::with_capacity(len);
         match self.push_at_least(len, len, &mut buf) {
             Ok(_) => Ok(buf),
@@ -665,10 +679,10 @@ pub trait Reader {
     /// Reads `n` little-endian unsigned integer bytes.
     ///
     /// `n` must be between 1 and 8, inclusive.
-    fn read_le_uint_n(&mut self, nbytes: uint) -> IoResult<u64> {
+    fn read_le_uint_n(&mut self, nbytes: usize) -> IoResult<u64> {
         assert!(nbytes > 0 && nbytes <= 8);
 
-        let mut val = 0u64;
+        let mut val = 0;
         let mut pos = 0;
         let mut i = nbytes;
         while i > 0 {
@@ -682,17 +696,17 @@ pub trait Reader {
     /// Reads `n` little-endian signed integer bytes.
     ///
     /// `n` must be between 1 and 8, inclusive.
-    fn read_le_int_n(&mut self, nbytes: uint) -> IoResult<i64> {
+    fn read_le_int_n(&mut self, nbytes: usize) -> IoResult<i64> {
         self.read_le_uint_n(nbytes).map(|i| extend_sign(i, nbytes))
     }
 
     /// Reads `n` big-endian unsigned integer bytes.
     ///
     /// `n` must be between 1 and 8, inclusive.
-    fn read_be_uint_n(&mut self, nbytes: uint) -> IoResult<u64> {
+    fn read_be_uint_n(&mut self, nbytes: usize) -> IoResult<u64> {
         assert!(nbytes > 0 && nbytes <= 8);
 
-        let mut val = 0u64;
+        let mut val = 0;
         let mut i = nbytes;
         while i > 0 {
             i -= 1;
@@ -704,36 +718,36 @@ pub trait Reader {
     /// Reads `n` big-endian signed integer bytes.
     ///
     /// `n` must be between 1 and 8, inclusive.
-    fn read_be_int_n(&mut self, nbytes: uint) -> IoResult<i64> {
+    fn read_be_int_n(&mut self, nbytes: usize) -> IoResult<i64> {
         self.read_be_uint_n(nbytes).map(|i| extend_sign(i, nbytes))
     }
 
     /// Reads a little-endian unsigned integer.
     ///
     /// The number of bytes returned is system-dependent.
-    fn read_le_uint(&mut self) -> IoResult<uint> {
-        self.read_le_uint_n(usize::BYTES).map(|i| i as uint)
+    fn read_le_uint(&mut self) -> IoResult<usize> {
+        self.read_le_uint_n(usize::BYTES as usize).map(|i| i as usize)
     }
 
     /// Reads a little-endian integer.
     ///
     /// The number of bytes returned is system-dependent.
-    fn read_le_int(&mut self) -> IoResult<int> {
-        self.read_le_int_n(isize::BYTES).map(|i| i as int)
+    fn read_le_int(&mut self) -> IoResult<isize> {
+        self.read_le_int_n(isize::BYTES as usize).map(|i| i as isize)
     }
 
     /// Reads a big-endian unsigned integer.
     ///
     /// The number of bytes returned is system-dependent.
-    fn read_be_uint(&mut self) -> IoResult<uint> {
-        self.read_be_uint_n(usize::BYTES).map(|i| i as uint)
+    fn read_be_uint(&mut self) -> IoResult<usize> {
+        self.read_be_uint_n(usize::BYTES as usize).map(|i| i as usize)
     }
 
     /// Reads a big-endian integer.
     ///
     /// The number of bytes returned is system-dependent.
-    fn read_be_int(&mut self) -> IoResult<int> {
-        self.read_be_int_n(isize::BYTES).map(|i| i as int)
+    fn read_be_int(&mut self) -> IoResult<isize> {
+        self.read_be_int_n(isize::BYTES as usize).map(|i| i as isize)
     }
 
     /// Reads a big-endian `u64`.
@@ -905,14 +919,14 @@ impl<T: Reader> BytesReader for T {
 }
 
 impl<'a> Reader for Box<Reader+'a> {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         let reader: &mut Reader = &mut **self;
         reader.read(buf)
     }
 }
 
 impl<'a> Reader for &'a mut (Reader+'a) {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> { (*self).read(buf) }
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> { (*self).read(buf) }
 }
 
 /// Returns a slice of `v` between `start` and `end`.
@@ -926,16 +940,15 @@ impl<'a> Reader for &'a mut (Reader+'a) {
 /// `start` > `end`.
 // Private function here because we aren't sure if we want to expose this as
 // API yet. If so, it should be a method on Vec.
-unsafe fn slice_vec_capacity<'a, T>(v: &'a mut Vec<T>, start: uint, end: uint) -> &'a mut [T] {
-    use raw::Slice;
-    use ptr::PtrExt;
+unsafe fn slice_vec_capacity<'a, T>(v: &'a mut Vec<T>, start: usize, end: usize) -> &'a mut [T] {
+    use slice;
 
     assert!(start <= end);
     assert!(end <= v.capacity());
-    transmute(Slice {
-        data: v.as_ptr().offset(start as int),
-        len: end - start
-    })
+    slice::from_raw_parts_mut(
+        v.as_mut_ptr().offset(start as isize),
+        end - start
+    )
 }
 
 /// A `RefReader` is a struct implementing `Reader` which contains a reference
@@ -944,8 +957,9 @@ unsafe fn slice_vec_capacity<'a, T>(v: &'a mut Vec<T>, start: uint, end: uint) -
 /// # Examples
 ///
 /// ```
+/// # #![feature(old_io)]
 /// use std::old_io as io;
-/// use std::old_io::ByRefReader;
+/// use std::old_io::*;
 /// use std::old_io::util::LimitReader;
 ///
 /// fn process_input<R: Reader>(r: R) {}
@@ -966,15 +980,15 @@ pub struct RefReader<'a, R:'a> {
 }
 
 impl<'a, R: Reader> Reader for RefReader<'a, R> {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> { self.inner.read(buf) }
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> { self.inner.read(buf) }
 }
 
 impl<'a, R: Buffer> Buffer for RefReader<'a, R> {
     fn fill_buf(&mut self) -> IoResult<&[u8]> { self.inner.fill_buf() }
-    fn consume(&mut self, amt: uint) { self.inner.consume(amt) }
+    fn consume(&mut self, amt: usize) { self.inner.consume(amt) }
 }
 
-fn extend_sign(val: u64, nbytes: uint) -> i64 {
+fn extend_sign(val: u64, nbytes: usize) -> i64 {
     let shift = (8 - nbytes) * 8;
     (val << shift) as i64 >> shift
 }
@@ -1076,45 +1090,45 @@ pub trait Writer {
     /// Write a single char, encoded as UTF-8.
     #[inline]
     fn write_char(&mut self, c: char) -> IoResult<()> {
-        let mut buf = [0u8; 4];
+        let mut buf = [0; 4];
         let n = c.encode_utf8(&mut buf).unwrap_or(0);
         self.write_all(&buf[..n])
     }
 
-    /// Write the result of passing n through `int::to_str_bytes`.
+    /// Write the result of passing n through `isize::to_str_bytes`.
     #[inline]
-    fn write_int(&mut self, n: int) -> IoResult<()> {
+    fn write_int(&mut self, n: isize) -> IoResult<()> {
         write!(self, "{}", n)
     }
 
-    /// Write the result of passing n through `uint::to_str_bytes`.
+    /// Write the result of passing n through `usize::to_str_bytes`.
     #[inline]
-    fn write_uint(&mut self, n: uint) -> IoResult<()> {
+    fn write_uint(&mut self, n: usize) -> IoResult<()> {
         write!(self, "{}", n)
     }
 
-    /// Write a little-endian uint (number of bytes depends on system).
+    /// Write a little-endian usize (number of bytes depends on system).
     #[inline]
-    fn write_le_uint(&mut self, n: uint) -> IoResult<()> {
-        extensions::u64_to_le_bytes(n as u64, usize::BYTES, |v| self.write_all(v))
+    fn write_le_uint(&mut self, n: usize) -> IoResult<()> {
+        extensions::u64_to_le_bytes(n as u64, usize::BYTES as usize, |v| self.write_all(v))
     }
 
-    /// Write a little-endian int (number of bytes depends on system).
+    /// Write a little-endian isize (number of bytes depends on system).
     #[inline]
-    fn write_le_int(&mut self, n: int) -> IoResult<()> {
-        extensions::u64_to_le_bytes(n as u64, isize::BYTES, |v| self.write_all(v))
+    fn write_le_int(&mut self, n: isize) -> IoResult<()> {
+        extensions::u64_to_le_bytes(n as u64, isize::BYTES as usize, |v| self.write_all(v))
     }
 
-    /// Write a big-endian uint (number of bytes depends on system).
+    /// Write a big-endian usize (number of bytes depends on system).
     #[inline]
-    fn write_be_uint(&mut self, n: uint) -> IoResult<()> {
-        extensions::u64_to_be_bytes(n as u64, usize::BYTES, |v| self.write_all(v))
+    fn write_be_uint(&mut self, n: usize) -> IoResult<()> {
+        extensions::u64_to_be_bytes(n as u64, usize::BYTES as usize, |v| self.write_all(v))
     }
 
-    /// Write a big-endian int (number of bytes depends on system).
+    /// Write a big-endian isize (number of bytes depends on system).
     #[inline]
-    fn write_be_int(&mut self, n: int) -> IoResult<()> {
-        extensions::u64_to_be_bytes(n as u64, isize::BYTES, |v| self.write_all(v))
+    fn write_be_int(&mut self, n: isize) -> IoResult<()> {
+        extensions::u64_to_be_bytes(n as u64, isize::BYTES as usize, |v| self.write_all(v))
     }
 
     /// Write a big-endian u64 (8 bytes).
@@ -1275,11 +1289,12 @@ impl<'a> Writer for &'a mut (Writer+'a) {
 /// A `RefWriter` is a struct implementing `Writer` which contains a reference
 /// to another writer. This is often useful when composing streams.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
+/// # #![feature(old_io)]
 /// use std::old_io::util::TeeReader;
-/// use std::old_io::{stdin, ByRefWriter};
+/// use std::old_io::*;
 ///
 /// fn process_input<R: Reader>(r: R) {}
 ///
@@ -1394,16 +1409,17 @@ pub trait Buffer: Reader {
 
     /// Tells this buffer that `amt` bytes have been consumed from the buffer,
     /// so they should no longer be returned in calls to `read`.
-    fn consume(&mut self, amt: uint);
+    fn consume(&mut self, amt: usize);
 
     /// Reads the next line of input, interpreted as a sequence of UTF-8
     /// encoded Unicode codepoints. If a newline is encountered, then the
     /// newline is contained in the returned string.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
-    /// use std::old_io::BufReader;
+    /// ```
+    /// # #![feature(old_io)]
+    /// use std::old_io::*;
     ///
     /// let mut reader = BufReader::new(b"hello\nworld");
     /// assert_eq!("hello\n", &*reader.read_line().unwrap());
@@ -1537,7 +1553,7 @@ impl<T: Buffer> BufferPrelude for T {
 
 /// When seeking, the resulting cursor is offset from a base by the offset given
 /// to the `seek` function. The base used is specified by this enumeration.
-#[derive(Copy)]
+#[derive(Copy, Clone)]
 pub enum SeekStyle {
     /// Seek from the beginning of the stream
     SeekSet,
@@ -1572,9 +1588,7 @@ pub trait Seek {
 /// connections.
 ///
 /// Doing so produces some sort of Acceptor.
-pub trait Listener<T, A: Acceptor<T>>
-    : PhantomFn<T,T> // FIXME should be an assoc type anyhow
-{
+pub trait Listener<A: Acceptor> {
     /// Spin up the listener and start queuing incoming connections
     ///
     /// # Error
@@ -1585,13 +1599,16 @@ pub trait Listener<T, A: Acceptor<T>>
 }
 
 /// An acceptor is a value that presents incoming connections
-pub trait Acceptor<T> {
+pub trait Acceptor {
+    /// Type of connection that is accepted by this acceptor.
+    type Connection;
+
     /// Wait for and accept an incoming connection
     ///
     /// # Error
     ///
     /// Returns `Err` if an I/O error is encountered.
-    fn accept(&mut self) -> IoResult<T>;
+    fn accept(&mut self) -> IoResult<Self::Connection>;
 
     /// Create an iterator over incoming connection attempts.
     ///
@@ -1612,11 +1629,10 @@ pub struct IncomingConnections<'a, A: ?Sized +'a> {
     inc: &'a mut A,
 }
 
-#[old_impl_check]
-impl<'a, T, A: ?Sized + Acceptor<T>> Iterator for IncomingConnections<'a, A> {
-    type Item = IoResult<T>;
+impl<'a, A: ?Sized + Acceptor> Iterator for IncomingConnections<'a, A> {
+    type Item = IoResult<A::Connection>;
 
-    fn next(&mut self) -> Option<IoResult<T>> {
+    fn next(&mut self) -> Option<IoResult<A::Connection>> {
         Some(self.inc.accept())
     }
 }
@@ -1624,9 +1640,10 @@ impl<'a, T, A: ?Sized + Acceptor<T>> Iterator for IncomingConnections<'a, A> {
 /// Creates a standard error for a commonly used flavor of error. The `detail`
 /// field of the returned error will always be `None`.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
+/// # #![feature(old_io)]
 /// use std::old_io as io;
 ///
 /// let eof = io::standard_error(io::EndOfFile);
@@ -1715,8 +1732,10 @@ pub enum FileType {
 /// # Examples
 ///
 /// ```no_run
+/// # #![feature(old_io, old_path)]
 ///
 /// use std::old_io::fs::PathExtensions;
+/// use std::old_path::Path;
 ///
 /// let info = match Path::new("foo.txt").stat() {
 ///     Ok(stat) => stat,
@@ -1725,7 +1744,7 @@ pub enum FileType {
 ///
 /// println!("byte size: {}", info.size);
 /// ```
-#[derive(Copy, Hash)]
+#[derive(Copy, Clone, Hash)]
 pub struct FileStat {
     /// The size of the file, in bytes
     pub size: u64,
@@ -1764,7 +1783,7 @@ pub struct FileStat {
 /// structure. This information is not necessarily platform independent, and may
 /// have different meanings or no meaning at all on some platforms.
 #[unstable(feature = "io")]
-#[derive(Copy, Hash)]
+#[derive(Copy, Clone, Hash)]
 pub struct UnstableFileStat {
     /// The ID of the device containing the file.
     pub device: u64,
@@ -1845,13 +1864,14 @@ impl fmt::Display for FilePermission {
 mod tests {
     use self::BadReaderBehavior::*;
     use super::{IoResult, Reader, MemReader, NoProgress, InvalidInput, Writer};
-    use prelude::v1::{Ok, Vec, Buffer, SliceExt};
+    use super::Buffer;
+    use prelude::v1::{Ok, Vec};
     use usize;
 
     #[derive(Clone, PartialEq, Debug)]
     enum BadReaderBehavior {
-        GoodBehavior(uint),
-        BadBehavior(uint)
+        GoodBehavior(usize),
+        BadBehavior(usize)
     }
 
     struct BadReader<T> {
@@ -1866,7 +1886,7 @@ mod tests {
     }
 
     impl<T: Reader> Reader for BadReader<T> {
-        fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+        fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
             let BadReader { ref mut behavior, ref mut r } = *self;
             loop {
                 if behavior.is_empty() {
@@ -1894,7 +1914,7 @@ mod tests {
     fn test_read_at_least() {
         let mut r = BadReader::new(MemReader::new(b"hello, world!".to_vec()),
                                    vec![GoodBehavior(usize::MAX)]);
-        let buf = &mut [0u8; 5];
+        let buf = &mut [0; 5];
         assert!(r.read_at_least(1, buf).unwrap() >= 1);
         assert!(r.read_exact(5).unwrap().len() == 5); // read_exact uses read_at_least
         assert!(r.read_at_least(0, buf).is_ok());

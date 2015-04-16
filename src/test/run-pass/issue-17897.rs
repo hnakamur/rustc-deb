@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
+#![feature(unboxed_closures, std_misc)]
 
 use std::thunk::Thunk;
 
-fn action(cb: Thunk<uint, uint>) -> uint {
-    cb.invoke(1)
+fn action(cb: Thunk<(usize,), usize>) -> usize {
+    cb(1)
 }
 
 pub fn main() {
-    println!("num: {}", action(Thunk::with_arg(move |u| u)));
+    println!("num: {}", action(Box::new(move |u| u)));
 }

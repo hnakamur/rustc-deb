@@ -8,11 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![feature(core)]
+
 use std::u8;
 
-const NUM: uint = u8::BITS as uint;
+const NUM: usize = u8::BITS as usize;
 
-struct MyStruct { nums: [uint; 8] }
+struct MyStruct { nums: [usize; 8] }
 
 
 fn main() {

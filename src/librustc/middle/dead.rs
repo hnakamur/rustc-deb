@@ -18,7 +18,7 @@ use util::nodemap::NodeSet;
 
 use std::collections::HashSet;
 use syntax::{ast, ast_map, codemap};
-use syntax::ast_util::{local_def, is_local, PostExpansionMethod};
+use syntax::ast_util::{local_def, is_local};
 use syntax::attr::{self, AttrMetaMethods};
 use syntax::visit::{self, Visitor};
 
@@ -71,13 +71,13 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
 
     fn lookup_and_handle_definition(&mut self, id: &ast::NodeId) {
         self.tcx.def_map.borrow().get(id).map(|def| {
-            match def {
-                &def::DefConst(_) => {
+            match def.full_def() {
+                def::DefConst(_) => {
                     self.check_def_id(def.def_id())
                 }
                 _ if self.ignore_non_const_paths => (),
-                &def::DefPrimTy(_) => (),
-                &def::DefVariant(enum_id, variant_id, _) => {
+                def::DefPrimTy(_) => (),
+                def::DefVariant(enum_id, variant_id, _) => {
                     self.check_def_id(enum_id);
                     self.check_def_id(variant_id);
                 }
@@ -145,7 +145,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
         }
     }
 
-    fn handle_tup_field_access(&mut self, lhs: &ast::Expr, idx: uint) {
+    fn handle_tup_field_access(&mut self, lhs: &ast::Expr, idx: usize) {
         match ty::expr_ty_adjusted(self.tcx, lhs).sty {
             ty::ty_struct(id, _) => {
                 let fields = ty::lookup_struct_fields(self.tcx, id);
@@ -158,7 +158,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
 
     fn handle_field_pattern_match(&mut self, lhs: &ast::Pat,
                                   pats: &[codemap::Spanned<ast::FieldPat>]) {
-        let id = match (*self.tcx.def_map.borrow())[lhs.id] {
+        let id = match self.tcx.def_map.borrow().get(&lhs.id).unwrap().full_def() {
             def::DefVariant(_, id, _) => id,
             _ => {
                 match ty::ty_to_def_id(ty::node_id_to_type(self.tcx,
@@ -228,16 +228,11 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
                     _ => ()
                 }
             }
-            ast_map::NodeTraitItem(trait_method) => {
-                visit::walk_trait_item(self, trait_method);
+            ast_map::NodeTraitItem(trait_item) => {
+                visit::walk_trait_item(self, trait_item);
             }
             ast_map::NodeImplItem(impl_item) => {
-                match *impl_item {
-                    ast::MethodImplItem(ref method) => {
-                        visit::walk_method_helper(self, method);
-                    }
-                    ast::TypeImplItem(_) => {}
-                }
+                visit::walk_impl_item(self, impl_item);
             }
             ast_map::NodeForeignItem(foreign_item) => {
                 visit::walk_foreign_item(self, &*foreign_item);
@@ -355,34 +350,35 @@ impl<'v> Visitor<'v> for LifeSeeder {
             ast::ItemEnum(ref enum_def, _) if allow_dead_code => {
                 self.worklist.extend(enum_def.variants.iter().map(|variant| variant.node.id));
             }
-            ast::ItemImpl(_, _, _, Some(ref _trait_ref), _, ref impl_items) => {
+            ast::ItemTrait(_, _, _, ref trait_items) => {
+                for trait_item in trait_items {
+                    match trait_item.node {
+                        ast::MethodTraitItem(_, Some(_)) => {
+                            if has_allow_dead_code_or_lang_attr(&trait_item.attrs) {
+                                self.worklist.push(trait_item.id);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ast::ItemImpl(_, _, _, ref opt_trait, _, ref impl_items) => {
                 for impl_item in impl_items {
-                    match *impl_item {
-                        ast::MethodImplItem(ref method) => {
-                            self.worklist.push(method.id);
+                    match impl_item.node {
+                        ast::MethodImplItem(..) => {
+                            if opt_trait.is_some() ||
+                                    has_allow_dead_code_or_lang_attr(&impl_item.attrs) {
+                                self.worklist.push(impl_item.id);
+                            }
                         }
                         ast::TypeImplItem(_) => {}
+                        ast::MacImplItem(_) => panic!("unexpanded macro")
                     }
                 }
             }
             _ => ()
         }
         visit::walk_item(self, item);
-    }
-
-    fn visit_fn(&mut self, fk: visit::FnKind<'v>,
-                _: &'v ast::FnDecl, block: &'v ast::Block,
-                _: codemap::Span, id: ast::NodeId) {
-        // Check for method here because methods are not ast::Item
-        match fk {
-            visit::FkMethod(_, _, method) => {
-                if has_allow_dead_code_or_lang_attr(&method.attrs) {
-                    self.worklist.push(id);
-                }
-            }
-            _ => ()
-        }
-        visit::walk_block(self, block);
     }
 }
 
@@ -500,7 +496,7 @@ impl<'a, 'tcx> DeadVisitor<'a, 'tcx> {
             None => (),
             Some(impl_list) => {
                 for impl_did in &**impl_list {
-                    for item_did in &(*impl_items)[*impl_did] {
+                    for item_did in &*impl_items.get(impl_did).unwrap() {
                         if self.live_symbols.contains(&item_did.def_id()
                                                                .node) {
                             return true;
@@ -561,7 +557,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for DeadVisitor<'a, 'tcx> {
                 span: codemap::Span, id: ast::NodeId) {
         // Have to warn method here because methods are not ast::Item
         match fk {
-            visit::FkMethod(name, _, _) => {
+            visit::FkMethod(name, _) => {
                 if !self.symbol_is_live(id, None) {
                     self.warn_dead_code(id, span, name, "method");
                 }
@@ -582,12 +578,12 @@ impl<'a, 'tcx, 'v> Visitor<'v> for DeadVisitor<'a, 'tcx> {
 
     // Overwrite so that we don't warn the trait method itself.
     fn visit_trait_item(&mut self, trait_method: &ast::TraitItem) {
-        match *trait_method {
-            ast::ProvidedMethod(ref method) => {
-                visit::walk_block(self, &*method.pe_body())
+        match trait_method.node {
+            ast::MethodTraitItem(_, Some(ref body)) => {
+                visit::walk_block(self, body)
             }
-            ast::RequiredMethod(_) => {}
-            ast::TypeTraitItem(_) => {}
+            ast::MethodTraitItem(_, None) |
+            ast::TypeTraitItem(..) => {}
         }
     }
 }

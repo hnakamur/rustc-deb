@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait DigitCollection: Sized {
     type Iter: Iterator<Item = u8>;
     fn digit_iter(self) -> Self::Iter;
@@ -28,6 +30,6 @@ impl<I> DigitCollection for I where I: Iterator<Item=u8> {
 }
 
 fn main() {
-    let xs = vec![1u8, 2, 3, 4, 5];
+    let xs = vec![1, 2, 3, 4, 5];
     assert_eq!(xs.into_iter().digit_sum(), 15);
 }

@@ -8,8 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::old_io::{File, Command};
+#![feature(rand, core)]
+
+use std::fs::File;
+use std::io::prelude::*;
 use std::iter::repeat;
+use std::path::Path;
+use std::process::Command;
 use std::rand::{thread_rng, Rng};
 use std::{char, env};
 
@@ -54,11 +59,11 @@ fn main() {
                              .arg("-c")
                              .arg(&format!("{} {}",
                                            rustc,
-                                           main_file.as_str()
+                                           main_file.to_str()
                                                     .unwrap()))
                              .output().unwrap();
 
-        let err = String::from_utf8_lossy(&result.error);
+        let err = String::from_utf8_lossy(&result.stderr);
 
         // the span should end the line (e.g no extra ~'s)
         let expected_span = format!("^{}\n", repeat("~").take(n - 1)
@@ -73,17 +78,16 @@ fn main() {
     }
 
     // Extra characters. Every line is preceded by `filename:lineno <actual code>`
-    let offset = main_file.as_str().unwrap().len() + 3;
+    let offset = main_file.to_str().unwrap().len() + 3;
 
     let result = Command::new("sh")
                          .arg("-c")
                          .arg(format!("{} {}",
                                       rustc,
-                                      main_file.as_str()
-                                               .unwrap()).as_slice())
+                                      main_file.display()))
                          .output().unwrap();
 
-    let err = String::from_utf8_lossy(result.error.as_slice());
+    let err = String::from_utf8_lossy(&result.stderr);
 
     // Test both the length of the snake and the leading spaces up to it
 
@@ -91,10 +95,10 @@ fn main() {
     let expected_span = format!("\n{}^{}\n",
                                 repeat(" ").take(offset + 7).collect::<String>(),
                                 repeat("~").take(8).collect::<String>());
-    assert!(err.contains(expected_span.as_slice()));
+    assert!(err.contains(&expected_span));
     // Second snake is 8 ~s long, with 36 preceding spaces
     let expected_span = format!("\n{}^{}\n",
                                 repeat(" ").take(offset + 36).collect::<String>(),
                                 repeat("~").take(8).collect::<String>());
-    assert!(err.contains(expected_span.as_slice()));
+    assert!(err.contains(&expected_span));
 }
