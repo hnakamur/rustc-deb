@@ -2,6 +2,7 @@ rustc (1.0.0+dfsg1-1) unstable; urgency=medium
 
   [ Angus Lees ]
   * New upstream release (1.0!)
+  * Set SONAME when building dylibs
 
   [ Sylvestre Ledru ]
   * Fix the watch file
