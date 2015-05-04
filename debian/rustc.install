@@ -1,2 +1,2 @@
-usr/lib/*/rust/*/bin/
-usr/lib/*/rust/*/lib/
+usr/bin/rustc
+usr/bin/rustdoc

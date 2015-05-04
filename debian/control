@@ -8,7 +8,6 @@ Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
   Angus Lees <gus@debian.org>
 Build-Depends: debhelper (>= 9.20141010),
                dpkg-dev (>= 1.17.14),
-#               rust <!dlstage0>,
                autotools-dev,
                curl,
                python,
@@ -17,33 +16,26 @@ Build-Depends: debhelper (>= 9.20141010),
                libedit-dev,
                valgrind,
                git,
-               ca-certificates,
-# <dlstage0>,
 	       llvm-3.6-dev (>= 1:3.6~+rc4)
 # git is necessary for 'make check'
 Build-Depends-Indep: pandoc (>=1.9),
-# <!nodoc>,
                      po4a,
-# <!nodoc>,
                      texlive-xetex,
-# <!nodoc>,
                      texlive-latex-base,
-# <!nodoc>,
                      texlive-generic-recommended,
-# <!nodoc>,
                      texlive-fonts-recommended,
-# <!nodoc>,
                      lmodern
-# <!nodoc>
 Standards-Version: 3.9.6
 Homepage: http://www.rust-lang.org/
 Vcs-Git: git://git.debian.org/pkg-rust/rust.git
 Vcs-Browser: http://git.debian.org/?p=pkg-rust/rust.git;a=summary
 
 Package: rustc
-Architecture: amd64 i386
+Architecture: any
+Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${source:Version})
+Recommends: rust-gdb | rust-lldb
 Suggests: rust-doc
 Description: Rust systems programming language
  Rust is a curly-brace, block-structured expression language.  It
@@ -57,6 +49,89 @@ Description: Rust systems programming language
  object-oriented and pure functional styles.  Rust also supports
  generic programming and meta-programming, in both static and dynamic
  styles.
+
+Package: libstd-rust-4e7c5e5c
+Section: libs
+Architecture: any
+Multi-Arch: same
+Pre-Depends: multiarch-support, ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Rust standard libraries
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains the standard Rust libraries, built as dylibs.
+
+Package: libstd-rust-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Pre-Depends: multiarch-support
+Depends: ${misc:Depends}, libstd-rust-4e7c5e5c (= ${source:Version})
+Description: Rust standard libraries - development files
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains development files necessary to use the standard
+ Rust libraries.
+
+Package: rust-gdb
+Section: devel
+Architecture: any
+Depends: gdb, ${misc:Depends}
+Description: Rust debugger (gdb)
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains pretty printers and a wrapper script for
+ invoking gdb on rust binaries.
+
+Package: rust-lldb
+Section: devel
+Architecture: any
+Depends: lldb, ${misc:Depends}
+Description: Rust debugger (lldb)
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains pretty printers and a wrapper script for
+ invoking lldb on rust binaries.
 
 Package: rust-doc
 Section: doc
@@ -76,4 +151,5 @@ Description: Rust systems programming language - Documentation
  generic programming and meta-programming, in both static and dynamic
  styles.
  .
- This package contains the documentation.
+ This package contains the Rust tutorial, language reference and
+ standard library documentation.

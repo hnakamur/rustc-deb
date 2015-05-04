@@ -7,6 +7,9 @@ include /usr/share/dpkg/buildflags.mk
 RUSTFLAGS = -C link-args="$(LDFLAGS)"
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
 
+# Defines DEB_*_RUST_TYPE triples
+include debian/architecture.mk
+
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
@@ -18,54 +21,41 @@ unexport SUDO_USER
 # Debhelper clears MAKEFLAGS, so we have to do this again for any
 # target where we call $(MAKE) directly.  Boo.
 DEB_PARALLEL_JOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
-DEB_MAKE_PARALLEL = $(if $(DEB_PARALLEL_JOBS),-j$(DEB_PARALLEL_JOBS))
-
-
-# $DEB_VERSION_UPSTREAM is the full upstream version (eg. 1.0.0~alpha)
-
-# This is original/unmangled upstream version (eg. 1.0.0-alpha)
-UPSTREAM_RUST_VERSION := $(subst ~,-,$(DEB_VERSION_UPSTREAM))
-
-# Main (major.minor) upstream version (eg. 1.0)
-MAIN_RUST_VERSION := $(shell echo $(DEB_VERSION_UPSTREAM) | egrep -o '^[^\.]+\.[^\.]+')
-
-# Upstream version suffix, if any (eg. alpha)
-UPSTREAM_RUST_SUFFIX := $(shell echo $(DEB_VERSION_UPSTREAM) | egrep -o '[^\~]+$$')
-
-# Private dir for rust .so and .rlib
-RUST_PREFIX := usr/lib/$(DEB_HOST_MULTIARCH)/rust/$(MAIN_RUST_VERSION)
+PMAKE = $(MAKE) $(if $(DEB_PARALLEL_JOBS),-j$(DEB_PARALLEL_JOBS))
 
 # Release type (one of beta, stable or nightly)
 RELEASE_CHANNEL := beta
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
-RUST_TMP_PREFIX := $(DEB_DESTDIR)/$(RUST_PREFIX)
+
+RUST_HASH := $(shell sed -n 's/^CFG_FILENAME_EXTRA=//p' mk/main.mk)
+LIBSTD_PKG := libstd-rust-$(RUST_HASH)
 
 # These are the normal build flags
-COMMON_FLAGS = \
+DEB_CONFIGURE_FLAGS = \
+               --host=$(DEB_HOST_RUST_TYPE) \
+               --target=$(DEB_TARGET_RUST_TYPE) \
                --disable-manage-submodules \
                --release-channel=$(RELEASE_CHANNEL) \
-               --mandir=/usr/share/man \
-               --enable-rpath \
-               --prefix=/$(RUST_PREFIX)
+               --prefix=/usr
 
-SYSTEM_LLVM = --llvm-root=/usr/lib/llvm-3.6
-
+# Use system LLVM (comment out to use vendored LLVM)
+DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.6
 
 ifeq (,$(findstring dlstage0,$(DEB_BUILD_PROFILES)))
 # Without these options, a pre-built stage0 will be downloaded from
-# rust-lang.org at build time.
-#	DEB_CONFIGURE_EXTRA_FLAGS += --enable-local-rust --local-rust-root=/usr
+# rust-lang.org at build time (or looked for in dl/).
+  #DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=/usr
 endif
 
 BUILD_DOCS = 1
 ifneq (,$(findstring nodoc,$(DEB_BUILD_PROFILES)))
-  DEB_CONFIGURE_EXTRA_FLAGS += --disable-docs
+  DEB_CONFIGURE_FLAGS += --disable-docs
   BUILD_DOCS =
 endif
 
 ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
-  DEB_CONFIGURE_EXTRA_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
+  DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
 endif
 
 
@@ -75,15 +65,15 @@ endif
 # Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
 	SHELL=/bin/sh \
-	    ./configure \
-		    $(COMMON_FLAGS) \
-		    $(DEB_CONFIGURE_EXTRA_FLAGS) \
-		    $(SYSTEM_LLVM)
+	    ./configure $(DEB_CONFIGURE_FLAGS)
 
 
 override_dh_auto_clean:
-	[ ! -f Makefile ] ||  $(MAKE) $(DEB_MAKE_PARALLEL) clean-all
-	-$(RM) Makefile
+	set -e; \
+	if [ -f Makefile ]; then \
+	  $(PMAKE) clean-all; \
+	  $(RM) Makefile config.stamp; \
+	fi
 
 override_dh_auto_build-arch:
 	dh_auto_build -- all VERBOSE=1
@@ -91,45 +81,41 @@ override_dh_auto_build-arch:
 override_dh_auto_build-indep:
 	$(if $(BUILD_DOCS),dh_auto_build -- docs)
 
-LD_TMP1 := $(RUST_TMP_PREFIX)/lib
-# TODO improve this stuff to make it dynamic
-LD_TMP_i386 := $(LD_TMP1)/rustlib/i686-unknown-linux-gnu/lib
-LD_TMP_AMD64 := $(LD_TMP1)/rustlib/x86_64-unknown-linux-gnu/lib
-RUST_TMP_LD_PATH := $(LD_TMP1):$(LD_TMP_i386):$(LD_TMP_AMD64)
-
-override_dh_shlibdeps:
-	LD_LIBRARY_PATH=$(RUST_TMP_LD_PATH):$(LD_LIBRARY_PATH) \
-		dh_shlibdeps -l$(RUST_TMP_LD_PATH)
-
 override_dh_auto_install:
 	dh_auto_install --destdir=$(DEB_DESTDIR)
-	dh_link $(RUST_PREFIX)/bin/rustc usr/bin/rustc-$(MAIN_RUST_VERSION)
-	dh_link usr/bin/rustc-$(MAIN_RUST_VERSION) usr/bin/rustc
-	dh_link $(RUST_PREFIX)/bin/rustdoc usr/bin/rustdoc-$(MAIN_RUST_VERSION)
-	dh_link usr/bin/rustdoc-$(MAIN_RUST_VERSION) usr/bin/rustdoc
-	dh_link $(RUST_PREFIX)/bin/rust-gdb usr/bin/rust-gdb-$(MAIN_RUST_VERSION)
-	dh_link usr/bin/rust-gdb-$(MAIN_RUST_VERSION) usr/bin/rust-gdb
+
+	mkdir -p $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
+	mv $(DEB_DESTDIR)/usr/lib/lib*.so $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
 
 	# Replace duplicated compile-time/run-time dylibs with symlinks
-	for f in $(RUST_TMP_PREFIX)/lib/rustlib/*/lib/lib*.so; do \
-		name=$${f##*/}; \
-		if [ -f $(RUST_TMP_PREFIX)/lib/$$name ]; then \
-			ln -sf ../../../$$name $$f; \
-		fi; \
+	@set -e; \
+	for f in $(DEB_DESTDIR)/usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/lib/lib*.so; do \
+	  name=$${f##*/}; \
+	  if [ -f "$(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/$$name" ]; then \
+	    echo "ln -sf ../../../$(DEB_HOST_MULTIARCH)/$$name $$f"; \
+	    ln -sf ../../../$(DEB_HOST_MULTIARCH)/$$name $$f; \
+	  fi; \
 	done
 
-override_dh_install:
+ifneq (,$(BUILD_DOCS))
 	# Brute force to remove privacy-breach-logo lintian warning.
 	# We could have updated the upstream sources but it would complexify
 	# the rebase
-ifneq (,$(BUILD_DOCS))
-	sed -i '/rel="shortcut icon" href="http:\/\/www.rust-lang.org\/favicon.ico"/d' `find $(DEB_DESTDIR) -iname '*.html'`
-	rm -f `find $(DEB_DESTDIR) -iname '*.html' -empty` $(DEB_DESTDIR)/usr/share/doc/rust-doc/html/.lock
-	ln -sf /usr/share/javascript/jquery/jquery.js $(DEB_DESTDIR)/usr/lib/*/rust/*/share/doc/rust/html/jquery.js
-	ln -sf /usr/share/javascript/jquery/jquery.js $(DEB_DESTDIR)/usr/lib/*/rust/*/share/doc/rust/html/style/jquery.js
-	ln -sf /usr/share/javascript/jquery/jquery.js $(DEB_DESTDIR)/usr/lib/*/rust/*/share/doc/rust/html/book/jquery.js
+	sed -i '\!rel="shortcut icon" href="http://www.rust-lang.org/favicon.ico"!d' `find $(DEB_DESTDIR) -iname '*.html'`
+
+	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock \) -delete
+
+	find $(DEB_DESTDIR)/usr/share/doc -name jquery.js \
+	  -exec ln -sf /usr/share/javascript/jquery/jquery.js '{}' \;
 endif
+
+override_dh_install:
 	dh_install
+	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
+
+	chmod -x \
+	  debian/rust-gdb/usr/share/rust-gdb/*.py \
+	  debian/rust-lldb/usr/share/rust-lldb/*.py
 
 override_dh_installchangelogs:
 	dh_installchangelogs RELEASES.md
@@ -138,8 +124,23 @@ override_dh_installdocs:
 	dh_installdocs -X.tex -X.aux -X.log -X.out -X.toc
 
 override_dh_auto_test:
-	# NB: not parallel - there is some race that leads to failures like:
-	# note: cc: error: x86_64-unknown-linux-gnu/test/run-pass/generic-default-type-params-cross-crate.stage2-x86_64-unknown-linux-gnulibaux/default_type_params_xc.o: No such file or directory
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(MAKE) check-notidy
+	$(PMAKE) check-notidy
 endif
+
+override_dh_makeshlibs:
+	dh_makeshlibs -V
+
+	# dh_makeshlibs doesn't support our "libfoo-version.so" naming
+	# structure, so we have to do this ourselves.
+	install -o 0 -g 0 -d debian/$(LIBSTD_PKG)/DEBIAN
+	ls debian/$(LIBSTD_PKG)/usr/lib/$(DEB_HOST_MULTIARCH)/lib*.so | \
+	sed -n 's,^.*/\(lib.*\)-\(.\+\)\.so$$,\1 \2,p' | \
+	while read name version; do \
+	  echo "$$name $$version $(LIBSTD_PKG) (>= $(DEB_VERSION_UPSTREAM))"; \
+	done > debian/$(LIBSTD_PKG)/DEBIAN/shlibs
+	chmod 644 debian/$(LIBSTD_PKG)/DEBIAN/shlibs
+	chown 0:0 debian/$(LIBSTD_PKG)/DEBIAN/shlibs
+
+override_dh_shlibdeps:
+	dh_shlibdeps -- -x$(LIBSTD_PKG)
