@@ -95,7 +95,7 @@ macro_rules! thread_local {
     (static $name:ident: $t:ty = $init:expr) => (
         static $name: ::std::thread::LocalKey<$t> = {
             use std::cell::UnsafeCell as __UnsafeCell;
-            use std::thread::__local::__impl::KeyInner as __KeyInner;
+            use std::thread::__local::KeyInner as __KeyInner;
             use std::option::Option as __Option;
             use std::option::Option::None as __None;
 
@@ -112,7 +112,7 @@ macro_rules! thread_local {
     (pub static $name:ident: $t:ty = $init:expr) => (
         pub static $name: ::std::thread::LocalKey<$t> = {
             use std::cell::UnsafeCell as __UnsafeCell;
-            use std::thread::__local::__impl::KeyInner as __KeyInner;
+            use std::thread::__local::KeyInner as __KeyInner;
             use std::option::Option as __Option;
             use std::option::Option::None as __None;
 
@@ -156,20 +156,20 @@ macro_rules! __thread_local_inner {
         #[cfg_attr(all(any(target_os = "macos", target_os = "linux"),
                        not(target_arch = "aarch64")),
                    thread_local)]
-        static $name: ::std::thread::__local::__impl::KeyInner<$t> =
+        static $name: ::std::thread::__local::KeyInner<$t> =
             __thread_local_inner!($init, $t);
     );
     (pub static $name:ident: $t:ty = $init:expr) => (
         #[cfg_attr(all(any(target_os = "macos", target_os = "linux"),
                        not(target_arch = "aarch64")),
                    thread_local)]
-        pub static $name: ::std::thread::__local::__impl::KeyInner<$t> =
+        pub static $name: ::std::thread::__local::KeyInner<$t> =
             __thread_local_inner!($init, $t);
     );
     ($init:expr, $t:ty) => ({
         #[cfg(all(any(target_os = "macos", target_os = "linux"), not(target_arch = "aarch64")))]
-        const _INIT: ::std::thread::__local::__impl::KeyInner<$t> = {
-            ::std::thread::__local::__impl::KeyInner {
+        const _INIT: ::std::thread::__local::KeyInner<$t> = {
+            ::std::thread::__local::KeyInner {
                 inner: ::std::cell::UnsafeCell { value: $init },
                 dtor_registered: ::std::cell::UnsafeCell { value: false },
                 dtor_running: ::std::cell::UnsafeCell { value: false },
@@ -178,13 +178,13 @@ macro_rules! __thread_local_inner {
 
         #[allow(trivial_casts)]
         #[cfg(any(not(any(target_os = "macos", target_os = "linux")), target_arch = "aarch64"))]
-        const _INIT: ::std::thread::__local::__impl::KeyInner<$t> = {
-            ::std::thread::__local::__impl::KeyInner {
+        const _INIT: ::std::thread::__local::KeyInner<$t> = {
+            ::std::thread::__local::KeyInner {
                 inner: ::std::cell::UnsafeCell { value: $init },
-                os: ::std::thread::__local::__impl::OsStaticKey {
-                    inner: ::std::thread::__local::__impl::OS_INIT_INNER,
+                os: ::std::thread::__local::OsStaticKey {
+                    inner: ::std::thread::__local::OS_INIT_INNER,
                     dtor: ::std::option::Option::Some(
-                        ::std::thread::__local::__impl::destroy_value::<$t>
+                        ::std::thread::__local::destroy_value::<$t>
                     ),
                 },
             }
@@ -226,7 +226,7 @@ pub enum LocalKeyState {
 }
 
 impl<T: 'static> LocalKey<T> {
-    /// Acquire a reference to the value in this TLS key.
+    /// Acquires a reference to the value in this TLS key.
     ///
     /// This will lazily initialize the value if this thread has not referenced
     /// this key yet.
@@ -373,7 +373,7 @@ mod imp {
                                       arg: *mut u8,
                                       dso_handle: *mut u8) -> libc::c_int;
             mem::transmute::<*const (), F>(__cxa_thread_atexit_impl)
-            (dtor, t, __dso_handle);
+            (dtor, t, &__dso_handle as *const _ as *mut _);
             return
         }
 

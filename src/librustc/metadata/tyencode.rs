@@ -241,12 +241,12 @@ pub fn enc_region(w: &mut Encoder, cx: &ctxt, r: ty::Region) {
             enc_bound_region(w, cx, br);
             mywrite!(w, "]");
         }
-        ty::ReEarlyBound(node_id, space, index, name) => {
+        ty::ReEarlyBound(ref data) => {
             mywrite!(w, "B[{}|{}|{}|{}]",
-                     node_id,
-                     space.to_uint(),
-                     index,
-                     token::get_name(name));
+                     data.param_id,
+                     data.space.to_uint(),
+                     data.index,
+                     token::get_name(data.name));
         }
         ty::ReFree(ref fr) => {
             mywrite!(w, "f[");
@@ -275,9 +275,11 @@ pub fn enc_region(w: &mut Encoder, cx: &ctxt, r: ty::Region) {
 
 fn enc_scope(w: &mut Encoder, _cx: &ctxt, scope: region::CodeExtent) {
     match scope {
+        region::CodeExtent::ParameterScope {
+            fn_id, body_id } => mywrite!(w, "P[{}|{}]", fn_id, body_id),
         region::CodeExtent::Misc(node_id) => mywrite!(w, "M{}", node_id),
         region::CodeExtent::Remainder(region::BlockRemainder {
-            block: b, first_statement_index: i }) => mywrite!(w, "B{}{}", b, i),
+            block: b, first_statement_index: i }) => mywrite!(w, "B[{}|{}]", b, i),
         region::CodeExtent::DestructionScope(node_id) => mywrite!(w, "D{}", node_id),
     }
 }

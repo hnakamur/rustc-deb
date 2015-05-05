@@ -389,16 +389,15 @@ fn test_bit_vec_clone() {
 
 mod bench {
     use std::collections::{BitSet, BitVec};
-    use std::rand::{Rng, self};
+    use std::__rand::{Rng, thread_rng, ThreadRng};
     use std::u32;
 
     use test::{Bencher, black_box};
 
     const BENCH_BITS : usize = 1 << 14;
 
-    fn rng() -> rand::IsaacRng {
-        let seed: &[_] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
-        rand::SeedableRng::from_seed(seed)
+    fn rng() -> ThreadRng {
+        thread_rng()
     }
 
     #[bench]
@@ -407,7 +406,7 @@ mod bench {
         let mut bit_vec = BitSet::new();
         b.iter(|| {
             for _ in 0..100 {
-                bit_vec.insert((r.next_u32() as usize) % u32::BITS as usize);
+                bit_vec.insert((r.next_u32() as usize) % u32::BITS);
             }
             black_box(&bit_vec);
         });

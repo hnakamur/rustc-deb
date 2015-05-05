@@ -24,9 +24,6 @@ pub mod io {
     use sys_common::{net2, AsInner, FromInner};
     use sys;
 
-    #[allow(deprecated)]
-    use old_io;
-
     /// Raw HANDLEs.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub type RawHandle = libc::HANDLE;
@@ -38,7 +35,7 @@ pub mod io {
     /// Extract raw handles.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub trait AsRawHandle {
-        /// Extract the raw handle, without taking any ownership.
+        /// Extracts the raw handle, without taking any ownership.
         #[stable(feature = "rust1", since = "1.0.0")]
         fn as_raw_handle(&self) -> RawHandle;
     }
@@ -47,20 +44,18 @@ pub mod io {
     #[unstable(feature = "from_raw_os",
                reason = "recent addition to the std::os::windows::io module")]
     pub trait FromRawHandle {
-        /// Construct a new I/O object from the specified raw handle.
+        /// Constructs a new I/O object from the specified raw handle.
         ///
         /// This function will **consume ownership** of the handle given,
         /// passing responsibility for closing the handle to the returned
         /// object.
-        fn from_raw_handle(handle: RawHandle) -> Self;
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawHandle for old_io::fs::File {
-        fn as_raw_handle(&self) -> RawHandle {
-            self.as_inner().handle()
-        }
+        ///
+        /// This function is also unsafe as the primitives currently returned
+        /// have the contract that they are the sole owner of the file
+        /// descriptor they are wrapping. Usage of this function could
+        /// accidentally allow violating this contract which can cause memory
+        /// unsafety in code that relies on it being true.
+        unsafe fn from_raw_handle(handle: RawHandle) -> Self;
     }
 
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -72,47 +67,15 @@ pub mod io {
 
     #[unstable(feature = "from_raw_os", reason = "trait is unstable")]
     impl FromRawHandle for fs::File {
-        fn from_raw_handle(handle: RawHandle) -> fs::File {
+        unsafe fn from_raw_handle(handle: RawHandle) -> fs::File {
             fs::File::from_inner(sys::fs2::File::from_inner(handle))
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawHandle for old_io::pipe::PipeStream {
-        fn as_raw_handle(&self) -> RawHandle {
-            self.as_inner().handle()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawHandle for old_io::net::pipe::UnixStream {
-        fn as_raw_handle(&self) -> RawHandle {
-            self.as_inner().handle()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawHandle for old_io::net::pipe::UnixListener {
-        fn as_raw_handle(&self) -> RawHandle {
-            self.as_inner().handle()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawHandle for old_io::net::pipe::UnixAcceptor {
-        fn as_raw_handle(&self) -> RawHandle {
-            self.as_inner().handle()
         }
     }
 
     /// Extract raw sockets.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub trait AsRawSocket {
-        /// Extract the underlying raw socket from this object.
+        /// Extracts the underlying raw socket from this object.
         #[stable(feature = "rust1", since = "1.0.0")]
         fn as_raw_socket(&self) -> RawSocket;
     }
@@ -124,39 +87,13 @@ pub mod io {
         ///
         /// This function will **consume ownership** of the socket provided and
         /// it will be closed when the returned object goes out of scope.
-        fn from_raw_socket(sock: RawSocket) -> Self;
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawSocket for old_io::net::tcp::TcpStream {
-        fn as_raw_socket(&self) -> RawSocket {
-            self.as_inner().fd()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawSocket for old_io::net::tcp::TcpListener {
-        fn as_raw_socket(&self) -> RawSocket {
-            self.as_inner().socket()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawSocket for old_io::net::tcp::TcpAcceptor {
-        fn as_raw_socket(&self) -> RawSocket {
-            self.as_inner().socket()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawSocket for old_io::net::udp::UdpSocket {
-        fn as_raw_socket(&self) -> RawSocket {
-            self.as_inner().fd()
-        }
+        ///
+        /// This function is also unsafe as the primitives currently returned
+        /// have the contract that they are the sole owner of the file
+        /// descriptor they are wrapping. Usage of this function could
+        /// accidentally allow violating this contract which can cause memory
+        /// unsafety in code that relies on it being true.
+        unsafe fn from_raw_socket(sock: RawSocket) -> Self;
     }
 
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -180,21 +117,21 @@ pub mod io {
 
     #[unstable(feature = "from_raw_os", reason = "trait is unstable")]
     impl FromRawSocket for net::TcpStream {
-        fn from_raw_socket(sock: RawSocket) -> net::TcpStream {
+        unsafe fn from_raw_socket(sock: RawSocket) -> net::TcpStream {
             let sock = sys::net::Socket::from_inner(sock);
             net::TcpStream::from_inner(net2::TcpStream::from_inner(sock))
         }
     }
     #[unstable(feature = "from_raw_os", reason = "trait is unstable")]
     impl FromRawSocket for net::TcpListener {
-        fn from_raw_socket(sock: RawSocket) -> net::TcpListener {
+        unsafe fn from_raw_socket(sock: RawSocket) -> net::TcpListener {
             let sock = sys::net::Socket::from_inner(sock);
             net::TcpListener::from_inner(net2::TcpListener::from_inner(sock))
         }
     }
     #[unstable(feature = "from_raw_os", reason = "trait is unstable")]
     impl FromRawSocket for net::UdpSocket {
-        fn from_raw_socket(sock: RawSocket) -> net::UdpSocket {
+        unsafe fn from_raw_socket(sock: RawSocket) -> net::UdpSocket {
             let sock = sys::net::Socket::from_inner(sock);
             net::UdpSocket::from_inner(net2::UdpSocket::from_inner(sock))
         }
@@ -214,7 +151,7 @@ pub mod ffi {
     /// Windows-specific extensions to `OsString`.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub trait OsStringExt {
-        /// Create an `OsString` from a potentially ill-formed UTF-16 slice of
+        /// Creates an `OsString` from a potentially ill-formed UTF-16 slice of
         /// 16-bit code units.
         ///
         /// This is lossless: calling `.encode_wide()` on the resulting string
@@ -233,7 +170,7 @@ pub mod ffi {
     /// Windows-specific extensions to `OsStr`.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub trait OsStrExt {
-        /// Re-encode an `OsStr` as a wide character sequence,
+        /// Re-encodes an `OsStr` as a wide character sequence,
         /// i.e. potentially ill-formed UTF-16.
         ///
         /// This is lossless. Note that the encoding does not include a final
@@ -258,25 +195,25 @@ pub mod fs {
 
     /// Windows-specific extensions to `OpenOptions`
     pub trait OpenOptionsExt {
-        /// Override the `dwDesiredAccess` argument to the call to `CreateFile`
+        /// Overrides the `dwDesiredAccess` argument to the call to `CreateFile`
         /// with the specified value.
         fn desired_access(&mut self, access: i32) -> &mut Self;
 
-        /// Override the `dwCreationDisposition` argument to the call to
+        /// Overrides the `dwCreationDisposition` argument to the call to
         /// `CreateFile` with the specified value.
         ///
         /// This will override any values of the standard `create` flags, for
         /// example.
         fn creation_disposition(&mut self, val: i32) -> &mut Self;
 
-        /// Override the `dwFlagsAndAttributes` argument to the call to
+        /// Overrides the `dwFlagsAndAttributes` argument to the call to
         /// `CreateFile` with the specified value.
         ///
         /// This will override any values of the standard flags on the
         /// `OpenOptions` structure.
         fn flags_and_attributes(&mut self, val: i32) -> &mut Self;
 
-        /// Override the `dwShareMode` argument to the call to `CreateFile` with
+        /// Overrides the `dwShareMode` argument to the call to `CreateFile` with
         /// the specified value.
         ///
         /// This will override any values of the standard flags on the

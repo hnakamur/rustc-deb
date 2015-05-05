@@ -56,70 +56,34 @@ place!
 
 ## Threads
 
-Rust's standard library provides a library for 'threads', which allow you to
+Rust's standard library provides a library for threads, which allow you to
 run Rust code in parallel. Here's a basic example of using `std::thread`:
 
 ```
 use std::thread;
 
 fn main() {
-    thread::scoped(|| {
-        println!("Hello from a thread!");
-    });
-}
-```
-
-The `thread::scoped()` method accepts a closure, which is executed in a new
-thread. It's called `scoped` because this thread returns a join guard:
-
-```
-use std::thread;
-
-fn main() {
-    let guard = thread::scoped(|| {
-        println!("Hello from a thread!");
-    });
-
-    // guard goes out of scope here
-}
-```
-
-When `guard` goes out of scope, it will block execution until the thread is
-finished. If we didn't want this behaviour, we could use `thread::spawn()`:
-
-```
-# #![feature(old_io, std_misc)]
-use std::thread;
-use std::old_io::timer;
-use std::time::Duration;
-
-fn main() {
     thread::spawn(|| {
         println!("Hello from a thread!");
     });
-
-    timer::sleep(Duration::milliseconds(50));
 }
 ```
 
-We need to `sleep` here because when `main()` ends, it kills all of the
-running threads.
+The `thread::spawn()` method accepts a closure, which is executed in a
+new thread. It returns a handle to the thread, that can be used to
+wait for the child thread to finish and extract its result:
 
-[`scoped`](std/thread/struct.Builder.html#method.scoped) has an interesting
-type signature:
-
-```text
-fn scoped<'a, T, F>(self, f: F) -> JoinGuard<'a, T>
-    where T: Send + 'a,
-          F: FnOnce() -> T,
-          F: Send + 'a
 ```
+use std::thread;
 
-Specifically, `F`, the closure that we pass to execute in the new thread. It
-has two restrictions: It must be a `FnOnce` from `()` to `T`. Using `FnOnce`
-allows the closure to take ownership of any data it mentions from the parent
-thread. The other restriction is that `F` must be `Send`. We aren't allowed to
-transfer this ownership unless the type thinks that's okay.
+fn main() {
+    let handle = thread::spawn(|| {
+        "Hello from a thread!"
+    });
+
+    println!("{}", handle.join().unwrap());
+}
+```
 
 Many languages have the ability to execute threads, but it's wildly unsafe.
 There are entire books about how to prevent errors that occur from shared
@@ -147,10 +111,7 @@ As an example, here is a Rust program that would have a data race in many
 languages. It will not compile:
 
 ```ignore
-# #![feature(old_io, std_misc)]
 use std::thread;
-use std::old_io::timer;
-use std::time::Duration;
 
 fn main() {
     let mut data = vec![1u32, 2, 3];
@@ -161,14 +122,14 @@ fn main() {
         });
     }
 
-    timer::sleep(Duration::milliseconds(50));
+    thread::sleep_ms(50);
 }
 ```
 
 This gives us an error:
 
 ```text
-12:17 error: capture of moved value: `data`
+8:17 error: capture of moved value: `data`
         data[i] += 1;
         ^~~~
 ```
@@ -187,10 +148,7 @@ only one person at a time can mutate what's inside. For that, we can use the
 but for a different reason:
 
 ```ignore
-# #![feature(old_io, std_misc)]
 use std::thread;
-use std::old_io::timer;
-use std::time::Duration;
 use std::sync::Mutex;
 
 fn main() {
@@ -203,17 +161,17 @@ fn main() {
         });
     }
 
-    timer::sleep(Duration::milliseconds(50));
+    thread::sleep_ms(50);
 }
 ```
 
 Here's the error:
 
 ```text
-<anon>:11:9: 11:22 error: the trait `core::marker::Send` is not implemented for the type `std::sync::mutex::MutexGuard<'_, collections::vec::Vec<u32>>` [E0277]
+<anon>:9:9: 9:22 error: the trait `core::marker::Send` is not implemented for the type `std::sync::mutex::MutexGuard<'_, collections::vec::Vec<u32>>` [E0277]
 <anon>:11         thread::spawn(move || {
                   ^~~~~~~~~~~~~
-<anon>:11:9: 11:22 note: `std::sync::mutex::MutexGuard<'_, collections::vec::Vec<u32>>` cannot be sent between threads safely
+<anon>:9:9: 9:22 note: `std::sync::mutex::MutexGuard<'_, collections::vec::Vec<u32>>` cannot be sent between threads safely
 <anon>:11         thread::spawn(move || {
                   ^~~~~~~~~~~~~
 ```
@@ -232,11 +190,8 @@ guard across thread boundaries, which gives us our error.
 We can use `Arc<T>` to fix this. Here's the working version:
 
 ```
-# #![feature(old_io, std_misc)]
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::old_io::timer;
-use std::time::Duration;
 
 fn main() {
     let data = Arc::new(Mutex::new(vec![1u32, 2, 3]));
@@ -249,7 +204,7 @@ fn main() {
         });
     }
 
-    timer::sleep(Duration::milliseconds(50));
+    thread::sleep_ms(50);
 }
 ```
 
@@ -257,12 +212,9 @@ We now call `clone()` on our `Arc`, which increases the internal count. This
 handle is then moved into the new thread. Let's examine the body of the
 thread more closely:
 
-```
-# #![feature(old_io, std_misc)]
+```rust
 # use std::sync::{Arc, Mutex};
 # use std::thread;
-# use std::old_io::timer;
-# use std::time::Duration;
 # fn main() {
 #     let data = Arc::new(Mutex::new(vec![1u32, 2, 3]));
 #     for i in 0..2 {
@@ -272,6 +224,7 @@ thread::spawn(move || {
     data[i] += 1;
 });
 #     }
+#     thread::sleep_ms(50);
 # }
 ```
 

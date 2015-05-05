@@ -80,7 +80,7 @@ pub fn validate_crate_name(sess: Option<&Session>, s: &str, sp: Option<Span>) {
             (None, Some(sess)) => sess.err(s),
         }
     };
-    if s.len() == 0 {
+    if s.is_empty() {
         say("crate name must not be empty");
     }
     for c in s.chars() {
@@ -528,7 +528,10 @@ impl<'a> CrateReader<'a> {
                                                               source_name.clone(),
                                                               body);
                 let lo = p.span.lo;
-                let body = p.parse_all_token_trees();
+                let body = match p.parse_all_token_trees() {
+                    Ok(body) => body,
+                    Err(err) => panic!(err),
+                };
                 let span = mk_sp(lo, p.last_span.hi);
                 p.abort_if_errors();
                 macros.push(ast::MacroDef {

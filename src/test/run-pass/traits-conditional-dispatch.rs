@@ -12,18 +12,15 @@
 // blanket impl for T:Copy coexists with an impl for Box<T>, because
 // Box does not impl Copy.
 
-// pretty-expanded FIXME #23616
 
 #![allow(unknown_features)]
 #![feature(box_syntax)]
-
-use std::marker::MarkerTrait;
 
 trait Get {
     fn get(&self) -> Self;
 }
 
-trait MyCopy : MarkerTrait { fn copy(&self) -> Self; }
+trait MyCopy { fn copy(&self) -> Self; }
 impl MyCopy for u16 { fn copy(&self) -> Self { *self } }
 impl MyCopy for u32 { fn copy(&self) -> Self { *self } }
 impl MyCopy for i32 { fn copy(&self) -> Self { *self } }

@@ -54,7 +54,7 @@ The second is that the syntax is similar, but a bit different. I've added spaces
 here to make them look a little closer:
 
 ```rust
-fn  plus_one_v1 (  x: i32 ) -> i32 { x + 1 }
+fn  plus_one_v1   (x: i32 ) -> i32 { x + 1 }
 let plus_one_v2 = |x: i32 | -> i32 { x + 1 };
 let plus_one_v3 = |x: i32 |          x + 1  ;
 ```
@@ -175,9 +175,6 @@ we called `add_num`, it mutated the underlying value, as we'd expect. We also
 needed to declare `add_num` as `mut` too, because we’re mutating its
 environment.
 
-We also had to declare `add_num` as mut, since we will be modifying its
-environment.
-
 If we change to a `move` closure, it's different:
 
 ```rust
@@ -208,11 +205,11 @@ you tons of control over what your code does, and closures are no different.
 
 Rust's implementation of closures is a bit different than other languages. They
 are effectively syntax sugar for traits. You'll want to make sure to have read
-the [traits chapter][traits] before this one, as well as the chapter on [static
-and dynamic dispatch][dispatch], which talks about trait objects.
+the [traits chapter][traits] before this one, as well as the chapter on [trait
+objects][trait-objects].
 
 [traits]: traits.html
-[dispatch]: static-and-dynamic-dispatch.html
+[trait-objects]: trait-objects.html
 
 Got all that? Good.
 

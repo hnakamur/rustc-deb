@@ -130,10 +130,10 @@ struct Output {
 
 pub fn main() {
     const STACK_SIZE: usize = 32000000; // 32MB
-    let res = std::thread::Builder::new().stack_size(STACK_SIZE).scoped(move || {
+    let res = std::thread::Builder::new().stack_size(STACK_SIZE).spawn(move || {
         let s = env::args().collect::<Vec<_>>();
         main_args(&s)
-    }).unwrap().join();
+    }).unwrap().join().unwrap();
     env::set_exit_status(res as i32);
 }
 
@@ -154,8 +154,9 @@ pub fn opts() -> Vec<getopts::OptGroup> {
         optmulti("", "cfg", "pass a --cfg to rustc", ""),
         optmulti("", "extern", "pass an --extern to rustc", "NAME=PATH"),
         optmulti("", "plugin-path", "directory to load plugins from", "DIR"),
-        optmulti("", "passes", "space separated list of passes to also run, a \
-                                value of `list` will print available passes",
+        optmulti("", "passes", "list of passes to also run, you might want \
+                                to pass it multiple times; a value of `list` \
+                                will print available passes",
                  "PASSES"),
         optmulti("", "plugins", "space separated list of plugins to also load",
                  "PLUGINS"),
@@ -218,7 +219,7 @@ pub fn main_args(args: &[String]) -> isize {
         return 0;
     }
 
-    if matches.free.len() == 0 {
+    if matches.free.is_empty() {
         println!("expected an input file to act on");
         return 1;
     } if matches.free.len() > 1 {

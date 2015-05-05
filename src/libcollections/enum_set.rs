@@ -16,7 +16,7 @@
 use core::prelude::*;
 use core::marker;
 use core::fmt;
-use core::iter::{FromIterator, IntoIterator};
+use core::iter::{FromIterator};
 use core::ops::{Sub, BitOr, BitAnd, BitXor};
 
 // FIXME(contentions): implement union family of methods? (general design may be wrong here)
@@ -86,7 +86,7 @@ pub trait CLike {
 fn bit<E:CLike>(e: &E) -> usize {
     use core::usize;
     let value = e.to_usize();
-    assert!(value < usize::BITS as usize,
+    assert!(value < usize::BITS,
             "EnumSet only supports up to {} variants.", usize::BITS - 1);
     1 << value
 }

@@ -51,7 +51,7 @@ use result::Result::{Ok, Err};
 use ptr;
 use mem;
 use mem::size_of;
-use marker::{Send, Sized, Sync, self};
+use marker::{Send, Sync, self};
 use raw::Repr;
 // Avoid conflicts with *both* the Slice trait (buggy) and the `slice::raw` module.
 use raw::Slice as RawSlice;
@@ -63,6 +63,7 @@ use raw::Slice as RawSlice;
 
 /// Extension methods for slices.
 #[allow(missing_docs)] // docs in libcollections
+#[doc(hidden)]
 pub trait SliceExt {
     type Item;
 
@@ -203,7 +204,7 @@ impl<T> SliceExt for [T] {
 
     #[inline]
     fn first(&self) -> Option<&T> {
-        if self.len() == 0 { None } else { Some(&self[0]) }
+        if self.is_empty() { None } else { Some(&self[0]) }
     }
 
     #[inline]
@@ -216,7 +217,7 @@ impl<T> SliceExt for [T] {
 
     #[inline]
     fn last(&self) -> Option<&T> {
-        if self.len() == 0 { None } else { Some(&self[self.len() - 1]) }
+        if self.is_empty() { None } else { Some(&self[self.len() - 1]) }
     }
 
     #[inline]
@@ -295,7 +296,7 @@ impl<T> SliceExt for [T] {
 
     #[inline]
     fn first_mut(&mut self) -> Option<&mut T> {
-        if self.len() == 0 { None } else { Some(&mut self[0]) }
+        if self.is_empty() { None } else { Some(&mut self[0]) }
     }
 
     #[inline]
@@ -593,37 +594,6 @@ impl<T> ops::IndexMut<RangeFull> for [T] {
 ////////////////////////////////////////////////////////////////////////////////
 // Common traits
 ////////////////////////////////////////////////////////////////////////////////
-
-/// Data that is viewable as a slice.
-#[unstable(feature = "core",
-           reason = "will be replaced by slice syntax")]
-#[deprecated(since = "1.0.0",
-             reason = "use std::convert::AsRef<[T]> instead")]
-pub trait AsSlice<T> {
-    /// Work with `self` as a slice.
-    fn as_slice<'a>(&'a self) -> &'a [T];
-}
-
-#[unstable(feature = "core", reason = "trait is experimental")]
-#[allow(deprecated)]
-impl<T> AsSlice<T> for [T] {
-    #[inline(always)]
-    fn as_slice<'a>(&'a self) -> &'a [T] { self }
-}
-
-#[unstable(feature = "core", reason = "trait is experimental")]
-#[allow(deprecated)]
-impl<'a, T, U: ?Sized + AsSlice<T>> AsSlice<T> for &'a U {
-    #[inline(always)]
-    fn as_slice(&self) -> &[T] { AsSlice::as_slice(*self) }
-}
-
-#[unstable(feature = "core", reason = "trait is experimental")]
-#[allow(deprecated)]
-impl<'a, T, U: ?Sized + AsSlice<T>> AsSlice<T> for &'a mut U {
-    #[inline(always)]
-    fn as_slice(&self) -> &[T] { AsSlice::as_slice(*self) }
-}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Default for &'a [T] {
@@ -1305,7 +1275,7 @@ impl<'a, T> Iterator for Chunks<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<&'a [T]> {
-        if self.v.len() == 0 {
+        if self.v.is_empty() {
             None
         } else {
             let chunksz = cmp::min(self.v.len(), self.size);
@@ -1317,7 +1287,7 @@ impl<'a, T> Iterator for Chunks<'a, T> {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        if self.v.len() == 0 {
+        if self.v.is_empty() {
             (0, Some(0))
         } else {
             let n = self.v.len() / self.size;
@@ -1332,7 +1302,7 @@ impl<'a, T> Iterator for Chunks<'a, T> {
 impl<'a, T> DoubleEndedIterator for Chunks<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<&'a [T]> {
-        if self.v.len() == 0 {
+        if self.v.is_empty() {
             None
         } else {
             let remainder = self.v.len() % self.size;
@@ -1383,7 +1353,7 @@ impl<'a, T> Iterator for ChunksMut<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<&'a mut [T]> {
-        if self.v.len() == 0 {
+        if self.v.is_empty() {
             None
         } else {
             let sz = cmp::min(self.v.len(), self.chunk_size);
@@ -1396,7 +1366,7 @@ impl<'a, T> Iterator for ChunksMut<'a, T> {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        if self.v.len() == 0 {
+        if self.v.is_empty() {
             (0, Some(0))
         } else {
             let n = self.v.len() / self.chunk_size;
@@ -1411,7 +1381,7 @@ impl<'a, T> Iterator for ChunksMut<'a, T> {
 impl<'a, T> DoubleEndedIterator for ChunksMut<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<&'a mut [T]> {
-        if self.v.len() == 0 {
+        if self.v.is_empty() {
             None
         } else {
             let remainder = self.v.len() % self.chunk_size;

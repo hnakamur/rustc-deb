@@ -8,13 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// pretty-expanded FIXME #23616
 
 #![feature(intrinsics, core)]
 
 macro_rules! assert_approx_eq {
     ($a:expr, $b:expr) => ({
-        use std::num::Float;
         let (a, b) = (&$a, &$b);
         assert!((*a - *b).abs() < 1.0e-6,
                 "{} is not approximately equal to {}", *a, *b);

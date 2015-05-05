@@ -223,7 +223,7 @@ impl<T> Option<T> {
     // Adapter for working with references
     /////////////////////////////////////////////////////////////////////////
 
-    /// Convert from `Option<T>` to `Option<&T>`
+    /// Converts from `Option<T>` to `Option<&T>`
     ///
     /// # Examples
     ///
@@ -248,7 +248,7 @@ impl<T> Option<T> {
         }
     }
 
-    /// Convert from `Option<T>` to `Option<&mut T>`
+    /// Converts from `Option<T>` to `Option<&mut T>`
     ///
     /// # Examples
     ///
@@ -269,7 +269,7 @@ impl<T> Option<T> {
         }
     }
 
-    /// Convert from `Option<T>` to `&mut [T]` (without copying)
+    /// Converts from `Option<T>` to `&mut [T]` (without copying)
     ///
     /// # Examples
     ///
@@ -551,25 +551,6 @@ impl<T> Option<T> {
         IterMut { inner: Item { opt: self.as_mut() } }
     }
 
-    /// Returns a consuming iterator over the possibly contained value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let x = Some("string");
-    /// let v: Vec<&str> = x.into_iter().collect();
-    /// assert_eq!(v, ["string"]);
-    ///
-    /// let x = None;
-    /// let v: Vec<&str> = x.into_iter().collect();
-    /// assert!(v.is_empty());
-    /// ```
-    #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn into_iter(self) -> IntoIter<T> {
-        IntoIter { inner: Item { opt: self } }
-    }
-
     /////////////////////////////////////////////////////////////////////////
     // Boolean operations on the values, eager and lazy
     /////////////////////////////////////////////////////////////////////////
@@ -704,7 +685,7 @@ impl<T> Option<T> {
         mem::replace(self, None)
     }
 
-    /// Convert from `Option<T>` to `&[T]` (without copying)
+    /// Converts from `Option<T>` to `&[T]` (without copying)
     #[inline]
     #[unstable(feature = "as_slice", since = "unsure of the utility here")]
     pub fn as_slice<'a>(&'a self) -> &'a [T] {
@@ -768,6 +749,30 @@ impl<T> Default for Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn default() -> Option<T> { None }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> IntoIterator for Option<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    /// Returns a consuming iterator over the possibly contained value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let x = Some("string");
+    /// let v: Vec<&str> = x.into_iter().collect();
+    /// assert_eq!(v, ["string"]);
+    ///
+    /// let x = None;
+    /// let v: Vec<&str> = x.into_iter().collect();
+    /// assert!(v.is_empty());
+    /// ```
+    #[inline]
+    fn into_iter(self) -> IntoIter<T> {
+        IntoIter { inner: Item { opt: self } }
+    }
 }
 
 /////////////////////////////////////////////////////////////////////////////

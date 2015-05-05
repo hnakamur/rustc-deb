@@ -8,11 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-tidy-linelength
-
 use std::cell::RefCell;
 
-trait Trait : ::std::marker::MarkerTrait {}
+trait Trait {}
 
 pub fn main() {
     let x: Vec<Trait + Sized> = Vec::new();

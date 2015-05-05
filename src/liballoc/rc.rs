@@ -324,7 +324,7 @@ pub fn try_unwrap<T>(rc: Rc<T>) -> Result<T, Rc<T>> {
 /// ```
 #[inline]
 #[unstable(feature = "alloc")]
-pub fn get_mut<'a, T>(rc: &'a mut Rc<T>) -> Option<&'a mut T> {
+pub fn get_mut<T>(rc: &mut Rc<T>) -> Option<&mut T> {
     if is_unique(rc) {
         let inner = unsafe { &mut **rc._ptr };
         Some(&mut inner.value)
@@ -459,7 +459,6 @@ impl<T: Default> Default for Rc<T> {
     ///
     /// ```
     /// use std::rc::Rc;
-    /// use std::default::Default;
     ///
     /// let x: Rc<i32> = Default::default();
     /// ```
@@ -631,6 +630,13 @@ impl<T: fmt::Display> fmt::Display for Rc<T> {
 impl<T: fmt::Debug> fmt::Debug for Rc<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> fmt::Pointer for Rc<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Pointer::fmt(&*self._ptr, f)
     }
 }
 

@@ -56,7 +56,7 @@ Types which are [`Sync`][sync] are thread-safe when multiple shared
 references to them are used concurrently. Types which are not `Sync` are not
 thread-safe, and thus when used in a global require unsafe code to use.
 
-[sync]: core/kinds/trait.Sync.html
+[sync]: core/marker/trait.Sync.html
 
 ### If mutable static items that implement `Sync` are safe, why is taking &mut SHARABLE unsafe?
 
@@ -139,7 +139,7 @@ and explicitly calling the `clone` method. Making user-defined copy operators
 explicit surfaces the underlying complexity, forcing the developer to opt-in
 to potentially expensive operations.
 
-[copy]: core/kinds/trait.Copy.html
+[copy]: core/marker/trait.Copy.html
 [clone]: core/clone/trait.Clone.html
 
 ## No move constructors
@@ -163,13 +163,18 @@ This is to make the language easier to parse for humans, especially in the face
 of higher-order functions. `fn foo<T>(f: fn(int): int, fn(T): U): U` is not
 particularly easy to read.
 
-## `let` is used to introduce variables
+## Why is `let` used to introduce variables?
 
-`let` not only defines variables, but can do pattern matching. One can also
-redeclare immutable variables with `let`. This is useful to avoid unnecessary
-`mut` annotations. An interesting historical note is that Rust comes,
-syntactically, most closely from ML, which also uses `let` to introduce
-bindings.
+Instead of the term "variable", we use "variable bindings". The
+simplest way for creating a binding is by using the `let` syntax.
+Other ways include `if let`, `while let`, and `match`. Bindings also
+exist in function argument positions.
+
+Bindings always happen in pattern matching positions, and it's also Rust's way
+to declare mutability. One can also re-declare mutability of a binding in
+pattern matching. This is useful to avoid unnecessary `mut` annotations. An
+interesting historical note is that Rust comes, syntactically, most closely
+from ML, which also uses `let` to introduce bindings.
 
 See also [a long thread][alt] on renaming `let mut` to `var`.
 

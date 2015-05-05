@@ -111,7 +111,7 @@ pub struct HashSet<T, S = RandomState> {
 }
 
 impl<T: Hash + Eq> HashSet<T, RandomState> {
-    /// Create an empty HashSet.
+    /// Creates an empty HashSet.
     ///
     /// # Examples
     ///
@@ -125,7 +125,7 @@ impl<T: Hash + Eq> HashSet<T, RandomState> {
         HashSet::with_capacity(INITIAL_CAPACITY)
     }
 
-    /// Create an empty HashSet with space for at least `n` elements in
+    /// Creates an empty HashSet with space for at least `n` elements in
     /// the hash table.
     ///
     /// # Examples
@@ -166,7 +166,7 @@ impl<T, S> HashSet<T, S>
         HashSet::with_capacity_and_hash_state(INITIAL_CAPACITY, hash_state)
     }
 
-    /// Create an empty HashSet with space for at least `capacity`
+    /// Creates an empty HashSet with space for at least `capacity`
     /// elements in the hash table, using `hasher` to hash the keys.
     ///
     /// Warning: `hasher` is normally randomly generated, and
@@ -271,40 +271,11 @@ impl<T, S> HashSet<T, S>
         Iter { iter: self.map.keys() }
     }
 
-    /// Creates a consuming iterator, that is, one that moves each value out
-    /// of the set in arbitrary order. The set cannot be used after calling
-    /// this.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::collections::HashSet;
-    /// let mut set = HashSet::new();
-    /// set.insert("a".to_string());
-    /// set.insert("b".to_string());
-    ///
-    /// // Not possible to collect to a Vec<String> with a regular `.iter()`.
-    /// let v: Vec<String> = set.into_iter().collect();
-    ///
-    /// // Will print in an arbitrary order.
-    /// for x in v.iter() {
-    ///     println!("{}", x);
-    /// }
-    /// ```
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn into_iter(self) -> IntoIter<T> {
-        fn first<A, B>((a, _): (A, B)) -> A { a }
-        let first: fn((T, ())) -> T = first;
-
-        IntoIter { iter: self.map.into_iter().map(first) }
-    }
-
     /// Visit the values representing the difference.
     ///
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::HashSet;
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
@@ -335,7 +306,6 @@ impl<T, S> HashSet<T, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::HashSet;
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
@@ -362,7 +332,6 @@ impl<T, S> HashSet<T, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::HashSet;
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
@@ -388,7 +357,6 @@ impl<T, S> HashSet<T, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::HashSet;
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
@@ -406,7 +374,7 @@ impl<T, S> HashSet<T, S>
         Union { iter: self.iter().chain(other.difference(self)) }
     }
 
-    /// Return the number of elements in the set
+    /// Returns the number of elements in the set.
     ///
     /// # Examples
     ///
@@ -421,7 +389,7 @@ impl<T, S> HashSet<T, S>
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn len(&self) -> usize { self.map.len() }
 
-    /// Returns true if the set contains no elements
+    /// Returns true if the set contains no elements.
     ///
     /// # Examples
     ///
@@ -434,7 +402,7 @@ impl<T, S> HashSet<T, S>
     /// assert!(!v.is_empty());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn is_empty(&self) -> bool { self.map.len() == 0 }
+    pub fn is_empty(&self) -> bool { self.map.is_empty() }
 
     /// Clears the set, returning all elements in an iterator.
     #[inline]
@@ -471,7 +439,6 @@ impl<T, S> HashSet<T, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::HashSet;
     ///
     /// let set: HashSet<_> = [1, 2, 3].iter().cloned().collect();
@@ -491,7 +458,6 @@ impl<T, S> HashSet<T, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::HashSet;
     ///
     /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
@@ -513,7 +479,6 @@ impl<T, S> HashSet<T, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::HashSet;
     ///
     /// let sup: HashSet<_> = [1, 2, 3].iter().cloned().collect();
@@ -535,7 +500,6 @@ impl<T, S> HashSet<T, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::HashSet;
     ///
     /// let sub: HashSet<_> = [1, 2].iter().cloned().collect();
@@ -858,8 +822,31 @@ impl<T, S> IntoIterator for HashSet<T, S>
     type Item = T;
     type IntoIter = IntoIter<T>;
 
+    /// Creates a consuming iterator, that is, one that moves each value out
+    /// of the set in arbitrary order. The set cannot be used after calling
+    /// this.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashSet;
+    /// let mut set = HashSet::new();
+    /// set.insert("a".to_string());
+    /// set.insert("b".to_string());
+    ///
+    /// // Not possible to collect to a Vec<String> with a regular `.iter()`.
+    /// let v: Vec<String> = set.into_iter().collect();
+    ///
+    /// // Will print in an arbitrary order.
+    /// for x in v.iter() {
+    ///     println!("{}", x);
+    /// }
+    /// ```
     fn into_iter(self) -> IntoIter<T> {
-        self.into_iter()
+        fn first<A, B>((a, _): (A, B)) -> A { a }
+        let first: fn((T, ())) -> T = first;
+
+        IntoIter { iter: self.map.into_iter().map(first) }
     }
 }
 

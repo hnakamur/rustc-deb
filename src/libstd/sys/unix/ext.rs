@@ -15,14 +15,12 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! #![feature(globs)]
-//!
-//! use std::old_io::fs::File;
+//! ```no_run
+//! use std::fs::File;
 //! use std::os::unix::prelude::*;
 //!
 //! fn main() {
-//!     let f = File::create(&Path::new("foo.txt")).unwrap();
+//!     let f = File::create("foo.txt").unwrap();
 //!     let fd = f.as_raw_fd();
 //!
 //!     // use fd with native unix bindings
@@ -34,7 +32,6 @@
 /// Unix-specific extensions to general I/O primitives
 #[stable(feature = "rust1", since = "1.0.0")]
 pub mod io {
-    #[allow(deprecated)] use old_io;
     use fs;
     use libc;
     use net;
@@ -53,7 +50,7 @@ pub mod io {
     /// and `AsRawSocket` set of traits.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub trait AsRawFd {
-        /// Extract the raw file descriptor.
+        /// Extracts the raw file descriptor.
         ///
         /// This method does **not** pass ownership of the raw file descriptor
         /// to the caller. The descriptor is only guarantee to be valid while
@@ -74,17 +71,12 @@ pub mod io {
         /// descriptor. The returned object will take responsibility for closing
         /// it when the object goes out of scope.
         ///
-        /// Callers should normally only pass in a valid file descriptor to this
-        /// method or otherwise methods will return errors.
-        fn from_raw_fd(fd: RawFd) -> Self;
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawFd for old_io::fs::File {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
-        }
+        /// This function is also unsafe as the primitives currently returned
+        /// have the contract that they are the sole owner of the file
+        /// descriptor they are wrapping. Usage of this function could
+        /// accidentally allow violating this contract which can cause memory
+        /// unsafety in code that relies on it being true.
+        unsafe fn from_raw_fd(fd: RawFd) -> Self;
     }
 
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -95,72 +87,8 @@ pub mod io {
     }
     #[unstable(feature = "from_raw_os", reason = "trait is unstable")]
     impl FromRawFd for fs::File {
-        fn from_raw_fd(fd: RawFd) -> fs::File {
+        unsafe fn from_raw_fd(fd: RawFd) -> fs::File {
             fs::File::from_inner(sys::fs2::File::from_inner(fd))
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawFd for old_io::pipe::PipeStream {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawFd for old_io::net::pipe::UnixStream {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawFd for old_io::net::pipe::UnixListener {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawFd for old_io::net::pipe::UnixAcceptor {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
-        }
-    }
-
-    #[stable(feature = "rust1", since = "1.0.0")]
-    #[allow(deprecated)]
-    impl AsRawFd for old_io::net::tcp::TcpStream {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
-        }
-    }
-
-    #[stable(feature = "rust1", since = "1.0.0")]
-    #[allow(deprecated)]
-    impl AsRawFd for old_io::net::tcp::TcpListener {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
-        }
-    }
-
-    #[stable(feature = "rust1", since = "1.0.0")]
-    #[allow(deprecated)]
-    impl AsRawFd for old_io::net::tcp::TcpAcceptor {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
-        }
-    }
-
-    #[allow(deprecated)]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    impl AsRawFd for old_io::net::udp::UdpSocket {
-        fn as_raw_fd(&self) -> RawFd {
-            self.as_inner().fd()
         }
     }
 
@@ -179,21 +107,21 @@ pub mod io {
 
     #[unstable(feature = "from_raw_os", reason = "trait is unstable")]
     impl FromRawFd for net::TcpStream {
-        fn from_raw_fd(fd: RawFd) -> net::TcpStream {
+        unsafe fn from_raw_fd(fd: RawFd) -> net::TcpStream {
             let socket = sys::net::Socket::from_inner(fd);
             net::TcpStream::from_inner(net2::TcpStream::from_inner(socket))
         }
     }
     #[unstable(feature = "from_raw_os", reason = "trait is unstable")]
     impl FromRawFd for net::TcpListener {
-        fn from_raw_fd(fd: RawFd) -> net::TcpListener {
+        unsafe fn from_raw_fd(fd: RawFd) -> net::TcpListener {
             let socket = sys::net::Socket::from_inner(fd);
             net::TcpListener::from_inner(net2::TcpListener::from_inner(socket))
         }
     }
     #[unstable(feature = "from_raw_os", reason = "trait is unstable")]
     impl FromRawFd for net::UdpSocket {
-        fn from_raw_fd(fd: RawFd) -> net::UdpSocket {
+        unsafe fn from_raw_fd(fd: RawFd) -> net::UdpSocket {
             let socket = sys::net::Socket::from_inner(fd);
             net::UdpSocket::from_inner(net2::UdpSocket::from_inner(socket))
         }
@@ -216,11 +144,11 @@ pub mod ffi {
     /// Unix-specific extensions to `OsString`.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub trait OsStringExt {
-        /// Create an `OsString` from a byte vector.
+        /// Creates an `OsString` from a byte vector.
         #[stable(feature = "rust1", since = "1.0.0")]
         fn from_vec(vec: Vec<u8>) -> Self;
 
-        /// Yield the underlying byte vector of this `OsString`.
+        /// Yields the underlying byte vector of this `OsString`.
         #[stable(feature = "rust1", since = "1.0.0")]
         fn into_vec(self) -> Vec<u8>;
     }
@@ -241,7 +169,7 @@ pub mod ffi {
         #[stable(feature = "rust1", since = "1.0.0")]
         fn from_bytes(slice: &[u8]) -> &Self;
 
-        /// Get the underlying byte view of the `OsStr` slice.
+        /// Gets the underlying byte view of the `OsStr` slice.
         #[stable(feature = "rust1", since = "1.0.0")]
         fn as_bytes(&self) -> &[u8];
     }
@@ -280,7 +208,7 @@ pub mod fs {
 
     /// Unix-specific extensions to `OpenOptions`
     pub trait OpenOptionsExt {
-        /// Set the mode bits that a new file will be created with.
+        /// Sets the mode bits that a new file will be created with.
         ///
         /// If a new file is created as part of a `File::open_opts` call then this
         /// specified `mode` will be used as the permission bits for the new file.

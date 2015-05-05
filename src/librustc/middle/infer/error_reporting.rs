@@ -373,8 +373,9 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
     fn report_and_explain_type_error(&self,
                                      trace: TypeTrace<'tcx>,
                                      terr: &ty::type_err<'tcx>) {
+        let span = trace.origin.span();
         self.report_type_error(trace, terr);
-        ty::note_and_explain_type_err(self.tcx, terr);
+        ty::note_and_explain_type_err(self.tcx, terr, span);
     }
 
     /// Returns a string of the form "expected `{}`, found `{}`", or None if this is a derived
@@ -812,7 +813,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
         }
         self.give_suggestion(same_regions);
         for &(ref trace, terr) in trace_origins {
-            self.report_type_error(trace.clone(), &terr);
+            self.report_and_explain_type_error(trace.clone(), &terr);
         }
     }
 
@@ -965,7 +966,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
     fn pick_lifetime(&self,
                      region_names: &HashSet<ast::Name>)
                      -> (ast::Lifetime, FreshOrKept) {
-        if region_names.len() > 0 {
+        if !region_names.is_empty() {
             // It's not necessary to convert the set of region names to a
             // vector of string and then sort them. However, it makes the
             // choice of lifetime name deterministic and thus easier to test.
@@ -1240,7 +1241,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                             let lifetimes =
                                 path.segments.last().unwrap().parameters.lifetimes();
                             let mut insert = Vec::new();
-                            if lifetimes.len() == 0 {
+                            if lifetimes.is_empty() {
                                 let anon = self.cur_anon.get();
                                 for (i, a) in (anon..anon+expected).enumerate() {
                                     if anon_nums.contains(&a) {
@@ -1360,7 +1361,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
 
             ast::AngleBracketedParameters(ref data) => {
                 let mut new_lts = Vec::new();
-                if data.lifetimes.len() == 0 {
+                if data.lifetimes.is_empty() {
                     // traverse once to see if there's a need to insert lifetime
                     let need_insert = (0..expected).any(|i| {
                         indexes.contains(&i)

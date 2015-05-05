@@ -85,7 +85,6 @@ use core::clone::Clone;
 use core::cmp::Ordering::{self, Greater, Less};
 use core::cmp::{self, Ord, PartialEq};
 use core::iter::Iterator;
-use core::iter::MultiplicativeIterator;
 use core::marker::Sized;
 use core::mem::size_of;
 use core::mem;
@@ -99,7 +98,7 @@ use self::Direction::*;
 use borrow::{Borrow, BorrowMut, ToOwned};
 use vec::Vec;
 
-pub use core::slice::{Chunks, AsSlice, Windows};
+pub use core::slice::{Chunks, Windows};
 pub use core::slice::{Iter, IterMut};
 pub use core::slice::{IntSliceExt, SplitMut, ChunksMut, Split};
 pub use core::slice::{SplitN, RSplitN, SplitNMut, RSplitNMut};
@@ -550,7 +549,7 @@ impl<T> [T] {
         core_slice::SliceExt::binary_search_by(self, f)
     }
 
-    /// Return the number of elements in the slice
+    /// Returns the number of elements in the slice.
     ///
     /// # Example
     ///
@@ -758,7 +757,7 @@ impl<T> [T] {
         core_slice::SliceExt::get_unchecked_mut(self, index)
     }
 
-    /// Return an unsafe mutable pointer to the slice's buffer.
+    /// Returns an unsafe mutable pointer to the slice's buffer.
     ///
     /// The caller must ensure that the slice outlives the pointer this
     /// function returns, or else it will end up pointing to garbage.
@@ -985,7 +984,7 @@ impl<T> [T] {
         core_slice::SliceExt::ends_with(self, needle)
     }
 
-    /// Convert `self` into a vector without clones or allocation.
+    /// Converts `self` into a vector without clones or allocation.
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn into_vec(self: Box<Self>) -> Vec<T> {
@@ -1182,7 +1181,7 @@ impl Iterator for ElementSwaps {
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         // For a vector of size n, there are exactly n! permutations.
-        let n = (2..self.sdir.len() + 1).product();
+        let n: usize = (2..self.sdir.len() + 1).product();
         (n - self.swaps_made, Some(n - self.swaps_made))
     }
 }

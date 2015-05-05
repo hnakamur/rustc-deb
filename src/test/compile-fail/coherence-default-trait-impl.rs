@@ -8,25 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-tidy-linelength
-
 #![feature(optin_builtin_traits)]
 
-use std::marker::MarkerTrait;
-
-trait MyTrait: MarkerTrait {}
+trait MyTrait {}
 
 impl MyTrait for .. {}
 
 impl MyTrait for .. {}
 //~^ ERROR conflicting implementations for trait `MyTrait`
 
-trait MySafeTrait: MarkerTrait {}
+trait MySafeTrait {}
 
 unsafe impl MySafeTrait for .. {}
 //~^ ERROR implementing the trait `MySafeTrait` is not unsafe
 
-unsafe trait MyUnsafeTrait: MarkerTrait {}
+unsafe trait MyUnsafeTrait {}
 
 impl MyUnsafeTrait for .. {}
 //~^ ERROR the trait `MyUnsafeTrait` requires an `unsafe impl` declaration

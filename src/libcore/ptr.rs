@@ -15,9 +15,9 @@
 //! Working with unsafe pointers in Rust is uncommon,
 //! typically limited to a few patterns.
 //!
-//! Use the [`null` function](fn.null.html) to create null pointers, and
-//! the `is_null` method of the `*const T` type  to check for null.
-//! The `*const T` type also defines the `offset` method, for pointer math.
+//! Use the `null` function to create null pointers, and the `is_null` method
+//! of the `*const T` type  to check for null. The `*const T` type also defines
+//! the `offset` method, for pointer math.
 //!
 //! # Common ways to create unsafe pointers
 //!
@@ -89,11 +89,13 @@
 //! of unsafe pointers in Rust.
 
 #![stable(feature = "rust1", since = "1.0.0")]
+#![doc(primitive = "pointer")]
 
 use mem;
 use clone::Clone;
 use intrinsics;
 use ops::Deref;
+use core::fmt;
 use option::Option::{self, Some, None};
 use marker::{PhantomData, Send, Sized, Sync};
 use nonzero::NonZero;
@@ -542,19 +544,19 @@ unsafe impl<T: Send + ?Sized> Send for Unique<T> { }
 unsafe impl<T: Sync + ?Sized> Sync for Unique<T> { }
 
 impl<T: ?Sized> Unique<T> {
-    /// Create a new `Unique`.
+    /// Creates a new `Unique`.
     #[unstable(feature = "unique")]
     pub unsafe fn new(ptr: *mut T) -> Unique<T> {
         Unique { pointer: NonZero::new(ptr), _marker: PhantomData }
     }
 
-    /// Dereference the content.
+    /// Dereferences the content.
     #[unstable(feature = "unique")]
     pub unsafe fn get(&self) -> &T {
         &**self.pointer
     }
 
-    /// Mutably dereference the content.
+    /// Mutably dereferences the content.
     #[unstable(feature = "unique")]
     pub unsafe fn get_mut(&mut self) -> &mut T {
         &mut ***self
@@ -568,5 +570,12 @@ impl<T:?Sized> Deref for Unique<T> {
     #[inline]
     fn deref<'a>(&'a self) -> &'a *mut T {
         unsafe { mem::transmute(&*self.pointer) }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T> fmt::Pointer for Unique<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Pointer::fmt(&*self.pointer, f)
     }
 }

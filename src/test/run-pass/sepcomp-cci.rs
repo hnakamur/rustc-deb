@@ -8,12 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-bitrig
 // compile-flags: -C codegen-units=3
 // aux-build:sepcomp_cci_lib.rs
 
 // Test accessing cross-crate inlined items from multiple compilation units.
 
-// pretty-expanded FIXME #23616
 
 extern crate sepcomp_cci_lib;
 use sepcomp_cci_lib::{cci_fn, CCI_STATIC};

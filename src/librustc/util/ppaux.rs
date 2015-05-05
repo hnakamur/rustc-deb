@@ -113,6 +113,9 @@ pub fn explain_region_and_span(cx: &ctxt, region: ty::Region)
         };
         let scope_decorated_tag = match scope {
             region::CodeExtent::Misc(_) => tag,
+            region::CodeExtent::ParameterScope { .. } => {
+                "scope of parameters for function"
+            }
             region::CodeExtent::DestructionScope(_) => {
                 new_string = format!("destruction scope surrounding {}", tag);
                 &*new_string
@@ -160,8 +163,8 @@ pub fn explain_region_and_span(cx: &ctxt, region: ty::Region)
 
       ReEmpty => { ("the empty lifetime".to_string(), None) }
 
-      ReEarlyBound(_, _, _, name) => {
-        (format!("{}", token::get_name(name)), None)
+      ReEarlyBound(ref data) => {
+        (format!("{}", token::get_name(data.name)), None)
       }
 
       // I believe these cases should not occur (except when debugging,
@@ -220,8 +223,8 @@ pub fn region_to_string(cx: &ctxt, prefix: &str, space: bool, region: Region) ->
     // `explain_region()` or `note_and_explain_region()`.
     match region {
         ty::ReScope(_) => prefix.to_string(),
-        ty::ReEarlyBound(_, _, _, name) => {
-            token::get_name(name).to_string()
+        ty::ReEarlyBound(ref data) => {
+            token::get_name(data.name).to_string()
         }
         ty::ReLateBound(_, br) => bound_region_to_string(cx, prefix, space, br),
         ty::ReFree(ref fr) => bound_region_to_string(cx, prefix, space, fr.bound_region),
@@ -555,7 +558,7 @@ pub fn parameterized<'tcx,GG>(cx: &ctxt<'tcx>,
                     &strs[0][..]
                 },
                 tail)
-    } else if strs.len() > 0 {
+    } else if !strs.is_empty() {
         format!("{}<{}>", base, strs.connect(", "))
     } else {
         format!("{}", base)
@@ -896,12 +899,12 @@ impl<'tcx> Repr<'tcx> for ty::BoundRegion {
 impl<'tcx> Repr<'tcx> for ty::Region {
     fn repr(&self, tcx: &ctxt) -> String {
         match *self {
-            ty::ReEarlyBound(id, space, index, name) => {
+            ty::ReEarlyBound(ref data) => {
                 format!("ReEarlyBound({}, {:?}, {}, {})",
-                               id,
-                               space,
-                               index,
-                               token::get_name(name))
+                        data.param_id,
+                        data.space,
+                        data.index,
+                        token::get_name(data.name))
             }
 
             ty::ReLateBound(binder_id, ref bound_region) => {
@@ -952,6 +955,8 @@ impl<'tcx> Repr<'tcx> for ty::FreeRegion {
 impl<'tcx> Repr<'tcx> for region::CodeExtent {
     fn repr(&self, _tcx: &ctxt) -> String {
         match *self {
+            region::CodeExtent::ParameterScope { fn_id, body_id } =>
+                format!("ParameterScope({}, {})", fn_id, body_id),
             region::CodeExtent::Misc(node_id) =>
                 format!("Misc({})", node_id),
             region::CodeExtent::DestructionScope(node_id) =>
@@ -1264,7 +1269,7 @@ impl<'tcx, T> UserString<'tcx> for ty::Binder<T>
         let names: Vec<_> = names.iter().map(|s| &s[..]).collect();
 
         let value_str = unbound_value.user_string(tcx);
-        if names.len() == 0 {
+        if names.is_empty() {
             value_str
         } else {
             format!("for<{}> {}", names.connect(","), value_str)

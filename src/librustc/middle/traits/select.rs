@@ -698,7 +698,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         // is checked for in `evaluate_stack` (and hence users
         // who might care about this case, like coherence, should use
         // that function).
-        if candidates.len() == 0 {
+        if candidates.is_empty() {
             return Err(Unimplemented);
         }
 
@@ -836,14 +836,6 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
             ambiguous: false
         };
 
-        // Check for the `PhantomFn` trait. This is really just a
-        // special annotation that is *always* considered to match, no
-        // matter what the type parameters are etc.
-        if self.tcx().lang_items.phantom_fn() == Some(obligation.predicate.def_id()) {
-            candidates.vec.push(PhantomFnCandidate);
-            return Ok(candidates);
-        }
-
         // Other bounds. Consider both in-scope bounds from fn decl
         // and applicable impls. There is a certain set of precedence rules here.
 
@@ -881,7 +873,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         try!(self.assemble_candidates_from_caller_bounds(stack, &mut candidates));
         // Default implementations have lower priority, so we only
         // consider triggering a default if there is no other impl that can apply.
-        if candidates.vec.len() == 0 {
+        if candidates.vec.is_empty() {
             try!(self.assemble_candidates_from_default_impls(obligation, &mut candidates));
         }
         debug!("candidate list size: {}", candidates.vec.len());
@@ -1384,6 +1376,18 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                 // the caller. Using an impl in preference of a where
                 // clause can also lead us to "overspecialize", as in
                 // #18453.
+                true
+            }
+            (&ImplCandidate(..), &ObjectCandidate(..)) => {
+                // This means that we are matching an object of type
+                // `Trait` against the trait `Trait`. In that case, we
+                // always prefer to use the object vtable over the
+                // impl. Like a where clause, the impl may or may not
+                // be the one that is used by the object (because the
+                // impl may have additional where-clauses that the
+                // object's source might not meet) -- if it is, using
+                // the vtable is fine. If it is not, using the vtable
+                // is good. A win win!
                 true
             }
             (&DefaultImplCandidate(_), _) => {

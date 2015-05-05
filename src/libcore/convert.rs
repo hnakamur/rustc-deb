@@ -10,18 +10,38 @@
 
 //! Traits for conversions between types.
 //!
-//! The traits in this module provide a general way to talk about
-//! conversions from one type to another. They follow the standard
-//! Rust conventions of `as`/`to`/`into`/`from`.
+//! The traits in this module provide a general way to talk about conversions from one type to
+//! another. They follow the standard Rust conventions of `as`/`to`/`into`/`from`.
+//!
+//! Like many traits, these are often used as bounds for generic functions, to support arguments of
+//! multiple types.
+//!
+//! See each trait for usage examples.
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use marker::Sized;
 
 /// A cheap, reference-to-reference conversion.
+///
+/// # Examples
+///
+/// Both `String` and `&str` implement `AsRef<str>`:
+///
+/// ```
+/// fn is_hello<T: AsRef<str>>(s: T) {
+///    assert_eq!("hello", s.as_ref());
+/// }
+///
+/// let s = "hello";
+/// is_hello(s);
+///
+/// let s = "hello".to_string();
+/// is_hello(s);
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait AsRef<T: ?Sized> {
-    /// Perform the conversion.
+    /// Performs the conversion.
     #[stable(feature = "rust1", since = "1.0.0")]
     fn as_ref(&self) -> &T;
 }
@@ -29,24 +49,50 @@ pub trait AsRef<T: ?Sized> {
 /// A cheap, mutable reference-to-mutable reference conversion.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait AsMut<T: ?Sized> {
-    /// Perform the conversion.
+    /// Performs the conversion.
     #[stable(feature = "rust1", since = "1.0.0")]
     fn as_mut(&mut self) -> &mut T;
 }
 
-/// A conversion that consumes `self`, which may or may not be
-/// expensive.
+/// A conversion that consumes `self`, which may or may not be expensive.
+///
+/// # Examples
+///
+/// `String` implements `Into<Vec<u8>>`:
+///
+/// ```
+/// fn is_hello<T: Into<Vec<u8>>>(s: T) {
+///    let bytes = b"hello".to_vec();
+///    assert_eq!(bytes, s.into());
+/// }
+///
+/// let s = "hello".to_string();
+/// is_hello(s);
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait Into<T>: Sized {
-    /// Perform the conversion.
+    /// Performs the conversion.
     #[stable(feature = "rust1", since = "1.0.0")]
     fn into(self) -> T;
 }
 
 /// Construct `Self` via a conversion.
+///
+/// # Examples
+///
+/// `String` implements `From<&str>`:
+///
+/// ```
+/// let s = "hello";
+/// let string = "hello".to_string();
+///
+/// let other_string: String = From::from(s);
+///
+/// assert_eq!(string, other_string);
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait From<T> {
-    /// Perform the conversion.
+    /// Performs the conversion.
     #[stable(feature = "rust1", since = "1.0.0")]
     fn from(T) -> Self;
 }

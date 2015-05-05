@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Test that when we write `x.foo()`, we do nothave to know the
+// Test that when we write `x.foo()`, we do not have to know the
 // complete type of `x` in order to type-check the method call. In
 // this case, we know that `x: Vec<_1>`, but we don't know what type
 // `_1` is (because the call to `push` comes later). To pick between
@@ -19,7 +19,6 @@
 // translate the call as `Foo::foo(&x)` and let the specific impl get
 // chosen later.
 
-// pretty-expanded FIXME #23616
 
 #![allow(unknown_features)]
 #![feature(box_syntax)]

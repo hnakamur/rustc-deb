@@ -122,11 +122,11 @@ fn relate_item_substs<'a,'tcx:'a,R>(relation: &mut R,
     relate_substs(relation, opt_variances, a_subst, b_subst)
 }
 
-fn relate_substs<'a,'tcx,R>(relation: &mut R,
-                            variances: Option<&ty::ItemVariances>,
-                            a_subst: &Substs<'tcx>,
-                            b_subst: &Substs<'tcx>)
-                            -> RelateResult<'tcx, Substs<'tcx>>
+fn relate_substs<'a,'tcx:'a,R>(relation: &mut R,
+                               variances: Option<&ty::ItemVariances>,
+                               a_subst: &Substs<'tcx>,
+                               b_subst: &Substs<'tcx>)
+                               -> RelateResult<'tcx, Substs<'tcx>>
     where R: TypeRelation<'a,'tcx>
 {
     let mut substs = Substs::empty();
@@ -161,11 +161,11 @@ fn relate_substs<'a,'tcx,R>(relation: &mut R,
     Ok(substs)
 }
 
-fn relate_type_params<'a,'tcx,R>(relation: &mut R,
-                                 variances: Option<&[ty::Variance]>,
-                                 a_tys: &[Ty<'tcx>],
-                                 b_tys: &[Ty<'tcx>])
-                                 -> RelateResult<'tcx, Vec<Ty<'tcx>>>
+fn relate_type_params<'a,'tcx:'a,R>(relation: &mut R,
+                                    variances: Option<&[ty::Variance]>,
+                                    a_tys: &[Ty<'tcx>],
+                                    b_tys: &[Ty<'tcx>])
+                                    -> RelateResult<'tcx, Vec<Ty<'tcx>>>
     where R: TypeRelation<'a,'tcx>
 {
     if a_tys.len() != b_tys.len() {
@@ -264,10 +264,10 @@ impl<'a,'tcx:'a> Relate<'a,'tcx> for ty::FnSig<'tcx> {
     }
 }
 
-fn relate_arg_vecs<'a,'tcx,R>(relation: &mut R,
-                              a_args: &[Ty<'tcx>],
-                              b_args: &[Ty<'tcx>])
-                              -> RelateResult<'tcx, Vec<Ty<'tcx>>>
+fn relate_arg_vecs<'a,'tcx:'a,R>(relation: &mut R,
+                                 a_args: &[Ty<'tcx>],
+                                 b_args: &[Ty<'tcx>])
+                                 -> RelateResult<'tcx, Vec<Ty<'tcx>>>
     where R: TypeRelation<'a,'tcx>
 {
     if a_args.len() != b_args.len() {
@@ -544,7 +544,7 @@ pub fn super_relate_tys<'a,'tcx:'a,R>(relation: &mut R,
                                  .map(|(a, b)| relation.relate(a, b))
                                  .collect::<Result<_, _>>());
                 Ok(ty::mk_tup(tcx, ts))
-            } else if as_.len() != 0 && bs.len() != 0 {
+            } else if !(as_.is_empty() || bs.is_empty()) {
                 Err(ty::terr_tuple_size(
                     expected_found(relation, &as_.len(), &bs.len())))
             } else {
@@ -629,10 +629,10 @@ impl<'a,'tcx:'a,T> Relate<'a,'tcx> for Box<T>
 ///////////////////////////////////////////////////////////////////////////
 // Error handling
 
-pub fn expected_found<'a,'tcx,R,T>(relation: &mut R,
-                                   a: &T,
-                                   b: &T)
-                                   -> ty::expected_found<T>
+pub fn expected_found<'a,'tcx:'a,R,T>(relation: &mut R,
+                                      a: &T,
+                                      b: &T)
+                                      -> ty::expected_found<T>
     where R: TypeRelation<'a,'tcx>, T: Clone
 {
     expected_found_bool(relation.a_is_expected(), a, b)

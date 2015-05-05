@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// pretty-expanded FIXME #23616
 
 #![allow(unknown_features)]
 #![feature(box_syntax)]
@@ -99,9 +98,9 @@ pub fn main() {
 
     // Zero size vec.
     let f5: &Fat<[isize]> = &Fat { f1: 5, f2: "some str", ptr: [] };
-    assert!(f5.ptr.len() == 0);
+    assert!(f5.ptr.is_empty());
     let f5: &Fat<[Bar]> = &Fat { f1: 5, f2: "some str", ptr: [] };
-    assert!(f5.ptr.len() == 0);
+    assert!(f5.ptr.is_empty());
 
     // Deeply nested.
     let f1 = Fat { f1: 5, f2: "some str", ptr: Fat { f1: 8, f2: "deep str", ptr: [1, 2, 3]} };

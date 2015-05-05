@@ -41,12 +41,11 @@
 // no-pretty-expanded FIXME #15189
 
 #![allow(non_snake_case)]
-#![feature(unboxed_closures, core, os)]
+#![feature(unboxed_closures, core, os, scoped)]
 
-use std::iter::{repeat, AdditiveIterator};
+use std::iter::repeat;
 use std::thread;
 use std::mem;
-use std::num::Float;
 use std::os;
 use std::env;
 use std::raw::Repr;

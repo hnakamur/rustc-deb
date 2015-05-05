@@ -41,6 +41,7 @@ use trans::common::{self, Block, Result, NodeIdAndSpan, ExprId, CrateContext,
 use trans::consts;
 use trans::datum::*;
 use trans::debuginfo::{DebugLoc, ToDebugLoc};
+use trans::declare;
 use trans::expr;
 use trans::glue;
 use trans::inline;
@@ -183,7 +184,7 @@ fn trans<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, expr: &ast::Expr)
                                                     bcx.fcx.param_substs);
 
                 // Nullary variants are not callable
-                assert!(vinfo.args.len() > 0);
+                assert!(!vinfo.args.is_empty());
 
                 Callee {
                     bcx: bcx,
@@ -326,13 +327,9 @@ pub fn trans_fn_pointer_shim<'a, 'tcx>(
     debug!("tuple_fn_ty: {}", tuple_fn_ty.repr(tcx));
 
     //
-    let function_name =
-        link::mangle_internal_name_by_type_and_seq(ccx, bare_fn_ty,
-                                                   "fn_pointer_shim");
-    let llfn =
-        decl_internal_rust_fn(ccx,
-                              tuple_fn_ty,
-                              &function_name[..]);
+    let function_name = link::mangle_internal_name_by_type_and_seq(ccx, bare_fn_ty,
+                                                                   "fn_pointer_shim");
+    let llfn = declare::declare_internal_rust_fn(ccx, &function_name[..], tuple_fn_ty);
 
     //
     let empty_substs = tcx.mk_substs(Substs::trans_empty());
@@ -498,7 +495,7 @@ pub fn trans_fn_ref_with_substs<'a, 'tcx>(
 
         match map_node {
             ast_map::NodeVariant(v) => match v.node.kind {
-                ast::TupleVariantKind(ref args) => args.len() > 0,
+                ast::TupleVariantKind(ref args) => !args.is_empty(),
                 _ => false
             },
             ast_map::NodeStructCtor(_) => true,
