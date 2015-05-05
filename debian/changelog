@@ -7,6 +7,9 @@ rustc (1.0.0+dfsg1-1) unstable; urgency=medium
     - libs are now installed into multiarch-friendly locations
     - rpath is no longer required to use dylibs (but talk to Debian Rust
       maintainers before building a package that depends on the dylibs)
+  * Install /usr/share/rustc/architecture.mk, which declares Rust arch
+    triples for Debian archs and is intended to help future Rust packaging
+    efforts.  Warning: it may not be complete/accurate yet.
 
   [ Sylvestre Ledru ]
   * Fix the watch file
