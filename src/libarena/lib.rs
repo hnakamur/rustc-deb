@@ -192,13 +192,16 @@ struct TyDesc {
     align: usize
 }
 
+trait AllTypes { fn dummy(&self) { } }
+impl<T:?Sized> AllTypes for T { }
+
 unsafe fn get_tydesc<T>() -> *const TyDesc {
     use std::raw::TraitObject;
 
     let ptr = &*(1 as *const T);
 
     // Can use any trait that is implemented for all types.
-    let obj = mem::transmute::<&marker::MarkerTrait, TraitObject>(ptr);
+    let obj = mem::transmute::<&AllTypes, TraitObject>(ptr);
     obj.vtable as *const TyDesc
 }
 
@@ -359,10 +362,6 @@ fn test_arena_destructors_fail() {
 }
 
 /// A faster arena that can hold objects of only one type.
-///
-/// Safety note: Modifying objects in the arena that have already had their
-/// `drop` destructors run can cause leaks, because the destructor will not
-/// run again for these objects.
 pub struct TypedArena<T> {
     /// A pointer to the next object to be allocated.
     ptr: Cell<*const T>,

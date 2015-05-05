@@ -103,14 +103,14 @@ use core::prelude::*;
 use ascii::*;
 use borrow::{Borrow, IntoCow, ToOwned, Cow};
 use cmp;
-use iter::{self, IntoIterator};
+use iter;
 use mem;
 use ops::{self, Deref};
 use string::String;
 use vec::Vec;
 use fmt;
 
-use ffi::{OsStr, OsString, AsOsStr};
+use ffi::{OsStr, OsString};
 
 use self::platform::{is_sep_byte, is_verbatim_sep, MAIN_SEP_STR, parse_prefix};
 
@@ -218,7 +218,7 @@ mod platform {
                     return Some(DeviceNS(u8_slice_as_os_str(slice)));
                 }
                 match parse_two_comps(path, is_sep_byte) {
-                    Some((server, share)) if server.len() > 0 && share.len() > 0 => {
+                    Some((server, share)) if !server.is_empty() && !share.is_empty() => {
                         // \\server\share
                         return Some(UNC(u8_slice_as_os_str(server),
                                         u8_slice_as_os_str(share)));
@@ -312,7 +312,7 @@ impl<'a> Prefix<'a> {
 
     }
 
-    /// Determine if the prefix is verbatim, i.e. begins `\\?\`.
+    /// Determines if the prefix is verbatim, i.e. begins `\\?\`.
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn is_verbatim(&self) -> bool {
@@ -341,7 +341,7 @@ impl<'a> Prefix<'a> {
 // Exposed parsing helpers
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Determine whether the character is one of the permitted path
+/// Determines whether the character is one of the permitted path
 /// separators for the current platform.
 ///
 /// # Examples
@@ -401,7 +401,7 @@ unsafe fn u8_slice_as_os_str(s: &[u8]) -> &OsStr {
 /// Says whether the first byte after the prefix is a separator.
 fn has_physical_root(s: &[u8], prefix: Option<Prefix>) -> bool {
     let path = if let Some(p) = prefix { &s[p.len()..] } else { s };
-    path.len() > 0 && is_sep_byte(path[0])
+    !path.is_empty() && is_sep_byte(path[0])
 }
 
 // basic workhorse for splitting stem and extension
@@ -524,7 +524,7 @@ pub enum Component<'a> {
 }
 
 impl<'a> Component<'a> {
-    /// Extract the underlying `OsStr` slice
+    /// Extracts the underlying `OsStr` slice
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn as_os_str(self) -> &'a OsStr {
         match self {
@@ -629,7 +629,7 @@ impl<'a> Components<'a> {
         }
     }
 
-    /// Extract a slice corresponding to the portion of the path remaining for iteration.
+    /// Extracts a slice corresponding to the portion of the path remaining for iteration.
     ///
     /// # Examples
     ///
@@ -704,7 +704,7 @@ impl<'a> Components<'a> {
         (comp.len() + extra, self.parse_single_component(comp))
     }
 
-    // trim away repeated separators (i.e. emtpy components) on the left
+    // trim away repeated separators (i.e. empty components) on the left
     fn trim_left(&mut self) {
         while !self.path.is_empty() {
             let (size, comp) = self.parse_next_component();
@@ -716,7 +716,7 @@ impl<'a> Components<'a> {
         }
     }
 
-    // trim away repeated separators (i.e. emtpy components) on the right
+    // trim away repeated separators (i.e. empty components) on the right
     fn trim_right(&mut self) {
         while self.path.len() > self.len_before_body() {
             let (size, comp) = self.parse_next_component_back();
@@ -750,7 +750,7 @@ impl<'a> AsRef<OsStr> for Components<'a> {
 }
 
 impl<'a> Iter<'a> {
-    /// Extract a slice corresponding to the portion of the path remaining for iteration.
+    /// Extracts a slice corresponding to the portion of the path remaining for iteration.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn as_path(&self) -> &'a Path {
         self.inner.as_path()
@@ -810,7 +810,7 @@ impl<'a> Iterator for Components<'a> {
                 State::StartDir => {
                     self.front = State::Body;
                     if self.has_physical_root {
-                        debug_assert!(self.path.len() > 0);
+                        debug_assert!(!self.path.is_empty());
                         self.path = &self.path[1..];
                         return Some(Component::RootDir)
                     } else if let Some(p) = self.prefix {
@@ -818,7 +818,7 @@ impl<'a> Iterator for Components<'a> {
                             return Some(Component::RootDir)
                         }
                     } else if self.include_cur_dir() {
-                        debug_assert!(self.path.len() > 0);
+                        debug_assert!(!self.path.is_empty());
                         self.path = &self.path[1..];
                         return Some(Component::CurDir)
                     }
@@ -941,19 +941,19 @@ impl PathBuf {
         unsafe { mem::transmute(self) }
     }
 
-    /// Allocate an empty `PathBuf`.
+    /// Allocates an empty `PathBuf`.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new() -> PathBuf {
         PathBuf { inner: OsString::new() }
     }
 
-    /// Coerce to a `Path` slice.
+    /// Coerces to a `Path` slice.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn as_path(&self) -> &Path {
         self
     }
 
-    /// Extend `self` with `path`.
+    /// Extends `self` with `path`.
     ///
     /// If `path` is absolute, it replaces the current path.
     ///
@@ -1055,7 +1055,7 @@ impl PathBuf {
         };
 
         let extension = extension.as_ref();
-        if os_str_as_u8_slice(extension).len() > 0 {
+        if !os_str_as_u8_slice(extension).is_empty() {
             stem.push(".");
             stem.push(extension);
         }
@@ -1064,7 +1064,7 @@ impl PathBuf {
         true
     }
 
-    /// Consume the `PathBuf`, yielding its internal `OsString` storage
+    /// Consumes the `PathBuf`, yielding its internal `OsString` storage.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn into_os_string(self) -> OsString {
         self.inner
@@ -1185,14 +1185,6 @@ impl AsRef<OsStr> for PathBuf {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-#[deprecated(since = "1.0.0", reason = "trait is deprecated")]
-impl AsOsStr for PathBuf {
-    fn as_os_str(&self) -> &OsStr {
-        &self.inner[..]
-    }
-}
-
-#[stable(feature = "rust1", since = "1.0.0")]
 impl Into<OsString> for PathBuf {
     fn into(self) -> OsString {
         self.inner
@@ -1254,7 +1246,7 @@ impl Path {
         unsafe { mem::transmute(s.as_ref()) }
     }
 
-    /// Yield the underlying `OsStr` slice.
+    /// Yields the underlying `OsStr` slice.
     ///
     /// # Examples
     ///
@@ -1268,7 +1260,7 @@ impl Path {
         &self.inner
     }
 
-    /// Yield a `&str` slice if the `Path` is valid unicode.
+    /// Yields a `&str` slice if the `Path` is valid unicode.
     ///
     /// This conversion may entail doing a check for UTF-8 validity.
     ///
@@ -1284,7 +1276,7 @@ impl Path {
         self.inner.to_str()
     }
 
-    /// Convert a `Path` to a `Cow<str>`.
+    /// Converts a `Path` to a `Cow<str>`.
     ///
     /// Any non-Unicode sequences are replaced with U+FFFD REPLACEMENT CHARACTER.
     ///
@@ -1300,7 +1292,7 @@ impl Path {
         self.inner.to_string_lossy()
     }
 
-    /// Convert a `Path` to an owned `PathBuf`.
+    /// Converts a `Path` to an owned `PathBuf`.
     ///
     /// # Examples
     ///
@@ -1477,7 +1469,7 @@ impl Path {
         iter_after(self.components().rev(), child.as_ref().components().rev()).is_some()
     }
 
-    /// Extract the stem (non-extension) portion of `self.file()`.
+    /// Extracts the stem (non-extension) portion of `self.file()`.
     ///
     /// The stem is:
     ///
@@ -1500,7 +1492,7 @@ impl Path {
         self.file_name().map(split_file_at_dot).and_then(|(before, after)| before.or(after))
     }
 
-    /// Extract the extension of `self.file()`, if possible.
+    /// Extracts the extension of `self.file()`, if possible.
     ///
     /// The extension is:
     ///
@@ -1570,11 +1562,12 @@ impl Path {
     /// # Examples
     ///
     /// ```
-    /// use std::path::Path;
+    /// use std::path::{Path, PathBuf};
     ///
     /// let path = Path::new("/tmp/foo.rs");
     ///
-    /// let new_path = path.with_extension("foo.txt");
+    /// let new_path = path.with_extension("txt");
+    /// assert_eq!(new_path, PathBuf::from("/tmp/foo.txt"));
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn with_extension<S: AsRef<OsStr>>(&self, extension: S) -> PathBuf {
@@ -1652,14 +1645,6 @@ impl AsRef<OsStr> for Path {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-#[deprecated(since = "1.0.0", reason = "trait is deprecated")]
-impl AsOsStr for Path {
-    fn as_os_str(&self) -> &OsStr {
-        &self.inner
-    }
-}
-
-#[stable(feature = "rust1", since = "1.0.0")]
 impl fmt::Debug for Path {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         self.inner.fmt(formatter)
@@ -1708,22 +1693,6 @@ impl cmp::Ord for Path {
     fn cmp(&self, other: &Path) -> cmp::Ordering {
         self.components().cmp(&other.components())
     }
-}
-
-/// Freely convertible to a `Path`.
-#[unstable(feature = "std_misc")]
-#[deprecated(since = "1.0.0", reason = "use std::convert::AsRef<Path> instead")]
-pub trait AsPath {
-    /// Convert to a `Path`.
-    #[unstable(feature = "std_misc")]
-    fn as_path(&self) -> &Path;
-}
-
-#[unstable(feature = "std_misc")]
-#[deprecated(since = "1.0.0", reason = "use std::convert::AsRef<Path> instead")]
-#[allow(deprecated)]
-impl<T: AsOsStr + ?Sized> AsPath for T {
-    fn as_path(&self) -> &Path { Path::new(self.as_os_str()) }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]

@@ -77,9 +77,8 @@
 //! including [`atomic`](sync/atomic/index.html), and [`mpsc`](sync/mpsc/index.html),
 //! which contains the channel types for message passing.
 //!
-//! Common types of I/O, including files, TCP, UDP, pipes, Unix domain sockets,
-//! timers, and process spawning, are defined in the
-//! [`old_io`](old_io/index.html) module.
+//! Common types of I/O, including files, TCP, UDP, pipes, Unix domain sockets, and
+//! process spawning, are defined in the [`io`](io/index.html) module.
 //!
 //! Rust's I/O and concurrency depends on a small runtime interface
 //! that lives, along with its support code, in mod [`rt`](rt/index.html).
@@ -104,7 +103,8 @@
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
-#![doc(test(no_crate_inject))]
+#![doc(test(no_crate_inject, attr(deny(warnings))))]
+#![doc(test(attr(allow(dead_code, deprecated, unused_variables, unused_mut))))]
 
 #![feature(alloc)]
 #![feature(box_syntax)]
@@ -128,6 +128,8 @@
 #![feature(std_misc)]
 #![feature(slice_patterns)]
 #![feature(debug_builders)]
+#![feature(zero_one)]
+#![cfg_attr(test, feature(float_from_str_radix))]
 #![cfg_attr(test, feature(test, rustc_private, std_misc))]
 
 // Don't link to std. We are std.
@@ -262,12 +264,9 @@ pub mod ffi;
 pub mod fs;
 pub mod io;
 pub mod net;
-pub mod old_io;
-pub mod old_path;
 pub mod os;
 pub mod path;
 pub mod process;
-pub mod rand;
 pub mod sync;
 pub mod time;
 
@@ -281,6 +280,18 @@ pub mod time;
 
 pub mod rt;
 mod panicking;
+mod rand;
+
+// Some external utilities of the standard library rely on randomness (aka
+// rustc_back::TempDir and tests) and need a way to get at the OS rng we've got
+// here. This module is not at all intended for stabilization as-is, however,
+// but it may be stabilized long-term. As a result we're exposing a hidden,
+// unstable module so we can get our build working.
+#[doc(hidden)]
+#[unstable(feature = "rand")]
+pub mod __rand {
+    pub use rand::{thread_rng, ThreadRng, Rng};
+}
 
 // Modules that exist purely to document + host impl docs for primitive types
 
@@ -297,8 +308,6 @@ mod std {
     pub use sync; // used for select!()
     pub use error; // used for try!()
     pub use fmt; // used for any formatting strings
-    #[allow(deprecated)]
-    pub use old_io; // used for println!()
     pub use option; // used for bitflags!{}
     pub use rt; // used for panic!()
     pub use vec; // used for vec![]

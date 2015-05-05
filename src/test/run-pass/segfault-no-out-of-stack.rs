@@ -8,11 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// pretty-expanded FIXME #23616
 
-#![feature(old_io)]
-
-use std::old_io::process::Command;
+use std::process::Command;
 use std::env;
 
 fn main() {
@@ -22,7 +19,7 @@ fn main() {
     } else {
         let segfault = Command::new(&args[0]).arg("segfault").output().unwrap();
         assert!(!segfault.status.success());
-        let error = String::from_utf8_lossy(&segfault.error);
+        let error = String::from_utf8_lossy(&segfault.stderr);
         assert!(!error.contains("has overflowed its stack"));
     }
 }

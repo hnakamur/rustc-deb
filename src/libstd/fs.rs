@@ -100,6 +100,38 @@ pub struct WalkDir {
 /// what operations are permitted on the open file. The `File::open` and
 /// `File::create` methods are aliases for commonly used options using this
 /// builder.
+///
+/// Generally speaking, when using `OpenOptions`, you'll first call `new()`,
+/// then chain calls to methods to set each option, then call `open()`, passing
+/// the path of the file you're trying to open. This will give you a
+/// [`io::Result`][result] with a [`File`][file] inside that you can further
+/// operate on.
+///
+/// [result]: ../io/type.Result.html
+/// [file]: struct.File.html
+///
+/// # Examples
+///
+/// Opening a file to read:
+///
+/// ```no_run
+/// use std::fs::OpenOptions;
+///
+/// let file = OpenOptions::new().read(true).open("foo.txt");
+/// ```
+///
+/// Opening a file for both reading and writing, as well as creating it if it
+/// doesn't exist:
+///
+/// ```no_run
+/// use std::fs::OpenOptions;
+///
+/// let file = OpenOptions::new()
+///             .read(true)
+///             .write(true)
+///             .create(true)
+///             .open("foo.txt");
+/// ```
 #[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct OpenOptions(fs_imp::OpenOptions);
@@ -139,7 +171,7 @@ impl File {
         OpenOptions::new().read(true).open(path)
     }
 
-    /// Open a file in write-only mode.
+    /// Opens a file in write-only mode.
     ///
     /// This function will create a file if it does not exist,
     /// and will truncate it if it does.
@@ -169,7 +201,7 @@ impl File {
         self.path.as_ref().map(|p| &**p)
     }
 
-    /// Attempt to sync all OS-internal metadata to disk.
+    /// Attempts to sync all OS-internal metadata to disk.
     ///
     /// This function will attempt to ensure that all in-core data reaches the
     /// filesystem before returning.
@@ -317,57 +349,105 @@ impl OpenOptions {
     /// Creates a blank net set of options ready for configuration.
     ///
     /// All options are initially set to `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().open("foo.txt");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new() -> OpenOptions {
         OpenOptions(fs_imp::OpenOptions::new())
     }
 
-    /// Set the option for read access.
+    /// Sets the option for read access.
     ///
     /// This option, when true, will indicate that the file should be
     /// `read`-able if opened.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().read(true).open("foo.txt");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn read(&mut self, read: bool) -> &mut OpenOptions {
         self.0.read(read); self
     }
 
-    /// Set the option for write access.
+    /// Sets the option for write access.
     ///
     /// This option, when true, will indicate that the file should be
     /// `write`-able if opened.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().write(true).open("foo.txt");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn write(&mut self, write: bool) -> &mut OpenOptions {
         self.0.write(write); self
     }
 
-    /// Set the option for the append mode.
+    /// Sets the option for the append mode.
     ///
     /// This option, when true, means that writes will append to a file instead
     /// of overwriting previous contents.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().append(true).open("foo.txt");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn append(&mut self, append: bool) -> &mut OpenOptions {
         self.0.append(append); self
     }
 
-    /// Set the option for truncating a previous file.
+    /// Sets the option for truncating a previous file.
     ///
     /// If a file is successfully opened with this option set it will truncate
     /// the file to 0 length if it already exists.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().truncate(true).open("foo.txt");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn truncate(&mut self, truncate: bool) -> &mut OpenOptions {
         self.0.truncate(truncate); self
     }
 
-    /// Set the option for creating a new file.
+    /// Sets the option for creating a new file.
     ///
     /// This option indicates whether a new file will be created if the file
     /// does not yet already exist.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().create(true).open("foo.txt");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn create(&mut self, create: bool) -> &mut OpenOptions {
         self.0.create(create); self
     }
 
-    /// Open a file at `path` with the options specified by `self`.
+    /// Opens a file at `path` with the options specified by `self`.
     ///
     /// # Errors
     ///
@@ -378,6 +458,14 @@ impl OpenOptions {
     /// * Attempting to open a file with access that the user lacks
     ///   permissions for
     /// * Filesystem-level errors (full disk, etc)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().open("foo.txt");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn open<P: AsRef<Path>>(&self, path: P) -> io::Result<File> {
         let path = path.as_ref();
@@ -392,18 +480,70 @@ impl AsInnerMut<fs_imp::OpenOptions> for OpenOptions {
 
 impl Metadata {
     /// Returns whether this metadata is for a directory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn foo() -> std::io::Result<()> {
+    /// use std::fs;
+    ///
+    /// let metadata = try!(fs::metadata("foo.txt"));
+    ///
+    /// assert!(!metadata.is_dir());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn is_dir(&self) -> bool { self.0.is_dir() }
 
     /// Returns whether this metadata is for a regular file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn foo() -> std::io::Result<()> {
+    /// use std::fs;
+    ///
+    /// let metadata = try!(fs::metadata("foo.txt"));
+    ///
+    /// assert!(metadata.is_file());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn is_file(&self) -> bool { self.0.is_file() }
 
     /// Returns the size of the file, in bytes, this metadata is for.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn foo() -> std::io::Result<()> {
+    /// use std::fs;
+    ///
+    /// let metadata = try!(fs::metadata("foo.txt"));
+    ///
+    /// assert_eq!(0, metadata.len());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn len(&self) -> u64 { self.0.size() }
 
     /// Returns the permissions of the file this metadata is for.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn foo() -> std::io::Result<()> {
+    /// use std::fs;
+    ///
+    /// let metadata = try!(fs::metadata("foo.txt"));
+    ///
+    /// assert!(!metadata.permissions().readonly());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn permissions(&self) -> Permissions {
         Permissions(self.0.perm())
@@ -430,13 +570,48 @@ impl Metadata {
 
 impl Permissions {
     /// Returns whether these permissions describe a readonly file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs::File;
+    ///
+    /// # fn foo() -> std::io::Result<()> {
+    /// let mut f = try!(File::create("foo.txt"));
+    /// let metadata = try!(f.metadata());
+    ///
+    /// assert_eq!(false, metadata.permissions().readonly());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn readonly(&self) -> bool { self.0.readonly() }
 
-    /// Modify the readonly flag for this set of permissions.
+    /// Modifies the readonly flag for this set of permissions.
     ///
     /// This operation does **not** modify the filesystem. To modify the
     /// filesystem use the `fs::set_permissions` function.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs::File;
+    ///
+    /// # fn foo() -> std::io::Result<()> {
+    /// let mut f = try!(File::create("foo.txt"));
+    /// let metadata = try!(f.metadata());
+    /// let mut permissions = metadata.permissions();
+    ///
+    /// permissions.set_readonly(true);
+    ///
+    /// // filesystem doesn't change
+    /// assert_eq!(false, metadata.permissions().readonly());
+    ///
+    /// // just this particular `permissions`.
+    /// assert_eq!(true, permissions.readonly());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn set_readonly(&mut self, readonly: bool) {
         self.0.set_readonly(readonly)
@@ -468,19 +643,34 @@ impl DirEntry {
     ///
     /// The full path is created by joining the original path to `read_dir` or
     /// `walk_dir` with the filename of this entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs;
+    /// # fn foo() -> std::io::Result<()> {
+    /// for entry in try!(fs::read_dir(".")) {
+    ///     let dir = try!(entry);
+    ///     println!("{:?}", dir.path());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// This prints output like:
+    ///
+    /// ```text
+    /// "./whatever.txt"
+    /// "./foo.html"
+    /// "./hello_world.rs"
+    /// ```
+    ///
+    /// The exact text, of course, depends on what files you have in `.`.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn path(&self) -> PathBuf { self.0.path() }
 }
 
-/// Remove a file from the underlying filesystem.
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use std::fs;
-///
-/// fs::remove_file("/some/file/path.txt");
-/// ```
+/// Removes a file from the underlying filesystem.
 ///
 /// Note that, just because an unlink call was successful, it is not
 /// guaranteed that a file is immediately deleted (e.g. depending on
@@ -491,6 +681,17 @@ impl DirEntry {
 /// This function will return an error if `path` points to a directory, if the
 /// user lacks permissions to remove the file, or if some other filesystem-level
 /// error occurs.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::remove_file("a.txt"));
+/// # Ok(())
+/// # }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
     fs_imp::unlink(path.as_ref())
@@ -504,7 +705,7 @@ pub fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust
 /// # fn foo() -> std::io::Result<()> {
 /// use std::fs;
 ///
@@ -526,20 +727,23 @@ pub fn metadata<P: AsRef<Path>>(path: P) -> io::Result<Metadata> {
 
 /// Rename a file or directory to a new name.
 ///
-/// # Examples
-///
-/// ```rust,no_run
-/// use std::fs;
-///
-/// fs::rename("foo", "bar");
-/// ```
-///
 /// # Errors
 ///
 /// This function will return an error if the provided `from` doesn't exist, if
 /// the process lacks permissions to view the contents, if `from` and `to`
 /// reside on separate filesystems, or if some other intermittent I/O error
 /// occurs.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::rename("a.txt", "b.txt"));
+/// # Ok(())
+/// # }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> {
     fs_imp::rename(from.as_ref(), to.as_ref())
@@ -553,14 +757,6 @@ pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> 
 /// Note that if `from` and `to` both point to the same file, then the file
 /// will likely get truncated by this operation.
 ///
-/// # Examples
-///
-/// ```
-/// use std::fs;
-///
-/// fs::copy("foo.txt", "bar.txt");
-/// ```
-///
 /// # Errors
 ///
 /// This function will return an error in the following situations, but is not
@@ -570,6 +766,16 @@ pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> 
 /// * The `from` file does not exist
 /// * The current process does not have the permission rights to access
 ///   `from` or write `to`
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::copy("foo.txt", "bar.txt"));
+/// # Ok(()) }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn copy<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<u64> {
     let from = from.as_ref();
@@ -592,6 +798,17 @@ pub fn copy<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<u64> {
 ///
 /// The `dst` path will be a link pointing to the `src` path. Note that systems
 /// often require these two paths to both be located on the same filesystem.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::hard_link("a.txt", "b.txt"));
+/// # Ok(())
+/// # }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
     fs_imp::link(src.as_ref(), dst.as_ref())
@@ -600,6 +817,17 @@ pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<(
 /// Creates a new soft link on the filesystem.
 ///
 /// The `dst` path will be a soft link pointing to the `src` path.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::soft_link("a.txt", "b.txt"));
+/// # Ok(())
+/// # }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn soft_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
     fs_imp::symlink(src.as_ref(), dst.as_ref())
@@ -612,25 +840,39 @@ pub fn soft_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<(
 /// This function will return an error on failure. Failure conditions include
 /// reading a file that does not exist or reading a file that is not a soft
 /// link.
-#[stable(feature = "rust1", since = "1.0.0")]
-pub fn read_link<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
-    fs_imp::readlink(path.as_ref())
-}
-
-/// Create a new, empty directory at the provided path
 ///
 /// # Examples
 ///
 /// ```
 /// use std::fs;
 ///
-/// fs::create_dir("/some/dir");
+/// # fn foo() -> std::io::Result<()> {
+/// let path = try!(fs::read_link("a.txt"));
+/// # Ok(())
+/// # }
 /// ```
+#[stable(feature = "rust1", since = "1.0.0")]
+pub fn read_link<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
+    fs_imp::readlink(path.as_ref())
+}
+
+/// Creates a new, empty directory at the provided path
 ///
 /// # Errors
 ///
 /// This function will return an error if the user lacks permissions to make a
 /// new directory at the provided `path`, or if the directory already exists.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::create_dir("/some/dir"));
+/// # Ok(())
+/// # }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn create_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
     fs_imp::mkdir(path.as_ref())
@@ -645,6 +887,17 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// does not already exist and it could not be created otherwise. The specific
 /// error conditions for when a directory is being created (after it is
 /// determined to not exist) are outlined by `fs::create_dir`.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::create_dir_all("/some/dir"));
+/// # Ok(())
+/// # }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn create_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
@@ -653,20 +906,23 @@ pub fn create_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     create_dir(path)
 }
 
-/// Remove an existing, empty directory
+/// Removes an existing, empty directory.
+///
+/// # Errors
+///
+/// This function will return an error if the user lacks permissions to remove
+/// the directory at the provided `path`, or if the directory isn't empty.
 ///
 /// # Examples
 ///
 /// ```
 /// use std::fs;
 ///
-/// fs::remove_dir("/some/dir");
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::remove_dir("/some/dir"));
+/// # Ok(())
+/// # }
 /// ```
-///
-/// # Errors
-///
-/// This function will return an error if the user lacks permissions to remove
-/// the directory at the provided `path`, or if the directory isn't empty.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
     fs_imp::rmdir(path.as_ref())
@@ -680,7 +936,18 @@ pub fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 ///
 /// # Errors
 ///
-/// See `file::remove_file` and `fs::remove_dir`
+/// See `file::remove_file` and `fs::remove_dir`.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// try!(fs::remove_dir_all("/some/dir"));
+/// # Ok(())
+/// # }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
@@ -791,7 +1058,7 @@ impl Iterator for WalkDir {
            reason = "the precise set of methods exposed on this trait may \
                      change and some methods may be removed")]
 pub trait PathExt {
-    /// Get information on the file, directory, etc at this path.
+    /// Gets information on the file, directory, etc at this path.
     ///
     /// Consult the `fs::stat` documentation for more info.
     ///
@@ -832,8 +1099,8 @@ impl PathExt for Path {
 /// Changes the timestamps for a file's last modification and access time.
 ///
 /// The file at the path specified will have its last access time set to
-/// `atime` and its modification time set to `mtime`. The times specified should
-/// be in milliseconds.
+/// `accessed` and its modification time set to `modified`. The times specified
+/// should be in milliseconds.
 #[unstable(feature = "fs_time",
            reason = "the argument type of u64 is not quite appropriate for \
                      this function and may change if the standard library \
@@ -928,7 +1195,8 @@ mod tests {
 
     pub fn tmpdir() -> TempDir {
         let p = env::temp_dir();
-        let ret = p.join(&format!("rust-{}", rand::random::<u32>()));
+        let mut r = rand::thread_rng();
+        let ret = p.join(&format!("rust-{}", r.next_u32()));
         check!(fs::create_dir(&ret));
         TempDir(ret)
     }

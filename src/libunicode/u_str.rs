@@ -20,7 +20,7 @@ use core::prelude::*;
 
 use core::char;
 use core::cmp;
-use core::iter::{Filter, AdditiveIterator};
+use core::iter::Filter;
 use core::mem;
 use core::slice;
 use core::str::Split;
@@ -28,7 +28,8 @@ use core::str::Split;
 use tables::grapheme::GraphemeCat;
 
 /// An iterator over the words of a string, separated by a sequence of whitespace
-#[stable(feature = "rust1", since = "1.0.0")]
+#[unstable(feature = "str_words",
+           reason = "words() will be replaced by split_whitespace() in 1.1.0")]
 pub struct Words<'a> {
     inner: Filter<Split<'a, fn(char) -> bool>, fn(&&str) -> bool>,
 }
@@ -157,7 +158,7 @@ impl<'a> Iterator for Graphemes<'a> {
     #[inline]
     fn next(&mut self) -> Option<&'a str> {
         use tables::grapheme as gr;
-        if self.string.len() == 0 {
+        if self.string.is_empty() {
             return None;
         }
 
@@ -199,7 +200,7 @@ impl<'a> Iterator for Graphemes<'a> {
                     gr::GC_L => HangulL,
                     gr::GC_LV | gr::GC_V => HangulLV,
                     gr::GC_LVT | gr::GC_T => HangulLVT,
-                    gr::GC_RegionalIndicator => Regional,
+                    gr::GC_Regional_Indicator => Regional,
                     _ => FindExtend
                 },
                 FindExtend => {         // found non-extending when looking for extending
@@ -231,7 +232,7 @@ impl<'a> Iterator for Graphemes<'a> {
                     }
                 },
                 Regional => match cat {     // rule GB8a
-                    gr::GC_RegionalIndicator => continue,
+                    gr::GC_Regional_Indicator => continue,
                     _ => {
                         take_curr = false;
                         break;
@@ -257,7 +258,7 @@ impl<'a> DoubleEndedIterator for Graphemes<'a> {
     #[inline]
     fn next_back(&mut self) -> Option<&'a str> {
         use tables::grapheme as gr;
-        if self.string.len() == 0 {
+        if self.string.is_empty() {
             return None;
         }
 
@@ -300,7 +301,7 @@ impl<'a> DoubleEndedIterator for Graphemes<'a> {
                     gr::GC_L | gr::GC_LV | gr::GC_LVT => HangulL,
                     gr::GC_V => HangulLV,
                     gr::GC_T => HangulLVT,
-                    gr::GC_RegionalIndicator => Regional,
+                    gr::GC_Regional_Indicator => Regional,
                     gr::GC_Control => {
                         take_curr = Start == state;
                         break;
@@ -332,7 +333,7 @@ impl<'a> DoubleEndedIterator for Graphemes<'a> {
                     }
                 },
                 Regional => match cat {     // rule GB8a
-                    gr::GC_RegionalIndicator => continue,
+                    gr::GC_Regional_Indicator => continue,
                     _ => {
                         take_curr = false;
                         break;

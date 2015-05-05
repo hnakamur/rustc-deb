@@ -66,8 +66,6 @@ use parse::lexer;
 use ptr::P;
 
 use std::fmt;
-#[allow(deprecated)]
-use std::num::Int;
 use std::rc::Rc;
 use serialize::{Encodable, Decodable, Encoder, Decoder};
 
@@ -429,14 +427,14 @@ pub struct Generics {
 }
 
 impl Generics {
-    pub fn is_parameterized(&self) -> bool {
-        self.lifetimes.len() + self.ty_params.len() > 0
-    }
     pub fn is_lt_parameterized(&self) -> bool {
-        self.lifetimes.len() > 0
+        !self.lifetimes.is_empty()
     }
     pub fn is_type_parameterized(&self) -> bool {
-        self.ty_params.len() > 0
+        !self.ty_params.is_empty()
+    }
+    pub fn is_parameterized(&self) -> bool {
+        self.is_lt_parameterized() || self.is_type_parameterized()
     }
 }
 
@@ -1142,15 +1140,23 @@ pub enum Sign {
 }
 
 impl Sign {
-    #[allow(deprecated)] // Int
-    pub fn new<T:Int>(n: T) -> Sign {
-        if n < Int::zero() {
-            Minus
-        } else {
-            Plus
-        }
+    pub fn new<T: IntSign>(n: T) -> Sign {
+        n.sign()
     }
 }
+
+pub trait IntSign {
+    fn sign(&self) -> Sign;
+}
+macro_rules! doit {
+    ($($t:ident)*) => ($(impl IntSign for $t {
+        #[allow(unused_comparisons)]
+        fn sign(&self) -> Sign {
+            if *self < 0 {Minus} else {Plus}
+        }
+    })*)
+}
+doit! { i8 i16 i32 i64 isize u8 u16 u32 u64 usize }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub enum LitIntType {

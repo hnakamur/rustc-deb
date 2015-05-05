@@ -66,7 +66,7 @@ There are some shortcomings in this design:
 
 use astconv::{self, AstConv, ty_of_arg, ast_ty_to_ty, ast_region_to_region};
 use middle::def;
-use constrained_type_params::identify_constrained_type_params;
+use constrained_type_params as ctp;
 use middle::lang_items::SizedTraitLangItem;
 use middle::region;
 use middle::resolve_lifetime;
@@ -547,14 +547,15 @@ fn is_param<'tcx>(tcx: &ty::ctxt<'tcx>,
     if let ast::TyPath(None, _) = ast_ty.node {
         let path_res = *tcx.def_map.borrow().get(&ast_ty.id).unwrap();
         match path_res.base_def {
-            def::DefSelfTy(node_id) =>
-                path_res.depth == 0 && node_id == param_id,
-
-            def::DefTyParam(_, _, def_id, _) =>
-                path_res.depth == 0 && def_id == local_def(param_id),
-
-            _ =>
-                false,
+            def::DefSelfTy(Some(def_id), None) => {
+                path_res.depth == 0 && def_id.node == param_id
+            }
+            def::DefTyParam(_, _, def_id, _) => {
+                path_res.depth == 0 && def_id == local_def(param_id)
+            }
+            _ => {
+                false
+            }
         }
     } else {
         false
@@ -575,7 +576,7 @@ fn get_enum_variant_types<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         // Nullary enum constructors get turned into constants; n-ary enum
         // constructors get turned into functions.
         let result_ty = match variant.node.kind {
-            ast::TupleVariantKind(ref args) if args.len() > 0 => {
+            ast::TupleVariantKind(ref args) if !args.is_empty() => {
                 let rs = ExplicitRscope;
                 let input_tys: Vec<_> = args.iter().map(|va| icx.to_ty(&rs, &*va.ty)).collect();
                 ty::mk_ctor_fn(tcx, variant_def_id, &input_tys, enum_scheme.ty)
@@ -901,9 +902,10 @@ fn convert_item(ccx: &CrateCtxt, it: &ast::Item) {
                 tcx.impl_trait_refs.borrow_mut().insert(it.id, trait_ref);
             }
 
-            enforce_impl_ty_params_are_constrained(tcx,
-                                                   generics,
-                                                   local_def(it.id));
+            enforce_impl_params_are_constrained(tcx,
+                                                generics,
+                                                local_def(it.id),
+                                                impl_items);
         },
         ast::ItemTrait(_, _, _, ref trait_items) => {
             let trait_def = trait_def_of_item(ccx, it);
@@ -1034,7 +1036,7 @@ fn convert_struct<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     match struct_def.ctor_id {
         None => {}
         Some(ctor_id) => {
-            if struct_def.fields.len() == 0 {
+            if struct_def.fields.is_empty() {
                 // Enum-like.
                 write_ty_to_tcx(tcx, ctor_id, selfty);
 
@@ -1216,10 +1218,12 @@ fn trait_def_of_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
             generics.lifetimes
                     .iter()
                     .enumerate()
-                    .map(|(i, def)| ty::ReEarlyBound(def.lifetime.id,
-                                                     TypeSpace,
-                                                     i as u32,
-                                                     def.lifetime.name))
+                    .map(|(i, def)| ty::ReEarlyBound(ty::EarlyBoundRegion {
+                        param_id: def.lifetime.id,
+                        space: TypeSpace,
+                        index: i as u32,
+                        name: def.lifetime.name
+                    }))
                     .collect();
 
         // Start with the generics in the type parameters...
@@ -1690,7 +1694,13 @@ fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
     let early_lifetimes = early_bound_lifetimes_from_generics(space, ast_generics);
     for (index, param) in early_lifetimes.iter().enumerate() {
         let index = index as u32;
-        let region = ty::ReEarlyBound(param.lifetime.id, space, index, param.lifetime.name);
+        let region =
+            ty::ReEarlyBound(ty::EarlyBoundRegion {
+                param_id: param.lifetime.id,
+                space: space,
+                index: index,
+                name: param.lifetime.name
+            });
         for bound in &param.bounds {
             let bound_region = ast_region_to_region(ccx.tcx, bound);
             let outlives = ty::Binder(ty::OutlivesPredicate(region, bound_region));
@@ -1814,7 +1824,7 @@ fn get_or_create_type_parameter_def<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                     ty::ty_param(p) => if p.idx > cur_idx {
                         span_err!(tcx.sess, path.span, E0128,
                                   "type parameters with a default cannot use \
-                                  forward declared identifiers");
+                                   forward declared identifiers");
                         },
                         _ => {}
                     }
@@ -1892,7 +1902,7 @@ fn compute_object_lifetime_default<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                   .flat_map(|predicate| {
                       match *predicate {
                           ast::WherePredicate::BoundPredicate(ref data) => {
-                              if data.bound_lifetimes.len() == 0 &&
+                              if data.bound_lifetimes.is_empty() &&
                                   is_param(ccx.tcx, &data.bounded_ty, param_id)
                               {
                                   from_bounds(ccx, &data.bounds).into_iter()
@@ -2167,10 +2177,10 @@ fn check_method_self_type<'a, 'tcx, RS:RegionScope>(
 
         ty_fold::fold_regions(tcx, value, |region, _| {
             match region {
-                ty::ReEarlyBound(id, _, _, name) => {
-                    let def_id = local_def(id);
+                ty::ReEarlyBound(data) => {
+                    let def_id = local_def(data.param_id);
                     ty::ReFree(ty::FreeRegion { scope: scope,
-                                                bound_region: ty::BrNamed(def_id, name) })
+                                                bound_region: ty::BrNamed(def_id, data.name) })
                 }
                 _ => region
             }
@@ -2179,9 +2189,10 @@ fn check_method_self_type<'a, 'tcx, RS:RegionScope>(
 }
 
 /// Checks that all the type parameters on an impl
-fn enforce_impl_ty_params_are_constrained<'tcx>(tcx: &ty::ctxt<'tcx>,
-                                                ast_generics: &ast::Generics,
-                                                impl_def_id: ast::DefId)
+fn enforce_impl_params_are_constrained<'tcx>(tcx: &ty::ctxt<'tcx>,
+                                             ast_generics: &ast::Generics,
+                                             impl_def_id: ast::DefId,
+                                             impl_items: &[P<ast::ImplItem>])
 {
     let impl_scheme = ty::lookup_item_type(tcx, impl_def_id);
     let impl_predicates = ty::lookup_predicates(tcx, impl_def_id);
@@ -2191,27 +2202,81 @@ fn enforce_impl_ty_params_are_constrained<'tcx>(tcx: &ty::ctxt<'tcx>,
     // reachable from there, to start (if this is an inherent impl,
     // then just examine the self type).
     let mut input_parameters: HashSet<_> =
-        impl_trait_ref.iter()
-                      .flat_map(|t| t.input_types().iter()) // Types in trait ref, if any
-                      .chain(Some(impl_scheme.ty).iter())   // Self type, always
-                      .flat_map(|t| t.walk())
-                      .filter_map(|t| t.as_opt_param_ty())
-                      .collect();
+        ctp::parameters_for_type(impl_scheme.ty).into_iter().collect();
+    if let Some(ref trait_ref) = impl_trait_ref {
+        input_parameters.extend(ctp::parameters_for_trait_ref(trait_ref));
+    }
 
-    identify_constrained_type_params(tcx,
-                                     impl_predicates.predicates.as_slice(),
-                                     impl_trait_ref,
-                                     &mut input_parameters);
+    ctp::identify_constrained_type_params(tcx,
+                                          impl_predicates.predicates.as_slice(),
+                                          impl_trait_ref,
+                                          &mut input_parameters);
 
     for (index, ty_param) in ast_generics.ty_params.iter().enumerate() {
         let param_ty = ty::ParamTy { space: TypeSpace,
                                      idx: index as u32,
                                      name: ty_param.ident.name };
-        if !input_parameters.contains(&param_ty) {
-            span_err!(tcx.sess, ty_param.span, E0207,
-                "the type parameter `{}` is not constrained by the \
-                         impl trait, self type, or predicates",
-                        param_ty.user_string(tcx));
+        if !input_parameters.contains(&ctp::Parameter::Type(param_ty)) {
+            report_unused_parameter(tcx, ty_param.span, "type", &param_ty.user_string(tcx));
         }
     }
+
+    // Every lifetime used in an associated type must be constrained.
+
+    let lifetimes_in_associated_types: HashSet<_> =
+        impl_items.iter()
+                  .filter_map(|item| match item.node {
+                      ast::TypeImplItem(..) => Some(ty::node_id_to_type(tcx, item.id)),
+                      ast::MethodImplItem(..) | ast::MacImplItem(..) => None,
+                  })
+                  .flat_map(|ty| ctp::parameters_for_type(ty).into_iter())
+                  .filter_map(|p| match p {
+                      ctp::Parameter::Type(_) => None,
+                      ctp::Parameter::Region(r) => Some(r),
+                  })
+                  .collect();
+
+    for (index, lifetime_def) in ast_generics.lifetimes.iter().enumerate() {
+        let region = ty::EarlyBoundRegion { param_id: lifetime_def.lifetime.id,
+                                            space: TypeSpace,
+                                            index: index as u32,
+                                            name: lifetime_def.lifetime.name };
+        if
+            lifetimes_in_associated_types.contains(&region) && // (*)
+            !input_parameters.contains(&ctp::Parameter::Region(region))
+        {
+            report_unused_parameter(tcx, lifetime_def.lifetime.span,
+                                    "lifetime", &region.name.user_string(tcx));
+        }
+    }
+
+    // (*) This is a horrible concession to reality. I think it'd be
+    // better to just ban unconstrianed lifetimes outright, but in
+    // practice people do non-hygenic macros like:
+    //
+    // ```
+    // macro_rules! __impl_slice_eq1 {
+    //     ($Lhs: ty, $Rhs: ty, $Bound: ident) => {
+    //         impl<'a, 'b, A: $Bound, B> PartialEq<$Rhs> for $Lhs where A: PartialEq<B> {
+    //            ....
+    //         }
+    //     }
+    // }
+    // ```
+    //
+    // In a concession to backwards compatbility, we continue to
+    // permit those, so long as the lifetimes aren't used in
+    // associated types. I believe this is sound, because lifetimes
+    // used elsewhere are not projected back out.
+}
+
+fn report_unused_parameter(tcx: &ty::ctxt,
+                           span: Span,
+                           kind: &str,
+                           name: &str)
+{
+    span_err!(tcx.sess, span, E0207,
+              "the {} parameter `{}` is not constrained by the \
+               impl trait, self type, or predicates",
+              kind, name);
 }

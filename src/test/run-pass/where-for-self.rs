@@ -11,20 +11,14 @@
 // Test that we can quantify lifetimes outside a constraint (i.e., including
 // the self type) in a where clause.
 
-// pretty-expanded FIXME #23616
-
-use std::marker::PhantomFn;
 
 static mut COUNT: u32 = 1;
 
-trait Bar<'a>
-    : PhantomFn<&'a ()>
-{
+trait Bar<'a> {
     fn bar(&self);
 }
 
 trait Baz<'a>
-    : PhantomFn<&'a ()>
 {
     fn baz(&self);
 }

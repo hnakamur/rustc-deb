@@ -26,7 +26,7 @@ use middle::ty::*;
 use middle::ty;
 use std::cmp::Ordering;
 use std::fmt;
-use std::iter::{range_inclusive, AdditiveIterator, FromIterator, IntoIterator, repeat};
+use std::iter::{range_inclusive, FromIterator, IntoIterator, repeat};
 use std::slice;
 use syntax::ast::{self, DUMMY_NODE_ID, NodeId, Pat};
 use syntax::ast_util;
@@ -76,7 +76,7 @@ impl<'a> fmt::Debug for Matrix<'a> {
             pretty_printed_matrix.iter().map(|row| row[col].len()).max().unwrap_or(0)
         }).collect();
 
-        let total_width = column_widths.iter().cloned().sum() + column_count * 3 + 1;
+        let total_width = column_widths.iter().cloned().sum::<usize>() + column_count * 3 + 1;
         let br = repeat('+').take(total_width).collect::<String>();
         try!(write!(f, "{}\n", br));
         for row in pretty_printed_matrix {
@@ -239,7 +239,7 @@ fn check_for_bindings_named_the_same_as_variants(cx: &MatchCheckCtxt, pat: &Pat)
                     if let Some(DefLocal(_)) = def {
                         if ty::enum_variants(cx.tcx, def_id).iter().any(|variant|
                             token::get_name(variant.name) == token::get_name(ident.node.name)
-                                && variant.args.len() == 0
+                                && variant.args.is_empty()
                         ) {
                             span_warn!(cx.tcx.sess, p.span, E0170,
                                 "pattern binding `{}` is named the same as one \
@@ -636,19 +636,19 @@ fn is_useful(cx: &MatchCheckCtxt,
              -> Usefulness {
     let &Matrix(ref rows) = matrix;
     debug!("{:?}", matrix);
-    if rows.len() == 0 {
+    if rows.is_empty() {
         return match witness {
             ConstructWitness => UsefulWithWitness(vec!()),
             LeaveOutWitness => Useful
         };
     }
-    if rows[0].len() == 0 {
+    if rows[0].is_empty() {
         return NotUseful;
     }
     assert!(rows.iter().all(|r| r.len() == v.len()));
     let real_pat = match rows.iter().find(|r| (*r)[0].id != DUMMY_NODE_ID) {
         Some(r) => raw_pat(r[0]),
-        None if v.len() == 0 => return NotUseful,
+        None if v.is_empty() => return NotUseful,
         None => v[0]
     };
     let left_ty = if real_pat.id == DUMMY_NODE_ID {

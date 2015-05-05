@@ -12,7 +12,7 @@ use self::TargetLocation::*;
 
 use common::Config;
 use common::{CompileFail, ParseFail, Pretty, RunFail, RunPass, RunPassValgrind};
-use common::{Codegen, DebugInfoLldb, DebugInfoGdb};
+use common::{Codegen, DebugInfoLldb, DebugInfoGdb, Rustdoc};
 use errors;
 use header::TestProps;
 use header;
@@ -29,7 +29,6 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, ExitStatus};
 use std::str;
-use std::time::Duration;
 use test::MetricMap;
 
 pub fn run(config: Config, testfile: &Path) {
@@ -57,15 +56,16 @@ pub fn run_metrics(config: Config, testfile: &Path, mm: &mut MetricMap) {
     let props = header::load_props(&testfile);
     debug!("loaded props");
     match config.mode {
-      CompileFail => run_cfail_test(&config, &props, &testfile),
-      ParseFail => run_cfail_test(&config, &props, &testfile),
-      RunFail => run_rfail_test(&config, &props, &testfile),
-      RunPass => run_rpass_test(&config, &props, &testfile),
-      RunPassValgrind => run_valgrind_test(&config, &props, &testfile),
-      Pretty => run_pretty_test(&config, &props, &testfile),
-      DebugInfoGdb => run_debuginfo_gdb_test(&config, &props, &testfile),
-      DebugInfoLldb => run_debuginfo_lldb_test(&config, &props, &testfile),
-      Codegen => run_codegen_test(&config, &props, &testfile, mm),
+        CompileFail => run_cfail_test(&config, &props, &testfile),
+        ParseFail => run_cfail_test(&config, &props, &testfile),
+        RunFail => run_rfail_test(&config, &props, &testfile),
+        RunPass => run_rpass_test(&config, &props, &testfile),
+        RunPassValgrind => run_valgrind_test(&config, &props, &testfile),
+        Pretty => run_pretty_test(&config, &props, &testfile),
+        DebugInfoGdb => run_debuginfo_gdb_test(&config, &props, &testfile),
+        DebugInfoLldb => run_debuginfo_lldb_test(&config, &props, &testfile),
+        Codegen => run_codegen_test(&config, &props, &testfile, mm),
+        Rustdoc => run_rustdoc_test(&config, &props, &testfile),
     }
 }
 
@@ -382,7 +382,7 @@ fn run_debuginfo_gdb_test(config: &Config, props: &TestProps, testfile: &Path) {
 
             // write debugger script
             let mut script_str = String::with_capacity(2048);
-            script_str.push_str("set charset UTF-8\n");
+            script_str.push_str(&format!("set charset {}\n", charset()));
             script_str.push_str(&format!("file {}\n", exe_file.to_str().unwrap()));
             script_str.push_str("target remote :5039\n");
             script_str.push_str(&format!("set solib-search-path \
@@ -451,11 +451,7 @@ fn run_debuginfo_gdb_test(config: &Config, props: &TestProps, testfile: &Path) {
                 .expect(&format!("failed to exec `{:?}`", config.adb_path));
             loop {
                 //waiting 1 second for gdbserver start
-                #[allow(deprecated)]
-                fn sleep() {
-                    ::std::old_io::timer::sleep(Duration::milliseconds(1000));
-                }
-                sleep();
+                ::std::thread::sleep_ms(1000);
                 if TcpStream::connect("127.0.0.1:5039").is_ok() {
                     break
                 }
@@ -516,8 +512,7 @@ fn run_debuginfo_gdb_test(config: &Config, props: &TestProps, testfile: &Path) {
                                                        .to_string();
             // write debugger script
             let mut script_str = String::with_capacity(2048);
-
-            script_str.push_str("set charset UTF-8\n");
+            script_str.push_str(&format!("set charset {}\n", charset()));
             script_str.push_str("show version\n");
 
             match config.gdb_version {
@@ -726,32 +721,37 @@ fn run_debuginfo_lldb_test(config: &Config, props: &TestProps, testfile: &Path) 
                 -> ProcRes {
         // Prepare the lldb_batchmode which executes the debugger script
         let lldb_script_path = rust_src_root.join("src/etc/lldb_batchmode.py");
+        cmd2procres(config,
+                    test_executable,
+                    Command::new(&config.python)
+                            .arg(&lldb_script_path)
+                            .arg(test_executable)
+                            .arg(debugger_script)
+                            .env("PYTHONPATH",
+                                 config.lldb_python_dir.as_ref().unwrap()))
+    }
+}
 
-        let mut cmd = Command::new("python");
-        cmd.arg(&lldb_script_path)
-           .arg(test_executable)
-           .arg(debugger_script)
-           .env("PYTHONPATH", config.lldb_python_dir.as_ref().unwrap());
+fn cmd2procres(config: &Config, test_executable: &Path, cmd: &mut Command)
+              -> ProcRes {
+    let (status, out, err) = match cmd.output() {
+        Ok(Output { status, stdout, stderr }) => {
+            (status,
+             String::from_utf8(stdout).unwrap(),
+             String::from_utf8(stderr).unwrap())
+        },
+        Err(e) => {
+            fatal(&format!("Failed to setup Python process for \
+                            LLDB script: {}", e))
+        }
+    };
 
-        let (status, out, err) = match cmd.output() {
-            Ok(Output { status, stdout, stderr }) => {
-                (status,
-                 String::from_utf8(stdout).unwrap(),
-                 String::from_utf8(stderr).unwrap())
-            },
-            Err(e) => {
-                fatal(&format!("Failed to setup Python process for \
-                                LLDB script: {}", e))
-            }
-        };
-
-        dump_output(config, test_executable, &out, &err);
-        return ProcRes {
-            status: Status::Normal(status),
-            stdout: out,
-            stderr: err,
-            cmdline: format!("{:?}", cmd)
-        };
+    dump_output(config, test_executable, &out, &err);
+    ProcRes {
+        status: Status::Normal(status),
+        stdout: out,
+        stderr: err,
+        cmdline: format!("{:?}", cmd)
     }
 }
 
@@ -864,7 +864,7 @@ fn check_debugger_output(debugger_run_result: &ProcRes, check_lines: &[String]) 
                 }
                 first = false;
             }
-            if !failed && rest.len() == 0 {
+            if !failed && rest.is_empty() {
                 i += 1;
             }
             if i == num_check_lines {
@@ -1158,6 +1158,26 @@ fn compile_test_(config: &Config, props: &TestProps,
     compose_and_run_compiler(config, props, testfile, args, None)
 }
 
+fn document(config: &Config, props: &TestProps,
+            testfile: &Path, extra_args: &[String]) -> (ProcRes, PathBuf) {
+    let aux_dir = aux_output_dir_name(config, testfile);
+    let out_dir = output_base_name(config, testfile);
+    let _ = fs::remove_dir_all(&out_dir);
+    ensure_dir(&out_dir);
+    let mut args = vec!["-L".to_string(),
+                        aux_dir.to_str().unwrap().to_string(),
+                        "-o".to_string(),
+                        out_dir.to_str().unwrap().to_string(),
+                        testfile.to_str().unwrap().to_string()];
+    args.extend(extra_args.iter().cloned());
+    args.extend(split_maybe_args(&props.compile_flags).into_iter());
+    let args = ProcArgs {
+        prog: config.rustdoc_path.to_str().unwrap().to_string(),
+        args: args,
+    };
+    (compose_and_run_compiler(config, props, testfile, args, None), out_dir)
+}
+
 fn exec_compiled_test(config: &Config, props: &TestProps,
                       testfile: &Path) -> ProcRes {
 
@@ -1182,20 +1202,17 @@ fn exec_compiled_test(config: &Config, props: &TestProps,
     }
 }
 
-fn compose_and_run_compiler(
-    config: &Config,
-    props: &TestProps,
-    testfile: &Path,
-    args: ProcArgs,
-    input: Option<String>) -> ProcRes {
-
+fn compose_and_run_compiler(config: &Config, props: &TestProps,
+                            testfile: &Path, args: ProcArgs,
+                            input: Option<String>) -> ProcRes {
     if !props.aux_builds.is_empty() {
         ensure_dir(&aux_output_dir_name(config, testfile));
     }
 
     let aux_dir = aux_output_dir_name(config, testfile);
     // FIXME (#9639): This needs to handle non-utf8 paths
-    let extra_link_args = vec!("-L".to_string(), aux_dir.to_str().unwrap().to_string());
+    let extra_link_args = vec!["-L".to_string(),
+                               aux_dir.to_str().unwrap().to_string()];
 
     for rel_ab in &props.aux_builds {
         let abs_ab = config.aux_base.join(rel_ab);
@@ -1331,8 +1348,8 @@ fn make_exe_name(config: &Config, testfile: &Path) -> PathBuf {
     f
 }
 
-fn make_run_args(config: &Config, props: &TestProps, testfile: &Path) ->
-   ProcArgs {
+fn make_run_args(config: &Config, props: &TestProps, testfile: &Path)
+                 -> ProcArgs {
     // If we've got another tool to run under (valgrind),
     // then split apart its command
     let mut args = split_maybe_args(&config.runtool);
@@ -1645,7 +1662,7 @@ fn _arm_push_aux_shared_library(config: &Config, testfile: &Path) {
 // codegen tests (vs. clang)
 
 fn append_suffix_to_stem(p: &Path, suffix: &str) -> PathBuf {
-    if suffix.len() == 0 {
+    if suffix.is_empty() {
         p.to_path_buf()
     } else {
         let mut stem = p.file_stem().unwrap().to_os_string();
@@ -1789,4 +1806,30 @@ fn run_codegen_test(config: &Config, props: &TestProps,
     mm.insert_metric("clang-codegen-ratio",
                      (base_lines as f64) / (clang_lines as f64),
                      0.001);
+}
+
+fn charset() -> &'static str {
+    if cfg!(any(target_os = "bitrig", target_os = "freebsd")) {
+        "auto"
+    } else {
+        "UTF-8"
+    }
+}
+
+fn run_rustdoc_test(config: &Config, props: &TestProps, testfile: &Path) {
+    let (proc_res, out_dir) = document(config, props, testfile, &[]);
+    if !proc_res.status.success() {
+        fatal_proc_rec("rustdoc failed!", &proc_res);
+    }
+    let root = find_rust_src_root(config).unwrap();
+
+    let res = cmd2procres(config,
+                          testfile,
+                          Command::new(&config.python)
+                                  .arg(root.join("src/etc/htmldocck.py"))
+                                  .arg(out_dir)
+                                  .arg(testfile));
+    if !res.status.success() {
+        fatal_proc_rec("htmldocck failed!", &res);
+    }
 }

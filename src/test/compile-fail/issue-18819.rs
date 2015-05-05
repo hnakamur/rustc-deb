@@ -8,9 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::marker::MarkerTrait;
-
-trait Foo : MarkerTrait {
+trait Foo {
     type Item;
 }
 
@@ -20,7 +18,7 @@ impl Foo for X {
     type Item = bool;
 }
 
-fn print_x(_: &Foo, extra: &str) {
+fn print_x(_: &Foo<Item=bool>, extra: &str) {
     println!("{}", extra);
 }
 

@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-bitrig
 // compile-flags: -C codegen-units=3
 
 // Test references to items that haven't been translated yet.
@@ -15,7 +16,6 @@
 // Generate some code in the first compilation unit before declaring any
 // modules.  This ensures that the first module doesn't go into the same
 // compilation unit as the top-level module.
-// pretty-expanded FIXME #23616
 
 fn pad() -> usize { 0 }
 

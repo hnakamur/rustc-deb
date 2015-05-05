@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-bitrig
 // compile-flags: -C codegen-units=3
 
 // Test unwinding through multiple compilation units.
@@ -19,7 +20,6 @@
 // In any case, this test should let us know if enabling parallel codegen ever
 // breaks unwinding.
 
-// pretty-expanded FIXME #23616
 
 use std::thread;
 

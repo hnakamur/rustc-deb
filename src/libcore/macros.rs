@@ -182,7 +182,7 @@ macro_rules! try {
 /// ```
 #[macro_export]
 macro_rules! write {
-    ($dst:expr, $($arg:tt)*) => ((&mut *$dst).write_fmt(format_args!($($arg)*)))
+    ($dst:expr, $($arg:tt)*) => ($dst.write_fmt(format_args!($($arg)*)))
 }
 
 /// Equivalent to the `write!` macro, except that a newline is appended after
@@ -229,7 +229,6 @@ macro_rules! writeln {
 /// Iterators:
 ///
 /// ```
-/// # #![feature(core)]
 /// fn divide_by_three(x: u32) -> u32 { // one of the poorest implementations of x/3
 ///     for i in 0.. {
 ///         if 3*i < i { panic!("u32 overflow"); }

@@ -53,11 +53,10 @@ use alloc::boxed::Box;
 use alloc::heap::{EMPTY, allocate, reallocate, deallocate};
 use core::cmp::max;
 use core::cmp::Ordering;
-use core::default::Default;
 use core::fmt;
 use core::hash::{self, Hash};
 use core::intrinsics::assume;
-use core::iter::{repeat, FromIterator, IntoIterator};
+use core::iter::{repeat, FromIterator};
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Index, IndexMut, Deref, Add};
@@ -65,9 +64,13 @@ use core::ops;
 use core::ptr;
 use core::ptr::Unique;
 use core::slice;
+use core::isize;
 use core::usize;
 
 use borrow::{Cow, IntoCow};
+
+// FIXME- fix places which assume the max vector allowed has memory usize::MAX.
+static MAX_MEMORY_SIZE: usize = isize::MAX as usize;
 
 /// A growable list type, written `Vec<T>` but pronounced 'vector.'
 ///
@@ -185,7 +188,7 @@ impl<T> Vec<T> {
     /// # Examples
     ///
     /// ```
-    /// let mut vec: Vec<_> = Vec::with_capacity(10);
+    /// let mut vec = Vec::with_capacity(10);
     ///
     /// // The vector contains no items, even though it has capacity for more
     /// assert_eq!(vec.len(), 0);
@@ -307,10 +310,15 @@ impl<T> Vec<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn reserve(&mut self, additional: usize) {
         if self.cap - self.len < additional {
-            let err_msg = "Vec::reserve: `usize` overflow";
-            let new_cap = self.len.checked_add(additional).expect(err_msg)
-                .checked_next_power_of_two().expect(err_msg);
-            self.grow_capacity(new_cap);
+            const ERR_MSG: &'static str  = "Vec::reserve: `isize` overflow";
+
+            let new_min_cap = self.len.checked_add(additional).expect(ERR_MSG);
+            if new_min_cap > MAX_MEMORY_SIZE { panic!(ERR_MSG) }
+            self.grow_capacity(match new_min_cap.checked_next_power_of_two() {
+                Some(x) if x > MAX_MEMORY_SIZE => MAX_MEMORY_SIZE,
+                None => MAX_MEMORY_SIZE,
+                Some(x) => x,
+            });
         }
     }
 
@@ -384,7 +392,7 @@ impl<T> Vec<T> {
         }
     }
 
-    /// Convert the vector into Box<[T]>.
+    /// Converts the vector into Box<[T]>.
     ///
     /// Note that this will drop any excess capacity. Calling this and
     /// converting back to a vector with `into_vec()` is equivalent to calling
@@ -425,7 +433,7 @@ impl<T> Vec<T> {
         }
     }
 
-    /// Extract a slice containing the entire vector.
+    /// Extracts a slice containing the entire vector.
     #[inline]
     #[unstable(feature = "convert",
                reason = "waiting on RFC revision")]
@@ -439,37 +447,6 @@ impl<T> Vec<T> {
                reason = "waiting on RFC revision")]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self[..]
-    }
-
-    /// Creates a consuming iterator, that is, one that moves each value out of
-    /// the vector (from start to end). The vector cannot be used after calling
-    /// this.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let v = vec!["a".to_string(), "b".to_string()];
-    /// for s in v.into_iter() {
-    ///     // s has type String, not &String
-    ///     println!("{}", s);
-    /// }
-    /// ```
-    #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn into_iter(self) -> IntoIter<T> {
-        unsafe {
-            let ptr = *self.ptr;
-            assume(!ptr.is_null());
-            let cap = self.cap;
-            let begin = ptr as *const T;
-            let end = if mem::size_of::<T>() == 0 {
-                (ptr as usize + self.len()) as *const T
-            } else {
-                ptr.offset(self.len() as isize) as *const T
-            };
-            mem::forget(self);
-            IntoIter { allocation: ptr, cap: cap, ptr: begin, end: end }
-        }
     }
 
     /// Sets the length of a vector.
@@ -525,8 +502,7 @@ impl<T> Vec<T> {
     ///
     /// # Panics
     ///
-    /// Panics if `index` is not between `0` and the vector's length (both
-    /// bounds inclusive).
+    /// Panics if `index` is greater than the vector's length.
     ///
     /// # Examples
     ///
@@ -648,8 +624,11 @@ impl<T> Vec<T> {
         #[inline(never)]
         fn resize<T>(vec: &mut Vec<T>) {
             let old_size = vec.cap * mem::size_of::<T>();
-            let size = max(old_size, 2 * mem::size_of::<T>()) * 2;
-            if old_size > size { panic!("capacity overflow") }
+            if old_size >= MAX_MEMORY_SIZE { panic!("capacity overflow") }
+            let mut size = max(old_size, 2 * mem::size_of::<T>()) * 2;
+            if old_size > size || size > MAX_MEMORY_SIZE {
+                size = MAX_MEMORY_SIZE;
+            }
             unsafe {
                 let ptr = alloc_or_realloc(*vec.ptr, old_size, size);
                 if ptr.is_null() { ::alloc::oom() }
@@ -1501,8 +1480,34 @@ impl<T> IntoIterator for Vec<T> {
     type Item = T;
     type IntoIter = IntoIter<T>;
 
+    /// Creates a consuming iterator, that is, one that moves each value out of
+    /// the vector (from start to end). The vector cannot be used after calling
+    /// this.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let v = vec!["a".to_string(), "b".to_string()];
+    /// for s in v.into_iter() {
+    ///     // s has type String, not &String
+    ///     println!("{}", s);
+    /// }
+    /// ```
+    #[inline]
     fn into_iter(self) -> IntoIter<T> {
-        self.into_iter()
+        unsafe {
+            let ptr = *self.ptr;
+            assume(!ptr.is_null());
+            let cap = self.cap;
+            let begin = ptr as *const T;
+            let end = if mem::size_of::<T>() == 0 {
+                (ptr as usize + self.len()) as *const T
+            } else {
+                ptr.offset(self.len() as isize) as *const T
+            };
+            mem::forget(self);
+            IntoIter { allocation: ptr, cap: cap, ptr: begin, end: end }
+        }
     }
 }
 
@@ -1583,18 +1588,6 @@ impl<T: Ord> Ord for Vec<T> {
     #[inline]
     fn cmp(&self, other: &Vec<T>) -> Ordering {
         Ord::cmp(&**self, &**other)
-    }
-}
-
-#[unstable(feature = "collections",
-           reason = "will be replaced by slice syntax")]
-#[deprecated(since = "1.0.0", reason = "use &mut s[..] instead")]
-#[allow(deprecated)]
-impl<T> AsSlice<T> for Vec<T> {
-    /// Deprecated: use `&mut s[..]` instead.
-    #[inline]
-    fn as_slice(&self) -> &[T] {
-        self
     }
 }
 
@@ -1925,7 +1918,7 @@ impl<'a, T> Drop for DerefVec<'a, T> {
     }
 }
 
-/// Convert a slice to a wrapper type providing a `&Vec<T>` reference.
+/// Converts a slice to a wrapper type providing a `&Vec<T>` reference.
 #[unstable(feature = "collections")]
 pub fn as_vec<'a, T>(x: &'a [T]) -> DerefVec<'a, T> {
     unsafe {

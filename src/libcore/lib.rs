@@ -38,7 +38,7 @@
 //!   provided by the [rlibc crate](https://crates.io/crates/rlibc).
 //!
 //! * `rust_begin_unwind` - This function takes three arguments, a
-//!   `fmt::Arguments`, a `&str`, and a `usize`. These three arguments dictate
+//!   `fmt::Arguments`, a `&str`, and a `u32`. These three arguments dictate
 //!   the panic message, the file at which panic was invoked, and the line.
 //!   It is up to consumers of this core library to define this panic
 //!   function; it is only required to never return.
@@ -108,6 +108,7 @@ mod uint_macros;
 #[path = "num/f32.rs"]   pub mod f32;
 #[path = "num/f64.rs"]   pub mod f64;
 
+#[macro_use]
 pub mod num;
 
 /* The libcore prelude, not as all-encompassing as the libstd prelude */
@@ -157,6 +158,7 @@ mod tuple;
 
 #[doc(hidden)]
 mod core {
+    pub use intrinsics;
     pub use panicking;
     pub use fmt;
     pub use clone;

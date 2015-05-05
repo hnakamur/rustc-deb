@@ -863,12 +863,15 @@ pub mod types {
                     pub sa_data: [u8; 14],
                 }
                 #[repr(C)]
-                #[derive(Copy, Clone)] pub struct sockaddr_storage {
+                #[derive(Copy)] pub struct sockaddr_storage {
                     pub ss_len: u8,
                     pub ss_family: sa_family_t,
                     pub __ss_pad1: [u8; 6],
                     pub __ss_align: i64,
                     pub __ss_pad2: [u8; 112],
+                }
+                impl ::core::clone::Clone for sockaddr_storage {
+                    fn clone(&self) -> sockaddr_storage { *self }
                 }
                 #[repr(C)]
                 #[derive(Copy, Clone)] pub struct sockaddr_in {
@@ -917,10 +920,13 @@ pub mod types {
                     pub ai_next: *mut addrinfo,
                 }
                 #[repr(C)]
-                #[derive(Copy, Clone)] pub struct sockaddr_un {
+                #[derive(Copy)] pub struct sockaddr_un {
                     pub sun_len: u8,
                     pub sun_family: sa_family_t,
                     pub sun_path: [c_char; 104]
+                }
+                impl ::core::clone::Clone for sockaddr_un {
+                    fn clone(&self) -> sockaddr_un { *self }
                 }
                 #[repr(C)]
                 #[derive(Copy, Clone)] pub struct ifaddrs {
@@ -1125,12 +1131,15 @@ pub mod types {
                     pub sa_data: [u8; 14],
                 }
                 #[repr(C)]
-                #[derive(Copy, Clone)] pub struct sockaddr_storage {
+                #[derive(Copy)] pub struct sockaddr_storage {
                     pub ss_len: u8,
                     pub ss_family: sa_family_t,
                     pub __ss_pad1: [u8; 6],
                     pub __ss_align: i64,
                     pub __ss_pad2: [u8; 112],
+                }
+                impl ::core::clone::Clone for sockaddr_storage {
+                    fn clone(&self) -> sockaddr_storage { *self }
                 }
                 #[repr(C)]
                 #[derive(Copy, Clone)] pub struct sockaddr_in {
@@ -1179,10 +1188,13 @@ pub mod types {
                     pub ai_next: *mut addrinfo,
                 }
                 #[repr(C)]
-                #[derive(Copy, Clone)] pub struct sockaddr_un {
+                #[derive(Copy)] pub struct sockaddr_un {
                     pub sun_len: u8,
                     pub sun_family: sa_family_t,
                     pub sun_path: [c_char; 104]
+                }
+                impl ::core::clone::Clone for sockaddr_un {
+                    fn clone(&self) -> sockaddr_un { *self }
                 }
                 #[repr(C)]
                 #[derive(Copy, Clone)] pub struct ifaddrs {
@@ -1405,12 +1417,15 @@ pub mod types {
                     pub sa_data: [u8; 14],
                 }
                 #[repr(C)]
-                #[derive(Copy, Clone)] pub struct sockaddr_storage {
+                #[derive(Copy)] pub struct sockaddr_storage {
                     pub ss_len: u8,
                     pub ss_family: sa_family_t,
                     pub __ss_pad1: [u8; 6],
                     pub __ss_pad2: i64,
                     pub __ss_pad3: [u8; 240],
+                }
+                impl ::core::clone::Clone for sockaddr_storage {
+                    fn clone(&self) -> sockaddr_storage { *self }
                 }
                 #[repr(C)]
                 #[derive(Copy, Clone)] pub struct sockaddr_in {
@@ -1459,10 +1474,13 @@ pub mod types {
                     pub ai_next: *mut addrinfo,
                 }
                 #[repr(C)]
-                #[derive(Copy, Clone)] pub struct sockaddr_un {
+                #[derive(Copy)] pub struct sockaddr_un {
                     pub sun_len: u8,
                     pub sun_family: sa_family_t,
                     pub sun_path: [c_char; 104]
+                }
+                impl ::core::clone::Clone for sockaddr_un {
+                    fn clone(&self) -> sockaddr_un { *self }
                 }
                 #[repr(C)]
                 #[derive(Copy, Clone)] pub struct ifaddrs {
@@ -2838,6 +2856,7 @@ pub mod consts {
             pub const O_APPEND : c_int = 1024;
             pub const O_CREAT : c_int = 64;
             pub const O_EXCL : c_int = 128;
+            pub const O_NOCTTY : c_int = 256;
             pub const O_TRUNC : c_int = 512;
             pub const S_IFIFO : mode_t = 4096;
             pub const S_IFCHR : mode_t = 8192;
@@ -3059,6 +3078,7 @@ pub mod consts {
             pub const O_APPEND : c_int = 8;
             pub const O_CREAT : c_int = 256;
             pub const O_EXCL : c_int = 1024;
+            pub const O_NOCTTY : c_int = 2048;
             pub const O_TRUNC : c_int = 512;
             pub const S_IFIFO : mode_t = 4096;
             pub const S_IFCHR : mode_t = 8192;
@@ -3116,7 +3136,7 @@ pub mod consts {
             pub const MAP_FIXED : c_int = 0x0010;
             pub const MAP_ANON : c_int = 0x0800;
 
-            pub const MAP_FAILED : *mut c_void = -1 as *mut c_void;
+            pub const MAP_FAILED : *mut c_void = !0 as *mut c_void;
 
             pub const MCL_CURRENT : c_int = 0x0001;
             pub const MCL_FUTURE : c_int = 0x0002;
@@ -3325,6 +3345,8 @@ pub mod consts {
             pub const _SC_XOPEN_LEGACY : c_int = 129;
             pub const _SC_XOPEN_REALTIME : c_int = 130;
             pub const _SC_XOPEN_REALTIME_THREADS : c_int = 131;
+
+
 
             pub const PTHREAD_CREATE_JOINABLE: c_int = 0;
             pub const PTHREAD_CREATE_DETACHED: c_int = 1;
@@ -3709,12 +3731,14 @@ pub mod consts {
             pub const _SC_2_FORT_RUN : c_int = 50;
             pub const _SC_2_SW_DEV : c_int = 51;
             pub const _SC_2_LOCALEDEF : c_int = 52;
+            pub const _SC_NPROCESSORS_ONLN : c_int = 84;
             pub const _SC_2_CHAR_TERM : c_int = 95;
             pub const _SC_2_C_VERSION : c_int = 96;
             pub const _SC_2_UPE : c_int = 97;
             pub const _SC_XBS5_ILP32_OFF32 : c_int = 125;
             pub const _SC_XBS5_ILP32_OFFBIG : c_int = 126;
             pub const _SC_XBS5_LPBIG_OFFBIG : c_int = 128;
+
         }
         #[cfg(target_os = "nacl")]
         pub mod sysconf {
@@ -3724,6 +3748,13 @@ pub mod consts {
             pub static _SC_NPROCESSORS_ONLN : c_int = 1;
             pub static _SC_PAGESIZE : c_int = 2;
         }
+
+        #[cfg(target_os = "macos")]
+        pub mod sysconf {
+            use types::os::arch::c95::c_int;
+            pub static _SC_NPROCESSORS_ONLN : c_int = 58;
+        }
+
         #[cfg(target_os = "android")]
         pub mod sysconf {
             use types::os::arch::c95::c_int;
@@ -3795,6 +3826,7 @@ pub mod consts {
             pub const O_APPEND : c_int = 8;
             pub const O_CREAT : c_int = 512;
             pub const O_EXCL : c_int = 2048;
+            pub const O_NOCTTY : c_int = 32768;
             pub const O_TRUNC : c_int = 1024;
             pub const S_IFIFO : mode_t = 4096;
             pub const S_IFCHR : mode_t = 8192;
@@ -3852,7 +3884,7 @@ pub mod consts {
             pub const MAP_FIXED : c_int = 0x0010;
             pub const MAP_ANON : c_int = 0x1000;
 
-            pub const MAP_FAILED : *mut c_void = -1 as *mut c_void;
+            pub const MAP_FAILED : *mut c_void = !0 as *mut c_void;
 
             pub const MCL_CURRENT : c_int = 0x0001;
             pub const MCL_FUTURE : c_int = 0x0002;
@@ -4249,6 +4281,7 @@ pub mod consts {
             pub const O_APPEND : c_int = 8;
             pub const O_CREAT : c_int = 512;
             pub const O_EXCL : c_int = 2048;
+            pub const O_NOCTTY : c_int = 32768;
             pub const O_TRUNC : c_int = 1024;
             pub const S_IFIFO : mode_t = 4096;
             pub const S_IFCHR : mode_t = 8192;
@@ -4306,7 +4339,7 @@ pub mod consts {
             pub const MAP_FIXED : c_int = 0x0010;
             pub const MAP_ANON : c_int = 0x1000;
 
-            pub const MAP_FAILED : *mut c_void = -1 as *mut c_void;
+            pub const MAP_FAILED : *mut c_void = !0 as *mut c_void;
 
             pub const MCL_CURRENT : c_int = 0x0001;
             pub const MCL_FUTURE : c_int = 0x0002;
@@ -4669,6 +4702,7 @@ pub mod consts {
             pub const O_APPEND : c_int = 8;
             pub const O_CREAT : c_int = 512;
             pub const O_EXCL : c_int = 2048;
+            pub const O_NOCTTY : c_int = 131072;
             pub const O_TRUNC : c_int = 1024;
             pub const S_IFIFO : mode_t = 4096;
             pub const S_IFCHR : mode_t = 8192;

@@ -105,11 +105,18 @@ pub struct Process {
     handle: Handle,
 }
 
+pub enum Stdio {
+    Inherit,
+    Piped(AnonPipe),
+    None,
+}
+
 impl Process {
     #[allow(deprecated)]
     pub fn spawn(cfg: &Command,
-                 in_fd: Option<AnonPipe>, out_fd: Option<AnonPipe>, err_fd: Option<AnonPipe>)
-                 -> io::Result<Process>
+                 in_fd: Stdio,
+                 out_fd: Stdio,
+                 err_fd: Stdio) -> io::Result<Process>
     {
         use libc::types::os::arch::extra::{DWORD, HANDLE, STARTUPINFO};
         use libc::consts::os::extra::{
@@ -133,7 +140,7 @@ impl Process {
         // read the *child's* PATH if one is provided. See #15149 for more details.
         let program = cfg.env.as_ref().and_then(|env| {
             for (key, v) in env {
-                if OsStr::from_str("PATH") != &**key { continue }
+                if OsStr::new("PATH") != &**key { continue }
 
                 // Split the value and test each path to see if the
                 // program exists.
@@ -156,13 +163,16 @@ impl Process {
 
             let cur_proc = GetCurrentProcess();
 
-            // Similarly to unix, we don't actually leave holes for the stdio file
-            // descriptors, but rather open up /dev/null equivalents. These
-            // equivalents are drawn from libuv's windows process spawning.
-            let set_fd = |fd: &Option<AnonPipe>, slot: &mut HANDLE,
+            let set_fd = |fd: &Stdio, slot: &mut HANDLE,
                           is_stdin: bool| {
                 match *fd {
-                    None => {
+                    Stdio::Inherit => {}
+
+                    // Similarly to unix, we don't actually leave holes for the
+                    // stdio file descriptors, but rather open up /dev/null
+                    // equivalents. These equivalents are drawn from libuv's
+                    // windows process spawning.
+                    Stdio::None => {
                         let access = if is_stdin {
                             libc::FILE_GENERIC_READ
                         } else {
@@ -188,11 +198,8 @@ impl Process {
                             return Err(Error::last_os_error())
                         }
                     }
-                    Some(ref pipe) => {
-                        let orig = pipe.raw();
-                        if orig == INVALID_HANDLE_VALUE {
-                            return Err(Error::last_os_error())
-                        }
+                    Stdio::Piped(ref pipe) => {
+                        let orig = pipe.handle().raw();
                         if DuplicateHandle(cur_proc, orig, cur_proc, slot,
                                            0, TRUE, DUPLICATE_SAME_ACCESS) == FALSE {
                             return Err(Error::last_os_error())
@@ -235,9 +242,15 @@ impl Process {
                 })
             });
 
-            assert!(CloseHandle(si.hStdInput) != 0);
-            assert!(CloseHandle(si.hStdOutput) != 0);
-            assert!(CloseHandle(si.hStdError) != 0);
+            if !in_fd.inherited() {
+                assert!(CloseHandle(si.hStdInput) != 0);
+            }
+            if !out_fd.inherited() {
+                assert!(CloseHandle(si.hStdOutput) != 0);
+            }
+            if !err_fd.inherited() {
+                assert!(CloseHandle(si.hStdError) != 0);
+            }
 
             match create_err {
                 Some(err) => return Err(err),
@@ -293,6 +306,12 @@ impl Process {
                 }
             }
         }
+    }
+}
+
+impl Stdio {
+    fn inherited(&self) -> bool {
+        match *self { Stdio::Inherit => true, _ => false }
     }
 }
 
@@ -362,7 +381,7 @@ fn make_command_line(prog: &OsStr, args: &[OsString]) -> Vec<u16> {
         // it will be dropped entirely when parsed on the other end.
         let arg_bytes = &arg.as_inner().inner.as_inner();
         let quote = arg_bytes.iter().any(|c| *c == b' ' || *c == b'\t')
-            || arg_bytes.len() == 0;
+            || arg_bytes.is_empty();
         if quote {
             cmd.push('"' as u16);
         }
@@ -444,7 +463,7 @@ mod tests {
     fn test_make_command_line() {
         fn test_wrapper(prog: &str, args: &[&str]) -> String {
             String::from_utf16(
-                &make_command_line(OsStr::from_str(prog),
+                &make_command_line(OsStr::new(prog),
                                    &args.iter()
                                         .map(|a| OsString::from(a))
                                         .collect::<Vec<OsString>>())).unwrap()

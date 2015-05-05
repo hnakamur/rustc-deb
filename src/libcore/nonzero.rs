@@ -10,11 +10,17 @@
 
 //! Exposes the NonZero lang item which provides optimization hints.
 
-use marker::{Sized, MarkerTrait};
+use marker::Sized;
 use ops::Deref;
+#[cfg(stage0)] use marker::MarkerTrait;
 
 /// Unsafe trait to indicate what types are usable with the NonZero struct
-pub unsafe trait Zeroable : MarkerTrait {}
+#[cfg(not(stage0))]
+pub unsafe trait Zeroable {}
+
+/// Unsafe trait to indicate what types are usable with the NonZero struct
+#[cfg(stage0)]
+pub unsafe trait Zeroable: MarkerTrait {}
 
 unsafe impl<T:?Sized> Zeroable for *const T {}
 unsafe impl<T:?Sized> Zeroable for *mut T {}
@@ -37,7 +43,7 @@ unsafe impl Zeroable for u64 {}
 pub struct NonZero<T: Zeroable>(T);
 
 impl<T: Zeroable> NonZero<T> {
-    /// Create an instance of NonZero with the provided value.
+    /// Creates an instance of NonZero with the provided value.
     /// You must indeed ensure that the value is actually "non-zero".
     #[inline(always)]
     pub unsafe fn new(inner: T) -> NonZero<T> {

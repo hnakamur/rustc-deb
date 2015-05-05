@@ -248,7 +248,7 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
 
             def::DefFn(..) => Some(recorder::FnRef),
 
-            def::DefSelfTy(_) |
+            def::DefSelfTy(..) |
             def::DefRegion(_) |
             def::DefLabel(_) |
             def::DefTyParam(..) |
@@ -263,7 +263,7 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
 
     fn process_formals(&mut self, formals: &Vec<ast::Arg>, qualname: &str) {
         for arg in formals {
-            assert!(self.collected_paths.len() == 0 && !self.collecting);
+            assert!(self.collected_paths.is_empty() && !self.collecting);
             self.collecting = true;
             self.visit_pat(&*arg.pat);
             self.collecting = false;
@@ -288,7 +288,7 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
 
     fn process_method(&mut self, sig: &ast::MethodSig,
                       body: Option<&ast::Block>,
-                      id: ast::NodeId, ident: ast::Ident,
+                      id: ast::NodeId, name: ast::Name,
                       span: Span) {
         if generated_code(span) {
             return;
@@ -354,7 +354,7 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
             },
         };
 
-        let qualname = &format!("{}::{}", qualname, &get_ident(ident));
+        let qualname = &format!("{}::{}", qualname, &token::get_name(name));
 
         // record the decl for this def (if it has one)
         let decl_id = ty::trait_item_of_item(&self.analysis.ty_cx,
@@ -1119,7 +1119,7 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DxrVisitor<'l, 'tcx> {
                         let glob_map = glob_map.as_ref().unwrap();
                         if glob_map.contains_key(&item.id) {
                             for n in glob_map.get(&item.id).unwrap() {
-                                if name_string.len() > 0 {
+                                if !name_string.is_empty() {
                                     name_string.push_str(", ");
                                 }
                                 name_string.push_str(n.as_str());
@@ -1238,7 +1238,7 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DxrVisitor<'l, 'tcx> {
         match trait_item.node {
             ast::MethodTraitItem(ref sig, ref body) => {
                 self.process_method(sig, body.as_ref().map(|x| &**x),
-                                    trait_item.id, trait_item.ident, trait_item.span);
+                                    trait_item.id, trait_item.ident.name, trait_item.span);
             }
             ast::TypeTraitItem(..) => {}
         }
@@ -1248,7 +1248,7 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DxrVisitor<'l, 'tcx> {
         match impl_item.node {
             ast::MethodImplItem(ref sig, ref body) => {
                 self.process_method(sig, Some(body), impl_item.id,
-                                    impl_item.ident, impl_item.span);
+                                    impl_item.ident.name, impl_item.span);
             }
             ast::TypeImplItem(_) |
             ast::MacImplItem(_) => {}
@@ -1394,7 +1394,7 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DxrVisitor<'l, 'tcx> {
     }
 
     fn visit_arm(&mut self, arm: &ast::Arm) {
-        assert!(self.collected_paths.len() == 0 && !self.collecting);
+        assert!(self.collected_paths.is_empty() && !self.collecting);
         self.collecting = true;
         for pattern in &arm.pats {
             // collect paths from the arm's patterns
@@ -1462,7 +1462,7 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DxrVisitor<'l, 'tcx> {
 
         // The local could declare multiple new vars, we must walk the
         // pattern and collect them all.
-        assert!(self.collected_paths.len() == 0 && !self.collecting);
+        assert!(self.collected_paths.is_empty() && !self.collecting);
         self.collecting = true;
         self.visit_pat(&*l.pat);
         self.collecting = false;

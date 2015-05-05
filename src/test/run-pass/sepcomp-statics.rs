@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-bitrig
 // compile-flags: -C codegen-units=3
 
 // Test references to static items across compilation units.
 
-// pretty-expanded FIXME #23616
 
 fn pad() -> usize { 0 }
 

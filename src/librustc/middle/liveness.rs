@@ -248,12 +248,12 @@ struct CaptureInfo {
 #[derive(Copy, Clone, Debug)]
 struct LocalInfo {
     id: NodeId,
-    ident: ast::Ident
+    name: ast::Name
 }
 
 #[derive(Copy, Clone, Debug)]
 enum VarKind {
-    Arg(NodeId, ast::Ident),
+    Arg(NodeId, ast::Name),
     Local(LocalInfo),
     ImplicitRet,
     CleanExit
@@ -334,8 +334,8 @@ impl<'a, 'tcx> IrMaps<'a, 'tcx> {
 
     fn variable_name(&self, var: Variable) -> String {
         match self.var_kinds[var.get()] {
-            Local(LocalInfo { ident: nm, .. }) | Arg(_, nm) => {
-                token::get_ident(nm).to_string()
+            Local(LocalInfo { name, .. }) | Arg(_, name) => {
+                token::get_name(name).to_string()
             },
             ImplicitRet => "<implicit-ret>".to_string(),
             CleanExit => "<clean-exit>".to_string()
@@ -385,8 +385,8 @@ fn visit_fn(ir: &mut IrMaps,
                                &*arg.pat,
                                |_bm, arg_id, _x, path1| {
             debug!("adding argument {}", arg_id);
-            let ident = path1.node;
-            fn_maps.add_variable(Arg(arg_id, ident));
+            let name = path1.node.name;
+            fn_maps.add_variable(Arg(arg_id, name));
         })
     };
 
@@ -418,11 +418,11 @@ fn visit_fn(ir: &mut IrMaps,
 fn visit_local(ir: &mut IrMaps, local: &ast::Local) {
     pat_util::pat_bindings(&ir.tcx.def_map, &*local.pat, |_, p_id, sp, path1| {
         debug!("adding local variable {}", p_id);
-        let name = path1.node;
+        let name = path1.node.name;
         ir.add_live_node_for_node(p_id, VarDefNode(sp));
         ir.add_variable(Local(LocalInfo {
           id: p_id,
-          ident: name
+          name: name
         }));
     });
     visit::walk_local(ir, local);
@@ -433,11 +433,11 @@ fn visit_arm(ir: &mut IrMaps, arm: &ast::Arm) {
         pat_util::pat_bindings(&ir.tcx.def_map, &**pat, |bm, p_id, sp, path1| {
             debug!("adding local variable {} from match with bm {:?}",
                    p_id, bm);
-            let name = path1.node;
+            let name = path1.node.name;
             ir.add_live_node_for_node(p_id, VarDefNode(sp));
             ir.add_variable(Local(LocalInfo {
                 id: p_id,
-                ident: name
+                name: name
             }));
         })
     }
@@ -716,7 +716,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
             None => {
                 // Vanilla 'break' or 'loop', so use the enclosing
                 // loop scope
-                if self.loop_scope.len() == 0 {
+                if self.loop_scope.is_empty() {
                     self.ir.tcx.sess.span_bug(sp, "break outside loop");
                 } else {
                     *self.loop_scope.last().unwrap()
@@ -1527,7 +1527,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                     // for nil return types, it is ok to not return a value expl.
                 } else {
                     let ends_with_stmt = match body.expr {
-                        None if body.stmts.len() > 0 =>
+                        None if !body.stmts.is_empty() =>
                             match body.stmts.first().unwrap().node {
                                 ast::StmtSemi(ref e, _) => {
                                     ty::expr_ty(self.ir.tcx, &**e) == t_ret
@@ -1586,7 +1586,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
     fn should_warn(&self, var: Variable) -> Option<String> {
         let name = self.ir.variable_name(var);
-        if name.len() == 0 || name.as_bytes()[0] == ('_' as u8) {
+        if name.is_empty() || name.as_bytes()[0] == ('_' as u8) {
             None
         } else {
             Some(name)

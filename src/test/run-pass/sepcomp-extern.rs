@@ -8,12 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-bitrig
 // compile-flags: -C codegen-units=3
 // aux-build:sepcomp-extern-lib.rs
 
 // Test accessing external items from multiple compilation units.
 
-// pretty-expanded FIXME #23616
 
 #[link(name = "sepcomp_extern_lib")]
 extern {

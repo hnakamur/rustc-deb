@@ -19,13 +19,13 @@ use io::prelude::*;
 use ffi::OsStr;
 use fmt;
 use io::{self, Error, ErrorKind};
-use libc;
 use path;
 use sync::mpsc::{channel, Receiver};
 use sys::pipe2::{self, AnonPipe};
 use sys::process2::Command as CommandImp;
 use sys::process2::Process as ProcessImp;
 use sys::process2::ExitStatus as ExitStatusImp;
+use sys::process2::Stdio as StdioImp2;
 use sys_common::{AsInner, AsInnerMut};
 use thread;
 
@@ -38,8 +38,6 @@ use thread;
 /// # Examples
 ///
 /// ```should_panic
-/// # #![feature(process)]
-///
 /// use std::process::Command;
 ///
 /// let output = Command::new("/bin/cat").arg("file.txt").output().unwrap_or_else(|e| {
@@ -196,7 +194,7 @@ impl Command {
         self
     }
 
-    /// Set the working directory for the child process.
+    /// Sets the working directory for the child process.
     #[stable(feature = "process", since = "1.0.0")]
     pub fn current_dir<P: AsRef<path::Path>>(&mut self, dir: P) -> &mut Command {
         self.inner.cwd(dir.as_ref().as_ref());
@@ -229,13 +227,13 @@ impl Command {
 
     fn spawn_inner(&self, default_io: StdioImp) -> io::Result<Child> {
         let (their_stdin, our_stdin) = try!(
-            setup_io(self.stdin.as_ref().unwrap_or(&default_io), 0, true)
+            setup_io(self.stdin.as_ref().unwrap_or(&default_io), true)
         );
         let (their_stdout, our_stdout) = try!(
-            setup_io(self.stdout.as_ref().unwrap_or(&default_io), 1, false)
+            setup_io(self.stdout.as_ref().unwrap_or(&default_io), false)
         );
         let (their_stderr, our_stderr) = try!(
-            setup_io(self.stderr.as_ref().unwrap_or(&default_io), 2, false)
+            setup_io(self.stderr.as_ref().unwrap_or(&default_io), false)
         );
 
         match ProcessImp::spawn(&self.inner, their_stdin, their_stdout, their_stderr) {
@@ -267,10 +265,8 @@ impl Command {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(process)]
     /// use std::process::Command;
-    ///
-    /// let output = Command::new("cat").arg("foot.txt").output().unwrap_or_else(|e| {
+    /// let output = Command::new("cat").arg("foo.txt").output().unwrap_or_else(|e| {
     ///     panic!("failed to execute process: {}", e)
     /// });
     ///
@@ -291,7 +287,6 @@ impl Command {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(process)]
     /// use std::process::Command;
     ///
     /// let status = Command::new("ls").status().unwrap_or_else(|e| {
@@ -328,23 +323,19 @@ impl AsInnerMut<CommandImp> for Command {
     fn as_inner_mut(&mut self) -> &mut CommandImp { &mut self.inner }
 }
 
-fn setup_io(io: &StdioImp, fd: libc::c_int, readable: bool)
-            -> io::Result<(Option<AnonPipe>, Option<AnonPipe>)>
+fn setup_io(io: &StdioImp, readable: bool)
+            -> io::Result<(StdioImp2, Option<AnonPipe>)>
 {
     use self::StdioImp::*;
     Ok(match *io {
-        Null => {
-            (None, None)
-        }
-        Inherit => {
-            (Some(AnonPipe::from_fd(fd)), None)
-        }
+        Null => (StdioImp2::None, None),
+        Inherit => (StdioImp2::Inherit, None),
         Piped => {
-            let (reader, writer) = try!(unsafe { pipe2::anon_pipe() });
+            let (reader, writer) = try!(pipe2::anon_pipe());
             if readable {
-                (Some(reader), Some(writer))
+                (StdioImp2::Piped(reader), Some(writer))
             } else {
-                (Some(writer), Some(reader))
+                (StdioImp2::Piped(writer), Some(reader))
             }
         }
     })
@@ -405,7 +396,7 @@ impl ExitStatus {
         self.0.success()
     }
 
-    /// Return the exit code of the process, if any.
+    /// Returns the exit code of the process, if any.
     ///
     /// On Unix, this will return `None` if the process was terminated
     /// by a signal; `std::os::unix` provides an extension trait for
@@ -462,7 +453,7 @@ impl Child {
         unsafe { self.handle.kill() }
     }
 
-    /// Wait for the child to exit completely, returning the status that it
+    /// Waits for the child to exit completely, returning the status that it
     /// exited with. This function will continue to have the same return value
     /// after it has been called at least once.
     ///
@@ -483,7 +474,7 @@ impl Child {
         }
     }
 
-    /// Simultaneously wait for the child to exit and collect all remaining
+    /// Simultaneously waits for the child to exit and collect all remaining
     /// output on the stdout/stderr handles, returning a `Output`
     /// instance.
     ///
@@ -543,8 +534,6 @@ mod tests {
     use io::prelude::*;
 
     use io::ErrorKind;
-    use old_path::{self, GenericPath};
-    use old_io::fs::PathExtensions;
     use rt::running_on_valgrind;
     use str;
     use super::{Command, Output, Stdio};
@@ -755,43 +744,6 @@ mod tests {
         let mut cmd = Command::new("cmd");
         cmd.arg("/c").arg("cd");
         cmd
-    }
-
-    #[cfg(not(target_arch = "aarch64"))]
-    #[test]
-    fn test_keep_current_working_dir() {
-        use os;
-        let prog = pwd_cmd().spawn().unwrap();
-
-        let output = String::from_utf8(prog.wait_with_output().unwrap().stdout).unwrap();
-        let parent_dir = ::env::current_dir().unwrap().to_str().unwrap().to_string();
-        let parent_dir = old_path::Path::new(parent_dir);
-        let child_dir = old_path::Path::new(output.trim());
-
-        let parent_stat = parent_dir.stat().unwrap();
-        let child_stat = child_dir.stat().unwrap();
-
-        assert_eq!(parent_stat.unstable.device, child_stat.unstable.device);
-        assert_eq!(parent_stat.unstable.inode, child_stat.unstable.inode);
-    }
-
-    #[test]
-    fn test_change_working_directory() {
-        use os;
-        // test changing to the parent of os::getcwd() because we know
-        // the path exists (and os::getcwd() is not expected to be root)
-        let parent_dir = ::env::current_dir().unwrap().to_str().unwrap().to_string();
-        let parent_dir = old_path::Path::new(parent_dir).dir_path();
-        let result = pwd_cmd().current_dir(parent_dir.as_str().unwrap()).output().unwrap();
-
-        let output = String::from_utf8(result.stdout).unwrap();
-        let child_dir = old_path::Path::new(output.trim());
-
-        let parent_stat = parent_dir.stat().unwrap();
-        let child_stat = child_dir.stat().unwrap();
-
-        assert_eq!(parent_stat.unstable.device, child_stat.unstable.device);
-        assert_eq!(parent_stat.unstable.inode, child_stat.unstable.inode);
     }
 
     #[cfg(all(unix, not(target_os="android")))]

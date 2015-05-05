@@ -16,15 +16,14 @@
 
 use core::prelude::*;
 
-use core::default::Default;
 use core::fmt;
 use core::hash;
-use core::iter::{IntoIterator, FromIterator};
+use core::iter::FromIterator;
 use core::mem;
 use core::ops::{self, Deref, Add, Index};
 use core::ptr;
 use core::slice;
-use core::str::Pattern;
+use core::str::pattern::Pattern;
 use unicode::str as unicode_str;
 use unicode::str::Utf16Item;
 
@@ -132,7 +131,7 @@ impl String {
     ///
     /// let invalid_vec = vec![240, 144, 128];
     /// let s = String::from_utf8(invalid_vec).err().unwrap();
-    /// assert_eq!(s.utf8_error(), Utf8Error::TooShort);
+    /// let err = s.utf8_error();
     /// assert_eq!(s.into_bytes(), [240, 144, 128]);
     /// ```
     #[inline]
@@ -156,14 +155,10 @@ impl String {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn from_utf8_lossy<'a>(v: &'a [u8]) -> Cow<'a, str> {
-        let mut i = 0;
+        let mut i;
         match str::from_utf8(v) {
             Ok(s) => return Cow::Borrowed(s),
-            Err(e) => {
-                if let Utf8Error::InvalidByte(firstbad) = e {
-                    i = firstbad;
-                }
-            }
+            Err(e) => i = e.valid_up_to(),
         }
 
         const TAG_CONT_U8: u8 = 128;
@@ -188,9 +183,9 @@ impl String {
             };
         }
 
-        // subseqidx is the index of the first byte of the subsequence we're looking at.
-        // It's used to copy a bunch of contiguous good codepoints at once instead of copying
-        // them one by one.
+        // subseqidx is the index of the first byte of the subsequence we're
+        // looking at.  It's used to copy a bunch of contiguous good codepoints
+        // at once instead of copying them one by one.
         let mut subseqidx = i;
 
         while i < total {
@@ -347,7 +342,7 @@ impl String {
         String { vec: bytes }
     }
 
-    /// Return the underlying byte buffer, encoded as UTF-8.
+    /// Returns the underlying byte buffer, encoded as UTF-8.
     ///
     /// # Examples
     ///
@@ -363,7 +358,7 @@ impl String {
         self.vec
     }
 
-    /// Extract a string slice containing the entire string.
+    /// Extracts a string slice containing the entire string.
     #[inline]
     #[unstable(feature = "convert",
                reason = "waiting on RFC revision")]
@@ -607,7 +602,7 @@ impl String {
         ch
     }
 
-    /// Insert a character into the string buffer at byte position `idx`.
+    /// Inserts a character into the string buffer at byte position `idx`.
     ///
     /// # Warning
     ///
@@ -662,7 +657,7 @@ impl String {
         &mut self.vec
     }
 
-    /// Return the number of bytes in this string.
+    /// Returns the number of bytes in this string.
     ///
     /// # Examples
     ///
@@ -705,12 +700,12 @@ impl String {
 }
 
 impl FromUtf8Error {
-    /// Consume this error, returning the bytes that were attempted to make a
+    /// Consumes this error, returning the bytes that were attempted to make a
     /// `String` with.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn into_bytes(self) -> Vec<u8> { self.bytes }
 
-    /// Access the underlying UTF8-error that was the cause of this error.
+    /// Accesss the underlying UTF8-error that was the cause of this error.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn utf8_error(&self) -> Utf8Error { self.error }
 }
@@ -796,9 +791,9 @@ impl<'a, 'b> Pattern<'a> for &'b String {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl PartialEq for String {
     #[inline]
-    fn eq(&self, other: &String) -> bool { PartialEq::eq(&**self, &**other) }
+    fn eq(&self, other: &String) -> bool { PartialEq::eq(&self[..], &other[..]) }
     #[inline]
-    fn ne(&self, other: &String) -> bool { PartialEq::ne(&**self, &**other) }
+    fn ne(&self, other: &String) -> bool { PartialEq::ne(&self[..], &other[..]) }
 }
 
 macro_rules! impl_eq {
@@ -806,48 +801,41 @@ macro_rules! impl_eq {
         #[stable(feature = "rust1", since = "1.0.0")]
         impl<'a> PartialEq<$rhs> for $lhs {
             #[inline]
-            fn eq(&self, other: &$rhs) -> bool { PartialEq::eq(&**self, &**other) }
+            fn eq(&self, other: &$rhs) -> bool { PartialEq::eq(&self[..], &other[..]) }
             #[inline]
-            fn ne(&self, other: &$rhs) -> bool { PartialEq::ne(&**self, &**other) }
+            fn ne(&self, other: &$rhs) -> bool { PartialEq::ne(&self[..], &other[..]) }
         }
 
         #[stable(feature = "rust1", since = "1.0.0")]
         impl<'a> PartialEq<$lhs> for $rhs {
             #[inline]
-            fn eq(&self, other: &$lhs) -> bool { PartialEq::eq(&**self, &**other) }
+            fn eq(&self, other: &$lhs) -> bool { PartialEq::eq(&self[..], &other[..]) }
             #[inline]
-            fn ne(&self, other: &$lhs) -> bool { PartialEq::ne(&**self, &**other) }
+            fn ne(&self, other: &$lhs) -> bool { PartialEq::ne(&self[..], &other[..]) }
         }
 
     }
 }
 
+impl_eq! { String, str }
 impl_eq! { String, &'a str }
+impl_eq! { Cow<'a, str>, str }
 impl_eq! { Cow<'a, str>, String }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, 'b> PartialEq<&'b str> for Cow<'a, str> {
     #[inline]
-    fn eq(&self, other: &&'b str) -> bool { PartialEq::eq(&**self, &**other) }
+    fn eq(&self, other: &&'b str) -> bool { PartialEq::eq(&self[..], &other[..]) }
     #[inline]
-    fn ne(&self, other: &&'b str) -> bool { PartialEq::ne(&**self, &**other) }
+    fn ne(&self, other: &&'b str) -> bool { PartialEq::ne(&self[..], &other[..]) }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, 'b> PartialEq<Cow<'a, str>> for &'b str {
     #[inline]
-    fn eq(&self, other: &Cow<'a, str>) -> bool { PartialEq::eq(&**self, &**other) }
+    fn eq(&self, other: &Cow<'a, str>) -> bool { PartialEq::eq(&self[..], &other[..]) }
     #[inline]
-    fn ne(&self, other: &Cow<'a, str>) -> bool { PartialEq::ne(&**self, &**other) }
-}
-
-#[unstable(feature = "collections", reason = "waiting on Str stabilization")]
-#[allow(deprecated)]
-impl Str for String {
-    #[inline]
-    fn as_slice(&self) -> &str {
-        unsafe { mem::transmute(&*self.vec) }
-    }
+    fn ne(&self, other: &Cow<'a, str>) -> bool { PartialEq::ne(&self[..], &other[..]) }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -957,7 +945,7 @@ impl<'a> Deref for DerefString<'a> {
     }
 }
 
-/// Convert a string slice to a wrapper type providing a `&String` reference.
+/// Converts a string slice to a wrapper type providing a `&String` reference.
 ///
 /// # Examples
 ///
@@ -1057,14 +1045,6 @@ impl<'a> IntoCow<'a, str> for &'a str {
     #[inline]
     fn into_cow(self) -> Cow<'a, str> {
         Cow::Borrowed(self)
-    }
-}
-
-#[allow(deprecated)]
-impl<'a> Str for Cow<'a, str> {
-    #[inline]
-    fn as_slice<'b>(&'b self) -> &'b str {
-        &**self
     }
 }
 

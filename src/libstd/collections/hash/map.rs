@@ -506,7 +506,7 @@ impl<K, V, S> HashMap<K, V, S>
 }
 
 impl<K: Hash + Eq, V> HashMap<K, V, RandomState> {
-    /// Create an empty HashMap.
+    /// Creates an empty HashMap.
     ///
     /// # Examples
     ///
@@ -563,7 +563,7 @@ impl<K, V, S> HashMap<K, V, S>
         }
     }
 
-    /// Create an empty HashMap with space for at least `capacity`
+    /// Creates an empty HashMap with space for at least `capacity`
     /// elements, using `hasher` to hash the keys.
     ///
     /// Warning: `hasher` is normally randomly generated, and
@@ -916,33 +916,6 @@ impl<K, V, S> HashMap<K, V, S>
         IterMut { inner: self.table.iter_mut() }
     }
 
-    /// Creates a consuming iterator, that is, one that moves each key-value
-    /// pair out of the map in arbitrary order. The map cannot be used after
-    /// calling this.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::collections::HashMap;
-    ///
-    /// let mut map = HashMap::new();
-    /// map.insert("a", 1);
-    /// map.insert("b", 2);
-    /// map.insert("c", 3);
-    ///
-    /// // Not possible with .iter()
-    /// let vec: Vec<(&str, isize)> = map.into_iter().collect();
-    /// ```
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn into_iter(self) -> IntoIter<K, V> {
-        fn last_two<A, B, C>((_, b, c): (A, B, C)) -> (B, C) { (b, c) }
-        let last_two: fn((SafeHash, K, V)) -> (K, V) = last_two;
-
-        IntoIter {
-            inner: self.table.into_iter().map(last_two)
-        }
-    }
-
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn entry(&mut self, key: K) -> Entry<K, V> {
@@ -1094,9 +1067,8 @@ impl<K, V, S> HashMap<K, V, S>
     ///
     /// let mut map = HashMap::new();
     /// map.insert(1, "a");
-    /// match map.get_mut(&1) {
-    ///     Some(x) => *x = "b",
-    ///     None => (),
+    /// if let Some(x) = map.get_mut(&1) {
+    ///     *x = "b";
     /// }
     /// assert_eq!(map[&1], "b");
     /// ```
@@ -1107,7 +1079,7 @@ impl<K, V, S> HashMap<K, V, S>
         self.search_mut(k).map(|bucket| bucket.into_mut_refs().1)
     }
 
-    /// Inserts a key-value pair from the map. If the key already had a value
+    /// Inserts a key-value pair into the map. If the key already had a value
     /// present in the map, that value is returned. Otherwise, `None` is returned.
     ///
     /// # Examples
@@ -1391,8 +1363,30 @@ impl<K, V, S> IntoIterator for HashMap<K, V, S>
     type Item = (K, V);
     type IntoIter = IntoIter<K, V>;
 
+    /// Creates a consuming iterator, that is, one that moves each key-value
+    /// pair out of the map in arbitrary order. The map cannot be used after
+    /// calling this.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// map.insert("c", 3);
+    ///
+    /// // Not possible with .iter()
+    /// let vec: Vec<(&str, isize)> = map.into_iter().collect();
+    /// ```
     fn into_iter(self) -> IntoIter<K, V> {
-        self.into_iter()
+        fn last_two<A, B, C>((_, b, c): (A, B, C)) -> (B, C) { (b, c) }
+        let last_two: fn((SafeHash, K, V)) -> (K, V) = last_two;
+
+        IntoIter {
+            inner: self.table.into_iter().map(last_two)
+        }
     }
 }
 
@@ -1469,7 +1463,6 @@ impl<'a, K, V> ExactSizeIterator for Drain<'a, K, V> {
 }
 
 impl<'a, K, V> Entry<'a, K, V> {
-    /// Returns a mutable reference to the entry if occupied, or the VacantEntry if vacant.
     #[unstable(feature = "std_misc",
                reason = "will soon be replaced by or_insert")]
     #[deprecated(since = "1.0",
@@ -1596,7 +1589,7 @@ pub struct RandomState {
 #[unstable(feature = "std_misc",
            reason = "hashing an hash maps may be altered")]
 impl RandomState {
-    /// Construct a new `RandomState` that is initialized with random keys.
+    /// Constructs a new `RandomState` that is initialized with random keys.
     #[inline]
     #[allow(deprecated)]
     pub fn new() -> RandomState {
@@ -1629,9 +1622,9 @@ mod test_map {
 
     use super::HashMap;
     use super::Entry::{Occupied, Vacant};
-    use iter::{range_inclusive, range_step_inclusive, repeat};
+    use iter::{range_inclusive, repeat};
     use cell::RefCell;
-    use rand::{weak_rng, Rng};
+    use rand::{thread_rng, Rng};
 
     #[test]
     fn test_create_capacity_zero() {
@@ -1865,7 +1858,7 @@ mod test_map {
             }
 
             // remove backwards
-            for i in range_step_inclusive(1000, 1, -1) {
+            for i in (1..1001).rev() {
                 assert!(m.remove(&i).is_some());
 
                 for j in range_inclusive(i, 1000) {
@@ -2290,7 +2283,7 @@ mod test_map {
         }
 
         let mut m = HashMap::new();
-        let mut rng = weak_rng();
+        let mut rng = thread_rng();
 
         // Populate the map with some items.
         for _ in 0..50 {

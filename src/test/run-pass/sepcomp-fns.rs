@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-bitrig
 // compile-flags: -C codegen-units=3
 
 // Test basic separate compilation functionality.  The functions should be able
@@ -17,7 +18,6 @@
 // Generate some code in the first compilation unit before declaring any
 // modules.  This ensures that the first module doesn't go into the same
 // compilation unit as the top-level module.
-// pretty-expanded FIXME #23616
 
 fn one() -> usize { 1 }
 

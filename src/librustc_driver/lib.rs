@@ -277,7 +277,8 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
             Some(ref code) => {
                 match descriptions.find_description(&code[..]) {
                     Some(ref description) => {
-                        println!("{}", description);
+                        // Slice off the leading newline and print.
+                        print!("{}", &description[1..]);
                     }
                     None => {
                         early_error(&format!("no extended information for {}", code));
@@ -424,7 +425,7 @@ impl RustcDefaultCalls {
                         odir: &Option<PathBuf>,
                         ofile: &Option<PathBuf>)
                         -> Compilation {
-        if sess.opts.prints.len() == 0 {
+        if sess.opts.prints.is_empty() {
             return Compilation::Continue;
         }
 
