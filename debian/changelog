@@ -6,7 +6,10 @@ rustc (1.0.0~beta.4-1~exp1) UNRELEASED; urgency=low
   * Replace duplicated compile-time dylibs with symlinks to run-time libs
     (reduces installed size by ~68MB)
 
- -- Angus Lees <gus@debian.org>  Tue, 05 May 2015 17:28:40 +1000
+  [ Sylvestre Ledru ]
+  * Replace two more occurrences of jquery by the package
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Wed, 06 May 2015 11:14:30 +0200
 
 rustc (1.0.0~alpha.2-1~exp1) experimental; urgency=low
 
