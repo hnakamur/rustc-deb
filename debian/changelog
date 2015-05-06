@@ -1,12 +1,13 @@
-rustc (1.0.0~beta.4-1~exp1) UNRELEASED; urgency=low
+rustc (1.0.0~beta.4-1~exp1) experimental; urgency=low
 
   [ Angus Lees ]
-  * New upstream release
+  * New upstream release (beta 3)
     - Drop manpage patch - now included upstream
   * Replace duplicated compile-time dylibs with symlinks to run-time libs
     (reduces installed size by ~68MB)
 
   [ Sylvestre Ledru ]
+  * New upstream release (beta 4)
   * Replace two more occurrences of jquery by the package
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Wed, 06 May 2015 11:14:30 +0200
