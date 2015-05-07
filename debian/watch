@@ -5,4 +5,6 @@ pgpsigurlmangle=s/$/.asc/,\
 uversionmangle=s/(\d)[_.+-]?((beta|alpha)\.?\d*)$/$1~$2/,\
 " \
  http://www.rust-lang.org/install.html \
- (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.gz
+ (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.gz debian \
+ debian/orig-tar.sh
+
