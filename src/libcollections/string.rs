@@ -742,8 +742,7 @@ impl<'a> FromIterator<&'a str> for String {
     }
 }
 
-#[unstable(feature = "collections",
-           reason = "waiting on Extend stabilization")]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Extend<char> for String {
     fn extend<I: IntoIterator<Item=char>>(&mut self, iterable: I) {
         let iterator = iterable.into_iter();
@@ -755,8 +754,7 @@ impl Extend<char> for String {
     }
 }
 
-#[unstable(feature = "collections",
-           reason = "waiting on Extend stabilization")]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Extend<&'a str> for String {
     fn extend<I: IntoIterator<Item=&'a str>>(&mut self, iterable: I) {
         let iterator = iterable.into_iter();
@@ -871,8 +869,7 @@ impl hash::Hash for String {
     }
 }
 
-#[unstable(feature = "collections",
-           reason = "recent addition, needs more experience")]
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Add<&'a str> for String {
     type Output = String;
 
@@ -953,23 +950,30 @@ impl<'a> Deref for DerefString<'a> {
 /// # #![feature(collections)]
 /// use std::string::as_string;
 ///
-/// fn string_consumer(s: String) {
-///     assert_eq!(s, "foo".to_string());
+/// // Let's pretend we have a function that requires `&String`
+/// fn string_consumer(s: &String) {
+///     assert_eq!(s, "foo");
 /// }
 ///
-/// let string = as_string("foo").clone();
-/// string_consumer(string);
+/// // Provide a `&String` from a `&str` without allocating
+/// string_consumer(&as_string("foo"));
 /// ```
 #[unstable(feature = "collections")]
 pub fn as_string<'a>(x: &'a str) -> DerefString<'a> {
     DerefString { x: as_vec(x.as_bytes()) }
 }
 
-#[unstable(feature = "collections", reason = "associated error type may change")]
+/// Error returned from `String::from_str`
+#[unstable(feature = "str_parse_error", reason = "may want to be replaced with \
+                                                  Void if it ever exists")]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ParseError(());
+
+#[stable(feature = "rust1", since = "1.0.0")]
 impl FromStr for String {
-    type Err = ();
+    type Err = ParseError;
     #[inline]
-    fn from_str(s: &str) -> Result<String, ()> {
+    fn from_str(s: &str) -> Result<String, ParseError> {
         Ok(String::from_str(s))
     }
 }
@@ -998,6 +1002,14 @@ impl<T: fmt::Display + ?Sized> ToString for T {
 impl AsRef<str> for String {
     fn as_ref(&self) -> &str {
         self
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl AsRef<[u8]> for String {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
     }
 }
 

@@ -304,10 +304,19 @@ absolutify() {
     local file_path="$1"
     local file_path_dirname="$(dirname "$file_path")"
     local file_path_basename="$(basename "$file_path")"
-    local file_abs_path="$(cd "$file_path_dirname" && pwd)"
+    local file_abs_path="$(abs_path "$file_path_dirname")"
     local file_path="$file_abs_path/$file_path_basename"
     # This is the return value
     RETVAL="$file_path"
+}
+
+# Prints the absolute path of a directory to stdout
+abs_path() {
+    local path="$1"
+    # Unset CDPATH because it causes havok: it makes the destination unpredictable
+    # and triggers 'cd' to print the path to stdout. Route `cd`'s output to /dev/null
+    # for good measure.
+    (unset CDPATH && cd "$path" > /dev/null && pwd)
 }
 
 get_host_triple() {
@@ -739,7 +748,7 @@ do_preflight_sanity_checks() {
     # Sanity check: don't install to the directory containing the installer.
     # That would surely cause chaos.
     verbose_msg "verifying destination is not the same as source"
-    local _prefix_dir="$(cd "$dest_prefix" && pwd)"
+    local _prefix_dir="$(abs_path "$dest_prefix")"
     if [ "$_src_dir" = "$_dest_prefix" -a "${CFG_UNINSTALL-}" != 1 ]; then
 	err "cannot install to same directory as installer"
     fi
@@ -756,6 +765,8 @@ need_cmd uname
 need_cmd tr
 need_cmd sed
 need_cmd chmod
+need_cmd env
+need_cmd pwd
 
 CFG_ARGS="${@:-}"
 
@@ -827,7 +838,7 @@ TEMPLATE_RUST_INSTALLER_VERSION=%%TEMPLATE_RUST_INSTALLER_VERSION%%
 # OK, let's get installing ...
 
 # This is where we are installing from
-src_dir="$(cd $(dirname "$0") && pwd)"
+src_dir="$(abs_path $(dirname "$0"))"
 
 # The name of the script
 src_basename="$(basename "$0")"
@@ -841,8 +852,8 @@ if [ "$src_basename" = "uninstall.sh" ]; then
 	err "uninstall.sh does not take any arguments"
     fi
     CFG_UNINSTALL=1
-    CFG_DESTDIR_PREFIX="$(cd "$src_dir/../../" && pwd)"
-    CFG_LIBDIR="$(cd "$src_dir/../" && pwd)"
+    CFG_DESTDIR_PREFIX="$(abs_path "$src_dir/../../")"
+    CFG_LIBDIR="$(abs_path "$src_dir/../")"
 fi
 
 # This is where we are installing to
