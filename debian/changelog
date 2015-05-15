@@ -9,7 +9,7 @@ rustc (1.0.0~beta.4-1~exp1) experimental; urgency=low
   [ Sylvestre Ledru ]
   * New upstream release (beta 4)
   * Replace two more occurrences of jquery by the package
-  * Add a repack script to remove a file with an incorrect license
+  * Repack upstream to remove an LLVM file with a non-DFSG license
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Wed, 06 May 2015 11:14:30 +0200
 

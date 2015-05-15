@@ -3,8 +3,7 @@ version=3
 opts="\
 pgpsigurlmangle=s/$/.asc/,\
 uversionmangle=s/(\d)[_.+-]?((beta|alpha)\.?\d*)$/$1~$2/,\
+repacksuffix=+dfsg1,\
 " \
  http://www.rust-lang.org/install.html \
- (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.gz debian \
- debian/orig-tar.sh
-
+ (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.gz
