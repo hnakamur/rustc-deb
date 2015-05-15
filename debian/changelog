@@ -1,3 +1,10 @@
+rustc (1.0.0+dfsg1-1) UNRELEASED; urgency=medium
+
+  [ Angus Lees ]
+  * New upstream release (1.0!)
+
+ -- Angus Lees <gus@debian.org>  Sat, 16 May 2015 08:24:32 +1000
+
 rustc (1.0.0~beta.4-1~exp1) experimental; urgency=low
 
   [ Angus Lees ]
