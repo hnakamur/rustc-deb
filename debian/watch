@@ -3,6 +3,7 @@ version=3
 opts="\
 pgpsigurlmangle=s/$/.asc/,\
 uversionmangle=s/(\d)[_.+-]?((beta|alpha)\.?\d*)$/$1~$2/,\
+dversionmangle=s/\+dfsg\d*$//,\
 repacksuffix=+dfsg1,\
 " \
  http://www.rust-lang.org/install.html \

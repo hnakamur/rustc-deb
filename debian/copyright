@@ -2,7 +2,7 @@ Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: rust
 Source: http://www.rust-lang.org
 Files-Excluded:
- src/llvm/cmake/modules/LLVMParseArguments.cmake
+ src/llvm
 
 Files: *
 Copyright: 2006-2009 Graydon Hoare
