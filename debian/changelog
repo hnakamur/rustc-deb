@@ -1,6 +1,5 @@
-rustc (1.0.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.0.0+dfsg1-1) unstable; urgency=medium
 
-  [ Angus Lees ]
   * New upstream release (1.0!)
 
  -- Angus Lees <gus@debian.org>  Sat, 16 May 2015 08:24:32 +1000
