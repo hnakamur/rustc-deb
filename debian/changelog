@@ -1,7 +1,6 @@
-rustc (1.0.0+dfsg1-1) unstable; urgency=medium
+rustc (1.0.0+dfsg1-2) UNRELEASED; urgency=low
 
   [ Angus Lees ]
-  * New upstream release (1.0!)
   * Set SONAME when building dylibs
   * Split out libstd-rust, libstd-rust-dev, rust-gdb, rust-lldb from rustc
     - libs are now installed into multiarch-friendly locations
@@ -10,6 +9,13 @@ rustc (1.0.0+dfsg1-1) unstable; urgency=medium
   * Install /usr/share/rustc/architecture.mk, which declares Rust arch
     triples for Debian archs and is intended to help future Rust packaging
     efforts.  Warning: it may not be complete/accurate yet.
+
+ -- Angus Lees <gus@debian.org>  Wed, 27 May 2015 18:15:33 +1000
+
+rustc (1.0.0+dfsg1-1) unstable; urgency=medium
+
+  [ Angus Lees ]
+  * New upstream release (1.0!)
 
   [ Sylvestre Ledru ]
   * Fix the watch file
