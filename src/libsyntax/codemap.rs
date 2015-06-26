@@ -7,8 +7,6 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-//
-// ignore-lexer-test FIXME #15679
 
 //! The CodeMap tracks all the source code used within a single crate, mapping
 //! from integer byte positions to the original source code location. Each bit
@@ -19,7 +17,7 @@
 //! within the CodeMap, which upon request can be converted to line and column
 //! information, source code snippets, etc.
 
-pub use self::MacroFormat::*;
+pub use self::ExpnFormat::*;
 
 use std::cell::RefCell;
 use std::ops::{Add, Sub};
@@ -27,7 +25,6 @@ use std::rc::Rc;
 
 use std::fmt;
 
-use libc::c_uint;
 use serialize::{Encodable, Decodable, Encoder, Decoder};
 
 
@@ -229,16 +226,18 @@ pub struct FileMapAndBytePos { pub fm: Rc<FileMap>, pub pos: BytePos }
 
 
 // _____________________________________________________________________________
-// MacroFormat, NameAndSpan, ExpnInfo, ExpnId
+// ExpnFormat, NameAndSpan, ExpnInfo, ExpnId
 //
 
-/// The syntax with which a macro was invoked.
-#[derive(Clone, Copy, Hash, Debug)]
-pub enum MacroFormat {
+/// The source of expansion.
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq)]
+pub enum ExpnFormat {
     /// e.g. #[derive(...)] <item>
     MacroAttribute,
     /// e.g. `format!()`
-    MacroBang
+    MacroBang,
+    /// Syntax sugar expansion performed by the compiler (libsyntax::expand).
+    CompilerExpansion,
 }
 
 #[derive(Clone, Hash, Debug)]
@@ -247,7 +246,7 @@ pub struct NameAndSpan {
     /// with this Span.
     pub name: String,
     /// The format with which the macro was invoked.
-    pub format: MacroFormat,
+    pub format: ExpnFormat,
     /// Whether the macro is allowed to use #[unstable]/feature-gated
     /// features internally without forcing the whole crate to opt-in
     /// to them.
@@ -258,11 +257,11 @@ pub struct NameAndSpan {
     pub span: Option<Span>
 }
 
-/// Extra information for tracking macro expansion of spans
+/// Extra information for tracking spans of macro and syntax sugar expansion
 #[derive(Hash, Debug)]
 pub struct ExpnInfo {
-    /// The location of the actual macro invocation, e.g. `let x =
-    /// foo!();`
+    /// The location of the actual macro invocation or syntax sugar , e.g.
+    /// `let x = foo!();` or `if let Some(y) = x {}`
     ///
     /// This may recursively refer to other macro invocations, e.g. if
     /// `foo!()` invoked `bar!()` internally, and there was an
@@ -271,12 +270,7 @@ pub struct ExpnInfo {
     /// call_site span would have its own ExpnInfo, with the call_site
     /// pointing to the `foo!` invocation.
     pub call_site: Span,
-    /// Information about the macro and its definition.
-    ///
-    /// The `callee` of the inner expression in the `call_site`
-    /// example would point to the `macro_rules! bar { ... }` and that
-    /// of the `bar!()` invocation would point to the `macro_rules!
-    /// foo { ... }`.
+    /// Information about the expansion.
     pub callee: NameAndSpan
 }
 
@@ -288,13 +282,12 @@ pub const NO_EXPANSION: ExpnId = ExpnId(!0);
 pub const COMMAND_LINE_EXPN: ExpnId = ExpnId(!1);
 
 impl ExpnId {
-    pub fn from_llvm_cookie(cookie: c_uint) -> ExpnId {
-        ExpnId(cookie)
+    pub fn from_u32(id: u32) -> ExpnId {
+        ExpnId(id)
     }
 
-    pub fn to_llvm_cookie(self) -> i32 {
-        let ExpnId(cookie) = self;
-        cookie as i32
+    pub fn into_u32(self) -> u32 {
+        self.0
     }
 }
 
@@ -547,7 +540,7 @@ impl CodeMap {
         }
     }
 
-    pub fn new_filemap(&self, filename: FileName, src: String) -> Rc<FileMap> {
+    pub fn new_filemap(&self, filename: FileName, mut src: String) -> Rc<FileMap> {
         let mut files = self.files.borrow_mut();
         let start_pos = match files.last() {
             None => 0,
@@ -555,13 +548,9 @@ impl CodeMap {
         };
 
         // Remove utf-8 BOM if any.
-        // FIXME #12884: no efficient/safe way to remove from the start of a string
-        // and reuse the allocation.
-        let mut src = if src.starts_with("\u{feff}") {
-            String::from_str(&src[3..])
-        } else {
-            String::from_str(&src[..])
-        };
+        if src.starts_with("\u{feff}") {
+            src.drain(..3);
+        }
 
         // Append '\n' in case it's not already there.
         // This is a workaround to prevent CodeMap.lookup_filemap_idx from
@@ -595,8 +584,8 @@ impl CodeMap {
     pub fn new_imported_filemap(&self,
                                 filename: FileName,
                                 source_len: usize,
-                                file_local_lines: Vec<BytePos>,
-                                file_local_multibyte_chars: Vec<MultiByteChar>)
+                                mut file_local_lines: Vec<BytePos>,
+                                mut file_local_multibyte_chars: Vec<MultiByteChar>)
                                 -> Rc<FileMap> {
         let mut files = self.files.borrow_mut();
         let start_pos = match files.last() {
@@ -607,19 +596,21 @@ impl CodeMap {
         let end_pos = Pos::from_usize(start_pos + source_len);
         let start_pos = Pos::from_usize(start_pos);
 
-        let lines = file_local_lines.map_in_place(|pos| pos + start_pos);
-        let multibyte_chars = file_local_multibyte_chars.map_in_place(|mbc| MultiByteChar {
-            pos: mbc.pos + start_pos,
-            bytes: mbc.bytes
-        });
+        for pos in &mut file_local_lines {
+            *pos = *pos + start_pos;
+        }
+
+        for mbc in &mut file_local_multibyte_chars {
+            mbc.pos = mbc.pos + start_pos;
+        }
 
         let filemap = Rc::new(FileMap {
             name: filename,
             src: None,
             start_pos: start_pos,
             end_pos: end_pos,
-            lines: RefCell::new(lines),
-            multibyte_chars: RefCell::new(multibyte_chars),
+            lines: RefCell::new(file_local_lines),
+            multibyte_chars: RefCell::new(file_local_multibyte_chars),
         });
 
         files.push(filemap.clone());
@@ -637,7 +628,39 @@ impl CodeMap {
 
     /// Lookup source information about a BytePos
     pub fn lookup_char_pos(&self, pos: BytePos) -> Loc {
-        self.lookup_pos(pos)
+        let FileMapAndLine {fm: f, line: a} = self.lookup_line(pos);
+        let line = a + 1; // Line numbers start at 1
+        let chpos = self.bytepos_to_file_charpos(pos);
+        let linebpos = (*f.lines.borrow())[a];
+        let linechpos = self.bytepos_to_file_charpos(linebpos);
+        debug!("byte pos {:?} is on the line at byte pos {:?}",
+               pos, linebpos);
+        debug!("char pos {:?} is on the line at char pos {:?}",
+               chpos, linechpos);
+        debug!("byte is on line: {}", line);
+        assert!(chpos >= linechpos);
+        Loc {
+            file: f,
+            line: line,
+            col: chpos - linechpos
+        }
+    }
+
+    fn lookup_line(&self, pos: BytePos) -> FileMapAndLine {
+        let idx = self.lookup_filemap_idx(pos);
+
+        let files = self.files.borrow();
+        let f = (*files)[idx].clone();
+        let mut a = 0;
+        {
+            let lines = f.lines.borrow();
+            let mut b = lines.len();
+            while b - a > 1 {
+                let m = (a + b) / 2;
+                if (*lines)[m] > pos { b = m; } else { a = m; }
+            }
+        }
+        FileMapAndLine {fm: f, line: a}
     }
 
     pub fn lookup_char_pos_adj(&self, pos: BytePos) -> LocWithOpt {
@@ -669,9 +692,22 @@ impl CodeMap {
         self.lookup_char_pos(sp.lo).file.name.to_string()
     }
 
-    pub fn span_to_lines(&self, sp: Span) -> FileLines {
+    pub fn span_to_lines(&self, sp: Span) -> FileLinesResult {
+        if sp.lo > sp.hi {
+            return Err(SpanLinesError::IllFormedSpan(sp));
+        }
+
         let lo = self.lookup_char_pos(sp.lo);
         let hi = self.lookup_char_pos(sp.hi);
+
+        if lo.file.start_pos != hi.file.start_pos {
+            return Err(SpanLinesError::DistinctSources(DistinctSources {
+                begin: (lo.file.name.clone(), lo.file.start_pos),
+                end: (hi.file.name.clone(), hi.file.start_pos),
+            }));
+        }
+        assert!(hi.line >= lo.line);
+
         let mut lines = Vec::with_capacity(hi.line - lo.line + 1);
 
         // The span starts partway through the first line,
@@ -695,7 +731,7 @@ impl CodeMap {
                               start_col: start_col,
                               end_col: hi.col });
 
-        FileLines {file: lo.file, lines: lines}
+        Ok(FileLines {file: lo.file, lines: lines})
     }
 
     pub fn span_to_snippet(&self, sp: Span) -> Result<String, SpanSnippetError> {
@@ -824,42 +860,6 @@ impl CodeMap {
         return a;
     }
 
-    fn lookup_line(&self, pos: BytePos) -> FileMapAndLine {
-        let idx = self.lookup_filemap_idx(pos);
-
-        let files = self.files.borrow();
-        let f = (*files)[idx].clone();
-        let mut a = 0;
-        {
-            let lines = f.lines.borrow();
-            let mut b = lines.len();
-            while b - a > 1 {
-                let m = (a + b) / 2;
-                if (*lines)[m] > pos { b = m; } else { a = m; }
-            }
-        }
-        FileMapAndLine {fm: f, line: a}
-    }
-
-    fn lookup_pos(&self, pos: BytePos) -> Loc {
-        let FileMapAndLine {fm: f, line: a} = self.lookup_line(pos);
-        let line = a + 1; // Line numbers start at 1
-        let chpos = self.bytepos_to_file_charpos(pos);
-        let linebpos = (*f.lines.borrow())[a];
-        let linechpos = self.bytepos_to_file_charpos(linebpos);
-        debug!("byte pos {:?} is on the line at byte pos {:?}",
-               pos, linebpos);
-        debug!("char pos {:?} is on the line at char pos {:?}",
-               chpos, linechpos);
-        debug!("byte is on line: {}", line);
-        assert!(chpos >= linechpos);
-        Loc {
-            file: f,
-            line: line,
-            col: chpos - linechpos
-        }
-    }
-
     pub fn record_expansion(&self, expn_info: ExpnInfo) -> ExpnId {
         let mut expansions = self.expansions.borrow_mut();
         expansions.push(expn_info);
@@ -920,8 +920,16 @@ impl CodeMap {
 }
 
 // _____________________________________________________________________________
-// SpanSnippetError, DistinctSources, MalformedCodemapPositions
+// SpanLinesError, SpanSnippetError, DistinctSources, MalformedCodemapPositions
 //
+
+pub type FileLinesResult = Result<FileLines, SpanLinesError>;
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum SpanLinesError {
+    IllFormedSpan(Span),
+    DistinctSources(DistinctSources),
+}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SpanSnippetError {
@@ -951,7 +959,7 @@ pub struct MalformedCodemapPositions {
 //
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use std::rc::Rc;
 
@@ -1088,7 +1096,7 @@ mod test {
         // Test span_to_lines for a span ending at the end of filemap
         let cm = init_code_map();
         let span = Span {lo: BytePos(12), hi: BytePos(23), expn_id: NO_EXPANSION};
-        let file_lines = cm.span_to_lines(span);
+        let file_lines = cm.span_to_lines(span).unwrap();
 
         assert_eq!(file_lines.file.name, "blork.rs");
         assert_eq!(file_lines.lines.len(), 1);
@@ -1133,7 +1141,7 @@ mod test {
         assert_eq!(&cm.span_to_snippet(span).unwrap(), "BB\nCCC\nDDDDD");
 
         // check that span_to_lines gives us the complete result with the lines/cols we expected
-        let lines = cm.span_to_lines(span);
+        let lines = cm.span_to_lines(span).unwrap();
         let expected = vec![
             LineInfo { line_index: 1, start_col: CharPos(4), end_col: CharPos(6) },
             LineInfo { line_index: 2, start_col: CharPos(0), end_col: CharPos(3) },

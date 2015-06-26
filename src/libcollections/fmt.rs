@@ -7,8 +7,6 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-//
-// ignore-lexer-test FIXME #15679
 
 //! Utilities for formatting and printing strings
 //!
@@ -262,7 +260,6 @@
 //! Example usage is:
 //!
 //! ```
-//! # #![feature(old_io)]
 //! # #![allow(unused_must_use)]
 //! use std::io::Write;
 //! let mut w = Vec::new();
@@ -290,7 +287,6 @@
 //! off, some example usage is:
 //!
 //! ```
-//! # #![feature(old_io)]
 //! use std::fmt;
 //! use std::io::{self, Write};
 //!
@@ -402,7 +398,7 @@
 //! longer than this width, then it is truncated down to this many characters and only those are
 //! emitted.
 //!
-//! For integral types, this has no meaning currently.
+//! For integral types, this is ignored.
 //!
 //! For floating-point types, this indicates how many digits after the decimal point should be
 //! printed.
@@ -500,6 +496,6 @@ use string;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn format(args: Arguments) -> string::String {
     let mut output = string::String::new();
-    let _ = write!(&mut output, "{}", args);
+    let _ = output.write_fmt(args);
     output
 }

@@ -995,39 +995,38 @@ impl<T> [T] {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension traits for slices over specific kinds of data
 ////////////////////////////////////////////////////////////////////////////////
-#[unstable(feature = "collections", reason = "U should be an associated type")]
+#[unstable(feature = "collections", reason = "recently changed")]
 /// An extension trait for concatenating slices
-pub trait SliceConcatExt<T: ?Sized, U> {
-    /// Flattens a slice of `T` into a single value `U`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let v = vec!["hello", "world"];
-    ///
-    /// let s: String = v.concat();
-    ///
-    /// println!("{}", s); // prints "helloworld"
-    /// ```
-    #[stable(feature = "rust1", since = "1.0.0")]
-    fn concat(&self) -> U;
+pub trait SliceConcatExt<T: ?Sized> {
+    #[unstable(feature = "collections", reason = "recently changed")]
+    /// The resulting type after concatenation
+    type Output;
 
-    /// Flattens a slice of `T` into a single value `U`, placing a given separator between each.
+    /// Flattens a slice of `T` into a single value `Self::Output`.
     ///
     /// # Examples
     ///
     /// ```
-    /// let v = vec!["hello", "world"];
-    ///
-    /// let s: String = v.connect(" ");
-    ///
-    /// println!("{}", s); // prints "hello world"
+    /// assert_eq!(["hello", "world"].concat(), "helloworld");
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    fn connect(&self, sep: &T) -> U;
+    fn concat(&self) -> Self::Output;
+
+    /// Flattens a slice of `T` into a single value `Self::Output`, placing a given separator
+    /// between each.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(["hello", "world"].connect(" "), "hello world");
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
+    fn connect(&self, sep: &T) -> Self::Output;
 }
 
-impl<T: Clone, V: Borrow<[T]>> SliceConcatExt<T, Vec<T>> for [V] {
+impl<T: Clone, V: Borrow<[T]>> SliceConcatExt<T> for [V] {
+    type Output = Vec<T>;
+
     fn concat(&self) -> Vec<T> {
         let size = self.iter().fold(0, |acc, v| acc + v.borrow().len());
         let mut result = Vec::with_capacity(size);

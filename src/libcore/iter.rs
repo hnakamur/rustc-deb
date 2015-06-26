@@ -82,7 +82,7 @@ fn _assert_is_object_safe(_: &Iterator<Item=()>) {}
 /// is returned. A concrete Iterator implementation may choose to behave however
 /// it wishes, either by returning `None` infinitely, or by doing something
 /// else.
-#[lang="iterator"]
+#[lang = "iterator"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_on_unimplemented = "`{Self}` is not an iterator; maybe try calling \
                             `.iter()` or a similar method"]
@@ -106,6 +106,18 @@ pub trait Iterator {
 
     /// Counts the number of elements in this iterator.
     ///
+    /// # Overflow Behavior
+    ///
+    /// The method does no guarding against overflows, so counting elements of
+    /// an iterator with more than `usize::MAX` elements either produces the
+    /// wrong result or panics. If debug assertions are enabled, a panic is
+    /// guaranteed.
+    ///
+    /// # Panics
+    ///
+    /// This functions might panic if the iterator has more than `usize::MAX`
+    /// elements.
+    ///
     /// # Examples
     ///
     /// ```
@@ -115,7 +127,8 @@ pub trait Iterator {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn count(self) -> usize where Self: Sized {
-        self.fold(0, |cnt, _x| cnt + 1)
+        // Might overflow.
+        self.fold(0, |cnt, _| cnt + 1)
     }
 
     /// Loops through the entire iterator, returning the last element.
@@ -281,6 +294,17 @@ pub trait Iterator {
     /// different sized integer, the `zip` function provides similar
     /// functionality.
     ///
+    /// # Overflow Behavior
+    ///
+    /// The method does no guarding against overflows, so enumerating more than
+    /// `usize::MAX` elements either produces the wrong result or panics. If
+    /// debug assertions are enabled, a panic is guaranteed.
+    ///
+    /// # Panics
+    ///
+    /// The returned iterator might panic if the to-be-returned index would
+    /// overflow a `usize`.
+    ///
     /// # Examples
     ///
     /// ```
@@ -293,7 +317,7 @@ pub trait Iterator {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn enumerate(self) -> Enumerate<Self> where Self: Sized {
-        Enumerate{iter: self, count: 0}
+        Enumerate { iter: self, count: 0 }
     }
 
     /// Creates an iterator that has a `.peek()` method
@@ -521,8 +545,8 @@ pub trait Iterator {
     /// let mut it = 0..10;
     /// // sum the first five values
     /// let partial_sum = it.by_ref().take(5).fold(0, |a, b| a + b);
-    /// assert!(partial_sum == 10);
-    /// assert!(it.next() == Some(5));
+    /// assert_eq!(partial_sum, 10);
+    /// assert_eq!(it.next(), Some(5));
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn by_ref(&mut self) -> &mut Self where Self: Sized { self }
@@ -578,11 +602,13 @@ pub trait Iterator {
     /// Performs a fold operation over the entire iterator, returning the
     /// eventual state at the end of the iteration.
     ///
+    /// This operation is sometimes called 'reduce' or 'inject'.
+    ///
     /// # Examples
     ///
     /// ```
     /// let a = [1, 2, 3, 4, 5];
-    /// assert!(a.iter().fold(0, |acc, &item| acc + item) == 15);
+    /// assert_eq!(a.iter().fold(0, |acc, &item| acc + item), 15);
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -672,6 +698,18 @@ pub trait Iterator {
     ///
     /// Does not consume the iterator past the first found element.
     ///
+    /// # Overflow Behavior
+    ///
+    /// The method does no guarding against overflows, so if there are more
+    /// than `usize::MAX` non-matching elements, it either produces the wrong
+    /// result or panics. If debug assertions are enabled, a panic is
+    /// guaranteed.
+    ///
+    /// # Panics
+    ///
+    /// This functions might panic if the iterator has more than `usize::MAX`
+    /// non-matching elements.
+    ///
     /// # Examples
     ///
     /// ```
@@ -685,12 +723,11 @@ pub trait Iterator {
         Self: Sized,
         P: FnMut(Self::Item) -> bool,
     {
-        let mut i = 0;
-        for x in self.by_ref() {
+        // `enumerate` might overflow.
+        for (i, x) in self.by_ref().enumerate() {
             if predicate(x) {
                 return Some(i);
             }
-            i += 1;
         }
         None
     }
@@ -720,6 +757,8 @@ pub trait Iterator {
             if predicate(v) {
                 return Some(i - 1);
             }
+            // No need for an overflow check here, because `ExactSizeIterator`
+            // implies that the number of elements fits into a `usize`.
             i -= 1;
         }
         None
@@ -795,13 +834,13 @@ pub trait Iterator {
     /// assert_eq!(a.iter().min_max(), NoElements);
     ///
     /// let a = [1];
-    /// assert!(a.iter().min_max() == OneElement(&1));
+    /// assert_eq!(a.iter().min_max(), OneElement(&1));
     ///
     /// let a = [1, 2, 3, 4, 5];
-    /// assert!(a.iter().min_max() == MinMax(&1, &5));
+    /// assert_eq!(a.iter().min_max(), MinMax(&1, &5));
     ///
     /// let a = [1, 1, 1, 1];
-    /// assert!(a.iter().min_max() == MinMax(&1, &1));
+    /// assert_eq!(a.iter().min_max(), MinMax(&1, &1));
     /// ```
     #[unstable(feature = "core", reason = "return type may change")]
     fn min_max(mut self) -> MinMaxResult<Self::Item> where Self: Sized, Self::Item: Ord
@@ -1019,7 +1058,7 @@ pub trait Iterator {
     ///
     /// let a = [1, 2, 3, 4, 5];
     /// let mut it = a.iter().cloned();
-    /// assert!(it.sum::<i32>() == 15);
+    /// assert_eq!(it.sum::<i32>(), 15);
     /// ```
     #[unstable(feature="core")]
     fn sum<S=<Self as Iterator>::Item>(self) -> S where
@@ -1039,9 +1078,9 @@ pub trait Iterator {
     /// fn factorial(n: u32) -> u32 {
     ///     (1..).take_while(|&i| i <= n).product()
     /// }
-    /// assert!(factorial(0) == 1);
-    /// assert!(factorial(1) == 1);
-    /// assert!(factorial(5) == 120);
+    /// assert_eq!(factorial(0), 1);
+    /// assert_eq!(factorial(1), 1);
+    /// assert_eq!(factorial(5), 120);
     /// ```
     #[unstable(feature="core")]
     fn product<P=<Self as Iterator>::Item>(self) -> P where
@@ -1331,7 +1370,7 @@ impl<T: Clone> MinMaxResult<T> {
 }
 
 /// An iterator that clones the elements of an underlying iterator
-#[unstable(feature = "core", reason = "recent addition")]
+#[stable(feature = "iter_cloned", since = "1.1.0")]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[derive(Clone)]
 pub struct Cloned<I> {
@@ -1470,6 +1509,32 @@ impl<A, B> Iterator for Chain<A, B> where
             self.flag = true;
             self.b.next()
         }
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        (if !self.flag { self.a.count() } else { 0 }) + self.b.count()
+    }
+
+    #[inline]
+    fn nth(&mut self, mut n: usize) -> Option<A::Item> {
+        if !self.flag {
+            for x in self.a.by_ref() {
+                if n == 0 {
+                    return Some(x)
+                }
+                n -= 1;
+            }
+            self.flag = true;
+        }
+        self.b.nth(n)
+    }
+
+    #[inline]
+    fn last(self) -> Option<A::Item> {
+        let a_last = if self.flag { None } else { self.a.last() };
+        let b_last = self.b.last();
+        b_last.or(a_last)
     }
 
     #[inline]
@@ -1757,17 +1822,27 @@ impl<B, I: DoubleEndedIterator, F> DoubleEndedIterator for FilterMap<I, F>
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Enumerate<I> {
     iter: I,
-    count: usize
+    count: usize,
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<I> Iterator for Enumerate<I> where I: Iterator {
     type Item = (usize, <I as Iterator>::Item);
 
+    /// # Overflow Behavior
+    ///
+    /// The method does no guarding against overflows, so enumerating more than
+    /// `usize::MAX` elements either produces the wrong result or panics. If
+    /// debug assertions are enabled, a panic is guaranteed.
+    ///
+    /// # Panics
+    ///
+    /// Might panic if the index of the element overflows a `usize`.
     #[inline]
     fn next(&mut self) -> Option<(usize, <I as Iterator>::Item)> {
         self.iter.next().map(|a| {
             let ret = (self.count, a);
+            // Possible undefined overflow.
             self.count += 1;
             ret
         })
@@ -1776,6 +1851,20 @@ impl<I> Iterator for Enumerate<I> where I: Iterator {
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<(usize, I::Item)> {
+        self.iter.nth(n).map(|a| {
+            let i = self.count + n;
+            self.count = i + 1;
+            (i, a)
+        })
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.iter.count()
     }
 }
 
@@ -1787,6 +1876,8 @@ impl<I> DoubleEndedIterator for Enumerate<I> where
     fn next_back(&mut self) -> Option<(usize, <I as Iterator>::Item)> {
         self.iter.next_back().map(|a| {
             let len = self.iter.len();
+            // Can safely add, `ExactSizeIterator` promises that the number of
+            // elements fits into a `usize`.
             (self.count + len, a)
         })
     }
@@ -1801,6 +1892,9 @@ impl<I> RandomAccessIterator for Enumerate<I> where I: RandomAccessIterator {
 
     #[inline]
     fn idx(&mut self, index: usize) -> Option<(usize, <I as Iterator>::Item)> {
+        // Can safely add, `ExactSizeIterator` (ancestor of
+        // `RandomAccessIterator`) promises that the number of elements fits
+        // into a `usize`.
         self.iter.idx(index).map(|a| (self.count + index, a))
     }
 }
@@ -1832,6 +1926,28 @@ impl<I: Iterator> Iterator for Peekable<I> {
             Some(_) => self.peeked.take(),
             None => self.iter.next(),
         }
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        (if self.peeked.is_some() { 1 } else { 0 }) + self.iter.count()
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<I::Item> {
+        match self.peeked {
+            Some(_) if n == 0 => self.peeked.take(),
+            Some(_) => {
+                self.peeked = None;
+                self.iter.nth(n-1)
+            },
+            None => self.iter.nth(n)
+        }
+    }
+
+    #[inline]
+    fn last(self) -> Option<I::Item> {
+        self.iter.last().or(self.peeked)
     }
 
     #[inline]
@@ -1960,27 +2076,49 @@ impl<I> Iterator for Skip<I> where I: Iterator {
     type Item = <I as Iterator>::Item;
 
     #[inline]
-    fn next(&mut self) -> Option<<I as Iterator>::Item> {
-        let mut next = self.iter.next();
+    fn next(&mut self) -> Option<I::Item> {
         if self.n == 0 {
-            next
+            self.iter.next()
         } else {
-            let mut n = self.n;
-            while n > 0 {
-                n -= 1;
-                match next {
-                    Some(_) => {
-                        next = self.iter.next();
-                        continue
-                    }
-                    None => {
-                        self.n = 0;
-                        return None
-                    }
-                }
-            }
+            let old_n = self.n;
             self.n = 0;
-            next
+            self.iter.nth(old_n)
+        }
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<I::Item> {
+        // Can't just add n + self.n due to overflow.
+        if self.n == 0 {
+            self.iter.nth(n)
+        } else {
+            let to_skip = self.n;
+            self.n = 0;
+            // nth(n) skips n+1
+            if self.iter.nth(to_skip-1).is_none() {
+                return None;
+            }
+            self.iter.nth(n)
+        }
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.iter.count().saturating_sub(self.n)
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<I::Item> {
+        if self.n == 0 {
+            self.iter.last()
+        } else {
+            let next = self.next();
+            if next.is_some() {
+                // recurse. n should be 0.
+                self.last().or(next)
+            } else {
+                None
+            }
         }
     }
 
@@ -2034,6 +2172,20 @@ impl<I> Iterator for Take<I> where I: Iterator{
             self.n -= 1;
             self.iter.next()
         } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<I::Item> {
+        if self.n > n {
+            self.n -= n + 1;
+            self.iter.nth(n)
+        } else {
+            if self.n > 0 {
+                self.iter.nth(self.n - 1);
+                self.n = 0;
+            }
             None
         }
     }
@@ -2196,6 +2348,35 @@ impl<I> Iterator for Fuse<I> where I: Iterator {
             let next = self.iter.next();
             self.done = next.is_none();
             next
+        }
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<I::Item> {
+        if self.done {
+            None
+        } else {
+            let nth = self.iter.nth(n);
+            self.done = nth.is_none();
+            nth
+        }
+    }
+
+    #[inline]
+    fn last(self) -> Option<I::Item> {
+        if self.done {
+            None
+        } else {
+            self.iter.last()
+        }
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        if self.done {
+            0
+        } else {
+            self.iter.count()
         }
     }
 
@@ -2397,17 +2578,15 @@ pub trait Step: PartialOrd {
     /// Steps `self` if possible.
     fn step(&self, by: &Self) -> Option<Self>;
 
-    /// Returns the number of steps between two step objects.
+    /// Returns the number of steps between two step objects. The count is
+    /// inclusive of `start` and exclusive of `end`.
     ///
-    /// `start` should always be less than `end`, so the result should never
-    /// be negative.
-    ///
-    /// Returns `None` if it is not possible to calculate steps_between
+    /// Returns `None` if it is not possible to calculate `steps_between`
     /// without overflow.
     fn steps_between(start: &Self, end: &Self, by: &Self) -> Option<usize>;
 }
 
-macro_rules! step_impl {
+macro_rules! step_impl_unsigned {
     ($($t:ty)*) => ($(
         impl Step for $t {
             #[inline]
@@ -2417,10 +2596,56 @@ macro_rules! step_impl {
             #[inline]
             #[allow(trivial_numeric_casts)]
             fn steps_between(start: &$t, end: &$t, by: &$t) -> Option<usize> {
-                if *start <= *end {
-                    Some(((*end - *start) / *by) as usize)
+                if *by == 0 { return None; }
+                if *start < *end {
+                    // Note: We assume $t <= usize here
+                    let diff = (*end - *start) as usize;
+                    let by = *by as usize;
+                    if diff % by > 0 {
+                        Some(diff / by + 1)
+                    } else {
+                        Some(diff / by)
+                    }
                 } else {
                     Some(0)
+                }
+            }
+        }
+    )*)
+}
+macro_rules! step_impl_signed {
+    ($($t:ty)*) => ($(
+        impl Step for $t {
+            #[inline]
+            fn step(&self, by: &$t) -> Option<$t> {
+                (*self).checked_add(*by)
+            }
+            #[inline]
+            #[allow(trivial_numeric_casts)]
+            fn steps_between(start: &$t, end: &$t, by: &$t) -> Option<usize> {
+                if *by == 0 { return None; }
+                let mut diff: usize;
+                let mut by_u: usize;
+                if *by > 0 {
+                    if *start >= *end {
+                        return Some(0);
+                    }
+                    // Note: We assume $t <= isize here
+                    // Use .wrapping_sub and cast to usize to compute the
+                    // difference that may not fit inside the range of isize.
+                    diff = (*end as isize).wrapping_sub(*start as isize) as usize;
+                    by_u = *by as usize;
+                } else {
+                    if *start <= *end {
+                        return Some(0);
+                    }
+                    diff = (*start as isize).wrapping_sub(*end as isize) as usize;
+                    by_u = (*by as isize).wrapping_mul(-1) as usize;
+                }
+                if diff % by_u > 0 {
+                    Some(diff / by_u + 1)
+                } else {
+                    Some(diff / by_u)
                 }
             }
         }
@@ -2442,9 +2667,12 @@ macro_rules! step_impl_no_between {
     )*)
 }
 
-step_impl!(usize u8 u16 u32 isize i8 i16 i32);
+step_impl_unsigned!(usize u8 u16 u32);
+step_impl_signed!(isize i8 i16 i32);
 #[cfg(target_pointer_width = "64")]
-step_impl!(u64 i64);
+step_impl_unsigned!(u64);
+#[cfg(target_pointer_width = "64")]
+step_impl_signed!(i64);
 #[cfg(target_pointer_width = "32")]
 step_impl_no_between!(u64 i64);
 
@@ -2637,6 +2865,16 @@ impl<A: Step + Zero + Clone> Iterator for StepBy<A, ops::Range<A>> {
             }
         } else {
             None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match Step::steps_between(&self.range.start,
+                                  &self.range.end,
+                                  &self.step_by) {
+            Some(hint) => (hint, Some(hint)),
+            None       => (0, None)
         }
     }
 }

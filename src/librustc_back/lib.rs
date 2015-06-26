@@ -41,18 +41,19 @@
 #![feature(path_ext)]
 #![feature(step_by)]
 #![feature(libc)]
+#![feature(fs_canonicalize)]
 #![cfg_attr(test, feature(test, rand))]
 
 extern crate syntax;
 extern crate libc;
 extern crate serialize;
+extern crate rustc_llvm;
 #[macro_use] extern crate log;
 
 pub mod abi;
 pub mod archive;
 pub mod tempdir;
 pub mod arm;
-pub mod fs;
 pub mod mips;
 pub mod mipsel;
 pub mod rpath;

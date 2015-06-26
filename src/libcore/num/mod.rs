@@ -7,8 +7,6 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-//
-// ignore-lexer-test FIXME #15679
 
 //! Numeric traits and functions for the built-in numeric types.
 
@@ -45,6 +43,9 @@ pub struct Wrapping<T>(#[stable(feature = "rust1", since = "1.0.0")] pub T);
 
 #[unstable(feature = "core", reason = "may be removed or relocated")]
 pub mod wrapping;
+
+#[unstable(feature = "core", reason = "internal routines only exposed for testing")]
+pub mod flt2dec;
 
 /// Types that have a "zero" value.
 ///
@@ -115,12 +116,14 @@ macro_rules! int_impl {
      $mul_with_overflow:path) => {
         /// Returns the smallest value that can be represented by this integer type.
         #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
         pub fn min_value() -> $T {
             (-1 as $T) << ($BITS - 1)
         }
 
         /// Returns the largest value that can be represented by this integer type.
         #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
         pub fn max_value() -> $T {
             let min = $T::min_value(); !min
         }
@@ -463,6 +466,66 @@ macro_rules! int_impl {
             }
         }
 
+        /// Wrapping (modular) division. Computes `floor(self / other)`,
+        /// wrapping around at the boundary of the type.
+        ///
+        /// The only case where such wrapping can occur is when one
+        /// divides `MIN / -1` on a signed type (where `MIN` is the
+        /// negative minimal value for the type); this is equivalent
+        /// to `-MIN`, a positive value that is too large to represent
+        /// in the type. In such a case, this function returns `MIN`
+        /// itself..
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_div(self, rhs: $T) -> $T {
+            self.overflowing_div(rhs).0
+        }
+
+        /// Wrapping (modular) remainder. Computes `self % other`,
+        /// wrapping around at the boundary of the type.
+        ///
+        /// Such wrap-around never actually occurs mathematically;
+        /// implementation artifacts make `x % y` illegal for `MIN /
+        /// -1` on a signed type illegal (where `MIN` is the negative
+        /// minimal value). In such a case, this function returns `0`.
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_rem(self, rhs: $T) -> $T {
+            self.overflowing_rem(rhs).0
+        }
+
+        /// Wrapping (modular) negation. Computes `-self`,
+        /// wrapping around at the boundary of the type.
+        ///
+        /// The only case where such wrapping can occur is when one
+        /// negates `MIN` on a signed type (where `MIN` is the
+        /// negative minimal value for the type); this is a positive
+        /// value that is too large to represent in the type. In such
+        /// a case, this function returns `MIN` itself.
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_neg(self) -> $T {
+            self.overflowing_neg().0
+        }
+
+        /// Panic-free bitwise shift-left; yields `self << mask(rhs)`,
+        /// where `mask` removes any high-order bits of `rhs` that
+        /// would cause the shift to exceed the bitwidth of the type.
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_shl(self, rhs: u32) -> $T {
+            self.overflowing_shl(rhs).0
+        }
+
+        /// Panic-free bitwise shift-left; yields `self >> mask(rhs)`,
+        /// where `mask` removes any high-order bits of `rhs` that
+        /// would cause the shift to exceed the bitwidth of the type.
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_shr(self, rhs: u32) -> $T {
+            self.overflowing_shr(rhs).0
+        }
+
         /// Raises self to the power of `exp`, using exponentiation by squaring.
         ///
         /// # Examples
@@ -500,13 +563,22 @@ macro_rules! int_impl {
             acc
         }
 
-        /// Computes the absolute value of `self`. `Int::min_value()` will be
-        /// returned if the number is `Int::min_value()`.
+        /// Computes the absolute value of `self`.
+        ///
+        /// # Overflow behavior
+        ///
+        /// The absolute value of `i32::min_value()` cannot be represented as an
+        /// `i32`, and attempting to calculate it will cause an overflow. This
+        /// means that code in debug mode will trigger a panic on this case and
+        /// optimized code will return `i32::min_value()` without a panic.
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
         pub fn abs(self) -> $T {
             if self.is_negative() {
-                !self + 1 // wrapping_neg
+                // Note that the #[inline] above means that the overflow
+                // semantics of this negation depend on the crate we're being
+                // inlined into.
+                -self
             } else {
                 self
             }
@@ -687,7 +759,20 @@ macro_rules! uint_impl {
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
         pub fn trailing_zeros(self) -> u32 {
-            unsafe { $cttz(self as $ActualT) as u32 }
+            // As of LLVM 3.6 the codegen for the zero-safe cttz8 intrinsic
+            // emits two conditional moves on x86_64. By promoting the value to
+            // u16 and setting bit 8, we get better code without any conditional
+            // operations.
+            // FIXME: There's a LLVM patch (http://reviews.llvm.org/D9284)
+            // pending, remove this workaround once LLVM generates better code
+            // for cttz8.
+            unsafe {
+                if $BITS == 8 {
+                    intrinsics::cttz16(self as u16 | 0x100) as u32
+                } else {
+                    $cttz(self as $ActualT) as u32
+                }
+            }
         }
 
         /// Shifts the bits to the left by a specified amount, `n`,
@@ -949,6 +1034,66 @@ macro_rules! uint_impl {
             unsafe {
                 intrinsics::overflowing_mul(self, rhs)
             }
+        }
+
+        /// Wrapping (modular) division. Computes `floor(self / other)`,
+        /// wrapping around at the boundary of the type.
+        ///
+        /// The only case where such wrapping can occur is when one
+        /// divides `MIN / -1` on a signed type (where `MIN` is the
+        /// negative minimal value for the type); this is equivalent
+        /// to `-MIN`, a positive value that is too large to represent
+        /// in the type. In such a case, this function returns `MIN`
+        /// itself..
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_div(self, rhs: $T) -> $T {
+            self.overflowing_div(rhs).0
+        }
+
+        /// Wrapping (modular) remainder. Computes `self % other`,
+        /// wrapping around at the boundary of the type.
+        ///
+        /// Such wrap-around never actually occurs mathematically;
+        /// implementation artifacts make `x % y` illegal for `MIN /
+        /// -1` on a signed type illegal (where `MIN` is the negative
+        /// minimal value). In such a case, this function returns `0`.
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_rem(self, rhs: $T) -> $T {
+            self.overflowing_rem(rhs).0
+        }
+
+        /// Wrapping (modular) negation. Computes `-self`,
+        /// wrapping around at the boundary of the type.
+        ///
+        /// The only case where such wrapping can occur is when one
+        /// negates `MIN` on a signed type (where `MIN` is the
+        /// negative minimal value for the type); this is a positive
+        /// value that is too large to represent in the type. In such
+        /// a case, this function returns `MIN` itself.
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_neg(self) -> $T {
+            self.overflowing_neg().0
+        }
+
+        /// Panic-free bitwise shift-left; yields `self << mask(rhs)`,
+        /// where `mask` removes any high-order bits of `rhs` that
+        /// would cause the shift to exceed the bitwidth of the type.
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_shl(self, rhs: u32) -> $T {
+            self.overflowing_shl(rhs).0
+        }
+
+        /// Panic-free bitwise shift-left; yields `self >> mask(rhs)`,
+        /// where `mask` removes any high-order bits of `rhs` that
+        /// would cause the shift to exceed the bitwidth of the type.
+        #[unstable(feature = "core", since = "1.0.0")]
+        #[inline(always)]
+        pub fn wrapping_shr(self, rhs: u32) -> $T {
+            self.overflowing_shr(rhs).0
         }
 
         /// Raises self to the power of `exp`, using exponentiation by squaring.
@@ -1391,7 +1536,11 @@ impl fmt::Display for ParseIntError {
 
 /// An error which can be returned when parsing a float.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ParseFloatError { pub kind: FloatErrorKind }
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct ParseFloatError {
+    #[doc(hidden)]
+    pub __kind: FloatErrorKind
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FloatErrorKind {
@@ -1400,9 +1549,9 @@ pub enum FloatErrorKind {
 }
 
 impl ParseFloatError {
-    #[unstable(feature = "core", reason = "available through Error trait")]
-    pub fn description(&self) -> &str {
-        match self.kind {
+    #[doc(hidden)]
+    pub fn __description(&self) -> &str {
+        match self.__kind {
             FloatErrorKind::Empty => "cannot parse float from empty string",
             FloatErrorKind::Invalid => "invalid float literal",
         }
@@ -1412,6 +1561,6 @@ impl ParseFloatError {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl fmt::Display for ParseFloatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.description().fmt(f)
+        self.__description().fmt(f)
     }
 }

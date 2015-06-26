@@ -31,8 +31,6 @@
 #![feature(std_misc)]
 #![feature(test)]
 #![feature(unicode)]
-#![feature(str_words)]
-#![feature(file_path)]
 #![feature(path_ext)]
 #![feature(path_relative_from)]
 #![feature(slice_patterns)]
@@ -49,7 +47,7 @@ extern crate rustc_back;
 extern crate serialize;
 extern crate syntax;
 extern crate test as testing;
-extern crate unicode;
+extern crate rustc_unicode;
 #[macro_use] extern crate log;
 
 extern crate serialize as rustc_serialize; // used by deriving
@@ -91,7 +89,6 @@ pub mod html {
 pub mod markdown;
 pub mod passes;
 pub mod plugins;
-pub mod stability_summary;
 pub mod visit_ast;
 pub mod test;
 mod flock;
@@ -242,7 +239,7 @@ pub fn main_args(args: &[String]) -> isize {
 
     let test_args = matches.opt_strs("test-args");
     let test_args: Vec<String> = test_args.iter()
-                                          .flat_map(|s| s.words())
+                                          .flat_map(|s| s.split_whitespace())
                                           .map(|s| s.to_string())
                                           .collect();
 
@@ -406,13 +403,13 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
                     }
                     clean::NameValue(ref x, ref value)
                             if "passes" == *x => {
-                        for pass in value.words() {
+                        for pass in value.split_whitespace() {
                             passes.push(pass.to_string());
                         }
                     }
                     clean::NameValue(ref x, ref value)
                             if "plugins" == *x => {
-                        for p in value.words() {
+                        for p in value.split_whitespace() {
                             plugins.push(p.to_string());
                         }
                     }

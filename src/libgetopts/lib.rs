@@ -7,8 +7,6 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-//
-// ignore-lexer-test FIXME #15677
 
 //! Simple getopt alternative.
 //!
@@ -93,7 +91,6 @@
 
 #![deny(missing_docs)]
 #![feature(staged_api)]
-#![feature(str_words)]
 #![feature(str_char)]
 #![cfg_attr(test, feature(rustc_private))]
 
@@ -773,7 +770,7 @@ pub fn usage(brief: &str, opts: &[OptGroup]) -> String {
 
         // Normalize desc to contain words separated by one space character
         let mut desc_normalized_whitespace = String::new();
-        for word in desc.words() {
+        for word in desc.split_whitespace() {
             desc_normalized_whitespace.push_str(word);
             desc_normalized_whitespace.push(' ');
         }

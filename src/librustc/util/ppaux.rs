@@ -349,7 +349,8 @@ pub fn ty_to_string<'tcx>(cx: &ctxt<'tcx>, typ: &ty::TyS<'tcx>) -> String {
             ty::FloatVar(ref vid) if print_var_ids => vid.repr(cx),
             ty::TyVar(_) | ty::IntVar(_) | ty::FloatVar(_) => format!("_"),
             ty::FreshTy(v) => format!("FreshTy({})", v),
-            ty::FreshIntTy(v) => format!("FreshIntTy({})", v)
+            ty::FreshIntTy(v) => format!("FreshIntTy({})", v),
+            ty::FreshFloatTy(v) => format!("FreshFloatTy({})", v)
         }
     }
 
@@ -637,7 +638,7 @@ impl<'tcx, T:Repr<'tcx>> Repr<'tcx> for OwnedSlice<T> {
     }
 }
 
-// This is necessary to handle types like Option<~[T]>, for which
+// This is necessary to handle types like Option<Vec<T>>, for which
 // autoderef cannot convert the &[T] handler
 impl<'tcx, T:Repr<'tcx>> Repr<'tcx> for Vec<T> {
     fn repr(&self, tcx: &ctxt<'tcx>) -> String {
@@ -671,7 +672,7 @@ impl<'tcx> Repr<'tcx> for def::Def {
 /// projection bounds, so we just stuff them altogether. But in
 /// reality we should eventually sort things out better.
 type TraitAndProjections<'tcx> =
-    (Rc<ty::TraitRef<'tcx>>, Vec<ty::ProjectionPredicate<'tcx>>);
+    (ty::TraitRef<'tcx>, Vec<ty::ProjectionPredicate<'tcx>>);
 
 impl<'tcx> UserString<'tcx> for TraitAndProjections<'tcx> {
     fn user_string(&self, tcx: &ctxt<'tcx>) -> String {
@@ -810,8 +811,12 @@ impl<'tcx> Repr<'tcx> for ty::TraitRef<'tcx> {
         // to enumerate the `for<...>` etc because the debruijn index
         // tells you everything you need to know.
         let base = ty::item_path_str(tcx, self.def_id);
-        parameterized(tcx, &base, self.substs, self.def_id, &[],
-                      || ty::lookup_trait_def(tcx, self.def_id).generics.clone())
+        let result = parameterized(tcx, &base, self.substs, self.def_id, &[],
+                      || ty::lookup_trait_def(tcx, self.def_id).generics.clone());
+        match self.substs.self_ty() {
+            None => result,
+            Some(sty) => format!("<{} as {}>", sty.repr(tcx), result)
+        }
     }
 }
 
@@ -826,6 +831,7 @@ impl<'tcx> Repr<'tcx> for ty::TraitDef<'tcx> {
 impl<'tcx> Repr<'tcx> for ast::TraitItem {
     fn repr(&self, _tcx: &ctxt) -> String {
         let kind = match self.node {
+            ast::ConstTraitItem(..) => "ConstTraitItem",
             ast::MethodTraitItem(..) => "MethodTraitItem",
             ast::TypeTraitItem(..) => "TypeTraitItem",
         };
@@ -1050,9 +1056,39 @@ impl<'tcx> Repr<'tcx> for ty::Variance {
     }
 }
 
+impl<'tcx> Repr<'tcx> for ty::ImplOrTraitItem<'tcx> {
+    fn repr(&self, tcx: &ctxt<'tcx>) -> String {
+        format!("ImplOrTraitItem({})",
+                match *self {
+                    ty::ImplOrTraitItem::MethodTraitItem(ref i) => i.repr(tcx),
+                    ty::ImplOrTraitItem::ConstTraitItem(ref i) => i.repr(tcx),
+                    ty::ImplOrTraitItem::TypeTraitItem(ref i) => i.repr(tcx),
+                })
+    }
+}
+
+impl<'tcx> Repr<'tcx> for ty::AssociatedConst<'tcx> {
+    fn repr(&self, tcx: &ctxt<'tcx>) -> String {
+        format!("AssociatedConst(name: {}, ty: {}, vis: {}, def_id: {})",
+                self.name.repr(tcx),
+                self.ty.repr(tcx),
+                self.vis.repr(tcx),
+                self.def_id.repr(tcx))
+    }
+}
+
+impl<'tcx> Repr<'tcx> for ty::AssociatedType {
+    fn repr(&self, tcx: &ctxt<'tcx>) -> String {
+        format!("AssociatedType(name: {}, vis: {}, def_id: {})",
+                self.name.repr(tcx),
+                self.vis.repr(tcx),
+                self.def_id.repr(tcx))
+    }
+}
+
 impl<'tcx> Repr<'tcx> for ty::Method<'tcx> {
     fn repr(&self, tcx: &ctxt<'tcx>) -> String {
-        format!("method(name: {}, generics: {}, predicates: {}, fty: {}, \
+        format!("Method(name: {}, generics: {}, predicates: {}, fty: {}, \
                  explicit_self: {}, vis: {}, def_id: {})",
                 self.name.repr(tcx),
                 self.generics.repr(tcx),
@@ -1504,8 +1540,7 @@ impl<'tcx> UserString<'tcx> for ty::ProjectionPredicate<'tcx> {
 
 impl<'tcx> Repr<'tcx> for ty::ProjectionTy<'tcx> {
     fn repr(&self, tcx: &ctxt<'tcx>) -> String {
-        format!("<{} as {}>::{}",
-                self.trait_ref.substs.self_ty().repr(tcx),
+        format!("{}::{}",
                 self.trait_ref.repr(tcx),
                 self.item_name.repr(tcx))
     }

@@ -21,7 +21,7 @@ use core::ops::Deref;
 use core::option::Option;
 
 use fmt;
-use alloc::{rc, arc};
+use alloc::{boxed, rc, arc};
 
 use self::Cow::*;
 
@@ -37,6 +37,11 @@ use self::Cow::*;
 /// trait: if `T: Borrow<U>`, then `&U` can be borrowed from `&T`.  A given
 /// type can be borrowed as multiple different types. In particular, `Vec<T>:
 /// Borrow<Vec<T>>` and `Vec<T>: Borrow<[T]>`.
+///
+/// `Borrow` is very similar to, but different than, `AsRef`. See
+/// [the book][book] for more.
+///
+/// [book]: ../../book/borrow-and-asref.html
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait Borrow<Borrowed: ?Sized> {
     /// Immutably borrows from an owned value.
@@ -108,6 +113,14 @@ impl<'a, T: ?Sized> Borrow<T> for &'a mut T {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: ?Sized> BorrowMut<T> for &'a mut T {
+    fn borrow_mut(&mut self) -> &mut T { &mut **self }
+}
+
+impl<T: ?Sized> Borrow<T> for boxed::Box<T> {
+    fn borrow(&self) -> &T { &**self }
+}
+
+impl<T: ?Sized> BorrowMut<T> for boxed::Box<T> {
     fn borrow_mut(&mut self) -> &mut T { &mut **self }
 }
 

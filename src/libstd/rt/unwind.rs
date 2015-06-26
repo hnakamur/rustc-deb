@@ -238,7 +238,7 @@ pub mod eabi {
             -> uw::_Unwind_Reason_Code;
     }
 
-    #[lang="eh_personality"]
+    #[lang = "eh_personality"]
     #[no_mangle] // referenced from rust_try.ll
     #[allow(private_no_mangle_fns)]
     extern fn rust_eh_personality(
@@ -292,7 +292,7 @@ pub mod eabi {
             -> uw::_Unwind_Reason_Code;
     }
 
-    #[lang="eh_personality"]
+    #[lang = "eh_personality"]
     #[no_mangle] // referenced from rust_try.ll
     pub extern "C" fn rust_eh_personality(
         version: c_int,
@@ -345,7 +345,7 @@ pub mod eabi {
             -> uw::_Unwind_Reason_Code;
     }
 
-    #[lang="eh_personality"]
+    #[lang = "eh_personality"]
     #[no_mangle] // referenced from rust_try.ll
     #[allow(private_no_mangle_fns)]
     extern "C" fn rust_eh_personality(
@@ -432,7 +432,7 @@ pub mod eabi {
         ) -> EXCEPTION_DISPOSITION;
     }
 
-    #[lang="eh_personality"]
+    #[lang = "eh_personality"]
     #[no_mangle] // referenced from rust_try.ll
     #[allow(private_no_mangle_fns)]
     extern "C" fn rust_eh_personality(
@@ -504,29 +504,12 @@ pub fn begin_unwind_fmt(msg: fmt::Arguments, file_line: &(&'static str, u32)) ->
     // below).
 
     let mut s = String::new();
-    let _ = write!(&mut s, "{}", msg);
+    let _ = s.write_fmt(msg);
     begin_unwind_inner(Box::new(s), file_line)
 }
 
 /// This is the entry point of unwinding for panic!() and assert!().
 #[inline(never)] #[cold] // avoid code bloat at the call sites as much as possible
-#[cfg(stage0)]
-pub fn begin_unwind<M: Any + Send>(msg: M, file_line: &(&'static str, usize)) -> ! {
-    // Note that this should be the only allocation performed in this code path.
-    // Currently this means that panic!() on OOM will invoke this code path,
-    // but then again we're not really ready for panic on OOM anyway. If
-    // we do start doing this, then we should propagate this allocation to
-    // be performed in the parent of this thread instead of the thread that's
-    // panicking.
-
-    // see below for why we do the `Any` coercion here.
-    let (file, line) = *file_line;
-    begin_unwind_inner(Box::new(msg), &(file, line as u32))
-}
-
-/// This is the entry point of unwinding for panic!() and assert!().
-#[inline(never)] #[cold] // avoid code bloat at the call sites as much as possible
-#[cfg(not(stage0))]
 pub fn begin_unwind<M: Any + Send>(msg: M, file_line: &(&'static str, u32)) -> ! {
     // Note that this should be the only allocation performed in this code path.
     // Currently this means that panic!() on OOM will invoke this code path,
