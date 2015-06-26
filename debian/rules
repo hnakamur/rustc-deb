@@ -28,7 +28,7 @@ RELEASE_CHANNEL := stable
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
-RUST_HASH := $(shell sed -n 's/^CFG_FILENAME_EXTRA=//p' mk/main.mk)
+RUST_HASH := $(shell printf '%s' $(DEB_VERSION_UPSTREAM) | sed -e 's/\+dfsg[0-9]*$$//' | md5sum | head -c 8)
 LIBSTD_PKG := libstd-rust-$(RUST_HASH)
 
 # These are the normal build flags
