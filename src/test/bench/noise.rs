@@ -10,7 +10,6 @@
 
 // Multi-language Perlin noise benchmark.
 // See https://github.com/nsf/pnoise for timings and alternative implementations.
-// ignore-lexer-test FIXME #15679
 
 #![feature(rand, core)]
 
@@ -102,8 +101,8 @@ impl Noise2DContext {
 
 fn main() {
     let symbols = [' ', '░', '▒', '▓', '█', '█'];
-    let mut pixels = [0f32; 256*256];
-    let n2d = Noise2DContext::new();
+    let mut pixels = Box::new([0f32; 256*256]);
+    let n2d = Box::new(Noise2DContext::new());
 
     for _ in 0..100 {
         for y in 0..256 {

@@ -38,30 +38,6 @@
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[allow_internal_unstable]
-#[cfg(stage0)]
-macro_rules! panic {
-    () => ({
-        panic!("explicit panic")
-    });
-    ($msg:expr) => ({
-        $crate::rt::begin_unwind($msg, {
-            // static requires less code at runtime, more constant data
-            static _FILE_LINE: (&'static str, usize) = (file!(), line!() as usize);
-            &_FILE_LINE
-        })
-    });
-    ($fmt:expr, $($arg:tt)+) => ({
-        $crate::rt::begin_unwind_fmt(format_args!($fmt, $($arg)+), {
-            // The leading _'s are to avoid dead code warnings if this is
-            // used inside a dead function. Just `#[allow(dead_code)]` is
-            // insufficient, since the user may have
-            // `#[forbid(dead_code)]` and which cannot be overridden.
-            static _FILE_LINE: (&'static str, u32) = (file!(), line!());
-            &_FILE_LINE
-        })
-    });
-}
-
 /// The entry point for panic of Rust threads.
 ///
 /// This macro is used to inject panic into a Rust thread, causing the thread to
@@ -84,7 +60,6 @@ macro_rules! panic {
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[allow_internal_unstable]
-#[cfg(not(stage0))]
 macro_rules! panic {
     () => ({
         panic!("explicit panic")
@@ -177,12 +152,14 @@ macro_rules! try {
 /// thread::spawn(move|| { long_running_thread(); tx1.send(()).unwrap(); });
 /// thread::spawn(move|| { tx2.send(calculate_the_answer()).unwrap(); });
 ///
-/// select! (
+/// select! {
 ///     _ = rx1.recv() => println!("the long running thread finished first"),
 ///     answer = rx2.recv() => {
 ///         println!("the answer was: {}", answer.unwrap());
 ///     }
-/// )
+/// }
+/// # drop(rx1.recv());
+/// # drop(rx2.recv());
 /// ```
 ///
 /// For more information about select, see the `std::sync::mpsc::Select` structure.
@@ -459,7 +436,7 @@ pub mod builtin {
 
     /// Parse the current given file as an expression.
     ///
-    /// This is generally a bad idea, because it's going to behave unhygenically.
+    /// This is generally a bad idea, because it's going to behave unhygienically.
     ///
     /// # Examples
     ///

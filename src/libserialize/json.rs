@@ -209,8 +209,8 @@ use std::str::FromStr;
 use std::string;
 use std::{char, f64, fmt, str};
 use std;
-use unicode::str as unicode_str;
-use unicode::str::Utf16Item;
+use rustc_unicode::str as unicode_str;
+use rustc_unicode::str::Utf16Item;
 
 use Encodable;
 
@@ -1538,7 +1538,7 @@ impl<T: Iterator<Item=char>> Parser<T> {
             F64Value(res)
         } else {
             if neg {
-                let res = !(res as i64) + 1; // wrapping_neg
+                let res = (res as i64).wrapping_neg();
 
                 // Make sure we didn't underflow.
                 if res > 0 {
@@ -2057,7 +2057,7 @@ impl<T: Iterator<Item=char>> Builder<T> {
     }
 }
 
-/// Decodes a json value from an `&mut old_io::Reader`
+/// Decodes a json value from an `&mut io::Read`
 pub fn from_reader(rdr: &mut Read) -> Result<Json, BuilderError> {
     let mut contents = Vec::new();
     match rdr.read_to_end(&mut contents) {
@@ -3011,9 +3011,9 @@ mod tests {
         let v: i64 = super::decode("9223372036854775807").unwrap();
         assert_eq!(v, i64::MAX);
 
-        let res: DecodeResult<i64> = super::decode("765.25252");
+        let res: DecodeResult<i64> = super::decode("765.25");
         assert_eq!(res, Err(ExpectedError("Integer".to_string(),
-                                          "765.25252".to_string())));
+                                          "765.25".to_string())));
     }
 
     #[test]

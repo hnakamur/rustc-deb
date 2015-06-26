@@ -43,7 +43,8 @@
 #![feature(std_misc)]
 #![feature(libc)]
 #![feature(set_stdio)]
-#![cfg_attr(test, feature(old_io))]
+#![feature(duration)]
+#![feature(duration_span)]
 
 extern crate getopts;
 extern crate serialize;
@@ -121,7 +122,6 @@ impl fmt::Display for TestName {
 #[derive(Clone, Copy)]
 enum NamePadding {
     PadNone,
-    PadOnLeft,
     PadOnRight,
 }
 
@@ -129,13 +129,9 @@ impl TestDesc {
     fn padded_name(&self, column_count: usize, align: NamePadding) -> String {
         let mut name = String::from_str(self.name.as_slice());
         let fill = column_count.saturating_sub(name.len());
-        let mut pad = repeat(" ").take(fill).collect::<String>();
+        let pad = repeat(" ").take(fill).collect::<String>();
         match align {
             PadNone => name,
-            PadOnLeft => {
-                pad.push_str(&name);
-                pad
-            }
             PadOnRight => {
                 name.push_str(&pad);
                 name
@@ -145,7 +141,7 @@ impl TestDesc {
 }
 
 /// Represents a benchmark function.
-pub trait TDynBenchFn {
+pub trait TDynBenchFn: Send {
     fn run(&self, harness: &mut Bencher);
 }
 
@@ -265,8 +261,8 @@ pub fn test_main(args: &[String], tests: Vec<TestDescAndFn> ) {
 // This will panic (intentionally) when fed any dynamic tests, because
 // it is copying the static values out into a dynamic vector and cannot
 // copy dynamic values. It is doing this because from this point on
-// a ~[TestDescAndFn] is used in order to effect ownership-transfer
-// semantics into parallel test runners, which in turn requires a ~[]
+// a Vec<TestDescAndFn> is used in order to effect ownership-transfer
+// semantics into parallel test runners, which in turn requires a Vec<>
 // rather than a &[].
 pub fn test_main_static(args: env::Args, tests: &[TestDescAndFn]) {
     let args = args.collect::<Vec<_>>();
@@ -291,7 +287,7 @@ pub struct TestOpts {
     pub filter: Option<String>,
     pub run_ignored: bool,
     pub run_tests: bool,
-    pub run_benchmarks: bool,
+    pub bench_benchmarks: bool,
     pub logfile: Option<PathBuf>,
     pub nocapture: bool,
     pub color: ColorConfig,
@@ -304,7 +300,7 @@ impl TestOpts {
             filter: None,
             run_ignored: false,
             run_tests: false,
-            run_benchmarks: false,
+            bench_benchmarks: false,
             logfile: None,
             nocapture: false,
             color: AutoColor,
@@ -383,8 +379,8 @@ pub fn parse_opts(args: &[String]) -> Option<OptRes> {
     let logfile = matches.opt_str("logfile");
     let logfile = logfile.map(|s| PathBuf::from(&s));
 
-    let run_benchmarks = matches.opt_present("bench");
-    let run_tests = ! run_benchmarks ||
+    let bench_benchmarks = matches.opt_present("bench");
+    let run_tests = ! bench_benchmarks ||
         matches.opt_present("test");
 
     let mut nocapture = matches.opt_present("nocapture");
@@ -406,7 +402,7 @@ pub fn parse_opts(args: &[String]) -> Option<OptRes> {
         filter: filter,
         run_ignored: run_ignored,
         run_tests: run_tests,
-        run_benchmarks: run_benchmarks,
+        bench_benchmarks: bench_benchmarks,
         logfile: logfile,
         nocapture: nocapture,
         color: color,
@@ -689,7 +685,7 @@ pub fn run_tests_console(opts: &TestOpts, tests: Vec<TestDescAndFn> ) -> io::Res
     fn len_if_padded(t: &TestDescAndFn) -> usize {
         match t.testfn.padding() {
             PadNone => 0,
-            PadOnLeft | PadOnRight => t.desc.name.as_slice().len(),
+            PadOnRight => t.desc.name.as_slice().len(),
         }
     }
     match tests.iter().max_by(|t|len_if_padded(*t)) {
@@ -784,7 +780,11 @@ fn run_tests<F>(opts: &TestOpts,
                 mut callback: F) -> io::Result<()> where
     F: FnMut(TestEvent) -> io::Result<()>,
 {
-    let filtered_tests = filter_tests(opts, tests);
+    let mut filtered_tests = filter_tests(opts, tests);
+    if !opts.bench_benchmarks {
+        filtered_tests = convert_benchmarks_to_tests(filtered_tests);
+    }
+
     let filtered_descs = filtered_tests.iter()
                                        .map(|t| t.desc.clone())
                                        .collect();
@@ -830,13 +830,15 @@ fn run_tests<F>(opts: &TestOpts,
         pending -= 1;
     }
 
-    // All benchmarks run at the end, in serial.
-    // (this includes metric fns)
-    for b in filtered_benchs_and_metrics {
-        try!(callback(TeWait(b.desc.clone(), b.testfn.padding())));
-        run_test(opts, !opts.run_benchmarks, b, tx.clone());
-        let (test, result, stdout) = rx.recv().unwrap();
-        try!(callback(TeResult(test, result, stdout)));
+    if opts.bench_benchmarks {
+        // All benchmarks run at the end, in serial.
+        // (this includes metric fns)
+        for b in filtered_benchs_and_metrics {
+            try!(callback(TeWait(b.desc.clone(), b.testfn.padding())));
+            run_test(opts, false, b, tx.clone());
+            let (test, result, stdout) = rx.recv().unwrap();
+            try!(callback(TeResult(test, result, stdout)));
+        }
     }
     Ok(())
 }
@@ -897,6 +899,22 @@ pub fn filter_tests(opts: &TestOpts, tests: Vec<TestDescAndFn>) -> Vec<TestDescA
     filtered.sort_by(|t1, t2| t1.desc.name.as_slice().cmp(t2.desc.name.as_slice()));
 
     filtered
+}
+
+pub fn convert_benchmarks_to_tests(tests: Vec<TestDescAndFn>) -> Vec<TestDescAndFn> {
+    // convert benchmarks to tests, if we're not benchmarking them
+    tests.into_iter().map(|x| {
+        let testfn = match x.testfn {
+            DynBenchFn(bench) => {
+                DynTestFn(Box::new(move || bench::run_once(|b| bench.run(b))))
+            }
+            StaticBenchFn(benchfn) => {
+                DynTestFn(Box::new(move || bench::run_once(|b| benchfn(b))))
+            }
+            f => f
+        };
+        TestDescAndFn { desc: x.desc, testfn: testfn }
+    }).collect()
 }
 
 pub fn run_test(opts: &TestOpts,
@@ -1053,7 +1071,7 @@ impl Bencher {
     }
 
     pub fn ns_elapsed(&mut self) -> u64 {
-        self.dur.num_nanoseconds().unwrap() as u64
+        self.dur.secs() * 1_000_000_000 + (self.dur.extra_nanos() as u64)
     }
 
     pub fn ns_per_iter(&mut self) -> u64 {
@@ -1089,7 +1107,7 @@ impl Bencher {
         // (i.e. larger error bars).
         if n == 0 { n = 1; }
 
-        let mut total_run = Duration::nanoseconds(0);
+        let mut total_run = Duration::new(0, 0);
         let samples : &mut [f64] = &mut [0.0_f64; 50];
         loop {
             let mut summ = None;
@@ -1118,7 +1136,7 @@ impl Bencher {
 
             // If we've run for 100ms and seem to have converged to a
             // stable median.
-            if loop_run.num_milliseconds() > 100 &&
+            if loop_run > Duration::from_millis(100) &&
                 summ.median_abs_dev_pct < 1.0 &&
                 summ.median - summ5.median < summ5.median_abs_dev {
                 return summ5;
@@ -1126,7 +1144,7 @@ impl Bencher {
 
             total_run = total_run + loop_run;
             // Longest we ever run for is 3s.
-            if total_run.num_seconds() > 3 {
+            if total_run > Duration::from_secs(3) {
                 return summ5;
             }
 
@@ -1150,7 +1168,7 @@ pub mod bench {
     pub fn benchmark<F>(f: F) -> BenchSamples where F: FnMut(&mut Bencher) {
         let mut bs = Bencher {
             iterations: 0,
-            dur: Duration::nanoseconds(0),
+            dur: Duration::new(0, 0),
             bytes: 0
         };
 
@@ -1164,6 +1182,15 @@ pub mod bench {
             ns_iter_summ: ns_iter_summ,
             mb_s: mb_s as usize
         }
+    }
+
+    pub fn run_once<F>(f: F) where F: FnOnce(&mut Bencher) {
+        let mut bs = Bencher {
+            iterations: 0,
+            dur: Duration::new(0, 0),
+            bytes: 0
+        };
+        bs.bench_n(1, f);
     }
 }
 

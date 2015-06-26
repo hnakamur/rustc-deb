@@ -28,7 +28,7 @@
 //!
 //! The standard library is minimal, a set of battle-tested
 //! core types and shared abstractions for the [broader Rust
-//! ecosystem][https://crates.io] to build on.
+//! ecosystem](https://crates.io) to build on.
 //!
 //! The [primitive types](#primitives), though not defined in the
 //! standard library, are documented here, as are the predefined
@@ -40,7 +40,7 @@
 //! [`result`](result/index.html) modules define optional and
 //! error-handling types, `Option` and `Result`. The
 //! [`iter`](iter/index.html) module defines Rust's iterator trait,
-//! [`Iterater`](iter/trait.Iterator.html), which works with the `for`
+//! [`Iterator`](iter/trait.Iterator.html), which works with the `for`
 //! loop to access collections.
 //!
 //! The common container type, `Vec`, a growable vector backed by an array,
@@ -104,27 +104,27 @@
 #![doc(test(attr(allow(dead_code, deprecated, unused_variables, unused_mut))))]
 
 #![feature(alloc)]
+#![feature(allow_internal_unstable)]
+#![feature(associated_consts)]
 #![feature(box_syntax)]
 #![feature(collections)]
 #![feature(core)]
+#![feature(debug_builders)]
+#![feature(into_cow)]
 #![feature(lang_items)]
 #![feature(libc)]
 #![feature(linkage, thread_local, asm)]
+#![feature(macro_reexport)]
 #![feature(optin_builtin_traits)]
 #![feature(rand)]
+#![feature(slice_patterns)]
 #![feature(staged_api)]
+#![feature(std_misc)]
+#![feature(str_char)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
-#![feature(unsafe_destructor)]
-#![feature(unsafe_no_drop_flag, filling_drop)]
-#![feature(macro_reexport)]
 #![feature(unique)]
-#![feature(allow_internal_unstable)]
-#![feature(str_char)]
-#![feature(into_cow)]
-#![feature(std_misc)]
-#![feature(slice_patterns)]
-#![feature(debug_builders)]
+#![feature(unsafe_no_drop_flag, filling_drop)]
 #![feature(zero_one)]
 #![cfg_attr(test, feature(float_from_str_radix))]
 #![cfg_attr(test, feature(test, rustc_private, std_misc))]
@@ -150,7 +150,7 @@ extern crate collections as core_collections;
 
 #[allow(deprecated)] extern crate rand as core_rand;
 extern crate alloc;
-extern crate unicode;
+extern crate rustc_unicode;
 extern crate libc;
 
 #[macro_use] #[no_link] extern crate rustc_bitflags;
@@ -195,7 +195,7 @@ pub use core_collections::string;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use core_collections::vec;
 
-pub use unicode::char;
+pub use rustc_unicode::char;
 
 /* Exported macros */
 
@@ -305,13 +305,12 @@ mod std {
     pub use sync; // used for select!()
     pub use error; // used for try!()
     pub use fmt; // used for any formatting strings
-    pub use option; // used for bitflags!{}
+    pub use option; // used for thread_local!{}
     pub use rt; // used for panic!()
     pub use vec; // used for vec![]
     pub use cell; // used for tls!
     pub use thread; // used for thread_local!
     pub use marker;  // used for tls!
-    pub use ops; // used for bitflags!
 
     // The test runner calls ::std::env::args() but really wants realstd
     #[cfg(test)] pub use realstd::env as env;

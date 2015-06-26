@@ -46,8 +46,9 @@ pub struct Session {
     pub entry_type: Cell<Option<config::EntryFnType>>,
     pub plugin_registrar_fn: Cell<Option<ast::NodeId>>,
     pub default_sysroot: Option<PathBuf>,
-    // The name of the root source file of the crate, in the local file system. The path is always
-    // expected to be absolute. `None` means that there is no source file.
+    // The name of the root source file of the crate, in the local file system.
+    // The path is always expected to be absolute. `None` means that there is no
+    // source file.
     pub local_crate_source_file: Option<PathBuf>,
     pub working_dir: PathBuf,
     pub lint_store: RefCell<lint::LintStore>,
@@ -56,6 +57,8 @@ pub struct Session {
     pub crate_types: RefCell<Vec<config::CrateType>>,
     pub crate_metadata: RefCell<Vec<String>>,
     pub features: RefCell<feature_gate::Features>,
+
+    pub delayed_span_bug: RefCell<Option<(codemap::Span, String)>>,
 
     /// The maximum recursion limit for potentially infinitely recursive
     /// operations such as auto-dereference and monomorphization.
@@ -114,7 +117,15 @@ impl Session {
         self.diagnostic().handler().has_errors()
     }
     pub fn abort_if_errors(&self) {
-        self.diagnostic().handler().abort_if_errors()
+        self.diagnostic().handler().abort_if_errors();
+
+        let delayed_bug = self.delayed_span_bug.borrow();
+        match *delayed_bug {
+            Some((span, ref errmsg)) => {
+                self.diagnostic().span_bug(span, errmsg);
+            },
+            _ => {}
+        }
     }
     pub fn span_warn(&self, sp: Span, msg: &str) {
         if self.can_print_warnings {
@@ -170,6 +181,11 @@ impl Session {
             Some(sp) => self.span_bug(sp, msg),
             None => self.bug(msg),
         }
+    }
+    /// Delay a span_bug() call until abort_if_errors()
+    pub fn delay_span_bug(&self, sp: Span, msg: &str) {
+        let mut delayed = self.delayed_span_bug.borrow_mut();
+        *delayed = Some((sp, msg.to_string()));
     }
     pub fn span_bug(&self, sp: Span, msg: &str) -> ! {
         self.diagnostic().span_bug(sp, msg)
@@ -402,6 +418,7 @@ pub fn build_session_(sopts: config::Options,
         plugin_llvm_passes: RefCell::new(Vec::new()),
         crate_types: RefCell::new(Vec::new()),
         crate_metadata: RefCell::new(Vec::new()),
+        delayed_span_bug: RefCell::new(None),
         features: RefCell::new(feature_gate::Features::new()),
         recursion_limit: Cell::new(64),
         can_print_warnings: can_print_warnings

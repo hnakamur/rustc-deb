@@ -41,7 +41,6 @@ use syntax;
 use std::cell::Cell;
 use std::io::SeekFrom;
 use std::io::prelude::*;
-use std::rc::Rc;
 use std::fmt::Debug;
 
 use rbml::reader;
@@ -465,6 +464,9 @@ impl tr for def::Def {
           def::DefForeignMod(did) => { def::DefForeignMod(did.tr(dcx)) }
           def::DefStatic(did, m) => { def::DefStatic(did.tr(dcx), m) }
           def::DefConst(did) => { def::DefConst(did.tr(dcx)) }
+          def::DefAssociatedConst(did, p) => {
+              def::DefAssociatedConst(did.tr(dcx), p.map(|did2| did2.tr(dcx)))
+          }
           def::DefLocal(nid) => { def::DefLocal(dcx.tr_id(nid)) }
           def::DefVariant(e_did, v_did, is_s) => {
             def::DefVariant(e_did.tr(dcx), v_did.tr(dcx), is_s)
@@ -887,7 +889,7 @@ impl<'a, 'tcx> rbml_writer_helpers<'tcx> for Encoder<'a> {
                     this.emit_enum_variant("MethodTypeParam", 2, 1, |this| {
                         this.emit_struct("MethodParam", 2, |this| {
                             try!(this.emit_struct_field("trait_ref", 0, |this| {
-                                Ok(this.emit_trait_ref(ecx, &*p.trait_ref))
+                                Ok(this.emit_trait_ref(ecx, &p.trait_ref))
                             }));
                             try!(this.emit_struct_field("method_num", 0, |this| {
                                 this.emit_uint(p.method_num)
@@ -911,7 +913,7 @@ impl<'a, 'tcx> rbml_writer_helpers<'tcx> for Encoder<'a> {
                     this.emit_enum_variant("MethodTraitObject", 3, 1, |this| {
                         this.emit_struct("MethodObject", 2, |this| {
                             try!(this.emit_struct_field("trait_ref", 0, |this| {
-                                Ok(this.emit_trait_ref(ecx, &*o.trait_ref))
+                                Ok(this.emit_trait_ref(ecx, &o.trait_ref))
                             }));
                             try!(this.emit_struct_field("object_trait_id", 0, |this| {
                                 Ok(this.emit_def_id(o.object_trait_id))
@@ -1205,7 +1207,7 @@ fn encode_side_tables_for_id(ecx: &e::EncodeContext,
     if let Some(trait_ref) = tcx.object_cast_map.borrow().get(&id) {
         rbml_w.tag(c::tag_table_object_cast_map, |rbml_w| {
             rbml_w.id(id);
-            rbml_w.emit_trait_ref(ecx, &*trait_ref.0);
+            rbml_w.emit_trait_ref(ecx, &trait_ref.0);
         })
     }
 
@@ -1272,7 +1274,7 @@ trait rbml_decoder_decoder_helpers<'tcx> {
     fn read_ty<'a, 'b>(&mut self, dcx: &DecodeContext<'a, 'b, 'tcx>) -> Ty<'tcx>;
     fn read_tys<'a, 'b>(&mut self, dcx: &DecodeContext<'a, 'b, 'tcx>) -> Vec<Ty<'tcx>>;
     fn read_trait_ref<'a, 'b>(&mut self, dcx: &DecodeContext<'a, 'b, 'tcx>)
-                              -> Rc<ty::TraitRef<'tcx>>;
+                              -> ty::TraitRef<'tcx>;
     fn read_poly_trait_ref<'a, 'b>(&mut self, dcx: &DecodeContext<'a, 'b, 'tcx>)
                                    -> ty::PolyTraitRef<'tcx>;
     fn read_type_param_def<'a, 'b>(&mut self, dcx: &DecodeContext<'a, 'b, 'tcx>)
@@ -1466,7 +1468,7 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
     }
 
     fn read_trait_ref<'b, 'c>(&mut self, dcx: &DecodeContext<'b, 'c, 'tcx>)
-                              -> Rc<ty::TraitRef<'tcx>> {
+                              -> ty::TraitRef<'tcx> {
         self.read_opaque(|this, doc| {
             let ty = tydecode::parse_trait_ref_data(
                 doc.data,
@@ -1835,29 +1837,31 @@ fn decode_item_ast(par_doc: rbml::Doc) -> ast::Item {
 }
 
 #[cfg(test)]
-trait fake_ext_ctxt {
+trait FakeExtCtxt {
+    fn call_site(&self) -> codemap::Span;
     fn cfg(&self) -> ast::CrateConfig;
-    fn parse_sess<'a>(&'a self) -> &'a parse::ParseSess;
-    fn call_site(&self) -> Span;
     fn ident_of(&self, st: &str) -> ast::Ident;
+    fn name_of(&self, st: &str) -> ast::Name;
+    fn parse_sess(&self) -> &parse::ParseSess;
 }
 
 #[cfg(test)]
-impl fake_ext_ctxt for parse::ParseSess {
-    fn cfg(&self) -> ast::CrateConfig {
-        Vec::new()
-    }
-    fn parse_sess<'a>(&'a self) -> &'a parse::ParseSess { self }
-    fn call_site(&self) -> Span {
+impl FakeExtCtxt for parse::ParseSess {
+    fn call_site(&self) -> codemap::Span {
         codemap::Span {
             lo: codemap::BytePos(0),
             hi: codemap::BytePos(0),
-            expn_id: codemap::NO_EXPANSION
+            expn_id: codemap::NO_EXPANSION,
         }
     }
+    fn cfg(&self) -> ast::CrateConfig { Vec::new() }
     fn ident_of(&self, st: &str) -> ast::Ident {
-        token::str_to_ident(st)
+        parse::token::str_to_ident(st)
     }
+    fn name_of(&self, st: &str) -> ast::Name {
+        parse::token::intern(st)
+    }
+    fn parse_sess(&self) -> &parse::ParseSess { self }
 }
 
 #[cfg(test)]
@@ -1883,7 +1887,7 @@ fn test_basic() {
         fn foo() {}
     ));
 }
-/* NOTE: When there's a snapshot, update this (yay quasiquoter!)
+
 #[test]
 fn test_smalltalk() {
     let cx = mk_ctxt();
@@ -1891,7 +1895,6 @@ fn test_smalltalk() {
         fn foo() -> isize { 3 + 4 } // first smalltalk program ever executed.
     ));
 }
-*/
 
 #[test]
 fn test_more() {

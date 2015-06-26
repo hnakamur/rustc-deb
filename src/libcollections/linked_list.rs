@@ -616,7 +616,13 @@ impl<T> LinkedList<T> {
             length: len - at
         };
 
+        // Swap split_node.next with list_head (which is None), nulling out split_node.next,
+        // as it is the new tail.
         mem::swap(&mut split_node.resolve().unwrap().next, &mut splitted_list.list_head);
+        // Null out list_head.prev. Note this `unwrap` won't fail because if at == len
+        // we already branched out at the top of the fn to return the empty list.
+        splitted_list.list_head.as_mut().unwrap().prev = Rawlink::none();
+        // Fix the tail ptr
         self.list_tail = split_node;
         self.length = at;
 
@@ -624,7 +630,6 @@ impl<T> LinkedList<T> {
     }
 }
 
-#[unsafe_destructor]
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {
@@ -933,7 +938,7 @@ impl<A: Hash> Hash for LinkedList<A> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::clone::Clone;
     use std::iter::{Iterator, IntoIterator};
     use std::option::Option::{Some, None, self};
@@ -1081,6 +1086,26 @@ mod test {
             fuzz_test(16);
             fuzz_test(189);
         }
+    }
+
+    #[test]
+    fn test_26021() {
+        use std::iter::ExactSizeIterator;
+        // There was a bug in split_off that failed to null out the RHS's head's prev ptr.
+        // This caused the RHS's dtor to walk up into the LHS at drop and delete all of
+        // its nodes.
+        //
+        // https://github.com/rust-lang/rust/issues/26021
+        let mut v1 = LinkedList::new();
+        v1.push_front(1u8);
+        v1.push_front(1u8);
+        v1.push_front(1u8);
+        v1.push_front(1u8);
+        let _ = v1.split_off(3); // Dropping this now should not cause laundry consumption
+        assert_eq!(v1.len(), 3);
+
+        assert_eq!(v1.iter().len(), 3);
+        assert_eq!(v1.iter().collect::<Vec<_>>().len(), 3);
     }
 
     #[cfg(test)]

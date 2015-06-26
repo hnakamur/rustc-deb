@@ -13,7 +13,7 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use cmp;
-use unicode::str as core_str;
+use rustc_unicode::str as core_str;
 use error as std_error;
 use fmt;
 use iter::{self, Iterator, Extend};
@@ -70,8 +70,7 @@ fn append_to_string<F>(buf: &mut String, f: F) -> Result<usize>
     where F: FnOnce(&mut Vec<u8>) -> Result<usize>
 {
     struct Guard<'a> { s: &'a mut Vec<u8>, len: usize }
-    #[unsafe_destructor]
-    impl<'a> Drop for Guard<'a> {
+        impl<'a> Drop for Guard<'a> {
         fn drop(&mut self) {
             unsafe { self.s.set_len(self.len); }
         }
@@ -237,7 +236,7 @@ pub trait Read {
 
     /// Transforms this `Read` instance to an `Iterator` over `char`s.
     ///
-    /// This adaptor will attempt to interpret this reader as an UTF-8 encoded
+    /// This adaptor will attempt to interpret this reader as a UTF-8 encoded
     /// sequence of characters. The returned iterator will return `None` once
     /// EOF is reached for this reader. Otherwise each element yielded will be a
     /// `Result<char, E>` where `E` may contain information about what I/O error

@@ -31,11 +31,9 @@
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
-#![feature(unsafe_destructor)]
 #![feature(staged_api)]
 #![feature(exit_status)]
 #![feature(set_stdio)]
-#![feature(unicode)]
 
 extern crate arena;
 extern crate flate;
@@ -485,10 +483,6 @@ pub fn commit_date_str() -> Option<&'static str> {
     option_env!("CFG_VER_DATE")
 }
 
-pub fn build_date_str() -> Option<&'static str> {
-    option_env!("CFG_BUILD_DATE")
-}
-
 /// Prints version information and returns None on success or an error
 /// message on panic.
 pub fn version(binary: &str, matches: &getopts::Matches) {
@@ -500,7 +494,6 @@ pub fn version(binary: &str, matches: &getopts::Matches) {
         println!("binary: {}", binary);
         println!("commit-hash: {}", unw(commit_hash_str()));
         println!("commit-date: {}", unw(commit_date_str()));
-        println!("build-date: {}", unw(build_date_str()));
         println!("host: {}", config::host_triple());
         println!("release: {}", unw(release_str()));
     }
@@ -574,7 +567,7 @@ Available lint options:
     let builtin_groups = sort_lint_groups(builtin_groups);
 
     let max_name_len = plugin.iter().chain(builtin.iter())
-        .map(|&s| s.name.width(true))
+        .map(|&s| s.name.chars().count())
         .max().unwrap_or(0);
     let padded = |x: &str| {
         let mut s = repeat(" ").take(max_name_len - x.chars().count())
@@ -601,7 +594,7 @@ Available lint options:
 
 
     let max_name_len = plugin_groups.iter().chain(builtin_groups.iter())
-        .map(|&(s, _)| s.width(true))
+        .map(|&(s, _)| s.chars().count())
         .max().unwrap_or(0);
     let padded = |x: &str| {
         let mut s = repeat(" ").take(max_name_len - x.chars().count())
@@ -790,7 +783,6 @@ fn parse_crate_attrs(sess: &Session, input: &Input) ->
 ///
 /// The diagnostic emitter yielded to the procedure should be used for reporting
 /// errors of the compiler.
-#[allow(deprecated)]
 pub fn monitor<F:FnOnce()+Send+'static>(f: F) {
     const STACK_SIZE: usize = 8 * 1024 * 1024; // 8MB
 
@@ -856,9 +848,10 @@ pub fn diagnostics_registry() -> diagnostics::registry::Registry {
     use syntax::diagnostics::registry::Registry;
 
     let mut all_errors = Vec::new();
-    all_errors.push_all(&rustc::diagnostics::DIAGNOSTICS);
-    all_errors.push_all(&rustc_typeck::diagnostics::DIAGNOSTICS);
-    all_errors.push_all(&rustc_resolve::diagnostics::DIAGNOSTICS);
+    all_errors.push_all(&rustc::DIAGNOSTICS);
+    all_errors.push_all(&rustc_typeck::DIAGNOSTICS);
+    all_errors.push_all(&rustc_borrowck::DIAGNOSTICS);
+    all_errors.push_all(&rustc_resolve::DIAGNOSTICS);
 
     Registry::new(&*all_errors)
 }

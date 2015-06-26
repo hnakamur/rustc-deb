@@ -261,10 +261,13 @@ lets_do_this! {
 
     SendTraitLangItem,               "send",                    send_trait;
     SizedTraitLangItem,              "sized",                   sized_trait;
+    UnsizeTraitLangItem,             "unsize",                  unsize_trait;
     CopyTraitLangItem,               "copy",                    copy_trait;
     SyncTraitLangItem,               "sync",                    sync_trait;
 
     DropTraitLangItem,               "drop",                    drop_trait;
+
+    CoerceUnsizedTraitLangItem,      "coerce_unsized",          coerce_unsized_trait;
 
     AddTraitLangItem,                "add",                     add_trait;
     SubTraitLangItem,                "sub",                     sub_trait;
@@ -334,7 +337,6 @@ lets_do_this! {
     InvariantLifetimeItem,           "invariant_lifetime",      invariant_lifetime;
 
     NoCopyItem,                      "no_copy_bound",           no_copy_bound;
-    ManagedItem,                     "managed_bound",           managed_bound;
 
     NonZeroItem,                     "non_zero",                non_zero;
 

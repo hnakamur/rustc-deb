@@ -140,7 +140,7 @@ impl<T> SliceExt for [T] {
             assume(!p.is_null());
             if mem::size_of::<T>() == 0 {
                 Iter {ptr: p,
-                      end: (p as usize + self.len()) as *const T,
+                      end: ((p as usize).wrapping_add(self.len())) as *const T,
                       _marker: marker::PhantomData}
             } else {
                 Iter {ptr: p,
@@ -277,7 +277,7 @@ impl<T> SliceExt for [T] {
             assume(!p.is_null());
             if mem::size_of::<T>() == 0 {
                 IterMut {ptr: p,
-                         end: (p as usize + self.len()) as *mut T,
+                         end: ((p as usize).wrapping_add(self.len())) as *mut T,
                          _marker: marker::PhantomData}
             } else {
                 IterMut {ptr: p,
@@ -625,6 +625,36 @@ impl<'a, T> IntoIterator for &'a mut [T] {
     }
 }
 
+#[inline(always)]
+fn size_from_ptr<T>(_: *const T) -> usize {
+    mem::size_of::<T>()
+}
+
+
+// Use macros to be generic over const/mut
+macro_rules! slice_offset {
+    ($ptr:expr, $by:expr) => {{
+        let ptr = $ptr;
+        if size_from_ptr(ptr) == 0 {
+            transmute((ptr as isize).wrapping_add($by))
+        } else {
+            ptr.offset($by)
+        }
+    }};
+}
+
+macro_rules! slice_ref {
+    ($ptr:expr) => {{
+        let ptr = $ptr;
+        if size_from_ptr(ptr) == 0 {
+            // Use a non-null pointer value
+            &mut *(1 as *mut _)
+        } else {
+            transmute(ptr)
+        }
+    }};
+}
+
 // The shared definition of the `Iter` and `IterMut` iterators
 macro_rules! iterator {
     (struct $name:ident -> $ptr:ty, $elem:ty) => {
@@ -636,35 +666,42 @@ macro_rules! iterator {
             fn next(&mut self) -> Option<$elem> {
                 // could be implemented with slices, but this avoids bounds checks
                 unsafe {
-                    ::intrinsics::assume(!self.ptr.is_null());
-                    ::intrinsics::assume(!self.end.is_null());
+                    if mem::size_of::<T>() != 0 {
+                        assume(!self.ptr.is_null());
+                        assume(!self.end.is_null());
+                    }
                     if self.ptr == self.end {
                         None
                     } else {
-                        if mem::size_of::<T>() == 0 {
-                            // purposefully don't use 'ptr.offset' because for
-                            // vectors with 0-size elements this would return the
-                            // same pointer.
-                            self.ptr = transmute(self.ptr as usize + 1);
-
-                            // Use a non-null pointer value
-                            Some(&mut *(1 as *mut _))
-                        } else {
-                            let old = self.ptr;
-                            self.ptr = self.ptr.offset(1);
-
-                            Some(transmute(old))
-                        }
+                        let old = self.ptr;
+                        self.ptr = slice_offset!(self.ptr, 1);
+                        Some(slice_ref!(old))
                     }
                 }
             }
 
             #[inline]
             fn size_hint(&self) -> (usize, Option<usize>) {
-                let diff = (self.end as usize) - (self.ptr as usize);
+                let diff = (self.end as usize).wrapping_sub(self.ptr as usize);
                 let size = mem::size_of::<T>();
                 let exact = diff / (if size == 0 {1} else {size});
                 (exact, Some(exact))
+            }
+
+            #[inline]
+            fn count(self) -> usize {
+                self.size_hint().0
+            }
+
+            #[inline]
+            fn nth(&mut self, n: usize) -> Option<$elem> {
+                // Call helper method. Can't put the definition here because mut versus const.
+                self.iter_nth(n)
+            }
+
+            #[inline]
+            fn last(mut self) -> Option<$elem> {
+                self.next_back()
             }
         }
 
@@ -674,22 +711,15 @@ macro_rules! iterator {
             fn next_back(&mut self) -> Option<$elem> {
                 // could be implemented with slices, but this avoids bounds checks
                 unsafe {
-                    ::intrinsics::assume(!self.ptr.is_null());
-                    ::intrinsics::assume(!self.end.is_null());
+                    if mem::size_of::<T>() != 0 {
+                        assume(!self.ptr.is_null());
+                        assume(!self.end.is_null());
+                    }
                     if self.end == self.ptr {
                         None
                     } else {
-                        if mem::size_of::<T>() == 0 {
-                            // See above for why 'ptr.offset' isn't used
-                            self.end = transmute(self.end as usize - 1);
-
-                            // Use a non-null pointer value
-                            Some(&mut *(1 as *mut _))
-                        } else {
-                            self.end = self.end.offset(-1);
-
-                            Some(transmute(self.end))
-                        }
+                        self.end = slice_offset!(self.end, -1);
+                        Some(slice_ref!(self.end))
                     }
                 }
             }
@@ -698,29 +728,29 @@ macro_rules! iterator {
 }
 
 macro_rules! make_slice {
-    ($t: ty => $result: ty: $start: expr, $end: expr) => {{
-        let diff = $end as usize - $start as usize;
-        let len = if mem::size_of::<T>() == 0 {
-            diff
+    ($start: expr, $end: expr) => {{
+        let start = $start;
+        let diff = ($end as usize).wrapping_sub(start as usize);
+        if size_from_ptr(start) == 0 {
+            // use a non-null pointer value
+            unsafe { from_raw_parts(1 as *const _, diff) }
         } else {
-            diff / mem::size_of::<$t>()
-        };
-        unsafe {
-            from_raw_parts($start, len)
+            let len = diff / size_from_ptr(start);
+            unsafe { from_raw_parts(start, len) }
         }
     }}
 }
 
 macro_rules! make_mut_slice {
-    ($t: ty => $result: ty: $start: expr, $end: expr) => {{
-        let diff = $end as usize - $start as usize;
-        let len = if mem::size_of::<T>() == 0 {
-            diff
+    ($start: expr, $end: expr) => {{
+        let start = $start;
+        let diff = ($end as usize).wrapping_sub(start as usize);
+        if size_from_ptr(start) == 0 {
+            // use a non-null pointer value
+            unsafe { from_raw_parts_mut(1 as *mut _, diff) }
         } else {
-            diff / mem::size_of::<$t>()
-        };
-        unsafe {
-            from_raw_parts_mut($start, len)
+            let len = diff / size_from_ptr(start);
+            unsafe { from_raw_parts_mut(start, len) }
         }
     }}
 }
@@ -743,7 +773,21 @@ impl<'a, T> Iter<'a, T> {
     /// iterator can continue to be used while this exists.
     #[unstable(feature = "core")]
     pub fn as_slice(&self) -> &'a [T] {
-        make_slice!(T => &'a [T]: self.ptr, self.end)
+        make_slice!(self.ptr, self.end)
+    }
+
+    // Helper function for Iter::nth
+    fn iter_nth(&mut self, n: usize) -> Option<&'a T> {
+        match self.as_slice().get(n) {
+            Some(elem_ref) => unsafe {
+                self.ptr = slice_offset!(self.ptr, (n as isize).wrapping_add(1));
+                Some(slice_ref!(elem_ref))
+            },
+            None => {
+                self.ptr = self.end;
+                None
+            }
+        }
     }
 }
 
@@ -769,12 +813,7 @@ impl<'a, T> RandomAccessIterator for Iter<'a, T> {
     fn idx(&mut self, index: usize) -> Option<&'a T> {
         unsafe {
             if index < self.indexable() {
-                if mem::size_of::<T>() == 0 {
-                    // Use a non-null pointer value
-                    Some(&mut *(1 as *mut _))
-                } else {
-                    Some(transmute(self.ptr.offset(index as isize)))
-                }
+                Some(slice_ref!(self.ptr.offset(index as isize)))
             } else {
                 None
             }
@@ -802,7 +841,21 @@ impl<'a, T> IterMut<'a, T> {
     /// restricted lifetimes that do not consume the iterator.
     #[unstable(feature = "core")]
     pub fn into_slice(self) -> &'a mut [T] {
-        make_mut_slice!(T => &'a mut [T]: self.ptr, self.end)
+        make_mut_slice!(self.ptr, self.end)
+    }
+
+    // Helper function for IterMut::nth
+    fn iter_nth(&mut self, n: usize) -> Option<&'a mut T> {
+        match make_mut_slice!(self.ptr, self.end).get_mut(n) {
+            Some(elem_ref) => unsafe {
+                self.ptr = slice_offset!(self.ptr, (n as isize).wrapping_add(1));
+                Some(slice_ref!(elem_ref))
+            },
+            None => {
+                self.ptr = self.end;
+                None
+            }
+        }
     }
 }
 

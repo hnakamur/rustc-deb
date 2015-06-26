@@ -13,7 +13,6 @@
 
 #![feature(box_syntax)]
 #![feature(unboxed_closures)]
-#![feature(unsafe_destructor)]
 #![feature(core)]
 #![feature(test)]
 #![feature(rand)]
@@ -30,7 +29,8 @@
 extern crate core;
 extern crate test;
 extern crate libc;
-extern crate unicode;
+extern crate rustc_unicode;
+extern crate rand;
 
 mod any;
 mod atomic;
