@@ -1,4 +1,4 @@
-rustc (1.1.0+dfsg1-1) UNRELEASED; urgency=low
+rustc (1.1.0+dfsg1-1) unstable; urgency=low
 
   [ Angus Lees ]
   * Set SONAME when building dylibs
@@ -11,7 +11,7 @@ rustc (1.1.0+dfsg1-1) UNRELEASED; urgency=low
     efforts.  Warning: it may not be complete/accurate yet.
   * New upstream release (1.1)
 
- -- Angus Lees <gus@debian.org>  Fri, 26 Jun 2015 16:49:12 -0600
+ -- Angus Lees <gus@debian.org>  Thu, 16 Jul 2015 14:23:47 +1000
 
 rustc (1.0.0+dfsg1-1) unstable; urgency=medium
 
