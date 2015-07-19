@@ -11,6 +11,3 @@ Files: /usr/share/doc/rust-doc/html/reference.html
 
 Format: PDF
 Files: /usr/share/doc/rust-doc/html/reference.pdf.gz
-
-Format: EPUB
-Files: /usr/share/doc/rust-doc/html/reference.epub
