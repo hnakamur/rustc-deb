@@ -101,7 +101,11 @@ ifneq (,$(BUILD_DOCS))
 	# Brute force to remove privacy-breach-logo lintian warning.
 	# We could have updated the upstream sources but it would complexify
 	# the rebase
-	sed -i '\!rel="shortcut icon" href="http://www.rust-lang.org/favicon.ico"!d' `find $(DEB_DESTDIR) -iname '*.html'`
+	find $(DEB_DESTDIR)/usr/share/doc/html -iname '*.html' | \
+	while read file; do \
+	  topdir=$(echo "$file" | sed 's,^$(DEB_DESTDIR)/usr/share/doc/html/,,; s,/[^/]*$,/,; s,[^/]\+/,../,g'); \
+	  sed -i "s,http://www.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),${topdir}rust-logo-32x32-blk.png," "$file"; \
+	done
 
 	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock \) -delete
 

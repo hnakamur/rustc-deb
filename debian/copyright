@@ -267,6 +267,12 @@ License: MIT-License or Apache-2.0
  option. This file may not be copied, modified, or distributed
  except according to those terms.
 
+Files: debian/icons/rust-logo-32x32-blk.png
+Copyright: Mozilla Foundation
+License: CC-BY
+Comment:
+ Relevant discussion in https://github.com/rust-lang/rust/issues/11562
+
 License: BSD-1-clause
  Redistribution and use in source and binary forms, with
  or without modification, are permitted provided that the
