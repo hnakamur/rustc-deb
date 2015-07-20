@@ -128,6 +128,9 @@ override_dh_installchangelogs:
 override_dh_installdocs:
 	dh_installdocs -X.tex -X.aux -X.log -X.out -X.toc
 
+override_dh_compress:
+	dh_compress -X.woff
+
 override_dh_auto_test:
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	$(PMAKE) check-notidy
