@@ -1,12 +1,15 @@
-rustc (1.1.0+dfsg1-2) UNRELEASED; urgency=low
+rustc (1.1.0+dfsg1-2) unstable; urgency=medium
 
   [ Angus Lees ]
   * Replace remote Rust logo with local file in HTML docs.
   * Symlink rust-{gdb,lldb}.1 to {gdb,lldb}.1 manpages.
     Note that gdb.1 requires the gdb-doc package, and that lldb.1 doesn't
-    exist yet (#792908).
+    exist yet (see #792908).
+  * Restore "Architecture: amd64 i386" filter, mistakenly removed in
+    previous version.  Unfortunately the toolchain bootstrap isn't ready
+    to support all Debian archs yet.  Closes: #793147.
 
- -- Angus Lees <gus@debian.org>  Mon, 20 Jul 2015 11:15:44 +1000
+ -- Angus Lees <gus@debian.org>  Wed, 22 Jul 2015 09:51:08 +1000
 
 rustc (1.1.0+dfsg1-1) unstable; urgency=low
 
