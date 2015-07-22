@@ -71,7 +71,7 @@ License: U-OF-I-BSD-LIKE or Expat
  to use it under either license.  As a contributor, you agree to allow your code
  to be used under both.
 
-Files: src/compiler-rt/BlocksRuntime/*
+Files: src/compiler-rt/lib/BlocksRuntime/*
 Copyright: 2008-2010 Apple, Inc.
 License: Expat
 
@@ -81,8 +81,11 @@ Copyright: 2008 Natacha Porté
            2013 Devin Torres and the Hoedown authors
 License: ISC
 
-Files: src/libbacktrace/filenames.h, src/libbacktrace/ansidecl.h,
- src/libbacktrace/hashtab.h, src/libbacktrace/ltmain.sh
+Files:
+ src/libbacktrace/filenames.h
+ src/libbacktrace/ansidecl.h
+ src/libbacktrace/hashtab.h
+ src/libbacktrace/ltmain.sh
 Copyright: 2000, 2001, 2007, 2010 Free Software Foundation, Inc.
 License: GPL-2+
 
@@ -232,7 +235,7 @@ Files: src/llvm/utils/unittest/googletest/*
 Copyright: 2006-2008, Google Inc.
 License: BSD-3-Clause
 
-Files: src/librustdoc/html/static/FireSans*
+Files: src/librustdoc/html/static/FiraSans*
 Copyright: 2014, Mozilla Foundation, 2014, Telefonica S.A.
 License: SIL-OPEN-FONT
 
@@ -255,10 +258,6 @@ Files:
  debian/missing-sources/jquery-2.1.0.js
 Copyright: 2005-2014 jQuery Foundation, Inc and other contributors
 License: MIT-License
-
-Files: src/librustdoc/html/static/jquery-*.min.js, ./debian/missing-sources/jquery.js
-Copyright: 2011 The Dojo Foundation
-License: MIT or BSD-1-clause or GPL-2
 
 Files: src/librustdoc/html/static/main.js
 Copyright: 2014 The Rust Project Developers
