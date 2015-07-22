@@ -94,7 +94,6 @@ Description: Rust standard libraries - development files
  Rust libraries.
 
 Package: rust-gdb
-Section: devel
 Architecture: any
 Depends: gdb, ${misc:Depends}
 Description: Rust debugger (gdb)
@@ -114,7 +113,6 @@ Description: Rust debugger (gdb)
  invoking gdb on rust binaries.
 
 Package: rust-lldb
-Section: devel
 Architecture: any
 Depends: lldb, ${misc:Depends}
 Description: Rust debugger (lldb)
