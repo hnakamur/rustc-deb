@@ -250,7 +250,9 @@ Files: src/librustdoc/html/static/SourceSerifPro*
 Copyright: 2014 Adobe Systems Incorporated
 License: SIL-OPEN-FONT
 
-Files: src/librustdoc/html/static/jquery-*.min.js, ./debian/missing-sources/jquery.js
+Files:
+ src/librustdoc/html/static/jquery-*.min.js
+ debian/missing-sources/jquery-2.1.0.js
 Copyright: 2005-2014 jQuery Foundation, Inc and other contributors
 License: MIT-License
 
