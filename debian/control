@@ -96,6 +96,7 @@ Description: Rust standard libraries - development files
 Package: rust-gdb
 Architecture: any
 Depends: gdb, ${misc:Depends}
+Replaces: rustc (<< 1.1.0+dfsg1-1)
 Description: Rust debugger (gdb)
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
@@ -115,6 +116,7 @@ Description: Rust debugger (gdb)
 Package: rust-lldb
 Architecture: any
 Depends: lldb, ${misc:Depends}
+Replaces: rustc (<< 1.1.0+dfsg1-1)
 Description: Rust debugger (lldb)
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly

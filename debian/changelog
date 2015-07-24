@@ -1,3 +1,11 @@
+rustc (1.1.0+dfsg1-3) unstable; urgency=medium
+
+  * rust-{gdb,lldb} now Replaces pre-split rustc package.
+    Closes: #793433.
+  * Several minor lintian cleanups.
+
+ -- Angus Lees <gus@debian.org>  Fri, 24 Jul 2015 17:47:48 +1000
+
 rustc (1.1.0+dfsg1-2) unstable; urgency=medium
 
   [ Angus Lees ]
