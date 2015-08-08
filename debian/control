@@ -28,7 +28,7 @@ Build-Depends-Indep: pandoc (>=1.9),
 Standards-Version: 3.9.6
 Homepage: http://www.rust-lang.org/
 Vcs-Git: git://anonscm.debian.org/pkg-rust/rust.git
-Vcs-Browser: https://anonscm.debian.org/cgit/pkg-rust/rust.git;a=summary
+Vcs-Browser: https://anonscm.debian.org/cgit/pkg-rust/rust.git/
 
 Package: rustc
 Architecture: amd64 i386
