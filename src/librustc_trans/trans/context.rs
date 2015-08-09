@@ -28,7 +28,6 @@ use middle::subst::Substs;
 use middle::ty::{self, Ty};
 use session::config::NoDebugInfo;
 use session::Session;
-use util::ppaux::Repr;
 use util::sha2::Sha256;
 use util::nodemap::{NodeMap, NodeSet, DefIdMap, FnvHashMap, FnvHashSet};
 
@@ -57,7 +56,7 @@ pub struct Stats {
 /// per crate.  The data here is shared between all compilation units of the
 /// crate, so it must not contain references to any LLVM data structures
 /// (aside from metadata-related ones).
-pub struct SharedCrateContext<'tcx> {
+pub struct SharedCrateContext<'a, 'tcx: 'a> {
     local_ccxs: Vec<LocalCrateContext<'tcx>>,
 
     metadata_llmod: ModuleRef,
@@ -68,13 +67,13 @@ pub struct SharedCrateContext<'tcx> {
     item_symbols: RefCell<NodeMap<String>>,
     link_meta: LinkMeta,
     symbol_hasher: RefCell<Sha256>,
-    tcx: ty::ctxt<'tcx>,
+    tcx: &'a ty::ctxt<'tcx>,
     stats: Stats,
     check_overflow: bool,
     check_drop_flag_for_sanity: bool,
 
-    available_monomorphizations: RefCell<FnvHashSet<String>>,
     available_drop_glues: RefCell<FnvHashMap<DropGlueKind<'tcx>, String>>,
+    use_dll_storage_attrs: bool,
 }
 
 /// The local portion of a `CrateContext`.  There is one `LocalCrateContext`
@@ -99,6 +98,7 @@ pub struct LocalCrateContext<'tcx> {
     /// Cache instances of monomorphized functions
     monomorphized: RefCell<FnvHashMap<MonoId<'tcx>, ValueRef>>,
     monomorphizing: RefCell<DefIdMap<usize>>,
+    available_monomorphizations: RefCell<FnvHashSet<String>>,
     /// Cache generated vtables
     vtables: RefCell<FnvHashMap<ty::PolyTraitRef<'tcx>, ValueRef>>,
     /// Cache of constant strings,
@@ -158,7 +158,7 @@ pub struct LocalCrateContext<'tcx> {
 }
 
 pub struct CrateContext<'a, 'tcx: 'a> {
-    shared: &'a SharedCrateContext<'tcx>,
+    shared: &'a SharedCrateContext<'a, 'tcx>,
     local: &'a LocalCrateContext<'tcx>,
     /// The index of `local` in `shared.local_ccxs`.  This is used in
     /// `maybe_iter(true)` to identify the original `LocalCrateContext`.
@@ -166,7 +166,7 @@ pub struct CrateContext<'a, 'tcx: 'a> {
 }
 
 pub struct CrateContextIterator<'a, 'tcx: 'a> {
-    shared: &'a SharedCrateContext<'tcx>,
+    shared: &'a SharedCrateContext<'a, 'tcx>,
     index: usize,
 }
 
@@ -191,7 +191,7 @@ impl<'a, 'tcx> Iterator for CrateContextIterator<'a,'tcx> {
 
 /// The iterator produced by `CrateContext::maybe_iter`.
 pub struct CrateContextMaybeIterator<'a, 'tcx: 'a> {
-    shared: &'a SharedCrateContext<'tcx>,
+    shared: &'a SharedCrateContext<'a, 'tcx>,
     index: usize,
     single: bool,
     origin: usize,
@@ -236,20 +236,65 @@ unsafe fn create_context_and_module(sess: &Session, mod_name: &str) -> (ContextR
     (llcx, llmod)
 }
 
-impl<'tcx> SharedCrateContext<'tcx> {
+impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
     pub fn new(crate_name: &str,
                local_count: usize,
-               tcx: ty::ctxt<'tcx>,
+               tcx: &'b ty::ctxt<'tcx>,
                export_map: ExportMap,
                symbol_hasher: Sha256,
                link_meta: LinkMeta,
                reachable: NodeSet,
                check_overflow: bool,
                check_drop_flag_for_sanity: bool)
-               -> SharedCrateContext<'tcx> {
+               -> SharedCrateContext<'b, 'tcx> {
         let (metadata_llcx, metadata_llmod) = unsafe {
             create_context_and_module(&tcx.sess, "metadata")
         };
+
+        // An interesting part of Windows which MSVC forces our hand on (and
+        // apparently MinGW didn't) is the usage of `dllimport` and `dllexport`
+        // attributes in LLVM IR as well as native dependencies (in C these
+        // correspond to `__declspec(dllimport)`).
+        //
+        // Whenever a dynamic library is built by MSVC it must have its public
+        // interface specified by functions tagged with `dllexport` or otherwise
+        // they're not available to be linked against. This poses a few problems
+        // for the compiler, some of which are somewhat fundamental, but we use
+        // the `use_dll_storage_attrs` variable below to attach the `dllexport`
+        // attribute to all LLVM functions that are reachable (e.g. they're
+        // already tagged with external linkage). This is suboptimal for a few
+        // reasons:
+        //
+        // * If an object file will never be included in a dynamic library,
+        //   there's no need to attach the dllexport attribute. Most object
+        //   files in Rust are not destined to become part of a dll as binaries
+        //   are statically linked by default.
+        // * If the compiler is emitting both an rlib and a dylib, the same
+        //   source object file is currently used but with MSVC this may be less
+        //   feasible. The compiler may be able to get around this, but it may
+        //   involve some invasive changes to deal with this.
+        //
+        // The flipside of this situation is that whenever you link to a dll and
+        // you import a function from it, the import should be tagged with
+        // `dllimport`. At this time, however, the compiler does not emit
+        // `dllimport` for any declarations other than constants (where it is
+        // required), which is again suboptimal for even more reasons!
+        //
+        // * Calling a function imported from another dll without using
+        //   `dllimport` causes the linker/compiler to have extra overhead (one
+        //   `jmp` instruction on x86) when calling the function.
+        // * The same object file may be used in different circumstances, so a
+        //   function may be imported from a dll if the object is linked into a
+        //   dll, but it may be just linked against if linked into an rlib.
+        // * The compiler has no knowledge about whether native functions should
+        //   be tagged dllimport or not.
+        //
+        // For now the compiler takes the perf hit (I do not have any numbers to
+        // this effect) by marking very little as `dllimport` and praying the
+        // linker will take care of everything. Fixing this problem will likely
+        // require adding a few attributes to Rust itself (feature gated at the
+        // start) and then strongly recommending static linkage on MSVC!
+        let use_dll_storage_attrs = tcx.sess.target.target.options.is_like_msvc;
 
         let mut shared_ccx = SharedCrateContext {
             local_ccxs: Vec::with_capacity(local_count),
@@ -275,8 +320,8 @@ impl<'tcx> SharedCrateContext<'tcx> {
             },
             check_overflow: check_overflow,
             check_drop_flag_for_sanity: check_drop_flag_for_sanity,
-            available_monomorphizations: RefCell::new(FnvHashSet()),
             available_drop_glues: RefCell::new(FnvHashMap()),
+            use_dll_storage_attrs: use_dll_storage_attrs,
         };
 
         for i in 0..local_count {
@@ -351,10 +396,6 @@ impl<'tcx> SharedCrateContext<'tcx> {
     }
 
     pub fn tcx<'a>(&'a self) -> &'a ty::ctxt<'tcx> {
-        &self.tcx
-    }
-
-    pub fn take_tcx(self) -> ty::ctxt<'tcx> {
         self.tcx
     }
 
@@ -365,10 +406,14 @@ impl<'tcx> SharedCrateContext<'tcx> {
     pub fn stats<'a>(&'a self) -> &'a Stats {
         &self.stats
     }
+
+    pub fn use_dll_storage_attrs(&self) -> bool {
+        self.use_dll_storage_attrs
+    }
 }
 
 impl<'tcx> LocalCrateContext<'tcx> {
-    fn new(shared: &SharedCrateContext<'tcx>,
+    fn new<'a>(shared: &SharedCrateContext<'a, 'tcx>,
            name: &str)
            -> LocalCrateContext<'tcx> {
         unsafe {
@@ -401,6 +446,7 @@ impl<'tcx> LocalCrateContext<'tcx> {
                 external_srcs: RefCell::new(NodeMap()),
                 monomorphized: RefCell::new(FnvHashMap()),
                 monomorphizing: RefCell::new(DefIdMap()),
+                available_monomorphizations: RefCell::new(FnvHashSet()),
                 vtables: RefCell::new(FnvHashMap()),
                 const_cstr_cache: RefCell::new(FnvHashMap()),
                 const_unsized: RefCell::new(FnvHashMap()),
@@ -454,7 +500,7 @@ impl<'tcx> LocalCrateContext<'tcx> {
     /// This is used in the `LocalCrateContext` constructor to allow calling
     /// functions that expect a complete `CrateContext`, even before the local
     /// portion is fully initialized and attached to the `SharedCrateContext`.
-    fn dummy_ccx<'a>(&'a self, shared: &'a SharedCrateContext<'tcx>)
+    fn dummy_ccx<'a>(&'a self, shared: &'a SharedCrateContext<'a, 'tcx>)
                      -> CrateContext<'a, 'tcx> {
         CrateContext {
             shared: shared,
@@ -465,7 +511,7 @@ impl<'tcx> LocalCrateContext<'tcx> {
 }
 
 impl<'b, 'tcx> CrateContext<'b, 'tcx> {
-    pub fn shared(&self) -> &'b SharedCrateContext<'tcx> {
+    pub fn shared(&self) -> &'b SharedCrateContext<'b, 'tcx> {
         self.shared
     }
 
@@ -497,7 +543,7 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
 
     pub fn tcx<'a>(&'a self) -> &'a ty::ctxt<'tcx> {
-        &self.shared.tcx
+        self.shared.tcx
     }
 
     pub fn sess<'a>(&'a self) -> &'a Session {
@@ -658,7 +704,7 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
     }
 
     pub fn available_monomorphizations<'a>(&'a self) -> &'a RefCell<FnvHashSet<String>> {
-        &self.shared.available_monomorphizations
+        &self.local.available_monomorphizations
     }
 
     pub fn available_drop_glues(&self) -> &RefCell<FnvHashMap<DropGlueKind<'tcx>, String>> {
@@ -719,8 +765,8 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
     pub fn report_overbig_object(&self, obj: Ty<'tcx>) -> ! {
         self.sess().fatal(
-            &format!("the type `{}` is too big for the current architecture",
-                    obj.repr(self.tcx())))
+            &format!("the type `{:?}` is too big for the current architecture",
+                    obj))
     }
 
     pub fn check_overflow(&self) -> bool {
@@ -732,6 +778,10 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         // guarded on whether the dropflag is one of its (two) valid
         // values.
         self.shared.check_drop_flag_for_sanity
+    }
+
+    pub fn use_dll_storage_attrs(&self) -> bool {
+        self.shared.use_dll_storage_attrs()
     }
 }
 
@@ -815,6 +865,11 @@ fn declare_intrinsic(ccx: &CrateContext, key: & &'static str) -> Option<ValueRef
     ifn!("llvm.trunc.f32", fn(t_f32) -> t_f32);
     ifn!("llvm.trunc.f64", fn(t_f64) -> t_f64);
 
+    ifn!("llvm.copysign.f32", fn(t_f32, t_f32) -> t_f32);
+    ifn!("llvm.copysign.f64", fn(t_f64, t_f64) -> t_f64);
+    ifn!("llvm.round.f32", fn(t_f32) -> t_f32);
+    ifn!("llvm.round.f64", fn(t_f64) -> t_f64);
+
     ifn!("llvm.rint.f32", fn(t_f32) -> t_f32);
     ifn!("llvm.rint.f64", fn(t_f64) -> t_f64);
     ifn!("llvm.nearbyint.f32", fn(t_f32) -> t_f32);
@@ -873,22 +928,48 @@ fn declare_intrinsic(ccx: &CrateContext, key: & &'static str) -> Option<ValueRef
     ifn!("llvm.lifetime.end", fn(t_i64, i8p) -> void);
 
     ifn!("llvm.expect.i1", fn(i1, i1) -> i1);
-    ifn!("llvm.assume", fn(i1) -> void);
 
     // Some intrinsics were introduced in later versions of LLVM, but they have
-    // fallbacks in libc or libm and such. Currently, all of these intrinsics
-    // were introduced in LLVM 3.4, so we case on that.
+    // fallbacks in libc or libm and such.
     macro_rules! compatible_ifn {
-        ($name:expr, $cname:ident ($($arg:expr),*) -> $ret:expr) => (
-            ifn!($name, fn($($arg),*) -> $ret);
+        ($name:expr, noop($cname:ident ($($arg:expr),*) -> void), $llvm_version:expr) => (
+            if unsafe { llvm::LLVMVersionMinor() >= $llvm_version } {
+                // The `if key == $name` is already in ifn!
+                ifn!($name, fn($($arg),*) -> void);
+            } else if *key == $name {
+                let f = declare::declare_cfn(ccx, stringify!($cname),
+                                             Type::func(&[$($arg),*], &void),
+                                             ty::mk_nil(ccx.tcx()));
+                llvm::SetLinkage(f, llvm::InternalLinkage);
+
+                let bld = ccx.builder();
+                let llbb = unsafe {
+                    llvm::LLVMAppendBasicBlockInContext(ccx.llcx(), f,
+                                                        "entry-block\0".as_ptr() as *const _)
+                };
+
+                bld.position_at_end(llbb);
+                bld.ret_void();
+
+                ccx.intrinsics().borrow_mut().insert($name, f.clone());
+                return Some(f);
+            }
+        );
+        ($name:expr, $cname:ident ($($arg:expr),*) -> $ret:expr, $llvm_version:expr) => (
+            if unsafe { llvm::LLVMVersionMinor() >= $llvm_version } {
+                // The `if key == $name` is already in ifn!
+                ifn!($name, fn($($arg),*) -> $ret);
+            } else if *key == $name {
+                let f = declare::declare_cfn(ccx, stringify!($cname),
+                                             Type::func(&[$($arg),*], &$ret),
+                                             ty::mk_nil(ccx.tcx()));
+                ccx.intrinsics().borrow_mut().insert($name, f.clone());
+                return Some(f);
+            }
         )
     }
 
-    compatible_ifn!("llvm.copysign.f32", copysignf(t_f32, t_f32) -> t_f32);
-    compatible_ifn!("llvm.copysign.f64", copysign(t_f64, t_f64) -> t_f64);
-    compatible_ifn!("llvm.round.f32", roundf(t_f32) -> t_f32);
-    compatible_ifn!("llvm.round.f64", round(t_f64) -> t_f64);
-
+    compatible_ifn!("llvm.assume", noop(llvmcompat_assume(i1) -> void), 6);
 
     if ccx.sess().opts.debuginfo != NoDebugInfo {
         ifn!("llvm.dbg.declare", fn(Type::metadata(ccx), Type::metadata(ccx)) -> void);

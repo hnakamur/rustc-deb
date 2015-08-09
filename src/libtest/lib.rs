@@ -31,20 +31,21 @@
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/")]
 
 #![feature(asm)]
 #![feature(box_syntax)]
-#![feature(collections)]
-#![feature(core)]
-#![feature(rustc_private)]
-#![feature(staged_api)]
-#![feature(std_misc)]
-#![feature(libc)]
-#![feature(set_stdio)]
 #![feature(duration)]
 #![feature(duration_span)]
+#![feature(fnbox)]
+#![feature(iter_cmp)]
+#![feature(libc)]
+#![feature(rt)]
+#![feature(rustc_private)]
+#![feature(set_stdio)]
+#![feature(slice_extras)]
+#![feature(staged_api)]
 
 extern crate getopts;
 extern crate serialize;
@@ -80,7 +81,6 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::thunk::Thunk;
 use std::time::Duration;
 
 // to be used by rustc to compile tests in libtest
@@ -127,7 +127,7 @@ enum NamePadding {
 
 impl TestDesc {
     fn padded_name(&self, column_count: usize, align: NamePadding) -> String {
-        let mut name = String::from_str(self.name.as_slice());
+        let mut name = String::from(self.name.as_slice());
         let fill = column_count.saturating_sub(name.len());
         let pad = repeat(" ").take(fill).collect::<String>();
         match align {
@@ -153,7 +153,7 @@ pub enum TestFn {
     StaticTestFn(fn()),
     StaticBenchFn(fn(&mut Bencher)),
     StaticMetricFn(fn(&mut MetricMap)),
-    DynTestFn(Thunk<'static>),
+    DynTestFn(Box<FnBox() + Send>),
     DynMetricFn(Box<FnBox(&mut MetricMap)+Send>),
     DynBenchFn(Box<TDynBenchFn+'static>)
 }
@@ -625,17 +625,44 @@ impl<T: Write> ConsoleTestState<T> {
     }
 }
 
-pub fn fmt_bench_samples(bs: &BenchSamples) -> String {
-    if bs.mb_s != 0 {
-        format!("{:>9} ns/iter (+/- {}) = {} MB/s",
-             bs.ns_iter_summ.median as usize,
-             (bs.ns_iter_summ.max - bs.ns_iter_summ.min) as usize,
-             bs.mb_s)
-    } else {
-        format!("{:>9} ns/iter (+/- {})",
-             bs.ns_iter_summ.median as usize,
-             (bs.ns_iter_summ.max - bs.ns_iter_summ.min) as usize)
+// Format a number with thousands separators
+fn fmt_thousands_sep(mut n: usize, sep: char) -> String {
+    use std::fmt::Write;
+    let mut output = String::new();
+    let mut trailing = false;
+    for &pow in &[9, 6, 3, 0] {
+        let base = 10_usize.pow(pow);
+        if pow == 0 || trailing || n / base != 0 {
+            if !trailing {
+                output.write_fmt(format_args!("{}", n / base)).unwrap();
+            } else {
+                output.write_fmt(format_args!("{:03}", n / base)).unwrap();
+            }
+            if pow != 0 {
+                output.push(sep);
+            }
+            trailing = true;
+        }
+        n %= base;
     }
+
+    output
+}
+
+pub fn fmt_bench_samples(bs: &BenchSamples) -> String {
+    use std::fmt::Write;
+    let mut output = String::new();
+
+    let median = bs.ns_iter_summ.median as usize;
+    let deviation = (bs.ns_iter_summ.max - bs.ns_iter_summ.min) as usize;
+
+    output.write_fmt(format_args!("{:>11} ns/iter (+/- {})",
+                     fmt_thousands_sep(median, ','),
+                     fmt_thousands_sep(deviation, ','))).unwrap();
+    if bs.mb_s != 0 {
+        output.write_fmt(format_args!(" = {} MB/s", bs.mb_s)).unwrap();
+    }
+    output
 }
 
 // A simple console test runner
@@ -740,7 +767,7 @@ fn should_sort_failures_before_printing_them() {
 
 fn use_color(opts: &TestOpts) -> bool {
     match opts.color {
-        AutoColor => get_concurrency() == 1 && stdout_isatty(),
+        AutoColor => !opts.nocapture && stdout_isatty(),
         AlwaysColor => true,
         NeverColor => false,
     }
@@ -932,7 +959,7 @@ pub fn run_test(opts: &TestOpts,
     fn run_test_inner(desc: TestDesc,
                       monitor_ch: Sender<MonitorMsg>,
                       nocapture: bool,
-                      testfn: Thunk<'static>) {
+                      testfn: Box<FnBox() + Send>) {
         struct Sink(Arc<Mutex<Vec<u8>>>);
         impl Write for Sink {
             fn write(&mut self, data: &[u8]) -> io::Result<usize> {
@@ -1200,7 +1227,6 @@ mod tests {
                TestDesc, TestDescAndFn, TestOpts, run_test,
                MetricMap,
                StaticTestName, DynTestName, DynTestFn, ShouldPanic};
-    use std::thunk::Thunk;
     use std::sync::mpsc::channel;
 
     #[test]
@@ -1396,7 +1422,7 @@ mod tests {
                  "test::parse_ignored_flag".to_string(),
                  "test::sort_tests".to_string());
 
-        for (a, b) in expected.iter().zip(filtered.iter()) {
+        for (a, b) in expected.iter().zip(filtered) {
             assert!(*a == b.desc.name.to_string());
         }
     }

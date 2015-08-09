@@ -11,10 +11,12 @@
 // Test that we cleanup dynamic sized Box<[D]> properly when D has a
 // destructor.
 
-use std::thread;
-use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+#![feature(const_fn)]
 
-static LOG: AtomicUsize = ATOMIC_USIZE_INIT;
+use std::thread;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static LOG: AtomicUsize = AtomicUsize::new(0);
 
 struct D(u8);
 

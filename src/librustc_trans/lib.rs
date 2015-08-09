@@ -22,22 +22,27 @@
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-      html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+      html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "http://doc.rust-lang.org/nightly/")]
 
-#![feature(alloc)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(collections)]
-#![feature(core)]
+#![feature(const_fn)]
+#![feature(iter_cmp)]
+#![feature(iter_arith)]
 #![feature(libc)]
+#![feature(path_ext)]
+#![feature(path_ext)]
+#![feature(path_relative_from)]
+#![feature(path_relative_from)]
 #![feature(quote)]
+#![feature(rc_weak)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
 #![feature(unicode)]
-#![feature(path_ext)]
-#![feature(path_relative_from)]
+#![feature(unicode)]
+#![feature(vec_push_all)]
 
 #![allow(trivial_casts)]
 
@@ -73,6 +78,7 @@ pub mod back {
     pub use rustc_back::x86;
     pub use rustc_back::x86_64;
 
+    pub mod linker;
     pub mod link;
     pub mod lto;
     pub mod write;

@@ -8,8 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![unstable(feature = "std_misc")]
-
+use borrow::{Cow, ToOwned};
+use boxed::Box;
+use clone::Clone;
 use convert::{Into, From};
 use cmp::{PartialEq, Eq, PartialOrd, Ord, Ordering};
 use error::Error;
@@ -22,6 +23,7 @@ use ops::Deref;
 use option::Option::{self, Some, None};
 use result::Result::{self, Ok, Err};
 use slice;
+use str;
 use string::String;
 use vec::Vec;
 
@@ -53,17 +55,16 @@ use vec::Vec;
 ///     fn my_printer(s: *const libc::c_char);
 /// }
 ///
-/// let to_print = &b"Hello, world!"[..];
-/// let c_to_print = CString::new(to_print).unwrap();
+/// let c_to_print = CString::new("Hello, world!").unwrap();
 /// unsafe {
 ///     my_printer(c_to_print.as_ptr());
 /// }
 /// # }
 /// ```
-#[derive(Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct CString {
-    inner: Vec<u8>,
+    inner: Box<[u8]>,
 }
 
 /// Representation of a borrowed C string.
@@ -112,6 +113,26 @@ pub struct CString {
 /// fn main() {
 ///     let s = CString::new("data data data data").unwrap();
 ///     work(&s);
+/// }
+/// ```
+///
+/// Converting a foreign C string into a Rust `String`
+///
+/// ```no_run
+/// # #![feature(libc,cstr_to_str)]
+/// extern crate libc;
+/// use std::ffi::CStr;
+///
+/// extern { fn my_string() -> *const libc::c_char; }
+///
+/// fn my_string_safe() -> String {
+///     unsafe {
+///         CStr::from_ptr(my_string()).to_string_lossy().into_owned()
+///     }
+/// }
+///
+/// fn main() {
+///     println!("string: {}", my_string_safe());
 /// }
 /// ```
 #[derive(Hash)]
@@ -176,7 +197,39 @@ impl CString {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub unsafe fn from_vec_unchecked(mut v: Vec<u8>) -> CString {
         v.push(0);
-        CString { inner: v }
+        CString { inner: v.into_boxed_slice() }
+    }
+
+    /// Retakes ownership of a CString that was transferred to C.
+    ///
+    /// The only appropriate argument is a pointer obtained by calling
+    /// `into_ptr`. The length of the string will be recalculated
+    /// using the pointer.
+    #[unstable(feature = "cstr_memory", reason = "recently added")]
+    // NB: may want to be called from_raw, needs to consider CStr::from_ptr,
+    //     Box::from_raw (or whatever it's currently called), and
+    //     slice::from_raw_parts
+    pub unsafe fn from_ptr(ptr: *const libc::c_char) -> CString {
+        let len = libc::strlen(ptr) + 1; // Including the NUL byte
+        let slice = slice::from_raw_parts(ptr, len as usize);
+        CString { inner: mem::transmute(slice) }
+    }
+
+    /// Transfers ownership of the string to a C caller.
+    ///
+    /// The pointer must be returned to Rust and reconstituted using
+    /// `from_ptr` to be properly deallocated. Specifically, one
+    /// should *not* use the standard C `free` function to deallocate
+    /// this string.
+    ///
+    /// Failure to call `from_ptr` will lead to a memory leak.
+    #[unstable(feature = "cstr_memory", reason = "recently added")]
+    // NB: may want to be called into_raw, see comments on from_ptr
+    pub fn into_ptr(self) -> *const libc::c_char {
+        // It is important that the bytes be sized to fit - we need
+        // the capacity to be determinable from the string length, and
+        // shrinking to fit is the only way to be sure.
+        Box::into_raw(self.inner) as *const libc::c_char
     }
 
     /// Returns the contents of this `CString` as a slice of bytes.
@@ -193,6 +246,13 @@ impl CString {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn as_bytes_with_nul(&self) -> &[u8] {
         &self.inner
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Clone for CString {
+    fn clone(&self) -> Self {
+        CString { inner: self.inner.to_owned().into_boxed_slice() }
     }
 }
 
@@ -328,6 +388,39 @@ impl CStr {
     pub fn to_bytes_with_nul(&self) -> &[u8] {
         unsafe { mem::transmute::<&[libc::c_char], &[u8]>(&self.inner) }
     }
+
+    /// Yields a `&str` slice if the `CStr` contains valid UTF-8.
+    ///
+    /// This function will calculate the length of this string and check for
+    /// UTF-8 validity, and then return the `&str` if it's valid.
+    ///
+    /// > **Note**: This method is currently implemented to check for validity
+    /// > after a 0-cost cast, but it is planned to alter its definition in the
+    /// > future to perform the length calculation in addition to the UTF-8
+    /// > check whenever this method is called.
+    #[unstable(feature = "cstr_to_str", reason = "recently added")]
+    pub fn to_str(&self) -> Result<&str, str::Utf8Error> {
+        // NB: When CStr is changed to perform the length check in .to_bytes() instead of in
+        // from_ptr(), it may be worth considering if this should be rewritten to do the UTF-8
+        // check inline with the length calculation instead of doing it afterwards.
+        str::from_utf8(self.to_bytes())
+    }
+
+    /// Converts a `CStr` into a `Cow<str>`.
+    ///
+    /// This function will calculate the length of this string (which normally
+    /// requires a linear amount of work to be done) and then return the
+    /// resulting slice as a `Cow<str>`, replacing any invalid UTF-8 sequences
+    /// with `U+FFFD REPLACEMENT CHARACTER`.
+    ///
+    /// > **Note**: This method is currently implemented to check for validity
+    /// > after a 0-cost cast, but it is planned to alter its definition in the
+    /// > future to perform the length calculation in addition to the UTF-8
+    /// > check whenever this method is called.
+    #[unstable(feature = "cstr_to_str", reason = "recently added")]
+    pub fn to_string_lossy(&self) -> Cow<str> {
+        String::from_utf8_lossy(self.to_bytes())
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -356,6 +449,7 @@ mod tests {
     use prelude::v1::*;
     use super::*;
     use libc;
+    use borrow::Cow::{Borrowed, Owned};
 
     #[test]
     fn c_to_rust() {
@@ -403,6 +497,22 @@ mod tests {
             let s = CStr::from_ptr(b"12\0".as_ptr() as *const _);
             assert_eq!(s.to_bytes(), b"12");
             assert_eq!(s.to_bytes_with_nul(), b"12\0");
+        }
+    }
+
+    #[test]
+    fn to_str() {
+        let data = b"123\xE2\x80\xA6\0";
+        let ptr = data.as_ptr() as *const libc::c_char;
+        unsafe {
+            assert_eq!(CStr::from_ptr(ptr).to_str(), Ok("123…"));
+            assert_eq!(CStr::from_ptr(ptr).to_string_lossy(), Borrowed("123…"));
+        }
+        let data = b"123\xE2\0";
+        let ptr = data.as_ptr() as *const libc::c_char;
+        unsafe {
+            assert!(CStr::from_ptr(ptr).to_str().is_err());
+            assert_eq!(CStr::from_ptr(ptr).to_string_lossy(), Owned::<str>(format!("123\u{FFFD}")));
         }
     }
 }

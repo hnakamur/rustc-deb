@@ -805,6 +805,8 @@ pub fn symlink_metadata<P: AsRef<Path>>(path: P) -> io::Result<Metadata> {
 
 /// Rename a file or directory to a new name.
 ///
+/// This will not work if the new name is on a different mount point.
+///
 /// # Errors
 ///
 /// This function will return an error if the provided `from` doesn't exist, if
@@ -910,7 +912,7 @@ pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<(
 /// # Ok(())
 /// # }
 /// ```
-#[deprecated(since = "1.0.0",
+#[deprecated(since = "1.1.0",
              reason = "replaced with std::os::unix::fs::symlink and \
                        std::os::windows::fs::{symlink_file, symlink_dir}")]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1060,20 +1062,19 @@ pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// # Examples
 ///
 /// ```
-/// # #![feature(path_ext)]
 /// use std::io;
-/// use std::fs::{self, PathExt, DirEntry};
+/// use std::fs::{self, DirEntry};
 /// use std::path::Path;
 ///
 /// // one possible implementation of fs::walk_dir only visiting files
-/// fn visit_dirs(dir: &Path, cb: &mut FnMut(DirEntry)) -> io::Result<()> {
-///     if dir.is_dir() {
+/// fn visit_dirs(dir: &Path, cb: &Fn(&DirEntry)) -> io::Result<()> {
+///     if try!(fs::metadata(dir)).is_dir() {
 ///         for entry in try!(fs::read_dir(dir)) {
 ///             let entry = try!(entry);
-///             if entry.path().is_dir() {
+///             if try!(fs::metadata(entry.path())).is_dir() {
 ///                 try!(visit_dirs(&entry.path(), cb));
 ///             } else {
-///                 cb(entry);
+///                 cb(&entry);
 ///             }
 ///         }
 ///     }
@@ -1139,8 +1140,9 @@ impl Iterator for WalkDir {
 
 /// Utility methods for paths.
 #[unstable(feature = "path_ext",
-           reason = "the precise set of methods exposed on this trait may \
-                     change and some methods may be removed")]
+           reason = "The precise set of methods exposed on this trait may \
+                     change and some methods may be removed.  For stable code, \
+                     see the std::fs::metadata function.")]
 pub trait PathExt {
     /// Gets information on the file, directory, etc at this path.
     ///

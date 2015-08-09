@@ -13,7 +13,7 @@
 use middle::infer::{InferCtxt, GenericKind};
 use middle::subst::Substs;
 use middle::traits;
-use middle::ty::{self, RegionEscape, ToPolyTraitRef, Ty};
+use middle::ty::{self, RegionEscape, ToPolyTraitRef, AsPredicate, Ty};
 use middle::ty_fold::{TypeFoldable, TypeFolder};
 
 use syntax::ast;
@@ -21,10 +21,10 @@ use syntax::codemap::Span;
 
 use util::common::ErrorReported;
 use util::nodemap::FnvHashSet;
-use util::ppaux::Repr;
 
 // Helper functions related to manipulating region types.
 
+#[derive(Debug)]
 pub enum Implication<'tcx> {
     RegionSubRegion(Option<Ty<'tcx>>, ty::Region, ty::Region),
     RegionSubGeneric(Option<Ty<'tcx>>, ty::Region, GenericKind<'tcx>),
@@ -53,10 +53,10 @@ pub fn implications<'a,'tcx>(
     span: Span)
     -> Vec<Implication<'tcx>>
 {
-    debug!("implications(body_id={}, ty={}, outer_region={})",
+    debug!("implications(body_id={}, ty={:?}, outer_region={:?})",
            body_id,
-           ty.repr(closure_typer.tcx()),
-           outer_region.repr(closure_typer.tcx()));
+           ty,
+           outer_region);
 
     let mut stack = Vec::new();
     stack.push((outer_region, None));
@@ -68,7 +68,7 @@ pub fn implications<'a,'tcx>(
                               out: Vec::new(),
                               visited: FnvHashSet() };
     wf.accumulate_from_ty(ty);
-    debug!("implications: out={}", wf.out.repr(closure_typer.tcx()));
+    debug!("implications: out={:?}", wf.out);
     wf.out
 }
 
@@ -78,8 +78,8 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
     }
 
     fn accumulate_from_ty(&mut self, ty: Ty<'tcx>) {
-        debug!("accumulate_from_ty(ty={})",
-               ty.repr(self.tcx()));
+        debug!("accumulate_from_ty(ty={:?})",
+               ty);
 
         // When expanding out associated types, we can visit a cyclic
         // set of types. Issue #23003.
@@ -88,61 +88,62 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
         }
 
         match ty.sty {
-            ty::ty_bool |
-            ty::ty_char |
-            ty::ty_int(..) |
-            ty::ty_uint(..) |
-            ty::ty_float(..) |
-            ty::ty_bare_fn(..) |
-            ty::ty_err |
-            ty::ty_str => {
+            ty::TyBool |
+            ty::TyChar |
+            ty::TyInt(..) |
+            ty::TyUint(..) |
+            ty::TyFloat(..) |
+            ty::TyBareFn(..) |
+            ty::TyError |
+            ty::TyStr => {
                 // No borrowed content reachable here.
             }
 
-            ty::ty_closure(def_id, substs) => {
+            ty::TyClosure(def_id, substs) => {
                 let &(r_a, opt_ty) = self.stack.last().unwrap();
                 self.out.push(Implication::RegionSubClosure(opt_ty, r_a, def_id, substs));
             }
 
-            ty::ty_trait(ref t) => {
+            ty::TyTrait(ref t) => {
                 let required_region_bounds =
                     object_region_bounds(self.tcx(), &t.principal, t.bounds.builtin_bounds);
                 self.accumulate_from_object_ty(ty, t.bounds.region_bound, required_region_bounds)
             }
 
-            ty::ty_enum(def_id, substs) |
-            ty::ty_struct(def_id, substs) => {
+            ty::TyEnum(def_id, substs) |
+            ty::TyStruct(def_id, substs) => {
                 let item_scheme = ty::lookup_item_type(self.tcx(), def_id);
                 self.accumulate_from_adt(ty, def_id, &item_scheme.generics, substs)
             }
 
-            ty::ty_vec(t, _) |
-            ty::ty_ptr(ty::mt { ty: t, .. }) |
-            ty::ty_uniq(t) => {
+            ty::TyArray(t, _) |
+            ty::TySlice(t) |
+            ty::TyRawPtr(ty::mt { ty: t, .. }) |
+            ty::TyBox(t) => {
                 self.accumulate_from_ty(t)
             }
 
-            ty::ty_rptr(r_b, mt) => {
+            ty::TyRef(r_b, mt) => {
                 self.accumulate_from_rptr(ty, *r_b, mt.ty);
             }
 
-            ty::ty_param(p) => {
+            ty::TyParam(p) => {
                 self.push_param_constraint_from_top(p);
             }
 
-            ty::ty_projection(ref data) => {
+            ty::TyProjection(ref data) => {
                 // `<T as TraitRef<..>>::Name`
 
                 self.push_projection_constraint_from_top(data);
             }
 
-            ty::ty_tup(ref tuptys) => {
+            ty::TyTuple(ref tuptys) => {
                 for &tupty in tuptys {
                     self.accumulate_from_ty(tupty);
                 }
             }
 
-            ty::ty_infer(_) => {
+            ty::TyInfer(_) => {
                 // This should not happen, BUT:
                 //
                 //   Currently we uncover region relationships on
@@ -276,7 +277,7 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
 
         let variances = ty::item_variances(self.tcx(), def_id);
 
-        for (&region, &variance) in substs.regions().iter().zip(variances.regions.iter()) {
+        for (&region, &variance) in substs.regions().iter().zip(&variances.regions) {
             match variance {
                 ty::Contravariant | ty::Invariant => {
                     // If any data with this lifetime is reachable
@@ -287,7 +288,7 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
             }
         }
 
-        for (&ty, &variance) in substs.types.iter().zip(variances.types.iter()) {
+        for (&ty, &variance) in substs.types.iter().zip(&variances.types) {
             match variance {
                 ty::Covariant | ty::Invariant => {
                     // If any data of this type is reachable within,
@@ -311,8 +312,8 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
     fn accumulate_from_assoc_types_transitive(&mut self,
                                               data: &ty::PolyTraitPredicate<'tcx>)
     {
-        debug!("accumulate_from_assoc_types_transitive({})",
-               data.repr(self.tcx()));
+        debug!("accumulate_from_assoc_types_transitive({:?})",
+               data);
 
         for poly_trait_ref in traits::supertraits(self.tcx(), data.to_poly_trait_ref()) {
             match ty::no_late_bound_regions(self.tcx(), &poly_trait_ref) {
@@ -325,8 +326,8 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
     fn accumulate_from_assoc_types(&mut self,
                                    trait_ref: ty::TraitRef<'tcx>)
     {
-        debug!("accumulate_from_assoc_types({})",
-               trait_ref.repr(self.tcx()));
+        debug!("accumulate_from_assoc_types({:?})",
+               trait_ref);
 
         let trait_def_id = trait_ref.def_id;
         let trait_def = ty::lookup_trait_def(self.tcx(), trait_def_id);
@@ -335,8 +336,8 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
                      .iter()
                      .map(|&name| ty::mk_projection(self.tcx(), trait_ref.clone(), name))
                      .collect();
-        debug!("accumulate_from_assoc_types: assoc_type_projections={}",
-               assoc_type_projections.repr(self.tcx()));
+        debug!("accumulate_from_assoc_types: assoc_type_projections={:?}",
+               assoc_type_projections);
         let tys = match self.fully_normalize(&assoc_type_projections) {
             Ok(tys) => { tys }
             Err(ErrorReported) => { return; }
@@ -399,7 +400,7 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
     }
 
     fn fully_normalize<T>(&self, value: &T) -> Result<T,ErrorReported>
-        where T : TypeFoldable<'tcx> + ty::HasProjectionTypes + Clone + Repr<'tcx>
+        where T : TypeFoldable<'tcx> + ty::HasProjectionTypes
     {
         let value =
             traits::fully_normalize(self.infcx,
@@ -443,44 +444,8 @@ pub fn object_region_bounds<'tcx>(
     let substs = tcx.mk_substs(principal.0.substs.with_self_ty(open_ty));
     let trait_refs = vec!(ty::Binder(ty::TraitRef::new(principal.0.def_id, substs)));
 
-    let param_bounds = ty::ParamBounds {
-        region_bounds: Vec::new(),
-        builtin_bounds: others,
-        trait_bounds: trait_refs,
-        projection_bounds: Vec::new(), // not relevant to computing region bounds
-    };
+    let mut predicates = others.to_predicates(tcx, open_ty);
+    predicates.extend(trait_refs.iter().map(|t| t.as_predicate()));
 
-    let predicates = ty::predicates(tcx, open_ty, &param_bounds);
     ty::required_region_bounds(tcx, open_ty, predicates)
-}
-
-impl<'tcx> Repr<'tcx> for Implication<'tcx> {
-    fn repr(&self, tcx: &ty::ctxt<'tcx>) -> String {
-        match *self {
-            Implication::RegionSubRegion(_, ref r_a, ref r_b) => {
-                format!("RegionSubRegion({}, {})",
-                        r_a.repr(tcx),
-                        r_b.repr(tcx))
-            }
-
-            Implication::RegionSubGeneric(_, ref r, ref p) => {
-                format!("RegionSubGeneric({}, {})",
-                        r.repr(tcx),
-                        p.repr(tcx))
-            }
-
-            Implication::RegionSubClosure(_, ref a, ref b, ref c) => {
-                format!("RegionSubClosure({}, {}, {})",
-                        a.repr(tcx),
-                        b.repr(tcx),
-                        c.repr(tcx))
-            }
-
-            Implication::Predicate(ref def_id, ref p) => {
-                format!("Predicate({}, {})",
-                        def_id.repr(tcx),
-                        p.repr(tcx))
-            }
-        }
-    }
 }

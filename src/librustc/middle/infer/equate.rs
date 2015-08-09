@@ -16,7 +16,6 @@ use super::type_variable::{EqTo};
 use middle::ty::{self, Ty};
 use middle::ty::TyVar;
 use middle::ty_relate::{Relate, RelateResult, TypeRelation};
-use util::ppaux::{Repr};
 
 pub struct Equate<'a, 'tcx: 'a> {
     fields: CombineFields<'a, 'tcx>
@@ -35,6 +34,11 @@ impl<'a, 'tcx> TypeRelation<'a,'tcx> for Equate<'a, 'tcx> {
 
     fn a_is_expected(&self) -> bool { self.fields.a_is_expected }
 
+    fn will_change(&mut self, a: bool, b: bool) -> bool {
+        // if either side changed from what it was, that could cause equality to fail
+        a || b
+    }
+
     fn relate_with_variance<T:Relate<'a,'tcx>>(&mut self,
                                                _: ty::Variance,
                                                a: &T,
@@ -45,25 +49,25 @@ impl<'a, 'tcx> TypeRelation<'a,'tcx> for Equate<'a, 'tcx> {
     }
 
     fn tys(&mut self, a: Ty<'tcx>, b: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
-        debug!("{}.tys({}, {})", self.tag(),
-               a.repr(self.fields.infcx.tcx), b.repr(self.fields.infcx.tcx));
+        debug!("{}.tys({:?}, {:?})", self.tag(),
+               a, b);
         if a == b { return Ok(a); }
 
         let infcx = self.fields.infcx;
         let a = infcx.type_variables.borrow().replace_if_possible(a);
         let b = infcx.type_variables.borrow().replace_if_possible(b);
         match (&a.sty, &b.sty) {
-            (&ty::ty_infer(TyVar(a_id)), &ty::ty_infer(TyVar(b_id))) => {
+            (&ty::TyInfer(TyVar(a_id)), &ty::TyInfer(TyVar(b_id))) => {
                 infcx.type_variables.borrow_mut().relate_vars(a_id, EqTo, b_id);
                 Ok(a)
             }
 
-            (&ty::ty_infer(TyVar(a_id)), _) => {
+            (&ty::TyInfer(TyVar(a_id)), _) => {
                 try!(self.fields.instantiate(b, EqTo, a_id));
                 Ok(a)
             }
 
-            (_, &ty::ty_infer(TyVar(b_id))) => {
+            (_, &ty::TyInfer(TyVar(b_id))) => {
                 try!(self.fields.instantiate(a, EqTo, b_id));
                 Ok(a)
             }
@@ -75,10 +79,10 @@ impl<'a, 'tcx> TypeRelation<'a,'tcx> for Equate<'a, 'tcx> {
     }
 
     fn regions(&mut self, a: ty::Region, b: ty::Region) -> RelateResult<'tcx, ty::Region> {
-        debug!("{}.regions({}, {})",
+        debug!("{}.regions({:?}, {:?})",
                self.tag(),
-               a.repr(self.fields.infcx.tcx),
-               b.repr(self.fields.infcx.tcx));
+               a,
+               b);
         let origin = Subtype(self.fields.trace.clone());
         self.fields.infcx.region_vars.make_eqregion(origin, a, b);
         Ok(a)

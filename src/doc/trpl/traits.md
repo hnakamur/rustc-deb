@@ -1,5 +1,8 @@
 % Traits
 
+A trait is a language feature that tells the Rust compiler about
+functionality a type must provide.
+
 Do you remember the `impl` keyword, used to call a function with [method
 syntax][methodsyntax]?
 
@@ -45,7 +48,7 @@ but we don’t define a body, just a type signature. When we `impl` a trait,
 we use `impl Trait for Item`, rather than just `impl Item`.
 
 We can use traits to constrain our generics. Consider this function, which
-does not compile, and gives us a similar error:
+does not compile:
 
 ```rust,ignore
 fn print_area<T>(shape: T) {
@@ -56,7 +59,7 @@ fn print_area<T>(shape: T) {
 Rust complains:
 
 ```text
-error: type `T` does not implement any method in scope named `area`
+error: no method named `area` found for type `T` in the current scope
 ```
 
 Because `T` can be any type, we can’t be sure that it implements the `area`
@@ -146,7 +149,7 @@ print_area(5);
 We get a compile-time error:
 
 ```text
-error: failed to find an implementation of trait main::HasArea for int
+error: the trait `HasArea` is not implemented for the type `_` [E0277]
 ```
 
 So far, we’ve only added trait implementations to structs, but you can
@@ -183,7 +186,8 @@ won’t have its methods:
 
 ```rust,ignore
 let mut f = std::fs::File::open("foo.txt").ok().expect("Couldn’t open foo.txt");
-let result = f.write("whatever".as_bytes());
+let buf = b"whatever"; // byte string literal. buf: &[u8; 8]
+let result = f.write(buf);
 # result.unwrap(); // ignore the error
 ```
 
@@ -191,9 +195,8 @@ Here’s the error:
 
 ```text
 error: type `std::fs::File` does not implement any method in scope named `write`
-
-let result = f.write(b"whatever");
-               ^~~~~~~~~~~~~~~~~~
+let result = f.write(buf);
+               ^~~~~~~~~~
 ```
 
 We need to `use` the `Write` trait first:
@@ -202,19 +205,20 @@ We need to `use` the `Write` trait first:
 use std::io::Write;
 
 let mut f = std::fs::File::open("foo.txt").ok().expect("Couldn’t open foo.txt");
-let result = f.write("whatever".as_bytes());
+let buf = b"whatever";
+let result = f.write(buf);
 # result.unwrap(); // ignore the error
 ```
 
 This will compile without error.
 
-This means that even if someone does something bad like add methods to `int`,
+This means that even if someone does something bad like add methods to `i32`,
 it won’t affect you, unless you `use` that trait.
 
-There’s one more restriction on implementing traits. Either the trait or the
-type you’re writing the `impl` for must be defined by you. So, we could
+There’s one more restriction on implementing traits: either the trait, or the
+type you’re writing the `impl` for, must be defined by you. So, we could
 implement the `HasArea` type for `i32`, because `HasArea` is in our code. But
-if we tried to implement `Float`, a trait provided by Rust, for `i32`, we could
+if we tried to implement `ToString`, a trait provided by Rust, for `i32`, we could
 not, because neither the trait nor the type are in our code.
 
 One last thing about traits: generic functions with a trait bound use
@@ -252,7 +256,7 @@ Writing functions with only a few generic types and a small number of trait
 bounds isn’t too bad, but as the number increases, the syntax gets increasingly
 awkward:
 
-```
+```rust
 use std::fmt::Debug;
 
 fn foo<T: Clone, K: Clone + Debug>(x: T, y: K) {
@@ -267,7 +271,7 @@ far right. The bounds are getting in the way.
 
 Rust has a solution, and it’s called a ‘`where` clause’:
 
-```
+```rust
 use std::fmt::Debug;
 
 fn foo<T: Clone, K: Clone + Debug>(x: T, y: K) {
@@ -284,7 +288,7 @@ fn bar<T, K>(x: T, y: K) where T: Clone, K: Clone + Debug {
 
 fn main() {
     foo("Hello", "world");
-    bar("Hello", "workd");
+    bar("Hello", "world");
 }
 ```
 
@@ -293,7 +297,7 @@ All you need to do is leave off the bounds when defining your type parameters,
 and then add `where` after the parameter list. For longer lists, whitespace can
 be added:
 
-```
+```rust
 use std::fmt::Debug;
 
 fn bar<T, K>(x: T, y: K)
@@ -310,7 +314,7 @@ This flexibility can add clarity in complex situations.
 
 `where` is also more powerful than the simpler syntax. For example:
 
-```
+```rust
 trait ConvertTo<Output> {
     fn convert(&self) -> Output;
 }
@@ -328,7 +332,7 @@ fn normal<T: ConvertTo<i64>>(x: &T) -> i64 {
 fn inverse<T>() -> T
         // this is using ConvertTo as if it were "ConvertFrom<i32>"
         where i32: ConvertTo<T> {
-    1i32.convert()
+    42.convert()
 }
 ```
 

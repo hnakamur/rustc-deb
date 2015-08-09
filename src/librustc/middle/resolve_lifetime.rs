@@ -154,7 +154,7 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
     fn visit_fn(&mut self, fk: visit::FnKind<'v>, fd: &'v ast::FnDecl,
                 b: &'v ast::Block, s: Span, _: ast::NodeId) {
         match fk {
-            visit::FkItemFn(_, generics, _, _, _) => {
+            visit::FkItemFn(_, generics, _, _, _, _) => {
                 self.visit_early_late(subst::FnSpace, generics, |this| {
                     this.walk_fn(fk, fd, b, s)
                 })
@@ -232,7 +232,7 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
     }
 
     fn visit_generics(&mut self, generics: &ast::Generics) {
-        for ty_param in &*generics.ty_params {
+        for ty_param in generics.ty_params.iter() {
             visit::walk_ty_param_bounds_helper(self, &ty_param.bounds);
             match ty_param.default {
                 Some(ref ty) => self.visit_ty(&**ty),
@@ -447,7 +447,7 @@ impl<'a> LifetimeContext<'a> {
                    fb: &'b ast::Block,
                    _span: Span) {
         match fk {
-            visit::FkItemFn(_, generics, _, _, _) => {
+            visit::FkItemFn(_, generics, _, _, _, _) => {
                 visit::walk_fn_decl(self, fd);
                 self.visit_generics(generics);
             }
@@ -773,7 +773,7 @@ fn early_bound_lifetime_names(generics: &ast::Generics) -> Vec<ast::Name> {
         let mut collector =
             FreeLifetimeCollector { early_bound: &mut early_bound,
                                     late_bound: &mut late_bound };
-        for ty_param in &*generics.ty_params {
+        for ty_param in generics.ty_params.iter() {
             visit::walk_ty_param_bounds_helper(&mut collector, &ty_param.bounds);
         }
         for predicate in &generics.where_clause.predicates {

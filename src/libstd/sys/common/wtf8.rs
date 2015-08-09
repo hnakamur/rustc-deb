@@ -28,7 +28,7 @@
 use core::prelude::*;
 
 use core::char::{encode_utf8_raw, encode_utf16_raw};
-use core::str::{char_range_at_raw, next_code_point};
+use core::str::next_code_point;
 
 use ascii::*;
 use borrow::Cow;
@@ -480,31 +480,6 @@ impl Wtf8 {
         }
     }
 
-    /// Returns the code point at `position`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `position` is not at a code point boundary,
-    /// or is beyond the end of the string.
-    #[inline]
-    pub fn code_point_at(&self, position: usize) -> CodePoint {
-        let (code_point, _) = self.code_point_range_at(position);
-        code_point
-    }
-
-    /// Returns the code point at `position`
-    /// and the position of the next code point.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `position` is not at a code point boundary,
-    /// or is beyond the end of the string.
-    #[inline]
-    pub fn code_point_range_at(&self, position: usize) -> (CodePoint, usize) {
-        let (c, n) = char_range_at_raw(&self.bytes, position);
-        (CodePoint { value: c }, n)
-    }
-
     /// Returns an iterator for the string’s code points.
     #[inline]
     pub fn code_points(&self) -> Wtf8CodePoints {
@@ -906,8 +881,8 @@ mod tests {
 
     #[test]
     fn wtf8buf_from_string() {
-        assert_eq!(Wtf8Buf::from_string(String::from_str("")).bytes, b"");
-        assert_eq!(Wtf8Buf::from_string(String::from_str("aé 💩")).bytes,
+        assert_eq!(Wtf8Buf::from_string(String::from("")).bytes, b"");
+        assert_eq!(Wtf8Buf::from_string(String::from("aé 💩")).bytes,
                    b"a\xC3\xA9 \xF0\x9F\x92\xA9");
     }
 
@@ -1049,7 +1024,7 @@ mod tests {
     #[test]
     fn wtf8buf_into_string() {
         let mut string = Wtf8Buf::from_str("aé 💩");
-        assert_eq!(string.clone().into_string(), Ok(String::from_str("aé 💩")));
+        assert_eq!(string.clone().into_string(), Ok(String::from("aé 💩")));
         string.push(CodePoint::from_u32(0xD800).unwrap());
         assert_eq!(string.clone().into_string(), Err(string));
     }
@@ -1057,9 +1032,9 @@ mod tests {
     #[test]
     fn wtf8buf_into_string_lossy() {
         let mut string = Wtf8Buf::from_str("aé 💩");
-        assert_eq!(string.clone().into_string_lossy(), String::from_str("aé 💩"));
+        assert_eq!(string.clone().into_string_lossy(), String::from("aé 💩"));
         string.push(CodePoint::from_u32(0xD800).unwrap());
-        assert_eq!(string.clone().into_string_lossy(), String::from_str("aé 💩�"));
+        assert_eq!(string.clone().into_string_lossy(), String::from("aé 💩�"));
     }
 
     #[test]
@@ -1174,30 +1149,6 @@ mod tests {
     }
 
     #[test]
-    fn wtf8_code_point_at() {
-        let mut string = Wtf8Buf::from_str("aé ");
-        string.push(CodePoint::from_u32(0xD83D).unwrap());
-        string.push_char('💩');
-        assert_eq!(string.code_point_at(0), CodePoint::from_char('a'));
-        assert_eq!(string.code_point_at(1), CodePoint::from_char('é'));
-        assert_eq!(string.code_point_at(3), CodePoint::from_char(' '));
-        assert_eq!(string.code_point_at(4), CodePoint::from_u32(0xD83D).unwrap());
-        assert_eq!(string.code_point_at(7), CodePoint::from_char('💩'));
-    }
-
-    #[test]
-    fn wtf8_code_point_range_at() {
-        let mut string = Wtf8Buf::from_str("aé ");
-        string.push(CodePoint::from_u32(0xD83D).unwrap());
-        string.push_char('💩');
-        assert_eq!(string.code_point_range_at(0), (CodePoint::from_char('a'), 1));
-        assert_eq!(string.code_point_range_at(1), (CodePoint::from_char('é'), 3));
-        assert_eq!(string.code_point_range_at(3), (CodePoint::from_char(' '), 4));
-        assert_eq!(string.code_point_range_at(4), (CodePoint::from_u32(0xD83D).unwrap(), 7));
-        assert_eq!(string.code_point_range_at(7), (CodePoint::from_char('💩'), 11));
-    }
-
-    #[test]
     fn wtf8_code_points() {
         fn c(value: u32) -> CodePoint { CodePoint::from_u32(value).unwrap() }
         fn cp(string: &Wtf8Buf) -> Vec<Option<char>> {
@@ -1226,7 +1177,7 @@ mod tests {
         assert_eq!(Wtf8::from_str("aé 💩").to_string_lossy(), Cow::Borrowed("aé 💩"));
         let mut string = Wtf8Buf::from_str("aé 💩");
         string.push(CodePoint::from_u32(0xD800).unwrap());
-        let expected: Cow<str> = Cow::Owned(String::from_str("aé 💩�"));
+        let expected: Cow<str> = Cow::Owned(String::from("aé 💩�"));
         assert_eq!(string.to_string_lossy(), expected);
     }
 

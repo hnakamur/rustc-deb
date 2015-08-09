@@ -52,19 +52,60 @@ pub use intrinsics::transmute;
 /// * `mpsc::{Sender, Receiver}` cycles (they use `Arc` internally)
 /// * Panicking destructors are likely to leak local resources
 ///
+/// # When To Use
+///
+/// There's only a few reasons to use this function. They mainly come
+/// up in unsafe code or FFI code.
+///
+/// * You have an uninitialized value, perhaps for performance reasons, and
+///   need to prevent the destructor from running on it.
+/// * You have two copies of a value (like `std::mem::swap`), but need the
+///   destructor to only run once to prevent a double free.
+/// * Transferring resources across FFI boundries.
+///
 /// # Example
+///
+/// Leak some heap memory by never deallocating it.
+///
+/// ```rust
+/// use std::mem;
+///
+/// let heap_memory = Box::new(3);
+/// mem::forget(heap_memory);
+/// ```
+///
+/// Leak an I/O object, never closing the file.
 ///
 /// ```rust,no_run
 /// use std::mem;
 /// use std::fs::File;
 ///
-/// // Leak some heap memory by never deallocating it
-/// let heap_memory = Box::new(3);
-/// mem::forget(heap_memory);
-///
-/// // Leak an I/O object, never closing the file
 /// let file = File::open("foo.txt").unwrap();
 /// mem::forget(file);
+/// ```
+///
+/// The swap function uses forget to good effect.
+///
+/// ```rust
+/// use std::mem;
+/// use std::ptr;
+///
+/// fn swap<T>(x: &mut T, y: &mut T) {
+///     unsafe {
+///         // Give ourselves some scratch space to work with
+///         let mut t: T = mem::uninitialized();
+///
+///         // Perform the swap, `&mut` pointers never alias
+///         ptr::copy_nonoverlapping(&*x, &mut t, 1);
+///         ptr::copy_nonoverlapping(&*y, x, 1);
+///         ptr::copy_nonoverlapping(&t, y, 1);
+///
+///         // y and t now point to the same thing, but we need to completely
+///         // forget `t` because we do not want to run the destructor for `T`
+///         // on its value, which is still owned somewhere outside this function.
+///         mem::forget(t);
+///     }
+/// }
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn forget<T>(t: T) {
@@ -95,27 +136,10 @@ pub fn size_of<T>() -> usize {
 ///
 /// assert_eq!(4, mem::size_of_val(&5i32));
 /// ```
-#[cfg(not(stage0))]
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn size_of_val<T: ?Sized>(val: &T) -> usize {
     unsafe { intrinsics::size_of_val(val) }
-}
-
-/// Returns the size of the type that `_val` points to in bytes.
-///
-/// # Examples
-///
-/// ```
-/// use std::mem;
-///
-/// assert_eq!(4, mem::size_of_val(&5i32));
-/// ```
-#[cfg(stage0)]
-#[inline]
-#[stable(feature = "rust1", since = "1.0.0")]
-pub fn size_of_val<T>(_val: &T) -> usize {
-    size_of::<T>()
 }
 
 /// Returns the ABI-required minimum alignment of a type
@@ -131,6 +155,7 @@ pub fn size_of_val<T>(_val: &T) -> usize {
 /// ```
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
+#[deprecated(reason = "use `align_of` instead", since = "1.2.0")]
 pub fn min_align_of<T>() -> usize {
     unsafe { intrinsics::min_align_of::<T>() }
 }
@@ -144,33 +169,16 @@ pub fn min_align_of<T>() -> usize {
 ///
 /// assert_eq!(4, mem::min_align_of_val(&5i32));
 /// ```
-#[cfg(not(stage0))]
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
+#[deprecated(reason = "use `align_of_val` instead", since = "1.2.0")]
 pub fn min_align_of_val<T: ?Sized>(val: &T) -> usize {
     unsafe { intrinsics::min_align_of_val(val) }
 }
 
-/// Returns the ABI-required minimum alignment of the type of the value that `_val` points to
-///
-/// # Examples
-///
-/// ```
-/// use std::mem;
-///
-/// assert_eq!(4, mem::min_align_of_val(&5i32));
-/// ```
-#[cfg(stage0)]
-#[inline]
-#[stable(feature = "rust1", since = "1.0.0")]
-pub fn min_align_of_val<T>(_val: &T) -> usize {
-    min_align_of::<T>()
-}
-
 /// Returns the alignment in memory for a type.
 ///
-/// This function will return the alignment, in bytes, of a type in memory. If the alignment
-/// returned is adhered to, then the type is guaranteed to function properly.
+/// This is the alignment used for struct fields. It may be smaller than the preferred alignment.
 ///
 /// # Examples
 ///
@@ -182,17 +190,10 @@ pub fn min_align_of_val<T>(_val: &T) -> usize {
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn align_of<T>() -> usize {
-    // We use the preferred alignment as the default alignment for a type. This
-    // appears to be what clang migrated towards as well:
-    //
-    // http://lists.cs.uiuc.edu/pipermail/cfe-commits/Week-of-Mon-20110725/044411.html
-    unsafe { intrinsics::pref_align_of::<T>() }
+    unsafe { intrinsics::min_align_of::<T>() }
 }
 
-/// Returns the alignment of the type of the value that `_val` points to.
-///
-/// This is similar to `align_of`, but function will properly handle types such as trait objects
-/// (in the future), returning the alignment for an arbitrary value at runtime.
+/// Returns the ABI-required minimum alignment of the type of the value that `val` points to
 ///
 /// # Examples
 ///
@@ -203,8 +204,8 @@ pub fn align_of<T>() -> usize {
 /// ```
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
-pub fn align_of_val<T>(_val: &T) -> usize {
-    align_of::<T>()
+pub fn align_of_val<T: ?Sized>(val: &T) -> usize {
+    unsafe { intrinsics::min_align_of_val(val) }
 }
 
 /// Creates a value initialized to zero.
@@ -301,8 +302,9 @@ pub fn swap<T>(x: &mut T, y: &mut T) {
         ptr::copy_nonoverlapping(&*y, x, 1);
         ptr::copy_nonoverlapping(&t, y, 1);
 
-        // y and t now point to the same thing, but we need to completely forget `t`
-        // because it's no longer relevant.
+        // y and t now point to the same thing, but we need to completely
+        // forget `t` because we do not want to run the destructor for `T`
+        // on its value, which is still owned somewhere outside this function.
         forget(t);
     }
 }
@@ -451,9 +453,13 @@ pub unsafe fn transmute_copy<T, U>(src: &T) -> U {
 
 /// Transforms lifetime of the second pointer to match the first.
 #[inline]
-#[unstable(feature = "core",
+#[unstable(feature = "copy_lifetime",
            reason = "this function may be removed in the future due to its \
                      questionable utility")]
+#[deprecated(since = "1.2.0",
+             reason = "unclear that this function buys more safety and \
+                       lifetimes are generally not handled as such in unsafe \
+                       code today")]
 pub unsafe fn copy_lifetime<'a, S: ?Sized, T: ?Sized + 'a>(_ptr: &'a S,
                                                         ptr: &T) -> &'a T {
     transmute(ptr)
@@ -461,9 +467,13 @@ pub unsafe fn copy_lifetime<'a, S: ?Sized, T: ?Sized + 'a>(_ptr: &'a S,
 
 /// Transforms lifetime of the second mutable pointer to match the first.
 #[inline]
-#[unstable(feature = "core",
+#[unstable(feature = "copy_lifetime",
            reason = "this function may be removed in the future due to its \
                      questionable utility")]
+#[deprecated(since = "1.2.0",
+             reason = "unclear that this function buys more safety and \
+                       lifetimes are generally not handled as such in unsafe \
+                       code today")]
 pub unsafe fn copy_mut_lifetime<'a, S: ?Sized, T: ?Sized + 'a>(_ptr: &'a S,
                                                                ptr: &mut T)
                                                               -> &'a mut T

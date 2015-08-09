@@ -10,7 +10,7 @@
 
 // Microbenchmarks for various functions in std and extra
 
-#![feature(rand, collections, std_misc, duration, duration_span)]
+#![feature(rand, vec_push_all, duration, duration_span)]
 
 use std::iter::repeat;
 use std::mem::swap;
@@ -72,7 +72,7 @@ fn vec_plus() {
     while i < 1500 {
         let rv = repeat(i).take(r.gen_range(0, i + 1)).collect::<Vec<_>>();
         if r.gen() {
-            v.extend(rv.into_iter());
+            v.extend(rv);
         } else {
             let mut rv = rv.clone();
             rv.push_all(&v);

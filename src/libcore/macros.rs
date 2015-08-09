@@ -10,6 +10,7 @@
 
 /// Entry point of thread panic, for details, see std::macros
 #[macro_export]
+#[allow_internal_unstable]
 macro_rules! panic {
     () => (
         panic!("explicit panic")
@@ -173,12 +174,11 @@ macro_rules! try {
 /// # Examples
 ///
 /// ```
-/// # #![allow(unused_must_use)]
 /// use std::io::Write;
 ///
 /// let mut w = Vec::new();
-/// write!(&mut w, "test");
-/// write!(&mut w, "formatted {}", "arguments");
+/// write!(&mut w, "test").unwrap();
+/// write!(&mut w, "formatted {}", "arguments").unwrap();
 /// ```
 #[macro_export]
 macro_rules! write {

@@ -16,7 +16,7 @@ fn test_stack_assign() {
     let s: String = "a".to_string();
     println!("{}", s.clone());
     let t: String = "a".to_string();
-    assert!(s == t);
+    assert_eq!(s, t);
     let u: String = "b".to_string();
     assert!((s != u));
 }
@@ -26,7 +26,7 @@ fn test_heap_lit() { "a big string".to_string(); }
 fn test_heap_assign() {
     let s: String = "a big ol' string".to_string();
     let t: String = "a big ol' string".to_string();
-    assert!(s == t);
+    assert_eq!(s, t);
     let u: String = "a bad ol' string".to_string();
     assert!((s != u));
 }
@@ -41,17 +41,17 @@ fn test_append() {
     s.push_str("a");
     assert_eq!(s, "a");
 
-    let mut s = String::from_str("a");
+    let mut s = String::from("a");
     s.push_str("b");
     println!("{}", s.clone());
     assert_eq!(s, "ab");
 
-    let mut s = String::from_str("c");
+    let mut s = String::from("c");
     s.push_str("offee");
-    assert!(s == "coffee");
+    assert_eq!(s, "coffee");
 
     s.push_str("&tea");
-    assert!(s == "coffee&tea");
+    assert_eq!(s, "coffee&tea");
 }
 
 pub fn main() {

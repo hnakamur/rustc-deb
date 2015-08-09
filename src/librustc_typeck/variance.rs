@@ -270,15 +270,14 @@ use middle::resolve_lifetime as rl;
 use middle::subst;
 use middle::subst::{ParamSpace, FnSpace, TypeSpace, SelfSpace, VecPerParamSpace};
 use middle::ty::{self, Ty};
+use rustc::ast_map;
 use std::fmt;
 use std::rc::Rc;
 use syntax::ast;
-use syntax::ast_map;
 use syntax::ast_util;
 use syntax::visit;
 use syntax::visit::Visitor;
 use util::nodemap::NodeMap;
-use util::ppaux::Repr;
 
 pub fn infer_variance(tcx: &ty::ctxt) {
     let krate = tcx.map.krate();
@@ -518,7 +517,7 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
 
 impl<'a, 'tcx, 'v> Visitor<'v> for TermsContext<'a, 'tcx> {
     fn visit_item(&mut self, item: &ast::Item) {
-        debug!("add_inferreds for item {}", item.repr(self.tcx));
+        debug!("add_inferreds for item {}", self.tcx.map.node_to_string(item.id));
 
         match item.node {
             ast::ItemEnum(_, ref generics) |
@@ -600,8 +599,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
         let did = ast_util::local_def(item.id);
         let tcx = self.terms_cx.tcx;
 
-        debug!("visit_item item={}",
-               item.repr(tcx));
+        debug!("visit_item item={}", tcx.map.node_to_string(item.id));
 
         match item.node {
             ast::ItemEnum(ref enum_definition, _) => {
@@ -846,8 +844,8 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                                       generics: &ty::Generics<'tcx>,
                                       trait_ref: ty::TraitRef<'tcx>,
                                       variance: VarianceTermPtr<'a>) {
-        debug!("add_constraints_from_trait_ref: trait_ref={} variance={:?}",
-               trait_ref.repr(self.tcx()),
+        debug!("add_constraints_from_trait_ref: trait_ref={:?} variance={:?}",
+               trait_ref,
                variance);
 
         let trait_def = ty::lookup_trait_def(self.tcx(), trait_ref.def_id);
@@ -868,44 +866,44 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                                generics: &ty::Generics<'tcx>,
                                ty: Ty<'tcx>,
                                variance: VarianceTermPtr<'a>) {
-        debug!("add_constraints_from_ty(ty={}, variance={:?})",
-               ty.repr(self.tcx()),
+        debug!("add_constraints_from_ty(ty={:?}, variance={:?})",
+               ty,
                variance);
 
         match ty.sty {
-            ty::ty_bool |
-            ty::ty_char | ty::ty_int(_) | ty::ty_uint(_) |
-            ty::ty_float(_) | ty::ty_str => {
+            ty::TyBool |
+            ty::TyChar | ty::TyInt(_) | ty::TyUint(_) |
+            ty::TyFloat(_) | ty::TyStr => {
                 /* leaf type -- noop */
             }
 
-            ty::ty_closure(..) => {
+            ty::TyClosure(..) => {
                 self.tcx().sess.bug("Unexpected closure type in variance computation");
             }
 
-            ty::ty_rptr(region, ref mt) => {
+            ty::TyRef(region, ref mt) => {
                 let contra = self.contravariant(variance);
                 self.add_constraints_from_region(generics, *region, contra);
                 self.add_constraints_from_mt(generics, mt, variance);
             }
 
-            ty::ty_uniq(typ) | ty::ty_vec(typ, _) => {
+            ty::TyBox(typ) | ty::TyArray(typ, _) | ty::TySlice(typ) => {
                 self.add_constraints_from_ty(generics, typ, variance);
             }
 
 
-            ty::ty_ptr(ref mt) => {
+            ty::TyRawPtr(ref mt) => {
                 self.add_constraints_from_mt(generics, mt, variance);
             }
 
-            ty::ty_tup(ref subtys) => {
+            ty::TyTuple(ref subtys) => {
                 for &subty in subtys {
                     self.add_constraints_from_ty(generics, subty, variance);
                 }
             }
 
-            ty::ty_enum(def_id, substs) |
-            ty::ty_struct(def_id, substs) => {
+            ty::TyEnum(def_id, substs) |
+            ty::TyStruct(def_id, substs) => {
                 let item_type = ty::lookup_item_type(self.tcx(), def_id);
 
                 // All type parameters on enums and structs should be
@@ -924,7 +922,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                     variance);
             }
 
-            ty::ty_projection(ref data) => {
+            ty::TyProjection(ref data) => {
                 let trait_ref = &data.trait_ref;
                 let trait_def = ty::lookup_trait_def(self.tcx(), trait_ref.def_id);
                 self.add_constraints_from_substs(
@@ -936,7 +934,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                     variance);
             }
 
-            ty::ty_trait(ref data) => {
+            ty::TyTrait(ref data) => {
                 let poly_trait_ref =
                     data.principal_trait_ref_with_self_ty(self.tcx(),
                                                           self.tcx().types.err);
@@ -955,7 +953,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 }
             }
 
-            ty::ty_param(ref data) => {
+            ty::TyParam(ref data) => {
                 let def_id = generics.types.get(data.space, data.idx as usize).def_id;
                 assert_eq!(def_id.krate, ast::LOCAL_CRATE);
                 match self.terms_cx.inferred_map.get(&def_id.node) {
@@ -970,20 +968,19 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 }
             }
 
-            ty::ty_bare_fn(_, &ty::BareFnTy { ref sig, .. }) => {
+            ty::TyBareFn(_, &ty::BareFnTy { ref sig, .. }) => {
                 self.add_constraints_from_sig(generics, sig, variance);
             }
 
-            ty::ty_err => {
+            ty::TyError => {
                 // we encounter this when walking the trait references for object
-                // types, where we use ty_err as the Self type
+                // types, where we use TyError as the Self type
             }
 
-            ty::ty_infer(..) => {
+            ty::TyInfer(..) => {
                 self.tcx().sess.bug(
                     &format!("unexpected type encountered in \
-                            variance inference: {}",
-                            ty.repr(self.tcx())));
+                              variance inference: {}", ty));
             }
         }
     }
@@ -998,9 +995,9 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                                    region_param_defs: &[ty::RegionParameterDef],
                                    substs: &subst::Substs<'tcx>,
                                    variance: VarianceTermPtr<'a>) {
-        debug!("add_constraints_from_substs(def_id={}, substs={}, variance={:?})",
-               def_id.repr(self.tcx()),
-               substs.repr(self.tcx()),
+        debug!("add_constraints_from_substs(def_id={:?}, substs={:?}, variance={:?})",
+               def_id,
+               substs,
                variance);
 
         for p in type_param_defs {
@@ -1067,8 +1064,8 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 self.tcx()
                     .sess
                     .bug(&format!("unexpected region encountered in variance \
-                                  inference: {}",
-                                 region.repr(self.tcx())));
+                                  inference: {:?}",
+                                 region));
             }
         }
     }
@@ -1195,17 +1192,16 @@ impl<'a, 'tcx> SolveContext<'a, 'tcx> {
                 types: types,
                 regions: regions
             };
-            debug!("item_id={} item_variances={}",
+            debug!("item_id={} item_variances={:?}",
                     item_id,
-                    item_variances.repr(tcx));
+                    item_variances);
 
             let item_def_id = ast_util::local_def(item_id);
 
             // For unit testing: check for a special "rustc_variance"
             // attribute and report an error with various results if found.
             if ty::has_attr(tcx, item_def_id, "rustc_variance") {
-                let found = item_variances.repr(tcx);
-                span_err!(tcx.sess, tcx.map.span(item_id), E0208, "{}", &found[..]);
+                span_err!(tcx.sess, tcx.map.span(item_id), E0208, "{:?}", item_variances);
             }
 
             let newly_added = tcx.item_variance_map.borrow_mut()

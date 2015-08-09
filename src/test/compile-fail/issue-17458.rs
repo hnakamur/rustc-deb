@@ -9,7 +9,7 @@
 // except according to those terms.
 
 static X: usize = 0 as *const usize as usize;
-//~^ ERROR: can not cast a pointer to an integer in statics
+//~^ ERROR: raw pointers cannot be cast to integers in statics
 
 fn main() {
     assert_eq!(X, 0);

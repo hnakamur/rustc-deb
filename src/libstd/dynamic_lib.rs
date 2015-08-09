@@ -12,7 +12,9 @@
 //!
 //! A simple wrapper over the platform's dynamic library facilities
 
-#![unstable(feature = "std_misc")]
+#![unstable(feature = "dynamic_lib",
+            reason = "API has not been scrutinized and is highly likely to \
+                      either disappear or change")]
 #![allow(missing_docs)]
 
 use prelude::v1::*;
@@ -211,8 +213,8 @@ mod dl {
     pub fn check_for_errors_in<T, F>(f: F) -> Result<T, String> where
         F: FnOnce() -> T,
     {
-        use sync::{StaticMutex, MUTEX_INIT};
-        static LOCK: StaticMutex = MUTEX_INIT;
+        use sync::StaticMutex;
+        static LOCK: StaticMutex = StaticMutex::new();
         unsafe {
             // dlerror isn't thread safe, so we need to lock around this entire
             // sequence
@@ -294,7 +296,7 @@ mod dl {
         let result = match filename {
             Some(filename) => {
                 let filename_str: Vec<_> =
-                    filename.encode_wide().chain(Some(0).into_iter()).collect();
+                    filename.encode_wide().chain(Some(0)).collect();
                 let result = unsafe {
                     LoadLibraryW(filename_str.as_ptr() as *const libc::c_void)
                 };

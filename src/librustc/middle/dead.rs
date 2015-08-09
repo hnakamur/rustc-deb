@@ -12,12 +12,13 @@
 // closely. The idea is that all reachable symbols are live, codes called
 // from live codes are live, and everything else is dead.
 
+use ast_map;
 use middle::{def, pat_util, privacy, ty};
 use lint;
 use util::nodemap::NodeSet;
 
 use std::collections::HashSet;
-use syntax::{ast, ast_map, codemap};
+use syntax::{ast, codemap};
 use syntax::ast_util::{local_def, is_local};
 use syntax::attr::{self, AttrMetaMethods};
 use syntax::visit::{self, Visitor};
@@ -47,6 +48,7 @@ struct MarkSymbolVisitor<'a, 'tcx: 'a> {
     struct_has_extern_repr: bool,
     ignore_non_const_paths: bool,
     inherited_pub_visibility: bool,
+    ignore_variant_stack: Vec<ast::NodeId>,
 }
 
 impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
@@ -59,6 +61,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
             struct_has_extern_repr: false,
             ignore_non_const_paths: false,
             inherited_pub_visibility: false,
+            ignore_variant_stack: vec![],
         }
     }
 
@@ -79,7 +82,9 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
                 def::DefPrimTy(_) => (),
                 def::DefVariant(enum_id, variant_id, _) => {
                     self.check_def_id(enum_id);
-                    self.check_def_id(variant_id);
+                    if !self.ignore_variant_stack.contains(&variant_id.node) {
+                        self.check_def_id(variant_id);
+                    }
                 }
                 _ => {
                     self.check_def_id(def.def_id());
@@ -128,7 +133,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
 
     fn handle_field_access(&mut self, lhs: &ast::Expr, name: ast::Name) {
         match ty::expr_ty_adjusted(self.tcx, lhs).sty {
-            ty::ty_struct(id, _) => {
+            ty::TyStruct(id, _) => {
                 let fields = ty::lookup_struct_fields(self.tcx, id);
                 let field_id = fields.iter()
                     .find(|field| field.name == name).unwrap().id;
@@ -140,7 +145,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
 
     fn handle_tup_field_access(&mut self, lhs: &ast::Expr, idx: usize) {
         match ty::expr_ty_adjusted(self.tcx, lhs).sty {
-            ty::ty_struct(id, _) => {
+            ty::TyStruct(id, _) => {
                 let fields = ty::lookup_struct_fields(self.tcx, id);
                 let field_id = fields[idx].id;
                 self.live_symbols.insert(field_id.node);
@@ -167,6 +172,9 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
         };
         let fields = ty::lookup_struct_fields(self.tcx, id);
         for pat in pats {
+            if let ast::PatWild(ast::PatWildSingle) = pat.node.pat.node {
+                continue;
+            }
             let field_id = fields.iter()
                 .find(|field| field.name == pat.node.ident.name).unwrap().id;
             self.live_symbols.insert(field_id.node);
@@ -269,6 +277,23 @@ impl<'a, 'tcx, 'v> Visitor<'v> for MarkSymbolVisitor<'a, 'tcx> {
         }
 
         visit::walk_expr(self, expr);
+    }
+
+    fn visit_arm(&mut self, arm: &ast::Arm) {
+        if arm.pats.len() == 1 {
+            let pat = &*arm.pats[0];
+            let variants = pat_util::necessary_variants(&self.tcx.def_map, pat);
+
+            // Inside the body, ignore constructions of variants
+            // necessary for the pattern to match. Those construction sites
+            // can't be reached unless the variant is constructed elsewhere.
+            let len = self.ignore_variant_stack.len();
+            self.ignore_variant_stack.push_all(&*variants);
+            visit::walk_arm(self, arm);
+            self.ignore_variant_stack.truncate(len);
+        } else {
+            visit::walk_arm(self, arm);
+        }
     }
 
     fn visit_pat(&mut self, pat: &ast::Pat) {
@@ -392,6 +417,11 @@ fn create_and_seed_worklist(tcx: &ty::ctxt,
         worklist.push(*id);
     }
     for id in reachable_symbols {
+        // Reachable variants can be dead, because we warn about
+        // variants never constructed, not variants never used.
+        if let Some(ast_map::NodeVariant(..)) = tcx.map.find(*id) {
+            continue;
+        }
         worklist.push(*id);
     }
 
@@ -490,8 +520,8 @@ impl<'a, 'tcx> DeadVisitor<'a, 'tcx> {
         match self.tcx.inherent_impls.borrow().get(&local_def(id)) {
             None => (),
             Some(impl_list) => {
-                for impl_did in &**impl_list {
-                    for item_did in &*impl_items.get(impl_did).unwrap() {
+                for impl_did in impl_list.iter() {
+                    for item_did in impl_items.get(impl_did).unwrap().iter() {
                         if self.live_symbols.contains(&item_did.def_id()
                                                                .node) {
                             return true;

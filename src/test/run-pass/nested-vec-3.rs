@@ -12,11 +12,12 @@
 // the contents implement Drop and we hit a panic in the middle of
 // construction.
 
+#![feature(const_fn)]
 
 use std::thread;
-use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-static LOG: AtomicUsize = ATOMIC_USIZE_INIT;
+static LOG: AtomicUsize = AtomicUsize::new(0);
 
 struct D(u8);
 

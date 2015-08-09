@@ -19,11 +19,13 @@
 
 pub use self::ExpnFormat::*;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ops::{Add, Sub};
+use std::path::Path;
 use std::rc::Rc;
 
-use std::fmt;
+use std::{fmt, fs};
+use std::io::{self, Read};
 
 use serialize::{Encodable, Decodable, Encoder, Decoder};
 
@@ -113,7 +115,7 @@ impl Sub for CharPos {
 /// are *absolute* positions from the beginning of the codemap, not positions
 /// relative to FileMaps. Methods on the CodeMap can be used to relate spans back
 /// to the original source.
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Hash)]
 pub struct Span {
     pub lo: BytePos,
     pub hi: BytePos,
@@ -159,6 +161,20 @@ impl Decodable for Span {
         let lo = BytePos(lo_hi as u32);
         let hi = BytePos((lo_hi >> 32) as u32);
         Ok(mk_sp(lo, hi))
+    }
+}
+
+fn default_span_debug(span: Span, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "Span {{ lo: {:?}, hi: {:?}, expn_id: {:?} }}",
+           span.lo, span.hi, span.expn_id)
+}
+
+thread_local!(pub static SPAN_DEBUG: Cell<fn(Span, &mut fmt::Formatter) -> fmt::Result> =
+                Cell::new(default_span_debug));
+
+impl fmt::Debug for Span {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        SPAN_DEBUG.with(|span_debug| span_debug.get()(*self, f))
     }
 }
 
@@ -522,6 +538,29 @@ impl FileMap {
     }
 }
 
+/// An abstraction over the fs operations used by the Parser.
+pub trait FileLoader {
+    /// Query the existence of a file.
+    fn file_exists(&self, path: &Path) -> bool;
+
+    /// Read the contents of an UTF-8 file into memory.
+    fn read_file(&self, path: &Path) -> io::Result<String>;
+}
+
+/// A FileLoader that uses std::fs to load real files.
+pub struct RealFileLoader;
+
+impl FileLoader for RealFileLoader {
+    fn file_exists(&self, path: &Path) -> bool {
+        fs::metadata(path).is_ok()
+    }
+
+    fn read_file(&self, path: &Path) -> io::Result<String> {
+        let mut src = String::new();
+        try!(try!(fs::File::open(path)).read_to_string(&mut src));
+        Ok(src)
+    }
+}
 
 // _____________________________________________________________________________
 // CodeMap
@@ -529,7 +568,8 @@ impl FileMap {
 
 pub struct CodeMap {
     pub files: RefCell<Vec<Rc<FileMap>>>,
-    expansions: RefCell<Vec<ExpnInfo>>
+    expansions: RefCell<Vec<ExpnInfo>>,
+    file_loader: Box<FileLoader>
 }
 
 impl CodeMap {
@@ -537,7 +577,25 @@ impl CodeMap {
         CodeMap {
             files: RefCell::new(Vec::new()),
             expansions: RefCell::new(Vec::new()),
+            file_loader: Box::new(RealFileLoader)
         }
+    }
+
+    pub fn with_file_loader(file_loader: Box<FileLoader>) -> CodeMap {
+        CodeMap {
+            files: RefCell::new(Vec::new()),
+            expansions: RefCell::new(Vec::new()),
+            file_loader: file_loader
+        }
+    }
+
+    pub fn file_exists(&self, path: &Path) -> bool {
+        self.file_loader.file_exists(path)
+    }
+
+    pub fn load_file(&self, path: &Path) -> io::Result<Rc<FileMap>> {
+        let src = try!(self.file_loader.read_file(path));
+        Ok(self.new_filemap(path.to_str().unwrap().to_string(), src))
     }
 
     pub fn new_filemap(&self, filename: FileName, mut src: String) -> Rc<FileMap> {
@@ -779,7 +837,7 @@ impl CodeMap {
     }
 
     pub fn get_filemap(&self, filename: &str) -> Rc<FileMap> {
-        for fm in &*self.files.borrow() {
+        for fm in self.files.borrow().iter() {
             if filename == fm.name {
                 return fm.clone();
             }
@@ -804,7 +862,7 @@ impl CodeMap {
         // The number of extra bytes due to multibyte chars in the FileMap
         let mut total_extra_bytes = 0;
 
-        for mbc in &*map.multibyte_chars.borrow() {
+        for mbc in map.multibyte_chars.borrow().iter() {
             debug!("{}-byte char at {:?}", mbc.bytes, mbc.pos);
             if mbc.pos < bpos {
                 // every character is at least one byte, so we only

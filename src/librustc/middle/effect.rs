@@ -15,7 +15,6 @@ use self::UnsafeContext::*;
 use middle::def;
 use middle::ty::{self, Ty};
 use middle::ty::MethodCall;
-use util::ppaux;
 
 use syntax::ast;
 use syntax::codemap::Span;
@@ -31,7 +30,7 @@ enum UnsafeContext {
 
 fn type_is_unsafe_function(ty: Ty) -> bool {
     match ty.sty {
-        ty::ty_bare_fn(_, ref f) => f.unsafety == ast::Unsafety::Unsafe,
+        ty::TyBareFn(_, ref f) => f.unsafety == ast::Unsafety::Unsafe,
         _ => false,
     }
 }
@@ -66,14 +65,14 @@ impl<'a, 'tcx> EffectCheckVisitor<'a, 'tcx> {
             ast::ExprIndex(ref base, _) => ty::node_id_to_type(self.tcx, base.id),
             _ => return
         };
-        debug!("effect: checking index with base type {}",
-                ppaux::ty_to_string(self.tcx, base_type));
+        debug!("effect: checking index with base type {:?}",
+                 base_type);
         match base_type.sty {
-            ty::ty_uniq(ty) | ty::ty_rptr(_, ty::mt{ty, ..}) => if ty::ty_str == ty.sty {
+            ty::TyBox(ty) | ty::TyRef(_, ty::mt{ty, ..}) => if ty::TyStr == ty.sty {
                 span_err!(self.tcx.sess, e.span, E0134,
                           "modification of string types is not allowed");
             },
-            ty::ty_str => {
+            ty::TyStr => {
                 span_err!(self.tcx.sess, e.span, E0135,
                           "modification of string types is not allowed");
             }
@@ -87,8 +86,8 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
                 block: &'v ast::Block, span: Span, _: ast::NodeId) {
 
         let (is_item_fn, is_unsafe_fn) = match fn_kind {
-            visit::FkItemFn(_, _, fn_style, _, _) =>
-                (true, fn_style == ast::Unsafety::Unsafe),
+            visit::FkItemFn(_, _, unsafety, _, _, _) =>
+                (true, unsafety == ast::Unsafety::Unsafe),
             visit::FkMethod(_, sig, _) =>
                 (true, sig.unsafety == ast::Unsafety::Unsafe),
             _ => (false, false),
@@ -142,8 +141,8 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
             ast::ExprMethodCall(_, _, _) => {
                 let method_call = MethodCall::expr(expr.id);
                 let base_type = self.tcx.method_map.borrow().get(&method_call).unwrap().ty;
-                debug!("effect: method call case, base type is {}",
-                       ppaux::ty_to_string(self.tcx, base_type));
+                debug!("effect: method call case, base type is {:?}",
+                        base_type);
                 if type_is_unsafe_function(base_type) {
                     self.require_unsafe(expr.span,
                                         "invocation of unsafe method")
@@ -151,18 +150,18 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
             }
             ast::ExprCall(ref base, _) => {
                 let base_type = ty::node_id_to_type(self.tcx, base.id);
-                debug!("effect: call case, base type is {}",
-                       ppaux::ty_to_string(self.tcx, base_type));
+                debug!("effect: call case, base type is {:?}",
+                        base_type);
                 if type_is_unsafe_function(base_type) {
                     self.require_unsafe(expr.span, "call to unsafe function")
                 }
             }
             ast::ExprUnary(ast::UnDeref, ref base) => {
                 let base_type = ty::node_id_to_type(self.tcx, base.id);
-                debug!("effect: unary case, base type is {}",
-                       ppaux::ty_to_string(self.tcx, base_type));
-                if let ty::ty_ptr(_) = base_type.sty {
-                    self.require_unsafe(expr.span, "dereference of unsafe pointer")
+                debug!("effect: unary case, base type is {:?}",
+                        base_type);
+                if let ty::TyRawPtr(_) = base_type.sty {
+                    self.require_unsafe(expr.span, "dereference of raw pointer")
                 }
             }
             ast::ExprAssign(ref base, _) | ast::ExprAssignOp(_, ref base, _) => {

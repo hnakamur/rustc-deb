@@ -340,10 +340,10 @@ pub mod compat {
                                       -> $rettype:ty { $fallback:expr }) => (
             #[inline(always)]
             pub unsafe fn $symbol($($argname: $argtype),*) -> $rettype {
-                use sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+                use sync::atomic::{AtomicUsize, Ordering};
                 use mem;
 
-                static PTR: AtomicUsize = ATOMIC_USIZE_INIT;
+                static PTR: AtomicUsize = AtomicUsize::new(0);
 
                 fn load() -> usize {
                     ::sys::c::compat::store_func(&PTR,
@@ -482,6 +482,7 @@ extern "system" {
                                dwMilliseconds: libc::DWORD) -> libc::DWORD;
     pub fn SwitchToThread() -> libc::BOOL;
     pub fn Sleep(dwMilliseconds: libc::DWORD);
+    pub fn GetProcessId(handle: libc::HANDLE) -> libc::DWORD;
 }
 
 #[link(name = "userenv")]

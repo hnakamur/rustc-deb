@@ -26,6 +26,7 @@ use llvm::{ModuleRef, ContextRef, ValueRef};
 use llvm::debuginfo::{DIFile, DIType, DIScope, DIBuilderRef, DISubprogram, DIArray,
                       DIDescriptor, FlagPrototyped};
 use middle::subst::{self, Substs};
+use rustc::ast_map;
 use trans::common::{NodeIdAndSpan, CrateContext, FunctionContext, Block};
 use trans;
 use trans::monomorphize;
@@ -39,7 +40,7 @@ use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
 use syntax::codemap::{Span, Pos};
-use syntax::{ast, codemap, ast_util, ast_map};
+use syntax::{ast, codemap, ast_util};
 use syntax::parse::token::{self, special_idents};
 
 pub mod gdb;
@@ -193,7 +194,7 @@ pub fn finalize(cx: &CrateContext) {
         // Prevent bitcode readers from deleting the debug info.
         let ptr = "Debug Info Version\0".as_ptr();
         llvm::LLVMRustAddModuleFlag(cx.llmod(), ptr as *const _,
-                                    llvm::LLVMRustDebugMetadataVersion);
+                                    llvm::LLVMRustDebugMetadataVersion());
     };
 }
 
@@ -232,7 +233,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             }
 
             match item.node {
-                ast::ItemFn(ref fn_decl, _, _, ref generics, ref top_level_block) => {
+                ast::ItemFn(ref fn_decl, _, _, _, ref generics, ref top_level_block) => {
                     (item.ident.name, fn_decl, generics, top_level_block, item.span, true)
                 }
                 _ => {
@@ -331,7 +332,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
     // Get_template_parameters() will append a `<...>` clause to the function
     // name if necessary.
-    let mut function_name = String::from_str(&token::get_name(name));
+    let mut function_name = String::from(&*token::get_name(name));
     let template_parameters = get_template_parameters(cx,
                                                       generics,
                                                       param_substs,
@@ -484,10 +485,10 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 let param_metadata = unsafe {
                     llvm::LLVMDIBuilderCreateTemplateTypeParameter(
                         DIB(cx),
-                        file_metadata,
+                        ptr::null_mut(),
                         name.as_ptr(),
                         actual_self_type_metadata,
-                        ptr::null_mut(),
+                        file_metadata,
                         0,
                         0)
                 };
@@ -518,10 +519,10 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 let param_metadata = unsafe {
                     llvm::LLVMDIBuilderCreateTemplateTypeParameter(
                         DIB(cx),
-                        file_metadata,
+                        ptr::null_mut(),
                         name.as_ptr(),
                         actual_type_metadata,
-                        ptr::null_mut(),
+                        file_metadata,
                         0,
                         0)
                 };
@@ -580,12 +581,14 @@ fn declare_local<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                                                           loc.line,
                                                                           loc.col.to_usize()));
             unsafe {
+                let debug_loc = llvm::LLVMGetCurrentDebugLocation(cx.raw_builder());
                 let instr = llvm::LLVMDIBuilderInsertDeclareAtEnd(
                     DIB(cx),
                     alloca,
                     metadata,
                     address_operations.as_ptr(),
                     address_operations.len() as c_uint,
+                    debug_loc,
                     bcx.llbb);
 
                 llvm::LLVMSetInstDebugLocation(trans::build::B(bcx).llbuilder, instr);

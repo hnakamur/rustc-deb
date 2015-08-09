@@ -30,8 +30,8 @@ mind.
 
 # Defining a macro
 
-You may have seen the `vec!` macro, used to initialize a [vector][] with any
-number of elements.
+You may have seen the `vec!` macro, used to initialize a [vector][vector] with
+any number of elements.
 
 [vector]: vectors.html
 
@@ -224,7 +224,7 @@ more" match. Both forms optionally include a separator, which can be any token
 except `+` or `*`.
 
 This system is based on
-"[Macro-by-Example](http://www.cs.indiana.edu/ftp/techreports/TR206.pdf)"
+"[Macro-by-Example](https://www.cs.indiana.edu/ftp/techreports/TR206.pdf)"
 (PDF link).
 
 # Hygiene
@@ -319,7 +319,7 @@ syntax context where it was introduced. It’s as though the variable `state`
 inside `main` is painted a different "color" from the variable `state` inside
 the macro, and therefore they don’t conflict.
 
-[hygienic macro system]: http://en.wikipedia.org/wiki/Hygienic_macro
+[hygienic macro system]: https://en.wikipedia.org/wiki/Hygienic_macro
 
 This also restricts the ability of macros to introduce new bindings at the
 invocation site. Code such as the following will not work:
@@ -349,7 +349,7 @@ fn main() {
 }
 ```
 
-This holds for `let` bindings and loop labels, but not for [items][].
+This holds for `let` bindings and loop labels, but not for [items][items].
 So the following code does compile:
 
 ```rust
@@ -470,15 +470,15 @@ which syntactic form it matches.
 * `stmt`: a single statement. Example: `let x = 3`.
 * `block`: a brace-delimited sequence of statements. Example:
   `{ log(error, "hi"); return 12; }`.
-* `item`: an [item][]. Examples: `fn foo() { }`; `struct Bar;`.
+* `item`: an [item][item]. Examples: `fn foo() { }`; `struct Bar;`.
 * `meta`: a "meta item", as found in attributes. Example: `cfg(target_os = "windows")`.
 * `tt`: a single token tree.
 
 There are additional rules regarding the next token after a metavariable:
 
-* `expr` variables must be followed by one of: `=> , ;`
-* `ty` and `path` variables must be followed by one of: `=> , : = > as`
-* `pat` variables must be followed by one of: `=> , =`
+* `expr` variables may only be followed by one of: `=> , ;`
+* `ty` and `path` variables may only be followed by one of: `=> , : = > as`
+* `pat` variables may only be followed by one of: `=> , = if in`
 * Other variables may be followed by any token.
 
 These rules provide some flexibility for Rust’s syntax to evolve without
@@ -622,7 +622,7 @@ invocation gives you another opportunity to pattern-match the macro’s
 arguments.
 
 As an extreme example, it is possible, though hardly advisable, to implement
-the [Bitwise Cyclic Tag](http://esolangs.org/wiki/Bitwise_Cyclic_Tag) automaton
+the [Bitwise Cyclic Tag](https://esolangs.org/wiki/Bitwise_Cyclic_Tag) automaton
 within Rust’s macro system.
 
 ```rust
@@ -683,9 +683,9 @@ let v = vec![0; 100];
 
 ## assert! and assert_eq!
 
-These two macros are used in tests. `assert!` takes a boolean, and `assert_eq!`
-takes two values and compares them. Truth passes, success `panic!`s. Like
-this:
+These two macros are used in tests. `assert!` takes a boolean. `assert_eq!`
+takes two values and checks them for equality. `true` passes, `false` `panic!`s.
+Like this:
 
 ```rust,no_run
 // A-ok!
@@ -698,6 +698,7 @@ assert_eq!(5, 3 + 2);
 assert!(5 < 3);
 assert_eq!(5, 3);
 ```
+
 ## try!
 
 `try!` is used for error handling. It takes something that can return a

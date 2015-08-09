@@ -13,10 +13,10 @@
 //
 // - For each *mutable* static item, it checks that its **type**:
 //     - doesn't have a destructor
-//     - doesn't own an owned pointer
+//     - doesn't own a box
 //
 // - For each *immutable* static item, it checks that its **value**:
-//       - doesn't own owned, managed pointers
+//       - doesn't own a box
 //       - doesn't contain a struct literal or a call to an enum variant / struct constructor where
 //           - the type of the struct/enum has a dtor
 //
@@ -24,6 +24,7 @@
 // - It's not possible to take the address of a static item with unsafe interior. This is enforced
 // by borrowck::gather_loans
 
+use middle::cast::{CastKind};
 use middle::const_eval;
 use middle::def;
 use middle::expr_use_visitor as euv;
@@ -32,11 +33,9 @@ use middle::mem_categorization as mc;
 use middle::traits;
 use middle::ty::{self, Ty};
 use util::nodemap::NodeMap;
-use util::ppaux;
 
 use syntax::ast;
 use syntax::codemap::Span;
-use syntax::print::pprust;
 use syntax::visit::{self, Visitor};
 
 use std::collections::hash_map::Entry;
@@ -79,6 +78,7 @@ bitflags! {
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum Mode {
     Const,
+    ConstFn,
     Static,
     StaticMut,
 
@@ -136,8 +136,109 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
         })
     }
 
+    fn fn_like(&mut self,
+               fk: visit::FnKind,
+               fd: &ast::FnDecl,
+               b: &ast::Block,
+               s: Span,
+               fn_id: ast::NodeId)
+               -> ConstQualif {
+        match self.tcx.const_qualif_map.borrow_mut().entry(fn_id) {
+            Entry::Occupied(entry) => return *entry.get(),
+            Entry::Vacant(entry) => {
+                // Prevent infinite recursion on re-entry.
+                entry.insert(ConstQualif::empty());
+            }
+        }
+
+        let mode = match fk {
+            visit::FkItemFn(_, _, _, ast::Constness::Const, _, _) => {
+                Mode::ConstFn
+            }
+            visit::FkMethod(_, m, _) => {
+                if m.constness == ast::Constness::Const {
+                    Mode::ConstFn
+                } else {
+                    Mode::Var
+                }
+            }
+            _ => Mode::Var
+        };
+
+        // Ensure the arguments are simple, not mutable/by-ref or patterns.
+        if mode == Mode::ConstFn {
+            for arg in &fd.inputs {
+                match arg.pat.node {
+                    ast::PatIdent(ast::BindByValue(ast::MutImmutable), _, None) => {}
+                    _ => {
+                        span_err!(self.tcx.sess, arg.pat.span, E0022,
+                                  "arguments of constant functions can only \
+                                   be immutable by-value bindings");
+                    }
+                }
+            }
+        }
+
+        let qualif = self.with_mode(mode, |this| {
+            this.with_euv(Some(fn_id), |euv| euv.walk_fn(fd, b));
+            visit::walk_fn(this, fk, fd, b, s);
+            this.qualif
+        });
+
+        // Keep only bits that aren't affected by function body (NON_ZERO_SIZED),
+        // and bits that don't change semantics, just optimizations (PREFER_IN_PLACE).
+        let qualif = qualif & (ConstQualif::NON_ZERO_SIZED | ConstQualif::PREFER_IN_PLACE);
+
+        self.tcx.const_qualif_map.borrow_mut().insert(fn_id, qualif);
+        qualif
+    }
+
     fn add_qualif(&mut self, qualif: ConstQualif) {
         self.qualif = self.qualif | qualif;
+    }
+
+    /// Returns true if the call is to a const fn or method.
+    fn handle_const_fn_call(&mut self,
+                            expr: &ast::Expr,
+                            def_id: ast::DefId,
+                            ret_ty: Ty<'tcx>)
+                            -> bool {
+        if let Some(fn_like) = const_eval::lookup_const_fn_by_id(self.tcx, def_id) {
+            if
+                // we are in a static/const initializer
+                self.mode != Mode::Var &&
+
+                // feature-gate is not enabled
+                !self.tcx.sess.features.borrow().const_fn &&
+
+                // this doesn't come from a macro that has #[allow_internal_unstable]
+                !self.tcx.sess.codemap().span_allows_unstable(expr.span)
+            {
+                self.tcx.sess.span_err(
+                    expr.span,
+                    &format!("const fns are an unstable feature"));
+                fileline_help!(
+                    self.tcx.sess,
+                    expr.span,
+                    "in Nightly builds, add `#![feature(const_fn)]` to the crate \
+                     attributes to enable");
+            }
+
+            let qualif = self.fn_like(fn_like.kind(),
+                                      fn_like.decl(),
+                                      fn_like.body(),
+                                      fn_like.span(),
+                                      fn_like.id());
+            self.add_qualif(qualif);
+
+            if ty::type_contents(self.tcx, ret_ty).interior_unsafe() {
+                self.add_qualif(ConstQualif::MUTABLE_MEM);
+            }
+
+            true
+        } else {
+            false
+        }
     }
 
     fn record_borrow(&mut self, id: ast::NodeId, mutbl: ast::Mutability) {
@@ -158,6 +259,7 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
     fn msg(&self) -> &'static str {
         match self.mode {
             Mode::Const => "constant",
+            Mode::ConstFn => "constant function",
             Mode::StaticMut | Mode::Static => "static",
             Mode::Var => unreachable!(),
         }
@@ -170,19 +272,19 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
         let suffix = if tcontents.has_dtor() {
             "destructors"
         } else if tcontents.owns_owned() {
-            "owned pointers"
+            "boxes"
         } else {
             return
         };
 
-        self.tcx.sess.span_err(e.span, &format!("mutable statics are not allowed \
-                                                 to have {}", suffix));
+        span_err!(self.tcx.sess, e.span, E0397,
+                 "mutable statics are not allowed to have {}", suffix);
     }
 
     fn check_static_type(&self, e: &ast::Expr) {
         let ty = ty::node_id_to_type(self.tcx, e.id);
         let infcx = infer::new_infer_ctxt(self.tcx);
-        let mut fulfill_cx = traits::FulfillmentContext::new();
+        let mut fulfill_cx = traits::FulfillmentContext::new(false);
         let cause = traits::ObligationCause::new(e.span, e.id, traits::SharedStatic);
         fulfill_cx.register_builtin_bound(&infcx, ty, ty::BoundSync, cause);
         let env = ty::empty_parameter_environment(self.tcx);
@@ -197,7 +299,7 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
 
 impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
     fn visit_item(&mut self, i: &ast::Item) {
-        debug!("visit_item(item={})", pprust::item_to_string(i));
+        debug!("visit_item(item={})", self.tcx.map.node_to_string(i.id));
         match i.node {
             ast::ItemStatic(_, ast::MutImmutable, ref expr) => {
                 self.check_static_type(&**expr);
@@ -251,9 +353,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                 b: &'v ast::Block,
                 s: Span,
                 fn_id: ast::NodeId) {
-        assert!(self.mode == Mode::Var);
-        self.with_euv(Some(fn_id), |euv| euv.walk_fn(fd, b));
-        visit::walk_fn(self, fk, fd, b, s);
+        self.fn_like(fk, fd, b, s, fn_id);
     }
 
     fn visit_pat(&mut self, p: &ast::Pat) {
@@ -269,6 +369,35 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
         }
     }
 
+    fn visit_block(&mut self, block: &ast::Block) {
+        // Check all statements in the block
+        for stmt in &block.stmts {
+            let span = match stmt.node {
+                ast::StmtDecl(ref decl, _) => {
+                    match decl.node {
+                        ast::DeclLocal(_) => decl.span,
+
+                        // Item statements are allowed
+                        ast::DeclItem(_) => continue
+                    }
+                }
+                ast::StmtExpr(ref expr, _) => expr.span,
+                ast::StmtSemi(ref semi, _) => semi.span,
+                ast::StmtMac(..) => {
+                    self.tcx.sess.span_bug(stmt.span, "unexpanded statement \
+                                                       macro in const?!")
+                }
+            };
+            self.add_qualif(ConstQualif::NOT_CONST);
+            if self.mode != Mode::Var {
+                span_err!(self.tcx.sess, span, E0016,
+                          "blocks in {}s are limited to items and \
+                           tail expressions", self.msg());
+            }
+        }
+        visit::walk_block(self, block);
+    }
+
     fn visit_expr(&mut self, ex: &ast::Expr) {
         let mut outer = self.qualif;
         self.qualif = ConstQualif::empty();
@@ -279,7 +408,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
         // Special-case some expressions to avoid certain flags bubbling up.
         match ex.node {
             ast::ExprCall(ref callee, ref args) => {
-                for arg in args.iter() {
+                for arg in args {
                     self.visit_expr(&**arg)
                 }
 
@@ -293,7 +422,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                 self.visit_expr(&**element);
                 // The count is checked elsewhere (typeck).
                 let count = match node_ty.sty {
-                    ty::ty_vec(_, Some(n)) => n,
+                    ty::TyArray(_, n) => n,
                     _ => unreachable!()
                 };
                 // [element; 0] is always zero-sized.
@@ -305,7 +434,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                 // Compute the most demanding borrow from all the arms'
                 // patterns and set that on the discriminator.
                 let mut borrow = None;
-                for pat in arms.iter().flat_map(|arm| arm.pats.iter()) {
+                for pat in arms.iter().flat_map(|arm| &arm.pats) {
                     let pat_borrow = self.rvalue_borrows.remove(&pat.id);
                     match (borrow, pat_borrow) {
                         (None, _) | (_, Some(ast::MutMutable)) => {
@@ -324,7 +453,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                 visit::walk_expr(self, ex);
                 let div_or_rem = op.node == ast::BiDiv || op.node == ast::BiRem;
                 match node_ty.sty {
-                    ty::ty_uint(_) | ty::ty_int(_) if div_or_rem => {
+                    ty::TyUint(_) | ty::TyInt(_) if div_or_rem => {
                         if !self.qualif.intersects(ConstQualif::NOT_CONST) {
                             match const_eval::eval_const_expr_partial(self.tcx, ex, None) {
                                 Ok(_) => {}
@@ -399,8 +528,8 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
 fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                         e: &ast::Expr, node_ty: Ty<'tcx>) {
     match node_ty.sty {
-        ty::ty_struct(did, _) |
-        ty::ty_enum(did, _) if ty::has_dtor(v.tcx, did) => {
+        ty::TyStruct(did, _) |
+        ty::TyEnum(did, _) if ty::has_dtor(v.tcx, did) => {
             v.add_qualif(ConstQualif::NEEDS_DROP);
             if v.mode != Mode::Var {
                 v.tcx.sess.span_err(e.span,
@@ -430,36 +559,48 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                           "allocations are not allowed in {}s", v.msg());
             }
         }
-        ast::ExprUnary(ast::UnDeref, ref ptr) => {
-            match ty::node_id_to_type(v.tcx, ptr.id).sty {
-                ty::ty_ptr(_) => {
-                    // This shouldn't be allowed in constants at all.
+        ast::ExprUnary(op, ref inner) => {
+            match ty::node_id_to_type(v.tcx, inner.id).sty {
+                ty::TyRawPtr(_) => {
+                    assert!(op == ast::UnDeref);
+
                     v.add_qualif(ConstQualif::NOT_CONST);
+                    if v.mode != Mode::Var {
+                        span_err!(v.tcx.sess, e.span, E0396,
+                                  "raw pointers cannot be dereferenced in {}s", v.msg());
+                    }
+                }
+                _ => {}
+            }
+        }
+        ast::ExprBinary(op, ref lhs, _) => {
+            match ty::node_id_to_type(v.tcx, lhs.id).sty {
+                ty::TyRawPtr(_) => {
+                    assert!(op.node == ast::BiEq || op.node == ast::BiNe ||
+                            op.node == ast::BiLe || op.node == ast::BiLt ||
+                            op.node == ast::BiGe || op.node == ast::BiGt);
+
+                    v.add_qualif(ConstQualif::NOT_CONST);
+                    if v.mode != Mode::Var {
+                        span_err!(v.tcx.sess, e.span, E0395,
+                                  "raw pointers cannot be compared in {}s", v.msg());
+                    }
                 }
                 _ => {}
             }
         }
         ast::ExprCast(ref from, _) => {
-            let toty = ty::expr_ty(v.tcx, e);
-            let fromty = ty::expr_ty(v.tcx, &**from);
-            let is_legal_cast =
-                ty::type_is_numeric(toty) ||
-                ty::type_is_unsafe_ptr(toty) ||
-                (ty::type_is_bare_fn(toty) && ty::type_is_bare_fn_item(fromty));
-            if !is_legal_cast {
-                v.add_qualif(ConstQualif::NOT_CONST);
-                if v.mode != Mode::Var {
-                    span_err!(v.tcx.sess, e.span, E0012,
-                              "can not cast to `{}` in {}s",
-                              ppaux::ty_to_string(v.tcx, toty), v.msg());
+            debug!("Checking const cast(id={})", from.id);
+            match v.tcx.cast_kinds.borrow().get(&from.id) {
+                None => v.tcx.sess.span_bug(e.span, "no kind for cast"),
+                Some(&CastKind::PtrAddrCast) | Some(&CastKind::FnPtrAddrCast) => {
+                    v.add_qualif(ConstQualif::NOT_CONST);
+                    if v.mode != Mode::Var {
+                        span_err!(v.tcx.sess, e.span, E0018,
+                                  "raw pointers cannot be cast to integers in {}s", v.msg());
+                    }
                 }
-            }
-            if ty::type_is_unsafe_ptr(fromty) && ty::type_is_numeric(toty) {
-                v.add_qualif(ConstQualif::NOT_CONST);
-                if v.mode != Mode::Var {
-                    span_err!(v.tcx.sess, e.span, E0018,
-                              "can not cast a pointer to an integer in {}s", v.msg());
-                }
+                _ => {}
             }
         }
         ast::ExprPath(..) => {
@@ -470,7 +611,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                     v.add_qualif(ConstQualif::NON_ZERO_SIZED);
                 }
                 Some(def::DefStruct(_)) => {
-                    if let ty::ty_bare_fn(..) = node_ty.sty {
+                    if let ty::TyBareFn(..) = node_ty.sty {
                         // Count the function pointer.
                         v.add_qualif(ConstQualif::NON_ZERO_SIZED);
                     }
@@ -482,10 +623,10 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                 Some(def::DefStatic(..)) => {
                     match v.mode {
                         Mode::Static | Mode::StaticMut => {}
-                        Mode::Const => {
+                        Mode::Const | Mode::ConstFn => {
                             span_err!(v.tcx.sess, e.span, E0013,
-                                "constants cannot refer to other statics, \
-                                 insert an intermediate constant instead");
+                                "{}s cannot refer to other statics, insert \
+                                 an intermediate constant instead", v.msg());
                         }
                         Mode::Var => v.add_qualif(ConstQualif::NOT_CONST)
                     }
@@ -501,6 +642,10 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                                             "DefConst or DefAssociatedConst \
                                              doesn't point to a constant");
                     }
+                }
+                Some(def::DefLocal(_)) if v.mode == Mode::ConstFn => {
+                    // Sadly, we can't determine whether the types are zero-sized.
+                    v.add_qualif(ConstQualif::NOT_CONST | ConstQualif::NON_ZERO_SIZED);
                 }
                 def => {
                     v.add_qualif(ConstQualif::NOT_CONST);
@@ -526,48 +671,44 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                 };
             }
             let def = v.tcx.def_map.borrow().get(&callee.id).map(|d| d.full_def());
-            match def {
-                Some(def::DefStruct(..)) => {}
+            let is_const = match def {
+                Some(def::DefStruct(..)) => true,
                 Some(def::DefVariant(..)) => {
                     // Count the discriminator.
                     v.add_qualif(ConstQualif::NON_ZERO_SIZED);
+                    true
                 }
-                _ => {
-                    v.add_qualif(ConstQualif::NOT_CONST);
-                    if v.mode != Mode::Var {
-                        span_err!(v.tcx.sess, e.span, E0015,
-                                  "function calls in {}s are limited to \
-                                   struct and enum constructors", v.msg());
-                    }
+                Some(def::DefMethod(did, def::FromImpl(_))) |
+                Some(def::DefFn(did, _)) => {
+                    v.handle_const_fn_call(e, did, node_ty)
+                }
+                _ => false
+            };
+            if !is_const {
+                v.add_qualif(ConstQualif::NOT_CONST);
+                if v.mode != Mode::Var {
+                    span_err!(v.tcx.sess, e.span, E0015,
+                              "function calls in {}s are limited to \
+                               constant functions, \
+                               struct and enum constructors", v.msg());
                 }
             }
         }
-        ast::ExprBlock(ref block) => {
-            // Check all statements in the block
-            let mut block_span_err = |span| {
+        ast::ExprMethodCall(..) => {
+            let method_did = match v.tcx.method_map.borrow()[&method_call].origin {
+                ty::MethodStatic(did) => Some(did),
+                _ => None
+            };
+            let is_const = match method_did {
+                Some(did) => v.handle_const_fn_call(e, did, node_ty),
+                None => false
+            };
+            if !is_const {
                 v.add_qualif(ConstQualif::NOT_CONST);
                 if v.mode != Mode::Var {
-                    span_err!(v.tcx.sess, span, E0016,
-                              "blocks in {}s are limited to items and \
-                               tail expressions", v.msg());
-                }
-            };
-            for stmt in &block.stmts {
-                match stmt.node {
-                    ast::StmtDecl(ref decl, _) => {
-                        match decl.node {
-                            ast::DeclLocal(_) => block_span_err(decl.span),
-
-                            // Item statements are allowed
-                            ast::DeclItem(_) => {}
-                        }
-                    }
-                    ast::StmtExpr(ref expr, _) => block_span_err(expr.span),
-                    ast::StmtSemi(ref semi, _) => block_span_err(semi.span),
-                    ast::StmtMac(..) => {
-                        v.tcx.sess.span_bug(e.span, "unexpanded statement \
-                                                     macro in const?!")
-                    }
+                    span_err!(v.tcx.sess, e.span, E0378,
+                              "method calls in {}s are limited to \
+                               constant inherent methods", v.msg());
                 }
             }
         }
@@ -588,7 +729,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
         }
 
         ast::ExprClosure(..) => {
-            // Paths in constant constexts cannot refer to local variables,
+            // Paths in constant contexts cannot refer to local variables,
             // as there are none, and thus closures can't have upvars there.
             if ty::with_freevars(v.tcx, e.id, |fv| !fv.is_empty()) {
                 assert!(v.mode == Mode::Var,
@@ -597,8 +738,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
             }
         }
 
-        ast::ExprUnary(..) |
-        ast::ExprBinary(..) |
+        ast::ExprBlock(_) |
         ast::ExprIndex(..) |
         ast::ExprField(..) |
         ast::ExprTupField(..) |
@@ -625,8 +765,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
         // Miscellaneous expressions that could be implemented.
         ast::ExprRange(..) |
 
-        // Various other expressions.
-        ast::ExprMethodCall(..) |
+        // Expressions with side-effects.
         ast::ExprAssign(..) |
         ast::ExprAssignOp(..) |
         ast::ExprInlineAsm(_) |
@@ -665,9 +804,9 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'tcx> {
                         // statics cannot be consumed by value at any time, that would imply
                         // that they're an initializer (what a const is for) or kept in sync
                         // over time (not feasible), so deny it outright.
-                        self.tcx.sess.span_err(consume_span,
-                            "cannot refer to other statics by value, use the \
-                             address-of operator or a constant instead");
+                        span_err!(self.tcx.sess, consume_span, E0394,
+                                  "cannot refer to other statics by value, use the \
+                                   address-of operator or a constant instead");
                     }
                     break;
                 }
@@ -711,10 +850,14 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'tcx> {
                     }
                     let mutbl = bk.to_mutbl_lossy();
                     if mutbl == ast::MutMutable && self.mode == Mode::StaticMut {
-                        // Mutable slices are the only `&mut` allowed in globals,
-                        // but only in `static mut`, nowhere else.
+                        // Mutable slices are the only `&mut` allowed in
+                        // globals, but only in `static mut`, nowhere else.
+                        // FIXME: This exception is really weird... there isn't
+                        // any fundamental reason to restrict this based on
+                        // type of the expression.  `&mut [1]` has exactly the
+                        // same representation as &mut 1.
                         match cmt.ty.sty {
-                            ty::ty_vec(_, _) => break,
+                            ty::TyArray(_, _) | ty::TySlice(_) => break,
                             _ => {}
                         }
                     }

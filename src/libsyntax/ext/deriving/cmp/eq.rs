@@ -20,7 +20,7 @@ use ptr::P;
 pub fn expand_deriving_eq(cx: &mut ExtCtxt,
                           span: Span,
                           mitem: &MetaItem,
-                          item: Annotatable,
+                          item: &Annotatable,
                           push: &mut FnMut(Annotatable))
 {
     fn cs_total_eq_assert(cx: &mut ExtCtxt, span: Span, substr: &Substructure) -> P<Expr> {
@@ -59,6 +59,7 @@ pub fn expand_deriving_eq(cx: &mut ExtCtxt,
                 args: vec!(),
                 ret_ty: nil_ty(),
                 attributes: attrs,
+                is_unsafe: false,
                 combine_substructure: combine_substructure(Box::new(|a, b, c| {
                     cs_total_eq_assert(a, b, c)
                 }))
@@ -66,5 +67,5 @@ pub fn expand_deriving_eq(cx: &mut ExtCtxt,
         ),
         associated_types: Vec::new(),
     };
-    trait_def.expand(cx, mitem, &item, push)
+    trait_def.expand(cx, mitem, item, push)
 }

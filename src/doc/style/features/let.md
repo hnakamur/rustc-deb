@@ -5,7 +5,7 @@
 Prefer
 
 ```rust
-fn use_mutex(m: sync::mutex::Mutex<int>) {
+fn use_mutex(m: sync::mutex::Mutex<i32>) {
     let guard = m.lock();
     do_work(guard);
     drop(guard); // unlock the lock
@@ -16,7 +16,7 @@ fn use_mutex(m: sync::mutex::Mutex<int>) {
 over
 
 ```rust
-fn use_mutex(m: sync::mutex::Mutex<int>) {
+fn use_mutex(m: sync::mutex::Mutex<i32>) {
     do_work(m.lock());
     // do other work
 }
@@ -34,7 +34,7 @@ Prefer
 
 ```rust
 let foo = match bar {
-    Baz  => 0,
+    Baz => 0,
     Quux => 1
 };
 ```
@@ -44,7 +44,7 @@ over
 ```rust
 let foo;
 match bar {
-    Baz  => {
+    Baz => {
         foo = 0;
     }
     Quux => {
@@ -61,8 +61,8 @@ conditional expression.
 Prefer
 
 ```rust
-s.iter().map(|x| x * 2)
-        .collect::<Vec<_>>()
+let v = s.iter().map(|x| x * 2)
+                .collect::<Vec<_>>();
 ```
 
 over

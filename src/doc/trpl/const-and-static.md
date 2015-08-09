@@ -31,10 +31,8 @@ static N: i32 = 5;
 
 Unlike [`let`][let] bindings, you must annotate the type of a `static`.
 
-[let]: variable-bindings.html
-
 Statics live for the entire lifetime of a program, and therefore any
-reference stored in a constant has a [`’static` lifetime][lifetimes]:
+reference stored in a constant has a [`'static` lifetime][lifetimes]:
 
 ```rust
 static NAME: &'static str = "Steve";
@@ -66,7 +64,10 @@ unsafe {
 
 [unsafe]: unsafe.html
 
-Furthermore, any type stored in a `static` must be `Sync`.
+Furthermore, any type stored in a `static` must be `Sync`, and may not have
+a [`Drop`][drop] implementation.
+
+[drop]: drop.html
 
 # Initializing
 
@@ -80,7 +81,3 @@ Almost always, if you can choose between the two, choose `const`. It’s pretty
 rare that you actually want a memory location associated with your constant,
 and using a const allows for optimizations like constant propagation not only
 in your crate but downstream crates.
-
-A const can be thought of as a `#define` in C: it has metadata overhead but it
-has no runtime overhead. “Should I use a #define or a static in C,” is largely
-the same question as whether you should use a const or a static in Rust.

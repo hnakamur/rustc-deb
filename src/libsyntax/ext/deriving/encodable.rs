@@ -100,7 +100,7 @@ use ptr::P;
 pub fn expand_deriving_rustc_encodable(cx: &mut ExtCtxt,
                                        span: Span,
                                        mitem: &MetaItem,
-                                       item: Annotatable,
+                                       item: &Annotatable,
                                        push: &mut FnMut(Annotatable))
 {
     expand_deriving_encodable_imp(cx, span, mitem, item, push, "rustc_serialize")
@@ -109,7 +109,7 @@ pub fn expand_deriving_rustc_encodable(cx: &mut ExtCtxt,
 pub fn expand_deriving_encodable(cx: &mut ExtCtxt,
                                  span: Span,
                                  mitem: &MetaItem,
-                                 item: Annotatable,
+                                 item: &Annotatable,
                                  push: &mut FnMut(Annotatable))
 {
     expand_deriving_encodable_imp(cx, span, mitem, item, push, "serialize")
@@ -118,7 +118,7 @@ pub fn expand_deriving_encodable(cx: &mut ExtCtxt,
 fn expand_deriving_encodable_imp(cx: &mut ExtCtxt,
                                  span: Span,
                                  mitem: &MetaItem,
-                                 item: Annotatable,
+                                 item: &Annotatable,
                                  push: &mut FnMut(Annotatable),
                                  krate: &'static str)
 {
@@ -155,6 +155,7 @@ fn expand_deriving_encodable_imp(cx: &mut ExtCtxt,
                     true
                 )),
                 attributes: Vec::new(),
+                is_unsafe: false,
                 combine_substructure: combine_substructure(Box::new(|a, b, c| {
                     encodable_substructure(a, b, c)
                 })),
@@ -163,7 +164,7 @@ fn expand_deriving_encodable_imp(cx: &mut ExtCtxt,
         associated_types: Vec::new(),
     };
 
-    trait_def.expand(cx, mitem, &item, push)
+    trait_def.expand(cx, mitem, item, push)
 }
 
 fn encodable_substructure(cx: &mut ExtCtxt, trait_span: Span,

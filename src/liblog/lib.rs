@@ -164,18 +164,19 @@
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
 #![deny(missing_docs)]
 
-#![feature(alloc)]
-#![feature(staged_api)]
+#![feature(box_raw)]
 #![feature(box_syntax)]
-#![feature(core)]
-#![feature(std_misc)]
+#![feature(const_fn)]
+#![feature(iter_cmp)]
+#![feature(rt)]
+#![feature(staged_api)]
+#![feature(static_mutex)]
 
-use std::boxed;
 use std::cell::RefCell;
 use std::fmt;
 use std::io::{self, Stderr};
@@ -184,7 +185,7 @@ use std::mem;
 use std::env;
 use std::rt;
 use std::slice;
-use std::sync::{Once, ONCE_INIT, StaticMutex, MUTEX_INIT};
+use std::sync::{Once, StaticMutex};
 
 use directive::LOG_LEVEL_NAMES;
 
@@ -200,7 +201,7 @@ pub const MAX_LOG_LEVEL: u32 = 255;
 /// The default logging level of a crate if no other is specified.
 const DEFAULT_LOG_LEVEL: u32 = 1;
 
-static LOCK: StaticMutex = MUTEX_INIT;
+static LOCK: StaticMutex = StaticMutex::new();
 
 /// An unsafe constant that is the maximum logging level of any module
 /// specified. This is the first line of defense to determining whether a
@@ -367,7 +368,7 @@ pub struct LogLocation {
 /// module's log statement should be emitted or not.
 #[doc(hidden)]
 pub fn mod_enabled(level: u32, module: &str) -> bool {
-    static INIT: Once = ONCE_INIT;
+    static INIT: Once = Once::new();
     INIT.call_once(init);
 
     // It's possible for many threads are in this function, only one of them
@@ -434,12 +435,12 @@ fn init() {
 
         assert!(FILTER.is_null());
         match filter {
-            Some(f) => FILTER = boxed::into_raw(box f),
+            Some(f) => FILTER = Box::into_raw(box f),
             None => {}
         }
 
         assert!(DIRECTIVES.is_null());
-        DIRECTIVES = boxed::into_raw(box directives);
+        DIRECTIVES = Box::into_raw(box directives);
 
         // Schedule the cleanup for the globals for when the runtime exits.
         let _ = rt::at_exit(move || {

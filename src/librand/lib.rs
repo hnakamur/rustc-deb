@@ -21,7 +21,7 @@
 #![crate_name = "rand"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
 #![no_std]
@@ -29,11 +29,15 @@
 #![unstable(feature = "rand",
             reason = "use `rand` from crates.io")]
 #![feature(core)]
+#![feature(core_float)]
+#![feature(core_prelude)]
+#![feature(core_slice_ext)]
 #![feature(no_std)]
+#![feature(num_bits_bytes)]
 #![feature(staged_api)]
 #![feature(step_by)]
 
-#![cfg_attr(test, feature(test, rand, rustc_private))]
+#![cfg_attr(test, feature(test, rand, rustc_private, iter_order))]
 
 #![allow(deprecated)]
 

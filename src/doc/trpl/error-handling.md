@@ -49,7 +49,7 @@ We use `assert!` to declare that something is true. If it's not true, something
 is very wrong. Wrong enough that we can't continue with things in the current
 state. Another example is using the `unreachable!()` macro:
 
-```{rust,ignore}
+```rust,ignore
 enum Event {
     NewRelease,
 }
@@ -188,7 +188,7 @@ The [`Debug`](../std/fmt/trait.Debug.html) trait is what lets us print the enum 
 In the case of an error that is unexpected and not recoverable, the `panic!`
 macro will induce a panic. This will crash the current thread, and give an error:
 
-```{rust,ignore}
+```rust,ignore
 panic!("boom");
 ```
 
@@ -212,7 +212,7 @@ handle and possibly recover from error.
 If we don't want to handle this error, and would rather just abort the program,
 we can use the `unwrap()` method:
 
-```{rust,ignore}
+```rust,ignore
 io::stdin().read_line(&mut buffer).unwrap();
 ```
 
@@ -223,11 +223,11 @@ shorter. Sometimes, just crashing is appropriate.
 
 There's another way of doing this that's a bit nicer than `unwrap()`:
 
-```{rust,ignore}
+```rust,ignore
 let mut buffer = String::new();
-let input = io::stdin().read_line(&mut buffer)
-                       .ok()
-                       .expect("Failed to read line");
+let num_bytes_read = io::stdin().read_line(&mut buffer)
+                                .ok()
+                                .expect("Failed to read line");
 ```
 
 `ok()` converts the `Result` into an `Option`, and `expect()` does the same
@@ -284,7 +284,7 @@ struct Info {
 }
 
 fn write_info(info: &Info) -> io::Result<()> {
-    let mut file = try!(File::create("my_best_friends.txt"));
+    let mut file = File::create("my_best_friends.txt").unwrap();
 
     try!(writeln!(&mut file, "name: {}", info.name));
     try!(writeln!(&mut file, "age: {}", info.age));

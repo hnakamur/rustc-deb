@@ -18,9 +18,12 @@ use net::SocketAddr;
 use num::One;
 use ops::Neg;
 use rt;
-use sync::{Once, ONCE_INIT};
+use sync::Once;
+use sys;
 use sys::c;
 use sys_common::{AsInner, FromInner};
+use sys_common::net::{setsockopt, getsockopt};
+use time::Duration;
 
 pub type wrlen_t = i32;
 
@@ -29,7 +32,7 @@ pub struct Socket(libc::SOCKET);
 /// Checks whether the Windows socket interface has been started already, and
 /// if not, starts it.
 pub fn init() {
-    static START: Once = ONCE_INIT;
+    static START: Once = Once::new();
 
     START.call_once(|| unsafe {
         let mut data: c::WSADATA = mem::zeroed();
@@ -125,6 +128,32 @@ impl Socket {
                 -1 => Err(last_error()),
                 n => Ok(n as usize)
             }
+        }
+    }
+
+    pub fn set_timeout(&self, dur: Option<Duration>, kind: libc::c_int) -> io::Result<()> {
+        let timeout = match dur {
+            Some(dur) => {
+                let timeout = sys::dur2timeout(dur);
+                if timeout == 0 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput,
+                                              "cannot set a 0 duration timeout"));
+                }
+                timeout
+            }
+            None => 0
+        };
+        setsockopt(self, libc::SOL_SOCKET, kind, timeout)
+    }
+
+    pub fn timeout(&self, kind: libc::c_int) -> io::Result<Option<Duration>> {
+        let raw: libc::DWORD = try!(getsockopt(self, libc::SOL_SOCKET, kind));
+        if raw == 0 {
+            Ok(None)
+        } else {
+            let secs = raw / 1000;
+            let nsec = (raw % 1000) * 1000000;
+            Ok(Some(Duration::new(secs as u64, nsec as u32)))
         }
     }
 }

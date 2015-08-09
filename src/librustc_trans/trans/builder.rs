@@ -71,7 +71,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 // Pass 2: concat strings for each elt, skipping
                 // forwards over any cycles by advancing to rightmost
                 // occurrence of each element in path.
-                let mut s = String::from_str(".");
+                let mut s = String::from(".");
                 i = 0;
                 while i < len {
                     i = mm[v[i]];
@@ -410,21 +410,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    /* Memory */
-    pub fn malloc(&self, ty: Type) -> ValueRef {
-        self.count_insn("malloc");
-        unsafe {
-            llvm::LLVMBuildMalloc(self.llbuilder, ty.to_ref(), noname())
-        }
-    }
-
-    pub fn array_malloc(&self, ty: Type, val: ValueRef) -> ValueRef {
-        self.count_insn("arraymalloc");
-        unsafe {
-            llvm::LLVMBuildArrayMalloc(self.llbuilder, ty.to_ref(), val, noname())
-        }
-    }
-
     pub fn alloca(&self, ty: Type, name: &str) -> ValueRef {
         self.count_insn("alloca");
         unsafe {
@@ -435,13 +420,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 llvm::LLVMBuildAlloca(self.llbuilder, ty.to_ref(),
                                       name.as_ptr())
             }
-        }
-    }
-
-    pub fn array_alloca(&self, ty: Type, val: ValueRef) -> ValueRef {
-        self.count_insn("arrayalloca");
-        unsafe {
-            llvm::LLVMBuildArrayAlloca(self.llbuilder, ty.to_ref(), val, noname())
         }
     }
 
@@ -561,7 +539,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         // we care about.
         if ixs.len() < 16 {
             let mut small_vec = [ C_i32(self.ccx, 0); 16 ];
-            for (small_vec_e, &ix) in small_vec.iter_mut().zip(ixs.iter()) {
+            for (small_vec_e, &ix) in small_vec.iter_mut().zip(ixs) {
                 *small_vec_e = C_i32(self.ccx, ix as i32);
             }
             self.inbounds_gep(base, &small_vec[..ixs.len()])

@@ -19,7 +19,7 @@ use ptr::P;
 pub fn expand_deriving_hash(cx: &mut ExtCtxt,
                             span: Span,
                             mitem: &MetaItem,
-                            item: Annotatable,
+                            item: &Annotatable,
                             push: &mut FnMut(Annotatable))
 {
 
@@ -44,6 +44,7 @@ pub fn expand_deriving_hash(cx: &mut ExtCtxt,
                 args: vec!(Ptr(Box::new(Literal(arg)), Borrowed(None, MutMutable))),
                 ret_ty: nil_ty(),
                 attributes: vec![],
+                is_unsafe: false,
                 combine_substructure: combine_substructure(Box::new(|a, b, c| {
                     hash_substructure(a, b, c)
                 }))
@@ -52,7 +53,7 @@ pub fn expand_deriving_hash(cx: &mut ExtCtxt,
         associated_types: Vec::new(),
     };
 
-    hash_trait_def.expand(cx, mitem, &item, push);
+    hash_trait_def.expand(cx, mitem, item, push);
 }
 
 fn hash_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substructure) -> P<Expr> {

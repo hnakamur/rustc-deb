@@ -1,8 +1,8 @@
 % Generics
 
 Sometimes, when writing a function or data type, we may want it to work for
-multiple types of arguments. Luckily, Rust has a feature that gives us a better
-way: generics. Generics are called ‘parametric polymorphism’ in type theory,
+multiple types of arguments. In Rust, we can do this with generics.
+Generics are called ‘parametric polymorphism’ in type theory,
 which means that they are types or functions that have multiple forms (‘poly’
 is multiple, ‘morph’ is form) over a given parameter (‘parametric’).
 
@@ -110,7 +110,7 @@ Generic functions are most useful with ‘trait bounds’, which we’ll cover i
 
 You can store a generic type in a `struct` as well:
 
-```
+```rust
 struct Point<T> {
     x: T,
     y: T,

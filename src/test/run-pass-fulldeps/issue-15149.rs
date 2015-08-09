@@ -52,7 +52,7 @@ fn test() {
     let path = {
         let mut paths: Vec<_> = env::split_paths(&env::var_os("PATH").unwrap()).collect();
         paths.push(child_dir.to_path_buf());
-        env::join_paths(paths.iter()).unwrap()
+        env::join_paths(paths).unwrap()
     };
 
     let child_output = process::Command::new("mytest").env("PATH", &path)
@@ -64,6 +64,10 @@ fn test() {
                     str::from_utf8(&child_output.stdout).unwrap(),
                     str::from_utf8(&child_output.stderr).unwrap()));
 
-    fs::remove_dir_all(&child_dir).unwrap();
-
+    let res = fs::remove_dir_all(&child_dir);
+    if res.is_err() {
+        // On Windows deleting just executed mytest.exe can fail because it's still locked
+        std::thread::sleep_ms(1000);
+        fs::remove_dir_all(&child_dir).unwrap();
+    }
 }

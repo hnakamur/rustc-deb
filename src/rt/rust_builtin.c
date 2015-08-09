@@ -14,7 +14,8 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#if !defined(__WIN32__)
+
+#if !defined(_WIN32)
 #include <dirent.h>
 #include <pthread.h>
 #include <signal.h>
@@ -40,7 +41,15 @@
 
 /* Foreign builtins. */
 //include valgrind.h after stdint.h so that uintptr_t is defined for msys2 w64
+#ifndef _WIN32
 #include "valgrind/valgrind.h"
+#endif
+
+#if defined(_MSC_VER)
+# define RUST_BUILTIN_API __declspec(dllexport)
+#else
+# define RUST_BUILTIN_API
+#endif
 
 #ifndef _WIN32
 char*
@@ -50,7 +59,7 @@ rust_list_dir_val(struct dirent* entry_ptr) {
 
 int
 rust_dir_get_mode(struct dirent* entry_ptr) {
-#if defined(_DIRENT_HAVE_D_TYPE)
+#if defined(_DIRENT_HAVE_D_TYPE) || defined(__APPLE__)
     switch (entry_ptr->d_type) {
         case DT_BLK: return S_IFBLK;
         case DT_CHR: return S_IFCHR;
@@ -58,6 +67,7 @@ rust_dir_get_mode(struct dirent* entry_ptr) {
         case DT_LNK: return S_IFLNK;
         case DT_REG: return S_IFREG;
         case DT_SOCK: return S_IFSOCK;
+        case DT_DIR: return S_IFDIR;
     }
 #endif
     return -1;
@@ -84,12 +94,7 @@ rust_dirent_t_size() {
 }
 #endif
 
-uintptr_t
-rust_running_on_valgrind() {
-    return RUNNING_ON_VALGRIND;
-}
-
-#if defined(__WIN32__)
+#if defined(_WIN32)
 int
 get_num_cpus() {
     SYSTEM_INFO sysinfo;
@@ -131,19 +136,19 @@ get_num_cpus() {
 }
 #endif
 
+RUST_BUILTIN_API
 uintptr_t
 rust_get_num_cpus() {
     return get_num_cpus();
 }
 
-unsigned int
-rust_valgrind_stack_register(void *start, void *end) {
-  return VALGRIND_STACK_REGISTER(start, end);
-}
-
-void
-rust_valgrind_stack_deregister(unsigned int id) {
-  VALGRIND_STACK_DEREGISTER(id);
+uintptr_t
+rust_running_on_valgrind() {
+#ifdef _WIN32
+    return 0;
+#else
+    return RUNNING_ON_VALGRIND;
+#endif
 }
 
 #if defined(__DragonFly__)

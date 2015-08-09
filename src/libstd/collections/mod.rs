@@ -66,7 +66,7 @@
 //! ### Use a `BTreeMap` when:
 //! * You're interested in what the smallest or largest key-value pair is.
 //! * You want to find the largest or smallest key that is smaller or larger
-//!   than something
+//!   than something.
 //! * You want to be able to get all of the entries in order on-demand.
 //! * You want a sorted map.
 //!
@@ -147,7 +147,7 @@
 //! relation to the number of elements in the collection.  VecMap should only be
 //! seriously considered for small keys.
 //!
-//! Note also that BTreeMap's precise preformance depends on the value of B.
+//! Note also that BTreeMap's precise performance depends on the value of B.
 //!
 //! # Correct and Efficient Usage of Collections
 //!
@@ -252,6 +252,7 @@
 //! contents by-value. This is great when the collection itself is no longer
 //! needed, and the values are needed elsewhere. Using `extend` with `into_iter`
 //! is the main way that contents of one collection are moved into another.
+//! `extend` automatically calls `into_iter`, and takes any `T: IntoIterator`.
 //! Calling `collect` on an iterator itself is also a great way to convert one
 //! collection into another. Both of these methods should internally use the
 //! capacity management tools discussed in the previous section to do this as
@@ -260,7 +261,7 @@
 //! ```
 //! let mut vec1 = vec![1, 2, 3, 4];
 //! let vec2 = vec![10, 20, 30, 40];
-//! vec1.extend(vec2.into_iter());
+//! vec1.extend(vec2);
 //! ```
 //!
 //! ```
@@ -308,7 +309,7 @@
 //! If a `Vacant(entry)` is yielded, then the key *was not* found. In this case
 //! the only valid operation is to `insert` a value into the entry. When this is
 //! done, the vacant entry is consumed and converted into a mutable reference to
-//! the the value that was inserted. This allows for further manipulation of the
+//! the value that was inserted. This allows for further manipulation of the
 //! value beyond the lifetime of the search itself. This is useful if complex
 //! logic needs to be performed on the value regardless of whether the value was
 //! just inserted.
@@ -339,7 +340,7 @@
 //! assert_eq!(count.get(&'s'), Some(&8));
 //!
 //! println!("Number of occurrences of each character");
-//! for (char, count) in count.iter() {
+//! for (char, count) in &count {
 //!     println!("{}: {}", char, count);
 //! }
 //! ```
@@ -362,7 +363,7 @@
 //! // Our clients.
 //! let mut blood_alcohol = BTreeMap::new();
 //!
-//! for id in orders.into_iter() {
+//! for id in orders {
 //!     // If this is the first time we've seen this customer, initialize them
 //!     // with no blood alcohol. Otherwise, just retrieve them.
 //!     let person = blood_alcohol.entry(id).or_insert(Person{id: id, blood_alcohol: 0.0});
@@ -409,7 +410,7 @@ pub mod hash_set {
 
 /// Experimental support for providing custom hash algorithms to a HashMap and
 /// HashSet.
-#[unstable(feature = "std_misc", reason = "module was recently added")]
+#[unstable(feature = "hashmap_hasher", reason = "module was recently added")]
 pub mod hash_state {
     pub use super::hash::state::*;
 }

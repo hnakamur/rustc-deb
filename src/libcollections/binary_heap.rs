@@ -10,10 +10,11 @@
 
 //! A priority queue implemented with a binary heap.
 //!
-//! Insertion and popping the largest element have `O(log n)` time complexity. Checking the largest
-//! element is `O(1)`. Converting a vector to a binary heap can be done in-place, and has `O(n)`
-//! complexity. A binary heap can also be converted to a sorted vector in-place, allowing it to
-//! be used for an `O(n log n)` in-place heapsort.
+//! Insertion and popping the largest element have `O(log n)` time complexity.
+//! Checking the largest element is `O(1)`. Converting a vector to a binary heap
+//! can be done in-place, and has `O(n)` complexity. A binary heap can also be
+//! converted to a sorted vector in-place, allowing it to be used for an `O(n
+//! log n)` in-place heapsort.
 //!
 //! # Examples
 //!
@@ -85,7 +86,7 @@
 //!
 //!         // For each node we can reach, see if we can find a way with
 //!         // a lower cost going through this node
-//!         for edge in adj_list[position].iter() {
+//!         for edge in &adj_list[position] {
 //!             let next = State { cost: cost + edge.cost, position: edge.node };
 //!
 //!             // If so, add it to the frontier and continue
@@ -450,7 +451,7 @@ impl<T: Ord> BinaryHeap<T> {
     /// let vec = heap.into_vec();
     ///
     /// // Will print in some order
-    /// for x in vec.iter() {
+    /// for x in vec {
     ///     println!("{}", x);
     /// }
     /// ```
@@ -539,8 +540,9 @@ impl<T: Ord> BinaryHeap<T> {
     ///
     /// The elements are removed in arbitrary order.
     #[inline]
-    #[unstable(feature = "collections",
-               reason = "matches collection reform specification, waiting for dust to settle")]
+    #[unstable(feature = "drain",
+               reason = "matches collection reform specification, \
+                         waiting for dust to settle")]
     pub fn drain(&mut self) -> Drain<T> {
         Drain { iter: self.data.drain(..) }
     }
@@ -678,7 +680,7 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
 impl<T> ExactSizeIterator for IntoIter<T> {}
 
 /// An iterator that drains a `BinaryHeap`.
-#[unstable(feature = "collections", reason = "recent addition")]
+#[unstable(feature = "drain", reason = "recent addition")]
 pub struct Drain<'a, T: 'a> {
     iter: vec::Drain<'a, T>,
 }
@@ -758,5 +760,12 @@ impl<T: Ord> Extend<T> for BinaryHeap<T> {
         for elem in iter {
             self.push(elem);
         }
+    }
+}
+
+#[stable(feature = "extend_ref", since = "1.2.0")]
+impl<'a, T: 'a + Ord + Copy> Extend<&'a T> for BinaryHeap<T> {
+    fn extend<I: IntoIterator<Item=&'a T>>(&mut self, iter: I) {
+        self.extend(iter.into_iter().cloned());
     }
 }

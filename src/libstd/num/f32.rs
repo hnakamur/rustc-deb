@@ -32,7 +32,6 @@ pub use core::f32::consts;
 mod cmath {
     use libc::{c_float, c_int};
 
-    #[link_name = "m"]
     extern {
         pub fn acosf(n: c_float) -> c_float;
         pub fn asinf(n: c_float) -> c_float;
@@ -44,13 +43,10 @@ mod cmath {
         pub fn erfcf(n: c_float) -> c_float;
         pub fn expm1f(n: c_float) -> c_float;
         pub fn fdimf(a: c_float, b: c_float) -> c_float;
-        pub fn frexpf(n: c_float, value: &mut c_int) -> c_float;
         pub fn fmaxf(a: c_float, b: c_float) -> c_float;
         pub fn fminf(a: c_float, b: c_float) -> c_float;
         pub fn fmodf(a: c_float, b: c_float) -> c_float;
         pub fn nextafterf(x: c_float, y: c_float) -> c_float;
-        pub fn hypotf(x: c_float, y: c_float) -> c_float;
-        pub fn ldexpf(x: c_float, n: c_int) -> c_float;
         pub fn logbf(n: c_float) -> c_float;
         pub fn log1pf(n: c_float) -> c_float;
         pub fn ilogbf(n: c_float) -> c_int;
@@ -60,12 +56,27 @@ mod cmath {
         pub fn tanhf(n: c_float) -> c_float;
         pub fn tgammaf(n: c_float) -> c_float;
 
-        #[cfg(unix)]
+        #[cfg_attr(all(windows, target_env = "msvc"), link_name = "__lgammaf_r")]
         pub fn lgammaf_r(n: c_float, sign: &mut c_int) -> c_float;
+        #[cfg_attr(all(windows, target_env = "msvc"), link_name = "_hypotf")]
+        pub fn hypotf(x: c_float, y: c_float) -> c_float;
 
-        #[cfg(windows)]
-        #[link_name="__lgammaf_r"]
-        pub fn lgammaf_r(n: c_float, sign: &mut c_int) -> c_float;
+        #[cfg(any(unix, all(windows, not(target_env = "msvc"))))]
+        pub fn frexpf(n: c_float, value: &mut c_int) -> c_float;
+        #[cfg(any(unix, all(windows, not(target_env = "msvc"))))]
+        pub fn ldexpf(x: c_float, n: c_int) -> c_float;
+    }
+
+    #[cfg(all(windows, target_env = "msvc"))]
+    pub unsafe fn ldexpf(x: c_float, n: c_int) -> c_float {
+        f64::ldexp(x as f64, n as isize) as c_float
+    }
+
+    #[cfg(all(windows, target_env = "msvc"))]
+    pub unsafe fn frexpf(x: c_float, value: &mut c_int) -> c_float {
+        let (a, b) = f64::frexp(x as f64);
+        *value = b as c_int;
+        a as c_float
     }
 }
 
@@ -183,7 +194,7 @@ impl f32 {
     /// The floating point encoding is documented in the [Reference][floating-point].
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// use std::f32;
     ///
     /// let num = 2.0f32;
@@ -200,9 +211,11 @@ impl f32 {
     /// assert!(abs_difference <= f32::EPSILON);
     /// ```
     /// [floating-point]: ../../../../../reference.html#machine-types
-    #[unstable(feature = "std_misc", reason = "signature is undecided")]
+    #[unstable(feature = "float_extras", reason = "signature is undecided")]
     #[inline]
-    pub fn integer_decode(self) -> (u64, i16, i8) { num::Float::integer_decode(self) }
+    pub fn integer_decode(self) -> (u64, i16, i8) {
+        num::Float::integer_decode(self)
+    }
 
     /// Returns the largest integer less than or equal to a number.
     ///
@@ -544,7 +557,7 @@ impl f32 {
     /// Converts radians to degrees.
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// use std::f32::{self, consts};
     ///
     /// let angle = consts::PI;
@@ -553,14 +566,14 @@ impl f32 {
     ///
     /// assert!(abs_difference <= f32::EPSILON);
     /// ```
-    #[unstable(feature = "std_misc", reason = "desirability is unclear")]
+    #[unstable(feature = "float_extras", reason = "desirability is unclear")]
     #[inline]
     pub fn to_degrees(self) -> f32 { num::Float::to_degrees(self) }
 
     /// Converts degrees to radians.
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// use std::f32::{self, consts};
     ///
     /// let angle = 180.0f32;
@@ -569,21 +582,21 @@ impl f32 {
     ///
     /// assert!(abs_difference <= f32::EPSILON);
     /// ```
-    #[unstable(feature = "std_misc", reason = "desirability is unclear")]
+    #[unstable(feature = "float_extras", reason = "desirability is unclear")]
     #[inline]
     pub fn to_radians(self) -> f32 { num::Float::to_radians(self) }
 
     /// Constructs a floating point number of `x*2^exp`.
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// use std::f32;
     /// // 3*2^2 - 12 == 0
     /// let abs_difference = (f32::ldexp(3.0, 2) - 12.0).abs();
     ///
     /// assert!(abs_difference <= f32::EPSILON);
     /// ```
-    #[unstable(feature = "std_misc",
+    #[unstable(feature = "float_extras",
                reason = "pending integer conventions")]
     #[inline]
     pub fn ldexp(x: f32, exp: isize) -> f32 {
@@ -597,7 +610,7 @@ impl f32 {
     ///  * `0.5 <= abs(x) < 1.0`
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// use std::f32;
     ///
     /// let x = 4.0f32;
@@ -610,7 +623,7 @@ impl f32 {
     /// assert!(abs_difference_0 <= f32::EPSILON);
     /// assert!(abs_difference_1 <= f32::EPSILON);
     /// ```
-    #[unstable(feature = "std_misc",
+    #[unstable(feature = "float_extras",
                reason = "pending integer conventions")]
     #[inline]
     pub fn frexp(self) -> (f32, isize) {
@@ -625,7 +638,7 @@ impl f32 {
     /// `other`.
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// use std::f32;
     ///
     /// let x = 1.0f32;
@@ -634,7 +647,7 @@ impl f32 {
     ///
     /// assert!(abs_diff <= f32::EPSILON);
     /// ```
-    #[unstable(feature = "std_misc",
+    #[unstable(feature = "float_extras",
                reason = "unsure about its place in the world")]
     #[inline]
     pub fn next_after(self, other: f32) -> f32 {
@@ -649,6 +662,8 @@ impl f32 {
     ///
     /// assert_eq!(x.max(y), y);
     /// ```
+    ///
+    /// If one of the arguments is NaN, then the other argument is returned.
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn max(self, other: f32) -> f32 {
@@ -663,6 +678,8 @@ impl f32 {
     ///
     /// assert_eq!(x.min(y), x);
     /// ```
+    ///
+    /// If one of the arguments is NaN, then the other argument is returned.
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn min(self, other: f32) -> f32 {

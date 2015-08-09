@@ -37,7 +37,10 @@ CRATE_FULLDEPS_$(1)_T_$(2)_H_$(3)_$(4) := \
 		$$(foreach dep,$$(NATIVE_DEPS_$(4)), \
 		  $$(RT_OUTPUT_DIR_$(2))/$$(call CFG_STATIC_LIB_NAME_$(2),$$(dep))) \
 		$$(foreach dep,$$(NATIVE_DEPS_$(4)_T_$(2)), \
-		  $$(RT_OUTPUT_DIR_$(2))/$$(dep))
+		  $$(RT_OUTPUT_DIR_$(2))/$$(dep)) \
+		$$(foreach dep,$$(NATIVE_TOOL_DEPS_$(4)_T_$(2)), \
+		  $$(TBIN$(1)_T_$(3)_H_$(3))/$$(dep)) \
+		$$(CUSTOM_DEPS_$(4)_T_$(2))
 endef
 
 $(foreach host,$(CFG_HOST), \
@@ -83,13 +86,14 @@ $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$(4): \
 	    $$(dir $$@)$$(call CFG_LIB_GLOB_$(2),$(4)))
 	$$(call REMOVE_ALL_OLD_GLOB_MATCHES, \
 	    $$(dir $$@)$$(call CFG_RLIB_GLOB,$(4)))
-	$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(3)) \
+	$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(2)) \
 	    $$(subst @,,$$(STAGE$(1)_T_$(2)_H_$(3))) \
 		$$(RUST_LIB_FLAGS_ST$(1)) \
 		-L "$$(RT_OUTPUT_DIR_$(2))" \
 		$$(LLVM_LIBDIR_RUSTFLAGS_$(2)) \
 		$$(LLVM_STDCPP_RUSTFLAGS_$(2)) \
 		$$(RUSTFLAGS_$(4)) \
+		$$(RUSTFLAGS_$(4)_T_$(2)) \
 		--out-dir $$(@D) \
 		-C extra-filename=-$$(CFG_FILENAME_EXTRA) \
 		$$<
@@ -149,6 +153,11 @@ $$(TLIB$(1)_T_$(2)_H_$(3))/%: $$(RT_OUTPUT_DIR_$(2))/% \
 	    | $$(TLIB$(1)_T_$(2)_H_$(3))/ $$(SNAPSHOT_RUSTC_POST_CLEANUP)
 	@$$(call E, cp: $$@)
 	$$(Q)cp $$< $$@
+
+$$(TBIN$(1)_T_$(2)_H_$(3))/%: $$(CFG_LLVM_INST_DIR_$(2))/bin/% \
+	    | $$(TBIN$(1)_T_$(2)_H_$(3))/ $$(SNAPSHOT_RUSTC_POST_CLEANUP)
+	@$$(call E, cp: $$@)
+	$$(Q)cp $$< $$@
 endef
 
 $(foreach source,$(CFG_HOST), \
@@ -172,3 +181,42 @@ $(foreach host,$(CFG_HOST), \
   $(foreach stage,$(STAGES), \
    $(foreach tool,$(TOOLS), \
     $(eval $(call TARGET_TOOL,$(stage),$(target),$(host),$(tool)))))))
+
+# We have some triples which are bootstrapped from other triples, and this means
+# that we need to fixup some of the native tools that a triple depends on.
+#
+# For example, MSVC requires the llvm-ar.exe executable to manage archives, but
+# it bootstraps from the GNU Windows triple. This means that the compiler will
+# add this directory to PATH when executing new processes:
+#
+# 	$SYSROOT/rustlib/x86_64-pc-windows-gnu/bin
+#
+# Unfortunately, however, the GNU triple is not known about in stage0, so the
+# tools are actually located in:
+#
+# 	$SYSROOT/rustlib/x86_64-pc-windows-msvc/bin
+#
+# To remedy this problem, the rules below copy all native tool dependencies into
+# the bootstrap triple's location in stage 0 so the bootstrap compiler can find
+# the right sets of tools. Later stages (1+) will have the right host triple for
+# the compiler, so there's no need to worry there.
+#
+# $(1) - stage
+# $(2) - triple that's being used as host/target
+# $(3) - triple snapshot is built for
+# $(4) - crate
+# $(5) - tool
+define MOVE_TOOLS_TO_SNAPSHOT_HOST_DIR
+ifneq (,$(3))
+$$(TLIB$(1)_T_$(2)_H_$(2))/stamp.$(4): $$(HLIB$(1)_H_$(2))/rustlib/$(3)/bin/$(5)
+
+$$(HLIB$(1)_H_$(2))/rustlib/$(3)/bin/$(5): $$(TBIN$(1)_T_$(2)_H_$(2))/$(5)
+	mkdir -p $$(@D)
+	cp $$< $$@
+endif
+endef
+
+$(foreach target,$(CFG_TARGET), \
+ $(foreach crate,$(CRATES), \
+  $(foreach tool,$(NATIVE_TOOL_DEPS_$(crate)_T_$(target)), \
+   $(eval $(call MOVE_TOOLS_TO_SNAPSHOT_HOST_DIR,0,$(target),$(BOOTSTRAP_FROM_$(target)),$(crate),$(tool))))))

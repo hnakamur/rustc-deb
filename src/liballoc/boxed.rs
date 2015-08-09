@@ -10,9 +10,9 @@
 
 //! A pointer type for heap allocation.
 //!
-//! `Box<T>`, casually referred to as a 'box', provides the simplest form of heap allocation in
-//! Rust. Boxes provide ownership for this allocation, and drop their contents when they go out of
-//! scope.
+//! `Box<T>`, casually referred to as a 'box', provides the simplest form of
+//! heap allocation in Rust. Boxes provide ownership for this allocation, and
+//! drop their contents when they go out of scope.
 //!
 //! # Examples
 //!
@@ -39,15 +39,17 @@
 //!
 //! This will print `Cons(1, Cons(2, Nil))`.
 //!
-//! Recursive structures must be boxed, because if the definition of `Cons` looked like this:
+//! Recursive structures must be boxed, because if the definition of `Cons`
+//! looked like this:
 //!
 //! ```rust,ignore
 //! Cons(T, List<T>),
 //! ```
 //!
-//! It wouldn't work. This is because the size of a `List` depends on how many elements are in the
-//! list, and so we don't know how much memory to allocate for a `Cons`. By introducing a `Box`,
-//! which has a defined size, we know how big `Cons` needs to be.
+//! It wouldn't work. This is because the size of a `List` depends on how many
+//! elements are in the list, and so we don't know how much memory to allocate
+//! for a `Cons`. By introducing a `Box`, which has a defined size, we know how
+//! big `Cons` needs to be.
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
@@ -57,15 +59,11 @@ use core::any::Any;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{self, Hash};
+use core::marker::Unsize;
 use core::mem;
-use core::ops::{Deref, DerefMut};
+use core::ops::{CoerceUnsized, Deref, DerefMut};
 use core::ptr::{Unique};
 use core::raw::{TraitObject};
-
-#[cfg(not(stage0))]
-use core::marker::Unsize;
-#[cfg(not(stage0))]
-use core::ops::CoerceUnsized;
 
 /// A value that represents the heap. This is the default place that the `box`
 /// keyword allocates into when no place is supplied.
@@ -73,7 +71,7 @@ use core::ops::CoerceUnsized;
 /// The following two examples are equivalent:
 ///
 /// ```
-/// # #![feature(alloc)]
+/// # #![feature(box_heap)]
 /// #![feature(box_syntax)]
 /// use std::boxed::HEAP;
 ///
@@ -83,9 +81,9 @@ use core::ops::CoerceUnsized;
 /// }
 /// ```
 #[lang = "exchange_heap"]
-#[unstable(feature = "alloc",
+#[unstable(feature = "box_heap",
            reason = "may be renamed; uncertain about custom allocator design")]
-pub static HEAP: () = ();
+pub const HEAP: () = ();
 
 /// A pointer type for heap allocation.
 ///
@@ -123,11 +121,36 @@ impl<T : ?Sized> Box<T> {
     /// Function is unsafe, because improper use of this function may
     /// lead to memory problems like double-free, for example if the
     /// function is called twice on the same raw pointer.
-    #[unstable(feature = "alloc",
+    #[unstable(feature = "box_raw",
                reason = "may be renamed or moved out of Box scope")]
     #[inline]
+    // NB: may want to be called from_ptr, see comments on CStr::from_ptr
     pub unsafe fn from_raw(raw: *mut T) -> Self {
         mem::transmute(raw)
+    }
+
+    /// Consumes the `Box`, returning the wrapped raw pointer.
+    ///
+    /// After call to this function, caller is responsible for the memory
+    /// previously managed by `Box`, in particular caller should properly
+    /// destroy `T` and release memory. The proper way to do it is to
+    /// convert pointer back to `Box` with `Box::from_raw` function, because
+    /// `Box` does not specify, how memory is allocated.
+    ///
+    /// # Examples
+    /// ```
+    /// # #![feature(box_raw)]
+    /// use std::boxed;
+    ///
+    /// let seventeen = Box::new(17u32);
+    /// let raw = boxed::into_raw(seventeen);
+    /// let boxed_again = unsafe { Box::from_raw(raw) };
+    /// ```
+    #[unstable(feature = "box_raw", reason = "may be renamed")]
+    #[inline]
+    // NB: may want to be called into_ptr, see comments on CStr::from_ptr
+    pub fn into_raw(b: Box<T>) -> *mut T {
+        unsafe { mem::transmute(b) }
     }
 }
 
@@ -139,24 +162,20 @@ impl<T : ?Sized> Box<T> {
 /// convert pointer back to `Box` with `Box::from_raw` function, because
 /// `Box` does not specify, how memory is allocated.
 ///
-/// Function is unsafe, because result of this function is no longer
-/// automatically managed that may lead to memory or other resource
-/// leak.
-///
 /// # Examples
 /// ```
-/// # #![feature(alloc)]
+/// # #![feature(box_raw)]
 /// use std::boxed;
 ///
 /// let seventeen = Box::new(17u32);
-/// let raw = unsafe { boxed::into_raw(seventeen) };
+/// let raw = boxed::into_raw(seventeen);
 /// let boxed_again = unsafe { Box::from_raw(raw) };
 /// ```
-#[unstable(feature = "alloc",
-           reason = "may be renamed")]
+#[unstable(feature = "box_raw", reason = "may be renamed")]
+#[deprecated(since = "1.2.0", reason = "renamed to Box::into_raw")]
 #[inline]
-pub unsafe fn into_raw<T : ?Sized>(b: Box<T>) -> *mut T {
-    mem::transmute(b)
+pub fn into_raw<T : ?Sized>(b: Box<T>) -> *mut T {
+    Box::into_raw(b)
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -189,7 +208,7 @@ impl<T: Clone> Clone for Box<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(alloc, core)]
+    /// # #![feature(box_raw)]
     /// let x = Box::new(5);
     /// let mut y = Box::new(10);
     ///
@@ -250,7 +269,7 @@ impl Box<Any> {
         if self.is::<T>() {
             unsafe {
                 // Get the raw representation of the trait object
-                let raw = into_raw(self);
+                let raw = Box::into_raw(self);
                 let to: TraitObject =
                     mem::transmute::<*mut Any, TraitObject>(raw);
 
@@ -342,7 +361,7 @@ impl<I: ExactSizeIterator + ?Sized> ExactSizeIterator for Box<I> {}
 /// -> i32>`.
 ///
 /// ```
-/// #![feature(core)]
+/// #![feature(fnbox)]
 ///
 /// use std::boxed::FnBox;
 /// use std::collections::HashMap;
@@ -363,7 +382,7 @@ impl<I: ExactSizeIterator + ?Sized> ExactSizeIterator for Box<I> {}
 /// }
 /// ```
 #[rustc_paren_sugar]
-#[unstable(feature = "core", reason = "Newly introduced")]
+#[unstable(feature = "fnbox", reason = "Newly introduced")]
 pub trait FnBox<A> {
     type Output;
 
@@ -396,5 +415,4 @@ impl<'a,A,R> FnOnce<A> for Box<FnBox<A,Output=R>+Send+'a> {
     }
 }
 
-#[cfg(not(stage0))]
 impl<T: ?Sized+Unsize<U>, U: ?Sized> CoerceUnsized<Box<U>> for Box<T> {}

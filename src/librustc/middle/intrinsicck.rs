@@ -8,17 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use ast_map::NodeForeignItem;
 use metadata::csearch;
 use middle::def::DefFn;
 use middle::subst::{Subst, Substs, EnumeratedItems};
-use middle::ty::{TransmuteRestriction, ctxt, ty_bare_fn};
+use middle::ty::{TransmuteRestriction, ctxt, TyBareFn};
 use middle::ty::{self, Ty};
-use util::ppaux::Repr;
+
+use std::fmt;
 
 use syntax::abi::RustIntrinsic;
 use syntax::ast::DefId;
 use syntax::ast;
-use syntax::ast_map::NodeForeignItem;
 use syntax::codemap::Span;
 use syntax::parse::token;
 use syntax::visit::Visitor;
@@ -54,7 +55,7 @@ struct IntrinsicCheckingVisitor<'a, 'tcx: 'a> {
 impl<'a, 'tcx> IntrinsicCheckingVisitor<'a, 'tcx> {
     fn def_id_is_transmute(&self, def_id: DefId) -> bool {
         let intrinsic = match ty::lookup_item_type(self.tcx, def_id).ty.sty {
-            ty::ty_bare_fn(_, ref bfty) => bfty.abi == RustIntrinsic,
+            ty::TyBareFn(_, ref bfty) => bfty.abi == RustIntrinsic,
             _ => return false
         };
         if def_id.krate == ast::LOCAL_CRATE {
@@ -202,17 +203,17 @@ impl<'a, 'tcx> IntrinsicCheckingVisitor<'a, 'tcx> {
 
         match types_in_scope.next() {
             None => {
-                debug!("with_each_combination(substs={})",
-                       substs.repr(self.tcx));
+                debug!("with_each_combination(substs={:?})",
+                       substs);
 
                 callback(substs);
             }
 
             Some((space, index, &param_ty)) => {
-                debug!("with_each_combination: space={:?}, index={}, param_ty={}",
-                       space, index, param_ty.repr(self.tcx));
+                debug!("with_each_combination: space={:?}, index={}, param_ty={:?}",
+                       space, index, param_ty);
 
-                if !ty::type_is_sized(param_env, span, param_ty) {
+                if !ty::type_is_sized(Some(param_env), self.tcx, span, param_ty) {
                     debug!("with_each_combination: param_ty is not known to be sized");
 
                     substs.types.get_mut_slice(space)[index] = self.dummy_unsized_ty;
@@ -228,7 +229,7 @@ impl<'a, 'tcx> IntrinsicCheckingVisitor<'a, 'tcx> {
     }
 
     fn push_transmute_restriction(&self, restriction: TransmuteRestriction<'tcx>) {
-        debug!("Pushing transmute restriction: {}", restriction.repr(self.tcx));
+        debug!("Pushing transmute restriction: {:?}", restriction);
         self.tcx.transmute_restrictions.borrow_mut().push(restriction);
     }
 }
@@ -256,7 +257,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for IntrinsicCheckingVisitor<'a, 'tcx> {
                 DefFn(did, _) if self.def_id_is_transmute(did) => {
                     let typ = ty::node_id_to_type(self.tcx, expr.id);
                     match typ.sty {
-                        ty_bare_fn(_, ref bare_fn_ty) if bare_fn_ty.abi == RustIntrinsic => {
+                        TyBareFn(_, ref bare_fn_ty) if bare_fn_ty.abi == RustIntrinsic => {
                             if let ty::FnConverging(to) = bare_fn_ty.sig.0.output {
                                 let from = bare_fn_ty.sig.0.inputs[0];
                                 self.check_transmute(expr.span, from, to, expr.id);
@@ -277,13 +278,13 @@ impl<'a, 'tcx, 'v> Visitor<'v> for IntrinsicCheckingVisitor<'a, 'tcx> {
     }
 }
 
-impl<'tcx> Repr<'tcx> for TransmuteRestriction<'tcx> {
-    fn repr(&self, tcx: &ty::ctxt<'tcx>) -> String {
-        format!("TransmuteRestriction(id={}, original=({},{}), substituted=({},{}))",
-                self.id,
-                self.original_from.repr(tcx),
-                self.original_to.repr(tcx),
-                self.substituted_from.repr(tcx),
-                self.substituted_to.repr(tcx))
+impl<'tcx> fmt::Debug for TransmuteRestriction<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "TransmuteRestriction(id={}, original=({:?},{:?}), substituted=({:?},{:?}))",
+               self.id,
+               self.original_from,
+               self.original_to,
+               self.substituted_from,
+               self.substituted_to)
     }
 }

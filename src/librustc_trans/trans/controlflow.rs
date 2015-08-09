@@ -24,27 +24,25 @@ use trans::debuginfo::{DebugLoc, ToDebugLoc};
 use trans::expr;
 use trans;
 use middle::ty;
-use util::ppaux::Repr;
 
 use syntax::ast;
 use syntax::ast_util;
 use syntax::parse::token::InternedString;
 use syntax::parse::token;
-use syntax::visit::Visitor;
 
 pub fn trans_stmt<'blk, 'tcx>(cx: Block<'blk, 'tcx>,
                               s: &ast::Stmt)
                               -> Block<'blk, 'tcx> {
     let _icx = push_ctxt("trans_stmt");
     let fcx = cx.fcx;
-    debug!("trans_stmt({})", s.repr(cx.tcx()));
+    debug!("trans_stmt({:?})", s);
 
     if cx.unreachable.get() {
         return cx;
     }
 
     if cx.sess().asm_comments() {
-        add_span_comment(cx, s.span, &s.repr(cx.tcx()));
+        add_span_comment(cx, s.span, &format!("{:?}", s));
     }
 
     let mut bcx = cx;
@@ -152,8 +150,8 @@ pub fn trans_if<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                             els: Option<&ast::Expr>,
                             dest: expr::Dest)
                             -> Block<'blk, 'tcx> {
-    debug!("trans_if(bcx={}, if_id={}, cond={}, thn={}, dest={})",
-           bcx.to_str(), if_id, bcx.expr_to_string(cond), thn.id,
+    debug!("trans_if(bcx={}, if_id={}, cond={:?}, thn={}, dest={})",
+           bcx.to_str(), if_id, cond, thn.id,
            dest.to_string(bcx.ccx()));
     let _icx = push_ctxt("trans_if");
 
@@ -166,31 +164,15 @@ pub fn trans_if<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let cond_val = unpack_result!(bcx, expr::trans(bcx, cond).to_llbool());
 
     // Drop branches that are known to be impossible
-    if is_const(cond_val) && !is_undef(cond_val) {
-        if const_to_uint(cond_val) == 1 {
-            match els {
-                Some(elexpr) => {
-                    let mut trans = TransItemVisitor { ccx: bcx.fcx.ccx };
-                    trans.visit_expr(&*elexpr);
-                }
-                None => {}
-            }
+    if let Some(cv) = const_to_opt_uint(cond_val) {
+        if cv == 1 {
             // if true { .. } [else { .. }]
             bcx = trans_block(bcx, &*thn, dest);
             trans::debuginfo::clear_source_location(bcx.fcx);
         } else {
-            let mut trans = TransItemVisitor { ccx: bcx.fcx.ccx } ;
-            trans.visit_block(&*thn);
-
-            match els {
-                // if false { .. } else { .. }
-                Some(elexpr) => {
-                    bcx = expr::trans_into(bcx, &*elexpr, dest);
-                    trans::debuginfo::clear_source_location(bcx.fcx);
-                }
-
-                // if false { .. }
-                None => { }
+            if let Some(elexpr) = els {
+                bcx = expr::trans_into(bcx, &*elexpr, dest);
+                trans::debuginfo::clear_source_location(bcx.fcx);
             }
         }
 

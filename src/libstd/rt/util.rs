@@ -42,7 +42,7 @@ pub fn limit_thread_creation_due_to_osx_and_valgrind() -> bool {
 }
 
 pub fn min_stack() -> usize {
-    static MIN: atomic::AtomicUsize = atomic::ATOMIC_USIZE_INIT;
+    static MIN: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
     match MIN.load(Ordering::SeqCst) {
         0 => {}
         n => return n - 1,
@@ -63,7 +63,7 @@ pub const ENFORCE_SANITY: bool = true || !cfg!(rtopt) || cfg!(rtdebug) ||
                                   cfg!(rtassert);
 
 pub fn dumb_print(args: fmt::Arguments) {
-    let _ = Stderr::new().write_fmt(args);
+    let _ = Stderr::new().map(|mut stderr| stderr.write_fmt(args));
 }
 
 pub fn abort(args: fmt::Arguments) -> ! {

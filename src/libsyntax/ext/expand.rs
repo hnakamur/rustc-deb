@@ -183,7 +183,7 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
 
             let mut arms = Vec::with_capacity(else_if_arms.len() + 2);
             arms.push(pat_arm);
-            arms.extend(else_if_arms.into_iter());
+            arms.extend(else_if_arms);
             arms.push(else_arm);
 
             let match_expr = fld.cx.expr(span,
@@ -513,11 +513,12 @@ pub fn expand_item(it: P<ast::Item>, fld: &mut MacroExpander)
 /// Expand item_underscore
 fn expand_item_underscore(item: ast::Item_, fld: &mut MacroExpander) -> ast::Item_ {
     match item {
-        ast::ItemFn(decl, fn_style, abi, generics, body) => {
+        ast::ItemFn(decl, unsafety, constness, abi, generics, body) => {
             let (rewritten_fn_decl, rewritten_body)
                 = expand_and_rename_fn_decl_and_block(decl, body, fld);
             let expanded_generics = fold::noop_fold_generics(generics,fld);
-            ast::ItemFn(rewritten_fn_decl, fn_style, abi, expanded_generics, rewritten_body)
+            ast::ItemFn(rewritten_fn_decl, unsafety, constness, abi,
+                        expanded_generics, rewritten_body)
         }
         _ => noop_fold_item_underscore(item, fld)
     }
@@ -778,7 +779,7 @@ fn expand_non_macro_stmt(Spanned {node, span: stmt_span}: Stmt, fld: &mut MacroE
                     };
                     // add them to the existing pending renames:
                     fld.cx.syntax_env.info().pending_renames
-                          .extend(new_pending_renames.into_iter());
+                          .extend(new_pending_renames);
                     Local {
                         id: id,
                         ty: expanded_ty,
@@ -1212,7 +1213,7 @@ fn expand_decorators(a: Annotatable,
                     dec.expand(fld.cx,
                                attr.span,
                                &attr.node.value,
-                               a.clone(),
+                               &a,
                                &mut |ann| items.push(ann));
                     decorator_items.extend(items.into_iter()
                         .flat_map(|ann| expand_annotatable(ann, fld).into_iter()));
@@ -1395,6 +1396,7 @@ fn expand_and_rename_method(sig: ast::MethodSig, body: P<ast::Block>,
         abi: sig.abi,
         explicit_self: fld.fold_explicit_self(sig.explicit_self),
         unsafety: sig.unsafety,
+        constness: sig.constness,
         decl: rewritten_fn_decl
     }, rewritten_body)
 }
@@ -1684,7 +1686,7 @@ mod tests {
     #[test] fn macros_cant_escape_fns_test () {
         let src = "fn bogus() {macro_rules! z (() => (3+4));}\
                    fn inty() -> i32 { z!() }".to_string();
-        let sess = parse::new_parse_sess();
+        let sess = parse::ParseSess::new();
         let crate_ast = parse::parse_crate_from_source_str(
             "<test>".to_string(),
             src,
@@ -1698,7 +1700,7 @@ mod tests {
     #[test] fn macros_cant_escape_mods_test () {
         let src = "mod foo {macro_rules! z (() => (3+4));}\
                    fn inty() -> i32 { z!() }".to_string();
-        let sess = parse::new_parse_sess();
+        let sess = parse::ParseSess::new();
         let crate_ast = parse::parse_crate_from_source_str(
             "<test>".to_string(),
             src,
@@ -1710,7 +1712,7 @@ mod tests {
     #[test] fn macros_can_escape_flattened_mods_test () {
         let src = "#[macro_use] mod foo {macro_rules! z (() => (3+4));}\
                    fn inty() -> i32 { z!() }".to_string();
-        let sess = parse::new_parse_sess();
+        let sess = parse::ParseSess::new();
         let crate_ast = parse::parse_crate_from_source_str(
             "<test>".to_string(),
             src,
@@ -1719,7 +1721,7 @@ mod tests {
     }
 
     fn expand_crate_str(crate_str: String) -> ast::Crate {
-        let ps = parse::new_parse_sess();
+        let ps = parse::ParseSess::new();
         let crate_ast = panictry!(string_to_parser(&ps, crate_str).parse_crate_mod());
         // the cfg argument actually does matter, here...
         expand_crate(&ps,test_ecfg(),vec!(),vec!(),crate_ast)

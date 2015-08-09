@@ -1,4 +1,4 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2014-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -37,27 +37,34 @@ pub fn parse_cmd(name: &str) -> Option<Box<Subcommand>> {
     }
 }
 
-fn write_toc(book: &Book, path_to_root: &Path, out: &mut Write) -> io::Result<()> {
+fn write_toc(book: &Book, current_page: &BookItem, out: &mut Write) -> io::Result<()> {
     fn walk_items(items: &[BookItem],
                   section: &str,
-                  path_to_root: &Path,
+                  current_page: &BookItem,
                   out: &mut Write) -> io::Result<()> {
         for (i, item) in items.iter().enumerate() {
-            try!(walk_item(item, &format!("{}{}.", section, i + 1)[..], path_to_root, out));
+            try!(walk_item(item, &format!("{}{}.", section, i + 1)[..], current_page, out));
         }
         Ok(())
     }
     fn walk_item(item: &BookItem,
                  section: &str,
-                 path_to_root: &Path,
+                 current_page: &BookItem,
                  out: &mut Write) -> io::Result<()> {
-        try!(writeln!(out, "<li><a href='{}'><b>{}</b> {}</a>",
-                 path_to_root.join(&item.path.with_extension("html")).display(),
+        let class_string = if item.path == current_page.path {
+          "class='active'"
+        } else {
+        ""
+        };
+
+        try!(writeln!(out, "<li><a {} href='{}'><b>{}</b> {}</a>",
+                 class_string,
+                 current_page.path_to_root.join(&item.path).with_extension("html").display(),
                  section,
                  item.title));
         if !item.children.is_empty() {
             try!(writeln!(out, "<ul class='section'>"));
-            let _ = walk_items(&item.children[..], section, path_to_root, out);
+            let _ = walk_items(&item.children[..], section, current_page, out);
             try!(writeln!(out, "</ul>"));
         }
         try!(writeln!(out, "</li>"));
@@ -67,7 +74,7 @@ fn write_toc(book: &Book, path_to_root: &Path, out: &mut Write) -> io::Result<()
 
     try!(writeln!(out, "<div id='toc' class='mobile-hidden'>"));
     try!(writeln!(out, "<ul class='chapter'>"));
-    try!(walk_items(&book.chapters[..], "", path_to_root, out));
+    try!(walk_items(&book.chapters[..], "", &current_page, out));
     try!(writeln!(out, "</ul>"));
     try!(writeln!(out, "</div>"));
 
@@ -115,7 +122,7 @@ fn render(book: &Book, tgt: &Path) -> CliResult<()> {
                   <span class="bar"></span>
                 </button>
               </div>"#));
-            let _ = write_toc(book, &item.path_to_root, &mut toc);
+            let _ = write_toc(book, &item, &mut toc);
             try!(writeln!(&mut toc, "<div id='page-wrapper'>"));
             try!(writeln!(&mut toc, "<div id='page'>"));
         }
@@ -151,10 +158,7 @@ fn render(book: &Book, tgt: &Path) -> CliResult<()> {
     // create index.html from the root README
     try!(fs::copy(&tgt.join("README.html"), &tgt.join("index.html")));
 
-    // Copy some js for playpen
-    let mut jquery = try!(File::create(tgt.join("jquery.js")));
-    let js = include_bytes!("../librustdoc/html/static/jquery-2.1.0.min.js");
-    try!(jquery.write_all(js));
+    // Copy js for playpen
     let mut playpen = try!(File::create(tgt.join("playpen.js")));
     let js = include_bytes!("../librustdoc/html/static/playpen.js");
     try!(playpen.write_all(js));

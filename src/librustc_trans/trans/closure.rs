@@ -10,7 +10,7 @@
 
 use arena::TypedArena;
 use back::link::{self, mangle_internal_name_by_path_and_seq};
-use llvm::{ValueRef, get_param};
+use llvm::{ValueRef, get_params};
 use middle::mem_categorization::Typer;
 use trans::adt;
 use trans::attributes;
@@ -28,7 +28,6 @@ use trans::type_of::*;
 use middle::ty::{self, ClosureTyper};
 use middle::subst::Substs;
 use session::config::FullDebugInfo;
-use util::ppaux::Repr;
 
 use syntax::abi::RustCall;
 use syntax::ast;
@@ -143,7 +142,7 @@ pub fn get_or_create_declaration_if_closure<'a, 'tcx>(ccx: &CrateContext<'a, 'tc
     // duplicate declarations
     let function_type = erase_regions(ccx.tcx(), &function_type);
     let params = match function_type.sty {
-        ty::ty_closure(_, substs) => &substs.types,
+        ty::TyClosure(_, substs) => &substs.types,
         _ => unreachable!()
     };
     let mono_id = MonoId {
@@ -153,7 +152,8 @@ pub fn get_or_create_declaration_if_closure<'a, 'tcx>(ccx: &CrateContext<'a, 'tc
 
     match ccx.closure_vals().borrow().get(&mono_id) {
         Some(&llfn) => {
-            debug!("get_or_create_declaration_if_closure(): found closure");
+            debug!("get_or_create_declaration_if_closure(): found closure {:?}: {:?}",
+                   mono_id, ccx.tn().val_to_string(llfn));
             return Some(Datum::new(llfn, function_type, Rvalue::new(ByValue)))
         }
         None => {}
@@ -173,9 +173,10 @@ pub fn get_or_create_declaration_if_closure<'a, 'tcx>(ccx: &CrateContext<'a, 'tc
     attributes::inline(llfn, attributes::InlineAttr::Hint);
 
     debug!("get_or_create_declaration_if_closure(): inserting new \
-            closure {:?} (type {})",
+            closure {:?} (type {}): {:?}",
            mono_id,
-           ccx.tn().type_to_string(val_ty(llfn)));
+           ccx.tn().type_to_string(val_ty(llfn)),
+           ccx.tn().val_to_string(llfn));
     ccx.closure_vals().borrow_mut().insert(mono_id, llfn);
 
     Some(Datum::new(llfn, function_type, Rvalue::new(ByValue)))
@@ -198,9 +199,9 @@ pub fn trans_closure_expr<'a, 'tcx>(dest: Dest<'a, 'tcx>,
         Dest::Ignore(ccx) => ccx
     };
     let tcx = ccx.tcx();
-    let _icx = push_ctxt("closure::trans_closure");
+    let _icx = push_ctxt("closure::trans_closure_expr");
 
-    debug!("trans_closure()");
+    debug!("trans_closure_expr()");
 
     let closure_id = ast_util::local_def(id);
     let llfn = get_or_create_declaration_if_closure(
@@ -230,7 +231,7 @@ pub fn trans_closure_expr<'a, 'tcx>(dest: Dest<'a, 'tcx>,
                   &[],
                   sig.output,
                   function_type.abi,
-                  ClosureEnv::Closure(&freevars[..]));
+                  ClosureEnv::Closure(&freevars));
 
     // Don't hoist this to the top of the function. It's perfectly legitimate
     // to have a zero-size closure (in which case dest will be `Ignore`) and
@@ -238,7 +239,7 @@ pub fn trans_closure_expr<'a, 'tcx>(dest: Dest<'a, 'tcx>,
     let (mut bcx, dest_addr) = match dest {
         Dest::SaveIn(bcx, p) => (bcx, p),
         Dest::Ignore(_) => {
-            debug!("trans_closure() ignoring result");
+            debug!("trans_closure_expr() ignoring result");
             return None;
         }
     };
@@ -351,9 +352,9 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
     llreffn: ValueRef)
     -> ValueRef
 {
-    debug!("trans_fn_once_adapter_shim(closure_def_id={}, substs={}, llreffn={})",
-           closure_def_id.repr(ccx.tcx()),
-           substs.repr(ccx.tcx()),
+    debug!("trans_fn_once_adapter_shim(closure_def_id={:?}, substs={:?}, llreffn={})",
+           closure_def_id,
+           substs,
            ccx.tn().val_to_string(llreffn));
 
     let tcx = ccx.tcx();
@@ -372,8 +373,8 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
                                                                abi: abi,
                                                                sig: sig.clone() });
     let llref_fn_ty = ty::mk_bare_fn(tcx, None, llref_bare_fn_ty);
-    debug!("trans_fn_once_adapter_shim: llref_fn_ty={}",
-           llref_fn_ty.repr(tcx));
+    debug!("trans_fn_once_adapter_shim: llref_fn_ty={:?}",
+           llref_fn_ty);
 
     // Make a version of the closure type with the same arguments, but
     // with argument #0 being by value.
@@ -404,11 +405,14 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
                       &block_arena);
     let mut bcx = init_function(&fcx, false, sig.output);
 
+    let llargs = get_params(fcx.llfn);
+
     // the first argument (`self`) will be the (by value) closure env.
     let self_scope = fcx.push_custom_cleanup_scope();
     let self_scope_id = CustomScope(self_scope);
     let rvalue_mode = datum::appropriate_rvalue_mode(ccx, closure_ty);
-    let llself = get_param(lloncefn, fcx.arg_pos(0) as u32);
+    let self_idx = fcx.arg_offset();
+    let llself = llargs[self_idx];
     let env_datum = Datum::new(llself, closure_ty, Rvalue::new(rvalue_mode));
     let env_datum = unpack_datum!(bcx,
                                   env_datum.to_lvalue_datum_in_scope(bcx, "self",
@@ -416,19 +420,6 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
 
     debug!("trans_fn_once_adapter_shim: env_datum={}",
            bcx.val_to_string(env_datum.val));
-
-    // the remaining arguments will be packed up in a tuple.
-    let input_tys = match sig.inputs[1].sty {
-        ty::ty_tup(ref tys) => &**tys,
-        _ => bcx.sess().bug(&format!("trans_fn_once_adapter_shim: not rust-call! \
-                                      closure_def_id={}",
-                                     closure_def_id.repr(tcx)))
-    };
-    let llargs: Vec<_> =
-        input_tys.iter()
-                 .enumerate()
-                 .map(|(i, _)| get_param(lloncefn, fcx.arg_pos(i+1) as u32))
-                 .collect();
 
     let dest =
         fcx.llretslotptr.get().map(
@@ -441,7 +432,7 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
                                    DebugLoc::None,
                                    llref_fn_ty,
                                    |bcx, _| Callee { bcx: bcx, data: callee_data },
-                                   ArgVals(&llargs),
+                                   ArgVals(&llargs[(self_idx + 1)..]),
                                    dest).bcx;
 
     fcx.pop_custom_cleanup_scope(self_scope);

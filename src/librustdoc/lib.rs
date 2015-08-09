@@ -16,24 +16,26 @@
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-   html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+   html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
    html_root_url = "http://doc.rust-lang.org/nightly/",
    html_playground_url = "http://play.rust-lang.org/")]
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(collections)]
-#![feature(exit_status)]
-#![feature(set_stdio)]
+#![feature(dynamic_lib)]
 #![feature(libc)]
-#![feature(rustc_private)]
-#![feature(staged_api)]
-#![feature(std_misc)]
-#![feature(test)]
-#![feature(unicode)]
+#![feature(owned_ascii_ext)]
 #![feature(path_ext)]
 #![feature(path_relative_from)]
+#![feature(rustc_private)]
+#![feature(set_stdio)]
+#![feature(slice_extras)]
 #![feature(slice_patterns)]
+#![feature(staged_api)]
+#![feature(subslice_offset)]
+#![feature(test)]
+#![feature(unicode)]
+#![feature(vec_push_all)]
 
 extern crate arena;
 extern crate getopts;
@@ -58,6 +60,7 @@ use std::env;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::process;
 use std::rc::Rc;
 use std::sync::mpsc::channel;
 
@@ -131,7 +134,7 @@ pub fn main() {
         let s = env::args().collect::<Vec<_>>();
         main_args(&s)
     }).unwrap().join().unwrap();
-    env::set_exit_status(res as i32);
+    process::exit(res as i32);
 }
 
 pub fn opts() -> Vec<getopts::OptGroup> {

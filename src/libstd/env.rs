@@ -23,8 +23,8 @@ use ffi::{OsStr, OsString};
 use fmt;
 use io;
 use path::{Path, PathBuf};
-use sync::atomic::{AtomicIsize, ATOMIC_ISIZE_INIT, Ordering};
-use sync::{StaticMutex, MUTEX_INIT};
+use sync::atomic::{AtomicIsize, Ordering};
+use sync::StaticMutex;
 use sys::os as os_imp;
 
 /// Returns the current working directory as a `PathBuf`.
@@ -70,7 +70,7 @@ pub fn set_current_dir<P: AsRef<Path>>(p: P) -> io::Result<()> {
     os_imp::chdir(p.as_ref())
 }
 
-static ENV_LOCK: StaticMutex = MUTEX_INIT;
+static ENV_LOCK: StaticMutex = StaticMutex::new();
 
 /// An iterator over a snapshot of the environment variables of this process.
 ///
@@ -365,7 +365,7 @@ pub struct JoinPathsError {
 /// if let Some(path) = env::var_os("PATH") {
 ///     let mut paths = env::split_paths(&path).collect::<Vec<_>>();
 ///     paths.push(PathBuf::from("/home/xyz/bin"));
-///     let new_path = env::join_paths(paths.iter()).unwrap();
+///     let new_path = env::join_paths(paths).unwrap();
 ///     env::set_var("PATH", &new_path);
 /// }
 /// ```
@@ -475,7 +475,7 @@ pub fn current_exe() -> io::Result<PathBuf> {
     os_imp::current_exe()
 }
 
-static EXIT_STATUS: AtomicIsize = ATOMIC_ISIZE_INIT;
+static EXIT_STATUS: AtomicIsize = AtomicIsize::new(0);
 
 /// Sets the process exit code
 ///
@@ -486,6 +486,7 @@ static EXIT_STATUS: AtomicIsize = ATOMIC_ISIZE_INIT;
 ///
 /// Note that this is not synchronized against modifications of other threads.
 #[unstable(feature = "exit_status", reason = "managing the exit status may change")]
+#[deprecated(since = "1.2.0", reason = "use process::exit instead")]
 pub fn set_exit_status(code: i32) {
     EXIT_STATUS.store(code as isize, Ordering::SeqCst)
 }
@@ -493,6 +494,7 @@ pub fn set_exit_status(code: i32) {
 /// Fetches the process's current exit code. This defaults to 0 and can change
 /// by calling `set_exit_status`.
 #[unstable(feature = "exit_status", reason = "managing the exit status may change")]
+#[deprecated(since = "1.2.0", reason = "use process::exit instead")]
 pub fn get_exit_status() -> i32 {
     EXIT_STATUS.load(Ordering::SeqCst) as i32
 }
@@ -598,40 +600,94 @@ pub fn page_size() -> usize {
 pub mod consts {
     /// A string describing the architecture of the CPU that this is currently
     /// in use.
+    ///
+    /// Some possible values:
+    ///
+    /// - x86
+    /// - x86_64
+    /// - arm
+    /// - aarch64
+    /// - mips
+    /// - mipsel
+    /// - powerpc
     #[stable(feature = "env", since = "1.0.0")]
     pub const ARCH: &'static str = super::arch::ARCH;
 
     /// The family of the operating system. In this case, `unix`.
+    ///
+    /// Some possible values:
+    ///
+    /// - unix
+    /// - windows
     #[stable(feature = "env", since = "1.0.0")]
     pub const FAMILY: &'static str = super::os::FAMILY;
 
     /// A string describing the specific operating system in use: in this
     /// case, `linux`.
+    ///
+    /// Some possible values:
+    ///
+    /// - linux
+    /// - macos
+    /// - ios
+    /// - freebsd
+    /// - dragonfly
+    /// - bitrig
+    /// - openbsd
+    /// - android
+    /// - windows
     #[stable(feature = "env", since = "1.0.0")]
     pub const OS: &'static str = super::os::OS;
 
     /// Specifies the filename prefix used for shared libraries on this
     /// platform: in this case, `lib`.
+    ///
+    /// Some possible values:
+    ///
+    /// - lib
+    /// - `""` (an empty string)
     #[stable(feature = "env", since = "1.0.0")]
     pub const DLL_PREFIX: &'static str = super::os::DLL_PREFIX;
 
     /// Specifies the filename suffix used for shared libraries on this
     /// platform: in this case, `.so`.
+    ///
+    /// Some possible values:
+    ///
+    /// - .so
+    /// - .dylib
+    /// - .dll
     #[stable(feature = "env", since = "1.0.0")]
     pub const DLL_SUFFIX: &'static str = super::os::DLL_SUFFIX;
 
     /// Specifies the file extension used for shared libraries on this
     /// platform that goes after the dot: in this case, `so`.
+    ///
+    /// Some possible values:
+    ///
+    /// - .so
+    /// - .dylib
+    /// - .dll
     #[stable(feature = "env", since = "1.0.0")]
     pub const DLL_EXTENSION: &'static str = super::os::DLL_EXTENSION;
 
     /// Specifies the filename suffix used for executable binaries on this
     /// platform: in this case, the empty string.
+    ///
+    /// Some possible values:
+    ///
+    /// - exe
+    /// - `""` (an empty string)
     #[stable(feature = "env", since = "1.0.0")]
     pub const EXE_SUFFIX: &'static str = super::os::EXE_SUFFIX;
 
     /// Specifies the file extension, if any, used for executable binaries
     /// on this platform: in this case, the empty string.
+    ///
+    /// Some possible values:
+    ///
+    /// - exe
+    /// - `""` (an empty string)
     #[stable(feature = "env", since = "1.0.0")]
     pub const EXE_EXTENSION: &'static str = super::os::EXE_EXTENSION;
 

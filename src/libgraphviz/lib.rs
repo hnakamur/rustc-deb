@@ -74,7 +74,7 @@
 //!         // (assumes that |N| \approxeq |E|)
 //!         let &Edges(ref v) = self;
 //!         let mut nodes = Vec::with_capacity(v.len());
-//!         for &(s,t) in v.iter() {
+//!         for &(s,t) in v {
 //!             nodes.push(s); nodes.push(t);
 //!         }
 //!         nodes.sort();
@@ -279,10 +279,11 @@
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/")]
-#![feature(collections)]
+
 #![feature(into_cow)]
+#![feature(str_escape)]
 
 use self::LabelText::*;
 
@@ -558,7 +559,7 @@ pub fn render_opts<'a, N:Clone+'a, E:Clone+'a, G:Labeller<'a,N,E>+GraphWalk<'a,N
     }
 
     try!(writeln(w, &["digraph ", g.graph_id().as_slice(), " {"]));
-    for n in &*g.nodes() {
+    for n in g.nodes().iter() {
         try!(indent(w));
         let id = g.node_id(n);
         if options.contains(&RenderOption::NoNodeLabels) {
@@ -570,7 +571,7 @@ pub fn render_opts<'a, N:Clone+'a, E:Clone+'a, G:Labeller<'a,N,E>+GraphWalk<'a,N
         }
     }
 
-    for e in &*g.edges() {
+    for e in g.edges().iter() {
         let escaped_label = g.edge_label(e).escape();
         try!(indent(w));
         let source = g.source(e);

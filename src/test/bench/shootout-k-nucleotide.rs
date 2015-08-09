@@ -40,7 +40,7 @@
 
 // ignore-android: FIXME(#10393) hangs without output
 
-#![feature(box_syntax, std_misc, collections)]
+#![feature(box_syntax, owned_ascii_ext, vec_push_all)]
 
 use std::ascii::OwnedAsciiExt;
 use std::env;
@@ -317,7 +317,7 @@ fn main() {
     for (i, freq) in nb_freqs {
         print_frequencies(&freq.join().unwrap(), i);
     }
-    for (&occ, freq) in OCCURRENCES.iter().zip(occ_freqs.into_iter()) {
+    for (&occ, freq) in OCCURRENCES.iter().zip(occ_freqs) {
         print_occurrences(&mut freq.join().unwrap(), occ);
     }
 }

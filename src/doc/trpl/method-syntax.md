@@ -4,7 +4,7 @@ Functions are great, but if you want to call a bunch of them on some data, it
 can be awkward. Consider this code:
 
 ```rust,ignore
-baz(bar(foo)));
+baz(bar(foo));
 ```
 
 We would read this left-to right, and so we see ‘baz bar foo’. But this isn’t the
@@ -86,10 +86,10 @@ impl Circle {
 # Chaining method calls
 
 So, now we know how to call a method, such as `foo.bar()`. But what about our
-original example, `foo.bar().baz()`? This is called ‘method chaining’, and we
-can do it by returning `self`.
+original example, `foo.bar().baz()`? This is called ‘method chaining’. Let’s
+look at an example:
 
-```
+```rust
 struct Circle {
     x: f64,
     y: f64,
@@ -117,7 +117,7 @@ fn main() {
 
 Check the return type:
 
-```
+```rust
 # struct Circle;
 # impl Circle {
 fn grow(&self) -> Circle {
@@ -156,7 +156,7 @@ fn main() {
 
 This ‘associated function’ builds a new `Circle` for us. Note that associated
 functions are called with the `Struct::function()` syntax, rather than the
-`ref.method()` syntax. Some other langauges call associated functions ‘static
+`ref.method()` syntax. Some other languages call associated functions ‘static
 methods’.
 
 # Builder Pattern
@@ -167,7 +167,7 @@ and `y` attributes will be `0.0`, and the `radius` will be `1.0`. Rust doesn’t
 have method overloading, named arguments, or variable arguments. We employ
 the builder pattern instead. It looks like this:
 
-```
+```rust
 struct Circle {
     x: f64,
     y: f64,

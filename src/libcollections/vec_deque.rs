@@ -67,7 +67,7 @@ impl<T> Drop for VecDeque<T> {
             if mem::size_of::<T>() != 0 {
                 heap::deallocate(*self.ptr as *mut u8,
                                  self.cap * mem::size_of::<T>(),
-                                 mem::min_align_of::<T>())
+                                 mem::align_of::<T>())
             }
         }
     }
@@ -172,7 +172,7 @@ impl<T> VecDeque<T> {
 
         let ptr = unsafe {
             if mem::size_of::<T>() != 0 {
-                let ptr = heap::allocate(size, mem::min_align_of::<T>())  as *mut T;;
+                let ptr = heap::allocate(size, mem::align_of::<T>())  as *mut T;;
                 if ptr.is_null() { ::alloc::oom() }
                 Unique::new(ptr)
             } else {
@@ -247,7 +247,6 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -275,7 +274,6 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let buf: VecDeque<i32> = VecDeque::with_capacity(10);
@@ -299,7 +297,6 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf: VecDeque<i32> = vec![1].into_iter().collect();
@@ -321,7 +318,6 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf: VecDeque<i32> = vec![1].into_iter().collect();
@@ -344,7 +340,7 @@ impl<T> VecDeque<T> {
                     let ptr = heap::reallocate(*self.ptr as *mut u8,
                                                old,
                                                new,
-                                               mem::min_align_of::<T>()) as *mut T;
+                                               mem::align_of::<T>()) as *mut T;
                     if ptr.is_null() { ::alloc::oom() }
                     self.ptr = Unique::new(ptr);
                 }
@@ -464,7 +460,7 @@ impl<T> VecDeque<T> {
                     let ptr = heap::reallocate(*self.ptr as *mut u8,
                                                old,
                                                new_size,
-                                               mem::min_align_of::<T>()) as *mut T;
+                                               mem::align_of::<T>()) as *mut T;
                     if ptr.is_null() { ::alloc::oom() }
                     self.ptr = Unique::new(ptr);
                 }
@@ -484,7 +480,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
+    /// # #![feature(deque_extras)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -495,7 +491,7 @@ impl<T> VecDeque<T> {
     /// assert_eq!(buf.len(), 1);
     /// assert_eq!(Some(&5), buf.get(0));
     /// ```
-    #[unstable(feature = "collections",
+    #[unstable(feature = "deque_extras",
                reason = "matches collection reform specification; waiting on panic semantics")]
     pub fn truncate(&mut self, len: usize) {
         for _ in len..self.len() {
@@ -508,7 +504,6 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -533,7 +528,6 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -558,7 +552,7 @@ impl<T> VecDeque<T> {
     /// Returns a pair of slices which contain, in order, the contents of the
     /// `VecDeque`.
     #[inline]
-    #[unstable(feature = "collections",
+    #[unstable(feature = "deque_extras",
                reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn as_slices(&self) -> (&[T], &[T]) {
         unsafe {
@@ -578,7 +572,7 @@ impl<T> VecDeque<T> {
     /// Returns a pair of slices which contain, in order, the contents of the
     /// `VecDeque`.
     #[inline]
-    #[unstable(feature = "collections",
+    #[unstable(feature = "deque_extras",
                reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn as_mut_slices(&mut self) -> (&mut [T], &mut [T]) {
         unsafe {
@@ -635,7 +629,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
+    /// # #![feature(drain)]
     /// use std::collections::VecDeque;
     ///
     /// let mut v = VecDeque::new();
@@ -644,7 +638,7 @@ impl<T> VecDeque<T> {
     /// assert!(v.is_empty());
     /// ```
     #[inline]
-    #[unstable(feature = "collections",
+    #[unstable(feature = "drain",
                reason = "matches collection reform specification, waiting for dust to settle")]
     pub fn drain(&mut self) -> Drain<T> {
         Drain {
@@ -874,7 +868,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
+    /// # #![feature(deque_extras)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -886,7 +880,7 @@ impl<T> VecDeque<T> {
     /// buf.push_back(10);
     /// assert_eq!(buf.swap_back_remove(1), Some(99));
     /// ```
-    #[unstable(feature = "collections",
+    #[unstable(feature = "deque_extras",
                reason = "the naming of this function may be altered")]
     pub fn swap_back_remove(&mut self, index: usize) -> Option<T> {
         let length = self.len();
@@ -898,8 +892,8 @@ impl<T> VecDeque<T> {
         self.pop_back()
     }
 
-    /// Removes an element from anywhere in the ringbuf and returns it, replacing it with the first
-    /// element.
+    /// Removes an element from anywhere in the ringbuf and returns it,
+    /// replacing it with the first element.
     ///
     /// This does not preserve ordering, but is O(1).
     ///
@@ -908,7 +902,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
+    /// # #![feature(deque_extras)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -920,7 +914,7 @@ impl<T> VecDeque<T> {
     /// buf.push_back(20);
     /// assert_eq!(buf.swap_front_remove(3), Some(99));
     /// ```
-    #[unstable(feature = "collections",
+    #[unstable(feature = "deque_extras",
                reason = "the naming of this function may be altered")]
     pub fn swap_front_remove(&mut self, index: usize) -> Option<T> {
         let length = self.len();
@@ -1316,7 +1310,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
+    /// # #![feature(split_off)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf: VecDeque<_> = vec![1,2,3].into_iter().collect();
@@ -1326,7 +1320,7 @@ impl<T> VecDeque<T> {
     /// assert_eq!(buf2.len(), 2);
     /// ```
     #[inline]
-    #[unstable(feature = "collections",
+    #[unstable(feature = "split_off",
                reason = "new API, waiting for dust to settle")]
     pub fn split_off(&mut self, at: usize) -> Self {
         let len = self.len();
@@ -1379,7 +1373,7 @@ impl<T> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
+    /// # #![feature(append)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf: VecDeque<_> = vec![1, 2, 3].into_iter().collect();
@@ -1389,7 +1383,7 @@ impl<T> VecDeque<T> {
     /// assert_eq!(buf2.len(), 0);
     /// ```
     #[inline]
-    #[unstable(feature = "collections",
+    #[unstable(feature = "append",
                reason = "new API, waiting for dust to settle")]
     pub fn append(&mut self, other: &mut Self) {
         // naive impl
@@ -1440,7 +1434,7 @@ impl<T: Clone> VecDeque<T> {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
+    /// # #![feature(deque_extras)]
     /// use std::collections::VecDeque;
     ///
     /// let mut buf = VecDeque::new();
@@ -1449,11 +1443,11 @@ impl<T: Clone> VecDeque<T> {
     /// buf.push_back(15);
     /// buf.resize(2, 0);
     /// buf.resize(6, 20);
-    /// for (a, b) in [5, 10, 20, 20, 20, 20].iter().zip(buf.iter()) {
+    /// for (a, b) in [5, 10, 20, 20, 20, 20].iter().zip(&buf) {
     ///     assert_eq!(a, b);
     /// }
     /// ```
-    #[unstable(feature = "collections",
+    #[unstable(feature = "deque_extras",
                reason = "matches collection reform specification; waiting on panic semantics")]
     pub fn resize(&mut self, new_len: usize, value: T) {
         let len = self.len();
@@ -1536,6 +1530,7 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
 impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 impl<'a, T> RandomAccessIterator for Iter<'a, T> {
     #[inline]
     fn indexable(&self) -> usize {
@@ -1641,7 +1636,7 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
 impl<T> ExactSizeIterator for IntoIter<T> {}
 
 /// A draining VecDeque iterator
-#[unstable(feature = "collections",
+#[unstable(feature = "drain",
            reason = "matches collection reform specification, waiting for dust to settle")]
 pub struct Drain<'a, T: 'a> {
     inner: &'a mut VecDeque<T>,
@@ -1687,7 +1682,7 @@ impl<'a, T: 'a> ExactSizeIterator for Drain<'a, T> {}
 impl<A: PartialEq> PartialEq for VecDeque<A> {
     fn eq(&self, other: &VecDeque<A>) -> bool {
         self.len() == other.len() &&
-            self.iter().zip(other.iter()).all(|(a, b)| a.eq(b))
+            self.iter().zip(other).all(|(a, b)| a.eq(b))
     }
 }
 
@@ -1791,6 +1786,13 @@ impl<A> Extend<A> for VecDeque<A> {
     }
 }
 
+#[stable(feature = "extend_ref", since = "1.2.0")]
+impl<'a, T: 'a + Copy> Extend<&'a T> for VecDeque<T> {
+    fn extend<I: IntoIterator<Item=&'a T>>(&mut self, iter: I) {
+        self.extend(iter.into_iter().cloned());
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: fmt::Debug> fmt::Debug for VecDeque<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1807,7 +1809,7 @@ impl<T: fmt::Debug> fmt::Debug for VecDeque<T> {
 
 #[cfg(test)]
 mod tests {
-    use core::iter::{Iterator, self};
+    use core::iter::Iterator;
     use core::option::Option::Some;
 
     use test;

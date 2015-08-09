@@ -17,7 +17,7 @@ use ast::{Public, Unsafety};
 use ast::{Mod, BiAdd, Arg, Arm, Attribute, BindByRef, BindByValue};
 use ast::{BiBitAnd, BiBitOr, BiBitXor, BiRem, BiLt, BiGt, Block};
 use ast::{BlockCheckMode, CaptureByRef, CaptureByValue, CaptureClause};
-use ast::{ConstImplItem, ConstTraitItem, Crate, CrateConfig};
+use ast::{Constness, ConstImplItem, ConstTraitItem, Crate, CrateConfig};
 use ast::{Decl, DeclItem, DeclLocal, DefaultBlock, DefaultReturn};
 use ast::{UnDeref, BiDiv, EMPTY_CTXT, EnumDef, ExplicitSelf};
 use ast::{Expr, Expr_, ExprAddrOf, ExprMatch, ExprAgain};
@@ -79,7 +79,6 @@ use parse::PResult;
 use diagnostic::FatalError;
 
 use std::collections::HashSet;
-use std::fs;
 use std::io::prelude::*;
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -1061,7 +1060,7 @@ impl<'a> Parser<'a> {
             };
             let all_bounds =
                 Some(TraitTyParamBound(poly_trait_ref, TraitBoundModifier::None)).into_iter()
-                .chain(other_bounds.into_vec().into_iter())
+                .chain(other_bounds.into_vec())
                 .collect();
             Ok(ast::TyPolyTraitRef(all_bounds))
         }
@@ -1161,7 +1160,8 @@ impl<'a> Parser<'a> {
                 let TyParam {ident, bounds, default, ..} = try!(p.parse_ty_param());
                 try!(p.expect(&token::Semi));
                 (ident, TypeTraitItem(bounds, default))
-            } else if try!(p.eat_keyword(keywords::Const)) {
+            } else if p.is_const_item() {
+                try!(p.expect_keyword(keywords::Const));
                 let ident = try!(p.parse_ident());
                 try!(p.expect(&token::Colon));
                 let ty = try!(p.parse_ty_sum());
@@ -1176,13 +1176,7 @@ impl<'a> Parser<'a> {
                 };
                 (ident, ConstTraitItem(ty, default))
             } else {
-                let style = try!(p.parse_unsafety());
-                let abi = if try!(p.eat_keyword(keywords::Extern)) {
-                    try!(p.parse_opt_abi()).unwrap_or(abi::C)
-                } else {
-                    abi::Rust
-                };
-                try!(p.expect_keyword(keywords::Fn));
+                let (constness, unsafety, abi) = try!(p.parse_fn_front_matter());
 
                 let ident = try!(p.parse_ident());
                 let mut generics = try!(p.parse_generics());
@@ -1196,7 +1190,8 @@ impl<'a> Parser<'a> {
 
                 generics.where_clause = try!(p.parse_where_clause());
                 let sig = ast::MethodSig {
-                    unsafety: style,
+                    unsafety: unsafety,
+                    constness: constness,
                     decl: d,
                     generics: generics,
                     abi: abi,
@@ -2026,7 +2021,8 @@ impl<'a> Parser<'a> {
                 return self.parse_block_expr(lo, DefaultBlock);
             },
             token::BinOp(token::Or) |  token::OrOr => {
-                return self.parse_lambda_expr(CaptureByRef);
+                let lo = self.span.lo;
+                return self.parse_lambda_expr(lo, CaptureByRef);
             },
             token::Ident(id @ ast::Ident {
                             name: token::SELF_KEYWORD_NAME,
@@ -2062,7 +2058,7 @@ impl<'a> Parser<'a> {
                             |p| Ok(try!(p.parse_expr_nopanic()))
                                 ));
                         let mut exprs = vec!(first_expr);
-                        exprs.extend(remaining_exprs.into_iter());
+                        exprs.extend(remaining_exprs);
                         ex = ExprVec(exprs);
                     } else {
                         // Vector with one element.
@@ -2074,14 +2070,14 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 if try!(self.eat_lt()){
-
                     let (qself, path) =
                         try!(self.parse_qualified_path(LifetimeAndTypesWithColons));
-
+                    hi = path.span.hi;
                     return Ok(self.mk_expr(lo, hi, ExprPath(Some(qself), path)));
                 }
                 if try!(self.eat_keyword(keywords::Move) ){
-                    return self.parse_lambda_expr(CaptureByValue);
+                    let lo = self.last_span.lo;
+                    return self.parse_lambda_expr(lo, CaptureByValue);
                 }
                 if try!(self.eat_keyword(keywords::If)) {
                     return self.parse_if_expr();
@@ -2840,10 +2836,9 @@ impl<'a> Parser<'a> {
     }
 
     // `|args| expr`
-    pub fn parse_lambda_expr(&mut self, capture_clause: CaptureClause)
+    pub fn parse_lambda_expr(&mut self, lo: BytePos, capture_clause: CaptureClause)
                              -> PResult<P<Expr>>
     {
-        let lo = self.span.lo;
         let decl = try!(self.parse_fn_block_decl());
         let body = match decl.output {
             DefaultReturn(_) => {
@@ -3399,7 +3394,10 @@ impl<'a> Parser<'a> {
     /// Parse a structure field
     fn parse_name_and_ty(&mut self, pr: Visibility,
                          attrs: Vec<Attribute> ) -> PResult<StructField> {
-        let lo = self.span.lo;
+        let lo = match pr {
+            Inherited => self.span.lo,
+            Public => self.last_span.lo,
+        };
         if !self.token.is_plain_ident() {
             return Err(self.fatal("expected ident"));
         }
@@ -4217,7 +4215,7 @@ impl<'a> Parser<'a> {
                 };
                 if self.is_self_ident() {
                     let span = self.span;
-                    self.span_err(span, "cannot pass self by unsafe pointer");
+                    self.span_err(span, "cannot pass self by raw pointer");
                     try!(self.bump());
                 }
                 // error case, making bogus self ident:
@@ -4359,12 +4357,46 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse an item-position function declaration.
-    fn parse_item_fn(&mut self, unsafety: Unsafety, abi: abi::Abi) -> PResult<ItemInfo> {
+    fn parse_item_fn(&mut self,
+                     unsafety: Unsafety,
+                     constness: Constness,
+                     abi: abi::Abi)
+                     -> PResult<ItemInfo> {
         let (ident, mut generics) = try!(self.parse_fn_header());
         let decl = try!(self.parse_fn_decl(false));
         generics.where_clause = try!(self.parse_where_clause());
         let (inner_attrs, body) = try!(self.parse_inner_attrs_and_block());
-        Ok((ident, ItemFn(decl, unsafety, abi, generics, body), Some(inner_attrs)))
+        Ok((ident, ItemFn(decl, unsafety, constness, abi, generics, body), Some(inner_attrs)))
+    }
+
+    /// true if we are looking at `const ID`, false for things like `const fn` etc
+    pub fn is_const_item(&mut self) -> bool {
+        self.token.is_keyword(keywords::Const) &&
+            !self.look_ahead(1, |t| t.is_keyword(keywords::Fn))
+    }
+
+    /// parses all the "front matter" for a `fn` declaration, up to
+    /// and including the `fn` keyword:
+    ///
+    /// - `const fn`
+    /// - `unsafe fn`
+    /// - `extern fn`
+    /// - etc
+    pub fn parse_fn_front_matter(&mut self) -> PResult<(ast::Constness, ast::Unsafety, abi::Abi)> {
+        let is_const_fn = try!(self.eat_keyword(keywords::Const));
+        let (constness, unsafety, abi) = if is_const_fn {
+            (Constness::Const, Unsafety::Normal, abi::Rust)
+        } else {
+            let unsafety = try!(self.parse_unsafety());
+            let abi = if try!(self.eat_keyword(keywords::Extern)) {
+                try!(self.parse_opt_abi()).unwrap_or(abi::C)
+            } else {
+                abi::Rust
+            };
+            (Constness::NotConst, unsafety, abi)
+        };
+        try!(self.expect_keyword(keywords::Fn));
+        Ok((constness, unsafety, abi))
     }
 
     /// Parse an impl item.
@@ -4380,7 +4412,8 @@ impl<'a> Parser<'a> {
             let typ = try!(self.parse_ty_sum());
             try!(self.expect(&token::Semi));
             (name, TypeImplItem(typ))
-        } else if try!(self.eat_keyword(keywords::Const)) {
+        } else if self.is_const_item() {
+            try!(self.expect_keyword(keywords::Const));
             let name = try!(self.parse_ident());
             try!(self.expect(&token::Colon));
             let typ = try!(self.parse_ty_sum());
@@ -4390,7 +4423,7 @@ impl<'a> Parser<'a> {
             (name, ConstImplItem(typ, expr))
         } else {
             let (name, inner_attrs, node) = try!(self.parse_impl_method(vis));
-            attrs.extend(inner_attrs.into_iter());
+            attrs.extend(inner_attrs);
             (name, node)
         };
 
@@ -4445,13 +4478,7 @@ impl<'a> Parser<'a> {
             }
             Ok((token::special_idents::invalid, vec![], ast::MacImplItem(m)))
         } else {
-            let unsafety = try!(self.parse_unsafety());
-            let abi = if try!(self.eat_keyword(keywords::Extern)) {
-                try!(self.parse_opt_abi()).unwrap_or(abi::C)
-            } else {
-                abi::Rust
-            };
-            try!(self.expect_keyword(keywords::Fn));
+            let (constness, unsafety, abi) = try!(self.parse_fn_front_matter());
             let ident = try!(self.parse_ident());
             let mut generics = try!(self.parse_generics());
             let (explicit_self, decl) = try!(self.parse_fn_decl_with_self(|p| {
@@ -4464,6 +4491,7 @@ impl<'a> Parser<'a> {
                 abi: abi,
                 explicit_self: explicit_self,
                 unsafety: unsafety,
+                constness: constness,
                 decl: decl
              }, body)))
         }
@@ -4538,7 +4566,7 @@ impl<'a> Parser<'a> {
         if try!(self.eat(&token::DotDot) ){
             if generics.is_parameterized() {
                 self.span_err(impl_span, "default trait implementations are not \
-                                          allowed to have genercis");
+                                          allowed to have generics");
             }
 
             try!(self.expect(&token::OpenDelim(token::Brace)));
@@ -4839,8 +4867,7 @@ impl<'a> Parser<'a> {
                     outer_attrs: &[ast::Attribute],
                     id_sp: Span)
                     -> PResult<(ast::Item_, Vec<ast::Attribute> )> {
-        let mut prefix = PathBuf::from(&self.sess.span_diagnostic.cm
-                                            .span_to_filename(self.span));
+        let mut prefix = PathBuf::from(&self.sess.codemap().span_to_filename(self.span));
         prefix.pop();
         let mut dir_path = prefix;
         for part in &self.mod_path_stack {
@@ -4856,8 +4883,8 @@ impl<'a> Parser<'a> {
                 let secondary_path_str = format!("{}/mod.rs", mod_name);
                 let default_path = dir_path.join(&default_path_str[..]);
                 let secondary_path = dir_path.join(&secondary_path_str[..]);
-                let default_exists = fs::metadata(&default_path).is_ok();
-                let secondary_exists = fs::metadata(&secondary_path).is_ok();
+                let default_exists = self.sess.codemap().file_exists(&default_path);
+                let secondary_exists = self.sess.codemap().file_exists(&secondary_path);
 
                 if !self.owns_directory {
                     self.span_err(id_sp,
@@ -5041,7 +5068,7 @@ impl<'a> Parser<'a> {
 
         let abi = opt_abi.unwrap_or(abi::C);
 
-        attrs.extend(self.parse_inner_attributes().into_iter());
+        attrs.extend(self.parse_inner_attributes());
 
         let mut foreign_items = vec![];
         while let Some(item) = try!(self.parse_foreign_item()) {
@@ -5217,7 +5244,7 @@ impl<'a> Parser<'a> {
                 try!(self.bump());
                 let mut attrs = attrs;
                 mem::swap(&mut item.attrs, &mut attrs);
-                item.attrs.extend(attrs.into_iter());
+                item.attrs.extend(attrs);
                 return Ok(Some(P(item)));
             }
             None => {}
@@ -5253,7 +5280,7 @@ impl<'a> Parser<'a> {
                 // EXTERN FUNCTION ITEM
                 let abi = opt_abi.unwrap_or(abi::C);
                 let (ident, item_, extra_attrs) =
-                    try!(self.parse_item_fn(Unsafety::Normal, abi));
+                    try!(self.parse_item_fn(Unsafety::Normal, Constness::NotConst, abi));
                 let last_span = self.last_span;
                 let item = self.mk_item(lo,
                                         last_span.hi,
@@ -5266,11 +5293,7 @@ impl<'a> Parser<'a> {
                 return Ok(Some(try!(self.parse_item_foreign_mod(lo, opt_abi, visibility, attrs))));
             }
 
-            let span = self.span;
-            let token_str = self.this_token_to_string();
-            return Err(self.span_fatal(span,
-                            &format!("expected `{}` or `fn`, found `{}`", "{",
-                                    token_str)))
+            try!(self.expect_one_of(&[], &[]));
         }
 
         if try!(self.eat_keyword_noexpect(keywords::Virtual) ){
@@ -5292,6 +5315,21 @@ impl<'a> Parser<'a> {
             return Ok(Some(item));
         }
         if try!(self.eat_keyword(keywords::Const) ){
+            if self.check_keyword(keywords::Fn) {
+                // CONST FUNCTION ITEM
+                try!(self.bump());
+                let (ident, item_, extra_attrs) =
+                    try!(self.parse_item_fn(Unsafety::Normal, Constness::Const, abi::Rust));
+                let last_span = self.last_span;
+                let item = self.mk_item(lo,
+                                        last_span.hi,
+                                        ident,
+                                        item_,
+                                        visibility,
+                                        maybe_append(attrs, extra_attrs));
+                return Ok(Some(item));
+            }
+
             // CONST ITEM
             if try!(self.eat_keyword(keywords::Mut) ){
                 let last_span = self.last_span;
@@ -5345,7 +5383,7 @@ impl<'a> Parser<'a> {
             // FUNCTION ITEM
             try!(self.bump());
             let (ident, item_, extra_attrs) =
-                try!(self.parse_item_fn(Unsafety::Normal, abi::Rust));
+                try!(self.parse_item_fn(Unsafety::Normal, Constness::NotConst, abi::Rust));
             let last_span = self.last_span;
             let item = self.mk_item(lo,
                                     last_span.hi,
@@ -5366,7 +5404,7 @@ impl<'a> Parser<'a> {
             };
             try!(self.expect_keyword(keywords::Fn));
             let (ident, item_, extra_attrs) =
-                try!(self.parse_item_fn(Unsafety::Unsafe, abi));
+                try!(self.parse_item_fn(Unsafety::Unsafe, Constness::NotConst, abi));
             let last_span = self.last_span;
             let item = self.mk_item(lo,
                                     last_span.hi,

@@ -13,6 +13,7 @@
 //! For more details, see std::str
 
 #![doc(primitive = "str")]
+#![stable(feature = "rust1", since = "1.0.0")]
 
 use self::OldSearcher::{TwoWay, TwoWayLong};
 use self::pattern::Pattern;
@@ -191,7 +192,7 @@ fn unwrap_or_0(opt: Option<&u8>) -> u8 {
 
 /// Reads the next code point out of a byte iterator (assuming a
 /// UTF-8-like encoding).
-#[unstable(feature = "core")]
+#[unstable(feature = "str_internals")]
 #[inline]
 pub fn next_code_point(bytes: &mut slice::Iter<u8>) -> Option<u32> {
     // Decode UTF-8
@@ -226,9 +227,8 @@ pub fn next_code_point(bytes: &mut slice::Iter<u8>) -> Option<u32> {
 
 /// Reads the last code point out of a byte iterator (assuming a
 /// UTF-8-like encoding).
-#[unstable(feature = "core")]
 #[inline]
-pub fn next_code_point_reverse(bytes: &mut slice::Iter<u8>) -> Option<u32> {
+fn next_code_point_reverse(bytes: &mut slice::Iter<u8>) -> Option<u32> {
     // Decode UTF-8
     let w = match bytes.next_back() {
         None => return None,
@@ -638,10 +638,10 @@ impl<'a, P: Pattern<'a>> SplitInternal<'a, P> {
 
 generate_pattern_iterators! {
     forward:
-        /// Created with the method `.split()`.
+        #[doc="Created with the method `.split()`."]
         struct Split;
     reverse:
-        /// Created with the method `.rsplit()`.
+        #[doc="Created with the method `.rsplit()`."]
         struct RSplit;
     stability:
         #[stable(feature = "rust1", since = "1.0.0")]
@@ -652,10 +652,10 @@ generate_pattern_iterators! {
 
 generate_pattern_iterators! {
     forward:
-        /// Created with the method `.split_terminator()`.
+        #[doc="Created with the method `.split_terminator()`."]
         struct SplitTerminator;
     reverse:
-        /// Created with the method `.rsplit_terminator()`.
+        #[doc="Created with the method `.rsplit_terminator()`."]
         struct RSplitTerminator;
     stability:
         #[stable(feature = "rust1", since = "1.0.0")]
@@ -698,10 +698,10 @@ impl<'a, P: Pattern<'a>> SplitNInternal<'a, P> {
 
 generate_pattern_iterators! {
     forward:
-        /// Created with the method `.splitn()`.
+        #[doc="Created with the method `.splitn()`."]
         struct SplitN;
     reverse:
-        /// Created with the method `.rsplitn()`.
+        #[doc="Created with the method `.rsplitn()`."]
         struct RSplitN;
     stability:
         #[stable(feature = "rust1", since = "1.0.0")]
@@ -732,13 +732,13 @@ impl<'a, P: Pattern<'a>> MatchIndicesInternal<'a, P> {
 
 generate_pattern_iterators! {
     forward:
-        /// Created with the method `.match_indices()`.
+        #[doc="Created with the method `.match_indices()`."]
         struct MatchIndices;
     reverse:
-        /// Created with the method `.rmatch_indices()`.
+        #[doc="Created with the method `.rmatch_indices()`."]
         struct RMatchIndices;
     stability:
-        #[unstable(feature = "core",
+        #[unstable(feature = "str_match_indices",
                    reason = "type may be removed or have its iterator impl changed")]
     internal:
         MatchIndicesInternal yielding ((usize, usize));
@@ -773,13 +773,13 @@ impl<'a, P: Pattern<'a>> MatchesInternal<'a, P> {
 
 generate_pattern_iterators! {
     forward:
-        /// Created with the method `.matches()`.
+        #[doc="Created with the method `.matches()`."]
         struct Matches;
     reverse:
-        /// Created with the method `.rmatches()`.
+        #[doc="Created with the method `.rmatches()`."]
         struct RMatches;
     stability:
-        #[unstable(feature = "core", reason = "type got recently added")]
+        #[stable(feature = "str_matches", since = "1.2.0")]
     internal:
         MatchesInternal yielding (&'a str);
     delegate double ended;
@@ -1470,6 +1470,8 @@ mod traits {
 /// Methods for string slices
 #[allow(missing_docs)]
 #[doc(hidden)]
+#[unstable(feature = "core_str_ext",
+           reason = "stable interface provided by `impl str` in later crates")]
 pub trait StrExt {
     // NB there are no docs here are they're all located on the StrExt trait in
     // libcollections, not here.
@@ -1517,6 +1519,7 @@ pub trait StrExt {
     fn rfind<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize>
         where P::Searcher: ReverseSearcher<'a>;
     fn find_str<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize>;
+    fn split_at(&self, mid: usize) -> (&str, &str);
     fn slice_shift_char<'a>(&'a self) -> Option<(char, &'a str)>;
     fn subslice_offset(&self, inner: &str) -> usize;
     fn as_ptr(&self) -> *const u8;
@@ -1809,6 +1812,18 @@ impl StrExt for str {
         self.find(pat)
     }
 
+    fn split_at(&self, mid: usize) -> (&str, &str) {
+        // is_char_boundary checks that the index is in [0, .len()]
+        if self.is_char_boundary(mid) {
+            unsafe {
+                (self.slice_unchecked(0, mid),
+                 self.slice_unchecked(mid, self.len()))
+            }
+        } else {
+            slice_error_fail(self, 0, mid)
+        }
+    }
+
     #[inline]
     fn slice_shift_char(&self) -> Option<(char, &str)> {
         if self.is_empty() {
@@ -1857,8 +1872,7 @@ impl AsRef<[u8]> for str {
 /// Pluck a code point out of a UTF-8-like byte slice and return the
 /// index of the next code point.
 #[inline]
-#[unstable(feature = "core")]
-pub fn char_range_at_raw(bytes: &[u8], i: usize) -> (u32, usize) {
+fn char_range_at_raw(bytes: &[u8], i: usize) -> (u32, usize) {
     if bytes[i] < 128 {
         return (bytes[i] as u32, i + 1);
     }

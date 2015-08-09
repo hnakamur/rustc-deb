@@ -13,10 +13,11 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use os::unix::raw::{uid_t, gid_t};
+use os::unix::io::{FromRawFd, RawFd, AsRawFd};
 use prelude::v1::*;
 use process;
 use sys;
-use sys_common::{AsInnerMut, AsInner};
+use sys_common::{AsInnerMut, AsInner, FromInner};
 
 /// Unix-specific extensions to the `std::process::Command` builder
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -61,5 +62,33 @@ impl ExitStatusExt for process::ExitStatus {
             sys::process::ExitStatus::Signal(s) => Some(s),
             _ => None
         }
+    }
+}
+
+#[stable(feature = "process_extensions", since = "1.2.0")]
+impl FromRawFd for process::Stdio {
+    unsafe fn from_raw_fd(fd: RawFd) -> process::Stdio {
+        process::Stdio::from_inner(sys::fd::FileDesc::new(fd))
+    }
+}
+
+#[stable(feature = "process_extensions", since = "1.2.0")]
+impl AsRawFd for process::ChildStdin {
+    fn as_raw_fd(&self) -> RawFd {
+        self.as_inner().fd().raw()
+    }
+}
+
+#[stable(feature = "process_extensions", since = "1.2.0")]
+impl AsRawFd for process::ChildStdout {
+    fn as_raw_fd(&self) -> RawFd {
+        self.as_inner().fd().raw()
+    }
+}
+
+#[stable(feature = "process_extensions", since = "1.2.0")]
+impl AsRawFd for process::ChildStderr {
+    fn as_raw_fd(&self) -> RawFd {
+        self.as_inner().fd().raw()
     }
 }

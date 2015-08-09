@@ -17,6 +17,7 @@ extern crate serialize as rustc_serialize;
 use std::collections::BTreeMap;
 use std::fs::{read_dir, File};
 use std::io::{Read, Write};
+use std::env;
 use std::path::Path;
 use std::error::Error;
 
@@ -73,7 +74,7 @@ r##"<!DOCTYPE html>
 
     try!(write!(&mut output_file, "<h1>Rust Compiler Error Index</h1>\n"));
 
-    for (err_code, info) in err_map.iter() {
+    for (err_code, info) in err_map {
         // Enclose each error in a div so they can be shown/hidden en masse.
         let desc_desc = match info.description {
             Some(_) => "error-described",
@@ -106,7 +107,8 @@ r##"<!DOCTYPE html>
 }
 
 fn main_with_result() -> Result<(), Box<Error>> {
-    let metadata_dir = get_metadata_dir();
+    let build_arch = try!(env::var("CFG_BUILD"));
+    let metadata_dir = get_metadata_dir(&build_arch);
     let err_map = try!(load_all_errors(&metadata_dir));
     try!(render_error_page(&err_map, Path::new("doc/error-index.html")));
     Ok(())

@@ -1,3 +1,161 @@
+Version 1.2.0 (August 2015)
+===========================
+
+* ~1200 changes, numerous bugfixes
+
+Highlights
+----------
+
+* [Dynamically-sized-type coercions][dst] allow smart pointer types
+  like `Rc` to contain types without a fixed size, arrays and trait
+  objects, finally enabling use of `Rc<[T]>` and completing the
+  implementation of DST.
+* [Parallel codegen][parcodegen] is now working again, which can
+  substantially speed up large builds in debug mode; It also gets
+  another ~33% speedup when bootstrapping on a 4 core machine (using 8
+  jobs). It's not enabled by default, but will be "in the near
+  future". It can be activated with the `-C codegen-units=N` flag to
+  `rustc`.
+* This is the first release with [experimental support for linking
+  with the MSVC linker and lib C on Windows (instead of using the GNU
+  variants via MinGW)][win]. It is yet recommended only for the most
+  intrepid Rusticians.
+* Benchmark compilations are showing a 30% improvement in
+  bootstrapping over 1.1.
+
+Breaking Changes
+----------------
+
+* The [`to_uppercase`] and [`to_lowercase`] methods on `char` now do
+  unicode case mapping, which is a previously-planned change in
+  behavior and considered a bugfix.
+* [`mem::align_of`] now specifies [the *minimum alignment* for
+  T][align], which is usually the alignment programs are interested
+  in, and the same value reported by clang's
+  `alignof`. [`mem::min_align_of`] is deprecated. This is not known to
+  break real code.
+* [The `#[packed]` attribute is no longer silently accepted by the
+  compiler][packed]. This attribute did nothing and code that
+  mentioned it likely did not work as intended.
+* Associated type defaults are [now behind the
+  `associated_type_defaults` feature gate][ad]. In 1.1 associated type
+  defaults *did not work*, but could be mentioned syntactically. As
+  such this breakage has minimal impact.
+
+Language
+--------
+
+* Patterns with `ref mut` now correctly invoke [`DerefMut`] when
+  matching against dereferencable values.
+
+Libraries
+---------
+
+* The [`Extend`] trait, which grows a collection from an iterator, is
+  implemented over iterators of references, for `String`, `Vec`,
+  `LinkedList`, `VecDeque`, `EnumSet`, `BinaryHeap`, `VecMap`,
+  `BTreeSet` and `BTreeMap`. [RFC][extend-rfc].
+* The [`iter::once`] function returns an iterator that yields a single
+  element, and [`iter::empty`] returns an iterator that yields no
+  elements.
+* The [`matches`] and [`rmatches`] methods on `str` return iterators
+  over substring matches.
+* [`Cell`] and [`RefCell`] both implement `Eq`.
+* A number of methods for wrapping arithmetic are added to the
+  integral types, [`wrapping_div`], [`wrapping_rem`],
+  [`wrapping_neg`], [`wrapping_shl`], [`wrapping_shr`]. These are in
+  addition to the existing [`wrapping_add`], [`wrapping_sub`], and
+  [`wrapping_mul`] methods, and alternatives to the [`Wrapping`]
+  type.. It is illegal for the default arithmetic operations in Rust
+  to overflow; the desire to wrap must be explicit.
+* The `{:#?}` formatting specifier [displays the alternate,
+  pretty-printed][debugfmt] form of the `Debug` formatter. This
+  feature was actually introduced prior to 1.0 with little
+  fanfare.
+* [`fmt::Formatter`] implements [`fmt::Write`], a `fmt`-specific trait
+  for writing data to formatted strings, similar to [`io::Write`].
+* [`fmt::Formatter`] adds 'debug builder' methods, [`debug_struct`],
+  [`debug_tuple`], [`debug_list`], [`debug_set`], [`debug_map`]. These
+  are used by code generators to emit implementations of [`Debug`].
+* `str` has new [`to_uppercase`][strup] and [`to_lowercase`][strlow]
+  methods that convert case, following Unicode case mapping.
+* It is now easier to handle poisoned locks. The [`PoisonError`]
+  type, returned by failing lock operations, exposes `into_inner`,
+  `get_ref`, and `get_mut`, which all give access to the inner lock
+  guard, and allow the poisoned lock to continue to operate. The
+  `is_poisoned` method of [`RwLock`] and [`Mutex`] can poll for a
+  poisoned lock without attempting to take the lock.
+* On Unix the [`FromRawFd`] trait is implemented for [`Stdio`], and
+  [`AsRawFd`] for [`ChildStdin`], [`ChildStdout`], [`ChildStderr`].
+  On Windows the `FromRawHandle` trait is implemented for `Stdio`,
+  and `AsRawHandle` for `ChildStdin`, `ChildStdout`,
+  `ChildStderr`.
+* [`io::ErrorKind`] has a new variant, `InvalidData`, which indicates
+  malformed input.
+
+Misc
+----
+
+* `rustc` employs smarter heuristics for guessing at [typos].
+* `rustc` emits more efficient code for [no-op conversions between
+  unsafe pointers][nop].
+* Fat pointers are now [passed in pairs of immediate arguments][fat],
+  resulting in faster compile times and smaller code.
+
+[`Extend`]: http://doc.rust-lang.org/nightly/std/iter/trait.Extend.html
+[extend-rfc]: https://github.com/rust-lang/rfcs/blob/master/text/0839-embrace-extend-extinguish.md
+[`iter::once`]: http://doc.rust-lang.org/nightly/std/iter/fn.once.html
+[`iter::empty`]: http://doc.rust-lang.org/nightly/std/iter/fn.empty.html
+[`matches`]: http://doc.rust-lang.org/nightly/std/primitive.str.html#method.matches
+[`rmatches`]: http://doc.rust-lang.org/nightly/std/primitive.str.html#method.rmatches
+[`Cell`]: http://doc.rust-lang.org/nightly/std/cell/struct.Cell.html
+[`RefCell`]: http://doc.rust-lang.org/nightly/std/cell/struct.RefCell.html
+[`wrapping_add`]: http://doc.rust-lang.org/nightly/std/primitive.i8.html#method.wrapping_add
+[`wrapping_sub`]: http://doc.rust-lang.org/nightly/std/primitive.i8.html#method.wrapping_sub
+[`wrapping_mul`]: http://doc.rust-lang.org/nightly/std/primitive.i8.html#method.wrapping_mul
+[`wrapping_div`]: http://doc.rust-lang.org/nightly/std/primitive.i8.html#method.wrapping_div
+[`wrapping_rem`]: http://doc.rust-lang.org/nightly/std/primitive.i8.html#method.wrapping_rem
+[`wrapping_neg`]: http://doc.rust-lang.org/nightly/std/primitive.i8.html#method.wrapping_neg
+[`wrapping_shl`]: http://doc.rust-lang.org/nightly/std/primitive.i8.html#method.wrapping_shl
+[`wrapping_shr`]: http://doc.rust-lang.org/nightly/std/primitive.i8.html#method.wrapping_shr
+[`Wrapping`]: http://doc.rust-lang.org/nightly/std/num/struct.Wrapping.html
+[`fmt::Formatter`]: http://doc.rust-lang.org/nightly/std/fmt/struct.Formatter.html
+[`fmt::Write`]: http://doc.rust-lang.org/nightly/std/fmt/trait.Write.html
+[`io::Write`]: http://doc.rust-lang.org/nightly/std/io/trait.Write.html
+[`debug_struct`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.debug_struct
+[`debug_tuple`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.debug_tuple
+[`debug_list`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.debug_list
+[`debug_set`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.debug_set
+[`debug_map`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.debug_map
+[`Debug`]: http://doc.rust-lang.org/nightly/std/fmt/trait.Debug.html
+[strup]: http://doc.rust-lang.org/nightly/std/primitive.str.html#method.to_uppercase
+[strlow]: http://doc.rust-lang.org/nightly/std/primitive.str.html#method.to_lowercase
+[`to_uppercase`]: http://doc.rust-lang.org/nightly/std/primitive.char.html#method.to_uppercase
+[`to_lowercase`]: http://doc.rust-lang.org/nightly/std/primitive.char.html#method.to_lowercase
+[`PoisonError`]: http://doc.rust-lang.org/nightly/std/sync/struct.PoisonError.html
+[`RwLock`]: http://doc.rust-lang.org/nightly/std/sync/struct.RwLock.html
+[`Mutex`]: http://doc.rust-lang.org/nightly/std/sync/struct.Mutex.html
+[`FromRawFd`]: http://doc.rust-lang.org/nightly/std/os/unix/io/trait.FromRawFd.html
+[`AsRawFd`]: http://doc.rust-lang.org/nightly/std/os/unix/io/trait.AsRawFd.html
+[`Stdio`]: http://doc.rust-lang.org/nightly/std/process/struct.Stdio.html
+[`ChildStdin`]: http://doc.rust-lang.org/nightly/std/process/struct.ChildStdin.html
+[`ChildStdout`]: http://doc.rust-lang.org/nightly/std/process/struct.ChildStdout.html
+[`ChildStderr`]: http://doc.rust-lang.org/nightly/std/process/struct.ChildStderr.html
+[`io::ErrorKind`]: http://doc.rust-lang.org/nightly/std/io/enum.ErrorKind.html
+[debugfmt]: https://www.reddit.com/r/rust/comments/3ceaui/psa_produces_prettyprinted_debug_output/
+[`DerefMut`]: http://doc.rust-lang.org/nightly/std/ops/trait.DerefMut.html
+[`mem::align_of`]: http://doc.rust-lang.org/nightly/std/mem/fn.align_of.html
+[align]: https://github.com/rust-lang/rust/pull/25646
+[`mem::min_align_of`]: http://doc.rust-lang.org/nightly/std/mem/fn.min_align_of.html
+[typos]: https://github.com/rust-lang/rust/pull/26087
+[nop]: https://github.com/rust-lang/rust/pull/26336
+[fat]: https://github.com/rust-lang/rust/pull/26411
+[dst]: https://github.com/rust-lang/rfcs/blob/master/text/0982-dst-coercion.md
+[parcodegen]: https://github.com/rust-lang/rust/pull/26018
+[packed]: https://github.com/rust-lang/rust/pull/25541
+[ad]: https://github.com/rust-lang/rust/pull/27382
+[win]: https://github.com/rust-lang/rust/pull/25350
+
 Version 1.1.0 (June 2015)
 =========================
 
@@ -132,11 +290,11 @@ Language
 
 * Several [restrictions have been added to trait coherence][coh] in
   order to make it easier for upstream authors to change traits
-  without breaking downsteam code.
+  without breaking downstream code.
 * Digits of binary and octal literals are [lexed more eagerly][lex] to
   improve error messages and macro behavior. For example, `0b1234` is
   now lexed as `0b1234` instead of two tokens, `0b1` and `234`.
-* Trait bounds [are always invariant][inv], eleminating the need for
+* Trait bounds [are always invariant][inv], eliminating the need for
   the `PhantomFn` and `MarkerTrait` lang items, which have been
   removed.
 * ["-" is no longer a valid character in crate names][cr], the `extern crate
@@ -275,17 +433,17 @@ Misc
 
 
 Version 1.0.0-alpha.2 (February 2015)
--------------------------------------
+=====================================
 
 * ~1300 changes, numerous bugfixes
 
 * Highlights
 
     * The various I/O modules were [overhauled][io-rfc] to reduce
-      unncessary abstractions and provide better interoperation with
+      unnecessary abstractions and provide better interoperation with
       the underlying platform. The old `io` module remains temporarily
       at `std::old_io`.
-    * The standard library now [partipates in feature gating][feat],
+    * The standard library now [participates in feature gating][feat],
       so use of unstable libraries now requires a `#![feature(...)]`
       attribute. The impact of this change is [described on the
       forum][feat-forum]. [RFC][feat-rfc].
@@ -373,8 +531,9 @@ Version 1.0.0-alpha.2 (February 2015)
 [ufcs-rfc]: https://github.com/rust-lang/rfcs/blob/master/text/0132-ufcs.md
 [un]: https://github.com/rust-lang/rust/pull/22256
 
+
 Version 1.0.0-alpha (January 2015)
-----------------------------------
+==================================
 
   * ~2400 changes, numerous bugfixes
 
@@ -497,7 +656,7 @@ Version 1.0.0-alpha (January 2015)
       syscall when available.
     * The 'serialize' crate has been renamed 'rustc-serialize' and
       moved out of the distribution to Cargo. Although it is widely
-      used now, it is expected to be superceded in the near future.
+      used now, it is expected to be superseded in the near future.
     * The `Show` formatter, typically implemented with
       `#[derive(Show)]` is [now requested with the `{:?}`
       specifier][show] and is intended for use by all types, for uses
@@ -559,8 +718,9 @@ Version 1.0.0-alpha (January 2015)
 [trpl]: http://doc.rust-lang.org/book/index.html
 [rbe]: http://rustbyexample.com/
 
+
 Version 0.12.0 (October 2014)
------------------------------
+=============================
 
   * ~1900 changes, numerous bugfixes
 
@@ -681,8 +841,9 @@ Version 0.12.0 (October 2014)
     * Official Rust binaries on Linux are more compatible with older
       kernels and distributions, built on CentOS 5.10.
 
+
 Version 0.11.0 (July 2014)
--------------------------
+==========================
 
   * ~1700 changes, numerous bugfixes
 
@@ -813,8 +974,9 @@ Version 0.11.0 (July 2014)
     * Error message related to non-exhaustive match expressions have been
       greatly improved.
 
+
 Version 0.10 (April 2014)
--------------------------
+=========================
 
   * ~1500 changes, numerous bugfixes
 
@@ -979,8 +1141,9 @@ Version 0.10 (April 2014)
       * search works across crates that have been rendered to the same output
         directory.
 
+
 Version 0.9 (January 2014)
---------------------------
+==========================
 
    * ~1800 changes, numerous bugfixes
 
@@ -1144,8 +1307,9 @@ Version 0.9 (January 2014)
       * `rustc` adds a `--dep-info` flag for communicating dependencies to
         build tools.
 
+
 Version 0.8 (September 2013)
---------------------------
+============================
 
    * ~2200 changes, numerous bugfixes
 
@@ -1299,8 +1463,9 @@ Version 0.8 (September 2013)
       * A new documentation backend, rustdoc_ng, is available for use. It is
         still invoked through the normal `rustdoc` command.
 
+
 Version 0.7 (July 2013)
------------------------
+=======================
 
    * ~2000 changes, numerous bugfixes
 
@@ -1415,8 +1580,9 @@ Version 0.7 (July 2013)
       * Various improvements to rustdoc.
       * Improvements to rustpkg (see the detailed release notes).
 
+
 Version 0.6 (April 2013)
-------------------------
+========================
 
    * ~2100 changes, numerous bugfixes
 
@@ -1517,8 +1683,9 @@ Version 0.6 (April 2013)
       * Rust code may be embedded in foreign code under limited circumstances
       * Inline assembler supported by new asm!() syntax extension.
 
+
 Version 0.5 (December 2012)
----------------------------
+===========================
 
    * ~900 changes, numerous bugfixes
 
@@ -1573,8 +1740,9 @@ Version 0.5 (December 2012)
       * Added a preliminary REPL, `rusti`
       * License changed from MIT to dual MIT/APL2
 
+
 Version 0.4 (October 2012)
---------------------------
+==========================
 
    * ~2000 changes, numerous bugfixes
 
@@ -1628,8 +1796,9 @@ Version 0.4 (October 2012)
         Rust-based (visitor) code
       * All hash functions and tables converted to secure, randomized SipHash
 
+
 Version 0.3  (July 2012)
-------------------------
+========================
 
    * ~1900 changes, numerous bugfixes
 
@@ -1686,8 +1855,9 @@ Version 0.3  (July 2012)
    * Tool improvements
       * Cargo automatically resolves dependencies
 
+
 Version 0.2  (March 2012)
--------------------------
+=========================
 
    * >1500 changes, numerous bugfixes
 
@@ -1726,8 +1896,9 @@ Version 0.2  (March 2012)
       * Merged per-platform std::{os*, fs*} to core::{libc, os}
       * Extensive cleanup, regularization in libstd, libcore
 
+
 Version 0.1  (January 20, 2012)
--------------------------------
+===============================
 
    * Most language features work, including:
       * Unique pointers, unique closures, move semantics

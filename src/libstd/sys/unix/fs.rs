@@ -274,8 +274,6 @@ impl File {
         Ok(File(fd))
     }
 
-    pub fn into_fd(self) -> FileDesc { self.0 }
-
     pub fn file_attr(&self) -> io::Result<FileAttr> {
         let mut stat: raw::stat = unsafe { mem::zeroed() };
         try!(cvt(unsafe {
@@ -399,12 +397,13 @@ impl fmt::Debug for File {
         }
 
         let fd = self.0.raw();
-        let mut b = f.debug_struct("File").field("fd", &fd);
+        let mut b = f.debug_struct("File");
+        b.field("fd", &fd);
         if let Some(path) = get_path(fd) {
-            b = b.field("path", &path);
+            b.field("path", &path);
         }
         if let Some((read, write)) = get_mode(fd) {
-            b = b.field("read", &read).field("write", &write);
+            b.field("read", &read).field("write", &write);
         }
         b.finish()
     }

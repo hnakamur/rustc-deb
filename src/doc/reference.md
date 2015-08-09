@@ -638,7 +638,7 @@ apply to the crate as a whole.
 ```
 
 A crate that contains a `main` function can be compiled to an executable. If a
-`main` function is present, its return type must be [`unit`](#primitive-types)
+`main` function is present, its return type must be [`unit`](#tuple-types)
 and it must take no arguments.
 
 # Items and attributes
@@ -928,26 +928,36 @@ A _generic function_ allows one or more _parameterized types_ to appear in its
 signature. Each type parameter must be explicitly declared, in an
 angle-bracket-enclosed, comma-separated list following the function name.
 
-```{.ignore}
-fn iter<T, F>(seq: &[T], f: F) where T: Copy, F: Fn(T) {
-    for elt in seq { f(*elt); }
-}
-fn map<T, U, F>(seq: &[T], f: F) -> Vec<U> where T: Copy, U: Copy, F: Fn(T) -> U {
-    let mut acc = vec![];
-    for elt in seq { acc.push(f(*elt)); }
-    acc
-}
+```rust,ignore
+// foo is generic over A and B
+
+fn foo<A, B>(x: A, y: B) {
 ```
 
 Inside the function signature and body, the name of the type parameter can be
 used as a type name. [Trait](#traits) bounds can be specified for type parameters
 to allow methods with that trait to be called on values of that type. This is
-specified using the `where` syntax, as in the above example.
+specified using the `where` syntax:
+
+```rust,ignore
+fn foo<T>(x: T) where T: Debug {
+```
 
 When a generic function is referenced, its type is instantiated based on the
-context of the reference. For example, calling the `iter` function defined
-above on `[1, 2]` will instantiate type parameter `T` with `i32`, and require
-the closure parameter to have type `Fn(i32)`.
+context of the reference. For example, calling the `foo` function here:
+
+```
+use std::fmt::Debug;
+
+fn foo<T>(x: &[T]) where T: Debug {
+    // details elided
+    # ()
+}
+
+foo(&[1, 2]);
+```
+
+will instantiate type parameter `T` with `i32`.
 
 The type parameters can also be explicitly supplied in a trailing
 [path](#paths) component after the function name. This might be necessary if
@@ -1038,7 +1048,7 @@ be undesired.
 
 * Deadlocks
 * Reading data from private fields (`std::repr`)
-* Leaks due to reference count cycles, even in the global heap
+* Leaks of memory and other resources
 * Exiting without calling destructors
 * Sending signals
 * Accessing/modifying the file system
@@ -1111,7 +1121,7 @@ extern fn new_i32() -> i32 { 0 }
 extern "stdcall" fn new_i32_stdcall() -> i32 { 0 }
 ```
 
-Unlike normal functions, extern fns have an `extern "ABI" fn()`. This is the
+Unlike normal functions, extern fns have type `extern "ABI" fn()`. This is the
 same type as the functions declared in an extern block.
 
 ```
@@ -1367,7 +1377,6 @@ Traits can include default implementations of methods, as in:
 ```
 trait Foo {
     fn bar(&self);
-
     fn baz(&self) { println!("We called baz."); }
 }
 ```
@@ -1418,9 +1427,13 @@ impl<T> Container for Vec<T> {
 ```
 
 Generic functions may use traits as _bounds_ on their type parameters. This
-will have two effects: only types that have the trait may instantiate the
-parameter, and within the generic function, the methods of the trait can be
-called on values that have the parameter's type. For example:
+will have two effects:
+
+- Only types that have the trait may instantiate the parameter.
+- Within the generic function, the methods of the trait can be
+  called on values that have the parameter's type.
+
+For example:
 
 ```
 # type Surface = i32;
@@ -1547,7 +1560,7 @@ methods in such an implementation can only be used as direct calls on the
 values of the type that the implementation targets. In such an implementation,
 the trait type and `for` after `impl` are omitted. Such implementations are
 limited to nominal types (enums, structs), and the implementation must appear
-in the same module or a sub-module as the `self` type:
+in the same crate as the `self` type:
 
 ```
 struct Point {x: i32, y: i32}
@@ -1943,9 +1956,6 @@ macro scope.
 - `simd` - on certain tuple structs, derive the arithmetic operators, which
   lower to the target's SIMD instructions, if any; the `simd` feature gate
   is necessary to use this attribute.
-- `static_assert` - on statics whose type is `bool`, terminates compilation
-  with an error if it is not initialized to `true`. To use this, the `static_assert`
-  feature gate must be enabled.
 - `unsafe_no_drop_flag` - on structs, remove the flag that prevents
   destructors from being run twice. Destructors might be run multiple times on
   the same object with this attribute. To use this, the `unsafe_no_drop_flag` feature
@@ -2003,6 +2013,10 @@ arbitrarily complex configurations through nesting.
 
 The following configurations must be defined by the implementation:
 
+* `debug_assertions`. Enabled by default when compiling without optimizations.
+  This can be used to enable extra debugging code in development but not in
+  production.  For example, it controls the behavior of the standard library's
+  `debug_assert!` macro.
 * `target_arch = "..."`. Target CPU architecture, such as `"x86"`, `"x86_64"`
   `"mips"`, `"powerpc"`, `"arm"`, or `"aarch64"`.
 * `target_endian = "..."`. Endianness of the target CPU, either `"little"` or
@@ -2296,12 +2310,6 @@ The currently implemented features of the reference compiler are:
 * `staged_api` - Allows usage of stability markers and `#![staged_api]` in a
                  crate. Stability markers are also attributes: `#[stable]`,
                  `#[unstable]`, and `#[deprecated]` are the three levels.
-
-* `static_assert` - The `#[static_assert]` functionality is experimental and
-                    unstable. The attribute can be attached to a `static` of
-                    type `bool` and the compiler will error if the `bool` is
-                    `false` at compile time. This version of this functionality
-                    is unintuitive and suboptimal.
 
 * `start` - Allows use of the `#[start]` attribute, which changes the entry point
             into a Rust program. This capability, especially the signature for the
@@ -2771,22 +2779,24 @@ meaning of the operators on standard types is given here.
 Like the [arithmetic operators](#arithmetic-operators), bitwise operators are
 syntactic sugar for calls to methods of built-in traits. This means that
 bitwise operators can be overridden for user-defined types. The default
-meaning of the operators on standard types is given here.
+meaning of the operators on standard types is given here. Bitwise `&`, `|` and
+`^` applied to boolean arguments are equivalent to logical `&&`, `||` and `!=`
+evaluated in non-lazy fashion.
 
 * `&`
-  : And.
+  : Bitwise AND.
     Calls the `bitand` method of the `std::ops::BitAnd` trait.
 * `|`
-  : Inclusive or.
+  : Bitwise inclusive OR.
     Calls the `bitor` method of the `std::ops::BitOr` trait.
 * `^`
-  : Exclusive or.
+  : Bitwise exclusive OR.
     Calls the `bitxor` method of the `std::ops::BitXor` trait.
 * `<<`
   : Left shift.
     Calls the `shl` method of the `std::ops::Shl` trait.
 * `>>`
-  : Right shift.
+  : Right shift (arithmetic).
     Calls the `shr` method of the `std::ops::Shr` trait.
 
 #### Lazy boolean operators
@@ -2836,13 +2846,13 @@ on the right-hand side.
 An example of an `as` expression:
 
 ```
-# fn sum(v: &[f64]) -> f64 { 0.0 }
-# fn len(v: &[f64]) -> i32 { 0 }
+# fn sum(values: &[f64]) -> f64 { 0.0 }
+# fn len(values: &[f64]) -> i32 { 0 }
 
-fn avg(v: &[f64]) -> f64 {
-  let sum: f64 = sum(v);
-  let sz: f64 = len(v) as f64;
-  return sum / sz;
+fn average(values: &[f64]) -> f64 {
+  let sum: f64 = sum(values);
+  let size: f64 = len(values) as f64;
+  sum / size
 }
 ```
 
@@ -2876,7 +2886,7 @@ The `+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `<<`, and `>>` operators may be
 composed with the `=` operator. The expression `lval OP= val` is equivalent to
 `lval = lval OP val`. For example, `x = x + 1` may be written as `x += 1`.
 
-Any such expression always has the [`unit`](#primitive-types) type.
+Any such expression always has the [`unit`](#tuple-types) type.
 
 #### Operator precedence
 
@@ -3251,8 +3261,8 @@ User-defined types have limited capabilities.
 The primitive types are the following:
 
 * The boolean type `bool` with values `true` and `false`.
-* The machine types.
-* The machine-dependent integer and floating-point types.
+* The machine types (integer and floating-point).
+* The machine-dependent integer types.
 
 #### Machine types
 
@@ -3317,6 +3327,9 @@ let (a, b) = p;
 assert!(b != "world");
 assert!(p.0 == 10);
 ```
+
+For historical reasons and convenience, the tuple type with no elements (`()`)
+is often called ‘unit’ or ‘the unit type’.
 
 ### Array, and Slice types
 
@@ -3604,6 +3617,147 @@ The notation `&self` is a shorthand for `self: &Self`. In this case,
 in the impl, `Self` refers to the value of type `String` that is the
 receiver for a call to the method `make_string`.
 
+## Subtyping
+
+Subtyping is implicit and can occur at any stage in type checking or
+inference. Subtyping in Rust is very restricted and occurs only due to
+variance with respect to lifetimes and between types with higher ranked
+lifetimes. If we were to erase lifetimes from types, then the only subtyping
+would be due to type equality.
+
+Consider the following example: string literals always have `'static`
+lifetime. Nevertheless, we can assign `s` to `t`:
+
+```
+fn bar<'a>() {
+    let s: &'static str = "hi";
+    let t: &'a str = s;
+}
+```
+Since `'static` "lives longer" than `'a`, `&'static str` is a subtype of
+`&'a str`.
+
+## Type coercions
+
+Coercions are defined in [RFC401]. A coercion is implicit and has no syntax.
+
+[RFC401]: https://github.com/rust-lang/rfcs/blob/master/text/0401-coercions.md
+
+### Coercion sites
+
+A coercion can only occur at certain coercion sites in a program; these are
+typically places where the desired type is explicit or can be dervied by
+propagation from explicit types (without type inference). Possible coercion
+sites are:
+
+* `let` statements where an explicit type is given.
+
+    In `let _: U = e;`, `e` is coerced to have type `U`.
+
+* `static` and `const` statements (similar to `let` statements).
+
+* arguments for function calls.
+
+    The value being coerced is the
+    actual parameter and it is coerced to the type of the formal parameter. For
+    example, let `foo` be defined as `fn foo(x: U) { ... }` and call it as
+    `foo(e);`. Then `e` is coerced to have type `U`;
+
+* instantiations of struct or variant fields.
+
+    Assume we have a `struct
+    Foo { x: U }` and instantiate it as `Foo { x: e }`. Then `e` is coerced to
+    have type `U`.
+
+* function results (either the final line of a block if it is not semicolon
+terminated or any expression in a `return` statement).
+
+    In `fn foo() -> U { e }`, `e` is coerced to to have type `U`.
+
+If the expression in one of these coercion sites is a coercion-propagating
+expression, then the relevant sub-expressions in that expression are also
+coercion sites. Propagation recurses from these new coercion sites.
+Propagating expressions and their relevant sub-expressions are:
+
+* array literals, where the array has type `[U; n]`. Each sub-expression in
+the array literal is a coercion site for coercion to type `U`.
+
+* array literals with repeating syntax, where the array has type `[U; n]`. The
+repeated sub-expression is a coercion site for coercion to type `U`.
+
+* tuples, where a tuple is a coercion site to type `(U_0, U_1, ..., U_n)`.
+Each sub-expression is a coercion site to the respective type, e.g. the
+zeroth sub-expression is a coercion site to type `U_0`.
+
+* parenthesised sub-expressions (`(e)`). If the expression has type `U`, then
+the sub-expression is a coercion site to `U`.
+
+* blocks. If a block has type `U`, then the last expression in the block (if
+it is not semicolon-terminated) is a coercion site to `U`. This includes
+blocks which are part of control flow statements, such as `if`/`else`, if
+the block has a known type.
+
+### Coercion types
+
+Coercion is allowed between the following types:
+
+* `T` to `U` if `T` is a subtype of `U` (*reflexive case*).
+
+* `T_1` to `T_3` where `T_1` coerces to `T_2` and `T_2` coerces to `T_3`
+(*transitive case*).
+
+    Note that this is not fully supported yet
+
+* `&mut T` to `&T`.
+
+* `*mut T` to `*const T`.
+
+* `&T` to `*const T`.
+
+* `&mut T` to `*mut T`.
+
+* `&T` to `&U` if `T` implements `Deref<Target = U>`. For example:
+
+```rust
+use std::ops::Deref;
+
+struct CharContainer {
+    value: char
+}
+
+impl Deref for CharContainer {
+    type Target = char;
+
+    fn deref<'a>(&'a self) -> &'a char {
+        &self.value
+    }
+}
+
+fn foo(arg: &char) {}
+
+fn main() {
+    let x = &mut CharContainer { value: 'y' };
+    foo(x); //&mut CharContainer is coerced to &char.
+}
+```
+* `&mut T` to `&mut U` if `T` implements `DerefMut<Target = U>`.
+
+* TyCtor(`T`) to TyCtor(coerce_inner(`T`)), where TyCtor(`T`) is one of
+    - `&T`
+    - `&mut T`
+    - `*const T`
+    - `*mut T`
+    - `Box<T>`
+
+    and where
+    - coerce_inner(`[T, ..n]`) = `[T]`
+    - coerce_inner(`T`) = `U` where `T` is a concrete type which implements the
+    trait `U`.
+
+    In the future, coerce_inner will be recursively extended to tuples and
+    structs. In addition, coercions from sub-traits to super-traits will be
+    added. See [RFC401] for more details.
+
 # Special traits
 
 Several traits define special evaluation behavior.
@@ -3621,6 +3775,14 @@ The `Sized` trait indicates that the size of this type is known at compile-time.
 
 The `Drop` trait provides a destructor, to be run whenever a value of this type
 is to be destroyed.
+
+## The `Deref` trait
+
+The `Deref<Target = U>` trait allows a type to implicitly implement all the methods
+of the type `U`. When attempting to resolve a method call, the compiler will search
+the top-level type for the implementation of the called method. If no such method is
+found, `.deref()` is called and the compiler continues to search for the method
+implementation in the returned type `U`.
 
 # Memory model
 

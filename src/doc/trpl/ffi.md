@@ -81,7 +81,7 @@ vectors as pointers to memory. Rust's vectors are guaranteed to be a contiguous 
 length is number of elements currently contained, and the capacity is the total size in elements of
 the allocated memory. The length is less than or equal to the capacity.
 
-```
+```rust
 # #![feature(libc)]
 # extern crate libc;
 # use libc::{c_int, size_t};
@@ -106,7 +106,7 @@ required capacity to hold the compressed output. The vector can then be passed t
 `snappy_compress` function as an output parameter. An output parameter is also passed to retrieve
 the true length after compression for setting the length.
 
-```
+```rust
 # #![feature(libc)]
 # extern crate libc;
 # use libc::{size_t, c_int};
@@ -133,7 +133,7 @@ pub fn compress(src: &[u8]) -> Vec<u8> {
 Decompression is similar, because snappy stores the uncompressed size as part of the compression
 format and `snappy_uncompressed_length` will retrieve the exact buffer size required.
 
-```
+```rust
 # #![feature(libc)]
 # extern crate libc;
 # use libc::{size_t, c_int};
@@ -238,7 +238,7 @@ However it is often desired that the callback is targeted to a special
 Rust object. This could be the object that represents the wrapper for the
 respective C object.
 
-This can be achieved by passing an unsafe pointer to the object down to the
+This can be achieved by passing an raw pointer to the object down to the
 C library. The C library can then include the pointer to the Rust object in
 the notification. This will allow the callback to unsafely access the
 referenced Rust object.
@@ -342,8 +342,10 @@ Note that frameworks are only available on OSX targets.
 The different `kind` values are meant to differentiate how the native library
 participates in linkage. From a linkage perspective, the rust compiler creates
 two flavors of artifacts: partial (rlib/staticlib) and final (dylib/binary).
-Native dynamic libraries and frameworks are propagated to the final artifact
-boundary, while static libraries are not propagated at all.
+Native dynamic library and framework dependencies are propagated to the final
+artifact boundary, while static library dependencies are not propagated at
+all, because the static libraries are integrated directly into the subsequent
+artifact.
 
 A few examples of how this model can be used are:
 
@@ -368,14 +370,14 @@ On OSX, frameworks behave with the same semantics as a dynamic library.
 
 # Unsafe blocks
 
-Some operations, like dereferencing unsafe pointers or calling functions that have been marked
+Some operations, like dereferencing raw pointers or calling functions that have been marked
 unsafe are only allowed inside unsafe blocks. Unsafe blocks isolate unsafety and are a promise to
 the compiler that the unsafety does not leak out of the block.
 
 Unsafe functions, on the other hand, advertise it to the world. An unsafe function is written like
 this:
 
-```
+```rust
 unsafe fn kaboom(ptr: *const i32) -> i32 { *ptr }
 ```
 
@@ -439,7 +441,7 @@ Most foreign code exposes a C ABI, and Rust uses the platform's C calling conven
 calling foreign functions. Some foreign functions, most notably the Windows API, use other calling
 conventions. Rust provides a way to tell the compiler which convention to use:
 
-```
+```rust
 # #![feature(libc)]
 extern crate libc;
 
@@ -516,7 +518,7 @@ function pointer using the C ABI.
 You may wish to compile Rust code in a way so that it can be called from C. This is
 fairly easy, but requires a few things:
 
-```
+```rust
 #[no_mangle]
 pub extern fn hello_rust() -> *const u8 {
     "Hello, world!\0".as_ptr()
@@ -528,3 +530,37 @@ The `extern` makes this function adhere to the C calling convention, as
 discussed above in "[Foreign Calling
 Conventions](ffi.html#foreign-calling-conventions)". The `no_mangle`
 attribute turns off Rust's name mangling, so that it is easier to link to.
+
+# FFI and panics
+
+It’s important to be mindful of `panic!`s when working with FFI. This code,
+when called from C, will `abort`:
+
+```rust
+#[no_mangle]
+pub extern fn oh_no() -> ! {
+    panic!("Oops!");
+}
+# fn main() {}
+```
+
+If you’re writing code that may panic, you should run it in another thread,
+so that the panic doesn’t bubble up to C:
+
+```rust
+use std::thread;
+
+#[no_mangle]
+pub extern fn oh_no() -> i32 {
+    let h = thread::spawn(|| {
+        panic!("Oops!");
+    });
+
+    match h.join() {
+        Ok(_) => 1,
+        Err(_) => 0,
+    }
+}
+# fn main() {}
+```
+

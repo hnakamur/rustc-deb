@@ -11,7 +11,6 @@
 use super::{InferCtxt, fixup_err, fres, unresolved_ty, unresolved_int_ty, unresolved_float_ty};
 use middle::ty::{self, Ty};
 use middle::ty_fold::{self, TypeFoldable};
-use util::ppaux::Repr;
 
 ///////////////////////////////////////////////////////////////////////////
 // OPPORTUNISTIC TYPE RESOLVER
@@ -81,22 +80,22 @@ impl<'a, 'tcx> ty_fold::TypeFolder<'tcx> for FullTypeResolver<'a, 'tcx> {
         } else {
             let t = self.infcx.shallow_resolve(t);
             match t.sty {
-                ty::ty_infer(ty::TyVar(vid)) => {
+                ty::TyInfer(ty::TyVar(vid)) => {
                     self.err = Some(unresolved_ty(vid));
                     self.tcx().types.err
                 }
-                ty::ty_infer(ty::IntVar(vid)) => {
+                ty::TyInfer(ty::IntVar(vid)) => {
                     self.err = Some(unresolved_int_ty(vid));
                     self.tcx().types.err
                 }
-                ty::ty_infer(ty::FloatVar(vid)) => {
+                ty::TyInfer(ty::FloatVar(vid)) => {
                     self.err = Some(unresolved_float_ty(vid));
                     self.tcx().types.err
                 }
-                ty::ty_infer(_) => {
+                ty::TyInfer(_) => {
                     self.infcx.tcx.sess.bug(
-                        &format!("Unexpected type in full type resolver: {}",
-                                t.repr(self.infcx.tcx)));
+                        &format!("Unexpected type in full type resolver: {:?}",
+                                t));
                 }
                 _ => {
                     ty_fold::super_fold_ty(self, t)

@@ -277,9 +277,9 @@ allocated on the heap:
 | 0       | x    | ?????? |
 
 [drop]: drop.html
-[moving]: We can make the memory live longer by transferring ownership,
-          sometimes called ‘moving out of the box’. More complex examples will
-          be covered later.
+[^moving]: We can make the memory live longer by transferring ownership,
+           sometimes called ‘moving out of the box’. More complex examples will
+           be covered later.
 
 
 And then the stack frame goes away, freeing all of our memory.
@@ -454,7 +454,7 @@ At the end of `bar()`, it calls `baz()`:
 | (2<sup>30</sup>) - 1 |      | 5                    |
 | ...                  | ...  | ...                  |
 | 12                   | g    | 100                  |
-| 11                   | f    | 4                    |
+| 11                   | f    | 9                    |
 | 10                   | e    | 9                    |
 | 9                    | d    | (2<sup>30</sup>) - 1 |
 | 8                    | c    | 5                    |

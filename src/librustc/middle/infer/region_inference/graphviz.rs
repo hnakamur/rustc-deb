@@ -24,7 +24,6 @@ use super::Constraint;
 use middle::infer::SubregionOrigin;
 use middle::infer::region_inference::RegionVarBindings;
 use util::nodemap::{FnvHashMap, FnvHashSet};
-use util::ppaux::Repr;
 
 use std::borrow::Cow;
 use std::collections::hash_map::Entry::Vacant;
@@ -32,7 +31,7 @@ use std::env;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
-use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
+use std::sync::atomic::{AtomicBool, Ordering};
 use syntax::ast;
 
 fn print_help_message() {
@@ -76,7 +75,7 @@ pub fn maybe_print_constraints_for<'a, 'tcx>(region_vars: &RegionVarBindings<'a,
     let output_path = {
         let output_template = match requested_output {
             Ok(ref s) if &**s == "help" => {
-                static PRINTED_YET: AtomicBool = ATOMIC_BOOL_INIT;
+                static PRINTED_YET: AtomicBool = AtomicBool::new(false);
                 if !PRINTED_YET.load(Ordering::SeqCst) {
                     print_help_message();
                     PRINTED_YET.store(true, Ordering::SeqCst);
@@ -191,13 +190,13 @@ impl<'a, 'tcx> dot::Labeller<'a, Node, Edge> for ConstraintGraph<'a, 'tcx> {
             Node::RegionVid(n_vid) =>
                 dot::LabelText::label(format!("{:?}", n_vid)),
             Node::Region(n_rgn) =>
-                dot::LabelText::label(format!("{}", n_rgn.repr(self.tcx))),
+                dot::LabelText::label(format!("{:?}", n_rgn)),
         }
     }
     fn edge_label(&self, e: &Edge) -> dot::LabelText {
         match *e {
             Edge::Constraint(ref c) =>
-                dot::LabelText::label(format!("{}", self.map.get(c).unwrap().repr(self.tcx))),
+                dot::LabelText::label(format!("{:?}", self.map.get(c).unwrap())),
             Edge::EnclScope(..) =>
                 dot::LabelText::label(format!("(enclosed)")),
         }

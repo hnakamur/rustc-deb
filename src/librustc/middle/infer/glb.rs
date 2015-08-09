@@ -16,7 +16,6 @@ use super::Subtype;
 
 use middle::ty::{self, Ty};
 use middle::ty_relate::{Relate, RelateResult, TypeRelation};
-use util::ppaux::Repr;
 
 /// "Greatest lower bound" (common subtype)
 pub struct Glb<'a, 'tcx: 'a> {
@@ -35,6 +34,16 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Glb<'a, 'tcx> {
     fn tcx(&self) -> &'a ty::ctxt<'tcx> { self.fields.tcx() }
 
     fn a_is_expected(&self) -> bool { self.fields.a_is_expected }
+
+    fn will_change(&mut self, a: bool, b: bool) -> bool {
+        // Hmm, so the result of GLB will still be a LB if one or both
+        // sides change to 'static, but it may no longer be the GLB.
+        // I'm going to go with `a || b` here to be conservative,
+        // since the result of this operation may be affected, though
+        // I think it would mostly be more accepting than before (since the result
+        // would be a bigger region).
+        a || b
+    }
 
     fn relate_with_variance<T:Relate<'a,'tcx>>(&mut self,
                                                variance: ty::Variance,
@@ -55,10 +64,10 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Glb<'a, 'tcx> {
     }
 
     fn regions(&mut self, a: ty::Region, b: ty::Region) -> RelateResult<'tcx, ty::Region> {
-        debug!("{}.regions({}, {})",
+        debug!("{}.regions({:?}, {:?})",
                self.tag(),
-               a.repr(self.fields.infcx.tcx),
-               b.repr(self.fields.infcx.tcx));
+               a,
+               b);
 
         let origin = Subtype(self.fields.trace.clone());
         Ok(self.fields.infcx.region_vars.glb_regions(origin, a, b))

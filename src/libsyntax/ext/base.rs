@@ -154,18 +154,18 @@ pub trait MultiItemDecorator {
               ecx: &mut ExtCtxt,
               sp: Span,
               meta_item: &ast::MetaItem,
-              item: Annotatable,
+              item: &Annotatable,
               push: &mut FnMut(Annotatable));
 }
 
 impl<F> MultiItemDecorator for F
-    where F : Fn(&mut ExtCtxt, Span, &ast::MetaItem, Annotatable, &mut FnMut(Annotatable))
+    where F : Fn(&mut ExtCtxt, Span, &ast::MetaItem, &Annotatable, &mut FnMut(Annotatable))
 {
     fn expand(&self,
               ecx: &mut ExtCtxt,
               sp: Span,
               meta_item: &ast::MetaItem,
-              item: Annotatable,
+              item: &Annotatable,
               push: &mut FnMut(Annotatable)) {
         (*self)(ecx, sp, meta_item, item, push)
     }
@@ -648,7 +648,7 @@ impl<'a> ExtCtxt<'a> {
         parse::tts_to_parser(self.parse_sess, tts.to_vec(), self.cfg())
     }
 
-    pub fn codemap(&self) -> &'a CodeMap { &self.parse_sess.span_diagnostic.cm }
+    pub fn codemap(&self) -> &'a CodeMap { self.parse_sess.codemap() }
     pub fn parse_sess(&self) -> &'a parse::ParseSess { self.parse_sess }
     pub fn cfg(&self) -> ast::CrateConfig { self.cfg.clone() }
     pub fn call_site(&self) -> Span {

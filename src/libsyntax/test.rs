@@ -123,7 +123,7 @@ impl<'a> fold::Folder for TestHarnessGenerator<'a> {
 
         let i = if is_test_fn(&self.cx, &*i) || is_bench_fn(&self.cx, &*i) {
             match i.node {
-                ast::ItemFn(_, ast::Unsafety::Unsafe, _, _, _) => {
+                ast::ItemFn(_, ast::Unsafety::Unsafe, _, _, _, _) => {
                     let diag = self.cx.span_diagnostic;
                     panic!(diag.span_fatal(i.span, "unsafe functions cannot be used for tests"));
                 }
@@ -301,7 +301,7 @@ fn ignored_span(cx: &TestCtxt, sp: Span) -> Span {
             allow_internal_unstable: true,
         }
     };
-    let expn_id = cx.sess.span_diagnostic.cm.record_expansion(info);
+    let expn_id = cx.sess.codemap().record_expansion(info);
     let mut sp = sp;
     sp.expn_id = expn_id;
     return sp;
@@ -320,7 +320,7 @@ fn is_test_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
 
     fn has_test_signature(i: &ast::Item) -> HasTestSignature {
         match &i.node {
-          &ast::ItemFn(ref decl, _, _, ref generics, _) => {
+          &ast::ItemFn(ref decl, _, _, _, ref generics, _) => {
             let no_output = match decl.output {
                 ast::DefaultReturn(..) => true,
                 ast::Return(ref t) if t.node == ast::TyTup(vec![]) => true,
@@ -356,7 +356,7 @@ fn is_bench_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
 
     fn has_test_signature(i: &ast::Item) -> bool {
         match i.node {
-            ast::ItemFn(ref decl, _, _, ref generics, _) => {
+            ast::ItemFn(ref decl, _, _, _, ref generics, _) => {
                 let input_cnt = decl.inputs.len();
                 let no_output = match decl.output {
                     ast::DefaultReturn(..) => true,
@@ -469,7 +469,9 @@ fn mk_main(cx: &mut TestCtxt) -> P<ast::Item> {
     let main_ret_ty = ecx.ty(sp, ast::TyTup(vec![]));
     let main_body = ecx.block_all(sp, vec![call_test_main], None);
     let main = ast::ItemFn(ecx.fn_decl(vec![], main_ret_ty),
-                           ast::Unsafety::Normal, ::abi::Rust, empty_generics(), main_body);
+                           ast::Unsafety::Normal,
+                           ast::Constness::NotConst,
+                           ::abi::Rust, empty_generics(), main_body);
     let main = P(ast::Item {
         ident: token::str_to_ident("main"),
         attrs: vec![main_attr],
@@ -656,7 +658,7 @@ fn mk_test_desc_and_fn_rec(cx: &TestCtxt, test: &Test) -> P<ast::Expr> {
             diag.handler.bug("expected to find top-level re-export name, but found None");
         }
     };
-    visible_path.extend(path.into_iter());
+    visible_path.extend(path);
 
     let fn_expr = ecx.expr_path(ecx.path_global(span, visible_path));
 
