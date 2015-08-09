@@ -10,6 +10,7 @@
 
 use std::iter::{FromIterator, repeat};
 use std::mem::size_of;
+#[allow(deprecated)]
 use std::vec::as_vec;
 
 use test::Bencher;
@@ -25,12 +26,14 @@ impl<'a> Drop for DropCounter<'a> {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_as_vec() {
     let xs = [1u8, 2u8, 3u8];
     assert_eq!(&**as_vec(&xs), xs);
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_as_vec_dtor() {
     let (mut count_x, mut count_y) = (0, 0);
     {
@@ -110,6 +113,21 @@ fn test_extend() {
     for i in 3..10 { w.push(i) }
 
     assert_eq!(v, w);
+}
+
+#[test]
+fn test_extend_ref() {
+    let mut v = vec![1, 2];
+    v.extend(&[3, 4, 5]);
+
+    assert_eq!(v.len(), 5);
+    assert_eq!(v, [1, 2, 3, 4, 5]);
+
+    let w = vec![6, 7];
+    v.extend(&w);
+
+    assert_eq!(v.len(), 7);
+    assert_eq!(v, [1, 2, 3, 4, 5, 6, 7]);
 }
 
 #[test]
@@ -399,7 +417,7 @@ fn test_map_in_place_zero_sized() {
 
 #[test]
 fn test_map_in_place_zero_drop_count() {
-    use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Clone, PartialEq, Debug)]
     struct Nothing;
@@ -413,7 +431,7 @@ fn test_map_in_place_zero_drop_count() {
         }
     }
     const NUM_ELEMENTS: usize = 2;
-    static DROP_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+    static DROP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     let v = repeat(Nothing).take(NUM_ELEMENTS).collect::<Vec<_>>();
 
@@ -684,7 +702,7 @@ fn do_bench_from_iter(b: &mut Bencher, src_len: usize) {
     b.bytes = src_len as u64;
 
     b.iter(|| {
-        let dst: Vec<_> = FromIterator::from_iter(src.clone().into_iter());
+        let dst: Vec<_> = FromIterator::from_iter(src.clone());
         assert_eq!(dst.len(), src_len);
         assert!(dst.iter().enumerate().all(|(i, x)| i == *x));
     });
@@ -718,7 +736,7 @@ fn do_bench_extend(b: &mut Bencher, dst_len: usize, src_len: usize) {
 
     b.iter(|| {
         let mut dst = dst.clone();
-        dst.extend(src.clone().into_iter());
+        dst.extend(src.clone());
         assert_eq!(dst.len(), dst_len + src_len);
         assert!(dst.iter().enumerate().all(|(i, x)| i == *x));
     });
@@ -816,7 +834,7 @@ fn do_bench_push_all_move(b: &mut Bencher, dst_len: usize, src_len: usize) {
 
     b.iter(|| {
         let mut dst = dst.clone();
-        dst.extend(src.clone().into_iter());
+        dst.extend(src.clone());
         assert_eq!(dst.len(), dst_len + src_len);
         assert!(dst.iter().enumerate().all(|(i, x)| i == *x));
     });

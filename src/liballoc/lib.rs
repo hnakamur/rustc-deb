@@ -22,9 +22,9 @@
 //!
 //! ## Boxed values
 //!
-//! The [`Box`](boxed/index.html) type is the core owned pointer type in Rust.
-//! There can only be one owner of a `Box`, and the owner can decide to mutate
-//! the contents, which live on the heap.
+//! The [`Box`](boxed/index.html) type is a smart pointer type. There can
+//! only be one owner of a `Box`, and the owner can decide to mutate the
+//! contents, which live on the heap.
 //!
 //! This type can be sent among threads efficiently as the size of a `Box` value
 //! is the same as that of a pointer. Tree-like data structures are often built
@@ -59,31 +59,39 @@
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "alloc"]
-#![unstable(feature = "alloc")]
-#![feature(staged_api)]
-#![staged_api]
 #![crate_type = "rlib"]
+#![staged_api]
+#![unstable(feature = "alloc",
+            reason = "this library is unlikely to be stabilized in its current \
+                      form or name")]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/")]
-#![doc(test(no_crate_inject))]
-
-#![feature(no_std)]
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
+       html_root_url = "http://doc.rust-lang.org/nightly/",
+       test(no_crate_inject))]
 #![no_std]
+
 #![feature(allocator)]
+#![feature(box_syntax)]
+#![feature(coerce_unsized)]
+#![feature(core)]
+#![feature(core_intrinsics)]
+#![feature(core_prelude)]
 #![feature(custom_attribute)]
 #![feature(fundamental)]
 #![feature(lang_items)]
-#![feature(box_syntax)]
+#![feature(no_std)]
+#![feature(nonzero)]
 #![feature(optin_builtin_traits)]
+#![feature(raw)]
+#![feature(staged_api)]
 #![feature(unboxed_closures)]
-#![feature(unsafe_no_drop_flag, filling_drop)]
-#![feature(core)]
 #![feature(unique)]
-#![cfg_attr(test, feature(test, alloc, rustc_private))]
+#![feature(unsafe_no_drop_flag, filling_drop)]
+#![feature(unsize)]
+
+#![cfg_attr(test, feature(test, alloc, rustc_private, box_raw))]
 #![cfg_attr(all(not(feature = "external_funcs"), not(feature = "external_crate")),
             feature(libc))]
-
 
 #[macro_use]
 extern crate core;
@@ -118,6 +126,7 @@ pub mod rc;
 /// Common out-of-memory routine
 #[cold]
 #[inline(never)]
+#[unstable(feature = "oom", reason = "not a scrutinized interface")]
 pub fn oom() -> ! {
     // FIXME(#14674): This really needs to do something other than just abort
     //                here, but any printing done must be *guaranteed* to not
@@ -138,4 +147,5 @@ pub fn oom() -> ! {
 //                to get linked in to libstd successfully (the linker won't
 //                optimize it out).
 #[doc(hidden)]
+#[unstable(feature = "issue_14344_fixme")]
 pub fn fixme_14344_be_sure_to_link_to_collections() {}

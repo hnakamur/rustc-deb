@@ -24,6 +24,10 @@ use sys_common::rwlock as sys;
 /// of the underlying data (exclusive access) and the read portion of this lock
 /// typically allows for read-only access (shared access).
 ///
+/// The priority policy of the lock is dependent on the underlying operating
+/// system's implementation, and this type does not guarantee that any
+/// particular policy will be used.
+///
 /// The type parameter `T` represents the data that this lock protects. It is
 /// required that `T` satisfies `Send` to be shared across threads and `Sync` to
 /// allow concurrent access through readers. The RAII guards returned from the
@@ -77,7 +81,7 @@ unsafe impl<T: ?Sized + Send + Sync> Sync for RwLock<T> {}
 /// # Examples
 ///
 /// ```
-/// # #![feature(std_misc)]
+/// # #![feature(static_rwlock)]
 /// use std::sync::{StaticRwLock, RW_LOCK_INIT};
 ///
 /// static LOCK: StaticRwLock = RW_LOCK_INIT;
@@ -92,7 +96,7 @@ unsafe impl<T: ?Sized + Send + Sync> Sync for RwLock<T> {}
 /// }
 /// unsafe { LOCK.destroy() } // free all resources
 /// ```
-#[unstable(feature = "std_misc",
+#[unstable(feature = "static_rwlock",
            reason = "may be merged with RwLock in the future")]
 pub struct StaticRwLock {
     lock: sys::RWLock,
@@ -100,12 +104,9 @@ pub struct StaticRwLock {
 }
 
 /// Constant initialization for a statically-initialized rwlock.
-#[unstable(feature = "std_misc",
+#[unstable(feature = "static_rwlock",
            reason = "may be merged with RwLock in the future")]
-pub const RW_LOCK_INIT: StaticRwLock = StaticRwLock {
-    lock: sys::RWLOCK_INIT,
-    poison: poison::FLAG_INIT,
-};
+pub const RW_LOCK_INIT: StaticRwLock = StaticRwLock::new();
 
 /// RAII structure used to release the shared read access of a lock when
 /// dropped.
@@ -142,7 +143,7 @@ impl<T> RwLock<T> {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new(t: T) -> RwLock<T> {
-        RwLock { inner: box RW_LOCK_INIT, data: UnsafeCell::new(t) }
+        RwLock { inner: box StaticRwLock::new(), data: UnsafeCell::new(t) }
     }
 }
 
@@ -252,7 +253,7 @@ impl<T: ?Sized> RwLock<T> {
     /// time.  You should not trust a `false` value for program correctness
     /// without additional synchronization.
     #[inline]
-    #[unstable(feature = "std_misc")]
+    #[stable(feature = "sync_poison", since = "1.2.0")]
     pub fn is_poisoned(&self) -> bool {
         self.inner.poison.get()
     }
@@ -280,16 +281,24 @@ impl<T: ?Sized + fmt::Debug> fmt::Debug for RwLock<T> {
 
 struct Dummy(UnsafeCell<()>);
 unsafe impl Sync for Dummy {}
-static DUMMY: Dummy = Dummy(UnsafeCell { value: () });
+static DUMMY: Dummy = Dummy(UnsafeCell::new(()));
 
+#[unstable(feature = "static_rwlock",
+           reason = "may be merged with RwLock in the future")]
 impl StaticRwLock {
+    /// Creates a new rwlock.
+    pub const fn new() -> StaticRwLock {
+        StaticRwLock {
+            lock: sys::RWLock::new(),
+            poison: poison::Flag::new(),
+        }
+    }
+
     /// Locks this rwlock with shared read access, blocking the current thread
     /// until it can be acquired.
     ///
     /// See `RwLock::read`.
     #[inline]
-    #[unstable(feature = "std_misc",
-               reason = "may be merged with RwLock in the future")]
     pub fn read(&'static self) -> LockResult<RwLockReadGuard<'static, ()>> {
         unsafe { self.lock.read() }
         RwLockReadGuard::new(self, &DUMMY.0)
@@ -299,8 +308,6 @@ impl StaticRwLock {
     ///
     /// See `RwLock::try_read`.
     #[inline]
-    #[unstable(feature = "std_misc",
-               reason = "may be merged with RwLock in the future")]
     pub fn try_read(&'static self)
                     -> TryLockResult<RwLockReadGuard<'static, ()>> {
         if unsafe { self.lock.try_read() } {
@@ -315,8 +322,6 @@ impl StaticRwLock {
     ///
     /// See `RwLock::write`.
     #[inline]
-    #[unstable(feature = "std_misc",
-               reason = "may be merged with RwLock in the future")]
     pub fn write(&'static self) -> LockResult<RwLockWriteGuard<'static, ()>> {
         unsafe { self.lock.write() }
         RwLockWriteGuard::new(self, &DUMMY.0)
@@ -326,8 +331,6 @@ impl StaticRwLock {
     ///
     /// See `RwLock::try_write`.
     #[inline]
-    #[unstable(feature = "std_misc",
-               reason = "may be merged with RwLock in the future")]
     pub fn try_write(&'static self)
                      -> TryLockResult<RwLockWriteGuard<'static, ()>> {
         if unsafe { self.lock.try_write() } {
@@ -343,8 +346,6 @@ impl StaticRwLock {
     /// active users of the lock, and this also doesn't prevent any future users
     /// of this lock. This method is required to be called to not leak memory on
     /// all platforms.
-    #[unstable(feature = "std_misc",
-               reason = "may be merged with RwLock in the future")]
     pub unsafe fn destroy(&'static self) {
         self.lock.destroy()
     }
@@ -420,7 +421,7 @@ mod tests {
     use rand::{self, Rng};
     use sync::mpsc::channel;
     use thread;
-    use sync::{Arc, RwLock, StaticRwLock, TryLockError, RW_LOCK_INIT};
+    use sync::{Arc, RwLock, StaticRwLock, TryLockError};
 
     #[test]
     fn smoke() {
@@ -433,7 +434,7 @@ mod tests {
 
     #[test]
     fn static_smoke() {
-        static R: StaticRwLock = RW_LOCK_INIT;
+        static R: StaticRwLock = StaticRwLock::new();
         drop(R.read().unwrap());
         drop(R.write().unwrap());
         drop((R.read().unwrap(), R.read().unwrap()));
@@ -443,7 +444,7 @@ mod tests {
 
     #[test]
     fn frob() {
-        static R: StaticRwLock = RW_LOCK_INIT;
+        static R: StaticRwLock = StaticRwLock::new();
         const N: usize = 10;
         const M: usize = 1000;
 

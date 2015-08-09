@@ -19,10 +19,21 @@ pub enum Parameter {
     Region(ty::EarlyBoundRegion),
 }
 
+/// Returns the list of parameters that are constrained by the type `ty`
+/// - i.e. the value of each parameter in the list is uniquely determined
+/// by `ty` (see RFC 447).
 pub fn parameters_for_type<'tcx>(ty: Ty<'tcx>) -> Vec<Parameter> {
-    ty.walk()
-      .flat_map(|ty| parameters_for_type_shallow(ty).into_iter())
-      .collect()
+    let mut result = vec![];
+    ty::maybe_walk_ty(ty, |t| {
+        if let ty::TyProjection(..) = t.sty {
+            false // projections are not injective.
+        } else {
+            result.append(&mut parameters_for_type_shallow(t));
+            // non-projection type constructors are injective.
+            true
+        }
+    });
+    result
 }
 
 pub fn parameters_for_trait_ref<'tcx>(trait_ref: &ty::TraitRef<'tcx>) -> Vec<Parameter> {
@@ -31,7 +42,7 @@ pub fn parameters_for_trait_ref<'tcx>(trait_ref: &ty::TraitRef<'tcx>) -> Vec<Par
 
     let type_parameters =
         trait_ref.substs.types.iter()
-                              .flat_map(|ty| parameters_for_type(ty).into_iter());
+                              .flat_map(|ty| parameters_for_type(ty));
 
     region_parameters.extend(type_parameters);
 
@@ -40,14 +51,14 @@ pub fn parameters_for_trait_ref<'tcx>(trait_ref: &ty::TraitRef<'tcx>) -> Vec<Par
 
 fn parameters_for_type_shallow<'tcx>(ty: Ty<'tcx>) -> Vec<Parameter> {
     match ty.sty {
-        ty::ty_param(ref d) =>
+        ty::TyParam(ref d) =>
             vec![Parameter::Type(d.clone())],
-        ty::ty_rptr(region, _) =>
+        ty::TyRef(region, _) =>
             parameters_for_region(region).into_iter().collect(),
-        ty::ty_struct(_, substs) |
-        ty::ty_enum(_, substs) =>
+        ty::TyStruct(_, substs) |
+        ty::TyEnum(_, substs) =>
             parameters_for_regions_in_substs(substs),
-        ty::ty_trait(ref data) =>
+        ty::TyTrait(ref data) =>
             parameters_for_regions_in_substs(&data.principal.skip_binder().substs),
         _ =>
             vec![],

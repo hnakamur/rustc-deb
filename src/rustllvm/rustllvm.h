@@ -12,7 +12,6 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
-#include "llvm/PassManager.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Analysis/Passes.h"
@@ -46,18 +45,16 @@
 #include "llvm-c/ExecutionEngine.h"
 #include "llvm-c/Object.h"
 
+#if LLVM_VERSION_MINOR >= 7
+#include "llvm/IR/LegacyPassManager.h"
+#else
+#include "llvm/PassManager.h"
+#endif
+
 #include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/Linker/Linker.h"
-
-// Used by RustMCJITMemoryManager::getPointerToNamedFunction()
-// to get around glibc issues. See the function for more information.
-#ifdef __linux__
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-#endif
 
 void LLVMRustSetLastError(const char*);
 

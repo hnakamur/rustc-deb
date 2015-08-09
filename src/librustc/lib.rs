@@ -22,28 +22,45 @@
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-      html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+      html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "http://doc.rust-lang.org/nightly/")]
 
+#![feature(append)]
 #![feature(associated_consts)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
+#![feature(clone_from_slice)]
 #![feature(collections)]
-#![feature(core)]
+#![feature(const_fn)]
 #![feature(duration)]
 #![feature(duration_span)]
+#![feature(dynamic_lib)]
+#![feature(enumset)]
 #![feature(fs_canonicalize)]
-#![feature(hash)]
+#![feature(hash_default)]
+#![feature(hashmap_hasher)]
 #![feature(into_cow)]
+#![feature(iter_cmp)]
+#![feature(iter_arith)]
 #![feature(libc)]
+#![feature(map_in_place)]
+#![feature(num_bits_bytes)]
 #![feature(path_ext)]
 #![feature(quote)]
+#![feature(range_inclusive)]
+#![feature(ref_slice)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
+#![feature(scoped_tls)]
+#![feature(slice_bytes)]
+#![feature(slice_extras)]
 #![feature(slice_patterns)]
+#![feature(slice_position_elem)]
 #![feature(staged_api)]
-#![feature(std_misc)]
 #![feature(str_char)]
+#![feature(str_match_indices)]
+#![feature(vec_push_all)]
+#![feature(wrapping)]
 #![cfg_attr(test, feature(test))]
 
 #![allow(trivial_casts)]
@@ -91,9 +108,12 @@ pub mod back {
     pub use rustc_back::x86_64;
 }
 
+pub mod ast_map;
+
 pub mod middle {
     pub mod astconv_util;
     pub mod astencode;
+    pub mod cast;
     pub mod cfg;
     pub mod check_const;
     pub mod check_static_recursion;
@@ -166,7 +186,4 @@ mod rustc {
 }
 
 // Build the diagnostics array at the end so that the metadata includes error use sites.
-#[cfg(stage0)]
-__build_diagnostic_array! { DIAGNOSTICS }
-#[cfg(not(stage0))]
 __build_diagnostic_array! { librustc, DIAGNOSTICS }

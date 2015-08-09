@@ -16,8 +16,6 @@ use trans::common::*;
 use trans::foreign;
 use trans::machine;
 use middle::ty::{self, RegionEscape, Ty};
-use util::ppaux;
-use util::ppaux::Repr;
 
 use trans::type_::Type;
 
@@ -38,12 +36,12 @@ fn ensure_array_fits_in_address_space<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
 pub fn arg_is_indirect<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                  arg_ty: Ty<'tcx>) -> bool {
-    !type_is_immediate(ccx, arg_ty)
+    !type_is_immediate(ccx, arg_ty) && !type_is_fat_ptr(ccx.tcx(), arg_ty)
 }
 
 pub fn return_uses_outptr<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                     ty: Ty<'tcx>) -> bool {
-    !type_is_immediate(ccx, ty)
+    arg_is_indirect(ccx, ty)
 }
 
 pub fn type_of_explicit_arg<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
@@ -79,7 +77,7 @@ pub fn untuple_arguments_if_necessary<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     }
 
     match inputs[inputs.len() - 1].sty {
-        ty::ty_tup(ref tupled_arguments) => {
+        ty::TyTuple(ref tupled_arguments) => {
             debug!("untuple_arguments_if_necessary(): untupling arguments");
             for &tupled_argument in tupled_arguments {
                 result.push(tupled_argument);
@@ -100,8 +98,8 @@ pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                  abi: abi::Abi)
                                  -> Type
 {
-    debug!("type_of_rust_fn(sig={},abi={:?})",
-           sig.repr(cx.tcx()),
+    debug!("type_of_rust_fn(sig={:?},abi={:?})",
+           sig,
            abi);
 
     let sig = ty::erase_late_bound_regions(cx.tcx(), sig);
@@ -138,8 +136,15 @@ pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     }
 
     // ... then explicit args.
-    let input_tys = inputs.iter().map(|&arg_ty| type_of_explicit_arg(cx, arg_ty));
-    atys.extend(input_tys);
+    for input in &inputs {
+        let arg_ty = type_of_explicit_arg(cx, input);
+
+        if type_is_fat_ptr(cx.tcx(), input) {
+            atys.extend(arg_ty.field_types());
+        } else {
+            atys.push(arg_ty);
+        }
+    }
 
     Type::func(&atys[..], &lloutputtype)
 }
@@ -147,7 +152,7 @@ pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 // Given a function type and a count of ty params, construct an llvm type
 pub fn type_of_fn_from_ty<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, fty: Ty<'tcx>) -> Type {
     match fty.sty {
-        ty::ty_bare_fn(_, ref f) => {
+        ty::TyBareFn(_, ref f) => {
             // FIXME(#19925) once fn item types are
             // zero-sized, we'll need to do something here
             if f.abi == abi::Rust || f.abi == abi::RustCall {
@@ -184,13 +189,13 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
             Type::struct_(cx, &[Type::i8p(cx), Type::i8p(cx)], false)
         }
 
-        ty::ty_bool => Type::bool(cx),
-        ty::ty_char => Type::char(cx),
-        ty::ty_int(t) => Type::int_from_ty(cx, t),
-        ty::ty_uint(t) => Type::uint_from_ty(cx, t),
-        ty::ty_float(t) => Type::float_from_ty(cx, t),
+        ty::TyBool => Type::bool(cx),
+        ty::TyChar => Type::char(cx),
+        ty::TyInt(t) => Type::int_from_ty(cx, t),
+        ty::TyUint(t) => Type::uint_from_ty(cx, t),
+        ty::TyFloat(t) => Type::float_from_ty(cx, t),
 
-        ty::ty_uniq(ty) | ty::ty_rptr(_, ty::mt{ty, ..}) | ty::ty_ptr(ty::mt{ty, ..}) => {
+        ty::TyBox(ty) | ty::TyRef(_, ty::mt{ty, ..}) | ty::TyRawPtr(ty::mt{ty, ..}) => {
             if type_is_sized(cx.tcx(), ty) {
                 Type::i8p(cx)
             } else {
@@ -198,25 +203,25 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
             }
         }
 
-        ty::ty_bare_fn(..) => Type::i8p(cx),
+        ty::TyBareFn(..) => Type::i8p(cx),
 
-        ty::ty_vec(ty, Some(size)) => {
+        ty::TyArray(ty, size) => {
             let llty = sizing_type_of(cx, ty);
             let size = size as u64;
             ensure_array_fits_in_address_space(cx, llty, size, t);
             Type::array(&llty, size)
         }
 
-        ty::ty_tup(ref tys) if tys.is_empty() => {
+        ty::TyTuple(ref tys) if tys.is_empty() => {
             Type::nil(cx)
         }
 
-        ty::ty_tup(..) | ty::ty_enum(..) | ty::ty_closure(..) => {
+        ty::TyTuple(..) | ty::TyEnum(..) | ty::TyClosure(..) => {
             let repr = adt::represent_type(cx, t);
             adt::sizing_type_of(cx, &*repr, false)
         }
 
-        ty::ty_struct(..) => {
+        ty::TyStruct(..) => {
             if ty::type_is_simd(cx.tcx(), t) {
                 let llet = type_of(cx, ty::simd_type(cx.tcx(), t));
                 let n = ty::simd_size(cx.tcx(), t) as u64;
@@ -228,11 +233,11 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
             }
         }
 
-        ty::ty_projection(..) | ty::ty_infer(..) | ty::ty_param(..) | ty::ty_err(..) => {
-            cx.sess().bug(&format!("fictitious type {} in sizing_type_of()",
-                                  ppaux::ty_to_string(cx.tcx(), t)))
+        ty::TyProjection(..) | ty::TyInfer(..) | ty::TyParam(..) | ty::TyError(..) => {
+            cx.sess().bug(&format!("fictitious type {:?} in sizing_type_of()",
+                                   t))
         }
-        ty::ty_vec(_, None) | ty::ty_trait(..) | ty::ty_str => unreachable!()
+        ty::TySlice(_) | ty::TyTrait(..) | ty::TyStr => unreachable!()
     };
 
     cx.llsizingtypes().borrow_mut().insert(t, llsizingty);
@@ -299,7 +304,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
         None => ()
     }
 
-    debug!("type_of {} {:?}", t.repr(cx.tcx()), t.sty);
+    debug!("type_of {:?}", t);
 
     assert!(!t.has_escaping_regions());
 
@@ -312,10 +317,10 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
 
     if t != t_norm {
         let llty = in_memory_type_of(cx, t_norm);
-        debug!("--> normalized {} {:?} to {} {:?} llty={}",
-                t.repr(cx.tcx()),
+        debug!("--> normalized {:?} {:?} to {:?} {:?} llty={}",
                 t,
-                t_norm.repr(cx.tcx()),
+                t,
+                t_norm,
                 t_norm,
                 cx.tn().type_to_string(llty));
         cx.lltypes().borrow_mut().insert(t, llty);
@@ -323,12 +328,12 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
     }
 
     let mut llty = match t.sty {
-      ty::ty_bool => Type::bool(cx),
-      ty::ty_char => Type::char(cx),
-      ty::ty_int(t) => Type::int_from_ty(cx, t),
-      ty::ty_uint(t) => Type::uint_from_ty(cx, t),
-      ty::ty_float(t) => Type::float_from_ty(cx, t),
-      ty::ty_enum(did, ref substs) => {
+      ty::TyBool => Type::bool(cx),
+      ty::TyChar => Type::char(cx),
+      ty::TyInt(t) => Type::int_from_ty(cx, t),
+      ty::TyUint(t) => Type::uint_from_ty(cx, t),
+      ty::TyFloat(t) => Type::float_from_ty(cx, t),
+      ty::TyEnum(did, ref substs) => {
           // Only create the named struct, but don't fill it in. We
           // fill it in *after* placing it into the type cache. This
           // avoids creating more than one copy of the enum when one
@@ -338,7 +343,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
           let name = llvm_type_name(cx, did, tps);
           adt::incomplete_type_of(cx, &*repr, &name[..])
       }
-      ty::ty_closure(..) => {
+      ty::TyClosure(..) => {
           // Only create the named struct, but don't fill it in. We
           // fill it in *after* placing it into the type cache.
           let repr = adt::represent_type(cx, t);
@@ -349,9 +354,9 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
           adt::incomplete_type_of(cx, &*repr, "closure")
       }
 
-      ty::ty_uniq(ty) | ty::ty_rptr(_, ty::mt{ty, ..}) | ty::ty_ptr(ty::mt{ty, ..}) => {
+      ty::TyBox(ty) | ty::TyRef(_, ty::mt{ty, ..}) | ty::TyRawPtr(ty::mt{ty, ..}) => {
           if !type_is_sized(cx.tcx(), ty) {
-              if let ty::ty_str = ty.sty {
+              if let ty::TyStr = ty.sty {
                   // This means we get a nicer name in the output (str is always
                   // unsized).
                   cx.tn().find_type("str_slice").unwrap()
@@ -359,13 +364,13 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
                   let ptr_ty = in_memory_type_of(cx, ty).ptr_to();
                   let unsized_part = ty::struct_tail(cx.tcx(), ty);
                   let info_ty = match unsized_part.sty {
-                      ty::ty_str | ty::ty_vec(..) => {
+                      ty::TyStr | ty::TyArray(..) | ty::TySlice(_) => {
                           Type::uint_from_ty(cx, ast::TyUs)
                       }
-                      ty::ty_trait(_) => Type::vtable_ptr(cx),
+                      ty::TyTrait(_) => Type::vtable_ptr(cx),
                       _ => panic!("Unexpected type returned from \
-                                   struct_tail: {} for ty={}",
-                                  unsized_part.repr(cx.tcx()), ty.repr(cx.tcx()))
+                                   struct_tail: {:?} for ty={:?}",
+                                  unsized_part, ty)
                   };
                   Type::struct_(cx, &[ptr_ty, info_ty], false)
               }
@@ -374,7 +379,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
           }
       }
 
-      ty::ty_vec(ty, Some(size)) => {
+      ty::TyArray(ty, size) => {
           let size = size as u64;
           let llty = in_memory_type_of(cx, ty);
           ensure_array_fits_in_address_space(cx, llty, size, t);
@@ -385,18 +390,18 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
       // traits have the type of u8. This is so that the data pointer inside
       // fat pointers is of the right type (e.g. for array accesses), even
       // when taking the address of an unsized field in a struct.
-      ty::ty_vec(ty, None) => in_memory_type_of(cx, ty),
-      ty::ty_str | ty::ty_trait(..) => Type::i8(cx),
+      ty::TySlice(ty) => in_memory_type_of(cx, ty),
+      ty::TyStr | ty::TyTrait(..) => Type::i8(cx),
 
-      ty::ty_bare_fn(..) => {
+      ty::TyBareFn(..) => {
           type_of_fn_from_ty(cx, t).ptr_to()
       }
-      ty::ty_tup(ref tys) if tys.is_empty() => Type::nil(cx),
-      ty::ty_tup(..) => {
+      ty::TyTuple(ref tys) if tys.is_empty() => Type::nil(cx),
+      ty::TyTuple(..) => {
           let repr = adt::represent_type(cx, t);
           adt::type_of(cx, &*repr)
       }
-      ty::ty_struct(did, ref substs) => {
+      ty::TyStruct(did, ref substs) => {
           if ty::type_is_simd(cx.tcx(), t) {
               let llet = in_memory_type_of(cx, ty::simd_type(cx.tcx(), t));
               let n = ty::simd_size(cx.tcx(), t) as u64;
@@ -413,14 +418,14 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
           }
       }
 
-      ty::ty_infer(..) => cx.sess().bug("type_of with ty_infer"),
-      ty::ty_projection(..) => cx.sess().bug("type_of with ty_projection"),
-      ty::ty_param(..) => cx.sess().bug("type_of with ty_param"),
-      ty::ty_err(..) => cx.sess().bug("type_of with ty_err"),
+      ty::TyInfer(..) => cx.sess().bug("type_of with TyInfer"),
+      ty::TyProjection(..) => cx.sess().bug("type_of with TyProjection"),
+      ty::TyParam(..) => cx.sess().bug("type_of with ty_param"),
+      ty::TyError(..) => cx.sess().bug("type_of with TyError"),
     };
 
-    debug!("--> mapped t={} {:?} to llty={}",
-            t.repr(cx.tcx()),
+    debug!("--> mapped t={:?} {:?} to llty={}",
+            t,
             t,
             cx.tn().type_to_string(llty));
 
@@ -428,7 +433,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
 
     // If this was an enum or struct, fill in the type now.
     match t.sty {
-        ty::ty_enum(..) | ty::ty_struct(..) | ty::ty_closure(..)
+        ty::TyEnum(..) | ty::TyStruct(..) | ty::TyClosure(..)
                 if !ty::type_is_simd(cx.tcx(), t) => {
             let repr = adt::represent_type(cx, t);
             adt::finish_type_of(cx, &*repr, &mut llty);
@@ -450,7 +455,7 @@ fn llvm_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                             tps: &[Ty<'tcx>])
                             -> String {
     let base = ty::item_path_str(cx.tcx(), did);
-    let strings: Vec<String> = tps.iter().map(|t| t.repr(cx.tcx())).collect();
+    let strings: Vec<String> = tps.iter().map(|t| t.to_string()).collect();
     let tstr = if strings.is_empty() {
         base
     } else {

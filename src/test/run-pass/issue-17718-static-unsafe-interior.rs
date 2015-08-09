@@ -11,6 +11,8 @@
 // pretty-expanded FIXME #23616
 
 #![feature(core)]
+#![feature(const_fn)]
+
 
 use std::marker;
 use std::cell::UnsafeCell;
@@ -38,8 +40,8 @@ unsafe impl<T: Send> Sync for UnsafeEnum<T> {}
 
 static STATIC1: UnsafeEnum<isize> = UnsafeEnum::VariantSafe;
 
-static STATIC2: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell { value: 1 });
-const CONST: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell { value: 1 });
+static STATIC2: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell::new(1));
+const CONST: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell::new(1));
 static STATIC3: MyUnsafe<isize> = MyUnsafe{value: CONST};
 
 static STATIC4: &'static MyUnsafePack<isize> = &STATIC2;
@@ -50,7 +52,7 @@ struct Wrap<T> {
 
 unsafe impl<T: Send> Sync for Wrap<T> {}
 
-static UNSAFE: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell{value: 2});
+static UNSAFE: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell::new(2));
 static WRAPPED_UNSAFE: Wrap<&'static MyUnsafePack<isize>> = Wrap { value: &UNSAFE };
 
 fn main() {

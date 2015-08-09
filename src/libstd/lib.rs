@@ -26,7 +26,7 @@
 //!
 //! ## What is in the standard library
 //!
-//! The standard library is minimal, a set of battle-tested
+//! The standard library is a set of minimal, battle-tested
 //! core types and shared abstractions for the [broader Rust
 //! ecosystem](https://crates.io) to build on.
 //!
@@ -60,7 +60,7 @@
 //! [`FromStr`](str/trait.FromStr.html) trait.
 //!
 //! Data may be shared by placing it in a reference-counted box or the
-//! [`Rc`][rc/index.html] type, and if further contained in a [`Cell`
+//! [`Rc`](rc/index.html) type, and if further contained in a [`Cell`
 //! or `RefCell`](cell/index.html), may be mutated as well as shared.
 //! Likewise, in a concurrent setting it is common to pair an
 //! atomically-reference-counted box, [`Arc`](sync/struct.Arc.html),
@@ -97,40 +97,62 @@
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "http://doc.rust-lang.org/nightly/",
-       html_playground_url = "http://play.rust-lang.org/")]
-#![doc(test(no_crate_inject, attr(deny(warnings))))]
-#![doc(test(attr(allow(dead_code, deprecated, unused_variables, unused_mut))))]
+       html_playground_url = "http://play.rust-lang.org/",
+       test(no_crate_inject, attr(deny(warnings))),
+       test(attr(allow(dead_code, deprecated, unused_variables, unused_mut))))]
 
 #![feature(alloc)]
 #![feature(allow_internal_unstable)]
 #![feature(associated_consts)]
+#![feature(borrow_state)]
+#![feature(box_raw)]
 #![feature(box_syntax)]
+#![feature(char_internals)]
+#![feature(clone_from_slice)]
 #![feature(collections)]
+#![feature(collections_bound)]
+#![feature(const_fn)]
 #![feature(core)]
-#![feature(debug_builders)]
+#![feature(core_float)]
+#![feature(core_intrinsics)]
+#![feature(core_prelude)]
+#![feature(core_simd)]
+#![feature(fnbox)]
+#![feature(heap_api)]
+#![feature(int_error_internals)]
 #![feature(into_cow)]
+#![feature(iter_order)]
 #![feature(lang_items)]
 #![feature(libc)]
 #![feature(linkage, thread_local, asm)]
 #![feature(macro_reexport)]
+#![feature(slice_concat_ext)]
+#![feature(slice_position_elem)]
+#![feature(no_std)]
+#![feature(oom)]
 #![feature(optin_builtin_traits)]
 #![feature(rand)]
+#![feature(raw)]
+#![feature(reflect_marker)]
+#![feature(slice_bytes)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
-#![feature(std_misc)]
 #![feature(str_char)]
+#![feature(str_internals)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
 #![feature(unique)]
 #![feature(unsafe_no_drop_flag, filling_drop)]
+#![feature(vec_push_all)]
+#![feature(wrapping)]
 #![feature(zero_one)]
-#![cfg_attr(test, feature(float_from_str_radix))]
-#![cfg_attr(test, feature(test, rustc_private, std_misc))]
+#![cfg_attr(windows, feature(str_utf16))]
+#![cfg_attr(test, feature(float_from_str_radix, range_inclusive, float_extras))]
+#![cfg_attr(test, feature(test, rustc_private, float_consts))]
 
 // Don't link to std. We are std.
-#![feature(no_std)]
 #![no_std]
 
 #![allow(trivial_casts)]

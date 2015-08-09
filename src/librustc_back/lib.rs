@@ -29,19 +29,19 @@
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-      html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+      html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "http://doc.rust-lang.org/nightly/")]
 
 #![feature(box_syntax)]
-#![feature(collections)]
-#![feature(core)]
-#![feature(rustc_private)]
-#![feature(staged_api)]
-#![feature(rand)]
-#![feature(path_ext)]
-#![feature(step_by)]
-#![feature(libc)]
 #![feature(fs_canonicalize)]
+#![feature(libc)]
+#![feature(path_ext)]
+#![feature(rand)]
+#![feature(rustc_private)]
+#![feature(slice_bytes)]
+#![feature(staged_api)]
+#![feature(step_by)]
+#![feature(vec_push_all)]
 #![cfg_attr(test, feature(test, rand))]
 
 extern crate syntax;

@@ -23,13 +23,8 @@ pub struct Condvar { inner: UnsafeCell<ffi::pthread_cond_t> }
 unsafe impl Send for Condvar {}
 unsafe impl Sync for Condvar {}
 
-pub const CONDVAR_INIT: Condvar = Condvar {
-    inner: UnsafeCell { value: ffi::PTHREAD_COND_INITIALIZER },
-};
-
 impl Condvar {
-    #[inline]
-    pub unsafe fn new() -> Condvar {
+    pub const fn new() -> Condvar {
         // Might be moved and address is changing it is better to avoid
         // initialization of potentially opaque OS data before it landed
         Condvar { inner: UnsafeCell::new(ffi::PTHREAD_COND_INITIALIZER) }
@@ -65,21 +60,22 @@ impl Condvar {
         let r = ffi::gettimeofday(&mut sys_now, ptr::null_mut());
         debug_assert_eq!(r, 0);
 
+        let nsec = dur.extra_nanos() as libc::c_long +
+                   (sys_now.tv_usec * 1000) as libc::c_long;
+        let extra = (nsec / 1_000_000_000) as libc::time_t;
+        let nsec = nsec % 1_000_000_000;
         let seconds = dur.secs() as libc::time_t;
-        let timeout = match sys_now.tv_sec.checked_add(seconds) {
-            Some(sec) => {
-                libc::timespec {
-                    tv_sec: sec,
-                    tv_nsec: dur.extra_nanos() as libc::c_long,
-                }
+
+        let timeout = sys_now.tv_sec.checked_add(extra).and_then(|s| {
+            s.checked_add(seconds)
+        }).map(|s| {
+            libc::timespec { tv_sec: s, tv_nsec: nsec }
+        }).unwrap_or_else(|| {
+            libc::timespec {
+                tv_sec: <libc::time_t>::max_value(),
+                tv_nsec: 1_000_000_000 - 1,
             }
-            None => {
-                libc::timespec {
-                    tv_sec: <libc::time_t>::max_value(),
-                    tv_nsec: 1_000_000_000 - 1,
-                }
-            }
-        };
+        });
 
         // And wait!
         let r = ffi::pthread_cond_timedwait(self.inner.get(), mutex::raw(mutex),

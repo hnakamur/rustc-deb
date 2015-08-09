@@ -34,7 +34,6 @@ use middle::ty::{self, Ty};
 use syntax::abi::RustIntrinsic;
 use syntax::ast;
 use syntax::parse::token;
-use util::ppaux::{Repr, ty_to_string};
 
 pub fn get_simple_intrinsic(ccx: &CrateContext, item: &ast::ForeignItem) -> Option<ValueRef> {
     let name = match &token::get_ident(item.ident)[..] {
@@ -93,7 +92,7 @@ pub fn get_simple_intrinsic(ccx: &CrateContext, item: &ast::ForeignItem) -> Opti
 /// the only intrinsic that needs such verification is `transmute`.
 pub fn check_intrinsics(ccx: &CrateContext) {
     let mut last_failing_id = None;
-    for transmute_restriction in &*ccx.tcx().transmute_restrictions.borrow() {
+    for transmute_restriction in ccx.tcx().transmute_restrictions.borrow().iter() {
         // Sometimes, a single call to transmute will push multiple
         // type pairs to test in order to exhaustively test the
         // possibility around a type parameter. If one of those fails,
@@ -102,7 +101,7 @@ pub fn check_intrinsics(ccx: &CrateContext) {
             continue;
         }
 
-        debug!("transmute_restriction: {}", transmute_restriction.repr(ccx.tcx()));
+        debug!("transmute_restriction: {:?}", transmute_restriction);
 
         assert!(!ty::type_has_params(transmute_restriction.substituted_from));
         assert!(!ty::type_has_params(transmute_restriction.substituted_to));
@@ -121,10 +120,10 @@ pub fn check_intrinsics(ccx: &CrateContext) {
                     transmute_restriction.span,
                     &format!("transmute called on types with potentially different sizes: \
                               {} (could be {} bit{}) to {} (could be {} bit{})",
-                             ty_to_string(ccx.tcx(), transmute_restriction.original_from),
+                             transmute_restriction.original_from,
                              from_type_size as usize,
                              if from_type_size == 1 {""} else {"s"},
-                             ty_to_string(ccx.tcx(), transmute_restriction.original_to),
+                             transmute_restriction.original_to,
                              to_type_size as usize,
                              if to_type_size == 1 {""} else {"s"}));
             } else {
@@ -132,10 +131,10 @@ pub fn check_intrinsics(ccx: &CrateContext) {
                     transmute_restriction.span,
                     &format!("transmute called on types with different sizes: \
                               {} ({} bit{}) to {} ({} bit{})",
-                             ty_to_string(ccx.tcx(), transmute_restriction.original_from),
+                             transmute_restriction.original_from,
                              from_type_size as usize,
                              if from_type_size == 1 {""} else {"s"},
-                             ty_to_string(ccx.tcx(), transmute_restriction.original_to),
+                             transmute_restriction.original_to,
                              to_type_size as usize,
                              if to_type_size == 1 {""} else {"s"}));
             }
@@ -163,7 +162,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
     let _icx = push_ctxt("trans_intrinsic_call");
 
     let ret_ty = match callee_ty.sty {
-        ty::ty_bare_fn(_, ref f) => {
+        ty::TyBareFn(_, ref f) => {
             ty::erase_late_bound_regions(bcx.tcx(), &f.sig.output())
         }
         _ => panic!("expected bare_fn in trans_intrinsic_call")
@@ -223,7 +222,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
                     let val = if datum.kind.is_by_ref() {
                         load_ty(bcx, datum.val, datum.ty)
                     } else {
-                        datum.val
+                        from_arg_ty(bcx, datum.val, datum.ty)
                     };
 
                     let cast_val = BitCast(bcx, val, llret_ty);
@@ -262,6 +261,44 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
             _ => {
                 ccx.sess().bug("expected expr as argument for transmute");
             }
+        }
+    }
+
+    // For `move_val_init` we can evaluate the destination address
+    // (the first argument) and then trans the source value (the
+    // second argument) directly into the resulting destination
+    // address.
+    if &name[..] == "move_val_init" {
+        if let callee::ArgExprs(ref exprs) = args {
+            let (dest_expr, source_expr) = if exprs.len() != 2 {
+                ccx.sess().bug("expected two exprs as arguments for `move_val_init` intrinsic");
+            } else {
+                (&exprs[0], &exprs[1])
+            };
+
+            // evaluate destination address
+            let dest_datum = unpack_datum!(bcx, expr::trans(bcx, dest_expr));
+            let dest_datum = unpack_datum!(
+                bcx, dest_datum.to_rvalue_datum(bcx, "arg"));
+            let dest_datum = unpack_datum!(
+                bcx, dest_datum.to_appropriate_datum(bcx));
+
+            // `expr::trans_into(bcx, expr, dest)` is equiv to
+            //
+            //    `trans(bcx, expr).store_to_dest(dest)`,
+            //
+            // which for `dest == expr::SaveIn(addr)`, is equivalent to:
+            //
+            //    `trans(bcx, expr).store_to(bcx, addr)`.
+            let lldest = expr::Dest::SaveIn(dest_datum.val);
+            bcx = expr::trans_into(bcx, source_expr, lldest);
+
+            let llresult = C_nil(ccx);
+            fcx.pop_and_trans_custom_cleanup_scope(bcx, cleanup_scope);
+
+            return Result::new(bcx, llresult);
+        } else {
+            ccx.sess().bug("expected two exprs as arguments for `move_val_init` intrinsic");
         }
     }
 
@@ -329,8 +366,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         (_, "size_of_val") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
             if !type_is_sized(tcx, tp_ty) {
-                let info = Load(bcx, expr::get_len(bcx, llargs[0]));
-                let (llsize, _) = glue::size_and_align_of_dst(bcx, tp_ty, info);
+                let (llsize, _) = glue::size_and_align_of_dst(bcx, tp_ty, llargs[1]);
                 llsize
             } else {
                 let lltp_ty = type_of::type_of(ccx, tp_ty);
@@ -344,8 +380,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         (_, "min_align_of_val") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
             if !type_is_sized(tcx, tp_ty) {
-                let info = Load(bcx, expr::get_len(bcx, llargs[0]));
-                let (_, llalign) = glue::size_and_align_of_dst(bcx, tp_ty, info);
+                let (_, llalign) = glue::size_and_align_of_dst(bcx, tp_ty, llargs[1]);
                 llalign
             } else {
                 C_uint(ccx, type_of::align_of(ccx, tp_ty))
@@ -356,30 +391,23 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
             let lltp_ty = type_of::type_of(ccx, tp_ty);
             C_uint(ccx, machine::llalign_of_pref(ccx, lltp_ty))
         }
-        (_, "move_val_init") => {
-            // Create a datum reflecting the value being moved.
-            // Use `appropriate_mode` so that the datum is by ref
-            // if the value is non-immediate. Note that, with
-            // intrinsics, there are no argument cleanups to
-            // concern ourselves with, so we can use an rvalue datum.
-            let tp_ty = *substs.types.get(FnSpace, 0);
-            let mode = appropriate_rvalue_mode(ccx, tp_ty);
-            let src = Datum {
-                val: llargs[1],
-                ty: tp_ty,
-                kind: Rvalue::new(mode)
-            };
-            bcx = src.store_to(bcx, llargs[0]);
-            C_nil(ccx)
-        }
         (_, "drop_in_place") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
-            glue::drop_ty(bcx, llargs[0], tp_ty, call_debug_location);
+            let ptr = if type_is_sized(tcx, tp_ty) {
+                llargs[0]
+            } else {
+                let scratch = rvalue_scratch_datum(bcx, tp_ty, "tmp");
+                Store(bcx, llargs[0], expr::get_dataptr(bcx, scratch.val));
+                Store(bcx, llargs[1], expr::get_len(bcx, scratch.val));
+                fcx.schedule_lifetime_end(cleanup::CustomScope(cleanup_scope), scratch.val);
+                scratch.val
+            };
+            glue::drop_ty(bcx, ptr, tp_ty, call_debug_location);
             C_nil(ccx)
         }
         (_, "type_name") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
-            let ty_name = token::intern_and_get_ident(&ty_to_string(ccx.tcx(), tp_ty));
+            let ty_name = token::intern_and_get_ident(&tp_ty.to_string());
             C_str_slice(ccx, ty_name)
         }
         (_, "type_id") => {
@@ -417,6 +445,11 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
             let ptr = llargs[0];
             let offset = llargs[1];
             InBoundsGEP(bcx, ptr, &[offset])
+        }
+        (_, "arith_offset") => {
+            let ptr = llargs[0];
+            let offset = llargs[1];
+            GEP(bcx, ptr, &[offset])
         }
 
         (_, "copy_nonoverlapping") => {
@@ -485,12 +518,12 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
             unsafe {
                 llvm::LLVMSetAlignment(load, type_of::align_of(ccx, tp_ty));
             }
-            from_arg_ty(bcx, load, tp_ty)
+            to_arg_ty(bcx, load, tp_ty)
         },
         (_, "volatile_store") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
             let ptr = to_arg_ty_ptr(bcx, llargs[0], tp_ty);
-            let val = to_arg_ty(bcx, llargs[1], tp_ty);
+            let val = from_arg_ty(bcx, llargs[1], tp_ty);
             let store = VolatileStore(bcx, val, ptr);
             unsafe {
                 llvm::LLVMSetAlignment(store, type_of::align_of(ccx, tp_ty));
@@ -724,7 +757,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         (_, "discriminant_value") => {
             let val_ty = substs.types.get(FnSpace, 0);
             match val_ty.sty {
-                ty::ty_enum(..) => {
+                ty::TyEnum(..) => {
                     let repr = adt::represent_type(ccx, *val_ty);
                     adt::trans_get_discr(bcx, &*repr, llargs[0], Some(llret_ty))
                 }
@@ -772,8 +805,8 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
 
                     let tp_ty = *substs.types.get(FnSpace, 0);
                     let ptr = to_arg_ty_ptr(bcx, llargs[0], tp_ty);
-                    let cmp = to_arg_ty(bcx, llargs[1], tp_ty);
-                    let src = to_arg_ty(bcx, llargs[2], tp_ty);
+                    let cmp = from_arg_ty(bcx, llargs[1], tp_ty);
+                    let src = from_arg_ty(bcx, llargs[2], tp_ty);
                     let res = AtomicCmpXchg(bcx, ptr, cmp, src, order,
                                             strongest_failure_ordering);
                     ExtractValue(bcx, res, 0)
@@ -782,12 +815,12 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
                 "load" => {
                     let tp_ty = *substs.types.get(FnSpace, 0);
                     let ptr = to_arg_ty_ptr(bcx, llargs[0], tp_ty);
-                    from_arg_ty(bcx, AtomicLoad(bcx, ptr, order), tp_ty)
+                    to_arg_ty(bcx, AtomicLoad(bcx, ptr, order), tp_ty)
                 }
                 "store" => {
                     let tp_ty = *substs.types.get(FnSpace, 0);
                     let ptr = to_arg_ty_ptr(bcx, llargs[0], tp_ty);
-                    let val = to_arg_ty(bcx, llargs[1], tp_ty);
+                    let val = from_arg_ty(bcx, llargs[1], tp_ty);
                     AtomicStore(bcx, val, ptr, order);
                     C_nil(ccx)
                 }
@@ -821,7 +854,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
 
                     let tp_ty = *substs.types.get(FnSpace, 0);
                     let ptr = to_arg_ty_ptr(bcx, llargs[0], tp_ty);
-                    let val = to_arg_ty(bcx, llargs[1], tp_ty);
+                    let val = from_arg_ty(bcx, llargs[1], tp_ty);
                     AtomicRMW(bcx, atom_op, ptr, val, order)
                 }
             }
@@ -950,7 +983,7 @@ fn with_overflow_intrinsic<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let ret = C_undef(type_of::type_of(bcx.ccx(), t));
     let ret = InsertValue(bcx, ret, result, 0);
     let ret = InsertValue(bcx, ret, overflow, 1);
-    if type_is_immediate(bcx.ccx(), t) {
+    if !arg_is_indirect(bcx.ccx(), t) {
         let tmp = alloc_ty(bcx, t, "tmp");
         Store(bcx, ret, tmp);
         load_ty(bcx, tmp, t)

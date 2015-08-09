@@ -35,7 +35,7 @@ use owned_slice::OwnedSlice;
 #[derive(Copy, Clone)]
 pub enum FnKind<'a> {
     /// fn foo() or extern "Abi" fn foo()
-    FkItemFn(Ident, &'a Generics, Unsafety, Abi, Visibility),
+    FkItemFn(Ident, &'a Generics, Unsafety, Constness, Abi, Visibility),
 
     /// fn foo(&self)
     FkMethod(Ident, &'a MethodSig, Option<Visibility>),
@@ -246,8 +246,9 @@ pub fn walk_item<'v, V: Visitor<'v>>(visitor: &mut V, item: &'v Item) {
             visitor.visit_ty(&**typ);
             visitor.visit_expr(&**expr);
         }
-        ItemFn(ref declaration, fn_style, abi, ref generics, ref body) => {
-            visitor.visit_fn(FkItemFn(item.ident, generics, fn_style, abi, item.vis),
+        ItemFn(ref declaration, unsafety, constness, abi, ref generics, ref body) => {
+            visitor.visit_fn(FkItemFn(item.ident, generics, unsafety,
+                                      constness, abi, item.vis),
                              &**declaration,
                              &**body,
                              item.span,
@@ -427,13 +428,13 @@ pub fn walk_path_parameters<'v, V: Visitor<'v>>(visitor: &mut V,
                                                 path_parameters: &'v PathParameters) {
     match *path_parameters {
         ast::AngleBracketedParameters(ref data) => {
-            for typ in &*data.types {
+            for typ in data.types.iter() {
                 visitor.visit_ty(&**typ);
             }
             for lifetime in &data.lifetimes {
                 visitor.visit_lifetime_ref(lifetime);
             }
-            for binding in &*data.bindings {
+            for binding in data.bindings.iter() {
                 visitor.visit_assoc_type_binding(&**binding);
             }
         }
@@ -530,7 +531,7 @@ pub fn walk_foreign_item<'v, V: Visitor<'v>>(visitor: &mut V,
 
 pub fn walk_ty_param_bounds_helper<'v, V: Visitor<'v>>(visitor: &mut V,
                                                        bounds: &'v OwnedSlice<TyParamBound>) {
-    for bound in &**bounds {
+    for bound in bounds.iter() {
         visitor.visit_ty_param_bound(bound)
     }
 }
@@ -548,7 +549,7 @@ pub fn walk_ty_param_bound<'v, V: Visitor<'v>>(visitor: &mut V,
 }
 
 pub fn walk_generics<'v, V: Visitor<'v>>(visitor: &mut V, generics: &'v Generics) {
-    for param in &*generics.ty_params {
+    for param in generics.ty_params.iter() {
         visitor.visit_ident(param.span, param.ident);
         walk_ty_param_bounds_helper(visitor, &param.bounds);
         walk_ty_opt(visitor, &param.default);
@@ -604,7 +605,7 @@ pub fn walk_fn<'v, V: Visitor<'v>>(visitor: &mut V,
     walk_fn_decl(visitor, function_declaration);
 
     match function_kind {
-        FkItemFn(_, generics, _, _, _) => {
+        FkItemFn(_, generics, _, _, _, _) => {
             visitor.visit_generics(generics);
         }
         FkMethod(_, sig, _) => {

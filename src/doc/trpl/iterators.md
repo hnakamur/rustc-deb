@@ -116,7 +116,7 @@ A *consumer* operates on an iterator, returning some kind of value or values.
 The most common consumer is `collect()`. This code doesn't quite compile,
 but it shows the intention:
 
-```{rust,ignore}
+```rust,ignore
 let one_to_one_hundred = (1..101).collect();
 ```
 
@@ -213,7 +213,7 @@ As we've said before, an iterator is something that we can call the
 `.next()` method on repeatedly, and it gives us a sequence of things.
 Because you need to call the method, this means that iterators
 can be *lazy* and not generate all of the values upfront. This code,
-for example, does not actually generate the numbers `1-100`, instead
+for example, does not actually generate the numbers `1-99`, instead
 creating a value that merely represents the sequence:
 
 ```rust
@@ -253,7 +253,7 @@ we need to talk about with regards to iterators. Let's get to it!
 *Iterator adapters* take an iterator and modify it somehow, producing
 a new iterator. The simplest one is called `map`:
 
-```{rust,ignore}
+```rust,ignore
 (1..100).map(|x| x + 1);
 ```
 
@@ -272,7 +272,7 @@ warning: unused result which must be used: iterator adaptors are lazy and
 Laziness strikes again! That closure will never execute. This example
 doesn't print any numbers:
 
-```{rust,ignore}
+```rust,ignore
 (1..100).map(|x| println!("{}", x));
 ```
 
@@ -285,8 +285,7 @@ has no side effect on the original iterator. Let's try it out with our infinite
 iterator from before:
 
 ```rust
-# #![feature(step_by)]
-for i in (1..).step_by(5).take(5) {
+for i in (1..).take(5) {
     println!("{}", i);
 }
 ```
@@ -295,10 +294,10 @@ This will print
 
 ```text
 1
-6
-11
-16
-21
+2
+3
+4
+5
 ```
 
 `filter()` is an adapter that takes a closure as an argument. This closure
@@ -321,7 +320,7 @@ You can chain all three things together: start with an iterator, adapt it
 a few times, and then consume the result. Check it out:
 
 ```rust
-(1..1000)
+(1..)
     .filter(|&x| x % 2 == 0)
     .filter(|&x| x % 3 == 0)
     .take(5)

@@ -18,10 +18,10 @@ use middle::subst::Substs;
 use middle::ty::{self, Ty};
 use check::{check_expr, check_expr_has_type, check_expr_with_expectation};
 use check::{check_expr_coercable_to_type, demand, FnCtxt, Expectation};
+use check::{check_expr_with_lvalue_pref, LvaluePreference};
 use check::{instantiate_path, resolve_ty_and_def_ufcs, structurally_resolved_type};
 use require_same_types;
 use util::nodemap::FnvHashMap;
-use util::ppaux::Repr;
 
 use std::cmp::{self, Ordering};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
@@ -39,9 +39,9 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
     let fcx = pcx.fcx;
     let tcx = pcx.fcx.ccx.tcx;
 
-    debug!("check_pat(pat={},expected={})",
-           pat.repr(tcx),
-           expected.repr(tcx));
+    debug!("check_pat(pat={:?},expected={:?})",
+           pat,
+           expected);
 
     match pat.node {
         ast::PatWild(_) => {
@@ -57,8 +57,8 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             if let ast::ExprLit(ref lt) = lt.node {
                 if let ast::LitBinary(_) = lt.node {
                     let expected_ty = structurally_resolved_type(fcx, pat.span, expected);
-                    if let ty::ty_rptr(_, mt) = expected_ty.sty {
-                        if let ty::ty_vec(_, None) = mt.ty.sty {
+                    if let ty::TyRef(_, mt) = expected_ty.sty {
+                        if let ty::TySlice(_) = mt.ty.sty {
                             pat_ty = ty::mk_slice(tcx, tcx.mk_region(ty::ReStatic),
                                 ty::mt{ ty: tcx.types.u8, mutbl: ast::MutImmutable })
                         }
@@ -83,39 +83,64 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             demand::suptype(fcx, pat.span, expected, pat_ty);
         }
         ast::PatRange(ref begin, ref end) => {
-            check_expr(fcx, &**begin);
-            check_expr(fcx, &**end);
+            check_expr(fcx, begin);
+            check_expr(fcx, end);
 
-            let lhs_ty = fcx.expr_ty(&**begin);
-            let rhs_ty = fcx.expr_ty(&**end);
+            let lhs_ty = fcx.expr_ty(begin);
+            let rhs_ty = fcx.expr_ty(end);
 
-            let lhs_eq_rhs =
-                require_same_types(
-                    tcx, Some(fcx.infcx()), false, pat.span, lhs_ty, rhs_ty,
-                    || "mismatched types in range".to_string());
+            // Check that both end-points are of numeric or char type.
+            let numeric_or_char = |t| ty::type_is_numeric(t) || ty::type_is_char(t);
+            let lhs_compat = numeric_or_char(lhs_ty);
+            let rhs_compat = numeric_or_char(rhs_ty);
 
-            let numeric_or_char =
-                lhs_eq_rhs && (ty::type_is_numeric(lhs_ty) || ty::type_is_char(lhs_ty));
+            if !lhs_compat || !rhs_compat {
+                let span = if !lhs_compat && !rhs_compat {
+                    pat.span
+                } else if !lhs_compat {
+                    begin.span
+                } else {
+                    end.span
+                };
 
-            if numeric_or_char {
-                match const_eval::compare_lit_exprs(tcx, &**begin, &**end, Some(lhs_ty)) {
-                    Some(Ordering::Less) |
-                    Some(Ordering::Equal) => {}
-                    Some(Ordering::Greater) => {
-                        span_err!(tcx.sess, begin.span, E0030,
-                            "lower range bound must be less than upper");
-                    }
-                    None => {
-                        span_err!(tcx.sess, begin.span, E0031,
-                            "mismatched types in range");
-                    }
-                }
-            } else {
-                span_err!(tcx.sess, begin.span, E0029,
-                          "only char and numeric types are allowed in range");
+                // Note: spacing here is intentional, we want a space before "start" and "end".
+                span_err!(tcx.sess, span, E0029,
+                          "only char and numeric types are allowed in range patterns\n \
+                           start type: {}\n end type: {}",
+                          fcx.infcx().ty_to_string(lhs_ty),
+                          fcx.infcx().ty_to_string(rhs_ty)
+                );
+                return;
             }
 
-            fcx.write_ty(pat.id, lhs_ty);
+            // Check that the types of the end-points can be unified.
+            let types_unify = require_same_types(
+                    tcx, Some(fcx.infcx()), false, pat.span, rhs_ty, lhs_ty,
+                    || "mismatched types in range".to_string()
+            );
+
+            // It's ok to return without a message as `require_same_types` prints an error.
+            if !types_unify {
+                return;
+            }
+
+            // Now that we know the types can be unified we find the unified type and use
+            // it to type the entire expression.
+            let common_type = fcx.infcx().resolve_type_vars_if_possible(&lhs_ty);
+
+            fcx.write_ty(pat.id, common_type);
+
+            // Finally we evaluate the constants and check that the range is non-empty.
+            let get_substs = |id| fcx.item_substs()[&id].substs.clone();
+            match const_eval::compare_lit_exprs(tcx, begin, end, Some(&common_type), get_substs) {
+                Some(Ordering::Less) |
+                Some(Ordering::Equal) => {}
+                Some(Ordering::Greater) => {
+                    span_err!(tcx.sess, begin.span, E0030,
+                        "lower range bound must be less than or equal to upper");
+                }
+                None => tcx.sess.span_bug(begin.span, "literals of different types in range pat")
+            }
 
             // subtyping doesn't matter here, as the value is some kind of scalar
             demand::eqtype(fcx, pat.span, expected, lhs_ty);
@@ -196,7 +221,7 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
                 }
             } else {
                 tcx.sess.span_bug(pat.span,
-                                  &format!("unbound path {}", pat.repr(tcx)))
+                                  &format!("unbound path {:?}", pat))
             };
             if let Some((opt_ty, segments, def)) =
                     resolve_ty_and_def_ufcs(fcx, path_res, Some(self_ty),
@@ -224,7 +249,7 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             let pat_ty = ty::mk_tup(tcx, element_tys.clone());
             fcx.write_ty(pat.id, pat_ty);
             demand::eqtype(fcx, pat.span, expected, pat_ty);
-            for (element_pat, element_ty) in elements.iter().zip(element_tys.into_iter()) {
+            for (element_pat, element_ty) in elements.iter().zip(element_tys) {
                 check_pat(pcx, &**element_pat, element_ty);
             }
         }
@@ -267,7 +292,7 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             let expected_ty = structurally_resolved_type(fcx, pat.span, expected);
             let inner_ty = fcx.infcx().next_ty_var();
             let pat_ty = match expected_ty.sty {
-                ty::ty_vec(_, Some(size)) => ty::mk_vec(tcx, inner_ty, Some({
+                ty::TyArray(_, size) => ty::mk_vec(tcx, inner_ty, Some({
                     let min_len = before.len() + after.len();
                     match *slice {
                         Some(_) => cmp::max(min_len, size),
@@ -387,7 +412,7 @@ pub fn check_dereferencable<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
     if pat_is_binding(&tcx.def_map, inner) {
         let expected = fcx.infcx().shallow_resolve(expected);
         ty::deref(expected, true).map_or(true, |mt| match mt.ty.sty {
-            ty::ty_trait(_) => {
+            ty::TyTrait(_) => {
                 // This is "x = SomeTrait" being reduced from
                 // "let &x = &SomeTrait" or "let box x = Box<SomeTrait>", an error.
                 span_err!(tcx.sess, span, E0033,
@@ -413,10 +438,15 @@ pub fn check_match<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     // Not entirely obvious: if matches may create ref bindings, we
     // want to use the *precise* type of the discriminant, *not* some
     // supertype, as the "discriminant type" (issue #23116).
-    let contains_ref_bindings = arms.iter().any(|a| tcx.arm_contains_ref_binding(a));
+    let contains_ref_bindings = arms.iter()
+                                    .filter_map(|a| tcx.arm_contains_ref_binding(a))
+                                    .max_by(|m| match *m {
+                                        ast::MutMutable => 1,
+                                        ast::MutImmutable => 0,
+                                    });
     let discrim_ty;
-    if contains_ref_bindings {
-        check_expr(fcx, discrim);
+    if let Some(m) = contains_ref_bindings {
+        check_expr_with_lvalue_pref(fcx, discrim, LvaluePreference::from_mutbl(m));
         discrim_ty = fcx.expr_ty(discrim);
     } else {
         // ...but otherwise we want to use any supertype of the
@@ -527,9 +557,9 @@ pub fn check_pat_struct<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>, pat: &'tcx ast::Pat,
         _ => {
             let def_type = ty::lookup_item_type(tcx, def.def_id());
             match def_type.ty.sty {
-                ty::ty_struct(struct_def_id, _) =>
+                ty::TyStruct(struct_def_id, _) =>
                     (struct_def_id, struct_def_id),
-                ty::ty_enum(enum_def_id, _)
+                ty::TyEnum(enum_def_id, _)
                     if def == def::DefVariant(enum_def_id, def.def_id(), true) =>
                     (enum_def_id, def.def_id()),
                 _ => {
@@ -631,7 +661,7 @@ pub fn check_pat_enum<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
 
     let real_path_ty = fcx.node_ty(pat.id);
     let (arg_tys, kind_name): (Vec<_>, &'static str) = match real_path_ty.sty {
-        ty::ty_enum(enum_def_id, expected_substs)
+        ty::TyEnum(enum_def_id, expected_substs)
             if def == def::DefVariant(enum_def_id, def.def_id(), false) =>
         {
             let variant = ty::enum_variant_with_id(tcx, enum_def_id, def.def_id());
@@ -640,7 +670,7 @@ pub fn check_pat_enum<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
                          .collect(),
              "variant")
         }
-        ty::ty_struct(struct_def_id, expected_substs) => {
+        ty::TyStruct(struct_def_id, expected_substs) => {
             let struct_fields = ty::struct_fields(tcx, struct_def_id, expected_substs);
             (struct_fields.iter()
                           .map(|field| fcx.instantiate_type_scheme(pat.span,
@@ -666,8 +696,8 @@ pub fn check_pat_enum<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
 
     if let Some(subpats) = subpats {
         if subpats.len() == arg_tys.len() {
-            for (subpat, arg_ty) in subpats.iter().zip(arg_tys.iter()) {
-                check_pat(pcx, &**subpat, *arg_ty);
+            for (subpat, arg_ty) in subpats.iter().zip(arg_tys) {
+                check_pat(pcx, &**subpat, arg_ty);
             }
         } else if arg_tys.is_empty() {
             span_err!(tcx.sess, pat.span, E0024,

@@ -31,7 +31,6 @@ use super::type_variable::{BiTo};
 use middle::ty::{self, Ty};
 use middle::ty::TyVar;
 use middle::ty_relate::{Relate, RelateResult, TypeRelation};
-use util::ppaux::{Repr};
 
 pub struct Bivariate<'a, 'tcx: 'a> {
     fields: CombineFields<'a, 'tcx>
@@ -49,6 +48,11 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Bivariate<'a, 'tcx> {
     fn tcx(&self) -> &'a ty::ctxt<'tcx> { self.fields.tcx() }
 
     fn a_is_expected(&self) -> bool { self.fields.a_is_expected }
+
+    fn will_change(&mut self, _: bool, _: bool) -> bool {
+        // since we are not comparing regions, we don't care
+        false
+    }
 
     fn relate_with_variance<T:Relate<'a,'tcx>>(&mut self,
                                                variance: ty::Variance,
@@ -73,25 +77,25 @@ impl<'a, 'tcx> TypeRelation<'a, 'tcx> for Bivariate<'a, 'tcx> {
     }
 
     fn tys(&mut self, a: Ty<'tcx>, b: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
-        debug!("{}.tys({}, {})", self.tag(),
-               a.repr(self.fields.infcx.tcx), b.repr(self.fields.infcx.tcx));
+        debug!("{}.tys({:?}, {:?})", self.tag(),
+               a, b);
         if a == b { return Ok(a); }
 
         let infcx = self.fields.infcx;
         let a = infcx.type_variables.borrow().replace_if_possible(a);
         let b = infcx.type_variables.borrow().replace_if_possible(b);
         match (&a.sty, &b.sty) {
-            (&ty::ty_infer(TyVar(a_id)), &ty::ty_infer(TyVar(b_id))) => {
+            (&ty::TyInfer(TyVar(a_id)), &ty::TyInfer(TyVar(b_id))) => {
                 infcx.type_variables.borrow_mut().relate_vars(a_id, BiTo, b_id);
                 Ok(a)
             }
 
-            (&ty::ty_infer(TyVar(a_id)), _) => {
+            (&ty::TyInfer(TyVar(a_id)), _) => {
                 try!(self.fields.instantiate(b, BiTo, a_id));
                 Ok(a)
             }
 
-            (_, &ty::ty_infer(TyVar(b_id))) => {
+            (_, &ty::TyInfer(TyVar(b_id))) => {
                 try!(self.fields.instantiate(a, BiTo, b_id));
                 Ok(a)
             }

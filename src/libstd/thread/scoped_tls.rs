@@ -43,12 +43,8 @@
 
 use prelude::v1::*;
 
-// macro hygiene sure would be nice, wouldn't it?
 #[doc(hidden)]
-pub mod __impl {
-    pub use super::imp::KeyInner;
-    pub use sys_common::thread_local::INIT as OS_INIT;
-}
+pub use self::imp::KeyInner as __KeyInner;
 
 /// Type representing a thread local storage key corresponding to a reference
 /// to the type parameter `T`.
@@ -60,7 +56,7 @@ pub mod __impl {
 #[unstable(feature = "scoped_tls",
            reason = "scoped TLS has yet to have wide enough use to fully consider \
                      stabilizing its interface")]
-pub struct ScopedKey<T> { #[doc(hidden)] pub inner: __impl::KeyInner<T> }
+pub struct ScopedKey<T> { inner: fn() -> &'static imp::KeyInner<T> }
 
 /// Declare a new scoped thread local storage key.
 ///
@@ -71,88 +67,62 @@ pub struct ScopedKey<T> { #[doc(hidden)] pub inner: __impl::KeyInner<T> }
 /// information.
 #[macro_export]
 #[allow_internal_unstable]
-#[cfg(not(no_elf_tls))]
 macro_rules! scoped_thread_local {
     (static $name:ident: $t:ty) => (
-        __scoped_thread_local_inner!(static $name: $t);
-    );
-    (pub static $name:ident: $t:ty) => (
-        __scoped_thread_local_inner!(pub static $name: $t);
-    );
-}
-
-#[macro_export]
-#[doc(hidden)]
-#[allow_internal_unstable]
-macro_rules! __scoped_thread_local_inner {
-    (static $name:ident: $t:ty) => (
-        #[cfg_attr(not(any(windows,
-                           target_os = "android",
-                           target_os = "ios",
-                           target_os = "openbsd",
-                           target_arch = "aarch64")),
-                   thread_local)]
         static $name: ::std::thread::ScopedKey<$t> =
             __scoped_thread_local_inner!($t);
     );
     (pub static $name:ident: $t:ty) => (
-        #[cfg_attr(not(any(windows,
-                           target_os = "android",
-                           target_os = "ios",
-                           target_os = "openbsd",
-                           target_arch = "aarch64")),
-                   thread_local)]
         pub static $name: ::std::thread::ScopedKey<$t> =
             __scoped_thread_local_inner!($t);
     );
-    ($t:ty) => ({
-        use std::thread::ScopedKey as __Key;
-
-        #[cfg(not(any(windows,
-                      target_os = "android",
-                      target_os = "ios",
-                      target_os = "openbsd",
-                      target_arch = "aarch64")))]
-        const _INIT: __Key<$t> = __Key {
-            inner: ::std::thread::__scoped::KeyInner {
-                inner: ::std::cell::UnsafeCell { value: 0 as *mut _ },
-            }
-        };
-
-        #[cfg(any(windows,
-                  target_os = "android",
-                  target_os = "ios",
-                  target_os = "openbsd",
-                  target_arch = "aarch64"))]
-        const _INIT: __Key<$t> = __Key {
-            inner: ::std::thread::__scoped::KeyInner {
-                inner: ::std::thread::__scoped::OS_INIT,
-                marker: ::std::marker::PhantomData::<::std::cell::Cell<$t>>,
-            }
-        };
-
-        _INIT
-    })
 }
 
+#[doc(hidden)]
+#[unstable(feature = "thread_local_internals",
+           reason = "should not be necessary")]
 #[macro_export]
 #[allow_internal_unstable]
 #[cfg(no_elf_tls)]
-macro_rules! scoped_thread_local {
-    (static $name:ident: $t:ty) => (
-        static $name: ::std::thread::ScopedKey<$t> =
-            ::std::thread::ScopedKey::new();
-    );
-    (pub static $name:ident: $t:ty) => (
-        pub static $name: ::std::thread::ScopedKey<$t> =
-            ::std::thread::ScopedKey::new();
-    );
+macro_rules! __scoped_thread_local_inner {
+    ($t:ty) => {{
+        static _KEY: ::std::thread::__ScopedKeyInner<$t> =
+            ::std::thread::__ScopedKeyInner::new();
+        fn _getit() -> &'static ::std::thread::__ScopedKeyInner<$t> { &_KEY }
+        ::std::thread::ScopedKey::new(_getit)
+    }}
+}
+
+#[doc(hidden)]
+#[unstable(feature = "thread_local_internals",
+           reason = "should not be necessary")]
+#[macro_export]
+#[allow_internal_unstable]
+#[cfg(not(no_elf_tls))]
+macro_rules! __scoped_thread_local_inner {
+    ($t:ty) => {{
+        #[cfg_attr(not(any(windows,
+                           target_os = "android",
+                           target_os = "ios",
+                           target_os = "openbsd",
+                           target_arch = "aarch64")),
+                   thread_local)]
+        static _KEY: ::std::thread::__ScopedKeyInner<$t> =
+            ::std::thread::__ScopedKeyInner::new();
+        fn _getit() -> &'static ::std::thread::__ScopedKeyInner<$t> { &_KEY }
+        ::std::thread::ScopedKey::new(_getit)
+    }}
 }
 
 #[unstable(feature = "scoped_tls",
            reason = "scoped TLS has yet to have wide enough use to fully consider \
                      stabilizing its interface")]
 impl<T> ScopedKey<T> {
+    #[doc(hidden)]
+    pub const fn new(inner: fn() -> &'static imp::KeyInner<T>) -> ScopedKey<T> {
+        ScopedKey { inner: inner }
+    }
+
     /// Inserts a value into this scoped thread local storage slot for a
     /// duration of a closure.
     ///
@@ -186,7 +156,7 @@ impl<T> ScopedKey<T> {
         F: FnOnce() -> R,
     {
         struct Reset<'a, T: 'a> {
-            key: &'a __impl::KeyInner<T>,
+            key: &'a imp::KeyInner<T>,
             val: *mut T,
         }
                 impl<'a, T> Drop for Reset<'a, T> {
@@ -195,13 +165,14 @@ impl<T> ScopedKey<T> {
             }
         }
 
+        let inner = (self.inner)();
         let prev = unsafe {
-            let prev = self.inner.get();
-            self.inner.set(t as *const T as *mut T);
+            let prev = inner.get();
+            inner.set(t as *const T as *mut T);
             prev
         };
 
-        let _reset = Reset { key: &self.inner, val: prev };
+        let _reset = Reset { key: inner, val: prev };
         cb()
     }
 
@@ -228,7 +199,7 @@ impl<T> ScopedKey<T> {
         F: FnOnce(&T) -> R
     {
         unsafe {
-            let ptr = self.inner.get();
+            let ptr = (self.inner)().get();
             assert!(!ptr.is_null(), "cannot access a scoped thread local \
                                      variable without calling `set` first");
             cb(&*ptr)
@@ -237,7 +208,7 @@ impl<T> ScopedKey<T> {
 
     /// Test whether this TLS key has been `set` for the current thread.
     pub fn is_set(&'static self) -> bool {
-        unsafe { !self.inner.get().is_null() }
+        unsafe { !(self.inner)().get().is_null() }
     }
 }
 
@@ -247,20 +218,20 @@ impl<T> ScopedKey<T> {
               target_os = "openbsd",
               target_arch = "aarch64",
               no_elf_tls)))]
+#[doc(hidden)]
 mod imp {
-    use std::cell::UnsafeCell;
+    use std::cell::Cell;
 
-    #[doc(hidden)]
-    pub struct KeyInner<T> { pub inner: UnsafeCell<*mut T> }
+    pub struct KeyInner<T> { inner: Cell<*mut T> }
 
     unsafe impl<T> ::marker::Sync for KeyInner<T> { }
 
-    #[doc(hidden)]
     impl<T> KeyInner<T> {
-        #[doc(hidden)]
-        pub unsafe fn set(&self, ptr: *mut T) { *self.inner.get() = ptr; }
-        #[doc(hidden)]
-        pub unsafe fn get(&self) -> *mut T { *self.inner.get() }
+        pub const fn new() -> KeyInner<T> {
+            KeyInner { inner: Cell::new(0 as *mut _) }
+        }
+        pub unsafe fn set(&self, ptr: *mut T) { self.inner.set(ptr); }
+        pub unsafe fn get(&self) -> *mut T { self.inner.get() }
     }
 }
 
@@ -270,24 +241,29 @@ mod imp {
           target_os = "openbsd",
           target_arch = "aarch64",
           no_elf_tls))]
+#[doc(hidden)]
 mod imp {
+    use prelude::v1::*;
+
+    use cell::Cell;
     use marker;
-    use std::cell::Cell;
     use sys_common::thread_local::StaticKey as OsStaticKey;
 
-    #[doc(hidden)]
     pub struct KeyInner<T> {
         pub inner: OsStaticKey,
         pub marker: marker::PhantomData<Cell<T>>,
     }
 
-    unsafe impl<T> ::marker::Sync for KeyInner<T> { }
+    unsafe impl<T> marker::Sync for KeyInner<T> { }
 
-    #[doc(hidden)]
     impl<T> KeyInner<T> {
-        #[doc(hidden)]
+        pub const fn new() -> KeyInner<T> {
+            KeyInner {
+                inner: OsStaticKey::new(None),
+                marker: marker::PhantomData
+            }
+        }
         pub unsafe fn set(&self, ptr: *mut T) { self.inner.set(ptr as *mut _) }
-        #[doc(hidden)]
         pub unsafe fn get(&self) -> *mut T { self.inner.get() as *mut _ }
     }
 }

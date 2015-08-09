@@ -14,8 +14,6 @@
 //! library. Each macro is available for use when linking against the standard
 //! library.
 
-#![unstable(feature = "std_misc")]
-
 /// The entry point for panic of Rust threads.
 ///
 /// This macro is used to inject panic into a Rust thread, causing the thread to
@@ -117,7 +115,34 @@ macro_rules! println {
 }
 
 /// Helper macro for unwrapping `Result` values while returning early with an
-/// error if the value of the expression is `Err`.
+/// error if the value of the expression is `Err`. Can only be used in
+/// functions that return `Result` because of the early return of `Err` that
+/// it provides.
+///
+/// # Examples
+///
+/// ```
+/// use std::io;
+/// use std::fs::File;
+/// use std::io::prelude::*;
+///
+/// fn write_to_file_using_try() -> Result<(), io::Error> {
+///     let mut file = try!(File::create("my_best_friends.txt"));
+///     try!(file.write_all(b"This is a list of my best friends."));
+///     println!("I wrote to the file");
+///     Ok(())
+/// }
+/// // This is equivalent to:
+/// fn write_to_file_using_match() -> Result<(), io::Error> {
+///     let mut file = try!(File::create("my_best_friends.txt"));
+///     match file.write_all(b"This is a list of my best friends.") {
+///         Ok(_) => (),
+///         Err(e) => return Err(e),
+///     }
+///     println!("I wrote to the file");
+///     Ok(())
+/// }
+/// ```
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
 macro_rules! try {
@@ -138,7 +163,7 @@ macro_rules! try {
 /// # Examples
 ///
 /// ```
-/// # #![feature(std_misc)]
+/// # #![feature(mpsc_select)]
 /// use std::thread;
 /// use std::sync::mpsc;
 ///
@@ -164,7 +189,7 @@ macro_rules! try {
 ///
 /// For more information about select, see the `std::sync::mpsc::Select` structure.
 #[macro_export]
-#[unstable(feature = "std_misc")]
+#[unstable(feature = "mpsc_select")]
 macro_rules! select {
     (
         $($name:pat = $rx:ident.$meth:ident() => $code:expr),+
@@ -306,7 +331,7 @@ pub mod builtin {
 
     /// A macro which expands to the line number on which it was invoked.
     ///
-    /// The expanded expression has type `usize`, and the returned line is not
+    /// The expanded expression has type `u32`, and the returned line is not
     /// the invocation of the `line!()` macro itself, but rather the first macro
     /// invocation leading up to the invocation of the `line!()` macro.
     ///
@@ -321,7 +346,7 @@ pub mod builtin {
 
     /// A macro which expands to the column number on which it was invoked.
     ///
-    /// The expanded expression has type `usize`, and the returned column is not
+    /// The expanded expression has type `u32`, and the returned column is not
     /// the invocation of the `column!()` macro itself, but rather the first macro
     /// invocation leading up to the invocation of the `column!()` macro.
     ///

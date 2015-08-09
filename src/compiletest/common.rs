@@ -80,9 +80,6 @@ pub struct Config {
     // The python executable
     pub python: String,
 
-    // The clang executable
-    pub clang_path: Option<PathBuf>,
-
     // The llvm binaries path
     pub llvm_bin_path: Option<PathBuf>,
 
@@ -126,9 +123,6 @@ pub struct Config {
 
     // Flags to pass to the compiler when building for the target
     pub target_rustcflags: Option<String>,
-
-    // Run tests using the JIT
-    pub jit: bool,
 
     // Target system to be tested
     pub target: String,

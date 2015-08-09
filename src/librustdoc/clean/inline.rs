@@ -83,17 +83,17 @@ fn try_inline_def(cx: &DocContext, tcx: &ty::ctxt,
         }
         def::DefStruct(did) => {
             record_extern_fqn(cx, did, clean::TypeStruct);
-            ret.extend(build_impls(cx, tcx, did).into_iter());
+            ret.extend(build_impls(cx, tcx, did));
             clean::StructItem(build_struct(cx, tcx, did))
         }
         def::DefTy(did, false) => {
             record_extern_fqn(cx, did, clean::TypeTypedef);
-            ret.extend(build_impls(cx, tcx, did).into_iter());
+            ret.extend(build_impls(cx, tcx, did));
             build_type(cx, tcx, did)
         }
         def::DefTy(did, true) => {
             record_extern_fqn(cx, did, clean::TypeEnum);
-            ret.extend(build_impls(cx, tcx, did).into_iter());
+            ret.extend(build_impls(cx, tcx, did));
             build_type(cx, tcx, did)
         }
         // Assume that the enum type is reexported next to the variant, and
@@ -167,7 +167,7 @@ pub fn build_external_trait(cx: &DocContext, tcx: &ty::ctxt,
 fn build_external_function(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> clean::Function {
     let t = ty::lookup_item_type(tcx, did);
     let (decl, style, abi) = match t.ty.sty {
-        ty::ty_bare_fn(_, ref f) => ((did, &f.sig).clean(cx), f.unsafety, f.abi),
+        ty::TyBareFn(_, ref f) => ((did, &f.sig).clean(cx), f.unsafety, f.abi),
         _ => panic!("bad function"),
     };
     let predicates = ty::lookup_predicates(tcx, did);
@@ -175,6 +175,7 @@ fn build_external_function(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> 
         decl: decl,
         generics: (&t.generics, &predicates, subst::FnSpace).clean(cx),
         unsafety: style,
+        constness: ast::Constness::NotConst,
         abi: abi,
     }
 }
@@ -203,7 +204,7 @@ fn build_type(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> clean::ItemEn
     let t = ty::lookup_item_type(tcx, did);
     let predicates = ty::lookup_predicates(tcx, did);
     match t.ty.sty {
-        ty::ty_enum(edid, _) if !csearch::is_typedef(&tcx.sess.cstore, did) => {
+        ty::TyEnum(edid, _) if !csearch::is_typedef(&tcx.sess.cstore, did) => {
             return clean::EnumItem(clean::Enum {
                 generics: (&t.generics, &predicates, subst::TypeSpace).clean(cx),
                 variants_stripped: false,
@@ -216,7 +217,7 @@ fn build_type(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> clean::ItemEn
     clean::TypedefItem(clean::Typedef {
         type_: t.ty.clean(cx),
         generics: (&t.generics, &predicates, subst::TypeSpace).clean(cx),
-    })
+    }, false)
 }
 
 pub fn build_impls(cx: &DocContext, tcx: &ty::ctxt,
@@ -348,6 +349,7 @@ pub fn build_impl(cx: &DocContext,
                     }) => {
                         clean::MethodItem(clean::Method {
                             unsafety: unsafety,
+                            constness: ast::Constness::NotConst,
                             decl: decl,
                             self_: self_,
                             generics: generics,
@@ -360,15 +362,17 @@ pub fn build_impl(cx: &DocContext,
             }
             ty::TypeTraitItem(ref assoc_ty) => {
                 let did = assoc_ty.def_id;
-                let type_scheme = ty::lookup_item_type(tcx, did);
-                let predicates = ty::lookup_predicates(tcx, did);
+                let type_scheme = ty::TypeScheme {
+                    ty: assoc_ty.ty.unwrap(),
+                    generics: ty::Generics::empty()
+                };
                 // Not sure the choice of ParamSpace actually matters here,
                 // because an associated type won't have generics on the LHS
-                let typedef = (type_scheme, predicates,
+                let typedef = (type_scheme, ty::GenericPredicates::empty(),
                                subst::ParamSpace::TypeSpace).clean(cx);
                 Some(clean::Item {
                     name: Some(assoc_ty.name.clean(cx)),
-                    inner: clean::TypedefItem(typedef),
+                    inner: clean::TypedefItem(typedef, true),
                     source: clean::Span::empty(),
                     attrs: vec![],
                     visibility: None,
@@ -447,7 +451,7 @@ fn build_module(cx: &DocContext, tcx: &ty::ctxt,
                 decoder::DlDef(def) if vis == ast::Public => {
                     if !visited.insert(def) { return }
                     match try_inline_def(cx, tcx, def) {
-                        Some(i) => items.extend(i.into_iter()),
+                        Some(i) => items.extend(i),
                         None => {}
                     }
                 }

@@ -11,8 +11,9 @@
 // Checks that struct-literal expression order-of-eval is as expected
 // even when no Drop-implementations are involved.
 
+#![feature(const_fn)]
 
-use std::sync::atomic::{Ordering, AtomicUsize, ATOMIC_USIZE_INIT};
+use std::sync::atomic::{Ordering, AtomicUsize};
 
 struct W { wrapped: u32 }
 struct S { f0: W, _f1: i32 }
@@ -31,7 +32,7 @@ pub fn main() {
             "expect: 0x{:x} actual: 0x{:x}", expect, actual);
 }
 
-static LOG: AtomicUsize = ATOMIC_USIZE_INIT;
+static LOG: AtomicUsize = AtomicUsize::new(0);
 
 fn event_log() -> usize {
     LOG.load(Ordering::SeqCst)

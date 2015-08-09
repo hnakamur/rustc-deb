@@ -37,7 +37,6 @@ pub struct Error {
     repr: Repr,
 }
 
-#[derive(Debug)]
 enum Repr {
     Os(i32),
     Custom(Box<Custom>),
@@ -95,6 +94,13 @@ pub enum ErrorKind {
     /// A parameter was incorrect.
     #[stable(feature = "rust1", since = "1.0.0")]
     InvalidInput,
+    /// Data not valid for the operation were encountered.
+    ///
+    /// Unlike `InvalidInput`, this typically means that the operation
+    /// parameters were valid, however the error was caused by malformed
+    /// input data.
+    #[stable(feature = "io_invalid_data", since = "1.2.0")]
+    InvalidData,
     /// The I/O operation's timeout expired, causing it to be canceled.
     #[stable(feature = "rust1", since = "1.0.0")]
     TimedOut,
@@ -116,7 +122,7 @@ pub enum ErrorKind {
     Other,
 
     /// Any I/O error not part of this list.
-    #[unstable(feature = "std_misc",
+    #[unstable(feature = "io_error_internals",
                reason = "better expressed through extensible enums that this \
                          enum cannot be exhaustively matched against")]
     #[doc(hidden)]
@@ -129,9 +135,7 @@ impl Error {
     ///
     /// This function is used to generically create I/O errors which do not
     /// originate from the OS itself. The `error` argument is an arbitrary
-    /// payload which will be contained in this `Error`. Accessors as well as
-    /// downcasting will soon be added to this type as well to access the custom
-    /// information.
+    /// payload which will be contained in this `Error`.
     ///
     /// # Examples
     ///
@@ -174,13 +178,54 @@ impl Error {
 
     /// Returns the OS error that this error represents (if any).
     ///
-    /// If this `Error` was constructed via `last_os_error` then this function
-    /// will return `Some`, otherwise it will return `None`.
+    /// If this `Error` was constructed via `last_os_error` or
+    /// `from_raw_os_error`, then this function will return `Some`, otherwise
+    /// it will return `None`.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn raw_os_error(&self) -> Option<i32> {
         match self.repr {
             Repr::Os(i) => Some(i),
             Repr::Custom(..) => None,
+        }
+    }
+
+    /// Returns a reference to the inner error wrapped by this error (if any).
+    ///
+    /// If this `Error` was constructed via `new` then this function will
+    /// return `Some`, otherwise it will return `None`.
+    #[unstable(feature = "io_error_inner",
+               reason = "recently added and requires UFCS to downcast")]
+    pub fn get_ref(&self) -> Option<&(error::Error+Send+Sync+'static)> {
+        match self.repr {
+            Repr::Os(..) => None,
+            Repr::Custom(ref c) => Some(&*c.error),
+        }
+    }
+
+    /// Returns a mutable reference to the inner error wrapped by this error
+    /// (if any).
+    ///
+    /// If this `Error` was constructed via `new` then this function will
+    /// return `Some`, otherwise it will return `None`.
+    #[unstable(feature = "io_error_inner",
+               reason = "recently added and requires UFCS to downcast")]
+    pub fn get_mut(&mut self) -> Option<&mut (error::Error+Send+Sync+'static)> {
+        match self.repr {
+            Repr::Os(..) => None,
+            Repr::Custom(ref mut c) => Some(&mut *c.error),
+        }
+    }
+
+    /// Consumes the `Error`, returning its inner error (if any).
+    ///
+    /// If this `Error` was constructed via `new` then this function will
+    /// return `Some`, otherwise it will return `None`.
+    #[unstable(feature = "io_error_inner",
+               reason = "recently added and requires UFCS to downcast")]
+    pub fn into_inner(self) -> Option<Box<error::Error+Send+Sync>> {
+        match self.repr {
+            Repr::Os(..) => None,
+            Repr::Custom(c) => Some(c.error)
         }
     }
 
@@ -190,6 +235,17 @@ impl Error {
         match self.repr {
             Repr::Os(code) => sys::decode_error_kind(code),
             Repr::Custom(ref c) => c.kind,
+        }
+    }
+}
+
+impl fmt::Debug for Repr {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Repr::Os(ref code) =>
+                fmt.debug_struct("Os").field("code", code)
+                   .field("message", &sys::os::error_string(*code)).finish(),
+            &Repr::Custom(ref c) => fmt.debug_tuple("Custom").field(c).finish(),
         }
     }
 }
@@ -215,9 +271,62 @@ impl error::Error for Error {
             Repr::Custom(ref c) => c.error.description(),
         }
     }
+
+    fn cause(&self) -> Option<&error::Error> {
+        match self.repr {
+            Repr::Os(..) => None,
+            Repr::Custom(ref c) => c.error.cause(),
+        }
+    }
 }
 
 fn _assert_error_is_sync_send() {
     fn _is_sync_send<T: Sync+Send>() {}
     _is_sync_send::<Error>();
+}
+
+#[cfg(test)]
+mod test {
+    use prelude::v1::*;
+    use super::{Error, ErrorKind};
+    use error;
+    use error::Error as error_Error;
+    use fmt;
+    use sys::os::error_string;
+
+    #[test]
+    fn test_debug_error() {
+        let code = 6;
+        let msg = error_string(code);
+        let err = Error { repr: super::Repr::Os(code) };
+        let expected = format!("Error {{ repr: Os {{ code: {:?}, message: {:?} }} }}", code, msg);
+        assert_eq!(format!("{:?}", err), expected);
+    }
+
+    #[test]
+    fn test_downcasting() {
+        #[derive(Debug)]
+        struct TestError;
+
+        impl fmt::Display for TestError {
+            fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+                Ok(())
+            }
+        }
+
+        impl error::Error for TestError {
+            fn description(&self) -> &str {
+                "asdf"
+            }
+        }
+
+        // we have to call all of these UFCS style right now since method
+        // resolution won't implicitly drop the Send+Sync bounds
+        let mut err = Error::new(ErrorKind::Other, TestError);
+        assert!(error::Error::is::<TestError>(err.get_ref().unwrap()));
+        assert_eq!("asdf", err.get_ref().unwrap().description());
+        assert!(error::Error::is::<TestError>(err.get_mut().unwrap()));
+        let extracted = err.into_inner().unwrap();
+        error::Error::downcast::<TestError>(extracted).unwrap();
+    }
 }

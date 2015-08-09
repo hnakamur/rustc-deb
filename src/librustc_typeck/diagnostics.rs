@@ -12,6 +12,396 @@
 
 register_long_diagnostics! {
 
+E0023: r##"
+A pattern used to match against an enum variant must provide a sub-pattern for
+each field of the enum variant. This error indicates that a pattern attempted to
+extract an incorrect number of fields from a variant.
+
+```
+enum Fruit {
+    Apple(String, String)
+    Pear(u32)
+}
+```
+
+Here the `Apple` variant has two fields, and should be matched against like so:
+
+```
+// Correct.
+match x {
+    Apple(a, b) => ...
+}
+```
+
+Matching with the wrong number of fields has no sensible interpretation:
+
+```
+// Incorrect.
+match x {
+    Apple(a) => ...,
+    Apple(a, b, c) => ...
+}
+```
+
+Check how many fields the enum was declared with and ensure that your pattern
+uses the same number.
+"##,
+
+E0024: r##"
+This error indicates that a pattern attempted to extract the fields of an enum
+variant with no fields. Here's a tiny example of this error:
+
+```
+// This enum has two variants.
+enum Number {
+    // This variant has no fields.
+    Zero,
+    // This variant has one field.
+    One(u32)
+}
+
+// Assuming x is a Number we can pattern match on its contents.
+match x {
+    Zero(inside) => ...,
+    One(inside) => ...
+}
+```
+
+The pattern match `Zero(inside)` is incorrect because the `Zero` variant
+contains no fields, yet the `inside` name attempts to bind the first field of
+the enum.
+"##,
+
+E0025: r##"
+Each field of a struct can only be bound once in a pattern. Each occurrence of a
+field name binds the value of that field, so to fix this error you will have to
+remove or alter the duplicate uses of the field name. Perhaps you misspelt
+another field name?
+"##,
+
+E0026: r##"
+This error indicates that a struct pattern attempted to extract a non-existant
+field from a struct. Struct fields are identified by the name used before the
+colon `:` so struct patterns should resemble the declaration of the struct type
+being matched.
+
+```
+// Correct matching.
+struct Thing {
+    x: u32,
+    y: u32
+}
+
+let thing = Thing { x: 1, y: 2 };
+match thing {
+    Thing { x: xfield, y: yfield } => ...
+}
+```
+
+If you are using shorthand field patterns but want to refer to the struct field
+by a different name, you should rename it explicitly.
+
+```
+// Change this:
+match thing {
+    Thing { x, z } => ...
+}
+
+// To this:
+match thing {
+    Thing { x, y: z } => ...
+}
+```
+"##,
+
+E0027: r##"
+This error indicates that a pattern for a struct fails to specify a sub-pattern
+for every one of the struct's fields. Ensure that each field from the struct's
+definition is mentioned in the pattern, or use `..` to ignore unwanted fields.
+
+For example:
+
+```
+struct Dog {
+    name: String,
+    age: u32
+}
+
+let d = Dog { name: "Rusty".to_string(), age: 8 };
+
+// This is incorrect.
+match d {
+    Dog { age: x } => ...
+}
+
+// This is correct (explicit).
+match d {
+    Dog { name: n, age: x } => ...
+}
+
+// This is also correct (ignore unused fields).
+match d {
+    Dog { age: x, .. } => ...
+}
+```
+"##,
+
+E0029: r##"
+In a match expression, only numbers and characters can be matched against a
+range. This is because the compiler checks that the range is non-empty at
+compile-time, and is unable to evaluate arbitrary comparison functions. If you
+want to capture values of an orderable type between two end-points, you can use
+a guard.
+
+```
+// The ordering relation for strings can't be evaluated at compile time,
+// so this doesn't work:
+match string {
+    "hello" ... "world" => ...
+    _ => ...
+}
+
+// This is a more general version, using a guard:
+match string {
+    s if s >= "hello" && s <= "world" => ...
+    _ => ...
+}
+```
+"##,
+
+E0030: r##"
+When matching against a range, the compiler verifies that the range is
+non-empty.  Range patterns include both end-points, so this is equivalent to
+requiring the start of the range to be less than or equal to the end of the
+range.
+
+For example:
+
+```
+match 5u32 {
+    // This range is ok, albeit pointless.
+    1 ... 1 => ...
+    // This range is empty, and the compiler can tell.
+    1000 ... 5 => ...
+}
+```
+"##,
+
+E0033: r##"
+This error indicates that a pointer to a trait type cannot be implicitly
+dereferenced by a pattern. Every trait defines a type, but because the
+size of trait implementors isn't fixed, this type has no compile-time size.
+Therefore, all accesses to trait types must be through pointers. If you
+encounter this error you should try to avoid dereferencing the pointer.
+
+```
+let trait_obj: &SomeTrait = ...;
+
+// This tries to implicitly dereference to create an unsized local variable.
+let &invalid = trait_obj;
+
+// You can call methods without binding to the value being pointed at.
+trait_obj.method_one();
+trait_obj.method_two();
+```
+
+You can read more about trait objects in the Trait Object section of the
+Reference:
+
+http://doc.rust-lang.org/reference.html#trait-objects
+"##,
+
+E0034: r##"
+The compiler doesn't know what method to call because more than one method
+has the same prototype. Example:
+
+```
+struct Test;
+
+trait Trait1 {
+    fn foo();
+}
+
+trait Trait2 {
+    fn foo();
+}
+
+impl Trait1 for Test { fn foo() {} }
+impl Trait2 for Test { fn foo() {} }
+
+fn main() {
+    Test::foo() // error, which foo() to call?
+}
+```
+
+To avoid this error, you have to keep only one of them and remove the others.
+So let's take our example and fix it:
+
+```
+struct Test;
+
+trait Trait1 {
+    fn foo();
+}
+
+impl Trait1 for Test { fn foo() {} }
+
+fn main() {
+    Test::foo() // and now that's good!
+}
+```
+
+However, a better solution would be using fully explicit naming of type and
+trait:
+
+```
+struct Test;
+
+trait Trait1 {
+    fn foo();
+}
+
+trait Trait2 {
+    fn foo();
+}
+
+impl Trait1 for Test { fn foo() {} }
+impl Trait2 for Test { fn foo() {} }
+
+fn main() {
+    <Test as Trait1>::foo()
+}
+```
+"##,
+
+E0035: r##"
+You tried to give a type parameter where it wasn't needed. Bad example:
+
+```
+struct Test;
+
+impl Test {
+    fn method(&self) {}
+}
+
+fn main() {
+    let x = Test;
+
+    x.method::<i32>(); // Error: Test::method doesn't need type parameter!
+}
+```
+
+To fix this error, just remove the type parameter:
+
+```
+struct Test;
+
+impl Test {
+    fn method(&self) {}
+}
+
+fn main() {
+    let x = Test;
+
+    x.method(); // OK, we're good!
+}
+```
+"##,
+
+E0036: r##"
+This error occurrs when you pass too many or not enough type parameters to
+a method. Example:
+
+```
+struct Test;
+
+impl Test {
+    fn method<T>(&self, v: &[T]) -> usize {
+        v.len()
+    }
+}
+
+fn main() {
+    let x = Test;
+    let v = &[0i32];
+
+    x.method::<i32, i32>(v); // error: only one type parameter is expected!
+}
+```
+
+To fix it, just specify a correct number of type parameters:
+
+```
+struct Test;
+
+impl Test {
+    fn method<T>(&self, v: &[T]) -> usize {
+        v.len()
+    }
+}
+
+fn main() {
+    let x = Test;
+    let v = &[0i32];
+
+    x.method::<i32>(v); // OK, we're good!
+}
+```
+
+Please note on the last example that we could have called `method` like this:
+
+```
+x.method(v);
+```
+"##,
+
+E0040: r##"
+It is not allowed to manually call destructors in Rust. It is also not
+necessary to do this since `drop` is called automatically whenever a value goes
+out of scope.
+
+Here's an example of this error:
+
+```
+struct Foo {
+    x: i32,
+}
+
+impl Drop for Foo {
+    fn drop(&mut self) {
+        println!("kaboom");
+    }
+}
+
+fn main() {
+    let mut x = Foo { x: -7 };
+    x.drop(); // error: explicit use of destructor method
+}
+```
+"##,
+
+E0045: r##"
+Rust only supports variadic parameters for interoperability with C code in its
+FFI. As such, variadic parameters can only be used with functions which are
+using the C ABI. Examples of erroneous code:
+
+```
+extern "rust-call" { fn foo(x: u8, ...); }
+// or
+fn foo(x: u8, ...) {}
+```
+
+To fix such code, put them in an extern "C" block:
+
+```
+extern "C" fn foo (x: u8, ...);
+// or:
+extern "C" {
+    fn foo (x: u8, ...);
+}
+```
+"##,
+
 E0046: r##"
 When trying to make some type implement a trait `Foo`, you must, at minimum,
 provide implementations for all of `Foo`'s required methods (meaning the
@@ -65,40 +455,27 @@ impl Foo for Bar {
 "##,
 
 E0053: r##"
-For any given method of a trait, the mutabilities of the parameters must match
-between the trait definition and the implementation.
+The parameters of any trait method must match between a trait implementation
+and the trait definition.
 
-Here's an example where the mutability of the `self` parameter is wrong:
+Here are a couple examples of this error:
 
 ```
-trait Foo { fn foo(&self); }
+trait Foo {
+    fn foo(x: u16);
+    fn bar(&self);
+}
 
 struct Bar;
 
 impl Foo for Bar {
-    // error, the signature should be `fn foo(&self)` instead
-    fn foo(&mut self) { }
+    // error, expected u16, found i16
+    fn foo(x: i16) { }
+
+    // error, values differ in mutability
+    fn bar(&mut self) { }
 }
-
-fn main() {}
 ```
-
-Here's another example, this time for a non-`self` parameter:
-
-```
-trait Foo { fn foo(x: &mut bool) -> bool; }
-
-struct Bar;
-
-impl Foo for Bar {
-    // error, the type of `x` should be `&mut bool` instead
-    fn foo(x: &bool) -> bool { *x }
-}
-
-fn main() {}
-```
-
-
 "##,
 
 E0054: r##"
@@ -116,6 +493,128 @@ let x_is_nonzero = x as bool;
 ```
 "##,
 
+E0055: r##"
+During a method call, a value is automatically dereferenced as many times as
+needed to make the value's type match the method's receiver. The catch is that
+the compiler will only attempt to dereference a number of times up to the
+recursion limit (which can be set via the `recursion_limit` attribute).
+
+For a somewhat artificial example:
+
+```
+#![recursion_limit="2"]
+
+struct Foo;
+
+impl Foo {
+    fn foo(&self) {}
+}
+
+fn main() {
+    let foo = Foo;
+    let ref_foo = &&Foo;
+
+    // error, reached the recursion limit while auto-dereferencing &&Foo
+    ref_foo.foo();
+}
+```
+
+One fix may be to increase the recursion limit. Note that it is possible to
+create an infinite recursion of dereferencing, in which case the only fix is to
+somehow break the recursion.
+"##,
+
+E0057: r##"
+When invoking closures or other implementations of the function traits `Fn`,
+`FnMut` or `FnOnce` using call notation, the number of parameters passed to the
+function must match its definition.
+
+An example using a closure:
+
+```
+let f = |x| x * 3;
+let a = f();        // invalid, too few parameters
+let b = f(4);       // this works!
+let c = f(2, 3);    // invalid, too many parameters
+```
+
+A generic function must be treated similarly:
+
+```
+fn foo<F: Fn()>(f: F) {
+    f(); // this is valid, but f(3) would not work
+}
+```
+"##,
+
+E0059: r##"
+The built-in function traits are generic over a tuple of the function arguments.
+If one uses angle-bracket notation (`Fn<(T,), Output=U>`) instead of parentheses
+(`Fn(T) -> U`) to denote the function trait, the type parameter should be a
+tuple. Otherwise function call notation cannot be used and the trait will not be
+implemented by closures.
+
+The most likely source of this error is using angle-bracket notation without
+wrapping the function argument type into a tuple, for example:
+
+```
+fn foo<F: Fn<i32>>(f: F) -> F::Output { f(3) }
+```
+
+It can be fixed by adjusting the trait bound like this:
+
+```
+fn foo<F: Fn<(i32,)>>(f: F) -> F::Output { f(3) }
+```
+
+Note that `(T,)` always denotes the type of a 1-tuple containing an element of
+type `T`. The comma is necessary for syntactic disambiguation.
+"##,
+
+E0060: r##"
+External C functions are allowed to be variadic. However, a variadic function
+takes a minimum number of arguments. For example, consider C's variadic `printf`
+function:
+
+```
+extern crate libc;
+use libc::{ c_char, c_int };
+
+extern "C" {
+    fn printf(_: *const c_char, ...) -> c_int;
+}
+```
+
+Using this declaration, it must be called with at least one argument, so
+simply calling `printf()` is illegal. But the following uses are allowed:
+
+```
+unsafe {
+    use std::ffi::CString;
+
+    printf(CString::new("test\n").unwrap().as_ptr());
+    printf(CString::new("number = %d\n").unwrap().as_ptr(), 3);
+    printf(CString::new("%d, %d\n").unwrap().as_ptr(), 10, 5);
+}
+```
+"##,
+
+E0061: r##"
+The number of arguments passed to a function must match the number of arguments
+specified in the function signature.
+
+For example, a function like
+
+```
+fn f(a: u16, b: &str) {}
+```
+
+must always be called with exactly two arguments, e.g. `f(2, "test")`.
+
+Note, that Rust does not have a notion of optional function arguments or
+variadic functions (except for its C-FFI).
+"##,
+
 E0062: r##"
 This error indicates that during an attempt to build a struct or struct-like
 enum variant, one of the fields was specified more than once. Each field should
@@ -124,8 +623,8 @@ be specified exactly one time.
 
 E0063: r##"
 This error indicates that during an attempt to build a struct or struct-like
-enum variant, one of the fields was not provided. Each field should be specified
-exactly once.
+enum variant, one of the fields was not provided. Each field should be
+specified exactly once.
 "##,
 
 E0066: r##"
@@ -139,19 +638,36 @@ and [RFC 809] for more details.
 "##,
 
 E0067: r##"
-The left-hand side of an assignment operator must be an lvalue expression. An
-lvalue expression represents a memory location and includes item paths (ie,
-namespaced variables), dereferences, indexing expressions, and field references.
+The left-hand side of a compound assignment expression must be an lvalue
+expression. An lvalue expression represents a memory location and includes
+item paths (ie, namespaced variables), dereferences, indexing expressions,
+and field references.
 
+Let's start with some bad examples:
 ```
 use std::collections::LinkedList;
 
-// Good
-let mut list = LinkedList::new();
-
-
 // Bad: assignment to non-lvalue expression
 LinkedList::new() += 1;
+
+// ...
+
+fn some_func(i: &mut i32) {
+    i += 12; // Error : '+=' operation cannot be applied on a reference !
+}
+
+And now some good examples:
+```
+let mut i : i32 = 0;
+
+i += 12; // Good !
+
+// ...
+
+fn some_func(i: &mut i32) {
+    *i += 12; // Good !
+}
+
 ```
 "##,
 
@@ -168,6 +684,110 @@ fn foo() -> u8 {
 
 Since `return;` is just like `return ();`, there is a mismatch between the
 function's return type and the value being returned.
+"##,
+
+E0070: r##"
+The left-hand side of an assignment operator must be an lvalue expression. An
+lvalue expression represents a memory location and can be a variable (with
+optional namespacing), a dereference, an indexing expression or a field
+reference.
+
+More details can be found here:
+https://doc.rust-lang.org/reference.html#lvalues,-rvalues-and-temporaries
+
+Now, we can go further. Here are some bad examples:
+```
+struct SomeStruct {
+    x: i32,
+    y: i32
+}
+const SOME_CONST : i32 = 12;
+
+fn some_other_func() {}
+
+fn some_function() {
+    SOME_CONST = 14; // error : a constant value cannot be changed!
+    1 = 3; // error : 1 isn't a valid lvalue!
+    some_other_func() = 4; // error : we can't assign value to a function!
+    SomeStruct.x = 12; // error : SomeStruct a structure name but it is used
+                       // like a variable!
+}
+```
+
+And now let's give good examples:
+
+```
+struct SomeStruct {
+    x: i32,
+    y: i32
+}
+let mut s = SomeStruct {x: 0, y: 0};
+
+s.x = 3; // that's good !
+
+// ...
+
+fn some_func(x: &mut i32) {
+    *x = 12; // that's good !
+}
+```
+"##,
+
+E0072: r##"
+When defining a recursive struct or enum, any use of the type being defined
+from inside the definition must occur behind a pointer (like `Box` or `&`).
+This is because structs and enums must have a well-defined size, and without
+the pointer the size of the type would need to be unbounded.
+
+Consider the following erroneous definition of a type for a list of bytes:
+
+```
+// error, illegal recursive struct type
+struct ListNode {
+    head: u8,
+    tail: Option<ListNode>,
+}
+```
+
+This type cannot have a well-defined size, because it needs to be arbitrarily
+large (since we would be able to nest `ListNode`s to any depth). Specifically,
+
+```plain
+size of `ListNode` = 1 byte for `head`
+                   + 1 byte for the discriminant of the `Option`
+                   + size of `ListNode`
+```
+
+One way to fix this is by wrapping `ListNode` in a `Box`, like so:
+
+```
+struct ListNode {
+    head: u8,
+    tail: Option<Box<ListNode>>,
+}
+```
+
+This works because `Box` is a pointer, so its size is well-known.
+"##,
+
+E0073: r##"
+You cannot define a struct (or enum) `Foo` that requires an instance of `Foo`
+in order to make a new `Foo` value. This is because there would be no way a
+first instance of `Foo` could be made to initialize another instance!
+
+Here's an example of a struct that has this problem:
+
+```
+struct Foo { x: Box<Foo> } // error
+```
+
+One fix is to use `Option`, like so:
+
+```
+struct Foo { x: Option<Box<Foo>> }
+```
+
+Now it's possible to create at least one instance of `Foo`: `Foo { x: None }`.
 "##,
 
 E0081: r##"
@@ -242,6 +862,46 @@ construct an instance of the following type using only safe code:
 
 ```
 enum Empty {}
+```
+"##,
+
+E0087: r##"
+Too many type parameters were supplied for a function. For example:
+
+```
+fn foo<T>() {}
+
+fn main() {
+    foo::<f64, bool>(); // error, expected 1 parameter, found 2 parameters
+}
+```
+
+The number of supplied parameters much exactly match the number of defined type
+parameters.
+"##,
+
+E0089: r##"
+Not enough type parameters were supplied for a function. For example:
+
+```
+fn foo<T, U>() {}
+
+fn main() {
+    foo::<f64>(); // error, expected 2 parameters, found 1 parameter
+}
+```
+
+Note that if a function takes multiple type parameters but you want the compiler
+to infer some of them, you can use type placeholders:
+
+```
+fn foo<T, U>(x: T) {}
+
+fn main() {
+    let x: bool = true;
+    foo::<f64>(x);    // error, expected 2 parameters, found 1 parameter
+    foo::<_, f64>(x); // same as `foo::<bool, f64>(x)`
+}
 ```
 "##,
 
@@ -327,6 +987,45 @@ RFC. It is, however, [currently unimplemented][iss15872].
 [iss15872]: https://github.com/rust-lang/rust/issues/15872
 "##,
 
+E0116: r##"
+You can only define an inherent implementation for a type in the same crate
+where the type was defined. For example, an `impl` block as below is not allowed
+since `Vec` is defined in the standard library:
+
+```
+impl Vec<u8> { ... } // error
+```
+
+To fix this problem, you can do either of these things:
+
+ - define a trait that has the desired associated functions/types/constants and
+   implement the trait for the type in question
+ - define a new type wrapping the type and define an implementation on the new
+   type
+
+Note that using the `type` keyword does not work here because `type` only
+introduces a type alias:
+
+```
+type Bytes = Vec<u8>;
+
+impl Bytes { ... } // error, same as above
+```
+"##,
+
+E0121: r##"
+In order to be consistent with Rust's lack of global type inference, type
+placeholders are disallowed by design in item signatures.
+
+Examples of this error include:
+
+```
+fn foo() -> _ { 5 } // error, explicitly write out the return type instead
+
+static BAR: _ = "test"; // error, explicitly write out the type instead
+```
+"##,
+
 E0131: r##"
 It is not possible to define `main` with type parameters, or even with function
 parameters. When `main` is present, it must take no arguments and return `()`.
@@ -355,6 +1054,28 @@ return, for example with a `loop` that never breaks or a call to another
 diverging function (such as `panic!()`).
 "##,
 
+E0178: r##"
+In types, the `+` type operator has low precedence, so it is often necessary
+to use parentheses.
+
+For example:
+
+```
+trait Foo {}
+
+struct Bar<'a> {
+    w: &'a Foo + Copy,   // error, use &'a (Foo + Copy)
+    x: &'a Foo + 'a,     // error, use &'a (Foo + 'a)
+    y: &'a mut Foo + 'a, // error, use &'a mut (Foo + 'a)
+    z: fn() -> Foo + 'a, // error, use fn() -> (Foo + 'a)
+}
+```
+
+More details can be found in [RFC 438].
+
+[RFC 438]: https://github.com/rust-lang/rfcs/pull/438
+"##,
+
 E0184: r##"
 Explicitly implementing both Drop and Copy for a type is currently disallowed.
 This feature can make some sense in theory, but the current implementation is
@@ -362,6 +1083,54 @@ incorrect and can lead to memory unsafety (see [issue #20126][iss20126]), so
 it has been disabled for now.
 
 [iss20126]: https://github.com/rust-lang/rust/issues/20126
+"##,
+
+E0185: r##"
+An associated function for a trait was defined to be static, but an
+implementation of the trait declared the same function to be a method (i.e. to
+take a `self` parameter).
+
+Here's an example of this error:
+
+```
+trait Foo {
+    fn foo();
+}
+
+struct Bar;
+
+impl Foo for Bar {
+    // error, method `foo` has a `&self` declaration in the impl, but not in
+    // the trait
+    fn foo(&self) {}
+}
+"##,
+
+E0186: r##"
+An associated function for a trait was defined to be a method (i.e. to take a
+`self` parameter), but an implementation of the trait declared the same function
+to be static.
+
+Here's an example of this error:
+
+```
+trait Foo {
+    fn foo(&self);
+}
+
+struct Bar;
+
+impl Foo for Bar {
+    // error, method `foo` has a `&self` declaration in the trait, but not in
+    // the impl
+    fn foo() {}
+}
+"##,
+
+E0192: r##"
+Negative impls are only allowed for traits with default impls. For more
+information see the [opt-in builtin traits RFC](https://github.com/rust-lang/
+rfcs/blob/master/text/0019-opt-in-builtin-traits.md).
 "##,
 
 E0197: r##"
@@ -435,21 +1204,39 @@ unsafe impl Bar for Foo { }
 "##,
 
 E0201: r##"
-It is an error to define a method--a trait method or an inherent method--more
-than once.
+It is an error to define an associated function more than once.
 
-For example,
+For example:
 
 ```
 struct Foo(u8);
 
 impl Foo {
+    fn bar(&self) -> bool { self.0 > 5 }
+
+    // error: duplicate associated function
     fn bar() {}
+}
+
+trait Baz {
+    fn baz(&self) -> bool;
+}
+
+impl Baz for Foo {
+    fn baz(&self) -> bool { true }
 
     // error: duplicate method
-    fn bar(&self) -> bool { self.0 > 5 }
+    fn baz(&self) -> bool { self.0 > 5 }
 }
 ```
+"##,
+
+E0202: r##"
+Inherent associated types were part of [RFC 195] but are not yet implemented.
+See [the tracking issue][iss8995] for the status of this implementation.
+
+[RFC 195]: https://github.com/rust-lang/rfcs/pull/195
+[iss8995]: https://github.com/rust-lang/rust/issues/8995
 "##,
 
 E0204: r##"
@@ -566,10 +1353,10 @@ const C: [u32; 0.0] = []; // error
 "##,
 
 E0250: r##"
-This means there was an error while evaluating the expression for the length of
-a fixed-size array type.
+There was an error while evaluating the expression for the length of a fixed-
+size array type.
 
-Some examples of code that produces this error are:
+Some examples of this error are:
 
 ```
 // divide by zero in the length expression
@@ -585,6 +1372,12 @@ const C: [u32; u8::MAX + f64::EPSILON] = [];
 ```
 "##,
 
+E0318: r##"
+Default impls for a trait must be located in the same crate where the trait was
+defined. For more information see the [opt-in builtin traits RFC](https://github
+.com/rust-lang/rfcs/blob/master/text/0019-opt-in-builtin-traits.md).
+"##,
+
 E0322: r##"
 The `Sized` trait is a special trait built-in to the compiler for types with a
 constant size known at compile-time. This trait is automatically implemented
@@ -592,11 +1385,28 @@ for types as needed by the compiler, and it is currently disallowed to
 explicitly implement it for a type.
 "##,
 
+E0326: r##"
+The types of any associated constants in a trait implementation must match the
+types in the trait definition. This error indicates that there was a mismatch.
+
+Here's an example of this error:
+
+```
+trait Foo {
+    const BAR: bool;
+}
+
+struct Bar;
+
+impl Foo for Bar {
+    const BAR: u32 = 5; // error, expected bool, found u32
+}
+```
+"##,
+
 E0368: r##"
 This error indicates that a binary assignment operator like `+=` or `^=` was
-applied to the wrong types.
-
-A couple examples of this are as follows:
+applied to the wrong types. For example:
 
 ```
 let mut x: u16 = 5;
@@ -632,45 +1442,62 @@ traits, so it is not possible to overload them. See [RFC 953] for a proposal
 to change this.
 
 [RFC 953]: https://github.com/rust-lang/rfcs/pull/953
+"##,
+
+E0371: r##"
+When `Trait2` is a subtrait of `Trait1` (for example, when `Trait2` has a
+definition like `trait Trait2: Trait1 { ... }`), it is not allowed to implement
+`Trait1` for `Trait2`. This is because `Trait2` already implements `Trait1` by
+definition, so it is not useful to do this.
+
+Example:
+
+```
+trait Foo { fn foo(&self) { } }
+trait Bar: Foo { }
+trait Baz: Bar { }
+
+impl Bar for Baz { } // error, `Baz` implements `Bar` by definition
+impl Foo for Baz { } // error, `Baz` implements `Bar` which implements `Foo`
+impl Baz for Baz { } // error, `Baz` (trivially) implements `Baz`
+impl Baz for Bar { } // Note: This is OK
+```
+"##,
+
+E0372: r##"
+Trying to implement a trait for a trait object (as in `impl Trait1 for
+Trait2 { ... }`) does not work if the trait is not object-safe. Please see the
+[RFC 255] for more details on object safety rules.
+
+[RFC 255]: https://github.com/rust-lang/rfcs/pull/255
+"##,
+
+E0379: r##"
+Trait methods cannot be declared `const` by design. For more information, see
+[RFC 911].
+
+[RFC 911]: https://github.com/rust-lang/rfcs/pull/911
+"##,
+
+E0380: r##"
+Default impls are only allowed for traits with no methods or associated items.
+For more information see the [opt-in builtin traits RFC](https://github.com/rust
+-lang/rfcs/blob/master/text/0019-opt-in-builtin-traits.md).
 "##
 
 }
 
 register_diagnostics! {
-    E0023,
-    E0024,
-    E0025,
-    E0026,
-    E0027,
-    E0029,
-    E0030,
-    E0031,
-    E0033,
-    E0034, // multiple applicable methods in scope
-    E0035, // does not take type parameters
-    E0036, // incorrect number of type parameters given for this method
-    E0040, // explicit use of destructor method
     E0044, // foreign items may not have type parameters
-    E0045, // variadic function must have C calling convention
-    E0055, // method has an incompatible type for trait
-    E0057, // method has an incompatible type for trait
-    E0059,
-    E0060,
-    E0061,
     E0068,
-    E0070,
     E0071,
-    E0072,
-    E0073,
     E0074,
     E0075,
     E0076,
     E0077,
     E0085,
     E0086,
-    E0087,
     E0088,
-    E0089,
     E0090,
     E0091,
     E0092,
@@ -680,12 +1507,10 @@ register_diagnostics! {
     E0102,
     E0103,
     E0104,
-    E0116,
     E0117,
     E0118,
     E0119,
     E0120,
-    E0121,
     E0122,
     E0123,
     E0124,
@@ -702,23 +1527,18 @@ register_diagnostics! {
     E0172,
     E0173, // manual implementations of unboxed closure traits are experimental
     E0174, // explicit use of unboxed closure methods are experimental
-    E0178,
     E0182,
     E0183,
-    E0185,
-    E0186,
     E0187, // can't infer the kind of the closure
-    E0188, // types differ in mutability
-    E0189, // can only cast a boxed pointer to a boxed object
-    E0190, // can only cast a &-pointer to an &-object
+    E0188, // can not cast a immutable reference to a mutable pointer
+    E0189, // deprecated: can only cast a boxed pointer to a boxed object
+    E0190, // deprecated: can only cast a &-pointer to an &-object
     E0191, // value of the associated type must be specified
-    E0192, // negative imples are allowed just for `Send` and `Sync`
     E0193, // cannot bound type where clause bounds may only be attached to types
            // involving type parameters
     E0194,
     E0195, // lifetime parameters or bounds on method do not match the trait declaration
     E0196, // cannot determine a type for this closure
-    E0202, // associated items are not allowed in inherent impls
     E0203, // type parameter has more than one relaxed default bound,
            // and only one is supported
     E0207, // type parameter is not constrained by the impl trait, self type, or predicate
@@ -736,7 +1556,8 @@ register_diagnostics! {
     E0219, // associated type defined in higher-ranked supertrait
     E0220, // associated type not found for type parameter
     E0221, // ambiguous associated type in bounds
-    E0222, // variadic function must have C calling convention
+    //E0222, // Error code E0045 (variadic function must have C calling
+             // convention) duplicate
     E0223, // ambiguous associated type
     E0224, // at least one non-builtin train is required for an object type
     E0225, // only the builtin traits can be used as closure or object bounds
@@ -761,21 +1582,18 @@ register_diagnostics! {
     E0246, // illegal recursive type
     E0247, // found module name used as a type
     E0248, // found value name used as a type
-    E0318, // can't create default impls for traits outside their crates
     E0319, // trait impls for defaulted traits allowed just for structs/enums
     E0320, // recursive overflow during dropck
     E0321, // extended coherence rules for defaulted traits violated
     E0323, // implemented an associated const when another trait item expected
     E0324, // implemented a method when another trait item expected
     E0325, // implemented an associated type when another trait item expected
-    E0326, // associated const implemented with different type from trait
     E0327, // referred to method instead of constant in match pattern
     E0328, // cannot implement Unsize explicitly
+    E0329, // associated const depends on type parameter or Self.
     E0366, // dropck forbid specialization to concrete type or region
     E0367, // dropck forbid specialization to predicate not in struct/enum
     E0369, // binary operation `<op>` cannot be applied to types
-    E0371, // impl Trait for Trait is illegal
-    E0372, // impl Trait for Trait where Trait is not object safe
     E0374, // the trait `CoerceUnsized` may only be implemented for a coercion
            // between structures with one field being coerced, none found
     E0375, // the trait `CoerceUnsized` may only be implemented for a coercion
@@ -783,6 +1601,12 @@ register_diagnostics! {
            // fields need coercions
     E0376, // the trait `CoerceUnsized` may only be implemented for a coercion
            // between structures
-    E0377  // the trait `CoerceUnsized` may only be implemented for a coercion
+    E0377, // the trait `CoerceUnsized` may only be implemented for a coercion
            // between structures with the same definition
+    E0390, // only a single inherent implementation marked with
+           // `#[lang = \"{}\"]` is allowed for the `{}` primitive
+    E0391, // unsupported cyclic reference between types/traits detected
+    E0392, // parameter `{}` is never used
+    E0393  // the type parameter `{}` must be explicitly specified in an object
+           // type because its default value `{}` references the type `Self`"
 }

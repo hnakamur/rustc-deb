@@ -22,18 +22,17 @@
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-      html_favicon_url = "http://www.rust-lang.org/favicon.ico",
+      html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "http://doc.rust-lang.org/nightly/")]
 
 #![feature(box_syntax)]
-#![feature(collections)]
 #![feature(libc)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
-#![feature(staged_api)]
-#![feature(exit_status)]
 #![feature(set_stdio)]
+#![feature(staged_api)]
+#![feature(vec_push_all)]
 
 extern crate arena;
 extern crate flate;
@@ -73,6 +72,7 @@ use std::env;
 use std::io::{self, Read, Write};
 use std::iter::repeat;
 use std::path::PathBuf;
+use std::process;
 use std::str;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -377,12 +377,10 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
         if sess.opts.debugging_opts.save_analysis {
             control.after_analysis.callback = box |state| {
                 time(state.session.time_passes(),
-                     "save analysis",
-                     state.expanded_crate.unwrap(),
-                     |krate| save::process_crate(state.session,
-                                                 krate,
-                                                 state.analysis.unwrap(),
-                                                 state.out_dir));
+                     "save analysis", (),
+                     |_| save::process_crate(state.tcx.unwrap(),
+                                             state.analysis.unwrap(),
+                                             state.out_dir));
             };
             control.make_glob_map = resolve::MakeGlobMap::Yes;
         }
@@ -402,7 +400,7 @@ impl RustcDefaultCalls {
                 &Input::File(ref ifile) => {
                     let path = &(*ifile);
                     let mut v = Vec::new();
-                    metadata::loader::list_file_metadata(sess.target.target.options.is_like_osx,
+                    metadata::loader::list_file_metadata(&sess.target.target,
                                                          path,
                                                          &mut v).unwrap();
                     println!("{}", String::from_utf8(v).unwrap());
@@ -566,7 +564,7 @@ Available lint options:
     let plugin_groups = sort_lint_groups(plugin_groups);
     let builtin_groups = sort_lint_groups(builtin_groups);
 
-    let max_name_len = plugin.iter().chain(builtin.iter())
+    let max_name_len = plugin.iter().chain(&builtin)
         .map(|&s| s.name.chars().count())
         .max().unwrap_or(0);
     let padded = |x: &str| {
@@ -593,7 +591,7 @@ Available lint options:
 
 
 
-    let max_name_len = plugin_groups.iter().chain(builtin_groups.iter())
+    let max_name_len = plugin_groups.iter().chain(&builtin_groups)
         .map(|&(s, _)| s.chars().count())
         .max().unwrap_or(0);
     let padded = |x: &str| {
@@ -826,10 +824,13 @@ pub fn monitor<F:FnOnce()+Send+'static>(f: F) {
                     "the compiler unexpectedly panicked. this is a bug.".to_string(),
                     format!("we would appreciate a bug report: {}",
                             BUG_REPORT_URL),
-                    "run with `RUST_BACKTRACE=1` for a backtrace".to_string(),
                 ];
                 for note in &xs {
                     emitter.emit(None, &note[..], None, diagnostic::Note)
+                }
+                if let None = env::var_os("RUST_BACKTRACE") {
+                    emitter.emit(None, "run with `RUST_BACKTRACE=1` for a backtrace",
+                                 None, diagnostic::Note);
                 }
 
                 println!("{}", str::from_utf8(&data.lock().unwrap()).unwrap());
@@ -858,5 +859,5 @@ pub fn diagnostics_registry() -> diagnostics::registry::Registry {
 
 pub fn main() {
     let result = run(env::args().collect());
-    std::env::set_exit_status(result as i32);
+    process::exit(result as i32);
 }

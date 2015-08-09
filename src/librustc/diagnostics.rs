@@ -176,6 +176,38 @@ for the entire lifetime of a program. Creating a boxed value allocates memory on
 the heap at runtime, and therefore cannot be done at compile time.
 "##,
 
+E0011: r##"
+Initializers for constants and statics are evaluated at compile time.
+User-defined operators rely on user-defined functions, which cannot be evaluated
+at compile time.
+
+Bad example:
+
+```
+use std::ops::Index;
+
+struct Foo { a: u8 }
+
+impl Index<u8> for Foo {
+    type Output = u8;
+
+    fn index<'a>(&'a self, idx: u8) -> &'a u8 { &self.a }
+}
+
+const a: Foo = Foo { a: 0u8 };
+const b: u8 = a[0]; // Index trait is defined by the user, bad!
+```
+
+Only operators on builtin types are allowed.
+
+Example:
+
+```
+const a: &'static [i32] = &[1, 2, 3];
+const b: i32 = a[0]; // Good!
+```
+"##,
+
 E0013: r##"
 Static and const variables can refer to other const variables. But a const
 variable cannot refer to a static variable. For example, `Y` cannot refer to `X`
@@ -195,10 +227,48 @@ const Y: i32 = A;
 ```
 "##,
 
+E0014: r##"
+Constants can only be initialized by a constant value or, in a future
+version of Rust, a call to a const function. This error indicates the use
+of a path (like a::b, or x) denoting something other than one of these
+allowed items. Example:
+
+```
+const FOO: i32 = { let x = 0; x }; // 'x' isn't a constant nor a function!
+```
+
+To avoid it, you have to replace the non-constant value:
+
+```
+const FOO: i32 = { const X : i32 = 0; X };
+// or even:
+const FOO: i32 = { 0 }; // but brackets are useless here
+```
+"##,
+
 E0015: r##"
-The only function calls allowed in static or constant expressions are enum
-variant constructors or struct constructors (for unit or tuple structs). This
-is because Rust currently does not support compile-time function execution.
+The only functions that can be called in static or constant expressions are
+`const` functions. Rust currently does not support more general compile-time
+function execution.
+
+See [RFC 911] for more details on the design of `const fn`s.
+
+[RFC 911]: https://github.com/rust-lang/rfcs/blob/master/text/0911-const-fn.md
+"##,
+
+E0016: r##"
+Blocks in constants may only contain items (such as constant, function
+definition, etc...) and a tail expression. Example:
+
+```
+const FOO: i32 = { let x = 0; x }; // 'x' isn't an item!
+```
+
+To avoid it, you have to replace the non-item object:
+
+```
+const FOO: i32 = { const X : i32 = 0; X };
+```
 "##,
 
 E0018: r##"
@@ -218,9 +288,45 @@ Therefore, casting one of these non-constant pointers to an integer results
 in a non-constant integer which lead to this error. Example:
 
 ```
-const X: u32 = 50;
-const Y: *const u32 = &X;
-println!("{:?}", Y);
+const X: u32 = 1;
+const Y: usize = &X as *const u32 as usize;
+println!("{}", Y);
+```
+"##,
+
+E0019: r##"
+A function call isn't allowed in the const's initialization expression
+because the expression's value must be known at compile-time. Example of
+erroneous code:
+
+```
+enum Test {
+    V1
+}
+
+impl Test {
+    fn test(&self) -> i32 {
+        12
+    }
+}
+
+fn main() {
+    const FOO: Test = Test::V1;
+
+    const A: i32 = FOO.test(); // You can't call Test::func() here !
+}
+```
+
+Remember: you can't use a function call inside a const's initialization
+expression! However, you can totally use it elsewhere you want:
+
+```
+fn main() {
+    const FOO: Test = Test::V1;
+
+    FOO.func(); // here is good
+    let x = FOO.func(); // or even here!
+}
 ```
 "##,
 
@@ -257,8 +363,8 @@ http://doc.rust-lang.org/reference.html#ffi-attributes
 E0133: r##"
 Using unsafe functionality, such as dereferencing raw pointers and calling
 functions via FFI or marked as unsafe, is potentially dangerous and disallowed
-by safety checks. As such, those safety checks can be temporarily relaxed by
-wrapping the unsafe instructions inside an `unsafe` block. For instance:
+by safety checks. These safety checks can be relaxed for a section of the code
+by wrapping the unsafe instructions with an `unsafe` block. For instance:
 
 ```
 unsafe fn f() { return; }
@@ -396,6 +502,54 @@ enum Method { GET, POST }
 ```
 "##,
 
+E0261: r##"
+When using a lifetime like `'a` in a type, it must be declared before being
+used.
+
+These two examples illustrate the problem:
+
+```
+// error, use of undeclared lifetime name `'a`
+fn foo(x: &'a str) { }
+
+struct Foo {
+    // error, use of undeclared lifetime name `'a`
+    x: &'a str,
+}
+```
+
+These can be fixed by declaring lifetime parameters:
+
+```
+fn foo<'a>(x: &'a str) { }
+
+struct Foo<'a> {
+    x: &'a str,
+}
+```
+"##,
+
+E0262: r##"
+Declaring certain lifetime names in parameters is disallowed. For example,
+because the `'static` lifetime is a special built-in lifetime name denoting
+the lifetime of the entire program, this is an error:
+
+```
+// error, illegal lifetime parameter name `'static`
+fn foo<'static>(x: &'static str) { }
+```
+"##,
+
+E0263: r##"
+A lifetime name cannot be declared more than once in the same scope. For
+example:
+
+```
+// error, lifetime name `'a` declared twice in the same scope
+fn foo<'a, 'b, 'a>(x: &'a str, y: &'b str) { }
+```
+"##,
+
 E0265: r##"
 This error indicates that a static or constant references itself.
 All statics and constants need to resolve to a value in an acyclic manner.
@@ -475,7 +629,7 @@ impl Trait for i8 { type AssociatedType = &'static str; }
 
 foo(3_i8);
 // Here, we invoke `foo` with an `i8`, which does not satisfy
-// the constraint `<i8 as Trait>::AssociatedType=32`, and
+// the constraint `<i8 as Trait>::AssociatedType=u32`, and
 // therefore the type-checker complains with this error code.
 ```
 
@@ -794,18 +948,96 @@ struct Foo<T: 'static> {
     foo: &'static T
 }
 ```
+"##,
+
+E0378: r##"
+Method calls that aren't calls to inherent `const` methods are disallowed
+in statics, constants, and constant functions.
+
+For example:
+
+```
+const BAZ: i32 = Foo(25).bar(); // error, `bar` isn't `const`
+
+struct Foo(i32);
+
+impl Foo {
+    const fn foo(&self) -> i32 {
+        self.bar() // error, `bar` isn't `const`
+    }
+
+    fn bar(&self) -> i32 { self.0 }
+}
+```
+
+For more information about `const fn`'s, see [RFC 911].
+
+[RFC 911]: https://github.com/rust-lang/rfcs/blob/master/text/0911-const-fn.md
+"##,
+
+E0394: r##"
+From [RFC 246]:
+
+ > It is illegal for a static to reference another static by value. It is
+ > required that all references be borrowed.
+
+[RFC 246]: https://github.com/rust-lang/rfcs/pull/246
+"##,
+
+E0397: r##"
+It is not allowed for a mutable static to allocate or have destructors. For
+example:
+
+```
+// error: mutable statics are not allowed to have boxes
+static mut FOO: Option<Box<usize>> = None;
+
+// error: mutable statics are not allowed to have destructors
+static mut BAR: Option<Vec<i32>> = None;
+```
+"##,
+
+E0398: r##"
+In Rust 1.3, the default object lifetime bounds are expected to
+change, as described in RFC #1156 [1]. You are getting a warning
+because the compiler thinks it is possible that this change will cause
+a compilation error in your code. It is possible, though unlikely,
+that this is a false alarm.
+
+The heart of the change is that where `&'a Box<SomeTrait>` used to
+default to `&'a Box<SomeTrait+'a>`, it now defaults to `&'a
+Box<SomeTrait+'static>` (here, `SomeTrait` is the name of some trait
+type). Note that the only types which are affected are references to
+boxes, like `&Box<SomeTrait>` or `&[Box<SomeTrait>]`.  More common
+types like `&SomeTrait` or `Box<SomeTrait>` are unaffected.
+
+To silence this warning, edit your code to use an explicit bound.
+Most of the time, this means that you will want to change the
+signature of a function that you are calling. For example, if
+the error is reported on a call like `foo(x)`, and `foo` is
+defined as follows:
+
+```
+fn foo(arg: &Box<SomeTrait>) { ... }
+```
+
+you might change it to:
+
+```
+fn foo<'a>(arg: &Box<SomeTrait+'a>) { ... }
+```
+
+This explicitly states that you expect the trait object `SomeTrait` to
+contain references (with a maximum lifetime of `'a`).
+
+[1]: https://github.com/rust-lang/rfcs/pull/1156
 "##
 
 }
 
 
 register_diagnostics! {
-    E0011,
-    E0012,
-    E0014,
-    E0016,
     E0017,
-    E0019,
     E0022,
     E0038,
     E0109,
@@ -815,9 +1047,6 @@ register_diagnostics! {
     E0136,
     E0138,
     E0139,
-    E0261, // use of undeclared lifetime name
-    E0262, // illegal lifetime parameter name
-    E0263, // lifetime name declared twice in same scope
     E0264, // unknown external lang item
     E0266, // expected item
     E0269, // not all control paths return a value
@@ -846,5 +1075,7 @@ register_diagnostics! {
     E0314, // closure outlives stack frame
     E0315, // cannot invoke closure outside of its lifetime
     E0316, // nested quantification of lifetimes
-    E0370  // discriminant overflow
+    E0370, // discriminant overflow
+    E0395, // pointer comparison in const-expr
+    E0396  // pointer dereference in const-expr
 }

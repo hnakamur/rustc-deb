@@ -14,6 +14,7 @@
 
 #![allow(non_snake_case)]
 #![doc(primitive = "char")]
+#![stable(feature = "core_char", since = "1.2.0")]
 
 use iter::Iterator;
 use mem::transmute;
@@ -74,17 +75,8 @@ pub const MAX: char = '\u{10ffff}';
 /// ```
 /// use std::char;
 ///
-/// let c = char::from_u32(10084); // produces `Some(❤)`
-/// assert_eq!(c, Some('❤'));
-/// ```
-///
-/// An invalid character:
-///
-/// ```
-/// use std::char;
-///
-/// let none = char::from_u32(1114112);
-/// assert_eq!(none, None);
+/// assert_eq!(char::from_u32(0x2764), Some('❤'));
+/// assert_eq!(char::from_u32(0x110000), None); // invalid character
 /// ```
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -140,6 +132,8 @@ pub fn from_digit(num: u32, radix: u32) -> Option<char> {
 // unicode/char.rs, not here
 #[allow(missing_docs)] // docs in libunicode/u_char.rs
 #[doc(hidden)]
+#[unstable(feature = "core_char_ext",
+           reason = "the stable interface is `impl char` in later crate")]
 pub trait CharExt {
     fn is_digit(self, radix: u32) -> bool;
     fn to_digit(self, radix: u32) -> Option<u32>;
@@ -152,10 +146,12 @@ pub trait CharExt {
 }
 
 impl CharExt for char {
+    #[inline]
     fn is_digit(self, radix: u32) -> bool {
         self.to_digit(radix).is_some()
     }
 
+    #[inline]
     fn to_digit(self, radix: u32) -> Option<u32> {
         if radix > 36 {
             panic!("to_digit: radix is too high (maximum 36)");
@@ -170,10 +166,12 @@ impl CharExt for char {
         else { None }
     }
 
+    #[inline]
     fn escape_unicode(self) -> EscapeUnicode {
         EscapeUnicode { c: self, state: EscapeUnicodeState::Backslash }
     }
 
+    #[inline]
     fn escape_default(self) -> EscapeDefault {
         let init_state = match self {
             '\t' => EscapeDefaultState::Backslash('t'),
@@ -225,6 +223,9 @@ impl CharExt for char {
 /// If the buffer is not large enough, nothing will be written into it
 /// and a `None` will be returned.
 #[inline]
+#[unstable(feature = "char_internals",
+           reason = "this function should not be exposed publicly")]
+#[doc(hidden)]
 pub fn encode_utf8_raw(code: u32, dst: &mut [u8]) -> Option<usize> {
     // Marked #[inline] to allow llvm optimizing it away
     if code < MAX_ONE_B && !dst.is_empty() {
@@ -256,6 +257,9 @@ pub fn encode_utf8_raw(code: u32, dst: &mut [u8]) -> Option<usize> {
 /// If the buffer is not large enough, nothing will be written into it
 /// and a `None` will be returned.
 #[inline]
+#[unstable(feature = "char_internals",
+           reason = "this function should not be exposed publicly")]
+#[doc(hidden)]
 pub fn encode_utf16_raw(mut ch: u32, dst: &mut [u16]) -> Option<usize> {
     // Marked #[inline] to allow llvm optimizing it away
     if (ch & 0xFFFF) == ch && !dst.is_empty() {

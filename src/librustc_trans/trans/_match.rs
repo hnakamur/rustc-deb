@@ -217,10 +217,11 @@ use middle::ty::{self, Ty};
 use session::config::{NoDebugInfo, FullDebugInfo};
 use util::common::indenter;
 use util::nodemap::FnvHashMap;
-use util::ppaux::{Repr, vec_map_to_string};
+use util::ppaux;
 
 use std;
 use std::cmp::Ordering;
+use std::fmt;
 use std::rc::Rc;
 use syntax::ast;
 use syntax::ast::{DUMMY_NODE_ID, NodeId};
@@ -233,7 +234,8 @@ struct ConstantExpr<'a>(&'a ast::Expr);
 
 impl<'a> ConstantExpr<'a> {
     fn eq(self, other: ConstantExpr<'a>, tcx: &ty::ctxt) -> bool {
-        match const_eval::compare_lit_exprs(tcx, self.0, other.0, None) {
+        match const_eval::compare_lit_exprs(tcx, self.0, other.0, None,
+                                            |id| {ty::node_id_item_substs(tcx, id).substs}) {
             Some(result) => result == Ordering::Equal,
             None => panic!("compare_list_exprs: type mismatch"),
         }
@@ -278,14 +280,14 @@ impl<'a, 'tcx> Opt<'a, 'tcx> {
         match *self {
             ConstantValue(ConstantExpr(lit_expr), _) => {
                 let lit_ty = ty::node_id_to_type(bcx.tcx(), lit_expr.id);
-                let (llval, _) = consts::const_expr(ccx, &*lit_expr, bcx.fcx.param_substs);
+                let (llval, _) = consts::const_expr(ccx, &*lit_expr, bcx.fcx.param_substs, None);
                 let lit_datum = immediate_rvalue(llval, lit_ty);
                 let lit_datum = unpack_datum!(bcx, lit_datum.to_appropriate_datum(bcx));
                 SingleResult(Result::new(bcx, lit_datum.val))
             }
             ConstantRange(ConstantExpr(ref l1), ConstantExpr(ref l2), _) => {
-                let (l1, _) = consts::const_expr(ccx, &**l1, bcx.fcx.param_substs);
-                let (l2, _) = consts::const_expr(ccx, &**l2, bcx.fcx.param_substs);
+                let (l1, _) = consts::const_expr(ccx, &**l1, bcx.fcx.param_substs, None);
+                let (l2, _) = consts::const_expr(ccx, &**l2, bcx.fcx.param_substs, None);
                 RangeResult(Result::new(bcx, l1), Result::new(bcx, l2))
             }
             Variant(disr_val, ref repr, _, _) => {
@@ -370,13 +372,13 @@ struct Match<'a, 'p: 'a, 'blk: 'a, 'tcx: 'blk> {
     pat_renaming_map: Option<&'a FnvHashMap<(NodeId, Span), NodeId>>
 }
 
-impl<'a, 'p, 'blk, 'tcx> Repr<'tcx> for Match<'a, 'p, 'blk, 'tcx> {
-    fn repr(&self, tcx: &ty::ctxt) -> String {
-        if tcx.sess.verbose() {
+impl<'a, 'p, 'blk, 'tcx> fmt::Debug for Match<'a, 'p, 'blk, 'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if ppaux::verbose() {
             // for many programs, this just take too long to serialize
-            self.pats.repr(tcx)
+            write!(f, "{:?}", self.pats)
         } else {
-            format!("{} pats", self.pats.len())
+            write!(f, "{} pats", self.pats.len())
         }
     }
 }
@@ -396,9 +398,9 @@ fn expand_nested_bindings<'a, 'p, 'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                               col: usize,
                                               val: ValueRef)
                                               -> Vec<Match<'a, 'p, 'blk, 'tcx>> {
-    debug!("expand_nested_bindings(bcx={}, m={}, col={}, val={})",
+    debug!("expand_nested_bindings(bcx={}, m={:?}, col={}, val={})",
            bcx.to_str(),
-           m.repr(bcx.tcx()),
+           m,
            col,
            bcx.val_to_string(val));
     let _indenter = indenter();
@@ -436,9 +438,9 @@ fn enter_match<'a, 'b, 'p, 'blk, 'tcx, F>(bcx: Block<'blk, 'tcx>,
                                           -> Vec<Match<'a, 'p, 'blk, 'tcx>> where
     F: FnMut(&[&'p ast::Pat]) -> Option<Vec<&'p ast::Pat>>,
 {
-    debug!("enter_match(bcx={}, m={}, col={}, val={})",
+    debug!("enter_match(bcx={}, m={:?}, col={}, val={})",
            bcx.to_str(),
-           m.repr(bcx.tcx()),
+           m,
            col,
            bcx.val_to_string(val));
     let _indenter = indenter();
@@ -479,9 +481,9 @@ fn enter_default<'a, 'p, 'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                      col: usize,
                                      val: ValueRef)
                                      -> Vec<Match<'a, 'p, 'blk, 'tcx>> {
-    debug!("enter_default(bcx={}, m={}, col={}, val={})",
+    debug!("enter_default(bcx={}, m={:?}, col={}, val={})",
            bcx.to_str(),
-           m.repr(bcx.tcx()),
+           m,
            col,
            bcx.val_to_string(val));
     let _indenter = indenter();
@@ -536,9 +538,9 @@ fn enter_opt<'a, 'p, 'blk, 'tcx>(
              variant_size: usize,
              val: ValueRef)
              -> Vec<Match<'a, 'p, 'blk, 'tcx>> {
-    debug!("enter_opt(bcx={}, m={}, opt={:?}, col={}, val={})",
+    debug!("enter_opt(bcx={}, m={:?}, opt={:?}, col={}, val={})",
            bcx.to_str(),
-           m.repr(bcx.tcx()),
+           m,
            *opt,
            col,
            bcx.val_to_string(val));
@@ -824,22 +826,13 @@ fn compare_values<'blk, 'tcx>(cx: Block<'blk, 'tcx>,
                                -> Result<'blk, 'tcx> {
         let did = langcall(cx,
                            None,
-                           &format!("comparison of `{}`",
-                                   cx.ty_to_string(rhs_t)),
+                           &format!("comparison of `{}`", rhs_t),
                            StrEqFnLangItem);
-        let t = ty::mk_str_slice(cx.tcx(), cx.tcx().mk_region(ty::ReStatic), ast::MutImmutable);
-        // The comparison function gets the slices by value, so we have to make copies here. Even
-        // if the function doesn't write through the pointer, things like lifetime intrinsics
-        // require that we do this properly
-        let lhs_arg = alloc_ty(cx, t, "lhs");
-        let rhs_arg = alloc_ty(cx, t, "rhs");
-        memcpy_ty(cx, lhs_arg, lhs, t);
-        memcpy_ty(cx, rhs_arg, rhs, t);
-        let res = callee::trans_lang_call(cx, did, &[lhs_arg, rhs_arg], None, debug_loc);
-        call_lifetime_end(res.bcx, lhs_arg);
-        call_lifetime_end(res.bcx, rhs_arg);
-
-        res
+        let lhs_data = Load(cx, expr::get_dataptr(cx, lhs));
+        let lhs_len = Load(cx, expr::get_len(cx, lhs));
+        let rhs_data = Load(cx, expr::get_dataptr(cx, rhs));
+        let rhs_len = Load(cx, expr::get_len(cx, rhs));
+        callee::trans_lang_call(cx, did, &[lhs_data, lhs_len, rhs_data, rhs_len], None, debug_loc)
     }
 
     let _icx = push_ctxt("compare_values");
@@ -849,10 +842,10 @@ fn compare_values<'blk, 'tcx>(cx: Block<'blk, 'tcx>,
     }
 
     match rhs_t.sty {
-        ty::ty_rptr(_, mt) => match mt.ty.sty {
-            ty::ty_str => compare_str(cx, lhs, rhs, rhs_t, debug_loc),
-            ty::ty_vec(ty, _) => match ty.sty {
-                ty::ty_uint(ast::TyU8) => {
+        ty::TyRef(_, mt) => match mt.ty.sty {
+            ty::TyStr => compare_str(cx, lhs, rhs, rhs_t, debug_loc),
+            ty::TyArray(ty, _) | ty::TySlice(ty) => match ty.sty {
+                ty::TyUint(ast::TyU8) => {
                     // NOTE: cast &[u8] and &[u8; N] to &str and abuse the str_eq lang item,
                     // which calls memcmp().
                     let pat_len = val_ty(rhs).element_type().array_length();
@@ -936,11 +929,11 @@ fn compile_guard<'a, 'p, 'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                      chk: &FailureHandler,
                                      has_genuine_default: bool)
                                      -> Block<'blk, 'tcx> {
-    debug!("compile_guard(bcx={}, guard_expr={}, m={}, vals={})",
+    debug!("compile_guard(bcx={}, guard_expr={:?}, m={:?}, vals=[{}])",
            bcx.to_str(),
-           bcx.expr_to_string(guard_expr),
-           m.repr(bcx.tcx()),
-           vec_map_to_string(vals, |v| bcx.val_to_string(*v)));
+           guard_expr,
+           m,
+           vals.iter().map(|v| bcx.val_to_string(*v)).collect::<Vec<_>>().connect(", "));
     let _indenter = indenter();
 
     let mut bcx = insert_lllocals(bcx, &data.bindings_map, None);
@@ -982,10 +975,10 @@ fn compile_submatch<'a, 'p, 'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                         vals: &[ValueRef],
                                         chk: &FailureHandler,
                                         has_genuine_default: bool) {
-    debug!("compile_submatch(bcx={}, m={}, vals={})",
+    debug!("compile_submatch(bcx={}, m={:?}, vals=[{}])",
            bcx.to_str(),
-           m.repr(bcx.tcx()),
-           vec_map_to_string(vals, |v| bcx.val_to_string(*v)));
+           m,
+           vals.iter().map(|v| bcx.val_to_string(*v)).collect::<Vec<_>>().connect(", "));
     let _indenter = indenter();
     let _icx = push_ctxt("match::compile_submatch");
     let mut bcx = bcx;
@@ -1091,7 +1084,7 @@ fn compile_submatch_continue<'a, 'p, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         ).collect();
 
         match left_ty.sty {
-            ty::ty_struct(def_id, substs) if !type_is_sized(bcx.tcx(), left_ty) => {
+            ty::TyStruct(def_id, substs) if !type_is_sized(bcx.tcx(), left_ty) => {
                 // The last field is technically unsized but
                 // since we can only ever match that field behind
                 // a reference we construct a fat ptr here.
@@ -1115,7 +1108,7 @@ fn compile_submatch_continue<'a, 'p, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         Some(vec!(Load(bcx, val)))
     } else {
         match left_ty.sty {
-            ty::ty_vec(_, Some(n)) => {
+            ty::TyArray(_, n) => {
                 let args = extract_vec_elems(bcx, left_ty, n, 0, val);
                 Some(args.vals)
             }
@@ -1500,7 +1493,7 @@ fn trans_match_inner<'blk, 'tcx>(scope_cx: Block<'blk, 'tcx>,
     };
 
     let mut matches = Vec::new();
-    for (arm_data, pats) in arm_datas.iter().zip(arm_pats.iter()) {
+    for (arm_data, pats) in arm_datas.iter().zip(&arm_pats) {
         matches.extend(pats.iter().map(|p| Match {
             pats: vec![&**p],
             data: arm_data,
@@ -1695,13 +1688,13 @@ fn bind_irrefutable_pat<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                     val: ValueRef,
                                     cleanup_scope: cleanup::ScopeId)
                                     -> Block<'blk, 'tcx> {
-    debug!("bind_irrefutable_pat(bcx={}, pat={})",
+    debug!("bind_irrefutable_pat(bcx={}, pat={:?})",
            bcx.to_str(),
-           pat.repr(bcx.tcx()));
+           pat);
 
     if bcx.sess().asm_comments() {
-        add_comment(bcx, &format!("bind_irrefutable_pat(pat={})",
-                                 pat.repr(bcx.tcx())));
+        add_comment(bcx, &format!("bind_irrefutable_pat(pat={:?})",
+                                 pat));
     }
 
     let _indenter = indenter();
@@ -1832,7 +1825,7 @@ fn bind_irrefutable_pat<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 .iter()
                 .chain(slice.iter())
                 .chain(after.iter())
-                .zip(extracted.vals.into_iter())
+                .zip(extracted.vals)
                 .fold(bcx, |bcx, (inner, elem)|
                     bind_irrefutable_pat(bcx, &**inner, elem, cleanup_scope)
                 );

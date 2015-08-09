@@ -14,8 +14,8 @@ use std::io::{File, Open, Write, IoError};
 
 struct Info {
     name: String,
-    age: int,
-    rating: int
+    age: i32,
+    rating: i32
 }
 
 fn write_info(info: &Info) -> Result<(), IoError> {
@@ -36,8 +36,8 @@ use std::io::{File, Open, Write, IoError};
 
 struct Info {
     name: String,
-    age: int,
-    rating: int
+    age: i32,
+    rating: i32
 }
 
 fn write_info(info: &Info) -> Result<(), IoError> {
@@ -63,4 +63,4 @@ for more details.
 ### The `Result`-`impl` pattern [FIXME]
 
 > **[FIXME]** Document the way that the `io` module uses trait impls
-> on `IoResult` to painlessly propagate errors.
+> on `std::io::Result` to painlessly propagate errors.

@@ -28,13 +28,14 @@ use rustc_typeck::middle::infer;
 use rustc_typeck::middle::infer::lub::Lub;
 use rustc_typeck::middle::infer::glb::Glb;
 use rustc_typeck::middle::infer::sub::Sub;
-use rustc_typeck::util::ppaux::{ty_to_string, Repr, UserString};
+use rustc::ast_map;
 use rustc::session::{self,config};
-use syntax::{abi, ast, ast_map};
+use syntax::{abi, ast};
 use syntax::codemap;
 use syntax::codemap::{Span, CodeMap, DUMMY_SP};
 use syntax::diagnostic::{Level, RenderSpan, Bug, Fatal, Error, Warning, Note, Help};
 use syntax::parse::token;
+use syntax::feature_gate::UnstableFeatures;
 
 struct Env<'a, 'tcx: 'a> {
     infcx: &'a infer::InferCtxt<'a, 'tcx>,
@@ -102,12 +103,13 @@ fn test_env<F>(source_string: &str,
     let mut options =
         config::basic_options();
     options.debugging_opts.verbose = true;
+    options.unstable_features = UnstableFeatures::Allow;
     let codemap =
         CodeMap::new();
     let diagnostic_handler =
-        diagnostic::mk_handler(true, emitter);
+        diagnostic::Handler::with_emitter(true, emitter);
     let span_diagnostic_handler =
-        diagnostic::mk_span_handler(diagnostic_handler, codemap);
+        diagnostic::SpanHandler::new(diagnostic_handler, codemap);
 
     let sess = session::build_session_(options, None, span_diagnostic_handler);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
@@ -125,23 +127,25 @@ fn test_env<F>(source_string: &str,
     // run just enough stuff to build a tcx:
     let lang_items = lang_items::collect_language_items(krate, &sess);
     let resolve::CrateMap { def_map, freevars, .. } =
-        resolve::resolve_crate(&sess, &ast_map, &lang_items, krate, resolve::MakeGlobMap::No);
+        resolve::resolve_crate(&sess, &ast_map, resolve::MakeGlobMap::No);
     let named_region_map = resolve_lifetime::krate(&sess, krate, &def_map);
     let region_map = region::resolve_crate(&sess, krate);
-    let tcx = ty::mk_ctxt(sess,
-                          &arenas,
-                          def_map,
-                          named_region_map,
-                          ast_map,
-                          freevars,
-                          region_map,
-                          lang_items,
-                          stability::Index::new(krate));
-    let infcx = infer::new_infer_ctxt(&tcx);
-    body(Env { infcx: &infcx });
-    let free_regions = FreeRegionMap::new();
-    infcx.resolve_regions_and_report_errors(&free_regions, ast::CRATE_NODE_ID);
-    assert_eq!(tcx.sess.err_count(), expected_err_count);
+    ty::with_ctxt(sess,
+                  &arenas,
+                  def_map,
+                  named_region_map,
+                  ast_map,
+                  freevars,
+                  region_map,
+                  lang_items,
+                  stability::Index::new(krate),
+                  |tcx| {
+        let infcx = infer::new_infer_ctxt(tcx);
+        body(Env { infcx: &infcx });
+        let free_regions = FreeRegionMap::new();
+        infcx.resolve_regions_and_report_errors(&free_regions, ast::CRATE_NODE_ID);
+        assert_eq!(tcx.sess.err_count(), expected_err_count);
+    });
 }
 
 impl<'a, 'tcx> Env<'a, 'tcx> {
@@ -185,7 +189,7 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
                       -> Option<ast::NodeId> {
             assert!(idx < names.len());
             for item in &m.items {
-                if item.ident.user_string(this.infcx.tcx) == names[idx] {
+                if item.ident.to_string() == names[idx] {
                     return search(this, &**item, idx+1, names);
                 }
             }
@@ -224,8 +228,7 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
     pub fn make_subtype(&self, a: Ty<'tcx>, b: Ty<'tcx>) -> bool {
         match infer::mk_subty(self.infcx, true, infer::Misc(DUMMY_SP), a, b) {
             Ok(_) => true,
-            Err(ref e) => panic!("Encountered error: {}",
-                                ty::type_err_to_str(self.infcx.tcx, e))
+            Err(ref e) => panic!("Encountered error: {}", e)
         }
     }
 
@@ -238,19 +241,13 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
 
     pub fn assert_subtype(&self, a: Ty<'tcx>, b: Ty<'tcx>) {
         if !self.is_subtype(a, b) {
-            panic!("{} is not a subtype of {}, but it should be",
-                  self.ty_to_string(a),
-                  self.ty_to_string(b));
+            panic!("{} is not a subtype of {}, but it should be", a, b);
         }
     }
 
     pub fn assert_eq(&self, a: Ty<'tcx>, b: Ty<'tcx>) {
         self.assert_subtype(a, b);
         self.assert_subtype(b, a);
-    }
-
-    pub fn ty_to_string(&self, a: Ty<'tcx>) -> String {
-        ty_to_string(self.infcx.tcx, a)
     }
 
     pub fn t_fn(&self,
@@ -373,8 +370,7 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
     pub fn make_lub_ty(&self, t1: Ty<'tcx>, t2: Ty<'tcx>) -> Ty<'tcx> {
         match self.lub().relate(&t1, &t2) {
             Ok(t) => t,
-            Err(ref e) => panic!("unexpected error computing LUB: {}",
-                                ty::type_err_to_str(self.infcx.tcx, e))
+            Err(ref e) => panic!("unexpected error computing LUB: {}", e)
         }
     }
 
@@ -384,10 +380,10 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
         match self.sub().relate(&t1, &t2) {
             Ok(_) => { }
             Err(ref e) => {
-                panic!("unexpected error computing sub({},{}): {}",
-                       t1.repr(self.infcx.tcx),
-                       t2.repr(self.infcx.tcx),
-                       ty::type_err_to_str(self.infcx.tcx, e));
+                panic!("unexpected error computing sub({:?},{:?}): {}",
+                       t1,
+                       t2,
+                       e);
             }
         }
     }
@@ -398,9 +394,9 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
         match self.sub().relate(&t1, &t2) {
             Err(_) => { }
             Ok(_) => {
-                panic!("unexpected success computing sub({},{})",
-                       t1.repr(self.infcx.tcx),
-                       t2.repr(self.infcx.tcx));
+                panic!("unexpected success computing sub({:?},{:?})",
+                       t1,
+                       t2);
             }
         }
     }
@@ -412,18 +408,14 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
                 self.assert_eq(t, t_lub);
             }
             Err(ref e) => {
-                panic!("unexpected error in LUB: {}",
-                      ty::type_err_to_str(self.infcx.tcx, e))
+                panic!("unexpected error in LUB: {}", e)
             }
         }
     }
 
     /// Checks that `GLB(t1,t2) == t_glb`
     pub fn check_glb(&self, t1: Ty<'tcx>, t2: Ty<'tcx>, t_glb: Ty<'tcx>) {
-        debug!("check_glb(t1={}, t2={}, t_glb={})",
-               self.ty_to_string(t1),
-               self.ty_to_string(t2),
-               self.ty_to_string(t_glb));
+        debug!("check_glb(t1={}, t2={}, t_glb={})", t1, t2, t_glb);
         match self.glb().relate(&t1, &t2) {
             Err(e) => {
                 panic!("unexpected error computing LUB: {:?}", e)
@@ -655,8 +647,8 @@ fn glb_bound_free_infer() {
         // `&'_ isize`
         let t_resolve1 = env.infcx.shallow_resolve(t_infer1);
         match t_resolve1.sty {
-            ty::ty_rptr(..) => { }
-            _ => { panic!("t_resolve1={}", t_resolve1.repr(env.infcx.tcx)); }
+            ty::TyRef(..) => { }
+            _ => { panic!("t_resolve1={:?}", t_resolve1); }
         }
     })
 }
@@ -698,11 +690,11 @@ fn subst_ty_renumber_bound() {
             env.t_fn(&[t_ptr_bound2], env.t_nil())
         };
 
-        debug!("subst_bound: t_source={} substs={} t_substituted={} t_expected={}",
-               t_source.repr(env.infcx.tcx),
-               substs.repr(env.infcx.tcx),
-               t_substituted.repr(env.infcx.tcx),
-               t_expected.repr(env.infcx.tcx));
+        debug!("subst_bound: t_source={:?} substs={:?} t_substituted={:?} t_expected={:?}",
+               t_source,
+               substs,
+               t_substituted,
+               t_expected);
 
         assert_eq!(t_substituted, t_expected);
     })
@@ -735,11 +727,11 @@ fn subst_ty_renumber_some_bounds() {
             env.t_pair(t_rptr_bound1, env.t_fn(&[t_rptr_bound2], env.t_nil()))
         };
 
-        debug!("subst_bound: t_source={} substs={} t_substituted={} t_expected={}",
-               t_source.repr(env.infcx.tcx),
-               substs.repr(env.infcx.tcx),
-               t_substituted.repr(env.infcx.tcx),
-               t_expected.repr(env.infcx.tcx));
+        debug!("subst_bound: t_source={:?} substs={:?} t_substituted={:?} t_expected={:?}",
+               t_source,
+               substs,
+               t_substituted,
+               t_expected);
 
         assert_eq!(t_substituted, t_expected);
     })
@@ -796,11 +788,11 @@ fn subst_region_renumber_region() {
             env.t_fn(&[t_rptr_bound2], env.t_nil())
         };
 
-        debug!("subst_bound: t_source={} substs={} t_substituted={} t_expected={}",
-               t_source.repr(env.infcx.tcx),
-               substs.repr(env.infcx.tcx),
-               t_substituted.repr(env.infcx.tcx),
-               t_expected.repr(env.infcx.tcx));
+        debug!("subst_bound: t_source={:?} substs={:?} t_substituted={:?} t_expected={:?}",
+               t_source,
+               substs,
+               t_substituted,
+               t_expected);
 
         assert_eq!(t_substituted, t_expected);
     })

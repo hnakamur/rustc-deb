@@ -12,11 +12,13 @@
 // `Item` originates in a where-clause, not the declaration of
 // `T`. Issue #20300.
 
+#![feature(const_fn)]
+
 use std::marker::{PhantomData};
-use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
+use std::sync::atomic::{AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
 
-static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 // Preamble.
 trait Trait { type Item; }

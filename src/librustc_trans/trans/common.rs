@@ -40,7 +40,7 @@ use middle::traits;
 use middle::ty::{self, HasProjectionTypes, Ty};
 use middle::ty_fold;
 use middle::ty_fold::{TypeFolder, TypeFoldable};
-use util::ppaux::Repr;
+use rustc::ast_map::{PathElem, PathName};
 use util::nodemap::{FnvHashMap, NodeMap};
 
 use arena::TypedArena;
@@ -50,7 +50,6 @@ use std::cell::{Cell, RefCell};
 use std::result::Result as StdResult;
 use std::vec::Vec;
 use syntax::ast;
-use syntax::ast_map::{PathElem, PathName};
 use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
 use syntax::parse::token;
@@ -64,11 +63,11 @@ pub use trans::context::CrateContext;
 /// subtyping, but they are anonymized and normalized as well). This
 /// is a stronger, caching version of `ty_fold::erase_regions`.
 pub fn erase_regions<'tcx,T>(cx: &ty::ctxt<'tcx>, value: &T) -> T
-    where T : TypeFoldable<'tcx> + Repr<'tcx>
+    where T : TypeFoldable<'tcx>
 {
     let value1 = value.fold_with(&mut RegionEraser(cx));
-    debug!("erase_regions({}) = {}",
-           value.repr(cx), value1.repr(cx));
+    debug!("erase_regions({:?}) = {:?}",
+           value, value1);
     return value1;
 
     struct RegionEraser<'a, 'tcx: 'a>(&'a ty::ctxt<'tcx>);
@@ -87,8 +86,18 @@ pub fn erase_regions<'tcx,T>(cx: &ty::ctxt<'tcx>, value: &T) -> T
             return t_norm;
         }
 
+        fn fold_existential_bounds(&mut self, s: &ty::ExistentialBounds<'tcx>)
+                                   -> ty::ExistentialBounds<'tcx> {
+            let mut s = ty_fold::super_fold_existential_bounds(self, s);
+
+            // this annoying flag messes up trans normalization
+            s.region_bound_will_change = false;
+
+            s
+        }
+
         fn fold_binder<T>(&mut self, t: &ty::Binder<T>) -> ty::Binder<T>
-            where T : TypeFoldable<'tcx> + Repr<'tcx>
+            where T : TypeFoldable<'tcx>
         {
             let u = ty::anonymize_late_bound_regions(self.tcx(), t);
             ty_fold::super_fold_binder(self, &u)
@@ -118,26 +127,16 @@ pub fn erase_regions<'tcx,T>(cx: &ty::ctxt<'tcx>, value: &T) -> T
     }
 }
 
-// Is the type's representation size known at compile time?
+/// Is the type's representation size known at compile time?
 pub fn type_is_sized<'tcx>(tcx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    let param_env = ty::empty_parameter_environment(tcx);
-    // FIXME(#4287) This can cause errors due to polymorphic recursion,
-    // a better span should be provided, if available.
-    let err_count = tcx.sess.err_count();
-    let is_sized = ty::type_is_sized(&param_env, DUMMY_SP, ty);
-    // Those errors aren't fatal, but an incorrect result can later
-    // trip over asserts in both rustc's trans and LLVM.
-    if err_count < tcx.sess.err_count() {
-        tcx.sess.abort_if_errors();
-    }
-    is_sized
+    ty::type_is_sized(None, tcx, DUMMY_SP, ty)
 }
 
 pub fn type_is_fat_ptr<'tcx>(cx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
     match ty.sty {
-        ty::ty_ptr(ty::mt{ty, ..}) |
-        ty::ty_rptr(_, ty::mt{ty, ..}) |
-        ty::ty_uniq(ty) => {
+        ty::TyRawPtr(ty::mt{ty, ..}) |
+        ty::TyRef(_, ty::mt{ty, ..}) |
+        ty::TyBox(ty) => {
             !type_is_sized(cx, ty)
         }
         _ => {
@@ -168,10 +167,10 @@ pub fn type_needs_unwind_cleanup<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<
         let mut needs_unwind_cleanup = false;
         ty::maybe_walk_ty(ty, |ty| {
             needs_unwind_cleanup |= match ty.sty {
-                ty::ty_bool | ty::ty_int(_) | ty::ty_uint(_) |
-                ty::ty_float(_) | ty::ty_tup(_) | ty::ty_ptr(_) => false,
+                ty::TyBool | ty::TyInt(_) | ty::TyUint(_) |
+                ty::TyFloat(_) | ty::TyTuple(_) | ty::TyRawPtr(_) => false,
 
-                ty::ty_enum(did, substs) =>
+                ty::TyEnum(did, substs) =>
                     ty::enum_variants(tcx, did).iter().any(|v|
                         v.args.iter().any(|&aty| {
                             let t = aty.subst(tcx, substs);
@@ -222,13 +221,13 @@ fn type_needs_drop_given_env<'a,'tcx>(cx: &ty::ctxt<'tcx>,
     // destructor (e.g. zero its memory on move).
 
     let contents = ty::type_contents(cx, ty);
-    debug!("type_needs_drop ty={} contents={:?}", ty.repr(cx), contents);
+    debug!("type_needs_drop ty={:?} contents={:?}", ty, contents);
     contents.needs_drop(cx)
 }
 
 fn type_is_newtype_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
     match ty.sty {
-        ty::ty_struct(def_id, substs) => {
+        ty::TyStruct(def_id, substs) => {
             let fields = ty::lookup_struct_fields(ccx.tcx(), def_id);
             fields.len() == 1 && {
                 let ty = ty::lookup_field_type(ccx.tcx(), def_id, fields[0].id, substs);
@@ -256,8 +255,8 @@ pub fn type_is_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -
         return false;
     }
     match ty.sty {
-        ty::ty_struct(..) | ty::ty_enum(..) | ty::ty_tup(..) | ty::ty_vec(_, Some(_)) |
-        ty::ty_closure(..) => {
+        ty::TyStruct(..) | ty::TyEnum(..) | ty::TyTuple(..) | ty::TyArray(_, _) |
+        ty::TyClosure(..) => {
             let llty = sizing_type_of(ccx, ty);
             llsize_of_alloc(ccx, llty) <= llsize_of_alloc(ccx, ccx.int_type())
         }
@@ -432,13 +431,8 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
-    pub fn arg_pos(&self, arg: usize) -> usize {
-        let arg = self.env_arg_pos() + arg;
-        if self.llenv.is_some() {
-            arg + 1
-        } else {
-            arg
-        }
+    pub fn arg_offset(&self) -> usize {
+        self.env_arg_pos() + if self.llenv.is_some() { 1 } else { 0 }
     }
 
     pub fn env_arg_pos(&self) -> usize {
@@ -528,7 +522,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
-        where T : TypeFoldable<'tcx> + Repr<'tcx> + HasProjectionTypes + Clone
+        where T : TypeFoldable<'tcx> + HasProjectionTypes
     {
         monomorphize::apply_param_substs(self.ccx.tcx(),
                                          self.param_substs,
@@ -603,10 +597,6 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
         self.tcx().map.node_to_string(id).to_string()
     }
 
-    pub fn expr_to_string(&self, e: &ast::Expr) -> String {
-        e.repr(self.tcx())
-    }
-
     pub fn def(&self, nid: ast::NodeId) -> def::Def {
         match self.tcx().def_map.borrow().get(&nid) {
             Some(v) => v.full_def(),
@@ -625,16 +615,12 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
         self.ccx().tn().type_to_string(ty)
     }
 
-    pub fn ty_to_string(&self, t: Ty<'tcx>) -> String {
-        t.repr(self.tcx())
-    }
-
     pub fn to_str(&self) -> String {
         format!("[block {:p}]", self)
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
-        where T : TypeFoldable<'tcx> + Repr<'tcx> + HasProjectionTypes + Clone
+        where T : TypeFoldable<'tcx> + HasProjectionTypes
     {
         monomorphize::apply_param_substs(self.tcx(),
                                          self.fcx.param_substs,
@@ -919,12 +905,6 @@ pub fn const_get_elt(cx: &CrateContext, v: ValueRef, us: &[c_uint])
     }
 }
 
-pub fn is_const(v: ValueRef) -> bool {
-    unsafe {
-        llvm::LLVMIsConstant(v) == True
-    }
-}
-
 pub fn const_to_int(v: ValueRef) -> i64 {
     unsafe {
         llvm::LLVMConstIntGetSExtValue(v)
@@ -1010,13 +990,14 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     // First check the cache.
     match ccx.trait_cache().borrow().get(&trait_ref) {
         Some(vtable) => {
-            info!("Cache hit: {}", trait_ref.repr(ccx.tcx()));
+            info!("Cache hit: {:?}", trait_ref);
             return (*vtable).clone();
         }
         None => { }
     }
 
-    debug!("trans fulfill_obligation: trait_ref={}", trait_ref.repr(ccx.tcx()));
+    debug!("trans fulfill_obligation: trait_ref={:?} def_id={:?}",
+           trait_ref, trait_ref.def_id());
 
     ty::populate_implementations_for_trait_if_necessary(tcx, trait_ref.def_id());
     let infcx = infer::new_infer_ctxt(tcx);
@@ -1037,9 +1018,9 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
             // leading to an ambiguous result. So report this as an
             // overflow bug, since I believe this is the only case
             // where ambiguity can result.
-            debug!("Encountered ambiguity selecting `{}` during trans, \
+            debug!("Encountered ambiguity selecting `{:?}` during trans, \
                     presuming due to overflow",
-                   trait_ref.repr(tcx));
+                   trait_ref);
             ccx.sess().span_fatal(
                 span,
                 "reached the recursion limit during monomorphization");
@@ -1047,22 +1028,22 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         Err(e) => {
             tcx.sess.span_bug(
                 span,
-                &format!("Encountered error `{}` selecting `{}` during trans",
-                        e.repr(tcx),
-                        trait_ref.repr(tcx)))
+                &format!("Encountered error `{:?}` selecting `{:?}` during trans",
+                        e,
+                        trait_ref))
         }
     };
 
     // Currently, we use a fulfillment context to completely resolve
     // all nested obligations. This is because they can inform the
     // inference of the impl's type parameters.
-    let mut fulfill_cx = traits::FulfillmentContext::new();
-    let vtable = selection.map_move_nested(|predicate| {
+    let mut fulfill_cx = traits::FulfillmentContext::new(true);
+    let vtable = selection.map(|predicate| {
         fulfill_cx.register_predicate_obligation(&infcx, predicate);
     });
     let vtable = drain_fulfillment_cx_or_panic(span, &infcx, &mut fulfill_cx, &vtable);
 
-    info!("Cache miss: {}", trait_ref.repr(ccx.tcx()));
+    info!("Cache miss: {:?}", trait_ref);
     ccx.trait_cache().borrow_mut().insert(trait_ref,
                                           vtable.clone());
 
@@ -1077,14 +1058,14 @@ pub fn normalize_and_test_predicates<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                                predicates: Vec<ty::Predicate<'tcx>>)
                                                -> bool
 {
-    debug!("normalize_and_test_predicates(predicates={})",
-           predicates.repr(ccx.tcx()));
+    debug!("normalize_and_test_predicates(predicates={:?})",
+           predicates);
 
     let tcx = ccx.tcx();
     let infcx = infer::new_infer_ctxt(tcx);
     let typer = NormalizingClosureTyper::new(tcx);
     let mut selcx = traits::SelectionContext::new(&infcx, &typer);
-    let mut fulfill_cx = traits::FulfillmentContext::new();
+    let mut fulfill_cx = traits::FulfillmentContext::new(false);
     let cause = traits::ObligationCause::dummy();
     let traits::Normalized { value: predicates, obligations } =
         traits::normalize(&mut selcx, cause.clone(), &predicates);
@@ -1150,15 +1131,15 @@ pub fn drain_fulfillment_cx_or_panic<'a,'tcx,T>(span: Span,
                                                 fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
                                                 result: &T)
                                                 -> T
-    where T : TypeFoldable<'tcx> + Repr<'tcx>
+    where T : TypeFoldable<'tcx>
 {
     match drain_fulfillment_cx(infcx, fulfill_cx, result) {
         Ok(v) => v,
         Err(errors) => {
             infcx.tcx.sess.span_bug(
                 span,
-                &format!("Encountered errors `{}` fulfilling during trans",
-                         errors.repr(infcx.tcx)));
+                &format!("Encountered errors `{:?}` fulfilling during trans",
+                         errors));
         }
     }
 }
@@ -1174,10 +1155,10 @@ pub fn drain_fulfillment_cx<'a,'tcx,T>(infcx: &infer::InferCtxt<'a,'tcx>,
                                        fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
                                        result: &T)
                                        -> StdResult<T,Vec<traits::FulfillmentError<'tcx>>>
-    where T : TypeFoldable<'tcx> + Repr<'tcx>
+    where T : TypeFoldable<'tcx>
 {
-    debug!("drain_fulfillment_cx(result={})",
-           result.repr(infcx.tcx));
+    debug!("drain_fulfillment_cx(result={:?})",
+           result);
 
     // In principle, we only need to do this so long as `result`
     // contains unbound type parameters. It could be a slight
@@ -1225,7 +1206,7 @@ pub fn node_id_substs<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     if substs.types.any(|t| ty::type_needs_infer(*t)) {
             tcx.sess.bug(&format!("type parameters for node {:?} include inference types: {:?}",
-                                 node, substs.repr(tcx)));
+                                 node, substs));
         }
 
         monomorphize::apply_param_substs(tcx,

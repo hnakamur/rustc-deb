@@ -33,9 +33,9 @@ use middle::def::*;
 use middle::subst::Substs;
 use middle::ty::{self, Ty};
 use middle::{def, pat_util, stability};
-use middle::const_eval::{eval_const_expr_partial, const_int, const_uint};
+use middle::const_eval::{eval_const_expr_partial, ConstVal};
 use middle::cfg;
-use util::ppaux::ty_to_string;
+use rustc::ast_map;
 use util::nodemap::{FnvHashMap, NodeSet};
 use lint::{Level, Context, LintPass, LintArray, Lint};
 
@@ -44,7 +44,7 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::{cmp, slice};
 use std::{i8, i16, i32, i64, u8, u16, u32, u64, f32, f64};
 
-use syntax::{abi, ast, ast_map};
+use syntax::{abi, ast};
 use syntax::ast_util::{self, is_shift_binop, local_def};
 use syntax::attr::{self, AttrMetaMethods};
 use syntax::codemap::{self, Span};
@@ -144,7 +144,7 @@ impl LintPass for TypeLimits {
                     _ => {
                         let t = ty::expr_ty(cx.tcx, &**expr);
                         match t.sty {
-                            ty::ty_uint(_) => {
+                            ty::TyUint(_) => {
                                 cx.span_lint(UNSIGNED_NEGATION, e.span,
                                              "negation of unsigned int variable may \
                                              be unintentional");
@@ -169,8 +169,8 @@ impl LintPass for TypeLimits {
 
                 if is_shift_binop(binop.node) {
                     let opt_ty_bits = match ty::expr_ty(cx.tcx, &**l).sty {
-                        ty::ty_int(t) => Some(int_ty_bits(t, cx.sess().target.int_type)),
-                        ty::ty_uint(t) => Some(uint_ty_bits(t, cx.sess().target.uint_type)),
+                        ty::TyInt(t) => Some(int_ty_bits(t, cx.sess().target.int_type)),
+                        ty::TyUint(t) => Some(uint_ty_bits(t, cx.sess().target.uint_type)),
                         _ => None
                     };
 
@@ -180,8 +180,8 @@ impl LintPass for TypeLimits {
                             else { false }
                         } else {
                             match eval_const_expr_partial(cx.tcx, &**r, Some(cx.tcx.types.usize)) {
-                                Ok(const_int(shift)) => { shift as u64 >= bits },
-                                Ok(const_uint(shift)) => { shift >= bits },
+                                Ok(ConstVal::Int(shift)) => { shift as u64 >= bits },
+                                Ok(ConstVal::Uint(shift)) => { shift >= bits },
                                 _ => { false }
                             }
                         };
@@ -194,7 +194,7 @@ impl LintPass for TypeLimits {
             },
             ast::ExprLit(ref lit) => {
                 match ty::expr_ty(cx.tcx, e).sty {
-                    ty::ty_int(t) => {
+                    ty::TyInt(t) => {
                         match lit.node {
                             ast::LitInt(v, ast::SignedIntLit(_, ast::Plus)) |
                             ast::LitInt(v, ast::UnsuffixedIntLit(ast::Plus)) => {
@@ -203,11 +203,13 @@ impl LintPass for TypeLimits {
                                 } else {
                                     t
                                 };
-                                let (min, max) = int_ty_range(int_type);
+                                let (_, max) = int_ty_range(int_type);
                                 let negative = self.negated_expr_id == e.id;
 
-                                if (negative && v > (min.abs() as u64)) ||
-                                   (!negative && v > (max.abs() as u64)) {
+                                // Detect literal value out of range [min, max] inclusive
+                                // avoiding use of -min to prevent overflow/panic
+                                if (negative && v > max as u64 + 1) ||
+                                   (!negative && v > max as u64) {
                                     cx.span_lint(OVERFLOWING_LITERALS, e.span,
                                                  &*format!("literal out of range for {:?}", t));
                                     return;
@@ -216,7 +218,7 @@ impl LintPass for TypeLimits {
                             _ => panic!()
                         };
                     },
-                    ty::ty_uint(t) => {
+                    ty::TyUint(t) => {
                         let uint_type = if let ast::TyUs = t {
                             cx.sess().target.uint_type
                         } else {
@@ -233,7 +235,7 @@ impl LintPass for TypeLimits {
                                          &*format!("literal out of range for {:?}", t));
                         }
                     },
-                    ty::ty_float(t) => {
+                    ty::TyFloat(t) => {
                         let (min, max) = float_ty_range(t);
                         let lit_val: f64 = match lit.node {
                             ast::LitFloat(ref v, _) |
@@ -342,7 +344,7 @@ impl LintPass for TypeLimits {
                 binop
             };
             match ty::expr_ty(tcx, expr).sty {
-                ty::ty_int(int_ty) => {
+                ty::TyInt(int_ty) => {
                     let (min, max) = int_ty_range(int_ty);
                     let lit_val: i64 = match lit.node {
                         ast::ExprLit(ref li) => match li.node {
@@ -356,7 +358,7 @@ impl LintPass for TypeLimits {
                     };
                     is_valid(norm_binop, lit_val, min, max)
                 }
-                ty::ty_uint(uint_ty) => {
+                ty::TyUint(uint_ty) => {
                     let (min, max): (u64, u64) = uint_ty_range(uint_ty);
                     let lit_val: u64 = match lit.node {
                         ast::ExprLit(ref li) => match li.node {
@@ -483,7 +485,7 @@ impl BoxPointers {
         let mut n_uniq: usize = 0;
         ty::fold_ty(cx.tcx, ty, |t| {
             match t.sty {
-                ty::ty_uniq(_) => {
+                ty::TyBox(_) => {
                     n_uniq += 1;
                 }
                 _ => ()
@@ -492,8 +494,7 @@ impl BoxPointers {
         });
 
         if n_uniq > 0 {
-            let s = ty_to_string(cx.tcx, ty);
-            let m = format!("type uses owned (Box type) pointers: {}", s);
+            let m = format!("type uses owned (Box type) pointers: {}", ty);
             cx.span_lint(BOX_POINTERS, span, &m[..]);
         }
     }
@@ -588,8 +589,8 @@ impl LintPass for RawPointerDerive {
                 }
 
                 match ty::node_id_to_type(cx.tcx, item.id).sty {
-                    ty::ty_enum(did, _) => did,
-                    ty::ty_struct(did, _) => did,
+                    ty::TyEnum(did, _) => did,
+                    ty::TyStruct(did, _) => did,
                     _ => return,
                 }
             }
@@ -641,9 +642,26 @@ impl LintPass for UnusedAttributes {
             }
         }
 
+        let plugin_attributes = cx.sess().plugin_attributes.borrow_mut();
+        for &(ref name, ty) in plugin_attributes.iter() {
+            if ty == AttributeType::Whitelisted && attr.check_name(&*name) {
+                break;
+            }
+        }
+
         if !attr::is_used(attr) {
             cx.span_lint(UNUSED_ATTRIBUTES, attr.span, "unused attribute");
-            if KNOWN_ATTRIBUTES.contains(&(&attr.name(), AttributeType::CrateLevel)) {
+            // Is it a builtin attribute that must be used at the crate level?
+            let known_crate = KNOWN_ATTRIBUTES.contains(&(&attr.name(),
+                                                          AttributeType::CrateLevel));
+            // Has a plugin registered this attribute as one which must be used at
+            // the crate level?
+            let plugin_crate = plugin_attributes.iter()
+                                                .find(|&&(ref x, t)| {
+                                                        &*attr.name() == &*x &&
+                                                        AttributeType::CrateLevel == t
+                                                    }).is_some();
+            if  known_crate || plugin_crate {
                 let msg = match attr.node.style {
                     ast::AttrOuter => "crate-level attribute should be an inner \
                                        attribute: add an exclamation mark: #![foo]",
@@ -716,10 +734,10 @@ impl LintPass for UnusedResults {
 
         let t = ty::expr_ty(cx.tcx, expr);
         let warned = match t.sty {
-            ty::ty_tup(ref tys) if tys.is_empty() => return,
-            ty::ty_bool => return,
-            ty::ty_struct(did, _) |
-            ty::ty_enum(did, _) => {
+            ty::TyTuple(ref tys) if tys.is_empty() => return,
+            ty::TyBool => return,
+            ty::TyStruct(did, _) |
+            ty::TyEnum(did, _) => {
                 if ast_util::is_local(did) {
                     if let ast_map::NodeItem(it) = cx.tcx.map.get(did.node) {
                         check_must_use(cx, &it.attrs, s.span)
@@ -840,7 +858,7 @@ impl LintPass for NonCamelCaseTypes {
     }
 
     fn check_generics(&mut self, cx: &Context, it: &ast::Generics) {
-        for gen in &*it.ty_params {
+        for gen in it.ty_params.iter() {
             self.check_case(cx, "type parameter", gen.ident, gen.span);
         }
     }
@@ -977,7 +995,7 @@ impl LintPass for NonSnakeCase {
                 },
                 _ => (),
             },
-            visit::FkItemFn(ident, _, _, _, _) => {
+            visit::FkItemFn(ident, _, _, _, _, _) => {
                 self.check_snake_case(cx, "function", &token::get_ident(ident), Some(span))
             },
             _ => (),
@@ -1324,7 +1342,7 @@ impl LintPass for UnsafeCode {
     fn check_fn(&mut self, cx: &Context, fk: visit::FnKind, _: &ast::FnDecl,
                 _: &ast::Block, span: Span, _: ast::NodeId) {
         match fk {
-            visit::FkItemFn(_, _, ast::Unsafety::Unsafe, _, _) =>
+            visit::FkItemFn(_, _, ast::Unsafety::Unsafe, _, _, _) =>
                 cx.span_lint(UNSAFE_CODE, span, "declaration of an `unsafe` function"),
 
             visit::FkMethod(_, sig, _) => {
@@ -1779,20 +1797,21 @@ declare_lint! {
 pub struct Stability;
 
 impl Stability {
-    fn lint(&self, cx: &Context, _id: ast::DefId, span: Span, stability: &Option<attr::Stability>) {
+    fn lint(&self, cx: &Context, _id: ast::DefId,
+            span: Span, stability: &Option<&attr::Stability>) {
         // Deprecated attributes apply in-crate and cross-crate.
         let (lint, label) = match *stability {
-            Some(attr::Stability { deprecated_since: Some(_), .. }) =>
+            Some(&attr::Stability { deprecated_since: Some(_), .. }) =>
                 (DEPRECATED, "deprecated"),
             _ => return
         };
 
         output(cx, span, stability, lint, label);
 
-        fn output(cx: &Context, span: Span, stability: &Option<attr::Stability>,
+        fn output(cx: &Context, span: Span, stability: &Option<&attr::Stability>,
                   lint: &'static Lint, label: &'static str) {
             let msg = match *stability {
-                Some(attr::Stability { reason: Some(ref s), .. }) => {
+                Some(&attr::Stability { reason: Some(ref s), .. }) => {
                     format!("use of {} item: {}", label, *s)
                 }
                 _ => format!("use of {} item", label)
@@ -1853,7 +1872,7 @@ impl LintPass for UnconditionalRecursion {
                               ast::NodeId, ast::NodeId, ast::Ident, ast::NodeId) -> bool;
 
         let (name, checker) = match fn_kind {
-            visit::FkItemFn(name, _, _, _, _) => (name, id_refers_to_this_fn as F),
+            visit::FkItemFn(name, _, _, _, _, _) => (name, id_refers_to_this_fn as F),
             visit::FkMethod(name, _, _) => (name, id_refers_to_this_method as F),
             // closures can't recur, so they don't matter.
             visit::FkFnBlock => return
@@ -2141,7 +2160,7 @@ impl LintPass for MutableTransmutes {
         let msg = "mutating transmuted &mut T from &T may cause undefined behavior,\
                    consider instead using an UnsafeCell";
         match get_transmute_from_to(cx, expr) {
-            Some((&ty::ty_rptr(_, from_mt), &ty::ty_rptr(_, to_mt))) => {
+            Some((&ty::TyRef(_, from_mt), &ty::TyRef(_, to_mt))) => {
                 if to_mt.mutbl == ast::Mutability::MutMutable
                     && from_mt.mutbl == ast::Mutability::MutImmutable {
                     cx.span_lint(MUTABLE_TRANSMUTES, expr.span, msg);
@@ -2151,7 +2170,7 @@ impl LintPass for MutableTransmutes {
         }
 
         fn get_transmute_from_to<'a, 'tcx>(cx: &Context<'a, 'tcx>, expr: &ast::Expr)
-            -> Option<(&'tcx ty::sty<'tcx>, &'tcx ty::sty<'tcx>)> {
+            -> Option<(&'tcx ty::TypeVariants<'tcx>, &'tcx ty::TypeVariants<'tcx>)> {
             match expr.node {
                 ast::ExprPath(..) => (),
                 _ => return None
@@ -2162,7 +2181,7 @@ impl LintPass for MutableTransmutes {
                 }
                 let typ = ty::node_id_to_type(cx.tcx, expr.id);
                 match typ.sty {
-                    ty::ty_bare_fn(_, ref bare_fn) if bare_fn.abi == RustIntrinsic => {
+                    ty::TyBareFn(_, ref bare_fn) if bare_fn.abi == RustIntrinsic => {
                         if let ty::FnConverging(to) = bare_fn.sig.0.output {
                             let from = bare_fn.sig.0.inputs[0];
                             return Some((&from.sty, &to.sty));
@@ -2176,7 +2195,7 @@ impl LintPass for MutableTransmutes {
 
         fn def_id_is_transmute(cx: &Context, def_id: DefId) -> bool {
             match ty::lookup_item_type(cx.tcx, def_id).ty.sty {
-                ty::ty_bare_fn(_, ref bfty) if bfty.abi == RustIntrinsic => (),
+                ty::TyBareFn(_, ref bfty) if bfty.abi == RustIntrinsic => (),
                 _ => return false
             }
             ty::with_path(cx.tcx, def_id, |path| match path.last() {
@@ -2194,7 +2213,7 @@ pub struct UnstableFeatures;
 declare_lint! {
     UNSTABLE_FEATURES,
     Allow,
-    "enabling unstable features"
+    "enabling unstable features (deprecated. do not use)"
 }
 
 impl LintPass for UnstableFeatures {
@@ -2203,7 +2222,11 @@ impl LintPass for UnstableFeatures {
     }
     fn check_attribute(&mut self, ctx: &Context, attr: &ast::Attribute) {
         if attr::contains_name(&[attr.node.value.clone()], "feature") {
-            ctx.span_lint(UNSTABLE_FEATURES, attr.span, "unstable feature");
+            if let Some(items) = attr.node.value.meta_item_list() {
+                for item in items {
+                    ctx.span_lint(UNSTABLE_FEATURES, item.span, "unstable feature");
+                }
+            }
         }
     }
 }
@@ -2235,9 +2258,9 @@ impl LintPass for DropWithReprExtern {
                 };
 
             match dtor_self_type.sty {
-                ty::ty_enum(self_type_did, _) |
-                ty::ty_struct(self_type_did, _) |
-                ty::ty_closure(self_type_did, _) => {
+                ty::TyEnum(self_type_did, _) |
+                ty::TyStruct(self_type_did, _) |
+                ty::TyClosure(self_type_did, _) => {
                     let hints = ty::lookup_repr_hints(ctx.tcx, self_type_did);
                     if hints.iter().any(|attr| *attr == attr::ReprExtern) &&
                         ty::ty_dtor(ctx.tcx, self_type_did).has_drop_flag() {

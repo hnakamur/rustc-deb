@@ -48,7 +48,6 @@ mod cmath {
         pub fn fmod(a: c_double, b: c_double) -> c_double;
         pub fn nextafter(x: c_double, y: c_double) -> c_double;
         pub fn frexp(n: c_double, value: &mut c_int) -> c_double;
-        pub fn hypot(x: c_double, y: c_double) -> c_double;
         pub fn ldexp(x: c_double, n: c_int) -> c_double;
         pub fn logb(n: c_double) -> c_double;
         pub fn log1p(n: c_double) -> c_double;
@@ -69,11 +68,11 @@ mod cmath {
         pub fn y1(n: c_double) -> c_double;
         pub fn yn(i: c_int, n: c_double) -> c_double;
 
-        #[cfg(unix)]
+        #[cfg_attr(all(windows, target_env = "msvc"), link_name = "__lgamma_r")]
         pub fn lgamma_r(n: c_double, sign: &mut c_int) -> c_double;
-        #[cfg(windows)]
-        #[link_name="__lgamma_r"]
-        pub fn lgamma_r(n: c_double, sign: &mut c_int) -> c_double;
+
+        #[cfg_attr(all(windows, target_env = "msvc"), link_name = "_hypot")]
+        pub fn hypot(x: c_double, y: c_double) -> c_double;
     }
 }
 
@@ -191,7 +190,7 @@ impl f64 {
     /// The floating point encoding is documented in the [Reference][floating-point].
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// let num = 2.0f64;
     ///
     /// // (8388608, -22, 1)
@@ -206,7 +205,7 @@ impl f64 {
     /// assert!(abs_difference < 1e-10);
     /// ```
     /// [floating-point]: ../../../../../reference.html#machine-types
-    #[unstable(feature = "std_misc", reason = "signature is undecided")]
+    #[unstable(feature = "float_extras", reason = "signature is undecided")]
     #[inline]
     pub fn integer_decode(self) -> (u64, i16, i8) { num::Float::integer_decode(self) }
 
@@ -568,13 +567,13 @@ impl f64 {
     /// Constructs a floating point number of `x*2^exp`.
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// // 3*2^2 - 12 == 0
     /// let abs_difference = (f64::ldexp(3.0, 2) - 12.0).abs();
     ///
     /// assert!(abs_difference < 1e-10);
     /// ```
-    #[unstable(feature = "std_misc",
+    #[unstable(feature = "float_extras",
                reason = "pending integer conventions")]
     #[inline]
     pub fn ldexp(x: f64, exp: isize) -> f64 {
@@ -588,7 +587,7 @@ impl f64 {
     ///  * `0.5 <= abs(x) < 1.0`
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     /// let x = 4.0_f64;
     ///
     /// // (1/2)*2^3 -> 1 * 8/2 -> 4.0
@@ -599,7 +598,7 @@ impl f64 {
     /// assert!(abs_difference_0 < 1e-10);
     /// assert!(abs_difference_1 < 1e-10);
     /// ```
-    #[unstable(feature = "std_misc",
+    #[unstable(feature = "float_extras",
                reason = "pending integer conventions")]
     #[inline]
     pub fn frexp(self) -> (f64, isize) {
@@ -614,7 +613,7 @@ impl f64 {
     /// `other`.
     ///
     /// ```
-    /// # #![feature(std_misc)]
+    /// # #![feature(float_extras)]
     ///
     /// let x = 1.0f32;
     ///
@@ -622,7 +621,7 @@ impl f64 {
     ///
     /// assert!(abs_diff < 1e-10);
     /// ```
-    #[unstable(feature = "std_misc",
+    #[unstable(feature = "float_extras",
                reason = "unsure about its place in the world")]
     #[inline]
     pub fn next_after(self, other: f64) -> f64 {
@@ -637,6 +636,8 @@ impl f64 {
     ///
     /// assert_eq!(x.max(y), y);
     /// ```
+    ///
+    /// If one of the arguments is NaN, then the other argument is returned.
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn max(self, other: f64) -> f64 {
@@ -651,6 +652,8 @@ impl f64 {
     ///
     /// assert_eq!(x.min(y), x);
     /// ```
+    ///
+    /// If one of the arguments is NaN, then the other argument is returned.
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn min(self, other: f64) -> f64 {

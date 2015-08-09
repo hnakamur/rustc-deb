@@ -29,27 +29,34 @@ DEFAULT_PREPARE_MAN_CMD = install -m644
 
 # Create a directory
 # $(1) is the directory
+#
+# XXX: These defines are called to generate make steps.
+# Adding blank lines means two steps from different defines will not end up on
+# the same line.
 define PREPARE_DIR
-	@$(Q)$(call E, prepare: $(1))
+
+	@$(call E, prepare: $(1))
 	$(Q)$(PREPARE_DIR_CMD) $(1)
+
 endef
 
 # Copy an executable
 # $(1) is the filename/libname-glob
+#
+# See above for an explanation on the surrounding blank lines
 define PREPARE_BIN
+
 	@$(call E, prepare: $(PREPARE_DEST_BIN_DIR)/$(1))
 	$(Q)$(PREPARE_BIN_CMD) $(PREPARE_SOURCE_BIN_DIR)/$(1) $(PREPARE_DEST_BIN_DIR)/$(1)
+
 endef
 
 # Copy a dylib or rlib
 # $(1) is the filename/libname-glob
 #
-# XXX: Don't remove the $(nop) command below!
-# Yeah, that's right, it's voodoo. Something in the way this macro is being expanded
-# causes it to parse incorrectly. Throwing in that empty command seems to fix the
-# problem. I'm sorry, just don't remove the $(nop), alright?
+# See above for an explanation on the surrounding blank lines
 define PREPARE_LIB
-	$(nop)
+
 	@$(call E, prepare: $(PREPARE_WORKING_DEST_LIB_DIR)/$(1))
 	$(Q)LIB_NAME="$(notdir $(lastword $(wildcard $(PREPARE_WORKING_SOURCE_LIB_DIR)/$(1))))"; \
 	MATCHES="$(filter-out %$(notdir $(lastword $(wildcard $(PREPARE_WORKING_SOURCE_LIB_DIR)/$(1)))), \
@@ -60,14 +67,19 @@ define PREPARE_LIB
 	  echo "  at destination $(PREPARE_WORKING_DEST_LIB_DIR):"      && \
 	  echo $$MATCHES ; \
 	fi
-	$(Q)$(PREPARE_LIB_CMD) `ls -drt1 $(PREPARE_WORKING_SOURCE_LIB_DIR)/$(1) | tail -1` $(PREPARE_WORKING_DEST_LIB_DIR)/
+	$(Q)$(PREPARE_LIB_CMD) `ls -drt1 $(PREPARE_WORKING_SOURCE_LIB_DIR)/$(1)` $(PREPARE_WORKING_DEST_LIB_DIR)/
+
 endef
 
 # Copy a man page
 # $(1) - source dir
+#
+# See above for an explanation on the surrounding blank lines
 define PREPARE_MAN
+
 	@$(call E, prepare: $(PREPARE_DEST_MAN_DIR)/$(1))
 	$(Q)$(PREPARE_MAN_CMD) $(PREPARE_SOURCE_MAN_DIR)/$(1) $(PREPARE_DEST_MAN_DIR)/$(1)
+
 endef
 
 PREPARE_TOOLS = $(filter-out compiletest rustbook error-index-generator, $(TOOLS))
@@ -119,6 +131,8 @@ define DEF_PREPARE_TARGET_N
 # Rebind PREPARE_*_LIB_DIR to point to rustlib, then install the libs for the targets
 prepare-target-$(2)-host-$(3)-$(1)-$(4): PREPARE_WORKING_SOURCE_LIB_DIR=$$(PREPARE_SOURCE_LIB_DIR)/rustlib/$(2)/lib
 prepare-target-$(2)-host-$(3)-$(1)-$(4): PREPARE_WORKING_DEST_LIB_DIR=$$(PREPARE_DEST_LIB_DIR)/rustlib/$(2)/lib
+prepare-target-$(2)-host-$(3)-$(1)-$(4): PREPARE_SOURCE_BIN_DIR=$$(PREPARE_SOURCE_LIB_DIR)/rustlib/$(3)/bin
+prepare-target-$(2)-host-$(3)-$(1)-$(4): PREPARE_DEST_BIN_DIR=$$(PREPARE_DEST_LIB_DIR)/rustlib/$(3)/bin
 prepare-target-$(2)-host-$(3)-$(1)-$(4): prepare-maybe-clean-$(4) \
         $$(foreach crate,$$(TARGET_CRATES), \
           $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(crate)) \
@@ -133,6 +147,7 @@ prepare-target-$(2)-host-$(3)-$(1)-$(4): prepare-maybe-clean-$(4) \
       $$(if $$(findstring $(2), $$(PREPARE_TARGETS)), \
         $$(if $$(findstring $(3), $$(PREPARE_HOST)), \
           $$(call PREPARE_DIR,$$(PREPARE_WORKING_DEST_LIB_DIR)) \
+          $$(call PREPARE_DIR,$$(PREPARE_DEST_BIN_DIR)) \
           $$(foreach crate,$$(TARGET_CRATES), \
 	    $$(if $$(or $$(findstring 1, $$(ONLY_RLIB_$$(crate))),$$(findstring 1,$$(CFG_INSTALL_ONLY_RLIB_$(2)))),, \
               $$(call PREPARE_LIB,$$(call CFG_LIB_GLOB_$(2),$$(crate)))) \
@@ -140,8 +155,11 @@ prepare-target-$(2)-host-$(3)-$(1)-$(4): prepare-maybe-clean-$(4) \
           $$(if $$(findstring $(2),$$(CFG_HOST)), \
             $$(foreach crate,$$(HOST_CRATES), \
               $$(call PREPARE_LIB,$$(call CFG_LIB_GLOB_$(2),$$(crate)))),) \
-	  $$(foreach object,$$(INSTALLED_OBJECTS) $$(INSTALLED_OBJECTS_$(2)),\
-	    $$(call PREPARE_LIB,$$(object))),),),)
+	  $$(foreach object,$$(INSTALLED_OBJECTS_$(2)),\
+	    $$(call PREPARE_LIB,$$(object))) \
+	  $$(foreach bin,$$(INSTALLED_BINS_$(3)),\
+	    $$(call PREPARE_BIN,$$(bin))) \
+	,),),)
 endef
 
 define INSTALL_GDB_DEBUGGER_SCRIPTS_COMMANDS

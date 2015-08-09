@@ -36,13 +36,12 @@ pub use self::stdio::{StdoutLock, StderrLock, StdinLock};
 #[doc(no_inline, hidden)]
 pub use self::stdio::{set_panic, set_print};
 
-#[macro_use] mod lazy;
-
 pub mod prelude;
 mod buffered;
 mod cursor;
 mod error;
 mod impls;
+mod lazy;
 mod util;
 mod stdio;
 
@@ -81,7 +80,7 @@ fn append_to_string<F>(buf: &mut String, f: F) -> Result<usize>
         let ret = f(g.s);
         if str::from_utf8(&g.s[g.len..]).is_err() {
             ret.and_then(|_| {
-                Err(Error::new(ErrorKind::InvalidInput,
+                Err(Error::new(ErrorKind::InvalidData,
                                "stream did not contain valid UTF-8"))
             })
         } else {
@@ -307,7 +306,7 @@ pub trait Write {
     /// any wrapped object.
     ///
     /// Calls to `write` are not guaranteed to block waiting for data to be
-    /// written, and a write which would otherwise block can indicated through
+    /// written, and a write which would otherwise block can be indicated through
     /// an `Err` variant.
     ///
     /// If the return value is `Ok(n)` then it must be guaranteed that
@@ -506,11 +505,14 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
     }
 }
 
-/// A Buffer is a type of reader which has some form of internal buffering to
+/// A `BufRead` is a type of reader which has some form of internal buffering to
 /// allow certain kinds of reading operations to be more optimized than others.
 ///
 /// This type extends the `Read` trait with a few methods that are not
 /// possible to reasonably implement with purely a read interface.
+///
+/// You can use the [`BufReader` wrapper type](struct.BufReader.html) to turn any
+/// reader into a buffered reader.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait BufRead: Read {
     /// Fills the internal buffer of this object, returning the buffer contents.
@@ -569,7 +571,7 @@ pub trait BufRead: Read {
         read_until(self, byte, buf)
     }
 
-    /// Read all bytes until a newline byte (the 0xA byte) is reached, and
+    /// Read all bytes until a newline (the 0xA byte) is reached, and
     /// append them to the provided buffer.
     ///
     /// This function will continue to read (and buffer) bytes from the

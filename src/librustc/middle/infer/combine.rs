@@ -47,7 +47,6 @@ use middle::ty::{self, Ty};
 use middle::ty_fold;
 use middle::ty_fold::{TypeFolder, TypeFoldable};
 use middle::ty_relate::{self, Relate, RelateResult, TypeRelation};
-use util::ppaux::Repr;
 
 use syntax::ast;
 use syntax::codemap::Span;
@@ -57,6 +56,7 @@ pub struct CombineFields<'a, 'tcx: 'a> {
     pub infcx: &'a InferCtxt<'a, 'tcx>,
     pub a_is_expected: bool,
     pub trace: TypeTrace<'tcx>,
+    pub cause: Option<ty_relate::Cause>,
 }
 
 pub fn super_combine_tys<'a,'tcx:'a,R>(infcx: &InferCtxt<'a, 'tcx>,
@@ -70,44 +70,44 @@ pub fn super_combine_tys<'a,'tcx:'a,R>(infcx: &InferCtxt<'a, 'tcx>,
 
     match (&a.sty, &b.sty) {
         // Relate integral variables to other types
-        (&ty::ty_infer(ty::IntVar(a_id)), &ty::ty_infer(ty::IntVar(b_id))) => {
+        (&ty::TyInfer(ty::IntVar(a_id)), &ty::TyInfer(ty::IntVar(b_id))) => {
             try!(infcx.int_unification_table
                       .borrow_mut()
                       .unify_var_var(a_id, b_id)
                       .map_err(|e| int_unification_error(a_is_expected, e)));
             Ok(a)
         }
-        (&ty::ty_infer(ty::IntVar(v_id)), &ty::ty_int(v)) => {
+        (&ty::TyInfer(ty::IntVar(v_id)), &ty::TyInt(v)) => {
             unify_integral_variable(infcx, a_is_expected, v_id, IntType(v))
         }
-        (&ty::ty_int(v), &ty::ty_infer(ty::IntVar(v_id))) => {
+        (&ty::TyInt(v), &ty::TyInfer(ty::IntVar(v_id))) => {
             unify_integral_variable(infcx, !a_is_expected, v_id, IntType(v))
         }
-        (&ty::ty_infer(ty::IntVar(v_id)), &ty::ty_uint(v)) => {
+        (&ty::TyInfer(ty::IntVar(v_id)), &ty::TyUint(v)) => {
             unify_integral_variable(infcx, a_is_expected, v_id, UintType(v))
         }
-        (&ty::ty_uint(v), &ty::ty_infer(ty::IntVar(v_id))) => {
+        (&ty::TyUint(v), &ty::TyInfer(ty::IntVar(v_id))) => {
             unify_integral_variable(infcx, !a_is_expected, v_id, UintType(v))
         }
 
         // Relate floating-point variables to other types
-        (&ty::ty_infer(ty::FloatVar(a_id)), &ty::ty_infer(ty::FloatVar(b_id))) => {
+        (&ty::TyInfer(ty::FloatVar(a_id)), &ty::TyInfer(ty::FloatVar(b_id))) => {
             try!(infcx.float_unification_table
                       .borrow_mut()
                       .unify_var_var(a_id, b_id)
                       .map_err(|e| float_unification_error(relation.a_is_expected(), e)));
             Ok(a)
         }
-        (&ty::ty_infer(ty::FloatVar(v_id)), &ty::ty_float(v)) => {
+        (&ty::TyInfer(ty::FloatVar(v_id)), &ty::TyFloat(v)) => {
             unify_float_variable(infcx, a_is_expected, v_id, v)
         }
-        (&ty::ty_float(v), &ty::ty_infer(ty::FloatVar(v_id))) => {
+        (&ty::TyFloat(v), &ty::TyInfer(ty::FloatVar(v_id))) => {
             unify_float_variable(infcx, !a_is_expected, v_id, v)
         }
 
         // All other cases of inference are errors
-        (&ty::ty_infer(_), _) |
-        (_, &ty::ty_infer(_)) => {
+        (&ty::TyInfer(_), _) |
+        (_, &ty::TyInfer(_)) => {
             Err(ty::terr_sorts(ty_relate::expected_found(relation, &a, &b)))
         }
 
@@ -187,7 +187,6 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
                        b_vid: ty::TyVid)
                        -> RelateResult<'tcx, ()>
     {
-        let tcx = self.infcx.tcx;
         let mut stack = Vec::new();
         stack.push((a_ty, dir, b_vid));
         loop {
@@ -213,10 +212,10 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
                 Some(e) => e,
             };
 
-            debug!("instantiate(a_ty={} dir={:?} b_vid={})",
-                   a_ty.repr(tcx),
+            debug!("instantiate(a_ty={:?} dir={:?} b_vid={:?})",
+                   a_ty,
                    dir,
-                   b_vid.repr(tcx));
+                   b_vid);
 
             // Check whether `vid` has been instantiated yet.  If not,
             // make a generalized form of `ty` and instantiate with
@@ -230,10 +229,10 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
                         EqTo => self.generalize(a_ty, b_vid, false),
                         BiTo | SupertypeOf | SubtypeOf => self.generalize(a_ty, b_vid, true),
                     });
-                    debug!("instantiate(a_ty={}, dir={:?}, \
-                                        b_vid={}, generalized_ty={})",
-                           a_ty.repr(tcx), dir, b_vid.repr(tcx),
-                           generalized_ty.repr(tcx));
+                    debug!("instantiate(a_ty={:?}, dir={:?}, \
+                                        b_vid={:?}, generalized_ty={:?})",
+                           a_ty, dir, b_vid,
+                           generalized_ty);
                     self.infcx.type_variables
                         .borrow_mut()
                         .instantiate_and_push(
@@ -262,7 +261,7 @@ impl<'a, 'tcx> CombineFields<'a, 'tcx> {
 
     /// Attempts to generalize `ty` for the type variable `for_vid`.  This checks for cycle -- that
     /// is, whether the type `ty` references `for_vid`. If `make_region_vars` is true, it will also
-    /// replace all regions with fresh variables. Returns `ty_err` in the case of a cycle, `Ok`
+    /// replace all regions with fresh variables. Returns `TyError` in the case of a cycle, `Ok`
     /// otherwise.
     fn generalize(&self,
                   ty: Ty<'tcx>,
@@ -308,7 +307,7 @@ impl<'cx, 'tcx> ty_fold::TypeFolder<'tcx> for Generalizer<'cx, 'tcx> {
         // (In particular, you could have something like `$0 = Box<$1>`
         //  where `$1` has already been instantiated with `Box<$0>`)
         match t.sty {
-            ty::ty_infer(ty::TyVar(vid)) => {
+            ty::TyInfer(ty::TyVar(vid)) => {
                 if vid == self.for_vid {
                     self.cycle_detected = true;
                     self.tcx().types.err
@@ -335,8 +334,8 @@ impl<'cx, 'tcx> ty_fold::TypeFolder<'tcx> for Generalizer<'cx, 'tcx> {
             ty::ReEarlyBound(..) => {
                 self.tcx().sess.span_bug(
                     self.span,
-                    &format!("Encountered early bound region when generalizing: {}",
-                            r.repr(self.tcx())));
+                    &format!("Encountered early bound region when generalizing: {:?}",
+                            r));
             }
 
             // Always make a fresh region variable for skolemized regions;

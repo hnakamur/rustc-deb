@@ -8,8 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-#![feature(hash)]
+#![feature(hash_default)]
 
 use std::hash::{SipHasher, hash};
 
@@ -17,5 +16,5 @@ use std::hash::{SipHasher, hash};
 struct Empty;
 
 pub fn main() {
-    assert!(hash::<_, SipHasher>(&Empty) == hash::<_, SipHasher>(&Empty));
+    assert_eq!(hash::<_, SipHasher>(&Empty), hash::<_, SipHasher>(&Empty));
 }

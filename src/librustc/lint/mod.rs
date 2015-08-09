@@ -101,9 +101,8 @@ macro_rules! declare_lint {
 #[macro_export]
 macro_rules! lint_array { ($( $lint:expr ),*) => (
     {
-        #[allow(non_upper_case_globals)]
-        static array: LintArray = &[ $( &$lint ),* ];
-        array
+        static ARRAY: LintArray = &[ $( &$lint ),* ];
+        ARRAY
     }
 ) }
 
@@ -248,9 +247,6 @@ pub enum LintSource {
 
     /// Lint level was set by a command-line flag.
     CommandLine,
-
-    /// Lint level was set by the release channel.
-    ReleaseChannel
 }
 
 pub type LevelSource = (Level, LintSource);

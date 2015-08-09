@@ -23,14 +23,16 @@
 // conditions above to be satisfied, meaning that if the dropck is
 // sound, it should reject this code.
 
+#![feature(const_fn)]
+
 use std::cell::Cell;
 use id::Id;
 
 mod s {
     #![allow(unstable)]
-    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static S_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
+    static S_COUNT: AtomicUsize = AtomicUsize::new(0);
 
     /// generates globally unique count (global across the current
     /// process, that is)

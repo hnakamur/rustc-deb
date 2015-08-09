@@ -88,13 +88,13 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections, core)]
-    /// let s = String::from_str("hello");
+    /// # #![feature(collections)]
+    /// let s = String::from("hello");
     /// assert_eq!(&s[..], "hello");
     /// ```
     #[inline]
-    #[unstable(feature = "collections",
-               reason = "needs investigation to see if to_string() can match perf")]
+    #[unstable(feature = "collections", reason = "use `String::from` instead")]
+    #[deprecated(since = "1.2.0", reason = "use `String::from` instead")]
     #[cfg(not(test))]
     pub fn from_str(string: &str) -> String {
         String { vec: <[_]>::to_vec(string.as_bytes()) }
@@ -121,9 +121,6 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(core)]
-    /// use std::str::Utf8Error;
-    ///
     /// let hello_vec = vec![104, 101, 108, 108, 111];
     /// let s = String::from_utf8(hello_vec).unwrap();
     /// assert_eq!(s, "hello");
@@ -346,8 +343,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let s = String::from_str("hello");
+    /// let s = String::from("hello");
     /// let bytes = s.into_bytes();
     /// assert_eq!(bytes, [104, 101, 108, 108, 111]);
     /// ```
@@ -370,8 +366,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let mut s = String::from_str("foo");
+    /// let mut s = String::from("foo");
     /// s.push_str("bar");
     /// assert_eq!(s, "foobar");
     /// ```
@@ -433,7 +428,7 @@ impl String {
     ///
     /// ```
     /// let mut s = String::new();
-    /// s.reserve(10);
+    /// s.reserve_exact(10);
     /// assert!(s.capacity() >= 10);
     /// ```
     #[inline]
@@ -447,8 +442,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let mut s = String::from_str("foo");
+    /// let mut s = String::from("foo");
     /// s.reserve(100);
     /// assert!(s.capacity() >= 100);
     /// s.shrink_to_fit();
@@ -465,8 +459,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let mut s = String::from_str("abc");
+    /// let mut s = String::from("abc");
     /// s.push('1');
     /// s.push('2');
     /// s.push('3');
@@ -475,24 +468,24 @@ impl String {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn push(&mut self, ch: char) {
-        if (ch as u32) < 0x80 {
-            self.vec.push(ch as u8);
-            return;
-        }
+        match ch.len_utf8() {
+            1 => self.vec.push(ch as u8),
+            ch_len => {
+                let cur_len = self.len();
+                // This may use up to 4 bytes.
+                self.vec.reserve(ch_len);
 
-        let cur_len = self.len();
-        // This may use up to 4 bytes.
-        self.vec.reserve(4);
-
-        unsafe {
-            // Attempt to not use an intermediate buffer by just pushing bytes
-            // directly onto this string.
-            let slice = slice::from_raw_parts_mut (
-                self.vec.as_mut_ptr().offset(cur_len as isize),
-                4
-            );
-            let used = ch.encode_utf8(slice).unwrap_or(0);
-            self.vec.set_len(cur_len + used);
+                unsafe {
+                    // Attempt to not use an intermediate buffer by just pushing bytes
+                    // directly onto this string.
+                    let slice = slice::from_raw_parts_mut (
+                        self.vec.as_mut_ptr().offset(cur_len as isize),
+                        ch_len
+                    );
+                    let used = ch.encode_utf8(slice).unwrap_or(0);
+                    self.vec.set_len(cur_len + used);
+                }
+            }
         }
     }
 
@@ -501,10 +494,8 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let s = String::from_str("hello");
-    /// let b: &[_] = &[104, 101, 108, 108, 111];
-    /// assert_eq!(s.as_bytes(), b);
+    /// let s = String::from("hello");
+    /// assert_eq!(s.as_bytes(), [104, 101, 108, 108, 111]);
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -522,8 +513,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let mut s = String::from_str("hello");
+    /// let mut s = String::from("hello");
     /// s.truncate(2);
     /// assert_eq!(s, "he");
     /// ```
@@ -540,8 +530,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let mut s = String::from_str("foo");
+    /// let mut s = String::from("foo");
     /// assert_eq!(s.pop(), Some('o'));
     /// assert_eq!(s.pop(), Some('o'));
     /// assert_eq!(s.pop(), Some('f'));
@@ -578,8 +567,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let mut s = String::from_str("foo");
+    /// let mut s = String::from("foo");
     /// assert_eq!(s.remove(0), 'f');
     /// assert_eq!(s.remove(1), 'o');
     /// assert_eq!(s.remove(0), 'o');
@@ -641,8 +629,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections)]
-    /// let mut s = String::from_str("hello");
+    /// let mut s = String::from("hello");
     /// unsafe {
     ///     let vec = s.as_mut_vec();
     ///     assert!(vec == &[104, 101, 108, 108, 111]);
@@ -709,7 +696,7 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(collections_drain)]
+    /// # #![feature(drain)]
     ///
     /// let mut s = String::from("α is alpha, β is beta");
     /// let beta_offset = s.find('β').unwrap_or(s.len());
@@ -723,7 +710,7 @@ impl String {
     /// s.drain(..);
     /// assert_eq!(s, "");
     /// ```
-    #[unstable(feature = "collections_drain",
+    #[unstable(feature = "drain",
                reason = "recently added, matches RFC")]
     pub fn drain<R>(&mut self, range: R) -> Drain where R: RangeArgument<usize> {
         // Memory safety
@@ -803,6 +790,13 @@ impl Extend<char> for String {
         for ch in iterator {
             self.push(ch)
         }
+    }
+}
+
+#[stable(feature = "extend_ref", since = "1.2.0")]
+impl<'a> Extend<&'a char> for String {
+    fn extend<I: IntoIterator<Item=&'a char>>(&mut self, iter: I) {
+        self.extend(iter.into_iter().cloned());
     }
 }
 
@@ -981,10 +975,14 @@ impl ops::Deref for String {
 
 /// Wrapper type providing a `&String` reference via `Deref`.
 #[unstable(feature = "collections")]
+#[deprecated(since = "1.2.0",
+             reason = "replaced with deref coercions or Borrow")]
+#[allow(deprecated)]
 pub struct DerefString<'a> {
     x: DerefVec<'a, u8>
 }
 
+#[allow(deprecated)]
 impl<'a> Deref for DerefString<'a> {
     type Target = String;
 
@@ -1011,11 +1009,14 @@ impl<'a> Deref for DerefString<'a> {
 /// string_consumer(&as_string("foo"));
 /// ```
 #[unstable(feature = "collections")]
+#[deprecated(since = "1.2.0",
+             reason = "replaced with deref coercions or Borrow")]
+#[allow(deprecated)]
 pub fn as_string<'a>(x: &'a str) -> DerefString<'a> {
     DerefString { x: as_vec(x.as_bytes()) }
 }
 
-/// Error returned from `String::from_str`
+/// Error returned from `String::from`
 #[unstable(feature = "str_parse_error", reason = "may want to be replaced with \
                                                   Void if it ever exists")]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -1026,7 +1027,7 @@ impl FromStr for String {
     type Err = ParseError;
     #[inline]
     fn from_str(s: &str) -> Result<String, ParseError> {
-        Ok(String::from_str(s))
+        Ok(String::from(s))
     }
 }
 
@@ -1140,7 +1141,7 @@ impl fmt::Write for String {
 }
 
 /// A draining iterator for `String`.
-#[unstable(feature = "collections_drain", reason = "recently added")]
+#[unstable(feature = "drain", reason = "recently added")]
 pub struct Drain<'a> {
     /// Will be used as &'a mut String in the destructor
     string: *mut String,
@@ -1155,7 +1156,7 @@ pub struct Drain<'a> {
 unsafe impl<'a> Sync for Drain<'a> {}
 unsafe impl<'a> Send for Drain<'a> {}
 
-#[unstable(feature = "collections_drain", reason = "recently added")]
+#[unstable(feature = "drain", reason = "recently added")]
 impl<'a> Drop for Drain<'a> {
     fn drop(&mut self) {
         unsafe {
@@ -1169,7 +1170,7 @@ impl<'a> Drop for Drain<'a> {
     }
 }
 
-#[unstable(feature = "collections_drain", reason = "recently added")]
+#[unstable(feature = "drain", reason = "recently added")]
 impl<'a> Iterator for Drain<'a> {
     type Item = char;
 
@@ -1183,7 +1184,7 @@ impl<'a> Iterator for Drain<'a> {
     }
 }
 
-#[unstable(feature = "collections_drain", reason = "recently added")]
+#[unstable(feature = "drain", reason = "recently added")]
 impl<'a> DoubleEndedIterator for Drain<'a> {
     #[inline]
     fn next_back(&mut self) -> Option<char> {

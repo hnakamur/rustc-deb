@@ -124,11 +124,11 @@ impl<T: ?Sized> BorrowMut<T> for boxed::Box<T> {
     fn borrow_mut(&mut self) -> &mut T { &mut **self }
 }
 
-impl<T> Borrow<T> for rc::Rc<T> {
+impl<T: ?Sized> Borrow<T> for rc::Rc<T> {
     fn borrow(&self) -> &T { &**self }
 }
 
-impl<T> Borrow<T> for arc::Arc<T> {
+impl<T: ?Sized> Borrow<T> for arc::Arc<T> {
     fn borrow(&self) -> &T { &**self }
 }
 

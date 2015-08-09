@@ -21,7 +21,7 @@ use ptr::P;
 pub fn expand_deriving_ord(cx: &mut ExtCtxt,
                            span: Span,
                            mitem: &MetaItem,
-                           item: Annotatable,
+                           item: &Annotatable,
                            push: &mut FnMut(Annotatable))
 {
     let inline = cx.meta_word(span, InternedString::new("inline"));
@@ -40,6 +40,7 @@ pub fn expand_deriving_ord(cx: &mut ExtCtxt,
                 args: vec!(borrowed_self()),
                 ret_ty: Literal(path_std!(cx, core::cmp::Ordering)),
                 attributes: attrs,
+                is_unsafe: false,
                 combine_substructure: combine_substructure(Box::new(|a, b, c| {
                     cs_cmp(a, b, c)
                 })),
@@ -48,7 +49,7 @@ pub fn expand_deriving_ord(cx: &mut ExtCtxt,
         associated_types: Vec::new(),
     };
 
-    trait_def.expand(cx, mitem, &item, push)
+    trait_def.expand(cx, mitem, item, push)
 }
 
 

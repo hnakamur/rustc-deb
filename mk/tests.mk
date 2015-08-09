@@ -172,23 +172,24 @@ check: check-sanitycheck cleantmptestlogs cleantestlibs all check-stage2 tidy
 	$(Q)$(CFG_PYTHON) $(S)src/etc/check-summary.py tmp/*.log
 
 # As above but don't bother running tidy.
-check-notidy: cleantmptestlogs cleantestlibs all check-stage2
+check-notidy: check-sanitycheck cleantmptestlogs cleantestlibs all check-stage2
 	$(Q)$(CFG_PYTHON) $(S)src/etc/check-summary.py tmp/*.log
 
 # A slightly smaller set of tests for smoke testing.
-check-lite: cleantestlibs cleantmptestlogs \
+check-lite: check-sanitycheck cleantestlibs cleantmptestlogs \
 	$(foreach crate,$(TEST_TARGET_CRATES),check-stage2-$(crate)) \
 	check-stage2-rpass check-stage2-rpass-valgrind \
 	check-stage2-rfail check-stage2-cfail check-stage2-pfail check-stage2-rmake
 	$(Q)$(CFG_PYTHON) $(S)src/etc/check-summary.py tmp/*.log
 
 # Only check the 'reference' tests: rpass/cfail/rfail/rmake.
-check-ref: cleantestlibs cleantmptestlogs check-stage2-rpass check-stage2-rpass-valgrind \
-	check-stage2-rfail check-stage2-cfail check-stage2-pfail check-stage2-rmake
+check-ref: check-sanitycheck cleantestlibs cleantmptestlogs check-stage2-rpass \
+	check-stage2-rpass-valgrind check-stage2-rfail check-stage2-cfail check-stage2-pfail \
+	check-stage2-rmake
 	$(Q)$(CFG_PYTHON) $(S)src/etc/check-summary.py tmp/*.log
 
 # Only check the docs.
-check-docs: cleantestlibs cleantmptestlogs check-stage2-docs
+check-docs: check-sanitycheck cleantestlibs cleantmptestlogs check-stage2-docs
 	$(Q)$(CFG_PYTHON) $(S)src/etc/check-summary.py tmp/*.log
 
 # Some less critical tests that are not prone to breakage.
@@ -382,7 +383,7 @@ $(3)/stage$(1)/test/$(4)test-$(2)$$(X_$(2)): \
 		$$(CRATEFILE_$(4)) \
 		$$(TESTDEP_$(1)_$(2)_$(3)_$(4))
 	@$$(call E, rustc: $$@)
-	$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(3)) \
+	$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(2)) \
 	    $$(subst @,,$$(STAGE$(1)_T_$(2)_H_$(3))) -o $$@ $$< --test \
 		-L "$$(RT_OUTPUT_DIR_$(2))" \
 		$$(LLVM_LIBDIR_RUSTFLAGS_$(2)) \
@@ -581,10 +582,6 @@ ifeq ($(CFG_LLDB),)
 CTEST_DISABLE_debuginfo-lldb = "no lldb found"
 endif
 
-ifeq ($(CFG_CLANG),)
-CTEST_DISABLE_codegen = "no clang found"
-endif
-
 ifneq ($(CFG_OSTYPE),apple-darwin)
 CTEST_DISABLE_debuginfo-lldb = "lldb tests are only run on darwin"
 endif
@@ -645,7 +642,6 @@ CTEST_COMMON_ARGS$(1)-T-$(2)-H-$(3) := \
         --run-lib-path $$(TLIB$(1)_T_$(2)_H_$(3)) \
         --rustc-path $$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
         --rustdoc-path $$(HBIN$(1)_H_$(3))/rustdoc$$(X_$(3)) \
-        --clang-path $(if $(CFG_CLANG),$(CFG_CLANG),clang) \
         --llvm-bin-path $(CFG_LLVM_INST_DIR_$(CFG_BUILD))/bin \
         --aux-base $$(S)src/test/auxiliary/ \
         --stage-id stage$(1)-$(2) \
@@ -894,7 +890,7 @@ ifeq ($(2),$$(CFG_BUILD))
 $$(call TEST_OK_FILE,$(1),$(2),$(3),doc-crate-$(4)): $$(CRATEDOCTESTDEP_$(1)_$(2)_$(3)_$(4))
 	@$$(call E, run doc-crate-$(4) [$(2)])
 	$$(Q)touch $$@.start_time
-	$$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(3)) \
+	$$(Q)CFG_LLVM_LINKAGE_FILE=$$(LLVM_LINKAGE_PATH_$(2)) \
 	    $$(RUSTDOC_$(1)_T_$(2)_H_$(3)) --test --cfg dox \
 	        $$(CRATEFILE_$(4)) --test-args "$$(TESTARGS)" && \
 	        touch -r $$@.start_time $$@ && rm $$@.start_time

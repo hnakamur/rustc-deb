@@ -15,6 +15,7 @@
 // makes all other generics or inline functions that it references
 // reachable as well.
 
+use ast_map;
 use middle::def;
 use middle::ty;
 use middle::privacy;
@@ -24,7 +25,6 @@ use util::nodemap::NodeSet;
 use std::collections::HashSet;
 use syntax::abi;
 use syntax::ast;
-use syntax::ast_map;
 use syntax::ast_util::is_local;
 use syntax::attr;
 use syntax::visit::Visitor;
@@ -46,7 +46,7 @@ fn item_might_be_inlined(item: &ast::Item) -> bool {
 
     match item.node {
         ast::ItemImpl(_, _, ref generics, _, _, _) |
-        ast::ItemFn(_, _, _, ref generics, _) => {
+        ast::ItemFn(_, _, _, _, ref generics, _) => {
             generics_require_inlining(generics)
         }
         _ => false,
@@ -256,7 +256,7 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
             // but all other rust-only interfaces can be private (they will not
             // participate in linkage after this product is produced)
             if let ast_map::NodeItem(item) = *node {
-                if let ast::ItemFn(_, _, abi, _, _) = item.node {
+                if let ast::ItemFn(_, _, _, abi, _, _) = item.node {
                     if abi != abi::Rust {
                         self.reachable_symbols.insert(search_item);
                     }
@@ -273,7 +273,7 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
         match *node {
             ast_map::NodeItem(item) => {
                 match item.node {
-                    ast::ItemFn(_, _, _, _, ref search_block) => {
+                    ast::ItemFn(_, _, _, _, _, ref search_block) => {
                         if item_might_be_inlined(&*item) {
                             visit::walk_block(self, &**search_block)
                         }
@@ -354,7 +354,7 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
     // this properly would result in the necessity of computing *type*
     // reachability, which might result in a compile time loss.
     fn mark_destructors_reachable(&mut self) {
-        for (_, destructor_def_id) in &*self.tcx.destructor_for_type.borrow() {
+        for (_, destructor_def_id) in self.tcx.destructor_for_type.borrow().iter() {
             if destructor_def_id.krate == ast::LOCAL_CRATE {
                 self.reachable_symbols.insert(destructor_def_id.node);
             }

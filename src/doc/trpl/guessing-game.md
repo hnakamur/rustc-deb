@@ -38,7 +38,7 @@ Finally, Cargo generated a ‘Hello, world!’ for us. Check out `src/main.rs`:
 
 ```rust
 fn main() {
-    println!("Hello, world!")
+    println!("Hello, world!");
 }
 ```
 
@@ -148,10 +148,10 @@ a few tricks up their sleeves.
 For example, they’re [immutable][immutable] by default. That’s why our example
 uses `mut`: it makes a binding mutable, rather than immutable. `let` doesn’t
 take a name on the left hand side, it actually accepts a
-‘[pattern][patterns]’. We’ll use patterns more later. It’s easy enough
+‘[pattern][patterns]’. We’ll use patterns later. It’s easy enough
 to use for now:
 
-```
+```rust
 let foo = 5; // immutable.
 let mut bar = 5; // mutable
 ```
@@ -362,7 +362,7 @@ everything that follows it is part of it, until the next section starts.
 Cargo uses the dependencies section to know what dependencies on external
 crates you have, and what versions you require. In this case, we’ve used version `0.3.0`.
 Cargo understands [Semantic Versioning][semver], which is a standard for writing version
-numbers. If we wanted to use the latest version we could use `*` or we could use a range 
+numbers. If we wanted to use the latest version we could use `*` or we could use a range
 of versions. [Cargo’s documentation][cargodoc] contains more details.
 
 [semver]: http://semver.org
@@ -637,7 +637,7 @@ When we wrote `let guess = String::new()`, Rust was able to infer that `guess`
 should be a `String`, and so it doesn’t make us write out the type. And with
 our `secret_number`, there are a number of types which can have a value
 between one and a hundred: `i32`, a thirty-two-bit number, or `u32`, an
-unsigned thirty-two-bit number, or `i64`, a sixty-four-bit number. Or others.
+unsigned thirty-two-bit number, or `i64`, a sixty-four-bit number or others.
 So far, that hasn’t mattered, and so Rust defaults to an `i32`. However, here,
 Rust doesn’t know how to compare the `guess` and the `secret_number`. They
 need to be the same type. Ultimately, we want to convert the `String` we
