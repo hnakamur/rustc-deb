@@ -50,12 +50,14 @@ Description: Rust systems programming language
  generic programming and meta-programming, in both static and dynamic
  styles.
 
-Package: libstd-rust-7d23ff90
+Package: libstd-rust-62abc69f
 Section: libs
 Architecture: amd64 i386
 Multi-Arch: same
 Pre-Depends: multiarch-support, ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Replaces: libstd-rust-7d23ff90
+Breaks: libstd-rust-7d23ff90
 Description: Rust standard libraries
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
@@ -76,7 +78,7 @@ Section: libdevel
 Architecture: amd64 i386
 Multi-Arch: same
 Pre-Depends: multiarch-support
-Depends: ${misc:Depends}, libstd-rust-7d23ff90 (= ${binary:Version})
+Depends: ${misc:Depends}, libstd-rust-62abc69f (= ${binary:Version})
 Description: Rust standard libraries - development files
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
