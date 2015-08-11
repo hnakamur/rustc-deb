@@ -8,12 +8,14 @@ Description: Set CFLAGS/LDFLAGS/etc according to Debian policy
 Author: Angus Lees <gus@debian.org>
 Forwarded: no
 
---- rustc-1.0.0~alpha.2.orig/configure
-+++ rustc-1.0.0~alpha.2/configure
-@@ -903,12 +903,13 @@ fi
+Index: rustc.git/configure
+===================================================================
+--- rustc.git.orig/configure
++++ rustc.git/configure
+@@ -1035,12 +1035,13 @@ fi
  # point in the script; after this point, script logic should inspect
  # $CFG_USING_CLANG rather than $CFG_ENABLE_CLANG.
-
+ 
 -# Set CFG_{CC,CXX,CPP,CFLAGS,CXXFLAGS}
 +# Set CFG_{CC,CXX,CPP,CFLAGS,CXXFLAGS,LDFLAGS}
  envopt CC
@@ -22,11 +24,11 @@ Forwarded: no
  envopt CFLAGS
  envopt CXXFLAGS
 +envopt LDFLAGS
-
+ 
  # a little post-processing of various config values
  CFG_PREFIX=${CFG_PREFIX%/}
-@@ -1285,9 +1286,9 @@ do
-
+@@ -1523,9 +1524,9 @@ do
+ 
          CXX=$LLVM_CXX
          CC=$LLVM_CC
 -        CFLAGS=$LLVM_CFLAGS
@@ -35,20 +37,21 @@ Forwarded: no
 +        CFLAGS="$CFLAGS $LLVM_CFLAGS"
 +        CXXFLAGS="$CXXFLAGS $LLVM_CXXFLAGS"
 +        LDFLAGS="$LDFLAGS $LLVM_LDFLAGS"
-
+ 
          if [ -z "$CFG_DISABLE_LIBCPP" ] && [ -n "$CFG_USING_CLANG" ]; then
              LLVM_OPTS="$LLVM_OPTS --enable-libcpp"
---- rustc-1.0.0~alpha.2.orig/mk/platform.mk
-+++ rustc-1.0.0~alpha.2/mk/platform.mk
-@@ -155,16 +155,19 @@ define CFG_MAKE_TOOLCHAIN
+Index: rustc.git/mk/platform.mk
+===================================================================
+--- rustc.git.orig/mk/platform.mk
++++ rustc.git/mk/platform.mk
+@@ -187,21 +187,25 @@ define CFG_MAKE_TOOLCHAIN
    endif
-
+ 
    CFG_COMPILE_C_$(1) = $$(CC_$(1)) \
 +        $$(CFLAGS) \
          $$(CFG_GCCISH_CFLAGS) \
          $$(CFG_GCCISH_CFLAGS_$(1)) \
-         $$(CFG_DEPEND_FLAGS) \
-         -c -o $$(1) $$(2)
+         -c $$(call CFG_CC_OUTPUT_$(1),$$(1)) $$(2)
    CFG_LINK_C_$(1) = $$(CC_$(1)) \
 +        $$(LDFLAGS) \
          $$(CFG_GCCISH_LINK_FLAGS) -o $$(1) \
@@ -60,9 +63,8 @@ Forwarded: no
          $$(CFG_GCCISH_CFLAGS) \
          $$(CFG_GCCISH_CXXFLAGS) \
          $$(CFG_GCCISH_CFLAGS_$(1)) \
-@@ -172,6 +175,7 @@ define CFG_MAKE_TOOLCHAIN
-         $$(CFG_DEPEND_FLAGS) \
-         -c -o $$(1) $$(2)
+         $$(CFG_GCCISH_CXXFLAGS_$(1)) \
+         -c $$(call CFG_CC_OUTPUT_$(1),$$(1)) $$(2)
    CFG_LINK_CXX_$(1) = $$(CXX_$(1)) \
 +        $$(LDFLAGS) \
          $$(CFG_GCCISH_LINK_FLAGS) -o $$(1) \
