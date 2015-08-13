@@ -22,14 +22,13 @@ Index: rustc.git/src/librustc_trans/back/link.rs
 ===================================================================
 --- rustc.git.orig/src/librustc_trans/back/link.rs
 +++ rustc.git/src/librustc_trans/back/link.rs
-@@ -1017,6 +1017,12 @@ fn link_args(cmd: &mut Linker,
+@@ -1017,6 +1017,11 @@ fn link_args(cmd: &mut Linker,
          cmd.args(&rpath::get_rpath_flags(&mut rpath_config));
      }
  
 +    if dylib && t.options.linker_is_gnu {
-+        let mut v = OsString::from("-Wl,-soname=");
-+        v.push(out_filename.file_name().unwrap());
-+        cmd.arg(&v);
++        let soname = [String::from("-Wl,-soname="), String::from(out_filename.file_name().unwrap().to_str().unwrap())];
++        cmd.args(&soname);
 +    }
 +
      // Finally add all the linker arguments provided on the command line along
