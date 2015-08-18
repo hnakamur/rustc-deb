@@ -105,7 +105,8 @@ ifneq (,$(BUILD_DOCS))
 	find $(DEB_DESTDIR)/usr/share/doc/rust/html -iname '*.html' | \
 	while read file; do \
 	  topdir=$$(echo "$$file" | sed 's,^$(DEB_DESTDIR)/usr/share/doc/rust/html/,,; s,/[^/]*$$,/,; s,^[^/]*$$,,; s,[^/]\+/,../,g'); \
-	  sed -i "s,https://doc.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," "$$file"; \
+	  sed -i -e "s,https://doc.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," \
+              -e "s,http://www.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," "$$file"; \
 	done
 
 	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete
