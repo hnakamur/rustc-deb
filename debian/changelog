@@ -1,4 +1,4 @@
-rustc (1.2.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.2.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
     libstd-rust-7d23ff90 => libstd-rust-62abc69f
