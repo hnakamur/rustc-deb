@@ -76,6 +76,7 @@ override_dh_auto_clean:
 	  $(PMAKE) clean-all; \
 	  $(RM) Makefile config.stamp; \
 	fi
+	$(RM) src/etc/snapshot.pyc
 
 override_dh_auto_build-arch:
 	dh_auto_build -- all VERBOSE=1
