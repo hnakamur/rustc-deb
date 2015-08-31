@@ -110,9 +110,6 @@ ifneq (,$(BUILD_DOCS))
 	done
 
 	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete
-
-	find $(DEB_DESTDIR)/usr/share/doc -name jquery.js \
-	  -exec ln -sf /usr/share/javascript/jquery/jquery.js '{}' \;
 endif
 
 override_dh_install:
