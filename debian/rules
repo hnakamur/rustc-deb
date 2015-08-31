@@ -28,7 +28,7 @@ RELEASE_CHANNEL := stable
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
-RUST_HASH := $(shell printf '%s' $(DEB_VERSION_UPSTREAM) | sed -e 's/\+dfsg[0-9]*$$//' | md5sum | head -c 8)
+RUST_HASH := $(shell sed -n -e 's/Package: libstd-rust-\(........\)/\1/p' debian/control)
 LIBSTD_PKG := libstd-rust-$(RUST_HASH)
 
 # These are the normal build flags
@@ -66,6 +66,8 @@ endif
 override_dh_auto_configure:
 	SHELL=/bin/sh \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
+	echo '_deb-print-%  : ; @echo $$($$*)' >> Makefile
+	test "$$($(MAKE) --no-print-directory _deb-print-CFG_FILENAME_EXTRA | tail -n1)" = "$$(echo $(RUST_HASH))"
 
 
 override_dh_auto_clean:
