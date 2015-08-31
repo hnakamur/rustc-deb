@@ -66,8 +66,7 @@ endif
 override_dh_auto_configure:
 	SHELL=/bin/sh \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
-	echo '_deb-print-%  : ; @echo $$($$*)' >> Makefile
-	test "$$($(MAKE) --no-print-directory _deb-print-CFG_FILENAME_EXTRA | tail -n1)" = "$$(echo $(RUST_HASH))"
+	test "$$($(MAKE) --no-print-directory print-CFG_FILENAME_EXTRA | tail -n1 | cut -d= -f2)" = "$$(echo $(RUST_HASH))"
 
 
 override_dh_auto_clean:
