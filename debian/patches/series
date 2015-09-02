@@ -2,4 +2,3 @@ buildflags
 rust-gdb-paths
 rust-lldb-paths
 add-soname
-fix-test-llvm-3.6.diff
