@@ -1,6 +1,6 @@
 rustc (1.2.0+dfsg1-2) UNRELEASED; urgency=medium
 
-  * Use LLVM 3.7 as upstream does, now that it's released.
+  * Use LLVM 3.7 as upstream does, now that it's released. (Closes: #797626)
   * Fix debian/copyright syntax mistakes.
   * Don't Replace/Break previous versions of libstd-rust-*
   * Check that the libstd-rust-* name in d/control matches upstream.
