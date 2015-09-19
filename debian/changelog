@@ -1,6 +1,7 @@
 rustc (1.3.0+dfsg1-1) UNRELEASED; urgency=medium
 
   * New upstream release
+    62abc69f => 198068b3
 
   [ Ximin Luo ]
   * Use LLVM 3.7 as upstream does, now that it's released. (Closes: #797626)
