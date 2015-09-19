@@ -253,20 +253,84 @@ pub unsafe fn dropped<T>() -> T {
     dropped_impl()
 }
 
-/// Creates an uninitialized value.
+/// Bypasses Rust's normal memory-initialization checks by pretending to
+/// produce a value of type T, while doing nothing at all.
 ///
-/// Care must be taken when using this function, if the type `T` has a destructor and the value
-/// falls out of scope (due to unwinding or returning) before being initialized, then the
-/// destructor will run on uninitialized data, likely leading to crashes.
+/// **This is incredibly dangerous, and should not be done lightly. Deeply
+/// consider initializing your memory with a default value instead.**
 ///
-/// This is useful for FFI functions sometimes, but should generally be avoided.
+/// This is useful for FFI functions and initializing arrays sometimes,
+/// but should generally be avoided.
+///
+/// # Undefined Behaviour
+///
+/// It is Undefined Behaviour to read uninitialized memory. Even just an
+/// uninitialized boolean. For instance, if you branch on the value of such
+/// a boolean your program may take one, both, or neither of the branches.
+///
+/// Note that this often also includes *writing* to the uninitialized value.
+/// Rust believes the value is initialized, and will therefore try to Drop
+/// the uninitialized value and its fields if you try to overwrite the memory
+/// in a normal manner. The only way to safely initialize an arbitrary
+/// uninitialized value is with one of the `ptr` functions: `write`, `copy`, or
+/// `copy_nonoverlapping`. This isn't necessary if `T` is a primitive
+/// or otherwise only contains types that don't implement Drop.
+///
+/// If this value *does* need some kind of Drop, it must be initialized before
+/// it goes out of scope (and therefore would be dropped). Note that this
+/// includes a `panic` occurring and unwinding the stack suddenly.
 ///
 /// # Examples
 ///
+/// Here's how to safely initialize an array of `Vec`s.
+///
 /// ```
 /// use std::mem;
+/// use std::ptr;
 ///
-/// let x: i32 = unsafe { mem::uninitialized() };
+/// // Only declare the array. This safely leaves it
+/// // uninitialized in a way that Rust will track for us.
+/// // However we can't initialize it element-by-element
+/// // safely, and we can't use the `[value; 1000]`
+/// // constructor because it only works with `Copy` data.
+/// let mut data: [Vec<u32>; 1000];
+///
+/// unsafe {
+///     // So we need to do this to initialize it.
+///     data = mem::uninitialized();
+///
+///     // DANGER ZONE: if anything panics or otherwise
+///     // incorrectly reads the array here, we will have
+///     // Undefined Behaviour.
+///
+///     // It's ok to mutably iterate the data, since this
+///     // doesn't involve reading it at all.
+///     // (ptr and len are statically known for arrays)
+///     for elem in &mut data[..] {
+///         // *elem = Vec::new() would try to drop the
+///         // uninitialized memory at `elem` -- bad!
+///         //
+///         // Vec::new doesn't allocate or do really
+///         // anything. It's only safe to call here
+///         // because we know it won't panic.
+///         ptr::write(elem, Vec::new());
+///     }
+///
+///     // SAFE ZONE: everything is initialized.
+/// }
+///
+/// println!("{:?}", &data[0]);
+/// ```
+///
+/// This example emphasizes exactly how delicate and dangerous doing this is.
+/// Note that the `vec!` macro *does* let you initialize every element with a
+/// value that is only `Clone`, so the following is semantically equivalent and
+/// vastly less dangerous, as long as you can live with an extra heap
+/// allocation:
+///
+/// ```
+/// let data: Vec<Vec<u32>> = vec![Vec::new(); 1000];
+/// println!("{:?}", &data[0]);
 /// ```
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -365,10 +429,47 @@ pub fn replace<T>(dest: &mut T, mut src: T) -> T {
 
 /// Disposes of a value.
 ///
-/// This function can be used to destroy any value by allowing `drop` to take ownership of its
-/// argument.
+/// While this does call the argument's implementation of `Drop`, it will not
+/// release any borrows, as borrows are based on lexical scope.
 ///
 /// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// let v = vec![1, 2, 3];
+///
+/// drop(v); // explicitly drop the vector
+/// ```
+///
+/// Borrows are based on lexical scope, so this produces an error:
+///
+/// ```ignore
+/// let mut v = vec![1, 2, 3];
+/// let x = &v[0];
+///
+/// drop(x); // explicitly drop the reference, but the borrow still exists
+///
+/// v.push(4); // error: cannot borrow `v` as mutable because it is also
+///            // borrowed as immutable
+/// ```
+///
+/// An inner scope is needed to fix this:
+///
+/// ```
+/// let mut v = vec![1, 2, 3];
+///
+/// {
+///     let x = &v[0];
+///
+///     drop(x); // this is now redundant, as `x` is going out of scope anyway
+/// }
+///
+/// v.push(4); // no problems
+/// ```
+///
+/// Since `RefCell` enforces the borrow rules at runtime, `drop()` can
+/// seemingly release a borrow of one:
 ///
 /// ```
 /// use std::cell::RefCell;
@@ -408,17 +509,22 @@ macro_rules! repeat_u8_as_u64 {
 //
 // And of course, 0x00 brings back the old world of zero'ing on drop.
 #[unstable(feature = "filling_drop")]
+#[allow(missing_docs)]
 pub const POST_DROP_U8: u8 = 0x1d;
 #[unstable(feature = "filling_drop")]
+#[allow(missing_docs)]
 pub const POST_DROP_U32: u32 = repeat_u8_as_u32!(POST_DROP_U8);
 #[unstable(feature = "filling_drop")]
+#[allow(missing_docs)]
 pub const POST_DROP_U64: u64 = repeat_u8_as_u64!(POST_DROP_U8);
 
 #[cfg(target_pointer_width = "32")]
 #[unstable(feature = "filling_drop")]
+#[allow(missing_docs)]
 pub const POST_DROP_USIZE: usize = POST_DROP_U32 as usize;
 #[cfg(target_pointer_width = "64")]
 #[unstable(feature = "filling_drop")]
+#[allow(missing_docs)]
 pub const POST_DROP_USIZE: usize = POST_DROP_U64 as usize;
 
 /// Interprets `src` as `&U`, and then reads `src` without moving the contained

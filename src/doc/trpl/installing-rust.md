@@ -2,7 +2,7 @@
 
 The first step to using Rust is to install it! There are a number of ways to
 install Rust, but the easiest is to use the `rustup` script. If you're on Linux
-or a Mac, all you need to do is this: 
+or a Mac, all you need to do is this:
 
 > Note: you don't need to type in the `$`s, they just indicate the start of
 > each command. You’ll see many tutorials and examples around the web that
@@ -25,6 +25,12 @@ $ sh rustup.sh
 [insecurity]: http://curlpipesh.tumblr.com
 
 If you're on Windows, please download the appropriate [installer][install-page].
+**NOTE:** By default, the Windows installer will not add Rust to the %PATH%
+system variable. If this is the only version of Rust you are installing and you
+want to be able to run it from the command line, click on "Advanced" on the
+install dialog and on the "Product Features" page ensure "Add to PATH" is
+installed on the local hard drive.
+
 
 [install-page]: http://www.rust-lang.org/install.html
 
@@ -41,6 +47,8 @@ $ sudo /usr/local/lib/rustlib/uninstall.sh
 If you used the Windows installer, just re-run the `.msi` and it will give you
 an uninstall option.
 
+## That disclaimer we promised
+
 Some people, and somewhat rightfully so, get very upset when we tell you to
 `curl | sh`. Basically, when you do this, you are trusting that the good
 people who maintain Rust aren't going to hack your computer and do bad things.
@@ -49,6 +57,8 @@ documentation on [building Rust from Source][from-source], or [the official
 binary downloads][install-page].
 
 [from-source]: https://github.com/rust-lang/rust#building-from-source
+
+## Platform support
 
 Oh, we should also mention the officially supported platforms:
 
@@ -66,6 +76,8 @@ integrated as the Linux/OS X experience is. We're working on it! If anything
 does not work, it is a bug. Please let us know if that happens. Each and every
 commit is tested against Windows just like any other platform.
 
+## After installation
+
 If you've got Rust installed, you can open up a shell, and type this:
 
 ```bash
@@ -81,6 +93,11 @@ rustc 1.0.0 (a59de37e9 2015-05-13)
 
 If you did, Rust has been installed successfully! Congrats!
 
+If you didn't and you're on Windows, check that Rust is in your %PATH% system
+variable. If it isn't, run the installer again, select "Change" on the "Change,
+repair, or remove installation" page and ensure "Add to PATH" is installed on
+the local hard drive.
+
 This installer also installs a copy of the documentation locally, so you can
 read it offline. On UNIX systems, `/usr/local/share/doc/rust` is the location.
 On Windows, it's in a `share/doc` directory, inside wherever you installed Rust
@@ -95,5 +112,5 @@ resources include [the user’s forum][users], and
 
 [irc]: irc://irc.mozilla.org/#rust
 [mibbit]: http://chat.mibbit.com/?server=irc.mozilla.org&channel=%23rust
-[users]: http://users.rust-lang.org/ 
+[users]: http://users.rust-lang.org/
 [stackoverflow]: http://stackoverflow.com/questions/tagged/rust

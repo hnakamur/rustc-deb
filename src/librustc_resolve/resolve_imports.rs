@@ -22,6 +22,7 @@ use ResolveResult;
 use Resolver;
 use UseLexicalScopeFlag;
 use {names_to_string, module_to_string};
+use {resolve_error, ResolutionError};
 
 use build_reduced_graph;
 
@@ -30,7 +31,6 @@ use rustc::middle::privacy::*;
 
 use syntax::ast::{DefId, NodeId, Name};
 use syntax::attr::AttrMetaMethods;
-use syntax::parse::token;
 use syntax::codemap::Span;
 
 use std::mem::replace;
@@ -272,12 +272,14 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                         Some((span, msg)) => (span, format!(". {}", msg)),
                         None => (import_directive.span, String::new())
                     };
-                    let msg = format!("unresolved import `{}`{}",
-                                      import_path_to_string(
-                                          &import_directive.module_path,
-                                          import_directive.subclass),
-                                      help);
-                    self.resolver.resolve_error(span, &msg[..]);
+                    resolve_error(self.resolver,
+                                    span,
+                                    ResolutionError::UnresolvedImport(
+                                                Some((&*import_path_to_string(
+                                                        &import_directive.module_path,
+                                                        import_directive.subclass),
+                                                      Some(&*help))))
+                                   );
                 }
                 ResolveResult::Indeterminate => break, // Bail out. We'll come around next time.
                 ResolveResult::Success(()) => () // Good. Continue.
@@ -394,9 +396,9 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                              -> ResolveResult<()> {
         debug!("(resolving single import) resolving `{}` = `{}::{}` from \
                 `{}` id {}, last private {:?}",
-               token::get_name(target),
+               target,
                module_to_string(&*target_module),
-               token::get_name(source),
+               source,
                module_to_string(module_),
                directive.id,
                lp);
@@ -431,8 +433,13 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                     value_result = BoundResult(target_module.clone(),
                                                (*child_name_bindings).clone());
                     if directive.is_public && !child_name_bindings.is_public(ValueNS) {
-                        let msg = format!("`{}` is private", token::get_name(source));
+                        let msg = format!("`{}` is private, and cannot be reexported",
+                                          source);
+                        let note_msg =
+                            format!("Consider marking `{}` as `pub` in the imported module",
+                                    source);
                         span_err!(self.resolver.session, directive.span, E0364, "{}", &msg);
+                        self.resolver.session.span_note(directive.span, &note_msg);
                         pub_err = true;
                     }
                 }
@@ -441,8 +448,12 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                     type_result = BoundResult(target_module.clone(),
                                               (*child_name_bindings).clone());
                     if !pub_err && directive.is_public && !child_name_bindings.is_public(TypeNS) {
-                        let msg = format!("`{}` is private", token::get_name(source));
+                        let msg = format!("`{}` is private, and cannot be reexported",
+                                          source);
+                        let note_msg = format!("Consider declaring module `{}` as a `pub mod`",
+                                               source);
                         span_err!(self.resolver.session, directive.span, E0365, "{}", &msg);
+                        self.resolver.session.span_note(directive.span, &note_msg);
                     }
                 }
             }
@@ -655,7 +666,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
 
         if value_result.is_unbound() && type_result.is_unbound() {
             let msg = format!("There is no `{}` in `{}`",
-                              token::get_name(source),
+                              source,
                               module_to_string(&target_module));
             return ResolveResult::Failed(Some((directive.span, msg)));
         }
@@ -736,7 +747,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
         for (ident, target_import_resolution) in import_resolutions.iter() {
             debug!("(resolving glob import) writing module resolution \
                     {} into `{}`",
-                   token::get_name(*ident),
+                   *ident,
                    module_to_string(module_));
 
             if !target_import_resolution.is_public {
@@ -842,7 +853,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
 
         debug!("(resolving glob import) writing resolution `{}` in `{}` \
                to `{}`",
-               &token::get_name(name),
+               name,
                module_to_string(&*containing_module),
                module_to_string(module_));
 
@@ -861,7 +872,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                         let msg = format!("a {} named `{}` has already been imported \
                                            in this module",
                                           namespace_name,
-                                          &token::get_name(name));
+                                          name);
                         span_err!(self.resolver.session, import_directive.span, E0251, "{}", msg);
                     } else {
                         let target = Target::new(containing_module.clone(),
@@ -894,7 +905,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                                     namespace: Namespace) {
         let target = import_resolution.target_for_namespace(namespace);
         debug!("check_for_conflicting_import: {}; target exists: {}",
-               &token::get_name(name),
+               name,
                target.is_some());
 
         match target {
@@ -918,13 +929,13 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                 span_err!(self.resolver.session, import_span, E0252,
                           "a {} named `{}` has already been imported \
                            in this module", ns_word,
-                                  &token::get_name(name));
+                                  name);
                 let use_id = import_resolution.id(namespace);
                 let item = self.resolver.ast_map.expect_item(use_id);
                 // item is syntax::ast::Item;
                 span_note!(self.resolver.session, item.span,
                             "previous import of `{}` here",
-                            token::get_name(name));
+                            name);
             }
             Some(_) | None => {}
         }
@@ -938,7 +949,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                                        namespace: Namespace) {
         if !name_bindings.defined_in_namespace_with(namespace, DefModifiers::IMPORTABLE) {
             let msg = format!("`{}` is not directly importable",
-                              token::get_name(name));
+                              name);
             span_err!(self.resolver.session, import_span, E0253, "{}", &msg[..]);
         }
     }
@@ -959,7 +970,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                     let msg = format!("import `{0}` conflicts with imported \
                                        crate in this module \
                                        (maybe you meant `use {0}::*`?)",
-                                      &token::get_name(name));
+                                      name);
                     span_err!(self.resolver.session, import_span, E0254, "{}", &msg[..]);
                 }
                 Some(_) | None => {}
@@ -981,7 +992,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                 if let Some(ref value) = *name_bindings.value_def.borrow() {
                     span_err!(self.resolver.session, import_span, E0255,
                               "import `{}` conflicts with value in this module",
-                              &token::get_name(name));
+                              name);
                     if let Some(span) = value.value_span {
                         self.resolver.session.span_note(span, "conflicting value here");
                     }
@@ -1004,7 +1015,7 @@ impl<'a, 'b:'a, 'tcx:'b> ImportResolver<'a, 'b, 'tcx> {
                     };
                     span_err!(self.resolver.session, import_span, E0256,
                               "import `{}` conflicts with {}",
-                              &token::get_name(name), what);
+                              name, what);
                     if let Some(span) = ty.type_span {
                         self.resolver.session.span_note(span, note);
                     }
@@ -1029,9 +1040,7 @@ fn import_path_to_string(names: &[Name],
 
 fn import_directive_subclass_to_string(subclass: ImportDirectiveSubclass) -> String {
     match subclass {
-        SingleImport(_, source) => {
-            token::get_name(source).to_string()
-        }
+        SingleImport(_, source) => source.to_string(),
         GlobImport => "*".to_string()
     }
 }

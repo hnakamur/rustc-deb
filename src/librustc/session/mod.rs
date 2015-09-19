@@ -272,6 +272,9 @@ impl Session {
     pub fn print_enum_sizes(&self) -> bool {
         self.opts.debugging_opts.print_enum_sizes
     }
+    pub fn nonzeroing_move_hints(&self) -> bool {
+        self.opts.debugging_opts.enable_nonzeroing_move_hints
+    }
     pub fn sysroot<'a>(&'a self) -> &'a Path {
         match self.opts.maybe_sysroot {
             Some (ref sysroot) => sysroot,
@@ -301,7 +304,8 @@ fn split_msg_into_multilines(msg: &str) -> Option<String> {
         !msg.contains("if and else have incompatible types") &&
         !msg.contains("if may be missing an else clause") &&
         !msg.contains("match arms have incompatible types") &&
-        !msg.contains("structure constructor specifies a structure of type") {
+        !msg.contains("structure constructor specifies a structure of type") &&
+        !msg.contains("has an incompatible type for trait") {
             return None
     }
     let first = msg.match_indices("expected").filter(|s| {

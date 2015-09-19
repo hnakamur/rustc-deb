@@ -56,7 +56,6 @@
 #![deny(missing_docs)]
 
 #![feature(box_syntax)]
-#![feature(owned_ascii_ext)]
 #![feature(path_ext)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
@@ -152,6 +151,7 @@ pub fn stderr() -> Option<Box<Terminal<WriterWrapper> + Send>> {
 
 
 /// Terminal color definitions
+#[allow(missing_docs)]
 pub mod color {
     /// Number for a terminal color
     pub type Color = u16;

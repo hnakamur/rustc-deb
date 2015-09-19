@@ -35,7 +35,7 @@ use util::nodemap::FnvHashMap;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::hash::{self, Hash, SipHasher};
+use std::hash::{Hash, SipHasher, Hasher};
 use std::io::prelude::*;
 use std::io;
 use std::rc::Rc;
@@ -89,9 +89,9 @@ pub fn maybe_find_item<'a>(item_id: ast::NodeId,
     fn eq_item(bytes: &[u8], item_id: ast::NodeId) -> bool {
         u32_from_be_bytes(bytes) == item_id
     }
-    lookup_hash(items,
-                |a| eq_item(a, item_id),
-                hash::hash::<i64, SipHasher>(&(item_id as i64)))
+    let mut s = SipHasher::new_with_keys(0, 0);
+    (item_id as i64).hash(&mut s);
+    lookup_hash(items, |a| eq_item(a, item_id), s.finish())
 }
 
 fn find_item<'a>(item_id: ast::NodeId, items: rbml::Doc<'a>) -> rbml::Doc<'a> {
@@ -299,15 +299,7 @@ fn item_to_def_like(cdata: Cmd, item: rbml::Doc, did: ast::DefId) -> DefLike {
         Constant  => {
             // Check whether we have an associated const item.
             if item_sort(item) == Some('C') {
-                // Check whether the associated const is from a trait or impl.
-                // See the comment for methods below.
-                let provenance = if reader::maybe_get_doc(
-                      item, tag_item_trait_parent_sort).is_some() {
-                    def::FromTrait(item_require_parent_item(cdata, item))
-                } else {
-                    def::FromImpl(item_require_parent_item(cdata, item))
-                };
-                DlDef(def::DefAssociatedConst(did, provenance))
+                DlDef(def::DefAssociatedConst(did))
             } else {
                 // Regular const item.
                 DlDef(def::DefConst(did))
@@ -319,18 +311,7 @@ fn item_to_def_like(cdata: Cmd, item: rbml::Doc, did: ast::DefId) -> DefLike {
         Fn        => DlDef(def::DefFn(did, false)),
         CtorFn    => DlDef(def::DefFn(did, true)),
         Method | StaticMethod => {
-            // def_static_method carries an optional field of its enclosing
-            // trait or enclosing impl (if this is an inherent static method).
-            // So we need to detect whether this is in a trait or not, which
-            // we do through the mildly hacky way of checking whether there is
-            // a trait_parent_sort.
-            let provenance = if reader::maybe_get_doc(
-                  item, tag_item_trait_parent_sort).is_some() {
-                def::FromTrait(item_require_parent_item(cdata, item))
-            } else {
-                def::FromImpl(item_require_parent_item(cdata, item))
-            };
-            DlDef(def::DefMethod(did, provenance))
+            DlDef(def::DefMethod(did))
         }
         Type => {
             if item_sort(item) == Some('t') {
@@ -688,7 +669,7 @@ pub fn maybe_get_item_ast<'tcx>(cdata: Cmd, tcx: &ty::ctxt<'tcx>, id: ast::NodeI
                                 -> csearch::FoundAst<'tcx> {
     debug!("Looking up item: {}", id);
     let item_doc = lookup_item(id, cdata.data());
-    let path = item_path(item_doc).init().to_vec();
+    let path = item_path(item_doc).split_last().unwrap().1.to_vec();
     match decode_inlined_item(cdata, tcx, path, item_doc) {
         Ok(ii) => csearch::FoundAst::Found(ii),
         Err(path) => {
@@ -1049,7 +1030,7 @@ fn struct_field_family_to_visibility(family: Family) -> ast::Visibility {
 }
 
 pub fn get_struct_fields(intr: Rc<IdentInterner>, cdata: Cmd, id: ast::NodeId)
-    -> Vec<ty::field_ty> {
+    -> Vec<ty::FieldTy> {
     let data = cdata.data();
     let item = lookup_item(id, data);
     reader::tagged_docs(item, tag_item_field).filter_map(|an_item| {
@@ -1059,7 +1040,7 @@ pub fn get_struct_fields(intr: Rc<IdentInterner>, cdata: Cmd, id: ast::NodeId)
             let did = item_def_id(an_item, cdata);
             let tagdoc = reader::get_doc(an_item, tag_item_field_origin);
             let origin_id =  translated_def_id(cdata, tagdoc);
-            Some(ty::field_ty {
+            Some(ty::FieldTy {
                 name: name,
                 id: did,
                 vis: struct_field_family_to_visibility(f),
@@ -1073,7 +1054,7 @@ pub fn get_struct_fields(intr: Rc<IdentInterner>, cdata: Cmd, id: ast::NodeId)
         let tagdoc = reader::get_doc(an_item, tag_item_field_origin);
         let f = item_family(an_item);
         let origin_id =  translated_def_id(cdata, tagdoc);
-        ty::field_ty {
+        ty::FieldTy {
             name: special_idents::unnamed_field.name,
             id: did,
             vis: struct_field_family_to_visibility(f),

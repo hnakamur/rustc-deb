@@ -23,7 +23,6 @@ use metadata::cstore;
 use metadata::decoder;
 use metadata::tyencode;
 use middle::def;
-use middle::ty::lookup_item_type;
 use middle::ty::{self, Ty};
 use middle::stability;
 use util::nodemap::{FnvHashMap, NodeMap, NodeSet};
@@ -41,7 +40,6 @@ use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::diagnostic::SpanHandler;
 use syntax::parse::token::special_idents;
-use syntax::parse::token;
 use syntax::print::pprust;
 use syntax::ptr::P;
 use syntax::visit::Visitor;
@@ -84,11 +82,11 @@ pub struct EncodeContext<'a, 'tcx: 'a> {
 }
 
 fn encode_name(rbml_w: &mut Encoder, name: ast::Name) {
-    rbml_w.wr_tagged_str(tag_paths_data_name, &token::get_name(name));
+    rbml_w.wr_tagged_str(tag_paths_data_name, &name.as_str());
 }
 
 fn encode_impl_type_basename(rbml_w: &mut Encoder, name: ast::Name) {
-    rbml_w.wr_tagged_str(tag_item_impl_type_basename, &token::get_name(name));
+    rbml_w.wr_tagged_str(tag_item_impl_type_basename, &name.as_str());
 }
 
 fn encode_def_id(rbml_w: &mut Encoder, id: DefId) {
@@ -133,7 +131,7 @@ pub fn def_to_string(did: DefId) -> String {
 fn encode_item_variances(rbml_w: &mut Encoder,
                          ecx: &EncodeContext,
                          id: NodeId) {
-    let v = ty::item_variances(ecx.tcx, ast_util::local_def(id));
+    let v = ecx.tcx.item_variances(ast_util::local_def(id));
     rbml_w.start_tag(tag_item_variances);
     v.encode(rbml_w);
     rbml_w.end_tag();
@@ -144,8 +142,8 @@ fn encode_bounds_and_type_for_item<'a, 'tcx>(rbml_w: &mut Encoder,
                                              id: ast::NodeId) {
     encode_bounds_and_type(rbml_w,
                            ecx,
-                           &ty::lookup_item_type(ecx.tcx, local_def(id)),
-                           &ty::lookup_predicates(ecx.tcx, local_def(id)));
+                           &ecx.tcx.lookup_item_type(local_def(id)),
+                           &ecx.tcx.lookup_predicates(local_def(id)));
 }
 
 fn encode_bounds_and_type<'a, 'tcx>(rbml_w: &mut Encoder,
@@ -268,7 +266,7 @@ fn encode_parent_item(rbml_w: &mut Encoder, id: DefId) {
 }
 
 fn encode_struct_fields(rbml_w: &mut Encoder,
-                        fields: &[ty::field_ty],
+                        fields: &[ty::FieldTy],
                         origin: DefId) {
     for f in fields {
         if f.name == special_idents::unnamed_field.name {
@@ -293,8 +291,7 @@ fn encode_enum_variant_info(ecx: &EncodeContext,
 
     let mut disr_val = 0;
     let mut i = 0;
-    let vi = ty::enum_variants(ecx.tcx,
-                               DefId { krate: ast::LOCAL_CRATE, node: id });
+    let vi = ecx.tcx.enum_variants(local_def(id));
     for variant in variants {
         let def_id = local_def(variant.node.id);
         index.push(entry {
@@ -319,7 +316,7 @@ fn encode_enum_variant_info(ecx: &EncodeContext,
         match variant.node.kind {
             ast::TupleVariantKind(_) => {},
             ast::StructVariantKind(_) => {
-                let fields = ty::lookup_struct_fields(ecx.tcx, def_id);
+                let fields = ecx.tcx.lookup_struct_fields(def_id);
                 let idx = encode_info_for_struct(ecx,
                                                  rbml_w,
                                                  &fields[..],
@@ -328,9 +325,10 @@ fn encode_enum_variant_info(ecx: &EncodeContext,
                 encode_index(rbml_w, idx, write_i64);
             }
         }
-        if (*vi)[i].disr_val != disr_val {
-            encode_disr_val(ecx, rbml_w, (*vi)[i].disr_val);
-            disr_val = (*vi)[i].disr_val;
+        let specified_disr_val = vi[i].disr_val;
+        if specified_disr_val != disr_val {
+            encode_disr_val(ecx, rbml_w, specified_disr_val);
+            disr_val = specified_disr_val;
         }
         encode_bounds_and_type_for_item(rbml_w, ecx, def_id.local_id());
 
@@ -350,7 +348,7 @@ fn encode_path<PI: Iterator<Item=PathElem>>(rbml_w: &mut Encoder, path: PI) {
             ast_map::PathMod(_) => tag_path_elem_mod,
             ast_map::PathName(_) => tag_path_elem_name
         };
-        rbml_w.wr_tagged_str(tag, &token::get_name(pe.name()));
+        rbml_w.wr_tagged_str(tag, &pe.name().as_str());
     }
     rbml_w.end_tag();
 }
@@ -360,13 +358,13 @@ fn encode_reexported_static_method(rbml_w: &mut Encoder,
                                    method_def_id: DefId,
                                    method_name: ast::Name) {
     debug!("(encode reexported static method) {}::{}",
-            exp.name, token::get_name(method_name));
+            exp.name, method_name);
     rbml_w.start_tag(tag_items_data_item_reexport);
     rbml_w.wr_tagged_u64(tag_items_data_item_reexport_def_id,
                          def_to_u64(method_def_id));
     rbml_w.wr_tagged_str(tag_items_data_item_reexport_name,
                          &format!("{}::{}", exp.name,
-                                            token::get_name(method_name)));
+                                            method_name));
     rbml_w.end_tag();
 }
 
@@ -379,9 +377,7 @@ fn encode_reexported_static_base_methods(ecx: &EncodeContext,
         Some(implementations) => {
             for base_impl_did in implementations.iter() {
                 for &method_did in impl_items.get(base_impl_did).unwrap() {
-                    let impl_item = ty::impl_or_trait_item(
-                        ecx.tcx,
-                        method_did.def_id());
+                    let impl_item = ecx.tcx.impl_or_trait_item(method_did.def_id());
                     if let ty::MethodTraitItem(ref m) = impl_item {
                         encode_reexported_static_method(rbml_w,
                                                         exp,
@@ -502,15 +498,12 @@ fn encode_reexports(ecx: &EncodeContext,
                 rbml_w.wr_tagged_u64(tag_items_data_item_reexport_def_id,
                                      def_to_u64(exp.def_id));
                 rbml_w.wr_tagged_str(tag_items_data_item_reexport_name,
-                                     exp.name.as_str());
+                                     &exp.name.as_str());
                 rbml_w.end_tag();
                 encode_reexported_static_methods(ecx, rbml_w, path.clone(), exp);
             }
-        }
-        None => {
-            debug!("(encoding info for module) found no reexports for {}",
-                   id);
-        }
+        },
+        None => debug!("(encoding info for module) found no reexports for {}", id),
     }
 }
 
@@ -542,7 +535,7 @@ fn encode_info_for_mod(ecx: &EncodeContext,
         if let ast::ItemImpl(..) = item.node {
             let (ident, did) = (item.ident, item.id);
             debug!("(encoding info for module) ... encoding impl {} ({}/{})",
-                   token::get_ident(ident),
+                   ident,
                    did, ecx.tcx.map.node_to_string(did));
 
             rbml_w.wr_tagged_u64(tag_mod_impl, def_to_u64(local_def(did)));
@@ -639,7 +632,7 @@ fn encode_provided_source(rbml_w: &mut Encoder,
 /* Returns an index of items in this class */
 fn encode_info_for_struct(ecx: &EncodeContext,
                           rbml_w: &mut Encoder,
-                          fields: &[ty::field_ty],
+                          fields: &[ty::FieldTy],
                           global_index: &mut Vec<entry<i64>>)
                           -> Vec<entry<i64>> {
     /* Each class has its own index, since different classes
@@ -659,7 +652,7 @@ fn encode_info_for_struct(ecx: &EncodeContext,
         });
         rbml_w.start_tag(tag_items_data_item);
         debug!("encode_info_for_struct: doing {} {}",
-               token::get_name(nm), id);
+               nm, id);
         encode_struct_field_family(rbml_w, field.vis);
         encode_name(rbml_w, nm);
         encode_bounds_and_type_for_item(rbml_w, ecx, id);
@@ -819,7 +812,7 @@ fn encode_info_for_associated_const(ecx: &EncodeContext,
                                     impl_item_opt: Option<&ast::ImplItem>) {
     debug!("encode_info_for_associated_const({:?},{:?})",
            associated_const.def_id,
-           token::get_name(associated_const.name));
+           associated_const.name);
 
     rbml_w.start_tag(tag_items_data_item);
 
@@ -857,7 +850,7 @@ fn encode_info_for_method<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
                                     impl_item_opt: Option<&ast::ImplItem>) {
 
     debug!("encode_info_for_method: {:?} {:?}", m.def_id,
-           token::get_name(m.name));
+           m.name);
     rbml_w.start_tag(tag_items_data_item);
 
     encode_method_ty_fields(ecx, rbml_w, m);
@@ -875,7 +868,7 @@ fn encode_info_for_method<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
     if let Some(impl_item) = impl_item_opt {
         if let ast::MethodImplItem(ref sig, _) = impl_item.node {
             encode_attributes(rbml_w, &impl_item.attrs);
-            let scheme = ty::lookup_item_type(ecx.tcx, m.def_id);
+            let scheme = ecx.tcx.lookup_item_type(m.def_id);
             let any_types = !scheme.generics.types.is_empty();
             let needs_inline = any_types || is_default_impl ||
                                attr::requests_inline(&impl_item.attrs);
@@ -902,7 +895,7 @@ fn encode_info_for_associated_type<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
                                              impl_item_opt: Option<&ast::ImplItem>) {
     debug!("encode_info_for_associated_type({:?},{:?})",
            associated_type.def_id,
-           token::get_name(associated_type.name));
+           associated_type.name);
 
     rbml_w.start_tag(tag_items_data_item);
 
@@ -923,7 +916,7 @@ fn encode_info_for_associated_type<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         encode_attributes(rbml_w, &ii.attrs);
     } else {
         encode_predicates(rbml_w, ecx,
-                          &ty::lookup_predicates(ecx.tcx, associated_type.def_id),
+                          &ecx.tcx.lookup_predicates(associated_type.def_id),
                           tag_item_generics);
     }
 
@@ -940,7 +933,7 @@ fn encode_method_argument_names(rbml_w: &mut Encoder,
     for arg in &decl.inputs {
         let tag = tag_method_argument_name;
         if let ast::PatIdent(_, ref path1, _) = arg.pat.node {
-            let name = token::get_name(path1.node.name);
+            let name = path1.node.name.as_str();
             rbml_w.wr_tagged_bytes(tag, name.as_bytes());
         } else {
             rbml_w.wr_tagged_bytes(tag, &[]);
@@ -995,7 +988,7 @@ fn encode_extension_implementations(ecx: &EncodeContext,
                                     rbml_w: &mut Encoder,
                                     trait_def_id: DefId) {
     assert!(ast_util::is_local(trait_def_id));
-    let def = ty::lookup_trait_def(ecx.tcx, trait_def_id);
+    let def = ecx.tcx.lookup_trait_def(trait_def_id);
 
     def.for_each_impl(ecx.tcx, |impl_def_id| {
         rbml_w.start_tag(tag_items_data_item_extension_impl);
@@ -1161,7 +1154,7 @@ fn encode_info_for_item(ecx: &EncodeContext,
                                  index);
       }
       ast::ItemStruct(ref struct_def, _) => {
-        let fields = ty::lookup_struct_fields(tcx, def_id);
+        let fields = tcx.lookup_struct_fields(def_id);
 
         /* First, encode the fields
            These come first because we need to write them to make
@@ -1220,7 +1213,7 @@ fn encode_info_for_item(ecx: &EncodeContext,
           encode_name(rbml_w, item.ident.name);
           encode_unsafety(rbml_w, unsafety);
 
-          let trait_ref = ty::impl_trait_ref(tcx, local_def(item.id)).unwrap();
+          let trait_ref = tcx.impl_trait_ref(local_def(item.id)).unwrap();
           encode_trait_ref(rbml_w, ecx, trait_ref, tag_item_trait_ref);
           rbml_w.end_tag();
       }
@@ -1274,7 +1267,7 @@ fn encode_info_for_item(ecx: &EncodeContext,
             }
             rbml_w.end_tag();
         }
-        if let Some(trait_ref) = ty::impl_trait_ref(tcx, local_def(item.id)) {
+        if let Some(trait_ref) = tcx.impl_trait_ref(local_def(item.id)) {
             encode_trait_ref(rbml_w, ecx, trait_ref, tag_item_trait_ref);
         }
         encode_path(rbml_w, path.clone());
@@ -1298,7 +1291,7 @@ fn encode_info_for_item(ecx: &EncodeContext,
                 pos: rbml_w.mark_stable_position(),
             });
 
-            match ty::impl_or_trait_item(tcx, trait_item_def_id.def_id()) {
+            match tcx.impl_or_trait_item(trait_item_def_id.def_id()) {
                 ty::ConstTraitItem(ref associated_const) => {
                     encode_info_for_associated_const(ecx,
                                                      rbml_w,
@@ -1333,22 +1326,22 @@ fn encode_info_for_item(ecx: &EncodeContext,
         encode_def_id(rbml_w, def_id);
         encode_family(rbml_w, 'I');
         encode_item_variances(rbml_w, ecx, item.id);
-        let trait_def = ty::lookup_trait_def(tcx, def_id);
-        let trait_predicates = ty::lookup_predicates(tcx, def_id);
+        let trait_def = tcx.lookup_trait_def(def_id);
+        let trait_predicates = tcx.lookup_predicates(def_id);
         encode_unsafety(rbml_w, trait_def.unsafety);
         encode_paren_sugar(rbml_w, trait_def.paren_sugar);
-        encode_defaulted(rbml_w, ty::trait_has_default_impl(tcx, def_id));
+        encode_defaulted(rbml_w, tcx.trait_has_default_impl(def_id));
         encode_associated_type_names(rbml_w, &trait_def.associated_type_names);
         encode_generics(rbml_w, ecx, &trait_def.generics, &trait_predicates,
                         tag_item_generics);
-        encode_predicates(rbml_w, ecx, &ty::lookup_super_predicates(tcx, def_id),
+        encode_predicates(rbml_w, ecx, &tcx.lookup_super_predicates(def_id),
                           tag_item_super_predicates);
         encode_trait_ref(rbml_w, ecx, trait_def.trait_ref, tag_item_trait_ref);
         encode_name(rbml_w, item.ident.name);
         encode_attributes(rbml_w, &item.attrs);
         encode_visibility(rbml_w, vis);
         encode_stability(rbml_w, stab);
-        for &method_def_id in ty::trait_item_def_ids(tcx, def_id).iter() {
+        for &method_def_id in tcx.trait_item_def_ids(def_id).iter() {
             rbml_w.start_tag(tag_item_trait_item);
             match method_def_id {
                 ty::ConstTraitItemId(const_def_id) => {
@@ -1380,7 +1373,7 @@ fn encode_info_for_item(ecx: &EncodeContext,
         rbml_w.end_tag();
 
         // Now output the trait item info for each trait item.
-        let r = ty::trait_item_def_ids(tcx, def_id);
+        let r = tcx.trait_item_def_ids(def_id);
         for (i, &item_def_id) in r.iter().enumerate() {
             assert_eq!(item_def_id.def_id().krate, ast::LOCAL_CRATE);
 
@@ -1397,7 +1390,7 @@ fn encode_info_for_item(ecx: &EncodeContext,
             encode_stability(rbml_w, stab);
 
             let trait_item_type =
-                ty::impl_or_trait_item(tcx, item_def_id.def_id());
+                tcx.impl_or_trait_item(item_def_id.def_id());
             let is_nonstatic_method;
             match trait_item_type {
                 ty::ConstTraitItem(associated_const) => {
@@ -1453,6 +1446,10 @@ fn encode_info_for_item(ecx: &EncodeContext,
 
                     encode_item_sort(rbml_w, 't');
                     encode_family(rbml_w, 'y');
+
+                    if let Some(ty) = associated_type.ty {
+                        encode_type(ecx, rbml_w, ty);
+                    }
 
                     is_nonstatic_method = false;
                 }
@@ -1561,7 +1558,7 @@ fn my_visit_foreign_item(ni: &ast::ForeignItem,
                          index: &mut Vec<entry<i64>>) {
     debug!("writing foreign item {}::{}",
             ecx.tcx.map.path_to_string(ni.id),
-            token::get_ident(ni.ident));
+            ni.ident);
 
     let abi = ecx.tcx.map.get_foreign_abi(ni.id);
     ecx.tcx.map.with_path(ni.id, |path| {
@@ -1747,7 +1744,7 @@ fn encode_defaulted(rbml_w: &mut Encoder, is_defaulted: bool) {
 fn encode_associated_type_names(rbml_w: &mut Encoder, names: &[ast::Name]) {
     rbml_w.start_tag(tag_associated_type_names);
     for &name in names {
-        rbml_w.wr_tagged_str(tag_associated_type_name, &token::get_name(name));
+        rbml_w.wr_tagged_str(tag_associated_type_name, &name.as_str());
     }
     rbml_w.end_tag();
 }
@@ -2027,7 +2024,7 @@ fn encode_dylib_dependency_formats(rbml_w: &mut Encoder, ecx: &EncodeContext) {
                     cstore::RequireStatic => "s",
                 })).to_string())
             }).collect::<Vec<String>>();
-            rbml_w.wr_tagged_str(tag, &s.connect(","));
+            rbml_w.wr_tagged_str(tag, &s.join(","));
         }
         None => {
             rbml_w.wr_tagged_str(tag, "");
@@ -2135,11 +2132,7 @@ fn encode_metadata_inner(wr: &mut Cursor<Vec<u8>>,
     let mut rbml_w = Encoder::new(wr);
 
     encode_crate_name(&mut rbml_w, &ecx.link_meta.crate_name);
-    encode_crate_triple(&mut rbml_w,
-                        &tcx.sess
-                           .opts
-                           .target_triple
-                           );
+    encode_crate_triple(&mut rbml_w, &tcx.sess.opts.target_triple);
     encode_hash(&mut rbml_w, &ecx.link_meta.crate_hash);
     encode_dylib_dependency_formats(&mut rbml_w, &ecx);
 

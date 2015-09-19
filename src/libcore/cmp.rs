@@ -166,6 +166,8 @@ impl Ordering {
 ///
 /// - total and antisymmetric: exactly one of `a < b`, `a == b` or `a > b` is true; and
 /// - transitive, `a < b` and `b < c` implies `a < c`. The same must hold for both `==` and `>`.
+///
+/// When this trait is `derive`d, it produces a lexicographic ordering.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait Ord: Eq + PartialOrd<Self> {
     /// This method returns an `Ordering` between `self` and `other`.
@@ -381,7 +383,8 @@ pub fn max<T: Ord>(v1: T, v2: T) -> T {
 /// # Examples
 ///
 /// ```
-/// # #![feature(cmp_partial)]
+/// #![feature(cmp_partial)]
+///
 /// use std::cmp;
 ///
 /// assert_eq!(Some(1), cmp::partial_min(1, 2));
@@ -391,7 +394,8 @@ pub fn max<T: Ord>(v1: T, v2: T) -> T {
 /// When comparison is impossible:
 ///
 /// ```
-/// # #![feature(cmp_partial)]
+/// #![feature(cmp_partial)]
+///
 /// use std::cmp;
 ///
 /// let result = cmp::partial_min(std::f64::NAN, 1.0);
@@ -399,6 +403,7 @@ pub fn max<T: Ord>(v1: T, v2: T) -> T {
 /// ```
 #[inline]
 #[unstable(feature = "cmp_partial")]
+#[deprecated(since = "1.3.0", reason = "has not proven itself worthwhile")]
 pub fn partial_min<T: PartialOrd>(v1: T, v2: T) -> Option<T> {
     match v1.partial_cmp(&v2) {
         Some(Less) | Some(Equal) => Some(v1),
@@ -414,7 +419,8 @@ pub fn partial_min<T: PartialOrd>(v1: T, v2: T) -> Option<T> {
 /// # Examples
 ///
 /// ```
-/// # #![feature(cmp_partial)]
+/// #![feature(cmp_partial)]
+///
 /// use std::cmp;
 ///
 /// assert_eq!(Some(2), cmp::partial_max(1, 2));
@@ -424,7 +430,8 @@ pub fn partial_min<T: PartialOrd>(v1: T, v2: T) -> Option<T> {
 /// When comparison is impossible:
 ///
 /// ```
-/// # #![feature(cmp_partial)]
+/// #![feature(cmp_partial)]
+///
 /// use std::cmp;
 ///
 /// let result = cmp::partial_max(std::f64::NAN, 1.0);
@@ -432,6 +439,7 @@ pub fn partial_min<T: PartialOrd>(v1: T, v2: T) -> Option<T> {
 /// ```
 #[inline]
 #[unstable(feature = "cmp_partial")]
+#[deprecated(since = "1.3.0", reason = "has not proven itself worthwhile")]
 pub fn partial_max<T: PartialOrd>(v1: T, v2: T) -> Option<T> {
     match v1.partial_cmp(&v2) {
         Some(Equal) | Some(Less) => Some(v2),

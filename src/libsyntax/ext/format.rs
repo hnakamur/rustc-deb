@@ -23,7 +23,6 @@ use parse::token;
 use ptr::P;
 
 use std::collections::HashMap;
-use std::iter::repeat;
 
 #[derive(PartialEq)]
 enum ArgumentType {
@@ -122,8 +121,7 @@ fn parse_args(ecx: &mut ExtCtxt, sp: Span, tts: &[ast::TokenTree])
                     return None;
                 }
             };
-            let interned_name = token::get_ident(ident);
-            let name = &interned_name[..];
+            let name: &str = &ident.name.as_str();
 
             panictry!(p.expect(&token::Eq));
             let e = p.parse_expr();
@@ -469,7 +467,7 @@ impl<'a, 'b> Context<'a, 'b> {
     /// to
     fn into_expr(mut self) -> P<ast::Expr> {
         let mut locals = Vec::new();
-        let mut names: Vec<_> = repeat(None).take(self.name_positions.len()).collect();
+        let mut names = vec![None; self.name_positions.len()];
         let mut pats = Vec::new();
         let mut heads = Vec::new();
 

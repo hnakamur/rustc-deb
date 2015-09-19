@@ -745,19 +745,19 @@ impl Lifetime {
 
 impl Clean<Lifetime> for ast::Lifetime {
     fn clean(&self, _: &DocContext) -> Lifetime {
-        Lifetime(token::get_name(self.name).to_string())
+        Lifetime(self.name.to_string())
     }
 }
 
 impl Clean<Lifetime> for ast::LifetimeDef {
     fn clean(&self, _: &DocContext) -> Lifetime {
-        Lifetime(token::get_name(self.lifetime.name).to_string())
+        Lifetime(self.lifetime.name.to_string())
     }
 }
 
 impl Clean<Lifetime> for ty::RegionParameterDef {
     fn clean(&self, _: &DocContext) -> Lifetime {
-        Lifetime(token::get_name(self.name).to_string())
+        Lifetime(self.name.to_string())
     }
 }
 
@@ -766,7 +766,7 @@ impl Clean<Option<Lifetime>> for ty::Region {
         match *self {
             ty::ReStatic => Some(Lifetime::statik()),
             ty::ReLateBound(_, ty::BrNamed(_, name)) =>
-                Some(Lifetime(token::get_name(name).to_string())),
+                Some(Lifetime(name.to_string())),
             ty::ReEarlyBound(ref data) => Some(Lifetime(data.name.clean(cx))),
 
             ty::ReLateBound(..) |
@@ -1332,7 +1332,7 @@ impl<'tcx> Clean<Item> for ty::Method<'tcx> {
         let provided = match self.container {
             ty::ImplContainer(..) => false,
             ty::TraitContainer(did) => {
-                ty::provided_trait_methods(cx.tcx(), did).iter().any(|m| {
+                cx.tcx().provided_trait_methods(did).iter().any(|m| {
                     m.def_id == self.def_id
                 })
             }
@@ -1695,7 +1695,7 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
 
             ty::TyProjection(ref data) => data.clean(cx),
 
-            ty::TyParam(ref p) => Generic(token::get_name(p.name).to_string()),
+            ty::TyParam(ref p) => Generic(p.name.to_string()),
 
             ty::TyClosure(..) => Tuple(vec![]), // FIXME(pcwalton)
 
@@ -1729,7 +1729,7 @@ impl Clean<Item> for ast::StructField {
     }
 }
 
-impl Clean<Item> for ty::field_ty {
+impl Clean<Item> for ty::FieldTy {
     fn clean(&self, cx: &DocContext) -> Item {
         use syntax::parse::token::special_idents::unnamed_field;
         use rustc::metadata::csearch;
@@ -1742,7 +1742,7 @@ impl Clean<Item> for ty::field_ty {
             (Some(self.name), Some(attr_map.get(&self.id.node).unwrap()))
         };
 
-        let ty = ty::lookup_item_type(cx.tcx(), self.id);
+        let ty = cx.tcx().lookup_item_type(self.id);
 
         Item {
             name: name.clean(cx),
@@ -1947,6 +1947,10 @@ impl Span {
 
 impl Clean<Span> for syntax::codemap::Span {
     fn clean(&self, cx: &DocContext) -> Span {
+        if *self == DUMMY_SP {
+            return Span::empty();
+        }
+
         let cm = cx.sess().codemap();
         let filename = cm.span_to_filename(*self);
         let lo = cm.lookup_char_pos(self.lo);
@@ -2044,7 +2048,7 @@ impl Clean<PathSegment> for ast::PathSegment {
 fn path_to_string(p: &ast::Path) -> String {
     let mut s = String::new();
     let mut first = true;
-    for i in p.segments.iter().map(|x| token::get_ident(x.identifier)) {
+    for i in p.segments.iter().map(|x| x.identifier.name.as_str()) {
         if !first || p.global {
             s.push_str("::");
         } else {
@@ -2057,13 +2061,13 @@ fn path_to_string(p: &ast::Path) -> String {
 
 impl Clean<String> for ast::Ident {
     fn clean(&self, _: &DocContext) -> String {
-        token::get_ident(*self).to_string()
+        self.to_string()
     }
 }
 
 impl Clean<String> for ast::Name {
     fn clean(&self, _: &DocContext) -> String {
-        token::get_name(*self).to_string()
+        self.to_string()
     }
 }
 
@@ -2528,20 +2532,20 @@ fn name_from_pat(p: &ast::Pat) -> String {
     match p.node {
         PatWild(PatWildSingle) => "_".to_string(),
         PatWild(PatWildMulti) => "..".to_string(),
-        PatIdent(_, ref p, _) => token::get_ident(p.node).to_string(),
+        PatIdent(_, ref p, _) => p.node.to_string(),
         PatEnum(ref p, _) => path_to_string(p),
         PatQPath(..) => panic!("tried to get argument name from PatQPath, \
                                 which is not allowed in function arguments"),
         PatStruct(ref name, ref fields, etc) => {
             format!("{} {{ {}{} }}", path_to_string(name),
                 fields.iter().map(|&Spanned { node: ref fp, .. }|
-                                  format!("{}: {}", fp.ident.as_str(), name_from_pat(&*fp.pat)))
-                             .collect::<Vec<String>>().connect(", "),
+                                  format!("{}: {}", fp.ident, name_from_pat(&*fp.pat)))
+                             .collect::<Vec<String>>().join(", "),
                 if etc { ", ..." } else { "" }
             )
         },
         PatTup(ref elts) => format!("({})", elts.iter().map(|p| name_from_pat(&**p))
-                                            .collect::<Vec<String>>().connect(", ")),
+                                            .collect::<Vec<String>>().join(", ")),
         PatBox(ref p) => name_from_pat(&**p),
         PatRegion(ref p, _) => name_from_pat(&**p),
         PatLit(..) => {
@@ -2555,7 +2559,7 @@ fn name_from_pat(p: &ast::Pat) -> String {
             let begin = begin.iter().map(|p| name_from_pat(&**p));
             let mid = mid.as_ref().map(|p| format!("..{}", name_from_pat(&**p))).into_iter();
             let end = end.iter().map(|p| name_from_pat(&**p));
-            format!("[{}]", begin.chain(mid).chain(end).collect::<Vec<_>>().connect(", "))
+            format!("[{}]", begin.chain(mid).chain(end).collect::<Vec<_>>().join(", "))
         },
         PatMac(..) => {
             warn!("can't document the name of a function argument \
@@ -2599,7 +2603,7 @@ fn resolve_type(cx: &DocContext,
             ast::TyFloat(ast::TyF64) => return Primitive(F64),
         },
         def::DefSelfTy(..) if path.segments.len() == 1 => {
-            return Generic(token::get_name(special_idents::type_self.name).to_string());
+            return Generic(special_idents::type_self.name.to_string());
         }
         def::DefSelfTy(..) | def::DefTyParam(..) => true,
         _ => false,
@@ -2731,8 +2735,8 @@ impl<'tcx> Clean<Item> for ty::AssociatedType<'tcx> {
             // are actually located on the trait/impl itself, so we need to load
             // all of the generics from there and then look for bounds that are
             // applied to this associated type in question.
-            let def = ty::lookup_trait_def(cx.tcx(), did);
-            let predicates = ty::lookup_predicates(cx.tcx(), did);
+            let def = cx.tcx().lookup_trait_def(did);
+            let predicates = cx.tcx().lookup_predicates(did);
             let generics = (&def.generics, &predicates, subst::TypeSpace).clean(cx);
             generics.where_predicates.iter().filter_map(|pred| {
                 let (name, self_type, trait_, bounds) = match *pred {
