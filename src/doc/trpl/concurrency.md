@@ -10,11 +10,12 @@ system is up to the task, and gives you powerful ways to reason about
 concurrent code at compile time.
 
 Before we talk about the concurrency features that come with Rust, it's important
-to understand something: Rust is low-level enough that all of this is provided
-by the standard library, not by the language. This means that if you don't like
-some aspect of the way Rust handles concurrency, you can implement an alternative
-way of doing things. [mio](https://github.com/carllerche/mio) is a real-world
-example of this principle in action.
+to understand something: Rust is low-level enough that the vast majority of
+this is provided by the standard library, not by the language. This means that
+if you don't like some aspect of the way Rust handles concurrency, you can
+implement an alternative way of doing things.
+[mio](https://github.com/carllerche/mio) is a real-world example of this
+principle in action.
 
 ## Background: `Send` and `Sync`
 
@@ -114,7 +115,7 @@ languages. It will not compile:
 use std::thread;
 
 fn main() {
-    let mut data = vec![1u32, 2, 3];
+    let mut data = vec![1, 2, 3];
 
     for i in 0..3 {
         thread::spawn(move || {
@@ -152,7 +153,7 @@ use std::thread;
 use std::sync::Mutex;
 
 fn main() {
-    let mut data = Mutex::new(vec![1u32, 2, 3]);
+    let mut data = Mutex::new(vec![1, 2, 3]);
 
     for i in 0..3 {
         let data = data.lock().unwrap();
@@ -194,7 +195,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 fn main() {
-    let data = Arc::new(Mutex::new(vec![1u32, 2, 3]));
+    let data = Arc::new(Mutex::new(vec![1, 2, 3]));
 
     for i in 0..3 {
         let data = data.clone();
@@ -216,7 +217,7 @@ thread more closely:
 # use std::sync::{Arc, Mutex};
 # use std::thread;
 # fn main() {
-#     let data = Arc::new(Mutex::new(vec![1u32, 2, 3]));
+#     let data = Arc::new(Mutex::new(vec![1, 2, 3]));
 #     for i in 0..3 {
 #         let data = data.clone();
 thread::spawn(move || {
@@ -254,7 +255,7 @@ use std::thread;
 use std::sync::mpsc;
 
 fn main() {
-    let data = Arc::new(Mutex::new(0u32));
+    let data = Arc::new(Mutex::new(0));
 
     let (tx, rx) = mpsc::channel();
 
@@ -292,7 +293,7 @@ fn main() {
         let tx = tx.clone();
 
         thread::spawn(move || {
-            let answer = 42u32;
+            let answer = 42;
 
             tx.send(answer);
         });

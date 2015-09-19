@@ -543,7 +543,8 @@ impl<K, V, S> HashMap<K, V, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(hashmap_hasher)]
+    /// #![feature(hashmap_hasher)]
+    ///
     /// use std::collections::HashMap;
     /// use std::collections::hash_map::RandomState;
     ///
@@ -572,7 +573,8 @@ impl<K, V, S> HashMap<K, V, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(hashmap_hasher)]
+    /// #![feature(hashmap_hasher)]
+    ///
     /// use std::collections::HashMap;
     /// use std::collections::hash_map::RandomState;
     ///
@@ -979,7 +981,8 @@ impl<K, V, S> HashMap<K, V, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(drain)]
+    /// #![feature(drain)]
+    ///
     /// use std::collections::HashMap;
     ///
     /// let mut a = HashMap::new();
@@ -1638,7 +1641,7 @@ mod test_map {
 
     use super::HashMap;
     use super::Entry::{Occupied, Vacant};
-    use iter::{range_inclusive, repeat};
+    use iter::range_inclusive;
     use cell::RefCell;
     use rand::{thread_rng, Rng};
 
@@ -1698,7 +1701,7 @@ mod test_map {
     #[test]
     fn test_drops() {
         DROP_VECTOR.with(|slot| {
-            *slot.borrow_mut() = repeat(0).take(200).collect();
+            *slot.borrow_mut() = vec![0; 200];
         });
 
         {
@@ -1757,7 +1760,7 @@ mod test_map {
     #[test]
     fn test_move_iter_drops() {
         DROP_VECTOR.with(|v| {
-            *v.borrow_mut() = repeat(0).take(200).collect();
+            *v.borrow_mut() = vec![0; 200];
         });
 
         let hm = {

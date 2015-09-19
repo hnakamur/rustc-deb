@@ -8,9 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Utilities for slice manipulation
+//! A dynamically-sized view into a contiguous sequence, `[T]`.
 //!
-//! The `slice` module contains useful code to help work with slice values.
 //! Slices are a view into a block of memory represented as a pointer and a
 //! length.
 //!
@@ -78,7 +77,8 @@
 //!   iterators.
 //! * Further methods that return iterators are `.split()`, `.splitn()`,
 //!   `.chunks()`, `.windows()` and more.
-#![doc(primitive = "slice")]
+//!
+//! *[See also the slice primitive type](../primitive.slice.html).*
 #![stable(feature = "rust1", since = "1.0.0")]
 
 // Many of the usings in this module are only used in the test configuration.
@@ -282,32 +282,63 @@ impl<T> [T] {
 
     /// Returns all but the first element of a slice.
     #[unstable(feature = "slice_extras", reason = "likely to be renamed")]
+    #[deprecated(since = "1.3.0", reason = "superseded by split_first")]
     #[inline]
     pub fn tail(&self) -> &[T] {
         core_slice::SliceExt::tail(self)
     }
 
+    /// Returns the first and all the rest of the elements of a slice.
+    #[unstable(feature = "slice_splits", reason = "new API")]
+    #[inline]
+    pub fn split_first(&self) -> Option<(&T, &[T])> {
+        core_slice::SliceExt::split_first(self)
+    }
+
     /// Returns all but the first element of a mutable slice
-    #[unstable(feature = "slice_extras",
-               reason = "likely to be renamed or removed")]
+    #[unstable(feature = "slice_extras", reason = "likely to be renamed or removed")]
+    #[deprecated(since = "1.3.0", reason = "superseded by split_first_mut")]
     #[inline]
     pub fn tail_mut(&mut self) -> &mut [T] {
         core_slice::SliceExt::tail_mut(self)
     }
 
+    /// Returns the first and all the rest of the elements of a slice.
+    #[unstable(feature = "slice_splits", reason = "new API")]
+    #[inline]
+    pub fn split_first_mut(&mut self) -> Option<(&mut T, &mut [T])> {
+        core_slice::SliceExt::split_first_mut(self)
+    }
+
     /// Returns all but the last element of a slice.
     #[unstable(feature = "slice_extras", reason = "likely to be renamed")]
+    #[deprecated(since = "1.3.0", reason = "superseded by split_last")]
     #[inline]
     pub fn init(&self) -> &[T] {
         core_slice::SliceExt::init(self)
     }
 
+    /// Returns the last and all the rest of the elements of a slice.
+    #[unstable(feature = "slice_splits", reason = "new API")]
+    #[inline]
+    pub fn split_last(&self) -> Option<(&T, &[T])> {
+        core_slice::SliceExt::split_last(self)
+
+    }
+
     /// Returns all but the last element of a mutable slice
-    #[unstable(feature = "slice_extras",
-               reason = "likely to be renamed or removed")]
+    #[unstable(feature = "slice_extras", reason = "likely to be renamed or removed")]
+    #[deprecated(since = "1.3.0", reason = "superseded by split_last_mut")]
     #[inline]
     pub fn init_mut(&mut self) -> &mut [T] {
         core_slice::SliceExt::init_mut(self)
+    }
+
+    /// Returns the last and all the rest of the elements of a slice.
+    #[unstable(feature = "slice_splits", since = "1.3.0")]
+    #[inline]
+    pub fn split_last_mut(&mut self) -> Option<(&mut T, &mut [T])> {
+        core_slice::SliceExt::split_last_mut(self)
     }
 
     /// Returns the last element of a slice, or `None` if it is empty.
@@ -731,12 +762,16 @@ impl<T> [T] {
 
     /// Find the first index containing a matching value.
     #[unstable(feature = "slice_position_elem")]
+    #[deprecated(since = "1.3.0",
+                 reason = "less idiomatic than .iter().position()")]
     pub fn position_elem(&self, t: &T) -> Option<usize> where T: PartialEq {
         core_slice::SliceExt::position_elem(self, t)
     }
 
     /// Find the last index containing a matching value.
     #[unstable(feature = "slice_position_elem")]
+    #[deprecated(since = "1.3.0",
+                 reason = "less idiomatic than .iter().rev().position()")]
     pub fn rposition_elem(&self, t: &T) -> Option<usize> where T: PartialEq {
         core_slice::SliceExt::rposition_elem(self, t)
     }
@@ -852,7 +887,8 @@ impl<T> [T] {
     /// # Examples
     ///
     /// ```rust
-    /// # #![feature(permutations)]
+    /// #![feature(permutations)]
+    ///
     /// let v = [1, 2, 3];
     /// let mut perms = v.permutations();
     ///
@@ -864,7 +900,8 @@ impl<T> [T] {
     /// Iterating through permutations one by one.
     ///
     /// ```rust
-    /// # #![feature(permutations)]
+    /// #![feature(permutations)]
+    ///
     /// let v = [1, 2, 3];
     /// let mut perms = v.permutations();
     ///
@@ -889,7 +926,8 @@ impl<T> [T] {
     /// # Example
     ///
     /// ```rust
-    /// # #![feature(permutations)]
+    /// #![feature(permutations)]
+    ///
     /// let v: &mut [_] = &mut [0, 1, 2];
     /// v.next_permutation();
     /// let b: &mut [_] = &mut [0, 2, 1];
@@ -914,7 +952,8 @@ impl<T> [T] {
     /// # Example
     ///
     /// ```rust
-    /// # #![feature(permutations)]
+    /// #![feature(permutations)]
+    ///
     /// let v: &mut [_] = &mut [1, 0, 2];
     /// v.prev_permutation();
     /// let b: &mut [_] = &mut [0, 2, 1];
@@ -938,7 +977,8 @@ impl<T> [T] {
     /// # Example
     ///
     /// ```rust
-    /// # #![feature(clone_from_slice)]
+    /// #![feature(clone_from_slice)]
+    ///
     /// let mut dst = [0, 0, 0];
     /// let src = [1, 2];
     ///
@@ -969,7 +1009,8 @@ impl<T> [T] {
     /// # Examples
     ///
     /// ```rust
-    /// # #![feature(move_from)]
+    /// #![feature(move_from)]
+    ///
     /// let mut a = [1, 2, 3, 4, 5];
     /// let b = vec![6, 7, 8];
     /// let num_moved = a.move_from(b, 0, 3);
@@ -978,6 +1019,8 @@ impl<T> [T] {
     /// ```
     #[unstable(feature = "move_from",
                reason = "uncertain about this API approach")]
+    #[deprecated(since = "1.3.0",
+                 reason = "unclear that it must belong in the standard library")]
     #[inline]
     pub fn move_from(&mut self, mut src: Vec<T>, start: usize, end: usize) -> usize {
         for (a, b) in self.iter_mut().zip(&mut src[start .. end]) {
@@ -1031,9 +1074,21 @@ pub trait SliceConcatExt<T: ?Sized> {
     /// # Examples
     ///
     /// ```
+    /// assert_eq!(["hello", "world"].join(" "), "hello world");
+    /// ```
+    #[stable(feature = "rename_connect_to_join", since = "1.3.0")]
+    fn join(&self, sep: &T) -> Self::Output;
+
+    /// Flattens a slice of `T` into a single value `Self::Output`, placing a
+    /// given separator between each.
+    ///
+    /// # Examples
+    ///
+    /// ```
     /// assert_eq!(["hello", "world"].connect(" "), "hello world");
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[deprecated(since = "1.3.0", reason = "renamed to join")]
     fn connect(&self, sep: &T) -> Self::Output;
 }
 
@@ -1049,7 +1104,7 @@ impl<T: Clone, V: Borrow<[T]>> SliceConcatExt<T> for [V] {
         result
     }
 
-    fn connect(&self, sep: &T) -> Vec<T> {
+    fn join(&self, sep: &T) -> Vec<T> {
         let size = self.iter().fold(0, |acc, v| acc + v.borrow().len());
         let mut result = Vec::with_capacity(size + self.len());
         let mut first = true;
@@ -1058,6 +1113,10 @@ impl<T: Clone, V: Borrow<[T]>> SliceConcatExt<T> for [V] {
             result.push_all(v.borrow())
         }
         result
+    }
+
+    fn connect(&self, sep: &T) -> Vec<T> {
+        self.join(sep)
     }
 }
 

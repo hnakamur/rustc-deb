@@ -107,14 +107,14 @@ pub struct LocalKey<T> {
 #[cfg(not(no_elf_tls))]
 macro_rules! thread_local {
     (static $name:ident: $t:ty = $init:expr) => (
-        static $name: ::std::thread::LocalKey<$t> =
+        static $name: $crate::thread::LocalKey<$t> =
             __thread_local_inner!($t, $init,
                 #[cfg_attr(all(any(target_os = "macos", target_os = "linux"),
                                not(target_arch = "aarch64")),
                            thread_local)]);
     );
     (pub static $name:ident: $t:ty = $init:expr) => (
-        pub static $name: ::std::thread::LocalKey<$t> =
+        pub static $name: $crate::thread::LocalKey<$t> =
             __thread_local_inner!($t, $init,
                 #[cfg_attr(all(any(target_os = "macos", target_os = "linux"),
                                not(target_arch = "aarch64")),
@@ -128,11 +128,11 @@ macro_rules! thread_local {
 #[cfg(no_elf_tls)]
 macro_rules! thread_local {
     (static $name:ident: $t:ty = $init:expr) => (
-        static $name: ::std::thread::LocalKey<$t> =
+        static $name: $crate::thread::LocalKey<$t> =
             __thread_local_inner!($t, $init, #[]);
     );
     (pub static $name:ident: $t:ty = $init:expr) => (
-        pub static $name: ::std::thread::LocalKey<$t> =
+        pub static $name: $crate::thread::LocalKey<$t> =
             __thread_local_inner!($t, $init, #[]);
     );
 }
@@ -145,11 +145,11 @@ macro_rules! thread_local {
 macro_rules! __thread_local_inner {
     ($t:ty, $init:expr, #[$($attr:meta),*]) => {{
         $(#[$attr])*
-        static __KEY: ::std::thread::__LocalKeyInner<$t> =
-            ::std::thread::__LocalKeyInner::new();
+        static __KEY: $crate::thread::__LocalKeyInner<$t> =
+            $crate::thread::__LocalKeyInner::new();
         fn __init() -> $t { $init }
-        fn __getit() -> &'static ::std::thread::__LocalKeyInner<$t> { &__KEY }
-        ::std::thread::LocalKey::new(__getit, __init)
+        fn __getit() -> &'static $crate::thread::__LocalKeyInner<$t> { &__KEY }
+        $crate::thread::LocalKey::new(__getit, __init)
     }}
 }
 
@@ -275,6 +275,7 @@ mod imp {
 
     use cell::{Cell, UnsafeCell};
     use intrinsics;
+    use ptr;
 
     pub struct Key<T> {
         inner: UnsafeCell<Option<T>>,
@@ -327,7 +328,6 @@ mod imp {
     #[cfg(target_os = "linux")]
     unsafe fn register_dtor(t: *mut u8, dtor: unsafe extern fn(*mut u8)) {
         use mem;
-        use ptr;
         use libc;
         use sys_common::thread_local as os;
 
@@ -335,13 +335,13 @@ mod imp {
             #[linkage = "extern_weak"]
             static __dso_handle: *mut u8;
             #[linkage = "extern_weak"]
-            static __cxa_thread_atexit_impl: *const ();
+            static __cxa_thread_atexit_impl: *const libc::c_void;
         }
         if !__cxa_thread_atexit_impl.is_null() {
             type F = unsafe extern fn(dtor: unsafe extern fn(*mut u8),
                                       arg: *mut u8,
                                       dso_handle: *mut u8) -> libc::c_int;
-            mem::transmute::<*const (), F>(__cxa_thread_atexit_impl)
+            mem::transmute::<*const libc::c_void, F>(__cxa_thread_atexit_impl)
             (dtor, t, &__dso_handle as *const _ as *mut _);
             return
         }
@@ -394,7 +394,24 @@ mod imp {
         // destructor as running for this thread so calls to `get` will return
         // `None`.
         (*ptr).dtor_running.set(true);
-        intrinsics::drop_in_place((*ptr).inner.get());
+
+        // The OSX implementation of TLS apparently had an odd aspect to it
+        // where the pointer we have may be overwritten while this destructor
+        // is running. Specifically if a TLS destructor re-accesses TLS it may
+        // trigger a re-initialization of all TLS variables, paving over at
+        // least some destroyed ones with initial values.
+        //
+        // This means that if we drop a TLS value in place on OSX that we could
+        // revert the value to its original state halfway through the
+        // destructor, which would be bad!
+        //
+        // Hence, we use `ptr::read` on OSX (to move to a "safe" location)
+        // instead of drop_in_place.
+        if cfg!(target_os = "macos") {
+            ptr::read((*ptr).inner.get());
+        } else {
+            intrinsics::drop_in_place((*ptr).inner.get());
+        }
     }
 }
 

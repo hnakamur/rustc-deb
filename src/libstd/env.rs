@@ -11,7 +11,7 @@
 //! Inspection and manipulation of the process's environment.
 //!
 //! This module contains methods to inspect various aspects such as
-//! environment varibles, process arguments, the current directory, and various
+//! environment variables, process arguments, the current directory, and various
 //! other important directories.
 
 #![stable(feature = "env", since = "1.0.0")]
@@ -36,7 +36,6 @@ use sys::os as os_imp;
 ///
 /// * Current directory does not exist.
 /// * There are insufficient permissions to access the current directory.
-/// * The internal buffer is not large enough to hold the path.
 ///
 /// # Examples
 ///
@@ -591,6 +590,8 @@ impl ExactSizeIterator for ArgsOs {
 
 /// Returns the page size of the current architecture in bytes.
 #[unstable(feature = "page_size", reason = "naming and/or location may change")]
+#[deprecated(since = "1.3.0",
+             reason = "hasn't seen enough usage to justify inclusion")]
 pub fn page_size() -> usize {
     os_imp::page_size()
 }
@@ -633,6 +634,7 @@ pub mod consts {
     /// - freebsd
     /// - dragonfly
     /// - bitrig
+    /// - netbsd
     /// - openbsd
     /// - android
     /// - windows
@@ -752,6 +754,17 @@ mod os {
 mod os {
     pub const FAMILY: &'static str = "unix";
     pub const OS: &'static str = "bitrig";
+    pub const DLL_PREFIX: &'static str = "lib";
+    pub const DLL_SUFFIX: &'static str = ".so";
+    pub const DLL_EXTENSION: &'static str = "so";
+    pub const EXE_SUFFIX: &'static str = "";
+    pub const EXE_EXTENSION: &'static str = "";
+}
+
+#[cfg(target_os = "netbsd")]
+mod os {
+    pub const FAMILY: &'static str = "unix";
+    pub const OS: &'static str = "netbsd";
     pub const DLL_PREFIX: &'static str = "lib";
     pub const DLL_SUFFIX: &'static str = ".so";
     pub const DLL_EXTENSION: &'static str = "so";

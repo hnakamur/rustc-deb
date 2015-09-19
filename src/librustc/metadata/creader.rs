@@ -33,7 +33,6 @@ use syntax::attr::AttrMetaMethods;
 use syntax::codemap::{self, Span, mk_sp, Pos};
 use syntax::parse;
 use syntax::parse::token::InternedString;
-use syntax::parse::token;
 use syntax::visit;
 use log;
 
@@ -181,19 +180,18 @@ impl<'a> CrateReader<'a> {
     fn extract_crate_info(&self, i: &ast::Item) -> Option<CrateInfo> {
         match i.node {
             ast::ItemExternCrate(ref path_opt) => {
-                let ident = token::get_ident(i.ident);
                 debug!("resolving extern crate stmt. ident: {} path_opt: {:?}",
-                       ident, path_opt);
+                       i.ident, path_opt);
                 let name = match *path_opt {
                     Some(name) => {
-                        validate_crate_name(Some(self.sess), name.as_str(),
+                        validate_crate_name(Some(self.sess), &name.as_str(),
                                             Some(i.span));
-                        name.as_str().to_string()
+                        name.to_string()
                     }
-                    None => ident.to_string(),
+                    None => i.ident.to_string(),
                 };
                 Some(CrateInfo {
-                    ident: ident.to_string(),
+                    ident: i.ident.to_string(),
                     name: name,
                     id: i.id,
                     should_link: should_link(i),
@@ -660,14 +658,14 @@ pub fn import_codemap(local_codemap: &codemap::CodeMap,
                 // `CodeMap::new_imported_filemap()` will then translate those
                 // coordinates to their new global frame of reference when the
                 // offset of the FileMap is known.
-                let lines = lines.into_inner().map_in_place(|pos| pos - start_pos);
-                let multibyte_chars = multibyte_chars
-                    .into_inner()
-                    .map_in_place(|mbc|
-                        codemap::MultiByteChar {
-                            pos: mbc.pos - start_pos,
-                            bytes: mbc.bytes
-                        });
+                let mut lines = lines.into_inner();
+                for pos in &mut lines {
+                    *pos = *pos - start_pos;
+                }
+                let mut multibyte_chars = multibyte_chars.into_inner();
+                for mbc in &mut multibyte_chars {
+                    mbc.pos = mbc.pos - start_pos;
+                }
 
                 let local_version = local_codemap.new_imported_filemap(name,
                                                                        source_length,

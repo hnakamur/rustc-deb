@@ -106,9 +106,7 @@ pub fn trans_slice_vec<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let count = elements_required(bcx, content_expr);
     debug!("    vt={}, count={}", vt.to_string(ccx), count);
 
-    let fixed_ty = ty::mk_vec(bcx.tcx(),
-                              vt.unit_ty,
-                              Some(count));
+    let fixed_ty = bcx.tcx().mk_array(vt.unit_ty, count);
     let llfixed_ty = type_of::type_of(bcx.ccx(), fixed_ty);
 
     // Always create an alloca even if zero-sized, to preserve
@@ -119,7 +117,7 @@ pub fn trans_slice_vec<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         // Arrange for the backing array to be cleaned up.
         let cleanup_scope = cleanup::temporary_scope(bcx.tcx(), content_expr.id);
         fcx.schedule_lifetime_end(cleanup_scope, llfixed);
-        fcx.schedule_drop_mem(cleanup_scope, llfixed, fixed_ty);
+        fcx.schedule_drop_mem(cleanup_scope, llfixed, fixed_ty, None);
 
         // Generate the content into the backing array.
         // llfixed has type *[T x N], but we want the type *T,
@@ -214,7 +212,7 @@ fn write_content<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                                SaveIn(lleltptr));
                         let scope = cleanup::CustomScope(temp_scope);
                         fcx.schedule_lifetime_end(scope, lleltptr);
-                        fcx.schedule_drop_mem(scope, lleltptr, vt.unit_ty);
+                        fcx.schedule_drop_mem(scope, lleltptr, vt.unit_ty, None);
                     }
                     fcx.pop_custom_cleanup_scope(temp_scope);
                 }
@@ -227,7 +225,7 @@ fn write_content<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                     return expr::trans_into(bcx, &**element, Ignore);
                 }
                 SaveIn(lldest) => {
-                    match ty::eval_repeat_count(bcx.tcx(), &**count_expr) {
+                    match bcx.tcx().eval_repeat_count(&**count_expr) {
                         0 => expr::trans_into(bcx, &**element, Ignore),
                         1 => expr::trans_into(bcx, &**element, SaveIn(lldest)),
                         count => {
@@ -253,7 +251,7 @@ fn write_content<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 fn vec_types_from_expr<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, vec_expr: &ast::Expr)
                                    -> VecTypes<'tcx> {
     let vec_ty = node_id_type(bcx, vec_expr.id);
-    vec_types(bcx, ty::sequence_element_type(bcx.tcx(), vec_ty))
+    vec_types(bcx, vec_ty.sequence_element_type(bcx.tcx()))
 }
 
 fn vec_types<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, unit_ty: Ty<'tcx>)
@@ -279,7 +277,7 @@ fn elements_required(bcx: Block, content_expr: &ast::Expr) -> usize {
         },
         ast::ExprVec(ref es) => es.len(),
         ast::ExprRepeat(_, ref count_expr) => {
-            ty::eval_repeat_count(bcx.tcx(), &**count_expr)
+            bcx.tcx().eval_repeat_count(&**count_expr)
         }
         _ => bcx.tcx().sess.span_bug(content_expr.span,
                                      "unexpected vec content")
@@ -317,7 +315,7 @@ pub fn get_base_and_len<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         }
 
         // Only used for pattern matching.
-        ty::TyBox(ty) | ty::TyRef(_, ty::mt{ty, ..}) => {
+        ty::TyBox(ty) | ty::TyRef(_, ty::TypeAndMut{ty, ..}) => {
             let inner = if type_is_sized(bcx.tcx(), ty) {
                 Load(bcx, llval)
             } else {

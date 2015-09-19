@@ -73,7 +73,7 @@ frame. But before we can show what happens when `foo()` is called, we need to
 visualize what’s going on with memory. Your operating system presents a view of
 memory to your program that’s pretty simple: a huge list of addresses, from 0
 to a large number, representing how much RAM your computer has. For example, if
-you have a gigabyte of RAM, your addresses go from `0` to `1,073,741,824`. That
+you have a gigabyte of RAM, your addresses go from `0` to `1,073,741,823`. That
 number comes from 2<sup>30</sup>, the number of bytes in a gigabyte.
 
 This memory is kind of like a giant array: addresses start at zero and go
@@ -176,7 +176,7 @@ After `bar()` is over, its frame is deallocated, leaving just `foo()` and
 | 1       | a    | 5     |
 | 0       | x    | 42    |
 
-And then `foo()` ends, leaving just `main()`
+And then `foo()` ends, leaving just `main()`:
 
 | Address | Name | Value |
 |---------|------|-------|
@@ -537,7 +537,7 @@ Generally, you should prefer stack allocation, and so, Rust stack-allocates by
 default. The LIFO model of the stack is simpler, at a fundamental level. This
 has two big impacts: runtime efficiency and semantic impact.
 
-## Runtime Efficiency.
+## Runtime Efficiency
 
 Managing the memory for the stack is trivial: The machine just
 increments or decrements a single value, the so-called “stack pointer”.
@@ -551,7 +551,7 @@ is a great introduction.
 
 [wilson]: http://www.cs.northwestern.edu/~pdinda/icsclass/doc/dsa.pdf
 
-## Semantic impact 
+## Semantic impact
 
 Stack-allocation impacts the Rust language itself, and thus the developer’s
 mental model. The LIFO semantics is what drives how the Rust language handles

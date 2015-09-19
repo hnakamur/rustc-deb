@@ -26,6 +26,7 @@ use ParentLink::{self, ModuleParentLink, BlockParentLink};
 use Resolver;
 use resolve_imports::Shadowable;
 use TypeNsDef;
+use {resolve_error, ResolutionError};
 
 use self::DuplicateCheckingMode::*;
 use self::NamespaceError::*;
@@ -51,7 +52,7 @@ use syntax::ast::Visibility;
 use syntax::ast;
 use syntax::ast_util::local_def;
 use syntax::attr::AttrMetaMethods;
-use syntax::parse::token::{self, special_idents};
+use syntax::parse::token::special_idents;
 use syntax::codemap::{Span, DUMMY_SP};
 use syntax::visit::{self, Visitor};
 
@@ -208,17 +209,20 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                     // Return an error here by looking up the namespace that
                     // had the duplicate.
                     let ns = ns.unwrap();
-                    self.resolve_error(sp,
-                        &format!("duplicate definition of {} `{}`",
-                             namespace_error_to_string(duplicate_type),
-                             token::get_name(name)));
+                    resolve_error(
+                        self,
+                        sp,
+                        ResolutionError::DuplicateDefinition(
+                            namespace_error_to_string(duplicate_type),
+                            name)
+                    );
                     {
                         let r = child.span_for_namespace(ns);
                         if let Some(sp) = r {
                             self.session.span_note(sp,
                                  &format!("first definition of {} `{}` here",
                                       namespace_error_to_string(duplicate_type),
-                                      token::get_name(name)));
+                                      name));
                         }
                     }
                 }
@@ -276,7 +280,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                 let module_path = match view_path.node {
                     ViewPathSimple(_, ref full_path) => {
                         full_path.segments
-                            .init()
+                            .split_last().unwrap().1
                             .iter().map(|ident| ident.identifier.name)
                             .collect()
                     }
@@ -290,7 +294,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
                 // Build up the import directives.
                 let shadowable = item.attrs.iter().any(|attr| {
-                    attr.name() == token::get_name(special_idents::prelude_import.name)
+                    attr.name() == special_idents::prelude_import.name.as_str()
                 });
                 let shadowable = if shadowable {
                     Shadowable::Always
@@ -302,10 +306,10 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                     ViewPathSimple(binding, ref full_path) => {
                         let source_name =
                             full_path.segments.last().unwrap().identifier.name;
-                        if &token::get_name(source_name)[..] == "mod" ||
-                           &token::get_name(source_name)[..] == "self" {
-                            self.resolve_error(view_path.span,
-                                "`self` imports are only allowed within a { } list");
+                        if source_name.as_str() == "mod" || source_name.as_str() == "self" {
+                            resolve_error(self,
+                                          view_path.span,
+                                          ResolutionError::SelfImportsOnlyAllowedWithin);
                         }
 
                         let subclass = SingleImport(binding.name,
@@ -325,8 +329,11 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                             _ => None
                         }).collect::<Vec<Span>>();
                         if mod_spans.len() > 1 {
-                            self.resolve_error(mod_spans[0],
-                                "`self` import can only appear once in the list");
+                            resolve_error(
+                                self,
+                                mod_spans[0],
+                                ResolutionError::SelfImportCanOnlyAppearOnceInTheList
+                            );
                             for other_span in mod_spans.iter().skip(1) {
                                 self.session.span_note(*other_span,
                                     "another `self` import appears here");
@@ -341,13 +348,16 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                     let name = match module_path.last() {
                                         Some(name) => *name,
                                         None => {
-                                            self.resolve_error(source_item.span,
-                                                "`self` import can only appear in an import list \
-                                                 with a non-empty prefix");
+                                            resolve_error(
+                                                self,
+                                                source_item.span,
+                                                ResolutionError::
+                                                SelfImportOnlyInImportListWithNonEmptyPrefix
+                                            );
                                             continue;
                                         }
                                     };
-                                    let module_path = module_path.init();
+                                    let module_path = module_path.split_last().unwrap().1;
                                     (module_path.to_vec(), name)
                                 }
                             };
@@ -535,14 +545,12 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
                     match trait_item.node {
                         ast::ConstTraitItem(..) => {
-                            let def = DefAssociatedConst(local_def(trait_item.id),
-                                                         FromTrait(local_def(item.id)));
+                            let def = DefAssociatedConst(local_def(trait_item.id));
                             // NB: not DefModifiers::IMPORTABLE
                             name_bindings.define_value(def, trait_item.span, DefModifiers::PUBLIC);
                         }
                         ast::MethodTraitItem(..) => {
-                            let def = DefMethod(local_def(trait_item.id),
-                                                FromTrait(local_def(item.id)));
+                            let def = DefMethod(local_def(trait_item.id));
                             // NB: not DefModifiers::IMPORTABLE
                             name_bindings.define_value(def, trait_item.span, DefModifiers::PUBLIC);
                         }
@@ -751,7 +759,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
                   debug!("(building reduced graph for external crate) ... \
                           adding trait item '{}'",
-                         token::get_name(trait_item_name));
+                         trait_item_name);
 
                   self.trait_item_map.insert((trait_item_name, def_id),
                                              trait_item_def.def_id());
@@ -837,7 +845,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                         self.handle_external_def(def,
                                                  def_visibility,
                                                  &*child_name_bindings,
-                                                 &token::get_name(name),
+                                                 &name.as_str(),
                                                  name,
                                                  root);
                     }
@@ -871,7 +879,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                     def_id,
                                     |def_like, child_name, visibility| {
             debug!("(populating external module) ... found ident: {}",
-                   token::get_name(child_name));
+                   child_name);
             self.build_reduced_graph_for_external_crate_def(module,
                                                             def_like,
                                                             child_name,
@@ -925,7 +933,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
             SingleImport(target, _) => {
                 debug!("(building import directive) building import directive: {}::{}",
                        names_to_string(&module_.imports.borrow().last().unwrap().module_path),
-                       token::get_name(target));
+                       target);
 
                 let mut import_resolutions = module_.import_resolutions.borrow_mut();
                 match import_resolutions.get_mut(&target) {

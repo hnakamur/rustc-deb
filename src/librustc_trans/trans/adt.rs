@@ -41,8 +41,6 @@
 //!   used unboxed and any field can have pointers (including mutable)
 //!   taken to it, implementing them for Rust seems difficult.
 
-#![allow(unsigned_negation)]
-
 pub use self::Repr::*;
 
 use std::rc::Rc;
@@ -50,7 +48,7 @@ use std::rc::Rc;
 use llvm::{ValueRef, True, IntEQ, IntNE};
 use back::abi::FAT_PTR_ADDR;
 use middle::subst;
-use middle::ty::{self, Ty, ClosureTyper};
+use middle::ty::{self, Ty};
 use middle::ty::Disr;
 use syntax::ast;
 use syntax::attr;
@@ -165,6 +163,20 @@ macro_rules! repeat_u8_as_u64 {
                        (repeat_u8_as_u32!($name) as u64)) }
 }
 
+/// `DTOR_NEEDED_HINT` is a stack-local hint that just means
+/// "we do not know whether the destructor has run or not; check the
+/// drop-flag embedded in the value itself."
+pub const DTOR_NEEDED_HINT: u8 = 0x3d;
+
+/// `DTOR_MOVED_HINT` is a stack-local hint that means "this value has
+/// definitely been moved; you do not need to run its destructor."
+///
+/// (However, for now, such values may still end up being explicitly
+/// zeroed by the generated code; this is the distinction between
+/// `datum::DropFlagInfo::ZeroAndMaintain` versus
+/// `datum::DropFlagInfo::DontZeroJustUse`.)
+pub const DTOR_MOVED_HINT: u8 = 0x2d;
+
 pub const DTOR_NEEDED: u8 = 0xd4;
 pub const DTOR_NEEDED_U32: u32 = repeat_u8_as_u32!(DTOR_NEEDED);
 pub const DTOR_NEEDED_U64: u64 = repeat_u8_as_u64!(DTOR_NEEDED);
@@ -209,31 +221,28 @@ fn represent_type_uncached<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             Univariant(mk_struct(cx, &elems[..], false, t), 0)
         }
         ty::TyStruct(def_id, substs) => {
-            let fields = ty::lookup_struct_fields(cx.tcx(), def_id);
+            let fields = cx.tcx().lookup_struct_fields(def_id);
             let mut ftys = fields.iter().map(|field| {
-                let fty = ty::lookup_field_type(cx.tcx(), def_id, field.id, substs);
+                let fty = cx.tcx().lookup_field_type(def_id, field.id, substs);
                 monomorphize::normalize_associated_type(cx.tcx(), &fty)
             }).collect::<Vec<_>>();
-            let packed = ty::lookup_packed(cx.tcx(), def_id);
-            let dtor = ty::ty_dtor(cx.tcx(), def_id).has_drop_flag();
+            let packed = cx.tcx().lookup_packed(def_id);
+            let dtor = cx.tcx().ty_dtor(def_id).has_drop_flag();
             if dtor {
                 ftys.push(cx.tcx().dtor_type());
             }
 
             Univariant(mk_struct(cx, &ftys[..], packed, t), dtor_to_init_u8(dtor))
         }
-        ty::TyClosure(def_id, substs) => {
-            let typer = NormalizingClosureTyper::new(cx.tcx());
-            let upvars = typer.closure_upvars(def_id, substs).unwrap();
-            let upvar_types = upvars.iter().map(|u| u.ty).collect::<Vec<_>>();
-            Univariant(mk_struct(cx, &upvar_types[..], false, t), 0)
+        ty::TyClosure(_, ref substs) => {
+            Univariant(mk_struct(cx, &substs.upvar_tys, false, t), 0)
         }
         ty::TyEnum(def_id, substs) => {
             let cases = get_cases(cx.tcx(), def_id, substs);
-            let hint = *ty::lookup_repr_hints(cx.tcx(), def_id).get(0)
+            let hint = *cx.tcx().lookup_repr_hints(def_id).get(0)
                 .unwrap_or(&attr::ReprAny);
 
-            let dtor = ty::ty_dtor(cx.tcx(), def_id).has_drop_flag();
+            let dtor = cx.tcx().ty_dtor(def_id).has_drop_flag();
 
             if cases.is_empty() {
                 // Uninhabitable; represent as unit
@@ -261,9 +270,8 @@ fn represent_type_uncached<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             // been rejected by a checker before this point.
             if !cases.iter().enumerate().all(|(i,c)| c.discr == (i as Disr)) {
                 cx.sess().bug(&format!("non-C-like enum {} with specified \
-                                      discriminants",
-                                      ty::item_path_str(cx.tcx(),
-                                                        def_id)));
+                                        discriminants",
+                                       cx.tcx().item_path_str(def_id)));
             }
 
             if cases.len() == 1 {
@@ -398,7 +406,7 @@ fn find_discr_field_candidate<'tcx>(tcx: &ty::ctxt<'tcx>,
                                     mut path: DiscrField) -> Option<DiscrField> {
     match ty.sty {
         // Fat &T/&mut T/Box<T> i.e. T is [T], str, or Trait
-        ty::TyRef(_, ty::mt { ty, .. }) | ty::TyBox(ty) if !type_is_sized(tcx, ty) => {
+        ty::TyRef(_, ty::TypeAndMut { ty, .. }) | ty::TyBox(ty) if !type_is_sized(tcx, ty) => {
             path.push(FAT_PTR_ADDR);
             Some(path)
         },
@@ -411,11 +419,11 @@ fn find_discr_field_candidate<'tcx>(tcx: &ty::ctxt<'tcx>,
 
         // Is this the NonZero lang item wrapping a pointer or integer type?
         ty::TyStruct(did, substs) if Some(did) == tcx.lang_items.non_zero() => {
-            let nonzero_fields = ty::lookup_struct_fields(tcx, did);
+            let nonzero_fields = tcx.lookup_struct_fields(did);
             assert_eq!(nonzero_fields.len(), 1);
-            let nonzero_field = ty::lookup_field_type(tcx, did, nonzero_fields[0].id, substs);
+            let nonzero_field = tcx.lookup_field_type(did, nonzero_fields[0].id, substs);
             match nonzero_field.sty {
-                ty::TyRawPtr(ty::mt { ty, .. }) if !type_is_sized(tcx, ty) => {
+                ty::TyRawPtr(ty::TypeAndMut { ty, .. }) if !type_is_sized(tcx, ty) => {
                     path.push_all(&[0, FAT_PTR_ADDR]);
                     Some(path)
                 },
@@ -430,9 +438,9 @@ fn find_discr_field_candidate<'tcx>(tcx: &ty::ctxt<'tcx>,
         // Perhaps one of the fields of this struct is non-zero
         // let's recurse and find out
         ty::TyStruct(def_id, substs) => {
-            let fields = ty::lookup_struct_fields(tcx, def_id);
+            let fields = tcx.lookup_struct_fields(def_id);
             for (j, field) in fields.iter().enumerate() {
-                let field_ty = ty::lookup_field_type(tcx, def_id, field.id, substs);
+                let field_ty = tcx.lookup_field_type(def_id, field.id, substs);
                 if let Some(mut fpath) = find_discr_field_candidate(tcx, field_ty, path.clone()) {
                     fpath.push(j);
                     return Some(fpath);
@@ -443,12 +451,8 @@ fn find_discr_field_candidate<'tcx>(tcx: &ty::ctxt<'tcx>,
 
         // Perhaps one of the upvars of this struct is non-zero
         // Let's recurse and find out!
-        ty::TyClosure(def_id, substs) => {
-            let typer = NormalizingClosureTyper::new(tcx);
-            let upvars = typer.closure_upvars(def_id, substs).unwrap();
-            let upvar_types = upvars.iter().map(|u| u.ty).collect::<Vec<_>>();
-
-            for (j, &ty) in upvar_types.iter().enumerate() {
+        ty::TyClosure(_, ref substs) => {
+            for (j, &ty) in substs.upvar_tys.iter().enumerate() {
                 if let Some(mut fpath) = find_discr_field_candidate(tcx, ty, path.clone()) {
                     fpath.push(j);
                     return Some(fpath);
@@ -504,7 +508,7 @@ fn get_cases<'tcx>(tcx: &ty::ctxt<'tcx>,
                    def_id: ast::DefId,
                    substs: &subst::Substs<'tcx>)
                    -> Vec<Case<'tcx>> {
-    ty::enum_variants(tcx, def_id).iter().map(|vi| {
+    tcx.enum_variants(def_id).iter().map(|vi| {
         let arg_tys = vi.args.iter().map(|&raw_ty| {
             monomorphize::apply_param_substs(tcx, substs, &raw_ty)
         }).collect();
@@ -623,8 +627,8 @@ fn bounds_usable(cx: &CrateContext, ity: IntType, bounds: &IntBounds) -> bool {
 
 pub fn ty_of_inttype<'tcx>(tcx: &ty::ctxt<'tcx>, ity: IntType) -> Ty<'tcx> {
     match ity {
-        attr::SignedInt(t) => ty::mk_mach_int(tcx, t),
-        attr::UnsignedInt(t) => ty::mk_mach_uint(tcx, t)
+        attr::SignedInt(t) => tcx.mk_mach_int(t),
+        attr::UnsignedInt(t) => tcx.mk_mach_uint(t)
     }
 }
 
@@ -1078,7 +1082,7 @@ pub fn trans_drop_flag_ptr<'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
                                        -> datum::DatumBlock<'blk, 'tcx, datum::Expr>
 {
     let tcx = bcx.tcx();
-    let ptr_ty = ty::mk_imm_ptr(bcx.tcx(), tcx.dtor_type());
+    let ptr_ty = bcx.tcx().mk_imm_ptr(tcx.dtor_type());
     match *r {
         Univariant(ref st, dtor) if dtor_active(dtor) => {
             let flag_ptr = GEPi(bcx, val, &[0, st.fields.len() - 1]);
@@ -1093,7 +1097,7 @@ pub fn trans_drop_flag_ptr<'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
             ));
             bcx = fold_variants(bcx, r, val, |variant_cx, st, value| {
                 let ptr = struct_field_ptr(variant_cx, st, value, (st.fields.len() - 1), false);
-                datum::Datum::new(ptr, ptr_ty, datum::Lvalue)
+                datum::Datum::new(ptr, ptr_ty, datum::Lvalue::new("adt::trans_drop_flag_ptr"))
                     .store_to(variant_cx, scratch.val)
             });
             let expr_datum = scratch.to_expr_datum();

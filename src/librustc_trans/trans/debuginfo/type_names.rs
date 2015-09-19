@@ -14,10 +14,9 @@ use super::namespace::crate_root_namespace;
 
 use trans::common::CrateContext;
 use middle::subst::{self, Substs};
-use middle::ty::{self, Ty, ClosureTyper};
+use middle::ty::{self, Ty};
 
 use syntax::ast;
-use syntax::parse::token;
 
 
 // Compute the name of the type as it should be stored in debuginfo. Does not do
@@ -77,7 +76,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             push_debuginfo_type_name(cx, inner_type, true, output);
             output.push('>');
         },
-        ty::TyRawPtr(ty::mt { ty: inner_type, mutbl } ) => {
+        ty::TyRawPtr(ty::TypeAndMut { ty: inner_type, mutbl } ) => {
             output.push('*');
             match mutbl {
                 ast::MutImmutable => output.push_str("const "),
@@ -86,7 +85,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
             push_debuginfo_type_name(cx, inner_type, true, output);
         },
-        ty::TyRef(_, ty::mt { ty: inner_type, mutbl }) => {
+        ty::TyRef(_, ty::TypeAndMut { ty: inner_type, mutbl }) => {
             output.push('&');
             if mutbl == ast::MutMutable {
                 output.push_str("mut ");
@@ -106,7 +105,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             output.push(']');
         },
         ty::TyTrait(ref trait_data) => {
-            let principal = ty::erase_late_bound_regions(cx.tcx(), &trait_data.principal);
+            let principal = cx.tcx().erase_late_bound_regions(&trait_data.principal);
             push_item_name(cx, principal.def_id, false, output);
             push_type_params(cx, principal.substs, output);
         },
@@ -123,7 +122,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
             output.push_str("fn(");
 
-            let sig = ty::erase_late_bound_regions(cx.tcx(), sig);
+            let sig = cx.tcx().erase_late_bound_regions(sig);
             if !sig.inputs.is_empty() {
                 for &parameter_type in &sig.inputs {
                     push_debuginfo_type_name(cx, parameter_type, true, output);
@@ -144,7 +143,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             output.push(')');
 
             match sig.output {
-                ty::FnConverging(result_type) if ty::type_is_nil(result_type) => {}
+                ty::FnConverging(result_type) if result_type.is_nil() => {}
                 ty::FnConverging(result_type) => {
                     output.push_str(" -> ");
                     push_debuginfo_type_name(cx, result_type, true, output);
@@ -170,7 +169,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                       def_id: ast::DefId,
                       qualified: bool,
                       output: &mut String) {
-        ty::with_path(cx.tcx(), def_id, |path| {
+        cx.tcx().with_path(def_id, |path| {
             if qualified {
                 if def_id.krate == ast::LOCAL_CRATE {
                     output.push_str(crate_root_namespace(cx));
@@ -179,8 +178,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
                 let mut path_element_count = 0;
                 for path_element in path {
-                    let name = token::get_name(path_element.name());
-                    output.push_str(&name);
+                    output.push_str(&path_element.name().as_str());
                     output.push_str("::");
                     path_element_count += 1;
                 }
@@ -192,10 +190,8 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 output.pop();
                 output.pop();
             } else {
-                let name = token::get_name(path.last()
-                                               .expect("debuginfo: Empty item path?")
-                                               .name());
-                output.push_str(&name);
+                let name = path.last().expect("debuginfo: Empty item path?").name();
+                output.push_str(&name.as_str());
             }
         });
     }
@@ -225,4 +221,3 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         output.push('>');
     }
 }
-

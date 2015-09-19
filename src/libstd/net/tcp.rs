@@ -17,8 +17,9 @@ use io::prelude::*;
 use fmt;
 use io;
 use net::{ToSocketAddrs, SocketAddr, Shutdown};
+use sys_common::io::read_to_end_uninitialized;
 use sys_common::net as net_imp;
-use sys_common::{AsInner, FromInner};
+use sys_common::{AsInner, FromInner, IntoInner};
 use time::Duration;
 
 /// A structure which represents a TCP stream between a local socket and a
@@ -128,6 +129,9 @@ impl TcpStream {
     }
 
     /// Sets the nodelay flag on this connection to the boolean specified.
+    #[deprecated(since = "1.3.0",
+                 reason = "available through the `net2` crate on crates.io")]
+    #[unstable(feature = "tcp_extras", reason = "available externally")]
     pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
         self.0.set_nodelay(nodelay)
     }
@@ -137,6 +141,9 @@ impl TcpStream {
     /// If the value specified is `None`, then the keepalive flag is cleared on
     /// this connection. Otherwise, the keepalive timeout will be set to the
     /// specified time, in seconds.
+    #[unstable(feature = "tcp_extras", reason = "available externally")]
+    #[deprecated(since = "1.3.0",
+                 reason = "available through the `net2` crate on crates.io")]
     pub fn set_keepalive(&self, seconds: Option<u32>) -> io::Result<()> {
         self.0.set_keepalive(seconds)
     }
@@ -189,6 +196,9 @@ impl TcpStream {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Read for TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        unsafe { read_to_end_uninitialized(self, buf) }
+    }
 }
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Write for TcpStream {
@@ -198,6 +208,9 @@ impl Write for TcpStream {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Read for &'a TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        unsafe { read_to_end_uninitialized(self, buf) }
+    }
 }
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Write for &'a TcpStream {
@@ -211,6 +224,10 @@ impl AsInner<net_imp::TcpStream> for TcpStream {
 
 impl FromInner<net_imp::TcpStream> for TcpStream {
     fn from_inner(inner: net_imp::TcpStream) -> TcpStream { TcpStream(inner) }
+}
+
+impl IntoInner<net_imp::TcpStream> for TcpStream {
+    fn into_inner(self) -> net_imp::TcpStream { self.0 }
 }
 
 impl fmt::Debug for TcpStream {
@@ -289,6 +306,10 @@ impl FromInner<net_imp::TcpListener> for TcpListener {
     fn from_inner(inner: net_imp::TcpListener) -> TcpListener {
         TcpListener(inner)
     }
+}
+
+impl IntoInner<net_imp::TcpListener> for TcpListener {
+    fn into_inner(self) -> net_imp::TcpListener { self.0 }
 }
 
 impl fmt::Debug for TcpListener {
@@ -904,7 +925,7 @@ mod tests {
 
     // FIXME: re-enabled bitrig/openbsd tests once their socket timeout code
     //        no longer has rounding errors.
-    #[cfg_attr(any(target_os = "bitrig", target_os = "openbsd"), ignore)]
+    #[cfg_attr(any(target_os = "bitrig", target_os = "netbsd", target_os = "openbsd"), ignore)]
     #[test]
     fn timeouts() {
         let addr = next_test_ip4();
