@@ -43,10 +43,6 @@ License: unlicense
  .
  For more information, please refer to <http://unlicense.org/>
 
-Files: src/rt/valgrind/*.h
-Copyright: 2000-2013 Julian Seward
-License: Valgrind-BSD-style
-
 Files: src/jemalloc/*
 Copyright: 2002-2014 Jason Evans <jasone@canonware.com>
            2007-2012 Mozilla Foundation
