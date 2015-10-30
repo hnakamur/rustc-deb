@@ -1,0 +1,12 @@
+*.debhelper.log
+*.substvars
+*.debhelper
+files
+libstd-rust-*/
+libstd-rust-dev/
+rust-doc/
+rust-gdb/
+rust-lldb/
+rustc/
+tmp/
+
