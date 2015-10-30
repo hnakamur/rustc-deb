@@ -1,3 +1,11 @@
+rustc (1.4.0+dfsg1-1) UNRELEASED; urgency=medium
+
+  * New upstream release
+    198068b3 => 1bf6e69c
+  * Update the download url in debian/watch
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 30 Oct 2015 09:36:02 +0100
+
 rustc (1.3.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
