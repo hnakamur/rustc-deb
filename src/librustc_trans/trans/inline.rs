@@ -10,16 +10,18 @@
 
 use llvm::{AvailableExternallyLinkage, InternalLinkage, SetLinkage};
 use metadata::csearch;
+use metadata::inline::InlinedItem;
 use middle::astencode;
+use middle::def_id::DefId;
 use middle::subst::Substs;
 use trans::base::{push_ctxt, trans_item, get_item_val, trans_fn};
 use trans::common::*;
 
-use syntax::ast;
-use syntax::ast_util::local_def;
+use rustc_front::hir;
 
-fn instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId)
-    -> Option<ast::DefId> {
+
+fn instantiate_inline(ccx: &CrateContext, fn_id: DefId)
+    -> Option<DefId> {
     debug!("instantiate_inline({:?})", fn_id);
     let _icx = push_ctxt("instantiate_inline");
 
@@ -28,7 +30,7 @@ fn instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId)
             // Already inline
             debug!("instantiate_inline({}): already inline as node id {}",
                    ccx.tcx().item_path_str(fn_id), node_id);
-            return Some(local_def(node_id));
+            return Some(DefId::local(node_id));
         }
         Some(&None) => {
             return None; // Not inlinable
@@ -48,7 +50,7 @@ fn instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId)
             ccx.external().borrow_mut().insert(fn_id, None);
             return None;
         }
-        csearch::FoundAst::Found(&ast::IIItem(ref item)) => {
+        csearch::FoundAst::Found(&InlinedItem::Item(ref item)) => {
             ccx.external().borrow_mut().insert(fn_id, Some(item.id));
             ccx.external_srcs().borrow_mut().insert(item.id, fn_id);
 
@@ -56,7 +58,7 @@ fn instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId)
             trans_item(ccx, item);
 
             let linkage = match item.node {
-                ast::ItemFn(_, _, _, _, ref generics, _) => {
+                hir::ItemFn(_, _, _, _, ref generics, _) => {
                     if generics.is_type_parameterized() {
                         // Generics have no symbol, so they can't be given any
                         // linkage.
@@ -77,7 +79,7 @@ fn instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId)
                         }
                     }
                 }
-                ast::ItemConst(..) => None,
+                hir::ItemConst(..) => None,
                 _ => unreachable!(),
             };
 
@@ -91,45 +93,47 @@ fn instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId)
 
             item.id
         }
-        csearch::FoundAst::Found(&ast::IIForeign(ref item)) => {
+        csearch::FoundAst::Found(&InlinedItem::Foreign(ref item)) => {
             ccx.external().borrow_mut().insert(fn_id, Some(item.id));
             ccx.external_srcs().borrow_mut().insert(item.id, fn_id);
             item.id
         }
-        csearch::FoundAst::FoundParent(parent_id, &ast::IIItem(ref item)) => {
+        csearch::FoundAst::FoundParent(parent_id, &InlinedItem::Item(ref item)) => {
             ccx.external().borrow_mut().insert(parent_id, Some(item.id));
             ccx.external_srcs().borrow_mut().insert(item.id, parent_id);
 
-          let mut my_id = 0;
-          match item.node {
-            ast::ItemEnum(_, _) => {
-              let vs_here = ccx.tcx().enum_variants(local_def(item.id));
-              let vs_there = ccx.tcx().enum_variants(parent_id);
-              for (here, there) in vs_here.iter().zip(vs_there.iter()) {
-                  if there.id == fn_id { my_id = here.id.node; }
-                  ccx.external().borrow_mut().insert(there.id, Some(here.id.node));
-              }
-            }
-            ast::ItemStruct(ref struct_def, _) => {
-              match struct_def.ctor_id {
-                None => {}
-                Some(ctor_id) => {
-                    ccx.external().borrow_mut().insert(fn_id, Some(ctor_id));
-                    my_id = ctor_id;
+            let mut my_id = 0;
+            match item.node {
+                hir::ItemEnum(ref ast_def, _) => {
+                    let ast_vs = &ast_def.variants;
+                    let ty_vs = &ccx.tcx().lookup_adt_def(parent_id).variants;
+                    assert_eq!(ast_vs.len(), ty_vs.len());
+                    for (ast_v, ty_v) in ast_vs.iter().zip(ty_vs.iter()) {
+                        if ty_v.did == fn_id { my_id = ast_v.node.id; }
+                        ccx.external().borrow_mut().insert(ty_v.did, Some(ast_v.node.id));
+                    }
                 }
-              }
-            }
-            _ => ccx.sess().bug("instantiate_inline: item has a \
+                hir::ItemStruct(ref struct_def, _) => {
+                    match struct_def.ctor_id {
+                        None => ccx.sess().bug("instantiate_inline: called on a \
+                                                non-tuple struct"),
+                        Some(ctor_id) => {
+                            ccx.external().borrow_mut().insert(fn_id, Some(ctor_id));
+                            my_id = ctor_id;
+                        }
+                    }
+                }
+                _ => ccx.sess().bug("instantiate_inline: item has a \
                                  non-enum, non-struct parent")
-          }
-          trans_item(ccx, &**item);
-          my_id
+            }
+            trans_item(ccx, &**item);
+            my_id
         }
         csearch::FoundAst::FoundParent(_, _) => {
             ccx.sess().bug("maybe_get_item_ast returned a FoundParent \
                             with a non-item parent");
         }
-        csearch::FoundAst::Found(&ast::IITraitItem(_, ref trait_item)) => {
+        csearch::FoundAst::Found(&InlinedItem::TraitItem(_, ref trait_item)) => {
             ccx.external().borrow_mut().insert(fn_id, Some(trait_item.id));
             ccx.external_srcs().borrow_mut().insert(trait_item.id, fn_id);
 
@@ -141,21 +145,21 @@ fn instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId)
             // inlined items.
             let ty_trait_item = ccx.tcx().impl_or_trait_item(fn_id).clone();
             ccx.tcx().impl_or_trait_items.borrow_mut()
-                     .insert(local_def(trait_item.id), ty_trait_item);
+                     .insert(DefId::local(trait_item.id), ty_trait_item);
 
             // If this is a default method, we can't look up the
             // impl type. But we aren't going to translate anyways, so
             // don't.
             trait_item.id
         }
-        csearch::FoundAst::Found(&ast::IIImplItem(impl_did, ref impl_item)) => {
+        csearch::FoundAst::Found(&InlinedItem::ImplItem(impl_did, ref impl_item)) => {
             ccx.external().borrow_mut().insert(fn_id, Some(impl_item.id));
             ccx.external_srcs().borrow_mut().insert(impl_item.id, fn_id);
 
             ccx.stats().n_inlines.set(ccx.stats().n_inlines.get() + 1);
 
             // Translate monomorphic impl methods immediately.
-            if let ast::MethodImplItem(ref sig, ref body) = impl_item.node {
+            if let hir::MethodImplItem(ref sig, ref body) = impl_item.node {
                 let impl_tpt = ccx.tcx().lookup_item_type(impl_did);
                 if impl_tpt.generics.types.is_empty() &&
                         sig.generics.ty_params.is_empty() {
@@ -181,18 +185,18 @@ fn instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId)
         }
     };
 
-    Some(local_def(inline_id))
+    Some(DefId::local(inline_id))
 }
 
-pub fn get_local_instance(ccx: &CrateContext, fn_id: ast::DefId)
-    -> Option<ast::DefId> {
-    if fn_id.krate == ast::LOCAL_CRATE {
+pub fn get_local_instance(ccx: &CrateContext, fn_id: DefId)
+    -> Option<DefId> {
+    if fn_id.is_local() {
         Some(fn_id)
     } else {
         instantiate_inline(ccx, fn_id)
     }
 }
 
-pub fn maybe_instantiate_inline(ccx: &CrateContext, fn_id: ast::DefId) -> ast::DefId {
+pub fn maybe_instantiate_inline(ccx: &CrateContext, fn_id: DefId) -> DefId {
     get_local_instance(ccx, fn_id).unwrap_or(fn_id)
 }

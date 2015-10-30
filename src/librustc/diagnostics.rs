@@ -44,7 +44,7 @@ E0002: r##"
 This error indicates that an empty match expression is invalid because the type
 it is matching on is non-empty (there exist values of this type). In safe code
 it is impossible to create an instance of an empty type, so empty match
-expressions are almost never desired.  This error is typically fixed by adding
+expressions are almost never desired. This error is typically fixed by adding
 one or more cases to the match expression.
 
 An example of an empty type is `enum Empty { }`. So, the following will work:
@@ -218,7 +218,14 @@ match x {
 E0010: r##"
 The value of statics and constants must be known at compile time, and they live
 for the entire lifetime of a program. Creating a boxed value allocates memory on
-the heap at runtime, and therefore cannot be done at compile time.
+the heap at runtime, and therefore cannot be done at compile time. Erroneous
+code example:
+
+```
+#![feature(box_syntax)]
+
+const CON : Box<i32> = box 0;
+```
 "##,
 
 E0011: r##"
@@ -335,7 +342,6 @@ is not allowed.
 
 If you really want global mutable state, try using `static mut` or a global
 `UnsafeCell`.
-
 "##,
 
 E0018: r##"
@@ -399,7 +405,13 @@ fn main() {
 
 E0020: r##"
 This error indicates that an attempt was made to divide by zero (or take the
-remainder of a zero divisor) in a static or constant expression.
+remainder of a zero divisor) in a static or constant expression. Erroneous
+code example:
+
+```
+const X: i32 = 42 / 0;
+// error: attempted to divide by zero in a constant expression
+```
 "##,
 
 E0022: r##"
@@ -692,64 +704,6 @@ There's no easy fix for this, generally code will need to be refactored so that
 you no longer need to derive from `Super<Self>`.
 "####,
 
-E0079: r##"
-Enum variants which contain no data can be given a custom integer
-representation. This error indicates that the value provided is not an integer
-literal and is therefore invalid.
-
-For example, in the following code,
-
-```
-enum Foo {
-    Q = "32"
-}
-```
-
-we try to set the representation to a string.
-
-There's no general fix for this; if you can work with an integer then just set
-it to one:
-
-```
-enum Foo {
-    Q = 32
-}
-```
-
-however if you actually wanted a mapping between variants and non-integer
-objects, it may be preferable to use a method with a match instead:
-
-```
-enum Foo { Q }
-impl Foo {
-    fn get_str(&self) -> &'static str {
-        match *self {
-            Foo::Q => "32",
-        }
-    }
-}
-```
-"##,
-
-E0080: r##"
-This error indicates that the compiler was unable to sensibly evaluate an
-integer expression provided as an enum discriminant. Attempting to divide by 0
-or causing integer overflow are two ways to induce this error. For example:
-
-```
-enum Enum {
-    X = (1 << 500),
-    Y = (1 / 0)
-}
-```
-
-Ensure that the expressions given can be evaluated as the desired integer type.
-See the FFI section of the Reference for more information about using a custom
-integer type:
-
-https://doc.rust-lang.org/reference.html#ffi-attributes
-"##,
-
 E0109: r##"
 You tried to give a type parameter to a type which doesn't need it. Erroneous
 code example:
@@ -789,9 +743,14 @@ type X = u32; // ok!
 "##,
 
 E0133: r##"
-Using unsafe functionality, such as dereferencing raw pointers and calling
-functions via FFI or marked as unsafe, is potentially dangerous and disallowed
-by safety checks. These safety checks can be relaxed for a section of the code
+Using unsafe functionality, is potentially dangerous and disallowed
+by safety checks. Examples:
+
+- Dereferencing raw pointers
+- Calling functions via FFI
+- Calling functions marked unsafe
+
+These safety checks can be relaxed for a section of the code
 by wrapping the unsafe instructions with an `unsafe` block. For instance:
 
 ```
@@ -889,9 +848,7 @@ is a size mismatch in one of the impls.
 It is also possible to manually transmute:
 
 ```
-let result: SomeType = mem::uninitialized();
-unsafe { copy_nonoverlapping(&v, &result) };
-result // `v` transmuted to type `SomeType`
+ptr::read(&v as *const _ as *const SomeType) // `v` transmuted to `SomeType`
 ```
 "##,
 
@@ -1542,6 +1499,26 @@ fn main() {
 ```
 "##,
 
+E0281: r##"
+You tried to supply a type which doesn't implement some trait in a location
+which expected that trait. This error typically occurs when working with
+`Fn`-based types. Erroneous code example:
+
+```
+fn foo<F: Fn()>(x: F) { }
+
+fn main() {
+    // type mismatch: the type ... implements the trait `core::ops::Fn<(_,)>`,
+    // but the trait `core::ops::Fn<()>` is required (expected (), found tuple
+    // [E0281]
+    foo(|y| { });
+}
+```
+
+The issue in this case is that `foo` is defined as accepting a `Fn` with no
+arguments, but the closure we attempted to pass to it requires one argument.
+"##,
+
 E0282: r##"
 This error indicates that type inference did not result in one unique possible
 type, and extra information is required. In most cases this can be provided
@@ -1918,11 +1895,11 @@ register_diagnostics! {
     // E0006 // merged with E0005
 //  E0134,
 //  E0135,
+    E0229, // associated type bindings are not allowed here
     E0264, // unknown external lang item
     E0278, // requirement is not satisfied
     E0279, // requirement is not satisfied
     E0280, // requirement is not satisfied
-    E0281, // type implements trait but other trait is required
     E0283, // cannot resolve type
     E0284, // cannot resolve type
     E0285, // overflow evaluation builtin bounds
@@ -1937,6 +1914,5 @@ register_diagnostics! {
     E0314, // closure outlives stack frame
     E0315, // cannot invoke closure outside of its lifetime
     E0316, // nested quantification of lifetimes
-    E0370, // discriminant overflow
     E0400  // overloaded derefs are not allowed in constants
 }

@@ -11,15 +11,14 @@
 //! Overlap: No two impls for the same trait are implemented for the
 //! same type.
 
+use middle::def_id::{DefId, LOCAL_CRATE};
 use middle::traits;
 use middle::ty;
 use middle::infer::{self, new_infer_ctxt};
-use syntax::ast::DefId;
-use syntax::ast::LOCAL_CRATE;
 use syntax::ast;
-use syntax::ast_util;
-use syntax::visit;
 use syntax::codemap::Span;
+use rustc_front::hir;
+use rustc_front::visit;
 use util::nodemap::DefIdMap;
 
 pub fn check(tcx: &ty::ctxt) {
@@ -100,17 +99,17 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
     // We need to coherently pick which impl will be displayed
     // as causing the error message, and it must be the in the current
     // crate. Just pick the smaller impl in the file.
-    fn order_impls(&self, impl1_def_id: ast::DefId, impl2_def_id: ast::DefId)
-            -> Option<(ast::DefId, ast::DefId)> {
-        if impl1_def_id.krate != ast::LOCAL_CRATE {
-            if impl2_def_id.krate != ast::LOCAL_CRATE {
+    fn order_impls(&self, impl1_def_id: DefId, impl2_def_id: DefId)
+            -> Option<(DefId, DefId)> {
+        if impl1_def_id.krate != LOCAL_CRATE {
+            if impl2_def_id.krate != LOCAL_CRATE {
                 // we don't need to check impls if both are external;
                 // that's the other crate's job.
                 None
             } else {
                 Some((impl2_def_id, impl1_def_id))
             }
-        } else if impl2_def_id.krate != ast::LOCAL_CRATE {
+        } else if impl2_def_id.krate != LOCAL_CRATE {
             Some((impl1_def_id, impl2_def_id))
         } else if impl1_def_id.node < impl2_def_id.node {
             Some((impl1_def_id, impl2_def_id))
@@ -121,9 +120,9 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
 
 
     fn check_if_impls_overlap(&self,
-                              trait_def_id: ast::DefId,
-                              impl1_def_id: ast::DefId,
-                              impl2_def_id: ast::DefId)
+                              trait_def_id: DefId,
+                              impl1_def_id: DefId,
+                              impl2_def_id: DefId)
     {
         if let Some((impl1_def_id, impl2_def_id)) = self.order_impls(
             impl1_def_id, impl2_def_id)
@@ -140,8 +139,8 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
         }
     }
 
-    fn report_overlap_error(&self, trait_def_id: ast::DefId,
-                            impl1: ast::DefId, impl2: ast::DefId) {
+    fn report_overlap_error(&self, trait_def_id: DefId,
+                            impl1: DefId, impl2: DefId) {
 
         span_err!(self.tcx.sess, self.span_of_impl(impl1), E0119,
                   "conflicting implementations for trait `{}`",
@@ -150,9 +149,9 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
         self.report_overlap_note(impl1, impl2);
     }
 
-    fn report_overlap_note(&self, impl1: ast::DefId, impl2: ast::DefId) {
+    fn report_overlap_note(&self, impl1: DefId, impl2: DefId) {
 
-        if impl2.krate == ast::LOCAL_CRATE {
+        if impl2.is_local() {
             span_note!(self.tcx.sess, self.span_of_impl(impl2),
                        "note conflicting implementation here");
         } else {
@@ -164,34 +163,34 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
         }
     }
 
-    fn span_of_impl(&self, impl_did: ast::DefId) -> Span {
-        assert_eq!(impl_did.krate, ast::LOCAL_CRATE);
+    fn span_of_impl(&self, impl_did: DefId) -> Span {
+        assert_eq!(impl_did.krate, LOCAL_CRATE);
         self.tcx.map.span(impl_did.node)
     }
 }
 
 
 impl<'cx, 'tcx,'v> visit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
-    fn visit_item(&mut self, item: &'v ast::Item) {
+    fn visit_item(&mut self, item: &'v hir::Item) {
         match item.node {
-            ast::ItemDefaultImpl(_, _) => {
+            hir::ItemDefaultImpl(_, _) => {
                 // look for another default impl; note that due to the
                 // general orphan/coherence rules, it must always be
                 // in this crate.
-                let impl_def_id = ast_util::local_def(item.id);
+                let impl_def_id = DefId::local(item.id);
                 let trait_ref = self.tcx.impl_trait_ref(impl_def_id).unwrap();
                 let prev_default_impl = self.default_impls.insert(trait_ref.def_id, item.id);
                 match prev_default_impl {
                     Some(prev_id) => {
                         self.report_overlap_error(trait_ref.def_id,
                                                   impl_def_id,
-                                                  ast_util::local_def(prev_id));
+                                                  DefId::local(prev_id));
                     }
                     None => { }
                 }
             }
-            ast::ItemImpl(_, _, _, Some(_), ref self_ty, _) => {
-                let impl_def_id = ast_util::local_def(item.id);
+            hir::ItemImpl(_, _, _, Some(_), ref self_ty, _) => {
+                let impl_def_id = DefId::local(item.id);
                 let trait_ref = self.tcx.impl_trait_ref(impl_def_id).unwrap();
                 let trait_def_id = trait_ref.def_id;
                 match trait_ref.self_ty().sty {
@@ -200,10 +199,13 @@ impl<'cx, 'tcx,'v> visit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
                         // if Trait1 is a supertrait of Trait2 or Trait2 is not object safe.
 
                         if !traits::is_object_safe(self.tcx, data.principal_def_id()) {
-                            // this just means the self-ty is illegal,
-                            // and probably this error should have
-                            // been reported elsewhere, but I'm trying to avoid
-                            // giving a misleading message below.
+                            // FIXME(#27579). This just means the
+                            // self-ty is illegal; WF will report this
+                            // error. But it will do so as a warning
+                            // for a release or two.  For backwards
+                            // compat reasons, then, we continue to
+                            // report it here so that things which
+                            // were errors remain errors.
                             span_err!(self.tcx.sess, self_ty.span, E0372,
                                       "the trait `{}` cannot be made into an object",
                                       self.tcx.item_path_str(data.principal_def_id()));

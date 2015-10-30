@@ -13,8 +13,8 @@ as standard libraries, tools and documentation for Rust.
 
 Read ["Installing Rust"] from [The Book].
 
-["Installing Rust"]: http://doc.rust-lang.org/book/installing-rust.html
-[The Book]: http://doc.rust-lang.org/book/index.html
+["Installing Rust"]: https://doc.rust-lang.org/book/installing-rust.html
+[The Book]: https://doc.rust-lang.org/book/index.html
 
 ## Building from Source
 
@@ -65,6 +65,9 @@ Read ["Installing Rust"] from [The Book].
    tools.
 
    ```sh
+   # Update package mirrors (may be needed if you have a fresh install of MSYS2)
+   $ pacman -Sy pacman-mirrors
+   
    # Choose one based on platform:
    $ pacman -S mingw-w64-i686-toolchain
    $ pacman -S mingw-w64-x86_64-toolchain
@@ -81,6 +84,28 @@ Read ["Installing Rust"] from [The Book].
    $ ./configure
    $ make && make install
    ```
+
+## Building Documentation
+
+If you’d like to build the documentation, it’s almost the same:
+
+```sh
+./configure
+$ make docs
+```
+
+Building the documentation requires building the compiler, so the above
+details will apply. Once you have the compiler built, you can
+
+```sh
+$ make docs NO_REBUILD=1 
+```
+
+To make sure you don’t re-build the compiler because you made a change
+to some documentation.
+
+The generated documentation will appear in a top-level `doc` directory,
+created by the `make` rule.
 
 ## Notes
 
@@ -117,7 +142,7 @@ The Rust community congregates in a few places:
 
 [Stack Overflow]: http://stackoverflow.com/questions/tagged/rust
 [/r/rust]: http://reddit.com/r/rust
-[users.rust-lang.org]: http://users.rust-lang.org/
+[users.rust-lang.org]: https://users.rust-lang.org/
 
 ## Contributing
 

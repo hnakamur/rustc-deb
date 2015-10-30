@@ -8,17 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use middle::subst::Substs;
+use middle::def_id::DefId;
 use middle::infer::InferCtxt;
+use middle::subst::Substs;
 use middle::ty::{self, Ty, ToPredicate, ToPolyTraitRef};
-use std::fmt;
-use syntax::ast;
 use syntax::codemap::Span;
 use util::common::ErrorReported;
 use util::nodemap::FnvHashSet;
 
-use super::{Obligation, ObligationCause, PredicateObligation,
-            VtableImpl, VtableParam, VtableImplData, VtableDefaultImplData};
+use super::{Obligation, ObligationCause, PredicateObligation};
 
 struct PredicateSet<'a,'tcx:'a> {
     tcx: &'a ty::ctxt<'tcx>,
@@ -56,6 +54,12 @@ impl<'a,'tcx> PredicateSet<'a,'tcx> {
 
             ty::Predicate::Projection(ref data) =>
                 ty::Predicate::Projection(self.tcx.anonymize_late_bound_regions(data)),
+
+            ty::Predicate::WellFormed(data) =>
+                ty::Predicate::WellFormed(data),
+
+            ty::Predicate::ObjectSafe(data) =>
+                ty::Predicate::ObjectSafe(data),
         };
         self.set.insert(normalized_pred)
     }
@@ -136,6 +140,14 @@ impl<'cx, 'tcx> Elaborator<'cx, 'tcx> {
 
                 self.stack.extend(predicates);
             }
+            ty::Predicate::WellFormed(..) => {
+                // Currently, we do not elaborate WF predicates,
+                // although we easily could.
+            }
+            ty::Predicate::ObjectSafe(..) => {
+                // Currently, we do not elaborate object-safe
+                // predicates.
+            }
             ty::Predicate::Equate(..) => {
                 // Currently, we do not "elaborate" predicates like
                 // `X == Y`, though conceivably we might. For example,
@@ -212,12 +224,12 @@ pub fn transitive_bounds<'cx, 'tcx>(tcx: &'cx ty::ctxt<'tcx>,
 
 pub struct SupertraitDefIds<'cx, 'tcx:'cx> {
     tcx: &'cx ty::ctxt<'tcx>,
-    stack: Vec<ast::DefId>,
-    visited: FnvHashSet<ast::DefId>,
+    stack: Vec<DefId>,
+    visited: FnvHashSet<DefId>,
 }
 
 pub fn supertrait_def_ids<'cx, 'tcx>(tcx: &'cx ty::ctxt<'tcx>,
-                                     trait_def_id: ast::DefId)
+                                     trait_def_id: DefId)
                                      -> SupertraitDefIds<'cx, 'tcx>
 {
     SupertraitDefIds {
@@ -228,9 +240,9 @@ pub fn supertrait_def_ids<'cx, 'tcx>(tcx: &'cx ty::ctxt<'tcx>,
 }
 
 impl<'cx, 'tcx> Iterator for SupertraitDefIds<'cx, 'tcx> {
-    type Item = ast::DefId;
+    type Item = DefId;
 
-    fn next(&mut self) -> Option<ast::DefId> {
+    fn next(&mut self) -> Option<DefId> {
         let def_id = match self.stack.pop() {
             Some(def_id) => def_id,
             None => { return None; }
@@ -293,7 +305,7 @@ impl<'tcx,I:Iterator<Item=ty::Predicate<'tcx>>> Iterator for FilterToTraits<I> {
 // variables.
 pub fn fresh_type_vars_for_impl<'a, 'tcx>(infcx: &InferCtxt<'a, 'tcx>,
                                           span: Span,
-                                          impl_def_id: ast::DefId)
+                                          impl_def_id: DefId)
                                           -> Substs<'tcx>
 {
     let tcx = infcx.tcx;
@@ -354,7 +366,7 @@ pub fn predicate_for_trait_ref<'tcx>(
 pub fn predicate_for_trait_def<'tcx>(
     tcx: &ty::ctxt<'tcx>,
     cause: ObligationCause<'tcx>,
-    trait_def_id: ast::DefId,
+    trait_def_id: DefId,
     recursion_depth: usize,
     param_ty: Ty<'tcx>,
     ty_params: Vec<Ty<'tcx>>)
@@ -384,7 +396,7 @@ pub fn predicate_for_builtin_bound<'tcx>(
 /// supertrait.
 pub fn upcast<'tcx>(tcx: &ty::ctxt<'tcx>,
                     source_trait_ref: ty::PolyTraitRef<'tcx>,
-                    target_trait_def_id: ast::DefId)
+                    target_trait_def_id: DefId)
                     -> Vec<ty::PolyTraitRef<'tcx>>
 {
     if source_trait_ref.def_id() == target_trait_def_id {
@@ -418,7 +430,7 @@ pub fn count_own_vtable_entries<'tcx>(tcx: &ty::ctxt<'tcx>,
 /// `object.upcast_trait_ref`) within the vtable for `object`.
 pub fn get_vtable_index_of_object_method<'tcx>(tcx: &ty::ctxt<'tcx>,
                                                object: &super::VtableObjectData<'tcx>,
-                                               method_def_id: ast::DefId) -> usize {
+                                               method_def_id: DefId) -> usize {
     // Count number of methods preceding the one we are selecting and
     // add them to the total offset.
     // Skip over associated types and constants.
@@ -446,7 +458,7 @@ pub enum TupleArgumentsFlag { Yes, No }
 
 pub fn closure_trait_ref_and_return_type<'tcx>(
     tcx: &ty::ctxt<'tcx>,
-    fn_trait_def_id: ast::DefId,
+    fn_trait_def_id: DefId,
     self_ty: Ty<'tcx>,
     sig: &ty::PolyFnSig<'tcx>,
     tuple_arguments: TupleArgumentsFlag)
@@ -462,103 +474,4 @@ pub fn closure_trait_ref_and_return_type<'tcx>(
         substs: tcx.mk_substs(trait_substs),
     };
     ty::Binder((trait_ref, sig.0.output.unwrap_or(tcx.mk_nil())))
-}
-
-impl<'tcx,O:fmt::Debug> fmt::Debug for super::Obligation<'tcx, O> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Obligation(predicate={:?},depth={})",
-               self.predicate,
-               self.recursion_depth)
-    }
-}
-
-impl<'tcx, N:fmt::Debug> fmt::Debug for super::Vtable<'tcx, N> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            super::VtableImpl(ref v) =>
-                write!(f, "{:?}", v),
-
-            super::VtableDefaultImpl(ref t) =>
-                write!(f, "{:?}", t),
-
-            super::VtableClosure(ref d) =>
-                write!(f, "{:?}", d),
-
-            super::VtableFnPointer(ref d) =>
-                write!(f, "VtableFnPointer({:?})", d),
-
-            super::VtableObject(ref d) =>
-                write!(f, "{:?}", d),
-
-            super::VtableParam(ref n) =>
-                write!(f, "VtableParam({:?})", n),
-
-            super::VtableBuiltin(ref d) =>
-                write!(f, "{:?}", d)
-        }
-    }
-}
-
-impl<'tcx, N:fmt::Debug> fmt::Debug for super::VtableImplData<'tcx, N> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "VtableImpl(impl_def_id={:?}, substs={:?}, nested={:?})",
-               self.impl_def_id,
-               self.substs,
-               self.nested)
-    }
-}
-
-impl<'tcx, N:fmt::Debug> fmt::Debug for super::VtableClosureData<'tcx, N> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "VtableClosure(closure_def_id={:?}, substs={:?}, nested={:?})",
-               self.closure_def_id,
-               self.substs,
-               self.nested)
-    }
-}
-
-impl<'tcx, N:fmt::Debug> fmt::Debug for super::VtableBuiltinData<N> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "VtableBuiltin(nested={:?})", self.nested)
-    }
-}
-
-impl<'tcx, N:fmt::Debug> fmt::Debug for super::VtableDefaultImplData<N> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "VtableDefaultImplData(trait_def_id={:?}, nested={:?})",
-               self.trait_def_id,
-               self.nested)
-    }
-}
-
-impl<'tcx> fmt::Debug for super::VtableObjectData<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "VtableObject(upcast={:?}, vtable_base={})",
-               self.upcast_trait_ref,
-               self.vtable_base)
-    }
-}
-
-impl<'tcx> fmt::Debug for super::FulfillmentError<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "FulfillmentError({:?},{:?})",
-               self.obligation,
-               self.code)
-    }
-}
-
-impl<'tcx> fmt::Debug for super::FulfillmentErrorCode<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            super::CodeSelectionError(ref e) => write!(f, "{:?}", e),
-            super::CodeProjectionError(ref e) => write!(f, "{:?}", e),
-            super::CodeAmbiguity => write!(f, "Ambiguity")
-        }
-    }
-}
-
-impl<'tcx> fmt::Debug for super::MismatchedProjectionTypes<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "MismatchedProjectionTypes({:?})", self.err)
-    }
 }

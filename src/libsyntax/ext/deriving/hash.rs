@@ -32,6 +32,7 @@ pub fn expand_deriving_hash(cx: &mut ExtCtxt,
         path: path,
         additional_bounds: Vec::new(),
         generics: LifetimeBounds::empty(),
+        is_unsafe: false,
         methods: vec!(
             MethodDef {
                 name: "hash",
@@ -63,12 +64,7 @@ fn hash_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substructure) 
     };
     let call_hash = |span, thing_expr| {
         let hash_path = {
-            let strs = vec![
-                cx.ident_of_std("core"),
-                cx.ident_of("hash"),
-                cx.ident_of("Hash"),
-                cx.ident_of("hash"),
-            ];
+            let strs = cx.std_path(&["hash", "Hash", "hash"]);
 
             cx.expr_path(cx.path_global(span, strs))
         };

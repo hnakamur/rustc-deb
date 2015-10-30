@@ -10,15 +10,18 @@
 
 use middle::ty;
 use middle::def;
+use middle::def_id::{DefId, LOCAL_CRATE};
 
 use std::env;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
-use rustc::ast_map::NodeItem;
+use rustc_front;
+use rustc::front::map::NodeItem;
+use rustc_front::hir;
 
-use syntax::{attr};
-use syntax::ast::{self, NodeId, DefId};
+use syntax::attr;
+use syntax::ast::{self, NodeId};
 use syntax::ast_util;
 use syntax::codemap::*;
 use syntax::parse::token::{self, keywords};
@@ -28,8 +31,8 @@ use syntax::print::pprust::ty_to_string;
 use self::span_utils::SpanUtils;
 
 
-mod span_utils;
-mod recorder;
+pub mod span_utils;
+pub mod recorder;
 
 mod dump_csv;
 
@@ -173,7 +176,7 @@ pub struct MethodCallData {
 
 
 impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
-    pub fn new(tcx: &'l ty::ctxt<'tcx>) -> SaveContext <'l, 'tcx> {
+    pub fn new(tcx: &'l ty::ctxt<'tcx>) -> SaveContext<'l, 'tcx> {
         let span_utils = SpanUtils::new(&tcx.sess);
         SaveContext::from_span_utils(tcx, span_utils)
     }
@@ -181,10 +184,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     pub fn from_span_utils(tcx: &'l ty::ctxt<'tcx>,
                            span_utils: SpanUtils<'l>)
                            -> SaveContext<'l, 'tcx> {
-        SaveContext {
-            tcx: tcx,
-            span_utils: span_utils,
-        }
+        SaveContext { tcx: tcx, span_utils: span_utils }
     }
 
     // List external crates used by the current crate.
@@ -265,7 +265,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     scope: self.enclosing_scope(item.id),
                     filename: filename,
                 })
-            },
+            }
             ast::ItemEnum(..) => {
                 let enum_name = format!("::{}", self.tcx.map.path_to_string(item.id));
                 let val = self.span_utils.snippet(item.span);
@@ -278,7 +278,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     qualname: enum_name,
                     scope: self.enclosing_scope(item.id),
                 })
-            },
+            }
             ast::ItemImpl(_, _, _, ref trait_ref, ref typ, _) => {
                 let mut type_data = None;
                 let sub_span;
@@ -294,7 +294,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                             scope: parent,
                             ref_id: id,
                         });
-                    },
+                    }
                     _ => {
                         // Less useful case, impl for a compound type.
                         let span = typ.span;
@@ -338,33 +338,30 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     value: "".to_owned(),
                     type_value: typ,
                 })
-            },
+            }
             _ => None,
         }
     }
 
     // FIXME would be nice to take a MethodItem here, but the ast provides both
     // trait and impl flavours, so the caller must do the disassembly.
-    pub fn get_method_data(&self,
-                           id: ast::NodeId,
-                           name: ast::Name,
-                           span: Span) -> FunctionData {
+    pub fn get_method_data(&self, id: ast::NodeId, name: ast::Name, span: Span) -> FunctionData {
         // The qualname for a method is the trait name or name of the struct in an impl in
         // which the method is declared in, followed by the method's name.
-        let qualname = match self.tcx.impl_of_method(ast_util::local_def(id)) {
+        let qualname = match self.tcx.impl_of_method(DefId::local(id)) {
             Some(impl_id) => match self.tcx.map.get(impl_id.node) {
                 NodeItem(item) => {
                     match item.node {
-                        ast::ItemImpl(_, _, _, _, ref ty, _) => {
+                        hir::ItemImpl(_, _, _, _, ref ty, _) => {
                             let mut result = String::from("<");
-                            result.push_str(&ty_to_string(&**ty));
+                            result.push_str(&rustc_front::print::pprust::ty_to_string(&**ty));
 
-                            match self.tcx.trait_of_item(ast_util::local_def(id)) {
+                            match self.tcx.trait_of_item(DefId::local(id)) {
                                 Some(def_id) => {
                                     result.push_str(" as ");
                                     result.push_str(
                                         &self.tcx.item_path_str(def_id));
-                                },
+                                }
                                 None => {}
                             }
                             result.push_str(">");
@@ -374,16 +371,16 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                             self.tcx.sess.span_bug(span,
                                 &format!("Container {} for method {} not an impl?",
                                          impl_id.node, id));
-                        },
+                        }
                     }
-                },
+                }
                 _ => {
                     self.tcx.sess.span_bug(span,
                         &format!("Container {} for method {} is not a node item {:?}",
                                  impl_id.node, id, self.tcx.map.get(impl_id.node)));
-                },
+                }
             },
-            None => match self.tcx.trait_of_item(ast_util::local_def(id)) {
+            None => match self.tcx.trait_of_item(DefId::local(id)) {
                 Some(def_id) => {
                     match self.tcx.map.get(def_id.node) {
                         NodeItem(_) => {
@@ -395,20 +392,20 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                                          def_id.node, id));
                         }
                     }
-                },
+                }
                 None => {
                     self.tcx.sess.span_bug(span,
                         &format!("Could not find container for method {}", id));
-                },
+                }
             },
         };
 
         let qualname = format!("{}::{}", qualname, name);
 
-        let decl_id = self.tcx.trait_item_of_item(ast_util::local_def(id))
+        let decl_id = self.tcx.trait_item_of_item(DefId::local(id))
             .and_then(|new_id| {
                 let def_id = new_id.def_id();
-                if def_id.node != 0 && def_id != ast_util::local_def(id) {
+                if def_id.node != 0 && def_id != DefId::local(id) {
                     Some(def_id)
                 } else {
                     None
@@ -445,25 +442,18 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     pub fn get_expr_data(&self, expr: &ast::Expr) -> Option<Data> {
         match expr.node {
             ast::ExprField(ref sub_ex, ident) => {
-                let ty = &self.tcx.expr_ty_adjusted(&sub_ex).sty;
+                let hir_node = self.tcx.map.expect_expr(sub_ex.id);
+                let ty = &self.tcx.expr_ty_adjusted(&hir_node).sty;
                 match *ty {
-                    ty::TyStruct(def_id, _) => {
-                        let fields = self.tcx.lookup_struct_fields(def_id);
-                        for f in &fields {
-                            if f.name == ident.node.name {
-                                let sub_span = self.span_utils.span_for_last_ident(expr.span);
-                                return Some(Data::VariableRefData(VariableRefData {
-                                    name: ident.node.to_string(),
-                                    span: sub_span.unwrap(),
-                                    scope: self.enclosing_scope(expr.id),
-                                    ref_id: f.id,
-                                }));
-                            }
-                        }
-
-                        self.tcx.sess.span_bug(expr.span,
-                                               &format!("Couldn't find field {} on {:?}",
-                                                        ident.node, ty))
+                    ty::TyStruct(def, _) => {
+                        let f = def.struct_variant().field_named(ident.node.name);
+                        let sub_span = self.span_utils.span_for_last_ident(expr.span);
+                        return Some(Data::VariableRefData(VariableRefData {
+                            name: ident.node.to_string(),
+                            span: sub_span.unwrap(),
+                            scope: self.enclosing_scope(expr.id),
+                            ref_id: f.did,
+                        }));
                     }
                     _ => {
                         debug!("Expected struct type, found {:?}", ty);
@@ -472,14 +462,15 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 }
             }
             ast::ExprStruct(ref path, _, _) => {
-                let ty = &self.tcx.expr_ty_adjusted(expr).sty;
+                let hir_node = self.tcx.map.expect_expr(expr.id);
+                let ty = &self.tcx.expr_ty_adjusted(hir_node).sty;
                 match *ty {
-                    ty::TyStruct(def_id, _) => {
+                    ty::TyStruct(def, _) => {
                         let sub_span = self.span_utils.span_for_last_ident(path.span);
                         Some(Data::TypeRefData(TypeRefData {
                             span: sub_span.unwrap(),
                             scope: self.enclosing_scope(expr.id),
-                            ref_id: def_id,
+                            ref_id: def.did,
                         }))
                     }
                     _ => {
@@ -495,7 +486,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 let method_id = self.tcx.tables.borrow().method_map[&method_call].def_id;
                 let (def_id, decl_id) = match self.tcx.impl_or_trait_item(method_id).container() {
                     ty::ImplContainer(_) => (Some(method_id), None),
-                    ty::TraitContainer(_) => (None, Some(method_id))
+                    ty::TraitContainer(_) => (None, Some(method_id)),
                 };
                 let sub_span = self.span_utils.sub_span_for_meth_name(expr.span);
                 let parent = self.enclosing_scope(expr.id);
@@ -516,10 +507,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
         }
     }
 
-    pub fn get_path_data(&self,
-                         id: NodeId,
-                         path: &ast::Path)
-                         -> Option<Data> {
+    pub fn get_path_data(&self, id: NodeId, path: &ast::Path) -> Option<Data> {
         let def_map = self.tcx.def_map.borrow();
         if !def_map.contains_key(&id) {
             self.tcx.sess.span_bug(path.span,
@@ -553,7 +541,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
             }
             def::DefMethod(decl_id) => {
                 let sub_span = self.span_utils.sub_span_for_meth_name(path.span);
-                let def_id = if decl_id.krate == ast::LOCAL_CRATE {
+                let def_id = if decl_id.is_local() {
                     let ti = self.tcx.impl_or_trait_item(decl_id);
                     match ti.container() {
                         ty::TraitContainer(def_id) => {
@@ -586,7 +574,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     ref_id: def_id,
                     decl_id: Some(decl_id),
                 }))
-            },
+            }
             def::DefFn(def_id, _) => {
                 Some(Data::FunctionCallData(FunctionCallData {
                     ref_id: def_id,
@@ -607,12 +595,12 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
 
     fn trait_method_has_body(&self, mr: &ty::ImplOrTraitItem) -> bool {
         let def_id = mr.def_id();
-        if def_id.krate != ast::LOCAL_CRATE {
+        if def_id.krate != LOCAL_CRATE {
             return false;
         }
 
         let trait_item = self.tcx.map.expect_trait_item(def_id.node);
-        if let ast::TraitItem_::MethodTraitItem(_, Some(_)) = trait_item.node {
+        if let hir::TraitItem_::MethodTraitItem(_, Some(_)) = trait_item.node {
             true
         } else {
             false
@@ -621,26 +609,18 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
 
     pub fn get_field_ref_data(&self,
                               field_ref: &ast::Field,
-                              struct_id: DefId,
+                              variant: ty::VariantDef,
                               parent: NodeId)
                               -> VariableRefData {
-        let fields = self.tcx.lookup_struct_fields(struct_id);
-        let field_name = field_ref.ident.node.to_string();
-        for f in &fields {
-            if f.name == field_ref.ident.node.name {
-                // We don't really need a sub-span here, but no harm done
-                let sub_span = self.span_utils.span_for_last_ident(field_ref.ident.span);
-                return VariableRefData {
-                    name: field_name,
-                    span: sub_span.unwrap(),
-                    scope: parent,
-                    ref_id: f.id,
-                };
-            }
+        let f = variant.field_named(field_ref.ident.node.name);
+        // We don't really need a sub-span here, but no harm done
+        let sub_span = self.span_utils.span_for_last_ident(field_ref.ident.span);
+        VariableRefData {
+            name: field_ref.ident.node.to_string(),
+            span: sub_span.unwrap(),
+            scope: parent,
+            ref_id: f.did,
         }
-
-        self.tcx.sess.span_bug(field_ref.span,
-                               &format!("Couldn't find field {}", field_name));
     }
 
     pub fn get_data_for_id(&self, _id: &NodeId) -> Data {
@@ -661,7 +641,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     }
 
     #[inline]
-    fn enclosing_scope(&self, id: NodeId) -> NodeId {
+    pub fn enclosing_scope(&self, id: NodeId) -> NodeId {
         self.tcx.map.get_enclosing_scope(id).unwrap_or(0)
     }
 }
@@ -674,9 +654,7 @@ struct PathCollector {
 
 impl PathCollector {
     fn new() -> PathCollector {
-        PathCollector {
-            collected_paths: vec![],
-        }
+        PathCollector { collected_paths: vec![] }
     }
 }
 
@@ -719,11 +697,10 @@ impl<'v> Visitor<'v> for PathCollector {
     }
 }
 
-#[allow(deprecated)]
 pub fn process_crate(tcx: &ty::ctxt,
+                     krate: &ast::Crate,
                      analysis: &ty::CrateAnalysis,
                      odir: Option<&Path>) {
-    let krate = tcx.map.krate();
     if generated_code(krate.span) {
         return;
     }
@@ -734,7 +711,7 @@ pub fn process_crate(tcx: &ty::ctxt,
         None => {
             info!("Could not find crate name, using 'unknown_crate'");
             String::from("unknown_crate")
-        },
+        }
     };
 
     info!("Dumping crate {}", cratename);
@@ -787,5 +764,5 @@ fn escape(s: String) -> String {
 // If the expression is a macro expansion or other generated code, run screaming
 // and don't index.
 pub fn generated_code(span: Span) -> bool {
-    span.expn_id != NO_EXPANSION || span  == DUMMY_SP
+    span.expn_id != NO_EXPANSION || span == DUMMY_SP
 }

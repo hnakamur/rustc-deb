@@ -9,10 +9,11 @@
 // except according to those terms.
 
 
+use middle::def_id::DefId;
 use middle::subst::{self, Subst};
 use middle::ty::{BoundRegion, BrAnon, BrNamed};
 use middle::ty::{ReEarlyBound, BrFresh, ctxt};
-use middle::ty::{ReFree, ReScope, ReInfer, ReStatic, Region, ReEmpty};
+use middle::ty::{ReFree, ReScope, ReStatic, Region, ReEmpty};
 use middle::ty::{ReSkolemized, ReVar, BrEnv};
 use middle::ty::{TyBool, TyChar, TyStruct, TyEnum};
 use middle::ty::{TyError, TyStr, TyArray, TySlice, TyFloat, TyBareFn};
@@ -20,12 +21,13 @@ use middle::ty::{TyParam, TyRawPtr, TyRef, TyTuple};
 use middle::ty::TyClosure;
 use middle::ty::{TyBox, TyTrait, TyInt, TyUint, TyInfer};
 use middle::ty::{self, TypeAndMut, Ty, HasTypeFlags};
-use middle::ty_fold::{self, TypeFoldable};
+use middle::ty::fold::TypeFoldable;
 
 use std::fmt;
 use syntax::abi;
 use syntax::parse::token;
-use syntax::{ast, ast_util};
+use syntax::ast::DUMMY_NODE_ID;
+use rustc_front::hir as ast;
 
 pub fn verbose() -> bool {
     ty::tls::with(|tcx| tcx.sess.verbose())
@@ -64,7 +66,7 @@ fn fn_sig(f: &mut fmt::Formatter,
 
 fn parameterized<GG>(f: &mut fmt::Formatter,
                      substs: &subst::Substs,
-                     did: ast::DefId,
+                     did: DefId,
                      projections: &[ty::ProjectionPredicate],
                      get_generics: GG)
                      -> fmt::Result
@@ -217,7 +219,7 @@ fn in_binder<'tcx, T, U>(f: &mut fmt::Formatter,
         }
     };
 
-    let new_value = ty_fold::replace_late_bound_regions(tcx, &value, |br| {
+    let new_value = tcx.replace_late_bound_regions(&value, |br| {
         let _ = start_or_continue(f, "for<", ", ");
         ty::ReLateBound(ty::DebruijnIndex::new(1), match br {
             ty::BrNamed(_, name) => {
@@ -229,7 +231,7 @@ fn in_binder<'tcx, T, U>(f: &mut fmt::Formatter,
             ty::BrEnv => {
                 let name = token::intern("'r");
                 let _ = write!(f, "{}", name);
-                ty::BrNamed(ast_util::local_def(ast::DUMMY_NODE_ID), name)
+                ty::BrNamed(DefId::local(DUMMY_NODE_ID), name)
             }
         })
     }).0;
@@ -253,7 +255,7 @@ fn in_binder<'tcx, T, U>(f: &mut fmt::Formatter,
 struct TraitAndProjections<'tcx>(ty::TraitRef<'tcx>, Vec<ty::ProjectionPredicate<'tcx>>);
 
 impl<'tcx> TypeFoldable<'tcx> for TraitAndProjections<'tcx> {
-    fn fold_with<F:ty_fold::TypeFolder<'tcx>>(&self, folder: &mut F)
+    fn fold_with<F:ty::fold::TypeFolder<'tcx>>(&self, folder: &mut F)
                                               -> TraitAndProjections<'tcx> {
         TraitAndProjections(self.0.fold_with(folder), self.1.fold_with(folder))
     }
@@ -306,8 +308,20 @@ impl<'tcx> fmt::Display for ty::TraitTy<'tcx> {
 
 impl<'tcx> fmt::Debug for ty::TypeParameterDef<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "TypeParameterDef({:?}, {:?}/{})",
-               self.def_id, self.space, self.index)
+        write!(f, "TypeParameterDef({}, {}:{}, {:?}/{})",
+               self.name,
+               self.def_id.krate, self.def_id.node,
+               self.space, self.index)
+    }
+}
+
+impl fmt::Debug for ty::RegionParameterDef {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RegionParameterDef({}, {}:{}, {:?}/{}, {:?})",
+               self.name,
+               self.def_id.krate, self.def_id.node,
+               self.space, self.index,
+               self.bounds)
     }
 }
 
@@ -366,6 +380,61 @@ impl<'tcx> fmt::Debug for ty::TraitDef<'tcx> {
     }
 }
 
+impl<'tcx, 'container> fmt::Debug for ty::AdtDefData<'tcx, 'container> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        ty::tls::with(|tcx| {
+            write!(f, "{}", tcx.item_path_str(self.did))
+        })
+    }
+}
+
+impl<'tcx> fmt::Debug for ty::adjustment::AutoAdjustment<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ty::adjustment::AdjustReifyFnPointer => {
+                write!(f, "AdjustReifyFnPointer")
+            }
+            ty::adjustment::AdjustUnsafeFnPointer => {
+                write!(f, "AdjustUnsafeFnPointer")
+            }
+            ty::adjustment::AdjustDerefRef(ref data) => {
+                write!(f, "{:?}", data)
+            }
+        }
+    }
+}
+
+impl<'tcx> fmt::Debug for ty::adjustment::AutoDerefRef<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "AutoDerefRef({}, unsize={:?}, {:?})",
+               self.autoderefs, self.unsize, self.autoref)
+    }
+}
+
+impl<'tcx> fmt::Debug for ty::TraitTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "TraitTy({:?},{:?})",
+               self.principal,
+               self.bounds)
+    }
+}
+
+impl<'tcx> fmt::Debug for ty::Predicate<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ty::Predicate::Trait(ref a) => write!(f, "{:?}", a),
+            ty::Predicate::Equate(ref pair) => write!(f, "{:?}", pair),
+            ty::Predicate::RegionOutlives(ref pair) => write!(f, "{:?}", pair),
+            ty::Predicate::TypeOutlives(ref pair) => write!(f, "{:?}", pair),
+            ty::Predicate::Projection(ref pair) => write!(f, "{:?}", pair),
+            ty::Predicate::WellFormed(ty) => write!(f, "WF({:?})", ty),
+            ty::Predicate::ObjectSafe(trait_def_id) => {
+                write!(f, "ObjectSafe({:?})", trait_def_id)
+            }
+        }
+    }
+}
+
 impl fmt::Display for ty::BoundRegion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if verbose() {
@@ -375,6 +444,19 @@ impl fmt::Display for ty::BoundRegion {
         match *self {
             BrNamed(_, name) => write!(f, "{}", name),
             BrAnon(_) | BrFresh(_) | BrEnv => Ok(())
+        }
+    }
+}
+
+impl fmt::Debug for ty::BoundRegion {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            BrAnon(n) => write!(f, "BrAnon({:?})", n),
+            BrFresh(n) => write!(f, "BrFresh({:?})", n),
+            BrNamed(did, name) => {
+                write!(f, "BrNamed({}:{}, {:?})", did.krate, did.node, name)
+            }
+            BrEnv => "BrEnv".fmt(f),
         }
     }
 }
@@ -404,15 +486,54 @@ impl fmt::Debug for ty::Region {
 
             ty::ReStatic => write!(f, "ReStatic"),
 
-            ty::ReInfer(ReVar(ref vid)) => {
+            ty::ReVar(ref vid) => {
                 write!(f, "{:?}", vid)
             }
 
-            ty::ReInfer(ReSkolemized(id, ref bound_region)) => {
-                write!(f, "ReSkolemized({}, {:?})", id, bound_region)
+            ty::ReSkolemized(id, ref bound_region) => {
+                write!(f, "ReSkolemized({}, {:?})", id.index, bound_region)
             }
 
             ty::ReEmpty => write!(f, "ReEmpty")
+        }
+    }
+}
+
+impl<'tcx> fmt::Debug for ty::ClosureTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ClosureTy({},{:?},{})",
+               self.unsafety,
+               self.sig,
+               self.abi)
+    }
+}
+
+impl<'tcx> fmt::Debug for ty::ClosureUpvar<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ClosureUpvar({:?},{:?})",
+               self.def,
+               self.ty)
+    }
+}
+
+impl<'a, 'tcx> fmt::Debug for ty::ParameterEnvironment<'a, 'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ParameterEnvironment(\
+            free_substs={:?}, \
+            implicit_region_bound={:?}, \
+            caller_bounds={:?})",
+            self.free_substs,
+            self.implicit_region_bound,
+            self.caller_bounds)
+    }
+}
+
+impl<'tcx> fmt::Debug for ty::ObjectLifetimeDefault {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ty::ObjectLifetimeDefault::Ambiguous => write!(f, "Ambiguous"),
+            ty::ObjectLifetimeDefault::BaseDefault => write!(f, "BaseDefault"),
+            ty::ObjectLifetimeDefault::Specific(ref r) => write!(f, "{:?}", r),
         }
     }
 }
@@ -433,11 +554,11 @@ impl fmt::Display for ty::Region {
             }
             ty::ReLateBound(_, br) |
             ty::ReFree(ty::FreeRegion { bound_region: br, .. }) |
-            ty::ReInfer(ReSkolemized(_, br)) => {
+            ty::ReSkolemized(_, br) => {
                 write!(f, "{}", br)
             }
             ty::ReScope(_) |
-            ty::ReInfer(ReVar(_)) => Ok(()),
+            ty::ReVar(_) => Ok(()),
             ty::ReStatic => write!(f, "'static"),
             ty::ReEmpty => write!(f, "'<empty>"),
         }
@@ -448,6 +569,17 @@ impl fmt::Debug for ty::FreeRegion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ReFree({:?}, {:?})",
                self.scope, self.bound_region)
+    }
+}
+
+impl fmt::Debug for ty::Variance {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match *self {
+            ty::Covariant => "+",
+            ty::Contravariant => "-",
+            ty::Invariant => "o",
+            ty::Bivariant => "*",
+        })
     }
 }
 
@@ -535,6 +667,58 @@ impl fmt::Display for ty::BuiltinBounds {
     }
 }
 
+impl fmt::Debug for ty::TyVid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "_#{}t", self.index)
+    }
+}
+
+impl fmt::Debug for ty::IntVid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "_#{}i", self.index)
+    }
+}
+
+impl fmt::Debug for ty::FloatVid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "_#{}f", self.index)
+    }
+}
+
+impl fmt::Debug for ty::RegionVid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "'_#{}r", self.index)
+    }
+}
+
+impl<'tcx> fmt::Debug for ty::FnSig<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({:?}; variadic: {})->{:?}", self.inputs, self.variadic, self.output)
+    }
+}
+
+impl fmt::Debug for ty::InferTy {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ty::TyVar(ref v) => v.fmt(f),
+            ty::IntVar(ref v) => v.fmt(f),
+            ty::FloatVar(ref v) => v.fmt(f),
+            ty::FreshTy(v) => write!(f, "FreshTy({:?})", v),
+            ty::FreshIntTy(v) => write!(f, "FreshIntTy({:?})", v),
+            ty::FreshFloatTy(v) => write!(f, "FreshFloatTy({:?})", v)
+        }
+    }
+}
+
+impl fmt::Debug for ty::IntVarValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ty::IntType(ref v) => v.fmt(f),
+            ty::UintType(ref v) => v.fmt(f),
+        }
+    }
+}
+
 // The generic impl doesn't work yet because projections are not
 // normalized under HRTB.
 /*impl<T> fmt::Display for ty::Binder<T>
@@ -589,14 +773,55 @@ impl<'tcx> fmt::Display for ty::TraitRef<'tcx> {
     }
 }
 
+pub fn int_ty_to_string(t: ast::IntTy, val: Option<i64>) -> String {
+    let s = match t {
+        ast::TyIs => "isize",
+        ast::TyI8 => "i8",
+        ast::TyI16 => "i16",
+        ast::TyI32 => "i32",
+        ast::TyI64 => "i64"
+    };
+
+    match val {
+        // cast to a u64 so we can correctly print INT64_MIN. All integral types
+        // are parsed as u64, so we wouldn't want to print an extra negative
+        // sign.
+        Some(n) => format!("{}{}", n as u64, s),
+        None => s.to_string()
+    }
+}
+
+pub fn uint_ty_to_string(t: ast::UintTy, val: Option<u64>) -> String {
+    let s = match t {
+        ast::TyUs => "usize",
+        ast::TyU8 => "u8",
+        ast::TyU16 => "u16",
+        ast::TyU32 => "u32",
+        ast::TyU64 => "u64"
+    };
+
+    match val {
+        Some(n) => format!("{}{}", n, s),
+        None => s.to_string()
+    }
+}
+
+
+pub fn float_ty_to_string(t: ast::FloatTy) -> String {
+    match t {
+        ast::TyF32 => "f32".to_string(),
+        ast::TyF64 => "f64".to_string(),
+    }
+}
+
 impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             TyBool => write!(f, "bool"),
             TyChar => write!(f, "char"),
-            TyInt(t) => write!(f, "{}", ast_util::int_ty_to_string(t, None)),
-            TyUint(t) => write!(f, "{}", ast_util::uint_ty_to_string(t, None)),
-            TyFloat(t) => write!(f, "{}", ast_util::float_ty_to_string(t)),
+            TyInt(t) => write!(f, "{}", int_ty_to_string(t, None)),
+            TyUint(t) => write!(f, "{}", uint_ty_to_string(t, None)),
+            TyFloat(t) => write!(f, "{}", float_ty_to_string(t)),
             TyBox(typ) => write!(f, "Box<{}>",  typ),
             TyRawPtr(ref tm) => {
                 write!(f, "*{} {}", match tm.mutbl {
@@ -648,14 +873,14 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
             TyInfer(infer_ty) => write!(f, "{}", infer_ty),
             TyError => write!(f, "[type error]"),
             TyParam(ref param_ty) => write!(f, "{}", param_ty),
-            TyEnum(did, substs) | TyStruct(did, substs) => {
+            TyEnum(def, substs) | TyStruct(def, substs) => {
                 ty::tls::with(|tcx| {
-                    if did.krate == ast::LOCAL_CRATE &&
-                          !tcx.tcache.borrow().contains_key(&did) {
-                        write!(f, "{}<..>", tcx.item_path_str(did))
+                    if def.did.is_local() &&
+                          !tcx.tcache.borrow().contains_key(&def.did) {
+                        write!(f, "{}<..>", tcx.item_path_str(def.did))
                     } else {
-                        parameterized(f, substs, did, &[],
-                                      |tcx| tcx.lookup_item_type(did).generics)
+                        parameterized(f, substs, def.did, &[],
+                                      |tcx| tcx.lookup_item_type(def.did).generics)
                     }
                 })
             }
@@ -665,7 +890,7 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
             TyClosure(ref did, ref substs) => ty::tls::with(|tcx| {
                 try!(write!(f, "[closure"));
 
-                if did.krate == ast::LOCAL_CRATE {
+                if did.is_local() {
                     try!(write!(f, "@{:?}", tcx.map.span(did.node)));
                     let mut sep = " ";
                     try!(tcx.with_freevars(did.node, |freevars| {
@@ -823,6 +1048,11 @@ impl<'tcx> fmt::Display for ty::Predicate<'tcx> {
             ty::Predicate::RegionOutlives(ref predicate) => write!(f, "{}", predicate),
             ty::Predicate::TypeOutlives(ref predicate) => write!(f, "{}", predicate),
             ty::Predicate::Projection(ref predicate) => write!(f, "{}", predicate),
+            ty::Predicate::WellFormed(ty) => write!(f, "{} well-formed", ty),
+            ty::Predicate::ObjectSafe(trait_def_id) =>
+                ty::tls::with(|tcx| {
+                    write!(f, "the trait `{}` is object-safe", tcx.item_path_str(trait_def_id))
+                }),
         }
     }
 }

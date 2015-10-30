@@ -16,6 +16,7 @@ use libc;
 use libc::{c_uint, c_ulong};
 use libc::{DWORD, BOOL, BOOLEAN, ERROR_CALL_NOT_IMPLEMENTED, LPVOID, HANDLE};
 use libc::{LPCWSTR, LONG};
+use ptr;
 
 pub use self::GET_FILEEX_INFO_LEVELS::*;
 pub use self::FILE_INFO_BY_HANDLE_CLASS::*;
@@ -77,6 +78,10 @@ pub const PROGRESS_QUIET: libc::DWORD = 3;
 
 pub const TOKEN_ADJUST_PRIVILEGES: libc::DWORD = 0x0020;
 pub const SE_PRIVILEGE_ENABLED: libc::DWORD = 2;
+
+pub const EXCEPTION_CONTINUE_SEARCH: LONG = 0;
+pub const EXCEPTION_MAXIMUM_PARAMETERS: usize = 15;
+pub const EXCEPTION_STACK_OVERFLOW: DWORD = 0xc00000fd;
 
 #[repr(C)]
 #[cfg(target_arch = "x86")]
@@ -290,9 +295,9 @@ pub struct CRITICAL_SECTION {
 }
 
 pub const CONDITION_VARIABLE_INIT: CONDITION_VARIABLE = CONDITION_VARIABLE {
-    ptr: 0 as *mut _,
+    ptr: ptr::null_mut(),
 };
-pub const SRWLOCK_INIT: SRWLOCK = SRWLOCK { ptr: 0 as *mut _ };
+pub const SRWLOCK_INIT: SRWLOCK = SRWLOCK { ptr: ptr::null_mut() };
 
 #[repr(C)]
 pub struct LUID {
@@ -327,6 +332,24 @@ pub struct REPARSE_MOUNTPOINT_DATA_BUFFER {
     pub ReparseTarget: libc::WCHAR,
 }
 
+#[repr(C)]
+pub struct EXCEPTION_RECORD {
+    pub ExceptionCode: DWORD,
+    pub ExceptionFlags: DWORD,
+    pub ExceptionRecord: *mut EXCEPTION_RECORD,
+    pub ExceptionAddress: LPVOID,
+    pub NumberParameters: DWORD,
+    pub ExceptionInformation: [LPVOID; EXCEPTION_MAXIMUM_PARAMETERS]
+}
+
+#[repr(C)]
+pub struct EXCEPTION_POINTERS {
+    pub ExceptionRecord: *mut EXCEPTION_RECORD,
+    pub ContextRecord: LPVOID
+}
+
+pub type PVECTORED_EXCEPTION_HANDLER = extern "system"
+        fn(ExceptionInfo: *mut EXCEPTION_POINTERS) -> LONG;
 
 #[link(name = "ws2_32")]
 #[link(name = "userenv")]
@@ -487,6 +510,9 @@ extern "system" {
                                  BufferLength: libc::DWORD,
                                  PreviousState: PTOKEN_PRIVILEGES,
                                  ReturnLength: *mut libc::DWORD) -> libc::BOOL;
+    pub fn AddVectoredExceptionHandler(FirstHandler: ULONG,
+                                       VectoredHandler: PVECTORED_EXCEPTION_HANDLER)
+                                       -> LPVOID;
 }
 
 // Functions that aren't available on Windows XP, but we still use them and just

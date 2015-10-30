@@ -13,8 +13,8 @@
 
 #![crate_type = "lib"]
 #![feature(lang_items)]
-#![feature(no_std)]
-#![no_std]
+#![feature(no_core)]
+#![no_core]
 
 #[lang="sized"]
 pub trait Sized {
@@ -32,5 +32,4 @@ fn ice<A>(a: A) {
     let r = loop {};
     r = r + a;
     //~^ ERROR not implemented
-    //~| ERROR not implemented
 }

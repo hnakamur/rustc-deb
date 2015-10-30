@@ -26,23 +26,29 @@ use llvm;
 use llvm::{ModuleRef, ContextRef, ValueRef};
 use llvm::debuginfo::{DIFile, DIType, DIScope, DIBuilderRef, DISubprogram, DIArray,
                       DIDescriptor, FlagPrototyped};
+use middle::def_id::DefId;
+use middle::infer::normalize_associated_type;
 use middle::subst::{self, Substs};
-use rustc::ast_map;
+use rustc_front;
+use rustc_front::hir;
+use rustc_front::attr::IntType;
+
 use trans::common::{NodeIdAndSpan, CrateContext, FunctionContext, Block};
 use trans;
 use trans::{monomorphize, type_of};
 use middle::ty::{self, Ty};
 use session::config::{self, FullDebugInfo, LimitedDebugInfo, NoDebugInfo};
 use util::nodemap::{NodeMap, FnvHashMap, FnvHashSet};
+use rustc::front::map as hir_map;
 
 use libc::c_uint;
 use std::cell::{Cell, RefCell};
 use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
+
 use syntax::codemap::{Span, Pos};
-use syntax::{abi, ast, codemap, ast_util};
-use syntax::attr::IntType;
+use syntax::{abi, ast, codemap};
 use syntax::parse::token::{self, special_idents};
 
 pub mod gdb;
@@ -75,7 +81,7 @@ pub struct CrateDebugContext<'tcx> {
     builder: DIBuilderRef,
     current_debug_location: Cell<InternalDebugLocation>,
     created_files: RefCell<FnvHashMap<String, DIFile>>,
-    created_enum_disr_types: RefCell<FnvHashMap<(ast::DefId, IntType), DIType>>,
+    created_enum_disr_types: RefCell<FnvHashMap<(DefId, IntType), DIType>>,
 
     type_map: RefCell<TypeMap<'tcx>>,
     namespace_map: RefCell<FnvHashMap<Vec<ast::Name>, Rc<NamespaceTreeNode>>>,
@@ -224,18 +230,18 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         return FunctionDebugContext::FunctionWithoutDebugInfo;
     }
 
-    let empty_generics = ast_util::empty_generics();
+    let empty_generics = rustc_front::util::empty_generics();
 
     let fnitem = cx.tcx().map.get(fn_ast_id);
 
     let (name, fn_decl, generics, top_level_block, span, has_path) = match fnitem {
-        ast_map::NodeItem(ref item) => {
+        hir_map::NodeItem(ref item) => {
             if contains_nodebug_attribute(&item.attrs) {
                 return FunctionDebugContext::FunctionWithoutDebugInfo;
             }
 
             match item.node {
-                ast::ItemFn(ref fn_decl, _, _, _, ref generics, ref top_level_block) => {
+                hir::ItemFn(ref fn_decl, _, _, _, ref generics, ref top_level_block) => {
                     (item.ident.name, fn_decl, generics, top_level_block, item.span, true)
                 }
                 _ => {
@@ -244,9 +250,9 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 }
             }
         }
-        ast_map::NodeImplItem(impl_item) => {
+        hir_map::NodeImplItem(impl_item) => {
             match impl_item.node {
-                ast::MethodImplItem(ref sig, ref body) => {
+                hir::MethodImplItem(ref sig, ref body) => {
                     if contains_nodebug_attribute(&impl_item.attrs) {
                         return FunctionDebugContext::FunctionWithoutDebugInfo;
                     }
@@ -265,9 +271,9 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 }
             }
         }
-        ast_map::NodeExpr(ref expr) => {
+        hir_map::NodeExpr(ref expr) => {
             match expr.node {
-                ast::ExprClosure(_, ref fn_decl, ref top_level_block) => {
+                hir::ExprClosure(_, ref fn_decl, ref top_level_block) => {
                     let name = format!("fn{}", token::gensym("fn"));
                     let name = token::intern(&name[..]);
                     (name, fn_decl,
@@ -283,9 +289,9 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                         "create_function_debug_context: expected an expr_fn_block here")
             }
         }
-        ast_map::NodeTraitItem(trait_item) => {
+        hir_map::NodeTraitItem(trait_item) => {
             match trait_item.node {
-                ast::MethodTraitItem(ref sig, Some(ref body)) => {
+                hir::MethodTraitItem(ref sig, Some(ref body)) => {
                     if contains_nodebug_attribute(&trait_item.attrs) {
                         return FunctionDebugContext::FunctionWithoutDebugInfo;
                     }
@@ -305,9 +311,9 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 }
             }
         }
-        ast_map::NodeForeignItem(..) |
-        ast_map::NodeVariant(..) |
-        ast_map::NodeStructCtor(..) => {
+        hir_map::NodeForeignItem(..) |
+        hir_map::NodeVariant(..) |
+        hir_map::NodeStructCtor(..) => {
             return FunctionDebugContext::FunctionWithoutDebugInfo;
         }
         _ => cx.sess().bug(&format!("create_function_debug_context: \
@@ -340,12 +346,12 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                                       file_metadata,
                                                       &mut function_name);
 
-    // There is no ast_map::Path for ast::ExprClosure-type functions. For now,
+    // There is no hir_map::Path for hir::ExprClosure-type functions. For now,
     // just don't put them into a namespace. In the future this could be improved
-    // somehow (storing a path in the ast_map, or construct a path using the
+    // somehow (storing a path in the hir_map, or construct a path using the
     // enclosing function).
     let (linkage_name, containing_scope) = if has_path {
-        let namespace_node = namespace_for_item(cx, ast_util::local_def(fn_ast_id));
+        let namespace_node = namespace_for_item(cx, DefId::local(fn_ast_id));
         let linkage_name = namespace_node.mangled_name_of_contained_item(
             &function_name[..]);
         let containing_scope = namespace_node.scope;
@@ -451,14 +457,14 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     }
 
     fn get_template_parameters<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
-                                         generics: &ast::Generics,
+                                         generics: &hir::Generics,
                                          param_substs: &Substs<'tcx>,
                                          file_metadata: DIFile,
                                          name_to_append_suffix_to: &mut String)
                                          -> DIArray
     {
         let self_type = param_substs.self_ty();
-        let self_type = monomorphize::normalize_associated_type(cx.tcx(), &self_type);
+        let self_type = normalize_associated_type(cx.tcx(), &self_type);
 
         // Only true for static default methods:
         let has_self_type = self_type.is_some();
@@ -514,7 +520,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
         // Handle other generic parameters
         let actual_types = param_substs.types.get_slice(subst::FnSpace);
-        for (index, &ast::TyParam{ ident, .. }) in generics.ty_params.iter().enumerate() {
+        for (index, &hir::TyParam{ ident, .. }) in generics.ty_params.iter().enumerate() {
             let actual_type = actual_types[index];
             // Add actual type name to <...> clause of function name
             let actual_type_name = compute_debuginfo_type_name(cx,
@@ -645,7 +651,7 @@ pub trait ToDebugLoc {
     fn debug_loc(&self) -> DebugLoc;
 }
 
-impl ToDebugLoc for ast::Expr {
+impl ToDebugLoc for hir::Expr {
     fn debug_loc(&self) -> DebugLoc {
         DebugLoc::At(self.id, self.span)
     }

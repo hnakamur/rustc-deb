@@ -11,8 +11,6 @@
 //! A wrapper around another RNG that reseeds it after it
 //! generates a certain number of random bytes.
 
-use core::prelude::*;
-
 use {Rng, SeedableRng};
 
 /// How many bytes of entropy the underling RNG is allowed to generate

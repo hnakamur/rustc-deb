@@ -23,7 +23,6 @@ use ffi::{OsStr, OsString};
 use fmt;
 use io;
 use path::{Path, PathBuf};
-use sync::atomic::{AtomicIsize, Ordering};
 use sync::StaticMutex;
 use sys::os as os_imp;
 
@@ -175,6 +174,10 @@ impl Iterator for VarsOs {
 /// ```
 #[stable(feature = "env", since = "1.0.0")]
 pub fn var<K: AsRef<OsStr>>(key: K) -> Result<String, VarError> {
+    _var(key.as_ref())
+}
+
+fn _var(key: &OsStr) -> Result<String, VarError> {
     match var_os(key) {
         Some(s) => s.into_string().map_err(VarError::NotUnicode),
         None => Err(VarError::NotPresent)
@@ -197,8 +200,12 @@ pub fn var<K: AsRef<OsStr>>(key: K) -> Result<String, VarError> {
 /// ```
 #[stable(feature = "env", since = "1.0.0")]
 pub fn var_os<K: AsRef<OsStr>>(key: K) -> Option<OsString> {
+    _var_os(key.as_ref())
+}
+
+fn _var_os(key: &OsStr) -> Option<OsString> {
     let _g = ENV_LOCK.lock();
-    os_imp::getenv(key.as_ref())
+    os_imp::getenv(key)
 }
 
 /// Possible errors from the `env::var` method.
@@ -264,8 +271,12 @@ impl Error for VarError {
 /// ```
 #[stable(feature = "env", since = "1.0.0")]
 pub fn set_var<K: AsRef<OsStr>, V: AsRef<OsStr>>(k: K, v: V) {
+    _set_var(k.as_ref(), v.as_ref())
+}
+
+fn _set_var(k: &OsStr, v: &OsStr) {
     let _g = ENV_LOCK.lock();
-    os_imp::setenv(k.as_ref(), v.as_ref())
+    os_imp::setenv(k, v)
 }
 
 /// Removes an environment variable from the environment of the currently running process.
@@ -295,8 +306,12 @@ pub fn set_var<K: AsRef<OsStr>, V: AsRef<OsStr>>(k: K, v: V) {
 /// ```
 #[stable(feature = "env", since = "1.0.0")]
 pub fn remove_var<K: AsRef<OsStr>>(k: K) {
+    _remove_var(k.as_ref())
+}
+
+fn _remove_var(k: &OsStr) {
     let _g = ENV_LOCK.lock();
-    os_imp::unsetenv(k.as_ref())
+    os_imp::unsetenv(k)
 }
 
 /// An iterator over `Path` instances for parsing an environment variable
@@ -474,30 +489,6 @@ pub fn current_exe() -> io::Result<PathBuf> {
     os_imp::current_exe()
 }
 
-static EXIT_STATUS: AtomicIsize = AtomicIsize::new(0);
-
-/// Sets the process exit code
-///
-/// Sets the exit code returned by the process if all supervised threads
-/// terminate successfully (without panicking). If the current root thread panics
-/// and is supervised by the scheduler then any user-specified exit status is
-/// ignored and the process exits with the default panic status.
-///
-/// Note that this is not synchronized against modifications of other threads.
-#[unstable(feature = "exit_status", reason = "managing the exit status may change")]
-#[deprecated(since = "1.2.0", reason = "use process::exit instead")]
-pub fn set_exit_status(code: i32) {
-    EXIT_STATUS.store(code as isize, Ordering::SeqCst)
-}
-
-/// Fetches the process's current exit code. This defaults to 0 and can change
-/// by calling `set_exit_status`.
-#[unstable(feature = "exit_status", reason = "managing the exit status may change")]
-#[deprecated(since = "1.2.0", reason = "use process::exit instead")]
-pub fn get_exit_status() -> i32 {
-    EXIT_STATUS.load(Ordering::SeqCst) as i32
-}
-
 /// An iterator over the arguments of a process, yielding a `String` value
 /// for each argument.
 ///
@@ -586,14 +577,6 @@ impl Iterator for ArgsOs {
 #[stable(feature = "env", since = "1.0.0")]
 impl ExactSizeIterator for ArgsOs {
     fn len(&self) -> usize { self.inner.len() }
-}
-
-/// Returns the page size of the current architecture in bytes.
-#[unstable(feature = "page_size", reason = "naming and/or location may change")]
-#[deprecated(since = "1.3.0",
-             reason = "hasn't seen enough usage to justify inclusion")]
-pub fn page_size() -> usize {
-    os_imp::page_size()
 }
 
 /// Constants associated with the current target

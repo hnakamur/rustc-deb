@@ -12,21 +12,19 @@
 
 // pretty-expanded FIXME #23616
 
-#![feature(intrinsics, lang_items, start, no_std, libc)]
-#![no_std]
+#![feature(intrinsics, lang_items, start, no_core, libc)]
+#![no_core]
 
 extern crate libc;
 
 extern { fn puts(s: *const u8); }
 extern "rust-intrinsic" { fn transmute<T, U>(t: T) -> U; }
 
-#[lang = "stack_exhausted"] extern fn stack_exhausted() {}
 #[lang = "eh_personality"] extern fn eh_personality() {}
 #[lang = "eh_unwind_resume"] extern fn eh_unwind_resume() {}
 #[lang = "panic_fmt"] fn panic_fmt() -> ! { loop {} }
 
 #[start]
-#[no_stack_check]
 fn main(_: isize, _: *const *const u8) -> isize {
     unsafe {
         let (ptr, _): (*const u8, usize) = transmute("Hello!\0");

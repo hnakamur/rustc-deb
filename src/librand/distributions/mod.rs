@@ -17,7 +17,6 @@
 //! internally. The `IndependentSample` trait is for generating values
 //! that do not need to record state.
 
-use core::prelude::*;
 use core::num::Float;
 use core::marker::PhantomData;
 

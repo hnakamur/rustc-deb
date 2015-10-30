@@ -22,13 +22,13 @@
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "arena"]
-#![unstable(feature = "rustc_private")]
+#![unstable(feature = "rustc_private", issue = "27812")]
 #![staged_api]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/")]
 
 #![feature(alloc)]
 #![feature(box_syntax)]
@@ -49,7 +49,8 @@ use std::marker;
 use std::mem;
 use std::ptr;
 use std::rc::Rc;
-use std::rt::heap::{allocate, deallocate};
+
+use alloc::heap::{allocate, deallocate};
 
 // The way arena uses arrays is really deeply awful. The arrays are
 // allocated, and have capacities reserved, but the fill for the array
@@ -152,7 +153,7 @@ unsafe fn destroy_chunk(chunk: &Chunk) {
     let fill = chunk.fill.get();
 
     while idx < fill {
-        let tydesc_data: *const usize = mem::transmute(buf.offset(idx as isize));
+        let tydesc_data = buf.offset(idx as isize) as *const usize;
         let (tydesc, is_done) = un_bitpack_tydesc_ptr(*tydesc_data);
         let (size, align) = ((*tydesc).size, (*tydesc).align);
 
@@ -220,7 +221,7 @@ impl<'longer_than_self> Arena<'longer_than_self> {
         *self.copy_head.borrow_mut() =
             chunk((new_min_chunk_size + 1).next_power_of_two(), true);
 
-        return self.alloc_copy_inner(n_bytes, align);
+        self.alloc_copy_inner(n_bytes, align)
     }
 
     #[inline]
@@ -247,7 +248,7 @@ impl<'longer_than_self> Arena<'longer_than_self> {
                                             mem::align_of::<T>());
             let ptr = ptr as *mut T;
             ptr::write(&mut (*ptr), op());
-            return &mut *ptr;
+            &mut *ptr
         }
     }
 
@@ -261,7 +262,7 @@ impl<'longer_than_self> Arena<'longer_than_self> {
         *self.head.borrow_mut() =
             chunk((new_min_chunk_size + 1).next_power_of_two(), false);
 
-        return self.alloc_noncopy_inner(n_bytes, align);
+        self.alloc_noncopy_inner(n_bytes, align)
     }
 
     #[inline]
@@ -290,7 +291,7 @@ impl<'longer_than_self> Arena<'longer_than_self> {
 
         unsafe {
             let buf = head.as_ptr();
-            return (buf.offset(tydesc_start as isize), buf.offset(start as isize));
+            (buf.offset(tydesc_start as isize), buf.offset(start as isize))
         }
     }
 
@@ -305,14 +306,14 @@ impl<'longer_than_self> Arena<'longer_than_self> {
             let ptr = ptr as *mut T;
             // Write in our tydesc along with a bit indicating that it
             // has *not* been initialized yet.
-            *ty_ptr = mem::transmute(tydesc);
+            *ty_ptr = bitpack_tydesc_ptr(tydesc, false);
             // Actually initialize it
             ptr::write(&mut(*ptr), op());
             // Now that we are done, update the tydesc to indicate that
             // the object is there.
             *ty_ptr = bitpack_tydesc_ptr(tydesc, true);
 
-            return &mut *ptr;
+            &mut *ptr
         }
     }
 
@@ -443,8 +444,7 @@ impl<T> TypedArenaChunk<T> {
     fn start(&self) -> *const u8 {
         let this: *const TypedArenaChunk<T> = self;
         unsafe {
-            mem::transmute(round_up(this.offset(1) as usize,
-                                    mem::align_of::<T>()))
+            round_up(this.offset(1) as usize, mem::align_of::<T>()) as *const u8
         }
     }
 
@@ -487,14 +487,12 @@ impl<T> TypedArena<T> {
             self.grow()
         }
 
-        let ptr: &mut T = unsafe {
-            let ptr: &mut T = mem::transmute(self.ptr.clone());
+        unsafe {
+            let ptr: &mut T = &mut *(self.ptr.get() as *mut T);
             ptr::write(ptr, object);
             self.ptr.set(self.ptr.get().offset(1));
             ptr
-        };
-
-        ptr
+        }
     }
 
     /// Grows the arena.

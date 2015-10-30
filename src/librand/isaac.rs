@@ -12,7 +12,6 @@
 
 #![allow(non_camel_case_types)]
 
-use core::prelude::*;
 use core::slice;
 use core::iter::repeat;
 use core::num::Wrapping as w;

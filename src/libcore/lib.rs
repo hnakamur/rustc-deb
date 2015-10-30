@@ -51,35 +51,39 @@
 #![crate_name = "core"]
 #![unstable(feature = "core",
             reason = "the libcore library has not yet been scrutinized for \
-                      stabilization in terms of structure and naming")]
+                      stabilization in terms of structure and naming",
+            issue = "27701")]
 #![staged_api]
 #![crate_type = "rlib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/",
-       html_playground_url = "http://play.rust-lang.org/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/",
+       issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/")]
 #![doc(test(no_crate_inject))]
 
-#![feature(no_std)]
-#![no_std]
+#![no_core]
 #![allow(raw_pointer_derive)]
 #![deny(missing_docs)]
 
+#![feature(allow_internal_unstable)]
 #![feature(associated_type_defaults)]
+#![feature(concat_idents)]
+#![feature(const_fn)]
+#![feature(custom_attribute)]
+#![feature(fundamental)]
 #![feature(intrinsics)]
 #![feature(lang_items)]
+#![feature(no_core)]
 #![feature(on_unimplemented)]
-#![feature(simd)]
+#![feature(optin_builtin_traits)]
+#![feature(reflect)]
+#![feature(rustc_attrs)]
+#![feature(unwind_attributes)]
+#![cfg_attr(stage0, feature(simd))]
+#![cfg_attr(not(stage0), feature(repr_simd, platform_intrinsics))]
 #![feature(staged_api)]
 #![feature(unboxed_closures)]
-#![feature(rustc_attrs)]
-#![feature(optin_builtin_traits)]
-#![feature(fundamental)]
-#![feature(concat_idents)]
-#![feature(reflect)]
-#![feature(custom_attribute)]
-#![feature(const_fn)]
-#![feature(allow_internal_unstable)]
 
 #[macro_use]
 mod macros;
@@ -136,12 +140,13 @@ pub mod cmp;
 pub mod clone;
 pub mod default;
 pub mod convert;
+pub mod borrow;
 
 /* Core types and methods on primitives */
 
 pub mod any;
 pub mod array;
-pub mod atomic;
+pub mod sync;
 pub mod cell;
 pub mod char;
 pub mod panicking;
@@ -149,7 +154,13 @@ pub mod iter;
 pub mod option;
 pub mod raw;
 pub mod result;
+
+#[cfg(stage0)]
+#[path = "simd_old.rs"]
 pub mod simd;
+#[cfg(not(stage0))]
+pub mod simd;
+
 pub mod slice;
 pub mod str;
 pub mod hash;
@@ -157,24 +168,3 @@ pub mod fmt;
 
 // note: does not need to be public
 mod tuple;
-
-// A curious inner-module that's not exported that contains the bindings of core
-// so that compiler-expanded references to `core::$foo` can be resolved within
-// core itself.
-//
-// Note that no crate-defined macros require this module due to the existence of
-// the `$crate` meta variable, only those expansions defined in the compiler
-// require this. This is because the compiler doesn't currently know that it's
-// compiling the core library when it's compiling this library, so it expands
-// all references to `::core::$foo`
-#[doc(hidden)]
-mod core {
-    pub use intrinsics;     // derive(PartialOrd)
-    pub use fmt;            // format_args!
-    pub use clone;          // derive(Clone)
-    pub use cmp;            // derive(Ord)
-    pub use hash;           // derive(Hash)
-    pub use marker;         // derive(Copy)
-    pub use option;         // iterator protocol
-    pub use iter;           // iterator protocol
-}

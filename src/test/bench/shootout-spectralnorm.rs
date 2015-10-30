@@ -91,7 +91,7 @@ fn mult<F>(v: &[f64], out: &mut [f64], start: usize, a: F)
         for (j, chunk) in v.chunks(2).enumerate().map(|(j, s)| (2 * j, s)) {
             let top = f64x2(chunk[0], chunk[1]);
             let bot = f64x2(a(i, j), a(i, j + 1));
-            sum += top / bot;
+            sum = sum + top / bot;
         }
         let f64x2(a, b) = sum;
         *slot = a + b;
@@ -114,11 +114,10 @@ fn parallel<'a,T, F>(v: &mut [T], ref f: F)
                   where T: Send + Sync + 'a,
                         F: Fn(usize, &mut [T]) + Sync + 'a {
     // FIXME: pick a more appropriate parallel factor
+    // FIXME: replace with thread::scoped when it exists again
     let parallelism = 4;
     let size = v.len() / parallelism + 1;
     v.chunks_mut(size).enumerate().map(|(i, chunk)| {
-        thread::scoped(move|| {
-            f(i * size, chunk)
-        })
+        f(i * size, chunk)
     }).collect::<Vec<_>>();
 }

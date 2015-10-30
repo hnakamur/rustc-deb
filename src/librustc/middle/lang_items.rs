@@ -23,17 +23,17 @@ pub use self::LangItem::*;
 
 use session::Session;
 use metadata::csearch::each_lang_item;
+use middle::def_id::DefId;
 use middle::ty;
 use middle::weak_lang_items;
 use util::nodemap::FnvHashMap;
 
-use syntax::ast;
-use syntax::ast_util::local_def;
-use syntax::attr::AttrMetaMethods;
+use rustc_front::attr::AttrMetaMethods;
 use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
-use syntax::visit::Visitor;
-use syntax::visit;
+use rustc_front::visit::Visitor;
+use rustc_front::visit;
+use rustc_front::hir;
 
 use std::iter::Enumerate;
 use std::slice;
@@ -54,13 +54,13 @@ enum_from_u32! {
 }
 
 pub struct LanguageItems {
-    pub items: Vec<Option<ast::DefId>>,
+    pub items: Vec<Option<DefId>>,
     pub missing: Vec<LangItem>,
 }
 
 impl LanguageItems {
     pub fn new() -> LanguageItems {
-        fn foo(_: LangItem) -> Option<ast::DefId> { None }
+        fn foo(_: LangItem) -> Option<DefId> { None }
 
         LanguageItems {
             items: vec!($(foo($variant)),*),
@@ -68,7 +68,7 @@ impl LanguageItems {
         }
     }
 
-    pub fn items<'a>(&'a self) -> Enumerate<slice::Iter<'a, Option<ast::DefId>>> {
+    pub fn items<'a>(&'a self) -> Enumerate<slice::Iter<'a, Option<DefId>>> {
         self.items.iter().enumerate()
     }
 
@@ -80,7 +80,7 @@ impl LanguageItems {
         }
     }
 
-    pub fn require(&self, it: LangItem) -> Result<ast::DefId, String> {
+    pub fn require(&self, it: LangItem) -> Result<DefId, String> {
         match self.items[it as usize] {
             Some(id) => Ok(id),
             None => {
@@ -90,12 +90,12 @@ impl LanguageItems {
         }
     }
 
-    pub fn require_owned_box(&self) -> Result<ast::DefId, String> {
+    pub fn require_owned_box(&self) -> Result<DefId, String> {
         self.require(OwnedBoxLangItem)
     }
 
     pub fn from_builtin_kind(&self, bound: ty::BuiltinBound)
-                             -> Result<ast::DefId, String>
+                             -> Result<DefId, String>
     {
         match bound {
             ty::BoundSend => self.require(SendTraitLangItem),
@@ -105,7 +105,7 @@ impl LanguageItems {
         }
     }
 
-    pub fn to_builtin_kind(&self, id: ast::DefId) -> Option<ty::BuiltinBound> {
+    pub fn to_builtin_kind(&self, id: DefId) -> Option<ty::BuiltinBound> {
         if Some(id) == self.send_trait() {
             Some(ty::BoundSend)
         } else if Some(id) == self.sized_trait() {
@@ -119,7 +119,7 @@ impl LanguageItems {
         }
     }
 
-    pub fn fn_trait_kind(&self, id: ast::DefId) -> Option<ty::ClosureKind> {
+    pub fn fn_trait_kind(&self, id: DefId) -> Option<ty::ClosureKind> {
         let def_id_kinds = [
             (self.fn_trait(), ty::FnClosureKind),
             (self.fn_mut_trait(), ty::FnMutClosureKind),
@@ -137,7 +137,7 @@ impl LanguageItems {
 
     $(
         #[allow(dead_code)]
-        pub fn $method(&self) -> Option<ast::DefId> {
+        pub fn $method(&self) -> Option<DefId> {
             self.items[$variant as usize]
         }
     )*
@@ -152,12 +152,12 @@ struct LanguageItemCollector<'a> {
 }
 
 impl<'a, 'v> Visitor<'v> for LanguageItemCollector<'a> {
-    fn visit_item(&mut self, item: &ast::Item) {
+    fn visit_item(&mut self, item: &hir::Item) {
         if let Some(value) = extract(&item.attrs) {
             let item_index = self.item_refs.get(&value[..]).cloned();
 
             if let Some(item_index) = item_index {
-                self.collect_item(item_index, local_def(item.id), item.span)
+                self.collect_item(item_index, DefId::local(item.id), item.span)
             }
         }
 
@@ -179,7 +179,7 @@ impl<'a> LanguageItemCollector<'a> {
     }
 
     pub fn collect_item(&mut self, item_index: usize,
-                        item_def_id: ast::DefId, span: Span) {
+                        item_def_id: DefId, span: Span) {
         // Check for duplicates.
         match self.items.items[item_index] {
             Some(original_def_id) if original_def_id != item_def_id => {
@@ -195,7 +195,7 @@ impl<'a> LanguageItemCollector<'a> {
         self.items.items[item_index] = Some(item_def_id);
     }
 
-    pub fn collect_local_language_items(&mut self, krate: &ast::Crate) {
+    pub fn collect_local_language_items(&mut self, krate: &hir::Crate) {
         visit::walk_crate(self, krate);
     }
 
@@ -203,20 +203,20 @@ impl<'a> LanguageItemCollector<'a> {
         let crate_store = &self.session.cstore;
         crate_store.iter_crate_data(|crate_number, _crate_metadata| {
             each_lang_item(crate_store, crate_number, |node_id, item_index| {
-                let def_id = ast::DefId { krate: crate_number, node: node_id };
+                let def_id = DefId { krate: crate_number, node: node_id };
                 self.collect_item(item_index, def_id, DUMMY_SP);
                 true
             });
         })
     }
 
-    pub fn collect(&mut self, krate: &ast::Crate) {
+    pub fn collect(&mut self, krate: &hir::Crate) {
         self.collect_local_language_items(krate);
         self.collect_external_language_items();
     }
 }
 
-pub fn extract(attrs: &[ast::Attribute]) -> Option<InternedString> {
+pub fn extract(attrs: &[hir::Attribute]) -> Option<InternedString> {
     for attribute in attrs {
         match attribute.value_str() {
             Some(ref value) if attribute.check_name("lang") => {
@@ -229,7 +229,7 @@ pub fn extract(attrs: &[ast::Attribute]) -> Option<InternedString> {
     return None;
 }
 
-pub fn collect_language_items(krate: &ast::Crate,
+pub fn collect_language_items(krate: &hir::Crate,
                               session: &Session) -> LanguageItems {
     let mut collector = LanguageItemCollector::new(session);
     collector.collect(krate);
@@ -346,8 +346,6 @@ lets_do_this! {
     NoCopyItem,                      "no_copy_bound",           no_copy_bound;
 
     NonZeroItem,                     "non_zero",                non_zero;
-
-    StackExhaustedLangItem,          "stack_exhausted",         stack_exhausted;
 
     DebugTraitLangItem,              "debug_trait",             debug_trait;
 }

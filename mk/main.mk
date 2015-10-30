@@ -13,12 +13,12 @@
 ######################################################################
 
 # The version number
-CFG_RELEASE_NUM=1.3.0
+CFG_RELEASE_NUM=1.4.0
 
 # An optional number to put after the label, e.g. '.2' -> '-beta.2'
 # NB Make sure it starts with a dot to conform to semver pre-release
 # versions (section 9)
-CFG_PRERELEASE_VERSION=.3
+CFG_PRERELEASE_VERSION=.4
 
 # Append a version-dependent hash to each library, so we can install different
 # versions in the same place
@@ -163,7 +163,7 @@ endif
 # that the snapshot will be generated with a statically linked rustc so we only
 # have to worry about the distribution of one file (with its native dynamic
 # dependencies)
-RUSTFLAGS_STAGE0 += -C prefer-dynamic
+RUSTFLAGS_STAGE0 += -C prefer-dynamic -C no-stack-check
 RUSTFLAGS_STAGE1 += -C prefer-dynamic
 RUST_LIB_FLAGS_ST2 += -C prefer-dynamic
 RUST_LIB_FLAGS_ST3 += -C prefer-dynamic
@@ -171,6 +171,18 @@ RUST_LIB_FLAGS_ST3 += -C prefer-dynamic
 # Landing pads require a lot of codegen. We can get through bootstrapping faster
 # by not emitting them.
 RUSTFLAGS_STAGE0 += -Z no-landing-pads
+
+# Enable MIR to "always build" for crates where this works. This is
+# just temporary while MIR is being actively built up -- it's just a
+# poor man's unit testing infrastructure. Anyway we only want this for
+# stage1/stage2.
+define ADD_MIR_FLAG
+RUSTFLAGS1_$(1) += -Z always-build-mir
+RUSTFLAGS2_$(1) += -Z always-build-mir
+endef
+$(foreach crate,$(TARGET_CRATES),$(eval $(call ADD_MIR_FLAG,$(crate))))
+$(foreach crate,$(RUSTC_CRATES),$(eval $(call ADD_MIR_FLAG,$(crate))))
+$(foreach crate,$(HOST_CRATES),$(eval $(call ADD_MIR_FLAG,$(crate))))
 
 # platform-specific auto-configuration
 include $(CFG_SRC_DIR)mk/platform.mk
@@ -294,7 +306,7 @@ LLVM_VERSION_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --version)
 LLVM_BINDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --bindir)
 LLVM_INCDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --includedir)
 LLVM_LIBDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --libdir)
-LLVM_LIBDIR_RUSTFLAGS_$(1)=-L "$$(LLVM_LIBDIR_$(1))"
+LLVM_LIBDIR_RUSTFLAGS_$(1)=-L native="$$(LLVM_LIBDIR_$(1))"
 LLVM_LDFLAGS_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --ldflags)
 ifeq ($$(findstring freebsd,$(1)),freebsd)
 # On FreeBSD, it may search wrong headers (that are for pre-installed LLVM),

@@ -10,11 +10,12 @@
 
 // #![warn(deprecated_mode)]
 
+use middle::def_id::DefId;
 use middle::infer::{InferCtxt, GenericKind};
 use middle::subst::Substs;
 use middle::traits;
-use middle::ty::{self, RegionEscape, ToPolyTraitRef, ToPredicate, Ty};
-use middle::ty_fold::{TypeFoldable, TypeFolder};
+use middle::ty::{self, RegionEscape, ToPredicate, Ty};
+use middle::ty::fold::{TypeFoldable, TypeFolder};
 
 use syntax::ast;
 use syntax::codemap::Span;
@@ -28,7 +29,7 @@ use util::nodemap::FnvHashSet;
 pub enum Implication<'tcx> {
     RegionSubRegion(Option<Ty<'tcx>>, ty::Region, ty::Region),
     RegionSubGeneric(Option<Ty<'tcx>>, ty::Region, GenericKind<'tcx>),
-    Predicate(ast::DefId, ty::Predicate<'tcx>),
+    Predicate(DefId, ty::Predicate<'tcx>),
 }
 
 struct Implicator<'a, 'tcx: 'a> {
@@ -144,10 +145,10 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
                 self.accumulate_from_object_ty(ty, t.bounds.region_bound, required_region_bounds)
             }
 
-            ty::TyEnum(def_id, substs) |
-            ty::TyStruct(def_id, substs) => {
-                let item_scheme = self.tcx().lookup_item_type(def_id);
-                self.accumulate_from_adt(ty, def_id, &item_scheme.generics, substs)
+            ty::TyEnum(def, substs) |
+            ty::TyStruct(def, substs) => {
+                let item_scheme = def.type_scheme(self.tcx());
+                self.accumulate_from_adt(ty, def.did, &item_scheme.generics, substs)
             }
 
             ty::TyArray(t, _) |
@@ -265,7 +266,7 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
 
     fn accumulate_from_adt(&mut self,
                            ty: Ty<'tcx>,
-                           def_id: ast::DefId,
+                           def_id: DefId,
                            _generics: &ty::Generics<'tcx>,
                            substs: &Substs<'tcx>)
     {
@@ -278,9 +279,7 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
 
         for predicate in predicates.predicates.as_slice() {
             match *predicate {
-                ty::Predicate::Trait(ref data) => {
-                    self.accumulate_from_assoc_types_transitive(data);
-                }
+                ty::Predicate::Trait(..) => { }
                 ty::Predicate::Equate(..) => { }
                 ty::Predicate::Projection(..) => { }
                 ty::Predicate::RegionOutlives(ref data) => {
@@ -300,6 +299,9 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
                             self.stack.pop().unwrap();
                         }
                     }
+                }
+                ty::Predicate::ObjectSafe(_) |
+                ty::Predicate::WellFormed(_) => {
                 }
             }
         }
@@ -346,53 +348,6 @@ impl<'a, 'tcx> Implicator<'a, 'tcx> {
                 }
                 ty::Contravariant | ty::Bivariant => { }
             }
-        }
-    }
-
-    /// Given that there is a requirement that `Foo<X> : 'a`, where
-    /// `Foo` is declared like `struct Foo<T> where T : SomeTrait`,
-    /// this code finds all the associated types defined in
-    /// `SomeTrait` (and supertraits) and adds a requirement that `<X
-    /// as SomeTrait>::N : 'a` (where `N` is some associated type
-    /// defined in `SomeTrait`). This rule only applies to
-    /// trait-bounds that are not higher-ranked, because we cannot
-    /// project out of a HRTB. This rule helps code using associated
-    /// types to compile, see Issue #22246 for an example.
-    fn accumulate_from_assoc_types_transitive(&mut self,
-                                              data: &ty::PolyTraitPredicate<'tcx>)
-    {
-        debug!("accumulate_from_assoc_types_transitive({:?})",
-               data);
-
-        for poly_trait_ref in traits::supertraits(self.tcx(), data.to_poly_trait_ref()) {
-            match self.tcx().no_late_bound_regions(&poly_trait_ref) {
-                Some(trait_ref) => { self.accumulate_from_assoc_types(trait_ref); }
-                None => { }
-            }
-        }
-    }
-
-    fn accumulate_from_assoc_types(&mut self,
-                                   trait_ref: ty::TraitRef<'tcx>)
-    {
-        debug!("accumulate_from_assoc_types({:?})",
-               trait_ref);
-
-        let trait_def_id = trait_ref.def_id;
-        let trait_def = self.tcx().lookup_trait_def(trait_def_id);
-        let assoc_type_projections: Vec<_> =
-            trait_def.associated_type_names
-                     .iter()
-                     .map(|&name| self.tcx().mk_projection(trait_ref.clone(), name))
-                     .collect();
-        debug!("accumulate_from_assoc_types: assoc_type_projections={:?}",
-               assoc_type_projections);
-        let tys = match self.fully_normalize(&assoc_type_projections) {
-            Ok(tys) => { tys }
-            Err(ErrorReported) => { return; }
-        };
-        for ty in tys {
-            self.accumulate_from_ty(ty);
         }
     }
 

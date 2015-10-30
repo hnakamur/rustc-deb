@@ -29,11 +29,10 @@ pub fn expand_deriving_copy(cx: &mut ExtCtxt,
                             item: &Annotatable,
                             push: &mut FnMut(Annotatable))
 {
-    let path = Path::new(vec![
-        if cx.use_std { "std" } else { "core" },
-        "marker",
-        "Copy",
-    ]);
+    let mut v = cx.crate_root.map(|s| vec![s]).unwrap_or(Vec::new());
+    v.push("marker");
+    v.push("Copy");
+    let path = Path::new(v);
 
     let trait_def = TraitDef {
         span: span,
@@ -41,6 +40,7 @@ pub fn expand_deriving_copy(cx: &mut ExtCtxt,
         path: path,
         additional_bounds: Vec::new(),
         generics: LifetimeBounds::empty(),
+        is_unsafe: false,
         methods: Vec::new(),
         associated_types: Vec::new(),
     };

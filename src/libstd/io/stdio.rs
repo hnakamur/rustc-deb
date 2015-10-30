@@ -56,21 +56,21 @@ struct StderrRaw(stdio::Stderr);
 /// The returned handle has no external synchronization or buffering.
 fn stdin_raw() -> io::Result<StdinRaw> { stdio::Stdin::new().map(StdinRaw) }
 
-/// Constructs a new raw handle to the standard input stream of this process.
+/// Constructs a new raw handle to the standard output stream of this process.
 ///
 /// The returned handle does not interact with any other handles created nor
 /// handles returned by `std::io::stdout`. Note that data is buffered by the
-/// `std::io::stdin` handles so writes which happen via this raw handle may
+/// `std::io::stdout` handles so writes which happen via this raw handle may
 /// appear before previous writes.
 ///
 /// The returned handle has no external synchronization or buffering layered on
 /// top.
 fn stdout_raw() -> io::Result<StdoutRaw> { stdio::Stdout::new().map(StdoutRaw) }
 
-/// Constructs a new raw handle to the standard input stream of this process.
+/// Constructs a new raw handle to the standard error stream of this process.
 ///
 /// The returned handle does not interact with any other handles created nor
-/// handles returned by `std::io::stdout`.
+/// handles returned by `std::io::stderr`.
 ///
 /// The returned handle has no external synchronization or buffering layered on
 /// top.
@@ -270,6 +270,9 @@ impl Read for Stdin {
     }
     fn read_to_string(&mut self, buf: &mut String) -> io::Result<usize> {
         self.lock().read_to_string(buf)
+    }
+    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.lock().read_exact(buf)
     }
 }
 
@@ -531,7 +534,8 @@ impl<'a> Write for StderrLock<'a> {
 /// output handle is to the process's stderr stream.
 #[unstable(feature = "set_stdio",
            reason = "this function may disappear completely or be replaced \
-                     with a more general mechanism")]
+                     with a more general mechanism",
+           issue = "0")]
 #[doc(hidden)]
 pub fn set_panic(sink: Box<Write + Send>) -> Option<Box<Write + Send>> {
     use panicking::LOCAL_STDERR;
@@ -554,7 +558,8 @@ pub fn set_panic(sink: Box<Write + Send>) -> Option<Box<Write + Send>> {
 /// output handle is to the process's stdout stream.
 #[unstable(feature = "set_stdio",
            reason = "this function may disappear completely or be replaced \
-                     with a more general mechanism")]
+                     with a more general mechanism",
+           issue = "0")]
 #[doc(hidden)]
 pub fn set_print(sink: Box<Write + Send>) -> Option<Box<Write + Send>> {
     use mem;
@@ -567,7 +572,8 @@ pub fn set_print(sink: Box<Write + Send>) -> Option<Box<Write + Send>> {
 }
 
 #[unstable(feature = "print",
-           reason = "implementation detail which may disappear or be replaced at any time")]
+           reason = "implementation detail which may disappear or be replaced at any time",
+           issue = "0")]
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     let result = LOCAL_STDOUT.with(|s| {

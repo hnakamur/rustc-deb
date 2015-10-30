@@ -191,10 +191,11 @@
 #![staged_api]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/",
-       html_playground_url = "http://play.rust-lang.org/",
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/",
+       issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/",
        test(no_crate_inject, attr(deny(warnings))),
        test(attr(allow(dead_code, deprecated, unused_variables, unused_mut))))]
 
@@ -202,7 +203,6 @@
 #![feature(allow_internal_unstable)]
 #![feature(associated_consts)]
 #![feature(borrow_state)]
-#![feature(box_raw)]
 #![feature(box_syntax)]
 #![feature(char_from_unchecked)]
 #![feature(char_internals)]
@@ -213,7 +213,6 @@
 #![feature(core)]
 #![feature(core_float)]
 #![feature(core_intrinsics)]
-#![feature(core_prelude)]
 #![feature(core_simd)]
 #![feature(drain)]
 #![feature(fnbox)]
@@ -242,6 +241,8 @@
 #![feature(unicode)]
 #![feature(unique)]
 #![feature(unsafe_no_drop_flag, filling_drop)]
+#![feature(decode_utf16)]
+#![feature(unwind_attributes)]
 #![feature(vec_push_all)]
 #![feature(vec_resize)]
 #![feature(wrapping)]
@@ -254,16 +255,17 @@
 // Don't link to std. We are std.
 #![no_std]
 
-#![allow(trivial_casts)]
 #![deny(missing_docs)]
 
 #[cfg(test)] extern crate test;
 #[cfg(test)] #[macro_use] extern crate log;
 
-#[macro_use]
+// We want to reexport a few macros from core but libcore has already been
+// imported by the compiler (via our #[no_std] attribute) In this case we just
+// add a new crate name so we can attach the reexports to it.
 #[macro_reexport(assert, assert_eq, debug_assert, debug_assert_eq,
-    unreachable, unimplemented, write, writeln)]
-extern crate core;
+                 unreachable, unimplemented, write, writeln)]
+extern crate core as __core;
 
 #[macro_use]
 #[macro_reexport(vec, format)]
@@ -273,8 +275,6 @@ extern crate collections as core_collections;
 extern crate alloc;
 extern crate rustc_unicode;
 extern crate libc;
-
-#[macro_use] #[no_link] extern crate rustc_bitflags;
 
 // Make std testable by not duplicating lang items and other globals. See #2912
 #[cfg(test)] extern crate std as realstd;
@@ -295,6 +295,7 @@ pub use core::mem;
 pub use core::ops;
 pub use core::ptr;
 pub use core::raw;
+#[allow(deprecated)]
 pub use core::simd;
 pub use core::result;
 pub use core::option;
@@ -308,7 +309,6 @@ pub use core_collections::fmt;
 pub use core_collections::slice;
 pub use core_collections::str;
 pub use core_collections::string;
-#[stable(feature = "rust1", since = "1.0.0")]
 pub use core_collections::vec;
 
 pub use rustc_unicode::char;
@@ -327,39 +327,26 @@ pub mod prelude;
 
 /* Primitive types */
 
-// NB: slice and str are primitive types too, but their module docs + primitive doc pages
-// are inlined from the public re-exports of core_collections::{slice, str} above.
+// NB: slice and str are primitive types too, but their module docs + primitive
+// doc pages are inlined from the public re-exports of core_collections::{slice,
+// str} above.
 
-#[path = "num/float_macros.rs"]
-#[macro_use]
-mod float_macros;
+pub use core::isize;
+pub use core::i8;
+pub use core::i16;
+pub use core::i32;
+pub use core::i64;
 
-#[path = "num/int_macros.rs"]
-#[macro_use]
-mod int_macros;
-
-#[path = "num/uint_macros.rs"]
-#[macro_use]
-mod uint_macros;
-
-#[path = "num/isize.rs"]  pub mod isize;
-#[path = "num/i8.rs"]   pub mod i8;
-#[path = "num/i16.rs"]  pub mod i16;
-#[path = "num/i32.rs"]  pub mod i32;
-#[path = "num/i64.rs"]  pub mod i64;
-
-#[path = "num/usize.rs"] pub mod usize;
-#[path = "num/u8.rs"]   pub mod u8;
-#[path = "num/u16.rs"]  pub mod u16;
-#[path = "num/u32.rs"]  pub mod u32;
-#[path = "num/u64.rs"]  pub mod u64;
+pub use core::usize;
+pub use core::u8;
+pub use core::u16;
+pub use core::u32;
+pub use core::u64;
 
 #[path = "num/f32.rs"]   pub mod f32;
 #[path = "num/f64.rs"]   pub mod f64;
 
 pub mod ascii;
-
-pub mod thunk;
 
 /* Common traits */
 
@@ -401,7 +388,7 @@ mod rand;
 // but it may be stabilized long-term. As a result we're exposing a hidden,
 // unstable module so we can get our build working.
 #[doc(hidden)]
-#[unstable(feature = "rand")]
+#[unstable(feature = "rand", issue = "0")]
 pub mod __rand {
     pub use rand::{thread_rng, ThreadRng, Rng};
 }
@@ -410,11 +397,3 @@ pub mod __rand {
 // the rustdoc documentation for primitive types. Using `include!`
 // because rustdoc only looks for these modules at the crate level.
 include!("primitive_docs.rs");
-
-// The expansion of --test has a few references to `::std::$foo` so this module
-// is necessary to get things to compile.
-#[cfg(test)]
-mod std {
-    pub use option;
-    pub use realstd::env;
-}

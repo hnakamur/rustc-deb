@@ -24,7 +24,7 @@ use mem::{self, replace};
 use ops::{Deref, FnMut, FnOnce, Index};
 use option::Option::{self, Some, None};
 use rand::{self, Rng};
-use result::Result::{self, Ok, Err};
+use result::Result;
 
 use super::table::{
     self,
@@ -553,7 +553,8 @@ impl<K, V, S> HashMap<K, V, S>
     /// map.insert(1, 2);
     /// ```
     #[inline]
-    #[unstable(feature = "hashmap_hasher", reason = "hasher stuff is unclear")]
+    #[unstable(feature = "hashmap_hasher", reason = "hasher stuff is unclear",
+               issue = "27713")]
     pub fn with_hash_state(hash_state: S) -> HashMap<K, V, S> {
         HashMap {
             hash_state:    hash_state,
@@ -583,7 +584,8 @@ impl<K, V, S> HashMap<K, V, S>
     /// map.insert(1, 2);
     /// ```
     #[inline]
-    #[unstable(feature = "hashmap_hasher", reason = "hasher stuff is unclear")]
+    #[unstable(feature = "hashmap_hasher", reason = "hasher stuff is unclear",
+               issue = "27713")]
     pub fn with_capacity_and_hash_state(capacity: usize, hash_state: S)
                                         -> HashMap<K, V, S> {
         let resize_policy = DefaultResizePolicy::new();
@@ -767,7 +769,7 @@ impl<K, V, S> HashMap<K, V, S>
     /// If the key already exists, the hashtable will be returned untouched
     /// and a reference to the existing element will be returned.
     fn insert_hashed_nocheck(&mut self, hash: SafeHash, k: K, v: V) -> &mut V {
-        self.insert_or_replace_with(hash, k, v, |_, _, _| ())
+        self.insert_or_replace_with(hash, k, v, |_, _, _, _| ())
     }
 
     fn insert_or_replace_with<'a, F>(&'a mut self,
@@ -776,7 +778,7 @@ impl<K, V, S> HashMap<K, V, S>
                                      v: V,
                                      mut found_existing: F)
                                      -> &'a mut V where
-        F: FnMut(&mut K, &mut V, V),
+        F: FnMut(&mut K, &mut V, K, V),
     {
         // Worst case, we'll find one empty bucket among `size + 1` buckets.
         let size = self.table.size();
@@ -799,7 +801,7 @@ impl<K, V, S> HashMap<K, V, S>
                     let (bucket_k, bucket_v) = bucket.into_mut_refs();
                     debug_assert!(k == *bucket_k);
                     // Key already exists. Get its reference.
-                    found_existing(bucket_k, bucket_v, v);
+                    found_existing(bucket_k, bucket_v, k, v);
                     return bucket_v;
                 }
             }
@@ -998,7 +1000,8 @@ impl<K, V, S> HashMap<K, V, S>
     /// ```
     #[inline]
     #[unstable(feature = "drain",
-               reason = "matches collection reform specification, waiting for dust to settle")]
+               reason = "matches collection reform specification, waiting for dust to settle",
+               issue = "27711")]
     pub fn drain(&mut self) -> Drain<K, V> {
         fn last_two<A, B, C>((_, b, c): (A, B, C)) -> (B, C) { (b, c) }
         let last_two: fn((SafeHash, K, V)) -> (K, V) = last_two; // coerce to fn pointer
@@ -1120,7 +1123,7 @@ impl<K, V, S> HashMap<K, V, S>
         self.reserve(1);
 
         let mut retval = None;
-        self.insert_or_replace_with(hash, k, v, |_, val_ref, val| {
+        self.insert_or_replace_with(hash, k, v, |_, val_ref, _, val| {
             retval = Some(replace(val_ref, val));
         });
         retval
@@ -1311,7 +1314,8 @@ impl<'a, K, V> Clone for Values<'a, K, V> {
 
 /// HashMap drain iterator.
 #[unstable(feature = "drain",
-           reason = "matches collection reform specification, waiting for dust to settle")]
+           reason = "matches collection reform specification, waiting for dust to settle",
+           issue = "27711")]
 pub struct Drain<'a, K: 'a, V: 'a> {
     inner: iter::Map<table::Drain<'a, K, V>, fn((SafeHash, K, V)) -> (K, V)>
 }
@@ -1482,18 +1486,6 @@ impl<'a, K, V> ExactSizeIterator for Drain<'a, K, V> {
 }
 
 impl<'a, K, V> Entry<'a, K, V> {
-    #[unstable(feature = "entry",
-               reason = "will soon be replaced by or_insert")]
-    #[deprecated(since = "1.0",
-                reason = "replaced with more ergonomic `or_insert` and `or_insert_with`")]
-    /// Returns a mutable reference to the entry if occupied, or the VacantEntry if vacant
-    pub fn get(self) -> Result<&'a mut V, VacantEntry<'a, K, V>> {
-        match self {
-            Occupied(entry) => Ok(entry.into_mut()),
-            Vacant(entry) => Err(entry),
-        }
-    }
-
     #[stable(feature = "rust1", since = "1.0.0")]
     /// Ensures a value is in the entry by inserting the default if empty, and returns
     /// a mutable reference to the value in the entry.
@@ -1591,6 +1583,14 @@ impl<K, V, S> Extend<(K, V)> for HashMap<K, V, S>
     }
 }
 
+#[stable(feature = "hash_extend_copy", since = "1.4.0")]
+impl<'a, K, V, S> Extend<(&'a K, &'a V)> for HashMap<K, V, S>
+    where K: Eq + Hash + Copy, V: Copy, S: HashState
+{
+    fn extend<T: IntoIterator<Item=(&'a K, &'a V)>>(&mut self, iter: T) {
+        self.extend(iter.into_iter().map(|(&key, &value)| (key, value)));
+    }
+}
 
 /// `RandomState` is the default state for `HashMap` types.
 ///
@@ -1599,18 +1599,20 @@ impl<K, V, S> Extend<(K, V)> for HashMap<K, V, S>
 /// instances are unlikely to produce the same result for the same values.
 #[derive(Clone)]
 #[unstable(feature = "hashmap_hasher",
-           reason = "hashing an hash maps may be altered")]
+           reason = "hashing an hash maps may be altered",
+           issue = "27713")]
 pub struct RandomState {
     k0: u64,
     k1: u64,
 }
 
 #[unstable(feature = "hashmap_hasher",
-           reason = "hashing an hash maps may be altered")]
+           reason = "hashing an hash maps may be altered",
+           issue = "27713")]
 impl RandomState {
     /// Constructs a new `RandomState` that is initialized with random keys.
     #[inline]
-    #[allow(deprecated)]
+    #[allow(deprecated)] // rand
     pub fn new() -> RandomState {
         let mut r = rand::thread_rng();
         RandomState { k0: r.gen(), k1: r.gen() }
@@ -1618,7 +1620,8 @@ impl RandomState {
 }
 
 #[unstable(feature = "hashmap_hasher",
-           reason = "hashing an hash maps may be altered")]
+           reason = "hashing an hash maps may be altered",
+           issue = "27713")]
 impl HashState for RandomState {
     type Hasher = SipHasher;
     #[inline]
@@ -1632,6 +1635,35 @@ impl Default for RandomState {
     #[inline]
     fn default() -> RandomState {
         RandomState::new()
+    }
+}
+
+impl<K, S, Q: ?Sized> super::Recover<Q> for HashMap<K, (), S>
+    where K: Eq + Hash + Borrow<Q>, S: HashState, Q: Eq + Hash
+{
+    type Key = K;
+
+    fn get(&self, key: &Q) -> Option<&K> {
+        self.search(key).map(|bucket| bucket.into_refs().0)
+    }
+
+    fn take(&mut self, key: &Q) -> Option<K> {
+        if self.table.size() == 0 {
+            return None
+        }
+
+        self.search_mut(key).map(|bucket| pop_internal(bucket).0)
+    }
+
+    fn replace(&mut self, key: K) -> Option<K> {
+        let hash = self.make_hash(&key);
+        self.reserve(1);
+
+        let mut retkey = None;
+        self.insert_or_replace_with(hash, key, (), |key_ref, _, key, _| {
+            retkey = Some(replace(key_ref, key));
+        });
+        retkey
     }
 }
 
@@ -2322,5 +2354,21 @@ mod test_map {
 
             check(&m);
         }
+    }
+
+    #[test]
+    fn test_extend_ref() {
+        let mut a = HashMap::new();
+        a.insert(1, "one");
+        let mut b = HashMap::new();
+        b.insert(2, "two");
+        b.insert(3, "three");
+
+        a.extend(&b);
+
+        assert_eq!(a.len(), 3);
+        assert_eq!(a[&1], "one");
+        assert_eq!(a[&2], "two");
+        assert_eq!(a[&3], "three");
     }
 }

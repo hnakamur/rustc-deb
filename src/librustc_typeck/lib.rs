@@ -65,17 +65,16 @@ This API is completely unstable and subject to change.
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_typeck"]
-#![unstable(feature = "rustc_private")]
+#![unstable(feature = "rustc_private", issue = "27812")]
 #![staged_api]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-      html_root_url = "http://doc.rust-lang.org/nightly/")]
+      html_root_url = "https://doc.rust-lang.org/nightly/")]
 
 #![allow(non_camel_case_types)]
 
-#![feature(append)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(drain)]
@@ -96,6 +95,8 @@ This API is completely unstable and subject to change.
 extern crate arena;
 extern crate fmt_macros;
 extern crate rustc;
+extern crate rustc_platform_intrinsics as intrinsics;
+extern crate rustc_front;
 
 pub use rustc::lint;
 pub use rustc::metadata;
@@ -104,17 +105,18 @@ pub use rustc::session;
 pub use rustc::util;
 
 use middle::def;
+use middle::def_id::DefId;
 use middle::infer;
 use middle::subst;
 use middle::ty::{self, Ty, HasTypeFlags};
-use rustc::ast_map;
 use session::config;
 use util::common::time;
+use rustc::front::map as hir_map;
+use rustc_front::hir;
 
 use syntax::codemap::Span;
 use syntax::print::pprust::*;
 use syntax::{ast, abi};
-use syntax::ast_util::local_def;
 
 use std::cell::RefCell;
 
@@ -177,7 +179,7 @@ fn lookup_full_def(tcx: &ty::ctxt, sp: Span, id: ast::NodeId) -> def::Def {
 }
 
 fn require_c_abi_if_variadic(tcx: &ty::ctxt,
-                             decl: &ast::FnDecl,
+                             decl: &hir::FnDecl,
                              abi: abi::Abi,
                              span: Span) {
     if decl.variadic && abi != abi::C {
@@ -224,9 +226,9 @@ fn check_main_fn_ty(ccx: &CrateCtxt,
     match main_t.sty {
         ty::TyBareFn(..) => {
             match tcx.map.find(main_id) {
-                Some(ast_map::NodeItem(it)) => {
+                Some(hir_map::NodeItem(it)) => {
                     match it.node {
-                        ast::ItemFn(_, _, _, _, ref ps, _)
+                        hir::ItemFn(_, _, _, _, ref ps, _)
                         if ps.is_parameterized() => {
                             span_err!(ccx.tcx.sess, main_span, E0131,
                                       "main function is not allowed to have type parameters");
@@ -237,8 +239,8 @@ fn check_main_fn_ty(ccx: &CrateCtxt,
                 }
                 _ => ()
             }
-            let se_ty = tcx.mk_fn(Some(local_def(main_id)), tcx.mk_bare_fn(ty::BareFnTy {
-                unsafety: ast::Unsafety::Normal,
+            let se_ty = tcx.mk_fn(Some(DefId::local(main_id)), tcx.mk_bare_fn(ty::BareFnTy {
+                unsafety: hir::Unsafety::Normal,
                 abi: abi::Rust,
                 sig: ty::Binder(ty::FnSig {
                     inputs: Vec::new(),
@@ -269,9 +271,9 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
     match start_t.sty {
         ty::TyBareFn(..) => {
             match tcx.map.find(start_id) {
-                Some(ast_map::NodeItem(it)) => {
+                Some(hir_map::NodeItem(it)) => {
                     match it.node {
-                        ast::ItemFn(_,_,_,_,ref ps,_)
+                        hir::ItemFn(_,_,_,_,ref ps,_)
                         if ps.is_parameterized() => {
                             span_err!(tcx.sess, start_span, E0132,
                                       "start function is not allowed to have type parameters");
@@ -283,8 +285,8 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
                 _ => ()
             }
 
-            let se_ty = tcx.mk_fn(Some(local_def(start_id)), tcx.mk_bare_fn(ty::BareFnTy {
-                unsafety: ast::Unsafety::Normal,
+            let se_ty = tcx.mk_fn(Some(DefId::local(start_id)), tcx.mk_bare_fn(ty::BareFnTy {
+                unsafety: hir::Unsafety::Normal,
                 abi: abi::Rust,
                 sig: ty::Binder(ty::FnSig {
                     inputs: vec!(
@@ -332,21 +334,35 @@ pub fn check_crate(tcx: &ty::ctxt, trait_map: ty::TraitMap) {
         tcx: tcx
     };
 
-    time(time_passes, "type collecting", (), |_|
+    time(time_passes, "type collecting", ||
          collect::collect_item_types(tcx));
 
     // this ensures that later parts of type checking can assume that items
     // have valid types and not error
     tcx.sess.abort_if_errors();
 
-    time(time_passes, "variance inference", (), |_|
+    time(time_passes, "variance inference", ||
          variance::infer_variance(tcx));
 
-    time(time_passes, "coherence checking", (), |_|
+    time(time_passes, "coherence checking", ||
         coherence::check_coherence(&ccx));
 
-    time(time_passes, "type checking", (), |_|
+    time(time_passes, "wf checking (old)", ||
+        check::check_wf_old(&ccx));
+
+    time(time_passes, "item-types checking", ||
         check::check_item_types(&ccx));
+
+    time(time_passes, "item-bodies checking", ||
+        check::check_item_bodies(&ccx));
+
+    time(time_passes, "drop-impl checking", ||
+        check::check_drop_impls(&ccx));
+
+    // Do this last so that if there are errors in the old code, they
+    // get reported, and we don't get extra warnings.
+    time(time_passes, "wf checking (new)", ||
+        check::check_wf_new(&ccx));
 
     check_for_entry_fn(&ccx);
     tcx.sess.abort_if_errors();

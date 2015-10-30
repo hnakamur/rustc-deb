@@ -11,25 +11,26 @@
 use middle::infer::InferCtxt;
 use middle::ty::{self, RegionEscape, Ty, HasTypeFlags};
 
-use std::collections::HashSet;
-use std::fmt;
 use syntax::ast;
 use util::common::ErrorReported;
-use util::nodemap::NodeMap;
+use util::nodemap::{FnvHashSet, NodeMap};
 
 use super::CodeAmbiguity;
 use super::CodeProjectionError;
 use super::CodeSelectionError;
+use super::is_object_safe;
 use super::FulfillmentError;
 use super::ObligationCause;
+use super::ObligationCauseCode;
 use super::PredicateObligation;
 use super::project;
+use super::RFC1214Warning;
 use super::select::SelectionContext;
 use super::Unimplemented;
 use super::util::predicate_for_builtin_bound;
 
 pub struct FulfilledPredicates<'tcx> {
-    set: HashSet<ty::Predicate<'tcx>>
+    set: FnvHashSet<(RFC1214Warning, ty::Predicate<'tcx>)>
 }
 
 /// The fulfillment context is used to drive trait resolution.  It
@@ -48,6 +49,12 @@ pub struct FulfillmentContext<'tcx> {
     // than the `SelectionCache`: it avoids duplicate errors and
     // permits recursive obligations, which are often generated from
     // traits like `Send` et al.
+    //
+    // Note that because of type inference, a predicate can still
+    // occur twice in the predicates list, for example when 2
+    // initially-distinct type variables are unified after being
+    // inserted. Deduplicating the predicate set on selection had a
+    // significant performance cost the last time I checked.
     duplicate_set: FulfilledPredicates<'tcx>,
 
     // A list of all obligations that have been registered with this
@@ -187,7 +194,9 @@ impl<'tcx> FulfillmentContext<'tcx> {
 
         assert!(!obligation.has_escaping_regions());
 
-        if self.is_duplicate_or_add(infcx.tcx, &obligation.predicate) {
+        let w = RFC1214Warning(obligation.cause.code.is_rfc1214());
+
+        if self.is_duplicate_or_add(infcx.tcx, w, &obligation.predicate) {
             debug!("register_predicate({:?}) -- already seen, skip", obligation);
             return;
         }
@@ -250,7 +259,9 @@ impl<'tcx> FulfillmentContext<'tcx> {
         &self.predicates
     }
 
-    fn is_duplicate_or_add(&mut self, tcx: &ty::ctxt<'tcx>,
+    fn is_duplicate_or_add(&mut self,
+                           tcx: &ty::ctxt<'tcx>,
+                           w: RFC1214Warning,
                            predicate: &ty::Predicate<'tcx>)
                            -> bool {
         // This is a kind of dirty hack to allow us to avoid "rederiving"
@@ -265,10 +276,12 @@ impl<'tcx> FulfillmentContext<'tcx> {
         // evaluating the 'nested obligations'.  This cache lets us
         // skip those.
 
-        if self.errors_will_be_reported && predicate.is_global() {
-            tcx.fulfilled_predicates.borrow_mut().is_duplicate_or_add(predicate)
+        let will_warn_due_to_rfc1214 = w.0;
+        let errors_will_be_reported = self.errors_will_be_reported && !will_warn_due_to_rfc1214;
+        if errors_will_be_reported && predicate.is_global() {
+            tcx.fulfilled_predicates.borrow_mut().is_duplicate_or_add(w, predicate)
         } else {
-            self.duplicate_set.is_duplicate_or_add(predicate)
+            self.duplicate_set.is_duplicate_or_add(w, predicate)
         }
     }
 
@@ -472,14 +485,32 @@ fn process_predicate<'a,'tcx>(selcx: &mut SelectionContext<'a,'tcx>,
                 }
             }
         }
-    }
-}
 
-impl<'tcx> fmt::Debug for RegionObligation<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RegionObligation(sub_region={:?}, sup_type={:?})",
-               self.sub_region,
-               self.sup_type)
+        ty::Predicate::ObjectSafe(trait_def_id) => {
+            if !is_object_safe(selcx.tcx(), trait_def_id) {
+                errors.push(FulfillmentError::new(
+                    obligation.clone(),
+                    CodeSelectionError(Unimplemented)));
+            }
+            true
+        }
+
+        ty::Predicate::WellFormed(ty) => {
+            let rfc1214 = match obligation.cause.code {
+                ObligationCauseCode::RFC1214(_) => true,
+                _ => false,
+            };
+            match ty::wf::obligations(selcx.infcx(), obligation.cause.body_id,
+                                      ty, obligation.cause.span, rfc1214) {
+                Some(obligations) => {
+                    new_obligations.extend(obligations);
+                    true
+                }
+                None => {
+                    false
+                }
+            }
+        }
     }
 }
 
@@ -492,26 +523,29 @@ fn register_region_obligation<'tcx>(t_a: Ty<'tcx>,
                                                sub_region: r_b,
                                                cause: cause };
 
-    debug!("register_region_obligation({:?})",
-           region_obligation);
+    debug!("register_region_obligation({:?}, cause={:?})",
+           region_obligation, region_obligation.cause);
 
-    region_obligations.entry(region_obligation.cause.body_id).or_insert(vec![])
-        .push(region_obligation);
+    region_obligations.entry(region_obligation.cause.body_id)
+                      .or_insert(vec![])
+                      .push(region_obligation);
 
 }
 
 impl<'tcx> FulfilledPredicates<'tcx> {
     pub fn new() -> FulfilledPredicates<'tcx> {
         FulfilledPredicates {
-            set: HashSet::new()
+            set: FnvHashSet()
         }
     }
 
-    pub fn is_duplicate(&self, p: &ty::Predicate<'tcx>) -> bool {
-        self.set.contains(p)
+    pub fn is_duplicate(&self, w: RFC1214Warning, p: &ty::Predicate<'tcx>) -> bool {
+        let key = (w, p.clone());
+        self.set.contains(&key)
     }
 
-    fn is_duplicate_or_add(&mut self, p: &ty::Predicate<'tcx>) -> bool {
-        !self.set.insert(p.clone())
+    fn is_duplicate_or_add(&mut self, w: RFC1214Warning, p: &ty::Predicate<'tcx>) -> bool {
+        let key = (w, p.clone());
+        !self.set.insert(key)
     }
 }

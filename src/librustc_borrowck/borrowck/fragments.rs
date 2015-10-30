@@ -20,14 +20,15 @@ use borrowck::LoanPathKind::{LpVar, LpUpvar, LpDowncast, LpExtend};
 use borrowck::LoanPathElem::{LpDeref, LpInterior};
 use borrowck::move_data::InvalidMovePathIndex;
 use borrowck::move_data::{MoveData, MovePathIndex};
+use rustc::middle::def_id::{DefId, LOCAL_CRATE};
 use rustc::middle::ty;
 use rustc::middle::mem_categorization as mc;
 
 use std::mem;
 use std::rc::Rc;
 use syntax::ast;
-use syntax::attr::AttrMetaMethods;
 use syntax::codemap::Span;
+use rustc_front::attr::AttrMetaMethods;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Fragment {
@@ -132,7 +133,7 @@ pub fn build_unfragmented_map(this: &mut borrowck::BorrowckCtxt,
     }
 
     let mut fraginfo_map = this.tcx.fragment_infos.borrow_mut();
-    let fn_did = ast::DefId { krate: ast::LOCAL_CRATE, node: id };
+    let fn_did = DefId { krate: LOCAL_CRATE, node: id };
     let prev = fraginfo_map.insert(fn_did, fragment_infos);
     assert!(prev.is_none());
 }
@@ -412,7 +413,7 @@ fn add_fragment_siblings_for_extension<'tcx>(this: &MoveData<'tcx>,
                                              origin_field_name: &mc::FieldName,
                                              origin_lp: &Rc<LoanPath<'tcx>>,
                                              origin_id: Option<ast::NodeId>,
-                                             enum_variant_info: Option<(ast::DefId,
+                                             enum_variant_info: Option<(DefId,
                                                                         Rc<LoanPath<'tcx>>)>) {
     let parent_ty = parent_lp.to_type();
 
@@ -438,11 +439,10 @@ fn add_fragment_siblings_for_extension<'tcx>(this: &MoveData<'tcx>,
             }
         }
 
-        (&ty::TyStruct(def_id, ref _substs), None) => {
-            let fields = tcx.lookup_struct_fields(def_id);
+        (&ty::TyStruct(def, _), None) => {
             match *origin_field_name {
                 mc::NamedField(ast_name) => {
-                    for f in &fields {
+                    for f in &def.struct_variant().fields {
                         if f.name == ast_name {
                             continue;
                         }
@@ -451,7 +451,7 @@ fn add_fragment_siblings_for_extension<'tcx>(this: &MoveData<'tcx>,
                     }
                 }
                 mc::PositionalField(tuple_idx) => {
-                    for (i, _f) in fields.iter().enumerate() {
+                    for (i, _f) in def.struct_variant().fields.iter().enumerate() {
                         if i == tuple_idx {
                             continue
                         }
@@ -462,35 +462,26 @@ fn add_fragment_siblings_for_extension<'tcx>(this: &MoveData<'tcx>,
             }
         }
 
-        (&ty::TyEnum(enum_def_id, substs), ref enum_variant_info) => {
-            let variant_info = {
-                let mut variants = tcx.substd_enum_variants(enum_def_id, substs);
-                match *enum_variant_info {
-                    Some((variant_def_id, ref _lp2)) =>
-                        variants.iter()
-                        .find(|variant| variant.id == variant_def_id)
-                        .expect("enum_variant_with_id(): no variant exists with that ID")
-                        .clone(),
-                    None => {
-                        assert_eq!(variants.len(), 1);
-                        variants.pop().unwrap()
-                    }
+        (&ty::TyEnum(def, _), ref enum_variant_info) => {
+            let variant = match *enum_variant_info {
+                Some((vid, ref _lp2)) => def.variant_with_id(vid),
+                None => {
+                    assert!(def.is_univariant());
+                    &def.variants[0]
                 }
             };
             match *origin_field_name {
                 mc::NamedField(ast_name) => {
-                    let variant_arg_names = variant_info.arg_names.as_ref().unwrap();
-                    for &variant_arg_name in variant_arg_names {
-                        if variant_arg_name == ast_name {
+                    for field in &variant.fields {
+                        if field.name == ast_name {
                             continue;
                         }
-                        let field_name = mc::NamedField(variant_arg_name);
-                        add_fragment_sibling_local(field_name, Some(variant_info.id));
+                        let field_name = mc::NamedField(field.name);
+                        add_fragment_sibling_local(field_name, Some(variant.did));
                     }
                 }
                 mc::PositionalField(tuple_idx) => {
-                    let variant_arg_types = &variant_info.args;
-                    for (i, _variant_arg_ty) in variant_arg_types.iter().enumerate() {
+                    for (i, _f) in variant.fields.iter().enumerate() {
                         if tuple_idx == i {
                             continue;
                         }
@@ -519,7 +510,7 @@ fn add_fragment_sibling_core<'tcx>(this: &MoveData<'tcx>,
                                    mc: mc::MutabilityCategory,
                                    new_field_name: mc::FieldName,
                                    origin_lp: &Rc<LoanPath<'tcx>>,
-                                   enum_variant_did: Option<ast::DefId>) -> MovePathIndex {
+                                   enum_variant_did: Option<DefId>) -> MovePathIndex {
     let opt_variant_did = match parent.kind {
         LpDowncast(_, variant_did) => Some(variant_did),
         LpVar(..) | LpUpvar(..) | LpExtend(..) => enum_variant_did,

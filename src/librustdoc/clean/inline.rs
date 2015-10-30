@@ -13,12 +13,13 @@
 use std::collections::HashSet;
 
 use syntax::ast;
-use syntax::ast_util;
-use syntax::attr::AttrMetaMethods;
+use rustc_front::attr::AttrMetaMethods;
+use rustc_front::hir;
 
 use rustc::metadata::csearch;
 use rustc::metadata::decoder;
 use rustc::middle::def;
+use rustc::middle::def_id::DefId;
 use rustc::middle::ty;
 use rustc::middle::subst;
 use rustc::middle::stability;
@@ -53,7 +54,7 @@ pub fn try_inline(cx: &DocContext, id: ast::NodeId, into: Option<ast::Ident>)
         None => return None,
     };
     let did = def.def_id();
-    if ast_util::is_local(did) { return None }
+    if did.is_local() { return None }
     try_inline_def(cx, tcx, def).map(|vec| {
         vec.into_iter().map(|mut item| {
             match into {
@@ -113,14 +114,13 @@ fn try_inline_def(cx: &DocContext, tcx: &ty::ctxt,
         }
         _ => return None,
     };
-    let fqn = csearch::get_item_path(tcx, did);
     cx.inlined.borrow_mut().as_mut().unwrap().insert(did);
     ret.push(clean::Item {
         source: clean::Span::empty(),
-        name: Some(fqn.last().unwrap().to_string()),
+        name: Some(tcx.item_name(did).to_string()),
         attrs: load_attrs(cx, tcx, did),
         inner: inner,
-        visibility: Some(ast::Public),
+        visibility: Some(hir::Public),
         stability: stability::lookup(tcx, did).clean(cx),
         def_id: did,
     });
@@ -128,7 +128,7 @@ fn try_inline_def(cx: &DocContext, tcx: &ty::ctxt,
 }
 
 pub fn load_attrs(cx: &DocContext, tcx: &ty::ctxt,
-                  did: ast::DefId) -> Vec<clean::Attribute> {
+                  did: DefId) -> Vec<clean::Attribute> {
     let attrs = csearch::get_item_attrs(&tcx.sess.cstore, did);
     attrs.into_iter().map(|a| a.clean(cx)).collect()
 }
@@ -137,7 +137,7 @@ pub fn load_attrs(cx: &DocContext, tcx: &ty::ctxt,
 ///
 /// These names are used later on by HTML rendering to generate things like
 /// source links back to the original item.
-pub fn record_extern_fqn(cx: &DocContext, did: ast::DefId, kind: clean::TypeKind) {
+pub fn record_extern_fqn(cx: &DocContext, did: DefId, kind: clean::TypeKind) {
     match cx.tcx_opt() {
         Some(tcx) => {
             let fqn = csearch::get_item_path(tcx, did);
@@ -149,7 +149,7 @@ pub fn record_extern_fqn(cx: &DocContext, did: ast::DefId, kind: clean::TypeKind
 }
 
 pub fn build_external_trait(cx: &DocContext, tcx: &ty::ctxt,
-                            did: ast::DefId) -> clean::Trait {
+                            did: DefId) -> clean::Trait {
     let def = tcx.lookup_trait_def(did);
     let trait_items = tcx.trait_items(did).clean(cx);
     let predicates = tcx.lookup_predicates(did);
@@ -164,7 +164,7 @@ pub fn build_external_trait(cx: &DocContext, tcx: &ty::ctxt,
     }
 }
 
-fn build_external_function(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> clean::Function {
+fn build_external_function(cx: &DocContext, tcx: &ty::ctxt, did: DefId) -> clean::Function {
     let t = tcx.lookup_item_type(did);
     let (decl, style, abi) = match t.ty.sty {
         ty::TyBareFn(_, ref f) => ((did, &f.sig).clean(cx), f.unsafety, f.abi),
@@ -175,40 +175,40 @@ fn build_external_function(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> 
         decl: decl,
         generics: (&t.generics, &predicates, subst::FnSpace).clean(cx),
         unsafety: style,
-        constness: ast::Constness::NotConst,
+        constness: hir::Constness::NotConst,
         abi: abi,
     }
 }
 
-fn build_struct(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> clean::Struct {
+fn build_struct(cx: &DocContext, tcx: &ty::ctxt, did: DefId) -> clean::Struct {
     use syntax::parse::token::special_idents::unnamed_field;
 
     let t = tcx.lookup_item_type(did);
     let predicates = tcx.lookup_predicates(did);
-    let fields = tcx.lookup_struct_fields(did);
+    let variant = tcx.lookup_adt_def(did).struct_variant();
 
     clean::Struct {
-        struct_type: match &*fields {
+        struct_type: match &*variant.fields {
             [] => doctree::Unit,
             [ref f] if f.name == unnamed_field.name => doctree::Newtype,
             [ref f, ..] if f.name == unnamed_field.name => doctree::Tuple,
             _ => doctree::Plain,
         },
         generics: (&t.generics, &predicates, subst::TypeSpace).clean(cx),
-        fields: fields.clean(cx),
+        fields: variant.fields.clean(cx),
         fields_stripped: false,
     }
 }
 
-fn build_type(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> clean::ItemEnum {
+fn build_type(cx: &DocContext, tcx: &ty::ctxt, did: DefId) -> clean::ItemEnum {
     let t = tcx.lookup_item_type(did);
     let predicates = tcx.lookup_predicates(did);
     match t.ty.sty {
-        ty::TyEnum(edid, _) if !csearch::is_typedef(&tcx.sess.cstore, did) => {
+        ty::TyEnum(edef, _) if !csearch::is_typedef(&tcx.sess.cstore, did) => {
             return clean::EnumItem(clean::Enum {
                 generics: (&t.generics, &predicates, subst::TypeSpace).clean(cx),
                 variants_stripped: false,
-                variants: tcx.enum_variants(edid).clean(cx),
+                variants: edef.variants.clean(cx),
             })
         }
         _ => {}
@@ -221,7 +221,7 @@ fn build_type(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId) -> clean::ItemEn
 }
 
 pub fn build_impls(cx: &DocContext, tcx: &ty::ctxt,
-                   did: ast::DefId) -> Vec<clean::Item> {
+                   did: DefId) -> Vec<clean::Item> {
     tcx.populate_inherent_implementations_for_type_if_necessary(did);
     let mut impls = Vec::new();
 
@@ -271,7 +271,7 @@ pub fn build_impls(cx: &DocContext, tcx: &ty::ctxt,
 
 pub fn build_impl(cx: &DocContext,
                   tcx: &ty::ctxt,
-                  did: ast::DefId,
+                  did: DefId,
                   ret: &mut Vec<clean::Item>) {
     if !cx.inlined.borrow_mut().as_mut().unwrap().insert(did) {
         return
@@ -292,7 +292,7 @@ pub fn build_impl(cx: &DocContext,
         return ret.push(clean::Item {
             inner: clean::DefaultImplItem(clean::DefaultImpl {
                 // FIXME: this should be decoded
-                unsafety: ast::Unsafety::Normal,
+                unsafety: hir::Unsafety::Normal,
                 trait_: match associated_trait.as_ref().unwrap().clean(cx) {
                     clean::TraitBound(polyt, _) => polyt.trait_,
                     clean::RegionBound(..) => unreachable!(),
@@ -301,7 +301,7 @@ pub fn build_impl(cx: &DocContext,
             source: clean::Span::empty(),
             name: None,
             attrs: attrs,
-            visibility: Some(ast::Inherited),
+            visibility: Some(hir::Inherited),
             stability: stability::lookup(tcx, did).clean(cx),
             def_id: did,
         });
@@ -336,7 +336,7 @@ pub fn build_impl(cx: &DocContext,
                 })
             }
             ty::MethodTraitItem(method) => {
-                if method.vis != ast::Public && associated_trait.is_none() {
+                if method.vis != hir::Public && associated_trait.is_none() {
                     return None
                 }
                 if method.provided_source.is_some() {
@@ -349,7 +349,7 @@ pub fn build_impl(cx: &DocContext,
                     }) => {
                         clean::MethodItem(clean::Method {
                             unsafety: unsafety,
-                            constness: ast::Constness::NotConst,
+                            constness: hir::Constness::NotConst,
                             decl: decl,
                             self_: self_,
                             generics: generics,
@@ -397,7 +397,7 @@ pub fn build_impl(cx: &DocContext,
     }
     ret.push(clean::Item {
         inner: clean::ImplItem(clean::Impl {
-            unsafety: ast::Unsafety::Normal, // FIXME: this should be decoded
+            unsafety: hir::Unsafety::Normal, // FIXME: this should be decoded
             derived: clean::detect_derived(&attrs),
             trait_: trait_,
             for_: ty.ty.clean(cx),
@@ -408,7 +408,7 @@ pub fn build_impl(cx: &DocContext,
         source: clean::Span::empty(),
         name: None,
         attrs: attrs,
-        visibility: Some(ast::Inherited),
+        visibility: Some(hir::Inherited),
         stability: stability::lookup(tcx, did).clean(cx),
         def_id: did,
     });
@@ -429,7 +429,7 @@ pub fn build_impl(cx: &DocContext,
 }
 
 fn build_module(cx: &DocContext, tcx: &ty::ctxt,
-                did: ast::DefId) -> clean::Module {
+                did: DefId) -> clean::Module {
     let mut items = Vec::new();
     fill_in(cx, tcx, did, &mut items);
     return clean::Module {
@@ -437,7 +437,7 @@ fn build_module(cx: &DocContext, tcx: &ty::ctxt,
         is_crate: false,
     };
 
-    fn fill_in(cx: &DocContext, tcx: &ty::ctxt, did: ast::DefId,
+    fn fill_in(cx: &DocContext, tcx: &ty::ctxt, did: DefId,
                items: &mut Vec<clean::Item>) {
         // If we're reexporting a reexport it may actually reexport something in
         // two namespaces, so the target may be listed twice. Make sure we only
@@ -448,7 +448,7 @@ fn build_module(cx: &DocContext, tcx: &ty::ctxt,
                 decoder::DlDef(def::DefForeignMod(did)) => {
                     fill_in(cx, tcx, did, items);
                 }
-                decoder::DlDef(def) if vis == ast::Public => {
+                decoder::DlDef(def) if vis == hir::Public => {
                     if !visited.insert(def) { return }
                     match try_inline_def(cx, tcx, def) {
                         Some(i) => items.extend(i),
@@ -465,9 +465,9 @@ fn build_module(cx: &DocContext, tcx: &ty::ctxt,
 }
 
 fn build_const(cx: &DocContext, tcx: &ty::ctxt,
-               did: ast::DefId) -> clean::Constant {
+               did: DefId) -> clean::Constant {
     use rustc::middle::const_eval;
-    use syntax::print::pprust;
+    use rustc_front::print::pprust;
 
     let expr = const_eval::lookup_const_by_id(tcx, did, None).unwrap_or_else(|| {
         panic!("expected lookup_const_by_id to succeed for {:?}", did);
@@ -483,7 +483,7 @@ fn build_const(cx: &DocContext, tcx: &ty::ctxt,
 }
 
 fn build_static(cx: &DocContext, tcx: &ty::ctxt,
-                did: ast::DefId,
+                did: DefId,
                 mutable: bool) -> clean::Static {
     clean::Static {
         type_: tcx.lookup_item_type(did).ty.clean(cx),
@@ -499,7 +499,7 @@ fn build_static(cx: &DocContext, tcx: &ty::ctxt,
 ///
 /// The inverse of this filtering logic can be found in the `Clean`
 /// implementation for `AssociatedType`
-fn filter_non_trait_generics(trait_did: ast::DefId, mut g: clean::Generics)
+fn filter_non_trait_generics(trait_did: DefId, mut g: clean::Generics)
                              -> clean::Generics {
     g.where_predicates.retain(|pred| {
         match *pred {

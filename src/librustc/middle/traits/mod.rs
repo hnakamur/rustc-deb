@@ -15,19 +15,22 @@ pub use self::FulfillmentErrorCode::*;
 pub use self::Vtable::*;
 pub use self::ObligationCauseCode::*;
 
+use middle::def_id::DefId;
 use middle::free_region::FreeRegionMap;
 use middle::subst;
 use middle::ty::{self, HasTypeFlags, Ty};
-use middle::ty_fold::TypeFoldable;
+use middle::ty::fold::TypeFoldable;
 use middle::infer::{self, fixup_err_to_string, InferCtxt};
+
 use std::rc::Rc;
 use syntax::ast;
 use syntax::codemap::{Span, DUMMY_SP};
 
+pub use self::error_reporting::TraitErrorKey;
 pub use self::error_reporting::report_fulfillment_errors;
 pub use self::error_reporting::report_overflow_error;
 pub use self::error_reporting::report_selection_error;
-pub use self::error_reporting::suggest_new_overflow_limit;
+pub use self::error_reporting::report_object_safety_error;
 pub use self::coherence::orphan_check;
 pub use self::coherence::overlapping_impls;
 pub use self::coherence::OrphanCheckErr;
@@ -61,6 +64,7 @@ mod fulfill;
 mod project;
 mod object_safety;
 mod select;
+mod structural_impls;
 mod util;
 
 /// An `Obligation` represents some trait reference (e.g. `int:Eq`) for
@@ -80,7 +84,7 @@ pub type PredicateObligation<'tcx> = Obligation<'tcx, ty::Predicate<'tcx>>;
 pub type TraitObligation<'tcx> = Obligation<'tcx, ty::PolyTraitPredicate<'tcx>>;
 
 /// Why did we incur this obligation? Used for error reporting.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObligationCause<'tcx> {
     pub span: Span,
 
@@ -95,14 +99,26 @@ pub struct ObligationCause<'tcx> {
     pub code: ObligationCauseCode<'tcx>
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObligationCauseCode<'tcx> {
     /// Not well classified or should be obvious from span.
     MiscObligation,
 
+    /// Obligation that triggers warning until RFC 1214 is fully in place.
+    RFC1214(Rc<ObligationCauseCode<'tcx>>),
+
+    /// This is the trait reference from the given projection
+    SliceOrArrayElem,
+
+    /// This is the trait reference from the given projection
+    ProjectionWf(ty::ProjectionTy<'tcx>),
+
     /// In an impl of trait X for type Y, type Y must
     /// also implement all supertraits of X.
-    ItemObligation(ast::DefId),
+    ItemObligation(DefId),
+
+    /// A type like `&'a T` is WF only if `T: 'a`.
+    ReferenceOutlivesReferent(Ty<'tcx>),
 
     /// Obligation incurred due to an object cast.
     ObjectCastObligation(/* Object type */ Ty<'tcx>),
@@ -124,7 +140,6 @@ pub enum ObligationCauseCode<'tcx> {
     // static items must have `Sync` type
     SharedStatic,
 
-
     BuiltinDerivedObligation(DerivedObligationCause<'tcx>),
 
     ImplDerivedObligation(DerivedObligationCause<'tcx>),
@@ -132,7 +147,7 @@ pub enum ObligationCauseCode<'tcx> {
     CompareImplMethodObligation,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DerivedObligationCause<'tcx> {
     /// The trait reference of the parent obligation that led to the
     /// current obligation. Note that only trait obligations lead to
@@ -155,8 +170,8 @@ pub enum SelectionError<'tcx> {
     Unimplemented,
     OutputTypeParameterMismatch(ty::PolyTraitRef<'tcx>,
                                 ty::PolyTraitRef<'tcx>,
-                                ty::TypeError<'tcx>),
-    TraitNotObjectSafe(ast::DefId),
+                                ty::error::TypeError<'tcx>),
+    TraitNotObjectSafe(DefId),
 }
 
 pub struct FulfillmentError<'tcx> {
@@ -262,14 +277,14 @@ pub enum Vtable<'tcx, N> {
 /// impl, and nested obligations are satisfied later.
 #[derive(Clone, PartialEq, Eq)]
 pub struct VtableImplData<'tcx, N> {
-    pub impl_def_id: ast::DefId,
+    pub impl_def_id: DefId,
     pub substs: subst::Substs<'tcx>,
     pub nested: Vec<N>
 }
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct VtableClosureData<'tcx, N> {
-    pub closure_def_id: ast::DefId,
+    pub closure_def_id: DefId,
     pub substs: ty::ClosureSubsts<'tcx>,
     /// Nested obligations. This can be non-empty if the closure
     /// signature contains associated types.
@@ -278,7 +293,7 @@ pub struct VtableClosureData<'tcx, N> {
 
 #[derive(Clone)]
 pub struct VtableDefaultImplData<N> {
-    pub trait_def_id: ast::DefId,
+    pub trait_def_id: DefId,
     pub nested: Vec<N>
 }
 
@@ -513,6 +528,24 @@ impl<'tcx> ObligationCause<'tcx> {
 
     pub fn dummy() -> ObligationCause<'tcx> {
         ObligationCause { span: DUMMY_SP, body_id: 0, code: MiscObligation }
+    }
+}
+
+/// This marker is used in some caches to record whether the
+/// predicate, if it is found to be false, will yield a warning (due
+/// to RFC1214) or an error. We separate these two cases in the cache
+/// so that if we see the same predicate twice, first resulting in a
+/// warning, and next resulting in an error, we still report the
+/// error, rather than considering it a duplicate.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct RFC1214Warning(bool);
+
+impl<'tcx> ObligationCauseCode<'tcx> {
+    pub fn is_rfc1214(&self) -> bool {
+        match *self {
+            ObligationCauseCode::RFC1214(..) => true,
+            _ => false,
+        }
     }
 }
 

@@ -10,8 +10,9 @@
 
 //! An implementation of SipHash 2-4.
 
+use prelude::v1::*;
+
 use ptr;
-use prelude::*;
 use super::Hasher;
 
 /// An implementation of SipHash 2-4.
@@ -137,7 +138,10 @@ impl SipHasher {
         self.v3 = self.k1 ^ 0x7465646279746573;
         self.ntail = 0;
     }
+}
 
+#[stable(feature = "rust1", since = "1.0.0")]
+impl Hasher for SipHasher {
     #[inline]
     fn write(&mut self, msg: &[u8]) {
         let length = msg.len();
@@ -181,14 +185,6 @@ impl SipHasher {
 
         self.tail = u8to64_le!(msg, i, left);
         self.ntail = left;
-    }
-}
-
-#[stable(feature = "rust1", since = "1.0.0")]
-impl Hasher for SipHasher {
-    #[inline]
-    fn write(&mut self, msg: &[u8]) {
-        self.write(msg)
     }
 
     #[inline]

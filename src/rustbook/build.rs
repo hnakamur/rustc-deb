@@ -52,16 +52,16 @@ fn write_toc(book: &Book, current_page: &BookItem, out: &mut Write) -> io::Resul
                  current_page: &BookItem,
                  out: &mut Write) -> io::Result<()> {
         let class_string = if item.path == current_page.path {
-          "class='active'"
+            "class='active'"
         } else {
-        ""
+            ""
         };
 
         try!(writeln!(out, "<li><a {} href='{}'><b>{}</b> {}</a>",
-                 class_string,
-                 current_page.path_to_root.join(&item.path).with_extension("html").display(),
-                 section,
-                 item.title));
+                      class_string,
+                      current_page.path_to_root.join(&item.path).with_extension("html").display(),
+                      section,
+                      item.title));
         if !item.children.is_empty() {
             try!(writeln!(out, "<ul class='section'>"));
             let _ = walk_items(&item.children[..], section, current_page, out);
@@ -143,7 +143,7 @@ fn render(book: &Book, tgt: &Path) -> CliResult<()> {
             format!("-o{}", out_path.display()),
             format!("--html-before-content={}", prelude.display()),
             format!("--html-after-content={}", postlude.display()),
-            format!("--markdown-playground-url=http://play.rust-lang.org"),
+            format!("--markdown-playground-url=https://play.rust-lang.org"),
             format!("--markdown-css={}", item.path_to_root.join("rust-book.css").display()),
             "--markdown-no-toc".to_string(),
         ];

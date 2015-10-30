@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use io;
 use libc;
 use sys::fd::FileDesc;
@@ -25,7 +23,7 @@ impl Stdin {
         let fd = FileDesc::new(libc::STDIN_FILENO);
         let ret = fd.read(data);
         fd.into_raw();
-        return ret;
+        ret
     }
 }
 
@@ -36,7 +34,7 @@ impl Stdout {
         let fd = FileDesc::new(libc::STDOUT_FILENO);
         let ret = fd.write(data);
         fd.into_raw();
-        return ret;
+        ret
     }
 }
 
@@ -47,7 +45,7 @@ impl Stderr {
         let fd = FileDesc::new(libc::STDERR_FILENO);
         let ret = fd.write(data);
         fd.into_raw();
-        return ret;
+        ret
     }
 }
 

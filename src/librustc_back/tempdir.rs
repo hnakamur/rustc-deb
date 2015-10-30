@@ -38,8 +38,12 @@ impl TempDir {
     #[allow(deprecated)] // rand usage
     pub fn new_in<P: AsRef<Path>>(tmpdir: P, prefix: &str)
                                   -> io::Result<TempDir> {
+        Self::_new_in(tmpdir.as_ref(), prefix)
+    }
+
+    fn _new_in(tmpdir: &Path, prefix: &str) -> io::Result<TempDir> {
         let storage;
-        let mut tmpdir = tmpdir.as_ref();
+        let mut tmpdir = tmpdir;
         if !tmpdir.is_absolute() {
             let cur_dir = try!(env::current_dir());
             storage = cur_dir.join(tmpdir);
@@ -75,7 +79,6 @@ impl TempDir {
     /// deleted once the returned wrapper is destroyed.
     ///
     /// If no directory can be created, `Err` is returned.
-    #[allow(deprecated)]
     pub fn new(prefix: &str) -> io::Result<TempDir> {
         TempDir::new_in(&env::temp_dir(), prefix)
     }

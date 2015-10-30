@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::prelude::*;
 use io::prelude::*;
 use os::windows::prelude::*;
 
@@ -329,12 +328,12 @@ impl File {
             try!(cvt({
                 c::DeviceIoControl(self.handle.raw(),
                                    c::FSCTL_GET_REPARSE_POINT,
-                                   0 as *mut _,
+                                   ptr::null_mut(),
                                    0,
                                    space.as_mut_ptr() as *mut _,
                                    space.len() as libc::DWORD,
                                    &mut bytes,
-                                   0 as *mut _)
+                                   ptr::null_mut())
             }));
             Ok((bytes, &*(space.as_ptr() as *const c::REPARSE_DATA_BUFFER)))
         }
@@ -572,19 +571,6 @@ pub fn set_perm(p: &Path, perm: FilePermissions) -> io::Result<()> {
     }
 }
 
-pub fn utimes(p: &Path, atime: u64, mtime: u64) -> io::Result<()> {
-    let atime = super::ms_to_filetime(atime);
-    let mtime = super::ms_to_filetime(mtime);
-
-    let mut o = OpenOptions::new();
-    o.write(true);
-    let f = try!(File::open(p, &o));
-    try!(cvt(unsafe {
-        c::SetFileTime(f.handle.raw(), 0 as *const _, &atime, &mtime)
-    }));
-    Ok(())
-}
-
 fn get_path(f: &File) -> io::Result<PathBuf> {
     super::fill_utf16_buf(|buf, sz| unsafe {
         c::GetFinalPathNameByHandleW(f.handle.raw(), buf, sz,
@@ -694,15 +680,15 @@ fn directory_junctions_are_directories() {
                                    c::FSCTL_SET_REPARSE_POINT,
                                    data.as_ptr() as *mut _,
                                    (*db).ReparseDataLength + 8,
-                                   0 as *mut _, 0,
+                                   ptr::null_mut(), 0,
                                    &mut ret,
-                                   0 as *mut _)).map(|_| ())
+                                   ptr::null_mut())).map(|_| ())
         }
     }
 
     fn opendir(p: &Path, write: bool) -> io::Result<File> {
         unsafe {
-            let mut token = 0 as *mut _;
+            let mut token = ptr::null_mut();
             let mut tp: c::TOKEN_PRIVILEGES = mem::zeroed();
             try!(cvt(c::OpenProcessToken(c::GetCurrentProcess(),
                                          c::TOKEN_ADJUST_PRIVILEGES,
@@ -713,14 +699,14 @@ fn directory_junctions_are_directories() {
                 "SeBackupPrivilege".as_ref()
             };
             let name = name.encode_wide().chain(Some(0)).collect::<Vec<_>>();
-            try!(cvt(c::LookupPrivilegeValueW(0 as *const _,
+            try!(cvt(c::LookupPrivilegeValueW(ptr::null(),
                                               name.as_ptr(),
                                               &mut tp.Privileges[0].Luid)));
             tp.PrivilegeCount = 1;
             tp.Privileges[0].Attributes = c::SE_PRIVILEGE_ENABLED;
             let size = mem::size_of::<c::TOKEN_PRIVILEGES>() as libc::DWORD;
             try!(cvt(c::AdjustTokenPrivileges(token, libc::FALSE, &mut tp, size,
-                                              0 as *mut _, 0 as *mut _)));
+                                              ptr::null_mut(), ptr::null_mut())));
             try!(cvt(libc::CloseHandle(token)));
 
             File::open_reparse_point(p, write)
@@ -740,9 +726,9 @@ fn directory_junctions_are_directories() {
                                    c::FSCTL_DELETE_REPARSE_POINT,
                                    data.as_ptr() as *mut _,
                                    (*db).ReparseDataLength + 8,
-                                   0 as *mut _, 0,
+                                   ptr::null_mut(), 0,
                                    &mut bytes,
-                                   0 as *mut _)).map(|_| ())
+                                   ptr::null_mut())).map(|_| ())
         }
     }
 }

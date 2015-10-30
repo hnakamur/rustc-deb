@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use io;
 use libc::consts::os::extra::INVALID_SOCKET;
 use libc::{self, c_int, c_void};
@@ -17,11 +15,11 @@ use mem;
 use net::SocketAddr;
 use num::One;
 use ops::Neg;
-use rt;
+use ptr;
 use sync::Once;
 use sys;
 use sys::c;
-use sys_common::{AsInner, FromInner, IntoInner};
+use sys_common::{self, AsInner, FromInner, IntoInner};
 use sys_common::net::{setsockopt, getsockopt};
 use time::Duration;
 
@@ -40,7 +38,7 @@ pub fn init() {
                                 &mut data);
         assert_eq!(ret, 0);
 
-        let _ = rt::at_exit(|| { c::WSACleanup(); });
+        let _ = sys_common::at_exit(|| { c::WSACleanup(); });
     });
 }
 
@@ -69,7 +67,6 @@ pub fn cvt_gai(err: c_int) -> io::Result<()> {
 }
 
 /// Provides the functionality of `cvt` for a closure.
-#[allow(deprecated)]
 pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
     where F: FnMut() -> T, T: One + Neg<Output=T> + PartialEq
 {
@@ -83,7 +80,7 @@ impl Socket {
             SocketAddr::V6(..) => libc::AF_INET6,
         };
         let socket = try!(unsafe {
-            match c::WSASocketW(fam, ty, 0, 0 as *mut _, 0,
+            match c::WSASocketW(fam, ty, 0, ptr::null_mut(), 0,
                                 c::WSA_FLAG_OVERLAPPED) {
                 INVALID_SOCKET => Err(last_error()),
                 n => Ok(Socket(n)),

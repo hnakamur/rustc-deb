@@ -125,6 +125,9 @@ pub enum ErrorKind {
     /// Unlike `InvalidInput`, this typically means that the operation
     /// parameters were valid, however the error was caused by malformed
     /// input data.
+    ///
+    /// For example, a function that reads a file into a string will error with
+    /// `InvalidData` if the file's contents are not valid UTF-8.
     #[stable(feature = "io_invalid_data", since = "1.2.0")]
     InvalidData,
     /// The I/O operation's timeout expired, causing it to be canceled.
@@ -147,10 +150,20 @@ pub enum ErrorKind {
     #[stable(feature = "rust1", since = "1.0.0")]
     Other,
 
+    /// An error returned when an operation could not be completed because an
+    /// "end of file" was reached prematurely.
+    ///
+    /// This typically means that an operation could only succeed if it read a
+    /// particular number of bytes but only a smaller number of bytes could be
+    /// read.
+    #[unstable(feature = "read_exact", reason = "recently added", issue = "27585")]
+    UnexpectedEOF,
+
     /// Any I/O error not part of this list.
     #[unstable(feature = "io_error_internals",
                reason = "better expressed through extensible enums that this \
-                         enum cannot be exhaustively matched against")]
+                         enum cannot be exhaustively matched against",
+               issue = "0")]
     #[doc(hidden)]
     __Nonexhaustive,
 }
@@ -178,10 +191,14 @@ impl Error {
     pub fn new<E>(kind: ErrorKind, error: E) -> Error
         where E: Into<Box<error::Error+Send+Sync>>
     {
+        Self::_new(kind, error.into())
+    }
+
+    fn _new(kind: ErrorKind, error: Box<error::Error+Send+Sync>) -> Error {
         Error {
             repr: Repr::Custom(Box::new(Custom {
                 kind: kind,
-                error: error.into(),
+                error: error,
             }))
         }
     }
@@ -264,11 +281,11 @@ impl Error {
 
 impl fmt::Debug for Repr {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Repr::Os(ref code) =>
+        match *self {
+            Repr::Os(ref code) =>
                 fmt.debug_struct("Os").field("code", code)
                    .field("message", &sys::os::error_string(*code)).finish(),
-            &Repr::Custom(ref c) => fmt.debug_tuple("Custom").field(c).finish(),
+            Repr::Custom(ref c) => fmt.debug_tuple("Custom").field(c).finish(),
         }
     }
 }

@@ -25,8 +25,6 @@
 // unix (it's mostly used on windows), so don't worry about dead code here.
 #![allow(dead_code)]
 
-use core::prelude::*;
-
 use core::char::{encode_utf8_raw, encode_utf16_raw};
 use core::str::next_code_point;
 
@@ -39,7 +37,6 @@ use hash::{Hash, Hasher};
 use iter::FromIterator;
 use mem;
 use ops;
-use rustc_unicode::str::{Utf16Item, utf16_items};
 use slice;
 use str;
 use string::String;
@@ -188,14 +185,14 @@ impl Wtf8Buf {
     /// will always return the original code units.
     pub fn from_wide(v: &[u16]) -> Wtf8Buf {
         let mut string = Wtf8Buf::with_capacity(v.len());
-        for item in utf16_items(v) {
+        for item in char::decode_utf16(v.iter().cloned()) {
             match item {
-                Utf16Item::ScalarValue(c) => string.push_char(c),
-                Utf16Item::LoneSurrogate(s) => {
+                Ok(ch) => string.push_char(ch),
+                Err(surrogate) => {
                     // Surrogates are known to be in the code point range.
-                    let code_point = unsafe { CodePoint::from_u32_unchecked(s as u32) };
+                    let code_point = unsafe { CodePoint::from_u32_unchecked(surrogate as u32) };
                     // Skip the WTF-8 concatenation check,
-                    // surrogate pairs are already decoded by utf16_items
+                    // surrogate pairs are already decoded by decode_utf16
                     string.push_code_point_unchecked(code_point)
                 }
             }
@@ -285,19 +282,13 @@ impl Wtf8Buf {
     /// like concatenating ill-formed UTF-16 strings effectively would.
     #[inline]
     pub fn push(&mut self, code_point: CodePoint) {
-        match code_point.to_u32() {
-            trail @ 0xDC00...0xDFFF => {
-                match (&*self).final_lead_surrogate() {
-                    Some(lead) => {
-                        let len_without_lead_surrogate = self.len() - 3;
-                        self.bytes.truncate(len_without_lead_surrogate);
-                        self.push_char(decode_surrogate_pair(lead, trail as u16));
-                        return
-                    }
-                    _ => {}
-                }
+        if let trail @ 0xDC00...0xDFFF = code_point.to_u32() {
+            if let Some(lead) = (&*self).final_lead_surrogate() {
+                let len_without_lead_surrogate = self.len() - 3;
+                self.bytes.truncate(len_without_lead_surrogate);
+                self.push_char(decode_surrogate_pair(lead, trail as u16));
+                return
             }
-            _ => {}
         }
 
         // No newly paired surrogates at the boundary.

@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use io::ErrorKind;
 use io;
 use libc::funcs::extra::kernel32::{GetCurrentProcess, DuplicateHandle};

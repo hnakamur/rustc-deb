@@ -14,7 +14,7 @@ use std::cmp;
 use std::string::String;
 use std::usize;
 use syntax::ast;
-use syntax::ast_util;
+use rustc_front::hir;
 
 use clean;
 use clean::Item;
@@ -131,32 +131,32 @@ impl<'a> fold::DocFolder for Stripper<'a> {
             clean::TraitItem(..) | clean::FunctionItem(..) |
             clean::VariantItem(..) | clean::MethodItem(..) |
             clean::ForeignFunctionItem(..) | clean::ForeignStaticItem(..) => {
-                if ast_util::is_local(i.def_id) {
+                if i.def_id.is_local() {
                     if !self.exported_items.contains(&i.def_id.node) {
                         return None;
                     }
                     // Traits are in exported_items even when they're totally private.
-                    if i.is_trait() && i.visibility != Some(ast::Public) {
+                    if i.is_trait() && i.visibility != Some(hir::Public) {
                         return None;
                     }
                 }
             }
 
             clean::ConstantItem(..) => {
-                if ast_util::is_local(i.def_id) &&
+                if i.def_id.is_local() &&
                    !self.exported_items.contains(&i.def_id.node) {
                     return None;
                 }
             }
 
             clean::ExternCrateItem(..) | clean::ImportItem(_) => {
-                if i.visibility != Some(ast::Public) {
+                if i.visibility != Some(hir::Public) {
                     return None
                 }
             }
 
             clean::StructFieldItem(..) => {
-                if i.visibility != Some(ast::Public) {
+                if i.visibility != Some(hir::Public) {
                     return Some(clean::Item {
                         inner: clean::StructFieldItem(clean::HiddenStructField),
                         ..i
@@ -171,7 +171,7 @@ impl<'a> fold::DocFolder for Stripper<'a> {
             clean::ImplItem(clean::Impl{
                 for_: clean::ResolvedPath{ did, .. }, ..
             }) => {
-                if ast_util::is_local(did) &&
+                if did.is_local() &&
                    !self.exported_items.contains(&did.node) {
                     return None;
                 }
@@ -238,7 +238,7 @@ impl<'a> fold::DocFolder for ImplStripper<'a> {
             match imp.trait_ {
                 Some(clean::ResolvedPath{ did, .. }) => {
                     let ImplStripper(s) = *self;
-                    if ast_util::is_local(did) && !s.contains(&did.node) {
+                    if did.is_local() && !s.contains(&did.node) {
                         return None;
                     }
                 }
@@ -308,7 +308,7 @@ pub fn collapse_docs(krate: clean::Crate) -> plugins::PluginResult {
 }
 
 pub fn unindent(s: &str) -> String {
-    let lines = s.lines_any().collect::<Vec<&str> >();
+    let lines = s.lines().collect::<Vec<&str> >();
     let mut saw_first_line = false;
     let mut saw_second_line = false;
     let min_indent = lines.iter().fold(usize::MAX, |min_indent, line| {

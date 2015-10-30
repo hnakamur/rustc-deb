@@ -13,19 +13,18 @@
 use super::{check_fn, Expectation, FnCtxt};
 
 use astconv;
-use middle::region;
+use middle::def_id::DefId;
 use middle::subst;
 use middle::ty::{self, ToPolyTraitRef, Ty};
 use std::cmp;
 use syntax::abi;
-use syntax::ast;
-use syntax::ast_util;
+use rustc_front::hir;
 
 pub fn check_expr_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
-                                   expr: &ast::Expr,
-                                   _capture: ast::CaptureClause,
-                                   decl: &'tcx ast::FnDecl,
-                                   body: &'tcx ast::Block,
+                                   expr: &hir::Expr,
+                                   _capture: hir::CaptureClause,
+                                   decl: &'tcx hir::FnDecl,
+                                   body: &'tcx hir::Block,
                                    expected: Expectation<'tcx>) {
     debug!("check_expr_closure(expr={:?},expected={:?})",
            expr,
@@ -42,19 +41,19 @@ pub fn check_expr_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
 }
 
 fn check_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
-                          expr: &ast::Expr,
+                          expr: &hir::Expr,
                           opt_kind: Option<ty::ClosureKind>,
-                          decl: &'tcx ast::FnDecl,
-                          body: &'tcx ast::Block,
+                          decl: &'tcx hir::FnDecl,
+                          body: &'tcx hir::Block,
                           expected_sig: Option<ty::FnSig<'tcx>>) {
-    let expr_def_id = ast_util::local_def(expr.id);
+    let expr_def_id = DefId::local(expr.id);
 
     debug!("check_closure opt_kind={:?} expected_sig={:?}",
            opt_kind,
            expected_sig);
 
     let mut fn_ty = astconv::ty_of_closure(fcx,
-                                           ast::Unsafety::Normal,
+                                           hir::Unsafety::Normal,
                                            decl,
                                            abi::RustCall,
                                            expected_sig);
@@ -77,10 +76,10 @@ fn check_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
     fcx.write_ty(expr.id, closure_type);
 
     let fn_sig = fcx.tcx().liberate_late_bound_regions(
-        region::DestructionScopeData::new(body.id), &fn_ty.sig);
+        fcx.tcx().region_maps.item_extent(body.id), &fn_ty.sig);
 
     check_fn(fcx.ccx,
-             ast::Unsafety::Normal,
+             hir::Unsafety::Normal,
              expr.id,
              &fn_sig,
              decl,
@@ -177,6 +176,8 @@ fn deduce_expectations_from_obligations<'a,'tcx>(
                 ty::Predicate::Equate(..) => None,
                 ty::Predicate::RegionOutlives(..) => None,
                 ty::Predicate::TypeOutlives(..) => None,
+                ty::Predicate::WellFormed(..) => None,
+                ty::Predicate::ObjectSafe(..) => None,
             };
             opt_trait_ref
                 .and_then(|trait_ref| self_type_matches_expected_vid(fcx, trait_ref, expected_vid))

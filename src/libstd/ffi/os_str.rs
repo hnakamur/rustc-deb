@@ -29,11 +29,6 @@
 //! for conversion to/from various other string types. Eventually these types
 //! will offer a full-fledged string API.
 
-#![unstable(feature = "os_str",
-            reason = "recently added as part of path/io reform")]
-
-use core::prelude::*;
-
 use borrow::{Borrow, Cow, ToOwned};
 use ffi::CString;
 use fmt::{self, Debug};
@@ -76,20 +71,20 @@ impl OsString {
     ///
     /// On Windows system, only UTF-8 byte sequences will successfully
     /// convert; non UTF-8 data will produce `None`.
-    #[unstable(feature = "convert", reason = "recently added")]
+    #[unstable(feature = "convert", reason = "recently added", issue = "27704")]
     pub fn from_bytes<B>(bytes: B) -> Option<OsString> where B: Into<Vec<u8>> {
-        #[cfg(unix)]
-        fn from_bytes_inner(vec: Vec<u8>) -> Option<OsString> {
-            use os::unix::ffi::OsStringExt;
-            Some(OsString::from_vec(vec))
-        }
+        Self::_from_bytes(bytes.into())
+    }
 
-        #[cfg(windows)]
-        fn from_bytes_inner(vec: Vec<u8>) -> Option<OsString> {
-            String::from_utf8(vec).ok().map(OsString::from)
-        }
+    #[cfg(unix)]
+    fn _from_bytes(vec: Vec<u8>) -> Option<OsString> {
+        use os::unix::ffi::OsStringExt;
+        Some(OsString::from_vec(vec))
+    }
 
-        from_bytes_inner(bytes.into())
+    #[cfg(windows)]
+    fn _from_bytes(vec: Vec<u8>) -> Option<OsString> {
+        String::from_utf8(vec).ok().map(OsString::from)
     }
 
     /// Converts to an `OsStr` slice.
@@ -133,7 +128,7 @@ impl ops::Index<ops::RangeFull> for OsString {
 
     #[inline]
     fn index(&self, _index: ops::RangeFull) -> &OsStr {
-        unsafe { mem::transmute(self.inner.as_slice()) }
+        OsStr::from_inner(self.inner.as_slice())
     }
 }
 
@@ -225,6 +220,10 @@ impl OsStr {
         s.as_ref()
     }
 
+    fn from_inner(inner: &Slice) -> &OsStr {
+        unsafe { mem::transmute(inner) }
+    }
+
     /// Yields a `&str` slice if the `OsStr` is valid unicode.
     ///
     /// This conversion may entail doing a check for UTF-8 validity.
@@ -256,7 +255,7 @@ impl OsStr {
     /// On Windows systems, this returns `None` unless the `OsStr` is
     /// valid unicode, in which case it produces UTF-8-encoded
     /// data. This may entail checking validity.
-    #[unstable(feature = "convert", reason = "recently added")]
+    #[unstable(feature = "convert", reason = "recently added", issue = "27704")]
     pub fn to_bytes(&self) -> Option<&[u8]> {
         if cfg!(windows) {
             self.to_str().map(|s| s.as_bytes())
@@ -272,7 +271,7 @@ impl OsStr {
     /// This is a convenience for creating a `CString` from
     /// `self.to_bytes()`, and inherits the platform behavior of the
     /// `to_bytes` method.
-    #[unstable(feature = "convert", reason = "recently added")]
+    #[unstable(feature = "convert", reason = "recently added", issue = "27704")]
     pub fn to_cstring(&self) -> Option<CString> {
         self.to_bytes().and_then(|b| CString::new(b).ok())
     }
@@ -386,14 +385,14 @@ impl AsRef<OsStr> for OsString {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl AsRef<OsStr> for str {
     fn as_ref(&self) -> &OsStr {
-        unsafe { mem::transmute(Slice::from_str(self)) }
+        OsStr::from_inner(Slice::from_str(self))
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl AsRef<OsStr> for String {
     fn as_ref(&self) -> &OsStr {
-        unsafe { mem::transmute(Slice::from_str(self)) }
+        (&**self).as_ref()
     }
 }
 

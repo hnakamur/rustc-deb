@@ -20,6 +20,7 @@ use llvm::{ValueRef, BasicBlockRef, BuilderRef, ContextRef};
 use llvm::{True, False, Bool};
 use middle::cfg;
 use middle::def;
+use middle::def_id::DefId;
 use middle::infer;
 use middle::lang_items::LangItem;
 use middle::subst::{self, Substs};
@@ -37,16 +38,15 @@ use trans::type_::Type;
 use trans::type_of;
 use middle::traits;
 use middle::ty::{self, HasTypeFlags, Ty};
-use middle::ty_fold;
-use middle::ty_fold::{TypeFolder, TypeFoldable};
-use rustc::ast_map::{PathElem, PathName};
+use middle::ty::fold::{TypeFolder, TypeFoldable};
+use rustc::front::map::{PathElem, PathName};
+use rustc_front::hir;
 use util::nodemap::{FnvHashMap, NodeMap};
 
 use arena::TypedArena;
 use libc::{c_uint, c_char};
 use std::ffi::CString;
 use std::cell::{Cell, RefCell};
-use std::result::Result as StdResult;
 use std::vec::Vec;
 use syntax::ast;
 use syntax::codemap::{DUMMY_SP, Span};
@@ -54,65 +54,6 @@ use syntax::parse::token::InternedString;
 use syntax::parse::token;
 
 pub use trans::context::CrateContext;
-
-/// Returns an equivalent value with all free regions removed (note
-/// that late-bound regions remain, because they are important for
-/// subtyping, but they are anonymized and normalized as well). This
-/// is a stronger, caching version of `ty_fold::erase_regions`.
-pub fn erase_regions<'tcx,T>(cx: &ty::ctxt<'tcx>, value: &T) -> T
-    where T : TypeFoldable<'tcx>
-{
-    let value1 = value.fold_with(&mut RegionEraser(cx));
-    debug!("erase_regions({:?}) = {:?}",
-           value, value1);
-    return value1;
-
-    struct RegionEraser<'a, 'tcx: 'a>(&'a ty::ctxt<'tcx>);
-
-    impl<'a, 'tcx> TypeFolder<'tcx> for RegionEraser<'a, 'tcx> {
-        fn tcx(&self) -> &ty::ctxt<'tcx> { self.0 }
-
-        fn fold_ty(&mut self, ty: Ty<'tcx>) -> Ty<'tcx> {
-            match self.tcx().normalized_cache.borrow().get(&ty).cloned() {
-                None => {}
-                Some(u) => return u
-            }
-
-            let t_norm = ty_fold::super_fold_ty(self, ty);
-            self.tcx().normalized_cache.borrow_mut().insert(ty, t_norm);
-            return t_norm;
-        }
-
-        fn fold_binder<T>(&mut self, t: &ty::Binder<T>) -> ty::Binder<T>
-            where T : TypeFoldable<'tcx>
-        {
-            let u = self.tcx().anonymize_late_bound_regions(t);
-            ty_fold::super_fold_binder(self, &u)
-        }
-
-        fn fold_region(&mut self, r: ty::Region) -> ty::Region {
-            // because late-bound regions affect subtyping, we can't
-            // erase the bound/free distinction, but we can replace
-            // all free regions with 'static.
-            //
-            // Note that we *CAN* replace early-bound regions -- the
-            // type system never "sees" those, they get substituted
-            // away. In trans, they will always be erased to 'static
-            // whenever a substitution occurs.
-            match r {
-                ty::ReLateBound(..) => r,
-                _ => ty::ReStatic
-            }
-        }
-
-        fn fold_substs(&mut self,
-                       substs: &subst::Substs<'tcx>)
-                       -> subst::Substs<'tcx> {
-            subst::Substs { regions: subst::ErasedRegions,
-                            types: substs.types.fold_with(self) }
-        }
-    }
-}
 
 /// Is the type's representation size known at compile time?
 pub fn type_is_sized<'tcx>(tcx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
@@ -173,12 +114,10 @@ fn type_needs_drop_given_env<'a,'tcx>(cx: &ty::ctxt<'tcx>,
 
 fn type_is_newtype_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
     match ty.sty {
-        ty::TyStruct(def_id, substs) => {
-            let fields = ccx.tcx().lookup_struct_fields(def_id);
+        ty::TyStruct(def, substs) => {
+            let fields = &def.struct_variant().fields;
             fields.len() == 1 && {
-                let ty = ccx.tcx().lookup_field_type(def_id, fields[0].id, substs);
-                let ty = monomorphize::normalize_associated_type(ccx.tcx(), &ty);
-                type_is_immediate(ccx, ty)
+                type_is_immediate(ccx, monomorphize::field_ty(ccx.tcx(), substs, &fields[0]))
             }
         }
         _ => false
@@ -193,7 +132,7 @@ pub fn type_is_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -
     let simple = ty.is_scalar() ||
         ty.is_unique() || ty.is_region_ptr() ||
         type_is_newtype_immediate(ccx, ty) ||
-        ty.is_simd(tcx);
+        ty.is_simd();
     if simple && !type_is_fat_ptr(tcx, ty) {
         return true;
     }
@@ -267,8 +206,69 @@ pub struct NodeIdAndSpan {
     pub span: Span,
 }
 
-pub fn expr_info(expr: &ast::Expr) -> NodeIdAndSpan {
+pub fn expr_info(expr: &hir::Expr) -> NodeIdAndSpan {
     NodeIdAndSpan { id: expr.id, span: expr.span }
+}
+
+/// The concrete version of ty::FieldDef. The name is the field index if
+/// the field is numeric.
+pub struct Field<'tcx>(pub ast::Name, pub Ty<'tcx>);
+
+/// The concrete version of ty::VariantDef
+pub struct VariantInfo<'tcx> {
+    pub discr: ty::Disr,
+    pub fields: Vec<Field<'tcx>>
+}
+
+impl<'tcx> VariantInfo<'tcx> {
+    pub fn from_ty(tcx: &ty::ctxt<'tcx>,
+                   ty: Ty<'tcx>,
+                   opt_def: Option<def::Def>)
+                   -> Self
+    {
+        match ty.sty {
+            ty::TyStruct(adt, substs) | ty::TyEnum(adt, substs) => {
+                let variant = match opt_def {
+                    None => adt.struct_variant(),
+                    Some(def) => adt.variant_of_def(def)
+                };
+
+                VariantInfo {
+                    discr: variant.disr_val,
+                    fields: variant.fields.iter().map(|f| {
+                        Field(f.name, monomorphize::field_ty(tcx, substs, f))
+                    }).collect()
+                }
+            }
+
+            ty::TyTuple(ref v) => {
+                VariantInfo {
+                    discr: 0,
+                    fields: v.iter().enumerate().map(|(i, &t)| {
+                        Field(token::intern(&i.to_string()), t)
+                    }).collect()
+                }
+            }
+
+            _ => {
+                tcx.sess.bug(&format!(
+                    "cannot get field types from the type {:?}",
+                    ty));
+            }
+        }
+    }
+
+    /// Return the variant corresponding to a given node (e.g. expr)
+    pub fn of_node(tcx: &ty::ctxt<'tcx>, ty: Ty<'tcx>, id: ast::NodeId) -> Self {
+        let node_def = tcx.def_map.borrow().get(&id).map(|v| v.full_def());
+        Self::from_ty(tcx, ty, node_def)
+    }
+
+    pub fn field_index(&self, name: ast::Name) -> usize {
+        self.fields.iter().position(|&Field(n,_)| n == name).unwrap_or_else(|| {
+            panic!("unknown field `{}`", name)
+        })
+    }
 }
 
 pub struct BuilderRef_res {
@@ -444,7 +444,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
                         output: ty::FnOutput<'tcx>,
                         name: &str) -> ValueRef {
         if self.needs_ret_allocas {
-            base::alloca_no_lifetime(bcx, match output {
+            base::alloca(bcx, match output {
                 ty::FnConverging(output_type) => type_of::type_of(bcx.ccx(), output_type),
                 ty::FnDiverging => Type::void(bcx.ccx())
             }, name)
@@ -535,7 +535,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         // landing pads as "landing pads for SEH".
         let target = &self.ccx.sess().target.target;
         match self.ccx.tcx().lang_items.eh_personality() {
-            Some(def_id) if !target.options.is_like_msvc => {
+            Some(def_id) if !base::wants_msvc_seh(self.ccx.sess()) => {
                 callee::trans_fn_ref(self.ccx, def_id, ExprId(0),
                                      self.param_substs).val
             }
@@ -544,7 +544,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
                 match *personality {
                     Some(llpersonality) => llpersonality,
                     None => {
-                        let name = if !target.options.is_like_msvc {
+                        let name = if !base::wants_msvc_seh(self.ccx.sess()) {
                             "rust_eh_personality"
                         } else if target.arch == "x86" {
                             "_except_handler3"
@@ -773,10 +773,11 @@ pub fn C_u64(ccx: &CrateContext, i: u64) -> ValueRef {
 pub fn C_int<I: AsI64>(ccx: &CrateContext, i: I) -> ValueRef {
     let v = i.as_i64();
 
-    match machine::llbitsize_of_real(ccx, ccx.int_type()) {
-        32 => assert!(v < (1<<31) && v >= -(1<<31)),
-        64 => {},
-        n => panic!("unsupported target size: {}", n)
+    let bit_size = machine::llbitsize_of_real(ccx, ccx.int_type());
+
+    if bit_size < 64 {
+        // make sure it doesn't overflow
+        assert!(v < (1<<(bit_size-1)) && v >= -(1<<(bit_size-1)));
     }
 
     C_integral(ccx.int_type(), v as u64, true)
@@ -785,10 +786,11 @@ pub fn C_int<I: AsI64>(ccx: &CrateContext, i: I) -> ValueRef {
 pub fn C_uint<I: AsU64>(ccx: &CrateContext, i: I) -> ValueRef {
     let v = i.as_u64();
 
-    match machine::llbitsize_of_real(ccx, ccx.int_type()) {
-        32 => assert!(v < (1<<32)),
-        64 => {},
-        n => panic!("unsupported target size: {}", n)
+    let bit_size = machine::llbitsize_of_real(ccx, ccx.int_type());
+
+    if bit_size < 64 {
+        // make sure it doesn't overflow
+        assert!(v < (1<<bit_size));
     }
 
     C_integral(ccx.int_type(), v, false)
@@ -807,7 +809,7 @@ impl AsU64 for u64  { fn as_u64(self) -> u64 { self as u64 }}
 impl AsU64 for u32  { fn as_u64(self) -> u64 { self as u64 }}
 impl AsU64 for usize { fn as_u64(self) -> u64 { self as u64 }}
 
-pub fn C_u8(ccx: &CrateContext, i: usize) -> ValueRef {
+pub fn C_u8(ccx: &CrateContext, i: u8) -> ValueRef {
     C_integral(Type::i8(ccx), i as u64, false)
 }
 
@@ -962,11 +964,11 @@ pub fn node_id_type<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, id: ast::NodeId) -> Ty
     monomorphize_type(bcx, t)
 }
 
-pub fn expr_ty<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, ex: &ast::Expr) -> Ty<'tcx> {
+pub fn expr_ty<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, ex: &hir::Expr) -> Ty<'tcx> {
     node_id_type(bcx, ex.id)
 }
 
-pub fn expr_ty_adjusted<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, ex: &ast::Expr) -> Ty<'tcx> {
+pub fn expr_ty_adjusted<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, ex: &hir::Expr) -> Ty<'tcx> {
     monomorphize_type(bcx, bcx.tcx().expr_ty_adjusted(ex))
 }
 
@@ -981,7 +983,7 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let tcx = ccx.tcx();
 
     // Remove any references to regions; this helps improve caching.
-    let trait_ref = erase_regions(tcx, &trait_ref);
+    let trait_ref = tcx.erase_regions(&trait_ref);
 
     // First check the cache.
     match ccx.trait_cache().borrow().get(&trait_ref) {
@@ -1036,8 +1038,8 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let vtable = selection.map(|predicate| {
         fulfill_cx.register_predicate_obligation(&infcx, predicate);
     });
-    let vtable = erase_regions(tcx,
-        &drain_fulfillment_cx_or_panic(span, &infcx, &mut fulfill_cx, &vtable)
+    let vtable = infer::drain_fulfillment_cx_or_panic(
+        span, &infcx, &mut fulfill_cx, &vtable
     );
 
     info!("Cache miss: {:?} => {:?}", trait_ref, vtable);
@@ -1072,59 +1074,8 @@ pub fn normalize_and_test_predicates<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         let obligation = traits::Obligation::new(cause.clone(), predicate);
         fulfill_cx.register_predicate_obligation(&infcx, obligation);
     }
-    drain_fulfillment_cx(&infcx, &mut fulfill_cx, &()).is_ok()
-}
 
-pub fn drain_fulfillment_cx_or_panic<'a,'tcx,T>(span: Span,
-                                                infcx: &infer::InferCtxt<'a,'tcx>,
-                                                fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
-                                                result: &T)
-                                                -> T
-    where T : TypeFoldable<'tcx>
-{
-    match drain_fulfillment_cx(infcx, fulfill_cx, result) {
-        Ok(v) => v,
-        Err(errors) => {
-            infcx.tcx.sess.span_bug(
-                span,
-                &format!("Encountered errors `{:?}` fulfilling during trans",
-                         errors));
-        }
-    }
-}
-
-/// Finishes processes any obligations that remain in the fulfillment
-/// context, and then "freshens" and returns `result`. This is
-/// primarily used during normalization and other cases where
-/// processing the obligations in `fulfill_cx` may cause type
-/// inference variables that appear in `result` to be unified, and
-/// hence we need to process those obligations to get the complete
-/// picture of the type.
-pub fn drain_fulfillment_cx<'a,'tcx,T>(infcx: &infer::InferCtxt<'a,'tcx>,
-                                       fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
-                                       result: &T)
-                                       -> StdResult<T,Vec<traits::FulfillmentError<'tcx>>>
-    where T : TypeFoldable<'tcx>
-{
-    debug!("drain_fulfillment_cx(result={:?})",
-           result);
-
-    // In principle, we only need to do this so long as `result`
-    // contains unbound type parameters. It could be a slight
-    // optimization to stop iterating early.
-    match fulfill_cx.select_all_or_error(infcx) {
-        Ok(()) => { }
-        Err(errors) => {
-            return Err(errors);
-        }
-    }
-
-    // Use freshen to simultaneously replace all type variables with
-    // their bindings and replace all regions with 'static.  This is
-    // sort of overkill because we do not expect there to be any
-    // unbound type variables, hence no `TyFresh` types should ever be
-    // inserted.
-    Ok(result.fold_with(&mut infcx.freshener()))
+    infer::drain_fulfillment_cx(&infcx, &mut fulfill_cx, &()).is_ok()
 }
 
 // Key used to lookup values supplied for type parameters in an expr.
@@ -1166,7 +1117,7 @@ pub fn langcall(bcx: Block,
                 span: Option<Span>,
                 msg: &str,
                 li: LangItem)
-                -> ast::DefId {
+                -> DefId {
     match bcx.tcx().lang_items.require(li) {
         Ok(id) => id,
         Err(s) => {
@@ -1177,4 +1128,27 @@ pub fn langcall(bcx: Block,
             }
         }
     }
+}
+
+/// Return the VariantDef corresponding to an inlined variant node
+pub fn inlined_variant_def<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                                     inlined_vid: ast::NodeId)
+                                     -> ty::VariantDef<'tcx>
+{
+
+    let ctor_ty = ccx.tcx().node_id_to_type(inlined_vid);
+    debug!("inlined_variant_def: ctor_ty={:?} inlined_vid={:?}", ctor_ty,
+           inlined_vid);
+    let adt_def = match ctor_ty.sty {
+        ty::TyBareFn(_, &ty::BareFnTy { sig: ty::Binder(ty::FnSig {
+            output: ty::FnConverging(ty), ..
+        }), ..}) => ty,
+        _ => ctor_ty
+    }.ty_adt_def().unwrap();
+    adt_def.variants.iter().find(|v| {
+        DefId::local(inlined_vid) == v.did ||
+            ccx.external().borrow().get(&v.did) == Some(&Some(inlined_vid))
+    }).unwrap_or_else(|| {
+        ccx.sess().bug(&format!("no variant for {:?}::{}", adt_def, inlined_vid))
+    })
 }

@@ -10,9 +10,7 @@
 
 //! Thread local storage
 
-#![unstable(feature = "thread_local_internals")]
-
-use prelude::v1::*;
+#![unstable(feature = "thread_local_internals", issue = "0")]
 
 use cell::UnsafeCell;
 
@@ -62,7 +60,7 @@ pub use self::imp::Key as __KeyInner;
 /// });
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub struct LocalKey<T> {
+pub struct LocalKey<T:'static> {
     // The key itself may be tagged with #[thread_local], and this `Key` is
     // stored as a `static`, and it's not valid for a static to reference the
     // address of another thread_local static. For this reason we kinda wonkily
@@ -139,7 +137,8 @@ macro_rules! thread_local {
 
 #[doc(hidden)]
 #[unstable(feature = "thread_local_internals",
-           reason = "should not be necessary")]
+           reason = "should not be necessary",
+           issue = "0")]
 #[macro_export]
 #[allow_internal_unstable]
 macro_rules! __thread_local_inner {
@@ -155,7 +154,8 @@ macro_rules! __thread_local_inner {
 
 /// Indicator of the state of a thread local storage key.
 #[unstable(feature = "thread_local_state",
-           reason = "state querying was recently added")]
+           reason = "state querying was recently added",
+           issue = "27716")]
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub enum LocalKeyState {
     /// All keys are in this state whenever a thread starts. Keys will
@@ -187,7 +187,8 @@ pub enum LocalKeyState {
 impl<T: 'static> LocalKey<T> {
     #[doc(hidden)]
     #[unstable(feature = "thread_local_internals",
-               reason = "recently added to create a key")]
+               reason = "recently added to create a key",
+               issue = "0")]
     pub const fn new(inner: fn() -> &'static __KeyInner<T>,
                      init: fn() -> T) -> LocalKey<T> {
         LocalKey {
@@ -250,7 +251,8 @@ impl<T: 'static> LocalKey<T> {
     /// to be able to be accessed. Keys in the `Destroyed` state will panic on
     /// any call to `with`.
     #[unstable(feature = "thread_local_state",
-               reason = "state querying was recently added")]
+               reason = "state querying was recently added",
+               issue = "27716")]
     pub fn state(&'static self) -> LocalKeyState {
         unsafe {
             match (self.inner)().get() {
@@ -271,8 +273,6 @@ impl<T: 'static> LocalKey<T> {
           not(no_elf_tls)))]
 #[doc(hidden)]
 mod imp {
-    use prelude::v1::*;
-
     use cell::{Cell, UnsafeCell};
     use intrinsics;
     use ptr;
@@ -327,6 +327,7 @@ mod imp {
     // Due to rust-lang/rust#18804, make sure this is not generic!
     #[cfg(target_os = "linux")]
     unsafe fn register_dtor(t: *mut u8, dtor: unsafe extern fn(*mut u8)) {
+        use prelude::v1::*;
         use mem;
         use libc;
         use sys_common::thread_local as os;

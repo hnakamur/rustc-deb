@@ -91,7 +91,7 @@ pub struct Target {
 #[derive(Clone, Debug)]
 pub struct TargetOptions {
     /// [Data layout](http://llvm.org/docs/LangRef.html#data-layout) to pass to LLVM.
-    pub data_layout: String,
+    pub data_layout: Option<String>,
     /// Linker to invoke. Defaults to "cc".
     pub linker: String,
     /// Archive utility to use when managing archives. Defaults to "ar".
@@ -118,9 +118,6 @@ pub struct TargetOptions {
     /// Whether executables are available on this target. iOS, for example, only allows static
     /// libraries. Defaults to false.
     pub executables: bool,
-    /// Whether LLVM's segmented stack prelude is supported by whatever runtime is available.
-    /// Will emit stack checks and calls to __morestack. Defaults to false.
-    pub morestack: bool,
     /// Relocation model to use in object file. Corresponds to `llc
     /// -relocation-model=$relocation_model`. Defaults to "pic".
     pub relocation_model: String,
@@ -171,11 +168,17 @@ pub struct TargetOptions {
     /// currently only "gnu" is used to fall into LLVM. Unknown strings cause
     /// the system linker to be used.
     pub archive_format: String,
+    /// Is asm!() allowed? Defaults to true.
+    pub allow_asm: bool,
     /// Whether the target uses a custom unwind resumption routine.
     /// By default LLVM lowers `resume` instructions into calls to `_Unwind_Resume`
     /// defined in libgcc.  If this option is enabled, the target must provide
     /// `eh_unwind_resume` lang item.
     pub custom_unwind_resume: bool,
+
+    /// Default crate for allocation symbols to link against
+    pub lib_allocation_crate: String,
+    pub exe_allocation_crate: String,
 }
 
 impl Default for TargetOptions {
@@ -183,16 +186,15 @@ impl Default for TargetOptions {
     /// incomplete, and if used for compilation, will certainly not work.
     fn default() -> TargetOptions {
         TargetOptions {
-            data_layout: String::new(),
-            linker: "cc".to_string(),
-            ar: "ar".to_string(),
+            data_layout: None,
+            linker: option_env!("CFG_DEFAULT_LINKER").unwrap_or("cc").to_string(),
+            ar: option_env!("CFG_DEFAULT_AR").unwrap_or("ar").to_string(),
             pre_link_args: Vec::new(),
             post_link_args: Vec::new(),
             cpu: "generic".to_string(),
             features: "".to_string(),
             dynamic_linking: false,
             executables: false,
-            morestack: false,
             relocation_model: "pic".to_string(),
             code_model: "default".to_string(),
             disable_redzone: false,
@@ -215,6 +217,9 @@ impl Default for TargetOptions {
             post_link_objects: Vec::new(),
             archive_format: String::new(),
             custom_unwind_resume: false,
+            lib_allocation_crate: "alloc_system".to_string(),
+            exe_allocation_crate: "alloc_system".to_string(),
+            allow_asm: true,
         }
     }
 }
@@ -282,6 +287,14 @@ impl Target {
                         )
                     );
             } );
+            ($key_name:ident, optional) => ( {
+                let name = (stringify!($key_name)).replace("_", "-");
+                if let Some(o) = obj.find(&name[..]) {
+                    base.options.$key_name = o
+                        .as_string()
+                        .map(|s| s.to_string() );
+                }
+            } );
         }
 
         key!(cpu);
@@ -295,10 +308,9 @@ impl Target {
         key!(staticlib_prefix);
         key!(staticlib_suffix);
         key!(features);
-        key!(data_layout);
+        key!(data_layout, optional);
         key!(dynamic_linking, bool);
         key!(executables, bool);
-        key!(morestack, bool);
         key!(disable_redzone, bool);
         key!(eliminate_frame_pointer, bool);
         key!(function_sections, bool);
@@ -309,6 +321,7 @@ impl Target {
         key!(no_compiler_rt, bool);
         key!(pre_link_args, list);
         key!(post_link_args, list);
+        key!(allow_asm, bool);
 
         base
     }
@@ -372,6 +385,7 @@ impl Target {
             aarch64_unknown_linux_gnu,
             x86_64_unknown_linux_musl,
 
+            i686_linux_android,
             arm_linux_androideabi,
             aarch64_linux_android,
 
@@ -427,5 +441,13 @@ impl Target {
         }
 
         Err(format!("Could not find specification for target {:?}", target))
+    }
+}
+
+fn best_allocator() -> String {
+    if cfg!(disable_jemalloc) {
+        "alloc_system".to_string()
+    } else {
+        "alloc_jemalloc".to_string()
     }
 }

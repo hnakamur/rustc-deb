@@ -16,17 +16,19 @@ extern crate syntax;
 
 use syntax::codemap::DUMMY_SP;
 use syntax::print::pprust::*;
+use syntax::parse::token::intern;
 
 fn main() {
     let ps = syntax::parse::ParseSess::new();
+    let mut feature_gated_cfgs = vec![];
     let mut cx = syntax::ext::base::ExtCtxt::new(
         &ps, vec![],
-        syntax::ext::expand::ExpansionConfig::default("qquote".to_string()));
+        syntax::ext::expand::ExpansionConfig::default("qquote".to_string()),
+        &mut feature_gated_cfgs);
     cx.bt_push(syntax::codemap::ExpnInfo {
         call_site: DUMMY_SP,
         callee: syntax::codemap::NameAndSpan {
-            name: "".to_string(),
-            format: syntax::codemap::MacroBang,
+            format: syntax::codemap::MacroBang(intern("")),
             allow_internal_unstable: false,
             span: None,
         }

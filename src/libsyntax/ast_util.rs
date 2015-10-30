@@ -17,7 +17,7 @@ use owned_slice::OwnedSlice;
 use parse::token;
 use print::pprust;
 use ptr::P;
-use visit::Visitor;
+use visit::{FnKind, Visitor};
 use visit;
 
 use std::cmp;
@@ -27,12 +27,6 @@ pub fn path_name_i(idents: &[Ident]) -> String {
     // FIXME: Bad copies (#2543 -- same for everything else that says "bad")
     idents.iter().map(|i| i.to_string()).collect::<Vec<String>>().join("::")
 }
-
-pub fn local_def(id: NodeId) -> DefId {
-    ast::DefId { krate: LOCAL_CRATE, node: id }
-}
-
-pub fn is_local(did: ast::DefId) -> bool { did.krate == LOCAL_CRATE }
 
 pub fn stmt_id(s: &Stmt) -> NodeId {
     match s.node {
@@ -220,12 +214,6 @@ pub fn ident_to_pat(id: NodeId, s: Span, i: Ident) -> P<Pat> {
         node: PatIdent(BindByValue(MutImmutable), codemap::Spanned{span:s, node:i}, None),
         span: s
     })
-}
-
-pub fn name_to_dummy_lifetime(name: Name) -> Lifetime {
-    Lifetime { id: DUMMY_NODE_ID,
-               span: codemap::DUMMY_SP,
-               name: name }
 }
 
 /// Generate a "pretty" name for an `impl` from its type and trait.
@@ -429,8 +417,8 @@ impl<'a, 'v, O: IdVisitingOperation> Visitor<'v> for IdVisitor<'a, O> {
                 node_id: NodeId) {
         if !self.pass_through_items {
             match function_kind {
-                visit::FkMethod(..) if self.visited_outermost => return,
-                visit::FkMethod(..) => self.visited_outermost = true,
+                FnKind::Method(..) if self.visited_outermost => return,
+                FnKind::Method(..) => self.visited_outermost = true,
                 _ => {}
             }
         }
@@ -438,13 +426,13 @@ impl<'a, 'v, O: IdVisitingOperation> Visitor<'v> for IdVisitor<'a, O> {
         self.operation.visit_id(node_id);
 
         match function_kind {
-            visit::FkItemFn(_, generics, _, _, _, _) => {
+            FnKind::ItemFn(_, generics, _, _, _, _) => {
                 self.visit_generics_helper(generics)
             }
-            visit::FkMethod(_, sig, _) => {
+            FnKind::Method(_, sig, _) => {
                 self.visit_generics_helper(&sig.generics)
             }
-            visit::FkFnBlock => {}
+            FnKind::Closure => {}
         }
 
         for argument in &function_declaration.inputs {
@@ -458,7 +446,7 @@ impl<'a, 'v, O: IdVisitingOperation> Visitor<'v> for IdVisitor<'a, O> {
                        span);
 
         if !self.pass_through_items {
-            if let visit::FkMethod(..) = function_kind {
+            if let FnKind::Method(..) = function_kind {
                 self.visited_outermost = false;
             }
         }
@@ -503,19 +491,18 @@ impl<'a, 'v, O: IdVisitingOperation> Visitor<'v> for IdVisitor<'a, O> {
     }
 }
 
-pub fn visit_ids_for_inlined_item<O: IdVisitingOperation>(item: &InlinedItem,
-                                                          operation: &mut O) {
-    let mut id_visitor = IdVisitor {
-        operation: operation,
-        pass_through_items: true,
-        visited_outermost: false,
-    };
-
-    visit::walk_inlined_item(&mut id_visitor, item);
+pub struct IdRangeComputingVisitor {
+    pub result: IdRange,
 }
 
-struct IdRangeComputingVisitor {
-    result: IdRange,
+impl IdRangeComputingVisitor {
+    pub fn new() -> IdRangeComputingVisitor {
+        IdRangeComputingVisitor { result: IdRange::max() }
+    }
+
+    pub fn result(&self) -> IdRange {
+        self.result
+    }
 }
 
 impl IdVisitingOperation for IdRangeComputingVisitor {
@@ -524,25 +511,15 @@ impl IdVisitingOperation for IdRangeComputingVisitor {
     }
 }
 
-pub fn compute_id_range_for_inlined_item(item: &InlinedItem) -> IdRange {
-    let mut visitor = IdRangeComputingVisitor {
-        result: IdRange::max()
-    };
-    visit_ids_for_inlined_item(item, &mut visitor);
-    visitor.result
-}
-
 /// Computes the id range for a single fn body, ignoring nested items.
-pub fn compute_id_range_for_fn_body(fk: visit::FnKind,
+pub fn compute_id_range_for_fn_body(fk: FnKind,
                                     decl: &FnDecl,
                                     body: &Block,
                                     sp: Span,
                                     id: NodeId)
                                     -> IdRange
 {
-    let mut visitor = IdRangeComputingVisitor {
-        result: IdRange::max()
-    };
+    let mut visitor = IdRangeComputingVisitor::new();
     let mut id_visitor = IdVisitor {
         operation: &mut visitor,
         pass_through_items: false,
@@ -550,40 +527,6 @@ pub fn compute_id_range_for_fn_body(fk: visit::FnKind,
     };
     id_visitor.visit_fn(fk, decl, body, sp, id);
     id_visitor.operation.result
-}
-
-pub fn walk_pat<F>(pat: &Pat, mut it: F) -> bool where F: FnMut(&Pat) -> bool {
-    // FIXME(#19596) this is a workaround, but there should be a better way
-    fn walk_pat_<G>(pat: &Pat, it: &mut G) -> bool where G: FnMut(&Pat) -> bool {
-        if !(*it)(pat) {
-            return false;
-        }
-
-        match pat.node {
-            PatIdent(_, _, Some(ref p)) => walk_pat_(&**p, it),
-            PatStruct(_, ref fields, _) => {
-                fields.iter().all(|field| walk_pat_(&*field.node.pat, it))
-            }
-            PatEnum(_, Some(ref s)) | PatTup(ref s) => {
-                s.iter().all(|p| walk_pat_(&**p, it))
-            }
-            PatBox(ref s) | PatRegion(ref s, _) => {
-                walk_pat_(&**s, it)
-            }
-            PatVec(ref before, ref slice, ref after) => {
-                before.iter().all(|p| walk_pat_(&**p, it)) &&
-                slice.iter().all(|p| walk_pat_(&**p, it)) &&
-                after.iter().all(|p| walk_pat_(&**p, it))
-            }
-            PatMac(_) => panic!("attempted to analyze unexpanded pattern"),
-            PatWild(_) | PatLit(_) | PatRange(_, _) | PatIdent(_, _, _) |
-            PatEnum(_, _) | PatQPath(_, _) => {
-                true
-            }
-        }
-    }
-
-    walk_pat_(pat, &mut it)
 }
 
 /// Returns true if the given struct def is tuple-like; i.e. that its fields

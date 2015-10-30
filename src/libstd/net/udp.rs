@@ -8,14 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![unstable(feature = "udp", reason = "remaining functions have not been \
-                                       scrutinized enough to be stabilized")]
-
-use prelude::v1::*;
-
 use fmt;
 use io::{self, Error, ErrorKind};
-use net::{ToSocketAddrs, SocketAddr, IpAddr};
+use net::{ToSocketAddrs, SocketAddr};
 use sys_common::net as net_imp;
 use sys_common::{AsInner, FromInner, IntoInner};
 use time::Duration;
@@ -97,62 +92,18 @@ impl UdpSocket {
         self.0.duplicate().map(UdpSocket)
     }
 
-    /// Sets the broadcast flag on or off.
-    #[deprecated(since = "1.3.0",
-                 reason = "available through the `net2` crate on crates.io")]
-    #[unstable(feature = "udp_extras", reason = "available externally")]
-    pub fn set_broadcast(&self, on: bool) -> io::Result<()> {
-        self.0.set_broadcast(on)
-    }
-
-    /// Sets the multicast loop flag to the specified value.
-    ///
-    /// This lets multicast packets loop back to local sockets (if enabled)
-    #[deprecated(since = "1.3.0",
-                 reason = "available through the `net2` crate on crates.io")]
-    #[unstable(feature = "udp_extras", reason = "available externally")]
-    pub fn set_multicast_loop(&self, on: bool) -> io::Result<()> {
-        self.0.set_multicast_loop(on)
-    }
-
-    /// Joins a multicast IP address (becomes a member of it).
-    #[deprecated(since = "1.3.0",
-                 reason = "available through the `net2` crate on crates.io")]
-    #[unstable(feature = "udp_extras", reason = "available externally")]
-    pub fn join_multicast(&self, multi: &IpAddr) -> io::Result<()> {
-        self.0.join_multicast(multi)
-    }
-
-    /// Leaves a multicast IP address (drops membership from it).
-    #[deprecated(since = "1.3.0",
-                 reason = "available through the `net2` crate on crates.io")]
-    #[unstable(feature = "udp_extras", reason = "available externally")]
-    pub fn leave_multicast(&self, multi: &IpAddr) -> io::Result<()> {
-        self.0.leave_multicast(multi)
-    }
-
-    /// Sets the multicast TTL.
-    #[deprecated(since = "1.3.0",
-                 reason = "available through the `net2` crate on crates.io")]
-    #[unstable(feature = "udp_extras", reason = "available externally")]
-    pub fn set_multicast_time_to_live(&self, ttl: i32) -> io::Result<()> {
-        self.0.multicast_time_to_live(ttl)
-    }
-
-    /// Sets this socket's TTL.
-    #[deprecated(since = "1.3.0",
-                 reason = "available through the `net2` crate on crates.io")]
-    #[unstable(feature = "udp_extras", reason = "available externally")]
-    pub fn set_time_to_live(&self, ttl: i32) -> io::Result<()> {
-        self.0.time_to_live(ttl)
-    }
-
     /// Sets the read timeout to the timeout specified.
     ///
     /// If the value specified is `None`, then `read` calls will block
     /// indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
-    #[unstable(feature = "socket_timeout", reason = "RFC 1047 - recently added")]
+    ///
+    /// # Note
+    ///
+    /// Platforms may return a different error code whenever a read times out as
+    /// a result of setting this option. For example Unix typically returns an
+    /// error of the kind `WouldBlock`, but Windows may return `TimedOut`.
+    #[stable(feature = "socket_timeout", since = "1.4.0")]
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
         self.0.set_read_timeout(dur)
     }
@@ -162,7 +113,13 @@ impl UdpSocket {
     /// If the value specified is `None`, then `write` calls will block
     /// indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
-    #[unstable(feature = "socket_timeout", reason = "RFC 1047 - recently added")]
+    ///
+    /// # Note
+    ///
+    /// Platforms may return a different error code whenever a write times out
+    /// as a result of setting this option. For example Unix typically returns
+    /// an error of the kind `WouldBlock`, but Windows may return `TimedOut`.
+    #[stable(feature = "socket_timeout", since = "1.4.0")]
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
         self.0.set_write_timeout(dur)
     }
@@ -170,7 +127,7 @@ impl UdpSocket {
     /// Returns the read timeout of this socket.
     ///
     /// If the timeout is `None`, then `read` calls will block indefinitely.
-    #[unstable(feature = "socket_timeout", reason = "RFC 1047 - recently added")]
+    #[stable(feature = "socket_timeout", since = "1.4.0")]
     pub fn read_timeout(&self) -> io::Result<Option<Duration>> {
         self.0.read_timeout()
     }
@@ -178,7 +135,7 @@ impl UdpSocket {
     /// Returns the write timeout of this socket.
     ///
     /// If the timeout is `None`, then `write` calls will block indefinitely.
-    #[unstable(feature = "socket_timeout", reason = "RFC 1047 - recently added")]
+    #[stable(feature = "socket_timeout", since = "1.4.0")]
     pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
         self.0.write_timeout()
     }
@@ -422,7 +379,6 @@ mod tests {
             assert!(kind == ErrorKind::WouldBlock || kind == ErrorKind::TimedOut);
         });
         assert!(wait > Duration::from_millis(400));
-        assert!(wait < Duration::from_millis(1600));
     }
 
     #[test]
@@ -443,6 +399,5 @@ mod tests {
             assert!(kind == ErrorKind::WouldBlock || kind == ErrorKind::TimedOut);
         });
         assert!(wait > Duration::from_millis(400));
-        assert!(wait < Duration::from_millis(1600));
     }
 }

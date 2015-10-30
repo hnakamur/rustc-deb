@@ -52,7 +52,7 @@ likely desugar to the following:
 }
 ```
 
-Wow. That’s... awful. Let’s all take a moment to thank Rust for making this easier. 
+Wow. That's... awful. Let's all take a moment to thank Rust for making this easier.
 
 Actually passing references to outer scopes will cause Rust to infer
 a larger lifetime:

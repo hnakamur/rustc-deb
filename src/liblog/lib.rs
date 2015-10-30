@@ -159,21 +159,20 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "log"]
 #![unstable(feature = "rustc_private",
-            reason = "use the crates.io `log` library instead")]
+            reason = "use the crates.io `log` library instead",
+            issue = "27812")]
 #![staged_api]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/",
-       html_playground_url = "http://play.rust-lang.org/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/")]
 #![deny(missing_docs)]
 
-#![feature(box_raw)]
 #![feature(box_syntax)]
 #![feature(const_fn)]
 #![feature(iter_cmp)]
-#![feature(rt)]
 #![feature(staged_api)]
 #![feature(static_mutex)]
 
@@ -183,7 +182,7 @@ use std::io::{self, Stderr};
 use std::io::prelude::*;
 use std::mem;
 use std::env;
-use std::rt;
+use std::ptr;
 use std::slice;
 use std::sync::{Once, StaticMutex};
 
@@ -208,11 +207,10 @@ static LOCK: StaticMutex = StaticMutex::new();
 /// logging statement should be run.
 static mut LOG_LEVEL: u32 = MAX_LOG_LEVEL;
 
-static mut DIRECTIVES: *mut Vec<directive::LogDirective> =
-    0 as *mut Vec<directive::LogDirective>;
+static mut DIRECTIVES: *mut Vec<directive::LogDirective> = ptr::null_mut();
 
 /// Optional filter.
-static mut FILTER: *mut String = 0 as *mut _;
+static mut FILTER: *mut String = ptr::null_mut();
 
 /// Debug log level
 pub const DEBUG: u32 = 4;
@@ -291,10 +289,9 @@ pub fn log(level: u32, loc: &'static LogLocation, args: fmt::Arguments) {
         let _g = LOCK.lock();
         match FILTER as usize {
             0 => {}
-            1 => panic!("cannot log after main thread has exited"),
             n => {
                 let filter = mem::transmute::<_, &String>(n);
-                if !args.to_string().contains(&filter[..]) {
+                if !args.to_string().contains(filter) {
                     return
                 }
             }
@@ -384,9 +381,6 @@ pub fn mod_enabled(level: u32, module: &str) -> bool {
     let _g = LOCK.lock();
     unsafe {
         assert!(DIRECTIVES as usize != 0);
-        assert!(DIRECTIVES as usize != 1,
-                "cannot log after the main thread has exited");
-
         enabled(level, module, (*DIRECTIVES).iter())
     }
 }
@@ -441,19 +435,6 @@ fn init() {
 
         assert!(DIRECTIVES.is_null());
         DIRECTIVES = Box::into_raw(box directives);
-
-        // Schedule the cleanup for the globals for when the runtime exits.
-        let _ = rt::at_exit(move || {
-            let _g = LOCK.lock();
-            assert!(!DIRECTIVES.is_null());
-            let _directives = Box::from_raw(DIRECTIVES);
-            DIRECTIVES = 1 as *mut _;
-
-            if !FILTER.is_null() {
-                let _filter = Box::from_raw(FILTER);
-                FILTER = 1 as *mut _;
-            }
-        });
     }
 }
 

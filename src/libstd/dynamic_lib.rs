@@ -14,7 +14,8 @@
 
 #![unstable(feature = "dynamic_lib",
             reason = "API has not been scrutinized and is highly likely to \
-                      either disappear or change")]
+                      either disappear or change",
+            issue = "27810")]
 #![allow(missing_docs)]
 
 use prelude::v1::*;
@@ -230,7 +231,7 @@ mod dl {
                 Ok(result)
             } else {
                 let s = CStr::from_ptr(last_error).to_bytes();
-                Err(str::from_utf8(s).unwrap().to_string())
+                Err(str::from_utf8(s).unwrap().to_owned())
             };
 
             ret

@@ -29,6 +29,8 @@ use std::io::{self, Read};
 
 use serialize::{Encodable, Decodable, Encoder, Decoder};
 
+use parse::token::intern;
+use ast::Name;
 
 // _____________________________________________________________________________
 // Pos, BytePos, CharPos
@@ -134,6 +136,13 @@ pub const DUMMY_SP: Span = Span { lo: BytePos(0), hi: BytePos(0), expn_id: NO_EX
 pub const COMMAND_LINE_SP: Span = Span { lo: BytePos(0),
                                          hi: BytePos(0),
                                          expn_id: COMMAND_LINE_EXPN };
+
+impl Span {
+    /// Returns `self` if `self` is not the dummy span, and `other` otherwise.
+    pub fn substitute_dummy(self, other: Span) -> Span {
+        if self == DUMMY_SP { other } else { self }
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub struct Spanned<T> {
@@ -250,21 +259,36 @@ pub struct FileMapAndBytePos { pub fm: Rc<FileMap>, pub pos: BytePos }
 //
 
 /// The source of expansion.
-#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq)]
+#[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub enum ExpnFormat {
     /// e.g. #[derive(...)] <item>
-    MacroAttribute,
+    MacroAttribute(Name),
     /// e.g. `format!()`
-    MacroBang,
+    MacroBang(Name),
     /// Syntax sugar expansion performed by the compiler (libsyntax::expand).
-    CompilerExpansion,
+    CompilerExpansion(CompilerExpansionFormat),
 }
 
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq)]
+pub enum CompilerExpansionFormat {
+    IfLet,
+    PlacementIn,
+    WhileLet,
+    ForLoop,
+}
+
+impl CompilerExpansionFormat {
+    pub fn name(self) -> &'static str {
+        match self {
+            CompilerExpansionFormat::IfLet => "if let expansion",
+            CompilerExpansionFormat::PlacementIn => "placement-in expansion",
+            CompilerExpansionFormat::WhileLet => "while let expansion",
+            CompilerExpansionFormat::ForLoop => "for loop expansion",
+        }
+    }
+}
 #[derive(Clone, Hash, Debug)]
 pub struct NameAndSpan {
-    /// The name of the macro that was invoked to create the thing
-    /// with this Span.
-    pub name: String,
     /// The format with which the macro was invoked.
     pub format: ExpnFormat,
     /// Whether the macro is allowed to use #[unstable]/feature-gated
@@ -275,6 +299,16 @@ pub struct NameAndSpan {
     /// have a sensible definition span (e.g. something defined
     /// completely inside libsyntax) in which case this is None.
     pub span: Option<Span>
+}
+
+impl NameAndSpan {
+    pub fn name(&self) -> Name {
+        match self.format {
+            ExpnFormat::MacroAttribute(s) => s,
+            ExpnFormat::MacroBang(s) => s,
+            ExpnFormat::CompilerExpansion(ce) => intern(ce.name()),
+        }
+    }
 }
 
 /// Extra information for tracking spans of macro and syntax sugar expansion

@@ -14,8 +14,8 @@ use middle::ty::{self, Ty};
 use middle::infer;
 
 use std::result::Result::{Err, Ok};
-use syntax::ast;
 use syntax::codemap::Span;
+use rustc_front::hir;
 
 // Requires that the two types unify, and prints an error message if
 // they don't.
@@ -32,7 +32,7 @@ pub fn suptype_with_fn<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
                                     ty_a: Ty<'tcx>,
                                     ty_b: Ty<'tcx>,
                                     handle_err: F) where
-    F: FnOnce(Span, Ty<'tcx>, Ty<'tcx>, &ty::TypeError<'tcx>),
+    F: FnOnce(Span, Ty<'tcx>, Ty<'tcx>, &ty::error::TypeError<'tcx>),
 {
     // n.b.: order of actual, expected is reversed
     match infer::mk_subty(fcx.infcx(), b_is_expected, infer::Misc(sp),
@@ -56,7 +56,7 @@ pub fn eqtype<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>, sp: Span,
 pub fn coerce<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                         sp: Span,
                         expected: Ty<'tcx>,
-                        expr: &ast::Expr) {
+                        expr: &hir::Expr) {
     let expr_ty = fcx.expr_ty(expr);
     debug!("demand::coerce(expected = {:?}, expr_ty = {:?})",
            expected,

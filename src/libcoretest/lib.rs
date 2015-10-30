@@ -12,26 +12,20 @@
 #![feature(borrow_state)]
 #![feature(box_syntax)]
 #![feature(cell_extras)]
-#![feature(cmp_partial)]
 #![feature(const_fn)]
 #![feature(core)]
 #![feature(core_float)]
+#![feature(dec2flt)]
+#![feature(decode_utf16)]
+#![feature(fixed_size_array)]
 #![feature(float_extras)]
 #![feature(float_from_str_radix)]
 #![feature(flt2dec)]
 #![feature(fmt_radix)]
-#![feature(hash_default)]
-#![feature(hasher_write)]
 #![feature(iter_arith)]
 #![feature(iter_arith)]
 #![feature(iter_cmp)]
-#![feature(iter_empty)]
-#![feature(iter_idx)]
-#![feature(iter_iterate)]
-#![feature(iter_min_max)]
-#![feature(iter_once)]
 #![feature(iter_order)]
-#![feature(iter_unfold)]
 #![feature(libc)]
 #![feature(nonzero)]
 #![feature(num_bits_bytes)]
@@ -39,7 +33,6 @@
 #![feature(rand)]
 #![feature(range_inclusive)]
 #![feature(raw)]
-#![feature(result_expect)]
 #![feature(slice_bytes)]
 #![feature(slice_patterns)]
 #![feature(step_by)]
@@ -55,6 +48,7 @@ extern crate rustc_unicode;
 extern crate rand;
 
 mod any;
+mod array;
 mod atomic;
 mod cell;
 mod char;

@@ -25,9 +25,9 @@
 //!
 //! Rust's collections can be grouped into four major categories:
 //!
-//! * Sequences: `Vec`, `VecDeque`, `LinkedList`, `BitVec`
-//! * Maps: `HashMap`, `BTreeMap`, `VecMap`
-//! * Sets: `HashSet`, `BTreeSet`, `BitSet`
+//! * Sequences: `Vec`, `VecDeque`, `LinkedList`
+//! * Maps: `HashMap`, `BTreeMap`
+//! * Sets: `HashSet`, `BTreeSet`
 //! * Misc: `BinaryHeap`
 //!
 //! # When Should You Use Which Collection?
@@ -70,21 +70,10 @@
 //! * You want to be able to get all of the entries in order on-demand.
 //! * You want a sorted map.
 //!
-//! ### Use a `VecMap` when:
-//! * You want a `HashMap` but with known to be small `usize` keys.
-//! * You want a `BTreeMap`, but with known to be small `usize` keys.
-//!
 //! ### Use the `Set` variant of any of these `Map`s when:
 //! * You just want to remember which keys you've seen.
 //! * There is no meaningful value to associate with your keys.
 //! * You just want a set.
-//!
-//! ### Use a `BitVec` when:
-//! * You want to store an unbounded number of booleans in a small space.
-//! * You want a bit vector.
-//!
-//! ### Use a `BitSet` when:
-//! * You want a `BitVec`, but want `Set` properties
 //!
 //! ### Use a `BinaryHeap` when:
 //!
@@ -123,31 +112,20 @@
 //! | Vec          | O(1)           | O(n-i)*         | O(n-i)         | O(m)*  | O(n-i)         |
 //! | VecDeque     | O(1)           | O(min(i, n-i))* | O(min(i, n-i)) | O(m)*  | O(min(i, n-i)) |
 //! | LinkedList   | O(min(i, n-i)) | O(min(i, n-i))  | O(min(i, n-i)) | O(1)   | O(min(i, n-i)) |
-//! | BitVec       | O(1)           | O(n-i)*         | O(n-i)         | O(m)*  | O(n-i)         |
 //!
 //! Note that where ties occur, Vec is generally going to be faster than VecDeque, and VecDeque
-//! is generally going to be faster than LinkedList. BitVec is not a general purpose collection, and
-//! therefore cannot reasonably be compared.
+//! is generally going to be faster than LinkedList.
 //!
 //! ## Maps
 //!
-//! For Sets, all operations have the cost of the equivalent Map operation. For
-//! BitSet,
-//! refer to VecMap.
+//! For Sets, all operations have the cost of the equivalent Map operation.
 //!
 //! |          | get       | insert   | remove   | predecessor |
 //! |----------|-----------|----------|----------|-------------|
 //! | HashMap  | O(1)~     | O(1)~*   | O(1)~    | N/A         |
 //! | BTreeMap | O(log n)  | O(log n) | O(log n) | O(log n)    |
-//! | VecMap   | O(1)      | O(1)?    | O(1)     | O(n)        |
 //!
-//! Note that VecMap is *incredibly* inefficient in terms of space. The O(1)
-//! insertion time assumes space for the element is already allocated.
-//! Otherwise, a large key may require a massive reallocation, with no direct
-//! relation to the number of elements in the collection.  VecMap should only be
-//! seriously considered for small keys.
-//!
-//! Note also that BTreeMap's precise performance depends on the value of B.
+//! Note that BTreeMap's precise performance depends on the value of B.
 //!
 //! # Correct and Efficient Usage of Collections
 //!
@@ -385,11 +363,11 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 pub use core_collections::Bound;
-pub use core_collections::{BinaryHeap, BitVec, BitSet, BTreeMap, BTreeSet};
-pub use core_collections::{LinkedList, VecDeque, VecMap};
+pub use core_collections::{BinaryHeap, BTreeMap, BTreeSet};
+pub use core_collections::{LinkedList, VecDeque};
 
-pub use core_collections::{binary_heap, bit_vec, bit_set, btree_map, btree_set};
-pub use core_collections::{linked_list, vec_deque, vec_map};
+pub use core_collections::{binary_heap, btree_map, btree_set};
+pub use core_collections::{linked_list, vec_deque};
 
 pub use self::hash_map::HashMap;
 pub use self::hash_set::HashSet;
@@ -410,7 +388,8 @@ pub mod hash_set {
 
 /// Experimental support for providing custom hash algorithms to a HashMap and
 /// HashSet.
-#[unstable(feature = "hashmap_hasher", reason = "module was recently added")]
+#[unstable(feature = "hashmap_hasher", reason = "module was recently added",
+           issue = "27713")]
 pub mod hash_state {
     pub use super::hash::state::*;
 }
