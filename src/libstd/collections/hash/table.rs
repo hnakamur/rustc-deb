@@ -8,22 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use self::BucketState::*;
+use alloc::heap::{allocate, deallocate, EMPTY};
 
-use clone::Clone;
 use cmp;
 use hash::{Hash, Hasher};
-use iter::{Iterator, ExactSizeIterator};
-use marker::{Copy, Send, Sync, Sized, self};
+use marker;
 use mem::{align_of, size_of};
 use mem;
 use num::wrapping::OverflowingOps;
-use ops::{Deref, DerefMut, Drop};
-use option::Option;
-use option::Option::{Some, None};
+use ops::{Deref, DerefMut};
 use ptr::{self, Unique};
-use rt::heap::{allocate, deallocate, EMPTY};
 use collections::hash_state::HashState;
+
+use self::BucketState::*;
 
 const EMPTY_BUCKET: u64 = 0;
 
@@ -511,6 +508,7 @@ impl<K, V, M: Deref<Target=RawTable<K, V>>> GapThenFull<K, V, M> {
 /// # Panics
 ///
 /// Panics if `target_alignment` is not a power of two.
+#[inline]
 fn round_up_to_next(unrounded: usize, target_alignment: usize) -> usize {
     assert!(target_alignment.is_power_of_two());
     (unrounded + target_alignment - 1) & !(target_alignment - 1)
@@ -818,6 +816,9 @@ pub struct Iter<'a, K: 'a, V: 'a> {
     elems_left: usize,
 }
 
+unsafe impl<'a, K: Sync, V: Sync> Sync for Iter<'a, K, V> {}
+unsafe impl<'a, K: Sync, V: Sync> Send for Iter<'a, K, V> {}
+
 // FIXME(#19839) Remove in favor of `#[derive(Clone)]`
 impl<'a, K, V> Clone for Iter<'a, K, V> {
     fn clone(&self) -> Iter<'a, K, V> {
@@ -835,17 +836,28 @@ pub struct IterMut<'a, K: 'a, V: 'a> {
     elems_left: usize,
 }
 
+unsafe impl<'a, K: Sync, V: Sync> Sync for IterMut<'a, K, V> {}
+// Both K: Sync and K: Send are correct for IterMut's Send impl,
+// but Send is the more useful bound
+unsafe impl<'a, K: Send, V: Send> Send for IterMut<'a, K, V> {}
+
 /// Iterator over the entries in a table, consuming the table.
 pub struct IntoIter<K, V> {
     table: RawTable<K, V>,
     iter: RawBuckets<'static, K, V>
 }
 
+unsafe impl<K: Sync, V: Sync> Sync for IntoIter<K, V> {}
+unsafe impl<K: Send, V: Send> Send for IntoIter<K, V> {}
+
 /// Iterator over the entries in a table, clearing the table.
 pub struct Drain<'a, K: 'a, V: 'a> {
     table: &'a mut RawTable<K, V>,
     iter: RawBuckets<'static, K, V>,
 }
+
+unsafe impl<'a, K: Sync, V: Sync> Sync for Drain<'a, K, V> {}
+unsafe impl<'a, K: Send, V: Send> Send for Drain<'a, K, V> {}
 
 impl<'a, K, V> Iterator for Iter<'a, K, V> {
     type Item = (&'a K, &'a V);

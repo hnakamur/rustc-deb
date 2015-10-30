@@ -34,7 +34,7 @@ use ast::{ItemEnum, ItemFn, ItemForeignMod, ItemImpl, ItemConst};
 use ast::{ItemMac, ItemMod, ItemStruct, ItemTrait, ItemTy, ItemDefaultImpl};
 use ast::{ItemExternCrate, ItemUse};
 use ast::{LifetimeDef, Lit, Lit_};
-use ast::{LitBool, LitChar, LitByte, LitBinary};
+use ast::{LitBool, LitChar, LitByte, LitByteStr};
 use ast::{LitStr, LitInt, Local};
 use ast::{MacStmtWithBraces, MacStmtWithSemicolon, MacStmtWithoutBraces};
 use ast::{MutImmutable, MutMutable, Mac_, MacInvocTT, MatchSource};
@@ -51,6 +51,7 @@ use ast::{SelfExplicit, SelfRegion, SelfStatic, SelfValue};
 use ast::{Delimited, SequenceRepetition, TokenTree, TraitItem, TraitRef};
 use ast::{TtDelimited, TtSequence, TtToken};
 use ast::{TupleVariantKind, Ty, Ty_, TypeBinding};
+use ast::{TyMac};
 use ast::{TyFixedLengthVec, TyBareFn, TyTypeof, TyInfer};
 use ast::{TyParam, TyParamBound, TyParen, TyPath, TyPolyTraitRef, TyPtr};
 use ast::{TyRptr, TyTup, TyU32, TyVec, UnUniq};
@@ -573,10 +574,12 @@ impl<'a> Parser<'a> {
     pub fn parse_path_list_item(&mut self) -> PResult<ast::PathListItem> {
         let lo = self.span.lo;
         let node = if try!(self.eat_keyword(keywords::SelfValue)) {
-            ast::PathListMod { id: ast::DUMMY_NODE_ID }
+            let rename = try!(self.parse_rename());
+            ast::PathListMod { id: ast::DUMMY_NODE_ID, rename: rename }
         } else {
             let ident = try!(self.parse_ident());
-            ast::PathListIdent { name: ident, id: ast::DUMMY_NODE_ID }
+            let rename = try!(self.parse_rename());
+            ast::PathListIdent { name: ident, rename: rename, id: ast::DUMMY_NODE_ID }
         };
         let hi = self.last_span.hi;
         Ok(spanned(lo, hi, node))
@@ -1369,8 +1372,20 @@ impl<'a> Parser<'a> {
         } else if self.check(&token::ModSep) ||
                   self.token.is_ident() ||
                   self.token.is_path() {
-            // NAMED TYPE
-            try!(self.parse_ty_path())
+            let path = try!(self.parse_path(LifetimeAndTypesWithoutColons));
+            if self.check(&token::Not) {
+                // MACRO INVOCATION
+                try!(self.bump());
+                let delim = try!(self.expect_open_delim());
+                let tts = try!(self.parse_seq_to_end(&token::CloseDelim(delim),
+                                                     seq_sep_none(),
+                                                     |p| p.parse_token_tree()));
+                let hi = self.span.hi;
+                TyMac(spanned(lo, hi, MacInvocTT(path, tts, EMPTY_CTXT)))
+            } else {
+                // NAMED TYPE
+                TyPath(None, path)
+            }
         } else if try!(self.eat(&token::Underscore) ){
             // TYPE TO BE INFERRED
             TyInfer
@@ -1528,11 +1543,11 @@ impl<'a> Parser<'a> {
                             token::intern_and_get_ident(&parse::raw_str_lit(&s.as_str())),
                             ast::RawStr(n)))
                     }
-                    token::Binary(i) =>
-                        (true, LitBinary(parse::binary_lit(&i.as_str()))),
-                    token::BinaryRaw(i, _) =>
+                    token::ByteStr(i) =>
+                        (true, LitByteStr(parse::byte_str_lit(&i.as_str()))),
+                    token::ByteStrRaw(i, _) =>
                         (true,
-                         LitBinary(Rc::new(i.to_string().into_bytes()))),
+                         LitByteStr(Rc::new(i.to_string().into_bytes()))),
                 };
 
                 if suffix_illegal {
@@ -2060,7 +2075,7 @@ impl<'a> Parser<'a> {
                     // Nonempty vector.
                     let first_expr = try!(self.parse_expr_nopanic());
                     if self.check(&token::Semi) {
-                        // Repeating vector syntax: [ 0; 512 ]
+                        // Repeating array syntax: [ 0; 512 ]
                         try!(self.bump());
                         let count = try!(self.parse_expr_nopanic());
                         try!(self.expect(&token::CloseDelim(token::Bracket)));
@@ -2127,15 +2142,17 @@ impl<'a> Parser<'a> {
                     return self.parse_loop_expr(None, lo);
                 }
                 if try!(self.eat_keyword(keywords::Continue) ){
-                    let lo = self.span.lo;
                     let ex = if self.token.is_lifetime() {
-                        let lifetime = self.get_lifetime();
+                        let ex = ExprAgain(Some(Spanned{
+                            node: self.get_lifetime(),
+                            span: self.span
+                        }));
                         try!(self.bump());
-                        ExprAgain(Some(lifetime))
+                        ex
                     } else {
                         ExprAgain(None)
                     };
-                    let hi = self.span.hi;
+                    let hi = self.last_span.hi;
                     return Ok(self.mk_expr(lo, hi, ex));
                 }
                 if try!(self.eat_keyword(keywords::Match) ){
@@ -2147,7 +2164,6 @@ impl<'a> Parser<'a> {
                         UnsafeBlock(ast::UserProvided));
                 }
                 if try!(self.eat_keyword(keywords::Return) ){
-                    // RETURN expression
                     if self.token.can_begin_expr() {
                         let e = try!(self.parse_expr_nopanic());
                         hi = e.span.hi;
@@ -2156,15 +2172,16 @@ impl<'a> Parser<'a> {
                         ex = ExprRet(None);
                     }
                 } else if try!(self.eat_keyword(keywords::Break) ){
-                    // BREAK expression
                     if self.token.is_lifetime() {
-                        let lifetime = self.get_lifetime();
+                        ex = ExprBreak(Some(Spanned {
+                            node: self.get_lifetime(),
+                            span: self.span
+                        }));
                         try!(self.bump());
-                        ex = ExprBreak(Some(lifetime));
                     } else {
                         ex = ExprBreak(None);
                     }
-                    hi = self.span.hi;
+                    hi = self.last_span.hi;
                 } else if self.check(&token::ModSep) ||
                         self.token.is_ident() &&
                         !self.check_keyword(keywords::True) &&
@@ -2219,8 +2236,7 @@ impl<'a> Parser<'a> {
                                 self.span_err(last_span,
                                               "structure literal must either \
                                               have at least one field or use \
-                                              functional structure update \
-                                              syntax");
+                                              structure update syntax");
                             }
 
                             hi = self.span.hi;
@@ -2349,7 +2365,7 @@ impl<'a> Parser<'a> {
                         self.fileline_help(last_span,
                             &format!("try parenthesizing the first index; e.g., `(foo.{}){}`",
                                     float.trunc() as usize,
-                                    &float.fract().to_string()[1..]));
+                                    format!(".{}", fstr.splitn(2, ".").last().unwrap())));
                     }
                     self.abort_if_errors();
 
@@ -3245,7 +3261,7 @@ impl<'a> Parser<'a> {
             pat = PatTup(fields);
           }
           token::OpenDelim(token::Bracket) => {
-            // Parse [pat,pat,...] as vector pattern
+            // Parse [pat,pat,...] as slice pattern
             try!(self.bump());
             let (before, slice, after) = try!(self.parse_pat_vec_elements());
             try!(self.expect(&token::CloseDelim(token::Bracket)));
@@ -3948,7 +3964,7 @@ impl<'a> Parser<'a> {
                     p.span_warn(span, "whoops, no =?");
                 }
                 let ty = try!(p.parse_ty_nopanic());
-                let hi = p.span.hi;
+                let hi = ty.span.hi;
                 let span = mk_sp(lo, hi);
                 return Ok(P(TypeBinding{id: ast::DUMMY_NODE_ID,
                     ident: ident,
@@ -4676,11 +4692,6 @@ impl<'a> Parser<'a> {
         let class_name = try!(self.parse_ident());
         let mut generics = try!(self.parse_generics());
 
-        if try!(self.eat(&token::Colon) ){
-            let ty = try!(self.parse_ty_sum());
-            self.span_err(ty.span, "`virtual` structs have been removed from the language");
-        }
-
         // There is a special case worth noting here, as reported in issue #17904.
         // If we are parsing a tuple struct it is the case that the where clause
         // should follow the field list. Like so:
@@ -4712,9 +4723,13 @@ impl<'a> Parser<'a> {
             let fields = try!(self.parse_record_struct_body(&class_name));
             (fields, None)
         // Tuple-style struct definition with optional where-clause.
-        } else {
+        } else if self.token == token::OpenDelim(token::Paren) {
             let fields = try!(self.parse_tuple_struct_body(&class_name, &mut generics));
             (fields, Some(ast::DUMMY_NODE_ID))
+        } else {
+            let token_str = self.this_token_to_string();
+            return Err(self.fatal(&format!("expected `where`, `{{`, `(`, or `;` after struct \
+                                            name, found `{}`", token_str)))
         };
 
         Ok((class_name,
@@ -4742,8 +4757,8 @@ impl<'a> Parser<'a> {
             try!(self.bump());
         } else {
             let token_str = self.this_token_to_string();
-            return Err(self.fatal(&format!("expected `where`, or `{}` after struct \
-                                name, found `{}`", "{",
+            return Err(self.fatal(&format!("expected `where`, or `{{` after struct \
+                                name, found `{}`",
                                 token_str)));
         }
 
@@ -4755,43 +4770,32 @@ impl<'a> Parser<'a> {
                                    generics: &mut ast::Generics)
                                    -> PResult<Vec<StructField>> {
         // This is the case where we find `struct Foo<T>(T) where T: Copy;`
-        if self.check(&token::OpenDelim(token::Paren)) {
-            let fields = try!(self.parse_unspanned_seq(
-                &token::OpenDelim(token::Paren),
-                &token::CloseDelim(token::Paren),
-                seq_sep_trailing_allowed(token::Comma),
-                |p| {
-                    let attrs = p.parse_outer_attributes();
-                    let lo = p.span.lo;
-                    let struct_field_ = ast::StructField_ {
-                        kind: UnnamedField(try!(p.parse_visibility())),
-                        id: ast::DUMMY_NODE_ID,
-                        ty: try!(p.parse_ty_sum()),
-                        attrs: attrs,
-                    };
-                    Ok(spanned(lo, p.span.hi, struct_field_))
-                }));
+        // Unit like structs are handled in parse_item_struct function
+        let fields = try!(self.parse_unspanned_seq(
+            &token::OpenDelim(token::Paren),
+            &token::CloseDelim(token::Paren),
+            seq_sep_trailing_allowed(token::Comma),
+            |p| {
+                let attrs = p.parse_outer_attributes();
+                let lo = p.span.lo;
+                let struct_field_ = ast::StructField_ {
+                    kind: UnnamedField(try!(p.parse_visibility())),
+                    id: ast::DUMMY_NODE_ID,
+                    ty: try!(p.parse_ty_sum()),
+                    attrs: attrs,
+                };
+                Ok(spanned(lo, p.span.hi, struct_field_))
+            }));
 
-            if fields.is_empty() {
-                return Err(self.fatal(&format!("unit-like struct definition should be \
-                    written as `struct {};`",
-                    class_name)));
-            }
-
-            generics.where_clause = try!(self.parse_where_clause());
-            try!(self.expect(&token::Semi));
-            Ok(fields)
-        // This is the case where we just see struct Foo<T> where T: Copy;
-        } else if self.token.is_keyword(keywords::Where) {
-            generics.where_clause = try!(self.parse_where_clause());
-            try!(self.expect(&token::Semi));
-            Ok(Vec::new())
-        // This case is where we see: `struct Foo<T>;`
-        } else {
-            let token_str = self.this_token_to_string();
-            Err(self.fatal(&format!("expected `where`, `{}`, `(`, or `;` after struct \
-                name, found `{}`", "{", token_str)))
+        if fields.is_empty() {
+            return Err(self.fatal(&format!("unit-like struct definition should be \
+                                            written as `struct {};`",
+                                           class_name)));
         }
+
+        generics.where_clause = try!(self.parse_where_clause());
+        try!(self.expect(&token::Semi));
+        Ok(fields)
     }
 
     /// Parse a structure field declaration
@@ -5104,20 +5108,27 @@ impl<'a> Parser<'a> {
                                 -> PResult<P<Item>> {
 
         let crate_name = try!(self.parse_ident());
-        let (maybe_path, ident) = if try!(self.eat_keyword(keywords::As)) {
-            (Some(crate_name.name), try!(self.parse_ident()))
+        let (maybe_path, ident) = if let Some(ident) = try!(self.parse_rename()) {
+            (Some(crate_name.name), ident)
         } else {
             (None, crate_name)
         };
         try!(self.expect(&token::Semi));
 
         let last_span = self.last_span;
+
+        if visibility == ast::Public {
+            self.span_warn(mk_sp(lo, last_span.hi),
+                           "`pub extern crate` does not work as expected and should not be used. \
+                            Likely to become an error. Prefer `extern crate` and `pub use`.");
+        }
+
         Ok(self.mk_item(lo,
-                     last_span.hi,
-                     ident,
-                     ItemExternCrate(maybe_path),
-                     visibility,
-                     attrs))
+                        last_span.hi,
+                        ident,
+                        ItemExternCrate(maybe_path),
+                        visibility,
+                        attrs))
     }
 
     /// Parse `extern` for foreign ABIs
@@ -5365,11 +5376,6 @@ impl<'a> Parser<'a> {
             }
 
             try!(self.expect_one_of(&[], &[]));
-        }
-
-        if try!(self.eat_keyword_noexpect(keywords::Virtual) ){
-            let span = self.span;
-            self.span_err(span, "`virtual` structs have been removed from the language");
         }
 
         if try!(self.eat_keyword(keywords::Static) ){
@@ -5766,10 +5772,16 @@ impl<'a> Parser<'a> {
                 }
             }).collect()
         };
-        if try!(self.eat_keyword(keywords::As)) {
-            rename_to = try!(self.parse_ident())
-        }
+        rename_to = try!(self.parse_rename()).unwrap_or(rename_to);
         Ok(P(spanned(lo, self.last_span.hi, ViewPathSimple(rename_to, path))))
+    }
+
+    fn parse_rename(&mut self) -> PResult<Option<Ident>> {
+        if try!(self.eat_keyword(keywords::As)) {
+            self.parse_ident().map(Some)
+        } else {
+            Ok(None)
+        }
     }
 
     /// Parses a source module as a crate. This is the main
@@ -5806,7 +5818,7 @@ impl<'a> Parser<'a> {
         match try!(self.parse_optional_str()) {
             Some((s, style, suf)) => {
                 let sp = self.last_span;
-                self.expect_no_suffix(sp, "str literal", suf);
+                self.expect_no_suffix(sp, "string literal", suf);
                 Ok((s, style))
             }
             _ =>  Err(self.fatal("expected string literal"))

@@ -13,15 +13,18 @@
 use astconv::AstConv;
 use check::FnCtxt;
 use middle::def;
+use middle::def_id::DefId;
 use middle::privacy::{AllPublic, DependsOn, LastPrivate, LastMod};
 use middle::subst;
 use middle::traits;
-use middle::ty::{self, ToPredicate, ToPolyTraitRef, TraitRef};
+use middle::ty::{self, RegionEscape, ToPredicate, ToPolyTraitRef, TraitRef};
+use middle::ty::adjustment::{AdjustDerefRef, AutoDerefRef, AutoPtr};
 use middle::infer;
 
-use syntax::ast::DefId;
 use syntax::ast;
 use syntax::codemap::Span;
+
+use rustc_front::hir;
 
 pub use self::MethodError::*;
 pub use self::CandidateSource::*;
@@ -40,7 +43,7 @@ pub enum MethodError<'tcx> {
     Ambiguity(Vec<CandidateSource>),
 
     // Using a `Fn`/`FnMut`/etc method on a raw closure type before we have inferred its kind.
-    ClosureAmbiguity(/* DefId of fn trait */ ast::DefId),
+    ClosureAmbiguity(/* DefId of fn trait */ DefId),
 }
 
 // Contains a list of static methods that may apply, a list of unsatisfied trait predicates which
@@ -48,14 +51,14 @@ pub enum MethodError<'tcx> {
 pub struct NoMatchData<'tcx> {
     pub static_candidates: Vec<CandidateSource>,
     pub unsatisfied_predicates: Vec<TraitRef<'tcx>>,
-    pub out_of_scope_traits: Vec<ast::DefId>,
+    pub out_of_scope_traits: Vec<DefId>,
     pub mode: probe::Mode
 }
 
 impl<'tcx> NoMatchData<'tcx> {
     pub fn new(static_candidates: Vec<CandidateSource>,
                unsatisfied_predicates: Vec<TraitRef<'tcx>>,
-               out_of_scope_traits: Vec<ast::DefId>,
+               out_of_scope_traits: Vec<DefId>,
                mode: probe::Mode) -> Self {
         NoMatchData {
             static_candidates: static_candidates,
@@ -70,8 +73,8 @@ impl<'tcx> NoMatchData<'tcx> {
 // candidate can arise. Used for error reporting only.
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum CandidateSource {
-    ImplSource(ast::DefId),
-    TraitSource(/* trait id */ ast::DefId),
+    ImplSource(DefId),
+    TraitSource(/* trait id */ DefId),
 }
 
 /// Determines whether the type `self_ty` supports a method name `method_name` or not.
@@ -110,8 +113,8 @@ pub fn lookup<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                         method_name: ast::Name,
                         self_ty: ty::Ty<'tcx>,
                         supplied_method_types: Vec<ty::Ty<'tcx>>,
-                        call_expr: &'tcx ast::Expr,
-                        self_expr: &'tcx ast::Expr)
+                        call_expr: &'tcx hir::Expr,
+                        self_expr: &'tcx hir::Expr)
                         -> Result<ty::MethodCallee<'tcx>, MethodError<'tcx>>
 {
     debug!("lookup(method_name={}, self_ty={:?}, call_expr={:?}, self_expr={:?})",
@@ -128,7 +131,7 @@ pub fn lookup<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 
 pub fn lookup_in_trait<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                                  span: Span,
-                                 self_expr: Option<&ast::Expr>,
+                                 self_expr: Option<&hir::Expr>,
                                  m_name: ast::Name,
                                  trait_def_id: DefId,
                                  self_ty: ty::Ty<'tcx>,
@@ -150,7 +153,7 @@ pub fn lookup_in_trait<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 /// this method is basically the same as confirmation.
 pub fn lookup_in_trait_adjusted<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                                           span: Span,
-                                          self_expr: Option<&ast::Expr>,
+                                          self_expr: Option<&hir::Expr>,
                                           m_name: ast::Name,
                                           trait_def_id: DefId,
                                           autoderefs: usize,
@@ -280,9 +283,9 @@ pub fn lookup_in_trait_adjusted<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                     match transformed_self_ty.sty {
                         ty::TyRef(region, ty::TypeAndMut { mutbl, ty: _ }) => {
                             fcx.write_adjustment(self_expr.id,
-                                ty::AdjustDerefRef(ty::AutoDerefRef {
+                                AdjustDerefRef(AutoDerefRef {
                                     autoderefs: autoderefs,
-                                    autoref: Some(ty::AutoPtr(region, mutbl)),
+                                    autoref: Some(AutoPtr(region, mutbl)),
                                     unsize: if unsize {
                                         Some(transformed_self_ty)
                                     } else {
@@ -335,7 +338,7 @@ pub fn resolve_ufcs<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     let def_id = pick.item.def_id();
     let mut lp = LastMod(AllPublic);
     if let probe::InherentImplPick = pick.kind {
-        if pick.item.vis() != ast::Public {
+        if pick.item.vis() != hir::Public {
             lp = LastMod(DependsOn(def_id));
         }
     }
@@ -353,7 +356,7 @@ pub fn resolve_ufcs<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 /// Find item with name `item_name` defined in `trait_def_id`
 /// and return it, or `None`, if no such item.
 fn trait_item<'tcx>(tcx: &ty::ctxt<'tcx>,
-                    trait_def_id: ast::DefId,
+                    trait_def_id: DefId,
                     item_name: ast::Name)
                     -> Option<ty::ImplOrTraitItem<'tcx>>
 {
@@ -364,7 +367,7 @@ fn trait_item<'tcx>(tcx: &ty::ctxt<'tcx>,
 }
 
 fn impl_item<'tcx>(tcx: &ty::ctxt<'tcx>,
-                   impl_def_id: ast::DefId,
+                   impl_def_id: DefId,
                    item_name: ast::Name)
                    -> Option<ty::ImplOrTraitItem<'tcx>>
 {

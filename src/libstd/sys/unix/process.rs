@@ -36,7 +36,7 @@ pub struct Command {
     pub cwd: Option<CString>,
     pub uid: Option<uid_t>,
     pub gid: Option<gid_t>,
-    pub detach: bool, // not currently exposed in std::process
+    pub session_leader: bool,
 }
 
 impl Command {
@@ -48,7 +48,7 @@ impl Command {
             cwd: None,
             uid: None,
             gid: None,
-            detach: false,
+            session_leader: false,
         }
     }
 
@@ -302,7 +302,7 @@ impl Process {
                 fail(&mut output);
             }
         }
-        if cfg.detach {
+        if cfg.session_leader {
             // Don't check the error of setsid because it fails if we're the
             // process leader already. We just forked so it shouldn't return
             // error, but ignore it anyway.
@@ -405,7 +405,7 @@ fn make_envp(env: Option<&HashMap<OsString, OsString>>)
 
         (ptrs.as_ptr() as *const _, tmps, ptrs)
     } else {
-        (0 as *const _, Vec::new(), Vec::new())
+        (ptr::null(), Vec::new(), Vec::new())
     }
 }
 
@@ -463,7 +463,11 @@ mod tests {
         return 0;
     }
 
+    // See #14232 for more information, but it appears that signal delivery to a
+    // newly spawned process may just be raced in the OSX, so to prevent this
+    // test from being flaky we ignore it on OSX.
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn test_process_mask() {
         unsafe {
             // Test to make sure that a signal mask does not get inherited.

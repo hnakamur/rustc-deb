@@ -17,8 +17,6 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use core::prelude::*;
-
 use fmt;
 use ffi::OsString;
 use io::{self, SeekFrom, Seek, Read, Write};
@@ -90,7 +88,8 @@ pub struct DirEntry(fs_imp::DirEntry);
 #[unstable(feature = "fs_walk",
            reason = "the precise semantics and defaults for a recursive walk \
                      may change and this may end up accounting for files such \
-                     as symlinks differently")]
+                     as symlinks differently",
+           issue = "27707")]
 pub struct WalkDir {
     cur: Option<ReadDir>,
     stack: Vec<io::Result<ReadDir>>,
@@ -156,7 +155,8 @@ pub struct FileType(fs_imp::FileType);
 /// A builder used to create directories in various manners.
 ///
 /// This builder also supports platform-specific options.
-#[unstable(feature = "dir_builder", reason = "recently added API")]
+#[unstable(feature = "dir_builder", reason = "recently added API",
+           issue = "27710")]
 pub struct DirBuilder {
     inner: fs_imp::DirBuilder,
     recursive: bool,
@@ -184,7 +184,7 @@ impl File {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<File> {
-        OpenOptions::new().read(true).open(path)
+        OpenOptions::new().read(true).open(path.as_ref())
     }
 
     /// Opens a file in write-only mode.
@@ -206,7 +206,7 @@ impl File {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn create<P: AsRef<Path>>(path: P) -> io::Result<File> {
-        OpenOptions::new().write(true).create(true).truncate(true).open(path)
+        OpenOptions::new().write(true).create(true).truncate(true).open(path.as_ref())
     }
 
     /// Attempts to sync all OS-internal metadata to disk.
@@ -494,7 +494,10 @@ impl OpenOptions {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn open<P: AsRef<Path>>(&self, path: P) -> io::Result<File> {
-        let path = path.as_ref();
+        self._open(path.as_ref())
+    }
+
+    fn _open(&self, path: &Path) -> io::Result<File> {
         let inner = try!(fs_imp::File::open(path, &self.0));
         Ok(File { inner: inner })
     }
@@ -747,10 +750,10 @@ impl AsInner<fs_imp::DirEntry> for DirEntry {
     fn as_inner(&self) -> &fs_imp::DirEntry { &self.0 }
 }
 
-/// Removes a file from the underlying filesystem.
+/// Removes a file from the filesystem.
 ///
-/// Note that, just because an unlink call was successful, it is not
-/// guaranteed that a file is immediately deleted (e.g. depending on
+/// Note that there is no
+/// guarantee that the file is immediately deleted (e.g. depending on
 /// platform, other open file descriptors may prevent immediate removal).
 ///
 /// # Errors
@@ -854,6 +857,8 @@ pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> 
 /// Note that if `from` and `to` both point to the same file, then the file
 /// will likely get truncated by this operation.
 ///
+/// On success, the total number of bytes copied is returned.
+///
 /// # Errors
 ///
 /// This function will return an error in the following situations, but is not
@@ -949,7 +954,8 @@ pub fn read_link<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
 
 /// Returns the canonical form of a path with all intermediate components
 /// normalized and symbolic links resolved.
-#[unstable(feature = "fs_canonicalize", reason = "recently added API")]
+#[unstable(feature = "fs_canonicalize", reason = "recently added API",
+           issue = "27706")]
 pub fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     fs_imp::canonicalize(path.as_ref())
 }
@@ -1045,7 +1051,10 @@ pub fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
-    let path = path.as_ref();
+    _remove_dir_all(path.as_ref())
+}
+
+fn _remove_dir_all(path: &Path) -> io::Result<()> {
     for child in try!(read_dir(path)) {
         let child = try!(child).path();
         let stat = try!(symlink_metadata(&*child));
@@ -1107,13 +1116,18 @@ pub fn read_dir<P: AsRef<Path>>(path: P) -> io::Result<ReadDir> {
 #[unstable(feature = "fs_walk",
            reason = "the precise semantics and defaults for a recursive walk \
                      may change and this may end up accounting for files such \
-                     as symlinks differently")]
+                     as symlinks differently",
+           issue = "27707")]
 pub fn walk_dir<P: AsRef<Path>>(path: P) -> io::Result<WalkDir> {
+    _walk_dir(path.as_ref())
+}
+
+fn _walk_dir(path: &Path) -> io::Result<WalkDir> {
     let start = try!(read_dir(path));
     Ok(WalkDir { cur: Some(start), stack: Vec::new() })
 }
 
-#[unstable(feature = "fs_walk")]
+#[unstable(feature = "fs_walk", issue = "27707")]
 impl Iterator for WalkDir {
     type Item = io::Result<DirEntry>;
 
@@ -1146,7 +1160,8 @@ impl Iterator for WalkDir {
 #[unstable(feature = "path_ext",
            reason = "The precise set of methods exposed on this trait may \
                      change and some methods may be removed.  For stable code, \
-                     see the std::fs::metadata function.")]
+                     see the std::fs::metadata function.",
+           issue = "27725")]
 pub trait PathExt {
     /// Gets information on the file, directory, etc at this path.
     ///
@@ -1216,23 +1231,6 @@ impl PathExt for Path {
     }
 }
 
-/// Changes the timestamps for a file's last modification and access time.
-///
-/// The file at the path specified will have its last access time set to
-/// `accessed` and its modification time set to `modified`. The times specified
-/// should be in milliseconds.
-#[unstable(feature = "fs_time",
-           reason = "the argument type of u64 is not quite appropriate for \
-                     this function and may change if the standard library \
-                     gains a type to represent a moment in time")]
-#[deprecated(since = "1.3.0",
-             reason = "will never be stabilized as-is and its replacement will \
-                       likely have a totally new API")]
-pub fn set_file_times<P: AsRef<Path>>(path: P, accessed: u64,
-                                 modified: u64) -> io::Result<()> {
-    fs_imp::utimes(path.as_ref(), accessed, modified)
-}
-
 /// Changes the permissions found on a file or a directory.
 ///
 /// # Examples
@@ -1259,7 +1257,8 @@ pub fn set_permissions<P: AsRef<Path>>(path: P, perm: Permissions)
     fs_imp::set_perm(path.as_ref(), perm.0)
 }
 
-#[unstable(feature = "dir_builder", reason = "recently added API")]
+#[unstable(feature = "dir_builder", reason = "recently added API",
+           issue = "27710")]
 impl DirBuilder {
     /// Creates a new set of options with default mode/security settings for all
     /// platforms and also non-recursive.
@@ -1283,7 +1282,10 @@ impl DirBuilder {
     /// Create the specified directory with the options configured in this
     /// builder.
     pub fn create<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        let path = path.as_ref();
+        self._create(path.as_ref())
+    }
+
+    fn _create(&self, path: &Path) -> io::Result<()> {
         if self.recursive {
             self.create_dir_all(path)
         } else {
@@ -2047,44 +2049,6 @@ mod tests {
             check!(f.write("bar".as_bytes()));
         }
         assert_eq!(check!(fs::metadata(&tmpdir.join("h"))).len(), 3);
-    }
-
-    #[test]
-    fn utime() {
-        let tmpdir = tmpdir();
-        let path = tmpdir.join("a");
-        check!(File::create(&path));
-        // These numbers have to be bigger than the time in the day to account
-        // for timezones Windows in particular will fail in certain timezones
-        // with small enough values
-        check!(fs::set_file_times(&path, 100_000, 200_000));
-
-        check(&check!(path.metadata()));
-
-        #[cfg(unix)]
-        fn check(metadata: &fs::Metadata) {
-            use os::unix::prelude::*;
-            assert_eq!(metadata.atime(), 100);
-            assert_eq!(metadata.atime_nsec(), 0);
-            assert_eq!(metadata.mtime(), 200);
-            assert_eq!(metadata.mtime_nsec(), 0);
-        }
-        #[cfg(windows)]
-        fn check(metadata: &fs::Metadata) {
-            use os::windows::prelude::*;
-            assert_eq!(metadata.last_access_time(), 100_000 * 10_000);
-            assert_eq!(metadata.last_write_time(), 200_000 * 10_000);
-        }
-    }
-
-    #[test]
-    fn utime_noexist() {
-        let tmpdir = tmpdir();
-
-        match fs::set_file_times(&tmpdir.join("a"), 100, 200) {
-            Ok(..) => panic!(),
-            Err(..) => {}
-        }
     }
 
     #[test]

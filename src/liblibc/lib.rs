@@ -12,15 +12,17 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "libc"]
 #![crate_type = "rlib"]
-#![cfg_attr(not(feature = "cargo-build"), unstable(feature = "libc",
-                                                   reason = "use `libc` from crates.io"))]
-#![cfg_attr(not(feature = "cargo-build"), feature(staged_api, core, no_std))]
+#![cfg_attr(not(feature = "cargo-build"),
+            unstable(feature = "libc", reason = "use `libc` from crates.io",
+                     issue = "27783"))]
+#![cfg_attr(not(feature = "cargo-build"), feature(staged_api, no_std))]
 #![cfg_attr(not(feature = "cargo-build"), staged_api)]
 #![cfg_attr(not(feature = "cargo-build"), no_std)]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/",
-       html_playground_url = "http://play.rust-lang.org/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/",
+       issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/")]
 #![cfg_attr(test, feature(test))]
 
 //! Bindings for the C standard library and other platform libraries
@@ -78,7 +80,6 @@
 #![allow(bad_style, raw_pointer_derive)]
 #![cfg_attr(target_os = "nacl", allow(unused_imports))]
 #[cfg(feature = "cargo-build")] extern crate std as core;
-#[cfg(not(feature = "cargo-build"))] extern crate core;
 
 #[cfg(test)] extern crate std;
 #[cfg(test)] extern crate test;
@@ -101,6 +102,7 @@ pub use types::os::arch::extra::*;
 pub use consts::os::c95::*;
 pub use consts::os::posix88::*;
 pub use consts::os::posix01::*;
+pub use consts::os::posix08::*;
 pub use consts::os::bsd44::*;
 pub use consts::os::extra::*;
 
@@ -191,14 +193,15 @@ pub mod types {
             /// C. Use the unit type `()` or omit the return type instead.
             ///
             /// For LLVM to recognize the void pointer type and by extension
-            /// functions like malloc(), we need to have it represented as i8* in
-            /// LLVM bitcode. The enum used here ensures this and prevents misuse
-            /// of the "raw" type by only having private variants.. We need two
-            /// variants, because the compiler complains about the repr attribute
-            /// otherwise.
+            /// functions like malloc(), we need to have it represented as i8*
+            /// in LLVM bitcode. The enum used here ensures this. We need two
+            /// variants, because the compiler complains about the `repr`
+            /// attribute otherwise.
             #[repr(u8)]
             pub enum c_void {
+                #[doc(hidden)]
                 __variant1,
+                #[doc(hidden)]
                 __variant2,
             }
 
@@ -464,18 +467,19 @@ pub mod types {
                 pub type off_t = i32;
                 pub type dev_t = u32;
                 pub type ino_t = u32;
+
                 pub type pid_t = i32;
                 pub type uid_t = u32;
                 pub type gid_t = u32;
                 pub type useconds_t = u32;
+
                 pub type mode_t = u16;
                 pub type ssize_t = i32;
             }
-            #[cfg(any(target_arch = "x86",
+            #[cfg(any(all(any(target_arch = "arm", target_arch = "x86"),
+                          not(target_os = "android")),
                       target_arch = "le32",
-                      target_arch = "powerpc",
-                      all(any(target_arch = "arm", target_arch = "x86"),
-                          not(target_os = "android"))))]
+                      target_arch = "powerpc"))]
             pub mod posix01 {
                 use types::os::arch::c95::{c_short, c_long, time_t};
                 use types::os::arch::posix88::{dev_t, gid_t, ino_t};
@@ -521,12 +525,13 @@ pub mod types {
                     pub __size: [u32; 9]
                 }
             }
+
             #[cfg(all(any(target_arch = "arm", target_arch = "x86"),
-                          target_os = "android"))]
+                      target_os = "android"))]
             pub mod posix01 {
-                use types::os::arch::c95::{c_uchar, c_uint, c_ulong, time_t};
+                use types::os::arch::c95::{c_uchar, c_uint, c_ulong, c_long, time_t};
                 use types::os::arch::c99::{c_longlong, c_ulonglong};
-                use types::os::arch::posix88::{uid_t, gid_t, ino_t};
+                use types::os::arch::posix88::{uid_t, gid_t};
 
                 pub type nlink_t = u16;
                 pub type blksize_t = u32;
@@ -536,7 +541,7 @@ pub mod types {
                 #[derive(Copy, Clone)] pub struct stat {
                     pub st_dev: c_ulonglong,
                     pub __pad0: [c_uchar; 4],
-                    pub __st_ino: ino_t,
+                    pub __st_ino: c_long,
                     pub st_mode: c_uint,
                     pub st_nlink: c_uint,
                     pub st_uid: uid_t,
@@ -544,7 +549,7 @@ pub mod types {
                     pub st_rdev: c_ulonglong,
                     pub __pad3: [c_uchar; 4],
                     pub st_size: c_longlong,
-                    pub st_blksize: blksize_t,
+                    pub st_blksize: c_ulong,
                     pub st_blocks: c_ulonglong,
                     pub st_atime: time_t,
                     pub st_atime_nsec: c_ulong,
@@ -566,6 +571,7 @@ pub mod types {
                     pub __size: [u32; 9]
                 }
             }
+
             #[cfg(any(target_arch = "mips",
                       target_arch = "mipsel"))]
             pub mod posix01 {
@@ -3606,6 +3612,9 @@ pub mod consts {
             pub const RUSAGE_THREAD: c_int = 1;
         }
         pub mod posix08 {
+            use types::os::arch::c95::c_int;
+            pub const O_CLOEXEC: c_int = 0x80000;
+            pub const F_DUPFD_CLOEXEC: c_int = 1030;
         }
         #[cfg(any(target_arch = "arm",
                   target_arch = "aarch64",
@@ -3912,6 +3921,8 @@ pub mod consts {
             pub const _SC_XBS5_ILP32_OFFBIG : c_int = 126;
             pub const _SC_XBS5_LPBIG_OFFBIG : c_int = 128;
 
+            pub const _PC_NAME_MAX: c_int = 3;
+            pub const _PC_PATH_MAX: c_int = 4;
         }
         #[cfg(target_os = "nacl")]
         pub mod sysconf {
@@ -3920,6 +3931,9 @@ pub mod consts {
             pub static _SC_SENDMSG_MAX_SIZE : c_int = 0;
             pub static _SC_NPROCESSORS_ONLN : c_int = 1;
             pub static _SC_PAGESIZE : c_int = 2;
+
+            pub const _PC_NAME_MAX: c_int = 3;
+            pub const _PC_PATH_MAX: c_int = 4;
         }
 
         #[cfg(target_os = "android")]
@@ -3955,6 +3969,9 @@ pub mod consts {
             pub const _SC_STREAM_MAX : c_int = 27;
             pub const _SC_TZNAME_MAX : c_int = 28;
             pub const _SC_PAGESIZE : c_int = 39;
+
+            pub const _PC_NAME_MAX: c_int = 4;
+            pub const _PC_PATH_MAX: c_int = 5;
         }
     }
 
@@ -4265,7 +4282,17 @@ pub mod consts {
             pub const RUSAGE_CHILDREN: c_int = -1;
             pub const RUSAGE_THREAD: c_int = 1;
         }
+        #[cfg(target_os = "freebsd")]
         pub mod posix08 {
+            use types::os::arch::c95::c_int;
+            pub const O_CLOEXEC: c_int = 0x100000;
+            pub const F_DUPFD_CLOEXEC: c_int = 17;
+        }
+        #[cfg(target_os = "dragonfly")]
+        pub mod posix08 {
+            use types::os::arch::c95::c_int;
+            pub const O_CLOEXEC: c_int = 0x20000;
+            pub const F_DUPFD_CLOEXEC: c_int = 17;
         }
         pub mod bsd44 {
             use types::os::arch::c95::c_int;
@@ -4417,6 +4444,9 @@ pub mod consts {
             pub const _SC_SEM_VALUE_MAX : c_int = 50;
             pub const _SC_SIGQUEUE_MAX : c_int = 51;
             pub const _SC_TIMER_MAX : c_int = 52;
+
+            pub const _PC_NAME_MAX: c_int = 4;
+            pub const _PC_PATH_MAX: c_int = 5;
         }
     }
 
@@ -4630,7 +4660,6 @@ pub mod consts {
             pub const F_GETLK : c_int = 7;
             pub const F_SETLK : c_int = 8;
             pub const F_SETLKW : c_int = 9;
-            pub const F_DUPFD_CLOEXEC : c_int = 10;
 
             pub const SIGTRAP : c_int = 5;
             pub const SIG_IGN: size_t = 1;
@@ -4708,7 +4737,17 @@ pub mod consts {
             pub const RUSAGE_CHILDREN: c_int = -1;
             pub const RUSAGE_THREAD: c_int = 1;
         }
+        #[cfg(any(target_os = "bitrig", target_os = "openbsd"))]
         pub mod posix08 {
+            use types::os::arch::c95::c_int;
+            pub const O_CLOEXEC: c_int = 0x10000;
+            pub const F_DUPFD_CLOEXEC: c_int = 10;
+        }
+        #[cfg(target_os = "netbsd")]
+        pub mod posix08 {
+            use types::os::arch::c95::c_int;
+            pub const O_CLOEXEC: c_int = 0x400000;
+            pub const F_DUPFD_CLOEXEC: c_int = 12;
         }
         pub mod bsd44 {
             use types::os::arch::c95::c_int;
@@ -4844,6 +4883,9 @@ pub mod consts {
             pub const _SC_SYNCHRONIZED_IO : c_int = 75;
             pub const _SC_TIMER_MAX : c_int = 93;
             pub const _SC_TIMERS : c_int = 94;
+
+            pub const _PC_NAME_MAX: c_int = 4;
+            pub const _PC_PATH_MAX: c_int = 5;
         }
     }
 
@@ -5146,6 +5188,9 @@ pub mod consts {
             pub const RUSAGE_THREAD: c_int = 1;
         }
         pub mod posix08 {
+            use types::os::arch::c95::c_int;
+            pub const O_CLOEXEC: c_int = 0x1000000;
+            pub const F_DUPFD_CLOEXEC: c_int = 67;
         }
         pub mod bsd44 {
             use types::os::arch::c95::c_int;
@@ -5353,6 +5398,9 @@ pub mod consts {
             pub const _SC_TRACE_SYS_MAX : c_int = 129;
             pub const _SC_TRACE_USER_EVENT_MAX : c_int = 130;
             pub const _SC_PASS_MAX : c_int = 131;
+
+            pub const _PC_NAME_MAX: c_int = 4;
+            pub const _PC_PATH_MAX: c_int = 5;
         }
     }
 }
@@ -5809,8 +5857,6 @@ pub mod funcs {
             use types::os::arch::posix88::{gid_t, off_t, pid_t};
             use types::os::arch::posix88::{ssize_t, uid_t};
 
-            pub const _PC_NAME_MAX: c_int = 4;
-
             #[cfg(not(target_os = "nacl"))]
             extern {
                 pub fn access(path: *const c_char, amode: c_int) -> c_int;
@@ -6264,11 +6310,22 @@ pub mod funcs {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub mod bsd44 {
         use types::common::c95::{c_void};
-        use types::os::arch::c95::{c_uchar, c_int, c_ulong, size_t};
+        use types::os::arch::c95::{c_uchar, c_int, size_t};
+        #[cfg(not(feature = "cargo-build"))]
+        use types::os::arch::c95::c_ulong;
 
         extern {
             #[cfg(not(all(target_os = "android", target_arch = "aarch64")))]
             pub fn getdtablesize() -> c_int;
+
+            // Note that the correct signature of ioctl broke some crates on
+            // crates.io, so for now we keep the broken signature for crates.io
+            // but we fix it locally in the main Rust distribution. Once a new
+            // major version of libc is released on crates.io this #[cfg] should
+            // go away.
+            #[cfg(feature = "cargo-build")]
+            pub fn ioctl(fd: c_int, request: c_int, ...) -> c_int;
+            #[cfg(not(feature = "cargo-build"))]
             pub fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
             pub fn madvise(addr: *mut c_void, len: size_t, advice: c_int)
                            -> c_int;

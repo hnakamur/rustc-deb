@@ -17,6 +17,7 @@ use codemap::{CodeMap, Span, ExpnId, ExpnInfo, NO_EXPANSION, CompilerExpansion};
 use ext;
 use ext::expand;
 use ext::tt::macro_rules;
+use feature_gate::GatedCfg;
 use parse;
 use parse::parser;
 use parse::token;
@@ -30,60 +31,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::default::Default;
 
-#[unstable(feature = "rustc_private")]
-#[deprecated(since = "1.0.0", reason = "replaced by MultiItemDecorator")]
-pub trait ItemDecorator {
-    fn expand(&self,
-              ecx: &mut ExtCtxt,
-              sp: Span,
-              meta_item: &ast::MetaItem,
-              item: &ast::Item,
-              push: &mut FnMut(P<ast::Item>));
-}
-
-#[allow(deprecated)]
-#[unstable(feature = "rustc_private")]
-#[deprecated(since = "1.0.0", reason = "replaced by MultiItemDecorator")]
-impl<F> ItemDecorator for F
-    where F : Fn(&mut ExtCtxt, Span, &ast::MetaItem, &ast::Item, &mut FnMut(P<ast::Item>))
-{
-    fn expand(&self,
-              ecx: &mut ExtCtxt,
-              sp: Span,
-              meta_item: &ast::MetaItem,
-              item: &ast::Item,
-              push: &mut FnMut(P<ast::Item>)) {
-        (*self)(ecx, sp, meta_item, item, push)
-    }
-}
-
-#[unstable(feature = "rustc_private")]
-#[deprecated(since = "1.0.0", reason = "replaced by MultiItemModifier")]
-pub trait ItemModifier {
-    fn expand(&self,
-              ecx: &mut ExtCtxt,
-              span: Span,
-              meta_item: &ast::MetaItem,
-              item: P<ast::Item>)
-              -> P<ast::Item>;
-}
-
-#[allow(deprecated)]
-#[unstable(feature = "rustc_private")]
-#[deprecated(since = "1.0.0", reason = "replaced by MultiItemModifier")]
-impl<F> ItemModifier for F
-    where F : Fn(&mut ExtCtxt, Span, &ast::MetaItem, P<ast::Item>) -> P<ast::Item>
-{
-
-    fn expand(&self,
-              ecx: &mut ExtCtxt,
-              span: Span,
-              meta_item: &ast::MetaItem,
-              item: P<ast::Item>)
-              -> P<ast::Item> {
-        (*self)(ecx, span, meta_item, item)
-    }
-}
 
 #[derive(Debug,Clone)]
 pub enum Annotatable {
@@ -290,6 +237,10 @@ pub trait MacResult {
     fn make_stmts(self: Box<Self>) -> Option<SmallVector<P<ast::Stmt>>> {
         make_stmts_default!(self)
     }
+
+    fn make_ty(self: Box<Self>) -> Option<P<ast::Ty>> {
+        None
+    }
 }
 
 macro_rules! make_MacEager {
@@ -322,6 +273,7 @@ make_MacEager! {
     items: SmallVector<P<ast::Item>>,
     impl_items: SmallVector<P<ast::ImplItem>>,
     stmts: SmallVector<P<ast::Stmt>>,
+    ty: P<ast::Ty>,
 }
 
 impl MacResult for MacEager {
@@ -358,6 +310,10 @@ impl MacResult for MacEager {
             }
         }
         None
+    }
+
+    fn make_ty(self: Box<Self>) -> Option<P<ast::Ty>> {
+        self.ty
     }
 }
 
@@ -405,15 +361,24 @@ impl DummyResult {
         }
     }
 
+    pub fn raw_ty(sp: Span) -> P<ast::Ty> {
+        P(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            node: ast::TyInfer,
+            span: sp
+        })
+    }
 }
 
 impl MacResult for DummyResult {
     fn make_expr(self: Box<DummyResult>) -> Option<P<ast::Expr>> {
         Some(DummyResult::raw_expr(self.span))
     }
+
     fn make_pat(self: Box<DummyResult>) -> Option<P<ast::Pat>> {
         Some(P(DummyResult::raw_pat(self.span)))
     }
+
     fn make_items(self: Box<DummyResult>) -> Option<SmallVector<P<ast::Item>>> {
         // this code needs a comment... why not always just return the Some() ?
         if self.expr_only {
@@ -422,6 +387,7 @@ impl MacResult for DummyResult {
             Some(SmallVector::zero())
         }
     }
+
     fn make_impl_items(self: Box<DummyResult>) -> Option<SmallVector<P<ast::ImplItem>>> {
         if self.expr_only {
             None
@@ -429,6 +395,7 @@ impl MacResult for DummyResult {
             Some(SmallVector::zero())
         }
     }
+
     fn make_stmts(self: Box<DummyResult>) -> Option<SmallVector<P<ast::Stmt>>> {
         Some(SmallVector::one(P(
             codemap::respan(self.span,
@@ -441,23 +408,9 @@ impl MacResult for DummyResult {
 pub enum SyntaxExtension {
     /// A syntax extension that is attached to an item and creates new items
     /// based upon it.
-    #[unstable(feature = "rustc_private")]
-    #[deprecated(since = "1.0.0", reason = "replaced by MultiDecorator")]
-    #[allow(deprecated)]
-    Decorator(Box<ItemDecorator + 'static>),
-
-    /// A syntax extension that is attached to an item and creates new items
-    /// based upon it.
     ///
     /// `#[derive(...)]` is a `MultiItemDecorator`.
     MultiDecorator(Box<MultiItemDecorator + 'static>),
-
-    /// A syntax extension that is attached to an item and modifies it
-    /// in-place.
-    #[unstable(feature = "rustc_private")]
-    #[deprecated(since = "1.0.0", reason = "replaced by MultiModifier")]
-    #[allow(deprecated)]
-    Modifier(Box<ItemModifier + 'static>),
 
     /// A syntax extension that is attached to an item and modifies it
     /// in-place. More flexible version than Modifier.
@@ -611,7 +564,8 @@ pub struct ExtCtxt<'a> {
     pub cfg: ast::CrateConfig,
     pub backtrace: ExpnId,
     pub ecfg: expand::ExpansionConfig<'a>,
-    pub use_std: bool,
+    pub crate_root: Option<&'static str>,
+    pub feature_gated_cfgs: &'a mut Vec<GatedCfg>,
 
     pub mod_path: Vec<ast::Ident> ,
     pub exported_macros: Vec<ast::MacroDef>,
@@ -622,7 +576,8 @@ pub struct ExtCtxt<'a> {
 
 impl<'a> ExtCtxt<'a> {
     pub fn new(parse_sess: &'a parse::ParseSess, cfg: ast::CrateConfig,
-               ecfg: expand::ExpansionConfig<'a>) -> ExtCtxt<'a> {
+               ecfg: expand::ExpansionConfig<'a>,
+               feature_gated_cfgs: &'a mut Vec<GatedCfg>) -> ExtCtxt<'a> {
         let env = initial_syntax_expander_table(&ecfg);
         ExtCtxt {
             parse_sess: parse_sess,
@@ -630,7 +585,8 @@ impl<'a> ExtCtxt<'a> {
             backtrace: NO_EXPANSION,
             mod_path: Vec::new(),
             ecfg: ecfg,
-            use_std: true,
+            crate_root: None,
+            feature_gated_cfgs: feature_gated_cfgs,
             exported_macros: Vec::new(),
             syntax_env: env,
             recursion_count: 0,
@@ -690,13 +646,14 @@ impl<'a> ExtCtxt<'a> {
         loop {
             if self.codemap().with_expn_info(expn_id, |info| {
                 info.map_or(None, |i| {
-                    if i.callee.name == "include" {
+                    if i.callee.name() == "include" {
                         // Stop going up the backtrace once include! is encountered
                         return None;
                     }
                     expn_id = i.call_site.expn_id;
-                    if i.callee.format != CompilerExpansion {
-                        last_macro = Some(i.call_site)
+                    match i.callee.format {
+                        CompilerExpansion(..) => (),
+                        _ => last_macro = Some(i.call_site),
                     }
                     return Some(());
                 })
@@ -720,7 +677,7 @@ impl<'a> ExtCtxt<'a> {
         if self.recursion_count > self.ecfg.recursion_limit {
             panic!(self.span_fatal(ei.call_site,
                             &format!("recursion limit reached while expanding the macro `{}`",
-                                    ei.callee.name)));
+                                    ei.callee.name())));
         }
 
         let mut call_site = ei.call_site;
@@ -805,8 +762,13 @@ impl<'a> ExtCtxt<'a> {
     pub fn ident_of(&self, st: &str) -> ast::Ident {
         str_to_ident(st)
     }
-    pub fn ident_of_std(&self, st: &str) -> ast::Ident {
-        self.ident_of(if self.use_std { "std" } else { st })
+    pub fn std_path(&self, components: &[&str]) -> Vec<ast::Ident> {
+        let mut v = Vec::new();
+        if let Some(s) = self.crate_root {
+            v.push(self.ident_of(s));
+        }
+        v.extend(components.iter().map(|s| self.ident_of(s)));
+        return v
     }
     pub fn name_of(&self, st: &str) -> ast::Name {
         token::intern(st)

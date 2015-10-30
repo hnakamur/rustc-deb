@@ -13,7 +13,6 @@ use back::{abi, link};
 use llvm::{ValueRef, CallConv, get_param};
 use llvm;
 use middle::weak_lang_items;
-use rustc::ast_map;
 use trans::attributes;
 use trans::base::{llvm_linkage_by_name, push_ctxt};
 use trans::base;
@@ -30,16 +29,19 @@ use trans::type_of::*;
 use trans::type_of;
 use middle::ty::{self, Ty};
 use middle::subst::Substs;
+use rustc::front::map as hir_map;
 
 use std::cmp;
 use libc::c_uint;
 use syntax::abi::{Cdecl, Aapcs, C, Win64, Abi};
-use syntax::abi::{RustIntrinsic, Rust, RustCall, Stdcall, Fastcall, System};
+use syntax::abi::{PlatformIntrinsic, RustIntrinsic, Rust, RustCall, Stdcall, Fastcall, System};
 use syntax::codemap::Span;
 use syntax::parse::token::{InternedString, special_idents};
 use syntax::ast;
-use syntax::attr;
-use syntax::print::pprust;
+
+use rustc_front::print::pprust;
+use rustc_front::attr;
+use rustc_front::hir;
 
 ///////////////////////////////////////////////////////////////////////////
 // Type definitions
@@ -81,6 +83,10 @@ pub fn llvm_calling_convention(ccx: &CrateContext,
             // Intrinsics are emitted at the call site
             ccx.sess().bug("asked to register intrinsic fn");
         }
+        PlatformIntrinsic => {
+            // Intrinsics are emitted at the call site
+            ccx.sess().bug("asked to register platform intrinsic fn");
+        }
 
         Rust => {
             // FIXME(#3678) Implement linking to foreign fns with Rust ABI
@@ -107,7 +113,7 @@ pub fn llvm_calling_convention(ccx: &CrateContext,
 }
 
 pub fn register_static(ccx: &CrateContext,
-                       foreign_item: &ast::ForeignItem) -> ValueRef {
+                       foreign_item: &hir::ForeignItem) -> ValueRef {
     let ty = ccx.tcx().node_id_to_type(foreign_item.id);
     let llty = type_of::type_of(ccx, ty);
 
@@ -181,7 +187,8 @@ pub fn get_extern_fn(ccx: &CrateContext,
 /// Registers a foreign function found in a library. Just adds a LLVM global.
 pub fn register_foreign_item_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                           abi: Abi, fty: Ty<'tcx>,
-                                          name: &str) -> ValueRef {
+                                          name: &str,
+                                          attrs: &[hir::Attribute])-> ValueRef {
     debug!("register_foreign_item_fn(abi={:?}, \
             ty={:?}, \
             name={})",
@@ -204,7 +211,9 @@ pub fn register_foreign_item_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let llfn_ty = lltype_for_fn_from_foreign_types(ccx, &tys);
 
     let llfn = get_extern_fn(ccx, &mut *ccx.externs().borrow_mut(), name, cc, llfn_ty, fty);
+    attributes::unwind(llfn, false);
     add_argument_attributes(&tys, llfn);
+    attributes::from_fn_attrs(ccx, attrs, llfn);
     llfn
 }
 
@@ -292,13 +301,10 @@ pub fn trans_native_call<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         // Ensure that we always have the Rust value indirectly,
         // because it makes bitcasting easier.
         if !rust_indirect {
-            let scratch =
-                base::alloca(bcx,
-                             type_of::type_of(ccx, passed_arg_tys[i]),
-                             "__arg");
+            let scratch = base::alloc_ty(bcx, passed_arg_tys[i], "__arg");
             if type_is_fat_ptr(ccx.tcx(), passed_arg_tys[i]) {
                 Store(bcx, llargs_rust[i + offset], expr::get_dataptr(bcx, scratch));
-                Store(bcx, llargs_rust[i + offset + 1], expr::get_len(bcx, scratch));
+                Store(bcx, llargs_rust[i + offset + 1], expr::get_meta(bcx, scratch));
                 offset += 1;
             } else {
                 base::store_ty(bcx, llarg_rust, scratch, passed_arg_tys[i]);
@@ -428,6 +434,7 @@ pub fn trans_native_call<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             // - Truncating foreign type to correct integral type and then
             //   bitcasting to the struct type yields invalid cast errors.
             let llscratch = base::alloca(bcx, llforeign_ret_ty, "__cast");
+            base::call_lifetime_start(bcx, llscratch);
             Store(bcx, llforeign_retval, llscratch);
             let llscratch_i8 = BitCast(bcx, llscratch, Type::i8(ccx).ptr_to());
             let llretptr_i8 = BitCast(bcx, llretptr, Type::i8(ccx).ptr_to());
@@ -438,6 +445,7 @@ pub fn trans_native_call<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             debug!("llrust_size={}", llrust_size);
             base::call_memcpy(bcx, llretptr_i8, llscratch_i8,
                               C_uint(ccx, llrust_size), llalign as u32);
+            base::call_lifetime_end(bcx, llscratch);
         }
     }
 
@@ -446,10 +454,10 @@ pub fn trans_native_call<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 
 // feature gate SIMD types in FFI, since I (huonw) am not sure the
 // ABIs are handled at all correctly.
-fn gate_simd_ffi(tcx: &ty::ctxt, decl: &ast::FnDecl, ty: &ty::BareFnTy) {
+fn gate_simd_ffi(tcx: &ty::ctxt, decl: &hir::FnDecl, ty: &ty::BareFnTy) {
     if !tcx.sess.features.borrow().simd_ffi {
-        let check = |ast_ty: &ast::Ty, ty: ty::Ty| {
-            if ty.is_simd(tcx) {
+        let check = |ast_ty: &hir::Ty, ty: ty::Ty| {
+            if ty.is_simd() {
                 tcx.sess.span_err(ast_ty.span,
                               &format!("use of SIMD type `{}` in FFI is highly experimental and \
                                         may result in invalid code",
@@ -462,20 +470,20 @@ fn gate_simd_ffi(tcx: &ty::ctxt, decl: &ast::FnDecl, ty: &ty::BareFnTy) {
         for (input, ty) in decl.inputs.iter().zip(&sig.inputs) {
             check(&*input.ty, *ty)
         }
-        if let ast::Return(ref ty) = decl.output {
+        if let hir::Return(ref ty) = decl.output {
             check(&**ty, sig.output.unwrap())
         }
     }
 }
 
-pub fn trans_foreign_mod(ccx: &CrateContext, foreign_mod: &ast::ForeignMod) {
+pub fn trans_foreign_mod(ccx: &CrateContext, foreign_mod: &hir::ForeignMod) {
     let _icx = push_ctxt("foreign::trans_foreign_mod");
     for foreign_item in &foreign_mod.items {
         let lname = link_name(&**foreign_item);
 
-        if let ast::ForeignItemFn(ref decl, _) = foreign_item.node {
+        if let hir::ForeignItemFn(ref decl, _) = foreign_item.node {
             match foreign_mod.abi {
-                Rust | RustIntrinsic => {}
+                Rust | RustIntrinsic | PlatformIntrinsic => {}
                 abi => {
                     let ty = ccx.tcx().node_id_to_type(foreign_item.id);
                     match ty.sty {
@@ -484,8 +492,7 @@ pub fn trans_foreign_mod(ccx: &CrateContext, foreign_mod: &ast::ForeignMod) {
                                                      "foreign fn's sty isn't a bare_fn_ty?")
                     }
 
-                    let llfn = register_foreign_item_fn(ccx, abi, ty, &lname);
-                    attributes::from_fn_attrs(ccx, &foreign_item.attrs, llfn);
+                    register_foreign_item_fn(ccx, abi, ty, &lname, &foreign_item.attrs);
                     // Unlike for other items, we shouldn't call
                     // `base::update_linkage` here.  Foreign items have
                     // special linkage requirements, which are handled
@@ -568,9 +575,9 @@ pub fn register_rust_fn_with_foreign_abi(ccx: &CrateContext,
 }
 
 pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                                                decl: &ast::FnDecl,
-                                                body: &ast::Block,
-                                                attrs: &[ast::Attribute],
+                                                decl: &hir::FnDecl,
+                                                body: &hir::Block,
+                                                attrs: &[hir::Attribute],
                                                 llwrapfn: ValueRef,
                                                 param_substs: &'tcx Substs<'tcx>,
                                                 id: ast::NodeId,
@@ -590,10 +597,10 @@ pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     }
 
     fn build_rust_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                               decl: &ast::FnDecl,
-                               body: &ast::Block,
+                               decl: &hir::FnDecl,
+                               body: &hir::Block,
                                param_substs: &'tcx Substs<'tcx>,
-                               attrs: &[ast::Attribute],
+                               attrs: &[hir::Attribute],
                                id: ast::NodeId,
                                hash: Option<&str>)
                                -> ValueRef
@@ -604,7 +611,7 @@ pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         let t = monomorphize::apply_param_substs(tcx, param_substs, &t);
 
         let ps = ccx.tcx().map.with_path(id, |path| {
-            let abi = Some(ast_map::PathName(special_idents::clownshoe_abi.name));
+            let abi = Some(hir_map::PathName(special_idents::clownshoe_abi.name));
             link::mangle(path.chain(abi), hash)
         });
 
@@ -612,7 +619,7 @@ pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         // normal Rust function. This will be the type of the wrappee fn.
         match t.sty {
             ty::TyBareFn(_, ref f) => {
-                assert!(f.abi != Rust && f.abi != RustIntrinsic);
+                assert!(f.abi != Rust && f.abi != RustIntrinsic && f.abi != PlatformIntrinsic);
             }
             _ => {
                 ccx.sess().bug(&format!("build_rust_fn: extern fn {} has ty {:?}, \
@@ -817,10 +824,10 @@ pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                    i, ccx.tn().val_to_string(llrust_arg));
             if type_is_fat_ptr(ccx.tcx(), rust_ty) {
                 let next_llrust_ty = rust_param_tys.next().expect("Not enough parameter types!");
-                llrust_args.push(builder.load(builder.bitcast(builder.gepi(
-                                llrust_arg, &[0, abi::FAT_PTR_ADDR]), llrust_ty.ptr_to())));
-                llrust_args.push(builder.load(builder.bitcast(builder.gepi(
-                                llrust_arg, &[0, abi::FAT_PTR_EXTRA]), next_llrust_ty.ptr_to())));
+                llrust_args.push(builder.load(builder.bitcast(builder.struct_gep(
+                                llrust_arg, abi::FAT_PTR_ADDR), llrust_ty.ptr_to())));
+                llrust_args.push(builder.load(builder.bitcast(builder.struct_gep(
+                                llrust_arg, abi::FAT_PTR_EXTRA), next_llrust_ty.ptr_to())));
             } else {
                 llrust_args.push(llrust_arg);
             }
@@ -896,7 +903,7 @@ pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 // This code is kind of a confused mess and needs to be reworked given
 // the massive simplifications that have occurred.
 
-pub fn link_name(i: &ast::ForeignItem) -> InternedString {
+pub fn link_name(i: &hir::ForeignItem) -> InternedString {
     match attr::first_attr_value_str_by_name(&i.attrs, "link_name") {
         Some(ln) => ln.clone(),
         None => match weak_lang_items::link_name(&i.attrs) {

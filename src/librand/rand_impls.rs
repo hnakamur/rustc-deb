@@ -10,7 +10,6 @@
 
 //! The implementations of `Rand` for the built-in types.
 
-use core::prelude::*;
 use core::char;
 use core::isize;
 use core::usize;

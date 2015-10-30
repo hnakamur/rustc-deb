@@ -31,9 +31,8 @@
 //! inferencer knows "so far".
 
 use middle::ty::{self, Ty, HasTypeFlags};
-use middle::ty_fold;
-use middle::ty_fold::TypeFoldable;
-use middle::ty_fold::TypeFolder;
+use middle::ty::fold::TypeFoldable;
+use middle::ty::fold::TypeFolder;
 use std::collections::hash_map::{self, Entry};
 
 use super::InferCtxt;
@@ -95,7 +94,8 @@ impl<'a, 'tcx> TypeFolder<'tcx> for TypeFreshener<'a, 'tcx> {
             ty::ReStatic |
             ty::ReFree(_) |
             ty::ReScope(_) |
-            ty::ReInfer(_) |
+            ty::ReVar(_) |
+            ty::ReSkolemized(..) |
             ty::ReEmpty => {
                 // replace all free regions with 'static
                 ty::ReStatic
@@ -169,7 +169,7 @@ impl<'a, 'tcx> TypeFolder<'tcx> for TypeFreshener<'a, 'tcx> {
             ty::TyTuple(..) |
             ty::TyProjection(..) |
             ty::TyParam(..) => {
-                ty_fold::super_fold_ty(self, t)
+                ty::fold::super_fold_ty(self, t)
             }
         }
     }

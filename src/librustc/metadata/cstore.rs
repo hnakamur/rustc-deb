@@ -18,17 +18,21 @@ pub use self::LinkagePreference::*;
 pub use self::NativeLibraryKind::*;
 
 use back::svh::Svh;
-use metadata::{creader, decoder, loader};
+use metadata::{creader, decoder, index, loader};
 use session::search_paths::PathKind;
-use util::nodemap::{FnvHashMap, NodeMap};
+use util::nodemap::{FnvHashMap, NodeMap, NodeSet};
 
-use std::cell::{RefCell, Ref};
+use std::cell::{RefCell, Ref, Cell};
 use std::rc::Rc;
 use std::path::PathBuf;
 use flate::Bytes;
 use syntax::ast;
+use rustc_front::attr;
 use syntax::codemap;
+use syntax::parse::token;
 use syntax::parse::token::IdentInterner;
+use syntax::util::small_vector::SmallVector;
+use front::map as ast_map;
 
 // A map from external crate numbers (as decoded from some crate file) to
 // local crate numbers (as generated during this session). Each external
@@ -54,11 +58,20 @@ pub struct ImportedFileMap {
 
 pub struct crate_metadata {
     pub name: String,
+    pub local_path: RefCell<SmallVector<ast_map::PathElem>>,
     pub data: MetadataBlob,
-    pub cnum_map: cnum_map,
+    pub cnum_map: RefCell<cnum_map>,
     pub cnum: ast::CrateNum,
     pub codemap_import_info: RefCell<Vec<ImportedFileMap>>,
     pub span: codemap::Span,
+    pub staged_api: bool,
+    pub index: index::Index,
+
+    /// Flag if this crate is required by an rlib version of this crate, or in
+    /// other words whether it was explicitly linked to. An example of a crate
+    /// where this is false is when an allocator crate is injected into the
+    /// dependency list, and therefore isn't actually needed to link an rlib.
+    pub explicitly_linked: Cell<bool>,
 }
 
 #[derive(Copy, Debug, PartialEq, Clone)]
@@ -92,6 +105,7 @@ pub struct CStore {
     used_crate_sources: RefCell<Vec<CrateSource>>,
     used_libraries: RefCell<Vec<(String, NativeLibraryKind)>>,
     used_link_args: RefCell<Vec<String>>,
+    statically_included_foreign_items: RefCell<NodeSet>,
     pub intr: Rc<IdentInterner>,
 }
 
@@ -103,7 +117,8 @@ impl CStore {
             used_crate_sources: RefCell::new(Vec::new()),
             used_libraries: RefCell::new(Vec::new()),
             used_link_args: RefCell::new(Vec::new()),
-            intr: intr
+            intr: intr,
+            statically_included_foreign_items: RefCell::new(NodeSet()),
         }
     }
 
@@ -125,10 +140,10 @@ impl CStore {
     }
 
     pub fn iter_crate_data<I>(&self, mut i: I) where
-        I: FnMut(ast::CrateNum, &crate_metadata),
+        I: FnMut(ast::CrateNum, &Rc<crate_metadata>),
     {
         for (&k, v) in self.metas.borrow().iter() {
-            i(k, &**v);
+            i(k, v);
         }
     }
 
@@ -162,6 +177,7 @@ impl CStore {
         self.used_crate_sources.borrow_mut().clear();
         self.used_libraries.borrow_mut().clear();
         self.used_link_args.borrow_mut().clear();
+        self.statically_included_foreign_items.borrow_mut().clear();
     }
 
     // This method is used when generating the command line to pass through to
@@ -180,7 +196,7 @@ impl CStore {
                  ordering: &mut Vec<ast::CrateNum>) {
             if ordering.contains(&cnum) { return }
             let meta = cstore.get_crate_data(cnum);
-            for (_, &dep) in &meta.cnum_map {
+            for (_, &dep) in meta.cnum_map.borrow().iter() {
                 visit(cstore, dep, ordering);
             }
             ordering.push(cnum);
@@ -188,6 +204,7 @@ impl CStore {
         for (&num, _) in self.metas.borrow().iter() {
             visit(self, num, &mut ordering);
         }
+        info!("topological ordering: {:?}", ordering);
         ordering.reverse();
         let mut libs = self.used_crate_sources.borrow()
             .iter()
@@ -235,6 +252,14 @@ impl CStore {
                                      -> Option<ast::CrateNum> {
         self.extern_mod_crate_map.borrow().get(&emod_id).cloned()
     }
+
+    pub fn add_statically_included_foreign_item(&self, id: ast::NodeId) {
+        self.statically_included_foreign_items.borrow_mut().insert(id);
+    }
+
+    pub fn is_statically_included_foreign_item(&self, id: ast::NodeId) -> bool {
+        self.statically_included_foreign_items.borrow().contains(&id)
+    }
 }
 
 impl crate_metadata {
@@ -254,6 +279,43 @@ impl crate_metadata {
         } else {
             filemaps
         }
+    }
+
+    pub fn with_local_path<T, F>(&self, f: F) -> T
+        where F: Fn(&[ast_map::PathElem]) -> T
+    {
+        let cpath = self.local_path.borrow();
+        if cpath.is_empty() {
+            let name = ast_map::PathMod(token::intern(&self.name));
+            f(&[name])
+        } else {
+            f(cpath.as_slice())
+        }
+    }
+
+    pub fn update_local_path<'a, 'b>(&self, candidate: ast_map::PathElems<'a, 'b>) {
+        let mut cpath = self.local_path.borrow_mut();
+        let cap = cpath.len();
+        match cap {
+            0 => *cpath = candidate.collect(),
+            1 => (),
+            _ => {
+                let candidate: SmallVector<_> = candidate.collect();
+                if candidate.len() < cap {
+                    *cpath = candidate;
+                }
+            },
+        }
+    }
+
+    pub fn is_allocator(&self) -> bool {
+        let attrs = decoder::get_crate_attributes(self.data());
+        attr::contains_name(&attrs, "allocator")
+    }
+
+    pub fn needs_allocator(&self) -> bool {
+        let attrs = decoder::get_crate_attributes(self.data());
+        attr::contains_name(&attrs, "needs_allocator")
     }
 }
 

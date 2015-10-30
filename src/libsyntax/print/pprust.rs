@@ -113,7 +113,7 @@ pub fn print_crate<'a>(cm: &'a CodeMap,
                                       out,
                                       ann,
                                       is_expanded);
-    if is_expanded && std_inject::use_std(krate) {
+    if is_expanded && !std_inject::no_std(krate) {
         // We need to print `#![no_std]` (and its feature gate) so that
         // compiling pretty-printed source won't inject libstd again.
         // However we don't want these attributes in the AST because
@@ -259,8 +259,8 @@ pub fn token_to_string(tok: &Token) -> String {
                 token::StrRaw(s, n)      => format!("r{delim}\"{string}\"{delim}",
                                                     delim=repeat("#", n),
                                                     string=s),
-                token::Binary(v)         => format!("b\"{}\"", v),
-                token::BinaryRaw(s, n)   => format!("br{delim}\"{string}\"{delim}",
+                token::ByteStr(v)         => format!("b\"{}\"", v),
+                token::ByteStrRaw(s, n)   => format!("br{delim}\"{string}\"{delim}",
                                                     delim=repeat("#", n),
                                                     string=s),
             };
@@ -733,6 +733,9 @@ impl<'a> State<'a> {
             }
             ast::TyInfer => {
                 try!(word(&mut self.s, "_"));
+            }
+            ast::TyMac(ref m) => {
+                try!(self.print_mac(m, token::Paren));
             }
         }
         self.end()
@@ -1552,6 +1555,21 @@ impl<'a> State<'a> {
         self.pclose()
     }
 
+    pub fn check_expr_bin_needs_paren(&mut self, sub_expr: &ast::Expr,
+                                      binop: ast::BinOp) -> bool {
+        match sub_expr.node {
+            ast::ExprBinary(ref sub_op, _, _) => {
+                if ast_util::operator_prec(sub_op.node) <
+                    ast_util::operator_prec(binop.node) {
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => true
+        }
+    }
+
     pub fn print_expr_maybe_paren(&mut self, expr: &ast::Expr) -> io::Result<()> {
         let needs_par = needs_parentheses(expr);
         if needs_par {
@@ -1667,10 +1685,18 @@ impl<'a> State<'a> {
                          op: ast::BinOp,
                          lhs: &ast::Expr,
                          rhs: &ast::Expr) -> io::Result<()> {
-        try!(self.print_expr(lhs));
+        if self.check_expr_bin_needs_paren(lhs, op) {
+            try!(self.print_expr_maybe_paren(lhs));
+        } else {
+            try!(self.print_expr(lhs));
+        }
         try!(space(&mut self.s));
         try!(self.word_space(ast_util::binop_to_string(op.node)));
-        self.print_expr(rhs)
+        if self.check_expr_bin_needs_paren(rhs, op) {
+            self.print_expr_maybe_paren(rhs)
+        } else {
+            self.print_expr(rhs)
+        }
     }
 
     fn print_expr_unary(&mut self,
@@ -1727,7 +1753,11 @@ impl<'a> State<'a> {
                 try!(self.print_literal(&**lit));
             }
             ast::ExprCast(ref expr, ref ty) => {
-                try!(self.print_expr(&**expr));
+                if let ast::ExprCast(..) = expr.node {
+                    try!(self.print_expr(&**expr));
+                } else {
+                    try!(self.print_expr_maybe_paren(&**expr));
+                }
                 try!(space(&mut self.s));
                 try!(self.word_space("as"));
                 try!(self.print_type(&**ty));
@@ -1881,7 +1911,7 @@ impl<'a> State<'a> {
                 try!(word(&mut self.s, "break"));
                 try!(space(&mut self.s));
                 if let Some(ident) = opt_ident {
-                    try!(self.print_ident(ident));
+                    try!(self.print_ident(ident.node));
                     try!(space(&mut self.s));
                 }
             }
@@ -1889,7 +1919,7 @@ impl<'a> State<'a> {
                 try!(word(&mut self.s, "continue"));
                 try!(space(&mut self.s));
                 if let Some(ident) = opt_ident {
-                    try!(self.print_ident(ident));
+                    try!(self.print_ident(ident.node));
                     try!(space(&mut self.s))
                 }
             }
@@ -2643,11 +2673,23 @@ impl<'a> State<'a> {
                 }
                 try!(self.commasep(Inconsistent, &idents[..], |s, w| {
                     match w.node {
-                        ast::PathListIdent { name, .. } => {
-                            s.print_ident(name)
+                        ast::PathListIdent { name, rename, .. } => {
+                            try!(s.print_ident(name));
+                            if let Some(ident) = rename {
+                                try!(space(&mut s.s));
+                                try!(s.word_space("as"));
+                                try!(s.print_ident(ident));
+                            }
+                            Ok(())
                         },
-                        ast::PathListMod { .. } => {
-                            word(&mut s.s, "self")
+                        ast::PathListMod { rename, .. } => {
+                            try!(word(&mut s.s, "self"));
+                            if let Some(ident) = rename {
+                                try!(space(&mut s.s));
+                                try!(s.word_space("as"));
+                                try!(s.print_ident(ident));
+                            }
+                            Ok(())
                         }
                     }
                 }));
@@ -2845,7 +2887,7 @@ impl<'a> State<'a> {
             ast::LitBool(val) => {
                 if val { word(&mut self.s, "true") } else { word(&mut self.s, "false") }
             }
-            ast::LitBinary(ref v) => {
+            ast::LitByteStr(ref v) => {
                 let mut escaped: String = String::new();
                 for &ch in v.iter() {
                     escaped.extend(ascii::escape_default(ch)

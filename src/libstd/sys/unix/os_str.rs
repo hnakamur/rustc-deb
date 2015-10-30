@@ -11,8 +11,6 @@
 /// The underlying OsString/OsStr implementation on Unix systems: just
 /// a `Vec<u8>`/`[u8]`.
 
-use core::prelude::*;
-
 use borrow::Cow;
 use fmt::{self, Debug};
 use vec::Vec;

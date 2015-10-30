@@ -241,7 +241,7 @@ impl<T> Option<T> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn as_ref<'r>(&'r self) -> Option<&'r T> {
+    pub fn as_ref(&self) -> Option<&T> {
         match *self {
             Some(ref x) => Some(x),
             None => None,
@@ -262,7 +262,7 @@ impl<T> Option<T> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn as_mut<'r>(&'r mut self) -> Option<&'r mut T> {
+    pub fn as_mut(&mut self) -> Option<&mut T> {
         match *self {
             Some(ref mut x) => Some(x),
             None => None,
@@ -287,8 +287,10 @@ impl<T> Option<T> {
     /// ```
     #[inline]
     #[unstable(feature = "as_slice",
-               reason = "waiting for mut conventions")]
-    pub fn as_mut_slice<'r>(&'r mut self) -> &'r mut [T] {
+               reason = "waiting for mut conventions",
+               issue = "27776")]
+    #[deprecated(since = "1.4.0", reason = "niche API, unclear of usefulness")]
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
         match *self {
             Some(ref mut x) => {
                 let result: &mut [T] = slice::mut_ref_slice(x);
@@ -689,8 +691,10 @@ impl<T> Option<T> {
 
     /// Converts from `Option<T>` to `&[T]` (without copying)
     #[inline]
-    #[unstable(feature = "as_slice", since = "unsure of the utility here")]
-    pub fn as_slice<'a>(&'a self) -> &'a [T] {
+    #[unstable(feature = "as_slice", reason = "unsure of the utility here",
+               issue = "27776")]
+    #[deprecated(since = "1.4.0", reason = "niche API, unclear of usefulness")]
+    pub fn as_slice(&self) -> &[T] {
         match *self {
             Some(ref x) => slice::ref_slice(x),
             None => {
@@ -774,6 +778,26 @@ impl<T> IntoIterator for Option<T> {
     #[inline]
     fn into_iter(self) -> IntoIter<T> {
         IntoIter { inner: Item { opt: self } }
+    }
+}
+
+#[stable(since = "1.4.0", feature = "option_iter")]
+impl<'a, T> IntoIterator for &'a Option<T> {
+    type Item = &'a T;
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Iter<'a, T> {
+        self.iter()
+    }
+}
+
+#[stable(since = "1.4.0", feature = "option_iter")]
+impl<'a, T> IntoIterator for &'a mut Option<T> {
+    type Item = &'a mut T;
+    type IntoIter = IterMut<'a, T>;
+
+    fn into_iter(mut self) -> IterMut<'a, T> {
+        self.iter_mut()
     }
 }
 

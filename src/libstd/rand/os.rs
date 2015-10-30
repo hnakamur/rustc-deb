@@ -15,7 +15,6 @@ pub use self::imp::OsRng;
 
 #[cfg(all(unix, not(target_os = "ios")))]
 mod imp {
-    use prelude::v1::*;
     use self::OsRngInner::*;
 
     use fs::File;
@@ -182,12 +181,13 @@ mod imp {
 
 #[cfg(target_os = "ios")]
 mod imp {
-    use prelude::v1::*;
+    #[cfg(stage0)] use prelude::v1::*;
 
     use io;
     use mem;
+    use ptr;
     use rand::Rng;
-    use libc::{c_int, c_void, size_t};
+    use libc::{c_int, size_t};
 
     /// A random number generator that retrieves randomness straight from
     /// the operating system. Platform sources:
@@ -205,12 +205,10 @@ mod imp {
         _dummy: (),
     }
 
-    // Fake definition; this is actually a struct, but we don't use the
-    // contents here.
-    type SecRandom = c_void;
+    enum SecRandom {}
 
     #[allow(non_upper_case_globals)]
-    const kSecRandomDefault: *const SecRandom = 0 as *const SecRandom;
+    const kSecRandomDefault: *const SecRandom = ptr::null();
 
     #[link(name = "Security", kind = "framework")]
     extern "C" {
@@ -251,8 +249,6 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    use prelude::v1::*;
-
     use io;
     use mem;
     use rand::Rng;

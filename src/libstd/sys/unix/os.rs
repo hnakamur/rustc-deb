@@ -30,7 +30,6 @@ use sys::c;
 use sys::fd;
 use vec;
 
-const GETCWD_BUF_BYTES: usize = 2048;
 const TMPBUF_SZ: usize = 128;
 
 /// Returns the platform-specific value of errno
@@ -89,16 +88,14 @@ pub fn error_string(errno: i32) -> String {
         }
 
         let p = p as *const _;
-        str::from_utf8(CStr::from_ptr(p).to_bytes()).unwrap().to_string()
+        str::from_utf8(CStr::from_ptr(p).to_bytes()).unwrap().to_owned()
     }
 }
 
 pub fn getcwd() -> io::Result<PathBuf> {
-    let mut buf = Vec::new();
-    let mut n = GETCWD_BUF_BYTES;
+    let mut buf = Vec::with_capacity(512);
     loop {
         unsafe {
-            buf.reserve(n);
             let ptr = buf.as_mut_ptr() as *mut libc::c_char;
             if !libc::getcwd(ptr, buf.capacity() as libc::size_t).is_null() {
                 let len = CStr::from_ptr(buf.as_ptr() as *const libc::c_char).to_bytes().len();
@@ -111,7 +108,12 @@ pub fn getcwd() -> io::Result<PathBuf> {
                     return Err(error);
                 }
             }
-            n *= 2;
+
+            // Trigger the internal buffer resizing logic of `Vec` by requiring
+            // more space than the current capacity.
+            let cap = buf.capacity();
+            buf.set_len(cap);
+            buf.reserve(1);
         }
     }
 }
@@ -132,7 +134,7 @@ pub struct SplitPaths<'a> {
                     fn(&'a [u8]) -> PathBuf>,
 }
 
-pub fn split_paths<'a>(unparsed: &'a OsStr) -> SplitPaths<'a> {
+pub fn split_paths(unparsed: &OsStr) -> SplitPaths {
     fn bytes_to_path(b: &[u8]) -> PathBuf {
         PathBuf::from(<OsStr as OsStrExt>::from_bytes(b))
     }
@@ -140,7 +142,7 @@ pub fn split_paths<'a>(unparsed: &'a OsStr) -> SplitPaths<'a> {
     let unparsed = unparsed.as_bytes();
     SplitPaths {
         iter: unparsed.split(is_colon as fn(&u8) -> bool)
-                      .map(bytes_to_path as fn(&'a [u8]) -> PathBuf)
+                      .map(bytes_to_path as fn(&[u8]) -> PathBuf)
     }
 }
 
@@ -289,7 +291,7 @@ pub fn args() -> Args {
     };
     Args {
         iter: vec.into_iter(),
-        _dont_send_or_sync_me: 0 as *mut (),
+        _dont_send_or_sync_me: ptr::null_mut(),
     }
 }
 
@@ -345,7 +347,7 @@ pub fn args() -> Args {
         }
     }
 
-    Args { iter: res.into_iter(), _dont_send_or_sync_me: 0 as *mut _ }
+    Args { iter: res.into_iter(), _dont_send_or_sync_me: ptr::null_mut() }
 }
 
 #[cfg(any(target_os = "linux",
@@ -356,12 +358,12 @@ pub fn args() -> Args {
           target_os = "netbsd",
           target_os = "openbsd"))]
 pub fn args() -> Args {
-    use rt;
-    let bytes = rt::args::clone().unwrap_or(Vec::new());
+    use sys_common;
+    let bytes = sys_common::args::clone().unwrap_or(Vec::new());
     let v: Vec<OsString> = bytes.into_iter().map(|v| {
         OsStringExt::from_vec(v)
     }).collect();
-    Args { iter: v.into_iter(), _dont_send_or_sync_me: 0 as *mut _ }
+    Args { iter: v.into_iter(), _dont_send_or_sync_me: ptr::null_mut() }
 }
 
 pub struct Env {
@@ -401,7 +403,7 @@ pub fn env() -> Env {
             result.push(parse(CStr::from_ptr(*environ).to_bytes()));
             environ = environ.offset(1);
         }
-        Env { iter: result.into_iter(), _dont_send_or_sync_me: 0 as *mut _ }
+        Env { iter: result.into_iter(), _dont_send_or_sync_me: ptr::null_mut() }
     };
 
     fn parse(input: &[u8]) -> (OsString, OsString) {
@@ -479,7 +481,7 @@ pub fn home_dir() -> Option<PathBuf> {
         loop {
             let mut buf = Vec::with_capacity(amt);
             let mut passwd: c::passwd = mem::zeroed();
-            let mut result = 0 as *mut _;
+            let mut result = ptr::null_mut();
             match c::getpwuid_r(me, &mut passwd, buf.as_mut_ptr(),
                                 buf.capacity() as libc::size_t,
                                 &mut result) {

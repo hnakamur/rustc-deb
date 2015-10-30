@@ -24,13 +24,13 @@
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_back"]
-#![unstable(feature = "rustc_private")]
+#![unstable(feature = "rustc_private", issue = "27812")]
 #![staged_api]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-      html_root_url = "http://doc.rust-lang.org/nightly/")]
+      html_root_url = "https://doc.rust-lang.org/nightly/")]
 
 #![feature(box_syntax)]
 #![feature(fs_canonicalize)]
@@ -48,6 +48,7 @@ extern crate syntax;
 extern crate libc;
 extern crate serialize;
 extern crate rustc_llvm;
+extern crate rustc_front;
 #[macro_use] extern crate log;
 
 pub mod abi;

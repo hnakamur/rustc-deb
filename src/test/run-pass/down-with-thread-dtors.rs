@@ -12,6 +12,8 @@ thread_local!(static FOO: Foo = Foo);
 thread_local!(static BAR: Bar = Bar(1));
 thread_local!(static BAZ: Baz = Baz);
 
+static mut HIT: bool = false;
+
 struct Foo;
 struct Bar(i32);
 struct Baz;
@@ -31,8 +33,15 @@ impl Drop for Bar {
     }
 }
 
+impl Drop for Baz {
+    fn drop(&mut self) {
+        unsafe { HIT = true; }
+    }
+}
+
 fn main() {
     std::thread::spawn(|| {
         FOO.with(|_| {});
     }).join().unwrap();
+    assert!(unsafe { HIT });
 }

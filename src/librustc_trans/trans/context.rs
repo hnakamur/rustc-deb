@@ -12,6 +12,7 @@ use llvm;
 use llvm::{ContextRef, ModuleRef, ValueRef, BuilderRef};
 use metadata::common::LinkMeta;
 use middle::def::ExportMap;
+use middle::def_id::DefId;
 use middle::traits;
 use trans::adt;
 use trans::base;
@@ -91,7 +92,7 @@ pub struct LocalCrateContext<'tcx> {
     external: RefCell<DefIdMap<Option<ast::NodeId>>>,
     /// Backwards version of the `external` map (inlined items to where they
     /// came from)
-    external_srcs: RefCell<NodeMap<ast::DefId>>,
+    external_srcs: RefCell<NodeMap<DefId>>,
     /// Cache instances of monomorphized functions
     monomorphized: RefCell<FnvHashMap<MonoId<'tcx>, ValueRef>>,
     monomorphizing: RefCell<DefIdMap<usize>>,
@@ -120,7 +121,7 @@ pub struct LocalCrateContext<'tcx> {
     /// Cache of external const values
     extern_const_values: RefCell<DefIdMap<ValueRef>>,
 
-    impl_method_cache: RefCell<FnvHashMap<(ast::DefId, ast::Name), ast::DefId>>,
+    impl_method_cache: RefCell<FnvHashMap<(DefId, ast::Name), DefId>>,
 
     /// Cache of closure wrappers for bare fn's.
     closure_bare_wrapper_cache: RefCell<FnvHashMap<ValueRef, ValueRef>>,
@@ -228,9 +229,8 @@ unsafe fn create_context_and_module(sess: &Session, mod_name: &str) -> (ContextR
     let mod_name = CString::new(mod_name).unwrap();
     let llmod = llvm::LLVMModuleCreateWithNameInContext(mod_name.as_ptr(), llcx);
 
-    let custom_data_layout = &sess.target.target.options.data_layout[..];
-    if custom_data_layout.len() > 0 {
-        let data_layout = CString::new(custom_data_layout).unwrap();
+    if let Some(ref custom_data_layout) = sess.target.target.options.data_layout {
+        let data_layout = CString::new(&custom_data_layout[..]).unwrap();
         llvm::LLVMSetDataLayout(llmod, data_layout.as_ptr());
     } else {
         let tm = ::back::write::create_target_machine(sess);
@@ -560,20 +560,15 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         self.local.builder.b
     }
 
-    pub fn get_intrinsic(&self, key: & &'static str) -> ValueRef {
+    pub fn get_intrinsic(&self, key: &str) -> ValueRef {
         if let Some(v) = self.intrinsics().borrow().get(key).cloned() {
             return v;
         }
         match declare_intrinsic(self, key) {
             Some(v) => return v,
-            None => panic!()
+            None => panic!("unknown intrinsic '{}'", key)
         }
     }
-
-    pub fn is_split_stack_supported(&self) -> bool {
-        self.sess().target.target.options.morestack
-    }
-
 
     pub fn llmod(&self) -> ModuleRef {
         self.local.llmod
@@ -631,7 +626,7 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         &self.local.external
     }
 
-    pub fn external_srcs<'a>(&'a self) -> &'a RefCell<NodeMap<ast::DefId>> {
+    pub fn external_srcs<'a>(&'a self) -> &'a RefCell<NodeMap<DefId>> {
         &self.local.external_srcs
     }
 
@@ -669,7 +664,7 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
     }
 
     pub fn impl_method_cache<'a>(&'a self)
-            -> &'a RefCell<FnvHashMap<(ast::DefId, ast::Name), ast::DefId>> {
+            -> &'a RefCell<FnvHashMap<(DefId, ast::Name), DefId>> {
         &self.local.impl_method_cache
     }
 
@@ -796,20 +791,22 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 }
 
 /// Declare any llvm intrinsics that you might need
-fn declare_intrinsic(ccx: &CrateContext, key: & &'static str) -> Option<ValueRef> {
+fn declare_intrinsic(ccx: &CrateContext, key: &str) -> Option<ValueRef> {
     macro_rules! ifn {
         ($name:expr, fn() -> $ret:expr) => (
-            if *key == $name {
+            if key == $name {
                 let f = declare::declare_cfn(ccx, $name, Type::func(&[], &$ret),
                                              ccx.tcx().mk_nil());
+                llvm::SetUnnamedAddr(f, false);
                 ccx.intrinsics().borrow_mut().insert($name, f.clone());
                 return Some(f);
             }
         );
         ($name:expr, fn($($arg:expr),*) -> $ret:expr) => (
-            if *key == $name {
+            if key == $name {
                 let f = declare::declare_cfn(ccx, $name, Type::func(&[$($arg),*], &$ret),
                                              ccx.tcx().mk_nil());
+                llvm::SetUnnamedAddr(f, false);
                 ccx.intrinsics().borrow_mut().insert($name, f.clone());
                 return Some(f);
             }
@@ -829,10 +826,13 @@ fn declare_intrinsic(ccx: &CrateContext, key: & &'static str) -> Option<ValueRef
     let t_f32 = Type::f32(ccx);
     let t_f64 = Type::f64(ccx);
 
+    ifn!("llvm.memcpy.p0i8.p0i8.i16", fn(i8p, i8p, t_i16, t_i32, i1) -> void);
     ifn!("llvm.memcpy.p0i8.p0i8.i32", fn(i8p, i8p, t_i32, t_i32, i1) -> void);
     ifn!("llvm.memcpy.p0i8.p0i8.i64", fn(i8p, i8p, t_i64, t_i32, i1) -> void);
+    ifn!("llvm.memmove.p0i8.p0i8.i16", fn(i8p, i8p, t_i16, t_i32, i1) -> void);
     ifn!("llvm.memmove.p0i8.p0i8.i32", fn(i8p, i8p, t_i32, t_i32, i1) -> void);
     ifn!("llvm.memmove.p0i8.p0i8.i64", fn(i8p, i8p, t_i64, t_i32, i1) -> void);
+    ifn!("llvm.memset.p0i8.i16", fn(i8p, t_i8, t_i16, t_i32, i1) -> void);
     ifn!("llvm.memset.p0i8.i32", fn(i8p, t_i8, t_i32, t_i32, i1) -> void);
     ifn!("llvm.memset.p0i8.i64", fn(i8p, t_i8, t_i64, t_i32, i1) -> void);
 
@@ -947,7 +947,7 @@ fn declare_intrinsic(ccx: &CrateContext, key: & &'static str) -> Option<ValueRef
             if unsafe { llvm::LLVMVersionMinor() >= $llvm_version } {
                 // The `if key == $name` is already in ifn!
                 ifn!($name, fn($($arg),*) -> void);
-            } else if *key == $name {
+            } else if key == $name {
                 let f = declare::declare_cfn(ccx, stringify!($cname),
                                              Type::func(&[$($arg),*], &void),
                                              ccx.tcx().mk_nil());
@@ -970,7 +970,7 @@ fn declare_intrinsic(ccx: &CrateContext, key: & &'static str) -> Option<ValueRef
             if unsafe { llvm::LLVMVersionMinor() >= $llvm_version } {
                 // The `if key == $name` is already in ifn!
                 ifn!($name, fn($($arg),*) -> $ret);
-            } else if *key == $name {
+            } else if key == $name {
                 let f = declare::declare_cfn(ccx, stringify!($cname),
                                              Type::func(&[$($arg),*], &$ret),
                                              ccx.tcx().mk_nil());

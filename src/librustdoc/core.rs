@@ -10,13 +10,16 @@
 pub use self::MaybeTyped::*;
 
 use rustc_lint;
-use rustc_driver::driver;
+use rustc_driver::{driver, target_features};
 use rustc::session::{self, config};
+use rustc::middle::def_id::DefId;
 use rustc::middle::{privacy, ty};
-use rustc::ast_map;
+use rustc::front::map as hir_map;
 use rustc::lint;
 use rustc_trans::back::link;
 use rustc_resolve as resolve;
+use rustc_front::lowering::lower_crate;
+use rustc_front::hir;
 
 use syntax::{ast, codemap, diagnostic};
 use syntax::feature_gate::UnstableFeatures;
@@ -37,19 +40,19 @@ pub enum MaybeTyped<'a, 'tcx: 'a> {
     NotTyped(session::Session)
 }
 
-pub type ExternalPaths = RefCell<Option<HashMap<ast::DefId,
+pub type ExternalPaths = RefCell<Option<HashMap<DefId,
                                                 (Vec<String>, clean::TypeKind)>>>;
 
 pub struct DocContext<'a, 'tcx: 'a> {
-    pub krate: &'tcx ast::Crate,
+    pub krate: &'tcx hir::Crate,
     pub maybe_typed: MaybeTyped<'a, 'tcx>,
     pub input: Input,
     pub external_paths: ExternalPaths,
-    pub external_traits: RefCell<Option<HashMap<ast::DefId, clean::Trait>>>,
-    pub external_typarams: RefCell<Option<HashMap<ast::DefId, String>>>,
-    pub inlined: RefCell<Option<HashSet<ast::DefId>>>,
+    pub external_traits: RefCell<Option<HashMap<DefId, clean::Trait>>>,
+    pub external_typarams: RefCell<Option<HashMap<DefId, String>>>,
+    pub inlined: RefCell<Option<HashSet<DefId>>>,
     pub populated_crate_impls: RefCell<HashSet<ast::CrateNum>>,
-    pub deref_trait_did: Cell<Option<ast::DefId>>,
+    pub deref_trait_did: Cell<Option<DefId>>,
 }
 
 impl<'b, 'tcx> DocContext<'b, 'tcx> {
@@ -77,9 +80,9 @@ pub struct CrateAnalysis {
     pub exported_items: privacy::ExportedItems,
     pub public_items: privacy::PublicItems,
     pub external_paths: ExternalPaths,
-    pub external_typarams: RefCell<Option<HashMap<ast::DefId, String>>>,
-    pub inlined: RefCell<Option<HashSet<ast::DefId>>>,
-    pub deref_trait_did: Option<ast::DefId>,
+    pub external_typarams: RefCell<Option<HashMap<DefId, String>>>,
+    pub inlined: RefCell<Option<HashSet<DefId>>>,
+    pub deref_trait_did: Option<DefId>,
 }
 
 pub type Externs = HashMap<String, Vec<String>>;
@@ -119,7 +122,8 @@ pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
                                        span_diagnostic_handler);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
 
-    let cfg = config::build_configuration(&sess);
+    let mut cfg = config::build_configuration(&sess);
+    target_features::add_configuration(&mut cfg, &sess);
 
     let krate = driver::phase_1_parse_input(&sess, cfg, &input);
 
@@ -129,12 +133,15 @@ pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
     let krate = driver::phase_2_configure_and_expand(&sess, krate, &name, None)
                     .expect("phase_2_configure_and_expand aborted in rustdoc!");
 
-    let mut forest = ast_map::Forest::new(krate);
+    let krate = driver::assign_node_ids(&sess, krate);
+    // Lower ast -> hir.
+    let mut hir_forest = hir_map::Forest::new(lower_crate(&krate));
     let arenas = ty::CtxtArenas::new();
-    let ast_map = driver::assign_node_ids_and_map(&sess, &mut forest);
+    let hir_map = driver::make_map(&sess, &mut hir_forest);
 
     driver::phase_3_run_analysis_passes(sess,
-                                        ast_map,
+                                        hir_map,
+                                        &krate,
                                         &arenas,
                                         name,
                                         resolve::MakeGlobMap::No,

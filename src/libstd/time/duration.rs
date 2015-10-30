@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use ops::{Add, Sub, Mul, Div};
 use sys::time::SteadyTime;
 
@@ -66,7 +64,8 @@ impl Duration {
     #[unstable(feature = "duration_span",
                reason = "unsure if this is the right API or whether it should \
                          wait for a more general \"moment in time\" \
-                         abstraction")]
+                         abstraction",
+               issue = "27799")]
     pub fn span<F>(f: F) -> Duration where F: FnOnce() {
         let start = SteadyTime::now();
         f();
@@ -94,14 +93,6 @@ impl Duration {
     #[stable(feature = "duration", since = "1.3.0")]
     pub fn as_secs(&self) -> u64 { self.secs }
 
-    #[deprecated(reason = "renamed to `as_secs`", since = "1.3.0")]
-    #[unstable(feature = "duration_deprecated")]
-    /// Returns the number of whole seconds represented by this duration.
-    ///
-    /// The extra precision represented by this duration is ignored (e.g. extra
-    /// nanoseconds are not represented in the returned value).
-    pub fn secs(&self) -> u64 { self.as_secs() }
-
     /// Returns the nanosecond precision represented by this duration.
     ///
     /// This method does **not** return the length of the duration when
@@ -109,15 +100,6 @@ impl Duration {
     /// fractional portion of a second (e.g. it is less than one billion).
     #[stable(feature = "duration", since = "1.3.0")]
     pub fn subsec_nanos(&self) -> u32 { self.nanos }
-
-    #[deprecated(reason = "renamed to `subsec_nanos`", since = "1.3.0")]
-    #[unstable(feature = "duration_deprecated")]
-    /// Returns the nanosecond precision represented by this duration.
-    ///
-    /// This method does **not** return the length of the duration when
-    /// represented by nanoseconds. The returned number always represents a
-    /// fractional portion of a second (e.g. it is less than one billion).
-    pub fn extra_nanos(&self) -> u32 { self.subsec_nanos() }
 }
 
 impl Add for Duration {

@@ -60,19 +60,22 @@
 //! sort of a minor point so I've opted to leave it for later---after all
 //! we may want to adjust precisely when coercions occur.
 
-use check::{autoderef, FnCtxt, LvaluePreference, UnresolvedTypeAction};
+use check::{autoderef, FnCtxt, UnresolvedTypeAction};
 
 use middle::infer::{self, Coercion};
 use middle::traits::{self, ObligationCause};
 use middle::traits::{predicate_for_trait_def, report_selection_error};
-use middle::ty::{AutoDerefRef, AdjustDerefRef};
-use middle::ty::{self, TypeAndMut, Ty, TypeError};
-use middle::ty_relate::RelateResult;
+use middle::ty::adjustment::{AutoAdjustment, AutoDerefRef, AdjustDerefRef};
+use middle::ty::adjustment::{AutoPtr, AutoUnsafe, AdjustReifyFnPointer};
+use middle::ty::adjustment::{AdjustUnsafeFnPointer};
+use middle::ty::{self, LvaluePreference, TypeAndMut, Ty};
+use middle::ty::error::TypeError;
+use middle::ty::relate::RelateResult;
 use util::common::indent;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use syntax::ast;
+use rustc_front::hir;
 
 struct Coerce<'a, 'tcx: 'a> {
     fcx: &'a FnCtxt<'a, 'tcx>,
@@ -80,7 +83,7 @@ struct Coerce<'a, 'tcx: 'a> {
     unsizing_obligations: RefCell<Vec<traits::PredicateObligation<'tcx>>>,
 }
 
-type CoerceResult<'tcx> = RelateResult<'tcx, Option<ty::AutoAdjustment<'tcx>>>;
+type CoerceResult<'tcx> = RelateResult<'tcx, Option<AutoAdjustment<'tcx>>>;
 
 impl<'f, 'tcx> Coerce<'f, 'tcx> {
     fn tcx(&self) -> &ty::ctxt<'tcx> {
@@ -99,7 +102,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
     }
 
     fn coerce(&self,
-              expr_a: &ast::Expr,
+              expr_a: &hir::Expr,
               a: Ty<'tcx>,
               b: Ty<'tcx>)
               -> CoerceResult<'tcx> {
@@ -160,10 +163,10 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
     /// To match `A` with `B`, autoderef will be performed,
     /// calling `deref`/`deref_mut` where necessary.
     fn coerce_borrowed_pointer(&self,
-                               expr_a: &ast::Expr,
+                               expr_a: &hir::Expr,
                                a: Ty<'tcx>,
                                b: Ty<'tcx>,
-                               mutbl_b: ast::Mutability)
+                               mutbl_b: hir::Mutability)
                                -> CoerceResult<'tcx> {
         debug!("coerce_borrowed_pointer(a={:?}, b={:?})",
                a,
@@ -185,7 +188,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
         let coercion = Coercion(self.origin.span());
         let r_borrow = self.fcx.infcx().next_region_var(coercion);
         let r_borrow = self.tcx().mk_region(r_borrow);
-        let autoref = Some(ty::AutoPtr(r_borrow, mutbl_b));
+        let autoref = Some(AutoPtr(r_borrow, mutbl_b));
 
         let lvalue_pref = LvaluePreference::from_mutbl(mutbl_b);
         let mut first_error = None;
@@ -263,11 +266,11 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
                 let coercion = Coercion(self.origin.span());
                 let r_borrow = self.fcx.infcx().next_region_var(coercion);
                 let region = self.tcx().mk_region(r_borrow);
-                (mt_a.ty, Some(ty::AutoPtr(region, mt_b.mutbl)))
+                (mt_a.ty, Some(AutoPtr(region, mt_b.mutbl)))
             }
             (&ty::TyRef(_, mt_a), &ty::TyRawPtr(mt_b)) => {
                 try!(coerce_mutbls(mt_a.mutbl, mt_b.mutbl));
-                (mt_a.ty, Some(ty::AutoUnsafe(mt_b.mutbl)))
+                (mt_a.ty, Some(AutoUnsafe(mt_b.mutbl)))
             }
             _ => (source, None)
         };
@@ -356,10 +359,10 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
 
             if let ty::TyBareFn(None, fn_ty_b) = b.sty {
                 match (fn_ty_a.unsafety, fn_ty_b.unsafety) {
-                    (ast::Unsafety::Normal, ast::Unsafety::Unsafe) => {
+                    (hir::Unsafety::Normal, hir::Unsafety::Unsafe) => {
                         let unsafe_a = self.tcx().safe_to_unsafe_fn_ty(fn_ty_a);
                         try!(self.subtype(unsafe_a, b));
-                        return Ok(Some(ty::AdjustUnsafeFnPointer));
+                        return Ok(Some(AdjustUnsafeFnPointer));
                     }
                     _ => {}
                 }
@@ -386,7 +389,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
                 ty::TyBareFn(None, _) => {
                     let a_fn_pointer = self.tcx().mk_fn(None, fn_ty_a);
                     try!(self.subtype(a_fn_pointer, b));
-                    Ok(Some(ty::AdjustReifyFnPointer))
+                    Ok(Some(AdjustReifyFnPointer))
                 }
                 _ => self.subtype(a, b)
             }
@@ -396,7 +399,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
     fn coerce_unsafe_ptr(&self,
                          a: Ty<'tcx>,
                          b: Ty<'tcx>,
-                         mutbl_b: ast::Mutability)
+                         mutbl_b: hir::Mutability)
                          -> CoerceResult<'tcx> {
         debug!("coerce_unsafe_ptr(a={:?}, b={:?})",
                a,
@@ -421,7 +424,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
         if is_ref {
             Ok(Some(AdjustDerefRef(AutoDerefRef {
                 autoderefs: 1,
-                autoref: Some(ty::AutoUnsafe(mutbl_b)),
+                autoref: Some(AutoUnsafe(mutbl_b)),
                 unsize: None
             })))
         } else {
@@ -431,7 +434,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
 }
 
 pub fn mk_assignty<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
-                             expr: &ast::Expr,
+                             expr: &hir::Expr,
                              a: Ty<'tcx>,
                              b: Ty<'tcx>)
                              -> RelateResult<'tcx, ()> {
@@ -465,13 +468,13 @@ pub fn mk_assignty<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     Ok(())
 }
 
-fn coerce_mutbls<'tcx>(from_mutbl: ast::Mutability,
-                       to_mutbl: ast::Mutability)
+fn coerce_mutbls<'tcx>(from_mutbl: hir::Mutability,
+                       to_mutbl: hir::Mutability)
                        -> CoerceResult<'tcx> {
     match (from_mutbl, to_mutbl) {
-        (ast::MutMutable, ast::MutMutable) |
-        (ast::MutImmutable, ast::MutImmutable) |
-        (ast::MutMutable, ast::MutImmutable) => Ok(None),
-        (ast::MutImmutable, ast::MutMutable) => Err(TypeError::Mutability)
+        (hir::MutMutable, hir::MutMutable) |
+        (hir::MutImmutable, hir::MutImmutable) |
+        (hir::MutMutable, hir::MutImmutable) => Ok(None),
+        (hir::MutImmutable, hir::MutMutable) => Err(TypeError::Mutability)
     }
 }

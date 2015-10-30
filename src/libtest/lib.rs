@@ -26,13 +26,13 @@
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "test"]
-#![unstable(feature = "test")]
+#![unstable(feature = "test", issue = "27812")]
 #![staged_api]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/")]
 
 #![feature(asm)]
 #![feature(box_syntax)]
@@ -103,7 +103,7 @@ pub enum TestName {
     DynTestName(String)
 }
 impl TestName {
-    fn as_slice<'a>(&'a self) -> &'a str {
+    fn as_slice(&self) -> &str {
         match *self {
             StaticTestName(s) => s,
             DynTestName(ref s) => s
@@ -157,13 +157,13 @@ pub enum TestFn {
 
 impl TestFn {
     fn padding(&self) -> NamePadding {
-        match self {
-            &StaticTestFn(..)   => PadNone,
-            &StaticBenchFn(..)  => PadOnRight,
-            &StaticMetricFn(..) => PadOnRight,
-            &DynTestFn(..)      => PadNone,
-            &DynMetricFn(..)    => PadOnRight,
-            &DynBenchFn(..)     => PadOnRight,
+        match *self {
+            StaticTestFn(..)   => PadNone,
+            StaticBenchFn(..)  => PadOnRight,
+            StaticMetricFn(..) => PadOnRight,
+            DynTestFn(..)      => PadNone,
+            DynMetricFn(..)    => PadOnRight,
+            DynBenchFn(..)     => PadOnRight,
         }
     }
 }
@@ -196,7 +196,8 @@ pub struct Bencher {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ShouldPanic {
     No,
-    Yes(Option<&'static str>)
+    Yes,
+    YesWithMessage(&'static str)
 }
 
 // The definition of a single test. A test runner will run a list of
@@ -249,7 +250,7 @@ pub fn test_main(args: &[String], tests: Vec<TestDescAndFn> ) {
         };
     match run_tests_console(&opts, tests) {
         Ok(true) => {}
-        Ok(false) => panic!("Some tests failed"),
+        Ok(false) => std::process::exit(101),
         Err(e) => panic!("io error when running tests: {:?}", e),
     }
 }
@@ -261,8 +262,8 @@ pub fn test_main(args: &[String], tests: Vec<TestDescAndFn> ) {
 // a Vec<TestDescAndFn> is used in order to effect ownership-transfer
 // semantics into parallel test runners, which in turn requires a Vec<>
 // rather than a &[].
-pub fn test_main_static(args: env::Args, tests: &[TestDescAndFn]) {
-    let args = args.collect::<Vec<_>>();
+pub fn test_main_static(tests: &[TestDescAndFn]) {
+    let args = env::args().collect::<Vec<_>>();
     let owned_tests = tests.iter().map(|t| {
         match t.testfn {
             StaticTestFn(f) => TestDescAndFn { testfn: StaticTestFn(f), desc: t.desc.clone() },
@@ -563,9 +564,9 @@ impl<T: Write> ConsoleTestState<T> {
             None => Ok(()),
             Some(ref mut o) => {
                 let s = format!("{} {}\n", match *result {
-                        TrOk => "ok".to_string(),
-                        TrFailed => "failed".to_string(),
-                        TrIgnored => "ignored".to_string(),
+                        TrOk => "ok".to_owned(),
+                        TrFailed => "failed".to_owned(),
+                        TrIgnored => "ignored".to_owned(),
                         TrMetrics(ref mm) => mm.fmt_metrics(),
                         TrBench(ref bs) => fmt_bench_samples(bs)
                     }, test.name);
@@ -924,7 +925,7 @@ pub fn filter_tests(opts: &TestOpts, tests: Vec<TestDescAndFn>) -> Vec<TestDescA
                 None
             }
         };
-        filtered.into_iter().filter_map(|x| filter(x)).collect()
+        filtered.into_iter().filter_map(filter).collect()
     };
 
     // Sort the tests alphabetically
@@ -977,8 +978,8 @@ pub fn run_test(opts: &TestOpts,
             let data = Arc::new(Mutex::new(Vec::new()));
             let data2 = data.clone();
             let cfg = thread::Builder::new().name(match desc.name {
-                DynTestName(ref name) => name.clone().to_string(),
-                StaticTestName(name) => name.to_string(),
+                DynTestName(ref name) => name.clone(),
+                StaticTestName(name) => name.to_owned(),
             });
 
             let result_guard = cfg.spawn(move || {
@@ -1019,15 +1020,15 @@ pub fn run_test(opts: &TestOpts,
         }
         DynTestFn(f) => run_test_inner(desc, monitor_ch, opts.nocapture, f),
         StaticTestFn(f) => run_test_inner(desc, monitor_ch, opts.nocapture,
-                                          Box::new(move|| f()))
+                                          Box::new(f))
     }
 }
 
 fn calc_result(desc: &TestDesc, task_result: Result<(), Box<Any+Send>>) -> TestResult {
     match (&desc.should_panic, task_result) {
         (&ShouldPanic::No, Ok(())) |
-        (&ShouldPanic::Yes(None), Err(_)) => TrOk,
-        (&ShouldPanic::Yes(Some(msg)), Err(ref err))
+        (&ShouldPanic::Yes, Err(_)) => TrOk,
+        (&ShouldPanic::YesWithMessage(msg), Err(ref err))
             if err.downcast_ref::<String>()
                 .map(|e| &**e)
                 .or_else(|| err.downcast_ref::<&'static str>().map(|e| *e))
@@ -1062,7 +1063,7 @@ impl MetricMap {
             noise: noise
         };
         let MetricMap(ref mut map) = *self;
-        map.insert(name.to_string(), m);
+        map.insert(name.to_owned(), m);
     }
 
     pub fn fmt_metrics(&self) -> String {
@@ -1275,7 +1276,7 @@ mod tests {
             desc: TestDesc {
                 name: StaticTestName("whatever"),
                 ignore: false,
-                should_panic: ShouldPanic::Yes(None)
+                should_panic: ShouldPanic::Yes,
             },
             testfn: DynTestFn(Box::new(move|| f())),
         };
@@ -1292,7 +1293,7 @@ mod tests {
             desc: TestDesc {
                 name: StaticTestName("whatever"),
                 ignore: false,
-                should_panic: ShouldPanic::Yes(Some("error message"))
+                should_panic: ShouldPanic::YesWithMessage("error message"),
             },
             testfn: DynTestFn(Box::new(move|| f())),
         };
@@ -1309,7 +1310,7 @@ mod tests {
             desc: TestDesc {
                 name: StaticTestName("whatever"),
                 ignore: false,
-                should_panic: ShouldPanic::Yes(Some("foobar"))
+                should_panic: ShouldPanic::YesWithMessage("foobar"),
             },
             testfn: DynTestFn(Box::new(move|| f())),
         };
@@ -1326,7 +1327,7 @@ mod tests {
             desc: TestDesc {
                 name: StaticTestName("whatever"),
                 ignore: false,
-                should_panic: ShouldPanic::Yes(None)
+                should_panic: ShouldPanic::Yes,
             },
             testfn: DynTestFn(Box::new(move|| f())),
         };

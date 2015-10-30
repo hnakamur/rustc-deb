@@ -14,10 +14,10 @@
 use super::{CombinedSnapshot, InferCtxt, HigherRankedType, SkolemizationMap};
 use super::combine::CombineFields;
 
-use middle::subst;
-use middle::ty::{self, TypeError, Binder};
-use middle::ty_fold::{self, TypeFoldable};
-use middle::ty_relate::{Relate, RelateResult, TypeRelation};
+use middle::ty::{self, Binder};
+use middle::ty::error::TypeError;
+use middle::ty::fold::TypeFoldable;
+use middle::ty::relate::{Relate, RelateResult, TypeRelation};
 use syntax::codemap::Span;
 use util::nodemap::{FnvHashMap, FnvHashSet};
 
@@ -335,7 +335,7 @@ fn var_ids<'a, 'tcx>(fields: &CombineFields<'a, 'tcx>,
                      -> Vec<ty::RegionVid> {
     map.iter()
        .map(|(_, r)| match *r {
-           ty::ReInfer(ty::ReVar(r)) => { r }
+           ty::ReVar(r) => { r }
            r => {
                fields.tcx().sess.span_bug(
                    fields.trace.origin.span(),
@@ -347,7 +347,7 @@ fn var_ids<'a, 'tcx>(fields: &CombineFields<'a, 'tcx>,
 
 fn is_var_in_set(new_vars: &[ty::RegionVid], r: ty::Region) -> bool {
     match r {
-        ty::ReInfer(ty::ReVar(ref v)) => new_vars.iter().any(|x| x == v),
+        ty::ReVar(ref v) => new_vars.iter().any(|x| x == v),
         _ => false
     }
 }
@@ -359,7 +359,7 @@ fn fold_regions_in<'tcx, T, F>(tcx: &ty::ctxt<'tcx>,
     where T: TypeFoldable<'tcx>,
           F: FnMut(ty::Region, ty::DebruijnIndex) -> ty::Region,
 {
-    ty_fold::fold_regions(tcx, unbound_value, &mut false, |region, current_depth| {
+    tcx.fold_regions(unbound_value, &mut false, |region, current_depth| {
         // we should only be encountering "escaping" late-bound regions here,
         // because the ones at the current level should have been replaced
         // with fresh variables
@@ -439,11 +439,11 @@ impl<'a,'tcx> InferCtxtExt for InferCtxt<'a,'tcx> {
 
         let mut escaping_region_vars = FnvHashSet();
         for ty in &escaping_types {
-            ty_fold::collect_regions(self.tcx, ty, &mut escaping_region_vars);
+            self.tcx.collect_regions(ty, &mut escaping_region_vars);
         }
 
         region_vars.retain(|&region_vid| {
-            let r = ty::ReInfer(ty::ReVar(region_vid));
+            let r = ty::ReVar(region_vid);
             !escaping_region_vars.contains(&r)
         });
 
@@ -452,63 +452,6 @@ impl<'a,'tcx> InferCtxtExt for InferCtxt<'a,'tcx> {
                escaping_types);
 
         region_vars
-    }
-}
-
-/// Constructs and returns a substitution that, for a given type
-/// scheme parameterized by `generics`, will replace every generic
-/// parameter in the type with a skolemized type/region (which one can
-/// think of as a "fresh constant", except at the type/region level of
-/// reasoning).
-///
-/// Since we currently represent bound/free type parameters in the
-/// same way, this only has an effect on regions.
-///
-/// (Note that unlike a substitution from `ty::construct_free_substs`,
-/// this inserts skolemized regions rather than free regions; this
-/// allows one to use `fn leak_check` to catch attmepts to unify the
-/// skolemized regions with e.g. the `'static` lifetime)
-pub fn construct_skolemized_substs<'a,'tcx>(infcx: &InferCtxt<'a,'tcx>,
-                                            generics: &ty::Generics<'tcx>,
-                                            snapshot: &CombinedSnapshot)
-                                            -> (subst::Substs<'tcx>, SkolemizationMap)
-{
-    let mut map = FnvHashMap();
-
-    // map T => T
-    let mut types = subst::VecPerParamSpace::empty();
-    push_types_from_defs(infcx.tcx, &mut types, generics.types.as_slice());
-
-    // map early- or late-bound 'a => fresh 'a
-    let mut regions = subst::VecPerParamSpace::empty();
-    push_region_params(infcx, &mut map, &mut regions, generics.regions.as_slice(), snapshot);
-
-    let substs = subst::Substs { types: types,
-                                 regions: subst::NonerasedRegions(regions) };
-    return (substs, map);
-
-    fn push_region_params<'a,'tcx>(infcx: &InferCtxt<'a,'tcx>,
-                                   map: &mut SkolemizationMap,
-                                   regions: &mut subst::VecPerParamSpace<ty::Region>,
-                                   region_params: &[ty::RegionParameterDef],
-                                   snapshot: &CombinedSnapshot)
-    {
-        for r in region_params {
-            let br = r.to_bound_region();
-            let skol_var = infcx.region_vars.new_skolemized(br, &snapshot.region_vars_snapshot);
-            let sanity_check = map.insert(br, skol_var);
-            assert!(sanity_check.is_none());
-            regions.push(r.space, skol_var);
-        }
-    }
-
-    fn push_types_from_defs<'tcx>(tcx: &ty::ctxt<'tcx>,
-                                  types: &mut subst::VecPerParamSpace<ty::Ty<'tcx>>,
-                                  defs: &[ty::TypeParameterDef<'tcx>]) {
-        for def in defs {
-            let ty = tcx.mk_param_from_def(def);
-            types.push(def.space, ty);
-        }
     }
 }
 
@@ -526,7 +469,7 @@ pub fn skolemize_late_bound_regions<'a,'tcx,T>(infcx: &InferCtxt<'a,'tcx>,
      * details.
      */
 
-    let (result, map) = ty_fold::replace_late_bound_regions(infcx.tcx, binder, |br| {
+    let (result, map) = infcx.tcx.replace_late_bound_regions(binder, |br| {
         infcx.region_vars.new_skolemized(br, &snapshot.region_vars_snapshot)
     });
 
@@ -561,7 +504,7 @@ pub fn leak_check<'a,'tcx>(infcx: &InferCtxt<'a,'tcx>,
             // Each skolemized should only be relatable to itself
             // or new variables:
             match tainted_region {
-                ty::ReInfer(ty::ReVar(vid)) => {
+                ty::ReVar(vid) => {
                     if new_vars.iter().any(|&x| x == vid) { continue; }
                 }
                 _ => {
@@ -614,7 +557,7 @@ pub fn plug_leaks<'a,'tcx,T>(infcx: &InferCtxt<'a,'tcx>,
                              snapshot: &CombinedSnapshot,
                              value: &T)
                              -> T
-    where T : TypeFoldable<'tcx>
+    where T : TypeFoldable<'tcx> + ty::HasTypeFlags
 {
     debug_assert!(leak_check(infcx, &skol_map, snapshot).is_ok());
 
@@ -648,7 +591,7 @@ pub fn plug_leaks<'a,'tcx,T>(infcx: &InferCtxt<'a,'tcx>,
     // binder is that we encountered in `value`. The caller is
     // responsible for ensuring that (a) `value` contains at least one
     // binder and (b) that binder is the one we want to use.
-    let result = ty_fold::fold_regions(infcx.tcx, &value, &mut false, |r, current_depth| {
+    let result = infcx.tcx.fold_regions(&value, &mut false, |r, current_depth| {
         match inv_skol_map.get(&r) {
             None => r,
             Some(br) => {

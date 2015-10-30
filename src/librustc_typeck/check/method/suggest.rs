@@ -17,14 +17,16 @@ use astconv::AstConv;
 use check::{self, FnCtxt};
 use middle::ty::{self, Ty, ToPolyTraitRef, ToPredicate, HasTypeFlags};
 use middle::def;
+use middle::def_id::DefId;
 use middle::lang_items::FnOnceTraitLangItem;
 use middle::subst::Substs;
 use middle::traits::{Obligation, SelectionContext};
 use metadata::{csearch, cstore, decoder};
 
-use syntax::{ast, ast_util};
+use syntax::ast;
 use syntax::codemap::Span;
-use syntax::print::pprust;
+use rustc_front::print::pprust;
+use rustc_front::hir;
 
 use std::cell;
 use std::cmp::Ordering;
@@ -36,7 +38,7 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                               span: Span,
                               rcvr_ty: Ty<'tcx>,
                               item_name: ast::Name,
-                              rcvr_expr: Option<&ast::Expr>,
+                              rcvr_expr: Option<&hir::Expr>,
                               error: MethodError<'tcx>)
 {
     // avoid suggestions when we don't know what's going on.
@@ -65,10 +67,8 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                 None);
 
             // If the item has the name of a field, give a help note
-            if let (&ty::TyStruct(did, substs), Some(expr)) = (&rcvr_ty.sty, rcvr_expr) {
-                let fields = cx.lookup_struct_fields(did);
-
-                if let Some(field) = fields.iter().find(|f| f.name == item_name) {
+            if let (&ty::TyStruct(def, substs), Some(expr)) = (&rcvr_ty.sty, rcvr_expr) {
+                if let Some(field) = def.struct_variant().find_field_named(item_name) {
                     let expr_string = match cx.sess.codemap().span_to_snippet(expr.span) {
                         Ok(expr_string) => expr_string,
                         _ => "s".into() // Default to a generic placeholder for the
@@ -89,7 +89,7 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                     };
 
                     // Determine if the field can be used as a function in some way
-                    let field_ty = cx.lookup_field_type(did, field.id, substs);
+                    let field_ty = field.ty(cx, substs);
                     if let Ok(fn_once_trait_did) = cx.lang_items.require(FnOnceTraitLangItem) {
                         let infcx = fcx.infcx();
                         infcx.probe(|_| {
@@ -222,8 +222,8 @@ fn suggest_traits_to_import<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                                       span: Span,
                                       rcvr_ty: Ty<'tcx>,
                                       item_name: ast::Name,
-                                      rcvr_expr: Option<&ast::Expr>,
-                                      valid_out_of_scope_traits: Vec<ast::DefId>)
+                                      rcvr_expr: Option<&hir::Expr>,
+                                      valid_out_of_scope_traits: Vec<DefId>)
 {
     let tcx = fcx.tcx();
 
@@ -263,7 +263,7 @@ fn suggest_traits_to_import<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
             // this isn't perfect (that is, there are cases when
             // implementing a trait would be legal but is rejected
             // here).
-            (type_is_local || ast_util::is_local(info.def_id))
+            (type_is_local || info.def_id.is_local())
                 && trait_item(tcx, info.def_id, item_name).is_some()
         })
         .collect::<Vec<_>>();
@@ -300,12 +300,12 @@ fn suggest_traits_to_import<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 fn type_derefs_to_local<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                                   span: Span,
                                   rcvr_ty: Ty<'tcx>,
-                                  rcvr_expr: Option<&ast::Expr>) -> bool {
+                                  rcvr_expr: Option<&hir::Expr>) -> bool {
     fn is_local(ty: Ty) -> bool {
         match ty.sty {
-            ty::TyEnum(did, _) | ty::TyStruct(did, _) => ast_util::is_local(did),
+            ty::TyEnum(def, _) | ty::TyStruct(def, _) => def.did.is_local(),
 
-            ty::TyTrait(ref tr) => ast_util::is_local(tr.principal_def_id()),
+            ty::TyTrait(ref tr) => tr.principal_def_id().is_local(),
 
             ty::TyParam(_) => true,
 
@@ -324,7 +324,7 @@ fn type_derefs_to_local<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     }
 
     check::autoderef(fcx, span, rcvr_ty, None,
-                     check::UnresolvedTypeAction::Ignore, check::NoPreference,
+                     check::UnresolvedTypeAction::Ignore, ty::NoPreference,
                      |ty, _| {
         if is_local(ty) {
             Some(())
@@ -336,11 +336,11 @@ fn type_derefs_to_local<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 
 #[derive(Copy, Clone)]
 pub struct TraitInfo {
-    pub def_id: ast::DefId,
+    pub def_id: DefId,
 }
 
 impl TraitInfo {
-    fn new(def_id: ast::DefId) -> TraitInfo {
+    fn new(def_id: DefId) -> TraitInfo {
         TraitInfo {
             def_id: def_id,
         }
@@ -371,7 +371,7 @@ impl Ord for TraitInfo {
 /// Retrieve all traits in this crate and any dependent crates.
 pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
     if ccx.all_traits.borrow().is_none() {
-        use syntax::visit;
+        use rustc_front::visit;
 
         let mut traits = vec![];
 
@@ -382,10 +382,10 @@ pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
             traits: &'a mut AllTraitsVec,
         }
         impl<'v, 'a> visit::Visitor<'v> for Visitor<'a> {
-            fn visit_item(&mut self, i: &'v ast::Item) {
+            fn visit_item(&mut self, i: &'v hir::Item) {
                 match i.node {
-                    ast::ItemTrait(..) => {
-                        self.traits.push(TraitInfo::new(ast_util::local_def(i.id)));
+                    hir::ItemTrait(..) => {
+                        self.traits.push(TraitInfo::new(DefId::local(i.id)));
                     }
                     _ => {}
                 }

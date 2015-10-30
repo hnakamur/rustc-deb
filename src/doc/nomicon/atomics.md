@@ -127,7 +127,7 @@ fundamentally unsynchronized and compilers are free to aggressively optimize
 them. In particular, data accesses are free to be reordered by the compiler on
 the assumption that the program is single-threaded. The hardware is also free to
 propagate the changes made in data accesses to other threads as lazily and
-inconsistently as it wants. Mostly critically, data accesses are how data races
+inconsistently as it wants. Most critically, data accesses are how data races
 happen. Data accesses are very friendly to the hardware and compiler, but as
 we've seen they offer *awful* semantics to try to write synchronized code with.
 Actually, that's too weak.
@@ -210,18 +210,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 fn main() {
-    let lock = Arc::new(AtomicBool::new(true)); // value answers "am I locked?"
+    let lock = Arc::new(AtomicBool::new(false)); // value answers "am I locked?"
 
     // ... distribute lock to threads somehow ...
 
-    // Try to acquire the lock by setting it to false
-    while !lock.compare_and_swap(true, false, Ordering::Acquire) { }
+    // Try to acquire the lock by setting it to true
+    while lock.compare_and_swap(false, true, Ordering::Acquire) { }
     // broke out of the loop, so we successfully acquired the lock!
 
     // ... scary data accesses ...
 
     // ok we're done, release the lock
-    lock.store(true, Ordering::Release);
+    lock.store(false, Ordering::Release);
 }
 ```
 

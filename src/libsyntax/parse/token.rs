@@ -82,8 +82,8 @@ pub enum Lit {
     Float(ast::Name),
     Str_(ast::Name),
     StrRaw(ast::Name, usize), /* raw str delimited by n hash symbols */
-    Binary(ast::Name),
-    BinaryRaw(ast::Name, usize), /* raw binary str delimited by n hash symbols */
+    ByteStr(ast::Name),
+    ByteStrRaw(ast::Name, usize), /* raw byte str delimited by n hash symbols */
 }
 
 impl Lit {
@@ -93,8 +93,8 @@ impl Lit {
             Char(_) => "char",
             Integer(_) => "integer",
             Float(_) => "float",
-            Str_(_) | StrRaw(..) => "str",
-            Binary(_) | BinaryRaw(..) => "binary str"
+            Str_(_) | StrRaw(..) => "string",
+            ByteStr(_) | ByteStrRaw(..) => "byte string"
         }
     }
 }
@@ -575,13 +575,13 @@ declare_special_idents_and_keywords! {
         (36,                         Type,       "type");
         (37,                         Unsafe,     "unsafe");
         (38,                         Use,        "use");
-        (39,                         Virtual,    "virtual");
-        (40,                         While,      "while");
-        (41,                         Continue,   "continue");
-        (42,                         Box,        "box");
-        (43,                         Const,      "const");
-        (44,                         Where,      "where");
+        (39,                         While,      "while");
+        (40,                         Continue,   "continue");
+        (41,                         Box,        "box");
+        (42,                         Const,      "const");
+        (43,                         Where,      "where");
         'reserved:
+        (44,                         Virtual,    "virtual");
         (45,                         Proc,       "proc");
         (46,                         Alignof,    "alignof");
         (47,                         Become,     "become");

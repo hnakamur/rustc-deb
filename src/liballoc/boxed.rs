@@ -53,12 +53,11 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use core::prelude::*;
-
 use heap;
 use raw_vec::RawVec;
 
 use core::any::Any;
+use core::borrow;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{self, Hash};
@@ -87,14 +86,15 @@ use core::raw::{TraitObject};
 /// ```
 #[lang = "exchange_heap"]
 #[unstable(feature = "box_heap",
-           reason = "may be renamed; uncertain about custom allocator design")]
-#[allow(deprecated)]
+           reason = "may be renamed; uncertain about custom allocator design",
+           issue = "27779")]
 pub const HEAP: ExchangeHeapSingleton =
     ExchangeHeapSingleton { _force_singleton: () };
 
 /// This the singleton type used solely for `boxed::HEAP`.
 #[unstable(feature = "box_heap",
-           reason = "may be renamed; uncertain about custom allocator design")]
+           reason = "may be renamed; uncertain about custom allocator design",
+           issue = "27779")]
 #[derive(Copy, Clone)]
 pub struct ExchangeHeapSingleton { _force_singleton: () }
 
@@ -124,7 +124,9 @@ pub struct Box<T: ?Sized>(Unique<T>);
 /// the fact that the `align_of` intrinsic currently requires the
 /// input type to be Sized (which I do not think is strictly
 /// necessary).
-#[unstable(feature = "placement_in", reason = "placement box design is still being worked out.")]
+#[unstable(feature = "placement_in",
+           reason = "placement box design is still being worked out.",
+           issue = "27779")]
 pub struct IntermediateBox<T: ?Sized>{
     ptr: *mut u8,
     size: usize,
@@ -224,10 +226,8 @@ impl<T : ?Sized> Box<T> {
     /// Function is unsafe, because improper use of this function may
     /// lead to memory problems like double-free, for example if the
     /// function is called twice on the same raw pointer.
-    #[unstable(feature = "box_raw",
-               reason = "may be renamed or moved out of Box scope")]
+    #[stable(feature = "box_raw", since = "1.4.0")]
     #[inline]
-    // NB: may want to be called from_ptr, see comments on CStr::from_ptr
     pub unsafe fn from_raw(raw: *mut T) -> Self {
         mem::transmute(raw)
     }
@@ -241,44 +241,17 @@ impl<T : ?Sized> Box<T> {
     /// `Box` does not specify, how memory is allocated.
     ///
     /// # Examples
-    /// ```
-    /// #![feature(box_raw)]
     ///
+    /// ```
     /// let seventeen = Box::new(17u32);
     /// let raw = Box::into_raw(seventeen);
     /// let boxed_again = unsafe { Box::from_raw(raw) };
     /// ```
-    #[unstable(feature = "box_raw", reason = "may be renamed")]
+    #[stable(feature = "box_raw", since = "1.4.0")]
     #[inline]
-    // NB: may want to be called into_ptr, see comments on CStr::from_ptr
     pub fn into_raw(b: Box<T>) -> *mut T {
         unsafe { mem::transmute(b) }
     }
-}
-
-/// Consumes the `Box`, returning the wrapped raw pointer.
-///
-/// After call to this function, caller is responsible for the memory
-/// previously managed by `Box`, in particular caller should properly
-/// destroy `T` and release memory. The proper way to do it is to
-/// convert pointer back to `Box` with `Box::from_raw` function, because
-/// `Box` does not specify, how memory is allocated.
-///
-/// # Examples
-/// ```
-/// #![feature(box_raw)]
-///
-/// use std::boxed;
-///
-/// let seventeen = Box::new(17u32);
-/// let raw = boxed::into_raw(seventeen);
-/// let boxed_again = unsafe { Box::from_raw(raw) };
-/// ```
-#[unstable(feature = "box_raw", reason = "may be renamed")]
-#[deprecated(since = "1.2.0", reason = "renamed to Box::into_raw")]
-#[inline]
-pub fn into_raw<T : ?Sized>(b: Box<T>) -> *mut T {
-    Box::into_raw(b)
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -310,8 +283,6 @@ impl<T: Clone> Clone for Box<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(box_raw)]
-    ///
     /// let x = Box::new(5);
     /// let mut y = Box::new(10);
     ///
@@ -498,7 +469,7 @@ impl<I: ExactSizeIterator + ?Sized> ExactSizeIterator for Box<I> {}
 /// }
 /// ```
 #[rustc_paren_sugar]
-#[unstable(feature = "fnbox", reason = "Newly introduced")]
+#[unstable(feature = "fnbox", reason = "Newly introduced", issue = "0")]
 pub trait FnBox<A> {
     type Output;
 
@@ -584,3 +555,10 @@ impl<T: Clone> Clone for Box<[T]> {
     }
 }
 
+impl<T: ?Sized> borrow::Borrow<T> for Box<T> {
+    fn borrow(&self) -> &T { &**self }
+}
+
+impl<T: ?Sized> borrow::BorrowMut<T> for Box<T> {
+    fn borrow_mut(&mut self) -> &mut T { &mut **self }
+}

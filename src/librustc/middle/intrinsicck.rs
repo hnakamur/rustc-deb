@@ -8,9 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ast_map::NodeForeignItem;
-use metadata::csearch;
 use middle::def::DefFn;
+use middle::def_id::DefId;
 use middle::subst::{Subst, Substs, EnumeratedItems};
 use middle::ty::{TransmuteRestriction, ctxt, TyBareFn};
 use middle::ty::{self, Ty, HasTypeFlags};
@@ -18,11 +17,10 @@ use middle::ty::{self, Ty, HasTypeFlags};
 use std::fmt;
 
 use syntax::abi::RustIntrinsic;
-use syntax::ast::DefId;
 use syntax::ast;
 use syntax::codemap::Span;
-use syntax::visit::Visitor;
-use syntax::visit;
+use rustc_front::visit::{self, Visitor, FnKind};
+use rustc_front::hir;
 
 pub fn check_crate(tcx: &ctxt) {
     let mut visitor = IntrinsicCheckingVisitor {
@@ -57,21 +55,7 @@ impl<'a, 'tcx> IntrinsicCheckingVisitor<'a, 'tcx> {
             ty::TyBareFn(_, ref bfty) => bfty.abi == RustIntrinsic,
             _ => return false
         };
-        if def_id.krate == ast::LOCAL_CRATE {
-            match self.tcx.map.get(def_id.node) {
-                NodeForeignItem(ref item) if intrinsic => {
-                    item.ident.name == "transmute"
-                }
-                _ => false,
-            }
-        } else {
-            match csearch::get_item_path(self.tcx, def_id).last() {
-                Some(ref last) if intrinsic => {
-                    last.name() == "transmute"
-                }
-                _ => false,
-            }
-        }
+        intrinsic && self.tcx.item_name(def_id) == "transmute"
     }
 
     fn check_transmute(&self, span: Span, from: Ty<'tcx>, to: Ty<'tcx>, id: ast::NodeId) {
@@ -232,24 +216,24 @@ impl<'a, 'tcx> IntrinsicCheckingVisitor<'a, 'tcx> {
 }
 
 impl<'a, 'tcx, 'v> Visitor<'v> for IntrinsicCheckingVisitor<'a, 'tcx> {
-    fn visit_fn(&mut self, fk: visit::FnKind<'v>, fd: &'v ast::FnDecl,
-                b: &'v ast::Block, s: Span, id: ast::NodeId) {
+    fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v hir::FnDecl,
+                b: &'v hir::Block, s: Span, id: ast::NodeId) {
         match fk {
-            visit::FkItemFn(..) | visit::FkMethod(..) => {
+            FnKind::ItemFn(..) | FnKind::Method(..) => {
                 let param_env = ty::ParameterEnvironment::for_item(self.tcx, id);
                 self.param_envs.push(param_env);
                 visit::walk_fn(self, fk, fd, b, s);
                 self.param_envs.pop();
             }
-            visit::FkFnBlock(..) => {
+            FnKind::Closure(..) => {
                 visit::walk_fn(self, fk, fd, b, s);
             }
         }
 
     }
 
-    fn visit_expr(&mut self, expr: &ast::Expr) {
-        if let ast::ExprPath(..) = expr.node {
+    fn visit_expr(&mut self, expr: &hir::Expr) {
+        if let hir::ExprPath(..) = expr.node {
             match self.tcx.resolve_expr(expr) {
                 DefFn(did, _) if self.def_id_is_transmute(did) => {
                     let typ = self.tcx.node_id_to_type(expr.id);

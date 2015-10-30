@@ -11,14 +11,14 @@
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustdoc"]
-#![unstable(feature = "rustdoc")]
+#![unstable(feature = "rustdoc", issue = "27812")]
 #![staged_api]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
    html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-   html_root_url = "http://doc.rust-lang.org/nightly/",
-   html_playground_url = "http://play.rust-lang.org/")]
+   html_root_url = "https://doc.rust-lang.org/nightly/",
+   html_playground_url = "https://play.rust-lang.org/")]
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
@@ -43,6 +43,7 @@ extern crate rustc_driver;
 extern crate rustc_resolve;
 extern crate rustc_lint;
 extern crate rustc_back;
+extern crate rustc_front;
 extern crate serialize;
 extern crate syntax;
 extern crate test as testing;
@@ -65,6 +66,7 @@ use externalfiles::ExternalHtml;
 use serialize::Decodable;
 use serialize::json::{self, Json};
 use rustc::session::search_paths::SearchPaths;
+use syntax::diagnostic;
 
 // reexported from `clean` so it can be easily updated with the mod itself
 pub use clean::SCHEMA_VERSION;
@@ -227,7 +229,7 @@ pub fn main_args(args: &[String]) -> isize {
 
     let mut libs = SearchPaths::new();
     for s in &matches.opt_strs("L") {
-        libs.add_path(s);
+        libs.add_path(s, diagnostic::Auto);
     }
     let externs = match parse_externs(&matches) {
         Ok(ex) => ex,
@@ -354,7 +356,6 @@ fn parse_externs(matches: &getopts::Matches) -> Result<core::Externs, String> {
 /// generated from the cleaned AST of the crate.
 ///
 /// This form of input will run all of the plug/cleaning passes
-#[allow(deprecated)] // for old Path in plugin manager
 fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matches) -> Output {
     let mut default_passes = !matches.opt_present("no-defaults");
     let mut passes = matches.opt_strs("passes");
@@ -363,7 +364,7 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
     // First, parse the crate and extract all relevant information.
     let mut paths = SearchPaths::new();
     for s in &matches.opt_strs("L") {
-        paths.add_path(s);
+        paths.add_path(s, diagnostic::Auto);
     }
     let cfgs = matches.opt_strs("cfg");
     let triple = matches.opt_str("target");

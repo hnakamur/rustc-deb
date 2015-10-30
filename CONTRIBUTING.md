@@ -10,6 +10,7 @@ links to the major sections:
 * [Writing Documentation](#writing-documentation)
 * [Issue Triage](#issue-triage)
 * [Out-of-tree Contributions](#out-of-tree-contributions)
+* [Helpful Links and Information](#helpful-links-and-information)
 
 If you have questions, please make a post on [internals.rust-lang.org][internals] or
 hop on [#rust-internals][pound-rust-internals].
@@ -17,8 +18,8 @@ hop on [#rust-internals][pound-rust-internals].
 As a reminder, all contributors are expected to follow our [Code of Conduct][coc].
 
 [pound-rust-internals]: http://chat.mibbit.com/?server=irc.mozilla.org&channel=%23rust-internals
-[internals]: http://internals.rust-lang.org
-[coc]: http://www.rust-lang.org/conduct.html
+[internals]: https://internals.rust-lang.org
+[coc]: https://www.rust-lang.org/conduct.html
 
 ## Feature Requests
 
@@ -207,6 +208,31 @@ it to [Crates.io](http://crates.io). Easier said than done, but very, very
 valuable!
 
 [pound-rust]: http://chat.mibbit.com/?server=irc.mozilla.org&channel=%23rust
-[users]: http://users.rust-lang.org/
+[users]: https://users.rust-lang.org/
 [so]: http://stackoverflow.com/questions/tagged/rust
 [community-library]: https://github.com/rust-lang/rfcs/labels/A-community-library
+
+## Helpful Links and Information
+
+For people new to Rust, and just starting to contribute, or even for
+more seasoned developers, some useful places to look for information
+are:
+
+* The [Rust Internals forum][rif], a place to ask questions and
+  discuss Rust's internals
+* The [generated documentation for rust's compiler][gdfrustc]
+* The [rust referance][rr], even though it doesn't specifically talk about Rust's internals, its a great reasource nontheless
+* Although out of date, [Tom Lee's great blog article][tlgba] is very helpful
+* [rustaceans.org][ro] is helpful, but mostly dedicated to IRC
+* The [Rust Compiler Testing Docs][rctd]
+* For @bors, [this cheetsheat][cheetsheat] is helpful (Remember to replace `@homu` with `@bors` in the commands that you use.)
+* **Google**!
+* Don't be afraid to ask! The Rust community is friendly and helpful.
+
+[gdfrustc]: http://manishearth.github.io/rust-internals-docs/rustc/
+[rif]: http://internals.rust-lang.org
+[rr]: https://doc.rust-lang.org/book/README.html
+[tlgba]: http://tomlee.co/2014/04/03/a-more-detailed-tour-of-the-rust-compiler/
+[ro]: http://www.rustaceans.org/
+[rctd]: ./COMPILER_TESTS.md
+[cheetsheat]: http://buildbot.rust-lang.org/homu/

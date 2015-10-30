@@ -45,13 +45,7 @@ pub const tag_items_data_item_is_tuple_struct_ctor: usize = 0x29;
 
 pub const tag_index: usize = 0x2a;
 
-pub const tag_index_buckets: usize = 0x2b;
-
-pub const tag_index_buckets_bucket: usize = 0x2c;
-
-pub const tag_index_buckets_bucket_elt: usize = 0x2d;
-
-pub const tag_index_table: usize = 0x2e;
+// GAP 0x2b, 0x2c, 0x2d, 0x2e
 
 pub const tag_meta_item_name_value: usize = 0x2f;
 
@@ -78,12 +72,13 @@ pub const tag_crate_crate_name: usize = 0x104; // top-level only
 
 pub const tag_crate_dep_crate_name: usize = 0x36;
 pub const tag_crate_dep_hash: usize = 0x37;
+pub const tag_crate_dep_explicitly_linked: usize = 0x38; // top-level only
 
-pub const tag_mod_impl: usize = 0x38;
+pub const tag_mod_impl: usize = 0x39;
 
-pub const tag_item_trait_item: usize = 0x39;
+pub const tag_item_trait_item: usize = 0x3a;
 
-pub const tag_item_trait_ref: usize = 0x3a;
+pub const tag_item_trait_ref: usize = 0x3b;
 
 // discriminator value for variants
 pub const tag_disr_val: usize = 0x3c;
@@ -205,8 +200,8 @@ pub const tag_plugin_registrar_fn: usize = 0x10b; // top-level only
 pub const tag_method_argument_names: usize = 0x85;
 pub const tag_method_argument_name: usize = 0x86;
 
-pub const tag_reachable_extern_fns: usize = 0x10c; // top-level only
-pub const tag_reachable_extern_fn_id: usize = 0x87;
+pub const tag_reachable_ids: usize = 0x10c; // top-level only
+pub const tag_reachable_id: usize = 0x87;
 
 pub const tag_items_data_item_stability: usize = 0x88;
 

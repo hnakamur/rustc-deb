@@ -40,8 +40,6 @@
 
 pub use self::PopResult::*;
 
-use core::prelude::*;
-
 use alloc::boxed::Box;
 use core::ptr;
 use core::cell::UnsafeCell;

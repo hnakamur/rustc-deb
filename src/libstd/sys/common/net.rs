@@ -16,6 +16,7 @@ use io::{self, Error, ErrorKind};
 use libc::{self, c_int, c_char, c_void, socklen_t};
 use mem;
 use net::{SocketAddr, Shutdown, IpAddr};
+use ptr;
 use str::from_utf8;
 use sys::c;
 use sys::net::{cvt, cvt_r, cvt_gai, Socket, init, wrlen_t};
@@ -110,6 +111,9 @@ impl Iterator for LookupHost {
     }
 }
 
+unsafe impl Sync for LookupHost {}
+unsafe impl Send for LookupHost {}
+
 impl Drop for LookupHost {
     fn drop(&mut self) {
         unsafe { freeaddrinfo(self.original) }
@@ -120,9 +124,9 @@ pub fn lookup_host(host: &str) -> io::Result<LookupHost> {
     init();
 
     let c_host = try!(CString::new(host));
-    let mut res = 0 as *mut _;
+    let mut res = ptr::null_mut();
     unsafe {
-        try!(cvt_gai(getaddrinfo(c_host.as_ptr(), 0 as *const _, 0 as *const _,
+        try!(cvt_gai(getaddrinfo(c_host.as_ptr(), ptr::null(), ptr::null(),
                                  &mut res)));
         Ok(LookupHost { original: res, cur: res })
     }
@@ -151,13 +155,13 @@ pub fn lookup_addr(addr: &IpAddr) -> io::Result<String> {
     let data = unsafe {
         try!(cvt_gai(getnameinfo(inner, len,
                                  hostbuf.as_mut_ptr(), NI_MAXHOST as libc::size_t,
-                                 0 as *mut _, 0, 0)));
+                                 ptr::null_mut(), 0, 0)));
 
         CStr::from_ptr(hostbuf.as_ptr())
     };
 
     match from_utf8(data.to_bytes()) {
-        Ok(name) => Ok(name.to_string()),
+        Ok(name) => Ok(name.to_owned()),
         Err(_) => Err(io::Error::new(io::ErrorKind::Other,
                                      "failed to lookup address information"))
     }
@@ -185,42 +189,6 @@ impl TcpStream {
     pub fn socket(&self) -> &Socket { &self.inner }
 
     pub fn into_socket(self) -> Socket { self.inner }
-
-    pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
-        setsockopt(&self.inner, libc::IPPROTO_TCP, libc::TCP_NODELAY,
-                   nodelay as c_int)
-    }
-
-    pub fn set_keepalive(&self, seconds: Option<u32>) -> io::Result<()> {
-        let ret = setsockopt(&self.inner, libc::SOL_SOCKET, libc::SO_KEEPALIVE,
-                             seconds.is_some() as c_int);
-        match seconds {
-            Some(n) => ret.and_then(|()| self.set_tcp_keepalive(n)),
-            None => ret,
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    fn set_tcp_keepalive(&self, seconds: u32) -> io::Result<()> {
-        setsockopt(&self.inner, libc::IPPROTO_TCP, libc::TCP_KEEPALIVE,
-                   seconds as c_int)
-    }
-    #[cfg(any(target_os = "freebsd",
-              target_os = "dragonfly",
-              target_os = "linux"))]
-    fn set_tcp_keepalive(&self, seconds: u32) -> io::Result<()> {
-        setsockopt(&self.inner, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE,
-                   seconds as c_int)
-    }
-
-    #[cfg(not(any(target_os = "macos",
-                  target_os = "ios",
-                  target_os = "freebsd",
-                  target_os = "dragonfly",
-                  target_os = "linux")))]
-    fn set_tcp_keepalive(&self, _seconds: u32) -> io::Result<()> {
-        Ok(())
-    }
 
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
         self.inner.set_timeout(dur, libc::SO_RCVTIMEO)
@@ -429,65 +397,6 @@ impl UdpSocket {
                          0, dstp, dstlen)
         }));
         Ok(ret as usize)
-    }
-
-    pub fn set_broadcast(&self, on: bool) -> io::Result<()> {
-        setsockopt(&self.inner, libc::SOL_SOCKET, libc::SO_BROADCAST,
-                   on as c_int)
-    }
-
-    pub fn set_multicast_loop(&self, on: bool) -> io::Result<()> {
-        setsockopt(&self.inner, libc::IPPROTO_IP,
-                   libc::IP_MULTICAST_LOOP, on as c_int)
-    }
-
-    pub fn join_multicast(&self, multi: &IpAddr) -> io::Result<()> {
-        match *multi {
-            IpAddr::V4(..) => {
-                self.set_membership(multi, libc::IP_ADD_MEMBERSHIP)
-            }
-            IpAddr::V6(..) => {
-                self.set_membership(multi, libc::IPV6_ADD_MEMBERSHIP)
-            }
-        }
-    }
-    pub fn leave_multicast(&self, multi: &IpAddr) -> io::Result<()> {
-        match *multi {
-            IpAddr::V4(..) => {
-                self.set_membership(multi, libc::IP_DROP_MEMBERSHIP)
-            }
-            IpAddr::V6(..) => {
-                self.set_membership(multi, libc::IPV6_DROP_MEMBERSHIP)
-            }
-        }
-    }
-    fn set_membership(&self, addr: &IpAddr, opt: c_int) -> io::Result<()> {
-        match *addr {
-            IpAddr::V4(ref addr) => {
-                let mreq = libc::ip_mreq {
-                    imr_multiaddr: *addr.as_inner(),
-                    // interface == INADDR_ANY
-                    imr_interface: libc::in_addr { s_addr: 0x0 },
-                };
-                setsockopt(&self.inner, libc::IPPROTO_IP, opt, mreq)
-            }
-            IpAddr::V6(ref addr) => {
-                let mreq = libc::ip6_mreq {
-                    ipv6mr_multiaddr: *addr.as_inner(),
-                    ipv6mr_interface: 0,
-                };
-                setsockopt(&self.inner, libc::IPPROTO_IPV6, opt, mreq)
-            }
-        }
-    }
-
-    pub fn multicast_time_to_live(&self, ttl: i32) -> io::Result<()> {
-        setsockopt(&self.inner, libc::IPPROTO_IP, libc::IP_MULTICAST_TTL,
-                   ttl as c_int)
-    }
-
-    pub fn time_to_live(&self, ttl: i32) -> io::Result<()> {
-        setsockopt(&self.inner, libc::IPPROTO_IP, libc::IP_TTL, ttl as c_int)
     }
 
     pub fn duplicate(&self) -> io::Result<UdpSocket> {

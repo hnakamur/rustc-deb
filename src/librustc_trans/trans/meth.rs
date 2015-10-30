@@ -9,15 +9,13 @@
 // except according to those terms.
 
 use arena::TypedArena;
-use back::abi;
 use back::link;
 use llvm::{ValueRef, get_params};
-use metadata::csearch;
+use middle::def_id::DefId;
 use middle::subst::{Subst, Substs};
 use middle::subst::VecPerParamSpace;
 use middle::subst;
 use middle::traits;
-use rustc::ast_map;
 use trans::base::*;
 use trans::build::*;
 use trans::callee::*;
@@ -39,9 +37,13 @@ use trans::type_of::*;
 use middle::ty::{self, Ty, HasTypeFlags};
 use middle::ty::MethodCall;
 
-use syntax::{ast, attr, visit};
+use syntax::ast;
 use syntax::codemap::DUMMY_SP;
 use syntax::ptr::P;
+
+use rustc_front::attr;
+use rustc_front::visit;
+use rustc_front::hir;
 
 // drop_glue pointer, size, align.
 const VTABLE_OFFSET: usize = 3;
@@ -52,8 +54,8 @@ const VTABLE_OFFSET: usize = 3;
 /// see `trans::base::lval_static_fn()` or `trans::base::monomorphic_fn()`.
 pub fn trans_impl(ccx: &CrateContext,
                   name: ast::Ident,
-                  impl_items: &[P<ast::ImplItem>],
-                  generics: &ast::Generics,
+                  impl_items: &[P<hir::ImplItem>],
+                  generics: &hir::Generics,
                   id: ast::NodeId) {
     let _icx = push_ctxt("meth::trans_impl");
     let tcx = ccx.tcx();
@@ -67,7 +69,7 @@ pub fn trans_impl(ccx: &CrateContext,
     if !generics.ty_params.is_empty() {
         for impl_item in impl_items {
             match impl_item.node {
-                ast::MethodImplItem(..) => {
+                hir::MethodImplItem(..) => {
                     visit::walk_impl_item(&mut v, impl_item);
                 }
                 _ => {}
@@ -77,7 +79,7 @@ pub fn trans_impl(ccx: &CrateContext,
     }
     for impl_item in impl_items {
         match impl_item.node {
-            ast::MethodImplItem(ref sig, ref body) => {
+            hir::MethodImplItem(ref sig, ref body) => {
                 if sig.generics.ty_params.is_empty() {
                     let trans_everywhere = attr::requests_inline(&impl_item.attrs);
                     for (ref ccx, is_origin) in ccx.maybe_iter(trans_everywhere) {
@@ -100,7 +102,7 @@ pub fn trans_impl(ccx: &CrateContext,
 
 pub fn trans_method_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                        method_call: MethodCall,
-                                       self_expr: Option<&ast::Expr>,
+                                       self_expr: Option<&hir::Expr>,
                                        arg_cleanup_scope: cleanup::ScopeId)
                                        -> Callee<'blk, 'tcx> {
     let _icx = push_ctxt("meth::trans_method_callee");
@@ -150,8 +152,8 @@ pub fn trans_method_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 }
 
 pub fn trans_static_method_callee<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                                            method_id: ast::DefId,
-                                            trait_id: ast::DefId,
+                                            method_id: DefId,
+                                            trait_id: DefId,
                                             expr_id: ast::NodeId,
                                             param_substs: &'tcx subst::Substs<'tcx>)
                                             -> Datum<'tcx, Rvalue>
@@ -165,14 +167,8 @@ pub fn trans_static_method_callee<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
            tcx.item_path_str(trait_id),
            expr_id);
 
-    let mname = if method_id.krate == ast::LOCAL_CRATE {
-        match tcx.map.get(method_id.node) {
-            ast_map::NodeTraitItem(trait_item) => trait_item.ident.name,
-            _ => panic!("callee is not a trait method")
-        }
-    } else {
-        csearch::get_item_path(tcx, method_id).last().unwrap().name()
-    };
+    let mname = tcx.item_name(method_id);
+
     debug!("trans_static_method_callee: method_id={:?}, expr_id={}, \
             name={}", method_id, expr_id, mname);
 
@@ -273,8 +269,8 @@ pub fn trans_static_method_callee<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     }
 }
 
-fn method_with_name(ccx: &CrateContext, impl_id: ast::DefId, name: ast::Name)
-                    -> ast::DefId {
+fn method_with_name(ccx: &CrateContext, impl_id: DefId, name: ast::Name)
+                    -> DefId {
     match ccx.impl_method_cache().borrow().get(&(impl_id, name)).cloned() {
         Some(m) => return m,
         None => {}
@@ -297,9 +293,9 @@ fn method_with_name(ccx: &CrateContext, impl_id: ast::DefId, name: ast::Name)
 
 fn trans_monomorphized_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                           method_call: MethodCall,
-                                          self_expr: Option<&ast::Expr>,
-                                          trait_id: ast::DefId,
-                                          method_id: ast::DefId,
+                                          self_expr: Option<&hir::Expr>,
+                                          trait_id: DefId,
+                                          method_id: DefId,
                                           method_ty: Ty<'tcx>,
                                           vtable: traits::Vtable<'tcx, ()>,
                                           arg_cleanup_scope: cleanup::ScopeId)
@@ -424,7 +420,7 @@ fn combine_impl_and_methods_tps<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 fn trans_trait_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                   opaque_fn_ty: Ty<'tcx>,
                                   vtable_index: usize,
-                                  self_expr: &ast::Expr,
+                                  self_expr: &hir::Expr,
                                   arg_cleanup_scope: cleanup::ScopeId)
                                   -> Callee<'blk, 'tcx> {
     let _icx = push_ctxt("meth::trans_trait_callee");
@@ -453,8 +449,8 @@ fn trans_trait_callee<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         self_datum.val
     };
 
-    let llself = Load(bcx, GEPi(bcx, llval, &[0, abi::FAT_PTR_ADDR]));
-    let llvtable = Load(bcx, GEPi(bcx, llval, &[0, abi::FAT_PTR_EXTRA]));
+    let llself = Load(bcx, expr::get_dataptr(bcx, llval));
+    let llvtable = Load(bcx, expr::get_meta(bcx, llval));
     trans_trait_callee_from_llval(bcx, opaque_fn_ty, vtable_index, llself, llvtable)
 }
 
@@ -515,7 +511,7 @@ fn trans_trait_callee_from_llval<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 fn trans_object_shim<'a, 'tcx>(
     ccx: &'a CrateContext<'a, 'tcx>,
     upcast_trait_ref: ty::PolyTraitRef<'tcx>,
-    method_id: ast::DefId,
+    method_id: DefId,
     vtable_index: usize)
     -> Datum<'tcx, Rvalue>
 {
@@ -685,7 +681,7 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 }
 
 fn emit_vtable_methods<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                                 impl_id: ast::DefId,
+                                 impl_id: DefId,
                                  substs: subst::Substs<'tcx>,
                                  param_substs: &'tcx subst::Substs<'tcx>)
                                  -> Vec<ValueRef>
@@ -777,7 +773,7 @@ fn emit_vtable_methods<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 fn opaque_method_ty<'tcx>(tcx: &ty::ctxt<'tcx>, method_ty: &ty::BareFnTy<'tcx>)
                           -> &'tcx ty::BareFnTy<'tcx> {
     let mut inputs = method_ty.sig.0.inputs.clone();
-    inputs[0] = tcx.mk_mut_ptr(tcx.mk_mach_int(ast::TyI8));
+    inputs[0] = tcx.mk_mut_ptr(tcx.mk_mach_int(hir::TyI8));
 
     tcx.mk_bare_fn(ty::BareFnTy {
         unsafety: method_ty.unsafety,

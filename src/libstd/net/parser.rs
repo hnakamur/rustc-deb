@@ -15,8 +15,10 @@
 
 use prelude::v1::*;
 
-use str::FromStr;
+use error::Error;
+use fmt;
 use net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use str::FromStr;
 
 struct Parser<'a> {
     // parsing as ASCII, so can use byte array
@@ -260,8 +262,8 @@ impl<'a> Parser<'a> {
     }
 
     fn read_ip_addr(&mut self) -> Option<IpAddr> {
-        let ipv4_addr = |p: &mut Parser| p.read_ipv4_addr().map(|v4| IpAddr::V4(v4));
-        let ipv6_addr = |p: &mut Parser| p.read_ipv6_addr().map(|v6| IpAddr::V6(v6));
+        let ipv4_addr = |p: &mut Parser| p.read_ipv4_addr().map(IpAddr::V4);
+        let ipv6_addr = |p: &mut Parser| p.read_ipv6_addr().map(IpAddr::V6);
         self.read_or(&mut [Box::new(ipv4_addr), Box::new(ipv6_addr)])
     }
 
@@ -339,3 +341,17 @@ impl FromStr for SocketAddr {
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct AddrParseError(());
+
+#[stable(feature = "addr_parse_error_error", since = "1.4.0")]
+impl fmt::Display for AddrParseError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.write_str(self.description())
+    }
+}
+
+#[stable(feature = "addr_parse_error_error", since = "1.4.0")]
+impl Error for AddrParseError {
+    fn description(&self) -> &str {
+        "invalid IP address syntax"
+    }
+}

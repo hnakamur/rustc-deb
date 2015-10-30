@@ -20,9 +20,9 @@ use std::iter::repeat;
 use std::path::Path;
 use std::time::Duration;
 
-use syntax::ast;
-use syntax::visit;
-use syntax::visit::Visitor;
+use rustc_front::hir;
+use rustc_front::visit;
+use rustc_front::visit::Visitor;
 
 // The name of the associated type for `Fn` return types
 pub const FN_OUTPUT_NAME: &'static str = "Output";
@@ -32,11 +32,11 @@ pub const FN_OUTPUT_NAME: &'static str = "Output";
 #[derive(Clone, Copy, Debug)]
 pub struct ErrorReported;
 
-pub fn time<T, U, F>(do_it: bool, what: &str, u: U, f: F) -> T where
-    F: FnOnce(U) -> T,
+pub fn time<T, F>(do_it: bool, what: &str, f: F) -> T where
+    F: FnOnce() -> T,
 {
     thread_local!(static DEPTH: Cell<usize> = Cell::new(0));
-    if !do_it { return f(u); }
+    if !do_it { return f(); }
 
     let old = DEPTH.with(|slot| {
         let r = slot.get();
@@ -49,7 +49,7 @@ pub fn time<T, U, F>(do_it: bool, what: &str, u: U, f: F) -> T where
         let ref mut rvp = rv;
 
         Duration::span(move || {
-            *rvp = Some(f(u))
+            *rvp = Some(f())
         })
     };
     let rv = rv.unwrap();
@@ -75,24 +75,28 @@ pub fn time<T, U, F>(do_it: bool, what: &str, u: U, f: F) -> T where
     rv
 }
 
-// Memory reporting
-#[cfg(unix)]
-fn get_resident() -> Option<usize> {
-    get_proc_self_statm_field(1)
-}
-
-#[cfg(windows)]
-fn get_resident() -> Option<usize> {
-    get_working_set_size()
-}
-
 // Like std::macros::try!, but for Option<>.
 macro_rules! option_try(
     ($e:expr) => (match $e { Some(e) => e, None => return None })
 );
 
+// Memory reporting
+#[cfg(unix)]
+fn get_resident() -> Option<usize> {
+    use std::fs::File;
+    use std::io::Read;
+
+    let field = 1;
+    let mut f = option_try!(File::open("/proc/self/statm").ok());
+    let mut contents = String::new();
+    option_try!(f.read_to_string(&mut contents).ok());
+    let s = option_try!(contents.split_whitespace().nth(field));
+    let npages = option_try!(s.parse::<usize>().ok());
+    Some(npages * 4096)
+}
+
 #[cfg(windows)]
-fn get_working_set_size() -> Option<usize> {
+fn get_resident() -> Option<usize> {
     use libc::{BOOL, DWORD, HANDLE, SIZE_T, GetCurrentProcess};
     use std::mem;
     #[repr(C)] #[allow(non_snake_case)]
@@ -123,22 +127,6 @@ fn get_working_set_size() -> Option<usize> {
     }
 }
 
-#[cfg_attr(windows, allow(dead_code))]
-#[allow(deprecated)]
-fn get_proc_self_statm_field(field: usize) -> Option<usize> {
-    use std::fs::File;
-    use std::io::Read;
-
-    assert!(cfg!(unix));
-
-    let mut f = option_try!(File::open("/proc/self/statm").ok());
-    let mut contents = String::new();
-    option_try!(f.read_to_string(&mut contents).ok());
-    let s = option_try!(contents.split_whitespace().nth(field));
-    let npages = option_try!(s.parse::<usize>().ok());
-    Some(npages * ::std::env::page_size())
-}
-
 pub fn indent<R, F>(op: F) -> R where
     R: Debug,
     F: FnOnce() -> R,
@@ -164,18 +152,18 @@ pub fn indenter() -> Indenter {
     Indenter { _cannot_construct_outside_of_this_module: () }
 }
 
-struct LoopQueryVisitor<P> where P: FnMut(&ast::Expr_) -> bool {
+struct LoopQueryVisitor<P> where P: FnMut(&hir::Expr_) -> bool {
     p: P,
     flag: bool,
 }
 
-impl<'v, P> Visitor<'v> for LoopQueryVisitor<P> where P: FnMut(&ast::Expr_) -> bool {
-    fn visit_expr(&mut self, e: &ast::Expr) {
+impl<'v, P> Visitor<'v> for LoopQueryVisitor<P> where P: FnMut(&hir::Expr_) -> bool {
+    fn visit_expr(&mut self, e: &hir::Expr) {
         self.flag |= (self.p)(&e.node);
         match e.node {
           // Skip inner loops, since a break in the inner loop isn't a
           // break inside the outer loop
-          ast::ExprLoop(..) | ast::ExprWhile(..) => {}
+          hir::ExprLoop(..) | hir::ExprWhile(..) => {}
           _ => visit::walk_expr(self, e)
         }
     }
@@ -183,7 +171,7 @@ impl<'v, P> Visitor<'v> for LoopQueryVisitor<P> where P: FnMut(&ast::Expr_) -> b
 
 // Takes a predicate p, returns true iff p is true for any subexpressions
 // of b -- skipping any inner loops (loop, while, loop_body)
-pub fn loop_query<P>(b: &ast::Block, p: P) -> bool where P: FnMut(&ast::Expr_) -> bool {
+pub fn loop_query<P>(b: &hir::Block, p: P) -> bool where P: FnMut(&hir::Expr_) -> bool {
     let mut v = LoopQueryVisitor {
         p: p,
         flag: false,
@@ -192,13 +180,13 @@ pub fn loop_query<P>(b: &ast::Block, p: P) -> bool where P: FnMut(&ast::Expr_) -
     return v.flag;
 }
 
-struct BlockQueryVisitor<P> where P: FnMut(&ast::Expr) -> bool {
+struct BlockQueryVisitor<P> where P: FnMut(&hir::Expr) -> bool {
     p: P,
     flag: bool,
 }
 
-impl<'v, P> Visitor<'v> for BlockQueryVisitor<P> where P: FnMut(&ast::Expr) -> bool {
-    fn visit_expr(&mut self, e: &ast::Expr) {
+impl<'v, P> Visitor<'v> for BlockQueryVisitor<P> where P: FnMut(&hir::Expr) -> bool {
+    fn visit_expr(&mut self, e: &hir::Expr) {
         self.flag |= (self.p)(e);
         visit::walk_expr(self, e)
     }
@@ -206,56 +194,13 @@ impl<'v, P> Visitor<'v> for BlockQueryVisitor<P> where P: FnMut(&ast::Expr) -> b
 
 // Takes a predicate p, returns true iff p is true for any subexpressions
 // of b -- skipping any inner loops (loop, while, loop_body)
-pub fn block_query<P>(b: &ast::Block, p: P) -> bool where P: FnMut(&ast::Expr) -> bool {
+pub fn block_query<P>(b: &hir::Block, p: P) -> bool where P: FnMut(&hir::Expr) -> bool {
     let mut v = BlockQueryVisitor {
         p: p,
         flag: false,
     };
     visit::walk_block(&mut v, &*b);
     return v.flag;
-}
-
-/// K: Eq + Hash<S>, V, S, H: Hasher<S>
-///
-/// Determines whether there exists a path from `source` to `destination`.  The
-/// graph is defined by the `edges_map`, which maps from a node `S` to a list of
-/// its adjacent nodes `T`.
-///
-/// Efficiency note: This is implemented in an inefficient way because it is
-/// typically invoked on very small graphs. If the graphs become larger, a more
-/// efficient graph representation and algorithm would probably be advised.
-pub fn can_reach<T, S>(edges_map: &HashMap<T, Vec<T>, S>, source: T,
-                       destination: T) -> bool
-    where S: HashState, T: Hash + Eq + Clone,
-{
-    if source == destination {
-        return true;
-    }
-
-    // Do a little breadth-first-search here.  The `queue` list
-    // doubles as a way to detect if we've seen a particular FR
-    // before.  Note that we expect this graph to be an *extremely
-    // shallow* tree.
-    let mut queue = vec!(source);
-    let mut i = 0;
-    while i < queue.len() {
-        match edges_map.get(&queue[i]) {
-            Some(edges) => {
-                for target in edges {
-                    if *target == destination {
-                        return true;
-                    }
-
-                    if !queue.iter().any(|x| x == target) {
-                        queue.push((*target).clone());
-                    }
-                }
-            }
-            None => {}
-        }
-        i += 1;
-    }
-    return false;
 }
 
 /// Memoizes a one-argument closure using the given RefCell containing

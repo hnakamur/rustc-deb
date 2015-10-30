@@ -46,10 +46,11 @@ fn expand_deriving_decodable_imp(cx: &mut ExtCtxt,
                                  push: &mut FnMut(Annotatable),
                                  krate: &'static str)
 {
-    if !cx.use_std {
+    if cx.crate_root != Some("std") {
         // FIXME(#21880): lift this requirement.
-        cx.span_err(span, "this trait cannot be derived with #![no_std]");
-        return;
+        cx.span_err(span, "this trait cannot be derived with #![no_std] \
+                           or #![no_core]");
+        return
     }
 
     let trait_def = TraitDef {
@@ -58,6 +59,7 @@ fn expand_deriving_decodable_imp(cx: &mut ExtCtxt,
         path: Path::new_(vec!(krate, "Decodable"), None, vec!(), true),
         additional_bounds: Vec::new(),
         generics: LifetimeBounds::empty(),
+        is_unsafe: false,
         methods: vec!(
             MethodDef {
                 name: "decode",

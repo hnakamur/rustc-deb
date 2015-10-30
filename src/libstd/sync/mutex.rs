@@ -151,7 +151,8 @@ unsafe impl<T: ?Sized + Send> Sync for Mutex<T> { }
 /// // lock is unlocked here.
 /// ```
 #[unstable(feature = "static_mutex",
-           reason = "may be merged with Mutex in the future")]
+           reason = "may be merged with Mutex in the future",
+           issue = "27717")]
 pub struct StaticMutex {
     lock: sys::Mutex,
     poison: poison::Flag,
@@ -177,7 +178,8 @@ impl<'a, T: ?Sized> !marker::Send for MutexGuard<'a, T> {}
 /// Static initialization of a mutex. This constant can be used to initialize
 /// other mutex constants.
 #[unstable(feature = "static_mutex",
-           reason = "may be merged with Mutex in the future")]
+           reason = "may be merged with Mutex in the future",
+           issue = "27717")]
 pub const MUTEX_INIT: StaticMutex = StaticMutex::new();
 
 impl<T> Mutex<T> {
@@ -271,7 +273,8 @@ unsafe impl Sync for Dummy {}
 static DUMMY: Dummy = Dummy(UnsafeCell::new(()));
 
 #[unstable(feature = "static_mutex",
-           reason = "may be merged with Mutex in the future")]
+           reason = "may be merged with Mutex in the future",
+           issue = "27717")]
 impl StaticMutex {
     /// Creates a new mutex in an unlocked state ready for use.
     pub const fn new() -> StaticMutex {
@@ -331,13 +334,14 @@ impl<'mutex, T: ?Sized> MutexGuard<'mutex, T> {
 impl<'mutex, T: ?Sized> Deref for MutexGuard<'mutex, T> {
     type Target = T;
 
-    fn deref<'a>(&'a self) -> &'a T {
+    fn deref(&self) -> &T {
         unsafe { &*self.__data.get() }
     }
 }
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'mutex, T: ?Sized> DerefMut for MutexGuard<'mutex, T> {
-    fn deref_mut<'a>(&'a mut self) -> &'a mut T {
+    fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *self.__data.get() }
     }
 }
@@ -369,7 +373,7 @@ mod tests {
     use sync::{Arc, Mutex, StaticMutex, Condvar};
     use thread;
 
-    struct Packet<T: Send>(Arc<(Mutex<T>, Condvar)>);
+    struct Packet<T>(Arc<(Mutex<T>, Condvar)>);
 
     unsafe impl<T: Send> Send for Packet<T> {}
     unsafe impl<T> Sync for Packet<T> {}

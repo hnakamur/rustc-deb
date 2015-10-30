@@ -54,14 +54,12 @@
                       module will likely be replaced, and it is currently \
                       unknown how much API breakage that will cause. The ability \
                       to select over a number of channels will remain forever, \
-                      but no guarantees beyond this are being made")]
+                      but no guarantees beyond this are being made",
+            issue = "27800")]
 
-
-use core::prelude::*;
 
 use core::cell::{Cell, UnsafeCell};
 use core::marker;
-use core::mem;
 use core::ptr;
 use core::usize;
 
@@ -280,7 +278,7 @@ impl<'rx, T: Send> Handle<'rx, T> {
     pub unsafe fn add(&mut self) {
         if self.added { return }
         let selector = &mut *self.selector;
-        let me: *mut Handle<'static, ()> = mem::transmute(&*self);
+        let me = self as *mut Handle<'rx, T> as *mut Handle<'static, ()>;
 
         if selector.head.is_null() {
             selector.head = me;
@@ -301,7 +299,7 @@ impl<'rx, T: Send> Handle<'rx, T> {
         if !self.added { return }
 
         let selector = &mut *self.selector;
-        let me: *mut Handle<'static, ()> = mem::transmute(&*self);
+        let me = self as *mut Handle<'rx, T> as *mut Handle<'static, ()>;
 
         if self.prev.is_null() {
             assert_eq!(selector.head, me);

@@ -538,8 +538,9 @@ balanced, but they are otherwise not special.
 In the matcher, `$` _name_ `:` _designator_ matches the nonterminal in the Rust
 syntax named by _designator_. Valid designators are `item`, `block`, `stmt`,
 `pat`, `expr`, `ty` (type), `ident`, `path`, `tt` (either side of the `=>`
-in macro rules). In the transcriber, the designator is already known, and so
-only the name of a matched nonterminal comes after the dollar sign.
+in macro rules), and `meta` (contents of an attribute). In the transcriber, the
+designator is already known, and so only the name of a matched nonterminal comes
+after the dollar sign.
 
 In both the matcher and transcriber, the Kleene star-like operator indicates
 repetition. The Kleene star operator consists of `$` and parentheses, optionally
@@ -1094,12 +1095,12 @@ typecheck:
 # fn my_err(s: &str) -> ! { panic!() }
 
 fn f(i: i32) -> i32 {
-   if i == 42 {
-     return 42;
-   }
-   else {
-     my_err("Bad number!");
-   }
+    if i == 42 {
+        return 42;
+    }
+    else {
+        my_err("Bad number!");
+    }
 }
 ```
 
@@ -1398,9 +1399,9 @@ functions](#generic-functions).
 
 ```
 trait Seq<T> {
-   fn len(&self) -> u32;
-   fn elt_at(&self, n: u32) -> T;
-   fn iter<F>(&self, F) where F: Fn(T);
+    fn len(&self) -> u32;
+    fn elt_at(&self, n: u32) -> T;
+    fn iter<F>(&self, F) where F: Fn(T);
 }
 ```
 
@@ -1451,7 +1452,7 @@ fn draw_twice<T: Shape>(surface: Surface, sh: T) {
 }
 ```
 
-Traits also define an [trait object](#trait-objects) with the same
+Traits also define a [trait object](#trait-objects) with the same
 name as the trait. Values of this type are created by coercing from a
 pointer of some specific type to a pointer of trait type. For example,
 `&T` could be coerced to `&Shape` if `T: Shape` holds (and similarly
@@ -1488,19 +1489,41 @@ impl Num for f64 {
 let x: f64 = Num::from_i32(42);
 ```
 
-Traits may inherit from other traits. For example, in
+Traits may inherit from other traits. Consider the following example:
 
 ```
 trait Shape { fn area(&self) -> f64; }
 trait Circle : Shape { fn radius(&self) -> f64; }
 ```
 
-the syntax `Circle : Shape` means that types that implement `Circle` must also
+The syntax `Circle : Shape` means that types that implement `Circle` must also
 have an implementation for `Shape`. Multiple supertraits are separated by `+`,
 `trait Circle : Shape + PartialEq { }`. In an implementation of `Circle` for a
 given type `T`, methods can refer to `Shape` methods, since the typechecker
 checks that any type with an implementation of `Circle` also has an
-implementation of `Shape`.
+implementation of `Shape`:
+
+```rust
+struct Foo;
+
+trait Shape { fn area(&self) -> f64; }
+trait Circle : Shape { fn radius(&self) -> f64; }
+# impl Shape for Foo {
+#     fn area(&self) -> f64 {
+#         0.0
+#     }
+# }
+impl Circle for Foo {
+    fn radius(&self) -> f64 {
+        println!("calling area: {}", self.area());
+
+        0.0
+    }
+}
+
+let c = Foo;
+c.radius();
+```
 
 In type-parameterized functions, methods of the supertrait may be called on
 values of subtrait-bound type parameters. Referring to the previous example of
@@ -1556,8 +1579,12 @@ impl Shape for Circle {
     fn draw(&self, s: Surface) { do_draw_circle(s, *self); }
     fn bounding_box(&self) -> BoundingBox {
         let r = self.radius;
-        BoundingBox{x: self.center.x - r, y: self.center.y - r,
-         width: 2.0 * r, height: 2.0 * r}
+        BoundingBox {
+            x: self.center.x - r,
+            y: self.center.y - r,
+            width: 2.0 * r,
+            height: 2.0 * r,
+        }
     }
 }
 ```
@@ -1592,10 +1619,10 @@ are written after the `impl` keyword.
 ```
 # trait Seq<T> { fn dummy(&self, _: T) { } }
 impl<T> Seq<T> for Vec<T> {
-   /* ... */
+    /* ... */
 }
 impl Seq<bool> for u32 {
-   /* Treat the integer as a sequence of bits */
+    /* Treat the integer as a sequence of bits */
 }
 ```
 
@@ -1827,13 +1854,13 @@ An example of attributes:
 // A function marked as a unit test
 #[test]
 fn test_foo() {
-  /* ... */
+    /* ... */
 }
 
 // A conditionally-compiled module
 #[cfg(target_os="linux")]
 mod bar {
-  /* ... */
+    /* ... */
 }
 
 // A lint attribute used to suppress a warning/error
@@ -1858,11 +1885,15 @@ type int8_t = i8;
 - `no_start` - disable linking to the `native` crate, which specifies the
   "start" language item.
 - `no_std` - disable linking to the `std` crate.
-- `plugin` — load a list of named crates as compiler plugins, e.g.
+- `plugin` - load a list of named crates as compiler plugins, e.g.
              `#![plugin(foo, bar)]`. Optional arguments for each plugin,
              i.e. `#![plugin(foo(... args ...))]`, are provided to the plugin's
              registrar function.  The `plugin` feature gate is required to use
              this attribute.
+- `recursion_limit` - Sets the maximum depth for potentially
+                      infinitely-recursive compile-time operations like
+                      auto-dereference or macro expansion. The default is
+                      `#![recursion_limit="64"]`.
 
 ### Module-only attributes
 
@@ -1901,10 +1932,16 @@ On an `extern` block, the following attributes are interpreted:
   name and type. This is feature gated and the exact behavior is
   implementation-defined (due to variety of linker invocation syntax).
 - `link` - indicate that a native library should be linked to for the
-  declarations in this block to be linked correctly. `link` supports an optional `kind`
-  key with three possible values: `dylib`, `static`, and `framework`. See [external blocks](#external-blocks) for more about external blocks. Two
+  declarations in this block to be linked correctly. `link` supports an optional
+  `kind` key with three possible values: `dylib`, `static`, and `framework`. See
+  [external blocks](#external-blocks) for more about external blocks. Two
   examples: `#[link(name = "readline")]` and
   `#[link(name = "CoreFoundation", kind = "framework")]`.
+- `linked_from` - indicates what native library this block of FFI items is
+  coming from. This attribute is of the form `#[linked_from = "foo"]` where
+  `foo` is the name of a library in either `#[link]` or a `-l` flag. This
+  attribute is currently required to export symbols from a Rust dynamic library
+  on Windows, and it is feature gated behind the `linked_from` feature.
 
 On declarations inside an `extern` block, the following attributes are
 interpreted:
@@ -2022,25 +2059,31 @@ arbitrarily complex configurations through nesting.
 
 The following configurations must be defined by the implementation:
 
-* `debug_assertions`. Enabled by default when compiling without optimizations.
+* `debug_assertions` - Enabled by default when compiling without optimizations.
   This can be used to enable extra debugging code in development but not in
   production.  For example, it controls the behavior of the standard library's
   `debug_assert!` macro.
-* `target_arch = "..."`. Target CPU architecture, such as `"x86"`, `"x86_64"`
+* `target_arch = "..."` - Target CPU architecture, such as `"x86"`, `"x86_64"`
   `"mips"`, `"powerpc"`, `"arm"`, or `"aarch64"`.
-* `target_endian = "..."`. Endianness of the target CPU, either `"little"` or
+* `target_endian = "..."` - Endianness of the target CPU, either `"little"` or
   `"big"`.
-* `target_family = "..."`. Operating system family of the target, e. g.
+* `target_env = ".."` - An option provided by the compiler by default
+  describing the runtime environment of the target platform. Some examples of
+  this are `musl` for builds targeting the MUSL libc implementation, `msvc` for
+  Windows builds targeting MSVC, and `gnu` frequently the rest of the time. This
+  option may also be blank on some platforms.
+* `target_family = "..."` - Operating system family of the target, e. g.
   `"unix"` or `"windows"`. The value of this configuration option is defined
   as a configuration itself, like `unix` or `windows`.
-* `target_os = "..."`. Operating system of the target, examples include
+* `target_os = "..."` - Operating system of the target, examples include
   `"windows"`, `"macos"`, `"ios"`, `"linux"`, `"android"`, `"freebsd"`, `"dragonfly"`,
   `"bitrig"` , `"openbsd"` or `"netbsd"`.
-* `target_pointer_width = "..."`. Target pointer width in bits. This is set
+* `target_pointer_width = "..."` - Target pointer width in bits. This is set
   to `"32"` for targets with 32-bit pointers, and likewise set to `"64"` for
   64-bit pointers.
-* `unix`. See `target_family`.
-* `windows`. See `target_family`.
+* `test` - Enabled when compiling the test harness (using the `--test` flag).
+* `unix` - See `target_family`.
+* `windows` - See `target_family`.
 
 You can also set another attribute based on a `cfg` variable with `cfg_attr`:
 
@@ -2323,9 +2366,6 @@ The currently implemented features of the reference compiler are:
 * `start` - Allows use of the `#[start]` attribute, which changes the entry point
             into a Rust program. This capability, especially the signature for the
             annotated function, is subject to change.
-
-* `struct_inherit` - Allows using struct inheritance, which is barely
-                     implemented and will probably be removed. Don't use this.
 
 * `struct_variant` - Structural enum variants (those with named fields). It is
                      currently unknown whether this style of enum variant is as
@@ -2860,9 +2900,9 @@ An example of an `as` expression:
 # fn len(values: &[f64]) -> i32 { 0 }
 
 fn average(values: &[f64]) -> f64 {
-  let sum: f64 = sum(values);
-  let size: f64 = len(values) as f64;
-  sum / size
+    let sum: f64 = sum(values);
+    let size: f64 = len(values) as f64;
+    sum / size
 }
 ```
 
@@ -3161,16 +3201,6 @@ let z = match x { &0 => "zero", _ => "some" };
 assert_eq!(y, z);
 ```
 
-A pattern that's just an identifier, like `Nil` in the previous example, could
-either refer to an enum variant that's in scope, or bind a new variable. The
-compiler resolves this ambiguity by forbidding variable bindings that occur in
-`match` patterns from shadowing names of variants that are in scope. For
-example, wherever `List` is in scope, a `match` pattern would not be able to
-bind `Nil` as a new name. The compiler interprets a variable pattern `x` as a
-binding _only_ if there is no variant named `x` in scope. A convention you can
-use to avoid conflicts is simply to name variants with upper-case letters, and
-local variables with lower-case letters.
-
 Multiple match patterns may be joined with the `|` operator. A range of values
 may be specified with `...`. For example:
 
@@ -3178,9 +3208,9 @@ may be specified with `...`. For example:
 # let x = 2;
 
 let message = match x {
-  0 | 1  => "not many",
-  2 ... 9 => "a few",
-  _      => "lots"
+    0 | 1  => "not many",
+    2 ... 9 => "a few",
+    _      => "lots"
 };
 ```
 
@@ -3199,9 +3229,9 @@ may refer to the variables bound within the pattern they follow.
 # fn process_other(i: i32) { }
 
 let message = match maybe_digit {
-  Some(x) if x < 10 => process_digit(x),
-  Some(x) => process_other(x),
-  None => panic!()
+    Some(x) if x < 10 => process_digit(x),
+    Some(x) => process_other(x),
+    None => panic!()
 };
 ```
 
@@ -3245,10 +3275,10 @@ An example of a `return` expression:
 
 ```
 fn max(a: i32, b: i32) -> i32 {
-   if a > b {
-      return a;
-   }
-   return b;
+    if a > b {
+        return a;
+    }
+    return b;
 }
 ```
 
@@ -3492,7 +3522,7 @@ An example of a `fn` type:
 
 ```
 fn add(x: i32, y: i32) -> i32 {
-  return x + y;
+    return x + y;
 }
 
 let mut x = add(5,7);
@@ -3572,19 +3602,19 @@ An example of a trait object:
 
 ```
 trait Printable {
-  fn stringify(&self) -> String;
+    fn stringify(&self) -> String;
 }
 
 impl Printable for i32 {
-  fn stringify(&self) -> String { self.to_string() }
+    fn stringify(&self) -> String { self.to_string() }
 }
 
 fn print(a: Box<Printable>) {
-   println!("{}", a.stringify());
+    println!("{}", a.stringify());
 }
 
 fn main() {
-   print(Box::new(10) as Box<Printable>);
+    print(Box::new(10) as Box<Printable>);
 }
 ```
 
@@ -3599,7 +3629,7 @@ its type parameters are types:
 ```ignore
 fn to_vec<A: Clone>(xs: &[A]) -> Vec<A> {
     if xs.is_empty() {
-       return vec![];
+        return vec![];
     }
     let first: A = xs[0].clone();
     let mut rest: Vec<A> = to_vec(&xs[1..]);
@@ -3619,7 +3649,7 @@ it is an alias for the implementing type. For example, in:
 
 ```
 trait Printable {
-  fn make_string(&self) -> String;
+    fn make_string(&self) -> String;
 }
 
 impl Printable for String {
@@ -3687,7 +3717,7 @@ sites are:
   fn bar(_: i8) { }
 
   fn main() {
-     bar(128);
+      bar(128);
   }
   ```
 

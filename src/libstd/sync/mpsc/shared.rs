@@ -20,8 +20,6 @@
 
 pub use self::Failure::*;
 
-use core::prelude::*;
-
 use core::cmp;
 use core::isize;
 

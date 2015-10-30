@@ -17,13 +17,13 @@
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_driver"]
-#![unstable(feature = "rustc_private")]
+#![unstable(feature = "rustc_private", issue = "27812")]
 #![staged_api]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-      html_root_url = "http://doc.rust-lang.org/nightly/")]
+      html_root_url = "https://doc.rust-lang.org/nightly/")]
 
 #![feature(box_syntax)]
 #![feature(libc)]
@@ -42,8 +42,10 @@ extern crate libc;
 extern crate rustc;
 extern crate rustc_back;
 extern crate rustc_borrowck;
+extern crate rustc_front;
 extern crate rustc_lint;
 extern crate rustc_privacy;
+extern crate rustc_mir;
 extern crate rustc_resolve;
 extern crate rustc_trans;
 extern crate rustc_typeck;
@@ -89,6 +91,7 @@ pub mod test;
 
 pub mod driver;
 pub mod pretty;
+pub mod target_features;
 
 
 const BUG_REPORT_URL: &'static str =
@@ -116,11 +119,11 @@ pub fn run_compiler<'a>(args: &[String],
         None => return
     };
 
+    let sopts = config::build_session_options(&matches);
+
     let descriptions = diagnostics_registry();
 
-    do_or_return!(callbacks.early_callback(&matches, &descriptions));
-
-    let sopts = config::build_session_options(&matches);
+    do_or_return!(callbacks.early_callback(&matches, &descriptions, sopts.color));
 
     let (odir, ofile) = make_output(&matches);
     let (input, input_file_path) = match make_input(&matches.free) {
@@ -136,7 +139,8 @@ pub fn run_compiler<'a>(args: &[String],
     if sess.unstable_options() {
         sess.opts.show_span = matches.opt_str("show-span");
     }
-    let cfg = config::build_configuration(&sess);
+    let mut cfg = config::build_configuration(&sess);
+    target_features::add_configuration(&mut cfg, &sess);
 
     do_or_return!(callbacks.late_callback(&matches, &sess, &input, &odir, &ofile));
 
@@ -203,7 +207,8 @@ pub trait CompilerCalls<'a> {
     // else (e.g., selecting input and output).
     fn early_callback(&mut self,
                       _: &getopts::Matches,
-                      _: &diagnostics::registry::Registry)
+                      _: &diagnostics::registry::Registry,
+                      _: diagnostic::ColorConfig)
                       -> Compilation {
         Compilation::Continue
     }
@@ -275,7 +280,8 @@ pub struct RustcDefaultCalls;
 impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
     fn early_callback(&mut self,
                       matches: &getopts::Matches,
-                      descriptions: &diagnostics::registry::Registry)
+                      descriptions: &diagnostics::registry::Registry,
+                      color: diagnostic::ColorConfig)
                       -> Compilation {
         match matches.opt_str("explain") {
             Some(ref code) => {
@@ -285,7 +291,7 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                         print!("{}", &description[1..]);
                     }
                     None => {
-                        early_error(&format!("no extended information for {}", code));
+                        early_error(color, &format!("no extended information for {}", code));
                     }
                 }
                 return Compilation::Stop;
@@ -317,10 +323,10 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                 if should_stop == Compilation::Stop {
                     return None;
                 }
-                early_error("no input filename given");
+                early_error(sopts.color, "no input filename given");
             }
             1 => panic!("make_input should have provided valid inputs"),
-            _ => early_error("multiple input filenames provided")
+            _ => early_error(sopts.color, "multiple input filenames provided")
         }
 
         None
@@ -383,10 +389,11 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
         if sess.opts.debugging_opts.save_analysis {
             control.after_analysis.callback = box |state| {
                 time(state.session.time_passes(),
-                     "save analysis", (),
-                     |_| save::process_crate(state.tcx.unwrap(),
-                                             state.analysis.unwrap(),
-                                             state.out_dir));
+                     "save analysis",
+                     || save::process_crate(state.tcx.unwrap(),
+                                            state.krate.unwrap(),
+                                            state.analysis.unwrap(),
+                                            state.out_dir));
             };
             control.make_glob_map = resolve::MakeGlobMap::Yes;
         }
@@ -412,7 +419,7 @@ impl RustcDefaultCalls {
                     println!("{}", String::from_utf8(v).unwrap());
                 }
                 &Input::Str(_) => {
-                    early_error("cannot list metadata for stdin");
+                    early_error(sess.opts.color, "cannot list metadata for stdin");
                 }
             }
             return Compilation::Stop;
@@ -439,7 +446,7 @@ impl RustcDefaultCalls {
                 PrintRequest::CrateName => {
                     let input = match input {
                         Some(input) => input,
-                        None => early_error("no input file provided"),
+                        None => early_error(sess.opts.color, "no input file provided"),
                     };
                     let attrs = attrs.as_ref().unwrap();
                     let t_outputs = driver::build_output_filenames(input,
@@ -699,14 +706,15 @@ pub fn handle_options(mut args: Vec<String>) -> Option<getopts::Matches> {
                             &opt.opt_group.short_name
                         };
                         if m.opt_present(opt_name) {
-                            early_error(&format!("use of unstable option '{}' requires \
-                                                  -Z unstable-options", opt_name));
+                            early_error(diagnostic::Auto, &format!("use of unstable option '{}' \
+                                                                    requires -Z unstable-options",
+                                                                   opt_name));
                         }
                     }
                 }
                 m
             }
-            Err(f) => early_error(&f.to_string())
+            Err(f) => early_error(diagnostic::Auto, &f.to_string())
         }
     }
 

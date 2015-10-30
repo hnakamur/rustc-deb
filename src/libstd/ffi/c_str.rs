@@ -119,7 +119,7 @@ pub struct CString {
 /// Converting a foreign C string into a Rust `String`
 ///
 /// ```no_run
-/// # #![feature(libc,cstr_to_str)]
+/// # #![feature(libc)]
 /// extern crate libc;
 /// use std::ffi::CStr;
 ///
@@ -181,7 +181,10 @@ impl CString {
     /// the position of the nul byte.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new<T: Into<Vec<u8>>>(t: T) -> Result<CString, NulError> {
-        let bytes = t.into();
+        Self::_new(t.into())
+    }
+
+    fn _new(bytes: Vec<u8>) -> Result<CString, NulError> {
         match bytes.iter().position(|x| *x == 0) {
             Some(i) => Err(NulError(i, bytes)),
             None => Ok(unsafe { CString::from_vec_unchecked(bytes) }),
@@ -205,14 +208,38 @@ impl CString {
     /// The only appropriate argument is a pointer obtained by calling
     /// `into_ptr`. The length of the string will be recalculated
     /// using the pointer.
-    #[unstable(feature = "cstr_memory", reason = "recently added")]
-    // NB: may want to be called from_raw, needs to consider CStr::from_ptr,
-    //     Box::from_raw (or whatever it's currently called), and
-    //     slice::from_raw_parts
+    #[unstable(feature = "cstr_memory2", reason = "recently added",
+               issue = "27769")]
+    #[deprecated(since = "1.4.0", reason = "renamed to from_raw")]
     pub unsafe fn from_ptr(ptr: *const libc::c_char) -> CString {
+        CString::from_raw(ptr as *mut _)
+    }
+
+    /// Retakes ownership of a CString that was transferred to C.
+    ///
+    /// The only appropriate argument is a pointer obtained by calling
+    /// `into_raw`. The length of the string will be recalculated
+    /// using the pointer.
+    #[stable(feature = "cstr_memory", since = "1.4.0")]
+    pub unsafe fn from_raw(ptr: *mut libc::c_char) -> CString {
         let len = libc::strlen(ptr) + 1; // Including the NUL byte
         let slice = slice::from_raw_parts(ptr, len as usize);
         CString { inner: mem::transmute(slice) }
+    }
+
+    /// Transfers ownership of the string to a C caller.
+    ///
+    /// The pointer must be returned to Rust and reconstituted using
+    /// `from_raw` to be properly deallocated. Specifically, one
+    /// should *not* use the standard C `free` function to deallocate
+    /// this string.
+    ///
+    /// Failure to call `from_raw` will lead to a memory leak.
+    #[unstable(feature = "cstr_memory2", reason = "recently added",
+               issue = "27769")]
+    #[deprecated(since = "1.4.0", reason = "renamed to into_raw")]
+    pub fn into_ptr(self) -> *const libc::c_char {
+        self.into_raw() as *const _
     }
 
     /// Transfers ownership of the string to a C caller.
@@ -223,13 +250,9 @@ impl CString {
     /// this string.
     ///
     /// Failure to call `from_ptr` will lead to a memory leak.
-    #[unstable(feature = "cstr_memory", reason = "recently added")]
-    // NB: may want to be called into_raw, see comments on from_ptr
-    pub fn into_ptr(self) -> *const libc::c_char {
-        // It is important that the bytes be sized to fit - we need
-        // the capacity to be determinable from the string length, and
-        // shrinking to fit is the only way to be sure.
-        Box::into_raw(self.inner) as *const libc::c_char
+    #[stable(feature = "cstr_memory", since = "1.4.0")]
+    pub fn into_raw(self) -> *mut libc::c_char {
+        Box::into_raw(self.inner) as *mut libc::c_char
     }
 
     /// Returns the contents of this `CString` as a slice of bytes.
@@ -395,7 +418,7 @@ impl CStr {
     /// > length calculation whenever this method is called.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn to_bytes_with_nul(&self) -> &[u8] {
-        unsafe { mem::transmute::<&[libc::c_char], &[u8]>(&self.inner) }
+        unsafe { mem::transmute(&self.inner) }
     }
 
     /// Yields a `&str` slice if the `CStr` contains valid UTF-8.
@@ -407,11 +430,12 @@ impl CStr {
     /// > after a 0-cost cast, but it is planned to alter its definition in the
     /// > future to perform the length calculation in addition to the UTF-8
     /// > check whenever this method is called.
-    #[unstable(feature = "cstr_to_str", reason = "recently added")]
+    #[stable(feature = "cstr_to_str", since = "1.4.0")]
     pub fn to_str(&self) -> Result<&str, str::Utf8Error> {
-        // NB: When CStr is changed to perform the length check in .to_bytes() instead of in
-        // from_ptr(), it may be worth considering if this should be rewritten to do the UTF-8
-        // check inline with the length calculation instead of doing it afterwards.
+        // NB: When CStr is changed to perform the length check in .to_bytes()
+        // instead of in from_ptr(), it may be worth considering if this should
+        // be rewritten to do the UTF-8 check inline with the length calculation
+        // instead of doing it afterwards.
         str::from_utf8(self.to_bytes())
     }
 
@@ -426,7 +450,7 @@ impl CStr {
     /// > after a 0-cost cast, but it is planned to alter its definition in the
     /// > future to perform the length calculation in addition to the UTF-8
     /// > check whenever this method is called.
-    #[unstable(feature = "cstr_to_str", reason = "recently added")]
+    #[stable(feature = "cstr_to_str", since = "1.4.0")]
     pub fn to_string_lossy(&self) -> Cow<str> {
         String::from_utf8_lossy(self.to_bytes())
     }
@@ -468,6 +492,7 @@ mod tests {
     use super::*;
     use libc;
     use borrow::Cow::{Borrowed, Owned};
+    use hash::{SipHasher, Hash, Hasher};
 
     #[test]
     fn c_to_rust() {
@@ -545,15 +570,16 @@ mod tests {
 
     #[test]
     fn equal_hash() {
-        use hash;
-
         let data = b"123\xE2\xFA\xA6\0";
         let ptr = data.as_ptr() as *const libc::c_char;
         let cstr: &'static CStr = unsafe { CStr::from_ptr(ptr) };
 
-        let cstr_hash = hash::hash::<_, hash::SipHasher>(&cstr);
-        let cstring_hash =
-            hash::hash::<_, hash::SipHasher>(&CString::new(&data[..data.len() - 1]).unwrap());
+        let mut s = SipHasher::new_with_keys(0, 0);
+        cstr.hash(&mut s);
+        let cstr_hash = s.finish();
+        let mut s = SipHasher::new_with_keys(0, 0);
+        CString::new(&data[..data.len() - 1]).unwrap().hash(&mut s);
+        let cstring_hash = s.finish();
 
         assert_eq!(cstr_hash, cstring_hash);
     }

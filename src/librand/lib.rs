@@ -20,17 +20,17 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rand"]
 #![crate_type = "rlib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk.png",
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/",
-       html_playground_url = "http://play.rust-lang.org/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/")]
 #![no_std]
 #![staged_api]
 #![unstable(feature = "rand",
-            reason = "use `rand` from crates.io")]
-#![feature(core)]
+            reason = "use `rand` from crates.io",
+            issue = "27703")]
 #![feature(core_float)]
-#![feature(core_prelude)]
+#![feature(core_intrinsics)]
 #![feature(core_slice_ext)]
 #![feature(no_std)]
 #![feature(num_bits_bytes)]
@@ -41,13 +41,11 @@
 
 #![allow(deprecated)]
 
-#[macro_use]
-extern crate core;
-
 #[cfg(test)] #[macro_use] extern crate std;
 #[cfg(test)] #[macro_use] extern crate log;
 
-use core::prelude::*;
+use core::f64;
+use core::intrinsics;
 use core::marker::PhantomData;
 
 pub use isaac::{IsaacRng, Isaac64Rng};
@@ -64,6 +62,43 @@ pub mod isaac;
 pub mod chacha;
 pub mod reseeding;
 mod rand_impls;
+
+// Temporary trait to implement a few floating-point routines
+// needed by librand; this is necessary because librand doesn't
+// depend on libstd.  This will go away when librand is integrated
+// into libstd.
+trait FloatMath : Sized {
+    fn exp(self) -> Self;
+    fn ln(self) -> Self;
+    fn sqrt(self) -> Self;
+    fn powf(self, n: Self) -> Self;
+}
+
+impl FloatMath for f64 {
+    #[inline]
+    fn exp(self) -> f64 {
+        unsafe { intrinsics::expf64(self) }
+    }
+
+    #[inline]
+    fn ln(self) -> f64 {
+        unsafe { intrinsics::logf64(self) }
+    }
+
+    #[inline]
+    fn powf(self, n: f64) -> f64 {
+        unsafe { intrinsics::powf64(self, n) }
+    }
+
+    #[inline]
+    fn sqrt(self) -> f64 {
+        if self < 0.0 {
+            f64::NAN
+        } else {
+            unsafe { intrinsics::sqrtf64(self) }
+        }
+    }
+}
 
 /// A type that can be randomly generated using an `Rng`.
 #[doc(hidden)]

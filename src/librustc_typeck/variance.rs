@@ -266,17 +266,18 @@ use self::ParamKind::*;
 
 use arena;
 use arena::TypedArena;
+use middle::def_id::{DefId, LOCAL_CRATE};
 use middle::resolve_lifetime as rl;
 use middle::subst;
 use middle::subst::{ParamSpace, FnSpace, TypeSpace, SelfSpace, VecPerParamSpace};
 use middle::ty::{self, Ty};
-use rustc::ast_map;
+use rustc::front::map as hir_map;
 use std::fmt;
 use std::rc::Rc;
 use syntax::ast;
-use syntax::ast_util;
-use syntax::visit;
-use syntax::visit::Visitor;
+use rustc_front::hir;
+use rustc_front::visit;
+use rustc_front::visit::Visitor;
 use util::nodemap::NodeMap;
 
 pub fn infer_variance(tcx: &ty::ctxt) {
@@ -364,7 +365,7 @@ struct InferredInfo<'a> {
 
 fn determine_parameters_to_be_inferred<'a, 'tcx>(tcx: &'a ty::ctxt<'tcx>,
                                                  arena: &'a mut TypedArena<VarianceTerm<'a>>,
-                                                 krate: &ast::Crate)
+                                                 krate: &hir::Crate)
                                                  -> TermsContext<'a, 'tcx> {
     let mut terms_cx = TermsContext {
         tcx: tcx,
@@ -404,7 +405,7 @@ fn lang_items(tcx: &ty::ctxt) -> Vec<(ast::NodeId,Vec<ty::Variance>)> {
 
     all.into_iter()
        .filter(|&(ref d,_)| d.is_some())
-       .filter(|&(ref d,_)| d.as_ref().unwrap().krate == ast::LOCAL_CRATE)
+       .filter(|&(ref d,_)| d.as_ref().unwrap().is_local())
        .map(|(d, v)| (d.unwrap().node, v))
        .collect()
 }
@@ -413,7 +414,7 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
     fn add_inferreds_for_item(&mut self,
                               item_id: ast::NodeId,
                               has_self: bool,
-                              generics: &ast::Generics)
+                              generics: &hir::Generics)
     {
         /*!
          * Add "inferreds" for the generic parameters declared on this
@@ -452,7 +453,7 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
         if self.num_inferred() == inferreds_on_entry {
             let newly_added =
                 self.tcx.item_variance_map.borrow_mut().insert(
-                    ast_util::local_def(item_id),
+                    DefId::local(item_id),
                     self.empty_variances.clone()).is_none();
             assert!(newly_added);
         }
@@ -485,7 +486,7 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
                 param_id={}, \
                 inf_index={:?}, \
                 initial_variance={:?})",
-               self.tcx.item_path_str(ast_util::local_def(item_id)),
+               self.tcx.item_path_str(DefId::local(item_id)),
                item_id, kind, space, index, param_id, inf_index,
                initial_variance);
     }
@@ -516,15 +517,15 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
 }
 
 impl<'a, 'tcx, 'v> Visitor<'v> for TermsContext<'a, 'tcx> {
-    fn visit_item(&mut self, item: &ast::Item) {
+    fn visit_item(&mut self, item: &hir::Item) {
         debug!("add_inferreds for item {}", self.tcx.map.node_to_string(item.id));
 
         match item.node {
-            ast::ItemEnum(_, ref generics) |
-            ast::ItemStruct(_, ref generics) => {
+            hir::ItemEnum(_, ref generics) |
+            hir::ItemStruct(_, ref generics) => {
                 self.add_inferreds_for_item(item.id, false, generics);
             }
-            ast::ItemTrait(_, ref generics, _, _) => {
+            hir::ItemTrait(_, ref generics, _, _) => {
                 // Note: all inputs for traits are ultimately
                 // constrained to be invariant. See `visit_item` in
                 // the impl for `ConstraintContext` below.
@@ -532,17 +533,16 @@ impl<'a, 'tcx, 'v> Visitor<'v> for TermsContext<'a, 'tcx> {
                 visit::walk_item(self, item);
             }
 
-            ast::ItemExternCrate(_) |
-            ast::ItemUse(_) |
-            ast::ItemDefaultImpl(..) |
-            ast::ItemImpl(..) |
-            ast::ItemStatic(..) |
-            ast::ItemConst(..) |
-            ast::ItemFn(..) |
-            ast::ItemMod(..) |
-            ast::ItemForeignMod(..) |
-            ast::ItemTy(..) |
-            ast::ItemMac(..) => {
+            hir::ItemExternCrate(_) |
+            hir::ItemUse(_) |
+            hir::ItemDefaultImpl(..) |
+            hir::ItemImpl(..) |
+            hir::ItemStatic(..) |
+            hir::ItemConst(..) |
+            hir::ItemFn(..) |
+            hir::ItemMod(..) |
+            hir::ItemForeignMod(..) |
+            hir::ItemTy(..) => {
                 visit::walk_item(self, item);
             }
         }
@@ -575,7 +575,7 @@ struct Constraint<'a> {
 }
 
 fn add_constraints_from_crate<'a, 'tcx>(terms_cx: TermsContext<'a, 'tcx>,
-                                        krate: &ast::Crate)
+                                        krate: &hir::Crate)
                                         -> ConstraintContext<'a, 'tcx>
 {
     let covariant = terms_cx.arena.alloc(ConstantTerm(ty::Covariant));
@@ -595,14 +595,14 @@ fn add_constraints_from_crate<'a, 'tcx>(terms_cx: TermsContext<'a, 'tcx>,
 }
 
 impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
-    fn visit_item(&mut self, item: &ast::Item) {
-        let did = ast_util::local_def(item.id);
+    fn visit_item(&mut self, item: &hir::Item) {
+        let did = DefId::local(item.id);
         let tcx = self.terms_cx.tcx;
 
         debug!("visit_item item={}", tcx.map.node_to_string(item.id));
 
         match item.node {
-            ast::ItemEnum(ref enum_definition, _) => {
+            hir::ItemEnum(..) | hir::ItemStruct(..) => {
                 let scheme = tcx.lookup_item_type(did);
 
                 // Not entirely obvious: constraints on structs/enums do not
@@ -611,62 +611,29 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
                 //
                 // self.add_constraints_from_generics(&scheme.generics);
 
-                // Hack: If we directly call `ty::enum_variants`, it
-                // annoyingly takes it upon itself to run off and
-                // evaluate the discriminants eagerly (*grumpy* that's
-                // not the typical pattern). This results in double
-                // error messages because typeck goes off and does
-                // this at a later time. All we really care about is
-                // the types of the variant arguments, so we just call
-                // `ty::VariantInfo::from_ast_variant()` ourselves
-                // here, mainly so as to mask the differences between
-                // struct-like enums and so forth.
-                for ast_variant in &enum_definition.variants {
-                    let variant =
-                        ty::VariantInfo::from_ast_variant(tcx,
-                                                          &**ast_variant,
-                                                          /*discriminant*/ 0);
-                    for arg_ty in &variant.args {
-                        self.add_constraints_from_ty(&scheme.generics, *arg_ty, self.covariant);
-                    }
+                for field in tcx.lookup_adt_def(did).all_fields() {
+                    self.add_constraints_from_ty(&scheme.generics,
+                                                 field.unsubst_ty(),
+                                                 self.covariant);
                 }
             }
-
-            ast::ItemStruct(..) => {
-                let scheme = tcx.lookup_item_type(did);
-
-                // Not entirely obvious: constraints on structs/enums do not
-                // affect the variance of their type parameters. See discussion
-                // in comment at top of module.
-                //
-                // self.add_constraints_from_generics(&scheme.generics);
-
-                let struct_fields = tcx.lookup_struct_fields(did);
-                for field_info in &struct_fields {
-                    assert_eq!(field_info.id.krate, ast::LOCAL_CRATE);
-                    let field_ty = tcx.node_id_to_type(field_info.id.node);
-                    self.add_constraints_from_ty(&scheme.generics, field_ty, self.covariant);
-                }
-            }
-
-            ast::ItemTrait(..) => {
+            hir::ItemTrait(..) => {
                 let trait_def = tcx.lookup_trait_def(did);
                 self.add_constraints_from_trait_ref(&trait_def.generics,
                                                     trait_def.trait_ref,
                                                     self.invariant);
             }
 
-            ast::ItemExternCrate(_) |
-            ast::ItemUse(_) |
-            ast::ItemStatic(..) |
-            ast::ItemConst(..) |
-            ast::ItemFn(..) |
-            ast::ItemMod(..) |
-            ast::ItemForeignMod(..) |
-            ast::ItemTy(..) |
-            ast::ItemImpl(..) |
-            ast::ItemDefaultImpl(..) |
-            ast::ItemMac(..) => {
+            hir::ItemExternCrate(_) |
+            hir::ItemUse(_) |
+            hir::ItemStatic(..) |
+            hir::ItemConst(..) |
+            hir::ItemFn(..) |
+            hir::ItemMod(..) |
+            hir::ItemForeignMod(..) |
+            hir::ItemTy(..) |
+            hir::ItemImpl(..) |
+            hir::ItemDefaultImpl(..) => {
             }
         }
 
@@ -675,9 +642,9 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
 }
 
 /// Is `param_id` a lifetime according to `map`?
-fn is_lifetime(map: &ast_map::Map, param_id: ast::NodeId) -> bool {
+fn is_lifetime(map: &hir_map::Map, param_id: ast::NodeId) -> bool {
     match map.find(param_id) {
-        Some(ast_map::NodeLifetime(..)) => true, _ => false
+        Some(hir_map::NodeLifetime(..)) => true, _ => false
     }
 }
 
@@ -738,18 +705,18 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
             } } }
 
             match parent {
-                ast_map::NodeItem(p) => {
+                hir_map::NodeItem(p) => {
                     match p.node {
-                        ast::ItemTy(..) |
-                        ast::ItemEnum(..) |
-                        ast::ItemStruct(..) |
-                        ast::ItemTrait(..)   => is_inferred = true,
-                        ast::ItemFn(..)      => is_inferred = false,
+                        hir::ItemTy(..) |
+                        hir::ItemEnum(..) |
+                        hir::ItemStruct(..) |
+                        hir::ItemTrait(..)   => is_inferred = true,
+                        hir::ItemFn(..)      => is_inferred = false,
                         _                    => cannot_happen!(),
                     }
                 }
-                ast_map::NodeTraitItem(..)   => is_inferred = false,
-                ast_map::NodeImplItem(..)    => is_inferred = false,
+                hir_map::NodeTraitItem(..)   => is_inferred = false,
+                hir_map::NodeImplItem(..)    => is_inferred = false,
                 _                            => cannot_happen!(),
             }
 
@@ -764,15 +731,15 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
     /// Returns a variance term representing the declared variance of the type/region parameter
     /// with the given id.
     fn declared_variance(&self,
-                         param_def_id: ast::DefId,
-                         item_def_id: ast::DefId,
+                         param_def_id: DefId,
+                         item_def_id: DefId,
                          kind: ParamKind,
                          space: ParamSpace,
                          index: usize)
                          -> VarianceTermPtr<'a> {
         assert_eq!(param_def_id.krate, item_def_id.krate);
 
-        if param_def_id.krate == ast::LOCAL_CRATE {
+        if param_def_id.is_local() {
             // Parameter on an item defined within current crate:
             // variance not yet inferred, so return a symbolic
             // variance.
@@ -902,9 +869,9 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 }
             }
 
-            ty::TyEnum(def_id, substs) |
-            ty::TyStruct(def_id, substs) => {
-                let item_type = self.tcx().lookup_item_type(def_id);
+            ty::TyEnum(def, substs) |
+            ty::TyStruct(def, substs) => {
+                let item_type = self.tcx().lookup_item_type(def.did);
 
                 // All type parameters on enums and structs should be
                 // in the TypeSpace.
@@ -915,7 +882,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
 
                 self.add_constraints_from_substs(
                     generics,
-                    def_id,
+                    def.did,
                     item_type.generics.types.get_slice(subst::TypeSpace),
                     item_type.generics.regions.get_slice(subst::TypeSpace),
                     substs,
@@ -955,7 +922,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
 
             ty::TyParam(ref data) => {
                 let def_id = generics.types.get(data.space, data.idx as usize).def_id;
-                assert_eq!(def_id.krate, ast::LOCAL_CRATE);
+                assert_eq!(def_id.krate, LOCAL_CRATE);
                 match self.terms_cx.inferred_map.get(&def_id.node) {
                     Some(&index) => {
                         self.add_constraint(index, variance);
@@ -990,7 +957,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
     /// object, etc) appearing in a context with ambient variance `variance`
     fn add_constraints_from_substs(&mut self,
                                    generics: &ty::Generics<'tcx>,
-                                   def_id: ast::DefId,
+                                   def_id: DefId,
                                    type_param_defs: &[ty::TypeParameterDef<'tcx>],
                                    region_param_defs: &[ty::RegionParameterDef],
                                    substs: &subst::Substs<'tcx>,
@@ -1057,8 +1024,8 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 // methods or in fn types.
             }
 
-            ty::ReFree(..) | ty::ReScope(..) | ty::ReInfer(..) |
-            ty::ReEmpty => {
+            ty::ReFree(..) | ty::ReScope(..) | ty::ReVar(..) |
+            ty::ReSkolemized(..) | ty::ReEmpty => {
                 // We don't expect to see anything but 'static or bound
                 // regions when visiting member types or method types.
                 self.tcx()
@@ -1077,12 +1044,12 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                                mt: &ty::TypeAndMut<'tcx>,
                                variance: VarianceTermPtr<'a>) {
         match mt.mutbl {
-            ast::MutMutable => {
+            hir::MutMutable => {
                 let invar = self.invariant(variance);
                 self.add_constraints_from_ty(generics, mt.ty, invar);
             }
 
-            ast::MutImmutable => {
+            hir::MutImmutable => {
                 self.add_constraints_from_ty(generics, mt.ty, variance);
             }
         }
@@ -1196,7 +1163,7 @@ impl<'a, 'tcx> SolveContext<'a, 'tcx> {
                     item_id,
                     item_variances);
 
-            let item_def_id = ast_util::local_def(item_id);
+            let item_def_id = DefId::local(item_id);
 
             // For unit testing: check for a special "rustc_variance"
             // attribute and report an error with various results if found.

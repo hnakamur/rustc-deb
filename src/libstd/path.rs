@@ -98,8 +98,6 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use core::prelude::*;
-
 use ascii::*;
 use borrow::{Borrow, IntoCow, ToOwned, Cow};
 use cmp;
@@ -134,7 +132,6 @@ use self::platform::{is_sep_byte, is_verbatim_sep, MAIN_SEP_STR, parse_prefix};
 #[cfg(unix)]
 mod platform {
     use super::Prefix;
-    use core::prelude::*;
     use ffi::OsStr;
 
     #[inline]
@@ -157,7 +154,6 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
-    use core::prelude::*;
     use ascii::*;
 
     use super::{os_str_as_u8_slice, u8_slice_as_os_str, Prefix};
@@ -406,7 +402,6 @@ fn has_physical_root(s: &[u8], prefix: Option<Prefix>) -> bool {
 }
 
 // basic workhorse for splitting stem and extension
-#[allow(unused_unsafe)] // FIXME
 fn split_file_at_dot(file: &OsStr) -> (Option<&OsStr>, Option<&OsStr>) {
     unsafe {
         if os_str_as_u8_slice(file) == b".." { return (Some(file), None) }
@@ -603,8 +598,11 @@ impl<'a> Components<'a> {
     /// how much of the prefix is left from the point of view of iteration?
     #[inline]
     fn prefix_remaining(&self) -> usize {
-        if self.front == State::Prefix { self.prefix_len() }
-        else { 0 }
+        if self.front == State::Prefix {
+            self.prefix_len()
+        } else {
+            0
+        }
     }
 
     // Given the iteration so far, how much of the pre-State::Body path is left?
@@ -637,9 +635,11 @@ impl<'a> Components<'a> {
     /// ```
     /// use std::path::Path;
     ///
-    /// let path = Path::new("/tmp/foo/bar.txt");
+    /// let mut components = Path::new("/tmp/foo/bar.txt").components();
+    /// components.next();
+    /// components.next();
     ///
-    /// println!("{:?}", path.components().as_path());
+    /// assert_eq!(Path::new("foo/bar.txt"), components.as_path());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn as_path(&self) -> &'a Path {
@@ -730,7 +730,7 @@ impl<'a> Components<'a> {
     }
 
     /// Examine the next component without consuming it.
-    #[unstable(feature = "path_components_peek")]
+    #[unstable(feature = "path_components_peek", issue = "27727")]
     pub fn peek(&self) -> Option<Component<'a>> {
         self.clone().next()
     }
@@ -887,7 +887,7 @@ impl<'a> DoubleEndedIterator for Components<'a> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> cmp::PartialEq for Components<'a> {
     fn eq(&self, other: &Components<'a>) -> bool {
-        iter::order::eq(self.clone(), other.clone())
+        Iterator::eq(self.clone(), other.clone())
     }
 }
 
@@ -897,14 +897,14 @@ impl<'a> cmp::Eq for Components<'a> {}
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> cmp::PartialOrd for Components<'a> {
     fn partial_cmp(&self, other: &Components<'a>) -> Option<cmp::Ordering> {
-        iter::order::partial_cmp(self.clone(), other.clone())
+        Iterator::partial_cmp(self.clone(), other.clone())
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> cmp::Ord for Components<'a> {
     fn cmp(&self, other: &Components<'a>) -> cmp::Ordering {
-        iter::order::cmp(self.clone(), other.clone())
+        Iterator::cmp(self.clone(), other.clone())
     }
 }
 
@@ -939,7 +939,7 @@ pub struct PathBuf {
 
 impl PathBuf {
     fn as_mut_vec(&mut self) -> &mut Vec<u8> {
-        unsafe { mem::transmute(self) }
+        unsafe { &mut *(self as *mut PathBuf as *mut Vec<u8>) }
     }
 
     /// Allocates an empty `PathBuf`.
@@ -962,11 +962,13 @@ impl PathBuf {
     ///
     /// * if `path` has a root but no prefix (e.g. `\windows`), it
     ///   replaces everything except for the prefix (if any) of `self`.
-    /// * if `path` has a prefix but no root, it replaces `self.
+    /// * if `path` has a prefix but no root, it replaces `self`.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn push<P: AsRef<Path>>(&mut self, path: P) {
-        let path = path.as_ref();
+        self._push(path.as_ref())
+    }
 
+    fn _push(&mut self, path: &Path) {
         // in general, a separator is needed if the rightmost byte is not a separator
         let mut need_sep = self.as_mut_vec().last().map(|c| !is_sep_byte(*c)).unwrap_or(false);
 
@@ -1033,11 +1035,15 @@ impl PathBuf {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn set_file_name<S: AsRef<OsStr>>(&mut self, file_name: S) {
+        self._set_file_name(file_name.as_ref())
+    }
+
+    fn _set_file_name(&mut self, file_name: &OsStr) {
         if self.file_name().is_some() {
             let popped = self.pop();
             debug_assert!(popped);
         }
-        self.push(file_name.as_ref());
+        self.push(file_name);
     }
 
     /// Updates `self.extension()` to `extension`.
@@ -1048,6 +1054,10 @@ impl PathBuf {
     /// is added; otherwise it is replaced.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn set_extension<S: AsRef<OsStr>>(&mut self, extension: S) -> bool {
+        self._set_extension(extension.as_ref())
+    }
+
+    fn _set_extension(&mut self, extension: &OsStr) -> bool {
         if self.file_name().is_none() { return false; }
 
         let mut stem = match self.file_stem() {
@@ -1055,7 +1065,6 @@ impl PathBuf {
             None => OsString::new(),
         };
 
-        let extension = extension.as_ref();
         if !os_str_as_u8_slice(extension).is_empty() {
             stem.push(".");
             stem.push(extension);
@@ -1106,7 +1115,7 @@ impl<P: AsRef<Path>> iter::FromIterator<P> for PathBuf {
 impl<P: AsRef<Path>> iter::Extend<P> for PathBuf {
     fn extend<I: IntoIterator<Item = P>>(&mut self, iter: I) {
         for p in iter {
-            self.push(p)
+            self.push(p.as_ref())
         }
     }
 }
@@ -1123,7 +1132,7 @@ impl ops::Deref for PathBuf {
     type Target = Path;
 
     fn deref(&self) -> &Path {
-        unsafe { mem::transmute(&self.inner[..]) }
+        Path::new(&self.inner)
     }
 }
 
@@ -1167,14 +1176,14 @@ impl cmp::Eq for PathBuf {}
 #[stable(feature = "rust1", since = "1.0.0")]
 impl cmp::PartialOrd for PathBuf {
     fn partial_cmp(&self, other: &PathBuf) -> Option<cmp::Ordering> {
-        self.components().partial_cmp(&other.components())
+        self.components().partial_cmp(other.components())
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl cmp::Ord for PathBuf {
     fn cmp(&self, other: &PathBuf) -> cmp::Ordering {
-        self.components().cmp(&other.components())
+        self.components().cmp(other.components())
     }
 }
 
@@ -1224,11 +1233,11 @@ impl Path {
     // The following (private!) function allows construction of a path from a u8
     // slice, which is only safe when it is known to follow the OsStr encoding.
     unsafe fn from_u8_slice(s: &[u8]) -> &Path {
-        mem::transmute(s)
+        Path::new(u8_slice_as_os_str(s))
     }
     // The following (private!) function reveals the byte encoding used for OsStr.
     fn as_u8_slice(&self) -> &[u8] {
-        unsafe { mem::transmute(self) }
+        os_str_as_u8_slice(&self.inner)
     }
 
     /// Directly wrap a string slice as a `Path` slice.
@@ -1363,7 +1372,9 @@ impl Path {
     /// Prefixes are relevant only for Windows paths, and consist of volumes
     /// like `C:`, UNC prefixes like `\\server`, and others described in more
     /// detail in `std::os::windows::PathExt`.
-    #[unstable(feature = "path_prefix", reason = "uncertain whether to expose this convenience")]
+    #[unstable(feature = "path_prefix",
+               reason = "uncertain whether to expose this convenience",
+               issue = "27722")]
     pub fn prefix(&self) -> Option<Prefix> {
         self.components().prefix
     }
@@ -1446,10 +1457,15 @@ impl Path {
     ///
     /// If `base` is not a prefix of `self` (i.e. `starts_with`
     /// returns false), then `relative_from` returns `None`.
-    #[unstable(feature = "path_relative_from", reason = "see #23284")]
+    #[unstable(feature = "path_relative_from", reason = "see #23284",
+               issue = "23284")]
     pub fn relative_from<'a, P: ?Sized + AsRef<Path>>(&'a self, base: &'a P) -> Option<&Path>
     {
-        iter_after(self.components(), base.as_ref().components()).map(|c| c.as_path())
+        self._relative_from(base.as_ref())
+    }
+
+    fn _relative_from<'a>(&'a self, base: &'a Path) -> Option<&'a Path> {
+        iter_after(self.components(), base.components()).map(|c| c.as_path())
     }
 
     /// Determines whether `base` is a prefix of `self`.
@@ -1469,7 +1485,11 @@ impl Path {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn starts_with<P: AsRef<Path>>(&self, base: P) -> bool {
-        iter_after(self.components(), base.as_ref().components()).is_some()
+        self._starts_with(base.as_ref())
+    }
+
+    fn _starts_with(&self, base: &Path) -> bool {
+        iter_after(self.components(), base.components()).is_some()
     }
 
     /// Determines whether `child` is a suffix of `self`.
@@ -1487,7 +1507,11 @@ impl Path {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn ends_with<P: AsRef<Path>>(&self, child: P) -> bool {
-        iter_after(self.components().rev(), child.as_ref().components().rev()).is_some()
+        self._ends_with(child.as_ref())
+    }
+
+    fn _ends_with(&self, child: &Path) -> bool {
+        iter_after(self.components().rev(), child.components().rev()).is_some()
     }
 
     /// Extracts the stem (non-extension) portion of `self.file_name()`.
@@ -1549,6 +1573,10 @@ impl Path {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn join<P: AsRef<Path>>(&self, path: P) -> PathBuf {
+        self._join(path.as_ref())
+    }
+
+    fn _join(&self, path: &Path) -> PathBuf {
         let mut buf = self.to_path_buf();
         buf.push(path);
         buf
@@ -1568,6 +1596,10 @@ impl Path {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn with_file_name<S: AsRef<OsStr>>(&self, file_name: S) -> PathBuf {
+        self._with_file_name(file_name.as_ref())
+    }
+
+    fn _with_file_name(&self, file_name: &OsStr) -> PathBuf {
         let mut buf = self.to_path_buf();
         buf.set_file_name(file_name);
         buf
@@ -1587,6 +1619,10 @@ impl Path {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn with_extension<S: AsRef<OsStr>>(&self, extension: S) -> PathBuf {
+        self._with_extension(extension.as_ref())
+    }
+
+    fn _with_extension(&self, extension: &OsStr) -> PathBuf {
         let mut buf = self.to_path_buf();
         buf.set_extension(extension);
         buf
@@ -1693,7 +1729,7 @@ impl<'a> fmt::Display for Display<'a> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl cmp::PartialEq for Path {
     fn eq(&self, other: &Path) -> bool {
-        iter::order::eq(self.components(), other.components())
+        self.components().eq(other.components())
     }
 }
 
@@ -1703,14 +1739,14 @@ impl cmp::Eq for Path {}
 #[stable(feature = "rust1", since = "1.0.0")]
 impl cmp::PartialOrd for Path {
     fn partial_cmp(&self, other: &Path) -> Option<cmp::Ordering> {
-        self.components().partial_cmp(&other.components())
+        self.components().partial_cmp(other.components())
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl cmp::Ord for Path {
     fn cmp(&self, other: &Path) -> cmp::Ordering {
-        self.components().cmp(&other.components())
+        self.components().cmp(other.components())
     }
 }
 
@@ -1747,7 +1783,6 @@ impl AsRef<Path> for PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::prelude::*;
     use string::{ToString, String};
     use vec::Vec;
 

@@ -582,6 +582,7 @@ impl Child {
 /// to run.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn exit(code: i32) -> ! {
+    ::sys_common::cleanup();
     ::sys::os::exit(code)
 }
 
@@ -815,7 +816,7 @@ mod tests {
     #[cfg(target_os="android")]
     #[test]
     fn test_inherit_env() {
-        use std::env;
+        use env;
 
         let mut result = env_cmd().output().unwrap();
         let output = String::from_utf8(result.stdout).unwrap();

@@ -11,9 +11,8 @@
 #![allow(missing_docs)]
 #![allow(non_camel_case_types)]
 
-use prelude::v1::*;
-
 use io::{self, ErrorKind};
+use libc::funcs::posix01::signal::signal;
 use libc;
 use num::One;
 use ops::Neg;
@@ -48,6 +47,19 @@ pub mod thread;
 pub mod thread_local;
 pub mod time;
 pub mod stdio;
+
+pub fn init() {
+    // By default, some platforms will send a *signal* when a EPIPE error
+    // would otherwise be delivered. This runtime doesn't install a SIGPIPE
+    // handler, causing it to kill the program, which isn't exactly what we
+    // want!
+    //
+    // Hence, we set SIGPIPE to ignore when the program starts up in order
+    // to prevent this problem.
+    unsafe {
+        assert!(signal(libc::SIGPIPE, libc::SIG_IGN) != !0);
+    }
+}
 
 pub fn decode_error_kind(errno: i32) -> ErrorKind {
     match errno as libc::c_int {
@@ -84,7 +96,6 @@ pub fn cvt<T: One + PartialEq + Neg<Output=T>>(t: T) -> io::Result<T> {
     }
 }
 
-#[allow(deprecated)]
 pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
     where T: One + PartialEq + Neg<Output=T>, F: FnMut() -> T
 {
@@ -93,12 +104,5 @@ pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
             Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
             other => return other,
         }
-    }
-}
-
-pub fn ms_to_timeval(ms: u64) -> libc::timeval {
-    libc::timeval {
-        tv_sec: (ms / 1000) as libc::time_t,
-        tv_usec: ((ms % 1000) * 1000) as libc::suseconds_t,
     }
 }

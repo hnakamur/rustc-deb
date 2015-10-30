@@ -23,7 +23,6 @@ pub use self::FloatTy::*;
 pub use self::FunctionRetTy::*;
 pub use self::ForeignItem_::*;
 pub use self::ImplItem_::*;
-pub use self::InlinedItem::*;
 pub use self::IntTy::*;
 pub use self::Item_::*;
 pub use self::KleeneOp::*;
@@ -66,7 +65,6 @@ use parse::lexer::comments::{doc_comment_style, strip_doc_comment_decoration};
 use print::pprust;
 use ptr::P;
 
-use std::cell::Cell;
 use std::fmt;
 use std::rc::Rc;
 use serialize::{Encodable, Decodable, Encoder, Decoder};
@@ -372,37 +370,7 @@ pub type CrateNum = u32;
 
 pub type NodeId = u32;
 
-#[derive(Clone, Eq, Ord, PartialOrd, PartialEq, RustcEncodable,
-           RustcDecodable, Hash, Copy)]
-pub struct DefId {
-    pub krate: CrateNum,
-    pub node: NodeId,
-}
-
-fn default_def_id_debug(_: DefId, _: &mut fmt::Formatter) -> fmt::Result { Ok(()) }
-
-thread_local!(pub static DEF_ID_DEBUG: Cell<fn(DefId, &mut fmt::Formatter) -> fmt::Result> =
-                Cell::new(default_def_id_debug));
-
-impl fmt::Debug for DefId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "DefId {{ krate: {}, node: {} }}",
-                    self.krate, self.node));
-        DEF_ID_DEBUG.with(|def_id_debug| def_id_debug.get()(*self, f))
-    }
-}
-
-impl DefId {
-    /// Read the node id, asserting that this def-id is krate-local.
-    pub fn local_id(&self) -> NodeId {
-        assert_eq!(self.krate, LOCAL_CRATE);
-        self.node
-    }
-}
-
-/// Item definitions in the currently-compiled crate would have the CrateNum
-/// LOCAL_CRATE in their DefId.
-pub const LOCAL_CRATE: CrateNum = 0;
+/// Node id used to represent the root of the crate.
 pub const CRATE_NODE_ID: NodeId = 0;
 
 /// When parsing and doing expansions, we initially give all AST nodes this AST
@@ -475,7 +443,7 @@ pub enum WherePredicate {
     /// A lifetime predicate, e.g. `'a: 'b+'c`
     RegionPredicate(WhereRegionPredicate),
     /// An equality predicate (unsupported)
-    EqPredicate(WhereEqPredicate)
+    EqPredicate(WhereEqPredicate),
 }
 
 /// A type bound, eg `for<'c> Foo: Send+Clone+'c`
@@ -923,9 +891,9 @@ pub enum Expr_ {
     /// A referencing operation (`&a` or `&mut a`)
     ExprAddrOf(Mutability, P<Expr>),
     /// A `break`, with an optional label to break
-    ExprBreak(Option<Ident>),
+    ExprBreak(Option<SpannedIdent>),
     /// A `continue`, with an optional label
-    ExprAgain(Option<Ident>),
+    ExprAgain(Option<SpannedIdent>),
     /// A `return`, with an optional value to be returned
     ExprRet(Option<P<Expr>>),
 
@@ -941,7 +909,7 @@ pub enum Expr_ {
     /// `Foo {x: 1, .. base}`, where `base` is the `Option<Expr>`.
     ExprStruct(Path, Vec<Field>, Option<P<Expr>>),
 
-    /// A vector literal constructed from one repeated element.
+    /// An array literal constructed from one repeated element.
     ///
     /// For example, `[1u8; 5]`. The first expression is the element
     /// to be repeated; the second is the number of times to repeat it.
@@ -1217,22 +1185,12 @@ pub enum LitIntType {
     UnsuffixedIntLit(Sign)
 }
 
-impl LitIntType {
-    pub fn suffix_len(&self) -> usize {
-        match *self {
-            UnsuffixedIntLit(_) => 0,
-            SignedIntLit(s, _) => s.suffix_len(),
-            UnsignedIntLit(u) => u.suffix_len()
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Lit_ {
     /// A string literal (`"foo"`)
     LitStr(InternedString, StrStyle),
     /// A byte string (`b"foo"`)
-    LitBinary(Rc<Vec<u8>>),
+    LitByteStr(Rc<Vec<u8>>),
     /// A byte char (`b'f'`)
     LitByte(u8),
     /// A character literal (`'a'`)
@@ -1334,11 +1292,14 @@ impl fmt::Display for IntTy {
 }
 
 impl IntTy {
-    pub fn suffix_len(&self) -> usize {
-        match *self {
-            TyIs | TyI8 => 2,
-            TyI16 | TyI32 | TyI64  => 3,
-        }
+    pub fn bit_width(&self) -> Option<usize> {
+        Some(match *self {
+            TyIs => return None,
+            TyI8 => 8,
+            TyI16 => 16,
+            TyI32 => 32,
+            TyI64 => 64,
+        })
     }
 }
 
@@ -1352,11 +1313,14 @@ pub enum UintTy {
 }
 
 impl UintTy {
-    pub fn suffix_len(&self) -> usize {
-        match *self {
-            TyUs | TyU8 => 2,
-            TyU16 | TyU32 | TyU64  => 3,
-        }
+    pub fn bit_width(&self) -> Option<usize> {
+        Some(match *self {
+            TyUs => return None,
+            TyU8 => 8,
+            TyU16 => 16,
+            TyU32 => 32,
+            TyU64 => 64,
+        })
     }
 }
 
@@ -1391,9 +1355,10 @@ impl fmt::Display for FloatTy {
 }
 
 impl FloatTy {
-    pub fn suffix_len(&self) -> usize {
+    pub fn bit_width(&self) -> usize {
         match *self {
-            TyF32 | TyF64 => 3, // add F128 handling here
+            TyF32 => 32,
+            TyF64 => 64,
         }
     }
 }
@@ -1407,8 +1372,6 @@ pub struct TypeBinding {
     pub span: Span,
 }
 
-
-// NB PartialEq method appears below.
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash)]
 pub struct Ty {
     pub id: NodeId,
@@ -1471,6 +1434,8 @@ pub enum Ty_ {
     /// TyInfer means the type should be inferred instead of it having been
     /// specified. This can appear anywhere in a type.
     TyInfer,
+    // A macro in the type position.
+    TyMac(Mac)
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
@@ -1656,14 +1621,29 @@ pub type Variant = Spanned<Variant_>;
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub enum PathListItem_ {
-    PathListIdent { name: Ident, id: NodeId },
-    PathListMod { id: NodeId }
+    PathListIdent {
+        name: Ident,
+        /// renamed in list, eg `use foo::{bar as baz};`
+        rename: Option<Ident>,
+        id: NodeId
+    },
+    PathListMod {
+        /// renamed in list, eg `use foo::{self as baz};`
+        rename: Option<Ident>,
+        id: NodeId
+    }
 }
 
 impl PathListItem_ {
     pub fn id(&self) -> NodeId {
         match *self {
-            PathListIdent { id, .. } | PathListMod { id } => id
+            PathListIdent { id, .. } | PathListMod { id, .. } => id
+        }
+    }
+
+    pub fn rename(&self) -> Option<Ident> {
+        match *self {
+            PathListIdent { rename, .. } | PathListMod { rename, .. } => rename
         }
     }
 }
@@ -1906,17 +1886,6 @@ impl ForeignItem_ {
             ForeignItemStatic(..) => "foreign static item"
         }
     }
-}
-
-/// The data we save and restore about an inlined item or method.  This is not
-/// part of the AST that we parse from a file, but it becomes part of the tree
-/// that we trans.
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
-pub enum InlinedItem {
-    IIItem(P<Item>),
-    IITraitItem(DefId /* impl id */, P<TraitItem>),
-    IIImplItem(DefId /* impl id */, P<ImplItem>),
-    IIForeign(P<ForeignItem>),
 }
 
 /// A macro definition, in this crate or imported from another.

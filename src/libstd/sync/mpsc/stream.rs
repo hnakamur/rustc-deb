@@ -22,8 +22,6 @@ pub use self::UpgradeResult::*;
 pub use self::SelectionResult::*;
 use self::Message::*;
 
-use core::prelude::*;
-
 use core::cmp;
 use core::isize;
 use thread;
@@ -309,12 +307,7 @@ impl<T> Packet<T> {
                             steals, DISCONNECTED, Ordering::SeqCst);
             cnt != DISCONNECTED && cnt != steals
         } {
-            loop {
-                match self.queue.pop() {
-                    Some(..) => { steals += 1; }
-                    None => break
-                }
-            }
+            while let Some(_) = self.queue.pop() { steals += 1; }
         }
 
         // At this point in time, we have gated all future senders from sending,
@@ -380,7 +373,7 @@ impl<T> Packet<T> {
                 // previous value is positive because we're not going to sleep
                 let prev = self.bump(1);
                 assert!(prev == DISCONNECTED || prev >= 0);
-                return ret;
+                ret
             }
         }
     }

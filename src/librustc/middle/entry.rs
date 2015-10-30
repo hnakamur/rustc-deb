@@ -9,22 +9,21 @@
 // except according to those terms.
 
 
-use ast_map;
+use front::map as ast_map;
 use session::{config, Session};
-use syntax::ast::{Name, NodeId, Item, ItemFn};
-use syntax::attr;
+use syntax::ast::NodeId;
+use rustc_front::hir::{Item, ItemFn};
+use rustc_front::attr;
 use syntax::codemap::Span;
-use syntax::parse::token;
-use syntax::visit;
-use syntax::visit::Visitor;
+use syntax::entry::EntryPointType;
+use rustc_front::visit;
+use rustc_front::visit::Visitor;
 
-struct EntryContext<'a, 'ast: 'a> {
+struct EntryContext<'a> {
     session: &'a Session,
 
-    ast_map: &'a ast_map::Map<'ast>,
-
-    // The interned Name for "main".
-    main_name: Name,
+    // The current depth in the ast
+    depth: usize,
 
     // The top-level function called 'main'
     main_fn: Option<(NodeId, Span)>,
@@ -40,9 +39,11 @@ struct EntryContext<'a, 'ast: 'a> {
     non_main_fns: Vec<(NodeId, Span)> ,
 }
 
-impl<'a, 'ast, 'v> Visitor<'v> for EntryContext<'a, 'ast> {
+impl<'a, 'v> Visitor<'v> for EntryContext<'a> {
     fn visit_item(&mut self, item: &Item) {
+        self.depth += 1;
         find_item(item, self);
+        self.depth -= 1;
     }
 }
 
@@ -63,8 +64,7 @@ pub fn find_entry_point(session: &Session, ast_map: &ast_map::Map) {
 
     let mut ctxt = EntryContext {
         session: session,
-        main_name: token::intern("main"),
-        ast_map: ast_map,
+        depth: 0,
         main_fn: None,
         attr_main_fn: None,
         start_fn: None,
@@ -76,45 +76,61 @@ pub fn find_entry_point(session: &Session, ast_map: &ast_map::Map) {
     configure_main(&mut ctxt);
 }
 
-fn find_item(item: &Item, ctxt: &mut EntryContext) {
+// Beware, this is duplicated in libsyntax/entry.rs, make sure to keep
+// them in sync.
+fn entry_point_type(item: &Item, depth: usize) -> EntryPointType {
     match item.node {
         ItemFn(..) => {
-            if item.ident.name == ctxt.main_name {
-                 ctxt.ast_map.with_path(item.id, |path| {
-                        if path.count() == 1 {
-                            // This is a top-level function so can be 'main'
-                            if ctxt.main_fn.is_none() {
-                                ctxt.main_fn = Some((item.id, item.span));
-                            } else {
-                                span_err!(ctxt.session, item.span, E0136,
-                                          "multiple 'main' functions");
-                            }
-                        } else {
-                            // This isn't main
-                            ctxt.non_main_fns.push((item.id, item.span));
-                        }
-                });
-            }
-
-            if attr::contains_name(&item.attrs, "main") {
-                if ctxt.attr_main_fn.is_none() {
-                    ctxt.attr_main_fn = Some((item.id, item.span));
-                } else {
-                    span_err!(ctxt.session, item.span, E0137,
-                              "multiple functions with a #[main] attribute");
-                }
-            }
-
             if attr::contains_name(&item.attrs, "start") {
-                if ctxt.start_fn.is_none() {
-                    ctxt.start_fn = Some((item.id, item.span));
+                EntryPointType::Start
+            } else if attr::contains_name(&item.attrs, "main") {
+                EntryPointType::MainAttr
+            } else if item.ident.name == "main" {
+                if depth == 1 {
+                    // This is a top-level function so can be 'main'
+                    EntryPointType::MainNamed
                 } else {
-                    span_err!(ctxt.session, item.span, E0138,
-                              "multiple 'start' functions");
+                    EntryPointType::OtherMain
                 }
+            } else {
+                EntryPointType::None
             }
         }
-        _ => ()
+        _ => EntryPointType::None,
+    }
+}
+
+
+fn find_item(item: &Item, ctxt: &mut EntryContext) {
+    match entry_point_type(item, ctxt.depth) {
+        EntryPointType::MainNamed => {
+            if ctxt.main_fn.is_none() {
+                ctxt.main_fn = Some((item.id, item.span));
+            } else {
+                span_err!(ctxt.session, item.span, E0136,
+                          "multiple 'main' functions");
+            }
+        },
+        EntryPointType::OtherMain => {
+            ctxt.non_main_fns.push((item.id, item.span));
+        },
+        EntryPointType::MainAttr => {
+            if ctxt.attr_main_fn.is_none() {
+                ctxt.attr_main_fn = Some((item.id, item.span));
+            } else {
+                span_err!(ctxt.session, item.span, E0137,
+                          "multiple functions with a #[main] attribute");
+            }
+        },
+        EntryPointType::Start => {
+            if ctxt.start_fn.is_none() {
+                ctxt.start_fn = Some((item.id, item.span));
+            } else {
+                span_err!(ctxt.session, item.span, E0138,
+                          "multiple 'start' functions");
+            }
+        },
+        EntryPointType::None => ()
     }
 
     visit::walk_item(ctxt, item);

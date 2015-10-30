@@ -8,9 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![unstable(feature = "tcp", reason = "remaining functions have not been \
-                                       scrutinized enough to be stabilized")]
-
 use prelude::v1::*;
 use io::prelude::*;
 
@@ -128,32 +125,18 @@ impl TcpStream {
         self.0.duplicate().map(TcpStream)
     }
 
-    /// Sets the nodelay flag on this connection to the boolean specified.
-    #[deprecated(since = "1.3.0",
-                 reason = "available through the `net2` crate on crates.io")]
-    #[unstable(feature = "tcp_extras", reason = "available externally")]
-    pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
-        self.0.set_nodelay(nodelay)
-    }
-
-    /// Sets the keepalive timeout to the timeout specified.
-    ///
-    /// If the value specified is `None`, then the keepalive flag is cleared on
-    /// this connection. Otherwise, the keepalive timeout will be set to the
-    /// specified time, in seconds.
-    #[unstable(feature = "tcp_extras", reason = "available externally")]
-    #[deprecated(since = "1.3.0",
-                 reason = "available through the `net2` crate on crates.io")]
-    pub fn set_keepalive(&self, seconds: Option<u32>) -> io::Result<()> {
-        self.0.set_keepalive(seconds)
-    }
-
     /// Sets the read timeout to the timeout specified.
     ///
     /// If the value specified is `None`, then `read` calls will block
     /// indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
-    #[unstable(feature = "socket_timeout", reason = "RFC 1047 - recently added")]
+    ///
+    /// # Note
+    ///
+    /// Platforms may return a different error code whenever a read times out as
+    /// a result of setting this option. For example Unix typically returns an
+    /// error of the kind `WouldBlock`, but Windows may return `TimedOut`.
+    #[stable(feature = "socket_timeout", since = "1.4.0")]
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
         self.0.set_read_timeout(dur)
     }
@@ -163,7 +146,13 @@ impl TcpStream {
     /// If the value specified is `None`, then `write` calls will block
     /// indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
-    #[unstable(feature = "socket_timeout", reason = "RFC 1047 - recently added")]
+    ///
+    /// # Note
+    ///
+    /// Platforms may return a different error code whenever a write times out
+    /// as a result of setting this option. For example Unix typically returns
+    /// an error of the kind `WouldBlock`, but Windows may return `TimedOut`.
+    #[stable(feature = "socket_timeout", since = "1.4.0")]
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
         self.0.set_write_timeout(dur)
     }
@@ -175,7 +164,7 @@ impl TcpStream {
     /// # Note
     ///
     /// Some platforms do not provide access to the current timeout.
-    #[unstable(feature = "socket_timeout", reason = "RFC 1047 - recently added")]
+    #[stable(feature = "socket_timeout", since = "1.4.0")]
     pub fn read_timeout(&self) -> io::Result<Option<Duration>> {
         self.0.read_timeout()
     }
@@ -187,7 +176,7 @@ impl TcpStream {
     /// # Note
     ///
     /// Some platforms do not provide access to the current timeout.
-    #[unstable(feature = "socket_timeout", reason = "RFC 1047 - recently added")]
+    #[stable(feature = "socket_timeout", since = "1.4.0")]
     pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
         self.0.write_timeout()
     }
@@ -965,7 +954,6 @@ mod tests {
             assert!(kind == ErrorKind::WouldBlock || kind == ErrorKind::TimedOut);
         });
         assert!(wait > Duration::from_millis(400));
-        assert!(wait < Duration::from_millis(1600));
     }
 
     #[test]
@@ -988,6 +976,5 @@ mod tests {
             assert!(kind == ErrorKind::WouldBlock || kind == ErrorKind::TimedOut);
         });
         assert!(wait > Duration::from_millis(400));
-        assert!(wait < Duration::from_millis(1600));
     }
 }

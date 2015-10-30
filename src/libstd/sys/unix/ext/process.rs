@@ -14,7 +14,6 @@
 
 use os::unix::raw::{uid_t, gid_t};
 use os::unix::io::{FromRawFd, RawFd, AsRawFd, IntoRawFd};
-use prelude::v1::*;
 use process;
 use sys;
 use sys_common::{AsInnerMut, AsInner, FromInner, IntoInner};
@@ -32,6 +31,19 @@ pub trait CommandExt {
     /// the same semantics as the `uid` field.
     #[stable(feature = "rust1", since = "1.0.0")]
     fn gid(&mut self, id: gid_t) -> &mut process::Command;
+
+    /// Create a new session (cf. `setsid(2)`) for the child process. This means
+    /// that the child is the leader of a new process group. The parent process
+    /// remains the child reaper of the new process.
+    ///
+    /// This is not enough to create a daemon process. The *init* process should
+    /// be the child reaper of a daemon. This can be achieved if the parent
+    /// process exit. Moreover, a daemon should not have a controlling terminal.
+    /// To acheive this, a session leader (the child) must spawn another process
+    /// (the daemon) in the same session.
+    #[unstable(feature = "process_session_leader", reason = "recently added",
+               issue = "27811")]
+    fn session_leader(&mut self, on: bool) -> &mut process::Command;
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -43,6 +55,11 @@ impl CommandExt for process::Command {
 
     fn gid(&mut self, id: gid_t) -> &mut process::Command {
         self.as_inner_mut().gid = Some(id);
+        self
+    }
+
+    fn session_leader(&mut self, on: bool) -> &mut process::Command {
+        self.as_inner_mut().session_leader = on;
         self
     }
 }

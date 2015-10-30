@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use std::collections::BTreeSet;
-use std::hash::{SipHasher, self};
 
 #[test]
 fn test_clone_eq() {
@@ -34,7 +33,7 @@ fn test_hash() {
   y.insert(2);
   y.insert(1);
 
-  assert!(hash::hash::<_, SipHasher>(&x) == hash::hash::<_, SipHasher>(&y));
+  assert!(::hash(&x) == ::hash(&y));
 }
 
 struct Counter<'a, 'b> {
@@ -211,4 +210,53 @@ fn test_extend_ref() {
     assert!(a.contains(&4));
     assert!(a.contains(&5));
     assert!(a.contains(&6));
+}
+
+#[test]
+fn test_recovery() {
+    use std::cmp::Ordering;
+
+    #[derive(Debug)]
+    struct Foo(&'static str, i32);
+
+    impl PartialEq for Foo {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+
+    impl Eq for Foo {}
+
+    impl PartialOrd for Foo {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            self.0.partial_cmp(&other.0)
+        }
+    }
+
+    impl Ord for Foo {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.0.cmp(&other.0)
+        }
+    }
+
+    let mut s = BTreeSet::new();
+    assert_eq!(s.replace(Foo("a", 1)), None);
+    assert_eq!(s.len(), 1);
+    assert_eq!(s.replace(Foo("a", 2)), Some(Foo("a", 1)));
+    assert_eq!(s.len(), 1);
+
+    {
+        let mut it = s.iter();
+        assert_eq!(it.next(), Some(&Foo("a", 2)));
+        assert_eq!(it.next(), None);
+    }
+
+    assert_eq!(s.get(&Foo("a", 1)), Some(&Foo("a", 2)));
+    assert_eq!(s.take(&Foo("a", 1)), Some(Foo("a", 2)));
+    assert_eq!(s.len(), 0);
+
+    assert_eq!(s.get(&Foo("a", 1)), None);
+    assert_eq!(s.take(&Foo("a", 1)), None);
+
+    assert_eq!(s.iter().next(), None);
 }

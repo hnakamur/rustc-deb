@@ -12,8 +12,6 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use prelude::v1::*;
-
 use fs::{OpenOptions, Metadata};
 use io;
 use path::Path;
@@ -22,7 +20,8 @@ use sys_common::{AsInnerMut, AsInner};
 
 /// Windows-specific extensions to `OpenOptions`
 #[unstable(feature = "open_options_ext",
-           reason = "may require more thought/methods")]
+           reason = "may require more thought/methods",
+           issue = "27720")]
 pub trait OpenOptionsExt {
     /// Overrides the `dwDesiredAccess` argument to the call to `CreateFile`
     /// with the specified value.

@@ -17,7 +17,7 @@ use llvm::{Float, Double, X86_FP80, PPC_FP128, FP128};
 use trans::context::CrateContext;
 use util::nodemap::FnvHashMap;
 
-use syntax::ast;
+use rustc_front::hir;
 
 use std::ffi::CString;
 use std::mem;
@@ -48,6 +48,16 @@ impl Type {
     #[inline(always)] // So it doesn't kill --opt-level=0 builds of the compiler
     pub fn to_ref(&self) -> TypeRef {
         self.rf
+    }
+
+    pub fn to_string(self: Type) -> String {
+        llvm::build_string(|s| unsafe {
+            llvm::LLVMWriteTypeToString(self.to_ref(), s);
+        }).expect("non-UTF8 type description from LLVM")
+    }
+
+    pub fn to_ref_slice(slice: &[Type]) -> &[TypeRef] {
+        unsafe { mem::transmute(slice) }
     }
 
     pub fn void(ccx: &CrateContext) -> Type {
@@ -115,47 +125,47 @@ impl Type {
         }
     }
 
-    pub fn int_from_ty(ccx: &CrateContext, t: ast::IntTy) -> Type {
+    pub fn int_from_ty(ccx: &CrateContext, t: hir::IntTy) -> Type {
         match t {
-            ast::TyIs => ccx.int_type(),
-            ast::TyI8 => Type::i8(ccx),
-            ast::TyI16 => Type::i16(ccx),
-            ast::TyI32 => Type::i32(ccx),
-            ast::TyI64 => Type::i64(ccx)
+            hir::TyIs => ccx.int_type(),
+            hir::TyI8 => Type::i8(ccx),
+            hir::TyI16 => Type::i16(ccx),
+            hir::TyI32 => Type::i32(ccx),
+            hir::TyI64 => Type::i64(ccx)
         }
     }
 
-    pub fn uint_from_ty(ccx: &CrateContext, t: ast::UintTy) -> Type {
+    pub fn uint_from_ty(ccx: &CrateContext, t: hir::UintTy) -> Type {
         match t {
-            ast::TyUs => ccx.int_type(),
-            ast::TyU8 => Type::i8(ccx),
-            ast::TyU16 => Type::i16(ccx),
-            ast::TyU32 => Type::i32(ccx),
-            ast::TyU64 => Type::i64(ccx)
+            hir::TyUs => ccx.int_type(),
+            hir::TyU8 => Type::i8(ccx),
+            hir::TyU16 => Type::i16(ccx),
+            hir::TyU32 => Type::i32(ccx),
+            hir::TyU64 => Type::i64(ccx)
         }
     }
 
-    pub fn float_from_ty(ccx: &CrateContext, t: ast::FloatTy) -> Type {
+    pub fn float_from_ty(ccx: &CrateContext, t: hir::FloatTy) -> Type {
         match t {
-            ast::TyF32 => Type::f32(ccx),
-            ast::TyF64 => Type::f64(ccx),
+            hir::TyF32 => Type::f32(ccx),
+            hir::TyF64 => Type::f64(ccx),
         }
     }
 
     pub fn func(args: &[Type], ret: &Type) -> Type {
-        let vec : &[TypeRef] = unsafe { mem::transmute(args) };
-        ty!(llvm::LLVMFunctionType(ret.to_ref(), vec.as_ptr(),
+        let slice: &[TypeRef] = Type::to_ref_slice(args);
+        ty!(llvm::LLVMFunctionType(ret.to_ref(), slice.as_ptr(),
                                    args.len() as c_uint, False))
     }
 
     pub fn variadic_func(args: &[Type], ret: &Type) -> Type {
-        let vec : &[TypeRef] = unsafe { mem::transmute(args) };
-        ty!(llvm::LLVMFunctionType(ret.to_ref(), vec.as_ptr(),
+        let slice: &[TypeRef] = Type::to_ref_slice(args);
+        ty!(llvm::LLVMFunctionType(ret.to_ref(), slice.as_ptr(),
                                    args.len() as c_uint, True))
     }
 
     pub fn struct_(ccx: &CrateContext, els: &[Type], packed: bool) -> Type {
-        let els : &[TypeRef] = unsafe { mem::transmute(els) };
+        let els: &[TypeRef] = Type::to_ref_slice(els);
         ty!(llvm::LLVMStructTypeInContext(ccx.llcx(), els.as_ptr(),
                                           els.len() as c_uint,
                                           packed as Bool))
@@ -203,9 +213,9 @@ impl Type {
     }
 
     pub fn set_struct_body(&mut self, els: &[Type], packed: bool) {
+        let slice: &[TypeRef] = Type::to_ref_slice(els);
         unsafe {
-            let vec : &[TypeRef] = mem::transmute(els);
-            llvm::LLVMStructSetBody(self.to_ref(), vec.as_ptr(),
+            llvm::LLVMStructSetBody(self.to_ref(), slice.as_ptr(),
                                     els.len() as c_uint, packed as Bool)
         }
     }
@@ -315,9 +325,7 @@ impl TypeNames {
     }
 
     pub fn type_to_string(&self, ty: Type) -> String {
-        llvm::build_string(|s| unsafe {
-                llvm::LLVMWriteTypeToString(ty.to_ref(), s);
-            }).expect("non-UTF8 type description from LLVM")
+        ty.to_string()
     }
 
     pub fn types_to_str(&self, tys: &[Type]) -> String {

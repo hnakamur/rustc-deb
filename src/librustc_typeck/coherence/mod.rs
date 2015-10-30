@@ -16,9 +16,11 @@
 // mappings. That mapping code resides here.
 
 
+use middle::def_id::{DefId, LOCAL_CRATE};
 use middle::lang_items::UnsizeTraitLangItem;
 use middle::subst::{self, Subst};
 use middle::traits;
+use middle::ty;
 use middle::ty::RegionEscape;
 use middle::ty::{ImplContainer, ImplOrTraitItemId, ConstTraitItemId};
 use middle::ty::{MethodTraitItemId, TypeTraitItemId, ParameterEnvironment};
@@ -28,22 +30,20 @@ use middle::ty::{TyRef, TyStruct, TyTrait, TyTuple};
 use middle::ty::{TyStr, TyArray, TySlice, TyFloat, TyInfer, TyInt};
 use middle::ty::{TyUint, TyClosure, TyBox, TyBareFn};
 use middle::ty::TyProjection;
-use middle::ty;
+use middle::ty::util::CopyImplementationError;
 use middle::free_region::FreeRegionMap;
 use CrateCtxt;
 use middle::infer::{self, InferCtxt, new_infer_ctxt};
-use rustc::ast_map::{self, NodeItem};
 use std::cell::RefCell;
 use std::rc::Rc;
-use syntax::ast::{Crate, DefId};
-use syntax::ast::{Item, ItemImpl};
-use syntax::ast::{LOCAL_CRATE};
-use syntax::ast;
-use syntax::ast_util::local_def;
 use syntax::codemap::Span;
 use syntax::parse::token;
-use syntax::visit;
 use util::nodemap::{DefIdMap, FnvHashMap};
+use rustc::front::map as hir_map;
+use rustc::front::map::NodeItem;
+use rustc_front::visit;
+use rustc_front::hir::{Item, ItemImpl,Crate};
+use rustc_front::hir;
 
 mod orphan;
 mod overlap;
@@ -55,9 +55,9 @@ fn get_base_type_def_id<'a, 'tcx>(inference_context: &InferCtxt<'a, 'tcx>,
                                   ty: Ty<'tcx>)
                                   -> Option<DefId> {
     match ty.sty {
-        TyEnum(def_id, _) |
-        TyStruct(def_id, _) => {
-            Some(def_id)
+        TyEnum(def, _) |
+        TyStruct(def, _) => {
+            Some(def.did)
         }
 
         TyTrait(ref t) => {
@@ -89,7 +89,7 @@ fn get_base_type_def_id<'a, 'tcx>(inference_context: &InferCtxt<'a, 'tcx>,
 struct CoherenceChecker<'a, 'tcx: 'a> {
     crate_context: &'a CrateCtxt<'a, 'tcx>,
     inference_context: InferCtxt<'a, 'tcx>,
-    inherent_impls: RefCell<DefIdMap<Rc<RefCell<Vec<ast::DefId>>>>>,
+    inherent_impls: RefCell<DefIdMap<Rc<RefCell<Vec<DefId>>>>>,
 }
 
 struct CoherenceCheckVisitor<'a, 'tcx: 'a> {
@@ -126,7 +126,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
         // Populate the table of destructors. It might seem a bit strange to
         // do this here, but it's actually the most convenient place, since
         // the coherence tables contain the trait -> type mappings.
-        self.populate_destructor_table();
+        self.populate_destructors();
 
         // Check to make sure implementations of `Copy` are legal.
         self.check_implementations_of_copy();
@@ -138,7 +138,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
 
     fn check_implementation(&self, item: &Item) {
         let tcx = self.crate_context.tcx;
-        let impl_did = local_def(item.id);
+        let impl_did = DefId::local(item.id);
         let self_type = tcx.lookup_item_type(impl_did);
 
         // If there are no traits, then this implementation must have a
@@ -186,7 +186,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
         for trait_method in &prov {
             // Synthesize an ID.
             let new_id = tcx.sess.next_node_id();
-            let new_did = local_def(new_id);
+            let new_did = DefId::local(new_id);
 
             debug!("new_did={:?} trait_method={:?}", new_did, trait_method);
 
@@ -255,23 +255,19 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                 let mut items: Vec<ImplOrTraitItemId> =
                         impl_items.iter().map(|impl_item| {
                     match impl_item.node {
-                        ast::ConstImplItem(..) => {
-                            ConstTraitItemId(local_def(impl_item.id))
+                        hir::ConstImplItem(..) => {
+                            ConstTraitItemId(DefId::local(impl_item.id))
                         }
-                        ast::MethodImplItem(..) => {
-                            MethodTraitItemId(local_def(impl_item.id))
+                        hir::MethodImplItem(..) => {
+                            MethodTraitItemId(DefId::local(impl_item.id))
                         }
-                        ast::TypeImplItem(_) => {
-                            TypeTraitItemId(local_def(impl_item.id))
-                        }
-                        ast::MacImplItem(_) => {
-                            self.crate_context.tcx.sess.span_bug(impl_item.span,
-                                                                 "unexpanded macro");
+                        hir::TypeImplItem(_) => {
+                            TypeTraitItemId(DefId::local(impl_item.id))
                         }
                     }
                 }).collect();
 
-                let def_id = local_def(item.id);
+                let def_id = DefId::local(item.id);
                 if let Some(trait_ref) = self.crate_context.tcx.impl_trait_ref(def_id) {
                     self.instantiate_default_methods(def_id, &trait_ref, &mut items);
                 }
@@ -290,7 +286,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
     // Destructors
     //
 
-    fn populate_destructor_table(&self) {
+    fn populate_destructors(&self) {
         let tcx = self.crate_context.tcx;
         let drop_trait = match tcx.lang_items.drop_trait() {
             Some(id) => id, None => { return }
@@ -310,22 +306,16 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
 
             let self_type = tcx.lookup_item_type(impl_did);
             match self_type.ty.sty {
-                ty::TyEnum(type_def_id, _) |
-                ty::TyStruct(type_def_id, _) |
-                ty::TyClosure(type_def_id, _) => {
-                    tcx.destructor_for_type
-                       .borrow_mut()
-                       .insert(type_def_id, method_def_id.def_id());
-                    tcx.destructors
-                       .borrow_mut()
-                       .insert(method_def_id.def_id());
+                ty::TyEnum(type_def, _) |
+                ty::TyStruct(type_def, _) => {
+                    type_def.set_destructor(method_def_id.def_id());
                 }
                 _ => {
                     // Destructors only work on nominal types.
-                    if impl_did.krate == ast::LOCAL_CRATE {
+                    if impl_did.is_local() {
                         {
                             match tcx.map.find(impl_did.node) {
-                                Some(ast_map::NodeItem(item)) => {
+                                Some(hir_map::NodeItem(item)) => {
                                     span_err!(tcx.sess, item.span, E0120,
                                         "the Drop trait may only be implemented on structures");
                                 }
@@ -358,7 +348,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
             debug!("check_implementations_of_copy: impl_did={:?}",
                    impl_did);
 
-            if impl_did.krate != ast::LOCAL_CRATE {
+            if impl_did.krate != LOCAL_CRATE {
                 debug!("check_implementations_of_copy(): impl not in this \
                         crate");
                 return
@@ -378,27 +368,27 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
 
             match param_env.can_type_implement_copy(self_type, span) {
                 Ok(()) => {}
-                Err(ty::FieldDoesNotImplementCopy(name)) => {
+                Err(CopyImplementationError::InfrigingField(name)) => {
                        span_err!(tcx.sess, span, E0204,
                                  "the trait `Copy` may not be \
                                           implemented for this type; field \
                                           `{}` does not implement `Copy`",
                                          name)
                 }
-                Err(ty::VariantDoesNotImplementCopy(name)) => {
+                Err(CopyImplementationError::InfrigingVariant(name)) => {
                        span_err!(tcx.sess, span, E0205,
                                  "the trait `Copy` may not be \
                                           implemented for this type; variant \
                                           `{}` does not implement `Copy`",
                                          name)
                 }
-                Err(ty::TypeIsStructural) => {
+                Err(CopyImplementationError::NotAnAdt) => {
                        span_err!(tcx.sess, span, E0206,
                                  "the trait `Copy` may not be implemented \
                                   for this type; type is not a structure or \
                                   enumeration")
                 }
-                Err(ty::TypeHasDestructor) => {
+                Err(CopyImplementationError::HasDestructor) => {
                     span_err!(tcx.sess, span, E0184,
                               "the trait `Copy` may not be implemented for this type; \
                                the type has a destructor");
@@ -427,7 +417,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
             debug!("check_implementations_of_coerce_unsized: impl_did={:?}",
                    impl_did);
 
-            if impl_did.krate != ast::LOCAL_CRATE {
+            if impl_did.krate != LOCAL_CRATE {
                 debug!("check_implementations_of_coerce_unsized(): impl not \
                         in this crate");
                 return;
@@ -452,9 +442,9 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
 
             let check_mutbl = |mt_a: ty::TypeAndMut<'tcx>, mt_b: ty::TypeAndMut<'tcx>,
                                mk_ptr: &Fn(Ty<'tcx>) -> Ty<'tcx>| {
-                if (mt_a.mutbl, mt_b.mutbl) == (ast::MutImmutable, ast::MutMutable) {
+                if (mt_a.mutbl, mt_b.mutbl) == (hir::MutImmutable, hir::MutMutable) {
                     infcx.report_mismatched_types(span, mk_ptr(mt_b.ty),
-                                                  target, &ty::TypeError::Mutability);
+                                                  target, &ty::error::TypeError::Mutability);
                 }
                 (mt_a.ty, mt_b.ty, unsize_trait, None)
             };
@@ -471,10 +461,10 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                     check_mutbl(mt_a, mt_b, &|ty| tcx.mk_imm_ptr(ty))
                 }
 
-                (&ty::TyStruct(def_id_a, substs_a), &ty::TyStruct(def_id_b, substs_b)) => {
-                    if def_id_a != def_id_b {
-                        let source_path = tcx.item_path_str(def_id_a);
-                        let target_path = tcx.item_path_str(def_id_b);
+                (&ty::TyStruct(def_a, substs_a), &ty::TyStruct(def_b, substs_b)) => {
+                    if def_a != def_b {
+                        let source_path = tcx.item_path_str(def_a.did);
+                        let target_path = tcx.item_path_str(def_b.did);
                         span_err!(tcx.sess, span, E0377,
                                   "the trait `CoerceUnsized` may only be implemented \
                                    for a coercion between structures with the same \
@@ -484,10 +474,9 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                     }
 
                     let origin = infer::Misc(span);
-                    let fields = tcx.lookup_struct_fields(def_id_a);
+                    let fields = &def_a.struct_variant().fields;
                     let diff_fields = fields.iter().enumerate().filter_map(|(i, f)| {
-                        let ty = tcx.lookup_field_type_unsubstituted(def_id_a, f.id);
-                        let (a, b) = (ty.subst(tcx, substs_a), ty.subst(tcx, substs_b));
+                        let (a, b) = (f.ty(tcx, substs_a), f.ty(tcx, substs_b));
                         if infcx.sub_types(false, origin, b, a).is_ok() {
                             None
                         } else {
@@ -519,7 +508,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                     }
 
                     let (i, a, b) = diff_fields[0];
-                    let kind = ty::CustomCoerceUnsized::Struct(i);
+                    let kind = ty::adjustment::CustomCoerceUnsized::Struct(i);
                     (a, b, coerce_unsized_trait, Some(kind))
                 }
 
@@ -557,7 +546,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
     }
 }
 
-fn enforce_trait_manually_implementable(tcx: &ty::ctxt, sp: Span, trait_def_id: ast::DefId) {
+fn enforce_trait_manually_implementable(tcx: &ty::ctxt, sp: Span, trait_def_id: DefId) {
     if tcx.sess.features.borrow().unboxed_closures {
         // the feature gate allows all of them
         return
@@ -580,12 +569,12 @@ fn enforce_trait_manually_implementable(tcx: &ty::ctxt, sp: Span, trait_def_id: 
 }
 
 fn subst_receiver_types_in_method_ty<'tcx>(tcx: &ty::ctxt<'tcx>,
-                                           impl_id: ast::DefId,
+                                           impl_id: DefId,
                                            impl_type_scheme: &ty::TypeScheme<'tcx>,
                                            trait_ref: &ty::TraitRef<'tcx>,
-                                           new_def_id: ast::DefId,
+                                           new_def_id: DefId,
                                            method: &ty::Method<'tcx>,
-                                           provided_source: Option<ast::DefId>)
+                                           provided_source: Option<DefId>)
                                            -> ty::Method<'tcx>
 {
     let combined_substs = tcx.make_substs_for_receiver_types(trait_ref, method);

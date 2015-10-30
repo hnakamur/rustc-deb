@@ -19,9 +19,10 @@ use ext::build::AstBuilder;
 use attr;
 use attr::AttrMetaMethods;
 use codemap;
-use codemap::{Span, Spanned, ExpnInfo, NameAndSpan, MacroBang, MacroAttribute, CompilerExpansion};
+use codemap::{Span, Spanned, ExpnInfo, NameAndSpan, MacroBang, MacroAttribute};
+use codemap::{CompilerExpansion, CompilerExpansionFormat};
 use ext::base::*;
-use feature_gate::{self, Features};
+use feature_gate::{self, Features, GatedCfg};
 use fold;
 use fold::*;
 use parse;
@@ -38,18 +39,17 @@ use std_inject;
 fn mk_core_path(fld: &mut MacroExpander,
                 span: Span,
                 suffix: &[&'static str]) -> ast::Path {
-    let mut idents = vec![fld.cx.ident_of_std("core")];
-    for s in suffix.iter() { idents.push(fld.cx.ident_of(*s)); }
+    let idents = fld.cx.std_path(suffix);
     fld.cx.path_global(span, idents)
 }
 
 pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
-    fn push_compiler_expansion(fld: &mut MacroExpander, span: Span, expansion_desc: &str) {
+    fn push_compiler_expansion(fld: &mut MacroExpander, span: Span,
+                               expansion_type: CompilerExpansionFormat) {
         fld.cx.bt_push(ExpnInfo {
             call_site: span,
             callee: NameAndSpan {
-                name: expansion_desc.to_string(),
-                format: CompilerExpansion,
+                format: CompilerExpansion(expansion_type),
 
                 // This does *not* mean code generated after
                 // `push_compiler_expansion` is automatically exempt
@@ -112,7 +112,7 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
                 &fld.cx.parse_sess.span_diagnostic,
                 expr_span);
 
-            push_compiler_expansion(fld, expr_span, "placement-in expansion");
+            push_compiler_expansion(fld, expr_span, CompilerExpansionFormat::PlacementIn);
 
             let value_span = value_expr.span;
             let placer_span = placer.span;
@@ -224,7 +224,7 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
             //     }
             //   }
 
-            push_compiler_expansion(fld, span, "while let expansion");
+            push_compiler_expansion(fld, span, CompilerExpansionFormat::WhileLet);
 
             // `<pat> => <body>`
             let pat_arm = {
@@ -263,7 +263,7 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
             //     _ => [<elseopt> | ()]
             //   }
 
-            push_compiler_expansion(fld, span, "if let expansion");
+            push_compiler_expansion(fld, span, CompilerExpansionFormat::IfLet);
 
             // `<pat> => <body>`
             let pat_arm = {
@@ -335,7 +335,7 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
         ast::ExprIf(cond, blk, elseopt) => {
             let elseopt = elseopt.map(|els| els.and_then(|els| match els.node {
                 ast::ExprIfLet(..) => {
-                    push_compiler_expansion(fld, span, "if let expansion");
+                    push_compiler_expansion(fld, span, CompilerExpansionFormat::IfLet);
                     // wrap the if-let expr in a block
                     let span = els.span;
                     let blk = P(ast::Block {
@@ -379,29 +379,20 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
             //     result
             //   }
 
-            push_compiler_expansion(fld, span, "for loop expansion");
+            push_compiler_expansion(fld, span, CompilerExpansionFormat::ForLoop);
 
             let span = fld.new_span(span);
 
             // expand <head>
             let head = fld.fold_expr(head);
 
-            // create an hygienic ident
-            let iter = {
-                let ident = fld.cx.ident_of("iter");
-                let new_ident = fresh_name(&ident);
-                let rename = (ident, new_ident);
-                let mut rename_list = vec![rename];
-                let mut rename_fld = IdentRenamer{ renames: &mut rename_list };
-
-                rename_fld.fold_ident(ident)
-            };
+            let iter = token::gensym_ident("iter");
 
             let pat_span = fld.new_span(pat.span);
             // `::std::option::Option::Some(<pat>) => <body>`
             let pat_arm = {
                 let body_expr = fld.cx.expr_block(body);
-                let pat = noop_fold_pat(pat, fld);
+                let pat = fld.fold_pat(pat);
                 let some_pat = fld.cx.pat_some(pat_span, pat);
 
                 fld.cx.arm(pat_span, vec![some_pat], body_expr)
@@ -417,12 +408,7 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
             // `match ::std::iter::Iterator::next(&mut iter) { ... }`
             let match_expr = {
                 let next_path = {
-                    let strs = vec![
-                        fld.cx.ident_of_std("core"),
-                        fld.cx.ident_of("iter"),
-                        fld.cx.ident_of("Iterator"),
-                        fld.cx.ident_of("next"),
-                    ];
+                    let strs = fld.cx.std_path(&["iter", "Iterator", "next"]);
 
                     fld.cx.path_global(span, strs)
                 };
@@ -450,12 +436,8 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
             // `match ::std::iter::IntoIterator::into_iter(<head>) { ... }`
             let into_iter_expr = {
                 let into_iter_path = {
-                    let strs = vec![
-                        fld.cx.ident_of_std("core"),
-                        fld.cx.ident_of("iter"),
-                        fld.cx.ident_of("IntoIterator"),
-                        fld.cx.ident_of("into_iter"),
-                    ];
+                    let strs = fld.cx.std_path(&["iter", "IntoIterator",
+                                                 "into_iter"]);
 
                     fld.cx.path_global(span, strs)
                 };
@@ -477,15 +459,12 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
         }
 
         ast::ExprClosure(capture_clause, fn_decl, block) => {
-            push_compiler_expansion(fld, span, "closure expansion");
             let (rewritten_fn_decl, rewritten_block)
                 = expand_and_rename_fn_decl_and_block(fn_decl, block, fld);
             let new_node = ast::ExprClosure(capture_clause,
                                             rewritten_fn_decl,
                                             rewritten_block);
-            let result = P(ast::Expr{id:id, node: new_node, span: fld.new_span(span)});
-            fld.cx.bt_pop();
-            result
+            P(ast::Expr{id:id, node: new_node, span: fld.new_span(span)})
         }
 
         _ => {
@@ -561,8 +540,7 @@ fn expand_mac_invoc<T, F, G>(mac: ast::Mac,
                         fld.cx.bt_push(ExpnInfo {
                                 call_site: span,
                                 callee: NameAndSpan {
-                                    name: extname.to_string(),
-                                    format: MacroBang,
+                                    format: MacroBang(extname),
                                     span: exp_span,
                                     allow_internal_unstable: allow_internal_unstable,
                                 },
@@ -658,9 +636,9 @@ macro_rules! with_exts_frame {
 // When we enter a module, record it, for the sake of `module!`
 pub fn expand_item(it: P<ast::Item>, fld: &mut MacroExpander)
                    -> SmallVector<P<ast::Item>> {
-    let it = expand_item_modifiers(it, fld);
+    let it = expand_item_multi_modifier(Annotatable::Item(it), fld);
 
-    expand_annotatable(Annotatable::Item(it), fld)
+    expand_annotatable(it, fld)
         .into_iter().map(|i| i.expect_item()).collect()
 }
 
@@ -740,8 +718,7 @@ pub fn expand_item_mac(it: P<ast::Item>,
                     fld.cx.bt_push(ExpnInfo {
                         call_site: it.span,
                         callee: NameAndSpan {
-                            name: extname.to_string(),
-                            format: MacroBang,
+                            format: MacroBang(extname),
                             span: span,
                             allow_internal_unstable: allow_internal_unstable,
                         }
@@ -760,8 +737,7 @@ pub fn expand_item_mac(it: P<ast::Item>,
                     fld.cx.bt_push(ExpnInfo {
                         call_site: it.span,
                         callee: NameAndSpan {
-                            name: extname.to_string(),
-                            format: MacroBang,
+                            format: MacroBang(extname),
                             span: span,
                             allow_internal_unstable: allow_internal_unstable,
                         }
@@ -781,8 +757,7 @@ pub fn expand_item_mac(it: P<ast::Item>,
                     fld.cx.bt_push(ExpnInfo {
                         call_site: it.span,
                         callee: NameAndSpan {
-                            name: extname.to_string(),
-                            format: MacroBang,
+                            format: MacroBang(extname),
                             span: None,
                             // `macro_rules!` doesn't directly allow
                             // unstable (this is orthogonal to whether
@@ -803,6 +778,7 @@ pub fn expand_item_mac(it: P<ast::Item>,
                             &fld.cx.parse_sess.span_diagnostic,
                             "allow_internal_unstable",
                             it.span,
+                            feature_gate::GateIssue::Language,
                             feature_gate::EXPLAIN_ALLOW_INTERNAL_UNSTABLE)
                     }
 
@@ -1109,8 +1085,7 @@ fn expand_pat(p: P<ast::Pat>, fld: &mut MacroExpander) -> P<ast::Pat> {
                     fld.cx.bt_push(ExpnInfo {
                         call_site: span,
                         callee: NameAndSpan {
-                            name: extname.to_string(),
-                            format: MacroBang,
+                            format: MacroBang(extname),
                             span: tt_span,
                             allow_internal_unstable: allow_internal_unstable,
                         }
@@ -1301,56 +1276,25 @@ macro_rules! partition {
     }
 }
 
-partition!(modifiers, Modifier);
 partition!(multi_modifiers, MultiModifier);
 
 
-#[allow(deprecated)] // The `allow` is needed because the `Decorator` variant is used.
 fn expand_decorators(a: Annotatable,
                      fld: &mut MacroExpander,
                      decorator_items: &mut SmallVector<Annotatable>,
                      new_attrs: &mut Vec<ast::Attribute>)
 {
     for attr in a.attrs() {
-        let mname = attr.name();
-        match fld.cx.syntax_env.find(&intern(&mname)) {
+        let mname = intern(&attr.name());
+        match fld.cx.syntax_env.find(&mname) {
             Some(rc) => match *rc {
-                Decorator(ref dec) => {
-                    attr::mark_used(&attr);
-
-                    fld.cx.bt_push(ExpnInfo {
-                        call_site: attr.span,
-                        callee: NameAndSpan {
-                            name: mname.to_string(),
-                            format: MacroAttribute,
-                            span: Some(attr.span),
-                            // attributes can do whatever they like,
-                            // for now.
-                            allow_internal_unstable: true,
-                        }
-                    });
-
-                    // we'd ideally decorator_items.push_all(expand_item(item, fld)),
-                    // but that double-mut-borrows fld
-                    let mut items: SmallVector<Annotatable> = SmallVector::zero();
-                    dec.expand(fld.cx,
-                               attr.span,
-                               &attr.node.value,
-                               &a.clone().expect_item(),
-                               &mut |item| items.push(Annotatable::Item(item)));
-                    decorator_items.extend(items.into_iter()
-                        .flat_map(|ann| expand_annotatable(ann, fld).into_iter()));
-
-                    fld.cx.bt_pop();
-                }
                 MultiDecorator(ref dec) => {
                     attr::mark_used(&attr);
 
                     fld.cx.bt_push(ExpnInfo {
                         call_site: attr.span,
                         callee: NameAndSpan {
-                            name: mname.to_string(),
-                            format: MacroAttribute,
+                            format: MacroAttribute(mname),
                             span: Some(attr.span),
                             // attributes can do whatever they like,
                             // for now.
@@ -1391,17 +1335,16 @@ fn expand_item_multi_modifier(mut it: Annotatable,
     }
 
     for attr in &modifiers {
-        let mname = attr.name();
+        let mname = intern(&attr.name());
 
-        match fld.cx.syntax_env.find(&intern(&mname)) {
+        match fld.cx.syntax_env.find(&mname) {
             Some(rc) => match *rc {
                 MultiModifier(ref mac) => {
                     attr::mark_used(attr);
                     fld.cx.bt_push(ExpnInfo {
                         call_site: attr.span,
                         callee: NameAndSpan {
-                            name: mname.to_string(),
-                            format: MacroAttribute,
+                            format: MacroAttribute(mname),
                             span: Some(attr.span),
                             // attributes can do whatever they like,
                             // for now
@@ -1419,59 +1362,6 @@ fn expand_item_multi_modifier(mut it: Annotatable,
 
     // Expansion may have added new ItemModifiers.
     expand_item_multi_modifier(it, fld)
-}
-
-#[allow(deprecated)] // This is needed because the `ItemModifier` trait is used
-fn expand_item_modifiers(mut it: P<ast::Item>,
-                         fld: &mut MacroExpander)
-                         -> P<ast::Item> {
-    // partition the attributes into ItemModifiers and others
-    let (modifiers, other_attrs) = modifiers(&it.attrs, fld);
-
-    // update the attrs, leave everything else alone. Is this mutation really a good idea?
-    it = P(ast::Item {
-        attrs: other_attrs,
-        ..(*it).clone()
-    });
-
-    if modifiers.is_empty() {
-        let it = expand_item_multi_modifier(Annotatable::Item(it), fld);
-        return it.expect_item();
-    }
-
-    for attr in &modifiers {
-        let mname = attr.name();
-
-        match fld.cx.syntax_env.find(&intern(&mname)) {
-            Some(rc) => match *rc {
-                Modifier(ref mac) => {
-                    attr::mark_used(attr);
-                    fld.cx.bt_push(ExpnInfo {
-                        call_site: attr.span,
-                        callee: NameAndSpan {
-                            name: mname.to_string(),
-                            format: MacroAttribute,
-                            span: Some(attr.span),
-                            // attributes can do whatever they like,
-                            // for now
-                            allow_internal_unstable: true,
-                        }
-                    });
-                    it = mac.expand(fld.cx, attr.span, &*attr.node.value, it);
-                    fld.cx.bt_pop();
-                }
-                _ => unreachable!()
-            },
-            _ => unreachable!()
-        }
-    }
-
-    // Expansion may have added new ItemModifiers.
-    // It is possible, that an item modifier could expand to a multi-modifier or
-    // vice versa. In this case we will expand all modifiers before multi-modifiers,
-    // which might give an odd ordering. However, I think it is unlikely that the
-    // two kinds will be mixed, and old-style multi-modifiers are deprecated.
-    expand_item_modifiers(it, fld)
 }
 
 fn expand_impl_item(ii: P<ast::ImplItem>, fld: &mut MacroExpander)
@@ -1552,6 +1442,46 @@ fn expand_and_rename_method(sig: ast::MethodSig, body: P<ast::Block>,
     }, rewritten_body)
 }
 
+pub fn expand_type(t: P<ast::Ty>, fld: &mut MacroExpander) -> P<ast::Ty> {
+    let t = match t.node.clone() {
+        ast::Ty_::TyMac(mac) => {
+            if fld.cx.ecfg.features.unwrap().type_macros {
+                let expanded_ty = match expand_mac_invoc(mac, t.span,
+                                                         |r| r.make_ty(),
+                                                         mark_ty,
+                                                         fld) {
+                    Some(ty) => ty,
+                    None => {
+                        return DummyResult::raw_ty(t.span);
+                    }
+                };
+
+                // Keep going, outside-in.
+                let fully_expanded = fld.fold_ty(expanded_ty);
+                fld.cx.bt_pop();
+
+                fully_expanded.map(|t| ast::Ty {
+                    id: ast::DUMMY_NODE_ID,
+                    node: t.node,
+                    span: t.span,
+                    })
+            } else {
+                feature_gate::emit_feature_err(
+                    &fld.cx.parse_sess.span_diagnostic,
+                    "type_macros",
+                    t.span,
+                    feature_gate::GateIssue::Language,
+                    "type macros are experimental");
+
+                DummyResult::raw_ty(t.span)
+            }
+        }
+        _ => t
+    };
+
+    fold::noop_fold_ty(t, fld)
+}
+
 /// A tree-folder that performs macro expansion
 pub struct MacroExpander<'a, 'b:'a> {
     pub cx: &'a mut ExtCtxt<'b>,
@@ -1600,6 +1530,10 @@ impl<'a, 'b> Folder for MacroExpander<'a, 'b> {
     fn fold_impl_item(&mut self, i: P<ast::ImplItem>) -> SmallVector<P<ast::ImplItem>> {
         expand_annotatable(Annotatable::ImplItem(i), self)
             .into_iter().map(|i| i.expect_impl_item()).collect()
+    }
+
+    fn fold_ty(&mut self, ty: P<ast::Ty>) -> P<ast::Ty> {
+        expand_type(ty, self)
     }
 
     fn new_span(&mut self, span: Span) -> Span {
@@ -1663,9 +1597,17 @@ pub fn expand_crate<'feat>(parse_sess: &parse::ParseSess,
                            // these are the macros being imported to this crate:
                            imported_macros: Vec<ast::MacroDef>,
                            user_exts: Vec<NamedSyntaxExtension>,
+                           feature_gated_cfgs: &mut Vec<GatedCfg>,
                            c: Crate) -> Crate {
-    let mut cx = ExtCtxt::new(parse_sess, c.config.clone(), cfg);
-    cx.use_std = std_inject::use_std(&c);
+    let mut cx = ExtCtxt::new(parse_sess, c.config.clone(), cfg,
+                              feature_gated_cfgs);
+    if std_inject::no_core(&c) {
+        cx.crate_root = None;
+    } else if std_inject::no_std(&c) {
+        cx.crate_root = Some("core");
+    } else {
+        cx.crate_root = Some("std");
+    }
 
     let mut expander = MacroExpander::new(&mut cx);
 
@@ -1746,6 +1688,10 @@ fn mark_item(expr: P<ast::Item>, m: Mrk) -> P<ast::Item> {
 fn mark_impl_item(ii: P<ast::ImplItem>, m: Mrk) -> P<ast::ImplItem> {
     Marker{mark:m}.fold_impl_item(ii)
         .expect_one("marking an impl item didn't return exactly one impl item")
+}
+
+fn mark_ty(ty: P<ast::Ty>, m: Mrk) -> P<ast::Ty> {
+    Marker { mark: m }.fold_ty(ty)
 }
 
 /// Check that there are no macro invocations left in the AST:
@@ -1844,7 +1790,7 @@ mod tests {
             src,
             Vec::new(), &sess);
         // should fail:
-        expand_crate(&sess,test_ecfg(),vec!(),vec!(),crate_ast);
+        expand_crate(&sess,test_ecfg(),vec!(),vec!(), &mut vec![], crate_ast);
     }
 
     // make sure that macros can't escape modules
@@ -1857,7 +1803,7 @@ mod tests {
             "<test>".to_string(),
             src,
             Vec::new(), &sess);
-        expand_crate(&sess,test_ecfg(),vec!(),vec!(),crate_ast);
+        expand_crate(&sess,test_ecfg(),vec!(),vec!(), &mut vec![], crate_ast);
     }
 
     // macro_use modules should allow macros to escape
@@ -1869,14 +1815,14 @@ mod tests {
             "<test>".to_string(),
             src,
             Vec::new(), &sess);
-        expand_crate(&sess, test_ecfg(), vec!(), vec!(), crate_ast);
+        expand_crate(&sess, test_ecfg(), vec!(), vec!(), &mut vec![], crate_ast);
     }
 
     fn expand_crate_str(crate_str: String) -> ast::Crate {
         let ps = parse::ParseSess::new();
         let crate_ast = panictry!(string_to_parser(&ps, crate_str).parse_crate_mod());
         // the cfg argument actually does matter, here...
-        expand_crate(&ps,test_ecfg(),vec!(),vec!(),crate_ast)
+        expand_crate(&ps,test_ecfg(),vec!(),vec!(), &mut vec![], crate_ast)
     }
 
     // find the pat_ident paths in a crate

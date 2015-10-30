@@ -29,6 +29,7 @@ use std::usize;
 use syntax::ast;
 use syntax::ast_util;
 use syntax::codemap::Span;
+use rustc_front::hir;
 
 #[path="fragments.rs"]
 pub mod fragments;
@@ -494,7 +495,7 @@ impl<'tcx> MoveData<'tcx> {
                 LpVar(..) | LpUpvar(..) | LpDowncast(..) => {
                     let kill_scope = path.loan_path.kill_scope(tcx);
                     let path = *self.path_map.borrow().get(&path.loan_path).unwrap();
-                    self.kill_moves(path, kill_scope.node_id(),
+                    self.kill_moves(path, kill_scope.node_id(&tcx.region_maps),
                                     KillFrom::ScopeEnd, dfcx_moves);
                 }
                 LpExtend(..) => {}
@@ -509,7 +510,7 @@ impl<'tcx> MoveData<'tcx> {
                 LpVar(..) | LpUpvar(..) | LpDowncast(..) => {
                     let kill_scope = lp.kill_scope(tcx);
                     dfcx_assign.add_kill(KillFrom::ScopeEnd,
-                                         kill_scope.node_id(),
+                                         kill_scope.node_id(&tcx.region_maps),
                                          assignment_index);
                 }
                 LpExtend(..) => {
@@ -601,8 +602,8 @@ impl<'a, 'tcx> FlowedMoveData<'a, 'tcx> {
                tcx: &'a ty::ctxt<'tcx>,
                cfg: &cfg::CFG,
                id_range: ast_util::IdRange,
-               decl: &ast::FnDecl,
-               body: &ast::Block)
+               decl: &hir::FnDecl,
+               body: &hir::Block)
                -> FlowedMoveData<'a, 'tcx> {
         let mut dfcx_moves =
             DataFlowContext::new(tcx,

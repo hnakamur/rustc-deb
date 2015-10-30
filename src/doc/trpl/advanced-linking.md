@@ -34,16 +34,16 @@ formal `#[link(...)]` attribute on `extern` blocks instead.
 
 # Static linking
 
-Static linking refers to the process of creating output that contain all
-required libraries and so don't need libraries installed on every system where
+Static linking refers to the process of creating output that contains all
+required libraries and so doesn't need libraries installed on every system where
 you want to use your compiled project. Pure-Rust dependencies are statically
 linked by default so you can use created binaries and libraries without
-installing the Rust everywhere. By contrast, native libraries
-(e.g. `libc` and `libm`) usually dynamically linked, but it is possible to
+installing Rust everywhere. By contrast, native libraries
+(e.g. `libc` and `libm`) are usually dynamically linked, but it is possible to
 change this and statically link them as well.
 
-Linking is a very platform dependent topic — on some platforms, static linking
-may not be possible at all! This section assumes some basic familiarity with
+Linking is a very platform-dependent topic, and static linking may not even be
+possible on some platforms! This section assumes some basic familiarity with
 linking on your platform of choice.
 
 ## Linux
@@ -71,8 +71,7 @@ Dynamic linking on Linux can be undesirable if you wish to use new library
 features on old systems or target systems which do not have the required
 dependencies for your program to run.
 
-Static linking is supported via an alternative `libc`, `musl` - this must be
-enabled at Rust compile-time with some prerequisites available. You can compile
+Static linking is supported via an alternative `libc`, `musl`. You can compile
 your own version of Rust with `musl` enabled and install it into a custom
 directory with the instructions below:
 
@@ -81,33 +80,30 @@ $ mkdir musldist
 $ PREFIX=$(pwd)/musldist
 $
 $ # Build musl
-$ wget http://www.musl-libc.org/releases/musl-1.1.10.tar.gz
-[...]
+$ curl -O http://www.musl-libc.org/releases/musl-1.1.10.tar.gz
 $ tar xf musl-1.1.10.tar.gz
 $ cd musl-1.1.10/
 musl-1.1.10 $ ./configure --disable-shared --prefix=$PREFIX
-[...]
 musl-1.1.10 $ make
-[...]
 musl-1.1.10 $ make install
-[...]
 musl-1.1.10 $ cd ..
 $ du -h musldist/lib/libc.a
 2.2M    musldist/lib/libc.a
 $
 $ # Build libunwind.a
-$ wget http://llvm.org/releases/3.6.1/llvm-3.6.1.src.tar.xz
-$ tar xf llvm-3.6.1.src.tar.xz
-$ cd llvm-3.6.1.src/projects/
-llvm-3.6.1.src/projects $ svn co http://llvm.org/svn/llvm-project/libcxxabi/trunk/ libcxxabi
-llvm-3.6.1.src/projects $ svn co http://llvm.org/svn/llvm-project/libunwind/trunk/ libunwind
-llvm-3.6.1.src/projects $ sed -i 's#^\(include_directories\).*$#\0\n\1(../libcxxabi/include)#' libunwind/CMakeLists.txt
-llvm-3.6.1.src/projects $ mkdir libunwind/build
-llvm-3.6.1.src/projects $ cd libunwind/build
-llvm-3.6.1.src/projects/libunwind/build $ cmake -DLLVM_PATH=../../.. -DLIBUNWIND_ENABLE_SHARED=0 ..
-llvm-3.6.1.src/projects/libunwind/build $ make
-llvm-3.6.1.src/projects/libunwind/build $ cp lib/libunwind.a $PREFIX/lib/
-llvm-3.6.1.src/projects/libunwind/build $ cd cd ../../../../
+$ curl -O http://llvm.org/releases/3.7.0/llvm-3.7.0.src.tar.xz
+$ tar xf llvm-3.7.0.src.tar.xz
+$ cd llvm-3.7.0.src/projects/
+llvm-3.7.0.src/projects $ curl http://llvm.org/releases/3.7.0/libcxxabi-3.7.0.src.tar.xz | tar xJf -
+llvm-3.7.0.src/projects $ mv libcxxabi-3.7.0.src libcxxabi
+llvm-3.7.0.src/projects $ curl http://llvm.org/releases/3.7.0/libunwind-3.7.0.src.tar.xz | tar xJf -
+llvm-3.7.0.src/projects $ mv libunwind-3.7.0.src libunwind
+llvm-3.7.0.src/projects $ mkdir libunwind/build
+llvm-3.7.0.src/projects $ cd libunwind/build
+llvm-3.7.0.src/projects/libunwind/build $ cmake -DLLVM_PATH=../../.. -DLIBUNWIND_ENABLE_SHARED=0 ..
+llvm-3.7.0.src/projects/libunwind/build $ make
+llvm-3.7.0.src/projects/libunwind/build $ cp lib/libunwind.a $PREFIX/lib/
+llvm-3.7.0.src/projects/libunwind/build $ cd ../../../../
 $ du -h musldist/lib/libunwind.a
 164K    musldist/lib/libunwind.a
 $
@@ -123,7 +119,7 @@ $ du -h musldist/bin/rustc
 ```
 
 You now have a build of a `musl`-enabled Rust! Because we've installed it to a
-custom prefix we need to make sure our system can the binaries and appropriate
+custom prefix we need to make sure our system can find the binaries and appropriate
 libraries when we try and run it:
 
 ```text

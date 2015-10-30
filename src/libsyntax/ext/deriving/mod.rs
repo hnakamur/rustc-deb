@@ -40,13 +40,13 @@ macro_rules! path_local {
 }
 
 macro_rules! pathvec_std {
-    ($cx:expr, $first:ident :: $($rest:ident)::+) => (
-        if $cx.use_std {
-            pathvec!(std :: $($rest)::+)
-        } else {
-            pathvec!($first :: $($rest)::+)
+    ($cx:expr, $first:ident :: $($rest:ident)::+) => ({
+        let mut v = pathvec!($($rest)::+);
+        if let Some(s) = $cx.crate_root {
+            v.insert(0, s);
         }
-    )
+        v
+    })
 }
 
 macro_rules! path_std {
@@ -105,6 +105,7 @@ fn expand_derive(cx: &mut ExtCtxt,
                     feature_gate::emit_feature_err(&cx.parse_sess.span_diagnostic,
                                                    "custom_derive",
                                                    titem.span,
+                                                   feature_gate::GateIssue::Language,
                                                    feature_gate::EXPLAIN_CUSTOM_DERIVE);
                     continue;
                 }
