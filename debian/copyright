@@ -3,7 +3,6 @@ Upstream-Name: rust
 Source: http://www.rust-lang.org
 Files-Excluded:
  src/llvm
- src/etc/snapshot.pyc
 
 Files: *
 Copyright: 2006-2009 Graydon Hoare
