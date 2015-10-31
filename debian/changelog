@@ -1,4 +1,4 @@
-rustc (1.4.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.4.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
     198068b3 => 1bf6e69c
