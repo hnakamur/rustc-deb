@@ -12,7 +12,7 @@ Index: rustc.git/configure
 ===================================================================
 --- rustc.git.orig/configure
 +++ rustc.git/configure
-@@ -1035,12 +1035,13 @@ fi
+@@ -1067,12 +1067,13 @@ fi
  # point in the script; after this point, script logic should inspect
  # $CFG_USING_CLANG rather than $CFG_ENABLE_CLANG.
  
@@ -25,9 +25,9 @@ Index: rustc.git/configure
  envopt CXXFLAGS
 +envopt LDFLAGS
  
- # a little post-processing of various config values
- CFG_PREFIX=${CFG_PREFIX%/}
-@@ -1523,9 +1524,9 @@ do
+ # stdc++ name in use
+ # used to manage non-standard name (on OpenBSD for example)
+@@ -1673,9 +1674,9 @@ do
  
          CXX=$LLVM_CXX
          CC=$LLVM_CC
@@ -44,7 +44,7 @@ Index: rustc.git/mk/platform.mk
 ===================================================================
 --- rustc.git.orig/mk/platform.mk
 +++ rustc.git/mk/platform.mk
-@@ -187,21 +187,25 @@ define CFG_MAKE_TOOLCHAIN
+@@ -186,21 +186,25 @@ define CFG_MAKE_TOOLCHAIN
    endif
  
    CFG_COMPILE_C_$(1) = $$(CC_$(1)) \
