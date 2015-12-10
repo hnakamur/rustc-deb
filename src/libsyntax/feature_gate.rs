@@ -35,7 +35,7 @@ use codemap::{CodeMap, Span};
 use diagnostic::SpanHandler;
 use visit;
 use visit::{FnKind, Visitor};
-use parse::token::{self, InternedString};
+use parse::token::InternedString;
 
 use std::ascii::AsciiExt;
 use std::cmp;
@@ -81,8 +81,8 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("associated_types", "1.0.0", None, Accepted),
     ("visible_private_types", "1.0.0", None, Active),
     ("slicing_syntax", "1.0.0", None, Accepted),
-    ("box_syntax", "1.0.0", None, Active),
-    ("placement_in_syntax", "1.0.0", None, Active),
+    ("box_syntax", "1.0.0", Some(27779), Active),
+    ("placement_in_syntax", "1.0.0", Some(27779), Active),
     ("pushpop_unsafe", "1.2.0", None, Active),
     ("on_unimplemented", "1.0.0", None, Active),
     ("simd_ffi", "1.0.0", None, Active),
@@ -135,6 +135,10 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     // Allows using the unsafe_no_drop_flag attribute (unlikely to
     // switch to Accepted; see RFC 320)
     ("unsafe_no_drop_flag", "1.0.0", None, Active),
+
+    // Allows using the unsafe_destructor_blind_to_params attribute;
+    // RFC 1238
+    ("dropck_parametricity", "1.3.0", Some(28498), Active),
 
     // Allows the use of custom attributes; RFC 572
     ("custom_attribute", "1.0.0", None, Active),
@@ -191,6 +195,21 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
 
     // allow `#[unwind]`
     ("unwind_attributes", "1.4.0", None, Active),
+
+    // allow empty structs and enum variants with braces
+    ("braced_empty_structs", "1.5.0", None, Active),
+
+    // allow overloading augmented assignment operations like `a += b`
+    ("augmented_assignments", "1.5.0", None, Active),
+
+    // allow `#[no_debug]`
+    ("no_debug", "1.5.0", None, Active),
+
+    // allow `#[omit_gdb_pretty_printer_section]`
+    ("omit_gdb_pretty_printer_section", "1.5.0", None, Active),
+
+    // Allows cfg(target_vendor = "...").
+    ("cfg_target_vendor", "1.5.0", None, Active),
 ];
 // (changing above list without updating src/doc/reference.md makes @cmr sad)
 
@@ -314,11 +333,21 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
     ("link_section", Whitelisted, Ungated),
     ("no_builtins", Whitelisted, Ungated),
     ("no_mangle", Whitelisted, Ungated),
-    ("no_debug", Whitelisted, Ungated),
-    ("omit_gdb_pretty_printer_section", Whitelisted, Ungated),
+    ("no_debug", Whitelisted, Gated("no_debug",
+                                    "the `#[no_debug]` attribute \
+                                     is an experimental feature")),
+    ("omit_gdb_pretty_printer_section", Whitelisted, Gated("omit_gdb_pretty_printer_section",
+                                                       "the `#[omit_gdb_pretty_printer_section]` \
+                                                        attribute is just used for the Rust test \
+                                                        suite")),
     ("unsafe_no_drop_flag", Whitelisted, Gated("unsafe_no_drop_flag",
                                                "unsafe_no_drop_flag has unstable semantics \
                                                 and may be removed in the future")),
+    ("unsafe_destructor_blind_to_params",
+     Normal,
+     Gated("dropck_parametricity",
+           "unsafe_destructor_blind_to_params has unstable semantics \
+            and may be removed in the future")),
     ("unwind", Whitelisted, Gated("unwind_attributes", "#[unwind] is experimental")),
 
     // used in resolve
@@ -360,6 +389,7 @@ macro_rules! cfg_fn {
 const GATED_CFGS: &'static [(&'static str, &'static str, fn(&Features) -> bool)] = &[
     // (name in cfg, feature, function to check if the feature is enabled)
     ("target_feature", "cfg_target_feature", cfg_fn!(|x| x.cfg_target_feature)),
+    ("target_vendor", "cfg_target_vendor", cfg_fn!(|x| x.cfg_target_vendor)),
 ];
 
 #[derive(Debug, Eq, PartialEq)]
@@ -454,6 +484,9 @@ pub struct Features {
     pub default_type_parameter_fallback: bool,
     pub type_macros: bool,
     pub cfg_target_feature: bool,
+    pub cfg_target_vendor: bool,
+    pub augmented_assignments: bool,
+    pub braced_empty_structs: bool,
 }
 
 impl Features {
@@ -482,6 +515,9 @@ impl Features {
             default_type_parameter_fallback: false,
             type_macros: false,
             cfg_target_feature: false,
+            cfg_target_vendor: false,
+            augmented_assignments: false,
+            braced_empty_structs: false,
         }
     }
 }
@@ -647,8 +683,8 @@ struct MacroVisitor<'a> {
 
 impl<'a, 'v> Visitor<'v> for MacroVisitor<'a> {
     fn visit_mac(&mut self, mac: &ast::Mac) {
-        let ast::MacInvocTT(ref path, _, _) = mac.node;
-        let id = path.segments.last().unwrap().identifier;
+        let path = &mac.node.path;
+        let name = path.segments.last().unwrap().identifier.name.as_str();
 
         // Issue 22234: If you add a new case here, make sure to also
         // add code to catch the macro during or after expansion.
@@ -658,19 +694,19 @@ impl<'a, 'v> Visitor<'v> for MacroVisitor<'a> {
         // catch uses of these macros within conditionally-compiled
         // code, e.g. `#[cfg]`-guarded functions.
 
-        if id == token::str_to_ident("asm") {
+        if name == "asm" {
             self.context.gate_feature("asm", path.span, EXPLAIN_ASM);
         }
 
-        else if id == token::str_to_ident("log_syntax") {
+        else if name == "log_syntax" {
             self.context.gate_feature("log_syntax", path.span, EXPLAIN_LOG_SYNTAX);
         }
 
-        else if id == token::str_to_ident("trace_macros") {
+        else if name == "trace_macros" {
             self.context.gate_feature("trace_macros", path.span, EXPLAIN_TRACE_MACROS);
         }
 
-        else if id == token::str_to_ident("concat_idents") {
+        else if name == "concat_idents" {
             self.context.gate_feature("concat_idents", path.span, EXPLAIN_CONCAT_IDENTS);
         }
     }
@@ -688,11 +724,11 @@ impl<'a, 'v> Visitor<'v> for MacroVisitor<'a> {
         // But we keep these checks as a pre-expansion check to catch
         // uses in e.g. conditionalized code.
 
-        if let ast::ExprBox(None, _) = e.node {
+        if let ast::ExprBox(_) = e.node {
             self.context.gate_feature("box_syntax", e.span, EXPLAIN_BOX_SYNTAX);
         }
 
-        if let ast::ExprBox(Some(_), _) = e.node {
+        if let ast::ExprInPlace(..) = e.node {
             self.context.gate_feature("placement_in_syntax", e.span, EXPLAIN_PLACEMENT_IN);
         }
 
@@ -701,7 +737,7 @@ impl<'a, 'v> Visitor<'v> for MacroVisitor<'a> {
 }
 
 struct PostExpansionVisitor<'a> {
-    context: &'a Context<'a>
+    context: &'a Context<'a>,
 }
 
 impl<'a> PostExpansionVisitor<'a> {
@@ -821,6 +857,21 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
         visit::walk_item(self, i);
     }
 
+    fn visit_variant_data(&mut self, s: &'v ast::VariantData, _: ast::Ident,
+                        _: &'v ast::Generics, _: ast::NodeId, span: Span) {
+        if s.fields().is_empty() {
+            if s.is_struct() {
+                self.gate_feature("braced_empty_structs", span,
+                                  "empty structs and enum variants with braces are unstable");
+            } else if s.is_tuple() {
+                self.context.span_handler.span_err(span, "empty tuple structs and enum variants \
+                                                          are not allowed, use unit structs and \
+                                                          enum variants instead");
+            }
+        }
+        visit::walk_struct_def(self, s)
+    }
+
     fn visit_foreign_item(&mut self, i: &ast::ForeignItem) {
         let links_to_llvm = match attr::first_attr_value_str_by_name(&i.attrs,
                                                                      "link_name") {
@@ -837,7 +888,7 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
 
     fn visit_expr(&mut self, e: &ast::Expr) {
         match e.node {
-            ast::ExprBox(..) | ast::ExprUnary(ast::UnOp::UnUniq, _) => {
+            ast::ExprBox(_) => {
                 self.gate_feature("box_syntax",
                                   e.span,
                                   "box expression syntax is experimental; \
@@ -1034,6 +1085,9 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &SpanHandler,
         default_type_parameter_fallback: cx.has_feature("default_type_parameter_fallback"),
         type_macros: cx.has_feature("type_macros"),
         cfg_target_feature: cx.has_feature("cfg_target_feature"),
+        cfg_target_vendor: cx.has_feature("cfg_target_vendor"),
+        augmented_assignments: cx.has_feature("augmented_assignments"),
+        braced_empty_structs: cx.has_feature("braced_empty_structs"),
     }
 }
 
@@ -1064,8 +1118,7 @@ pub enum UnstableFeatures {
     /// Errors are bypassed for bootstrapping. This is required any time
     /// during the build that feature-related lints are set to warn or above
     /// because the build turns on warnings-as-errors and uses lots of unstable
-    /// features. As a result, this this is always required for building Rust
-    /// itself.
+    /// features. As a result, this is always required for building Rust itself.
     Cheat
 }
 

@@ -12,7 +12,7 @@ use rustc::front;
 use rustc::front::map as hir_map;
 use rustc_mir as mir;
 use rustc::session::Session;
-use rustc::session::config::{self, Input, OutputFilenames};
+use rustc::session::config::{self, Input, OutputFilenames, OutputType};
 use rustc::session::search_paths::PathKind;
 use rustc::lint;
 use rustc::metadata;
@@ -31,20 +31,22 @@ use rustc_trans::trans;
 use rustc_typeck as typeck;
 use rustc_privacy;
 use rustc_front::hir;
-use rustc_front::lowering::lower_crate;
+use rustc_front::lowering::{lower_crate, LoweringContext};
 use super::Compilation;
 
 use serialize::json;
 
+use std::collections::HashMap;
 use std::env;
 use std::ffi::{OsString, OsStr};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use syntax::ast;
+use syntax::ast::{self, NodeIdAssigner};
 use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::diagnostics;
+use syntax::feature_gate::UnstableFeatures;
 use syntax::fold::Folder;
 use syntax::parse;
 use syntax::parse::token;
@@ -70,7 +72,7 @@ pub fn compile_input(sess: Session,
     // We need nested scopes here, because the intermediate results can keep
     // large chunks of memory alive and we want to free them as soon as
     // possible to keep the peak memory usage low
-    let (sess, result) = {
+    let result = {
         let (outputs, expanded_crate, id) = {
             let krate = phase_1_parse_input(&sess, cfg, input);
 
@@ -111,13 +113,14 @@ pub fn compile_input(sess: Session,
 
         let expanded_crate = assign_node_ids(&sess, expanded_crate);
         // Lower ast -> hir.
+        let lcx = LoweringContext::new(&sess, Some(&expanded_crate));
         let mut hir_forest = time(sess.time_passes(),
                                   "lowering ast -> hir",
-                                  || hir_map::Forest::new(lower_crate(&expanded_crate)));
+                                  || hir_map::Forest::new(lower_crate(&lcx, &expanded_crate)));
         let arenas = ty::CtxtArenas::new();
         let ast_map = make_map(&sess, &mut hir_forest);
 
-        write_out_deps(&sess, input, &outputs, &id[..]);
+        write_out_deps(&sess, &outputs, &id);
 
         controller_entry_point!(after_write_deps,
                                 sess,
@@ -127,14 +130,21 @@ pub fn compile_input(sess: Session,
                                                                      &ast_map,
                                                                      &expanded_crate,
                                                                      &ast_map.krate(),
-                                                                     &id[..]));
+                                                                     &id[..],
+                                                                     &lcx));
 
+        time(sess.time_passes(), "attribute checking", || {
+            front::check_attr::check_crate(&sess, &expanded_crate);
+        });
 
-        phase_3_run_analysis_passes(sess,
+        time(sess.time_passes(), "early lint checks", || {
+            lint::check_ast_crate(&sess, &expanded_crate)
+        });
+
+        phase_3_run_analysis_passes(&sess,
                                     ast_map,
-                                    &expanded_crate,
                                     &arenas,
-                                    id,
+                                    &id,
                                     control.make_glob_map,
                                     |tcx, analysis| {
 
@@ -145,7 +155,9 @@ pub fn compile_input(sess: Session,
                                                                &expanded_crate,
                                                                tcx.map.krate(),
                                                                &analysis,
-                                                               tcx);
+                                                               tcx,
+                                                               &lcx,
+                                                               &id);
                 (control.after_analysis.callback)(state);
 
                 tcx.sess.abort_if_errors();
@@ -269,8 +281,9 @@ pub struct CompileState<'a, 'ast: 'a, 'tcx: 'a> {
     pub expanded_crate: Option<&'a ast::Crate>,
     pub hir_crate: Option<&'a hir::Crate>,
     pub ast_map: Option<&'a hir_map::Map<'ast>>,
-    pub analysis: Option<&'a ty::CrateAnalysis>,
+    pub analysis: Option<&'a ty::CrateAnalysis<'a>>,
     pub tcx: Option<&'a ty::ctxt<'tcx>>,
+    pub lcx: Option<&'a LoweringContext<'a>>,
     pub trans: Option<&'a trans::CrateTranslation>,
 }
 
@@ -292,6 +305,7 @@ impl<'a, 'ast, 'tcx> CompileState<'a, 'ast, 'tcx> {
             ast_map: None,
             analysis: None,
             tcx: None,
+            lcx: None,
             trans: None,
         }
     }
@@ -326,13 +340,15 @@ impl<'a, 'ast, 'tcx> CompileState<'a, 'ast, 'tcx> {
                               ast_map: &'a hir_map::Map<'ast>,
                               krate: &'a ast::Crate,
                               hir_crate: &'a hir::Crate,
-                              crate_name: &'a str)
+                              crate_name: &'a str,
+                              lcx: &'a LoweringContext<'a>)
                               -> CompileState<'a, 'ast, 'tcx> {
         CompileState {
             crate_name: Some(crate_name),
             ast_map: Some(ast_map),
             krate: Some(krate),
             hir_crate: Some(hir_crate),
+            lcx: Some(lcx),
             .. CompileState::empty(input, session, out_dir)
         }
     }
@@ -343,13 +359,17 @@ impl<'a, 'ast, 'tcx> CompileState<'a, 'ast, 'tcx> {
                             krate: &'a ast::Crate,
                             hir_crate: &'a hir::Crate,
                             analysis: &'a ty::CrateAnalysis,
-                            tcx: &'a ty::ctxt<'tcx>)
+                            tcx: &'a ty::ctxt<'tcx>,
+                            lcx: &'a LoweringContext<'a>,
+                            crate_name: &'a str)
                             -> CompileState<'a, 'ast, 'tcx> {
         CompileState {
             analysis: Some(analysis),
             tcx: Some(tcx),
             krate: Some(krate),
             hir_crate: Some(hir_crate),
+            lcx: Some(lcx),
+            crate_name: Some(crate_name),
             .. CompileState::empty(input, session, out_dir)
         }
     }
@@ -480,13 +500,16 @@ pub fn phase_2_configure_and_expand(sess: &Session,
         }
     });
 
-    let Registry { syntax_exts, lint_passes, lint_groups,
+    let Registry { syntax_exts, early_lint_passes, late_lint_passes, lint_groups,
                    llvm_passes, attributes, .. } = registry;
 
     {
         let mut ls = sess.lint_store.borrow_mut();
-        for pass in lint_passes {
-            ls.register_pass(Some(sess), true, pass);
+        for pass in early_lint_passes {
+            ls.register_early_pass(Some(sess), true, pass);
+        }
+        for pass in late_lint_passes {
+            ls.register_late_pass(Some(sess), true, pass);
         }
 
         for (name, to) in lint_groups {
@@ -639,14 +662,13 @@ pub fn make_map<'ast>(sess: &Session,
 /// Run the resolution, typechecking, region checking and other
 /// miscellaneous analysis passes on the crate. Return various
 /// structures carrying the results of the analysis.
-pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: Session,
+pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
                                                ast_map: front::map::Map<'tcx>,
-                                               ast_crate: &ast::Crate,
                                                arenas: &'tcx ty::CtxtArenas<'tcx>,
-                                               name: String,
+                                               name: &str,
                                                make_glob_map: resolve::MakeGlobMap,
                                                f: F)
-                                               -> (Session, R)
+                                               -> R
                                                where F: for<'a> FnOnce(&'a ty::ctxt<'tcx>,
                                                                        ty::CrateAnalysis) -> R
 {
@@ -654,10 +676,10 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: Session,
     let krate = ast_map.krate();
 
     time(time_passes, "external crate/lib resolution", ||
-         LocalCrateReader::new(&sess, &ast_map).read_crates(krate));
+         LocalCrateReader::new(sess, &ast_map).read_crates(krate));
 
     let lang_items = time(time_passes, "language item collection", ||
-                          middle::lang_items::collect_language_items(krate, &sess));
+                          middle::lang_items::collect_language_items(&sess, &ast_map));
 
     let resolve::CrateMap {
         def_map,
@@ -668,16 +690,19 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: Session,
         glob_map,
     } =
         time(time_passes, "resolution",
-             || resolve::resolve_crate(&sess, &ast_map, make_glob_map));
+             || resolve::resolve_crate(sess, &ast_map, make_glob_map));
 
     // Discard MTWT tables that aren't required past resolution.
-    syntax::ext::mtwt::clear_tables();
+    // FIXME: get rid of uses of MTWT tables in typeck, mir and trans and clear them
+    if !sess.opts.debugging_opts.keep_mtwt_tables {
+        // syntax::ext::mtwt::clear_tables();
+    }
 
     let named_region_map = time(time_passes, "lifetime resolution",
-                                || middle::resolve_lifetime::krate(&sess, krate, &def_map));
+                                || middle::resolve_lifetime::krate(sess, krate, &def_map));
 
     time(time_passes, "looking for entry point",
-         || middle::entry::find_entry_point(&sess, &ast_map));
+         || middle::entry::find_entry_point(sess, &ast_map));
 
     sess.plugin_registrar_fn.set(
         time(time_passes, "looking for plugin registrar", ||
@@ -685,13 +710,13 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: Session,
                 sess.diagnostic(), krate)));
 
     let region_map = time(time_passes, "region resolution", ||
-                          middle::region::resolve_crate(&sess, krate));
+                          middle::region::resolve_crate(sess, krate));
 
     time(time_passes, "loop checking", ||
-         middle::check_loop::check_crate(&sess, krate));
+         middle::check_loop::check_crate(sess, krate));
 
     time(time_passes, "static item recursion checking", ||
-         middle::check_static_recursion::check_crate(&sess, krate, &def_map, &ast_map));
+         middle::check_static_recursion::check_crate(sess, krate, &def_map, &ast_map));
 
     ty::ctxt::create_and_enter(sess,
                                arenas,
@@ -706,9 +731,6 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: Session,
 
         // passes are timed inside typeck
         typeck::check_crate(tcx, trait_map);
-
-        time(time_passes, "MIR dump", ||
-             mir::dump::dump_crate(tcx));
 
         time(time_passes, "const checking", ||
             middle::check_const::check_crate(tcx));
@@ -729,6 +751,19 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: Session,
 
         time(time_passes, "match checking", ||
             middle::check_match::check_crate(tcx));
+
+        match tcx.sess.opts.unstable_features {
+            UnstableFeatures::Disallow => {
+                // use this as a shorthand for beta/stable, and skip
+                // MIR construction there until known regressions are
+                // addressed
+            }
+            UnstableFeatures::Allow | UnstableFeatures::Cheat => {
+                let _mir_map =
+                    time(time_passes, "MIR dump", ||
+                            mir::mir_map::build_mir_for_crate(tcx));
+            }
+        }
 
         time(time_passes, "liveness checking", ||
             middle::liveness::check_crate(tcx));
@@ -765,7 +800,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: Session,
                 &tcx.sess, lib_features_used));
 
         time(time_passes, "lint checking", ||
-            lint::check_crate(tcx, &lower_crate(ast_crate), &exported_items));
+            lint::check_crate(tcx, krate, &exported_items));
 
         // The above three passes generate errors w/o aborting
         tcx.sess.abort_if_errors();
@@ -801,16 +836,16 @@ pub fn phase_5_run_llvm_passes(sess: &Session,
                                trans: &trans::CrateTranslation,
                                outputs: &OutputFilenames) {
     if sess.opts.cg.no_integrated_as {
-        let output_type = config::OutputTypeAssembly;
-
+        let mut map = HashMap::new();
+        map.insert(OutputType::Assembly, None);
         time(sess.time_passes(), "LLVM passes", ||
-            write::run_passes(sess, trans, &[output_type], outputs));
+            write::run_passes(sess, trans, &map, outputs));
 
         write::run_assembler(sess, outputs);
 
         // Remove assembly source, unless --save-temps was specified
         if !sess.opts.cg.save_temps {
-            fs::remove_file(&outputs.temp_path(config::OutputTypeAssembly)).unwrap();
+            fs::remove_file(&outputs.temp_path(OutputType::Assembly)).unwrap();
         }
     } else {
         time(sess.time_passes(), "LLVM passes", ||
@@ -841,16 +876,12 @@ fn escape_dep_filename(filename: &str) -> String {
     filename.replace(" ", "\\ ")
 }
 
-fn write_out_deps(sess: &Session,
-                  input: &Input,
-                  outputs: &OutputFilenames,
-                  id: &str) {
-
+fn write_out_deps(sess: &Session, outputs: &OutputFilenames, id: &str) {
     let mut out_filenames = Vec::new();
-    for output_type in &sess.opts.output_types {
+    for output_type in sess.opts.output_types.keys() {
         let file = outputs.path(*output_type);
         match *output_type {
-            config::OutputTypeExe => {
+            OutputType::Exe => {
                 for output in sess.crate_types.borrow().iter() {
                     let p = link::filename_for_input(sess, *output, id,
                                                      outputs);
@@ -861,23 +892,11 @@ fn write_out_deps(sess: &Session,
         }
     }
 
-    // Write out dependency rules to the dep-info file if requested with
-    // --dep-info
-    let deps_filename = match sess.opts.write_dependency_info {
-        // Use filename from --dep-file argument if given
-        (true, Some(ref filename)) => filename.clone(),
-        // Use default filename: crate source filename with extension replaced
-        // by ".d"
-        (true, None) => match *input {
-            Input::File(..) => outputs.with_extension("d"),
-            Input::Str(..) => {
-                sess.warn("can not write --dep-info without a filename \
-                           when compiling stdin.");
-                return
-            },
-        },
-        _ => return,
-    };
+    // Write out dependency rules to the dep-info file if requested
+    if !sess.opts.output_types.contains_key(&OutputType::DepInfo) {
+        return
+    }
+    let deps_filename = outputs.path(OutputType::DepInfo);
 
     let result = (|| -> io::Result<()> {
         // Build a list of files used to compile the output and
@@ -890,8 +909,15 @@ fn write_out_deps(sess: &Session,
                                    .collect();
         let mut file = try!(fs::File::create(&deps_filename));
         for path in &out_filenames {
-            try!(write!(&mut file,
+            try!(write!(file,
                         "{}: {}\n\n", path.display(), files.join(" ")));
+        }
+
+        // Emit a fake target for each input file to the compilation. This
+        // prevents `make` from spitting out an error if a file is later
+        // deleted. For more info see #28735
+        for path in files {
+            try!(writeln!(file, "{}:", path));
         }
         Ok(())
     })();
@@ -1006,11 +1032,15 @@ pub fn build_output_filenames(input: &Input,
                 out_filestem: stem,
                 single_output_file: None,
                 extra: sess.opts.cg.extra_filename.clone(),
+                outputs: sess.opts.output_types.clone(),
             }
         }
 
         Some(ref out_file) => {
-            let ofile = if sess.opts.output_types.len() > 1 {
+            let unnamed_output_types = sess.opts.output_types.values()
+                                           .filter(|a| a.is_none())
+                                           .count();
+            let ofile = if unnamed_output_types > 1 {
                 sess.warn("ignoring specified output filename because multiple \
                            outputs were requested");
                 None
@@ -1029,6 +1059,7 @@ pub fn build_output_filenames(input: &Input,
                                       .to_str().unwrap().to_string(),
                 single_output_file: ofile,
                 extra: sess.opts.cg.extra_filename.clone(),
+                outputs: sess.opts.output_types.clone(),
             }
         }
     }

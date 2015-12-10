@@ -60,6 +60,7 @@ pub struct File {
 /// represents known metadata about a file such as its permissions, size,
 /// modification times, etc.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[derive(Clone)]
 pub struct Metadata(fs_imp::FileAttr);
 
 /// Iterator over the entries in a directory.
@@ -954,8 +955,21 @@ pub fn read_link<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
 
 /// Returns the canonical form of a path with all intermediate components
 /// normalized and symbolic links resolved.
-#[unstable(feature = "fs_canonicalize", reason = "recently added API",
-           issue = "27706")]
+///
+/// This function may return an error in situations like where the path does not
+/// exist, a component in the path is not a directory, or an I/O error happens.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+///
+/// # fn foo() -> std::io::Result<()> {
+/// let path = try!(fs::canonicalize("../a/../foo.txt"));
+/// # Ok(())
+/// # }
+/// ```
+#[stable(feature = "fs_canonicalize", since = "1.5.0")]
 pub fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     fs_imp::canonicalize(path.as_ref())
 }
@@ -1157,11 +1171,12 @@ impl Iterator for WalkDir {
 }
 
 /// Utility methods for paths.
-#[unstable(feature = "path_ext",
+#[unstable(feature = "path_ext_deprecated",
            reason = "The precise set of methods exposed on this trait may \
                      change and some methods may be removed.  For stable code, \
                      see the std::fs::metadata function.",
            issue = "27725")]
+#[deprecated(since = "1.5.0", reason = "replaced with inherent methods")]
 pub trait PathExt {
     /// Gets information on the file, directory, etc at this path.
     ///
@@ -1214,6 +1229,7 @@ pub trait PathExt {
     fn is_dir(&self) -> bool;
 }
 
+#[allow(deprecated)]
 impl PathExt for Path {
     fn metadata(&self) -> io::Result<Metadata> { metadata(self) }
     fn symlink_metadata(&self) -> io::Result<Metadata> { symlink_metadata(self) }
@@ -2084,6 +2100,15 @@ mod tests {
     }
 
     #[test]
+    fn canonicalize_works_simple() {
+        let tmpdir = tmpdir();
+        let tmpdir = fs::canonicalize(tmpdir.path()).unwrap();
+        let file = tmpdir.join("test");
+        File::create(&file).unwrap();
+        assert_eq!(fs::canonicalize(&file).unwrap(), file);
+    }
+
+    #[test]
     #[cfg(not(windows))]
     fn realpath_works() {
         let tmpdir = tmpdir();
@@ -2151,5 +2176,11 @@ mod tests {
                 f => panic!("unknown file name: {:?}", f),
             }
         }
+    }
+
+    #[test]
+    fn read_dir_not_found() {
+        let res = fs::read_dir("/path/that/does/not/exist");
+        assert_eq!(res.err().unwrap().kind(), ErrorKind::NotFound);
     }
 }

@@ -15,6 +15,7 @@
 use back::svh::Svh;
 use session::{config, Session};
 use session::search_paths::PathKind;
+use metadata::common::rustc_version;
 use metadata::cstore;
 use metadata::cstore::{CStore, CrateSource, MetadataBlob};
 use metadata::decoder;
@@ -33,13 +34,11 @@ use syntax::abi;
 use syntax::codemap::{self, Span, mk_sp, Pos};
 use syntax::parse;
 use syntax::attr;
+use syntax::attr::AttrMetaMethods;
 use syntax::parse::token::InternedString;
 use syntax::util::small_vector::SmallVector;
 use rustc_front::visit;
 use rustc_front::hir;
-use rustc_front::attr as attr_front;
-use rustc_front::attr::AttrMetaMethods;
-use rustc_front::lowering::unlower_attribute;
 use log;
 
 pub struct LocalCrateReader<'a, 'b:'a> {
@@ -79,10 +78,9 @@ fn dump_crates(cstore: &CStore) {
 fn should_link(i: &ast::Item) -> bool {
     !attr::contains_name(&i.attrs, "no_link")
 }
-
 // Dup for the hir
 fn should_link_hir(i: &hir::Item) -> bool {
-    !attr_front::contains_name(&i.attrs, "no_link")
+    !attr::contains_name(&i.attrs, "no_link")
 }
 
 struct CrateInfo {
@@ -122,8 +120,8 @@ fn register_native_lib(sess: &Session,
     if name.is_empty() {
         match span {
             Some(span) => {
-                sess.span_err(span, "#[link(name = \"\")] given with \
-                                     empty name");
+                span_err!(sess, span, E0454,
+                          "#[link(name = \"\")] given with empty name");
             }
             None => {
                 sess.err("empty library name given via `-l`");
@@ -135,7 +133,10 @@ fn register_native_lib(sess: &Session,
     if kind == cstore::NativeFramework && !is_osx {
         let msg = "native frameworks are only available on OSX targets";
         match span {
-            Some(span) => sess.span_err(span, msg),
+            Some(span) => {
+                span_err!(sess, span, E0455,
+                          "{}", msg)
+            }
             None => sess.err(msg),
         }
     }
@@ -201,17 +202,17 @@ impl<'a> CrateReader<'a> {
         match i.node {
             hir::ItemExternCrate(ref path_opt) => {
                 debug!("resolving extern crate stmt. ident: {} path_opt: {:?}",
-                       i.ident, path_opt);
+                       i.name, path_opt);
                 let name = match *path_opt {
                     Some(name) => {
                         validate_crate_name(Some(self.sess), &name.as_str(),
                                             Some(i.span));
                         name.to_string()
                     }
-                    None => i.ident.to_string(),
+                    None => i.name.to_string(),
                 };
                 Some(CrateInfo {
-                    ident: i.ident.to_string(),
+                    ident: i.name.to_string(),
                     name: name,
                     id: i.id,
                     should_link: should_link_hir(i),
@@ -270,6 +271,24 @@ impl<'a> CrateReader<'a> {
         return ret;
     }
 
+    fn verify_rustc_version(&self,
+                            name: &str,
+                            span: Span,
+                            metadata: &MetadataBlob) {
+        let crate_rustc_version = decoder::crate_rustc_version(metadata.as_slice());
+        if crate_rustc_version != Some(rustc_version()) {
+            span_err!(self.sess, span, E0514,
+                      "the crate `{}` has been compiled with {}, which is \
+                       incompatible with this version of rustc",
+                      name,
+                      crate_rustc_version
+                          .as_ref().map(|s|&**s)
+                          .unwrap_or("an old version of rustc")
+            );
+            self.sess.abort_if_errors();
+        }
+    }
+
     fn register_crate(&mut self,
                       root: &Option<CratePaths>,
                       ident: &str,
@@ -279,6 +298,8 @@ impl<'a> CrateReader<'a> {
                       explicitly_linked: bool)
                       -> (ast::CrateNum, Rc<cstore::crate_metadata>,
                           cstore::CrateSource) {
+        self.verify_rustc_version(name, span, &lib.metadata);
+
         // Claim this crate number and cache it
         let cnum = self.next_crate_num;
         self.next_crate_num += 1;
@@ -304,7 +325,9 @@ impl<'a> CrateReader<'a> {
         let cmeta = Rc::new(cstore::crate_metadata {
             name: name.to_string(),
             local_path: RefCell::new(SmallVector::zero()),
+            local_def_path: RefCell::new(vec![]),
             index: decoder::load_index(metadata.as_slice()),
+            xref_index: decoder::load_xrefs(metadata.as_slice()),
             data: metadata,
             cnum_map: RefCell::new(cnum_map),
             cnum: cnum,
@@ -329,7 +352,7 @@ impl<'a> CrateReader<'a> {
         let attrs = decoder::get_crate_attributes(data);
         for attr in &attrs {
             if &attr.name()[..] == "staged_api" {
-                match attr.node.value.node { hir::MetaWord(_) => return true, _ => (/*pass*/) }
+                match attr.node.value.node { ast::MetaWord(_) => return true, _ => (/*pass*/) }
             }
         }
 
@@ -481,9 +504,15 @@ impl<'a> CrateReader<'a> {
                 };
                 let span = mk_sp(lo, p.last_span.hi);
                 p.abort_if_errors();
+
+                // Mark the attrs as used
+                for attr in &attrs {
+                    attr::mark_used(attr);
+                }
+
                 macros.push(ast::MacroDef {
-                    ident: name.ident(),
-                    attrs: attrs.iter().map(|a| unlower_attribute(a)).collect(),
+                    ident: ast::Ident::with_empty_ctxt(name),
+                    attrs: attrs,
                     id: ast::DUMMY_NODE_ID,
                     span: span,
                     imported_from: Some(item.ident),
@@ -517,20 +546,21 @@ impl<'a> CrateReader<'a> {
                                   name,
                                   config::host_triple(),
                                   self.sess.opts.target_triple);
-            self.sess.span_err(span, &message[..]);
+            span_err!(self.sess, span, E0456, "{}", &message[..]);
             self.sess.abort_if_errors();
         }
 
-        let registrar = decoder::get_plugin_registrar_fn(ekrate.metadata.as_slice())
+        let registrar =
+            decoder::get_plugin_registrar_fn(ekrate.metadata.as_slice())
             .map(|id| decoder::get_symbol_from_buf(ekrate.metadata.as_slice(), id));
 
         match (ekrate.dylib.as_ref(), registrar) {
             (Some(dylib), Some(reg)) => Some((dylib.to_path_buf(), reg)),
             (None, Some(_)) => {
-                let message = format!("plugin `{}` only found in rlib format, \
-                                       but must be available in dylib format",
-                                       name);
-                self.sess.span_err(span, &message[..]);
+                span_err!(self.sess, span, E0457,
+                          "plugin `{}` only found in rlib format, but must be available \
+                           in dylib format",
+                          name);
                 // No need to abort because the loading code will just ignore this
                 // empty dylib.
                 None
@@ -724,6 +754,9 @@ impl<'a, 'b> LocalCrateReader<'a, 'b> {
                                                               i.span,
                                                               PathKind::Crate,
                                                               true);
+                        let def_id = self.ast_map.local_def_id(i.id);
+                        let def_path = self.ast_map.def_path(def_id);
+                        cmeta.update_local_def_path(def_path);
                         self.ast_map.with_path(i.id, |path| {
                             cmeta.update_local_path(path)
                         });
@@ -763,7 +796,8 @@ impl<'a, 'b> LocalCrateReader<'a, 'b> {
                 Some("dylib") => cstore::NativeUnknown,
                 Some("framework") => cstore::NativeFramework,
                 Some(k) => {
-                    self.sess.span_err(m.span, &format!("unknown kind: `{}`", k));
+                    span_err!(self.sess, m.span, E0458,
+                              "unknown kind: `{}`", k);
                     cstore::NativeUnknown
                 }
                 None => cstore::NativeUnknown
@@ -774,8 +808,8 @@ impl<'a, 'b> LocalCrateReader<'a, 'b> {
             let n = match n {
                 Some(n) => n,
                 None => {
-                    self.sess.span_err(m.span, "#[link(...)] specified without \
-                                                `name = \"foo\"`");
+                    span_err!(self.sess, m.span, E0459,
+                              "#[link(...)] specified without `name = \"foo\"`");
                     InternedString::new("foo")
                 }
             };

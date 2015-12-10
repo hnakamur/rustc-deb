@@ -245,6 +245,7 @@
 #![allow(unused_variables)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
+#![feature(omit_gdb_pretty_printer_section)]
 #![omit_gdb_pretty_printer_section]
 
 use self::Univariant::Unit;
@@ -303,7 +304,7 @@ fn main() {
     let (&cc, _) = (&38, 39);
 
     // unique pointer
-    let box dd = box() (40, 41, 42);
+    let box dd = box (40, 41, 42);
 
     // ref binding
     let ref ee = (43, 44, 45);

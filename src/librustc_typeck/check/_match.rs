@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use middle::def;
-use middle::def_id::DefId;
 use middle::infer;
 use middle::pat_util::{PatIdMap, pat_id_map, pat_is_binding};
 use middle::pat_util::pat_is_resolved_const;
@@ -26,6 +25,7 @@ use util::nodemap::FnvHashMap;
 use std::cmp;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use syntax::ast;
+use syntax::ext::mtwt;
 use syntax::codemap::{Span, Spanned};
 use syntax::ptr::P;
 
@@ -56,7 +56,7 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             // They can denote both statically and dynamically sized byte arrays
             let mut pat_ty = expr_ty;
             if let hir::ExprLit(ref lt) = lt.node {
-                if let hir::LitByteStr(_) = lt.node {
+                if let ast::LitByteStr(_) = lt.node {
                     let expected_ty = structurally_resolved_type(fcx, pat.span, expected);
                     if let ty::TyRef(_, mt) = expected_ty.sty {
                         if let ty::TySlice(_) = mt.ty.sty {
@@ -179,7 +179,7 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
 
             // if there are multiple arms, make sure they all agree on
             // what the type of the binding `x` ought to be
-            let canon_id = *pcx.map.get(&path.node).unwrap();
+            let canon_id = *pcx.map.get(&mtwt::resolve(path.node)).unwrap();
             if canon_id != pat.id {
                 let ct = fcx.local_ty(pat.span, canon_id);
                 demand::eqtype(fcx, pat.span, ct, typ);
@@ -202,9 +202,10 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             let path_res = if let Some(&d) = tcx.def_map.borrow().get(&pat.id) {
                 d
             } else if qself.position == 0 {
+                // This is just a sentinel for finish_resolving_def_to_ty.
+                let sentinel = fcx.tcx().map.local_def_id(ast::CRATE_NODE_ID);
                 def::PathResolution {
-                    // This is just a sentinel for finish_resolving_def_to_ty.
-                    base_def: def::DefMod(DefId::local(ast::CRATE_NODE_ID)),
+                    base_def: def::DefMod(sentinel),
                     last_private: LastMod(AllPublic),
                     depth: path.segments.len()
                 }
@@ -259,17 +260,30 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             }
         }
         hir::PatRegion(ref inner, mutbl) => {
-            let inner_ty = fcx.infcx().next_ty_var();
-
-            let mt = ty::TypeAndMut { ty: inner_ty, mutbl: mutbl };
-            let region = fcx.infcx().next_region_var(infer::PatternRegion(pat.span));
-            let rptr_ty = tcx.mk_ref(tcx.mk_region(region), mt);
-
+            let expected = fcx.infcx().shallow_resolve(expected);
             if check_dereferencable(pcx, pat.span, expected, &**inner) {
                 // `demand::subtype` would be good enough, but using
                 // `eqtype` turns out to be equally general. See (*)
                 // below for details.
-                demand::eqtype(fcx, pat.span, expected, rptr_ty);
+
+                // Take region, inner-type from expected type if we
+                // can, to avoid creating needless variables.  This
+                // also helps with the bad interactions of the given
+                // hack detailed in (*) below.
+                let (rptr_ty, inner_ty) = match expected.sty {
+                    ty::TyRef(_, mt) if mt.mutbl == mutbl => {
+                        (expected, mt.ty)
+                    }
+                    _ => {
+                        let inner_ty = fcx.infcx().next_ty_var();
+                        let mt = ty::TypeAndMut { ty: inner_ty, mutbl: mutbl };
+                        let region = fcx.infcx().next_region_var(infer::PatternRegion(pat.span));
+                        let rptr_ty = tcx.mk_ref(tcx.mk_region(region), mt);
+                        demand::eqtype(fcx, pat.span, expected, rptr_ty);
+                        (rptr_ty, inner_ty)
+                    }
+                };
+
                 fcx.write_ty(pat.id, rptr_ty);
                 check_pat(pcx, &**inner, inner_ty);
             } else {
@@ -530,7 +544,7 @@ pub fn check_pat_struct<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>, pat: &'tcx hir::Pat,
     let tcx = pcx.fcx.ccx.tcx;
 
     let def = tcx.def_map.borrow().get(&pat.id).unwrap().full_def();
-    let variant = match fcx.def_struct_variant(def) {
+    let variant = match fcx.def_struct_variant(def, path.span) {
         Some((_, variant)) => variant,
         None => {
             let name = pprust::path_to_string(path);
@@ -706,25 +720,25 @@ pub fn check_struct_pat_fields<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
 
     // Typecheck each field.
     for &Spanned { node: ref field, span } in fields {
-        let field_ty = match used_fields.entry(field.ident.name) {
+        let field_ty = match used_fields.entry(field.name) {
             Occupied(occupied) => {
                 span_err!(tcx.sess, span, E0025,
                     "field `{}` bound multiple times in the pattern",
-                    field.ident);
+                    field.name);
                 span_note!(tcx.sess, *occupied.get(),
                     "field `{}` previously bound here",
-                    field.ident);
+                    field.name);
                 tcx.types.err
             }
             Vacant(vacant) => {
                 vacant.insert(span);
-                field_map.get(&field.ident.name)
+                field_map.get(&field.name)
                     .map(|f| pcx.fcx.field_ty(span, f, substs))
                     .unwrap_or_else(|| {
                         span_err!(tcx.sess, span, E0026,
                             "struct `{}` does not have a field named `{}`",
                             tcx.item_path_str(variant.did),
-                            field.ident);
+                            field.name);
                         tcx.types.err
                     })
             }

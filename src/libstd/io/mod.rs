@@ -20,11 +20,11 @@
 //!
 //! # Read and Write
 //!
-//! Because they are traits, they're implemented by a number of other types,
-//! and you can implement them for your types too. As such, you'll see a
-//! few different types of I/O throughout the documentation in this module:
-//! `File`s, `TcpStream`s, and somtimes even `Vec<T>`s. For example, `Read`
-//! adds a `read()` method, which we can use on `File`s:
+//! Because they are traits, `Read` and `Write` are implemented by a number
+//! of other types, and you can implement them for your types too. As such,
+//! you'll see a few different types of I/O throughout the documentation in
+//! this module: `File`s, `TcpStream`s, and sometimes even `Vec<T>`s. For
+//! example, `Read` adds a `read()` method, which we can use on `File`s:
 //!
 //! ```
 //! use std::io;
@@ -111,7 +111,7 @@
 //! # }
 //! ```
 //!
-//! `BufWriter` doesn't add any new ways of writing, it just buffers every call
+//! `BufWriter` doesn't add any new ways of writing; it just buffers every call
 //! to [`write()`][write]:
 //!
 //! ```
@@ -165,7 +165,7 @@
 //! # }
 //! ```
 //!
-//! Of course, using `io::stdout()` directly is less comon than something like
+//! Of course, using `io::stdout()` directly is less common than something like
 //! `println!`.
 //!
 //! ## Iterator types
@@ -234,7 +234,7 @@
 //! The return type of `read_input()`, `io::Result<()>`, is a very common type
 //! for functions which don't have a 'real' return value, but do want to return
 //! errors if they happen. In this case, the only purpose of this function is
-//! to read the line and print it, so we use use `()`.
+//! to read the line and print it, so we use `()`.
 //!
 //! [result]: type.Result.html
 //! [try]: macro.try!.html
@@ -369,6 +369,13 @@ fn read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize> 
 /// Readers are intended to be composable with one another. Many implementors
 /// throughout `std::io` take and provide types which implement the `Read`
 /// trait.
+///
+/// Please note that each call to `read` may involve a system call, and
+/// therefore, using something that implements [`BufRead`][bufread], such as
+/// [`BufReader`][bufreader], will be more efficient.
+///
+/// [bufread]: trait.BufRead.html
+/// [bufreader]: struct.BufReader.html
 ///
 /// # Examples
 ///

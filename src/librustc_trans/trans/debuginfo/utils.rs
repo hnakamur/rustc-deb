@@ -21,8 +21,6 @@ use trans::machine;
 use trans::common::{CrateContext, FunctionContext};
 use trans::type_::Type;
 
-use rustc_front::hir;
-
 use syntax::codemap::Span;
 use syntax::{ast, codemap};
 
@@ -46,11 +44,11 @@ pub fn create_DIArray(builder: DIBuilderRef, arr: &[DIDescriptor]) -> DIArray {
     };
 }
 
-pub fn contains_nodebug_attribute(attributes: &[hir::Attribute]) -> bool {
+pub fn contains_nodebug_attribute(attributes: &[ast::Attribute]) -> bool {
     attributes.iter().any(|attr| {
-        let meta_item: &hir::MetaItem = &*attr.node.value;
+        let meta_item: &ast::MetaItem = &*attr.node.value;
         match meta_item.node {
-            hir::MetaWord(ref value) => &value[..] == "no_debug",
+            ast::MetaWord(ref value) => &value[..] == "no_debug",
             _ => false
         }
     })
@@ -101,12 +99,9 @@ pub fn assert_type_for_node_id(cx: &CrateContext,
 pub fn get_namespace_and_span_for_item(cx: &CrateContext, def_id: DefId)
                                    -> (DIScope, Span) {
     let containing_scope = namespace_for_item(cx, def_id).scope;
-    let definition_span = if def_id.is_local() {
-        cx.tcx().map.span(def_id.node)
-    } else {
-        // For external items there is no span information
-        codemap::DUMMY_SP
-    };
+    let definition_span = cx.tcx().map.def_id_span(def_id, codemap::DUMMY_SP /* (1) */ );
+
+    // (1) For external items there is no span information
 
     (containing_scope, definition_span)
 }

@@ -23,7 +23,7 @@ use std::fmt;
 use std::ops;
 use std::mem;
 use syntax::abi;
-use syntax::ast::{Name, NodeId};
+use syntax::ast::{self, Name};
 use syntax::parse::token::special_idents;
 
 use rustc_front::hir;
@@ -79,13 +79,13 @@ pub enum TypeVariants<'tcx> {
     TyChar,
 
     /// A primitive signed integer type. For example, `i32`.
-    TyInt(hir::IntTy),
+    TyInt(ast::IntTy),
 
     /// A primitive unsigned integer type. For example, `u32`.
-    TyUint(hir::UintTy),
+    TyUint(ast::UintTy),
 
     /// A primitive floating-point type. For example, `f64`.
-    TyFloat(hir::FloatTy),
+    TyFloat(ast::FloatTy),
 
     /// An enumerated type, defined with `enum`.
     ///
@@ -93,7 +93,7 @@ pub enum TypeVariants<'tcx> {
     /// That is, even after substitution it is possible that there are type
     /// variables. This happens when the `TyEnum` corresponds to an enum
     /// definition and not a concrete use of it. To get the correct `TyEnum`
-    /// from the tcx, use the `NodeId` from the `hir::Ty` and look it up in
+    /// from the tcx, use the `NodeId` from the `ast::Ty` and look it up in
     /// the `ast_ty_to_ty_cache`. This is probably true for `TyStruct` as
     /// well.
     TyEnum(AdtDef<'tcx>, &'tcx Substs<'tcx>),
@@ -126,7 +126,7 @@ pub enum TypeVariants<'tcx> {
     TyRef(&'tcx Region, TypeAndMut<'tcx>),
 
     /// If the def-id is Some(_), then this is the type of a specific
-    /// fn item. Otherwise, if None(_), it a fn pointer type.
+    /// fn item. Otherwise, if None(_), it is a fn pointer type.
     ///
     /// FIXME: Conflating function pointers and the type of a
     /// function is probably a terrible idea; a function pointer is a
@@ -675,7 +675,7 @@ pub enum Region {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Debug)]
 pub struct EarlyBoundRegion {
-    pub param_id: NodeId,
+    pub def_id: DefId,
     pub space: subst::ParamSpace,
     pub index: u32,
     pub name: Name,
@@ -899,6 +899,14 @@ impl<'tcx> TyS<'tcx> {
         }
     }
 
+    pub fn is_phantom_data(&self) -> bool {
+        if let TyStruct(def, _) = self.sty {
+            def.is_phantom_data()
+        } else {
+            false
+        }
+    }
+
     pub fn is_bool(&self) -> bool { self.sty == TyBool }
 
     pub fn is_param(&self, space: subst::ParamSpace, index: u32) -> bool {
@@ -944,7 +952,7 @@ impl<'tcx> TyS<'tcx> {
     pub fn sequence_element_type(&self, cx: &ty::ctxt<'tcx>) -> Ty<'tcx> {
         match self.sty {
             TyArray(ty, _) | TySlice(ty) => ty,
-            TyStr => cx.mk_mach_uint(hir::TyU8),
+            TyStr => cx.mk_mach_uint(ast::TyU8),
             _ => cx.sess.bug(&format!("sequence_element_type called on non-sequence value: {}",
                                       self)),
         }
@@ -1035,7 +1043,7 @@ impl<'tcx> TyS<'tcx> {
 
     pub fn is_uint(&self) -> bool {
         match self.sty {
-            TyInfer(IntVar(_)) | TyUint(hir::TyUs) => true,
+            TyInfer(IntVar(_)) | TyUint(ast::TyUs) => true,
             _ => false
         }
     }
@@ -1081,7 +1089,7 @@ impl<'tcx> TyS<'tcx> {
 
     pub fn is_machine(&self) -> bool {
         match self.sty {
-            TyInt(hir::TyIs) | TyUint(hir::TyUs) => false,
+            TyInt(ast::TyIs) | TyUint(ast::TyUs) => false,
             TyInt(..) | TyUint(..) | TyFloat(..) => true,
             _ => false
         }

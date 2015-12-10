@@ -14,7 +14,7 @@ use back::svh::Svh;
 use middle::const_eval::{self, ConstVal, ErrKind};
 use middle::const_eval::EvalHint::UncheckedExprHint;
 use middle::def_id::DefId;
-use middle::subst;
+use middle::subst::{self, Subst, Substs};
 use middle::infer;
 use middle::pat_util;
 use middle::traits;
@@ -26,11 +26,12 @@ use util::num::ToPrimitive;
 
 use std::cmp;
 use std::hash::{Hash, SipHasher, Hasher};
-use syntax::ast::Name;
+use std::rc::Rc;
+use syntax::ast::{self, Name};
+use syntax::attr::{self, AttrMetaMethods, SignedInt, UnsignedInt};
 use syntax::codemap::Span;
 
 use rustc_front::hir;
-use rustc_front::attr::{self, AttrMetaMethods, SignedInt, UnsignedInt};
 
 pub trait IntTypeExt {
     fn to_ty<'tcx>(&self, cx: &ty::ctxt<'tcx>) -> Ty<'tcx>;
@@ -44,48 +45,48 @@ pub trait IntTypeExt {
 impl IntTypeExt for attr::IntType {
     fn to_ty<'tcx>(&self, cx: &ty::ctxt<'tcx>) -> Ty<'tcx> {
         match *self {
-            SignedInt(hir::TyI8)      => cx.types.i8,
-            SignedInt(hir::TyI16)     => cx.types.i16,
-            SignedInt(hir::TyI32)     => cx.types.i32,
-            SignedInt(hir::TyI64)     => cx.types.i64,
-            SignedInt(hir::TyIs)   => cx.types.isize,
-            UnsignedInt(hir::TyU8)    => cx.types.u8,
-            UnsignedInt(hir::TyU16)   => cx.types.u16,
-            UnsignedInt(hir::TyU32)   => cx.types.u32,
-            UnsignedInt(hir::TyU64)   => cx.types.u64,
-            UnsignedInt(hir::TyUs) => cx.types.usize,
+            SignedInt(ast::TyI8)      => cx.types.i8,
+            SignedInt(ast::TyI16)     => cx.types.i16,
+            SignedInt(ast::TyI32)     => cx.types.i32,
+            SignedInt(ast::TyI64)     => cx.types.i64,
+            SignedInt(ast::TyIs)   => cx.types.isize,
+            UnsignedInt(ast::TyU8)    => cx.types.u8,
+            UnsignedInt(ast::TyU16)   => cx.types.u16,
+            UnsignedInt(ast::TyU32)   => cx.types.u32,
+            UnsignedInt(ast::TyU64)   => cx.types.u64,
+            UnsignedInt(ast::TyUs) => cx.types.usize,
         }
     }
 
     fn i64_to_disr(&self, val: i64) -> Option<Disr> {
         match *self {
-            SignedInt(hir::TyI8)    => val.to_i8()  .map(|v| v as Disr),
-            SignedInt(hir::TyI16)   => val.to_i16() .map(|v| v as Disr),
-            SignedInt(hir::TyI32)   => val.to_i32() .map(|v| v as Disr),
-            SignedInt(hir::TyI64)   => val.to_i64() .map(|v| v as Disr),
-            UnsignedInt(hir::TyU8)  => val.to_u8()  .map(|v| v as Disr),
-            UnsignedInt(hir::TyU16) => val.to_u16() .map(|v| v as Disr),
-            UnsignedInt(hir::TyU32) => val.to_u32() .map(|v| v as Disr),
-            UnsignedInt(hir::TyU64) => val.to_u64() .map(|v| v as Disr),
+            SignedInt(ast::TyI8)    => val.to_i8()  .map(|v| v as Disr),
+            SignedInt(ast::TyI16)   => val.to_i16() .map(|v| v as Disr),
+            SignedInt(ast::TyI32)   => val.to_i32() .map(|v| v as Disr),
+            SignedInt(ast::TyI64)   => val.to_i64() .map(|v| v as Disr),
+            UnsignedInt(ast::TyU8)  => val.to_u8()  .map(|v| v as Disr),
+            UnsignedInt(ast::TyU16) => val.to_u16() .map(|v| v as Disr),
+            UnsignedInt(ast::TyU32) => val.to_u32() .map(|v| v as Disr),
+            UnsignedInt(ast::TyU64) => val.to_u64() .map(|v| v as Disr),
 
-            UnsignedInt(hir::TyUs) |
-            SignedInt(hir::TyIs) => unreachable!(),
+            UnsignedInt(ast::TyUs) |
+            SignedInt(ast::TyIs) => unreachable!(),
         }
     }
 
     fn u64_to_disr(&self, val: u64) -> Option<Disr> {
         match *self {
-            SignedInt(hir::TyI8)    => val.to_i8()  .map(|v| v as Disr),
-            SignedInt(hir::TyI16)   => val.to_i16() .map(|v| v as Disr),
-            SignedInt(hir::TyI32)   => val.to_i32() .map(|v| v as Disr),
-            SignedInt(hir::TyI64)   => val.to_i64() .map(|v| v as Disr),
-            UnsignedInt(hir::TyU8)  => val.to_u8()  .map(|v| v as Disr),
-            UnsignedInt(hir::TyU16) => val.to_u16() .map(|v| v as Disr),
-            UnsignedInt(hir::TyU32) => val.to_u32() .map(|v| v as Disr),
-            UnsignedInt(hir::TyU64) => val.to_u64() .map(|v| v as Disr),
+            SignedInt(ast::TyI8)    => val.to_i8()  .map(|v| v as Disr),
+            SignedInt(ast::TyI16)   => val.to_i16() .map(|v| v as Disr),
+            SignedInt(ast::TyI32)   => val.to_i32() .map(|v| v as Disr),
+            SignedInt(ast::TyI64)   => val.to_i64() .map(|v| v as Disr),
+            UnsignedInt(ast::TyU8)  => val.to_u8()  .map(|v| v as Disr),
+            UnsignedInt(ast::TyU16) => val.to_u16() .map(|v| v as Disr),
+            UnsignedInt(ast::TyU32) => val.to_u32() .map(|v| v as Disr),
+            UnsignedInt(ast::TyU64) => val.to_u64() .map(|v| v as Disr),
 
-            UnsignedInt(hir::TyUs) |
-            SignedInt(hir::TyIs) => unreachable!(),
+            UnsignedInt(ast::TyUs) |
+            SignedInt(ast::TyIs) => unreachable!(),
         }
     }
 
@@ -97,18 +98,18 @@ impl IntTypeExt for attr::IntType {
             // SignedInt repr means we *want* to reinterpret the bits
             // treating the highest bit of Disr as a sign-bit, so
             // cast to i64 before range-checking.
-            SignedInt(hir::TyI8)    => add1!((val as i64).to_i8()),
-            SignedInt(hir::TyI16)   => add1!((val as i64).to_i16()),
-            SignedInt(hir::TyI32)   => add1!((val as i64).to_i32()),
-            SignedInt(hir::TyI64)   => add1!(Some(val as i64)),
+            SignedInt(ast::TyI8)    => add1!((val as i64).to_i8()),
+            SignedInt(ast::TyI16)   => add1!((val as i64).to_i16()),
+            SignedInt(ast::TyI32)   => add1!((val as i64).to_i32()),
+            SignedInt(ast::TyI64)   => add1!(Some(val as i64)),
 
-            UnsignedInt(hir::TyU8)  => add1!(val.to_u8()),
-            UnsignedInt(hir::TyU16) => add1!(val.to_u16()),
-            UnsignedInt(hir::TyU32) => add1!(val.to_u32()),
-            UnsignedInt(hir::TyU64) => add1!(Some(val)),
+            UnsignedInt(ast::TyU8)  => add1!(val.to_u8()),
+            UnsignedInt(ast::TyU16) => add1!(val.to_u16()),
+            UnsignedInt(ast::TyU32) => add1!(val.to_u32()),
+            UnsignedInt(ast::TyU64) => add1!(Some(val)),
 
-            UnsignedInt(hir::TyUs) |
-            SignedInt(hir::TyIs) => unreachable!(),
+            UnsignedInt(ast::TyUs) |
+            SignedInt(ast::TyIs) => unreachable!(),
         }
     }
 
@@ -117,17 +118,17 @@ impl IntTypeExt for attr::IntType {
     // full range from `i64::MIN` through `u64::MAX`.
     fn disr_string(&self, val: Disr) -> String {
         match *self {
-            SignedInt(hir::TyI8)    => format!("{}", val as i8 ),
-            SignedInt(hir::TyI16)   => format!("{}", val as i16),
-            SignedInt(hir::TyI32)   => format!("{}", val as i32),
-            SignedInt(hir::TyI64)   => format!("{}", val as i64),
-            UnsignedInt(hir::TyU8)  => format!("{}", val as u8 ),
-            UnsignedInt(hir::TyU16) => format!("{}", val as u16),
-            UnsignedInt(hir::TyU32) => format!("{}", val as u32),
-            UnsignedInt(hir::TyU64) => format!("{}", val as u64),
+            SignedInt(ast::TyI8)    => format!("{}", val as i8 ),
+            SignedInt(ast::TyI16)   => format!("{}", val as i16),
+            SignedInt(ast::TyI32)   => format!("{}", val as i32),
+            SignedInt(ast::TyI64)   => format!("{}", val as i64),
+            UnsignedInt(ast::TyU8)  => format!("{}", val as u8 ),
+            UnsignedInt(ast::TyU16) => format!("{}", val as u16),
+            UnsignedInt(ast::TyU32) => format!("{}", val as u32),
+            UnsignedInt(ast::TyU64) => format!("{}", val as u64),
 
-            UnsignedInt(hir::TyUs) |
-            SignedInt(hir::TyIs) => unreachable!(),
+            UnsignedInt(ast::TyUs) |
+            SignedInt(ast::TyIs) => unreachable!(),
         }
     }
 
@@ -137,17 +138,17 @@ impl IntTypeExt for attr::IntType {
         }
         let val = val.unwrap_or(ty::INITIAL_DISCRIMINANT_VALUE);
         match *self {
-            SignedInt(hir::TyI8)    => add1!(val as i8 ),
-            SignedInt(hir::TyI16)   => add1!(val as i16),
-            SignedInt(hir::TyI32)   => add1!(val as i32),
-            SignedInt(hir::TyI64)   => add1!(val as i64),
-            UnsignedInt(hir::TyU8)  => add1!(val as u8 ),
-            UnsignedInt(hir::TyU16) => add1!(val as u16),
-            UnsignedInt(hir::TyU32) => add1!(val as u32),
-            UnsignedInt(hir::TyU64) => add1!(val as u64),
+            SignedInt(ast::TyI8)    => add1!(val as i8 ),
+            SignedInt(ast::TyI16)   => add1!(val as i16),
+            SignedInt(ast::TyI32)   => add1!(val as i32),
+            SignedInt(ast::TyI64)   => add1!(val as i64),
+            UnsignedInt(ast::TyU8)  => add1!(val as u8 ),
+            UnsignedInt(ast::TyU16) => add1!(val as u16),
+            UnsignedInt(ast::TyU32) => add1!(val as u32),
+            UnsignedInt(ast::TyU64) => add1!(val as u64),
 
-            UnsignedInt(hir::TyUs) |
-            SignedInt(hir::TyIs) => unreachable!(),
+            UnsignedInt(ast::TyUs) |
+            SignedInt(ast::TyIs) => unreachable!(),
         }
     }
 }
@@ -279,14 +280,14 @@ impl<'tcx> ty::ctxt<'tcx> {
             //
             // NB. Historically `fn enum_variants` generate i64 here, while
             // rustc_typeck::check would generate isize.
-            _ => SignedInt(hir::TyIs),
+            _ => SignedInt(ast::TyIs),
         };
 
         let repr_type_ty = repr_type.to_ty(self);
         let repr_type = match repr_type {
-            SignedInt(hir::TyIs) =>
+            SignedInt(ast::TyIs) =>
                 SignedInt(self.sess.target.int_type),
-            UnsignedInt(hir::TyUs) =>
+            UnsignedInt(ast::TyUs) =>
                 UnsignedInt(self.sess.target.uint_type),
             other => other
         };
@@ -334,7 +335,7 @@ impl<'tcx> ty::ctxt<'tcx> {
     /// Returns the repeat count for a repeating vector expression.
     pub fn eval_repeat_count(&self, count_expr: &hir::Expr) -> usize {
         let hint = UncheckedExprHint(self.types.usize);
-        match const_eval::eval_const_expr_partial(self, count_expr, hint) {
+        match const_eval::eval_const_expr_partial(self, count_expr, hint, None) {
             Ok(val) => {
                 let found = match val {
                     ConstVal::Uint(count) => return count as usize,
@@ -460,7 +461,7 @@ impl<'tcx> ty::ctxt<'tcx> {
                     tcx.sess.cstore.get_crate_hash(did.krate)
                 };
                 h.as_str().hash(state);
-                did.node.hash(state);
+                did.index.hash(state);
             };
             let mt = |state: &mut SipHasher, mt: TypeAndMut| {
                 mt.mutbl.hash(state);
@@ -565,84 +566,86 @@ impl<'tcx> ty::ctxt<'tcx> {
         }
     }
 
-    /// Returns true if this ADT is a dtorck type, i.e. whether it being
-    /// safe for destruction requires it to be alive
+    /// Returns true if this ADT is a dtorck type.
+    ///
+    /// Invoking the destructor of a dtorck type during usual cleanup
+    /// (e.g. the glue emitted for stack unwinding) requires all
+    /// lifetimes in the type-structure of `adt` to strictly outlive
+    /// the adt value itself.
+    ///
+    /// If `adt` is not dtorck, then the adt's destructor can be
+    /// invoked even when there are lifetimes in the type-structure of
+    /// `adt` that do not strictly outlive the adt value itself.
+    /// (This allows programs to make cyclic structures without
+    /// resorting to unasfe means; see RFCs 769 and 1238).
     pub fn is_adt_dtorck(&self, adt: ty::AdtDef<'tcx>) -> bool {
         let dtor_method = match adt.destructor() {
             Some(dtor) => dtor,
             None => return false
         };
-        let impl_did = self.impl_of_method(dtor_method).unwrap_or_else(|| {
-            self.sess.bug(&format!("no Drop impl for the dtor of `{:?}`", adt))
-        });
-        let generics = adt.type_scheme(self).generics;
 
-        // In `impl<'a> Drop ...`, we automatically assume
-        // `'a` is meaningful and thus represents a bound
-        // through which we could reach borrowed data.
+        // RFC 1238: if the destructor method is tagged with the
+        // attribute `unsafe_destructor_blind_to_params`, then the
+        // compiler is being instructed to *assume* that the
+        // destructor will not access borrowed data,
+        // even if such data is otherwise reachable.
         //
-        // FIXME (pnkfelix): In the future it would be good to
-        // extend the language to allow the user to express,
-        // in the impl signature, that a lifetime is not
-        // actually used (something like `where 'a: ?Live`).
-        if generics.has_region_params(subst::TypeSpace) {
-            debug!("typ: {:?} has interesting dtor due to region params",
-                   adt);
-            return true;
-        }
+        // Such access can be in plain sight (e.g. dereferencing
+        // `*foo.0` of `Foo<'a>(&'a u32)`) or indirectly hidden
+        // (e.g. calling `foo.0.clone()` of `Foo<T:Clone>`).
+        return !self.has_attr(dtor_method, "unsafe_destructor_blind_to_params");
+    }
+}
 
-        let mut seen_items = Vec::new();
-        let mut items_to_inspect = vec![impl_did];
-        while let Some(item_def_id) = items_to_inspect.pop() {
-            if seen_items.contains(&item_def_id) {
-                continue;
-            }
+#[derive(Debug)]
+pub struct ImplMethod<'tcx> {
+    pub method: Rc<ty::Method<'tcx>>,
+    pub substs: Substs<'tcx>,
+    pub is_provided: bool
+}
 
-            for pred in self.lookup_predicates(item_def_id).predicates {
-                let result = match pred {
-                    ty::Predicate::Equate(..) |
-                    ty::Predicate::RegionOutlives(..) |
-                    ty::Predicate::TypeOutlives(..) |
-                    ty::Predicate::WellFormed(..) |
-                    ty::Predicate::ObjectSafe(..) |
-                    ty::Predicate::Projection(..) => {
-                        // For now, assume all these where-clauses
-                        // may give drop implementation capabilty
-                        // to access borrowed data.
-                        true
+impl<'tcx> ty::ctxt<'tcx> {
+    #[inline(never)] // is this perfy enough?
+    pub fn get_impl_method(&self,
+                           impl_def_id: DefId,
+                           substs: Substs<'tcx>,
+                           name: Name)
+                           -> ImplMethod<'tcx>
+    {
+        // there don't seem to be nicer accessors to these:
+        let impl_or_trait_items_map = self.impl_or_trait_items.borrow();
+
+        for impl_item in &self.impl_items.borrow()[&impl_def_id] {
+            if let ty::MethodTraitItem(ref meth) =
+                impl_or_trait_items_map[&impl_item.def_id()] {
+                if meth.name == name {
+                    return ImplMethod {
+                        method: meth.clone(),
+                        substs: substs,
+                        is_provided: false
                     }
-
-                    ty::Predicate::Trait(ty::Binder(ref t_pred)) => {
-                        let def_id = t_pred.trait_ref.def_id;
-                        if self.trait_items(def_id).len() != 0 {
-                            // If trait has items, assume it adds
-                            // capability to access borrowed data.
-                            true
-                        } else {
-                            // Trait without items is itself
-                            // uninteresting from POV of dropck.
-                            //
-                            // However, may have parent w/ items;
-                            // so schedule checking of predicates,
-                            items_to_inspect.push(def_id);
-                            // and say "no capability found" for now.
-                            false
-                        }
-                    }
-                };
-
-                if result {
-                    debug!("typ: {:?} has interesting dtor due to generic preds, e.g. {:?}",
-                           adt, pred);
-                    return true;
                 }
             }
-
-            seen_items.push(item_def_id);
         }
 
-        debug!("typ: {:?} is dtorck-safe", adt);
-        false
+        // It is not in the impl - get the default from the trait.
+        let trait_ref = self.impl_trait_ref(impl_def_id).unwrap();
+        for trait_item in self.trait_items(trait_ref.def_id).iter() {
+            if let &ty::MethodTraitItem(ref meth) = trait_item {
+                if meth.name == name {
+                    let impl_to_trait_substs = self
+                        .make_substs_for_receiver_types(&trait_ref, meth);
+                    return ImplMethod {
+                        method: meth.clone(),
+                        substs: impl_to_trait_substs.subst(self, &substs),
+                        is_provided: true
+                    }
+                }
+            }
+        }
+
+        self.sess.bug(&format!("method {:?} not found in {:?}",
+                               name, impl_def_id))
     }
 }
 

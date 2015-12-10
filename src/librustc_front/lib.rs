@@ -36,13 +36,15 @@
 #![feature(staged_api)]
 #![feature(str_char)]
 #![feature(filling_drop)]
-#![feature(str_escape)]
-#![cfg_attr(test, feature(test))]
 
 extern crate serialize;
-#[macro_use] extern crate log;
-#[macro_use] extern crate syntax;
-#[macro_use] #[no_link] extern crate rustc_bitflags;
+#[macro_use]
+extern crate log;
+#[macro_use]
+extern crate syntax;
+#[macro_use]
+#[no_link]
+extern crate rustc_bitflags;
 
 extern crate serialize as rustc_serialize; // used by deriving
 
@@ -50,7 +52,6 @@ pub mod hir;
 pub mod lowering;
 pub mod fold;
 pub mod visit;
-pub mod attr;
 pub mod util;
 
 pub mod print {

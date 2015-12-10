@@ -32,11 +32,12 @@
 
 #![allow(unused_variables)]
 #![feature(box_syntax)]
+#![feature(omit_gdb_pretty_printer_section)]
 #![omit_gdb_pretty_printer_section]
 
 fn main() {
     let a = box 1;
-    let b = box() (2, 3.5f64);
+    let b = box (2, 3.5f64);
 
     zzz(); // #break
 }

@@ -75,7 +75,7 @@ impl IntoInner<imp::Process> for Child {
     fn into_inner(self) -> imp::Process { self.handle }
 }
 
-/// A handle to a child procesess's stdin
+/// A handle to a child process's stdin
 #[stable(feature = "process", since = "1.0.0")]
 pub struct ChildStdin {
     inner: AnonPipe
@@ -100,7 +100,7 @@ impl IntoInner<AnonPipe> for ChildStdin {
     fn into_inner(self) -> AnonPipe { self.inner }
 }
 
-/// A handle to a child procesess's stdout
+/// A handle to a child process's stdout
 #[stable(feature = "process", since = "1.0.0")]
 pub struct ChildStdout {
     inner: AnonPipe
@@ -121,7 +121,7 @@ impl IntoInner<AnonPipe> for ChildStdout {
     fn into_inner(self) -> AnonPipe { self.inner }
 }
 
-/// A handle to a child procesess's stderr
+/// A handle to a child process's stderr
 #[stable(feature = "process", since = "1.0.0")]
 pub struct ChildStderr {
     inner: AnonPipe
@@ -630,12 +630,15 @@ mod tests {
     fn signal_reported_right() {
         use os::unix::process::ExitStatusExt;
 
-        let p = Command::new("/bin/sh").arg("-c").arg("kill -9 $$").spawn();
-        assert!(p.is_ok());
-        let mut p = p.unwrap();
+        let mut p = Command::new("/bin/sh")
+                            .arg("-c").arg("read a")
+                            .stdin(Stdio::piped())
+                            .spawn().unwrap();
+        p.kill().unwrap();
         match p.wait().unwrap().signal() {
             Some(9) => {},
-            result => panic!("not terminated by signal 9 (instead, {:?})", result),
+            result => panic!("not terminated by signal 9 (instead, {:?})",
+                             result),
         }
     }
 

@@ -260,6 +260,12 @@ impl Error for VarError {
 ///  - [Austin Group Bugzilla](http://austingroupbugs.net/view.php?id=188)
 ///  - [GNU C library Bugzilla](https://sourceware.org/bugzilla/show_bug.cgi?id=15607#c2)
 ///
+/// # Panics
+///
+/// This function may panic if `key` is empty, contains an ASCII equals sign
+/// `'='` or the NUL character `'\0'`, or when the value contains the NUL
+/// character.
+///
 /// # Examples
 ///
 /// ```
@@ -291,6 +297,12 @@ fn _set_var(k: &OsStr, v: &OsStr) {
 ///
 ///  - [Austin Group Bugzilla](http://austingroupbugs.net/view.php?id=188)
 ///  - [GNU C library Bugzilla](https://sourceware.org/bugzilla/show_bug.cgi?id=15607#c2)
+///
+/// # Panics
+///
+/// This function may panic if `key` is empty, contains an ASCII equals sign
+/// `'='` or the NUL character `'\0'`, or when the value contains the NUL
+/// character.
 ///
 /// # Examples
 ///
@@ -416,7 +428,10 @@ impl Error for JoinPathsError {
 /// Returns the value of the 'HOME' environment variable if it is
 /// set and not equal to the empty string. Otherwise, returns the value of the
 /// 'USERPROFILE' environment variable if it is set and not equal to the empty
-/// string.
+/// string. If both do not exist, [`GetUserProfileDirectory`][msdn] is used to
+/// return the appropriate path.
+///
+/// [msdn]: https://msdn.microsoft.com/en-us/library/windows/desktop/bb762280(v=vs.85).aspx
 ///
 /// # Examples
 ///
@@ -442,7 +457,11 @@ pub fn home_dir() -> Option<PathBuf> {
 ///
 /// On Windows, returns the value of, in order, the 'TMP', 'TEMP',
 /// 'USERPROFILE' environment variable  if any are set and not the empty
-/// string. Otherwise, tmpdir returns the path to the Windows directory.
+/// string. Otherwise, tmpdir returns the path to the Windows directory. This
+/// behavior is identical to that of [GetTempPath][msdn], which this function
+/// uses internally.
+///
+/// [msdn]: https://msdn.microsoft.com/en-us/library/windows/desktop/aa364992(v=vs.85).aspx
 ///
 /// ```
 /// use std::env;

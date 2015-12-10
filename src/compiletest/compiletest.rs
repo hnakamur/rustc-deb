@@ -13,9 +13,7 @@
 #![feature(box_syntax)]
 #![feature(dynamic_lib)]
 #![feature(libc)]
-#![feature(path_ext)]
 #![feature(rustc_private)]
-#![feature(slice_splits)]
 #![feature(str_char)]
 #![feature(test)]
 #![feature(vec_push_all)]
@@ -92,7 +90,7 @@ pub fn parse_config(args: Vec<String> ) -> Config {
           optflag("h", "help", "show this message"));
 
     let (argv0, args_) = args.split_first().unwrap();
-    if args[1] == "-h" || args[1] == "--help" {
+    if args.len() == 1 || args[1] == "-h" || args[1] == "--help" {
         let message = format!("Usage: {} [OPTIONS] [TESTNAME...]", argv0);
         println!("{}", getopts::usage(&message, &groups));
         println!("");
@@ -348,7 +346,7 @@ fn extract_gdb_version(full_version_line: Option<String>) -> Option<String> {
           if !full_version_line.trim().is_empty() => {
             let full_version_line = full_version_line.trim();
 
-            // used to be a regex "(^|[^0-9])([0-9]\.[0-9])([^0-9]|$)"
+            // used to be a regex "(^|[^0-9])([0-9]\.[0-9]+)"
             for (pos, c) in full_version_line.char_indices() {
                 if !c.is_digit(10) { continue }
                 if pos + 2 >= full_version_line.len() { continue }
@@ -357,11 +355,12 @@ fn extract_gdb_version(full_version_line: Option<String>) -> Option<String> {
                 if pos > 0 && full_version_line.char_at_reverse(pos).is_digit(10) {
                     continue
                 }
-                if pos + 3 < full_version_line.len() &&
-                   full_version_line.char_at(pos + 3).is_digit(10) {
-                    continue
+                let mut end = pos + 3;
+                while end < full_version_line.len() &&
+                      full_version_line.char_at(end).is_digit(10) {
+                    end += 1;
                 }
-                return Some(full_version_line[pos..pos+3].to_owned());
+                return Some(full_version_line[pos..end].to_owned());
             }
             println!("Could not extract GDB version from line '{}'",
                      full_version_line);

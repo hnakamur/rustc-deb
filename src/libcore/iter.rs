@@ -8,51 +8,293 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Composable external iterators
+//! Composable external iteration
 //!
-//! # The `Iterator` trait
+//! If you've found yourself with a collection of some kind, and needed to
+//! perform an operation on the elements of said collection, you'll quickly run
+//! into 'iterators'. Iterators are heavily used in idiomatic Rust code, so
+//! it's worth becoming familiar with them.
 //!
-//! This module defines Rust's core iteration trait. The `Iterator` trait has
-//! one unimplemented method, `next`. All other methods are derived through
-//! default methods to perform operations such as `zip`, `chain`, `enumerate`,
-//! and `fold`.
+//! Before explaining more, let's talk about how this module is structured:
 //!
-//! The goal of this module is to unify iteration across all containers in Rust.
-//! An iterator can be considered as a state machine which is used to track
-//! which element will be yielded next.
+//! # Organization
 //!
-//! There are various extensions also defined in this module to assist with
-//! various types of iteration, such as the `DoubleEndedIterator` for iterating
-//! in reverse, the `FromIterator` trait for creating a container from an
-//! iterator, and much more.
+//! This module is largely organized by type:
 //!
-//! # Rust's `for` loop
+//! * [Traits] are the core portion: these traits define what kind of iterators
+//!   exist and what you can do with them. The methods of these traits are worth
+//!   putting some extra study time into.
+//! * [Functions] provide some helpful ways to create some basic iterators.
+//! * [Structs] are often the return types of the various methods on this
+//!   module's traits. You'll usually want to look at the method that creates
+//!   the `struct`, rather than the `struct` itself. For more detail about why,
+//!   see '[Implementing Iterator](#implementing-iterator)'.
 //!
-//! The special syntax used by rust's `for` loop is based around the
-//! `IntoIterator` trait defined in this module. `for` loops can be viewed as a
-//! syntactical expansion into a `loop`, for example, the `for` loop in this
-//! example is essentially translated to the `loop` below.
+//! [Traits]: #traits
+//! [Functions]: #functions
+//! [Structs]: #structs
+//!
+//! That's it! Let's dig into iterators.
+//!
+//! # Iterator
+//!
+//! The heart and soul of this module is the [`Iterator`] trait. The core of
+//! [`Iterator`] looks like this:
 //!
 //! ```
-//! let values = vec![1, 2, 3];
+//! trait Iterator {
+//!     type Item;
+//!     fn next(&mut self) -> Option<Self::Item>;
+//! }
+//! ```
+//!
+//! An iterator has a method, [`next()`], which when called, returns an
+//! [`Option`]`<Item>`. [`next()`] will return `Some(Item)` as long as there
+//! are elements, and once they've all been exhausted, will return `None` to
+//! indicate that iteration is finished. Individual iterators may choose to
+//! resume iteration, and so calling [`next()`] again may or may not eventually
+//! start returning `Some(Item)` again at some point.
+//!
+//! [`Iterator`]'s full definition includes a number of other methods as well,
+//! but they are default methods, built on top of [`next()`], and so you get
+//! them for free.
+//!
+//! Iterators are also composable, and it's common to chain them together to do
+//! more complex forms of processing. See the [Adapters](#adapters) section
+//! below for more details.
+//!
+//! [`Iterator`]: trait.Iterator.html
+//! [`next()`]: trait.Iterator.html#tymethod.next
+//! [`Option`]: ../option/enum.Option.html
+//!
+//! # The three forms of iteration
+//!
+//! There are three common methods which can create iterators from a collection:
+//!
+//! * `iter()`, which iterates over `&T`.
+//! * `iter_mut()`, which iterates over `&mut T`.
+//! * `into_iter()`, which iterates over `T`.
+//!
+//! Various things in the standard library may implement one or more of the
+//! three, where appropriate.
+//!
+//! # Implementing Iterator
+//!
+//! Creating an iterator of your own involves two steps: creating a `struct` to
+//! hold the iterator's state, and then `impl`ementing [`Iterator`] for that
+//! `struct`. This is why there are so many `struct`s in this module: there is
+//! one for each iterator and iterator adapter.
+//!
+//! Let's make an iterator named `Counter` which counts from `1` to `5`:
+//!
+//! ```
+//! // First, the struct:
+//!
+//! /// An iterator which counts from one to five
+//! struct Counter {
+//!     count: usize,
+//! }
+//!
+//! // we want our count to start at one, so let's add a new() method to help.
+//! // This isn't strictly necessary, but is convenient. Note that we start
+//! // `count` at zero, we'll see why in `next()`'s implementation below.
+//! impl Counter {
+//!     fn new() -> Counter {
+//!         Counter { count: 0 }
+//!     }
+//! }
+//!
+//! // Then, we implement `Iterator` for our `Counter`:
+//!
+//! impl Iterator for Counter {
+//!     // we will be counting with usize
+//!     type Item = usize;
+//!
+//!     // next() is the only required method
+//!     fn next(&mut self) -> Option<usize> {
+//!         // increment our count. This is why we started at zero.
+//!         self.count += 1;
+//!
+//!         // check to see if we've finished counting or not.
+//!         if self.count < 6 {
+//!             Some(self.count)
+//!         } else {
+//!             None
+//!         }
+//!     }
+//! }
+//!
+//! // And now we can use it!
+//!
+//! let mut counter = Counter::new();
+//!
+//! let x = counter.next().unwrap();
+//! println!("{}", x);
+//!
+//! let x = counter.next().unwrap();
+//! println!("{}", x);
+//!
+//! let x = counter.next().unwrap();
+//! println!("{}", x);
+//!
+//! let x = counter.next().unwrap();
+//! println!("{}", x);
+//!
+//! let x = counter.next().unwrap();
+//! println!("{}", x);
+//! ```
+//!
+//! This will print `1` through `5`, each on their own line.
+//!
+//! Calling `next()` this way gets repetitive. Rust has a construct which can
+//! call `next()` on your iterator, until it reaches `None`. Let's go over that
+//! next.
+//!
+//! # for Loops and IntoIterator
+//!
+//! Rust's `for` loop syntax is actually sugar for iterators. Here's a basic
+//! example of `for`:
+//!
+//! ```
+//! let values = vec![1, 2, 3, 4, 5];
 //!
 //! for x in values {
 //!     println!("{}", x);
 //! }
+//! ```
 //!
-//! // Rough translation of the iteration without a `for` iterator.
-//! # let values = vec![1, 2, 3];
-//! let mut it = values.into_iter();
-//! loop {
-//!     match it.next() {
-//!         Some(x) => println!("{}", x),
-//!         None => break,
-//!     }
+//! This will print the numbers one through five, each on their own line. But
+//! you'll notice something here: we never called anything on our vector to
+//! produce an iterator. What gives?
+//!
+//! There's a trait in the standard library for converting something into an
+//! iterator: [`IntoIterator`]. This trait has one method, [`into_iter()`],
+//! which converts the thing implementing [`IntoIterator`] into an iterator.
+//! Let's take a look at that `for` loop again, and what the compiler converts
+//! it into:
+//!
+//! [`IntoIterator`]: trait.IntoIterator.html
+//! [`into_iter()`]: trait.IntoIterator.html#tymethod.into_iter
+//!
+//! ```
+//! let values = vec![1, 2, 3, 4, 5];
+//!
+//! for x in values {
+//!     println!("{}", x);
 //! }
 //! ```
 //!
-//! Because `Iterator`s implement `IntoIterator`, this `for` loop syntax can be
-//! applied to any iterator over any type.
+//! Rust de-sugars this into:
+//!
+//! ```
+//! let values = vec![1, 2, 3, 4, 5];
+//! {
+//!     let result = match values.into_iter() {
+//!         mut iter => loop {
+//!             match iter.next() {
+//!                 Some(x) => { println!("{}", x); },
+//!                 None => break,
+//!             }
+//!         },
+//!     };
+//!     result
+//! }
+//! ```
+//!
+//! First, we call `into_iter()` on the value. Then, we match on the iterator
+//! that returns, calling [`next()`] over and over until we see a `None`. At
+//! that point, we `break` out of the loop, and we're done iterating.
+//!
+//! There's one more subtle bit here: the standard library contains an
+//! interesting implementation of [`IntoIterator`]:
+//!
+//! ```ignore
+//! impl<I: Iterator> IntoIterator for I
+//! ```
+//!
+//! In other words, all [`Iterator`]s implement [`IntoIterator`], by just
+//! returning themselves. This means two things:
+//!
+//! 1. If you're writing an [`Iterator`], you can use it with a `for` loop.
+//! 2. If you're creating a collection, implementing [`IntoIterator`] for it
+//!    will allow your collection to be used with the `for` loop.
+//!
+//! # Adapters
+//!
+//! Functions which take an [`Iterator`] and return another [`Iterator`] are
+//! often called 'iterator adapters', as they're a form of the 'adapter
+//! pattern'.
+//!
+//! Common iterator adapters include [`map()`], [`take()`], and [`collect()`].
+//! For more, see their documentation.
+//!
+//! [`map()`]: trait.Iterator.html#method.map
+//! [`take()`]: trait.Iterator.html#method.take
+//! [`collect()`]: trait.Iterator.html#method.collect
+//!
+//! # Laziness
+//!
+//! Iterators (and iterator [adapters](#adapters)) are *lazy*. This means that
+//! just creating an iterator doesn't _do_ a whole lot. Nothing really happens
+//! until you call [`next()`]. This is sometimes a source of confusion when
+//! creating an iterator solely for its side effects. For example, the [`map()`]
+//! method calls a closure on each element it iterates over:
+//!
+//! ```
+//! let v = vec![1, 2, 3, 4, 5];
+//! v.iter().map(|x| println!("{}", x));
+//! ```
+//!
+//! This will not print any values, as we only created an iterator, rather than
+//! using it. The compiler will warn us about this kind of behavior:
+//!
+//! ```text
+//! warning: unused result which must be used: iterator adaptors are lazy and
+//! do nothing unless consumed
+//! ```
+//!
+//! The idiomatic way to write a [`map()`] for its side effects is to use a
+//! `for` loop instead:
+//!
+//! ```
+//! let v = vec![1, 2, 3, 4, 5];
+//!
+//! for x in &v {
+//!     println!("{}", x);
+//! }
+//! ```
+//!
+//! [`map()`]: trait.Iterator.html#method.map
+//!
+//! The two most common ways to evaluate an iterator are to use a `for` loop
+//! like this, or using the [`collect()`] adapter to produce a new collection.
+//!
+//! [`collect()`]: trait.Iterator.html#method.collect
+//!
+//! # Infinity
+//!
+//! Iterators do not have to be finite. As an example, an open-ended range is
+//! an infinite iterator:
+//!
+//! ```
+//! let numbers = 0..;
+//! ```
+//!
+//! It is common to use the [`take()`] iterator adapter to turn an infinite
+//! iterator into a finite one:
+//!
+//! ```
+//! let numbers = 0..;
+//! let five_numbers = numbers.take(5);
+//!
+//! for number in five_numbers {
+//!     println!("{}", number);
+//! }
+//! ```
+//!
+//! This will print the numbers `0` through `4`, each on their own line.
+//!
+//! [`take()`]: trait.Iterator.html#method.take
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
@@ -165,7 +407,7 @@ pub trait Iterator {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn nth(&mut self, mut n: usize) -> Option<Self::Item> where Self: Sized {
-        for x in self.by_ref() {
+        for x in self {
             if n == 0 { return Some(x) }
             n -= 1;
         }
@@ -637,7 +879,7 @@ pub trait Iterator {
     fn all<F>(&mut self, mut f: F) -> bool where
         Self: Sized, F: FnMut(Self::Item) -> bool
     {
-        for x in self.by_ref() {
+        for x in self {
             if !f(x) {
                 return false;
             }
@@ -664,7 +906,7 @@ pub trait Iterator {
         Self: Sized,
         F: FnMut(Self::Item) -> bool
     {
-        for x in self.by_ref() {
+        for x in self {
             if f(x) {
                 return true;
             }
@@ -689,7 +931,7 @@ pub trait Iterator {
         Self: Sized,
         P: FnMut(&Self::Item) -> bool,
     {
-        for x in self.by_ref() {
+        for x in self {
             if predicate(&x) { return Some(x) }
         }
         None
@@ -725,7 +967,7 @@ pub trait Iterator {
         P: FnMut(Self::Item) -> bool,
     {
         // `enumerate` might overflow.
-        for (i, x) in self.by_ref().enumerate() {
+        for (i, x) in self.enumerate() {
             if predicate(x) {
                 return Some(i);
             }
@@ -935,7 +1177,7 @@ pub trait Iterator {
 
     /// Creates an iterator that clones the elements it yields.
     ///
-    /// This is useful for converting an Iterator<&T> to an Iterator<T>,
+    /// This is useful for converting an `Iterator<&T>` to an`Iterator<T>`,
     /// so it's a more convenient form of `map(|&x| x)`.
     ///
     /// # Examples
@@ -1015,7 +1257,7 @@ pub trait Iterator {
 
     /// Lexicographically compares the elements of this `Iterator` with those
     /// of another.
-    #[unstable(feature = "iter_order", reason = "needs review and revision", issue = "27737")]
+    #[stable(feature = "iter_order", since = "1.5.0")]
     fn cmp<I>(mut self, other: I) -> Ordering where
         I: IntoIterator<Item = Self::Item>,
         Self::Item: Ord,
@@ -1038,7 +1280,7 @@ pub trait Iterator {
 
     /// Lexicographically compares the elements of this `Iterator` with those
     /// of another.
-    #[unstable(feature = "iter_order", reason = "needs review and revision", issue = "27737")]
+    #[stable(feature = "iter_order", since = "1.5.0")]
     fn partial_cmp<I>(mut self, other: I) -> Option<Ordering> where
         I: IntoIterator,
         Self::Item: PartialOrd<I::Item>,
@@ -1061,7 +1303,7 @@ pub trait Iterator {
 
     /// Determines if the elements of this `Iterator` are equal to those of
     /// another.
-    #[unstable(feature = "iter_order", reason = "needs review and revision", issue = "27737")]
+    #[stable(feature = "iter_order", since = "1.5.0")]
     fn eq<I>(mut self, other: I) -> bool where
         I: IntoIterator,
         Self::Item: PartialEq<I::Item>,
@@ -1080,7 +1322,7 @@ pub trait Iterator {
 
     /// Determines if the elements of this `Iterator` are unequal to those of
     /// another.
-    #[unstable(feature = "iter_order", reason = "needs review and revision", issue = "27737")]
+    #[stable(feature = "iter_order", since = "1.5.0")]
     fn ne<I>(mut self, other: I) -> bool where
         I: IntoIterator,
         Self::Item: PartialEq<I::Item>,
@@ -1099,7 +1341,7 @@ pub trait Iterator {
 
     /// Determines if the elements of this `Iterator` are lexicographically
     /// less than those of another.
-    #[unstable(feature = "iter_order", reason = "needs review and revision", issue = "27737")]
+    #[stable(feature = "iter_order", since = "1.5.0")]
     fn lt<I>(mut self, other: I) -> bool where
         I: IntoIterator,
         Self::Item: PartialOrd<I::Item>,
@@ -1126,7 +1368,7 @@ pub trait Iterator {
 
     /// Determines if the elements of this `Iterator` are lexicographically
     /// less or equal to those of another.
-    #[unstable(feature = "iter_order", reason = "needs review and revision", issue = "27737")]
+    #[stable(feature = "iter_order", since = "1.5.0")]
     fn le<I>(mut self, other: I) -> bool where
         I: IntoIterator,
         Self::Item: PartialOrd<I::Item>,
@@ -1153,7 +1395,7 @@ pub trait Iterator {
 
     /// Determines if the elements of this `Iterator` are lexicographically
     /// greater than those of another.
-    #[unstable(feature = "iter_order", reason = "needs review and revision", issue = "27737")]
+    #[stable(feature = "iter_order", since = "1.5.0")]
     fn gt<I>(mut self, other: I) -> bool where
         I: IntoIterator,
         Self::Item: PartialOrd<I::Item>,
@@ -1180,7 +1422,7 @@ pub trait Iterator {
 
     /// Determines if the elements of this `Iterator` are lexicographically
     /// greater than or equal to those of another.
-    #[unstable(feature = "iter_order", reason = "needs review and revision", issue = "27737")]
+    #[stable(feature = "iter_order", since = "1.5.0")]
     fn ge<I>(mut self, other: I) -> bool where
         I: IntoIterator,
         Self::Item: PartialOrd<I::Item>,
@@ -1211,7 +1453,7 @@ pub trait Iterator {
 ///
 /// This is an idiosyncratic helper to try to factor out the
 /// commonalities of {max,min}{,_by}. In particular, this avoids
-/// having to implement optimisations several times.
+/// having to implement optimizations several times.
 #[inline]
 fn select_fold1<I,B, FProj, FCmp>(mut it: I,
                                   mut f_proj: FProj,
@@ -1244,11 +1486,11 @@ impl<'a, I: Iterator + ?Sized> Iterator for &'a mut I {
     fn size_hint(&self) -> (usize, Option<usize>) { (**self).size_hint() }
 }
 
-/// Conversion from an `Iterator`
+/// Conversion from an `Iterator`.
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_on_unimplemented="a collection of type `{Self}` cannot be \
                           built from an iterator over elements of type `{A}`"]
-pub trait FromIterator<A> {
+pub trait FromIterator<A>: Sized {
     /// Builds a container with elements from something iterable.
     ///
     /// # Examples
@@ -1276,21 +1518,90 @@ pub trait FromIterator<A> {
     fn from_iter<T: IntoIterator<Item=A>>(iterator: T) -> Self;
 }
 
-/// Conversion into an `Iterator`
+/// Conversion into an `Iterator`.
 ///
-/// Implementing this trait allows you to use your type with Rust's `for` loop. See
-/// the [module level documentation](index.html) for more details.
+/// By implementing `IntoIterator` for a type, you define how it will be
+/// converted to an iterator. This is common for types which describe a
+/// collection of some kind.
+///
+/// One benefit of implementing `IntoIterator` is that your type will [work
+/// with Rust's `for` loop syntax](index.html#for-loops-and-intoiterator).
+///
+/// # Examples
+///
+/// Vectors implement `IntoIterator`:
+///
+/// ```
+/// let v = vec![1, 2, 3];
+///
+/// let mut iter = v.into_iter();
+///
+/// let n = iter.next();
+/// assert_eq!(Some(1), n);
+///
+/// let n = iter.next();
+/// assert_eq!(Some(2), n);
+///
+/// let n = iter.next();
+/// assert_eq!(Some(3), n);
+///
+/// let n = iter.next();
+/// assert_eq!(None, n);
+/// ```
+///
+/// Implementing `IntoIterator` for your type:
+///
+/// ```
+/// // A sample collection, that's just a wrapper over Vec<T>
+/// #[derive(Debug)]
+/// struct MyCollection(Vec<i32>);
+///
+/// // Let's give it some methods so we can create one and add things
+/// // to it.
+/// impl MyCollection {
+///     fn new() -> MyCollection {
+///         MyCollection(Vec::new())
+///     }
+///
+///     fn add(&mut self, elem: i32) {
+///         self.0.push(elem);
+///     }
+/// }
+///
+/// // and we'll implement IntoIterator
+/// impl IntoIterator for MyCollection {
+///     type Item = i32;
+///     type IntoIter = ::std::vec::IntoIter<i32>;
+///
+///     fn into_iter(self) -> Self::IntoIter {
+///         self.0.into_iter()
+///     }
+/// }
+///
+/// // Now we can make a new collection...
+/// let mut c = MyCollection::new();
+///
+/// // ... add some stuff to it ...
+/// c.add(0);
+/// c.add(1);
+/// c.add(2);
+///
+/// // ... and then turn it into an Iterator:
+/// for (i, n) in c.into_iter().enumerate() {
+///     assert_eq!(i as i32, n);
+/// }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait IntoIterator {
-    /// The type of the elements being iterated
+    /// The type of the elements being iterated over.
     #[stable(feature = "rust1", since = "1.0.0")]
     type Item;
 
-    /// A container for iterating over elements of type `Item`
+    /// Which kind of iterator are we turning this into?
     #[stable(feature = "rust1", since = "1.0.0")]
     type IntoIter: Iterator<Item=Self::Item>;
 
-    /// Consumes `Self` and returns an iterator over it
+    /// Consumes `Self` and returns an iterator over it.
     #[stable(feature = "rust1", since = "1.0.0")]
     fn into_iter(self) -> Self::IntoIter;
 }
@@ -1305,23 +1616,164 @@ impl<I: Iterator> IntoIterator for I {
     }
 }
 
-/// A type growable from an `Iterator` implementation
+/// Extend a collection with the contents of an iterator.
+///
+/// Iterators produce a series of values, and collections can also be thought
+/// of as a series of values. The `Extend` trait bridges this gap, allowing you
+/// to extend a collection by including the contents of that iterator.
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// // You can extend a String with some chars:
+/// let mut message = String::from("The first three letters are: ");
+///
+/// message.extend(&['a', 'b', 'c']);
+///
+/// assert_eq!("abc", &message[29..32]);
+/// ```
+///
+/// Implementing `Extend`:
+///
+/// ```
+/// // A sample collection, that's just a wrapper over Vec<T>
+/// #[derive(Debug)]
+/// struct MyCollection(Vec<i32>);
+///
+/// // Let's give it some methods so we can create one and add things
+/// // to it.
+/// impl MyCollection {
+///     fn new() -> MyCollection {
+///         MyCollection(Vec::new())
+///     }
+///
+///     fn add(&mut self, elem: i32) {
+///         self.0.push(elem);
+///     }
+/// }
+///
+/// // since MyCollection has a list of i32s, we implement Extend for i32
+/// impl Extend<i32> for MyCollection {
+///
+///     // This is a bit simpler with the concrete type signature: we can call
+///     // extend on anything which can be turned into an Iterator which gives
+///     // us i32s. Because we need i32s to put into MyCollection.
+///     fn extend<T: IntoIterator<Item=i32>>(&mut self, iterable: T) {
+///
+///         // The implementation is very straightforward: loop through the
+///         // iterator, and add() each element to ourselves.
+///         for elem in iterable {
+///             self.add(elem);
+///         }
+///     }
+/// }
+///
+/// let mut c = MyCollection::new();
+///
+/// c.add(5);
+/// c.add(6);
+/// c.add(7);
+///
+/// // let's extend our collection with three more numbers
+/// c.extend(vec![1, 2, 3]);
+///
+/// // we've added these elements onto the end
+/// assert_eq!("MyCollection([5, 6, 7, 1, 2, 3])", format!("{:?}", c));
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait Extend<A> {
-    /// Extends a container with the elements yielded by an arbitrary iterator
+    /// Extends a collection with the contents of an iterator.
+    ///
+    /// As this is the only method for this trait, the [trait-level] docs
+    /// contain more details.
+    ///
+    /// [trait-level]: trait.Extend.html
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// // You can extend a String with some chars:
+    /// let mut message = String::from("The first three letters are: ");
+    ///
+    /// message.extend(['a', 'b', 'c'].iter());
+    ///
+    /// assert_eq!("abc", &message[29..32]);
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn extend<T: IntoIterator<Item=A>>(&mut self, iterable: T);
 }
 
-/// A range iterator able to yield elements from both ends
+/// An iterator able to yield elements from both ends.
 ///
-/// A `DoubleEndedIterator` can be thought of as a deque in that `next()` and
-/// `next_back()` exhaust elements from the *same* range, and do not work
-/// independently of each other.
+/// Something that implements `DoubleEndedIterator` has one extra capability
+/// over something that implements [`Iterator`]: the ability to also take
+/// `Item`s from the back, as well as the front.
+///
+/// It is important to note that both back and forth work on the same range,
+/// and do not cross: iteration is over when they meet in the middle.
+///
+/// [`Iterator`]: trait.Iterator.html
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// let numbers = vec![1, 2, 3];
+///
+/// let mut iter = numbers.iter();
+///
+/// let n = iter.next();
+/// assert_eq!(Some(&1), n);
+///
+/// let n = iter.next_back();
+/// assert_eq!(Some(&3), n);
+///
+/// let n = iter.next_back();
+/// assert_eq!(Some(&2), n);
+///
+/// let n = iter.next();
+/// assert_eq!(None, n);
+///
+/// let n = iter.next_back();
+/// assert_eq!(None, n);
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait DoubleEndedIterator: Iterator {
-    /// Yields an element from the end of the range, returning `None` if the
-    /// range is empty.
+    /// An iterator able to yield elements from both ends.
+    ///
+    /// As this is the only method for this trait, the [trait-level] docs
+    /// contain more details.
+    ///
+    /// [trait-level]: trait.DoubleEndedIterator.html
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// let numbers = vec![1, 2, 3];
+    ///
+    /// let mut iter = numbers.iter();
+    ///
+    /// let n = iter.next();
+    /// assert_eq!(Some(&1), n);
+    ///
+    /// let n = iter.next_back();
+    /// assert_eq!(Some(&3), n);
+    ///
+    /// let n = iter.next_back();
+    /// assert_eq!(Some(&2), n);
+    ///
+    /// let n = iter.next();
+    /// assert_eq!(None, n);
+    ///
+    /// let n = iter.next_back();
+    /// assert_eq!(None, n);
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn next_back(&mut self) -> Option<Self::Item>;
 }
@@ -1331,18 +1783,98 @@ impl<'a, I: DoubleEndedIterator + ?Sized> DoubleEndedIterator for &'a mut I {
     fn next_back(&mut self) -> Option<I::Item> { (**self).next_back() }
 }
 
-/// An iterator that knows its exact length
+/// An iterator that knows its exact length.
 ///
-/// This trait is a helper for iterators like the vector iterator, so that
-/// it can support double-ended enumeration.
+/// Many [`Iterator`]s don't know how many times they will iterate, but some do.
+/// If an iterator knows how many times it can iterate, providing access to
+/// that information can be useful. For example, if you want to iterate
+/// backwards, a good start is to know where the end is.
 ///
-/// `Iterator::size_hint` *must* return the exact size of the iterator.
-/// Note that the size must fit in `usize`.
+/// When implementing an `ExactSizeIterator`, You must also implement
+/// [`Iterator`]. When doing so, the implementation of [`size_hint()`] *must*
+/// return the exact size of the iterator.
+///
+/// [`Iterator`]: trait.Iterator.html
+/// [`size_hint()`]: trait.Iterator.html#method.size_hint
+///
+/// The [`len()`] method has a default implementation, so you usually shouldn't
+/// implement it. However, you may be able to provide a more performant
+/// implementation than the default, so overriding it in this case makes sense.
+///
+/// [`len()`]: #method.len
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// // a finite range knows exactly how many times it will iterate
+/// let five = (0..5);
+///
+/// assert_eq!(5, five.len());
+/// ```
+///
+/// In the [module level docs][moddocs], we implemented an [`Iterator`],
+/// `Counter`. Let's implement `ExactSizeIterator` for it as well:
+///
+/// [moddocs]: index.html
+///
+/// ```
+/// # struct Counter {
+/// #     count: usize,
+/// # }
+/// # impl Counter {
+/// #     fn new() -> Counter {
+/// #         Counter { count: 0 }
+/// #     }
+/// # }
+/// # impl Iterator for Counter {
+/// #     type Item = usize;
+/// #     fn next(&mut self) -> Option<usize> {
+/// #         self.count += 1;
+/// #         if self.count < 6 {
+/// #             Some(self.count)
+/// #         } else {
+/// #             None
+/// #         }
+/// #     }
+/// # }
+/// impl ExactSizeIterator for Counter {
+///     // We already have the number of iterations, so we can use it directly.
+///     fn len(&self) -> usize {
+///         self.count
+///     }
+/// }
+///
+/// // And now we can use it!
+///
+/// let counter = Counter::new();
+///
+/// assert_eq!(0, counter.len());
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait ExactSizeIterator: Iterator {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    /// Returns the exact length of the iterator.
+    /// Returns the exact number of times the iterator will iterate.
+    ///
+    /// This method has a default implementation, so you usually should not
+    /// implement it directly. However, if you can provide a more efficient
+    /// implementation, you can do so. See the [trait-level] docs for an
+    /// example.
+    ///
+    /// [trait-level]: trait.ExactSizeIterator.html
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// // a finite range knows exactly how many times it will iterate
+    /// let five = (0..5);
+    ///
+    /// assert_eq!(5, five.len());
+    /// ```
     fn len(&self) -> usize {
         let (lower, upper) = self.size_hint();
         // Note: This assertion is overly defensive, but it checks the invariant
@@ -1376,7 +1908,13 @@ impl<B, I: ExactSizeIterator, F> ExactSizeIterator for Map<I, F> where
 impl<A, B> ExactSizeIterator for Zip<A, B>
     where A: ExactSizeIterator, B: ExactSizeIterator {}
 
-/// An double-ended iterator with the direction inverted
+/// An double-ended iterator with the direction inverted.
+///
+/// This `struct` is created by the [`rev()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`rev()`]: trait.Iterator.html#method.rev
+/// [`Iterator`]: trait.Iterator.html
 #[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1400,7 +1938,13 @@ impl<I> DoubleEndedIterator for Rev<I> where I: DoubleEndedIterator {
     fn next_back(&mut self) -> Option<<I as Iterator>::Item> { self.iter.next() }
 }
 
-/// An iterator that clones the elements of an underlying iterator
+/// An iterator that clones the elements of an underlying iterator.
+///
+/// This `struct` is created by the [`cloned()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`cloned()`]: trait.Iterator.html#method.cloned
+/// [`Iterator`]: trait.Iterator.html
 #[stable(feature = "iter_cloned", since = "1.1.0")]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[derive(Clone)]
@@ -1437,7 +1981,13 @@ impl<'a, I, T: 'a> ExactSizeIterator for Cloned<I>
     where I: ExactSizeIterator<Item=&'a T>, T: Clone
 {}
 
-/// An iterator that repeats endlessly
+/// An iterator that repeats endlessly.
+///
+/// This `struct` is created by the [`cycle()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`cycle()`]: trait.Iterator.html#method.cycle
+/// [`Iterator`]: trait.Iterator.html
 #[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1469,7 +2019,13 @@ impl<I> Iterator for Cycle<I> where I: Clone + Iterator {
     }
 }
 
-/// An iterator that strings two iterators together
+/// An iterator that strings two iterators together.
+///
+/// This `struct` is created by the [`chain()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`chain()`]: trait.Iterator.html#method.chain
+/// [`Iterator`]: trait.Iterator.html
 #[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1559,7 +2115,12 @@ impl<A, B> Iterator for Chain<A, B> where
     #[inline]
     fn last(self) -> Option<A::Item> {
         match self.state {
-            ChainState::Both => self.b.last().or(self.a.last()),
+            ChainState::Both => {
+                // Must exhaust a before b.
+                let a_last = self.a.last();
+                let b_last = self.b.last();
+                b_last.or(a_last)
+            },
             ChainState::Front => self.a.last(),
             ChainState::Back => self.b.last()
         }
@@ -1602,7 +2163,13 @@ impl<A, B> DoubleEndedIterator for Chain<A, B> where
     }
 }
 
-/// An iterator that iterates two other iterators simultaneously
+/// An iterator that iterates two other iterators simultaneously.
+///
+/// This `struct` is created by the [`zip()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`zip()`]: trait.Iterator.html#method.zip
+/// [`Iterator`]: trait.Iterator.html
 #[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1668,7 +2235,13 @@ impl<A, B> DoubleEndedIterator for Zip<A, B> where
     }
 }
 
-/// An iterator that maps the values of `iter` with `f`
+/// An iterator that maps the values of `iter` with `f`.
+///
+/// This `struct` is created by the [`map()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`map()`]: trait.Iterator.html#method.map
+/// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -1702,7 +2275,13 @@ impl<B, I: DoubleEndedIterator, F> DoubleEndedIterator for Map<I, F> where
     }
 }
 
-/// An iterator that filters the elements of `iter` with `predicate`
+/// An iterator that filters the elements of `iter` with `predicate`.
+///
+/// This `struct` is created by the [`filter()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`filter()`]: trait.Iterator.html#method.filter
+/// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -1747,7 +2326,13 @@ impl<I: DoubleEndedIterator, P> DoubleEndedIterator for Filter<I, P>
     }
 }
 
-/// An iterator that uses `f` to both filter and map elements from `iter`
+/// An iterator that uses `f` to both filter and map elements from `iter`.
+///
+/// This `struct` is created by the [`filter_map()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`filter_map()`]: trait.Iterator.html#method.filter_map
+/// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -1794,7 +2379,13 @@ impl<B, I: DoubleEndedIterator, F> DoubleEndedIterator for FilterMap<I, F>
     }
 }
 
-/// An iterator that yields the current count and the element during iteration
+/// An iterator that yields the current count and the element during iteration.
+///
+/// This `struct` is created by the [`enumerate()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`enumerate()`]: trait.Iterator.html#method.enumerate
+/// [`Iterator`]: trait.Iterator.html
 #[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1861,21 +2452,20 @@ impl<I> DoubleEndedIterator for Enumerate<I> where
     }
 }
 
-/// An iterator with a `peek()` that returns an optional reference to the next element.
+/// An iterator with a `peek()` that returns an optional reference to the next
+/// element.
+///
+/// This `struct` is created by the [`peekable()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`peekable()`]: trait.Iterator.html#method.peekable
+/// [`Iterator`]: trait.Iterator.html
+#[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Peekable<I: Iterator> {
     iter: I,
     peeked: Option<I::Item>,
-}
-
-impl<I: Iterator + Clone> Clone for Peekable<I> where I::Item: Clone {
-    fn clone(&self) -> Peekable<I> {
-        Peekable {
-            iter: self.iter.clone(),
-            peeked: self.peeked.clone(),
-        }
-    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1951,7 +2541,13 @@ impl<I: Iterator> Peekable<I> {
     }
 }
 
-/// An iterator that rejects elements while `predicate` is true
+/// An iterator that rejects elements while `predicate` is true.
+///
+/// This `struct` is created by the [`skip_while()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`skip_while()`]: trait.Iterator.html#method.skip_while
+/// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -1985,7 +2581,13 @@ impl<I: Iterator, P> Iterator for SkipWhile<I, P>
     }
 }
 
-/// An iterator that only accepts elements while `predicate` is true
+/// An iterator that only accepts elements while `predicate` is true.
+///
+/// This `struct` is created by the [`take_while()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`take_while()`]: trait.Iterator.html#method.take_while
+/// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -2025,6 +2627,12 @@ impl<I: Iterator, P> Iterator for TakeWhile<I, P>
 }
 
 /// An iterator that skips over `n` elements of `iter`.
+///
+/// This `struct` is created by the [`skip()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`skip()`]: trait.Iterator.html#method.skip
+/// [`Iterator`]: trait.Iterator.html
 #[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -2099,6 +2707,12 @@ impl<I> Iterator for Skip<I> where I: Iterator {
 impl<I> ExactSizeIterator for Skip<I> where I: ExactSizeIterator {}
 
 /// An iterator that only iterates over the first `n` iterations of `iter`.
+///
+/// This `struct` is created by the [`take()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`take()`]: trait.Iterator.html#method.take
+/// [`Iterator`]: trait.Iterator.html
 #[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -2154,7 +2768,13 @@ impl<I> Iterator for Take<I> where I: Iterator{
 impl<I> ExactSizeIterator for Take<I> where I: ExactSizeIterator {}
 
 
-/// An iterator to maintain state while iterating another iterator
+/// An iterator to maintain state while iterating another iterator.
+///
+/// This `struct` is created by the [`scan()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`scan()`]: trait.Iterator.html#method.scan
+/// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -2183,9 +2803,14 @@ impl<B, I, St, F> Iterator for Scan<I, St, F> where
     }
 }
 
-/// An iterator that maps each element to an iterator,
-/// and yields the elements of the produced iterators
+/// An iterator that maps each element to an iterator, and yields the elements
+/// of the produced iterators.
 ///
+/// This `struct` is created by the [`flat_map()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`flat_map()`]: trait.Iterator.html#method.flat_map
+/// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -2253,6 +2878,12 @@ impl<I: DoubleEndedIterator, U, F> DoubleEndedIterator for FlatMap<I, U, F> wher
 
 /// An iterator that yields `None` forever after the underlying iterator
 /// yields `None` once.
+///
+/// This `struct` is created by the [`fuse()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`fuse()`]: trait.Iterator.html#method.fuse
+/// [`Iterator`]: trait.Iterator.html
 #[derive(Clone)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -2332,8 +2963,14 @@ impl<I> DoubleEndedIterator for Fuse<I> where I: DoubleEndedIterator {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<I> ExactSizeIterator for Fuse<I> where I: ExactSizeIterator {}
 
-/// An iterator that calls a function with a reference to each
-/// element before yielding it.
+/// An iterator that calls a function with a reference to each element before
+/// yielding it.
+///
+/// This `struct` is created by the [`inspect()`] method on [`Iterator`]. See its
+/// documentation for more.
+///
+/// [`inspect()`]: trait.Iterator.html#method.inspect
+/// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -2587,6 +3224,8 @@ impl<A> Iterator for StepBy<A, RangeFrom<A>> where
 #[unstable(feature = "range_inclusive",
            reason = "likely to be replaced by range notation and adapters",
            issue = "27777")]
+#[deprecated(since = "1.5.0", reason = "replaced with ... syntax")]
+#[allow(deprecated)]
 pub struct RangeInclusive<A> {
     range: ops::Range<A>,
     done: bool,
@@ -2597,6 +3236,8 @@ pub struct RangeInclusive<A> {
 #[unstable(feature = "range_inclusive",
            reason = "likely to be replaced by range notation and adapters",
            issue = "27777")]
+#[deprecated(since = "1.5.0", reason = "replaced with ... syntax")]
+#[allow(deprecated)]
 pub fn range_inclusive<A>(start: A, stop: A) -> RangeInclusive<A>
     where A: Step + One + Clone
 {
@@ -2609,6 +3250,8 @@ pub fn range_inclusive<A>(start: A, stop: A) -> RangeInclusive<A>
 #[unstable(feature = "range_inclusive",
            reason = "likely to be replaced by range notation and adapters",
            issue = "27777")]
+#[deprecated(since = "1.5.0", reason = "replaced with ... syntax")]
+#[allow(deprecated)]
 impl<A> Iterator for RangeInclusive<A> where
     A: PartialEq + Step + One + Clone,
     for<'a> &'a A: Add<&'a A, Output = A>
@@ -2643,6 +3286,8 @@ impl<A> Iterator for RangeInclusive<A> where
 #[unstable(feature = "range_inclusive",
            reason = "likely to be replaced by range notation and adapters",
            issue = "27777")]
+#[deprecated(since = "1.5.0", reason = "replaced with ... syntax")]
+#[allow(deprecated)]
 impl<A> DoubleEndedIterator for RangeInclusive<A> where
     A: PartialEq + Step + One + Clone,
     for<'a> &'a A: Add<&'a A, Output = A>,
@@ -2767,7 +3412,11 @@ impl<A: Step + One> Iterator for ops::RangeFrom<A> where
     }
 }
 
-/// An iterator that repeats an element endlessly
+/// An iterator that repeats an element endlessly.
+///
+/// This `struct` is created by the [`repeat()`] function. See its documentation for more.
+///
+/// [`repeat()`]: fn.repeat.html
 #[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Repeat<A> {
@@ -2790,7 +3439,52 @@ impl<A: Clone> DoubleEndedIterator for Repeat<A> {
     fn next_back(&mut self) -> Option<A> { Some(self.element.clone()) }
 }
 
-/// Creates a new iterator that endlessly repeats the element `elt`.
+/// Creates a new iterator that endlessly repeats a single element.
+///
+/// The `repeat()` function repeats a single value over and over and over and
+/// over and over and 🔁.
+///
+/// Infinite iterators like `repeat()` are often used with adapters like
+/// [`take()`], in order to make them finite.
+///
+/// [`take()`]: trait.Iterator.html#method.take
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// use std::iter;
+///
+/// // the number four 4ever:
+/// let mut fours = iter::repeat(4);
+///
+/// assert_eq!(Some(4), fours.next());
+/// assert_eq!(Some(4), fours.next());
+/// assert_eq!(Some(4), fours.next());
+/// assert_eq!(Some(4), fours.next());
+/// assert_eq!(Some(4), fours.next());
+///
+/// // yup, still four
+/// assert_eq!(Some(4), fours.next());
+/// ```
+///
+/// Going finite with [`take()`]:
+///
+/// ```
+/// use std::iter;
+///
+/// // that last example was too many fours. Let's only have four fours.
+/// let mut four_fours = iter::repeat(4).take(4);
+///
+/// assert_eq!(Some(4), four_fours.next());
+/// assert_eq!(Some(4), four_fours.next());
+/// assert_eq!(Some(4), four_fours.next());
+/// assert_eq!(Some(4), four_fours.next());
+///
+/// // ... and now we're done
+/// assert_eq!(None, four_fours.next());
+/// ```
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn repeat<T: Clone>(elt: T) -> Repeat<T> {
@@ -2798,6 +3492,10 @@ pub fn repeat<T: Clone>(elt: T) -> Repeat<T> {
 }
 
 /// An iterator that yields nothing.
+///
+/// This `struct` is created by the [`empty()`] function. See its documentation for more.
+///
+/// [`empty()`]: fn.empty.html
 #[stable(feature = "iter_empty", since = "1.2.0")]
 pub struct Empty<T>(marker::PhantomData<T>);
 
@@ -2847,12 +3545,29 @@ impl<T> Default for Empty<T> {
 }
 
 /// Creates an iterator that yields nothing.
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// use std::iter;
+///
+/// // this could have been an iterator over i32, but alas, it's just not.
+/// let mut nope = iter::empty::<i32>();
+///
+/// assert_eq!(None, nope.next());
+/// ```
 #[stable(feature = "iter_empty", since = "1.2.0")]
 pub fn empty<T>() -> Empty<T> {
     Empty(marker::PhantomData)
 }
 
 /// An iterator that yields an element exactly once.
+///
+/// This `struct` is created by the [`once()`] function. See its documentation for more.
+///
+/// [`once()`]: fn.once.html
 #[derive(Clone)]
 #[stable(feature = "iter_once", since = "1.2.0")]
 pub struct Once<T> {
@@ -2887,6 +3602,56 @@ impl<T> ExactSizeIterator for Once<T> {
 }
 
 /// Creates an iterator that yields an element exactly once.
+///
+/// This is commonly used to adapt a single value into a [`chain()`] of other
+/// kinds of iteration. Maybe you have an iterator that covers almost
+/// everything, but you need an extra special case. Maybe you have a function
+/// which works on iterators, but you only need to process one value.
+///
+/// [`chain()`]: trait.Iterator.html#method.chain
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// use std::iter;
+///
+/// // one is the loneliest number
+/// let mut one = iter::once(1);
+///
+/// assert_eq!(Some(1), one.next());
+///
+/// // just one, that's all we get
+/// assert_eq!(None, one.next());
+/// ```
+///
+/// Chaining together with another iterator. Let's say that we want to iterate
+/// over each file of the `.foo` directory, but also a configuration file,
+/// `.foorc`:
+///
+/// ```no_run
+/// use std::iter;
+/// use std::fs;
+/// use std::path::PathBuf;
+///
+/// let dirs = fs::read_dir(".foo").unwrap();
+///
+/// // we need to convert from an iterator of DirEntry-s to an iterator of
+/// // PathBufs, so we use map
+/// let dirs = dirs.map(|file| file.unwrap().path());
+///
+/// // now, our iterator just for our config file
+/// let config = iter::once(PathBuf::from(".foorc"));
+///
+/// // chain the two iterators together into one big iterator
+/// let files = dirs.chain(config);
+///
+/// // this will give us all of the files in .foo as well as .foorc
+/// for f in files {
+///     println!("{:?}", f);
+/// }
+/// ```
 #[stable(feature = "iter_once", since = "1.2.0")]
 pub fn once<T>(value: T) -> Once<T> {
     Once { inner: Some(value).into_iter() }
@@ -2900,7 +3665,7 @@ pub fn once<T>(value: T) -> Once<T> {
 /// If two sequences are equal up until the point where one ends,
 /// the shorter sequence compares less.
 #[deprecated(since = "1.4.0", reason = "use the equivalent methods on `Iterator` instead")]
-#[unstable(feature = "iter_order", reason = "needs review and revision",
+#[unstable(feature = "iter_order_deprecated", reason = "needs review and revision",
            issue = "27737")]
 pub mod order {
     use cmp;

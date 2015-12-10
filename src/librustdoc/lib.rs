@@ -24,7 +24,6 @@
 #![feature(box_syntax)]
 #![feature(dynamic_lib)]
 #![feature(libc)]
-#![feature(path_ext)]
 #![feature(path_relative_from)]
 #![feature(rustc_private)]
 #![feature(set_stdio)]
@@ -211,7 +210,7 @@ pub fn main_args(args: &[String]) -> isize {
         for &(name, _, description) in PASSES {
             println!("{:>20} - {}", name, description);
         }
-        println!("{}", "\nDefault passes for rustdoc:"); // FIXME: #9970
+        println!("\nDefault passes for rustdoc:");
         for &name in DEFAULT_PASSES {
             println!("{:>20}", name);
         }

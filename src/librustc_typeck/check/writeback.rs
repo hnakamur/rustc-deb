@@ -17,7 +17,7 @@ use astconv::AstConv;
 use check::FnCtxt;
 use middle::def_id::DefId;
 use middle::pat_util;
-use middle::ty::{self, Ty, MethodCall, MethodCallee};
+use middle::ty::{self, Ty, MethodCall, MethodCallee, HasTypeFlags};
 use middle::ty::adjustment;
 use middle::ty::fold::{TypeFolder,TypeFoldable};
 use middle::infer;
@@ -91,24 +91,53 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
     // we observe that something like `a+b` is (known to be)
     // operating on scalars, we clear the overload.
     fn fix_scalar_binary_expr(&mut self, e: &hir::Expr) {
-        if let hir::ExprBinary(ref op, ref lhs, ref rhs) = e.node {
-            let lhs_ty = self.fcx.node_ty(lhs.id);
-            let lhs_ty = self.fcx.infcx().resolve_type_vars_if_possible(&lhs_ty);
+        match e.node {
+            hir::ExprBinary(ref op, ref lhs, ref rhs) |
+            hir::ExprAssignOp(ref op, ref lhs, ref rhs) => {
+                let lhs_ty = self.fcx.node_ty(lhs.id);
+                let lhs_ty = self.fcx.infcx().resolve_type_vars_if_possible(&lhs_ty);
 
-            let rhs_ty = self.fcx.node_ty(rhs.id);
-            let rhs_ty = self.fcx.infcx().resolve_type_vars_if_possible(&rhs_ty);
+                let rhs_ty = self.fcx.node_ty(rhs.id);
+                let rhs_ty = self.fcx.infcx().resolve_type_vars_if_possible(&rhs_ty);
 
-            if lhs_ty.is_scalar() && rhs_ty.is_scalar() {
-                self.fcx.inh.tables.borrow_mut().method_map.remove(&MethodCall::expr(e.id));
+                if lhs_ty.is_scalar() && rhs_ty.is_scalar() {
+                    self.fcx.inh.tables.borrow_mut().method_map.remove(&MethodCall::expr(e.id));
 
-                // weird but true: the by-ref binops put an
-                // adjustment on the lhs but not the rhs; the
-                // adjustment for rhs is kind of baked into the
-                // system.
-                if !hir_util::is_by_value_binop(op.node) {
-                    self.fcx.inh.tables.borrow_mut().adjustments.remove(&lhs.id);
+                    // weird but true: the by-ref binops put an
+                    // adjustment on the lhs but not the rhs; the
+                    // adjustment for rhs is kind of baked into the
+                    // system.
+                    match e.node {
+                        hir::ExprBinary(..) => {
+                            if !hir_util::is_by_value_binop(op.node) {
+                                self.fcx.inh.tables.borrow_mut().adjustments.remove(&lhs.id);
+                            }
+                        },
+                        hir::ExprAssignOp(..) => {
+                            self.fcx.inh.tables.borrow_mut().adjustments.remove(&lhs.id);
+                        },
+                        _ => {},
+                    }
+                } else {
+                    let tcx = self.tcx();
+
+                    if let hir::ExprAssignOp(..) = e.node {
+                        if
+                            !tcx.sess.features.borrow().augmented_assignments &&
+                            !self.fcx.expr_ty(e).references_error()
+                        {
+                            tcx.sess.span_err(
+                                e.span,
+                                "overloaded augmented assignments are not stable");
+                            fileline_help!(
+                                tcx.sess, e.span,
+                                "add #![feature(augmented_assignments)] to the crate root \
+                                 to enable");
+                        }
+                    }
                 }
             }
+            _ => {},
         }
     }
 }
@@ -195,6 +224,10 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
             hir::TyFixedLengthVec(ref ty, ref count_expr) => {
                 self.visit_ty(&**ty);
                 write_ty_to_tcx(self.tcx(), count_expr.id, self.tcx().types.usize);
+            }
+            hir::TyBareFn(ref function_declaration) => {
+                visit::walk_fn_decl_nopat(self, &function_declaration.decl);
+                walk_list!(self, visit_lifetime_def, &function_declaration.lifetimes);
             }
             _ => visit::walk_ty(self, t)
         }
@@ -355,8 +388,8 @@ impl ResolveReason {
                 tcx.expr_span(upvar_id.closure_expr_id)
             }
             ResolvingClosure(did) => {
-                if did.is_local() {
-                    tcx.expr_span(did.node)
+                if let Some(node_id) = tcx.map.as_local_node_id(did) {
+                    tcx.expr_span(node_id)
                 } else {
                     DUMMY_SP
                 }

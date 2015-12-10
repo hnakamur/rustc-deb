@@ -207,7 +207,7 @@ fn test_resize_policy() {
 /// The hashes are all keyed by the thread-local random number generator
 /// on creation by default. This means that the ordering of the keys is
 /// randomized, but makes the tables more resistant to
-/// denial-of-service attacks (Hash DoS). This behaviour can be
+/// denial-of-service attacks (Hash DoS). This behavior can be
 /// overridden with one of the constructors.
 ///
 /// It is required that the keys implement the `Eq` and `Hash` traits, although
@@ -324,7 +324,7 @@ fn search_hashed<K, V, M, F>(table: M,
     F: FnMut(&K) -> bool,
 {
     // This is the only function where capacity can be zero. To avoid
-    // undefined behaviour when Bucket::new gets the raw bucket in this
+    // undefined behavior when Bucket::new gets the raw bucket in this
     // case, immediately return the appropriate search result.
     if table.capacity() == 0 {
         return TableRef(table);
@@ -1101,8 +1101,14 @@ impl<K, V, S> HashMap<K, V, S>
         self.search_mut(k).map(|bucket| bucket.into_mut_refs().1)
     }
 
-    /// Inserts a key-value pair into the map. If the key already had a value
-    /// present in the map, that value is returned. Otherwise, `None` is returned.
+    /// Inserts a key-value pair into the map.
+    ///
+    /// If the map did not have this key present, `None` is returned.
+    ///
+    /// If the map did have this key present, that value is returned, and the
+    /// entry is not updated. See the [module-level documentation] for more.
+    ///
+    /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
     /// # Examples
     ///

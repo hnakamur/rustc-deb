@@ -87,6 +87,8 @@ thread '<main>' panicked at 'Invalid number: 11', src/bin/panic-simple.rs:5
 Here's another example that is slightly less contrived. A program that accepts
 an integer as an argument, doubles it and prints it.
 
+<span id="code-unwrap-double"></span>
+
 ```rust,should_panic
 use std::env;
 
@@ -120,10 +122,9 @@ It would be better if we just showed the code for unwrapping because it is so
 simple, but to do that, we will first need to explore the `Option` and `Result`
 types. Both of these types have a method called `unwrap` defined on them.
 
-## The `Option` type
+### The `Option` type
 
-The `Option` type is
-[defined in the standard library][1]: 
+The `Option` type is [defined in the standard library][5]:
 
 ```rust
 enum Option<T> {
@@ -138,6 +139,8 @@ system is an important concept because it will cause the compiler to force the
 programmer to handle that absence. Let's take a look at an example that tries
 to find a character in a string:
 
+<span id="code-option-ex-string-find"></span>
+
 ```rust
 // Searches `haystack` for the Unicode character `needle`. If one is found, the
 // byte offset of the character is returned. Otherwise, `None` is returned.
@@ -151,7 +154,7 @@ fn find(haystack: &str, needle: char) -> Option<usize> {
 }
 ```
 
-Notice that when this function finds a matching character, it doen't just
+Notice that when this function finds a matching character, it doesn't just
 return the `offset`. Instead, it returns `Some(offset)`. `Some` is a variant or
 a *value constructor* for the `Option` type. You can think of it as a function
 with the type `fn<T>(value: T) -> Option<T>`. Correspondingly, `None` is also a
@@ -179,9 +182,11 @@ analysis is the only way to get at the value stored inside an `Option<T>`. This
 means that you, as the programmer, must handle the case when an `Option<T>` is
 `None` instead of `Some(t)`.
 
-But wait, what about `unwrap` used in [`unwrap-double`](#code-unwrap-double)?
+But wait, what about `unwrap`,which we used [`previously`](#code-unwrap-double)?
 There was no case analysis there! Instead, the case analysis was put inside the
 `unwrap` method for you. You could define it yourself if you want:
+
+<span id="code-option-def-unwrap"></span>
 
 ```rust
 enum Option<T> {
@@ -206,7 +211,7 @@ that makes `unwrap` ergonomic to use. Unfortunately, that `panic!` means that
 
 ### Composing `Option<T>` values
 
-In [`option-ex-string-find`](#code-option-ex-string-find-2)
+In an [example from before](#code-option-ex-string-find),
 we saw how to use `find` to discover the extension in a file name. Of course,
 not all file names have a `.` in them, so it's possible that the file name has
 no extension. This *possibility of absence* is encoded into the types using
@@ -220,7 +225,7 @@ sense to put it into a function:
 ```rust
 # fn find(_: &str, _: char) -> Option<usize> { None }
 // Returns the extension of the given file name, where the extension is defined
-// as all characters proceding the first `.`.
+// as all characters proceeding the first `.`.
 // If `file_name` has no `.`, then `None` is returned.
 fn extension_explicit(file_name: &str) -> Option<&str> {
     match find(file_name, '.') {
@@ -248,6 +253,8 @@ option is `None`, in which case, just return `None`.
 Rust has parametric polymorphism, so it is very easy to define a combinator
 that abstracts this pattern:
 
+<span id="code-option-map"></span>
+
 ```rust
 fn map<F, T, A>(option: Option<T>, f: F) -> Option<A> where F: FnOnce(T) -> A {
     match option {
@@ -265,18 +272,18 @@ to get rid of the case analysis:
 ```rust
 # fn find(_: &str, _: char) -> Option<usize> { None }
 // Returns the extension of the given file name, where the extension is defined
-// as all characters proceding the first `.`.
+// as all characters proceeding the first `.`.
 // If `file_name` has no `.`, then `None` is returned.
 fn extension(file_name: &str) -> Option<&str> {
     find(file_name, '.').map(|i| &file_name[i+1..])
 }
 ```
 
-One other pattern that we find is very common is assigning a default value to
-the case when an `Option` value is `None`. For example, maybe your program
-assumes that the extension of a file is `rs` even if none is present. As you
-might imagine, the case analysis for this is not specific to file
-extensions - it can work with any `Option<T>`:
+One other pattern we commonly find is assigning a default value to the case
+when an `Option` value is `None`. For example, maybe your program assumes that
+the extension of a file is `rs` even if none is present. As you might imagine,
+the case analysis for this is not specific to file extensions - it can work
+with any `Option<T>`:
 
 ```rust
 fn unwrap_or<T>(option: Option<T>, default: T) -> T {
@@ -386,6 +393,8 @@ remove choices because they will panic if `Option<T>` is `None`.
 
 The `Result` type is also
 [defined in the standard library][6]:
+
+<span id="code-result-def"></span>
 
 ```rust
 enum Result<T, E> {
@@ -553,7 +562,7 @@ combinators that affect only the error type, such as
 ### The `Result` type alias idiom
 
 In the standard library, you may frequently see types like
-`Result<i32>`. But wait, [we defined `Result`](#code-result-def-1) to
+`Result<i32>`. But wait, [we defined `Result`](#code-result-def) to
 have two type parameters. How can we get away with only specifying
 one? The key is to define a `Result` type alias that *fixes* one of
 the type parameters to a particular type. Usually the fixed type is
@@ -663,6 +672,8 @@ with both an `Option` and a `Result`, the solution is *usually* to convert the
 (from `env::args()`) means the user didn't invoke the program correctly. We
 could just use a `String` to describe the error. Let's try:
 
+<span id="code-error-double-string"></span>
+
 ```rust
 use std::env;
 
@@ -744,7 +755,7 @@ fn main() {
 (N.B. The `AsRef<Path>` is used because those are the
 [same bounds used on
 `std::fs::File::open`](../std/fs/struct.File.html#method.open).
-This makes it ergnomic to use any kind of string as a file path.)
+This makes it ergonomic to use any kind of string as a file path.)
 
 There are three different errors that can occur here:
 
@@ -829,7 +840,7 @@ example, the very last call to `map` multiplies the `Ok(...)` value (which is
 an `i32`) by `2`. If an error had occurred before that point, this operation
 would have been skipped because of how `map` is defined.
 
-`map_err` is the trick the makes all of this work. `map_err` is just like
+`map_err` is the trick that makes all of this work. `map_err` is just like
 `map`, except it applies a function to the `Err(...)` value of a `Result`. In
 this case, we want to convert all of our errors to one type: `String`. Since
 both `io::Error` and `num::ParseIntError` implement `ToString`, we can call the
@@ -894,6 +905,8 @@ abstracts *control flow*. Namely, it can abstract the *early return* pattern
 seen above.
 
 Here is a simplified definition of a `try!` macro:
+
+<span id="code-try-def-simple"></span>
 
 ```rust
 macro_rules! try {
@@ -1155,6 +1168,8 @@ The `std::convert::From` trait is
 [defined in the standard
 library](../std/convert/trait.From.html):
 
+<span id="code-from-def"></span>
+
 ```rust
 trait From<T> {
     fn from(T) -> Self;
@@ -1208,7 +1223,7 @@ let err2: Box<Error> = From::from(parse_err);
 
 There is a really important pattern to recognize here. Both `err1` and `err2`
 have the *same type*. This is because they are existentially quantified types,
-or trait objects. In particularly, their underlying type is *erased* from the
+or trait objects. In particular, their underlying type is *erased* from the
 compiler's knowledge, so it truly sees `err1` and `err2` as exactly the same.
 Additionally, we constructed `err1` and `err2` using precisely the same
 function call: `From::from`. This is because `From::from` is overloaded on both
@@ -1232,8 +1247,10 @@ macro_rules! try {
 }
 ```
 
-This is not it's real definition. It's real definition is
+This is not its real definition. Its real definition is
 [in the standard library](../std/macro.try!.html):
+
+<span id="code-try-def"></span>
 
 ```rust
 macro_rules! try {
@@ -1267,7 +1284,7 @@ fn file_double<P: AsRef<Path>>(file_path: P) -> Result<i32, String> {
 
 Earlier, we promised that we could get rid of the `map_err` calls. Indeed, all
 we have to do is pick a type that `From` works with. As we saw in the previous
-section, `From` has an impl that let's it convert any error type into a
+section, `From` has an impl that lets it convert any error type into a
 `Box<Error>`:
 
 ```rust
@@ -1498,7 +1515,7 @@ and [`rustc-serialize`](https://crates.io/crates/rustc-serialize) crates.
 
 We're not going to spend a lot of time on setting up a project with
 Cargo because it is already covered well in [the Cargo
-chapter](../book/hello-cargo) and [Cargo's documentation][14].
+chapter](../book/hello-cargo.html) and [Cargo's documentation][14].
 
 To get started from scratch, run `cargo new --bin city-pop` and make sure your
 `Cargo.toml` looks something like this:
@@ -1528,14 +1545,14 @@ cargo build --release
 
 ## Argument parsing
 
-Let's get argument parsing out of the way. we won't go into too much
+Let's get argument parsing out of the way. We won't go into too much
 detail on Getopts, but there is [some good documentation][15]
 describing it. The short story is that Getopts generates an argument
 parser and a help message from a vector of options (The fact that it
 is a vector is hidden behind a struct and a set of methods). Once the
 parsing is done, we can decode the program arguments into a Rust
 struct. From there, we can get information about the flags, for
-instance, wether they were passed in, and what arguments they
+instance, whether they were passed in, and what arguments they
 had. Here's our program with the appropriate `extern crate`
 statements, and the basic argument setup for Getopts:
 
@@ -1556,7 +1573,7 @@ fn main() {
 
     let mut opts = Options::new();
     opts.optflag("h", "help", "Show this usage message.");
-    
+
     let matches = match opts.parse(&args[1..]) {
         Ok(m)  => { m }
 	Err(e) => { panic!(e.to_string()) }
@@ -1567,7 +1584,7 @@ fn main() {
     }
     let data_path = args[1].clone();
     let city = args[2].clone();
-	
+
 	// Do stuff with information
 }
 ```
@@ -1577,7 +1594,7 @@ then store the first one, knowing that it is our program's name. Once
 that's done, we set up our argument flags, in this case a simplistic
 help message flag. Once we have the argument flags set up, we use
 `Options.parse` to parse the argument vector (starting from index one,
-becouse index 0 is the program name). If this was successful, we
+because index 0 is the program name). If this was successful, we
 assign matches to the parsed object, if not, we panic. Once past that,
 we test if the user passed in the help flag, and if so print the usage
 message. The option help messages are constructed by Getopts, so all
@@ -1630,27 +1647,27 @@ fn main() {
 
     let mut opts = Options::new();
     opts.optflag("h", "help", "Show this usage message.");
-    
+
     let matches = match opts.parse(&args[1..]) {
         Ok(m)  => { m }
 		Err(e) => { panic!(e.to_string()) }
     };
-	
+
     if matches.opt_present("h") {
         print_usage(&program, opts);
 		return;
 	}
-		
+
 	let data_file = args[1].clone();
 	let data_path = Path::new(&data_file);
 	let city = args[2].clone();
-	
+
 	let file = fs::File::open(data_path).unwrap();
 	let mut rdr = csv::Reader::from_reader(file);
-	
+
 	for row in rdr.decode::<Row>() {
 		let row = row.unwrap();
-	
+
 		if row.city == city {
 			println!("{}, {}: {:?}",
 				row.city, row.country,
@@ -1756,7 +1773,7 @@ fn main() {
 		print_usage(&program, opts);
 		return;
 	}
-		
+
 	let data_file = args[1].clone();
 	let data_path = Path::new(&data_file);
 	let city = args[2].clone();
@@ -1838,7 +1855,7 @@ In our program, we accept a single file for input and do one pass over the
 data. This means we probably should be able to accept input on stdin. But maybe
 we like the current format too—so let's have both!
 
-Adding support for stdin is actually quite easy. There are only two things we
+Adding support for stdin is actually quite easy. There are only three things we
 have to do:
 
 1. Tweak the program arguments so that a single parameter—the
@@ -1865,7 +1882,7 @@ opts.optflag("h", "help", "Show this usage message.");
 ...
 let file = matches.opt_str("f");
 let data_file = file.as_ref().map(Path::new);
-	
+
 let city = if !matches.free.is_empty() {
 	matches.free[0].clone()
 } else {
@@ -1879,9 +1896,9 @@ for pop in search(&data_file, &city) {
 ...
 ```
 
-In this peice of code, we take `file` (which has the type
+In this piece of code, we take `file` (which has the type
 `Option<String>`), and convert it to a type that `search` can use, in
-this case, `&Option<AsRef<Path>>`. Do do this, we take a reference of
+this case, `&Option<AsRef<Path>>`. To do this, we take a reference of
 file, and map `Path::new` onto it. In this case, `as_ref()` converts
 the `Option<String>` into an `Option<&str>`, and from there, we can
 execute `Path::new` to the content of the optional, and return the
@@ -2040,14 +2057,14 @@ so. This can be a little clumsy, especially if you intend for the program to
 be used in shell scripts.
 
 So let's start by adding the flags. Like before, we need to tweak the usage
-string and add a flag to the Option variable. Once were done that, Getopts does the rest:
+string and add a flag to the Option variable. Once we've done that, Getopts does the rest:
 
 ```rust,ignore
 ...
 let mut opts = Options::new();
 opts.optopt("f", "file", "Choose an input file, instead of using STDIN.", "NAME");
 opts.optflag("h", "help", "Show this usage message.");
-opts.optflag("q", "quit", "Silences errors and warnings.");
+opts.optflag("q", "quiet", "Silences errors and warnings.");
 ...
 ```
 
@@ -2103,7 +2120,7 @@ heuristics!
   and
   [`Error`](../std/error/trait.Error.html)
   impls to make the [`try!`](../std/macro.try!.html)
-  macro more ergnomic.
+  macro more ergonomic.
 * If you're writing a library and your code can produce errors, define your own
   error type and implement the
   [`std::error::Error`](../std/error/trait.Error.html)

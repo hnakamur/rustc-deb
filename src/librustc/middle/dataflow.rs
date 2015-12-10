@@ -24,6 +24,7 @@ use std::usize;
 use syntax::ast;
 use syntax::ast_util::IdRange;
 use syntax::print::pp;
+use syntax::print::pprust::PrintState;
 use util::nodemap::NodeMap;
 use rustc_front::hir;
 use rustc_front::visit;
@@ -113,7 +114,7 @@ impl<'a, 'tcx, O:DataFlowOperator> pprust::PpAnn for DataFlowContext<'a, 'tcx, O
            ps: &mut pprust::State,
            node: pprust::AnnNode) -> io::Result<()> {
         let id = match node {
-            pprust::NodeIdent(_) | pprust::NodeName(_) => 0,
+            pprust::NodeName(_) => 0,
             pprust::NodeExpr(expr) => expr.id,
             pprust::NodeBlock(blk) => blk.id,
             pprust::NodeItem(_) | pprust::NodeSubItem(_) => 0,

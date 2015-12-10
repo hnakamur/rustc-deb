@@ -140,21 +140,14 @@ fn fold_item_underscore<F>(cx: &mut Context<F>, item: ast::Item_) -> ast::Item_ 
                 if !(cx.in_cfg)(&v.node.attrs) {
                     None
                 } else {
-                    Some(v.map(|Spanned {node: ast::Variant_ {id, name, attrs, kind,
-                                                              disr_expr, vis}, span}| {
+                    Some(v.map(|Spanned {node: ast::Variant_ {name, attrs, data,
+                                                              disr_expr}, span}| {
                         Spanned {
                             node: ast::Variant_ {
-                                id: id,
                                 name: name,
                                 attrs: attrs,
-                                kind: match kind {
-                                    ast::TupleVariantKind(..) => kind,
-                                    ast::StructVariantKind(def) => {
-                                        ast::StructVariantKind(fold_struct(cx, def))
-                                    }
-                                },
+                                data: fold_struct(cx, data),
                                 disr_expr: disr_expr,
-                                vis: vis
                             },
                             span: span
                         }
@@ -171,17 +164,22 @@ fn fold_item_underscore<F>(cx: &mut Context<F>, item: ast::Item_) -> ast::Item_ 
     fold::noop_fold_item_underscore(item, cx)
 }
 
-fn fold_struct<F>(cx: &mut Context<F>, def: P<ast::StructDef>) -> P<ast::StructDef> where
+fn fold_struct<F>(cx: &mut Context<F>, vdata: ast::VariantData) -> ast::VariantData where
     F: FnMut(&[ast::Attribute]) -> bool
 {
-    def.map(|ast::StructDef { fields, ctor_id }| {
-        ast::StructDef {
-            fields: fields.into_iter().filter(|m| {
+    match vdata {
+        ast::VariantData::Struct(fields, id) => {
+            ast::VariantData::Struct(fields.into_iter().filter(|m| {
                 (cx.in_cfg)(&m.node.attrs)
-            }).collect(),
-            ctor_id: ctor_id,
+            }).collect(), id)
         }
-    })
+        ast::VariantData::Tuple(fields, id) => {
+            ast::VariantData::Tuple(fields.into_iter().filter(|m| {
+                (cx.in_cfg)(&m.node.attrs)
+            }).collect(), id)
+        }
+        ast::VariantData::Unit(id) => ast::VariantData::Unit(id)
+    }
 }
 
 fn retain_stmt<F>(cx: &mut Context<F>, stmt: &ast::Stmt) -> bool where
@@ -226,10 +224,10 @@ fn fold_expr<F>(cx: &mut Context<F>, expr: P<ast::Expr>) -> P<ast::Expr> where
         fold::noop_fold_expr(ast::Expr {
             id: id,
             node: match node {
-                ast::ExprMatch(m, arms, source) => {
+                ast::ExprMatch(m, arms) => {
                     ast::ExprMatch(m, arms.into_iter()
                                         .filter(|a| (cx.in_cfg)(&a.attrs))
-                                        .collect(), source)
+                                        .collect())
                 }
                 _ => node
             },

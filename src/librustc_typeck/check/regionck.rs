@@ -77,7 +77,7 @@
 //! borrowed pointer? I mean any data that is reached by first
 //! dereferencing a borrowed pointer and then either traversing
 //! interior offsets or boxes.  We say that the guarantor
-//! of such data it the region of the borrowed pointer that was
+//! of such data is the region of the borrowed pointer that was
 //! traversed.  This is essentially the same as the ownership
 //! relation, except that a borrowed pointer never owns its
 //! contents.
@@ -592,6 +592,8 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
         };
 
         substs_wf_in_scope(rcx, origin, &callee.substs, expr.span, expr_region);
+        type_must_outlive(rcx, infer::ExprTypeIsNotInScope(callee.ty, expr.span),
+                          callee.ty, expr_region);
     }
 
     // Check any autoderefs or autorefs that appear.
@@ -664,6 +666,8 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
         }
     }
 
+    debug!("regionck::visit_expr(e={:?}, repeating_scope={}) - visiting subexprs",
+           expr, rcx.repeating_scope);
     match expr.node {
         hir::ExprPath(..) => {
             rcx.fcx.opt_node_ty_substs(expr.id, |item_substs| {
@@ -695,7 +699,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
         hir::ExprAssignOp(_, ref lhs, ref rhs) => {
             if has_method_map {
                 constrain_call(rcx, expr, Some(&**lhs),
-                               Some(&**rhs).into_iter(), true);
+                               Some(&**rhs).into_iter(), false);
             }
 
             visit::walk_expr(rcx, expr);
@@ -1178,9 +1182,10 @@ fn link_fn_args(rcx: &Rcx, body_scope: CodeExtent, args: &[hir::Arg]) {
         let arg_ty = rcx.fcx.node_ty(arg.id);
         let re_scope = ty::ReScope(body_scope);
         let arg_cmt = mc.cat_rvalue(arg.id, arg.ty.span, re_scope, arg_ty);
-        debug!("arg_ty={:?} arg_cmt={:?}",
+        debug!("arg_ty={:?} arg_cmt={:?} arg={:?}",
                arg_ty,
-               arg_cmt);
+               arg_cmt,
+               arg);
         link_pattern(rcx, mc, arg_cmt, &*arg.pat);
     }
 }
@@ -1523,9 +1528,10 @@ pub fn type_must_outlive<'a, 'tcx>(rcx: &Rcx<'a, 'tcx>,
 {
     let ty = rcx.resolve_type(ty);
 
-    debug!("type_must_outlive(ty={:?}, region={:?})",
+    debug!("type_must_outlive(ty={:?}, region={:?}, origin={:?})",
            ty,
-           region);
+           region,
+           origin);
 
     assert!(!ty.has_escaping_regions());
 

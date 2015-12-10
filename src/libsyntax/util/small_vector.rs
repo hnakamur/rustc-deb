@@ -65,7 +65,6 @@ impl<T> SmallVector<T> {
                 result
             }
             One(ref v) => {
-                // FIXME: Could be replaced with `slice::ref_slice(v)` when it is stable.
                 unsafe { slice::from_raw_parts(v, 1) }
             }
             Many(ref vs) => vs
@@ -129,7 +128,7 @@ impl<T> SmallVector<T> {
     }
 
     /// Deprecated: use `into_iter`.
-    #[unstable(feature = "rustc_private")]
+    #[unstable(feature = "rustc_private", issue = "0")]
     #[deprecated(since = "1.0.0", reason = "use into_iter")]
     pub fn move_iter(self) -> IntoIter<T> {
         self.into_iter()
