@@ -1,5 +1,223 @@
-Version 1.4.0 (October 2015)
-============================
+Version 1.5.0 (2015-12-10)
+==========================
+
+* ~700 changes, numerous bugfixes
+
+Highlights
+----------
+
+* Stabilized APIs:
+  [`BinaryHeap::from`], [`BinaryHeap::into_sorted_vec`],
+  [`BinaryHeap::into_vec`], [`Condvar::wait_timeout`],
+  [`FileTypeExt::is_block_device`], [`FileTypeExt::is_char_device`],
+  [`FileTypeExt::is_fifo`], [`FileTypeExt::is_socket`],
+  [`FileTypeExt`], [`Formatter::alternate`], [`Formatter::fill`],
+  [`Formatter::precision`], [`Formatter::sign_aware_zero_pad`],
+  [`Formatter::sign_minus`], [`Formatter::sign_plus`],
+  [`Formatter::width`], [`Iterator::cmp`], [`Iterator::eq`],
+  [`Iterator::ge`], [`Iterator::gt`], [`Iterator::le`],
+  [`Iterator::lt`], [`Iterator::ne`], [`Iterator::partial_cmp`],
+  [`Path::canonicalize`], [`Path::exists`], [`Path::is_dir`],
+  [`Path::is_file`], [`Path::metadata`], [`Path::read_dir`],
+  [`Path::read_link`], [`Path::symlink_metadata`],
+  [`Utf8Error::valid_up_to`], [`Vec::resize`],
+  [`VecDeque::as_mut_slices`], [`VecDeque::as_slices`],
+  [`VecDeque::insert`], [`VecDeque::shrink_to_fit`],
+  [`VecDeque::swap_remove_back`], [`VecDeque::swap_remove_front`],
+  [`slice::split_first_mut`], [`slice::split_first`],
+  [`slice::split_last_mut`], [`slice::split_last`],
+  [`char::from_u32_unchecked`], [`fs::canonicalize`],
+  [`str::MatchIndices`], [`str::RMatchIndices`],
+  [`str::match_indices`], [`str::rmatch_indices`],
+  [`str::slice_mut_unchecked`], [`string::ParseError`].
+* Rust applications hosted on crates.io can be installed locally to
+  `~/.cargo/bin` with the [`cargo install`] command. Among other
+  things this makes it easier to augment Cargo with new subcommands:
+  when a binary named e.g. `cargo-foo` is found in `$PATH` it can be
+  invoked as `cargo foo`.
+* Crates with wildcard (`*`) dependencies will [emit warnings when
+  published][1.5w]. In 1.6 it will no longer be possible to publish
+  crates with wildcard dependencies.
+
+Breaking Changes
+----------------
+
+* The rules determining when a particular lifetime must outlive
+  a particular value (known as '[dropck]') have been [modified
+  to not rely on parametricity][1.5p].
+* [Implementations of `AsRef` and `AsMut` were added to `Box`, `Rc`,
+  and `Arc`][1.5a]. Because these smart pointer types implement
+  `Deref`, this causes breakage in cases where the interior type
+  contains methods of the same name.
+* [Correct a bug in Rc/Arc][1.5c] that caused [dropck] to be unaware
+  that they could drop their content. Soundness fix.
+* All method invocations are [properly checked][1.5wf1] for
+  [well-formedness][1.5wf2]. Soundness fix.
+* Traits whose supertraits contain `Self` are [not object
+  safe][1.5o]. Soundness fix.
+* Target specifications support a [`no_default_libraries`][1.5nd]
+  setting that controls whether `-nodefaultlibs` is passed to the
+  linker, and in turn the `is_like_windows` setting no longer affects
+  the `-nodefaultlibs` flag.
+* `#[derive(Show)]`, long-deprecated, [has been removed][1.5ds].
+* The `#[inline]` and `#[repr]` attributes [can only appear
+  in valid locations][1.5at].
+* Native libraries linked from the local crate are [passed to
+  the linker before native libraries from upstream crates][1.5nl].
+* Two rarely-used attributes, `#[no_debug]` and
+  `#[omit_gdb_pretty_printer_section]` [are feature gated][1.5fg].
+* Negation of unsigned integers, which has been a warning for
+  several releases, [is now behind a feature gate and will
+  generate errors][1.5nu].
+* The parser accidentally accepted visibility modifiers on
+  enum variants, a bug [which has been fixed][1.5ev].
+* [A bug was fixed that allowed `use` statements to import unstable
+  features][1.5use].
+
+Language
+--------
+
+* When evaluating expressions at compile-time that are not
+  compile-time constants (const-evaluating expressions in non-const
+  contexts), incorrect code such as overlong bitshifts and arithmetic
+  overflow will [generate a warning instead of an error][1.5ce],
+  delaying the error until runtime. This will allow the
+  const-evaluator to be expanded in the future backwards-compatibly.
+* The `improper_ctypes` lint [no longer warns about using `isize` and
+  `usize` in FFI][1.5ict].
+
+Libraries
+---------
+
+* `Arc<T>` and `Rc<T>` are [covariant with respect to `T` instead of
+  invariant][1.5c].
+* `Default` is [implemented for mutable slices][1.5d].
+* `FromStr` is [implemented for `SockAddrV4` and `SockAddrV6`][1.5s].
+* There are now `From` conversions [between floating point
+  types][1.5f] where the conversions are lossless.
+* Thera are now `From` conversions [between integer types][1.5i] where
+  the conversions are lossless.
+* [`fs::Metadata` implements `Clone`][1.5fs].
+* The `parse` method [accepts a leading "+" when parsing
+  integers][1.5pi].
+* [`AsMut` is implemented for `Vec`][1.5am].
+* The `clone_from` implementations for `String` and `BinaryHeap` [have
+  been optimized][1.5cf] and no longer rely on the default impl.
+* The `extern "Rust"`, `extern "C"`, `unsafe extern "Rust"` and
+  `unsafe extern "C"` function types now [implement `Clone`,
+  `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Hash`, `fmt::Pointer`, and
+  `fmt::Debug` for up to 12 arguments][1.5fp].
+* [Dropping `Vec`s is much faster in unoptimized builds when the
+  element types don't implement `Drop`][1.5dv].
+* A bug that caused in incorrect behavior when [combining `VecDeque`
+  with zero-sized types][1.5vdz] was resolved.
+* [`PartialOrd` for slices is faster][1.5po].
+
+Miscellaneous
+-------------
+
+* [Crate metadata size was reduced by 20%][1.5md].
+* [Improvements to code generation reduced the size of libcore by 3.3
+  MB and rustc's memory usage by 18MB][1.5m].
+* [Improvements to deref translation increased performance in
+  unoptimized builds][1.5dr].
+* Various errors in trait resolution [are deduplicated to only be
+  reported once][1.5te].
+* Rust has preliminary [support for rumprun kernels][1.5rr].
+* Rust has preliminary [support for NetBSD on amd64][1.5na].
+
+[1.5use]: https://github.com/rust-lang/rust/pull/28364
+[1.5po]: https://github.com/rust-lang/rust/pull/28436
+[1.5ev]: https://github.com/rust-lang/rust/pull/28442
+[1.5nu]: https://github.com/rust-lang/rust/pull/28468
+[1.5dr]: https://github.com/rust-lang/rust/pull/28491
+[1.5vdz]: https://github.com/rust-lang/rust/pull/28494
+[1.5md]: https://github.com/rust-lang/rust/pull/28521
+[1.5fg]: https://github.com/rust-lang/rust/pull/28522
+[1.5dv]: https://github.com/rust-lang/rust/pull/28531
+[1.5na]: https://github.com/rust-lang/rust/pull/28543
+[1.5fp]: https://github.com/rust-lang/rust/pull/28560
+[1.5rr]: https://github.com/rust-lang/rust/pull/28593
+[1.5cf]: https://github.com/rust-lang/rust/pull/28602
+[1.5nl]: https://github.com/rust-lang/rust/pull/28605
+[1.5te]: https://github.com/rust-lang/rust/pull/28645
+[1.5at]: https://github.com/rust-lang/rust/pull/28650
+[1.5am]: https://github.com/rust-lang/rust/pull/28663
+[1.5m]: https://github.com/rust-lang/rust/pull/28778
+[1.5ict]: https://github.com/rust-lang/rust/pull/28779
+[1.5a]: https://github.com/rust-lang/rust/pull/28811
+[1.5pi]: https://github.com/rust-lang/rust/pull/28826
+[1.5ce]: https://github.com/rust-lang/rfcs/blob/master/text/1229-compile-time-asserts.md
+[1.5p]: https://github.com/rust-lang/rfcs/blob/master/text/1238-nonparametric-dropck.md
+[1.5i]: https://github.com/rust-lang/rust/pull/28921
+[1.5fs]: https://github.com/rust-lang/rust/pull/29021
+[1.5f]: https://github.com/rust-lang/rust/pull/29129
+[1.5ds]: https://github.com/rust-lang/rust/pull/29148
+[1.5s]: https://github.com/rust-lang/rust/pull/29190
+[1.5d]: https://github.com/rust-lang/rust/pull/29245
+[1.5o]: https://github.com/rust-lang/rust/pull/29259
+[1.5nd]: https://github.com/rust-lang/rust/pull/28578
+[1.5wf2]: https://github.com/rust-lang/rfcs/blob/master/text/1214-projections-lifetimes-and-wf.md
+[1.5wf1]: https://github.com/rust-lang/rust/pull/28669
+[dropck]: https://doc.rust-lang.org/nightly/nomicon/dropck.html
+[1.5c]: https://github.com/rust-lang/rust/pull/29110
+[1.5w]: https://github.com/rust-lang/rfcs/blob/master/text/1241-no-wildcard-deps.md
+[`cargo install`]: https://github.com/rust-lang/rfcs/blob/master/text/1200-cargo-install.md
+[`BinaryHeap::from`]: http://doc.rust-lang.org/nightly/std/convert/trait.From.html#method.from
+[`BinaryHeap::into_sorted_vec`]: http://doc.rust-lang.org/nightly/std/collections/struct.BinaryHeap.html#method.into_sorted_vec
+[`BinaryHeap::into_vec`]: http://doc.rust-lang.org/nightly/std/collections/struct.BinaryHeap.html#method.into_vec
+[`Condvar::wait_timeout`]: http://doc.rust-lang.org/nightly/std/sync/struct.Condvar.html#method.wait_timeout
+[`FileTypeExt::is_block_device`]: http://doc.rust-lang.org/nightly/std/os/unix/fs/trait.FileTypeExt.html#tymethod.is_block_device
+[`FileTypeExt::is_char_device`]: http://doc.rust-lang.org/nightly/std/os/unix/fs/trait.FileTypeExt.html#tymethod.is_char_device
+[`FileTypeExt::is_fifo`]: http://doc.rust-lang.org/nightly/std/os/unix/fs/trait.FileTypeExt.html#tymethod.is_fifo
+[`FileTypeExt::is_socket`]: http://doc.rust-lang.org/nightly/std/os/unix/fs/trait.FileTypeExt.html#tymethod.is_socket
+[`FileTypeExt`]: http://doc.rust-lang.org/nightly/std/os/unix/fs/trait.FileTypeExt.html
+[`Formatter::alternate`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.alternate
+[`Formatter::fill`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.fill
+[`Formatter::precision`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.precision
+[`Formatter::sign_aware_zero_pad`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.sign_aware_zero_pad
+[`Formatter::sign_minus`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.sign_minus
+[`Formatter::sign_plus`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.sign_plus
+[`Formatter::width`]: http://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html#method.width
+[`Iterator::cmp`]: http://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.cmp
+[`Iterator::eq`]: http://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.eq
+[`Iterator::ge`]: http://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.ge
+[`Iterator::gt`]: http://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.gt
+[`Iterator::le`]: http://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.le
+[`Iterator::lt`]: http://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.lt
+[`Iterator::ne`]: http://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.ne
+[`Iterator::partial_cmp`]: http://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.partial_cmp
+[`Path::canonicalize`]: http://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.canonicalize
+[`Path::exists`]: http://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.exists
+[`Path::is_dir`]: http://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.is_dir
+[`Path::is_file`]: http://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.is_file
+[`Path::metadata`]: http://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.metadata
+[`Path::read_dir`]: http://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.read_dir
+[`Path::read_link`]: http://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.read_link
+[`Path::symlink_metadata`]: http://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.symlink_metadata
+[`Utf8Error::valid_up_to`]: http://doc.rust-lang.org/nightly/core/str/struct.Utf8Error.html#method.valid_up_to
+[`Vec::resize`]: http://doc.rust-lang.org/nightly/std/vec/struct.Vec.html#method.resize
+[`VecDeque::as_mut_slices`]: http://doc.rust-lang.org/nightly/std/collections/struct.VecDeque.html#method.as_mut_slices
+[`VecDeque::as_slices`]: http://doc.rust-lang.org/nightly/std/collections/struct.VecDeque.html#method.as_slices
+[`VecDeque::insert`]: http://doc.rust-lang.org/nightly/std/collections/struct.VecDeque.html#method.insert
+[`VecDeque::shrink_to_fit`]: http://doc.rust-lang.org/nightly/std/collections/struct.VecDeque.html#method.shrink_to_fit
+[`VecDeque::swap_remove_back`]: http://doc.rust-lang.org/nightly/std/collections/struct.VecDeque.html#method.swap_remove_back
+[`VecDeque::swap_remove_front`]: http://doc.rust-lang.org/nightly/std/collections/struct.VecDeque.html#method.swap_remove_front
+[`slice::split_first_mut`]: http://doc.rust-lang.org/nightly/std/primitive.slice.html#method.split_first_mut
+[`slice::split_first`]: http://doc.rust-lang.org/nightly/std/primitive.slice.html#method.split_first
+[`slice::split_last_mut`]: http://doc.rust-lang.org/nightly/std/primitive.slice.html#method.split_last_mut
+[`slice::split_last`]: http://doc.rust-lang.org/nightly/std/primitive.slice.html#method.split_last
+[`char::from_u32_unchecked`]: http://doc.rust-lang.org/nightly/std/char/fn.from_u32_unchecked.html
+[`fs::canonicalize`]: http://doc.rust-lang.org/nightly/std/fs/fn.canonicalize.html
+[`str::MatchIndices`]: http://doc.rust-lang.org/nightly/std/str/struct.MatchIndices.html
+[`str::RMatchIndices`]: http://doc.rust-lang.org/nightly/std/str/struct.RMatchIndices.html
+[`str::match_indices`]: http://doc.rust-lang.org/nightly/std/primitive.str.html#method.match_indices
+[`str::rmatch_indices`]: http://doc.rust-lang.org/nightly/std/primitive.str.html#method.rmatch_indices
+[`str::slice_mut_unchecked`]: http://doc.rust-lang.org/nightly/std/primitive.str.html#method.slice_mut_unchecked
+[`string::ParseError`]: http://doc.rust-lang.org/nightly/std/string/enum.ParseError.html
+
+Version 1.4.0 (2015-10-29)
+==========================
 
 * ~1200 changes, numerous bugfixes
 
@@ -20,6 +238,12 @@ Breaking Changes
 * [The `str::lines` and `BufRead::lines` iterators treat `\r\n` as
   line breaks in addition to `\n`][crlf].
 * [Loans of `'static` lifetime extend to the end of a function][stat].
+* [`str::parse` no longer introduces avoidable rounding error when
+  parsing floating point numbers. Together with earlier changes to
+  float formatting/output, "round trips" like f.to_string().parse()
+  now preserve the value of f exactly. Additionally, leading plus
+  signs are now accepted][fp3].
+
 
 Language
 --------
@@ -68,19 +292,22 @@ Libraries
   prelude][pr].
 * [`Extend<String>` and `FromIterator<String` are both implemented for
   `String`][es].
-* [`IntoIterator` is implemented for `Option<&T>` and
-  `Result<&T>`][into].
+* [`IntoIterator` is implemented for references to `Option` and
+  `Result`][into2].
 * [`HashMap` and `HashSet` implement `Extend<&T>` where `T:
-  Copy`][ext] as part of [RFC 839].
+  Copy`][ext] as part of [RFC 839]. This will cause type inferance
+  breakage in rare situations.
 * [`BinaryHeap` implements `Debug`][bh2].
 * [`Borrow` and `BorrowMut` are implemented for fixed-size
   arrays][bm].
-* [`extern fn`s of with the "Rust" and "C" ABIs implement common
+* [`extern fn`s with the "Rust" and "C" ABIs implement common
   traits including `Eq`, `Ord`, `Debug`, `Hash`][fp].
 * [String comparison is faster][faststr].
-* `&mut T` where `T: Write` [also implements `Write`][mutw].
-* [A stable regression in `VecDec::push_back` that caused panics for
-  zero-sized types was fixed][vd].
+* `&mut T` where `T: std::fmt::Write` [also implements
+  `std::fmt::Write`][mutw].
+* [A stable regression in `VecDeque::push_back` and other
+  capicity-altering methods that caused panics for zero-sized types
+  was fixed][vd].
 * [Function pointers implement traits for up to 12 parameters][fp2].
 
 Miscellaneous
@@ -151,8 +378,9 @@ Miscellaneous
 [ffi]: https://github.com/rust-lang/rust/pull/28779
 [fp]: https://github.com/rust-lang/rust/pull/28268
 [fp2]: https://github.com/rust-lang/rust/pull/28560
+[fp3]: https://github.com/rust-lang/rust/pull/27307
 [i]: https://github.com/rust-lang/rust/pull/27451
-[into]: https://github.com/rust-lang/rust/pull/28039
+[into2]: https://github.com/rust-lang/rust/pull/28039
 [it]: https://github.com/rust-lang/rust/pull/27652
 [mm]: https://github.com/rust-lang/rust/pull/27338
 [mutw]: https://github.com/rust-lang/rust/pull/28368
@@ -802,7 +1030,7 @@ Misc
 [path-normalize]: https://github.com/rust-lang/rust/pull/23229
 
 
-Version 1.0.0-alpha.2 (February 2015)
+Version 1.0.0-alpha.2 (2015-02-20)
 =====================================
 
 * ~1300 changes, numerous bugfixes
@@ -901,7 +1129,7 @@ Version 1.0.0-alpha.2 (February 2015)
 [un]: https://github.com/rust-lang/rust/pull/22256
 
 
-Version 1.0.0-alpha (January 2015)
+Version 1.0.0-alpha (2015-01-09)
 ==================================
 
   * ~2400 changes, numerous bugfixes
@@ -1088,7 +1316,7 @@ Version 1.0.0-alpha (January 2015)
 [rbe]: http://rustbyexample.com/
 
 
-Version 0.12.0 (October 2014)
+Version 0.12.0 (2014-10-09)
 =============================
 
   * ~1900 changes, numerous bugfixes
@@ -1211,7 +1439,7 @@ Version 0.12.0 (October 2014)
       kernels and distributions, built on CentOS 5.10.
 
 
-Version 0.11.0 (July 2014)
+Version 0.11.0 (2014-07-02)
 ==========================
 
   * ~1700 changes, numerous bugfixes
@@ -1344,7 +1572,7 @@ Version 0.11.0 (July 2014)
       greatly improved.
 
 
-Version 0.10 (April 2014)
+Version 0.10 (2014-04-03)
 =========================
 
   * ~1500 changes, numerous bugfixes
@@ -1511,7 +1739,7 @@ Version 0.10 (April 2014)
         directory.
 
 
-Version 0.9 (January 2014)
+Version 0.9 (2014-01-09)
 ==========================
 
    * ~1800 changes, numerous bugfixes
@@ -1677,7 +1905,7 @@ Version 0.9 (January 2014)
         build tools.
 
 
-Version 0.8 (September 2013)
+Version 0.8 (2013-09-26)
 ============================
 
    * ~2200 changes, numerous bugfixes
@@ -1833,7 +2061,7 @@ Version 0.8 (September 2013)
         still invoked through the normal `rustdoc` command.
 
 
-Version 0.7 (July 2013)
+Version 0.7 (2013-07-03)
 =======================
 
    * ~2000 changes, numerous bugfixes
@@ -1950,7 +2178,7 @@ Version 0.7 (July 2013)
       * Improvements to rustpkg (see the detailed release notes).
 
 
-Version 0.6 (April 2013)
+Version 0.6 (2013-04-03)
 ========================
 
    * ~2100 changes, numerous bugfixes
@@ -2053,7 +2281,7 @@ Version 0.6 (April 2013)
       * Inline assembler supported by new asm!() syntax extension.
 
 
-Version 0.5 (December 2012)
+Version 0.5 (2012-12-21)
 ===========================
 
    * ~900 changes, numerous bugfixes
@@ -2110,7 +2338,7 @@ Version 0.5 (December 2012)
       * License changed from MIT to dual MIT/APL2
 
 
-Version 0.4 (October 2012)
+Version 0.4 (2012-10-15)
 ==========================
 
    * ~2000 changes, numerous bugfixes
@@ -2166,7 +2394,7 @@ Version 0.4 (October 2012)
       * All hash functions and tables converted to secure, randomized SipHash
 
 
-Version 0.3  (July 2012)
+Version 0.3  (2012-07-12)
 ========================
 
    * ~1900 changes, numerous bugfixes
@@ -2225,7 +2453,7 @@ Version 0.3  (July 2012)
       * Cargo automatically resolves dependencies
 
 
-Version 0.2  (March 2012)
+Version 0.2  (2012-03-29)
 =========================
 
    * >1500 changes, numerous bugfixes
@@ -2266,7 +2494,7 @@ Version 0.2  (March 2012)
       * Extensive cleanup, regularization in libstd, libcore
 
 
-Version 0.1  (January 20, 2012)
+Version 0.1  (2012-01-20)
 ===============================
 
    * Most language features work, including:

@@ -373,7 +373,7 @@ const DOWNCAST_PRINTED_OPERATOR: &'static str = " as ";
 
 // A local, "cleaned" version of `mc::InteriorKind` that drops
 // information that is not relevant to loan-path analysis. (In
-// particular, the distinction between how precisely a array-element
+// particular, the distinction between how precisely an array-element
 // is tracked is irrelevant here.)
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InteriorKind {
@@ -801,6 +801,10 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
 
     pub fn span_err(&self, s: Span, m: &str) {
         self.tcx.sess.span_err(s, m);
+    }
+
+    pub fn span_err_with_code(&self, s: Span, msg: &str, code: &str) {
+        self.tcx.sess.span_err_with_code(s, msg, code);
     }
 
     pub fn span_bug(&self, s: Span, m: &str) {

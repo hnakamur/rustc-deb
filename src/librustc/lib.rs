@@ -35,7 +35,6 @@
 #![feature(duration_span)]
 #![feature(dynamic_lib)]
 #![feature(enumset)]
-#![feature(fs_canonicalize)]
 #![feature(hashmap_hasher)]
 #![feature(into_cow)]
 #![feature(iter_cmp)]
@@ -43,18 +42,13 @@
 #![feature(libc)]
 #![feature(nonzero)]
 #![feature(num_bits_bytes)]
-#![feature(path_ext)]
 #![feature(quote)]
-#![feature(range_inclusive)]
-#![feature(ref_slice)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(scoped_tls)]
-#![feature(slice_splits)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
 #![feature(str_char)]
-#![feature(str_match_indices)]
 #![feature(vec_push_all)]
 #![feature(wrapping)]
 #![feature(cell_extras)]
@@ -101,10 +95,12 @@ pub mod back {
 }
 
 pub mod front {
+    pub mod check_attr;
     pub mod map;
 }
 
 pub mod middle {
+    pub mod expr_use_visitor; // STAGE0: increase glitch immunity
     pub mod astconv_util;
     pub mod astencode;
     pub mod cfg;
@@ -122,7 +118,6 @@ pub mod middle {
     pub mod dependency_format;
     pub mod effect;
     pub mod entry;
-    pub mod expr_use_visitor;
     pub mod free_region;
     pub mod intrinsicck;
     pub mod infer;

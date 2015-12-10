@@ -29,13 +29,13 @@ use middle::ty::*;
 use middle::ty;
 use std::cmp::Ordering;
 use std::fmt;
-use std::iter::{range_inclusive, FromIterator, IntoIterator, repeat};
-use std::slice;
+use std::iter::{FromIterator, IntoIterator, repeat};
 
 use rustc_front::hir;
 use rustc_front::hir::Pat;
 use rustc_front::visit::{self, Visitor, FnKind};
 use rustc_front::util as front_util;
+use rustc_back::slice;
 
 use syntax::ast::{self, DUMMY_NODE_ID, NodeId};
 use syntax::ast_util;
@@ -245,7 +245,7 @@ fn check_for_bindings_named_the_same_as_variants(cx: &MatchCheckCtxt, pat: &Pat)
                 let pat_ty = cx.tcx.pat_ty(p);
                 if let ty::TyEnum(edef, _) = pat_ty.sty {
                     let def = cx.tcx.def_map.borrow().get(&p.id).map(|d| d.full_def());
-                    if let Some(DefLocal(_)) = def {
+                    if let Some(DefLocal(..)) = def {
                         if edef.variants.iter().any(|variant|
                             variant.name == ident.node.name
                                 && variant.kind() == VariantKind::Unit
@@ -272,7 +272,7 @@ fn check_for_bindings_named_the_same_as_variants(cx: &MatchCheckCtxt, pat: &Pat)
 fn check_for_static_nan(cx: &MatchCheckCtxt, pat: &Pat) {
     front_util::walk_pat(pat, |p| {
         if let hir::PatLit(ref expr) = p.node {
-            match eval_const_expr_partial(cx.tcx, &**expr, ExprTypeChecked) {
+            match eval_const_expr_partial(cx.tcx, &**expr, ExprTypeChecked, None) {
                 Ok(ConstVal::Float(f)) if f.is_nan() => {
                     span_warn!(cx.tcx.sess, p.span, E0003,
                                "unmatchable NaN in pattern, \
@@ -281,11 +281,10 @@ fn check_for_static_nan(cx: &MatchCheckCtxt, pat: &Pat) {
                 Ok(_) => {}
 
                 Err(err) => {
-                    let subspan = p.span.lo <= err.span.lo && err.span.hi <= p.span.hi;
-                    cx.tcx.sess.span_err(err.span,
-                                         &format!("constant evaluation error: {}",
-                                                  err.description()));
-                    if !subspan {
+                    span_err!(cx.tcx.sess, err.span, E0471,
+                              "constant evaluation error: {}",
+                              err.description());
+                    if !p.span.contains(err.span) {
                         cx.tcx.sess.span_note(p.span,
                                               "in pattern here")
                     }
@@ -404,7 +403,7 @@ fn check_exhaustive(cx: &MatchCheckCtxt, sp: Span, matrix: &Matrix, source: hir:
 
 fn const_val_to_expr(value: &ConstVal) -> P<hir::Expr> {
     let node = match value {
-        &ConstVal::Bool(b) => hir::LitBool(b),
+        &ConstVal::Bool(b) => ast::LitBool(b),
         _ => unreachable!()
     };
     P(hir::Expr {
@@ -519,14 +518,14 @@ fn construct_witness<'a,'tcx>(cx: &MatchCheckCtxt<'a,'tcx>, ctor: &Constructor,
 
         ty::TyEnum(adt, _) | ty::TyStruct(adt, _)  => {
             let v = adt.variant_of_ctor(ctor);
-            if let VariantKind::Dict = v.kind() {
+            if let VariantKind::Struct = v.kind() {
                 let field_pats: Vec<_> = v.fields.iter()
                     .zip(pats)
                     .filter(|&(_, ref pat)| pat.node != hir::PatWild(hir::PatWildSingle))
                     .map(|(field, pat)| Spanned {
                         span: DUMMY_SP,
                         node: hir::FieldPat {
-                            ident: ast::Ident::new(field.name),
+                            name: field.name,
                             pat: pat,
                             is_shorthand: false,
                         }
@@ -616,7 +615,7 @@ fn all_constructors(_cx: &MatchCheckCtxt, left_ty: Ty,
 
         ty::TyRef(_, ty::TypeAndMut { ty, .. }) => match ty.sty {
             ty::TySlice(_) =>
-                range_inclusive(0, max_slice_length).map(|length| Slice(length)).collect(),
+                (0..max_slice_length+1).map(|length| Slice(length)).collect(),
             _ => vec![Single]
         },
 
@@ -791,7 +790,7 @@ fn pat_constructors(cx: &MatchCheckCtxt, p: &Pat,
             match left_ty.sty {
                 ty::TyArray(_, _) => vec!(Single),
                 _                      => if slice.is_some() {
-                    range_inclusive(before.len() + after.len(), max_slice_length)
+                    (before.len() + after.len()..max_slice_length+1)
                         .map(|length| Slice(length))
                         .collect()
                 } else {
@@ -910,7 +909,7 @@ pub fn specialize<'a>(cx: &MatchCheckCtxt, r: &[&'a Pat],
             let def_variant = adt.variant_of_def(def);
             if variant.did == def_variant.did {
                 Some(variant.fields.iter().map(|sf| {
-                    match pattern_fields.iter().find(|f| f.node.ident.name == sf.name) {
+                    match pattern_fields.iter().find(|f| f.node.name == sf.name) {
                         Some(ref f) => &*f.node.pat,
                         _ => DUMMY_WILD_PAT
                     }

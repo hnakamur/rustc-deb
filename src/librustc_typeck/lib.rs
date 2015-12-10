@@ -81,10 +81,8 @@ This API is completely unstable and subject to change.
 #![feature(iter_cmp)]
 #![feature(iter_arith)]
 #![feature(quote)]
-#![feature(ref_slice)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
-#![feature(slice_splits)]
 #![feature(staged_api)]
 #![feature(vec_push_all)]
 #![feature(cell_extras)]
@@ -97,21 +95,22 @@ extern crate fmt_macros;
 extern crate rustc;
 extern crate rustc_platform_intrinsics as intrinsics;
 extern crate rustc_front;
+extern crate rustc_back;
 
+pub use rustc::front;
 pub use rustc::lint;
 pub use rustc::metadata;
 pub use rustc::middle;
 pub use rustc::session;
 pub use rustc::util;
 
+use front::map as hir_map;
 use middle::def;
-use middle::def_id::DefId;
 use middle::infer;
 use middle::subst;
 use middle::ty::{self, Ty, HasTypeFlags};
 use session::config;
 use util::common::time;
-use rustc::front::map as hir_map;
 use rustc_front::hir;
 
 use syntax::codemap::Span;
@@ -239,7 +238,8 @@ fn check_main_fn_ty(ccx: &CrateCtxt,
                 }
                 _ => ()
             }
-            let se_ty = tcx.mk_fn(Some(DefId::local(main_id)), tcx.mk_bare_fn(ty::BareFnTy {
+            let main_def_id = tcx.map.local_def_id(main_id);
+            let se_ty = tcx.mk_fn(Some(main_def_id), tcx.mk_bare_fn(ty::BareFnTy {
                 unsafety: hir::Unsafety::Normal,
                 abi: abi::Rust,
                 sig: ty::Binder(ty::FnSig {
@@ -285,7 +285,8 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
                 _ => ()
             }
 
-            let se_ty = tcx.mk_fn(Some(DefId::local(start_id)), tcx.mk_bare_fn(ty::BareFnTy {
+            let se_ty = tcx.mk_fn(Some(ccx.tcx.map.local_def_id(start_id)),
+                                  tcx.mk_bare_fn(ty::BareFnTy {
                 unsafety: hir::Unsafety::Normal,
                 abi: abi::Rust,
                 sig: ty::Binder(ty::FnSig {

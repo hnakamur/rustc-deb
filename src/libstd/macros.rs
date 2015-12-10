@@ -68,6 +68,10 @@ macro_rules! panic {
 /// necessary to use `io::stdout().flush()` to ensure the output is emitted
 /// immediately.
 ///
+/// # Panics
+///
+/// Panics if writing to `io::stdout()` fails.
+///
 /// # Examples
 ///
 /// ```
@@ -94,10 +98,14 @@ macro_rules! print {
     ($($arg:tt)*) => ($crate::io::_print(format_args!($($arg)*)));
 }
 
-/// Macro for printing to the standard output.
+/// Macro for printing to the standard output, with a newline.
 ///
 /// Use the `format!` syntax to write data to the standard output.
 /// See `std::fmt` for more information.
+///
+/// # Panics
+///
+/// Panics if writing to `io::stdout()` fails.
 ///
 /// # Examples
 ///

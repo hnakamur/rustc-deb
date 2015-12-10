@@ -49,7 +49,7 @@ pub fn create_scope_map(cx: &CrateContext,
     for arg in args {
         pat_util::pat_bindings(def_map, &*arg.pat, |_, node_id, _, path1| {
             scope_stack.push(ScopeStackEntry { scope_metadata: fn_metadata,
-                                               name: Some(path1.node.name) });
+                                               name: Some(path1.node) });
             scope_map.insert(node_id, fn_metadata);
         })
     }
@@ -322,13 +322,10 @@ fn walk_expr(cx: &CrateContext,
         hir::ExprCast(ref sub_exp, _)     |
         hir::ExprAddrOf(_, ref sub_exp)  |
         hir::ExprField(ref sub_exp, _) |
-        hir::ExprTupField(ref sub_exp, _) |
-        hir::ExprParen(ref sub_exp) =>
+        hir::ExprTupField(ref sub_exp, _) =>
             walk_expr(cx, &**sub_exp, scope_stack, scope_map),
 
-        hir::ExprBox(ref place, ref sub_expr) => {
-            place.as_ref().map(
-                |e| walk_expr(cx, &**e, scope_stack, scope_map));
+        hir::ExprBox(ref sub_expr) => {
             walk_expr(cx, &**sub_expr, scope_stack, scope_map);
         }
 

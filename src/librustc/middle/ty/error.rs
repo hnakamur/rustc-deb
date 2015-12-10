@@ -15,7 +15,7 @@ use middle::ty::{self, BoundRegion, Region, Ty};
 
 use std::fmt;
 use syntax::abi;
-use syntax::ast::Name;
+use syntax::ast::{self, Name};
 use syntax::codemap::Span;
 
 use rustc_front::hir;
@@ -49,7 +49,7 @@ pub enum TypeError<'tcx> {
     Sorts(ExpectedFound<Ty<'tcx>>),
     IntegerAsChar,
     IntMismatch(ExpectedFound<ty::IntVarValue>),
-    FloatMismatch(ExpectedFound<hir::FloatTy>),
+    FloatMismatch(ExpectedFound<ast::FloatTy>),
     Traits(ExpectedFound<DefId>),
     BuiltinBoundsMismatch(ExpectedFound<ty::BuiltinBounds>),
     VariadicMismatch(ExpectedFound<bool>),
@@ -302,13 +302,15 @@ impl<'tcx> ty::ctxt<'tcx> {
                                              expected.ty,
                                              found.ty));
 
-                match (expected.def_id.is_local(),
-                       self.map.opt_span(expected.def_id.node)) {
-                    (true, Some(span)) => {
+                match
+                    self.map.as_local_node_id(expected.def_id)
+                            .and_then(|node_id| self.map.opt_span(node_id))
+                {
+                    Some(span) => {
                         self.sess.span_note(span,
                                             &format!("a default was defined here..."));
                     }
-                    (_, _) => {
+                    None => {
                         self.sess.note(
                             &format!("a default is defined on `{}`",
                                      self.item_path_str(expected.def_id)));
@@ -319,13 +321,15 @@ impl<'tcx> ty::ctxt<'tcx> {
                     expected.origin_span,
                     &format!("...that was applied to an unconstrained type variable here"));
 
-                match (found.def_id.is_local(),
-                       self.map.opt_span(found.def_id.node)) {
-                    (true, Some(span)) => {
+                match
+                    self.map.as_local_node_id(found.def_id)
+                            .and_then(|node_id| self.map.opt_span(node_id))
+                {
+                    Some(span) => {
                         self.sess.span_note(span,
                                             &format!("a second default was defined here..."));
                     }
-                    (_, _) => {
+                    None => {
                         self.sess.note(
                             &format!("a second default is defined on `{}`",
                                      self.item_path_str(found.def_id)));

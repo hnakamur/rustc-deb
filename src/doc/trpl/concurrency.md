@@ -26,8 +26,8 @@ to help us make sense of code that can possibly be concurrent.
 ### `Send`
 
 The first trait we're going to talk about is
-[`Send`](../std/marker/trait.Send.html). When a type `T` implements `Send`, it indicates
-to the compiler that something of this type is able to have ownership transferred
+[`Send`](../std/marker/trait.Send.html). When a type `T` implements `Send`, it
+indicates that something of this type is able to have ownership transferred
 safely between threads.
 
 This is important to enforce certain restrictions. For example, if we have a
@@ -35,20 +35,28 @@ channel connecting two threads, we would want to be able to send some data
 down the channel and to the other thread. Therefore, we'd ensure that `Send` was
 implemented for that type.
 
-In the opposite way, if we were wrapping a library with FFI that isn't
+In the opposite way, if we were wrapping a library with [FFI][ffi] that isn't
 threadsafe, we wouldn't want to implement `Send`, and so the compiler will help
 us enforce that it can't leave the current thread.
+
+[ffi]: ffi.html
 
 ### `Sync`
 
 The second of these traits is called [`Sync`](../std/marker/trait.Sync.html).
-When a type `T` implements `Sync`, it indicates to the compiler that something
+When a type `T` implements `Sync`, it indicates that something
 of this type has no possibility of introducing memory unsafety when used from
-multiple threads concurrently.
+multiple threads concurrently through shared references. This implies that
+types which don't have [interior mutability](mutability.html) are inherently
+`Sync`, which includes simple primitive types (like `u8`) and aggregate types
+containing them.
 
-For example, sharing immutable data with an atomic reference count is
-threadsafe. Rust provides a type like this, `Arc<T>`, and it implements `Sync`,
-so it is safe to share between threads.
+For sharing references across threads, Rust provides a wrapper type called
+`Arc<T>`. `Arc<T>` implements `Send` and `Sync` if and only if `T` implements
+both `Send` and `Sync`. For example, an object of type `Arc<RefCell<U>>` cannot
+be transferred across threads because
+[`RefCell`](choosing-your-guarantees.html#refcellt) does not implement
+`Sync`, consequently `Arc<RefCell<U>>` would not implement `Send`.
 
 These two traits allow you to use the type system to make strong guarantees
 about the properties of your code under concurrency. Before we demonstrate
@@ -70,7 +78,7 @@ fn main() {
 }
 ```
 
-The `thread::spawn()` method accepts a closure, which is executed in a
+The `thread::spawn()` method accepts a [closure](closures.html), which is executed in a
 new thread. It returns a handle to the thread, that can be used to
 wait for the child thread to finish and extract its result:
 
@@ -142,7 +150,7 @@ owners!
 So, we need some type that lets us have more than one reference to a value and
 that we can share between threads, that is it must implement `Sync`.
 
-We'll use `Arc<T>`, rust's standard atomic reference count type, which
+We'll use `Arc<T>`, Rust's standard atomic reference count type, which
 wraps a value up with some extra runtime bookkeeping which allows us to
 share the ownership of the value between multiple references at the same time.
 
@@ -189,7 +197,7 @@ our value if it's immutable, but we want to be able to mutate it, so we need
 something else to persuade the borrow checker we know what we're doing.
 
 It looks like we need some type that allows us to safely mutate a shared value,
-for example a type that that can ensure only one thread at a time is able to
+for example a type that can ensure only one thread at a time is able to
 mutate the value inside it at any one time.
 
 For that, we can use the `Mutex<T>` type!
@@ -215,29 +223,18 @@ fn main() {
 }
 ```
 
+Note that the value of `i` is bound (copied) to the closure and not shared
+among the threads.
 
-If we'd tried to use `Mutex<T>` without wrapping it in an `Arc<T>` we would have
-seen another error like:
-
-```text
-error: the trait `core::marker::Send` is not implemented for the type `std::sync::mutex::MutexGuard<'_, collections::vec::Vec<u32>>` [E0277]
- thread::spawn(move || {
-                  ^~~~~~~~~~~~~
-note: `std::sync::mutex::MutexGuard<'_, collections::vec::Vec<u32>>` cannot be sent between threads safely
- thread::spawn(move || {
-                  ^~~~~~~~~~~~~
-```
-
-You see, [`Mutex`](../std/sync/struct.Mutex.html) has a
-[`lock`](../std/sync/struct.Mutex.html#method.lock)
-method which has this signature:
+Also note that [`lock`](../std/sync/struct.Mutex.html#method.lock) method of
+[`Mutex`](../std/sync/struct.Mutex.html) has this signature:
 
 ```ignore
 fn lock(&self) -> LockResult<MutexGuard<T>>
 ```
 
-and because `Send` is not implemented for `MutexGuard<T>`, we couldn't have
-transferred the guard across thread boundaries on it's own.
+and because `Send` is not implemented for `MutexGuard<T>`, the guard cannot
+cross thread boundaries, ensuring thread-locality of lock acquire and release.
 
 Let's examine the body of the thread more closely:
 
@@ -317,22 +314,24 @@ use std::sync::mpsc;
 fn main() {
     let (tx, rx) = mpsc::channel();
 
-    for _ in 0..10 {
+    for i in 0..10 {
         let tx = tx.clone();
 
         thread::spawn(move || {
-            let answer = 42;
+            let answer = i * i;
 
             tx.send(answer);
         });
     }
 
-   rx.recv().ok().expect("Could not receive answer");
+    for _ in 0..10 {
+        println!("{}", rx.recv().unwrap());
+    }
 }
 ```
 
-A `u32` is `Send` because we can make a copy. So we create a thread, ask it to calculate
-the answer, and then it `send()`s us the answer over the channel.
+Here we create 10 threads, asking each to calculate the square of a number (`i`
+at the time of `spawn()`), and then `send()` back the answer over the channel.
 
 
 ## Panics

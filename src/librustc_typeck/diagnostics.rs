@@ -109,7 +109,7 @@ fn main(){
 "##,
 
 E0026: r##"
-This error indicates that a struct pattern attempted to extract a non-existant
+This error indicates that a struct pattern attempted to extract a non-existent
 field from a struct. Struct fields are identified by the name used before the
 colon `:` so struct patterns should resemble the declaration of the struct type
 being matched.
@@ -1308,8 +1308,8 @@ extern "rust-intrinsic" {
 "##,
 
 E0101: r##"
-You hit this error because the compiler the compiler lacks information
-to determine a type for this expression. Erroneous code example:
+You hit this error because the compiler lacks the information to
+determine a type for this expression. Erroneous code example:
 
 ```
 fn main() {
@@ -1390,8 +1390,7 @@ enum Bar { A(u8), B(&bool), }        // error
 enum Bar<'a> { A(u8), B(&'a bool), } // correct
 
 type MyStr = &str;        // error
-type MyStr<'a> = &'a str; //correct
-
+type MyStr<'a> = &'a str; // correct
 ```
 
 Lifetime elision is a special, limited kind of inference for lifetimes in
@@ -1779,6 +1778,58 @@ fn(isize, *const *const u8) -> isize;
 ```
 "##,
 
+E0163: r##"
+This error means that an attempt was made to match an enum variant as a
+struct type when the variant isn't a struct type:
+
+```
+enum Foo { B(u32) }
+
+fn bar(foo: Foo) -> u32 {
+    match foo {
+        Foo::B{i} => i // error 0163
+    }
+}
+```
+
+Try using `()` instead:
+
+```
+fn bar(foo: Foo) -> u32 {
+    match foo {
+        Foo::B(i) => i
+    }
+}
+```
+"##,
+
+E0164: r##"
+
+This error means that an attempt was made to match a struct type enum
+variant as a non-struct type:
+
+```
+enum Foo { B{ i: u32 } }
+
+fn bar(foo: Foo) -> u32 {
+    match foo {
+        Foo::B(i) => i // error 0164
+    }
+}
+```
+
+Try using `{}` instead:
+
+```
+fn bar(foo: Foo) -> u32 {
+    match foo {
+        Foo::B{i} => i
+    }
+}
+```
+"##,
+
+
 E0166: r##"
 This error means that the compiler found a return expression in a function
 marked as diverging. A function diverges if it has `!` in the place of the
@@ -1958,8 +2009,8 @@ wrapped type `T` implements `Clone`. The `where` clause is important because
 some types will not implement `Clone`, and thus will not get this method.
 
 In our erroneous example, however, we're referencing a single concrete type.
-Since we know for certain that Wrapper<u32> implements Clone, there's no reason
-to also specify it in a `where` clause.
+Since we know for certain that `Wrapper<u32>` implements `Clone`, there's no
+reason to also specify it in a `where` clause.
 "##,
 
 E0194: r##"
@@ -2297,8 +2348,8 @@ For information on the design of the orphan rules, see [RFC 1023].
 "##,
 
 E0211: r##"
-You used an intrinsic function which doesn't correspond to its
-definition. Erroneous code example:
+You used a function or type which doesn't fit the requirements for where it was
+used. Erroneous code examples:
 
 ```
 #![feature(intrinsics)]
@@ -2306,15 +2357,71 @@ definition. Erroneous code example:
 extern "rust-intrinsic" {
     fn size_of<T>(); // error: intrinsic has wrong type
 }
+
+// or:
+
+fn main() -> i32 { 0 }
+// error: main function expects type: `fn() {main}`: expected (), found i32
+
+// or:
+
+let x = 1u8;
+match x {
+    0u8...3i8 => (),
+    // error: mismatched types in range: expected u8, found i8
+    _ => ()
+}
+
+// or:
+
+use std::rc::Rc;
+struct Foo;
+
+impl Foo {
+    fn x(self: Rc<Foo>) {}
+    // error: mismatched self type: expected `Foo`: expected struct
+    //        `Foo`, found struct `alloc::rc::Rc`
+}
 ```
 
-Please check the function definition. Example:
+For the first code example, please check the function definition. Example:
 
 ```
 #![feature(intrinsics)]
 
 extern "rust-intrinsic" {
-    fn size_of<T>() -> usize;
+    fn size_of<T>() -> usize; // ok!
+}
+```
+
+The second case example is a bit particular : the main function must always
+have this definition:
+
+```
+fn main();
+```
+
+They never take parameters and never return types.
+
+For the third example, when you match, all patterns must have the same type
+as the type you're matching on. Example:
+
+```
+let x = 1u8;
+match x {
+    0u8...3u8 => (), // ok!
+    _ => ()
+}
+```
+
+And finally, for the last example, only `Box<Self>`, `&Self`, `Self`,
+or `&mut Self` work as explicit self parameters. Example:
+
+```
+struct Foo;
+
+impl Foo {
+    fn x(self: Box<Foo>) {} // ok!
 }
 ```
 "##,
@@ -2529,7 +2636,7 @@ In this example, we're attempting to take a type of `Foo::Bar` in the
 do_something function. This is not legal: `Foo::Bar` is a value of type `Foo`,
 not a distinct static type. Likewise, it's not legal to attempt to
 `impl Foo::Bar`: instead, you must `impl Foo` and then pattern match to specify
-behaviour for specific enum variants.
+behavior for specific enum variants.
 "##,
 
 E0249: r##"
@@ -2862,13 +2969,26 @@ impl <T: Foo> Drop for MyStructWrapper<T> {
 
 E0368: r##"
 This error indicates that a binary assignment operator like `+=` or `^=` was
-applied to the wrong types. For example:
+applied to a type that doesn't support it. For example:
 
 ```
-let mut x: u16 = 5;
-x ^= true; // error, `^=` cannot be applied to types `u16` and `bool`
-x += ();   // error, `+=` cannot be applied to types `u16` and `()`
+let mut x = 12f32; // error: binary operation `<<` cannot be applied to
+               //        type `f32`
+
+x <<= 2;
 ```
+
+To fix this error, please check that this type implements this binary
+operation. Example:
+
+```
+let x = 12u32; // the `u32` type does implement the `ShlAssign` trait
+
+x <<= 2; // ok!
+```
+
+It is also possible to overload most operators for your own type by
+implementing the `[OP]Assign` traits from `std::ops`.
 
 Another problem you might be facing is this: suppose you've overloaded the `+`
 operator for some type `Foo` by implementing the `std::ops::Add` trait for
@@ -2889,15 +3009,12 @@ impl Add for Foo {
 
 fn main() {
     let mut x: Foo = Foo(5);
-    x += Foo(7); // error, `+= cannot be applied to types `Foo` and `Foo`
+    x += Foo(7); // error, `+= cannot be applied to the type `Foo`
 }
 ```
 
-This is because the binary assignment operators currently do not work off of
-traits, so it is not possible to overload them. See [RFC 953] for a proposal
-to change this.
-
-[RFC 953]: https://github.com/rust-lang/rfcs/pull/953
+This is because `AddAssign` is not automatically implemented, so you need to
+manually implement it for your type.
 "##,
 
 E0369: r##"
@@ -3269,6 +3386,25 @@ extern "platform-intrinsic" {
 ```
 "##,
 
+E0516: r##"
+The `typeof` keyword is currently reserved but unimplemented.
+Erroneous code example:
+
+```
+fn main() {
+    let x: typeof(92) = 92;
+}
+```
+
+Try using type inference instead. Example:
+
+```
+fn main() {
+    let x = 92;
+}
+```
+"##,
+
 }
 
 register_diagnostics! {
@@ -3283,8 +3419,6 @@ register_diagnostics! {
 //  E0129,
 //  E0141,
 //  E0159, // use of trait `{}` as struct constructor
-    E0163,
-    E0164,
     E0167,
 //  E0168,
 //  E0173, // manual implementations of unboxed closure traits are experimental
@@ -3292,7 +3426,7 @@ register_diagnostics! {
     E0182,
     E0183,
 //  E0187, // can't infer the kind of the closure
-//  E0188, // can not cast a immutable reference to a mutable pointer
+//  E0188, // can not cast an immutable reference to a mutable pointer
 //  E0189, // deprecated: can only cast a boxed pointer to a boxed object
 //  E0190, // deprecated: can only cast a &-pointer to an &-object
     E0196, // cannot determine a type for this closure
@@ -3344,5 +3478,6 @@ register_diagnostics! {
            // type because its default value `{}` references the type `Self`"
     E0399, // trait items need to be implemented because the associated
            // type `{}` was overridden
-    E0436,  // functional record update requires a struct
+    E0436, // functional record update requires a struct
+    E0513  // no type for local variable ..
 }

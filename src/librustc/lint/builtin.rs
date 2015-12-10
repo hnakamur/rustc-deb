@@ -14,7 +14,13 @@
 //! compiler code, rather than using their own custom pass. Those
 //! lints are all available in `rustc_lint::builtin`.
 
-use lint::{LintPass, LintArray};
+use lint::{LintPass, LateLintPass, LintArray};
+
+declare_lint! {
+    pub CONST_ERR,
+    Warn,
+    "constant evaluation detected erroneous expression"
+}
 
 declare_lint! {
     pub UNUSED_IMPORTS,
@@ -134,7 +140,10 @@ impl LintPass for HardwiredLints {
             VARIANT_SIZE_DIFFERENCES,
             FAT_PTR_TRANSMUTES,
             TRIVIAL_CASTS,
-            TRIVIAL_NUMERIC_CASTS
+            TRIVIAL_NUMERIC_CASTS,
+            CONST_ERR
         )
     }
 }
+
+impl LateLintPass for HardwiredLints {}

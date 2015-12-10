@@ -15,7 +15,6 @@ use rustc::middle::ty;
 use std::cell::RefCell;
 use syntax::ast;
 use syntax::codemap;
-use rustc_front::print::pprust;
 use rustc_front::hir;
 
 pub struct MoveErrorCollector<'tcx> {
@@ -57,7 +56,7 @@ impl<'tcx> MoveError<'tcx> {
 #[derive(Clone)]
 pub struct MoveSpanAndPath {
     pub span: codemap::Span,
-    pub ident: ast::Ident
+    pub name: ast::Name,
 }
 
 pub struct GroupedMoveErrors<'tcx> {
@@ -73,7 +72,7 @@ fn report_move_errors<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
         let mut is_first_note = true;
         for move_to in &error.move_to_places {
             note_move_destination(bccx, move_to.span,
-                                  &move_to.ident, is_first_note);
+                                  move_to.name, is_first_note);
             is_first_note = false;
         }
     }
@@ -119,18 +118,18 @@ fn report_cannot_move_out_of<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
         mc::cat_deref(_, _, mc::Implicit(..)) |
         mc::cat_deref(_, _, mc::UnsafePtr(..)) |
         mc::cat_static_item => {
-            bccx.span_err(move_from.span,
-                          &format!("cannot move out of {}",
-                                  move_from.descriptive_string(bccx.tcx)));
+            span_err!(bccx, move_from.span, E0507,
+                      "cannot move out of {}",
+                      move_from.descriptive_string(bccx.tcx));
         }
 
         mc::cat_interior(ref b, mc::InteriorElement(Kind::Index, _)) => {
             let expr = bccx.tcx.map.expect_expr(move_from.id);
             if let hir::ExprIndex(..) = expr.node {
-                bccx.span_err(move_from.span,
-                              &format!("cannot move out of type `{}`, \
-                                        a non-copy fixed-size array",
-                                       b.ty));
+                span_err!(bccx, move_from.span, E0508,
+                          "cannot move out of type `{}`, \
+                           a non-copy fixed-size array",
+                          b.ty);
             }
         }
 
@@ -139,11 +138,10 @@ fn report_cannot_move_out_of<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
             match b.ty.sty {
                 ty::TyStruct(def, _) |
                 ty::TyEnum(def, _) if def.has_dtor() => {
-                    bccx.span_err(
-                        move_from.span,
-                        &format!("cannot move out of type `{}`, \
-                                 which defines the `Drop` trait",
-                                b.ty));
+                    span_err!(bccx, move_from.span, E0509,
+                              "cannot move out of type `{}`, \
+                               which defines the `Drop` trait",
+                              b.ty);
                 },
                 _ => {
                     bccx.span_bug(move_from.span, "this path should not cause illegal move")
@@ -158,9 +156,8 @@ fn report_cannot_move_out_of<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
 
 fn note_move_destination(bccx: &BorrowckCtxt,
                          move_to_span: codemap::Span,
-                         pat_ident: &ast::Ident,
+                         pat_name: ast::Name,
                          is_first_note: bool) {
-    let pat_name = pprust::ident_to_string(pat_ident);
     if is_first_note {
         bccx.span_note(
             move_to_span,

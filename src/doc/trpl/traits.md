@@ -47,11 +47,13 @@ As you can see, the `trait` block looks very similar to the `impl` block,
 but we don’t define a body, just a type signature. When we `impl` a trait,
 we use `impl Trait for Item`, rather than just `impl Item`.
 
-## Traits bounds for generic functions
+## Trait bounds on generic functions
 
 Traits are useful because they allow a type to make certain promises about its
-behavior. Generic functions can exploit this to constrain the types they
+behavior. Generic functions can exploit this to constrain, or [bound][bounds], the types they
 accept. Consider this function, which does not compile:
+
+[bounds]: glossary.html#bounds
 
 ```rust,ignore
 fn print_area<T>(shape: T) {
@@ -66,7 +68,7 @@ error: no method named `area` found for type `T` in the current scope
 ```
 
 Because `T` can be any type, we can’t be sure that it implements the `area`
-method. But we can add a ‘trait constraint’ to our generic `T`, ensuring
+method. But we can add a trait bound to our generic `T`, ensuring
 that it does:
 
 ```rust
@@ -155,10 +157,10 @@ We get a compile-time error:
 error: the trait `HasArea` is not implemented for the type `_` [E0277]
 ```
 
-## Traits bounds for generic structs
+## Trait bounds on generic structs
 
-Your generic structs can also benefit from trait constraints. All you need to
-do is append the constraint when you declare type parameters. Here is a new
+Your generic structs can also benefit from trait bounds. All you need to
+do is append the bound when you declare type parameters. Here is a new
 type `Rectangle<T>` and its operation `is_square()`:
 
 ```rust
@@ -492,3 +494,32 @@ If we forget to implement `Foo`, Rust will tell us:
 ```text
 error: the trait `main::Foo` is not implemented for the type `main::Baz` [E0277]
 ```
+
+# Deriving
+
+Implementing traits like `Debug` and `Default` over and over again can become
+quite tedious. For that reason, Rust provides an [attribute][attributes] that
+allows you to let Rust automatically implement traits for you:
+
+```rust
+#[derive(Debug)]
+struct Foo;
+
+fn main() {
+    println!("{:?}", Foo);
+}
+```
+
+[attributes]: attributes.html
+
+However, deriving is limited to a certain set of traits:
+
+- [`Clone`](../core/clone/trait.Clone.html)
+- [`Copy`](../core/marker/trait.Copy.html)
+- [`Debug`](../core/fmt/trait.Debug.html)
+- [`Default`](../core/default/trait.Default.html)
+- [`Eq`](../core/cmp/trait.Eq.html)
+- [`Hash`](../core/hash/trait.Hash.html)
+- [`Ord`](../core/cmp/trait.Ord.html)
+- [`PartialEq`](../core/cmp/trait.PartialEq.html)
+- [`PartialOrd`](../core/cmp/trait.PartialOrd.html)

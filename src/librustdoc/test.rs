@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(deprecated)]
+
 use std::cell::{RefCell, Cell};
 use std::collections::{HashSet, HashMap};
 use std::dynamic_lib::DynamicLibrary;
@@ -22,10 +24,11 @@ use std::sync::{Arc, Mutex};
 
 use testing;
 use rustc_lint;
+use rustc::front::map as hir_map;
 use rustc::session::{self, config};
-use rustc::session::config::get_unstable_features_setting;
+use rustc::session::config::{get_unstable_features_setting, OutputType};
 use rustc::session::search_paths::{SearchPaths, PathKind};
-use rustc_front::lowering::lower_crate;
+use rustc_front::lowering::{lower_crate, LoweringContext};
 use rustc_back::tempdir::TempDir;
 use rustc_driver::{driver, Compilation};
 use syntax::codemap::CodeMap;
@@ -82,13 +85,17 @@ pub fn run(input: &str,
                                                      "rustdoc-test", None)
         .expect("phase_2_configure_and_expand aborted in rustdoc!");
     let krate = driver::assign_node_ids(&sess, krate);
-    let krate = lower_crate(&krate);
+    let lcx = LoweringContext::new(&sess, Some(&krate));
+    let krate = lower_crate(&lcx, &krate);
 
     let opts = scrape_test_config(&krate);
 
+    let mut forest = hir_map::Forest::new(krate);
+    let map = hir_map::map_crate(&mut forest);
+
     let ctx = core::DocContext {
-        krate: &krate,
-        maybe_typed: core::NotTyped(sess),
+        map: &map,
+        maybe_typed: core::NotTyped(&sess),
         input: input,
         external_paths: RefCell::new(Some(HashMap::new())),
         external_traits: RefCell::new(None),
@@ -99,7 +106,7 @@ pub fn run(input: &str,
     };
 
     let mut v = RustdocVisitor::new(&ctx, None);
-    v.visit(ctx.krate);
+    v.visit(ctx.map.krate());
     let mut krate = v.clean(&ctx);
     match crate_name {
         Some(name) => krate.name = name,
@@ -124,8 +131,8 @@ pub fn run(input: &str,
 
 // Look for #![doc(test(no_crate_inject))], used by crates in the std facade
 fn scrape_test_config(krate: &::rustc_front::hir::Crate) -> TestOptions {
-    use rustc_front::attr::AttrMetaMethods;
-    use rustc_front::print::pprust;
+    use syntax::attr::AttrMetaMethods;
+    use syntax::print::pprust;
 
     let mut opts = TestOptions {
         no_crate_inject: false,
@@ -163,13 +170,15 @@ fn runtest(test: &str, cratename: &str, libs: SearchPaths,
     // never wrap the test in `fn main() { ... }`
     let test = maketest(test, Some(cratename), as_test_harness, opts);
     let input = config::Input::Str(test.to_string());
+    let mut outputs = HashMap::new();
+    outputs.insert(OutputType::Exe, None);
 
     let sessopts = config::Options {
         maybe_sysroot: Some(env::current_exe().unwrap().parent().unwrap()
                                               .parent().unwrap().to_path_buf()),
         search_paths: libs,
         crate_types: vec!(config::CrateTypeExecutable),
-        output_types: vec!(config::OutputTypeExe),
+        output_types: outputs,
         externs: externs,
         cg: config::CodegenOptions {
             prefer_dynamic: true,

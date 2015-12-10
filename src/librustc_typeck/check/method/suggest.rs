@@ -15,6 +15,7 @@ use CrateCtxt;
 
 use astconv::AstConv;
 use check::{self, FnCtxt};
+use front::map as hir_map;
 use middle::ty::{self, Ty, ToPolyTraitRef, ToPredicate, HasTypeFlags};
 use middle::def;
 use middle::def_id::DefId;
@@ -22,6 +23,7 @@ use middle::lang_items::FnOnceTraitLangItem;
 use middle::subst::Substs;
 use middle::traits::{Obligation, SelectionContext};
 use metadata::{csearch, cstore, decoder};
+use util::nodemap::{FnvHashSet};
 
 use syntax::ast;
 use syntax::codemap::Span;
@@ -182,7 +184,14 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                 CandidateSource::ImplSource(impl_did) => {
                     // Provide the best span we can. Use the item, if local to crate, else
                     // the impl, if local to crate (item may be defaulted), else the call site.
-                    let item = impl_item(fcx.tcx(), impl_did, item_name).unwrap();
+                    let item = impl_item(fcx.tcx(), impl_did, item_name)
+                        .or_else(|| {
+                            trait_item(
+                                fcx.tcx(),
+                                fcx.tcx().impl_trait_ref(impl_did).unwrap().def_id,
+                                item_name
+                            )
+                        }).unwrap();
                     let impl_span = fcx.tcx().map.def_id_span(impl_did, span);
                     let item_span = fcx.tcx().map.def_id_span(item.def_id(), impl_span);
 
@@ -357,13 +366,11 @@ impl PartialOrd for TraitInfo {
 }
 impl Ord for TraitInfo {
     fn cmp(&self, other: &TraitInfo) -> Ordering {
-        // accessible traits are more important/relevant than
-        // inaccessible ones, local crates are more important than
-        // remote ones (local: cnum == 0), and NodeIds just for
-        // totality.
+        // local crates are more important than remote ones (local:
+        // cnum == 0), and otherwise we throw in the defid for totality
 
-        let lhs = (other.def_id.krate, other.def_id.node);
-        let rhs = (self.def_id.krate, self.def_id.node);
+        let lhs = (other.def_id.krate, other.def_id);
+        let rhs = (self.def_id.krate, self.def_id);
         lhs.cmp(&rhs)
     }
 }
@@ -378,14 +385,16 @@ pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
         // Crate-local:
         //
         // meh.
-        struct Visitor<'a> {
+        struct Visitor<'a, 'tcx:'a> {
+            map: &'a hir_map::Map<'tcx>,
             traits: &'a mut AllTraitsVec,
         }
-        impl<'v, 'a> visit::Visitor<'v> for Visitor<'a> {
+        impl<'v, 'a, 'tcx> visit::Visitor<'v> for Visitor<'a, 'tcx> {
             fn visit_item(&mut self, i: &'v hir::Item) {
                 match i.node {
                     hir::ItemTrait(..) => {
-                        self.traits.push(TraitInfo::new(DefId::local(i.id)));
+                        let def_id = self.map.local_def_id(i.id);
+                        self.traits.push(TraitInfo::new(def_id));
                     }
                     _ => {}
                 }
@@ -393,11 +402,14 @@ pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
             }
         }
         visit::walk_crate(&mut Visitor {
+            map: &ccx.tcx.map,
             traits: &mut traits
         }, ccx.tcx.map.krate());
 
         // Cross-crate:
+        let mut external_mods = FnvHashSet();
         fn handle_external_def(traits: &mut AllTraitsVec,
+                               external_mods: &mut FnvHashSet<DefId>,
                                ccx: &CrateCtxt,
                                cstore: &cstore::CStore,
                                dl: decoder::DefLike) {
@@ -406,8 +418,12 @@ pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
                     traits.push(TraitInfo::new(did));
                 }
                 decoder::DlDef(def::DefMod(did)) => {
+                    if !external_mods.insert(did) {
+                        return;
+                    }
                     csearch::each_child_of_item(cstore, did, |dl, _, _| {
-                        handle_external_def(traits, ccx, cstore, dl)
+                        handle_external_def(traits, external_mods,
+                                            ccx, cstore, dl)
                     })
                 }
                 _ => {}
@@ -416,7 +432,9 @@ pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
         let cstore = &ccx.tcx.sess.cstore;
         cstore.iter_crate_data(|cnum, _| {
             csearch::each_top_level_item_of_crate(cstore, cnum, |dl, _, _| {
-                handle_external_def(&mut traits, ccx, cstore, dl)
+                handle_external_def(&mut traits,
+                                    &mut external_mods,
+                                    ccx, cstore, dl)
             })
         });
 

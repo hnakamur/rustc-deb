@@ -83,6 +83,8 @@ pub const EXCEPTION_CONTINUE_SEARCH: LONG = 0;
 pub const EXCEPTION_MAXIMUM_PARAMETERS: usize = 15;
 pub const EXCEPTION_STACK_OVERFLOW: DWORD = 0xc00000fd;
 
+pub const ERROR_PATH_NOT_FOUND: libc::c_int = 3;
+
 #[repr(C)]
 #[cfg(target_arch = "x86")]
 pub struct WSADATA {
@@ -182,6 +184,7 @@ pub struct CONSOLE_SCREEN_BUFFER_INFO {
 pub type PCONSOLE_SCREEN_BUFFER_INFO = *mut CONSOLE_SCREEN_BUFFER_INFO;
 
 #[repr(C)]
+#[derive(Clone)]
 pub struct WIN32_FILE_ATTRIBUTE_DATA {
     pub dwFileAttributes: libc::DWORD,
     pub ftCreationTime: libc::FILETIME,

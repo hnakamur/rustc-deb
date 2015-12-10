@@ -21,6 +21,7 @@
 
 pub use self::LangItem::*;
 
+use front::map as hir_map;
 use session::Session;
 use metadata::csearch::each_lang_item;
 use middle::def_id::DefId;
@@ -28,7 +29,8 @@ use middle::ty;
 use middle::weak_lang_items;
 use util::nodemap::FnvHashMap;
 
-use rustc_front::attr::AttrMetaMethods;
+use syntax::ast;
+use syntax::attr::AttrMetaMethods;
 use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
 use rustc_front::visit::Visitor;
@@ -143,21 +145,23 @@ impl LanguageItems {
     )*
 }
 
-struct LanguageItemCollector<'a> {
+struct LanguageItemCollector<'a, 'tcx: 'a> {
     items: LanguageItems,
+
+    ast_map: &'a hir_map::Map<'tcx>,
 
     session: &'a Session,
 
     item_refs: FnvHashMap<&'static str, usize>,
 }
 
-impl<'a, 'v> Visitor<'v> for LanguageItemCollector<'a> {
+impl<'a, 'v, 'tcx> Visitor<'v> for LanguageItemCollector<'a, 'tcx> {
     fn visit_item(&mut self, item: &hir::Item) {
         if let Some(value) = extract(&item.attrs) {
             let item_index = self.item_refs.get(&value[..]).cloned();
 
             if let Some(item_index) = item_index {
-                self.collect_item(item_index, DefId::local(item.id), item.span)
+                self.collect_item(item_index, self.ast_map.local_def_id(item.id), item.span)
             }
         }
 
@@ -165,16 +169,18 @@ impl<'a, 'v> Visitor<'v> for LanguageItemCollector<'a> {
     }
 }
 
-impl<'a> LanguageItemCollector<'a> {
-    pub fn new(session: &'a Session) -> LanguageItemCollector<'a> {
+impl<'a, 'tcx> LanguageItemCollector<'a, 'tcx> {
+    pub fn new(session: &'a Session, ast_map: &'a hir_map::Map<'tcx>)
+               -> LanguageItemCollector<'a, 'tcx> {
         let mut item_refs = FnvHashMap();
 
         $( item_refs.insert($name, $variant as usize); )*
 
         LanguageItemCollector {
             session: session,
+            ast_map: ast_map,
             items: LanguageItems::new(),
-            item_refs: item_refs
+            item_refs: item_refs,
         }
     }
 
@@ -202,8 +208,8 @@ impl<'a> LanguageItemCollector<'a> {
     pub fn collect_external_language_items(&mut self) {
         let crate_store = &self.session.cstore;
         crate_store.iter_crate_data(|crate_number, _crate_metadata| {
-            each_lang_item(crate_store, crate_number, |node_id, item_index| {
-                let def_id = DefId { krate: crate_number, node: node_id };
+            each_lang_item(crate_store, crate_number, |index, item_index| {
+                let def_id = DefId { krate: crate_number, index: index };
                 self.collect_item(item_index, def_id, DUMMY_SP);
                 true
             });
@@ -216,7 +222,7 @@ impl<'a> LanguageItemCollector<'a> {
     }
 }
 
-pub fn extract(attrs: &[hir::Attribute]) -> Option<InternedString> {
+pub fn extract(attrs: &[ast::Attribute]) -> Option<InternedString> {
     for attribute in attrs {
         match attribute.value_str() {
             Some(ref value) if attribute.check_name("lang") => {
@@ -229,9 +235,11 @@ pub fn extract(attrs: &[hir::Attribute]) -> Option<InternedString> {
     return None;
 }
 
-pub fn collect_language_items(krate: &hir::Crate,
-                              session: &Session) -> LanguageItems {
-    let mut collector = LanguageItemCollector::new(session);
+pub fn collect_language_items(session: &Session,
+                              map: &hir_map::Map)
+                              -> LanguageItems {
+    let krate: &hir::Crate = map.krate();
+    let mut collector = LanguageItemCollector::new(session, map);
     collector.collect(krate);
     let LanguageItemCollector { mut items, .. } = collector;
     weak_lang_items::check_crate(krate, session, &mut items);
@@ -285,6 +293,16 @@ lets_do_this! {
     BitOrTraitLangItem,              "bitor",                   bitor_trait;
     ShlTraitLangItem,                "shl",                     shl_trait;
     ShrTraitLangItem,                "shr",                     shr_trait;
+    AddAssignTraitLangItem,          "add_assign",              add_assign_trait;
+    SubAssignTraitLangItem,          "sub_assign",              sub_assign_trait;
+    MulAssignTraitLangItem,          "mul_assign",              mul_assign_trait;
+    DivAssignTraitLangItem,          "div_assign",              div_assign_trait;
+    RemAssignTraitLangItem,          "rem_assign",              rem_assign_trait;
+    BitXorAssignTraitLangItem,       "bitxor_assign",           bitxor_assign_trait;
+    BitAndAssignTraitLangItem,       "bitand_assign",           bitand_assign_trait;
+    BitOrAssignTraitLangItem,        "bitor_assign",            bitor_assign_trait;
+    ShlAssignTraitLangItem,          "shl_assign",              shl_assign_trait;
+    ShrAssignTraitLangItem,          "shr_assign",              shr_assign_trait;
     IndexTraitLangItem,              "index",                   index_trait;
     IndexMutTraitLangItem,           "index_mut",               index_mut_trait;
     RangeStructLangItem,             "range",                   range_struct;
@@ -330,7 +348,6 @@ lets_do_this! {
     EhUnwindResumeLangItem,          "eh_unwind_resume",        eh_unwind_resume;
     MSVCTryFilterLangItem,           "msvc_try_filter",         msvc_try_filter;
 
-    ExchangeHeapLangItem,            "exchange_heap",           exchange_heap;
     OwnedBoxLangItem,                "owned_box",               owned_box;
 
     PhantomDataItem,                 "phantom_data",            phantom_data;

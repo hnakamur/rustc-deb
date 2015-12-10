@@ -13,12 +13,12 @@
 ######################################################################
 
 # The version number
-CFG_RELEASE_NUM=1.4.0
+CFG_RELEASE_NUM=1.5.0
 
 # An optional number to put after the label, e.g. '.2' -> '-beta.2'
 # NB Make sure it starts with a dot to conform to semver pre-release
 # versions (section 9)
-CFG_PRERELEASE_VERSION=.4
+CFG_PRERELEASE_VERSION=.5
 
 # Append a version-dependent hash to each library, so we can install different
 # versions in the same place
@@ -132,7 +132,11 @@ endif
 
 ifdef CFG_ENABLE_DEBUGINFO
   $(info cfg: enabling debuginfo (CFG_ENABLE_DEBUGINFO))
-  CFG_RUSTC_FLAGS += -g
+  # FIXME: Re-enable -g in stage0 after new snapshot
+  #CFG_RUSTC_FLAGS += -g
+  RUSTFLAGS_STAGE1 += -g
+  RUSTFLAGS_STAGE2 += -g
+  RUSTFLAGS_STAGE3 += -g
 endif
 
 ifdef SAVE_TEMPS
@@ -170,19 +174,10 @@ RUST_LIB_FLAGS_ST3 += -C prefer-dynamic
 
 # Landing pads require a lot of codegen. We can get through bootstrapping faster
 # by not emitting them.
-RUSTFLAGS_STAGE0 += -Z no-landing-pads
 
-# Enable MIR to "always build" for crates where this works. This is
-# just temporary while MIR is being actively built up -- it's just a
-# poor man's unit testing infrastructure. Anyway we only want this for
-# stage1/stage2.
-define ADD_MIR_FLAG
-RUSTFLAGS1_$(1) += -Z always-build-mir
-RUSTFLAGS2_$(1) += -Z always-build-mir
-endef
-$(foreach crate,$(TARGET_CRATES),$(eval $(call ADD_MIR_FLAG,$(crate))))
-$(foreach crate,$(RUSTC_CRATES),$(eval $(call ADD_MIR_FLAG,$(crate))))
-$(foreach crate,$(HOST_CRATES),$(eval $(call ADD_MIR_FLAG,$(crate))))
+ifdef CFG_DISABLE_STAGE0_LANDING_PADS
+  RUSTFLAGS_STAGE0 += -Z no-landing-pads
+endif
 
 # platform-specific auto-configuration
 include $(CFG_SRC_DIR)mk/platform.mk

@@ -28,18 +28,16 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(const_fn)]
+#![feature(custom_attribute)]
+#![allow(unused_attributes)]
 #![feature(iter_cmp)]
 #![feature(iter_arith)]
 #![feature(libc)]
-#![feature(path_ext)]
-#![feature(path_ext)]
-#![feature(path_relative_from)]
 #![feature(path_relative_from)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
-#![feature(unicode)]
 #![feature(unicode)]
 #![feature(vec_push_all)]
 
@@ -79,6 +77,8 @@ pub mod back {
     pub mod write;
     pub mod msvc;
 }
+
+pub mod diagnostics;
 
 pub mod trans;
 pub mod save;

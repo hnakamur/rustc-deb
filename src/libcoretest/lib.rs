@@ -15,6 +15,8 @@
 #![feature(const_fn)]
 #![feature(core)]
 #![feature(core_float)]
+#![feature(core_private_bignum)]
+#![feature(core_private_diy_float)]
 #![feature(dec2flt)]
 #![feature(decode_utf16)]
 #![feature(fixed_size_array)]
@@ -52,9 +54,11 @@ mod array;
 mod atomic;
 mod cell;
 mod char;
+mod clone;
 mod cmp;
 mod fmt;
 mod hash;
+mod intrinsics;
 mod iter;
 mod mem;
 mod nonzero;

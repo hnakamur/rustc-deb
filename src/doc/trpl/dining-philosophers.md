@@ -13,7 +13,7 @@ Hoare in 1985.
 > dining room, furnished with a circular table, surrounded by five chairs, each
 > labelled by the name of the philosopher who was to sit in it. They sat
 > anticlockwise around the table. To the left of each philosopher there was
-> laid a golden fork, and in the centre stood a large bowl of spaghetti, which
+> laid a golden fork, and in the center stood a large bowl of spaghetti, which
 > was constantly replenished. A philosopher was expected to spend most of
 > their time thinking; but when they felt hungry, they went to the dining
 > room, sat down in their own chair, picked up their own fork on their left,
@@ -45,7 +45,7 @@ Now, let’s imagine this sequence of events:
 6. ... ? All the forks are taken, but nobody can eat!
 
 There are different ways to solve this problem. We’ll get to our solution in
-the tutorial itself. For now, let’s get started modelling the problem itself.
+the tutorial itself. For now, let’s get started modeling the problem itself.
 We’ll start with the philosophers:
 
 ```rust
@@ -434,7 +434,7 @@ ownership of the values it’s capturing. Primarily, the `p` variable of the
 
 Inside the thread, all we do is call `eat()` on `p`. Also note that the call to `thread::spawn` lacks a trailing semicolon, making this an expression. This distinction is important, yielding the correct return value. For more details, read [Expressions vs. Statements][es].
 
-[es]: functions.html#expressions-vs.-statements
+[es]: functions.html#expressions-vs-statements
 
 ```rust,ignore
 }).collect();
@@ -512,6 +512,7 @@ impl Philosopher {
 
     fn eat(&self, table: &Table) {
         let _left = table.forks[self.left].lock().unwrap();
+        thread::sleep_ms(150);
         let _right = table.forks[self.right].lock().unwrap();
 
         println!("{} is eating.", self.name);
@@ -597,6 +598,7 @@ We now need to construct those `left` and `right` values, so we add them to
 ```rust,ignore
 fn eat(&self, table: &Table) {
     let _left = table.forks[self.left].lock().unwrap();
+    thread::sleep_ms(150);
     let _right = table.forks[self.right].lock().unwrap();
 
     println!("{} is eating.", self.name);
@@ -607,11 +609,14 @@ fn eat(&self, table: &Table) {
 }
 ```
 
-We have two new lines. We’ve also added an argument, `table`. We access the
+We have three new lines. We’ve added an argument, `table`. We access the
 `Table`’s list of forks, and then use `self.left` and `self.right` to access
 the fork at that particular index. That gives us access to the `Mutex` at that
 index, and we call `lock()` on it. If the mutex is currently being accessed by
-someone else, we’ll block until it becomes available.
+someone else, we’ll block until it becomes available. We have also a call to
+`thread::sleep_ms` between the moment first fork is picked and the moment the
+second forked is picked, as the process  of picking up the fork is not
+immediate.
 
 The call to `lock()` might fail, and if it does, we want to crash. In this
 case, the error that could happen is that the mutex is [‘poisoned’][poison],
@@ -660,7 +665,9 @@ We need to pass in our `left` and `right` values to the constructors for our
 you look at the pattern, it’s all consistent until the very end. Monsieur
 Foucault should have `4, 0` as arguments, but instead, has `0, 4`. This is what
 prevents deadlock, actually: one of our philosophers is left handed! This is
-one way to solve the problem, and in my opinion, it’s the simplest.
+one way to solve the problem, and in my opinion, it’s the simplest. If you
+change the order of the parameters, you will be able to observe the deadlock
+taking place.
 
 ```rust,ignore
 let handles: Vec<_> = philosophers.into_iter().map(|p| {

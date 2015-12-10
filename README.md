@@ -67,10 +67,13 @@ Read ["Installing Rust"] from [The Book].
    ```sh
    # Update package mirrors (may be needed if you have a fresh install of MSYS2)
    $ pacman -Sy pacman-mirrors
-   
+
    # Choose one based on platform:
    $ pacman -S mingw-w64-i686-toolchain
    $ pacman -S mingw-w64-x86_64-toolchain
+
+   # Make git available in MSYS2 (if not already available on path)
+   $ pacman -S git
 
    $ pacman -S base-devel
    ```
@@ -84,6 +87,13 @@ Read ["Installing Rust"] from [The Book].
    $ ./configure
    $ make && make install
    ```
+> ***Note:*** gcc versions >= 5 currently have issues building LLVM on Windows
+> resulting in a segmentation fault when building Rust. In order to avoid this
+> it may be necessary to obtain an earlier version of gcc such as 4.9.x.
+> Installers for earlier Windows builds of gcc are available at the
+> [Mingw-Builds] project. For more information on this see issue #28260.
+
+[Mingw-Builds]: http://sourceforge.net/projects/mingw-w64/
 
 ## Building Documentation
 
@@ -98,7 +108,7 @@ Building the documentation requires building the compiler, so the above
 details will apply. Once you have the compiler built, you can
 
 ```sh
-$ make docs NO_REBUILD=1 
+$ make docs NO_REBUILD=1
 ```
 
 To make sure you don’t re-build the compiler because you made a change

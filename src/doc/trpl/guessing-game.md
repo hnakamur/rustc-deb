@@ -99,9 +99,12 @@ use std::io;
 We’ll need to take user input, and then print the result as output. As such, we
 need the `io` library from the standard library. Rust only imports a few things
 by default into every program, [the ‘prelude’][prelude]. If it’s not in the
-prelude, you’ll have to `use` it directly.
+prelude, you’ll have to `use` it directly. There is also a second ‘prelude’, the
+[`io` prelude][ioprelude], which serves a similar function: you import it, and it
+imports a number of useful, `io`-related things.
 
 [prelude]: ../std/prelude/index.html
+[ioprelude]: ../std/io/prelude/index.html
 
 ```rust,ignore
 fn main() {
@@ -147,7 +150,7 @@ a few tricks up their sleeves.
 
 For example, they’re [immutable][immutable] by default. That’s why our example
 uses `mut`: it makes a binding mutable, rather than immutable. `let` doesn’t
-take a name on the left hand side, it actually accepts a
+take a name on the left hand side of the assignment, it actually accepts a
 ‘[pattern][patterns]’. We’ll use patterns later. It’s easy enough
 to use for now:
 
@@ -599,7 +602,7 @@ With this definition, anything of type `Foo` can be either a
 `Foo::Bar` or a `Foo::Baz`. We use the `::` to indicate the
 namespace for a particular `enum` variant.
 
-The [`Ordering`][ordering] enum has three possible variants: `Less`, `Equal`,
+The [`Ordering`][ordering] `enum` has three possible variants: `Less`, `Equal`,
 and `Greater`. The `match` statement takes a value of a type, and lets you
 create an ‘arm’ for each possible value. Since we have three types of
 `Ordering`, we have three arms:
@@ -918,9 +921,9 @@ let guess: u32 = match guess.trim().parse() {
 
 This is how you generally move from ‘crash on error’ to ‘actually handle the
 error’, by switching from `ok().expect()` to a `match` statement. The `Result`
-returned by `parse()` is an enum just like `Ordering`, but in this case, each
+returned by `parse()` is an `enum` just like `Ordering`, but in this case, each
 variant has some data associated with it: `Ok` is a success, and `Err` is a
-failure. Each contains more information: the successful parsed integer, or an
+failure. Each contains more information: the successfully parsed integer, or an
 error type. In this case, we `match` on `Ok(num)`, which sets the inner value
 of the `Ok` to the name `num`, and then we just return it on the right-hand
 side. In the `Err` case, we don’t care what kind of error it is, so we just
