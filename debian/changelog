@@ -1,6 +1,8 @@
 rustc (1.5.0+dfsg1-1) unstable; urgency=medium
 
-  * New uopstream release
+  * New upstream release
+    - We believe that we should let rust transit to testing
+      (Closes: #786836)
   * Move away from hash to the same rust naming schema
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 10 Dec 2015 17:23:32 +0100
