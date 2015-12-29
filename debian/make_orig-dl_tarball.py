@@ -16,12 +16,9 @@ snapshot_dir = os.path.join(src_root_dir, 'src', 'etc')
 os.environ['CFG_SRC_DIR'] = src_root_dir
 
 os.chdir(src_root_dir)
-ps = subprocess.Popen('dpkg-parsechangelog', stdout=subprocess.PIPE)
+ps = subprocess.Popen(['dpkg-parsechangelog','-SVersion'], stdout=subprocess.PIPE)
 version = ps.stdout.read()
-regex = re.compile('^Version:\s*(\S+)\s*$', re.MULTILINE)
-mo = regex.search(version)
-assert mo is not None
-version = mo.group(1)
+assert version is not None
 upstream_version = version.split('-')[0]
 
 sys.path.append(snapshot_dir)
