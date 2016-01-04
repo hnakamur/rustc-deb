@@ -66,7 +66,7 @@ endif
 override_dh_auto_configure:
 	SHELL=/bin/sh \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
-	test "$$($(MAKE) --no-print-directory print-CFG_FILENAME_EXTRA | tail -n1 | cut -d= -f2)" = "$$(echo $(RUST_VERSION))"
+#	test "$$($(MAKE) --no-print-directory print-CFG_FILENAME_EXTRA | tail -n1 | cut -d= -f2)" = "$$(echo $(RUST_VERSION))"
 
 
 override_dh_auto_clean:
