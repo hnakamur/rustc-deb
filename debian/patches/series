@@ -1,4 +1,3 @@
-buildflags
 rust-gdb-paths
 rust-lldb-paths
 add-soname
