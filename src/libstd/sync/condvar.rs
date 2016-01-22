@@ -15,8 +15,7 @@ use sync::{mutex, MutexGuard, PoisonError};
 use sys_common::condvar as sys;
 use sys_common::mutex as sys_mutex;
 use sys_common::poison::{self, LockResult};
-use sys::time::SteadyTime;
-use time::Duration;
+use time::{Instant, Duration};
 
 /// A type indicating whether a timed wait on a condition variable returned
 /// due to a time out or not.
@@ -167,6 +166,8 @@ impl Condvar {
     /// Like `wait`, the lock specified will be re-acquired when this function
     /// returns, regardless of whether the timeout elapsed or not.
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[rustc_deprecated(since = "1.6.0", reason = "replaced by `std::sync::Condvar::wait_timeout`")]
+    #[allow(deprecated)]
     pub fn wait_timeout_ms<'a, T>(&self, guard: MutexGuard<'a, T>, ms: u32)
                                   -> LockResult<(MutexGuard<'a, T>, bool)> {
         unsafe {
@@ -289,6 +290,8 @@ impl StaticCondvar {
     #[unstable(feature = "static_condvar",
                reason = "may be merged with Condvar in the future",
                issue = "27717")]
+    #[rustc_deprecated(since = "1.6.0",
+                       reason = "replaced by `std::sync::StaticCondvar::wait_timeout`")]
     pub fn wait_timeout_ms<'a, T>(&'static self, guard: MutexGuard<'a, T>, ms: u32)
                                   -> LockResult<(MutexGuard<'a, T>, bool)> {
         match self.wait_timeout(guard, Duration::from_millis(ms as u64)) {
@@ -342,14 +345,13 @@ impl StaticCondvar {
             where F: FnMut(LockResult<&mut T>) -> bool {
         // This could be made more efficient by pushing the implementation into
         // sys::condvar
-        let start = SteadyTime::now();
+        let start = Instant::now();
         let mut guard_result: LockResult<MutexGuard<'a, T>> = Ok(guard);
         while !f(guard_result
                     .as_mut()
                     .map(|g| &mut **g)
                     .map_err(|e| PoisonError::new(&mut **e.get_mut()))) {
-            let now = SteadyTime::now();
-            let consumed = &now - &start;
+            let consumed = start.elapsed();
             let guard = guard_result.unwrap_or_else(|e| e.into_inner());
             let (new_guard_result, timed_out) = if consumed > dur {
                 (Ok(guard), WaitTimeoutResult(true))

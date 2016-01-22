@@ -1,5 +1,5 @@
-// RUN: %clang_dfsan -m64 %s -o %t && %run %t
-// RUN: %clang_dfsan -mllvm -dfsan-args-abi -m64 %s -o %t && %run %t
+// RUN: %clang_dfsan %s -o %t && %run %t
+// RUN: %clang_dfsan -mllvm -dfsan-args-abi %s -o %t && %run %t
 
 // Tests that labels are propagated through loads and stores.
 
@@ -16,6 +16,13 @@ int main(void) {
 
   dfsan_label read_label = dfsan_read_label(&i, sizeof(i));
   assert(i_label == read_label);
+
+  dfsan_label j_label = dfsan_create_label("j", 0);
+  dfsan_add_label(j_label, &i, sizeof(i));
+
+  read_label = dfsan_read_label(&i, sizeof(i));
+  assert(dfsan_has_label(read_label, i_label));
+  assert(dfsan_has_label(read_label, j_label));
 
   return 0;
 }

@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use llvm::{ContextRef, ModuleRef};
-use metadata::common::LinkMeta;
+use middle::cstore::LinkMeta;
 
 pub use self::base::trans_crate;
 pub use self::context::CrateContext;
@@ -52,6 +52,7 @@ mod llrepr;
 mod machine;
 mod _match;
 mod meth;
+mod mir;
 mod monomorphize;
 mod tvec;
 mod type_;

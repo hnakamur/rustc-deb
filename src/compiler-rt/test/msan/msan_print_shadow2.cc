@@ -1,10 +1,10 @@
-// RUN: %clangxx_msan -m64 -O0 -g %s -o %t && %run %t >%t.out 2>&1
+// RUN: %clangxx_msan -O0 -g %s -o %t && %run %t >%t.out 2>&1
 // RUN: FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-NO-ORIGINS < %t.out
 
-// RUN: %clangxx_msan -fsanitize-memory-track-origins -m64 -O0 -g %s -o %t && %run %t >%t.out 2>&1
+// RUN: %clangxx_msan -fsanitize-memory-track-origins -O0 -g %s -o %t && %run %t >%t.out 2>&1
 // RUN: FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-ORIGINS < %t.out
 
-// RUN: %clangxx_msan -fsanitize-memory-track-origins=2 -m64 -O0 -g %s -o %t && %run %t >%t.out 2>&1
+// RUN: %clangxx_msan -fsanitize-memory-track-origins=2 -O0 -g %s -o %t && %run %t >%t.out 2>&1
 // RUN: FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-ORIGINS < %t.out
 
 #include <sanitizer/msan_interface.h>
@@ -17,8 +17,8 @@ int main(void) {
   __msan_print_shadow(p+15, 1);
   __msan_print_shadow(p, 0);
   delete[] p;
-  const char *q = "abc";
-  __msan_print_shadow(q, 3);
+  int x = 0;
+  __msan_print_shadow(&x, 3);
   return 0;
 }
 

@@ -29,7 +29,7 @@ use rustc_front::hir::{Block, FnDecl};
 use syntax::ast::{Name, NodeId};
 use rustc_front::hir as ast;
 use syntax::codemap::Span;
-use rustc_front::visit::FnKind;
+use rustc_front::intravisit::FnKind;
 
 /// An FnLikeNode is a Node that is like a fn, in that it has a decl
 /// and a body (as well as a NodeId, a span, etc).
@@ -236,7 +236,7 @@ impl<'a> FnLikeNode<'a> {
             },
             map::NodeImplItem(ii) => {
                 match ii.node {
-                    ast::MethodImplItem(ref sig, ref body) => {
+                    ast::ImplItemKind::Method(ref sig, ref body) => {
                         method(ii.id, ii.name, sig, Some(ii.vis), body, ii.span)
                     }
                     _ => {

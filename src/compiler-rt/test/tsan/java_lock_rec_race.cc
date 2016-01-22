@@ -1,6 +1,5 @@
-// RUN: %clangxx_tsan -O1 %s -o %t && not %run %t 2>&1 | FileCheck %s
+// RUN: %clangxx_tsan -O1 %s -o %t && %deflake %run %t | FileCheck %s
 #include "java.h"
-#include <unistd.h>
 
 jptr varaddr;
 jptr lockaddr;
@@ -15,7 +14,8 @@ void *Thread(void *p) {
     exit(1);
   }
   *(int*)varaddr = 42;
-  sleep(2);
+  barrier_wait(&barrier);
+  barrier_wait(&barrier);
   __tsan_java_mutex_lock_rec(lockaddr, rec);
   __tsan_java_mutex_unlock(lockaddr);
   __tsan_java_mutex_unlock(lockaddr);
@@ -24,25 +24,28 @@ void *Thread(void *p) {
 }
 
 int main() {
+  barrier_init(&barrier, 2);
   int const kHeapSize = 1024 * 1024;
-  void *jheap = malloc(kHeapSize);
-  __tsan_java_init((jptr)jheap, kHeapSize);
+  jptr jheap = (jptr)malloc(kHeapSize + 8) + 8;
+  __tsan_java_init(jheap, kHeapSize);
   const int kBlockSize = 16;
-  __tsan_java_alloc((jptr)jheap, kBlockSize);
-  varaddr = (jptr)jheap;
+  __tsan_java_alloc(jheap, kBlockSize);
+  varaddr = jheap;
   *(int*)varaddr = 0;
-  lockaddr = (jptr)jheap + 8;
+  lockaddr = jheap + 8;
   pthread_t th;
   pthread_create(&th, 0, Thread, 0);
-  sleep(1);
+  barrier_wait(&barrier);
   __tsan_java_mutex_lock(lockaddr);
   *(int*)varaddr = 43;
   __tsan_java_mutex_unlock(lockaddr);
+  barrier_wait(&barrier);
   pthread_join(th, 0);
-  __tsan_java_free((jptr)jheap, kBlockSize);
-  printf("OK\n");
+  __tsan_java_free(jheap, kBlockSize);
+  printf("DONE\n");
   return __tsan_java_fini();
 }
 
 // CHECK: WARNING: ThreadSanitizer: data race
 // CHECK-NOT: FAILED
+// CHECK: DONE

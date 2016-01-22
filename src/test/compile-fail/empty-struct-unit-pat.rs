@@ -10,9 +10,9 @@
 
 // Can't use unit struct as enum pattern
 
+#![feature(rustc_attrs)]
+// remove prior feature after warning cycle and promoting warnings to errors
 #![feature(braced_empty_structs)]
-
-FIXME //~ ERROR expected item, found `FIXME`
 
 struct Empty1;
 
@@ -20,21 +20,24 @@ enum E {
     Empty2
 }
 
-fn main() {
+// remove attribute after warning cycle and promoting warnings to errors
+#[rustc_error]
+fn main() { //~ ERROR: compilation successful
     let e1 = Empty1;
     let e2 = E::Empty2;
 
-    // Issue #28692
+    // Rejected by parser as yet
     // match e1 {
-    //     Empty1() => () // ERROR variable `Empty1` should have a snake case name
+    //     Empty1() => () // ERROR `Empty1` does not name a tuple variant or a tuple struct
     // }
-    // match e1 {
-    //     Empty1(..) => () // ERROR variable `Empty1` should have a snake case name
-    // }
+    match e1 {
+        Empty1(..) => () //~ WARN `Empty1` does not name a tuple variant or a tuple struct
+    }
+    // Rejected by parser as yet
     // match e2 {
-    //     E::Empty2() => () // ERROR variable `Empty2` should have a snake case name
+    //     E::Empty2() => () // ERROR `E::Empty2` does not name a tuple variant or a tuple struct
     // }
-    // match e2 {
-    //     E::Empty2(..) => () // ERROR variable `Empty2` should have a snake case name
-    // }
+    match e2 {
+        E::Empty2(..) => () //~ WARN `E::Empty2` does not name a tuple variant or a tuple struct
+    }
 }

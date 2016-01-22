@@ -51,53 +51,59 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("globs", "1.0.0", None, Accepted),
     ("macro_rules", "1.0.0", None, Accepted),
     ("struct_variant", "1.0.0", None, Accepted),
-    ("asm", "1.0.0", None, Active),
+    ("asm", "1.0.0", Some(29722), Active),
     ("managed_boxes", "1.0.0", None, Removed),
-    ("non_ascii_idents", "1.0.0", None, Active),
-    ("thread_local", "1.0.0", None, Active),
-    ("link_args", "1.0.0", None, Active),
-    ("plugin_registrar", "1.0.0", None, Active),
-    ("log_syntax", "1.0.0", None, Active),
-    ("trace_macros", "1.0.0", None, Active),
-    ("concat_idents", "1.0.0", None, Active),
+    ("non_ascii_idents", "1.0.0", Some(28979), Active),
+    ("thread_local", "1.0.0", Some(29594), Active),
+    ("link_args", "1.0.0", Some(29596), Active),
+    ("plugin_registrar", "1.0.0", Some(29597), Active),
+    ("log_syntax", "1.0.0", Some(29598), Active),
+    ("trace_macros", "1.0.0", Some(29598), Active),
+    ("concat_idents", "1.0.0", Some(29599), Active),
+
+    // rustc internal, for now:
     ("intrinsics", "1.0.0", None, Active),
     ("lang_items", "1.0.0", None, Active),
 
     ("simd", "1.0.0", Some(27731), Active),
     ("default_type_params", "1.0.0", None, Accepted),
-    ("quote", "1.0.0", None, Active),
-    ("link_llvm_intrinsics", "1.0.0", None, Active),
-    ("linkage", "1.0.0", None, Active),
+    ("quote", "1.0.0", Some(29601), Active),
+    ("link_llvm_intrinsics", "1.0.0", Some(29602), Active),
+    ("linkage", "1.0.0", Some(29603), Active),
     ("struct_inherit", "1.0.0", None, Removed),
 
     ("quad_precision_float", "1.0.0", None, Removed),
 
+    // rustc internal
     ("rustc_diagnostic_macros", "1.0.0", None, Active),
-    ("unboxed_closures", "1.0.0", None, Active),
-    ("reflect", "1.0.0", None, Active),
+    ("unboxed_closures", "1.0.0", Some(29625), Active),
+    ("reflect", "1.0.0", Some(27749), Active),
     ("import_shadowing", "1.0.0", None, Removed),
-    ("advanced_slice_patterns", "1.0.0", None, Active),
+    ("advanced_slice_patterns", "1.0.0", Some(23121), Active),
     ("tuple_indexing", "1.0.0", None, Accepted),
     ("associated_types", "1.0.0", None, Accepted),
-    ("visible_private_types", "1.0.0", None, Active),
+    ("visible_private_types", "1.0.0", Some(29627), Active),
     ("slicing_syntax", "1.0.0", None, Accepted),
     ("box_syntax", "1.0.0", Some(27779), Active),
     ("placement_in_syntax", "1.0.0", Some(27779), Active),
+
+    // rustc internal.
     ("pushpop_unsafe", "1.2.0", None, Active),
-    ("on_unimplemented", "1.0.0", None, Active),
-    ("simd_ffi", "1.0.0", None, Active),
-    ("allocator", "1.0.0", None, Active),
-    ("needs_allocator", "1.4.0", None, Active),
-    ("linked_from", "1.3.0", None, Active),
+
+    ("on_unimplemented", "1.0.0", Some(29628), Active),
+    ("simd_ffi", "1.0.0", Some(27731), Active),
+    ("allocator", "1.0.0", Some(27389), Active),
+    ("needs_allocator", "1.4.0", Some(27389), Active),
+    ("linked_from", "1.3.0", Some(29629), Active),
 
     ("if_let", "1.0.0", None, Accepted),
     ("while_let", "1.0.0", None, Accepted),
 
-    ("plugin", "1.0.0", None, Active),
-    ("start", "1.0.0", None, Active),
-    ("main", "1.0.0", None, Active),
+    ("plugin", "1.0.0", Some(29597), Active),
+    ("start", "1.0.0", Some(29633), Active),
+    ("main", "1.0.0", Some(29634), Active),
 
-    ("fundamental", "1.0.0", None, Active),
+    ("fundamental", "1.0.0", Some(29635), Active),
 
     // A temporary feature gate used to enable parser extensions needed
     // to bootstrap fix for #5723.
@@ -107,10 +113,10 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("opt_out_copy", "1.0.0", None, Removed),
 
     // OIBIT specific features
-    ("optin_builtin_traits", "1.0.0", None, Active),
+    ("optin_builtin_traits", "1.0.0", Some(13231), Active),
 
     // macro reexport needs more discussion and stabilization
-    ("macro_reexport", "1.0.0", None, Active),
+    ("macro_reexport", "1.0.0", Some(29638), Active),
 
     // These are used to test this portion of the compiler, they don't actually
     // mean anything
@@ -118,19 +124,21 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("test_removed_feature", "1.0.0", None, Removed),
 
     // Allows use of #[staged_api]
+    // rustc internal
     ("staged_api", "1.0.0", None, Active),
 
     // Allows using items which are missing stability attributes
+    // rustc internal
     ("unmarked_api", "1.0.0", None, Active),
 
     // Allows using #![no_std]
-    ("no_std", "1.0.0", None, Active),
+    ("no_std", "1.0.0", None, Accepted),
 
     // Allows using #![no_core]
-    ("no_core", "1.3.0", None, Active),
+    ("no_core", "1.3.0", Some(29639), Active),
 
     // Allows using `box` in patterns; RFC 469
-    ("box_patterns", "1.0.0", None, Active),
+    ("box_patterns", "1.0.0", Some(29641), Active),
 
     // Allows using the unsafe_no_drop_flag attribute (unlikely to
     // switch to Accepted; see RFC 320)
@@ -141,75 +149,87 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("dropck_parametricity", "1.3.0", Some(28498), Active),
 
     // Allows the use of custom attributes; RFC 572
-    ("custom_attribute", "1.0.0", None, Active),
+    ("custom_attribute", "1.0.0", Some(29642), Active),
 
     // Allows the use of #[derive(Anything)] as sugar for
     // #[derive_Anything].
-    ("custom_derive", "1.0.0", None, Active),
+    ("custom_derive", "1.0.0", Some(29644), Active),
 
     // Allows the use of rustc_* attributes; RFC 572
-    ("rustc_attrs", "1.0.0", None, Active),
+    ("rustc_attrs", "1.0.0", Some(29642), Active),
 
     // Allows the use of #[allow_internal_unstable]. This is an
     // attribute on macro_rules! and can't use the attribute handling
     // below (it has to be checked before expansion possibly makes
     // macros disappear).
+    //
+    // rustc internal
     ("allow_internal_unstable", "1.0.0", None, Active),
 
     // #23121. Array patterns have some hazards yet.
-    ("slice_patterns", "1.0.0", None, Active),
+    ("slice_patterns", "1.0.0", Some(23121), Active),
 
     // Allows use of unary negate on unsigned integers, e.g. -e for e: u8
-    ("negate_unsigned", "1.0.0", None, Active),
+    ("negate_unsigned", "1.0.0", Some(29645), Active),
 
     // Allows the definition of associated constants in `trait` or `impl`
     // blocks.
-    ("associated_consts", "1.0.0", None, Active),
+    ("associated_consts", "1.0.0", Some(29646), Active),
 
     // Allows the definition of `const fn` functions.
-    ("const_fn", "1.2.0", None, Active),
+    ("const_fn", "1.2.0", Some(24111), Active),
+
+    // Allows indexing into constant arrays.
+    ("const_indexing", "1.4.0", Some(29947), Active),
 
     // Allows using #[prelude_import] on glob `use` items.
+    //
+    // rustc internal
     ("prelude_import", "1.2.0", None, Active),
 
     // Allows the definition recursive static items.
-    ("static_recursion", "1.3.0", None, Active),
+    ("static_recursion", "1.3.0", Some(29719), Active),
 
     // Allows default type parameters to influence type inference.
-    ("default_type_parameter_fallback", "1.3.0", None, Active),
+    ("default_type_parameter_fallback", "1.3.0", Some(27336), Active),
 
     // Allows associated type defaults
-    ("associated_type_defaults", "1.2.0", None, Active),
-    // Allows macros to appear in the type position.
+    ("associated_type_defaults", "1.2.0", Some(29661), Active),
 
+    // Allows macros to appear in the type position.
     ("type_macros", "1.3.0", Some(27336), Active),
 
     // allow `repr(simd)`, and importing the various simd intrinsics
     ("repr_simd", "1.4.0", Some(27731), Active),
 
     // Allows cfg(target_feature = "...").
-    ("cfg_target_feature", "1.4.0", None, Active),
+    ("cfg_target_feature", "1.4.0", Some(29717), Active),
 
     // allow `extern "platform-intrinsic" { ... }`
     ("platform_intrinsics", "1.4.0", Some(27731), Active),
 
     // allow `#[unwind]`
+    // rust runtime internal
     ("unwind_attributes", "1.4.0", None, Active),
 
     // allow empty structs and enum variants with braces
-    ("braced_empty_structs", "1.5.0", None, Active),
+    ("braced_empty_structs", "1.5.0", Some(29720), Active),
 
     // allow overloading augmented assignment operations like `a += b`
-    ("augmented_assignments", "1.5.0", None, Active),
+    ("augmented_assignments", "1.5.0", Some(28235), Active),
 
     // allow `#[no_debug]`
-    ("no_debug", "1.5.0", None, Active),
+    ("no_debug", "1.5.0", Some(29721), Active),
 
     // allow `#[omit_gdb_pretty_printer_section]`
+    // rustc internal.
     ("omit_gdb_pretty_printer_section", "1.5.0", None, Active),
 
     // Allows cfg(target_vendor = "...").
-    ("cfg_target_vendor", "1.5.0", None, Active),
+    ("cfg_target_vendor", "1.5.0", Some(29718), Active),
+
+    // Allow attributes on expressions and non-item statements
+    ("stmt_expr_attributes", "1.6.0", Some(15701), Active),
 ];
 // (changing above list without updating src/doc/reference.md makes @cmr sad)
 
@@ -263,13 +283,10 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
     // Not used any more, but we can't feature gate it
     ("no_stack_check", Normal, Ungated),
 
-    ("staged_api", CrateLevel, Gated("staged_api",
-                                     "staged_api is for use by rustc only")),
     ("plugin", CrateLevel, Gated("plugin",
                                  "compiler plugins are experimental \
                                   and possibly buggy")),
-    ("no_std", CrateLevel, Gated("no_std",
-                                 "no_std is experimental")),
+    ("no_std", CrateLevel, Ungated),
     ("no_core", CrateLevel, Gated("no_core",
                                   "no_core is experimental")),
     ("lang", Normal, Gated("lang_items",
@@ -356,7 +373,7 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
 
     // FIXME: #14407 these are only looked at on-demand so we can't
     // guarantee they'll have already been checked
-    ("deprecated", Whitelisted, Ungated),
+    ("rustc_deprecated", Whitelisted, Ungated),
     ("must_use", Whitelisted, Ungated),
     ("stable", Whitelisted, Ungated),
     ("unstable", Whitelisted, Ungated),
@@ -393,21 +410,53 @@ const GATED_CFGS: &'static [(&'static str, &'static str, fn(&Features) -> bool)]
 ];
 
 #[derive(Debug, Eq, PartialEq)]
+pub enum GatedCfgAttr {
+    GatedCfg(GatedCfg),
+    GatedAttr(Span),
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub struct GatedCfg {
     span: Span,
     index: usize,
 }
 
-impl Ord for GatedCfg {
-    fn cmp(&self, other: &GatedCfg) -> cmp::Ordering {
-        (self.span.lo.0, self.span.hi.0, self.index)
-            .cmp(&(other.span.lo.0, other.span.hi.0, other.index))
+impl Ord for GatedCfgAttr {
+    fn cmp(&self, other: &GatedCfgAttr) -> cmp::Ordering {
+        let to_tup = |s: &GatedCfgAttr| match *s {
+            GatedCfgAttr::GatedCfg(ref gated_cfg) => {
+                (gated_cfg.span.lo.0, gated_cfg.span.hi.0, gated_cfg.index)
+            }
+            GatedCfgAttr::GatedAttr(ref span) => {
+                (span.lo.0, span.hi.0, GATED_CFGS.len())
+            }
+        };
+        to_tup(self).cmp(&to_tup(other))
     }
 }
 
-impl PartialOrd for GatedCfg {
-    fn partial_cmp(&self, other: &GatedCfg) -> Option<cmp::Ordering> {
+impl PartialOrd for GatedCfgAttr {
+    fn partial_cmp(&self, other: &GatedCfgAttr) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl GatedCfgAttr {
+    pub fn check_and_emit(&self, diagnostic: &SpanHandler, features: &Features) {
+        match *self {
+            GatedCfgAttr::GatedCfg(ref cfg) => {
+                cfg.check_and_emit(diagnostic, features);
+            }
+            GatedCfgAttr::GatedAttr(span) => {
+                if !features.stmt_expr_attributes {
+                    emit_feature_err(diagnostic,
+                                     "stmt_expr_attributes",
+                                     span,
+                                     GateIssue::Language,
+                                     EXPLAIN_STMT_ATTR_SYNTAX);
+                }
+            }
+        }
     }
 }
 
@@ -423,7 +472,7 @@ impl GatedCfg {
                       }
                   })
     }
-    pub fn check_and_emit(&self, diagnostic: &SpanHandler, features: &Features) {
+    fn check_and_emit(&self, diagnostic: &SpanHandler, features: &Features) {
         let (cfg, feature, has_feature) = GATED_CFGS[self.index];
         if !has_feature(features) {
             let explain = format!("`cfg({})` is experimental and subject to change", cfg);
@@ -480,6 +529,7 @@ pub struct Features {
     /// #![feature] attrs for non-language (library) features
     pub declared_lib_features: Vec<(InternedString, Span)>,
     pub const_fn: bool,
+    pub const_indexing: bool,
     pub static_recursion: bool,
     pub default_type_parameter_fallback: bool,
     pub type_macros: bool,
@@ -487,6 +537,8 @@ pub struct Features {
     pub cfg_target_vendor: bool,
     pub augmented_assignments: bool,
     pub braced_empty_structs: bool,
+    pub staged_api: bool,
+    pub stmt_expr_attributes: bool,
 }
 
 impl Features {
@@ -511,6 +563,7 @@ impl Features {
             declared_stable_lang_features: Vec::new(),
             declared_lib_features: Vec::new(),
             const_fn: false,
+            const_indexing: false,
             static_recursion: false,
             default_type_parameter_fallback: false,
             type_macros: false,
@@ -518,6 +571,8 @@ impl Features {
             cfg_target_vendor: false,
             augmented_assignments: false,
             braced_empty_structs: false,
+            staged_api: false,
+            stmt_expr_attributes: false,
         }
     }
 }
@@ -530,6 +585,9 @@ const EXPLAIN_PLACEMENT_IN: &'static str =
 
 const EXPLAIN_PUSHPOP_UNSAFE: &'static str =
     "push/pop_unsafe macros are experimental and subject to change.";
+
+const EXPLAIN_STMT_ATTR_SYNTAX: &'static str =
+    "attributes on non-item statements and expressions are experimental.";
 
 pub fn check_for_box_syntax(f: Option<&Features>, diag: &SpanHandler, span: Span) {
     if let Some(&Features { allow_box: true, .. }) = f {
@@ -867,6 +925,8 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                 self.context.span_handler.span_err(span, "empty tuple structs and enum variants \
                                                           are not allowed, use unit structs and \
                                                           enum variants instead");
+                self.context.span_handler.span_help(span, "remove trailing `()` to make a unit \
+                                                           struct or unit enum variant");
             }
         }
         visit::walk_struct_def(self, s)
@@ -982,12 +1042,12 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
 
     fn visit_impl_item(&mut self, ii: &'v ast::ImplItem) {
         match ii.node {
-            ast::ConstImplItem(..) => {
+            ast::ImplItemKind::Const(..) => {
                 self.gate_feature("associated_consts",
                                   ii.span,
                                   "associated constants are experimental")
             }
-            ast::MethodImplItem(ref sig, _) => {
+            ast::ImplItemKind::Method(ref sig, _) => {
                 if sig.constness == ast::Constness::Const {
                     self.gate_feature("const_fn", ii.span, "const fn is unstable");
                 }
@@ -1081,6 +1141,7 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &SpanHandler,
         declared_stable_lang_features: accepted_features,
         declared_lib_features: unknown_features,
         const_fn: cx.has_feature("const_fn"),
+        const_indexing: cx.has_feature("const_indexing"),
         static_recursion: cx.has_feature("static_recursion"),
         default_type_parameter_fallback: cx.has_feature("default_type_parameter_fallback"),
         type_macros: cx.has_feature("type_macros"),
@@ -1088,6 +1149,8 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &SpanHandler,
         cfg_target_vendor: cx.has_feature("cfg_target_vendor"),
         augmented_assignments: cx.has_feature("augmented_assignments"),
         braced_empty_structs: cx.has_feature("braced_empty_structs"),
+        staged_api: cx.has_feature("staged_api"),
+        stmt_expr_attributes: cx.has_feature("stmt_expr_attributes"),
     }
 }
 

@@ -47,9 +47,9 @@ pub fn create_scope_map(cx: &CrateContext,
     // Push argument identifiers onto the stack so arguments integrate nicely
     // with variable shadowing.
     for arg in args {
-        pat_util::pat_bindings(def_map, &*arg.pat, |_, node_id, _, path1| {
+        pat_util::pat_bindings_ident(def_map, &*arg.pat, |_, node_id, _, path1| {
             scope_stack.push(ScopeStackEntry { scope_metadata: fn_metadata,
-                                               name: Some(path1.node) });
+                                               name: Some(path1.node.unhygienic_name) });
             scope_map.insert(node_id, fn_metadata);
         })
     }
@@ -117,7 +117,7 @@ fn walk_block(cx: &CrateContext,
 
     // The interesting things here are statements and the concluding expression.
     for statement in &block.stmts {
-        scope_map.insert(rustc_front::util::stmt_id(&**statement),
+        scope_map.insert(rustc_front::util::stmt_id(statement),
                          scope_stack.last().unwrap().scope_metadata);
 
         match statement.node {
@@ -167,9 +167,9 @@ fn walk_pattern(cx: &CrateContext,
 
             // Check if this is a binding. If so we need to put it on the
             // scope stack and maybe introduce an artificial scope
-            if pat_util::pat_is_binding(def_map, &*pat) {
+            if pat_util::pat_is_binding(&def_map.borrow(), &*pat) {
 
-                let name = path1.node.name;
+                let name = path1.node.unhygienic_name;
 
                 // LLVM does not properly generate 'DW_AT_start_scope' fields
                 // for variable DIEs. For this reason we have to introduce
@@ -235,7 +235,7 @@ fn walk_pattern(cx: &CrateContext,
             }
         }
 
-        hir::PatWild(_) => {
+        hir::PatWild => {
             scope_map.insert(pat.id, scope_stack.last().unwrap().scope_metadata);
         }
 

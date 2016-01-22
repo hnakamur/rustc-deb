@@ -76,6 +76,7 @@
 //! a trait method that was originally defined to take `&self`.
 //!
 //! ```
+//! # #![allow(dead_code)]
 //! use std::cell::RefCell;
 //!
 //! struct Graph {
@@ -125,6 +126,7 @@
 //! }
 //!
 //! struct RcBox<T> {
+//! # #[allow(dead_code)]
 //!     value: T,
 //!     refcount: Cell<usize>
 //! }
@@ -249,7 +251,6 @@ impl<T:Copy> Clone for Cell<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T:Default + Copy> Default for Cell<T> {
-    #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     fn default() -> Cell<T> {
         Cell::new(Default::default())
@@ -468,7 +469,6 @@ impl<T: Clone> Clone for RefCell<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T:Default> Default for RefCell<T> {
-    #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     fn default() -> RefCell<T> {
         RefCell::new(Default::default())
@@ -778,6 +778,7 @@ impl<'b, T: ?Sized> DerefMut for RefMut<'b, T> {
 /// use std::cell::UnsafeCell;
 /// use std::marker::Sync;
 ///
+/// # #[allow(dead_code)]
 /// struct NotThreadSafe<T> {
 ///     value: UnsafeCell<T>,
 /// }
@@ -790,6 +791,7 @@ pub struct UnsafeCell<T: ?Sized> {
     value: T,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> !Sync for UnsafeCell<T> {}
 
 impl<T> UnsafeCell<T> {

@@ -11,6 +11,7 @@
 /// Entry point of thread panic, for details, see std::macros
 #[macro_export]
 #[allow_internal_unstable]
+#[stable(feature = "core", since = "1.6.0")]
 macro_rules! panic {
     () => (
         panic!("explicit panic")
@@ -33,6 +34,8 @@ macro_rules! panic {
 ///
 /// This will invoke the `panic!` macro if the provided expression cannot be
 /// evaluated to `true` at runtime.
+///
+/// This macro has a second version, where a custom panic message can be provided.
 ///
 /// # Examples
 ///
@@ -87,7 +90,7 @@ macro_rules! assert_eq {
             (left_val, right_val) => {
                 if !(*left_val == *right_val) {
                     panic!("assertion failed: `(left == right)` \
-                           (left: `{:?}`, right: `{:?}`)", *left_val, *right_val)
+                           (left: `{:?}`, right: `{:?}`)", left_val, right_val)
                 }
             }
         }
@@ -98,6 +101,9 @@ macro_rules! assert_eq {
 ///
 /// This will invoke the `panic!` macro if the provided expression cannot be
 /// evaluated to `true` at runtime.
+///
+/// Like `assert!`, this macro also has a second version, where a custom panic
+/// message can be provided.
 ///
 /// Unlike `assert!`, `debug_assert!` statements are only enabled in non
 /// optimized builds by default. An optimized build will omit all
@@ -149,21 +155,47 @@ macro_rules! debug_assert {
 /// debug_assert_eq!(a, b);
 /// ```
 #[macro_export]
+#[stable(feature = "rust1", since = "1.0.0")]
 macro_rules! debug_assert_eq {
     ($($arg:tt)*) => (if cfg!(debug_assertions) { assert_eq!($($arg)*); })
 }
 
-/// Short circuiting evaluation on Err
+/// Helper macro for unwrapping `Result` values while returning early with an
+/// error if the value of the expression is `Err`. Can only be used in
+/// functions that return `Result` because of the early return of `Err` that
+/// it provides.
 ///
-/// `libstd` contains a more general `try!` macro that uses `From<E>`.
+/// # Examples
+///
+/// ```
+/// use std::io;
+/// use std::fs::File;
+/// use std::io::prelude::*;
+///
+/// fn write_to_file_using_try() -> Result<(), io::Error> {
+///     let mut file = try!(File::create("my_best_friends.txt"));
+///     try!(file.write_all(b"This is a list of my best friends."));
+///     println!("I wrote to the file");
+///     Ok(())
+/// }
+/// // This is equivalent to:
+/// fn write_to_file_using_match() -> Result<(), io::Error> {
+///     let mut file = try!(File::create("my_best_friends.txt"));
+///     match file.write_all(b"This is a list of my best friends.") {
+///         Ok(_) => (),
+///         Err(e) => return Err(e),
+///     }
+///     println!("I wrote to the file");
+///     Ok(())
+/// }
+/// ```
 #[macro_export]
+#[stable(feature = "rust1", since = "1.0.0")]
 macro_rules! try {
-    ($e:expr) => ({
-        use $crate::result::Result::{Ok, Err};
-
-        match $e {
-            Ok(e) => e,
-            Err(e) => return Err(e),
+    ($expr:expr) => (match $expr {
+        $crate::result::Result::Ok(val) => val,
+        $crate::result::Result::Err(err) => {
+            return $crate::result::Result::Err($crate::convert::From::from(err))
         }
     })
 }
@@ -189,6 +221,7 @@ macro_rules! try {
 /// assert_eq!(w, b"testformatted arguments");
 /// ```
 #[macro_export]
+#[stable(feature = "core", since = "1.6.0")]
 macro_rules! write {
     ($dst:expr, $($arg:tt)*) => ($dst.write_fmt(format_args!($($arg)*)))
 }
@@ -242,6 +275,7 @@ macro_rules! writeln {
 /// Match arms:
 ///
 /// ```
+/// # #[allow(dead_code)]
 /// fn foo(x: Option<i32>) {
 ///     match x {
 ///         Some(n) if n >= 0 => println!("Some(Non-negative)"),
@@ -255,6 +289,7 @@ macro_rules! writeln {
 /// Iterators:
 ///
 /// ```
+/// # #[allow(dead_code)]
 /// fn divide_by_three(x: u32) -> u32 { // one of the poorest implementations of x/3
 ///     for i in 0.. {
 ///         if 3*i < i { panic!("u32 overflow"); }
@@ -264,9 +299,7 @@ macro_rules! writeln {
 /// }
 /// ```
 #[macro_export]
-#[unstable(feature = "core",
-           reason = "relationship with panic is unclear",
-           issue = "27701")]
+#[stable(feature = "core", since = "1.6.0")]
 macro_rules! unreachable {
     () => ({
         panic!("internal error: entered unreachable code")
@@ -303,33 +336,31 @@ macro_rules! unreachable {
 ///
 /// ```
 /// # trait Foo {
-/// #     fn foo(&self);
 /// #     fn bar(&self);
+/// #     fn baz(&self);
 /// # }
 /// struct MyStruct;
 ///
 /// impl Foo for MyStruct {
-///     fn foo(&self) {
+///     fn bar(&self) {
 ///         // implementation goes here
 ///     }
 ///
-///     fn bar(&self) {
-///         // let's not worry about implementing bar() for now
+///     fn baz(&self) {
+///         // let's not worry about implementing baz() for now
 ///         unimplemented!();
 ///     }
 /// }
 ///
 /// fn main() {
 ///     let s = MyStruct;
-///     s.foo();
+///     s.bar();
 ///
-///     // we aren't even using bar() yet, so this is fine.
+///     // we aren't even using baz() yet, so this is fine.
 /// }
 /// ```
 #[macro_export]
-#[unstable(feature = "core",
-           reason = "relationship with panic is unclear",
-           issue = "27701")]
+#[stable(feature = "core", since = "1.6.0")]
 macro_rules! unimplemented {
     () => (panic!("not yet implemented"))
 }

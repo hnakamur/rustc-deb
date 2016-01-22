@@ -9,8 +9,8 @@
 // except according to those terms.
 
 use ast;
-use ast::{MetaItem, Expr,};
-use codemap::Span;
+use ast::{MetaItem, Expr};
+use codemap::{Span, respan};
 use ext::base::{ExtCtxt, Annotatable};
 use ext::build::AstBuilder;
 use ext::deriving::generic::*;
@@ -72,34 +72,43 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
     let span = Span { expn_id: cx.backtrace(), .. span };
     let name = cx.expr_lit(span, ast::Lit_::LitStr(ident.name.as_str(),
                                                    ast::StrStyle::CookedStr));
-    let mut expr = substr.nonself_args[0].clone();
+    let builder = token::str_to_ident("builder");
+    let builder_expr = cx.expr_ident(span, builder.clone());
 
-    match *substr.fields {
+    let fmt = substr.nonself_args[0].clone();
+
+    let stmts = match *substr.fields {
         Struct(ref fields) | EnumMatching(_, _, ref fields) => {
-
+            let mut stmts = vec![];
             if fields.is_empty() || fields[0].name.is_none() {
                 // tuple struct/"normal" variant
-                expr = cx.expr_method_call(span,
-                                           expr,
-                                           token::str_to_ident("debug_tuple"),
-                                           vec![name]);
+                let expr = cx.expr_method_call(span,
+                                               fmt,
+                                               token::str_to_ident("debug_tuple"),
+                                               vec![name]);
+                stmts.push(cx.stmt_let(span, true, builder, expr));
 
                 for field in fields {
                     // Use double indirection to make sure this works for unsized types
                     let field = cx.expr_addr_of(field.span, field.self_.clone());
                     let field = cx.expr_addr_of(field.span, field);
 
-                    expr = cx.expr_method_call(span,
-                                               expr,
-                                               token::str_to_ident("field"),
-                                               vec![field]);
+                    let expr = cx.expr_method_call(span,
+                                                   builder_expr.clone(),
+                                                   token::str_to_ident("field"),
+                                                   vec![field]);
+
+                    // Use `let _ = expr;` to avoid triggering the
+                    // unused_results lint.
+                    stmts.push(stmt_let_undescore(cx, span, expr));
                 }
             } else {
                 // normal struct/struct variant
-                expr = cx.expr_method_call(span,
-                                           expr,
-                                           token::str_to_ident("debug_struct"),
-                                           vec![name]);
+                let expr = cx.expr_method_call(span,
+                                               fmt,
+                                               token::str_to_ident("debug_struct"),
+                                               vec![name]);
+                stmts.push(cx.stmt_let(span, true, builder, expr));
 
                 for field in fields {
                     let name = cx.expr_lit(field.span, ast::Lit_::LitStr(
@@ -109,18 +118,38 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
                     // Use double indirection to make sure this works for unsized types
                     let field = cx.expr_addr_of(field.span, field.self_.clone());
                     let field = cx.expr_addr_of(field.span, field);
-                    expr = cx.expr_method_call(span,
-                                               expr,
-                                               token::str_to_ident("field"),
-                                               vec![name, field]);
+                    let expr = cx.expr_method_call(span,
+                                                   builder_expr.clone(),
+                                                   token::str_to_ident("field"),
+                                                   vec![name, field]);
+                    stmts.push(stmt_let_undescore(cx, span, expr));
                 }
             }
+            stmts
         }
         _ => unreachable!()
-    }
+    };
 
-    cx.expr_method_call(span,
-                        expr,
-                        token::str_to_ident("finish"),
-                        vec![])
+    let expr = cx.expr_method_call(span,
+                                   builder_expr,
+                                   token::str_to_ident("finish"),
+                                   vec![]);
+
+    let block = cx.block(span, stmts, Some(expr));
+    cx.expr_block(block)
+}
+
+fn stmt_let_undescore(cx: &mut ExtCtxt,
+                      sp: Span,
+                      expr: P<ast::Expr>) -> P<ast::Stmt> {
+    let local = P(ast::Local {
+        pat: cx.pat_wild(sp),
+        ty: None,
+        init: Some(expr),
+        id: ast::DUMMY_NODE_ID,
+        span: sp,
+        attrs: None,
+    });
+    let decl = respan(sp, ast::DeclLocal(local));
+    P(respan(sp, ast::StmtDecl(P(decl), ast::DUMMY_NODE_ID)))
 }

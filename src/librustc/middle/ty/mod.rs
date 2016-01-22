@@ -21,9 +21,8 @@ pub use self::LvaluePreference::*;
 
 use front::map as ast_map;
 use front::map::LinkedPath;
-use metadata::csearch;
-use metadata::cstore::LOCAL_CRATE;
 use middle;
+use middle::cstore::{CrateStore, LOCAL_CRATE};
 use middle::def::{self, ExportMap};
 use middle::def_id::DefId;
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangItem};
@@ -104,13 +103,11 @@ pub const INITIAL_DISCRIMINANT_VALUE: Disr = 0;
 /// produced by the driver and fed to trans and later passes.
 pub struct CrateAnalysis<'a> {
     pub export_map: ExportMap,
-    pub exported_items: middle::privacy::ExportedItems,
-    pub public_items: middle::privacy::PublicItems,
+    pub access_levels: middle::privacy::AccessLevels,
     pub reachable: NodeSet,
     pub name: &'a str,
     pub glob_map: Option<GlobMap>,
 }
-
 
 #[derive(Copy, Clone)]
 pub enum DtorKind {
@@ -1091,6 +1088,9 @@ pub struct ParameterEnvironment<'a, 'tcx:'a> {
     /// for things that have to do with the parameters in scope.
     pub selection_cache: traits::SelectionCache<'tcx>,
 
+    /// Caches the results of trait evaluation.
+    pub evaluation_cache: traits::EvaluationCache<'tcx>,
+
     /// Scope that is attached to free regions for this scope. This
     /// is usually the id of the fn body, but for more abstract scopes
     /// like structs we often use the node-id of the struct.
@@ -1112,6 +1112,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
             implicit_region_bound: self.implicit_region_bound,
             caller_bounds: caller_bounds,
             selection_cache: traits::SelectionCache::new(),
+            evaluation_cache: traits::EvaluationCache::new(),
             free_id: self.free_id,
         }
     }
@@ -1120,7 +1121,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
         match cx.map.find(id) {
             Some(ast_map::NodeImplItem(ref impl_item)) => {
                 match impl_item.node {
-                    hir::TypeImplItem(_) => {
+                    hir::ImplItemKind::Type(_) => {
                         // associated types don't have their own entry (for some reason),
                         // so for now just grab environment for the impl
                         let impl_id = cx.map.get_parent(id);
@@ -1132,7 +1133,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                                                            &predicates,
                                                            id)
                     }
-                    hir::ConstImplItem(_, _) => {
+                    hir::ImplItemKind::Const(_, _) => {
                         let def_id = cx.map.local_def_id(id);
                         let scheme = cx.lookup_item_type(def_id);
                         let predicates = cx.lookup_predicates(def_id);
@@ -1141,7 +1142,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                                                            &predicates,
                                                            id)
                     }
-                    hir::MethodImplItem(_, ref body) => {
+                    hir::ImplItemKind::Method(_, ref body) => {
                         let method_def_id = cx.map.local_def_id(id);
                         match cx.impl_or_trait_item(method_def_id) {
                             MethodTraitItem(ref method_ty) => {
@@ -1732,6 +1733,13 @@ impl<'tcx, 'container> VariantDefData<'tcx, 'container> {
     }
 
     #[inline]
+    pub fn index_of_field_named(&self,
+                                name: ast::Name)
+                                -> Option<usize> {
+        self.fields.iter().position(|f| f.name == name)
+    }
+
+    #[inline]
     pub fn field_named(&self, name: ast::Name) -> &FieldDefData<'tcx, 'container> {
         self.find_field_named(name).unwrap()
     }
@@ -2122,7 +2130,7 @@ impl<'tcx> ctxt<'tcx> {
                 self.sess.bug(&format!("provided_trait_methods: `{:?}` is not a trait", id))
             }
         } else {
-            csearch::get_provided_trait_methods(self, id)
+            self.sess.cstore.provided_trait_methods(self, id)
         }
     }
 
@@ -2147,7 +2155,7 @@ impl<'tcx> ctxt<'tcx> {
                 }
                 ItemImpl(_, _, _, _, _, ref iis) => {
                     iis.iter().filter_map(|ii| {
-                        if let hir::ConstImplItem(_, _) = ii.node {
+                        if let hir::ImplItemKind::Const(_, _) = ii.node {
                             match self.impl_or_trait_item(self.map.local_def_id(ii.id)) {
                                 ConstTraitItem(ac) => Some(ac),
                                 _ => {
@@ -2167,7 +2175,7 @@ impl<'tcx> ctxt<'tcx> {
                 }
             }
         } else {
-            csearch::get_associated_consts(self, id)
+            self.sess.cstore.associated_consts(self, id)
         }
     }
 
@@ -2199,14 +2207,14 @@ impl<'tcx> ctxt<'tcx> {
                 _ => None
             }
         } else {
-            csearch::get_impl_polarity(self, id)
+            self.sess.cstore.impl_polarity(id)
         }
     }
 
     pub fn custom_coerce_unsized_kind(&self, did: DefId) -> adjustment::CustomCoerceUnsized {
         memoized(&self.custom_coerce_unsized_kinds, did, |did: DefId| {
             let (kind, src) = if did.krate != LOCAL_CRATE {
-                (csearch::get_custom_coerce_unsized_kind(self, did), "external")
+                (self.sess.cstore.custom_coerce_unsized_kind(did), "external")
             } else {
                 (None, "local")
             };
@@ -2225,13 +2233,13 @@ impl<'tcx> ctxt<'tcx> {
     pub fn impl_or_trait_item(&self, id: DefId) -> ImplOrTraitItem<'tcx> {
         lookup_locally_or_in_crate_store(
             "impl_or_trait_items", id, &self.impl_or_trait_items,
-            || csearch::get_impl_or_trait_item(self, id))
+            || self.sess.cstore.impl_or_trait_item(self, id))
     }
 
     pub fn trait_item_def_ids(&self, id: DefId) -> Rc<Vec<ImplOrTraitItemId>> {
         lookup_locally_or_in_crate_store(
             "trait_item_def_ids", id, &self.trait_item_def_ids,
-            || Rc::new(csearch::get_trait_item_def_ids(&self.sess.cstore, id)))
+            || Rc::new(self.sess.cstore.trait_item_def_ids(id)))
     }
 
     /// Returns the trait-ref corresponding to a given impl, or None if it is
@@ -2239,7 +2247,7 @@ impl<'tcx> ctxt<'tcx> {
     pub fn impl_trait_ref(&self, id: DefId) -> Option<TraitRef<'tcx>> {
         lookup_locally_or_in_crate_store(
             "impl_trait_refs", id, &self.impl_trait_refs,
-            || csearch::get_impl_trait(self, id))
+            || self.sess.cstore.impl_trait_ref(self, id))
     }
 
     /// Returns whether this DefId refers to an impl
@@ -2252,7 +2260,7 @@ impl<'tcx> ctxt<'tcx> {
                 false
             }
         } else {
-            csearch::is_impl(&self.sess.cstore, id)
+            self.sess.cstore.is_impl(id)
         }
     }
 
@@ -2268,7 +2276,7 @@ impl<'tcx> ctxt<'tcx> {
         if id.is_local() {
             self.map.def_path(id)
         } else {
-            csearch::def_path(self, id)
+            self.sess.cstore.def_path(id)
         }
     }
 
@@ -2278,7 +2286,7 @@ impl<'tcx> ctxt<'tcx> {
         if let Some(id) = self.map.as_local_node_id(id) {
             self.map.with_path(id, f)
         } else {
-            f(csearch::get_item_path(self, id).iter().cloned().chain(LinkedPath::empty()))
+            f(self.sess.cstore.item_path(id).iter().cloned().chain(LinkedPath::empty()))
         }
     }
 
@@ -2286,7 +2294,7 @@ impl<'tcx> ctxt<'tcx> {
         if let Some(id) = self.map.as_local_node_id(id) {
             self.map.get_path_elem(id).name()
         } else {
-            csearch::get_item_name(self, id)
+            self.sess.cstore.item_name(id)
         }
     }
 
@@ -2300,14 +2308,14 @@ impl<'tcx> ctxt<'tcx> {
     pub fn lookup_item_type(&self, did: DefId) -> TypeScheme<'tcx> {
         lookup_locally_or_in_crate_store(
             "tcache", did, &self.tcache,
-            || csearch::get_type(self, did))
+            || self.sess.cstore.item_type(self, did))
     }
 
     /// Given the did of a trait, returns its canonical trait ref.
     pub fn lookup_trait_def(&self, did: DefId) -> &'tcx TraitDef<'tcx> {
         lookup_locally_or_in_crate_store(
             "trait_defs", did, &self.trait_defs,
-            || self.alloc_trait_def(csearch::get_trait_def(self, did))
+            || self.alloc_trait_def(self.sess.cstore.trait_def(self, did))
         )
     }
 
@@ -2317,7 +2325,7 @@ impl<'tcx> ctxt<'tcx> {
     pub fn lookup_adt_def_master(&self, did: DefId) -> AdtDefMaster<'tcx> {
         lookup_locally_or_in_crate_store(
             "adt_defs", did, &self.adt_defs,
-            || csearch::get_adt_def(self, did)
+            || self.sess.cstore.adt_def(self, did)
         )
     }
 
@@ -2332,14 +2340,14 @@ impl<'tcx> ctxt<'tcx> {
     pub fn lookup_predicates(&self, did: DefId) -> GenericPredicates<'tcx> {
         lookup_locally_or_in_crate_store(
             "predicates", did, &self.predicates,
-            || csearch::get_predicates(self, did))
+            || self.sess.cstore.item_predicates(self, did))
     }
 
     /// Given the did of a trait, returns its superpredicates.
     pub fn lookup_super_predicates(&self, did: DefId) -> GenericPredicates<'tcx> {
         lookup_locally_or_in_crate_store(
             "super_predicates", did, &self.super_predicates,
-            || csearch::get_super_predicates(self, did))
+            || self.sess.cstore.item_super_predicates(self, did))
     }
 
     /// Get the attributes of a definition.
@@ -2347,7 +2355,7 @@ impl<'tcx> ctxt<'tcx> {
         if let Some(id) = self.map.as_local_node_id(did) {
             Cow::Borrowed(self.map.attrs(id))
         } else {
-            Cow::Owned(csearch::get_item_attrs(&self.sess.cstore, did))
+            Cow::Owned(self.sess.cstore.item_attrs(did))
         }
     }
 
@@ -2375,7 +2383,7 @@ impl<'tcx> ctxt<'tcx> {
                     attr::find_repr_attrs(self.sess.diagnostic(), meta).into_iter()
                 }).collect()
             } else {
-                csearch::get_repr_attrs(&self.sess.cstore, did)
+                self.sess.cstore.repr_attrs(did)
             })
         })
     }
@@ -2383,7 +2391,7 @@ impl<'tcx> ctxt<'tcx> {
     pub fn item_variances(&self, item_id: DefId) -> Rc<ItemVariances> {
         lookup_locally_or_in_crate_store(
             "item_variance_map", item_id, &self.item_variance_map,
-            || Rc::new(csearch::get_item_variances(&self.sess.cstore, item_id)))
+            || Rc::new(self.sess.cstore.item_variances(item_id)))
     }
 
     pub fn trait_has_default_impl(&self, trait_def_id: DefId) -> bool {
@@ -2413,7 +2421,7 @@ impl<'tcx> ctxt<'tcx> {
         debug!("populate_implementations_for_primitive_if_necessary: searching for {:?}",
                primitive_def_id);
 
-        let impl_items = csearch::get_impl_items(&self.sess.cstore, primitive_def_id);
+        let impl_items = self.sess.cstore.impl_items(primitive_def_id);
 
         // Store the implementation info.
         self.impl_items.borrow_mut().insert(primitive_def_id, impl_items);
@@ -2435,15 +2443,12 @@ impl<'tcx> ctxt<'tcx> {
         debug!("populate_inherent_implementations_for_type_if_necessary: searching for {:?}",
                type_id);
 
-        let mut inherent_impls = Vec::new();
-        csearch::each_inherent_implementation_for_type(&self.sess.cstore, type_id, |impl_def_id| {
-            // Record the implementation.
-            inherent_impls.push(impl_def_id);
-
+        let inherent_impls = self.sess.cstore.inherent_implementations_for_type(type_id);
+        for &impl_def_id in &inherent_impls {
             // Store the implementation info.
-            let impl_items = csearch::get_impl_items(&self.sess.cstore, impl_def_id);
+            let impl_items = self.sess.cstore.impl_items(impl_def_id);
             self.impl_items.borrow_mut().insert(impl_def_id, impl_items);
-        });
+        }
 
         self.inherent_impls.borrow_mut().insert(type_id, Rc::new(inherent_impls));
         self.populated_external_types.borrow_mut().insert(type_id);
@@ -2463,12 +2468,12 @@ impl<'tcx> ctxt<'tcx> {
 
         debug!("populate_implementations_for_trait_if_necessary: searching for {:?}", def);
 
-        if csearch::is_defaulted_trait(&self.sess.cstore, trait_id) {
+        if self.sess.cstore.is_defaulted_trait(trait_id) {
             self.record_trait_has_default_impl(trait_id);
         }
 
-        csearch::each_implementation_for_trait(&self.sess.cstore, trait_id, |impl_def_id| {
-            let impl_items = csearch::get_impl_items(&self.sess.cstore, impl_def_id);
+        for impl_def_id in self.sess.cstore.implementations_of_trait(trait_id) {
+            let impl_items = self.sess.cstore.impl_items(impl_def_id);
             let trait_ref = self.impl_trait_ref(impl_def_id).unwrap();
             // Record the trait->implementation mapping.
             def.record_impl(self, impl_def_id, trait_ref);
@@ -2484,7 +2489,7 @@ impl<'tcx> ctxt<'tcx> {
 
             // Store the implementation info.
             self.impl_items.borrow_mut().insert(impl_def_id, impl_items);
-        });
+        }
 
         def.flags.set(def.flags.get() | TraitFlags::IMPLS_VALID);
     }
@@ -2511,8 +2516,7 @@ impl<'tcx> ctxt<'tcx> {
     /// ID of the impl that the method belongs to. Otherwise, return `None`.
     pub fn impl_of_method(&self, def_id: DefId) -> Option<DefId> {
         if def_id.krate != LOCAL_CRATE {
-            return match csearch::get_impl_or_trait_item(self,
-                                                         def_id).container() {
+            return match self.sess.cstore.impl_or_trait_item(self, def_id).container() {
                 TraitContainer(_) => None,
                 ImplContainer(def_id) => Some(def_id),
             };
@@ -2533,7 +2537,7 @@ impl<'tcx> ctxt<'tcx> {
     /// the trait that the method belongs to. Otherwise, return `None`.
     pub fn trait_of_item(&self, def_id: DefId) -> Option<DefId> {
         if def_id.krate != LOCAL_CRATE {
-            return csearch::get_trait_of_item(&self.sess.cstore, def_id, self);
+            return self.sess.cstore.trait_of_item(self, def_id);
         }
         match self.impl_or_trait_items.borrow().get(&def_id).cloned() {
             Some(impl_or_trait_item) => {
@@ -2577,6 +2581,7 @@ impl<'tcx> ctxt<'tcx> {
                                    caller_bounds: Vec::new(),
                                    implicit_region_bound: ty::ReEmpty,
                                    selection_cache: traits::SelectionCache::new(),
+                                   evaluation_cache: traits::EvaluationCache::new(),
 
                                    // for an empty parameter
                                    // environment, there ARE no free
@@ -2666,6 +2671,7 @@ impl<'tcx> ctxt<'tcx> {
             implicit_region_bound: ty::ReScope(free_id_outlive),
             caller_bounds: predicates,
             selection_cache: traits::SelectionCache::new(),
+            evaluation_cache: traits::EvaluationCache::new(),
             free_id: free_id,
         };
 

@@ -12,7 +12,7 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_borrowck"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -38,7 +38,7 @@ extern crate rustc_front;
 
 pub use borrowck::check_crate;
 pub use borrowck::build_borrowck_dataflow_data_for_fn;
-pub use borrowck::FnPartsWithCFG;
+pub use borrowck::{AnalysisData, BorrowckCtxt};
 
 // NB: This module needs to be declared first so diagnostics are
 // registered before they are used.

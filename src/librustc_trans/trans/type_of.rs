@@ -11,6 +11,7 @@
 #![allow(non_camel_case_types)]
 
 use middle::def_id::DefId;
+use middle::infer;
 use middle::subst;
 use trans::adt;
 use trans::common::*;
@@ -89,7 +90,7 @@ pub fn untuple_arguments<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
 pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                  llenvironment_type: Option<Type>,
-                                 sig: &ty::Binder<ty::FnSig<'tcx>>,
+                                 sig: &ty::FnSig<'tcx>,
                                  abi: abi::Abi)
                                  -> Type
 {
@@ -97,16 +98,17 @@ pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
            sig,
            abi);
 
-    let sig = cx.tcx().erase_late_bound_regions(sig);
     assert!(!sig.variadic); // rust fns are never variadic
 
     let mut atys: Vec<Type> = Vec::new();
 
     // First, munge the inputs, if this has the `rust-call` ABI.
-    let inputs = &if abi == abi::RustCall {
-        untuple_arguments(cx, &sig.inputs)
+    let inputs_temp;
+    let inputs = if abi == abi::RustCall {
+        inputs_temp = untuple_arguments(cx, &sig.inputs);
+        &inputs_temp
     } else {
-        sig.inputs
+        &sig.inputs
     };
 
     // Arg 0: Output pointer.
@@ -155,7 +157,9 @@ pub fn type_of_fn_from_ty<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, fty: Ty<'tcx>) 
             // FIXME(#19925) once fn item types are
             // zero-sized, we'll need to do something here
             if f.abi == abi::Rust || f.abi == abi::RustCall {
-                type_of_rust_fn(cx, None, &f.sig, f.abi)
+                let sig = cx.tcx().erase_late_bound_regions(&f.sig);
+                let sig = infer::normalize_associated_type(cx.tcx(), &sig);
+                type_of_rust_fn(cx, None, &sig, f.abi)
             } else {
                 foreign::lltype_for_foreign_fn(cx, fty)
             }
@@ -184,6 +188,8 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
     }
 
     debug!("sizing_type_of {:?}", t);
+    let _recursion_lock = cx.enter_type_of(t);
+
     let llsizingty = match t.sty {
         _ if !type_is_sized(cx.tcx(), t) => {
             Type::struct_(cx, &[Type::i8p(cx), Type::i8p(cx)], false)
@@ -241,7 +247,7 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
             }
         }
 
-        ty::TyProjection(..) | ty::TyInfer(..) | ty::TyParam(..) | ty::TyError(..) => {
+        ty::TyProjection(..) | ty::TyInfer(..) | ty::TyParam(..) | ty::TyError => {
             cx.sess().bug(&format!("fictitious type {:?} in sizing_type_of()",
                                    t))
         }
@@ -395,8 +401,12 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
 
       ty::TyArray(ty, size) => {
           let size = size as u64;
+          // we must use `sizing_type_of` here as the type may
+          // not be fully initialized.
+          let szty = sizing_type_of(cx, ty);
+          ensure_array_fits_in_address_space(cx, szty, size, t);
+
           let llty = in_memory_type_of(cx, ty);
-          ensure_array_fits_in_address_space(cx, llty, size, t);
           Type::array(&llty, size)
       }
 
@@ -441,7 +451,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
       ty::TyInfer(..) => cx.sess().bug("type_of with TyInfer"),
       ty::TyProjection(..) => cx.sess().bug("type_of with TyProjection"),
       ty::TyParam(..) => cx.sess().bug("type_of with ty_param"),
-      ty::TyError(..) => cx.sess().bug("type_of with TyError"),
+      ty::TyError => cx.sess().bug("type_of with TyError"),
     };
 
     debug!("--> mapped t={:?} to llty={}",

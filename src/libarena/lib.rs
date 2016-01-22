@@ -23,12 +23,13 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "arena"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "https://doc.rust-lang.org/nightly/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       test(no_crate_inject, attr(deny(warnings))))]
 
 #![feature(alloc)]
 #![feature(box_syntax)]
@@ -167,8 +168,8 @@ unsafe fn destroy_chunk(chunk: &Chunk) {
 
         let start = round_up(after_tydesc, align);
 
-        //debug!("freeing object: idx = {}, size = {}, align = {}, done = {}",
-        //       start, size, align, is_done);
+        // debug!("freeing object: idx = {}, size = {}, align = {}, done = {}",
+        //        start, size, align, is_done);
         if is_done {
             ((*tydesc).drop_glue)(buf.offset(start as isize) as *const i8);
         }
@@ -200,8 +201,11 @@ struct TyDesc {
     align: usize,
 }
 
-trait AllTypes { fn dummy(&self) { } }
-impl<T:?Sized> AllTypes for T { }
+trait AllTypes {
+    fn dummy(&self) {}
+}
+
+impl<T: ?Sized> AllTypes for T {}
 
 unsafe fn get_tydesc<T>() -> *const TyDesc {
     use std::raw::TraitObject;
@@ -623,7 +627,7 @@ mod tests {
         for _ in 0..100000 {
             arena.alloc(Noncopy {
                 string: "hello world".to_string(),
-                array: vec!(1, 2, 3, 4, 5),
+                array: vec![1, 2, 3, 4, 5],
             });
         }
     }
@@ -634,7 +638,7 @@ mod tests {
         b.iter(|| {
             arena.alloc(Noncopy {
                 string: "hello world".to_string(),
-                array: vec!(1, 2, 3, 4, 5),
+                array: vec![1, 2, 3, 4, 5],
             })
         })
     }
@@ -644,7 +648,7 @@ mod tests {
         b.iter(|| {
             let _: Box<_> = box Noncopy {
                 string: "hello world".to_string(),
-                array: vec!(1, 2, 3, 4, 5),
+                array: vec![1, 2, 3, 4, 5],
             };
         })
     }
@@ -656,7 +660,7 @@ mod tests {
             arena.alloc(|| {
                 Noncopy {
                     string: "hello world".to_string(),
-                    array: vec!(1, 2, 3, 4, 5),
+                    array: vec![1, 2, 3, 4, 5],
                 }
             })
         })

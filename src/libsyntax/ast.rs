@@ -20,7 +20,6 @@ pub use self::Expr_::*;
 pub use self::FloatTy::*;
 pub use self::FunctionRetTy::*;
 pub use self::ForeignItem_::*;
-pub use self::ImplItem_::*;
 pub use self::IntTy::*;
 pub use self::Item_::*;
 pub use self::KleeneOp::*;
@@ -31,13 +30,11 @@ pub use self::MetaItem_::*;
 pub use self::Mutability::*;
 pub use self::Pat_::*;
 pub use self::PathListItem_::*;
-pub use self::PatWildKind::*;
 pub use self::PrimTy::*;
 pub use self::Sign::*;
 pub use self::Stmt_::*;
 pub use self::StrStyle::*;
 pub use self::StructFieldKind::*;
-pub use self::TokenTree::*;
 pub use self::TraitItem_::*;
 pub use self::Ty_::*;
 pub use self::TyParamBound::*;
@@ -48,6 +45,7 @@ pub use self::ViewPath_::*;
 pub use self::Visibility::*;
 pub use self::PathParameters::*;
 
+use attr::ThinAttributes;
 use codemap::{Span, Spanned, DUMMY_SP, ExpnId};
 use abi::Abi;
 use ast_util;
@@ -569,19 +567,10 @@ pub enum BindingMode {
     BindByValue(Mutability),
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
-pub enum PatWildKind {
-    /// Represents the wildcard pattern `_`
-    PatWildSingle,
-
-    /// Represents the wildcard pattern `..`
-    PatWildMulti,
-}
-
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Pat_ {
-    /// Represents a wildcard pattern (either `_` or `..`)
-    PatWild(PatWildKind),
+    /// Represents a wildcard pattern (`_`)
+    PatWild,
 
     /// A PatIdent may either be a new bound variable,
     /// or a nullary enum (in which case the third field
@@ -593,7 +582,7 @@ pub enum Pat_ {
     /// set (of "PatIdents that refer to nullary enums")
     PatIdent(BindingMode, SpannedIdent, Option<P<Pat>>),
 
-    /// "None" means a * pattern where we don't bind the fields to names.
+    /// "None" means a `Variant(..)` pattern where we don't bind the fields to names.
     PatEnum(Path, Option<Vec<P<Pat>>>),
 
     /// An associated const named using the qualified path `<T>::CONST` or
@@ -615,8 +604,8 @@ pub enum Pat_ {
     PatLit(P<Expr>),
     /// A range pattern, e.g. `1...2`
     PatRange(P<Expr>, P<Expr>),
-    /// [a, b, ..i, y, z] is represented as:
-    ///     PatVec(box [a, b], Some(i), box [y, z])
+    /// `[a, b, ..i, y, z]` is represented as:
+    ///     `PatVec(box [a, b], Some(i), box [y, z])`
     PatVec(Vec<P<Pat>>, Option<P<Pat>>, Vec<P<Pat>>),
     /// A macro pattern; pre-expansion
     PatMac(Mac),
@@ -704,8 +693,21 @@ pub enum Stmt_ {
     /// Expr with trailing semi-colon (may have any type):
     StmtSemi(P<Expr>, NodeId),
 
-    StmtMac(P<Mac>, MacStmtStyle),
+    StmtMac(P<Mac>, MacStmtStyle, ThinAttributes),
 }
+
+impl Stmt_ {
+    pub fn attrs(&self) -> &[Attribute] {
+        match *self {
+            StmtDecl(ref d, _) => d.attrs(),
+            StmtExpr(ref e, _) |
+            StmtSemi(ref e, _) => e.attrs(),
+            StmtMac(_, _, Some(ref b)) => b,
+            StmtMac(_, _, None) => &[],
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum MacStmtStyle {
     /// The macro statement had a trailing semicolon, e.g. `foo! { ... };`
@@ -730,6 +732,16 @@ pub struct Local {
     pub init: Option<P<Expr>>,
     pub id: NodeId,
     pub span: Span,
+    pub attrs: ThinAttributes,
+}
+
+impl Local {
+    pub fn attrs(&self) -> &[Attribute] {
+        match self.attrs {
+            Some(ref b) => b,
+            None => &[],
+        }
+    }
 }
 
 pub type Decl = Spanned<Decl_>;
@@ -740,6 +752,15 @@ pub enum Decl_ {
     DeclLocal(P<Local>),
     /// An item binding:
     DeclItem(P<Item>),
+}
+
+impl Decl {
+    pub fn attrs(&self) -> &[Attribute] {
+        match self.node {
+            DeclLocal(ref l) => l.attrs(),
+            DeclItem(ref i) => i.attrs(),
+        }
+    }
 }
 
 /// represents one arm of a 'match'
@@ -778,6 +799,16 @@ pub struct Expr {
     pub id: NodeId,
     pub node: Expr_,
     pub span: Span,
+    pub attrs: ThinAttributes
+}
+
+impl Expr {
+    pub fn attrs(&self) -> &[Attribute] {
+        match self.attrs {
+            Some(ref b) => b,
+            None => &[],
+        }
+    }
 }
 
 impl fmt::Debug for Expr {
@@ -919,13 +950,15 @@ pub enum Expr_ {
 /// separately. `position` represents the index of the associated
 /// item qualified with this Self type.
 ///
-///     <Vec<T> as a::b::Trait>::AssociatedItem
-///      ^~~~~     ~~~~~~~~~~~~~~^
-///      ty        position = 3
+/// ```ignore
+/// <Vec<T> as a::b::Trait>::AssociatedItem
+///  ^~~~~     ~~~~~~~~~~~~~~^
+///  ty        position = 3
 ///
-///     <Vec<T>>::AssociatedItem
-///      ^~~~~    ^
-///      ty       position = 0
+/// <Vec<T>>::AssociatedItem
+///  ^~~~~    ^
+///  ty       position = 0
+/// ```
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct QSelf {
     pub ty: P<Ty>,
@@ -964,12 +997,12 @@ impl Delimited {
 
     /// Returns the opening delimiter as a token tree.
     pub fn open_tt(&self) -> TokenTree {
-        TtToken(self.open_span, self.open_token())
+        TokenTree::Token(self.open_span, self.open_token())
     }
 
     /// Returns the closing delimiter as a token tree.
     pub fn close_tt(&self) -> TokenTree {
-        TtToken(self.close_span, self.close_token())
+        TokenTree::Token(self.close_span, self.close_token())
     }
 }
 
@@ -1009,61 +1042,61 @@ pub enum KleeneOp {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum TokenTree {
     /// A single token
-    TtToken(Span, token::Token),
+    Token(Span, token::Token),
     /// A delimited sequence of token trees
-    TtDelimited(Span, Rc<Delimited>),
+    Delimited(Span, Rc<Delimited>),
 
     // This only makes sense in MBE macros.
 
     /// A kleene-style repetition sequence with a span
     // FIXME(eddyb) #12938 Use DST.
-    TtSequence(Span, Rc<SequenceRepetition>),
+    Sequence(Span, Rc<SequenceRepetition>),
 }
 
 impl TokenTree {
     pub fn len(&self) -> usize {
         match *self {
-            TtToken(_, token::DocComment(name)) => {
+            TokenTree::Token(_, token::DocComment(name)) => {
                 match doc_comment_style(&name.as_str()) {
                     AttrStyle::Outer => 2,
                     AttrStyle::Inner => 3
                 }
             }
-            TtToken(_, token::SpecialVarNt(..)) => 2,
-            TtToken(_, token::MatchNt(..)) => 3,
-            TtDelimited(_, ref delimed) => {
+            TokenTree::Token(_, token::SpecialVarNt(..)) => 2,
+            TokenTree::Token(_, token::MatchNt(..)) => 3,
+            TokenTree::Delimited(_, ref delimed) => {
                 delimed.tts.len() + 2
             }
-            TtSequence(_, ref seq) => {
+            TokenTree::Sequence(_, ref seq) => {
                 seq.tts.len()
             }
-            TtToken(..) => 0
+            TokenTree::Token(..) => 0
         }
     }
 
     pub fn get_tt(&self, index: usize) -> TokenTree {
         match (self, index) {
-            (&TtToken(sp, token::DocComment(_)), 0) => {
-                TtToken(sp, token::Pound)
+            (&TokenTree::Token(sp, token::DocComment(_)), 0) => {
+                TokenTree::Token(sp, token::Pound)
             }
-            (&TtToken(sp, token::DocComment(name)), 1)
+            (&TokenTree::Token(sp, token::DocComment(name)), 1)
             if doc_comment_style(&name.as_str()) == AttrStyle::Inner => {
-                TtToken(sp, token::Not)
+                TokenTree::Token(sp, token::Not)
             }
-            (&TtToken(sp, token::DocComment(name)), _) => {
+            (&TokenTree::Token(sp, token::DocComment(name)), _) => {
                 let stripped = strip_doc_comment_decoration(&name.as_str());
-                TtDelimited(sp, Rc::new(Delimited {
+                TokenTree::Delimited(sp, Rc::new(Delimited {
                     delim: token::Bracket,
                     open_span: sp,
-                    tts: vec![TtToken(sp, token::Ident(token::str_to_ident("doc"),
-                                                       token::Plain)),
-                              TtToken(sp, token::Eq),
-                              TtToken(sp, token::Literal(
+                    tts: vec![TokenTree::Token(sp, token::Ident(token::str_to_ident("doc"),
+                                                                token::Plain)),
+                              TokenTree::Token(sp, token::Eq),
+                              TokenTree::Token(sp, token::Literal(
                                   token::StrRaw(token::intern(&stripped), 0), None))],
                     close_span: sp,
                 }))
             }
-            (&TtDelimited(_, ref delimed), _) => {
+            (&TokenTree::Delimited(_, ref delimed), _) => {
                 if index == 0 {
                     return delimed.open_tt();
                 }
@@ -1072,19 +1105,19 @@ impl TokenTree {
                 }
                 delimed.tts[index - 1].clone()
             }
-            (&TtToken(sp, token::SpecialVarNt(var)), _) => {
-                let v = [TtToken(sp, token::Dollar),
-                         TtToken(sp, token::Ident(token::str_to_ident(var.as_str()),
+            (&TokenTree::Token(sp, token::SpecialVarNt(var)), _) => {
+                let v = [TokenTree::Token(sp, token::Dollar),
+                         TokenTree::Token(sp, token::Ident(token::str_to_ident(var.as_str()),
                                                   token::Plain))];
                 v[index].clone()
             }
-            (&TtToken(sp, token::MatchNt(name, kind, name_st, kind_st)), _) => {
-                let v = [TtToken(sp, token::SubstNt(name, name_st)),
-                         TtToken(sp, token::Colon),
-                         TtToken(sp, token::Ident(kind, kind_st))];
+            (&TokenTree::Token(sp, token::MatchNt(name, kind, name_st, kind_st)), _) => {
+                let v = [TokenTree::Token(sp, token::SubstNt(name, name_st)),
+                         TokenTree::Token(sp, token::Colon),
+                         TokenTree::Token(sp, token::Ident(kind, kind_st))];
                 v[index].clone()
             }
-            (&TtSequence(_, ref seq), _) => {
+            (&TokenTree::Sequence(_, ref seq), _) => {
                 seq.tts[index].clone()
             }
             _ => panic!("Cannot expand a token tree")
@@ -1094,9 +1127,9 @@ impl TokenTree {
     /// Returns the `Span` corresponding to this token tree.
     pub fn get_span(&self) -> Span {
         match *self {
-            TtToken(span, _)     => span,
-            TtDelimited(span, _) => span,
-            TtSequence(span, _)  => span,
+            TokenTree::Token(span, _)     => span,
+            TokenTree::Delimited(span, _) => span,
+            TokenTree::Sequence(span, _)  => span,
         }
     }
 
@@ -1239,16 +1272,16 @@ pub struct ImplItem {
     pub ident: Ident,
     pub vis: Visibility,
     pub attrs: Vec<Attribute>,
-    pub node: ImplItem_,
+    pub node: ImplItemKind,
     pub span: Span,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
-pub enum ImplItem_ {
-    ConstImplItem(P<Ty>, P<Expr>),
-    MethodImplItem(MethodSig, P<Block>),
-    TypeImplItem(P<Ty>),
-    MacImplItem(Mac),
+pub enum ImplItemKind {
+    Const(P<Ty>, P<Expr>),
+    Method(MethodSig, P<Block>),
+    Type(P<Ty>),
+    Macro(Mac),
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
@@ -1268,7 +1301,7 @@ impl fmt::Debug for IntTy {
 
 impl fmt::Display for IntTy {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", ast_util::int_ty_to_string(*self, None))
+        write!(f, "{}", ast_util::int_ty_to_string(*self))
     }
 }
 
@@ -1313,7 +1346,7 @@ impl fmt::Debug for UintTy {
 
 impl fmt::Display for UintTy {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", ast_util::uint_ty_to_string(*self, None))
+        write!(f, "{}", ast_util::uint_ty_to_string(*self))
     }
 }
 
@@ -1696,9 +1729,9 @@ pub enum Visibility {
 
 impl Visibility {
     pub fn inherit_from(&self, parent_visibility: Visibility) -> Visibility {
-        match self {
-            &Inherited => parent_visibility,
-            &Public => *self
+        match *self {
+            Inherited => parent_visibility,
+            Public => *self
         }
     }
 }
@@ -1734,6 +1767,12 @@ impl StructFieldKind {
         match *self {
             UnnamedField(..) => true,
             NamedField(..) => false,
+        }
+    }
+
+    pub fn visibility(&self) -> Visibility {
+        match *self {
+            NamedField(_, vis) | UnnamedField(vis) => vis
         }
     }
 }
@@ -1794,6 +1833,12 @@ pub struct Item {
     pub node: Item_,
     pub vis: Visibility,
     pub span: Span,
+}
+
+impl Item {
+    pub fn attrs(&self) -> &[Attribute] {
+        &self.attrs
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]

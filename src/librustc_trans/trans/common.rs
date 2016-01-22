@@ -16,7 +16,7 @@ pub use self::ExprOrMethodCall::*;
 
 use session::Session;
 use llvm;
-use llvm::{ValueRef, BasicBlockRef, BuilderRef, ContextRef};
+use llvm::{ValueRef, BasicBlockRef, BuilderRef, ContextRef, TypeKind};
 use llvm::{True, False, Bool};
 use middle::cfg;
 use middle::def;
@@ -40,6 +40,7 @@ use middle::traits;
 use middle::ty::{self, HasTypeFlags, Ty};
 use middle::ty::fold::{TypeFolder, TypeFoldable};
 use rustc_front::hir;
+use rustc::mir::repr::Mir;
 use util::nodemap::{FnvHashMap, NodeMap};
 
 use arena::TypedArena;
@@ -328,6 +329,11 @@ impl<'tcx> DropFlagHintsMap<'tcx> {
 // Function context.  Every LLVM function we create will have one of
 // these.
 pub struct FunctionContext<'a, 'tcx: 'a> {
+    // The MIR for this function. At present, this is optional because
+    // we only have MIR available for things that are local to the
+    // crate.
+    pub mir: Option<&'a Mir<'tcx>>,
+
     // The ValueRef returned from a call to llvm::LLVMAddFunction; the
     // address of the first instruction in the sequence of
     // instructions for this function that will go in the .text
@@ -407,6 +413,10 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
+    pub fn mir(&self) -> &'a Mir<'tcx> {
+        self.mir.unwrap()
+    }
+
     pub fn arg_offset(&self) -> usize {
         self.env_arg_pos() + if self.llenv.is_some() { 1 } else { 0 }
     }
@@ -561,53 +571,33 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         }
     }
 
-    /// By default, LLVM lowers `resume` instructions into calls to `_Unwind_Resume`
-    /// defined in libgcc, however, unlike personality routines, there is no easy way to
-    /// override that symbol.  This method injects a local-scoped `_Unwind_Resume` function
-    /// which immediately defers to the user-defined `eh_unwind_resume` lang item.
-    pub fn inject_unwind_resume_hook(&self) {
-        let ccx = self.ccx;
-        if !ccx.sess().target.target.options.custom_unwind_resume ||
-           ccx.unwind_resume_hooked().get() {
-            return;
-        }
-
-        let new_resume = match ccx.tcx().lang_items.eh_unwind_resume() {
-            Some(did) => callee::trans_fn_ref(ccx, did, ExprId(0), &self.param_substs).val,
-            None => {
-                let fty = Type::variadic_func(&[], &Type::void(self.ccx));
-                declare::declare_cfn(self.ccx, "rust_eh_unwind_resume", fty,
-                                     self.ccx.tcx().mk_nil())
+    // Returns a ValueRef of the "eh_unwind_resume" lang item if one is defined,
+    // otherwise declares it as an external funtion.
+    pub fn eh_unwind_resume(&self) -> ValueRef {
+        use trans::attributes;
+        assert!(self.ccx.sess().target.target.options.custom_unwind_resume);
+        match self.ccx.tcx().lang_items.eh_unwind_resume() {
+            Some(def_id) => {
+                callee::trans_fn_ref(self.ccx, def_id, ExprId(0),
+                                     self.param_substs).val
             }
-        };
-
-        unsafe {
-            let resume_type = Type::func(&[Type::i8(ccx).ptr_to()], &Type::void(ccx));
-            let old_resume = llvm::LLVMAddFunction(ccx.llmod(),
-                                                   "_Unwind_Resume\0".as_ptr() as *const _,
-                                                   resume_type.to_ref());
-            llvm::SetLinkage(old_resume, llvm::InternalLinkage);
-            let llbb = llvm::LLVMAppendBasicBlockInContext(ccx.llcx(),
-                                                           old_resume,
-                                                           "\0".as_ptr() as *const _);
-            let builder = ccx.builder();
-            builder.position_at_end(llbb);
-            builder.call(new_resume, &[llvm::LLVMGetFirstParam(old_resume)], None);
-            builder.unreachable(); // it should never return
-
-            // Until DwarfEHPrepare pass has run, _Unwind_Resume is not referenced by any live code
-            // and is subject to dead code elimination.  Here we add _Unwind_Resume to @llvm.globals
-            // to prevent that.
-            let i8p_ty = Type::i8p(ccx);
-            let used_ty = Type::array(&i8p_ty, 1);
-            let used = llvm::LLVMAddGlobal(ccx.llmod(), used_ty.to_ref(),
-                                           "llvm.used\0".as_ptr() as *const _);
-            let old_resume = llvm::LLVMConstBitCast(old_resume, i8p_ty.to_ref());
-            llvm::LLVMSetInitializer(used, C_array(i8p_ty, &[old_resume]));
-            llvm::SetLinkage(used, llvm::AppendingLinkage);
-            llvm::LLVMSetSection(used, "llvm.metadata\0".as_ptr() as *const _)
+            None => {
+                let mut unwresume = self.ccx.eh_unwind_resume().borrow_mut();
+                match *unwresume {
+                    Some(llfn) => llfn,
+                    None => {
+                        let fty = Type::func(&[Type::i8p(self.ccx)], &Type::void(self.ccx));
+                        let llfn = declare::declare_fn(self.ccx,
+                                                       "rust_eh_unwind_resume",
+                                                       llvm::CCallConv,
+                                                       fty, ty::FnDiverging);
+                        attributes::unwind(llfn, true);
+                        *unwresume = Some(llfn);
+                        llfn
+                    }
+                }
+            }
         }
-        ccx.unwind_resume_hooked().set(true);
     }
 }
 
@@ -663,6 +653,10 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
         self.fcx.ccx.tcx()
     }
     pub fn sess(&self) -> &'blk Session { self.fcx.ccx.sess() }
+
+    pub fn mir(&self) -> &'blk Mir<'tcx> {
+        self.fcx.mir()
+    }
 
     pub fn name(&self, name: ast::Name) -> String {
         name.to_string()
@@ -746,6 +740,12 @@ pub fn C_floating(s: &str, t: Type) -> ValueRef {
     unsafe {
         let s = CString::new(s).unwrap();
         llvm::LLVMConstRealOfString(t.to_ref(), s.as_ptr())
+    }
+}
+
+pub fn C_floating_f64(f: f64, t: Type) -> ValueRef {
+    unsafe {
+        llvm::LLVMConstReal(t.to_ref(), f)
     }
 }
 
@@ -1151,4 +1151,76 @@ pub fn inlined_variant_def<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     }).unwrap_or_else(|| {
         ccx.sess().bug(&format!("no variant for {:?}::{}", adt_def, inlined_vid))
     })
+}
+
+// To avoid UB from LLVM, these two functions mask RHS with an
+// appropriate mask unconditionally (i.e. the fallback behavior for
+// all shifts). For 32- and 64-bit types, this matches the semantics
+// of Java. (See related discussion on #1877 and #10183.)
+
+pub fn build_unchecked_lshift<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
+                                          lhs: ValueRef,
+                                          rhs: ValueRef,
+                                          binop_debug_loc: DebugLoc) -> ValueRef {
+    let rhs = base::cast_shift_expr_rhs(bcx, hir::BinOp_::BiShl, lhs, rhs);
+    // #1877, #10183: Ensure that input is always valid
+    let rhs = shift_mask_rhs(bcx, rhs, binop_debug_loc);
+    build::Shl(bcx, lhs, rhs, binop_debug_loc)
+}
+
+pub fn build_unchecked_rshift<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
+                                          lhs_t: Ty<'tcx>,
+                                          lhs: ValueRef,
+                                          rhs: ValueRef,
+                                          binop_debug_loc: DebugLoc) -> ValueRef {
+    let rhs = base::cast_shift_expr_rhs(bcx, hir::BinOp_::BiShr, lhs, rhs);
+    // #1877, #10183: Ensure that input is always valid
+    let rhs = shift_mask_rhs(bcx, rhs, binop_debug_loc);
+    let is_signed = lhs_t.is_signed();
+    if is_signed {
+        build::AShr(bcx, lhs, rhs, binop_debug_loc)
+    } else {
+        build::LShr(bcx, lhs, rhs, binop_debug_loc)
+    }
+}
+
+fn shift_mask_rhs<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
+                              rhs: ValueRef,
+                              debug_loc: DebugLoc) -> ValueRef {
+    let rhs_llty = val_ty(rhs);
+    build::And(bcx, rhs, shift_mask_val(bcx, rhs_llty, rhs_llty, false), debug_loc)
+}
+
+pub fn shift_mask_val<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
+                              llty: Type,
+                              mask_llty: Type,
+                              invert: bool) -> ValueRef {
+    let kind = llty.kind();
+    match kind {
+        TypeKind::Integer => {
+            // i8/u8 can shift by at most 7, i16/u16 by at most 15, etc.
+            let val = llty.int_width() - 1;
+            if invert {
+                C_integral(mask_llty, !val, true)
+            } else {
+                C_integral(mask_llty, val, false)
+            }
+        },
+        TypeKind::Vector => {
+            let mask = shift_mask_val(bcx, llty.element_type(), mask_llty.element_type(), invert);
+            build::VectorSplat(bcx, mask_llty.vector_length(), mask)
+        },
+        _ => panic!("shift_mask_val: expected Integer or Vector, found {:?}", kind),
+    }
+}
+
+pub fn get_static_val<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                            did: DefId,
+                            ty: Ty<'tcx>)
+                            -> ValueRef {
+    if let Some(node_id) = ccx.tcx().map.as_local_node_id(did) {
+        base::get_item_val(ccx, node_id)
+    } else {
+        base::get_extern_const(ccx, did, ty)
+    }
 }

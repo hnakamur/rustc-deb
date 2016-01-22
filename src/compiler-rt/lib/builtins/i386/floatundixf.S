@@ -8,16 +8,23 @@
 #ifdef __i386__
 
 CONST_SECTION
-.align 4
-twop52: .quad 0x4330000000000000
+
+	.balign 16
+twop52:
+	.quad 0x4330000000000000
+
+	.balign 16
 twop84_plus_twop52_neg:
-		.quad 0xc530000000100000
-twop84: .quad 0x4530000000000000
+	.quad 0xc530000000100000
+
+	.balign 16
+twop84:
+	.quad 0x4530000000000000
 
 #define REL_ADDR(_a)	(_a)-0b(%eax)
 
 .text
-.align 4
+.balign 4
 DEFINE_COMPILERRT_FUNCTION(__floatundixf)
 	calll	0f
 0:	popl	%eax

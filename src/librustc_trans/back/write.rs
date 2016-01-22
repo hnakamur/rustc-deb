@@ -38,14 +38,12 @@ pub fn llvm_err(handler: &diagnostic::Handler, msg: String) -> ! {
     unsafe {
         let cstr = llvm::LLVMRustGetLastError();
         if cstr == ptr::null() {
-            handler.fatal(&msg[..]);
+            panic!(handler.fatal(&msg[..]));
         } else {
             let err = CStr::from_ptr(cstr).to_bytes();
             let err = String::from_utf8_lossy(err).to_string();
             libc::free(cstr as *mut _);
-            handler.fatal(&format!("{}: {}",
-                                  &msg[..],
-                                  &err[..]));
+            panic!(handler.fatal(&format!("{}: {}", &msg[..], &err[..])));
         }
     }
 }
@@ -220,7 +218,6 @@ pub fn create_target_machine(sess: &Session) -> TargetMachineRef {
             code_model,
             reloc_model,
             opt_level,
-            true /* EnableSegstk */,
             use_softfp,
             !any_library && reloc_model == llvm::RelocPIC,
             ffunction_sections,
@@ -266,6 +263,7 @@ pub struct ModuleConfig {
     vectorize_loop: bool,
     vectorize_slp: bool,
     merge_functions: bool,
+    inline_threshold: Option<usize>
 }
 
 unsafe impl Send for ModuleConfig { }
@@ -291,6 +289,7 @@ impl ModuleConfig {
             vectorize_loop: false,
             vectorize_slp: false,
             merge_functions: false,
+            inline_threshold: None
         }
     }
 
@@ -299,6 +298,7 @@ impl ModuleConfig {
         self.no_prepopulate_passes = sess.opts.cg.no_prepopulate_passes;
         self.no_builtins = trans.no_builtins;
         self.time_passes = sess.time_passes();
+        self.inline_threshold = sess.opts.cg.inline_threshold;
 
         // Copy what clang does by turning on loop vectorization at O2 and
         // slp vectorization at O3. Otherwise configure other optimization aspects
@@ -925,7 +925,7 @@ pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
                                  prog.status));
                 sess.note(&format!("{:?}", &cmd));
                 let mut note = prog.stderr.clone();
-                note.push_all(&prog.stdout);
+                note.extend_from_slice(&prog.stdout);
                 sess.note(str::from_utf8(&note[..]).unwrap());
                 sess.abort_if_errors();
             }
@@ -1007,6 +1007,7 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
     // manager.
     let builder = llvm::LLVMPassManagerBuilderCreate();
     let opt = config.opt_level.unwrap_or(llvm::CodeGenLevelNone);
+    let inline_threshold = config.inline_threshold;
 
     llvm::LLVMRustConfigurePassManagerBuilder(builder, opt,
                                               config.merge_functions,
@@ -1019,17 +1020,20 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
     // always-inline functions (but don't add lifetime intrinsics), at O1 we
     // inline with lifetime intrinsics, and O2+ we add an inliner with a
     // thresholds copied from clang.
-    match opt {
-        llvm::CodeGenLevelNone => {
+    match (opt, inline_threshold) {
+        (_, Some(t)) => {
+            llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, t as u32);
+        }
+        (llvm::CodeGenLevelNone, _) => {
             llvm::LLVMRustAddAlwaysInlinePass(builder, false);
         }
-        llvm::CodeGenLevelLess => {
+        (llvm::CodeGenLevelLess, _) => {
             llvm::LLVMRustAddAlwaysInlinePass(builder, true);
         }
-        llvm::CodeGenLevelDefault => {
+        (llvm::CodeGenLevelDefault, _) => {
             llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 225);
         }
-        llvm::CodeGenLevelAggressive => {
+        (llvm::CodeGenLevelAggressive, _) => {
             llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 275);
         }
     }

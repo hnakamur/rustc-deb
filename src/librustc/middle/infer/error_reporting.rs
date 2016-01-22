@@ -76,9 +76,10 @@ use front::map as ast_map;
 use rustc_front::hir;
 use rustc_front::print::pprust;
 
+use middle::cstore::CrateStore;
 use middle::def;
 use middle::def_id::DefId;
-use middle::infer;
+use middle::infer::{self, TypeOrigin};
 use middle::region;
 use middle::subst;
 use middle::ty::{self, Ty, HasTypeFlags};
@@ -474,8 +475,11 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
         self.check_and_note_conflicting_crates(terr, trace.origin.span());
 
         match trace.origin {
-            infer::MatchExpressionArm(_, arm_span) =>
-                self.tcx.sess.span_note(arm_span, "match arm with an incompatible type"),
+            TypeOrigin::MatchExpressionArm(_, arm_span, source) => match source {
+                hir::MatchSource::IfLetDesugar{..} =>
+                    self.tcx.sess.span_note(arm_span, "`if let` arm with an incompatible type"),
+                _ => self.tcx.sess.span_note(arm_span, "match arm with an incompatible type"),
+            },
             _ => ()
         }
     }
@@ -495,8 +499,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                 // We compare strings because PathMod and PathName can be different
                 // for imported and non-imported crates
                 if exp_path == found_path {
-                    let crate_name = self.tcx.sess.cstore
-                                         .get_crate_data(did1.krate).name();
+                    let crate_name = self.tcx.sess.cstore.crate_name(did1.krate);
                     self.tcx.sess.span_note(sp, &format!("Perhaps two different versions \
                                                           of crate `{}` are being used?",
                                                           crate_name));
@@ -945,7 +948,7 @@ impl<'a, 'tcx> ErrorReporting<'tcx> for InferCtxt<'a, 'tcx> {
                 }
                 ast_map::NodeImplItem(item) => {
                     match item.node {
-                        hir::MethodImplItem(ref sig, _) => {
+                        hir::ImplItemKind::Method(ref sig, _) => {
                             Some((&sig.decl,
                                   &sig.generics,
                                   sig.unsafety,
@@ -1441,7 +1444,6 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                     hir::TyTup(tys) => {
                         hir::TyTup(tys.into_iter().map(|ty| build_to(ty, to)).collect())
                     }
-                    hir::TyParen(typ) => hir::TyParen(build_to(typ, to)),
                     other => other
                 };
                 hir::Ty { id: id, node: new_node, span: span }
@@ -1499,7 +1501,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                     self.rebuild_arg_ty_or_output(&**t, lifetime, anon_nums, region_names)
                 });
                 let new_bindings = data.bindings.map(|b| {
-                    P(hir::TypeBinding {
+                    hir::TypeBinding {
                         id: b.id,
                         name: b.name,
                         ty: self.rebuild_arg_ty_or_output(&*b.ty,
@@ -1507,7 +1509,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
                                                           anon_nums,
                                                           region_names),
                         span: b.span
-                    })
+                    }
                 });
                 hir::AngleBracketedParameters(hir::AngleBracketedParameterData {
                     lifetimes: new_lts,
@@ -1521,7 +1523,7 @@ impl<'a, 'tcx> Rebuilder<'a, 'tcx> {
             parameters: new_parameters
         };
         let mut new_segs = Vec::new();
-        new_segs.push_all(path.segments.split_last().unwrap().1);
+        new_segs.extend_from_slice(path.segments.split_last().unwrap().1);
         new_segs.push(new_seg);
         hir::Path {
             span: path.span,
@@ -1600,38 +1602,38 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
             }
             infer::Subtype(ref trace) => {
                 let desc = match trace.origin {
-                    infer::Misc(_) => {
+                    TypeOrigin::Misc(_) => {
                         "types are compatible"
                     }
-                    infer::MethodCompatCheck(_) => {
+                    TypeOrigin::MethodCompatCheck(_) => {
                         "method type is compatible with trait"
                     }
-                    infer::ExprAssignable(_) => {
+                    TypeOrigin::ExprAssignable(_) => {
                         "expression is assignable"
                     }
-                    infer::RelateTraitRefs(_) => {
+                    TypeOrigin::RelateTraitRefs(_) => {
                         "traits are compatible"
                     }
-                    infer::RelateSelfType(_) => {
+                    TypeOrigin::RelateSelfType(_) => {
                         "self type matches impl self type"
                     }
-                    infer::RelateOutputImplTypes(_) => {
+                    TypeOrigin::RelateOutputImplTypes(_) => {
                         "trait type parameters matches those \
                                  specified on the impl"
                     }
-                    infer::MatchExpressionArm(_, _) => {
+                    TypeOrigin::MatchExpressionArm(_, _, _) => {
                         "match arms have compatible types"
                     }
-                    infer::IfExpression(_) => {
+                    TypeOrigin::IfExpression(_) => {
                         "if and else have compatible types"
                     }
-                    infer::IfExpressionWithNoElse(_) => {
+                    TypeOrigin::IfExpressionWithNoElse(_) => {
                         "if may be missing an else clause"
                     }
-                    infer::RangeExpression(_) => {
+                    TypeOrigin::RangeExpression(_) => {
                         "start and end of range have compatible types"
                     }
-                    infer::EquatePredicate(_) => {
+                    TypeOrigin::EquatePredicate(_) => {
                         "equality where clause is satisfied"
                     }
                 };
@@ -1748,7 +1750,7 @@ impl<'a, 'tcx> ErrorReportingHelpers<'tcx> for InferCtxt<'a, 'tcx> {
             infer::ParameterInScope(_, span) => {
                 self.tcx.sess.span_note(
                     span,
-                    &format!("...so that a type/lifetime parameter is in scope here"));
+                    "...so that a type/lifetime parameter is in scope here");
             }
             infer::DataBorrowed(ty, span) => {
                 self.tcx.sess.span_note(
@@ -1829,15 +1831,15 @@ fn lifetimes_in_scope(tcx: &ty::ctxt,
         Some(node) => match node {
             ast_map::NodeItem(item) => match item.node {
                 hir::ItemFn(_, _, _, _, ref gen, _) => {
-                    taken.push_all(&gen.lifetimes);
+                    taken.extend_from_slice(&gen.lifetimes);
                     None
                 },
                 _ => None
             },
             ast_map::NodeImplItem(ii) => {
                 match ii.node {
-                    hir::MethodImplItem(ref sig, _) => {
-                        taken.push_all(&sig.generics.lifetimes);
+                    hir::ImplItemKind::Method(ref sig, _) => {
+                        taken.extend_from_slice(&sig.generics.lifetimes);
                         Some(ii.id)
                     }
                     _ => None,
@@ -1854,7 +1856,7 @@ fn lifetimes_in_scope(tcx: &ty::ctxt,
             Some(node) => match node {
                 ast_map::NodeItem(item) => match item.node {
                     hir::ItemImpl(_, _, ref gen, _, _, _) => {
-                        taken.push_all(&gen.lifetimes);
+                        taken.extend_from_slice(&gen.lifetimes);
                     }
                     _ => ()
                 },

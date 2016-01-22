@@ -66,7 +66,7 @@ use sys_common::poison::{self, TryLockError, TryLockResult, LockResult};
 /// for _ in 0..10 {
 ///     let (data, tx) = (data.clone(), tx.clone());
 ///     thread::spawn(move || {
-///         // The shared static can only be accessed once the lock is held.
+///         // The shared state can only be accessed once the lock is held.
 ///         // Our non-atomic increment is safe because we're the only thread
 ///         // which can access the shared state when the lock is held.
 ///         //
@@ -125,8 +125,9 @@ pub struct Mutex<T: ?Sized> {
 
 // these are the only places where `T: Send` matters; all other
 // functionality works fine on a single thread.
+#[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<T: ?Sized + Send> Send for Mutex<T> { }
-
+#[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<T: ?Sized + Send> Sync for Mutex<T> { }
 
 /// The static mutex type is provided to allow for static allocation of mutexes.
@@ -175,6 +176,7 @@ pub struct MutexGuard<'a, T: ?Sized + 'a> {
     __poison: poison::Guard,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: ?Sized> !marker::Send for MutexGuard<'a, T> {}
 
 /// Static initialization of a mutex. This constant can be used to initialize
@@ -252,7 +254,7 @@ impl<T: ?Sized> Mutex<T> {
     ///
     /// If another user of this mutex panicked while holding the mutex, then
     /// this call will return an error instead.
-    #[unstable(feature = "mutex_into_inner", reason = "recently added", issue = "28968")]
+    #[stable(feature = "mutex_into_inner", since = "1.6.0")]
     pub fn into_inner(self) -> LockResult<T> where T: Sized {
         // We know statically that there are no outstanding references to
         // `self` so there's no need to lock the inner StaticMutex.
@@ -282,7 +284,7 @@ impl<T: ?Sized> Mutex<T> {
     ///
     /// If another user of this mutex panicked while holding the mutex, then
     /// this call will return an error instead.
-    #[unstable(feature = "mutex_get_mut", reason = "recently added", issue = "28968")]
+    #[stable(feature = "mutex_get_mut", since = "1.6.0")]
     pub fn get_mut(&mut self) -> LockResult<&mut T> {
         // We know statically that there are no other references to `self`, so
         // there's no need to lock the inner StaticMutex.

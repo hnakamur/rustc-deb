@@ -66,7 +66,7 @@ This API is completely unstable and subject to change.
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_typeck"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -77,14 +77,11 @@ This API is completely unstable and subject to change.
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(drain)]
-#![feature(iter_cmp)]
 #![feature(iter_arith)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
-#![feature(vec_push_all)]
 #![feature(cell_extras)]
 
 #[macro_use] extern crate log;
@@ -99,14 +96,13 @@ extern crate rustc_back;
 
 pub use rustc::front;
 pub use rustc::lint;
-pub use rustc::metadata;
 pub use rustc::middle;
 pub use rustc::session;
 pub use rustc::util;
 
 use front::map as hir_map;
 use middle::def;
-use middle::infer;
+use middle::infer::{self, TypeOrigin};
 use middle::subst;
 use middle::ty::{self, Ty, HasTypeFlags};
 use session::config;
@@ -200,10 +196,10 @@ fn require_same_types<'a, 'tcx, M>(tcx: &ty::ctxt<'tcx>,
     let result = match maybe_infcx {
         None => {
             let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None, false);
-            infer::mk_eqty(&infcx, t1_is_expected, infer::Misc(span), t1, t2)
+            infer::mk_eqty(&infcx, t1_is_expected, TypeOrigin::Misc(span), t1, t2)
         }
         Some(infcx) => {
-            infer::mk_eqty(infcx, t1_is_expected, infer::Misc(span), t1, t2)
+            infer::mk_eqty(infcx, t1_is_expected, TypeOrigin::Misc(span), t1, t2)
         }
     };
 

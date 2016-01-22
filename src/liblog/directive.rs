@@ -17,7 +17,7 @@ pub struct LogDirective {
     pub level: u32,
 }
 
-pub const LOG_LEVEL_NAMES: [&'static str; 4] = ["ERROR", "WARN", "INFO", "DEBUG"];
+pub const LOG_LEVEL_NAMES: [&'static str; 5] = ["ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
 
 /// Parse an individual log level that is either a number or a symbolic log level
 fn parse_log_level(level: &str) -> Option<u32> {
@@ -49,7 +49,7 @@ pub fn parse_logging_spec(spec: &str) -> (Vec<LogDirective>, Option<String>) {
     if let Some(m) = mods {
         for s in m.split(',') {
             if s.is_empty() {
-                continue
+                continue;
             }
             let mut parts = s.split('=');
             let (log_level, name) = match (parts.next(),
@@ -69,13 +69,13 @@ pub fn parse_logging_spec(spec: &str) -> (Vec<LogDirective>, Option<String>) {
                         Some(num) => (num, Some(part0)),
                         _ => {
                             println!("warning: invalid logging spec '{}', ignoring it", part1);
-                            continue
+                            continue;
                         }
                     }
                 }
                 _ => {
                     println!("warning: invalid logging spec '{}', ignoring it", s);
-                    continue
+                    continue;
                 }
             };
             dirs.push(LogDirective {

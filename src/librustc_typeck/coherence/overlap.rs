@@ -11,7 +11,7 @@
 //! Overlap: No two impls for the same trait are implemented for the
 //! same type.
 
-use metadata::cstore::LOCAL_CRATE;
+use middle::cstore::{CrateStore, LOCAL_CRATE};
 use middle::def_id::DefId;
 use middle::traits;
 use middle::ty;
@@ -19,7 +19,7 @@ use middle::infer::{self, new_infer_ctxt};
 use syntax::ast;
 use syntax::codemap::Span;
 use rustc_front::hir;
-use rustc_front::visit;
+use rustc_front::intravisit;
 use util::nodemap::DefIdMap;
 
 pub fn check(tcx: &ty::ctxt) {
@@ -28,7 +28,7 @@ pub fn check(tcx: &ty::ctxt) {
 
     // this secondary walk specifically checks for some other cases,
     // like defaulted traits, for which additional overlap rules exist
-    visit::walk_crate(&mut overlap, tcx.map.krate());
+    tcx.map.krate().visit_all_items(&mut overlap);
 }
 
 struct OverlapChecker<'cx, 'tcx:'cx> {
@@ -147,20 +147,17 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
                   "conflicting implementations for trait `{}`",
                   self.tcx.item_path_str(trait_def_id));
 
-        self.report_overlap_note(impl1, impl2);
+        self.report_overlap_note(impl2);
     }
 
-    fn report_overlap_note(&self, impl1: DefId, impl2: DefId) {
+    fn report_overlap_note(&self, impl2: DefId) {
 
         if impl2.is_local() {
             span_note!(self.tcx.sess, self.span_of_impl(impl2),
                        "note conflicting implementation here");
         } else {
-            let crate_store = &self.tcx.sess.cstore;
-            let cdata = crate_store.get_crate_data(impl2.krate);
-            span_note!(self.tcx.sess, self.span_of_impl(impl1),
-                       "conflicting implementation in crate `{}`",
-                       cdata.name);
+            let cname = self.tcx.sess.cstore.crate_name(impl2.krate);
+            self.tcx.sess.note(&format!("conflicting implementation in crate `{}`", cname));
         }
     }
 
@@ -171,7 +168,7 @@ impl<'cx, 'tcx> OverlapChecker<'cx, 'tcx> {
 }
 
 
-impl<'cx, 'tcx,'v> visit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
+impl<'cx, 'tcx,'v> intravisit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
     fn visit_item(&mut self, item: &'v hir::Item) {
         match item.node {
             hir::ItemDefaultImpl(_, _) => {
@@ -228,6 +225,5 @@ impl<'cx, 'tcx,'v> visit::Visitor<'v> for OverlapChecker<'cx, 'tcx> {
             _ => {
             }
         }
-        visit::walk_item(self, item);
     }
 }

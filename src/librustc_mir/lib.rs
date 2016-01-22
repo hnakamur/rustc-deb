@@ -31,7 +31,7 @@ extern crate syntax;
 
 pub mod build;
 pub mod mir_map;
-pub mod hair;
-pub mod repr;
+mod hair;
 mod graphviz;
-mod tcx;
+pub mod transform;
+

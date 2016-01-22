@@ -9,14 +9,15 @@
 // except according to those terms.
 
 #![feature(staged_api)]
-#![staged_api]
 #![deny(deprecated)]
+
+#![unstable(feature = "test_feature", issue = "0")]
 
 struct Foo;
 
 impl Foo {
     #[unstable(feature = "test_feature", issue = "0")]
-    #[deprecated(since = "1.0.0", reason = "text")]
+    #[rustc_deprecated(since = "1.0.0", reason = "text")]
     fn foo(self) {}
 }
 

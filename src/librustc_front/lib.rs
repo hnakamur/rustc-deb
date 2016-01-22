@@ -18,7 +18,7 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_front"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -35,7 +35,6 @@
 #![feature(slice_patterns)]
 #![feature(staged_api)]
 #![feature(str_char)]
-#![feature(filling_drop)]
 
 extern crate serialize;
 #[macro_use]
@@ -51,7 +50,7 @@ extern crate serialize as rustc_serialize; // used by deriving
 pub mod hir;
 pub mod lowering;
 pub mod fold;
-pub mod visit;
+pub mod intravisit;
 pub mod util;
 
 pub mod print {

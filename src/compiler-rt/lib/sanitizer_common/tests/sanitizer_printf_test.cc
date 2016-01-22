@@ -28,14 +28,11 @@ TEST(Printf, Basic) {
       (unsigned)10, (unsigned long)11, // NOLINT
       (void*)0x123, "_string_");
   EXPECT_EQ(len, strlen(buf));
-  void *ptr;
-  if (sizeof(ptr) == 4) {
-    EXPECT_STREQ("a-1b-2c4294967292e5fahbq"
-                 "0x00000123e_string_r", buf);
-  } else {
-    EXPECT_STREQ("a-1b-2c4294967292e5fahbq"
-                 "0x000000000123e_string_r", buf);
-  }
+
+  std::string expectedString = "a-1b-2c4294967292e5fahbq0x";
+  expectedString += std::string(SANITIZER_POINTER_FORMAT_LENGTH - 3, '0');
+  expectedString += "123e_string_r";
+  EXPECT_STREQ(expectedString.c_str(), buf);
 }
 
 TEST(Printf, OverflowStr) {
@@ -103,6 +100,11 @@ TEST(Printf, OverflowPtr) {
   EXPECT_EQ(buf[9], 0);
 }
 
+#if defined(_WIN32)
+// Oh well, MSVS headers don't define snprintf.
+# define snprintf _snprintf
+#endif
+
 template<typename T>
 static void TestAgainstLibc(const char *fmt, T arg1, T arg2) {
   char buf[1024];
@@ -115,11 +117,14 @@ static void TestAgainstLibc(const char *fmt, T arg1, T arg2) {
 
 TEST(Printf, MinMax) {
   TestAgainstLibc<int>("%d-%d", INT_MIN, INT_MAX);  // NOLINT
-  TestAgainstLibc<long>("%zd-%zd", LONG_MIN, LONG_MAX);  // NOLINT
   TestAgainstLibc<unsigned>("%u-%u", 0, UINT_MAX);  // NOLINT
-  TestAgainstLibc<unsigned long>("%zu-%zu", 0, ULONG_MAX);  // NOLINT
   TestAgainstLibc<unsigned>("%x-%x", 0, UINT_MAX);  // NOLINT
+#if !defined(_WIN32)
+  // %z* format doesn't seem to be supported by MSVS.
+  TestAgainstLibc<long>("%zd-%zd", LONG_MIN, LONG_MAX);  // NOLINT
+  TestAgainstLibc<unsigned long>("%zu-%zu", 0, ULONG_MAX);  // NOLINT
   TestAgainstLibc<unsigned long>("%zx-%zx", 0, ULONG_MAX);  // NOLINT
+#endif
 }
 
 TEST(Printf, Padding) {

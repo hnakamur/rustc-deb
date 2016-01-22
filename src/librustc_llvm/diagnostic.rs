@@ -37,8 +37,6 @@ impl OptimizationDiagnosticKind {
     }
 }
 
-#[allow(raw_pointer_derive)]
-#[derive(Copy, Clone)]
 pub struct OptimizationDiagnostic {
     pub kind: OptimizationDiagnosticKind,
     pub pass_name: *const c_char,
@@ -95,7 +93,6 @@ impl InlineAsmDiagnostic {
     }
 }
 
-#[derive(Copy, Clone)]
 pub enum Diagnostic {
     Optimization(OptimizationDiagnostic),
     InlineAsm(InlineAsmDiagnostic),

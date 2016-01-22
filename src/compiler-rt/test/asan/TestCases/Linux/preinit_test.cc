@@ -1,6 +1,12 @@
+// FIXME: https://code.google.com/p/address-sanitizer/issues/detail?id=316
+// XFAIL: android
+//
 // RUN: %clangxx      -DFUNC=zzzz %s -shared -o %t.so -fPIC
 // RUN: %clangxx_asan -DFUNC=main %s         -o %t    -Wl,-R. %t.so
 // RUN: %run %t
+
+// GNU driver doesn't handle .so files properly.
+// REQUIRES: Clang
 
 // This test ensures that we call __asan_init early enough.
 // We build a shared library w/o asan instrumentation

@@ -21,8 +21,6 @@
 #include "sanitizer_common/sanitizer_stacktrace.h"
 #include "sanitizer_common/sanitizer_libc.h"
 
-#define ASAN_DEFAULT_FAILURE_EXITCODE 1
-
 #if __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
 # error "The AddressSanitizer run-time should not be"
         " instrumented by AddressSanitizer"
@@ -45,17 +43,17 @@
 # endif
 #endif
 
-#ifndef ASAN_USE_PREINIT_ARRAY
-# define ASAN_USE_PREINIT_ARRAY (SANITIZER_LINUX && !SANITIZER_ANDROID)
-#endif
-
 #ifndef ASAN_DYNAMIC
-# define ASAN_DYNAMIC 0
+# ifdef PIC
+#  define ASAN_DYNAMIC 1
+# else
+#  define ASAN_DYNAMIC 0
+# endif
 #endif
 
 // All internal functions in asan reside inside the __asan namespace
 // to avoid namespace collisions with the user programs.
-// Seperate namespace also makes it simpler to distinguish the asan run-time
+// Separate namespace also makes it simpler to distinguish the asan run-time
 // functions from the instrumented user code in a profile.
 namespace __asan {
 
@@ -67,7 +65,6 @@ void AsanInitFromRtl();
 // asan_rtl.cc
 void NORETURN ShowStatsAndAbort();
 
-void ReplaceOperatorsNewAndDelete();
 // asan_malloc_linux.cc / asan_malloc_mac.cc
 void ReplaceSystemMalloc();
 
@@ -76,13 +73,11 @@ void *AsanDoesNotSupportStaticLinkage();
 void AsanCheckDynamicRTPrereqs();
 void AsanCheckIncompatibleRT();
 
-void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp);
-void AsanOnSIGSEGV(int, void *siginfo, void *context);
+void AsanOnDeadlySignal(int, void *siginfo, void *context);
 
+void DisableReexec();
 void MaybeReexec();
-bool AsanInterceptsSignal(int signum);
 void ReadContextStack(void *context, uptr *stack, uptr *ssize);
-void AsanPlatformThreadInit();
 void StopInitOrderChecking();
 
 // Wrapper for TLS/TSD.
@@ -93,9 +88,11 @@ void PlatformTSDDtor(void *tsd);
 
 void AppendToErrorMessageBuffer(const char *buffer);
 
-void ParseExtraActivationFlags();
+void *AsanDlSymNext(const char *sym);
 
-// Platfrom-specific options.
+void ReserveShadowMemoryRange(uptr beg, uptr end, const char *name);
+
+// Platform-specific options.
 #if SANITIZER_MAC
 bool PlatformHasDifferentMemcpyAndMemmove();
 # define PLATFORM_HAS_DIFFERENT_MEMCPY_AND_MEMMOVE \
@@ -107,9 +104,9 @@ bool PlatformHasDifferentMemcpyAndMemmove();
 // Add convenient macro for interface functions that may be represented as
 // weak hooks.
 #define ASAN_MALLOC_HOOK(ptr, size) \
-  if (&__asan_malloc_hook) __asan_malloc_hook(ptr, size)
+  if (&__sanitizer_malloc_hook) __sanitizer_malloc_hook(ptr, size)
 #define ASAN_FREE_HOOK(ptr) \
-  if (&__asan_free_hook) __asan_free_hook(ptr)
+  if (&__sanitizer_free_hook) __sanitizer_free_hook(ptr)
 #define ASAN_ON_ERROR() \
   if (&__asan_on_error) __asan_on_error()
 
@@ -133,6 +130,10 @@ const int kAsanContiguousContainerOOBMagic = 0xfc;
 const int kAsanStackUseAfterScopeMagic = 0xf8;
 const int kAsanGlobalRedzoneMagic = 0xf9;
 const int kAsanInternalHeapMagic = 0xfe;
+const int kAsanArrayCookieMagic = 0xac;
+const int kAsanIntraObjectRedzone = 0xbb;
+const int kAsanAllocaLeftMagic = 0xca;
+const int kAsanAllocaRightMagic = 0xcb;
 
 static const uptr kCurrentStackFrameMagic = 0x41B58AB3;
 static const uptr kRetiredStackFrameMagic = 0x45E0360E;

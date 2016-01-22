@@ -18,8 +18,8 @@
 // Then this operation can simply be performed as part of item (or import)
 // processing.
 
-use {Module, NameBindings, Resolver};
-use Namespace::{self, TypeNS, ValueNS};
+use {Module, NameBinding, Resolver};
+use Namespace::{TypeNS, ValueNS};
 
 use build_reduced_graph;
 use module_to_string;
@@ -30,8 +30,8 @@ use syntax::ast;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
-struct ExportRecorder<'a, 'b:'a, 'tcx:'b> {
-    resolver: &'a mut Resolver<'b, 'tcx>
+struct ExportRecorder<'a, 'b: 'a, 'tcx: 'b> {
+    resolver: &'a mut Resolver<'b, 'tcx>,
 }
 
 // Deref and DerefMut impls allow treating ExportRecorder as Resolver.
@@ -50,28 +50,26 @@ impl<'a, 'b, 'tcx:'b> DerefMut for ExportRecorder<'a, 'b, 'tcx> {
 }
 
 impl<'a, 'b, 'tcx> ExportRecorder<'a, 'b, 'tcx> {
-    fn record_exports_for_module_subtree(&mut self,
-                                         module_: Rc<Module>) {
+    fn record_exports_for_module_subtree(&mut self, module_: Rc<Module>) {
         // If this isn't a local krate, then bail out. We don't need to record
         // exports for nonlocal crates.
 
-        match module_.def_id.get() {
+        match module_.def_id() {
             Some(def_id) if def_id.is_local() => {
                 // OK. Continue.
-                debug!("(recording exports for module subtree) recording \
-                        exports for local module `{}`",
+                debug!("(recording exports for module subtree) recording exports for local \
+                        module `{}`",
                        module_to_string(&*module_));
             }
             None => {
                 // Record exports for the root module.
-                debug!("(recording exports for module subtree) recording \
-                        exports for root module `{}`",
+                debug!("(recording exports for module subtree) recording exports for root module \
+                        `{}`",
                        module_to_string(&*module_));
             }
             Some(_) => {
                 // Bail out.
-                debug!("(recording exports for module subtree) not recording \
-                        exports for `{}`",
+                debug!("(recording exports for module subtree) not recording exports for `{}`",
                        module_to_string(&*module_));
                 return;
             }
@@ -81,7 +79,7 @@ impl<'a, 'b, 'tcx> ExportRecorder<'a, 'b, 'tcx> {
         build_reduced_graph::populate_module_if_necessary(self.resolver, &module_);
 
         for (_, child_name_bindings) in module_.children.borrow().iter() {
-            match child_name_bindings.get_module_if_available() {
+            match child_name_bindings.type_ns.module() {
                 None => {
                     // Nothing to do.
                 }
@@ -100,7 +98,7 @@ impl<'a, 'b, 'tcx> ExportRecorder<'a, 'b, 'tcx> {
         let mut exports = Vec::new();
 
         self.add_exports_for_module(&mut exports, module_);
-        match module_.def_id.get() {
+        match module_.def_id() {
             Some(def_id) => {
                 let node_id = self.ast_map.as_local_node_id(def_id).unwrap();
                 self.export_map.insert(node_id, exports);
@@ -110,18 +108,18 @@ impl<'a, 'b, 'tcx> ExportRecorder<'a, 'b, 'tcx> {
         }
     }
 
-    fn add_exports_of_namebindings(&mut self,
-                                   exports: &mut Vec<Export>,
-                                   name: ast::Name,
-                                   namebindings: &NameBindings,
-                                   ns: Namespace) {
-        match namebindings.def_for_namespace(ns) {
+    fn add_export_of_namebinding(&mut self,
+                                 exports: &mut Vec<Export>,
+                                 name: ast::Name,
+                                 namebinding: &NameBinding) {
+        match namebinding.def() {
             Some(d) => {
                 debug!("(computing exports) YES: export '{}' => {:?}",
-                       name, d.def_id());
+                       name,
+                       d.def_id());
                 exports.push(Export {
                     name: name,
-                    def_id: d.def_id()
+                    def_id: d.def_id(),
                 });
             }
             d_opt => {
@@ -130,25 +128,19 @@ impl<'a, 'b, 'tcx> ExportRecorder<'a, 'b, 'tcx> {
         }
     }
 
-    fn add_exports_for_module(&mut self,
-                              exports: &mut Vec<Export>,
-                              module_: &Module) {
+    fn add_exports_for_module(&mut self, exports: &mut Vec<Export>, module_: &Module) {
         for (name, import_resolution) in module_.import_resolutions.borrow().iter() {
             if !import_resolution.is_public {
-                continue
+                continue;
             }
             let xs = [TypeNS, ValueNS];
             for &ns in &xs {
                 match import_resolution.target_for_namespace(ns) {
                     Some(target) => {
-                        debug!("(computing exports) maybe export '{}'",
-                               name);
-                        self.add_exports_of_namebindings(exports,
-                                                         *name,
-                                                         &*target.bindings,
-                                                         ns)
+                        debug!("(computing exports) maybe export '{}'", name);
+                        self.add_export_of_namebinding(exports, *name, &target.binding)
                     }
-                    _ => ()
+                    _ => (),
                 }
             }
         }
@@ -157,6 +149,6 @@ impl<'a, 'b, 'tcx> ExportRecorder<'a, 'b, 'tcx> {
 
 pub fn record(resolver: &mut Resolver) {
     let mut recorder = ExportRecorder { resolver: resolver };
-    let root_module = recorder.graph_root.get_module();
+    let root_module = recorder.graph_root.clone();
     recorder.record_exports_for_module_subtree(root_module);
 }

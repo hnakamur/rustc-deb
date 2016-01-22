@@ -19,12 +19,10 @@ pub use self::ExplicitSelf_::*;
 pub use self::Expr_::*;
 pub use self::FunctionRetTy::*;
 pub use self::ForeignItem_::*;
-pub use self::ImplItem_::*;
 pub use self::Item_::*;
 pub use self::Mutability::*;
 pub use self::Pat_::*;
 pub use self::PathListItem_::*;
-pub use self::PatWildKind::*;
 pub use self::PrimTy::*;
 pub use self::Stmt_::*;
 pub use self::StructFieldKind::*;
@@ -37,10 +35,13 @@ pub use self::ViewPath_::*;
 pub use self::Visibility::*;
 pub use self::PathParameters::*;
 
+use intravisit::Visitor;
+use std::collections::BTreeMap;
 use syntax::codemap::{self, Span, Spanned, DUMMY_SP, ExpnId};
 use syntax::abi::Abi;
-use syntax::ast::{Name, Ident, NodeId, DUMMY_NODE_ID, TokenTree, AsmDialect};
+use syntax::ast::{Name, NodeId, DUMMY_NODE_ID, TokenTree, AsmDialect};
 use syntax::ast::{Attribute, Lit, StrStyle, FloatTy, IntTy, UintTy, CrateConfig};
+use syntax::attr::ThinAttributes;
 use syntax::owned_slice::OwnedSlice;
 use syntax::parse::token::InternedString;
 use syntax::ptr::P;
@@ -49,7 +50,65 @@ use print::pprust;
 use util;
 
 use std::fmt;
-use serialize::{Encodable, Encoder, Decoder};
+use std::hash::{Hash, Hasher};
+use serialize::{Encodable, Decodable, Encoder, Decoder};
+
+/// Identifier in HIR
+#[derive(Clone, Copy, Eq)]
+pub struct Ident {
+    /// Hygienic name (renamed), should be used by default
+    pub name: Name,
+    /// Unhygienic name (original, not renamed), needed in few places in name resolution
+    pub unhygienic_name: Name,
+}
+
+impl Ident {
+    /// Creates a HIR identifier with both `name` and `unhygienic_name` initialized with
+    /// the argument. Hygiene properties of the created identifier depend entirely on this
+    /// argument. If the argument is a plain interned string `intern("iter")`, then the result
+    /// is unhygienic and can interfere with other entities named "iter". If the argument is
+    /// a "fresh" name created with `gensym("iter")`, then the result is hygienic and can't
+    /// interfere with other entities having the same string as a name.
+    pub fn from_name(name: Name) -> Ident {
+        Ident { name: name, unhygienic_name: name }
+    }
+}
+
+impl PartialEq for Ident {
+    fn eq(&self, other: &Ident) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Hash for Ident {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state)
+    }
+}
+
+impl fmt::Debug for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.name, f)
+    }
+}
+
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.name, f)
+    }
+}
+
+impl Encodable for Ident {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        self.name.encode(s)
+    }
+}
+
+impl Decodable for Ident {
+    fn decode<D: Decoder>(d: &mut D) -> Result<Ident, D::Error> {
+        Ok(Ident::from_name(try!(Name::decode(d))))
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
 pub struct Lifetime {
@@ -104,6 +163,14 @@ impl fmt::Display for Path {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct PathSegment {
     /// The identifier portion of this path segment.
+    ///
+    /// Hygiene properties of this identifier are worth noting.
+    /// Most path segments are not hygienic and they are not renamed during
+    /// lowering from AST to HIR (see comments to `fn lower_path`). However segments from
+    /// unqualified paths with one segment originating from `ExprPath` (local-variable-like paths)
+    /// can be hygienic, so they are renamed. You should not normally care about this peculiarity
+    /// and just use `identifier.name` unless you modify identifier resolution code
+    /// (`fn resolve_identifier` and other functions called by it in `rustc_resolve`).
     pub identifier: Ident,
 
     /// Type/lifetime parameters attached to this path. They come in
@@ -182,7 +249,7 @@ impl PathParameters {
         }
     }
 
-    pub fn bindings(&self) -> Vec<&P<TypeBinding>> {
+    pub fn bindings(&self) -> Vec<&TypeBinding> {
         match *self {
             AngleBracketedParameters(ref data) => {
                 data.bindings.iter().collect()
@@ -203,7 +270,7 @@ pub struct AngleBracketedParameterData {
     pub types: OwnedSlice<P<Ty>>,
     /// Bindings (equality constraints) on associated types, if present.
     /// E.g., `Foo<A=Bar>`.
-    pub bindings: OwnedSlice<P<TypeBinding>>,
+    pub bindings: OwnedSlice<TypeBinding>,
 }
 
 impl AngleBracketedParameterData {
@@ -322,13 +389,41 @@ pub struct WhereEqPredicate {
     pub ty: P<Ty>,
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Debug)]
 pub struct Crate {
     pub module: Mod,
     pub attrs: Vec<Attribute>,
     pub config: CrateConfig,
     pub span: Span,
     pub exported_macros: Vec<MacroDef>,
+
+    // NB: We use a BTreeMap here so that `visit_all_items` iterates
+    // over the ids in increasing order. In principle it should not
+    // matter what order we visit things in, but in *practice* it
+    // does, because it can affect the order in which errors are
+    // detected, which in turn can make compile-fail tests yield
+    // slightly different results.
+    pub items: BTreeMap<NodeId, Item>,
+}
+
+impl Crate {
+    pub fn item(&self, id: NodeId) -> &Item {
+        &self.items[&id]
+    }
+
+    /// Visits all items in the crate in some determinstic (but
+    /// unspecified) order. If you just need to process every item,
+    /// but don't care about nesting, this method is the best choice.
+    ///
+    /// If you do care about nesting -- usually because your algorithm
+    /// follows lexical scoping rules -- then you want a different
+    /// approach. You should override `visit_nested_item` in your
+    /// visitor and then call `intravisit::walk_crate` instead.
+    pub fn visit_all_items<'hir, V:Visitor<'hir>>(&'hir self, visitor: &mut V) {
+        for (_, item) in &self.items {
+            visitor.visit_item(item);
+        }
+    }
 }
 
 /// A macro definition, in this crate or imported from another.
@@ -350,7 +445,7 @@ pub struct MacroDef {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct Block {
     /// Statements in a block
-    pub stmts: Vec<P<Stmt>>,
+    pub stmts: Vec<Stmt>,
     /// An expression at the end of the block
     /// without a semicolon, if any
     pub expr: Option<P<Expr>>,
@@ -393,19 +488,10 @@ pub enum BindingMode {
     BindByValue(Mutability),
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
-pub enum PatWildKind {
-    /// Represents the wildcard pattern `_`
-    PatWildSingle,
-
-    /// Represents the wildcard pattern `..`
-    PatWildMulti,
-}
-
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Pat_ {
-    /// Represents a wildcard pattern (either `_` or `..`)
-    PatWild(PatWildKind),
+    /// Represents a wildcard pattern (`_`)
+    PatWild,
 
     /// A PatIdent may either be a new bound variable,
     /// or a nullary enum (in which case the third field
@@ -417,7 +503,7 @@ pub enum Pat_ {
     /// set (of "PatIdents that refer to nullary enums")
     PatIdent(BindingMode, Spanned<Ident>, Option<P<Pat>>),
 
-    /// "None" means a * pattern where we don't bind the fields to names.
+    /// "None" means a `Variant(..)` pattern where we don't bind the fields to names.
     PatEnum(Path, Option<Vec<P<Pat>>>),
 
     /// An associated const named using the qualified path `<T>::CONST` or
@@ -439,8 +525,8 @@ pub enum Pat_ {
     PatLit(P<Expr>),
     /// A range pattern, e.g. `1...2`
     PatRange(P<Expr>, P<Expr>),
-    /// [a, b, ..i, y, z] is represented as:
-    ///     PatVec(box [a, b], Some(i), box [y, z])
+    /// `[a, b, ..i, y, z]` is represented as:
+    ///     `PatVec(box [a, b], Some(i), box [y, z])`
     PatVec(Vec<P<Pat>>, Option<P<Pat>>, Vec<P<Pat>>),
 }
 
@@ -539,6 +625,7 @@ pub struct Local {
     pub init: Option<P<Expr>>,
     pub id: NodeId,
     pub span: Span,
+    pub attrs: ThinAttributes,
 }
 
 pub type Decl = Spanned<Decl_>;
@@ -548,7 +635,7 @@ pub enum Decl_ {
     /// A local (let) binding:
     DeclLocal(P<Local>),
     /// An item binding:
-    DeclItem(P<Item>),
+    DeclItem(ItemId),
 }
 
 /// represents one arm of a 'match'
@@ -590,6 +677,7 @@ pub struct Expr {
     pub id: NodeId,
     pub node: Expr_,
     pub span: Span,
+    pub attrs: ThinAttributes,
 }
 
 impl fmt::Debug for Expr {
@@ -781,15 +869,15 @@ pub struct ImplItem {
     pub name: Name,
     pub vis: Visibility,
     pub attrs: Vec<Attribute>,
-    pub node: ImplItem_,
+    pub node: ImplItemKind,
     pub span: Span,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
-pub enum ImplItem_ {
-    ConstImplItem(P<Ty>, P<Expr>),
-    MethodImplItem(MethodSig, P<Block>),
-    TypeImplItem(P<Ty>),
+pub enum ImplItemKind {
+    Const(P<Ty>, P<Expr>),
+    Method(MethodSig, P<Block>),
+    Type(P<Ty>),
 }
 
 // Bind a type to an associated type: `A=Foo`.
@@ -858,8 +946,6 @@ pub enum Ty_ {
     TyObjectSum(P<Ty>, TyParamBounds),
     /// A type like `for<'a> Foo<&'a Bar>`
     TyPolyTraitRef(TyParamBounds),
-    /// No-op; kept solely so that we can pretty-print faithfully
-    TyParen(P<Ty>),
     /// Unused for now
     TyTypeof(P<Expr>),
     /// TyInfer means the type should be inferred instead of it having been
@@ -1005,18 +1091,18 @@ pub struct Mod {
     /// For `mod foo;`, the inner span ranges from the first token
     /// to the last token in the external file.
     pub inner: Span,
-    pub items: Vec<P<Item>>,
+    pub item_ids: Vec<ItemId>,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct ForeignMod {
     pub abi: Abi,
-    pub items: Vec<P<ForeignItem>>,
+    pub items: Vec<ForeignItem>,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct EnumDef {
-    pub variants: Vec<P<Variant>>,
+    pub variants: Vec<Variant>,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
@@ -1072,7 +1158,6 @@ pub type ViewPath = Spanned<ViewPath_>;
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum ViewPath_ {
-
     /// `foo::bar::baz as quux`
     ///
     /// or just
@@ -1158,6 +1243,12 @@ impl StructFieldKind {
             NamedField(..) => false,
         }
     }
+
+    pub fn visibility(&self) -> Visibility {
+        match *self {
+            NamedField(_, vis) | UnnamedField(vis) => vis,
+        }
+    }
 }
 
 /// Fields and Ids of enum variants and structs
@@ -1187,24 +1278,42 @@ impl VariantData {
     }
     pub fn id(&self) -> NodeId {
         match *self {
-            VariantData::Struct(_, id) | VariantData::Tuple(_, id) | VariantData::Unit(id) => id
+            VariantData::Struct(_, id) | VariantData::Tuple(_, id) | VariantData::Unit(id) => id,
         }
     }
     pub fn is_struct(&self) -> bool {
-        if let VariantData::Struct(..) = *self { true } else { false }
+        if let VariantData::Struct(..) = *self {
+            true
+        } else {
+            false
+        }
     }
     pub fn is_tuple(&self) -> bool {
-        if let VariantData::Tuple(..) = *self { true } else { false }
+        if let VariantData::Tuple(..) = *self {
+            true
+        } else {
+            false
+        }
     }
     pub fn is_unit(&self) -> bool {
-        if let VariantData::Unit(..) = *self { true } else { false }
+        if let VariantData::Unit(..) = *self {
+            true
+        } else {
+            false
+        }
     }
 }
 
-/*
-  FIXME (#3300): Should allow items to be anonymous. Right now
-  we just use dummy names for anon items.
- */
+// The bodies for items are stored "out of line", in a separate
+// hashmap in the `Crate`. Here we just record the node-id of the item
+// so it can fetched later.
+#[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub struct ItemId {
+    pub id: NodeId,
+}
+
+//  FIXME (#3300): Should allow items to be anonymous. Right now
+//  we just use dummy names for anon items.
 /// An item
 ///
 /// The name might be a dummy name in case of anonymous items
@@ -1244,11 +1353,11 @@ pub enum Item_ {
     /// A struct definition, e.g. `struct Foo<A> {x: A}`
     ItemStruct(VariantData, Generics),
     /// Represents a Trait Declaration
-    ItemTrait(Unsafety, Generics, TyParamBounds, Vec<P<TraitItem>>),
+    ItemTrait(Unsafety, Generics, TyParamBounds, Vec<TraitItem>),
 
     // Default trait implementations
     ///
-    // `impl Trait for .. {}`
+    /// `impl Trait for .. {}`
     ItemDefaultImpl(Unsafety, TraitRef),
     /// An implementation, eg `impl<A> Trait for Foo { .. }`
     ItemImpl(Unsafety,
@@ -1256,7 +1365,7 @@ pub enum Item_ {
              Generics,
              Option<TraitRef>, // (optional) trait this impl implements
              P<Ty>, // self
-             Vec<P<ImplItem>>),
+             Vec<ImplItem>),
 }
 
 impl Item_ {

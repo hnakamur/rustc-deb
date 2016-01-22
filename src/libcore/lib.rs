@@ -10,11 +10,14 @@
 
 //! # The Rust Core Library
 //!
-//! The Rust Core Library is the dependency-free foundation of [The
+//! The Rust Core Library is the dependency-free[^free] foundation of [The
 //! Rust Standard Library](../std/index.html). It is the portable glue
 //! between the language and its libraries, defining the intrinsic and
 //! primitive building blocks of all Rust code. It links to no
 //! upstream libraries, no system libraries, and no libc.
+//!
+//! [^free]: Strictly speaking, there are some symbols which are needed but
+//!          they aren't always necessary.
 //!
 //! The core library is *minimal*: it isn't even aware of heap allocation,
 //! nor does it provide concurrency or I/O. These things require
@@ -49,23 +52,22 @@
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "core"]
-#![unstable(feature = "core",
-            reason = "the libcore library has not yet been scrutinized for \
-                      stabilization in terms of structure and naming",
-            issue = "27701")]
-#![staged_api]
+#![stable(feature = "core", since = "1.6.0")]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
        html_playground_url = "https://play.rust-lang.org/",
-       issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/")]
-#![doc(test(no_crate_inject))]
+       issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/",
+       test(no_crate_inject, attr(deny(warnings))),
+       test(attr(allow(dead_code, deprecated, unused_variables, unused_mut))))]
 
 #![no_core]
-#![allow(raw_pointer_derive)]
 #![deny(missing_docs)]
 
+#![cfg_attr(stage0, feature(rustc_attrs))]
+#![cfg_attr(stage0, allow(unused_attributes))]
 #![feature(allow_internal_unstable)]
 #![feature(associated_type_defaults)]
 #![feature(concat_idents)]
@@ -78,7 +80,6 @@
 #![feature(on_unimplemented)]
 #![feature(optin_builtin_traits)]
 #![feature(reflect)]
-#![feature(rustc_attrs)]
 #![feature(unwind_attributes)]
 #![cfg_attr(stage0, feature(simd))]
 #![cfg_attr(not(stage0), feature(repr_simd, platform_intrinsics))]
@@ -87,9 +88,6 @@
 
 #[macro_use]
 mod macros;
-
-#[macro_use]
-mod cmp_macros;
 
 #[path = "num/float_macros.rs"]
 #[macro_use]

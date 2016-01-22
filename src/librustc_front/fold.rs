@@ -12,43 +12,15 @@
 //! and returns a piece of the same type.
 
 use hir::*;
-use syntax::ast::{Ident, Name, NodeId, DUMMY_NODE_ID, Attribute, Attribute_, MetaItem};
+use syntax::ast::{Name, NodeId, DUMMY_NODE_ID, Attribute, Attribute_, MetaItem};
 use syntax::ast::{MetaWord, MetaList, MetaNameValue};
+use syntax::attr::ThinAttributesExt;
 use hir;
 use syntax::codemap::{respan, Span, Spanned};
 use syntax::owned_slice::OwnedSlice;
 use syntax::ptr::P;
 use syntax::parse::token;
-use std::ptr;
-use syntax::util::small_vector::SmallVector;
-
-
-// This could have a better place to live.
-pub trait MoveMap<T> {
-    fn move_map<F>(self, f: F) -> Self where F: FnMut(T) -> T;
-}
-
-impl<T> MoveMap<T> for Vec<T> {
-    fn move_map<F>(mut self, mut f: F) -> Vec<T>
-        where F: FnMut(T) -> T
-    {
-        for p in &mut self {
-            unsafe {
-                // FIXME(#5016) this shouldn't need to zero to be safe.
-                ptr::write(p, f(ptr::read_and_drop(p)));
-            }
-        }
-        self
-    }
-}
-
-impl<T> MoveMap<T> for OwnedSlice<T> {
-    fn move_map<F>(self, f: F) -> OwnedSlice<T>
-        where F: FnMut(T) -> T
-    {
-        OwnedSlice::from_vec(self.into_vec().move_map(f))
-    }
-}
+use syntax::util::move_map::MoveMap;
 
 pub trait Folder : Sized {
     // Any additions to this trait should happen in form
@@ -75,16 +47,16 @@ pub trait Folder : Sized {
         noop_fold_view_path(view_path, self)
     }
 
-    fn fold_foreign_item(&mut self, ni: P<ForeignItem>) -> P<ForeignItem> {
+    fn fold_foreign_item(&mut self, ni: ForeignItem) -> ForeignItem {
         noop_fold_foreign_item(ni, self)
     }
 
-    fn fold_item(&mut self, i: P<Item>) -> SmallVector<P<Item>> {
+    fn fold_item(&mut self, i: Item) -> Item {
         noop_fold_item(i, self)
     }
 
-    fn fold_item_simple(&mut self, i: Item) -> Item {
-        noop_fold_item_simple(i, self)
+    fn fold_item_id(&mut self, i: ItemId) -> ItemId {
+        noop_fold_item_id(i, self)
     }
 
     fn fold_struct_field(&mut self, sf: StructField) -> StructField {
@@ -95,11 +67,11 @@ pub trait Folder : Sized {
         noop_fold_item_underscore(i, self)
     }
 
-    fn fold_trait_item(&mut self, i: P<TraitItem>) -> SmallVector<P<TraitItem>> {
+    fn fold_trait_item(&mut self, i: TraitItem) -> TraitItem {
         noop_fold_trait_item(i, self)
     }
 
-    fn fold_impl_item(&mut self, i: P<ImplItem>) -> SmallVector<P<ImplItem>> {
+    fn fold_impl_item(&mut self, i: ImplItem) -> ImplItem {
         noop_fold_impl_item(i, self)
     }
 
@@ -111,8 +83,8 @@ pub trait Folder : Sized {
         noop_fold_block(b, self)
     }
 
-    fn fold_stmt(&mut self, s: P<Stmt>) -> SmallVector<P<Stmt>> {
-        s.and_then(|s| noop_fold_stmt(s, self))
+    fn fold_stmt(&mut self, s: Stmt) -> Stmt {
+        noop_fold_stmt(s, self)
     }
 
     fn fold_arm(&mut self, a: Arm) -> Arm {
@@ -123,7 +95,7 @@ pub trait Folder : Sized {
         noop_fold_pat(p, self)
     }
 
-    fn fold_decl(&mut self, d: P<Decl>) -> SmallVector<P<Decl>> {
+    fn fold_decl(&mut self, d: P<Decl>) -> P<Decl> {
         noop_fold_decl(d, self)
     }
 
@@ -135,7 +107,7 @@ pub trait Folder : Sized {
         noop_fold_ty(t, self)
     }
 
-    fn fold_ty_binding(&mut self, t: P<TypeBinding>) -> P<TypeBinding> {
+    fn fold_ty_binding(&mut self, t: TypeBinding) -> TypeBinding {
         noop_fold_ty_binding(t, self)
     }
 
@@ -147,7 +119,7 @@ pub trait Folder : Sized {
         noop_fold_foreign_mod(nm, self)
     }
 
-    fn fold_variant(&mut self, v: P<Variant>) -> P<Variant> {
+    fn fold_variant(&mut self, v: Variant) -> Variant {
         noop_fold_variant(v, self)
     }
 
@@ -277,7 +249,13 @@ pub trait Folder : Sized {
         noop_fold_where_predicate(where_predicate, self)
     }
 
+    /// called for the `id` on each declaration
     fn new_id(&mut self, i: NodeId) -> NodeId {
+        i
+    }
+
+    /// called for ids that are references (e.g., ItemDef)
+    fn map_id(&mut self, i: NodeId) -> NodeId {
         i
     }
 
@@ -328,7 +306,7 @@ pub fn noop_fold_view_path<T: Folder>(view_path: P<ViewPath>, fld: &mut T) -> P<
 }
 
 pub fn fold_attrs<T: Folder>(attrs: Vec<Attribute>, fld: &mut T) -> Vec<Attribute> {
-    attrs.into_iter().flat_map(|x| fld.fold_attribute(x)).collect()
+    attrs.move_flat_map(|x| fld.fold_attribute(x))
 }
 
 pub fn noop_fold_arm<T: Folder>(Arm { attrs, pats, guard, body }: Arm, fld: &mut T) -> Arm {
@@ -340,35 +318,28 @@ pub fn noop_fold_arm<T: Folder>(Arm { attrs, pats, guard, body }: Arm, fld: &mut
     }
 }
 
-pub fn noop_fold_decl<T: Folder>(d: P<Decl>, fld: &mut T) -> SmallVector<P<Decl>> {
-    d.and_then(|Spanned { node, span }| {
+pub fn noop_fold_decl<T: Folder>(d: P<Decl>, fld: &mut T) -> P<Decl> {
+    d.map(|Spanned { node, span }| {
         match node {
-            DeclLocal(l) => SmallVector::one(P(Spanned {
+            DeclLocal(l) => Spanned {
                 node: DeclLocal(fld.fold_local(l)),
                 span: fld.new_span(span),
-            })),
-            DeclItem(it) => fld.fold_item(it)
-                               .into_iter()
-                               .map(|i| {
-                                   P(Spanned {
-                                       node: DeclItem(i),
-                                       span: fld.new_span(span),
-                                   })
-                               })
-                               .collect(),
+            },
+            DeclItem(it) => Spanned {
+                node: DeclItem(fld.fold_item_id(it)),
+                span: fld.new_span(span),
+            },
         }
     })
 }
 
-pub fn noop_fold_ty_binding<T: Folder>(b: P<TypeBinding>, fld: &mut T) -> P<TypeBinding> {
-    b.map(|TypeBinding { id, name, ty, span }| {
-        TypeBinding {
-            id: fld.new_id(id),
-            name: name,
-            ty: fld.fold_ty(ty),
-            span: fld.new_span(span),
-        }
-    })
+pub fn noop_fold_ty_binding<T: Folder>(b: TypeBinding, fld: &mut T) -> TypeBinding {
+    TypeBinding {
+        id: fld.new_id(b.id),
+        name: b.name,
+        ty: fld.fold_ty(b.ty),
+        span: fld.new_span(b.span),
+    }
 }
 
 pub fn noop_fold_ty<T: Folder>(t: P<Ty>, fld: &mut T) -> P<Ty> {
@@ -393,7 +364,6 @@ pub fn noop_fold_ty<T: Folder>(t: P<Ty>, fld: &mut T) -> P<Ty> {
                     }))
                 }
                 TyTup(tys) => TyTup(tys.move_map(|ty| fld.fold_ty(ty))),
-                TyParen(ty) => TyParen(fld.fold_ty(ty)),
                 TyPath(qself, path) => {
                     let qself = qself.map(|QSelf { ty, position }| {
                         QSelf {
@@ -430,16 +400,16 @@ pub fn noop_fold_foreign_mod<T: Folder>(ForeignMod { abi, items }: ForeignMod,
     }
 }
 
-pub fn noop_fold_variant<T: Folder>(v: P<Variant>, fld: &mut T) -> P<Variant> {
-    v.map(|Spanned {node: Variant_ {name, attrs, data, disr_expr}, span}| Spanned {
+pub fn noop_fold_variant<T: Folder>(v: Variant, fld: &mut T) -> Variant {
+    Spanned {
         node: Variant_ {
-            name: name,
-            attrs: fold_attrs(attrs, fld),
-            data: fld.fold_variant_data(data),
-            disr_expr: disr_expr.map(|e| fld.fold_expr(e)),
+            name: v.node.name,
+            attrs: fold_attrs(v.node.attrs, fld),
+            data: fld.fold_variant_data(v.node.data),
+            disr_expr: v.node.disr_expr.map(|e| fld.fold_expr(e)),
         },
-        span: fld.new_span(span),
-    })
+        span: fld.new_span(v.span),
+    }
 }
 
 pub fn noop_fold_name<T: Folder>(n: Name, _: &mut T) -> Name {
@@ -501,13 +471,14 @@ pub fn noop_fold_parenthesized_parameter_data<T: Folder>(data: ParenthesizedPara
 }
 
 pub fn noop_fold_local<T: Folder>(l: P<Local>, fld: &mut T) -> P<Local> {
-    l.map(|Local { id, pat, ty, init, span }| {
+    l.map(|Local { id, pat, ty, init, span, attrs }| {
         Local {
             id: fld.new_id(id),
             ty: ty.map(|t| fld.fold_ty(t)),
             pat: fld.fold_pat(pat),
             init: init.map(|e| fld.fold_expr(e)),
             span: fld.new_span(span),
+            attrs: attrs.map_thin_attrs(|attrs| fold_attrs(attrs, fld)),
         }
     })
 }
@@ -696,12 +667,14 @@ pub fn noop_fold_where_predicate<T: Folder>(pred: WherePredicate, fld: &mut T) -
 pub fn noop_fold_variant_data<T: Folder>(vdata: VariantData, fld: &mut T) -> VariantData {
     match vdata {
         VariantData::Struct(fields, id) => {
-            VariantData::Struct(fields.move_map(|f| fld.fold_struct_field(f)), fld.new_id(id))
+            VariantData::Struct(fields.move_map(|f| fld.fold_struct_field(f)),
+                                fld.new_id(id))
         }
         VariantData::Tuple(fields, id) => {
-            VariantData::Tuple(fields.move_map(|f| fld.fold_struct_field(f)), fld.new_id(id))
+            VariantData::Tuple(fields.move_map(|f| fld.fold_struct_field(f)),
+                               fld.new_id(id))
         }
-        VariantData::Unit(id) => VariantData::Unit(fld.new_id(id))
+        VariantData::Unit(id) => VariantData::Unit(fld.new_id(id)),
     }
 }
 
@@ -740,8 +713,7 @@ pub fn noop_fold_struct_field<T: Folder>(f: StructField, fld: &mut T) -> StructF
 
 pub fn noop_fold_field<T: Folder>(Field { name, expr, span }: Field, folder: &mut T) -> Field {
     Field {
-        name: respan(folder.new_span(name.span),
-                     folder.fold_name(name.node)),
+        name: respan(folder.new_span(name.span), folder.fold_name(name.node)),
         expr: folder.fold_expr(expr),
         span: folder.new_span(span),
     }
@@ -768,7 +740,7 @@ pub fn noop_fold_block<T: Folder>(b: P<Block>, folder: &mut T) -> P<Block> {
     b.map(|Block { id, stmts, expr, rules, span }| {
         Block {
             id: folder.new_id(id),
-            stmts: stmts.into_iter().flat_map(|s| folder.fold_stmt(s).into_iter()).collect(),
+            stmts: stmts.move_map(|s| folder.fold_stmt(s)),
             expr: expr.map(|x| folder.fold_expr(x)),
             rules: rules,
             span: folder.new_span(span),
@@ -812,15 +784,11 @@ pub fn noop_fold_item_underscore<T: Folder>(i: Item_, folder: &mut T) -> Item_ {
             ItemStruct(struct_def, folder.fold_generics(generics))
         }
         ItemDefaultImpl(unsafety, ref trait_ref) => {
-            ItemDefaultImpl(unsafety,
-                            folder.fold_trait_ref((*trait_ref).clone()))
+            ItemDefaultImpl(unsafety, folder.fold_trait_ref((*trait_ref).clone()))
         }
         ItemImpl(unsafety, polarity, generics, ifce, ty, impl_items) => {
-            let new_impl_items = impl_items.into_iter()
-                                           .flat_map(|item| {
-                                               folder.fold_impl_item(item).into_iter()
-                                           })
-                                           .collect();
+            let new_impl_items = impl_items
+                .move_map(|item| folder.fold_impl_item(item));
             let ifce = match ifce {
                 None => None,
                 Some(ref trait_ref) => {
@@ -836,103 +804,89 @@ pub fn noop_fold_item_underscore<T: Folder>(i: Item_, folder: &mut T) -> Item_ {
         }
         ItemTrait(unsafety, generics, bounds, items) => {
             let bounds = folder.fold_bounds(bounds);
-            let items = items.into_iter()
-                             .flat_map(|item| folder.fold_trait_item(item).into_iter())
-                             .collect();
+            let items = items.move_map(|item| folder.fold_trait_item(item));
             ItemTrait(unsafety, folder.fold_generics(generics), bounds, items)
         }
     }
 }
 
-pub fn noop_fold_trait_item<T: Folder>(i: P<TraitItem>,
+pub fn noop_fold_trait_item<T: Folder>(i: TraitItem,
                                        folder: &mut T)
-                                       -> SmallVector<P<TraitItem>> {
-    SmallVector::one(i.map(|TraitItem { id, name, attrs, node, span }| {
-        TraitItem {
-            id: folder.new_id(id),
-            name: folder.fold_name(name),
-            attrs: fold_attrs(attrs, folder),
-            node: match node {
-                ConstTraitItem(ty, default) => {
-                    ConstTraitItem(folder.fold_ty(ty),
-                                   default.map(|x| folder.fold_expr(x)))
-                }
-                MethodTraitItem(sig, body) => {
-                    MethodTraitItem(noop_fold_method_sig(sig, folder),
-                                    body.map(|x| folder.fold_block(x)))
-                }
-                TypeTraitItem(bounds, default) => {
-                    TypeTraitItem(folder.fold_bounds(bounds),
-                                  default.map(|x| folder.fold_ty(x)))
-                }
-            },
-            span: folder.new_span(span),
-        }
-    }))
-}
-
-pub fn noop_fold_impl_item<T: Folder>(i: P<ImplItem>, folder: &mut T) -> SmallVector<P<ImplItem>> {
-    SmallVector::one(i.map(|ImplItem { id, name, attrs, node, vis, span }| {
-        ImplItem {
-            id: folder.new_id(id),
-            name: folder.fold_name(name),
-            attrs: fold_attrs(attrs, folder),
-            vis: vis,
-            node: match node {
-                ConstImplItem(ty, expr) => {
-                    ConstImplItem(folder.fold_ty(ty), folder.fold_expr(expr))
-                }
-                MethodImplItem(sig, body) => {
-                    MethodImplItem(noop_fold_method_sig(sig, folder),
-                                   folder.fold_block(body))
-                }
-                TypeImplItem(ty) => TypeImplItem(folder.fold_ty(ty)),
-            },
-            span: folder.new_span(span),
-        }
-    }))
-}
-
-pub fn noop_fold_mod<T: Folder>(Mod { inner, items }: Mod, folder: &mut T) -> Mod {
-    Mod {
-        inner: folder.new_span(inner),
-        items: items.into_iter().flat_map(|x| folder.fold_item(x).into_iter()).collect(),
+                                       -> TraitItem {
+    TraitItem {
+        id: folder.new_id(i.id),
+        name: folder.fold_name(i.name),
+        attrs: fold_attrs(i.attrs, folder),
+        node: match i.node {
+            ConstTraitItem(ty, default) => {
+                ConstTraitItem(folder.fold_ty(ty), default.map(|x| folder.fold_expr(x)))
+            }
+            MethodTraitItem(sig, body) => {
+                MethodTraitItem(noop_fold_method_sig(sig, folder),
+                                body.map(|x| folder.fold_block(x)))
+            }
+            TypeTraitItem(bounds, default) => {
+                TypeTraitItem(folder.fold_bounds(bounds),
+                              default.map(|x| folder.fold_ty(x)))
+            }
+        },
+        span: folder.new_span(i.span),
     }
 }
 
-pub fn noop_fold_crate<T: Folder>(Crate { module, attrs, config, span, exported_macros }: Crate,
+pub fn noop_fold_impl_item<T: Folder>(i: ImplItem, folder: &mut T) -> ImplItem {
+    ImplItem {
+        id: folder.new_id(i.id),
+        name: folder.fold_name(i.name),
+        attrs: fold_attrs(i.attrs, folder),
+        vis: i.vis,
+        node: match i.node {
+            ImplItemKind::Const(ty, expr) => {
+                ImplItemKind::Const(folder.fold_ty(ty), folder.fold_expr(expr))
+            }
+            ImplItemKind::Method(sig, body) => {
+                ImplItemKind::Method(noop_fold_method_sig(sig, folder), folder.fold_block(body))
+            }
+            ImplItemKind::Type(ty) => ImplItemKind::Type(folder.fold_ty(ty)),
+        },
+        span: folder.new_span(i.span),
+    }
+}
+
+pub fn noop_fold_mod<T: Folder>(Mod { inner, item_ids }: Mod, folder: &mut T) -> Mod {
+    Mod {
+        inner: folder.new_span(inner),
+        item_ids: item_ids.move_map(|x| folder.fold_item_id(x)),
+    }
+}
+
+pub fn noop_fold_crate<T: Folder>(Crate { module, attrs, config, span,
+                                          exported_macros, items }: Crate,
                                   folder: &mut T)
                                   -> Crate {
     let config = folder.fold_meta_items(config);
 
-    let mut items = folder.fold_item(P(hir::Item {
-                              name: token::special_idents::invalid.name,
-                              attrs: attrs,
-                              id: DUMMY_NODE_ID,
-                              vis: hir::Public,
-                              span: span,
-                              node: hir::ItemMod(module),
-                          }))
-                          .into_iter();
+    let crate_mod = folder.fold_item(hir::Item {
+        name: token::special_idents::invalid.name,
+        attrs: attrs,
+        id: DUMMY_NODE_ID,
+        vis: hir::Public,
+        span: span,
+        node: hir::ItemMod(module),
+    });
 
-    let (module, attrs, span) = match items.next() {
-        Some(item) => {
-            assert!(items.next().is_none(),
-                    "a crate cannot expand to more than one item");
-            item.and_then(|hir::Item { attrs, span, node, .. }| {
-                match node {
-                    hir::ItemMod(m) => (m, attrs, span),
-                    _ => panic!("fold converted a module to not a module"),
-                }
-            })
+    let (module, attrs, span) = match crate_mod {
+        hir::Item { attrs, span, node, .. } => {
+            match node {
+                hir::ItemMod(m) => (m, attrs, span),
+                _ => panic!("fold converted a module to not a module"),
+            }
         }
-        None => (hir::Mod {
-            inner: span,
-            items: vec![],
-        },
-                 vec![],
-                 span),
     };
+
+    let items = items.into_iter()
+                     .map(|(id, item)| (id, folder.fold_item(item)))
+                     .collect();
 
     Crate {
         module: module,
@@ -940,18 +894,18 @@ pub fn noop_fold_crate<T: Folder>(Crate { module, attrs, config, span, exported_
         config: config,
         span: span,
         exported_macros: exported_macros,
+        items: items,
     }
 }
 
-// fold one item into possibly many items
-pub fn noop_fold_item<T: Folder>(i: P<Item>, folder: &mut T) -> SmallVector<P<Item>> {
-    SmallVector::one(i.map(|i| folder.fold_item_simple(i)))
+pub fn noop_fold_item_id<T: Folder>(i: ItemId, folder: &mut T) -> ItemId {
+    let id = folder.map_id(i.id);
+    ItemId { id: id }
 }
 
-// fold one item into exactly one item
-pub fn noop_fold_item_simple<T: Folder>(Item { id, name, attrs, node, vis, span }: Item,
-                                        folder: &mut T)
-                                        -> Item {
+// fold one item into one item
+pub fn noop_fold_item<T: Folder>(item: Item, folder: &mut T) -> Item {
+    let Item { id, name, attrs, node, vis, span } = item;
     let id = folder.new_id(id);
     let node = folder.fold_item_underscore(node);
     // FIXME: we should update the impl_pretty_name, but it uses pretty printing.
@@ -973,25 +927,22 @@ pub fn noop_fold_item_simple<T: Folder>(Item { id, name, attrs, node, vis, span 
     }
 }
 
-pub fn noop_fold_foreign_item<T: Folder>(ni: P<ForeignItem>, folder: &mut T) -> P<ForeignItem> {
-    ni.map(|ForeignItem { id, name, attrs, node, span, vis }| {
-        ForeignItem {
-            id: folder.new_id(id),
-            name: folder.fold_name(name),
-            attrs: fold_attrs(attrs, folder),
-            node: match node {
-                ForeignItemFn(fdec, generics) => {
-                    ForeignItemFn(folder.fold_fn_decl(fdec),
-                                  folder.fold_generics(generics))
-                }
-                ForeignItemStatic(t, m) => {
-                    ForeignItemStatic(folder.fold_ty(t), m)
-                }
-            },
-            vis: vis,
-            span: folder.new_span(span),
-        }
-    })
+pub fn noop_fold_foreign_item<T: Folder>(ni: ForeignItem, folder: &mut T) -> ForeignItem {
+    ForeignItem {
+        id: folder.new_id(ni.id),
+        name: folder.fold_name(ni.name),
+        attrs: fold_attrs(ni.attrs, folder),
+        node: match ni.node {
+            ForeignItemFn(fdec, generics) => {
+                ForeignItemFn(folder.fold_fn_decl(fdec), folder.fold_generics(generics))
+            }
+            ForeignItemStatic(t, m) => {
+                ForeignItemStatic(folder.fold_ty(t), m)
+            }
+        },
+        vis: ni.vis,
+        span: folder.new_span(ni.span),
+    }
 }
 
 pub fn noop_fold_method_sig<T: Folder>(sig: MethodSig, folder: &mut T) -> MethodSig {
@@ -1010,7 +961,7 @@ pub fn noop_fold_pat<T: Folder>(p: P<Pat>, folder: &mut T) -> P<Pat> {
         Pat {
             id: folder.new_id(id),
             node: match node {
-                PatWild(k) => PatWild(k),
+                PatWild => PatWild,
                 PatIdent(binding_mode, pth1, sub) => {
                     PatIdent(binding_mode,
                              Spanned {
@@ -1059,7 +1010,7 @@ pub fn noop_fold_pat<T: Folder>(p: P<Pat>, folder: &mut T) -> P<Pat> {
     })
 }
 
-pub fn noop_fold_expr<T: Folder>(Expr { id, node, span }: Expr, folder: &mut T) -> Expr {
+pub fn noop_fold_expr<T: Folder>(Expr { id, node, span, attrs }: Expr, folder: &mut T) -> Expr {
     Expr {
         id: folder.new_id(id),
         node: match node {
@@ -1074,12 +1025,10 @@ pub fn noop_fold_expr<T: Folder>(Expr { id, node, span }: Expr, folder: &mut T) 
             }
             ExprTup(elts) => ExprTup(elts.move_map(|x| folder.fold_expr(x))),
             ExprCall(f, args) => {
-                ExprCall(folder.fold_expr(f),
-                         args.move_map(|x| folder.fold_expr(x)))
+                ExprCall(folder.fold_expr(f), args.move_map(|x| folder.fold_expr(x)))
             }
             ExprMethodCall(name, tps, args) => {
-                ExprMethodCall(respan(folder.new_span(name.span),
-                                      folder.fold_name(name.node)),
+                ExprMethodCall(respan(folder.new_span(name.span), folder.fold_name(name.node)),
                                tps.move_map(|x| folder.fold_ty(x)),
                                args.move_map(|x| folder.fold_expr(x)))
             }
@@ -1127,13 +1076,11 @@ pub fn noop_fold_expr<T: Folder>(Expr { id, node, span }: Expr, folder: &mut T) 
             }
             ExprField(el, name) => {
                 ExprField(folder.fold_expr(el),
-                          respan(folder.new_span(name.span),
-                                 folder.fold_name(name.node)))
+                          respan(folder.new_span(name.span), folder.fold_name(name.node)))
             }
             ExprTupField(el, index) => {
                 ExprTupField(folder.fold_expr(el),
-                             respan(folder.new_span(index.span),
-                                    folder.fold_usize(index.node)))
+                             respan(folder.new_span(index.span), folder.fold_usize(index.node)))
             }
             ExprIndex(el, er) => {
                 ExprIndex(folder.fold_expr(el), folder.fold_expr(er))
@@ -1152,12 +1099,10 @@ pub fn noop_fold_expr<T: Folder>(Expr { id, node, span }: Expr, folder: &mut T) 
                 ExprPath(qself, folder.fold_path(path))
             }
             ExprBreak(opt_ident) => ExprBreak(opt_ident.map(|label| {
-                respan(folder.new_span(label.span),
-                       folder.fold_ident(label.node))
+                respan(folder.new_span(label.span), folder.fold_ident(label.node))
             })),
             ExprAgain(opt_ident) => ExprAgain(opt_ident.map(|label| {
-                respan(folder.new_span(label.span),
-                       folder.fold_ident(label.node))
+                respan(folder.new_span(label.span), folder.fold_ident(label.node))
             })),
             ExprRet(e) => ExprRet(e.map(|x| folder.fold_expr(x))),
             ExprInlineAsm(InlineAsm {
@@ -1188,39 +1133,33 @@ pub fn noop_fold_expr<T: Folder>(Expr { id, node, span }: Expr, folder: &mut T) 
             }
         },
         span: folder.new_span(span),
+        attrs: attrs.map_thin_attrs(|attrs| fold_attrs(attrs, folder)),
     }
 }
 
-pub fn noop_fold_stmt<T: Folder>(Spanned { node, span }: Stmt,
-                                 folder: &mut T)
-                                 -> SmallVector<P<Stmt>> {
-    let span = folder.new_span(span);
-    match node {
+pub fn noop_fold_stmt<T: Folder>(stmt: Stmt, folder: &mut T) -> Stmt {
+    let span = folder.new_span(stmt.span);
+    match stmt.node {
         StmtDecl(d, id) => {
             let id = folder.new_id(id);
-            folder.fold_decl(d)
-                  .into_iter()
-                  .map(|d| {
-                      P(Spanned {
-                          node: StmtDecl(d, id),
-                          span: span,
-                      })
-                  })
-                  .collect()
+            Spanned {
+                node: StmtDecl(folder.fold_decl(d), id),
+                span: span
+            }
         }
         StmtExpr(e, id) => {
             let id = folder.new_id(id);
-            SmallVector::one(P(Spanned {
+            Spanned {
                 node: StmtExpr(folder.fold_expr(e), id),
                 span: span,
-            }))
+            }
         }
         StmtSemi(e, id) => {
             let id = folder.new_id(id);
-            SmallVector::one(P(Spanned {
+            Spanned {
                 node: StmtSemi(folder.fold_expr(e), id),
                 span: span,
-            }))
+            }
         }
     }
 }

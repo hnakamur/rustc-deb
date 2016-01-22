@@ -11,7 +11,6 @@
 use io;
 use libc::{self, c_int, size_t, c_void};
 use mem;
-use sys::c;
 use sys::cvt;
 use sys_common::AsInner;
 
@@ -51,9 +50,18 @@ impl FileDesc {
         Ok(ret as usize)
     }
 
+    #[cfg(not(target_env = "newlib"))]
     pub fn set_cloexec(&self) {
         unsafe {
-            let ret = c::ioctl(self.fd, c::FIOCLEX);
+            let ret = libc::ioctl(self.fd, libc::FIOCLEX);
+            debug_assert_eq!(ret, 0);
+        }
+    }
+    #[cfg(target_env = "newlib")]
+    pub fn set_cloexec(&self) {
+        unsafe {
+            let previous = libc::fnctl(self.fd, libc::F_GETFD);
+            let ret = libc::fnctl(self.fd, libc::F_SETFD, previous | libc::FD_CLOEXEC);
             debug_assert_eq!(ret, 0);
         }
     }

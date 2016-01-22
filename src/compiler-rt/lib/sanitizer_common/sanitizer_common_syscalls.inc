@@ -831,6 +831,7 @@ POST_SYSCALL(stat)(long res, const void *filename, void *statbuf) {
   }
 }
 
+#if !SANITIZER_ANDROID
 PRE_SYSCALL(statfs)(const void *path, void *buf) {
   if (path)
     PRE_READ(path, __sanitizer::internal_strlen((const char *)path) + 1);
@@ -868,6 +869,7 @@ POST_SYSCALL(fstatfs64)(long res, long fd, long sz, void *buf) {
     if (buf) POST_WRITE(buf, struct_statfs64_sz);
   }
 }
+#endif // !SANITIZER_ANDROID
 
 PRE_SYSCALL(lstat)(const void *filename, void *statbuf) {
   if (filename)
@@ -1324,13 +1326,13 @@ PRE_SYSCALL(io_submit)(long ctx_id, long nr, __sanitizer_iocb **iocbpp) {
     } else if (op == iocb_cmd_pread && buf && len) {
       POST_WRITE(buf, len);
     } else if (op == iocb_cmd_pwritev) {
-      __sanitizer_iovec *iovec = (__sanitizer_iovec*)iocbpp[i]->aio_buf;
+      __sanitizer_iovec *iovec = (__sanitizer_iovec*)buf;
       for (uptr v = 0; v < len; v++)
-        PRE_READ(iovec[i].iov_base, iovec[i].iov_len);
+        PRE_READ(iovec[v].iov_base, iovec[v].iov_len);
     } else if (op == iocb_cmd_preadv) {
-      __sanitizer_iovec *iovec = (__sanitizer_iovec*)iocbpp[i]->aio_buf;
+      __sanitizer_iovec *iovec = (__sanitizer_iovec*)buf;
       for (uptr v = 0; v < len; v++)
-        POST_WRITE(iovec[i].iov_base, iovec[i].iov_len);
+        POST_WRITE(iovec[v].iov_base, iovec[v].iov_len);
     }
     // See comment in io_getevents.
     COMMON_SYSCALL_RELEASE(data);
@@ -1441,6 +1443,7 @@ PRE_SYSCALL(fchown)(long fd, long user, long group) {}
 
 POST_SYSCALL(fchown)(long res, long fd, long user, long group) {}
 
+#if SANITIZER_USES_UID16_SYSCALLS
 PRE_SYSCALL(chown16)(const void *filename, long user, long group) {
   if (filename)
     PRE_READ(filename,
@@ -1550,6 +1553,7 @@ POST_SYSCALL(getgid16)(long res) {}
 PRE_SYSCALL(getegid16)() {}
 
 POST_SYSCALL(getegid16)(long res) {}
+#endif // SANITIZER_USES_UID16_SYSCALLS
 
 PRE_SYSCALL(utime)(void *filename, void *times) {}
 
@@ -2295,7 +2299,9 @@ PRE_SYSCALL(ni_syscall)() {}
 POST_SYSCALL(ni_syscall)(long res) {}
 
 PRE_SYSCALL(ptrace)(long request, long pid, long addr, long data) {
-#if defined(__i386) || defined (__x86_64)
+#if !SANITIZER_ANDROID && \
+    (defined(__i386) || defined(__x86_64) || defined(__mips64) || \
+     defined(__powerpc64__) || defined(__aarch64__))
   if (data) {
     if (request == ptrace_setregs) {
       PRE_READ((void *)data, struct_user_regs_struct_sz);
@@ -2314,7 +2320,9 @@ PRE_SYSCALL(ptrace)(long request, long pid, long addr, long data) {
 }
 
 POST_SYSCALL(ptrace)(long res, long request, long pid, long addr, long data) {
-#if defined(__i386) || defined (__x86_64)
+#if !SANITIZER_ANDROID && \
+    (defined(__i386) || defined(__x86_64) || defined(__mips64) || \
+     defined(__powerpc64__) || defined(__aarch64__))
   if (res >= 0 && data) {
     // Note that this is different from the interceptor in
     // sanitizer_common_interceptors.inc.

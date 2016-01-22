@@ -348,8 +348,8 @@ impl<T, S> HashSet<T, S>
     ///     println!("{}", x);
     /// }
     ///
-    /// let diff: HashSet<_> = a.intersection(&b).cloned().collect();
-    /// assert_eq!(diff, [2, 3].iter().cloned().collect());
+    /// let intersection: HashSet<_> = a.intersection(&b).cloned().collect();
+    /// assert_eq!(intersection, [2, 3].iter().cloned().collect());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn intersection<'a>(&'a self, other: &'a HashSet<T, S>) -> Intersection<'a, T, S> {
@@ -373,8 +373,8 @@ impl<T, S> HashSet<T, S>
     ///     println!("{}", x);
     /// }
     ///
-    /// let diff: HashSet<_> = a.union(&b).cloned().collect();
-    /// assert_eq!(diff, [1, 2, 3, 4].iter().cloned().collect());
+    /// let union: HashSet<_> = a.union(&b).cloned().collect();
+    /// assert_eq!(union, [1, 2, 3, 4].iter().cloned().collect());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn union<'a>(&'a self, other: &'a HashSet<T, S>) -> Union<'a, T, S> {
@@ -413,9 +413,7 @@ impl<T, S> HashSet<T, S>
 
     /// Clears the set, returning all elements in an iterator.
     #[inline]
-    #[unstable(feature = "drain",
-               reason = "matches collection reform specification, waiting for dust to settle",
-               issue = "27711")]
+    #[stable(feature = "drain", since = "1.6.0")]
     pub fn drain(&mut self) -> Drain<T> {
         fn first<A, B>((a, _): (A, B)) -> A { a }
         let first: fn((T, ())) -> T = first; // coerce to fn pointer
@@ -544,10 +542,7 @@ impl<T, S> HashSet<T, S>
     ///
     /// If the set did not have a value present, `true` is returned.
     ///
-    /// If the set did have this key present, that value is returned, and the
-    /// entry is not updated. See the [module-level documentation] for more.
-    ///
-    /// [module-level documentation]: index.html#insert-and-complex-keys
+    /// If the set did have this key present, `false` is returned.
     ///
     /// # Examples
     ///
@@ -675,7 +670,6 @@ impl<T, S> Default for HashSet<T, S>
     where T: Eq + Hash,
           S: HashState + Default,
 {
-    #[stable(feature = "rust1", since = "1.0.0")]
     fn default() -> HashSet<T, S> {
         HashSet::with_hash_state(Default::default())
     }
@@ -905,6 +899,7 @@ impl<T, S> IntoIterator for HashSet<T, S>
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K> Clone for Iter<'a, K> {
     fn clone(&self) -> Iter<'a, K> { Iter { iter: self.iter.clone() } }
 }
@@ -944,6 +939,7 @@ impl<'a, K> ExactSizeIterator for Drain<'a, K> {
     fn len(&self) -> usize { self.iter.len() }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T, S> Clone for Intersection<'a, T, S> {
     fn clone(&self) -> Intersection<'a, T, S> {
         Intersection { iter: self.iter.clone(), ..*self }
@@ -973,6 +969,7 @@ impl<'a, T, S> Iterator for Intersection<'a, T, S>
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T, S> Clone for Difference<'a, T, S> {
     fn clone(&self) -> Difference<'a, T, S> {
         Difference { iter: self.iter.clone(), ..*self }
@@ -1002,6 +999,7 @@ impl<'a, T, S> Iterator for Difference<'a, T, S>
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T, S> Clone for SymmetricDifference<'a, T, S> {
     fn clone(&self) -> SymmetricDifference<'a, T, S> {
         SymmetricDifference { iter: self.iter.clone() }
@@ -1018,6 +1016,7 @@ impl<'a, T, S> Iterator for SymmetricDifference<'a, T, S>
     fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T, S> Clone for Union<'a, T, S> {
     fn clone(&self) -> Union<'a, T, S> { Union { iter: self.iter.clone() } }
 }

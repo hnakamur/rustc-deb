@@ -43,12 +43,15 @@ struct DTLS {
   uptr dtv_size;
   DTV *dtv;  // dtv_size elements, allocated by MmapOrDie.
 
-  // Auxilary fields, don't access them outside sanitizer_tls_get_addr.cc
+  // Auxiliary fields, don't access them outside sanitizer_tls_get_addr.cc
   uptr last_memalign_size;
   uptr last_memalign_ptr;
 };
 
-void DTLS_on_tls_get_addr(void *arg, void *res);
+// Returns pointer and size of a linker-allocated TLS block.
+// Each block is returned exactly once.
+DTLS::DTV *DTLS_on_tls_get_addr(void *arg, void *res, uptr static_tls_begin,
+                                uptr static_tls_end);
 void DTLS_on_libc_memalign(void *ptr, uptr size);
 DTLS *DTLS_Get();
 void DTLS_Destroy();  // Make sure to call this before the thread is destroyed.

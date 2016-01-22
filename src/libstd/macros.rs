@@ -120,46 +120,6 @@ macro_rules! println {
     ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
 }
 
-/// Helper macro for unwrapping `Result` values while returning early with an
-/// error if the value of the expression is `Err`. Can only be used in
-/// functions that return `Result` because of the early return of `Err` that
-/// it provides.
-///
-/// # Examples
-///
-/// ```
-/// use std::io;
-/// use std::fs::File;
-/// use std::io::prelude::*;
-///
-/// fn write_to_file_using_try() -> Result<(), io::Error> {
-///     let mut file = try!(File::create("my_best_friends.txt"));
-///     try!(file.write_all(b"This is a list of my best friends."));
-///     println!("I wrote to the file");
-///     Ok(())
-/// }
-/// // This is equivalent to:
-/// fn write_to_file_using_match() -> Result<(), io::Error> {
-///     let mut file = try!(File::create("my_best_friends.txt"));
-///     match file.write_all(b"This is a list of my best friends.") {
-///         Ok(_) => (),
-///         Err(e) => return Err(e),
-///     }
-///     println!("I wrote to the file");
-///     Ok(())
-/// }
-/// ```
-#[macro_export]
-#[stable(feature = "rust1", since = "1.0.0")]
-macro_rules! try {
-    ($expr:expr) => (match $expr {
-        $crate::result::Result::Ok(val) => val,
-        $crate::result::Result::Err(err) => {
-            return $crate::result::Result::Err($crate::convert::From::from(err))
-        }
-    })
-}
-
 /// A macro to select an event from a number of receivers.
 ///
 /// This macro is used to wait for the first event to occur on a number of
@@ -259,6 +219,7 @@ pub mod builtin {
     /// assert_eq!(s, format!("hello {}", "world"));
     ///
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! format_args { ($fmt:expr, $($args:tt)*) => ({
         /* compiler built-in */
@@ -279,6 +240,7 @@ pub mod builtin {
     /// let path: &'static str = env!("PATH");
     /// println!("the $PATH variable at the time of compiling was: {}", path);
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! env { ($name:expr) => ({ /* compiler built-in */ }) }
 
@@ -298,6 +260,7 @@ pub mod builtin {
     /// let key: Option<&'static str> = option_env!("SECRET_KEY");
     /// println!("the secret key might be: {:?}", key);
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! option_env { ($name:expr) => ({ /* compiler built-in */ }) }
 
@@ -322,6 +285,7 @@ pub mod builtin {
     /// println!("{}", f());
     /// # }
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! concat_idents {
         ($($e:ident),*) => ({ /* compiler built-in */ })
@@ -342,6 +306,7 @@ pub mod builtin {
     /// let s = concat!("test", 10, 'b', true);
     /// assert_eq!(s, "test10btrue");
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! concat { ($($e:expr),*) => ({ /* compiler built-in */ }) }
 
@@ -357,6 +322,7 @@ pub mod builtin {
     /// let current_line = line!();
     /// println!("defined on line: {}", current_line);
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! line { () => ({ /* compiler built-in */ }) }
 
@@ -372,6 +338,7 @@ pub mod builtin {
     /// let current_col = column!();
     /// println!("defined on column: {}", current_col);
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! column { () => ({ /* compiler built-in */ }) }
 
@@ -388,6 +355,7 @@ pub mod builtin {
     /// let this_file = file!();
     /// println!("defined in file: {}", this_file);
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! file { () => ({ /* compiler built-in */ }) }
 
@@ -403,6 +371,7 @@ pub mod builtin {
     /// let one_plus_one = stringify!(1 + 1);
     /// assert_eq!(one_plus_one, "1 + 1");
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! stringify { ($t:tt) => ({ /* compiler built-in */ }) }
 
@@ -417,6 +386,7 @@ pub mod builtin {
     /// ```rust,ignore
     /// let secret_key = include_str!("secret-key.ascii");
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! include_str { ($file:expr) => ({ /* compiler built-in */ }) }
 
@@ -431,6 +401,7 @@ pub mod builtin {
     /// ```rust,ignore
     /// let secret_key = include_bytes!("secret-key.bin");
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! include_bytes { ($file:expr) => ({ /* compiler built-in */ }) }
 
@@ -451,6 +422,7 @@ pub mod builtin {
     ///
     /// test::foo();
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     macro_rules! module_path { () => ({ /* compiler built-in */ }) }
 
@@ -460,8 +432,8 @@ pub mod builtin {
     /// boolean expression evaluation of configuration flags. This frequently
     /// leads to less duplicated code.
     ///
-    /// The syntax given to this macro is the same syntax as the `cfg`
-    /// attribute.
+    /// The syntax given to this macro is the same syntax as [the `cfg`
+    /// attribute](../reference.html#conditional-compilation).
     ///
     /// # Examples
     ///
@@ -472,8 +444,9 @@ pub mod builtin {
     ///     "unix-directory"
     /// };
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
-    macro_rules! cfg { ($cfg:tt) => ({ /* compiler built-in */ }) }
+    macro_rules! cfg { ($($cfg:tt)*) => ({ /* compiler built-in */ }) }
 
     /// Parse the current given file as an expression.
     ///
@@ -486,6 +459,7 @@ pub mod builtin {
     ///     include!("/path/to/a/file")
     /// }
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
-    macro_rules! include { ($cfg:tt) => ({ /* compiler built-in */ }) }
+    macro_rules! include { ($file:expr) => ({ /* compiler built-in */ }) }
 }

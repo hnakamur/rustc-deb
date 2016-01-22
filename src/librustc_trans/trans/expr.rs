@@ -326,42 +326,6 @@ pub fn copy_fat_ptr(bcx: Block, src_ptr: ValueRef, dst_ptr: ValueRef) {
     Store(bcx, Load(bcx, get_meta(bcx, src_ptr)), get_meta(bcx, dst_ptr));
 }
 
-/// Retrieve the information we are losing (making dynamic) in an unsizing
-/// adjustment.
-///
-/// The `old_info` argument is a bit funny. It is intended for use
-/// in an upcast, where the new vtable for an object will be drived
-/// from the old one.
-pub fn unsized_info<'ccx, 'tcx>(ccx: &CrateContext<'ccx, 'tcx>,
-                                source: Ty<'tcx>,
-                                target: Ty<'tcx>,
-                                old_info: Option<ValueRef>,
-                                param_substs: &'tcx Substs<'tcx>)
-                                -> ValueRef {
-    let (source, target) = ccx.tcx().struct_lockstep_tails(source, target);
-    match (&source.sty, &target.sty) {
-        (&ty::TyArray(_, len), &ty::TySlice(_)) => C_uint(ccx, len),
-        (&ty::TyTrait(_), &ty::TyTrait(_)) => {
-            // For now, upcasts are limited to changes in marker
-            // traits, and hence never actually require an actual
-            // change to the vtable.
-            old_info.expect("unsized_info: missing old info for trait upcast")
-        }
-        (_, &ty::TyTrait(box ty::TraitTy { ref principal, .. })) => {
-            // Note that we preserve binding levels here:
-            let substs = principal.0.substs.with_self_ty(source).erase_regions();
-            let substs = ccx.tcx().mk_substs(substs);
-            let trait_ref = ty::Binder(ty::TraitRef { def_id: principal.def_id(),
-                                                      substs: substs });
-            consts::ptrcast(meth::get_vtable(ccx, trait_ref, param_substs),
-                            Type::vtable_ptr(ccx))
-        }
-        _ => ccx.sess().bug(&format!("unsized_info: invalid unsizing {:?} -> {:?}",
-                                     source,
-                                     target))
-    }
-}
-
 fn adjustment_required<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                    expr: &hir::Expr) -> bool {
     let adjustment = match bcx.tcx().tables.borrow().adjustments.get(&expr.id).cloned() {
@@ -578,10 +542,13 @@ fn coerce_unsized<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             };
             assert!(coerce_index < src_fields.len() && src_fields.len() == target_fields.len());
 
+            let source_val = adt::MaybeSizedValue::sized(source.val);
+            let target_val = adt::MaybeSizedValue::sized(target.val);
+
             let iter = src_fields.iter().zip(target_fields).enumerate();
             for (i, (src_ty, target_ty)) in iter {
-                let ll_source = adt::trans_field_ptr(bcx, &repr_source, source.val, 0, i);
-                let ll_target = adt::trans_field_ptr(bcx, &repr_target, target.val, 0, i);
+                let ll_source = adt::trans_field_ptr(bcx, &repr_source, source_val, 0, i);
+                let ll_target = adt::trans_field_ptr(bcx, &repr_target, target_val, 0, i);
 
                 // If this is the field we need to coerce, recurse on it.
                 if i == coerce_index {
@@ -773,7 +740,9 @@ fn trans_field<'blk, 'tcx, F>(bcx: Block<'blk, 'tcx>,
     let d = base_datum.get_element(
         bcx,
         vinfo.fields[ix].1,
-        |srcval| adt::trans_field_ptr(bcx, &*repr, srcval, vinfo.discr, ix));
+        |srcval| {
+            adt::trans_field_ptr(bcx, &*repr, srcval, vinfo.discr, ix)
+        });
 
     if type_is_sized(bcx.tcx(), d.ty) {
         DatumBlock { datum: d.to_expr_datum(), bcx: bcx }
@@ -941,29 +910,8 @@ fn trans_def<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             DatumBlock::new(bcx, datum.to_expr_datum())
         }
         def::DefStatic(did, _) => {
-            // There are two things that may happen here:
-            //  1) If the static item is defined in this crate, it will be
-            //     translated using `get_item_val`, and we return a pointer to
-            //     the result.
-            //  2) If the static item is defined in another crate then we add
-            //     (or reuse) a declaration of an external global, and return a
-            //     pointer to that.
             let const_ty = expr_ty(bcx, ref_expr);
-
-            // For external constants, we don't inline.
-            let val = if let Some(node_id) = bcx.tcx().map.as_local_node_id(did) {
-                // Case 1.
-
-                // The LLVM global has the type of its initializer,
-                // which may not be equal to the enum's type for
-                // non-C-like enums.
-                let val = base::get_item_val(bcx.ccx(), node_id);
-                let pty = type_of::type_of(bcx.ccx(), const_ty).ptr_to();
-                PointerCast(bcx, val, pty)
-            } else {
-                // Case 2.
-                base::get_extern_const(bcx.ccx(), did, const_ty)
-            };
+            let val = get_static_val(bcx.ccx(), did, const_ty);
             let lval = Lvalue::new("expr::trans_def");
             DatumBlock::new(bcx, Datum::new(val, const_ty, LvalueExpr(lval)))
         }
@@ -1569,9 +1517,10 @@ pub fn trans_adt<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         // Second, trans the base to the dest.
         assert_eq!(discr, 0);
 
+        let addr = adt::MaybeSizedValue::sized(addr);
         match expr_kind(bcx.tcx(), &*base.expr) {
             ExprKind::RvalueDps | ExprKind::RvalueDatum if !bcx.fcx.type_needs_drop(ty) => {
-                bcx = trans_into(bcx, &*base.expr, SaveIn(addr));
+                bcx = trans_into(bcx, &*base.expr, SaveIn(addr.value));
             },
             ExprKind::RvalueStmt => {
                 bcx.tcx().sess.bug("unexpected expr kind for struct base expr")
@@ -1595,6 +1544,7 @@ pub fn trans_adt<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         }
     } else {
         // No base means we can write all fields directly in place.
+        let addr = adt::MaybeSizedValue::sized(addr);
         for &(i, ref e) in fields {
             let dest = adt::trans_field_ptr(bcx, &*repr, addr, discr, i);
             let e_ty = expr_ty_adjusted(bcx, &**e);
@@ -1744,58 +1694,6 @@ fn trans_addr_of<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         // Sized value, ref to a thin pointer
         immediate_rvalue_bcx(bcx, sub_datum.val, ty).to_expr_datumblock()
     }
-}
-
-fn trans_fat_ptr_binop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                                   binop_expr: &hir::Expr,
-                                   binop_ty: Ty<'tcx>,
-                                   op: hir::BinOp,
-                                   lhs: Datum<'tcx, Rvalue>,
-                                   rhs: Datum<'tcx, Rvalue>)
-                                   -> DatumBlock<'blk, 'tcx, Expr>
-{
-    let debug_loc = binop_expr.debug_loc();
-
-    let lhs_addr = Load(bcx, GEPi(bcx, lhs.val, &[0, abi::FAT_PTR_ADDR]));
-    let lhs_extra = Load(bcx, GEPi(bcx, lhs.val, &[0, abi::FAT_PTR_EXTRA]));
-
-    let rhs_addr = Load(bcx, GEPi(bcx, rhs.val, &[0, abi::FAT_PTR_ADDR]));
-    let rhs_extra = Load(bcx, GEPi(bcx, rhs.val, &[0, abi::FAT_PTR_EXTRA]));
-
-    let val = match op.node {
-        hir::BiEq => {
-            let addr_eq = ICmp(bcx, llvm::IntEQ, lhs_addr, rhs_addr, debug_loc);
-            let extra_eq = ICmp(bcx, llvm::IntEQ, lhs_extra, rhs_extra, debug_loc);
-            And(bcx, addr_eq, extra_eq, debug_loc)
-        }
-        hir::BiNe => {
-            let addr_eq = ICmp(bcx, llvm::IntNE, lhs_addr, rhs_addr, debug_loc);
-            let extra_eq = ICmp(bcx, llvm::IntNE, lhs_extra, rhs_extra, debug_loc);
-            Or(bcx, addr_eq, extra_eq, debug_loc)
-        }
-        hir::BiLe | hir::BiLt | hir::BiGe | hir::BiGt => {
-            // a OP b ~ a.0 STRICT(OP) b.0 | (a.0 == b.0 && a.1 OP a.1)
-            let (op, strict_op) = match op.node {
-                hir::BiLt => (llvm::IntULT, llvm::IntULT),
-                hir::BiLe => (llvm::IntULE, llvm::IntULT),
-                hir::BiGt => (llvm::IntUGT, llvm::IntUGT),
-                hir::BiGe => (llvm::IntUGE, llvm::IntUGT),
-                _ => unreachable!()
-            };
-
-            let addr_eq = ICmp(bcx, llvm::IntEQ, lhs_addr, rhs_addr, debug_loc);
-            let extra_op = ICmp(bcx, op, lhs_extra, rhs_extra, debug_loc);
-            let addr_eq_extra_op = And(bcx, addr_eq, extra_op, debug_loc);
-
-            let addr_strict = ICmp(bcx, strict_op, lhs_addr, rhs_addr, debug_loc);
-            Or(bcx, addr_strict, addr_eq_extra_op, debug_loc)
-        }
-        _ => {
-            bcx.tcx().sess.span_bug(binop_expr.span, "unexpected binop");
-        }
-    };
-
-    immediate_rvalue_bcx(bcx, val, binop_ty).to_expr_datumblock()
 }
 
 fn trans_scalar_binop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
@@ -2026,7 +1924,15 @@ fn trans_binary<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             if type_is_fat_ptr(ccx.tcx(), lhs.ty) {
                 assert!(type_is_fat_ptr(ccx.tcx(), rhs.ty),
                         "built-in binary operators on fat pointers are homogeneous");
-                trans_fat_ptr_binop(bcx, expr, binop_ty, op, lhs, rhs)
+                assert_eq!(binop_ty, bcx.tcx().types.bool);
+                let val = base::compare_scalar_types(
+                    bcx,
+                    lhs.val,
+                    rhs.val,
+                    lhs.ty,
+                    op.node,
+                    expr.debug_loc());
+                immediate_rvalue_bcx(bcx, val, binop_ty).to_expr_datumblock()
             } else {
                 assert!(!type_is_fat_ptr(ccx.tcx(), rhs.ty),
                         "built-in binary operators on fat pointers are homogeneous");
@@ -2574,29 +2480,6 @@ impl OverflowOpViaInputCheck {
     }
 }
 
-fn shift_mask_val<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                              llty: Type,
-                              mask_llty: Type,
-                              invert: bool) -> ValueRef {
-    let kind = llty.kind();
-    match kind {
-        TypeKind::Integer => {
-            // i8/u8 can shift by at most 7, i16/u16 by at most 15, etc.
-            let val = llty.int_width() - 1;
-            if invert {
-                C_integral(mask_llty, !val, true)
-            } else {
-                C_integral(mask_llty, val, false)
-            }
-        },
-        TypeKind::Vector => {
-            let mask = shift_mask_val(bcx, llty.element_type(), mask_llty.element_type(), invert);
-            VectorSplat(bcx, mask_llty.vector_length(), mask)
-        },
-        _ => panic!("shift_mask_val: expected Integer or Vector, found {:?}", kind),
-    }
-}
-
 // Check if an integer or vector contains a nonzero element.
 fn build_nonzero_check<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                    value: ValueRef,
@@ -2614,44 +2497,6 @@ fn build_nonzero_check<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         },
         _ => panic!("build_nonzero_check: expected Integer or Vector, found {:?}", kind),
     }
-}
-
-// To avoid UB from LLVM, these two functions mask RHS with an
-// appropriate mask unconditionally (i.e. the fallback behavior for
-// all shifts). For 32- and 64-bit types, this matches the semantics
-// of Java. (See related discussion on #1877 and #10183.)
-
-fn build_unchecked_lshift<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                                      lhs: ValueRef,
-                                      rhs: ValueRef,
-                                      binop_debug_loc: DebugLoc) -> ValueRef {
-    let rhs = base::cast_shift_expr_rhs(bcx, hir::BinOp_::BiShl, lhs, rhs);
-    // #1877, #10183: Ensure that input is always valid
-    let rhs = shift_mask_rhs(bcx, rhs, binop_debug_loc);
-    Shl(bcx, lhs, rhs, binop_debug_loc)
-}
-
-fn build_unchecked_rshift<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                                      lhs_t: Ty<'tcx>,
-                                      lhs: ValueRef,
-                                      rhs: ValueRef,
-                                      binop_debug_loc: DebugLoc) -> ValueRef {
-    let rhs = base::cast_shift_expr_rhs(bcx, hir::BinOp_::BiShr, lhs, rhs);
-    // #1877, #10183: Ensure that input is always valid
-    let rhs = shift_mask_rhs(bcx, rhs, binop_debug_loc);
-    let is_signed = lhs_t.is_signed();
-    if is_signed {
-        AShr(bcx, lhs, rhs, binop_debug_loc)
-    } else {
-        LShr(bcx, lhs, rhs, binop_debug_loc)
-    }
-}
-
-fn shift_mask_rhs<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                              rhs: ValueRef,
-                              debug_loc: DebugLoc) -> ValueRef {
-    let rhs_llty = val_ty(rhs);
-    And(bcx, rhs, shift_mask_val(bcx, rhs_llty, rhs_llty, false), debug_loc)
 }
 
 fn with_overflow_check<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, oop: OverflowOp, info: NodeIdAndSpan,

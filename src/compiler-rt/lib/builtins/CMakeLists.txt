@@ -8,6 +8,7 @@ set(GENERIC_SOURCES
   absvti2.c
   adddf3.c
   addsf3.c
+  addtf3.c
   addvdi3.c
   addvsi3.c
   addvti3.c
@@ -38,10 +39,12 @@ set(GENERIC_SOURCES
   divsf3.c
   divsi3.c
   divti3.c
+  divtf3.c
   divxc3.c
   enable_execute_stack.c
   eprintf.c
   extendsfdf2.c
+  extendhfsf2.c
   ffsdi2.c
   ffsti2.c
   fixdfdi.c
@@ -77,7 +80,6 @@ set(GENERIC_SOURCES
   floatuntidf.c
   floatuntisf.c
   floatuntixf.c
-  gcc_personality_v0.c
   int_util.c
   lshrdi3.c
   lshrti3.c
@@ -93,6 +95,7 @@ set(GENERIC_SOURCES
   mulsc3.c
   mulsf3.c
   multi3.c
+  multf3.c
   mulvdi3.c
   mulvsi3.c
   mulvti3.c
@@ -119,8 +122,11 @@ set(GENERIC_SOURCES
   subvdi3.c
   subvsi3.c
   subvti3.c
+  subtf3.c
   trampoline_setup.c
+  truncdfhf2.c
   truncdfsf2.c
+  truncsfhf2.c
   ucmpdi2.c
   ucmpti2.c
   udivdi3.c
@@ -133,37 +139,98 @@ set(GENERIC_SOURCES
   umodsi3.c
   umodti3.c)
 
-set(x86_64_SOURCES
-  x86_64/floatdidf.c
-  x86_64/floatdisf.c
-  x86_64/floatdixf.c
-  x86_64/floatundidf.S
-  x86_64/floatundisf.S
-  x86_64/floatundixf.S
-  ${GENERIC_SOURCES})
+if(APPLE)
+  set(GENERIC_SOURCES
+    ${GENERIC_SOURCES}
+    atomic_flag_clear.c
+    atomic_flag_clear_explicit.c
+    atomic_flag_test_and_set.c
+    atomic_flag_test_and_set_explicit.c
+    atomic_signal_fence.c
+    atomic_thread_fence.c)
+endif()
 
-set(i386_SOURCES
-  i386/ashldi3.S
-  i386/ashrdi3.S
-  i386/divdi3.S
-  i386/floatdidf.S
-  i386/floatdisf.S
-  i386/floatdixf.S
-  i386/floatundidf.S
-  i386/floatundisf.S
-  i386/floatundixf.S
-  i386/lshrdi3.S
-  i386/moddi3.S
-  i386/muldi3.S
-  i386/udivdi3.S
-  i386/umoddi3.S
-  ${GENERIC_SOURCES})
+if(NOT WIN32)
+  set(GENERIC_SOURCES
+      ${GENERIC_SOURCES}
+      emutls.c)
+endif()
+
+if (HAVE_UNWIND_H)
+  set(GENERIC_SOURCES
+      ${GENERIC_SOURCES}
+      gcc_personality_v0.c)
+endif ()
+
+if (NOT MSVC)
+  set(x86_64_SOURCES
+      x86_64/floatdidf.c
+      x86_64/floatdisf.c
+      x86_64/floatdixf.c
+      x86_64/floatundidf.S
+      x86_64/floatundisf.S
+      x86_64/floatundixf.S
+      ${GENERIC_SOURCES})
+  set(x86_64h_SOURCES ${x86_64_SOURCES})
+
+  if (WIN32)
+    set(x86_64_SOURCES
+        ${x86_64_SOURCES}
+        x86_64/chkstk.S
+        x86_64/chkstk2.S)
+  endif()
+
+  set(i386_SOURCES
+      i386/ashldi3.S
+      i386/ashrdi3.S
+      i386/divdi3.S
+      i386/floatdidf.S
+      i386/floatdisf.S
+      i386/floatdixf.S
+      i386/floatundidf.S
+      i386/floatundisf.S
+      i386/floatundixf.S
+      i386/lshrdi3.S
+      i386/moddi3.S
+      i386/muldi3.S
+      i386/udivdi3.S
+      i386/umoddi3.S
+      ${GENERIC_SOURCES})
+
+  if (WIN32)
+    set(i386_SOURCES
+        ${i386_SOURCES}
+        i386/chkstk.S
+        i386/chkstk2.S)
+  endif()
+
+  set(i686_SOURCES
+      ${i386_SOURCES})
+else () # MSVC
+  # Use C versions of functions when building on MSVC
+  # MSVC's assembler takes Intel syntax, not AT&T syntax
+  set(x86_64_SOURCES
+      x86_64/floatdidf.c
+      x86_64/floatdisf.c
+      x86_64/floatdixf.c
+      ${GENERIC_SOURCES})
+  set(x86_64h_SOURCES ${x86_64_SOURCES})
+  set(i386_SOURCES ${GENERIC_SOURCES})
+  set(i686_SOURCES ${i386_SOURCES})
+endif () # if (NOT MSVC)
 
 set(arm_SOURCES
   arm/adddf3vfp.S
   arm/addsf3vfp.S
+  arm/aeabi_cdcmp.S
+  arm/aeabi_cdcmpeq_check_nan.c
+  arm/aeabi_cfcmp.S
+  arm/aeabi_cfcmpeq_check_nan.c
   arm/aeabi_dcmp.S
+  arm/aeabi_div0.c
+  arm/aeabi_drsub.c
   arm/aeabi_fcmp.S
+  arm/aeabi_frsub.c
   arm/aeabi_idivmod.S
   arm/aeabi_ldivmod.S
   arm/aeabi_memcmp.S
@@ -243,19 +310,74 @@ set(arm_SOURCES
   ${GENERIC_SOURCES})
 
 set(aarch64_SOURCES
+  comparetf2.c
+  extenddftf2.c
+  extendsftf2.c
+  fixtfdi.c
+  fixtfsi.c
+  fixtfti.c
+  fixunstfdi.c
+  fixunstfsi.c
+  fixunstfti.c
+  floatditf.c
+  floatsitf.c
+  floatunditf.c
+  floatunsitf.c
+  multc3.c
+  trunctfdf2.c
+  trunctfsf2.c
   ${GENERIC_SOURCES})
+
+set(armhf_SOURCES ${arm_SOURCES})
+set(armv7_SOURCES ${arm_SOURCES})
+set(armv7s_SOURCES ${arm_SOURCES})
+set(arm64_SOURCES ${aarch64_SOURCES})
+
+# macho_embedded archs
+set(armv6m_SOURCES ${GENERIC_SOURCES})
+set(armv7m_SOURCES ${arm_SOURCES})
+set(armv7em_SOURCES ${arm_SOURCES})
+
+set(mips_SOURCES ${GENERIC_SOURCES})
+set(mipsel_SOURCES ${mips_SOURCES})
+set(mips64_SOURCES ${mips_SOURCES})
+set(mips64el_SOURCES ${mips_SOURCES})
 
 add_custom_target(builtins)
 
-if (NOT WIN32)
-  foreach(arch x86_64 i386 arm aarch64)
-    if(CAN_TARGET_${arch})
-      add_compiler_rt_runtime(clang_rt.${arch} ${arch} STATIC
-        SOURCES ${${arch}_SOURCES}
-        CFLAGS "-std=c99")
-      add_dependencies(builtins clang_rt.${arch})
-    endif()
-  endforeach()
-endif()
+if (APPLE)
+  add_subdirectory(Darwin-excludes)
+  add_subdirectory(macho_embedded)
+  darwin_add_builtin_libraries(${BUILTIN_SUPPORTED_OS})
+else ()
+  foreach (arch ${BUILTIN_SUPPORTED_ARCH})
+    if (CAN_TARGET_${arch})
+      # Filter out generic versions of routines that are re-implemented in
+      # architecture specific manner.  This prevents multiple definitions of the
+      # same symbols, making the symbol selection non-deterministic.
+      foreach (_file ${${arch}_SOURCES})
+        if (${_file} MATCHES ${arch}/*)
+          get_filename_component(_name ${_file} NAME)
+          string(REPLACE ".S" ".c" _cname "${_name}")
+          list(REMOVE_ITEM ${arch}_SOURCES ${_cname})
+        endif ()
+      endforeach ()
+
+      # Rust: don't insert a reference to MSVCRT.lib/etc
+      if (MSVC)
+        set(_cflags -Zl)
+      else ()
+        set(_cflags -std=c99)
+      endif ()
+
+      add_compiler_rt_runtime(clang_rt.builtins
+                              STATIC
+                              ARCHS ${arch}
+                              SOURCES ${${arch}_SOURCES}
+                              CFLAGS ${_cflags}
+                              PARENT_TARGET builtins)
+    endif ()
+  endforeach ()
+endif ()
 
 add_dependencies(compiler-rt builtins)

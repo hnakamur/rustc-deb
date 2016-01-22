@@ -22,10 +22,11 @@ $(eval $(call RUST_CRATE,coretest))
 DEPS_collectionstest :=
 $(eval $(call RUST_CRATE,collectionstest))
 
-TEST_TARGET_CRATES = $(filter-out core rustc_unicode alloc_system \
+TEST_TARGET_CRATES = $(filter-out core rustc_unicode alloc_system libc \
 		     		  alloc_jemalloc,$(TARGET_CRATES)) \
 			collectionstest coretest
-TEST_DOC_CRATES = $(DOC_CRATES)
+TEST_DOC_CRATES = $(DOC_CRATES) arena flate fmt_macros getopts graphviz \
+                log rand rbml serialize syntax term test
 TEST_HOST_CRATES = $(filter-out rustc_typeck rustc_borrowck rustc_resolve \
 		   		rustc_trans rustc_lint,\
                      $(HOST_CRATES))
@@ -162,8 +163,8 @@ endef
 
 $(foreach doc,$(DOCS), \
   $(eval $(call DOCTEST,md-$(doc),$(S)src/doc/$(doc).md)))
-$(foreach file,$(wildcard $(S)src/doc/trpl/*.md), \
-  $(eval $(call DOCTEST,$(file:$(S)src/doc/trpl/%.md=trpl-%),$(file))))
+$(foreach file,$(wildcard $(S)src/doc/book/*.md), \
+  $(eval $(call DOCTEST,$(file:$(S)src/doc/book/%.md=book-%),$(file))))
 $(foreach file,$(wildcard $(S)src/doc/nomicon/*.md), \
   $(eval $(call DOCTEST,$(file:$(S)src/doc/nomicon/%.md=nomicon-%),$(file))))
 ######################################################################
@@ -283,6 +284,7 @@ tidy-binaries:
 		| grep '^$(S)src/compiler-rt' -v \
 		| grep '^$(S)src/libbacktrace' -v \
 		| grep '^$(S)src/rust-installer' -v \
+		| grep '^$(S)src/liblibc' -v \
 		| xargs $(CFG_PYTHON) $(S)src/etc/check-binaries.py
 
 .PHONY: tidy-errors
@@ -391,7 +393,8 @@ $(3)/stage$(1)/test/$(4)test-$(2)$$(X_$(2)): \
 	    $$(subst @,,$$(STAGE$(1)_T_$(2)_H_$(3))) -o $$@ $$< --test \
 		-L "$$(RT_OUTPUT_DIR_$(2))" \
 		$$(LLVM_LIBDIR_RUSTFLAGS_$(2)) \
-		$$(RUSTFLAGS_$(4))
+		$$(RUSTFLAGS_$(4)) \
+		$$(STDCPP_LIBDIR_RUSTFLAGS_$(2))
 
 endef
 
@@ -605,7 +608,7 @@ endif
 
 # CTEST_DISABLE_NONSELFHOST_$(TEST_GROUP), if set, will cause that
 # test group to be disabled *unless* the target is able to build a
-# compiler (i.e. when the target triple is in the set of of host
+# compiler (i.e. when the target triple is in the set of host
 # triples).  The associated message will be printed as a warning
 # during attempts to run those tests.
 
@@ -661,9 +664,9 @@ CTEST_COMMON_ARGS$(1)-T-$(2)-H-$(3) := \
         --android-cross-path=$(CFG_ANDROID_CROSS_PATH) \
         --adb-path=$(CFG_ADB) \
         --adb-test-dir=$(CFG_ADB_TEST_DIR) \
-        --host-rustcflags "$(RUSTC_FLAGS_$(3)) $$(CTEST_RUSTC_FLAGS) -L $$(RT_OUTPUT_DIR_$(3))" \
+        --host-rustcflags "$(RUSTC_FLAGS_$(3)) $$(CTEST_RUSTC_FLAGS) -L $$(RT_OUTPUT_DIR_$(3)) $$(STDCPP_LIBDIR_RUSTFLAGS_$(3))" \
         --lldb-python-dir=$(CFG_LLDB_PYTHON_DIR) \
-        --target-rustcflags "$(RUSTC_FLAGS_$(2)) $$(CTEST_RUSTC_FLAGS) -L $$(RT_OUTPUT_DIR_$(2))" \
+        --target-rustcflags "$(RUSTC_FLAGS_$(2)) $$(CTEST_RUSTC_FLAGS) -L $$(RT_OUTPUT_DIR_$(2)) $$(STDCPP_LIBDIR_RUSTFLAGS_$(2))" \
         $$(CTEST_TESTARGS)
 
 ifdef CFG_VALGRIND_RPASS

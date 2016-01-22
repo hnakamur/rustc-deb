@@ -7,15 +7,16 @@
 
 #ifdef __x86_64__
 
-#if defined(__APPLE__)
-.literal4
-#endif
-two: .single 2.0
+CONST_SECTION
+
+	.balign 16
+two:
+	.single 2.0
 
 #define REL_ADDR(_a)	(_a)(%rip)
 
 .text
-.align 4
+.balign 4
 DEFINE_COMPILERRT_FUNCTION(__floatundisf)
 	movq		$1,			%rsi
 	testq		%rdi,		%rdi

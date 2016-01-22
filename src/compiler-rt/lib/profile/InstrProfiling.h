@@ -27,7 +27,6 @@ typedef uint32_t uintptr_t;
 
 #endif /* defined(__FreeBSD__) && defined(__i386__) */
 
-#define PROFILE_HEADER_SIZE 7
 
 typedef struct __llvm_profile_data {
   const uint32_t NameSize;
@@ -36,6 +35,17 @@ typedef struct __llvm_profile_data {
   const char *const Name;
   uint64_t *const Counters;
 } __llvm_profile_data;
+
+typedef struct __llvm_profile_header {
+  uint64_t Magic;
+  uint64_t Version;
+  uint64_t DataSize;
+  uint64_t CountersSize;
+  uint64_t NamesSize;
+  uint64_t CountersDelta;
+  uint64_t NamesDelta;
+} __llvm_profile_header;
+
 
 /*!
  * \brief Get required size for profile buffer.
@@ -50,22 +60,21 @@ uint64_t __llvm_profile_get_size_for_buffer(void);
  */
 int __llvm_profile_write_buffer(char *Buffer);
 
-const __llvm_profile_data *__llvm_profile_data_begin(void);
-const __llvm_profile_data *__llvm_profile_data_end(void);
-const char *__llvm_profile_names_begin(void);
-const char *__llvm_profile_names_end(void);
-uint64_t *__llvm_profile_counters_begin(void);
-uint64_t *__llvm_profile_counters_end(void);
-
-#define PROFILE_RANGE_SIZE(Range) \
-  (__llvm_profile_ ## Range ## _end() - __llvm_profile_ ## Range ## _begin())
+const __llvm_profile_data *__llvm_profile_begin_data(void);
+const __llvm_profile_data *__llvm_profile_end_data(void);
+const char *__llvm_profile_begin_names(void);
+const char *__llvm_profile_end_names(void);
+uint64_t *__llvm_profile_begin_counters(void);
+uint64_t *__llvm_profile_end_counters(void);
 
 /*!
  * \brief Write instrumentation data to the current file.
  *
  * Writes to the file with the last name given to \a __llvm_profile_set_filename(),
  * or if it hasn't been called, the \c LLVM_PROFILE_FILE environment variable,
- * or if that's not set, \c "default.profdata".
+ * or if that's not set, the last name given to
+ * \a __llvm_profile_override_default_filename(), or if that's not set,
+ * \c "default.profraw".
  */
 int __llvm_profile_write_file(void);
 
@@ -80,8 +89,24 @@ int __llvm_profile_write_file(void);
  */
 void __llvm_profile_set_filename(const char *Name);
 
+/*!
+ * \brief Set the filename for writing instrumentation data, unless the
+ * \c LLVM_PROFILE_FILE environment variable was set.
+ *
+ * Unless overridden, sets the filename to be used for subsequent calls to
+ * \a __llvm_profile_write_file().
+ *
+ * \c Name is not copied, so it must remain valid.  Passing NULL resets the
+ * filename logic to the default behaviour (unless the \c LLVM_PROFILE_FILE
+ * was set in which case it has no effect).
+ */
+void __llvm_profile_override_default_filename(const char *Name);
+
 /*! \brief Register to write instrumentation data to file at exit. */
 int __llvm_profile_register_write_file_atexit(void);
+
+/*! \brief Initialize file handling. */
+void __llvm_profile_initialize_file(void);
 
 /*! \brief Get the magic token for the file format. */
 uint64_t __llvm_profile_get_magic(void);

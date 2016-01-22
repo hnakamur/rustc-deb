@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use rustc::middle::def_id::DefId;
+use rustc::middle::privacy::AccessLevels;
 use rustc::util::nodemap::DefIdSet;
 use std::cmp;
 use std::string::String;
@@ -96,13 +98,13 @@ pub fn strip_private(mut krate: clean::Crate) -> plugins::PluginResult {
     let analysis = super::ANALYSISKEY.with(|a| a.clone());
     let analysis = analysis.borrow();
     let analysis = analysis.as_ref().unwrap();
-    let exported_items = analysis.exported_items.clone();
+    let access_levels = analysis.access_levels.clone();
 
     // strip all private items
     {
         let mut stripper = Stripper {
             retained: &mut retained,
-            exported_items: &exported_items,
+            access_levels: &access_levels,
         };
         krate = stripper.fold_crate(krate);
     }
@@ -117,7 +119,7 @@ pub fn strip_private(mut krate: clean::Crate) -> plugins::PluginResult {
 
 struct Stripper<'a> {
     retained: &'a mut DefIdSet,
-    exported_items: &'a DefIdSet,
+    access_levels: &'a AccessLevels<DefId>,
 }
 
 impl<'a> fold::DocFolder for Stripper<'a> {
@@ -130,18 +132,14 @@ impl<'a> fold::DocFolder for Stripper<'a> {
             clean::VariantItem(..) | clean::MethodItem(..) |
             clean::ForeignFunctionItem(..) | clean::ForeignStaticItem(..) => {
                 if i.def_id.is_local() {
-                    if !self.exported_items.contains(&i.def_id) {
-                        return None;
-                    }
-                    // Traits are in exported_items even when they're totally private.
-                    if i.is_trait() && i.visibility != Some(hir::Public) {
+                    if !self.access_levels.is_exported(i.def_id) {
                         return None;
                     }
                 }
             }
 
             clean::ConstantItem(..) => {
-                if i.def_id.is_local() && !self.exported_items.contains(&i.def_id) {
+                if i.def_id.is_local() && !self.access_levels.is_exported(i.def_id) {
                     return None;
                 }
             }
@@ -168,7 +166,7 @@ impl<'a> fold::DocFolder for Stripper<'a> {
             clean::ImplItem(clean::Impl{
                 for_: clean::ResolvedPath{ did, .. }, ..
             }) => {
-                if did.is_local() && !self.exported_items.contains(&did) {
+                if did.is_local() && !self.access_levels.is_exported(did) {
                     return None;
                 }
             }
@@ -331,24 +329,24 @@ pub fn unindent(s: &str) -> String {
             min_indent
         } else {
             saw_first_line = true;
-            let mut spaces = 0;
+            let mut whitespace = 0;
             line.chars().all(|char| {
-                // Only comparing against space because I wouldn't
-                // know what to do with mixed whitespace chars
-                if char == ' ' {
-                    spaces += 1;
+                // Compare against either space or tab, ignoring whether they
+                // are mixed or not
+                if char == ' ' || char == '\t' {
+                    whitespace += 1;
                     true
                 } else {
                     false
                 }
             });
-            cmp::min(min_indent, spaces)
+            cmp::min(min_indent, whitespace)
         }
     });
 
     if !lines.is_empty() {
         let mut unindented = vec![ lines[0].trim().to_string() ];
-        unindented.push_all(&lines[1..].iter().map(|&line| {
+        unindented.extend_from_slice(&lines[1..].iter().map(|&line| {
             if line.chars().all(|c| c.is_whitespace()) {
                 line.to_string()
             } else {
@@ -406,5 +404,23 @@ mod unindent_tests {
         let s = "line1\n\n    line2".to_string();
         let r = unindent(&s);
         assert_eq!(r, "line1\n\n    line2");
+    }
+
+    #[test]
+    fn should_unindent_tabs() {
+        let s = "\tline1\n\tline2".to_string();
+        let r = unindent(&s);
+        assert_eq!(r, "line1\nline2");
+    }
+
+    #[test]
+    fn should_trim_mixed_indentation() {
+        let s = "\t    line1\n\t    line2".to_string();
+        let r = unindent(&s);
+        assert_eq!(r, "line1\nline2");
+
+        let s = "    \tline1\n    \tline2".to_string();
+        let r = unindent(&s);
+        assert_eq!(r, "line1\nline2");
     }
 }

@@ -23,7 +23,6 @@ use ffi::{OsStr, OsString};
 use fmt;
 use io;
 use path::{Path, PathBuf};
-use sync::StaticMutex;
 use sys::os as os_imp;
 
 /// Returns the current working directory as a `PathBuf`.
@@ -67,8 +66,6 @@ pub fn current_dir() -> io::Result<PathBuf> {
 pub fn set_current_dir<P: AsRef<Path>>(p: P) -> io::Result<()> {
     os_imp::chdir(p.as_ref())
 }
-
-static ENV_LOCK: StaticMutex = StaticMutex::new();
 
 /// An iterator over a snapshot of the environment variables of this process.
 ///
@@ -133,7 +130,6 @@ pub fn vars() -> Vars {
 /// ```
 #[stable(feature = "env", since = "1.0.0")]
 pub fn vars_os() -> VarsOs {
-    let _g = ENV_LOCK.lock();
     VarsOs { inner: os_imp::env() }
 }
 
@@ -204,8 +200,9 @@ pub fn var_os<K: AsRef<OsStr>>(key: K) -> Option<OsString> {
 }
 
 fn _var_os(key: &OsStr) -> Option<OsString> {
-    let _g = ENV_LOCK.lock();
-    os_imp::getenv(key)
+    os_imp::getenv(key).unwrap_or_else(|e| {
+        panic!("failed to get environment variable `{:?}`: {}", key, e)
+    })
 }
 
 /// Possible errors from the `env::var` method.
@@ -281,8 +278,10 @@ pub fn set_var<K: AsRef<OsStr>, V: AsRef<OsStr>>(k: K, v: V) {
 }
 
 fn _set_var(k: &OsStr, v: &OsStr) {
-    let _g = ENV_LOCK.lock();
-    os_imp::setenv(k, v)
+    os_imp::setenv(k, v).unwrap_or_else(|e| {
+        panic!("failed to set environment variable `{:?}` to `{:?}`: {}",
+               k, v, e)
+    })
 }
 
 /// Removes an environment variable from the environment of the currently running process.
@@ -322,11 +321,12 @@ pub fn remove_var<K: AsRef<OsStr>>(k: K) {
 }
 
 fn _remove_var(k: &OsStr) {
-    let _g = ENV_LOCK.lock();
-    os_imp::unsetenv(k)
+    os_imp::unsetenv(k).unwrap_or_else(|e| {
+        panic!("failed to remove environment variable `{:?}`: {}", k, e)
+    })
 }
 
-/// An iterator over `Path` instances for parsing an environment variable
+/// An iterator over `PathBuf` instances for parsing an environment variable
 /// according to platform-specific conventions.
 ///
 /// This structure is returned from `std::env::split_paths`.
@@ -416,12 +416,14 @@ impl Error for JoinPathsError {
     fn description(&self) -> &str { self.inner.description() }
 }
 
-/// Optionally returns the path to the current user's home directory if known.
+/// Returns the path to the current user's home directory if known.
 ///
 /// # Unix
 ///
 /// Returns the value of the 'HOME' environment variable if it is set
-/// and not equal to the empty string.
+/// and not equal to the empty string. Otherwise, it tries to determine the
+/// home directory by invoking the `getpwuid_r` function on the UID of the
+/// current user.
 ///
 /// # Windows
 ///
@@ -480,8 +482,8 @@ pub fn temp_dir() -> PathBuf {
     os_imp::temp_dir()
 }
 
-/// Optionally returns the filesystem path to the current executable which is
-/// running but with the executable name.
+/// Returns the filesystem path to the current executable which is running but
+/// with the executable name.
 ///
 /// The path returned is not necessarily a "real path" to the executable as
 /// there may be intermediate symlinks.
@@ -669,9 +671,9 @@ pub mod consts {
     ///
     /// Some possible values:
     ///
-    /// - .so
-    /// - .dylib
-    /// - .dll
+    /// - so
+    /// - dylib
+    /// - dll
     #[stable(feature = "env", since = "1.0.0")]
     pub const DLL_EXTENSION: &'static str = super::os::DLL_EXTENSION;
 
@@ -680,7 +682,9 @@ pub mod consts {
     ///
     /// Some possible values:
     ///
-    /// - exe
+    /// - .exe
+    /// - .nexe
+    /// - .pexe
     /// - `""` (an empty string)
     #[stable(feature = "env", since = "1.0.0")]
     pub const EXE_SUFFIX: &'static str = super::os::EXE_SUFFIX;
@@ -807,6 +811,27 @@ mod os {
     pub const EXE_EXTENSION: &'static str = "exe";
 }
 
+#[cfg(all(target_os = "nacl", not(target_arch = "le32")))]
+mod os {
+    pub const FAMILY: &'static str = "unix";
+    pub const OS: &'static str = "nacl";
+    pub const DLL_PREFIX: &'static str = "lib";
+    pub const DLL_SUFFIX: &'static str = ".so";
+    pub const DLL_EXTENSION: &'static str = "so";
+    pub const EXE_SUFFIX: &'static str = ".nexe";
+    pub const EXE_EXTENSION: &'static str = "nexe";
+}
+#[cfg(all(target_os = "nacl", target_arch = "le32"))]
+mod os {
+    pub const FAMILY: &'static str = "unix";
+    pub const OS: &'static str = "pnacl";
+    pub const DLL_PREFIX: &'static str = "lib";
+    pub const DLL_SUFFIX: &'static str = ".pso";
+    pub const DLL_EXTENSION: &'static str = "pso";
+    pub const EXE_SUFFIX: &'static str = ".pexe";
+    pub const EXE_EXTENSION: &'static str = "pexe";
+}
+
 #[cfg(target_arch = "x86")]
 mod arch {
     pub const ARCH: &'static str = "x86";
@@ -840,6 +865,11 @@ mod arch {
 #[cfg(target_arch = "powerpc")]
 mod arch {
     pub const ARCH: &'static str = "powerpc";
+}
+
+#[cfg(target_arch = "le32")]
+mod arch {
+    pub const ARCH: &'static str = "le32";
 }
 
 #[cfg(test)]

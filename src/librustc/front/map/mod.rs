@@ -14,8 +14,8 @@ use self::MapEntry::*;
 use self::collector::NodeCollector;
 pub use self::definitions::{Definitions, DefKey, DefPath, DefPathData, DisambiguatedDefPathData};
 
-use metadata::inline::InlinedItem;
-use metadata::inline::InlinedItem as II;
+use middle::cstore::InlinedItem;
+use middle::cstore::InlinedItem as II;
 use middle::def_id::DefId;
 
 use syntax::abi;
@@ -25,7 +25,7 @@ use syntax::parse::token;
 
 use rustc_front::hir::*;
 use rustc_front::fold::Folder;
-use rustc_front::visit;
+use rustc_front::intravisit;
 use rustc_front::print::pprust;
 
 use arena::TypedArena;
@@ -809,9 +809,11 @@ impl<F: FoldOps> Folder for IdAndSpanUpdater<F> {
 }
 
 pub fn map_crate<'ast>(forest: &'ast mut Forest) -> Map<'ast> {
-    let mut collector = NodeCollector::root();
-    visit::walk_crate(&mut collector, &forest.krate);
-    let NodeCollector { map, definitions, .. } = collector;
+    let (map, definitions) = {
+        let mut collector = NodeCollector::root(&forest.krate);
+        intravisit::walk_crate(&mut collector, &forest.krate);
+        (collector.map, collector.definitions)
+    };
 
     if log_enabled!(::log::DEBUG) {
         // This only makes sense for ordered stores; note the
@@ -847,16 +849,16 @@ pub fn map_decoded_item<'ast, F: FoldOps>(map: &Map<'ast>,
                                           -> &'ast InlinedItem {
     let mut fld = IdAndSpanUpdater { fold_ops: fold_ops };
     let ii = match ii {
-        II::Item(i) => II::Item(fld.fold_item(i).expect_one("expected one item")),
+        II::Item(i) => II::Item(i.map(|i| fld.fold_item(i))),
         II::TraitItem(d, ti) => {
             II::TraitItem(fld.fold_ops.new_def_id(d),
-                        fld.fold_trait_item(ti).expect_one("expected one trait item"))
+                          ti.map(|ti| fld.fold_trait_item(ti)))
         }
         II::ImplItem(d, ii) => {
             II::ImplItem(fld.fold_ops.new_def_id(d),
-                       fld.fold_impl_item(ii).expect_one("expected one impl item"))
+                         ii.map(|ii| fld.fold_impl_item(ii)))
         }
-        II::Foreign(i) => II::Foreign(fld.fold_foreign_item(i))
+        II::Foreign(i) => II::Foreign(i.map(|i| fld.fold_foreign_item(i)))
     };
 
     let ii_parent = map.forest.inlined_items.alloc(InlinedParent {
@@ -867,6 +869,7 @@ pub fn map_decoded_item<'ast, F: FoldOps>(map: &Map<'ast>,
     let ii_parent_id = fld.new_id(DUMMY_NODE_ID);
     let mut collector =
         NodeCollector::extend(
+            map.krate(),
             ii_parent,
             ii_parent_id,
             def_path,
@@ -937,18 +940,18 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
         }
         Some(NodeImplItem(ii)) => {
             match ii.node {
-                ConstImplItem(..) => {
+                ImplItemKind::Const(..) => {
                     format!("assoc const {} in {}{}",
                             ii.name,
                             map.path_to_string(id),
                             id_str)
                 }
-                MethodImplItem(..) => {
+                ImplItemKind::Method(..) => {
                     format!("method {} in {}{}",
                             ii.name,
                             map.path_to_string(id), id_str)
                 }
-                TypeImplItem(_) => {
+                ImplItemKind::Type(_) => {
                     format!("assoc type {} in {}{}",
                             ii.name,
                             map.path_to_string(id),

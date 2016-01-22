@@ -12,14 +12,14 @@
 
 use session::config;
 use session::Session;
-use metadata::csearch;
+use middle::cstore::CrateStore;
 use middle::lang_items;
 
 use syntax::ast;
 use syntax::codemap::Span;
 use syntax::parse::token::InternedString;
-use rustc_front::visit::Visitor;
-use rustc_front::visit;
+use rustc_front::intravisit::Visitor;
+use rustc_front::intravisit;
 use rustc_front::hir;
 
 use std::collections::HashSet;
@@ -50,7 +50,7 @@ pub fn check_crate(krate: &hir::Crate,
 
     {
         let mut cx = Context { sess: sess, items: items };
-        visit::walk_crate(&mut cx, krate);
+        krate.visit_all_items(&mut cx);
     }
     verify(sess, items);
 }
@@ -79,11 +79,11 @@ fn verify(sess: &Session, items: &lang_items::LanguageItems) {
     if !needs_check { return }
 
     let mut missing = HashSet::new();
-    sess.cstore.iter_crate_data(|cnum, _| {
-        for item in &csearch::get_missing_lang_items(&sess.cstore, cnum) {
-            missing.insert(*item);
+    for cnum in sess.cstore.crates() {
+        for item in sess.cstore.missing_lang_items(cnum) {
+            missing.insert(item);
         }
-    });
+    }
 
     $(
         if missing.contains(&lang_items::$item) && items.$name().is_none() {
@@ -102,8 +102,8 @@ impl<'a> Context<'a> {
             }
         } else)* {
             span_err!(self.sess, span, E0264,
-                               "unknown external lang item: `{}`",
-                                       name);
+                      "unknown external lang item: `{}`",
+                      name);
         }
     }
 }
@@ -114,7 +114,7 @@ impl<'a, 'v> Visitor<'v> for Context<'a> {
             None => {}
             Some(lang_item) => self.register(&lang_item, i.span),
         }
-        visit::walk_foreign_item(self, i)
+        intravisit::walk_foreign_item(self, i)
     }
 }
 

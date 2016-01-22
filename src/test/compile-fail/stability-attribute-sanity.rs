@@ -11,7 +11,8 @@
 // Various checks that stability attributes are used correctly, per RFC 507
 
 #![feature(staged_api)]
-#![staged_api]
+
+#![stable(feature = "rust1", since = "1.0.0")]
 
 mod bogus_attribute_types_1 {
     #[stable(feature = "a", since = "a", reason)] //~ ERROR unknown meta item 'reason'
@@ -44,11 +45,11 @@ mod bogus_attribute_types_2 {
     fn f4() { }
 
     #[stable(feature = "a", since = "b")]
-    #[deprecated] //~ ERROR incorrect stability attribute type
+    #[rustc_deprecated] //~ ERROR incorrect stability attribute type
     fn f5() { }
 
     #[stable(feature = "a", since = "b")]
-    #[deprecated = "a"] //~ ERROR incorrect stability attribute type
+    #[rustc_deprecated = "a"] //~ ERROR incorrect stability attribute type
     fn f6() { }
 }
 
@@ -68,7 +69,7 @@ mod missing_version {
     fn f1() { }
 
     #[stable(feature = "a", since = "b")]
-    #[deprecated(reason = "a")] //~ ERROR missing 'since'
+    #[rustc_deprecated(reason = "a")] //~ ERROR missing 'since'
     fn f2() { }
 }
 
@@ -85,12 +86,12 @@ fn multiple2() { } //~ ERROR multiple stability levels
 fn multiple3() { } //~ ERROR multiple stability levels
 
 #[stable(feature = "a", since = "b")]
-#[deprecated(since = "b", reason = "text")]
-#[deprecated(since = "b", reason = "text")]
-fn multiple4() { } //~ ERROR multiple deprecated attributes
+#[rustc_deprecated(since = "b", reason = "text")]
+#[rustc_deprecated(since = "b", reason = "text")]
+fn multiple4() { } //~ ERROR multiple rustc_deprecated attributes
 //~^ ERROR Invalid stability or deprecation version found
 
-#[deprecated(since = "a", reason = "text")]
-fn deprecated_without_unstable_or_stable() { } //~ ERROR deprecated attribute must be paired
+#[rustc_deprecated(since = "a", reason = "text")]
+fn deprecated_without_unstable_or_stable() { } //~ ERROR rustc_deprecated attribute must be paired
 
 fn main() { }

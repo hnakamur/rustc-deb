@@ -23,21 +23,21 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
-       html_playground_url = "https://play.rust-lang.org/")]
+       html_playground_url = "https://play.rust-lang.org/",
+       test(attr(deny(warnings))))]
 #![no_std]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![unstable(feature = "rand",
             reason = "use `rand` from crates.io",
             issue = "27703")]
 #![feature(core_float)]
 #![feature(core_intrinsics)]
-#![feature(core_slice_ext)]
-#![feature(no_std)]
 #![feature(num_bits_bytes)]
 #![feature(staged_api)]
 #![feature(step_by)]
 #![feature(custom_attribute)]
 #![allow(unused_attributes)]
+#![cfg_attr(stage0, feature(no_std))]
 
 #![cfg_attr(test, feature(test, rand, rustc_private, iter_order_deprecated))]
 
@@ -305,10 +305,9 @@ impl<'a, R: Rng> Iterator for AsciiGenerator<'a, R> {
     type Item = char;
 
     fn next(&mut self) -> Option<char> {
-        const GEN_ASCII_STR_CHARSET: &'static [u8] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
-              abcdefghijklmnopqrstuvwxyz\
-              0123456789";
+        const GEN_ASCII_STR_CHARSET: &'static [u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+                                                       abcdefghijklmnopqrstuvwxyz\
+                                                       0123456789";
         Some(*self.rng.choose(GEN_ASCII_STR_CHARSET).unwrap() as char)
     }
 }

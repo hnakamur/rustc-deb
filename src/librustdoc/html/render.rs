@@ -54,10 +54,10 @@ use externalfiles::ExternalHtml;
 
 use serialize::json::{self, ToJson};
 use syntax::{abi, ast};
-use rustc::metadata::cstore::LOCAL_CRATE;
+use rustc::middle::cstore::LOCAL_CRATE;
 use rustc::middle::def_id::{CRATE_DEF_INDEX, DefId};
+use rustc::middle::privacy::AccessLevels;
 use rustc::middle::stability;
-use rustc::util::nodemap::DefIdSet;
 use rustc_front::hir;
 
 use clean::{self, SelfTy};
@@ -244,7 +244,7 @@ pub struct Cache {
     search_index: Vec<IndexItem>,
     privmod: bool,
     remove_priv: bool,
-    public_items: DefIdSet,
+    access_levels: AccessLevels<DefId>,
     deref_trait_did: Option<DefId>,
 
     // In rare case where a structure is defined in one module but implemented
@@ -342,6 +342,51 @@ impl fmt::Display for IndexItemFunctionType {
 thread_local!(static CACHE_KEY: RefCell<Arc<Cache>> = Default::default());
 thread_local!(pub static CURRENT_LOCATION_KEY: RefCell<Vec<String>> =
                     RefCell::new(Vec::new()));
+thread_local!(static USED_ID_MAP: RefCell<HashMap<String, usize>> =
+                    RefCell::new(init_ids()));
+
+fn init_ids() -> HashMap<String, usize> {
+    [
+     "main",
+     "search",
+     "help",
+     "TOC",
+     "render-detail",
+     "associated-types",
+     "associated-const",
+     "required-methods",
+     "provided-methods",
+     "implementors",
+     "implementors-list",
+     "methods",
+     "deref-methods",
+     "implementations",
+     "derived_implementations"
+     ].into_iter().map(|id| (String::from(*id), 1)).collect::<HashMap<_, _>>()
+}
+
+/// This method resets the local table of used ID attributes. This is typically
+/// used at the beginning of rendering an entire HTML page to reset from the
+/// previous state (if any).
+pub fn reset_ids() {
+    USED_ID_MAP.with(|s| *s.borrow_mut() = init_ids());
+}
+
+pub fn derive_id(candidate: String) -> String {
+    USED_ID_MAP.with(|map| {
+        let id = match map.borrow_mut().get_mut(&candidate) {
+            None => candidate,
+            Some(a) => {
+                let id = format!("{}-{}", candidate, *a);
+                *a += 1;
+                id
+            }
+        };
+
+        map.borrow_mut().insert(id.clone(), 1);
+        id
+    })
+}
 
 /// Generates the documentation for `crate` into the directory `dst`
 pub fn run(mut krate: clean::Crate,
@@ -415,8 +460,8 @@ pub fn run(mut krate: clean::Crate,
     // Crawl the crate to build various caches used for the output
     let analysis = ::ANALYSISKEY.with(|a| a.clone());
     let analysis = analysis.borrow();
-    let public_items = analysis.as_ref().map(|a| a.public_items.clone());
-    let public_items = public_items.unwrap_or(DefIdSet());
+    let access_levels = analysis.as_ref().map(|a| a.access_levels.clone());
+    let access_levels = access_levels.unwrap_or(Default::default());
     let paths: HashMap<DefId, (Vec<String>, ItemType)> =
       analysis.as_ref().map(|a| {
         let paths = a.external_paths.borrow_mut().take().unwrap();
@@ -435,7 +480,7 @@ pub fn run(mut krate: clean::Crate,
         primitive_locations: HashMap::new(),
         remove_priv: cx.passes.contains("strip-private"),
         privmod: false,
-        public_items: public_items,
+        access_levels: access_levels,
         orphan_methods: Vec::new(),
         traits: mem::replace(&mut krate.external_traits, HashMap::new()),
         deref_trait_did: analysis.as_ref().and_then(|a| a.deref_trait_did),
@@ -602,8 +647,10 @@ fn write_shared(cx: &Context,
                include_bytes!("static/main.js")));
     try!(write(cx.dst.join("playpen.js"),
                include_bytes!("static/playpen.js")));
+    try!(write(cx.dst.join("rustdoc.css"),
+               include_bytes!("static/rustdoc.css")));
     try!(write(cx.dst.join("main.css"),
-               include_bytes!("static/main.css")));
+               include_bytes!("static/styles/main.css")));
     try!(write(cx.dst.join("normalize.css"),
                include_bytes!("static/normalize.css")));
     try!(write(cx.dst.join("FiraSans-Regular.woff"),
@@ -1053,7 +1100,7 @@ impl DocFolder for Cache {
                 if
                     !self.paths.contains_key(&item.def_id) ||
                     !item.def_id.is_local() ||
-                    self.public_items.contains(&item.def_id)
+                    self.access_levels.is_public(item.def_id)
                 {
                     self.paths.insert(item.def_id,
                                       (self.stack.clone(), shortty(&item)));
@@ -1274,7 +1321,7 @@ impl Context {
                 keywords: &keywords,
             };
 
-            markdown::reset_headers();
+            reset_ids();
 
             // We have a huge number of calls to write, so try to alleviate some
             // of the pain by using a buffered writer instead of invoking the
@@ -1696,10 +1743,9 @@ fn item_module(w: &mut fmt::Formatter, cx: &Context,
                 ItemType::AssociatedType  => ("associated-types", "Associated Types"),
                 ItemType::AssociatedConst => ("associated-consts", "Associated Constants"),
             };
-            try!(write!(w,
-                        "<h2 id='{id}' class='section-header'>\
-                        <a href=\"#{id}\">{name}</a></h2>\n<table>",
-                        id = short, name = name));
+            try!(write!(w, "<h2 id='{id}' class='section-header'>\
+                           <a href=\"#{id}\">{name}</a></h2>\n<table>",
+                           id = derive_id(short.to_owned()), name = name));
         }
 
         match myitem.inner {
@@ -1829,12 +1875,12 @@ fn item_static(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
 
 fn item_function(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
                  f: &clean::Function) -> fmt::Result {
-    try!(write!(w, "<pre class='rust fn'>{vis}{unsafety}{abi}{constness}fn \
+    try!(write!(w, "<pre class='rust fn'>{vis}{constness}{unsafety}{abi}fn \
                     {name}{generics}{decl}{where_clause}</pre>",
            vis = VisSpace(it.visibility),
+           constness = ConstnessSpace(f.constness),
            unsafety = UnsafetySpace(f.unsafety),
            abi = AbiSpace(f.abi),
-           constness = ConstnessSpace(f.constness),
            name = it.name.as_ref().unwrap(),
            generics = f.generics,
            where_clause = WhereClause(&f.generics),
@@ -1920,10 +1966,11 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
 
     fn trait_item(w: &mut fmt::Formatter, cx: &Context, m: &clean::Item)
                   -> fmt::Result {
-        try!(write!(w, "<h3 id='{ty}.{name}' class='method stab {stab}'><code>",
-                    ty = shortty(m),
-                    name = *m.name.as_ref().unwrap(),
-                    stab = m.stability_class()));
+        let name = m.name.as_ref().unwrap();
+        let id = derive_id(format!("{}.{}", shortty(m), name));
+        try!(write!(w, "<h3 id='{id}' class='method stab {stab}'><code>",
+                       id = id,
+                       stab = m.stability_class()));
         try!(render_assoc_item(w, m, AssocItemLink::Anchor));
         try!(write!(w, "</code></h3>"));
         try!(document(w, cx, m));
@@ -2055,8 +2102,8 @@ fn render_assoc_item(w: &mut fmt::Formatter, meth: &clean::Item,
         };
         write!(w, "{}{}{}fn <a href='{href}' class='fnname'>{name}</a>\
                    {generics}{decl}{where_clause}",
-               UnsafetySpace(unsafety),
                ConstnessSpace(constness),
+               UnsafetySpace(unsafety),
                match abi {
                    Abi::Rust => String::new(),
                    a => format!("extern {} ", a.to_string())
@@ -2418,44 +2465,38 @@ fn render_impl(w: &mut fmt::Formatter, cx: &Context, i: &Impl, link: AssocItemLi
 
     fn doctraititem(w: &mut fmt::Formatter, cx: &Context, item: &clean::Item,
                     link: AssocItemLink, render_static: bool) -> fmt::Result {
+        let name = item.name.as_ref().unwrap();
         match item.inner {
             clean::MethodItem(..) | clean::TyMethodItem(..) => {
                 // Only render when the method is not static or we allow static methods
                 if !is_static_method(item) || render_static {
-                    try!(write!(w, "<h4 id='method.{}' class='{}'><code>",
-                                *item.name.as_ref().unwrap(),
-                                shortty(item)));
+                    let id = derive_id(format!("method.{}", name));
+                    try!(write!(w, "<h4 id='{}' class='{}'><code>", id, shortty(item)));
                 try!(render_assoc_item(w, item, link));
                     try!(write!(w, "</code></h4>\n"));
                 }
             }
             clean::TypedefItem(ref tydef, _) => {
-                let name = item.name.as_ref().unwrap();
-                try!(write!(w, "<h4 id='assoc_type.{}' class='{}'><code>",
-                            *name,
-                            shortty(item)));
+                let id = derive_id(format!("assoc_type.{}", name));
+                try!(write!(w, "<h4 id='{}' class='{}'><code>", id, shortty(item)));
                 try!(write!(w, "type {} = {}", name, tydef.type_));
                 try!(write!(w, "</code></h4>\n"));
             }
             clean::AssociatedConstItem(ref ty, ref default) => {
-                let name = item.name.as_ref().unwrap();
-                try!(write!(w, "<h4 id='assoc_const.{}' class='{}'><code>",
-                            *name, shortty(item)));
+                let id = derive_id(format!("assoc_const.{}", name));
+                try!(write!(w, "<h4 id='{}' class='{}'><code>", id, shortty(item)));
                 try!(assoc_const(w, item, ty, default.as_ref()));
                 try!(write!(w, "</code></h4>\n"));
             }
             clean::ConstantItem(ref c) => {
-                let name = item.name.as_ref().unwrap();
-                try!(write!(w, "<h4 id='assoc_const.{}' class='{}'><code>",
-                            *name, shortty(item)));
+                let id = derive_id(format!("assoc_const.{}", name));
+                try!(write!(w, "<h4 id='{}' class='{}'><code>", id, shortty(item)));
                 try!(assoc_const(w, item, &c.type_, Some(&c.expr)));
                 try!(write!(w, "</code></h4>\n"));
             }
             clean::AssociatedTypeItem(ref bounds, ref default) => {
-                let name = item.name.as_ref().unwrap();
-                try!(write!(w, "<h4 id='assoc_type.{}' class='{}'><code>",
-                            *name,
-                            shortty(item)));
+                let id = derive_id(format!("assoc_type.{}", name));
+                try!(write!(w, "<h4 id='{}' class='{}'><code>", id, shortty(item)));
                 try!(assoc_type(w, item, bounds, default));
                 try!(write!(w, "</code></h4>\n"));
             }
@@ -2668,4 +2709,23 @@ fn get_index_type_name(clean_type: &clean::Type) -> Option<String> {
 
 pub fn cache() -> Arc<Cache> {
     CACHE_KEY.with(|c| c.borrow().clone())
+}
+
+#[cfg(test)]
+#[test]
+fn test_unique_id() {
+    let input = ["foo", "examples", "examples", "method.into_iter","examples",
+                 "method.into_iter", "foo", "main", "search", "methods",
+                 "examples", "method.into_iter", "assoc_type.Item", "assoc_type.Item"];
+    let expected = ["foo", "examples", "examples-1", "method.into_iter", "examples-2",
+                    "method.into_iter-1", "foo-1", "main-1", "search-1", "methods-1",
+                    "examples-3", "method.into_iter-2", "assoc_type.Item", "assoc_type.Item-1"];
+
+    let test = || {
+        let actual: Vec<String> = input.iter().map(|s| derive_id(s.to_string())).collect();
+        assert_eq!(&actual[..], expected);
+    };
+    test();
+    reset_ids();
+    test();
 }

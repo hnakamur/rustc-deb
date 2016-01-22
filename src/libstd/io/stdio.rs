@@ -20,7 +20,7 @@ use sync::{Arc, Mutex, MutexGuard};
 use sys::stdio;
 use sys_common::io::{read_to_end_uninitialized};
 use sys_common::remutex::{ReentrantMutex, ReentrantMutexGuard};
-use libc;
+use thread::LocalKeyState;
 
 /// Stdout used by print! and println! macros
 thread_local! {
@@ -120,9 +120,9 @@ impl<R: io::Read> io::Read for Maybe<R> {
 
 fn handle_ebadf<T>(r: io::Result<T>, default: T) -> io::Result<T> {
     #[cfg(windows)]
-    const ERR: libc::c_int = libc::ERROR_INVALID_HANDLE;
+    const ERR: i32 = ::sys::c::ERROR_INVALID_HANDLE as i32;
     #[cfg(not(windows))]
-    const ERR: libc::c_int = libc::EBADF;
+    const ERR: i32 = ::libc::EBADF as i32;
 
     match r {
         Err(ref e) if e.raw_os_error() == Some(ERR) => Ok(default),
@@ -576,14 +576,31 @@ pub fn set_print(sink: Box<Write + Send>) -> Option<Box<Write + Send>> {
            issue = "0")]
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
-    let result = LOCAL_STDOUT.with(|s| {
-        if s.borrow_state() == BorrowState::Unused {
-            if let Some(w) = s.borrow_mut().as_mut() {
-                return w.write_fmt(args);
-            }
+    // As an implementation of the `println!` macro, we want to try our best to
+    // not panic wherever possible and get the output somewhere. There are
+    // currently two possible vectors for panics we take care of here:
+    //
+    // 1. If the TLS key for the local stdout has been destroyed, accessing it
+    //    would cause a panic. Note that we just lump in the uninitialized case
+    //    here for convenience, we're not trying to avoid a panic.
+    // 2. If the local stdout is currently in use (e.g. we're in the middle of
+    //    already printing) then accessing again would cause a panic.
+    //
+    // If, however, the actual I/O causes an error, we do indeed panic.
+    let result = match LOCAL_STDOUT.state() {
+        LocalKeyState::Uninitialized |
+        LocalKeyState::Destroyed => stdout().write_fmt(args),
+        LocalKeyState::Valid => {
+            LOCAL_STDOUT.with(|s| {
+                if s.borrow_state() == BorrowState::Unused {
+                    if let Some(w) = s.borrow_mut().as_mut() {
+                        return w.write_fmt(args);
+                    }
+                }
+                stdout().write_fmt(args)
+            })
         }
-        stdout().write_fmt(args)
-    });
+    };
     if let Err(e) = result {
         panic!("failed printing to stdout: {}", e);
     }

@@ -202,6 +202,7 @@ impl Token {
             Interpolated(NtIdent(..))   => true,
             Interpolated(NtBlock(..))   => true,
             Interpolated(NtPath(..))    => true,
+            Pound                       => true, // for expression attributes
             _                           => false,
         }
     }
@@ -381,12 +382,13 @@ pub enum Nonterminal {
     NtMeta(P<ast::MetaItem>),
     NtPath(Box<ast::Path>),
     NtTT(P<ast::TokenTree>), // needs P'ed to break a circularity
-    // These is not exposed to macros, but is used by quasiquote.
+    // These are not exposed to macros, but are used by quasiquote.
     NtArm(ast::Arm),
     NtImplItem(P<ast::ImplItem>),
     NtTraitItem(P<ast::TraitItem>),
     NtGenerics(ast::Generics),
     NtWhereClause(ast::WhereClause),
+    NtArg(ast::Arg),
 }
 
 impl fmt::Debug for Nonterminal {
@@ -407,6 +409,7 @@ impl fmt::Debug for Nonterminal {
             NtTraitItem(..) => f.pad("NtTraitItem(..)"),
             NtGenerics(..) => f.pad("NtGenerics(..)"),
             NtWhereClause(..) => f.pad("NtWhereClause(..)"),
+            NtArg(..) => f.pad("NtArg(..)"),
         }
     }
 }

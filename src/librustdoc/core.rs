@@ -13,19 +13,22 @@ use rustc_lint;
 use rustc_driver::{driver, target_features};
 use rustc::session::{self, config};
 use rustc::middle::def_id::DefId;
+use rustc::middle::privacy::AccessLevels;
 use rustc::middle::ty;
 use rustc::front::map as hir_map;
 use rustc::lint;
-use rustc::util::nodemap::DefIdSet;
 use rustc_trans::back::link;
 use rustc_resolve as resolve;
 use rustc_front::lowering::{lower_crate, LoweringContext};
+use rustc_metadata::cstore::CStore;
 
 use syntax::{ast, codemap, diagnostic};
 use syntax::feature_gate::UnstableFeatures;
+use syntax::parse::token;
 
 use std::cell::{RefCell, Cell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use visit_ast::RustdocVisitor;
 use clean;
@@ -77,8 +80,7 @@ impl<'b, 'tcx> DocContext<'b, 'tcx> {
 }
 
 pub struct CrateAnalysis {
-    pub exported_items: DefIdSet,
-    pub public_items: DefIdSet,
+    pub access_levels: AccessLevels<DefId>,
     pub external_paths: ExternalPaths,
     pub external_typarams: RefCell<Option<HashMap<DefId, String>>>,
     pub inlined: RefCell<Option<HashSet<DefId>>>,
@@ -105,6 +107,7 @@ pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
         search_paths: search_paths,
         crate_types: vec!(config::CrateTypeRlib),
         lint_opts: vec!((warning_lint, lint::Allow)),
+        lint_cap: Some(lint::Allow),
         externs: externs,
         target_triple: triple.unwrap_or(config::host_triple().to_string()),
         cfg: config::parse_cfgspecs(cfgs),
@@ -118,8 +121,10 @@ pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
     let span_diagnostic_handler =
         diagnostic::SpanHandler::new(diagnostic_handler, codemap);
 
+    let cstore = Rc::new(CStore::new(token::get_ident_interner()));
+    let cstore_ = ::rustc_driver::cstore_to_cratestore(cstore.clone());
     let sess = session::build_session_(sessopts, cpath,
-                                       span_diagnostic_handler);
+                                       span_diagnostic_handler, cstore_);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
 
     let mut cfg = config::build_configuration(&sess);
@@ -130,7 +135,7 @@ pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
     let name = link::find_crate_name(Some(&sess), &krate.attrs,
                                      &input);
 
-    let krate = driver::phase_2_configure_and_expand(&sess, krate, &name, None)
+    let krate = driver::phase_2_configure_and_expand(&sess, &cstore, krate, &name, None)
                     .expect("phase_2_configure_and_expand aborted in rustdoc!");
 
     let krate = driver::assign_node_ids(&sess, krate);
@@ -141,23 +146,21 @@ pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
     let hir_map = driver::make_map(&sess, &mut hir_forest);
 
     driver::phase_3_run_analysis_passes(&sess,
+                                        &cstore,
                                         hir_map,
                                         &arenas,
                                         &name,
                                         resolve::MakeGlobMap::No,
-                                        |tcx, analysis| {
-        let ty::CrateAnalysis { exported_items, public_items, .. } = analysis;
+                                        |tcx, _, analysis| {
+        let ty::CrateAnalysis { access_levels, .. } = analysis;
 
         // Convert from a NodeId set to a DefId set since we don't always have easy access
         // to the map from defid -> nodeid
-        let exported_items: DefIdSet =
-            exported_items.into_iter()
-                          .map(|n| tcx.map.local_def_id(n))
-                          .collect();
-        let public_items: DefIdSet =
-            public_items.into_iter()
-                        .map(|n| tcx.map.local_def_id(n))
-                        .collect();
+        let access_levels = AccessLevels {
+            map: access_levels.map.into_iter()
+                                  .map(|(k, v)| (tcx.map.local_def_id(k), v))
+                                  .collect()
+        };
 
         let ctxt = DocContext {
             map: &tcx.map,
@@ -173,8 +176,7 @@ pub fn run_core(search_paths: SearchPaths, cfgs: Vec<String>, externs: Externs,
         debug!("crate: {:?}", ctxt.map.krate());
 
         let mut analysis = CrateAnalysis {
-            exported_items: exported_items,
-            public_items: public_items,
+            access_levels: access_levels,
             external_paths: RefCell::new(None),
             external_typarams: RefCell::new(None),
             inlined: RefCell::new(None),

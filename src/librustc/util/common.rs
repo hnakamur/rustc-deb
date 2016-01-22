@@ -18,11 +18,11 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::iter::repeat;
 use std::path::Path;
-use std::time::Duration;
+use std::time::Instant;
 
 use rustc_front::hir;
-use rustc_front::visit;
-use rustc_front::visit::Visitor;
+use rustc_front::intravisit;
+use rustc_front::intravisit::Visitor;
 
 // The name of the associated type for `Fn` return types
 pub const FN_OUTPUT_NAME: &'static str = "Output";
@@ -44,15 +44,9 @@ pub fn time<T, F>(do_it: bool, what: &str, f: F) -> T where
         r
     });
 
-    let mut rv = None;
-    let dur = {
-        let ref mut rvp = rv;
-
-        Duration::span(move || {
-            *rvp = Some(f())
-        })
-    };
-    let rv = rv.unwrap();
+    let start = Instant::now();
+    let rv = f();
+    let dur = start.elapsed();
 
     // Hack up our own formatting for the duration to make it easier for scripts
     // to parse (always use the same number of decimal places and the same unit).
@@ -96,25 +90,30 @@ fn get_resident() -> Option<usize> {
 }
 
 #[cfg(windows)]
+#[cfg_attr(stage0, allow(improper_ctypes))]
 fn get_resident() -> Option<usize> {
-    use libc::{BOOL, DWORD, HANDLE, SIZE_T, GetCurrentProcess};
+    type BOOL = i32;
+    type DWORD = u32;
+    type HANDLE = *mut u8;
+    use libc::size_t;
     use std::mem;
     #[repr(C)] #[allow(non_snake_case)]
     struct PROCESS_MEMORY_COUNTERS {
         cb: DWORD,
         PageFaultCount: DWORD,
-        PeakWorkingSetSize: SIZE_T,
-        WorkingSetSize: SIZE_T,
-        QuotaPeakPagedPoolUsage: SIZE_T,
-        QuotaPagedPoolUsage: SIZE_T,
-        QuotaPeakNonPagedPoolUsage: SIZE_T,
-        QuotaNonPagedPoolUsage: SIZE_T,
-        PagefileUsage: SIZE_T,
-        PeakPagefileUsage: SIZE_T,
+        PeakWorkingSetSize: size_t,
+        WorkingSetSize: size_t,
+        QuotaPeakPagedPoolUsage: size_t,
+        QuotaPagedPoolUsage: size_t,
+        QuotaPeakNonPagedPoolUsage: size_t,
+        QuotaNonPagedPoolUsage: size_t,
+        PagefileUsage: size_t,
+        PeakPagefileUsage: size_t,
     }
     type PPROCESS_MEMORY_COUNTERS = *mut PROCESS_MEMORY_COUNTERS;
     #[link(name = "psapi")]
     extern "system" {
+        fn GetCurrentProcess() -> HANDLE;
         fn GetProcessMemoryInfo(Process: HANDLE,
                                 ppsmemCounters: PPROCESS_MEMORY_COUNTERS,
                                 cb: DWORD) -> BOOL;
@@ -164,7 +163,7 @@ impl<'v, P> Visitor<'v> for LoopQueryVisitor<P> where P: FnMut(&hir::Expr_) -> b
           // Skip inner loops, since a break in the inner loop isn't a
           // break inside the outer loop
           hir::ExprLoop(..) | hir::ExprWhile(..) => {}
-          _ => visit::walk_expr(self, e)
+          _ => intravisit::walk_expr(self, e)
         }
     }
 }
@@ -176,7 +175,7 @@ pub fn loop_query<P>(b: &hir::Block, p: P) -> bool where P: FnMut(&hir::Expr_) -
         p: p,
         flag: false,
     };
-    visit::walk_block(&mut v, b);
+    intravisit::walk_block(&mut v, b);
     return v.flag;
 }
 
@@ -188,7 +187,7 @@ struct BlockQueryVisitor<P> where P: FnMut(&hir::Expr) -> bool {
 impl<'v, P> Visitor<'v> for BlockQueryVisitor<P> where P: FnMut(&hir::Expr) -> bool {
     fn visit_expr(&mut self, e: &hir::Expr) {
         self.flag |= (self.p)(e);
-        visit::walk_expr(self, e)
+        intravisit::walk_expr(self, e)
     }
 }
 
@@ -199,7 +198,7 @@ pub fn block_query<P>(b: &hir::Block, p: P) -> bool where P: FnMut(&hir::Expr) -
         p: p,
         flag: false,
     };
-    visit::walk_block(&mut v, &*b);
+    intravisit::walk_block(&mut v, &*b);
     return v.flag;
 }
 

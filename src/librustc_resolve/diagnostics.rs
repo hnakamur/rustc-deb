@@ -10,9 +10,9 @@
 
 #![allow(non_snake_case)]
 
-// Error messages for EXXXX errors.
-// Each message should start and end with a new line, and be wrapped to 80 characters.
-// In vim you can `:set tw=80` and use `gq` to wrap paragraphs. Use `:set tw=0` to disable.
+// Error messages for EXXXX errors.  Each message should start and end with a
+// new line, and be wrapped to 80 characters.  In vim you can `:set tw=80` and
+// use `gq` to wrap paragraphs. Use `:set tw=0` to disable.
 register_long_diagnostics! {
 
 E0154: r##"
@@ -271,6 +271,77 @@ See the 'Use Declarations' section of the reference for more information
 on this topic:
 
 https://doc.rust-lang.org/reference.html#use-declarations
+"##,
+
+E0401: r##"
+Inner functions do not inherit type parameters from the functions they are
+embedded in. For example, this will not compile:
+
+```
+fn foo<T>(x: T) {
+    fn bar(y: T) { // T is defined in the "outer" function
+        // ..
+    }
+    bar(x);
+}
+```
+
+Functions inside functions are basically just like top-level functions, except
+that they can only be called from the function they are in.
+
+There are a couple of solutions for this.
+
+You can use a closure:
+
+```
+fn foo<T>(x: T) {
+    let bar = |y: T| { // explicit type annotation may not be necessary
+        // ..
+    }
+    bar(x);
+}
+```
+
+or copy over the parameters:
+
+```
+fn foo<T>(x: T) {
+    fn bar<T>(y: T) {
+        // ..
+    }
+    bar(x);
+}
+```
+
+Be sure to copy over any bounds as well:
+
+```
+fn foo<T: Copy>(x: T) {
+    fn bar<T: Copy>(y: T) {
+        // ..
+    }
+    bar(x);
+}
+```
+
+This may require additional type hints in the function body.
+
+In case the function is in an `impl`, defining a private helper function might
+be easier:
+
+```
+impl<T> Foo<T> {
+    pub fn foo(&self, x: T) {
+        self.bar(x);
+    }
+    fn bar(&self, y: T) {
+        // ..
+    }
+}
+```
+
+For default impls in traits, the private helper solution won't work, however
+closures or copying the parameters should still work.
 "##,
 
 E0403: r##"
@@ -806,6 +877,15 @@ mod something {
     pub struct Foo;
 }
 ```
+
+Or, if you tried to use a module from an external crate, you may have missed
+the `extern crate` declaration:
+
+```
+extern crate homura; // Required to use the `homura` crate
+
+use homura::Madoka;
+```
 "##,
 
 E0433: r##"
@@ -900,7 +980,6 @@ register_diagnostics! {
     E0254, // import conflicts with imported crate in this module
     E0257,
     E0258,
-    E0401, // can't use type parameters from outer function
     E0402, // cannot use an outer type parameter in this context
     E0406, // undeclared associated type
     E0408, // variable from pattern #1 is not bound in pattern #

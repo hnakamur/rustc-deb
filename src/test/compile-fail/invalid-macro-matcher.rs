@@ -9,7 +9,7 @@
 // except according to those terms.
 
 macro_rules! invalid {
-    _ => (); //~^ ERROR Invalid macro matcher
+    _ => (); //~^ ERROR invalid macro matcher
 }
 
 fn main() {

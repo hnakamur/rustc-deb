@@ -601,6 +601,9 @@ impl<K, V, S> HashMap<K, V, S>
 
     /// Returns the number of elements the map can hold without reallocating.
     ///
+    /// This number is a lower bound; the `HashMap<K, V>` might be able to hold
+    /// more, but is guaranteed to be able to hold at least this many.
+    ///
     /// # Examples
     ///
     /// ```
@@ -983,8 +986,6 @@ impl<K, V, S> HashMap<K, V, S>
     /// # Examples
     ///
     /// ```
-    /// #![feature(drain)]
-    ///
     /// use std::collections::HashMap;
     ///
     /// let mut a = HashMap::new();
@@ -999,9 +1000,7 @@ impl<K, V, S> HashMap<K, V, S>
     /// assert!(a.is_empty());
     /// ```
     #[inline]
-    #[unstable(feature = "drain",
-               reason = "matches collection reform specification, waiting for dust to settle",
-               issue = "27711")]
+    #[stable(feature = "drain", since = "1.6.0")]
     pub fn drain(&mut self) -> Drain<K, V> {
         fn last_two<A, B, C>((_, b, c): (A, B, C)) -> (B, C) { (b, c) }
         let last_two: fn((SafeHash, K, V)) -> (K, V) = last_two; // coerce to fn pointer
@@ -1105,8 +1104,9 @@ impl<K, V, S> HashMap<K, V, S>
     ///
     /// If the map did not have this key present, `None` is returned.
     ///
-    /// If the map did have this key present, that value is returned, and the
-    /// entry is not updated. See the [module-level documentation] for more.
+    /// If the map did have this key present, the key is not updated, the
+    /// value is updated and the old value is returned.
+    /// See the [module-level documentation] for more.
     ///
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
@@ -1211,6 +1211,7 @@ fn search_entry_hashed<'a, K: Eq, V>(table: &'a mut RawTable<K,V>, hash: SafeHas
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<K, V, S> PartialEq for HashMap<K, V, S>
     where K: Eq + Hash, V: PartialEq, S: HashState
 {
@@ -1268,6 +1269,7 @@ pub struct Iter<'a, K: 'a, V: 'a> {
 }
 
 // FIXME(#19839) Remove in favor of `#[derive(Clone)]`
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K, V> Clone for Iter<'a, K, V> {
     fn clone(&self) -> Iter<'a, K, V> {
         Iter {
@@ -1295,6 +1297,7 @@ pub struct Keys<'a, K: 'a, V: 'a> {
 }
 
 // FIXME(#19839) Remove in favor of `#[derive(Clone)]`
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K, V> Clone for Keys<'a, K, V> {
     fn clone(&self) -> Keys<'a, K, V> {
         Keys {
@@ -1310,6 +1313,7 @@ pub struct Values<'a, K: 'a, V: 'a> {
 }
 
 // FIXME(#19839) Remove in favor of `#[derive(Clone)]`
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K, V> Clone for Values<'a, K, V> {
     fn clone(&self) -> Values<'a, K, V> {
         Values {
@@ -1319,9 +1323,7 @@ impl<'a, K, V> Clone for Values<'a, K, V> {
 }
 
 /// HashMap drain iterator.
-#[unstable(feature = "drain",
-           reason = "matches collection reform specification, waiting for dust to settle",
-           issue = "27711")]
+#[stable(feature = "drain", since = "1.6.0")]
 pub struct Drain<'a, K: 'a, V: 'a> {
     inner: iter::Map<table::Drain<'a, K, V>, fn((SafeHash, K, V)) -> (K, V)>
 }

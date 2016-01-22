@@ -107,8 +107,17 @@ impl <'l, 'tcx> DumpCsvVisitor<'l, 'tcx> {
     }
 
     pub fn dump_crate_info(&mut self, name: &str, krate: &ast::Crate) {
+        let source_file = self.tcx.sess.local_crate_source_file.as_ref();
+        let crate_root = match source_file {
+            Some(source_file) => match source_file.file_name() {
+                Some(_) => source_file.parent().unwrap().display().to_string(),
+                None => source_file.display().to_string(),
+            },
+            None => "<no source>".to_owned(),
+        };
+
         // The current crate.
-        self.fmt.crate_str(krate.span, name);
+        self.fmt.crate_str(krate.span, name, &crate_root);
 
         // Dump info about all the external crates referenced from this crate.
         for c in &self.save_ctxt.get_external_crates() {
@@ -900,7 +909,7 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DumpCsvVisitor<'l, 'tcx> {
                     None => item.ident.to_string(),
                 };
                 let alias_span = self.span.span_for_last_ident(item.span);
-                let cnum = match self.sess.cstore.find_extern_mod_stmt_cnum(item.id) {
+                let cnum = match self.sess.cstore.extern_mod_stmt_cnum(item.id) {
                     Some(cnum) => cnum,
                     None => 0,
                 };
@@ -983,22 +992,22 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DumpCsvVisitor<'l, 'tcx> {
 
     fn visit_impl_item(&mut self, impl_item: &ast::ImplItem) {
         match impl_item.node {
-            ast::ConstImplItem(ref ty, ref expr) => {
+            ast::ImplItemKind::Const(ref ty, ref expr) => {
                 self.process_const(impl_item.id,
                                    impl_item.ident.name,
                                    impl_item.span,
                                    &ty,
                                    &expr);
             }
-            ast::MethodImplItem(ref sig, ref body) => {
+            ast::ImplItemKind::Method(ref sig, ref body) => {
                 self.process_method(sig,
                                     Some(body),
                                     impl_item.id,
                                     impl_item.ident.name,
                                     impl_item.span);
             }
-            ast::TypeImplItem(_) |
-            ast::MacImplItem(_) => {}
+            ast::ImplItemKind::Type(_) |
+            ast::ImplItemKind::Macro(_) => {}
         }
     }
 
@@ -1207,4 +1216,3 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DumpCsvVisitor<'l, 'tcx> {
         walk_list!(self, visit_expr, &l.init);
     }
 }
-

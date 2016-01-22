@@ -25,7 +25,7 @@ endif
 endif
 
 # Filter out stuff that gcc cannot compile (these are only needed for clang-generated code anywasys).
-CommonFunctions_gcc := $(filter-out atomic enable_execute_stack,$(CommonFunctions))
+CommonFunctions_gcc := $(filter-out atomic% enable_execute_stack,$(CommonFunctions))
 
 # Filter out stuff which is not available on specific target
 # For example, sync_fetch_and_add_4 uses Thumb instructions, which are unavailable
@@ -52,6 +52,18 @@ ifeq ($(TargetTriple),arm-linux-androideabi)
                 sync_fetch_and_umax_8 \
                 sync_fetch_and_min_8 \
                 sync_fetch_and_umin_8
+endif
+
+# Disable emutls on MIPS
+# Rust uses GCC 4.4 to cross-compile, which doesn't have some builtins
+ifneq (,$(findstring mips,$(TargetTriple)))
+    CommonDisabledFunctions := emutls
+endif
+
+# Disable emutls on Windows
+# emutls works on POSIX only as it uses pthreads
+ifneq (,$(findstring windows,$(TargetTriple)))
+    CommonDisabledFunctions := emutls
 endif
 
 # Clear cache is builtin on aarch64-apple-ios

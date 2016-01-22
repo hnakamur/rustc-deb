@@ -10,30 +10,30 @@
 
 use borrowck::BorrowckCtxt;
 use rustc::middle::mem_categorization as mc;
+use rustc::middle::mem_categorization::Categorization;
 use rustc::middle::mem_categorization::InteriorOffsetKind as Kind;
 use rustc::middle::ty;
-use std::cell::RefCell;
 use syntax::ast;
 use syntax::codemap;
 use rustc_front::hir;
 
 pub struct MoveErrorCollector<'tcx> {
-    errors: RefCell<Vec<MoveError<'tcx>>>
+    errors: Vec<MoveError<'tcx>>
 }
 
 impl<'tcx> MoveErrorCollector<'tcx> {
     pub fn new() -> MoveErrorCollector<'tcx> {
         MoveErrorCollector {
-            errors: RefCell::new(Vec::new())
+            errors: Vec::new()
         }
     }
 
-    pub fn add_error(&self, error: MoveError<'tcx>) {
-        self.errors.borrow_mut().push(error);
+    pub fn add_error(&mut self, error: MoveError<'tcx>) {
+        self.errors.push(error);
     }
 
     pub fn report_potential_errors<'a>(&self, bccx: &BorrowckCtxt<'a, 'tcx>) {
-        report_move_errors(bccx, &*self.errors.borrow())
+        report_move_errors(bccx, &self.errors)
     }
 }
 
@@ -114,16 +114,16 @@ fn group_errors_with_same_origin<'tcx>(errors: &Vec<MoveError<'tcx>>)
 fn report_cannot_move_out_of<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                        move_from: mc::cmt<'tcx>) {
     match move_from.cat {
-        mc::cat_deref(_, _, mc::BorrowedPtr(..)) |
-        mc::cat_deref(_, _, mc::Implicit(..)) |
-        mc::cat_deref(_, _, mc::UnsafePtr(..)) |
-        mc::cat_static_item => {
+        Categorization::Deref(_, _, mc::BorrowedPtr(..)) |
+        Categorization::Deref(_, _, mc::Implicit(..)) |
+        Categorization::Deref(_, _, mc::UnsafePtr(..)) |
+        Categorization::StaticItem => {
             span_err!(bccx, move_from.span, E0507,
                       "cannot move out of {}",
                       move_from.descriptive_string(bccx.tcx));
         }
 
-        mc::cat_interior(ref b, mc::InteriorElement(Kind::Index, _)) => {
+        Categorization::Interior(ref b, mc::InteriorElement(Kind::Index, _)) => {
             let expr = bccx.tcx.map.expect_expr(move_from.id);
             if let hir::ExprIndex(..) = expr.node {
                 span_err!(bccx, move_from.span, E0508,
@@ -133,8 +133,8 @@ fn report_cannot_move_out_of<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
             }
         }
 
-        mc::cat_downcast(ref b, _) |
-        mc::cat_interior(ref b, mc::InteriorField(_)) => {
+        Categorization::Downcast(ref b, _) |
+        Categorization::Interior(ref b, mc::InteriorField(_)) => {
             match b.ty.sty {
                 ty::TyStruct(def, _) |
                 ty::TyEnum(def, _) if def.has_dtor() => {

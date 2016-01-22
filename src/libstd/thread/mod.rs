@@ -171,6 +171,7 @@ use sys::thread as imp;
 use sys_common::thread_info;
 use sys_common::unwind;
 use sys_common::util;
+use sys_common::{AsInner, IntoInner};
 use time::Duration;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -189,7 +190,9 @@ pub use self::local::{LocalKey, LocalKeyState};
            issue = "27715")]
 pub use self::scoped_tls::ScopedKey;
 
+#[unstable(feature = "libstd_thread_internals", issue = "0")]
 #[doc(hidden)] pub use self::local::__KeyInner as __LocalKeyInner;
+#[unstable(feature = "libstd_thread_internals", issue = "0")]
 #[doc(hidden)] pub use self::scoped_tls::__KeyInner as __ScopedKeyInner;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -390,6 +393,7 @@ pub fn catch_panic<F, R>(f: F) -> Result<R>
 /// this function will not return early due to a signal being received or a
 /// spurious wakeup.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_deprecated(since = "1.6.0", reason = "replaced by `std::thread::sleep`")]
 pub fn sleep_ms(ms: u32) {
     sleep(Duration::from_millis(ms as u64))
 }
@@ -456,6 +460,7 @@ pub fn park() {
 ///
 /// See the module doc for more detail.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_deprecated(since = "1.6.0", reason = "replaced by `std::thread::park_timeout`")]
 pub fn park_timeout_ms(ms: u32) {
     park_timeout(Duration::from_millis(ms as u64))
 }
@@ -615,6 +620,14 @@ impl<T> JoinHandle<T> {
     pub fn join(mut self) -> Result<T> {
         self.0.join()
     }
+}
+
+impl<T> AsInner<imp::Thread> for JoinHandle<T> {
+    fn as_inner(&self) -> &imp::Thread { self.0.native.as_ref().unwrap() }
+}
+
+impl<T> IntoInner<imp::Thread> for JoinHandle<T> {
+    fn into_inner(self) -> imp::Thread { self.0.native.unwrap() }
 }
 
 fn _assert_sync_and_send() {

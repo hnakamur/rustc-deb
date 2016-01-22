@@ -80,6 +80,11 @@ __ledf2(fp_t a, fp_t b) {
     }
 }
 
+#if defined(__ELF__)
+// Alias for libgcc compatibility
+FNALIAS(__cmpdf2, __ledf2);
+#endif
+
 enum GE_RESULT {
     GE_LESS      = -1,
     GE_EQUAL     =  0,
@@ -117,7 +122,7 @@ __unorddf2(fp_t a, fp_t b) {
     return aAbs > infRep || bAbs > infRep;
 }
 
-// The following are alternative names for the preceeding routines.
+// The following are alternative names for the preceding routines.
 
 COMPILER_RT_ABI enum LE_RESULT
 __eqdf2(fp_t a, fp_t b) {

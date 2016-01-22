@@ -28,8 +28,8 @@
 //! Use the former for unit-like structs and the latter for structs with
 //! a `pub fn new()`.
 
-use metadata::decoder;
 use middle::{cfg, def, infer, stability, traits};
+use middle::cstore::CrateStore;
 use middle::def_id::DefId;
 use middle::subst::Substs;
 use middle::ty::{self, Ty};
@@ -46,7 +46,7 @@ use syntax::attr::{self, AttrMetaMethods};
 use syntax::codemap::{self, Span};
 
 use rustc_front::hir;
-use rustc_front::visit::{self, FnKind, Visitor};
+use rustc_front::intravisit::FnKind;
 
 use bad_style::{MethodLateContext, method_context};
 
@@ -139,92 +139,6 @@ impl LateLintPass for BoxPointers {
 }
 
 declare_lint! {
-    RAW_POINTER_DERIVE,
-    Warn,
-    "uses of #[derive] with raw pointers are rarely correct"
-}
-
-struct RawPtrDeriveVisitor<'a, 'tcx: 'a> {
-    cx: &'a LateContext<'a, 'tcx>
-}
-
-impl<'a, 'tcx, 'v> Visitor<'v> for RawPtrDeriveVisitor<'a, 'tcx> {
-    fn visit_ty(&mut self, ty: &hir::Ty) {
-        const MSG: &'static str = "use of `#[derive]` with a raw pointer";
-        if let hir::TyPtr(..) = ty.node {
-            self.cx.span_lint(RAW_POINTER_DERIVE, ty.span, MSG);
-        }
-        visit::walk_ty(self, ty);
-    }
-    // explicit override to a no-op to reduce code bloat
-    fn visit_expr(&mut self, _: &hir::Expr) {}
-    fn visit_block(&mut self, _: &hir::Block) {}
-}
-
-pub struct RawPointerDerive {
-    checked_raw_pointers: NodeSet,
-}
-
-impl RawPointerDerive {
-    pub fn new() -> RawPointerDerive {
-        RawPointerDerive {
-            checked_raw_pointers: NodeSet(),
-        }
-    }
-}
-
-impl LintPass for RawPointerDerive {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(RAW_POINTER_DERIVE)
-    }
-}
-
-impl LateLintPass for RawPointerDerive {
-    fn check_item(&mut self, cx: &LateContext, item: &hir::Item) {
-        if !attr::contains_name(&item.attrs, "automatically_derived") {
-            return;
-        }
-        let did = match item.node {
-            hir::ItemImpl(_, _, _, ref t_ref_opt, _, _) => {
-                // Deriving the Copy trait does not cause a warning
-                if let &Some(ref trait_ref) = t_ref_opt {
-                    let def_id = cx.tcx.trait_ref_to_def_id(trait_ref);
-                    if Some(def_id) == cx.tcx.lang_items.copy_trait() {
-                        return;
-                    }
-                }
-
-                match cx.tcx.node_id_to_type(item.id).sty {
-                    ty::TyEnum(def, _) => def.did,
-                    ty::TyStruct(def, _) => def.did,
-                    _ => return,
-                }
-            }
-            _ => return,
-        };
-        let node_id = if let Some(node_id) = cx.tcx.map.as_local_node_id(did) {
-            node_id
-        } else {
-            return;
-        };
-        let item = match cx.tcx.map.find(node_id) {
-            Some(hir_map::NodeItem(item)) => item,
-            _ => return,
-        };
-        if !self.checked_raw_pointers.insert(item.id) {
-            return;
-        }
-        match item.node {
-            hir::ItemStruct(..) | hir::ItemEnum(..) => {
-                let mut visitor = RawPtrDeriveVisitor { cx: cx };
-                visit::walk_item(&mut visitor, &item);
-            }
-            _ => {}
-        }
-    }
-}
-
-declare_lint! {
     NON_SHORTHAND_FIELD_PATTERNS,
     Warn,
     "using `Struct { x: x }` instead of `Struct { x }`"
@@ -256,9 +170,7 @@ impl LateLintPass for NonShorthandFieldPatterns {
             });
             for fieldpat in field_pats {
                 if let hir::PatIdent(_, ident, None) = fieldpat.node.pat.node {
-                    if ident.node.name == fieldpat.node.name {
-                        // FIXME: should this comparison really be done on the name?
-                        // doing it on the ident will fail during compilation of libcore
+                    if ident.node.unhygienic_name == fieldpat.node.name {
                         cx.span_lint(NON_SHORTHAND_FIELD_PATTERNS, fieldpat.span,
                                      &format!("the `{}:` in this pattern is redundant and can \
                                               be removed", ident.node))
@@ -387,8 +299,8 @@ impl MissingDoc {
         // Only check publicly-visible items, using the result from the privacy pass.
         // It's an option so the crate root can also use this function (it doesn't
         // have a NodeId).
-        if let Some(ref id) = id {
-            if !cx.exported_items.contains(id) {
+        if let Some(id) = id {
+            if !cx.access_levels.is_exported(id) {
                 return;
             }
         }
@@ -505,9 +417,9 @@ impl LateLintPass for MissingDoc {
         }
 
         let desc = match impl_item.node {
-            hir::ConstImplItem(..) => "an associated constant",
-            hir::MethodImplItem(..) => "a method",
-            hir::TypeImplItem(_) => "an associated type",
+            hir::ImplItemKind::Const(..) => "an associated constant",
+            hir::ImplItemKind::Method(..) => "a method",
+            hir::ImplItemKind::Type(_) => "an associated type",
         };
         self.check_missing_docs_attrs(cx, Some(impl_item.id),
                                       &impl_item.attrs,
@@ -556,7 +468,7 @@ impl LintPass for MissingCopyImplementations {
 
 impl LateLintPass for MissingCopyImplementations {
     fn check_item(&mut self, cx: &LateContext, item: &hir::Item) {
-        if !cx.exported_items.contains(&item.id) {
+        if !cx.access_levels.is_reachable(item.id) {
             return;
         }
         let (def, ty) = match item.node {
@@ -620,7 +532,7 @@ impl LintPass for MissingDebugImplementations {
 
 impl LateLintPass for MissingDebugImplementations {
     fn check_item(&mut self, cx: &LateContext, item: &hir::Item) {
-        if !cx.exported_items.contains(&item.id) {
+        if !cx.access_levels.is_reachable(item.id) {
             return;
         }
 
@@ -663,10 +575,10 @@ impl LateLintPass for MissingDebugImplementations {
 declare_lint! {
     DEPRECATED,
     Warn,
-    "detects use of #[deprecated] items"
+    "detects use of #[rustc_deprecated] items"
 }
 
-/// Checks for use of items with `#[deprecated]` attributes
+/// Checks for use of items with `#[rustc_deprecated]` attributes
 #[derive(Copy, Clone)]
 pub struct Stability;
 
@@ -1022,8 +934,8 @@ impl LateLintPass for PluginAsLibrary {
             _ => return,
         };
 
-        let md = match cx.sess().cstore.find_extern_mod_stmt_cnum(it.id) {
-            Some(cnum) => cx.sess().cstore.get_crate_data(cnum),
+        let prfn = match cx.sess().cstore.extern_mod_stmt_cnum(it.id) {
+            Some(cnum) => cx.sess().cstore.plugin_registrar_fn(cnum),
             None => {
                 // Probably means we aren't linking the crate for some reason.
                 //
@@ -1032,7 +944,7 @@ impl LateLintPass for PluginAsLibrary {
             }
         };
 
-        if decoder::get_plugin_registrar_fn(md.data()).is_some() {
+        if prfn.is_some() {
             cx.span_lint(PLUGIN_AS_LIBRARY, it.span,
                          "compiler plugin used as an ordinary library");
         }
@@ -1073,7 +985,7 @@ impl LateLintPass for InvalidNoMangleItems {
         match it.node {
             hir::ItemFn(..) => {
                 if attr::contains_name(&it.attrs, "no_mangle") &&
-                       !cx.exported_items.contains(&it.id) {
+                       !cx.access_levels.is_reachable(it.id) {
                     let msg = format!("function {} is marked #[no_mangle], but not exported",
                                       it.name);
                     cx.span_lint(PRIVATE_NO_MANGLE_FNS, it.span, &msg);
@@ -1081,7 +993,7 @@ impl LateLintPass for InvalidNoMangleItems {
             },
             hir::ItemStatic(..) => {
                 if attr::contains_name(&it.attrs, "no_mangle") &&
-                       !cx.exported_items.contains(&it.id) {
+                       !cx.access_levels.is_reachable(it.id) {
                     let msg = format!("static {} is marked #[no_mangle], but not exported",
                                       it.name);
                     cx.span_lint(PRIVATE_NO_MANGLE_STATICS, it.span, &msg);

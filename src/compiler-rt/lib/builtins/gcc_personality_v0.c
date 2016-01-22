@@ -11,47 +11,7 @@
 
 #include "int_lib.h"
 
-/*
- * _Unwind_* stuff based on C++ ABI public documentation
- * http://refspecs.freestandards.org/abi-eh-1.21.html
- */
-
-typedef enum {
-    _URC_NO_REASON = 0,
-    _URC_FOREIGN_EXCEPTION_CAUGHT = 1,
-    _URC_FATAL_PHASE2_ERROR = 2,
-    _URC_FATAL_PHASE1_ERROR = 3,
-    _URC_NORMAL_STOP = 4,
-    _URC_END_OF_STACK = 5,
-    _URC_HANDLER_FOUND = 6,
-    _URC_INSTALL_CONTEXT = 7,
-    _URC_CONTINUE_UNWIND = 8
-} _Unwind_Reason_Code;
-
-typedef enum {
-    _UA_SEARCH_PHASE = 1,
-    _UA_CLEANUP_PHASE = 2,
-    _UA_HANDLER_FRAME = 4,
-    _UA_FORCE_UNWIND = 8,
-    _UA_END_OF_STACK = 16
-} _Unwind_Action;
-
-typedef struct _Unwind_Context* _Unwind_Context_t;
-
-struct _Unwind_Exception {
-    uint64_t                exception_class;
-    void                    (*exception_cleanup)(_Unwind_Reason_Code reason, 
-                                                 struct _Unwind_Exception* exc);
-    uintptr_t                private_1;    
-    uintptr_t                private_2;    
-};
-
-COMPILER_RT_ABI  const uint8_t*    _Unwind_GetLanguageSpecificData(_Unwind_Context_t c);
-COMPILER_RT_ABI  void              _Unwind_SetGR(_Unwind_Context_t c, int i, uintptr_t n);
-COMPILER_RT_ABI  void              _Unwind_SetIP(_Unwind_Context_t, uintptr_t new_value);
-COMPILER_RT_ABI  uintptr_t         _Unwind_GetIP(_Unwind_Context_t context);
-COMPILER_RT_ABI  uintptr_t         _Unwind_GetRegionStart(_Unwind_Context_t context);
-
+#include <unwind.h>
 
 /*
  * Pointer encodings documented at:
@@ -180,17 +140,17 @@ static uintptr_t readEncodedPointer(const uint8_t** data, uint8_t encoding)
  * on each frame as the stack is unwound during a C++ exception
  * throw through a C function compiled with -fexceptions.
  */
-#if defined(__USING_SJLJ_EXCEPTIONS__)
+#if __USING_SJLJ_EXCEPTIONS__
 // the setjump-longjump based exceptions personality routine has a different name
 COMPILER_RT_ABI _Unwind_Reason_Code
 __gcc_personality_sj0(int version, _Unwind_Action actions,
          uint64_t exceptionClass, struct _Unwind_Exception* exceptionObject,
-         _Unwind_Context_t context)
+         struct _Unwind_Context *context)
 #else
 COMPILER_RT_ABI _Unwind_Reason_Code
 __gcc_personality_v0(int version, _Unwind_Action actions,
          uint64_t exceptionClass, struct _Unwind_Exception* exceptionObject,
-         _Unwind_Context_t context)
+         struct _Unwind_Context *context)
 #endif
 {
     /* Since C does not have catch clauses, there is nothing to do during */
@@ -199,7 +159,7 @@ __gcc_personality_v0(int version, _Unwind_Action actions,
         return _URC_CONTINUE_UNWIND;
         
     /* There is nothing to do if there is no LSDA for this frame. */
-    const uint8_t* lsda = _Unwind_GetLanguageSpecificData(context);
+    const uint8_t* lsda = (uint8_t*)_Unwind_GetLanguageSpecificData(context);
     if ( lsda == (uint8_t*) 0 )
         return _URC_CONTINUE_UNWIND;
 
@@ -227,15 +187,14 @@ __gcc_personality_v0(int version, _Unwind_Action actions,
     exceptions -- -1 means no-action, and 0 means terminate.  But
     since we're using uleb128 values, we've not got random access
     to the array.  */
-    if ((int) pc <= 0)
+    if ((int) pc <= 0) {
         return _URC_CONTINUE_UNWIND;
-    else {
+    } else {
         uintptr_t csLp;
         do {
             csLp = readULEB128(&callSite);
             readULEB128(&callSite); // skip cs action
-        }
-        while (--pc);
+        } while (--pc);
 
         /* Can never have null landing pad for sjlj -- that would have
         been indicated by a -1 call site index.  */
@@ -243,9 +202,9 @@ __gcc_personality_v0(int version, _Unwind_Action actions,
     }
 #else
     /* Walk call-site table looking for range that includes current PC. */
-    uintptr_t       funcStart = _Unwind_GetRegionStart(context);
-    uintptr_t       pcOffset = pc - funcStart;
-    const uint8_t*  callSiteTableEnd = callSite + callSiteTableLength;
+    uintptr_t funcStart = _Unwind_GetRegionStart(context);
+    uintptr_t pcOffset = pc - funcStart;
+    const uint8_t* callSiteTableEnd = callSite + callSiteTableLength;
 
     while (callSite < callSiteTableEnd) {
         uintptr_t start = readEncodedPointer(&callSite, callSiteEncoding);
@@ -256,22 +215,22 @@ __gcc_personality_v0(int version, _Unwind_Action actions,
             continue; /* no landing pad for this entry */
         if ( (start <= pcOffset) && (pcOffset < (start+length)) ) {
             /* Found landing pad for the PC.
-             * Set Instruction Pointer to so we re-enter function
+             * Set Instruction Pointer to so we re-enter function 
              * at landing pad. The landing pad is created by the compiler
              * to take two parameters in registers.
-            */
+             */
             resumeIp = funcStart + landingPad;
             break;
         }
     }
 #endif // SJ/LJ
 
-    if (resumeIp == 0)
+    if (resumeIp == 0) {
         return _URC_CONTINUE_UNWIND;
-    else
-    {
-        _Unwind_SetGR(context, __builtin_eh_return_data_regno (0), (uintptr_t)exceptionObject);
-        _Unwind_SetGR(context, __builtin_eh_return_data_regno (1), 0);
+    } else {
+        _Unwind_SetGR(context, __builtin_eh_return_data_regno(0),
+                      (uintptr_t)exceptionObject);
+        _Unwind_SetGR(context, __builtin_eh_return_data_regno(1), 0);
         _Unwind_SetIP(context, resumeIp);
         return _URC_INSTALL_CONTEXT;
     }

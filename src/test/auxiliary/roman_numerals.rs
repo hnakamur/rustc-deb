@@ -16,13 +16,14 @@
 
 extern crate syntax;
 extern crate rustc;
+extern crate rustc_plugin;
 
 use syntax::codemap::Span;
-use syntax::ast::{TokenTree, TtToken};
+use syntax::ast::TokenTree;
 use syntax::parse::token;
 use syntax::ext::base::{ExtCtxt, MacResult, DummyResult, MacEager};
 use syntax::ext::build::AstBuilder;  // trait for expr_usize
-use rustc::plugin::Registry;
+use rustc_plugin::Registry;
 
 // WARNING WARNING WARNING WARNING WARNING
 // =======================================
@@ -39,8 +40,15 @@ fn expand_rn(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree])
         ("X",   10), ("IX",   9), ("V",   5), ("IV",   4),
         ("I",    1)];
 
-    let text = match args {
-        [TtToken(_, token::Ident(s, _))] => s.to_string(),
+    if args.len() != 1 {
+        cx.span_err(
+            sp,
+            &format!("argument should be a single identifier, but got {} arguments", args.len()));
+        return DummyResult::any(sp);
+    }
+
+    let text = match args[0] {
+        TokenTree::Token(_, token::Ident(s, _)) => s.to_string(),
         _ => {
             cx.span_err(sp, "argument should be a single identifier");
             return DummyResult::any(sp);

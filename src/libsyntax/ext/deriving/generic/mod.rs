@@ -54,6 +54,7 @@
 //! following snippet
 //!
 //! ```rust
+//! # #![allow(dead_code)]
 //! struct A { x : i32 }
 //!
 //! struct B(i32);
@@ -88,7 +89,7 @@
 //!
 //! ```rust
 //! trait PartialEq {
-//!     fn eq(&self, other: &Self);
+//!     fn eq(&self, other: &Self) -> bool;
 //! }
 //! impl PartialEq for i32 {
 //!     fn eq(&self, other: &i32) -> bool {
@@ -203,7 +204,7 @@ use ext::build::AstBuilder;
 use codemap::{self, DUMMY_SP};
 use codemap::Span;
 use diagnostic::SpanHandler;
-use fold::MoveMap;
+use util::move_map::MoveMap;
 use owned_slice::OwnedSlice;
 use parse::token::{intern, InternedString};
 use parse::token::special_idents;
@@ -479,7 +480,7 @@ impl<'a> TraitDef<'a> {
                 ident: ident,
                 vis: ast::Inherited,
                 attrs: Vec::new(),
-                node: ast::TypeImplItem(type_def.to_ty(cx,
+                node: ast::ImplItemKind::Type(type_def.to_ty(cx,
                     self.span,
                     type_ident,
                     generics
@@ -894,7 +895,7 @@ impl<'a> MethodDef<'a> {
             span: trait_.span,
             vis: ast::Inherited,
             ident: method_ident,
-            node: ast::MethodImplItem(ast::MethodSig {
+            node: ast::ImplItemKind::Method(ast::MethodSig {
                 generics: fn_generics,
                 abi: abi,
                 explicit_self: explicit_self,
@@ -905,7 +906,7 @@ impl<'a> MethodDef<'a> {
         })
     }
 
-    /// ```
+    /// ```ignore
     /// #[derive(PartialEq)]
     /// struct A { x: i32, y: i32 }
     ///
@@ -1010,7 +1011,7 @@ impl<'a> MethodDef<'a> {
                                       &StaticStruct(struct_def, summary))
     }
 
-    /// ```
+    /// ```ignore
     /// #[derive(PartialEq)]
     /// enum A {
     ///     A1,
@@ -1596,7 +1597,7 @@ pub fn cs_fold<F>(use_foldl: bool,
 /// Call the method that is being derived on all the fields, and then
 /// process the collected results. i.e.
 ///
-/// ```
+/// ```ignore
 /// f(cx, span, vec![self_1.method(__arg_1_1, __arg_2_1),
 ///                  self_2.method(__arg_1_2, __arg_2_2)])
 /// ```

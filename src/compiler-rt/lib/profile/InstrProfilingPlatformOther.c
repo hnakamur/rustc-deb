@@ -1,4 +1,4 @@
-/*===- InstrProfilingPlatformOther.c - Profile data default platfrom ------===*\
+/*===- InstrProfilingPlatformOther.c - Profile data default platform ------===*\
 |*
 |*                     The LLVM Compiler Infrastructure
 |*
@@ -9,7 +9,7 @@
 
 #include "InstrProfiling.h"
 
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(__linux__) && !defined(__FreeBSD__)
 #include <stdlib.h>
 
 static const __llvm_profile_data *DataFirst = NULL;
@@ -26,6 +26,7 @@ static uint64_t *CountersLast = NULL;
  * calls are only required (and only emitted) on targets where we haven't
  * implemented linker magic to find the bounds of the sections.
  */
+__attribute__((visibility("hidden")))
 void __llvm_profile_register_function(void *Data_) {
   /* TODO: Only emit this function if we can't use linker magic. */
   const __llvm_profile_data *Data = (__llvm_profile_data*)Data_;
@@ -54,14 +55,20 @@ void __llvm_profile_register_function(void *Data_) {
 #undef UPDATE_LAST
 }
 
-const __llvm_profile_data *__llvm_profile_data_begin(void) {
+__attribute__((visibility("hidden")))
+const __llvm_profile_data *__llvm_profile_begin_data(void) {
   return DataFirst;
 }
-const __llvm_profile_data *__llvm_profile_data_end(void) {
+__attribute__((visibility("hidden")))
+const __llvm_profile_data *__llvm_profile_end_data(void) {
   return DataLast;
 }
-const char *__llvm_profile_names_begin(void) { return NamesFirst; }
-const char *__llvm_profile_names_end(void) { return NamesLast; }
-uint64_t *__llvm_profile_counters_begin(void) { return CountersFirst; }
-uint64_t *__llvm_profile_counters_end(void) { return CountersLast; }
+__attribute__((visibility("hidden")))
+const char *__llvm_profile_begin_names(void) { return NamesFirst; }
+__attribute__((visibility("hidden")))
+const char *__llvm_profile_end_names(void) { return NamesLast; }
+__attribute__((visibility("hidden")))
+uint64_t *__llvm_profile_begin_counters(void) { return CountersFirst; }
+__attribute__((visibility("hidden")))
+uint64_t *__llvm_profile_end_counters(void) { return CountersLast; }
 #endif

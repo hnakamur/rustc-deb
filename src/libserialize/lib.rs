@@ -20,13 +20,14 @@ Core encoding and decoding interfaces.
 #![unstable(feature = "rustc_private",
             reason = "deprecated in favor of rustc-serialize on crates.io",
             issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
-       html_playground_url = "https://play.rust-lang.org/")]
+       html_playground_url = "https://play.rust-lang.org/",
+       test(attr(allow(unused_variables), deny(warnings))))]
 
 #![feature(box_syntax)]
 #![feature(collections)]

@@ -29,8 +29,7 @@ use std::cell::Cell;
 use syntax::ast;
 use syntax::codemap::{DUMMY_SP, Span};
 use rustc_front::print::pprust::pat_to_string;
-use rustc_front::visit;
-use rustc_front::visit::Visitor;
+use rustc_front::intravisit::{self, Visitor};
 use rustc_front::util as hir_util;
 use rustc_front::hir;
 
@@ -43,6 +42,7 @@ pub fn resolve_type_vars_in_expr(fcx: &FnCtxt, e: &hir::Expr) {
     wbcx.visit_expr(e);
     wbcx.visit_upvar_borrow_map();
     wbcx.visit_closures();
+    wbcx.visit_liberated_fn_sigs();
 }
 
 pub fn resolve_type_vars_in_fn(fcx: &FnCtxt,
@@ -56,13 +56,14 @@ pub fn resolve_type_vars_in_fn(fcx: &FnCtxt,
         wbcx.visit_pat(&*arg.pat);
 
         // Privacy needs the type for the whole pattern, not just each binding
-        if !pat_util::pat_is_binding(&fcx.tcx().def_map, &*arg.pat) {
+        if !pat_util::pat_is_binding(&fcx.tcx().def_map.borrow(), &*arg.pat) {
             wbcx.visit_node_id(ResolvingPattern(arg.pat.span),
                                arg.pat.id);
         }
     }
     wbcx.visit_upvar_borrow_map();
     wbcx.visit_closures();
+    wbcx.visit_liberated_fn_sigs();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -151,17 +152,13 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
 // traffic in node-ids or update tables in the type context etc.
 
 impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
-    fn visit_item(&mut self, _: &hir::Item) {
-        // Ignore items
-    }
-
     fn visit_stmt(&mut self, s: &hir::Stmt) {
         if self.fcx.writeback_errors.get() {
             return;
         }
 
         self.visit_node_id(ResolvingExpr(s.span), hir_util::stmt_id(s));
-        visit::walk_stmt(self, s);
+        intravisit::walk_stmt(self, s);
     }
 
     fn visit_expr(&mut self, e: &hir::Expr) {
@@ -181,7 +178,7 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
             }
         }
 
-        visit::walk_expr(self, e);
+        intravisit::walk_expr(self, e);
     }
 
     fn visit_block(&mut self, b: &hir::Block) {
@@ -190,7 +187,7 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
         }
 
         self.visit_node_id(ResolvingExpr(b.span), b.id);
-        visit::walk_block(self, b);
+        intravisit::walk_block(self, b);
     }
 
     fn visit_pat(&mut self, p: &hir::Pat) {
@@ -205,7 +202,7 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
                p.id,
                self.tcx().node_id_to_type(p.id));
 
-        visit::walk_pat(self, p);
+        intravisit::walk_pat(self, p);
     }
 
     fn visit_local(&mut self, l: &hir::Local) {
@@ -216,7 +213,7 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
         let var_ty = self.fcx.local_ty(l.span, l.id);
         let var_ty = self.resolve(&var_ty, ResolvingLocal(l.span));
         write_ty_to_tcx(self.tcx(), l.id, var_ty);
-        visit::walk_local(self, l);
+        intravisit::walk_local(self, l);
     }
 
     fn visit_ty(&mut self, t: &hir::Ty) {
@@ -226,10 +223,10 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
                 write_ty_to_tcx(self.tcx(), count_expr.id, self.tcx().types.usize);
             }
             hir::TyBareFn(ref function_declaration) => {
-                visit::walk_fn_decl_nopat(self, &function_declaration.decl);
+                intravisit::walk_fn_decl_nopat(self, &function_declaration.decl);
                 walk_list!(self, visit_lifetime_def, &function_declaration.lifetimes);
             }
-            _ => visit::walk_ty(self, t)
+            _ => intravisit::walk_ty(self, t)
         }
     }
 }
@@ -361,6 +358,13 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         }
     }
 
+    fn visit_liberated_fn_sigs(&self) {
+        for (&node_id, fn_sig) in self.fcx.inh.tables.borrow().liberated_fn_sigs.iter() {
+            let fn_sig = self.resolve(fn_sig, ResolvingFnSig(node_id));
+            self.tcx().tables.borrow_mut().liberated_fn_sigs.insert(node_id, fn_sig.clone());
+        }
+    }
+
     fn resolve<T:TypeFoldable<'tcx>>(&self, t: &T, reason: ResolveReason) -> T {
         t.fold_with(&mut Resolver::new(self.fcx, reason))
     }
@@ -376,6 +380,7 @@ enum ResolveReason {
     ResolvingPattern(Span),
     ResolvingUpvar(ty::UpvarId),
     ResolvingClosure(DefId),
+    ResolvingFnSig(ast::NodeId),
 }
 
 impl ResolveReason {
@@ -386,6 +391,9 @@ impl ResolveReason {
             ResolvingPattern(s) => s,
             ResolvingUpvar(upvar_id) => {
                 tcx.expr_span(upvar_id.closure_expr_id)
+            }
+            ResolvingFnSig(id) => {
+                tcx.map.span(id)
             }
             ResolvingClosure(did) => {
                 if let Some(node_id) = tcx.map.as_local_node_id(did) {
@@ -462,6 +470,16 @@ impl<'cx, 'tcx> Resolver<'cx, 'tcx> {
                     let span = self.reason.span(self.tcx);
                     span_err!(self.tcx.sess, span, E0196,
                               "cannot determine a type for this closure")
+                }
+
+                ResolvingFnSig(id) => {
+                    // any failures here should also fail when
+                    // resolving the patterns, closure types, or
+                    // something else.
+                    let span = self.reason.span(self.tcx);
+                    self.tcx.sess.delay_span_bug(
+                        span,
+                        &format!("cannot resolve some aspect of fn sig for {:?}", id));
                 }
             }
         }

@@ -2,9 +2,10 @@
 // executable is prohibited.
 //
 // RUN: %clangxx_asan_static %s -o %t
-// RUN: LD_PRELOAD=%shared_libasan not %run %t 2>&1 | FileCheck %s
+// RUN: env LD_PRELOAD=%shared_libasan not %run %t 2>&1 | FileCheck %s
 
 // REQUIRES: asan-dynamic-runtime
+// XFAIL: android
 
 #include <stdlib.h>
 int main(int argc, char **argv) { return 0; }

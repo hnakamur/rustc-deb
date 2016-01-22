@@ -75,10 +75,7 @@ pub trait ExitStatusExt {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl ExitStatusExt for process::ExitStatus {
     fn signal(&self) -> Option<i32> {
-        match *self.as_inner() {
-            sys::process::ExitStatus::Signal(s) => Some(s),
-            _ => None
-        }
+        self.as_inner().signal()
     }
 }
 
@@ -110,18 +107,21 @@ impl AsRawFd for process::ChildStderr {
     }
 }
 
+#[stable(feature = "process_extensions", since = "1.2.0")]
 impl IntoRawFd for process::ChildStdin {
     fn into_raw_fd(self) -> RawFd {
         self.into_inner().into_fd().into_raw()
     }
 }
 
+#[stable(feature = "process_extensions", since = "1.2.0")]
 impl IntoRawFd for process::ChildStdout {
     fn into_raw_fd(self) -> RawFd {
         self.into_inner().into_fd().into_raw()
     }
 }
 
+#[stable(feature = "process_extensions", since = "1.2.0")]
 impl IntoRawFd for process::ChildStderr {
     fn into_raw_fd(self) -> RawFd {
         self.into_inner().into_fd().into_raw()

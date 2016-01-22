@@ -20,8 +20,7 @@ use std::cell::{RefCell, Cell};
 use std::{cmp, error, fmt};
 use std::io::prelude::*;
 use std::io;
-use term::{self, WriterWrapper};
-use libc;
+use term;
 
 /// maximum number of lines we will print for each error; arbitrary.
 const MAX_LINES: usize = 6;
@@ -175,6 +174,10 @@ impl SpanHandler {
         self.handler.emit(Some((&self.cm, sp)), msg, Bug);
         panic!(ExplicitBug);
     }
+    pub fn span_bug_no_panic(&self, sp: Span, msg: &str) {
+        self.handler.emit(Some((&self.cm, sp)), msg, Bug);
+        self.handler.bump_err_count();
+    }
     pub fn span_unimpl(&self, sp: Span, msg: &str) -> ! {
         self.span_bug(sp, &format!("unimplemented {}", msg));
     }
@@ -206,13 +209,9 @@ impl Handler {
             can_emit_warnings: can_emit_warnings
         }
     }
-    pub fn fatal(&self, msg: &str) -> ! {
+    pub fn fatal(&self, msg: &str) -> FatalError {
         self.emit.borrow_mut().emit(None, msg, None, Fatal);
-
-        // Suppress the fatal error message from the panic below as we've
-        // already terminated in our own "legitimate" fashion.
-        io::set_panic(Box::new(io::sink()));
-        panic!(FatalError);
+        FatalError
     }
     pub fn err(&self, msg: &str) {
         self.emit.borrow_mut().emit(None, msg, None, Error);
@@ -230,14 +229,15 @@ impl Handler {
     pub fn abort_if_errors(&self) {
         let s;
         match self.err_count.get() {
-          0 => return,
-          1 => s = "aborting due to previous error".to_string(),
-          _   => {
-            s = format!("aborting due to {} previous errors",
-                        self.err_count.get());
-          }
+            0 => return,
+            1 => s = "aborting due to previous error".to_string(),
+            _  => {
+                s = format!("aborting due to {} previous errors",
+                            self.err_count.get());
+            }
         }
-        self.fatal(&s[..]);
+
+        panic!(self.fatal(&s[..]));
     }
     pub fn warn(&self, msg: &str) {
         self.emit.borrow_mut().emit(None, msg, None, Warning);
@@ -318,7 +318,7 @@ pub struct EmitterWriter {
 }
 
 enum Destination {
-    Terminal(Box<term::Terminal<WriterWrapper> + Send>),
+    Terminal(Box<term::StderrTerminal>),
     Raw(Box<Write + Send>),
 }
 
@@ -365,7 +365,7 @@ impl EmitterWriter {
 
     fn print_maybe_styled(&mut self,
                           args: fmt::Arguments,
-                          color: term::attr::Attr,
+                          color: term::Attr,
                           print_newline_at_end: bool) -> io::Result<()> {
         match self.dst {
             Terminal(ref mut t) => {
@@ -408,13 +408,13 @@ impl EmitterWriter {
             try!(write!(&mut self.dst, "{} ", topic));
         }
 
-        try!(print_maybe_styled!(self, term::attr::ForegroundColor(lvl.color()),
+        try!(print_maybe_styled!(self, term::Attr::ForegroundColor(lvl.color()),
                                  "{}: ", lvl.to_string()));
-        try!(print_maybe_styled!(self, term::attr::Bold, "{}", msg));
+        try!(print_maybe_styled!(self, term::Attr::Bold, "{}", msg));
 
         match code {
             Some(code) => {
-                let style = term::attr::ForegroundColor(term::color::BRIGHT_MAGENTA);
+                let style = term::Attr::ForegroundColor(term::color::BRIGHT_MAGENTA);
                 try!(print_maybe_styled!(self, style, " [{}]", code.clone()));
             }
             None => ()
@@ -646,7 +646,7 @@ impl EmitterWriter {
                     s.pop();
                 }
 
-                try!(println_maybe_styled!(self, term::attr::ForegroundColor(lvl.color()),
+                try!(println_maybe_styled!(self, term::Attr::ForegroundColor(lvl.color()),
                                            "{}", s));
             }
         }
@@ -719,7 +719,7 @@ impl EmitterWriter {
             }
         }
         s.push('^');
-        println_maybe_styled!(self, term::attr::ForegroundColor(lvl.color()),
+        println_maybe_styled!(self, term::Attr::ForegroundColor(lvl.color()),
                               "{}", s)
     }
 
@@ -770,15 +770,19 @@ impl EmitterWriter {
 
 #[cfg(unix)]
 fn stderr_isatty() -> bool {
+    use libc;
     unsafe { libc::isatty(libc::STDERR_FILENO) != 0 }
 }
 #[cfg(windows)]
 fn stderr_isatty() -> bool {
-    const STD_ERROR_HANDLE: libc::DWORD = -12i32 as libc::DWORD;
+    type DWORD = u32;
+    type BOOL = i32;
+    type HANDLE = *mut u8;
+    const STD_ERROR_HANDLE: DWORD = -12i32 as DWORD;
     extern "system" {
-        fn GetStdHandle(which: libc::DWORD) -> libc::HANDLE;
-        fn GetConsoleMode(hConsoleHandle: libc::HANDLE,
-                          lpMode: libc::LPDWORD) -> libc::BOOL;
+        fn GetStdHandle(which: DWORD) -> HANDLE;
+        fn GetConsoleMode(hConsoleHandle: HANDLE,
+                          lpMode: *mut DWORD) -> BOOL;
     }
     unsafe {
         let handle = GetStdHandle(STD_ERROR_HANDLE);

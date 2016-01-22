@@ -60,7 +60,7 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "alloc"]
 #![crate_type = "rlib"]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![allow(unused_attributes)]
 #![unstable(feature = "alloc",
             reason = "this library is unlikely to be stabilized in its current \
@@ -70,20 +70,20 @@
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
        issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/",
-       test(no_crate_inject))]
+       test(no_crate_inject, attr(allow(unused_variables), deny(warnings))))]
 #![no_std]
 #![cfg_attr(not(stage0), needs_allocator)]
 
+#![cfg_attr(stage0, feature(rustc_attrs))]
+#![cfg_attr(stage0, feature(no_std))]
+#![cfg_attr(stage0, allow(unused_attributes))]
 #![feature(allocator)]
 #![feature(box_syntax)]
 #![feature(coerce_unsized)]
-#![feature(core)]
 #![feature(core_intrinsics)]
-#![feature(core_slice_ext)]
 #![feature(custom_attribute)]
 #![feature(fundamental)]
 #![feature(lang_items)]
-#![feature(no_std)]
 #![feature(nonzero)]
 #![feature(num_bits_bytes)]
 #![feature(optin_builtin_traits)]
@@ -101,8 +101,9 @@
 #![allow(unused_attributes)]
 #![feature(dropck_parametricity)]
 #![feature(unsize)]
-#![feature(core_slice_ext)]
-#![feature(core_str_ext)]
+#![feature(drop_in_place)]
+#![feature(fn_traits)]
+
 #![cfg_attr(stage0, feature(alloc_system))]
 #![cfg_attr(not(stage0), feature(needs_allocator))]
 

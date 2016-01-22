@@ -13,7 +13,6 @@
 use ast;
 use codemap::{self, Span, CodeMap, FileMap};
 use diagnostic::{SpanHandler, Handler, Auto, FatalError};
-use parse::attr::ParserAttr;
 use parse::parser::Parser;
 use parse::token::InternedString;
 use ptr::P;
@@ -83,7 +82,8 @@ pub fn parse_crate_attrs_from_file(
     cfg: ast::CrateConfig,
     sess: &ParseSess
 ) -> Vec<ast::Attribute> {
-    new_parser_from_file(sess, cfg, input).parse_inner_attributes()
+    // FIXME: maybe_aborted?
+    panictry!(new_parser_from_file(sess, cfg, input).parse_inner_attributes())
 }
 
 pub fn parse_crate_from_source_str(name: String,
@@ -107,7 +107,7 @@ pub fn parse_crate_attrs_from_source_str(name: String,
                                            cfg,
                                            name,
                                            source);
-    maybe_aborted(p.parse_inner_attributes(), p)
+    maybe_aborted(panictry!(p.parse_inner_attributes()), p)
 }
 
 pub fn parse_expr_from_source_str(name: String,
@@ -116,7 +116,7 @@ pub fn parse_expr_from_source_str(name: String,
                                   sess: &ParseSess)
                                   -> P<ast::Expr> {
     let mut p = new_parser_from_source_str(sess, cfg, name, source);
-    maybe_aborted(p.parse_expr(), p)
+    maybe_aborted(panictry!(p.parse_expr()), p)
 }
 
 pub fn parse_item_from_source_str(name: String,
@@ -125,7 +125,7 @@ pub fn parse_item_from_source_str(name: String,
                                   sess: &ParseSess)
                                   -> Option<P<ast::Item>> {
     let mut p = new_parser_from_source_str(sess, cfg, name, source);
-    maybe_aborted(p.parse_item(),p)
+    maybe_aborted(panictry!(p.parse_item()), p)
 }
 
 pub fn parse_meta_from_source_str(name: String,
@@ -134,7 +134,7 @@ pub fn parse_meta_from_source_str(name: String,
                                   sess: &ParseSess)
                                   -> P<ast::MetaItem> {
     let mut p = new_parser_from_source_str(sess, cfg, name, source);
-    maybe_aborted(p.parse_meta_item(),p)
+    maybe_aborted(panictry!(p.parse_meta_item()), p)
 }
 
 pub fn parse_stmt_from_source_str(name: String,
@@ -148,7 +148,7 @@ pub fn parse_stmt_from_source_str(name: String,
         name,
         source
     );
-    maybe_aborted(p.parse_stmt(), p)
+    maybe_aborted(panictry!(p.parse_stmt()), p)
 }
 
 // Warning: This parses with quote_depth > 0, which is not the default.
@@ -235,7 +235,7 @@ fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
             let msg = format!("couldn't read {:?}: {}", path.display(), e);
             match spanopt {
                 Some(sp) => panic!(sess.span_diagnostic.span_fatal(sp, &msg)),
-                None => sess.span_diagnostic.handler().fatal(&msg)
+                None => panic!(sess.span_diagnostic.handler().fatal(&msg))
             }
         }
     }
@@ -446,10 +446,10 @@ fn filtered_float_lit(data: token::InternedString, suffix: Option<&str>,
         Some(suf) => {
             if suf.len() >= 2 && looks_like_width_suffix(&['f'], suf) {
                 // if it looks like a width, lets try to be helpful.
-                sd.span_err(sp, &*format!("invalid width `{}` for float literal", &suf[1..]));
+                sd.span_err(sp, &format!("invalid width `{}` for float literal", &suf[1..]));
                 sd.fileline_help(sp, "valid widths are 32 and 64");
             } else {
-                sd.span_err(sp, &*format!("invalid suffix `{}` for float literal", suf));
+                sd.span_err(sp, &format!("invalid suffix `{}` for float literal", suf));
                 sd.fileline_help(sp, "valid suffixes are `f32` and `f64`");
             }
 
@@ -619,11 +619,11 @@ pub fn integer_lit(s: &str,
                 // i<digits> and u<digits> look like widths, so lets
                 // give an error message along those lines
                 if looks_like_width_suffix(&['i', 'u'], suf) {
-                    sd.span_err(sp, &*format!("invalid width `{}` for integer literal",
-                                              &suf[1..]));
+                    sd.span_err(sp, &format!("invalid width `{}` for integer literal",
+                                             &suf[1..]));
                     sd.fileline_help(sp, "valid widths are 8, 16, 32 and 64");
                 } else {
-                    sd.span_err(sp, &*format!("invalid suffix `{}` for numeric literal", suf));
+                    sd.span_err(sp, &format!("invalid suffix `{}` for numeric literal", suf));
                     sd.fileline_help(sp, "the suffix must be one of the integral types \
                                       (`u32`, `isize`, etc)");
                 }
@@ -669,7 +669,7 @@ mod tests {
     use std::rc::Rc;
     use codemap::{Span, BytePos, Pos, Spanned, NO_EXPANSION};
     use owned_slice::OwnedSlice;
-    use ast;
+    use ast::{self, TokenTree};
     use abi;
     use attr::{first_attr_value_str_by_name, AttrMetaMethods};
     use parse;
@@ -699,7 +699,8 @@ mod tests {
                             }
                         ),
                     }),
-                    span: sp(0, 1)
+                    span: sp(0, 1),
+                    attrs: None,
                    }))
     }
 
@@ -721,7 +722,8 @@ mod tests {
                                 }
                             )
                         }),
-                    span: sp(0, 6)
+                    span: sp(0, 6),
+                    attrs: None,
                    }))
     }
 
@@ -739,10 +741,10 @@ mod tests {
         match (tts.len(), tts.get(0), tts.get(1), tts.get(2), tts.get(3)) {
             (
                 4,
-                Some(&ast::TtToken(_, token::Ident(name_macro_rules, token::Plain))),
-                Some(&ast::TtToken(_, token::Not)),
-                Some(&ast::TtToken(_, token::Ident(name_zip, token::Plain))),
-                Some(&ast::TtDelimited(_, ref macro_delimed)),
+                Some(&TokenTree::Token(_, token::Ident(name_macro_rules, token::Plain))),
+                Some(&TokenTree::Token(_, token::Not)),
+                Some(&TokenTree::Token(_, token::Ident(name_zip, token::Plain))),
+                Some(&TokenTree::Delimited(_, ref macro_delimed)),
             )
             if name_macro_rules.name.as_str() == "macro_rules"
             && name_zip.name.as_str() == "zip" => {
@@ -750,17 +752,17 @@ mod tests {
                 match (tts.len(), tts.get(0), tts.get(1), tts.get(2)) {
                     (
                         3,
-                        Some(&ast::TtDelimited(_, ref first_delimed)),
-                        Some(&ast::TtToken(_, token::FatArrow)),
-                        Some(&ast::TtDelimited(_, ref second_delimed)),
+                        Some(&TokenTree::Delimited(_, ref first_delimed)),
+                        Some(&TokenTree::Token(_, token::FatArrow)),
+                        Some(&TokenTree::Delimited(_, ref second_delimed)),
                     )
                     if macro_delimed.delim == token::Paren => {
                         let tts = &first_delimed.tts[..];
                         match (tts.len(), tts.get(0), tts.get(1)) {
                             (
                                 2,
-                                Some(&ast::TtToken(_, token::Dollar)),
-                                Some(&ast::TtToken(_, token::Ident(ident, token::Plain))),
+                                Some(&TokenTree::Token(_, token::Dollar)),
+                                Some(&TokenTree::Token(_, token::Ident(ident, token::Plain))),
                             )
                             if first_delimed.delim == token::Paren
                             && ident.name.as_str() == "a" => {},
@@ -770,8 +772,8 @@ mod tests {
                         match (tts.len(), tts.get(0), tts.get(1)) {
                             (
                                 2,
-                                Some(&ast::TtToken(_, token::Dollar)),
-                                Some(&ast::TtToken(_, token::Ident(ident, token::Plain))),
+                                Some(&TokenTree::Token(_, token::Dollar)),
+                                Some(&TokenTree::Token(_, token::Ident(ident, token::Plain))),
                             )
                             if second_delimed.delim == token::Paren
                             && ident.name.as_str() == "a" => {},
@@ -790,39 +792,39 @@ mod tests {
         let tts = string_to_tts("fn a (b : i32) { b; }".to_string());
 
         let expected = vec![
-            ast::TtToken(sp(0, 2),
+            TokenTree::Token(sp(0, 2),
                          token::Ident(str_to_ident("fn"),
                          token::IdentStyle::Plain)),
-            ast::TtToken(sp(3, 4),
+            TokenTree::Token(sp(3, 4),
                          token::Ident(str_to_ident("a"),
                          token::IdentStyle::Plain)),
-            ast::TtDelimited(
+            TokenTree::Delimited(
                 sp(5, 14),
                 Rc::new(ast::Delimited {
                     delim: token::DelimToken::Paren,
                     open_span: sp(5, 6),
                     tts: vec![
-                        ast::TtToken(sp(6, 7),
+                        TokenTree::Token(sp(6, 7),
                                      token::Ident(str_to_ident("b"),
                                      token::IdentStyle::Plain)),
-                        ast::TtToken(sp(8, 9),
+                        TokenTree::Token(sp(8, 9),
                                      token::Colon),
-                        ast::TtToken(sp(10, 13),
+                        TokenTree::Token(sp(10, 13),
                                      token::Ident(str_to_ident("i32"),
                                      token::IdentStyle::Plain)),
                     ],
                     close_span: sp(13, 14),
                 })),
-            ast::TtDelimited(
+            TokenTree::Delimited(
                 sp(15, 21),
                 Rc::new(ast::Delimited {
                     delim: token::DelimToken::Brace,
                     open_span: sp(15, 16),
                     tts: vec![
-                        ast::TtToken(sp(17, 18),
+                        TokenTree::Token(sp(17, 18),
                                      token::Ident(str_to_ident("b"),
                                      token::IdentStyle::Plain)),
-                        ast::TtToken(sp(18, 19),
+                        TokenTree::Token(sp(18, 19),
                                      token::Semi)
                     ],
                     close_span: sp(20, 21),
@@ -848,15 +850,17 @@ mod tests {
                                 }
                             ),
                         }),
-                        span:sp(7,8)
+                        span:sp(7,8),
+                        attrs: None,
                     }))),
-                    span:sp(0,8)
+                    span:sp(0,8),
+                    attrs: None,
                    }))
     }
 
     #[test] fn parse_stmt_1 () {
         assert!(string_to_stmt("b;".to_string()) ==
-                   P(Spanned{
+                   Some(P(Spanned{
                        node: ast::StmtExpr(P(ast::Expr {
                            id: ast::DUMMY_NODE_ID,
                            node: ast::ExprPath(None, ast::Path {
@@ -869,9 +873,10 @@ mod tests {
                                 }
                                ),
                             }),
-                           span: sp(0,1)}),
+                           span: sp(0,1),
+                           attrs: None}),
                                            ast::DUMMY_NODE_ID),
-                       span: sp(0,1)}))
+                       span: sp(0,1)})))
 
     }
 
@@ -882,7 +887,7 @@ mod tests {
     #[test] fn parse_ident_pat () {
         let sess = ParseSess::new();
         let mut parser = string_to_parser(&sess, "b".to_string());
-        assert!(panictry!(parser.parse_pat_nopanic())
+        assert!(panictry!(parser.parse_pat())
                 == P(ast::Pat{
                 id: ast::DUMMY_NODE_ID,
                 node: ast::PatIdent(ast::BindByValue(ast::MutImmutable),
@@ -963,7 +968,8 @@ mod tests {
                                                             }
                                                         ),
                                                       }),
-                                                span: sp(17,18)}),
+                                                span: sp(17,18),
+                                                attrs: None,}),
                                                 ast::DUMMY_NODE_ID),
                                             span: sp(17,19)})),
                                         expr: None,

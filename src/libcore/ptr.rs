@@ -40,6 +40,9 @@ pub use intrinsics::copy;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use intrinsics::write_bytes;
 
+#[unstable(feature = "drop_in_place", reason = "just exposed, needs FCP", issue = "27908")]
+pub use intrinsics::drop_in_place;
+
 /// Creates a null raw pointer.
 ///
 /// # Examples
@@ -159,7 +162,6 @@ pub unsafe fn write<T>(dst: *mut T, src: T) {
     intrinsics::move_val_init(&mut *dst, src)
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
 #[lang = "const_ptr"]
 impl<T: ?Sized> *const T {
     /// Returns true if the pointer is null.
@@ -208,7 +210,6 @@ impl<T: ?Sized> *const T {
     }
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
 #[lang = "mut_ptr"]
 impl<T: ?Sized> *mut T {
     /// Returns true if the pointer is null.
@@ -531,6 +532,10 @@ impl<T: ?Sized> Unique<T> {
         &mut ***self
     }
 }
+
+#[cfg(not(stage0))] // remove cfg after new snapshot
+#[unstable(feature = "unique", issue = "27730")]
+impl<T: ?Sized, U: ?Sized> CoerceUnsized<Unique<U>> for Unique<T> where T: Unsize<U> { }
 
 #[unstable(feature = "unique", issue= "27730")]
 impl<T:?Sized> Deref for Unique<T> {

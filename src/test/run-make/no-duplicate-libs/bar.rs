@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(lang_items, no_std, libc)]
-#![no_std]
+#![feature(lang_items, libc)]
 #![crate_type = "dylib"]
+#![no_std]
 
 extern crate libc;
 
@@ -20,3 +20,5 @@ pub extern fn bar() {}
 #[lang = "eh_personality"] fn eh_personality() {}
 #[lang = "eh_unwind_resume"] fn eh_unwind_resume() {}
 #[lang = "panic_fmt"] fn panic_fmt() -> ! { loop {} }
+#[no_mangle] pub extern fn rust_eh_register_frames () {}
+#[no_mangle] pub extern fn rust_eh_unregister_frames () {}

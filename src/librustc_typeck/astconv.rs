@@ -203,10 +203,14 @@ fn report_elision_failure(
 {
     let mut m = String::new();
     let len = params.len();
+    let mut any_lifetimes = false;
+
     for (i, info) in params.into_iter().enumerate() {
         let ElisionFailureInfo {
             name, lifetime_count: n, have_bound_regions
         } = info;
+
+        any_lifetimes = any_lifetimes || (n > 0);
 
         let help_name = if name.is_empty() {
             format!("argument {}", i + 1)
@@ -229,17 +233,26 @@ fn report_elision_failure(
             m.push_str(", ");
         }
     }
-    if len == 1 {
-        fileline_help!(tcx.sess, default_span,
-                       "this function's return type contains a borrowed value, but \
-                        the signature does not say which {} it is borrowed from",
-                       m);
-    } else if len == 0 {
+
+    if len == 0 {
         fileline_help!(tcx.sess, default_span,
                        "this function's return type contains a borrowed value, but \
                         there is no value for it to be borrowed from");
         fileline_help!(tcx.sess, default_span,
                        "consider giving it a 'static lifetime");
+    } else if !any_lifetimes {
+        fileline_help!(tcx.sess, default_span,
+                       "this function's return type contains a borrowed value with \
+                        an elided lifetime, but the lifetime cannot be derived from \
+                        the arguments");
+        fileline_help!(tcx.sess, default_span,
+                       "consider giving it an explicit bounded or 'static \
+                        lifetime");
+    } else if len == 1 {
+        fileline_help!(tcx.sess, default_span,
+                       "this function's return type contains a borrowed value, but \
+                        the signature does not say which {} it is borrowed from",
+                       m);
     } else {
         fileline_help!(tcx.sess, default_span,
                        "this function's return type contains a borrowed value, but \
@@ -1036,7 +1049,7 @@ fn ast_ty_to_trait_ref<'tcx>(this: &AstConv<'tcx>,
             let hi = bounds.iter().map(|x| match *x {
                 hir::TraitTyParamBound(ref tr, _) => tr.span.hi,
                 hir::RegionTyParamBound(ref r) => r.span.hi,
-            }).max_by(|x| x.to_usize());
+            }).max_by_key(|x| x.to_usize());
             let full_span = hi.map(|hi| Span {
                 lo: ty.span.lo,
                 hi: hi,
@@ -1624,7 +1637,6 @@ pub fn ast_ty_to_ty<'tcx>(this: &AstConv<'tcx>,
                              .collect();
             tcx.mk_tup(flds)
         }
-        hir::TyParen(ref typ) => ast_ty_to_ty(this, rscope, &**typ),
         hir::TyBareFn(ref bf) => {
             require_c_abi_if_variadic(tcx, &bf.decl, bf.abi, ast_ty.span);
             let bare_fn = ty_of_bare_fn(this, bf.unsafety, bf.abi, &*bf.decl);

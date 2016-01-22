@@ -17,12 +17,12 @@ use astconv::AstConv;
 use check::{self, FnCtxt};
 use front::map as hir_map;
 use middle::ty::{self, Ty, ToPolyTraitRef, ToPredicate, HasTypeFlags};
+use middle::cstore::{self, CrateStore, DefLike};
 use middle::def;
 use middle::def_id::DefId;
 use middle::lang_items::FnOnceTraitLangItem;
 use middle::subst::Substs;
 use middle::traits::{Obligation, SelectionContext};
-use metadata::{csearch, cstore, decoder};
 use util::nodemap::{FnvHashSet};
 
 use syntax::ast;
@@ -92,31 +92,39 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 
                     // Determine if the field can be used as a function in some way
                     let field_ty = field.ty(cx, substs);
-                    if let Ok(fn_once_trait_did) = cx.lang_items.require(FnOnceTraitLangItem) {
-                        let infcx = fcx.infcx();
-                        infcx.probe(|_| {
-                            let fn_once_substs = Substs::new_trait(vec![infcx.next_ty_var()],
-                                                                   Vec::new(),
-                                                                   field_ty);
-                            let trait_ref = ty::TraitRef::new(fn_once_trait_did,
-                                                              cx.mk_substs(fn_once_substs));
-                            let poly_trait_ref = trait_ref.to_poly_trait_ref();
-                            let obligation = Obligation::misc(span,
-                                                              fcx.body_id,
-                                                              poly_trait_ref.to_predicate());
-                            let mut selcx = SelectionContext::new(infcx);
 
-                            if selcx.evaluate_obligation(&obligation) {
-                                span_stored_function();
+                    match field_ty.sty {
+                        // Not all of these (e.g. unsafe fns) implement FnOnce
+                        // so we look for these beforehand
+                        ty::TyClosure(..) | ty::TyBareFn(..) => span_stored_function(),
+                        // If it's not a simple function, look for things which implement FnOnce
+                        _ => {
+                            if let Ok(fn_once_trait_did) =
+                                    cx.lang_items.require(FnOnceTraitLangItem) {
+                                let infcx = fcx.infcx();
+                                infcx.probe(|_| {
+                                    let fn_once_substs = Substs::new_trait(vec![
+                                                                            infcx.next_ty_var()],
+                                                                           Vec::new(),
+                                                                           field_ty);
+                                    let trait_ref = ty::TraitRef::new(fn_once_trait_did,
+                                                                      cx.mk_substs(fn_once_substs));
+                                    let poly_trait_ref = trait_ref.to_poly_trait_ref();
+                                    let obligation = Obligation::misc(span,
+                                                                      fcx.body_id,
+                                                                      poly_trait_ref
+                                                                         .to_predicate());
+                                    let mut selcx = SelectionContext::new(infcx);
+
+                                    if selcx.evaluate_obligation(&obligation) {
+                                        span_stored_function();
+                                    } else {
+                                        span_did_you_mean();
+                                    }
+                                });
                             } else {
-                                span_did_you_mean();
+                                span_did_you_mean()
                             }
-                        });
-                    } else {
-                        match field_ty.sty {
-                            // fallback to matching a closure or function pointer
-                            ty::TyClosure(..) | ty::TyBareFn(..) => span_stored_function(),
-                            _ => span_did_you_mean(),
                         }
                     }
                 }
@@ -378,7 +386,7 @@ impl Ord for TraitInfo {
 /// Retrieve all traits in this crate and any dependent crates.
 pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
     if ccx.all_traits.borrow().is_none() {
-        use rustc_front::visit;
+        use rustc_front::intravisit;
 
         let mut traits = vec![];
 
@@ -389,7 +397,7 @@ pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
             map: &'a hir_map::Map<'tcx>,
             traits: &'a mut AllTraitsVec,
         }
-        impl<'v, 'a, 'tcx> visit::Visitor<'v> for Visitor<'a, 'tcx> {
+        impl<'v, 'a, 'tcx> intravisit::Visitor<'v> for Visitor<'a, 'tcx> {
             fn visit_item(&mut self, i: &'v hir::Item) {
                 match i.node {
                     hir::ItemTrait(..) => {
@@ -398,45 +406,44 @@ pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
                     }
                     _ => {}
                 }
-                visit::walk_item(self, i)
             }
         }
-        visit::walk_crate(&mut Visitor {
+        ccx.tcx.map.krate().visit_all_items(&mut Visitor {
             map: &ccx.tcx.map,
             traits: &mut traits
-        }, ccx.tcx.map.krate());
+        });
 
         // Cross-crate:
         let mut external_mods = FnvHashSet();
         fn handle_external_def(traits: &mut AllTraitsVec,
                                external_mods: &mut FnvHashSet<DefId>,
                                ccx: &CrateCtxt,
-                               cstore: &cstore::CStore,
-                               dl: decoder::DefLike) {
+                               cstore: &for<'a> cstore::CrateStore<'a>,
+                               dl: cstore::DefLike) {
             match dl {
-                decoder::DlDef(def::DefTrait(did)) => {
+                cstore::DlDef(def::DefTrait(did)) => {
                     traits.push(TraitInfo::new(did));
                 }
-                decoder::DlDef(def::DefMod(did)) => {
+                cstore::DlDef(def::DefMod(did)) => {
                     if !external_mods.insert(did) {
                         return;
                     }
-                    csearch::each_child_of_item(cstore, did, |dl, _, _| {
+                    for child in cstore.item_children(did) {
                         handle_external_def(traits, external_mods,
-                                            ccx, cstore, dl)
-                    })
+                                            ccx, cstore, child.def)
+                    }
                 }
                 _ => {}
             }
         }
-        let cstore = &ccx.tcx.sess.cstore;
-        cstore.iter_crate_data(|cnum, _| {
-            csearch::each_top_level_item_of_crate(cstore, cnum, |dl, _, _| {
-                handle_external_def(&mut traits,
-                                    &mut external_mods,
-                                    ccx, cstore, dl)
-            })
-        });
+        let cstore = &*ccx.tcx.sess.cstore;
+
+        for cnum in ccx.tcx.sess.cstore.crates() {
+            for child in cstore.crate_top_level_items(cnum) {
+                handle_external_def(&mut traits, &mut external_mods,
+                                    ccx, cstore, child.def)
+            }
+        }
 
         *ccx.all_traits.borrow_mut() = Some(traits);
     }

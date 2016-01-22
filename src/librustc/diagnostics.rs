@@ -858,6 +858,9 @@ It is also possible to manually transmute:
 ```
 ptr::read(&v as *const _ as *const SomeType) // `v` transmuted to `SomeType`
 ```
+
+Note that this does not move `v` (unlike `transmute`), and may need a
+call to `mem::forget(v)` in case you want to avoid destructors being called.
 "##,
 
 E0152: r##"
@@ -869,7 +872,6 @@ You can build a free-standing crate by adding `#![no_std]` to the crate
 attributes:
 
 ```
-#![feature(no_std)]
 #![no_std]
 ```
 
@@ -1032,6 +1034,31 @@ example:
 ```
 // error, lifetime name `'a` declared twice in the same scope
 fn foo<'a, 'b, 'a>(x: &'a str, y: &'b str) { }
+```
+"##,
+
+E0264: r##"
+An unknown external lang item was used. Erroneous code example:
+
+```
+#![feature(lang_items)]
+
+extern "C" {
+    #[lang = "cake"] // error: unknown external lang item: `cake`
+    fn cake();
+}
+```
+
+A list of available external lang items is available in
+`src/librustc/middle/weak_lang_items.rs`. Example:
+
+```
+#![feature(lang_items)]
+
+extern "C" {
+    #[lang = "panic_fmt"] // ok!
+    fn cake();
+}
 ```
 "##,
 
@@ -1896,49 +1923,144 @@ contain references (with a maximum lifetime of `'a`).
 [1]: https://github.com/rust-lang/rfcs/pull/1156
 "##,
 
-E0454: r##"
-A link name was given with an empty name. Erroneous code example:
+E0400: r##"
+A user-defined dereference was attempted in an invalid context. Erroneous
+code example:
 
 ```
-#[link(name = "")] extern {} // error: #[link(name = "")] given with empty name
+use std::ops::Deref;
+
+struct A;
+
+impl Deref for A {
+    type Target = str;
+
+    fn deref(&self)-> &str { "foo" }
+}
+
+const S: &'static str = &A;
+// error: user-defined dereference operators are not allowed in constants
+
+fn main() {
+    let foo = S;
+}
 ```
 
-The rust compiler cannot link to an external library if you don't give it its
-name. Example:
+You cannot directly use a dereference operation whilst initializing a constant
+or a static. To fix this error, restructure your code to avoid this dereference,
+perhaps moving it inline:
 
 ```
-#[link(name = "some_lib")] extern {} // ok!
+use std::ops::Deref;
+
+struct A;
+
+impl Deref for A {
+    type Target = str;
+
+    fn deref(&self)-> &str { "foo" }
+}
+
+fn main() {
+    let foo : &str = &A;
+}
 ```
 "##,
 
-E0458: r##"
-An unknown "kind" was specified for a link attribute. Erroneous code example:
+E0452: r##"
+An invalid lint attribute has been given. Erroneous code example:
 
 ```
-#[link(kind = "wonderful_unicorn")] extern {}
-// error: unknown kind: `wonderful_unicorn`
+#![allow(foo = "")] // error: malformed lint attribute
 ```
 
-Please specify a valid "kind" value, from one of the following:
- * static
- * dylib
- * framework
+Lint attributes only accept a list of identifiers (where each identifier is a
+lint name). Ensure the attribute is of this form:
+
+```
+#![allow(foo)] // ok!
+// or:
+#![allow(foo, foo2)] // ok!
+```
 "##,
 
-E0459: r##"
-A link was used without a name parameter. Erroneous code example:
+E0492: r##"
+A borrow of a constant containing interior mutability was attempted. Erroneous
+code example:
 
 ```
-#[link(kind = "dylib")] extern {}
-// error: #[link(...)] specified without `name = "foo"`
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
+
+const A: AtomicUsize = ATOMIC_USIZE_INIT;
+static B: &'static AtomicUsize = &A;
+// error: cannot borrow a constant which contains interior mutability, create a
+//        static instead
 ```
 
-Please add the name parameter to allow the rust compiler to find the library
-you want. Example:
+A `const` represents a constant value that should never change. If one takes
+a `&` reference to the constant, then one is taking a pointer to some memory
+location containing the value. Normally this is perfectly fine: most values
+can't be changed via a shared `&` pointer, but interior mutability would allow
+it. That is, a constant value could be mutated. On the other hand, a `static` is
+explicitly a single memory location, which can be mutated at will.
+
+So, in order to solve this error, either use statics which are `Sync`:
 
 ```
-#[link(kind = "dylib", name = "some_lib")] extern {} // ok!
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
+
+static A: AtomicUsize = ATOMIC_USIZE_INIT;
+static B: &'static AtomicUsize = &A; // ok!
 ```
+
+You can also have this error while using a cell type:
+
+```
+#![feature(const_fn)]
+
+use std::cell::Cell;
+
+const A: Cell<usize> = Cell::new(1);
+const B: &'static Cell<usize> = &A;
+// error: cannot borrow a constant which contains interior mutability, create
+//        a static instead
+
+// or:
+struct C { a: Cell<usize> }
+
+const D: C = C { a: Cell::new(1) };
+const E: &'static Cell<usize> = &D.a; // error
+
+// or:
+const F: &'static C = &D; // error
+```
+
+This is because cell types do operations that are not thread-safe. Due to this,
+they don't implement Sync and thus can't be placed in statics. In this
+case, `StaticMutex` would work just fine, but it isn't stable yet:
+https://doc.rust-lang.org/nightly/std/sync/struct.StaticMutex.html
+
+However, if you still wish to use these types, you can achieve this by an unsafe
+wrapper:
+
+```
+#![feature(const_fn)]
+
+use std::cell::Cell;
+use std::marker::Sync;
+
+struct NotThreadSafe<T> {
+    value: Cell<T>,
+}
+
+unsafe impl<T> Sync for NotThreadSafe<T> {}
+
+static A: NotThreadSafe<usize> = NotThreadSafe { value : Cell::new(1) };
+static B: &'static NotThreadSafe<usize> = &A; // ok!
+```
+
+Remember this solution is unsafe! You will have to ensure that accesses to the
+cell are synchronized.
 "##,
 
 E0493: r##"
@@ -2009,7 +2131,6 @@ impl<'a> Foo<'a> {
 
 Please change the name of one of the lifetimes to remove this error. Example:
 
-
 ```
 struct Foo<'a> {
     a: &'a i32,
@@ -2039,6 +2160,80 @@ It is not possible to use stability attributes outside of the standard library.
 Also, for now, it is not possible to write deprecation messages either.
 "##,
 
+E0517: r##"
+This error indicates that a `#[repr(..)]` attribute was placed on an unsupported
+item.
+
+Examples of erroneous code:
+
+```
+#[repr(C)]
+type Foo = u8;
+
+#[repr(packed)]
+enum Foo {Bar, Baz}
+
+#[repr(u8)]
+struct Foo {bar: bool, baz: bool}
+
+#[repr(C)]
+impl Foo {
+    ...
+}
+```
+
+ - The `#[repr(C)]` attribute can only be placed on structs and enums
+ - The `#[repr(packed)]` and `#[repr(simd)]` attributes only work on structs
+ - The `#[repr(u8)]`, `#[repr(i16)]`, etc attributes only work on enums
+
+These attributes do not work on typedefs, since typedefs are just aliases.
+
+Representations like `#[repr(u8)]`, `#[repr(i64)]` are for selecting the
+discriminant size for C-like enums (when there is no associated data, e.g. `enum
+Color {Red, Blue, Green}`), effectively setting the size of the enum to the size
+of the provided type. Such an enum can be cast to a value of the same type as
+well. In short, `#[repr(u8)]` makes the enum behave like an integer with a
+constrained set of allowed values.
+
+Only C-like enums can be cast to numerical primitives, so this attribute will
+not apply to structs.
+
+`#[repr(packed)]` reduces padding to make the struct size smaller. The
+representation of enums isn't strictly defined in Rust, and this attribute won't
+work on enums.
+
+`#[repr(simd)]` will give a struct consisting of a homogenous series of machine
+types (i.e. `u8`, `i32`, etc) a representation that permits vectorization via
+SIMD. This doesn't make much sense for enums since they don't consist of a
+single list of data.
+"##,
+
+E0518: r##"
+This error indicates that an `#[inline(..)]` attribute was incorrectly placed on
+something other than a function or method.
+
+Examples of erroneous code:
+
+```
+#[inline(always)]
+struct Foo;
+
+#[inline(never)]
+impl Foo {
+    ...
+}
+```
+
+`#[inline]` hints the compiler whether or not to attempt to inline a method or
+function. By default, the compiler does a pretty good job of figuring this out
+itself, but if you feel the need for annotations, `#[inline(always)]` and
+`#[inline(never)]` can override or force the compiler's decision.
+
+If you wish to apply this attribute to all methods in an impl, manually annotate
+each method; it is not possible to annotate the entire impl with an `#[inline]`
+attribute.
+"##,
+
 }
 
 
@@ -2047,7 +2242,6 @@ register_diagnostics! {
 //  E0134,
 //  E0135,
     E0229, // associated type bindings are not allowed here
-    E0264, // unknown external lang item
     E0278, // requirement is not satisfied
     E0279, // requirement is not satisfied
     E0280, // requirement is not satisfied
@@ -2065,23 +2259,7 @@ register_diagnostics! {
     E0314, // closure outlives stack frame
     E0315, // cannot invoke closure outside of its lifetime
     E0316, // nested quantification of lifetimes
-    E0400, // overloaded derefs are not allowed in constants
-    E0452, // malformed lint attribute
     E0453, // overruled by outer forbid
-    E0455, // native frameworks are only available on OSX targets
-    E0456, // plugin `..` is not available for triple `..`
-    E0457, // plugin `..` only found in rlib format, but must be available...
-    E0460, // found possibly newer version of crate `..`
-    E0461, // couldn't find crate `..` with expected target triple ..
-    E0462, // found staticlib `..` instead of rlib or dylib
-    E0463, // can't find crate for `..`
-    E0464, // multiple matching crates for `..`
-    E0465, // multiple .. candidates for `..` found
-    E0466, // bad macro import
-    E0467, // bad macro reexport
-    E0468, // an `extern crate` loading macros must be at the crate root
-    E0469, // imported macro not found
-    E0470, // reexported macro not found
     E0471, // constant evaluation error: ..
     E0472, // asm! is unsupported on this target
     E0473, // dereference of reference outside its lifetime
@@ -2103,8 +2281,5 @@ register_diagnostics! {
     E0489, // type/lifetime parameter not in scope here
     E0490, // a value of type `..` is borrowed for too long
     E0491, // in type `..`, reference has a longer lifetime than the data it...
-    E0492, // cannot borrow a constant which contains interior mutability
     E0495, // cannot infer an appropriate lifetime due to conflicting requirements
-    E0498, // malformed plugin attribute
-    E0514, // metadata version mismatch
 }

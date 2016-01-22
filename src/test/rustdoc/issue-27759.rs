@@ -9,8 +9,9 @@
 // except according to those terms.
 
 #![feature(staged_api)]
-#![staged_api]
 #![doc(issue_tracker_base_url = "http://issue_url/")]
+
+#![unstable(feature="test", issue="27759")]
 
 // @has issue_27759/unstable/index.html
 // @has - '<code>test</code>'

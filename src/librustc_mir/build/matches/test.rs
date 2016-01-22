@@ -15,18 +15,21 @@
 // identify what tests are needed, perform the tests, and then filter
 // the candidates based on the result.
 
-use build::{BlockAnd, Builder};
+use build::Builder;
 use build::matches::{Candidate, MatchPair, Test, TestKind};
 use hair::*;
-use repr::*;
+use rustc_data_structures::fnv::FnvHashMap;
+use rustc::middle::const_eval::ConstVal;
+use rustc::middle::ty::{self, Ty};
+use rustc::mir::repr::*;
 use syntax::codemap::Span;
 
 impl<'a,'tcx> Builder<'a,'tcx> {
     /// Identifies what test is needed to decide if `match_pair` is applicable.
     ///
     /// It is a bug to call this with a simplifyable pattern.
-    pub fn test(&mut self, match_pair: &MatchPair<'tcx>) -> Test<'tcx> {
-        match match_pair.pattern.kind {
+    pub fn test<'pat>(&mut self, match_pair: &MatchPair<'pat, 'tcx>) -> Test<'tcx> {
+        match *match_pair.pattern.kind {
             PatternKind::Variant { ref adt_def, variant_index: _, subpatterns: _ } => {
                 Test {
                     span: match_pair.pattern.span,
@@ -34,13 +37,31 @@ impl<'a,'tcx> Builder<'a,'tcx> {
                 }
             }
 
+            PatternKind::Constant { value: Literal::Value { .. } }
+            if is_switch_ty(match_pair.pattern.ty) => {
+                // for integers, we use a SwitchInt match, which allows
+                // us to handle more cases
+                Test {
+                    span: match_pair.pattern.span,
+                    kind: TestKind::SwitchInt {
+                        switch_ty: match_pair.pattern.ty,
+
+                        // these maps are empty to start; cases are
+                        // added below in add_cases_to_switch
+                        options: vec![],
+                        indices: FnvHashMap(),
+                    }
+                }
+            }
+
             PatternKind::Constant { ref value } => {
+                // for other types, we use an equality comparison
                 Test {
                     span: match_pair.pattern.span,
                     kind: TestKind::Eq {
                         value: value.clone(),
                         ty: match_pair.pattern.ty.clone(),
-                    },
+                    }
                 }
             }
 
@@ -78,13 +99,54 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         }
     }
 
+    pub fn add_cases_to_switch<'pat>(&mut self,
+                                     test_lvalue: &Lvalue<'tcx>,
+                                     candidate: &Candidate<'pat, 'tcx>,
+                                     switch_ty: Ty<'tcx>,
+                                     options: &mut Vec<ConstVal>,
+                                     indices: &mut FnvHashMap<ConstVal, usize>)
+                                     -> bool
+    {
+        let match_pair = match candidate.match_pairs.iter().find(|mp| mp.lvalue == *test_lvalue) {
+            Some(match_pair) => match_pair,
+            _ => { return false; }
+        };
+
+        match *match_pair.pattern.kind {
+            PatternKind::Constant { value: Literal::Value { ref value } } => {
+                // if the lvalues match, the type should match
+                assert_eq!(match_pair.pattern.ty, switch_ty);
+
+                indices.entry(value.clone())
+                       .or_insert_with(|| {
+                           options.push(value.clone());
+                           options.len() - 1
+                       });
+                true
+            }
+
+            PatternKind::Range { .. } |
+            PatternKind::Constant { .. } |
+            PatternKind::Variant { .. } |
+            PatternKind::Slice { .. } |
+            PatternKind::Array { .. } |
+            PatternKind::Wild |
+            PatternKind::Binding { .. } |
+            PatternKind::Leaf { .. } |
+            PatternKind::Deref { .. } => {
+                // don't know how to add these patterns to a switch
+                false
+            }
+        }
+    }
+
     /// Generates the code to perform a test.
     pub fn perform_test(&mut self,
                         block: BasicBlock,
                         lvalue: &Lvalue<'tcx>,
                         test: &Test<'tcx>)
                         -> Vec<BasicBlock> {
-        match test.kind.clone() {
+        match test.kind {
             TestKind::Switch { adt_def } => {
                 let num_enum_variants = self.hir.num_variants(adt_def);
                 let target_blocks: Vec<_> =
@@ -92,34 +154,52 @@ impl<'a,'tcx> Builder<'a,'tcx> {
                                           .collect();
                 self.cfg.terminate(block, Terminator::Switch {
                     discr: lvalue.clone(),
+                    adt_def: adt_def,
                     targets: target_blocks.clone()
                 });
                 target_blocks
             }
 
-            TestKind::Eq { value, ty } => {
-                // call PartialEq::eq(discrim, constant)
-                let constant = self.push_literal(block, test.span, ty.clone(), value);
-                let item_ref = self.hir.partial_eq(ty);
-                self.call_comparison_fn(block, test.span, item_ref, lvalue.clone(), constant)
+            TestKind::SwitchInt { switch_ty, ref options, indices: _ } => {
+                let otherwise = self.cfg.start_new_block();
+                let targets: Vec<_> =
+                    options.iter()
+                           .map(|_| self.cfg.start_new_block())
+                           .chain(Some(otherwise))
+                           .collect();
+                self.cfg.terminate(block, Terminator::SwitchInt {
+                    discr: lvalue.clone(),
+                    switch_ty: switch_ty,
+                    values: options.clone(),
+                    targets: targets.clone(),
+                });
+                targets
             }
 
-            TestKind::Range { lo, hi, ty } => {
+            TestKind::Eq { ref value, ty } => {
+                // call PartialEq::eq(discrim, constant)
+                let constant = self.literal_operand(test.span, ty.clone(), value.clone());
+                let item_ref = self.hir.partial_eq(ty);
+                self.call_comparison_fn(block, test.span, item_ref,
+                                        Operand::Consume(lvalue.clone()), constant)
+            }
+
+            TestKind::Range { ref lo, ref hi, ty } => {
                 // Test `v` by computing `PartialOrd::le(lo, v) && PartialOrd::le(v, hi)`.
-                let lo = self.push_literal(block, test.span, ty.clone(), lo);
-                let hi = self.push_literal(block, test.span, ty.clone(), hi);
+                let lo = self.literal_operand(test.span, ty.clone(), lo.clone());
+                let hi = self.literal_operand(test.span, ty.clone(), hi.clone());
                 let item_ref = self.hir.partial_le(ty);
 
                 let lo_blocks = self.call_comparison_fn(block,
                                                         test.span,
                                                         item_ref.clone(),
                                                         lo,
-                                                        lvalue.clone());
+                                                        Operand::Consume(lvalue.clone()));
 
                 let hi_blocks = self.call_comparison_fn(lo_blocks[0],
                                                         test.span,
                                                         item_ref,
-                                                        lvalue.clone(),
+                                                        Operand::Consume(lvalue.clone()),
                                                         hi);
 
                 let failure = self.cfg.start_new_block();
@@ -164,14 +244,14 @@ impl<'a,'tcx> Builder<'a,'tcx> {
                           block: BasicBlock,
                           span: Span,
                           item_ref: ItemRef<'tcx>,
-                          lvalue1: Lvalue<'tcx>,
-                          lvalue2: Lvalue<'tcx>)
+                          lvalue1: Operand<'tcx>,
+                          lvalue2: Operand<'tcx>)
                           -> Vec<BasicBlock> {
         let target_blocks = vec![self.cfg.start_new_block(), self.cfg.start_new_block()];
 
         let bool_ty = self.hir.bool_ty();
         let eq_result = self.temp(bool_ty);
-        let func = self.push_item_ref(block, span, item_ref);
+        let func = self.item_ref_operand(span, item_ref);
         let call_blocks = [self.cfg.start_new_block(), self.diverge_cleanup()];
         self.cfg.terminate(block,
                            Terminator::Call {
@@ -193,166 +273,187 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         target_blocks
     }
 
-    /// Given a candidate and the outcome of a test we have performed,
-    /// transforms the candidate into a new candidate that reflects
-    /// further tests still needed. Returns `None` if this candidate
-    /// has now been ruled out.
+    /// Given that we are performing `test` against `test_lvalue`,
+    /// this job sorts out what the status of `candidate` will be
+    /// after the test. The `resulting_candidates` vector stores, for
+    /// each possible outcome of `test`, a vector of the candidates
+    /// that will result. This fn should add a (possibly modified)
+    /// clone of candidate into `resulting_candidates` wherever
+    /// appropriate.
     ///
-    /// For example, if a candidate included the patterns `[x.0 @
-    /// Ok(P1), x.1 @ 22]`, and we did a switch test on `x.0` and
-    /// found the variant `Err` (as indicated by the `test_outcome`
-    /// parameter), we would return `None`. But if the test_outcome
-    /// were `Ok`, we would return `Some([x.0.downcast<Ok>.0 @ P1, x.1
-    /// @ 22])`.
-    pub fn candidate_under_assumption(&mut self,
-                                      mut block: BasicBlock,
-                                      test_lvalue: &Lvalue<'tcx>,
-                                      test_kind: &TestKind<'tcx>,
-                                      test_outcome: usize,
-                                      candidate: &Candidate<'tcx>)
-                                      -> BlockAnd<Option<Candidate<'tcx>>> {
-        let candidate = candidate.clone();
-        let match_pairs = candidate.match_pairs;
-        let result = unpack!(block = self.match_pairs_under_assumption(block,
-                                                                       test_lvalue,
-                                                                       test_kind,
-                                                                       test_outcome,
-                                                                       match_pairs));
-        block.and(match result {
-            Some(match_pairs) => Some(Candidate { match_pairs: match_pairs, ..candidate }),
-            None => None,
-        })
-    }
+    /// So, for example, if this candidate is `x @ Some(P0)` and the
+    /// test is a variant test, then we would add `(x as Option).0 @
+    /// P0` to the `resulting_candidates` entry corresponding to the
+    /// variant `Some`.
+    ///
+    /// However, in some cases, the test may just not be relevant to
+    /// candidate. For example, suppose we are testing whether `foo.x == 22`,
+    /// but in one match arm we have `Foo { x: _, ... }`... in that case,
+    /// the test for what value `x` has has no particular relevance
+    /// to this candidate. In such cases, this function just returns false
+    /// without doing anything. This is used by the overall `match_candidates`
+    /// algorithm to structure the match as a whole. See `match_candidates` for
+    /// more details.
+    ///
+    /// FIXME(#29623). In some cases, we have some tricky choices to
+    /// make.  for example, if we are testing that `x == 22`, but the
+    /// candidate is `x @ 13..55`, what should we do? In the event
+    /// that the test is true, we know that the candidate applies, but
+    /// in the event of false, we don't know that it *doesn't*
+    /// apply. For now, we return false, indicate that the test does
+    /// not apply to this candidate, but it might be we can get
+    /// tighter match code if we do something a bit different.
+    pub fn sort_candidate<'pat>(&mut self,
+                                test_lvalue: &Lvalue<'tcx>,
+                                test: &Test<'tcx>,
+                                candidate: &Candidate<'pat, 'tcx>,
+                                resulting_candidates: &mut [Vec<Candidate<'pat, 'tcx>>])
+                                -> bool {
+        // Find the match_pair for this lvalue (if any). At present,
+        // afaik, there can be at most one. (In the future, if we
+        // adopted a more general `@` operator, there might be more
+        // than one, but it'd be very unusual to have two sides that
+        // both require tests; you'd expect one side to be simplified
+        // away.)
+        let tested_match_pair = candidate.match_pairs.iter()
+                                                     .enumerate()
+                                                     .filter(|&(_, mp)| mp.lvalue == *test_lvalue)
+                                                     .next();
+        let (match_pair_index, match_pair) = match tested_match_pair {
+            Some(pair) => pair,
+            None => {
+                // We are not testing this lvalue. Therefore, this
+                // candidate applies to ALL outcomes.
+                return false;
+            }
+        };
 
-    /// Helper for candidate_under_assumption that does the actual
-    /// work of transforming the list of match pairs.
-    fn match_pairs_under_assumption(&mut self,
-                                    mut block: BasicBlock,
-                                    test_lvalue: &Lvalue<'tcx>,
-                                    test_kind: &TestKind<'tcx>,
-                                    test_outcome: usize,
-                                    match_pairs: Vec<MatchPair<'tcx>>)
-                                    -> BlockAnd<Option<Vec<MatchPair<'tcx>>>> {
-        let mut result = vec![];
-
-        for match_pair in match_pairs {
-            // if the match pair is testing a different lvalue, it
-            // is unaffected by this test.
-            if match_pair.lvalue != *test_lvalue {
-                result.push(match_pair);
-                continue;
+        match test.kind {
+            // If we are performing a variant switch, then this
+            // informs variant patterns, but nothing else.
+            TestKind::Switch { adt_def: tested_adt_def } => {
+                match *match_pair.pattern.kind {
+                    PatternKind::Variant { adt_def, variant_index, ref subpatterns } => {
+                        assert_eq!(adt_def, tested_adt_def);
+                        let new_candidate =
+                            self.candidate_after_variant_switch(match_pair_index,
+                                                                adt_def,
+                                                                variant_index,
+                                                                subpatterns,
+                                                                candidate);
+                        resulting_candidates[variant_index].push(new_candidate);
+                        true
+                    }
+                    _ => {
+                        false
+                    }
+                }
             }
 
-            let desired_test = self.test(&match_pair);
+            // If we are performing a switch over integers, then this informs integer
+            // equality, but nothing else.
+            //
+            // FIXME(#29623) we could use TestKind::Range to rule
+            // things out here, in some cases.
+            TestKind::SwitchInt { switch_ty: _, options: _, ref indices } => {
+                match *match_pair.pattern.kind {
+                    PatternKind::Constant { value: Literal::Value { ref value } }
+                    if is_switch_ty(match_pair.pattern.ty) => {
+                        let index = indices[value];
+                        let new_candidate = self.candidate_without_match_pair(match_pair_index,
+                                                                              candidate);
+                        resulting_candidates[index].push(new_candidate);
+                        true
+                    }
+                    _ => {
+                        false
+                    }
+                }
+            }
 
-            if *test_kind != desired_test.kind {
-                // if the match pair wants to (e.g.) test for
-                // equality against some particular constant, but
-                // we did a switch, then we can't say whether it
-                // matches or not, so we still have to include it
-                // as a possibility.
+            TestKind::Eq { .. } |
+            TestKind::Range { .. } |
+            TestKind::Len { .. } => {
+                // These are all binary tests.
                 //
-                // For example, we have a constant `FOO:
-                // Option<i32> = Some(22)`, and `match_pair` is `x
-                // @ FOO`, but we did a switch on the variant
-                // (`Some` vs `None`). (OK, in principle this
-                // could tell us something, but we're not that
-                // smart yet to actually dig into the constant
-                // itself)
-                result.push(match_pair);
-                continue;
-            }
-
-            let opt_consequent_match_pairs =
-                unpack!(block = self.consequent_match_pairs_under_assumption(block,
-                                                                             match_pair,
-                                                                             test_outcome));
-            match opt_consequent_match_pairs {
-                None => {
-                    // Right kind of test, but wrong outcome. That
-                    // means this **entire candidate** is
-                    // inapplicable, since the candidate is only
-                    // applicable if all of its match-pairs apply (and
-                    // this one doesn't).
-                    return block.and(None);
-                }
-
-                Some(consequent_match_pairs) => {
-                    // Test passed; add any new patterns we have to test to the final result.
-                    result.extend(consequent_match_pairs)
-                }
-            }
-        }
-        block.and(Some(result))
-    }
-
-    /// Identifies what test is needed to decide if `match_pair` is applicable.
-    ///
-    /// It is a bug to call this with a simplifyable pattern.
-    pub fn consequent_match_pairs_under_assumption(&mut self,
-                                                   mut block: BasicBlock,
-                                                   match_pair: MatchPair<'tcx>,
-                                                   test_outcome: usize)
-                                                   -> BlockAnd<Option<Vec<MatchPair<'tcx>>>> {
-        match match_pair.pattern.kind {
-            PatternKind::Variant { adt_def, variant_index, subpatterns } => {
-                if test_outcome != variant_index {
-                    return block.and(None);
-                }
-
-                let elem = ProjectionElem::Downcast(adt_def, variant_index);
-                let downcast_lvalue = match_pair.lvalue.clone().elem(elem);
-                let consequent_match_pairs =
-                    subpatterns.into_iter()
-                               .map(|subpattern| {
-                                   let lvalue =
-                                       downcast_lvalue.clone().field(
-                                           subpattern.field);
-                                   self.match_pair(lvalue, subpattern.pattern)
-                               })
-                               .collect();
-                block.and(Some(consequent_match_pairs))
-            }
-
-            PatternKind::Constant { .. } |
-            PatternKind::Range { .. } => {
-                // these are boolean tests: if we are on the 0th
-                // successor, then they passed, and otherwise they
-                // failed, but there are never any more tests to come.
-                if test_outcome == 0 {
-                    block.and(Some(vec![]))
+                // FIXME(#29623) we can be more clever here
+                let pattern_test = self.test(&match_pair);
+                if pattern_test.kind == test.kind {
+                    let new_candidate = self.candidate_without_match_pair(match_pair_index,
+                                                                          candidate);
+                    resulting_candidates[0].push(new_candidate);
+                    true
                 } else {
-                    block.and(None)
+                    false
                 }
-            }
-
-            PatternKind::Slice { prefix, slice, suffix } => {
-                if test_outcome == 0 {
-                    let mut consequent_match_pairs = vec![];
-                    unpack!(block = self.prefix_suffix_slice(&mut consequent_match_pairs,
-                                                             block,
-                                                             match_pair.lvalue,
-                                                             prefix,
-                                                             slice,
-                                                             suffix));
-                    block.and(Some(consequent_match_pairs))
-                } else {
-                    block.and(None)
-                }
-            }
-
-            PatternKind::Array { .. } |
-            PatternKind::Wild |
-            PatternKind::Binding { .. } |
-            PatternKind::Leaf { .. } |
-            PatternKind::Deref { .. } => {
-                self.error_simplifyable(&match_pair)
             }
         }
     }
 
-    fn error_simplifyable(&mut self, match_pair: &MatchPair<'tcx>) -> ! {
+    fn candidate_without_match_pair<'pat>(&mut self,
+                                          match_pair_index: usize,
+                                          candidate: &Candidate<'pat, 'tcx>)
+                                          -> Candidate<'pat, 'tcx> {
+        let other_match_pairs =
+            candidate.match_pairs.iter()
+                                 .enumerate()
+                                 .filter(|&(index, _)| index != match_pair_index)
+                                 .map(|(_, mp)| mp.clone())
+                                 .collect();
+        Candidate {
+            match_pairs: other_match_pairs,
+            bindings: candidate.bindings.clone(),
+            guard: candidate.guard.clone(),
+            arm_index: candidate.arm_index,
+        }
+    }
+
+    fn candidate_after_variant_switch<'pat>(&mut self,
+                                            match_pair_index: usize,
+                                            adt_def: ty::AdtDef<'tcx>,
+                                            variant_index: usize,
+                                            subpatterns: &'pat [FieldPattern<'tcx>],
+                                            candidate: &Candidate<'pat, 'tcx>)
+                                            -> Candidate<'pat, 'tcx> {
+        let match_pair = &candidate.match_pairs[match_pair_index];
+
+        // So, if we have a match-pattern like `x @ Enum::Variant(P1, P2)`,
+        // we want to create a set of derived match-patterns like
+        // `(x as Variant).0 @ P1` and `(x as Variant).1 @ P1`.
+        let elem = ProjectionElem::Downcast(adt_def, variant_index);
+        let downcast_lvalue = match_pair.lvalue.clone().elem(elem); // `(x as Variant)`
+        let consequent_match_pairs =
+            subpatterns.iter()
+                       .map(|subpattern| {
+                           // e.g., `(x as Variant).0`
+                           let lvalue = downcast_lvalue.clone().field(subpattern.field);
+                           // e.g., `(x as Variant).0 @ P1`
+                           MatchPair::new(lvalue, &subpattern.pattern)
+                       });
+
+        // In addition, we need all the other match pairs from the old candidate.
+        let other_match_pairs =
+            candidate.match_pairs.iter()
+                                 .enumerate()
+                                 .filter(|&(index, _)| index != match_pair_index)
+                                 .map(|(_, mp)| mp.clone());
+
+        let all_match_pairs = consequent_match_pairs.chain(other_match_pairs).collect();
+
+        Candidate {
+            match_pairs: all_match_pairs,
+            bindings: candidate.bindings.clone(),
+            guard: candidate.guard.clone(),
+            arm_index: candidate.arm_index,
+        }
+    }
+
+    fn error_simplifyable<'pat>(&mut self, match_pair: &MatchPair<'pat, 'tcx>) -> ! {
         self.hir.span_bug(match_pair.pattern.span,
                           &format!("simplifyable pattern found: {:?}", match_pair.pattern))
     }
+}
+
+fn is_switch_ty<'tcx>(ty: Ty<'tcx>) -> bool {
+    ty.is_integral() || ty.is_char() || ty.is_bool()
 }

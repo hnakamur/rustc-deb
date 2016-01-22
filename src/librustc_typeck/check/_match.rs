@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use middle::def;
-use middle::infer;
+use middle::infer::{self, TypeOrigin};
 use middle::pat_util::{PatIdMap, pat_id_map, pat_is_binding};
 use middle::pat_util::pat_is_resolved_const;
 use middle::privacy::{AllPublic, LastMod};
@@ -19,13 +19,14 @@ use check::{check_expr, check_expr_has_type, check_expr_with_expectation};
 use check::{check_expr_coercable_to_type, demand, FnCtxt, Expectation};
 use check::{check_expr_with_lvalue_pref};
 use check::{instantiate_path, resolve_ty_and_def_ufcs, structurally_resolved_type};
+use lint;
 use require_same_types;
 use util::nodemap::FnvHashMap;
+use session::Session;
 
 use std::cmp;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use syntax::ast;
-use syntax::ext::mtwt;
 use syntax::codemap::{Span, Spanned};
 use syntax::ptr::P;
 
@@ -45,7 +46,7 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
            expected);
 
     match pat.node {
-        hir::PatWild(_) => {
+        hir::PatWild => {
             fcx.write_ty(pat.id, expected);
         }
         hir::PatLit(ref lt) => {
@@ -134,7 +135,14 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             // subtyping doesn't matter here, as the value is some kind of scalar
             demand::eqtype(fcx, pat.span, expected, lhs_ty);
         }
-        hir::PatEnum(..) | hir::PatIdent(..) if pat_is_resolved_const(&tcx.def_map, pat) => {
+        hir::PatEnum(..) | hir::PatIdent(..)
+                if pat_is_resolved_const(&tcx.def_map.borrow(), pat) => {
+            if let hir::PatEnum(ref path, ref subpats) = pat.node {
+                if !(subpats.is_some() && subpats.as_ref().unwrap().is_empty()) {
+                    bad_struct_kind_err(tcx.sess, pat, path, false);
+                    return;
+                }
+            }
             let const_did = tcx.def_map.borrow().get(&pat.id).unwrap().def_id();
             let const_scheme = tcx.lookup_item_type(const_did);
             assert!(const_scheme.generics.is_empty());
@@ -150,7 +158,7 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             // is good enough.
             demand::suptype(fcx, pat.span, expected, const_ty);
         }
-        hir::PatIdent(bm, ref path, ref sub) if pat_is_binding(&tcx.def_map, pat) => {
+        hir::PatIdent(bm, ref path, ref sub) if pat_is_binding(&tcx.def_map.borrow(), pat) => {
             let typ = fcx.local_ty(pat.span, pat.id);
             match bm {
                 hir::BindByRef(mutbl) => {
@@ -179,7 +187,7 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
 
             // if there are multiple arms, make sure they all agree on
             // what the type of the binding `x` ought to be
-            let canon_id = *pcx.map.get(&mtwt::resolve(path.node)).unwrap();
+            let canon_id = *pcx.map.get(&path.node.name).unwrap();
             if canon_id != pat.id {
                 let ct = fcx.local_ty(pat.span, canon_id);
                 demand::eqtype(fcx, pat.span, ct, typ);
@@ -191,11 +199,12 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
         }
         hir::PatIdent(_, ref path, _) => {
             let path = hir_util::ident_to_path(path.span, path.node);
-            check_pat_enum(pcx, pat, &path, Some(&[]), expected);
+            check_pat_enum(pcx, pat, &path, Some(&[]), expected, false);
         }
         hir::PatEnum(ref path, ref subpats) => {
             let subpats = subpats.as_ref().map(|v| &v[..]);
-            check_pat_enum(pcx, pat, path, subpats, expected);
+            let is_tuple_struct_pat = !(subpats.is_some() && subpats.unwrap().is_empty());
+            check_pat_enum(pcx, pat, path, subpats, expected, is_tuple_struct_pat);
         }
         hir::PatQPath(ref qself, ref path) => {
             let self_ty = fcx.to_ty(&qself.ty);
@@ -411,7 +420,7 @@ pub fn check_dereferencable<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
                                       inner: &hir::Pat) -> bool {
     let fcx = pcx.fcx;
     let tcx = pcx.fcx.ccx.tcx;
-    if pat_is_binding(&tcx.def_map, inner) {
+    if pat_is_binding(&tcx.def_map.borrow(), inner) {
         let expected = fcx.infcx().shallow_resolve(expected);
         expected.builtin_deref(true, ty::NoPreference).map_or(true, |mt| match mt.ty.sty {
             ty::TyTrait(_) => {
@@ -442,7 +451,7 @@ pub fn check_match<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     // supertype, as the "discriminant type" (issue #23116).
     let contains_ref_bindings = arms.iter()
                                     .filter_map(|a| tcx.arm_contains_ref_binding(a))
-                                    .max_by(|m| match *m {
+                                    .max_by_key(|m| match *m {
                                         hir::MutMutable => 1,
                                         hir::MutImmutable => 0,
                                     });
@@ -508,12 +517,12 @@ pub fn check_match<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                 /* if-let construct without an else block */
                 hir::MatchSource::IfLetDesugar { contains_else_clause }
                 if !contains_else_clause => (
-                    infer::IfExpressionWithNoElse(expr.span),
+                    TypeOrigin::IfExpressionWithNoElse(expr.span),
                     bty,
                     result_ty,
                 ),
                 _ => (
-                    infer::MatchExpressionArm(expr.span, arm.body.span),
+                    TypeOrigin::MatchExpressionArm(expr.span, arm.body.span, match_src),
                     result_ty,
                     bty,
                 ),
@@ -571,11 +580,30 @@ pub fn check_pat_struct<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>, pat: &'tcx hir::Pat,
     fcx.write_substs(pat.id, ty::ItemSubsts { substs: item_substs.clone() });
 }
 
+// This function exists due to the warning "diagnostic code E0164 already used"
+fn bad_struct_kind_err(sess: &Session, pat: &hir::Pat, path: &hir::Path, lint: bool) {
+    let name = pprust::path_to_string(path);
+    let msg = format!("`{}` does not name a tuple variant or a tuple struct", name);
+    if lint {
+        let expanded_msg =
+            format!("{}; RFC 218 disallowed matching of unit variants or unit structs via {}(..)",
+                    msg,
+                    name);
+        sess.add_lint(lint::builtin::MATCH_OF_UNIT_VARIANT_VIA_PAREN_DOTDOT,
+                      pat.id,
+                      pat.span,
+                      expanded_msg);
+    } else {
+        span_err!(sess, pat.span, E0164, "{}", msg);
+    }
+}
+
 pub fn check_pat_enum<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
                                 pat: &hir::Pat,
                                 path: &hir::Path,
                                 subpats: Option<&'tcx [P<hir::Pat>]>,
-                                expected: Ty<'tcx>)
+                                expected: Ty<'tcx>,
+                                is_tuple_struct_pat: bool)
 {
     // Typecheck the path.
     let fcx = pcx.fcx;
@@ -617,18 +645,32 @@ pub fn check_pat_enum<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
                      path_scheme, &ctor_predicates,
                      opt_ty, def, pat.span, pat.id);
 
+    let report_bad_struct_kind = |is_warning| {
+        bad_struct_kind_err(tcx.sess, pat, path, is_warning);
+        if is_warning { return; }
+        fcx.write_error(pat.id);
+        if let Some(subpats) = subpats {
+            for pat in subpats {
+                check_pat(pcx, &**pat, tcx.types.err);
+            }
+        }
+    };
+
     // If we didn't have a fully resolved path to start with, we had an
     // associated const, and we should quit now, since the rest of this
     // function uses checks specific to structs and enums.
     if path_res.depth != 0 {
-        let pat_ty = fcx.node_ty(pat.id);
-        demand::suptype(fcx, pat.span, expected, pat_ty);
+        if is_tuple_struct_pat {
+            report_bad_struct_kind(false);
+        } else {
+            let pat_ty = fcx.node_ty(pat.id);
+            demand::suptype(fcx, pat.span, expected, pat_ty);
+        }
         return;
     }
 
     let pat_ty = fcx.node_ty(pat.id);
     demand::eqtype(fcx, pat.span, expected, pat_ty);
-
 
     let real_path_ty = fcx.node_ty(pat.id);
     let (arg_tys, kind_name): (Vec<_>, &'static str) = match real_path_ty.sty {
@@ -636,6 +678,15 @@ pub fn check_pat_enum<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
             if def == def::DefVariant(enum_def.did, def.def_id(), false) =>
         {
             let variant = enum_def.variant_of_def(def);
+            if is_tuple_struct_pat && variant.kind() != ty::VariantKind::Tuple {
+                // Matching unit variants with tuple variant patterns (`UnitVariant(..)`)
+                // is allowed for backward compatibility.
+                let is_special_case = variant.kind() == ty::VariantKind::Unit;
+                report_bad_struct_kind(is_special_case);
+                if !is_special_case {
+                    return
+                }
+            }
             (variant.fields
                     .iter()
                     .map(|f| fcx.instantiate_type_scheme(pat.span,
@@ -645,26 +696,24 @@ pub fn check_pat_enum<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
              "variant")
         }
         ty::TyStruct(struct_def, expected_substs) => {
-            (struct_def.struct_variant()
-                       .fields
-                       .iter()
-                       .map(|f| fcx.instantiate_type_scheme(pat.span,
-                                                            expected_substs,
-                                                            &f.unsubst_ty()))
-                       .collect(),
+            let variant = struct_def.struct_variant();
+            if is_tuple_struct_pat && variant.kind() != ty::VariantKind::Tuple {
+                // Matching unit structs with tuple variant patterns (`UnitVariant(..)`)
+                // is allowed for backward compatibility.
+                let is_special_case = variant.kind() == ty::VariantKind::Unit;
+                report_bad_struct_kind(is_special_case);
+                return;
+            }
+            (variant.fields
+                    .iter()
+                    .map(|f| fcx.instantiate_type_scheme(pat.span,
+                                                         expected_substs,
+                                                         &f.unsubst_ty()))
+                    .collect(),
              "struct")
         }
         _ => {
-            let name = pprust::path_to_string(path);
-            span_err!(tcx.sess, pat.span, E0164,
-                "`{}` does not name a non-struct variant or a tuple struct", name);
-            fcx.write_error(pat.id);
-
-            if let Some(subpats) = subpats {
-                for pat in subpats {
-                    check_pat(pcx, &**pat, tcx.types.err);
-                }
-            }
+            report_bad_struct_kind(false);
             return;
         }
     };

@@ -21,7 +21,7 @@ pub use self::MovedValueUseKind::*;
 use self::InteriorKind::*;
 
 use rustc::front::map as hir_map;
-use rustc::front::map::blocks::{FnLikeNode, FnParts};
+use rustc::front::map::blocks::FnParts;
 use rustc::middle::cfg;
 use rustc::middle::dataflow::DataFlowContext;
 use rustc::middle::dataflow::BitwiseOperator;
@@ -31,6 +31,7 @@ use rustc::middle::def_id::DefId;
 use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::free_region::FreeRegionMap;
 use rustc::middle::mem_categorization as mc;
+use rustc::middle::mem_categorization::Categorization;
 use rustc::middle::region;
 use rustc::middle::ty::{self, Ty};
 
@@ -42,8 +43,8 @@ use syntax::codemap::Span;
 
 use rustc_front::hir;
 use rustc_front::hir::{FnDecl, Block};
-use rustc_front::visit;
-use rustc_front::visit::{Visitor, FnKind};
+use rustc_front::intravisit;
+use rustc_front::intravisit::{Visitor, FnKind};
 use rustc_front::util as hir_util;
 
 pub mod check_loans;
@@ -84,14 +85,14 @@ impl<'a, 'tcx, 'v> Visitor<'v> for BorrowckCtxt<'a, 'tcx> {
         if let hir::ConstTraitItem(_, Some(ref expr)) = ti.node {
             gather_loans::gather_loans_in_static_initializer(self, &*expr);
         }
-        visit::walk_trait_item(self, ti);
+        intravisit::walk_trait_item(self, ti);
     }
 
     fn visit_impl_item(&mut self, ii: &hir::ImplItem) {
-        if let hir::ConstImplItem(_, ref expr) = ii.node {
+        if let hir::ImplItemKind::Const(_, ref expr) = ii.node {
             gather_loans::gather_loans_in_static_initializer(self, &*expr);
         }
-        visit::walk_impl_item(self, ii);
+        intravisit::walk_impl_item(self, ii);
     }
 }
 
@@ -107,7 +108,7 @@ pub fn check_crate(tcx: &ty::ctxt) {
         }
     };
 
-    visit::walk_crate(&mut bccx, tcx.map.krate());
+    tcx.map.krate().visit_all_items(&mut bccx);
 
     if tcx.sess.borrowck_stats() {
         println!("--- borrowck stats ---");
@@ -141,7 +142,7 @@ fn borrowck_item(this: &mut BorrowckCtxt, item: &hir::Item) {
         _ => { }
     }
 
-    visit::walk_item(this, item);
+    intravisit::walk_item(this, item);
 }
 
 /// Collection of conclusions determined via borrow checker analyses.
@@ -180,7 +181,7 @@ fn borrowck_fn(this: &mut BorrowckCtxt,
                              decl,
                              body);
 
-    visit::walk_fn(this, fk, decl, body, sp);
+    intravisit::walk_fn(this, fk, decl, body, sp);
 }
 
 fn build_borrowck_dataflow_data<'a, 'tcx>(this: &mut BorrowckCtxt<'a, 'tcx>,
@@ -226,25 +227,12 @@ fn build_borrowck_dataflow_data<'a, 'tcx>(this: &mut BorrowckCtxt<'a, 'tcx>,
                    move_data:flowed_moves }
 }
 
-/// This and a `ty::ctxt` is all you need to run the dataflow analyses
-/// used in the borrow checker.
-pub struct FnPartsWithCFG<'a> {
-    pub fn_parts: FnParts<'a>,
-    pub cfg:  &'a cfg::CFG,
-}
-
-impl<'a> FnPartsWithCFG<'a> {
-    pub fn from_fn_like(f: &'a FnLikeNode,
-                        g: &'a cfg::CFG) -> FnPartsWithCFG<'a> {
-        FnPartsWithCFG { fn_parts: f.to_fn_parts(), cfg: g }
-    }
-}
-
 /// Accessor for introspective clients inspecting `AnalysisData` and
 /// the `BorrowckCtxt` itself , e.g. the flowgraph visualizer.
 pub fn build_borrowck_dataflow_data_for_fn<'a, 'tcx>(
     tcx: &'a ty::ctxt<'tcx>,
-    input: FnPartsWithCFG<'a>)
+    fn_parts: FnParts<'a>,
+    cfg: &cfg::CFG)
     -> (BorrowckCtxt<'a, 'tcx>, AnalysisData<'a, 'tcx>)
 {
 
@@ -259,15 +247,13 @@ pub fn build_borrowck_dataflow_data_for_fn<'a, 'tcx>(
         }
     };
 
-    let p = input.fn_parts;
-
     let dataflow_data = build_borrowck_dataflow_data(&mut bccx,
-                                                     p.kind,
-                                                     &*p.decl,
-                                                     input.cfg,
-                                                     &*p.body,
-                                                     p.span,
-                                                     p.id);
+                                                     fn_parts.kind,
+                                                     &*fn_parts.decl,
+                                                     cfg,
+                                                     &*fn_parts.body,
+                                                     fn_parts.span,
+                                                     fn_parts.id);
 
     (bccx, dataflow_data)
 }
@@ -502,32 +488,32 @@ pub fn opt_loan_path<'tcx>(cmt: &mc::cmt<'tcx>) -> Option<Rc<LoanPath<'tcx>>> {
     let new_lp = |v: LoanPathKind<'tcx>| Rc::new(LoanPath::new(v, cmt.ty));
 
     match cmt.cat {
-        mc::cat_rvalue(..) |
-        mc::cat_static_item => {
+        Categorization::Rvalue(..) |
+        Categorization::StaticItem => {
             None
         }
 
-        mc::cat_local(id) => {
+        Categorization::Local(id) => {
             Some(new_lp(LpVar(id)))
         }
 
-        mc::cat_upvar(mc::Upvar { id, .. }) => {
+        Categorization::Upvar(mc::Upvar { id, .. }) => {
             Some(new_lp(LpUpvar(id)))
         }
 
-        mc::cat_deref(ref cmt_base, _, pk) => {
+        Categorization::Deref(ref cmt_base, _, pk) => {
             opt_loan_path(cmt_base).map(|lp| {
                 new_lp(LpExtend(lp, cmt.mutbl, LpDeref(pk)))
             })
         }
 
-        mc::cat_interior(ref cmt_base, ik) => {
+        Categorization::Interior(ref cmt_base, ik) => {
             opt_loan_path(cmt_base).map(|lp| {
                 new_lp(LpExtend(lp, cmt.mutbl, LpInterior(ik.cleaned())))
             })
         }
 
-        mc::cat_downcast(ref cmt_base, variant_def_id) =>
+        Categorization::Downcast(ref cmt_base, variant_def_id) =>
             opt_loan_path(cmt_base)
             .map(|lp| {
                 new_lp(LpDowncast(lp, variant_def_id))
@@ -941,8 +927,8 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                            "consider changing this closure to take self by mutable reference");
                 }
             }
-            mc::AliasableStatic(..) |
-            mc::AliasableStaticMut(..) => {
+            mc::AliasableStatic |
+            mc::AliasableStaticMut => {
                 span_err!(
                     self.tcx.sess, span, E0388,
                     "{} in a static location", prefix);
@@ -997,14 +983,14 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
     pub fn note_and_explain_bckerr(&self, err: BckError<'tcx>) {
         let code = err.code;
         match code {
-            err_mutbl(..) => {
+            err_mutbl => {
                 match err.cmt.note {
                     mc::NoteClosureEnv(upvar_id) | mc::NoteUpvarRef(upvar_id) => {
                         // If this is an `Fn` closure, it simply can't mutate upvars.
                         // If it's an `FnMut` closure, the original variable was declared immutable.
                         // We need to determine which is the case here.
                         let kind = match err.cmt.upvar().unwrap().cat {
-                            mc::cat_upvar(mc::Upvar { kind, .. }) => kind,
+                            Categorization::Upvar(mc::Upvar { kind, .. }) => kind,
                             _ => unreachable!()
                         };
                         if kind == ty::FnClosureKind {
@@ -1014,7 +1000,18 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                                  self by mutable reference");
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if let Categorization::Local(local_id) = err.cmt.cat {
+                            let span = self.tcx.map.span(local_id);
+                            if let Ok(snippet) = self.tcx.sess.codemap().span_to_snippet(span) {
+                                self.tcx.sess.span_suggestion(
+                                    span,
+                                    &format!("to make the {} mutable, use `mut` as shown:",
+                                             self.cmt_to_string(&err.cmt)),
+                                    format!("mut {}", snippet));
+                            }
+                        }
+                    }
                 }
             }
 
