@@ -99,13 +99,12 @@ Comments in Rust code follow the general C++ style of line (`//`) and
 block (`/* ... */`) comment forms. Nested block comments are supported.
 
 Line comments beginning with exactly _three_ slashes (`///`), and block
-comments beginning with exactly one repeated asterisk in the block-open
-sequence (`/**`), are interpreted as a special syntax for `doc`
+comments (`/** ... */`), are interpreted as a special syntax for `doc`
 [attributes](#attributes). That is, they are equivalent to writing
 `#[doc="..."]` around the body of the comment, i.e., `/// Foo` turns into
 `#[doc="Foo"]`.
 
-Line comments beginning with `//!` and block comments beginning with `/*!` are
+Line comments beginning with `//!` and block comments `/*! ... !*/` are
 doc comments that apply to the parent of the comment, rather than the item
 that follows.  That is, they are equivalent to writing `#![doc="..."]` around
 the body of the comment. `//!` comments are usually used to document
@@ -148,11 +147,11 @@ a form of constant expression, so is evaluated (primarily) at compile time.
 
 |                                              | Example         | `#` sets   | Characters  | Escapes             |
 |----------------------------------------------|-----------------|------------|-------------|---------------------|
-| [Character](#character-literals)             | `'H'`           | `N/A`      | All Unicode | `\'` & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
-| [String](#string-literals)                   | `"hello"`       | `N/A`      | All Unicode | `\"` & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
+| [Character](#character-literals)             | `'H'`           | `N/A`      | All Unicode | [Quote](#quote-escapes) & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
+| [String](#string-literals)                   | `"hello"`       | `N/A`      | All Unicode | [Quote](#quote-escapes) & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
 | [Raw](#raw-string-literals)                  | `r#"hello"#`    | `0...`     | All Unicode | `N/A`                                                      |
-| [Byte](#byte-literals)                       | `b'H'`          | `N/A`      | All ASCII   | `\'` & [Byte](#byte-escapes)                               |
-| [Byte string](#byte-string-literals)         | `b"hello"`      | `N/A`      | All ASCII   | `\"` & [Byte](#byte-escapes)                               |
+| [Byte](#byte-literals)                       | `b'H'`          | `N/A`      | All ASCII   | [Quote](#quote-escapes) & [Byte](#byte-escapes)                               |
+| [Byte string](#byte-string-literals)         | `b"hello"`      | `N/A`      | All ASCII   | [Quote](#quote-escapes) & [Byte](#byte-escapes)                               |
 | [Raw byte string](#raw-byte-string-literals) | `br#"hello"#`   | `0...`     | All ASCII   | `N/A`                                                      |
 
 ##### Byte escapes
@@ -164,11 +163,18 @@ a form of constant expression, so is evaluated (primarily) at compile time.
 | `\r` | Carriage return |
 | `\t` | Tab |
 | `\\` | Backslash |
+| `\0` | Null |
 
 ##### Unicode escapes
 |   | Name |
 |---|------|
 | `\u{7FFF}` | 24-bit Unicode character code (up to 6 digits) |
+
+##### Quote escapes
+|   | Name |
+|---|------|
+| `\'` | Single quote |
+| `\"` | Double quote |
 
 ##### Numbers
 
@@ -509,6 +515,25 @@ fn bar() {
 # fn main() {}
 ```
 
+Additionally keyword `super` may be repeated several times after the first
+`super` or `self` to refer to ancestor modules.
+
+```rust
+mod a {
+    fn foo() {}
+
+    mod b {
+        mod c {
+            fn foo() {
+                super::super::foo(); // call a's foo function
+                self::super::super::foo(); // call a's foo function
+            }
+        }
+    }
+}
+# fn main() {}
+```
+
 # Syntax extensions
 
 A number of minor features of Rust are not central enough to have their own
@@ -547,9 +572,20 @@ a `$` literally, including delimiters. For parsing reasons, delimiters must be
 balanced, but they are otherwise not special.
 
 In the matcher, `$` _name_ `:` _designator_ matches the nonterminal in the Rust
-syntax named by _designator_. Valid designators are `item`, `block`, `stmt`,
-`pat`, `expr`, `ty` (type), `ident`, `path`, `tt` (either side of the `=>`
-in macro rules), and `meta` (contents of an attribute). In the transcriber, the
+syntax named by _designator_. Valid designators are:
+
+* `item`: an [item](#items)
+* `block`: a [block](#block-expressions)
+* `stmt`: a [statement](#statements)
+* `pat`: a [pattern](#match-expressions)
+* `expr`: an [expression](#expressions)
+* `ty`: a [type](#types)
+* `ident`: an [identifier](#identifiers)
+* `path`: a [path](#paths)
+* `tt`: either side of the `=>` in macro rules
+* `meta`: the contents of an [attribute](#attributes)
+
+In the transcriber, the
 designator is already known, and so only the name of a matched nonterminal comes
 after the dollar sign.
 
@@ -660,8 +696,8 @@ apply to the crate as a whole.
 ```
 
 A crate that contains a `main` function can be compiled to an executable. If a
-`main` function is present, its return type must be [`unit`](#tuple-types)
-and it must take no arguments.
+`main` function is present, its return type must be `()`
+("[unit](#tuple-types)") and it must take no arguments.
 
 # Items and attributes
 
@@ -2308,20 +2344,9 @@ The currently implemented features of the reference compiler are:
 * `simd_ffi` - Allows use of SIMD vectors in signatures for foreign functions.
                The SIMD interface is subject to change.
 
-* `staged_api` - Allows usage of stability markers and `#![staged_api]` in a
-                 crate. Stability markers are also attributes: `#[stable]`,
-                 `#[unstable]`, and `#[deprecated]` are the three levels.
-
 * `start` - Allows use of the `#[start]` attribute, which changes the entry point
             into a Rust program. This capability, especially the signature for the
             annotated function, is subject to change.
-
-* `struct_variant` - Structural enum variants (those with named fields). It is
-                     currently unknown whether this style of enum variant is as
-                     fully supported as the tuple-forms, and it's not certain
-                     that this style of variant should remain in the language.
-                     For now this style of variant is hidden behind a feature
-                     flag.
 
 * `thread_local` - The usage of the `#[thread_local]` attribute is experimental
                    and should be seen as unstable. This attribute is used to
@@ -2361,6 +2386,9 @@ The currently implemented features of the reference compiler are:
 * - `default_type_parameter_fallback` - Allows type parameter defaults to
                                         influence type inference.
 * - `braced_empty_structs` - Allows use of empty structs and enum variants with braces.
+
+* - `stmt_expr_attributes` - Allows attributes on expressions and
+                             non-item statements.
 
 If a feature is promoted to a language feature, then all existing programs will
 start to receive compilation warnings about `#![feature]` directives which enabled
@@ -2412,9 +2440,9 @@ in meaning to declaring the item outside the statement block.
 > **Note**: there is no implicit capture of the function's dynamic environment when
 > declaring a function-local item.
 
-#### Variable declarations
+#### `let` statements
 
-A _variable declaration_ introduces a new set of variable, given by a pattern. The
+A _`let` statement_ introduces a new set of variables, given by a pattern. The
 pattern may be followed by a type annotation, and/or an initializer expression.
 When no type annotation is given, the compiler will infer the type, or signal
 an error if insufficient type information is available for definite inference.
@@ -3187,10 +3215,11 @@ let message = match maybe_digit {
 
 ### `if let` expressions
 
-An `if let` expression is semantically identical to an `if` expression but in place
-of a condition expression it expects a refutable let statement. If the value of the
-expression on the right hand side of the let statement matches the pattern, the corresponding
-block will execute, otherwise flow proceeds to the first `else` block that follows.
+An `if let` expression is semantically identical to an `if` expression but in
+place of a condition expression it expects a `let` statement with a refutable
+pattern. If the value of the expression on the right hand side of the `let`
+statement matches the pattern, the corresponding block will execute, otherwise
+flow proceeds to the first `else` block that follows.
 
 ```
 let dish = ("Ham", "Eggs");
@@ -3208,11 +3237,11 @@ if let ("Ham", b) = dish {
 
 ### `while let` loops
 
-A `while let` loop is semantically identical to a `while` loop but in place of a
-condition expression it expects a refutable let statement. If the value of the
-expression on the right hand side of the let statement matches the pattern, the
-loop body block executes and control returns to the pattern matching statement.
-Otherwise, the while expression completes.
+A `while let` loop is semantically identical to a `while` loop but in place of
+a condition expression it expects `let` statement with a refutable pattern. If
+the value of the expression on the right hand side of the `let` statement
+matches the pattern, the loop body block executes and control returns to the
+pattern matching statement. Otherwise, the while expression completes.
 
 ### `return` expressions
 

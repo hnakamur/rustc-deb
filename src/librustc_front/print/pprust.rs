@@ -25,7 +25,7 @@ use syntax::print::pprust::{self as ast_pp, PrintState};
 use syntax::ptr::P;
 
 use hir;
-use hir::{RegionTyParamBound, TraitTyParamBound, TraitBoundModifier};
+use hir::{Crate, RegionTyParamBound, TraitTyParamBound, TraitBoundModifier};
 
 use std::io::{self, Write, Read};
 
@@ -54,6 +54,7 @@ impl PpAnn for NoAnn {}
 
 
 pub struct State<'a> {
+    krate: Option<&'a Crate>,
     pub s: pp::Printer<'a>,
     cm: Option<&'a CodeMap>,
     comments: Option<Vec<comments::Comment>>,
@@ -85,13 +86,17 @@ impl<'a> PrintState<'a> for State<'a> {
     }
 }
 
-pub fn rust_printer<'a>(writer: Box<Write + 'a>) -> State<'a> {
+pub fn rust_printer<'a>(writer: Box<Write + 'a>, krate: Option<&'a Crate>) -> State<'a> {
     static NO_ANN: NoAnn = NoAnn;
-    rust_printer_annotated(writer, &NO_ANN)
+    rust_printer_annotated(writer, &NO_ANN, krate)
 }
 
-pub fn rust_printer_annotated<'a>(writer: Box<Write + 'a>, ann: &'a PpAnn) -> State<'a> {
+pub fn rust_printer_annotated<'a>(writer: Box<Write + 'a>,
+                                  ann: &'a PpAnn,
+                                  krate: Option<&'a Crate>)
+                                  -> State<'a> {
     State {
+        krate: krate,
         s: pp::mk_printer(writer, default_columns),
         cm: None,
         comments: None,
@@ -124,7 +129,8 @@ pub fn print_crate<'a>(cm: &'a CodeMap,
                        ann: &'a PpAnn,
                        is_expanded: bool)
                        -> io::Result<()> {
-    let mut s = State::new_from_input(cm, span_diagnostic, filename, input, out, ann, is_expanded);
+    let mut s = State::new_from_input(cm, span_diagnostic, filename, input,
+                                      out, ann, is_expanded, Some(krate));
 
     // When printing the AST, we sometimes need to inject `#[no_std]` here.
     // Since you can't compile the HIR, it's not necessary.
@@ -141,7 +147,8 @@ impl<'a> State<'a> {
                           input: &mut Read,
                           out: Box<Write + 'a>,
                           ann: &'a PpAnn,
-                          is_expanded: bool)
+                          is_expanded: bool,
+                          krate: Option<&'a Crate>)
                           -> State<'a> {
         let (cmnts, lits) = comments::gather_comments_and_literals(span_diagnostic,
                                                                    filename,
@@ -158,16 +165,19 @@ impl<'a> State<'a> {
                        None
                    } else {
                        Some(lits)
-                   })
+                   },
+                   krate)
     }
 
     pub fn new(cm: &'a CodeMap,
                out: Box<Write + 'a>,
                ann: &'a PpAnn,
                comments: Option<Vec<comments::Comment>>,
-               literals: Option<Vec<comments::Literal>>)
+               literals: Option<Vec<comments::Literal>>,
+               krate: Option<&'a Crate>)
                -> State<'a> {
         State {
+            krate: krate,
             s: pp::mk_printer(out, default_columns),
             cm: Some(cm),
             comments: comments.clone(),
@@ -187,7 +197,7 @@ pub fn to_string<F>(f: F) -> String
 {
     let mut wr = Vec::new();
     {
-        let mut printer = rust_printer(Box::new(&mut wr));
+        let mut printer = rust_printer(Box::new(&mut wr), None);
         f(&mut printer).unwrap();
         eof(&mut printer.s).unwrap();
     }
@@ -451,8 +461,8 @@ impl<'a> State<'a> {
 
     pub fn print_mod(&mut self, _mod: &hir::Mod, attrs: &[ast::Attribute]) -> io::Result<()> {
         try!(self.print_inner_attributes(attrs));
-        for item in &_mod.items {
-            try!(self.print_item(&**item));
+        for item_id in &_mod.item_ids {
+            try!(self.print_item_id(item_id));
         }
         Ok(())
     }
@@ -463,7 +473,7 @@ impl<'a> State<'a> {
                              -> io::Result<()> {
         try!(self.print_inner_attributes(attrs));
         for item in &nmod.items {
-            try!(self.print_foreign_item(&**item));
+            try!(self.print_foreign_item(item));
         }
         Ok(())
     }
@@ -504,11 +514,6 @@ impl<'a> State<'a> {
                 if elts.len() == 1 {
                     try!(word(&mut self.s, ","));
                 }
-                try!(self.pclose());
-            }
-            hir::TyParen(ref typ) => {
-                try!(self.popen());
-                try!(self.print_type(&**typ));
                 try!(self.pclose());
             }
             hir::TyBareFn(ref f) => {
@@ -623,6 +628,16 @@ impl<'a> State<'a> {
             try!(self.print_type(ty));
         }
         word(&mut self.s, ";")
+    }
+
+    pub fn print_item_id(&mut self, item_id: &hir::ItemId) -> io::Result<()> {
+        if let Some(krate) = self.krate {
+            // skip nested items if krate context was not provided
+            let item = &krate.items[&item_id.id];
+            self.print_item(item)
+        } else {
+            Ok(())
+        }
     }
 
     /// Pretty-print an item
@@ -863,7 +878,7 @@ impl<'a> State<'a> {
     }
 
     pub fn print_variants(&mut self,
-                          variants: &[P<hir::Variant>],
+                          variants: &[hir::Variant],
                           span: codemap::Span)
                           -> io::Result<()> {
         try!(self.bopen());
@@ -872,7 +887,7 @@ impl<'a> State<'a> {
             try!(self.maybe_print_comment(v.span.lo));
             try!(self.print_outer_attributes(&v.node.attrs));
             try!(self.ibox(indent_unit));
-            try!(self.print_variant(&**v));
+            try!(self.print_variant(v));
             try!(word(&mut self.s, ","));
             try!(self.end());
             try!(self.maybe_print_trailing_comment(v.span, None));
@@ -899,18 +914,16 @@ impl<'a> State<'a> {
         if !struct_def.is_struct() {
             if struct_def.is_tuple() {
                 try!(self.popen());
-                try!(self.commasep(Inconsistent,
-                                   struct_def.fields(),
-                                   |s, field| {
-                                       match field.node.kind {
-                                           hir::NamedField(..) => panic!("unexpected named field"),
-                                           hir::UnnamedField(vis) => {
-                                               try!(s.print_visibility(vis));
-                                               try!(s.maybe_print_comment(field.span.lo));
-                                               s.print_type(&*field.node.ty)
-                                           }
-                                       }
-                                   }));
+                try!(self.commasep(Inconsistent, struct_def.fields(), |s, field| {
+                    match field.node.kind {
+                        hir::NamedField(..) => panic!("unexpected named field"),
+                        hir::UnnamedField(vis) => {
+                            try!(s.print_visibility(vis));
+                            try!(s.maybe_print_comment(field.span.lo));
+                            s.print_type(&*field.node.ty)
+                        }
+                    }
+                }));
                 try!(self.pclose());
             }
             try!(self.print_where_clause(&generics.where_clause));
@@ -1013,16 +1026,16 @@ impl<'a> State<'a> {
         try!(self.maybe_print_comment(ii.span.lo));
         try!(self.print_outer_attributes(&ii.attrs));
         match ii.node {
-            hir::ConstImplItem(ref ty, ref expr) => {
+            hir::ImplItemKind::Const(ref ty, ref expr) => {
                 try!(self.print_associated_const(ii.name, &ty, Some(&expr), ii.vis));
             }
-            hir::MethodImplItem(ref sig, ref body) => {
+            hir::ImplItemKind::Method(ref sig, ref body) => {
                 try!(self.head(""));
                 try!(self.print_method_sig(ii.name, sig, ii.vis));
                 try!(self.nbsp());
                 try!(self.print_block_with_attrs(body, &ii.attrs));
             }
-            hir::TypeImplItem(ref ty) => {
+            hir::ImplItemKind::Type(ref ty) => {
                 try!(self.print_associated_type(ii.name, None, Some(ty)));
             }
         }
@@ -1094,7 +1107,7 @@ impl<'a> State<'a> {
         try!(self.print_inner_attributes(attrs));
 
         for st in &blk.stmts {
-            try!(self.print_stmt(&**st));
+            try!(self.print_stmt(st));
         }
         match blk.expr {
             Some(ref expr) => {
@@ -1489,44 +1502,37 @@ impl<'a> State<'a> {
                 try!(self.print_string(&a.asm, a.asm_str_style));
                 try!(self.word_space(":"));
 
-                try!(self.commasep(Inconsistent,
-                                   &a.outputs,
-                                   |s, &(ref co, ref o, is_rw)| {
-                                       match co.slice_shift_char() {
-                                           Some(('=', operand)) if is_rw => {
-                                               try!(s.print_string(&format!("+{}", operand),
-                                                                   ast::CookedStr))
-                                           }
-                                           _ => try!(s.print_string(&co, ast::CookedStr)),
-                                       }
-                                       try!(s.popen());
-                                       try!(s.print_expr(&**o));
-                                       try!(s.pclose());
-                                       Ok(())
-                                   }));
+                try!(self.commasep(Inconsistent, &a.outputs, |s, &(ref co, ref o, is_rw)| {
+                    match co.slice_shift_char() {
+                        Some(('=', operand)) if is_rw => {
+                            try!(s.print_string(&format!("+{}", operand), ast::CookedStr))
+                        }
+                        _ => try!(s.print_string(&co, ast::CookedStr)),
+                    }
+                    try!(s.popen());
+                    try!(s.print_expr(&**o));
+                    try!(s.pclose());
+                    Ok(())
+                }));
                 try!(space(&mut self.s));
                 try!(self.word_space(":"));
 
-                try!(self.commasep(Inconsistent,
-                                   &a.inputs,
-                                   |s, &(ref co, ref o)| {
-                                       try!(s.print_string(&co, ast::CookedStr));
-                                       try!(s.popen());
-                                       try!(s.print_expr(&**o));
-                                       try!(s.pclose());
-                                       Ok(())
-                                   }));
+                try!(self.commasep(Inconsistent, &a.inputs, |s, &(ref co, ref o)| {
+                    try!(s.print_string(&co, ast::CookedStr));
+                    try!(s.popen());
+                    try!(s.print_expr(&**o));
+                    try!(s.pclose());
+                    Ok(())
+                }));
                 try!(space(&mut self.s));
                 try!(self.word_space(":"));
 
-                try!(self.commasep(Inconsistent,
-                                   &a.clobbers,
-                                   |s, co| {
-                                       try!(s.print_string(&co, ast::CookedStr));
-                                       Ok(())
-                                   }));
+                try!(self.commasep(Inconsistent, &a.clobbers, |s, co| {
+                    try!(s.print_string(&co, ast::CookedStr));
+                    Ok(())
+                }));
 
-                let mut options = vec!();
+                let mut options = vec![];
                 if a.volatile {
                     options.push("volatile");
                 }
@@ -1540,12 +1546,10 @@ impl<'a> State<'a> {
                 if !options.is_empty() {
                     try!(space(&mut self.s));
                     try!(self.word_space(":"));
-                    try!(self.commasep(Inconsistent,
-                                       &*options,
-                                       |s, &co| {
-                                           try!(s.print_string(co, ast::CookedStr));
-                                           Ok(())
-                                       }));
+                    try!(self.commasep(Inconsistent, &*options, |s, &co| {
+                        try!(s.print_string(co, ast::CookedStr));
+                        Ok(())
+                    }));
                 }
 
                 try!(self.pclose());
@@ -1582,7 +1586,9 @@ impl<'a> State<'a> {
                 }
                 self.end()
             }
-            hir::DeclItem(ref item) => self.print_item(&**item),
+            hir::DeclItem(ref item) => {
+                self.print_item_id(item)
+            }
         }
     }
 
@@ -1610,7 +1616,7 @@ impl<'a> State<'a> {
         try!(self.maybe_print_comment(path.span.lo));
 
         let mut first = !path.global;
-        for segment in &path.segments[..path.segments.len()-depth] {
+        for segment in &path.segments[..path.segments.len() - depth] {
             if first {
                 first = false
             } else {
@@ -1694,9 +1700,7 @@ impl<'a> State<'a> {
 
             hir::ParenthesizedParameters(ref data) => {
                 try!(word(&mut self.s, "("));
-                try!(self.commasep(Inconsistent,
-                                   &data.inputs,
-                                   |s, ty| s.print_type(&**ty)));
+                try!(self.commasep(Inconsistent, &data.inputs, |s, ty| s.print_type(&**ty)));
                 try!(word(&mut self.s, ")"));
 
                 match data.output {
@@ -1716,11 +1720,10 @@ impl<'a> State<'a> {
     pub fn print_pat(&mut self, pat: &hir::Pat) -> io::Result<()> {
         try!(self.maybe_print_comment(pat.span.lo));
         try!(self.ann.pre(self, NodePat(pat)));
-        /* Pat isn't normalized, but the beauty of it
-         is that it doesn't matter */
+        // Pat isn't normalized, but the beauty of it
+        // is that it doesn't matter
         match pat.node {
-            hir::PatWild(hir::PatWildSingle) => try!(word(&mut self.s, "_")),
-            hir::PatWild(hir::PatWildMulti) => try!(word(&mut self.s, "..")),
+            hir::PatWild => try!(word(&mut self.s, "_")),
             hir::PatIdent(binding_mode, ref path1, ref sub) => {
                 match binding_mode {
                     hir::BindByRef(mutbl) => {
@@ -1815,13 +1818,10 @@ impl<'a> State<'a> {
                     if !before.is_empty() {
                         try!(self.word_space(","));
                     }
-                    try!(self.print_pat(&**p));
-                    match **p {
-                        hir::Pat { node: hir::PatWild(hir::PatWildMulti), .. } => {
-                            // this case is handled by print_pat
-                        }
-                        _ => try!(word(&mut self.s, "..")),
+                    if p.node != hir::PatWild {
+                        try!(self.print_pat(&**p));
                     }
+                    try!(word(&mut self.s, ".."));
                     if !after.is_empty() {
                         try!(self.word_space(","));
                     }
@@ -2070,18 +2070,16 @@ impl<'a> State<'a> {
             ints.push(i);
         }
 
-        try!(self.commasep(Inconsistent,
-                           &ints[..],
-                           |s, &idx| {
-                               if idx < generics.lifetimes.len() {
-                                   let lifetime = &generics.lifetimes[idx];
-                                   s.print_lifetime_def(lifetime)
-                               } else {
-                                   let idx = idx - generics.lifetimes.len();
-                                   let param = &generics.ty_params[idx];
-                                   s.print_ty_param(param)
-                               }
-                           }));
+        try!(self.commasep(Inconsistent, &ints[..], |s, &idx| {
+            if idx < generics.lifetimes.len() {
+                let lifetime = &generics.lifetimes[idx];
+                s.print_lifetime_def(lifetime)
+            } else {
+                let idx = idx - generics.lifetimes.len();
+                let param = &generics.ty_params[idx];
+                s.print_ty_param(param)
+            }
+        }));
 
         try!(word(&mut self.s, ">"));
         Ok(())
@@ -2102,7 +2100,7 @@ impl<'a> State<'a> {
 
     pub fn print_where_clause(&mut self, where_clause: &hir::WhereClause) -> io::Result<()> {
         if where_clause.predicates.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         try!(space(&mut self.s));
@@ -2174,18 +2172,16 @@ impl<'a> State<'a> {
                     try!(self.print_path(path, false, 0));
                     try!(word(&mut self.s, "::{"));
                 }
-                try!(self.commasep(Inconsistent,
-                                   &segments[..],
-                                   |s, w| {
-                                       match w.node {
-                                           hir::PathListIdent { name, .. } => {
-                                               s.print_name(name)
-                                           }
-                                           hir::PathListMod { .. } => {
-                                               word(&mut s.s, "self")
-                                           }
-                                       }
-                                   }));
+                try!(self.commasep(Inconsistent, &segments[..], |s, w| {
+                    match w.node {
+                        hir::PathListIdent { name, .. } => {
+                            s.print_name(name)
+                        }
+                        hir::PathListMod { .. } => {
+                            word(&mut s.s, "self")
+                        }
+                    }
+                }));
                 word(&mut self.s, "}")
             }
         }
@@ -2290,7 +2286,7 @@ impl<'a> State<'a> {
         match self.next_comment() {
             Some(ref cmnt) => {
                 if (*cmnt).style != comments::Trailing {
-                    return Ok(())
+                    return Ok(());
                 }
                 let span_line = cm.lookup_char_pos(span.hi);
                 let comment_line = cm.lookup_char_pos((*cmnt).pos);

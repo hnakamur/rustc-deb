@@ -18,13 +18,14 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "fmt_macros"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
-       html_playground_url = "https://play.rust-lang.org/")]
+       html_playground_url = "https://play.rust-lang.org/",
+       test(attr(deny(warnings))))]
 
 #![feature(staged_api)]
 #![feature(unicode)]
@@ -186,7 +187,7 @@ impl<'a> Parser<'a> {
         Parser {
             input: s,
             cur: s.char_indices().peekable(),
-            errors: vec!(),
+            errors: vec![],
         }
     }
 
@@ -235,7 +236,7 @@ impl<'a> Parser<'a> {
             if c.is_whitespace() {
                 self.cur.next();
             } else {
-                break
+                break;
             }
         }
     }
@@ -273,9 +274,7 @@ impl<'a> Parser<'a> {
             ArgumentIs(i)
         } else {
             match self.cur.peek() {
-                Some(&(_, c)) if c.is_alphabetic() => {
-                    ArgumentNamed(self.word())
-                }
+                Some(&(_, c)) if c.is_alphabetic() => ArgumentNamed(self.word()),
                 _ => ArgumentNext,
             }
         }
@@ -293,7 +292,7 @@ impl<'a> Parser<'a> {
             ty: &self.input[..0],
         };
         if !self.consume(':') {
-            return spec
+            return spec;
         }
 
         // fill character
@@ -418,7 +417,7 @@ impl<'a> Parser<'a> {
                 found = true;
                 self.cur.next();
             } else {
-                break
+                break;
             }
         }
         if found {
@@ -446,7 +445,7 @@ mod tests {
             precision: CountImplied,
             width: CountImplied,
             ty: "",
-        }
+        };
     }
 
     fn musterr(s: &str) {

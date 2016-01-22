@@ -78,14 +78,14 @@ void DTLS_Destroy() {
   DTLS_Deallocate(dtls.dtv, s);
 }
 
-void DTLS_on_tls_get_addr(void *arg_void, void *res) {
-  if (!common_flags()->intercept_tls_get_addr) return;
+DTLS::DTV *DTLS_on_tls_get_addr(void *arg_void, void *res,
+                                uptr static_tls_begin, uptr static_tls_end) {
+  if (!common_flags()->intercept_tls_get_addr) return 0;
   TlsGetAddrParam *arg = reinterpret_cast<TlsGetAddrParam *>(arg_void);
   uptr dso_id = arg->dso_id;
-  if (dtls.dtv_size == kDestroyedThread) return;
+  if (dtls.dtv_size == kDestroyedThread) return 0;
   DTLS_Resize(dso_id + 1);
-  if (dtls.dtv[dso_id].beg)
-    return;
+  if (dtls.dtv[dso_id].beg) return 0;
   uptr tls_size = 0;
   uptr tls_beg = reinterpret_cast<uptr>(res) - arg->offset;
   VPrintf(2, "__tls_get_addr: %p {%p,%p} => %p; tls_beg: %p; sp: %p "
@@ -96,6 +96,11 @@ void DTLS_on_tls_get_addr(void *arg_void, void *res) {
     tls_size = dtls.last_memalign_size;
     VPrintf(2, "__tls_get_addr: glibc <=2.18 suspected; tls={%p,%p}\n",
         tls_beg, tls_size);
+  } else if (tls_beg >= static_tls_begin && tls_beg < static_tls_end) {
+    // This is the static TLS block which was initialized / unpoisoned at thread
+    // creation.
+    VPrintf(2, "__tls_get_addr: static tls: %p\n", tls_beg);
+    tls_size = 0;
   } else if ((tls_beg % 4096) == sizeof(Glibc_2_19_tls_header)) {
     // We may want to check gnu_get_libc_version().
     Glibc_2_19_tls_header *header = (Glibc_2_19_tls_header *)tls_beg - 1;
@@ -110,6 +115,7 @@ void DTLS_on_tls_get_addr(void *arg_void, void *res) {
   }
   dtls.dtv[dso_id].beg = tls_beg;
   dtls.dtv[dso_id].size = tls_size;
+  return dtls.dtv + dso_id;
 }
 
 void DTLS_on_libc_memalign(void *ptr, uptr size) {
@@ -123,7 +129,7 @@ DTLS *DTLS_Get() { return &dtls; }
 
 #else
 void DTLS_on_libc_memalign(void *ptr, uptr size) {}
-void DTLS_on_tls_get_addr(void *arg, void *res) {}
+DTLS::DTV *DTLS_on_tls_get_addr(void *arg, void *res) { return 0; }
 DTLS *DTLS_Get() { return 0; }
 void DTLS_Destroy() {}
 #endif  // SANITIZER_INTERCEPT_TLS_GET_ADDR

@@ -14,10 +14,18 @@
 #include "../assembly.h"
 
 	.syntax unified
-
 	.text
-	.align	2
+#if __ARM_ARCH_ISA_THUMB == 2
+	.thumb
+#endif
+
+
+	.p2align	2
+#if __ARM_ARCH_ISA_THUMB == 2
+DEFINE_COMPILERRT_THUMB_FUNCTION(__clzdi2)
+#else
 DEFINE_COMPILERRT_FUNCTION(__clzdi2)
+#endif
 #ifdef __ARM_FEATURE_CLZ
 #ifdef __ARMEB__
 	cmp	r0, 0

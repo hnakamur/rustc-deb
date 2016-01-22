@@ -160,11 +160,16 @@ use core::cell::Cell;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{Hasher, Hash};
-use core::intrinsics::{assume, drop_in_place, abort};
-use core::marker::{self, Unsize};
+use core::intrinsics::{assume, abort};
+use core::marker;
+#[cfg(not(stage0))]
+use core::marker::Unsize;
 use core::mem::{self, align_of_val, size_of_val, forget};
-use core::ops::{CoerceUnsized, Deref};
+use core::ops::Deref;
+#[cfg(not(stage0))]
+use core::ops::CoerceUnsized;
 use core::ptr::{self, Shared};
+use core::convert::From;
 
 use heap::deallocate;
 
@@ -186,11 +191,15 @@ pub struct Rc<T: ?Sized> {
     _ptr: Shared<RcBox<T>>,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> !marker::Send for Rc<T> {}
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> !marker::Sync for Rc<T> {}
 
-#[cfg(not(stage0))] // remove cfg after new snapshot
-impl<T: ?Sized+Unsize<U>, U: ?Sized> CoerceUnsized<Rc<U>> for Rc<T> {}
+// remove cfg after new snapshot
+#[cfg(not(stage0))]
+#[unstable(feature = "coerce_unsized", issue = "27732")]
+impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Rc<U>> for Rc<T> {}
 
 impl<T> Rc<T> {
     /// Constructs a new `Rc<T>`.
@@ -227,8 +236,6 @@ impl<T> Rc<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(rc_unique)]
-    ///
     /// use std::rc::Rc;
     ///
     /// let x = Rc::new(3);
@@ -356,7 +363,7 @@ impl<T: Clone> Rc<T> {
     #[inline]
     #[unstable(feature = "rc_make_unique", reason = "renamed to Rc::make_mut",
                issue = "27718")]
-    #[deprecated(since = "1.4.0", reason = "renamed to Rc::make_mut")]
+    #[rustc_deprecated(since = "1.4.0", reason = "renamed to Rc::make_mut")]
     pub fn make_unique(&mut self) -> &mut T {
         Rc::make_mut(self)
     }
@@ -370,7 +377,6 @@ impl<T: Clone> Rc<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(rc_unique)]
     /// use std::rc::Rc;
     ///
     /// let mut data = Rc::new(5);
@@ -460,7 +466,7 @@ impl<T: ?Sized> Drop for Rc<T> {
                 self.dec_strong();
                 if self.strong() == 0 {
                     // destroy the contained object
-                    drop_in_place(&mut (*ptr).value);
+                    ptr::drop_in_place(&mut (*ptr).value);
 
                     // remove the implicit "strong weak" pointer now that we've
                     // destroyed the contents.
@@ -477,7 +483,6 @@ impl<T: ?Sized> Drop for Rc<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> Clone for Rc<T> {
-
     /// Makes a clone of the `Rc<T>`.
     ///
     /// When you clone an `Rc<T>`, it will create another pointer to the data and
@@ -511,7 +516,6 @@ impl<T: Default> Default for Rc<T> {
     /// let x: Rc<i32> = Default::default();
     /// ```
     #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
     fn default() -> Rc<T> {
         Rc::new(Default::default())
     }
@@ -674,21 +678,21 @@ impl<T: ?Sized + Ord> Ord for Rc<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized+Hash> Hash for Rc<T> {
+impl<T: ?Sized + Hash> Hash for Rc<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (**self).hash(state);
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized+fmt::Display> fmt::Display for Rc<T> {
+impl<T: ?Sized + fmt::Display> fmt::Display for Rc<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&**self, f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized+fmt::Debug> fmt::Debug for Rc<T> {
+impl<T: ?Sized + fmt::Debug> fmt::Debug for Rc<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
     }
@@ -698,6 +702,13 @@ impl<T: ?Sized+fmt::Debug> fmt::Debug for Rc<T> {
 impl<T> fmt::Pointer for Rc<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&*self._ptr, f)
+    }
+}
+
+#[stable(feature = "from_for_ptrs", since = "1.6.0")]
+impl<T> From<T> for Rc<T> {
+    fn from(t: T) -> Self {
+        Rc::new(t)
     }
 }
 
@@ -715,11 +726,15 @@ pub struct Weak<T: ?Sized> {
     _ptr: Shared<RcBox<T>>,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> !marker::Send for Weak<T> {}
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> !marker::Sync for Weak<T> {}
 
-#[cfg(not(stage0))] // remove cfg after new snapshot
-impl<T: ?Sized+Unsize<U>, U: ?Sized> CoerceUnsized<Weak<U>> for Weak<T> {}
+// remove cfg after new snapshot
+#[cfg(not(stage0))]
+#[unstable(feature = "coerce_unsized", issue = "27732")]
+impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Weak<U>> for Weak<T> {}
 
 impl<T: ?Sized> Weak<T> {
     /// Upgrades a weak reference to a strong reference.
@@ -796,7 +811,6 @@ impl<T: ?Sized> Drop for Weak<T> {
 
 #[stable(feature = "rc_weak", since = "1.4.0")]
 impl<T: ?Sized> Clone for Weak<T> {
-
     /// Makes a clone of the `Weak<T>`.
     ///
     /// This increases the weak reference count.
@@ -818,7 +832,7 @@ impl<T: ?Sized> Clone for Weak<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized+fmt::Debug> fmt::Debug for Weak<T> {
+impl<T: ?Sized + fmt::Debug> fmt::Debug for Weak<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "(Weak)")
     }
@@ -906,6 +920,7 @@ mod tests {
     use std::result::Result::{Err, Ok};
     use std::mem::drop;
     use std::clone::Clone;
+    use std::convert::From;
 
     #[test]
     fn test_clone() {
@@ -1108,8 +1123,16 @@ mod tests {
         let foo: Rc<[i32]> = Rc::new([1, 2, 3]);
         assert_eq!(foo, foo.clone());
     }
+
+    #[test]
+    fn test_from_owned() {
+        let foo = 123;
+        let foo_rc = Rc::from(foo);
+        assert!(123 == *foo_rc);
+    }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> borrow::Borrow<T> for Rc<T> {
     fn borrow(&self) -> &T {
         &**self

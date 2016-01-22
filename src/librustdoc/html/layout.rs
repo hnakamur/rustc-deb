@@ -47,6 +47,7 @@ r##"<!DOCTYPE html>
 
     <title>{title}</title>
 
+    <link rel="stylesheet" type="text/css" href="{root_path}rustdoc.css">
     <link rel="stylesheet" type="text/css" href="{root_path}main.css">
 
     {favicon}
@@ -137,7 +138,7 @@ r##"<!DOCTYPE html>
     <script src="{root_path}jquery.js"></script>
     <script src="{root_path}main.js"></script>
     {play_js}
-    <script async src="{root_path}search-index.js"></script>
+    <script defer src="{root_path}search-index.js"></script>
 </body>
 </html>"##,
     content   = *t,

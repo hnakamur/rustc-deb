@@ -16,7 +16,6 @@ use prelude::v1::*;
 
 use ffi::{OsStr, OsString};
 use io::{self, ErrorKind};
-use libc;
 use num::Zero;
 use os::windows::ffi::{OsStrExt, OsStringExt};
 use path::PathBuf;
@@ -46,34 +45,44 @@ pub mod stdio;
 pub fn init() {}
 
 pub fn decode_error_kind(errno: i32) -> ErrorKind {
-    match errno as libc::c_int {
-        libc::ERROR_ACCESS_DENIED => ErrorKind::PermissionDenied,
-        libc::ERROR_ALREADY_EXISTS => ErrorKind::AlreadyExists,
-        libc::ERROR_BROKEN_PIPE => ErrorKind::BrokenPipe,
-        libc::ERROR_FILE_NOT_FOUND => ErrorKind::NotFound,
-        c::ERROR_PATH_NOT_FOUND => ErrorKind::NotFound,
-        libc::ERROR_NO_DATA => ErrorKind::BrokenPipe,
-        libc::ERROR_OPERATION_ABORTED => ErrorKind::TimedOut,
+    match errno as c::DWORD {
+        c::ERROR_ACCESS_DENIED => return ErrorKind::PermissionDenied,
+        c::ERROR_ALREADY_EXISTS => return ErrorKind::AlreadyExists,
+        c::ERROR_BROKEN_PIPE => return ErrorKind::BrokenPipe,
+        c::ERROR_FILE_NOT_FOUND => return ErrorKind::NotFound,
+        c::ERROR_PATH_NOT_FOUND => return ErrorKind::NotFound,
+        c::ERROR_NO_DATA => return ErrorKind::BrokenPipe,
+        c::ERROR_OPERATION_ABORTED => return ErrorKind::TimedOut,
+        _ => {}
+    }
 
-        libc::WSAEACCES => ErrorKind::PermissionDenied,
-        libc::WSAEADDRINUSE => ErrorKind::AddrInUse,
-        libc::WSAEADDRNOTAVAIL => ErrorKind::AddrNotAvailable,
-        libc::WSAECONNABORTED => ErrorKind::ConnectionAborted,
-        libc::WSAECONNREFUSED => ErrorKind::ConnectionRefused,
-        libc::WSAECONNRESET => ErrorKind::ConnectionReset,
-        libc::WSAEINVAL => ErrorKind::InvalidInput,
-        libc::WSAENOTCONN => ErrorKind::NotConnected,
-        libc::WSAEWOULDBLOCK => ErrorKind::WouldBlock,
-        libc::WSAETIMEDOUT => ErrorKind::TimedOut,
+    match errno {
+        c::WSAEACCES => ErrorKind::PermissionDenied,
+        c::WSAEADDRINUSE => ErrorKind::AddrInUse,
+        c::WSAEADDRNOTAVAIL => ErrorKind::AddrNotAvailable,
+        c::WSAECONNABORTED => ErrorKind::ConnectionAborted,
+        c::WSAECONNREFUSED => ErrorKind::ConnectionRefused,
+        c::WSAECONNRESET => ErrorKind::ConnectionReset,
+        c::WSAEINVAL => ErrorKind::InvalidInput,
+        c::WSAENOTCONN => ErrorKind::NotConnected,
+        c::WSAEWOULDBLOCK => ErrorKind::WouldBlock,
+        c::WSAETIMEDOUT => ErrorKind::TimedOut,
 
         _ => ErrorKind::Other,
     }
 }
 
-fn to_utf16_os(s: &OsStr) -> Vec<u16> {
-    let mut v: Vec<_> = s.encode_wide().collect();
-    v.push(0);
-    v
+pub fn to_u16s<S: AsRef<OsStr>>(s: S) -> io::Result<Vec<u16>> {
+    fn inner(s: &OsStr) -> io::Result<Vec<u16>> {
+        let mut maybe_result: Vec<u16> = s.encode_wide().collect();
+        if maybe_result.iter().any(|&u| u == 0) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput,
+                                      "strings passed to WinAPI cannot contain NULs"));
+        }
+        maybe_result.push(0);
+        Ok(maybe_result)
+    }
+    inner(s.as_ref())
 }
 
 // Many Windows APIs follow a pattern of where we hand a buffer and then they
@@ -91,7 +100,7 @@ fn to_utf16_os(s: &OsStr) -> Vec<u16> {
 // yielded the data which has been read from the syscall. The return value
 // from this closure is then the return value of the function.
 fn fill_utf16_buf<F1, F2, T>(mut f1: F1, f2: F2) -> io::Result<T>
-    where F1: FnMut(*mut u16, libc::DWORD) -> libc::DWORD,
+    where F1: FnMut(*mut u16, c::DWORD) -> c::DWORD,
           F2: FnOnce(&[u16]) -> T
 {
     // Start off with a stack buf but then spill over to the heap if we end up
@@ -120,13 +129,12 @@ fn fill_utf16_buf<F1, F2, T>(mut f1: F1, f2: F2) -> io::Result<T>
             // error" is still 0 then we interpret it as a 0 length buffer and
             // not an actual error.
             c::SetLastError(0);
-            let k = match f1(buf.as_mut_ptr(), n as libc::DWORD) {
-                0 if libc::GetLastError() == 0 => 0,
+            let k = match f1(buf.as_mut_ptr(), n as c::DWORD) {
+                0 if c::GetLastError() == 0 => 0,
                 0 => return Err(io::Error::last_os_error()),
                 n => n,
             } as usize;
-            if k == n && libc::GetLastError() ==
-                            libc::ERROR_INSUFFICIENT_BUFFER as libc::DWORD {
+            if k == n && c::GetLastError() == c::ERROR_INSUFFICIENT_BUFFER {
                 n *= 2;
             } else if k >= n {
                 n = k;
@@ -157,7 +165,7 @@ fn cvt<I: PartialEq + Zero>(i: I) -> io::Result<I> {
     }
 }
 
-fn dur2timeout(dur: Duration) -> libc::DWORD {
+fn dur2timeout(dur: Duration) -> c::DWORD {
     // Note that a duration is a (u64, u32) (seconds, nanoseconds) pair, and the
     // timeouts in windows APIs are typically u32 milliseconds. To translate, we
     // have two pieces to take care of:
@@ -170,10 +178,10 @@ fn dur2timeout(dur: Duration) -> libc::DWORD {
     }).and_then(|ms| {
         ms.checked_add(if dur.subsec_nanos() % 1_000_000 > 0 {1} else {0})
     }).map(|ms| {
-        if ms > <libc::DWORD>::max_value() as u64 {
-            libc::INFINITE
+        if ms > <c::DWORD>::max_value() as u64 {
+            c::INFINITE
         } else {
-            ms as libc::DWORD
+            ms as c::DWORD
         }
-    }).unwrap_or(libc::INFINITE)
+    }).unwrap_or(c::INFINITE)
 }

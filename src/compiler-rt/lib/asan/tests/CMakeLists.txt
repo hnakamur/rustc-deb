@@ -21,35 +21,56 @@ set(ASAN_UNITTEST_HEADERS
   asan_test_utils.h)
 
 set(ASAN_UNITTEST_COMMON_CFLAGS
+  ${COMPILER_RT_TEST_CFLAGS}
   ${COMPILER_RT_GTEST_CFLAGS}
   -I${COMPILER_RT_SOURCE_DIR}/include
   -I${COMPILER_RT_SOURCE_DIR}/lib
   -I${COMPILER_RT_SOURCE_DIR}/lib/asan
   -I${COMPILER_RT_SOURCE_DIR}/lib/sanitizer_common/tests
+  -fno-rtti
+  -O2
   -Wno-format
   -Werror=sign-compare
-  -g
-  -O2)
-append_if(COMPILER_RT_HAS_WNO_VARIADIC_MACROS_FLAG -Wno-variadic-macros ASAN_UNITTEST_COMMON_CFLAGS)
+  -Wno-non-virtual-dtor)
+append_list_if(COMPILER_RT_HAS_WVARIADIC_MACROS_FLAG -Wno-variadic-macros ASAN_UNITTEST_COMMON_CFLAGS)
+
+# -gline-tables-only must be enough for ASan, so use it if possible.
+if(COMPILER_RT_TEST_COMPILER_ID MATCHES "Clang")
+  list(APPEND ASAN_UNITTEST_COMMON_CFLAGS -gline-tables-only)
+else()
+  list(APPEND ASAN_UNITTEST_COMMON_CFLAGS -g)
+endif()
 
 # Use -D instead of definitions to please custom compile command.
 list(APPEND ASAN_UNITTEST_COMMON_CFLAGS
   -DASAN_HAS_BLACKLIST=1
   -DASAN_HAS_EXCEPTIONS=1
-  -DASAN_NEEDS_SEGV=1
   -DASAN_UAR=0)
+
+if(APPLE)
+  list(APPEND ASAN_UNITTEST_COMMON_CFLAGS ${DARWIN_osx_CFLAGS})
+  list(APPEND ASAN_UNITTEST_COMMON_LINKFLAGS ${DARWIN_osx_LINKFLAGS})
+endif()
+
+if(MSVC)
+  # Disable exceptions on Windows until they work reliably.
+  list(APPEND ASAN_UNITTEST_COMMON_CFLAGS -fno-exceptions -DGTEST_HAS_SEH=0)
+endif()
 
 set(ASAN_BLACKLIST_FILE "${CMAKE_CURRENT_SOURCE_DIR}/asan_test.ignore")
 set(ASAN_UNITTEST_INSTRUMENTED_CFLAGS
   ${ASAN_UNITTEST_COMMON_CFLAGS}
   -fsanitize=address
   "-fsanitize-blacklist=${ASAN_BLACKLIST_FILE}"
-  -mllvm -asan-stack=1
-  -mllvm -asan-globals=1
 )
+if(CAN_TARGET_x86_64 OR CAN_TARGET_i386)
+  list(APPEND ASAN_UNITTEST_INSTRUMENTED_CFLAGS -mllvm -asan-instrument-assembly)
+endif()
 
-# Unit tests require libstdc++.
-set(ASAN_UNITTEST_COMMON_LINKFLAGS -lstdc++)
+if(NOT MSVC)
+  list(APPEND ASAN_UNITTEST_COMMON_LINKFLAGS --driver-mode=g++)
+endif()
+
 # x86_64 FreeBSD 9.2 additionally requires libc++ to build the tests.
 if(CMAKE_SYSTEM MATCHES "FreeBSD-9.2-RELEASE")
   list(APPEND ASAN_UNITTEST_COMMON_LINKFLAGS "-lc++")
@@ -65,22 +86,29 @@ endif()
 
 set(ASAN_UNITTEST_INSTRUMENTED_LINKFLAGS
   ${ASAN_UNITTEST_COMMON_LINKFLAGS})
-# On Android, we link with ASan runtime manually. On other platforms we depend
-# on Clang driver behavior, passing -fsanitize=address flag.
-if(NOT ANDROID)
-  list(APPEND ASAN_UNITTEST_INSTRUMENTED_LINKFLAGS -fsanitize=address)
-endif()
+list(APPEND ASAN_UNITTEST_INSTRUMENTED_LINKFLAGS -fsanitize=address)
 
 set(ASAN_DYNAMIC_UNITTEST_INSTRUMENTED_LINKFLAGS
   ${ASAN_UNITTEST_INSTRUMENTED_LINKFLAGS}
   -shared-libasan)
 
-set(ASAN_UNITTEST_NOINST_LINKFLAGS
-  ${ASAN_UNITTEST_COMMON_LINKFLAGS} -lm)
-append_if(COMPILER_RT_HAS_LIBDL -ldl ASAN_UNITTEST_NOINST_LINKFLAGS)
-append_if(COMPILER_RT_HAS_LIBPTHREAD -lpthread ASAN_UNITTEST_NOINST_LINKFLAGS)
-append_if(COMPILER_RT_HAS_LIBPTHREAD -lpthread
+set(ASAN_UNITTEST_INSTRUMENTED_LIBS)
+# NDK r10 requires -latomic almost always.
+append_list_if(ANDROID atomic ASAN_UNITTEST_INSTRUMENTED_LIBS)
+
+set(ASAN_UNITTEST_NOINST_LINKFLAGS ${ASAN_UNITTEST_COMMON_LINKFLAGS})
+append_list_if(COMPILER_RT_HAS_LIBM -lm ASAN_UNITTEST_NOINST_LINKFLAGS)
+append_list_if(COMPILER_RT_HAS_LIBDL -ldl ASAN_UNITTEST_NOINST_LINKFLAGS)
+append_list_if(COMPILER_RT_HAS_LIBRT -lrt ASAN_UNITTEST_NOINST_LINKFLAGS)
+append_list_if(COMPILER_RT_HAS_LIBPTHREAD -pthread ASAN_UNITTEST_NOINST_LINKFLAGS)
+append_list_if(COMPILER_RT_HAS_LIBPTHREAD -pthread
           ASAN_DYNAMIC_UNITTEST_INSTRUMENTED_LINKFLAGS)
+
+# TODO(eugenis): move all -l flags above to _LIBS?
+set(ASAN_UNITTEST_NOINST_LIBS)
+append_list_if(COMPILER_RT_HAS_LIBLOG log ASAN_UNITTEST_NOINST_LIBS)
+# NDK r10 requires -latomic almost always.
+append_list_if(ANDROID atomic ASAN_UNITTEST_NOINST_LIBS)
 
 # Compile source for the given architecture, using compiler
 # options in ${ARGN}, and add it to the object list.
@@ -101,7 +129,7 @@ endmacro()
 # Link ASan unit test for a given architecture from a set
 # of objects in with given linker flags.
 macro(add_asan_test test_suite test_name arch kind)
-  parse_arguments(TEST "OBJECTS;LINKFLAGS" "WITH_TEST_RUNTIME" ${ARGN})
+  cmake_parse_arguments(TEST "WITH_TEST_RUNTIME" "" "OBJECTS;LINKFLAGS;SUBDIR" ${ARGN})
   get_target_flags_for_arch(${arch} TARGET_LINK_FLAGS)
   set(TEST_DEPS ${TEST_OBJECTS})
   if(NOT COMPILER_RT_STANDALONE_BUILD)
@@ -109,9 +137,14 @@ macro(add_asan_test test_suite test_name arch kind)
   endif()
   if(TEST_WITH_TEST_RUNTIME)
     list(APPEND TEST_DEPS ${ASAN_TEST_RUNTIME})
-    list(APPEND TEST_OBJECTS lib${ASAN_TEST_RUNTIME}.a)
+    if(NOT MSVC)
+      list(APPEND TEST_OBJECTS lib${ASAN_TEST_RUNTIME}.a)
+    else()
+      list(APPEND TEST_OBJECTS ${ASAN_TEST_RUNTIME}.lib)
+    endif()
   endif()
   add_compiler_rt_test(${test_suite} ${test_name}
+                       SUBDIR ${TEST_SUBDIR}
                        OBJECTS ${TEST_OBJECTS}
                        DEPS ${TEST_DEPS}
                        LINK_FLAGS ${TEST_LINKFLAGS}
@@ -121,6 +154,11 @@ endmacro()
 # Main AddressSanitizer unit tests.
 add_custom_target(AsanUnitTests)
 set_target_properties(AsanUnitTests PROPERTIES FOLDER "ASan unit tests")
+# AddressSanitizer unit tests with dynamic runtime (on platforms where it's
+# not the default).
+add_custom_target(AsanDynamicUnitTests)
+set_target_properties(AsanDynamicUnitTests
+  PROPERTIES FOLDER "ASan unit tests with dynamic runtime")
 # ASan benchmarks (not actively used now).
 add_custom_target(AsanBenchmarks)
 set_target_properties(AsanBenchmarks PROPERTIES FOLDER "Asan benchmarks")
@@ -162,11 +200,15 @@ macro(add_asan_tests_for_arch_and_kind arch kind)
     asan_compile(ASAN_INST_TEST_OBJECTS asan_mac_test_helpers.mm ${arch} ${kind}
                  ${ASAN_UNITTEST_INSTRUMENTED_CFLAGS} -ObjC ${ARGN})
   endif()
-  add_asan_test(AsanUnitTests "Asan-${arch}${kind}-Test" ${arch} ${kind}
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/default")
+  add_asan_test(AsanUnitTests "Asan-${arch}${kind}-Test"
+                ${arch} ${kind} SUBDIR "default"
                 OBJECTS ${ASAN_INST_TEST_OBJECTS}
                 LINKFLAGS ${ASAN_UNITTEST_INSTRUMENTED_LINKFLAGS})
-  if(COMPILER_RT_BUILD_SHARED_ASAN)
-    add_asan_test(AsanUnitTests "Asan-${arch}${kind}-Dynamic-Test" ${arch} ${kind}
+  if(COMPILER_RT_ASAN_HAS_STATIC_RUNTIME)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/dynamic")
+    add_asan_test(AsanDynamicUnitTests "Asan-${arch}${kind}-Dynamic-Test"
+                  ${arch} ${kind} SUBDIR "dynamic"
                   OBJECTS ${ASAN_INST_TEST_OBJECTS}
                   LINKFLAGS ${ASAN_DYNAMIC_UNITTEST_INSTRUMENTED_LINKFLAGS})
   endif()
@@ -175,17 +217,22 @@ macro(add_asan_tests_for_arch_and_kind arch kind)
   set(ASAN_TEST_RUNTIME RTAsanTest.${arch}${kind})
   if(APPLE)
     set(ASAN_TEST_RUNTIME_OBJECTS
-      $<TARGET_OBJECTS:RTAsan.osx>
+      $<TARGET_OBJECTS:RTAsan_dynamic.osx>
       $<TARGET_OBJECTS:RTInterception.osx>
       $<TARGET_OBJECTS:RTSanitizerCommon.osx>
-      $<TARGET_OBJECTS:RTLSanCommon.osx>)
+      $<TARGET_OBJECTS:RTSanitizerCommonLibc.osx>
+      $<TARGET_OBJECTS:RTLSanCommon.osx>
+      $<TARGET_OBJECTS:RTUbsan.osx>)
   else()
     set(ASAN_TEST_RUNTIME_OBJECTS
       $<TARGET_OBJECTS:RTAsan.${arch}>
+      $<TARGET_OBJECTS:RTAsan_cxx.${arch}>
       $<TARGET_OBJECTS:RTInterception.${arch}>
-      $<TARGET_OBJECTS:RTLSanCommon.${arch}>
       $<TARGET_OBJECTS:RTSanitizerCommon.${arch}>
-      $<TARGET_OBJECTS:RTSanitizerCommonLibc.${arch}>)
+      $<TARGET_OBJECTS:RTSanitizerCommonLibc.${arch}>
+      $<TARGET_OBJECTS:RTLSanCommon.${arch}>
+      $<TARGET_OBJECTS:RTUbsan.${arch}>
+      $<TARGET_OBJECTS:RTUbsan_cxx.${arch}>)
   endif()
   add_library(${ASAN_TEST_RUNTIME} STATIC ${ASAN_TEST_RUNTIME_OBJECTS})
   set_target_properties(${ASAN_TEST_RUNTIME} PROPERTIES
@@ -196,7 +243,8 @@ macro(add_asan_tests_for_arch_and_kind arch kind)
     asan_compile(ASAN_NOINST_TEST_OBJECTS ${src} ${arch} ${kind}
                  ${ASAN_UNITTEST_COMMON_CFLAGS} ${ARGN})
   endforeach()
-  add_asan_test(AsanUnitTests "Asan-${arch}${kind}-Noinst-Test" ${arch} ${kind}
+  add_asan_test(AsanUnitTests "Asan-${arch}${kind}-Noinst-Test"
+                ${arch} ${kind} SUBDIR "default"
                 OBJECTS ${ASAN_NOINST_TEST_OBJECTS}
                 LINKFLAGS ${ASAN_UNITTEST_NOINST_LINKFLAGS}
                 WITH_TEST_RUNTIME)
@@ -207,18 +255,18 @@ macro(add_asan_tests_for_arch_and_kind arch kind)
     asan_compile(ASAN_BENCHMARKS_OBJECTS ${src} ${arch} ${kind}
                  ${ASAN_UNITTEST_INSTRUMENTED_CFLAGS} ${ARGN})
   endforeach()
-  add_asan_test(AsanBenchmarks "Asan-${arch}${kind}-Benchmark" ${arch} ${kind}
+  add_asan_test(AsanBenchmarks "Asan-${arch}${kind}-Benchmark"
+                ${arch} ${kind} SUBDIR "default"
                 OBJECTS ${ASAN_BENCHMARKS_OBJECTS}
                 LINKFLAGS ${ASAN_UNITTEST_INSTRUMENTED_LINKFLAGS})
-  if(COMPILER_RT_BUILD_SHARED_ASAN)
-    add_asan_test(AsanBenchmarks "Asan-${arch}${kind}-Dynamic-Benchmark" ${arch} ${kind}
-                  OBJECTS ${ASAN_BENCHMARKS_OBJECTS}
-                  LINKFLAGS ${ASAN_DYNAMIC_UNITTEST_INSTRUMENTED_LINKFLAGS})
-  endif()
 endmacro()
 
-if(COMPILER_RT_CAN_EXECUTE_TESTS)
-  foreach(arch ${ASAN_SUPPORTED_ARCH})
+if(COMPILER_RT_CAN_EXECUTE_TESTS AND NOT ANDROID)
+  set(ASAN_TEST_ARCH ${ASAN_SUPPORTED_ARCH})
+  if(APPLE)
+    darwin_filter_host_archs(ASAN_SUPPORTED_ARCH ASAN_TEST_ARCH)
+  endif()
+  foreach(arch ${ASAN_TEST_ARCH})
     add_asan_tests_for_arch_and_kind(${arch} "-inline")
     add_asan_tests_for_arch_and_kind(${arch} "-with-calls"
       -mllvm -asan-instrumentation-with-call-threshold=0)
@@ -226,31 +274,33 @@ if(COMPILER_RT_CAN_EXECUTE_TESTS)
 endif()
 
 if(ANDROID)
-  # We assume that unit tests on Android are built in a build
-  # tree with fresh Clang as a host compiler.
-  
-  # Test w/o ASan instrumentation. Link it with ASan statically.
-  add_executable(AsanNoinstTest
-    $<TARGET_OBJECTS:RTAsan.arm.android>
-    $<TARGET_OBJECTS:RTInterception.arm.android>
-    $<TARGET_OBJECTS:RTSanitizerCommon.arm.android>
-    ${COMPILER_RT_GTEST_SOURCE}
-    ${ASAN_NOINST_TEST_SOURCES})
-  set_target_compile_flags(AsanNoinstTest ${ASAN_UNITTEST_COMMON_CFLAGS})
-  set_target_link_flags(AsanNoinstTest ${ASAN_UNITTEST_NOINST_LINKFLAGS})
-  target_link_libraries(AsanNoinstTest log)
+  foreach(arch ${ASAN_SUPPORTED_ARCH})
+    # Test w/o ASan instrumentation. Link it with ASan statically.
+    add_executable(AsanNoinstTest # FIXME: .arch?
+      $<TARGET_OBJECTS:RTAsan.${arch}>
+      $<TARGET_OBJECTS:RTInterception.${arch}>
+      $<TARGET_OBJECTS:RTSanitizerCommon.${arch}>
+      $<TARGET_OBJECTS:RTSanitizerCommonLibc.${arch}>
+      $<TARGET_OBJECTS:RTUbsan.${arch}>
+      $<TARGET_OBJECTS:RTUbsan_cxx.${arch}>
+      ${COMPILER_RT_GTEST_SOURCE}
+      ${ASAN_NOINST_TEST_SOURCES})
+    set_target_compile_flags(AsanNoinstTest ${ASAN_UNITTEST_COMMON_CFLAGS})
+    set_target_link_flags(AsanNoinstTest ${ASAN_UNITTEST_NOINST_LINKFLAGS})
+    target_link_libraries(AsanNoinstTest ${ASAN_UNITTEST_NOINST_LIBS})
 
-  # Test with ASan instrumentation. Link with ASan dynamic runtime.
-  add_executable(AsanTest
-    ${COMPILER_RT_GTEST_SOURCE}
-    ${ASAN_INST_TEST_SOURCES})
-  set_target_compile_flags(AsanTest ${ASAN_UNITTEST_INSTRUMENTED_CFLAGS})
-  set_target_link_flags(AsanTest ${ASAN_UNITTEST_INSTRUMENTED_LINKFLAGS})
-  target_link_libraries(AsanTest clang_rt.asan-arm-android)
+    # Test with ASan instrumentation. Link with ASan dynamic runtime.
+    add_executable(AsanTest
+      ${COMPILER_RT_GTEST_SOURCE}
+      ${ASAN_INST_TEST_SOURCES})
+    set_target_compile_flags(AsanTest ${ASAN_UNITTEST_INSTRUMENTED_CFLAGS})
+    set_target_link_flags(AsanTest ${ASAN_UNITTEST_INSTRUMENTED_LINKFLAGS})
+    target_link_libraries(AsanTest ${ASAN_UNITTEST_INSTRUMENTED_LIBS})
 
-  # Setup correct output directory and link flags.
-  set_target_properties(AsanNoinstTest AsanTest PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-  # Add unit test to test suite.
-  add_dependencies(AsanUnitTests AsanNoinstTest AsanTest)
+    # Setup correct output directory and link flags.
+    set_target_properties(AsanNoinstTest AsanTest PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    # Add unit tests to the test suite.
+    add_dependencies(AsanUnitTests AsanNoinstTest AsanTest)
+  endforeach()
 endif()

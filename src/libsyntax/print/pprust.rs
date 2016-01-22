@@ -11,9 +11,12 @@
 pub use self::AnnNode::*;
 
 use abi;
-use ast;
+use ast::{self, TokenTree};
 use ast::{RegionTyParamBound, TraitTyParamBound, TraitBoundModifier};
+use ast::Attribute;
+use attr::ThinAttributesExt;
 use ast_util;
+use util::parser::AssocOp;
 use attr;
 use owned_slice::OwnedSlice;
 use attr::{AttrMetaMethods, AttributeMethods};
@@ -76,7 +79,7 @@ pub fn rust_printer<'a>(writer: Box<Write+'a>) -> State<'a> {
 pub fn rust_printer_annotated<'a>(writer: Box<Write+'a>,
                                   ann: &'a PpAnn) -> State<'a> {
     State {
-        s: pp::mk_printer(writer, default_columns),
+        s: pp::mk_printer(writer, DEFAULT_COLUMNS),
         cm: None,
         comments: None,
         literals: None,
@@ -89,11 +92,9 @@ pub fn rust_printer_annotated<'a>(writer: Box<Write+'a>,
     }
 }
 
-#[allow(non_upper_case_globals)]
-pub const indent_unit: usize = 4;
+pub const INDENT_UNIT: usize = 4;
 
-#[allow(non_upper_case_globals)]
-pub const default_columns: usize = 78;
+pub const DEFAULT_COLUMNS: usize = 78;
 
 /// Requires you to pass an input filename and reader so that
 /// it can scan the input text for comments and literals to
@@ -119,17 +120,15 @@ pub fn print_crate<'a>(cm: &'a CodeMap,
         // However we don't want these attributes in the AST because
         // of the feature gate, so we fake them up here.
 
-        let no_std_meta = attr::mk_word_item(InternedString::new("no_std"));
+        // #![feature(prelude_import)]
         let prelude_import_meta = attr::mk_word_item(InternedString::new("prelude_import"));
-
-        // #![feature(no_std)]
-        let fake_attr = attr::mk_attr_inner(attr::mk_attr_id(),
-                                            attr::mk_list_item(InternedString::new("feature"),
-                                                               vec![no_std_meta.clone(),
-                                                                    prelude_import_meta]));
+        let list = attr::mk_list_item(InternedString::new("feature"),
+                                      vec![prelude_import_meta]);
+        let fake_attr = attr::mk_attr_inner(attr::mk_attr_id(), list);
         try!(s.print_attribute(&fake_attr));
 
         // #![no_std]
+        let no_std_meta = attr::mk_word_item(InternedString::new("no_std"));
         let fake_attr = attr::mk_attr_inner(attr::mk_attr_id(), no_std_meta);
         try!(s.print_attribute(&fake_attr));
     }
@@ -169,7 +168,7 @@ impl<'a> State<'a> {
                comments: Option<Vec<comments::Comment>>,
                literals: Option<Vec<comments::Literal>>) -> State<'a> {
         State {
-            s: pp::mk_printer(out, default_columns),
+            s: pp::mk_printer(out, DEFAULT_COLUMNS),
             cm: Some(cm),
             comments: comments,
             literals: literals,
@@ -304,6 +303,7 @@ pub fn token_to_string(tok: &Token) -> String {
             token::NtTraitItem(ref e)   => trait_item_to_string(&**e),
             token::NtGenerics(ref e)    => generics_to_string(&*e),
             token::NtWhereClause(ref e) => where_clause_to_string(&*e),
+            token::NtArg(ref e)         => arg_to_string(&*e),
         }
     }
 }
@@ -399,7 +399,7 @@ pub fn fun_to_string(decl: &ast::FnDecl,
 pub fn block_to_string(blk: &ast::Block) -> String {
     to_string(|s| {
         // containing cbox, will be closed by print-block at }
-        try!(s.cbox(indent_unit));
+        try!(s.cbox(INDENT_UNIT));
         // head-ibox, will be closed by print-block after {
         try!(s.ibox(0));
         s.print_block(blk)
@@ -445,7 +445,8 @@ fn needs_parentheses(expr: &ast::Expr) -> bool {
     match expr.node {
         ast::ExprAssign(..) | ast::ExprBinary(..) |
         ast::ExprClosure(..) |
-        ast::ExprAssignOp(..) | ast::ExprCast(..) => true,
+        ast::ExprAssignOp(..) | ast::ExprCast(..) |
+        ast::ExprInPlace(..) => true,
         _ => false,
     }
 }
@@ -648,15 +649,15 @@ pub trait PrintState<'a> {
                 match t {
                     ast::SignedIntLit(st, ast::Plus) => {
                         word(self.writer(),
-                             &ast_util::int_ty_to_string(st, Some(i as i64)))
+                             &ast_util::int_val_to_string(st, i as i64))
                     }
                     ast::SignedIntLit(st, ast::Minus) => {
-                        let istr = ast_util::int_ty_to_string(st, Some(-(i as i64)));
+                        let istr = ast_util::int_val_to_string(st, -(i as i64));
                         word(self.writer(),
                              &format!("-{}", istr))
                     }
                     ast::UnsignedIntLit(ut) => {
-                        word(self.writer(), &ast_util::uint_ty_to_string(ut, Some(i)))
+                        word(self.writer(), &ast_util::uint_val_to_string(ut, i))
                     }
                     ast::UnsuffixedIntLit(ast::Plus) => {
                         word(self.writer(), &format!("{}", i))
@@ -704,43 +705,61 @@ pub trait PrintState<'a> {
     }
 
     fn print_inner_attributes(&mut self,
-                                  attrs: &[ast::Attribute]) -> io::Result<()> {
-        let mut count = 0;
-        for attr in attrs {
-            match attr.node.style {
-                ast::AttrStyle::Inner => {
-                    try!(self.print_attribute(attr));
-                    count += 1;
-                }
-                _ => {/* fallthrough */ }
-            }
-        }
-        if count > 0 {
-            try!(self.hardbreak_if_not_bol());
-        }
-        Ok(())
+                              attrs: &[ast::Attribute]) -> io::Result<()> {
+        self.print_either_attributes(attrs, ast::AttrStyle::Inner, false, true)
+    }
+
+    fn print_inner_attributes_no_trailing_hardbreak(&mut self,
+                                                   attrs: &[ast::Attribute])
+                                                   -> io::Result<()> {
+        self.print_either_attributes(attrs, ast::AttrStyle::Inner, false, false)
     }
 
     fn print_outer_attributes(&mut self,
                               attrs: &[ast::Attribute]) -> io::Result<()> {
+        self.print_either_attributes(attrs, ast::AttrStyle::Outer, false, true)
+    }
+
+    fn print_inner_attributes_inline(&mut self,
+                                     attrs: &[ast::Attribute]) -> io::Result<()> {
+        self.print_either_attributes(attrs, ast::AttrStyle::Inner, true, true)
+    }
+
+    fn print_outer_attributes_inline(&mut self,
+                                     attrs: &[ast::Attribute]) -> io::Result<()> {
+        self.print_either_attributes(attrs, ast::AttrStyle::Outer, true, true)
+    }
+
+    fn print_either_attributes(&mut self,
+                              attrs: &[ast::Attribute],
+                              kind: ast::AttrStyle,
+                              is_inline: bool,
+                              trailing_hardbreak: bool) -> io::Result<()> {
         let mut count = 0;
         for attr in attrs {
-            match attr.node.style {
-                ast::AttrStyle::Outer => {
-                    try!(self.print_attribute(attr));
+            if attr.node.style == kind {
+                    try!(self.print_attribute_inline(attr, is_inline));
+                    if is_inline {
+                        try!(self.nbsp());
+                    }
                     count += 1;
-                }
-                _ => {/* fallthrough */ }
             }
         }
-        if count > 0 {
+        if count > 0 && trailing_hardbreak && !is_inline {
             try!(self.hardbreak_if_not_bol());
         }
         Ok(())
     }
 
     fn print_attribute(&mut self, attr: &ast::Attribute) -> io::Result<()> {
-        try!(self.hardbreak_if_not_bol());
+        self.print_attribute_inline(attr, false)
+    }
+
+    fn print_attribute_inline(&mut self, attr: &ast::Attribute,
+                              is_inline: bool) -> io::Result<()> {
+        if !is_inline {
+            try!(self.hardbreak_if_not_bol());
+        }
         try!(self.maybe_print_comment(attr.span.lo));
         if attr.node.is_sugared_doc {
             word(self.writer(), &attr.value_str().unwrap())
@@ -755,7 +774,7 @@ pub trait PrintState<'a> {
     }
 
     fn print_meta_item(&mut self, item: &ast::MetaItem) -> io::Result<()> {
-        try!(self.ibox(indent_unit));
+        try!(self.ibox(INDENT_UNIT));
         match item.node {
             ast::MetaWord(ref name) => {
                 try!(word(self.writer(), &name));
@@ -776,6 +795,13 @@ pub trait PrintState<'a> {
         }
         self.end()
     }
+
+    fn space_if_not_bol(&mut self) -> io::Result<()> {
+        if !self.is_bol() { try!(space(self.writer())); }
+        Ok(())
+    }
+
+    fn nbsp(&mut self) -> io::Result<()> { word(self.writer(), " ") }
 }
 
 impl<'a> PrintState<'a> for State<'a> {
@@ -806,8 +832,6 @@ impl<'a> State<'a> {
         pp::cbox(&mut self.s, u)
     }
 
-    pub fn nbsp(&mut self) -> io::Result<()> { word(&mut self.s, " ") }
-
     pub fn word_nbsp(&mut self, w: &str) -> io::Result<()> {
         try!(word(&mut self.s, w));
         self.nbsp()
@@ -815,7 +839,7 @@ impl<'a> State<'a> {
 
     pub fn head(&mut self, w: &str) -> io::Result<()> {
         // outer-box is consistent
-        try!(self.cbox(indent_unit));
+        try!(self.cbox(INDENT_UNIT));
         // head-box is inconsistent
         try!(self.ibox(w.len() + 1));
         // keyword that starts the head
@@ -845,7 +869,7 @@ impl<'a> State<'a> {
         Ok(())
     }
     pub fn bclose(&mut self, span: codemap::Span) -> io::Result<()> {
-        self.bclose_(span, indent_unit)
+        self.bclose_(span, INDENT_UNIT)
     }
 
     pub fn in_cbox(&self) -> bool {
@@ -855,10 +879,6 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn space_if_not_bol(&mut self) -> io::Result<()> {
-        if !self.is_bol() { try!(space(&mut self.s)); }
-        Ok(())
-    }
     pub fn break_offset_if_not_bol(&mut self, n: usize,
                                    off: isize) -> io::Result<()> {
         if !self.is_bol() {
@@ -1197,7 +1217,7 @@ impl<'a> State<'a> {
                 try!(self.bclose(item.span));
             }
             ast::ItemTy(ref ty, ref params) => {
-                try!(self.ibox(indent_unit));
+                try!(self.ibox(INDENT_UNIT));
                 try!(self.ibox(0));
                 try!(self.word_nbsp(&visibility_qualified(item.vis, "type")));
                 try!(self.print_ident(item.ident));
@@ -1260,13 +1280,13 @@ impl<'a> State<'a> {
                     _ => {}
                 }
 
-                match opt_trait {
-                    &Some(ref t) => {
+                match *opt_trait {
+                    Some(ref t) => {
                         try!(self.print_trait_ref(t));
                         try!(space(&mut self.s));
                         try!(self.word_space("for"));
                     }
-                    &None => {}
+                    None => {}
                 }
 
                 try!(self.print_type(&**ty));
@@ -1311,7 +1331,7 @@ impl<'a> State<'a> {
                 try!(self.print_path(&node.path, false, 0));
                 try!(word(&mut self.s, "! "));
                 try!(self.print_ident(item.ident));
-                try!(self.cbox(indent_unit));
+                try!(self.cbox(INDENT_UNIT));
                 try!(self.popen());
                 try!(self.print_tts(&node.tts[..]));
                 try!(self.pclose());
@@ -1367,7 +1387,7 @@ impl<'a> State<'a> {
             try!(self.space_if_not_bol());
             try!(self.maybe_print_comment(v.span.lo));
             try!(self.print_outer_attributes(&v.node.attrs));
-            try!(self.ibox(indent_unit));
+            try!(self.ibox(INDENT_UNIT));
             try!(self.print_variant(&**v));
             try!(word(&mut self.s, ","));
             try!(self.end());
@@ -1450,7 +1470,7 @@ impl<'a> State<'a> {
     /// expression arguments as expressions). It can be done! I think.
     pub fn print_tt(&mut self, tt: &ast::TokenTree) -> io::Result<()> {
         match *tt {
-            ast::TtToken(_, ref tk) => {
+            TokenTree::Token(_, ref tk) => {
                 try!(word(&mut self.s, &token_to_string(tk)));
                 match *tk {
                     parse::token::DocComment(..) => {
@@ -1459,14 +1479,14 @@ impl<'a> State<'a> {
                     _ => Ok(())
                 }
             }
-            ast::TtDelimited(_, ref delimed) => {
+            TokenTree::Delimited(_, ref delimed) => {
                 try!(word(&mut self.s, &token_to_string(&delimed.open_token())));
                 try!(space(&mut self.s));
                 try!(self.print_tts(&delimed.tts));
                 try!(space(&mut self.s));
                 word(&mut self.s, &token_to_string(&delimed.close_token()))
             },
-            ast::TtSequence(_, ref seq) => {
+            TokenTree::Sequence(_, ref seq) => {
                 try!(word(&mut self.s, "$("));
                 for tt_elt in &seq.tts {
                     try!(self.print_tt(tt_elt));
@@ -1496,10 +1516,10 @@ impl<'a> State<'a> {
             try!(self.print_tt(tt));
             // There should be no space between the module name and the following `::` in paths,
             // otherwise imported macros get re-parsed from crate metadata incorrectly (#20701)
-            suppress_space = match tt {
-                &ast::TtToken(_, token::Ident(_, token::ModName)) |
-                &ast::TtToken(_, token::MatchNt(_, _, _, token::ModName)) |
-                &ast::TtToken(_, token::SubstNt(_, token::ModName)) => true,
+            suppress_space = match *tt {
+                TokenTree::Token(_, token::Ident(_, token::ModName)) |
+                TokenTree::Token(_, token::MatchNt(_, _, _, token::ModName)) |
+                TokenTree::Token(_, token::SubstNt(_, token::ModName)) => true,
                 _ => false
             }
         }
@@ -1573,23 +1593,23 @@ impl<'a> State<'a> {
         try!(self.maybe_print_comment(ii.span.lo));
         try!(self.print_outer_attributes(&ii.attrs));
         match ii.node {
-            ast::ConstImplItem(ref ty, ref expr) => {
+            ast::ImplItemKind::Const(ref ty, ref expr) => {
                 try!(self.print_associated_const(ii.ident, &ty, Some(&expr), ii.vis));
             }
-            ast::MethodImplItem(ref sig, ref body) => {
+            ast::ImplItemKind::Method(ref sig, ref body) => {
                 try!(self.head(""));
                 try!(self.print_method_sig(ii.ident, sig, ii.vis));
                 try!(self.nbsp());
                 try!(self.print_block_with_attrs(body, &ii.attrs));
             }
-            ast::TypeImplItem(ref ty) => {
+            ast::ImplItemKind::Type(ref ty) => {
                 try!(self.print_associated_type(ii.ident, None, Some(ty)));
             }
-            ast::MacImplItem(codemap::Spanned { ref node, .. }) => {
+            ast::ImplItemKind::Macro(codemap::Spanned { ref node, .. }) => {
                 // code copied from ItemMac:
                 try!(self.print_path(&node.path, false, 0));
                 try!(word(&mut self.s, "! "));
-                try!(self.cbox(indent_unit));
+                try!(self.cbox(INDENT_UNIT));
                 try!(self.popen());
                 try!(self.print_tts(&node.tts[..]));
                 try!(self.pclose());
@@ -1608,15 +1628,16 @@ impl<'a> State<'a> {
             }
             ast::StmtExpr(ref expr, _) => {
                 try!(self.space_if_not_bol());
-                try!(self.print_expr(&**expr));
+                try!(self.print_expr_outer_attr_style(&**expr, false));
             }
             ast::StmtSemi(ref expr, _) => {
                 try!(self.space_if_not_bol());
-                try!(self.print_expr(&**expr));
+                try!(self.print_expr_outer_attr_style(&**expr, false));
                 try!(word(&mut self.s, ";"));
             }
-            ast::StmtMac(ref mac, style) => {
+            ast::StmtMac(ref mac, style, ref attrs) => {
                 try!(self.space_if_not_bol());
+                try!(self.print_outer_attributes(attrs.as_attr_slice()));
                 let delim = match style {
                     ast::MacStmtWithBraces => token::Brace,
                     _ => token::Paren
@@ -1639,7 +1660,13 @@ impl<'a> State<'a> {
     }
 
     pub fn print_block_unclosed(&mut self, blk: &ast::Block) -> io::Result<()> {
-        self.print_block_unclosed_indent(blk, indent_unit)
+        self.print_block_unclosed_indent(blk, INDENT_UNIT)
+    }
+
+    pub fn print_block_unclosed_with_attrs(&mut self, blk: &ast::Block,
+                                            attrs: &[ast::Attribute])
+                                           -> io::Result<()> {
+        self.print_block_maybe_unclosed(blk, INDENT_UNIT, attrs, false)
     }
 
     pub fn print_block_unclosed_indent(&mut self, blk: &ast::Block,
@@ -1650,7 +1677,7 @@ impl<'a> State<'a> {
     pub fn print_block_with_attrs(&mut self,
                                   blk: &ast::Block,
                                   attrs: &[ast::Attribute]) -> io::Result<()> {
-        self.print_block_maybe_unclosed(blk, indent_unit, attrs, true)
+        self.print_block_maybe_unclosed(blk, INDENT_UNIT, attrs, true)
     }
 
     pub fn print_block_maybe_unclosed(&mut self,
@@ -1674,7 +1701,7 @@ impl<'a> State<'a> {
         match blk.expr {
             Some(ref expr) => {
                 try!(self.space_if_not_bol());
-                try!(self.print_expr(&**expr));
+                try!(self.print_expr_outer_attr_style(&**expr, false));
                 try!(self.maybe_print_trailing_comment(expr.span, Some(blk.span.hi)));
             }
             _ => ()
@@ -1689,7 +1716,7 @@ impl<'a> State<'a> {
                 match _else.node {
                     // "another else-if"
                     ast::ExprIf(ref i, ref then, ref e) => {
-                        try!(self.cbox(indent_unit - 1));
+                        try!(self.cbox(INDENT_UNIT - 1));
                         try!(self.ibox(0));
                         try!(word(&mut self.s, " else if "));
                         try!(self.print_expr(&**i));
@@ -1699,7 +1726,7 @@ impl<'a> State<'a> {
                     }
                     // "another else-if-let"
                     ast::ExprIfLet(ref pat, ref expr, ref then, ref e) => {
-                        try!(self.cbox(indent_unit - 1));
+                        try!(self.cbox(INDENT_UNIT - 1));
                         try!(self.ibox(0));
                         try!(word(&mut self.s, " else if let "));
                         try!(self.print_pat(&**pat));
@@ -1712,7 +1739,7 @@ impl<'a> State<'a> {
                     }
                     // "final else"
                     ast::ExprBlock(ref b) => {
-                        try!(self.cbox(indent_unit - 1));
+                        try!(self.cbox(INDENT_UNIT - 1));
                         try!(self.ibox(0));
                         try!(word(&mut self.s, " else "));
                         self.print_block(&**b)
@@ -1755,7 +1782,13 @@ impl<'a> State<'a> {
         match delim {
             token::Paren => try!(self.popen()),
             token::Bracket => try!(word(&mut self.s, "[")),
-            token::Brace => try!(self.bopen()),
+            token::Brace => {
+                // head-ibox, will be closed by bopen()
+                try!(self.ibox(0));
+                // Don't ask me why the regular bopen() does
+                // more then just opening a brace...
+                try!(self.bopen())
+            }
         }
         try!(self.print_tts(&m.node.tts));
         match delim {
@@ -1776,8 +1809,8 @@ impl<'a> State<'a> {
                                       binop: ast::BinOp) -> bool {
         match sub_expr.node {
             ast::ExprBinary(ref sub_op, _, _) => {
-                if ast_util::operator_prec(sub_op.node) <
-                    ast_util::operator_prec(binop.node) {
+                if AssocOp::from_ast_binop(sub_op.node).precedence() <
+                    AssocOp::from_ast_binop(binop.node).precedence() {
                     true
                 } else {
                     false
@@ -1802,15 +1835,17 @@ impl<'a> State<'a> {
     fn print_expr_in_place(&mut self,
                            place: &ast::Expr,
                            expr: &ast::Expr) -> io::Result<()> {
-        try!(self.word_space("in"));
-        try!(self.print_expr(place));
+        try!(self.print_expr_maybe_paren(place));
         try!(space(&mut self.s));
-        self.print_expr(expr)
+        try!(self.word_space("<-"));
+        self.print_expr_maybe_paren(expr)
     }
 
-    fn print_expr_vec(&mut self, exprs: &[P<ast::Expr>]) -> io::Result<()> {
-        try!(self.ibox(indent_unit));
+    fn print_expr_vec(&mut self, exprs: &[P<ast::Expr>],
+                      attrs: &[Attribute]) -> io::Result<()> {
+        try!(self.ibox(INDENT_UNIT));
         try!(word(&mut self.s, "["));
+        try!(self.print_inner_attributes_inline(attrs));
         try!(self.commasep_exprs(Inconsistent, &exprs[..]));
         try!(word(&mut self.s, "]"));
         self.end()
@@ -1818,9 +1853,11 @@ impl<'a> State<'a> {
 
     fn print_expr_repeat(&mut self,
                          element: &ast::Expr,
-                         count: &ast::Expr) -> io::Result<()> {
-        try!(self.ibox(indent_unit));
+                         count: &ast::Expr,
+                         attrs: &[Attribute]) -> io::Result<()> {
+        try!(self.ibox(INDENT_UNIT));
         try!(word(&mut self.s, "["));
+        try!(self.print_inner_attributes_inline(attrs));
         try!(self.print_expr(element));
         try!(self.word_space(";"));
         try!(self.print_expr(count));
@@ -1831,14 +1868,16 @@ impl<'a> State<'a> {
     fn print_expr_struct(&mut self,
                          path: &ast::Path,
                          fields: &[ast::Field],
-                         wth: &Option<P<ast::Expr>>) -> io::Result<()> {
+                         wth: &Option<P<ast::Expr>>,
+                         attrs: &[Attribute]) -> io::Result<()> {
         try!(self.print_path(path, true, 0));
         try!(word(&mut self.s, "{"));
+        try!(self.print_inner_attributes_inline(attrs));
         try!(self.commasep_cmnt(
             Consistent,
             &fields[..],
             |s, field| {
-                try!(s.ibox(indent_unit));
+                try!(s.ibox(INDENT_UNIT));
                 try!(s.print_ident(field.ident.node));
                 try!(s.word_space(":"));
                 try!(s.print_expr(&*field.expr));
@@ -1847,7 +1886,7 @@ impl<'a> State<'a> {
             |f| f.span));
         match *wth {
             Some(ref expr) => {
-                try!(self.ibox(indent_unit));
+                try!(self.ibox(INDENT_UNIT));
                 if !fields.is_empty() {
                     try!(word(&mut self.s, ","));
                     try!(space(&mut self.s));
@@ -1864,8 +1903,10 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    fn print_expr_tup(&mut self, exprs: &[P<ast::Expr>]) -> io::Result<()> {
+    fn print_expr_tup(&mut self, exprs: &[P<ast::Expr>],
+                      attrs: &[Attribute]) -> io::Result<()> {
         try!(self.popen());
+        try!(self.print_inner_attributes_inline(attrs));
         try!(self.commasep_exprs(Inconsistent, &exprs[..]));
         if exprs.len() == 1 {
             try!(word(&mut self.s, ","));
@@ -1931,8 +1972,22 @@ impl<'a> State<'a> {
     }
 
     pub fn print_expr(&mut self, expr: &ast::Expr) -> io::Result<()> {
+        self.print_expr_outer_attr_style(expr, true)
+    }
+
+    fn print_expr_outer_attr_style(&mut self,
+                                  expr: &ast::Expr,
+                                  is_inline: bool) -> io::Result<()> {
         try!(self.maybe_print_comment(expr.span.lo));
-        try!(self.ibox(indent_unit));
+
+        let attrs = expr.attrs.as_attr_slice();
+        if is_inline {
+            try!(self.print_outer_attributes_inline(attrs));
+        } else {
+            try!(self.print_outer_attributes(attrs));
+        }
+
+        try!(self.ibox(INDENT_UNIT));
         try!(self.ann.pre(self, NodeExpr(expr)));
         match expr.node {
             ast::ExprBox(ref expr) => {
@@ -1943,16 +1998,16 @@ impl<'a> State<'a> {
                 try!(self.print_expr_in_place(place, expr));
             }
             ast::ExprVec(ref exprs) => {
-                try!(self.print_expr_vec(&exprs[..]));
+                try!(self.print_expr_vec(&exprs[..], attrs));
             }
             ast::ExprRepeat(ref element, ref count) => {
-                try!(self.print_expr_repeat(&**element, &**count));
+                try!(self.print_expr_repeat(&**element, &**count, attrs));
             }
             ast::ExprStruct(ref path, ref fields, ref wth) => {
-                try!(self.print_expr_struct(path, &fields[..], wth));
+                try!(self.print_expr_struct(path, &fields[..], wth, attrs));
             }
             ast::ExprTup(ref exprs) => {
-                try!(self.print_expr_tup(&exprs[..]));
+                try!(self.print_expr_tup(&exprs[..], attrs));
             }
             ast::ExprCall(ref func, ref args) => {
                 try!(self.print_expr_call(&**func, &args[..]));
@@ -1996,7 +2051,7 @@ impl<'a> State<'a> {
                 try!(self.head("while"));
                 try!(self.print_expr(&**test));
                 try!(space(&mut self.s));
-                try!(self.print_block(&**blk));
+                try!(self.print_block_with_attrs(&**blk, attrs));
             }
             ast::ExprWhileLet(ref pat, ref expr, ref blk, opt_ident) => {
                 if let Some(ident) = opt_ident {
@@ -2009,7 +2064,7 @@ impl<'a> State<'a> {
                 try!(self.word_space("="));
                 try!(self.print_expr(&**expr));
                 try!(space(&mut self.s));
-                try!(self.print_block(&**blk));
+                try!(self.print_block_with_attrs(&**blk, attrs));
             }
             ast::ExprForLoop(ref pat, ref iter, ref blk, opt_ident) => {
                 if let Some(ident) = opt_ident {
@@ -2022,7 +2077,7 @@ impl<'a> State<'a> {
                 try!(self.word_space("in"));
                 try!(self.print_expr(&**iter));
                 try!(space(&mut self.s));
-                try!(self.print_block(&**blk));
+                try!(self.print_block_with_attrs(&**blk, attrs));
             }
             ast::ExprLoop(ref blk, opt_ident) => {
                 if let Some(ident) = opt_ident {
@@ -2031,19 +2086,20 @@ impl<'a> State<'a> {
                 }
                 try!(self.head("loop"));
                 try!(space(&mut self.s));
-                try!(self.print_block(&**blk));
+                try!(self.print_block_with_attrs(&**blk, attrs));
             }
             ast::ExprMatch(ref expr, ref arms) => {
-                try!(self.cbox(indent_unit));
+                try!(self.cbox(INDENT_UNIT));
                 try!(self.ibox(4));
                 try!(self.word_nbsp("match"));
                 try!(self.print_expr(&**expr));
                 try!(space(&mut self.s));
                 try!(self.bopen());
+                try!(self.print_inner_attributes_no_trailing_hardbreak(attrs));
                 for arm in arms {
                     try!(self.print_arm(arm));
                 }
-                try!(self.bclose_(expr.span, indent_unit));
+                try!(self.bclose_(expr.span, INDENT_UNIT));
             }
             ast::ExprClosure(capture_clause, ref decl, ref body) => {
                 try!(self.print_capture_clause(capture_clause));
@@ -2060,13 +2116,16 @@ impl<'a> State<'a> {
                     try!(self.print_block_unclosed(&**body));
                 } else {
                     // we extract the block, so as not to create another set of boxes
-                    match body.expr.as_ref().unwrap().node {
+                    let i_expr = body.expr.as_ref().unwrap();
+                    match i_expr.node {
                         ast::ExprBlock(ref blk) => {
-                            try!(self.print_block_unclosed(&**blk));
+                            try!(self.print_block_unclosed_with_attrs(
+                                &**blk,
+                                i_expr.attrs.as_attr_slice()));
                         }
                         _ => {
                             // this is a bare expression
-                            try!(self.print_expr(body.expr.as_ref().map(|e| &**e).unwrap()));
+                            try!(self.print_expr(&**i_expr));
                             try!(self.end()); // need to close a box
                         }
                     }
@@ -2078,10 +2137,10 @@ impl<'a> State<'a> {
             }
             ast::ExprBlock(ref blk) => {
                 // containing cbox, will be closed by print-block at }
-                try!(self.cbox(indent_unit));
+                try!(self.cbox(INDENT_UNIT));
                 // head-box, will be closed by print-block after {
                 try!(self.ibox(0));
-                try!(self.print_block(&**blk));
+                try!(self.print_block_with_attrs(&**blk, attrs));
             }
             ast::ExprAssign(ref lhs, ref rhs) => {
                 try!(self.print_expr(&**lhs));
@@ -2219,6 +2278,7 @@ impl<'a> State<'a> {
             ast::ExprMac(ref m) => try!(self.print_mac(m, token::Paren)),
             ast::ExprParen(ref e) => {
                 try!(self.popen());
+                try!(self.print_inner_attributes_inline(attrs));
                 try!(self.print_expr(&**e));
                 try!(self.pclose());
             }
@@ -2240,11 +2300,12 @@ impl<'a> State<'a> {
         try!(self.maybe_print_comment(decl.span.lo));
         match decl.node {
             ast::DeclLocal(ref loc) => {
+                try!(self.print_outer_attributes(loc.attrs.as_attr_slice()));
                 try!(self.space_if_not_bol());
-                try!(self.ibox(indent_unit));
+                try!(self.ibox(INDENT_UNIT));
                 try!(self.word_nbsp("let"));
 
-                try!(self.ibox(indent_unit));
+                try!(self.ibox(INDENT_UNIT));
                 try!(self.print_local_decl(&**loc));
                 try!(self.end());
                 if let Some(ref init) = loc.init {
@@ -2404,8 +2465,7 @@ impl<'a> State<'a> {
         /* Pat isn't normalized, but the beauty of it
          is that it doesn't matter */
         match pat.node {
-            ast::PatWild(ast::PatWildSingle) => try!(word(&mut self.s, "_")),
-            ast::PatWild(ast::PatWildMulti) => try!(word(&mut self.s, "..")),
+            ast::PatWild => try!(word(&mut self.s, "_")),
             ast::PatIdent(binding_mode, ref path1, ref sub) => {
                 match binding_mode {
                     ast::BindByRef(mutbl) => {
@@ -2450,7 +2510,7 @@ impl<'a> State<'a> {
                 try!(self.commasep_cmnt(
                     Consistent, &fields[..],
                     |s, f| {
-                        try!(s.cbox(indent_unit));
+                        try!(s.cbox(INDENT_UNIT));
                         if !f.node.is_shorthand {
                             try!(s.print_ident(f.node.ident));
                             try!(s.word_nbsp(":"));
@@ -2501,13 +2561,10 @@ impl<'a> State<'a> {
                                    |s, p| s.print_pat(&**p)));
                 if let Some(ref p) = *slice {
                     if !before.is_empty() { try!(self.word_space(",")); }
-                    try!(self.print_pat(&**p));
-                    match **p {
-                        ast::Pat { node: ast::PatWild(ast::PatWildMulti), .. } => {
-                            // this case is handled by print_pat
-                        }
-                        _ => try!(word(&mut self.s, "..")),
+                    if p.node != ast::PatWild {
+                        try!(self.print_pat(&**p));
                     }
+                    try!(word(&mut self.s, ".."));
                     if !after.is_empty() { try!(self.word_space(",")); }
                 }
                 try!(self.commasep(Inconsistent,
@@ -2526,7 +2583,7 @@ impl<'a> State<'a> {
         if arm.attrs.is_empty() {
             try!(space(&mut self.s));
         }
-        try!(self.cbox(indent_unit));
+        try!(self.cbox(INDENT_UNIT));
         try!(self.ibox(0));
         try!(self.print_outer_attributes(&arm.attrs));
         let mut first = true;
@@ -2550,7 +2607,7 @@ impl<'a> State<'a> {
         match arm.body.node {
             ast::ExprBlock(ref blk) => {
                 // the block will close the pattern's ibox
-                try!(self.print_block_unclosed_indent(&**blk, indent_unit));
+                try!(self.print_block_unclosed_indent(&**blk, INDENT_UNIT));
 
                 // If it is a user-provided unsafe block, print a comma after it
                 if let ast::UnsafeBlock(ast::UserProvided) = blk.rules {
@@ -2619,8 +2676,8 @@ impl<'a> State<'a> {
         try!(self.rbox(0, Inconsistent));
         let mut first = true;
         if let Some(explicit_self) = opt_explicit_self {
-            let m = match explicit_self {
-                &ast::SelfStatic => ast::MutImmutable,
+            let m = match *explicit_self {
+                ast::SelfStatic => ast::MutImmutable,
                 _ => match decl.inputs[0].pat.node {
                     ast::PatIdent(ast::BindByValue(m), _, _) => m,
                     _ => ast::MutImmutable
@@ -2805,18 +2862,18 @@ impl<'a> State<'a> {
                 try!(self.word_space(","));
             }
 
-            match predicate {
-                &ast::WherePredicate::BoundPredicate(ast::WhereBoundPredicate{ref bound_lifetimes,
-                                                                              ref bounded_ty,
-                                                                              ref bounds,
-                                                                              ..}) => {
+            match *predicate {
+                ast::WherePredicate::BoundPredicate(ast::WhereBoundPredicate{ref bound_lifetimes,
+                                                                             ref bounded_ty,
+                                                                             ref bounds,
+                                                                             ..}) => {
                     try!(self.print_formal_lifetime_list(bound_lifetimes));
                     try!(self.print_type(&**bounded_ty));
                     try!(self.print_bounds(":", bounds));
                 }
-                &ast::WherePredicate::RegionPredicate(ast::WhereRegionPredicate{ref lifetime,
-                                                                                ref bounds,
-                                                                                ..}) => {
+                ast::WherePredicate::RegionPredicate(ast::WhereRegionPredicate{ref lifetime,
+                                                                               ref bounds,
+                                                                               ..}) => {
                     try!(self.print_lifetime(lifetime));
                     try!(word(&mut self.s, ":"));
 
@@ -2828,7 +2885,7 @@ impl<'a> State<'a> {
                         }
                     }
                 }
-                &ast::WherePredicate::EqPredicate(ast::WhereEqPredicate{ref path, ref ty, ..}) => {
+                ast::WherePredicate::EqPredicate(ast::WhereEqPredicate{ref path, ref ty, ..}) => {
                     try!(self.print_path(path, false, 0));
                     try!(space(&mut self.s));
                     try!(self.word_space("="));
@@ -2908,7 +2965,7 @@ impl<'a> State<'a> {
     }
 
     pub fn print_arg(&mut self, input: &ast::Arg) -> io::Result<()> {
-        try!(self.ibox(indent_unit));
+        try!(self.ibox(INDENT_UNIT));
         match input.ty.node {
             ast::TyInfer => try!(self.print_pat(&*input.pat)),
             _ => {
@@ -2936,7 +2993,7 @@ impl<'a> State<'a> {
         }
 
         try!(self.space_if_not_bol());
-        try!(self.ibox(indent_unit));
+        try!(self.ibox(INDENT_UNIT));
         try!(self.word_space("->"));
         match decl.output {
             ast::NoReturn(_) =>
@@ -2961,7 +3018,7 @@ impl<'a> State<'a> {
                        generics: &ast::Generics,
                        opt_explicit_self: Option<&ast::ExplicitSelf_>)
                        -> io::Result<()> {
-        try!(self.ibox(indent_unit));
+        try!(self.ibox(INDENT_UNIT));
         if !generics.lifetimes.is_empty() || !generics.ty_params.is_empty() {
             try!(word(&mut self.s, "for"));
             try!(self.print_generics(generics));

@@ -20,10 +20,15 @@ use intrinsics;
 use libc::c_int;
 use num::{FpCategory, ParseFloatError};
 
+#[stable(feature = "rust1", since = "1.0.0")]
 pub use core::f32::{RADIX, MANTISSA_DIGITS, DIGITS, EPSILON};
+#[stable(feature = "rust1", since = "1.0.0")]
 pub use core::f32::{MIN_EXP, MAX_EXP, MIN_10_EXP};
+#[stable(feature = "rust1", since = "1.0.0")]
 pub use core::f32::{MAX_10_EXP, NAN, INFINITY, NEG_INFINITY};
+#[stable(feature = "rust1", since = "1.0.0")]
 pub use core::f32::{MIN, MIN_POSITIVE, MAX};
+#[stable(feature = "rust1", since = "1.0.0")]
 pub use core::f32::consts;
 
 #[allow(dead_code)]
@@ -120,13 +125,13 @@ mod cmath {
 
 #[cfg(not(test))]
 #[lang = "f32"]
-#[stable(feature = "rust1", since = "1.0.0")]
 impl f32 {
     /// Parses a float as with a given radix
     #[unstable(feature = "float_from_str_radix", reason = "recently moved API",
                issue = "27736")]
-    #[deprecated(since = "1.4.0",
+    #[rustc_deprecated(since = "1.4.0",
                  reason = "unclear how useful or correct this is")]
+    #[allow(deprecated)]
     pub fn from_str_radix(s: &str, radix: u32) -> Result<f32, ParseFloatError> {
         num::Float::from_str_radix(s, radix)
     }
@@ -420,7 +425,7 @@ impl f32 {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn is_sign_positive(self) -> bool { num::Float::is_positive(self) }
+    pub fn is_sign_positive(self) -> bool { num::Float::is_sign_positive(self) }
 
     /// Returns `true` if `self`'s sign is negative, including `-0.0`
     /// and `NEG_INFINITY`.
@@ -439,7 +444,7 @@ impl f32 {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn is_sign_negative(self) -> bool { num::Float::is_negative(self) }
+    pub fn is_sign_negative(self) -> bool { num::Float::is_sign_negative(self) }
 
     /// Fused multiply-add. Computes `(self * a) + b` with only one rounding
     /// error. This produces a more accurate result with better performance than

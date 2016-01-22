@@ -14,13 +14,14 @@
 
 extern crate syntax;
 extern crate rustc;
+extern crate rustc_plugin;
 
 use syntax::ast::{self, TokenTree, Item, MetaItem, ImplItem, TraitItem};
 use syntax::codemap::Span;
 use syntax::ext::base::*;
 use syntax::parse::{self, token};
 use syntax::ptr::P;
-use rustc::plugin::Registry;
+use rustc_plugin::Registry;
 
 #[macro_export]
 macro_rules! exported_macro { () => (2) }
@@ -54,7 +55,7 @@ fn expand_identity(cx: &mut ExtCtxt, _span: Span, tts: &[TokenTree])
     // Parse an expression and emit it unchanged.
     let mut parser = parse::new_parser_from_tts(cx.parse_sess(),
         cx.cfg(), tts.to_vec());
-    let expr = parser.parse_expr();
+    let expr = parser.parse_expr().unwrap();
     MacEager::expr(quote_expr!(&mut *cx, $expr))
 }
 

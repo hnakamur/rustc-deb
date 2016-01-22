@@ -21,7 +21,7 @@ use super::VtableClosureData;
 use super::VtableImplData;
 use super::util;
 
-use middle::infer;
+use middle::infer::{self, TypeOrigin};
 use middle::subst::Subst;
 use middle::ty::{self, ToPredicate, RegionEscape, HasTypeFlags, ToPolyTraitRef, Ty};
 use middle::ty::fold::{TypeFoldable, TypeFolder};
@@ -138,7 +138,7 @@ fn project_and_unify_type<'cx,'tcx>(
            obligations);
 
     let infcx = selcx.infcx();
-    let origin = infer::RelateOutputImplTypes(obligation.cause.span);
+    let origin = TypeOrigin::RelateOutputImplTypes(obligation.cause.span);
     match infer::mk_eqty(infcx, true, origin, normalized_ty, obligation.predicate.ty) {
         Ok(()) => Ok(Some(obligations)),
         Err(err) => Err(MismatchedProjectionTypes { err: err }),
@@ -183,7 +183,7 @@ fn consider_unification_despite_ambiguity<'cx,'tcx>(selcx: &mut SelectionContext
 
             debug!("consider_unification_despite_ambiguity: ret_type={:?}",
                    ret_type);
-            let origin = infer::RelateOutputImplTypes(obligation.cause.span);
+            let origin = TypeOrigin::RelateOutputImplTypes(obligation.cause.span);
             let obligation_ty = obligation.predicate.ty;
             match infer::mk_eqty(infcx, true, origin, obligation_ty, ret_type) {
                 Ok(()) => { }
@@ -343,7 +343,8 @@ pub fn normalize_projection_type<'a,'b,'tcx>(
                 projection_ty: projection_ty,
                 ty: ty_var
             });
-            let obligation = Obligation::with_depth(cause, depth+1, projection.to_predicate());
+            let obligation = Obligation::with_depth(
+                cause, depth + 1, projection.to_predicate());
             Normalized {
                 value: ty_var,
                 obligations: vec!(obligation)
@@ -382,7 +383,7 @@ fn opt_normalize_projection_type<'a,'b,'tcx>(
                    obligations);
 
             if projected_ty.has_projection_types() {
-                let mut normalizer = AssociatedTypeNormalizer::new(selcx, cause, depth);
+                let mut normalizer = AssociatedTypeNormalizer::new(selcx, cause, depth+1);
                 let normalized_ty = normalizer.fold(&projected_ty);
 
                 debug!("normalize_projection_type: normalized_ty={:?} depth={}",
@@ -425,11 +426,25 @@ fn opt_normalize_projection_type<'a,'b,'tcx>(
     }
 }
 
-/// in various error cases, we just set TyError and return an obligation
-/// that, when fulfilled, will lead to an error.
+/// If we are projecting `<T as Trait>::Item`, but `T: Trait` does not
+/// hold. In various error cases, we cannot generate a valid
+/// normalized projection. Therefore, we create an inference variable
+/// return an associated obligation that, when fulfilled, will lead to
+/// an error.
 ///
-/// FIXME: the TyError created here can enter the obligation we create,
-/// leading to error messages involving TyError.
+/// Note that we used to return `TyError` here, but that was quite
+/// dubious -- the premise was that an error would *eventually* be
+/// reported, when the obligation was processed. But in general once
+/// you see a `TyError` you are supposed to be able to assume that an
+/// error *has been* reported, so that you can take whatever heuristic
+/// paths you want to take. To make things worse, it was possible for
+/// cycles to arise, where you basically had a setup like `<MyType<$0>
+/// as Trait>::Foo == $0`. Here, normalizing `<MyType<$0> as
+/// Trait>::Foo> to `[type error]` would lead to an obligation of
+/// `<MyType<[type error]> as Trait>::Foo`.  We are supposed to report
+/// an error for this obligation, but we legitimately should not,
+/// because it contains `[type error]`. Yuck! (See issue #29857 for
+/// one case where this arose.)
 fn normalize_to_error<'a,'tcx>(selcx: &mut SelectionContext<'a,'tcx>,
                                projection_ty: ty::ProjectionTy<'tcx>,
                                cause: ObligationCause<'tcx>,
@@ -440,8 +455,9 @@ fn normalize_to_error<'a,'tcx>(selcx: &mut SelectionContext<'a,'tcx>,
     let trait_obligation = Obligation { cause: cause,
                                         recursion_depth: depth,
                                         predicate: trait_ref.to_predicate() };
+    let new_value = selcx.infcx().next_ty_var();
     Normalized {
-        value: selcx.tcx().types.err,
+        value: new_value,
         obligations: vec!(trait_obligation)
     }
 }
@@ -644,7 +660,7 @@ fn assemble_candidates_from_predicates<'cx,'tcx,I>(
                 let same_name = data.item_name() == obligation.predicate.item_name;
 
                 let is_match = same_name && infcx.probe(|_| {
-                    let origin = infer::Misc(obligation.cause.span);
+                    let origin = TypeOrigin::Misc(obligation.cause.span);
                     let data_poly_trait_ref =
                         data.to_poly_trait_ref();
                     let obligation_poly_trait_ref =
@@ -900,11 +916,11 @@ fn confirm_param_env_candidate<'cx,'tcx>(
     assert_eq!(projection.projection_ty.item_name,
                obligation.predicate.item_name);
 
-    let origin = infer::RelateOutputImplTypes(obligation.cause.span);
-    match infcx.sub_trait_refs(false,
-                               origin,
-                               obligation.predicate.trait_ref.clone(),
-                               projection.projection_ty.trait_ref.clone()) {
+    let origin = TypeOrigin::RelateOutputImplTypes(obligation.cause.span);
+    match infcx.eq_trait_refs(false,
+                              origin,
+                              obligation.predicate.trait_ref.clone(),
+                              projection.projection_ty.trait_ref.clone()) {
         Ok(()) => { }
         Err(e) => {
             selcx.tcx().sess.span_bug(

@@ -541,6 +541,16 @@ CFG_BUILD_DIR="$(pwd)/"
 CFG_SELF="$0"
 CFG_CONFIGURE_ARGS="$@"
 
+
+case "${CFG_SRC_DIR}" in  
+    *\ * )
+        err "The path to the rust source directory contains spaces, which is not supported"
+        ;;
+    *)
+        ;;
+esac
+
+
 OPTIONS=""
 HELP=0
 if [ "$1" = "--help" ]
@@ -632,18 +642,9 @@ putvar CFG_BUILD # Yes, this creates a duplicate entry, but the last one wins.
 CFG_HOST=$(to_llvm_triple $CFG_HOST)
 CFG_TARGET=$(to_llvm_triple $CFG_TARGET)
 
-# On windows we just store the libraries in the bin directory because
-# there's no rpath. This is where the build system itself puts libraries;
-# --libdir is used to configure the installation directory.
-# FIXME: This needs to parameterized over target triples. Do it in platform.mk
-if [ "$CFG_OSTYPE" = "pc-windows-gnu" ] || [ "$CFG_OSTYPE" = "pc-windows-msvc" ]
-then
-    CFG_LIBDIR_RELATIVE=bin
-else
-    CFG_LIBDIR_RELATIVE=lib
-fi
-
-valopt libdir "${CFG_PREFIX}/${CFG_LIBDIR_RELATIVE}" "install libraries (do not set it on windows platform)"
+# On Windows this determines root of the subtree for target libraries.
+# Host runtime libs always go to 'bin'.
+valopt libdir "${CFG_PREFIX}/lib" "install libraries"
 
 case "$CFG_LIBDIR" in
     "$CFG_PREFIX"/*) CAT_INC=2;;
@@ -653,11 +654,6 @@ case "$CFG_LIBDIR" in
 esac
 
 CFG_LIBDIR_RELATIVE=`echo ${CFG_LIBDIR} | cut -c$((${#CFG_PREFIX}+${CAT_INC}))-`
-
-if ( [ "$CFG_OSTYPE" = "pc-windows-gnu" ] || [ "$CFG_OSTYPE" = "pc-windows-msvc" ] ) \
-	&& [ "$CFG_LIBDIR_RELATIVE" != "bin" ]; then
-    err "libdir on windows should be set to 'bin'"
-fi
 
 if [ $HELP -eq 1 ]
 then
@@ -1067,12 +1063,13 @@ fi
 # point in the script; after this point, script logic should inspect
 # $CFG_USING_CLANG rather than $CFG_ENABLE_CLANG.
 
-# Set CFG_{CC,CXX,CPP,CFLAGS,CXXFLAGS}
+# Set CFG_{CC,CXX,CPP,CFLAGS,CXXFLAGS,LDFLAGS}
 envopt CC
 envopt CXX
 envopt CPP
 envopt CFLAGS
 envopt CXXFLAGS
+envopt LDFLAGS
 
 # stdc++ name in use
 # used to manage non-standard name (on OpenBSD for example)
@@ -1498,25 +1495,9 @@ do
         done
     fi
 
-    if [ ${do_reconfigure} -ne 0 ] && [ ${is_msvc} -ne 0 ]
+    # We need the generator later on for compiler-rt even if LLVM's not built
+    if [ ${is_msvc} -ne 0 ]
     then
-        msg "configuring LLVM for $t with cmake"
-
-        CMAKE_ARGS="-DLLVM_INCLUDE_TESTS=OFF"
-        if [ -n "$CFG_DISABLE_OPTIMIZE_LLVM" ]; then
-            CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug"
-        else
-            CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release"
-        fi
-        if [ -z "$CFG_ENABLE_LLVM_ASSERTIONS" ]
-        then
-            CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_ASSERTIONS=OFF"
-        else
-            CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_ASSERTIONS=ON"
-        fi
-
-        msg "configuring LLVM with:"
-        msg "$CMAKE_ARGS"
         case "$CFG_MSVC_ROOT" in
             *14.0*)
                 generator="Visual Studio 14 2015"
@@ -1538,8 +1519,32 @@ do
                 err "can only build LLVM for x86 platforms"
                 ;;
         esac
+        CFG_CMAKE_GENERATOR=$generator
+        putvar CFG_CMAKE_GENERATOR
+    fi
+
+    if [ ${do_reconfigure} -ne 0 ] && [ ${is_msvc} -ne 0 ]
+    then
+        msg "configuring LLVM for $t with cmake"
+
+        CMAKE_ARGS="-DLLVM_INCLUDE_TESTS=OFF"
+        if [ -n "$CFG_DISABLE_OPTIMIZE_LLVM" ]; then
+            CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug"
+        else
+            CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release"
+        fi
+        if [ -z "$CFG_ENABLE_LLVM_ASSERTIONS" ]
+        then
+            CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_ASSERTIONS=OFF"
+        else
+            CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_ASSERTIONS=ON"
+        fi
+
+        msg "configuring LLVM with:"
+        msg "$CMAKE_ARGS"
+
         (cd $LLVM_BUILD_DIR && "$CFG_CMAKE" $CFG_LLVM_SRC_DIR \
-                                            -G "$generator" \
+                                            -G "$CFG_CMAKE_GENERATOR" \
                                             $CMAKE_ARGS)
         need_ok "LLVM cmake configure failed"
     fi
@@ -1673,9 +1678,9 @@ do
 
         CXX=$LLVM_CXX
         CC=$LLVM_CC
-        CFLAGS=$LLVM_CFLAGS
-        CXXFLAGS=$LLVM_CXXFLAGS
-        LDFLAGS=$LLVM_LDFLAGS
+        CFLAGS="$CFLAGS $LLVM_CFLAGS"
+        CXXFLAGS="$CXXFLAGS $LLVM_CXXFLAGS"
+        LDFLAGS="$LDFLAGS $LLVM_LDFLAGS"
 
         if [ -z "$CFG_DISABLE_LIBCPP" ] && [ -n "$CFG_USING_CLANG" ]; then
             LLVM_OPTS="$LLVM_OPTS --enable-libcpp"

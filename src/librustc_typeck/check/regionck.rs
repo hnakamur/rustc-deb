@@ -59,9 +59,9 @@
 //! There are a number of troublesome scenarios in the tests
 //! `region-dependent-*.rs`, but here is one example:
 //!
-//!     struct Foo { i: int }
+//!     struct Foo { i: i32 }
 //!     struct Bar { foo: Foo  }
-//!     fn get_i(x: &'a Bar) -> &'a int {
+//!     fn get_i(x: &'a Bar) -> &'a i32 {
 //!        let foo = &x.foo; // Lifetime L1
 //!        &foo.i            // Lifetime L2
 //!     }
@@ -88,11 +88,12 @@ use check::FnCtxt;
 use middle::free_region::FreeRegionMap;
 use middle::implicator::{self, Implication};
 use middle::mem_categorization as mc;
+use middle::mem_categorization::Categorization;
 use middle::region::CodeExtent;
 use middle::subst::Substs;
 use middle::traits;
 use middle::ty::{self, RegionEscape, ReScope, Ty, MethodCall, HasTypeFlags};
-use middle::infer::{self, GenericKind, InferCtxt, SubregionOrigin, VerifyBound};
+use middle::infer::{self, GenericKind, InferCtxt, SubregionOrigin, TypeOrigin, VerifyBound};
 use middle::pat_util;
 use middle::ty::adjustment;
 use middle::ty::wf::ImpliedBound;
@@ -101,8 +102,7 @@ use std::mem;
 use std::rc::Rc;
 use syntax::ast;
 use syntax::codemap::Span;
-use rustc_front::visit;
-use rustc_front::visit::Visitor;
+use rustc_front::intravisit::{self, Visitor};
 use rustc_front::hir;
 use rustc_front::util as hir_util;
 
@@ -233,8 +233,8 @@ impl<'a, 'tcx> Rcx<'a, 'tcx> {
     /// Consider this silly example:
     ///
     /// ```
-    /// fn borrow(x: &int) -> &int {x}
-    /// fn foo(x: @int) -> int {  // block: B
+    /// fn borrow(x: &i32) -> &i32 {x}
+    /// fn foo(x: @i32) -> i32 {  // block: B
     ///     let b = borrow(x);    // region: <R0>
     ///     *b
     /// }
@@ -243,7 +243,7 @@ impl<'a, 'tcx> Rcx<'a, 'tcx> {
     /// Here, the region of `b` will be `<R0>`.  `<R0>` is constrained to be some subregion of the
     /// block B and some superregion of the call.  If we forced it now, we'd choose the smaller
     /// region (the call).  But that would make the *b illegal.  Since we don't resolve, the type
-    /// of b will be `&<R0>.int` and then `*b` will require that `<R0>` be bigger than the let and
+    /// of b will be `&<R0>.i32` and then `*b` will require that `<R0>` be bigger than the let and
     /// the `*b` expression, so we will effectively resolve `<R0>` to be the block B.
     pub fn resolve_type(&self, unresolved_ty: Ty<'tcx>) -> Ty<'tcx> {
         self.fcx.infcx().resolve_type_vars_if_possible(&unresolved_ty)
@@ -283,19 +283,32 @@ impl<'a, 'tcx> Rcx<'a, 'tcx> {
         // When we enter a function, we can derive
         debug!("visit_fn_body(id={})", id);
 
-        let fn_sig_map = self.fcx.inh.fn_sig_map.borrow();
-        let fn_sig = match fn_sig_map.get(&id) {
-            Some(f) => f,
-            None => {
-                self.tcx().sess.bug(
-                    &format!("No fn-sig entry for id={}", id));
+        let fn_sig = {
+            let fn_sig_map = &self.infcx().tables.borrow().liberated_fn_sigs;
+            match fn_sig_map.get(&id) {
+                Some(f) => f.clone(),
+                None => {
+                    self.tcx().sess.bug(
+                        &format!("No fn-sig entry for id={}", id));
+                }
             }
         };
 
         let old_region_bounds_pairs_len = self.region_bound_pairs.len();
 
+        // Collect the types from which we create inferred bounds.
+        // For the return type, if diverging, substitute `bool` just
+        // because it will have no effect.
+        //
+        // FIXME(#25759) return types should not be implied bounds
+        let fn_sig_tys: Vec<_> =
+            fn_sig.inputs.iter()
+                         .cloned()
+                         .chain(Some(fn_sig.output.unwrap_or(self.tcx().types.bool)))
+                         .collect();
+
         let old_body_id = self.set_body_id(body.id);
-        self.relate_free_regions(&fn_sig[..], body.id, span);
+        self.relate_free_regions(&fn_sig_tys[..], body.id, span);
         link_fn_args(self,
                      self.tcx().region_maps.node_extent(body.id),
                      &fn_decl.inputs[..]);
@@ -482,12 +495,10 @@ impl<'a, 'tcx, 'v> Visitor<'v> for Rcx<'a, 'tcx> {
     // hierarchy, and in particular the relationships between free
     // regions, until regionck, as described in #3238.
 
-    fn visit_fn(&mut self, _fk: visit::FnKind<'v>, fd: &'v hir::FnDecl,
+    fn visit_fn(&mut self, _fk: intravisit::FnKind<'v>, fd: &'v hir::FnDecl,
                 b: &'v hir::Block, span: Span, id: ast::NodeId) {
         self.visit_fn_body(id, fd, b, span)
     }
-
-    fn visit_item(&mut self, i: &hir::Item) { visit_item(self, i); }
 
     fn visit_expr(&mut self, ex: &hir::Expr) { visit_expr(self, ex); }
 
@@ -500,12 +511,8 @@ impl<'a, 'tcx, 'v> Visitor<'v> for Rcx<'a, 'tcx> {
     fn visit_block(&mut self, b: &hir::Block) { visit_block(self, b); }
 }
 
-fn visit_item(_rcx: &mut Rcx, _item: &hir::Item) {
-    // Ignore items
-}
-
 fn visit_block(rcx: &mut Rcx, b: &hir::Block) {
-    visit::walk_block(rcx, b);
+    intravisit::walk_block(rcx, b);
 }
 
 fn visit_arm(rcx: &mut Rcx, arm: &hir::Arm) {
@@ -514,14 +521,14 @@ fn visit_arm(rcx: &mut Rcx, arm: &hir::Arm) {
         constrain_bindings_in_pat(&**p, rcx);
     }
 
-    visit::walk_arm(rcx, arm);
+    intravisit::walk_arm(rcx, arm);
 }
 
 fn visit_local(rcx: &mut Rcx, l: &hir::Local) {
     // see above
     constrain_bindings_in_pat(&*l.pat, rcx);
     link_local(rcx, l);
-    visit::walk_local(rcx, l);
+    intravisit::walk_local(rcx, l);
 }
 
 fn constrain_bindings_in_pat(pat: &hir::Pat, rcx: &mut Rcx) {
@@ -686,14 +693,14 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
                                args.iter().map(|e| &**e), false);
             }
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprMethodCall(_, _, ref args) => {
             constrain_call(rcx, expr, Some(&*args[0]),
                            args[1..].iter().map(|e| &**e), false);
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprAssignOp(_, ref lhs, ref rhs) => {
@@ -702,14 +709,14 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
                                Some(&**rhs).into_iter(), false);
             }
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprIndex(ref lhs, ref rhs) if has_method_map => {
             constrain_call(rcx, expr, Some(&**lhs),
                            Some(&**rhs).into_iter(), true);
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         },
 
         hir::ExprBinary(op, ref lhs, ref rhs) if has_method_map => {
@@ -722,7 +729,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
             constrain_call(rcx, expr, Some(&**lhs),
                            Some(&**rhs).into_iter(), implicitly_ref_args);
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprBinary(_, ref lhs, ref rhs) => {
@@ -736,7 +743,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
                                   ty,
                                   expr_region);
             }
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprUnary(op, ref lhs) if has_method_map => {
@@ -746,7 +753,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
             constrain_call(rcx, expr, Some(&**lhs),
                            None::<hir::Expr>.iter(), implicitly_ref_args);
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprUnary(hir::UnDeref, ref base) => {
@@ -767,7 +774,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
                     rcx, expr.span, expr_region, *r_ptr);
             }
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprIndex(ref vec_expr, _) => {
@@ -775,7 +782,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
             let vec_type = rcx.resolve_expr_type_adjusted(&**vec_expr);
             constrain_index(rcx, expr, vec_type);
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprCast(ref source, _) => {
@@ -783,7 +790,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
             // instance.  If so, we have to be sure that the type of
             // the source obeys the trait's region bound.
             constrain_cast(rcx, expr, &**source);
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprAddrOf(m, ref base) => {
@@ -798,13 +805,13 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
             // FIXME(#6268) nested method calls requires that this rule change
             let ty0 = rcx.resolve_node_type(expr.id);
             type_must_outlive(rcx, infer::AddrOf(expr.span), ty0, expr_region);
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprMatch(ref discr, ref arms, _) => {
             link_match(rcx, &**discr, &arms[..]);
 
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
 
         hir::ExprClosure(_, _, ref body) => {
@@ -813,7 +820,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
 
         hir::ExprLoop(ref body, _) => {
             let repeating_scope = rcx.set_repeating_scope(body.id);
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
             rcx.set_repeating_scope(repeating_scope);
         }
 
@@ -828,7 +835,7 @@ fn visit_expr(rcx: &mut Rcx, expr: &hir::Expr) {
         }
 
         _ => {
-            visit::walk_expr(rcx, expr);
+            intravisit::walk_expr(rcx, expr);
         }
     }
 }
@@ -883,7 +890,7 @@ fn check_expr_fn_block(rcx: &mut Rcx,
                        expr: &hir::Expr,
                        body: &hir::Block) {
     let repeating_scope = rcx.set_repeating_scope(body.id);
-    visit::walk_expr(rcx, expr);
+    intravisit::walk_expr(rcx, expr);
     rcx.set_repeating_scope(repeating_scope);
 }
 
@@ -1058,7 +1065,7 @@ fn check_safety_of_rvalue_destructor_if_necessary<'a, 'tcx>(rcx: &mut Rcx<'a, 't
                                                             cmt: mc::cmt<'tcx>,
                                                             span: Span) {
     match cmt.cat {
-        mc::cat_rvalue(region) => {
+        Categorization::Rvalue(region) => {
             match region {
                 ty::ReScope(rvalue_scope) => {
                     let typ = rcx.resolve_type(cmt.ty);
@@ -1300,10 +1307,10 @@ fn link_region<'a, 'tcx>(rcx: &Rcx<'a, 'tcx>,
                borrow_kind,
                borrow_cmt);
         match borrow_cmt.cat.clone() {
-            mc::cat_deref(ref_cmt, _,
-                          mc::Implicit(ref_kind, ref_region)) |
-            mc::cat_deref(ref_cmt, _,
-                          mc::BorrowedPtr(ref_kind, ref_region)) => {
+            Categorization::Deref(ref_cmt, _,
+                                  mc::Implicit(ref_kind, ref_region)) |
+            Categorization::Deref(ref_cmt, _,
+                                  mc::BorrowedPtr(ref_kind, ref_region)) => {
                 match link_reborrowed_region(rcx, span,
                                              borrow_region, borrow_kind,
                                              ref_cmt, ref_region, ref_kind,
@@ -1318,20 +1325,20 @@ fn link_region<'a, 'tcx>(rcx: &Rcx<'a, 'tcx>,
                 }
             }
 
-            mc::cat_downcast(cmt_base, _) |
-            mc::cat_deref(cmt_base, _, mc::Unique) |
-            mc::cat_interior(cmt_base, _) => {
+            Categorization::Downcast(cmt_base, _) |
+            Categorization::Deref(cmt_base, _, mc::Unique) |
+            Categorization::Interior(cmt_base, _) => {
                 // Borrowing interior or owned data requires the base
                 // to be valid and borrowable in the same fashion.
                 borrow_cmt = cmt_base;
                 borrow_kind = borrow_kind;
             }
 
-            mc::cat_deref(_, _, mc::UnsafePtr(..)) |
-            mc::cat_static_item |
-            mc::cat_upvar(..) |
-            mc::cat_local(..) |
-            mc::cat_rvalue(..) => {
+            Categorization::Deref(_, _, mc::UnsafePtr(..)) |
+            Categorization::StaticItem |
+            Categorization::Upvar(..) |
+            Categorization::Local(..) |
+            Categorization::Rvalue(..) => {
                 // These are all "base cases" with independent lifetimes
                 // that are not subject to inference
                 return;
@@ -1726,7 +1733,7 @@ fn projection_declared_bounds<'a, 'tcx>(rcx: &Rcx<'a,'tcx>,
     let mut declared_bounds =
         declared_generic_bounds_from_env(rcx, GenericKind::Projection(projection_ty));
 
-    declared_bounds.push_all(
+    declared_bounds.extend_from_slice(
         &declared_projection_bounds_from_trait(rcx, span, projection_ty));
 
     declared_bounds
@@ -1861,7 +1868,7 @@ fn declared_projection_bounds_from_trait<'a,'tcx>(rcx: &Rcx<'a, 'tcx>,
                        outlives);
 
                 // check whether this predicate applies to our current projection
-                match infer::mk_eqty(infcx, false, infer::Misc(span), ty, outlives.0) {
+                match infer::mk_eqty(infcx, false, TypeOrigin::Misc(span), ty, outlives.0) {
                     Ok(()) => { Ok(outlives.1) }
                     Err(_) => { Err(()) }
                 }

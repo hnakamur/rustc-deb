@@ -141,6 +141,9 @@ pub mod consts {
     pub const LN_10: f64 = 2.30258509299404568401799145468436421_f64;
 }
 
+#[unstable(feature = "core_float",
+           reason = "stable interface is via `impl f{32,64}` in later crates",
+           issue = "27702")]
 impl Float for f64 {
     #[inline]
     fn nan() -> f64 { NAN }
@@ -240,14 +243,14 @@ impl Float for f64 {
     /// Returns `true` if `self` is positive, including `+0.0` and
     /// `Float::infinity()`.
     #[inline]
-    fn is_positive(self) -> bool {
+    fn is_sign_positive(self) -> bool {
         self > 0.0 || (1.0 / self) == Float::infinity()
     }
 
     /// Returns `true` if `self` is negative, including `-0.0` and
     /// `Float::neg_infinity()`.
     #[inline]
-    fn is_negative(self) -> bool {
+    fn is_sign_negative(self) -> bool {
         self < 0.0 || (1.0 / self) == Float::neg_infinity()
     }
 

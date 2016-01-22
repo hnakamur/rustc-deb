@@ -13,6 +13,7 @@
 //! # Examples
 //!
 //! ```
+//! # #![feature(rustc_private)]
 //! #[macro_use] extern crate log;
 //!
 //! fn main() {
@@ -161,18 +162,18 @@
 #![unstable(feature = "rustc_private",
             reason = "use the crates.io `log` library instead",
             issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
-       html_playground_url = "https://play.rust-lang.org/")]
+       html_playground_url = "https://play.rust-lang.org/",
+       test(attr(deny(warnings))))]
 #![deny(missing_docs)]
 
 #![feature(box_syntax)]
 #![feature(const_fn)]
-#![feature(iter_cmp)]
 #![feature(staged_api)]
 #![feature(static_mutex)]
 
@@ -294,7 +295,7 @@ pub fn log(level: u32, loc: &'static LogLocation, args: fmt::Arguments) {
             n => {
                 let filter = mem::transmute::<_, &String>(n);
                 if !args.to_string().contains(filter) {
-                    return
+                    return;
                 }
             }
         }
@@ -373,7 +374,7 @@ pub fn mod_enabled(level: u32, module: &str) -> bool {
     // check being expanded manually in the logging macro, this function checks
     // the log level again.
     if level > unsafe { LOG_LEVEL } {
-        return false
+        return false;
     }
 
     // This assertion should never get tripped unless we're in an at_exit
@@ -391,9 +392,7 @@ fn enabled(level: u32, module: &str, iter: slice::Iter<directive::LogDirective>)
     for directive in iter.rev() {
         match directive.name {
             Some(ref name) if !module.starts_with(&name[..]) => {}
-            Some(..) | None => {
-                return level <= directive.level
-            }
+            Some(..) | None => return level <= directive.level,
         }
     }
     level <= DEFAULT_LOG_LEVEL
@@ -418,7 +417,7 @@ fn init() {
     });
 
     let max_level = {
-        let max = directives.iter().max_by(|d| d.level);
+        let max = directives.iter().max_by_key(|d| d.level);
         max.map(|d| d.level).unwrap_or(DEFAULT_LOG_LEVEL)
     };
 

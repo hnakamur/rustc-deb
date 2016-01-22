@@ -9,7 +9,7 @@
 // except according to those terms.
 
 macro_rules! Id {
-    { $T:tt } => $T
+    ($T:tt) => ($T);
 }
 
 struct Foo<T> {

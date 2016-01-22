@@ -10,12 +10,12 @@
 
 //! See docs in build/expr/mod.rs
 
-use build::{BlockAnd, Builder};
+use build::{BlockAnd, BlockAndExtension, Builder};
 use build::expr::category::{Category, RvalueFunc};
 use build::scope::LoopScope;
 use hair::*;
-use repr::*;
 use rustc::middle::region::CodeExtent;
+use rustc::mir::repr::*;
 use syntax::codemap::Span;
 
 impl<'a,'tcx> Builder<'a,'tcx> {
@@ -206,15 +206,15 @@ impl<'a,'tcx> Builder<'a,'tcx> {
             }
             ExprKind::Return { value } => {
                 unpack!(block = this.into(&Lvalue::ReturnPointer, block, value));
-                let extent = this.extent_of_outermost_scope().unwrap();
+                let extent = this.extent_of_outermost_scope();
                 this.exit_scope(expr_span, extent, block, END_BLOCK);
                 this.cfg.start_new_block().unit()
             }
             ExprKind::Call { fun, args } => {
-                let fun = unpack!(block = this.as_lvalue(block, fun));
+                let fun = unpack!(block = this.as_operand(block, fun));
                 let args: Vec<_> =
                     args.into_iter()
-                        .map(|arg| unpack!(block = this.as_lvalue(block, arg)))
+                        .map(|arg| unpack!(block = this.as_operand(block, arg)))
                         .collect();
                 let success = this.cfg.start_new_block();
                 let panic = this.diverge_cleanup();

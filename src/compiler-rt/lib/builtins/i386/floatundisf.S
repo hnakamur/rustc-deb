@@ -19,7 +19,7 @@
 #ifdef __i386__
 
 CONST_SECTION
-.align 3
+.balign 3
 
 		.quad	0x43f0000000000000
 twop64:	.quad	0x0000000000000000
@@ -27,7 +27,7 @@ twop64:	.quad	0x0000000000000000
 #define			TWOp64			twop64-0b(%ecx,%eax,8)
 
 .text
-.align 4
+.balign 4
 DEFINE_COMPILERRT_FUNCTION(__floatundisf)
 	movl		8(%esp),		%eax
 	movd		8(%esp),		%xmm1
@@ -53,28 +53,32 @@ END_COMPILERRT_FUNCTION(__floatundisf)
 #ifdef __i386__
 
 CONST_SECTION
-#if !defined(__ELF__) && !defined(__WIN32__)
-.align 3
-#else
-.align 8
-#endif
-twop52: .quad 0x4330000000000000
-		.quad 0x0000000000000fff
-sticky: .quad 0x0000000000000000
-		.long 0x00000012
-twelve:	.long 0x00000000
+
+	.balign 16
+twop52:
+	.quad 0x4330000000000000
+	.quad 0x0000000000000fff
+
+	.balign 16
+sticky:
+	.quad 0x0000000000000000
+	.long 0x00000012
+
+	.balign 16
+twelve:
+	.long 0x00000000
 
 #define			TWOp52			twop52-0b(%ecx)
 #define			STICKY			sticky-0b(%ecx,%eax,8)
 
 .text
-.align 4
+.balign 4
 DEFINE_COMPILERRT_FUNCTION(__floatundisf)
 	movl		8(%esp),		%eax
 	movd		8(%esp),		%xmm1
 	movd		4(%esp),		%xmm0
 	punpckldq	%xmm1,			%xmm0
-
+	
 	calll		0f
 0:	popl		%ecx
 	shrl		%eax					// high 31 bits of input as sint32

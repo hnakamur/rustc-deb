@@ -9,19 +9,17 @@
 // except according to those terms.
 
 use lint;
-use metadata::cstore::CStore;
-use metadata::filesearch;
+use middle::cstore::CrateStore;
 use middle::dependency_format;
 use session::search_paths::PathKind;
 use util::nodemap::{NodeMap, FnvHashMap};
 
-use syntax::ast::{NodeId, NodeIdAssigner};
+use syntax::ast::{NodeId, NodeIdAssigner, Name};
 use syntax::codemap::Span;
 use syntax::diagnostic::{self, Emitter};
 use syntax::diagnostics;
 use syntax::feature_gate;
 use syntax::parse;
-use syntax::parse::token;
 use syntax::parse::ParseSess;
 use syntax::{ast, codemap};
 use syntax::feature_gate::AttributeType;
@@ -30,9 +28,12 @@ use rustc_back::target::Target;
 
 use std::path::{Path, PathBuf};
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::env;
+use std::rc::Rc;
 
 pub mod config;
+pub mod filesearch;
 pub mod search_paths;
 
 // Represents the data associated with a compilation
@@ -41,7 +42,7 @@ pub struct Session {
     pub target: config::Config,
     pub host: Target,
     pub opts: config::Options,
-    pub cstore: CStore,
+    pub cstore: Rc<for<'a> CrateStore<'a>>,
     pub parse_sess: ParseSess,
     // For a library crate, this is always none
     pub entry_fn: RefCell<Option<(NodeId, codemap::Span)>>,
@@ -74,6 +75,10 @@ pub struct Session {
     /// didn't already find one, and this tracks what was injected.
     pub injected_allocator: Cell<Option<ast::CrateNum>>,
 
+    /// Names of all bang-style macros and syntax extensions
+    /// available in this crate
+    pub available_macros: RefCell<HashSet<Name>>,
+
     next_node_id: Cell<ast::NodeId>,
 }
 
@@ -94,7 +99,7 @@ impl Session {
         if self.opts.treat_err_as_bug {
             self.bug(msg);
         }
-        self.diagnostic().handler().fatal(msg)
+        panic!(self.diagnostic().handler().fatal(msg))
     }
     pub fn span_err_or_warn(&self, is_warning: bool, sp: Span, msg: &str) {
         if is_warning {
@@ -387,7 +392,8 @@ fn split_msg_into_multilines(msg: &str) -> Option<String> {
 
 pub fn build_session(sopts: config::Options,
                      local_crate_source_file: Option<PathBuf>,
-                     registry: diagnostics::registry::Registry)
+                     registry: diagnostics::registry::Registry,
+                     cstore: Rc<for<'a> CrateStore<'a>>)
                      -> Session {
     // FIXME: This is not general enough to make the warning lint completely override
     // normal diagnostic warnings, since the warning lint can also be denied and changed
@@ -405,18 +411,19 @@ pub fn build_session(sopts: config::Options,
     let span_diagnostic_handler =
         diagnostic::SpanHandler::new(diagnostic_handler, codemap);
 
-    build_session_(sopts, local_crate_source_file, span_diagnostic_handler)
+    build_session_(sopts, local_crate_source_file, span_diagnostic_handler, cstore)
 }
 
 pub fn build_session_(sopts: config::Options,
                       local_crate_source_file: Option<PathBuf>,
-                      span_diagnostic: diagnostic::SpanHandler)
+                      span_diagnostic: diagnostic::SpanHandler,
+                      cstore: Rc<for<'a> CrateStore<'a>>)
                       -> Session {
     let host = match Target::search(config::host_triple()) {
         Ok(t) => t,
         Err(e) => {
-            span_diagnostic.handler()
-                .fatal(&format!("Error loading host specification: {}", e));
+            panic!(span_diagnostic.handler()
+                                  .fatal(&format!("Error loading host specification: {}", e)));
     }
     };
     let target_cfg = config::build_target_config(&sopts, &span_diagnostic);
@@ -446,7 +453,7 @@ pub fn build_session_(sopts: config::Options,
         target: target_cfg,
         host: host,
         opts: sopts,
-        cstore: CStore::new(token::get_ident_interner()),
+        cstore: cstore,
         parse_sess: p_s,
         // For a library crate, this is always none
         entry_fn: RefCell::new(None),
@@ -468,6 +475,7 @@ pub fn build_session_(sopts: config::Options,
         can_print_warnings: can_print_warnings,
         next_node_id: Cell::new(1),
         injected_allocator: Cell::new(None),
+        available_macros: RefCell::new(HashSet::new()),
     };
 
     sess

@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use ops::{Add, Sub, Mul, Div};
-use sys::time::SteadyTime;
+use time::Instant;
 
 const NANOS_PER_SEC: u32 = 1_000_000_000;
 const NANOS_PER_MILLI: u32 = 1_000_000;
@@ -66,10 +66,12 @@ impl Duration {
                          wait for a more general \"moment in time\" \
                          abstraction",
                issue = "27799")]
+    #[rustc_deprecated(reason = "use std::time::Instant instead",
+                       since = "1.6.0")]
     pub fn span<F>(f: F) -> Duration where F: FnOnce() {
-        let start = SteadyTime::now();
+        let start = Instant::now();
         f();
-        &SteadyTime::now() - &start
+        start.elapsed()
     }
 
     /// Creates a new `Duration` from the specified number of seconds.
@@ -102,6 +104,7 @@ impl Duration {
     pub fn subsec_nanos(&self) -> u32 { self.nanos }
 }
 
+#[stable(feature = "duration", since = "1.3.0")]
 impl Add for Duration {
     type Output = Duration;
 
@@ -118,6 +121,7 @@ impl Add for Duration {
     }
 }
 
+#[stable(feature = "duration", since = "1.3.0")]
 impl Sub for Duration {
     type Output = Duration;
 
@@ -136,6 +140,7 @@ impl Sub for Duration {
     }
 }
 
+#[stable(feature = "duration", since = "1.3.0")]
 impl Mul<u32> for Duration {
     type Output = Duration;
 
@@ -152,6 +157,7 @@ impl Mul<u32> for Duration {
     }
 }
 
+#[stable(feature = "duration", since = "1.3.0")]
 impl Div<u32> for Duration {
     type Output = Duration;
 

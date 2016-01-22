@@ -18,6 +18,6 @@ fn main() {
     let f = FooB { x: 3, y: 4 };
     match f {
         FooB(a, b) => println!("{} {}", a, b),
-//~^ ERROR `FooB` does not name a non-struct variant or a tuple struct
+//~^ ERROR `FooB` does not name a tuple variant or a tuple struct
     }
 }

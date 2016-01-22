@@ -27,22 +27,22 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "test"]
 #![unstable(feature = "test", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "https://doc.rust-lang.org/nightly/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       test(attr(deny(warnings))))]
 
 #![feature(asm)]
 #![feature(box_syntax)]
-#![feature(duration_span)]
 #![feature(fnbox)]
-#![feature(iter_cmp)]
 #![feature(libc)]
 #![feature(rustc_private)]
 #![feature(set_stdio)]
 #![feature(staged_api)]
+#![feature(time2)]
 
 extern crate getopts;
 extern crate serialize;
@@ -78,7 +78,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Instant, Duration};
 
 // to be used by rustc to compile tests in libtest
 pub mod test {
@@ -427,7 +427,7 @@ pub enum TestResult {
 unsafe impl Send for TestResult {}
 
 enum OutputLocation<T> {
-    Pretty(Box<term::Terminal<term::WriterWrapper> + Send>),
+    Pretty(Box<term::StdoutTerminal>),
     Raw(T),
 }
 
@@ -713,7 +713,7 @@ pub fn run_tests_console(opts: &TestOpts, tests: Vec<TestDescAndFn> ) -> io::Res
             PadOnRight => t.desc.name.as_slice().len(),
         }
     }
-    match tests.iter().max_by(|t|len_if_padded(*t)) {
+    match tests.iter().max_by_key(|t|len_if_padded(*t)) {
         Some(t) => {
             let n = t.desc.name.as_slice();
             st.max_name_len = n.len();
@@ -777,11 +777,14 @@ fn stdout_isatty() -> bool {
 }
 #[cfg(windows)]
 fn stdout_isatty() -> bool {
-    const STD_OUTPUT_HANDLE: libc::DWORD = -11i32 as libc::DWORD;
+    type DWORD = u32;
+    type BOOL = i32;
+    type HANDLE = *mut u8;
+    type LPDWORD = *mut u32;
+    const STD_OUTPUT_HANDLE: DWORD = -11i32 as DWORD;
     extern "system" {
-        fn GetStdHandle(which: libc::DWORD) -> libc::HANDLE;
-        fn GetConsoleMode(hConsoleHandle: libc::HANDLE,
-                          lpMode: libc::LPDWORD) -> libc::BOOL;
+        fn GetStdHandle(which: DWORD) -> HANDLE;
+        fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: LPDWORD) -> BOOL;
     }
     unsafe {
         let handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -882,10 +885,28 @@ fn get_concurrency() -> usize {
     };
 
     #[cfg(windows)]
+    #[allow(bad_style)]
     fn num_cpus() -> usize {
+        #[repr(C)]
+        struct SYSTEM_INFO {
+            wProcessorArchitecture: u16,
+            wReserved: u16,
+            dwPageSize: u32,
+            lpMinimumApplicationAddress: *mut u8,
+            lpMaximumApplicationAddress: *mut u8,
+            dwActiveProcessorMask: *mut u8,
+            dwNumberOfProcessors: u32,
+            dwProcessorType: u32,
+            dwAllocationGranularity: u32,
+            wProcessorLevel: u16,
+            wProcessorRevision: u16,
+        }
+        extern "system" {
+            fn GetSystemInfo(info: *mut SYSTEM_INFO) -> i32;
+        }
         unsafe {
             let mut sysinfo = std::mem::zeroed();
-            libc::GetSystemInfo(&mut sysinfo);
+            GetSystemInfo(&mut sysinfo);
             sysinfo.dwNumberOfProcessors as usize
         }
     }
@@ -1084,23 +1105,27 @@ impl MetricMap {
 /// elimination.
 ///
 /// This function is a no-op, and does not even read from `dummy`.
+#[cfg(not(all(target_os = "nacl", target_arch = "le32")))]
 pub fn black_box<T>(dummy: T) -> T {
     // we need to "use" the argument in some way LLVM can't
     // introspect.
     unsafe {asm!("" : : "r"(&dummy))}
     dummy
 }
+#[cfg(all(target_os = "nacl", target_arch = "le32"))]
+#[inline(never)]
+pub fn black_box<T>(dummy: T) -> T { dummy }
 
 
 impl Bencher {
     /// Callback for benchmark functions to run in their body.
     pub fn iter<T, F>(&mut self, mut inner: F) where F: FnMut() -> T {
-        self.dur = Duration::span(|| {
-            let k = self.iterations;
-            for _ in 0..k {
-                black_box(inner());
-            }
-        });
+        let start = Instant::now();
+        let k = self.iterations;
+        for _ in 0..k {
+            black_box(inner());
+        }
+        self.dur = start.elapsed();
     }
 
     pub fn ns_elapsed(&mut self) -> u64 {
@@ -1143,29 +1168,24 @@ impl Bencher {
         let mut total_run = Duration::new(0, 0);
         let samples : &mut [f64] = &mut [0.0_f64; 50];
         loop {
-            let mut summ = None;
-            let mut summ5 = None;
+            let loop_start = Instant::now();
 
-            let loop_run = Duration::span(|| {
+            for p in &mut *samples {
+                self.bench_n(n, |x| f(x));
+                *p = self.ns_per_iter() as f64;
+            };
 
-                for p in &mut *samples {
-                    self.bench_n(n, |x| f(x));
-                    *p = self.ns_per_iter() as f64;
-                };
+            stats::winsorize(samples, 5.0);
+            let summ = stats::Summary::new(samples);
 
-                stats::winsorize(samples, 5.0);
-                summ = Some(stats::Summary::new(samples));
+            for p in &mut *samples {
+                self.bench_n(5 * n, |x| f(x));
+                *p = self.ns_per_iter() as f64;
+            };
 
-                for p in &mut *samples {
-                    self.bench_n(5 * n, |x| f(x));
-                    *p = self.ns_per_iter() as f64;
-                };
-
-                stats::winsorize(samples, 5.0);
-                summ5 = Some(stats::Summary::new(samples));
-            });
-            let summ = summ.unwrap();
-            let summ5 = summ5.unwrap();
+            stats::winsorize(samples, 5.0);
+            let summ5 = stats::Summary::new(samples);
+            let loop_run = loop_start.elapsed();
 
             // If we've run for 100ms and seem to have converged to a
             // stable median.

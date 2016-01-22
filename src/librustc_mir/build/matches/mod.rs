@@ -13,10 +13,12 @@
 //! includes the high-level algorithm, the submodules contain the
 //! details.
 
-use build::{BlockAnd, Builder};
-use repr::*;
+use build::{BlockAnd, BlockAndExtension, Builder};
+use rustc_data_structures::fnv::FnvHashMap;
+use rustc::middle::const_eval::ConstVal;
 use rustc::middle::region::CodeExtent;
 use rustc::middle::ty::{AdtDef, Ty};
+use rustc::mir::repr::*;
 use hair::*;
 use syntax::ast::{Name, NodeId};
 use syntax::codemap::Span;
@@ -40,9 +42,9 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         // suitable extent for all of the bindings in this match. It's
         // easiest to do this up front because some of these arms may
         // be unreachable or reachable multiple times.
-        let var_extent = self.extent_of_innermost_scope().unwrap();
+        let var_extent = self.extent_of_innermost_scope();
         for arm in &arms {
-            self.declare_bindings(var_extent, arm.patterns[0].clone());
+            self.declare_bindings(var_extent, &arm.patterns[0]);
         }
 
         let mut arm_blocks = ArmBlocks {
@@ -62,18 +64,18 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         // highest priority candidate comes last in the list. This the
         // reverse of the order in which candidates are written in the
         // source.
-        let candidates: Vec<Candidate<'tcx>> =
+        let candidates: Vec<_> =
             arms.iter()
                 .enumerate()
                 .rev() // highest priority comes last
                 .flat_map(|(arm_index, arm)| {
                     arm.patterns.iter()
                                 .rev()
-                                .map(move |pat| (arm_index, pat.clone(), arm.guard.clone()))
+                                .map(move |pat| (arm_index, pat, arm.guard.clone()))
                 })
                 .map(|(arm_index, pattern, guard)| {
                     Candidate {
-                        match_pairs: vec![self.match_pair(discriminant_lvalue.clone(), pattern)],
+                        match_pairs: vec![MatchPair::new(discriminant_lvalue.clone(), pattern)],
                         bindings: vec![],
                         guard: guard,
                         arm_index: arm_index,
@@ -83,7 +85,15 @@ impl<'a,'tcx> Builder<'a,'tcx> {
 
         // this will generate code to test discriminant_lvalue and
         // branch to the appropriate arm block
-        self.match_candidates(span, &mut arm_blocks, candidates, block);
+        let otherwise = self.match_candidates(span, &mut arm_blocks, candidates, block);
+
+        // because all matches are exhaustive, in principle we expect
+        // an empty vector to be returned here, but the algorithm is
+        // not entirely precise
+        if !otherwise.is_empty() {
+            let join_block = self.join_otherwise_blocks(otherwise);
+            self.panic(join_block);
+        }
 
         // all the arm blocks will rejoin here
         let end_block = self.cfg.start_new_block();
@@ -100,12 +110,11 @@ impl<'a,'tcx> Builder<'a,'tcx> {
     pub fn expr_into_pattern(&mut self,
                              mut block: BasicBlock,
                              var_extent: CodeExtent, // lifetime of vars
-                             irrefutable_pat: PatternRef<'tcx>,
+                             irrefutable_pat: Pattern<'tcx>,
                              initializer: ExprRef<'tcx>)
                              -> BlockAnd<()> {
         // optimize the case of `let x = ...`
-        let irrefutable_pat = self.hir.mirror(irrefutable_pat);
-        match irrefutable_pat.kind {
+        match *irrefutable_pat.kind {
             PatternKind::Binding { mutability,
                                    name,
                                    mode: BindingMode::ByValue,
@@ -126,22 +135,22 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         let lvalue = unpack!(block = self.as_lvalue(block, initializer));
         self.lvalue_into_pattern(block,
                                  var_extent,
-                                 PatternRef::Mirror(Box::new(irrefutable_pat)),
+                                 irrefutable_pat,
                                  &lvalue)
     }
 
     pub fn lvalue_into_pattern(&mut self,
                                mut block: BasicBlock,
                                var_extent: CodeExtent,
-                               irrefutable_pat: PatternRef<'tcx>,
+                               irrefutable_pat: Pattern<'tcx>,
                                initializer: &Lvalue<'tcx>)
                                -> BlockAnd<()> {
         // first, creating the bindings
-        self.declare_bindings(var_extent, irrefutable_pat.clone());
+        self.declare_bindings(var_extent, &irrefutable_pat);
 
         // create a dummy candidate
-        let mut candidate = Candidate::<'tcx> {
-            match_pairs: vec![self.match_pair(initializer.clone(), irrefutable_pat.clone())],
+        let mut candidate = Candidate {
+            match_pairs: vec![MatchPair::new(initializer.clone(), &irrefutable_pat)],
             bindings: vec![],
             guard: None,
             arm_index: 0, // since we don't call `match_candidates`, this field is unused
@@ -164,29 +173,29 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         block.unit()
     }
 
-    pub fn declare_bindings(&mut self, var_extent: CodeExtent, pattern: PatternRef<'tcx>) {
-        let pattern = self.hir.mirror(pattern);
-        match pattern.kind {
-            PatternKind::Binding { mutability, name, mode: _, var, ty, subpattern } => {
+    pub fn declare_bindings(&mut self, var_extent: CodeExtent, pattern: &Pattern<'tcx>) {
+        match *pattern.kind {
+            PatternKind::Binding { mutability, name, mode: _, var, ty, ref subpattern } => {
                 self.declare_binding(var_extent, mutability, name, var, ty, pattern.span);
-                if let Some(subpattern) = subpattern {
+                if let Some(subpattern) = subpattern.as_ref() {
                     self.declare_bindings(var_extent, subpattern);
                 }
             }
-            PatternKind::Array { prefix, slice, suffix } |
-            PatternKind::Slice { prefix, slice, suffix } => {
-                for subpattern in prefix.into_iter().chain(slice).chain(suffix) {
+            PatternKind::Array { ref prefix, ref slice, ref suffix } |
+            PatternKind::Slice { ref prefix, ref slice, ref suffix } => {
+                for subpattern in prefix.iter().chain(slice).chain(suffix) {
                     self.declare_bindings(var_extent, subpattern);
                 }
             }
-            PatternKind::Constant { .. } | PatternKind::Range { .. } | PatternKind::Wild => {}
-            PatternKind::Deref { subpattern } => {
+            PatternKind::Constant { .. } | PatternKind::Range { .. } | PatternKind::Wild => {
+            }
+            PatternKind::Deref { ref subpattern } => {
                 self.declare_bindings(var_extent, subpattern);
             }
-            PatternKind::Leaf { subpatterns } |
-            PatternKind::Variant { subpatterns, .. } => {
+            PatternKind::Leaf { ref subpatterns } |
+            PatternKind::Variant { ref subpatterns, .. } => {
                 for subpattern in subpatterns {
-                    self.declare_bindings(var_extent, subpattern.pattern);
+                    self.declare_bindings(var_extent, &subpattern.pattern);
                 }
             }
         }
@@ -200,9 +209,9 @@ struct ArmBlocks {
 }
 
 #[derive(Clone, Debug)]
-struct Candidate<'tcx> {
+struct Candidate<'pat, 'tcx:'pat> {
     // all of these must be satisfied...
-    match_pairs: Vec<MatchPair<'tcx>>,
+    match_pairs: Vec<MatchPair<'pat, 'tcx>>,
 
     // ...these bindings established...
     bindings: Vec<Binding<'tcx>>,
@@ -226,12 +235,12 @@ struct Binding<'tcx> {
 }
 
 #[derive(Clone, Debug)]
-struct MatchPair<'tcx> {
+struct MatchPair<'pat, 'tcx:'pat> {
     // this lvalue...
     lvalue: Lvalue<'tcx>,
 
     // ... must match this pattern.
-    pattern: Pattern<'tcx>,
+    pattern: &'pat Pattern<'tcx>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -239,6 +248,13 @@ enum TestKind<'tcx> {
     // test the branches of enum
     Switch {
         adt_def: AdtDef<'tcx>,
+    },
+
+    // test the branches of enum
+    SwitchInt {
+        switch_ty: Ty<'tcx>,
+        options: Vec<ConstVal>,
+        indices: FnvHashMap<ConstVal, usize>,
     },
 
     // test for equality
@@ -271,11 +287,32 @@ struct Test<'tcx> {
 // Main matching algorithm
 
 impl<'a,'tcx> Builder<'a,'tcx> {
-    fn match_candidates(&mut self,
-                        span: Span,
-                        arm_blocks: &mut ArmBlocks,
-                        mut candidates: Vec<Candidate<'tcx>>,
-                        mut block: BasicBlock)
+    /// The main match algorithm. It begins with a set of candidates
+    /// `candidates` and has the job of generating code to determine
+    /// which of these candidates, if any, is the correct one. The
+    /// candidates are sorted in inverse priority -- so the last item
+    /// in the list has highest priority. When a candidate is found to
+    /// match the value, we will generate a branch to the appropriate
+    /// block found in `arm_blocks`.
+    ///
+    /// The return value is a list of "otherwise" blocks. These are
+    /// points in execution where we found that *NONE* of the
+    /// candidates apply.  In principle, this means that the input
+    /// list was not exhaustive, though at present we sometimes are
+    /// not smart enough to recognize all exhaustive inputs.
+    ///
+    /// It might be surprising that the input can be inexhaustive.
+    /// Indeed, initially, it is not, because all matches are
+    /// exhaustive in Rust. But during processing we sometimes divide
+    /// up the list of candidates and recurse with a non-exhaustive
+    /// list. This is important to keep the size of the generated code
+    /// under control. See `test_candidates` for more details.
+    fn match_candidates<'pat>(&mut self,
+                              span: Span,
+                              arm_blocks: &mut ArmBlocks,
+                              mut candidates: Vec<Candidate<'pat, 'tcx>>,
+                              mut block: BasicBlock)
+                              -> Vec<BasicBlock>
     {
         debug!("matched_candidate(span={:?}, block={:?}, candidates={:?})",
                span, block, candidates);
@@ -303,36 +340,187 @@ impl<'a,'tcx> Builder<'a,'tcx> {
             } else {
                 // if None is returned, then any remaining candidates
                 // are unreachable (at least not through this path).
-                return;
+                return vec![];
             }
         }
 
         // If there are no candidates that still need testing, we're done.
         // Since all matches are exhaustive, execution should never reach this point.
         if candidates.is_empty() {
-            return self.panic(block);
+            return vec![block];
         }
 
-        // otherwise, extract the next match pair and construct tests
+        // Test candidates where possible.
+        let (otherwise, tested_candidates) =
+            self.test_candidates(span, arm_blocks, &candidates, block);
+
+        // If the target candidates were exhaustive, then we are done.
+        if otherwise.is_empty() {
+            return vec![];
+        }
+
+        // If all candidates were sorted into `target_candidates` somewhere, then
+        // the initial set was inexhaustive.
+        let untested_candidates = candidates.len() - tested_candidates;
+        if untested_candidates == 0 {
+            return otherwise;
+        }
+
+        // Otherwise, let's process those remaining candidates.
+        let join_block = self.join_otherwise_blocks(otherwise);
+        candidates.truncate(untested_candidates);
+        self.match_candidates(span, arm_blocks, candidates, join_block)
+    }
+
+    fn join_otherwise_blocks(&mut self,
+                             otherwise: Vec<BasicBlock>)
+                             -> BasicBlock
+    {
+        if otherwise.len() == 1 {
+            otherwise[0]
+        } else {
+            let join_block = self.cfg.start_new_block();
+            for block in otherwise {
+                self.cfg.terminate(block, Terminator::Goto { target: join_block });
+            }
+            join_block
+        }
+    }
+
+    /// This is the most subtle part of the matching algorithm.  At
+    /// this point, the input candidates have been fully simplified,
+    /// and so we know that all remaining match-pairs require some
+    /// sort of test. To decide what test to do, we take the highest
+    /// priority candidate (last one in the list) and extract the
+    /// first match-pair from the list. From this we decide what kind
+    /// of test is needed using `test`, defined in the `test` module.
+    ///
+    /// *Note:* taking the first match pair is somewhat arbitrary, and
+    /// we might do better here by choosing more carefully what to
+    /// test.
+    ///
+    /// For example, consider the following possible match-pairs:
+    ///
+    /// 1. `x @ Some(P)` -- we will do a `Switch` to decide what variant `x` has
+    /// 2. `x @ 22` -- we will do a `SwitchInt`
+    /// 3. `x @ 3..5` -- we will do a range test
+    /// 4. etc.
+    ///
+    /// Once we know what sort of test we are going to perform, this
+    /// test may also help us with other candidates. So we walk over
+    /// the candidates (from high to low priority) and check. This
+    /// gives us, for each outcome of the test, a transformed list of
+    /// candidates.  For example, if we are testing the current
+    /// variant of `x.0`, and we have a candidate `{x.0 @ Some(v), x.1
+    /// @ 22}`, then we would have a resulting candidate of `{(x.0 as
+    /// Some).0 @ v, x.1 @ 22}`. Note that the first match-pair is now
+    /// simpler (and, in fact, irrefutable).
+    ///
+    /// But there may also be candidates that the test just doesn't
+    /// apply to. For example, consider the case of #29740:
+    ///
+    /// ```rust
+    /// match x {
+    ///     "foo" => ...,
+    ///     "bar" => ...,
+    ///     "baz" => ...,
+    ///     _ => ...,
+    /// }
+    /// ```
+    ///
+    /// Here the match-pair we are testing will be `x @ "foo"`, and we
+    /// will generate an `Eq` test. Because `"bar"` and `"baz"` are different
+    /// constants, we will decide that these later candidates are just not
+    /// informed by the eq test. So we'll wind up with three candidate sets:
+    ///
+    /// - If outcome is that `x == "foo"` (one candidate, derived from `x @ "foo"`)
+    /// - If outcome is that `x != "foo"` (empty list of candidates)
+    /// - Otherwise (three candidates, `x @ "bar"`, `x @ "baz"`, `x @
+    ///   _`). Here we have the invariant that everything in the
+    ///   otherwise list is of **lower priority** than the stuff in the
+    ///   other lists.
+    ///
+    /// So we'll compile the test. For each outcome of the test, we
+    /// recursively call `match_candidates` with the corresponding set
+    /// of candidates. But note that this set is now inexhaustive: for
+    /// example, in the case where the test returns false, there are
+    /// NO candidates, even though there is stll a value to be
+    /// matched. So we'll collect the return values from
+    /// `match_candidates`, which are the blocks where control-flow
+    /// goes if none of the candidates matched. At this point, we can
+    /// continue with the "otherwise" list.
+    ///
+    /// If you apply this to the above test, you basically wind up
+    /// with an if-else-if chain, testing each candidate in turn,
+    /// which is precisely what we want.
+    fn test_candidates<'pat>(&mut self,
+                             span: Span,
+                             arm_blocks: &mut ArmBlocks,
+                             candidates: &[Candidate<'pat, 'tcx>],
+                             block: BasicBlock)
+                             -> (Vec<BasicBlock>, usize)
+    {
+        // extract the match-pair from the highest priority candidate
         let match_pair = &candidates.last().unwrap().match_pairs[0];
-        let test = self.test(match_pair);
+        let mut test = self.test(match_pair);
+
+        // most of the time, the test to perform is simply a function
+        // of the main candidate; but for a test like SwitchInt, we
+        // may want to add cases based on the candidates that are
+        // available
+        match test.kind {
+            TestKind::SwitchInt { switch_ty, ref mut options, ref mut indices } => {
+                for candidate in candidates.iter().rev() {
+                    if !self.add_cases_to_switch(&match_pair.lvalue,
+                                                 candidate,
+                                                 switch_ty,
+                                                 options,
+                                                 indices) {
+                        break;
+                    }
+                }
+            }
+            _ => { }
+        }
+
+        // perform the test, branching to one of N blocks. For each of
+        // those N possible outcomes, create a (initially empty)
+        // vector of candidates. Those are the candidates that still
+        // apply if the test has that particular outcome.
         debug!("match_candidates: test={:?} match_pair={:?}", test, match_pair);
         let target_blocks = self.perform_test(block, &match_pair.lvalue, &test);
+        let mut target_candidates: Vec<_> = (0..target_blocks.len()).map(|_| vec![]).collect();
 
-        for (outcome, mut target_block) in target_blocks.into_iter().enumerate() {
-            let applicable_candidates: Vec<Candidate<'tcx>> =
-                candidates.iter()
-                          .filter_map(|candidate| {
-                              unpack!(target_block =
-                                      self.candidate_under_assumption(target_block,
-                                                                      &match_pair.lvalue,
-                                                                      &test.kind,
-                                                                      outcome,
-                                                                      candidate))
-                          })
-                          .collect();
-            self.match_candidates(span, arm_blocks, applicable_candidates, target_block);
-        }
+        // Sort the candidates into the appropriate vector in
+        // `target_candidates`. Note that at some point we may
+        // encounter a candidate where the test is not relevant; at
+        // that point, we stop sorting.
+        let tested_candidates =
+            candidates.iter()
+                      .rev()
+                      .take_while(|c| self.sort_candidate(&match_pair.lvalue,
+                                                          &test,
+                                                          c,
+                                                          &mut target_candidates))
+                      .count();
+        assert!(tested_candidates > 0); // at least the last candidate ought to be tested
+
+        // For each outcome of test, process the candidates that still
+        // apply. Collect a list of blocks where control flow will
+        // branch if one of the `target_candidate` sets is not
+        // exhaustive.
+        let otherwise: Vec<_> =
+            target_blocks.into_iter()
+                         .zip(target_candidates)
+                         .flat_map(|(target_block, target_candidates)| {
+                             self.match_candidates(span,
+                                                   arm_blocks,
+                                                   target_candidates,
+                                                   target_block)
+                         })
+                         .collect();
+
+        (otherwise, tested_candidates)
     }
 
     /// Initializes each of the bindings from the candidate by
@@ -347,11 +535,11 @@ impl<'a,'tcx> Builder<'a,'tcx> {
     /// bindings, further tests would be a use-after-move (which would
     /// in turn be detected by the borrowck code that runs on the
     /// MIR).
-    fn bind_and_guard_matched_candidate(&mut self,
-                                        mut block: BasicBlock,
-                                        arm_blocks: &mut ArmBlocks,
-                                        candidate: Candidate<'tcx>)
-                                        -> Option<BasicBlock> {
+    fn bind_and_guard_matched_candidate<'pat>(&mut self,
+                                              mut block: BasicBlock,
+                                              arm_blocks: &mut ArmBlocks,
+                                              candidate: Candidate<'pat, 'tcx>)
+                                              -> Option<BasicBlock> {
         debug!("bind_and_guard_matched_candidate(block={:?}, candidate={:?})",
                block, candidate);
 

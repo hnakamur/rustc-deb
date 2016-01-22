@@ -98,16 +98,25 @@ pub struct TargetOptions {
     pub linker: String,
     /// Archive utility to use when managing archives. Defaults to "ar".
     pub ar: String,
+
     /// Linker arguments that are unconditionally passed *before* any
     /// user-defined libraries.
     pub pre_link_args: Vec<String>,
+    /// Objects to link before all others, always found within the
+    /// sysroot folder.
+    pub pre_link_objects_exe: Vec<String>, // ... when linking an executable
+    pub pre_link_objects_dll: Vec<String>, // ... when linking a dylib
+    /// Linker arguments that are unconditionally passed after any
+    /// user-defined but before post_link_objects.  Standard platform
+    /// libraries that should be always be linked to, usually go here.
+    pub late_link_args: Vec<String>,
+    /// Objects to link after all others, always found within the
+    /// sysroot folder.
+    pub post_link_objects: Vec<String>,
     /// Linker arguments that are unconditionally passed *after* any
     /// user-defined libraries.
     pub post_link_args: Vec<String>,
-    /// Objects to link before and after all others, always found within the
-    /// sysroot folder.
-    pub pre_link_objects: Vec<String>,
-    pub post_link_objects: Vec<String>,
+
     /// Default CPU to pass to LLVM. Corresponds to `llc -mcpu=$cpu`. Defaults
     /// to "default".
     pub cpu: String,
@@ -141,6 +150,8 @@ pub struct TargetOptions {
     pub staticlib_prefix: String,
     /// String to append to the name of every static library. Defaults to ".a".
     pub staticlib_suffix: String,
+    /// OS family to use for conditional compilation. Valid options: "unix", "windows".
+    pub target_family: Option<String>,
     /// Whether the target toolchain is like OSX's. Only useful for compiling against iOS/OS X, in
     /// particular running dsymutil and some other stuff like `-dead_strip`. Defaults to false.
     pub is_like_osx: bool,
@@ -210,6 +221,7 @@ impl Default for TargetOptions {
             exe_suffix: "".to_string(),
             staticlib_prefix: "lib".to_string(),
             staticlib_suffix: ".a".to_string(),
+            target_family: None,
             is_like_osx: false,
             is_like_windows: false,
             is_like_android: false,
@@ -219,8 +231,10 @@ impl Default for TargetOptions {
             no_compiler_rt: false,
             no_default_libraries: true,
             position_independent_executables: false,
-            pre_link_objects: Vec::new(),
+            pre_link_objects_exe: Vec::new(),
+            pre_link_objects_dll: Vec::new(),
             post_link_objects: Vec::new(),
+            late_link_args: Vec::new(),
             archive_format: String::new(),
             custom_unwind_resume: false,
             lib_allocation_crate: "alloc_system".to_string(),
@@ -257,8 +271,10 @@ impl Target {
                      .map(|s| s.as_string())
                      .and_then(|os| os.map(|s| s.to_string())) {
                 Some(val) => val,
-                None =>
-                    handler.fatal(&format!("Field {} in target specification is required", name))
+                None => {
+                    panic!(handler.fatal(&format!("Field {} in target specification is required",
+                                                  name)))
+                }
             }
         };
 
@@ -326,6 +342,7 @@ impl Target {
         key!(disable_redzone, bool);
         key!(eliminate_frame_pointer, bool);
         key!(function_sections, bool);
+        key!(target_family, optional);
         key!(is_like_osx, bool);
         key!(is_like_windows, bool);
         key!(linker_is_gnu, bool);
@@ -334,7 +351,9 @@ impl Target {
         key!(no_default_libraries, bool);
         key!(pre_link_args, list);
         key!(post_link_args, list);
+        key!(archive_format);
         key!(allow_asm, bool);
+        key!(custom_unwind_resume, bool);
 
         base
     }

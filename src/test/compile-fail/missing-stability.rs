@@ -12,7 +12,8 @@
 
 #![crate_type="lib"]
 #![feature(staged_api)]
-#![staged_api]
+
+#![stable(feature = "test_feature", since = "1.0.0")]
 
 pub fn unmarked() {
     //~^ ERROR This node does not have a stability attribute

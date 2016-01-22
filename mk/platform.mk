@@ -14,7 +14,7 @@
 # would create a variable HOST_i686-darwin-macos with the value
 # i386.
 define DEF_HOST_VAR
-  HOST_$(1) = $(subst i686,i386,$(word 1,$(subst -, ,$(1))))
+  HOST_$(1) = $(patsubst i%86,i386,$(word 1,$(subst -, ,$(1))))
 endef
 $(foreach t,$(CFG_TARGET),$(eval $(call DEF_HOST_VAR,$(t))))
 $(foreach t,$(CFG_TARGET),$(info cfg: host for $(t) is $(HOST_$(t))))
@@ -113,7 +113,10 @@ CFG_RLIB_GLOB=lib$(1)-*.rlib
 include $(wildcard $(CFG_SRC_DIR)mk/cfg/*.mk)
 
 define ADD_INSTALLED_OBJECTS
+  INSTALLED_OBJECTS_$(1) += $$(CFG_INSTALLED_OBJECTS_$(1))
+  REQUIRED_OBJECTS_$(1) += $$(CFG_THIRD_PARTY_OBJECTS_$(1))
   INSTALLED_OBJECTS_$(1) += $$(call CFG_STATIC_LIB_NAME_$(1),compiler-rt)
+  REQUIRED_OBJECTS_$(1) += $$(call CFG_STATIC_LIB_NAME_$(1),compiler-rt)
 endef
 
 $(foreach target,$(CFG_TARGET), \
@@ -186,21 +189,25 @@ define CFG_MAKE_TOOLCHAIN
   endif
 
   CFG_COMPILE_C_$(1) = $$(CC_$(1)) \
+        $$(CFLAGS) \
         $$(CFG_GCCISH_CFLAGS) \
         $$(CFG_GCCISH_CFLAGS_$(1)) \
         -c $$(call CFG_CC_OUTPUT_$(1),$$(1)) $$(2)
   CFG_LINK_C_$(1) = $$(CC_$(1)) \
+        $$(LDFLAGS) \
         $$(CFG_GCCISH_LINK_FLAGS) -o $$(1) \
         $$(CFG_GCCISH_LINK_FLAGS_$(1)) \
         $$(CFG_GCCISH_DEF_FLAG_$(1))$$(3) $$(2) \
         $$(call CFG_INSTALL_NAME_$(1),$$(4))
   CFG_COMPILE_CXX_$(1) = $$(CXX_$(1)) \
+        $$(CXXFLAGS) \
         $$(CFG_GCCISH_CFLAGS) \
         $$(CFG_GCCISH_CXXFLAGS) \
         $$(CFG_GCCISH_CFLAGS_$(1)) \
         $$(CFG_GCCISH_CXXFLAGS_$(1)) \
         -c $$(call CFG_CC_OUTPUT_$(1),$$(1)) $$(2)
   CFG_LINK_CXX_$(1) = $$(CXX_$(1)) \
+        $$(LDFLAGS) \
         $$(CFG_GCCISH_LINK_FLAGS) -o $$(1) \
         $$(CFG_GCCISH_LINK_FLAGS_$(1)) \
         $$(CFG_GCCISH_DEF_FLAG_$(1))$$(3) $$(2) \
@@ -211,9 +218,11 @@ define CFG_MAKE_TOOLCHAIN
   # On OpenBSD, we need to pass the path of libstdc++.so to the linker
   # (use path of libstdc++.a which is a known name for the same path)
   ifeq ($(OSTYPE_$(1)),unknown-openbsd)
-    RUSTC_FLAGS_$(1)=-L "$$(dir $$(shell $$(CC_$(1)) $$(CFG_GCCISH_CFLAGS_$(1)) \
-        -print-file-name=lib$(CFG_STDCPP_NAME).a))" \
-        $(RUSTC_FLAGS_$(1))
+    STDCPP_LIBDIR_RUSTFLAGS_$(1)= \
+        -L "$$(dir $$(shell $$(CC_$(1)) $$(CFG_GCCISH_CFLAGS_$(1)) \
+        -print-file-name=lib$(CFG_STDCPP_NAME).a))"
+  else
+    STDCPP_LIBDIR_RUSTFLAGS_$(1)=
   endif
 
   # On Bitrig, we need the relocation model to be PIC for everything

@@ -11,7 +11,8 @@
 // More checks that stability attributes are used correctly
 
 #![feature(staged_api)]
-#![staged_api]
+
+#![stable(feature = "test_feature", since = "1.0.0")]
 
 #[stable(feature = "a", feature = "b", since = "1.0.0")] //~ ERROR multiple 'feature' items
 fn f1() { }
@@ -21,5 +22,10 @@ fn f2() { }
 
 #[unstable(feature = "a", issue = "no")] //~ ERROR incorrect 'issue'
 fn f3() { }
+
+#[macro_export]
+macro_rules! mac { //~ ERROR This node does not have a stability attribute
+    () => ()
+}
 
 fn main() { }

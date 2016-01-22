@@ -91,6 +91,8 @@ pub struct DirEntry(fs_imp::DirEntry);
                      may change and this may end up accounting for files such \
                      as symlinks differently",
            issue = "27707")]
+#[rustc_deprecated(reason = "superceded by the walkdir crate",
+                   since = "1.6.0")]
 pub struct WalkDir {
     cur: Option<ReadDir>,
     stack: Vec<io::Result<ReadDir>>,
@@ -156,8 +158,7 @@ pub struct FileType(fs_imp::FileType);
 /// A builder used to create directories in various manners.
 ///
 /// This builder also supports platform-specific options.
-#[unstable(feature = "dir_builder", reason = "recently added API",
-           issue = "27710")]
+#[stable(feature = "dir_builder", since = "1.6.0")]
 pub struct DirBuilder {
     inner: fs_imp::DirBuilder,
     recursive: bool,
@@ -324,6 +325,7 @@ impl IntoInner<fs_imp::File> for File {
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl fmt::Debug for File {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.inner.fmt(f)
@@ -677,7 +679,6 @@ impl Iterator for ReadDir {
     }
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
 impl DirEntry {
     /// Returns the full path to the file that this entry represents.
     ///
@@ -922,7 +923,7 @@ pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<(
 /// # Ok(())
 /// # }
 /// ```
-#[deprecated(since = "1.1.0",
+#[rustc_deprecated(since = "1.1.0",
              reason = "replaced with std::os::unix::fs::symlink and \
                        std::os::windows::fs::{symlink_file, symlink_dir}")]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1132,16 +1133,23 @@ pub fn read_dir<P: AsRef<Path>>(path: P) -> io::Result<ReadDir> {
                      may change and this may end up accounting for files such \
                      as symlinks differently",
            issue = "27707")]
+#[rustc_deprecated(reason = "superceded by the walkdir crate",
+                   since = "1.6.0")]
+#[allow(deprecated)]
 pub fn walk_dir<P: AsRef<Path>>(path: P) -> io::Result<WalkDir> {
     _walk_dir(path.as_ref())
 }
 
+#[allow(deprecated)]
 fn _walk_dir(path: &Path) -> io::Result<WalkDir> {
     let start = try!(read_dir(path));
     Ok(WalkDir { cur: Some(start), stack: Vec::new() })
 }
 
 #[unstable(feature = "fs_walk", issue = "27707")]
+#[rustc_deprecated(reason = "superceded by the walkdir crate",
+                   since = "1.6.0")]
+#[allow(deprecated)]
 impl Iterator for WalkDir {
     type Item = io::Result<DirEntry>;
 
@@ -1176,7 +1184,7 @@ impl Iterator for WalkDir {
                      change and some methods may be removed.  For stable code, \
                      see the std::fs::metadata function.",
            issue = "27725")]
-#[deprecated(since = "1.5.0", reason = "replaced with inherent methods")]
+#[rustc_deprecated(since = "1.5.0", reason = "replaced with inherent methods")]
 pub trait PathExt {
     /// Gets information on the file, directory, etc at this path.
     ///
@@ -1212,7 +1220,8 @@ pub trait PathExt {
     fn read_dir(&self) -> io::Result<ReadDir>;
 
     /// Boolean value indicator whether the underlying file exists on the local
-    /// filesystem. Returns false in exactly the cases where `fs::stat` fails.
+    /// filesystem. Returns false in exactly the cases where `fs::metadata`
+    /// fails.
     fn exists(&self) -> bool;
 
     /// Whether the underlying implementation (be it a file path, or something
@@ -1230,6 +1239,7 @@ pub trait PathExt {
 }
 
 #[allow(deprecated)]
+#[unstable(feature = "path_ext_deprecated", issue = "27725")]
 impl PathExt for Path {
     fn metadata(&self) -> io::Result<Metadata> { metadata(self) }
     fn symlink_metadata(&self) -> io::Result<Metadata> { symlink_metadata(self) }
@@ -1273,11 +1283,10 @@ pub fn set_permissions<P: AsRef<Path>>(path: P, perm: Permissions)
     fs_imp::set_perm(path.as_ref(), perm.0)
 }
 
-#[unstable(feature = "dir_builder", reason = "recently added API",
-           issue = "27710")]
 impl DirBuilder {
     /// Creates a new set of options with default mode/security settings for all
     /// platforms and also non-recursive.
+    #[stable(feature = "dir_builder", since = "1.6.0")]
     pub fn new() -> DirBuilder {
         DirBuilder {
             inner: fs_imp::DirBuilder::new(),
@@ -1290,6 +1299,7 @@ impl DirBuilder {
     /// permissions settings.
     ///
     /// This option defaults to `false`
+    #[stable(feature = "dir_builder", since = "1.6.0")]
     pub fn recursive(&mut self, recursive: bool) -> &mut Self {
         self.recursive = recursive;
         self
@@ -1297,6 +1307,20 @@ impl DirBuilder {
 
     /// Create the specified directory with the options configured in this
     /// builder.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::{self, DirBuilder};
+    ///
+    /// let path = "/tmp/foo/bar/baz";
+    /// DirBuilder::new()
+    ///     .recursive(true)
+    ///     .create(path).unwrap();
+    ///
+    /// assert!(fs::metadata(path).unwrap().is_dir());
+    /// ```
+    #[stable(feature = "dir_builder", since = "1.6.0")]
     pub fn create<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
         self._create(path.as_ref())
     }
@@ -1732,7 +1756,7 @@ mod tests {
         let tmpdir = tmpdir();
 
         let mut dirpath = tmpdir.path().to_path_buf();
-        dirpath.push(&format!("test-가一ー你好"));
+        dirpath.push("test-가一ー你好");
         check!(fs::create_dir(&dirpath));
         assert!(dirpath.is_dir());
 

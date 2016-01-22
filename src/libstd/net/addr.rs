@@ -13,10 +13,12 @@ use prelude::v1::*;
 use fmt;
 use hash;
 use io;
-use libc::{self, socklen_t, sa_family_t};
 use mem;
-use net::{lookup_host, ntoh, hton, IpAddr, Ipv4Addr, Ipv6Addr};
+use net::{lookup_host, ntoh, hton, Ipv4Addr, Ipv6Addr};
+#[allow(deprecated)]
+use net::IpAddr;
 use option;
+use sys::net::netc as c;
 use sys_common::{FromInner, AsInner, IntoInner};
 use vec;
 
@@ -39,16 +41,19 @@ pub enum SocketAddr {
 /// An IPv4 socket address which is a (ip, port) combination.
 #[derive(Copy)]
 #[stable(feature = "rust1", since = "1.0.0")]
-pub struct SocketAddrV4 { inner: libc::sockaddr_in }
+pub struct SocketAddrV4 { inner: c::sockaddr_in }
 
 /// An IPv6 socket address.
 #[derive(Copy)]
 #[stable(feature = "rust1", since = "1.0.0")]
-pub struct SocketAddrV6 { inner: libc::sockaddr_in6 }
+pub struct SocketAddrV6 { inner: c::sockaddr_in6 }
 
 impl SocketAddr {
     /// Creates a new socket address from the (ip, port) pair.
     #[unstable(feature = "ip_addr", reason = "recent addition", issue = "27801")]
+    #[rustc_deprecated(reason = "ip type too small a type to pull its weight",
+                       since = "1.6.0")]
+    #[allow(deprecated)]
     pub fn new(ip: IpAddr, port: u16) -> SocketAddr {
         match ip {
             IpAddr::V4(a) => SocketAddr::V4(SocketAddrV4::new(a, port)),
@@ -58,6 +63,9 @@ impl SocketAddr {
 
     /// Returns the IP address associated with this socket address.
     #[unstable(feature = "ip_addr", reason = "recent addition", issue = "27801")]
+    #[rustc_deprecated(reason = "too small a type to pull its weight",
+                       since = "1.6.0")]
+    #[allow(deprecated)]
     pub fn ip(&self) -> IpAddr {
         match *self {
             SocketAddr::V4(ref a) => IpAddr::V4(*a.ip()),
@@ -80,8 +88,8 @@ impl SocketAddrV4 {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new(ip: Ipv4Addr, port: u16) -> SocketAddrV4 {
         SocketAddrV4 {
-            inner: libc::sockaddr_in {
-                sin_family: libc::AF_INET as sa_family_t,
+            inner: c::sockaddr_in {
+                sin_family: c::AF_INET as c::sa_family_t,
                 sin_port: hton(port),
                 sin_addr: *ip.as_inner(),
                 .. unsafe { mem::zeroed() }
@@ -93,7 +101,7 @@ impl SocketAddrV4 {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn ip(&self) -> &Ipv4Addr {
         unsafe {
-            &*(&self.inner.sin_addr as *const libc::in_addr as *const Ipv4Addr)
+            &*(&self.inner.sin_addr as *const c::in_addr as *const Ipv4Addr)
         }
     }
 
@@ -109,8 +117,8 @@ impl SocketAddrV6 {
     pub fn new(ip: Ipv6Addr, port: u16, flowinfo: u32, scope_id: u32)
                -> SocketAddrV6 {
         SocketAddrV6 {
-            inner: libc::sockaddr_in6 {
-                sin6_family: libc::AF_INET6 as sa_family_t,
+            inner: c::sockaddr_in6 {
+                sin6_family: c::AF_INET6 as c::sa_family_t,
                 sin6_port: hton(port),
                 sin6_addr: *ip.as_inner(),
                 sin6_flowinfo: hton(flowinfo),
@@ -124,7 +132,7 @@ impl SocketAddrV6 {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn ip(&self) -> &Ipv6Addr {
         unsafe {
-            &*(&self.inner.sin6_addr as *const libc::in6_addr as *const Ipv6Addr)
+            &*(&self.inner.sin6_addr as *const c::in6_addr as *const Ipv6Addr)
         }
     }
 
@@ -143,26 +151,26 @@ impl SocketAddrV6 {
     pub fn scope_id(&self) -> u32 { ntoh(self.inner.sin6_scope_id) }
 }
 
-impl FromInner<libc::sockaddr_in> for SocketAddrV4 {
-    fn from_inner(addr: libc::sockaddr_in) -> SocketAddrV4 {
+impl FromInner<c::sockaddr_in> for SocketAddrV4 {
+    fn from_inner(addr: c::sockaddr_in) -> SocketAddrV4 {
         SocketAddrV4 { inner: addr }
     }
 }
 
-impl FromInner<libc::sockaddr_in6> for SocketAddrV6 {
-    fn from_inner(addr: libc::sockaddr_in6) -> SocketAddrV6 {
+impl FromInner<c::sockaddr_in6> for SocketAddrV6 {
+    fn from_inner(addr: c::sockaddr_in6) -> SocketAddrV6 {
         SocketAddrV6 { inner: addr }
     }
 }
 
-impl<'a> IntoInner<(*const libc::sockaddr, socklen_t)> for &'a SocketAddr {
-    fn into_inner(self) -> (*const libc::sockaddr, socklen_t) {
+impl<'a> IntoInner<(*const c::sockaddr, c::socklen_t)> for &'a SocketAddr {
+    fn into_inner(self) -> (*const c::sockaddr, c::socklen_t) {
         match *self {
             SocketAddr::V4(ref a) => {
-                (a as *const _ as *const _, mem::size_of_val(a) as socklen_t)
+                (a as *const _ as *const _, mem::size_of_val(a) as c::socklen_t)
             }
             SocketAddr::V6(ref a) => {
-                (a as *const _ as *const _, mem::size_of_val(a) as socklen_t)
+                (a as *const _ as *const _, mem::size_of_val(a) as c::socklen_t)
             }
         }
     }
@@ -351,6 +359,7 @@ impl ToSocketAddrs for SocketAddrV6 {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 impl ToSocketAddrs for (IpAddr, u16) {
     type Iter = option::IntoIter<SocketAddr>;
     fn to_socket_addrs(&self) -> io::Result<option::IntoIter<SocketAddr>> {
@@ -448,6 +457,7 @@ impl ToSocketAddrs for str {
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: ToSocketAddrs + ?Sized> ToSocketAddrs for &'a T {
     type Iter = T::Iter;
     fn to_socket_addrs(&self) -> io::Result<T::Iter> {
@@ -495,9 +505,9 @@ mod tests {
         assert!(tsa("localhost:23924").unwrap().contains(&a));
     }
 
-    // FIXME: figure out why this fails on bitrig and fix it
+    // FIXME: figure out why this fails on openbsd and bitrig and fix it
     #[test]
-    #[cfg(not(any(windows, target_os = "bitrig")))]
+    #[cfg(not(any(windows, target_os = "openbsd", target_os = "bitrig")))]
     fn to_socket_addr_str_bad() {
         assert!(tsa("1200::AB00:1234::2552:7777:1313:34300").is_err());
     }

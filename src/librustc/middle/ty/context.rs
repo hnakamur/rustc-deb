@@ -16,8 +16,8 @@
 use front::map as ast_map;
 use session::Session;
 use lint;
-use metadata::csearch;
 use middle;
+use middle::cstore::CrateStore;
 use middle::def::DefMap;
 use middle::def_id::DefId;
 use middle::free_region::FreeRegionMap;
@@ -121,6 +121,13 @@ pub struct Tables<'tcx> {
     /// Records the type of each closure. The def ID is the ID of the
     /// expression defining the closure.
     pub closure_kinds: DefIdMap<ty::ClosureKind>,
+
+    /// For each fn, records the "liberated" types of its arguments
+    /// and return type. Liberated means that all bound regions
+    /// (including late-bound regions) are replaced with free
+    /// equivalents. This table is not used in trans (since regions
+    /// are erased there) and hence is not serialized to metadata.
+    pub liberated_fn_sigs: NodeMap<ty::FnSig<'tcx>>,
 }
 
 impl<'tcx> Tables<'tcx> {
@@ -133,6 +140,7 @@ impl<'tcx> Tables<'tcx> {
             upvar_capture_map: FnvHashMap(),
             closure_tys: DefIdMap(),
             closure_kinds: DefIdMap(),
+            liberated_fn_sigs: NodeMap(),
         }
     }
 
@@ -147,7 +155,7 @@ impl<'tcx> Tables<'tcx> {
             return kind;
         }
 
-        let kind = csearch::closure_kind(tcx, def_id);
+        let kind = tcx.sess.cstore.closure_kind(tcx, def_id);
         this.borrow_mut().closure_kinds.insert(def_id, kind);
         kind
     }
@@ -165,7 +173,7 @@ impl<'tcx> Tables<'tcx> {
             return ty.subst(tcx, &substs.func_substs);
         }
 
-        let ty = csearch::closure_ty(tcx, def_id);
+        let ty = tcx.sess.cstore.closure_ty(tcx, def_id);
         this.borrow_mut().closure_tys.insert(def_id, ty.clone());
         ty.subst(tcx, &substs.func_substs)
     }
@@ -220,7 +228,7 @@ pub struct ctxt<'tcx> {
     pub types: CommonTypes<'tcx>,
 
     pub sess: &'tcx Session,
-    pub def_map: DefMap,
+    pub def_map: RefCell<DefMap>,
 
     pub named_region_map: resolve_lifetime::NamedRegionMap,
 
@@ -324,6 +332,11 @@ pub struct ctxt<'tcx> {
     /// for things that do not have to do with the parameters in scope.
     pub selection_cache: traits::SelectionCache<'tcx>,
 
+    /// Caches the results of trait evaluation. This cache is used
+    /// for things that do not have to do with the parameters in scope.
+    /// Merge this with `selection_cache`?
+    pub evaluation_cache: traits::EvaluationCache<'tcx>,
+
     /// A set of predicates that have been fulfilled *somewhere*.
     /// This is used to avoid duplicate work. Predicates are only
     /// added to this set when they mention only "global" names
@@ -395,7 +408,10 @@ impl<'tcx> ctxt<'tcx> {
                             -> &'tcx ty::TraitDef<'tcx> {
         let did = def.trait_ref.def_id;
         let interned = self.arenas.trait_defs.alloc(def);
-        self.trait_defs.borrow_mut().insert(did, interned);
+        if let Some(prev) = self.trait_defs.borrow_mut().insert(did, interned) {
+            self.sess.bug(&format!("Tried to overwrite interned TraitDef: {:?}",
+                                   prev))
+        }
         interned
     }
 
@@ -412,7 +428,10 @@ impl<'tcx> ctxt<'tcx> {
         let def = ty::AdtDefData::new(self, did, kind, variants);
         let interned = self.arenas.adt_defs.alloc(def);
         // this will need a transmute when reverse-variance is removed
-        self.adt_defs.borrow_mut().insert(did, interned);
+        if let Some(prev) = self.adt_defs.borrow_mut().insert(did, interned) {
+            self.sess.bug(&format!("Tried to overwrite interned AdtDef: {:?}",
+                                   prev))
+        }
         interned
     }
 
@@ -422,13 +441,20 @@ impl<'tcx> ctxt<'tcx> {
         }
 
         let interned = self.arenas.stability.alloc(stab);
-        self.stability_interner.borrow_mut().insert(interned, interned);
+        if let Some(prev) = self.stability_interner
+                                .borrow_mut()
+                                .insert(interned, interned) {
+            self.sess.bug(&format!("Tried to overwrite interned Stability: {:?}",
+                                   prev))
+        }
         interned
     }
 
     pub fn store_free_region_map(&self, id: NodeId, map: FreeRegionMap) {
-        self.free_region_maps.borrow_mut()
-                             .insert(id, map);
+        if self.free_region_maps.borrow_mut().insert(id, map).is_some() {
+            self.sess.bug(&format!("Tried to overwrite interned FreeRegionMap for NodeId {:?}",
+                                   id))
+        }
     }
 
     pub fn free_region_map(&self, id: NodeId) -> FreeRegionMap {
@@ -445,10 +471,10 @@ impl<'tcx> ctxt<'tcx> {
     /// reference to the context, to allow formatting values that need it.
     pub fn create_and_enter<F, R>(s: &'tcx Session,
                                  arenas: &'tcx CtxtArenas<'tcx>,
-                                 def_map: DefMap,
+                                 def_map: RefCell<DefMap>,
                                  named_region_map: resolve_lifetime::NamedRegionMap,
                                  map: ast_map::Map<'tcx>,
-                                 freevars: RefCell<FreevarMap>,
+                                 freevars: FreevarMap,
                                  region_maps: RegionMaps,
                                  lang_items: middle::lang_items::LanguageItems,
                                  stability: stability::Index<'tcx>,
@@ -481,7 +507,7 @@ impl<'tcx> ctxt<'tcx> {
             super_predicates: RefCell::new(DefIdMap()),
             fulfilled_predicates: RefCell::new(traits::FulfilledPredicates::new()),
             map: map,
-            freevars: freevars,
+            freevars: RefCell::new(freevars),
             tcache: RefCell::new(DefIdMap()),
             rcache: RefCell::new(FnvHashMap()),
             tc_cache: RefCell::new(FnvHashMap()),
@@ -504,6 +530,7 @@ impl<'tcx> ctxt<'tcx> {
             transmute_restrictions: RefCell::new(Vec::new()),
             stability: RefCell::new(stability),
             selection_cache: traits::SelectionCache::new(),
+            evaluation_cache: traits::EvaluationCache::new(),
             repr_hint_cache: RefCell::new(DefIdMap()),
             const_qualif_map: RefCell::new(NodeMap()),
             custom_coerce_unsized_kinds: RefCell::new(DefIdMap()),

@@ -35,9 +35,7 @@ use syntax::parse::token::{self, InternedString, special_idents};
 use syntax::ptr::P;
 
 use rustc_trans::back::link;
-use rustc::metadata::cstore;
-use rustc::metadata::csearch;
-use rustc::metadata::decoder;
+use rustc::middle::cstore::{self, CrateStore};
 use rustc::middle::def;
 use rustc::middle::def_id::{DefId, DefIndex};
 use rustc::middle::subst::{self, ParamSpace, VecPerParamSpace};
@@ -126,6 +124,8 @@ pub struct Crate {
     pub external_traits: HashMap<DefId, Trait>,
 }
 
+struct CrateNum(ast::CrateNum);
+
 impl<'a, 'tcx> Clean<Crate> for visit_ast::RustdocVisitor<'a, 'tcx> {
     fn clean(&self, cx: &DocContext) -> Crate {
         use rustc::session::config::Input;
@@ -135,9 +135,9 @@ impl<'a, 'tcx> Clean<Crate> for visit_ast::RustdocVisitor<'a, 'tcx> {
         }
 
         let mut externs = Vec::new();
-        cx.sess().cstore.iter_crate_data(|n, meta| {
-            externs.push((n, meta.clean(cx)));
-        });
+        for cnum in cx.sess().cstore.crates() {
+            externs.push((cnum, CrateNum(cnum).clean(cx)));
+        }
         externs.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
 
         // Figure out the name of this crate
@@ -219,24 +219,22 @@ pub struct ExternalCrate {
     pub primitives: Vec<PrimitiveType>,
 }
 
-impl Clean<ExternalCrate> for cstore::crate_metadata {
+impl Clean<ExternalCrate> for CrateNum {
     fn clean(&self, cx: &DocContext) -> ExternalCrate {
         let mut primitives = Vec::new();
         cx.tcx_opt().map(|tcx| {
-            csearch::each_top_level_item_of_crate(&tcx.sess.cstore,
-                                                  self.cnum,
-                                                  |def, _, _| {
-                let did = match def {
-                    decoder::DlDef(def::DefMod(did)) => did,
-                    _ => return
+            for item in tcx.sess.cstore.crate_top_level_items(self.0) {
+                let did = match item.def {
+                    cstore::DlDef(def::DefMod(did)) => did,
+                    _ => continue
                 };
                 let attrs = inline::load_attrs(cx, tcx, did);
                 PrimitiveType::find(&attrs).map(|prim| primitives.push(prim));
-            })
+            }
         });
         ExternalCrate {
-            name: self.name.to_string(),
-            attrs: decoder::get_crate_attributes(self.data()).clean(cx),
+            name: cx.sess().cstore.crate_name(self.0),
+            attrs: cx.sess().cstore.crate_attrs(self.0).clean(cx),
             primitives: primitives,
         }
     }
@@ -656,10 +654,7 @@ impl Clean<TyParamBound> for ty::BuiltinBound {
                 (tcx.lang_items.sync_trait().unwrap(),
                  external_path(cx, "Sync", None, vec![], &empty)),
         };
-        let fqn = csearch::get_item_path(tcx, did);
-        let fqn = fqn.into_iter().map(|i| i.to_string()).collect();
-        cx.external_paths.borrow_mut().as_mut().unwrap().insert(did,
-                                                                (fqn, TypeTrait));
+        inline::record_extern_fqn(cx, did, TypeTrait);
         TraitBound(PolyTrait {
             trait_: ResolvedPath {
                 path: path,
@@ -678,13 +673,9 @@ impl<'tcx> Clean<TyParamBound> for ty::TraitRef<'tcx> {
             Some(tcx) => tcx,
             None => return RegionBound(Lifetime::statik())
         };
-        let fqn = csearch::get_item_path(tcx, self.def_id);
-        let fqn = fqn.into_iter().map(|i| i.to_string())
-                     .collect::<Vec<String>>();
-        let path = external_path(cx, fqn.last().unwrap(),
+        inline::record_extern_fqn(cx, self.def_id, TypeTrait);
+        let path = external_path(cx, &tcx.item_name(self.def_id).as_str(),
                                  Some(self.def_id), vec![], self.substs);
-        cx.external_paths.borrow_mut().as_mut().unwrap().insert(self.def_id,
-                                                            (fqn, TypeTrait));
 
         debug!("ty::TraitRef\n  substs.types(TypeSpace): {:?}\n",
                self.substs.types.get_slice(ParamSpace::TypeSpace));
@@ -776,7 +767,7 @@ impl Clean<Option<Lifetime>> for ty::Region {
             ty::ReScope(..) |
             ty::ReVar(..) |
             ty::ReSkolemized(..) |
-            ty::ReEmpty(..) => None
+            ty::ReEmpty => None
         }
     }
 }
@@ -1140,7 +1131,7 @@ impl<'a, 'tcx> Clean<FnDecl> for (DefId, &'a ty::PolyFnSig<'tcx>) {
         let mut names = if let Some(_) = cx.map.as_local_node_id(did) {
             vec![].into_iter()
         } else {
-            csearch::get_method_arg_names(&cx.tcx().sess.cstore, did).into_iter()
+            cx.tcx().sess.cstore.method_arg_names(did).into_iter()
         }.peekable();
         if names.peek().map(|s| &**s) == Some("self") {
             let _ = names.next();
@@ -1271,16 +1262,16 @@ impl Clean<Item> for hir::TraitItem {
 impl Clean<Item> for hir::ImplItem {
     fn clean(&self, cx: &DocContext) -> Item {
         let inner = match self.node {
-            hir::ConstImplItem(ref ty, ref expr) => {
+            hir::ImplItemKind::Const(ref ty, ref expr) => {
                 ConstantItem(Constant{
                     type_: ty.clean(cx),
                     expr: expr.span.to_src(cx),
                 })
             }
-            hir::MethodImplItem(ref sig, _) => {
+            hir::ImplItemKind::Method(ref sig, _) => {
                 MethodItem(sig.clean(cx))
             }
-            hir::TypeImplItem(ref ty) => TypedefItem(Typedef {
+            hir::ImplItemKind::Type(ref ty) => TypedefItem(Typedef {
                 type_: ty.clean(cx),
                 generics: Generics {
                     lifetimes: Vec::new(),
@@ -1606,11 +1597,10 @@ impl Clean<Type> for hir::Ty {
                 }
             }
             TyBareFn(ref barefn) => BareFunction(box barefn.clean(cx)),
-            TyParen(ref ty) => ty.clean(cx),
             TyPolyTraitRef(ref bounds) => {
                 PolyTraitRef(bounds.clean(cx))
             },
-            TyInfer(..) => {
+            TyInfer => {
                 Infer
             },
             TyTypeof(..) => {
@@ -1666,15 +1656,13 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
             ty::TyStruct(def, substs) |
             ty::TyEnum(def, substs) => {
                 let did = def.did;
-                let fqn = csearch::get_item_path(cx.tcx(), did);
-                let fqn: Vec<_> = fqn.into_iter().map(|i| i.to_string()).collect();
                 let kind = match self.sty {
                     ty::TyStruct(..) => TypeStruct,
                     _ => TypeEnum,
                 };
-                let path = external_path(cx, &fqn.last().unwrap().to_string(),
+                inline::record_extern_fqn(cx, did, kind);
+                let path = external_path(cx, &cx.tcx().item_name(did).as_str(),
                                          None, vec![], substs);
-                cx.external_paths.borrow_mut().as_mut().unwrap().insert(did, (fqn, kind));
                 ResolvedPath {
                     path: path,
                     typarams: None,
@@ -1684,12 +1672,10 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
             }
             ty::TyTrait(box ty::TraitTy { ref principal, ref bounds }) => {
                 let did = principal.def_id();
-                let fqn = csearch::get_item_path(cx.tcx(), did);
-                let fqn: Vec<_> = fqn.into_iter().map(|i| i.to_string()).collect();
+                inline::record_extern_fqn(cx, did, TypeTrait);
                 let (typarams, bindings) = bounds.clean(cx);
-                let path = external_path(cx, &fqn.last().unwrap().to_string(),
+                let path = external_path(cx, &cx.tcx().item_name(did).as_str(),
                                          Some(did), bindings, principal.substs());
-                cx.external_paths.borrow_mut().as_mut().unwrap().insert(did, (fqn, TypeTrait));
                 ResolvedPath {
                     path: path,
                     typarams: Some(typarams),
@@ -1738,9 +1724,9 @@ impl Clean<Item> for hir::StructField {
 impl<'tcx> Clean<Item> for ty::FieldDefData<'tcx, 'static> {
     fn clean(&self, cx: &DocContext) -> Item {
         use syntax::parse::token::special_idents::unnamed_field;
-        use rustc::metadata::csearch;
-
-        let attr_map = csearch::get_struct_field_attrs(&cx.tcx().sess.cstore, self.did);
+        // FIXME: possible O(n^2)-ness! Not my fault.
+        let attr_map =
+            cx.tcx().sess.cstore.crate_struct_field_attrs(self.did.krate);
 
         let (name, attrs) = if self.name == unnamed_field.name {
             (None, None)
@@ -2528,8 +2514,7 @@ fn name_from_pat(p: &hir::Pat) -> String {
     debug!("Trying to get a name from pattern: {:?}", p);
 
     match p.node {
-        PatWild(PatWildSingle) => "_".to_string(),
-        PatWild(PatWildMulti) => "..".to_string(),
+        PatWild => "_".to_string(),
         PatIdent(_, ref p, _) => p.node.to_string(),
         PatEnum(ref p, _) => path_to_string(p),
         PatQPath(..) => panic!("tried to get argument name from PatQPath, \
@@ -2569,8 +2554,18 @@ fn resolve_type(cx: &DocContext,
     debug!("resolve_type({:?},{:?})", path, id);
     let tcx = match cx.tcx_opt() {
         Some(tcx) => tcx,
-        // If we're extracting tests, this return value doesn't matter.
-        None => return Primitive(Bool),
+        // If we're extracting tests, this return value's accuracy is not
+        // important, all we want is a string representation to help people
+        // figure out what doctests are failing.
+        None => {
+            let did = DefId::local(DefIndex::from_u32(0));
+            return ResolvedPath {
+                path: path,
+                typarams: None,
+                did: did,
+                is_generic: false
+            };
+        }
     };
     let def = match tcx.def_map.borrow().get(&id) {
         Some(k) => k.full_def(),
@@ -2657,15 +2652,18 @@ pub struct Macro {
 
 impl Clean<Item> for doctree::Macro {
     fn clean(&self, cx: &DocContext) -> Item {
+        let name = format!("{}!", self.name.clean(cx));
         Item {
-            name: Some(format!("{}!", self.name.clean(cx))),
+            name: Some(name.clone()),
             attrs: self.attrs.clean(cx),
             source: self.whence.clean(cx),
             visibility: hir::Public.clean(cx),
             stability: self.stab.clean(cx),
             def_id: cx.map.local_def_id(self.id),
             inner: MacroItem(Macro {
-                source: self.whence.to_src(cx),
+                source: format!("macro_rules! {} {{\n{}}}",
+                    name.trim_right_matches('!'), self.matchers.iter().map(|span|
+                        format!("    {} => {{ ... }};\n", span.to_src(cx))).collect::<String>()),
                 imported_from: self.imported_from.clean(cx),
             }),
         }
@@ -2807,11 +2805,7 @@ fn lang_struct(cx: &DocContext, did: Option<DefId>,
         Some(did) => did,
         None => return fallback(box t.clean(cx)),
     };
-    let fqn = csearch::get_item_path(cx.tcx(), did);
-    let fqn: Vec<String> = fqn.into_iter().map(|i| {
-        i.to_string()
-    }).collect();
-    cx.external_paths.borrow_mut().as_mut().unwrap().insert(did, (fqn, TypeStruct));
+    inline::record_extern_fqn(cx, did, TypeStruct);
     ResolvedPath {
         typarams: None,
         did: did,

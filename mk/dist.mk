@@ -42,7 +42,6 @@ PKG_FILES := \
     $(S)COPYRIGHT                              \
     $(S)LICENSE-APACHE                         \
     $(S)LICENSE-MIT                            \
-    $(S)AUTHORS.txt                            \
     $(S)CONTRIBUTING.md                        \
     $(S)README.md                              \
     $(S)RELEASES.md                            \
@@ -59,6 +58,7 @@ PKG_FILES := \
       libcoretest                              \
       libbacktrace                             \
       rt                                       \
+      rtstartup                                \
       rustllvm                                 \
       snapshots.txt                            \
       rust-installer                           \

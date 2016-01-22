@@ -157,8 +157,9 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
         om.vis = vis;
         om.stab = self.stability(id);
         om.id = id;
-        for i in &m.items {
-            self.visit_item(&**i, None, &mut om);
+        for i in &m.item_ids {
+            let item = self.cx.map.expect_item(i.id);
+            self.visit_item(item, None, &mut om);
         }
         om
     }
@@ -213,7 +214,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
         let analysis = match self.analysis {
             Some(analysis) => analysis, None => return false
         };
-        if !please_inline && analysis.public_items.contains(&def) {
+        if !please_inline && analysis.access_levels.is_public(def) {
             return false
         }
         if !self.view_item_stack.insert(def_node_id) { return false }
@@ -224,8 +225,9 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     let prev = mem::replace(&mut self.inlining_from_glob, true);
                     match it.node {
                         hir::ItemMod(ref m) => {
-                            for i in &m.items {
-                                self.visit_item(&**i, None, om);
+                            for i in &m.item_ids {
+                                let i = self.cx.map.expect_item(i.id);
+                                self.visit_item(i, None, om);
                             }
                         }
                         hir::ItemEnum(..) => {}
@@ -398,11 +400,15 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
 
     // convert each exported_macro into a doc item
     fn visit_macro(&self, def: &hir::MacroDef) -> Macro {
+        // Extract the spans of all matchers. They represent the "interface" of the macro.
+        let matchers = def.body.chunks(4).map(|arm| arm[0].get_span()).collect();
+
         Macro {
             id: def.id,
             attrs: def.attrs.clone(),
             name: def.name,
             whence: def.span,
+            matchers: matchers,
             stab: self.stability(def.id),
             imported_from: def.imported_from,
         }

@@ -111,24 +111,21 @@ pub fn is_path(e: P<Expr>) -> bool {
     match e.node { ExprPath(..) => true, _ => false }
 }
 
-/// Get a string representation of a signed int type, with its value.
-/// We want to avoid "45int" and "-3int" in favor of "45" and "-3"
-pub fn int_ty_to_string(t: IntTy, val: Option<i64>) -> String {
-    let s = match t {
+pub fn int_ty_to_string(t: IntTy) -> &'static str {
+    match t {
         TyIs => "isize",
         TyI8 => "i8",
         TyI16 => "i16",
         TyI32 => "i32",
         TyI64 => "i64"
-    };
-
-    match val {
-        // cast to a u64 so we can correctly print INT64_MIN. All integral types
-        // are parsed as u64, so we wouldn't want to print an extra negative
-        // sign.
-        Some(n) => format!("{}{}", n as u64, s),
-        None => s.to_string()
     }
+}
+
+pub fn int_val_to_string(t: IntTy, val: i64) -> String {
+    // cast to a u64 so we can correctly print INT64_MIN. All integral types
+    // are parsed as u64, so we wouldn't want to print an extra negative
+    // sign.
+    format!("{}{}", val as u64, int_ty_to_string(t))
 }
 
 pub fn int_ty_max(t: IntTy) -> u64 {
@@ -140,21 +137,18 @@ pub fn int_ty_max(t: IntTy) -> u64 {
     }
 }
 
-/// Get a string representation of an unsigned int type, with its value.
-/// We want to avoid "42u" in favor of "42us". "42uint" is right out.
-pub fn uint_ty_to_string(t: UintTy, val: Option<u64>) -> String {
-    let s = match t {
+pub fn uint_ty_to_string(t: UintTy) -> &'static str {
+    match t {
         TyUs => "usize",
         TyU8 => "u8",
         TyU16 => "u16",
         TyU32 => "u32",
         TyU64 => "u64"
-    };
-
-    match val {
-        Some(n) => format!("{}{}", n, s),
-        None => s.to_string()
     }
+}
+
+pub fn uint_val_to_string(t: UintTy, val: u64) -> String {
+    format!("{}{}", val, uint_ty_to_string(t))
 }
 
 pub fn uint_ty_max(t: UintTy) -> u64 {
@@ -166,10 +160,10 @@ pub fn uint_ty_max(t: UintTy) -> u64 {
     }
 }
 
-pub fn float_ty_to_string(t: FloatTy) -> String {
+pub fn float_ty_to_string(t: FloatTy) -> &'static str {
     match t {
-        TyF32 => "f32".to_string(),
-        TyF64 => "f64".to_string(),
+        TyF32 => "f32",
+        TyF64 => "f64",
     }
 }
 
@@ -242,26 +236,6 @@ pub fn struct_field_visibility(field: ast::StructField) -> Visibility {
     }
 }
 
-/// Maps a binary operator to its precedence
-pub fn operator_prec(op: ast::BinOp_) -> usize {
-  match op {
-      // 'as' sits here with 12
-      BiMul | BiDiv | BiRem     => 11,
-      BiAdd | BiSub             => 10,
-      BiShl | BiShr             =>  9,
-      BiBitAnd                  =>  8,
-      BiBitXor                  =>  7,
-      BiBitOr                   =>  6,
-      BiLt | BiLe | BiGe | BiGt | BiEq | BiNe => 3,
-      BiAnd                     =>  2,
-      BiOr                      =>  1
-  }
-}
-
-/// Precedence of the `as` operator, which is a binary operator
-/// not appearing in the prior table.
-pub const AS_PREC: usize = 12;
-
 pub fn empty_generics() -> Generics {
     Generics {
         lifetimes: Vec::new(),
@@ -309,7 +283,6 @@ pub trait IdVisitingOperation {
 
 pub struct IdVisitor<'a, O:'a> {
     pub operation: &'a mut O,
-    pub pass_through_items: bool,
     pub visited_outermost: bool,
 }
 
@@ -339,12 +312,10 @@ impl<'a, 'v, O: IdVisitingOperation> Visitor<'v> for IdVisitor<'a, O> {
     }
 
     fn visit_item(&mut self, item: &Item) {
-        if !self.pass_through_items {
-            if self.visited_outermost {
-                return
-            } else {
-                self.visited_outermost = true
-            }
+        if self.visited_outermost {
+            return
+        } else {
+            self.visited_outermost = true
         }
 
         self.operation.visit_id(item.id);
@@ -410,12 +381,10 @@ impl<'a, 'v, O: IdVisitingOperation> Visitor<'v> for IdVisitor<'a, O> {
                 block: &'v Block,
                 span: Span,
                 node_id: NodeId) {
-        if !self.pass_through_items {
-            match function_kind {
-                FnKind::Method(..) if self.visited_outermost => return,
-                FnKind::Method(..) => self.visited_outermost = true,
-                _ => {}
-            }
+        match function_kind {
+            FnKind::Method(..) if self.visited_outermost => return,
+            FnKind::Method(..) => self.visited_outermost = true,
+            _ => {}
         }
 
         self.operation.visit_id(node_id);
@@ -440,10 +409,8 @@ impl<'a, 'v, O: IdVisitingOperation> Visitor<'v> for IdVisitor<'a, O> {
                        block,
                        span);
 
-        if !self.pass_through_items {
-            if let FnKind::Method(..) = function_kind {
-                self.visited_outermost = false;
-            }
+        if let FnKind::Method(..) = function_kind {
+            self.visited_outermost = false;
         }
     }
 
@@ -517,7 +484,6 @@ pub fn compute_id_range_for_fn_body(fk: FnKind,
     let mut visitor = IdRangeComputingVisitor::new();
     let mut id_visitor = IdVisitor {
         operation: &mut visitor,
-        pass_through_items: false,
         visited_outermost: false,
     };
     id_visitor.visit_fn(fk, decl, body, sp, id);

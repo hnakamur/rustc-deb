@@ -21,6 +21,7 @@ use borrowck::move_data::MoveData;
 use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::infer;
 use rustc::middle::mem_categorization as mc;
+use rustc::middle::mem_categorization::Categorization;
 use rustc::middle::region;
 use rustc::middle::ty;
 
@@ -29,8 +30,8 @@ use syntax::codemap::Span;
 use syntax::ast::NodeId;
 use rustc_front::hir;
 use rustc_front::hir::{Expr, FnDecl, Block, Pat};
-use rustc_front::visit;
-use rustc_front::visit::Visitor;
+use rustc_front::intravisit;
+use rustc_front::intravisit::Visitor;
 
 mod lifetime;
 mod restrictions;
@@ -85,7 +86,7 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for GatherLoanCtxt<'a, 'tcx> {
         match mode {
             euv::Move(move_reason) => {
                 gather_moves::gather_move_from_expr(
-                    self.bccx, &self.move_data, &self.move_error_collector,
+                    self.bccx, &self.move_data, &mut self.move_error_collector,
                     consume_id, cmt, move_reason);
             }
             euv::Copy => { }
@@ -101,9 +102,9 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for GatherLoanCtxt<'a, 'tcx> {
                cmt,
                mode);
 
-        if let mc::cat_downcast(..) = cmt.cat {
+        if let Categorization::Downcast(..) = cmt.cat {
             gather_moves::gather_match_variant(
-                self.bccx, &self.move_data, &self.move_error_collector,
+                self.bccx, &self.move_data, &mut self.move_error_collector,
                 matched_pat, cmt, mode);
         }
     }
@@ -123,7 +124,7 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for GatherLoanCtxt<'a, 'tcx> {
         }
 
         gather_moves::gather_move_from_pat(
-            self.bccx, &self.move_data, &self.move_error_collector,
+            self.bccx, &self.move_data, &mut self.move_error_collector,
             consume_pat, cmt);
     }
 
@@ -263,7 +264,7 @@ impl<'a, 'tcx> GatherLoanCtxt<'a, 'tcx> {
         debug!("guarantee_assignment_valid(assignment_id={}, cmt={:?}) opt_lp={:?}",
                assignment_id, cmt, opt_lp);
 
-        if let mc::cat_local(..) = cmt.cat {
+        if let Categorization::Local(..) = cmt.cat {
             // Only re-assignments to locals require it to be
             // mutable - this is checked in check_loans.
         } else {
@@ -282,7 +283,7 @@ impl<'a, 'tcx> GatherLoanCtxt<'a, 'tcx> {
 
         match opt_lp {
             Some(lp) => {
-                if let mc::cat_local(..) = cmt.cat {
+                if let Categorization::Local(..) = cmt.cat {
                     // Only re-assignments to locals require it to be
                     // mutable - this is checked in check_loans.
                 } else {
@@ -485,7 +486,9 @@ impl<'a, 'tcx> GatherLoanCtxt<'a, 'tcx> {
         //! come about when variables of `&mut` type are re-borrowed,
         //! as in this example:
         //!
-        //!     fn counter<'a>(v: &'a mut Foo) -> &'a mut uint {
+        //!     struct Foo { counter: u32 }
+        //!
+        //!     fn counter<'a>(v: &'a mut Foo) -> &'a mut u32 {
         //!         &mut v.counter
         //!     }
         //!
@@ -532,7 +535,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for StaticInitializerCtxt<'a, 'tcx> {
             }
         }
 
-        visit::walk_expr(self, ex);
+        intravisit::walk_expr(self, ex);
     }
 }
 

@@ -28,8 +28,8 @@ use syntax::abi;
 use syntax::ast;
 use syntax::attr;
 use rustc_front::hir;
-use rustc_front::visit::Visitor;
-use rustc_front::visit;
+use rustc_front::intravisit::Visitor;
+use rustc_front::intravisit;
 
 // Returns true if the given set of generics implies that the item it's
 // associated with must be inlined.
@@ -87,9 +87,7 @@ struct ReachableContext<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx, 'v> Visitor<'v> for ReachableContext<'a, 'tcx> {
-
     fn visit_expr(&mut self, expr: &hir::Expr) {
-
         match expr.node {
             hir::ExprPath(..) => {
                 let def = match self.tcx.def_map.borrow().get(&expr.id) {
@@ -125,27 +123,20 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ReachableContext<'a, 'tcx> {
             hir::ExprMethodCall(..) => {
                 let method_call = ty::MethodCall::expr(expr.id);
                 let def_id = self.tcx.tables.borrow().method_map[&method_call].def_id;
-                match self.tcx.impl_or_trait_item(def_id).container() {
-                    ty::ImplContainer(_) => {
-                        if let Some(node_id) = self.tcx.map.as_local_node_id(def_id) {
-                            if self.def_id_represents_local_inlined_item(def_id) {
-                                self.worklist.push(node_id)
-                            }
-                            self.reachable_symbols.insert(node_id);
-                        }
+
+                // Mark the trait item (and, possibly, its default impl) as reachable
+                // Or mark inherent impl item as reachable
+                if let Some(node_id) = self.tcx.map.as_local_node_id(def_id) {
+                    if self.def_id_represents_local_inlined_item(def_id) {
+                        self.worklist.push(node_id)
                     }
-                    ty::TraitContainer(_) => {}
+                    self.reachable_symbols.insert(node_id);
                 }
             }
             _ => {}
         }
 
-        visit::walk_expr(self, expr)
-    }
-
-    fn visit_item(&mut self, _item: &hir::Item) {
-        // Do not recurse into items. These items will be added to the worklist
-        // and recursed into manually if necessary.
+        intravisit::walk_expr(self, expr)
     }
 }
 
@@ -187,8 +178,8 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
             }
             Some(ast_map::NodeImplItem(impl_item)) => {
                 match impl_item.node {
-                    hir::ConstImplItem(..) => true,
-                    hir::MethodImplItem(ref sig, _) => {
+                    hir::ImplItemKind::Const(..) => true,
+                    hir::ImplItemKind::Method(ref sig, _) => {
                         if generics_require_inlining(&sig.generics) ||
                                 attr::requests_inline(&impl_item.attrs) {
                             true
@@ -208,7 +199,7 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
                             }
                         }
                     }
-                    hir::TypeImplItem(_) => false,
+                    hir::ImplItemKind::Type(_) => false,
                 }
             }
             Some(_) => false,
@@ -228,14 +219,8 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
                 continue
             }
 
-            match self.tcx.map.find(search_item) {
-                Some(ref item) => self.propagate_node(item, search_item),
-                None if search_item == ast::CRATE_NODE_ID => {}
-                None => {
-                    self.tcx.sess.bug(&format!("found unmapped ID in worklist: \
-                                               {}",
-                                              search_item))
-                }
+            if let Some(ref item) = self.tcx.map.find(search_item) {
+                self.propagate_node(item, search_item);
             }
         }
     }
@@ -268,7 +253,7 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
                 match item.node {
                     hir::ItemFn(_, _, _, _, _, ref search_block) => {
                         if item_might_be_inlined(&*item) {
-                            visit::walk_block(self, &**search_block)
+                            intravisit::walk_block(self, &**search_block)
                         }
                     }
 
@@ -300,23 +285,23 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
                         self.visit_expr(&*expr);
                     }
                     hir::MethodTraitItem(_, Some(ref body)) => {
-                        visit::walk_block(self, body);
+                        intravisit::walk_block(self, body);
                     }
                     hir::TypeTraitItem(..) => {}
                 }
             }
             ast_map::NodeImplItem(impl_item) => {
                 match impl_item.node {
-                    hir::ConstImplItem(_, ref expr) => {
+                    hir::ImplItemKind::Const(_, ref expr) => {
                         self.visit_expr(&*expr);
                     }
-                    hir::MethodImplItem(ref sig, ref body) => {
+                    hir::ImplItemKind::Method(ref sig, ref body) => {
                         let did = self.tcx.map.get_parent_did(search_item);
                         if method_might_be_inlined(self.tcx, sig, impl_item, did) {
-                            visit::walk_block(self, body)
+                            intravisit::walk_block(self, body)
                         }
                     }
-                    hir::TypeImplItem(_) => {}
+                    hir::ImplItemKind::Type(_) => {}
                 }
             }
             // Nothing to recurse on for these
@@ -333,56 +318,65 @@ impl<'a, 'tcx> ReachableContext<'a, 'tcx> {
             }
         }
     }
+}
 
-    // Step 3: Mark all destructors as reachable.
-    //
-    // FIXME #10732: This is a conservative overapproximation, but fixing
-    // this properly would result in the necessity of computing *type*
-    // reachability, which might result in a compile time loss.
-    fn mark_destructors_reachable(&mut self) {
-        let drop_trait = match self.tcx.lang_items.drop_trait() {
-            Some(id) => self.tcx.lookup_trait_def(id), None => { return }
-        };
-        drop_trait.for_each_impl(self.tcx, |drop_impl| {
-            for destructor in &self.tcx.impl_items.borrow()[&drop_impl] {
-                let destructor_did = destructor.def_id();
-                if let Some(destructor_node_id) = self.tcx.map.as_local_node_id(destructor_did) {
-                    self.reachable_symbols.insert(destructor_node_id);
+// Some methods from non-exported (completely private) trait impls still have to be
+// reachable if they are called from inlinable code. Generally, it's not known until
+// monomorphization if a specific trait impl item can be reachable or not. So, we
+// conservatively mark all of them as reachable.
+// FIXME: One possible strategy for pruning the reachable set is to avoid marking impl
+// items of non-exported traits (or maybe all local traits?) unless their respective
+// trait items are used from inlinable code through method call syntax or UFCS, or their
+// trait is a lang item.
+struct CollectPrivateImplItemsVisitor<'a> {
+    access_levels: &'a privacy::AccessLevels,
+    worklist: &'a mut Vec<ast::NodeId>,
+}
+
+impl<'a, 'v> Visitor<'v> for CollectPrivateImplItemsVisitor<'a> {
+    fn visit_item(&mut self, item: &hir::Item) {
+        // We need only trait impls here, not inherent impls, and only non-exported ones
+        if let hir::ItemImpl(_, _, _, Some(_), _, ref impl_items) = item.node {
+            if !self.access_levels.is_reachable(item.id) {
+                for impl_item in impl_items {
+                    self.worklist.push(impl_item.id);
                 }
             }
-        })
+        }
     }
 }
 
 pub fn find_reachable(tcx: &ty::ctxt,
-                      exported_items: &privacy::ExportedItems)
+                      access_levels: &privacy::AccessLevels)
                       -> NodeSet {
+
     let mut reachable_context = ReachableContext::new(tcx);
 
     // Step 1: Seed the worklist with all nodes which were found to be public as
-    //         a result of the privacy pass along with all local lang items. If
-    //         other crates link to us, they're going to expect to be able to
+    //         a result of the privacy pass along with all local lang items and impl items.
+    //         If other crates link to us, they're going to expect to be able to
     //         use the lang items, so we need to be sure to mark them as
     //         exported.
-    for id in exported_items {
+    for (id, _) in &access_levels.map {
         reachable_context.worklist.push(*id);
     }
     for (_, item) in tcx.lang_items.items() {
-        match *item {
-            Some(did) => {
-                if let Some(node_id) = tcx.map.as_local_node_id(did) {
-                    reachable_context.worklist.push(node_id);
-                }
+        if let Some(did) = *item {
+            if let Some(node_id) = tcx.map.as_local_node_id(did) {
+                reachable_context.worklist.push(node_id);
             }
-            _ => {}
         }
+    }
+    {
+        let mut collect_private_impl_items = CollectPrivateImplItemsVisitor {
+            access_levels: access_levels,
+            worklist: &mut reachable_context.worklist,
+        };
+        tcx.map.krate().visit_all_items(&mut collect_private_impl_items);
     }
 
     // Step 2: Mark all symbols that the symbols on the worklist touch.
     reachable_context.propagate();
-
-    // Step 3: Mark all destructors as reachable.
-    reachable_context.mark_destructors_reachable();
 
     // Return the set of reachable symbols.
     reachable_context.reachable_symbols

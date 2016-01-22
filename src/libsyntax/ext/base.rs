@@ -17,17 +17,18 @@ use codemap::{CodeMap, Span, ExpnId, ExpnInfo, NO_EXPANSION};
 use ext;
 use ext::expand;
 use ext::tt::macro_rules;
-use feature_gate::GatedCfg;
+use feature_gate::GatedCfgAttr;
 use parse;
 use parse::parser;
 use parse::token;
 use parse::token::{InternedString, intern, str_to_ident};
 use ptr::P;
 use util::small_vector::SmallVector;
+use util::lev_distance::{lev_distance, max_suggestion_distance};
 use ext::mtwt;
 use fold::Folder;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::default::Default;
 
@@ -349,6 +350,7 @@ impl DummyResult {
             id: ast::DUMMY_NODE_ID,
             node: ast::ExprLit(P(codemap::respan(sp, ast::LitBool(false)))),
             span: sp,
+            attrs: None,
         })
     }
 
@@ -356,7 +358,7 @@ impl DummyResult {
     pub fn raw_pat(sp: Span) -> ast::Pat {
         ast::Pat {
             id: ast::DUMMY_NODE_ID,
-            node: ast::PatWild(ast::PatWildSingle),
+            node: ast::PatWild,
             span: sp,
         }
     }
@@ -512,6 +514,18 @@ fn initial_syntax_expander_table<'feat>(ecfg: &expand::ExpansionConfig<'feat>)
         syntax_expanders.insert(intern("quote_attr"),
                            builtin_normal_expander(
                                 ext::quote::expand_quote_attr));
+        syntax_expanders.insert(intern("quote_arg"),
+                           builtin_normal_expander(
+                                ext::quote::expand_quote_arg));
+        syntax_expanders.insert(intern("quote_block"),
+                           builtin_normal_expander(
+                                ext::quote::expand_quote_block));
+        syntax_expanders.insert(intern("quote_meta_item"),
+                           builtin_normal_expander(
+                                ext::quote::expand_quote_meta_item));
+        syntax_expanders.insert(intern("quote_path"),
+                           builtin_normal_expander(
+                                ext::quote::expand_quote_path));
     }
 
     syntax_expanders.insert(intern("line"),
@@ -559,7 +573,7 @@ pub struct ExtCtxt<'a> {
     pub backtrace: ExpnId,
     pub ecfg: expand::ExpansionConfig<'a>,
     pub crate_root: Option<&'static str>,
-    pub feature_gated_cfgs: &'a mut Vec<GatedCfg>,
+    pub feature_gated_cfgs: &'a mut Vec<GatedCfgAttr>,
 
     pub mod_path: Vec<ast::Ident> ,
     pub exported_macros: Vec<ast::MacroDef>,
@@ -571,7 +585,7 @@ pub struct ExtCtxt<'a> {
 impl<'a> ExtCtxt<'a> {
     pub fn new(parse_sess: &'a parse::ParseSess, cfg: ast::CrateConfig,
                ecfg: expand::ExpansionConfig<'a>,
-               feature_gated_cfgs: &'a mut Vec<GatedCfg>) -> ExtCtxt<'a> {
+               feature_gated_cfgs: &'a mut Vec<GatedCfgAttr>) -> ExtCtxt<'a> {
         let env = initial_syntax_expander_table(&ecfg);
         ExtCtxt {
             parse_sess: parse_sess,
@@ -588,7 +602,7 @@ impl<'a> ExtCtxt<'a> {
     }
 
     #[unstable(feature = "rustc_private", issue = "0")]
-    #[deprecated(since = "1.0.0",
+    #[rustc_deprecated(since = "1.0.0",
                  reason = "Replaced with `expander().fold_expr()`")]
     pub fn expand_expr(&mut self, e: P<ast::Expr>) -> P<ast::Expr> {
         self.expander().fold_expr(e)
@@ -666,9 +680,9 @@ impl<'a> ExtCtxt<'a> {
     pub fn bt_push(&mut self, ei: ExpnInfo) {
         self.recursion_count += 1;
         if self.recursion_count > self.ecfg.recursion_limit {
-            panic!(self.span_fatal(ei.call_site,
+            self.span_fatal(ei.call_site,
                             &format!("recursion limit reached while expanding the macro `{}`",
-                                    ei.callee.name())));
+                                    ei.callee.name()));
         }
 
         let mut call_site = ei.call_site;
@@ -764,6 +778,20 @@ impl<'a> ExtCtxt<'a> {
     pub fn name_of(&self, st: &str) -> ast::Name {
         token::intern(st)
     }
+
+    pub fn suggest_macro_name(&mut self, name: &str, span: Span) {
+        let mut min: Option<(Name, usize)> = None;
+        let max_dist = max_suggestion_distance(name);
+        for macro_name in self.syntax_env.names.iter() {
+            let dist = lev_distance(name, &macro_name.as_str());
+            if dist <= max_dist && (min.is_none() || min.unwrap().1 > dist) {
+                min = Some((*macro_name, dist));
+            }
+        }
+        if let Some((suggestion, _)) = min {
+            self.fileline_help(span, &format!("did you mean `{}!`?", suggestion));
+        }
+    }
 }
 
 /// Extract a string literal from the macro expanded version of `expr`,
@@ -809,7 +837,7 @@ pub fn get_single_str_from_tts(cx: &mut ExtCtxt,
         cx.span_err(sp, &format!("{} takes 1 argument", name));
         return None
     }
-    let ret = cx.expander().fold_expr(p.parse_expr());
+    let ret = cx.expander().fold_expr(panictry!(p.parse_expr()));
     if p.token != token::Eof {
         cx.span_err(sp, &format!("{} takes 1 argument", name));
     }
@@ -826,7 +854,7 @@ pub fn get_exprs_from_tts(cx: &mut ExtCtxt,
     let mut p = cx.new_parser_from_tts(tts);
     let mut es = Vec::new();
     while p.token != token::Eof {
-        es.push(cx.expander().fold_expr(p.parse_expr()));
+        es.push(cx.expander().fold_expr(panictry!(p.parse_expr())));
         if panictry!(p.eat(&token::Comma)){
             continue;
         }
@@ -844,7 +872,10 @@ pub fn get_exprs_from_tts(cx: &mut ExtCtxt,
 ///
 /// This environment maps Names to SyntaxExtensions.
 pub struct SyntaxEnv {
-    chain: Vec<MapChainFrame> ,
+    chain: Vec<MapChainFrame>,
+    /// All bang-style macro/extension names
+    /// encountered so far; to be used for diagnostics in resolve
+    pub names: HashSet<Name>,
 }
 
 // impl question: how to implement it? Initially, the
@@ -864,7 +895,7 @@ struct MapChainFrame {
 
 impl SyntaxEnv {
     fn new() -> SyntaxEnv {
-        let mut map = SyntaxEnv { chain: Vec::new() };
+        let mut map = SyntaxEnv { chain: Vec::new() , names: HashSet::new()};
         map.push_frame();
         map
     }
@@ -881,7 +912,7 @@ impl SyntaxEnv {
         self.chain.pop();
     }
 
-    fn find_escape_frame<'a>(&'a mut self) -> &'a mut MapChainFrame {
+    fn find_escape_frame(&mut self) -> &mut MapChainFrame {
         for (i, frame) in self.chain.iter_mut().enumerate().rev() {
             if !frame.info.macros_escape || i == 0 {
                 return frame
@@ -901,10 +932,13 @@ impl SyntaxEnv {
     }
 
     pub fn insert(&mut self, k: Name, v: SyntaxExtension) {
+        if let NormalTT(..) = v {
+            self.names.insert(k);
+        }
         self.find_escape_frame().map.insert(k, Rc::new(v));
     }
 
-    pub fn info<'a>(&'a mut self) -> &'a mut BlockInfo {
+    pub fn info(&mut self) -> &mut BlockInfo {
         let last_chain_index = self.chain.len() - 1;
         &mut self.chain[last_chain_index].info
     }

@@ -430,7 +430,7 @@ fn run_debuginfo_gdb_test(config: &Config, props: &TestProps, testfile: &Path) {
                 .expect(&format!("failed to exec `{:?}`", config.adb_path));
             loop {
                 //waiting 1 second for gdbserver start
-                ::std::thread::sleep_ms(1000);
+                ::std::thread::sleep(::std::time::Duration::new(1,0));
                 if TcpStream::connect("127.0.0.1:5039").is_ok() {
                     break
                 }
@@ -1009,15 +1009,12 @@ fn check_expected_errors(expected_errors: Vec<errors::ExpectedError>,
     }
 }
 
-fn is_compiler_error_or_warning(mut line: &str) -> bool {
-    // Remove initial prefix which may contain a colon
-    let mut components = Path::new(line).components();
-    if let Some(Component::Prefix(_)) = components.peek() {
-        components.next();
-    }
-
-    // Safe as path was originally constructed from a &str ^
-    line = components.as_path().to_str().unwrap();
+fn is_compiler_error_or_warning(line: &str) -> bool {
+    let mut c = Path::new(line).components();
+    let line = match c.next() {
+        Some(Component::Prefix(_)) => c.as_path().to_str().unwrap(),
+        _ => line,
+    };
 
     let mut i = 0;
     return
@@ -1149,11 +1146,20 @@ fn compile_test(config: &Config, props: &TestProps,
 }
 
 fn document(config: &Config, props: &TestProps,
-            testfile: &Path) -> (ProcRes, PathBuf) {
+            testfile: &Path, out_dir: &Path) -> ProcRes {
+    if props.build_aux_docs {
+        for rel_ab in &props.aux_builds {
+            let abs_ab = config.aux_base.join(rel_ab);
+            let aux_props = header::load_props(&abs_ab);
+
+            let auxres = document(config, &aux_props, &abs_ab, out_dir);
+            if !auxres.status.success() {
+                return auxres;
+            }
+        }
+    }
+
     let aux_dir = aux_output_dir_name(config, testfile);
-    let out_dir = output_base_name(config, testfile);
-    let _ = fs::remove_dir_all(&out_dir);
-    ensure_dir(&out_dir);
     let mut args = vec!["-L".to_owned(),
                         aux_dir.to_str().unwrap().to_owned(),
                         "-o".to_owned(),
@@ -1164,7 +1170,7 @@ fn document(config: &Config, props: &TestProps,
         prog: config.rustdoc_path.to_str().unwrap().to_owned(),
         args: args,
     };
-    (compose_and_run_compiler(config, props, testfile, args, None), out_dir)
+    compose_and_run_compiler(config, props, testfile, args, None)
 }
 
 fn exec_compiled_test(config: &Config, props: &TestProps,
@@ -1305,7 +1311,7 @@ fn make_compile_args<F>(config: &Config,
                         "-L".to_owned(),
                         config.build_base.to_str().unwrap().to_owned(),
                         format!("--target={}", target));
-    args.push_all(&extras);
+    args.extend_from_slice(&extras);
     if !props.no_prefer_dynamic {
         args.push("-C".to_owned());
         args.push("prefer-dynamic".to_owned());
@@ -1723,7 +1729,11 @@ fn charset() -> &'static str {
 }
 
 fn run_rustdoc_test(config: &Config, props: &TestProps, testfile: &Path) {
-    let (proc_res, out_dir) = document(config, props, testfile);
+    let out_dir = output_base_name(config, testfile);
+    let _ = fs::remove_dir_all(&out_dir);
+    ensure_dir(&out_dir);
+
+    let proc_res = document(config, props, testfile, &out_dir);
     if !proc_res.status.success() {
         fatal_proc_rec("rustdoc failed!", &proc_res);
     }

@@ -1,13 +1,9 @@
 # The Rust Programming Language
 
-Rust is a fast systems programming language that guarantees
-memory safety and offers painless concurrency ([no data races]).
-It does not employ a garbage collector and has minimal runtime overhead.
+This is the main source code repository for [Rust]. It contains the compiler, standard library,
+and documentation.
 
-This repo contains the code for the compiler (`rustc`), as well
-as standard libraries, tools and documentation for Rust.
-
-[no data races]: http://blog.rust-lang.org/2015/04/10/Fearless-Concurrency.html
+[Rust]: https://www.rust-lang.org
 
 ## Quick Start
 
@@ -68,7 +64,8 @@ Read ["Installing Rust"] from [The Book].
    # Update package mirrors (may be needed if you have a fresh install of MSYS2)
    $ pacman -Sy pacman-mirrors
 
-   # Choose one based on platform:
+   # Choose one based on platform: 
+   # *** see the note below ***
    $ pacman -S mingw-w64-i686-toolchain
    $ pacman -S mingw-w64-x86_64-toolchain
 
@@ -89,9 +86,12 @@ Read ["Installing Rust"] from [The Book].
    ```
 > ***Note:*** gcc versions >= 5 currently have issues building LLVM on Windows
 > resulting in a segmentation fault when building Rust. In order to avoid this
-> it may be necessary to obtain an earlier version of gcc such as 4.9.x.
-> Installers for earlier Windows builds of gcc are available at the
-> [Mingw-Builds] project. For more information on this see issue #28260.
+> it may be necessary to obtain an earlier version of gcc such as 4.9.x.  
+> Msys's `pacman` will install the latest version, so for the time being it is
+> recommended to skip gcc toolchain installation step above and use [Mingw-Builds]
+> project's installer instead.  Be sure to add gcc `bin` directory to the path
+> before running `configure`.  
+> For more information on this see issue #28260.
 
 [Mingw-Builds]: http://sourceforge.net/projects/mingw-w64/
 

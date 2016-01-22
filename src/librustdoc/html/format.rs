@@ -18,7 +18,7 @@
 use std::fmt;
 use std::iter::repeat;
 
-use rustc::metadata::cstore::LOCAL_CRATE;
+use rustc::middle::cstore::LOCAL_CRATE;
 use rustc::middle::def_id::{CRATE_DEF_INDEX, DefId};
 use syntax::abi::Abi;
 use rustc_front::hir;
@@ -378,7 +378,7 @@ fn primitive_link(f: &mut fmt::Formatter,
         Some(&LOCAL_CRATE) => {
             let len = CURRENT_LOCATION_KEY.with(|s| s.borrow().len());
             let len = if len == 0 {0} else {len - 1};
-            try!(write!(f, "<a href='{}primitive.{}.html'>",
+            try!(write!(f, "<a class='primitive' href='{}primitive.{}.html'>",
                         repeat("../").take(len).collect::<String>(),
                         prim.to_url_str()));
             needs_termination = true;
@@ -398,7 +398,7 @@ fn primitive_link(f: &mut fmt::Formatter,
             };
             match loc {
                 Some(root) => {
-                    try!(write!(f, "<a href='{}{}/primitive.{}.html'>",
+                    try!(write!(f, "<a class='primitive' href='{}{}/primitive.{}.html'>",
                                 root,
                                 path.0.first().unwrap(),
                                 prim.to_url_str()));

@@ -13,7 +13,7 @@
 //! This currently only contains the definitions and implementations
 //! of most of the lints that `rustc` supports directly, it does not
 //! contain the infrastructure for defining/registering lints. That is
-//! available in `rustc::lint` and `rustc::plugin` respectively.
+//! available in `rustc::lint` and `rustc_plugin` respectively.
 //!
 //! # Note
 //!
@@ -23,7 +23,7 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_lint"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -50,7 +50,6 @@ extern crate rustc_front;
 extern crate rustc_back;
 
 pub use rustc::lint as lint;
-pub use rustc::metadata as metadata;
 pub use rustc::middle as middle;
 pub use rustc::session as session;
 pub use rustc::util as util;
@@ -135,7 +134,6 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
 
     add_builtin_with_new!(sess,
                           TypeLimits,
-                          RawPointerDerive,
                           MissingDoc,
                           MissingDebugImplementations,
                           );
@@ -148,13 +146,17 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                     UNUSED_MUT, UNREACHABLE_CODE, UNUSED_MUST_USE,
                     UNUSED_UNSAFE, PATH_STATEMENTS, UNUSED_ATTRIBUTES);
 
+    add_lint_group!(sess, FUTURE_INCOMPATIBLE,
+                    MATCH_OF_UNIT_VARIANT_VIA_PAREN_DOTDOT);
+
     // We have one lint pass defined specially
     store.register_late_pass(sess, false, box lint::GatherNodeLevels);
 
-    // Insert temporary renamings for a one-time deprecation
-    store.register_renamed("raw_pointer_deriving", "raw_pointer_derive");
-
+    // Register renamed and removed lints
     store.register_renamed("unknown_features", "unused_features");
-
     store.register_removed("unsigned_negation", "replaced by negate_unsigned feature gate");
+    store.register_removed("raw_pointer_derive", "using derive with raw pointers is ok");
+    // This was renamed to raw_pointer_derive, which was then removed,
+    // so it is also considered removed
+    store.register_removed("raw_pointer_deriving", "using derive with raw pointers is ok");
 }

@@ -637,7 +637,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         debug!("walk_block(blk.id={})", blk.id);
 
         for stmt in &blk.stmts {
-            self.walk_stmt(&**stmt);
+            self.walk_stmt(stmt);
         }
 
         if let Some(ref tail_expr) = blk.expr {
@@ -934,7 +934,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         return_if_err!(self.mc.cat_pattern(cmt_discr, pat, |_mc, cmt_pat, pat| {
             let tcx = self.tcx();
             let def_map = &self.tcx().def_map;
-            if pat_util::pat_is_binding(def_map, pat) {
+            if pat_util::pat_is_binding(&def_map.borrow(), pat) {
                 match pat.node {
                     hir::PatIdent(hir::BindByRef(_), _, _) =>
                         mode.lub(BorrowingMatch),
@@ -969,7 +969,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         let def_map = &self.tcx().def_map;
         let delegate = &mut self.delegate;
         return_if_err!(mc.cat_pattern(cmt_discr.clone(), pat, |mc, cmt_pat, pat| {
-            if pat_util::pat_is_binding(def_map, pat) {
+            if pat_util::pat_is_binding(&def_map.borrow(), pat) {
                 let tcx = typer.tcx;
 
                 debug!("binding cmt_pat={:?} pat={:?} match_mode={:?}",
@@ -1141,7 +1141,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                     // will visit the substructure recursively.
                 }
 
-                hir::PatWild(_) | hir::PatTup(..) | hir::PatBox(..) |
+                hir::PatWild | hir::PatTup(..) | hir::PatBox(..) |
                 hir::PatRegion(..) | hir::PatLit(..) | hir::PatRange(..) |
                 hir::PatVec(..) => {
                     // Similarly, each of these cases does not

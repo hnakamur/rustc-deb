@@ -23,7 +23,7 @@ pub use self::LangItem::*;
 
 use front::map as hir_map;
 use session::Session;
-use metadata::csearch::each_lang_item;
+use middle::cstore::CrateStore;
 use middle::def_id::DefId;
 use middle::ty;
 use middle::weak_lang_items;
@@ -33,8 +33,7 @@ use syntax::ast;
 use syntax::attr::AttrMetaMethods;
 use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
-use rustc_front::visit::Visitor;
-use rustc_front::visit;
+use rustc_front::intravisit::Visitor;
 use rustc_front::hir;
 
 use std::iter::Enumerate;
@@ -164,8 +163,6 @@ impl<'a, 'v, 'tcx> Visitor<'v> for LanguageItemCollector<'a, 'tcx> {
                 self.collect_item(item_index, self.ast_map.local_def_id(item.id), item.span)
             }
         }
-
-        visit::walk_item(self, item);
     }
 }
 
@@ -202,18 +199,17 @@ impl<'a, 'tcx> LanguageItemCollector<'a, 'tcx> {
     }
 
     pub fn collect_local_language_items(&mut self, krate: &hir::Crate) {
-        visit::walk_crate(self, krate);
+        krate.visit_all_items(self);
     }
 
     pub fn collect_external_language_items(&mut self) {
-        let crate_store = &self.session.cstore;
-        crate_store.iter_crate_data(|crate_number, _crate_metadata| {
-            each_lang_item(crate_store, crate_number, |index, item_index| {
-                let def_id = DefId { krate: crate_number, index: index };
+        let cstore = &self.session.cstore;
+        for cnum in cstore.crates() {
+            for (index, item_index) in cstore.lang_items(cnum) {
+                let def_id = DefId { krate: cnum, index: index };
                 self.collect_item(item_index, def_id, DUMMY_SP);
-                true
-            });
-        })
+            }
+        }
     }
 
     pub fn collect(&mut self, krate: &hir::Crate) {

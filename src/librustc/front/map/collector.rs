@@ -13,7 +13,7 @@ use super::MapEntry::*;
 
 use rustc_front::hir::*;
 use rustc_front::util;
-use rustc_front::visit::{self, Visitor};
+use rustc_front::intravisit::{self, Visitor};
 use middle::def_id::{CRATE_DEF_INDEX, DefIndex};
 use std::iter::repeat;
 use syntax::ast::{NodeId, CRATE_NODE_ID, DUMMY_NODE_ID};
@@ -22,14 +22,16 @@ use syntax::codemap::Span;
 /// A Visitor that walks over an AST and collects Node's into an AST
 /// Map.
 pub struct NodeCollector<'ast> {
+    pub krate: &'ast Crate,
     pub map: Vec<MapEntry<'ast>>,
     pub definitions: Definitions,
     pub parent_node: NodeId,
 }
 
 impl<'ast> NodeCollector<'ast> {
-    pub fn root() -> NodeCollector<'ast> {
+    pub fn root(krate: &'ast Crate) -> NodeCollector<'ast> {
         let mut collector = NodeCollector {
+            krate: krate,
             map: vec![],
             definitions: Definitions::new(),
             parent_node: CRATE_NODE_ID,
@@ -44,13 +46,15 @@ impl<'ast> NodeCollector<'ast> {
         collector
     }
 
-    pub fn extend(parent: &'ast InlinedParent,
+    pub fn extend(krate: &'ast Crate,
+                  parent: &'ast InlinedParent,
                   parent_node: NodeId,
                   parent_def_path: DefPath,
                   map: Vec<MapEntry<'ast>>,
                   definitions: Definitions)
                   -> NodeCollector<'ast> {
         let mut collector = NodeCollector {
+            krate: krate,
             map: map,
             parent_node: parent_node,
             definitions: definitions,
@@ -107,6 +111,13 @@ impl<'ast> NodeCollector<'ast> {
 }
 
 impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
+    /// Because we want to track parent items and so forth, enable
+    /// deep walking so that we walk nested items in the context of
+    /// their outer items.
+    fn visit_nested_item(&mut self, item: ItemId) {
+        self.visit_item(self.krate.item(item.id))
+    }
+
     fn visit_item(&mut self, i: &'ast Item) {
         // Pick the def data. This need not be unique, but the more
         // information we encapsulate into
@@ -129,7 +140,7 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
                 for v in &enum_definition.variants {
                     let variant_def_index =
                         self.insert_def(v.node.data.id(),
-                                        NodeVariant(&**v),
+                                        NodeVariant(v),
                                         DefPathData::EnumVariant(v.node.name));
 
                     for field in v.node.data.fields() {
@@ -173,7 +184,7 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
             }
             _ => {}
         }
-        visit::walk_item(self, i);
+        intravisit::walk_item(self, i);
         self.parent_node = parent_node;
     }
 
@@ -184,7 +195,7 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
 
         let parent_node = self.parent_node;
         self.parent_node = foreign_item.id;
-        visit::walk_foreign_item(self, foreign_item);
+        intravisit::walk_foreign_item(self, foreign_item);
         self.parent_node = parent_node;
     }
 
@@ -195,7 +206,7 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
                             DefPathData::TypeParam(ty_param.name));
         }
 
-        visit::walk_generics(self, generics);
+        intravisit::walk_generics(self, generics);
     }
 
     fn visit_trait_item(&mut self, ti: &'ast TraitItem) {
@@ -217,15 +228,15 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
             _ => { }
         }
 
-        visit::walk_trait_item(self, ti);
+        intravisit::walk_trait_item(self, ti);
 
         self.parent_node = parent_node;
     }
 
     fn visit_impl_item(&mut self, ii: &'ast ImplItem) {
         let def_data = match ii.node {
-            MethodImplItem(..) | ConstImplItem(..) => DefPathData::Value(ii.name),
-            TypeImplItem(..) => DefPathData::Type(ii.name),
+            ImplItemKind::Method(..) | ImplItemKind::Const(..) => DefPathData::Value(ii.name),
+            ImplItemKind::Type(..) => DefPathData::Type(ii.name),
         };
 
         self.insert_def(ii.id, NodeImplItem(ii), def_data);
@@ -234,13 +245,13 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
         self.parent_node = ii.id;
 
         match ii.node {
-            ConstImplItem(_, ref expr) => {
+            ImplItemKind::Const(_, ref expr) => {
                 self.create_def(expr.id, DefPathData::Initializer);
             }
             _ => { }
         }
 
-        visit::walk_impl_item(self, ii);
+        intravisit::walk_impl_item(self, ii);
 
         self.parent_node = parent_node;
     }
@@ -259,7 +270,7 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
 
         let parent_node = self.parent_node;
         self.parent_node = pat.id;
-        visit::walk_pat(self, pat);
+        intravisit::walk_pat(self, pat);
         self.parent_node = parent_node;
     }
 
@@ -273,7 +284,7 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
 
         let parent_node = self.parent_node;
         self.parent_node = expr.id;
-        visit::walk_expr(self, expr);
+        intravisit::walk_expr(self, expr);
         self.parent_node = parent_node;
     }
 
@@ -282,21 +293,21 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
         self.insert(id, NodeStmt(stmt));
         let parent_node = self.parent_node;
         self.parent_node = id;
-        visit::walk_stmt(self, stmt);
+        intravisit::walk_stmt(self, stmt);
         self.parent_node = parent_node;
     }
 
-    fn visit_fn(&mut self, fk: visit::FnKind<'ast>, fd: &'ast FnDecl,
+    fn visit_fn(&mut self, fk: intravisit::FnKind<'ast>, fd: &'ast FnDecl,
                 b: &'ast Block, s: Span, id: NodeId) {
         assert_eq!(self.parent_node, id);
-        visit::walk_fn(self, fk, fd, b, s);
+        intravisit::walk_fn(self, fk, fd, b, s);
     }
 
     fn visit_block(&mut self, block: &'ast Block) {
         self.insert(block.id, NodeBlock(block));
         let parent_node = self.parent_node;
         self.parent_node = block.id;
-        visit::walk_block(self, block);
+        intravisit::walk_block(self, block);
         self.parent_node = parent_node;
     }
 
@@ -313,4 +324,3 @@ impl<'ast> Visitor<'ast> for NodeCollector<'ast> {
         self.create_def(macro_def.id, DefPathData::MacroDef(macro_def.name));
     }
 }
-

@@ -18,17 +18,19 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "flate"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-       html_root_url = "https://doc.rust-lang.org/nightly/")]
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       test(attr(deny(warnings))))]
 
 #![feature(libc)]
 #![feature(staged_api)]
 #![feature(unique)]
 #![cfg_attr(test, feature(rustc_private, rand, vec_push_all))]
+#![cfg_attr(stage0, allow(improper_ctypes))]
 
 #[cfg(test)]
 #[macro_use]
@@ -80,7 +82,7 @@ impl Drop for Bytes {
 }
 
 #[link(name = "miniz", kind = "static")]
-extern {
+extern "C" {
     /// Raw miniz compression function.
     fn tdefl_compress_mem_to_heap(psrc_buf: *const c_void,
                                   src_buf_len: size_t,

@@ -10,7 +10,6 @@
 
 // Can't use empty braced struct as constant pattern
 
-#![deny(warnings)]
 #![feature(braced_empty_structs)]
 
 struct Empty1 {}
@@ -23,11 +22,10 @@ fn main() {
     let e1 = Empty1 {};
     let e2 = E::Empty2 {};
 
-    // Issue #28692
-    // match e1 {
-    //     Empty1 => () // ERROR incorrect error
-    // }
+    match e1 {
+        Empty1 => () // Not an error, `Empty1` is interpreted as a new binding
+    }
     match e2 {
-        E::Empty2 => () //~ ERROR `E::Empty2` does not name a non-struct variant or a tuple struct
+        E::Empty2 => () //~ ERROR `E::Empty2` does not name a tuple variant or a tuple struct
     }
 }

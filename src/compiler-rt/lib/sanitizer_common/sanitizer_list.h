@@ -11,6 +11,7 @@
 // ThreadSanitizer, etc run-times.
 //
 //===----------------------------------------------------------------------===//
+
 #ifndef SANITIZER_LIST_H
 #define SANITIZER_LIST_H
 
@@ -29,7 +30,7 @@ struct IntrusiveList {
   friend class Iterator;
 
   void clear() {
-    first_ = last_ = 0;
+    first_ = last_ = nullptr;
     size_ = 0;
   }
 
@@ -38,11 +39,11 @@ struct IntrusiveList {
 
   void push_back(Item *x) {
     if (empty()) {
-      x->next = 0;
+      x->next = nullptr;
       first_ = last_ = x;
       size_ = 1;
     } else {
-      x->next = 0;
+      x->next = nullptr;
       last_->next = x;
       last_ = x;
       size_++;
@@ -51,7 +52,7 @@ struct IntrusiveList {
 
   void push_front(Item *x) {
     if (empty()) {
-      x->next = 0;
+      x->next = nullptr;
       first_ = last_ = x;
       size_ = 1;
     } else {
@@ -64,8 +65,8 @@ struct IntrusiveList {
   void pop_front() {
     CHECK(!empty());
     first_ = first_->next;
-    if (first_ == 0)
-      last_ = 0;
+    if (!first_)
+      last_ = nullptr;
     size_--;
   }
 
@@ -115,20 +116,24 @@ struct IntrusiveList {
     }
   }
 
-  class Iterator {
+  template<class ListTy, class ItemTy>
+  class IteratorBase {
    public:
-    explicit Iterator(IntrusiveList<Item> *list)
+    explicit IteratorBase(ListTy *list)
         : list_(list), current_(list->first_) { }
-    Item *next() {
-      Item *ret = current_;
+    ItemTy *next() {
+      ItemTy *ret = current_;
       if (current_) current_ = current_->next;
       return ret;
     }
-    bool hasNext() const { return current_ != 0; }
+    bool hasNext() const { return current_ != nullptr; }
    private:
-    IntrusiveList<Item> *list_;
-    Item *current_;
+    ListTy *list_;
+    ItemTy *current_;
   };
+
+  typedef IteratorBase<IntrusiveList<Item>, Item> Iterator;
+  typedef IteratorBase<const IntrusiveList<Item>, const Item> ConstIterator;
 
 // private, don't use directly.
   uptr size_;
@@ -136,6 +141,6 @@ struct IntrusiveList {
   Item *last_;
 };
 
-}  // namespace __sanitizer
+} // namespace __sanitizer
 
-#endif  // SANITIZER_LIST_H
+#endif // SANITIZER_LIST_H

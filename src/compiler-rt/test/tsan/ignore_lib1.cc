@@ -1,12 +1,14 @@
 // RUN: %clangxx_tsan -O1 %s -DLIB -fPIC -fno-sanitize=thread -shared -o %T/libignore_lib1.so
 // RUN: %clangxx_tsan -O1 %s -o %t
 // RUN: echo running w/o suppressions:
-// RUN: not %run %t 2>&1 | FileCheck %s --check-prefix=CHECK-NOSUPP
+// RUN: %deflake %run %t | FileCheck %s --check-prefix=CHECK-NOSUPP
 // RUN: echo running with suppressions:
-// RUN: TSAN_OPTIONS="$TSAN_OPTIONS suppressions=%s.supp" %run %t 2>&1 | FileCheck %s --check-prefix=CHECK-WITHSUPP
+// RUN: TSAN_OPTIONS="$TSAN_OPTIONS suppressions='%s.supp'" %run %t 2>&1 | FileCheck %s --check-prefix=CHECK-WITHSUPP
 
 // Tests that interceptors coming from a dynamically loaded library specified
 // in called_from_lib suppression are ignored.
+
+// REQUIRES: stable-runtime
 
 #ifndef LIB
 

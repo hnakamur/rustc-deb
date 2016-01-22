@@ -18,7 +18,7 @@ use syntax::attr::{self, AttrMetaMethods};
 use syntax::codemap::Span;
 
 use rustc_front::hir;
-use rustc_front::visit::FnKind;
+use rustc_front::intravisit::FnKind;
 
 #[derive(PartialEq)]
 pub enum MethodLateContext {
@@ -138,7 +138,7 @@ impl LateLintPass for NonCamelCaseTypes {
 declare_lint! {
     pub NON_SNAKE_CASE,
     Warn,
-    "methods, functions, lifetime parameters and modules should have snake case names"
+    "variables, methods, functions, lifetime parameters and modules should have snake case names"
 }
 
 #[derive(Copy, Clone)]
@@ -351,7 +351,7 @@ impl LateLintPass for NonUpperCaseGlobals {
 
     fn check_impl_item(&mut self, cx: &LateContext, ii: &hir::ImplItem) {
         match ii.node {
-            hir::ConstImplItem(..) => {
+            hir::ImplItemKind::Const(..) => {
                 NonUpperCaseGlobals::check_upper_case(cx, "associated constant",
                                                       ii.name, ii.span);
             }

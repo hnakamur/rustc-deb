@@ -16,9 +16,11 @@
 #![allow(dead_code)]
 #![allow(trivial_casts)]
 
+#![cfg_attr(stage0, allow(improper_ctypes))]
+
 #![crate_name = "rustc_llvm"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -30,7 +32,6 @@
 #![feature(libc)]
 #![feature(link_args)]
 #![feature(staged_api)]
-#![feature(vec_push_all)]
 #![feature(linked_from)]
 
 extern crate libc;
@@ -2042,7 +2043,6 @@ extern {
                                        Model: CodeGenModel,
                                        Reloc: RelocMode,
                                        Level: CodeGenOptLevel,
-                                       EnableSegstk: bool,
                                        UseSoftFP: bool,
                                        PositionIndependentExecutable: bool,
                                        FunctionSections: bool,
@@ -2308,7 +2308,7 @@ pub unsafe extern "C" fn rust_llvm_string_write_impl(sr: RustStringRef,
     let slice = slice::from_raw_parts(ptr as *const u8, size as usize);
 
     let sr = sr as RustStringRepr;
-    (*sr).borrow_mut().push_all(slice);
+    (*sr).borrow_mut().extend_from_slice(slice);
 }
 
 pub fn build_string<F>(f: F) -> Option<String> where F: FnOnce(RustStringRef){

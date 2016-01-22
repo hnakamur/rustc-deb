@@ -11,30 +11,31 @@
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "alloc_system"]
 #![crate_type = "rlib"]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![no_std]
 #![cfg_attr(not(stage0), allocator)]
+#![cfg_attr(stage0, allow(improper_ctypes))]
 #![unstable(feature = "alloc_system",
             reason = "this library is unlikely to be stabilized in its current \
                       form or name",
             issue = "27783")]
 #![feature(allocator)]
 #![feature(libc)]
-#![feature(no_std)]
 #![feature(staged_api)]
+#![cfg_attr(stage0, feature(no_std))]
 
 extern crate libc;
 
 // The minimum alignment guaranteed by the architecture. This value is used to
 // add fast paths for low alignment values. In practice, the alignment is a
 // constant at the call site and the branch will be optimized out.
-#[cfg(all(any(target_arch = "arm",
+#[cfg(all(any(target_arch = "x86",
+              target_arch = "arm",
               target_arch = "mips",
               target_arch = "mipsel",
               target_arch = "powerpc")))]
 const MIN_ALIGN: usize = 8;
-#[cfg(all(any(target_arch = "x86",
-              target_arch = "x86_64",
+#[cfg(all(any(target_arch = "x86_64",
               target_arch = "aarch64")))]
 const MIN_ALIGN: usize = 16;
 
@@ -78,7 +79,7 @@ mod imp {
     use libc;
     use MIN_ALIGN;
 
-    extern {
+    extern "C" {
         // Apparently android doesn't have posix_memalign
         #[cfg(target_os = "android")]
         fn memalign(align: libc::size_t, size: libc::size_t) -> *mut libc::c_void;
@@ -141,9 +142,15 @@ mod imp {
 }
 
 #[cfg(windows)]
+#[allow(bad_style)]
 mod imp {
-    use libc::{BOOL, DWORD, HANDLE, LPVOID, SIZE_T};
     use MIN_ALIGN;
+
+    type LPVOID = *mut u8;
+    type HANDLE = LPVOID;
+    type SIZE_T = usize;
+    type DWORD = u32;
+    type BOOL = i32;
 
     extern "system" {
         fn GetProcessHeap() -> HANDLE;
@@ -173,7 +180,7 @@ mod imp {
         } else {
             let ptr = HeapAlloc(GetProcessHeap(), 0, (size + align) as SIZE_T) as *mut u8;
             if ptr.is_null() {
-                return ptr
+                return ptr;
             }
             align_ptr(ptr, align)
         }
@@ -189,7 +196,7 @@ mod imp {
                                   header.0 as LPVOID,
                                   (size + align) as SIZE_T) as *mut u8;
             if new.is_null() {
-                return new
+                return new;
             }
             align_ptr(new, align)
         }

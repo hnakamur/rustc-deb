@@ -71,7 +71,9 @@ pub struct RwLock<T: ?Sized> {
     data: UnsafeCell<T>,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<T: ?Sized + Send + Sync> Send for RwLock<T> {}
+#[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<T: ?Sized + Send + Sync> Sync for RwLock<T> {}
 
 /// Structure representing a statically allocated RwLock.
@@ -122,6 +124,7 @@ pub struct RwLockReadGuard<'a, T: ?Sized + 'a> {
     __data: &'a UnsafeCell<T>,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: ?Sized> !marker::Send for RwLockReadGuard<'a, T> {}
 
 /// RAII structure used to release the exclusive write access of a lock when
@@ -134,6 +137,7 @@ pub struct RwLockWriteGuard<'a, T: ?Sized + 'a> {
     __poison: poison::Guard,
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: ?Sized> !marker::Send for RwLockWriteGuard<'a, T> {}
 
 impl<T> RwLock<T> {
@@ -271,7 +275,7 @@ impl<T: ?Sized> RwLock<T> {
     /// is poisoned whenever a writer panics while holding an exclusive lock. An
     /// error will only be returned if the lock would have otherwise been
     /// acquired.
-    #[unstable(feature = "rwlock_into_inner", reason = "recently added", issue = "28968")]
+    #[stable(feature = "rwlock_into_inner", since = "1.6.0")]
     pub fn into_inner(self) -> LockResult<T> where T: Sized {
         // We know statically that there are no outstanding references to
         // `self` so there's no need to lock the inner StaticRwLock.
@@ -303,7 +307,7 @@ impl<T: ?Sized> RwLock<T> {
     /// is poisoned whenever a writer panics while holding an exclusive lock. An
     /// error will only be returned if the lock would have otherwise been
     /// acquired.
-    #[unstable(feature = "rwlock_get_mut", reason = "recently added", issue = "28968")]
+    #[stable(feature = "rwlock_get_mut", since = "1.6.0")]
     pub fn get_mut(&mut self) -> LockResult<&mut T> {
         // We know statically that there are no other references to `self`, so
         // there's no need to lock the inner StaticRwLock.

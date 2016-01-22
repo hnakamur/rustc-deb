@@ -13,7 +13,7 @@ pub use self::Row::*;
 use super::escape;
 use super::span_utils::SpanUtils;
 
-use metadata::cstore::LOCAL_CRATE;
+use middle::cstore::LOCAL_CRATE;
 use middle::def_id::{CRATE_DEF_INDEX, DefId};
 use middle::ty;
 
@@ -198,7 +198,7 @@ impl<'a, 'tcx: 'a> FmtStrs<'a, 'tcx> {
                               vec!("name", "crate", "file_name"),
                               false,
                               false),
-            Crate => ("crate", vec!("name"), true, false),
+            Crate => ("crate", vec!("name", "crate_root"), true, false),
             FnCall => ("fn_call",
                        vec!("refid", "refidcrate", "qualname", "scopeid"),
                        true,
@@ -658,14 +658,14 @@ impl<'a, 'tcx: 'a> FmtStrs<'a, 'tcx> {
         self.check_and_record(Typedef, span, sub_span, svec!(id, qualname, value));
     }
 
-    pub fn crate_str(&mut self, span: Span, name: &str) {
-        self.record_with_span(Crate, span, span, svec!(name));
+    pub fn crate_str(&mut self, span: Span, name: &str, crate_root: &str) {
+        self.record_with_span(Crate, span, span, svec!(name, crate_root));
     }
 
     pub fn external_crate_str(&mut self, span: Span, name: &str, num: ast::CrateNum) {
         let lo_loc = self.span.sess.codemap().lookup_char_pos(span.lo);
         self.record_without_span(ExternalCrate,
-                                 svec!(name, num, lo_loc.file.name),
+                                 svec!(name, num, SpanUtils::make_path_string(&lo_loc.file.name)),
                                  span);
     }
 

@@ -25,6 +25,7 @@
 
 use abi::Abi;
 use ast::*;
+use attr::ThinAttributesExt;
 use codemap::Span;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -451,7 +452,7 @@ pub fn walk_pat<'v, V: Visitor<'v>>(visitor: &mut V, pattern: &'v Pat) {
             visitor.visit_expr(lower_bound);
             visitor.visit_expr(upper_bound)
         }
-        PatWild(_) => (),
+        PatWild => (),
         PatVec(ref prepatterns, ref slice_pattern, ref postpatterns) => {
             walk_list!(visitor, visit_pat, prepatterns);
             walk_list!(visitor, visit_pat, slice_pattern);
@@ -496,25 +497,25 @@ pub fn walk_generics<'v, V: Visitor<'v>>(visitor: &mut V, generics: &'v Generics
     }
     walk_list!(visitor, visit_lifetime_def, &generics.lifetimes);
     for predicate in &generics.where_clause.predicates {
-        match predicate {
-            &WherePredicate::BoundPredicate(WhereBoundPredicate{ref bounded_ty,
-                                                                          ref bounds,
-                                                                          ref bound_lifetimes,
-                                                                          ..}) => {
+        match *predicate {
+            WherePredicate::BoundPredicate(WhereBoundPredicate{ref bounded_ty,
+                                                               ref bounds,
+                                                               ref bound_lifetimes,
+                                                               ..}) => {
                 visitor.visit_ty(bounded_ty);
                 walk_list!(visitor, visit_ty_param_bound, bounds);
                 walk_list!(visitor, visit_lifetime_def, bound_lifetimes);
             }
-            &WherePredicate::RegionPredicate(WhereRegionPredicate{ref lifetime,
-                                                                            ref bounds,
-                                                                            ..}) => {
+            WherePredicate::RegionPredicate(WhereRegionPredicate{ref lifetime,
+                                                                 ref bounds,
+                                                                 ..}) => {
                 visitor.visit_lifetime(lifetime);
                 walk_list!(visitor, visit_lifetime, bounds);
             }
-            &WherePredicate::EqPredicate(WhereEqPredicate{id,
-                                                                    ref path,
-                                                                    ref ty,
-                                                                    ..}) => {
+            WherePredicate::EqPredicate(WhereEqPredicate{id,
+                                                         ref path,
+                                                         ref ty,
+                                                         ..}) => {
                 visitor.visit_path(path, id);
                 visitor.visit_ty(ty);
             }
@@ -588,18 +589,18 @@ pub fn walk_impl_item<'v, V: Visitor<'v>>(visitor: &mut V, impl_item: &'v ImplIt
     visitor.visit_ident(impl_item.span, impl_item.ident);
     walk_list!(visitor, visit_attribute, &impl_item.attrs);
     match impl_item.node {
-        ConstImplItem(ref ty, ref expr) => {
+        ImplItemKind::Const(ref ty, ref expr) => {
             visitor.visit_ty(ty);
             visitor.visit_expr(expr);
         }
-        MethodImplItem(ref sig, ref body) => {
+        ImplItemKind::Method(ref sig, ref body) => {
             visitor.visit_fn(FnKind::Method(impl_item.ident, sig, Some(impl_item.vis)), &sig.decl,
                              body, impl_item.span, impl_item.id);
         }
-        TypeImplItem(ref ty) => {
+        ImplItemKind::Type(ref ty) => {
             visitor.visit_ty(ty);
         }
-        MacImplItem(ref mac) => {
+        ImplItemKind::Macro(ref mac) => {
             visitor.visit_mac(mac);
         }
     }
@@ -628,7 +629,12 @@ pub fn walk_stmt<'v, V: Visitor<'v>>(visitor: &mut V, statement: &'v Stmt) {
         StmtExpr(ref expression, _) | StmtSemi(ref expression, _) => {
             visitor.visit_expr(expression)
         }
-        StmtMac(ref mac, _) => visitor.visit_mac(mac),
+        StmtMac(ref mac, _, ref attrs) => {
+            visitor.visit_mac(mac);
+            for attr in attrs.as_attr_slice() {
+                visitor.visit_attribute(attr);
+            }
+        }
     }
 }
 

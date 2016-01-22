@@ -219,6 +219,7 @@ impl IntoInner<net_imp::TcpStream> for TcpStream {
     fn into_inner(self) -> net_imp::TcpStream { self.0 }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl fmt::Debug for TcpStream {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
@@ -233,7 +234,7 @@ impl TcpListener {
     ///
     /// Binding with a port number of 0 will request that the OS assigns a port
     /// to this listener. The port allocated can be queried via the
-    /// `socket_addr` function.
+    /// `local_addr` method.
     ///
     /// The address type can be any implementor of `ToSocketAddrs` trait. See
     /// its documentation for concrete examples.
@@ -301,6 +302,7 @@ impl IntoInner<net_imp::TcpListener> for TcpListener {
     fn into_inner(self) -> net_imp::TcpListener { self.0 }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 impl fmt::Debug for TcpListener {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)

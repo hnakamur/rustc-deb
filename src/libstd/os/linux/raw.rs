@@ -12,10 +12,15 @@
 
 #![stable(feature = "raw_ext", since = "1.1.0")]
 
+use os::raw::c_ulong;
+
 #[stable(feature = "raw_ext", since = "1.1.0")] pub type dev_t = u64;
 #[stable(feature = "raw_ext", since = "1.1.0")] pub type mode_t = u32;
 
+#[unstable(feature = "pthread_t", issue = "29791")] pub type pthread_t = c_ulong;
+
 #[doc(inline)]
+#[stable(feature = "raw_ext", since = "1.1.0")]
 pub use self::arch::{off_t, ino_t, nlink_t, blksize_t, blkcnt_t, stat, time_t};
 
 #[cfg(any(target_arch = "x86",

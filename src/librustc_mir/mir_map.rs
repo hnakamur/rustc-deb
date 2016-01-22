@@ -22,9 +22,10 @@ extern crate rustc_front;
 
 use build;
 use dot;
-use repr::Mir;
+use transform::*;
+use rustc::mir::repr::Mir;
+use hair::cx::Cx;
 use std::fs::File;
-use tcx::{PatNode, Cx};
 
 use self::rustc::middle::infer;
 use self::rustc::middle::region::CodeExtentData;
@@ -32,7 +33,7 @@ use self::rustc::middle::ty::{self, Ty};
 use self::rustc::util::common::ErrorReported;
 use self::rustc::util::nodemap::NodeMap;
 use self::rustc_front::hir;
-use self::rustc_front::visit;
+use self::rustc_front::intravisit::{self, Visitor};
 use self::syntax::ast;
 use self::syntax::attr::AttrMetaMethods;
 use self::syntax::codemap::Span;
@@ -46,7 +47,7 @@ pub fn build_mir_for_crate<'tcx>(tcx: &ty::ctxt<'tcx>) -> MirMap<'tcx> {
             tcx: tcx,
             map: &mut map,
         };
-        visit::walk_crate(&mut dump, tcx.map.krate());
+        tcx.map.krate().visit_all_items(&mut dump);
     }
     map
 }
@@ -78,32 +79,32 @@ impl<'a, 'tcx> OuterDump<'a, 'tcx> {
 }
 
 
-impl<'a, 'tcx> visit::Visitor<'tcx> for OuterDump<'a, 'tcx> {
+impl<'a, 'tcx> Visitor<'tcx> for OuterDump<'a, 'tcx> {
     fn visit_item(&mut self, item: &'tcx hir::Item) {
-        self.visit_mir(&item.attrs, |c| visit::walk_item(c, item));
-        visit::walk_item(self, item);
+        self.visit_mir(&item.attrs, |c| intravisit::walk_item(c, item));
+        intravisit::walk_item(self, item);
     }
 
     fn visit_trait_item(&mut self, trait_item: &'tcx hir::TraitItem) {
         match trait_item.node {
             hir::MethodTraitItem(_, Some(_)) => {
-                self.visit_mir(&trait_item.attrs, |c| visit::walk_trait_item(c, trait_item));
+                self.visit_mir(&trait_item.attrs, |c| intravisit::walk_trait_item(c, trait_item));
             }
             hir::MethodTraitItem(_, None) |
             hir::ConstTraitItem(..) |
             hir::TypeTraitItem(..) => {}
         }
-        visit::walk_trait_item(self, trait_item);
+        intravisit::walk_trait_item(self, trait_item);
     }
 
     fn visit_impl_item(&mut self, impl_item: &'tcx hir::ImplItem) {
         match impl_item.node {
-            hir::MethodImplItem(..) => {
-                self.visit_mir(&impl_item.attrs, |c| visit::walk_impl_item(c, impl_item));
+            hir::ImplItemKind::Method(..) => {
+                self.visit_mir(&impl_item.attrs, |c| intravisit::walk_impl_item(c, impl_item));
             }
-            hir::ConstImplItem(..) | hir::TypeImplItem(..) => {}
+            hir::ImplItemKind::Const(..) | hir::ImplItemKind::Type(..) => {}
         }
-        visit::walk_impl_item(self, impl_item);
+        intravisit::walk_impl_item(self, impl_item);
     }
 }
 
@@ -116,27 +117,23 @@ struct InnerDump<'a, 'm, 'tcx: 'a + 'm> {
     attr: Option<&'a ast::Attribute>,
 }
 
-impl<'a, 'm, 'tcx> visit::Visitor<'tcx> for InnerDump<'a,'m,'tcx> {
-    fn visit_item(&mut self, _: &'tcx hir::Item) {
-        // ignore nested items; they need their own graphviz annotation
-    }
-
+impl<'a, 'm, 'tcx> Visitor<'tcx> for InnerDump<'a,'m,'tcx> {
     fn visit_trait_item(&mut self, _: &'tcx hir::TraitItem) {
-        // ignore nested items; they need their own graphviz annotation
+        // ignore methods; the outer dump will call us for them independently
     }
 
     fn visit_impl_item(&mut self, _: &'tcx hir::ImplItem) {
-        // ignore nested items; they need their own graphviz annotation
+        // ignore methods; the outer dump will call us for them independently
     }
 
     fn visit_fn(&mut self,
-                fk: visit::FnKind<'tcx>,
+                fk: intravisit::FnKind<'tcx>,
                 decl: &'tcx hir::FnDecl,
                 body: &'tcx hir::Block,
                 span: Span,
                 id: ast::NodeId) {
         let (prefix, implicit_arg_tys) = match fk {
-            visit::FnKind::Closure =>
+            intravisit::FnKind::Closure =>
                 (format!("{}-", id), vec![closure_self_ty(&self.tcx, id, body.id)]),
             _ =>
                 (format!(""), vec![]),
@@ -147,7 +144,9 @@ impl<'a, 'm, 'tcx> visit::Visitor<'tcx> for InnerDump<'a,'m,'tcx> {
         let infcx = infer::new_infer_ctxt(self.tcx, &self.tcx.tables, Some(param_env), true);
 
         match build_mir(Cx::new(&infcx), implicit_arg_tys, id, span, decl, body) {
-            Ok(mir) => {
+            Ok(mut mir) => {
+                simplify_cfg::SimplifyCfg::new().run_on_mir(&mut mir);
+
                 let meta_item_list = self.attr
                                          .iter()
                                          .flat_map(|a| a.meta_item_list())
@@ -173,7 +172,7 @@ impl<'a, 'm, 'tcx> visit::Visitor<'tcx> for InnerDump<'a,'m,'tcx> {
                             None => {
                                 self.tcx.sess.span_err(
                                     item.span,
-                                    &format!("graphviz attribute requires a path"));
+                                    "graphviz attribute requires a path");
                             }
                         }
                     }
@@ -185,30 +184,46 @@ impl<'a, 'm, 'tcx> visit::Visitor<'tcx> for InnerDump<'a,'m,'tcx> {
             Err(ErrorReported) => {}
         }
 
-        visit::walk_fn(self, fk, decl, body, span);
+        intravisit::walk_fn(self, fk, decl, body, span);
     }
 }
 
-fn build_mir<'a, 'tcx: 'a>(cx: Cx<'a, 'tcx>,
-                           implicit_arg_tys: Vec<Ty<'tcx>>,
-                           fn_id: ast::NodeId,
-                           span: Span,
-                           decl: &'tcx hir::FnDecl,
-                           body: &'tcx hir::Block)
-                           -> Result<Mir<'tcx>, ErrorReported> {
-    let arguments = decl.inputs
-                        .iter()
-                        .map(|arg| {
-                            let ty = cx.tcx().node_id_to_type(arg.id);
-                            (ty, PatNode::irrefutable(&arg.pat))
-                        })
-                        .collect();
+fn build_mir<'a,'tcx:'a>(cx: Cx<'a,'tcx>,
+                         implicit_arg_tys: Vec<Ty<'tcx>>,
+                         fn_id: ast::NodeId,
+                         span: Span,
+                         decl: &'tcx hir::FnDecl,
+                         body: &'tcx hir::Block)
+                         -> Result<Mir<'tcx>, ErrorReported> {
+    // fetch the fully liberated fn signature (that is, all bound
+    // types/lifetimes replaced)
+    let fn_sig = match cx.tcx().tables.borrow().liberated_fn_sigs.get(&fn_id) {
+        Some(f) => f.clone(),
+        None => {
+            cx.tcx().sess.span_bug(span,
+                                   &format!("no liberated fn sig for {:?}", fn_id));
+        }
+    };
 
-    let parameter_scope = cx.tcx().region_maps.lookup_code_extent(CodeExtentData::ParameterScope {
-        fn_id: fn_id,
-        body_id: body.id,
-    });
-    Ok(build::construct(cx, span, implicit_arg_tys, arguments, parameter_scope, body))
+    let arguments =
+        decl.inputs
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                (fn_sig.inputs[index], &*arg.pat)
+            })
+            .collect();
+
+    let parameter_scope =
+        cx.tcx().region_maps.lookup_code_extent(
+            CodeExtentData::ParameterScope { fn_id: fn_id, body_id: body.id });
+    Ok(build::construct(cx,
+                        span,
+                        implicit_arg_tys,
+                        arguments,
+                        parameter_scope,
+                        fn_sig.output,
+                        body))
 }
 
 fn closure_self_ty<'a, 'tcx>(tcx: &ty::ctxt<'tcx>,

@@ -10,10 +10,10 @@
 
 //! See docs in build/expr/mod.rs
 
-use build::{BlockAnd, Builder};
+use build::{BlockAnd, BlockAndExtension, Builder};
 use build::expr::category::Category;
 use hair::*;
-use repr::*;
+use rustc::mir::repr::*;
 
 impl<'a,'tcx> Builder<'a,'tcx> {
     /// Compile `expr` into a fresh temporary. This is used when building
@@ -38,7 +38,7 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         let temp_lifetime = match expr.temp_lifetime {
             Some(t) => t,
             None => {
-                this.hir.span_bug(expr.span, &format!("no temp_lifetime for expr"));
+                this.hir.span_bug(expr.span, "no temp_lifetime for expr");
             }
         };
         this.schedule_drop(expr.span, temp_lifetime, DropKind::Deep, &temp, expr_ty);

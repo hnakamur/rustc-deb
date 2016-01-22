@@ -22,7 +22,7 @@ use session::search_paths::SearchPaths;
 
 use rustc_back::target::Target;
 use lint;
-use metadata::cstore;
+use middle::cstore;
 
 use syntax::ast::{self, IntTy, UintTy};
 use syntax::attr;
@@ -69,6 +69,30 @@ pub enum OutputType {
     Object,
     Exe,
     DepInfo,
+}
+
+impl OutputType {
+    fn is_compatible_with_codegen_units_and_single_output_file(&self) -> bool {
+        match *self {
+            OutputType::Exe |
+            OutputType::DepInfo => true,
+            OutputType::Bitcode |
+            OutputType::Assembly |
+            OutputType::LlvmAssembly |
+            OutputType::Object => false,
+        }
+    }
+
+    fn shorthand(&self) -> &'static str {
+        match *self {
+            OutputType::Bitcode => "llvm-bc",
+            OutputType::Assembly => "asm",
+            OutputType::LlvmAssembly => "llvm-ir",
+            OutputType::Object => "obj",
+            OutputType::Exe => "link",
+            OutputType::DepInfo => "dep-info",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -510,9 +534,11 @@ options! {CodegenOptions, CodegenSetter, basic_codegen_options,
         "debug info emission level, 0 = no debug info, 1 = line tables only, \
          2 = full debug info with variable and type information"),
     opt_level: Option<usize> = (None, parse_opt_uint,
-        "Optimize with possible levels 0-3"),
+        "optimize with possible levels 0-3"),
     debug_assertions: Option<bool> = (None, parse_opt_bool,
         "explicitly enable the cfg(debug_assertions) directive"),
+    inline_threshold: Option<usize> = (None, parse_opt_uint,
+        "set the inlining threshold for"),
 }
 
 
@@ -527,6 +553,8 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
         "count where LLVM instrs originate"),
     time_llvm_passes: bool = (false, parse_bool,
         "measure time of each LLVM pass"),
+    input_stats: bool = (false, parse_bool,
+        "gather statistics about the input"),
     trans_stats: bool = (false, parse_bool,
         "gather trans statistics"),
     asm_comments: bool = (false, parse_bool,
@@ -544,56 +572,56 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
     meta_stats: bool = (false, parse_bool,
         "gather metadata statistics"),
     print_link_args: bool = (false, parse_bool,
-        "Print the arguments passed to the linker"),
+        "print the arguments passed to the linker"),
     gc: bool = (false, parse_bool,
-        "Garbage collect shared data (experimental)"),
+        "garbage collect shared data (experimental)"),
     print_llvm_passes: bool = (false, parse_bool,
-        "Prints the llvm optimization passes being run"),
+        "prints the llvm optimization passes being run"),
     ast_json: bool = (false, parse_bool,
-        "Print the AST as JSON and halt"),
+        "print the AST as JSON and halt"),
     ast_json_noexpand: bool = (false, parse_bool,
-        "Print the pre-expansion AST as JSON and halt"),
+        "print the pre-expansion AST as JSON and halt"),
     ls: bool = (false, parse_bool,
-        "List the symbols defined by a library crate"),
+        "list the symbols defined by a library crate"),
     save_analysis: bool = (false, parse_bool,
-        "Write syntax and type analysis information in addition to normal output"),
+        "write syntax and type analysis information in addition to normal output"),
     print_move_fragments: bool = (false, parse_bool,
-        "Print out move-fragment data for every fn"),
+        "print out move-fragment data for every fn"),
     flowgraph_print_loans: bool = (false, parse_bool,
-        "Include loan analysis data in --pretty flowgraph output"),
+        "include loan analysis data in --unpretty flowgraph output"),
     flowgraph_print_moves: bool = (false, parse_bool,
-        "Include move analysis data in --pretty flowgraph output"),
+        "include move analysis data in --unpretty flowgraph output"),
     flowgraph_print_assigns: bool = (false, parse_bool,
-        "Include assignment analysis data in --pretty flowgraph output"),
+        "include assignment analysis data in --unpretty flowgraph output"),
     flowgraph_print_all: bool = (false, parse_bool,
-        "Include all dataflow analysis data in --pretty flowgraph output"),
+        "include all dataflow analysis data in --unpretty flowgraph output"),
     print_region_graph: bool = (false, parse_bool,
-         "Prints region inference graph. \
+         "prints region inference graph. \
           Use with RUST_REGION_GRAPH=help for more info"),
     parse_only: bool = (false, parse_bool,
-          "Parse only; do not compile, assemble, or link"),
+          "parse only; do not compile, assemble, or link"),
     no_trans: bool = (false, parse_bool,
-          "Run all passes except translation; no output"),
+          "run all passes except translation; no output"),
     treat_err_as_bug: bool = (false, parse_bool,
-          "Treat all errors that occur as bugs"),
+          "treat all errors that occur as bugs"),
     no_analysis: bool = (false, parse_bool,
-          "Parse and expand the source, but run no analysis"),
+          "parse and expand the source, but run no analysis"),
     extra_plugins: Vec<String> = (Vec::new(), parse_list,
         "load extra plugins"),
     unstable_options: bool = (false, parse_bool,
-          "Adds unstable command line options to rustc interface"),
+          "adds unstable command line options to rustc interface"),
     print_enum_sizes: bool = (false, parse_bool,
-          "Print the size of enums and their variants"),
+          "print the size of enums and their variants"),
     force_overflow_checks: Option<bool> = (None, parse_opt_bool,
-          "Force overflow checks on or off"),
+          "force overflow checks on or off"),
     force_dropflag_checks: Option<bool> = (None, parse_opt_bool,
-          "Force drop flag checks on or off"),
+          "force drop flag checks on or off"),
     trace_macros: bool = (false, parse_bool,
-          "For every macro invocation, print its name and arguments"),
+          "for every macro invocation, print its name and arguments"),
     enable_nonzeroing_move_hints: bool = (false, parse_bool,
-          "Force nonzeroing move optimization on"),
+          "force nonzeroing move optimization on"),
     keep_mtwt_tables: bool = (false, parse_bool,
-          "Don't clear the resolution tables after analysis"),
+          "don't clear the resolution tables after analysis"),
 }
 
 pub fn default_lib_output() -> CrateType {
@@ -610,22 +638,28 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
     let env = &sess.target.target.target_env;
     let vendor = &sess.target.target.target_vendor;
 
-    let fam = match sess.target.target.options.is_like_windows {
-        true  => InternedString::new("windows"),
-        false => InternedString::new("unix")
+    let fam = if let Some(ref fam) = sess.target.target.options.target_family {
+        intern(fam)
+    } else if sess.target.target.options.is_like_windows {
+        InternedString::new("windows")
+    } else {
+        InternedString::new("unix")
     };
 
     let mk = attr::mk_name_value_item_str;
     let mut ret = vec![ // Target bindings.
-         attr::mk_word_item(fam.clone()),
-         mk(InternedString::new("target_os"), intern(os)),
-         mk(InternedString::new("target_family"), fam),
-         mk(InternedString::new("target_arch"), intern(arch)),
-         mk(InternedString::new("target_endian"), intern(end)),
-         mk(InternedString::new("target_pointer_width"), intern(wordsz)),
-         mk(InternedString::new("target_env"), intern(env)),
-         mk(InternedString::new("target_vendor"), intern(vendor)),
+        mk(InternedString::new("target_os"), intern(os)),
+        mk(InternedString::new("target_family"), fam.clone()),
+        mk(InternedString::new("target_arch"), intern(arch)),
+        mk(InternedString::new("target_endian"), intern(end)),
+        mk(InternedString::new("target_pointer_width"), intern(wordsz)),
+        mk(InternedString::new("target_env"), intern(env)),
+        mk(InternedString::new("target_vendor"), intern(vendor)),
     ];
+    match &fam[..] {
+        "windows" | "unix" => ret.push(attr::mk_word_item(fam)),
+        _ => (),
+    }
     if sess.opts.debug_assertions {
         ret.push(attr::mk_word_item(InternedString::new("debug_assertions")));
     }
@@ -649,7 +683,7 @@ pub fn build_configuration(sess: &Session) -> ast::CrateConfig {
         append_configuration(&mut user_cfg, InternedString::new("test"))
     }
     let mut v = user_cfg.into_iter().collect::<Vec<_>>();
-    v.push_all(&default_cfg[..]);
+    v.extend_from_slice(&default_cfg[..]);
     v
 }
 
@@ -657,15 +691,15 @@ pub fn build_target_config(opts: &Options, sp: &SpanHandler) -> Config {
     let target = match Target::search(&opts.target_triple) {
         Ok(t) => t,
         Err(e) => {
-            sp.handler().fatal(&format!("Error loading target specification: {}", e));
+            panic!(sp.handler().fatal(&format!("Error loading target specification: {}", e)));
         }
     };
 
     let (int_type, uint_type) = match &target.target_pointer_width[..] {
         "32" => (ast::TyI32, ast::TyU32),
         "64" => (ast::TyI64, ast::TyU64),
-        w    => sp.handler().fatal(&format!("target specification was invalid: unrecognized \
-                                             target-pointer-width {}", w))
+        w    => panic!(sp.handler().fatal(&format!("target specification was invalid: \
+                                                    unrecognized target-pointer-width {}", w))),
     };
 
     Config {
@@ -808,7 +842,7 @@ pub fn rustc_short_optgroups() -> Vec<RustcOptGroup> {
 /// long-term interface for rustc.
 pub fn rustc_optgroups() -> Vec<RustcOptGroup> {
     let mut opts = rustc_short_optgroups();
-    opts.push_all(&[
+    opts.extend_from_slice(&[
         opt::multi("", "extern", "Specify where an external rust library is \
                                 located",
                  "NAME=PATH"),
@@ -923,7 +957,28 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
         output_types.insert(OutputType::Exe, None);
     }
 
-    let cg = build_codegen_options(matches, color);
+    let mut cg = build_codegen_options(matches, color);
+
+    // Issue #30063: if user requests llvm-related output to one
+    // particular path, disable codegen-units.
+    if matches.opt_present("o") && cg.codegen_units != 1 {
+        let incompatible: Vec<_> = output_types.iter()
+            .map(|ot_path| ot_path.0)
+            .filter(|ot| {
+                !ot.is_compatible_with_codegen_units_and_single_output_file()
+            }).collect();
+        if !incompatible.is_empty() {
+            for ot in &incompatible {
+                early_warn(color, &format!("--emit={} with -o incompatible with \
+                                            -C codegen-units=N for N > 1",
+                                           ot.shorthand()));
+            }
+            early_warn(color, "resetting to default -C codegen-units=1");
+            cg.codegen_units = 1;
+        }
+    }
+
+    let cg = cg;
 
     let sysroot_opt = matches.opt_str("sysroot").map(|m| PathBuf::from(&m));
     let target = matches.opt_str("target").unwrap_or(
@@ -1112,10 +1167,11 @@ impl fmt::Display for CrateType {
 
 #[cfg(test)]
 mod tests {
-
+    use middle::cstore::DummyCrateStore;
     use session::config::{build_configuration, optgroups, build_session_options};
     use session::build_session;
 
+    use std::rc::Rc;
     use getopts::getopts;
     use syntax::attr;
     use syntax::attr::AttrMetaMethods;
@@ -1131,7 +1187,7 @@ mod tests {
             };
         let registry = diagnostics::registry::Registry::new(&[]);
         let sessopts = build_session_options(matches);
-        let sess = build_session(sessopts, None, registry);
+        let sess = build_session(sessopts, None, registry, Rc::new(DummyCrateStore));
         let cfg = build_configuration(&sess);
         assert!((attr::contains_name(&cfg[..], "test")));
     }
@@ -1150,7 +1206,8 @@ mod tests {
             };
         let registry = diagnostics::registry::Registry::new(&[]);
         let sessopts = build_session_options(matches);
-        let sess = build_session(sessopts, None, registry);
+        let sess = build_session(sessopts, None, registry,
+                                 Rc::new(DummyCrateStore));
         let cfg = build_configuration(&sess);
         let mut test_items = cfg.iter().filter(|m| m.name() == "test");
         assert!(test_items.next().is_some());
@@ -1165,7 +1222,8 @@ mod tests {
             ], &optgroups()).unwrap();
             let registry = diagnostics::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
-            let sess = build_session(sessopts, None, registry);
+            let sess = build_session(sessopts, None, registry,
+                                     Rc::new(DummyCrateStore));
             assert!(!sess.can_print_warnings);
         }
 
@@ -1176,7 +1234,8 @@ mod tests {
             ], &optgroups()).unwrap();
             let registry = diagnostics::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
-            let sess = build_session(sessopts, None, registry);
+            let sess = build_session(sessopts, None, registry,
+                                     Rc::new(DummyCrateStore));
             assert!(sess.can_print_warnings);
         }
 
@@ -1186,7 +1245,8 @@ mod tests {
             ], &optgroups()).unwrap();
             let registry = diagnostics::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
-            let sess = build_session(sessopts, None, registry);
+            let sess = build_session(sessopts, None, registry,
+                                     Rc::new(DummyCrateStore));
             assert!(sess.can_print_warnings);
         }
     }

@@ -24,10 +24,13 @@ use slice;
 use str;
 use self::rt::v1::Alignment;
 
+#[unstable(feature = "fmt_radix", issue = "27728")]
 pub use self::num::radix;
+#[unstable(feature = "fmt_radix", issue = "27728")]
 pub use self::num::Radix;
+#[unstable(feature = "fmt_radix", issue = "27728")]
 pub use self::num::RadixFmt;
-
+#[stable(feature = "debug_builders", since = "1.2.0")]
 pub use self::builders::{DebugStruct, DebugTuple, DebugSet, DebugList, DebugMap};
 
 mod num;
@@ -170,6 +173,8 @@ pub struct ArgumentV1<'a> {
     formatter: fn(&Void, &mut Formatter) -> Result,
 }
 
+#[unstable(feature = "fmt_internals", reason = "internal to format_args!",
+           issue = "0")]
 impl<'a> Clone for ArgumentV1<'a> {
     fn clone(&self) -> ArgumentV1<'a> {
         *self
@@ -300,6 +305,8 @@ impl<'a> Display for Arguments<'a> {
 ///
 /// [module]: ../../std/fmt/index.html
 ///
+/// This trait can be used with `#[derive]`.
+///
 /// # Examples
 ///
 /// Deriving an implementation:
@@ -328,7 +335,7 @@ impl<'a> Display for Arguments<'a> {
 ///
 /// impl fmt::Debug for Point {
 ///     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-///         write!(f, "({}, {})", self.x, self.y)
+///         write!(f, "Point {{ x: {}, y: {} }}", self.x, self.y)
 ///     }
 /// }
 ///
@@ -871,7 +878,7 @@ impl<'a> Formatter<'a> {
 
         let mut prefixed = false;
         if self.alternate() {
-            prefixed = true; width += prefix.char_len();
+            prefixed = true; width += prefix.chars().count();
         }
 
         // Writes the sign if it exists, and then the prefix if it was requested
@@ -935,18 +942,13 @@ impl<'a> Formatter<'a> {
         }
         // The `precision` field can be interpreted as a `max-width` for the
         // string being formatted
-        match self.precision {
-            Some(max) => {
-                // If there's a maximum width and our string is longer than
-                // that, then we must always have truncation. This is the only
-                // case where the maximum length will matter.
-                let char_len = s.char_len();
-                if char_len >= max {
-                    let nchars = ::cmp::min(max, char_len);
-                    return self.buf.write_str(s.slice_chars(0, nchars));
-                }
+        if let Some(max) = self.precision {
+            // If there's a maximum width and our string is longer than
+            // that, then we must always have truncation. This is the only
+            // case where the maximum length will matter.
+            if let Some((i, _)) = s.char_indices().skip(max).next() {
+                return self.buf.write_str(&s[..i])
             }
-            None => {}
         }
         // The `width` field is more of a `min-width` parameter at this point.
         match self.width {
@@ -955,13 +957,13 @@ impl<'a> Formatter<'a> {
             None => self.buf.write_str(s),
             // If we're under the maximum width, check if we're over the minimum
             // width, if so it's as easy as just emitting the string.
-            Some(width) if s.char_len() >= width => {
+            Some(width) if s.chars().count() >= width => {
                 self.buf.write_str(s)
             }
             // If we're under both the maximum and the minimum width, then fill
             // up the minimum width with the specified string + some alignment.
             Some(width) => {
-                self.with_padding(width - s.char_len(), Alignment::Left, |me| {
+                self.with_padding(width - s.chars().count(), Alignment::Left, |me| {
                     me.buf.write_str(s)
                 })
             }
@@ -1566,6 +1568,7 @@ impl Debug for () {
         f.pad("()")
     }
 }
+#[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Debug for PhantomData<T> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         f.pad("PhantomData")

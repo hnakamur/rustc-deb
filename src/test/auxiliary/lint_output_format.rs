@@ -11,11 +11,10 @@
 #![crate_name="lint_output_format"]
 #![crate_type = "lib"]
 #![feature(staged_api)]
-#![staged_api]
 #![unstable(feature = "test_feature", issue = "0")]
 
 #[stable(feature = "test_feature", since = "1.0.0")]
-#[deprecated(since = "1.0.0", reason = "text")]
+#[rustc_deprecated(since = "1.0.0", reason = "text")]
 pub fn foo() -> usize {
     20
 }

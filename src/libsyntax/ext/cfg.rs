@@ -19,22 +19,27 @@ use ext::base;
 use ext::build::AstBuilder;
 use attr;
 use attr::*;
-use parse::attr::ParserAttr;
 use parse::token;
+use config::CfgDiagReal;
 
 pub fn expand_cfg<'cx>(cx: &mut ExtCtxt,
                        sp: Span,
                        tts: &[ast::TokenTree])
                        -> Box<base::MacResult+'static> {
     let mut p = cx.new_parser_from_tts(tts);
-    let cfg = p.parse_meta_item();
+    let cfg = panictry!(p.parse_meta_item());
 
     if !panictry!(p.eat(&token::Eof)){
         cx.span_err(sp, "expected 1 cfg-pattern");
         return DummyResult::expr(sp);
     }
 
-    let matches_cfg = attr::cfg_matches(&cx.parse_sess.span_diagnostic, &cx.cfg, &*cfg,
-                                        cx.feature_gated_cfgs);
+    let matches_cfg = {
+        let mut diag = CfgDiagReal {
+            diag: &cx.parse_sess.span_diagnostic,
+            feature_gated_cfgs: cx.feature_gated_cfgs,
+        };
+        attr::cfg_matches(&cx.cfg, &cfg, &mut diag)
+    };
     MacEager::expr(cx.expr_bool(sp, matches_cfg))
 }

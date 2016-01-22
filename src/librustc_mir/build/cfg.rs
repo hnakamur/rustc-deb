@@ -14,7 +14,7 @@
 //! Routines for manipulating the control-flow graph.
 
 use build::CFG;
-use repr::*;
+use rustc::mir::repr::*;
 use syntax::codemap::Span;
 
 impl<'tcx> CFG<'tcx> {
@@ -24,13 +24,6 @@ impl<'tcx> CFG<'tcx> {
 
     pub fn block_data_mut(&mut self, blk: BasicBlock) -> &mut BasicBlockData<'tcx> {
         &mut self.basic_blocks[blk.index()]
-    }
-
-    pub fn end_point(&self, block: BasicBlock) -> ExecutionPoint {
-        ExecutionPoint {
-            block: block,
-            statement: self.block_data(block).statements.len() as u32,
-        }
     }
 
     pub fn start_new_block(&mut self) -> BasicBlock {

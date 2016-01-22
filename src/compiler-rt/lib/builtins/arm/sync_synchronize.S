@@ -21,7 +21,7 @@
 
 #if __APPLE__
 
-	.align 2
+	.p2align 2
 DEFINE_COMPILERRT_PRIVATE_FUNCTION(__sync_synchronize)
 	stmfd	sp!, {r7, lr}
 	add		r7, sp, #0
@@ -29,7 +29,7 @@ DEFINE_COMPILERRT_PRIVATE_FUNCTION(__sync_synchronize)
 	ldmfd	sp!, {r7, pc}
 END_COMPILERRT_FUNCTION(__sync_synchronize)
 
-// tell linker it can break up file at label boundaries
-FILE_LEVEL_DIRECTIVE
+	// tell linker it can break up file at label boundaries
+	.subsections_via_symbols
 		
 #endif

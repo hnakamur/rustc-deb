@@ -8,19 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use hair;
+use hair::cx::Cx;
 use rustc::middle::region::CodeExtent;
-use rustc::middle::ty::Ty;
+use rustc::middle::ty::{FnOutput, Ty};
+use rustc::mir::repr::*;
 use rustc_data_structures::fnv::FnvHashMap;
 use rustc_front::hir;
-use repr::*;
+
 use syntax::ast;
 use syntax::codemap::Span;
-use tcx::{Cx, PatNode};
 
 struct Builder<'a, 'tcx: 'a> {
     hir: Cx<'a, 'tcx>,
-    extents: FnvHashMap<CodeExtent, Vec<GraphExtent>>,
     cfg: CFG<'tcx>,
     scopes: Vec<scope::Scope<'tcx>>,
     loop_scopes: Vec<scope::LoopScope>,
@@ -43,7 +42,12 @@ struct CFG<'tcx> {
 #[must_use] // if you don't use one of these results, you're leaving a dangling edge
 struct BlockAnd<T>(BasicBlock, T);
 
-impl BasicBlock {
+trait BlockAndExtension {
+    fn and<T>(self, v: T) -> BlockAnd<T>;
+    fn unit(self) -> BlockAnd<()>;
+}
+
+impl BlockAndExtension for BasicBlock {
     fn and<T>(self, v: T) -> BlockAnd<T> {
         BlockAnd(self, v)
     }
@@ -75,13 +79,14 @@ macro_rules! unpack {
 ///////////////////////////////////////////////////////////////////////////
 // construct() -- the main entry point for building MIR for a function
 
-pub fn construct<'a, 'tcx>(mut hir: Cx<'a, 'tcx>,
-                           _span: Span,
-                           implicit_arguments: Vec<Ty<'tcx>>,
-                           explicit_arguments: Vec<(Ty<'tcx>, PatNode<'tcx>)>,
-                           argument_extent: CodeExtent,
-                           ast_block: &'tcx hir::Block)
-                           -> Mir<'tcx> {
+pub fn construct<'a,'tcx>(mut hir: Cx<'a,'tcx>,
+                          _span: Span,
+                          implicit_arguments: Vec<Ty<'tcx>>,
+                          explicit_arguments: Vec<(Ty<'tcx>, &'tcx hir::Pat)>,
+                          argument_extent: CodeExtent,
+                          return_ty: FnOutput<'tcx>,
+                          ast_block: &'tcx hir::Block)
+                          -> Mir<'tcx> {
     let cfg = CFG { basic_blocks: vec![] };
 
     // it's handy to have a temporary of type `()` sometimes, so make
@@ -92,7 +97,6 @@ pub fn construct<'a, 'tcx>(mut hir: Cx<'a, 'tcx>,
     let mut builder = Builder {
         hir: hir,
         cfg: cfg,
-        extents: FnvHashMap(),
         scopes: vec![],
         loop_scopes: vec![],
         temp_decls: temp_decls,
@@ -117,10 +121,10 @@ pub fn construct<'a, 'tcx>(mut hir: Cx<'a, 'tcx>,
 
     Mir {
         basic_blocks: builder.cfg.basic_blocks,
-        extents: builder.extents,
         var_decls: builder.var_decls,
         arg_decls: arg_decls,
         temp_decls: builder.temp_decls,
+        return_ty: return_ty,
     }
 }
 
@@ -128,7 +132,7 @@ impl<'a,'tcx> Builder<'a,'tcx> {
     fn args_and_body(&mut self,
                      mut block: BasicBlock,
                      implicit_arguments: Vec<Ty<'tcx>>,
-                     explicit_arguments: Vec<(Ty<'tcx>, PatNode<'tcx>)>,
+                     explicit_arguments: Vec<(Ty<'tcx>, &'tcx hir::Pat)>,
                      argument_extent: CodeExtent,
                      ast_block: &'tcx hir::Block)
                      -> BlockAnd<Vec<ArgDecl<'tcx>>>
@@ -146,9 +150,10 @@ impl<'a,'tcx> Builder<'a,'tcx> {
                     .enumerate()
                     .map(|(index, (ty, pattern))| {
                         let lvalue = Lvalue::Arg(index as u32);
+                        let pattern = this.hir.irrefutable_pat(pattern);
                         unpack!(block = this.lvalue_into_pattern(block,
                                                                  argument_extent,
-                                                                 hair::PatternRef::Hair(pattern),
+                                                                 pattern,
                                                                  &lvalue));
                         ArgDecl { ty: ty }
                     });

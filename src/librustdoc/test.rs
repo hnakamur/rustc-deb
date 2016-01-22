@@ -19,6 +19,7 @@ use std::io::prelude::*;
 use std::io;
 use std::path::PathBuf;
 use std::process::Command;
+use std::rc::Rc;
 use std::str;
 use std::sync::{Arc, Mutex};
 
@@ -31,8 +32,10 @@ use rustc::session::search_paths::{SearchPaths, PathKind};
 use rustc_front::lowering::{lower_crate, LoweringContext};
 use rustc_back::tempdir::TempDir;
 use rustc_driver::{driver, Compilation};
+use rustc_metadata::cstore::CStore;
 use syntax::codemap::CodeMap;
 use syntax::diagnostic;
+use syntax::parse::token;
 
 use core;
 use clean;
@@ -73,15 +76,18 @@ pub fn run(input: &str,
     let span_diagnostic_handler =
     diagnostic::SpanHandler::new(diagnostic_handler, codemap);
 
+    let cstore = Rc::new(CStore::new(token::get_ident_interner()));
+    let cstore_ = ::rustc_driver::cstore_to_cratestore(cstore.clone());
     let sess = session::build_session_(sessopts,
-                                      Some(input_path.clone()),
-                                      span_diagnostic_handler);
+                                       Some(input_path.clone()),
+                                       span_diagnostic_handler,
+                                       cstore_);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
 
     let mut cfg = config::build_configuration(&sess);
-    cfg.extend(config::parse_cfgspecs(cfgs));
+    cfg.extend(config::parse_cfgspecs(cfgs.clone()));
     let krate = driver::phase_1_parse_input(&sess, cfg, &input);
-    let krate = driver::phase_2_configure_and_expand(&sess, krate,
+    let krate = driver::phase_2_configure_and_expand(&sess, &cstore, krate,
                                                      "rustdoc-test", None)
         .expect("phase_2_configure_and_expand aborted in rustdoc!");
     let krate = driver::assign_node_ids(&sess, krate);
@@ -116,6 +122,7 @@ pub fn run(input: &str,
     let (krate, _) = passes::unindent_comments(krate);
 
     let mut collector = Collector::new(krate.name.to_string(),
+                                       cfgs,
                                        libs,
                                        externs,
                                        false,
@@ -162,7 +169,7 @@ fn scrape_test_config(krate: &::rustc_front::hir::Crate) -> TestOptions {
     return opts;
 }
 
-fn runtest(test: &str, cratename: &str, libs: SearchPaths,
+fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
            externs: core::Externs,
            should_panic: bool, no_run: bool, as_test_harness: bool,
            opts: &TestOptions) {
@@ -223,20 +230,24 @@ fn runtest(test: &str, cratename: &str, libs: SearchPaths,
     let span_diagnostic_handler =
         diagnostic::SpanHandler::new(diagnostic_handler, codemap);
 
+    let cstore = Rc::new(CStore::new(token::get_ident_interner()));
+    let cstore_ = ::rustc_driver::cstore_to_cratestore(cstore.clone());
     let sess = session::build_session_(sessopts,
                                        None,
-                                       span_diagnostic_handler);
+                                       span_diagnostic_handler,
+                                       cstore_);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
 
     let outdir = TempDir::new("rustdoctest").ok().expect("rustdoc needs a tempdir");
     let out = Some(outdir.path().to_path_buf());
-    let cfg = config::build_configuration(&sess);
+    let mut cfg = config::build_configuration(&sess);
+    cfg.extend(config::parse_cfgspecs(cfgs));
     let libdir = sess.target_filesearch(PathKind::All).get_lib_path();
     let mut control = driver::CompileController::basic();
     if no_run {
         control.after_analysis.stop = Compilation::Stop;
     }
-    driver::compile_input(sess, cfg, &input, &out, &None, None, control);
+    driver::compile_input(sess, &cstore, cfg, &input, &out, &None, None, control);
 
     if no_run { return }
 
@@ -340,6 +351,7 @@ fn partition_source(s: &str) -> (String, String) {
 pub struct Collector {
     pub tests: Vec<testing::TestDescAndFn>,
     names: Vec<String>,
+    cfgs: Vec<String>,
     libs: SearchPaths,
     externs: core::Externs,
     cnt: usize,
@@ -350,11 +362,12 @@ pub struct Collector {
 }
 
 impl Collector {
-    pub fn new(cratename: String, libs: SearchPaths, externs: core::Externs,
+    pub fn new(cratename: String, cfgs: Vec<String>, libs: SearchPaths, externs: core::Externs,
                use_headers: bool, opts: TestOptions) -> Collector {
         Collector {
             tests: Vec::new(),
             names: Vec::new(),
+            cfgs: cfgs,
             libs: libs,
             externs: externs,
             cnt: 0,
@@ -375,6 +388,7 @@ impl Collector {
             format!("{}_{}", self.names.join("::"), self.cnt)
         };
         self.cnt += 1;
+        let cfgs = self.cfgs.clone();
         let libs = self.libs.clone();
         let externs = self.externs.clone();
         let cratename = self.cratename.to_string();
@@ -390,6 +404,7 @@ impl Collector {
             testfn: testing::DynTestFn(Box::new(move|| {
                 runtest(&test,
                         &cratename,
+                        cfgs,
                         libs,
                         externs,
                         should_panic,
@@ -422,22 +437,59 @@ impl Collector {
 
 impl DocFolder for Collector {
     fn fold_item(&mut self, item: clean::Item) -> Option<clean::Item> {
-        let pushed = match item.name {
-            Some(ref name) if name.is_empty() => false,
-            Some(ref name) => { self.names.push(name.to_string()); true }
-            None => false
+        let current_name = match item.name {
+            Some(ref name) if !name.is_empty() => Some(name.clone()),
+            _ => typename_if_impl(&item)
         };
-        match item.doc_value() {
-            Some(doc) => {
-                self.cnt = 0;
-                markdown::find_testable_code(doc, &mut *self);
-            }
-            None => {}
+
+        let pushed = if let Some(name) = current_name {
+            self.names.push(name);
+            true
+        } else {
+            false
+        };
+
+        if let Some(doc) = item.doc_value() {
+            self.cnt = 0;
+            markdown::find_testable_code(doc, &mut *self);
         }
+
         let ret = self.fold_item_recur(item);
         if pushed {
             self.names.pop();
         }
+
         return ret;
+
+        // FIXME: it would be better to not have the escaped version in the first place
+        fn unescape_for_testname(mut s: String) -> String {
+            // for refs `&foo`
+            if s.contains("&amp;") {
+                s = s.replace("&amp;", "&");
+
+                // `::&'a mut Foo::` looks weird, let's make it `::<&'a mut Foo>`::
+                if let Some('&') = s.chars().nth(0) {
+                    s = format!("<{}>", s);
+                }
+            }
+
+            // either `<..>` or `->`
+            if s.contains("&gt;") {
+                s.replace("&gt;", ">")
+                 .replace("&lt;", "<")
+            } else {
+                s
+            }
+        }
+
+        fn typename_if_impl(item: &clean::Item) -> Option<String> {
+            if let clean::ItemEnum::ImplItem(ref impl_) = item.inner {
+                let path = impl_.for_.to_string();
+                let unescaped_path = unescape_for_testname(path);
+                Some(unescaped_path)
+            } else {
+                None
+            }
+        }
     }
 }

@@ -16,7 +16,7 @@
 // Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
 #![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "collections"]
-#![staged_api]
+#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![unstable(feature = "collections",
             reason = "library is unlikely to be stabilized with the current \
@@ -27,7 +27,7 @@
        html_root_url = "https://doc.rust-lang.org/nightly/",
        html_playground_url = "https://play.rust-lang.org/",
        issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/",
-       test(no_crate_inject))]
+       test(no_crate_inject, attr(allow(unused_variables), deny(warnings))))]
 
 #![allow(trivial_casts)]
 #![cfg_attr(test, allow(deprecated))] // rand
@@ -37,12 +37,12 @@
 // SNAP 1af31d4
 #![allow(unused_attributes)]
 
+#![cfg_attr(stage0, feature(rustc_attrs))]
+#![cfg_attr(stage0, allow(unused_attributes))]
 #![feature(alloc)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(core_intrinsics)]
-#![feature(core_slice_ext)]
-#![feature(core_str_ext)]
 #![feature(fmt_internals)]
 #![feature(fmt_radix)]
 #![feature(heap_api)]
@@ -65,16 +65,21 @@
 #![feature(dropck_parametricity)]
 #![feature(unsafe_no_drop_flag, filling_drop)]
 #![feature(decode_utf16)]
+#![feature(drop_in_place)]
+#![feature(clone_from_slice)]
 #![cfg_attr(test, feature(clone_from_slice, rand, test))]
 
-#![feature(no_std)]
+#![cfg_attr(stage0, feature(no_std))]
 #![no_std]
 
 extern crate rustc_unicode;
 extern crate alloc;
 
-#[cfg(test)] #[macro_use] extern crate std;
-#[cfg(test)] extern crate test;
+#[cfg(test)]
+#[macro_use]
+extern crate std;
+#[cfg(test)]
+extern crate test;
 
 pub use binary_heap::BinaryHeap;
 pub use btree_map::BTreeMap;
@@ -106,11 +111,13 @@ pub mod vec_deque;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub mod btree_map {
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub use btree::map::*;
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub mod btree_set {
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub use btree::set::*;
 }
 

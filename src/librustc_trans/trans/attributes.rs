@@ -142,6 +142,7 @@ pub fn from_fn_type<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, fn_type: ty::Ty<'tcx
     };
 
     let fn_sig = ccx.tcx().erase_late_bound_regions(fn_sig);
+    let fn_sig = infer::normalize_associated_type(ccx.tcx(), &fn_sig);
 
     let mut attrs = llvm::AttrBuilder::new();
     let ret_ty = fn_sig.output;
@@ -155,7 +156,7 @@ pub fn from_fn_type<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, fn_type: ty::Ty<'tcx
             match fn_sig.inputs[0].sty {
                 ty::TyTuple(ref inputs) => {
                     let mut full_inputs = vec![env_ty.expect("Missing closure environment")];
-                    full_inputs.push_all(inputs);
+                    full_inputs.extend_from_slice(inputs);
                     full_inputs
                 }
                 _ => ccx.sess().bug("expected tuple'd inputs")
@@ -166,7 +167,7 @@ pub fn from_fn_type<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, fn_type: ty::Ty<'tcx
 
             match fn_sig.inputs[1].sty {
                 ty::TyTuple(ref t_in) => {
-                    inputs.push_all(&t_in[..]);
+                    inputs.extend_from_slice(&t_in[..]);
                     inputs
                 }
                 _ => ccx.sess().bug("expected tuple'd inputs")
