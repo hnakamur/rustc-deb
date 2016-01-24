@@ -1,3 +1,4 @@
 rust-gdb-paths
 rust-lldb-paths
 add-soname
+wno-error

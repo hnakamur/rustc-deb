@@ -1,3 +1,11 @@
+rustc (1.6.0+dfsg1-2) unstable; UNRELEASED
+
+  [ Angus Lees ]
+  * mk/rt.mk: Modify upstream code to append -Wno-error rather than trying
+    to remove the string "-Werror".  (Closes: #812448)
+
+ -- Angus Lees <gus@debian.org>  Sun, 24 Jan 2016 20:58:59 +1100
+
 rustc (1.6.0+dfsg1-1) unstable; urgency=medium
 
   * new upstream release
