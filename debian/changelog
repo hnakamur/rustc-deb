@@ -3,8 +3,10 @@ rustc (1.6.0+dfsg1-2) unstable; UNRELEASED
   [ Angus Lees ]
   * mk/rt.mk: Modify upstream code to append -Wno-error rather than trying
     to remove the string "-Werror".  (Closes: #812448)
+  * Disable new gcc-6 "-Wmisleading-indentation" warning, which triggers
+    (incorrectly) on src/rt/miniz.c.  (Closes: #811573)
 
- -- Angus Lees <gus@debian.org>  Sun, 24 Jan 2016 20:58:59 +1100
+ -- Angus Lees <gus@debian.org>  Tue, 26 Jan 2016 04:01:56 +1100
 
 rustc (1.6.0+dfsg1-1) unstable; urgency=medium
 

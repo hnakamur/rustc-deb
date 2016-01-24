@@ -18,6 +18,10 @@ include debian/architecture.mk
 # the SUDO_USER variable.
 unexport SUDO_USER
 
+# src/rt/miniz.c (incorrectly) triggers -Wmisleading-indentation with
+# gcc-6.  See bug #811573.
+CFLAGS += -Wno-misleading-indentation
+
 # Debhelper clears MAKEFLAGS, so we have to do this again for any
 # target where we call $(MAKE) directly.  Boo.
 DEB_PARALLEL_JOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
