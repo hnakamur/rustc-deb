@@ -5,8 +5,10 @@ rustc (1.6.0+dfsg1-2) unstable; UNRELEASED
     to remove the string "-Werror".  (Closes: #812448)
   * Disable new gcc-6 "-Wmisleading-indentation" warning, which triggers
     (incorrectly) on src/rt/miniz.c.  (Closes: #811573)
+  * Guard arch-dependent dh_install commands appropriately, fixing
+    arch-indep-only builds.  (Closes: #809124)
 
- -- Angus Lees <gus@debian.org>  Tue, 26 Jan 2016 04:01:56 +1100
+ -- Angus Lees <gus@debian.org>  Tue, 26 Jan 2016 05:40:14 +1100
 
 rustc (1.6.0+dfsg1-1) unstable; urgency=medium
 

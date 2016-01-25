@@ -118,7 +118,7 @@ ifneq (,$(BUILD_DOCS))
 	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete
 endif
 
-override_dh_install:
+override_dh_install-arch:
 	dh_install
 	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
 
