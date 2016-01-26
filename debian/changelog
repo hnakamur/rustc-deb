@@ -1,6 +1,5 @@
-rustc (1.6.0+dfsg1-2) unstable; UNRELEASED
+rustc (1.6.0+dfsg1-2) unstable; urgency=medium
 
-  [ Angus Lees ]
   * mk/rt.mk: Modify upstream code to append -Wno-error rather than trying
     to remove the string "-Werror".  (Closes: #812448)
   * Disable new gcc-6 "-Wmisleading-indentation" warning, which triggers
