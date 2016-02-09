@@ -18,6 +18,13 @@ Build-Depends: debhelper (>= 9.20141010),
                git,
                procps,
 # git, procps are necessary for 'make check'
+               antlr4,
+               bison,
+               flex,
+               gdb,
+               java-compiler,
+               java-runtime,
+# above are optional tools for 'make check'
                llvm-3.7-dev,
                llvm-3.7-tools
 Build-Depends-Indep: pandoc (>= 1.9),

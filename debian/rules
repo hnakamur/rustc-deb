@@ -72,7 +72,7 @@ endif
 
 # Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
-	SHELL=/bin/sh \
+	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 #	test "$$($(MAKE) --no-print-directory print-CFG_FILENAME_EXTRA | tail -n1 | cut -d= -f2)" = "$$(echo $(RUST_VERSION))"
 
@@ -141,7 +141,7 @@ override_dh_compress:
 
 override_dh_auto_test:
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(PMAKE) check-notidy
+	RUST_BACKTRACE=1 $(PMAKE) VERBOSE=1 check-notidy
 endif
 
 override_dh_makeshlibs:
