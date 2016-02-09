@@ -29,6 +29,10 @@ PMAKE = $(MAKE) $(if $(DEB_PARALLEL_JOBS),-j$(DEB_PARALLEL_JOBS))
 
 # Release type (one of beta, stable or nightly)
 RELEASE_CHANNEL := stable
+# See also ./build-preview-dsc.sh for a script that builds a beta/nightly .dsc
+# out of this packaging. Furthermore, if the build breaks after importing a new
+# upstream stable release, check the do_temporary_fixup function in that file
+# to see if we already know what fix to make.
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
