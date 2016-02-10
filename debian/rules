@@ -4,7 +4,11 @@
 include /usr/share/dpkg/pkg-info.mk
 include /usr/share/dpkg/architecture.mk
 include /usr/share/dpkg/buildflags.mk
-RUSTFLAGS = -C link-args="$(LDFLAGS)"
+#RUSTFLAGS = -C link-args="$(LDFLAGS)"
+# temporary workaround for https://github.com/rust-lang/rust/issues/31529
+# this will FAIL if LDFLAGS itself contains shell-interpreted chars beyond
+# unquoted spaces (that addprefix works around the failure of)
+RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
 
 # Defines DEB_*_RUST_TYPE triples
