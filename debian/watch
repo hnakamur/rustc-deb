@@ -5,6 +5,7 @@ pgpsigurlmangle=s/$/.asc/,\
 uversionmangle=s/(\d)[_.+-]?((beta|alpha)\.?\d*)$/$1~$2/,\
 dversionmangle=s/\+dfsg\d*$//,\
 repacksuffix=+dfsg1,\
+compression=xz,\
 " \
  https://www.rust-lang.org/downloads.html \
  (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.gz

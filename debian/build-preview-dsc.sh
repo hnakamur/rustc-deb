@@ -67,11 +67,11 @@ cd "rustc-$CHANNEL"
 . ./envvars
 NEWUPSTR="$(echo "$CFG_RELEASE.$MODDATE2+dfsg1" | sed -e 's/-beta/~beta/' -e 's/-nightly/~~nightly/')"
 cp -a "$DEBDIR" .
-mk-origtargz -v "$NEWUPSTR" "../$BASENAME"
+mk-origtargz --repack --compression xz -v "$NEWUPSTR" "../$BASENAME"
 cd ..
 
 rm -rf "rustc-$CHANNEL" "rustc-$NEWUPSTR"
-tar xf "rustc_$NEWUPSTR.orig.tar.gz"
+tar xf "rustc_$NEWUPSTR.orig.tar.xz"
 mv "rustc-$CHANNEL" "rustc-$NEWUPSTR"
 
 libstd_ver() {

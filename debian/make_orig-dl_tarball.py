@@ -26,7 +26,7 @@ for arch in ('i386', 'x86_64'):
     snapshots[arch] = determine_curr_snapshot(arch + '-unknown-linux')
 
 def create_dl_tarball():
-    dl_tarfile = 'rustc_' + upstream_version  + '.orig-dl.tar.gz'
+    dl_tarfile = 'rustc_' + upstream_version  + '.orig-dl.tar.xz'
     url_base = 'https://static.rust-lang.org/stage0-snapshots/'
     out_paths = []
     for arch, snapshot in snapshots.iteritems():
@@ -38,7 +38,7 @@ def create_dl_tarball():
     # extra flags for reproducibility
     subprocess.check_call([
         "tar", "--mtime=@%s" % int(time.time()), "--clamp-mtime",
-        "-czf", dl_tarfile
-    ] + snapshots.values(), cwd=src_root_parent_dir, env={"GZIP":"-n"})
+        "-cJf", dl_tarfile
+    ] + snapshots.values(), cwd=src_root_parent_dir)
 
 create_dl_tarball()
