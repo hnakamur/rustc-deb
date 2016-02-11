@@ -10,6 +10,7 @@ CHANNEL="${CHANNEL:-beta}" # either beta or nightly
 DIST="${DIST:-experimental}" # which suite to put in debian/changelog
 DEBDIR="${DEBDIR:-}" # where is the debian/ directory? defaults to this script
 NOREMOTE="${NOREMOTE:-false}" # e.g. if you have already downloaded all necessary files
+# note that we already use "wget -N" to avoid redundant downloads
 
 do_temporary_fixups() {
 # patches needed to subsequent versions go here
@@ -45,7 +46,9 @@ set -e
 
 $NOREMOTE || wget -N "$HOST/dist/$BASENAME"
 $NOREMOTE || wget -N "$HOST/dist/$BASENAME.asc"
-$NOREMOTE || MODDATE1="$(torsocks wget "$HOST/dist/index.txt" -O - | grep "^/dist/$BASENAME," | cut -d, -f3 | sed -e 's/\(.*\)-\(.*\)-\(.*\)T.*/\1\2\3/')"
+$NOREMOTE || wget -N "$HOST/dist/index.txt"
+MODDATE1="$(grep "^/dist/$BASENAME," index.txt \
+  | cut -d, -f3 | sed -e 's/\(.*\)-\(.*\)-\(.*\)T.*/\1\2\3/')"
 MODDATE2="$(TZ=UTC stat "$BASENAME" -c %y | sed -e 's/\(.*\)-\(.*\)-\([0-9]*\) .*$/\1\2\3/')"
 $NOREMOTE || test "$MODDATE1" = "$MODDATE2" || abort 2 "file mod times don't match, try again"
 $NOREMOTE || wget -N "$JQUERY"

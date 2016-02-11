@@ -1,12 +1,9 @@
 #!/usr/bin/python
 
 import os
-import re
-import StringIO
 import subprocess
 import sys
-import tarfile
-import urllib3
+import time
 
 deb_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
 src_root_dir = os.path.realpath(os.path.join(deb_dir, '..'))
@@ -28,28 +25,20 @@ snapshots = {}
 for arch in ('i386', 'x86_64'):
     snapshots[arch] = determine_curr_snapshot(arch + '-unknown-linux')
 
-http = urllib3.PoolManager()
-
 def create_dl_tarball():
     dl_tarfile = 'rustc_' + upstream_version  + '.orig-dl.tar.gz'
-    dl_tarfile = os.path.join(src_root_parent_dir, dl_tarfile)
-    tar = tarfile.open(dl_tarfile, 'w:gz')
     url_base = 'https://static.rust-lang.org/stage0-snapshots/'
-    for arch in snapshots.iterkeys():
-        snapshot = snapshots[arch]
+    out_paths = []
+    for arch, snapshot in snapshots.iteritems():
         url = url_base + snapshot
-        print 'Downloading', snapshot, '...',
-        sys.stdout.flush()
-        r = http.request('GET', url)
-        print
-        assert(r.status == 200)
-        filelike = StringIO.StringIO(r.data)
-        tarinfo = tarfile.TarInfo(snapshot)
-        tarinfo.size = len(filelike.buf)
-        print 'Writing to', dl_tarfile, '...',
-        tar.addfile(tarinfo, filelike)
-        filelike.close()
-        print
-    tar.close()
+        out_path = os.path.join(src_root_parent_dir, snapshot)
+        subprocess.check_call(["wget", "-N", url], cwd=src_root_parent_dir)
+        out_paths.append(out_path)
+    print "Building %s" % dl_tarfile
+    # extra flags for reproducibility
+    subprocess.check_call([
+        "tar", "--mtime=@%s" % int(time.time()), "--clamp-mtime",
+        "-czf", dl_tarfile
+    ] + snapshots.values(), cwd=src_root_parent_dir, env={"GZIP":"-n"})
 
 create_dl_tarball()
