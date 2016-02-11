@@ -11,6 +11,8 @@ DIST="${DIST:-experimental}" # which suite to put in debian/changelog
 DEBDIR="${DEBDIR:-}" # where is the debian/ directory? defaults to this script
 NOREMOTE="${NOREMOTE:-false}" # e.g. if you have already downloaded all necessary files
 # note that we already use "wget -N" to avoid redundant downloads
+NOCLOBBER="${NOCLOBBER:-true}" # don't rebuild if we already have the .dsc
+DPUT_HOST="${DPUT_HOST}" # optional host dput the resulting .dsc to
 
 do_temporary_fixups() {
 # patches needed to subsequent versions go here
@@ -46,6 +48,7 @@ set -e
 
 $NOREMOTE || wget -N "$HOST/dist/$BASENAME"
 $NOREMOTE || wget -N "$HOST/dist/$BASENAME.asc"
+$NOREMOTE || gpg2 -v "$BASENAME.asc"
 $NOREMOTE || wget -N "$HOST/dist/index.txt"
 MODDATE1="$(grep "^/dist/$BASENAME," index.txt \
   | cut -d, -f3 | sed -e 's/\(.*\)-\(.*\)-\(.*\)T.*/\1\2\3/')"
@@ -66,6 +69,11 @@ cd "rustc-$CHANNEL"
 } | make -f - > ./envvars
 . ./envvars
 NEWUPSTR="$(echo "$CFG_RELEASE.$MODDATE2+dfsg1" | sed -e 's/-beta/~beta/' -e 's/-nightly/~~nightly/')"
+if $NOCLOBBER && test -f "../rustc_$NEWUPSTR-1.dsc"; then
+	cd ..
+	rm -rf "rustc-$CHANNEL"
+	abort 0 "already have rustc_$NEWUPSTR-1.dsc; set NOCLOBBER=false if you want to force"
+fi
 cp -a "$DEBDIR" .
 mk-origtargz --repack --compression xz -v "$NEWUPSTR" "../$BASENAME"
 cd ..
@@ -96,7 +104,10 @@ rm -rf .pc
 dpkg-buildpackage -d -S
 cd ..
 
-set +x
-
-echo "Source package built, but there is NO GUARANTEE THAT IT WORKS!"
-echo "You should now try to build it with \`sudo cowbuilder --build rustc_$NEWUPSTR-1.dsc\`"
+if test -n "$DPUT_HOST"; then
+	dput "$DPUT_HOST" "rustc_$NEWUPSTR-1_source.changes"
+else
+	set +x
+	echo "Source package built, but there is NO GUARANTEE THAT IT WORKS!"
+	echo "You should now try to build it with \`sudo cowbuilder --build rustc_$NEWUPSTR-1.dsc\`"
+fi
