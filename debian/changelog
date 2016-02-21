@@ -1,7 +1,14 @@
-rustc (1.6.0+dfsg1-3) UNRELEASED; urgency=medium
+rustc (1.6.0+dfsg1-3) unstable; urgency=medium
 
+  * Apply upstream fix to silent a valgrind issue in the test suite
+    (Closes: ##812825)
   * Add gcc & libc-dev as dependency of rustc to make sure it works
     out of the box
+
+  [ Ximin Luo ]
+  * Work around rust bug https://github.com/rust-lang/rust/issues/31529
+  * Enable optional tests, and add verbosity/backtraces to tests
+  * Use XZ instead of GZ compression (will apply to the next new upload)
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Tue, 02 Feb 2016 15:08:11 +0100
 
