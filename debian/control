@@ -22,8 +22,7 @@ Build-Depends: debhelper (>= 9.20141010),
                bison,
                flex,
                gdb,
-               java-compiler,
-               java-runtime,
+               default-jdk,
 # above are optional tools for 'make check'
                llvm-3.7-dev,
                llvm-3.7-tools
