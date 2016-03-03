@@ -162,11 +162,9 @@ use core::fmt;
 use core::hash::{Hasher, Hash};
 use core::intrinsics::{assume, abort};
 use core::marker;
-#[cfg(not(stage0))]
 use core::marker::Unsize;
-use core::mem::{self, align_of_val, size_of_val, forget};
+use core::mem::{self, align_of_val, size_of_val, forget, uninitialized};
 use core::ops::Deref;
-#[cfg(not(stage0))]
 use core::ops::CoerceUnsized;
 use core::ptr::{self, Shared};
 use core::convert::From;
@@ -196,8 +194,6 @@ impl<T: ?Sized> !marker::Send for Rc<T> {}
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> !marker::Sync for Rc<T> {}
 
-// remove cfg after new snapshot
-#[cfg(not(stage0))]
 #[unstable(feature = "coerce_unsized", issue = "27732")]
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Rc<U>> for Rc<T> {}
 
@@ -360,14 +356,6 @@ impl<T: ?Sized> Rc<T> {
 }
 
 impl<T: Clone> Rc<T> {
-    #[inline]
-    #[unstable(feature = "rc_make_unique", reason = "renamed to Rc::make_mut",
-               issue = "27718")]
-    #[rustc_deprecated(since = "1.4.0", reason = "renamed to Rc::make_mut")]
-    pub fn make_unique(&mut self) -> &mut T {
-        Rc::make_mut(self)
-    }
-
     /// Make a mutable reference into the given `Rc<T>` by cloning the inner
     /// data if the `Rc<T>` doesn't have one strong reference and no weak
     /// references.
@@ -461,8 +449,9 @@ impl<T: ?Sized> Drop for Rc<T> {
     fn drop(&mut self) {
         unsafe {
             let ptr = *self._ptr;
-            if !(*(&ptr as *const _ as *const *const ())).is_null() &&
-               ptr as *const () as usize != mem::POST_DROP_USIZE {
+            let thin = ptr as *const ();
+
+            if thin as usize != mem::POST_DROP_USIZE {
                 self.dec_strong();
                 if self.strong() == 0 {
                     // destroy the contained object
@@ -731,8 +720,6 @@ impl<T: ?Sized> !marker::Send for Weak<T> {}
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized> !marker::Sync for Weak<T> {}
 
-// remove cfg after new snapshot
-#[cfg(not(stage0))]
 #[unstable(feature = "coerce_unsized", issue = "27732")]
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Weak<U>> for Weak<T> {}
 
@@ -796,8 +783,9 @@ impl<T: ?Sized> Drop for Weak<T> {
     fn drop(&mut self) {
         unsafe {
             let ptr = *self._ptr;
-            if !(*(&ptr as *const _ as *const *const ())).is_null() &&
-               ptr as *const () as usize != mem::POST_DROP_USIZE {
+            let thin = ptr as *const ();
+
+            if thin as usize != mem::POST_DROP_USIZE {
                 self.dec_weak();
                 // the weak count starts at 1, and will only go to zero if all
                 // the strong pointers have disappeared.
@@ -835,6 +823,37 @@ impl<T: ?Sized> Clone for Weak<T> {
 impl<T: ?Sized + fmt::Debug> fmt::Debug for Weak<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "(Weak)")
+    }
+}
+
+impl<T> Weak<T> {
+    /// Constructs a new `Weak<T>` without an accompanying instance of T.
+    ///
+    /// This allocates memory for T, but does not initialize it. Calling
+    /// Weak<T>::upgrade() on the return value always gives None.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(downgraded_weak)]
+    ///
+    /// use std::rc::Weak;
+    ///
+    /// let empty: Weak<i64> = Weak::new();
+    /// ```
+    #[unstable(feature = "downgraded_weak",
+               reason = "recently added",
+               issue="30425")]
+    pub fn new() -> Weak<T> {
+        unsafe {
+            Weak {
+                _ptr: Shared::new(Box::into_raw(box RcBox {
+                    strong: Cell::new(0),
+                    weak: Cell::new(1),
+                    value: uninitialized(),
+                })),
+            }
+        }
     }
 }
 
@@ -1129,6 +1148,12 @@ mod tests {
         let foo = 123;
         let foo_rc = Rc::from(foo);
         assert!(123 == *foo_rc);
+    }
+
+    #[test]
+    fn test_new_weak() {
+        let foo: Weak<usize> = Weak::new();
+        assert!(foo.upgrade().is_none());
     }
 }
 

@@ -12,6 +12,10 @@ pub type pthread_mutexattr_t = *mut ::c_void;
 pub type pthread_cond_t = *mut ::c_void;
 pub type pthread_rwlock_t = *mut ::c_void;
 pub type pthread_key_t = ::c_int;
+pub type fsblkcnt_t = ::c_uint;
+pub type fsfilcnt_t = ::c_uint;
+pub type tcflag_t = ::c_uint;
+pub type speed_t = ::c_uint;
 
 pub enum timezone {}
 
@@ -98,6 +102,35 @@ s! {
         pub f_frsize: ::c_ulong,
         pub f_fsid: ::c_ulong,
         pub f_namemax: ::c_ulong,
+    }
+
+    pub struct sched_param {
+        pub sched_priority: ::c_int,
+    }
+
+    pub struct Dl_info {
+        pub dli_fname: *const ::c_char,
+        pub dli_fbase: *mut ::c_void,
+        pub dli_sname: *const ::c_char,
+        pub dli_saddr: *mut ::c_void,
+    }
+
+    pub struct sockaddr_in {
+        pub sin_len: u8,
+        pub sin_family: ::sa_family_t,
+        pub sin_port: ::in_port_t,
+        pub sin_addr: ::in_addr,
+        pub sin_zero: [::c_char; 8],
+    }
+
+    pub struct termios {
+        pub c_iflag: ::tcflag_t,
+        pub c_oflag: ::tcflag_t,
+        pub c_cflag: ::tcflag_t,
+        pub c_lflag: ::tcflag_t,
+        pub c_cc: [::cc_t; ::NCCS],
+        pub c_ispeed: ::speed_t,
+        pub c_ospeed: ::speed_t,
     }
 }
 
@@ -514,7 +547,32 @@ pub const PTHREAD_COND_INITIALIZER: pthread_cond_t = 0 as *mut _;
 pub const PTHREAD_RWLOCK_INITIALIZER: pthread_rwlock_t = 0 as *mut _;
 pub const PTHREAD_MUTEX_RECURSIVE: ::c_int = 2;
 
+pub const SCHED_FIFO: ::c_int = 1;
+pub const SCHED_OTHER: ::c_int = 2;
+pub const SCHED_RR: ::c_int = 3;
+
+pub const FD_SETSIZE: usize = 1024;
+
+pub const ST_NOSUID: ::c_ulong = 2;
+
+pub const HW_AVAILCPU: ::c_int = 25;
+
+pub const NI_MAXHOST: ::size_t = 1025;
+
 extern {
+    pub fn getnameinfo(sa: *const ::sockaddr,
+                       salen: ::socklen_t,
+                       host: *mut ::c_char,
+                       hostlen: ::size_t,
+                       serv: *mut ::c_char,
+                       servlen: ::size_t,
+                       flags: ::c_int) -> ::c_int;
+    pub fn mincore(addr: *const ::c_void, len: ::size_t,
+                   vec: *mut ::c_char) -> ::c_int;
+    pub fn sysctlnametomib(name: *const ::c_char,
+                           mibp: *mut ::c_int,
+                           sizep: *mut ::size_t)
+                           -> ::c_int;
     pub fn mprotect(addr: *const ::c_void, len: ::size_t, prot: ::c_int)
                     -> ::c_int;
     pub fn shm_open(name: *const ::c_char, oflag: ::c_int, mode: ::mode_t)
@@ -536,6 +594,9 @@ extern {
     pub fn pthread_set_name_np(tid: ::pthread_t, name: *const ::c_char);
     pub fn posix_fallocate(fd: ::c_int, offset: ::off_t,
                            len: ::off_t) -> ::c_int;
+    pub fn sched_setscheduler(pid: ::pid_t, policy: ::c_int, param: *const sched_param) -> ::c_int;
+    pub fn sched_getscheduler(pid: ::pid_t) -> ::c_int;
+    pub fn memrchr(cx: *const ::c_void, c: ::c_int, n: ::size_t) -> *mut ::c_void;
 }
 
 cfg_if! {

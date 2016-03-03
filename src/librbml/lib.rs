@@ -111,11 +111,8 @@
 //!
 //! First 0x20 tags are reserved by RBML; custom tags start at 0x20.
 
-// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
-#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rbml"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![cfg_attr(stage0, staged_api)]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -126,14 +123,22 @@
 
 #![feature(rustc_private)]
 #![feature(staged_api)]
-#![feature(clone_from_slice)]
 
 #![cfg_attr(test, feature(test))]
 
 extern crate serialize;
-#[macro_use] extern crate log;
 
-#[cfg(test)] extern crate test;
+#[cfg(test)]
+extern crate serialize as rustc_serialize; // Used by RustcEncodable
+
+#[macro_use]
+extern crate log;
+
+#[cfg(test)]
+extern crate test;
+
+pub mod opaque;
+pub mod leb128;
 
 pub use self::EbmlEncoderTag::*;
 pub use self::Error::*;
@@ -151,7 +156,11 @@ pub struct Doc<'a> {
 
 impl<'doc> Doc<'doc> {
     pub fn new(data: &'doc [u8]) -> Doc<'doc> {
-        Doc { data: data, start: 0, end: data.len() }
+        Doc {
+            data: data,
+            start: 0,
+            end: data.len(),
+        }
     }
 
     pub fn get<'a>(&'a self, tag: usize) -> Doc<'a> {
@@ -180,36 +189,35 @@ pub struct TaggedDoc<'a> {
 pub enum EbmlEncoderTag {
     // tags 00..1f are reserved for auto-serialization.
     // first NUM_IMPLICIT_TAGS tags are implicitly sized and lengths are not encoded.
-
-    EsU8       = 0x00, // + 1 byte
-    EsU16      = 0x01, // + 2 bytes
-    EsU32      = 0x02, // + 4 bytes
-    EsU64      = 0x03, // + 8 bytes
-    EsI8       = 0x04, // + 1 byte
-    EsI16      = 0x05, // + 2 bytes
-    EsI32      = 0x06, // + 4 bytes
-    EsI64      = 0x07, // + 8 bytes
-    EsBool     = 0x08, // + 1 byte
-    EsChar     = 0x09, // + 4 bytes
-    EsF32      = 0x0a, // + 4 bytes
-    EsF64      = 0x0b, // + 8 bytes
-    EsSub8     = 0x0c, // + 1 byte
-    EsSub32    = 0x0d, // + 4 bytes
+    EsU8 = 0x00, // + 1 byte
+    EsU16 = 0x01, // + 2 bytes
+    EsU32 = 0x02, // + 4 bytes
+    EsU64 = 0x03, // + 8 bytes
+    EsI8 = 0x04, // + 1 byte
+    EsI16 = 0x05, // + 2 bytes
+    EsI32 = 0x06, // + 4 bytes
+    EsI64 = 0x07, // + 8 bytes
+    EsBool = 0x08, // + 1 byte
+    EsChar = 0x09, // + 4 bytes
+    EsF32 = 0x0a, // + 4 bytes
+    EsF64 = 0x0b, // + 8 bytes
+    EsSub8 = 0x0c, // + 1 byte
+    EsSub32 = 0x0d, // + 4 bytes
     // 0x0e and 0x0f are reserved
-
-    EsStr      = 0x10,
-    EsEnum     = 0x11, // encodes the variant id as the first EsSub*
-    EsVec      = 0x12, // encodes the # of elements as the first EsSub*
-    EsVecElt   = 0x13,
-    EsMap      = 0x14, // encodes the # of pairs as the first EsSub*
-    EsMapKey   = 0x15,
-    EsMapVal   = 0x16,
-    EsOpaque   = 0x17,
+    EsStr = 0x10,
+    EsEnum = 0x11, // encodes the variant id as the first EsSub*
+    EsVec = 0x12, // encodes the # of elements as the first EsSub*
+    EsVecElt = 0x13,
+    EsMap = 0x14, // encodes the # of pairs as the first EsSub*
+    EsMapKey = 0x15,
+    EsMapVal = 0x16,
+    EsOpaque = 0x17,
 }
 
 const NUM_TAGS: usize = 0x1000;
 const NUM_IMPLICIT_TAGS: usize = 0x0e;
 
+#[cfg_attr(rustfmt, rustfmt_skip)]
 static TAG_IMPLICIT_LEN: [i8; NUM_IMPLICIT_TAGS] = [
     1, 2, 4, 8, // EsU*
     1, 2, 4, 8, // ESI*
@@ -225,7 +233,7 @@ pub enum Error {
     InvalidTag(usize),
     Expected(String),
     IoError(std::io::Error),
-    ApplicationError(String)
+    ApplicationError(String),
 }
 
 impl fmt::Display for Error {
@@ -244,11 +252,11 @@ pub mod reader {
 
     use serialize;
 
-    use super::{ ApplicationError, EsVec, EsMap, EsEnum, EsSub8, EsSub32,
-        EsVecElt, EsMapKey, EsU64, EsU32, EsU16, EsU8, EsI64,
-        EsI32, EsI16, EsI8, EsBool, EsF64, EsF32, EsChar, EsStr, EsMapVal,
-        EsOpaque, EbmlEncoderTag, Doc, TaggedDoc,
-        Error, IntTooBig, InvalidTag, Expected, NUM_IMPLICIT_TAGS, TAG_IMPLICIT_LEN };
+    use super::opaque;
+    use super::{ApplicationError, EsVec, EsMap, EsEnum, EsSub8, EsSub32, EsVecElt, EsMapKey,
+                EsU64, EsU32, EsU16, EsU8, EsI64, EsI32, EsI16, EsI8, EsBool, EsF64, EsF32,
+                EsChar, EsStr, EsMapVal, EsOpaque, EbmlEncoderTag, Doc, TaggedDoc, Error,
+                IntTooBig, InvalidTag, Expected, NUM_IMPLICIT_TAGS, TAG_IMPLICIT_LEN};
 
     pub type DecodeResult<T> = Result<T, Error>;
     // rbml reading
@@ -268,15 +276,21 @@ pub mod reader {
     #[derive(Copy, Clone)]
     pub struct Res {
         pub val: usize,
-        pub next: usize
+        pub next: usize,
     }
 
     pub fn tag_at(data: &[u8], start: usize) -> DecodeResult<Res> {
         let v = data[start] as usize;
         if v < 0xf0 {
-            Ok(Res { val: v, next: start + 1 })
+            Ok(Res {
+                val: v,
+                next: start + 1,
+            })
         } else if v > 0xf0 {
-            Ok(Res { val: ((v & 0xf) << 8) | data[start + 1] as usize, next: start + 2 })
+            Ok(Res {
+                val: ((v & 0xf) << 8) | data[start + 1] as usize,
+                next: start + 2,
+            })
         } else {
             // every tag starting with byte 0xf0 is an overlong form, which is prohibited.
             Err(InvalidTag(v))
@@ -287,25 +301,31 @@ pub mod reader {
     fn vuint_at_slow(data: &[u8], start: usize) -> DecodeResult<Res> {
         let a = data[start];
         if a & 0x80 != 0 {
-            return Ok(Res {val: (a & 0x7f) as usize, next: start + 1});
+            return Ok(Res {
+                val: (a & 0x7f) as usize,
+                next: start + 1,
+            });
         }
         if a & 0x40 != 0 {
-            return Ok(Res {val: ((a & 0x3f) as usize) << 8 |
-                        (data[start + 1] as usize),
-                    next: start + 2});
+            return Ok(Res {
+                val: ((a & 0x3f) as usize) << 8 | (data[start + 1] as usize),
+                next: start + 2,
+            });
         }
         if a & 0x20 != 0 {
-            return Ok(Res {val: ((a & 0x1f) as usize) << 16 |
-                        (data[start + 1] as usize) << 8 |
-                        (data[start + 2] as usize),
-                    next: start + 3});
+            return Ok(Res {
+                val: ((a & 0x1f) as usize) << 16 | (data[start + 1] as usize) << 8 |
+                     (data[start + 2] as usize),
+                next: start + 3,
+            });
         }
         if a & 0x10 != 0 {
-            return Ok(Res {val: ((a & 0x0f) as usize) << 24 |
-                        (data[start + 1] as usize) << 16 |
-                        (data[start + 2] as usize) << 8 |
-                        (data[start + 3] as usize),
-                    next: start + 4});
+            return Ok(Res {
+                val: ((a & 0x0f) as usize) << 24 | (data[start + 1] as usize) << 16 |
+                     (data[start + 2] as usize) << 8 |
+                     (data[start + 3] as usize),
+                next: start + 4,
+            });
         }
         Err(IntTooBig(a as usize))
     }
@@ -334,13 +354,22 @@ pub mod reader {
         // most significant bit is set etc. we can replace up to three
         // "and+branch" with a single table lookup which gives us a measured
         // speedup of around 2x on x86_64.
-        static SHIFT_MASK_TABLE: [(usize, u32); 16] = [
-            (0, 0x0), (0, 0x0fffffff),
-            (8, 0x1fffff), (8, 0x1fffff),
-            (16, 0x3fff), (16, 0x3fff), (16, 0x3fff), (16, 0x3fff),
-            (24, 0x7f), (24, 0x7f), (24, 0x7f), (24, 0x7f),
-            (24, 0x7f), (24, 0x7f), (24, 0x7f), (24, 0x7f)
-        ];
+        static SHIFT_MASK_TABLE: [(usize, u32); 16] = [(0, 0x0),
+                                                       (0, 0x0fffffff),
+                                                       (8, 0x1fffff),
+                                                       (8, 0x1fffff),
+                                                       (16, 0x3fff),
+                                                       (16, 0x3fff),
+                                                       (16, 0x3fff),
+                                                       (16, 0x3fff),
+                                                       (24, 0x7f),
+                                                       (24, 0x7f),
+                                                       (24, 0x7f),
+                                                       (24, 0x7f),
+                                                       (24, 0x7f),
+                                                       (24, 0x7f),
+                                                       (24, 0x7f),
+                                                       (24, 0x7f)];
 
         unsafe {
             let ptr = data.as_ptr().offset(start as isize) as *const u32;
@@ -357,7 +386,10 @@ pub mod reader {
 
     pub fn tag_len_at(data: &[u8], tag: Res) -> DecodeResult<Res> {
         if tag.val < NUM_IMPLICIT_TAGS && TAG_IMPLICIT_LEN[tag.val] >= 0 {
-            Ok(Res { val: TAG_IMPLICIT_LEN[tag.val] as usize, next: tag.next })
+            Ok(Res {
+                val: TAG_IMPLICIT_LEN[tag.val] as usize,
+                next: tag.next,
+            })
         } else {
             vuint_at(data, tag.next)
         }
@@ -369,7 +401,11 @@ pub mod reader {
         let end = elt_size.next + elt_size.val;
         Ok(TaggedDoc {
             tag: elt_tag.val,
-            doc: Doc { data: data, start: elt_size.next, end: end }
+            doc: Doc {
+                data: data,
+                start: elt_size.next,
+                end: end,
+            },
         })
     }
 
@@ -380,8 +416,11 @@ pub mod reader {
             let elt_size = try_or!(tag_len_at(d.data, elt_tag), None);
             pos = elt_size.next + elt_size.val;
             if elt_tag.val == tg {
-                return Some(Doc { data: d.data, start: elt_size.next,
-                                  end: pos });
+                return Some(Doc {
+                    data: d.data,
+                    start: elt_size.next,
+                    end: pos,
+                });
             }
         }
         None
@@ -398,9 +437,7 @@ pub mod reader {
     }
 
     pub fn docs<'a>(d: Doc<'a>) -> DocsIterator<'a> {
-        DocsIterator {
-            d: d
-        }
+        DocsIterator { d: d }
     }
 
     pub struct DocsIterator<'a> {
@@ -461,8 +498,8 @@ pub mod reader {
         }
     }
 
-    pub fn with_doc_data<T, F>(d: Doc, f: F) -> T where
-        F: FnOnce(&[u8]) -> T,
+    pub fn with_doc_data<T, F>(d: Doc, f: F) -> T
+        where F: FnOnce(&[u8]) -> T
     {
         f(&d.data[d.start..d.end])
     }
@@ -481,30 +518,48 @@ pub mod reader {
             // of the page and segfault.
 
             let mut b = [0; 8];
-            b.clone_from_slice(&d.data[d.end-8..d.end]);
+            b.clone_from_slice(&d.data[d.end - 8..d.end]);
             let data = unsafe { (*(b.as_ptr() as *const u64)).to_be() };
             let len = d.end - d.start;
             if len < 8 {
-                data & ((1<<(len*8))-1)
+                data & ((1 << (len * 8)) - 1)
             } else {
                 data
             }
         } else {
             let mut result = 0;
             for b in &d.data[d.start..d.end] {
-                result = (result<<8) + (*b as u64);
+                result = (result << 8) + (*b as u64);
             }
             result
         }
     }
 
-    #[inline] pub fn doc_as_u16(d: Doc) -> u16 { doc_as_u64(d) as u16 }
-    #[inline] pub fn doc_as_u32(d: Doc) -> u32 { doc_as_u64(d) as u32 }
+    #[inline]
+    pub fn doc_as_u16(d: Doc) -> u16 {
+        doc_as_u64(d) as u16
+    }
+    #[inline]
+    pub fn doc_as_u32(d: Doc) -> u32 {
+        doc_as_u64(d) as u32
+    }
 
-    #[inline] pub fn doc_as_i8(d: Doc) -> i8 { doc_as_u8(d) as i8 }
-    #[inline] pub fn doc_as_i16(d: Doc) -> i16 { doc_as_u16(d) as i16 }
-    #[inline] pub fn doc_as_i32(d: Doc) -> i32 { doc_as_u32(d) as i32 }
-    #[inline] pub fn doc_as_i64(d: Doc) -> i64 { doc_as_u64(d) as i64 }
+    #[inline]
+    pub fn doc_as_i8(d: Doc) -> i8 {
+        doc_as_u8(d) as i8
+    }
+    #[inline]
+    pub fn doc_as_i16(d: Doc) -> i16 {
+        doc_as_u16(d) as i16
+    }
+    #[inline]
+    pub fn doc_as_i32(d: Doc) -> i32 {
+        doc_as_u32(d) as i32
+    }
+    #[inline]
+    pub fn doc_as_i64(d: Doc) -> i64 {
+        doc_as_u64(d) as i64
+    }
 
     pub struct Decoder<'a> {
         parent: Doc<'a>,
@@ -515,18 +570,16 @@ pub mod reader {
         pub fn new(d: Doc<'doc>) -> Decoder<'doc> {
             Decoder {
                 parent: d,
-                pos: d.start
+                pos: d.start,
             }
         }
 
         fn next_doc(&mut self, exp_tag: EbmlEncoderTag) -> DecodeResult<Doc<'doc>> {
             debug!(". next_doc(exp_tag={:?})", exp_tag);
             if self.pos >= self.parent.end {
-                return Err(Expected(format!("no more documents in \
-                                             current node!")));
+                return Err(Expected(format!("no more documents in current node!")));
             }
-            let TaggedDoc { tag: r_tag, doc: r_doc } =
-                try!(doc_at(self.parent.data, self.pos));
+            let TaggedDoc { tag: r_tag, doc: r_doc } = try!(doc_at(self.parent.data, self.pos));
             debug!("self.parent={:?}-{:?} self.pos={:?} r_tag={:?} r_doc={:?}-{:?}",
                    self.parent.start,
                    self.parent.end,
@@ -535,20 +588,22 @@ pub mod reader {
                    r_doc.start,
                    r_doc.end);
             if r_tag != (exp_tag as usize) {
-                return Err(Expected(format!("expected EBML doc with tag {:?} but \
-                                             found tag {:?}", exp_tag, r_tag)));
+                return Err(Expected(format!("expected EBML doc with tag {:?} but found tag {:?}",
+                                            exp_tag,
+                                            r_tag)));
             }
             if r_doc.end > self.parent.end {
-                return Err(Expected(format!("invalid EBML, child extends to \
-                                             {:#x}, parent to {:#x}",
-                                            r_doc.end, self.parent.end)));
+                return Err(Expected(format!("invalid EBML, child extends to {:#x}, parent to \
+                                             {:#x}",
+                                            r_doc.end,
+                                            self.parent.end)));
             }
             self.pos = r_doc.end;
             Ok(r_doc)
         }
 
-        fn push_doc<T, F>(&mut self, exp_tag: EbmlEncoderTag, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn push_doc<T, F>(&mut self, exp_tag: EbmlEncoderTag, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             let d = try!(self.next_doc(exp_tag));
             let old_parent = self.parent;
@@ -567,20 +622,23 @@ pub mod reader {
                 return Ok(0);
             }
 
-            let TaggedDoc { tag: r_tag, doc: r_doc } =
-                try!(doc_at(self.parent.data, self.pos));
+            let TaggedDoc { tag: r_tag, doc: r_doc } = try!(doc_at(self.parent.data, self.pos));
             let r = if r_tag == (EsSub8 as usize) {
                 doc_as_u8(r_doc) as usize
             } else if r_tag == (EsSub32 as usize) {
                 doc_as_u32(r_doc) as usize
             } else {
-                return Err(Expected(format!("expected EBML doc with tag {:?} or {:?} but \
-                                             found tag {:?}", EsSub8, EsSub32, r_tag)));
+                return Err(Expected(format!("expected EBML doc with tag {:?} or {:?} but found \
+                                             tag {:?}",
+                                            EsSub8,
+                                            EsSub32,
+                                            r_tag)));
             };
             if r_doc.end > self.parent.end {
-                return Err(Expected(format!("invalid EBML, child extends to \
-                                             {:#x}, parent to {:#x}",
-                                            r_doc.end, self.parent.end)));
+                return Err(Expected(format!("invalid EBML, child extends to {:#x}, parent to \
+                                             {:#x}",
+                                            r_doc.end,
+                                            self.parent.end)));
             }
             self.pos = r_doc.end;
             debug!("_next_sub result={:?}", r);
@@ -593,14 +651,13 @@ pub mod reader {
         // all tags between them should be valid, in the order of u8, u16, u32 and u64.
         fn _next_int(&mut self,
                      first_tag: EbmlEncoderTag,
-                     last_tag: EbmlEncoderTag) -> DecodeResult<u64> {
+                     last_tag: EbmlEncoderTag)
+                     -> DecodeResult<u64> {
             if self.pos >= self.parent.end {
-                return Err(Expected(format!("no more documents in \
-                                             current node!")));
+                return Err(Expected(format!("no more documents in current node!")));
             }
 
-            let TaggedDoc { tag: r_tag, doc: r_doc } =
-                try!(doc_at(self.parent.data, self.pos));
+            let TaggedDoc { tag: r_tag, doc: r_doc } = try!(doc_at(self.parent.data, self.pos));
             let r = if first_tag as usize <= r_tag && r_tag <= last_tag as usize {
                 match r_tag - first_tag as usize {
                     0 => doc_as_u8(r_doc) as u64,
@@ -611,43 +668,62 @@ pub mod reader {
                 }
             } else {
                 return Err(Expected(format!("expected EBML doc with tag {:?} through {:?} but \
-                                             found tag {:?}", first_tag, last_tag, r_tag)));
+                                             found tag {:?}",
+                                            first_tag,
+                                            last_tag,
+                                            r_tag)));
             };
             if r_doc.end > self.parent.end {
-                return Err(Expected(format!("invalid EBML, child extends to \
-                                             {:#x}, parent to {:#x}",
-                                            r_doc.end, self.parent.end)));
+                return Err(Expected(format!("invalid EBML, child extends to {:#x}, parent to \
+                                             {:#x}",
+                                            r_doc.end,
+                                            self.parent.end)));
             }
             self.pos = r_doc.end;
             debug!("_next_int({:?}, {:?}) result={:?}", first_tag, last_tag, r);
             Ok(r)
         }
 
-        pub fn read_opaque<R, F>(&mut self, op: F) -> DecodeResult<R> where
-            F: FnOnce(&mut Decoder, Doc) -> DecodeResult<R>,
+        pub fn read_opaque<R, F>(&mut self, op: F) -> DecodeResult<R>
+            where F: FnOnce(&mut opaque::Decoder, Doc) -> DecodeResult<R>
         {
             let doc = try!(self.next_doc(EsOpaque));
 
-            let (old_parent, old_pos) = (self.parent, self.pos);
-            self.parent = doc;
-            self.pos = doc.start;
+            let result = {
+                let mut opaque_decoder = opaque::Decoder::new(doc.data, doc.start);
+                try!(op(&mut opaque_decoder, doc))
+            };
 
-            let result = try!(op(self, doc));
-
-            self.parent = old_parent;
-            self.pos = old_pos;
             Ok(result)
+        }
+
+        pub fn position(&self) -> usize {
+            self.pos
+        }
+
+        pub fn advance(&mut self, bytes: usize) {
+            self.pos += bytes;
         }
     }
 
     impl<'doc> serialize::Decoder for Decoder<'doc> {
         type Error = Error;
-        fn read_nil(&mut self) -> DecodeResult<()> { Ok(()) }
+        fn read_nil(&mut self) -> DecodeResult<()> {
+            Ok(())
+        }
 
-        fn read_u64(&mut self) -> DecodeResult<u64> { self._next_int(EsU8, EsU64) }
-        fn read_u32(&mut self) -> DecodeResult<u32> { Ok(try!(self._next_int(EsU8, EsU32)) as u32) }
-        fn read_u16(&mut self) -> DecodeResult<u16> { Ok(try!(self._next_int(EsU8, EsU16)) as u16) }
-        fn read_u8(&mut self) -> DecodeResult<u8> { Ok(doc_as_u8(try!(self.next_doc(EsU8)))) }
+        fn read_u64(&mut self) -> DecodeResult<u64> {
+            self._next_int(EsU8, EsU64)
+        }
+        fn read_u32(&mut self) -> DecodeResult<u32> {
+            Ok(try!(self._next_int(EsU8, EsU32)) as u32)
+        }
+        fn read_u16(&mut self) -> DecodeResult<u16> {
+            Ok(try!(self._next_int(EsU8, EsU16)) as u16)
+        }
+        fn read_u8(&mut self) -> DecodeResult<u8> {
+            Ok(doc_as_u8(try!(self.next_doc(EsU8))))
+        }
         fn read_uint(&mut self) -> DecodeResult<usize> {
             let v = try!(self._next_int(EsU8, EsU64));
             if v > (::std::usize::MAX as u64) {
@@ -657,10 +733,18 @@ pub mod reader {
             }
         }
 
-        fn read_i64(&mut self) -> DecodeResult<i64> { Ok(try!(self._next_int(EsI8, EsI64)) as i64) }
-        fn read_i32(&mut self) -> DecodeResult<i32> { Ok(try!(self._next_int(EsI8, EsI32)) as i32) }
-        fn read_i16(&mut self) -> DecodeResult<i16> { Ok(try!(self._next_int(EsI8, EsI16)) as i16) }
-        fn read_i8(&mut self) -> DecodeResult<i8> { Ok(doc_as_u8(try!(self.next_doc(EsI8))) as i8) }
+        fn read_i64(&mut self) -> DecodeResult<i64> {
+            Ok(try!(self._next_int(EsI8, EsI64)) as i64)
+        }
+        fn read_i32(&mut self) -> DecodeResult<i32> {
+            Ok(try!(self._next_int(EsI8, EsI32)) as i32)
+        }
+        fn read_i16(&mut self) -> DecodeResult<i16> {
+            Ok(try!(self._next_int(EsI8, EsI16)) as i16)
+        }
+        fn read_i8(&mut self) -> DecodeResult<i8> {
+            Ok(doc_as_u8(try!(self.next_doc(EsI8))) as i8)
+        }
         fn read_int(&mut self) -> DecodeResult<isize> {
             let v = try!(self._next_int(EsI8, EsI64)) as i64;
             if v > (isize::MAX as i64) || v < (isize::MIN as i64) {
@@ -691,8 +775,8 @@ pub mod reader {
         }
 
         // Compound types:
-        fn read_enum<T, F>(&mut self, name: &str, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_enum<T, F>(&mut self, name: &str, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_enum({})", name);
 
@@ -709,9 +793,8 @@ pub mod reader {
             Ok(result)
         }
 
-        fn read_enum_variant<T, F>(&mut self, _: &[&str],
-                                   mut f: F) -> DecodeResult<T>
-            where F: FnMut(&mut Decoder<'doc>, usize) -> DecodeResult<T>,
+        fn read_enum_variant<T, F>(&mut self, _: &[&str], mut f: F) -> DecodeResult<T>
+            where F: FnMut(&mut Decoder<'doc>, usize) -> DecodeResult<T>
         {
             debug!("read_enum_variant()");
             let idx = try!(self._next_sub());
@@ -720,16 +803,15 @@ pub mod reader {
             f(self, idx)
         }
 
-        fn read_enum_variant_arg<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_enum_variant_arg<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_enum_variant_arg(idx={})", idx);
             f(self)
         }
 
-        fn read_enum_struct_variant<T, F>(&mut self, _: &[&str],
-                                          mut f: F) -> DecodeResult<T>
-            where F: FnMut(&mut Decoder<'doc>, usize) -> DecodeResult<T>,
+        fn read_enum_struct_variant<T, F>(&mut self, _: &[&str], mut f: F) -> DecodeResult<T>
+            where F: FnMut(&mut Decoder<'doc>, usize) -> DecodeResult<T>
         {
             debug!("read_enum_struct_variant()");
             let idx = try!(self._next_sub());
@@ -742,67 +824,66 @@ pub mod reader {
                                                 name: &str,
                                                 idx: usize,
                                                 f: F)
-                                                -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+                                                -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
-                debug!("read_enum_struct_variant_arg(name={}, idx={})", name, idx);
+            debug!("read_enum_struct_variant_arg(name={}, idx={})", name, idx);
             f(self)
         }
 
-        fn read_struct<T, F>(&mut self, name: &str, _: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_struct<T, F>(&mut self, name: &str, _: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_struct(name={})", name);
             f(self)
         }
 
-        fn read_struct_field<T, F>(&mut self, name: &str, idx: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_struct_field<T, F>(&mut self, name: &str, idx: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_struct_field(name={}, idx={})", name, idx);
             f(self)
         }
 
-        fn read_tuple<T, F>(&mut self, tuple_len: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_tuple<T, F>(&mut self, tuple_len: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_tuple()");
             self.read_seq(move |d, len| {
                 if len == tuple_len {
                     f(d)
                 } else {
-                    Err(Expected(format!("Expected tuple of length `{}`, \
-                                          found tuple of length `{}`", tuple_len, len)))
+                    Err(Expected(format!("Expected tuple of length `{}`, found tuple of length \
+                                          `{}`",
+                                         tuple_len,
+                                         len)))
                 }
             })
         }
 
-        fn read_tuple_arg<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_tuple_arg<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_tuple_arg(idx={})", idx);
             self.read_seq_elt(idx, f)
         }
 
-        fn read_tuple_struct<T, F>(&mut self, name: &str, len: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_tuple_struct<T, F>(&mut self, name: &str, len: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_tuple_struct(name={})", name);
             self.read_tuple(len, f)
         }
 
-        fn read_tuple_struct_arg<T, F>(&mut self,
-                                       idx: usize,
-                                       f: F)
-                                       -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_tuple_struct_arg<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_tuple_struct_arg(idx={})", idx);
             self.read_tuple_arg(idx, f)
         }
 
-        fn read_option<T, F>(&mut self, mut f: F) -> DecodeResult<T> where
-            F: FnMut(&mut Decoder<'doc>, bool) -> DecodeResult<T>,
+        fn read_option<T, F>(&mut self, mut f: F) -> DecodeResult<T>
+            where F: FnMut(&mut Decoder<'doc>, bool) -> DecodeResult<T>
         {
             debug!("read_option()");
             self.read_enum("Option", move |this| {
@@ -810,16 +891,14 @@ pub mod reader {
                     match idx {
                         0 => f(this, false),
                         1 => f(this, true),
-                        _ => {
-                            Err(Expected(format!("Expected None or Some")))
-                        }
+                        _ => Err(Expected(format!("Expected None or Some"))),
                     }
                 })
             })
         }
 
-        fn read_seq<T, F>(&mut self, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>, usize) -> DecodeResult<T>,
+        fn read_seq<T, F>(&mut self, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>, usize) -> DecodeResult<T>
         {
             debug!("read_seq()");
             self.push_doc(EsVec, move |d| {
@@ -829,15 +908,15 @@ pub mod reader {
             })
         }
 
-        fn read_seq_elt<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_seq_elt<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_seq_elt(idx={})", idx);
             self.push_doc(EsVecElt, f)
         }
 
-        fn read_map<T, F>(&mut self, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>, usize) -> DecodeResult<T>,
+        fn read_map<T, F>(&mut self, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>, usize) -> DecodeResult<T>
         {
             debug!("read_map()");
             self.push_doc(EsMap, move |d| {
@@ -847,15 +926,15 @@ pub mod reader {
             })
         }
 
-        fn read_map_elt_key<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_map_elt_key<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_map_elt_key(idx={})", idx);
             self.push_doc(EsMapKey, f)
         }
 
-        fn read_map_elt_val<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T> where
-            F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>,
+        fn read_map_elt_val<T, F>(&mut self, idx: usize, f: F) -> DecodeResult<T>
+            where F: FnOnce(&mut Decoder<'doc>) -> DecodeResult<T>
         {
             debug!("read_map_elt_val(idx={})", idx);
             self.push_doc(EsMapVal, f)
@@ -872,10 +951,10 @@ pub mod writer {
     use std::io::prelude::*;
     use std::io::{self, SeekFrom, Cursor};
 
-    use super::{ EsVec, EsMap, EsEnum, EsSub8, EsSub32, EsVecElt, EsMapKey,
-        EsU64, EsU32, EsU16, EsU8, EsI64, EsI32, EsI16, EsI8,
-        EsBool, EsF64, EsF32, EsChar, EsStr, EsMapVal,
-        EsOpaque, NUM_IMPLICIT_TAGS, NUM_TAGS };
+    use super::opaque;
+    use super::{EsVec, EsMap, EsEnum, EsSub8, EsSub32, EsVecElt, EsMapKey, EsU64, EsU32, EsU16,
+                EsU8, EsI64, EsI32, EsI16, EsI8, EsBool, EsF64, EsF32, EsChar, EsStr, EsMapVal,
+                EsOpaque, NUM_IMPLICIT_TAGS, NUM_TAGS};
 
     use serialize;
 
@@ -895,8 +974,7 @@ pub mod writer {
         } else if 0x100 <= n && n < NUM_TAGS {
             w.write_all(&[0xf0 | (n >> 8) as u8, n as u8])
         } else {
-            Err(io::Error::new(io::ErrorKind::Other,
-                               &format!("invalid tag: {}", n)[..]))
+            Err(io::Error::new(io::ErrorKind::Other, &format!("invalid tag: {}", n)[..]))
         }
     }
 
@@ -904,29 +982,33 @@ pub mod writer {
         match size {
             1 => w.write_all(&[0x80 | (n as u8)]),
             2 => w.write_all(&[0x40 | ((n >> 8) as u8), n as u8]),
-            3 => w.write_all(&[0x20 | ((n >> 16) as u8), (n >> 8) as u8,
-                            n as u8]),
-            4 => w.write_all(&[0x10 | ((n >> 24) as u8), (n >> 16) as u8,
-                            (n >> 8) as u8, n as u8]),
-            _ => Err(io::Error::new(io::ErrorKind::Other,
-                                    &format!("isize too big: {}", n)[..]))
+            3 => w.write_all(&[0x20 | ((n >> 16) as u8), (n >> 8) as u8, n as u8]),
+            4 => w.write_all(&[0x10 | ((n >> 24) as u8), (n >> 16) as u8, (n >> 8) as u8, n as u8]),
+            _ => Err(io::Error::new(io::ErrorKind::Other, &format!("isize too big: {}", n)[..])),
         }
     }
 
     pub fn write_vuint<W: Write>(w: &mut W, n: usize) -> EncodeResult {
-        if n < 0x7f { return write_sized_vuint(w, n, 1); }
-        if n < 0x4000 { return write_sized_vuint(w, n, 2); }
-        if n < 0x200000 { return write_sized_vuint(w, n, 3); }
-        if n < 0x10000000 { return write_sized_vuint(w, n, 4); }
-        Err(io::Error::new(io::ErrorKind::Other,
-                           &format!("isize too big: {}", n)[..]))
+        if n < 0x7f {
+            return write_sized_vuint(w, n, 1);
+        }
+        if n < 0x4000 {
+            return write_sized_vuint(w, n, 2);
+        }
+        if n < 0x200000 {
+            return write_sized_vuint(w, n, 3);
+        }
+        if n < 0x10000000 {
+            return write_sized_vuint(w, n, 4);
+        }
+        Err(io::Error::new(io::ErrorKind::Other, &format!("isize too big: {}", n)[..]))
     }
 
     impl<'a> Encoder<'a> {
         pub fn new(w: &'a mut Cursor<Vec<u8>>) -> Encoder<'a> {
             Encoder {
                 writer: w,
-                size_positions: vec!(),
+                size_positions: vec![],
                 relax_limit: 0,
             }
         }
@@ -959,8 +1041,8 @@ pub mod writer {
                 let mut buf = [0u8; RELAX_MAX_SIZE];
                 {
                     let last_size_pos = last_size_pos as usize;
-                    let data = &self.writer.get_ref()[last_size_pos+4..cur_pos as usize];
-                    buf.clone_from_slice(data);
+                    let data = &self.writer.get_ref()[last_size_pos + 4..cur_pos as usize];
+                    buf[..size].clone_from_slice(data);
                 }
 
                 // overwrite the size and data and continue
@@ -976,8 +1058,8 @@ pub mod writer {
             Ok(())
         }
 
-        pub fn wr_tag<F>(&mut self, tag_id: usize, blk: F) -> EncodeResult where
-            F: FnOnce() -> EncodeResult,
+        pub fn wr_tag<F>(&mut self, tag_id: usize, blk: F) -> EncodeResult
+            where F: FnOnce() -> EncodeResult
         {
             try!(self.start_tag(tag_id));
             try!(blk());
@@ -995,12 +1077,12 @@ pub mod writer {
             let bytes: [u8; 8] = unsafe { mem::transmute(v.to_be()) };
             // tagged integers are emitted in big-endian, with no
             // leading zeros.
-            let leading_zero_bytes = v.leading_zeros()/8;
+            let leading_zero_bytes = v.leading_zeros() / 8;
             self.wr_tagged_bytes(tag_id, &bytes[leading_zero_bytes as usize..])
         }
 
         #[inline]
-        pub fn wr_tagged_u32(&mut self, tag_id: usize, v: u32)  -> EncodeResult {
+        pub fn wr_tagged_u32(&mut self, tag_id: usize, v: u32) -> EncodeResult {
             self.wr_tagged_u64(tag_id, v as u64)
         }
 
@@ -1049,7 +1131,7 @@ pub mod writer {
             self.wr_tagged_raw_bytes(tag_id, &bytes)
         }
 
-        fn wr_tagged_raw_u32(&mut self, tag_id: usize, v: u32)  -> EncodeResult{
+        fn wr_tagged_raw_u32(&mut self, tag_id: usize, v: u32) -> EncodeResult {
             let bytes: [u8; 4] = unsafe { mem::transmute(v.to_be()) };
             self.wr_tagged_raw_bytes(tag_id, &bytes)
         }
@@ -1109,16 +1191,21 @@ pub mod writer {
                 self.wr_tagged_raw_u32(EsSub32 as usize, v as u32)
             } else {
                 Err(io::Error::new(io::ErrorKind::Other,
-                                   &format!("length or variant id too big: {}",
-                                            v)[..]))
+                                   &format!("length or variant id too big: {}", v)[..]))
             }
         }
 
-        pub fn emit_opaque<F>(&mut self, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder) -> EncodeResult,
+        pub fn emit_opaque<F>(&mut self, f: F) -> EncodeResult
+            where F: FnOnce(&mut opaque::Encoder) -> EncodeResult
         {
             try!(self.start_tag(EsOpaque as usize));
-            try!(f(self));
+
+            {
+                let mut opaque_encoder = opaque::Encoder::new(self.writer);
+                try!(f(&mut opaque_encoder));
+            }
+
+            self.mark_stable_position();
             self.end_tag()
         }
     }
@@ -1206,27 +1293,23 @@ pub mod writer {
             self.wr_tagged_str(EsStr as usize, v)
         }
 
-        fn emit_enum<F>(&mut self, _name: &str, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_enum<F>(&mut self, _name: &str, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             try!(self.start_tag(EsEnum as usize));
             try!(f(self));
             self.end_tag()
         }
 
-        fn emit_enum_variant<F>(&mut self,
-                                _: &str,
-                                v_id: usize,
-                                _: usize,
-                                f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_enum_variant<F>(&mut self, _: &str, v_id: usize, _: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             try!(self._emit_tagged_sub(v_id));
             f(self)
         }
 
-        fn emit_enum_variant_arg<F>(&mut self, _: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_enum_variant_arg<F>(&mut self, _: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             f(self)
         }
@@ -1235,72 +1318,70 @@ pub mod writer {
                                        v_name: &str,
                                        v_id: usize,
                                        cnt: usize,
-                                       f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+                                       f: F)
+                                       -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             self.emit_enum_variant(v_name, v_id, cnt, f)
         }
 
-        fn emit_enum_struct_variant_field<F>(&mut self,
-                                             _: &str,
-                                             idx: usize,
-                                             f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_enum_struct_variant_field<F>(&mut self, _: &str, idx: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             self.emit_enum_variant_arg(idx, f)
         }
 
-        fn emit_struct<F>(&mut self, _: &str, _len: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_struct<F>(&mut self, _: &str, _len: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             f(self)
         }
 
-        fn emit_struct_field<F>(&mut self, _name: &str, _: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_struct_field<F>(&mut self, _name: &str, _: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             f(self)
         }
 
-        fn emit_tuple<F>(&mut self, len: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_tuple<F>(&mut self, len: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             self.emit_seq(len, f)
         }
-        fn emit_tuple_arg<F>(&mut self, idx: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_tuple_arg<F>(&mut self, idx: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             self.emit_seq_elt(idx, f)
         }
 
-        fn emit_tuple_struct<F>(&mut self, _: &str, len: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_tuple_struct<F>(&mut self, _: &str, len: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             self.emit_seq(len, f)
         }
-        fn emit_tuple_struct_arg<F>(&mut self, idx: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_tuple_struct_arg<F>(&mut self, idx: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             self.emit_seq_elt(idx, f)
         }
 
-        fn emit_option<F>(&mut self, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_option<F>(&mut self, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             self.emit_enum("Option", f)
         }
         fn emit_option_none(&mut self) -> EncodeResult {
             self.emit_enum_variant("None", 0, 0, |_| Ok(()))
         }
-        fn emit_option_some<F>(&mut self, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_option_some<F>(&mut self, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
 
             self.emit_enum_variant("Some", 1, 1, f)
         }
 
-        fn emit_seq<F>(&mut self, len: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_seq<F>(&mut self, len: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             if len == 0 {
                 // empty vector optimization
@@ -1313,8 +1394,8 @@ pub mod writer {
             self.end_tag()
         }
 
-        fn emit_seq_elt<F>(&mut self, _idx: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_seq_elt<F>(&mut self, _idx: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
 
             try!(self.start_tag(EsVecElt as usize));
@@ -1322,8 +1403,8 @@ pub mod writer {
             self.end_tag()
         }
 
-        fn emit_map<F>(&mut self, len: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_map<F>(&mut self, len: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             if len == 0 {
                 // empty map optimization
@@ -1336,8 +1417,8 @@ pub mod writer {
             self.end_tag()
         }
 
-        fn emit_map_elt_key<F>(&mut self, _idx: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_map_elt_key<F>(&mut self, _idx: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
 
             try!(self.start_tag(EsMapKey as usize));
@@ -1345,8 +1426,8 @@ pub mod writer {
             self.end_tag()
         }
 
-        fn emit_map_elt_val<F>(&mut self, _idx: usize, f: F) -> EncodeResult where
-            F: FnOnce(&mut Encoder<'a>) -> EncodeResult,
+        fn emit_map_elt_val<F>(&mut self, _idx: usize, f: F) -> EncodeResult
+            where F: FnOnce(&mut Encoder<'a>) -> EncodeResult
         {
             try!(self.start_tag(EsMapVal as usize));
             try!(f(self));
@@ -1444,12 +1525,14 @@ mod bench {
 
     #[bench]
     pub fn vuint_at_A_aligned(b: &mut Bencher) {
-        let data = (0..4*100).map(|i| {
-            match i % 2 {
-              0 => 0x80,
-              _ => i as u8,
-            }
-        }).collect::<Vec<_>>();
+        let data = (0..4 * 100)
+                       .map(|i| {
+                           match i % 2 {
+                               0 => 0x80,
+                               _ => i as u8,
+                           }
+                       })
+                       .collect::<Vec<_>>();
         let mut sum = 0;
         b.iter(|| {
             let mut i = 0;
@@ -1462,12 +1545,14 @@ mod bench {
 
     #[bench]
     pub fn vuint_at_A_unaligned(b: &mut Bencher) {
-        let data = (0..4*100+1).map(|i| {
-            match i % 2 {
-              1 => 0x80,
-              _ => i as u8
-            }
-        }).collect::<Vec<_>>();
+        let data = (0..4 * 100 + 1)
+                       .map(|i| {
+                           match i % 2 {
+                               1 => 0x80,
+                               _ => i as u8,
+                           }
+                       })
+                       .collect::<Vec<_>>();
         let mut sum = 0;
         b.iter(|| {
             let mut i = 1;
@@ -1480,13 +1565,15 @@ mod bench {
 
     #[bench]
     pub fn vuint_at_D_aligned(b: &mut Bencher) {
-        let data = (0..4*100).map(|i| {
-            match i % 4 {
-              0 => 0x10,
-              3 => i as u8,
-              _ => 0
-            }
-        }).collect::<Vec<_>>();
+        let data = (0..4 * 100)
+                       .map(|i| {
+                           match i % 4 {
+                               0 => 0x10,
+                               3 => i as u8,
+                               _ => 0,
+                           }
+                       })
+                       .collect::<Vec<_>>();
         let mut sum = 0;
         b.iter(|| {
             let mut i = 0;
@@ -1499,13 +1586,15 @@ mod bench {
 
     #[bench]
     pub fn vuint_at_D_unaligned(b: &mut Bencher) {
-        let data = (0..4*100+1).map(|i| {
-            match i % 4 {
-              1 => 0x10,
-              0 => i as u8,
-              _ => 0
-            }
-        }).collect::<Vec<_>>();
+        let data = (0..4 * 100 + 1)
+                       .map(|i| {
+                           match i % 4 {
+                               1 => 0x10,
+                               0 => i as u8,
+                               _ => 0,
+                           }
+                       })
+                       .collect::<Vec<_>>();
         let mut sum = 0;
         b.iter(|| {
             let mut i = 1;

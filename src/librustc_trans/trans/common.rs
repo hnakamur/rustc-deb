@@ -37,7 +37,7 @@ use trans::monomorphize;
 use trans::type_::Type;
 use trans::type_of;
 use middle::traits;
-use middle::ty::{self, HasTypeFlags, Ty};
+use middle::ty::{self, Ty};
 use middle::ty::fold::{TypeFolder, TypeFoldable};
 use rustc_front::hir;
 use rustc::mir::repr::Mir;
@@ -71,45 +71,6 @@ pub fn type_is_fat_ptr<'tcx>(cx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
             false
         }
     }
-}
-
-/// If `type_needs_drop` returns true, then `ty` is definitely
-/// non-copy and *might* have a destructor attached; if it returns
-/// false, then `ty` definitely has no destructor (i.e. no drop glue).
-///
-/// (Note that this implies that if `ty` has a destructor attached,
-/// then `type_needs_drop` will definitely return `true` for `ty`.)
-pub fn type_needs_drop<'tcx>(cx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    type_needs_drop_given_env(cx, ty, &cx.empty_parameter_environment())
-}
-
-/// Core implementation of type_needs_drop, potentially making use of
-/// and/or updating caches held in the `param_env`.
-fn type_needs_drop_given_env<'a,'tcx>(cx: &ty::ctxt<'tcx>,
-                                      ty: Ty<'tcx>,
-                                      param_env: &ty::ParameterEnvironment<'a,'tcx>) -> bool {
-    // Issue #22536: We first query type_moves_by_default.  It sees a
-    // normalized version of the type, and therefore will definitely
-    // know whether the type implements Copy (and thus needs no
-    // cleanup/drop/zeroing) ...
-    let implements_copy = !ty.moves_by_default(param_env, DUMMY_SP);
-
-    if implements_copy { return false; }
-
-    // ... (issue #22536 continued) but as an optimization, still use
-    // prior logic of asking if the `needs_drop` bit is set; we need
-    // not zero non-Copy types if they have no destructor.
-
-    // FIXME(#22815): Note that calling `ty::type_contents` is a
-    // conservative heuristic; it may report that `needs_drop` is set
-    // when actual type does not actually have a destructor associated
-    // with it. But since `ty` absolutely did not have the `Copy`
-    // bound attached (see above), it is sound to treat it as having a
-    // destructor (e.g. zero its memory on move).
-
-    let contents = ty.type_contents(cx);
-    debug!("type_needs_drop ty={:?} contents={:?}", ty, contents);
-    contents.needs_drop(cx)
 }
 
 fn type_is_newtype_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
@@ -158,11 +119,9 @@ pub fn type_is_zero_size<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -
 }
 
 /// Identifies types which we declare to be equivalent to `void` in C for the purpose of function
-/// return types. These are `()`, bot, and uninhabited enums. Note that all such types are also
-/// zero-size, but not all zero-size types use a `void` return type (in order to aid with C ABI
-/// compatibility).
-pub fn return_type_is_void(ccx: &CrateContext, ty: Ty) -> bool {
-    ty.is_nil() || ty.is_empty(ccx.tcx())
+/// return types. These are `()`, bot, uninhabited enums and all other zero-sized types.
+pub fn return_type_is_void<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
+    ty.is_nil() || ty.is_empty(ccx.tcx()) || type_is_zero_size(ccx, ty)
 }
 
 /// Generates a unique symbol based off the name given. This is used to create
@@ -200,6 +159,8 @@ pub fn gensym_name(name: &str) -> ast::Name {
 *
 */
 
+use trans::Disr;
+
 #[derive(Copy, Clone)]
 pub struct NodeIdAndSpan {
     pub id: ast::NodeId,
@@ -216,7 +177,7 @@ pub struct Field<'tcx>(pub ast::Name, pub Ty<'tcx>);
 
 /// The concrete version of ty::VariantDef
 pub struct VariantInfo<'tcx> {
-    pub discr: ty::Disr,
+    pub discr: Disr,
     pub fields: Vec<Field<'tcx>>
 }
 
@@ -234,7 +195,7 @@ impl<'tcx> VariantInfo<'tcx> {
                 };
 
                 VariantInfo {
-                    discr: variant.disr_val,
+                    discr: Disr::from(variant.disr_val),
                     fields: variant.fields.iter().map(|f| {
                         Field(f.name, monomorphize::field_ty(tcx, substs, f))
                     }).collect()
@@ -243,7 +204,7 @@ impl<'tcx> VariantInfo<'tcx> {
 
             ty::TyTuple(ref v) => {
                 VariantInfo {
-                    discr: 0,
+                    discr: Disr(0),
                     fields: v.iter().enumerate().map(|(i, &t)| {
                         Field(token::intern(&i.to_string()), t)
                     }).collect()
@@ -508,7 +469,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
-        where T : TypeFoldable<'tcx> + HasTypeFlags
+        where T : TypeFoldable<'tcx>
     {
         monomorphize::apply_param_substs(self.ccx.tcx(),
                                          self.param_substs,
@@ -518,7 +479,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
     /// This is the same as `common::type_needs_drop`, except that it
     /// may use or update caches within this `FunctionContext`.
     pub fn type_needs_drop(&self, ty: Ty<'tcx>) -> bool {
-        type_needs_drop_given_env(self.ccx.tcx(), ty, &self.param_env)
+        self.ccx.tcx().type_needs_drop_given_env(ty, &self.param_env)
     }
 
     pub fn eh_personality(&self) -> ValueRef {
@@ -689,7 +650,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
-        where T : TypeFoldable<'tcx> + HasTypeFlags
+        where T : TypeFoldable<'tcx>
     {
         monomorphize::apply_param_substs(self.tcx(),
                                          self.fcx.param_substs,

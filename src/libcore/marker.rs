@@ -24,6 +24,8 @@ use hash::Hash;
 use hash::Hasher;
 
 /// Types that can be transferred across thread boundaries.
+///
+/// This trait is automatically derived when the compiler determines it's appropriate.
 #[stable(feature = "rust1", since = "1.0.0")]
 #[lang = "send"]
 #[rustc_on_unimplemented = "`{Self}` cannot be sent between threads safely"]
@@ -219,6 +221,8 @@ pub trait Copy : Clone {
 /// wrapper around the value(s) which can be mutated when behind a `&`
 /// reference; not doing this is undefined behavior (for example,
 /// `transmute`-ing from `&T` to `&mut T` is invalid).
+///
+/// This trait is automatically derived when the compiler determines it's appropriate.
 #[stable(feature = "rust1", since = "1.0.0")]
 #[lang = "sync"]
 #[rustc_on_unimplemented = "`{Self}` cannot be shared between threads safely"]
@@ -291,6 +295,10 @@ macro_rules! impls{
 /// even though it does not. This allows you to inform the compiler about certain safety properties
 /// of your code.
 ///
+/// For a more in-depth explanation of how to use `PhantomData<T>`, please see [the Nomicon].
+///
+/// [the Nomicon]: ../../nomicon/phantom-data.html
+///
 /// # A ghastly note 👻👻👻
 ///
 /// Though they both have scary names, `PhantomData<T>` and 'phantom types' are related, but not
@@ -325,7 +333,7 @@ macro_rules! impls{
 /// use std::marker::PhantomData;
 ///
 /// # #[allow(dead_code)]
-/// struct Slice<'a, T:'a> {
+/// struct Slice<'a, T: 'a> {
 ///     start: *const T,
 ///     end: *const T,
 ///     phantom: PhantomData<&'a T>
@@ -420,18 +428,18 @@ mod impls {
 /// use std::any::Any;
 ///
 /// # #[allow(dead_code)]
-/// fn foo<T:Reflect+'static>(x: &T) {
+/// fn foo<T: Reflect + 'static>(x: &T) {
 ///     let any: &Any = x;
 ///     if any.is::<u32>() { println!("u32"); }
 /// }
 /// ```
 ///
-/// Without the declaration `T:Reflect`, `foo` would not type check
+/// Without the declaration `T: Reflect`, `foo` would not type check
 /// (note: as a matter of style, it would be preferable to write
-/// `T:Any`, because `T:Any` implies `T:Reflect` and `T:'static`, but
+/// `T: Any`, because `T: Any` implies `T: Reflect` and `T: 'static`, but
 /// we use `Reflect` here to show how it works). The `Reflect` bound
 /// thus serves to alert `foo`'s caller to the fact that `foo` may
-/// behave differently depending on whether `T=u32` or not. In
+/// behave differently depending on whether `T = u32` or not. In
 /// particular, thanks to the `Reflect` bound, callers know that a
 /// function declared like `fn bar<T>(...)` will always act in
 /// precisely the same way no matter what type `T` is supplied,

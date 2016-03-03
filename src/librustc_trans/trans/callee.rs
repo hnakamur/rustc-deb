@@ -20,7 +20,6 @@ pub use self::CallArgs::*;
 
 use arena::TypedArena;
 use back::link;
-use session;
 use llvm::{self, ValueRef, get_params};
 use middle::cstore::LOCAL_CRATE;
 use middle::def;
@@ -51,12 +50,14 @@ use trans::meth;
 use trans::monomorphize;
 use trans::type_::Type;
 use trans::type_of;
-use middle::ty::{self, Ty, HasTypeFlags, RegionEscape};
+use trans::Disr;
+use middle::ty::{self, Ty, TypeFoldable};
 use middle::ty::MethodCall;
 use rustc_front::hir;
 
 use syntax::abi as synabi;
 use syntax::ast;
+use syntax::errors;
 use syntax::ptr::P;
 
 #[derive(Copy, Clone)]
@@ -68,7 +69,7 @@ pub struct MethodData {
 pub enum CalleeData<'tcx> {
     // Constructor for enum variant/tuple-like-struct
     // i.e. Some, Ok
-    NamedTupleConstructor(ty::Disr),
+    NamedTupleConstructor(Disr),
 
     // Represents a (possibly monomorphized) top-level fn item or method
     // item. Note that this is just the fn-ptr and is not a Rust closure
@@ -151,7 +152,7 @@ fn trans<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, expr: &hir::Expr)
             } => {
                 Callee {
                     bcx: bcx,
-                    data: NamedTupleConstructor(0),
+                    data: NamedTupleConstructor(Disr(0)),
                     ty: expr_ty
                 }
             }
@@ -195,14 +196,14 @@ fn trans<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, expr: &hir::Expr)
 
                 Callee {
                     bcx: bcx,
-                    data: NamedTupleConstructor(vinfo.disr_val),
+                    data: NamedTupleConstructor(Disr::from(vinfo.disr_val)),
                     ty: expr_ty
                 }
             }
             def::DefStruct(_) => {
                 Callee {
                     bcx: bcx,
-                    data: NamedTupleConstructor(0),
+                    data: NamedTupleConstructor(Disr(0)),
                     ty: expr_ty
                 }
             }
@@ -215,8 +216,8 @@ fn trans<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, expr: &hir::Expr)
             }
             def::DefMod(..) | def::DefForeignMod(..) | def::DefTrait(..) |
             def::DefTy(..) | def::DefPrimTy(..) | def::DefAssociatedTy(..) |
-            def::DefUse(..) | def::DefLabel(..) | def::DefTyParam(..) |
-            def::DefSelfTy(..) => {
+            def::DefLabel(..) | def::DefTyParam(..) |
+            def::DefSelfTy(..) | def::DefErr => {
                 bcx.tcx().sess.span_bug(
                     ref_expr.span,
                     &format!("cannot translate def {:?} \
@@ -412,8 +413,8 @@ pub fn trans_fn_ref_with_substs<'a, 'tcx>(
             Some(n) => n,
             None => { return false; }
         };
-        let map_node = session::expect(
-            &tcx.sess,
+        let map_node = errors::expect(
+            &tcx.sess.diagnostic(),
             tcx.map.find(node_id),
             || "local item should be in ast map".to_string());
 
@@ -863,7 +864,7 @@ fn trans_args_under_call_abi<'blk, 'tcx>(
                     bcx,
                     field_type,
                     |srcval| {
-                        adt::trans_field_ptr(bcx, repr_ptr, srcval, 0, i)
+                        adt::trans_field_ptr(bcx, repr_ptr, srcval, Disr(0), i)
                     }).to_expr_datum();
                 bcx = trans_arg_datum(bcx,
                                       field_type,

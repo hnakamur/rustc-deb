@@ -13,6 +13,5 @@ pub fn main() {
         let p = 3;
         //~^ ERROR blocks in constants are limited to items and tail expressions
         &p
-        //~^ ERROR paths in constants may only refer to constants or functions
     };
 }

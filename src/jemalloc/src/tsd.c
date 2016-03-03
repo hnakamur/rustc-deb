@@ -15,16 +15,14 @@ void *
 malloc_tsd_malloc(size_t size)
 {
 
-	/* Avoid choose_arena() in order to dodge bootstrapping issues. */
-	return (arena_malloc(NULL, arenas[0], CACHELINE_CEILING(size), false,
-	    false));
+	return (a0malloc(CACHELINE_CEILING(size)));
 }
 
 void
 malloc_tsd_dalloc(void *wrapper)
 {
 
-	idalloct(NULL, wrapper, false);
+	a0dalloc(wrapper);
 }
 
 void
@@ -75,6 +73,9 @@ tsd_cleanup(void *arg)
 	tsd_t *tsd = (tsd_t *)arg;
 
 	switch (tsd->state) {
+	case tsd_state_uninitialized:
+		/* Do nothing. */
+		break;
 	case tsd_state_nominal:
 #define O(n, t)								\
 		n##_cleanup(tsd);
@@ -106,13 +107,22 @@ MALLOC_TSD
 }
 
 bool
-malloc_tsd_boot(void)
+malloc_tsd_boot0(void)
 {
 
 	ncleanups = 0;
-	if (tsd_boot())
+	if (tsd_boot0())
 		return (true);
+	*tsd_arenas_cache_bypassp_get(tsd_fetch()) = true;
 	return (false);
+}
+
+void
+malloc_tsd_boot1(void)
+{
+
+	tsd_boot1();
+	*tsd_arenas_cache_bypassp_get(tsd_fetch()) = false;
 }
 
 #ifdef _WIN32
@@ -144,7 +154,7 @@ _tls_callback(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 #  pragma section(".CRT$XLY",long,read)
 #endif
 JEMALLOC_SECTION(".CRT$XLY") JEMALLOC_ATTR(used)
-static const BOOL	(WINAPI *tls_callback)(HINSTANCE hinstDLL,
+static BOOL	(WINAPI *const tls_callback)(HINSTANCE hinstDLL,
     DWORD fdwReason, LPVOID lpvReserved) = _tls_callback;
 #endif
 

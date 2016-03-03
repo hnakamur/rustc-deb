@@ -30,11 +30,7 @@ fn ordering3<'a, 'b>(x: &'a usize, y: &'b usize) -> &'a &'b usize {
     panic!();
 }
 
-fn ordering4<'a, 'b, F>(a: &'a usize, b: &'b usize, x: F) where F: FnOnce(&'a &'b usize) {
-    // Do not infer ordering from closure argument types.
-    let z: Option<&'a &'b usize> = None;
-    //~^ ERROR reference has a longer lifetime than the data it references
-}
+// see regions-free-region-ordering-callee-4.rs
 
 fn ordering5<'a, 'b>(a: &'a usize, b: &'b usize, x: Option<&'a &'b usize>) {
     let z: Option<&'a &'b usize> = None;

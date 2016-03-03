@@ -22,16 +22,15 @@ use sys::net::netc as c;
 use sys_common::{AsInner, FromInner};
 
 /// An IP address, either an IPv4 or IPv6 address.
-#[unstable(feature = "ip_addr", reason = "recent addition", issue = "27801")]
-#[rustc_deprecated(reason = "too small a type to pull its weight",
-                   since = "1.6.0")]
+#[stable(feature = "ip_addr", since = "1.7.0")]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, PartialOrd, Ord)]
-#[allow(deprecated)]
 pub enum IpAddr {
     /// Representation of an IPv4 address.
-    V4(Ipv4Addr),
+    #[stable(feature = "ip_addr", since = "1.7.0")]
+    V4(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.7.0"))] Ipv4Addr),
     /// Representation of an IPv6 address.
-    V6(Ipv6Addr),
+    #[stable(feature = "ip_addr", since = "1.7.0")]
+    V6(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.7.0"))] Ipv6Addr),
 }
 
 /// Representation of an IPv4 address.
@@ -89,6 +88,9 @@ impl Ipv4Addr {
     }
 
     /// Returns true if this is a loopback address (127.0.0.0/8).
+    ///
+    /// This property is defined by RFC 6890
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_loopback(&self) -> bool {
         self.octets()[0] == 127
     }
@@ -100,6 +102,7 @@ impl Ipv4Addr {
     ///  - 10.0.0.0/8
     ///  - 172.16.0.0/12
     ///  - 192.168.0.0/16
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_private(&self) -> bool {
         match (self.octets()[0], self.octets()[1]) {
             (10, _) => true,
@@ -110,6 +113,9 @@ impl Ipv4Addr {
     }
 
     /// Returns true if the address is link-local (169.254.0.0/16).
+    ///
+    /// This property is defined by RFC 6890
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_link_local(&self) -> bool {
         self.octets()[0] == 169 && self.octets()[1] == 254
     }
@@ -130,7 +136,9 @@ impl Ipv4Addr {
 
     /// Returns true if this is a multicast address.
     ///
-    /// Multicast addresses have a most significant octet between 224 and 239.
+    /// Multicast addresses have a most significant octet between 224 and 239,
+    /// and is defined by RFC 5771
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_multicast(&self) -> bool {
         self.octets()[0] >= 224 && self.octets()[0] <= 239
     }
@@ -138,6 +146,7 @@ impl Ipv4Addr {
     /// Returns true if this is a broadcast address.
     ///
     /// A broadcast address has all octets set to 255 as defined in RFC 919.
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_broadcast(&self) -> bool {
         self.octets()[0] == 255 && self.octets()[1] == 255 &&
         self.octets()[2] == 255 && self.octets()[3] == 255
@@ -150,6 +159,7 @@ impl Ipv4Addr {
     /// - 192.0.2.0/24 (TEST-NET-1)
     /// - 198.51.100.0/24 (TEST-NET-2)
     /// - 203.0.113.0/24 (TEST-NET-3)
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_documentation(&self) -> bool {
         match(self.octets()[0], self.octets()[1], self.octets()[2], self.octets()[3]) {
             (192, 0, 2, _) => true,
@@ -302,11 +312,17 @@ impl Ipv6Addr {
     }
 
     /// Returns true for the special 'unspecified' address ::.
+    ///
+    /// This property is defined in RFC 6890.
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_unspecified(&self) -> bool {
         self.segments() == [0, 0, 0, 0, 0, 0, 0, 0]
     }
 
     /// Returns true if this is a loopback address (::1).
+    ///
+    /// This property is defined in RFC 6890.
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_loopback(&self) -> bool {
         self.segments() == [0, 0, 0, 0, 0, 0, 0, 1]
     }
@@ -378,7 +394,9 @@ impl Ipv6Addr {
 
     /// Returns true if this is a multicast address.
     ///
-    /// Multicast addresses have the form ff00::/8.
+    /// Multicast addresses have the form ff00::/8, and this property is defined
+    /// by RFC 3956.
+    #[stable(since = "1.7.0", feature = "ip_17")]
     pub fn is_multicast(&self) -> bool {
         (self.segments()[0] & 0xff00) == 0xff00
     }
@@ -527,7 +545,6 @@ impl FromInner<c::in6_addr> for Ipv6Addr {
 #[cfg(test)]
 mod tests {
     use prelude::v1::*;
-    use io;
     use net::*;
     use net::Ipv6MulticastScope::*;
     use net::test::{tsa, sa6, sa4};

@@ -54,8 +54,23 @@
 #![cfg_attr(all(windows, target_arch = "x86", target_env = "msvc"), doc(
     html_root_url = "https://doc.rust-lang.org/libc/i686-pc-windows-msvc"
 ))]
-#![cfg_attr(all(target_os = "android"), doc(
+#![cfg_attr(target_os = "android", doc(
     html_root_url = "https://doc.rust-lang.org/libc/arm-linux-androideabi"
+))]
+#![cfg_attr(target_os = "freebsd", doc(
+    html_root_url = "https://doc.rust-lang.org/libc/x86_64-unknown-freebsd"
+))]
+#![cfg_attr(target_os = "openbsd", doc(
+    html_root_url = "https://doc.rust-lang.org/libc/x86_64-unknown-openbsd"
+))]
+#![cfg_attr(target_os = "bitrig", doc(
+    html_root_url = "https://doc.rust-lang.org/libc/x86_64-unknown-bitrig"
+))]
+#![cfg_attr(target_os = "netbsd", doc(
+    html_root_url = "https://doc.rust-lang.org/libc/x86_64-unknown-netbsd"
+))]
+#![cfg_attr(target_os = "dragonfly", doc(
+    html_root_url = "https://doc.rust-lang.org/libc/x86_64-unknown-dragonfly"
 ))]
 
 // Attributes needed when building as part of the standard library
@@ -172,7 +187,9 @@ extern {
     pub fn fseek(stream: *mut FILE, offset: c_long, whence: c_int) -> c_int;
     pub fn ftell(stream: *mut FILE) -> c_long;
     pub fn rewind(stream: *mut FILE);
+    #[cfg_attr(target_os = "netbsd", link_name = "__fgetpos50")]
     pub fn fgetpos(stream: *mut FILE, ptr: *mut fpos_t) -> c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__fsetpos50")]
     pub fn fsetpos(stream: *mut FILE, ptr: *const fpos_t) -> c_int;
     pub fn feof(stream: *mut FILE) -> c_int;
     pub fn ferror(stream: *mut FILE) -> c_int;

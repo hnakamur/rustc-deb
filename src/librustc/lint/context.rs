@@ -25,9 +25,10 @@
 //! for all lint attributes.
 use self::TargetLint::*;
 
+use dep_graph::DepNode;
 use middle::privacy::AccessLevels;
-use middle::ty::{self, Ty};
-use session::{early_error, Session};
+use middle::ty;
+use session::{config, early_error, Session};
 use lint::{Level, LevelSource, Lint, LintId, LintArray, LintPass};
 use lint::{EarlyLintPass, EarlyLintPassObject, LateLintPass, LateLintPassObject};
 use lint::{Default, CommandLine, Node, Allow, Warn, Deny, Forbid};
@@ -36,10 +37,12 @@ use util::nodemap::FnvHashMap;
 
 use std::cell::RefCell;
 use std::cmp;
+use std::default::Default as StdDefault;
 use std::mem;
 use syntax::ast_util::{self, IdVisitingOperation};
 use syntax::attr::{self, AttrMetaMethods};
 use syntax::codemap::Span;
+use syntax::errors::DiagnosticBuilder;
 use syntax::parse::token::InternedString;
 use syntax::ast;
 use syntax::attr::ThinAttributesExt;
@@ -47,7 +50,6 @@ use rustc_front::hir;
 use rustc_front::util;
 use rustc_front::intravisit as hir_visit;
 use syntax::visit as ast_visit;
-use syntax::diagnostic;
 
 /// Information about the registered lints.
 ///
@@ -74,8 +76,20 @@ pub struct LintStore {
     /// is true if the lint group was added by a plugin.
     lint_groups: FnvHashMap<&'static str, (Vec<LintId>, bool)>,
 
+    /// Extra info for future incompatibility lints, descibing the
+    /// issue or RFC that caused the incompatibility.
+    future_incompatible: FnvHashMap<LintId, FutureIncompatibleInfo>,
+
     /// Maximum level a lint can be
     lint_cap: Option<Level>,
+}
+
+/// Extra information for a future incompatibility lint. See the call
+/// to `register_future_incompatible` in `librustc_lint/lib.rs` for
+/// guidelines.
+pub struct FutureIncompatibleInfo {
+    pub id: LintId,
+    pub reference: &'static str // e.g., a URL for an issue/PR/RFC or error code
 }
 
 /// The targed of the `by_name` map, which accounts for renaming/deprecation.
@@ -122,6 +136,7 @@ impl LintStore {
             late_passes: Some(vec!()),
             by_name: FnvHashMap(),
             levels: FnvHashMap(),
+            future_incompatible: FnvHashMap(),
             lint_groups: FnvHashMap(),
             lint_cap: None,
         }
@@ -167,7 +182,7 @@ impl LintStore {
                 match (sess, from_plugin) {
                     // We load builtin lints first, so a duplicate is a compiler bug.
                     // Use early_error when handling -W help with no crate.
-                    (None, _) => early_error(diagnostic::Auto, &msg[..]),
+                    (None, _) => early_error(config::ErrorOutputType::default(), &msg[..]),
                     (Some(sess), false) => sess.bug(&msg[..]),
 
                     // A duplicate name from a plugin is a user error.
@@ -181,6 +196,20 @@ impl LintStore {
         }
     }
 
+    pub fn register_future_incompatible(&mut self,
+                                        sess: Option<&Session>,
+                                        lints: Vec<FutureIncompatibleInfo>) {
+        let ids = lints.iter().map(|f| f.id).collect();
+        self.register_group(sess, false, "future_incompatible", ids);
+        for info in lints {
+            self.future_incompatible.insert(info.id, info);
+        }
+    }
+
+    pub fn future_incompatible(&self, id: LintId) -> Option<&FutureIncompatibleInfo> {
+        self.future_incompatible.get(&id)
+    }
+
     pub fn register_group(&mut self, sess: Option<&Session>,
                           from_plugin: bool, name: &'static str,
                           to: Vec<LintId>) {
@@ -191,7 +220,7 @@ impl LintStore {
             match (sess, from_plugin) {
                 // We load builtin lints first, so a duplicate is a compiler bug.
                 // Use early_error when handling -W help with no crate.
-                (None, _) => early_error(diagnostic::Auto, &msg[..]),
+                (None, _) => early_error(config::ErrorOutputType::default(), &msg[..]),
                 (Some(sess), false) => sess.bug(&msg[..]),
 
                 // A duplicate name from a plugin is a user error.
@@ -375,8 +404,20 @@ pub fn raw_emit_lint(sess: &Session,
                      lvlsrc: LevelSource,
                      span: Option<Span>,
                      msg: &str) {
+    raw_struct_lint(sess, lints, lint, lvlsrc, span, msg).emit();
+}
+
+pub fn raw_struct_lint<'a>(sess: &'a Session,
+                           lints: &LintStore,
+                           lint: &'static Lint,
+                           lvlsrc: LevelSource,
+                           span: Option<Span>,
+                           msg: &str)
+                           -> DiagnosticBuilder<'a> {
     let (mut level, source) = lvlsrc;
-    if level == Allow { return }
+    if level == Allow {
+        return sess.diagnostic().struct_dummy();
+    }
 
     let name = lint.name_lower();
     let mut def = None;
@@ -401,29 +442,35 @@ pub fn raw_emit_lint(sess: &Session,
     // For purposes of printing, we can treat forbid as deny.
     if level == Forbid { level = Deny; }
 
-    match (level, span) {
-        (Warn, Some(sp)) => sess.span_warn(sp, &msg[..]),
-        (Warn, None)     => sess.warn(&msg[..]),
-        (Deny, Some(sp)) => sess.span_err(sp, &msg[..]),
-        (Deny, None)     => sess.err(&msg[..]),
+    let mut err = match (level, span) {
+        (Warn, Some(sp)) => sess.struct_span_warn(sp, &msg[..]),
+        (Warn, None)     => sess.struct_warn(&msg[..]),
+        (Deny, Some(sp)) => sess.struct_span_err(sp, &msg[..]),
+        (Deny, None)     => sess.struct_err(&msg[..]),
         _ => sess.bug("impossible level in raw_emit_lint"),
-    }
+    };
 
     // Check for future incompatibility lints and issue a stronger warning.
-    let future_incompat_lints = &lints.lint_groups[builtin::FUTURE_INCOMPATIBLE];
-    let this_id = LintId::of(lint);
-    if future_incompat_lints.0.iter().any(|&id| id == this_id) {
-        let msg = "this lint will become a HARD ERROR in a future release!";
+    if let Some(future_incompatible) = lints.future_incompatible(LintId::of(lint)) {
+        let explanation = format!("this was previously accepted by the compiler \
+                                   but is being phased out; \
+                                   it will become a hard error in a future release!");
+        let citation = format!("for more information, see {}",
+                               future_incompatible.reference);
         if let Some(sp) = span {
-            sess.span_note(sp, msg);
+            err.fileline_warn(sp, &explanation);
+            err.fileline_note(sp, &citation);
         } else {
-            sess.note(msg);
+            err.warn(&explanation);
+            err.note(&citation);
         }
     }
 
     if let Some(span) = def {
-        sess.span_note(span, "lint level defined here");
+        err.span_note(span, "lint level defined here");
     }
+
+    err
 }
 
 pub trait LintContext: Sized {
@@ -440,17 +487,36 @@ pub trait LintContext: Sized {
         self.lints().levels.get(&LintId::of(lint)).map_or(Allow, |&(lvl, _)| lvl)
     }
 
-    fn lookup_and_emit(&self, lint: &'static Lint, span: Option<Span>, msg: &str) {
-        let (level, src) = match self.lints().levels.get(&LintId::of(lint)) {
-            None => return,
-            Some(&(Warn, src)) => {
+    fn level_src(&self, lint: &'static Lint) -> Option<LevelSource> {
+        self.lints().levels.get(&LintId::of(lint)).map(|ls| match ls {
+            &(Warn, src) => {
                 let lint_id = LintId::of(builtin::WARNINGS);
                 (self.lints().get_level_source(lint_id).0, src)
             }
-            Some(&pair) => pair,
+            _ => *ls
+        })
+    }
+
+    fn lookup_and_emit(&self, lint: &'static Lint, span: Option<Span>, msg: &str) {
+        let (level, src) = match self.level_src(lint) {
+            None => return,
+            Some(pair) => pair,
         };
 
         raw_emit_lint(&self.sess(), self.lints(), lint, (level, src), span, msg);
+    }
+
+    fn lookup(&self,
+              lint: &'static Lint,
+              span: Option<Span>,
+              msg: &str)
+              -> DiagnosticBuilder {
+        let (level, src) = match self.level_src(lint) {
+            None => return self.sess().diagnostic().struct_dummy(),
+            Some(pair) => pair,
+        };
+
+        raw_struct_lint(&self.sess(), self.lints(), lint, (level, src), span, msg)
     }
 
     /// Emit a lint at the appropriate level, for a particular span.
@@ -458,26 +524,37 @@ pub trait LintContext: Sized {
         self.lookup_and_emit(lint, Some(span), msg);
     }
 
+    fn struct_span_lint(&self,
+                        lint: &'static Lint,
+                        span: Span,
+                        msg: &str)
+                        -> DiagnosticBuilder {
+        self.lookup(lint, Some(span), msg)
+    }
+
     /// Emit a lint and note at the appropriate level, for a particular span.
     fn span_lint_note(&self, lint: &'static Lint, span: Span, msg: &str,
                       note_span: Span, note: &str) {
-        self.span_lint(lint, span, msg);
+        let mut err = self.lookup(lint, Some(span), msg);
         if self.current_level(lint) != Level::Allow {
             if note_span == span {
-                self.sess().fileline_note(note_span, note)
+                err.fileline_note(note_span, note);
             } else {
-                self.sess().span_note(note_span, note)
+                err.span_note(note_span, note);
             }
         }
+        err.emit();
     }
 
     /// Emit a lint and help at the appropriate level, for a particular span.
     fn span_lint_help(&self, lint: &'static Lint, span: Span,
                       msg: &str, help: &str) {
+        let mut err = self.lookup(lint, Some(span), msg);
         self.span_lint(lint, span, msg);
         if self.current_level(lint) != Level::Allow {
-            self.sess().span_help(span, help)
+            err.span_help(span, help);
         }
+        err.emit();
     }
 
     /// Emit a lint at the appropriate level, with no associated span.
@@ -1044,12 +1121,13 @@ impl LateLintPass for GatherNodeLevels {
     }
 }
 
-enum CheckLintNameResult {
+enum CheckLintNameResult<'a> {
     Ok,
     // Lint doesn't exist
     NoLint,
-    // The lint is either renamed or removed and a warning was generated
-    Mentioned
+    // The lint is either renamed or removed and a warning was
+    // generated in the DiagnosticBuilder
+    Mentioned(DiagnosticBuilder<'a>)
 }
 
 /// Checks the name of a lint for its existence, and whether it was
@@ -1059,27 +1137,27 @@ enum CheckLintNameResult {
 /// it emits non-fatal warnings and there are *two* lint passes that
 /// inspect attributes, this is only run from the late pass to avoid
 /// printing duplicate warnings.
-fn check_lint_name(sess: &Session,
-                   lint_cx: &LintStore,
-                   lint_name: &str,
-                   span: Option<Span>) -> CheckLintNameResult {
+fn check_lint_name<'a>(sess: &'a Session,
+                       lint_cx: &LintStore,
+                       lint_name: &str,
+                       span: Option<Span>) -> CheckLintNameResult<'a> {
     match lint_cx.by_name.get(lint_name) {
         Some(&Renamed(ref new_name, _)) => {
             let warning = format!("lint {} has been renamed to {}",
                                   lint_name, new_name);
-            match span {
-                Some(span) => sess.span_warn(span, &warning[..]),
-                None => sess.warn(&warning[..]),
+            let db = match span {
+                Some(span) => sess.struct_span_warn(span, &warning[..]),
+                None => sess.struct_warn(&warning[..]),
             };
-            CheckLintNameResult::Mentioned
+            CheckLintNameResult::Mentioned(db)
         },
         Some(&Removed(ref reason)) => {
             let warning = format!("lint {} has been removed: {}", lint_name, reason);
-            match span {
-                Some(span) => sess.span_warn(span, &warning[..]),
-                None => sess.warn(&warning[..])
+            let db = match span {
+                Some(span) => sess.struct_span_warn(span, &warning[..]),
+                None => sess.struct_warn(&warning[..])
             };
-            CheckLintNameResult::Mentioned
+            CheckLintNameResult::Mentioned(db)
         },
         None => {
             match lint_cx.lint_groups.get(lint_name) {
@@ -1110,7 +1188,9 @@ fn check_lint_name_attribute(cx: &LateContext, attr: &ast::Attribute) {
             Ok((lint_name, _, span)) => {
                 match check_lint_name(&cx.tcx.sess, &cx.lints, &lint_name[..], Some(span)) {
                     CheckLintNameResult::Ok => (),
-                    CheckLintNameResult::Mentioned => (),
+                    CheckLintNameResult::Mentioned(mut db) => {
+                        db.emit();
+                    }
                     CheckLintNameResult::NoLint => {
                         cx.span_lint(builtin::UNKNOWN_LINTS, span,
                                      &format!("unknown lint: `{}`",
@@ -1125,16 +1205,15 @@ fn check_lint_name_attribute(cx: &LateContext, attr: &ast::Attribute) {
 // Checks the validity of lint names derived from the command line
 fn check_lint_name_cmdline(sess: &Session, lint_cx: &LintStore,
                            lint_name: &str, level: Level) {
-    let explain = match check_lint_name(sess, lint_cx, lint_name, None) {
-        CheckLintNameResult::Ok => false,
-        CheckLintNameResult::Mentioned => true,
+    let db = match check_lint_name(sess, lint_cx, lint_name, None) {
+        CheckLintNameResult::Ok => None,
+        CheckLintNameResult::Mentioned(db) => Some(db),
         CheckLintNameResult::NoLint => {
-            sess.err(&format!("unknown lint: `{}`", lint_name));
-            true
+            Some(sess.struct_err(&format!("unknown lint: `{}`", lint_name)))
         }
     };
 
-    if explain {
+    if let Some(mut db) = db {
         let msg = format!("requested on the command line with `{} {}`",
                           match level {
                               Level::Allow => "-A",
@@ -1143,7 +1222,8 @@ fn check_lint_name_cmdline(sess: &Session, lint_cx: &LintStore,
                               Level::Forbid => "-F",
                           },
                           lint_name);
-        sess.note(&msg);
+        db.note(&msg);
+        db.emit();
     }
 }
 
@@ -1152,6 +1232,8 @@ fn check_lint_name_cmdline(sess: &Session, lint_cx: &LintStore,
 ///
 /// Consumes the `lint_store` field of the `Session`.
 pub fn check_crate(tcx: &ty::ctxt, access_levels: &AccessLevels) {
+    let _task = tcx.dep_graph.in_task(DepNode::LateLintCheck);
+
     let krate = tcx.map.krate();
     let mut cx = LateContext::new(tcx, krate, access_levels);
 

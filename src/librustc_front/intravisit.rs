@@ -10,7 +10,7 @@
 
 //! HIR walker. Each overridden visit method has full control over what
 //! happens with its node, it can do its own traversal of the node's children,
-//! call `visit::walk_*` to apply the default traversal algorithm, or prevent
+//! call `intravisit::walk_*` to apply the default traversal algorithm, or prevent
 //! deeper traversal by doing nothing.
 //!
 //! When visiting the HIR, the contents of nested items are NOT visited
@@ -45,7 +45,7 @@ pub enum FnKind<'a> {
 /// Each method of the Visitor trait is a hook to be potentially
 /// overridden.  Each method's default implementation recursively visits
 /// the substructure of the input via the corresponding `walk` method;
-/// e.g. the `visit_mod` method by default calls `visit::walk_mod`.
+/// e.g. the `visit_mod` method by default calls `intravisit::walk_mod`.
 ///
 /// Note that this visitor does NOT visit nested items by default
 /// (this is why the module is called `intravisit`, to distinguish it
@@ -732,7 +732,7 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
             visitor.visit_expr(subexpression)
         }
         ExprLit(_) => {}
-        ExprCast(ref subexpression, ref typ) => {
+        ExprCast(ref subexpression, ref typ) | ExprType(ref subexpression, ref typ) => {
             visitor.visit_expr(subexpression);
             visitor.visit_ty(typ)
         }
@@ -803,8 +803,8 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
             for &(_, ref input) in &ia.inputs {
                 visitor.visit_expr(&input)
             }
-            for &(_, ref output, _) in &ia.outputs {
-                visitor.visit_expr(&output)
+            for output in &ia.outputs {
+                visitor.visit_expr(&output.expr)
             }
         }
     }

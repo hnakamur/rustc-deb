@@ -15,10 +15,14 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 #![allow(missing_docs)]
 
+#[cfg(not(test))]
 use core::num;
+#[cfg(not(test))]
 use intrinsics;
+#[cfg(not(test))]
 use libc::c_int;
-use num::{FpCategory, ParseFloatError};
+#[cfg(not(test))]
+use num::FpCategory;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use core::f64::{RADIX, MANTISSA_DIGITS, DIGITS, EPSILON};
@@ -83,16 +87,6 @@ mod cmath {
 #[cfg(not(test))]
 #[lang = "f64"]
 impl f64 {
-    /// Parses a float as with a given radix
-    #[unstable(feature = "float_from_str_radix", reason = "recently moved API",
-               issue = "27736")]
-    #[rustc_deprecated(since = "1.4.0",
-                 reason = "unclear how useful or correct this is")]
-    #[allow(deprecated)]
-    pub fn from_str_radix(s: &str, radix: u32) -> Result<f64, ParseFloatError> {
-        num::Float::from_str_radix(s, radix)
-    }
-
     /// Returns `true` if this value is `NaN` and false otherwise.
     ///
     /// ```
@@ -1569,11 +1563,9 @@ mod tests {
 
     #[test]
     fn test_ldexp() {
-        // We have to use from_str until base-2 exponents
-        // are supported in floating-point literals
-        let f1: f64 = f64::from_str_radix("1p-123", 16).unwrap();
-        let f2: f64 = f64::from_str_radix("1p-111", 16).unwrap();
-        let f3: f64 = f64::from_str_radix("1.Cp-12", 16).unwrap();
+        let f1 = 2.0f64.powi(-123);
+        let f2 = 2.0f64.powi(-111);
+        let f3 = 1.75 * 2.0f64.powi(-12);
         assert_eq!(f64::ldexp(1f64, -123), f1);
         assert_eq!(f64::ldexp(1f64, -111), f2);
         assert_eq!(f64::ldexp(1.75f64, -12), f3);
@@ -1591,11 +1583,9 @@ mod tests {
 
     #[test]
     fn test_frexp() {
-        // We have to use from_str until base-2 exponents
-        // are supported in floating-point literals
-        let f1: f64 = f64::from_str_radix("1p-123", 16).unwrap();
-        let f2: f64 = f64::from_str_radix("1p-111", 16).unwrap();
-        let f3: f64 = f64::from_str_radix("1.Cp-123", 16).unwrap();
+        let f1 = 2.0f64.powi(-123);
+        let f2 = 2.0f64.powi(-111);
+        let f3 = 1.75 * 2.0f64.powi(-123);
         let (x1, exp1) = f1.frexp();
         let (x2, exp2) = f2.frexp();
         let (x3, exp3) = f3.frexp();

@@ -12,31 +12,34 @@ pub use self::ImplOrTraitItemId::*;
 pub use self::ClosureKind::*;
 pub use self::Variance::*;
 pub use self::DtorKind::*;
-pub use self::ExplicitSelfCategory::*;
 pub use self::ImplOrTraitItemContainer::*;
 pub use self::BorrowKind::*;
 pub use self::ImplOrTraitItem::*;
 pub use self::IntVarValue::*;
 pub use self::LvaluePreference::*;
+pub use self::fold::TypeFoldable;
 
+use dep_graph::{self, DepNode};
 use front::map as ast_map;
 use front::map::LinkedPath;
 use middle;
-use middle::cstore::{CrateStore, LOCAL_CRATE};
+use middle::cstore::{self, CrateStore, LOCAL_CRATE};
 use middle::def::{self, ExportMap};
 use middle::def_id::DefId;
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangItem};
-use middle::subst::{self, ParamSpace, Subst, Substs, VecPerParamSpace};
+use middle::region::{CodeExtent};
+use middle::subst::{self, Subst, Substs, VecPerParamSpace};
 use middle::traits;
 use middle::ty;
 use middle::ty::fold::TypeFolder;
 use middle::ty::walk::TypeWalker;
-use util::common::memoized;
-use util::nodemap::{NodeMap, NodeSet, DefIdMap};
+use util::common::MemoizationMap;
+use util::nodemap::{NodeMap, NodeSet};
 use util::nodemap::FnvHashMap;
 
+use serialize::{Encodable, Encoder, Decodable, Decoder};
 use std::borrow::{Borrow, Cow};
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 use std::iter;
 use std::rc::Rc;
@@ -45,12 +48,12 @@ use std::vec::IntoIter;
 use std::collections::{HashMap, HashSet};
 use syntax::ast::{self, CrateNum, Name, NodeId};
 use syntax::attr::{self, AttrMetaMethods};
-use syntax::codemap::Span;
-use syntax::parse::token::{InternedString, special_idents};
+use syntax::codemap::{DUMMY_SP, Span};
+use syntax::parse::token::InternedString;
 
 use rustc_front::hir;
 use rustc_front::hir::{ItemImpl, ItemTrait};
-use rustc_front::hir::{MutImmutable, MutMutable, Visibility};
+use rustc_front::intravisit::Visitor;
 
 pub use self::sty::{Binder, DebruijnIndex};
 pub use self::sty::{BuiltinBound, BuiltinBounds, ExistentialBounds};
@@ -75,14 +78,18 @@ pub use self::contents::TypeContents;
 pub use self::context::{ctxt, tls};
 pub use self::context::{CtxtArenas, Lift, Tables};
 
+pub use self::trait_def::{TraitDef, TraitFlags};
+
 pub mod adjustment;
 pub mod cast;
 pub mod error;
 pub mod fast_reject;
 pub mod fold;
 pub mod _match;
+pub mod maps;
 pub mod outlives;
 pub mod relate;
+pub mod trait_def;
 pub mod walk;
 pub mod wf;
 pub mod util;
@@ -479,6 +486,24 @@ impl<'tcx> Hash for TyS<'tcx> {
 
 pub type Ty<'tcx> = &'tcx TyS<'tcx>;
 
+impl<'tcx> Encodable for Ty<'tcx> {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        cstore::tls::with_encoding_context(s, |ecx, rbml_w| {
+            ecx.encode_ty(rbml_w, *self);
+            Ok(())
+        })
+    }
+}
+
+impl<'tcx> Decodable for Ty<'tcx> {
+    fn decode<D: Decoder>(d: &mut D) -> Result<Ty<'tcx>, D::Error> {
+        cstore::tls::with_decoding_context(d, |dcx, rbml_r| {
+            Ok(dcx.decode_ty(rbml_r))
+        })
+    }
+}
+
+
 /// Upvars do not get their own node-id. Instead, we use the pair of
 /// the original var id (that is, the root variable that is referenced
 /// by the upvar) and the id of the closure expression.
@@ -614,7 +639,6 @@ pub struct RegionParameterDef {
 impl RegionParameterDef {
     pub fn to_early_bound_region(&self) -> ty::Region {
         ty::ReEarlyBound(ty::EarlyBoundRegion {
-            def_id: self.def_id,
             space: self.space,
             index: self.index,
             name: self.name,
@@ -1098,7 +1122,7 @@ pub struct ParameterEnvironment<'a, 'tcx:'a> {
     /// FIXME(#3696). It would be nice to refactor so that free
     /// regions don't have this implicit scope and instead introduce
     /// relationships in the environment.
-    pub free_id: ast::NodeId,
+    pub free_id_outlive: CodeExtent,
 }
 
 impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
@@ -1113,7 +1137,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
             caller_bounds: caller_bounds,
             selection_cache: traits::SelectionCache::new(),
             evaluation_cache: traits::EvaluationCache::new(),
-            free_id: self.free_id,
+            free_id_outlive: self.free_id_outlive,
         }
     }
 
@@ -1131,7 +1155,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(impl_item.span,
                                                            &scheme.generics,
                                                            &predicates,
-                                                           id)
+                                                           cx.region_maps.item_extent(id))
                     }
                     hir::ImplItemKind::Const(_, _) => {
                         let def_id = cx.map.local_def_id(id);
@@ -1140,7 +1164,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(impl_item.span,
                                                            &scheme.generics,
                                                            &predicates,
-                                                           id)
+                                                           cx.region_maps.item_extent(id))
                     }
                     hir::ImplItemKind::Method(_, ref body) => {
                         let method_def_id = cx.map.local_def_id(id);
@@ -1152,7 +1176,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                                     impl_item.span,
                                     method_generics,
                                     method_bounds,
-                                    body.id)
+                                    cx.region_maps.call_site_extent(id, body.id))
                             }
                             _ => {
                                 cx.sess
@@ -1175,7 +1199,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(trait_item.span,
                                                            &trait_def.generics,
                                                            &predicates,
-                                                           id)
+                                                           cx.region_maps.item_extent(id))
                     }
                     hir::ConstTraitItem(..) => {
                         let def_id = cx.map.local_def_id(id);
@@ -1184,23 +1208,29 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(trait_item.span,
                                                            &scheme.generics,
                                                            &predicates,
-                                                           id)
+                                                           cx.region_maps.item_extent(id))
                     }
                     hir::MethodTraitItem(_, ref body) => {
-                        // for the body-id, use the id of the body
-                        // block, unless this is a trait method with
-                        // no default, then fallback to the method id.
-                        let body_id = body.as_ref().map(|b| b.id).unwrap_or(id);
+                        // Use call-site for extent (unless this is a
+                        // trait method with no default; then fallback
+                        // to the method id).
                         let method_def_id = cx.map.local_def_id(id);
                         match cx.impl_or_trait_item(method_def_id) {
                             MethodTraitItem(ref method_ty) => {
                                 let method_generics = &method_ty.generics;
                                 let method_bounds = &method_ty.predicates;
+                                let extent = if let Some(ref body) = *body {
+                                    // default impl: use call_site extent as free_id_outlive bound.
+                                    cx.region_maps.call_site_extent(id, body.id)
+                                } else {
+                                    // no default impl: use item extent as free_id_outlive bound.
+                                    cx.region_maps.item_extent(id)
+                                };
                                 cx.construct_parameter_environment(
                                     trait_item.span,
                                     method_generics,
                                     method_bounds,
-                                    body_id)
+                                    extent)
                             }
                             _ => {
                                 cx.sess
@@ -1223,7 +1253,8 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(item.span,
                                                            &fn_scheme.generics,
                                                            &fn_predicates,
-                                                           body.id)
+                                                           cx.region_maps.call_site_extent(id,
+                                                                                           body.id))
                     }
                     hir::ItemEnum(..) |
                     hir::ItemStruct(..) |
@@ -1236,7 +1267,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(item.span,
                                                            &scheme.generics,
                                                            &predicates,
-                                                           id)
+                                                           cx.region_maps.item_extent(id))
                     }
                     hir::ItemTrait(..) => {
                         let def_id = cx.map.local_def_id(id);
@@ -1245,7 +1276,7 @@ impl<'a, 'tcx> ParameterEnvironment<'a, 'tcx> {
                         cx.construct_parameter_environment(item.span,
                                                            &trait_def.generics,
                                                            &predicates,
-                                                           id)
+                                                           cx.region_maps.item_extent(id))
                     }
                     _ => {
                         cx.sess.span_bug(item.span,
@@ -1294,161 +1325,6 @@ pub struct TypeScheme<'tcx> {
 }
 
 bitflags! {
-    flags TraitFlags: u32 {
-        const NO_TRAIT_FLAGS        = 0,
-        const HAS_DEFAULT_IMPL      = 1 << 0,
-        const IS_OBJECT_SAFE        = 1 << 1,
-        const OBJECT_SAFETY_VALID   = 1 << 2,
-        const IMPLS_VALID           = 1 << 3,
-    }
-}
-
-/// As `TypeScheme` but for a trait ref.
-pub struct TraitDef<'tcx> {
-    pub unsafety: hir::Unsafety,
-
-    /// If `true`, then this trait had the `#[rustc_paren_sugar]`
-    /// attribute, indicating that it should be used with `Foo()`
-    /// sugar. This is a temporary thing -- eventually any trait wil
-    /// be usable with the sugar (or without it).
-    pub paren_sugar: bool,
-
-    /// Generic type definitions. Note that `Self` is listed in here
-    /// as having a single bound, the trait itself (e.g., in the trait
-    /// `Eq`, there is a single bound `Self : Eq`). This is so that
-    /// default methods get to assume that the `Self` parameters
-    /// implements the trait.
-    pub generics: Generics<'tcx>,
-
-    pub trait_ref: TraitRef<'tcx>,
-
-    /// A list of the associated types defined in this trait. Useful
-    /// for resolving `X::Foo` type markers.
-    pub associated_type_names: Vec<Name>,
-
-    // Impls of this trait. To allow for quicker lookup, the impls are indexed
-    // by a simplified version of their Self type: impls with a simplifiable
-    // Self are stored in nonblanket_impls keyed by it, while all other impls
-    // are stored in blanket_impls.
-
-    /// Impls of the trait.
-    pub nonblanket_impls: RefCell<
-        FnvHashMap<fast_reject::SimplifiedType, Vec<DefId>>
-    >,
-
-    /// Blanket impls associated with the trait.
-    pub blanket_impls: RefCell<Vec<DefId>>,
-
-    /// Various flags
-    pub flags: Cell<TraitFlags>
-}
-
-impl<'tcx> TraitDef<'tcx> {
-    // returns None if not yet calculated
-    pub fn object_safety(&self) -> Option<bool> {
-        if self.flags.get().intersects(TraitFlags::OBJECT_SAFETY_VALID) {
-            Some(self.flags.get().intersects(TraitFlags::IS_OBJECT_SAFE))
-        } else {
-            None
-        }
-    }
-
-    pub fn set_object_safety(&self, is_safe: bool) {
-        assert!(self.object_safety().map(|cs| cs == is_safe).unwrap_or(true));
-        self.flags.set(
-            self.flags.get() | if is_safe {
-                TraitFlags::OBJECT_SAFETY_VALID | TraitFlags::IS_OBJECT_SAFE
-            } else {
-                TraitFlags::OBJECT_SAFETY_VALID
-            }
-        );
-    }
-
-    /// Records a trait-to-implementation mapping.
-    pub fn record_impl(&self,
-                       tcx: &ctxt<'tcx>,
-                       impl_def_id: DefId,
-                       impl_trait_ref: TraitRef<'tcx>) {
-        debug!("TraitDef::record_impl for {:?}, from {:?}",
-               self, impl_trait_ref);
-
-        // We don't want to borrow_mut after we already populated all impls,
-        // so check if an impl is present with an immutable borrow first.
-        if let Some(sty) = fast_reject::simplify_type(tcx,
-                                                      impl_trait_ref.self_ty(), false) {
-            if let Some(is) = self.nonblanket_impls.borrow().get(&sty) {
-                if is.contains(&impl_def_id) {
-                    return // duplicate - skip
-                }
-            }
-
-            self.nonblanket_impls.borrow_mut().entry(sty).or_insert(vec![]).push(impl_def_id)
-        } else {
-            if self.blanket_impls.borrow().contains(&impl_def_id) {
-                return // duplicate - skip
-            }
-            self.blanket_impls.borrow_mut().push(impl_def_id)
-        }
-    }
-
-
-    pub fn for_each_impl<F: FnMut(DefId)>(&self, tcx: &ctxt<'tcx>, mut f: F)  {
-        tcx.populate_implementations_for_trait_if_necessary(self.trait_ref.def_id);
-
-        for &impl_def_id in self.blanket_impls.borrow().iter() {
-            f(impl_def_id);
-        }
-
-        for v in self.nonblanket_impls.borrow().values() {
-            for &impl_def_id in v {
-                f(impl_def_id);
-            }
-        }
-    }
-
-    /// Iterate over every impl that could possibly match the
-    /// self-type `self_ty`.
-    pub fn for_each_relevant_impl<F: FnMut(DefId)>(&self,
-                                                   tcx: &ctxt<'tcx>,
-                                                   self_ty: Ty<'tcx>,
-                                                   mut f: F)
-    {
-        tcx.populate_implementations_for_trait_if_necessary(self.trait_ref.def_id);
-
-        for &impl_def_id in self.blanket_impls.borrow().iter() {
-            f(impl_def_id);
-        }
-
-        // simplify_type(.., false) basically replaces type parameters and
-        // projections with infer-variables. This is, of course, done on
-        // the impl trait-ref when it is instantiated, but not on the
-        // predicate trait-ref which is passed here.
-        //
-        // for example, if we match `S: Copy` against an impl like
-        // `impl<T:Copy> Copy for Option<T>`, we replace the type variable
-        // in `Option<T>` with an infer variable, to `Option<_>` (this
-        // doesn't actually change fast_reject output), but we don't
-        // replace `S` with anything - this impl of course can't be
-        // selected, and as there are hundreds of similar impls,
-        // considering them would significantly harm performance.
-        if let Some(simp) = fast_reject::simplify_type(tcx, self_ty, true) {
-            if let Some(impls) = self.nonblanket_impls.borrow().get(&simp) {
-                for &impl_def_id in impls {
-                    f(impl_def_id);
-                }
-            }
-        } else {
-            for v in self.nonblanket_impls.borrow().values() {
-                for &impl_def_id in v {
-                    f(impl_def_id);
-                }
-            }
-        }
-    }
-
-}
-
-bitflags! {
     flags AdtFlags: u32 {
         const NO_ADT_FLAGS        = 0,
         const IS_ENUM             = 1 << 0,
@@ -1477,6 +1353,7 @@ pub struct VariantDefData<'tcx, 'container: 'tcx> {
     pub name: Name, // struct's name if this is a struct
     pub disr_val: Disr,
     pub fields: Vec<FieldDefData<'tcx, 'container>>,
+    pub kind: VariantKind,
 }
 
 pub struct FieldDefData<'tcx, 'container: 'tcx> {
@@ -1489,6 +1366,8 @@ pub struct FieldDefData<'tcx, 'container: 'tcx> {
     pub vis: hir::Visibility,
     /// TyIVar is used here to allow for variance (see the doc at
     /// AdtDefData).
+    ///
+    /// Note: direct accesses to `ty` must also add dep edges.
     ty: ivar::TyIVar<'tcx, 'container>
 }
 
@@ -1526,6 +1405,23 @@ impl<'tcx, 'container> Hash for AdtDefData<'tcx, 'container> {
     #[inline]
     fn hash<H: Hasher>(&self, s: &mut H) {
         (self as *const AdtDefData).hash(s)
+    }
+}
+
+impl<'tcx> Encodable for AdtDef<'tcx> {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        self.did.encode(s)
+    }
+}
+
+impl<'tcx> Decodable for AdtDef<'tcx> {
+    fn decode<D: Decoder>(d: &mut D) -> Result<AdtDef<'tcx>, D::Error> {
+        let def_id: DefId = try!{ Decodable::decode(d) };
+
+        cstore::tls::with_decoding_context(d, |dcx, _| {
+            let def_id = dcx.translate_def_id(def_id);
+            Ok(dcx.tcx().lookup_adt_def(def_id))
+        })
     }
 }
 
@@ -1712,13 +1608,7 @@ impl<'tcx, 'container> VariantDefData<'tcx, 'container> {
     }
 
     pub fn kind(&self) -> VariantKind {
-        match self.fields.get(0) {
-            None => VariantKind::Unit,
-            Some(&FieldDefData { name, .. }) if name == special_idents::unnamed_field.name => {
-                VariantKind::Tuple
-            }
-            Some(_) => VariantKind::Struct
-        }
+        self.kind
     }
 
     pub fn is_tuple_struct(&self) -> bool {
@@ -1762,11 +1652,11 @@ impl<'tcx, 'container> FieldDefData<'tcx, 'container> {
     }
 
     pub fn unsubst_ty(&self) -> Ty<'tcx> {
-        self.ty.unwrap()
+        self.ty.unwrap(DepNode::FieldTy(self.did))
     }
 
     pub fn fulfill_ty(&self, ty: Ty<'container>) {
-        self.ty.fulfill(ty);
+        self.ty.fulfill(DepNode::FieldTy(self.did), ty);
     }
 }
 
@@ -1889,24 +1779,20 @@ impl LvaluePreference {
 /// into the map by the `typeck::collect` phase.  If the def-id is external,
 /// then we have to go consult the crate loading code (and cache the result for
 /// the future).
-fn lookup_locally_or_in_crate_store<V, F>(descr: &str,
+fn lookup_locally_or_in_crate_store<M, F>(descr: &str,
                                           def_id: DefId,
-                                          map: &RefCell<DefIdMap<V>>,
-                                          load_external: F) -> V where
-    V: Clone,
-    F: FnOnce() -> V,
+                                          map: &M,
+                                          load_external: F)
+                                          -> M::Value where
+    M: MemoizationMap<Key=DefId>,
+    F: FnOnce() -> M::Value,
 {
-    match map.borrow().get(&def_id).cloned() {
-        Some(v) => { return v; }
-        None => { }
-    }
-
-    if def_id.is_local() {
-        panic!("No def'n found for {:?} in tcx.{}", def_id, descr);
-    }
-    let v = load_external();
-    map.borrow_mut().insert(def_id, v.clone());
-    v
+    map.memoize(def_id, || {
+        if def_id.is_local() {
+            panic!("No def'n found for {:?} in tcx.{}", def_id, descr);
+        }
+        load_external()
+    })
 }
 
 impl BorrowKind {
@@ -2064,12 +1950,15 @@ impl<'tcx> ctxt<'tcx> {
                     }) => {
                         true
                     }
-
+                    Some(&def::PathResolution { base_def: def::DefErr, .. })=> true,
                     Some(..) => false,
-
                     None => self.sess.span_bug(expr.span, &format!(
                         "no def for path {}", expr.id))
                 }
+            }
+
+            hir::ExprType(ref e, _) => {
+                self.expr_is_lval(e)
             }
 
             hir::ExprUnary(hir::UnDeref, _) |
@@ -2179,22 +2068,6 @@ impl<'tcx> ctxt<'tcx> {
         }
     }
 
-    pub fn trait_items(&self, trait_did: DefId) -> Rc<Vec<ImplOrTraitItem<'tcx>>> {
-        let mut trait_items = self.trait_items_cache.borrow_mut();
-        match trait_items.get(&trait_did).cloned() {
-            Some(trait_items) => trait_items,
-            None => {
-                let def_ids = self.trait_item_def_ids(trait_did);
-                let items: Rc<Vec<ImplOrTraitItem>> =
-                    Rc::new(def_ids.iter()
-                                   .map(|d| self.impl_or_trait_item(d.def_id()))
-                                   .collect());
-                trait_items.insert(trait_did, items.clone());
-                items
-            }
-        }
-    }
-
     pub fn trait_impl_polarity(&self, id: DefId) -> Option<hir::ImplPolarity> {
         if let Some(id) = self.map.as_local_node_id(id) {
             match self.map.find(id) {
@@ -2212,7 +2085,7 @@ impl<'tcx> ctxt<'tcx> {
     }
 
     pub fn custom_coerce_unsized_kind(&self, did: DefId) -> adjustment::CustomCoerceUnsized {
-        memoized(&self.custom_coerce_unsized_kinds, did, |did: DefId| {
+        self.custom_coerce_unsized_kinds.memoize(did, || {
             let (kind, src) = if did.krate != LOCAL_CRATE {
                 (self.sess.cstore.custom_coerce_unsized_kind(did), "external")
             } else {
@@ -2350,6 +2223,39 @@ impl<'tcx> ctxt<'tcx> {
             || self.sess.cstore.item_super_predicates(self, did))
     }
 
+    /// If `type_needs_drop` returns true, then `ty` is definitely
+    /// non-copy and *might* have a destructor attached; if it returns
+    /// false, then `ty` definitely has no destructor (i.e. no drop glue).
+    ///
+    /// (Note that this implies that if `ty` has a destructor attached,
+    /// then `type_needs_drop` will definitely return `true` for `ty`.)
+    pub fn type_needs_drop_given_env<'a>(&self,
+                                         ty: Ty<'tcx>,
+                                         param_env: &ty::ParameterEnvironment<'a,'tcx>) -> bool {
+        // Issue #22536: We first query type_moves_by_default.  It sees a
+        // normalized version of the type, and therefore will definitely
+        // know whether the type implements Copy (and thus needs no
+        // cleanup/drop/zeroing) ...
+        let implements_copy = !ty.moves_by_default(param_env, DUMMY_SP);
+
+        if implements_copy { return false; }
+
+        // ... (issue #22536 continued) but as an optimization, still use
+        // prior logic of asking if the `needs_drop` bit is set; we need
+        // not zero non-Copy types if they have no destructor.
+
+        // FIXME(#22815): Note that calling `ty::type_contents` is a
+        // conservative heuristic; it may report that `needs_drop` is set
+        // when actual type does not actually have a destructor associated
+        // with it. But since `ty` absolutely did not have the `Copy`
+        // bound attached (see above), it is sound to treat it as having a
+        // destructor (e.g. zero its memory on move).
+
+        let contents = ty.type_contents(self);
+        debug!("type_needs_drop ty={:?} contents={:?}", ty, contents);
+        contents.needs_drop(self)
+    }
+
     /// Get the attributes of a definition.
     pub fn get_attrs(&self, did: DefId) -> Cow<'tcx, [ast::Attribute]> {
         if let Some(id) = self.map.as_local_node_id(did) {
@@ -2373,19 +2279,6 @@ impl<'tcx> ctxt<'tcx> {
     pub fn lookup_simd(&self, did: DefId) -> bool {
         self.has_attr(did, "simd")
             || self.lookup_repr_hints(did).contains(&attr::ReprSimd)
-    }
-
-    /// Obtain the representation annotation for a struct definition.
-    pub fn lookup_repr_hints(&self, did: DefId) -> Rc<Vec<attr::ReprAttr>> {
-        memoized(&self.repr_hint_cache, did, |did: DefId| {
-            Rc::new(if did.is_local() {
-                self.get_attrs(did).iter().flat_map(|meta| {
-                    attr::find_repr_attrs(self.sess.diagnostic(), meta).into_iter()
-                }).collect()
-            } else {
-                self.sess.cstore.repr_attrs(did)
-            })
-        })
     }
 
     pub fn item_variances(&self, item_id: DefId) -> Rc<ItemVariances> {
@@ -2414,6 +2307,10 @@ impl<'tcx> ctxt<'tcx> {
             return
         }
 
+        // The primitive is not local, hence we are reading this out
+        // of metadata.
+        let _ignore = self.dep_graph.in_ignore();
+
         if self.populated_external_primitive_impls.borrow().contains(&primitive_def_id) {
             return
         }
@@ -2435,6 +2332,10 @@ impl<'tcx> ctxt<'tcx> {
         if type_id.is_local() {
             return
         }
+
+        // The type is not local, hence we are reading this out of
+        // metadata and don't need to track edges.
+        let _ignore = self.dep_graph.in_ignore();
 
         if self.populated_external_types.borrow().contains(&type_id) {
             return
@@ -2460,6 +2361,10 @@ impl<'tcx> ctxt<'tcx> {
         if trait_id.is_local() {
             return
         }
+
+        // The type is not local, hence we are reading this out of
+        // metadata and don't need to track edges.
+        let _ignore = self.dep_graph.in_ignore();
 
         let def = self.lookup_trait_def(trait_id);
         if def.flags.get().intersects(TraitFlags::IMPLS_VALID) {
@@ -2576,18 +2481,17 @@ impl<'tcx> ctxt<'tcx> {
     /// are no free type/lifetime parameters in scope.
     pub fn empty_parameter_environment<'a>(&'a self)
                                            -> ParameterEnvironment<'a,'tcx> {
+
+        // for an empty parameter environment, there ARE no free
+        // regions, so it shouldn't matter what we use for the free id
+        let free_id_outlive = self.region_maps.node_extent(ast::DUMMY_NODE_ID);
         ty::ParameterEnvironment { tcx: self,
                                    free_substs: Substs::empty(),
                                    caller_bounds: Vec::new(),
                                    implicit_region_bound: ty::ReEmpty,
                                    selection_cache: traits::SelectionCache::new(),
                                    evaluation_cache: traits::EvaluationCache::new(),
-
-                                   // for an empty parameter
-                                   // environment, there ARE no free
-                                   // regions, so it shouldn't matter
-                                   // what we use for the free id
-                                   free_id: ast::DUMMY_NODE_ID }
+                                   free_id_outlive: free_id_outlive }
     }
 
     /// Constructs and returns a substitution that can be applied to move from
@@ -2596,7 +2500,7 @@ impl<'tcx> ctxt<'tcx> {
     /// free parameters. Since we currently represent bound/free type
     /// parameters in the same way, this only has an effect on regions.
     pub fn construct_free_substs(&self, generics: &Generics<'tcx>,
-                                 free_id: NodeId) -> Substs<'tcx> {
+                                 free_id_outlive: CodeExtent) -> Substs<'tcx> {
         // map T => T
         let mut types = VecPerParamSpace::empty();
         for def in generics.types.as_slice() {
@@ -2604,8 +2508,6 @@ impl<'tcx> ctxt<'tcx> {
                     def);
             types.push(def.space, self.mk_param_from_def(def));
         }
-
-        let free_id_outlive = self.region_maps.item_extent(free_id);
 
         // map bound 'a => free 'a
         let mut regions = VecPerParamSpace::empty();
@@ -2623,20 +2525,21 @@ impl<'tcx> ctxt<'tcx> {
         }
     }
 
-    /// See `ParameterEnvironment` struct def'n for details
+    /// See `ParameterEnvironment` struct def'n for details.
+    /// If you were using `free_id: NodeId`, you might try `self.region_maps.item_extent(free_id)`
+    /// for the `free_id_outlive` parameter. (But note that that is not always quite right.)
     pub fn construct_parameter_environment<'a>(&'a self,
                                                span: Span,
                                                generics: &ty::Generics<'tcx>,
                                                generic_predicates: &ty::GenericPredicates<'tcx>,
-                                               free_id: NodeId)
+                                               free_id_outlive: CodeExtent)
                                                -> ParameterEnvironment<'a, 'tcx>
     {
         //
         // Construct the free substs.
         //
 
-        let free_substs = self.construct_free_substs(generics, free_id);
-        let free_id_outlive = self.region_maps.item_extent(free_id);
+        let free_substs = self.construct_free_substs(generics, free_id_outlive);
 
         //
         // Compute the bounds on Self and the type parameters.
@@ -2646,12 +2549,6 @@ impl<'tcx> ctxt<'tcx> {
         let bounds = self.liberate_late_bound_regions(free_id_outlive, &ty::Binder(bounds));
         let predicates = bounds.predicates.into_vec();
 
-        debug!("construct_parameter_environment: free_id={:?} free_subst={:?} predicates={:?}",
-               free_id,
-               free_substs,
-               predicates);
-
-        //
         // Finally, we have to normalize the bounds in the environment, in
         // case they contain any associated type projections. This process
         // can yield errors if the put in illegal associated types, like
@@ -2672,10 +2569,10 @@ impl<'tcx> ctxt<'tcx> {
             caller_bounds: predicates,
             selection_cache: traits::SelectionCache::new(),
             evaluation_cache: traits::EvaluationCache::new(),
-            free_id: free_id,
+            free_id_outlive: free_id_outlive,
         };
 
-        let cause = traits::ObligationCause::misc(span, free_id);
+        let cause = traits::ObligationCause::misc(span, free_id_outlive.node_id(&self.region_maps));
         traits::normalize_param_env_or_error(unnormalized_env, cause)
     }
 
@@ -2691,15 +2588,24 @@ impl<'tcx> ctxt<'tcx> {
     pub fn upvar_capture(&self, upvar_id: ty::UpvarId) -> Option<ty::UpvarCapture> {
         Some(self.tables.borrow().upvar_capture_map.get(&upvar_id).unwrap().clone())
     }
+
+
+    pub fn visit_all_items_in_krate<V,F>(&self,
+                                         dep_node_fn: F,
+                                         visitor: &mut V)
+        where F: FnMut(DefId) -> DepNode, V: Visitor<'tcx>
+    {
+        dep_graph::visit_all_items_in_krate(self, dep_node_fn, visitor);
+    }
 }
 
 /// The category of explicit self.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum ExplicitSelfCategory {
-    StaticExplicitSelfCategory,
-    ByValueExplicitSelfCategory,
-    ByReferenceExplicitSelfCategory(Region, hir::Mutability),
-    ByBoxExplicitSelfCategory,
+    Static,
+    ByValue,
+    ByReference(Region, hir::Mutability),
+    ByBox,
 }
 
 /// A free variable referred to in a function.
@@ -2755,75 +2661,5 @@ impl<'tcx> ctxt<'tcx> {
                   .map(|def| def.to_early_bound_region())
                   .collect();
         trait_ref.substs.clone().with_method(meth_tps, meth_regions)
-    }
-}
-
-/// An "escaping region" is a bound region whose binder is not part of `t`.
-///
-/// So, for example, consider a type like the following, which has two binders:
-///
-///    for<'a> fn(x: for<'b> fn(&'a isize, &'b isize))
-///    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ outer scope
-///                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~~  inner scope
-///
-/// This type has *bound regions* (`'a`, `'b`), but it does not have escaping regions, because the
-/// binders of both `'a` and `'b` are part of the type itself. However, if we consider the *inner
-/// fn type*, that type has an escaping region: `'a`.
-///
-/// Note that what I'm calling an "escaping region" is often just called a "free region". However,
-/// we already use the term "free region". It refers to the regions that we use to represent bound
-/// regions on a fn definition while we are typechecking its body.
-///
-/// To clarify, conceptually there is no particular difference between an "escaping" region and a
-/// "free" region. However, there is a big difference in practice. Basically, when "entering" a
-/// binding level, one is generally required to do some sort of processing to a bound region, such
-/// as replacing it with a fresh/skolemized region, or making an entry in the environment to
-/// represent the scope to which it is attached, etc. An escaping region represents a bound region
-/// for which this processing has not yet been done.
-pub trait RegionEscape {
-    fn has_escaping_regions(&self) -> bool {
-        self.has_regions_escaping_depth(0)
-    }
-
-    fn has_regions_escaping_depth(&self, depth: u32) -> bool;
-}
-
-pub trait HasTypeFlags {
-    fn has_type_flags(&self, flags: TypeFlags) -> bool;
-    fn has_projection_types(&self) -> bool {
-        self.has_type_flags(TypeFlags::HAS_PROJECTION)
-    }
-    fn references_error(&self) -> bool {
-        self.has_type_flags(TypeFlags::HAS_TY_ERR)
-    }
-    fn has_param_types(&self) -> bool {
-        self.has_type_flags(TypeFlags::HAS_PARAMS)
-    }
-    fn has_self_ty(&self) -> bool {
-        self.has_type_flags(TypeFlags::HAS_SELF)
-    }
-    fn has_infer_types(&self) -> bool {
-        self.has_type_flags(TypeFlags::HAS_TY_INFER)
-    }
-    fn needs_infer(&self) -> bool {
-        self.has_type_flags(TypeFlags::HAS_TY_INFER | TypeFlags::HAS_RE_INFER)
-    }
-    fn needs_subst(&self) -> bool {
-        self.has_type_flags(TypeFlags::NEEDS_SUBST)
-    }
-    fn has_closure_types(&self) -> bool {
-        self.has_type_flags(TypeFlags::HAS_TY_CLOSURE)
-    }
-    fn has_erasable_regions(&self) -> bool {
-        self.has_type_flags(TypeFlags::HAS_RE_EARLY_BOUND |
-                            TypeFlags::HAS_RE_INFER |
-                            TypeFlags::HAS_FREE_REGIONS)
-    }
-    /// Indicates whether this value references only 'global'
-    /// types/lifetimes that are the same regardless of what fn we are
-    /// in. This is used for caching. Errs on the side of returning
-    /// false.
-    fn is_global(&self) -> bool {
-        !self.has_type_flags(TypeFlags::HAS_LOCAL_NAMES)
     }
 }

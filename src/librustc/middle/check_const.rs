@@ -24,6 +24,7 @@
 // - It's not possible to take the address of a static item with unsafe interior. This is enforced
 // by borrowck::gather_loans
 
+use dep_graph::DepNode;
 use middle::ty::cast::{CastKind};
 use middle::const_eval::{self, ConstEvalErr};
 use middle::const_eval::ErrKind::IndexOpFeatureGated;
@@ -174,21 +175,6 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
             _ => Mode::Var
         };
 
-        // Ensure the arguments are simple, not mutable/by-ref or patterns.
-        if mode == Mode::ConstFn {
-            for arg in &fd.inputs {
-                match arg.pat.node {
-                    hir::PatWild => {}
-                    hir::PatIdent(hir::BindByValue(hir::MutImmutable), _, None) => {}
-                    _ => {
-                        span_err!(self.tcx.sess, arg.pat.span, E0022,
-                                  "arguments of constant functions can only \
-                                   be immutable by-value bindings");
-                    }
-                }
-            }
-        }
-
         let qualif = self.with_mode(mode, |this| {
             this.with_euv(Some(fn_id), |euv| euv.walk_fn(fd, b));
             intravisit::walk_fn(this, fk, fd, b, s);
@@ -224,14 +210,15 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
                 // this doesn't come from a macro that has #[allow_internal_unstable]
                 !self.tcx.sess.codemap().span_allows_unstable(expr.span)
             {
-                self.tcx.sess.span_err(
+                let mut err = self.tcx.sess.struct_span_err(
                     expr.span,
                     "const fns are an unstable feature");
                 fileline_help!(
-                    self.tcx.sess,
+                    &mut err,
                     expr.span,
                     "in Nightly builds, add `#![feature(const_fn)]` to the crate \
                      attributes to enable");
+                err.emit();
             }
 
             let qualif = self.fn_like(fn_like.kind(),
@@ -395,24 +382,20 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
     fn visit_block(&mut self, block: &hir::Block) {
         // Check all statements in the block
         for stmt in &block.stmts {
-            let span = match stmt.node {
+            match stmt.node {
                 hir::StmtDecl(ref decl, _) => {
                     match decl.node {
-                        hir::DeclLocal(_) => decl.span,
-
+                        hir::DeclLocal(_) => {},
                         // Item statements are allowed
                         hir::DeclItem(_) => continue
                     }
                 }
-                hir::StmtExpr(ref expr, _) => expr.span,
-                hir::StmtSemi(ref semi, _) => semi.span,
-            };
-            self.add_qualif(ConstQualif::NOT_CONST);
-            if self.mode != Mode::Var {
-                span_err!(self.tcx.sess, span, E0016,
-                          "blocks in {}s are limited to items and \
-                           tail expressions", self.msg());
+                hir::StmtExpr(_, _) => {},
+                hir::StmtSemi(_, _) => {},
             }
+            self.add_qualif(ConstQualif::NOT_CONST);
+            // anything else should have been caught by check_const_fn
+            assert_eq!(self.mode, Mode::Var);
         }
         intravisit::walk_block(self, block);
     }
@@ -655,13 +638,10 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                 Some(def::DefConst(did)) |
                 Some(def::DefAssociatedConst(did)) => {
                     if let Some(expr) = const_eval::lookup_const_by_id(v.tcx, did,
-                                                                       Some(e.id)) {
+                                                                       Some(e.id),
+                                                                       None) {
                         let inner = v.global_expr(Mode::Const, expr);
                         v.add_qualif(inner);
-                    } else {
-                        v.tcx.sess.span_bug(e.span,
-                                            "DefConst or DefAssociatedConst \
-                                             doesn't point to a constant");
                     }
                 }
                 Some(def::DefLocal(..)) if v.mode == Mode::ConstFn => {
@@ -714,27 +694,27 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
             if !is_const {
                 v.add_qualif(ConstQualif::NOT_CONST);
                 if v.mode != Mode::Var {
-                    fn span_limited_call_error(tcx: &ty::ctxt, span: Span, s: &str) {
-                        span_err!(tcx.sess, span, E0015, "{}", s);
-                    }
-
                     // FIXME(#24111) Remove this check when const fn stabilizes
-                    if let UnstableFeatures::Disallow = v.tcx.sess.opts.unstable_features {
-                        span_limited_call_error(&v.tcx, e.span,
-                                                &format!("function calls in {}s are limited to \
-                                                          struct and enum constructors",
-                                                         v.msg()));
-                        v.tcx.sess.span_note(e.span,
-                                             "a limited form of compile-time function \
-                                              evaluation is available on a nightly \
-                                              compiler via `const fn`");
+                    let (msg, note) =
+                        if let UnstableFeatures::Disallow = v.tcx.sess.opts.unstable_features {
+                        (format!("function calls in {}s are limited to \
+                                  struct and enum constructors",
+                                 v.msg()),
+                         Some("a limited form of compile-time function \
+                               evaluation is available on a nightly \
+                               compiler via `const fn`"))
                     } else {
-                        span_limited_call_error(&v.tcx, e.span,
-                                                &format!("function calls in {}s are limited \
-                                                          to constant functions, \
-                                                          struct and enum constructors",
-                                                         v.msg()));
+                        (format!("function calls in {}s are limited \
+                                  to constant functions, \
+                                  struct and enum constructors",
+                                 v.msg()),
+                         None)
+                    };
+                    let mut err = struct_span_err!(v.tcx.sess, e.span, E0015, "{}", msg);
+                    if let Some(note) = note {
+                        err.span_note(e.span, note);
                     }
+                    err.emit();
                 }
             }
         }
@@ -784,6 +764,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
         hir::ExprField(..) |
         hir::ExprTupField(..) |
         hir::ExprVec(_) |
+        hir::ExprType(..) |
         hir::ExprTup(..) => {}
 
         // Conditional control flow (possible to implement).
@@ -840,13 +821,12 @@ fn check_adjustments<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>, e: &hir::Exp
 }
 
 pub fn check_crate(tcx: &ty::ctxt) {
-    tcx.map.krate().visit_all_items(&mut CheckCrateVisitor {
+    tcx.visit_all_items_in_krate(DepNode::CheckConst, &mut CheckCrateVisitor {
         tcx: tcx,
         mode: Mode::Var,
         qualif: ConstQualif::NOT_CONST,
         rvalue_borrows: NodeMap()
     });
-
     tcx.sess.abort_if_errors();
 }
 

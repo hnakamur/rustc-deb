@@ -19,9 +19,7 @@ use middle::def_id::DefId;
 use middle::subst;
 use middle::subst::Subst;
 use middle::traits;
-use middle::ty::{self, NoPreference, RegionEscape, Ty, ToPolyTraitRef, TraitRef};
-use middle::ty::HasTypeFlags;
-use middle::ty::fold::TypeFoldable;
+use middle::ty::{self, NoPreference, Ty, ToPolyTraitRef, TraitRef, TypeFoldable};
 use middle::infer;
 use middle::infer::{InferCtxt, TypeOrigin};
 use syntax::ast;
@@ -1144,10 +1142,10 @@ impl<'a,'tcx> ProbeContext<'a,'tcx> {
         match *item {
             ty::ImplOrTraitItem::MethodTraitItem(ref method) =>
                 match method.explicit_self {
-                    ty::StaticExplicitSelfCategory => self.mode == Mode::Path,
-                    ty::ByValueExplicitSelfCategory |
-                    ty::ByReferenceExplicitSelfCategory(..) |
-                    ty::ByBoxExplicitSelfCategory => true,
+                    ty::ExplicitSelfCategory::Static => self.mode == Mode::Path,
+                    ty::ExplicitSelfCategory::ByValue |
+                    ty::ExplicitSelfCategory::ByReference(..) |
+                    ty::ExplicitSelfCategory::ByBox => true,
                 },
             ty::ImplOrTraitItem::ConstTraitItem(..) => self.mode == Mode::Path,
             _ => false,

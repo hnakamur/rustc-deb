@@ -69,7 +69,7 @@ const MAX_THREE_B: u32 =  0x10000;
 /// Point], but only ones within a certain range. `MAX` is the highest valid
 /// code point that's a valid [Unicode Scalar Value].
 ///
-/// [`char`]: primitive.char.html
+/// [`char`]: ../primitive.char.html
 /// [Unicode Scalar Value]: http://www.unicode.org/glossary/#unicode_scalar_value
 /// [Code Point]: http://www.unicode.org/glossary/#code_point
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -91,9 +91,9 @@ pub const MAX: char = '\u{10ffff}';
 /// [`char`]s. `from_u32()` will return `None` if the input is not a valid value
 /// for a [`char`].
 ///
-/// [`char`]: primitive.char.html
-/// [`u32`]: primitive.u32.html
-/// [`as`]: ../book/casting-between-types.html#as
+/// [`char`]: ../primitive.char.html
+/// [`u32`]: ../primitive.u32.html
+/// [`as`]: ../../book/casting-between-types.html#as
 ///
 /// For an unsafe version of this function which ignores these checks, see
 /// [`from_u32_unchecked()`].
@@ -148,9 +148,9 @@ pub fn from_u32(i: u32) -> Option<char> {
 /// [`char`]s. `from_u32_unchecked()` will ignore this, and blindly cast to
 /// [`char`], possibly creating an invalid one.
 ///
-/// [`char`]: primitive.char.html
-/// [`u32`]: primitive.u32.html
-/// [`as`]: ../book/casting-between-types.html#as
+/// [`char`]: ../primitive.char.html
+/// [`u32`]: ../primitive.u32.html
+/// [`as`]: ../../book/casting-between-types.html#as
 ///
 /// # Safety
 ///
@@ -181,7 +181,7 @@ pub unsafe fn from_u32_unchecked(i: u32) -> char {
 ///
 /// A 'radix' here is sometimes also called a 'base'. A radix of two
 /// indicates a binary number, a radix of ten, decimal, and a radix of
-/// sixteen, hexicdecimal, to give some common values. Arbitrary
+/// sixteen, hexadecimal, to give some common values. Arbitrary
 /// radicum are supported.
 ///
 /// `from_digit()` will return `None` if the input is not a digit in
@@ -414,8 +414,8 @@ pub fn encode_utf16_raw(mut ch: u32, dst: &mut [u16]) -> Option<usize> {
 /// This `struct` is created by the [`escape_unicode()`] method on [`char`]. See
 /// its documentation for more.
 ///
-/// [`escape_unicode()`]: primitive.char.html#method.escape_unicode
-/// [`char`]: primitive.char.html
+/// [`escape_unicode()`]: ../primitive.char.html#method.escape_unicode
+/// [`char`]: ../primitive.char.html
 #[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct EscapeUnicode {
@@ -494,8 +494,8 @@ impl Iterator for EscapeUnicode {
 /// This `struct` is created by the [`escape_default()`] method on [`char`]. See
 /// its documentation for more.
 ///
-/// [`escape_default()`]: primitive.char.html#method.escape_default
-/// [`char`]: primitive.char.html
+/// [`escape_default()`]: ../primitive.char.html#method.escape_default
+/// [`char`]: ../primitive.char.html
 #[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct EscapeDefault {
@@ -535,6 +535,51 @@ impl Iterator for EscapeDefault {
             EscapeDefaultState::Backslash(_) => (2, Some(2)),
             EscapeDefaultState::Unicode(ref iter) => iter.size_hint(),
             EscapeDefaultState::Done => (0, Some(0)),
+        }
+    }
+
+    fn count(self) -> usize {
+        match self.state {
+            EscapeDefaultState::Char(_) => 1,
+            EscapeDefaultState::Unicode(iter) => iter.count(),
+            EscapeDefaultState::Done => 0,
+            EscapeDefaultState::Backslash(_) => 2,
+        }
+    }
+
+    fn nth(&mut self, n: usize) -> Option<char> {
+        match self.state {
+            EscapeDefaultState::Backslash(c) if n == 0 => {
+                self.state = EscapeDefaultState::Char(c);
+                Some('\\')
+            },
+            EscapeDefaultState::Backslash(c) if n == 1 => {
+                self.state = EscapeDefaultState::Done;
+                Some(c)
+            },
+            EscapeDefaultState::Backslash(_) => {
+                self.state = EscapeDefaultState::Done;
+                None
+            },
+            EscapeDefaultState::Char(c) => {
+                self.state = EscapeDefaultState::Done;
+
+                if n == 0 {
+                    Some(c)
+                } else {
+                    None
+                }
+            },
+            EscapeDefaultState::Done => return None,
+            EscapeDefaultState::Unicode(ref mut i) => return i.nth(n),
+        }
+    }
+
+    fn last(self) -> Option<char> {
+        match self.state {
+            EscapeDefaultState::Unicode(iter) => iter.last(),
+            EscapeDefaultState::Done => None,
+            EscapeDefaultState::Backslash(c) | EscapeDefaultState::Char(c) => Some(c),
         }
     }
 }

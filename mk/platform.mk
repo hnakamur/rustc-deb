@@ -64,14 +64,18 @@ define DEF_GOOD_VALGRIND
   ifeq ($(OSTYPE_$(1)),unknown-linux-gnu)
     GOOD_VALGRIND_$(1) = 1
   endif
-  ifneq (,$(filter $(OSTYPE_$(1)),darwin freebsd))
-    ifeq (HOST_$(1),x86_64)
+  ifneq (,$(filter $(OSTYPE_$(1)),apple-darwin freebsd))
+    ifeq ($(HOST_$(1)),x86_64)
       GOOD_VALGRIND_$(1) = 1
     endif
   endif
+  ifdef GOOD_VALGRIND_$(t)
+    $$(info cfg: have good valgrind for $(t))
+  else
+    $$(info cfg: no good valgrind for $(t))
+  endif
 endef
 $(foreach t,$(CFG_TARGET),$(eval $(call DEF_GOOD_VALGRIND,$(t))))
-$(foreach t,$(CFG_TARGET),$(info cfg: good valgrind for $(t) is $(GOOD_VALGRIND_$(t))))
 
 ifneq ($(findstring linux,$(CFG_OSTYPE)),)
   ifdef CFG_PERF
@@ -214,16 +218,6 @@ define CFG_MAKE_TOOLCHAIN
         $$(call CFG_INSTALL_NAME_$(1),$$(4))
 
   ifeq ($$(findstring $(HOST_$(1)),arm aarch64 mips mipsel powerpc),)
-
-  # On OpenBSD, we need to pass the path of libstdc++.so to the linker
-  # (use path of libstdc++.a which is a known name for the same path)
-  ifeq ($(OSTYPE_$(1)),unknown-openbsd)
-    STDCPP_LIBDIR_RUSTFLAGS_$(1)= \
-        -L "$$(dir $$(shell $$(CC_$(1)) $$(CFG_GCCISH_CFLAGS_$(1)) \
-        -print-file-name=lib$(CFG_STDCPP_NAME).a))"
-  else
-    STDCPP_LIBDIR_RUSTFLAGS_$(1)=
-  endif
 
   # On Bitrig, we need the relocation model to be PIC for everything
   ifeq (,$(filter $(OSTYPE_$(1)),bitrig))

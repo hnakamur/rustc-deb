@@ -12,15 +12,15 @@ pub use self::Constructor::*;
 use self::Usefulness::*;
 use self::WitnessPreference::*;
 
+use dep_graph::DepNode;
 use middle::const_eval::{compare_const_vals, ConstVal};
 use middle::const_eval::{eval_const_expr, eval_const_expr_partial};
 use middle::const_eval::{const_expr_to_pat, lookup_const_by_id};
 use middle::const_eval::EvalHint::ExprTypeChecked;
 use middle::def::*;
 use middle::def_id::{DefId};
-use middle::expr_use_visitor::{ConsumeMode, Delegate, ExprUseVisitor, Init};
-use middle::expr_use_visitor::{JustWrite, LoanCause, MutateMode};
-use middle::expr_use_visitor::WriteAndRead;
+use middle::expr_use_visitor::{ConsumeMode, Delegate, ExprUseVisitor};
+use middle::expr_use_visitor::{LoanCause, MutateMode};
 use middle::expr_use_visitor as euv;
 use middle::infer;
 use middle::mem_categorization::{cmt};
@@ -155,7 +155,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for MatchCheckCtxt<'a, 'tcx> {
 }
 
 pub fn check_crate(tcx: &ty::ctxt) {
-    tcx.map.krate().visit_all_items(&mut MatchCheckCtxt {
+    tcx.visit_all_items_in_krate(DepNode::MatchCheck, &mut MatchCheckCtxt {
         tcx: tcx,
         param_env: tcx.empty_parameter_environment(),
     });
@@ -215,12 +215,13 @@ fn check_expr(cx: &mut MatchCheckCtxt, ex: &hir::Expr) {
             if inlined_arms.is_empty() {
                 if !pat_ty.is_empty(cx.tcx) {
                     // We know the type is inhabited, so this must be wrong
-                    span_err!(cx.tcx.sess, ex.span, E0002,
-                              "non-exhaustive patterns: type {} is non-empty",
-                              pat_ty);
-                    span_help!(cx.tcx.sess, ex.span,
+                    let mut err = struct_span_err!(cx.tcx.sess, ex.span, E0002,
+                                                   "non-exhaustive patterns: type {} is non-empty",
+                                                   pat_ty);
+                    span_help!(&mut err, ex.span,
                         "Please ensure that all possible cases are being handled; \
                          possibly adding wildcards or more match arms.");
+                    err.emit();
                 }
                 // If the type *is* empty, it's vacuously exhaustive
                 return;
@@ -250,14 +251,16 @@ fn check_for_bindings_named_the_same_as_variants(cx: &MatchCheckCtxt, pat: &Pat)
                             variant.name == ident.node.unhygienic_name
                                 && variant.kind() == VariantKind::Unit
                         ) {
-                            span_warn!(cx.tcx.sess, p.span, E0170,
+                            let ty_path = cx.tcx.item_path_str(edef.did);
+                            let mut err = struct_span_warn!(cx.tcx.sess, p.span, E0170,
                                 "pattern binding `{}` is named the same as one \
                                  of the variants of the type `{}`",
-                                ident.node, pat_ty);
-                            fileline_help!(cx.tcx.sess, p.span,
+                                ident.node, ty_path);
+                            fileline_help!(err, p.span,
                                 "if you meant to match on a variant, \
                                  consider making the path in the pattern qualified: `{}::{}`",
-                                pat_ty, ident.node);
+                                ty_path, ident.node);
+                            err.emit();
                         }
                     }
                 }
@@ -281,13 +284,13 @@ fn check_for_static_nan(cx: &MatchCheckCtxt, pat: &Pat) {
                 Ok(_) => {}
 
                 Err(err) => {
-                    span_err!(cx.tcx.sess, err.span, E0471,
-                              "constant evaluation error: {}",
-                              err.description());
+                    let mut diag = struct_span_err!(cx.tcx.sess, err.span, E0471,
+                                                    "constant evaluation error: {}",
+                                                    err.description());
                     if !p.span.contains(err.span) {
-                        cx.tcx.sess.span_note(p.span,
-                                              "in pattern here")
+                        diag.span_note(p.span, "in pattern here");
                     }
+                    diag.emit();
                 }
             }
         }
@@ -452,7 +455,8 @@ impl<'a, 'tcx> Folder for StaticInliner<'a, 'tcx> {
                 let def = self.tcx.def_map.borrow().get(&pat.id).map(|d| d.full_def());
                 match def {
                     Some(DefAssociatedConst(did)) |
-                    Some(DefConst(did)) => match lookup_const_by_id(self.tcx, did, Some(pat.id)) {
+                    Some(DefConst(did)) => match lookup_const_by_id(self.tcx, did,
+                                                                    Some(pat.id), None) {
                         Some(const_expr) => {
                             const_expr_to_pat(self.tcx, const_expr, pat.span).map(|new_pat| {
 
@@ -516,7 +520,7 @@ fn construct_witness<'a,'tcx>(cx: &MatchCheckCtxt<'a,'tcx>, ctor: &Constructor,
         ty::TyEnum(adt, _) | ty::TyStruct(adt, _)  => {
             let v = adt.variant_of_ctor(ctor);
             if let VariantKind::Struct = v.kind() {
-                let field_pats: Vec<_> = v.fields.iter()
+                let field_pats: hir::HirVec<_> = v.fields.iter()
                     .zip(pats)
                     .filter(|&(_, ref pat)| pat.node != hir::PatWild)
                     .map(|(field, pat)| Spanned {
@@ -539,14 +543,14 @@ fn construct_witness<'a,'tcx>(cx: &MatchCheckCtxt<'a,'tcx>, ctor: &Constructor,
                ty::TyArray(_, n) => match ctor {
                     &Single => {
                         assert_eq!(pats_len, n);
-                        hir::PatVec(pats.collect(), None, vec!())
+                        hir::PatVec(pats.collect(), None, hir::HirVec::new())
                     },
                     _ => unreachable!()
                 },
                 ty::TySlice(_) => match ctor {
                     &Slice(n) => {
                         assert_eq!(pats_len, n);
-                        hir::PatVec(pats.collect(), None, vec!())
+                        hir::PatVec(pats.collect(), None, hir::HirVec::new())
                     },
                     _ => unreachable!()
                 },
@@ -561,7 +565,7 @@ fn construct_witness<'a,'tcx>(cx: &MatchCheckCtxt<'a,'tcx>, ctor: &Constructor,
 
         ty::TyArray(_, len) => {
             assert_eq!(pats_len, len);
-            hir::PatVec(pats.collect(), None, vec![])
+            hir::PatVec(pats.collect(), None, hir::HirVec::new())
         }
 
         _ => {
@@ -1075,9 +1079,10 @@ fn check_legality_of_move_bindings(cx: &MatchCheckCtxt,
         } else if has_guard {
             span_err!(cx.tcx.sess, p.span, E0008, "cannot bind by-move into a pattern guard");
         } else if by_ref_span.is_some() {
-            span_err!(cx.tcx.sess, p.span, E0009,
-                "cannot bind by-move and by-ref in the same pattern");
-            span_note!(cx.tcx.sess, by_ref_span.unwrap(), "by-ref binding occurs here");
+            let mut err = struct_span_err!(cx.tcx.sess, p.span, E0009,
+                                           "cannot bind by-move and by-ref in the same pattern");
+            span_note!(&mut err, by_ref_span.unwrap(), "by-ref binding occurs here");
+            err.emit();
         }
     };
 
@@ -1156,10 +1161,10 @@ impl<'a, 'tcx> Delegate<'tcx> for MutationChecker<'a, 'tcx> {
     fn decl_without_init(&mut self, _: NodeId, _: Span) {}
     fn mutate(&mut self, _: NodeId, span: Span, _: cmt, mode: MutateMode) {
         match mode {
-            JustWrite | WriteAndRead => {
+            MutateMode::JustWrite | MutateMode::WriteAndRead => {
                 span_err!(self.cx.tcx.sess, span, E0302, "cannot assign in a pattern guard")
             }
-            Init => {}
+            MutateMode::Init => {}
         }
     }
 }

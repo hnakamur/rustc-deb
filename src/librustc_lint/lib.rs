@@ -19,11 +19,8 @@
 //!
 //! This API is completely unstable and subject to change.
 
-// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
-#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_lint"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -33,7 +30,6 @@
 #![cfg_attr(test, feature(test))]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(num_bits_bytes)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -41,6 +37,7 @@
 #![feature(staged_api)]
 #![feature(str_char)]
 
+#[macro_use]
 extern crate syntax;
 #[macro_use]
 extern crate rustc;
@@ -56,6 +53,7 @@ pub use rustc::util as util;
 
 use session::Session;
 use lint::LintId;
+use lint::FutureIncompatibleInfo;
 
 mod bad_style;
 mod builtin;
@@ -124,7 +122,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                  UnusedAllocation,
                  MissingCopyImplementations,
                  UnstableFeatures,
-                 Stability,
+                 Deprecated,
                  UnconditionalRecursion,
                  InvalidNoMangleItems,
                  PluginAsLibrary,
@@ -146,8 +144,29 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                     UNUSED_MUT, UNREACHABLE_CODE, UNUSED_MUST_USE,
                     UNUSED_UNSAFE, PATH_STATEMENTS, UNUSED_ATTRIBUTES);
 
-    add_lint_group!(sess, FUTURE_INCOMPATIBLE,
-                    MATCH_OF_UNIT_VARIANT_VIA_PAREN_DOTDOT);
+    // Guidelines for creating a future incompatibility lint:
+    //
+    // - Create a lint defaulting to warn as normal, with ideally the same error
+    //   message you would normally give
+    // - Add a suitable reference, typically an RFC or tracking issue. Go ahead
+    //   and include the full URL.
+    // - Later, change lint to error
+    // - Eventually, remove lint
+    store.register_future_incompatible(sess, vec![
+        FutureIncompatibleInfo {
+            id: LintId::of(PRIVATE_IN_PUBLIC),
+            reference: "the explanation for E0446 (`--explain E0446`)",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(INVALID_TYPE_PARAM_DEFAULT),
+            reference: "PR 30742 <https://github.com/rust-lang/rust/pull/30724>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(MATCH_OF_UNIT_VARIANT_VIA_PAREN_DOTDOT),
+            reference: "RFC 218 <https://github.com/rust-lang/rfcs/blob/\
+                        master/text/0218-empty-struct-with-braces.md>",
+        },
+        ]);
 
     // We have one lint pass defined specially
     store.register_late_pass(sess, false, box lint::GatherNodeLevels);
@@ -155,6 +174,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
     // Register renamed and removed lints
     store.register_renamed("unknown_features", "unused_features");
     store.register_removed("unsigned_negation", "replaced by negate_unsigned feature gate");
+    store.register_removed("negate_unsigned", "cast a signed value instead");
     store.register_removed("raw_pointer_derive", "using derive with raw pointers is ok");
     // This was renamed to raw_pointer_derive, which was then removed,
     // so it is also considered removed

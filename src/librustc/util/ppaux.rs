@@ -11,20 +11,16 @@
 
 use middle::def_id::DefId;
 use middle::subst::{self, Subst};
-use middle::ty::{BoundRegion, BrAnon, BrNamed};
-use middle::ty::{ReEarlyBound, BrFresh, ctxt};
-use middle::ty::{ReFree, ReScope, ReStatic, Region, ReEmpty};
-use middle::ty::{ReSkolemized, ReVar, BrEnv};
+use middle::ty::{BrAnon, BrEnv, BrFresh, BrNamed};
 use middle::ty::{TyBool, TyChar, TyStruct, TyEnum};
 use middle::ty::{TyError, TyStr, TyArray, TySlice, TyFloat, TyBareFn};
 use middle::ty::{TyParam, TyRawPtr, TyRef, TyTuple};
 use middle::ty::TyClosure;
 use middle::ty::{TyBox, TyTrait, TyInt, TyUint, TyInfer};
-use middle::ty::{self, TypeAndMut, Ty, HasTypeFlags};
-use middle::ty::fold::TypeFoldable;
+use middle::ty::{self, Ty, TypeFoldable};
 
 use std::fmt;
-use syntax::{abi, ast_util};
+use syntax::{abi};
 use syntax::parse::token;
 use syntax::ast::CRATE_NODE_ID;
 use rustc_front::hir;
@@ -255,9 +251,12 @@ fn in_binder<'tcx, T, U>(f: &mut fmt::Formatter,
 struct TraitAndProjections<'tcx>(ty::TraitRef<'tcx>, Vec<ty::ProjectionPredicate<'tcx>>);
 
 impl<'tcx> TypeFoldable<'tcx> for TraitAndProjections<'tcx> {
-    fn fold_with<F:ty::fold::TypeFolder<'tcx>>(&self, folder: &mut F)
-                                              -> TraitAndProjections<'tcx> {
+    fn super_fold_with<F:ty::fold::TypeFolder<'tcx>>(&self, folder: &mut F) -> Self {
         TraitAndProjections(self.0.fold_with(folder), self.1.fold_with(folder))
+    }
+
+    fn super_visit_with<V: ty::fold::TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
+        self.0.visit_with(visitor) || self.1.visit_with(visitor)
     }
 }
 
@@ -465,8 +464,7 @@ impl fmt::Debug for ty::Region {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             ty::ReEarlyBound(ref data) => {
-                write!(f, "ReEarlyBound({:?}, {:?}, {}, {})",
-                       data.def_id,
+                write!(f, "ReEarlyBound({:?}, {}, {})",
                        data.space,
                        data.index,
                        data.name)
@@ -778,9 +776,9 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
         match *self {
             TyBool => write!(f, "bool"),
             TyChar => write!(f, "char"),
-            TyInt(t) => write!(f, "{}", ast_util::int_ty_to_string(t)),
-            TyUint(t) => write!(f, "{}", ast_util::uint_ty_to_string(t)),
-            TyFloat(t) => write!(f, "{}", ast_util::float_ty_to_string(t)),
+            TyInt(t) => write!(f, "{}", t.ty_to_string()),
+            TyUint(t) => write!(f, "{}", t.ty_to_string()),
+            TyFloat(t) => write!(f, "{}", t.ty_to_string()),
             TyBox(typ) => write!(f, "Box<{}>",  typ),
             TyRawPtr(ref tm) => {
                 write!(f, "*{} {}", match tm.mutbl {
@@ -923,13 +921,13 @@ impl fmt::Display for ty::InferTy {
 impl fmt::Display for ty::ExplicitSelfCategory {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(match *self {
-            ty::StaticExplicitSelfCategory => "static",
-            ty::ByValueExplicitSelfCategory => "self",
-            ty::ByReferenceExplicitSelfCategory(_, hir::MutMutable) => {
+            ty::ExplicitSelfCategory::Static => "static",
+            ty::ExplicitSelfCategory::ByValue => "self",
+            ty::ExplicitSelfCategory::ByReference(_, hir::MutMutable) => {
                 "&mut self"
             }
-            ty::ByReferenceExplicitSelfCategory(_, hir::MutImmutable) => "&self",
-            ty::ByBoxExplicitSelfCategory => "Box<self>",
+            ty::ExplicitSelfCategory::ByReference(_, hir::MutImmutable) => "&self",
+            ty::ExplicitSelfCategory::ByBox => "Box<self>",
         })
     }
 }

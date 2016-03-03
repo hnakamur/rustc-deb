@@ -20,8 +20,7 @@ use middle::def_id::DefId;
 use middle::lang_items::UnsizeTraitLangItem;
 use middle::subst::{self, Subst};
 use middle::traits;
-use middle::ty;
-use middle::ty::RegionEscape;
+use middle::ty::{self, TypeFoldable};
 use middle::ty::{ImplOrTraitItemId, ConstTraitItemId};
 use middle::ty::{MethodTraitItemId, TypeTraitItemId, ParameterEnvironment};
 use middle::ty::{Ty, TyBool, TyChar, TyEnum, TyError};
@@ -39,10 +38,10 @@ use std::rc::Rc;
 use syntax::codemap::Span;
 use syntax::parse::token;
 use util::nodemap::{DefIdMap, FnvHashMap};
+use rustc::dep_graph::DepNode;
 use rustc::front::map as hir_map;
-use rustc::front::map::NodeItem;
 use rustc_front::intravisit;
-use rustc_front::hir::{Item, ItemImpl,Crate};
+use rustc_front::hir::{Item, ItemImpl};
 use rustc_front::hir;
 
 mod orphan;
@@ -105,11 +104,13 @@ impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for CoherenceCheckVisitor<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
-    fn check(&self, krate: &Crate) {
+    fn check(&self) {
         // Check implementations and traits. This populates the tables
         // containing the inherent methods and extension methods. It also
         // builds up the trait inheritance table.
-        krate.visit_all_items(&mut CoherenceCheckVisitor { cc: self });
+        self.crate_context.tcx.visit_all_items_in_krate(
+            DepNode::CoherenceCheckImpl,
+            &mut CoherenceCheckVisitor { cc: self });
 
         // Copy over the inherent impls we gathered up during the walk into
         // the tcx.
@@ -148,11 +149,23 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                    trait_ref,
                    item.name);
 
+            // Skip impls where one of the self type is an error type.
+            // This occurs with e.g. resolve failures (#30589).
+            if trait_ref.references_error() {
+                return;
+            }
+
             enforce_trait_manually_implementable(self.crate_context.tcx,
                                                  item.span,
                                                  trait_ref.def_id);
             self.add_trait_impl(trait_ref, impl_did);
         } else {
+            // Skip inherent impls where the self type is an error
+            // type. This occurs with e.g. resolve failures (#30589).
+            if self_type.ty.references_error() {
+                return;
+            }
+
             // Add the implementation to the mapping from implementation to base
             // type def ID, if there is a base type for this implementation and
             // the implementation does not have any associated traits.
@@ -503,17 +516,24 @@ fn enforce_trait_manually_implementable(tcx: &ty::ctxt, sp: Span, trait_def_id: 
     } else {
         return // everything OK
     };
-    span_err!(tcx.sess, sp, E0183, "manual implementations of `{}` are experimental", trait_name);
-    fileline_help!(tcx.sess, sp,
-               "add `#![feature(unboxed_closures)]` to the crate attributes to enable");
+    let mut err = struct_span_err!(tcx.sess,
+                                   sp,
+                                   E0183,
+                                   "manual implementations of `{}` are experimental",
+                                   trait_name);
+    fileline_help!(&mut err, sp,
+                   "add `#![feature(unboxed_closures)]` to the crate attributes to enable");
+    err.emit();
 }
 
 pub fn check_coherence(crate_context: &CrateCtxt) {
+    let _task = crate_context.tcx.dep_graph.in_task(DepNode::Coherence);
+    let infcx = new_infer_ctxt(crate_context.tcx, &crate_context.tcx.tables, None, true);
     CoherenceChecker {
         crate_context: crate_context,
-        inference_context: new_infer_ctxt(crate_context.tcx, &crate_context.tcx.tables, None, true),
+        inference_context: infcx,
         inherent_impls: RefCell::new(FnvHashMap()),
-    }.check(crate_context.tcx.map.krate());
+    }.check();
     unsafety::check(crate_context.tcx);
     orphan::check(crate_context.tcx);
     overlap::check(crate_context.tcx);

@@ -60,27 +60,6 @@ mod tests {
         assert_eq!(u, None);
         let s : Option<i16> = i16::from_str_radix("80000", 10).ok();
         assert_eq!(s, None);
-        let s = "10000000000000000000000000000000000000000";
-        let f : Option<f32> = f32::from_str_radix(s, 10).ok();
-        assert_eq!(f, Some(Float::infinity()));
-        let fe : Option<f32> = f32::from_str_radix("1e40", 10).ok();
-        assert_eq!(fe, Some(Float::infinity()));
-    }
-
-    #[test]
-    fn test_from_str_radix_float() {
-        let x1 : Option<f64> = f64::from_str_radix("-123.456", 10).ok();
-        assert_eq!(x1, Some(-123.456));
-        let x2 : Option<f32> = f32::from_str_radix("123.456", 10).ok();
-        assert_eq!(x2, Some(123.456));
-        let x3 : Option<f32> = f32::from_str_radix("-0.0", 10).ok();
-        assert_eq!(x3, Some(-0.0));
-        let x4 : Option<f32> = f32::from_str_radix("0.0", 10).ok();
-        assert_eq!(x4, Some(0.0));
-        let x4 : Option<f32> = f32::from_str_radix("1.0", 10).ok();
-        assert_eq!(x4, Some(1.0));
-        let x5 : Option<f32> = f32::from_str_radix("-1.0", 10).ok();
-        assert_eq!(x5, Some(-1.0));
     }
 
     #[test]

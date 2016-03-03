@@ -42,13 +42,16 @@ use middle::lang_items::{LangItem, ExchangeMallocFnLangItem, StartFnLangItem};
 use middle::weak_lang_items;
 use middle::pat_util::simple_name;
 use middle::subst::Substs;
-use middle::ty::{self, Ty, HasTypeFlags};
+use middle::ty::{self, Ty, TypeFoldable};
+use rustc::dep_graph::DepNode;
 use rustc::front::map as hir_map;
+use rustc::util::common::time;
 use rustc_mir::mir_map::MirMap;
 use session::config::{self, NoDebugInfo, FullDebugInfo};
 use session::Session;
 use trans::_match;
 use trans::adt;
+use trans::assert_dep_graph;
 use trans::attributes;
 use trans::build::*;
 use trans::builder::{Builder, noname};
@@ -82,6 +85,7 @@ use trans::type_::Type;
 use trans::type_of;
 use trans::type_of::*;
 use trans::value::Value;
+use trans::Disr;
 use util::common::indenter;
 use util::sha2::Sha256;
 use util::nodemap::{NodeMap, NodeSet};
@@ -486,7 +490,7 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
         for (i, field) in variant.fields.iter().enumerate() {
             let arg = monomorphize::field_ty(tcx, substs, field);
             cx = f(cx,
-                   adt::trans_field_ptr(cx, repr, av, variant.disr_val, i),
+                   adt::trans_field_ptr(cx, repr, av, Disr::from(variant.disr_val), i),
                    arg);
         }
         return cx;
@@ -506,7 +510,7 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
             let repr = adt::represent_type(cx.ccx(), t);
             let VariantInfo { fields, discr } = VariantInfo::from_ty(cx.tcx(), t, None);
             for (i, &Field(_, field_ty)) in fields.iter().enumerate() {
-                let llfld_a = adt::trans_field_ptr(cx, &*repr, value, discr, i);
+                let llfld_a = adt::trans_field_ptr(cx, &*repr, value, Disr::from(discr), i);
 
                 let val = if common::type_is_sized(cx.tcx(), field_ty) {
                     llfld_a
@@ -522,7 +526,7 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
         ty::TyClosure(_, ref substs) => {
             let repr = adt::represent_type(cx.ccx(), t);
             for (i, upvar_ty) in substs.upvar_tys.iter().enumerate() {
-                let llupvar = adt::trans_field_ptr(cx, &*repr, value, 0, i);
+                let llupvar = adt::trans_field_ptr(cx, &*repr, value, Disr(0), i);
                 cx = f(cx, llupvar, upvar_ty);
             }
         }
@@ -538,7 +542,7 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
         ty::TyTuple(ref args) => {
             let repr = adt::represent_type(cx.ccx(), t);
             for (i, arg) in args.iter().enumerate() {
-                let llfld_a = adt::trans_field_ptr(cx, &*repr, value, 0, i);
+                let llfld_a = adt::trans_field_ptr(cx, &*repr, value, Disr(0), i);
                 cx = f(cx, llfld_a, *arg);
             }
         }
@@ -585,7 +589,7 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
                         let variant_cx = fcx.new_temp_block(&format!("enum-iter-variant-{}",
                                                                      &variant.disr_val
                                                                              .to_string()));
-                        let case_val = adt::trans_case(cx, &*repr, variant.disr_val);
+                        let case_val = adt::trans_case(cx, &*repr, Disr::from(variant.disr_val));
                         AddCase(llswitch, case_val, variant_cx.llbb);
                         let variant_cx = iter_variant(variant_cx,
                                                       &*repr,
@@ -717,8 +721,8 @@ pub fn coerce_unsized_into<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                     continue;
                 }
 
-                let src_f = adt::trans_field_ptr(bcx, &src_repr, src, 0, i);
-                let dst_f = adt::trans_field_ptr(bcx, &dst_repr, dst, 0, i);
+                let src_f = adt::trans_field_ptr(bcx, &src_repr, src, Disr(0), i);
+                let dst_f = adt::trans_field_ptr(bcx, &dst_repr, dst, Disr(0), i);
                 if src_fty == dst_fty {
                     memcpy_ty(bcx, dst_f, src_f, src_fty);
                 } else {
@@ -957,22 +961,28 @@ pub fn wants_msvc_seh(sess: &Session) -> bool {
     sess.target.target.options.is_like_msvc && sess.target.target.arch == "x86"
 }
 
-pub fn need_invoke(bcx: Block) -> bool {
+pub fn avoid_invoke(bcx: Block) -> bool {
     // FIXME(#25869) currently SEH-based unwinding is pretty buggy in LLVM and
     //               is being overhauled as this is being written. Until that
     //               time such that upstream LLVM's implementation is more solid
     //               and we start binding it we need to skip invokes for any
     //               target which wants SEH-based unwinding.
     if bcx.sess().no_landing_pads() || wants_msvc_seh(bcx.sess()) {
-        return false;
+        true
+    } else if bcx.is_lpad {
+        // Avoid using invoke if we are already inside a landing pad.
+        true
+    } else {
+        false
     }
+}
 
-    // Avoid using invoke if we are already inside a landing pad.
-    if bcx.is_lpad {
-        return false;
+pub fn need_invoke(bcx: Block) -> bool {
+    if avoid_invoke(bcx) {
+        false
+    } else {
+        bcx.fcx.needs_invoke()
     }
-
-    bcx.fcx.needs_invoke()
 }
 
 pub fn load_if_immediate<'blk, 'tcx>(cx: Block<'blk, 'tcx>, v: ValueRef, t: Ty<'tcx>) -> ValueRef {
@@ -1138,48 +1148,63 @@ pub fn with_cond<'blk, 'tcx, F>(bcx: Block<'blk, 'tcx>, val: ValueRef, f: F) -> 
     next_cx
 }
 
-pub fn call_lifetime_start(cx: Block, ptr: ValueRef) {
-    if cx.sess().opts.optimize == config::No {
+enum Lifetime { Start, End }
+
+// If LLVM lifetime intrinsic support is enabled (i.e. optimizations
+// on), and `ptr` is nonzero-sized, then extracts the size of `ptr`
+// and the intrinsic for `lt` and passes them to `emit`, which is in
+// charge of generating code to call the passed intrinsic on whatever
+// block of generated code is targetted for the intrinsic.
+//
+// If LLVM lifetime intrinsic support is disabled (i.e.  optimizations
+// off) or `ptr` is zero-sized, then no-op (does not call `emit`).
+fn core_lifetime_emit<'blk, 'tcx, F>(ccx: &'blk CrateContext<'blk, 'tcx>,
+                                     ptr: ValueRef,
+                                     lt: Lifetime,
+                                     emit: F)
+    where F: FnOnce(&'blk CrateContext<'blk, 'tcx>, machine::llsize, ValueRef)
+{
+    if ccx.sess().opts.optimize == config::OptLevel::No {
         return;
     }
 
-    let _icx = push_ctxt("lifetime_start");
-    let ccx = cx.ccx();
+    let _icx = push_ctxt(match lt {
+        Lifetime::Start => "lifetime_start",
+        Lifetime::End => "lifetime_end"
+    });
 
     let size = machine::llsize_of_alloc(ccx, val_ty(ptr).element_type());
     if size == 0 {
         return;
     }
 
-    let ptr = PointerCast(cx, ptr, Type::i8p(ccx));
-    let lifetime_start = ccx.get_intrinsic(&"llvm.lifetime.start");
-    Call(cx,
-         lifetime_start,
-         &[C_u64(ccx, size), ptr],
-         None,
-         DebugLoc::None);
+    let lifetime_intrinsic = ccx.get_intrinsic(match lt {
+        Lifetime::Start => "llvm.lifetime.start",
+        Lifetime::End => "llvm.lifetime.end"
+    });
+    emit(ccx, size, lifetime_intrinsic)
+}
+
+pub fn call_lifetime_start(cx: Block, ptr: ValueRef) {
+    core_lifetime_emit(cx.ccx(), ptr, Lifetime::Start, |ccx, size, lifetime_start| {
+        let ptr = PointerCast(cx, ptr, Type::i8p(ccx));
+        Call(cx,
+             lifetime_start,
+             &[C_u64(ccx, size), ptr],
+             None,
+             DebugLoc::None);
+    })
 }
 
 pub fn call_lifetime_end(cx: Block, ptr: ValueRef) {
-    if cx.sess().opts.optimize == config::No {
-        return;
-    }
-
-    let _icx = push_ctxt("lifetime_end");
-    let ccx = cx.ccx();
-
-    let size = machine::llsize_of_alloc(ccx, val_ty(ptr).element_type());
-    if size == 0 {
-        return;
-    }
-
-    let ptr = PointerCast(cx, ptr, Type::i8p(ccx));
-    let lifetime_end = ccx.get_intrinsic(&"llvm.lifetime.end");
-    Call(cx,
-         lifetime_end,
-         &[C_u64(ccx, size), ptr],
-         None,
-         DebugLoc::None);
+    core_lifetime_emit(cx.ccx(), ptr, Lifetime::End, |ccx, size, lifetime_end| {
+        let ptr = PointerCast(cx, ptr, Type::i8p(ccx));
+        Call(cx,
+             lifetime_end,
+             &[C_u64(ccx, size), ptr],
+             None,
+             DebugLoc::None);
+    })
 }
 
 // Generates code for resumption of unwind at the end of a landing pad.
@@ -1276,12 +1301,81 @@ fn memfill<'a, 'tcx>(b: &Builder<'a, 'tcx>, llptr: ValueRef, ty: Ty<'tcx>, byte:
            None);
 }
 
-pub fn alloc_ty<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, t: Ty<'tcx>, name: &str) -> ValueRef {
+/// In general, when we create an scratch value in an alloca, the
+/// creator may not know if the block (that initializes the scratch
+/// with the desired value) actually dominates the cleanup associated
+/// with the scratch value.
+///
+/// To deal with this, when we do an alloca (at the *start* of whole
+/// function body), we optionally can also set the associated
+/// dropped-flag state of the alloca to "dropped."
+#[derive(Copy, Clone, Debug)]
+pub enum InitAlloca {
+    /// Indicates that the state should have its associated drop flag
+    /// set to "dropped" at the point of allocation.
+    Dropped,
+    /// Indicates the value of the associated drop flag is irrelevant.
+    /// The embedded string literal is a programmer provided argument
+    /// for why. This is a safeguard forcing compiler devs to
+    /// document; it might be a good idea to also emit this as a
+    /// comment with the alloca itself when emitting LLVM output.ll.
+    Uninit(&'static str),
+}
+
+
+pub fn alloc_ty<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
+                            t: Ty<'tcx>,
+                            name: &str) -> ValueRef {
+    // pnkfelix: I do not know why alloc_ty meets the assumptions for
+    // passing Uninit, but it was never needed (even back when we had
+    // the original boolean `zero` flag on `lvalue_scratch_datum`).
+    alloc_ty_init(bcx, t, InitAlloca::Uninit("all alloc_ty are uninit"), name)
+}
+
+/// This variant of `fn alloc_ty` does not necessarily assume that the
+/// alloca should be created with no initial value. Instead the caller
+/// controls that assumption via the `init` flag.
+///
+/// Note that if the alloca *is* initialized via `init`, then we will
+/// also inject an `llvm.lifetime.start` before that initialization
+/// occurs, and thus callers should not call_lifetime_start
+/// themselves.  But if `init` says "uninitialized", then callers are
+/// in charge of choosing where to call_lifetime_start and
+/// subsequently populate the alloca.
+///
+/// (See related discussion on PR #30823.)
+pub fn alloc_ty_init<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
+                             t: Ty<'tcx>,
+                             init: InitAlloca,
+                             name: &str) -> ValueRef {
     let _icx = push_ctxt("alloc_ty");
     let ccx = bcx.ccx();
     let ty = type_of::type_of(ccx, t);
     assert!(!t.has_param_types());
-    alloca(bcx, ty, name)
+    match init {
+        InitAlloca::Dropped => alloca_dropped(bcx, t, name),
+        InitAlloca::Uninit(_) => alloca(bcx, ty, name),
+    }
+}
+
+pub fn alloca_dropped<'blk, 'tcx>(cx: Block<'blk, 'tcx>, ty: Ty<'tcx>, name: &str) -> ValueRef {
+    let _icx = push_ctxt("alloca_dropped");
+    let llty = type_of::type_of(cx.ccx(), ty);
+    if cx.unreachable.get() {
+        unsafe { return llvm::LLVMGetUndef(llty.ptr_to().to_ref()); }
+    }
+    let p = alloca(cx, llty, name);
+    let b = cx.fcx.ccx.builder();
+    b.position_before(cx.fcx.alloca_insert_pt.get().unwrap());
+
+    // This is just like `call_lifetime_start` (but latter expects a
+    // Block, which we do not have for `alloca_insert_pt`).
+    core_lifetime_emit(cx.ccx(), p, Lifetime::Start, |ccx, size, lifetime_start| {
+        let ptr = b.pointercast(p, Type::i8p(ccx));
+        b.call(lifetime_start, &[C_u64(ccx, size), ptr], None);
+    });
+    memfill(&b, p, ty, adt::DTOR_DONE);
+    p
 }
 
 pub fn alloca(cx: Block, ty: Type, name: &str) -> ValueRef {
@@ -1556,6 +1650,7 @@ pub fn init_function<'a, 'tcx>(fcx: &'a FunctionContext<'a, 'tcx>,
     // Create the drop-flag hints for every unfragmented path in the function.
     let tcx = fcx.ccx.tcx();
     let fn_did = tcx.map.local_def_id(fcx.id);
+    let tables = tcx.tables.borrow();
     let mut hints = fcx.lldropflag_hints.borrow_mut();
     let fragment_infos = tcx.fragment_infos.borrow();
 
@@ -1579,12 +1674,22 @@ pub fn init_function<'a, 'tcx>(fcx: &'a FunctionContext<'a, 'tcx>,
             let (var, datum) = match info {
                 ty::FragmentInfo::Moved { var, .. } |
                 ty::FragmentInfo::Assigned { var, .. } => {
-                    let datum = seen.get(&var).cloned().unwrap_or_else(|| {
-                        let datum = make_datum(var);
-                        seen.insert(var, datum.clone());
-                        datum
+                    let opt_datum = seen.get(&var).cloned().unwrap_or_else(|| {
+                        let ty = tables.node_types[&var];
+                        if fcx.type_needs_drop(ty) {
+                            let datum = make_datum(var);
+                            seen.insert(var, Some(datum.clone()));
+                            Some(datum)
+                        } else {
+                            // No drop call needed, so we don't need a dropflag hint
+                            None
+                        }
                     });
-                    (var, datum)
+                    if let Some(datum) = opt_datum {
+                        (var, datum)
+                    } else {
+                        continue
+                    }
                 }
             };
             match info {
@@ -1630,6 +1735,8 @@ pub fn create_datums_for_fn_args<'a, 'tcx>(mut bcx: Block<'a, 'tcx>,
     let fcx = bcx.fcx;
     let arg_scope_id = cleanup::CustomScope(arg_scope);
 
+    debug!("create_datums_for_fn_args");
+
     // Return an array wrapping the ValueRefs that we get from `get_param` for
     // each argument into datums.
     //
@@ -1641,6 +1748,7 @@ pub fn create_datums_for_fn_args<'a, 'tcx>(mut bcx: Block<'a, 'tcx>,
     // This alloca should be optimized away by LLVM's mem-to-reg pass in
     // the event it's not truly needed.
     let mut idx = fcx.arg_offset() as c_uint;
+    let uninit_reason = InitAlloca::Uninit("fn_arg populate dominates dtor");
     for (i, &arg_ty) in arg_tys.iter().enumerate() {
         let arg_datum = if !has_tupled_arg || i < arg_tys.len() - 1 {
             if type_of::arg_is_indirect(bcx.ccx(), arg_ty) &&
@@ -1660,9 +1768,12 @@ pub fn create_datums_for_fn_args<'a, 'tcx>(mut bcx: Block<'a, 'tcx>,
                 let data = get_param(fcx.llfn, idx);
                 let extra = get_param(fcx.llfn, idx + 1);
                 idx += 2;
-                unpack_datum!(bcx, datum::lvalue_scratch_datum(bcx, arg_ty, "",
+                unpack_datum!(bcx, datum::lvalue_scratch_datum(bcx, arg_ty, "", uninit_reason,
                                                         arg_scope_id, (data, extra),
                                                         |(data, extra), bcx, dst| {
+                    debug!("populate call for create_datum_for_fn_args \
+                            early fat arg, on arg[{}] ty={:?}", i, arg_ty);
+
                     Store(bcx, data, expr::get_dataptr(bcx, dst));
                     Store(bcx, extra, expr::get_meta(bcx, dst));
                     bcx
@@ -1675,9 +1786,16 @@ pub fn create_datums_for_fn_args<'a, 'tcx>(mut bcx: Block<'a, 'tcx>,
                               datum::lvalue_scratch_datum(bcx,
                                                           arg_ty,
                                                           "",
+                                                          uninit_reason,
                                                           arg_scope_id,
                                                           tmp,
-                                                          |tmp, bcx, dst| tmp.store_to(bcx, dst)))
+                                                          |tmp, bcx, dst| {
+
+                        debug!("populate call for create_datum_for_fn_args \
+                                early thin arg, on arg[{}] ty={:?}", i, arg_ty);
+
+                                                              tmp.store_to(bcx, dst)
+                                                          }))
             }
         } else {
             // FIXME(pcwalton): Reduce the amount of code bloat this is responsible for.
@@ -1687,11 +1805,14 @@ pub fn create_datums_for_fn_args<'a, 'tcx>(mut bcx: Block<'a, 'tcx>,
                                   datum::lvalue_scratch_datum(bcx,
                                                               arg_ty,
                                                               "tupled_args",
+                                                              uninit_reason,
                                                               arg_scope_id,
                                                               (),
                                                               |(),
                                                                mut bcx,
-                                                               llval| {
+                                                              llval| {
+                        debug!("populate call for create_datum_for_fn_args \
+                                tupled_args, on arg[{}] ty={:?}", i, arg_ty);
                         for (j, &tupled_arg_ty) in
                                     tupled_arg_tys.iter().enumerate() {
                             let lldest = StructGEP(bcx, llval, j);
@@ -1991,7 +2112,7 @@ pub fn trans_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
 pub fn trans_enum_variant<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                     ctor_id: ast::NodeId,
-                                    disr: ty::Disr,
+                                    disr: Disr,
                                     param_substs: &'tcx Substs<'tcx>,
                                     llfndecl: ValueRef) {
     let _icx = push_ctxt("trans_enum_variant");
@@ -2001,7 +2122,7 @@ pub fn trans_enum_variant<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
 pub fn trans_named_tuple_constructor<'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
                                                  ctor_ty: Ty<'tcx>,
-                                                 disr: ty::Disr,
+                                                 disr: Disr,
                                                  args: callee::CallArgs,
                                                  dest: expr::Dest,
                                                  debug_loc: DebugLoc)
@@ -2077,12 +2198,12 @@ pub fn trans_tuple_struct<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                     llfndecl: ValueRef) {
     let _icx = push_ctxt("trans_tuple_struct");
 
-    trans_enum_variant_or_tuple_like_struct(ccx, ctor_id, 0, param_substs, llfndecl);
+    trans_enum_variant_or_tuple_like_struct(ccx, ctor_id, Disr(0), param_substs, llfndecl);
 }
 
 fn trans_enum_variant_or_tuple_like_struct<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                                      ctor_id: ast::NodeId,
-                                                     disr: ty::Disr,
+                                                     disr: Disr,
                                                      param_substs: &'tcx Substs<'tcx>,
                                                      llfndecl: ValueRef) {
     let ctor_ty = ccx.tcx().node_id_to_type(ctor_id);
@@ -2113,7 +2234,7 @@ fn trans_enum_variant_or_tuple_like_struct<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx
         let repr = adt::represent_type(ccx, result_ty.unwrap());
         let mut llarg_idx = fcx.arg_offset() as c_uint;
         for (i, arg_ty) in arg_tys.into_iter().enumerate() {
-            let lldestptr = adt::trans_field_ptr(bcx, &*repr, dest_val, disr, i);
+            let lldestptr = adt::trans_field_ptr(bcx, &*repr, dest_val, Disr::from(disr), i);
             if common::type_is_fat_ptr(bcx.tcx(), arg_ty) {
                 Store(bcx,
                       get_param(fcx.llfn, llarg_idx),
@@ -2181,17 +2302,20 @@ fn enum_variant_size_lint(ccx: &CrateContext, enum_def: &hir::EnumDef, sp: Span,
             }
     );
 
+    // FIXME(#30505) Should use logging for this.
     if print_info {
         let llty = type_of::sizing_type_of(ccx, ty);
 
         let sess = &ccx.tcx().sess;
-        sess.span_note(sp, &*format!("total size: {} bytes", llsize_of_real(ccx, llty)));
+        sess.span_note_without_error(sp,
+                                     &*format!("total size: {} bytes", llsize_of_real(ccx, llty)));
         match *avar {
             adt::General(..) => {
                 for (i, var) in enum_def.variants.iter().enumerate() {
                     ccx.tcx()
                        .sess
-                       .span_note(var.span, &*format!("variant data: {} bytes", sizes[i]));
+                       .span_note_without_error(var.span,
+                                                &*format!("variant data: {} bytes", sizes[i]));
                 }
             }
             _ => {}
@@ -2203,17 +2327,17 @@ fn enum_variant_size_lint(ccx: &CrateContext, enum_def: &hir::EnumDef, sp: Span,
     if !is_allow && largest > slargest * 3 && slargest > 0 {
         // Use lint::raw_emit_lint rather than sess.add_lint because the lint-printing
         // pass for the latter already ran.
-        lint::raw_emit_lint(&ccx.tcx().sess,
-                            &ccx.tcx().sess.lint_store.borrow(),
-                            lint::builtin::VARIANT_SIZE_DIFFERENCES,
-                            *lvlsrc.unwrap(),
-                            Some(sp),
-                            &format!("enum variant is more than three times larger ({} bytes) \
-                                      than the next largest (ignoring padding)",
-                                     largest));
-
-        ccx.sess().span_note(enum_def.variants[largest_index].span,
-                             "this variant is the largest");
+        lint::raw_struct_lint(&ccx.tcx().sess,
+                              &ccx.tcx().sess.lint_store.borrow(),
+                              lint::builtin::VARIANT_SIZE_DIFFERENCES,
+                              *lvlsrc.unwrap(),
+                              Some(sp),
+                              &format!("enum variant is more than three times larger ({} bytes) \
+                                        than the next largest (ignoring padding)",
+                                       largest))
+            .span_note(enum_def.variants[largest_index].span,
+                       "this variant is the largest")
+            .emit();
     }
 }
 
@@ -2490,9 +2614,10 @@ pub fn create_entry_wrapper(ccx: &CrateContext, sp: Span, main_llfn: ValueRef) {
         let llfty = Type::func(&[ccx.int_type(), Type::i8p(ccx).ptr_to()], &ccx.int_type());
 
         let llfn = declare::define_cfn(ccx, "main", llfty, ccx.tcx().mk_nil()).unwrap_or_else(|| {
-            ccx.sess().span_err(sp, "entry symbol `main` defined multiple times");
             // FIXME: We should be smart and show a better diagnostic here.
-            ccx.sess().help("did you use #[no_mangle] on `fn main`? Use #[start] instead");
+            ccx.sess().struct_span_err(sp, "entry symbol `main` defined multiple times")
+                      .help("did you use #[no_mangle] on `fn main`? Use #[start] instead")
+                      .emit();
             ccx.sess().abort_if_errors();
             panic!();
         });
@@ -2761,7 +2886,11 @@ fn register_method(ccx: &CrateContext,
     }
 }
 
-pub fn write_metadata(cx: &SharedCrateContext, krate: &hir::Crate, reachable: &NodeSet) -> Vec<u8> {
+pub fn write_metadata<'a, 'tcx>(cx: &SharedCrateContext<'a, 'tcx>,
+                                krate: &hir::Crate,
+                                reachable: &NodeSet,
+                                mir_map: &MirMap<'tcx>)
+                                -> Vec<u8> {
     use flate;
 
     let any_library = cx.sess()
@@ -2774,9 +2903,13 @@ pub fn write_metadata(cx: &SharedCrateContext, krate: &hir::Crate, reachable: &N
     }
 
     let cstore = &cx.tcx().sess.cstore;
-    let metadata = cstore.encode_metadata(
-        cx.tcx(), cx.export_map(), cx.item_symbols(), cx.link_meta(), reachable,
-        krate);
+    let metadata = cstore.encode_metadata(cx.tcx(),
+                                          cx.export_map(),
+                                          cx.item_symbols(),
+                                          cx.link_meta(),
+                                          reachable,
+                                          mir_map,
+                                          krate);
     let mut compressed = cstore.metadata_encoding_version().to_vec();
     compressed.extend_from_slice(&flate::deflate_bytes(&metadata));
 
@@ -2966,8 +3099,15 @@ pub fn trans_crate<'tcx>(tcx: &ty::ctxt<'tcx>,
                          mir_map: &MirMap<'tcx>,
                          analysis: ty::CrateAnalysis)
                          -> CrateTranslation {
-    let ty::CrateAnalysis { export_map, reachable, name, .. } = analysis;
+    let _task = tcx.dep_graph.in_task(DepNode::TransCrate);
+
+    // Be careful with this krate: obviously it gives access to the
+    // entire contents of the krate. So if you push any subtasks of
+    // `TransCrate`, you need to be careful to register "reads" of the
+    // particular items that will be processed.
     let krate = tcx.map.krate();
+
+    let ty::CrateAnalysis { export_map, reachable, name, .. } = analysis;
 
     let check_overflow = if let Some(v) = tcx.sess.opts.debugging_opts.force_overflow_checks {
         v
@@ -3046,7 +3186,9 @@ pub fn trans_crate<'tcx>(tcx: &ty::ctxt<'tcx>,
     let reachable_symbol_ids = filter_reachable_ids(&shared_ccx);
 
     // Translate the metadata.
-    let metadata = write_metadata(&shared_ccx, krate, &reachable_symbol_ids);
+    let metadata = time(tcx.sess.time_passes(), "write metadata", || {
+        write_metadata(&shared_ccx, krate, &reachable_symbol_ids, mir_map)
+    });
 
     if shared_ccx.sess().trans_stats() {
         let stats = shared_ccx.stats();
@@ -3120,6 +3262,8 @@ pub fn trans_crate<'tcx>(tcx: &ty::ctxt<'tcx>,
     };
     let no_builtins = attr::contains_name(&krate.attrs, "no_builtins");
 
+    assert_dep_graph::assert_dep_graph(tcx);
+
     CrateTranslation {
         modules: modules,
         metadata_module: metadata_module,
@@ -3172,7 +3316,16 @@ impl<'a, 'tcx, 'v> Visitor<'v> for TransItemsWithinModVisitor<'a, 'tcx> {
                 // skip modules, they will be uncovered by the TransModVisitor
             }
             _ => {
-                trans_item(self.ccx, i);
+                let def_id = self.ccx.tcx().map.local_def_id(i.id);
+                let tcx = self.ccx.tcx();
+
+                // Create a subtask for trans'ing a particular item. We are
+                // giving `trans_item` access to this item, so also record a read.
+                tcx.dep_graph.with_task(DepNode::TransCrateItem(def_id), || {
+                    tcx.dep_graph.read(DepNode::Hir(def_id));
+                    trans_item(self.ccx, i);
+                });
+
                 intravisit::walk_item(self, i);
             }
         }

@@ -819,7 +819,7 @@ fn clean_srcpath<F>(src_root: &Path, p: &Path, keep_filename: bool, mut f: F) wh
     F: FnMut(&str),
 {
     // make it relative, if possible
-    let p = p.relative_from(src_root).unwrap_or(p);
+    let p = p.strip_prefix(src_root).unwrap_or(p);
 
     let mut iter = p.iter().map(|x| x.to_str().unwrap()).peekable();
     while let Some(c) = iter.next() {
@@ -1058,14 +1058,16 @@ impl DocFolder for Cache {
                         }
                     });
 
-                    self.search_index.push(IndexItem {
-                        ty: shortty(&item),
-                        name: s.to_string(),
-                        path: path.join("::").to_string(),
-                        desc: shorter(item.doc_value()),
-                        parent: parent,
-                        search_type: get_index_search_type(&item, parent_basename),
-                    });
+                    if item.def_id.index != CRATE_DEF_INDEX {
+                        self.search_index.push(IndexItem {
+                            ty: shortty(&item),
+                            name: s.to_string(),
+                            path: path.join("::").to_string(),
+                            desc: shorter(item.doc_value()),
+                            parent: parent,
+                            search_type: get_index_search_type(&item, parent_basename),
+                        });
+                    }
                 }
                 (Some(parent), None) if is_method || (!self.privmod && !hidden_field)=> {
                     if parent.is_local() {
@@ -1801,7 +1803,7 @@ fn item_module(w: &mut fmt::Formatter, cx: &Context,
 }
 
 fn short_stability(item: &clean::Item, cx: &Context, show_reason: bool) -> Option<String> {
-    item.stability.as_ref().and_then(|stab| {
+    let mut result = item.stability.as_ref().and_then(|stab| {
         let reason = if show_reason && !stab.reason.is_empty() {
             format!(": {}", stab.reason)
         } else {
@@ -1817,10 +1819,10 @@ fn short_stability(item: &clean::Item, cx: &Context, show_reason: bool) -> Optio
         } else if stab.level == stability::Unstable {
             let unstable_extra = if show_reason {
                 match (!stab.feature.is_empty(), &cx.issue_tracker_base_url, stab.issue) {
-                    (true, &Some(ref tracker_url), Some(issue_no)) =>
+                    (true, &Some(ref tracker_url), Some(issue_no)) if issue_no > 0 =>
                         format!(" (<code>{}</code> <a href=\"{}{}\">#{}</a>)",
                                 Escape(&stab.feature), tracker_url, issue_no, issue_no),
-                    (false, &Some(ref tracker_url), Some(issue_no)) =>
+                    (false, &Some(ref tracker_url), Some(issue_no)) if issue_no > 0 =>
                         format!(" (<a href=\"{}{}\">#{}</a>)", Escape(&tracker_url), issue_no,
                                 issue_no),
                     (true, _, _) =>
@@ -1836,7 +1838,27 @@ fn short_stability(item: &clean::Item, cx: &Context, show_reason: bool) -> Optio
         };
         Some(format!("<em class='stab {}'>{}</em>",
                      item.stability_class(), text))
-    })
+    });
+
+    if result.is_none() {
+        result = item.deprecation.as_ref().and_then(|depr| {
+            let note = if show_reason && !depr.note.is_empty() {
+                format!(": {}", depr.note)
+            } else {
+                String::new()
+            };
+            let since = if show_reason && !depr.since.is_empty() {
+                format!(" since {}", Escape(&depr.since))
+            } else {
+                String::new()
+            };
+
+            let text = format!("Deprecated{}{}", since, Markdown(&note));
+            Some(format!("<em class='stab deprecated'>{}</em>", text))
+        });
+    }
+
+    result
 }
 
 struct Initializer<'a>(&'a str);

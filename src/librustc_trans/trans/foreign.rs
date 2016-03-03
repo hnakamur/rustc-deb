@@ -35,7 +35,8 @@ use std::cmp;
 use std::iter::once;
 use libc::c_uint;
 use syntax::abi::{Cdecl, Aapcs, C, Win64, Abi};
-use syntax::abi::{PlatformIntrinsic, RustIntrinsic, Rust, RustCall, Stdcall, Fastcall, System};
+use syntax::abi::{PlatformIntrinsic, RustIntrinsic, Rust, RustCall, Stdcall};
+use syntax::abi::{Fastcall, Vectorcall, System};
 use syntax::attr;
 use syntax::codemap::Span;
 use syntax::parse::token::{InternedString, special_idents};
@@ -104,6 +105,7 @@ pub fn llvm_calling_convention(ccx: &CrateContext,
 
         Stdcall => llvm::X86StdcallCallConv,
         Fastcall => llvm::X86FastcallCallConv,
+        Vectorcall => llvm::X86_VectorCall,
         C => llvm::CCallConv,
         Win64 => llvm::X86_64_Win64,
 
@@ -460,12 +462,13 @@ fn gate_simd_ffi(tcx: &ty::ctxt, decl: &hir::FnDecl, ty: &ty::BareFnTy) {
     if !tcx.sess.features.borrow().simd_ffi {
         let check = |ast_ty: &hir::Ty, ty: ty::Ty| {
             if ty.is_simd() {
-                tcx.sess.span_err(ast_ty.span,
+                tcx.sess.struct_span_err(ast_ty.span,
                               &format!("use of SIMD type `{}` in FFI is highly experimental and \
                                         may result in invalid code",
-                                       pprust::ty_to_string(ast_ty)));
-                tcx.sess.fileline_help(ast_ty.span,
-                                   "add #![feature(simd_ffi)] to the crate attributes to enable");
+                                       pprust::ty_to_string(ast_ty)))
+                    .fileline_help(ast_ty.span,
+                                   "add #![feature(simd_ffi)] to the crate attributes to enable")
+                    .emit();
             }
         };
         let sig = &ty.sig.0;
@@ -639,7 +642,7 @@ pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
         let llfn = declare::define_internal_rust_fn(ccx, &ps, t);
         attributes::from_fn_attrs(ccx, attrs, llfn);
-        base::trans_fn(ccx, decl, body, llfn, param_substs, id, &[]);
+        base::trans_fn(ccx, decl, body, llfn, param_substs, id, attrs);
         llfn
     }
 

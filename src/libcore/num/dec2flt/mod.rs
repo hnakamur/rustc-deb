@@ -96,8 +96,7 @@ use prelude::v1::*;
 use fmt;
 use str::FromStr;
 
-use self::parse::{parse_decimal, Decimal, Sign};
-use self::parse::ParseResult::{self, Valid, ShortcutToInf, ShortcutToZero};
+use self::parse::{parse_decimal, Decimal, Sign, ParseResult};
 use self::num::digits_to_big;
 use self::rawfp::RawFloat;
 
@@ -109,7 +108,7 @@ pub mod rawfp;
 pub mod parse;
 
 macro_rules! from_str_float_impl {
-    ($t:ty, $func:ident) => {
+    ($t:ty) => {
         #[stable(feature = "rust1", since = "1.0.0")]
         impl FromStr for $t {
             type Err = ParseFloatError;
@@ -146,8 +145,8 @@ macro_rules! from_str_float_impl {
         }
     }
 }
-from_str_float_impl!(f32, to_f32);
-from_str_float_impl!(f64, to_f64);
+from_str_float_impl!(f32);
+from_str_float_impl!(f64);
 
 /// An error which can be returned when parsing a float.
 #[derive(Debug, Clone, PartialEq)]
@@ -183,11 +182,11 @@ impl fmt::Display for ParseFloatError {
     }
 }
 
-pub fn pfe_empty() -> ParseFloatError {
+fn pfe_empty() -> ParseFloatError {
     ParseFloatError { kind: FloatErrorKind::Empty }
 }
 
-pub fn pfe_invalid() -> ParseFloatError {
+fn pfe_invalid() -> ParseFloatError {
     ParseFloatError { kind: FloatErrorKind::Invalid }
 }
 
@@ -208,9 +207,9 @@ fn dec2flt<T: RawFloat>(s: &str) -> Result<T, ParseFloatError> {
     }
     let (sign, s) = extract_sign(s);
     let flt = match parse_decimal(s) {
-        Valid(decimal) => try!(convert(decimal)),
-        ShortcutToInf => T::infinity(),
-        ShortcutToZero => T::zero(),
+        ParseResult::Valid(decimal) => try!(convert(decimal)),
+        ParseResult::ShortcutToInf => T::infinity(),
+        ParseResult::ShortcutToZero => T::zero(),
         ParseResult::Invalid => match s {
             "inf" => T::infinity(),
             "NaN" => T::nan(),

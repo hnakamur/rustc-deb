@@ -8,19 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
-#![cfg_attr(stage0, feature(custom_attribute))]
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 #![allow(trivial_casts)]
 
-#![cfg_attr(stage0, allow(improper_ctypes))]
-
 #![crate_name = "rustc_llvm"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -33,6 +28,7 @@
 #![feature(link_args)]
 #![feature(staged_api)]
 #![feature(linked_from)]
+#![feature(concat_idents)]
 
 extern crate libc;
 #[macro_use] #[no_link] extern crate rustc_bitflags;
@@ -89,6 +85,7 @@ pub enum CallConv {
     X86StdcallCallConv = 64,
     X86FastcallCallConv = 65,
     X86_64_Win64 = 79,
+    X86_VectorCall = 80
 }
 
 #[derive(Copy, Clone)]
@@ -615,6 +612,7 @@ extern {
                                              C: ContextRef)
                                              -> ModuleRef;
     pub fn LLVMGetModuleContext(M: ModuleRef) -> ContextRef;
+    pub fn LLVMCloneModule(M: ModuleRef) -> ModuleRef;
     pub fn LLVMDisposeModule(M: ModuleRef);
 
     /// Data layout. See Module::getDataLayout.
@@ -2010,32 +2008,6 @@ extern {
     pub fn LLVMIsAAllocaInst(value_ref: ValueRef) -> ValueRef;
     pub fn LLVMIsAConstantInt(value_ref: ValueRef) -> ValueRef;
 
-    pub fn LLVMInitializeX86TargetInfo();
-    pub fn LLVMInitializeX86Target();
-    pub fn LLVMInitializeX86TargetMC();
-    pub fn LLVMInitializeX86AsmPrinter();
-    pub fn LLVMInitializeX86AsmParser();
-    pub fn LLVMInitializeARMTargetInfo();
-    pub fn LLVMInitializeARMTarget();
-    pub fn LLVMInitializeARMTargetMC();
-    pub fn LLVMInitializeARMAsmPrinter();
-    pub fn LLVMInitializeARMAsmParser();
-    pub fn LLVMInitializeAArch64TargetInfo();
-    pub fn LLVMInitializeAArch64Target();
-    pub fn LLVMInitializeAArch64TargetMC();
-    pub fn LLVMInitializeAArch64AsmPrinter();
-    pub fn LLVMInitializeAArch64AsmParser();
-    pub fn LLVMInitializeMipsTargetInfo();
-    pub fn LLVMInitializeMipsTarget();
-    pub fn LLVMInitializeMipsTargetMC();
-    pub fn LLVMInitializeMipsAsmPrinter();
-    pub fn LLVMInitializeMipsAsmParser();
-    pub fn LLVMInitializePowerPCTargetInfo();
-    pub fn LLVMInitializePowerPCTarget();
-    pub fn LLVMInitializePowerPCTargetMC();
-    pub fn LLVMInitializePowerPCAsmPrinter();
-    pub fn LLVMInitializePowerPCAsmParser();
-
     pub fn LLVMRustAddPass(PM: PassManagerRef, Pass: *const c_char) -> bool;
     pub fn LLVMRustCreateTargetMachine(Triple: *const c_char,
                                        CPU: *const c_char,
@@ -2141,6 +2113,53 @@ extern {
     pub fn LLVMRustSetDataLayoutFromTargetMachine(M: ModuleRef,
                                                   TM: TargetMachineRef);
     pub fn LLVMRustGetModuleDataLayout(M: ModuleRef) -> TargetDataRef;
+}
+
+#[cfg(have_component_x86)]
+extern {
+    pub fn LLVMInitializeX86TargetInfo();
+    pub fn LLVMInitializeX86Target();
+    pub fn LLVMInitializeX86TargetMC();
+    pub fn LLVMInitializeX86AsmPrinter();
+    pub fn LLVMInitializeX86AsmParser();
+}
+#[cfg(have_component_arm)]
+extern {
+    pub fn LLVMInitializeARMTargetInfo();
+    pub fn LLVMInitializeARMTarget();
+    pub fn LLVMInitializeARMTargetMC();
+    pub fn LLVMInitializeARMAsmPrinter();
+    pub fn LLVMInitializeARMAsmParser();
+}
+#[cfg(have_component_aarch64)]
+extern {
+    pub fn LLVMInitializeAArch64TargetInfo();
+    pub fn LLVMInitializeAArch64Target();
+    pub fn LLVMInitializeAArch64TargetMC();
+    pub fn LLVMInitializeAArch64AsmPrinter();
+    pub fn LLVMInitializeAArch64AsmParser();
+}
+#[cfg(have_component_mips)]
+extern {
+    pub fn LLVMInitializeMipsTargetInfo();
+    pub fn LLVMInitializeMipsTarget();
+    pub fn LLVMInitializeMipsTargetMC();
+    pub fn LLVMInitializeMipsAsmPrinter();
+    pub fn LLVMInitializeMipsAsmParser();
+}
+#[cfg(have_component_powerpc)]
+extern {
+    pub fn LLVMInitializePowerPCTargetInfo();
+    pub fn LLVMInitializePowerPCTarget();
+    pub fn LLVMInitializePowerPCTargetMC();
+    pub fn LLVMInitializePowerPCAsmPrinter();
+    pub fn LLVMInitializePowerPCAsmParser();
+}
+#[cfg(have_component_pnacl)]
+extern {
+    pub fn LLVMInitializePNaClTargetInfo();
+    pub fn LLVMInitializePNaClTarget();
+    pub fn LLVMInitializePNaClTargetMC();
 }
 
 // LLVM requires symbols from this library, but apparently they're not printed
@@ -2325,6 +2344,51 @@ pub unsafe fn twine_to_string(tr: TwineRef) -> String {
 pub unsafe fn debug_loc_to_string(c: ContextRef, tr: DebugLocRef) -> String {
     build_string(|s| LLVMWriteDebugLocToString(c, tr, s))
         .expect("got a non-UTF8 DebugLoc from LLVM")
+}
+
+pub fn initialize_available_targets() {
+    macro_rules! init_target(
+        ($cfg:ident $arch:ident) => { {
+            #[cfg($cfg)]
+            fn init() {
+                unsafe {
+                    let f = concat_idents!(LLVMInitialize, $arch, TargetInfo);
+                    f();
+                    let f = concat_idents!(LLVMInitialize, $arch, Target);
+                    f();
+                    let f = concat_idents!(LLVMInitialize, $arch, TargetMC);
+                    f();
+                    let f = concat_idents!(LLVMInitialize, $arch, AsmPrinter);
+                    f();
+                    let f = concat_idents!(LLVMInitialize, $arch, AsmParser);
+                    f();
+                }
+            }
+            #[cfg(not($cfg))]
+            fn init() { }
+            init();
+        } }
+    );
+
+    init_target!(have_component_powerpc PowerPC);
+    init_target!(have_component_mips Mips);
+    init_target!(have_component_aarch64 AArch64);
+    init_target!(have_component_arm ARM);
+    init_target!(have_component_x86 X86);
+
+    // PNaCl doesn't provide some of the optional target components, so we
+    // manually initialize it here.
+    #[cfg(have_component_pnacl)]
+    fn init_pnacl() {
+        unsafe {
+            LLVMInitializePNaClTargetInfo();
+            LLVMInitializePNaClTarget();
+            LLVMInitializePNaClTargetMC();
+        }
+    }
+    #[cfg(not(have_component_pnacl))]
+    fn init_pnacl() { }
+    init_pnacl();
 }
 
 // The module containing the native LLVM dependencies, generated by the build system

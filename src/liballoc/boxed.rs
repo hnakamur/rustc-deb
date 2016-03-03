@@ -222,12 +222,12 @@ impl<T: ?Sized> Drop for IntermediateBox<T> {
 }
 
 impl<T> Box<T> {
-    /// Allocates memory on the heap and then moves `x` into it.
+    /// Allocates memory on the heap and then places `x` into it.
     ///
     /// # Examples
     ///
     /// ```
-    /// let x = Box::new(5);
+    /// let five = Box::new(5);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline(always)]
@@ -237,17 +237,17 @@ impl<T> Box<T> {
 }
 
 impl<T: ?Sized> Box<T> {
-    /// Constructs a box from the raw pointer.
+    /// Constructs a box from a raw pointer.
     ///
-    /// After this function call, pointer is owned by resulting box.
-    /// In particular, it means that `Box` destructor calls destructor
-    /// of `T` and releases memory. Since the way `Box` allocates and
-    /// releases memory is unspecified, the only valid pointer to pass
-    /// to this function is the one taken from another `Box` with
-    /// `Box::into_raw` function.
+    /// After calling this function, the raw pointer is owned by the
+    /// resulting `Box`. Specifically, the `Box` destructor will call
+    /// the destructor of `T` and free the allocated memory. Since the
+    /// way `Box` allocates and releases memory is unspecified, the
+    /// only valid pointer to pass to this function is the one taken
+    /// from another `Box` via the `Box::into_raw` function.
     ///
-    /// Function is unsafe, because improper use of this function may
-    /// lead to memory problems like double-free, for example if the
+    /// This function is unsafe because improper use may lead to
+    /// memory problems. For example, a double-free may occur if the
     /// function is called twice on the same raw pointer.
     #[stable(feature = "box_raw", since = "1.4.0")]
     #[inline]
@@ -257,16 +257,16 @@ impl<T: ?Sized> Box<T> {
 
     /// Consumes the `Box`, returning the wrapped raw pointer.
     ///
-    /// After call to this function, caller is responsible for the memory
-    /// previously managed by `Box`, in particular caller should properly
-    /// destroy `T` and release memory. The proper way to do it is to
-    /// convert pointer back to `Box` with `Box::from_raw` function, because
-    /// `Box` does not specify, how memory is allocated.
+    /// After calling this function, the caller is responsible for the
+    /// memory previously managed by the `Box`. In particular, the
+    /// caller should properly destroy `T` and release the memory. The
+    /// proper way to do so is to convert the raw pointer back into a
+    /// `Box` with the `Box::from_raw` function.
     ///
     /// # Examples
     ///
     /// ```
-    /// let seventeen = Box::new(17u32);
+    /// let seventeen = Box::new(17);
     /// let raw = Box::into_raw(seventeen);
     /// let boxed_again = unsafe { Box::from_raw(raw) };
     /// ```

@@ -79,11 +79,10 @@ use core::cmp::Ordering;
 use core::mem::{align_of_val, size_of_val};
 use core::intrinsics::abort;
 use core::mem;
+use core::mem::uninitialized;
 use core::ops::Deref;
-#[cfg(not(stage0))]
 use core::ops::CoerceUnsized;
 use core::ptr::{self, Shared};
-#[cfg(not(stage0))]
 use core::marker::Unsize;
 use core::hash::{Hash, Hasher};
 use core::{usize, isize};
@@ -135,8 +134,6 @@ unsafe impl<T: ?Sized + Sync + Send> Send for Arc<T> {}
 #[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<T: ?Sized + Sync + Send> Sync for Arc<T> {}
 
-// remove cfg after new snapshot
-#[cfg(not(stage0))]
 #[unstable(feature = "coerce_unsized", issue = "27732")]
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Arc<U>> for Arc<T> {}
 
@@ -157,8 +154,6 @@ unsafe impl<T: ?Sized + Sync + Send> Send for Weak<T> {}
 #[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<T: ?Sized + Sync + Send> Sync for Weak<T> {}
 
-// remove cfg after new snapshot
-#[cfg(not(stage0))]
 #[unstable(feature = "coerce_unsized", issue = "27732")]
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Weak<U>> for Weak<T> {}
 
@@ -385,13 +380,6 @@ impl<T: ?Sized> Deref for Arc<T> {
 }
 
 impl<T: Clone> Arc<T> {
-    #[unstable(feature = "arc_make_unique", reason = "renamed to Arc::make_mut",
-               issue = "27718")]
-    #[rustc_deprecated(since = "1.4.0", reason = "renamed to Arc::make_mut")]
-    pub fn make_unique(this: &mut Self) -> &mut T {
-        Arc::make_mut(this)
-    }
-
     /// Make a mutable reference into the given `Arc<T>` by cloning the inner
     /// data if the `Arc<T>` doesn't have one strong reference and no weak
     /// references.
@@ -428,7 +416,7 @@ impl<T: Clone> Arc<T> {
         // weak count, there's no chance the ArcInner itself could be
         // deallocated.
         if this.inner().strong.compare_and_swap(1, 0, Acquire) != 1 {
-            // Another srong pointer exists; clone
+            // Another strong pointer exists; clone
             *this = Arc::new((**this).clone());
         } else if this.inner().weak.load(Relaxed) != 1 {
             // Relaxed suffices in the above because this is fundamentally an
@@ -567,9 +555,9 @@ impl<T: ?Sized> Drop for Arc<T> {
         // This structure has #[unsafe_no_drop_flag], so this drop glue may run
         // more than once (but it is guaranteed to be zeroed after the first if
         // it's run more than once)
-        let ptr = *self._ptr;
-        // if ptr.is_null() { return }
-        if ptr as *mut u8 as usize == 0 || ptr as *mut u8 as usize == mem::POST_DROP_USIZE {
+        let thin = *self._ptr as *const ();
+
+        if thin as usize == mem::POST_DROP_USIZE {
             return;
         }
 
@@ -722,9 +710,10 @@ impl<T: ?Sized> Drop for Weak<T> {
     /// ```
     fn drop(&mut self) {
         let ptr = *self._ptr;
+        let thin = ptr as *const ();
 
         // see comments above for why this check is here
-        if ptr as *mut u8 as usize == 0 || ptr as *mut u8 as usize == mem::POST_DROP_USIZE {
+        if thin as usize == mem::POST_DROP_USIZE {
             return;
         }
 
@@ -914,6 +903,35 @@ impl<T: ?Sized + Hash> Hash for Arc<T> {
 impl<T> From<T> for Arc<T> {
     fn from(t: T) -> Self {
         Arc::new(t)
+    }
+}
+
+impl<T> Weak<T> {
+    /// Constructs a new `Weak<T>` without an accompanying instance of T.
+    ///
+    /// This allocates memory for T, but does not initialize it. Calling
+    /// Weak<T>::upgrade() on the return value always gives None.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(downgraded_weak)]
+    ///
+    /// use std::sync::Weak;
+    ///
+    /// let empty: Weak<i64> = Weak::new();
+    /// ```
+    #[unstable(feature = "downgraded_weak",
+               reason = "recently added",
+               issue = "30425")]
+    pub fn new() -> Weak<T> {
+        unsafe {
+            Weak { _ptr: Shared::new(Box::into_raw(box ArcInner {
+                strong: atomic::AtomicUsize::new(0),
+                weak: atomic::AtomicUsize::new(1),
+                data: uninitialized(),
+            }))}
+        }
     }
 }
 
@@ -1166,6 +1184,12 @@ mod tests {
         let foo = 123;
         let foo_arc = Arc::from(foo);
         assert!(123 == *foo_arc);
+    }
+
+    #[test]
+    fn test_new_weak() {
+        let foo: Weak<usize> = Weak::new();
+        assert!(foo.upgrade().is_none());
     }
 }
 

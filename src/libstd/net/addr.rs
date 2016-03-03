@@ -14,9 +14,7 @@ use fmt;
 use hash;
 use io;
 use mem;
-use net::{lookup_host, ntoh, hton, Ipv4Addr, Ipv6Addr};
-#[allow(deprecated)]
-use net::IpAddr;
+use net::{lookup_host, ntoh, hton, IpAddr, Ipv4Addr, Ipv6Addr};
 use option;
 use sys::net::netc as c;
 use sys_common::{FromInner, AsInner, IntoInner};
@@ -32,10 +30,10 @@ use vec;
 pub enum SocketAddr {
     /// An IPv4 socket address which is a (ip, port) combination.
     #[stable(feature = "rust1", since = "1.0.0")]
-    V4(SocketAddrV4),
+    V4(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] SocketAddrV4),
     /// An IPv6 socket address
     #[stable(feature = "rust1", since = "1.0.0")]
-    V6(SocketAddrV6),
+    V6(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] SocketAddrV6),
 }
 
 /// An IPv4 socket address which is a (ip, port) combination.
@@ -50,10 +48,7 @@ pub struct SocketAddrV6 { inner: c::sockaddr_in6 }
 
 impl SocketAddr {
     /// Creates a new socket address from the (ip, port) pair.
-    #[unstable(feature = "ip_addr", reason = "recent addition", issue = "27801")]
-    #[rustc_deprecated(reason = "ip type too small a type to pull its weight",
-                       since = "1.6.0")]
-    #[allow(deprecated)]
+    #[stable(feature = "ip_addr", since = "1.7.0")]
     pub fn new(ip: IpAddr, port: u16) -> SocketAddr {
         match ip {
             IpAddr::V4(a) => SocketAddr::V4(SocketAddrV4::new(a, port)),
@@ -62,10 +57,7 @@ impl SocketAddr {
     }
 
     /// Returns the IP address associated with this socket address.
-    #[unstable(feature = "ip_addr", reason = "recent addition", issue = "27801")]
-    #[rustc_deprecated(reason = "too small a type to pull its weight",
-                       since = "1.6.0")]
-    #[allow(deprecated)]
+    #[stable(feature = "ip_addr", since = "1.7.0")]
     pub fn ip(&self) -> IpAddr {
         match *self {
             SocketAddr::V4(ref a) => IpAddr::V4(*a.ip()),
@@ -140,13 +132,13 @@ impl SocketAddrV6 {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn port(&self) -> u16 { ntoh(self.inner.sin6_port) }
 
-    /// Returns scope ID associated with this address, corresponding to the
-    /// `sin6_flowinfo` field in C.
+    /// Returns the flow information associated with this address,
+    /// corresponding to the `sin6_flowinfo` field in C.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn flowinfo(&self) -> u32 { ntoh(self.inner.sin6_flowinfo) }
 
-    /// Returns scope ID associated with this address, corresponding to the
-    /// `sin6_scope_id` field in C.
+    /// Returns the scope ID associated with this address,
+    /// corresponding to the `sin6_scope_id` field in C.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn scope_id(&self) -> u32 { ntoh(self.inner.sin6_scope_id) }
 }
@@ -359,7 +351,6 @@ impl ToSocketAddrs for SocketAddrV6 {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-#[allow(deprecated)]
 impl ToSocketAddrs for (IpAddr, u16) {
     type Iter = option::IntoIter<SocketAddr>;
     fn to_socket_addrs(&self) -> io::Result<option::IntoIter<SocketAddr>> {
@@ -468,9 +459,7 @@ impl<'a, T: ToSocketAddrs + ?Sized> ToSocketAddrs for &'a T {
 #[cfg(test)]
 mod tests {
     use prelude::v1::*;
-    use io;
     use net::*;
-    use net::Ipv6MulticastScope::*;
     use net::test::{tsa, sa6, sa4};
 
     #[test]

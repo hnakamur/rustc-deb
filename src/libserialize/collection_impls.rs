@@ -10,10 +10,8 @@
 
 //! Implementations of serialization for structures found in libcollections
 
-use std::usize;
-use std::default::Default;
-use std::hash::Hash;
-use std::collections::hash_state::HashState;
+use std::hash::{Hash, BuildHasher};
+use std::mem;
 
 use {Decodable, Encodable, Decoder, Encoder};
 use std::collections::{LinkedList, VecDeque, BTreeMap, BTreeSet, HashMap, HashSet};
@@ -148,7 +146,7 @@ impl<
     fn decode<D: Decoder>(d: &mut D) -> Result<EnumSet<T>, D::Error> {
         let bits = try!(d.read_uint());
         let mut set = EnumSet::new();
-        for bit in 0..usize::BITS {
+        for bit in 0..(mem::size_of::<usize>()*8) {
             if bits & (1 << bit) != 0 {
                 set.insert(CLike::from_usize(1 << bit));
             }
@@ -160,7 +158,7 @@ impl<
 impl<K, V, S> Encodable for HashMap<K, V, S>
     where K: Encodable + Hash + Eq,
           V: Encodable,
-          S: HashState,
+          S: BuildHasher,
 {
     fn encode<E: Encoder>(&self, e: &mut E) -> Result<(), E::Error> {
         e.emit_map(self.len(), |e| {
@@ -178,12 +176,12 @@ impl<K, V, S> Encodable for HashMap<K, V, S>
 impl<K, V, S> Decodable for HashMap<K, V, S>
     where K: Decodable + Hash + Eq,
           V: Decodable,
-          S: HashState + Default,
+          S: BuildHasher + Default,
 {
     fn decode<D: Decoder>(d: &mut D) -> Result<HashMap<K, V, S>, D::Error> {
         d.read_map(|d, len| {
             let state = Default::default();
-            let mut map = HashMap::with_capacity_and_hash_state(len, state);
+            let mut map = HashMap::with_capacity_and_hasher(len, state);
             for i in 0..len {
                 let key = try!(d.read_map_elt_key(i, |d| Decodable::decode(d)));
                 let val = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
@@ -196,7 +194,7 @@ impl<K, V, S> Decodable for HashMap<K, V, S>
 
 impl<T, S> Encodable for HashSet<T, S>
     where T: Encodable + Hash + Eq,
-          S: HashState,
+          S: BuildHasher,
 {
     fn encode<E: Encoder>(&self, s: &mut E) -> Result<(), E::Error> {
         s.emit_seq(self.len(), |s| {
@@ -212,12 +210,12 @@ impl<T, S> Encodable for HashSet<T, S>
 
 impl<T, S> Decodable for HashSet<T, S>
     where T: Decodable + Hash + Eq,
-          S: HashState + Default,
+          S: BuildHasher + Default,
 {
     fn decode<D: Decoder>(d: &mut D) -> Result<HashSet<T, S>, D::Error> {
         d.read_seq(|d, len| {
             let state = Default::default();
-            let mut set = HashSet::with_capacity_and_hash_state(len, state);
+            let mut set = HashSet::with_capacity_and_hasher(len, state);
             for i in 0..len {
                 set.insert(try!(d.read_seq_elt(i, |d| Decodable::decode(d))));
             }

@@ -496,7 +496,7 @@ fn visit_expr(ir: &mut IrMaps, expr: &Expr) {
       hir::ExprBlock(..) | hir::ExprAssign(..) | hir::ExprAssignOp(..) |
       hir::ExprStruct(..) | hir::ExprRepeat(..) |
       hir::ExprInlineAsm(..) | hir::ExprBox(..) |
-      hir::ExprRange(..) => {
+      hir::ExprRange(..) | hir::ExprType(..) => {
           intravisit::walk_expr(ir, expr);
       }
     }
@@ -1160,18 +1160,26 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
           hir::ExprBox(ref e) |
           hir::ExprAddrOf(_, ref e) |
           hir::ExprCast(ref e, _) |
+          hir::ExprType(ref e, _) |
           hir::ExprUnary(_, ref e) => {
             self.propagate_through_expr(&**e, succ)
           }
 
           hir::ExprInlineAsm(ref ia) => {
 
-            let succ = ia.outputs.iter().rev().fold(succ, |succ, &(_, ref expr, _)| {
-                // see comment on lvalues
-                // in propagate_through_lvalue_components()
-                let succ = self.write_lvalue(&**expr, succ, ACC_WRITE);
-                self.propagate_through_lvalue_components(&**expr, succ)
-            });
+            let succ = ia.outputs.iter().rev().fold(succ,
+                |succ, out| {
+                    // see comment on lvalues
+                    // in propagate_through_lvalue_components()
+                    if out.is_indirect {
+                        self.propagate_through_expr(&*out.expr, succ)
+                    } else {
+                        let acc = if out.is_rw { ACC_WRITE|ACC_READ } else { ACC_WRITE };
+                        let succ = self.write_lvalue(&*out.expr, succ, acc);
+                        self.propagate_through_lvalue_components(&*out.expr, succ)
+                    }
+                }
+            );
             // Inputs are executed first. Propagate last because of rev order
             ia.inputs.iter().rev().fold(succ, |succ, &(_, ref expr)| {
                 self.propagate_through_expr(&**expr, succ)
@@ -1416,9 +1424,11 @@ fn check_expr(this: &mut Liveness, expr: &Expr) {
         }
 
         // Output operands must be lvalues
-        for &(_, ref out, _) in &ia.outputs {
-          this.check_lvalue(&**out);
-          this.visit_expr(&**out);
+        for out in &ia.outputs {
+          if !out.is_indirect {
+            this.check_lvalue(&*out.expr);
+          }
+          this.visit_expr(&*out.expr);
         }
 
         intravisit::walk_expr(this, expr);
@@ -1434,7 +1444,7 @@ fn check_expr(this: &mut Liveness, expr: &Expr) {
       hir::ExprBlock(..) | hir::ExprAddrOf(..) |
       hir::ExprStruct(..) | hir::ExprRepeat(..) |
       hir::ExprClosure(..) | hir::ExprPath(..) | hir::ExprBox(..) |
-      hir::ExprRange(..) => {
+      hir::ExprRange(..) | hir::ExprType(..) => {
         intravisit::walk_expr(this, expr);
       }
     }
@@ -1466,10 +1476,11 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                  entry_ln: LiveNode,
                  body: &hir::Block)
     {
-        // within the fn body, late-bound regions are liberated:
+        // within the fn body, late-bound regions are liberated
+        // and must outlive the *call-site* of the function.
         let fn_ret =
             self.ir.tcx.liberate_late_bound_regions(
-                self.ir.tcx.region_maps.item_extent(body.id),
+                self.ir.tcx.region_maps.call_site_extent(id, body.id),
                 &self.fn_ret(id));
 
         match fn_ret {
@@ -1489,7 +1500,10 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                             },
                         _ => false
                     };
-                    span_err!(self.ir.tcx.sess, sp, E0269, "not all control paths return a value");
+                    let mut err = struct_span_err!(self.ir.tcx.sess,
+                                                   sp,
+                                                   E0269,
+                                                   "not all control paths return a value");
                     if ends_with_stmt {
                         let last_stmt = body.stmts.first().unwrap();
                         let original_span = original_sp(self.ir.tcx.sess.codemap(),
@@ -1499,9 +1513,9 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                             hi: original_span.hi,
                             expn_id: original_span.expn_id
                         };
-                        self.ir.tcx.sess.span_help(
-                            span_semicolon, "consider removing this semicolon:");
+                        err.span_help(span_semicolon, "consider removing this semicolon:");
                     }
+                    err.emit();
                 }
             }
             ty::FnDiverging

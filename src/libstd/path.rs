@@ -100,8 +100,10 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use ascii::*;
+#[allow(deprecated)]
 use borrow::{Borrow, IntoCow, ToOwned, Cow};
 use cmp;
+use error::Error;
 use fmt;
 use fs;
 use hash::{Hash, Hasher};
@@ -266,27 +268,33 @@ mod platform {
 pub enum Prefix<'a> {
     /// Prefix `\\?\`, together with the given component immediately following it.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Verbatim(&'a OsStr),
+    Verbatim(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] &'a OsStr),
 
     /// Prefix `\\?\UNC\`, with the "server" and "share" components following it.
     #[stable(feature = "rust1", since = "1.0.0")]
-    VerbatimUNC(&'a OsStr, &'a OsStr),
+    VerbatimUNC(
+        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] &'a OsStr,
+        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] &'a OsStr,
+    ),
 
     /// Prefix like `\\?\C:\`, for the given drive letter
     #[stable(feature = "rust1", since = "1.0.0")]
-    VerbatimDisk(u8),
+    VerbatimDisk(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] u8),
 
     /// Prefix `\\.\`, together with the given component immediately following it.
     #[stable(feature = "rust1", since = "1.0.0")]
-    DeviceNS(&'a OsStr),
+    DeviceNS(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] &'a OsStr),
 
     /// Prefix `\\server\share`, with the given "server" and "share" components.
     #[stable(feature = "rust1", since = "1.0.0")]
-    UNC(&'a OsStr, &'a OsStr),
+    UNC(
+        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] &'a OsStr,
+        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] &'a OsStr,
+    ),
 
     /// Prefix `C:` for the given disk drive.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Disk(u8),
+    Disk(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] u8),
 }
 
 impl<'a> Prefix<'a> {
@@ -528,7 +536,9 @@ pub enum Component<'a> {
     ///
     /// Does not occur on Unix.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Prefix(PrefixComponent<'a>),
+    Prefix(
+        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] PrefixComponent<'a>
+    ),
 
     /// The root directory component, appears after any prefix and before anything else
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -544,7 +554,7 @@ pub enum Component<'a> {
 
     /// A normal component, i.e. `a` and `b` in `a/b`
     #[stable(feature = "rust1", since = "1.0.0")]
-    Normal(&'a OsStr),
+    Normal(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] &'a OsStr),
 }
 
 impl<'a> Component<'a> {
@@ -1035,6 +1045,7 @@ impl PathBuf {
         self._push(path.as_ref())
     }
 
+    #[allow(deprecated)]
     fn _push(&mut self, path: &Path) {
         // in general, a separator is needed if the rightmost byte is not a separator
         let mut need_sep = self.as_mut_vec().last().map(|c| !is_sep_byte(*c)).unwrap_or(false);
@@ -1211,6 +1222,7 @@ impl Borrow<Path> for PathBuf {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 impl IntoCow<'static, Path> for PathBuf {
     fn into_cow(self) -> Cow<'static, Path> {
         Cow::Owned(self)
@@ -1218,6 +1230,7 @@ impl IntoCow<'static, Path> for PathBuf {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 impl<'a> IntoCow<'a, Path> for &'a Path {
     fn into_cow(self) -> Cow<'a, Path> {
         Cow::Borrowed(self)
@@ -1319,6 +1332,12 @@ impl Into<OsString> for PathBuf {
 pub struct Path {
     inner: OsStr,
 }
+
+/// An error returned from the `Path::strip_prefix` method indicating that the
+/// prefix was not found in `self`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[stable(since = "1.7.0", feature = "strip_prefix")]
+pub struct StripPrefixError(());
 
 impl Path {
     // The following (private!) function allows construction of a path from a u8
@@ -1439,6 +1458,7 @@ impl Path {
     /// assert!(!Path::new("foo.txt").is_absolute());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[allow(deprecated)]
     pub fn is_absolute(&self) -> bool {
         self.has_root() && (cfg!(unix) || self.prefix().is_some())
     }
@@ -1465,6 +1485,8 @@ impl Path {
     #[unstable(feature = "path_prefix",
                reason = "uncertain whether to expose this convenience",
                issue = "27722")]
+    #[rustc_deprecated(since = "1.7.0",
+                       reason = "inspect components().next() instead")]
     pub fn prefix(&self) -> Option<Prefix> {
         self.components().prefix
     }
@@ -1553,12 +1575,28 @@ impl Path {
     /// returns false), then `relative_from` returns `None`.
     #[unstable(feature = "path_relative_from", reason = "see #23284",
                issue = "23284")]
+    #[rustc_deprecated(since = "1.7.0", reason = "renamed to strip_prefix")]
     pub fn relative_from<'a, P: ?Sized + AsRef<Path>>(&'a self, base: &'a P) -> Option<&Path> {
-        self._relative_from(base.as_ref())
+        self._strip_prefix(base.as_ref()).ok()
     }
 
-    fn _relative_from<'a>(&'a self, base: &'a Path) -> Option<&'a Path> {
-        iter_after(self.components(), base.components()).map(|c| c.as_path())
+    /// Returns a path that, when joined onto `base`, yields `self`.
+    ///
+    /// If `base` is not a prefix of `self` (i.e. `starts_with`
+    /// returns false), then `relative_from` returns `None`.
+    #[stable(since = "1.7.0", feature = "path_strip_prefix")]
+    pub fn strip_prefix<'a, P: ?Sized>(&'a self, base: &'a P)
+                                       -> Result<&'a Path, StripPrefixError>
+        where P: AsRef<Path>
+    {
+        self._strip_prefix(base.as_ref())
+    }
+
+    fn _strip_prefix<'a>(&'a self, base: &'a Path)
+                         -> Result<&'a Path, StripPrefixError> {
+        iter_after(self.components(), base.components())
+            .map(|c| c.as_path())
+            .ok_or(StripPrefixError(()))
     }
 
     /// Determines whether `base` is a prefix of `self`.
@@ -2007,6 +2045,18 @@ impl_eq!(Cow<'a, Path>, Path);
 impl_eq!(Cow<'a, Path>, &'b Path);
 impl_eq!(Cow<'a, Path>, PathBuf);
 
+#[stable(since = "1.7.0", feature = "strip_prefix")]
+impl fmt::Display for StripPrefixError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.description().fmt(f)
+    }
+}
+
+#[stable(since = "1.7.0", feature = "strip_prefix")]
+impl Error for StripPrefixError {
+    fn description(&self) -> &str { "prefix not found" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2097,6 +2147,7 @@ mod tests {
     );
 
     #[test]
+    #[allow(deprecated)]
     fn into_cow() {
         use borrow::{Cow, IntoCow};
 

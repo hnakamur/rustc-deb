@@ -399,12 +399,12 @@ pub fn walk_path_parameters<'v, V: Visitor<'v>>(visitor: &mut V,
                                                 _path_span: Span,
                                                 path_parameters: &'v PathParameters) {
     match *path_parameters {
-        AngleBracketedParameters(ref data) => {
+        PathParameters::AngleBracketed(ref data) => {
             walk_list!(visitor, visit_ty, &data.types);
             walk_list!(visitor, visit_lifetime, &data.lifetimes);
             walk_list!(visitor, visit_assoc_type_binding, &data.bindings);
         }
-        ParenthesizedParameters(ref data) => {
+        PathParameters::Parenthesized(ref data) => {
             walk_list!(visitor, visit_ty, &data.inputs);
             walk_list!(visitor, visit_ty, &data.output);
         }
@@ -693,7 +693,7 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
             visitor.visit_expr(subexpression)
         }
         ExprLit(_) => {}
-        ExprCast(ref subexpression, ref typ) => {
+        ExprCast(ref subexpression, ref typ) | ExprType(ref subexpression, ref typ) => {
             visitor.visit_expr(subexpression);
             visitor.visit_ty(typ)
         }
@@ -786,8 +786,8 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
             for &(_, ref input) in &ia.inputs {
                 visitor.visit_expr(&input)
             }
-            for &(_, ref output, _) in &ia.outputs {
-                visitor.visit_expr(&output)
+            for output in &ia.outputs {
+                visitor.visit_expr(&output.expr)
             }
         }
     }

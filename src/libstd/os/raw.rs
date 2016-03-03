@@ -14,11 +14,17 @@
 
 #[cfg(any(target_os = "android",
           all(target_os = "linux", any(target_arch = "aarch64",
-                                       target_arch = "arm"))))]
+                                       target_arch = "arm",
+                                       target_arch = "powerpc",
+                                       target_arch = "powerpc64",
+                                       target_arch = "powerpc64le"))))]
 #[stable(feature = "raw_os", since = "1.1.0")] pub type c_char = u8;
 #[cfg(not(any(target_os = "android",
               all(target_os = "linux", any(target_arch = "aarch64",
-                                           target_arch = "arm")))))]
+                                           target_arch = "arm",
+                                           target_arch = "powerpc",
+                                           target_arch = "powerpc64",
+                                           target_arch = "powerpc64le")))))]
 #[stable(feature = "raw_os", since = "1.1.0")] pub type c_char = i8;
 #[stable(feature = "raw_os", since = "1.1.0")] pub type c_schar = i8;
 #[stable(feature = "raw_os", since = "1.1.0")] pub type c_uchar = u8;
@@ -88,7 +94,8 @@ mod tests {
             c_longlong c_ulonglong c_float c_double);
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "android")))]
+    #[test]
     fn unix() {
         {
             use os::unix::raw;
@@ -101,6 +108,7 @@ mod tests {
     }
 
     #[cfg(windows)]
+    #[test]
     fn windows() {
         use os::windows::raw;
     }

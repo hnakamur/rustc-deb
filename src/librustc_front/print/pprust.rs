@@ -12,9 +12,8 @@ pub use self::AnnNode::*;
 
 use syntax::abi;
 use syntax::ast;
-use syntax::owned_slice::OwnedSlice;
 use syntax::codemap::{self, CodeMap, BytePos, Spanned};
-use syntax::diagnostic;
+use syntax::errors;
 use syntax::parse::token::{self, BinOpToken};
 use syntax::parse::lexer::comments;
 use syntax::parse;
@@ -121,7 +120,7 @@ pub const default_columns: usize = 78;
 /// it can scan the input text for comments and literals to
 /// copy forward.
 pub fn print_crate<'a>(cm: &'a CodeMap,
-                       span_diagnostic: &diagnostic::SpanHandler,
+                       span_diagnostic: &errors::Handler,
                        krate: &hir::Crate,
                        filename: String,
                        input: &mut Read,
@@ -142,7 +141,7 @@ pub fn print_crate<'a>(cm: &'a CodeMap,
 
 impl<'a> State<'a> {
     pub fn new_from_input(cm: &'a CodeMap,
-                          span_diagnostic: &diagnostic::SpanHandler,
+                          span_diagnostic: &errors::Handler,
                           filename: String,
                           input: &mut Read,
                           out: Box<Write + 'a>,
@@ -336,7 +335,8 @@ fn needs_parentheses(expr: &hir::Expr) -> bool {
         hir::ExprBinary(..) |
         hir::ExprClosure(..) |
         hir::ExprAssignOp(..) |
-        hir::ExprCast(..) => true,
+        hir::ExprCast(..) |
+        hir::ExprType(..) => true,
         _ => false,
     }
 }
@@ -519,10 +519,10 @@ impl<'a> State<'a> {
             hir::TyBareFn(ref f) => {
                 let generics = hir::Generics {
                     lifetimes: f.lifetimes.clone(),
-                    ty_params: OwnedSlice::empty(),
+                    ty_params: hir::HirVec::new(),
                     where_clause: hir::WhereClause {
                         id: ast::DUMMY_NODE_ID,
-                        predicates: Vec::new(),
+                        predicates: hir::HirVec::new(),
                     },
                 };
                 try!(self.print_ty_fn(f.abi, f.unsafety, &*f.decl, None, &generics, None));
@@ -1354,6 +1354,11 @@ impl<'a> State<'a> {
                 try!(self.word_space("as"));
                 try!(self.print_type(&**ty));
             }
+            hir::ExprType(ref expr, ref ty) => {
+                try!(self.print_expr(&**expr));
+                try!(self.word_space(":"));
+                try!(self.print_type(&**ty));
+            }
             hir::ExprIf(ref test, ref blk, ref elseopt) => {
                 try!(self.print_if(&**test, &**blk, elseopt.as_ref().map(|e| &**e)));
             }
@@ -1502,15 +1507,15 @@ impl<'a> State<'a> {
                 try!(self.print_string(&a.asm, a.asm_str_style));
                 try!(self.word_space(":"));
 
-                try!(self.commasep(Inconsistent, &a.outputs, |s, &(ref co, ref o, is_rw)| {
-                    match co.slice_shift_char() {
-                        Some(('=', operand)) if is_rw => {
+                try!(self.commasep(Inconsistent, &a.outputs, |s, out| {
+                    match out.constraint.slice_shift_char() {
+                        Some(('=', operand)) if out.is_rw => {
                             try!(s.print_string(&format!("+{}", operand), ast::CookedStr))
                         }
-                        _ => try!(s.print_string(&co, ast::CookedStr)),
+                        _ => try!(s.print_string(&out.constraint, ast::CookedStr)),
                     }
                     try!(s.popen());
-                    try!(s.print_expr(&**o));
+                    try!(s.print_expr(&*out.expr));
                     try!(s.pclose());
                     Ok(())
                 }));
@@ -2257,11 +2262,11 @@ impl<'a> State<'a> {
             try!(self.print_generics(generics));
         }
         let generics = hir::Generics {
-            lifetimes: Vec::new(),
-            ty_params: OwnedSlice::empty(),
+            lifetimes: hir::HirVec::new(),
+            ty_params: hir::HirVec::new(),
             where_clause: hir::WhereClause {
                 id: ast::DUMMY_NODE_ID,
-                predicates: Vec::new(),
+                predicates: hir::HirVec::new(),
             },
         };
         try!(self.print_fn(decl,

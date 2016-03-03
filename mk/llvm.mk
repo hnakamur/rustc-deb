@@ -80,10 +80,16 @@ endif
 
 
 # LLVM linkage:
+# Note: Filter with llvm-config so that optional targets which aren't present
+# don't cause errors (ie PNaCl's target is only present within PNaCl's LLVM
+# fork).
 LLVM_LINKAGE_PATH_$(1):=$$(abspath $$(RT_OUTPUT_DIR_$(1))/llvmdeps.rs)
 $$(LLVM_LINKAGE_PATH_$(1)): $(S)src/etc/mklldeps.py $$(LLVM_CONFIG_$(1))
-	$(Q)$(CFG_PYTHON) "$$<" "$$@" "$$(LLVM_COMPONENTS)" "$$(CFG_ENABLE_LLVM_STATIC_STDCPP)" \
-		$$(LLVM_CONFIG_$(1)) "$(CFG_STDCPP_NAME)"
+	$(Q)$(CFG_PYTHON) "$$<" "$$@" "$$(filter $$(shell \
+				$$(LLVM_CONFIG_$(1)) --components), \
+                        $(LLVM_OPTIONAL_COMPONENTS)) $(LLVM_REQUIRED_COMPONENTS)" \
+		"$$(CFG_ENABLE_LLVM_STATIC_STDCPP)" $$(LLVM_CONFIG_$(1)) \
+		"$(CFG_STDCPP_NAME)" "$$(CFG_USING_LIBCPP)"
 endef
 
 $(foreach host,$(CFG_HOST), \
@@ -95,6 +101,8 @@ $(foreach host,$(CFG_HOST), \
 # This can't be done in target.mk because it's included before this file.
 define LLVM_LINKAGE_DEPS
 $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.rustc_llvm: $$(LLVM_LINKAGE_PATH_$(2))
+RUSTFLAGS$(1)_rustc_llvm_T_$(2) += $$(shell echo $$(LLVM_ALL_COMPONENTS_$(2)) | tr '-' '_' |\
+	sed -e 's/^ //;s/\([^ ]*\)/\-\-cfg have_component_\1/g')
 endef
 
 $(foreach source,$(CFG_HOST), \

@@ -71,6 +71,7 @@ use trans::machine;
 use trans::meth;
 use trans::tvec;
 use trans::type_of;
+use trans::Disr;
 use middle::ty::adjustment::{AdjustDerefRef, AdjustReifyFnPointer};
 use middle::ty::adjustment::{AdjustUnsafeFnPointer, CustomCoerceUnsized};
 use middle::ty::{self, Ty};
@@ -83,7 +84,7 @@ use trans::type_::Type;
 use rustc_front;
 use rustc_front::hir;
 
-use syntax::{ast, ast_util, codemap};
+use syntax::{ast, codemap};
 use syntax::parse::token::InternedString;
 use syntax::ptr::P;
 use syntax::parse::token;
@@ -165,7 +166,9 @@ pub fn trans_into<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 hir::ExprPath(..) => {
                     match bcx.def(expr.id) {
                         def::DefConst(did) => {
-                            let const_expr = consts::get_const_expr(bcx.ccx(), did, expr);
+                            let empty_substs = bcx.tcx().mk_substs(Substs::trans_empty());
+                            let const_expr = consts::get_const_expr(bcx.ccx(), did, expr,
+                                                                    empty_substs);
                             // Temporarily get cleanup scopes out of the way,
                             // as they require sub-expressions to be contained
                             // inside the current AST scope.
@@ -547,8 +550,8 @@ fn coerce_unsized<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 
             let iter = src_fields.iter().zip(target_fields).enumerate();
             for (i, (src_ty, target_ty)) in iter {
-                let ll_source = adt::trans_field_ptr(bcx, &repr_source, source_val, 0, i);
-                let ll_target = adt::trans_field_ptr(bcx, &repr_target, target_val, 0, i);
+                let ll_source = adt::trans_field_ptr(bcx, &repr_source, source_val, Disr(0), i);
+                let ll_target = adt::trans_field_ptr(bcx, &repr_target, target_val, Disr(0), i);
 
                 // If this is the field we need to coerce, recurse on it.
                 if i == coerce_index {
@@ -656,6 +659,9 @@ fn trans_datum_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let _icx = push_ctxt("trans_datum_unadjusted");
 
     match expr.node {
+        hir::ExprType(ref e, _) => {
+            trans(bcx, &**e)
+        }
         hir::ExprPath(..) => {
             trans_def(bcx, expr, bcx.def(expr.id))
         }
@@ -941,6 +947,9 @@ fn trans_rvalue_stmt_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         hir::ExprBreak(label_opt) => {
             controlflow::trans_break(bcx, expr, label_opt.map(|l| l.node.name))
         }
+        hir::ExprType(ref e, _) => {
+            trans_into(bcx, &**e, Ignore)
+        }
         hir::ExprAgain(label_opt) => {
             controlflow::trans_cont(bcx, expr, label_opt.map(|l| l.node.name))
         }
@@ -1064,6 +1073,9 @@ fn trans_rvalue_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     debuginfo::set_source_location(bcx.fcx, expr.id, expr.span);
 
     match expr.node {
+        hir::ExprType(ref e, _) => {
+            trans_into(bcx, &**e, dest)
+        }
         hir::ExprPath(..) => {
             trans_def_dps_unadjusted(bcx, expr, bcx.def(expr.id), dest)
         }
@@ -1143,7 +1155,7 @@ fn trans_rvalue_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 args.iter().enumerate().map(|(i, arg)| (i, &**arg)).collect();
             trans_adt(bcx,
                       expr_ty(bcx, expr),
-                      0,
+                      Disr(0),
                       &numbered_fields[..],
                       None,
                       dest,
@@ -1187,7 +1199,13 @@ fn trans_rvalue_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                         &format!("closure expr without closure type: {:?}", t)),
             };
 
-            closure::trans_closure_expr(dest, decl, body, expr.id, def_id, substs).unwrap_or(bcx)
+            closure::trans_closure_expr(dest,
+                                        decl,
+                                        body,
+                                        expr.id,
+                                        def_id,
+                                        substs,
+                                        &expr.attrs).unwrap_or(bcx)
         }
         hir::ExprCall(ref f, ref args) => {
             if bcx.tcx().is_method_call(expr.id) {
@@ -1278,7 +1296,7 @@ fn trans_def_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 // Nullary variant.
                 let ty = expr_ty(bcx, ref_expr);
                 let repr = adt::represent_type(bcx.ccx(), ty);
-                adt::trans_set_discr(bcx, &*repr, lldest, variant.disr_val);
+                adt::trans_set_discr(bcx, &*repr, lldest, Disr::from(variant.disr_val));
                 return bcx;
             }
         }
@@ -1287,7 +1305,7 @@ fn trans_def_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             match ty.sty {
                 ty::TyStruct(def, _) if def.has_dtor() => {
                     let repr = adt::represent_type(bcx.ccx(), ty);
-                    adt::trans_set_discr(bcx, &*repr, lldest, 0);
+                    adt::trans_set_discr(bcx, &*repr, lldest, Disr(0));
                 }
                 _ => {}
             }
@@ -1449,7 +1467,7 @@ pub struct StructBaseInfo<'a, 'tcx> {
 /// which remaining fields are copied; see comments on `StructBaseInfo`.
 pub fn trans_adt<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
                                  ty: Ty<'tcx>,
-                                 discr: ty::Disr,
+                                 discr: Disr,
                                  fields: &[(usize, &hir::Expr)],
                                  optbase: Option<StructBaseInfo<'a, 'tcx>>,
                                  dest: Dest,
@@ -1471,6 +1489,8 @@ pub fn trans_adt<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
             llresult
         }
     };
+
+    debug!("trans_adt");
 
     // This scope holds intermediates that must be cleaned should
     // panic occur before the ADT as a whole is ready.
@@ -1515,7 +1535,7 @@ pub fn trans_adt<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
         debug_location.apply(bcx.fcx);
 
         // Second, trans the base to the dest.
-        assert_eq!(discr, 0);
+        assert_eq!(discr, Disr(0));
 
         let addr = adt::MaybeSizedValue::sized(addr);
         match expr_kind(bcx.tcx(), &*base.expr) {
@@ -2178,15 +2198,19 @@ fn auto_ref<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let referent_ty = lv_datum.ty;
     let ptr_ty = bcx.tcx().mk_imm_ref(bcx.tcx().mk_region(ty::ReStatic), referent_ty);
 
+    // Construct the resulting datum. The right datum to return here would be an Lvalue datum,
+    // because there is cleanup scheduled and the datum doesn't own the data, but for thin pointers
+    // we microoptimize it to be an Rvalue datum to avoid the extra alloca and level of
+    // indirection and for thin pointers, this has no ill effects.
+    let kind  = if type_is_sized(bcx.tcx(), referent_ty) {
+        RvalueExpr(Rvalue::new(ByValue))
+    } else {
+        LvalueExpr(lv_datum.kind)
+    };
+
     // Get the pointer.
     let llref = lv_datum.to_llref();
-
-    // Construct the resulting datum, using what was the "by ref"
-    // ValueRef of type `referent_ty` to be the "by value" ValueRef
-    // of type `&referent_ty`.
-    // Pointers to DST types are non-immediate, and therefore still use ByRef.
-    let kind  = if type_is_sized(bcx.tcx(), referent_ty) { ByValue } else { ByRef };
-    DatumBlock::new(bcx, Datum::new(llref, ptr_ty, RvalueExpr(Rvalue::new(kind))))
+    DatumBlock::new(bcx, Datum::new(llref, ptr_ty, kind))
 }
 
 fn deref_multiple<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
@@ -2601,6 +2625,10 @@ fn expr_kind(tcx: &ty::ctxt, expr: &hir::Expr) -> ExprKind {
             }
         }
 
+        hir::ExprType(ref expr, _) => {
+            expr_kind(tcx, expr)
+        }
+
         hir::ExprUnary(hir::UnDeref, _) |
         hir::ExprField(..) |
         hir::ExprTupField(..) |
@@ -2622,7 +2650,7 @@ fn expr_kind(tcx: &ty::ctxt, expr: &hir::Expr) -> ExprKind {
             ExprKind::RvalueDps
         }
 
-        hir::ExprLit(ref lit) if ast_util::lit_is_str(&**lit) => {
+        hir::ExprLit(ref lit) if lit.node.is_str() => {
             ExprKind::RvalueDps
         }
 

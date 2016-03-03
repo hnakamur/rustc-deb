@@ -11,7 +11,6 @@
 use std::collections::BTreeMap;
 use std::collections::Bound::{Excluded, Included, Unbounded, self};
 use std::collections::btree_map::Entry::{Occupied, Vacant};
-use std::iter::range_inclusive;
 use std::rc::Rc;
 
 #[test]
@@ -188,7 +187,7 @@ fn test_range() {
     for i in 0..size {
         for j in i..size {
             let mut kvs = map.range(Included(&i), Included(&j)).map(|(&k, &v)| (k, v));
-            let mut pairs = range_inclusive(i, j).map(|i| (i, i));
+            let mut pairs = (i..j+1).map(|i| (i, i));
 
             for (kv, pair) in kvs.by_ref().zip(pairs.by_ref()) {
                 assert_eq!(kv, pair);
@@ -345,6 +344,54 @@ fn test_bad_zst() {
     for _ in 0..100 {
         m.insert(Bad, Bad);
     }
+}
+
+#[test]
+fn test_clone() {
+    let mut map = BTreeMap::new();
+    let size = 100;
+    assert_eq!(map.len(), 0);
+
+    for i in 0..size {
+        assert_eq!(map.insert(i, 10*i), None);
+        assert_eq!(map.len(), i + 1);
+        assert_eq!(map, map.clone());
+    }
+
+    for i in 0..size {
+        assert_eq!(map.insert(i, 100*i), Some(10*i));
+        assert_eq!(map.len(), size);
+        assert_eq!(map, map.clone());
+    }
+
+    for i in 0..size/2 {
+        assert_eq!(map.remove(&(i*2)), Some(i*200));
+        assert_eq!(map.len(), size - i - 1);
+        assert_eq!(map, map.clone());
+    }
+
+    for i in 0..size/2 {
+        assert_eq!(map.remove(&(2*i)), None);
+        assert_eq!(map.remove(&(2*i+1)), Some(i*200 + 100));
+        assert_eq!(map.len(), size/2 - i - 1);
+        assert_eq!(map, map.clone());
+    }
+}
+
+#[test]
+fn test_variance() {
+    use std::collections::btree_map::{Iter, IntoIter, Range, Keys, Values};
+
+    fn map_key<'new>(v: BTreeMap<&'static str, ()>) -> BTreeMap<&'new str, ()> { v }
+    fn map_val<'new>(v: BTreeMap<(), &'static str>) -> BTreeMap<(), &'new str> { v }
+    fn iter_key<'a, 'new>(v: Iter<'a, &'static str, ()>) -> Iter<'a, &'new str, ()> { v }
+    fn iter_val<'a, 'new>(v: Iter<'a, (), &'static str>) -> Iter<'a, (), &'new str> { v }
+    fn into_iter_key<'new>(v: IntoIter<&'static str, ()>) -> IntoIter<&'new str, ()> { v }
+    fn into_iter_val<'new>(v: IntoIter<(), &'static str>) -> IntoIter<(), &'new str> { v }
+    fn range_key<'a, 'new>(v: Range<'a, &'static str, ()>) -> Range<'a, &'new str, ()> { v }
+    fn range_val<'a, 'new>(v: Range<'a, (), &'static str>) -> Range<'a, (), &'new str> { v }
+    fn keys<'a, 'new>(v: Keys<'a, &'static str, ()>) -> Keys<'a, &'new str, ()> { v }
+    fn vals<'a, 'new>(v: Values<'a, (), &'static str>) -> Values<'a, (), &'new str> { v }
 }
 
 mod bench {

@@ -95,11 +95,13 @@ pub enum Cow<'a, B: ?Sized + 'a>
 {
     /// Borrowed data.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Borrowed(&'a B),
+    Borrowed(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] &'a B),
 
     /// Owned data.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Owned(<B as ToOwned>::Owned),
+    Owned(
+        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] <B as ToOwned>::Owned
+    ),
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -245,12 +247,15 @@ impl<'a, B: ?Sized> Hash for Cow<'a, B> where B: Hash + ToOwned {
 /// Trait for moving into a `Cow`.
 #[unstable(feature = "into_cow", reason = "may be replaced by `convert::Into`",
            issue = "27735")]
+#[rustc_deprecated(since = "1.7.0",
+                   reason = "conflicts with Into, may return with specialization")]
 pub trait IntoCow<'a, B: ?Sized> where B: ToOwned {
     /// Moves `self` into `Cow`
     fn into_cow(self) -> Cow<'a, B>;
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 impl<'a, B: ?Sized> IntoCow<'a, B> for Cow<'a, B> where B: ToOwned {
     fn into_cow(self) -> Cow<'a, B> {
         self
@@ -258,6 +263,7 @@ impl<'a, B: ?Sized> IntoCow<'a, B> for Cow<'a, B> where B: ToOwned {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 impl<'a, T: ?Sized + ToOwned> AsRef<T> for Cow<'a, T> {
     fn as_ref(&self) -> &T {
         self

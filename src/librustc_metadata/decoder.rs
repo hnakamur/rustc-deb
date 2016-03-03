@@ -18,6 +18,7 @@ use cstore::{self, crate_metadata};
 use common::*;
 use encoder::def_to_u64;
 use index;
+use tls_context;
 use tydecode::TyDecoder;
 
 use rustc::back::svh::Svh;
@@ -26,15 +27,18 @@ use rustc::util::nodemap::FnvHashMap;
 use rustc_front::hir;
 
 use middle::cstore::{LOCAL_CRATE, FoundAst, InlinedItem, LinkagePreference};
-use middle::cstore::{DefLike, DlDef, DlField, DlImpl};
+use middle::cstore::{DefLike, DlDef, DlField, DlImpl, tls};
 use middle::def;
 use middle::def_id::{DefId, DefIndex};
 use middle::lang_items;
 use middle::subst;
 use middle::ty::{ImplContainer, TraitContainer};
-use middle::ty::{self, RegionEscape, Ty};
+use middle::ty::{self, Ty, TypeFoldable};
 
-use std::cell::{Cell, RefCell};
+use rustc::mir;
+use rustc::mir::visit::MutVisitor;
+
+use std::cell::Cell;
 use std::io::prelude::*;
 use std::io;
 use std::rc::Rc;
@@ -48,7 +52,7 @@ use syntax::parse::token::{IdentInterner, special_idents};
 use syntax::parse::token;
 use syntax::ast;
 use syntax::abi;
-use syntax::codemap;
+use syntax::codemap::{self, Span};
 use syntax::print::pprust;
 use syntax::ptr::P;
 
@@ -97,12 +101,15 @@ enum Family {
     Mod,                   // m
     ForeignMod,            // n
     Enum,                  // t
-    TupleVariant,          // v
     StructVariant,         // V
+    TupleVariant,          // v
+    UnitVariant,           // w
     Impl,                  // i
-    DefaultImpl,              // d
+    DefaultImpl,           // d
     Trait,                 // I
     Struct,                // S
+    TupleStruct,           // s
+    UnitStruct,            // u
     PublicField,           // g
     InheritedField,        // N
     Constant,              // C
@@ -122,12 +129,15 @@ fn item_family(item: rbml::Doc) -> Family {
       'm' => Mod,
       'n' => ForeignMod,
       't' => Enum,
-      'v' => TupleVariant,
       'V' => StructVariant,
+      'v' => TupleVariant,
+      'w' => UnitVariant,
       'i' => Impl,
       'd' => DefaultImpl,
       'I' => Trait,
       'S' => Struct,
+      's' => TupleStruct,
+      'u' => UnitStruct,
       'g' => PublicField,
       'N' => InheritedField,
        c => panic!("unexpected family char: {}", c)
@@ -278,7 +288,7 @@ fn item_to_def_like(cdata: Cmd, item: rbml::Doc, did: DefId) -> DefLike {
         }
         ImmStatic => DlDef(def::DefStatic(did, false)),
         MutStatic => DlDef(def::DefStatic(did, true)),
-        Struct    => DlDef(def::DefStruct(did)),
+        Struct | TupleStruct | UnitStruct => DlDef(def::DefStruct(did)),
         Fn        => DlDef(def::DefFn(did, false)),
         CtorFn    => DlDef(def::DefFn(did, true)),
         Method | StaticMethod => {
@@ -298,7 +308,7 @@ fn item_to_def_like(cdata: Cmd, item: rbml::Doc, did: DefId) -> DefLike {
             let enum_did = item_require_parent_item(cdata, item);
             DlDef(def::DefVariant(enum_did, did, true))
         }
-        TupleVariant => {
+        TupleVariant | UnitVariant => {
             let enum_did = item_require_parent_item(cdata, item);
             DlDef(def::DefVariant(enum_did, did, false))
         }
@@ -349,16 +359,11 @@ pub fn get_trait_def<'tcx>(cdata: Cmd,
     let associated_type_names = parse_associated_type_names(item_doc);
     let paren_sugar = parse_paren_sugar(item_doc);
 
-    ty::TraitDef {
-        paren_sugar: paren_sugar,
-        unsafety: unsafety,
-        generics: generics,
-        trait_ref: item_trait_ref(item_doc, tcx, cdata),
-        associated_type_names: associated_type_names,
-        nonblanket_impls: RefCell::new(FnvHashMap()),
-        blanket_impls: RefCell::new(vec![]),
-        flags: Cell::new(ty::TraitFlags::NO_TRAIT_FLAGS)
-    }
+    ty::TraitDef::new(unsafety,
+                      paren_sugar,
+                      generics,
+                      item_trait_ref(item_doc, tcx, cdata),
+                      associated_type_names)
 }
 
 pub fn get_adt_def<'tcx>(intr: &IdentInterner,
@@ -366,6 +371,14 @@ pub fn get_adt_def<'tcx>(intr: &IdentInterner,
                          item_id: DefIndex,
                          tcx: &ty::ctxt<'tcx>) -> ty::AdtDefMaster<'tcx>
 {
+    fn family_to_variant_kind<'tcx>(family: Family, tcx: &ty::ctxt<'tcx>) -> ty::VariantKind {
+        match family {
+            Struct | StructVariant => ty::VariantKind::Struct,
+            TupleStruct | TupleVariant => ty::VariantKind::Tuple,
+            UnitStruct | UnitVariant => ty::VariantKind::Unit,
+            _ => tcx.sess.bug(&format!("unexpected family: {:?}", family)),
+        }
+    }
     fn get_enum_variants<'tcx>(intr: &IdentInterner,
                                cdata: Cmd,
                                doc: rbml::Doc,
@@ -385,7 +398,8 @@ pub fn get_adt_def<'tcx>(intr: &IdentInterner,
                 did: did,
                 name: item_name(intr, item),
                 fields: get_variant_fields(intr, cdata, item, tcx),
-                disr_val: disr
+                disr_val: disr,
+                kind: family_to_variant_kind(item_family(item), tcx),
             }
         }).collect()
     }
@@ -418,7 +432,8 @@ pub fn get_adt_def<'tcx>(intr: &IdentInterner,
             did: did,
             name: item_name(intr, doc),
             fields: get_variant_fields(intr, cdata, doc, tcx),
-            disr_val: 0
+            disr_val: 0,
+            kind: family_to_variant_kind(item_family(doc), tcx),
         }
     }
 
@@ -429,7 +444,7 @@ pub fn get_adt_def<'tcx>(intr: &IdentInterner,
             (ty::AdtKind::Enum,
              get_enum_variants(intr, cdata, doc, tcx))
         }
-        Struct => {
+        Struct | TupleStruct | UnitStruct => {
             let ctor_did =
                 reader::maybe_get_doc(doc, tag_items_data_item_struct_ctor).
                 map_or(did, |ctor_doc| translated_def_id(cdata, ctor_doc));
@@ -517,6 +532,14 @@ pub fn get_type<'tcx>(cdata: Cmd, id: DefIndex, tcx: &ty::ctxt<'tcx>)
 pub fn get_stability(cdata: Cmd, id: DefIndex) -> Option<attr::Stability> {
     let item = cdata.lookup_item(id);
     reader::maybe_get_doc(item, tag_items_data_item_stability).map(|doc| {
+        let mut decoder = reader::Decoder::new(doc);
+        Decodable::decode(&mut decoder).unwrap()
+    })
+}
+
+pub fn get_deprecation(cdata: Cmd, id: DefIndex) -> Option<attr::Deprecation> {
+    let item = cdata.lookup_item(id);
+    reader::maybe_get_doc(item, tag_items_data_item_deprecation).map(|doc| {
         let mut decoder = reader::Decoder::new(doc);
         Decodable::decode(&mut decoder).unwrap()
     })
@@ -751,34 +774,111 @@ pub fn get_item_name(intr: &IdentInterner, cdata: Cmd, id: DefIndex) -> ast::Nam
 pub type DecodeInlinedItem<'a> =
     Box<for<'tcx> FnMut(Cmd,
                         &ty::ctxt<'tcx>,
-                        Vec<hir_map::PathElem>,
-                        hir_map::DefPath,
+                        Vec<hir_map::PathElem>, // parent_path
+                        hir_map::DefPath,       // parent_def_path
                         rbml::Doc,
                         DefId)
                         -> Result<&'tcx InlinedItem, (Vec<hir_map::PathElem>,
                                                       hir_map::DefPath)> + 'a>;
 
-pub fn maybe_get_item_ast<'tcx>(cdata: Cmd, tcx: &ty::ctxt<'tcx>, id: DefIndex,
+pub fn maybe_get_item_ast<'tcx>(cdata: Cmd,
+                                tcx: &ty::ctxt<'tcx>,
+                                id: DefIndex,
                                 mut decode_inlined_item: DecodeInlinedItem)
                                 -> FoundAst<'tcx> {
     debug!("Looking up item: {:?}", id);
     let item_doc = cdata.lookup_item(id);
     let item_did = item_def_id(item_doc, cdata);
-    let path = item_path(item_doc).split_last().unwrap().1.to_vec();
-    let def_path = def_path(cdata, id);
-    match decode_inlined_item(cdata, tcx, path, def_path, item_doc, item_did) {
+    let parent_path = {
+        let mut path = item_path(item_doc);
+        path.pop();
+        path
+    };
+    let parent_def_path = {
+        let mut def_path = def_path(cdata, id);
+        def_path.pop();
+        def_path
+    };
+    match decode_inlined_item(cdata,
+                              tcx,
+                              parent_path,
+                              parent_def_path,
+                              item_doc,
+                              item_did) {
         Ok(ii) => FoundAst::Found(ii),
-        Err((path, def_path)) => {
+        Err((mut parent_path, mut parent_def_path)) => {
             match item_parent_item(cdata, item_doc) {
-                Some(did) => {
-                    let parent_item = cdata.lookup_item(did.index);
-                    match decode_inlined_item(cdata, tcx, path, def_path, parent_item, did) {
-                        Ok(ii) => FoundAst::FoundParent(did, ii),
+                Some(parent_did) => {
+                    // Remove the last element from the paths, since we are now
+                    // trying to inline the parent.
+                    parent_path.pop();
+                    parent_def_path.pop();
+
+                    let parent_item = cdata.lookup_item(parent_did.index);
+                    match decode_inlined_item(cdata,
+                                              tcx,
+                                              parent_path,
+                                              parent_def_path,
+                                              parent_item,
+                                              parent_did) {
+                        Ok(ii) => FoundAst::FoundParent(parent_did, ii),
                         Err(_) => FoundAst::NotFound
                     }
                 }
                 None => FoundAst::NotFound
             }
+        }
+    }
+}
+
+pub fn maybe_get_item_mir<'tcx>(cdata: Cmd,
+                                tcx: &ty::ctxt<'tcx>,
+                                id: DefIndex)
+                                -> Option<mir::repr::Mir<'tcx>> {
+    let item_doc = cdata.lookup_item(id);
+
+    return reader::maybe_get_doc(item_doc, tag_mir as usize).map(|mir_doc| {
+        let dcx = tls_context::DecodingContext {
+            crate_metadata: cdata,
+            tcx: tcx,
+        };
+        let mut decoder = reader::Decoder::new(mir_doc);
+
+        let mut mir = decoder.read_opaque(|opaque_decoder, _| {
+            tls::enter_decoding_context(&dcx, opaque_decoder, |_, opaque_decoder| {
+                Decodable::decode(opaque_decoder)
+            })
+        }).unwrap();
+
+        let mut def_id_and_span_translator = MirDefIdAndSpanTranslator {
+            crate_metadata: cdata,
+            codemap: tcx.sess.codemap(),
+            last_filemap_index_hint: Cell::new(0),
+        };
+
+        def_id_and_span_translator.visit_mir(&mut mir);
+
+        mir
+    });
+
+    struct MirDefIdAndSpanTranslator<'cdata, 'codemap> {
+        crate_metadata: Cmd<'cdata>,
+        codemap: &'codemap codemap::CodeMap,
+        last_filemap_index_hint: Cell<usize>
+    }
+
+    impl<'v, 'cdata, 'codemap> mir::visit::MutVisitor<'v>
+        for MirDefIdAndSpanTranslator<'cdata, 'codemap>
+    {
+        fn visit_def_id(&mut self, def_id: &mut DefId) {
+            *def_id = translate_def_id(self.crate_metadata, *def_id);
+        }
+
+        fn visit_span(&mut self, span: &mut Span) {
+            *span = translate_span(self.crate_metadata,
+                                   self.codemap,
+                                   &self.last_filemap_index_hint,
+                                   *span);
         }
     }
 }
@@ -797,12 +897,12 @@ fn get_explicit_self(item: rbml::Doc) -> ty::ExplicitSelfCategory {
 
     let explicit_self_kind = string.as_bytes()[0];
     match explicit_self_kind as char {
-        's' => ty::StaticExplicitSelfCategory,
-        'v' => ty::ByValueExplicitSelfCategory,
-        '~' => ty::ByBoxExplicitSelfCategory,
+        's' => ty::ExplicitSelfCategory::Static,
+        'v' => ty::ExplicitSelfCategory::ByValue,
+        '~' => ty::ExplicitSelfCategory::ByBox,
         // FIXME(#4846) expl. region
         '&' => {
-            ty::ByReferenceExplicitSelfCategory(
+            ty::ExplicitSelfCategory::ByReference(
                 ty::ReEmpty,
                 get_mutability(string.as_bytes()[1]))
         }
@@ -836,7 +936,7 @@ pub fn is_static_method(cdata: Cmd, id: DefIndex) -> bool {
     let doc = cdata.lookup_item(id);
     match item_sort(doc) {
         Some('r') | Some('p') => {
-            get_explicit_self(doc) == ty::StaticExplicitSelfCategory
+            get_explicit_self(doc) == ty::ExplicitSelfCategory::Static
         }
         _ => false
     }
@@ -1216,6 +1316,64 @@ fn reverse_translate_def_id(cdata: Cmd, did: DefId) -> Option<DefId> {
     None
 }
 
+/// Translates a `Span` from an extern crate to the corresponding `Span`
+/// within the local crate's codemap.
+pub fn translate_span(cdata: Cmd,
+                      codemap: &codemap::CodeMap,
+                      last_filemap_index_hint: &Cell<usize>,
+                      span: codemap::Span)
+                      -> codemap::Span {
+    let span = if span.lo > span.hi {
+        // Currently macro expansion sometimes produces invalid Span values
+        // where lo > hi. In order not to crash the compiler when trying to
+        // translate these values, let's transform them into something we
+        // can handle (and which will produce useful debug locations at
+        // least some of the time).
+        // This workaround is only necessary as long as macro expansion is
+        // not fixed. FIXME(#23480)
+        codemap::mk_sp(span.lo, span.lo)
+    } else {
+        span
+    };
+
+    let imported_filemaps = cdata.imported_filemaps(&codemap);
+    let filemap = {
+        // Optimize for the case that most spans within a translated item
+        // originate from the same filemap.
+        let last_filemap_index = last_filemap_index_hint.get();
+        let last_filemap = &imported_filemaps[last_filemap_index];
+
+        if span.lo >= last_filemap.original_start_pos &&
+           span.lo <= last_filemap.original_end_pos &&
+           span.hi >= last_filemap.original_start_pos &&
+           span.hi <= last_filemap.original_end_pos {
+            last_filemap
+        } else {
+            let mut a = 0;
+            let mut b = imported_filemaps.len();
+
+            while b - a > 1 {
+                let m = (a + b) / 2;
+                if imported_filemaps[m].original_start_pos > span.lo {
+                    b = m;
+                } else {
+                    a = m;
+                }
+            }
+
+            last_filemap_index_hint.set(a);
+            &imported_filemaps[a]
+        }
+    };
+
+    let lo = (span.lo - filemap.original_start_pos) +
+              filemap.translated_filemap.start_pos;
+    let hi = (span.hi - filemap.original_start_pos) +
+              filemap.translated_filemap.start_pos;
+
+    codemap::mk_sp(lo, hi)
+}
+
 pub fn each_inherent_implementation_for_type<F>(cdata: Cmd,
                                                 id: DefIndex,
                                                 mut callback: F)
@@ -1498,7 +1656,9 @@ pub fn get_imported_filemaps(metadata: &[u8]) -> Vec<codemap::FileMap> {
 
     reader::tagged_docs(cm_doc, tag_codemap_filemap).map(|filemap_doc| {
         let mut decoder = reader::Decoder::new(filemap_doc);
-        Decodable::decode(&mut decoder).unwrap()
+        decoder.read_opaque(|opaque_decoder, _| {
+            Decodable::decode(opaque_decoder)
+        }).unwrap()
     }).collect()
 }
 

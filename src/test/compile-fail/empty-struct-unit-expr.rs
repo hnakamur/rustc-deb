@@ -10,15 +10,22 @@
 
 // Can't use unit struct as constructor function
 
+// aux-build:empty-struct.rs
+
 #![feature(braced_empty_structs)]
 
-struct Empty1;
+extern crate empty_struct;
+use empty_struct::*;
+
+struct Empty2;
 
 enum E {
-    Empty2
+    Empty4
 }
 
 fn main() {
-    let e1 = Empty1(); //~ ERROR expected function, found `Empty1`
-    let e2 = E::Empty2(); //~ ERROR expected function, found `E`
+    let e2 = Empty2(); //~ ERROR expected function, found `Empty2`
+    let e4 = E::Empty4(); //~ ERROR expected function, found `E`
+    let xe2 = XEmpty2(); //~ ERROR expected function, found `empty_struct::XEmpty2`
+    let xe4 = XE::XEmpty4(); //~ ERROR  expected function, found `empty_struct::XE`
 }

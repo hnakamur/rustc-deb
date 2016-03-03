@@ -6,6 +6,7 @@ use std::env;
 
 fn main() {
     let target = env::var("TARGET").unwrap();
+    let x86_64 = target.contains("x86_64");
     let windows = target.contains("windows");
     let mingw = target.contains("windows-gnu");
     let linux = target.contains("unknown-linux");
@@ -13,11 +14,15 @@ fn main() {
     let apple = target.contains("apple");
     let musl = target.contains("musl");
     let freebsd = target.contains("freebsd");
-    let bsdlike = freebsd || apple;
+    let mips = target.contains("mips");
+    let netbsd = target.contains("netbsd");
+    let openbsd = target.contains("openbsd");
+    let rumprun = target.contains("rumprun");
+    let bsdlike = freebsd || apple || netbsd || openbsd;
     let mut cfg = ctest::TestGenerator::new();
 
     // Pull in extra goodies on linux/mingw
-    if target.contains("unknown-linux") {
+    if linux || android {
         cfg.define("_GNU_SOURCE", None);
     } else if windows {
         cfg.define("_WIN32_WINNT", Some("0x8000"));
@@ -57,6 +62,9 @@ fn main() {
     } else {
         cfg.header("ctype.h");
         cfg.header("dirent.h");
+        if openbsd {
+            cfg.header("sys/socket.h");
+        }
         cfg.header("net/if.h");
         cfg.header("netdb.h");
         cfg.header("netinet/in.h");
@@ -78,6 +86,13 @@ fn main() {
         cfg.header("utime.h");
         cfg.header("pwd.h");
         cfg.header("grp.h");
+        cfg.header("sys/utsname.h");
+        cfg.header("sys/ptrace.h");
+        cfg.header("sys/mount.h");
+        cfg.header("sys/uio.h");
+        cfg.header("sched.h");
+        cfg.header("termios.h");
+        cfg.header("poll.h");
     }
 
     if android {
@@ -86,11 +101,17 @@ fn main() {
     } else if !windows {
         cfg.header("glob.h");
         cfg.header("ifaddrs.h");
+        if !openbsd {
+            cfg.header("sys/quota.h");
+        }
         cfg.header("sys/statvfs.h");
 
         if !musl {
-            cfg.header("execinfo.h");
             cfg.header("sys/sysctl.h");
+
+            if !netbsd && !openbsd {
+                cfg.header("execinfo.h");
+            }
         }
     }
 
@@ -103,19 +124,54 @@ fn main() {
         }
     }
 
+    if bsdlike {
+        cfg.header("sys/event.h");
+    }
+
+    if linux {
+        cfg.header("mqueue.h");
+        cfg.header("sys/signalfd.h");
+        cfg.header("sys/xattr.h");
+        cfg.header("sys/ipc.h");
+        cfg.header("sys/shm.h");
+    }
+
     if linux || android {
-        cfg.header("netpacket/packet.h");
-        cfg.header("net/ethernet.h");
         cfg.header("malloc.h");
+        cfg.header("net/ethernet.h");
+        cfg.header("netpacket/packet.h");
+        cfg.header("sched.h");
+        cfg.header("sys/epoll.h");
+        cfg.header("sys/eventfd.h");
         cfg.header("sys/prctl.h");
-        /* linux kernel header */
+        cfg.header("sys/vfs.h");
+        cfg.header("sys/syscall.h");
         if !musl {
             cfg.header("linux/netlink.h");
+            cfg.header("linux/magic.h");
+
+            if !mips {
+                cfg.header("linux/quota.h");
+            }
         }
     }
 
     if freebsd {
         cfg.header("pthread_np.h");
+        cfg.header("sched.h");
+    }
+
+    if netbsd {
+        cfg.header("ufs/ufs/quota.h");
+        cfg.header("ufs/ufs/quota1.h");
+        cfg.header("sys/ioctl_compat.h");
+    }
+
+    if openbsd {
+        cfg.header("ufs/ufs/quota.h");
+        cfg.header("rpcsvc/rex.h");
+        cfg.header("pthread_np.h");
+        cfg.header("sys/syscall.h");
     }
 
     cfg.type_name(move |ty, is_struct| {
@@ -157,6 +213,8 @@ fn main() {
     let target2 = target.clone();
     cfg.field_name(move |struct_, field| {
         match field {
+            "st_birthtime"      if openbsd && struct_ == "stat" => "__st_birthtime".to_string(),
+            "st_birthtime_nsec" if openbsd && struct_ == "stat" => "__st_birthtimensec".to_string(),
             // Our stat *_nsec fields normally don't actually exist but are part
             // of a timeval struct
             s if s.ends_with("_nsec") && struct_.starts_with("stat") => {
@@ -168,6 +226,7 @@ fn main() {
                     s.replace("e_nsec", ".tv_nsec")
                 }
             }
+            "u64" if struct_ == "epoll_event" => "data.u64".to_string(),
             s => s.to_string(),
         }
     });
@@ -184,6 +243,10 @@ fn main() {
     cfg.skip_struct(move |ty| {
         match ty {
             "sockaddr_nl" => musl,
+
+            // The alignment of this is 4 on 64-bit OSX...
+            "kevent" if apple && x86_64 => true,
+
             _ => false
         }
     });
@@ -222,13 +285,28 @@ fn main() {
             "RLIMIT_NLIMITS" |
             "TCP_COOKIE_TRANSACTIONS" |
             "RLIMIT_RTTIME" if musl => true,
+            // work around super old mips toolchain
+            "SCHED_IDLE" | "SHM_NORESERVE" => mips,
+
+            // weird signed extension or something like that?
+            "MS_NOUSER" => true,
+
+            // These OSX constants are flagged as deprecated
+            "NOTE_EXIT_REPARENTED" |
+            "NOTE_REAP" if apple => true,
+
+            // The linux/quota.h header file which defines these can't be
+            // included with sys/quota.h currently on MIPS, so we don't include
+            // it and just ignore these constants
+            "QFMT_VFS_OLD" |
+            "QFMT_VFS_V0" if mips && linux => true,
 
             _ => false,
         }
     });
 
     cfg.skip_fn(move |name| {
-        // skip those that are manually verifiedmanually verified
+        // skip those that are manually verified
         match name {
             "execv" |       // crazy stuff with const/mut
             "execve" |
@@ -240,7 +318,10 @@ fn main() {
             "strerror_r" if linux => true,   // actually xpg-something-or-other
 
             // typed 2nd arg on linux and android
-            "gettimeofday" if linux || android || freebsd => true,
+            "gettimeofday" if linux || android || freebsd || openbsd => true,
+
+            // not declared in newer android toolchains
+            "getdtablesize" if android => true,
 
             "dlerror" if android => true, // const-ness is added
             "dladdr" if musl => true, // const-ness only added recently
@@ -249,12 +330,58 @@ fn main() {
             // Rust, but is close enough to *mut
             "timegm" if apple => true,
 
+            // OSX's daemon is deprecated in 10.5 so we'll get a warning (which
+            // we turn into an error) so just ignore it.
+            "daemon" if apple => true,
+
+            // These functions presumably exist on netbsd but don't look like
+            // they're implemented on rumprun yet, just let them slide for now.
+            // Some of them look like they have headers but then don't have
+            // corresponding actual definitions either...
+            "backtrace" |
+            "pthread_main_np" |
+            "pthread_set_name_np" |
+            "pthread_stackseg_np" |
+            "shm_open" |
+            "shm_unlink" |
+            "syscall" |
+            "ptrace" |
+            "sigaltstack" if rumprun => true,
+
+            // There seems to be a small error in EGLIBC's eventfd.h header. The
+            // [underlying system call][1] always takes its first `count`
+            // argument as an `unsigned int`, but [EGLIBC's <sys/eventfd.h>
+            // header][2] declares it to take an `int`. [GLIBC's header][3]
+            // matches the kernel.
+            //
+            // EGLIBC is no longer actively developed, and Debian, the largest
+            // distribution that had been using it, switched back to GLIBC in
+            // April 2015. So effectively all Linux <sys/eventfd.h> headers will
+            // be using `unsigned int` soon.
+            //
+            // [1]: https://git.kernel.org/cgit/linux/kernel/git/stable/linux-stable.git/tree/fs/eventfd.c?id=refs/tags/v3.12.51#n397
+            // [2]: http://bazaar.launchpad.net/~ubuntu-branches/ubuntu/trusty/eglibc/trusty/view/head:/sysdeps/unix/sysv/linux/sys/eventfd.h
+            // [3]: https://sourceware.org/git/?p=glibc.git;a=blob;f=sysdeps/unix/sysv/linux/sys/eventfd.h;h=6295f32e937e779e74318eb9d3bdbe76aef8a8f3;hb=4e42b5b8f89f0e288e68be7ad70f9525aebc2cff#l34
+            "eventfd" if linux => true,
+
             _ => false,
         }
     });
 
-    // Windows dllimport oddness?
-    cfg.skip_fn_ptrcheck(move |_| windows);
+    cfg.skip_fn_ptrcheck(move |name| {
+        match name {
+            // This used to be called bsd_signal in rev 18 of the android
+            // platform and is now just called signal, the old `bsd_signal`
+            // symbol, however, still remains, just gives a different function
+            // pointer.
+            "signal" if android => true,
+
+            // dllimport weirdness?
+            _ if windows => true,
+
+            _ => false,
+        }
+    });
 
     cfg.skip_field_type(move |struct_, field| {
         // This is a weird union, don't check the type.
@@ -269,6 +396,14 @@ fn main() {
         (struct_ == "siginfo_t" && field == "_pad") ||
         // musl names this __dummy1 but it's still there
         (musl && struct_ == "glob_t" && field == "gl_flags")
+    });
+
+    cfg.fn_cname(move |name, cname| {
+        if windows {
+            cname.unwrap_or(name).to_string()
+        } else {
+            name.to_string()
+        }
     });
 
     cfg.generate("../src/lib.rs", "all.rs");

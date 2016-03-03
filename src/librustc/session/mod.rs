@@ -16,7 +16,9 @@ use util::nodemap::{NodeMap, FnvHashMap};
 
 use syntax::ast::{NodeId, NodeIdAssigner, Name};
 use syntax::codemap::Span;
-use syntax::diagnostic::{self, Emitter};
+use syntax::errors::{self, DiagnosticBuilder};
+use syntax::errors::emitter::{Emitter, BasicEmitter, EmitterWriter};
+use syntax::errors::json::JsonEmitter;
 use syntax::diagnostics;
 use syntax::feature_gate;
 use syntax::parse;
@@ -63,13 +65,9 @@ pub struct Session {
     pub crate_metadata: RefCell<Vec<String>>,
     pub features: RefCell<feature_gate::Features>,
 
-    pub delayed_span_bug: RefCell<Option<(codemap::Span, String)>>,
-
     /// The maximum recursion limit for potentially infinitely recursive
     /// operations such as auto-dereference and monomorphization.
     pub recursion_limit: Cell<usize>,
-
-    pub can_print_warnings: bool,
 
     /// The metadata::creader module may inject an allocator dependency if it
     /// didn't already find one, and this tracks what was injected.
@@ -83,23 +81,69 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn span_fatal(&self, sp: Span, msg: &str) -> ! {
-        if self.opts.treat_err_as_bug {
-            self.span_bug(sp, msg);
+    pub fn struct_span_warn<'a>(&'a self,
+                                sp: Span,
+                                msg: &str)
+                                -> DiagnosticBuilder<'a>  {
+        self.diagnostic().struct_span_warn(sp, msg)
+    }
+    pub fn struct_span_warn_with_code<'a>(&'a self,
+                                          sp: Span,
+                                          msg: &str,
+                                          code: &str)
+                                          -> DiagnosticBuilder<'a>  {
+        self.diagnostic().struct_span_warn_with_code(sp, msg, code)
+    }
+    pub fn struct_warn<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a>  {
+        self.diagnostic().struct_warn(msg)
+    }
+    pub fn struct_span_err<'a>(&'a self,
+                               sp: Span,
+                               msg: &str)
+                               -> DiagnosticBuilder<'a>  {
+        match split_msg_into_multilines(msg) {
+            Some(ref msg) => self.diagnostic().struct_span_err(sp, msg),
+            None => self.diagnostic().struct_span_err(sp, msg),
         }
+    }
+    pub fn struct_span_err_with_code<'a>(&'a self,
+                                         sp: Span,
+                                         msg: &str,
+                                         code: &str)
+                                         -> DiagnosticBuilder<'a>  {
+        match split_msg_into_multilines(msg) {
+            Some(ref msg) => self.diagnostic().struct_span_err_with_code(sp, msg, code),
+            None => self.diagnostic().struct_span_err_with_code(sp, msg, code),
+        }
+    }
+    pub fn struct_err<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a>  {
+        self.diagnostic().struct_err(msg)
+    }
+    pub fn struct_span_fatal<'a>(&'a self,
+                                 sp: Span,
+                                 msg: &str)
+                                 -> DiagnosticBuilder<'a>  {
+        self.diagnostic().struct_span_fatal(sp, msg)
+    }
+    pub fn struct_span_fatal_with_code<'a>(&'a self,
+                                           sp: Span,
+                                           msg: &str,
+                                           code: &str)
+                                           -> DiagnosticBuilder<'a>  {
+        self.diagnostic().struct_span_fatal_with_code(sp, msg, code)
+    }
+    pub fn struct_fatal<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a>  {
+        self.diagnostic().struct_fatal(msg)
+    }
+
+    pub fn span_fatal(&self, sp: Span, msg: &str) -> ! {
         panic!(self.diagnostic().span_fatal(sp, msg))
     }
     pub fn span_fatal_with_code(&self, sp: Span, msg: &str, code: &str) -> ! {
-        if self.opts.treat_err_as_bug {
-            self.span_bug(sp, msg);
-        }
         panic!(self.diagnostic().span_fatal_with_code(sp, msg, code))
     }
     pub fn fatal(&self, msg: &str) -> ! {
-        if self.opts.treat_err_as_bug {
-            self.bug(msg);
-        }
-        panic!(self.diagnostic().handler().fatal(msg))
+        panic!(self.diagnostic().fatal(msg))
     }
     pub fn span_err_or_warn(&self, is_warning: bool, sp: Span, msg: &str) {
         if is_warning {
@@ -109,101 +153,52 @@ impl Session {
         }
     }
     pub fn span_err(&self, sp: Span, msg: &str) {
-        if self.opts.treat_err_as_bug {
-            self.span_bug(sp, msg);
-        }
         match split_msg_into_multilines(msg) {
-            Some(msg) => self.diagnostic().span_err(sp, &msg[..]),
+            Some(msg) => self.diagnostic().span_err(sp, &msg),
             None => self.diagnostic().span_err(sp, msg)
         }
     }
-    pub fn note_rfc_1214(&self, span: Span) {
-        self.span_note(
-            span,
-            &format!("this warning results from recent bug fixes and clarifications; \
-                      it will become a HARD ERROR in the next release. \
-                      See RFC 1214 for details."));
-    }
     pub fn span_err_with_code(&self, sp: Span, msg: &str, code: &str) {
-        if self.opts.treat_err_as_bug {
-            self.span_bug(sp, msg);
-        }
         match split_msg_into_multilines(msg) {
-            Some(msg) => self.diagnostic().span_err_with_code(sp, &msg[..], code),
+            Some(msg) => self.diagnostic().span_err_with_code(sp, &msg, code),
             None => self.diagnostic().span_err_with_code(sp, msg, code)
         }
     }
     pub fn err(&self, msg: &str) {
-        if self.opts.treat_err_as_bug {
-            self.bug(msg);
-        }
-        self.diagnostic().handler().err(msg)
+        self.diagnostic().err(msg)
     }
     pub fn err_count(&self) -> usize {
-        self.diagnostic().handler().err_count()
+        self.diagnostic().err_count()
     }
     pub fn has_errors(&self) -> bool {
-        self.diagnostic().handler().has_errors()
+        self.diagnostic().has_errors()
     }
     pub fn abort_if_errors(&self) {
-        self.diagnostic().handler().abort_if_errors();
-
-        let delayed_bug = self.delayed_span_bug.borrow();
-        match *delayed_bug {
-            Some((span, ref errmsg)) => {
-                self.diagnostic().span_bug(span, errmsg);
-            },
-            _ => {}
+        self.diagnostic().abort_if_errors();
+    }
+    pub fn abort_if_new_errors<F>(&self, mut f: F)
+        where F: FnMut()
+    {
+        let count = self.err_count();
+        f();
+        if self.err_count() > count {
+            self.abort_if_errors();
         }
     }
     pub fn span_warn(&self, sp: Span, msg: &str) {
-        if self.can_print_warnings {
-            self.diagnostic().span_warn(sp, msg)
-        }
+        self.diagnostic().span_warn(sp, msg)
     }
     pub fn span_warn_with_code(&self, sp: Span, msg: &str, code: &str) {
-        if self.can_print_warnings {
-            self.diagnostic().span_warn_with_code(sp, msg, code)
-        }
+        self.diagnostic().span_warn_with_code(sp, msg, code)
     }
     pub fn warn(&self, msg: &str) {
-        if self.can_print_warnings {
-            self.diagnostic().handler().warn(msg)
-        }
+        self.diagnostic().warn(msg)
     }
     pub fn opt_span_warn(&self, opt_sp: Option<Span>, msg: &str) {
         match opt_sp {
             Some(sp) => self.span_warn(sp, msg),
             None => self.warn(msg),
         }
-    }
-    pub fn span_note(&self, sp: Span, msg: &str) {
-        self.diagnostic().span_note(sp, msg)
-    }
-    pub fn span_end_note(&self, sp: Span, msg: &str) {
-        self.diagnostic().span_end_note(sp, msg)
-    }
-
-    /// Prints out a message with a suggested edit of the code.
-    ///
-    /// See `diagnostic::RenderSpan::Suggestion` for more information.
-    pub fn span_suggestion(&self, sp: Span, msg: &str, suggestion: String) {
-        self.diagnostic().span_suggestion(sp, msg, suggestion)
-    }
-    pub fn span_help(&self, sp: Span, msg: &str) {
-        self.diagnostic().span_help(sp, msg)
-    }
-    pub fn fileline_note(&self, sp: Span, msg: &str) {
-        self.diagnostic().fileline_note(sp, msg)
-    }
-    pub fn fileline_help(&self, sp: Span, msg: &str) {
-        self.diagnostic().fileline_help(sp, msg)
-    }
-    pub fn note(&self, msg: &str) {
-        self.diagnostic().handler().note(msg)
-    }
-    pub fn help(&self, msg: &str) {
-        self.diagnostic().handler().help(msg)
     }
     pub fn opt_span_bug(&self, opt_sp: Option<Span>, msg: &str) -> ! {
         match opt_sp {
@@ -213,20 +208,25 @@ impl Session {
     }
     /// Delay a span_bug() call until abort_if_errors()
     pub fn delay_span_bug(&self, sp: Span, msg: &str) {
-        let mut delayed = self.delayed_span_bug.borrow_mut();
-        *delayed = Some((sp, msg.to_string()));
+        self.diagnostic().delay_span_bug(sp, msg)
     }
     pub fn span_bug(&self, sp: Span, msg: &str) -> ! {
         self.diagnostic().span_bug(sp, msg)
     }
     pub fn bug(&self, msg: &str) -> ! {
-        self.diagnostic().handler().bug(msg)
+        self.diagnostic().bug(msg)
+    }
+    pub fn note_without_error(&self, msg: &str) {
+        self.diagnostic().note_without_error(msg)
+    }
+    pub fn span_note_without_error(&self, sp: Span, msg: &str) {
+        self.diagnostic().span_note_without_error(sp, msg)
     }
     pub fn span_unimpl(&self, sp: Span, msg: &str) -> ! {
         self.diagnostic().span_unimpl(sp, msg)
     }
     pub fn unimpl(&self, msg: &str) -> ! {
-        self.diagnostic().handler().unimpl(msg)
+        self.diagnostic().unimpl(msg)
     }
     pub fn add_lint(&self,
                     lint: &'static lint::Lint,
@@ -251,7 +251,7 @@ impl Session {
 
         id
     }
-    pub fn diagnostic<'a>(&'a self) -> &'a diagnostic::SpanHandler {
+    pub fn diagnostic<'a>(&'a self) -> &'a errors::Handler {
         &self.parse_sess.span_diagnostic
     }
     pub fn codemap<'a>(&'a self) -> &'a codemap::CodeMap {
@@ -260,8 +260,7 @@ impl Session {
     // This exists to help with refactoring to eliminate impossible
     // cases later on
     pub fn impossible_case(&self, sp: Span, msg: &str) -> ! {
-        self.span_bug(sp,
-                      &format!("impossible case reached: {}", msg));
+        self.span_bug(sp, &format!("impossible case reached: {}", msg));
     }
     pub fn verbose(&self) -> bool { self.opts.debugging_opts.verbose }
     pub fn time_passes(&self) -> bool { self.opts.debugging_opts.time_passes }
@@ -404,30 +403,40 @@ pub fn build_session(sopts: config::Options,
         .map(|&(_, ref level)| *level != lint::Allow)
         .last()
         .unwrap_or(true);
+    let treat_err_as_bug = sopts.treat_err_as_bug;
 
-    let codemap = codemap::CodeMap::new();
+    let codemap = Rc::new(codemap::CodeMap::new());
+    let emitter: Box<Emitter> = match sopts.error_format {
+        config::ErrorOutputType::HumanReadable(color_config) => {
+            Box::new(EmitterWriter::stderr(color_config, Some(registry), codemap.clone()))
+        }
+        config::ErrorOutputType::Json => {
+            Box::new(JsonEmitter::stderr(Some(registry), codemap.clone()))
+        }
+    };
+
     let diagnostic_handler =
-        diagnostic::Handler::new(sopts.color, Some(registry), can_print_warnings);
-    let span_diagnostic_handler =
-        diagnostic::SpanHandler::new(diagnostic_handler, codemap);
+        errors::Handler::with_emitter(can_print_warnings,
+                                      treat_err_as_bug,
+                                      emitter);
 
-    build_session_(sopts, local_crate_source_file, span_diagnostic_handler, cstore)
+    build_session_(sopts, local_crate_source_file, diagnostic_handler, codemap, cstore)
 }
 
 pub fn build_session_(sopts: config::Options,
                       local_crate_source_file: Option<PathBuf>,
-                      span_diagnostic: diagnostic::SpanHandler,
+                      span_diagnostic: errors::Handler,
+                      codemap: Rc<codemap::CodeMap>,
                       cstore: Rc<for<'a> CrateStore<'a>>)
                       -> Session {
     let host = match Target::search(config::host_triple()) {
         Ok(t) => t,
         Err(e) => {
-            panic!(span_diagnostic.handler()
-                                  .fatal(&format!("Error loading host specification: {}", e)));
+            panic!(span_diagnostic.fatal(&format!("Error loading host specification: {}", e)));
     }
     };
     let target_cfg = config::build_target_config(&sopts, &span_diagnostic);
-    let p_s = parse::ParseSess::with_span_handler(span_diagnostic);
+    let p_s = parse::ParseSess::with_span_handler(span_diagnostic, codemap);
     let default_sysroot = match sopts.maybe_sysroot {
         Some(_) => None,
         None => Some(filesearch::get_or_default_sysroot())
@@ -441,13 +450,6 @@ pub fn build_session_(sopts: config::Options,
             env::current_dir().unwrap().join(&path)
         }
     );
-
-    let can_print_warnings = sopts.lint_opts
-        .iter()
-        .filter(|&&(ref key, _)| *key == "warnings")
-        .map(|&(_, ref level)| *level != lint::Allow)
-        .last()
-        .unwrap_or(true);
 
     let sess = Session {
         target: target_cfg,
@@ -469,10 +471,8 @@ pub fn build_session_(sopts: config::Options,
         crate_types: RefCell::new(Vec::new()),
         dependency_formats: RefCell::new(FnvHashMap()),
         crate_metadata: RefCell::new(Vec::new()),
-        delayed_span_bug: RefCell::new(None),
         features: RefCell::new(feature_gate::Features::new()),
         recursion_limit: Cell::new(64),
-        can_print_warnings: can_print_warnings,
         next_node_id: Cell::new(1),
         injected_allocator: Cell::new(None),
         available_macros: RefCell::new(HashSet::new()),
@@ -481,20 +481,23 @@ pub fn build_session_(sopts: config::Options,
     sess
 }
 
-// Seems out of place, but it uses session, so I'm putting it here
-pub fn expect<T, M>(sess: &Session, opt: Option<T>, msg: M) -> T where
-    M: FnOnce() -> String,
-{
-    diagnostic::expect(sess.diagnostic(), opt, msg)
+pub fn early_error(output: config::ErrorOutputType, msg: &str) -> ! {
+    let mut emitter: Box<Emitter> = match output {
+        config::ErrorOutputType::HumanReadable(color_config) => {
+            Box::new(BasicEmitter::stderr(color_config))
+        }
+        config::ErrorOutputType::Json => Box::new(JsonEmitter::basic()),
+    };
+    emitter.emit(None, msg, None, errors::Level::Fatal);
+    panic!(errors::FatalError);
 }
 
-pub fn early_error(color: diagnostic::ColorConfig, msg: &str) -> ! {
-    let mut emitter = diagnostic::EmitterWriter::stderr(color, None);
-    emitter.emit(None, msg, None, diagnostic::Fatal);
-    panic!(diagnostic::FatalError);
-}
-
-pub fn early_warn(color: diagnostic::ColorConfig, msg: &str) {
-    let mut emitter = diagnostic::EmitterWriter::stderr(color, None);
-    emitter.emit(None, msg, None, diagnostic::Warning);
+pub fn early_warn(output: config::ErrorOutputType, msg: &str) {
+    let mut emitter: Box<Emitter> = match output {
+        config::ErrorOutputType::HumanReadable(color_config) => {
+            Box::new(BasicEmitter::stderr(color_config))
+        }
+        config::ErrorOutputType::Json => Box::new(JsonEmitter::basic()),
+    };
+    emitter.emit(None, msg, None, errors::Level::Warning);
 }

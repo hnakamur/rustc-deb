@@ -174,7 +174,7 @@ labels to triage issues:
 * Yellow, **A**-prefixed labels state which **area** of the project an issue
   relates to.
 
-* Magenta, **B**-prefixed labels identify bugs which **belong** elsewhere.
+* Magenta, **B**-prefixed labels identify bugs which are **blockers**.
 
 * Green, **E**-prefixed labels explain the level of **experience** necessary
   to fix the issue.
@@ -238,7 +238,7 @@ are:
 * Don't be afraid to ask! The Rust community is friendly and helpful.
 
 [gdfrustc]: http://manishearth.github.io/rust-internals-docs/rustc/
-[gsearchdocs]: https://www.google.de/search?q=site:doc.rust-lang.org+your+query+here
+[gsearchdocs]: https://www.google.com/search?q=site:doc.rust-lang.org+your+query+here
 [rif]: http://internals.rust-lang.org
 [rr]: https://doc.rust-lang.org/book/README.html
 [tlgba]: http://tomlee.co/2014/04/03/a-more-detailed-tour-of-the-rust-compiler/

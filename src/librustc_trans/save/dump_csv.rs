@@ -34,15 +34,13 @@ use session::Session;
 
 use middle::def;
 use middle::def_id::DefId;
-use middle::ty::{self, Ty};
+use middle::ty;
 
 use std::fs::File;
-use std::path::Path;
 
 use syntax::ast::{self, NodeId};
 use syntax::codemap::*;
 use syntax::parse::token::{self, keywords};
-use syntax::owned_slice::OwnedSlice;
 use syntax::visit::{self, Visitor};
 use syntax::print::pprust::{path_to_string, ty_to_string};
 use syntax::ptr::P;
@@ -274,9 +272,9 @@ impl <'l, 'tcx> DumpCsvVisitor<'l, 'tcx> {
             def::DefSelfTy(..) |
             def::DefLabel(_) |
             def::DefTyParam(..) |
-            def::DefUse(_) |
             def::DefMethod(..) |
-            def::DefPrimTy(_) => {
+            def::DefPrimTy(_) |
+            def::DefErr => {
                 self.sess.span_bug(span,
                                    &format!("lookup_def_kind for unexpected item: {:?}", def));
             }
@@ -573,7 +571,7 @@ impl <'l, 'tcx> DumpCsvVisitor<'l, 'tcx> {
     fn process_trait(&mut self,
                      item: &ast::Item,
                      generics: &ast::Generics,
-                     trait_refs: &OwnedSlice<ast::TyParamBound>,
+                     trait_refs: &ast::TyParamBounds,
                      methods: &[P<ast::TraitItem>]) {
         let qualname = format!("::{}", self.tcx.map.path_to_string(item.id));
         let val = self.span.snippet(item.span);
@@ -684,7 +682,7 @@ impl <'l, 'tcx> DumpCsvVisitor<'l, 'tcx> {
             def::DefMethod(did) => {
                 let ti = self.tcx.impl_or_trait_item(did);
                 if let ty::MethodTraitItem(m) = ti {
-                    if m.explicit_self == ty::StaticExplicitSelfCategory {
+                    if m.explicit_self == ty::ExplicitSelfCategory::Static {
                         self.write_sub_path_trait_truncated(path);
                     }
                 }

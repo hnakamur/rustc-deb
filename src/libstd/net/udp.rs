@@ -27,18 +27,19 @@ use time::Duration;
 /// use std::net::UdpSocket;
 ///
 /// # fn foo() -> std::io::Result<()> {
-/// let mut socket = try!(UdpSocket::bind("127.0.0.1:34254"));
+/// {
+///     let mut socket = try!(UdpSocket::bind("127.0.0.1:34254"));
 ///
-/// let mut buf = [0; 10];
-/// let (amt, src) = try!(socket.recv_from(&mut buf));
+///     // read from the socket
+///     let mut buf = [0; 10];
+///     let (amt, src) = try!(socket.recv_from(&mut buf));
 ///
-/// // Send a reply to the socket we received data from
-/// let buf = &mut buf[..amt];
-/// buf.reverse();
-/// try!(socket.send_to(buf, &src));
-///
-/// drop(socket); // close the socket
-/// # Ok(())
+///     // send a reply to the socket we received data from
+///     let buf = &mut buf[..amt];
+///     buf.reverse();
+///     try!(socket.send_to(buf, &src));
+///     # Ok(())
+/// } // the socket is closed here
 /// # }
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -169,7 +170,7 @@ mod tests {
     use net::test::{next_test_ip4, next_test_ip6};
     use sync::mpsc::channel;
     use sys_common::AsInner;
-    use time::Duration;
+    use time::{Instant, Duration};
     use thread;
 
     fn each_ip(f: &mut FnMut(SocketAddr, SocketAddr)) {
@@ -370,22 +371,22 @@ mod tests {
     fn test_read_timeout() {
         let addr = next_test_ip4();
 
-        let mut stream = t!(UdpSocket::bind(&addr));
+        let stream = t!(UdpSocket::bind(&addr));
         t!(stream.set_read_timeout(Some(Duration::from_millis(1000))));
 
         let mut buf = [0; 10];
-        let wait = Duration::span(|| {
-            let kind = stream.recv_from(&mut buf).err().expect("expected error").kind();
-            assert!(kind == ErrorKind::WouldBlock || kind == ErrorKind::TimedOut);
-        });
-        assert!(wait > Duration::from_millis(400));
+
+        let start = Instant::now();
+        let kind = stream.recv_from(&mut buf).err().expect("expected error").kind();
+        assert!(kind == ErrorKind::WouldBlock || kind == ErrorKind::TimedOut);
+        assert!(start.elapsed() > Duration::from_millis(400));
     }
 
     #[test]
     fn test_read_with_timeout() {
         let addr = next_test_ip4();
 
-        let mut stream = t!(UdpSocket::bind(&addr));
+        let stream = t!(UdpSocket::bind(&addr));
         t!(stream.set_read_timeout(Some(Duration::from_millis(1000))));
 
         t!(stream.send_to(b"hello world", &addr));
@@ -394,10 +395,9 @@ mod tests {
         t!(stream.recv_from(&mut buf));
         assert_eq!(b"hello world", &buf[..]);
 
-        let wait = Duration::span(|| {
-            let kind = stream.recv_from(&mut buf).err().expect("expected error").kind();
-            assert!(kind == ErrorKind::WouldBlock || kind == ErrorKind::TimedOut);
-        });
-        assert!(wait > Duration::from_millis(400));
+        let start = Instant::now();
+        let kind = stream.recv_from(&mut buf).err().expect("expected error").kind();
+        assert!(kind == ErrorKind::WouldBlock || kind == ErrorKind::TimedOut);
+        assert!(start.elapsed() > Duration::from_millis(400));
     }
 }

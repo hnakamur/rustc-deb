@@ -14,7 +14,7 @@
 use core::cmp::Ordering::{self, Less, Greater, Equal};
 use core::fmt::Debug;
 use core::fmt;
-use core::iter::{Peekable, Map, FromIterator};
+use core::iter::{Peekable, FromIterator};
 use core::ops::{BitOr, BitAnd, BitXor, Sub};
 
 use borrow::Borrow;
@@ -26,12 +26,17 @@ use Bound;
 
 /// A set based on a B-Tree.
 ///
-/// See BTreeMap's documentation for a detailed discussion of this collection's performance
+/// See [`BTreeMap`]'s documentation for a detailed discussion of this collection's performance
 /// benefits and drawbacks.
 ///
 /// It is a logic error for an item to be modified in such a way that the item's ordering relative
-/// to any other item, as determined by the `Ord` trait, changes while it is in the set. This is
-/// normally only possible through `Cell`, `RefCell`, global state, I/O, or unsafe code.
+/// to any other item, as determined by the [`Ord`] trait, changes while it is in the set. This is
+/// normally only possible through [`Cell`], [`RefCell`], global state, I/O, or unsafe code.
+///
+/// [`BTreeMap`]: ../struct.BTreeMap.html
+/// [`Ord`]: ../../core/cmp/trait.Ord.html
+/// [`Cell`]: ../../std/cell/struct.Cell.html
+/// [`RefCell`]: ../../std/cell/struct.RefCell.html
 #[derive(Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct BTreeSet<T> {
@@ -47,12 +52,12 @@ pub struct Iter<'a, T: 'a> {
 /// An owning iterator over a BTreeSet's items.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IntoIter<T> {
-    iter: Map<::btree_map::IntoIter<T, ()>, fn((T, ())) -> T>,
+    iter: ::btree_map::IntoIter<T, ()>,
 }
 
 /// An iterator over a sub-range of BTreeSet's items.
 pub struct Range<'a, T: 'a> {
-    iter: Map<::btree_map::Range<'a, T, ()>, fn((&'a T, &'a ())) -> &'a T>,
+    iter: ::btree_map::Range<'a, T, ()>,
 }
 
 /// A lazy iterator producing elements in the set difference (in-order).
@@ -97,18 +102,6 @@ impl<T: Ord> BTreeSet<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new() -> BTreeSet<T> {
         BTreeSet { map: BTreeMap::new() }
-    }
-
-    /// Makes a new BTreeSet with the given B.
-    ///
-    /// B cannot be less than 2.
-    #[unstable(feature = "btree_b",
-               reason = "probably want this to be on the type, eventually",
-               issue = "27795")]
-    #[rustc_deprecated(since = "1.4.0", reason = "niche API")]
-    #[allow(deprecated)]
-    pub fn with_b(b: usize) -> BTreeSet<T> {
-        BTreeSet { map: BTreeMap::with_b(b) }
     }
 }
 
@@ -161,18 +154,13 @@ impl<T: Ord> BTreeSet<T> {
     #[unstable(feature = "btree_range",
                reason = "matches collection reform specification, waiting for dust to settle",
                issue = "27787")]
-    pub fn range<'a, Min: ?Sized + Ord = T, Max: ?Sized + Ord = T>(&'a self,
-                                                                   min: Bound<&Min>,
-                                                                   max: Bound<&Max>)
-                                                                   -> Range<'a, T>
+    pub fn range<'a, Min: ?Sized + Ord, Max: ?Sized + Ord>(&'a self,
+                                                           min: Bound<&Min>,
+                                                           max: Bound<&Max>)
+                                                           -> Range<'a, T>
         where T: Borrow<Min> + Borrow<Max>
     {
-        fn first<A, B>((a, _): (A, B)) -> A {
-            a
-        }
-        let first: fn((&'a T, &'a ())) -> &'a T = first; // coerce to fn pointer
-
-        Range { iter: self.map.range(min, max).map(first) }
+        Range { iter: self.map.range(min, max) }
     }
 }
 
@@ -460,7 +448,7 @@ impl<T: Ord> BTreeSet<T> {
     ///
     /// If the set did not have a value present, `true` is returned.
     ///
-    /// If the set did have this key present, that value is returned, and the
+    /// If the set did have this key present, `false` is returned, and the
     /// entry is not updated. See the [module-level documentation] for more.
     ///
     /// [module-level documentation]: index.html#insert-and-complex-keys
@@ -555,12 +543,7 @@ impl<T> IntoIterator for BTreeSet<T> {
     /// assert_eq!(v, [1, 2, 3, 4]);
     /// ```
     fn into_iter(self) -> IntoIter<T> {
-        fn first<A, B>((a, _): (A, B)) -> A {
-            a
-        }
-        let first: fn((T, ())) -> T = first; // coerce to fn pointer
-
-        IntoIter { iter: self.map.into_iter().map(first) }
+        IntoIter { iter: self.map.into_iter() }
     }
 }
 
@@ -728,7 +711,7 @@ impl<T> Iterator for IntoIter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<T> {
-        self.iter.next()
+        self.iter.next().map(|(k, _)| k)
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
@@ -737,7 +720,7 @@ impl<T> Iterator for IntoIter<T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> DoubleEndedIterator for IntoIter<T> {
     fn next_back(&mut self) -> Option<T> {
-        self.iter.next_back()
+        self.iter.next_back().map(|(k, _)| k)
     }
 }
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -753,12 +736,12 @@ impl<'a, T> Iterator for Range<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<&'a T> {
-        self.iter.next()
+        self.iter.next().map(|(k, _)| k)
     }
 }
 impl<'a, T> DoubleEndedIterator for Range<'a, T> {
     fn next_back(&mut self) -> Option<&'a T> {
-        self.iter.next_back()
+        self.iter.next_back().map(|(k, _)| k)
     }
 }
 

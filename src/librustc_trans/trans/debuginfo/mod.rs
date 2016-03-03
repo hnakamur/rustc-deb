@@ -145,7 +145,7 @@ impl FunctionDebugContext {
     }
 }
 
-struct FunctionDebugContextData {
+pub struct FunctionDebugContextData {
     scope_map: RefCell<NodeMap<DIScope>>,
     fn_metadata: DISubprogram,
     argument_counter: Cell<usize>,
@@ -383,7 +383,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             true,
             scope_line as c_uint,
             FlagPrototyped as c_uint,
-            cx.sess().opts.optimize != config::No,
+            cx.sess().opts.optimize != config::OptLevel::No,
             llfn,
             template_parameters,
             ptr::null_mut())
@@ -596,7 +596,7 @@ fn declare_local<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                     file_metadata,
                     loc.line as c_uint,
                     type_metadata,
-                    cx.sess().opts.optimize != config::No,
+                    cx.sess().opts.optimize != config::OptLevel::No,
                     0,
                     address_operations.as_ptr(),
                     address_operations.len() as c_uint,

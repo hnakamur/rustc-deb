@@ -18,6 +18,7 @@ use front::map as ast_map;
 use front::map::blocks::FnLikeNode;
 use middle::cstore::{self, CrateStore, InlinedItem};
 use middle::{def, infer, subst, traits};
+use middle::subst::Subst;
 use middle::def_id::DefId;
 use middle::pat_util::def_to_path;
 use middle::ty::{self, Ty};
@@ -25,6 +26,7 @@ use middle::astconv_util::ast_ty_to_prim_ty;
 use util::num::ToPrimitive;
 use util::nodemap::NodeMap;
 
+use graphviz::IntoCow;
 use syntax::{ast, abi};
 use rustc_front::hir::Expr;
 use rustc_front::hir;
@@ -34,28 +36,13 @@ use syntax::parse::token::InternedString;
 use syntax::ptr::P;
 use syntax::codemap;
 
-use std::borrow::{Cow, IntoCow};
-use std::num::wrapping::OverflowingOps;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry::Vacant;
 use std::hash;
 use std::mem::transmute;
 use std::{i8, i16, i32, i64, u8, u16, u32, u64};
 use std::rc::Rc;
-
-fn lookup_const<'a>(tcx: &'a ty::ctxt, e: &Expr) -> Option<&'a Expr> {
-    let opt_def = tcx.def_map.borrow().get(&e.id).map(|d| d.full_def());
-    match opt_def {
-        Some(def::DefConst(def_id)) |
-        Some(def::DefAssociatedConst(def_id)) => {
-            lookup_const_by_id(tcx, def_id, Some(e.id))
-        }
-        Some(def::DefVariant(enum_def, variant_def, _)) => {
-            lookup_variant_by_id(tcx, enum_def, variant_def)
-        }
-        _ => None
-    }
-}
 
 fn lookup_variant_by_id<'a>(tcx: &'a ty::ctxt,
                             enum_def: DefId,
@@ -88,9 +75,17 @@ fn lookup_variant_by_id<'a>(tcx: &'a ty::ctxt,
     }
 }
 
+/// * `def_id` is the id of the constant.
+/// * `maybe_ref_id` is the id of the expr referencing the constant.
+/// * `param_substs` is the monomorphization substitution for the expression.
+///
+/// `maybe_ref_id` and `param_substs` are optional and are used for
+/// finding substitutions in associated constants. This generally
+/// happens in late/trans const evaluation.
 pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: &'a ty::ctxt<'tcx>,
                                         def_id: DefId,
-                                        maybe_ref_id: Option<ast::NodeId>)
+                                        maybe_ref_id: Option<ast::NodeId>,
+                                        param_substs: Option<&'tcx subst::Substs<'tcx>>)
                                         -> Option<&'tcx Expr> {
     if let Some(node_id) = tcx.map.as_local_node_id(def_id) {
         match tcx.map.find(node_id) {
@@ -111,8 +106,11 @@ pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: &'a ty::ctxt<'tcx>,
                         Some(ref_id) => {
                             let trait_id = tcx.trait_of_item(def_id)
                                               .unwrap();
-                            let substs = tcx.node_id_item_substs(ref_id)
-                                            .substs;
+                            let mut substs = tcx.node_id_item_substs(ref_id)
+                                                .substs;
+                            if let Some(param_substs) = param_substs {
+                                substs = substs.subst(tcx, param_substs);
+                            }
                             resolve_trait_associated_const(tcx, ti, trait_id,
                                                            substs)
                         }
@@ -158,8 +156,11 @@ pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: &'a ty::ctxt<'tcx>,
                         // a trait-associated const if the caller gives us
                         // the expression that refers to it.
                         Some(ref_id) => {
-                            let substs = tcx.node_id_item_substs(ref_id)
-                                            .substs;
+                            let mut substs = tcx.node_id_item_substs(ref_id)
+                                                .substs;
+                            if let Some(param_substs) = param_substs {
+                                substs = substs.subst(tcx, param_substs);
+                            }
                             resolve_trait_associated_const(tcx, ti, trait_id,
                                                            substs).map(|e| e.id)
                         }
@@ -242,7 +243,7 @@ pub fn lookup_const_fn_by_id<'tcx>(tcx: &ty::ctxt<'tcx>, def_id: DefId)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub enum ConstVal {
     Float(f64),
     Int(i64),
@@ -332,6 +333,11 @@ pub fn const_expr_to_pat(tcx: &ty::ctxt, expr: &Expr, span: Span) -> P<hir::Pat>
             let path = match def.full_def() {
                 def::DefStruct(def_id) => def_to_path(tcx, def_id),
                 def::DefVariant(_, variant_did, _) => def_to_path(tcx, variant_did),
+                def::DefFn(..) => return P(hir::Pat {
+                    id: expr.id,
+                    node: hir::PatLit(P(expr.clone())),
+                    span: span,
+                }),
                 _ => unreachable!()
             };
             let pats = args.iter().map(|expr| const_expr_to_pat(tcx, &**expr, span)).collect();
@@ -352,22 +358,22 @@ pub fn const_expr_to_pat(tcx: &ty::ctxt, expr: &Expr, span: Span) -> P<hir::Pat>
 
         hir::ExprVec(ref exprs) => {
             let pats = exprs.iter().map(|expr| const_expr_to_pat(tcx, &**expr, span)).collect();
-            hir::PatVec(pats, None, vec![])
+            hir::PatVec(pats, None, hir::HirVec::new())
         }
 
         hir::ExprPath(_, ref path) => {
             let opt_def = tcx.def_map.borrow().get(&expr.id).map(|d| d.full_def());
             match opt_def {
                 Some(def::DefStruct(..)) =>
-                    hir::PatStruct(path.clone(), vec![], false),
+                    hir::PatStruct(path.clone(), hir::HirVec::new(), false),
                 Some(def::DefVariant(..)) =>
                     hir::PatEnum(path.clone(), None),
-                _ => {
-                    match lookup_const(tcx, expr) {
-                        Some(actual) => return const_expr_to_pat(tcx, actual, span),
-                        _ => unreachable!()
-                    }
-                }
+                Some(def::DefConst(def_id)) |
+                Some(def::DefAssociatedConst(def_id)) => {
+                    let expr = lookup_const_by_id(tcx, def_id, Some(expr.id), None).unwrap();
+                    return const_expr_to_pat(tcx, expr, span);
+                },
+                _ => unreachable!(),
             }
         }
 
@@ -1008,7 +1014,7 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &ty::ctxt<'tcx>,
                           _ => (None, None)
                       }
                   } else {
-                      (lookup_const_by_id(tcx, def_id, Some(e.id)), None)
+                      (lookup_const_by_id(tcx, def_id, Some(e.id), None), None)
                   }
               }
               Some(def::DefAssociatedConst(def_id)) => {
@@ -1043,7 +1049,7 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &ty::ctxt<'tcx>,
                           },
                       }
                   } else {
-                      (lookup_const_by_id(tcx, def_id, Some(e.id)), None)
+                      (lookup_const_by_id(tcx, def_id, Some(e.id), None), None)
                   }
               }
               Some(def::DefVariant(enum_def, variant_def, _)) => {
@@ -1121,6 +1127,7 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &ty::ctxt<'tcx>,
             None => unreachable!(),
         }
       }
+      hir::ExprType(ref e, _) => try!(eval_const_expr_partial(tcx, &**e, ty_hint, fn_args)),
       hir::ExprTup(_) => Tuple(e.id),
       hir::ExprStruct(..) => Struct(e.id),
       hir::ExprIndex(ref arr, ref idx) => {
@@ -1177,46 +1184,40 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &ty::ctxt<'tcx>,
       },
       hir::ExprTupField(ref base, index) => {
         let base_hint = ty_hint.erase_hint();
-        if let Ok(c) = eval_const_expr_partial(tcx, base, base_hint, fn_args) {
-            if let Tuple(tup_id) = c {
-                if let hir::ExprTup(ref fields) = tcx.map.expect_expr(tup_id).node {
-                    if index.node < fields.len() {
-                        return eval_const_expr_partial(tcx, &fields[index.node], base_hint, fn_args)
-                    } else {
-                        signal!(e, TupleIndexOutOfBounds);
-                    }
+        let c = try!(eval_const_expr_partial(tcx, base, base_hint, fn_args));
+        if let Tuple(tup_id) = c {
+            if let hir::ExprTup(ref fields) = tcx.map.expect_expr(tup_id).node {
+                if index.node < fields.len() {
+                    return eval_const_expr_partial(tcx, &fields[index.node], base_hint, fn_args)
                 } else {
-                    unreachable!()
+                    signal!(e, TupleIndexOutOfBounds);
                 }
             } else {
-                signal!(base, ExpectedConstTuple);
+                unreachable!()
             }
         } else {
-            signal!(base, NonConstPath)
+            signal!(base, ExpectedConstTuple);
         }
       }
       hir::ExprField(ref base, field_name) => {
         let base_hint = ty_hint.erase_hint();
         // Get the base expression if it is a struct and it is constant
-        if let Ok(c) = eval_const_expr_partial(tcx, base, base_hint, fn_args) {
-            if let Struct(struct_id) = c {
-                if let hir::ExprStruct(_, ref fields, _) = tcx.map.expect_expr(struct_id).node {
-                    // Check that the given field exists and evaluate it
-                    // if the idents are compared run-pass/issue-19244 fails
-                    if let Some(f) = fields.iter().find(|f| f.name.node
-                                                         == field_name.node) {
-                        return eval_const_expr_partial(tcx, &*f.expr, base_hint, fn_args)
-                    } else {
-                        signal!(e, MissingStructField);
-                    }
+        let c = try!(eval_const_expr_partial(tcx, base, base_hint, fn_args));
+        if let Struct(struct_id) = c {
+            if let hir::ExprStruct(_, ref fields, _) = tcx.map.expect_expr(struct_id).node {
+                // Check that the given field exists and evaluate it
+                // if the idents are compared run-pass/issue-19244 fails
+                if let Some(f) = fields.iter().find(|f| f.name.node
+                                                     == field_name.node) {
+                    return eval_const_expr_partial(tcx, &*f.expr, base_hint, fn_args)
                 } else {
-                    unreachable!()
+                    signal!(e, MissingStructField);
                 }
             } else {
-                signal!(base, ExpectedConstStruct);
+                unreachable!()
             }
         } else {
-            signal!(base, NonConstPath);
+            signal!(base, ExpectedConstStruct);
         }
       }
       _ => signal!(e, MiscCatchAll)
@@ -1260,12 +1261,8 @@ fn resolve_trait_associated_const<'a, 'tcx: 'a>(tcx: &'a ty::ctxt<'tcx>,
         Ok(None) => {
             return None
         }
-        Err(e) => {
-            tcx.sess.span_bug(ti.span,
-                              &format!("Encountered error `{:?}` when trying \
-                                        to select an implementation for \
-                                        constant trait item reference.",
-                                       e))
+        Err(_) => {
+            return None
         }
     };
 
@@ -1273,7 +1270,7 @@ fn resolve_trait_associated_const<'a, 'tcx: 'a>(tcx: &'a ty::ctxt<'tcx>,
         traits::VtableImpl(ref impl_data) => {
             match tcx.associated_consts(impl_data.impl_def_id)
                      .iter().find(|ic| ic.name == ti.name) {
-                Some(ic) => lookup_const_by_id(tcx, ic.def_id, None),
+                Some(ic) => lookup_const_by_id(tcx, ic.def_id, None, None),
                 None => match ti.node {
                     hir::ConstTraitItem(_, Some(ref expr)) => Some(&*expr),
                     _ => None,
@@ -1440,6 +1437,6 @@ fn get_fn_def<'a>(tcx: &'a ty::ctxt,
             _ => signal!(e, NonConstPath),
         },
         Some(ast_map::NodeTraitItem(..)) => signal!(e, NonConstPath),
-        Some(_) => unimplemented!(),
+        Some(_) => signal!(e, UnimplementedConstVal("calling struct, tuple or variant")),
     }
 }

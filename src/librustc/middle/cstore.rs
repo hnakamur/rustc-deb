@@ -28,6 +28,7 @@ use middle::def;
 use middle::lang_items;
 use middle::ty::{self, Ty};
 use middle::def_id::{DefId, DefIndex};
+use mir::repr::Mir;
 use session::Session;
 use session::search_paths::PathKind;
 use util::nodemap::{FnvHashMap, NodeMap, NodeSet};
@@ -100,6 +101,7 @@ pub enum InlinedItem {
 }
 
 /// A borrowed version of `hir::InlinedItem`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum InlinedItemRef<'a> {
     Item(&'a hir::Item),
     TraitItem(DefId, &'a hir::TraitItem),
@@ -133,6 +135,7 @@ pub enum FoundAst<'ast> {
 pub trait CrateStore<'tcx> : Any {
     // item info
     fn stability(&self, def: DefId) -> Option<attr::Stability>;
+    fn deprecation(&self, def: DefId) -> Option<attr::Deprecation>;
     fn closure_kind(&self, tcx: &ty::ctxt<'tcx>, def_id: DefId)
                     -> ty::ClosureKind;
     fn closure_ty(&self, tcx: &ty::ctxt<'tcx>, def_id: DefId)
@@ -216,6 +219,8 @@ pub trait CrateStore<'tcx> : Any {
     // misc. metadata
     fn maybe_get_item_ast(&'tcx self, tcx: &ty::ctxt<'tcx>, def: DefId)
                           -> FoundAst<'tcx>;
+    fn maybe_get_item_mir(&self, tcx: &ty::ctxt<'tcx>, def: DefId)
+                          -> Option<Mir<'tcx>>;
     // This is basically a 1-based range of ints, which is a little
     // silly - I may fix that.
     fn crates(&self) -> Vec<ast::CrateNum>;
@@ -235,6 +240,7 @@ pub trait CrateStore<'tcx> : Any {
                        item_symbols: &RefCell<NodeMap<String>>,
                        link_meta: &LinkMeta,
                        reachable: &NodeSet,
+                       mir_map: &NodeMap<Mir<'tcx>>,
                        krate: &hir::Crate) -> Vec<u8>;
     fn metadata_encoding_version(&self) -> &[u8];
 }
@@ -287,6 +293,7 @@ pub struct DummyCrateStore;
 impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
     // item info
     fn stability(&self, def: DefId) -> Option<attr::Stability> { unimplemented!() }
+    fn deprecation(&self, def: DefId) -> Option<attr::Deprecation> { unimplemented!() }
     fn closure_kind(&self, tcx: &ty::ctxt<'tcx>, def_id: DefId)
                     -> ty::ClosureKind  { unimplemented!() }
     fn closure_ty(&self, tcx: &ty::ctxt<'tcx>, def_id: DefId)
@@ -383,6 +390,9 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
     // misc. metadata
     fn maybe_get_item_ast(&'tcx self, tcx: &ty::ctxt<'tcx>, def: DefId)
                           -> FoundAst<'tcx> { unimplemented!() }
+    fn maybe_get_item_mir(&self, tcx: &ty::ctxt<'tcx>, def: DefId)
+                          -> Option<Mir<'tcx>> { unimplemented!() }
+
     // This is basically a 1-based range of ints, which is a little
     // silly - I may fix that.
     fn crates(&self) -> Vec<ast::CrateNum> { vec![] }
@@ -404,6 +414,145 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
                        item_symbols: &RefCell<NodeMap<String>>,
                        link_meta: &LinkMeta,
                        reachable: &NodeSet,
+                       mir_map: &NodeMap<Mir<'tcx>>,
                        krate: &hir::Crate) -> Vec<u8> { vec![] }
     fn metadata_encoding_version(&self) -> &[u8] { unimplemented!() }
+}
+
+
+/// Metadata encoding and decoding can make use of thread-local encoding and
+/// decoding contexts. These allow implementers of serialize::Encodable and
+/// Decodable to access information and datastructures that would otherwise not
+/// be available to them. For example, we can automatically translate def-id and
+/// span information during decoding because the decoding context knows which
+/// crate the data is decoded from. Or it allows to make ty::Ty decodable
+/// because the context has access to the ty::ctxt that is needed for creating
+/// ty::Ty instances.
+///
+/// Note, however, that this only works for RBML-based encoding and decoding at
+/// the moment.
+pub mod tls {
+    use rbml::opaque::Encoder as OpaqueEncoder;
+    use rbml::opaque::Decoder as OpaqueDecoder;
+    use serialize;
+    use std::mem;
+    use middle::ty::{self, Ty};
+    use middle::subst::Substs;
+    use middle::def_id::DefId;
+
+    pub trait EncodingContext<'tcx> {
+        fn tcx<'a>(&'a self) -> &'a ty::ctxt<'tcx>;
+        fn encode_ty(&self, encoder: &mut OpaqueEncoder, t: Ty<'tcx>);
+        fn encode_substs(&self, encoder: &mut OpaqueEncoder, substs: &Substs<'tcx>);
+    }
+
+    /// Marker type used for the scoped TLS slot.
+    /// The type context cannot be used directly because the scoped TLS
+    /// in libstd doesn't allow types generic over lifetimes.
+    struct TlsPayload;
+
+    scoped_thread_local!(static TLS_ENCODING: TlsPayload);
+
+    /// Execute f after pushing the given EncodingContext onto the TLS stack.
+    pub fn enter_encoding_context<'tcx, F, R>(ecx: &EncodingContext<'tcx>,
+                                              encoder: &mut OpaqueEncoder,
+                                              f: F) -> R
+        where F: FnOnce(&EncodingContext<'tcx>, &mut OpaqueEncoder) -> R
+    {
+        let tls_payload = (ecx as *const _, encoder as *mut _);
+        let tls_ptr = &tls_payload as *const _ as *const TlsPayload;
+        TLS_ENCODING.set(unsafe { &*tls_ptr }, || f(ecx, encoder))
+    }
+
+    /// Execute f with access to the thread-local encoding context and
+    /// rbml encoder. This function will panic if the encoder passed in and the
+    /// context encoder are not the same.
+    ///
+    /// Note that this method is 'practically' safe due to its checking that the
+    /// encoder passed in is the same as the one in TLS, but it would still be
+    /// possible to construct cases where the EncodingContext is exchanged
+    /// while the same encoder is used, thus working with a wrong context.
+    pub fn with_encoding_context<'tcx, E, F, R>(encoder: &mut E, f: F) -> R
+        where F: FnOnce(&EncodingContext<'tcx>, &mut OpaqueEncoder) -> R,
+              E: serialize::Encoder
+    {
+        unsafe {
+            unsafe_with_encoding_context(|ecx, tls_encoder| {
+                assert!(encoder as *mut _ as usize == tls_encoder as *mut _ as usize);
+
+                let ecx: &EncodingContext<'tcx> = mem::transmute(ecx);
+
+                f(ecx, tls_encoder)
+            })
+        }
+    }
+
+    /// Execute f with access to the thread-local encoding context and
+    /// rbml encoder.
+    pub unsafe fn unsafe_with_encoding_context<F, R>(f: F) -> R
+        where F: FnOnce(&EncodingContext, &mut OpaqueEncoder) -> R
+    {
+        TLS_ENCODING.with(|tls| {
+            let tls_payload = (tls as *const TlsPayload)
+                                   as *mut (&EncodingContext, &mut OpaqueEncoder);
+            f((*tls_payload).0, (*tls_payload).1)
+        })
+    }
+
+    pub trait DecodingContext<'tcx> {
+        fn tcx<'a>(&'a self) -> &'a ty::ctxt<'tcx>;
+        fn decode_ty(&self, decoder: &mut OpaqueDecoder) -> ty::Ty<'tcx>;
+        fn decode_substs(&self, decoder: &mut OpaqueDecoder) -> Substs<'tcx>;
+        fn translate_def_id(&self, def_id: DefId) -> DefId;
+    }
+
+    scoped_thread_local!(static TLS_DECODING: TlsPayload);
+
+    /// Execute f after pushing the given DecodingContext onto the TLS stack.
+    pub fn enter_decoding_context<'tcx, F, R>(dcx: &DecodingContext<'tcx>,
+                                              decoder: &mut OpaqueDecoder,
+                                              f: F) -> R
+        where F: FnOnce(&DecodingContext<'tcx>, &mut OpaqueDecoder) -> R
+    {
+        let tls_payload = (dcx as *const _, decoder as *mut _);
+        let tls_ptr = &tls_payload as *const _ as *const TlsPayload;
+        TLS_DECODING.set(unsafe { &*tls_ptr }, || f(dcx, decoder))
+    }
+
+    /// Execute f with access to the thread-local decoding context and
+    /// rbml decoder. This function will panic if the decoder passed in and the
+    /// context decoder are not the same.
+    ///
+    /// Note that this method is 'practically' safe due to its checking that the
+    /// decoder passed in is the same as the one in TLS, but it would still be
+    /// possible to construct cases where the DecodingContext is exchanged
+    /// while the same decoder is used, thus working with a wrong context.
+    pub fn with_decoding_context<'decoder, 'tcx, D, F, R>(d: &'decoder mut D, f: F) -> R
+        where D: serialize::Decoder,
+              F: FnOnce(&DecodingContext<'tcx>,
+                        &mut OpaqueDecoder) -> R,
+              'tcx: 'decoder
+    {
+        unsafe {
+            unsafe_with_decoding_context(|dcx, decoder| {
+                assert!((d as *mut _ as usize) == (decoder as *mut _ as usize));
+
+                let dcx: &DecodingContext<'tcx> = mem::transmute(dcx);
+
+                f(dcx, decoder)
+            })
+        }
+    }
+
+    /// Execute f with access to the thread-local decoding context and
+    /// rbml decoder.
+    pub unsafe fn unsafe_with_decoding_context<F, R>(f: F) -> R
+        where F: FnOnce(&DecodingContext, &mut OpaqueDecoder) -> R
+    {
+        TLS_DECODING.with(|tls| {
+            let tls_payload = (tls as *const TlsPayload)
+                                   as *mut (&DecodingContext, &mut OpaqueDecoder);
+            f((*tls_payload).0, (*tls_payload).1)
+        })
+    }
 }

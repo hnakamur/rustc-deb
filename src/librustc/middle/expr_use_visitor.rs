@@ -12,7 +12,6 @@
 //! normal visitor, which just walks the entire body in one shot, the
 //! `ExprUseVisitor` determines how expressions are being used.
 
-pub use self::MutateMode::*;
 pub use self::LoanCause::*;
 pub use self::ConsumeMode::*;
 pub use self::MoveReason::*;
@@ -242,8 +241,6 @@ impl OverloadedCallType {
 // mem_categorization, it requires a TYPER, which is a type that
 // supplies types from the tree. After type checking is complete, you
 // can just use the tcx as the typer.
-//
-// FIXME(stage0): the :'t here is probably only important for stage0
 pub struct ExprUseVisitor<'d, 't, 'a: 't, 'tcx:'a+'d> {
     typer: &'t infer::InferCtxt<'a, 'tcx>,
     mc: mc::MemCategorizationContext<'t, 'a, 'tcx>,
@@ -276,7 +273,7 @@ enum PassArgs {
 }
 
 impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
-    pub fn new(delegate: &'d mut (Delegate<'tcx>),
+    pub fn new(delegate: &'d mut (Delegate<'tcx>+'d),
                typer: &'t infer::InferCtxt<'a, 'tcx>)
                -> ExprUseVisitor<'d,'t,'a,'tcx> where 'tcx:'a+'d
     {
@@ -324,7 +321,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         self.delegate.consume(consume_id, consume_span, cmt, mode);
     }
 
-    fn consume_exprs(&mut self, exprs: &Vec<P<hir::Expr>>) {
+    fn consume_exprs(&mut self, exprs: &[P<hir::Expr>]) {
         for expr in exprs {
             self.consume_expr(&**expr);
         }
@@ -372,6 +369,10 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
 
         match expr.node {
             hir::ExprPath(..) => { }
+
+            hir::ExprType(ref subexpr, _) => {
+                self.walk_expr(&**subexpr)
+            }
 
             hir::ExprUnary(hir::UnDeref, ref base) => {      // *base
                 if !self.walk_overloaded_operator(expr, &**base, Vec::new(), PassArgs::ByRef) {
@@ -458,9 +459,17 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                     self.consume_expr(&**input);
                 }
 
-                for &(_, ref output, is_rw) in &ia.outputs {
-                    self.mutate_expr(expr, &**output,
-                                           if is_rw { WriteAndRead } else { JustWrite });
+                for output in &ia.outputs {
+                    if output.is_indirect {
+                        self.consume_expr(&*output.expr);
+                    } else {
+                        self.mutate_expr(expr, &*output.expr,
+                                         if output.is_rw {
+                                             MutateMode::WriteAndRead
+                                         } else {
+                                             MutateMode::JustWrite
+                                         });
+                    }
                 }
             }
 
@@ -513,7 +522,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
             }
 
             hir::ExprAssign(ref lhs, ref rhs) => {
-                self.mutate_expr(expr, &**lhs, JustWrite);
+                self.mutate_expr(expr, &**lhs, MutateMode::JustWrite);
                 self.consume_expr(&**rhs);
             }
 
@@ -526,7 +535,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                 assert!(::rustc_front::util::is_by_value_binop(op.node));
 
                 if !self.walk_overloaded_operator(expr, lhs, vec![rhs], PassArgs::ByValue) {
-                    self.mutate_expr(expr, &**lhs, WriteAndRead);
+                    self.mutate_expr(expr, &**lhs, MutateMode::WriteAndRead);
                     self.consume_expr(&**rhs);
                 }
             }
@@ -647,7 +656,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
 
     fn walk_struct_expr(&mut self,
                         _expr: &hir::Expr,
-                        fields: &Vec<hir::Field>,
+                        fields: &[hir::Field],
                         opt_with: &Option<P<hir::Expr>>) {
         // Consume the expressions supplying values for each field.
         for field in fields {
@@ -693,7 +702,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         self.walk_expr(with_expr);
 
         fn contains_field_named(field: ty::FieldDef,
-                                fields: &Vec<hir::Field>)
+                                fields: &[hir::Field])
                                 -> bool
         {
             fields.iter().any(
@@ -985,7 +994,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                 let def = def_map.borrow().get(&pat.id).unwrap().full_def();
                 match mc.cat_def(pat.id, pat.span, pat_ty, def) {
                     Ok(binding_cmt) => {
-                        delegate.mutate(pat.id, pat.span, binding_cmt, Init);
+                        delegate.mutate(pat.id, pat.span, binding_cmt, MutateMode::Init);
                     }
                     Err(_) => { }
                 }

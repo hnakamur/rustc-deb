@@ -14,7 +14,7 @@ use middle::pat_util::{PatIdMap, pat_id_map, pat_is_binding};
 use middle::pat_util::pat_is_resolved_const;
 use middle::privacy::{AllPublic, LastMod};
 use middle::subst::Substs;
-use middle::ty::{self, Ty, HasTypeFlags, LvaluePreference};
+use middle::ty::{self, Ty, TypeFoldable, LvaluePreference};
 use check::{check_expr, check_expr_has_type, check_expr_with_expectation};
 use check::{check_expr_coercable_to_type, demand, FnCtxt, Expectation};
 use check::{check_expr_with_lvalue_pref};
@@ -143,20 +143,24 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
                     return;
                 }
             }
-            let const_did = tcx.def_map.borrow().get(&pat.id).unwrap().def_id();
-            let const_scheme = tcx.lookup_item_type(const_did);
-            assert!(const_scheme.generics.is_empty());
-            let const_ty = pcx.fcx.instantiate_type_scheme(pat.span,
-                                                           &Substs::empty(),
-                                                           &const_scheme.ty);
-            fcx.write_ty(pat.id, const_ty);
+            if let Some(pat_def) = tcx.def_map.borrow().get(&pat.id) {
+                let const_did = pat_def.def_id();
+                let const_scheme = tcx.lookup_item_type(const_did);
+                assert!(const_scheme.generics.is_empty());
+                let const_ty = pcx.fcx.instantiate_type_scheme(pat.span,
+                                                               &Substs::empty(),
+                                                               &const_scheme.ty);
+                fcx.write_ty(pat.id, const_ty);
 
-            // FIXME(#20489) -- we should limit the types here to scalars or something!
+                // FIXME(#20489) -- we should limit the types here to scalars or something!
 
-            // As with PatLit, what we really want here is that there
-            // exist a LUB, but for the cases that can occur, subtype
-            // is good enough.
-            demand::suptype(fcx, pat.span, expected, const_ty);
+                // As with PatLit, what we really want here is that there
+                // exist a LUB, but for the cases that can occur, subtype
+                // is good enough.
+                demand::suptype(fcx, pat.span, expected, const_ty);
+            } else {
+                fcx.write_error(pat.id);
+            }
         }
         hir::PatIdent(bm, ref path, ref sub) if pat_is_binding(&tcx.def_map.borrow(), pat) => {
             let typ = fcx.local_ty(pat.span, pat.id);
@@ -187,14 +191,15 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
 
             // if there are multiple arms, make sure they all agree on
             // what the type of the binding `x` ought to be
-            let canon_id = *pcx.map.get(&path.node.name).unwrap();
-            if canon_id != pat.id {
-                let ct = fcx.local_ty(pat.span, canon_id);
-                demand::eqtype(fcx, pat.span, ct, typ);
-            }
+            if let Some(&canon_id) = pcx.map.get(&path.node.name) {
+                if canon_id != pat.id {
+                    let ct = fcx.local_ty(pat.span, canon_id);
+                    demand::eqtype(fcx, pat.span, ct, typ);
+                }
 
-            if let Some(ref p) = *sub {
-                check_pat(pcx, &**p, expected);
+                if let Some(ref p) = *sub {
+                    check_pat(pcx, &**p, expected);
+                }
             }
         }
         hir::PatIdent(_, ref path, _) => {
@@ -209,6 +214,10 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
         hir::PatQPath(ref qself, ref path) => {
             let self_ty = fcx.to_ty(&qself.ty);
             let path_res = if let Some(&d) = tcx.def_map.borrow().get(&pat.id) {
+                if d.base_def == def::DefErr {
+                    fcx.write_error(pat.id);
+                    return;
+                }
                 d
             } else if qself.position == 0 {
                 // This is just a sentinel for finish_resolving_def_to_ty.
@@ -219,8 +228,9 @@ pub fn check_pat<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
                     depth: path.segments.len()
                 }
             } else {
-                tcx.sess.span_bug(pat.span,
-                                  &format!("unbound path {:?}", pat))
+                debug!("unbound path {:?}", pat);
+                fcx.write_error(pat.id);
+                return;
             };
             if let Some((opt_ty, segments, def)) =
                     resolve_ty_and_def_ufcs(fcx, path_res, Some(self_ty),
@@ -585,14 +595,10 @@ fn bad_struct_kind_err(sess: &Session, pat: &hir::Pat, path: &hir::Path, lint: b
     let name = pprust::path_to_string(path);
     let msg = format!("`{}` does not name a tuple variant or a tuple struct", name);
     if lint {
-        let expanded_msg =
-            format!("{}; RFC 218 disallowed matching of unit variants or unit structs via {}(..)",
-                    msg,
-                    name);
         sess.add_lint(lint::builtin::MATCH_OF_UNIT_VARIANT_VIA_PAREN_DOTDOT,
                       pat.id,
                       pat.span,
-                      expanded_msg);
+                      msg);
     } else {
         span_err!(sess, pat.span, E0164, "{}", msg);
     }
@@ -609,7 +615,20 @@ pub fn check_pat_enum<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
     let fcx = pcx.fcx;
     let tcx = pcx.fcx.ccx.tcx;
 
-    let path_res = *tcx.def_map.borrow().get(&pat.id).unwrap();
+    let path_res = match tcx.def_map.borrow().get(&pat.id) {
+        Some(&path_res) if path_res.base_def != def::DefErr => path_res,
+        _ => {
+            fcx.write_error(pat.id);
+
+            if let Some(subpats) = subpats {
+                for pat in subpats {
+                    check_pat(pcx, &**pat, tcx.types.err);
+                }
+            }
+
+            return;
+        }
+    };
 
     let (opt_ty, segments, def) = match resolve_ty_and_def_ufcs(fcx, path_res,
                                                                 None, path,
@@ -771,12 +790,13 @@ pub fn check_struct_pat_fields<'a, 'tcx>(pcx: &pat_ctxt<'a, 'tcx>,
     for &Spanned { node: ref field, span } in fields {
         let field_ty = match used_fields.entry(field.name) {
             Occupied(occupied) => {
-                span_err!(tcx.sess, span, E0025,
-                    "field `{}` bound multiple times in the pattern",
-                    field.name);
-                span_note!(tcx.sess, *occupied.get(),
-                    "field `{}` previously bound here",
-                    field.name);
+                let mut err = struct_span_err!(tcx.sess, span, E0025,
+                                               "field `{}` bound multiple times in the pattern",
+                                               field.name);
+                span_note!(&mut err, *occupied.get(),
+                           "field `{}` previously bound here",
+                           field.name);
+                err.emit();
                 tcx.types.err
             }
             Vacant(vacant) => {

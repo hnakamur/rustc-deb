@@ -352,6 +352,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             hir::ExprBox(ref e) |
             hir::ExprAddrOf(_, ref e) |
             hir::ExprCast(ref e, _) |
+            hir::ExprType(ref e, _) |
             hir::ExprUnary(_, ref e) |
             hir::ExprField(ref e, _) |
             hir::ExprTupField(ref e, _) => {
@@ -368,8 +369,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                 }), pred);
                 let post_outputs = self.exprs(outputs.map(|a| {
                     debug!("cfg::construct InlineAsm id:{} output:{:?}", expr.id, a);
-                    let &(_, ref expr, _) = a;
-                    &**expr
+                    &*a.expr
                 }), post_inputs);
                 self.add_ast_node(expr.id, &[post_outputs])
             }

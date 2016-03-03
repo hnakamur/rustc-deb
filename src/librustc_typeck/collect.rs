@@ -34,13 +34,12 @@ lazilly and on demand, and include logic that checks for cycles.
 Demand is driven by calls to `AstConv::get_item_type_scheme` or
 `AstConv::lookup_trait_def`.
 
-Currently, we "convert" types and traits in three phases (note that
+Currently, we "convert" types and traits in two phases (note that
 conversion only affects the types of items / enum variants / methods;
 it does not e.g. compute the types of individual expressions):
 
 0. Intrinsics
-1. Trait definitions
-2. Type definitions
+1. Trait/Type definitions
 
 Conversion itself is done by simply walking each of the items in turn
 and invoking an appropriate function (e.g., `trait_def_of_item` or
@@ -56,38 +55,32 @@ There are some shortcomings in this design:
 - Because the type scheme includes defaults, cycles through type
   parameter defaults are illegal even if those defaults are never
   employed. This is not necessarily a bug.
-- The phasing of trait definitions before type definitions does not
-  seem to be necessary, sufficient, or particularly helpful, given that
-  processing a trait definition can trigger processing a type def and
-  vice versa. However, if I remove it, I get ICEs, so some more work is
-  needed in that area. -nmatsakis
 
 */
 
 use astconv::{self, AstConv, ty_of_arg, ast_ty_to_ty, ast_region_to_region};
+use lint;
 use middle::def;
 use middle::def_id::DefId;
 use constrained_type_params as ctp;
 use middle::lang_items::SizedTraitLangItem;
-use middle::free_region::FreeRegionMap;
-use middle::region;
 use middle::resolve_lifetime;
 use middle::const_eval::{self, ConstVal};
 use middle::const_eval::EvalHint::UncheckedExprHint;
 use middle::subst::{Substs, FnSpace, ParamSpace, SelfSpace, TypeSpace, VecPerParamSpace};
 use middle::ty::{ToPredicate, ImplContainer, ImplOrTraitItemContainer, TraitContainer};
-use middle::ty::{self, RegionEscape, ToPolyTraitRef, Ty, TypeScheme};
+use middle::ty::{self, ToPolyTraitRef, Ty, TypeScheme};
 use middle::ty::{VariantKind};
-use middle::ty::fold::{TypeFolder, TypeFoldable};
+use middle::ty::fold::{TypeFolder};
 use middle::ty::util::IntTypeExt;
-use middle::infer;
 use rscope::*;
+use rustc::dep_graph::DepNode;
 use rustc::front::map as hir_map;
-use util::common::{ErrorReported, memoized};
+use util::common::{ErrorReported, MemoizationMap};
 use util::nodemap::{FnvHashMap, FnvHashSet};
 use write_ty_to_tcx;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -106,9 +99,6 @@ use rustc_front::print::pprust;
 
 pub fn collect_item_types(tcx: &ty::ctxt) {
     let ccx = &CrateCtxt { tcx: tcx, stack: RefCell::new(Vec::new()) };
-
-    let mut visitor = CollectTraitDefVisitor{ ccx: ccx };
-    ccx.tcx.map.krate().visit_all_items(&mut visitor);
 
     let mut visitor = CollectItemTypesVisitor{ ccx: ccx };
     ccx.tcx.map.krate().visit_all_items(&mut visitor);
@@ -149,41 +139,17 @@ enum AstConvRequest {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-// First phase: just collect *trait definitions* -- basically, the set
-// of type parameters and supertraits. This is information we need to
-// know later when parsing field defs.
-
-struct CollectTraitDefVisitor<'a, 'tcx: 'a> {
-    ccx: &'a CrateCtxt<'a, 'tcx>
-}
-
-impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for CollectTraitDefVisitor<'a, 'tcx> {
-    fn visit_item(&mut self, i: &hir::Item) {
-        match i.node {
-            hir::ItemTrait(..) => {
-                // computing the trait def also fills in the table
-                let _ = trait_def_of_item(self.ccx, i);
-            }
-            _ => { }
-        }
-    }
-}
-
-///////////////////////////////////////////////////////////////////////////
-// Second phase: collection proper.
 
 struct CollectItemTypesVisitor<'a, 'tcx: 'a> {
     ccx: &'a CrateCtxt<'a, 'tcx>
 }
 
 impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for CollectItemTypesVisitor<'a, 'tcx> {
-    fn visit_item(&mut self, i: &hir::Item) {
-        convert_item(self.ccx, i);
-        intravisit::walk_item(self, i);
-    }
-    fn visit_foreign_item(&mut self, i: &hir::ForeignItem) {
-        convert_foreign_item(self.ccx, i);
-        intravisit::walk_foreign_item(self, i);
+    fn visit_item(&mut self, item: &hir::Item) {
+        let tcx = self.ccx.tcx;
+        let item_def_id = tcx.map.local_def_id(item.id);
+        let _task = tcx.dep_graph.in_task(DepNode::CollectItem(item_def_id));
+        convert_item(self.ccx, item);
     }
 }
 
@@ -193,16 +159,6 @@ impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for CollectItemTypesVisitor<'a, 'tcx>
 impl<'a,'tcx> CrateCtxt<'a,'tcx> {
     fn icx(&'a self, param_bounds: &'a GetTypeParameterBounds<'tcx>) -> ItemCtxt<'a,'tcx> {
         ItemCtxt { ccx: self, param_bounds: param_bounds }
-    }
-
-    fn method_ty(&self, method_id: ast::NodeId) -> Rc<ty::Method<'tcx>> {
-        let def_id = self.tcx.map.local_def_id(method_id);
-        match *self.tcx.impl_or_trait_items.borrow().get(&def_id).unwrap() {
-            ty::MethodTraitItem(ref mty) => mty.clone(),
-            _ => {
-                self.tcx.sess.bug(&format!("method with id {} has the wrong type", method_id));
-            }
-        }
     }
 
     fn cycle_check<F,R>(&self,
@@ -238,24 +194,24 @@ impl<'a,'tcx> CrateCtxt<'a,'tcx> {
         assert!(!cycle.is_empty());
         let tcx = self.tcx;
 
-        span_err!(tcx.sess, span, E0391,
+        let mut err = struct_span_err!(tcx.sess, span, E0391,
             "unsupported cyclic reference between types/traits detected");
 
         match cycle[0] {
             AstConvRequest::GetItemTypeScheme(def_id) |
             AstConvRequest::GetTraitDef(def_id) => {
-                tcx.sess.note(
+                err.note(
                     &format!("the cycle begins when processing `{}`...",
                              tcx.item_path_str(def_id)));
             }
             AstConvRequest::EnsureSuperPredicates(def_id) => {
-                tcx.sess.note(
+                err.note(
                     &format!("the cycle begins when computing the supertraits of `{}`...",
                              tcx.item_path_str(def_id)));
             }
             AstConvRequest::GetTypeParameterBounds(id) => {
                 let def = tcx.type_parameter_def(id);
-                tcx.sess.note(
+                err.note(
                     &format!("the cycle begins when computing the bounds \
                               for type parameter `{}`...",
                              def.name));
@@ -266,18 +222,18 @@ impl<'a,'tcx> CrateCtxt<'a,'tcx> {
             match *request {
                 AstConvRequest::GetItemTypeScheme(def_id) |
                 AstConvRequest::GetTraitDef(def_id) => {
-                    tcx.sess.note(
+                    err.note(
                         &format!("...which then requires processing `{}`...",
                                  tcx.item_path_str(def_id)));
                 }
                 AstConvRequest::EnsureSuperPredicates(def_id) => {
-                    tcx.sess.note(
+                    err.note(
                         &format!("...which then requires computing the supertraits of `{}`...",
                                  tcx.item_path_str(def_id)));
                 }
                 AstConvRequest::GetTypeParameterBounds(id) => {
                     let def = tcx.type_parameter_def(id);
-                    tcx.sess.note(
+                    err.note(
                         &format!("...which then requires computing the bounds \
                                   for type parameter `{}`...",
                                  def.name));
@@ -288,24 +244,25 @@ impl<'a,'tcx> CrateCtxt<'a,'tcx> {
         match cycle[0] {
             AstConvRequest::GetItemTypeScheme(def_id) |
             AstConvRequest::GetTraitDef(def_id) => {
-                tcx.sess.note(
+                err.note(
                     &format!("...which then again requires processing `{}`, completing the cycle.",
                              tcx.item_path_str(def_id)));
             }
             AstConvRequest::EnsureSuperPredicates(def_id) => {
-                tcx.sess.note(
+                err.note(
                     &format!("...which then again requires computing the supertraits of `{}`, \
                               completing the cycle.",
                              tcx.item_path_str(def_id)));
             }
             AstConvRequest::GetTypeParameterBounds(id) => {
                 let def = tcx.type_parameter_def(id);
-                tcx.sess.note(
+                err.note(
                     &format!("...which then again requires computing the bounds \
                               for type parameter `{}`, completing the cycle.",
                              def.name));
             }
         }
+        err.emit();
     }
 
     /// Loads the trait def for a given trait, returning ErrorReported if a cycle arises.
@@ -573,10 +530,10 @@ fn is_param<'tcx>(tcx: &ty::ctxt<'tcx>,
 
 fn convert_method<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                             container: ImplOrTraitItemContainer,
-                            sig: &hir::MethodSig,
-                            id: ast::NodeId,
                             name: ast::Name,
+                            id: ast::NodeId,
                             vis: hir::Visibility,
+                            sig: &hir::MethodSig,
                             untransformed_rcvr_ty: Ty<'tcx>,
                             rcvr_ty_generics: &ty::Generics<'tcx>,
                             rcvr_ty_predicates: &ty::GenericPredicates<'tcx>) {
@@ -681,33 +638,6 @@ fn convert_associated_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
        .insert(ccx.tcx.map.local_def_id(id), ty::TypeTraitItem(associated_type));
 }
 
-fn convert_methods<'a,'tcx,'i,I>(ccx: &CrateCtxt<'a, 'tcx>,
-                                 container: ImplOrTraitItemContainer,
-                                 methods: I,
-                                 untransformed_rcvr_ty: Ty<'tcx>,
-                                 rcvr_ty_generics: &ty::Generics<'tcx>,
-                                 rcvr_ty_predicates: &ty::GenericPredicates<'tcx>)
-    where I: Iterator<Item=(&'i hir::MethodSig, ast::NodeId, ast::Name, hir::Visibility, Span)>
-{
-    debug!("convert_methods(untransformed_rcvr_ty={:?}, rcvr_ty_generics={:?}, \
-                            rcvr_ty_predicates={:?})",
-           untransformed_rcvr_ty,
-           rcvr_ty_generics,
-           rcvr_ty_predicates);
-
-    for (sig, id, name, vis, _span) in methods {
-        convert_method(ccx,
-                       container,
-                       sig,
-                       id,
-                       name,
-                       vis,
-                       untransformed_rcvr_ty,
-                       rcvr_ty_generics,
-                       rcvr_ty_predicates);
-    }
-}
-
 fn ensure_no_ty_param_bounds(ccx: &CrateCtxt,
                                  span: Span,
                                  generics: &hir::Generics,
@@ -742,8 +672,12 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
     debug!("convert: item {} with id {}", it.name, it.id);
     match it.node {
         // These don't define types.
-        hir::ItemExternCrate(_) | hir::ItemUse(_) |
-        hir::ItemForeignMod(_) | hir::ItemMod(_) => {
+        hir::ItemExternCrate(_) | hir::ItemUse(_) | hir::ItemMod(_) => {
+        }
+        hir::ItemForeignMod(ref foreign_mod) => {
+            for item in &foreign_mod.items {
+                convert_foreign_item(ccx, item);
+            }
         }
         hir::ItemEnum(ref enum_definition, _) => {
             let (scheme, predicates) = convert_typed_item(ccx, it);
@@ -867,34 +801,17 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
                 }
             }
 
-            let methods = impl_items.iter().filter_map(|ii| {
-                if let hir::ImplItemKind::Method(ref sig, _) = ii.node {
+            for impl_item in impl_items {
+                if let hir::ImplItemKind::Method(ref sig, _) = impl_item.node {
                     // if the method specifies a visibility, use that, otherwise
                     // inherit the visibility from the impl (so `foo` in `pub impl
                     // { fn foo(); }` is public, but private in `impl { fn
                     // foo(); }`).
-                    let method_vis = ii.vis.inherit_from(parent_visibility);
-                    Some((sig, ii.id, ii.name, method_vis, ii.span))
-                } else {
-                    None
-                }
-            });
-            convert_methods(ccx,
-                            ImplContainer(def_id),
-                            methods,
-                            selfty,
-                            &ty_generics,
-                            &ty_predicates);
+                    let method_vis = impl_item.vis.inherit_from(parent_visibility);
 
-            for impl_item in impl_items {
-                if let hir::ImplItemKind::Method(ref sig, ref body) = impl_item.node {
-                    let body_id = body.id;
-                    check_method_self_type(ccx,
-                                           &BindingRscope::new(),
-                                           ccx.method_ty(impl_item.id),
-                                           selfty,
-                                           &sig.explicit_self,
-                                           body_id);
+                    convert_method(ccx, ImplContainer(def_id),
+                                   impl_item.name, impl_item.id, method_vis,
+                                   sig, selfty, &ty_generics, &ty_predicates);
                 }
             }
 
@@ -902,103 +819,80 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
         },
         hir::ItemTrait(_, _, _, ref trait_items) => {
             let trait_def = trait_def_of_item(ccx, it);
+            let def_id = trait_def.trait_ref.def_id;
             let _: Result<(), ErrorReported> = // any error is already reported, can ignore
-                ccx.ensure_super_predicates(it.span, ccx.tcx.map.local_def_id(it.id));
+                ccx.ensure_super_predicates(it.span, def_id);
             convert_trait_predicates(ccx, it);
-            let trait_predicates = tcx.lookup_predicates(ccx.tcx.map.local_def_id(it.id));
+            let trait_predicates = tcx.lookup_predicates(def_id);
 
             debug!("convert: trait_bounds={:?}", trait_predicates);
 
+            // FIXME: is the ordering here important? I think it is.
+            let container = TraitContainer(def_id);
+
+            // Convert all the associated constants.
+            for trait_item in trait_items {
+                if let hir::ConstTraitItem(ref ty, ref default) = trait_item.node {
+                    let ty = ccx.icx(&trait_predicates)
+                        .to_ty(&ExplicitRscope, ty);
+                    tcx.register_item_type(ccx.tcx.map.local_def_id(trait_item.id),
+                                           TypeScheme {
+                                               generics: trait_def.generics.clone(),
+                                               ty: ty,
+                                           });
+                    convert_associated_const(ccx,
+                                             container,
+                                             trait_item.name,
+                                             trait_item.id,
+                                             hir::Public,
+                                             ty,
+                                             default.is_some())
+                }
+            }
+
             // Convert all the associated types.
             for trait_item in trait_items {
-                match trait_item.node {
-                    hir::ConstTraitItem(ref ty, ref default) => {
-                        let ty = ccx.icx(&trait_predicates)
-                                    .to_ty(&ExplicitRscope, ty);
-                        tcx.register_item_type(ccx.tcx.map.local_def_id(trait_item.id),
-                                               TypeScheme {
-                                                   generics: trait_def.generics.clone(),
-                                                   ty: ty,
-                                               });
-                        convert_associated_const(ccx,
-                                                 TraitContainer(ccx.tcx.map.local_def_id(it.id)),
-                                                 trait_item.name,
-                                                 trait_item.id,
-                                                 hir::Public,
-                                                 ty,
-                                                 default.is_some())
-                    }
-                    _ => {}
-                }
-            };
+                if let hir::TypeTraitItem(_, ref opt_ty) = trait_item.node {
+                    let typ = opt_ty.as_ref().map({
+                        |ty| ccx.icx(&trait_predicates).to_ty(&ExplicitRscope, &ty)
+                    });
 
-            // Convert all the associated types.
+                    convert_associated_type(ccx,
+                                            container,
+                                            trait_item.name,
+                                            trait_item.id,
+                                            hir::Public,
+                                            typ);
+                }
+            }
+
+            // Convert all the methods
             for trait_item in trait_items {
-                match trait_item.node {
-                    hir::TypeTraitItem(_, ref opt_ty) => {
-                        let typ = opt_ty.as_ref().map({
-                            |ty| ccx.icx(&trait_predicates).to_ty(&ExplicitRscope, &ty)
-                        });
+                if let hir::MethodTraitItem(ref sig, _) = trait_item.node {
+                    convert_method(ccx,
+                                   container,
+                                   trait_item.name,
+                                   trait_item.id,
+                                   hir::Inherited,
+                                   sig,
+                                   tcx.mk_self_type(),
+                                   &trait_def.generics,
+                                   &trait_predicates);
 
-                        convert_associated_type(ccx,
-                                                TraitContainer(ccx.tcx.map.local_def_id(it.id)),
-                                                trait_item.name,
-                                                trait_item.id,
-                                                hir::Public,
-                                                typ);
-                    }
-                    _ => {}
                 }
-            };
-
-            let methods = trait_items.iter().filter_map(|ti| {
-                let sig = match ti.node {
-                    hir::MethodTraitItem(ref sig, _) => sig,
-                    _ => return None,
-                };
-                Some((sig, ti.id, ti.name, hir::Inherited, ti.span))
-            });
-
-            // Run convert_methods on the trait methods.
-            convert_methods(ccx,
-                            TraitContainer(ccx.tcx.map.local_def_id(it.id)),
-                            methods,
-                            tcx.mk_self_type(),
-                            &trait_def.generics,
-                            &trait_predicates);
+            }
 
             // Add an entry mapping
             let trait_item_def_ids = Rc::new(trait_items.iter().map(|trait_item| {
                 let def_id = ccx.tcx.map.local_def_id(trait_item.id);
                 match trait_item.node {
-                    hir::ConstTraitItem(..) => {
-                        ty::ConstTraitItemId(def_id)
-                    }
-                    hir::MethodTraitItem(..) => {
-                        ty::MethodTraitItemId(def_id)
-                    }
-                    hir::TypeTraitItem(..) => {
-                        ty::TypeTraitItemId(def_id)
-                    }
+                    hir::ConstTraitItem(..) => ty::ConstTraitItemId(def_id),
+                    hir::MethodTraitItem(..) => ty::MethodTraitItemId(def_id),
+                    hir::TypeTraitItem(..) => ty::TypeTraitItemId(def_id)
                 }
             }).collect());
             tcx.trait_item_def_ids.borrow_mut().insert(ccx.tcx.map.local_def_id(it.id),
                                                        trait_item_def_ids);
-
-            // This must be done after `collect_trait_methods` so that
-            // we have a method type stored for every method.
-            for trait_item in trait_items {
-                let sig = match trait_item.node {
-                    hir::MethodTraitItem(ref sig, _) => sig,
-                    _ => continue
-                };
-                check_method_self_type(ccx,
-                                       &BindingRscope::new(),
-                                       ccx.method_ty(trait_item.id),
-                                       tcx.mk_self_type(),
-                                       &sig.explicit_self,
-                                       it.id)
-            }
         },
         hir::ItemStruct(ref struct_def, _) => {
             let (scheme, predicates) = convert_typed_item(ccx, it);
@@ -1092,10 +986,11 @@ fn convert_struct_variant<'tcx>(tcx: &ty::ctxt<'tcx>,
             hir::NamedField(name, vis) => {
                 let dup_span = seen_fields.get(&name).cloned();
                 if let Some(prev_span) = dup_span {
-                    span_err!(tcx.sess, f.span, E0124,
-                              "field `{}` is already declared",
-                              name);
-                    span_note!(tcx.sess, prev_span, "previously declared here");
+                    let mut err = struct_span_err!(tcx.sess, f.span, E0124,
+                                                   "field `{}` is already declared",
+                                                   name);
+                    span_note!(&mut err, prev_span, "previously declared here");
+                    err.emit();
                 } else {
                     seen_fields.insert(name, f.span);
                 }
@@ -1111,7 +1006,12 @@ fn convert_struct_variant<'tcx>(tcx: &ty::ctxt<'tcx>,
         did: did,
         name: name,
         disr_val: disr_val,
-        fields: fields
+        fields: fields,
+        kind: match *def {
+            hir::VariantData::Struct(..) => ty::VariantKind::Struct,
+            hir::VariantData::Tuple(..) => ty::VariantKind::Tuple,
+            hir::VariantData::Unit(..) => ty::VariantKind::Unit,
+        }
     }
 }
 
@@ -1160,12 +1060,13 @@ fn convert_enum_def<'tcx>(tcx: &ty::ctxt<'tcx>,
                 None
             },
             Err(err) => {
-                span_err!(tcx.sess, err.span, E0080,
-                          "constant evaluation error: {}",
-                          err.description());
+                let mut diag = struct_span_err!(tcx.sess, err.span, E0080,
+                                                "constant evaluation error: {}",
+                                                err.description());
                 if !e.span.contains(err.span) {
-                    tcx.sess.span_note(e.span, "for enum discriminant here");
+                    diag.span_note(e.span, "for enum discriminant here");
                 }
+                diag.emit();
                 None
             }
         }
@@ -1334,13 +1235,14 @@ fn trait_def_of_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
 
     let paren_sugar = tcx.has_attr(def_id, "rustc_paren_sugar");
     if paren_sugar && !ccx.tcx.sess.features.borrow().unboxed_closures {
-        ccx.tcx.sess.span_err(
+        let mut err = ccx.tcx.sess.struct_span_err(
             it.span,
             "the `#[rustc_paren_sugar]` attribute is a temporary means of controlling \
              which traits can use parenthetical notation");
-        fileline_help!(ccx.tcx.sess, it.span,
+        fileline_help!(&mut err, it.span,
                    "add `#![feature(unboxed_closures)]` to \
                     the crate attributes to use it");
+        err.emit();
     }
 
     let substs = ccx.tcx.mk_substs(mk_trait_substs(ccx, generics));
@@ -1359,16 +1261,11 @@ fn trait_def_of_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         substs: substs,
     };
 
-    let trait_def = ty::TraitDef {
-        paren_sugar: paren_sugar,
-        unsafety: unsafety,
-        generics: ty_generics,
-        trait_ref: trait_ref,
-        associated_type_names: associated_type_names,
-        nonblanket_impls: RefCell::new(FnvHashMap()),
-        blanket_impls: RefCell::new(vec![]),
-        flags: Cell::new(ty::TraitFlags::NO_TRAIT_FLAGS)
-    };
+    let trait_def = ty::TraitDef::new(unsafety,
+                                      paren_sugar,
+                                      ty_generics,
+                                      trait_ref,
+                                      associated_type_names);
 
     return tcx.intern_trait_def(trait_def);
 
@@ -1384,7 +1281,6 @@ fn trait_def_of_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                     .iter()
                     .enumerate()
                     .map(|(i, def)| ty::ReEarlyBound(ty::EarlyBoundRegion {
-                        def_id: tcx.map.local_def_id(def.lifetime.id),
                         space: TypeSpace,
                         index: i as u32,
                         name: def.lifetime.name
@@ -1529,12 +1425,17 @@ fn type_scheme_of_def_id<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
 }
 
 fn type_scheme_of_item<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
-                                it: &hir::Item)
+                                item: &hir::Item)
                                 -> ty::TypeScheme<'tcx>
 {
-    memoized(&ccx.tcx.tcache,
-             ccx.tcx.map.local_def_id(it.id),
-             |_| compute_type_scheme_of_item(ccx, it))
+    let item_def_id = ccx.tcx.map.local_def_id(item.id);
+    ccx.tcx.tcache.memoize(item_def_id, || {
+        // NB. Since the `memoized` function enters a new task, and we
+        // are giving this task access to the item `item`, we must
+        // register a read.
+        ccx.tcx.dep_graph.read(DepNode::Hir(item_def_id));
+        compute_type_scheme_of_item(ccx, item)
+    })
 }
 
 fn compute_type_scheme_of_item<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
@@ -1648,13 +1549,18 @@ fn convert_typed_item<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
 
 fn type_scheme_of_foreign_item<'a, 'tcx>(
     ccx: &CrateCtxt<'a, 'tcx>,
-    it: &hir::ForeignItem,
+    item: &hir::ForeignItem,
     abi: abi::Abi)
     -> ty::TypeScheme<'tcx>
 {
-    memoized(&ccx.tcx.tcache,
-             ccx.tcx.map.local_def_id(it.id),
-             |_| compute_type_scheme_of_foreign_item(ccx, it, abi))
+    let item_def_id = ccx.tcx.map.local_def_id(item.id);
+    ccx.tcx.tcache.memoize(item_def_id, || {
+        // NB. Since the `memoized` function enters a new task, and we
+        // are giving this task access to the item `item`, we must
+        // register a read.
+        ccx.tcx.dep_graph.read(DepNode::Hir(item_def_id));
+        compute_type_scheme_of_foreign_item(ccx, item, abi)
+    })
 }
 
 fn compute_type_scheme_of_foreign_item<'a, 'tcx>(
@@ -1859,10 +1765,8 @@ fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
     let early_lifetimes = early_bound_lifetimes_from_generics(space, ast_generics);
     for (index, param) in early_lifetimes.iter().enumerate() {
         let index = index as u32;
-        let def_id = tcx.map.local_def_id(param.lifetime.id);
         let region =
             ty::ReEarlyBound(ty::EarlyBoundRegion {
-                def_id: def_id,
                 space: space,
                 index: index,
                 name: param.lifetime.name
@@ -2011,6 +1915,17 @@ fn get_or_create_type_parameter_def<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                                         &param.bounds, &ast_generics.where_clause);
 
     let parent = tcx.map.get_parent(param.id);
+
+    if space != TypeSpace && default.is_some() {
+        if !tcx.sess.features.borrow().default_type_parameter_fallback {
+            tcx.sess.add_lint(
+                lint::builtin::INVALID_TYPE_PARAM_DEFAULT,
+                param.id,
+                param.span,
+                format!("defaults for type parameters are only allowed on type definitions, \
+                         like `struct` or `enum`"));
+        }
+    }
 
     let def = ty::TypeParameterDef {
         space: space,
@@ -2270,107 +2185,6 @@ fn mk_item_substs<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     Substs::new(types, regions)
 }
 
-/// Verifies that the explicit self type of a method matches the impl
-/// or trait. This is a bit weird but basically because right now we
-/// don't handle the general case, but instead map it to one of
-/// several pre-defined options using various heuristics, this method
-/// comes back to check after the fact that explicit type the user
-/// wrote actually matches what the pre-defined option said.
-fn check_method_self_type<'a, 'tcx, RS:RegionScope>(
-    ccx: &CrateCtxt<'a, 'tcx>,
-    rs: &RS,
-    method_type: Rc<ty::Method<'tcx>>,
-    required_type: Ty<'tcx>,
-    explicit_self: &hir::ExplicitSelf,
-    body_id: ast::NodeId)
-{
-    let tcx = ccx.tcx;
-    if let hir::SelfExplicit(ref ast_type, _) = explicit_self.node {
-        let typ = ccx.icx(&method_type.predicates).to_ty(rs, &**ast_type);
-        let base_type = match typ.sty {
-            ty::TyRef(_, tm) => tm.ty,
-            ty::TyBox(typ) => typ,
-            _ => typ,
-        };
-
-        let body_scope = tcx.region_maps.item_extent(body_id);
-
-        // "Required type" comes from the trait definition. It may
-        // contain late-bound regions from the method, but not the
-        // trait (since traits only have early-bound region
-        // parameters).
-        assert!(!base_type.has_regions_escaping_depth(1));
-        let required_type_free =
-            liberate_early_bound_regions(
-                tcx, body_scope,
-                &tcx.liberate_late_bound_regions(body_scope, &ty::Binder(required_type)));
-
-        // The "base type" comes from the impl. It too may have late-bound
-        // regions from the method.
-        assert!(!base_type.has_regions_escaping_depth(1));
-        let base_type_free =
-            liberate_early_bound_regions(
-                tcx, body_scope,
-                &tcx.liberate_late_bound_regions(body_scope, &ty::Binder(base_type)));
-
-        debug!("required_type={:?} required_type_free={:?} \
-                base_type={:?} base_type_free={:?}",
-               required_type,
-               required_type_free,
-               base_type,
-               base_type_free);
-
-        let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None, false);
-        drop(::require_same_types(tcx,
-                                  Some(&infcx),
-                                  false,
-                                  explicit_self.span,
-                                  base_type_free,
-                                  required_type_free,
-                                  || {
-                format!("mismatched self type: expected `{}`",
-                         required_type)
-        }));
-
-        // We could conceviably add more free-region relations here,
-        // but since this code is just concerned with checking that
-        // the `&Self` types etc match up, it's not really necessary.
-        // It would just allow people to be more approximate in some
-        // cases. In any case, we can do it later as we feel the need;
-        // I'd like this function to go away eventually.
-        let free_regions = FreeRegionMap::new();
-
-        infcx.resolve_regions_and_report_errors(&free_regions, body_id);
-    }
-
-    fn liberate_early_bound_regions<'tcx,T>(
-        tcx: &ty::ctxt<'tcx>,
-        scope: region::CodeExtent,
-        value: &T)
-        -> T
-        where T : TypeFoldable<'tcx>
-    {
-        /*!
-         * Convert early-bound regions into free regions; normally this is done by
-         * applying the `free_substs` from the `ParameterEnvironment`, but this particular
-         * method-self-type check is kind of hacky and done very early in the process,
-         * before we really have a `ParameterEnvironment` to check.
-         */
-
-        tcx.fold_regions(value, &mut false, |region, _| {
-            match region {
-                ty::ReEarlyBound(data) => {
-                    ty::ReFree(ty::FreeRegion {
-                        scope: scope,
-                        bound_region: ty::BrNamed(data.def_id, data.name)
-                    })
-                }
-                _ => region
-            }
-        })
-    }
-}
-
 /// Checks that all the type parameters on an impl
 fn enforce_impl_params_are_constrained<'tcx>(tcx: &ty::ctxt<'tcx>,
                                              ast_generics: &hir::Generics,
@@ -2440,9 +2254,7 @@ fn enforce_impl_lifetimes_are_constrained<'tcx>(tcx: &ty::ctxt<'tcx>,
                   .collect();
 
     for (index, lifetime_def) in ast_generics.lifetimes.iter().enumerate() {
-        let def_id = tcx.map.local_def_id(lifetime_def.lifetime.id);
-        let region = ty::EarlyBoundRegion { def_id: def_id,
-                                            space: TypeSpace,
+        let region = ty::EarlyBoundRegion { space: TypeSpace,
                                             index: index as u32,
                                             name: lifetime_def.lifetime.name };
         if

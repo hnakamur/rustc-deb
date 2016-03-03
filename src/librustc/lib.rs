@@ -14,11 +14,8 @@
 //!
 //! This API is completely unstable and subject to change.
 
-// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
-#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -29,16 +26,12 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(cell_extras)]
-#![feature(clone_from_slice)]
 #![feature(collections)]
 #![feature(const_fn)]
 #![feature(enumset)]
-#![feature(hashmap_hasher)]
-#![feature(into_cow)]
 #![feature(iter_arith)]
 #![feature(libc)]
 #![feature(nonzero)]
-#![feature(num_bits_bytes)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -47,7 +40,6 @@
 #![feature(staged_api)]
 #![feature(str_char)]
 #![feature(time2)]
-#![feature(wrapping)]
 #![cfg_attr(test, feature(test))]
 
 #![allow(trivial_casts)]
@@ -59,6 +51,7 @@ extern crate fmt_macros;
 extern crate getopts;
 extern crate graphviz;
 extern crate libc;
+extern crate rbml;
 extern crate rustc_llvm;
 extern crate rustc_back;
 extern crate rustc_front;
@@ -89,6 +82,8 @@ pub mod back {
     pub use rustc_back::svh;
 }
 
+pub mod dep_graph;
+
 pub mod front {
     pub mod check_attr;
     pub mod map;
@@ -102,7 +97,6 @@ pub mod middle {
     pub mod check_static_recursion;
     pub mod check_loop;
     pub mod check_match;
-    pub mod check_no_asm;
     pub mod check_rvalues;
     pub mod const_eval;
     pub mod cstore;

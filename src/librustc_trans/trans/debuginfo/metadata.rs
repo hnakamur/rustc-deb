@@ -46,7 +46,7 @@ use std::rc::Rc;
 use syntax;
 use syntax::util::interner::Interner;
 use syntax::codemap::Span;
-use syntax::{ast, ast_util, codemap};
+use syntax::{ast, codemap};
 use syntax::parse::token;
 
 
@@ -936,13 +936,13 @@ fn basic_type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         ty::TyBool => ("bool", DW_ATE_boolean),
         ty::TyChar => ("char", DW_ATE_unsigned_char),
         ty::TyInt(int_ty) => {
-            (ast_util::int_ty_to_string(int_ty), DW_ATE_signed)
+            (int_ty.ty_to_string(), DW_ATE_signed)
         },
         ty::TyUint(uint_ty) => {
-            (ast_util::uint_ty_to_string(uint_ty), DW_ATE_unsigned)
+            (uint_ty.ty_to_string(), DW_ATE_unsigned)
         },
         ty::TyFloat(float_ty) => {
-            (ast_util::float_ty_to_string(float_ty), DW_ATE_float)
+            (float_ty.ty_to_string(), DW_ATE_float)
         },
         _ => cx.sess().bug("debuginfo::basic_type_metadata - t is invalid type")
     };
@@ -990,8 +990,8 @@ pub fn compile_unit_metadata(cx: &CrateContext) -> DIDescriptor {
                 cx.sess().warn("debuginfo: Invalid path to crate's local root source file!");
                 fallback_path(cx)
             } else {
-                match abs_path.relative_from(work_dir) {
-                    Some(ref p) if p.is_relative() => {
+                match abs_path.strip_prefix(work_dir) {
+                    Ok(ref p) if p.is_relative() => {
                         if p.starts_with(Path::new("./")) {
                             path2cstr(p)
                         } else {
@@ -1020,7 +1020,7 @@ pub fn compile_unit_metadata(cx: &CrateContext) -> DIDescriptor {
             compile_unit_name,
             work_dir.as_ptr(),
             producer.as_ptr(),
-            cx.sess().opts.optimize != config::No,
+            cx.sess().opts.optimize != config::OptLevel::No,
             flags.as_ptr() as *const _,
             0,
             split_name.as_ptr() as *const _)
@@ -1341,7 +1341,7 @@ impl<'tcx> EnumMemberDescriptionFactory<'tcx> {
                 // DWARF representation of enums uniform.
 
                 // First create a description of the artificial wrapper struct:
-                let non_null_variant = &adt.variants[non_null_variant_index as usize];
+                let non_null_variant = &adt.variants[non_null_variant_index.0 as usize];
                 let non_null_variant_name = non_null_variant.name.as_str();
 
                 // The llvm type and metadata of the pointer
@@ -1389,7 +1389,7 @@ impl<'tcx> EnumMemberDescriptionFactory<'tcx> {
 
                 // Encode the information about the null variant in the union
                 // member's name.
-                let null_variant_index = (1 - non_null_variant_index) as usize;
+                let null_variant_index = (1 - non_null_variant_index.0) as usize;
                 let null_variant_name = adt.variants[null_variant_index].name;
                 let union_member_name = format!("RUST$ENCODED$ENUM${}${}",
                                                 0,
@@ -1415,7 +1415,7 @@ impl<'tcx> EnumMemberDescriptionFactory<'tcx> {
                     describe_enum_variant(cx,
                                           self.enum_type,
                                           struct_def,
-                                          &adt.variants[nndiscr as usize],
+                                          &adt.variants[nndiscr.0 as usize],
                                           OptimizedDiscriminant,
                                           self.containing_scope,
                                           self.span);
@@ -1430,7 +1430,7 @@ impl<'tcx> EnumMemberDescriptionFactory<'tcx> {
 
                 // Encode the information about the null variant in the union
                 // member's name.
-                let null_variant_index = (1 - nndiscr) as usize;
+                let null_variant_index = (1 - nndiscr.0) as usize;
                 let null_variant_name = adt.variants[null_variant_index].name;
                 let discrfield = discrfield.iter()
                                            .skip(1)

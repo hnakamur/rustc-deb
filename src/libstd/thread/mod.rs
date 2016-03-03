@@ -191,7 +191,10 @@ pub use self::local::{LocalKey, LocalKeyState};
 pub use self::scoped_tls::ScopedKey;
 
 #[unstable(feature = "libstd_thread_internals", issue = "0")]
-#[doc(hidden)] pub use self::local::__KeyInner as __LocalKeyInner;
+#[cfg(target_thread_local)]
+#[doc(hidden)] pub use self::local::elf::Key as __ElfLocalKeyInner;
+#[unstable(feature = "libstd_thread_internals", issue = "0")]
+#[doc(hidden)] pub use self::local::os::Key as __OsLocalKeyInner;
 #[unstable(feature = "libstd_thread_internals", issue = "0")]
 #[doc(hidden)] pub use self::scoped_tls::__KeyInner as __ScopedKeyInner;
 
@@ -355,26 +358,9 @@ pub fn panicking() -> bool {
 /// with exception safety. Furthermore, a `Send` bound is also required,
 /// providing the same safety guarantees as `thread::spawn` (ensuring the
 /// closure is properly isolated from the parent).
-///
-/// # Examples
-///
-/// ```
-/// #![feature(catch_panic)]
-///
-/// use std::thread;
-///
-/// let result = thread::catch_panic(|| {
-///     println!("hello!");
-/// });
-/// assert!(result.is_ok());
-///
-/// let result = thread::catch_panic(|| {
-///     panic!("oh no!");
-/// });
-/// assert!(result.is_err());
-/// ```
 #[unstable(feature = "catch_panic", reason = "recent API addition",
            issue = "27719")]
+#[rustc_deprecated(since = "1.6.0", reason = "renamed to std::panic::recover")]
 pub fn catch_panic<F, R>(f: F) -> Result<R>
     where F: FnOnce() -> R + Send + 'static
 {
@@ -844,14 +830,14 @@ mod tests {
     fn test_park_timeout_unpark_before() {
         for _ in 0..10 {
             thread::current().unpark();
-            thread::park_timeout_ms(u32::MAX);
+            thread::park_timeout(Duration::from_millis(u32::MAX as u64));
         }
     }
 
     #[test]
     fn test_park_timeout_unpark_not_called() {
         for _ in 0..10 {
-            thread::park_timeout_ms(10);
+            thread::park_timeout(Duration::from_millis(10));
         }
     }
 
@@ -861,17 +847,17 @@ mod tests {
             let th = thread::current();
 
             let _guard = thread::spawn(move || {
-                super::sleep_ms(50);
+                super::sleep(Duration::from_millis(50));
                 th.unpark();
             });
 
-            thread::park_timeout_ms(u32::MAX);
+            thread::park_timeout(Duration::from_millis(u32::MAX as u64));
         }
     }
 
     #[test]
     fn sleep_ms_smoke() {
-        thread::sleep_ms(2);
+        thread::sleep(Duration::from_millis(2));
     }
 
     // NOTE: the corresponding test for stderr is in run-pass/thread-stderr, due

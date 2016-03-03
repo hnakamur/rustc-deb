@@ -19,9 +19,7 @@ use hair::*;
 use rustc::mir::repr::*;
 
 use rustc::middle::const_eval::{self, ConstVal};
-use rustc::middle::def_id::DefId;
 use rustc::middle::infer::InferCtxt;
-use rustc::middle::subst::{Subst, Substs};
 use rustc::middle::ty::{self, Ty};
 use syntax::codemap::Span;
 use syntax::parse::token;
@@ -48,10 +46,6 @@ impl<'a,'tcx:'a> Cx<'a, 'tcx> {
         ast.make_mirror(self)
     }
 
-    pub fn unit_ty(&mut self) -> Ty<'tcx> {
-        self.tcx.mk_nil()
-    }
-
     pub fn usize_ty(&mut self) -> Ty<'tcx> {
         self.tcx.types.usize
     }
@@ -62,6 +56,10 @@ impl<'a,'tcx:'a> Cx<'a, 'tcx> {
 
     pub fn bool_ty(&mut self) -> Ty<'tcx> {
         self.tcx.types.bool
+    }
+
+    pub fn str_literal(&mut self, value: token::InternedString) -> Literal<'tcx> {
+        Literal::Value { value: ConstVal::Str(value) }
     }
 
     pub fn true_literal(&mut self) -> Literal<'tcx> {
@@ -76,14 +74,11 @@ impl<'a,'tcx:'a> Cx<'a, 'tcx> {
         Literal::Value { value: const_eval::eval_const_expr(self.tcx, e) }
     }
 
-    pub fn partial_eq(&mut self, ty: Ty<'tcx>) -> ItemRef<'tcx> {
-        let eq_def_id = self.tcx.lang_items.eq_trait().unwrap();
-        self.cmp_method_ref(eq_def_id, "eq", ty)
-    }
-
-    pub fn partial_le(&mut self, ty: Ty<'tcx>) -> ItemRef<'tcx> {
-        let ord_def_id = self.tcx.lang_items.ord_trait().unwrap();
-        self.cmp_method_ref(ord_def_id, "le", ty)
+    pub fn try_const_eval_literal(&mut self, e: &hir::Expr) -> Option<Literal<'tcx>> {
+        let hint = const_eval::EvalHint::ExprTypeChecked;
+        const_eval::eval_const_expr_partial(self.tcx, e, hint, None)
+            .ok()
+            .map(|v| Literal::Value { value: v })
     }
 
     pub fn num_variants(&mut self, adt_def: ty::AdtDef<'tcx>) -> usize {
@@ -96,17 +91,8 @@ impl<'a,'tcx:'a> Cx<'a, 'tcx> {
             .collect()
     }
 
-    pub fn needs_drop(&mut self, ty: Ty<'tcx>, span: Span) -> bool {
-        if self.infcx.type_moves_by_default(ty, span) {
-            // FIXME(#21859) we should do an add'l check here to determine if
-            // any dtor will execute, but the relevant fn
-            // (`type_needs_drop`) is currently factored into
-            // `librustc_trans`, so we can't easily do so.
-            true
-        } else {
-            // if type implements Copy, cannot require drop
-            false
-        }
+    pub fn needs_drop(&mut self, ty: Ty<'tcx>) -> bool {
+        self.tcx.type_needs_drop_given_env(ty, &self.infcx.parameter_environment)
     }
 
     pub fn span_bug(&mut self, span: Span, message: &str) -> ! {
@@ -115,34 +101,6 @@ impl<'a,'tcx:'a> Cx<'a, 'tcx> {
 
     pub fn tcx(&self) -> &'a ty::ctxt<'tcx> {
         self.tcx
-    }
-
-    fn cmp_method_ref(&mut self,
-                      trait_def_id: DefId,
-                      method_name: &str,
-                      arg_ty: Ty<'tcx>)
-                      -> ItemRef<'tcx> {
-        let method_name = token::intern(method_name);
-        let substs = Substs::new_trait(vec![arg_ty], vec![], arg_ty);
-        for trait_item in self.tcx.trait_items(trait_def_id).iter() {
-            match *trait_item {
-                ty::ImplOrTraitItem::MethodTraitItem(ref method) => {
-                    if method.name == method_name {
-                        let method_ty = self.tcx.lookup_item_type(method.def_id);
-                        let method_ty = method_ty.ty.subst(self.tcx, &substs);
-                        return ItemRef {
-                            ty: method_ty,
-                            def_id: method.def_id,
-                            substs: self.tcx.mk_substs(substs),
-                        };
-                    }
-                }
-                ty::ImplOrTraitItem::ConstTraitItem(..) |
-                ty::ImplOrTraitItem::TypeTraitItem(..) => {}
-            }
-        }
-
-        self.tcx.sess.bug(&format!("found no method `{}` in `{:?}`", method_name, trait_def_id));
     }
 }
 
