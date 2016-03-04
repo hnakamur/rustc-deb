@@ -1,3 +1,9 @@
+rustc (1.7.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 03 Mar 2016 22:41:24 +0100
+
 rustc (1.6.0+dfsg1-3) unstable; urgency=medium
 
   * Apply upstream fix to silent a valgrind issue in the test suite
