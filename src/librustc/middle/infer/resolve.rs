@@ -9,8 +9,7 @@
 // except according to those terms.
 
 use super::{InferCtxt, FixupError, FixupResult};
-use middle::ty::{self, Ty, HasTypeFlags};
-use middle::ty::fold::{TypeFoldable};
+use middle::ty::{self, Ty, TypeFoldable};
 
 ///////////////////////////////////////////////////////////////////////////
 // OPPORTUNISTIC TYPE RESOLVER
@@ -40,7 +39,42 @@ impl<'a, 'tcx> ty::fold::TypeFolder<'tcx> for OpportunisticTypeResolver<'a, 'tcx
             t // micro-optimize -- if there is nothing in this type that this fold affects...
         } else {
             let t0 = self.infcx.shallow_resolve(t);
-            ty::fold::super_fold_ty(self, t0)
+            t0.super_fold_with(self)
+        }
+    }
+}
+
+/// The opportunistic type and region resolver is similar to the
+/// opportunistic type resolver, but also opportunistly resolves
+/// regions. It is useful for canonicalization.
+pub struct OpportunisticTypeAndRegionResolver<'a, 'tcx:'a> {
+    infcx: &'a InferCtxt<'a, 'tcx>,
+}
+
+impl<'a, 'tcx> OpportunisticTypeAndRegionResolver<'a, 'tcx> {
+    pub fn new(infcx: &'a InferCtxt<'a, 'tcx>) -> Self {
+        OpportunisticTypeAndRegionResolver { infcx: infcx }
+    }
+}
+
+impl<'a, 'tcx> ty::fold::TypeFolder<'tcx> for OpportunisticTypeAndRegionResolver<'a, 'tcx> {
+    fn tcx(&self) -> &ty::ctxt<'tcx> {
+        self.infcx.tcx
+    }
+
+    fn fold_ty(&mut self, t: Ty<'tcx>) -> Ty<'tcx> {
+        if !t.needs_infer() {
+            t // micro-optimize -- if there is nothing in this type that this fold affects...
+        } else {
+            let t0 = self.infcx.shallow_resolve(t);
+            t0.super_fold_with(self)
+        }
+    }
+
+    fn fold_region(&mut self, r: ty::Region) -> ty::Region {
+        match r {
+          ty::ReVar(rid) => self.infcx.region_vars.opportunistic_resolve_var(rid),
+          _ => r,
         }
     }
 }
@@ -98,7 +132,7 @@ impl<'a, 'tcx> ty::fold::TypeFolder<'tcx> for FullTypeResolver<'a, 'tcx> {
                                 t));
                 }
                 _ => {
-                    ty::fold::super_fold_ty(self, t)
+                    t.super_fold_with(self)
                 }
             }
         }

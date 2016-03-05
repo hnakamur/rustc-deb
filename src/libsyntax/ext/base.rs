@@ -14,6 +14,7 @@ use ast;
 use ast::Name;
 use codemap;
 use codemap::{CodeMap, Span, ExpnId, ExpnInfo, NO_EXPANSION};
+use errors::DiagnosticBuilder;
 use ext;
 use ext::expand;
 use ext::tt::macro_rules;
@@ -24,7 +25,7 @@ use parse::token;
 use parse::token::{InternedString, intern, str_to_ident};
 use ptr::P;
 use util::small_vector::SmallVector;
-use util::lev_distance::{lev_distance, max_suggestion_distance};
+use util::lev_distance::find_best_match_for_name;
 use ext::mtwt;
 use fold::Folder;
 
@@ -464,26 +465,6 @@ fn initial_syntax_expander_table<'feat>(ecfg: &expand::ExpansionConfig<'feat>)
 
     let mut syntax_expanders = SyntaxEnv::new();
     syntax_expanders.insert(intern("macro_rules"), MacroRulesTT);
-    syntax_expanders.insert(intern("format_args"),
-                            // format_args uses `unstable` things internally.
-                            NormalTT(Box::new(ext::format::expand_format_args), None, true));
-    syntax_expanders.insert(intern("env"),
-                            builtin_normal_expander(
-                                    ext::env::expand_env));
-    syntax_expanders.insert(intern("option_env"),
-                            builtin_normal_expander(
-                                    ext::env::expand_option_env));
-    syntax_expanders.insert(intern("concat_idents"),
-                            builtin_normal_expander(
-                                    ext::concat_idents::expand_syntax_ext));
-    syntax_expanders.insert(intern("concat"),
-                            builtin_normal_expander(
-                                    ext::concat::expand_syntax_ext));
-    syntax_expanders.insert(intern("log_syntax"),
-                            builtin_normal_expander(
-                                    ext::log_syntax::expand_syntax_ext));
-
-    ext::deriving::register_all(&mut syntax_expanders);
 
     if ecfg.enable_quotes() {
         // Quasi-quoting expanders
@@ -552,15 +533,6 @@ fn initial_syntax_expander_table<'feat>(ecfg: &expand::ExpansionConfig<'feat>)
     syntax_expanders.insert(intern("module_path"),
                             builtin_normal_expander(
                                     ext::source_util::expand_mod));
-    syntax_expanders.insert(intern("asm"),
-                            builtin_normal_expander(
-                                    ext::asm::expand_asm));
-    syntax_expanders.insert(intern("cfg"),
-                            builtin_normal_expander(
-                                    ext::cfg::expand_cfg));
-    syntax_expanders.insert(intern("trace_macros"),
-                            builtin_normal_expander(
-                                    ext::trace_macros::expand_trace_macros));
     syntax_expanders
 }
 
@@ -599,13 +571,6 @@ impl<'a> ExtCtxt<'a> {
             syntax_env: env,
             recursion_count: 0,
         }
-    }
-
-    #[unstable(feature = "rustc_private", issue = "0")]
-    #[rustc_deprecated(since = "1.0.0",
-                 reason = "Replaced with `expander().fold_expr()`")]
-    pub fn expand_expr(&mut self, e: P<ast::Expr>) -> P<ast::Expr> {
-        self.expander().fold_expr(e)
     }
 
     /// Returns a `Folder` for deeply expanding all macros in an AST node.
@@ -714,6 +679,25 @@ impl<'a> ExtCtxt<'a> {
         }
     }
 
+    pub fn struct_span_warn(&self,
+                            sp: Span,
+                            msg: &str)
+                            -> DiagnosticBuilder<'a> {
+        self.parse_sess.span_diagnostic.struct_span_warn(sp, msg)
+    }
+    pub fn struct_span_err(&self,
+                           sp: Span,
+                           msg: &str)
+                           -> DiagnosticBuilder<'a> {
+        self.parse_sess.span_diagnostic.struct_span_err(sp, msg)
+    }
+    pub fn struct_span_fatal(&self,
+                             sp: Span,
+                             msg: &str)
+                             -> DiagnosticBuilder<'a> {
+        self.parse_sess.span_diagnostic.struct_span_fatal(sp, msg)
+    }
+
     /// Emit `msg` attached to `sp`, and stop compilation immediately.
     ///
     /// `span_err` should be strongly preferred where-ever possible:
@@ -746,17 +730,8 @@ impl<'a> ExtCtxt<'a> {
     pub fn span_bug(&self, sp: Span, msg: &str) -> ! {
         self.parse_sess.span_diagnostic.span_bug(sp, msg);
     }
-    pub fn span_note(&self, sp: Span, msg: &str) {
-        self.parse_sess.span_diagnostic.span_note(sp, msg);
-    }
-    pub fn span_help(&self, sp: Span, msg: &str) {
-        self.parse_sess.span_diagnostic.span_help(sp, msg);
-    }
-    pub fn fileline_help(&self, sp: Span, msg: &str) {
-        self.parse_sess.span_diagnostic.fileline_help(sp, msg);
-    }
     pub fn bug(&self, msg: &str) -> ! {
-        self.parse_sess.span_diagnostic.handler().bug(msg);
+        self.parse_sess.span_diagnostic.bug(msg);
     }
     pub fn trace_macros(&self) -> bool {
         self.ecfg.trace_mac
@@ -779,17 +754,13 @@ impl<'a> ExtCtxt<'a> {
         token::intern(st)
     }
 
-    pub fn suggest_macro_name(&mut self, name: &str, span: Span) {
-        let mut min: Option<(Name, usize)> = None;
-        let max_dist = max_suggestion_distance(name);
-        for macro_name in self.syntax_env.names.iter() {
-            let dist = lev_distance(name, &macro_name.as_str());
-            if dist <= max_dist && (min.is_none() || min.unwrap().1 > dist) {
-                min = Some((*macro_name, dist));
-            }
-        }
-        if let Some((suggestion, _)) = min {
-            self.fileline_help(span, &format!("did you mean `{}!`?", suggestion));
+    pub fn suggest_macro_name(&mut self,
+                              name: &str,
+                              span: Span,
+                              err: &mut DiagnosticBuilder<'a>) {
+        let names = &self.syntax_env.names;
+        if let Some(suggestion) = find_best_match_for_name(names.iter(), name, None) {
+            err.fileline_help(span, &format!("did you mean `{}!`?", suggestion));
         }
     }
 }
@@ -855,7 +826,7 @@ pub fn get_exprs_from_tts(cx: &mut ExtCtxt,
     let mut es = Vec::new();
     while p.token != token::Eof {
         es.push(cx.expander().fold_expr(panictry!(p.parse_expr())));
-        if panictry!(p.eat(&token::Comma)){
+        if p.eat(&token::Comma) {
             continue;
         }
         if p.token != token::Eof {

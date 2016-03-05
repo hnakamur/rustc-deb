@@ -66,7 +66,7 @@
 //! // to each node. This implementation isn't memory-efficient as it may leave duplicate
 //! // nodes in the queue. It also uses `usize::MAX` as a sentinel value,
 //! // for a simpler implementation.
-//! fn shortest_path(adj_list: &Vec<Vec<Edge>>, start: usize, goal: usize) -> usize {
+//! fn shortest_path(adj_list: &Vec<Vec<Edge>>, start: usize, goal: usize) -> Option<usize> {
 //!     // dist[node] = current shortest distance from `start` to `node`
 //!     let mut dist: Vec<_> = (0..adj_list.len()).map(|_| usize::MAX).collect();
 //!
@@ -79,7 +79,7 @@
 //!     // Examine the frontier with lower cost nodes first (min-heap)
 //!     while let Some(State { cost, position }) = heap.pop() {
 //!         // Alternatively we could have continued to find all shortest paths
-//!         if position == goal { return cost; }
+//!         if position == goal { return Some(cost); }
 //!
 //!         // Important as we may have already found a better way
 //!         if cost > dist[position] { continue; }
@@ -99,7 +99,7 @@
 //!     }
 //!
 //!     // Goal not reachable
-//!     usize::MAX
+//!     None
 //! }
 //!
 //! fn main() {
@@ -140,11 +140,11 @@
 //!         // Node 4
 //!         vec![]];
 //!
-//!     assert_eq!(shortest_path(&graph, 0, 1), 1);
-//!     assert_eq!(shortest_path(&graph, 0, 3), 3);
-//!     assert_eq!(shortest_path(&graph, 3, 0), 7);
-//!     assert_eq!(shortest_path(&graph, 0, 4), 5);
-//!     assert_eq!(shortest_path(&graph, 4, 0), usize::MAX);
+//!     assert_eq!(shortest_path(&graph, 0, 1), Some(1));
+//!     assert_eq!(shortest_path(&graph, 0, 3), Some(3));
+//!     assert_eq!(shortest_path(&graph, 3, 0), Some(7));
+//!     assert_eq!(shortest_path(&graph, 0, 4), Some(5));
+//!     assert_eq!(shortest_path(&graph, 4, 0), None);
 //! }
 //! ```
 
@@ -228,26 +228,6 @@ impl<T: Ord> BinaryHeap<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn with_capacity(capacity: usize) -> BinaryHeap<T> {
         BinaryHeap { data: Vec::with_capacity(capacity) }
-    }
-
-    /// Creates a `BinaryHeap` from a vector. This is sometimes called
-    /// `heapifying` the vector.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(binary_heap_extras)]
-    /// # #![allow(deprecated)]
-    ///
-    /// use std::collections::BinaryHeap;
-    /// let heap = BinaryHeap::from_vec(vec![9, 1, 2, 7, 3, 2]);
-    /// ```
-    #[unstable(feature = "binary_heap_extras",
-               reason = "needs to be audited",
-               issue = "28147")]
-    #[rustc_deprecated(since = "1.5.0", reason = "use BinaryHeap::from instead")]
-    pub fn from_vec(vec: Vec<T>) -> BinaryHeap<T> {
-        BinaryHeap::from(vec)
     }
 
     /// Returns an iterator visiting all values in the underlying vector, in
@@ -374,7 +354,7 @@ impl<T: Ord> BinaryHeap<T> {
         self.data.pop().map(|mut item| {
             if !self.is_empty() {
                 swap(&mut item, &mut self.data[0]);
-                self.sift_down(0);
+                self.sift_down_to_bottom(0);
             }
             item
         })
@@ -563,6 +543,31 @@ impl<T: Ord> BinaryHeap<T> {
     fn sift_down(&mut self, pos: usize) {
         let len = self.len();
         self.sift_down_range(pos, len);
+    }
+
+    /// Take an element at `pos` and move it all the way down the heap,
+    /// then sift it up to its position.
+    ///
+    /// Note: This is faster when the element is known to be large / should
+    /// be closer to the bottom.
+    fn sift_down_to_bottom(&mut self, mut pos: usize) {
+        let end = self.len();
+        let start = pos;
+        unsafe {
+            let mut hole = Hole::new(&mut self.data, pos);
+            let mut child = 2 * pos + 1;
+            while child < end {
+                let right = child + 1;
+                // compare with the greater of the two children
+                if right < end && !(hole.get(child) > hole.get(right)) {
+                    child = right;
+                }
+                hole.move_to(child);
+                child = 2 * hole.pos() + 1;
+            }
+            pos = hole.pos;
+        }
+        self.sift_up(start, pos);
     }
 
     /// Returns the length of the binary heap.

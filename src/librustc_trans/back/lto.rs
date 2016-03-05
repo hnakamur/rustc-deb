@@ -29,8 +29,9 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
            name_extra: &str,
            output_names: &config::OutputFilenames) {
     if sess.opts.cg.prefer_dynamic {
-        sess.err("cannot prefer dynamic linking when performing LTO");
-        sess.note("only 'staticlib' and 'bin' outputs are supported with LTO");
+        sess.struct_err("cannot prefer dynamic linking when performing LTO")
+            .note("only 'staticlib' and 'bin' outputs are supported with LTO")
+            .emit();
         sess.abort_if_errors();
     }
 
@@ -101,7 +102,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
                 if !llvm::LLVMRustLinkInExternalBitcode(llmod,
                                                         ptr as *const libc::c_char,
                                                         bc_decoded.len() as libc::size_t) {
-                    write::llvm_err(sess.diagnostic().handler(),
+                    write::llvm_err(sess.diagnostic(),
                                     format!("failed to load bc of `{}`",
                                             &name[..]));
                 }

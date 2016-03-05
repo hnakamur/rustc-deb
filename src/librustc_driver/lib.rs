@@ -14,11 +14,8 @@
 //!
 //! This API is completely unstable and subject to change.
 
-// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
-#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustc_driver"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -32,7 +29,6 @@
 #![feature(rustc_private)]
 #![feature(set_stdio)]
 #![feature(staged_api)]
-#![feature(raw)] // remove after snapshot
 
 extern crate arena;
 extern crate flate;
@@ -42,6 +38,7 @@ extern crate libc;
 extern crate rustc;
 extern crate rustc_back;
 extern crate rustc_borrowck;
+extern crate rustc_passes;
 extern crate rustc_front;
 extern crate rustc_lint;
 extern crate rustc_plugin;
@@ -57,8 +54,7 @@ extern crate rustc_llvm as llvm;
 extern crate log;
 #[macro_use]
 extern crate syntax;
-
-pub use syntax::diagnostic;
+extern crate syntax_ext;
 
 use driver::CompileController;
 use pretty::{PpMode, UserIdentifiedItem};
@@ -67,7 +63,7 @@ use rustc_resolve as resolve;
 use rustc_trans::back::link;
 use rustc_trans::save;
 use rustc::session::{config, Session, build_session};
-use rustc::session::config::{Input, PrintRequest, OutputType};
+use rustc::session::config::{Input, PrintRequest, OutputType, ErrorOutputType};
 use rustc::middle::cstore::CrateStore;
 use rustc::lint::Lint;
 use rustc::lint;
@@ -75,7 +71,9 @@ use rustc_metadata::loader;
 use rustc_metadata::cstore::CStore;
 use rustc::util::common::time;
 
+use std::cmp::max;
 use std::cmp::Ordering::Equal;
+use std::default::Default;
 use std::env;
 use std::io::{self, Read, Write};
 use std::iter::repeat;
@@ -90,7 +88,8 @@ use rustc::session::early_error;
 
 use syntax::ast;
 use syntax::parse;
-use syntax::diagnostic::Emitter;
+use syntax::errors;
+use syntax::errors::emitter::Emitter;
 use syntax::diagnostics;
 use syntax::parse::token;
 
@@ -104,24 +103,6 @@ pub mod target_features;
 
 const BUG_REPORT_URL: &'static str = "https://github.com/rust-lang/rust/blob/master/CONTRIBUTING.\
                                       md#bug-reports";
-
-// SNAP 1af31d4
-// This is a terrible hack. Our stage0 is older than 1.4 and does not
-// support DST coercions, so this function performs the corecion
-// manually. This should go away.
-pub fn cstore_to_cratestore(a: Rc<CStore>) -> Rc<for<'s> CrateStore<'s>>
-{
-    use std::mem;
-    use std::raw::TraitObject;
-    unsafe {
-        let TraitObject { vtable, .. } =
-            mem::transmute::<&for<'s> CrateStore<'s>, TraitObject>(&*a);
-        mem::transmute(TraitObject {
-            data: mem::transmute(a),
-            vtable: vtable
-        })
-    }
-}
 
 pub fn run(args: Vec<String>) -> isize {
     monitor(move || run_compiler(&args, &mut RustcDefaultCalls));
@@ -147,7 +128,7 @@ pub fn run_compiler<'a>(args: &[String], callbacks: &mut CompilerCalls<'a>) {
 
     let descriptions = diagnostics_registry();
 
-    do_or_return!(callbacks.early_callback(&matches, &descriptions, sopts.color));
+    do_or_return!(callbacks.early_callback(&matches, &descriptions, sopts.error_format));
 
     let (odir, ofile) = make_output(&matches);
     let (input, input_file_path) = match make_input(&matches.free) {
@@ -159,12 +140,9 @@ pub fn run_compiler<'a>(args: &[String], callbacks: &mut CompilerCalls<'a>) {
     };
 
     let cstore = Rc::new(CStore::new(token::get_ident_interner()));
-    let cstore_ = cstore_to_cratestore(cstore.clone());
-    let mut sess = build_session(sopts, input_file_path, descriptions, cstore_);
+    let sess = build_session(sopts, input_file_path, descriptions,
+                                 cstore.clone());
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
-    if sess.unstable_options() {
-        sess.opts.show_span = matches.opt_str("show-span");
-    }
     let mut cfg = config::build_configuration(&sess);
     target_features::add_configuration(&mut cfg, &sess);
 
@@ -238,7 +216,7 @@ pub trait CompilerCalls<'a> {
     fn early_callback(&mut self,
                       _: &getopts::Matches,
                       _: &diagnostics::registry::Registry,
-                      _: diagnostic::ColorConfig)
+                      _: ErrorOutputType)
                       -> Compilation {
         Compilation::Continue
     }
@@ -314,7 +292,7 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
     fn early_callback(&mut self,
                       matches: &getopts::Matches,
                       descriptions: &diagnostics::registry::Registry,
-                      color: diagnostic::ColorConfig)
+                      output: ErrorOutputType)
                       -> Compilation {
         match matches.opt_str("explain") {
             Some(ref code) => {
@@ -329,7 +307,7 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                         print!("{}", &description[1..]);
                     }
                     None => {
-                        early_error(color, &format!("no extended information for {}", code));
+                        early_error(output, &format!("no extended information for {}", code));
                     }
                 }
                 return Compilation::Stop;
@@ -356,17 +334,17 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                     return None;
                 }
                 let cstore = Rc::new(CStore::new(token::get_ident_interner()));
-                let cstore_ = cstore_to_cratestore(cstore.clone());
-                let sess = build_session(sopts.clone(), None, descriptions.clone(), cstore_);
+                let sess = build_session(sopts.clone(), None, descriptions.clone(),
+                                         cstore.clone());
                 rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
                 let should_stop = RustcDefaultCalls::print_crate_info(&sess, None, odir, ofile);
                 if should_stop == Compilation::Stop {
                     return None;
                 }
-                early_error(sopts.color, "no input filename given");
+                early_error(sopts.error_format, "no input filename given");
             }
             1 => panic!("make_input should have provided valid inputs"),
-            _ => early_error(sopts.color, "multiple input filenames provided"),
+            _ => early_error(sopts.error_format, "multiple input filenames provided"),
         }
 
         None
@@ -408,7 +386,7 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
     fn build_controller(&mut self, sess: &Session) -> CompileController<'a> {
         let mut control = CompileController::basic();
 
-        if sess.opts.parse_only || sess.opts.show_span.is_some() ||
+        if sess.opts.parse_only || sess.opts.debugging_opts.show_span.is_some() ||
            sess.opts.debugging_opts.ast_json_noexpand {
             control.after_parse.stop = Compilation::Stop;
         }
@@ -456,7 +434,7 @@ impl RustcDefaultCalls {
                     println!("{}", String::from_utf8(v).unwrap());
                 }
                 &Input::Str(_) => {
-                    early_error(sess.opts.color, "cannot list metadata for stdin");
+                    early_error(ErrorOutputType::default(), "cannot list metadata for stdin");
                 }
             }
             return Compilation::Stop;
@@ -483,7 +461,7 @@ impl RustcDefaultCalls {
                 PrintRequest::CrateName => {
                     let input = match input {
                         Some(input) => input,
-                        None => early_error(sess.opts.color, "no input file provided"),
+                        None => early_error(ErrorOutputType::default(), "no input file provided"),
                     };
                     let attrs = attrs.as_ref().unwrap();
                     let t_outputs = driver::build_output_filenames(input, odir, ofile, attrs, sess);
@@ -649,11 +627,13 @@ Available lint options:
 
 
 
-    let max_name_len = plugin_groups.iter()
-                                    .chain(&builtin_groups)
-                                    .map(|&(s, _)| s.chars().count())
-                                    .max()
-                                    .unwrap_or(0);
+    let max_name_len = max("warnings".len(),
+                           plugin_groups.iter()
+                                        .chain(&builtin_groups)
+                                        .map(|&(s, _)| s.chars().count())
+                                        .max()
+                                        .unwrap_or(0));
+
     let padded = |x: &str| {
         let mut s = repeat(" ")
                         .take(max_name_len - x.chars().count())
@@ -665,6 +645,7 @@ Available lint options:
     println!("Lint groups provided by rustc:\n");
     println!("    {}  {}", padded("name"), "sub-lints");
     println!("    {}  {}", padded("----"), "---------");
+    println!("    {}  {}", padded("warnings"), "all built-in lints");
 
     let print_lint_groups = |lints: Vec<(&'static str, Vec<lint::LintId>)>| {
         for (name, to) in lints {
@@ -773,7 +754,7 @@ pub fn handle_options(mut args: Vec<String>) -> Option<getopts::Matches> {
                             &opt.opt_group.short_name
                         };
                         if m.opt_present(opt_name) {
-                            early_error(diagnostic::Auto,
+                            early_error(ErrorOutputType::default(),
                                         &format!("use of unstable option '{}' requires -Z \
                                                   unstable-options",
                                                  opt_name));
@@ -782,7 +763,7 @@ pub fn handle_options(mut args: Vec<String>) -> Option<getopts::Matches> {
                 }
                 m
             }
-            Err(f) => early_error(diagnostic::Auto, &f.to_string()),
+            Err(f) => early_error(ErrorOutputType::default(), &f.to_string()),
         }
     }
 
@@ -894,25 +875,25 @@ pub fn monitor<F: FnOnce() + Send + 'static>(f: F) {
         }
         Err(value) => {
             // Thread panicked without emitting a fatal diagnostic
-            if !value.is::<diagnostic::FatalError>() {
-                let mut emitter = diagnostic::EmitterWriter::stderr(diagnostic::Auto, None);
+            if !value.is::<errors::FatalError>() {
+                let mut emitter = errors::emitter::BasicEmitter::stderr(errors::ColorConfig::Auto);
 
                 // a .span_bug or .bug call has already printed what
                 // it wants to print.
-                if !value.is::<diagnostic::ExplicitBug>() {
-                    emitter.emit(None, "unexpected panic", None, diagnostic::Bug);
+                if !value.is::<errors::ExplicitBug>() {
+                    emitter.emit(None, "unexpected panic", None, errors::Level::Bug);
                 }
 
                 let xs = ["the compiler unexpectedly panicked. this is a bug.".to_string(),
                           format!("we would appreciate a bug report: {}", BUG_REPORT_URL)];
                 for note in &xs {
-                    emitter.emit(None, &note[..], None, diagnostic::Note)
+                    emitter.emit(None, &note[..], None, errors::Level::Note)
                 }
                 if let None = env::var_os("RUST_BACKTRACE") {
                     emitter.emit(None,
                                  "run with `RUST_BACKTRACE=1` for a backtrace",
                                  None,
-                                 diagnostic::Note);
+                                 errors::Level::Note);
                 }
 
                 println!("{}", str::from_utf8(&data.lock().unwrap()).unwrap());

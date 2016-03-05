@@ -62,11 +62,9 @@ independently:
 This API is completely unstable and subject to change.
 
 */
-// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
-#![cfg_attr(stage0, feature(custom_attribute))]
+
 #![crate_name = "rustc_typeck"]
 #![unstable(feature = "rustc_private", issue = "27812")]
-#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -94,6 +92,7 @@ extern crate rustc_platform_intrinsics as intrinsics;
 extern crate rustc_front;
 extern crate rustc_back;
 
+pub use rustc::dep_graph;
 pub use rustc::front;
 pub use rustc::lint;
 pub use rustc::middle;
@@ -104,13 +103,12 @@ use front::map as hir_map;
 use middle::def;
 use middle::infer::{self, TypeOrigin};
 use middle::subst;
-use middle::ty::{self, Ty, HasTypeFlags};
+use middle::ty::{self, Ty, TypeFoldable};
 use session::config;
 use util::common::time;
 use rustc_front::hir;
 
 use syntax::codemap::Span;
-use syntax::print::pprust::*;
 use syntax::{ast, abi};
 
 use std::cell::RefCell;
@@ -206,8 +204,9 @@ fn require_same_types<'a, 'tcx, M>(tcx: &ty::ctxt<'tcx>,
     match result {
         Ok(_) => true,
         Err(ref terr) => {
-            span_err!(tcx.sess, span, E0211, "{}: {}", msg(), terr);
-            tcx.note_and_explain_type_err(terr, span);
+            let mut err = struct_span_err!(tcx.sess, span, E0211, "{}: {}", msg(), terr);
+            tcx.note_and_explain_type_err(&mut err, terr, span);
+            err.emit();
             false
         }
     }
@@ -331,21 +330,24 @@ pub fn check_crate(tcx: &ty::ctxt, trait_map: ty::TraitMap) {
         tcx: tcx
     };
 
-    time(time_passes, "type collecting", ||
-         collect::collect_item_types(tcx));
-
     // this ensures that later parts of type checking can assume that items
     // have valid types and not error
-    tcx.sess.abort_if_errors();
+    tcx.sess.abort_if_new_errors(|| {
+        time(time_passes, "type collecting", ||
+             collect::collect_item_types(tcx));
+
+    });
 
     time(time_passes, "variance inference", ||
          variance::infer_variance(tcx));
 
-    time(time_passes, "coherence checking", ||
-        coherence::check_coherence(&ccx));
+    tcx.sess.abort_if_new_errors(|| {
+      time(time_passes, "coherence checking", ||
+          coherence::check_coherence(&ccx));
+    });
 
-    time(time_passes, "wf checking (old)", ||
-        check::check_wf_old(&ccx));
+    time(time_passes, "wf checking", ||
+        check::check_wf_new(&ccx));
 
     time(time_passes, "item-types checking", ||
         check::check_item_types(&ccx));
@@ -355,11 +357,6 @@ pub fn check_crate(tcx: &ty::ctxt, trait_map: ty::TraitMap) {
 
     time(time_passes, "drop-impl checking", ||
         check::check_drop_impls(&ccx));
-
-    // Do this last so that if there are errors in the old code, they
-    // get reported, and we don't get extra warnings.
-    time(time_passes, "wf checking (new)", ||
-        check::check_wf_new(&ccx));
 
     check_for_entry_fn(&ccx);
     tcx.sess.abort_if_errors();

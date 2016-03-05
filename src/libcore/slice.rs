@@ -48,9 +48,7 @@ use result::Result;
 use result::Result::{Ok, Err};
 use ptr;
 use mem;
-use mem::size_of;
 use marker::{Send, Sync, self};
-use num::wrapping::OverflowingOps;
 use raw::Repr;
 // Avoid conflicts with *both* the Slice trait (buggy) and the `slice::raw` module.
 use raw::Slice as RawSlice;
@@ -152,8 +150,8 @@ pub trait SliceExt {
     #[stable(feature = "core", since = "1.6.0")]
     fn ends_with(&self, needle: &[Self::Item]) -> bool where Self::Item: PartialEq;
 
-    #[unstable(feature = "clone_from_slice", issue= "27750")]
-    fn clone_from_slice(&mut self, &[Self::Item]) -> usize where Self::Item: Clone;
+    #[stable(feature = "clone_from_slice", since = "1.7.0")]
+    fn clone_from_slice(&mut self, &[Self::Item]) where Self::Item: Clone;
 }
 
 // Use macros to be generic over const/mut
@@ -477,14 +475,17 @@ impl<T> SliceExt for [T] {
     }
 
     #[inline]
-    fn clone_from_slice(&mut self, src: &[T]) -> usize where T: Clone {
-        let min = cmp::min(self.len(), src.len());
-        let dst = &mut self[.. min];
-        let src = &src[.. min];
-        for i in 0..min {
-            dst[i].clone_from(&src[i]);
+    fn clone_from_slice(&mut self, src: &[T]) where T: Clone {
+        assert!(self.len() == src.len(),
+                "destination and source slices have different lengths");
+        // NOTE: We need to explicitly slice them to the same length
+        // for bounds checking to be elided, and the optimizer will
+        // generate memcpy for simple cases (for example T = u8).
+        let len = self.len();
+        let src = &src[..len];
+        for i in 0..len {
+            self[i].clone_from(&src[i]);
         }
-        min
     }
 }
 
@@ -1379,24 +1380,6 @@ impl<'a, T> ExactSizeIterator for ChunksMut<'a, T> {}
 //
 // Free functions
 //
-
-/// Converts a reference to A into a slice of length 1 (without copying).
-#[unstable(feature = "ref_slice", issue = "27774")]
-#[rustc_deprecated(since = "1.5.0", reason = "unclear whether belongs in libstd")]
-pub fn ref_slice<A>(s: &A) -> &[A] {
-    unsafe {
-        from_raw_parts(s, 1)
-    }
-}
-
-/// Converts a reference to A into a slice of length 1 (without copying).
-#[unstable(feature = "ref_slice", issue = "27774")]
-#[rustc_deprecated(since = "1.5.0", reason = "unclear whether belongs in libstd")]
-pub fn mut_ref_slice<A>(s: &mut A) -> &mut [A] {
-    unsafe {
-        from_raw_parts_mut(s, 1)
-    }
-}
 
 /// Forms a slice from a pointer and a length.
 ///

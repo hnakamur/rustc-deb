@@ -499,11 +499,16 @@ case $CFG_CPUTYPE in
         CFG_CPUTYPE=aarch64
         ;;
 
-    # At some point, when ppc64[le] support happens, this will need to do
-    # something clever. For now it's safe to assume that we're only ever
-    # interested in building 32 bit.
-    powerpc | ppc | ppc64)
+    powerpc | ppc)
         CFG_CPUTYPE=powerpc
+        ;;
+
+    powerpc64 | ppc64)
+        CFG_CPUTYPE=powerpc64
+        ;;
+
+    powerpc64le | ppc64le)
+        CFG_CPUTYPE=powerpc64le
         ;;
 
     x86_64 | x86-64 | x64 | amd64)
@@ -521,15 +526,18 @@ then
     # if configure is running in an interactive bash shell. /usr/bin/env
     # exists *everywhere*.
     BIN_TO_PROBE="$SHELL"
-    if [ -z "$BIN_TO_PROBE" -a -e "/usr/bin/env" ]; then
-       BIN_TO_PROBE="/usr/bin/env"
+    if [ ! -r "$BIN_TO_PROBE" ]; then
+        if [ -r "/usr/bin/env" ]; then
+            BIN_TO_PROBE="/usr/bin/env"
+        else
+            warn "Cannot check if the userland is i686 or x86_64"
+        fi
     fi
-    if [ -n "$BIN_TO_PROBE" ]; then
-       file -L "$BIN_TO_PROBE" | grep -q "x86[_-]64"
-       if [ $? != 0 ]; then
-            CFG_CPUTYPE=i686
-       fi
-     fi
+    file -L "$BIN_TO_PROBE" | grep -q "x86[_-]64"
+    if [ $? != 0 ]; then
+        msg "i686 userland on x86_64 Linux kernel"
+        CFG_CPUTYPE=i686
+    fi
 fi
 
 
@@ -587,7 +595,7 @@ opt fast-make 0 "use .gitmodules as timestamp for submodule deps"
 opt ccache 0 "invoke gcc/clang via ccache to reuse object files between builds"
 opt local-rust 0 "use an installed rustc rather than downloading a snapshot"
 opt llvm-static-stdcpp 0 "statically link to libstdc++ for LLVM"
-opt rpath 0 "build rpaths into rustc itself"
+opt rpath 1 "build rpaths into rustc itself"
 opt stage0-landing-pads 1 "enable landing pads during bootstrap with stage0"
 # This is used by the automation to produce single-target nightlies
 opt dist-host-only 0 "only install bins for the host architecture"
@@ -616,8 +624,10 @@ valopt android-cross-path "/opt/ndk_standalone" "Android NDK standalone path (de
 valopt i686-linux-android-ndk "" "i686-linux-android NDK standalone path"
 valopt arm-linux-androideabi-ndk "" "arm-linux-androideabi NDK standalone path"
 valopt aarch64-linux-android-ndk "" "aarch64-linux-android NDK standalone path"
+valopt nacl-cross-path  "" "NaCl SDK path (Pepper Canary is recommended). Must be absolute!"
 valopt release-channel "dev" "the name of the release channel to build"
 valopt musl-root "/usr/local" "MUSL root installation directory"
+valopt extra-filename "" "Additional data that is hashed and passed to the -C extra-filename flag"
 
 # Used on systems where "cc" and "ar" are unavailable
 valopt default-linker "cc" "the default linker"
@@ -939,6 +949,13 @@ then
     putvar CFG_ENABLE_CLANG
 fi
 
+if [ -z "$CFG_DISABLE_LIBCPP" -a -n "$CFG_ENABLE_CLANG" ]
+then
+    CFG_USING_LIBCPP="1"
+else
+    CFG_USING_LIBCPP="0"
+fi
+
 # Same with jemalloc.  save the setting here.
 if [ -n "$CFG_DISABLE_JEMALLOC" ]
 then
@@ -1018,7 +1035,7 @@ then
         if [ -n "$CFG_OSX_CLANG_VERSION" ]
         then
             case $CFG_OSX_CLANG_VERSION in
-                (7.0*)
+                (7.0* | 7.1* | 7.2*)
                 step_msg "found ok version of APPLE CLANG: $CFG_OSX_CLANG_VERSION"
                 ;;
                 (*)
@@ -1140,7 +1157,12 @@ do
                 fi
             done
             ;;
-
+        *-unknown-nacl)
+	    if [ -z "$CFG_NACL_CROSS_PATH" ]
+	    then
+		err "I need the NaCl SDK path! (use --nacl-cross-path)"
+	    fi
+	    ;;
         arm-apple-darwin)
             if [ $CFG_OSTYPE != apple-darwin ]
             then
@@ -1682,7 +1704,7 @@ do
         CXXFLAGS="$CXXFLAGS $LLVM_CXXFLAGS"
         LDFLAGS="$LDFLAGS $LLVM_LDFLAGS"
 
-        if [ -z "$CFG_DISABLE_LIBCPP" ] && [ -n "$CFG_USING_CLANG" ]; then
+        if [ "$CFG_USING_LIBCPP" != "0" ]; then
             LLVM_OPTS="$LLVM_OPTS --enable-libcpp"
         fi
 
@@ -1742,7 +1764,9 @@ putvar CFG_DISABLE_MANAGE_SUBMODULES
 putvar CFG_AARCH64_LINUX_ANDROID_NDK
 putvar CFG_ARM_LINUX_ANDROIDEABI_NDK
 putvar CFG_I686_LINUX_ANDROID_NDK
+putvar CFG_NACL_CROSS_PATH
 putvar CFG_MANDIR
+putvar CFG_USING_LIBCPP
 
 # Avoid spurious warnings from clang by feeding it original source on
 # ccache-miss rather than preprocessed input.

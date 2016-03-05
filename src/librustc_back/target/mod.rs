@@ -48,7 +48,7 @@
 use serialize::json::Json;
 use std::default::Default;
 use std::io::prelude::*;
-use syntax::{diagnostic, abi};
+use syntax::abi;
 
 mod android_base;
 mod apple_base;
@@ -80,7 +80,7 @@ pub struct Target {
     /// Vendor name to use for conditional compilation.
     pub target_vendor: String,
     /// Architecture to use for ABI considerations. Valid options: "x86", "x86_64", "arm",
-    /// "aarch64", "mips", and "powerpc". "mips" includes "mipsel".
+    /// "aarch64", "mips", "powerpc", "powerpc64" and "powerpc64le". "mips" includes "mipsel".
     pub arch: String,
     /// Optional settings with defaults.
     pub options: TargetOptions,
@@ -195,6 +195,10 @@ pub struct TargetOptions {
     /// Default crate for allocation symbols to link against
     pub lib_allocation_crate: String,
     pub exe_allocation_crate: String,
+
+    /// Flag indicating whether ELF TLS (e.g. #[thread_local]) is available for
+    /// this target.
+    pub has_elf_tls: bool,
 }
 
 impl Default for TargetOptions {
@@ -240,6 +244,7 @@ impl Default for TargetOptions {
             lib_allocation_crate: "alloc_system".to_string(),
             exe_allocation_crate: "alloc_system".to_string(),
             allow_asm: true,
+            has_elf_tls: false,
         }
     }
 }
@@ -263,17 +268,13 @@ impl Target {
     pub fn from_json(obj: Json) -> Target {
         // this is 1. ugly, 2. error prone.
 
-
-        let handler = diagnostic::Handler::new(diagnostic::Auto, None, true);
-
         let get_req_field = |name: &str| {
             match obj.find(name)
                      .map(|s| s.as_string())
                      .and_then(|os| os.map(|s| s.to_string())) {
                 Some(val) => val,
                 None => {
-                    panic!(handler.fatal(&format!("Field {} in target specification is required",
-                                                  name)))
+                    panic!("Field {} in target specification is required", name)
                 }
             }
         };
@@ -412,6 +413,8 @@ impl Target {
             mips_unknown_linux_gnu,
             mipsel_unknown_linux_gnu,
             powerpc_unknown_linux_gnu,
+            powerpc64_unknown_linux_gnu,
+            powerpc64le_unknown_linux_gnu,
             arm_unknown_linux_gnueabi,
             arm_unknown_linux_gnueabihf,
             aarch64_unknown_linux_gnu,

@@ -30,5 +30,6 @@ impl ToString_ for Point {
 
 fn main() {
     let p = Point::new(0.0, 0.0);
-    println!("{}", p.to_string());
+    //~^ ERROR no associated item named `new` found for type `Point` in the current scope
+    println!("{}", p.to_string()); //~ ERROR type of this value must be known
 }

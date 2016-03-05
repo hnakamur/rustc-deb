@@ -17,7 +17,6 @@ use prelude::v1::*;
 
 use error::Error;
 use fmt;
-#[allow(deprecated)]
 use net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use str::FromStr;
 
@@ -193,7 +192,7 @@ impl<'a> Parser<'a> {
         fn ipv6_addr_from_head_tail(head: &[u16], tail: &[u16]) -> Ipv6Addr {
             assert!(head.len() + tail.len() <= 8);
             let mut gs = [0; 8];
-            gs.clone_from_slice(head);
+            gs[..head.len()].clone_from_slice(head);
             gs[(8 - tail.len()) .. 8].clone_from_slice(tail);
             Ipv6Addr::new(gs[0], gs[1], gs[2], gs[3], gs[4], gs[5], gs[6], gs[7])
         }
@@ -262,7 +261,6 @@ impl<'a> Parser<'a> {
         self.read_atomically(|p| p.read_ipv6_addr_impl())
     }
 
-    #[allow(deprecated)]
     fn read_ip_addr(&mut self) -> Option<IpAddr> {
         let ipv4_addr = |p: &mut Parser| p.read_ipv4_addr().map(IpAddr::V4);
         let ipv6_addr = |p: &mut Parser| p.read_ipv6_addr().map(IpAddr::V6);
@@ -308,7 +306,6 @@ impl<'a> Parser<'a> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-#[allow(deprecated)]
 impl FromStr for IpAddr {
     type Err = AddrParseError;
     fn from_str(s: &str) -> Result<IpAddr, AddrParseError> {

@@ -23,7 +23,7 @@ use super::elaborate_predicates;
 use middle::def_id::DefId;
 use middle::subst::{self, SelfSpace, TypeSpace};
 use middle::traits;
-use middle::ty::{self, HasTypeFlags, ToPolyTraitRef, Ty};
+use middle::ty::{self, ToPolyTraitRef, Ty, TypeFoldable};
 use std::rc::Rc;
 use syntax::ast;
 
@@ -192,7 +192,8 @@ fn generics_require_sized_self<'tcx>(tcx: &ty::ctxt<'tcx>,
     };
 
     // Search for a predicate like `Self : Sized` amongst the trait bounds.
-    let free_substs = tcx.construct_free_substs(generics, ast::DUMMY_NODE_ID);
+    let free_substs = tcx.construct_free_substs(generics,
+                                                tcx.region_maps.node_extent(ast::DUMMY_NODE_ID));
     let predicates = predicates.instantiate(tcx, &free_substs).predicates.into_vec();
     elaborate_predicates(tcx, predicates)
         .any(|predicate| {
@@ -253,13 +254,13 @@ fn virtual_call_violation_for_method<'tcx>(tcx: &ty::ctxt<'tcx>,
     // autorefs) to `&self`. For now, we only accept `self`, `&self`
     // and `Box<Self>`.
     match method.explicit_self {
-        ty::StaticExplicitSelfCategory => {
+        ty::ExplicitSelfCategory::Static => {
             return Some(MethodViolationCode::StaticMethod);
         }
 
-        ty::ByValueExplicitSelfCategory |
-        ty::ByReferenceExplicitSelfCategory(..) |
-        ty::ByBoxExplicitSelfCategory => {
+        ty::ExplicitSelfCategory::ByValue |
+        ty::ExplicitSelfCategory::ByReference(..) |
+        ty::ExplicitSelfCategory::ByBox => {
         }
     }
 

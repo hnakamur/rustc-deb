@@ -82,6 +82,7 @@ use self::TupleArgumentsFlag::*;
 
 use astconv::{self, ast_region_to_region, ast_ty_to_ty, AstConv, PathParamMode};
 use check::_match::pat_ctxt;
+use dep_graph::DepNode;
 use fmt_macros::{Parser, Piece, Position};
 use middle::astconv_util::prohibit_type_params;
 use middle::cstore::LOCAL_CRATE;
@@ -93,10 +94,10 @@ use middle::pat_util::{self, pat_id_map};
 use middle::privacy::{AllPublic, LastMod};
 use middle::subst::{self, Subst, Substs, VecPerParamSpace, ParamSpace, TypeSpace};
 use middle::traits::{self, report_fulfillment_errors};
-use middle::ty::{FnSig, GenericPredicates, TypeScheme};
+use middle::ty::{GenericPredicates, TypeScheme};
 use middle::ty::{Disr, ParamTy, ParameterEnvironment};
 use middle::ty::{LvaluePreference, NoPreference, PreferMutLvalue};
-use middle::ty::{self, HasTypeFlags, RegionEscape, ToPolyTraitRef, Ty};
+use middle::ty::{self, ToPolyTraitRef, Ty};
 use middle::ty::{MethodCall, MethodCallee};
 use middle::ty::adjustment;
 use middle::ty::error::TypeError;
@@ -119,15 +120,14 @@ use syntax::ast;
 use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::codemap::{self, Span, Spanned};
-use syntax::owned_slice::OwnedSlice;
+use syntax::errors::DiagnosticBuilder;
 use syntax::parse::token::{self, InternedString};
 use syntax::ptr::P;
-use syntax::util::lev_distance::lev_distance;
+use syntax::util::lev_distance::find_best_match_for_name;
 
 use rustc_front::intravisit::{self, Visitor};
 use rustc_front::hir;
 use rustc_front::hir::Visibility;
-use rustc_front::hir::{Item, ItemImpl};
 use rustc_front::print::pprust;
 use rustc_back::slice;
 
@@ -140,7 +140,6 @@ pub mod coercion;
 pub mod demand;
 pub mod method;
 mod upvar;
-mod wf;
 mod wfcheck;
 mod cast;
 mod closure;
@@ -319,7 +318,7 @@ impl<'a, 'tcx> Inherited<'a, 'tcx> {
                                         body_id: ast::NodeId,
                                         value: &T)
                                         -> T
-        where T : TypeFoldable<'tcx> + HasTypeFlags
+        where T : TypeFoldable<'tcx>
     {
         let mut fulfillment_cx = self.infcx.fulfillment_cx.borrow_mut();
         assoc::normalize_associated_types_in(&self.infcx,
@@ -384,62 +383,45 @@ impl<'a, 'tcx> Visitor<'tcx> for CheckItemBodiesVisitor<'a, 'tcx> {
     }
 }
 
-pub fn check_wf_old(ccx: &CrateCtxt) {
-    // FIXME(#25759). The new code below is much more reliable but (for now)
-    // only generates warnings. So as to ensure that we continue
-    // getting errors where we used to get errors, we run the old wf
-    // code first and abort if it encounters any errors. If no abort
-    // comes, we run the new code and issue warnings.
-    let krate = ccx.tcx.map.krate();
-    let mut visit = wf::CheckTypeWellFormedVisitor::new(ccx);
-    krate.visit_all_items(&mut visit);
-
-    // If types are not well-formed, it leads to all manner of errors
-    // downstream, so stop reporting errors at this point.
-    ccx.tcx.sess.abort_if_errors();
-}
-
 pub fn check_wf_new(ccx: &CrateCtxt) {
-    let krate = ccx.tcx.map.krate();
-    let mut visit = wfcheck::CheckTypeWellFormedVisitor::new(ccx);
-    krate.visit_all_items(&mut visit);
-
-    // If types are not well-formed, it leads to all manner of errors
-    // downstream, so stop reporting errors at this point.
-    ccx.tcx.sess.abort_if_errors();
+    ccx.tcx.sess.abort_if_new_errors(|| {
+        let mut visit = wfcheck::CheckTypeWellFormedVisitor::new(ccx);
+        ccx.tcx.visit_all_items_in_krate(DepNode::WfCheck, &mut visit);
+    });
 }
 
 pub fn check_item_types(ccx: &CrateCtxt) {
-    let krate = ccx.tcx.map.krate();
-    let mut visit = CheckItemTypesVisitor { ccx: ccx };
-    krate.visit_all_items(&mut visit);
-    ccx.tcx.sess.abort_if_errors();
+    ccx.tcx.sess.abort_if_new_errors(|| {
+        let mut visit = CheckItemTypesVisitor { ccx: ccx };
+        ccx.tcx.visit_all_items_in_krate(DepNode::TypeckItemType, &mut visit);
+    });
 }
 
 pub fn check_item_bodies(ccx: &CrateCtxt) {
-    let krate = ccx.tcx.map.krate();
-    let mut visit = CheckItemBodiesVisitor { ccx: ccx };
-    krate.visit_all_items(&mut visit);
-
-    ccx.tcx.sess.abort_if_errors();
+    ccx.tcx.sess.abort_if_new_errors(|| {
+        let mut visit = CheckItemBodiesVisitor { ccx: ccx };
+        ccx.tcx.visit_all_items_in_krate(DepNode::TypeckItemBody, &mut visit);
+    });
 }
 
 pub fn check_drop_impls(ccx: &CrateCtxt) {
-    let drop_trait = match ccx.tcx.lang_items.drop_trait() {
-        Some(id) => ccx.tcx.lookup_trait_def(id), None => { return }
-    };
-    drop_trait.for_each_impl(ccx.tcx, |drop_impl_did| {
-        if drop_impl_did.is_local() {
-            match dropck::check_drop_impl(ccx.tcx, drop_impl_did) {
-                Ok(()) => {}
-                Err(()) => {
-                    assert!(ccx.tcx.sess.has_errors());
+    ccx.tcx.sess.abort_if_new_errors(|| {
+        let _task = ccx.tcx.dep_graph.in_task(DepNode::Dropck);
+        let drop_trait = match ccx.tcx.lang_items.drop_trait() {
+            Some(id) => ccx.tcx.lookup_trait_def(id), None => { return }
+        };
+        drop_trait.for_each_impl(ccx.tcx, |drop_impl_did| {
+            let _task = ccx.tcx.dep_graph.in_task(DepNode::DropckImpl(drop_impl_did));
+            if drop_impl_did.is_local() {
+                match dropck::check_drop_impl(ccx.tcx, drop_impl_did) {
+                    Ok(()) => {}
+                    Err(()) => {
+                        assert!(ccx.tcx.sess.has_errors());
+                    }
                 }
             }
-        }
+        });
     });
-
-    ccx.tcx.sess.abort_if_errors();
 }
 
 fn check_bare_fn<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
@@ -456,7 +438,7 @@ fn check_bare_fn<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
             let inh = Inherited::new(ccx.tcx, &tables, param_env);
 
             // Compute the fty from point of view of inside fn.
-            let fn_scope = ccx.tcx.region_maps.item_extent(body.id);
+            let fn_scope = ccx.tcx.region_maps.call_site_extent(fn_id, body.id);
             let fn_sig =
                 fn_ty.sig.subst(ccx.tcx, &inh.infcx.parameter_environment.free_substs);
             let fn_sig =
@@ -721,11 +703,12 @@ pub fn check_item_type<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>, it: &'tcx hir::Item) {
             for item in &m.items {
                 let pty = ccx.tcx.lookup_item_type(ccx.tcx.map.local_def_id(item.id));
                 if !pty.generics.types.is_empty() {
-                    span_err!(ccx.tcx.sess, item.span, E0044,
+                    let mut err = struct_span_err!(ccx.tcx.sess, item.span, E0044,
                         "foreign items may not have type parameters");
-                    span_help!(ccx.tcx.sess, item.span,
+                    span_help!(&mut err, item.span,
                         "consider using specialization instead of \
                         type parameters");
+                    err.emit();
                 }
 
                 if let hir::ForeignItemFn(ref fn_decl, _) = item.node {
@@ -891,75 +874,71 @@ fn check_impl_items_against_trait<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     for impl_item in impl_items {
         let ty_impl_item = ccx.tcx.impl_or_trait_item(ccx.tcx.map.local_def_id(impl_item.id));
         let ty_trait_item = trait_items.iter()
-            .find(|ac| ac.name() == ty_impl_item.name())
-            .unwrap_or_else(|| {
-                // This is checked by resolve
-                tcx.sess.span_bug(impl_item.span,
-                                  &format!("impl-item `{}` is not a member of `{:?}`",
-                                           ty_impl_item.name(),
-                                           impl_trait_ref));
-            });
-        match impl_item.node {
-            hir::ImplItemKind::Const(..) => {
-                let impl_const = match ty_impl_item {
-                    ty::ConstTraitItem(ref cti) => cti,
-                    _ => tcx.sess.span_bug(impl_item.span, "non-const impl-item for const")
-                };
+            .find(|ac| ac.name() == ty_impl_item.name());
 
-                // Find associated const definition.
-                if let &ty::ConstTraitItem(ref trait_const) = ty_trait_item {
-                    compare_const_impl(ccx.tcx,
-                                       &impl_const,
-                                       impl_item.span,
-                                       trait_const,
-                                       &*impl_trait_ref);
-                } else {
-                    span_err!(tcx.sess, impl_item.span, E0323,
-                              "item `{}` is an associated const, \
-                              which doesn't match its trait `{:?}`",
-                              impl_const.name,
-                              impl_trait_ref)
-                }
-            }
-            hir::ImplItemKind::Method(ref sig, ref body) => {
-                check_trait_fn_not_const(ccx, impl_item.span, sig.constness);
+        if let Some(ty_trait_item) = ty_trait_item {
+            match impl_item.node {
+                hir::ImplItemKind::Const(..) => {
+                    let impl_const = match ty_impl_item {
+                        ty::ConstTraitItem(ref cti) => cti,
+                        _ => tcx.sess.span_bug(impl_item.span, "non-const impl-item for const")
+                    };
 
-                let impl_method = match ty_impl_item {
-                    ty::MethodTraitItem(ref mti) => mti,
-                    _ => tcx.sess.span_bug(impl_item.span, "non-method impl-item for method")
-                };
-
-                if let &ty::MethodTraitItem(ref trait_method) = ty_trait_item {
-                    compare_impl_method(ccx.tcx,
-                                        &impl_method,
-                                        impl_item.span,
-                                        body.id,
-                                        &trait_method,
-                                        &impl_trait_ref);
-                } else {
-                    span_err!(tcx.sess, impl_item.span, E0324,
-                              "item `{}` is an associated method, \
-                              which doesn't match its trait `{:?}`",
-                              impl_method.name,
-                              impl_trait_ref)
-                }
-            }
-            hir::ImplItemKind::Type(_) => {
-                let impl_type = match ty_impl_item {
-                    ty::TypeTraitItem(ref tti) => tti,
-                    _ => tcx.sess.span_bug(impl_item.span, "non-type impl-item for type")
-                };
-
-                if let &ty::TypeTraitItem(ref at) = ty_trait_item {
-                    if let Some(_) = at.ty {
-                        overridden_associated_type = Some(impl_item);
+                    // Find associated const definition.
+                    if let &ty::ConstTraitItem(ref trait_const) = ty_trait_item {
+                        compare_const_impl(ccx.tcx,
+                                           &impl_const,
+                                           impl_item.span,
+                                           trait_const,
+                                           &*impl_trait_ref);
+                    } else {
+                        span_err!(tcx.sess, impl_item.span, E0323,
+                                  "item `{}` is an associated const, \
+                                  which doesn't match its trait `{:?}`",
+                                  impl_const.name,
+                                  impl_trait_ref)
                     }
-                } else {
-                    span_err!(tcx.sess, impl_item.span, E0325,
-                              "item `{}` is an associated type, \
-                              which doesn't match its trait `{:?}`",
-                              impl_type.name,
-                              impl_trait_ref)
+                }
+                hir::ImplItemKind::Method(ref sig, ref body) => {
+                    check_trait_fn_not_const(ccx, impl_item.span, sig.constness);
+
+                    let impl_method = match ty_impl_item {
+                        ty::MethodTraitItem(ref mti) => mti,
+                        _ => tcx.sess.span_bug(impl_item.span, "non-method impl-item for method")
+                    };
+
+                    if let &ty::MethodTraitItem(ref trait_method) = ty_trait_item {
+                        compare_impl_method(ccx.tcx,
+                                            &impl_method,
+                                            impl_item.span,
+                                            body.id,
+                                            &trait_method,
+                                            &impl_trait_ref);
+                    } else {
+                        span_err!(tcx.sess, impl_item.span, E0324,
+                                  "item `{}` is an associated method, \
+                                  which doesn't match its trait `{:?}`",
+                                  impl_method.name,
+                                  impl_trait_ref)
+                    }
+                }
+                hir::ImplItemKind::Type(_) => {
+                    let impl_type = match ty_impl_item {
+                        ty::TypeTraitItem(ref tti) => tti,
+                        _ => tcx.sess.span_bug(impl_item.span, "non-type impl-item for type")
+                    };
+
+                    if let &ty::TypeTraitItem(ref at) = ty_trait_item {
+                        if let Some(_) = at.ty {
+                            overridden_associated_type = Some(impl_item);
+                        }
+                    } else {
+                        span_err!(tcx.sess, impl_item.span, E0325,
+                                  "item `{}` is an associated type, \
+                                  which doesn't match its trait `{:?}`",
+                                  impl_type.name,
+                                  impl_trait_ref)
+                    }
                 }
             }
         }
@@ -1063,7 +1042,7 @@ fn report_cast_to_unsized_type<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
         return;
     }
     let tstr = fcx.infcx().ty_to_string(t_cast);
-    fcx.type_error_message(span, |actual| {
+    let mut err = fcx.type_error_struct(span, |actual| {
         format!("cast to unsized type: `{}` as `{}`", actual, tstr)
     }, t_expr, None);
     match t_expr.sty {
@@ -1075,16 +1054,16 @@ fn report_cast_to_unsized_type<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
             if t_cast.is_trait() {
                 match fcx.tcx().sess.codemap().span_to_snippet(t_span) {
                     Ok(s) => {
-                        fcx.tcx().sess.span_suggestion(t_span,
-                                                       "try casting to a reference instead:",
-                                                       format!("&{}{}", mtstr, s));
+                        err.span_suggestion(t_span,
+                                            "try casting to a reference instead:",
+                                            format!("&{}{}", mtstr, s));
                     },
                     Err(_) =>
-                        span_help!(fcx.tcx().sess, t_span,
+                        span_help!(err, t_span,
                                    "did you mean `&{}{}`?", mtstr, tstr),
                 }
             } else {
-                span_help!(fcx.tcx().sess, span,
+                span_help!(err, span,
                            "consider using an implicit coercion to `&{}{}` instead",
                            mtstr, tstr);
             }
@@ -1092,19 +1071,20 @@ fn report_cast_to_unsized_type<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
         ty::TyBox(..) => {
             match fcx.tcx().sess.codemap().span_to_snippet(t_span) {
                 Ok(s) => {
-                    fcx.tcx().sess.span_suggestion(t_span,
-                                                   "try casting to a `Box` instead:",
-                                                   format!("Box<{}>", s));
+                    err.span_suggestion(t_span,
+                                                          "try casting to a `Box` instead:",
+                                                           format!("Box<{}>", s));
                 },
                 Err(_) =>
-                    span_help!(fcx.tcx().sess, t_span, "did you mean `Box<{}>`?", tstr),
+                    span_help!(err, t_span, "did you mean `Box<{}>`?", tstr),
             }
         }
         _ => {
-            span_help!(fcx.tcx().sess, e_span,
+            span_help!(err, e_span,
                        "consider using a box or reference as appropriate");
         }
     }
+    err.emit();
     fcx.write_error(id);
 }
 
@@ -1357,7 +1337,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                   substs: &Substs<'tcx>,
                                   value: &T)
                                   -> T
-        where T : TypeFoldable<'tcx> + HasTypeFlags
+        where T : TypeFoldable<'tcx>
     {
         let value = value.subst(self.tcx(), substs);
         let result = self.normalize_associated_types_in(span, &value);
@@ -1383,7 +1363,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
 
     fn normalize_associated_types_in<T>(&self, span: Span, value: &T) -> T
-        where T : TypeFoldable<'tcx> + HasTypeFlags
+        where T : TypeFoldable<'tcx>
     {
         self.inh.normalize_associated_types_in(span, self.body_id, value)
     }
@@ -1469,10 +1449,12 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             Some((adt, variant))
         } else if var_kind == ty::VariantKind::Unit {
             if !self.tcx().sess.features.borrow().braced_empty_structs {
-                self.tcx().sess.span_err(span, "empty structs and enum variants \
-                                                with braces are unstable");
-                fileline_help!(self.tcx().sess, span, "add #![feature(braced_empty_structs)] to \
-                                                       the crate features to enable");
+                let mut err = self.tcx().sess.struct_span_err(span,
+                                                              "empty structs and enum variants \
+                                                               with braces are unstable");
+                fileline_help!(&mut err, span, "add #![feature(braced_empty_structs)] to \
+                                                the crate features to enable");
+                err.emit();
             }
 
              Some((adt, variant))
@@ -1640,10 +1622,21 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                  sp: Span,
                                  mk_msg: M,
                                  actual_ty: Ty<'tcx>,
-                                 err: Option<&TypeError<'tcx>>) where
-        M: FnOnce(String) -> String,
+                                 err: Option<&TypeError<'tcx>>)
+        where M: FnOnce(String) -> String,
     {
         self.infcx().type_error_message(sp, mk_msg, actual_ty, err);
+    }
+
+    pub fn type_error_struct<M>(&self,
+                                sp: Span,
+                                mk_msg: M,
+                                actual_ty: Ty<'tcx>,
+                                err: Option<&TypeError<'tcx>>)
+                                -> DiagnosticBuilder<'tcx>
+        where M: FnOnce(String) -> String,
+    {
+        self.infcx().type_error_struct(sp, mk_msg, actual_ty, err)
     }
 
     pub fn report_mismatched_types(&self,
@@ -2674,6 +2667,14 @@ fn check_lit<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     }
 }
 
+fn check_expr_eq_type<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
+                                expr: &'tcx hir::Expr,
+                                expected: Ty<'tcx>) {
+    check_expr_with_unifier(
+        fcx, expr, ExpectHasType(expected), NoPreference,
+        || demand::eqtype(fcx, expr.span, expected, fcx.expr_ty(expr)));
+}
+
 pub fn check_expr_has_type<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                                      expr: &'tcx hir::Expr,
                                      expected: Ty<'tcx>) {
@@ -2931,7 +2932,6 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
                             lvalue_pref: LvaluePreference,
                             base: &'tcx hir::Expr,
                             field: &Spanned<ast::Name>) {
-        let tcx = fcx.ccx.tcx;
         check_expr_with_lvalue_pref(fcx, base, lvalue_pref);
         let expr_t = structurally_resolved_type(fcx, expr.span,
                                                 fcx.expr_ty(base));
@@ -2963,19 +2963,18 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
         }
 
         if method::exists(fcx, field.span, field.node, expr_t, expr.id) {
-            fcx.type_error_message(
-                field.span,
-                |actual| {
-                    format!("attempted to take value of method `{}` on type \
-                            `{}`", field.node, actual)
-                },
-                expr_t, None);
-
-            tcx.sess.fileline_help(field.span,
+            fcx.type_error_struct(field.span,
+                                  |actual| {
+                                       format!("attempted to take value of method `{}` on type \
+                                               `{}`", field.node, actual)
+                                   },
+                                   expr_t, None)
+                .fileline_help(field.span,
                                "maybe a `()` to call it is missing? \
-                               If not, try an anonymous function");
+                               If not, try an anonymous function")
+                .emit();
         } else {
-            fcx.type_error_message(
+            let mut err = fcx.type_error_struct(
                 expr.span,
                 |actual| {
                     format!("attempted access of field `{}` on \
@@ -2986,41 +2985,36 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
                 },
                 expr_t, None);
             if let ty::TyStruct(def, _) = expr_t.sty {
-                suggest_field_names(def.struct_variant(), field, tcx, vec![]);
+                suggest_field_names(&mut err, def.struct_variant(), field, vec![]);
             }
+            err.emit();
         }
 
         fcx.write_error(expr.id);
     }
 
     // displays hints about the closest matches in field names
-    fn suggest_field_names<'tcx>(variant: ty::VariantDef<'tcx>,
+    fn suggest_field_names<'tcx>(err: &mut DiagnosticBuilder,
+                                 variant: ty::VariantDef<'tcx>,
                                  field: &Spanned<ast::Name>,
-                                 tcx: &ty::ctxt<'tcx>,
                                  skip : Vec<InternedString>) {
         let name = field.node.as_str();
+        let names = variant.fields
+                    .iter()
+                    .filter_map(|ref field| {
+                        // ignore already set fields and private fields from non-local crates
+                        if skip.iter().any(|x| *x == field.name.as_str()) ||
+                           (variant.did.krate != LOCAL_CRATE && field.vis != Visibility::Public) {
+                               None
+                        } else {
+                            Some(&field.name)
+                        }
+                    });
+
         // only find fits with at least one matching letter
-        let mut best_dist = name.len();
-        let mut best = None;
-        for elem in &variant.fields {
-            let n = elem.name.as_str();
-            // ignore already set fields
-            if skip.iter().any(|x| *x == n) {
-                continue;
-            }
-            // ignore private fields from non-local crates
-            if variant.did.krate != LOCAL_CRATE && elem.vis != Visibility::Public {
-                continue;
-            }
-            let dist = lev_distance(&n, &name);
-            if dist < best_dist {
-                best = Some(n);
-                best_dist = dist;
-            }
-        }
-        if let Some(n) = best {
-            tcx.sess.span_help(field.span,
-                &format!("did you mean `{}`?", n));
+        if let Some(name) = find_best_match_for_name(names, &name, Some(name.len())) {
+            err.span_help(field.span,
+                          &format!("did you mean `{}`?", name));
         }
     }
 
@@ -3095,7 +3089,7 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
                                       variant: ty::VariantDef<'tcx>,
                                       field: &hir::Field,
                                       skip_fields: &[hir::Field]) {
-        fcx.type_error_message(
+        let mut err = fcx.type_error_struct(
             field.name.span,
             |actual| if let ty::TyEnum(..) = ty.sty {
                 format!("struct variant `{}::{}` has no field named `{}`",
@@ -3108,7 +3102,8 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
             None);
         // prevent all specified fields from being suggested
         let skip_fields = skip_fields.iter().map(|ref x| x.name.node.as_str());
-        suggest_field_names(variant, &field.name, fcx.tcx(), skip_fields.collect());
+        suggest_field_names(&mut err, variant, &field.name, skip_fields.collect());
+        err.emit();
     }
 
     fn check_expr_struct_fields<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
@@ -3159,12 +3154,13 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
             !remaining_fields.is_empty()
         {
             span_err!(tcx.sess, span, E0063,
-                      "missing field{}: {}",
+                      "missing field{} {} in initializer of `{}`",
                       if remaining_fields.len() == 1 {""} else {"s"},
                       remaining_fields.keys()
                                       .map(|n| format!("`{}`", n))
                                       .collect::<Vec<_>>()
-                                      .join(", "));
+                                      .join(", "),
+                      adt_ty);
         }
 
     }
@@ -3195,6 +3191,10 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
 
         // Find the relevant variant
         let def = lookup_full_def(tcx, path.span, expr.id);
+        if def == def::DefErr {
+            check_struct_fields_on_error(fcx, expr.id, fields, base_expr);
+            return;
+        }
         let (adt, variant) = match fcx.def_struct_variant(def, path.span) {
             Some((adt, variant)) => (adt, variant),
             None => {
@@ -3373,17 +3373,21 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
           if let Some((opt_ty, segments, def)) =
                   resolve_ty_and_def_ufcs(fcx, path_res, opt_self_ty, path,
                                           expr.span, expr.id) {
-              let (scheme, predicates) = type_scheme_and_predicates_for_def(fcx,
-                                                                            expr.span,
-                                                                            def);
-              instantiate_path(fcx,
-                               segments,
-                               scheme,
-                               &predicates,
-                               opt_ty,
-                               def,
-                               expr.span,
-                               id);
+              if def != def::DefErr {
+                  let (scheme, predicates) = type_scheme_and_predicates_for_def(fcx,
+                                                                                expr.span,
+                                                                                def);
+                  instantiate_path(fcx,
+                                   segments,
+                                   scheme,
+                                   &predicates,
+                                   opt_ty,
+                                   def,
+                                   expr.span,
+                                   id);
+              } else {
+                  fcx.write_ty(id, fcx.tcx().types.err);
+              }
           }
 
           // We always require that the type provided as the value for
@@ -3396,8 +3400,8 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
           for &(_, ref input) in &ia.inputs {
               check_expr(fcx, &**input);
           }
-          for &(_, ref out, _) in &ia.outputs {
-              check_expr(fcx, &**out);
+          for out in &ia.outputs {
+              check_expr(fcx, &*out.expr);
           }
           fcx.write_nil(id);
       }
@@ -3527,6 +3531,11 @@ fn check_expr_with_unifier<'a, 'tcx, F>(fcx: &FnCtxt<'a, 'tcx>,
             let cast_check = cast::CastCheck::new((**e).clone(), t_expr, t_cast, expr.span);
             deferred_cast_checks.push(cast_check);
         }
+      }
+      hir::ExprType(ref e, ref t) => {
+        let typ = fcx.to_ty(&**t);
+        check_expr_eq_type(fcx, &**e, typ);
+        fcx.write_ty(id, typ);
       }
       hir::ExprVec(ref args) => {
         let uty = expected.to_option(fcx).and_then(|uty| {
@@ -3776,35 +3785,8 @@ pub fn resolve_ty_and_def_ufcs<'a, 'b, 'tcx>(fcx: &FnCtxt<'b, 'tcx>,
                                                         def::Def)>
 {
 
-    // Associated constants can't depend on generic types.
-    fn have_disallowed_generic_consts<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
-                                                def: def::Def,
-                                                ty: Ty<'tcx>,
-                                                span: Span,
-                                                node_id: ast::NodeId) -> bool {
-        match def {
-            def::DefAssociatedConst(..) => {
-                if ty.has_param_types() || ty.has_self_ty() {
-                    span_err!(fcx.sess(), span, E0329,
-                              "Associated consts cannot depend \
-                               on type parameters or Self.");
-                    fcx.write_error(node_id);
-                    return true;
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-
     // If fully resolved already, we don't have to do anything.
     if path_res.depth == 0 {
-        if let Some(ty) = opt_self_ty {
-            if have_disallowed_generic_consts(fcx, path_res.full_def(), ty,
-                                              span, node_id) {
-                return None;
-            }
-        }
         Some((opt_self_ty, &path.segments, path_res.base_def))
     } else {
         let mut def = path_res.base_def;
@@ -3820,9 +3802,6 @@ pub fn resolve_ty_and_def_ufcs<'a, 'b, 'tcx>(fcx: &FnCtxt<'b, 'tcx>,
         let item_name = item_segment.identifier.name;
         match method::resolve_ufcs(fcx, span, item_name, ty, node_id) {
             Ok((def, lp)) => {
-                if have_disallowed_generic_consts(fcx, def, ty, span, node_id) {
-                    return None;
-                }
                 // Write back the new resolution.
                 fcx.ccx.tcx.def_map.borrow_mut()
                        .insert(node_id, def::PathResolution {
@@ -4157,9 +4136,9 @@ pub fn check_representable(tcx: &ty::ctxt,
     // caught by case 1.
     match rty.is_representable(tcx, sp) {
         Representability::SelfRecursive => {
-            span_err!(tcx.sess, sp, E0072, "invalid recursive {} type", designation);
-            tcx.sess.fileline_help(
-                sp, "wrap the inner value in a box to make it representable");
+            struct_span_err!(tcx.sess, sp, E0072, "invalid recursive {} type", designation)
+                .fileline_help(sp, "wrap the inner value in a box to make it representable")
+                .emit();
             return false
         }
         Representability::Representable | Representability::ContainsRecursive => (),
@@ -4199,7 +4178,7 @@ pub fn check_enum_variants<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                                     sp: Span,
                                     vs: &'tcx [hir::Variant],
                                     id: ast::NodeId) {
-
+    // disr_in_range should be removed once we have forced type hints for consts
     fn disr_in_range(ccx: &CrateCtxt,
                      ty: attr::IntType,
                      disr: ty::Disr) -> bool {
@@ -4256,11 +4235,12 @@ pub fn check_enum_variants<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
             // Check for duplicate discriminant values
             match disr_vals.iter().position(|&x| x == current_disr_val) {
                 Some(i) => {
-                    span_err!(ccx.tcx.sess, v.span, E0081,
+                    let mut err = struct_span_err!(ccx.tcx.sess, v.span, E0081,
                         "discriminant value `{}` already exists", disr_vals[i]);
                     let variant_i_node_id = ccx.tcx.map.as_local_node_id(variants[i].did).unwrap();
-                    span_note!(ccx.tcx.sess, ccx.tcx.map.span(variant_i_node_id),
-                        "conflicting discriminant here")
+                    span_note!(&mut err, ccx.tcx.map.span(variant_i_node_id),
+                        "conflicting discriminant here");
+                    err.emit();
                 }
                 None => {}
             }
@@ -4269,10 +4249,11 @@ pub fn check_enum_variants<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                 attr::ReprAny | attr::ReprExtern => (),
                 attr::ReprInt(sp, ity) => {
                     if !disr_in_range(ccx, ity, current_disr_val) {
-                        span_err!(ccx.tcx.sess, v.span, E0082,
+                        let mut err = struct_span_err!(ccx.tcx.sess, v.span, E0082,
                             "discriminant value outside specified type");
-                        span_note!(ccx.tcx.sess, sp,
+                        span_note!(&mut err, sp,
                             "discriminant type specified here");
+                        err.emit();
                     }
                 }
                 attr::ReprSimd => {
@@ -4327,9 +4308,9 @@ fn type_scheme_and_predicates_for_def<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
         def::DefTyParam(..) |
         def::DefMod(..) |
         def::DefForeignMod(..) |
-        def::DefUse(..) |
         def::DefLabel(..) |
-        def::DefSelfTy(..) => {
+        def::DefSelfTy(..) |
+        def::DefErr => {
             fcx.ccx.tcx.sess.span_bug(sp, &format!("expected value, found {:?}", defn));
         }
     }
@@ -4497,9 +4478,9 @@ pub fn instantiate_path<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
         def::DefMod(..) |
         def::DefForeignMod(..) |
         def::DefLocal(..) |
-        def::DefUse(..) |
         def::DefLabel(..) |
-        def::DefUpvar(..) => {
+        def::DefUpvar(..) |
+        def::DefErr => {
             segment_spaces = vec![None; segments.len()];
         }
     }
@@ -4908,7 +4889,7 @@ pub fn may_break(cx: &ty::ctxt, id: ast::NodeId, b: &hir::Block) -> bool {
 }
 
 pub fn check_bounds_are_used<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
-                                       tps: &OwnedSlice<hir::TyParam>,
+                                       tps: &[hir::TyParam],
                                        ty: Ty<'tcx>) {
     debug!("check_bounds_are_used(n_tps={}, ty={:?})",
            tps.len(),  ty);

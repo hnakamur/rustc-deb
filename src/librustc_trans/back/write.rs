@@ -20,8 +20,8 @@ use trans::{CrateTranslation, ModuleTranslation};
 use util::common::time;
 use util::common::path2cstr;
 use syntax::codemap;
-use syntax::diagnostic;
-use syntax::diagnostic::{Emitter, Handler, Level};
+use syntax::errors::{self, Handler, Level};
+use syntax::errors::emitter::Emitter;
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -34,7 +34,7 @@ use std::sync::mpsc::channel;
 use std::thread;
 use libc::{self, c_uint, c_int, c_void};
 
-pub fn llvm_err(handler: &diagnostic::Handler, msg: String) -> ! {
+pub fn llvm_err(handler: &errors::Handler, msg: String) -> ! {
     unsafe {
         let cstr = llvm::LLVMRustGetLastError();
         if cstr == ptr::null() {
@@ -49,7 +49,7 @@ pub fn llvm_err(handler: &diagnostic::Handler, msg: String) -> ! {
 }
 
 pub fn write_output_file(
-        handler: &diagnostic::Handler,
+        handler: &errors::Handler,
         target: llvm::TargetMachineRef,
         pm: llvm::PassManagerRef,
         m: ModuleRef,
@@ -109,9 +109,9 @@ impl SharedEmitter {
 }
 
 impl Emitter for SharedEmitter {
-    fn emit(&mut self, cmsp: Option<(&codemap::CodeMap, codemap::Span)>,
+    fn emit(&mut self, sp: Option<codemap::Span>,
             msg: &str, code: Option<&str>, lvl: Level) {
-        assert!(cmsp.is_none(), "SharedEmitter doesn't support spans");
+        assert!(sp.is_none(), "SharedEmitter doesn't support spans");
 
         self.buffer.lock().unwrap().push(Diagnostic {
             msg: msg.to_string(),
@@ -120,8 +120,7 @@ impl Emitter for SharedEmitter {
         });
     }
 
-    fn custom_emit(&mut self, _cm: &codemap::CodeMap,
-                   _sp: diagnostic::RenderSpan, _msg: &str, _lvl: Level) {
+    fn custom_emit(&mut self, _sp: errors::RenderSpan, _msg: &str, _lvl: Level) {
         panic!("SharedEmitter doesn't support custom_emit");
     }
 }
@@ -145,10 +144,10 @@ fn target_feature(sess: &Session) -> String {
 
 fn get_llvm_opt_level(optimize: config::OptLevel) -> llvm::CodeGenOptLevel {
     match optimize {
-      config::No => llvm::CodeGenLevelNone,
-      config::Less => llvm::CodeGenLevelLess,
-      config::Default => llvm::CodeGenLevelDefault,
-      config::Aggressive => llvm::CodeGenLevelAggressive,
+      config::OptLevel::No => llvm::CodeGenLevelNone,
+      config::OptLevel::Less => llvm::CodeGenLevelLess,
+      config::OptLevel::Default => llvm::CodeGenLevelDefault,
+      config::OptLevel::Aggressive => llvm::CodeGenLevelAggressive,
     }
 }
 
@@ -226,7 +225,7 @@ pub fn create_target_machine(sess: &Session) -> TargetMachineRef {
     };
 
     if tm.is_null() {
-        llvm_err(sess.diagnostic().handler(),
+        llvm_err(sess.diagnostic(),
                  format!("Could not create LLVM TargetMachine for triple: {}",
                          triple).to_string());
     } else {
@@ -304,13 +303,13 @@ impl ModuleConfig {
         // slp vectorization at O3. Otherwise configure other optimization aspects
         // of this pass manager builder.
         self.vectorize_loop = !sess.opts.cg.no_vectorize_loops &&
-                             (sess.opts.optimize == config::Default ||
-                              sess.opts.optimize == config::Aggressive);
+                             (sess.opts.optimize == config::OptLevel::Default ||
+                              sess.opts.optimize == config::OptLevel::Aggressive);
         self.vectorize_slp = !sess.opts.cg.no_vectorize_slp &&
-                            sess.opts.optimize == config::Aggressive;
+                            sess.opts.optimize == config::OptLevel::Aggressive;
 
-        self.merge_functions = sess.opts.optimize == config::Default ||
-                               sess.opts.optimize == config::Aggressive;
+        self.merge_functions = sess.opts.optimize == config::OptLevel::Default ||
+                               sess.opts.optimize == config::OptLevel::Aggressive;
     }
 }
 
@@ -333,7 +332,7 @@ impl<'a> CodegenContext<'a> {
     fn new_with_session(sess: &'a Session, reachable: &'a [String]) -> CodegenContext<'a> {
         CodegenContext {
             lto_ctxt: Some((sess, reachable)),
-            handler: sess.diagnostic().handler(),
+            handler: sess.diagnostic(),
             plugin_passes: sess.plugin_llvm_passes.borrow().clone(),
             remark: sess.opts.cg.remark.clone(),
             worker: 0,
@@ -360,8 +359,9 @@ unsafe extern "C" fn report_inline_asm<'a, 'b>(cgcx: &'a CodegenContext<'a>,
         }
 
         None => {
-            cgcx.handler.err(msg);
-            cgcx.handler.note("build without -C codegen-units for more exact errors");
+            cgcx.handler.struct_err(msg)
+                        .note("build without -C codegen-units for more exact errors")
+                        .emit();
         }
     }
 }
@@ -398,11 +398,11 @@ unsafe extern "C" fn diagnostic_handler(info: DiagnosticInfoRef, user: *mut c_vo
 
             if enabled {
                 let loc = llvm::debug_loc_to_string(llcx, opt.debug_loc);
-                cgcx.handler.note(&format!("optimization {} for {} at {}: {}",
-                                           opt.kind.describe(),
-                                           pass_name,
-                                           if loc.is_empty() { "[unknown]" } else { &*loc },
-                                           llvm::twine_to_string(opt.message)));
+                cgcx.handler.note_without_error(&format!("optimization {} for {} at {}: {}",
+                                                opt.kind.describe(),
+                                                pass_name,
+                                                if loc.is_empty() { "[unknown]" } else { &*loc },
+                                                llvm::twine_to_string(opt.message)));
             }
         }
 
@@ -545,10 +545,22 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 
         if config.emit_asm {
             let path = output_names.with_extension(&format!("{}.s", name_extra));
+
+            // We can't use the same module for asm and binary output, because that triggers
+            // various errors like invalid IR or broken binaries, so we might have to clone the
+            // module to produce the asm output
+            let llmod = if config.emit_obj {
+                llvm::LLVMCloneModule(llmod)
+            } else {
+                llmod
+            };
             with_codegen(tm, llmod, config.no_builtins, |cpm| {
                 write_output_file(cgcx.handler, tm, cpm, llmod, &path,
                                   llvm::AssemblyFileType);
             });
+            if config.emit_obj {
+                llvm::LLVMDisposeModule(llmod);
+            }
         }
 
         if config.emit_obj {
@@ -863,7 +875,7 @@ fn run_work_multithreaded(sess: &Session,
         futures.push(rx);
 
         thread::Builder::new().name(format!("codegen-{}", i)).spawn(move || {
-            let diag_handler = Handler::with_emitter(true, box diag_emitter);
+            let diag_handler = Handler::with_emitter(true, false, box diag_emitter);
 
             // Must construct cgcx inside the proc because it has non-Send
             // fields.
@@ -903,7 +915,7 @@ fn run_work_multithreaded(sess: &Session,
             },
         }
         // Display any new diagnostics.
-        diag_emitter.dump(sess.diagnostic().handler());
+        diag_emitter.dump(sess.diagnostic());
     }
     if panicked {
         sess.fatal("aborting due to worker thread panic");
@@ -920,13 +932,15 @@ pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
     match cmd.output() {
         Ok(prog) => {
             if !prog.status.success() {
-                sess.err(&format!("linking with `{}` failed: {}",
-                                 pname,
-                                 prog.status));
-                sess.note(&format!("{:?}", &cmd));
                 let mut note = prog.stderr.clone();
                 note.extend_from_slice(&prog.stdout);
-                sess.note(str::from_utf8(&note[..]).unwrap());
+
+                sess.struct_err(&format!("linking with `{}` failed: {}",
+                                         pname,
+                                         prog.status))
+                    .note(&format!("{:?}", &cmd))
+                    .note(str::from_utf8(&note[..]).unwrap())
+                    .emit();
                 sess.abort_if_errors();
             }
         },
@@ -961,39 +975,7 @@ pub unsafe fn configure_llvm(sess: &Session) {
 
     llvm::LLVMInitializePasses();
 
-    // Only initialize the platforms supported by Rust here, because
-    // using --llvm-root will have multiple platforms that rustllvm
-    // doesn't actually link to and it's pointless to put target info
-    // into the registry that Rust cannot generate machine code for.
-    llvm::LLVMInitializeX86TargetInfo();
-    llvm::LLVMInitializeX86Target();
-    llvm::LLVMInitializeX86TargetMC();
-    llvm::LLVMInitializeX86AsmPrinter();
-    llvm::LLVMInitializeX86AsmParser();
-
-    llvm::LLVMInitializeARMTargetInfo();
-    llvm::LLVMInitializeARMTarget();
-    llvm::LLVMInitializeARMTargetMC();
-    llvm::LLVMInitializeARMAsmPrinter();
-    llvm::LLVMInitializeARMAsmParser();
-
-    llvm::LLVMInitializeAArch64TargetInfo();
-    llvm::LLVMInitializeAArch64Target();
-    llvm::LLVMInitializeAArch64TargetMC();
-    llvm::LLVMInitializeAArch64AsmPrinter();
-    llvm::LLVMInitializeAArch64AsmParser();
-
-    llvm::LLVMInitializeMipsTargetInfo();
-    llvm::LLVMInitializeMipsTarget();
-    llvm::LLVMInitializeMipsTargetMC();
-    llvm::LLVMInitializeMipsAsmPrinter();
-    llvm::LLVMInitializeMipsAsmParser();
-
-    llvm::LLVMInitializePowerPCTargetInfo();
-    llvm::LLVMInitializePowerPCTarget();
-    llvm::LLVMInitializePowerPCTargetMC();
-    llvm::LLVMInitializePowerPCAsmPrinter();
-    llvm::LLVMInitializePowerPCAsmParser();
+    llvm::initialize_available_targets();
 
     llvm::LLVMRustSetLLVMOptions(llvm_args.len() as c_int,
                                  llvm_args.as_ptr());

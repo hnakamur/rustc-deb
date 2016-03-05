@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use llvm::ValueRef;
-use rustc::middle::ty::{self, Ty, HasTypeFlags};
+use rustc::middle::ty::{self, Ty, TypeFoldable};
 use rustc::mir::repr as mir;
 use rustc::mir::tcx::LvalueTy;
 use trans::adt;
@@ -18,6 +18,9 @@ use trans::build;
 use trans::common::{self, Block};
 use trans::debuginfo::DebugLoc;
 use trans::machine;
+use trans::type_of;
+use llvm;
+use trans::Disr;
 
 use std::ptr;
 
@@ -91,10 +94,23 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     const_ty)
             },
             mir::Lvalue::ReturnPointer => {
-                let return_ty = bcx.monomorphize(&self.mir.return_ty);
-                let llval = fcx.get_ret_slot(bcx, return_ty, "return");
-                LvalueRef::new_sized(llval, LvalueTy::from_ty(return_ty.unwrap()))
-            }
+                let fn_return_ty = bcx.monomorphize(&self.mir.return_ty);
+                let return_ty = fn_return_ty.unwrap();
+                let llval = if !common::return_type_is_void(bcx.ccx(), return_ty) {
+                    fcx.get_ret_slot(bcx, fn_return_ty, "")
+                } else {
+                    // This is a void return; that is, there’s no place to store the value and
+                    // there cannot really be one (or storing into it doesn’t make sense, anyway).
+                    // Ergo, we return an undef ValueRef, so we do not have to special-case every
+                    // place using lvalues, and could use it the same way you use a regular
+                    // ReturnPointer LValue (i.e. store into it, load from it etc).
+                    let llty = type_of::type_of(bcx.ccx(), return_ty).ptr_to();
+                    unsafe {
+                        llvm::LLVMGetUndef(llty.to_ref())
+                    }
+                };
+                LvalueRef::new_sized(llval, LvalueTy::from_ty(return_ty))
+            },
             mir::Lvalue::Projection(ref projection) => {
                 let tr_base = self.trans_lvalue(bcx, &projection.base);
                 let projected_ty = tr_base.ty.projection_ty(tcx, &projection.elem);
@@ -122,7 +138,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         } else {
                             adt::MaybeSizedValue::unsized_(tr_base.llval, tr_base.llextra)
                         };
-                        (adt::trans_field_ptr(bcx, &base_repr, base, discr, field.index()),
+                        (adt::trans_field_ptr(bcx, &base_repr, base, Disr(discr), field.index()),
                          if is_sized {
                              ptr::null_mut()
                          } else {
@@ -132,7 +148,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     mir::ProjectionElem::Index(ref index) => {
                         let index = self.trans_operand(bcx, index);
                         let llindex = self.prepare_index(bcx, index.immediate());
-                        (build::InBoundsGEP(bcx, tr_base.llval, &[llindex]),
+                        let zero = common::C_uint(bcx.ccx(), 0u64);
+                        (build::InBoundsGEP(bcx, tr_base.llval, &[zero, llindex]),
                          ptr::null_mut())
                     }
                     mir::ProjectionElem::ConstantIndex { offset,
@@ -140,7 +157,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                                          min_length: _ } => {
                         let lloffset = common::C_u32(bcx.ccx(), offset);
                         let llindex = self.prepare_index(bcx, lloffset);
-                        (build::InBoundsGEP(bcx, tr_base.llval, &[llindex]),
+                        let zero = common::C_uint(bcx.ccx(), 0u64);
+                        (build::InBoundsGEP(bcx, tr_base.llval, &[zero, llindex]),
                          ptr::null_mut())
                     }
                     mir::ProjectionElem::ConstantIndex { offset,
@@ -150,7 +168,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         let lllen = self.lvalue_len(bcx, tr_base);
                         let llindex = build::Sub(bcx, lllen, lloffset, DebugLoc::None);
                         let llindex = self.prepare_index(bcx, llindex);
-                        (build::InBoundsGEP(bcx, tr_base.llval, &[llindex]),
+                        let zero = common::C_uint(bcx.ccx(), 0u64);
+                        (build::InBoundsGEP(bcx, tr_base.llval, &[zero, llindex]),
                          ptr::null_mut())
                     }
                     mir::ProjectionElem::Downcast(..) => {

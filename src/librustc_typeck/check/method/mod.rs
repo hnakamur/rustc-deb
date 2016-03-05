@@ -17,7 +17,7 @@ use middle::def_id::DefId;
 use middle::privacy::{AllPublic, DependsOn, LastPrivate, LastMod};
 use middle::subst;
 use middle::traits;
-use middle::ty::{self, RegionEscape, ToPredicate, ToPolyTraitRef, TraitRef};
+use middle::ty::{self, ToPredicate, ToPolyTraitRef, TraitRef, TypeFoldable};
 use middle::ty::adjustment::{AdjustDerefRef, AutoDerefRef, AutoPtr};
 use middle::infer;
 
@@ -274,13 +274,13 @@ pub fn lookup_in_trait_adjusted<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                    method_ty.explicit_self);
 
             match method_ty.explicit_self {
-                ty::ByValueExplicitSelfCategory => {
+                ty::ExplicitSelfCategory::ByValue => {
                     // Trait method is fn(self), no transformation needed.
                     assert!(!unsize);
                     fcx.write_autoderef_adjustment(self_expr.id, autoderefs);
                 }
 
-                ty::ByReferenceExplicitSelfCategory(..) => {
+                ty::ExplicitSelfCategory::ByReference(..) => {
                     // Trait method is fn(&self) or fn(&mut self), need an
                     // autoref. Pull the region etc out of the type of first argument.
                     match transformed_self_ty.sty {

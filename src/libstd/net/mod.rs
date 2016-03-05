@@ -18,7 +18,6 @@ use io::{self, Error, ErrorKind};
 use sys_common::net as net_imp;
 
 #[stable(feature = "rust1", since = "1.0.0")]
-#[allow(deprecated)]
 pub use self::ip::{IpAddr, Ipv4Addr, Ipv6Addr, Ipv6MulticastScope};
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::addr::{SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
@@ -140,7 +139,6 @@ pub fn lookup_host(host: &str) -> io::Result<LookupHost> {
 ///
 /// ```no_run
 /// #![feature(lookup_addr)]
-/// #![feature(ip_addr)]
 ///
 /// use std::net::{self, Ipv4Addr, IpAddr};
 ///

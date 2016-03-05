@@ -316,21 +316,6 @@ See [RFC 911] for more details on the design of `const fn`s.
 [RFC 911]: https://github.com/rust-lang/rfcs/blob/master/text/0911-const-fn.md
 "##,
 
-E0016: r##"
-Blocks in constants may only contain items (such as constant, function
-definition, etc...) and a tail expression. Example:
-
-```
-const FOO: i32 = { let x = 0; x }; // 'x' isn't an item!
-```
-
-To avoid it, you have to replace the non-item object:
-
-```
-const FOO: i32 = { const X : i32 = 0; X };
-```
-"##,
-
 E0017: r##"
 References in statics and constants may only refer to immutable values. Example:
 
@@ -420,24 +405,6 @@ code example:
 const X: i32 = 42 / 0;
 // error: attempted to divide by zero in a constant expression
 ```
-"##,
-
-E0022: r##"
-Constant functions are not allowed to mutate anything. Thus, binding to an
-argument with a mutable pattern is not allowed. For example,
-
-```
-const fn foo(mut x: u8) {
-    // do stuff
-}
-```
-
-is bad because the function body may not mutate `x`.
-
-Remove any mutable bindings from the argument list to fix this error. In case
-you need to mutate the argument, try lazily initializing a global variable
-instead of using a `const fn`, or refactoring the code to a functional style to
-avoid mutation if possible.
 "##,
 
 E0030: r##"
@@ -989,6 +956,41 @@ enum Method { GET, POST }
 ```
 "##,
 
+E0229: r##"
+An associated type binding was done outside of the type parameter declaration
+and `where` clause. Erroneous code example:
+
+```
+pub trait Foo {
+    type A;
+    fn boo(&self) -> <Self as Foo>::A;
+}
+
+struct Bar;
+
+impl Foo for isize {
+    type A = usize;
+    fn boo(&self) -> usize { 42 }
+}
+
+fn baz<I>(x: &<I as Foo<A=Bar>>::A) {}
+// error: associated type bindings are not allowed here
+```
+
+To solve this error, please move the type bindings in the type parameter
+declaration:
+
+```
+fn baz<I: Foo<A=Bar>>(x: &<I as Foo>::A) {} // ok!
+```
+
+or in the `where` clause:
+
+```
+fn baz<I>(x: &<I as Foo>::A) where I: Foo<A=Bar> {}
+```
+"##,
+
 E0261: r##"
 When using a lifetime like `'a` in a type, it must be declared before being
 used.
@@ -1302,7 +1304,7 @@ explanatory comments for the same example:
 
     // `for`-loops use a protocol based on the `Iterator`
     // trait. Each item yielded in a `for` loop has the
-    // type `Iterator::Item` -- that is,I `Item` is the
+    // type `Iterator::Item` -- that is, `Item` is the
     // associated type of the concrete iterator impl.
     for v in &vs {
 //      ~    ~~~
@@ -1622,6 +1624,46 @@ This will fail because the compiler does not know which instance of `Foo` to
 call `bar` on. Change `Foo::bar()` to `Foo::<T>::bar()` to resolve the error.
 "##,
 
+E0283: r##"
+This error occurs when the compiler doesn't have enough information
+to unambiguously choose an implementation.
+
+For example:
+
+```
+trait Generator {
+    fn create() -> u32;
+}
+
+struct Impl;
+impl Generator for Impl {
+    fn create() -> u32 { 1 }
+}
+
+struct AnotherImpl;
+impl Generator for AnotherImpl {
+    fn create() -> u32 { 2 }
+}
+
+fn main() {
+    let cont: u32 = Generator::create();
+    // error, impossible to choose one of Generator trait implementation
+    // Impl or AnotherImpl? Maybe anything else?
+}
+```
+
+To resolve this error use the concrete type:
+
+```
+fn main() {
+    let gen1 = AnotherImpl::create();
+
+    // if there are multiple methods with same name (different traits)
+    let gen2 = <AnotherImpl as Generator>::create();
+}
+```
+"##,
+
 E0296: r##"
 This error indicates that the given recursion limit could not be parsed. Ensure
 that the value provided is a positive integer between quotes, like so:
@@ -1747,6 +1789,30 @@ let x: i32 = "I am not a number!";
 //      |
 //    type `i32` assigned to variable `x`
 ```
+
+Another situation in which this occurs is when you attempt to use the `try!`
+macro inside a function that does not return a `Result<T, E>`:
+
+```
+use std::fs::File;
+
+fn main() {
+    let mut f = try!(File::create("foo.txt"));
+}
+```
+
+This code gives an error like this:
+
+```text
+<std macros>:5:8: 6:42 error: mismatched types:
+ expected `()`,
+     found `core::result::Result<_, _>`
+ (expected (),
+     found enum `core::result::Result`) [E0308]
+```
+
+`try!` returns a `Result<T, E>`, and so the function must. But `main()` has
+`()` as its return type, hence the error.
 "##,
 
 E0309: r##"
@@ -2241,18 +2307,16 @@ register_diagnostics! {
     // E0006 // merged with E0005
 //  E0134,
 //  E0135,
-    E0229, // associated type bindings are not allowed here
     E0278, // requirement is not satisfied
     E0279, // requirement is not satisfied
     E0280, // requirement is not satisfied
-    E0283, // cannot resolve type
     E0284, // cannot resolve type
     E0285, // overflow evaluation builtin bounds
     E0298, // mismatched types between arms
     E0299, // mismatched types between arms
-    E0300, // unexpanded macro
-    E0304, // expected signed integer constant
-    E0305, // expected constant
+    // E0300, // unexpanded macro
+    // E0304, // expected signed integer constant
+    // E0305, // expected constant
     E0311, // thing may not live long enough
     E0312, // lifetime of reference outlives lifetime of borrowed content
     E0313, // lifetime of borrowed pointer outlives lifetime of captured variable
@@ -2261,7 +2325,6 @@ register_diagnostics! {
     E0316, // nested quantification of lifetimes
     E0453, // overruled by outer forbid
     E0471, // constant evaluation error: ..
-    E0472, // asm! is unsupported on this target
     E0473, // dereference of reference outside its lifetime
     E0474, // captured variable `..` does not outlive the enclosing closure
     E0475, // index of slice outside its lifetime

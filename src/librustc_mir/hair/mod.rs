@@ -14,11 +14,12 @@
 //! unit-tested and separated from the Rust source and compiler data
 //! structures.
 
-use rustc::mir::repr::{BinOp, BorrowKind, Field, Literal, Mutability, UnOp};
+use rustc::mir::repr::{BinOp, BorrowKind, Field, Literal, Mutability, UnOp, ItemKind};
+use rustc::middle::const_eval::ConstVal;
 use rustc::middle::def_id::DefId;
 use rustc::middle::region::CodeExtent;
 use rustc::middle::subst::Substs;
-use rustc::middle::ty::{AdtDef, ClosureSubsts, Region, Ty};
+use rustc::middle::ty::{self, AdtDef, ClosureSubsts, Region, Ty};
 use rustc_front::hir;
 use syntax::ast;
 use syntax::codemap::Span;
@@ -29,6 +30,7 @@ pub mod cx;
 #[derive(Clone, Debug)]
 pub struct ItemRef<'tcx> {
     pub ty: Ty<'tcx>,
+    pub kind: ItemKind,
     pub def_id: DefId,
     pub substs: &'tcx Substs<'tcx>,
 }
@@ -122,6 +124,7 @@ pub enum ExprKind<'tcx> {
         value: ExprRef<'tcx>,
     },
     Call {
+        ty: ty::Ty<'tcx>,
         fun: ExprRef<'tcx>,
         args: Vec<ExprRef<'tcx>>,
     },
@@ -304,7 +307,7 @@ pub enum PatternKind<'tcx> {
     }, // box P, &P, &mut P, etc
 
     Constant {
-        value: Literal<'tcx>,
+        value: ConstVal,
     },
 
     Range {

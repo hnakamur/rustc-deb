@@ -16,15 +16,15 @@
 use DefModifiers;
 use resolve_imports::ImportDirective;
 use resolve_imports::ImportDirectiveSubclass::{self, SingleImport, GlobImport};
-use resolve_imports::ImportResolution;
+use resolve_imports::{ImportResolution, ImportResolutionPerNamespace};
 use Module;
 use Namespace::{TypeNS, ValueNS};
 use NameBindings;
 use {names_to_string, module_to_string};
-use ParentLink::{self, ModuleParentLink, BlockParentLink};
+use ParentLink::{ModuleParentLink, BlockParentLink};
 use Resolver;
 use resolve_imports::Shadowable;
-use {resolve_error, ResolutionError};
+use {resolve_error, resolve_struct_error, ResolutionError};
 
 use self::DuplicateCheckingMode::*;
 
@@ -38,12 +38,12 @@ use syntax::parse::token::special_idents;
 use syntax::codemap::{Span, DUMMY_SP};
 
 use rustc_front::hir;
-use rustc_front::hir::{Block, Crate, DeclItem};
+use rustc_front::hir::{Block, DeclItem};
 use rustc_front::hir::{ForeignItem, ForeignItemFn, ForeignItemStatic};
 use rustc_front::hir::{Item, ItemConst, ItemEnum, ItemExternCrate, ItemFn};
 use rustc_front::hir::{ItemForeignMod, ItemImpl, ItemMod, ItemStatic, ItemDefaultImpl};
 use rustc_front::hir::{ItemStruct, ItemTrait, ItemTy, ItemUse};
-use rustc_front::hir::{NamedField, PathListIdent, PathListMod, Public};
+use rustc_front::hir::{NamedField, PathListIdent, PathListMod};
 use rustc_front::hir::StmtDecl;
 use rustc_front::hir::UnnamedField;
 use rustc_front::hir::{Variant, ViewPathGlob, ViewPathList, ViewPathSimple};
@@ -52,7 +52,6 @@ use rustc_front::intravisit::{self, Visitor};
 
 use std::mem::replace;
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
 
 // Specifies how duplicates should be handled when adding a child item if
 // another item exists with the same name in some namespace.
@@ -86,7 +85,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
     /// Constructs the reduced graph for the entire crate.
     fn build_reduced_graph(self, krate: &hir::Crate) {
         let mut visitor = BuildReducedGraphVisitor {
-            parent: self.graph_root.clone(),
+            parent: self.graph_root,
             builder: self,
         };
         intravisit::walk_crate(&mut visitor, krate);
@@ -97,12 +96,12 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
     /// Returns the child's corresponding name bindings.
     fn add_child(&self,
                  name: Name,
-                 parent: &Rc<Module>,
+                 parent: Module<'b>,
                  duplicate_checking_mode: DuplicateCheckingMode,
                  // For printing errors
                  sp: Span)
-                 -> NameBindings {
-        self.check_for_conflicts_between_external_crates_and_items(&**parent, name, sp);
+                 -> NameBindings<'b> {
+        self.check_for_conflicts_between_external_crates_and_items(parent, name, sp);
 
         // Add or reuse the child.
         let child = parent.children.borrow().get(&name).cloned();
@@ -137,12 +136,16 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
                 // Record an error here by looking up the namespace that had the duplicate
                 let ns_str = match ns { TypeNS => "type or module", ValueNS => "value" };
-                resolve_error(self, sp, ResolutionError::DuplicateDefinition(ns_str, name));
+                let mut err = resolve_struct_error(self,
+                                                   sp,
+                                                   ResolutionError::DuplicateDefinition(ns_str,
+                                                                                        name));
 
                 if let Some(sp) = child[ns].span() {
                     let note = format!("first definition of {} `{}` here", ns_str, name);
-                    self.session.span_note(sp, &note);
+                    err.span_note(sp, &note);
                 }
+                err.emit();
                 child
             }
         }
@@ -174,12 +177,8 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
         return false;
     }
 
-    fn get_parent_link(&mut self, parent: &Rc<Module>, name: Name) -> ParentLink {
-        ModuleParentLink(Rc::downgrade(parent), name)
-    }
-
     /// Constructs the reduced graph for one item.
-    fn build_reduced_graph_for_item(&mut self, item: &Item, parent: &Rc<Module>) -> Rc<Module> {
+    fn build_reduced_graph_for_item(&mut self, item: &Item, parent: Module<'b>) -> Module<'b> {
         let name = item.name;
         let sp = item.span;
         let is_public = item.vis == hir::Public;
@@ -234,7 +233,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                         }
 
                         let subclass = SingleImport(binding, source_name);
-                        self.build_import_directive(&**parent,
+                        self.build_import_directive(parent,
                                                     module_path,
                                                     subclass,
                                                     view_path.span,
@@ -253,13 +252,13 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                                     })
                                                     .collect::<Vec<Span>>();
                         if mod_spans.len() > 1 {
-                            resolve_error(self,
+                            let mut e = resolve_struct_error(self,
                                           mod_spans[0],
                                           ResolutionError::SelfImportCanOnlyAppearOnceInTheList);
                             for other_span in mod_spans.iter().skip(1) {
-                                self.session
-                                    .span_note(*other_span, "another `self` import appears here");
+                                e.span_note(*other_span, "another `self` import appears here");
                             }
+                            e.emit();
                         }
 
                         for source_item in source_items {
@@ -284,7 +283,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                     (module_path.to_vec(), name, rename)
                                 }
                             };
-                            self.build_import_directive(&**parent,
+                            self.build_import_directive(parent,
                                                         module_path,
                                                         SingleImport(rename, name),
                                                         source_item.span,
@@ -294,7 +293,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                         }
                     }
                     ViewPathGlob(_) => {
-                        self.build_import_directive(&**parent,
+                        self.build_import_directive(parent,
                                                     module_path,
                                                     GlobImport,
                                                     view_path.span,
@@ -303,7 +302,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                                     shadowable);
                     }
                 }
-                parent.clone()
+                parent
             }
 
             ItemExternCrate(_) => {
@@ -315,32 +314,32 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                         index: CRATE_DEF_INDEX,
                     };
                     self.external_exports.insert(def_id);
-                    let parent_link = ModuleParentLink(Rc::downgrade(parent), name);
+                    let parent_link = ModuleParentLink(parent, name);
                     let def = DefMod(def_id);
-                    let external_module = Module::new(parent_link, Some(def), false, true);
+                    let external_module = self.new_module(parent_link, Some(def), false, true);
 
                     debug!("(build reduced graph for item) found extern `{}`",
                            module_to_string(&*external_module));
-                    self.check_for_conflicts_between_external_crates(&**parent, name, sp);
+                    self.check_for_conflicts_for_external_crate(parent, name, sp);
                     parent.external_module_children
                           .borrow_mut()
-                          .insert(name, external_module.clone());
+                          .insert(name, external_module);
                     self.build_reduced_graph_for_external_crate(&external_module);
                 }
-                parent.clone()
+                parent
             }
 
             ItemMod(..) => {
                 let name_bindings = self.add_child(name, parent, ForbidDuplicateTypes, sp);
 
-                let parent_link = self.get_parent_link(parent, name);
+                let parent_link = ModuleParentLink(parent, name);
                 let def = DefMod(self.ast_map.local_def_id(item.id));
-                let module = Module::new(parent_link, Some(def), false, is_public);
+                let module = self.new_module(parent_link, Some(def), false, is_public);
                 name_bindings.define_module(module.clone(), sp);
                 module
             }
 
-            ItemForeignMod(..) => parent.clone(),
+            ItemForeignMod(..) => parent,
 
             // These items live in the value namespace.
             ItemStatic(_, m, _) => {
@@ -350,19 +349,19 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                 name_bindings.define_value(DefStatic(self.ast_map.local_def_id(item.id), mutbl),
                                            sp,
                                            modifiers);
-                parent.clone()
+                parent
             }
             ItemConst(_, _) => {
                 self.add_child(name, parent, ForbidDuplicateValues, sp)
                     .define_value(DefConst(self.ast_map.local_def_id(item.id)), sp, modifiers);
-                parent.clone()
+                parent
             }
             ItemFn(_, _, _, _, _, _) => {
                 let name_bindings = self.add_child(name, parent, ForbidDuplicateValues, sp);
 
                 let def = DefFn(self.ast_map.local_def_id(item.id), false);
                 name_bindings.define_value(def, sp, modifiers);
-                parent.clone()
+                parent
             }
 
             // These items live in the type namespace.
@@ -372,11 +371,11 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                                    ForbidDuplicateTypes,
                                                    sp);
 
-                let parent_link = self.get_parent_link(parent, name);
+                let parent_link = ModuleParentLink(parent, name);
                 let def = DefTy(self.ast_map.local_def_id(item.id), false);
-                let module = Module::new(parent_link, Some(def), false, is_public);
+                let module = self.new_module(parent_link, Some(def), false, is_public);
                 name_bindings.define_module(module, sp);
-                parent.clone()
+                parent
             }
 
             ItemEnum(ref enum_definition, _) => {
@@ -385,16 +384,22 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                                    ForbidDuplicateTypes,
                                                    sp);
 
-                let parent_link = self.get_parent_link(parent, name);
+                let parent_link = ModuleParentLink(parent, name);
                 let def = DefTy(self.ast_map.local_def_id(item.id), true);
-                let module = Module::new(parent_link, Some(def), false, is_public);
+                let module = self.new_module(parent_link, Some(def), false, is_public);
                 name_bindings.define_module(module.clone(), sp);
 
+                let variant_modifiers = if is_public {
+                    DefModifiers::empty()
+                } else {
+                    DefModifiers::PRIVATE_VARIANT
+                };
                 for variant in &(*enum_definition).variants {
                     let item_def_id = self.ast_map.local_def_id(item.id);
-                    self.build_reduced_graph_for_variant(variant, item_def_id, &module);
+                    self.build_reduced_graph_for_variant(variant, item_def_id,
+                                                         &module, variant_modifiers);
                 }
-                parent.clone()
+                parent
             }
 
             // These items live in both the type and value namespaces.
@@ -434,11 +439,11 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                 let item_def_id = self.ast_map.local_def_id(item.id);
                 self.structs.insert(item_def_id, named_fields);
 
-                parent.clone()
+                parent
             }
 
             ItemDefaultImpl(_, _) |
-            ItemImpl(..) => parent.clone(),
+            ItemImpl(..) => parent,
 
             ItemTrait(_, _, _, ref items) => {
                 let name_bindings = self.add_child(name,
@@ -449,9 +454,9 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                 let def_id = self.ast_map.local_def_id(item.id);
 
                 // Add all the items within to a new module.
-                let parent_link = self.get_parent_link(parent, name);
+                let parent_link = ModuleParentLink(parent, name);
                 let def = DefTrait(def_id);
-                let module_parent = Module::new(parent_link, Some(def), false, is_public);
+                let module_parent = self.new_module(parent_link, Some(def), false, is_public);
                 name_bindings.define_module(module_parent.clone(), sp);
 
                 // Add the names of all the items to the trait info.
@@ -484,7 +489,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                     self.trait_item_map.insert((trait_item.name, def_id), trait_item_def_id);
                 }
 
-                parent.clone()
+                parent
             }
         }
     }
@@ -494,7 +499,8 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
     fn build_reduced_graph_for_variant(&mut self,
                                        variant: &Variant,
                                        item_id: DefId,
-                                       parent: &Rc<Module>) {
+                                       parent: Module<'b>,
+                                       variant_modifiers: DefModifiers) {
         let name = variant.node.name;
         let is_exported = if variant.node.data.is_struct() {
             // Not adding fields for variants as they are not accessed with a self receiver
@@ -512,18 +518,18 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                                       self.ast_map.local_def_id(variant.node.data.id()),
                                       is_exported),
                            variant.span,
-                           DefModifiers::PUBLIC | DefModifiers::IMPORTABLE);
+                           DefModifiers::PUBLIC | DefModifiers::IMPORTABLE | variant_modifiers);
         child.define_type(DefVariant(item_id,
                                      self.ast_map.local_def_id(variant.node.data.id()),
                                      is_exported),
                           variant.span,
-                          DefModifiers::PUBLIC | DefModifiers::IMPORTABLE);
+                          DefModifiers::PUBLIC | DefModifiers::IMPORTABLE | variant_modifiers);
     }
 
     /// Constructs the reduced graph for one foreign item.
     fn build_reduced_graph_for_foreign_item(&mut self,
                                             foreign_item: &ForeignItem,
-                                            parent: &Rc<Module>) {
+                                            parent: Module<'b>) {
         let name = foreign_item.name;
         let is_public = foreign_item.vis == hir::Public;
         let modifiers = if is_public {
@@ -544,7 +550,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
         name_bindings.define_value(def, foreign_item.span, modifiers);
     }
 
-    fn build_reduced_graph_for_block(&mut self, block: &Block, parent: &Rc<Module>) -> Rc<Module> {
+    fn build_reduced_graph_for_block(&mut self, block: &Block, parent: Module<'b>) -> Module<'b> {
         if self.block_needs_anonymous_module(block) {
             let block_id = block.id;
 
@@ -552,22 +558,22 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                     {}",
                    block_id);
 
-            let parent_link = BlockParentLink(Rc::downgrade(parent), block_id);
-            let new_module = Module::new(parent_link, None, false, false);
-            parent.anonymous_children.borrow_mut().insert(block_id, new_module.clone());
+            let parent_link = BlockParentLink(parent, block_id);
+            let new_module = self.new_module(parent_link, None, false, false);
+            parent.anonymous_children.borrow_mut().insert(block_id, new_module);
             new_module
         } else {
-            parent.clone()
+            parent
         }
     }
 
     fn handle_external_def(&mut self,
                            def: Def,
                            vis: Visibility,
-                           child_name_bindings: &NameBindings,
+                           child_name_bindings: &NameBindings<'b>,
                            final_ident: &str,
                            name: Name,
-                           new_parent: &Rc<Module>) {
+                           new_parent: Module<'b>) {
         debug!("(building reduced graph for external crate) building external def {}, priv {:?}",
                final_ident,
                vis);
@@ -598,8 +604,8 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                     debug!("(building reduced graph for external crate) building module {} {}",
                            final_ident,
                            is_public);
-                    let parent_link = self.get_parent_link(new_parent, name);
-                    let module = Module::new(parent_link, Some(def), true, is_public);
+                    let parent_link = ModuleParentLink(new_parent, name);
+                    let module = self.new_module(parent_link, Some(def), true, is_public);
                     child_name_bindings.define_module(module, DUMMY_SP);
                 }
             }
@@ -670,8 +676,8 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
                 }
 
                 // Define a module if necessary.
-                let parent_link = self.get_parent_link(new_parent, name);
-                let module = Module::new(parent_link, Some(def), true, is_public);
+                let parent_link = ModuleParentLink(new_parent, name);
+                let module = self.new_module(parent_link, Some(def), true, is_public);
                 child_name_bindings.define_module(module, DUMMY_SP);
             }
             DefTy(..) | DefAssociatedTy(..) => {
@@ -706,10 +712,10 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
             DefLocal(..) |
             DefPrimTy(..) |
             DefTyParam(..) |
-            DefUse(..) |
             DefUpvar(..) |
             DefLabel(..) |
-            DefSelfTy(..) => {
+            DefSelfTy(..) |
+            DefErr => {
                 panic!("didn't expect `{:?}`", def);
             }
         }
@@ -717,7 +723,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
     /// Builds the reduced graph for a single item in an external crate.
     fn build_reduced_graph_for_external_crate_def(&mut self,
-                                                  root: &Rc<Module>,
+                                                  root: Module<'b>,
                                                   xcdef: ChildItem) {
         match xcdef.def {
             DlDef(def) => {
@@ -755,9 +761,9 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
     }
 
     /// Builds the reduced graph rooted at the given external module.
-    fn populate_external_module(&mut self, module: &Rc<Module>) {
+    fn populate_external_module(&mut self, module: Module<'b>) {
         debug!("(populating external module) attempting to populate {}",
-               module_to_string(&**module));
+               module_to_string(module));
 
         let def_id = match module.def_id() {
             None => {
@@ -777,7 +783,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
     /// Ensures that the reduced graph rooted at the given external module
     /// is built, building it if it is not.
-    fn populate_module_if_necessary(&mut self, module: &Rc<Module>) {
+    fn populate_module_if_necessary(&mut self, module: Module<'b>) {
         if !module.populated.get() {
             self.populate_external_module(module)
         }
@@ -786,7 +792,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
     /// Builds the reduced graph rooted at the 'use' directive for an external
     /// crate.
-    fn build_reduced_graph_for_external_crate(&mut self, root: &Rc<Module>) {
+    fn build_reduced_graph_for_external_crate(&mut self, root: Module<'b>) {
         let root_cnum = root.def_id().unwrap().krate;
         for child in self.session.cstore.crate_top_level_items(root_cnum) {
             self.build_reduced_graph_for_external_crate_def(root, child);
@@ -795,7 +801,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
     /// Creates and adds an import directive to the given module.
     fn build_import_directive(&mut self,
-                              module_: &Module,
+                              module_: Module<'b>,
                               module_path: Vec<Name>,
                               subclass: ImportDirectiveSubclass,
                               span: Span,
@@ -822,22 +828,23 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
                 let mut import_resolutions = module_.import_resolutions.borrow_mut();
                 match import_resolutions.get_mut(&target) {
-                    Some(resolution) => {
+                    Some(resolution_per_ns) => {
                         debug!("(building import directive) bumping reference");
-                        resolution.outstanding_references += 1;
+                        resolution_per_ns.outstanding_references += 1;
 
                         // the source of this name is different now
-                        resolution.type_id = id;
-                        resolution.value_id = id;
-                        resolution.is_public = is_public;
+                        let resolution =
+                            ImportResolution { id: id, is_public: is_public, target: None };
+                        resolution_per_ns[TypeNS] = resolution.clone();
+                        resolution_per_ns[ValueNS] = resolution;
                         return;
                     }
                     None => {}
                 }
                 debug!("(building import directive) creating new");
-                let mut resolution = ImportResolution::new(id, is_public);
-                resolution.outstanding_references = 1;
-                import_resolutions.insert(target, resolution);
+                let mut import_resolution_per_ns = ImportResolutionPerNamespace::new(id, is_public);
+                import_resolution_per_ns.outstanding_references = 1;
+                import_resolutions.insert(target, import_resolution_per_ns);
             }
             GlobImport => {
                 // Set the glob flag. This tells us that we don't know the
@@ -854,7 +861,7 @@ impl<'a, 'b:'a, 'tcx:'b> GraphBuilder<'a, 'b, 'tcx> {
 
 struct BuildReducedGraphVisitor<'a, 'b: 'a, 'tcx: 'b> {
     builder: GraphBuilder<'a, 'b, 'tcx>,
-    parent: Rc<Module>,
+    parent: Module<'b>,
 }
 
 impl<'a, 'b, 'v, 'tcx> Visitor<'v> for BuildReducedGraphVisitor<'a, 'b, 'tcx> {
@@ -885,6 +892,7 @@ pub fn build_reduced_graph(resolver: &mut Resolver, krate: &hir::Crate) {
     GraphBuilder { resolver: resolver }.build_reduced_graph(krate);
 }
 
-pub fn populate_module_if_necessary(resolver: &mut Resolver, module: &Rc<Module>) {
+pub fn populate_module_if_necessary<'a, 'tcx>(resolver: &mut Resolver<'a, 'tcx>,
+                                              module: Module<'a>) {
     GraphBuilder { resolver: resolver }.populate_module_if_necessary(module);
 }

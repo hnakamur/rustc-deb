@@ -120,7 +120,8 @@ enum_from_u32! {
 
         tag_tree = 0x51,
 
-        // GAP 0x52
+        tag_mir = 0x52,
+
         tag_table = 0x53,
         // GAP 0x54, 0x55
         tag_table_def = 0x56,
@@ -235,6 +236,8 @@ pub const tag_defaulted_trait: usize = 0xa4;
 pub const tag_impl_coerce_unsized_kind: usize = 0xa5;
 
 pub const tag_items_data_item_constness: usize = 0xa6;
+
+pub const tag_items_data_item_deprecation: usize = 0xa7;
 
 pub const tag_rustc_version: usize = 0x10f;
 pub fn rustc_version() -> String {

@@ -18,11 +18,13 @@ pub use self::RegionResolutionError::*;
 pub use self::VarValue::*;
 
 use super::{RegionVariableOrigin, SubregionOrigin, TypeTrace, MiscVariable};
+use super::unify_key;
 
 use rustc_data_structures::graph::{self, Direction, NodeIndex};
+use rustc_data_structures::unify::{self, UnificationTable};
 use middle::free_region::FreeRegionMap;
 use middle::ty::{self, Ty};
-use middle::ty::{BoundRegion, FreeRegion, Region, RegionVid};
+use middle::ty::{BoundRegion, Region, RegionVid};
 use middle::ty::{ReEmpty, ReStatic, ReFree, ReEarlyBound};
 use middle::ty::{ReLateBound, ReScope, ReVar, ReSkolemized, BrFresh};
 use middle::ty::error::TypeError;
@@ -234,15 +236,16 @@ pub struct RegionVarBindings<'a, 'tcx: 'a> {
     // bound on a variable and so forth, which can never be rolled
     // back.
     undo_log: RefCell<Vec<UndoLogEntry>>,
+    unification_table: RefCell<UnificationTable<ty::RegionVid>>,
 
     // This contains the results of inference.  It begins as an empty
     // option and only acquires a value after inference is complete.
     values: RefCell<Option<Vec<VarValue>>>,
 }
 
-#[derive(Debug)]
 pub struct RegionSnapshot {
     length: usize,
+    region_snapshot: unify::Snapshot<ty::RegionVid>,
     skolemization_count: u32,
 }
 
@@ -260,6 +263,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             skolemization_count: Cell::new(0),
             bound_count: Cell::new(0),
             undo_log: RefCell::new(Vec::new()),
+            unification_table: RefCell::new(UnificationTable::new()),
         }
     }
 
@@ -273,6 +277,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
         self.undo_log.borrow_mut().push(OpenSnapshot);
         RegionSnapshot {
             length: length,
+            region_snapshot: self.unification_table.borrow_mut().snapshot(),
             skolemization_count: self.skolemization_count.get(),
         }
     }
@@ -289,6 +294,7 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             (*undo_log)[snapshot.length] = CommitedSnapshot;
         }
         self.skolemization_count.set(snapshot.skolemization_count);
+        self.unification_table.borrow_mut().commit(snapshot.region_snapshot);
     }
 
     pub fn rollback_to(&self, snapshot: RegionSnapshot) {
@@ -328,6 +334,8 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
         let c = undo_log.pop().unwrap();
         assert!(c == OpenSnapshot);
         self.skolemization_count.set(snapshot.skolemization_count);
+        self.unification_table.borrow_mut()
+            .rollback_to(snapshot.region_snapshot);
     }
 
     pub fn num_vars(&self) -> u32 {
@@ -338,9 +346,13 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
     }
 
     pub fn new_region_var(&self, origin: RegionVariableOrigin) -> RegionVid {
-        let id = self.num_vars();
+        let vid = RegionVid { index: self.num_vars() };
         self.var_origins.borrow_mut().push(origin.clone());
-        let vid = RegionVid { index: id };
+
+        let u_vid = self.unification_table.borrow_mut().new_key(
+            unify_key::RegionVidKey { min_vid: vid }
+            );
+        assert_eq!(vid, u_vid);
         if self.in_snapshot() {
             self.undo_log.borrow_mut().push(AddVar(vid));
         }
@@ -460,6 +472,10 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
             // equating regions.
             self.make_subregion(origin.clone(), sub, sup);
             self.make_subregion(origin, sup, sub);
+
+            if let (ty::ReVar(sub), ty::ReVar(sup)) = (sub, sup) {
+                self.unification_table.borrow_mut().union(sub, sup);
+            }
         }
     }
 
@@ -473,13 +489,6 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
                origin);
 
         match (sub, sup) {
-            (ReEarlyBound(..), ReEarlyBound(..)) => {
-                // This case is used only to make sure that explicitly-specified
-                // `Self` types match the real self type in implementations.
-                //
-                // FIXME(NDM) -- we really shouldn't be comparing bound things
-                self.add_verify(VerifyRegSubReg(origin, sub, sup));
-            }
             (ReEarlyBound(..), _) |
             (ReLateBound(..), _) |
             (_, ReEarlyBound(..)) |
@@ -566,6 +575,10 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
                 r
             }
         }
+    }
+
+    pub fn opportunistic_resolve_var(&self, rid: RegionVid) -> ty::Region {
+        ty::ReVar(self.unification_table.borrow_mut().find_value(rid).min_vid)
     }
 
     fn combine_map(&self, t: CombineMapType) -> &RefCell<CombineMap> {
@@ -1092,7 +1105,14 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
         for _ in 0..num_vars {
             graph.add_node(());
         }
-        let dummy_idx = graph.add_node(());
+
+        // Issue #30438: two distinct dummy nodes, one for incoming
+        // edges (dummy_source) and another for outgoing edges
+        // (dummy_sink). In `dummy -> a -> b -> dummy`, using one
+        // dummy node leads one to think (erroneously) there exists a
+        // path from `b` to `a`. Two dummy nodes sidesteps the issue.
+        let dummy_source = graph.add_node(());
+        let dummy_sink = graph.add_node(());
 
         for (constraint, _) in constraints.iter() {
             match *constraint {
@@ -1102,10 +1122,10 @@ impl<'a, 'tcx> RegionVarBindings<'a, 'tcx> {
                                    *constraint);
                 }
                 ConstrainRegSubVar(_, b_id) => {
-                    graph.add_edge(dummy_idx, NodeIndex(b_id.index as usize), *constraint);
+                    graph.add_edge(dummy_source, NodeIndex(b_id.index as usize), *constraint);
                 }
                 ConstrainVarSubReg(a_id, _) => {
-                    graph.add_edge(NodeIndex(a_id.index as usize), dummy_idx, *constraint);
+                    graph.add_edge(NodeIndex(a_id.index as usize), dummy_sink, *constraint);
                 }
             }
         }
@@ -1309,6 +1329,13 @@ fn lookup(values: &Vec<VarValue>, rid: ty::RegionVid) -> ty::Region {
 impl<'tcx> fmt::Debug for RegionAndOrigin<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "RegionAndOrigin({:?},{:?})", self.region, self.origin)
+    }
+}
+
+impl fmt::Debug for RegionSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RegionSnapshot(length={},skolemization={})",
+               self.length, self.skolemization_count)
     }
 }
 

@@ -19,7 +19,8 @@ use io;
 use iter::Iterator;
 use libc;
 use mem;
-use ops::Deref;
+use memchr;
+use ops;
 use option::Option::{self, Some, None};
 use os::raw::c_char;
 use result::Result::{self, Ok, Err};
@@ -149,7 +150,7 @@ pub struct NulError(usize, Vec<u8>);
 /// An error returned from `CString::into_string` to indicate that a UTF-8 error
 /// was encountered during the conversion.
 #[derive(Clone, PartialEq, Debug)]
-#[unstable(feature = "cstring_into", reason = "recently added", issue = "29157")]
+#[stable(feature = "cstring_into", since = "1.7.0")]
 pub struct IntoStringError {
     inner: CString,
     error: Utf8Error,
@@ -188,7 +189,7 @@ impl CString {
     }
 
     fn _new(bytes: Vec<u8>) -> Result<CString, NulError> {
-        match bytes.iter().position(|x| *x == 0) {
+        match memchr::memchr(0, &bytes) {
             Some(i) => Err(NulError(i, bytes)),
             None => Ok(unsafe { CString::from_vec_unchecked(bytes) }),
         }
@@ -211,38 +212,11 @@ impl CString {
     /// The only appropriate argument is a pointer obtained by calling
     /// `into_raw`. The length of the string will be recalculated
     /// using the pointer.
-    #[unstable(feature = "cstr_memory2", reason = "recently added",
-               issue = "27769")]
-    #[rustc_deprecated(since = "1.4.0", reason = "renamed to from_raw")]
-    pub unsafe fn from_ptr(ptr: *const c_char) -> CString {
-        CString::from_raw(ptr as *mut _)
-    }
-
-    /// Retakes ownership of a CString that was transferred to C.
-    ///
-    /// The only appropriate argument is a pointer obtained by calling
-    /// `into_raw`. The length of the string will be recalculated
-    /// using the pointer.
     #[stable(feature = "cstr_memory", since = "1.4.0")]
     pub unsafe fn from_raw(ptr: *mut c_char) -> CString {
         let len = libc::strlen(ptr) + 1; // Including the NUL byte
         let slice = slice::from_raw_parts(ptr, len as usize);
         CString { inner: mem::transmute(slice) }
-    }
-
-    /// Transfers ownership of the string to a C caller.
-    ///
-    /// The pointer must be returned to Rust and reconstituted using
-    /// `from_raw` to be properly deallocated. Specifically, one
-    /// should *not* use the standard C `free` function to deallocate
-    /// this string.
-    ///
-    /// Failure to call `from_raw` will lead to a memory leak.
-    #[unstable(feature = "cstr_memory2", reason = "recently added",
-               issue = "27769")]
-    #[rustc_deprecated(since = "1.4.0", reason = "renamed to into_raw")]
-    pub fn into_ptr(self) -> *const c_char {
-        self.into_raw() as *const _
     }
 
     /// Transfers ownership of the string to a C caller.
@@ -261,7 +235,7 @@ impl CString {
     /// Converts the `CString` into a `String` if it contains valid Unicode data.
     ///
     /// On failure, ownership of the original `CString` is returned.
-    #[unstable(feature = "cstring_into", reason = "recently added", issue = "29157")]
+    #[stable(feature = "cstring_into", since = "1.7.0")]
     pub fn into_string(self) -> Result<String, IntoStringError> {
         String::from_utf8(self.into_bytes())
             .map_err(|e| IntoStringError {
@@ -274,9 +248,8 @@ impl CString {
     ///
     /// The returned buffer does **not** contain the trailing nul separator and
     /// it is guaranteed to not have any interior nul bytes.
-    #[unstable(feature = "cstring_into", reason = "recently added", issue = "29157")]
+    #[stable(feature = "cstring_into", since = "1.7.0")]
     pub fn into_bytes(self) -> Vec<u8> {
-        // FIXME: Once this method becomes stable, add an `impl Into<Vec<u8>> for CString`
         let mut vec = self.inner.into_vec();
         let _nul = vec.pop();
         debug_assert_eq!(_nul, Some(0u8));
@@ -285,7 +258,7 @@ impl CString {
 
     /// Equivalent to the `into_bytes` function except that the returned vector
     /// includes the trailing nul byte.
-    #[unstable(feature = "cstring_into", reason = "recently added", issue = "29157")]
+    #[stable(feature = "cstring_into", since = "1.7.0")]
     pub fn into_bytes_with_nul(self) -> Vec<u8> {
         self.inner.into_vec()
     }
@@ -308,7 +281,7 @@ impl CString {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Deref for CString {
+impl ops::Deref for CString {
     type Target = CStr;
 
     fn deref(&self) -> &CStr {
@@ -320,6 +293,13 @@ impl Deref for CString {
 impl fmt::Debug for CString {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
+    }
+}
+
+#[stable(feature = "cstring_into", since = "1.7.0")]
+impl From<CString> for Vec<u8> {
+    fn from(s: CString) -> Vec<u8> {
+        s.into_bytes()
     }
 }
 
@@ -374,29 +354,33 @@ impl From<NulError> for io::Error {
 impl IntoStringError {
     /// Consumes this error, returning original `CString` which generated the
     /// error.
-    #[unstable(feature = "cstring_into", reason = "recently added", issue = "29157")]
+    #[stable(feature = "cstring_into", since = "1.7.0")]
     pub fn into_cstring(self) -> CString {
         self.inner
     }
 
     /// Access the underlying UTF-8 error that was the cause of this error.
-    #[unstable(feature = "cstring_into", reason = "recently added", issue = "29157")]
+    #[stable(feature = "cstring_into", since = "1.7.0")]
     pub fn utf8_error(&self) -> Utf8Error {
         self.error
     }
 }
 
-#[unstable(feature = "cstring_into", reason = "recently added", issue = "29157")]
+#[stable(feature = "cstring_into", since = "1.7.0")]
 impl Error for IntoStringError {
     fn description(&self) -> &str {
-        Error::description(&self.error)
+        "C string contained non-utf8 bytes"
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        Some(&self.error)
     }
 }
 
-#[unstable(feature = "cstring_into", reason = "recently added", issue = "29157")]
+#[stable(feature = "cstring_into", since = "1.7.0")]
 impl fmt::Display for IntoStringError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.error, f)
+        self.description().fmt(f)
     }
 }
 
@@ -545,6 +529,37 @@ impl ToOwned for CStr {
 
     fn to_owned(&self) -> CString {
         unsafe { CString::from_vec_unchecked(self.to_bytes().to_vec()) }
+    }
+}
+
+#[stable(feature = "cstring_asref", since = "1.7.0")]
+impl<'a> From<&'a CStr> for CString {
+    fn from(s: &'a CStr) -> CString {
+        s.to_owned()
+    }
+}
+
+#[stable(feature = "cstring_asref", since = "1.7.0")]
+impl ops::Index<ops::RangeFull> for CString {
+    type Output = CStr;
+
+    #[inline]
+    fn index(&self, _index: ops::RangeFull) -> &CStr {
+        self
+    }
+}
+
+#[stable(feature = "cstring_asref", since = "1.7.0")]
+impl AsRef<CStr> for CStr {
+    fn as_ref(&self) -> &CStr {
+        self
+    }
+}
+
+#[stable(feature = "cstring_asref", since = "1.7.0")]
+impl AsRef<CStr> for CString {
+    fn as_ref(&self) -> &CStr {
+        self
     }
 }
 

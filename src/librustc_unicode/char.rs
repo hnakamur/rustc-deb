@@ -46,8 +46,8 @@ pub use tables::UNICODE_VERSION;
 /// This `struct` is created by the [`to_lowercase()`] method on [`char`]. See
 /// its documentation for more.
 ///
-/// [`to_lowercase()`]: primitive.char.html#method.escape_to_lowercase
-/// [`char`]: primitive.char.html
+/// [`to_lowercase()`]: ../primitive.char.html#method.to_lowercase
+/// [`char`]: ../primitive.char.html
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct ToLowercase(CaseMappingIter);
 
@@ -64,8 +64,8 @@ impl Iterator for ToLowercase {
 /// This `struct` is created by the [`to_uppercase()`] method on [`char`]. See
 /// its documentation for more.
 ///
-/// [`to_uppercase()`]: primitive.char.html#method.escape_to_uppercase
-/// [`char`]: primitive.char.html
+/// [`to_uppercase()`]: ../primitive.char.html#method.to_uppercase
+/// [`char`]: ../primitive.char.html
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct ToUppercase(CaseMappingIter);
 
@@ -126,7 +126,7 @@ impl char {
     ///
     /// A 'radix' here is sometimes also called a 'base'. A radix of two
     /// indicates a binary number, a radix of ten, decimal, and a radix of
-    /// sixteen, hexicdecimal, to give some common values. Arbitrary
+    /// sixteen, hexadecimal, to give some common values. Arbitrary
     /// radicum are supported.
     ///
     /// Compared to `is_numeric()`, this function only recognizes the characters
@@ -185,7 +185,7 @@ impl char {
     ///
     /// A 'radix' here is sometimes also called a 'base'. A radix of two
     /// indicates a binary number, a radix of ten, decimal, and a radix of
-    /// sixteen, hexicdecimal, to give some common values. Arbitrary
+    /// sixteen, hexadecimal, to give some common values. Arbitrary
     /// radicum are supported.
     ///
     /// 'Digit' is defined to be only the following characters:

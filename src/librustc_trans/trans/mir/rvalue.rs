@@ -10,6 +10,7 @@
 
 use llvm::ValueRef;
 use rustc::middle::ty::{self, Ty};
+use middle::ty::cast::{CastTy, IntTy};
 use rustc::mir::repr as mir;
 
 use trans::asm;
@@ -19,28 +20,31 @@ use trans::common::{self, Block, Result};
 use trans::debuginfo::DebugLoc;
 use trans::declare;
 use trans::expr;
+use trans::adt;
 use trans::machine;
 use trans::type_::Type;
 use trans::type_of;
 use trans::tvec;
+use trans::Disr;
 
 use super::MirContext;
 use super::operand::{OperandRef, OperandValue};
+use super::lvalue::LvalueRef;
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     pub fn trans_rvalue(&mut self,
                         bcx: Block<'bcx, 'tcx>,
-                        lldest: ValueRef,
+                        dest: LvalueRef<'tcx>,
                         rvalue: &mir::Rvalue<'tcx>)
                         -> Block<'bcx, 'tcx>
     {
-        debug!("trans_rvalue(lldest={}, rvalue={:?})",
-               bcx.val_to_string(lldest),
+        debug!("trans_rvalue(dest.llval={}, rvalue={:?})",
+               bcx.val_to_string(dest.llval),
                rvalue);
 
         match *rvalue {
             mir::Rvalue::Use(ref operand) => {
-                self.trans_operand_into(bcx, lldest, operand);
+                self.trans_operand_into(bcx, dest.llval, operand);
                 bcx
             }
 
@@ -49,7 +53,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     // into-coerce of a thin pointer to a fat pointer - just
                     // use the operand path.
                     let (bcx, temp) = self.trans_rvalue_operand(bcx, rvalue);
-                    self.store_operand(bcx, lldest, temp);
+                    self.store_operand(bcx, dest.llval, temp);
                     return bcx;
                 }
 
@@ -72,12 +76,12 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         base::store_ty(bcx, llval, lltemp, operand.ty);
                         base::coerce_unsized_into(bcx,
                                                   lltemp, operand.ty,
-                                                  lldest, cast_ty);
+                                                  dest.llval, cast_ty);
                     }
                     OperandValue::Ref(llref) => {
                         base::coerce_unsized_into(bcx,
                                                   llref, operand.ty,
-                                                  lldest, cast_ty);
+                                                  dest.llval, cast_ty);
                     }
                 }
                 bcx
@@ -86,20 +90,42 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             mir::Rvalue::Repeat(ref elem, ref count) => {
                 let elem = self.trans_operand(bcx, elem);
                 let size = self.trans_constant(bcx, count).immediate();
-                let base = expr::get_dataptr(bcx, lldest);
+                let base = expr::get_dataptr(bcx, dest.llval);
                 tvec::iter_vec_raw(bcx, base, elem.ty, size, |bcx, llslot, _| {
                     self.store_operand(bcx, llslot, elem);
                     bcx
                 })
             }
 
-            mir::Rvalue::Aggregate(_, ref operands) => {
-                for (i, operand) in operands.iter().enumerate() {
-                    // Note: perhaps this should be StructGep, but
-                    // note that in some cases the values here will
-                    // not be structs but arrays.
-                    let lldest_i = build::GEPi(bcx, lldest, &[0, i]);
-                    self.trans_operand_into(bcx, lldest_i, operand);
+            mir::Rvalue::Aggregate(ref kind, ref operands) => {
+                match *kind {
+                    mir::AggregateKind::Adt(adt_def, index, _) => {
+                        let repr = adt::represent_type(bcx.ccx(), dest.ty.to_ty(bcx.tcx()));
+                        let disr = Disr::from(adt_def.variants[index].disr_val);
+                        adt::trans_set_discr(bcx, &*repr, dest.llval, Disr::from(disr));
+                        for (i, operand) in operands.iter().enumerate() {
+                            let op = self.trans_operand(bcx, operand);
+                            // Do not generate stores and GEPis for zero-sized fields.
+                            if !common::type_is_zero_size(bcx.ccx(), op.ty) {
+                                let val = adt::MaybeSizedValue::sized(dest.llval);
+                                let lldest_i = adt::trans_field_ptr(bcx, &*repr, val, disr, i);
+                                self.store_operand(bcx, lldest_i, op);
+                            }
+                        }
+                    },
+                    _ => {
+                        for (i, operand) in operands.iter().enumerate() {
+                            let op = self.trans_operand(bcx, operand);
+                            // Do not generate stores and GEPis for zero-sized fields.
+                            if !common::type_is_zero_size(bcx.ccx(), op.ty) {
+                                // Note: perhaps this should be StructGep, but
+                                // note that in some cases the values here will
+                                // not be structs but arrays.
+                                let dest = build::GEPi(bcx, dest.llval, &[0, i]);
+                                self.store_operand(bcx, dest, op);
+                            }
+                        }
+                    }
                 }
                 bcx
             }
@@ -113,21 +139,21 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 let llbase1 = build::GEPi(bcx, llbase, &[from_start]);
                 let adj = common::C_uint(ccx, from_start + from_end);
                 let lllen1 = build::Sub(bcx, lllen, adj, DebugLoc::None);
-                let lladdrdest = expr::get_dataptr(bcx, lldest);
+                let lladdrdest = expr::get_dataptr(bcx, dest.llval);
                 build::Store(bcx, llbase1, lladdrdest);
-                let llmetadest = expr::get_meta(bcx, lldest);
+                let llmetadest = expr::get_meta(bcx, dest.llval);
                 build::Store(bcx, lllen1, llmetadest);
                 bcx
             }
 
-            mir::Rvalue::InlineAsm(inline_asm) => {
+            mir::Rvalue::InlineAsm(ref inline_asm) => {
                 asm::trans_inline_asm(bcx, inline_asm)
             }
 
             _ => {
                 assert!(rvalue_creates_operand(rvalue));
                 let (bcx, temp) = self.trans_rvalue_operand(bcx, rvalue);
-                self.store_operand(bcx, lldest, temp);
+                self.store_operand(bcx, dest.llval, temp);
                 bcx
             }
         }
@@ -185,7 +211,89 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                             }
                         }
                     }
-                    mir::CastKind::Misc => unimplemented!()
+                    mir::CastKind::Misc if common::type_is_immediate(bcx.ccx(), operand.ty) => {
+                        debug_assert!(common::type_is_immediate(bcx.ccx(), cast_ty));
+                        let r_t_in = CastTy::from_ty(operand.ty).expect("bad input type for cast");
+                        let r_t_out = CastTy::from_ty(cast_ty).expect("bad output type for cast");
+                        let ll_t_in = type_of::arg_type_of(bcx.ccx(), operand.ty);
+                        let ll_t_out = type_of::arg_type_of(bcx.ccx(), cast_ty);
+                        let (llval, ll_t_in, signed) = if let CastTy::Int(IntTy::CEnum) = r_t_in {
+                            let repr = adt::represent_type(bcx.ccx(), operand.ty);
+                            let llval = operand.immediate();
+                            let discr = adt::trans_get_discr(bcx, &*repr, llval, None);
+                            (discr, common::val_ty(discr), adt::is_discr_signed(&*repr))
+                        } else {
+                            (operand.immediate(), ll_t_in, operand.ty.is_signed())
+                        };
+
+                        let newval = match (r_t_in, r_t_out) {
+                            (CastTy::Int(_), CastTy::Int(_)) => {
+                                let srcsz = ll_t_in.int_width();
+                                let dstsz = ll_t_out.int_width();
+                                if srcsz == dstsz {
+                                    build::BitCast(bcx, llval, ll_t_out)
+                                } else if srcsz > dstsz {
+                                    build::Trunc(bcx, llval, ll_t_out)
+                                } else if signed {
+                                    build::SExt(bcx, llval, ll_t_out)
+                                } else {
+                                    build::ZExt(bcx, llval, ll_t_out)
+                                }
+                            }
+                            (CastTy::Float, CastTy::Float) => {
+                                let srcsz = ll_t_in.float_width();
+                                let dstsz = ll_t_out.float_width();
+                                if dstsz > srcsz {
+                                    build::FPExt(bcx, llval, ll_t_out)
+                                } else if srcsz > dstsz {
+                                    build::FPTrunc(bcx, llval, ll_t_out)
+                                } else {
+                                    llval
+                                }
+                            }
+                            (CastTy::Ptr(_), CastTy::Ptr(_)) |
+                            (CastTy::FnPtr, CastTy::Ptr(_)) |
+                            (CastTy::RPtr(_), CastTy::Ptr(_)) =>
+                                build::PointerCast(bcx, llval, ll_t_out),
+                            (CastTy::Ptr(_), CastTy::Int(_)) |
+                            (CastTy::FnPtr, CastTy::Int(_)) =>
+                                build::PtrToInt(bcx, llval, ll_t_out),
+                            (CastTy::Int(_), CastTy::Ptr(_)) =>
+                                build::IntToPtr(bcx, llval, ll_t_out),
+                            (CastTy::Int(_), CastTy::Float) if signed =>
+                                build::SIToFP(bcx, llval, ll_t_out),
+                            (CastTy::Int(_), CastTy::Float) =>
+                                build::UIToFP(bcx, llval, ll_t_out),
+                            (CastTy::Float, CastTy::Int(IntTy::I)) =>
+                                build::FPToSI(bcx, llval, ll_t_out),
+                            (CastTy::Float, CastTy::Int(_)) =>
+                                build::FPToUI(bcx, llval, ll_t_out),
+                            _ => bcx.ccx().sess().bug(
+                                &format!("unsupported cast: {:?} to {:?}", operand.ty, cast_ty)
+                            )
+                        };
+                        OperandValue::Immediate(newval)
+                    }
+                    mir::CastKind::Misc => { // Casts from a fat-ptr.
+                        let ll_cast_ty = type_of::arg_type_of(bcx.ccx(), cast_ty);
+                        let ll_from_ty = type_of::arg_type_of(bcx.ccx(), operand.ty);
+                        if let OperandValue::FatPtr(data_ptr, meta_ptr) = operand.val {
+                            if common::type_is_fat_ptr(bcx.tcx(), cast_ty) {
+                                let ll_cft = ll_cast_ty.field_types();
+                                let ll_fft = ll_from_ty.field_types();
+                                let data_cast = build::PointerCast(bcx, data_ptr, ll_cft[0]);
+                                assert_eq!(ll_cft[1].kind(), ll_fft[1].kind());
+                                OperandValue::FatPtr(data_cast, meta_ptr)
+                            } else { // cast to thin-ptr
+                                // Cast of fat-ptr to thin-ptr is an extraction of data-ptr and
+                                // pointer-cast of that pointer to desired pointer type.
+                                let llval = build::PointerCast(bcx, data_ptr, ll_cast_ty);
+                                OperandValue::Immediate(llval)
+                            }
+                        } else {
+                            panic!("Unexpected non-FatPtr operand")
+                        }
+                    }
                 };
                 (bcx, OperandRef {
                     val: val,

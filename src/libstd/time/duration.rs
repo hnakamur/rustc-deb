@@ -40,7 +40,7 @@ const MILLIS_PER_SEC: u64 = 1_000;
 /// let ten_millis = Duration::from_millis(10);
 /// ```
 #[stable(feature = "duration", since = "1.3.0")]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Duration {
     secs: u64,
     nanos: u32, // Always 0 <= nanos < NANOS_PER_SEC
@@ -173,7 +173,6 @@ impl Div<u32> for Duration {
 
 #[cfg(test)]
 mod tests {
-    use prelude::v1::*;
     use super::Duration;
 
     #[test]

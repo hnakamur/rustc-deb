@@ -1,4 +1,6 @@
 #!/bin/sh
+#
+# Usage: size_classes.sh <lg_qarr> <lg_tmin> <lg_parr> <lg_g>
 
 # The following limits are chosen such that they cover all supported platforms.
 
@@ -6,19 +8,19 @@
 lg_zarr="2 3"
 
 # Quanta.
-lg_qarr="3 4"
+lg_qarr=$1
 
 # The range of tiny size classes is [2^lg_tmin..2^(lg_q-1)].
-lg_tmin=3
+lg_tmin=$2
 
 # Maximum lookup size.
 lg_kmax=12
 
 # Page sizes.
-lg_parr="12 13 16"
+lg_parr=`echo $3 | tr ',' ' '`
 
 # Size class group size (number of size classes for each size doubling).
-lg_g=2
+lg_g=$4
 
 pow2() {
   e=$1
@@ -61,7 +63,7 @@ size_class() {
     rem="yes"
   fi
 
-  if [ ${lg_size} -lt ${lg_p} ] ; then
+  if [ ${lg_size} -lt $((${lg_p} + ${lg_g})) ] ; then
     bin="yes"
   else
     bin="no"
@@ -159,7 +161,14 @@ size_classes() {
         nbins=$((${index} + 1))
         # Final written value is correct:
         small_maxclass="((((size_t)1) << ${lg_grp}) + (((size_t)${ndelta}) << ${lg_delta}))"
+        if [ ${lg_g} -gt 0 ] ; then
+          lg_large_minclass=$((${lg_grp} + 1))
+        else
+          lg_large_minclass=$((${lg_grp} + 2))
+        fi
       fi
+      # Final written value is correct:
+      huge_maxclass="((((size_t)1) << ${lg_grp}) + (((size_t)${ndelta}) << ${lg_delta}))"
       index=$((${index} + 1))
       ndelta=$((${ndelta} + 1))
     done
@@ -167,14 +176,18 @@ size_classes() {
     lg_delta=$((${lg_delta} + 1))
   done
   echo
+  nsizes=${index}
 
   # Defined upon completion:
   # - ntbins
   # - nlbins
   # - nbins
+  # - nsizes
   # - lg_tiny_maxclass
   # - lookup_maxclass
   # - small_maxclass
+  # - lg_large_minclass
+  # - huge_maxclass
 }
 
 cat <<EOF
@@ -188,7 +201,8 @@ cat <<EOF
  *
  *   LG_SIZE_CLASS_GROUP: Lg of size class count for each size doubling.
  *   SIZE_CLASSES: Complete table of
- *                 SC(index, lg_delta, size, bin, lg_delta_lookup) tuples.
+ *                 SC(index, lg_grp, lg_delta, ndelta, bin, lg_delta_lookup)
+ *                 tuples.
  *     index: Size class index.
  *     lg_grp: Lg group base size (no deltas added).
  *     lg_delta: Lg delta to previous size class.
@@ -199,10 +213,12 @@ cat <<EOF
  *   NTBINS: Number of tiny bins.
  *   NLBINS: Number of bins supported by the lookup table.
  *   NBINS: Number of small size class bins.
+ *   NSIZES: Number of size classes.
  *   LG_TINY_MAXCLASS: Lg of maximum tiny size class.
  *   LOOKUP_MAXCLASS: Maximum size class included in lookup table.
  *   SMALL_MAXCLASS: Maximum small size class.
- *   LARGE_MINCLASS: Minimum large size class.
+ *   LG_LARGE_MINCLASS: Lg of minimum large size class.
+ *   HUGE_MAXCLASS: Maximum (huge) size class.
  */
 
 #define	LG_SIZE_CLASS_GROUP	${lg_g}
@@ -221,9 +237,12 @@ for lg_z in ${lg_zarr} ; do
         echo "#define	NTBINS			${ntbins}"
         echo "#define	NLBINS			${nlbins}"
         echo "#define	NBINS			${nbins}"
+        echo "#define	NSIZES			${nsizes}"
         echo "#define	LG_TINY_MAXCLASS	${lg_tiny_maxclass}"
         echo "#define	LOOKUP_MAXCLASS		${lookup_maxclass}"
         echo "#define	SMALL_MAXCLASS		${small_maxclass}"
+        echo "#define	LG_LARGE_MINCLASS	${lg_large_minclass}"
+        echo "#define	HUGE_MAXCLASS		${huge_maxclass}"
         echo "#endif"
         echo
       done
@@ -238,7 +257,7 @@ cat <<EOF
 #endif
 #undef SIZE_CLASSES_DEFINED
 /*
- * The small_size2bin lookup table uses uint8_t to encode each bin index, so we
+ * The size2index_tab lookup table uses uint8_t to encode each bin index, so we
  * cannot support more than 256 small size classes.  Further constrain NBINS to
  * 255 since all small size classes, plus a "not small" size class must be
  * stored in 8 bits of arena_chunk_map_bits_t's bits field.
@@ -246,8 +265,6 @@ cat <<EOF
 #if (NBINS > 255)
 #  error "Too many small size classes"
 #endif
-
-#define	LARGE_MINCLASS (PAGE_CEILING(SMALL_MAXCLASS+1))
 
 #endif /* JEMALLOC_H_TYPES */
 /******************************************************************************/

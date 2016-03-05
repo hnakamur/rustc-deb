@@ -37,11 +37,5 @@ const fn get_Y_addr() -> &'static u32 {
         //~^ ERROR E0013
 }
 
-const fn get() -> u32 {
-    let x = 22; //~ ERROR E0016
-    let y = 44; //~ ERROR E0016
-    x + y
-}
-
 fn main() {
 }

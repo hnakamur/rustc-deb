@@ -17,13 +17,13 @@ use middle::traits;
 use middle::ty;
 use syntax::ast;
 use syntax::codemap::Span;
+use rustc::dep_graph::DepNode;
 use rustc_front::intravisit;
 use rustc_front::hir;
-use rustc_front::hir::{Item, ItemImpl};
 
 pub fn check(tcx: &ty::ctxt) {
     let mut orphan = OrphanChecker { tcx: tcx };
-    tcx.map.krate().visit_all_items(&mut orphan);
+    tcx.visit_all_items_in_krate(DepNode::CoherenceOrphanCheck, &mut orphan);
 }
 
 struct OrphanChecker<'cx, 'tcx:'cx> {
@@ -49,11 +49,11 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
         match lang_def_id {
             Some(lang_def_id) if lang_def_id == impl_def_id => { /* OK */ },
             _ => {
-                span_err!(self.tcx.sess, span, E0390,
+                struct_span_err!(self.tcx.sess, span, E0390,
                           "only a single inherent implementation marked with `#[lang = \"{}\"]` \
-                           is allowed for the `{}` primitive", lang, ty);
-                span_help!(self.tcx.sess, span,
-                           "consider using a trait to implement these methods");
+                           is allowed for the `{}` primitive", lang, ty)
+                    .span_help(span, "consider using a trait to implement these methods")
+                    .emit();
             }
         }
     }
@@ -205,6 +205,9 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                                                   "f64",
                                                   item.span);
                     }
+                    ty::TyError => {
+                        return;
+                    }
                     _ => {
                         span_err!(self.tcx.sess, item.span, E0118,
                                   "no base type found for inherent implementation; \
@@ -232,10 +235,10 @@ impl<'cx, 'tcx> OrphanChecker<'cx, 'tcx> {
                     }
                     Err(traits::OrphanCheckErr::UncoveredTy(param_ty)) => {
                         span_err!(self.tcx.sess, item.span, E0210,
-                                "type parameter `{}` must be used as the type parameter for \
-                                 some local type (e.g. `MyStruct<T>`); only traits defined in \
-                                 the current crate can be implemented for a type parameter",
-                                param_ty);
+                                  "type parameter `{}` must be used as the type parameter for \
+                                   some local type (e.g. `MyStruct<T>`); only traits defined in \
+                                   the current crate can be implemented for a type parameter",
+                                  param_ty);
                         return;
                     }
                 }

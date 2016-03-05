@@ -34,7 +34,8 @@ use rustc_back::tempdir::TempDir;
 use rustc_driver::{driver, Compilation};
 use rustc_metadata::cstore::CStore;
 use syntax::codemap::CodeMap;
-use syntax::diagnostic;
+use syntax::errors;
+use syntax::errors::emitter::ColorConfig;
 use syntax::parse::token;
 
 use core;
@@ -71,17 +72,19 @@ pub fn run(input: &str,
         ..config::basic_options().clone()
     };
 
-    let codemap = CodeMap::new();
-    let diagnostic_handler = diagnostic::Handler::new(diagnostic::Auto, None, true);
-    let span_diagnostic_handler =
-    diagnostic::SpanHandler::new(diagnostic_handler, codemap);
+    let codemap = Rc::new(CodeMap::new());
+    let diagnostic_handler = errors::Handler::with_tty_emitter(ColorConfig::Auto,
+                                                               None,
+                                                               true,
+                                                               false,
+                                                               codemap.clone());
 
     let cstore = Rc::new(CStore::new(token::get_ident_interner()));
-    let cstore_ = ::rustc_driver::cstore_to_cratestore(cstore.clone());
     let sess = session::build_session_(sessopts,
                                        Some(input_path.clone()),
-                                       span_diagnostic_handler,
-                                       cstore_);
+                                       diagnostic_handler,
+                                       codemap,
+                                       cstore.clone());
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
 
     let mut cfg = config::build_configuration(&sess);
@@ -220,22 +223,22 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
         }
     }
     let data = Arc::new(Mutex::new(Vec::new()));
-    let emitter = diagnostic::EmitterWriter::new(box Sink(data.clone()), None);
+    let codemap = Rc::new(CodeMap::new());
+    let emitter = errors::emitter::EmitterWriter::new(box Sink(data.clone()),
+                                                      None,
+                                                      codemap.clone());
     let old = io::set_panic(box Sink(data.clone()));
     let _bomb = Bomb(data, old.unwrap_or(box io::stdout()));
 
     // Compile the code
-    let codemap = CodeMap::new();
-    let diagnostic_handler = diagnostic::Handler::with_emitter(true, box emitter);
-    let span_diagnostic_handler =
-        diagnostic::SpanHandler::new(diagnostic_handler, codemap);
+    let diagnostic_handler = errors::Handler::with_emitter(true, false, box emitter);
 
     let cstore = Rc::new(CStore::new(token::get_ident_interner()));
-    let cstore_ = ::rustc_driver::cstore_to_cratestore(cstore.clone());
     let sess = session::build_session_(sessopts,
                                        None,
-                                       span_diagnostic_handler,
-                                       cstore_);
+                                       diagnostic_handler,
+                                       codemap,
+                                       cstore.clone());
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
 
     let outdir = TempDir::new("rustdoctest").ok().expect("rustdoc needs a tempdir");
@@ -316,6 +319,7 @@ pub fn maketest(s: &str, cratename: Option<&str>, dont_insert_main: bool,
     } else {
         prog.push_str("fn main() {\n    ");
         prog.push_str(&everything_else.replace("\n", "\n    "));
+        prog = prog.trim().into();
         prog.push_str("\n}");
     }
 

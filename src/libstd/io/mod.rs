@@ -112,7 +112,7 @@
 //! ```
 //!
 //! `BufWriter` doesn't add any new ways of writing; it just buffers every call
-//! to [`write()`][write]:
+//! to [`write()`][write()]:
 //!
 //! ```
 //! use std::io;
@@ -134,7 +134,7 @@
 //! # }
 //! ```
 //!
-//! [write]: trait.Write.html#tymethod.write
+//! [write()]: trait.Write.html#tymethod.write
 //!
 //! ## Standard input and output
 //!
@@ -237,7 +237,16 @@
 //! to read the line and print it, so we use `()`.
 //!
 //! [result]: type.Result.html
-//! [try]: macro.try!.html
+//! [try]: ../macro.try!.html
+//!
+//! ## Platform-specific behavior
+//!
+//! Many I/O functions throughout the standard library are documented to indicate
+//! what various library or syscalls they are delegated to. This is done to help
+//! applications both understand what's happening under the hood as well as investigate
+//! any possibly unclear semantics. Note, however, that this is informative, not a binding
+//! contract. The implementation of many of these functions are subject to change over
+//! time and may call fewer or more syscalls/library functions.
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
@@ -254,6 +263,7 @@ use result;
 use string::String;
 use str;
 use vec::Vec;
+use memchr;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::buffered::{BufReader, BufWriter, LineWriter};
@@ -389,7 +399,7 @@ fn read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize> 
 ///
 /// [`File`][file]s implement `Read`:
 ///
-/// [file]: ../std/fs/struct.File.html
+/// [file]: ../fs/struct.File.html
 ///
 /// ```
 /// use std::io;
@@ -449,7 +459,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// use std::io;
@@ -491,7 +501,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// use std::io;
@@ -530,7 +540,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// use std::io;
@@ -590,7 +600,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// use std::io;
@@ -633,7 +643,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// use std::io;
@@ -672,7 +682,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// use std::io;
@@ -708,7 +718,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// #![feature(io)]
@@ -743,7 +753,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// use std::io;
@@ -779,7 +789,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// use std::io;
@@ -813,7 +823,7 @@ pub trait Read {
     ///
     /// [`File`][file]s implement `Read`:
     ///
-    /// [file]: ../std/fs/struct.File.html
+    /// [file]: ../fs/struct.File.html
     ///
     /// ```
     /// #![feature(io)]
@@ -991,8 +1001,8 @@ pub trait Write {
     /// explicitly be called. The [`write!`][write] macro should be favored to
     /// invoke this method instead.
     ///
-    /// [formatargs]: ../std/macro.format_args!.html
-    /// [write]: ../std/macro.write!.html
+    /// [formatargs]: ../macro.format_args!.html
+    /// [write]: ../macro.write!.html
     ///
     /// This function internally uses the [`write_all`][writeall] method on
     /// this trait and hence will continuously write data so long as no errors
@@ -1125,7 +1135,7 @@ pub trait Write {
 ///
 /// [`File`][file]s implement `Seek`:
 ///
-/// [file]: ../std/fs/struct.File.html
+/// [file]: ../fs/struct.File.html
 ///
 /// ```
 /// use std::io;
@@ -1165,23 +1175,23 @@ pub trait Seek {
 pub enum SeekFrom {
     /// Set the offset to the provided number of bytes.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Start(u64),
+    Start(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] u64),
 
     /// Set the offset to the size of this object plus the specified number of
     /// bytes.
     ///
-    /// It is possible to seek beyond the end of an object, but is an error to
+    /// It is possible to seek beyond the end of an object, but it's an error to
     /// seek before byte 0.
     #[stable(feature = "rust1", since = "1.0.0")]
-    End(i64),
+    End(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] i64),
 
     /// Set the offset to the current position plus the specified number of
     /// bytes.
     ///
-    /// It is possible to seek beyond the end of an object, but is an error to
+    /// It is possible to seek beyond the end of an object, but it's an error to
     /// seek before byte 0.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Current(i64),
+    Current(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] i64),
 }
 
 fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
@@ -1194,7 +1204,7 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e)
             };
-            match available.iter().position(|x| *x == delim) {
+            match memchr::memchr(delim, available) {
                 Some(i) => {
                     buf.extend_from_slice(&available[..i + 1]);
                     (true, i + 1)
@@ -1982,7 +1992,7 @@ mod tests {
         b.iter(|| {
             let mut lr = repeat(1).take(10000000);
             let mut vec = Vec::with_capacity(1024);
-            super::read_to_end(&mut lr, &mut vec);
+            super::read_to_end(&mut lr, &mut vec)
         });
     }
 }

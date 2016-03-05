@@ -321,7 +321,6 @@ fn _assert_is_object_safe(_: &Iterator<Item=()>) {}
 ///
 /// [module-level documentation]: index.html
 /// [impl]: index.html#implementing-iterator
-#[lang = "iterator"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_on_unimplemented = "`{Self}` is not an iterator; maybe try calling \
                             `.iter()` or a similar method"]
@@ -604,7 +603,7 @@ pub trait Iterator {
     /// iterators, returning a tuple where the first element comes from the
     /// first iterator, and the second element comes from the second iterator.
     ///
-    /// In other words, it zips two iterators together, into a single one. 🤐
+    /// In other words, it zips two iterators together, into a single one.
     ///
     /// When either iterator returns `None`, all further calls to `next()`
     /// will return `None`.
@@ -1113,16 +1112,22 @@ pub trait Iterator {
         Take{iter: self, n: n}
     }
 
-    /// An iterator similar to `fold()`, with internal state.
-    ///
-    /// `scan()` accumulates a final value, similar to [`fold()`], but instead
-    /// of passing along an accumulator, it maintains the accumulator internally.
+    /// An iterator adaptor similar to [`fold()`] that holds internal state and
+    /// produces a new iterator.
     ///
     /// [`fold()`]: #method.fold
     ///
-    /// On each iteraton of `scan()`, you can assign to the internal state, and
-    /// a mutable reference to the state is passed as the first argument to the
-    /// closure, allowing you to modify it on each iteration.
+    /// `scan()` takes two arguments: an initial value which seeds the internal
+    /// state, and a closure with two arguments, the first being a mutable
+    /// reference to the internal state and the second an iterator element.
+    /// The closure can assign to the internal state to share state between
+    /// iterations.
+    ///
+    /// On iteration, the closure will be applied to each element of the
+    /// iterator and the return value from the closure, an [`Option`], is
+    /// yielded by the iterator.
+    ///
+    /// [`Option`]: ../option/enum.Option.html
     ///
     /// # Examples
     ///
@@ -1353,7 +1358,7 @@ pub trait Iterator {
     /// One of the keys to `collect()`'s power is that many things you might
     /// not think of as 'collections' actually are. For example, a [`String`]
     /// is a collection of [`char`]s. And a collection of [`Result<T, E>`] can
-    /// be thought of as single [`Result<Collection<T>, E>`]. See the examples
+    /// be thought of as single `Result<Collection<T>, E>`. See the examples
     /// below for more.
     ///
     /// [`String`]: ../string/struct.String.html
@@ -2126,7 +2131,7 @@ pub trait Iterator {
     /// ```
     #[unstable(feature = "iter_arith", reason = "bounds recently changed",
                issue = "27739")]
-    fn sum<S=<Self as Iterator>::Item>(self) -> S where
+    fn sum<S>(self) -> S where
         S: Add<Self::Item, Output=S> + Zero,
         Self: Sized,
     {
@@ -2151,7 +2156,7 @@ pub trait Iterator {
     /// ```
     #[unstable(feature="iter_arith", reason = "bounds recently changed",
                issue = "27739")]
-    fn product<P=<Self as Iterator>::Item>(self) -> P where
+    fn product<P>(self) -> P where
         P: Mul<Self::Item, Output=P> + One,
         Self: Sized,
     {
@@ -4749,88 +4754,4 @@ impl<T> ExactSizeIterator for Once<T> {
 #[stable(feature = "iter_once", since = "1.2.0")]
 pub fn once<T>(value: T) -> Once<T> {
     Once { inner: Some(value).into_iter() }
-}
-
-/// Functions for lexicographical ordering of sequences.
-///
-/// Lexicographical ordering through `<`, `<=`, `>=`, `>` requires
-/// that the elements implement both `PartialEq` and `PartialOrd`.
-///
-/// If two sequences are equal up until the point where one ends,
-/// the shorter sequence compares less.
-#[rustc_deprecated(since = "1.4.0", reason = "use the equivalent methods on `Iterator` instead")]
-#[unstable(feature = "iter_order_deprecated", reason = "needs review and revision",
-           issue = "27737")]
-pub mod order {
-    use cmp;
-    use cmp::{Eq, Ord, PartialOrd, PartialEq};
-    use option::Option;
-    use super::Iterator;
-
-    /// Compare `a` and `b` for equality using `Eq`
-    pub fn equals<A, L, R>(a: L, b: R) -> bool where
-        A: Eq,
-        L: Iterator<Item=A>,
-        R: Iterator<Item=A>,
-    {
-        a.eq(b)
-    }
-
-    /// Order `a` and `b` lexicographically using `Ord`
-    pub fn cmp<A, L, R>(a: L, b: R) -> cmp::Ordering where
-        A: Ord,
-        L: Iterator<Item=A>,
-        R: Iterator<Item=A>,
-    {
-        a.cmp(b)
-    }
-
-    /// Order `a` and `b` lexicographically using `PartialOrd`
-    pub fn partial_cmp<L: Iterator, R: Iterator>(a: L, b: R) -> Option<cmp::Ordering> where
-        L::Item: PartialOrd<R::Item>
-    {
-        a.partial_cmp(b)
-    }
-
-    /// Compare `a` and `b` for equality (Using partial equality, `PartialEq`)
-    pub fn eq<L: Iterator, R: Iterator>(a: L, b: R) -> bool where
-        L::Item: PartialEq<R::Item>,
-    {
-        a.eq(b)
-    }
-
-    /// Compares `a` and `b` for nonequality (Using partial equality, `PartialEq`)
-    pub fn ne<L: Iterator, R: Iterator>(a: L, b: R) -> bool where
-        L::Item: PartialEq<R::Item>,
-    {
-        a.ne(b)
-    }
-
-    /// Returns `a` < `b` lexicographically (Using partial order, `PartialOrd`)
-    pub fn lt<L: Iterator, R: Iterator>(a: L, b: R) -> bool where
-        L::Item: PartialOrd<R::Item>,
-    {
-        a.lt(b)
-    }
-
-    /// Returns `a` <= `b` lexicographically (Using partial order, `PartialOrd`)
-    pub fn le<L: Iterator, R: Iterator>(a: L, b: R) -> bool where
-        L::Item: PartialOrd<R::Item>,
-    {
-        a.le(b)
-    }
-
-    /// Returns `a` > `b` lexicographically (Using partial order, `PartialOrd`)
-    pub fn gt<L: Iterator, R: Iterator>(a: L, b: R) -> bool where
-        L::Item: PartialOrd<R::Item>,
-    {
-        a.gt(b)
-    }
-
-    /// Returns `a` >= `b` lexicographically (Using partial order, `PartialOrd`)
-    pub fn ge<L: Iterator, R: Iterator>(a: L, b: R) -> bool where
-        L::Item: PartialOrd<R::Item>,
-    {
-        a.ge(b)
-    }
 }

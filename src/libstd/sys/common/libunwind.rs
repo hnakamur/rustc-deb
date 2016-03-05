@@ -83,7 +83,8 @@ pub const unwinder_private_data_size: usize = 2;
 #[cfg(any(target_arch = "mips", target_arch = "mipsel"))]
 pub const unwinder_private_data_size: usize = 2;
 
-#[cfg(target_arch = "powerpc")]
+#[cfg(any(target_arch = "powerpc", target_arch = "powerpc64",
+          target_arch = "powerpc64le"))]
 pub const unwinder_private_data_size: usize = 2;
 
 #[repr(C)]
@@ -131,8 +132,6 @@ extern "C" {
 
     pub fn _Unwind_DeleteException(exception: *mut _Unwind_Exception);
 
-    // remove cfg after new snapshot
-    #[cfg(not(all(stage0, target_os="windows", target_arch="x86_64")))]
     #[unwind]
     pub fn _Unwind_Resume(exception: *mut _Unwind_Exception) -> !;
 }

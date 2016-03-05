@@ -22,9 +22,10 @@ use middle::def_id::{DefId, DefIndex};
 use middle::region;
 use middle::subst;
 use middle::subst::VecPerParamSpace;
-use middle::ty::{self, ToPredicate, Ty, HasTypeFlags};
+use middle::ty::{self, ToPredicate, Ty, TypeFoldable};
 
 use rbml;
+use rbml::leb128;
 use std::str;
 use syntax::abi;
 use syntax::ast;
@@ -68,6 +69,10 @@ impl<'a,'tcx> TyDecoder<'a,'tcx> {
         }
     }
 
+    pub fn position(&self) -> usize {
+        self.pos
+    }
+
     fn peek(&self) -> char {
         self.data[self.pos] as char
     }
@@ -99,9 +104,10 @@ impl<'a,'tcx> TyDecoder<'a,'tcx> {
     }
 
     fn parse_vuint(&mut self) -> usize {
-        let res = rbml::reader::vuint_at(self.data, self.pos).unwrap();
-        self.pos = res.next;
-        res.val
+        let (value, bytes_read) = leb128::read_unsigned_leb128(self.data,
+                                                               self.pos);
+        self.pos += bytes_read;
+        value as usize
     }
 
     fn parse_name(&mut self, last: char) -> ast::Name {
@@ -188,14 +194,12 @@ impl<'a,'tcx> TyDecoder<'a,'tcx> {
             }
             'B' => {
                 assert_eq!(self.next(), '[');
-                let def_id = self.parse_def();
                 let space = self.parse_param_space();
                 assert_eq!(self.next(), '|');
                 let index = self.parse_u32();
                 assert_eq!(self.next(), '|');
                 let name = token::intern(&self.parse_str(']'));
                 ty::ReEarlyBound(ty::EarlyBoundRegion {
-                    def_id: def_id,
                     space: space,
                     index: index,
                     name: name
@@ -233,6 +237,17 @@ impl<'a,'tcx> TyDecoder<'a,'tcx> {
             // doesn't care about regions.
             //
             // May still be worth fixing though.
+            'C' => {
+                assert_eq!(self.next(), '[');
+                let fn_id = self.parse_uint() as ast::NodeId;
+                assert_eq!(self.next(), '|');
+                let body_id = self.parse_uint() as ast::NodeId;
+                assert_eq!(self.next(), ']');
+                region::CodeExtentData::CallSiteScope {
+                    fn_id: fn_id, body_id: body_id
+                }
+            }
+            // This creates scopes with the wrong NodeId. (See note above.)
             'P' => {
                 assert_eq!(self.next(), '[');
                 let fn_id = self.parse_uint() as ast::NodeId;

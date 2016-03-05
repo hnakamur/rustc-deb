@@ -41,7 +41,6 @@ use super::{InferCtxt};
 use super::{MiscVariable, TypeTrace};
 use super::type_variable::{RelationDir, BiTo, EqTo, SubtypeOf, SupertypeOf};
 
-use middle::ty::{TyVar};
 use middle::ty::{IntType, UintType};
 use middle::ty::{self, Ty};
 use middle::ty::error::TypeError;
@@ -319,7 +318,7 @@ impl<'cx, 'tcx> ty::fold::TypeFolder<'tcx> for Generalizer<'cx, 'tcx> {
                 }
             }
             _ => {
-                ty::fold::super_fold_ty(self, t)
+                t.super_fold_with(self)
             }
         }
     }

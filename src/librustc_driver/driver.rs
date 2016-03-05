@@ -54,6 +54,7 @@ use syntax::parse::token;
 use syntax::util::node_count::NodeCounter;
 use syntax::visit;
 use syntax;
+use syntax_ext;
 
 pub fn compile_input(sess: Session,
                      cstore: &CStore,
@@ -120,7 +121,7 @@ pub fn compile_input(sess: Session,
         }
 
         let arenas = ty::CtxtArenas::new();
-        let ast_map = make_map(&sess, &mut hir_forest);
+        let hir_map = make_map(&sess, &mut hir_forest);
 
         write_out_deps(&sess, &outputs, &id);
 
@@ -129,9 +130,9 @@ pub fn compile_input(sess: Session,
                                 CompileState::state_after_write_deps(input,
                                                                      &sess,
                                                                      outdir,
-                                                                     &ast_map,
+                                                                     &hir_map,
                                                                      &expanded_crate,
-                                                                     &ast_map.krate(),
+                                                                     &hir_map.krate(),
                                                                      &id[..],
                                                                      &lcx));
 
@@ -143,9 +144,17 @@ pub fn compile_input(sess: Session,
              "early lint checks",
              || lint::check_ast_crate(&sess, &expanded_crate));
 
+        let opt_crate = if sess.opts.debugging_opts.keep_ast ||
+                           sess.opts.debugging_opts.save_analysis {
+            Some(&expanded_crate)
+        } else {
+            drop(expanded_crate);
+            None
+        };
+
         phase_3_run_analysis_passes(&sess,
                                     &cstore,
-                                    ast_map,
+                                    hir_map,
                                     &arenas,
                                     &id,
                                     control.make_glob_map,
@@ -156,7 +165,7 @@ pub fn compile_input(sess: Session,
                                                 CompileState::state_after_analysis(input,
                                                                                    &tcx.sess,
                                                                                    outdir,
-                                                                                   &expanded_crate,
+                                                                                   opt_crate,
                                                                                    tcx.map.krate(),
                                                                                    &analysis,
                                                                                    &mir_map,
@@ -340,7 +349,7 @@ impl<'a, 'ast, 'tcx> CompileState<'a, 'ast, 'tcx> {
     fn state_after_write_deps(input: &'a Input,
                               session: &'a Session,
                               out_dir: &'a Option<PathBuf>,
-                              ast_map: &'a hir_map::Map<'ast>,
+                              hir_map: &'a hir_map::Map<'ast>,
                               krate: &'a ast::Crate,
                               hir_crate: &'a hir::Crate,
                               crate_name: &'a str,
@@ -348,7 +357,7 @@ impl<'a, 'ast, 'tcx> CompileState<'a, 'ast, 'tcx> {
                               -> CompileState<'a, 'ast, 'tcx> {
         CompileState {
             crate_name: Some(crate_name),
-            ast_map: Some(ast_map),
+            ast_map: Some(hir_map),
             krate: Some(krate),
             hir_crate: Some(hir_crate),
             lcx: Some(lcx),
@@ -359,7 +368,7 @@ impl<'a, 'ast, 'tcx> CompileState<'a, 'ast, 'tcx> {
     fn state_after_analysis(input: &'a Input,
                             session: &'a Session,
                             out_dir: &'a Option<PathBuf>,
-                            krate: &'a ast::Crate,
+                            krate: Option<&'a ast::Crate>,
                             hir_crate: &'a hir::Crate,
                             analysis: &'a ty::CrateAnalysis,
                             mir_map: &'a MirMap<'tcx>,
@@ -371,7 +380,7 @@ impl<'a, 'ast, 'tcx> CompileState<'a, 'ast, 'tcx> {
             analysis: Some(analysis),
             mir_map: Some(mir_map),
             tcx: Some(tcx),
-            krate: Some(krate),
+            krate: krate,
             hir_crate: Some(hir_crate),
             lcx: Some(lcx),
             crate_name: Some(crate_name),
@@ -419,7 +428,7 @@ pub fn phase_1_parse_input(sess: &Session, cfg: ast::CrateConfig, input: &Input)
         println!("Pre-expansion node count:  {}", count_nodes(&krate));
     }
 
-    if let Some(ref s) = sess.opts.show_span {
+    if let Some(ref s) = sess.opts.debugging_opts.show_span {
         syntax::show_span::run(sess.diagnostic(), s, &krate);
     }
 
@@ -563,12 +572,15 @@ pub fn phase_2_configure_and_expand(sess: &Session,
             recursion_limit: sess.recursion_limit.get(),
             trace_mac: sess.opts.debugging_opts.trace_macros,
         };
-        let (ret, macro_names) = syntax::ext::expand::expand_crate(&sess.parse_sess,
-                                                                    cfg,
-                                                                    macros,
-                                                                    syntax_exts,
-                                                                    &mut feature_gated_cfgs,
-                                                                    krate);
+        let mut ecx = syntax::ext::base::ExtCtxt::new(&sess.parse_sess,
+                                                      krate.config.clone(),
+                                                      cfg,
+                                                      &mut feature_gated_cfgs);
+        syntax_ext::register_builtins(&mut ecx.syntax_env);
+        let (ret, macro_names) = syntax::ext::expand::expand_crate(ecx,
+                                                                   macros,
+                                                                   syntax_exts,
+                                                                   krate);
         if cfg!(windows) {
             env::set_var("PATH", &_old_path);
         }
@@ -602,7 +614,7 @@ pub fn phase_2_configure_and_expand(sess: &Session,
         feature_gated_cfgs.sort();
         feature_gated_cfgs.dedup();
         for cfg in &feature_gated_cfgs {
-            cfg.check_and_emit(sess.diagnostic(), &features);
+            cfg.check_and_emit(sess.diagnostic(), &features, sess.codemap());
         }
     });
 
@@ -620,7 +632,7 @@ pub fn phase_2_configure_and_expand(sess: &Session,
 
     time(time_passes,
          "checking for inline asm in case the target doesn't support it",
-         || middle::check_no_asm::check_crate(sess, &krate));
+         || ::rustc_passes::no_asm::check_crate(sess, &krate));
 
     // One final feature gating of the true AST that gets compiled
     // later, to make sure we've got everything (e.g. configuration
@@ -634,6 +646,10 @@ pub fn phase_2_configure_and_expand(sess: &Session,
         *sess.features.borrow_mut() = features;
         sess.abort_if_errors();
     });
+
+    time(time_passes,
+         "const fn bodies and arguments",
+         || ::rustc_passes::const_fn::check_crate(sess, &krate));
 
     if sess.opts.debugging_opts.input_stats {
         println!("Post-expansion node count: {}", count_nodes(&krate));
@@ -666,14 +682,12 @@ pub fn assign_node_ids(sess: &Session, krate: ast::Crate) -> ast::Crate {
 }
 
 pub fn make_map<'ast>(sess: &Session,
-                      forest: &'ast mut front::map::Forest)
-                      -> front::map::Map<'ast> {
-    // Construct the 'ast'-map
-    let map = time(sess.time_passes(),
-                   "indexing hir",
-                   move || front::map::map_crate(forest));
-
-    map
+                      forest: &'ast mut hir_map::Forest)
+                      -> hir_map::Map<'ast> {
+    // Construct the HIR map
+    time(sess.time_passes(),
+         "indexing hir",
+         move || hir_map::map_crate(forest))
 }
 
 /// Run the resolution, typechecking, region checking and other
@@ -681,7 +695,7 @@ pub fn make_map<'ast>(sess: &Session,
 /// structures carrying the results of the analysis.
 pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
                                                cstore: &CStore,
-                                               ast_map: front::map::Map<'tcx>,
+                                               hir_map: hir_map::Map<'tcx>,
                                                arenas: &'tcx ty::CtxtArenas<'tcx>,
                                                name: &str,
                                                make_glob_map: resolve::MakeGlobMap,
@@ -690,15 +704,15 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
     where F: for<'a> FnOnce(&'a ty::ctxt<'tcx>, MirMap<'tcx>, ty::CrateAnalysis) -> R
 {
     let time_passes = sess.time_passes();
-    let krate = ast_map.krate();
+    let krate = hir_map.krate();
 
     time(time_passes,
          "external crate/lib resolution",
-         || LocalCrateReader::new(sess, cstore, &ast_map).read_crates(krate));
+         || LocalCrateReader::new(sess, cstore, &hir_map).read_crates(krate));
 
     let lang_items = time(time_passes,
                           "language item collection",
-                          || middle::lang_items::collect_language_items(&sess, &ast_map));
+                          || middle::lang_items::collect_language_items(&sess, &hir_map));
 
     let resolve::CrateMap {
         def_map,
@@ -709,7 +723,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
         glob_map,
     } = time(time_passes,
              "resolution",
-             || resolve::resolve_crate(sess, &ast_map, make_glob_map));
+             || resolve::resolve_crate(sess, &hir_map, make_glob_map));
 
     let named_region_map = time(time_passes,
                                 "lifetime resolution",
@@ -717,7 +731,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
 
     time(time_passes,
          "looking for entry point",
-         || middle::entry::find_entry_point(sess, &ast_map));
+         || middle::entry::find_entry_point(sess, &hir_map));
 
     sess.plugin_registrar_fn.set(time(time_passes, "looking for plugin registrar", || {
         plugin::build::find_plugin_registrar(sess.diagnostic(), krate)
@@ -733,13 +747,13 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
 
     time(time_passes,
          "static item recursion checking",
-         || middle::check_static_recursion::check_crate(sess, krate, &def_map.borrow(), &ast_map));
+         || middle::check_static_recursion::check_crate(sess, krate, &def_map.borrow(), &hir_map));
 
     ty::ctxt::create_and_enter(sess,
                                arenas,
                                def_map,
                                named_region_map,
-                               ast_map,
+                               hir_map,
                                freevars,
                                region_map,
                                lang_items,
@@ -791,7 +805,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
 
                                    time(time_passes,
                                         "rvalue checking",
-                                        || middle::check_rvalues::check_crate(tcx, krate));
+                                        || middle::check_rvalues::check_crate(tcx));
 
                                    // Avoid overwhelming user with errors if type checking failed.
                                    // I'm not sure how helpful this is, to be honest, but it avoids
@@ -991,8 +1005,9 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
                              None
                          }
                          _ => {
-                             session.span_err(a.span, "`crate_type` requires a value");
-                             session.note("for example: `#![crate_type=\"lib\"]`");
+                             session.struct_span_err(a.span, "`crate_type` requires a value")
+                                 .note("for example: `#![crate_type=\"lib\"]`")
+                                 .emit();
                              None
                          }
                      }

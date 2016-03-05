@@ -218,7 +218,7 @@ pub enum VarError {
     /// valid unicode data. The found data is returned as a payload of this
     /// variant.
     #[stable(feature = "env", since = "1.0.0")]
-    NotUnicode(OsString),
+    NotUnicode(#[cfg_attr(not(stage0), stable(feature = "env", since = "1.0.0"))] OsString),
 }
 
 #[stable(feature = "env", since = "1.0.0")]
@@ -615,6 +615,8 @@ pub mod consts {
     /// - mips
     /// - mipsel
     /// - powerpc
+    /// - powerpc64
+    /// - powerpc64le
     #[stable(feature = "env", since = "1.0.0")]
     pub const ARCH: &'static str = super::arch::ARCH;
 
@@ -865,6 +867,16 @@ mod arch {
 #[cfg(target_arch = "powerpc")]
 mod arch {
     pub const ARCH: &'static str = "powerpc";
+}
+
+#[cfg(target_arch = "powerpc64")]
+mod arch {
+    pub const ARCH: &'static str = "powerpc64";
+}
+
+#[cfg(target_arch = "powerpc64le")]
+mod arch {
+    pub const ARCH: &'static str = "powerpc64le";
 }
 
 #[cfg(target_arch = "le32")]

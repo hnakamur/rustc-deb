@@ -88,18 +88,8 @@ use sys_common::mutex::Mutex;
 #[path = "seh.rs"] #[doc(hidden)]
 pub mod imp;
 
-// stage0: i686-pc-windows-gnu
-#[cfg(all(stage0, windows, target_arch = "x86_64", target_env = "gnu"))]
-#[path = "seh64_gnu.rs"] #[doc(hidden)]
-pub mod imp;
-
-// stage0: x86_64-pc-windows-msvc
-#[cfg(all(stage0, windows, target_arch = "x86_64", target_env = "msvc"))]
-#[path = "seh.rs"] #[doc(hidden)]
-pub mod imp;
-
 // x86_64-pc-windows-*
-#[cfg(all(not(stage0), windows, target_arch = "x86_64"))]
+#[cfg(all(windows, target_arch = "x86_64"))]
 #[path = "seh64_gnu.rs"] #[doc(hidden)]
 pub mod imp;
 
@@ -182,7 +172,7 @@ pub fn panicking() -> bool {
 #[inline(never)]
 #[no_mangle]
 #[allow(private_no_mangle_fns)]
-fn rust_panic(cause: Box<Any + Send + 'static>) -> ! {
+pub fn rust_panic(cause: Box<Any + Send + 'static>) -> ! {
     unsafe {
         imp::panic(cause)
     }

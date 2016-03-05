@@ -12,7 +12,7 @@
 
 use ast;
 use codemap::{self, Span, CodeMap, FileMap};
-use diagnostic::{SpanHandler, Handler, Auto, FatalError};
+use errors::{Handler, ColorConfig, DiagnosticBuilder};
 use parse::parser::Parser;
 use parse::token::InternedString;
 use ptr::P;
@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str;
 
-pub type PResult<T> = Result<T, FatalError>;
+pub type PResult<'a, T> = Result<T, DiagnosticBuilder<'a>>;
 
 #[macro_use]
 pub mod parser;
@@ -40,26 +40,29 @@ pub mod obsolete;
 
 /// Info about a parsing session.
 pub struct ParseSess {
-    pub span_diagnostic: SpanHandler, // better be the same as the one in the reader!
+    pub span_diagnostic: Handler, // better be the same as the one in the reader!
     /// Used to determine and report recursive mod inclusions
     included_mod_stack: RefCell<Vec<PathBuf>>,
+    code_map: Rc<CodeMap>,
 }
 
 impl ParseSess {
     pub fn new() -> ParseSess {
-        let handler = SpanHandler::new(Handler::new(Auto, None, true), CodeMap::new());
-        ParseSess::with_span_handler(handler)
+        let cm = Rc::new(CodeMap::new());
+        let handler = Handler::with_tty_emitter(ColorConfig::Auto, None, true, false, cm.clone());
+        ParseSess::with_span_handler(handler, cm)
     }
 
-    pub fn with_span_handler(sh: SpanHandler) -> ParseSess {
+    pub fn with_span_handler(handler: Handler, code_map: Rc<CodeMap>) -> ParseSess {
         ParseSess {
-            span_diagnostic: sh,
-            included_mod_stack: RefCell::new(vec![])
+            span_diagnostic: handler,
+            included_mod_stack: RefCell::new(vec![]),
+            code_map: code_map
         }
     }
 
     pub fn codemap(&self) -> &CodeMap {
-        &self.span_diagnostic.cm
+        &self.code_map
     }
 }
 
@@ -73,8 +76,8 @@ pub fn parse_crate_from_file(
     cfg: ast::CrateConfig,
     sess: &ParseSess
 ) -> ast::Crate {
-    panictry!(new_parser_from_file(sess, cfg, input).parse_crate_mod())
-    // why is there no p.abort_if_errors here?
+    let mut parser = new_parser_from_file(sess, cfg, input);
+    abort_if_errors(parser.parse_crate_mod(), &parser)
 }
 
 pub fn parse_crate_attrs_from_file(
@@ -82,8 +85,8 @@ pub fn parse_crate_attrs_from_file(
     cfg: ast::CrateConfig,
     sess: &ParseSess
 ) -> Vec<ast::Attribute> {
-    // FIXME: maybe_aborted?
-    panictry!(new_parser_from_file(sess, cfg, input).parse_inner_attributes())
+    let mut parser = new_parser_from_file(sess, cfg, input);
+    abort_if_errors(parser.parse_inner_attributes(), &parser)
 }
 
 pub fn parse_crate_from_source_str(name: String,
@@ -235,7 +238,7 @@ fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
             let msg = format!("couldn't read {:?}: {}", path.display(), e);
             match spanopt {
                 Some(sp) => panic!(sess.span_diagnostic.span_fatal(sp, &msg)),
-                None => panic!(sess.span_diagnostic.handler().fatal(&msg))
+                None => panic!(sess.span_diagnostic.fatal(&msg))
             }
         }
     }
@@ -258,7 +261,7 @@ pub fn tts_to_parser<'a>(sess: &'a ParseSess,
                          cfg: ast::CrateConfig) -> Parser<'a> {
     let trdr = lexer::new_tt_reader(&sess.span_diagnostic, None, None, tts);
     let mut p = Parser::new(sess, cfg, Box::new(trdr));
-    panictry!(p.check_unknown_macro_variable());
+    p.check_unknown_macro_variable();
     p
 }
 
@@ -266,6 +269,20 @@ pub fn tts_to_parser<'a>(sess: &'a ParseSess,
 pub fn maybe_aborted<T>(result: T, p: Parser) -> T {
     p.abort_if_errors();
     result
+}
+
+fn abort_if_errors<'a, T>(result: PResult<'a, T>, p: &Parser) -> T {
+    match result {
+        Ok(c) => {
+            p.abort_if_errors();
+            c
+        }
+        Err(mut e) => {
+            e.emit();
+            p.abort_if_errors();
+            unreachable!();
+        }
+    }
 }
 
 /// Parse a string representing a character literal into its final form.
@@ -438,7 +455,7 @@ fn looks_like_width_suffix(first_chars: &[char], s: &str) -> bool {
 }
 
 fn filtered_float_lit(data: token::InternedString, suffix: Option<&str>,
-                      sd: &SpanHandler, sp: Span) -> ast::Lit_ {
+                      sd: &Handler, sp: Span) -> ast::Lit_ {
     debug!("filtered_float_lit: {}, {:?}", data, suffix);
     match suffix.as_ref().map(|s| &**s) {
         Some("f32") => ast::LitFloat(data, ast::TyF32),
@@ -446,11 +463,13 @@ fn filtered_float_lit(data: token::InternedString, suffix: Option<&str>,
         Some(suf) => {
             if suf.len() >= 2 && looks_like_width_suffix(&['f'], suf) {
                 // if it looks like a width, lets try to be helpful.
-                sd.span_err(sp, &format!("invalid width `{}` for float literal", &suf[1..]));
-                sd.fileline_help(sp, "valid widths are 32 and 64");
+                sd.struct_span_err(sp, &format!("invalid width `{}` for float literal", &suf[1..]))
+                 .fileline_help(sp, "valid widths are 32 and 64")
+                 .emit();
             } else {
-                sd.span_err(sp, &format!("invalid suffix `{}` for float literal", suf));
-                sd.fileline_help(sp, "valid suffixes are `f32` and `f64`");
+                sd.struct_span_err(sp, &format!("invalid suffix `{}` for float literal", suf))
+                  .fileline_help(sp, "valid suffixes are `f32` and `f64`")
+                  .emit();
             }
 
             ast::LitFloatUnsuffixed(data)
@@ -459,7 +478,7 @@ fn filtered_float_lit(data: token::InternedString, suffix: Option<&str>,
     }
 }
 pub fn float_lit(s: &str, suffix: Option<InternedString>,
-                 sd: &SpanHandler, sp: Span) -> ast::Lit_ {
+                 sd: &Handler, sp: Span) -> ast::Lit_ {
     debug!("float_lit: {:?}, {:?}", s, suffix);
     // FIXME #2252: bounds checking float literals is deferred until trans
     let s = s.chars().filter(|&c| c != '_').collect::<String>();
@@ -561,7 +580,7 @@ pub fn byte_str_lit(lit: &str) -> Rc<Vec<u8>> {
 
 pub fn integer_lit(s: &str,
                    suffix: Option<InternedString>,
-                   sd: &SpanHandler,
+                   sd: &Handler,
                    sp: Span)
                    -> ast::Lit_ {
     // s can only be ascii, byte indexing is fine
@@ -619,13 +638,15 @@ pub fn integer_lit(s: &str,
                 // i<digits> and u<digits> look like widths, so lets
                 // give an error message along those lines
                 if looks_like_width_suffix(&['i', 'u'], suf) {
-                    sd.span_err(sp, &format!("invalid width `{}` for integer literal",
-                                             &suf[1..]));
-                    sd.fileline_help(sp, "valid widths are 8, 16, 32 and 64");
+                    sd.struct_span_err(sp, &format!("invalid width `{}` for integer literal",
+                                             &suf[1..]))
+                      .fileline_help(sp, "valid widths are 8, 16, 32 and 64")
+                      .emit();
                 } else {
-                    sd.span_err(sp, &format!("invalid suffix `{}` for numeric literal", suf));
-                    sd.fileline_help(sp, "the suffix must be one of the integral types \
-                                      (`u32`, `isize`, etc)");
+                    sd.struct_span_err(sp, &format!("invalid suffix `{}` for numeric literal", suf))
+                      .fileline_help(sp, "the suffix must be one of the integral types \
+                                      (`u32`, `isize`, etc)")
+                      .emit();
                 }
 
                 ty
@@ -668,7 +689,6 @@ mod tests {
     use super::*;
     use std::rc::Rc;
     use codemap::{Span, BytePos, Pos, Spanned, NO_EXPANSION};
-    use owned_slice::OwnedSlice;
     use ast::{self, TokenTree};
     use abi;
     use attr::{first_attr_value_str_by_name, AttrMetaMethods};
@@ -890,7 +910,7 @@ mod tests {
         assert!(panictry!(parser.parse_pat())
                 == P(ast::Pat{
                 id: ast::DUMMY_NODE_ID,
-                node: ast::PatIdent(ast::BindByValue(ast::MutImmutable),
+                node: ast::PatIdent(ast::BindingMode::ByValue(ast::MutImmutable),
                                     Spanned{ span:sp(0, 1),
                                              node: str_to_ident("b")
                     },
@@ -926,7 +946,7 @@ mod tests {
                                     pat: P(ast::Pat {
                                         id: ast::DUMMY_NODE_ID,
                                         node: ast::PatIdent(
-                                            ast::BindByValue(ast::MutImmutable),
+                                            ast::BindingMode::ByValue(ast::MutImmutable),
                                                 Spanned{
                                                     span: sp(6,7),
                                                     node: str_to_ident("b")},
@@ -944,7 +964,7 @@ mod tests {
                                     abi::Rust,
                                     ast::Generics{ // no idea on either of these:
                                         lifetimes: Vec::new(),
-                                        ty_params: OwnedSlice::empty(),
+                                        ty_params: P::empty(),
                                         where_clause: ast::WhereClause {
                                             id: ast::DUMMY_NODE_ID,
                                             predicates: Vec::new(),

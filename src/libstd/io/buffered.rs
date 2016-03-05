@@ -18,6 +18,7 @@ use cmp;
 use error;
 use fmt;
 use io::{self, DEFAULT_BUF_SIZE, Error, ErrorKind, SeekFrom};
+use memchr;
 
 /// The `BufReader` struct adds buffering to any reader.
 ///
@@ -746,7 +747,7 @@ impl<W: Write> LineWriter<W> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<W: Write> Write for LineWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match buf.iter().rposition(|b| *b == b'\n') {
+        match memchr::memrchr(b'\n', buf) {
             Some(i) => {
                 let n = try!(self.inner.write(&buf[..i + 1]));
                 if n != i + 1 { return Ok(n) }
@@ -771,26 +772,11 @@ impl<W: Write> fmt::Debug for LineWriter<W> where W: fmt::Debug {
     }
 }
 
-struct InternalBufWriter<W: Write>(BufWriter<W>);
-
-impl<W: Read + Write> InternalBufWriter<W> {
-    fn get_mut(&mut self) -> &mut BufWriter<W> {
-        let InternalBufWriter(ref mut w) = *self;
-        return w;
-    }
-}
-
-impl<W: Read + Write> Read for InternalBufWriter<W> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.get_mut().inner.as_mut().unwrap().read(buf)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use prelude::v1::*;
     use io::prelude::*;
-    use io::{self, BufReader, BufWriter, Cursor, LineWriter, SeekFrom};
+    use io::{self, BufReader, BufWriter, LineWriter, SeekFrom};
     use test;
 
     /// A dummy reader intended at testing short-reads propagation.

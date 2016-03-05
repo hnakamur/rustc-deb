@@ -16,7 +16,7 @@
 use std::str::FromStr;
 
 use ast;
-use diagnostic;
+use errors;
 use visit;
 use visit::Visitor;
 
@@ -40,28 +40,28 @@ impl FromStr for Mode {
 }
 
 struct ShowSpanVisitor<'a> {
-    span_diagnostic: &'a diagnostic::SpanHandler,
+    span_diagnostic: &'a errors::Handler,
     mode: Mode,
 }
 
 impl<'a, 'v> Visitor<'v> for ShowSpanVisitor<'a> {
     fn visit_expr(&mut self, e: &ast::Expr) {
         if let Mode::Expression = self.mode {
-            self.span_diagnostic.span_note(e.span, "expression");
+            self.span_diagnostic.span_warn(e.span, "expression");
         }
         visit::walk_expr(self, e);
     }
 
     fn visit_pat(&mut self, p: &ast::Pat) {
         if let Mode::Pattern = self.mode {
-            self.span_diagnostic.span_note(p.span, "pattern");
+            self.span_diagnostic.span_warn(p.span, "pattern");
         }
         visit::walk_pat(self, p);
     }
 
     fn visit_ty(&mut self, t: &ast::Ty) {
         if let Mode::Type = self.mode {
-            self.span_diagnostic.span_note(t.span, "type");
+            self.span_diagnostic.span_warn(t.span, "type");
         }
         visit::walk_ty(self, t);
     }
@@ -71,7 +71,7 @@ impl<'a, 'v> Visitor<'v> for ShowSpanVisitor<'a> {
     }
 }
 
-pub fn run(span_diagnostic: &diagnostic::SpanHandler,
+pub fn run(span_diagnostic: &errors::Handler,
            mode: &str,
            krate: &ast::Crate) {
     let mode = match mode.parse().ok() {

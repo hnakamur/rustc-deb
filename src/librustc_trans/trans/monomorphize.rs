@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use back::link::exported_name;
-use session;
 use llvm::ValueRef;
 use llvm;
 use middle::def_id::DefId;
@@ -24,7 +23,8 @@ use trans::base;
 use trans::common::*;
 use trans::declare;
 use trans::foreign;
-use middle::ty::{self, HasTypeFlags, Ty};
+use middle::ty::{self, Ty};
+use trans::Disr;
 use rustc::front::map as hir_map;
 
 use rustc_front::hir;
@@ -32,6 +32,7 @@ use rustc_front::hir;
 use syntax::abi;
 use syntax::ast;
 use syntax::attr;
+use syntax::errors;
 use std::hash::{Hasher, Hash, SipHasher};
 
 pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
@@ -83,8 +84,8 @@ pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
            hash_id);
 
 
-    let map_node = session::expect(
-        ccx.sess(),
+    let map_node = errors::expect(
+        ccx.sess().diagnostic(),
         ccx.tcx().map.find(fn_node_id),
         || {
             format!("while monomorphizing {:?}, couldn't find it in \
@@ -185,7 +186,13 @@ pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                               ccx, &**decl, &**body, &[], d, psubsts, fn_node_id,
                               Some(&hash[..]));
                       } else {
-                          trans_fn(ccx, &**decl, &**body, d, psubsts, fn_node_id, &[]);
+                          trans_fn(ccx,
+                                   &**decl,
+                                   &**body,
+                                   d,
+                                   psubsts,
+                                   fn_node_id,
+                                   &i.attrs);
                       }
                   }
 
@@ -201,7 +208,7 @@ pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
             assert_eq!(v.node.name, variant.name);
             let d = mk_lldecl(abi::Rust);
             attributes::inline(d, attributes::InlineAttr::Hint);
-            trans_enum_variant(ccx, fn_node_id, variant.disr_val, psubsts, d);
+            trans_enum_variant(ccx, fn_node_id, Disr::from(variant.disr_val), psubsts, d);
             d
         }
         hir_map::NodeImplItem(impl_item) => {
@@ -216,7 +223,7 @@ pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                  d,
                                  psubsts,
                                  impl_item.id,
-                                 &[]);
+                                 &impl_item.attrs);
                     }
                     d
                 }
@@ -232,8 +239,13 @@ pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                     let d = mk_lldecl(abi::Rust);
                     let needs_body = setup_lldecl(d, &trait_item.attrs);
                     if needs_body {
-                        trans_fn(ccx, &sig.decl, body, d,
-                                 psubsts, trait_item.id, &[]);
+                        trans_fn(ccx,
+                                 &sig.decl,
+                                 body,
+                                 d,
+                                 psubsts,
+                                 trait_item.id,
+                                 &trait_item.attrs);
                     }
                     d
                 }
@@ -288,7 +300,7 @@ pub fn apply_param_substs<'tcx,T>(tcx: &ty::ctxt<'tcx>,
                                   param_substs: &Substs<'tcx>,
                                   value: &T)
                                   -> T
-    where T : TypeFoldable<'tcx> + HasTypeFlags
+    where T : TypeFoldable<'tcx>
 {
     let substituted = value.subst(tcx, param_substs);
     normalize_associated_type(tcx, &substituted)

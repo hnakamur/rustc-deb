@@ -28,14 +28,13 @@ use trans::consts;
 use trans::datum::*;
 use trans::debuginfo::DebugLoc;
 use trans::declare;
-use trans::expr::SaveIn;
 use trans::expr;
 use trans::glue;
 use trans::machine;
 use trans::monomorphize;
 use trans::type_::Type;
 use trans::type_of::*;
-use middle::ty::{self, Ty, HasTypeFlags};
+use middle::ty::{self, Ty, TypeFoldable};
 use middle::ty::MethodCall;
 
 use syntax::ast;
@@ -75,8 +74,13 @@ pub fn trans_impl(ccx: &CrateContext,
                     for (ref ccx, is_origin) in ccx.maybe_iter(trans_everywhere) {
                         let llfn = get_item_val(ccx, impl_item.id);
                         let empty_substs = tcx.mk_substs(Substs::trans_empty());
-                        trans_fn(ccx, &sig.decl, body, llfn,
-                                 empty_substs, impl_item.id, &[]);
+                        trans_fn(ccx,
+                                 &sig.decl,
+                                 body,
+                                 llfn,
+                                 empty_substs,
+                                 impl_item.id,
+                                 &impl_item.attrs);
                         update_linkage(ccx,
                                        llfn,
                                        Some(impl_item.id),
@@ -473,7 +477,7 @@ fn trans_trait_callee_from_llval<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 ///
 /// In fact, all virtual calls can be thought of as normal trait calls
 /// that go through this shim function.
-fn trans_object_shim<'a, 'tcx>(
+pub fn trans_object_shim<'a, 'tcx>(
     ccx: &'a CrateContext<'a, 'tcx>,
     upcast_trait_ref: ty::PolyTraitRef<'tcx>,
     method_id: DefId,

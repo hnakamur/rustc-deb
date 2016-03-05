@@ -110,9 +110,9 @@ pub use core::slice::{Iter, IterMut};
 pub use core::slice::{SplitMut, ChunksMut, Split};
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use core::slice::{SplitN, RSplitN, SplitNMut, RSplitNMut};
-#[unstable(feature = "ref_slice", issue = "27774")]
+#[unstable(feature = "slice_bytes", issue = "27740")]
 #[allow(deprecated)]
-pub use core::slice::{bytes, mut_ref_slice, ref_slice};
+pub use core::slice::bytes;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use core::slice::{from_raw_parts, from_raw_parts_mut};
 
@@ -788,15 +788,12 @@ impl<T> [T] {
     /// # Examples
     ///
     /// ```rust
-    /// #![feature(slice_sort_by_key)]
-    ///
     /// let mut v = [-5i32, 4, 1, -3, 2];
     ///
     /// v.sort_by_key(|k| k.abs());
     /// assert!(v == [1, 2, -3, 4, -5]);
     /// ```
-    #[unstable(feature = "slice_sort_by_key", reason = "recently added",
-               issue = "27724")]
+    #[stable(feature = "slice_sort_by_key", since = "1.7.0")]
     #[inline]
     pub fn sort_by_key<B, F>(&mut self, mut f: F)
         where F: FnMut(&T) -> B, B: Ord
@@ -829,29 +826,25 @@ impl<T> [T] {
         merge_sort(self, compare)
     }
 
-    /// Copies as many elements from `src` as it can into `self` (the
-    /// shorter of `self.len()` and `src.len()`). Returns the number
-    /// of elements copied.
+    /// Copies the elements from `src` into `self`.
+    ///
+    /// The length of this slice must be the same as the slice passed in.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the two slices have different lengths.
     ///
     /// # Example
     ///
     /// ```rust
-    /// #![feature(clone_from_slice)]
-    ///
     /// let mut dst = [0, 0, 0];
-    /// let src = [1, 2];
+    /// let src = [1, 2, 3];
     ///
-    /// assert!(dst.clone_from_slice(&src) == 2);
-    /// assert!(dst == [1, 2, 0]);
-    ///
-    /// let src2 = [3, 4, 5, 6];
-    /// assert!(dst.clone_from_slice(&src2) == 3);
-    /// assert!(dst == [3, 4, 5]);
+    /// dst.clone_from_slice(&src);
+    /// assert!(dst == [1, 2, 3]);
     /// ```
-    #[unstable(feature = "clone_from_slice", issue = "27750")]
-    pub fn clone_from_slice(&mut self, src: &[T]) -> usize
-        where T: Clone
-    {
+    #[stable(feature = "clone_from_slice", since = "1.7.0")]
+    pub fn clone_from_slice(&mut self, src: &[T]) where T: Clone {
         core_slice::SliceExt::clone_from_slice(self, src)
     }
 
@@ -909,15 +902,6 @@ pub trait SliceConcatExt<T: ?Sized> {
     #[stable(feature = "rename_connect_to_join", since = "1.3.0")]
     fn join(&self, sep: &T) -> Self::Output;
 
-    /// Flattens a slice of `T` into a single value `Self::Output`, placing a
-    /// given separator between each.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #![allow(deprecated)]
-    /// assert_eq!(["hello", "world"].connect(" "), "hello world");
-    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_deprecated(since = "1.3.0", reason = "renamed to join")]
     fn connect(&self, sep: &T) -> Self::Output;

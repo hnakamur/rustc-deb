@@ -7,11 +7,13 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+#![cfg_attr(test, allow(dead_code))]
 
 use libc;
 use self::imp::{make_handler, drop_handler};
 
-pub use self::imp::{init, cleanup};
+pub use self::imp::cleanup;
+pub use self::imp::init;
 
 pub struct Handler {
     _data: *mut libc::c_void
@@ -40,12 +42,11 @@ impl Drop for Handler {
           target_os = "openbsd"))]
 mod imp {
     use super::Handler;
-    use sys_common::util::report_overflow;
     use mem;
     use ptr;
+    use libc::{sigaltstack, SIGSTKSZ};
     use libc::{sigaction, SIGBUS, SIG_DFL,
-               SA_SIGINFO, SA_ONSTACK, sigaltstack,
-               SIGSTKSZ, sighandler_t};
+               SA_SIGINFO, SA_ONSTACK, sighandler_t};
     use libc;
     use libc::{mmap, munmap};
     use libc::{SIGSEGV, PROT_READ, PROT_WRITE, MAP_PRIVATE, MAP_ANON};
@@ -58,19 +59,19 @@ mod imp {
     static mut PAGE_SIZE: usize = 0;
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe fn siginfo_si_addr(info: *mut libc::siginfo_t) -> *mut libc::c_void {
+    unsafe fn siginfo_si_addr(info: *mut libc::siginfo_t) -> usize {
         #[repr(C)]
         struct siginfo_t {
             a: [libc::c_int; 3], // si_signo, si_code, si_errno,
             si_addr: *mut libc::c_void,
         }
 
-        (*(info as *const siginfo_t)).si_addr
+        (*(info as *const siginfo_t)).si_addr as usize
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    unsafe fn siginfo_si_addr(info: *mut libc::siginfo_t) -> *mut libc::c_void {
-        (*info).si_addr
+    unsafe fn siginfo_si_addr(info: *mut libc::siginfo_t) -> usize {
+        (*info).si_addr as usize
     }
 
     // Signal handler for the SIGSEGV and SIGBUS handlers. We've got guard pages
@@ -94,8 +95,10 @@ mod imp {
     unsafe extern fn signal_handler(signum: libc::c_int,
                                     info: *mut libc::siginfo_t,
                                     _data: *mut libc::c_void) {
+        use sys_common::util::report_overflow;
+
         let guard = thread_info::stack_guard().unwrap_or(0);
-        let addr = siginfo_si_addr(info) as usize;
+        let addr = siginfo_si_addr(info);
 
         // If the faulting address is within the guard page, then we print a
         // message saying so.

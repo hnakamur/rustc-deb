@@ -68,11 +68,12 @@ use core::hash::{self, Hash};
 use core::intrinsics::{arith_offset, assume, needs_drop};
 use core::iter::FromIterator;
 use core::mem;
-use core::ops::{Index, IndexMut, Deref};
+use core::ops::{Index, IndexMut};
 use core::ops;
 use core::ptr;
 use core::slice;
 
+#[allow(deprecated)]
 use borrow::{Cow, IntoCow};
 
 use super::range::RangeArgument;
@@ -464,9 +465,7 @@ impl<T> Vec<T> {
     ///
     /// Equivalent to `&s[..]`.
     #[inline]
-    #[unstable(feature = "convert",
-               reason = "waiting on RFC revision",
-               issue = "27729")]
+    #[stable(feature = "vec_as_slice", since = "1.7.0")]
     pub fn as_slice(&self) -> &[T] {
         self
     }
@@ -475,9 +474,7 @@ impl<T> Vec<T> {
     ///
     /// Equivalent to `&mut s[..]`.
     #[inline]
-    #[unstable(feature = "convert",
-               reason = "waiting on RFC revision",
-               issue = "27729")]
+    #[stable(feature = "vec_as_slice", since = "1.7.0")]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self[..]
     }
@@ -725,10 +722,12 @@ impl<T> Vec<T> {
     }
 
     /// Create a draining iterator that removes the specified range in the vector
-    /// and yields the removed items from start to end. The element range is
-    /// removed even if the iterator is not consumed until the end.
+    /// and yields the removed items.
     ///
-    /// Note: It is unspecified how many elements are removed from the vector,
+    /// Note 1: The element range is removed even if the iterator is not
+    /// consumed until the end.
+    ///
+    /// Note 2: It is unspecified how many elements are removed from the vector,
     /// if the `Drain` value is leaked.
     ///
     /// # Panics
@@ -739,11 +738,14 @@ impl<T> Vec<T> {
     /// # Examples
     ///
     /// ```
-    /// // Draining using `..` clears the whole vector.
     /// let mut v = vec![1, 2, 3];
-    /// let u: Vec<_> = v.drain(..).collect();
+    /// let u: Vec<_> = v.drain(1..).collect();
+    /// assert_eq!(v, &[1]);
+    /// assert_eq!(u, &[2, 3]);
+    ///
+    /// // A full range clears the vector
+    /// v.drain(..);
     /// assert_eq!(v, &[]);
-    /// assert_eq!(u, &[1, 2, 3]);
     /// ```
     #[stable(feature = "drain", since = "1.6.0")]
     pub fn drain<R>(&mut self, range: R) -> Drain<T>
@@ -1511,6 +1513,7 @@ impl<'a, T> FromIterator<T> for Cow<'a, [T]> where T: Clone {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 impl<'a, T: 'a> IntoCow<'a, [T]> for Vec<T> where T: Clone {
     fn into_cow(self) -> Cow<'a, [T]> {
         Cow::Owned(self)
@@ -1518,6 +1521,7 @@ impl<'a, T: 'a> IntoCow<'a, [T]> for Vec<T> where T: Clone {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow(deprecated)]
 impl<'a, T> IntoCow<'a, [T]> for &'a [T] where T: Clone {
     fn into_cow(self) -> Cow<'a, [T]> {
         Cow::Borrowed(self)

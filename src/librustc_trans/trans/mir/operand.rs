@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use llvm::ValueRef;
-use rustc::middle::ty::{Ty, HasTypeFlags};
+use rustc::middle::ty::{Ty, TypeFoldable};
 use rustc::mir::repr as mir;
 use trans::base;
 use trans::common::{self, Block};
@@ -73,6 +73,16 @@ impl<'tcx> OperandRef<'tcx> {
                         bcx.val_to_string(a),
                         bcx.val_to_string(d),
                         self.ty)
+            }
+        }
+    }
+
+    pub fn from_rvalue_datum(datum: datum::Datum<'tcx, datum::Rvalue>) -> OperandRef {
+        OperandRef {
+            ty: datum.ty,
+            val: match datum.kind.mode {
+                datum::RvalueMode::ByRef => OperandValue::Ref(datum.val),
+                datum::RvalueMode::ByValue => OperandValue::Immediate(datum.val),
             }
         }
     }
@@ -159,6 +169,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          operand: OperandRef<'tcx>)
     {
         debug!("store_operand: operand={}", operand.repr(bcx));
+        // Avoid generating stores of zero-sized values, because the only way to have a zero-sized
+        // value is through `undef`, and store itself is useless.
+        if common::type_is_zero_size(bcx.ccx(), operand.ty) {
+            return;
+        }
         match operand.val {
             OperandValue::Ref(r) => base::memcpy_ty(bcx, lldest, r, operand.ty),
             OperandValue::Immediate(s) => base::store_ty(bcx, s, lldest, operand.ty),

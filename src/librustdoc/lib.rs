@@ -8,23 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
-#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "rustdoc"]
 #![unstable(feature = "rustdoc", issue = "27812")]
-#![cfg_attr(stage0, staged_api)]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-   html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-   html_root_url = "https://doc.rust-lang.org/nightly/",
-   html_playground_url = "https://play.rust-lang.org/")]
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/")]
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(dynamic_lib)]
 #![feature(libc)]
-#![feature(path_relative_from)]
 #![feature(rustc_private)]
 #![feature(set_stdio)]
 #![feature(slice_patterns)]
@@ -53,6 +49,7 @@ extern crate serialize as rustc_serialize; // used by deriving
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::default::Default;
 use std::env;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -65,7 +62,7 @@ use externalfiles::ExternalHtml;
 use serialize::Decodable;
 use serialize::json::{self, Json};
 use rustc::session::search_paths::SearchPaths;
-use syntax::diagnostic;
+use rustc::session::config::ErrorOutputType;
 
 // reexported from `clean` so it can be easily updated with the mod itself
 pub use clean::SCHEMA_VERSION;
@@ -228,7 +225,7 @@ pub fn main_args(args: &[String]) -> isize {
 
     let mut libs = SearchPaths::new();
     for s in &matches.opt_strs("L") {
-        libs.add_path(s, diagnostic::Auto);
+        libs.add_path(s, ErrorOutputType::default());
     }
     let externs = match parse_externs(&matches) {
         Ok(ex) => ex,
@@ -363,7 +360,7 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
     // First, parse the crate and extract all relevant information.
     let mut paths = SearchPaths::new();
     for s in &matches.opt_strs("L") {
-        paths.add_path(s, diagnostic::Auto);
+        paths.add_path(s, ErrorOutputType::default());
     }
     let cfgs = matches.opt_strs("cfg");
     let triple = matches.opt_str("target");

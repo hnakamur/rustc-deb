@@ -17,7 +17,7 @@ use astconv::AstConv;
 use check::FnCtxt;
 use middle::def_id::DefId;
 use middle::pat_util;
-use middle::ty::{self, Ty, MethodCall, MethodCallee, HasTypeFlags};
+use middle::ty::{self, Ty, MethodCall, MethodCallee};
 use middle::ty::adjustment;
 use middle::ty::fold::{TypeFolder,TypeFoldable};
 use middle::infer;
@@ -122,18 +122,20 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
                 } else {
                     let tcx = self.tcx();
 
-                    if let hir::ExprAssignOp(..) = e.node {
+                    if let hir::ExprAssignOp(_, ref lhs, ref rhs) = e.node {
                         if
                             !tcx.sess.features.borrow().augmented_assignments &&
-                            !self.fcx.expr_ty(e).references_error()
+                            !self.fcx.expr_ty(e).references_error() &&
+                            !self.fcx.expr_ty(lhs).references_error() &&
+                            !self.fcx.expr_ty(rhs).references_error()
                         {
-                            tcx.sess.span_err(
-                                e.span,
-                                "overloaded augmented assignments are not stable");
-                            fileline_help!(
-                                tcx.sess, e.span,
-                                "add #![feature(augmented_assignments)] to the crate root \
-                                 to enable");
+                            tcx.sess.struct_span_err(e.span,
+                                                     "overloaded augmented assignments \
+                                                      are not stable")
+                                .fileline_help(e.span,
+                                               "add #![feature(augmented_assignments)] to the \
+                                                crate root to enable")
+                                .emit()
                         }
                     }
                 }

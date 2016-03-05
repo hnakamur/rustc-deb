@@ -13,5 +13,6 @@ pub trait ToNbt<T> {
 }
 
 impl ToNbt<Self> {} //~ ERROR use of `Self` outside of an impl or trait
+//~^ ERROR the trait `ToNbt` cannot be made into an object
 
 fn main() {}

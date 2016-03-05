@@ -32,7 +32,7 @@ use ast;
 use attr;
 use attr::AttrMetaMethods;
 use codemap::{CodeMap, Span};
-use diagnostic::SpanHandler;
+use errors::Handler;
 use visit;
 use visit::{FnKind, Visitor};
 use parse::token::InternedString;
@@ -82,7 +82,7 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("advanced_slice_patterns", "1.0.0", Some(23121), Active),
     ("tuple_indexing", "1.0.0", None, Accepted),
     ("associated_types", "1.0.0", None, Accepted),
-    ("visible_private_types", "1.0.0", Some(29627), Active),
+    ("visible_private_types", "1.0.0", None, Removed),
     ("slicing_syntax", "1.0.0", None, Accepted),
     ("box_syntax", "1.0.0", Some(27779), Active),
     ("placement_in_syntax", "1.0.0", Some(27779), Active),
@@ -170,7 +170,7 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("slice_patterns", "1.0.0", Some(23121), Active),
 
     // Allows use of unary negate on unsigned integers, e.g. -e for e: u8
-    ("negate_unsigned", "1.0.0", Some(29645), Active),
+    ("negate_unsigned", "1.0.0", Some(29645), Removed),
 
     // Allows the definition of associated constants in `trait` or `impl`
     // blocks.
@@ -230,6 +230,18 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
 
     // Allow attributes on expressions and non-item statements
     ("stmt_expr_attributes", "1.6.0", Some(15701), Active),
+
+    // Allows `#[deprecated]` attribute
+    ("deprecated", "1.6.0", Some(29935), Active),
+
+    // allow using type ascription in expressions
+    ("type_ascription", "1.6.0", Some(23416), Active),
+
+    // Allows cfg(target_thread_local)
+    ("cfg_target_thread_local", "1.7.0", Some(29594), Active),
+
+    // rustc internal
+    ("abi_vectorcall", "1.7.0", None, Active)
 ];
 // (changing above list without updating src/doc/reference.md makes @cmr sad)
 
@@ -317,6 +329,14 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
                                        "the `#[rustc_error]` attribute \
                                         is just used for rustc unit tests \
                                         and will never be stable")),
+    ("rustc_if_this_changed", Whitelisted, Gated("rustc_attrs",
+                                       "the `#[rustc_if_this_changed]` attribute \
+                                        is just used for rustc unit tests \
+                                        and will never be stable")),
+    ("rustc_then_this_would_need", Whitelisted, Gated("rustc_attrs",
+                                       "the `#[rustc_if_this_changed]` attribute \
+                                        is just used for rustc unit tests \
+                                        and will never be stable")),
     ("rustc_move_fragments", Normal, Gated("rustc_attrs",
                                            "the `#[rustc_move_fragments]` attribute \
                                             is just used for rustc unit tests \
@@ -377,6 +397,7 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
     ("must_use", Whitelisted, Ungated),
     ("stable", Whitelisted, Ungated),
     ("unstable", Whitelisted, Ungated),
+    ("deprecated", Normal, Gated("deprecated", "`#[deprecated]` attribute is unstable")),
 
     ("rustc_paren_sugar", Normal, Gated("unboxed_closures",
                                         "unboxed_closures are still evolving")),
@@ -407,6 +428,8 @@ const GATED_CFGS: &'static [(&'static str, &'static str, fn(&Features) -> bool)]
     // (name in cfg, feature, function to check if the feature is enabled)
     ("target_feature", "cfg_target_feature", cfg_fn!(|x| x.cfg_target_feature)),
     ("target_vendor", "cfg_target_vendor", cfg_fn!(|x| x.cfg_target_vendor)),
+    ("target_thread_local", "cfg_target_thread_local",
+     cfg_fn!(|x| x.cfg_target_thread_local)),
 ];
 
 #[derive(Debug, Eq, PartialEq)]
@@ -442,10 +465,13 @@ impl PartialOrd for GatedCfgAttr {
 }
 
 impl GatedCfgAttr {
-    pub fn check_and_emit(&self, diagnostic: &SpanHandler, features: &Features) {
+    pub fn check_and_emit(&self,
+                          diagnostic: &Handler,
+                          features: &Features,
+                          codemap: &CodeMap) {
         match *self {
             GatedCfgAttr::GatedCfg(ref cfg) => {
-                cfg.check_and_emit(diagnostic, features);
+                cfg.check_and_emit(diagnostic, features, codemap);
             }
             GatedCfgAttr::GatedAttr(span) => {
                 if !features.stmt_expr_attributes {
@@ -472,9 +498,12 @@ impl GatedCfg {
                       }
                   })
     }
-    fn check_and_emit(&self, diagnostic: &SpanHandler, features: &Features) {
+    fn check_and_emit(&self,
+                      diagnostic: &Handler,
+                      features: &Features,
+                      codemap: &CodeMap) {
         let (cfg, feature, has_feature) = GATED_CFGS[self.index];
-        if !has_feature(features) {
+        if !has_feature(features) && !codemap.span_allows_unstable(self.span) {
             let explain = format!("`cfg({})` is experimental and subject to change", cfg);
             emit_feature_err(diagnostic, feature, self.span, GateIssue::Language, &explain);
         }
@@ -510,7 +539,6 @@ pub enum AttributeGate {
 pub struct Features {
     pub unboxed_closures: bool,
     pub rustc_diagnostic_macros: bool,
-    pub visible_private_types: bool,
     pub allow_quote: bool,
     pub allow_asm: bool,
     pub allow_log_syntax: bool,
@@ -523,7 +551,6 @@ pub struct Features {
     pub allow_pushpop_unsafe: bool,
     pub simd_ffi: bool,
     pub unmarked_api: bool,
-    pub negate_unsigned: bool,
     /// spans of #![feature] attrs for stable language features. for error reporting
     pub declared_stable_lang_features: Vec<Span>,
     /// #![feature] attrs for non-language (library) features
@@ -535,10 +562,12 @@ pub struct Features {
     pub type_macros: bool,
     pub cfg_target_feature: bool,
     pub cfg_target_vendor: bool,
+    pub cfg_target_thread_local: bool,
     pub augmented_assignments: bool,
     pub braced_empty_structs: bool,
     pub staged_api: bool,
     pub stmt_expr_attributes: bool,
+    pub deprecated: bool,
 }
 
 impl Features {
@@ -546,7 +575,6 @@ impl Features {
         Features {
             unboxed_closures: false,
             rustc_diagnostic_macros: false,
-            visible_private_types: false,
             allow_quote: false,
             allow_asm: false,
             allow_log_syntax: false,
@@ -559,7 +587,6 @@ impl Features {
             allow_pushpop_unsafe: false,
             simd_ffi: false,
             unmarked_api: false,
-            negate_unsigned: false,
             declared_stable_lang_features: Vec::new(),
             declared_lib_features: Vec::new(),
             const_fn: false,
@@ -569,10 +596,12 @@ impl Features {
             type_macros: false,
             cfg_target_feature: false,
             cfg_target_vendor: false,
+            cfg_target_thread_local: false,
             augmented_assignments: false,
             braced_empty_structs: false,
             staged_api: false,
             stmt_expr_attributes: false,
+            deprecated: false,
         }
     }
 }
@@ -589,21 +618,21 @@ const EXPLAIN_PUSHPOP_UNSAFE: &'static str =
 const EXPLAIN_STMT_ATTR_SYNTAX: &'static str =
     "attributes on non-item statements and expressions are experimental.";
 
-pub fn check_for_box_syntax(f: Option<&Features>, diag: &SpanHandler, span: Span) {
+pub fn check_for_box_syntax(f: Option<&Features>, diag: &Handler, span: Span) {
     if let Some(&Features { allow_box: true, .. }) = f {
         return;
     }
     emit_feature_err(diag, "box_syntax", span, GateIssue::Language, EXPLAIN_BOX_SYNTAX);
 }
 
-pub fn check_for_placement_in(f: Option<&Features>, diag: &SpanHandler, span: Span) {
+pub fn check_for_placement_in(f: Option<&Features>, diag: &Handler, span: Span) {
     if let Some(&Features { allow_placement_in: true, .. }) = f {
         return;
     }
     emit_feature_err(diag, "placement_in_syntax", span, GateIssue::Language, EXPLAIN_PLACEMENT_IN);
 }
 
-pub fn check_for_pushpop_syntax(f: Option<&Features>, diag: &SpanHandler, span: Span) {
+pub fn check_for_pushpop_syntax(f: Option<&Features>, diag: &Handler, span: Span) {
     if let Some(&Features { allow_pushpop_unsafe: true, .. }) = f {
         return;
     }
@@ -612,7 +641,7 @@ pub fn check_for_pushpop_syntax(f: Option<&Features>, diag: &SpanHandler, span: 
 
 struct Context<'a> {
     features: Vec<&'static str>,
-    span_handler: &'a SpanHandler,
+    span_handler: &'a Handler,
     cm: &'a CodeMap,
     plugin_attributes: &'a [(String, AttributeType)],
 }
@@ -698,24 +727,28 @@ pub enum GateIssue {
     Library(Option<u32>)
 }
 
-pub fn emit_feature_err(diag: &SpanHandler, feature: &str, span: Span, issue: GateIssue,
+pub fn emit_feature_err(diag: &Handler, feature: &str, span: Span, issue: GateIssue,
                         explain: &str) {
     let issue = match issue {
         GateIssue::Language => find_lang_feature_issue(feature),
         GateIssue::Library(lib) => lib,
     };
 
-    if let Some(n) = issue {
-        diag.span_err(span, &format!("{} (see issue #{})", explain, n));
+    let mut err = if let Some(n) = issue {
+        diag.struct_span_err(span, &format!("{} (see issue #{})", explain, n))
     } else {
-        diag.span_err(span, explain);
-    }
+        diag.struct_span_err(span, explain)
+    };
 
     // #23973: do not suggest `#![feature(...)]` if we are in beta/stable
-    if option_env!("CFG_DISABLE_UNSTABLE_FEATURES").is_some() { return; }
-    diag.fileline_help(span, &format!("add #![feature({})] to the \
-                                   crate attributes to enable",
-                                  feature));
+    if option_env!("CFG_DISABLE_UNSTABLE_FEATURES").is_some() {
+        err.emit();
+        return;
+    }
+    err.fileline_help(span, &format!("add #![feature({})] to the \
+                                      crate attributes to enable",
+                                     feature));
+    err.emit();
 }
 
 pub const EXPLAIN_ASM: &'static str =
@@ -842,6 +875,11 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                     Abi::PlatformIntrinsic => {
                         Some(("platform_intrinsics",
                               "platform intrinsics are experimental and possibly buggy"))
+                    },
+                    Abi::Vectorcall => {
+                        Some(("abi_vectorcall",
+                            "vectorcall is experimental and subject to change"
+                        ))
                     }
                     _ => None
                 };
@@ -922,11 +960,13 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                 self.gate_feature("braced_empty_structs", span,
                                   "empty structs and enum variants with braces are unstable");
             } else if s.is_tuple() {
-                self.context.span_handler.span_err(span, "empty tuple structs and enum variants \
-                                                          are not allowed, use unit structs and \
-                                                          enum variants instead");
-                self.context.span_handler.span_help(span, "remove trailing `()` to make a unit \
-                                                           struct or unit enum variant");
+                self.context.span_handler.struct_span_err(span, "empty tuple structs and enum \
+                                                                 variants are not allowed, use \
+                                                                 unit structs and enum variants \
+                                                                 instead")
+                                         .span_help(span, "remove trailing `()` to make a unit \
+                                                           struct or unit enum variant")
+                                         .emit();
             }
         }
         visit::walk_struct_def(self, s)
@@ -953,6 +993,10 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                                   e.span,
                                   "box expression syntax is experimental; \
                                    you can call `Box::new` instead.");
+            }
+            ast::ExprType(..) => {
+                self.gate_feature("type_ascription", e.span,
+                                  "type ascription is experimental");
             }
             _ => {}
         }
@@ -1009,11 +1053,17 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                                   "intrinsics are subject to change")
             }
             FnKind::ItemFn(_, _, _, _, abi, _) |
-            FnKind::Method(_, &ast::MethodSig { abi, .. }, _) if abi == Abi::RustCall => {
-                self.gate_feature("unboxed_closures",
-                                  span,
-                                  "rust-call ABI is subject to change")
-            }
+            FnKind::Method(_, &ast::MethodSig { abi, .. }, _) => match abi {
+                Abi::RustCall => {
+                    self.gate_feature("unboxed_closures", span,
+                        "rust-call ABI is subject to change");
+                },
+                Abi::Vectorcall => {
+                    self.gate_feature("abi_vectorcall", span,
+                        "vectorcall is experimental and subject to change");
+                },
+                _ => {}
+            },
             _ => {}
         }
         visit::walk_fn(self, fn_kind, fn_decl, block, span);
@@ -1058,7 +1108,7 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
     }
 }
 
-fn check_crate_inner<F>(cm: &CodeMap, span_handler: &SpanHandler,
+fn check_crate_inner<F>(cm: &CodeMap, span_handler: &Handler,
                         krate: &ast::Crate,
                         plugin_attributes: &[(String, AttributeType)],
                         check: F)
@@ -1124,7 +1174,6 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &SpanHandler,
     Features {
         unboxed_closures: cx.has_feature("unboxed_closures"),
         rustc_diagnostic_macros: cx.has_feature("rustc_diagnostic_macros"),
-        visible_private_types: cx.has_feature("visible_private_types"),
         allow_quote: cx.has_feature("quote"),
         allow_asm: cx.has_feature("asm"),
         allow_log_syntax: cx.has_feature("log_syntax"),
@@ -1137,7 +1186,6 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &SpanHandler,
         allow_pushpop_unsafe: cx.has_feature("pushpop_unsafe"),
         simd_ffi: cx.has_feature("simd_ffi"),
         unmarked_api: cx.has_feature("unmarked_api"),
-        negate_unsigned: cx.has_feature("negate_unsigned"),
         declared_stable_lang_features: accepted_features,
         declared_lib_features: unknown_features,
         const_fn: cx.has_feature("const_fn"),
@@ -1147,20 +1195,22 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &SpanHandler,
         type_macros: cx.has_feature("type_macros"),
         cfg_target_feature: cx.has_feature("cfg_target_feature"),
         cfg_target_vendor: cx.has_feature("cfg_target_vendor"),
+        cfg_target_thread_local: cx.has_feature("cfg_target_thread_local"),
         augmented_assignments: cx.has_feature("augmented_assignments"),
         braced_empty_structs: cx.has_feature("braced_empty_structs"),
         staged_api: cx.has_feature("staged_api"),
         stmt_expr_attributes: cx.has_feature("stmt_expr_attributes"),
+        deprecated: cx.has_feature("deprecated"),
     }
 }
 
-pub fn check_crate_macros(cm: &CodeMap, span_handler: &SpanHandler, krate: &ast::Crate)
+pub fn check_crate_macros(cm: &CodeMap, span_handler: &Handler, krate: &ast::Crate)
 -> Features {
     check_crate_inner(cm, span_handler, krate, &[] as &'static [_],
                       |ctx, krate| visit::walk_crate(&mut MacroVisitor { context: ctx }, krate))
 }
 
-pub fn check_crate(cm: &CodeMap, span_handler: &SpanHandler, krate: &ast::Crate,
+pub fn check_crate(cm: &CodeMap, span_handler: &Handler, krate: &ast::Crate,
                    plugin_attributes: &[(String, AttributeType)],
                    unstable: UnstableFeatures) -> Features
 {
@@ -1185,7 +1235,7 @@ pub enum UnstableFeatures {
     Cheat
 }
 
-fn maybe_stage_features(span_handler: &SpanHandler, krate: &ast::Crate,
+fn maybe_stage_features(span_handler: &Handler, krate: &ast::Crate,
                         unstable: UnstableFeatures) {
     let allow_features = match unstable {
         UnstableFeatures::Allow => true,

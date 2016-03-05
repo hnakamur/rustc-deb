@@ -14,12 +14,14 @@ use middle::cstore::LinkMeta;
 pub use self::base::trans_crate;
 pub use self::context::CrateContext;
 pub use self::common::gensym_name;
+pub use self::disr::Disr;
 
 #[macro_use]
 mod macros;
 
 mod adt;
 mod asm;
+mod assert_dep_graph;
 mod attributes;
 mod base;
 mod basic_block;
@@ -30,6 +32,7 @@ mod cabi_aarch64;
 mod cabi_arm;
 mod cabi_mips;
 mod cabi_powerpc;
+mod cabi_powerpc64;
 mod cabi_x86;
 mod cabi_x86_64;
 mod cabi_x86_win64;
@@ -43,6 +46,7 @@ mod controlflow;
 mod datum;
 mod debuginfo;
 mod declare;
+mod disr;
 mod expr;
 mod foreign;
 mod glue;

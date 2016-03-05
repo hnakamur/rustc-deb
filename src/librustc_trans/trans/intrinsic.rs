@@ -14,7 +14,7 @@ use arena::TypedArena;
 use intrinsics::{self, Intrinsic};
 use libc;
 use llvm;
-use llvm::{SequentiallyConsistent, Acquire, Release, AtomicXchg, ValueRef, TypeKind};
+use llvm::{ValueRef, TypeKind};
 use middle::infer;
 use middle::subst;
 use middle::subst::FnSpace;
@@ -32,13 +32,13 @@ use trans::debuginfo::DebugLoc;
 use trans::declare;
 use trans::expr;
 use trans::glue;
-use trans::type_of::*;
 use trans::type_of;
 use trans::machine;
-use trans::machine::llsize_of;
 use trans::type_::Type;
-use middle::ty::{self, Ty, HasTypeFlags};
+use middle::ty::{self, Ty, TypeFoldable};
+use trans::Disr;
 use middle::subst::Substs;
+use rustc::dep_graph::DepNode;
 use rustc_front::hir;
 use syntax::abi::{self, RustIntrinsic};
 use syntax::ast;
@@ -103,6 +103,7 @@ pub fn span_transmute_size_error(a: &Session, b: Span, msg: &str) {
 /// Performs late verification that intrinsics are used correctly. At present,
 /// the only intrinsic that needs such verification is `transmute`.
 pub fn check_intrinsics(ccx: &CrateContext) {
+    let _task = ccx.tcx().dep_graph.in_task(DepNode::IntrinsicUseCheck);
     let mut last_failing_id = None;
     for transmute_restriction in ccx.tcx().transmute_restrictions.borrow().iter() {
         // Sometimes, a single call to transmute will push multiple
@@ -848,7 +849,7 @@ pub fn trans_intrinsic_call<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
                         let arg = adt::MaybeSizedValue::sized(llarg);
                         (0..contents.len())
                             .map(|i| {
-                                Load(bcx, adt::trans_field_ptr(bcx, repr_ptr, arg, 0, i))
+                                Load(bcx, adt::trans_field_ptr(bcx, repr_ptr, arg, Disr(0), i))
                             })
                             .collect()
                     }

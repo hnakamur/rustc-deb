@@ -56,11 +56,8 @@
 //! The [`heap`](heap/index.html) module defines the low-level interface to the
 //! default global allocator. It is not compatible with the libc allocator API.
 
-// Do not remove on snapshot creation. Needed for bootstrap. (Issue #22364)
-#![cfg_attr(stage0, feature(custom_attribute))]
 #![crate_name = "alloc"]
 #![crate_type = "rlib"]
-#![cfg_attr(stage0, staged_api)]
 #![allow(unused_attributes)]
 #![unstable(feature = "alloc",
             reason = "this library is unlikely to be stabilized in its current \
@@ -72,11 +69,8 @@
        issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/",
        test(no_crate_inject, attr(allow(unused_variables), deny(warnings))))]
 #![no_std]
-#![cfg_attr(not(stage0), needs_allocator)]
+#![needs_allocator]
 
-#![cfg_attr(stage0, feature(rustc_attrs))]
-#![cfg_attr(stage0, feature(no_std))]
-#![cfg_attr(stage0, allow(unused_attributes))]
 #![feature(allocator)]
 #![feature(box_syntax)]
 #![feature(coerce_unsized)]
@@ -84,8 +78,6 @@
 #![feature(custom_attribute)]
 #![feature(fundamental)]
 #![feature(lang_items)]
-#![feature(nonzero)]
-#![feature(num_bits_bytes)]
 #![feature(optin_builtin_traits)]
 #![feature(placement_in_syntax)]
 #![feature(placement_new_protocol)]
@@ -95,17 +87,17 @@
 #![feature(unboxed_closures)]
 #![feature(unique)]
 #![feature(unsafe_no_drop_flag, filling_drop)]
-// SNAP 1af31d4
-#![allow(unused_features)]
-// SNAP 1af31d4
-#![allow(unused_attributes)]
 #![feature(dropck_parametricity)]
 #![feature(unsize)]
 #![feature(drop_in_place)]
 #![feature(fn_traits)]
+#![feature(const_fn)]
 
+#![feature(needs_allocator)]
+
+// Issue# 30592: Systematically use alloc_system during stage0 since jemalloc
+// might be unavailable or disabled
 #![cfg_attr(stage0, feature(alloc_system))]
-#![cfg_attr(not(stage0), feature(needs_allocator))]
 
 #![cfg_attr(test, feature(test, rustc_private, box_heap))]
 
@@ -142,15 +134,6 @@ mod boxed_test;
 pub mod arc;
 pub mod rc;
 pub mod raw_vec;
+pub mod oom;
 
-/// Common out-of-memory routine
-#[cold]
-#[inline(never)]
-#[unstable(feature = "oom", reason = "not a scrutinized interface",
-           issue = "27700")]
-pub fn oom() -> ! {
-    // FIXME(#14674): This really needs to do something other than just abort
-    //                here, but any printing done must be *guaranteed* to not
-    //                allocate.
-    unsafe { core::intrinsics::abort() }
-}
+pub use oom::oom;

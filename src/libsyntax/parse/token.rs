@@ -377,7 +377,7 @@ pub enum Nonterminal {
     NtPat(P<ast::Pat>),
     NtExpr(P<ast::Expr>),
     NtTy(P<ast::Ty>),
-    NtIdent(Box<ast::Ident>, IdentStyle),
+    NtIdent(Box<ast::SpannedIdent>, IdentStyle),
     /// Stuff inside brackets for attributes
     NtMeta(P<ast::MetaItem>),
     NtPath(Box<ast::Path>),
@@ -495,9 +495,6 @@ macro_rules! declare_special_idents_and_keywords {(
     }
 
     fn mk_fresh_ident_interner() -> IdentInterner {
-        // The indices here must correspond to the numbers in
-        // special_idents, in Keyword to_name(), and in static
-        // constants below.
         let mut init_vec = Vec::new();
         $(init_vec.push($si_str);)*
         $(init_vec.push($sk_str);)*

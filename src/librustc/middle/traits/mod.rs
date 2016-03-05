@@ -15,11 +15,12 @@ pub use self::FulfillmentErrorCode::*;
 pub use self::Vtable::*;
 pub use self::ObligationCauseCode::*;
 
+use dep_graph::DepNode;
 use middle::def_id::DefId;
 use middle::free_region::FreeRegionMap;
 use middle::subst;
-use middle::ty::{self, HasTypeFlags, Ty};
-use middle::ty::fold::TypeFoldable;
+use middle::ty::{self, Ty, TypeFoldable};
+use middle::ty::fast_reject;
 use middle::infer::{self, fixup_err_to_string, InferCtxt};
 
 use std::rc::Rc;
@@ -105,9 +106,6 @@ pub struct ObligationCause<'tcx> {
 pub enum ObligationCauseCode<'tcx> {
     /// Not well classified or should be obvious from span.
     MiscObligation,
-
-    /// Obligation that triggers warning until RFC 1214 is fully in place.
-    RFC1214(Rc<ObligationCauseCode<'tcx>>),
 
     /// This is the trait reference from the given projection
     SliceOrArrayElem,
@@ -471,7 +469,7 @@ pub fn fully_normalize<'a,'tcx,T>(infcx: &InferCtxt<'a,'tcx>,
                                   cause: ObligationCause<'tcx>,
                                   value: &T)
                                   -> Result<T, Vec<FulfillmentError<'tcx>>>
-    where T : TypeFoldable<'tcx> + HasTypeFlags
+    where T : TypeFoldable<'tcx>
 {
     debug!("normalize_param_env(value={:?})", value);
 
@@ -554,24 +552,6 @@ impl<'tcx> ObligationCause<'tcx> {
     }
 }
 
-/// This marker is used in some caches to record whether the
-/// predicate, if it is found to be false, will yield a warning (due
-/// to RFC1214) or an error. We separate these two cases in the cache
-/// so that if we see the same predicate twice, first resulting in a
-/// warning, and next resulting in an error, we still report the
-/// error, rather than considering it a duplicate.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct RFC1214Warning(bool);
-
-impl<'tcx> ObligationCauseCode<'tcx> {
-    pub fn is_rfc1214(&self) -> bool {
-        match *self {
-            ObligationCauseCode::RFC1214(..) => true,
-            _ => false,
-        }
-    }
-}
-
 impl<'tcx, N> Vtable<'tcx, N> {
     pub fn nested_obligations(self) -> Vec<N> {
         match self {
@@ -620,6 +600,18 @@ impl<'tcx> FulfillmentError<'tcx> {
 }
 
 impl<'tcx> TraitObligation<'tcx> {
+    /// Creates the dep-node for selecting/evaluating this trait reference.
+    fn dep_node(&self, tcx: &ty::ctxt<'tcx>) -> DepNode {
+        let simplified_ty =
+            fast_reject::simplify_type(tcx,
+                                       self.predicate.skip_binder().self_ty(), // (*)
+                                       true);
+
+        // (*) skip_binder is ok because `simplify_type` doesn't care about regions
+
+        DepNode::TraitSelect(self.predicate.def_id(), simplified_ty)
+    }
+
     fn self_ty(&self) -> ty::Binder<Ty<'tcx>> {
         ty::Binder(self.predicate.skip_binder().self_ty())
     }

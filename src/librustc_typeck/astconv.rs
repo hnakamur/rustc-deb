@@ -57,7 +57,7 @@ use middle::resolve_lifetime as rl;
 use middle::privacy::{AllPublic, LastMod};
 use middle::subst::{FnSpace, TypeSpace, SelfSpace, Subst, Substs, ParamSpace};
 use middle::traits;
-use middle::ty::{self, RegionEscape, Ty, ToPredicate, HasTypeFlags};
+use middle::ty::{self, Ty, ToPredicate, TypeFoldable};
 use middle::ty::wf::object_region_bounds;
 use require_c_abi_if_variadic;
 use rscope::{self, UnelidableRscope, RegionScope, ElidableRscope,
@@ -68,6 +68,7 @@ use util::nodemap::FnvHashSet;
 
 use syntax::{abi, ast};
 use syntax::codemap::{Span, Pos};
+use syntax::errors::DiagnosticBuilder;
 use syntax::feature_gate::{GateIssue, emit_feature_err};
 use syntax::parse::token;
 
@@ -169,10 +170,8 @@ pub fn ast_region_to_region(tcx: &ty::ctxt, lifetime: &hir::Lifetime)
             ty::ReLateBound(debruijn, ty::BrNamed(tcx.map.local_def_id(id), lifetime.name))
         }
 
-        Some(&rl::DefEarlyBoundRegion(space, index, id)) => {
-            let def_id = tcx.map.local_def_id(id);
+        Some(&rl::DefEarlyBoundRegion(space, index, _)) => {
             ty::ReEarlyBound(ty::EarlyBoundRegion {
-                def_id: def_id,
                 space: space,
                 index: index,
                 name: lifetime.name
@@ -181,7 +180,7 @@ pub fn ast_region_to_region(tcx: &ty::ctxt, lifetime: &hir::Lifetime)
 
         Some(&rl::DefFreeRegion(scope, id)) => {
             ty::ReFree(ty::FreeRegion {
-                    scope: tcx.region_maps.item_extent(scope.node_id),
+                    scope: scope.to_code_extent(&tcx.region_maps),
                     bound_region: ty::BrNamed(tcx.map.local_def_id(id),
                                               lifetime.name)
                 })
@@ -197,7 +196,7 @@ pub fn ast_region_to_region(tcx: &ty::ctxt, lifetime: &hir::Lifetime)
 }
 
 fn report_elision_failure(
-    tcx: &ty::ctxt,
+    db: &mut DiagnosticBuilder,
     default_span: Span,
     params: Vec<ElisionFailureInfo>)
 {
@@ -235,26 +234,26 @@ fn report_elision_failure(
     }
 
     if len == 0 {
-        fileline_help!(tcx.sess, default_span,
+        fileline_help!(db, default_span,
                        "this function's return type contains a borrowed value, but \
                         there is no value for it to be borrowed from");
-        fileline_help!(tcx.sess, default_span,
+        fileline_help!(db, default_span,
                        "consider giving it a 'static lifetime");
     } else if !any_lifetimes {
-        fileline_help!(tcx.sess, default_span,
+        fileline_help!(db, default_span,
                        "this function's return type contains a borrowed value with \
                         an elided lifetime, but the lifetime cannot be derived from \
                         the arguments");
-        fileline_help!(tcx.sess, default_span,
+        fileline_help!(db, default_span,
                        "consider giving it an explicit bounded or 'static \
                         lifetime");
     } else if len == 1 {
-        fileline_help!(tcx.sess, default_span,
+        fileline_help!(db, default_span,
                        "this function's return type contains a borrowed value, but \
                         the signature does not say which {} it is borrowed from",
                        m);
     } else {
-        fileline_help!(tcx.sess, default_span,
+        fileline_help!(db, default_span,
                        "this function's return type contains a borrowed value, but \
                         the signature does not say whether it is borrowed from {}",
                        m);
@@ -275,11 +274,12 @@ pub fn opt_ast_region_to_region<'tcx>(
         None => match rscope.anon_regions(default_span, 1) {
             Ok(rs) => rs[0],
             Err(params) => {
-                span_err!(this.tcx().sess, default_span, E0106,
-                          "missing lifetime specifier");
+                let mut err = struct_span_err!(this.tcx().sess, default_span, E0106,
+                                               "missing lifetime specifier");
                 if let Some(params) = params {
-                    report_elision_failure(this.tcx(), default_span, params);
+                    report_elision_failure(&mut err, default_span, params);
                 }
+                err.emit();
                 ty::ReStatic
             }
         }
@@ -719,6 +719,9 @@ fn trait_def_id<'tcx>(this: &AstConv<'tcx>, trait_ref: &hir::TraitRef) -> DefId 
     let path = &trait_ref.path;
     match ::lookup_full_def(this.tcx(), path.span, trait_ref.ref_id) {
         def::DefTrait(trait_def_id) => trait_def_id,
+        def::DefErr => {
+            this.tcx().sess.fatal("cannot continue compilation due to previous error");
+        }
         _ => {
             span_fatal!(this.tcx().sess, path.span, E0245, "`{}` is not a trait",
                         path);
@@ -1043,9 +1046,9 @@ fn ast_ty_to_trait_ref<'tcx>(this: &AstConv<'tcx>,
             }
         }
         _ => {
-            span_err!(this.tcx().sess, ty.span, E0178,
-                      "expected a path on the left-hand side of `+`, not `{}`",
-                      pprust::ty_to_string(ty));
+            let mut err = struct_span_err!(this.tcx().sess, ty.span, E0178,
+                                           "expected a path on the left-hand side of `+`, not `{}`",
+                                           pprust::ty_to_string(ty));
             let hi = bounds.iter().map(|x| match *x {
                 hir::TraitTyParamBound(ref tr, _) => tr.span.hi,
                 hir::RegionTyParamBound(ref r) => r.span.hi,
@@ -1058,29 +1061,28 @@ fn ast_ty_to_trait_ref<'tcx>(this: &AstConv<'tcx>,
             match (&ty.node, full_span) {
                 (&hir::TyRptr(None, ref mut_ty), Some(full_span)) => {
                     let mutbl_str = if mut_ty.mutbl == hir::MutMutable { "mut " } else { "" };
-                    this.tcx().sess
-                        .span_suggestion(full_span, "try adding parentheses (per RFC 438):",
-                                         format!("&{}({} +{})",
-                                                 mutbl_str,
-                                                 pprust::ty_to_string(&*mut_ty.ty),
-                                                 pprust::bounds_to_string(bounds)));
+                    err.span_suggestion(full_span, "try adding parentheses (per RFC 438):",
+                                        format!("&{}({} +{})",
+                                                mutbl_str,
+                                                pprust::ty_to_string(&*mut_ty.ty),
+                                                pprust::bounds_to_string(bounds)));
                 }
                 (&hir::TyRptr(Some(ref lt), ref mut_ty), Some(full_span)) => {
                     let mutbl_str = if mut_ty.mutbl == hir::MutMutable { "mut " } else { "" };
-                    this.tcx().sess
-                        .span_suggestion(full_span, "try adding parentheses (per RFC 438):",
-                                         format!("&{} {}({} +{})",
-                                                 pprust::lifetime_to_string(lt),
-                                                 mutbl_str,
-                                                 pprust::ty_to_string(&*mut_ty.ty),
-                                                 pprust::bounds_to_string(bounds)));
+                    err.span_suggestion(full_span, "try adding parentheses (per RFC 438):",
+                                        format!("&{} {}({} +{})",
+                                                pprust::lifetime_to_string(lt),
+                                                mutbl_str,
+                                                pprust::ty_to_string(&*mut_ty.ty),
+                                                pprust::bounds_to_string(bounds)));
                 }
 
                 _ => {
-                    fileline_help!(this.tcx().sess, ty.span,
+                    fileline_help!(&mut err, ty.span,
                                "perhaps you forgot parentheses? (per RFC 438)");
                 }
             }
+            err.emit();
             Err(ErrorReported)
         }
     }
@@ -1133,7 +1135,8 @@ fn make_object_type<'tcx>(this: &AstConv<'tcx>,
         traits::astconv_object_safety_violations(tcx, principal.def_id());
     if !object_safety_violations.is_empty() {
         traits::report_object_safety_error(
-            tcx, span, principal.def_id(), object_safety_violations, false);
+            tcx, span, principal.def_id(), object_safety_violations)
+            .emit();
         return tcx.types.err;
     }
 
@@ -1234,17 +1237,18 @@ fn one_bound_for_assoc_type<'tcx>(tcx: &ty::ctxt<'tcx>,
     }
 
     if bounds.len() > 1 {
-        span_err!(tcx.sess, span, E0221,
-                  "ambiguous associated type `{}` in bounds of `{}`",
-                  assoc_name,
-                  ty_param_name);
+        let mut err = struct_span_err!(tcx.sess, span, E0221,
+                                       "ambiguous associated type `{}` in bounds of `{}`",
+                                       assoc_name,
+                                       ty_param_name);
 
         for bound in &bounds {
-            span_note!(tcx.sess, span,
+            span_note!(&mut err, span,
                        "associated type `{}` could derive from `{}`",
                        ty_param_name,
                        bound);
         }
+        err.emit();
     }
 
     Ok(bounds[0].clone())
@@ -1533,6 +1537,9 @@ fn base_def_to_ty<'tcx>(this: &AstConv<'tcx>,
         def::DefPrimTy(prim_ty) => {
             prim_ty_to_ty(tcx, base_segments, prim_ty)
         }
+        def::DefErr => {
+            return this.tcx().types.err;
+        }
         _ => {
             let id_node = tcx.map.as_local_node_id(def.def_id()).unwrap();
             span_err!(tcx.sess, span, E0248,
@@ -1703,12 +1710,13 @@ pub fn ast_ty_to_ty<'tcx>(this: &AstConv<'tcx>,
                     }
                 }
                 Err(ref r) => {
-                    span_err!(tcx.sess, r.span, E0250,
-                              "array length constant evaluation error: {}",
-                              r.description());
+                    let mut err = struct_span_err!(tcx.sess, r.span, E0250,
+                                                   "array length constant evaluation error: {}",
+                                                   r.description());
                     if !ast_ty.span.contains(r.span) {
-                        span_note!(tcx.sess, ast_ty.span, "for array length here")
+                        span_note!(&mut err, ast_ty.span, "for array length here")
                     }
+                    err.emit();
                     this.tcx().types.err
                 }
             }
@@ -1791,75 +1799,31 @@ fn ty_of_method_or_bare_fn<'a, 'tcx>(this: &AstConv<'tcx>,
     // lifetime elision, we can determine it in two ways. First (determined
     // here), if self is by-reference, then the implied output region is the
     // region of the self parameter.
-    let mut explicit_self_category_result = None;
-    let (self_ty, implied_output_region) = match opt_self_info {
+    let (self_ty, explicit_self_category) = match opt_self_info {
         None => (None, None),
-        Some(self_info) => {
-            // This type comes from an impl or trait; no late-bound
-            // regions should be present.
-            assert!(!self_info.untransformed_self_ty.has_escaping_regions());
-
-            // Figure out and record the explicit self category.
-            let explicit_self_category =
-                determine_explicit_self_category(this, &rb, &self_info);
-            explicit_self_category_result = Some(explicit_self_category);
-            match explicit_self_category {
-                ty::StaticExplicitSelfCategory => {
-                    (None, None)
-                }
-                ty::ByValueExplicitSelfCategory => {
-                    (Some(self_info.untransformed_self_ty), None)
-                }
-                ty::ByReferenceExplicitSelfCategory(region, mutability) => {
-                    (Some(this.tcx().mk_ref(
-                                      this.tcx().mk_region(region),
-                                      ty::TypeAndMut {
-                                        ty: self_info.untransformed_self_ty,
-                                        mutbl: mutability
-                                      })),
-                     Some(region))
-                }
-                ty::ByBoxExplicitSelfCategory => {
-                    (Some(this.tcx().mk_box(self_info.untransformed_self_ty)), None)
-                }
-            }
-        }
+        Some(self_info) => determine_self_type(this, &rb, self_info)
     };
 
     // HACK(eddyb) replace the fake self type in the AST with the actual type.
-    let input_params = if self_ty.is_some() {
+    let arg_params = if self_ty.is_some() {
         &decl.inputs[1..]
     } else {
         &decl.inputs[..]
     };
-    let input_tys = input_params.iter().map(|a| ty_of_arg(this, &rb, a, None));
-    let input_pats: Vec<String> = input_params.iter()
-                                              .map(|a| pprust::pat_to_string(&*a.pat))
-                                              .collect();
-    let self_and_input_tys: Vec<Ty> =
-        self_ty.into_iter().chain(input_tys).collect();
-
+    let arg_tys: Vec<Ty> =
+        arg_params.iter().map(|a| ty_of_arg(this, &rb, a, None)).collect();
+    let arg_pats: Vec<String> =
+        arg_params.iter().map(|a| pprust::pat_to_string(&*a.pat)).collect();
 
     // Second, if there was exactly one lifetime (either a substitution or a
     // reference) in the arguments, then any anonymous regions in the output
     // have that lifetime.
-    let implied_output_region = match implied_output_region {
-        Some(r) => Ok(r),
-        None => {
-            let input_tys = if self_ty.is_some() {
-                // Skip the first argument if `self` is present.
-                &self_and_input_tys[1..]
-            } else {
-                &self_and_input_tys[..]
-            };
-
-            find_implied_output_region(this.tcx(), input_tys, input_pats)
-        }
+    let implied_output_region = match explicit_self_category {
+        Some(ty::ExplicitSelfCategory::ByReference(region, _)) => Ok(region),
+        _ => find_implied_output_region(this.tcx(), &arg_tys, arg_pats)
     };
 
     let output_ty = match decl.output {
-        hir::Return(ref output) if output.node == hir::TyInfer =>
-            ty::FnConverging(this.ty_infer(None, None, None, output.span)),
         hir::Return(ref output) =>
             ty::FnConverging(convert_ty_with_lifetime_elision(this,
                                                               implied_output_region,
@@ -1872,28 +1836,37 @@ fn ty_of_method_or_bare_fn<'a, 'tcx>(this: &AstConv<'tcx>,
         unsafety: unsafety,
         abi: abi,
         sig: ty::Binder(ty::FnSig {
-            inputs: self_and_input_tys,
+            inputs: self_ty.into_iter().chain(arg_tys).collect(),
             output: output_ty,
             variadic: decl.variadic
         }),
-    }, explicit_self_category_result)
+    }, explicit_self_category)
 }
 
-fn determine_explicit_self_category<'a, 'tcx>(this: &AstConv<'tcx>,
-                                              rscope: &RegionScope,
-                                              self_info: &SelfInfo<'a, 'tcx>)
-                                              -> ty::ExplicitSelfCategory
+fn determine_self_type<'a, 'tcx>(this: &AstConv<'tcx>,
+                                 rscope: &RegionScope,
+                                 self_info: SelfInfo<'a, 'tcx>)
+                                 -> (Option<Ty<'tcx>>, Option<ty::ExplicitSelfCategory>)
 {
+    let self_ty = self_info.untransformed_self_ty;
     return match self_info.explicit_self.node {
-        hir::SelfStatic => ty::StaticExplicitSelfCategory,
-        hir::SelfValue(_) => ty::ByValueExplicitSelfCategory,
+        hir::SelfStatic => (None, Some(ty::ExplicitSelfCategory::Static)),
+        hir::SelfValue(_) => {
+            (Some(self_ty), Some(ty::ExplicitSelfCategory::ByValue))
+        }
         hir::SelfRegion(ref lifetime, mutability, _) => {
             let region =
                 opt_ast_region_to_region(this,
                                          rscope,
                                          self_info.explicit_self.span,
                                          lifetime);
-            ty::ByReferenceExplicitSelfCategory(region, mutability)
+            (Some(this.tcx().mk_ref(
+                this.tcx().mk_region(region),
+                ty::TypeAndMut {
+                    ty: self_ty,
+                    mutbl: mutability
+                })),
+             Some(ty::ExplicitSelfCategory::ByReference(region, mutability)))
         }
         hir::SelfExplicit(ref ast_type, _) => {
             let explicit_type = ast_ty_to_ty(this, rscope, &**ast_type);
@@ -1909,12 +1882,12 @@ fn determine_explicit_self_category<'a, 'tcx>(this: &AstConv<'tcx>,
             // ```
             // impl Foo for &T {
             //     // Legal declarations:
-            //     fn method1(self: &&T); // ByReferenceExplicitSelfCategory
-            //     fn method2(self: &T); // ByValueExplicitSelfCategory
-            //     fn method3(self: Box<&T>); // ByBoxExplicitSelfCategory
+            //     fn method1(self: &&T); // ExplicitSelfCategory::ByReference
+            //     fn method2(self: &T); // ExplicitSelfCategory::ByValue
+            //     fn method3(self: Box<&T>); // ExplicitSelfCategory::ByBox
             //
             //     // Invalid cases will be caught later by `check_method_self_type`:
-            //     fn method_err1(self: &mut T); // ByReferenceExplicitSelfCategory
+            //     fn method_err1(self: &mut T); // ExplicitSelfCategory::ByReference
             // }
             // ```
             //
@@ -1925,7 +1898,7 @@ fn determine_explicit_self_category<'a, 'tcx>(this: &AstConv<'tcx>,
             // call it by-ref, by-box as appropriate. For method1, for
             // example, the impl type has one modifier, but the method
             // type has two, so we end up with
-            // ByReferenceExplicitSelfCategory.
+            // ExplicitSelfCategory::ByReference.
 
             let impl_modifiers = count_modifiers(self_info.untransformed_self_ty);
             let method_modifiers = count_modifiers(explicit_type);
@@ -1938,15 +1911,17 @@ fn determine_explicit_self_category<'a, 'tcx>(this: &AstConv<'tcx>,
                    impl_modifiers,
                    method_modifiers);
 
-            if impl_modifiers >= method_modifiers {
-                ty::ByValueExplicitSelfCategory
+            let category = if impl_modifiers >= method_modifiers {
+                ty::ExplicitSelfCategory::ByValue
             } else {
                 match explicit_type.sty {
-                    ty::TyRef(r, mt) => ty::ByReferenceExplicitSelfCategory(*r, mt.mutbl),
-                    ty::TyBox(_) => ty::ByBoxExplicitSelfCategory,
-                    _ => ty::ByValueExplicitSelfCategory,
+                    ty::TyRef(r, mt) => ty::ExplicitSelfCategory::ByReference(*r, mt.mutbl),
+                    ty::TyBox(_) => ty::ExplicitSelfCategory::ByBox,
+                    _ => ty::ExplicitSelfCategory::ByValue,
                 }
-            }
+            };
+
+            (Some(explicit_type), Some(category))
         }
     };
 

@@ -575,74 +575,71 @@ impl LateLintPass for MissingDebugImplementations {
 declare_lint! {
     DEPRECATED,
     Warn,
-    "detects use of #[rustc_deprecated] items"
+    "detects use of deprecated items"
 }
 
-/// Checks for use of items with `#[rustc_deprecated]` attributes
+/// Checks for use of items with `#[deprecated]` or `#[rustc_deprecated]` attributes
 #[derive(Copy, Clone)]
-pub struct Stability;
+pub struct Deprecated;
 
-impl Stability {
-    fn lint(&self, cx: &LateContext, _id: DefId,
-            span: Span, stability: &Option<&attr::Stability>) {
+impl Deprecated {
+    fn lint(&self, cx: &LateContext, _id: DefId, span: Span,
+            stability: &Option<&attr::Stability>, deprecation: &Option<attr::Deprecation>) {
         // Deprecated attributes apply in-crate and cross-crate.
-        let (lint, label) = match *stability {
-            Some(&attr::Stability { depr: Some(_), .. }) =>
-                (DEPRECATED, "deprecated"),
-            _ => return
-        };
+        if let Some(&attr::Stability{rustc_depr: Some(attr::RustcDeprecation{ref reason, ..}), ..})
+                = *stability {
+            output(cx, DEPRECATED, span, Some(&reason))
+        } else if let Some(attr::Deprecation{ref note, ..}) = *deprecation {
+            output(cx, DEPRECATED, span, note.as_ref().map(|x| &**x))
+        }
 
-        output(cx, span, stability, lint, label);
-
-        fn output(cx: &LateContext, span: Span, stability: &Option<&attr::Stability>,
-                  lint: &'static Lint, label: &'static str) {
-            let msg = match *stability {
-                Some(&attr::Stability {depr: Some(attr::Deprecation {ref reason, ..}), ..}) => {
-                    format!("use of {} item: {}", label, reason)
-                }
-                _ => format!("use of {} item", label)
+        fn output(cx: &LateContext, lint: &'static Lint, span: Span, note: Option<&str>) {
+            let msg = if let Some(note) = note {
+                format!("use of deprecated item: {}", note)
+            } else {
+                format!("use of deprecated item")
             };
 
-            cx.span_lint(lint, span, &msg[..]);
+            cx.span_lint(lint, span, &msg);
         }
     }
 }
 
-impl LintPass for Stability {
+impl LintPass for Deprecated {
     fn get_lints(&self) -> LintArray {
         lint_array!(DEPRECATED)
     }
 }
 
-impl LateLintPass for Stability {
+impl LateLintPass for Deprecated {
     fn check_item(&mut self, cx: &LateContext, item: &hir::Item) {
         stability::check_item(cx.tcx, item, false,
-                              &mut |id, sp, stab|
-                                self.lint(cx, id, sp, &stab));
+                              &mut |id, sp, stab, depr|
+                                self.lint(cx, id, sp, &stab, &depr));
     }
 
     fn check_expr(&mut self, cx: &LateContext, e: &hir::Expr) {
         stability::check_expr(cx.tcx, e,
-                              &mut |id, sp, stab|
-                                self.lint(cx, id, sp, &stab));
+                              &mut |id, sp, stab, depr|
+                                self.lint(cx, id, sp, &stab, &depr));
     }
 
     fn check_path(&mut self, cx: &LateContext, path: &hir::Path, id: ast::NodeId) {
         stability::check_path(cx.tcx, path, id,
-                              &mut |id, sp, stab|
-                                self.lint(cx, id, sp, &stab));
+                              &mut |id, sp, stab, depr|
+                                self.lint(cx, id, sp, &stab, &depr));
     }
 
     fn check_path_list_item(&mut self, cx: &LateContext, item: &hir::PathListItem) {
         stability::check_path_list_item(cx.tcx, item,
-                                         &mut |id, sp, stab|
-                                           self.lint(cx, id, sp, &stab));
+                                         &mut |id, sp, stab, depr|
+                                           self.lint(cx, id, sp, &stab, &depr));
     }
 
     fn check_pat(&mut self, cx: &LateContext, pat: &hir::Pat) {
         stability::check_pat(cx.tcx, pat,
-                             &mut |id, sp, stab|
-                                self.lint(cx, id, sp, &stab));
+                             &mut |id, sp, stab, depr|
+                                self.lint(cx, id, sp, &stab, &depr));
     }
 }
 
@@ -755,19 +752,19 @@ impl LateLintPass for UnconditionalRecursion {
         // no break */ }`) shouldn't be linted unless it actually
         // recurs.
         if !reached_exit_without_self_call && !self_call_spans.is_empty() {
-            cx.span_lint(UNCONDITIONAL_RECURSION, sp,
-                         "function cannot return without recurring");
+            let mut db = cx.struct_span_lint(UNCONDITIONAL_RECURSION, sp,
+                                             "function cannot return without recurring");
 
             // FIXME #19668: these could be span_lint_note's instead of this manual guard.
             if cx.current_level(UNCONDITIONAL_RECURSION) != Level::Allow {
-                let sess = cx.sess();
                 // offer some help to the programmer.
                 for call in &self_call_spans {
-                    sess.span_note(*call, "recursive call site")
+                    db.span_note(*call, "recursive call site");
                 }
-                sess.fileline_help(sp, "a `loop` may express intention \
-                                        better if this is on purpose")
+                db.fileline_help(sp, "a `loop` may express intention \
+                                      better if this is on purpose");
             }
+            db.emit();
         }
 
         // all done
@@ -969,6 +966,12 @@ declare_lint! {
     "const items will not have their symbols exported"
 }
 
+declare_lint! {
+    NO_MANGLE_GENERIC_ITEMS,
+    Warn,
+    "generic items must be mangled"
+}
+
 #[derive(Copy, Clone)]
 pub struct InvalidNoMangleItems;
 
@@ -976,19 +979,26 @@ impl LintPass for InvalidNoMangleItems {
     fn get_lints(&self) -> LintArray {
         lint_array!(PRIVATE_NO_MANGLE_FNS,
                     PRIVATE_NO_MANGLE_STATICS,
-                    NO_MANGLE_CONST_ITEMS)
+                    NO_MANGLE_CONST_ITEMS,
+                    NO_MANGLE_GENERIC_ITEMS)
     }
 }
 
 impl LateLintPass for InvalidNoMangleItems {
     fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
         match it.node {
-            hir::ItemFn(..) => {
-                if attr::contains_name(&it.attrs, "no_mangle") &&
-                       !cx.access_levels.is_reachable(it.id) {
-                    let msg = format!("function {} is marked #[no_mangle], but not exported",
-                                      it.name);
-                    cx.span_lint(PRIVATE_NO_MANGLE_FNS, it.span, &msg);
+            hir::ItemFn(_, _, _, _, ref generics, _) => {
+                if attr::contains_name(&it.attrs, "no_mangle") {
+                    if !cx.access_levels.is_reachable(it.id) {
+                        let msg = format!("function {} is marked #[no_mangle], but not exported",
+                                          it.name);
+                        cx.span_lint(PRIVATE_NO_MANGLE_FNS, it.span, &msg);
+                    }
+                    if generics.is_parameterized() {
+                        cx.span_lint(NO_MANGLE_GENERIC_ITEMS,
+                                     it.span,
+                                     "generic functions must be mangled");
+                    }
                 }
             },
             hir::ItemStatic(..) => {

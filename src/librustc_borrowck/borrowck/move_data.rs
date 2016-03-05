@@ -20,6 +20,7 @@ use rustc::middle::dataflow::BitwiseOperator;
 use rustc::middle::dataflow::DataFlowOperator;
 use rustc::middle::dataflow::KillFrom;
 use rustc::middle::expr_use_visitor as euv;
+use rustc::middle::expr_use_visitor::MutateMode;
 use rustc::middle::ty;
 use rustc::util::nodemap::{FnvHashMap, NodeSet};
 
@@ -195,7 +196,7 @@ fn loan_path_is_precise(loan_path: &LoanPath) -> bool {
         LpVar(_) | LpUpvar(_) => {
             true
         }
-        LpExtend(_, _, LpInterior(InteriorKind::InteriorElement(..))) => {
+        LpExtend(_, _, LpInterior(_, InteriorKind::InteriorElement(..))) => {
             // Paths involving element accesses a[i] do not refer to a unique
             // location, as there is no accurate tracking of the indices.
             //
@@ -406,10 +407,10 @@ impl<'tcx> MoveData<'tcx> {
         self.fragments.borrow_mut().add_assignment(path_index);
 
         match mode {
-            euv::Init | euv::JustWrite => {
+            MutateMode::Init | MutateMode::JustWrite => {
                 self.assignee_ids.borrow_mut().insert(assignee_id);
             }
-            euv::WriteAndRead => { }
+            MutateMode::WriteAndRead => { }
         }
 
         let assignment = Assignment {

@@ -24,7 +24,7 @@ use rustc_front::hir;
 
 pub struct Module {
     pub name: Option<Name>,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub where_outer: Span,
     pub where_inner: Span,
     pub extern_crates: Vec<ExternCrate>,
@@ -40,6 +40,7 @@ pub struct Module {
     pub traits: Vec<Trait>,
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
     pub impls: Vec<Impl>,
     pub def_traits: Vec<DefaultImpl>,
     pub foreigns: Vec<hir::ForeignMod>,
@@ -54,9 +55,10 @@ impl Module {
             id: 0,
             vis: hir::Inherited,
             stab: None,
+            depr: None,
             where_outer: syntax::codemap::DUMMY_SP,
             where_inner: syntax::codemap::DUMMY_SP,
-            attrs      : Vec::new(),
+            attrs      : hir::HirVec::new(),
             extern_crates: Vec::new(),
             imports    : Vec::new(),
             structs    : Vec::new(),
@@ -96,21 +98,23 @@ pub enum TypeBound {
 pub struct Struct {
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
     pub id: NodeId,
     pub struct_type: StructType,
     pub name: Name,
     pub generics: hir::Generics,
-    pub attrs: Vec<ast::Attribute>,
-    pub fields: Vec<hir::StructField>,
+    pub attrs: hir::HirVec<ast::Attribute>,
+    pub fields: hir::HirVec<hir::StructField>,
     pub whence: Span,
 }
 
 pub struct Enum {
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
-    pub variants: Vec<Variant>,
+    pub depr: Option<attr::Deprecation>,
+    pub variants: hir::HirVec<Variant>,
     pub generics: hir::Generics,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub id: NodeId,
     pub whence: Span,
     pub name: Name,
@@ -118,19 +122,21 @@ pub struct Enum {
 
 pub struct Variant {
     pub name: Name,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub def: hir::VariantData,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
     pub whence: Span,
 }
 
 pub struct Function {
     pub decl: hir::FnDecl,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub id: NodeId,
     pub name: Name,
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
     pub unsafety: hir::Unsafety,
     pub constness: hir::Constness,
     pub whence: Span,
@@ -143,10 +149,11 @@ pub struct Typedef {
     pub gen: hir::Generics,
     pub name: Name,
     pub id: ast::NodeId,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub whence: Span,
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
 }
 
 #[derive(Debug)]
@@ -155,9 +162,10 @@ pub struct Static {
     pub mutability: hir::Mutability,
     pub expr: P<hir::Expr>,
     pub name: Name,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
     pub id: ast::NodeId,
     pub whence: Span,
 }
@@ -166,9 +174,10 @@ pub struct Constant {
     pub type_: P<hir::Ty>,
     pub expr: P<hir::Expr>,
     pub name: Name,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
     pub id: ast::NodeId,
     pub whence: Span,
 }
@@ -176,14 +185,15 @@ pub struct Constant {
 pub struct Trait {
     pub unsafety: hir::Unsafety,
     pub name: Name,
-    pub items: Vec<hir::TraitItem>,
+    pub items: hir::HirVec<hir::TraitItem>,
     pub generics: hir::Generics,
-    pub bounds: Vec<hir::TyParamBound>,
-    pub attrs: Vec<ast::Attribute>,
+    pub bounds: hir::HirVec<hir::TyParamBound>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub id: ast::NodeId,
     pub whence: Span,
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
 }
 
 pub struct Impl {
@@ -192,11 +202,12 @@ pub struct Impl {
     pub generics: hir::Generics,
     pub trait_: Option<hir::TraitRef>,
     pub for_: P<hir::Ty>,
-    pub items: Vec<hir::ImplItem>,
-    pub attrs: Vec<ast::Attribute>,
+    pub items: hir::HirVec<hir::ImplItem>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub whence: Span,
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
     pub id: ast::NodeId,
 }
 
@@ -204,17 +215,18 @@ pub struct DefaultImpl {
     pub unsafety: hir::Unsafety,
     pub trait_: hir::TraitRef,
     pub id: ast::NodeId,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub whence: Span,
 }
 
 pub struct Macro {
     pub name: Name,
     pub id: ast::NodeId,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub whence: Span,
-    pub matchers: Vec<Span>,
+    pub matchers: hir::HirVec<Span>,
     pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
     pub imported_from: Option<Name>,
 }
 
@@ -222,14 +234,14 @@ pub struct ExternCrate {
     pub name: Name,
     pub path: Option<String>,
     pub vis: hir::Visibility,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub whence: Span,
 }
 
 pub struct Import {
     pub id: NodeId,
     pub vis: hir::Visibility,
-    pub attrs: Vec<ast::Attribute>,
+    pub attrs: hir::HirVec<ast::Attribute>,
     pub node: hir::ViewPath_,
     pub whence: Span,
 }

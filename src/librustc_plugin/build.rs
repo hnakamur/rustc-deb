@@ -13,7 +13,7 @@
 use syntax::ast;
 use syntax::attr;
 use syntax::codemap::Span;
-use syntax::diagnostic;
+use syntax::errors;
 use rustc_front::intravisit::Visitor;
 use rustc_front::hir;
 
@@ -33,7 +33,7 @@ impl<'v> Visitor<'v> for RegistrarFinder {
 }
 
 /// Find the function marked with `#[plugin_registrar]`, if any.
-pub fn find_plugin_registrar(diagnostic: &diagnostic::SpanHandler,
+pub fn find_plugin_registrar(diagnostic: &errors::Handler,
                              krate: &hir::Crate)
                              -> Option<ast::NodeId> {
     let mut finder = RegistrarFinder { registrars: Vec::new() };
@@ -46,11 +46,12 @@ pub fn find_plugin_registrar(diagnostic: &diagnostic::SpanHandler,
             Some(node_id)
         },
         _ => {
-            diagnostic.handler().err("multiple plugin registration functions found");
+            let mut e = diagnostic.struct_err("multiple plugin registration functions found");
             for &(_, span) in &finder.registrars {
-                diagnostic.span_note(span, "one is here");
+                e.span_note(span, "one is here");
             }
-            diagnostic.handler().abort_if_errors();
+            e.emit();
+            diagnostic.abort_if_errors();
             unreachable!();
         }
     }
