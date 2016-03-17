@@ -4,6 +4,7 @@ opts="\
 pgpsigurlmangle=s/$/.asc/,\
 uversionmangle=s/(\d)[_.+-]?((beta|alpha)\.?\d*)$/$1~$2/,\
 dversionmangle=s/\+dfsg\d*$//,\
+repack,\
 repacksuffix=+dfsg1,\
 compression=xz,\
 " \
