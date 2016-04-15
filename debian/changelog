@@ -1,9 +1,12 @@
-rustc (1.7.0+dfsg1-2) UNRELEASED; urgency=medium
+rustc (1.8.0+dfsg1-1) unstable; urgency=medium
 
+  * New upstream release
+
+  [ Ximin Luo ]
   * Fix using XZ for the orig tarball: needs explicit --repack in debian/watch
   * Drop wno-error patch; applied upstream.
 
- -- Ximin Luo <infinity0@debian.org>  Thu, 17 Mar 2016 21:59:53 +0100
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 15 Apr 2016 12:01:45 +0200
 
 rustc (1.7.0+dfsg1-1) unstable; urgency=medium
 
