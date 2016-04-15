@@ -11,7 +11,6 @@
 use self::thread::{DepGraphThreadData, DepMessage};
 use middle::def_id::DefId;
 use middle::ty;
-use middle::ty::fast_reject::SimplifiedType;
 use rustc_front::hir;
 use rustc_front::intravisit::Visitor;
 use std::rc::Rc;
@@ -41,8 +40,21 @@ pub enum DepNode {
     Hir(DefId),
 
     // Represents different phases in the compiler.
+    CrateReader,
+    CollectLanguageItems,
+    CheckStaticRecursion,
+    ResolveLifetimes,
+    RegionResolveCrate,
+    CheckLoops,
+    PluginRegistrar,
+    StabilityIndex,
     CollectItem(DefId),
     Coherence,
+    EffectCheck,
+    Liveness,
+    Resolve,
+    EntryPoint,
+    CheckEntryFn,
     CoherenceCheckImpl(DefId),
     CoherenceOverlapCheck(DefId),
     CoherenceOverlapCheckSpecial(DefId),
@@ -102,7 +114,7 @@ pub enum DepNode {
     // which would yield an overly conservative dep-graph.
     TraitItems(DefId),
     ReprHints(DefId),
-    TraitSelect(DefId, Option<SimplifiedType>),
+    TraitSelect(DefId),
 }
 
 #[derive(Clone)]
@@ -115,6 +127,13 @@ impl DepGraph {
         DepGraph {
             data: Rc::new(DepGraphThreadData::new(enabled))
         }
+    }
+
+    /// True if we are actually building a dep-graph. If this returns false,
+    /// then the other methods on this `DepGraph` will have no net effect.
+    #[inline]
+    pub fn enabled(&self) -> bool {
+        self.data.enabled()
     }
 
     pub fn query(&self) -> DepGraphQuery {

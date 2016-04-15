@@ -24,11 +24,12 @@
 
 use back::svh::Svh;
 use front::map as hir_map;
-use middle::def;
+use middle::def::{self, Def};
 use middle::lang_items;
-use middle::ty::{self, Ty};
+use middle::ty::{self, Ty, VariantKind};
 use middle::def_id::{DefId, DefIndex};
 use mir::repr::Mir;
+use mir::mir_map::MirMap;
 use session::Session;
 use session::search_paths::PathKind;
 use util::nodemap::{FnvHashMap, NodeMap, NodeSet};
@@ -84,7 +85,7 @@ enum_from_u32! {
 // Something that a name can resolve to.
 #[derive(Copy, Clone, Debug)]
 pub enum DefLike {
-    DlDef(def::Def),
+    DlDef(Def),
     DlImpl(DefId),
     DlField
 }
@@ -186,8 +187,7 @@ pub trait CrateStore<'tcx> : Any {
     fn is_defaulted_trait(&self, did: DefId) -> bool;
     fn is_impl(&self, did: DefId) -> bool;
     fn is_default_impl(&self, impl_did: DefId) -> bool;
-    fn is_extern_fn(&self, tcx: &ty::ctxt<'tcx>, did: DefId) -> bool;
-    fn is_static(&self, did: DefId) -> bool;
+    fn is_extern_item(&self, tcx: &ty::ctxt<'tcx>, did: DefId) -> bool;
     fn is_static_method(&self, did: DefId) -> bool;
     fn is_statically_included_foreign_item(&self, id: ast::NodeId) -> bool;
     fn is_typedef(&self, did: DefId) -> bool;
@@ -211,6 +211,8 @@ pub trait CrateStore<'tcx> : Any {
 
     // resolve
     fn def_path(&self, def: DefId) -> hir_map::DefPath;
+    fn variant_kind(&self, def_id: DefId) -> Option<VariantKind>;
+    fn struct_ctor_def_id(&self, struct_def_id: DefId) -> Option<DefId>;
     fn tuple_struct_definition_if_ctor(&self, did: DefId) -> Option<DefId>;
     fn struct_field_names(&self, def: DefId) -> Vec<ast::Name>;
     fn item_children(&self, did: DefId) -> Vec<ChildItem>;
@@ -221,6 +223,8 @@ pub trait CrateStore<'tcx> : Any {
                           -> FoundAst<'tcx>;
     fn maybe_get_item_mir(&self, tcx: &ty::ctxt<'tcx>, def: DefId)
                           -> Option<Mir<'tcx>>;
+    fn is_item_mir_available(&self, def: DefId) -> bool;
+
     // This is basically a 1-based range of ints, which is a little
     // silly - I may fix that.
     fn crates(&self) -> Vec<ast::CrateNum>;
@@ -240,7 +244,7 @@ pub trait CrateStore<'tcx> : Any {
                        item_symbols: &RefCell<NodeMap<String>>,
                        link_meta: &LinkMeta,
                        reachable: &NodeSet,
-                       mir_map: &NodeMap<Mir<'tcx>>,
+                       mir_map: &MirMap<'tcx>,
                        krate: &hir::Crate) -> Vec<u8>;
     fn metadata_encoding_version(&self) -> &[u8];
 }
@@ -250,8 +254,8 @@ impl InlinedItem {
         where V: Visitor<'ast>
     {
         match *self {
-            InlinedItem::Item(ref i) => visitor.visit_item(&**i),
-            InlinedItem::Foreign(ref i) => visitor.visit_foreign_item(&**i),
+            InlinedItem::Item(ref i) => visitor.visit_item(&i),
+            InlinedItem::Foreign(ref i) => visitor.visit_foreign_item(&i),
             InlinedItem::TraitItem(_, ref ti) => visitor.visit_trait_item(ti),
             InlinedItem::ImplItem(_, ref ii) => visitor.visit_impl_item(ii),
         }
@@ -265,24 +269,28 @@ impl InlinedItem {
 
 // FIXME: find a better place for this?
 pub fn validate_crate_name(sess: Option<&Session>, s: &str, sp: Option<Span>) {
-    let say = |s: &str| {
-        match (sp, sess) {
-            (_, None) => panic!("{}", s),
-            (Some(sp), Some(sess)) => sess.span_err(sp, s),
-            (None, Some(sess)) => sess.err(s),
+    let mut err_count = 0;
+    {
+        let mut say = |s: &str| {
+            match (sp, sess) {
+                (_, None) => panic!("{}", s),
+                (Some(sp), Some(sess)) => sess.span_err(sp, s),
+                (None, Some(sess)) => sess.err(s),
+            }
+            err_count += 1;
+        };
+        if s.is_empty() {
+            say("crate name must not be empty");
         }
-    };
-    if s.is_empty() {
-        say("crate name must not be empty");
+        for c in s.chars() {
+            if c.is_alphanumeric() { continue }
+            if c == '_'  { continue }
+            say(&format!("invalid character `{}` in crate name: `{}`", c, s));
+        }
     }
-    for c in s.chars() {
-        if c.is_alphanumeric() { continue }
-        if c == '_'  { continue }
-        say(&format!("invalid character `{}` in crate name: `{}`", c, s));
-    }
-    match sess {
-        Some(sess) => sess.abort_if_errors(),
-        None => {}
+
+    if err_count > 0 {
+        sess.unwrap().abort_if_errors();
     }
 }
 
@@ -348,8 +356,7 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
     fn is_defaulted_trait(&self, did: DefId) -> bool { unimplemented!() }
     fn is_impl(&self, did: DefId) -> bool { unimplemented!() }
     fn is_default_impl(&self, impl_did: DefId) -> bool { unimplemented!() }
-    fn is_extern_fn(&self, tcx: &ty::ctxt<'tcx>, did: DefId) -> bool { unimplemented!() }
-    fn is_static(&self, did: DefId) -> bool { unimplemented!() }
+    fn is_extern_item(&self, tcx: &ty::ctxt<'tcx>, did: DefId) -> bool { unimplemented!() }
     fn is_static_method(&self, did: DefId) -> bool { unimplemented!() }
     fn is_statically_included_foreign_item(&self, id: ast::NodeId) -> bool { false }
     fn is_typedef(&self, did: DefId) -> bool { unimplemented!() }
@@ -380,6 +387,9 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
 
     // resolve
     fn def_path(&self, def: DefId) -> hir_map::DefPath { unimplemented!() }
+    fn variant_kind(&self, def_id: DefId) -> Option<VariantKind> { unimplemented!() }
+    fn struct_ctor_def_id(&self, struct_def_id: DefId) -> Option<DefId>
+        { unimplemented!() }
     fn tuple_struct_definition_if_ctor(&self, did: DefId) -> Option<DefId>
         { unimplemented!() }
     fn struct_field_names(&self, def: DefId) -> Vec<ast::Name> { unimplemented!() }
@@ -392,6 +402,9 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
                           -> FoundAst<'tcx> { unimplemented!() }
     fn maybe_get_item_mir(&self, tcx: &ty::ctxt<'tcx>, def: DefId)
                           -> Option<Mir<'tcx>> { unimplemented!() }
+    fn is_item_mir_available(&self, def: DefId) -> bool {
+        unimplemented!()
+    }
 
     // This is basically a 1-based range of ints, which is a little
     // silly - I may fix that.
@@ -414,7 +427,7 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
                        item_symbols: &RefCell<NodeMap<String>>,
                        link_meta: &LinkMeta,
                        reachable: &NodeSet,
-                       mir_map: &NodeMap<Mir<'tcx>>,
+                       mir_map: &MirMap<'tcx>,
                        krate: &hir::Crate) -> Vec<u8> { vec![] }
     fn metadata_encoding_version(&self) -> &[u8] { unimplemented!() }
 }
@@ -435,6 +448,7 @@ pub mod tls {
     use rbml::opaque::Encoder as OpaqueEncoder;
     use rbml::opaque::Decoder as OpaqueDecoder;
     use serialize;
+    use std::cell::Cell;
     use std::mem;
     use middle::ty::{self, Ty};
     use middle::subst::Substs;
@@ -446,12 +460,14 @@ pub mod tls {
         fn encode_substs(&self, encoder: &mut OpaqueEncoder, substs: &Substs<'tcx>);
     }
 
-    /// Marker type used for the scoped TLS slot.
-    /// The type context cannot be used directly because the scoped TLS
+    /// Marker type used for the TLS slot.
+    /// The type context cannot be used directly because the TLS
     /// in libstd doesn't allow types generic over lifetimes.
     struct TlsPayload;
 
-    scoped_thread_local!(static TLS_ENCODING: TlsPayload);
+    thread_local! {
+        static TLS_ENCODING: Cell<Option<*const TlsPayload>> = Cell::new(None)
+    }
 
     /// Execute f after pushing the given EncodingContext onto the TLS stack.
     pub fn enter_encoding_context<'tcx, F, R>(ecx: &EncodingContext<'tcx>,
@@ -461,7 +477,13 @@ pub mod tls {
     {
         let tls_payload = (ecx as *const _, encoder as *mut _);
         let tls_ptr = &tls_payload as *const _ as *const TlsPayload;
-        TLS_ENCODING.set(unsafe { &*tls_ptr }, || f(ecx, encoder))
+        TLS_ENCODING.with(|tls| {
+            let prev = tls.get();
+            tls.set(Some(tls_ptr));
+            let ret = f(ecx, encoder);
+            tls.set(prev);
+            return ret
+        })
     }
 
     /// Execute f with access to the thread-local encoding context and
@@ -493,8 +515,8 @@ pub mod tls {
         where F: FnOnce(&EncodingContext, &mut OpaqueEncoder) -> R
     {
         TLS_ENCODING.with(|tls| {
-            let tls_payload = (tls as *const TlsPayload)
-                                   as *mut (&EncodingContext, &mut OpaqueEncoder);
+            let tls = tls.get().unwrap();
+            let tls_payload = tls as *mut (&EncodingContext, &mut OpaqueEncoder);
             f((*tls_payload).0, (*tls_payload).1)
         })
     }
@@ -506,7 +528,9 @@ pub mod tls {
         fn translate_def_id(&self, def_id: DefId) -> DefId;
     }
 
-    scoped_thread_local!(static TLS_DECODING: TlsPayload);
+    thread_local! {
+        static TLS_DECODING: Cell<Option<*const TlsPayload>> = Cell::new(None)
+    }
 
     /// Execute f after pushing the given DecodingContext onto the TLS stack.
     pub fn enter_decoding_context<'tcx, F, R>(dcx: &DecodingContext<'tcx>,
@@ -516,7 +540,13 @@ pub mod tls {
     {
         let tls_payload = (dcx as *const _, decoder as *mut _);
         let tls_ptr = &tls_payload as *const _ as *const TlsPayload;
-        TLS_DECODING.set(unsafe { &*tls_ptr }, || f(dcx, decoder))
+        TLS_DECODING.with(|tls| {
+            let prev = tls.get();
+            tls.set(Some(tls_ptr));
+            let ret = f(dcx, decoder);
+            tls.set(prev);
+            return ret
+        })
     }
 
     /// Execute f with access to the thread-local decoding context and
@@ -550,8 +580,8 @@ pub mod tls {
         where F: FnOnce(&DecodingContext, &mut OpaqueDecoder) -> R
     {
         TLS_DECODING.with(|tls| {
-            let tls_payload = (tls as *const TlsPayload)
-                                   as *mut (&DecodingContext, &mut OpaqueDecoder);
+            let tls = tls.get().unwrap();
+            let tls_payload = tls as *mut (&DecodingContext, &mut OpaqueDecoder);
             f((*tls_payload).0, (*tls_payload).1)
         })
     }

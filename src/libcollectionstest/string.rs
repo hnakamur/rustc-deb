@@ -8,10 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::borrow::{IntoCow, Cow};
+use std::borrow::Cow;
 use std::iter::repeat;
 
 use test::Bencher;
+
+pub trait IntoCow<'a, B: ?Sized> where B: ToOwned {
+    fn into_cow(self) -> Cow<'a, B>;
+}
+
+impl<'a> IntoCow<'a, str> for String {
+    fn into_cow(self) -> Cow<'a, str> {
+        Cow::Owned(self)
+    }
+}
+
+impl<'a> IntoCow<'a, str> for &'a str {
+    fn into_cow(self) -> Cow<'a, str> {
+        Cow::Borrowed(self)
+    }
+}
 
 #[test]
 fn test_from_str() {
@@ -124,7 +140,7 @@ fn test_from_utf16() {
 
     for p in &pairs {
         let (s, u) = (*p).clone();
-        let s_as_utf16 = s.utf16_units().collect::<Vec<u16>>();
+        let s_as_utf16 = s.encode_utf16().collect::<Vec<u16>>();
         let u_as_string = String::from_utf16(&u).unwrap();
 
         assert!(::rustc_unicode::str::is_utf16(&u));
@@ -134,7 +150,7 @@ fn test_from_utf16() {
         assert_eq!(String::from_utf16_lossy(&u), s);
 
         assert_eq!(String::from_utf16(&s_as_utf16).unwrap(), s);
-        assert_eq!(u_as_string.utf16_units().collect::<Vec<u16>>(), u);
+        assert_eq!(u_as_string.encode_utf16().collect::<Vec<u16>>(), u);
     }
 }
 
@@ -175,7 +191,7 @@ fn test_push_bytes() {
     let mut s = String::from("ABC");
     unsafe {
         let mv = s.as_mut_vec();
-        mv.push_all(&[b'D']);
+        mv.extend_from_slice(&[b'D']);
     }
     assert_eq!(s, "ABCD");
 }

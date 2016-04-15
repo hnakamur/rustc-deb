@@ -16,6 +16,7 @@
             reason = "this library is unlikely to be stabilized in its current \
                       form or name",
             issue = "27783")]
+#![cfg_attr(not(stage0), deny(warnings))]
 #![feature(allocator)]
 #![feature(libc)]
 #![feature(staged_api)]
@@ -37,12 +38,28 @@ use libc::{c_int, c_void, size_t};
                not(target_os = "android"),
                not(target_env = "musl")),
            link(name = "pthread"))]
-extern "C" {
-    fn je_mallocx(size: size_t, flags: c_int) -> *mut c_void;
-    fn je_rallocx(ptr: *mut c_void, size: size_t, flags: c_int) -> *mut c_void;
-    fn je_xallocx(ptr: *mut c_void, size: size_t, extra: size_t, flags: c_int) -> size_t;
-    fn je_sdallocx(ptr: *mut c_void, size: size_t, flags: c_int);
-    fn je_nallocx(size: size_t, flags: c_int) -> size_t;
+#[cfg(not(cargobuild))]
+extern {}
+
+// Note that the symbols here are prefixed by default on OSX (we don't
+// explicitly request it), and on Android we explicitly request it as
+// unprefixing cause segfaults (mismatches in allocators).
+extern {
+    #[cfg_attr(any(target_os = "macos", target_os = "android", target_os = "ios"),
+               link_name = "je_mallocx")]
+    fn mallocx(size: size_t, flags: c_int) -> *mut c_void;
+    #[cfg_attr(any(target_os = "macos", target_os = "android", target_os = "ios"),
+               link_name = "je_rallocx")]
+    fn rallocx(ptr: *mut c_void, size: size_t, flags: c_int) -> *mut c_void;
+    #[cfg_attr(any(target_os = "macos", target_os = "android", target_os = "ios"),
+               link_name = "je_xallocx")]
+    fn xallocx(ptr: *mut c_void, size: size_t, extra: size_t, flags: c_int) -> size_t;
+    #[cfg_attr(any(target_os = "macos", target_os = "android", target_os = "ios"),
+               link_name = "je_sdallocx")]
+    fn sdallocx(ptr: *mut c_void, size: size_t, flags: c_int);
+    #[cfg_attr(any(target_os = "macos", target_os = "android", target_os = "ios"),
+               link_name = "je_nallocx")]
+    fn nallocx(size: size_t, flags: c_int) -> size_t;
 }
 
 // The minimum alignment guaranteed by the architecture. This value is used to
@@ -50,14 +67,12 @@ extern "C" {
 // constant at the call site and the branch will be optimized out.
 #[cfg(all(any(target_arch = "arm",
               target_arch = "mips",
-              target_arch = "mipsel",
               target_arch = "powerpc")))]
 const MIN_ALIGN: usize = 8;
 #[cfg(all(any(target_arch = "x86",
               target_arch = "x86_64",
               target_arch = "aarch64",
-              target_arch = "powerpc64",
-              target_arch = "powerpc64le")))]
+              target_arch = "powerpc64")))]
 const MIN_ALIGN: usize = 16;
 
 // MALLOCX_ALIGN(a) macro
@@ -76,7 +91,7 @@ fn align_to_flags(align: usize) -> c_int {
 #[no_mangle]
 pub extern "C" fn __rust_allocate(size: usize, align: usize) -> *mut u8 {
     let flags = align_to_flags(align);
-    unsafe { je_mallocx(size as size_t, flags) as *mut u8 }
+    unsafe { mallocx(size as size_t, flags) as *mut u8 }
 }
 
 #[no_mangle]
@@ -86,7 +101,7 @@ pub extern "C" fn __rust_reallocate(ptr: *mut u8,
                                     align: usize)
                                     -> *mut u8 {
     let flags = align_to_flags(align);
-    unsafe { je_rallocx(ptr as *mut c_void, size as size_t, flags) as *mut u8 }
+    unsafe { rallocx(ptr as *mut c_void, size as size_t, flags) as *mut u8 }
 }
 
 #[no_mangle]
@@ -96,19 +111,19 @@ pub extern "C" fn __rust_reallocate_inplace(ptr: *mut u8,
                                             align: usize)
                                             -> usize {
     let flags = align_to_flags(align);
-    unsafe { je_xallocx(ptr as *mut c_void, size as size_t, 0, flags) as usize }
+    unsafe { xallocx(ptr as *mut c_void, size as size_t, 0, flags) as usize }
 }
 
 #[no_mangle]
 pub extern "C" fn __rust_deallocate(ptr: *mut u8, old_size: usize, align: usize) {
     let flags = align_to_flags(align);
-    unsafe { je_sdallocx(ptr as *mut c_void, old_size as size_t, flags) }
+    unsafe { sdallocx(ptr as *mut c_void, old_size as size_t, flags) }
 }
 
 #[no_mangle]
 pub extern "C" fn __rust_usable_size(size: usize, align: usize) -> usize {
     let flags = align_to_flags(align);
-    unsafe { je_nallocx(size as size_t, flags) as usize }
+    unsafe { nallocx(size as size_t, flags) as usize }
 }
 
 // These symbols are used by jemalloc on android but the really old android

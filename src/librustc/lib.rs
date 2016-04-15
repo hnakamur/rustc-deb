@@ -19,15 +19,16 @@
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-      html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-      html_root_url = "https://doc.rust-lang.org/nightly/")]
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
+       html_root_url = "https://doc.rust-lang.org/nightly/")]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(associated_consts)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(cell_extras)]
 #![feature(collections)]
 #![feature(const_fn)]
+#![feature(copy_from_slice)]
 #![feature(enumset)]
 #![feature(iter_arith)]
 #![feature(libc)]
@@ -35,14 +36,10 @@
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
-#![feature(scoped_tls)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
 #![feature(str_char)]
-#![feature(time2)]
 #![cfg_attr(test, feature(test))]
-
-#![allow(trivial_casts)]
 
 extern crate arena;
 extern crate core;
@@ -52,7 +49,7 @@ extern crate getopts;
 extern crate graphviz;
 extern crate libc;
 extern crate rbml;
-extern crate rustc_llvm;
+pub extern crate rustc_llvm as llvm;
 extern crate rustc_back;
 extern crate rustc_front;
 extern crate rustc_data_structures;
@@ -66,8 +63,6 @@ extern crate serialize as rustc_serialize; // used by deriving
 
 #[cfg(test)]
 extern crate test;
-
-pub use rustc_llvm as llvm;
 
 #[macro_use]
 mod macros;
@@ -93,12 +88,9 @@ pub mod middle {
     pub mod astconv_util;
     pub mod expr_use_visitor; // STAGE0: increase glitch immunity
     pub mod cfg;
-    pub mod check_const;
-    pub mod check_static_recursion;
-    pub mod check_loop;
     pub mod check_match;
-    pub mod check_rvalues;
     pub mod const_eval;
+    pub mod const_qualif;
     pub mod cstore;
     pub mod dataflow;
     pub mod dead;
@@ -110,7 +102,6 @@ pub mod middle {
     pub mod free_region;
     pub mod intrinsicck;
     pub mod infer;
-    pub mod implicator;
     pub mod lang_items;
     pub mod liveness;
     pub mod mem_categorization;
@@ -131,6 +122,8 @@ pub mod mir {
     pub mod repr;
     pub mod tcx;
     pub mod visit;
+    pub mod transform;
+    pub mod mir_map;
 }
 
 pub mod session;

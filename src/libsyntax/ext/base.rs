@@ -11,7 +11,7 @@
 pub use self::SyntaxExtension::*;
 
 use ast;
-use ast::Name;
+use ast::{Name, PatKind};
 use codemap;
 use codemap::{CodeMap, Span, ExpnId, ExpnInfo, NO_EXPANSION};
 use errors::DiagnosticBuilder;
@@ -82,16 +82,16 @@ impl Annotatable {
         }
     }
 
-    pub fn expect_trait_item(self) -> P<ast::TraitItem> {
+    pub fn expect_trait_item(self) -> ast::TraitItem {
         match self {
-            Annotatable::TraitItem(i) => i,
+            Annotatable::TraitItem(i) => i.unwrap(),
             _ => panic!("expected Item")
         }
     }
 
-    pub fn expect_impl_item(self) -> P<ast::ImplItem> {
+    pub fn expect_impl_item(self) -> ast::ImplItem {
         match self {
-            Annotatable::ImplItem(i) => i,
+            Annotatable::ImplItem(i) => i.unwrap(),
             _ => panic!("expected Item")
         }
     }
@@ -120,7 +120,7 @@ impl<F> MultiItemDecorator for F
     }
 }
 
-// A more flexible ItemModifier (ItemModifier should go away, eventually, FIXME).
+// A more flexible ItemKind::Modifier (ItemKind::Modifier should go away, eventually, FIXME).
 // meta_item is the annotation, item is the item being modified, parent_item
 // is the impl or trait item is declared in if item is part of such a thing.
 // FIXME Decorators should follow the same pattern too.
@@ -204,8 +204,8 @@ impl<F> IdentMacroExpander for F
 macro_rules! make_stmts_default {
     ($me:expr) => {
         $me.make_expr().map(|e| {
-            SmallVector::one(P(codemap::respan(
-                e.span, ast::StmtExpr(e, ast::DUMMY_NODE_ID))))
+            SmallVector::one(codemap::respan(
+                e.span, ast::StmtKind::Expr(e, ast::DUMMY_NODE_ID)))
         })
     }
 }
@@ -223,7 +223,7 @@ pub trait MacResult {
     }
 
     /// Create zero or more impl items.
-    fn make_impl_items(self: Box<Self>) -> Option<SmallVector<P<ast::ImplItem>>> {
+    fn make_impl_items(self: Box<Self>) -> Option<SmallVector<ast::ImplItem>> {
         None
     }
 
@@ -236,7 +236,7 @@ pub trait MacResult {
     ///
     /// By default this attempts to create an expression statement,
     /// returning None if that fails.
-    fn make_stmts(self: Box<Self>) -> Option<SmallVector<P<ast::Stmt>>> {
+    fn make_stmts(self: Box<Self>) -> Option<SmallVector<ast::Stmt>> {
         make_stmts_default!(self)
     }
 
@@ -273,8 +273,8 @@ make_MacEager! {
     expr: P<ast::Expr>,
     pat: P<ast::Pat>,
     items: SmallVector<P<ast::Item>>,
-    impl_items: SmallVector<P<ast::ImplItem>>,
-    stmts: SmallVector<P<ast::Stmt>>,
+    impl_items: SmallVector<ast::ImplItem>,
+    stmts: SmallVector<ast::Stmt>,
     ty: P<ast::Ty>,
 }
 
@@ -287,11 +287,11 @@ impl MacResult for MacEager {
         self.items
     }
 
-    fn make_impl_items(self: Box<Self>) -> Option<SmallVector<P<ast::ImplItem>>> {
+    fn make_impl_items(self: Box<Self>) -> Option<SmallVector<ast::ImplItem>> {
         self.impl_items
     }
 
-    fn make_stmts(self: Box<Self>) -> Option<SmallVector<P<ast::Stmt>>> {
+    fn make_stmts(self: Box<Self>) -> Option<SmallVector<ast::Stmt>> {
         match self.stmts.as_ref().map_or(0, |s| s.len()) {
             0 => make_stmts_default!(self),
             _ => self.stmts,
@@ -303,11 +303,11 @@ impl MacResult for MacEager {
             return Some(p);
         }
         if let Some(e) = self.expr {
-            if let ast::ExprLit(_) = e.node {
+            if let ast::ExprKind::Lit(_) = e.node {
                 return Some(P(ast::Pat {
                     id: ast::DUMMY_NODE_ID,
                     span: e.span,
-                    node: ast::PatLit(e),
+                    node: PatKind::Lit(e),
                 }));
             }
         }
@@ -349,7 +349,7 @@ impl DummyResult {
     pub fn raw_expr(sp: Span) -> P<ast::Expr> {
         P(ast::Expr {
             id: ast::DUMMY_NODE_ID,
-            node: ast::ExprLit(P(codemap::respan(sp, ast::LitBool(false)))),
+            node: ast::ExprKind::Lit(P(codemap::respan(sp, ast::LitKind::Bool(false)))),
             span: sp,
             attrs: None,
         })
@@ -359,7 +359,7 @@ impl DummyResult {
     pub fn raw_pat(sp: Span) -> ast::Pat {
         ast::Pat {
             id: ast::DUMMY_NODE_ID,
-            node: ast::PatWild,
+            node: PatKind::Wild,
             span: sp,
         }
     }
@@ -367,7 +367,7 @@ impl DummyResult {
     pub fn raw_ty(sp: Span) -> P<ast::Ty> {
         P(ast::Ty {
             id: ast::DUMMY_NODE_ID,
-            node: ast::TyInfer,
+            node: ast::TyKind::Infer,
             span: sp
         })
     }
@@ -391,7 +391,7 @@ impl MacResult for DummyResult {
         }
     }
 
-    fn make_impl_items(self: Box<DummyResult>) -> Option<SmallVector<P<ast::ImplItem>>> {
+    fn make_impl_items(self: Box<DummyResult>) -> Option<SmallVector<ast::ImplItem>> {
         if self.expr_only {
             None
         } else {
@@ -399,11 +399,11 @@ impl MacResult for DummyResult {
         }
     }
 
-    fn make_stmts(self: Box<DummyResult>) -> Option<SmallVector<P<ast::Stmt>>> {
-        Some(SmallVector::one(P(
+    fn make_stmts(self: Box<DummyResult>) -> Option<SmallVector<ast::Stmt>> {
+        Some(SmallVector::one(
             codemap::respan(self.span,
-                            ast::StmtExpr(DummyResult::raw_expr(self.span),
-                                          ast::DUMMY_NODE_ID)))))
+                            ast::StmtKind::Expr(DummyResult::raw_expr(self.span),
+                                                ast::DUMMY_NODE_ID))))
     }
 }
 
@@ -760,7 +760,12 @@ impl<'a> ExtCtxt<'a> {
                               err: &mut DiagnosticBuilder<'a>) {
         let names = &self.syntax_env.names;
         if let Some(suggestion) = find_best_match_for_name(names.iter(), name, None) {
-            err.fileline_help(span, &format!("did you mean `{}!`?", suggestion));
+            if suggestion != name {
+                err.fileline_help(span, &format!("did you mean `{}!`?", suggestion));
+            } else {
+                err.fileline_help(span, &format!("have you added the `#[macro_use]` on the \
+                                                  module/import?"));
+            }
         }
     }
 }
@@ -773,8 +778,8 @@ pub fn expr_to_string(cx: &mut ExtCtxt, expr: P<ast::Expr>, err_msg: &str)
     // we want to be able to handle e.g. concat("foo", "bar")
     let expr = cx.expander().fold_expr(expr);
     match expr.node {
-        ast::ExprLit(ref l) => match l.node {
-            ast::LitStr(ref s, style) => return Some(((*s).clone(), style)),
+        ast::ExprKind::Lit(ref l) => match l.node {
+            ast::LitKind::Str(ref s, style) => return Some(((*s).clone(), style)),
             _ => cx.span_err(l.span, err_msg)
         },
         _ => cx.span_err(expr.span, err_msg)

@@ -28,6 +28,7 @@ use trans::build::*;
 use trans::callee;
 use trans::cleanup;
 use trans::cleanup::CleanupMethods;
+use trans::collector::{self, TransItem};
 use trans::common::*;
 use trans::debuginfo::DebugLoc;
 use trans::declare;
@@ -88,7 +89,7 @@ pub fn trans_exchange_free_ty<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     }
 }
 
-fn type_needs_drop<'tcx>(tcx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
+pub fn type_needs_drop<'tcx>(tcx: &ty::ctxt<'tcx>, ty: Ty<'tcx>) -> bool {
     tcx.type_needs_drop_given_env(ty, &tcx.empty_parameter_environment())
 }
 
@@ -297,7 +298,7 @@ fn trans_struct_drop_flag<'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
     assert!(type_is_sized(bcx.tcx(), t), "Precondition: caller must ensure t is sized");
 
     let repr = adt::represent_type(bcx.ccx(), t);
-    let drop_flag = unpack_datum!(bcx, adt::trans_drop_flag_ptr(bcx, &*repr, struct_data));
+    let drop_flag = unpack_datum!(bcx, adt::trans_drop_flag_ptr(bcx, &repr, struct_data));
     let loaded = load_ty(bcx, drop_flag.val, bcx.tcx().dtor_type());
     let drop_flag_llty = type_of(bcx.fcx.ccx, bcx.tcx().dtor_type());
     let init_val = C_integral(drop_flag_llty, adt::DTOR_NEEDED as u64, false);
@@ -401,7 +402,7 @@ pub fn size_and_align_of_dst<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, t: Ty<'tcx>, in
             // Don't use type_of::sizing_type_of because that expects t to be sized.
             assert!(!t.is_simd());
             let repr = adt::represent_type(ccx, t);
-            let sizing_type = adt::sizing_type_context_of(ccx, &*repr, true);
+            let sizing_type = adt::sizing_type_context_of(ccx, &repr, true);
             debug!("DST {} sizing_type: {}", t, sizing_type.to_string());
             let sized_size = llsize_of_alloc(ccx, sizing_type.prefix());
             let sized_align = llalign_of_min(ccx, sizing_type.prefix());
@@ -496,6 +497,13 @@ pub fn size_and_align_of_dst<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, t: Ty<'tcx>, in
 fn make_drop_glue<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, v0: ValueRef, g: DropGlueKind<'tcx>)
                               -> Block<'blk, 'tcx> {
     let t = g.ty();
+
+    if collector::collecting_debug_information(bcx.ccx()) {
+        bcx.ccx()
+           .record_translation_item_as_generated(TransItem::DropGlue(bcx.tcx()
+                                                                        .erase_regions(&t)));
+    }
+
     let skip_dtor = match g { DropGlueKind::Ty(_) => false, DropGlueKind::TyContents(_) => true };
     // NB: v0 is an *alias* of type t here, not a direct value.
     let _icx = push_ctxt("make_drop_glue");
@@ -506,7 +514,7 @@ fn make_drop_glue<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, v0: ValueRef, g: DropGlueK
     // the special dtor markings.
 
     let inttype = Type::int(bcx.ccx());
-    let dropped_pattern = C_integral(inttype, adt::dtor_done_usize(bcx.fcx.ccx) as u64, false);
+    let dropped_pattern = C_integral(inttype, adt::DTOR_DONE_U64, false);
 
     match t.sty {
         ty::TyBox(content_ty) => {

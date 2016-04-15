@@ -48,7 +48,7 @@ use result::Result;
 use result::Result::{Ok, Err};
 use ptr;
 use mem;
-use marker::{Send, Sync, self};
+use marker::{Copy, Send, Sync, self};
 use raw::Repr;
 // Avoid conflicts with *both* the Slice trait (buggy) and the `slice::raw` module.
 use raw::Slice as RawSlice;
@@ -152,6 +152,8 @@ pub trait SliceExt {
 
     #[stable(feature = "clone_from_slice", since = "1.7.0")]
     fn clone_from_slice(&mut self, &[Self::Item]) where Self::Item: Clone;
+    #[unstable(feature = "copy_from_slice", issue = "31755")]
+    fn copy_from_slice(&mut self, src: &[Self::Item]) where Self::Item: Copy;
 }
 
 // Use macros to be generic over const/mut
@@ -294,22 +296,23 @@ impl<T> SliceExt for [T] {
     fn binary_search_by<F>(&self, mut f: F) -> Result<usize, usize> where
         F: FnMut(&T) -> Ordering
     {
-        let mut base : usize = 0;
-        let mut lim : usize = self.len();
+        let mut base = 0usize;
+        let mut s = self;
 
-        while lim != 0 {
-            let ix = base + (lim >> 1);
-            match f(&self[ix]) {
-                Equal => return Ok(ix),
-                Less => {
-                    base = ix + 1;
-                    lim -= 1;
-                }
-                Greater => ()
+        loop {
+            let (head, tail) = s.split_at(s.len() >> 1);
+            if tail.is_empty() {
+                return Err(base)
             }
-            lim >>= 1;
+            match f(&tail[0]) {
+                Less => {
+                    base += head.len() + 1;
+                    s = &tail[1..];
+                }
+                Greater => s = head,
+                Equal => return Ok(base + head.len()),
+            }
         }
-        Err(base)
     }
 
     #[inline]
@@ -485,6 +488,16 @@ impl<T> SliceExt for [T] {
         let src = &src[..len];
         for i in 0..len {
             self[i].clone_from(&src[i]);
+        }
+    }
+
+    #[inline]
+    fn copy_from_slice(&mut self, src: &[T]) where T: Copy {
+        assert!(self.len() == src.len(),
+                "destination and source slices have different lengths");
+        unsafe {
+            ptr::copy_nonoverlapping(
+                src.as_ptr(), self.as_mut_ptr(), self.len());
         }
     }
 }

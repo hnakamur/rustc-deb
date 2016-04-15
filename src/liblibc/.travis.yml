@@ -3,6 +3,7 @@ sudo: required
 dist: trusty
 rust:
   - 1.0.0
+  - stable
   - beta
   - nightly
 services:
@@ -10,8 +11,11 @@ services:
 script:
   - if [[ $TRAVIS_RUST_VERSION = nightly* ]]; then
       sh ci/run-travis.sh;
+    elif [[ $TRAVIS_RUST_VERSION = "1.0.0" ]]; then
+      cargo build;
     else
       cargo build;
+      cargo build --no-default-features;
     fi
 os:
   - linux
@@ -41,13 +45,19 @@ matrix:
       rust: nightly
     - os: osx
       env: TARGET=i386-apple-ios
-      rust: nightly-2015-09-08
+      rust: nightly
     - os: osx
       env: TARGET=x86_64-apple-ios
-      rust: nightly-2015-09-08
+      rust: nightly
     - os: linux
       env: TARGET=x86_64-rumprun-netbsd DOCKER=alexcrichton/rust-libc-rumprun:2015-11-27
       rust: nightly-2015-09-27
+    - os: linux
+      env: TARGET=x86_64-unknown-freebsd QEMU=freebsd.qcow2
+      rust: nightly
+    - os: linux
+      env: TARGET=x86_64-unknown-openbsd QEMU=openbsd.qcow2
+      rust: nightly
 notifications:
   email:
     on_success: never

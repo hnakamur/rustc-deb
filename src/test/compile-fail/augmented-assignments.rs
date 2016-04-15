@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(augmented_assignments)]
-
 use std::ops::AddAssign;
 
 struct Int(i32);

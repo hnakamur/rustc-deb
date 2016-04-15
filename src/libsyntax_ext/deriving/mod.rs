@@ -13,7 +13,7 @@
 //! FIXME (#2810): hygiene. Search for "__" strings (in other files too). We also assume "extra" is
 //! the standard library, and "std" is the core library.
 
-use syntax::ast::{MetaItem, MetaWord};
+use syntax::ast::{MetaItem, MetaItemKind};
 use syntax::attr::AttrMetaMethods;
 use syntax::ext::base::{ExtCtxt, SyntaxEnv, Annotatable};
 use syntax::ext::base::{MultiDecorator, MultiItemDecorator, MultiModifier};
@@ -63,7 +63,6 @@ pub mod decodable;
 pub mod hash;
 pub mod debug;
 pub mod default;
-pub mod primitive;
 
 #[path="cmp/partial_eq.rs"]
 pub mod partial_eq;
@@ -95,7 +94,7 @@ fn expand_derive(cx: &mut ExtCtxt,
 
             for titem in traits.iter().rev() {
                 let tname = match titem.node {
-                    MetaWord(ref tname) => tname,
+                    MetaItemKind::Word(ref tname) => tname,
                     _ => {
                         cx.span_err(titem.span, "malformed `derive` entry");
                         continue;
@@ -177,8 +176,6 @@ derive_traits! {
     "Debug" => debug::expand_deriving_debug,
 
     "Default" => default::expand_deriving_default,
-
-    "FromPrimitive" => primitive::expand_deriving_from_primitive,
 
     "Send" => bounds::expand_deriving_unsafe_bound,
     "Sync" => bounds::expand_deriving_unsafe_bound,

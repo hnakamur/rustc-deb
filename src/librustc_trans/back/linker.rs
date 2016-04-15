@@ -131,6 +131,9 @@ impl<'a> Linker for GnuLinker<'a> {
         // insert it here.
         if self.sess.target.target.options.is_like_osx {
             self.cmd.arg("-Wl,-dead_strip");
+        } else if self.sess.target.target.options.is_like_solaris {
+            self.cmd.arg("-Wl,-z");
+            self.cmd.arg("-Wl,ignore");
 
         // If we're building a dylib, we don't use --gc-sections because LLVM
         // has already done the best it can do, and we also don't want to
@@ -210,7 +213,14 @@ impl<'a> Linker for MsvcLinker<'a> {
     fn link_rlib(&mut self, lib: &Path) { self.cmd.arg(lib); }
     fn add_object(&mut self, path: &Path) { self.cmd.arg(path); }
     fn args(&mut self, args: &[String]) { self.cmd.args(args); }
-    fn build_dylib(&mut self, _out_filename: &Path) { self.cmd.arg("/DLL"); }
+
+    fn build_dylib(&mut self, out_filename: &Path) {
+        self.cmd.arg("/DLL");
+        let mut arg: OsString = "/IMPLIB:".into();
+        arg.push(out_filename.with_extension("dll.lib"));
+        self.cmd.arg(arg);
+    }
+
     fn gc_sections(&mut self, _is_dylib: bool) { self.cmd.arg("/OPT:REF,ICF"); }
 
     fn link_dylib(&mut self, lib: &str) {
@@ -222,7 +232,7 @@ impl<'a> Linker for MsvcLinker<'a> {
         // `foo.lib` file if the dll doesn't actually export any symbols, so we
         // check to see if the file is there and just omit linking to it if it's
         // not present.
-        let name = format!("{}.lib", lib);
+        let name = format!("{}.dll.lib", lib);
         if fs::metadata(&path.join(&name)).is_ok() {
             self.cmd.arg(name);
         }

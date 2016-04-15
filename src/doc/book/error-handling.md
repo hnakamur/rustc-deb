@@ -265,6 +265,8 @@ fn map<F, T, A>(option: Option<T>, f: F) -> Option<A> where F: FnOnce(T) -> A {
 ```
 
 Indeed, `map` is [defined as a method][2] on `Option<T>` in the standard library.
+As a method, it has a slightly different signature: methods take `self`, `&self`,
+or `&mut self` as their first argument.
 
 Armed with our new combinator, we can rewrite our `extension_explicit` method
 to get rid of the case analysis:
@@ -293,6 +295,9 @@ fn unwrap_or<T>(option: Option<T>, default: T) -> T {
     }
 }
 ```
+
+Like with `map` above, the standard library implementation is a method instead
+of a free function.
 
 The trick here is that the default value must have the same type as the value
 that might be inside the `Option<T>`. Using it is dead simple in our case:
@@ -351,11 +356,28 @@ fn file_name(file_path: &str) -> Option<&str> {
 ```
 
 You might think that we could use the `map` combinator to reduce the case
-analysis, but its type doesn't quite fit. Namely, `map` takes a function that
-does something only with the inner value. The result of that function is then
-*always* [rewrapped with `Some`](#code-option-map). Instead, we need something
-like `map`, but which allows the caller to return another `Option`. Its generic
-implementation is even simpler than `map`:
+analysis, but its type doesn't quite fit...
+
+```rust,ignore
+fn file_path_ext(file_path: &str) -> Option<&str> {
+    file_name(file_path).map(|x| extension(x)) //Compilation error
+}
+```
+
+The `map` function here wraps the value returned by the `extension` function
+inside an `Option<_>` and since the `extension` function itself returns an
+`Option<&str>` the expression `file_name(file_path).map(|x| extension(x))`
+actually returns an `Option<Option<&str>>`.
+
+But since `file_path_ext` just returns `Option<&str>` (and not
+`Option<Option<&str>>`) we get a compilation error.
+
+The result of the function taken by map as input is *always* [rewrapped with
+`Some`](#code-option-map). Instead, we need something like `map`, but which
+allows the caller to return a `Option<_>` directly without wrapping it in
+another `Option<_>`.
+
+Its generic implementation is even simpler than `map`:
 
 ```rust
 fn and_then<F, T, A>(option: Option<T>, f: F) -> Option<A>
@@ -376,6 +398,10 @@ fn file_path_ext(file_path: &str) -> Option<&str> {
     file_name(file_path).and_then(extension)
 }
 ```
+
+Side note: Since `and_then` essentially works like `map` but returns an
+`Option<_>` instead of an `Option<Option<_>>` it is known as `flatmap` in some
+other languages.
 
 The `Option` type has many other combinators [defined in the standard
 library][5]. It is a good idea to skim this list and familiarize
@@ -1512,7 +1538,7 @@ and [`rustc-serialize`](https://crates.io/crates/rustc-serialize) crates.
 
 We're not going to spend a lot of time on setting up a project with
 Cargo because it is already covered well in [the Cargo
-section](../book/hello-cargo.html) and [Cargo's documentation][14].
+section](getting-started.html#hello-cargo) and [Cargo's documentation][14].
 
 To get started from scratch, run `cargo new --bin city-pop` and make sure your
 `Cargo.toml` looks something like this:
@@ -1566,7 +1592,7 @@ fn print_usage(program: &str, opts: Options) {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let program = args[0].clone();
+    let program = &args[0];
 
     let mut opts = Options::new();
     opts.optflag("h", "help", "Show this usage message.");
@@ -1579,10 +1605,10 @@ fn main() {
         print_usage(&program, opts);
         return;
     }
-    let data_path = args[1].clone();
-    let city = args[2].clone();
+    let data_path = &args[1];
+    let city = &args[2];
 
-	// Do stuff with information
+    // Do stuff with information
 }
 ```
 
@@ -1614,7 +1640,6 @@ sure to add `extern crate csv;` to the top of your file.)
 
 ```rust,ignore
 use std::fs::File;
-use std::path::Path;
 
 // This struct represents the data in each row of the CSV file.
 // Type based decoding absolves us of a lot of the nitty gritty error
@@ -1640,7 +1665,7 @@ fn print_usage(program: &str, opts: Options) {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let program = args[0].clone();
+    let program = &args[0];
 
     let mut opts = Options::new();
     opts.optflag("h", "help", "Show this usage message.");
@@ -1652,25 +1677,24 @@ fn main() {
 
     if matches.opt_present("h") {
         print_usage(&program, opts);
-		return;
-	}
+        return;
+    }
 
-	let data_file = args[1].clone();
-	let data_path = Path::new(&data_file);
-	let city = args[2].clone();
+    let data_path = &args[1];
+    let city: &str = &args[2];
 
-	let file = File::open(data_path).unwrap();
-	let mut rdr = csv::Reader::from_reader(file);
+    let file = File::open(data_path).unwrap();
+    let mut rdr = csv::Reader::from_reader(file);
 
-	for row in rdr.decode::<Row>() {
-		let row = row.unwrap();
+    for row in rdr.decode::<Row>() {
+        let row = row.unwrap();
 
-		if row.city == city {
-			println!("{}, {}: {:?}",
-				row.city, row.country,
-				row.population.expect("population count"));
-		}
-	}
+        if row.city == city {
+            println!("{}, {}: {:?}",
+                row.city, row.country,
+                row.population.expect("population count"));
+        }
+    }
 }
 ```
 
@@ -1719,6 +1743,8 @@ Note that we opt to handle the possibility of a missing population count by
 simply ignoring that row.
 
 ```rust,ignore
+use std::path::Path;
+
 struct Row {
     // unchanged
 }
@@ -1756,27 +1782,26 @@ fn search<P: AsRef<Path>>(file_path: P, city: &str) -> Vec<PopulationCount> {
 }
 
 fn main() {
-	let args: Vec<String> = env::args().collect();
-	let program = args[0].clone();
+    let args: Vec<String> = env::args().collect();
+    let program = &args[0];
 
-	let mut opts = Options::new();
-	opts.optflag("h", "help", "Show this usage message.");
+    let mut opts = Options::new();
+    opts.optflag("h", "help", "Show this usage message.");
 
-	let matches = match opts.parse(&args[1..]) {
-		Ok(m)  => { m }
-		Err(e) => { panic!(e.to_string()) }
-	};
-	if matches.opt_present("h") {
-		print_usage(&program, opts);
-		return;
-	}
+    let matches = match opts.parse(&args[1..]) {
+        Ok(m)  => { m }
+        Err(e) => { panic!(e.to_string()) }
+    };
+    if matches.opt_present("h") {
+        print_usage(&program, opts);
+        return;
+    }
 
-	let data_file = args[1].clone();
-	let data_path = Path::new(&data_file);
-	let city = args[2].clone();
-	for pop in search(&data_path, &city) {
-		println!("{}, {}: {:?}", pop.city, pop.country, pop.count);
-	}
+    let data_path = &args[1];
+    let city = &args[2];
+    for pop in search(data_path, city) {
+        println!("{}, {}: {:?}", pop.city, pop.country, pop.count);
+    }
 }
 
 ```
@@ -1886,7 +1911,7 @@ First, here's the new usage:
 
 ```rust,ignore
 fn print_usage(program: &str, opts: Options) {
-	println!("{}", opts.usage(&format!("Usage: {} [options] <city>", program)));
+    println!("{}", opts.usage(&format!("Usage: {} [options] <city>", program)));
 }
 ```
 The next part is going to be only a little harder:
@@ -1898,16 +1923,16 @@ opts.optopt("f", "file", "Choose an input file, instead of using STDIN.", "NAME"
 opts.optflag("h", "help", "Show this usage message.");
 ...
 let file = matches.opt_str("f");
-let data_file = file.as_ref().map(Path::new);
+let data_file = &file.as_ref().map(Path::new);
 
 let city = if !matches.free.is_empty() {
-	matches.free[0].clone()
+    &matches.free[0]
 } else {
-	print_usage(&program, opts);
-	return;
+    print_usage(&program, opts);
+    return;
 };
 
-match search(&data_file, &city) {
+match search(data_file, city) {
     Ok(pops) => {
         for pop in pops {
             println!("{}, {}: {:?}", pop.city, pop.country, pop.count);

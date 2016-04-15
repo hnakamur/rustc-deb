@@ -27,24 +27,16 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::ptr;
 use std::str;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::channel;
 use std::thread;
-use libc::{self, c_uint, c_int, c_void};
+use libc::{c_uint, c_int, c_void};
 
 pub fn llvm_err(handler: &errors::Handler, msg: String) -> ! {
-    unsafe {
-        let cstr = llvm::LLVMRustGetLastError();
-        if cstr == ptr::null() {
-            panic!(handler.fatal(&msg[..]));
-        } else {
-            let err = CStr::from_ptr(cstr).to_bytes();
-            let err = String::from_utf8_lossy(err).to_string();
-            libc::free(cstr as *mut _);
-            panic!(handler.fatal(&format!("{}: {}", &msg[..], &err[..])));
-        }
+    match llvm::last_error() {
+        Some(err) => panic!(handler.fatal(&format!("{}: {}", msg, err))),
+        None => panic!(handler.fatal(&msg)),
     }
 }
 
@@ -109,7 +101,7 @@ impl SharedEmitter {
 }
 
 impl Emitter for SharedEmitter {
-    fn emit(&mut self, sp: Option<codemap::Span>,
+    fn emit(&mut self, sp: Option<&codemap::MultiSpan>,
             msg: &str, code: Option<&str>, lvl: Level) {
         assert!(sp.is_none(), "SharedEmitter doesn't support spans");
 
@@ -120,7 +112,7 @@ impl Emitter for SharedEmitter {
         });
     }
 
-    fn custom_emit(&mut self, _sp: errors::RenderSpan, _msg: &str, _lvl: Level) {
+    fn custom_emit(&mut self, _sp: &errors::RenderSpan, _msg: &str, _lvl: Level) {
         panic!("SharedEmitter doesn't support custom_emit");
     }
 }
@@ -252,7 +244,6 @@ pub struct ModuleConfig {
     emit_ir: bool,
     emit_asm: bool,
     emit_obj: bool,
-
     // Miscellaneous flags.  These are mostly copied from command-line
     // options.
     no_verify: bool,
@@ -262,7 +253,11 @@ pub struct ModuleConfig {
     vectorize_loop: bool,
     vectorize_slp: bool,
     merge_functions: bool,
-    inline_threshold: Option<usize>
+    inline_threshold: Option<usize>,
+    // Instead of creating an object file by doing LLVM codegen, just
+    // make the object file bitcode. Provides easy compatibility with
+    // emscripten's ecc compiler, when used as the linker.
+    obj_is_bitcode: bool,
 }
 
 unsafe impl Send for ModuleConfig { }
@@ -280,6 +275,7 @@ impl ModuleConfig {
             emit_ir: false,
             emit_asm: false,
             emit_obj: false,
+            obj_is_bitcode: false,
 
             no_verify: false,
             no_prepopulate_passes: false,
@@ -298,6 +294,7 @@ impl ModuleConfig {
         self.no_builtins = trans.no_builtins;
         self.time_passes = sess.time_passes();
         self.inline_threshold = sess.opts.cg.inline_threshold;
+        self.obj_is_bitcode = sess.target.target.options.obj_is_bitcode;
 
         // Copy what clang does by turning on loop vectorization at O2 and
         // slp vectorization at O3. Otherwise configure other optimization aspects
@@ -383,7 +380,7 @@ unsafe extern "C" fn diagnostic_handler(info: DiagnosticInfoRef, user: *mut c_vo
     match llvm::diagnostic::Diagnostic::unpack(info) {
         llvm::diagnostic::InlineAsm(inline) => {
             report_inline_asm(cgcx,
-                              &*llvm::twine_to_string(inline.message),
+                              &llvm::twine_to_string(inline.message),
                               inline.cookie);
         }
 
@@ -446,9 +443,22 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 
         // If we're verifying or linting, add them to the function pass
         // manager.
-        let addpass = |pass: &str| {
-            let pass = CString::new(pass).unwrap();
-            llvm::LLVMRustAddPass(fpm, pass.as_ptr())
+        let addpass = |pass_name: &str| {
+            let pass_name = CString::new(pass_name).unwrap();
+            let pass = llvm::LLVMRustFindAndCreatePass(pass_name.as_ptr());
+            if pass.is_null() {
+                return false;
+            }
+            let pass_manager = match llvm::LLVMRustPassKind(pass) {
+                llvm::SupportedPassKind::Function => fpm,
+                llvm::SupportedPassKind::Module => mpm,
+                llvm::SupportedPassKind::Unsupported => {
+                    cgcx.handler.err("Encountered LLVM pass kind we can't handle");
+                    return true
+                },
+            };
+            llvm::LLVMRustAddPass(pass_manager, pass);
+            true
         };
 
         if !config.no_verify { assert!(addpass("verify")); }
@@ -525,11 +535,21 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
         f(cpm);
     }
 
-    if config.emit_bc {
-        let ext = format!("{}.bc", name_extra);
-        let out = output_names.with_extension(&ext);
-        let out = path2cstr(&out);
-        llvm::LLVMWriteBitcodeToFile(llmod, out.as_ptr());
+    // Change what we write and cleanup based on whether obj files are
+    // just llvm bitcode. In that case write bitcode, and possibly
+    // delete the bitcode if it wasn't requested. Don't generate the
+    // machine code, instead copy the .o file from the .bc
+    let write_bc = config.emit_bc || config.obj_is_bitcode;
+    let rm_bc = !config.emit_bc && config.obj_is_bitcode;
+    let write_obj = config.emit_obj && !config.obj_is_bitcode;
+    let copy_bc_to_obj = config.emit_obj && config.obj_is_bitcode;
+
+    let bc_out = output_names.with_extension(&format!("{}.bc", name_extra));
+    let obj_out = output_names.with_extension(&format!("{}.o", name_extra));
+
+    if write_bc {
+        let bc_out_c = path2cstr(&bc_out);
+        llvm::LLVMWriteBitcodeToFile(llmod, bc_out_c.as_ptr());
     }
 
     time(config.time_passes, &format!("codegen passes [{}]", cgcx.worker), || {
@@ -563,13 +583,26 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
             }
         }
 
-        if config.emit_obj {
-            let path = output_names.with_extension(&format!("{}.o", name_extra));
+        if write_obj {
             with_codegen(tm, llmod, config.no_builtins, |cpm| {
-                write_output_file(cgcx.handler, tm, cpm, llmod, &path, llvm::ObjectFileType);
+                write_output_file(cgcx.handler, tm, cpm, llmod, &obj_out, llvm::ObjectFileType);
             });
         }
     });
+
+    if copy_bc_to_obj {
+        debug!("copying bitcode {:?} to obj {:?}", bc_out, obj_out);
+        if let Err(e) = fs::copy(&bc_out, &obj_out) {
+            cgcx.handler.err(&format!("failed to copy bitcode to object file: {}", e));
+        }
+    }
+
+    if rm_bc {
+        debug!("removing_bitcode {:?}", bc_out);
+        if let Err(e) = fs::remove_file(&bc_out) {
+            cgcx.handler.err(&format!("failed to remove bitcode: {}", e));
+        }
+    }
 
     llvm::LLVMDisposeModule(llmod);
     llvm::LLVMContextDispose(llcx);

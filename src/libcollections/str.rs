@@ -19,10 +19,6 @@
 // It's cleaner to just turn off the unused_imports warning than to fix them.
 #![allow(unused_imports)]
 
-use core::clone::Clone;
-use core::iter::{Iterator, Extend};
-use core::option::Option::{self, Some, None};
-use core::result::Result;
 use core::str as core_str;
 use core::str::pattern::Pattern;
 use core::str::pattern::{Searcher, ReverseSearcher, DoubleEndedSearcher};
@@ -116,17 +112,22 @@ impl<S: Borrow<str>> SliceConcatExt<str> for [S] {
     }
 }
 
+/// Deprecated, renamed to EncodeUtf16
+#[unstable(feature = "str_utf16", issue = "27714")]
+#[rustc_deprecated(since = "1.8.0", reason = "renamed to EncodeUtf16")]
+pub type Utf16Units<'a> = EncodeUtf16<'a>;
+
 /// External iterator for a string's UTF-16 code units.
 ///
 /// For use with the `std::iter` module.
 #[derive(Clone)]
-#[unstable(feature = "str_utf16", issue = "27714")]
-pub struct Utf16Units<'a> {
+#[stable(feature = "encode_utf16", since = "1.8.0")]
+pub struct EncodeUtf16<'a> {
     encoder: Utf16Encoder<Chars<'a>>,
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<'a> Iterator for Utf16Units<'a> {
+impl<'a> Iterator for EncodeUtf16<'a> {
     type Item = u16;
 
     #[inline]
@@ -271,8 +272,10 @@ impl str {
     /// Converts a string slice to a raw pointer.
     ///
     /// As string slices are a slice of bytes, the raw pointer points to a
-    /// `u8`. This pointer will be pointing to the first byte of the string
+    /// [`u8`]. This pointer will be pointing to the first byte of the string
     /// slice.
+    ///
+    /// [`u8`]: primitive.u8.html
     ///
     /// # Examples
     ///
@@ -665,7 +668,7 @@ impl str {
     /// assert_eq!(None, chars.next());
     /// ```
     ///
-    /// Remember, `char`s may not match your human intuition about characters:
+    /// Remember, [`char`]s may not match your human intuition about characters:
     ///
     /// ```
     /// let y = "y̆";
@@ -682,15 +685,17 @@ impl str {
     pub fn chars(&self) -> Chars {
         core_str::StrExt::chars(self)
     }
-    /// Returns an iterator over the `char`s of a string slice, and their
+    /// Returns an iterator over the [`char`]s of a string slice, and their
     /// positions.
     ///
     /// As a string slice consists of valid UTF-8, we can iterate through a
-    /// string slice by `char`. This method returns an iterator of both
-    /// these `char`s, as well as their byte positions.
+    /// string slice by [`char`]. This method returns an iterator of both
+    /// these [`char`]s, as well as their byte positions.
     ///
-    /// The iterator yields tuples. The position is first, the `char` is
+    /// The iterator yields tuples. The position is first, the [`char`] is
     /// second.
+    ///
+    /// [`char`]: primitive.char.html
     ///
     /// # Examples
     ///
@@ -715,7 +720,7 @@ impl str {
     /// assert_eq!(None, char_indices.next());
     /// ```
     ///
-    /// Remember, `char`s may not match your human intuition about characters:
+    /// Remember, [`char`]s may not match your human intuition about characters:
     ///
     /// ```
     /// let y = "y̆";
@@ -853,8 +858,16 @@ impl str {
     #[unstable(feature = "str_utf16",
                reason = "this functionality may only be provided by libunicode",
                issue = "27714")]
+    #[rustc_deprecated(since = "1.8.0", reason = "renamed to encode_utf16")]
+    #[allow(deprecated)]
     pub fn utf16_units(&self) -> Utf16Units {
         Utf16Units { encoder: Utf16Encoder::new(self[..].chars()) }
+    }
+
+    /// Returns an iterator of `u16` over the string encoded as UTF-16.
+    #[stable(feature = "encode_utf16", since = "1.8.0")]
+    pub fn encode_utf16(&self) -> EncodeUtf16 {
+        EncodeUtf16 { encoder: Utf16Encoder::new(self[..].chars()) }
     }
 
     /// Returns `true` if the given pattern matches a sub-slice of
@@ -922,12 +935,13 @@ impl str {
     /// Returns the byte index of the first character of this string slice that
     /// matches the pattern.
     ///
-    /// Returns `None` if the pattern doesn't match.
+    /// Returns [`None`] if the pattern doesn't match.
     ///
     /// The pattern can be a `&str`, [`char`], or a closure that determines if
     /// a character matches.
     ///
     /// [`char`]: primitive.char.html
+    /// [`None`]: option/enum.Option.html#variant.None
     ///
     /// # Examples
     ///
@@ -966,12 +980,13 @@ impl str {
     /// Returns the byte index of the last character of this string slice that
     /// matches the pattern.
     ///
-    /// Returns `None` if the pattern doesn't match.
+    /// Returns [`None`] if the pattern doesn't match.
     ///
     /// The pattern can be a `&str`, [`char`], or a closure that determines if
     /// a character matches.
     ///
     /// [`char`]: primitive.char.html
+    /// [`None`]: option/enum.Option.html#variant.None
     ///
     /// # Examples
     ///
@@ -1191,13 +1206,17 @@ impl str {
     /// An iterator over substrings of `self`, separated by characters
     /// matched by a pattern and yielded in reverse order.
     ///
-    /// The pattern can be a simple `&str`, `char`, or a closure that
+    /// The pattern can be a simple `&str`, [`char`], or a closure that
     /// determines the split.
     /// Additional libraries might provide more complex patterns like
     /// regular expressions.
     ///
-    /// Equivalent to `split`, except that the trailing substring is
+    /// [`char`]: primitive.char.html
+    ///
+    /// Equivalent to [`split()`], except that the trailing substring is
     /// skipped if empty.
+    ///
+    /// [`split()`]: #method.split
     ///
     /// This method can be used for string data that is _terminated_,
     /// rather than _separated_ by a pattern.
@@ -1461,7 +1480,7 @@ impl str {
     /// # Iterator behavior
     ///
     /// The returned iterator requires that the pattern supports a reverse
-    /// search, and it will be a `[DoubleEndedIterator]` if a forward/reverse
+    /// search, and it will be a [`DoubleEndedIterator`] if a forward/reverse
     /// search yields the same elements.
     ///
     /// [`DoubleEndedIterator`]: iter/trait.DoubleEndedIterator.html
@@ -1515,6 +1534,13 @@ impl str {
     /// 'Whitespace' is defined according to the terms of the Unicode Derived
     /// Core Property `White_Space`.
     ///
+    /// # Text directionality
+    ///
+    /// A string is a sequence of bytes. 'Left' in this context means the first
+    /// position of that byte string; for a language like Arabic or Hebrew
+    /// which are 'right to left' rather than 'left to right', this will be
+    /// the _right_ side, not the left.
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -1523,6 +1549,16 @@ impl str {
     /// let s = " Hello\tworld\t";
     ///
     /// assert_eq!("Hello\tworld\t", s.trim_left());
+    /// ```
+    ///
+    /// Directionality:
+    ///
+    /// ```
+    /// let s = "  English";
+    /// assert!(Some('E') == s.trim_left().chars().next());
+    ///
+    /// let s = "  עברית";
+    /// assert!(Some('ע') == s.trim_left().chars().next());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn trim_left(&self) -> &str {
@@ -1534,6 +1570,13 @@ impl str {
     /// 'Whitespace' is defined according to the terms of the Unicode Derived
     /// Core Property `White_Space`.
     ///
+    /// # Text directionality
+    ///
+    /// A string is a sequence of bytes. 'Right' in this context means the last
+    /// position of that byte string; for a language like Arabic or Hebrew
+    /// which are 'right to left' rather than 'left to right', this will be
+    /// the _left_ side, not the right.
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -1542,6 +1585,16 @@ impl str {
     /// let s = " Hello\tworld\t";
     ///
     /// assert_eq!(" Hello\tworld", s.trim_right());
+    /// ```
+    ///
+    /// Directionality:
+    ///
+    /// ```
+    /// let s = "English  ";
+    /// assert!(Some('h') == s.trim_right().chars().rev().next());
+    ///
+    /// let s = "עברית  ";
+    /// assert!(Some('ת') == s.trim_right().chars().rev().next());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn trim_right(&self) -> &str {
@@ -1588,6 +1641,13 @@ impl str {
     ///
     /// [`char`]: primitive.char.html
     ///
+    /// # Text directionality
+    ///
+    /// A string is a sequence of bytes. 'Left' in this context means the first
+    /// position of that byte string; for a language like Arabic or Hebrew
+    /// which are 'right to left' rather than 'left to right', this will be
+    /// the _right_ side, not the left.
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -1611,6 +1671,13 @@ impl str {
     /// determines if a character matches.
     ///
     /// [`char`]: primitive.char.html
+    ///
+    /// # Text directionality
+    ///
+    /// A string is a sequence of bytes. 'Right' in this context means the last
+    /// position of that byte string; for a language like Arabic or Hebrew
+    /// which are 'right to left' rather than 'left to right', this will be
+    /// the _left_ side, not the right.
     ///
     /// # Examples
     ///
@@ -1648,10 +1715,12 @@ impl str {
     ///
     /// [`FromStr`]: str/trait.FromStr.html
     ///
-    /// # Failure
+    /// # Errors
     ///
-    /// Will return `Err` if it's not possible to parse this string slice into
+    /// Will return [`Err`] if it's not possible to parse this string slice into
     /// the desired type.
+    ///
+    /// [`Err`]: str/trait.FromStr.html#associatedtype.Err
     ///
     /// # Example
     ///
@@ -1663,7 +1732,7 @@ impl str {
     /// assert_eq!(4, four);
     /// ```
     ///
-    /// Using the 'turbofish' instead of annotationg `four`:
+    /// Using the 'turbofish' instead of annotating `four`:
     ///
     /// ```
     /// let four = "4".parse::<u32>();
@@ -1721,10 +1790,12 @@ impl str {
         result
     }
 
-    /// Returns the lowercase equivalent of this string slice, as a new `String`.
+    /// Returns the lowercase equivalent of this string slice, as a new [`String`].
     ///
     /// 'Lowercase' is defined according to the terms of the Unicode Derived Core Property
     /// `Lowercase`.
+    ///
+    /// [`String`]: string/struct.String.html
     ///
     /// # Examples
     ///
@@ -1764,7 +1835,7 @@ impl str {
                 // Σ maps to σ, except at the end of a word where it maps to ς.
                 // This is the only conditional (contextual) but language-independent mapping
                 // in `SpecialCasing.txt`,
-                // so hard-code it rather than have a generic "condition" mechanim.
+                // so hard-code it rather than have a generic "condition" mechanism.
                 // See https://github.com/rust-lang/rust/issues/26035
                 map_uppercase_sigma(self, i, &mut s)
             } else {
@@ -1795,10 +1866,12 @@ impl str {
         }
     }
 
-    /// Returns the uppercase equivalent of this string slice, as a new `String`.
+    /// Returns the uppercase equivalent of this string slice, as a new [`String`].
     ///
     /// 'Uppercase' is defined according to the terms of the Unicode Derived Core Property
     /// `Uppercase`.
+    ///
+    /// [`String`]: string/struct.String.html
     ///
     /// # Examples
     ///
@@ -1840,7 +1913,9 @@ impl str {
         self.chars().flat_map(|c| c.escape_unicode()).collect()
     }
 
-    /// Converts a `Box<str>` into a `String` without copying or allocating.
+    /// Converts a `Box<str>` into a [`String`] without copying or allocating.
+    ///
+    /// [`String`]: string/struct.String.html
     ///
     /// # Examples
     ///

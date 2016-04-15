@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! A growable list type with heap-allocated contents, written `Vec<T>` but
-//! pronounced 'vector.'
+//! A contiguous growable array type with heap-allocated contents, written
+//! `Vec<T>` but pronounced 'vector.'
 //!
 //! Vectors have `O(1)` indexing, amortized `O(1)` push (to the end) and
 //! `O(1)` pop (from the end).
@@ -59,9 +59,10 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use alloc::raw_vec::RawVec;
 use alloc::boxed::Box;
 use alloc::heap::EMPTY;
+use alloc::raw_vec::RawVec;
+use borrow::ToOwned;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{self, Hash};
@@ -78,7 +79,7 @@ use borrow::{Cow, IntoCow};
 
 use super::range::RangeArgument;
 
-/// A growable list type, written `Vec<T>` but pronounced 'vector.'
+/// A contiguous growable array type, written `Vec<T>` but pronounced 'vector.'
 ///
 /// # Examples
 ///
@@ -133,6 +134,49 @@ use super::range::RangeArgument;
 ///     println!("{}", top);
 /// }
 /// ```
+///
+/// # Indexing
+///
+/// The Vec type allows to access values by index, because it implements the
+/// `Index` trait. An example will be more explicit:
+///
+/// ```
+/// let v = vec!(0, 2, 4, 6);
+/// println!("{}", v[1]); // it will display '2'
+/// ```
+///
+/// However be careful: if you try to access an index which isn't in the Vec,
+/// your software will panic! You cannot do this:
+///
+/// ```ignore
+/// let v = vec!(0, 2, 4, 6);
+/// println!("{}", v[6]); // it will panic!
+/// ```
+///
+/// In conclusion: always check if the index you want to get really exists
+/// before doing it.
+///
+/// # Slicing
+///
+/// A Vec can be mutable. Slices, on the other hand, are read-only objects.
+/// To get a slice, use "&". Example:
+///
+/// ```
+/// fn read_slice(slice: &[usize]) {
+///     // ...
+/// }
+///
+/// let v = vec!(0, 1);
+/// read_slice(&v);
+///
+/// // ... and that's all!
+/// // you can also do it like this:
+/// let x : &[usize] = &v;
+/// ```
+///
+/// In Rust, it's more common to pass slices as arguments rather than vectors
+/// when you just want to provide a read access. The same goes for String and
+/// &str.
 ///
 /// # Capacity and reallocation
 ///
@@ -528,7 +572,7 @@ impl<T> Vec<T> {
     }
 
     /// Inserts an element at position `index` within the vector, shifting all
-    /// elements after position `i` one position to the right.
+    /// elements after it to the right.
     ///
     /// # Panics
     ///
@@ -570,7 +614,7 @@ impl<T> Vec<T> {
     }
 
     /// Removes and returns the element at position `index` within the vector,
-    /// shifting all elements after position `index` one position to the left.
+    /// shifting all elements after it to the left.
     ///
     /// # Panics
     ///
@@ -1505,6 +1549,20 @@ impl<'a> From<&'a str> for Vec<u8> {
 // Clone-on-write
 ////////////////////////////////////////////////////////////////////////////////
 
+#[stable(feature = "cow_from_vec", since = "1.7.0")]
+impl<'a, T: Clone> From<&'a [T]> for Cow<'a, [T]> {
+    fn from(s: &'a [T]) -> Cow<'a, [T]> {
+        Cow::Borrowed(s)
+    }
+}
+
+#[stable(feature = "cow_from_vec", since = "1.7.0")]
+impl<'a, T: Clone> From<Vec<T>> for Cow<'a, [T]> {
+    fn from(v: Vec<T>) -> Cow<'a, [T]> {
+        Cow::Owned(v)
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> FromIterator<T> for Cow<'a, [T]> where T: Clone {
     fn from_iter<I: IntoIterator<Item = T>>(it: I) -> Cow<'a, [T]> {
@@ -1618,6 +1676,15 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ExactSizeIterator for IntoIter<T> {}
+
+#[stable(feature = "vec_into_iter_clone", since = "1.8.0")]
+impl<T: Clone> Clone for IntoIter<T> {
+    fn clone(&self) -> IntoIter<T> {
+        unsafe {
+            slice::from_raw_parts(self.ptr, self.len()).to_owned().into_iter()
+        }
+    }
+}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Drop for IntoIter<T> {

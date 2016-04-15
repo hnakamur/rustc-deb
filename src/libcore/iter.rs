@@ -189,7 +189,7 @@
 //! ```
 //! let values = vec![1, 2, 3, 4, 5];
 //! {
-//!     let result = match values.into_iter() {
+//!     let result = match IntoIterator::into_iter(values) {
 //!         mut iter => loop {
 //!             match iter.next() {
 //!                 Some(x) => { println!("{}", x); },
@@ -1050,6 +1050,30 @@ pub trait Iterator {
     /// // got a false, take_while() isn't used any more
     /// assert_eq!(iter.next(), None);
     /// ```
+    ///
+    /// Because `take_while()` needs to look at the value in order to see if it
+    /// should be included or not, consuming iterators will see that it is
+    /// removed:
+    ///
+    /// ```
+    /// let a = [1, 2, 3, 4];
+    /// let mut iter = a.into_iter();
+    ///
+    /// let result: Vec<i32> = iter.by_ref()
+    ///                            .take_while(|n| **n != 3)
+    ///                            .cloned()
+    ///                            .collect();
+    ///
+    /// assert_eq!(result, &[1, 2]);
+    ///
+    /// let result: Vec<i32> = iter.cloned().collect();
+    ///
+    /// assert_eq!(result, &[4]);
+    /// ```
+    ///
+    /// The `3` is no longer there, because it was consumed in order to see if
+    /// the iteration should stop, but wasn't placed back into the iterator or
+    /// some similar thing.
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn take_while<P>(self, predicate: P) -> TakeWhile<Self, P> where
@@ -1404,7 +1428,7 @@ pub trait Iterator {
     /// assert_eq!(6, doubled[2]);
     /// ```
     ///
-    /// Using the 'turbofish' instead of annotationg `doubled`:
+    /// Using the 'turbofish' instead of annotating `doubled`:
     ///
     /// ```
     /// let a = [1, 2, 3];
@@ -1586,7 +1610,7 @@ pub trait Iterator {
     /// `true`, then so does `all()`. If any of them return `false`, it
     /// returns `false`.
     ///
-    /// `all()` is short-circuting; in other words, it will stop processing
+    /// `all()` is short-circuiting; in other words, it will stop processing
     /// as soon as it finds a `false`, given that no matter what else happens,
     /// the result will also be `false`.
     ///
@@ -1636,7 +1660,7 @@ pub trait Iterator {
     /// `true`, then so does `any()`. If they all return `false`, it
     /// returns `false`.
     ///
-    /// `any()` is short-circuting; in other words, it will stop processing
+    /// `any()` is short-circuiting; in other words, it will stop processing
     /// as soon as it finds a `true`, given that no matter what else happens,
     /// the result will also be `true`.
     ///
@@ -1687,7 +1711,7 @@ pub trait Iterator {
     /// `true`, then `find()` returns `Some(element)`. If they all return
     /// `false`, it returns `None`.
     ///
-    /// `find()` is short-circuting; in other words, it will stop processing
+    /// `find()` is short-circuiting; in other words, it will stop processing
     /// as soon as the closure returns `true`.
     ///
     /// Because `find()` takes a reference, and many iterators iterate over
@@ -1738,7 +1762,7 @@ pub trait Iterator {
     /// returns `true`, then `position()` returns `Some(index)`. If all of
     /// them return `false`, it returns `None`.
     ///
-    /// `position()` is short-circuting; in other words, it will stop
+    /// `position()` is short-circuiting; in other words, it will stop
     /// processing as soon as it finds a `true`.
     ///
     /// # Overflow Behavior
@@ -1800,7 +1824,7 @@ pub trait Iterator {
     /// and if one of them returns `true`, then `rposition()` returns
     /// `Some(index)`. If all of them return `false`, it returns `None`.
     ///
-    /// `rposition()` is short-circuting; in other words, it will stop
+    /// `rposition()` is short-circuiting; in other words, it will stop
     /// processing as soon as it finds a `true`.
     ///
     /// # Examples
@@ -2055,7 +2079,7 @@ pub trait Iterator {
         (ts, us)
     }
 
-    /// Creates an iterator which clone()s all of its elements.
+    /// Creates an iterator which `clone()`s all of its elements.
     ///
     /// This is useful when you have an iterator over `&T`, but you need an
     /// iterator over `T`.
@@ -2740,7 +2764,13 @@ pub trait Extend<A> {
 /// It is important to note that both back and forth work on the same range,
 /// and do not cross: iteration is over when they meet in the middle.
 ///
+/// In a similar fashion to the [`Iterator`] protocol, once a
+/// `DoubleEndedIterator` returns `None` from a `next_back()`, calling it again
+/// may or may not ever return `Some` again. `next()` and `next_back()` are
+/// interchangable for this purpose.
+///
 /// [`Iterator`]: trait.Iterator.html
+///
 /// # Examples
 ///
 /// Basic usage:
@@ -2750,20 +2780,11 @@ pub trait Extend<A> {
 ///
 /// let mut iter = numbers.iter();
 ///
-/// let n = iter.next();
-/// assert_eq!(Some(&1), n);
-///
-/// let n = iter.next_back();
-/// assert_eq!(Some(&3), n);
-///
-/// let n = iter.next_back();
-/// assert_eq!(Some(&2), n);
-///
-/// let n = iter.next();
-/// assert_eq!(None, n);
-///
-/// let n = iter.next_back();
-/// assert_eq!(None, n);
+/// assert_eq!(Some(&1), iter.next());
+/// assert_eq!(Some(&3), iter.next_back());
+/// assert_eq!(Some(&2), iter.next_back());
+/// assert_eq!(None, iter.next());
+/// assert_eq!(None, iter.next_back());
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait DoubleEndedIterator: Iterator {
@@ -2783,20 +2804,11 @@ pub trait DoubleEndedIterator: Iterator {
     ///
     /// let mut iter = numbers.iter();
     ///
-    /// let n = iter.next();
-    /// assert_eq!(Some(&1), n);
-    ///
-    /// let n = iter.next_back();
-    /// assert_eq!(Some(&3), n);
-    ///
-    /// let n = iter.next_back();
-    /// assert_eq!(Some(&2), n);
-    ///
-    /// let n = iter.next();
-    /// assert_eq!(None, n);
-    ///
-    /// let n = iter.next_back();
-    /// assert_eq!(None, n);
+    /// assert_eq!(Some(&1), iter.next());
+    /// assert_eq!(Some(&3), iter.next_back());
+    /// assert_eq!(Some(&2), iter.next_back());
+    /// assert_eq!(None, iter.next());
+    /// assert_eq!(None, iter.next_back());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn next_back(&mut self) -> Option<Self::Item>;
@@ -3270,6 +3282,49 @@ impl<A, B> DoubleEndedIterator for Zip<A, B> where
 ///
 /// [`map()`]: trait.Iterator.html#method.map
 /// [`Iterator`]: trait.Iterator.html
+///
+/// # Notes about side effects
+///
+/// The [`map()`] iterator implements [`DoubleEndedIterator`], meaning that
+/// you can also [`map()`] backwards:
+///
+/// ```rust
+/// let v: Vec<i32> = vec![1, 2, 3].into_iter().rev().map(|x| x + 1).collect();
+///
+/// assert_eq!(v, [4, 3, 2]);
+/// ```
+///
+/// [`DoubleEndedIterator`]: trait.DoubleEndedIterator.html
+///
+/// But if your closure has state, iterating backwards may act in a way you do
+/// not expect. Let's go through an example. First, in the forward direction:
+///
+/// ```rust
+/// let mut c = 0;
+///
+/// for pair in vec!['a', 'b', 'c'].into_iter()
+///                                .map(|letter| { c += 1; (letter, c) }) {
+///     println!("{:?}", pair);
+/// }
+/// ```
+///
+/// This will print "('a', 1), ('b', 2), ('c', 3)".
+///
+/// Now consider this twist where we add a call to `rev`. This version will
+/// print `('c', 1), ('b', 2), ('a', 3)`. Note that the letters are reversed,
+/// but the values of the counter still go in order. This is because `map()` is
+/// still being called lazilly on each item, but we are popping items off the
+/// back of the vector now, instead of shifting them from the front.
+///
+/// ```rust
+/// let mut c = 0;
+///
+/// for pair in vec!['a', 'b', 'c'].into_iter()
+///                                .map(|letter| { c += 1; (letter, c) })
+///                                .rev() {
+///     println!("{:?}", pair);
+/// }
+/// ```
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Clone)]
@@ -4246,13 +4301,15 @@ impl<A: Step> RangeFrom<A> {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// for i in (0u8..).step_by(2) {
+    /// ```
+    /// # #![feature(step_by)]
+    ///
+    /// for i in (0u8..).step_by(2).take(10) {
     ///     println!("{}", i);
     /// }
     /// ```
     ///
-    /// This prints all even `u8` values.
+    /// This prints the first ten even natural integers (0 to 18).
     #[unstable(feature = "step_by", reason = "recent addition",
                issue = "27741")]
     pub fn step_by(self, by: A) -> StepBy<A, Self> {

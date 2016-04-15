@@ -10,6 +10,9 @@ pub type ino_t = u32;
 pub type blkcnt_t = i32;
 pub type blksize_t = i32;
 pub type nlink_t = u32;
+pub type fsblkcnt_t = ::c_ulong;
+pub type fsfilcnt_t = ::c_ulong;
+pub type rlim_t = c_ulong;
 
 s! {
     pub struct stat {
@@ -204,6 +207,8 @@ pub const O_DSYNC: ::c_int = 0x10;
 pub const O_FSYNC: ::c_int = 0x4010;
 pub const O_ASYNC: ::c_int = 0x1000;
 pub const O_NDELAY: ::c_int = 0x80;
+
+pub const SOCK_NONBLOCK: ::c_int = 128;
 
 pub const EDEADLK: ::c_int = 45;
 pub const ENAMETOOLONG: ::c_int = 78;
@@ -426,6 +431,8 @@ pub const EFD_NONBLOCK: ::c_int = 0x80;
 pub const F_GETLK: ::c_int = 14;
 pub const F_GETOWN: ::c_int = 23;
 pub const F_SETOWN: ::c_int = 24;
+pub const F_SETLK: ::c_int = 6;
+pub const F_SETLKW: ::c_int = 7;
 
 pub const SFD_NONBLOCK: ::c_int = 0x80;
 
@@ -461,6 +468,10 @@ pub const TIOCMSET: ::c_ulong = 0x741a;
 pub const FIONREAD: ::c_ulong = 0x467f;
 pub const TIOCCONS: ::c_ulong = 0x80047478;
 
+pub const RTLD_DEEPBIND: ::c_int = 0x10;
+pub const RTLD_GLOBAL: ::c_int = 0x4;
+pub const RTLD_NOLOAD: ::c_int = 0x8;
+
 extern {
     pub fn sysctl(name: *mut ::c_int,
                   namelen: ::c_int,
@@ -487,4 +498,10 @@ extern {
                        flags: ::c_int) -> ::c_int;
     pub fn eventfd(init: ::c_uint, flags: ::c_int) -> ::c_int;
     pub fn ptrace(request: ::c_uint, ...) -> ::c_long;
+    pub fn pthread_attr_getaffinity_np(attr: *const ::pthread_attr_t,
+                                       cpusetsize: ::size_t,
+                                       cpuset: *mut ::cpu_set_t) -> ::c_int;
+    pub fn pthread_attr_setaffinity_np(attr: *mut ::pthread_attr_t,
+                                       cpusetsize: ::size_t,
+                                       cpuset: *const ::cpu_set_t) -> ::c_int;
 }

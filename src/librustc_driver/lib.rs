@@ -21,6 +21,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(box_syntax)]
 #![feature(libc)]
@@ -62,8 +63,9 @@ use pretty::{PpMode, UserIdentifiedItem};
 use rustc_resolve as resolve;
 use rustc_trans::back::link;
 use rustc_trans::save;
-use rustc::session::{config, Session, build_session};
+use rustc::session::{config, Session, build_session, CompileResult};
 use rustc::session::config::{Input, PrintRequest, OutputType, ErrorOutputType};
+use rustc::session::config::{get_unstable_features_setting, OptionStability};
 use rustc::middle::cstore::CrateStore;
 use rustc::lint::Lint;
 use rustc::lint;
@@ -84,7 +86,7 @@ use std::str;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use rustc::session::early_error;
+use rustc::session::{early_error, early_warn};
 
 use syntax::ast;
 use syntax::parse;
@@ -92,6 +94,7 @@ use syntax::errors;
 use syntax::errors::emitter::Emitter;
 use syntax::diagnostics;
 use syntax::parse::token;
+use syntax::feature_gate::UnstableFeatures;
 
 #[cfg(test)]
 pub mod test;
@@ -104,49 +107,87 @@ pub mod target_features;
 const BUG_REPORT_URL: &'static str = "https://github.com/rust-lang/rust/blob/master/CONTRIBUTING.\
                                       md#bug-reports";
 
+#[inline]
+fn abort_msg(err_count: usize) -> String {
+    match err_count {
+        0 => "aborting with no errors (maybe a bug?)".to_owned(),
+        1 => "aborting due to previous error".to_owned(),
+        e => format!("aborting due to {} previous errors", e),
+    }
+}
+
+pub fn abort_on_err<T>(result: Result<T, usize>, sess: &Session) -> T {
+    match result {
+        Err(err_count) => {
+            sess.fatal(&abort_msg(err_count));
+        }
+        Ok(x) => x,
+    }
+}
+
 pub fn run(args: Vec<String>) -> isize {
-    monitor(move || run_compiler(&args, &mut RustcDefaultCalls));
+    monitor(move || {
+        let (result, session) = run_compiler(&args, &mut RustcDefaultCalls);
+        if let Err(err_count) = result {
+            if err_count > 0 {
+                match session {
+                    Some(sess) => sess.fatal(&abort_msg(err_count)),
+                    None => {
+                        let mut emitter =
+                            errors::emitter::BasicEmitter::stderr(errors::ColorConfig::Auto);
+                        emitter.emit(None, &abort_msg(err_count), None, errors::Level::Fatal);
+                        exit_on_err();
+                    }
+                }
+            }
+        }
+    });
     0
 }
 
 // Parse args and run the compiler. This is the primary entry point for rustc.
 // See comments on CompilerCalls below for details about the callbacks argument.
-pub fn run_compiler<'a>(args: &[String], callbacks: &mut CompilerCalls<'a>) {
-    macro_rules! do_or_return {($expr: expr) => {
+pub fn run_compiler<'a>(args: &[String],
+                        callbacks: &mut CompilerCalls<'a>)
+                        -> (CompileResult, Option<Session>) {
+    macro_rules! do_or_return {($expr: expr, $sess: expr) => {
         match $expr {
-            Compilation::Stop => return,
+            Compilation::Stop => return (Ok(()), $sess),
             Compilation::Continue => {}
         }
     }}
 
     let matches = match handle_options(args.to_vec()) {
         Some(matches) => matches,
-        None => return,
+        None => return (Ok(()), None),
     };
 
     let sopts = config::build_session_options(&matches);
 
     let descriptions = diagnostics_registry();
 
-    do_or_return!(callbacks.early_callback(&matches, &descriptions, sopts.error_format));
+    do_or_return!(callbacks.early_callback(&matches,
+                                           &sopts,
+                                           &descriptions,
+                                           sopts.error_format),
+                                           None);
 
     let (odir, ofile) = make_output(&matches);
     let (input, input_file_path) = match make_input(&matches.free) {
         Some((input, input_file_path)) => callbacks.some_input(input, input_file_path),
         None => match callbacks.no_input(&matches, &sopts, &odir, &ofile, &descriptions) {
             Some((input, input_file_path)) => (input, input_file_path),
-            None => return,
+            None => return (Ok(()), None),
         },
     };
 
     let cstore = Rc::new(CStore::new(token::get_ident_interner()));
-    let sess = build_session(sopts, input_file_path, descriptions,
-                                 cstore.clone());
+    let sess = build_session(sopts, input_file_path, descriptions, cstore.clone());
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
     let mut cfg = config::build_configuration(&sess);
     target_features::add_configuration(&mut cfg, &sess);
 
-    do_or_return!(callbacks.late_callback(&matches, &sess, &input, &odir, &ofile));
+    do_or_return!(callbacks.late_callback(&matches, &sess, &input, &odir, &ofile), Some(sess));
 
     // It is somewhat unfortunate that this is hardwired in - this is forced by
     // the fact that pretty_print_input requires the session by value.
@@ -154,7 +195,7 @@ pub fn run_compiler<'a>(args: &[String], callbacks: &mut CompilerCalls<'a>) {
     match pretty {
         Some((ppm, opt_uii)) => {
             pretty::pretty_print_input(sess, &cstore, cfg, &input, ppm, opt_uii, ofile);
-            return;
+            return (Ok(()), None);
         }
         None => {
             // continue
@@ -163,8 +204,9 @@ pub fn run_compiler<'a>(args: &[String], callbacks: &mut CompilerCalls<'a>) {
 
     let plugins = sess.opts.debugging_opts.extra_plugins.clone();
     let control = callbacks.build_controller(&sess);
-    driver::compile_input(sess, &cstore, cfg, &input, &odir, &ofile,
-                          Some(plugins), control);
+    (driver::compile_input(&sess, &cstore, cfg, &input, &odir, &ofile,
+                           Some(plugins), &control),
+     Some(sess))
 }
 
 // Extract output directory and file from matches.
@@ -215,6 +257,7 @@ pub trait CompilerCalls<'a> {
     // else (e.g., selecting input and output).
     fn early_callback(&mut self,
                       _: &getopts::Matches,
+                      _: &config::Options,
                       _: &diagnostics::registry::Registry,
                       _: ErrorOutputType)
                       -> Compilation {
@@ -288,34 +331,68 @@ pub trait CompilerCalls<'a> {
 #[derive(Copy, Clone)]
 pub struct RustcDefaultCalls;
 
+fn handle_explain(code: &str,
+                  descriptions: &diagnostics::registry::Registry,
+                  output: ErrorOutputType) {
+    let normalised = if !code.starts_with("E") {
+        format!("E{0:0>4}", code)
+    } else {
+        code.to_string()
+    };
+    match descriptions.find_description(&normalised) {
+        Some(ref description) => {
+            // Slice off the leading newline and print.
+            print!("{}", &description[1..]);
+        }
+        None => {
+            early_error(output, &format!("no extended information for {}", code));
+        }
+    }
+}
+
+fn check_cfg(sopts: &config::Options,
+             output: ErrorOutputType) {
+    let mut emitter: Box<Emitter> = match output {
+        config::ErrorOutputType::HumanReadable(color_config) => {
+            Box::new(errors::emitter::BasicEmitter::stderr(color_config))
+        }
+        config::ErrorOutputType::Json => Box::new(errors::json::JsonEmitter::basic()),
+    };
+
+    let mut saw_invalid_predicate = false;
+    for item in sopts.cfg.iter() {
+        match item.node {
+            ast::MetaItemKind::List(ref pred, _) => {
+                saw_invalid_predicate = true;
+                emitter.emit(None,
+                             &format!("invalid predicate in --cfg command line argument: `{}`",
+                                      pred),
+                             None,
+                             errors::Level::Fatal);
+            }
+            _ => {},
+        }
+    }
+
+    if saw_invalid_predicate {
+        panic!(errors::FatalError);
+    }
+}
+
 impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
     fn early_callback(&mut self,
                       matches: &getopts::Matches,
+                      sopts: &config::Options,
                       descriptions: &diagnostics::registry::Registry,
                       output: ErrorOutputType)
                       -> Compilation {
-        match matches.opt_str("explain") {
-            Some(ref code) => {
-                let normalised = if !code.starts_with("E") {
-                    format!("E{0:0>4}", code)
-                } else {
-                    code.to_string()
-                };
-                match descriptions.find_description(&normalised) {
-                    Some(ref description) => {
-                        // Slice off the leading newline and print.
-                        print!("{}", &description[1..]);
-                    }
-                    None => {
-                        early_error(output, &format!("no extended information for {}", code));
-                    }
-                }
-                return Compilation::Stop;
-            }
-            None => (),
+        if let Some(ref code) = matches.opt_str("explain") {
+            handle_explain(code, descriptions, output);
+            return Compilation::Stop;
         }
 
-        return Compilation::Continue;
+        check_cfg(sopts, output);
+        Compilation::Continue
     }
 
     fn no_input(&mut self,
@@ -414,6 +491,7 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                                         state.out_dir)
                 });
             };
+            control.after_analysis.run_callback_on_error = true;
             control.make_glob_map = resolve::MakeGlobMap::Yes;
         }
 
@@ -456,6 +534,11 @@ impl RustcDefaultCalls {
         let attrs = input.map(|input| parse_crate_attrs(sess, input));
         for req in &sess.opts.prints {
             match *req {
+                PrintRequest::TargetList => {
+                    let mut targets = rustc_back::target::TARGETS.to_vec();
+                    targets.sort();
+                    println!("{}", targets.join("\n"));
+                },
                 PrintRequest::Sysroot => println!("{}", sess.sysroot().display()),
                 PrintRequest::FileNames |
                 PrintRequest::CrateName => {
@@ -479,6 +562,25 @@ impl RustcDefaultCalls {
                                  fname.file_name()
                                       .unwrap()
                                       .to_string_lossy());
+                    }
+                }
+                PrintRequest::Cfg => {
+                    for cfg in config::build_configuration(sess) {
+                        match cfg.node {
+                            ast::MetaItemKind::Word(ref word) => println!("{}", word),
+                            ast::MetaItemKind::NameValue(ref name, ref value) => {
+                                println!("{}=\"{}\"", name, match value.node {
+                                    ast::LitKind::Str(ref s, _) => s,
+                                    _ => continue,
+                                });
+                            }
+                            // Right now there are not and should not be any
+                            // MetaItemKind::List items in the configuration returned by
+                            // `build_configuration`.
+                            ast::MetaItemKind::List(..) => {
+                                panic!("MetaItemKind::List encountered in default cfg")
+                            }
+                        }
                     }
                 }
             }
@@ -719,8 +821,31 @@ fn print_flag_list<T>(cmdline_opt: &str,
 }
 
 /// Process command line options. Emits messages as appropriate. If compilation
-/// should continue, returns a getopts::Matches object parsed from args, otherwise
-/// returns None.
+/// should continue, returns a getopts::Matches object parsed from args,
+/// otherwise returns None.
+///
+/// The compiler's handling of options is a little complication as it ties into
+/// our stability story, and it's even *more* complicated by historical
+/// accidents. The current intention of each compiler option is to have one of
+/// three modes:
+///
+/// 1. An option is stable and can be used everywhere.
+/// 2. An option is unstable, but was historically allowed on the stable
+///    channel.
+/// 3. An option is unstable, and can only be used on nightly.
+///
+/// Like unstable library and language features, however, unstable options have
+/// always required a form of "opt in" to indicate that you're using them. This
+/// provides the easy ability to scan a code base to check to see if anything
+/// unstable is being used. Currently, this "opt in" is the `-Z` "zed" flag.
+///
+/// All options behind `-Z` are considered unstable by default. Other top-level
+/// options can also be considered unstable, and they were unlocked through the
+/// `-Z unstable-options` flag. Note that `-Z` remains to be the root of
+/// instability in both cases, though.
+///
+/// So with all that in mind, the comments below have some more detail about the
+/// contortions done here to get things to work out correctly.
 pub fn handle_options(mut args: Vec<String>) -> Option<getopts::Matches> {
     // Throw away the first argument, the name of the binary
     let _binary = args.remove(0);
@@ -732,62 +857,83 @@ pub fn handle_options(mut args: Vec<String>) -> Option<getopts::Matches> {
         return None;
     }
 
-    fn allows_unstable_options(matches: &getopts::Matches) -> bool {
-        let r = matches.opt_strs("Z");
-        r.iter().any(|x| *x == "unstable-options")
-    }
-
-    fn parse_all_options(args: &Vec<String>) -> getopts::Matches {
-        let all_groups: Vec<getopts::OptGroup> = config::rustc_optgroups()
-                                                     .into_iter()
-                                                     .map(|x| x.opt_group)
-                                                     .collect();
-        match getopts::getopts(&args[..], &all_groups) {
-            Ok(m) => {
-                if !allows_unstable_options(&m) {
-                    // If -Z unstable-options was not specified, verify that
-                    // no unstable options were present.
-                    for opt in config::rustc_optgroups().into_iter().filter(|x| !x.is_stable()) {
-                        let opt_name = if !opt.opt_group.long_name.is_empty() {
-                            &opt.opt_group.long_name
-                        } else {
-                            &opt.opt_group.short_name
-                        };
-                        if m.opt_present(opt_name) {
-                            early_error(ErrorOutputType::default(),
-                                        &format!("use of unstable option '{}' requires -Z \
-                                                  unstable-options",
-                                                 opt_name));
-                        }
-                    }
-                }
-                m
-            }
-            Err(f) => early_error(ErrorOutputType::default(), &f.to_string()),
-        }
-    }
-
-    // As a speed optimization, first try to parse the command-line using just
-    // the stable options.
-    let matches = match getopts::getopts(&args[..], &config::optgroups()) {
-        Ok(ref m) if allows_unstable_options(m) => {
-            // If -Z unstable-options was specified, redo parsing with the
-            // unstable options to ensure that unstable options are defined
-            // in the returned getopts::Matches.
-            parse_all_options(&args)
-        }
+    // Parse with *all* options defined in the compiler, we don't worry about
+    // option stability here we just want to parse as much as possible.
+    let all_groups: Vec<getopts::OptGroup> = config::rustc_optgroups()
+                                                 .into_iter()
+                                                 .map(|x| x.opt_group)
+                                                 .collect();
+    let matches = match getopts::getopts(&args[..], &all_groups) {
         Ok(m) => m,
-        Err(_) => {
-            // redo option parsing, including unstable options this time,
-            // in anticipation that the mishandled option was one of the
-            // unstable ones.
-            parse_all_options(&args)
-        }
+        Err(f) => early_error(ErrorOutputType::default(), &f.to_string()),
     };
 
+    // For all options we just parsed, we check a few aspects:
+    //
+    // * If the option is stable, we're all good
+    // * If the option wasn't passed, we're all good
+    // * If `-Z unstable-options` wasn't passed (and we're not a -Z option
+    //   ourselves), then we require the `-Z unstable-options` flag to unlock
+    //   this option that was passed.
+    // * If we're a nightly compiler, then unstable options are now unlocked, so
+    //   we're good to go.
+    // * Otherwise, if we're a truly unstable option then we generate an error
+    //   (unstable option being used on stable)
+    // * If we're a historically stable-but-should-be-unstable option then we
+    //   emit a warning that we're going to turn this into an error soon.
+    let has_z_unstable_options = matches.opt_strs("Z")
+                                        .iter()
+                                        .any(|x| *x == "unstable-options");
+    let really_allows_unstable_options = match get_unstable_features_setting() {
+        UnstableFeatures::Disallow => false,
+        _ => true,
+    };
+    for opt in config::rustc_optgroups() {
+        if opt.stability == OptionStability::Stable {
+            continue
+        }
+        let opt_name = if !opt.opt_group.long_name.is_empty() {
+            &opt.opt_group.long_name
+        } else {
+            &opt.opt_group.short_name
+        };
+        if !matches.opt_present(opt_name) {
+            continue
+        }
+        if opt_name != "Z" && !has_z_unstable_options {
+            let msg = format!("the `-Z unstable-options` flag must also be \
+                               passed to enable the flag `{}`", opt_name);
+            early_error(ErrorOutputType::default(), &msg);
+        }
+        if really_allows_unstable_options {
+            continue
+        }
+        match opt.stability {
+            OptionStability::Unstable => {
+                let msg = format!("the option `{}` is only accepted on the \
+                                   nightly compiler", opt_name);
+                early_error(ErrorOutputType::default(), &msg);
+            }
+            OptionStability::UnstableButNotReally => {
+                let msg = format!("the option `{}` is is unstable and should \
+                                   only be used on the nightly compiler, but \
+                                   it is currently accepted for backwards \
+                                   compatibility; this will soon change, \
+                                   see issue #31847 for more details",
+                                  opt_name);
+                early_warn(ErrorOutputType::default(), &msg);
+            }
+            OptionStability::Stable => {}
+        }
+    }
+
     if matches.opt_present("h") || matches.opt_present("help") {
+        // Only show unstable options in --help if we *really* accept unstable
+        // options, which catches the case where we got `-Z unstable-options` on
+        // the stable channel of Rust which was accidentally allowed
+        // historically.
         usage(matches.opt_present("verbose"),
-              allows_unstable_options(&matches));
+              has_z_unstable_options && really_allows_unstable_options);
         return None;
     }
 
@@ -899,13 +1045,17 @@ pub fn monitor<F: FnOnce() + Send + 'static>(f: F) {
                 println!("{}", str::from_utf8(&data.lock().unwrap()).unwrap());
             }
 
-            // Panic so the process returns a failure code, but don't pollute the
-            // output with some unnecessary panic messages, we've already
-            // printed everything that we needed to.
-            io::set_panic(box io::sink());
-            panic!();
+            exit_on_err();
         }
     }
+}
+
+fn exit_on_err() -> ! {
+    // Panic so the process returns a failure code, but don't pollute the
+    // output with some unnecessary panic messages, we've already
+    // printed everything that we needed to.
+    io::set_panic(box io::sink());
+    panic!();
 }
 
 pub fn diagnostics_registry() -> diagnostics::registry::Registry {
@@ -919,7 +1069,7 @@ pub fn diagnostics_registry() -> diagnostics::registry::Registry {
     all_errors.extend_from_slice(&rustc_privacy::DIAGNOSTICS);
     all_errors.extend_from_slice(&rustc_trans::DIAGNOSTICS);
 
-    Registry::new(&*all_errors)
+    Registry::new(&all_errors)
 }
 
 pub fn main() {

@@ -12,8 +12,6 @@
 
 // aux-build:empty-struct.rs
 
-#![feature(braced_empty_structs)]
-
 extern crate empty_struct;
 use empty_struct::*;
 
@@ -29,9 +27,8 @@ fn main() {
     let e3 = E::Empty3; //~ ERROR `E::Empty3` is the name of a struct or struct variant
     let e3 = E::Empty3(); //~ ERROR `E::Empty3` is the name of a struct or struct variant
 
-    // FIXME: non-local struct kind should be known early (e.g. kept in `DefStruct`)
-    // let xe1 = XEmpty1; // ERROR `XEmpty1` is the name of a struct or struct variant
-    let xe1 = XEmpty1(); //~ ERROR expected function, found `empty_struct::XEmpty1`
+    let xe1 = XEmpty1; //~ ERROR `XEmpty1` is the name of a struct or struct variant
+    let xe1 = XEmpty1(); //~ ERROR `XEmpty1` is the name of a struct or struct variant
     let xe3 = XE::Empty3; //~ ERROR no associated item named `Empty3` found for type
     let xe3 = XE::Empty3(); //~ ERROR no associated item named `Empty3` found for type
 }

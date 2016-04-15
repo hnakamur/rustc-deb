@@ -28,6 +28,7 @@ use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::errors::{ColorConfig, Handler};
 use syntax::parse;
+use syntax::parse::lexer::Reader;
 use syntax::parse::token::InternedString;
 use syntax::feature_gate::UnstableFeatures;
 
@@ -137,8 +138,15 @@ pub struct Options {
     pub no_trans: bool,
     pub error_format: ErrorOutputType,
     pub treat_err_as_bug: bool,
-    pub incremental_compilation: bool,
+    pub continue_parse_after_error: bool,
+    pub mir_opt_level: usize,
+
+    /// if true, build up the dep-graph
+    pub build_dep_graph: bool,
+
+    /// if true, -Z dump-dep-graph was passed to dump out the dep-graph
     pub dump_dep_graph: bool,
+
     pub no_analysis: bool,
     pub debugging_opts: DebuggingOptions,
     pub prints: Vec<PrintRequest>,
@@ -158,6 +166,8 @@ pub enum PrintRequest {
     FileNames,
     Sysroot,
     CrateName,
+    Cfg,
+    TargetList,
 }
 
 pub enum Input {
@@ -246,7 +256,9 @@ pub fn basic_options() -> Options {
         parse_only: false,
         no_trans: false,
         treat_err_as_bug: false,
-        incremental_compilation: false,
+        continue_parse_after_error: false,
+        mir_opt_level: 1,
+        build_dep_graph: false,
         dump_dep_graph: false,
         no_analysis: false,
         debugging_opts: basic_debugging_options(),
@@ -501,6 +513,8 @@ options! {CodegenOptions, CodegenSetter, basic_codegen_options,
         "system linker to link outputs with"),
     link_args: Option<Vec<String>> = (None, parse_opt_list,
         "extra arguments to pass to the linker (space separated)"),
+    link_dead_code: bool = (false, parse_bool,
+        "don't let linker strip dead code (turning it on can be used for code coverage)"),
     lto: bool = (false, parse_bool,
         "perform LLVM link-time optimizations"),
     target_cpu: Option<String> = (None, parse_opt_string,
@@ -617,6 +631,8 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "run all passes except translation; no output"),
     treat_err_as_bug: bool = (false, parse_bool,
           "treat all errors that occur as bugs"),
+    continue_parse_after_error: bool = (false, parse_bool,
+          "attempt to recover from parse errors (experimental)"),
     incr_comp: bool = (false, parse_bool,
           "enable incremental compilation (experimental)"),
     dump_dep_graph: bool = (false, parse_bool,
@@ -643,6 +659,10 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "keep the AST after lowering it to HIR"),
     show_span: Option<String> = (None, parse_opt_string,
           "show spans for compiler debugging (expr|pat|ty)"),
+    print_trans_items: Option<String> = (None, parse_opt_string,
+          "print the result of the translation item collection pass"),
+    mir_opt_level: Option<usize> = (None, parse_opt_uint,
+          "set the MIR optimization level (0-3)"),
 }
 
 pub fn default_lib_output() -> CrateType {
@@ -720,8 +740,8 @@ pub fn build_target_config(opts: &Options, sp: &Handler) -> Config {
     };
 
     let (int_type, uint_type) = match &target.target_pointer_width[..] {
-        "32" => (ast::TyI32, ast::TyU32),
-        "64" => (ast::TyI64, ast::TyU64),
+        "32" => (ast::IntTy::I32, ast::UintTy::U32),
+        "64" => (ast::IntTy::I64, ast::UintTy::U64),
         w    => panic!(sp.fatal(&format!("target specification was invalid: \
                                           unrecognized target-pointer-width {}", w))),
     };
@@ -733,24 +753,20 @@ pub fn build_target_config(opts: &Options, sp: &Handler) -> Config {
     }
 }
 
-/// Returns the "short" subset of the stable rustc command line options.
-pub fn short_optgroups() -> Vec<getopts::OptGroup> {
-    rustc_short_optgroups().into_iter()
-        .filter(|g|g.is_stable())
-        .map(|g|g.opt_group)
-        .collect()
-}
-
-/// Returns all of the stable rustc command line options.
-pub fn optgroups() -> Vec<getopts::OptGroup> {
-    rustc_optgroups().into_iter()
-        .filter(|g|g.is_stable())
-        .map(|g|g.opt_group)
-        .collect()
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum OptionStability { Stable, Unstable }
+pub enum OptionStability {
+    Stable,
+
+    // FIXME: historically there were some options which were either `-Z` or
+    //        required the `-Z unstable-options` flag, which were all intended
+    //        to be unstable. Unfortunately we didn't actually gate usage of
+    //        these options on the stable compiler, so we still allow them there
+    //        today. There are some warnings printed out about this in the
+    //        driver.
+    UnstableButNotReally,
+
+    Unstable,
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct RustcOptGroup {
@@ -767,8 +783,16 @@ impl RustcOptGroup {
         RustcOptGroup { opt_group: g, stability: OptionStability::Stable }
     }
 
+    #[allow(dead_code)] // currently we have no "truly unstable" options
     fn unstable(g: getopts::OptGroup) -> RustcOptGroup {
         RustcOptGroup { opt_group: g, stability: OptionStability::Unstable }
+    }
+
+    fn unstable_bnr(g: getopts::OptGroup) -> RustcOptGroup {
+        RustcOptGroup {
+            opt_group: g,
+            stability: OptionStability::UnstableButNotReally,
+        }
     }
 }
 
@@ -791,24 +815,57 @@ mod opt {
 
     fn stable(g: getopts::OptGroup) -> R { RustcOptGroup::stable(g) }
     fn unstable(g: getopts::OptGroup) -> R { RustcOptGroup::unstable(g) }
+    fn unstable_bnr(g: getopts::OptGroup) -> R { RustcOptGroup::unstable_bnr(g) }
 
-    // FIXME (pnkfelix): We default to stable since the current set of
-    // options is defacto stable.  However, it would be good to revise the
-    // code so that a stable option is the thing that takes extra effort
-    // to encode.
+    pub fn opt_s(a: S, b: S, c: S, d: S) -> R {
+        stable(getopts::optopt(a, b, c, d))
+    }
+    pub fn multi_s(a: S, b: S, c: S, d: S) -> R {
+        stable(getopts::optmulti(a, b, c, d))
+    }
+    pub fn flag_s(a: S, b: S, c: S) -> R {
+        stable(getopts::optflag(a, b, c))
+    }
+    pub fn flagopt_s(a: S, b: S, c: S, d: S) -> R {
+        stable(getopts::optflagopt(a, b, c, d))
+    }
+    pub fn flagmulti_s(a: S, b: S, c: S) -> R {
+        stable(getopts::optflagmulti(a, b, c))
+    }
 
-    pub fn     opt(a: S, b: S, c: S, d: S) -> R { stable(getopts::optopt(a, b, c, d)) }
-    pub fn   multi(a: S, b: S, c: S, d: S) -> R { stable(getopts::optmulti(a, b, c, d)) }
-    pub fn    flag(a: S, b: S, c: S)       -> R { stable(getopts::optflag(a, b, c)) }
-    pub fn flagopt(a: S, b: S, c: S, d: S) -> R { stable(getopts::optflagopt(a, b, c, d)) }
-    pub fn flagmulti(a: S, b: S, c: S)     -> R { stable(getopts::optflagmulti(a, b, c)) }
+    pub fn opt(a: S, b: S, c: S, d: S) -> R {
+        unstable(getopts::optopt(a, b, c, d))
+    }
+    pub fn multi(a: S, b: S, c: S, d: S) -> R {
+        unstable(getopts::optmulti(a, b, c, d))
+    }
+    pub fn flag(a: S, b: S, c: S) -> R {
+        unstable(getopts::optflag(a, b, c))
+    }
+    pub fn flagopt(a: S, b: S, c: S, d: S) -> R {
+        unstable(getopts::optflagopt(a, b, c, d))
+    }
+    pub fn flagmulti(a: S, b: S, c: S) -> R {
+        unstable(getopts::optflagmulti(a, b, c))
+    }
 
-
-    pub fn     opt_u(a: S, b: S, c: S, d: S) -> R { unstable(getopts::optopt(a, b, c, d)) }
-    pub fn   multi_u(a: S, b: S, c: S, d: S) -> R { unstable(getopts::optmulti(a, b, c, d)) }
-    pub fn    flag_u(a: S, b: S, c: S)       -> R { unstable(getopts::optflag(a, b, c)) }
-    pub fn flagopt_u(a: S, b: S, c: S, d: S) -> R { unstable(getopts::optflagopt(a, b, c, d)) }
-    pub fn flagmulti_u(a: S, b: S, c: S)     -> R { unstable(getopts::optflagmulti(a, b, c)) }
+    // Do not use these functions for any new options added to the compiler, all
+    // new options should use the `*_u` variants above to be truly unstable.
+    pub fn opt_ubnr(a: S, b: S, c: S, d: S) -> R {
+        unstable_bnr(getopts::optopt(a, b, c, d))
+    }
+    pub fn multi_ubnr(a: S, b: S, c: S, d: S) -> R {
+        unstable_bnr(getopts::optmulti(a, b, c, d))
+    }
+    pub fn flag_ubnr(a: S, b: S, c: S) -> R {
+        unstable_bnr(getopts::optflag(a, b, c))
+    }
+    pub fn flagopt_ubnr(a: S, b: S, c: S, d: S) -> R {
+        unstable_bnr(getopts::optflagopt(a, b, c, d))
+    }
+    pub fn flagmulti_ubnr(a: S, b: S, c: S) -> R {
+        unstable_bnr(getopts::optflagmulti(a, b, c))
+    }
 }
 
 /// Returns the "short" subset of the rustc command line options,
@@ -816,48 +873,44 @@ mod opt {
 /// part of the stable long-term interface for rustc.
 pub fn rustc_short_optgroups() -> Vec<RustcOptGroup> {
     vec![
-        opt::flag("h", "help", "Display this message"),
-        opt::multi("", "cfg", "Configure the compilation environment", "SPEC"),
-        opt::multi("L", "",   "Add a directory to the library search path",
+        opt::flag_s("h", "help", "Display this message"),
+        opt::multi_s("", "cfg", "Configure the compilation environment", "SPEC"),
+        opt::multi_s("L", "",   "Add a directory to the library search path",
                    "[KIND=]PATH"),
-        opt::multi("l", "",   "Link the generated crate(s) to the specified native
+        opt::multi_s("l", "",   "Link the generated crate(s) to the specified native
                              library NAME. The optional KIND can be one of,
                              static, dylib, or framework. If omitted, dylib is
                              assumed.", "[KIND=]NAME"),
-        opt::multi("", "crate-type", "Comma separated list of types of crates
+        opt::multi_s("", "crate-type", "Comma separated list of types of crates
                                     for the compiler to emit",
                    "[bin|lib|rlib|dylib|staticlib]"),
-        opt::opt("", "crate-name", "Specify the name of the crate being built",
+        opt::opt_s("", "crate-name", "Specify the name of the crate being built",
                "NAME"),
-        opt::multi("", "emit", "Comma separated list of types of output for \
+        opt::multi_s("", "emit", "Comma separated list of types of output for \
                               the compiler to emit",
                  "[asm|llvm-bc|llvm-ir|obj|link|dep-info]"),
-        opt::multi("", "print", "Comma separated list of compiler information to \
+        opt::multi_s("", "print", "Comma separated list of compiler information to \
                                print on stdout",
-                 "[crate-name|file-names|sysroot]"),
-        opt::flagmulti("g",  "",  "Equivalent to -C debuginfo=2"),
-        opt::flagmulti("O", "", "Equivalent to -C opt-level=2"),
-        opt::opt("o", "", "Write output to <filename>", "FILENAME"),
-        opt::opt("",  "out-dir", "Write output to compiler-chosen filename \
+                 "[crate-name|file-names|sysroot|target-list]"),
+        opt::flagmulti_s("g",  "",  "Equivalent to -C debuginfo=2"),
+        opt::flagmulti_s("O", "", "Equivalent to -C opt-level=2"),
+        opt::opt_s("o", "", "Write output to <filename>", "FILENAME"),
+        opt::opt_s("",  "out-dir", "Write output to compiler-chosen filename \
                                 in <dir>", "DIR"),
-        opt::opt("", "explain", "Provide a detailed explanation of an error \
+        opt::opt_s("", "explain", "Provide a detailed explanation of an error \
                                message", "OPT"),
-        opt::flag("", "test", "Build a test harness"),
-        opt::opt("", "target", "Target triple cpu-manufacturer-kernel[-os] \
-                              to compile for (see chapter 3.4 of \
-                              http://www.sourceware.org/autobook/
-                              for details)",
-               "TRIPLE"),
-        opt::multi("W", "warn", "Set lint warnings", "OPT"),
-        opt::multi("A", "allow", "Set lint allowed", "OPT"),
-        opt::multi("D", "deny", "Set lint denied", "OPT"),
-        opt::multi("F", "forbid", "Set lint forbidden", "OPT"),
-        opt::multi("", "cap-lints", "Set the most restrictive lint level. \
+        opt::flag_s("", "test", "Build a test harness"),
+        opt::opt_s("", "target", "Target triple for which the code is compiled", "TARGET"),
+        opt::multi_s("W", "warn", "Set lint warnings", "OPT"),
+        opt::multi_s("A", "allow", "Set lint allowed", "OPT"),
+        opt::multi_s("D", "deny", "Set lint denied", "OPT"),
+        opt::multi_s("F", "forbid", "Set lint forbidden", "OPT"),
+        opt::multi_s("", "cap-lints", "Set the most restrictive lint level. \
                                      More restrictive lints are capped at this \
                                      level", "LEVEL"),
-        opt::multi("C", "codegen", "Set a codegen option", "OPT[=VALUE]"),
-        opt::flag("V", "version", "Print version info and exit"),
-        opt::flag("v", "verbose", "Use verbose output"),
+        opt::multi_s("C", "codegen", "Set a codegen option", "OPT[=VALUE]"),
+        opt::flag_s("V", "version", "Print version info and exit"),
+        opt::flag_s("v", "verbose", "Use verbose output"),
     ]
 }
 
@@ -867,24 +920,26 @@ pub fn rustc_short_optgroups() -> Vec<RustcOptGroup> {
 pub fn rustc_optgroups() -> Vec<RustcOptGroup> {
     let mut opts = rustc_short_optgroups();
     opts.extend_from_slice(&[
-        opt::multi("", "extern", "Specify where an external rust library is \
+        opt::multi_s("", "extern", "Specify where an external rust library is \
                                 located",
                  "NAME=PATH"),
-        opt::opt("", "sysroot", "Override the system root", "PATH"),
-        opt::multi("Z", "", "Set internal debugging options", "FLAG"),
-        opt::opt_u("", "error-format", "How errors and other messages are produced", "human|json"),
-        opt::opt("", "color", "Configure coloring of output:
+        opt::opt_s("", "sysroot", "Override the system root", "PATH"),
+        opt::multi_ubnr("Z", "", "Set internal debugging options", "FLAG"),
+        opt::opt_ubnr("", "error-format",
+                      "How errors and other messages are produced",
+                      "human|json"),
+        opt::opt_s("", "color", "Configure coloring of output:
             auto   = colorize, if output goes to a tty (default);
             always = always colorize output;
             never  = never colorize output", "auto|always|never"),
 
-        opt::flagopt_u("", "pretty",
+        opt::flagopt_ubnr("", "pretty",
                    "Pretty-print the input instead of compiling;
                    valid types are: `normal` (un-annotated source),
                    `expanded` (crates expanded), or
                    `expanded,identified` (fully parenthesized, AST nodes with IDs).",
                  "TYPE"),
-        opt::flagopt_u("", "unpretty",
+        opt::flagopt_ubnr("", "unpretty",
                      "Present the input source, unstable (and less-pretty) variants;
                       valid types are any of the types for `--pretty`, as well as:
                       `flowgraph=<nodeid>` (graphviz formatted flowgraph for node),
@@ -892,6 +947,14 @@ pub fn rustc_optgroups() -> Vec<RustcOptGroup> {
                       `hir` (the HIR), `hir,identified`, or
                       `hir,typed` (HIR with types for each node).",
                      "TYPE"),
+
+        // new options here should **not** use the `_ubnr` functions, all new
+        // unstable options should use the short variants to indicate that they
+        // are truly unstable. All `_ubnr` flags are just that way because they
+        // were so historically.
+        //
+        // You may also wish to keep this comment at the bottom of this list to
+        // ensure that others see it.
     ]);
     opts
 }
@@ -899,10 +962,19 @@ pub fn rustc_optgroups() -> Vec<RustcOptGroup> {
 // Convert strings provided as --cfg [cfgspec] into a crate_cfg
 pub fn parse_cfgspecs(cfgspecs: Vec<String> ) -> ast::CrateConfig {
     cfgspecs.into_iter().map(|s| {
-        parse::parse_meta_from_source_str("cfgspec".to_string(),
-                                          s.to_string(),
-                                          Vec::new(),
-                                          &parse::ParseSess::new())
+        let sess = parse::ParseSess::new();
+        let mut parser = parse::new_parser_from_source_str(&sess,
+                                                           Vec::new(),
+                                                           "cfgspec".to_string(),
+                                                           s.to_string());
+        let meta_item = panictry!(parser.parse_meta_item());
+
+        if !parser.reader.is_eof() {
+            early_error(ErrorOutputType::default(), &format!("invalid --cfg argument: {}",
+                                                             s))
+        }
+
+        meta_item
     }).collect::<ast::CrateConfig>()
 }
 
@@ -971,6 +1043,8 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
     let parse_only = debugging_opts.parse_only;
     let no_trans = debugging_opts.no_trans;
     let treat_err_as_bug = debugging_opts.treat_err_as_bug;
+    let continue_parse_after_error = debugging_opts.continue_parse_after_error;
+    let mir_opt_level = debugging_opts.mir_opt_level.unwrap_or(1);
     let incremental_compilation = debugging_opts.incr_comp;
     let dump_dep_graph = debugging_opts.dump_dep_graph;
     let no_analysis = debugging_opts.no_analysis;
@@ -1102,6 +1176,8 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
             "crate-name" => PrintRequest::CrateName,
             "file-names" => PrintRequest::FileNames,
             "sysroot" => PrintRequest::Sysroot,
+            "cfg" => PrintRequest::Cfg,
+            "target-list" => PrintRequest::TargetList,
             req => {
                 early_error(error_format, &format!("unknown print request `{}`", req))
             }
@@ -1147,7 +1223,9 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
         parse_only: parse_only,
         no_trans: no_trans,
         treat_err_as_bug: treat_err_as_bug,
-        incremental_compilation: incremental_compilation || dump_dep_graph,
+        continue_parse_after_error: continue_parse_after_error,
+        mir_opt_level: mir_opt_level,
+        build_dep_graph: incremental_compilation || dump_dep_graph,
         dump_dep_graph: dump_dep_graph,
         no_analysis: no_analysis,
         debugging_opts: debugging_opts,
@@ -1217,14 +1295,20 @@ impl fmt::Display for CrateType {
 #[cfg(test)]
 mod tests {
     use middle::cstore::DummyCrateStore;
-    use session::config::{build_configuration, optgroups, build_session_options};
+    use session::config::{build_configuration, build_session_options};
     use session::build_session;
 
     use std::rc::Rc;
-    use getopts::getopts;
+    use getopts::{getopts, OptGroup};
     use syntax::attr;
     use syntax::attr::AttrMetaMethods;
     use syntax::diagnostics;
+
+    fn optgroups() -> Vec<OptGroup> {
+        super::rustc_optgroups().into_iter()
+                                .map(|a| a.opt_group)
+                                .collect()
+    }
 
     // When the user supplies --test we should implicitly supply --cfg test
     #[test]

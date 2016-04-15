@@ -26,15 +26,15 @@
        issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/",
        test(no_crate_inject, attr(allow(unused_variables), deny(warnings))))]
 
-#![allow(trivial_casts)]
 #![cfg_attr(test, allow(deprecated))] // rand
+#![cfg_attr(not(test), feature(copy_from_slice))] // impl [T]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(alloc)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(core_intrinsics)]
 #![feature(decode_utf16)]
-#![feature(drop_in_place)]
 #![feature(dropck_parametricity)]
 #![feature(fmt_internals)]
 #![feature(fmt_radix)]
@@ -45,6 +45,8 @@
 #![feature(nonzero)]
 #![feature(num_bits_bytes)]
 #![feature(pattern)]
+#![feature(placement_in)]
+#![feature(placement_new_protocol)]
 #![feature(shared)]
 #![feature(slice_bytes)]
 #![feature(slice_patterns)]
@@ -55,7 +57,7 @@
 #![feature(unicode)]
 #![feature(unique)]
 #![feature(unsafe_no_drop_flag)]
-#![cfg_attr(test, feature(clone_from_slice, rand, test))]
+#![cfg_attr(test, feature(rand, test))]
 
 #![no_std]
 

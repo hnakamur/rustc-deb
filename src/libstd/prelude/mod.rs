@@ -17,7 +17,7 @@
 //!
 //! The *prelude* is the list of things that Rust automatically imports into
 //! every Rust program. It's kept as small as possible, and is focused on
-//! things, particuarly traits, which are used in almost every single Rust
+//! things, particularly traits, which are used in almost every single Rust
 //! program.
 //!
 //! On a technical level, Rust inserts
@@ -45,7 +45,7 @@
 //!
 //! The difference between 'the prelude' and these other preludes is that they
 //! are not automatically `use`'d, and must be imported manually. This is still
-//! easier than importing all of their consitutent components.
+//! easier than importing all of their constituent components.
 //!
 //! # Prelude contents
 //!
@@ -55,7 +55,7 @@
 //! * [`std::marker`]::{[`Copy`], [`Send`], [`Sized`], [`Sync`]}. The marker
 //!   traits indicate fundamental properties of types.
 //! * [`std::ops`]::{[`Drop`], [`Fn`], [`FnMut`], [`FnOnce`]}. Various
-//!   operations for both destuctors and overloading `()`.
+//!   operations for both destructors and overloading `()`.
 //! * [`std::mem`]::[`drop`], a convenience function for explicitly dropping a
 //!   value.
 //! * [`std::boxed`]::[`Box`], a way to allocate values on the heap.

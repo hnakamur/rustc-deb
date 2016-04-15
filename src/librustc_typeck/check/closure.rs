@@ -16,7 +16,7 @@ use astconv;
 use middle::subst;
 use middle::ty::{self, ToPolyTraitRef, Ty};
 use std::cmp;
-use syntax::abi;
+use syntax::abi::Abi;
 use rustc_front::hir;
 
 pub fn check_expr_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
@@ -54,7 +54,7 @@ fn check_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
     let mut fn_ty = astconv::ty_of_closure(fcx,
                                            hir::Unsafety::Normal,
                                            decl,
-                                           abi::RustCall,
+                                           Abi::RustCall,
                                            expected_sig);
 
     // Create type variables (for now) to represent the transformed
@@ -83,7 +83,7 @@ fn check_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
              &fn_sig,
              decl,
              expr.id,
-             &*body,
+             &body,
              fcx.inh);
 
     // Tuple up the arguments and insert the resulting function type into
@@ -134,13 +134,14 @@ fn deduce_expectations_from_obligations<'a,'tcx>(
     expected_vid: ty::TyVid)
     -> (Option<ty::FnSig<'tcx>>, Option<ty::ClosureKind>)
 {
-    let fulfillment_cx = fcx.inh.infcx.fulfillment_cx.borrow();
+    let fulfillment_cx = fcx.inh.fulfillment_cx.borrow();
     // Here `expected_ty` is known to be a type inference variable.
 
     let expected_sig =
         fulfillment_cx
         .pending_obligations()
         .iter()
+        .map(|obligation| &obligation.obligation)
         .filter_map(|obligation| {
             debug!("deduce_expectations_from_obligations: obligation.predicate={:?}",
                    obligation.predicate);
@@ -168,6 +169,7 @@ fn deduce_expectations_from_obligations<'a,'tcx>(
         fulfillment_cx
         .pending_obligations()
         .iter()
+        .map(|obligation| &obligation.obligation)
         .filter_map(|obligation| {
             let opt_trait_ref = match obligation.predicate {
                 ty::Predicate::Projection(ref data) => Some(data.to_poly_trait_ref()),

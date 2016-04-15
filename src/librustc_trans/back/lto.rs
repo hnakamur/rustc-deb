@@ -52,7 +52,7 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
     link::each_linked_rlib(sess, &mut |_, path| {
         let archive = ArchiveRO::open(&path).expect("wanted an rlib");
         let bytecodes = archive.iter().filter_map(|child| {
-            child.name().map(|name| (name, child))
+            child.ok().and_then(|c| c.name().map(|name| (name, c)))
         }).filter(|&(name, _)| name.ends_with("bytecode.deflate"));
         for (name, data) in bytecodes {
             let bc_encoded = data.data();
@@ -145,7 +145,9 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
     unsafe {
         let pm = llvm::LLVMCreatePassManager();
         llvm::LLVMRustAddAnalysisPasses(tm, pm, llmod);
-        llvm::LLVMRustAddPass(pm, "verify\0".as_ptr() as *const _);
+        let pass = llvm::LLVMRustFindAndCreatePass("verify\0".as_ptr() as *const _);
+        assert!(!pass.is_null());
+        llvm::LLVMRustAddPass(pm, pass);
 
         with_llvm_pmb(llmod, config, &mut |b| {
             llvm::LLVMPassManagerBuilderPopulateLTOPassManager(b, pm,
@@ -153,7 +155,9 @@ pub fn run(sess: &session::Session, llmod: ModuleRef,
                 /* RunInliner = */ True);
         });
 
-        llvm::LLVMRustAddPass(pm, "verify\0".as_ptr() as *const _);
+        let pass = llvm::LLVMRustFindAndCreatePass("verify\0".as_ptr() as *const _);
+        assert!(!pass.is_null());
+        llvm::LLVMRustAddPass(pm, pass);
 
         time(sess.time_passes(), "LTO passes", ||
              llvm::LLVMRunPassManager(pm, llmod));

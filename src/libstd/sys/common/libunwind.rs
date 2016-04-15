@@ -80,12 +80,15 @@ pub const unwinder_private_data_size: usize = 5;
 #[cfg(target_arch = "aarch64")]
 pub const unwinder_private_data_size: usize = 2;
 
-#[cfg(any(target_arch = "mips", target_arch = "mipsel"))]
+#[cfg(target_arch = "mips")]
 pub const unwinder_private_data_size: usize = 2;
 
-#[cfg(any(target_arch = "powerpc", target_arch = "powerpc64",
-          target_arch = "powerpc64le"))]
+#[cfg(any(target_arch = "powerpc", target_arch = "powerpc64"))]
 pub const unwinder_private_data_size: usize = 2;
+
+#[cfg(target_arch = "asmjs")]
+// FIXME: Copied from arm. Need to confirm.
+pub const unwinder_private_data_size: usize = 20;
 
 #[repr(C)]
 pub struct _Unwind_Exception {
@@ -101,9 +104,11 @@ pub type _Unwind_Exception_Cleanup_Fn =
                       exception: *mut _Unwind_Exception);
 
 #[cfg_attr(any(all(target_os = "linux", not(target_env = "musl")),
-               target_os = "freebsd"),
+               target_os = "freebsd",
+               target_os = "solaris",
+               all(target_os = "linux", target_env = "musl", not(target_arch = "x86_64"))),
            link(name = "gcc_s"))]
-#[cfg_attr(all(target_os = "linux", target_env = "musl", not(test)),
+#[cfg_attr(all(target_os = "linux", target_env = "musl", target_arch = "x86_64", not(test)),
            link(name = "unwind", kind = "static"))]
 #[cfg_attr(any(target_os = "android", target_os = "openbsd"),
            link(name = "gcc"))]

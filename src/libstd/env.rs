@@ -218,7 +218,7 @@ pub enum VarError {
     /// valid unicode data. The found data is returned as a payload of this
     /// variant.
     #[stable(feature = "env", since = "1.0.0")]
-    NotUnicode(#[cfg_attr(not(stage0), stable(feature = "env", since = "1.0.0"))] OsString),
+    NotUnicode(#[stable(feature = "env", since = "1.0.0")] OsString),
 }
 
 #[stable(feature = "env", since = "1.0.0")]
@@ -441,8 +441,8 @@ impl Error for JoinPathsError {
 /// use std::env;
 ///
 /// match env::home_dir() {
-///     Some(ref p) => println!("{}", p.display()),
-///     None => println!("Impossible to get your home dir!")
+///     Some(path) => println!("{}", path.display()),
+///     None => println!("Impossible to get your home dir!"),
 /// }
 /// ```
 #[stable(feature = "env", since = "1.0.0")]
@@ -482,8 +482,7 @@ pub fn temp_dir() -> PathBuf {
     os_imp::temp_dir()
 }
 
-/// Returns the filesystem path to the current executable which is running but
-/// with the executable name.
+/// Returns the full filesystem path to the current running executable.
 ///
 /// The path returned is not necessarily a "real path" to the executable as
 /// there may be intermediate symlinks.
@@ -492,7 +491,7 @@ pub fn temp_dir() -> PathBuf {
 ///
 /// Acquiring the path to the current executable is a platform-specific operation
 /// that can fail for a good number of reasons. Some errors can include, but not
-/// be limited to filesystem operations failing or general syscall failures.
+/// be limited to, filesystem operations failing or general syscall failures.
 ///
 /// # Examples
 ///
@@ -528,13 +527,13 @@ pub struct ArgsOs { inner: os_imp::Args }
 /// via the command line).
 ///
 /// The first element is traditionally the path to the executable, but it can be
-/// set to arbitrary text, and it may not even exist, so this property should
+/// set to arbitrary text, and may not even exist. This means this property should
 /// not be relied upon for security purposes.
 ///
 /// # Panics
 ///
 /// The returned iterator will panic during iteration if any argument to the
-/// process is not valid unicode. If this is not desired it is recommended to
+/// process is not valid unicode. If this is not desired,
 /// use the `args_os` function instead.
 ///
 /// # Examples
@@ -603,7 +602,7 @@ impl ExactSizeIterator for ArgsOs {
 /// Constants associated with the current target
 #[stable(feature = "env", since = "1.0.0")]
 pub mod consts {
-    /// A string describing the architecture of the CPU that this is currently
+    /// A string describing the architecture of the CPU that is currently
     /// in use.
     ///
     /// Some possible values:
@@ -613,10 +612,8 @@ pub mod consts {
     /// - arm
     /// - aarch64
     /// - mips
-    /// - mipsel
     /// - powerpc
     /// - powerpc64
-    /// - powerpc64le
     #[stable(feature = "env", since = "1.0.0")]
     pub const ARCH: &'static str = super::arch::ARCH;
 
@@ -642,6 +639,7 @@ pub mod consts {
     /// - bitrig
     /// - netbsd
     /// - openbsd
+    /// - solaris
     /// - android
     /// - windows
     #[stable(feature = "env", since = "1.0.0")]
@@ -802,6 +800,17 @@ mod os {
     pub const EXE_EXTENSION: &'static str = "";
 }
 
+#[cfg(target_os = "solaris")]
+mod os {
+    pub const FAMILY: &'static str = "unix";
+    pub const OS: &'static str = "solaris";
+    pub const DLL_PREFIX: &'static str = "lib";
+    pub const DLL_SUFFIX: &'static str = ".so";
+    pub const DLL_EXTENSION: &'static str = "so";
+    pub const EXE_SUFFIX: &'static str = "";
+    pub const EXE_EXTENSION: &'static str = "";
+}
+
 #[cfg(target_os = "windows")]
 mod os {
     pub const FAMILY: &'static str = "windows";
@@ -834,6 +843,17 @@ mod os {
     pub const EXE_EXTENSION: &'static str = "pexe";
 }
 
+#[cfg(target_os = "emscripten")]
+mod os {
+    pub const FAMILY: &'static str = "unix";
+    pub const OS: &'static str = "emscripten";
+    pub const DLL_PREFIX: &'static str = "lib";
+    pub const DLL_SUFFIX: &'static str = ".so";
+    pub const DLL_EXTENSION: &'static str = "so";
+    pub const EXE_SUFFIX: &'static str = ".js";
+    pub const EXE_EXTENSION: &'static str = "js";
+}
+
 #[cfg(target_arch = "x86")]
 mod arch {
     pub const ARCH: &'static str = "x86";
@@ -859,11 +879,6 @@ mod arch {
     pub const ARCH: &'static str = "mips";
 }
 
-#[cfg(target_arch = "mipsel")]
-mod arch {
-    pub const ARCH: &'static str = "mipsel";
-}
-
 #[cfg(target_arch = "powerpc")]
 mod arch {
     pub const ARCH: &'static str = "powerpc";
@@ -874,14 +889,14 @@ mod arch {
     pub const ARCH: &'static str = "powerpc64";
 }
 
-#[cfg(target_arch = "powerpc64le")]
-mod arch {
-    pub const ARCH: &'static str = "powerpc64le";
-}
-
 #[cfg(target_arch = "le32")]
 mod arch {
     pub const ARCH: &'static str = "le32";
+}
+
+#[cfg(target_arch = "asmjs")]
+mod arch {
+    pub const ARCH: &'static str = "asmjs";
 }
 
 #[cfg(test)]

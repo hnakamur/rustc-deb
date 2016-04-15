@@ -1055,7 +1055,14 @@ pub trait Write {
         let mut output = Adaptor { inner: self, error: Ok(()) };
         match fmt::write(&mut output, fmt) {
             Ok(()) => Ok(()),
-            Err(..) => output.error
+            Err(..) => {
+                // check if the error came from the underlying `Write` or not
+                if output.error.is_err() {
+                    output.error
+                } else {
+                    Err(Error::new(ErrorKind::Other, "formatter error"))
+                }
+            }
         }
     }
 
@@ -1175,7 +1182,7 @@ pub trait Seek {
 pub enum SeekFrom {
     /// Set the offset to the provided number of bytes.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Start(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] u64),
+    Start(#[stable(feature = "rust1", since = "1.0.0")] u64),
 
     /// Set the offset to the size of this object plus the specified number of
     /// bytes.
@@ -1183,7 +1190,7 @@ pub enum SeekFrom {
     /// It is possible to seek beyond the end of an object, but it's an error to
     /// seek before byte 0.
     #[stable(feature = "rust1", since = "1.0.0")]
-    End(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] i64),
+    End(#[stable(feature = "rust1", since = "1.0.0")] i64),
 
     /// Set the offset to the current position plus the specified number of
     /// bytes.
@@ -1191,7 +1198,7 @@ pub enum SeekFrom {
     /// It is possible to seek beyond the end of an object, but it's an error to
     /// seek before byte 0.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Current(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] i64),
+    Current(#[stable(feature = "rust1", since = "1.0.0")] i64),
 }
 
 fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)

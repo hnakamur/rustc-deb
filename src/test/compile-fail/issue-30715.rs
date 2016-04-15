@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// compile-flags: -Z continue-parse-after-error
+
 macro_rules! parallel {
     (
         // If future has `pred`/`moelarry` fragments (where "pred" is
@@ -25,7 +27,7 @@ macro_rules! parallel {
 fn main() {
     parallel! {
         for i in 0..n {
-            x += i; //~ ERROR no rules expected the token `+=`
-        }
+            x += i; //~ ERROR expected `:`, found `+=`
+        } //~ ERROR unexpected end of macro invocation
     }
 }

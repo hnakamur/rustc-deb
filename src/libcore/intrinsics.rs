@@ -58,6 +58,33 @@ extern "rust-intrinsic" {
     pub fn atomic_cxchg_rel<T>(dst: *mut T, old: T, src: T) -> T;
     pub fn atomic_cxchg_acqrel<T>(dst: *mut T, old: T, src: T) -> T;
     pub fn atomic_cxchg_relaxed<T>(dst: *mut T, old: T, src: T) -> T;
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchg_failrelaxed<T>(dst: *mut T, old: T, src: T) -> T;
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchg_failacq<T>(dst: *mut T, old: T, src: T) -> T;
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchg_acq_failrelaxed<T>(dst: *mut T, old: T, src: T) -> T;
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchg_acqrel_failrelaxed<T>(dst: *mut T, old: T, src: T) -> T;
+
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak_acq<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak_rel<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak_acqrel<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak_relaxed<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak_failrelaxed<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak_failacq<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak_acq_failrelaxed<T>(dst: *mut T, old: T, src: T) -> (T, bool);
+    #[cfg(not(stage0))]
+    pub fn atomic_cxchgweak_acqrel_failrelaxed<T>(dst: *mut T, old: T, src: T) -> (T, bool);
 
     pub fn atomic_load<T>(src: *const T) -> T;
     pub fn atomic_load_acq<T>(src: *const T) -> T;
@@ -213,7 +240,7 @@ extern "rust-intrinsic" {
     ///
     /// This has all the same safety problems as `ptr::read` with respect to
     /// invalid pointers, types, and double drops.
-    #[unstable(feature = "drop_in_place", reason = "just exposed, needs FCP", issue = "27908")]
+    #[stable(feature = "drop_in_place", since = "1.8.0")]
     pub fn drop_in_place<T: ?Sized>(to_drop: *mut T);
 
     /// Gets a static string slice containing the name of a type.
@@ -552,7 +579,12 @@ extern "rust-intrinsic" {
     pub fn discriminant_value<T>(v: &T) -> u64;
 
     /// Rust's "try catch" construct which invokes the function pointer `f` with
-    /// the data pointer `data`, returning the exception payload if an exception
-    /// is thrown (aka the thread panics).
-    pub fn try(f: fn(*mut u8), data: *mut u8) -> *mut u8;
+    /// the data pointer `data`.
+    ///
+    /// The third pointer is a target-specific data pointer which is filled in
+    /// with the specifics of the exception that occurred. For examples on Unix
+    /// platforms this is a `*mut *mut T` which is filled in by the compiler and
+    /// on MSVC it's `*mut [usize; 2]`. For more information see the compiler's
+    /// source as well as std's catch implementation.
+    pub fn try(f: fn(*mut u8), data: *mut u8, local_ptr: *mut u8) -> i32;
 }

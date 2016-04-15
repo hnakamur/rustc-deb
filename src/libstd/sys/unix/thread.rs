@@ -8,16 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(dead_code)]
-
 use prelude::v1::*;
 
 use alloc::boxed::FnBox;
 use cmp;
-#[cfg(not(target_env = "newlib"))]
+#[cfg(not(any(target_env = "newlib", target_os = "solaris")))]
 use ffi::CString;
 use io;
-use libc::PTHREAD_STACK_MIN;
 use libc;
 use mem;
 use ptr;
@@ -84,7 +81,9 @@ impl Thread {
         debug_assert_eq!(ret, 0);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux",
+              target_os = "android",
+              target_os = "emscripten"))]
     pub fn set_name(name: &str) {
         const PR_SET_NAME: libc::c_int = 15;
         let cname = CString::new(name).unwrap_or_else(|_| {
@@ -125,9 +124,9 @@ impl Thread {
                                      carg.as_ptr() as *mut libc::c_void);
         }
     }
-    #[cfg(target_env = "newlib")]
-    pub unsafe fn set_name(_name: &str) {
-        // Newlib has no way to set a thread name.
+    #[cfg(any(target_env = "newlib", target_os = "solaris"))]
+    pub fn set_name(_name: &str) {
+        // Newlib and Illumos has no way to set a thread name.
     }
 
     pub fn sleep(dur: Duration) {
@@ -169,36 +168,38 @@ impl Drop for Thread {
     }
 }
 
-#[cfg(all(not(target_os = "linux"),
+#[cfg(all(not(all(target_os = "linux", not(target_env = "musl"))),
           not(target_os = "macos"),
           not(target_os = "bitrig"),
           not(all(target_os = "netbsd", not(target_vendor = "rumprun"))),
-          not(target_os = "openbsd")))]
+          not(target_os = "openbsd"),
+          not(target_os = "solaris")))]
+#[cfg_attr(test, allow(dead_code))]
 pub mod guard {
     pub unsafe fn current() -> Option<usize> { None }
     pub unsafe fn init() -> Option<usize> { None }
 }
 
 
-#[cfg(any(target_os = "linux",
+#[cfg(any(all(target_os = "linux", not(target_env = "musl")),
           target_os = "macos",
           target_os = "bitrig",
           all(target_os = "netbsd", not(target_vendor = "rumprun")),
-          target_os = "openbsd"))]
-#[allow(unused_imports)]
+          target_os = "openbsd",
+          target_os = "solaris"))]
+#[cfg_attr(test, allow(dead_code))]
 pub mod guard {
     use prelude::v1::*;
 
-    use libc::{self, pthread_t};
+    use libc;
     use libc::mmap;
     use libc::{PROT_NONE, MAP_PRIVATE, MAP_ANON, MAP_FAILED, MAP_FIXED};
-    use mem;
-    use ptr;
     use sys::os;
 
     #[cfg(any(target_os = "macos",
               target_os = "bitrig",
-              target_os = "openbsd"))]
+              target_os = "openbsd",
+              target_os = "solaris"))]
     unsafe fn get_stack_start() -> Option<*mut libc::c_void> {
         current().map(|s| s as *mut libc::c_void)
     }
@@ -206,10 +207,10 @@ pub mod guard {
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "netbsd"))]
     unsafe fn get_stack_start() -> Option<*mut libc::c_void> {
         let mut ret = None;
-        let mut attr: libc::pthread_attr_t = mem::zeroed();
+        let mut attr: libc::pthread_attr_t = ::mem::zeroed();
         assert_eq!(libc::pthread_attr_init(&mut attr), 0);
         if libc::pthread_getattr_np(libc::pthread_self(), &mut attr) == 0 {
-            let mut stackaddr = ptr::null_mut();
+            let mut stackaddr = ::ptr::null_mut();
             let mut stacksize = 0;
             assert_eq!(libc::pthread_attr_getstack(&attr, &mut stackaddr,
                                                    &mut stacksize), 0);
@@ -257,6 +258,13 @@ pub mod guard {
         Some(stackaddr as usize + offset * psize)
     }
 
+    #[cfg(target_os = "solaris")]
+    pub unsafe fn current() -> Option<usize> {
+        let mut current_stack: libc::stack_t = ::mem::zeroed();
+        assert_eq!(libc::stack_getbounds(&mut current_stack), 0);
+        Some(current_stack.ss_sp as usize)
+    }
+
     #[cfg(target_os = "macos")]
     pub unsafe fn current() -> Option<usize> {
         Some((libc::pthread_get_stackaddr_np(libc::pthread_self()) as libc::size_t -
@@ -265,7 +273,7 @@ pub mod guard {
 
     #[cfg(any(target_os = "openbsd", target_os = "bitrig"))]
     pub unsafe fn current() -> Option<usize> {
-        let mut current_stack: libc::stack_t = mem::zeroed();
+        let mut current_stack: libc::stack_t = ::mem::zeroed();
         assert_eq!(libc::pthread_stackseg_np(libc::pthread_self(),
                                              &mut current_stack), 0);
 
@@ -282,7 +290,7 @@ pub mod guard {
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "netbsd"))]
     pub unsafe fn current() -> Option<usize> {
         let mut ret = None;
-        let mut attr: libc::pthread_attr_t = mem::zeroed();
+        let mut attr: libc::pthread_attr_t = ::mem::zeroed();
         assert_eq!(libc::pthread_attr_init(&mut attr), 0);
         if libc::pthread_getattr_np(libc::pthread_self(), &mut attr) == 0 {
             let mut guardsize = 0;
@@ -290,7 +298,7 @@ pub mod guard {
             if guardsize == 0 {
                 panic!("there is no guard page");
             }
-            let mut stackaddr = ptr::null_mut();
+            let mut stackaddr = ::ptr::null_mut();
             let mut size = 0;
             assert_eq!(libc::pthread_attr_getstack(&attr, &mut stackaddr,
                                                    &mut size), 0);
@@ -311,45 +319,26 @@ pub mod guard {
 // storage.  We need that information to avoid blowing up when a small stack
 // is created in an application with big thread-local storage requirements.
 // See #6233 for rationale and details.
-//
-// Use dlsym to get the symbol value at runtime, both for
-// compatibility with older versions of glibc, and to avoid creating
-// dependencies on GLIBC_PRIVATE symbols.  Assumes that we've been
-// dynamically linked to libpthread but that is currently always the
-// case.  We previously used weak linkage (under the same assumption),
-// but that caused Debian to detect an unnecessarily strict versioned
-// dependency on libc6 (#23628).
 #[cfg(target_os = "linux")]
 #[allow(deprecated)]
 fn min_stack_size(attr: *const libc::pthread_attr_t) -> usize {
-    use dynamic_lib::DynamicLibrary;
-    use sync::Once;
+    weak!(fn __pthread_get_minstack(*const libc::pthread_attr_t) -> libc::size_t);
 
-    type F = unsafe extern "C" fn(*const libc::pthread_attr_t) -> libc::size_t;
-    static INIT: Once = Once::new();
-    static mut __pthread_get_minstack: Option<F> = None;
-
-    INIT.call_once(|| {
-        let lib = match DynamicLibrary::open(None) {
-            Ok(l) => l,
-            Err(..) => return,
-        };
-        unsafe {
-            if let Ok(f) = lib.symbol("__pthread_get_minstack") {
-                __pthread_get_minstack = Some(mem::transmute::<*const (), F>(f));
-            }
-        }
-    });
-
-    match unsafe { __pthread_get_minstack } {
-        None => PTHREAD_STACK_MIN as usize,
+    match __pthread_get_minstack.get() {
+        None => libc::PTHREAD_STACK_MIN as usize,
         Some(f) => unsafe { f(attr) as usize },
     }
 }
 
 // No point in looking up __pthread_get_minstack() on non-glibc
 // platforms.
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"),
+          not(target_os = "netbsd")))]
 fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
-    PTHREAD_STACK_MIN as usize
+    libc::PTHREAD_STACK_MIN as usize
+}
+
+#[cfg(target_os = "netbsd")]
+fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
+    2048 // just a guess
 }

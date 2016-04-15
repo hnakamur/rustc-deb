@@ -122,7 +122,7 @@ r##"<!DOCTYPE html>
 
                 <p>
                     Search functions by type signature (e.g.
-                    <code>vec -> usize</code>)
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
                 </p>
             </div>
         </div>
@@ -148,7 +148,7 @@ r##"<!DOCTYPE html>
         "".to_string()
     } else {
         format!("<a href='{}{}/index.html'>\
-                 <img src='{}' alt='' width='100'></a>",
+                 <img src='{}' alt='logo' width='100'></a>",
                 page.root_path, layout.krate,
                 layout.logo)
     },

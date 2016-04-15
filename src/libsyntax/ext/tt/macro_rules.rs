@@ -87,7 +87,7 @@ impl<'a> MacResult for ParserAnyMacro<'a> {
     }
 
     fn make_impl_items(self: Box<ParserAnyMacro<'a>>)
-                       -> Option<SmallVector<P<ast::ImplItem>>> {
+                       -> Option<SmallVector<ast::ImplItem>> {
         let mut ret = SmallVector::zero();
         loop {
             let mut parser = self.parser.borrow_mut();
@@ -101,7 +101,7 @@ impl<'a> MacResult for ParserAnyMacro<'a> {
     }
 
     fn make_stmts(self: Box<ParserAnyMacro<'a>>)
-                 -> Option<SmallVector<P<ast::Stmt>>> {
+                 -> Option<SmallVector<ast::Stmt>> {
         let mut ret = SmallVector::zero();
         loop {
             let mut parser = self.parser.borrow_mut();
@@ -248,7 +248,7 @@ pub fn compile<'cx>(cx: &'cx mut ExtCtxt,
                            TokenTree::Token(DUMMY_SP, token::FatArrow),
                            TokenTree::Token(DUMMY_SP, match_rhs_tok)],
                        separator: Some(token::Semi),
-                       op: ast::OneOrMore,
+                       op: ast::KleeneOp::OneOrMore,
                        num_captures: 2
                    })),
         //to phase into semicolon-termination instead of
@@ -257,7 +257,7 @@ pub fn compile<'cx>(cx: &'cx mut ExtCtxt,
                    Rc::new(ast::SequenceRepetition {
                        tts: vec![TokenTree::Token(DUMMY_SP, token::Semi)],
                        separator: None,
-                       op: ast::ZeroOrMore,
+                       op: ast::KleeneOp::ZeroOrMore,
                        num_captures: 0
                    })));
 

@@ -48,7 +48,8 @@ use std::ptr;
 use std::rc::Rc;
 
 use syntax::codemap::{Span, Pos};
-use syntax::{abi, ast, codemap};
+use syntax::{ast, codemap};
+use syntax::abi::Abi;
 use syntax::attr::IntType;
 use syntax::parse::token::{self, special_idents};
 
@@ -198,6 +199,13 @@ pub fn finalize(cx: &CrateContext) {
             llvm::LLVMRustAddModuleFlag(cx.llmod(),
                                         "Dwarf Version\0".as_ptr() as *const _,
                                         2)
+        }
+
+        // Indicate that we want CodeView debug information on MSVC
+        if cx.sess().target.target.options.is_like_msvc {
+            llvm::LLVMRustAddModuleFlag(cx.llmod(),
+                                        "CodeView\0".as_ptr() as *const _,
+                                        1)
         }
 
         // Prevent bitcode readers from deleting the debug info.
@@ -391,7 +399,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
     let scope_map = create_scope_map::create_scope_map(cx,
                                                        &fn_decl.inputs,
-                                                       &*top_level_block,
+                                                       &top_level_block,
                                                        fn_metadata,
                                                        fn_ast_id);
 
@@ -448,7 +456,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             ty::FnDiverging => diverging_type_metadata(cx)
         });
 
-        let inputs = &if abi == abi::RustCall {
+        let inputs = &if abi == Abi::RustCall {
             type_of::untuple_arguments(cx, &sig.inputs)
         } else {
             sig.inputs

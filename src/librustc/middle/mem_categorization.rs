@@ -74,12 +74,12 @@ use self::Aliasability::*;
 use middle::def_id::DefId;
 use front::map as ast_map;
 use middle::infer;
-use middle::check_const;
-use middle::def;
+use middle::const_qualif::ConstQualif;
+use middle::def::Def;
 use middle::ty::adjustment;
 use middle::ty::{self, Ty};
 
-use rustc_front::hir::{MutImmutable, MutMutable};
+use rustc_front::hir::{MutImmutable, MutMutable, PatKind};
 use rustc_front::hir;
 use syntax::ast;
 use syntax::codemap::Span;
@@ -305,7 +305,7 @@ impl MutabilityCategory {
     fn from_local(tcx: &ty::ctxt, id: ast::NodeId) -> MutabilityCategory {
         let ret = match tcx.map.get(id) {
             ast_map::NodeLocal(p) => match p.node {
-                hir::PatIdent(bind_mode, _, _) => {
+                PatKind::Ident(bind_mode, _, _) => {
                     if bind_mode == hir::BindByValue(hir::MutMutable) {
                         McDeclared
                     } else {
@@ -396,7 +396,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
         // *being borrowed* is.  But ideally we would put in a more
         // fundamental fix to this conflated use of the node id.
         let ret_ty = match pat.node {
-            hir::PatIdent(hir::BindByRef(_), _, _) => {
+            PatKind::Ident(hir::BindByRef(_), _, _) => {
                 // a bind-by-ref means that the base_ty will be the type of the ident itself,
                 // but what we want here is the type of the underlying value being borrowed.
                 // So peel off one-level, turning the &T into T.
@@ -430,6 +430,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
 
                     adjustment::AdjustReifyFnPointer |
                     adjustment::AdjustUnsafeFnPointer |
+                    adjustment::AdjustMutToConstPointer |
                     adjustment::AdjustDerefRef(_) => {
                         debug!("cat_expr({:?}): {:?}",
                                adjustment,
@@ -463,12 +464,12 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
         let expr_ty = try!(self.expr_ty(expr));
         match expr.node {
           hir::ExprUnary(hir::UnDeref, ref e_base) => {
-            let base_cmt = try!(self.cat_expr(&**e_base));
+            let base_cmt = try!(self.cat_expr(&e_base));
             self.cat_deref(expr, base_cmt, 0, None)
           }
 
           hir::ExprField(ref base, f_name) => {
-            let base_cmt = try!(self.cat_expr(&**base));
+            let base_cmt = try!(self.cat_expr(&base));
             debug!("cat_expr(cat_field): id={} expr={:?} base={:?}",
                    expr.id,
                    expr,
@@ -477,7 +478,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
           }
 
           hir::ExprTupField(ref base, idx) => {
-            let base_cmt = try!(self.cat_expr(&**base));
+            let base_cmt = try!(self.cat_expr(&base));
             Ok(self.cat_tup_field(expr, base_cmt, idx.node, expr_ty))
           }
 
@@ -508,7 +509,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
                     self.cat_deref_common(expr, base_cmt, 1, elem_ty, Some(context), true)
                 }
                 None => {
-                    self.cat_index(expr, try!(self.cat_expr(&**base)), context)
+                    self.cat_index(expr, try!(self.cat_expr(&base)), context)
                 }
             }
           }
@@ -519,7 +520,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
           }
 
           hir::ExprType(ref e, _) => {
-            self.cat_expr(&**e)
+            self.cat_expr(&e)
           }
 
           hir::ExprAddrOf(..) | hir::ExprCall(..) |
@@ -542,32 +543,27 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
                    id: ast::NodeId,
                    span: Span,
                    expr_ty: Ty<'tcx>,
-                   def: def::Def)
+                   def: Def)
                    -> McResult<cmt<'tcx>> {
         debug!("cat_def: id={} expr={:?} def={:?}",
                id, expr_ty, def);
 
         match def {
-          def::DefStruct(..) | def::DefVariant(..) | def::DefConst(..) |
-          def::DefAssociatedConst(..) | def::DefFn(..) | def::DefMethod(..) => {
+          Def::Struct(..) | Def::Variant(..) | Def::Const(..) |
+          Def::AssociatedConst(..) | Def::Fn(..) | Def::Method(..) => {
                 Ok(self.cat_rvalue_node(id, span, expr_ty))
           }
-          def::DefMod(_) | def::DefForeignMod(_) |
-          def::DefTrait(_) | def::DefTy(..) | def::DefPrimTy(_) |
-          def::DefTyParam(..) |
-          def::DefLabel(_) | def::DefSelfTy(..) |
-          def::DefAssociatedTy(..) => {
-              Ok(Rc::new(cmt_ {
-                  id:id,
-                  span:span,
-                  cat:Categorization::StaticItem,
-                  mutbl: McImmutable,
-                  ty:expr_ty,
-                  note: NoteNone
-              }))
+
+          Def::Mod(_) | Def::ForeignMod(_) |
+          Def::Trait(_) | Def::Enum(..) | Def::TyAlias(..) | Def::PrimTy(_) |
+          Def::TyParam(..) |
+          Def::Label(_) | Def::SelfTy(..) |
+          Def::AssociatedTy(..) => {
+              self.tcx().sess.span_bug(span, &format!("Unexpected definition in \
+                                                       memory categorization: {:?}", def));
           }
 
-          def::DefStatic(_, mutbl) => {
+          Def::Static(_, mutbl) => {
               Ok(Rc::new(cmt_ {
                   id:id,
                   span:span,
@@ -578,7 +574,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
               }))
           }
 
-          def::DefUpvar(_, var_id, _, fn_node_id) => {
+          Def::Upvar(_, var_id, _, fn_node_id) => {
               let ty = try!(self.node_ty(fn_node_id));
               match ty.sty {
                   ty::TyClosure(closure_id, _) => {
@@ -589,7 +585,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
                           None => {
                               self.tcx().sess.span_bug(
                                   span,
-                                  &*format!("No closure kind for {:?}", closure_id));
+                                  &format!("No closure kind for {:?}", closure_id));
                           }
                       }
                   }
@@ -603,7 +599,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
               }
           }
 
-          def::DefLocal(_, vid) => {
+          Def::Local(_, vid) => {
             Ok(Rc::new(cmt_ {
                 id: id,
                 span: span,
@@ -614,7 +610,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
             }))
           }
 
-          def::DefErr => panic!("DefErr in memory categorization")
+          Def::Err => panic!("Def::Err in memory categorization")
         }
     }
 
@@ -800,19 +796,19 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
                            expr_ty: Ty<'tcx>)
                            -> cmt<'tcx> {
         let qualif = self.tcx().const_qualif_map.borrow().get(&id).cloned()
-                               .unwrap_or(check_const::ConstQualif::NOT_CONST);
+                               .unwrap_or(ConstQualif::NOT_CONST);
 
         // Only promote `[T; 0]` before an RFC for rvalue promotions
         // is accepted.
         let qualif = match expr_ty.sty {
             ty::TyArray(_, 0) => qualif,
-            _ => check_const::ConstQualif::NOT_CONST
+            _ => ConstQualif::NOT_CONST
         };
 
         // Compute maximum lifetime of this rvalue. This is 'static if
         // we can promote to a constant, otherwise equal to enclosing temp
         // lifetime.
-        let re = if qualif.intersects(check_const::ConstQualif::NON_STATIC_BORROWS) {
+        let re = if qualif.intersects(ConstQualif::NON_STATIC_BORROWS) {
             self.temporary_scope(id)
         } else {
             ty::ReStatic
@@ -1202,7 +1198,7 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
         (*op)(self, cmt.clone(), pat);
 
         let opt_def = if let Some(path_res) = self.tcx().def_map.borrow().get(&pat.id) {
-            if path_res.depth != 0 || path_res.base_def == def::DefErr {
+            if path_res.depth != 0 || path_res.base_def == Def::Err {
                 // Since patterns can be associated constants
                 // which are resolved during typeck, we might have
                 // some unresolved patterns reaching this stage
@@ -1214,11 +1210,11 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
             None
         };
 
-        // Note: This goes up here (rather than within the PatEnum arm
+        // Note: This goes up here (rather than within the PatKind::TupleStruct arm
         // alone) because struct patterns can refer to struct types or
         // to struct variants within enums.
         let cmt = match opt_def {
-            Some(def::DefVariant(enum_did, variant_did, _))
+            Some(Def::Variant(enum_did, variant_did))
                 // univariant enums do not need downcasts
                 if !self.tcx().lookup_adt_def(enum_did).is_univariant() => {
                     self.cat_downcast(pat, cmt.clone(), cmt.ty, variant_did)
@@ -1227,41 +1223,41 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
         };
 
         match pat.node {
-          hir::PatWild => {
+          PatKind::Wild => {
             // _
           }
 
-          hir::PatEnum(_, None) => {
+          PatKind::TupleStruct(_, None) => {
             // variant(..)
           }
-          hir::PatEnum(_, Some(ref subpats)) => {
+          PatKind::TupleStruct(_, Some(ref subpats)) => {
             match opt_def {
-                Some(def::DefVariant(..)) => {
+                Some(Def::Variant(..)) => {
                     // variant(x, y, z)
                     for (i, subpat) in subpats.iter().enumerate() {
-                        let subpat_ty = try!(self.pat_ty(&**subpat)); // see (*2)
+                        let subpat_ty = try!(self.pat_ty(&subpat)); // see (*2)
 
                         let subcmt =
                             self.cat_imm_interior(
                                 pat, cmt.clone(), subpat_ty,
                                 InteriorField(PositionalField(i)));
 
-                        try!(self.cat_pattern_(subcmt, &**subpat, op));
+                        try!(self.cat_pattern_(subcmt, &subpat, op));
                     }
                 }
-                Some(def::DefStruct(..)) => {
+                Some(Def::Struct(..)) => {
                     for (i, subpat) in subpats.iter().enumerate() {
-                        let subpat_ty = try!(self.pat_ty(&**subpat)); // see (*2)
+                        let subpat_ty = try!(self.pat_ty(&subpat)); // see (*2)
                         let cmt_field =
                             self.cat_imm_interior(
                                 pat, cmt.clone(), subpat_ty,
                                 InteriorField(PositionalField(i)));
-                        try!(self.cat_pattern_(cmt_field, &**subpat, op));
+                        try!(self.cat_pattern_(cmt_field, &subpat, op));
                     }
                 }
-                Some(def::DefConst(..)) | Some(def::DefAssociatedConst(..)) => {
+                Some(Def::Const(..)) | Some(Def::AssociatedConst(..)) => {
                     for subpat in subpats {
-                        try!(self.cat_pattern_(cmt.clone(), &**subpat, op));
+                        try!(self.cat_pattern_(cmt.clone(), &subpat, op));
                     }
                 }
                 _ => {
@@ -1272,65 +1268,61 @@ impl<'t, 'a,'tcx> MemCategorizationContext<'t, 'a, 'tcx> {
             }
           }
 
-          hir::PatQPath(..) => {
-              // Lone constant: ignore
+          PatKind::Path(..) | PatKind::QPath(..) | PatKind::Ident(_, _, None) => {
+              // Lone constant, or unit variant or identifier: ignore
           }
 
-          hir::PatIdent(_, _, Some(ref subpat)) => {
-              try!(self.cat_pattern_(cmt, &**subpat, op));
+          PatKind::Ident(_, _, Some(ref subpat)) => {
+              try!(self.cat_pattern_(cmt, &subpat, op));
           }
 
-          hir::PatIdent(_, _, None) => {
-              // nullary variant or identifier: ignore
-          }
-
-          hir::PatStruct(_, ref field_pats, _) => {
+          PatKind::Struct(_, ref field_pats, _) => {
             // {f1: p1, ..., fN: pN}
             for fp in field_pats {
-                let field_ty = try!(self.pat_ty(&*fp.node.pat)); // see (*2)
+                let field_ty = try!(self.pat_ty(&fp.node.pat)); // see (*2)
                 let cmt_field = self.cat_field(pat, cmt.clone(), fp.node.name, field_ty);
-                try!(self.cat_pattern_(cmt_field, &*fp.node.pat, op));
+                try!(self.cat_pattern_(cmt_field, &fp.node.pat, op));
             }
           }
 
-          hir::PatTup(ref subpats) => {
+          PatKind::Tup(ref subpats) => {
             // (p1, ..., pN)
             for (i, subpat) in subpats.iter().enumerate() {
-                let subpat_ty = try!(self.pat_ty(&**subpat)); // see (*2)
+                let subpat_ty = try!(self.pat_ty(&subpat)); // see (*2)
                 let subcmt =
                     self.cat_imm_interior(
                         pat, cmt.clone(), subpat_ty,
                         InteriorField(PositionalField(i)));
-                try!(self.cat_pattern_(subcmt, &**subpat, op));
+                try!(self.cat_pattern_(subcmt, &subpat, op));
             }
           }
 
-          hir::PatBox(ref subpat) | hir::PatRegion(ref subpat, _) => {
+          PatKind::Box(ref subpat) | PatKind::Ref(ref subpat, _) => {
             // box p1, &p1, &mut p1.  we can ignore the mutability of
-            // PatRegion since that information is already contained
+            // PatKind::Ref since that information is already contained
             // in the type.
             let subcmt = try!(self.cat_deref(pat, cmt, 0, None));
-              try!(self.cat_pattern_(subcmt, &**subpat, op));
+              try!(self.cat_pattern_(subcmt, &subpat, op));
           }
 
-          hir::PatVec(ref before, ref slice, ref after) => {
+          PatKind::Vec(ref before, ref slice, ref after) => {
               let context = InteriorOffsetKind::Pattern;
               let vec_cmt = try!(self.deref_vec(pat, cmt, context));
               let elt_cmt = try!(self.cat_index(pat, vec_cmt, context));
               for before_pat in before {
-                  try!(self.cat_pattern_(elt_cmt.clone(), &**before_pat, op));
+                  try!(self.cat_pattern_(elt_cmt.clone(), &before_pat, op));
               }
               if let Some(ref slice_pat) = *slice {
-                  let slice_ty = try!(self.pat_ty(&**slice_pat));
+                  let slice_ty = try!(self.pat_ty(&slice_pat));
                   let slice_cmt = self.cat_rvalue_node(pat.id(), pat.span(), slice_ty);
-                  try!(self.cat_pattern_(slice_cmt, &**slice_pat, op));
+                  try!(self.cat_pattern_(slice_cmt, &slice_pat, op));
               }
               for after_pat in after {
-                  try!(self.cat_pattern_(elt_cmt.clone(), &**after_pat, op));
+                  try!(self.cat_pattern_(elt_cmt.clone(), &after_pat, op));
               }
           }
 
-          hir::PatLit(_) | hir::PatRange(_, _) => {
+          PatKind::Lit(_) | PatKind::Range(_, _) => {
               /*always ok*/
           }
         }

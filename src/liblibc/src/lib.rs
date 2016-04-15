@@ -82,7 +82,9 @@
                                reason = "use `libc` from crates.io",
                                issue = "27783"))]
 
-#[cfg(all(not(stdbuild), not(dox)))]
+#![cfg_attr(not(feature = "use_std"), no_std)]
+
+#[cfg(all(not(stdbuild), not(dox), feature = "use_std"))]
 extern crate std as core;
 
 #[macro_use] mod macros;
@@ -206,6 +208,7 @@ extern {
     pub fn malloc(size: size_t) -> *mut c_void;
     pub fn realloc(p: *mut c_void, size: size_t) -> *mut c_void;
     pub fn free(p: *mut c_void);
+    pub fn abort() -> !;
     pub fn exit(status: c_int) -> !;
     pub fn _exit(status: c_int) -> !;
     pub fn atexit(cb: extern fn()) -> c_int;

@@ -21,7 +21,7 @@ use middle::ty::{self, Ty, TypeFoldable};
 
 use trans::type_::Type;
 
-use syntax::abi;
+use syntax::abi::Abi;
 use syntax::ast;
 
 // LLVM doesn't like objects that are too big. Issue #17913
@@ -91,7 +91,7 @@ pub fn untuple_arguments<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                  llenvironment_type: Option<Type>,
                                  sig: &ty::FnSig<'tcx>,
-                                 abi: abi::Abi)
+                                 abi: Abi)
                                  -> Type
 {
     debug!("type_of_rust_fn(sig={:?},abi={:?})",
@@ -104,7 +104,7 @@ pub fn type_of_rust_fn<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
     // First, munge the inputs, if this has the `rust-call` ABI.
     let inputs_temp;
-    let inputs = if abi == abi::RustCall {
+    let inputs = if abi == Abi::RustCall {
         inputs_temp = untuple_arguments(cx, &sig.inputs);
         &inputs_temp
     } else {
@@ -156,7 +156,7 @@ pub fn type_of_fn_from_ty<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, fty: Ty<'tcx>) 
         ty::TyBareFn(_, ref f) => {
             // FIXME(#19925) once fn item types are
             // zero-sized, we'll need to do something here
-            if f.abi == abi::Rust || f.abi == abi::RustCall {
+            if f.abi == Abi::Rust || f.abi == Abi::RustCall {
                 let sig = cx.tcx().erase_late_bound_regions(&f.sig);
                 let sig = infer::normalize_associated_type(cx.tcx(), &sig);
                 type_of_rust_fn(cx, None, &sig, f.abi)
@@ -182,9 +182,8 @@ pub fn type_of_fn_from_ty<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, fty: Ty<'tcx>) 
 //     recursive types. For example, enum types rely on this behavior.
 
 pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Type {
-    match cx.llsizingtypes().borrow().get(&t).cloned() {
-        Some(t) => return t,
-        None => ()
+    if let Some(t) = cx.llsizingtypes().borrow().get(&t).cloned() {
+        return t;
     }
 
     debug!("sizing_type_of {:?}", t);
@@ -226,7 +225,7 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
 
         ty::TyTuple(..) | ty::TyEnum(..) | ty::TyClosure(..) => {
             let repr = adt::represent_type(cx, t);
-            adt::sizing_type_of(cx, &*repr, false)
+            adt::sizing_type_of(cx, &repr, false)
         }
 
         ty::TyStruct(..) => {
@@ -243,7 +242,7 @@ pub fn sizing_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Typ
                 Type::vector(&llet, n)
             } else {
                 let repr = adt::represent_type(cx, t);
-                adt::sizing_type_of(cx, &*repr, false)
+                adt::sizing_type_of(cx, &repr, false)
             }
         }
 
@@ -317,9 +316,8 @@ pub fn type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> Type {
 /// NB: If you update this, be sure to update `sizing_type_of()` as well.
 pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> Type {
     // Check the cache.
-    match cx.lltypes().borrow().get(&t) {
-        Some(&llty) => return llty,
-        None => ()
+    if let Some(&llty) = cx.lltypes().borrow().get(&t) {
+        return llty;
     }
 
     debug!("type_of {:?}", t);
@@ -359,7 +357,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
           let repr = adt::represent_type(cx, t);
           let tps = substs.types.get_slice(subst::TypeSpace);
           let name = llvm_type_name(cx, def.did, tps);
-          adt::incomplete_type_of(cx, &*repr, &name[..])
+          adt::incomplete_type_of(cx, &repr, &name[..])
       }
       ty::TyClosure(..) => {
           // Only create the named struct, but don't fill it in. We
@@ -369,7 +367,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
           // inherited from their environment, so we use entire
           // contents of the VecPerParamSpace to construct the llvm
           // name
-          adt::incomplete_type_of(cx, &*repr, "closure")
+          adt::incomplete_type_of(cx, &repr, "closure")
       }
 
       ty::TyBox(ty) |
@@ -385,7 +383,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
                   let unsized_part = cx.tcx().struct_tail(ty);
                   let info_ty = match unsized_part.sty {
                       ty::TyStr | ty::TyArray(..) | ty::TySlice(_) => {
-                          Type::uint_from_ty(cx, ast::TyUs)
+                          Type::uint_from_ty(cx, ast::UintTy::Us)
                       }
                       ty::TyTrait(_) => Type::vtable_ptr(cx),
                       _ => panic!("Unexpected type returned from \
@@ -423,7 +421,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
       ty::TyTuple(ref tys) if tys.is_empty() => Type::nil(cx),
       ty::TyTuple(..) => {
           let repr = adt::represent_type(cx, t);
-          adt::type_of(cx, &*repr)
+          adt::type_of(cx, &repr)
       }
       ty::TyStruct(def, ref substs) => {
           if t.is_simd() {
@@ -444,7 +442,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
               let repr = adt::represent_type(cx, t);
               let tps = substs.types.get_slice(subst::TypeSpace);
               let name = llvm_type_name(cx, def.did, tps);
-              adt::incomplete_type_of(cx, &*repr, &name[..])
+              adt::incomplete_type_of(cx, &repr, &name[..])
           }
       }
 
@@ -465,7 +463,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
         ty::TyEnum(..) | ty::TyStruct(..) | ty::TyClosure(..)
                 if !t.is_simd() => {
             let repr = adt::represent_type(cx, t);
-            adt::finish_type_of(cx, &*repr, &mut llty);
+            adt::finish_type_of(cx, &repr, &mut llty);
         }
         _ => ()
     }

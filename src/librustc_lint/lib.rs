@@ -26,6 +26,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![cfg_attr(test, feature(test))]
 #![feature(box_patterns)]
@@ -156,6 +157,10 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         FutureIncompatibleInfo {
             id: LintId::of(PRIVATE_IN_PUBLIC),
             reference: "the explanation for E0446 (`--explain E0446`)",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(INACCESSIBLE_EXTERN_CRATE),
+            reference: "PR 31362 <https://github.com/rust-lang/rust/pull/31362>",
         },
         FutureIncompatibleInfo {
             id: LintId::of(INVALID_TYPE_PARAM_DEFAULT),

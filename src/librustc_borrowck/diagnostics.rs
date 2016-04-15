@@ -17,7 +17,7 @@ This error occurs when an attempt is made to use data captured by a closure,
 when that data may no longer exist. It's most commonly seen when attempting to
 return a closure:
 
-```
+```compile_fail
 fn foo() -> Box<Fn(u32) -> u32> {
     let x = 0u32;
     Box::new(|y| x + y)
@@ -26,11 +26,12 @@ fn foo() -> Box<Fn(u32) -> u32> {
 
 Notice that `x` is stack-allocated by `foo()`. By default, Rust captures
 closed-over data by reference. This means that once `foo()` returns, `x` no
-longer exists. An attempt to access `x` within the closure would thus be unsafe.
+longer exists. An attempt to access `x` within the closure would thus be
+unsafe.
 
 Another situation where this might be encountered is when spawning threads:
 
-```
+```compile_fail
 fn foo() {
     let x = 0u32;
     let y = 1u32;
@@ -65,21 +66,29 @@ about safety.
 E0381: r##"
 It is not allowed to use or capture an uninitialized variable. For example:
 
-```
+```compile_fail
 fn main() {
     let x: i32;
     let y = x; // error, use of possibly uninitialized variable
+}
 ```
 
 To fix this, ensure that any declared variables are initialized before being
-used.
+used. Example:
+
+```
+fn main() {
+    let x: i32 = 0;
+    let y = x; // ok!
+}
+```
 "##,
 
 E0382: r##"
 This error occurs when an attempt is made to use a variable after its contents
 have been moved elsewhere. For example:
 
-```
+```compile_fail
 struct MyStruct { s: u32 }
 
 fn main() {
@@ -124,7 +133,7 @@ fn main() {
     let mut x = Rc::new(RefCell::new(MyStruct{ s: 5u32 }));
     let y = x.clone();
     x.borrow_mut().s = 6;
-    println!("{}", x.borrow.s);
+    println!("{}", x.borrow().s);
 }
 ```
 
@@ -144,7 +153,11 @@ structure that is currently uninitialized.
 
 For example, this can happen when a drop has taken place:
 
-```
+```compile_fail
+struct Foo {
+    a: u32,
+}
+
 let mut x = Foo { a: 1 };
 drop(x); // `x` is now uninitialized
 x.a = 2; // error, partial reinitialization of uninitialized structure `t`
@@ -153,6 +166,10 @@ x.a = 2; // error, partial reinitialization of uninitialized structure `t`
 This error can be fixed by fully reinitializing the structure in question:
 
 ```
+struct Foo {
+    a: u32,
+}
+
 let mut x = Foo { a: 1 };
 drop(x);
 x = Foo { a: 2 };
@@ -163,7 +180,7 @@ E0384: r##"
 This error occurs when an attempt is made to reassign an immutable variable.
 For example:
 
-```
+```compile_fail
 fn main(){
     let x = 3;
     x = 5; // error, reassignment of immutable variable
@@ -187,7 +204,7 @@ reference stored inside an immutable container.
 
 For example, this can happen when storing a `&mut` inside an immutable `Box`:
 
-```
+```compile_fail
 let mut x: i64 = 1;
 let y: Box<_> = Box::new(&mut x);
 **y = 2; // error, cannot assign to data in an immutable container
@@ -201,10 +218,12 @@ let mut y: Box<_> = Box::new(&mut x);
 **y = 2;
 ```
 
-It can also be fixed by using a type with interior mutability, such as `Cell` or
-`RefCell`:
+It can also be fixed by using a type with interior mutability, such as `Cell`
+or `RefCell`:
 
 ```
+use std::cell::Cell;
+
 let x: i64 = 1;
 let y: Box<Cell<_>> = Box::new(Cell::new(x));
 y.set(2);
@@ -215,12 +234,12 @@ E0387: r##"
 This error occurs when an attempt is made to mutate or mutably reference data
 that a closure has captured immutably. Examples of this error are shown below:
 
-```
+```compile_fail
 // Accepts a function or a closure that captures its environment immutably.
 // Closures passed to foo will not be able to mutate their closed-over state.
 fn foo<F: Fn()>(f: F) { }
 
-// Attempts to mutate closed-over data.  Error message reads:
+// Attempts to mutate closed-over data. Error message reads:
 // `cannot assign to data in a captured outer variable...`
 fn mutable() {
     let mut x = 0u32;
@@ -248,11 +267,13 @@ fn foo<F: FnMut()>(f: F) { }
 ```
 
 Alternatively, we can consider using the `Cell` and `RefCell` types to achieve
-interior mutability through a shared reference. Our example's `mutable` function
-could be redefined as below:
+interior mutability through a shared reference. Our example's `mutable`
+function could be redefined as below:
 
 ```
 use std::cell::Cell;
+
+fn foo<F: Fn()>(f: F) { }
 
 fn mutable() {
     let x = Cell::new(0u32);
@@ -268,7 +289,7 @@ https://doc.rust-lang.org/std/cell/
 E0499: r##"
 A variable was borrowed as mutable more than once. Erroneous code example:
 
-```
+```compile_fail
 let mut i = 0;
 let mut x = &mut i;
 let mut a = &mut i;
@@ -296,7 +317,7 @@ let c = &i; // still ok!
 E0507: r##"
 You tried to move out of a value which was borrowed. Erroneous code example:
 
-```
+```compile_fail
 use std::cell::RefCell;
 
 struct TheDarkKnight;
@@ -374,6 +395,33 @@ fn main() {
     let x = RefCell::new(TheDarkKnight);
 
     x.borrow().nothing_is_true(); // ok!
+}
+```
+
+Moving out of a member of a mutably borrowed struct is fine if you put something
+back. `mem::replace` can be used for that:
+
+```ignore
+struct TheDarkKnight;
+
+impl TheDarkKnight {
+    fn nothing_is_true(self) {}
+}
+
+struct Batcave {
+    knight: TheDarkKnight
+}
+
+fn main() {
+    use std::mem;
+
+    let mut cave = Batcave {
+        knight: TheDarkKnight
+    };
+    let borrowed = &mut cave;
+
+    borrowed.knight.nothing_is_true(); // E0507
+    mem::replace(&mut borrowed.knight, TheDarkKnight).nothing_is_true(); // ok!
 }
 ```
 

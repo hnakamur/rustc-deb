@@ -31,6 +31,7 @@
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
        test(attr(deny(warnings))))]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(asm)]
 #![feature(box_syntax)]
@@ -39,7 +40,6 @@
 #![feature(rustc_private)]
 #![feature(set_stdio)]
 #![feature(staged_api)]
-#![feature(time2)]
 
 extern crate getopts;
 extern crate serialize;
@@ -202,7 +202,12 @@ pub struct TestDesc {
     pub should_panic: ShouldPanic,
 }
 
-unsafe impl Send for TestDesc {}
+#[derive(Clone)]
+pub struct TestPaths {
+    pub file: PathBuf,         // e.g., compile-test/foo/bar/baz.rs
+    pub base: PathBuf,         // e.g., compile-test, auxiliary
+    pub relative_dir: PathBuf, // e.g., foo/bar
+}
 
 #[derive(Debug)]
 pub struct TestDescAndFn {
@@ -926,7 +931,9 @@ fn get_concurrency() -> usize {
     #[cfg(any(target_os = "linux",
               target_os = "macos",
               target_os = "ios",
-              target_os = "android"))]
+              target_os = "android",
+              target_os = "solaris",
+              target_os = "emscripten"))]
     fn num_cpus() -> usize {
         unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) as usize }
     }
@@ -938,18 +945,12 @@ fn get_concurrency() -> usize {
     fn num_cpus() -> usize {
         let mut cpus: libc::c_uint = 0;
         let mut cpus_size = std::mem::size_of_val(&cpus);
-        let mut mib = [libc::CTL_HW, libc::HW_AVAILCPU, 0, 0];
 
         unsafe {
-            libc::sysctl(mib.as_mut_ptr(),
-                         2,
-                         &mut cpus as *mut _ as *mut _,
-                         &mut cpus_size as *mut _ as *mut _,
-                         0 as *mut _,
-                         0);
+            cpus = libc::sysconf(libc::_SC_NPROCESSORS_ONLN) as libc::c_uint;
         }
         if cpus < 1 {
-            mib[1] = libc::HW_NCPU;
+            let mut mib = [libc::CTL_HW, libc::HW_NCPU, 0, 0];
             unsafe {
                 libc::sysctl(mib.as_mut_ptr(),
                              2,
@@ -1178,14 +1179,16 @@ impl MetricMap {
 /// elimination.
 ///
 /// This function is a no-op, and does not even read from `dummy`.
-#[cfg(not(all(target_os = "nacl", target_arch = "le32")))]
+#[cfg(not(any(all(target_os = "nacl", target_arch = "le32"),
+              target_arch = "asmjs")))]
 pub fn black_box<T>(dummy: T) -> T {
     // we need to "use" the argument in some way LLVM can't
     // introspect.
     unsafe { asm!("" : : "r"(&dummy)) }
     dummy
 }
-#[cfg(all(target_os = "nacl", target_arch = "le32"))]
+#[cfg(any(all(target_os = "nacl", target_arch = "le32"),
+          target_arch = "asmjs"))]
 #[inline(never)]
 pub fn black_box<T>(dummy: T) -> T {
     dummy

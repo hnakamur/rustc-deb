@@ -8,12 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+pub mod clear_dead_blocks;
 pub mod simplify_cfg;
 pub mod erase_regions;
-mod util;
-
-use rustc::mir::repr::Mir;
-
-pub trait MirPass<'tcx> {
-    fn run_on_mir(&mut self, mir: &mut Mir<'tcx>);
-}
+pub mod no_landing_pads;
+pub mod type_check;

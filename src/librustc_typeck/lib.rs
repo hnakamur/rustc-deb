@@ -70,6 +70,7 @@ This API is completely unstable and subject to change.
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![allow(non_camel_case_types)]
 
@@ -80,7 +81,6 @@ This API is completely unstable and subject to change.
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
-#![feature(cell_extras)]
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
@@ -99,17 +99,19 @@ pub use rustc::middle;
 pub use rustc::session;
 pub use rustc::util;
 
+use dep_graph::DepNode;
 use front::map as hir_map;
-use middle::def;
+use middle::def::Def;
 use middle::infer::{self, TypeOrigin};
 use middle::subst;
 use middle::ty::{self, Ty, TypeFoldable};
-use session::config;
+use session::{config, CompileResult};
 use util::common::time;
 use rustc_front::hir;
 
 use syntax::codemap::Span;
-use syntax::{ast, abi};
+use syntax::ast;
+use syntax::abi::Abi;
 
 use std::cell::RefCell;
 
@@ -162,7 +164,7 @@ fn write_substs_to_tcx<'tcx>(tcx: &ty::ctxt<'tcx>,
     }
 }
 
-fn lookup_full_def(tcx: &ty::ctxt, sp: Span, id: ast::NodeId) -> def::Def {
+fn lookup_full_def(tcx: &ty::ctxt, sp: Span, id: ast::NodeId) -> Def {
     match tcx.def_map.borrow().get(&id) {
         Some(x) => x.full_def(),
         None => {
@@ -173,9 +175,9 @@ fn lookup_full_def(tcx: &ty::ctxt, sp: Span, id: ast::NodeId) -> def::Def {
 
 fn require_c_abi_if_variadic(tcx: &ty::ctxt,
                              decl: &hir::FnDecl,
-                             abi: abi::Abi,
+                             abi: Abi,
                              span: Span) {
-    if decl.variadic && abi != abi::C {
+    if decl.variadic && abi != Abi::C {
         span_err!(tcx.sess, span, E0045,
                   "variadic function must have C calling convention");
     }
@@ -193,7 +195,7 @@ fn require_same_types<'a, 'tcx, M>(tcx: &ty::ctxt<'tcx>,
 {
     let result = match maybe_infcx {
         None => {
-            let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None, false);
+            let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None);
             infer::mk_eqty(&infcx, t1_is_expected, TypeOrigin::Misc(span), t1, t2)
         }
         Some(infcx) => {
@@ -236,7 +238,7 @@ fn check_main_fn_ty(ccx: &CrateCtxt,
             let main_def_id = tcx.map.local_def_id(main_id);
             let se_ty = tcx.mk_fn(Some(main_def_id), tcx.mk_bare_fn(ty::BareFnTy {
                 unsafety: hir::Unsafety::Normal,
-                abi: abi::Rust,
+                abi: Abi::Rust,
                 sig: ty::Binder(ty::FnSig {
                     inputs: Vec::new(),
                     output: ty::FnConverging(tcx.mk_nil()),
@@ -283,7 +285,7 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
             let se_ty = tcx.mk_fn(Some(ccx.tcx.map.local_def_id(start_id)),
                                   tcx.mk_bare_fn(ty::BareFnTy {
                 unsafety: hir::Unsafety::Normal,
-                abi: abi::Rust,
+                abi: Abi::Rust,
                 sig: ty::Binder(ty::FnSig {
                     inputs: vec!(
                         tcx.types.isize,
@@ -311,6 +313,7 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
 
 fn check_for_entry_fn(ccx: &CrateCtxt) {
     let tcx = ccx.tcx;
+    let _task = tcx.dep_graph.in_task(DepNode::CheckEntryFn);
     match *tcx.sess.entry_fn.borrow() {
         Some((id, sp)) => match tcx.sess.entry_type.get() {
             Some(config::EntryMain) => check_main_fn_ty(ccx, id, sp),
@@ -322,7 +325,7 @@ fn check_for_entry_fn(ccx: &CrateCtxt) {
     }
 }
 
-pub fn check_crate(tcx: &ty::ctxt, trait_map: ty::TraitMap) {
+pub fn check_crate(tcx: &ty::ctxt, trait_map: ty::TraitMap) -> CompileResult {
     let time_passes = tcx.sess.time_passes();
     let ccx = CrateCtxt {
         trait_map: trait_map,
@@ -332,34 +335,40 @@ pub fn check_crate(tcx: &ty::ctxt, trait_map: ty::TraitMap) {
 
     // this ensures that later parts of type checking can assume that items
     // have valid types and not error
-    tcx.sess.abort_if_new_errors(|| {
+    try!(tcx.sess.track_errors(|| {
         time(time_passes, "type collecting", ||
              collect::collect_item_types(tcx));
 
-    });
+    }));
 
     time(time_passes, "variance inference", ||
          variance::infer_variance(tcx));
 
-    tcx.sess.abort_if_new_errors(|| {
+    try!(tcx.sess.track_errors(|| {
       time(time_passes, "coherence checking", ||
           coherence::check_coherence(&ccx));
-    });
+    }));
 
-    time(time_passes, "wf checking", ||
-        check::check_wf_new(&ccx));
+    try!(time(time_passes, "wf checking", ||
+        check::check_wf_new(&ccx)));
 
-    time(time_passes, "item-types checking", ||
-        check::check_item_types(&ccx));
+    try!(time(time_passes, "item-types checking", ||
+        check::check_item_types(&ccx)));
 
-    time(time_passes, "item-bodies checking", ||
-        check::check_item_bodies(&ccx));
+    try!(time(time_passes, "item-bodies checking", ||
+        check::check_item_bodies(&ccx)));
 
-    time(time_passes, "drop-impl checking", ||
-        check::check_drop_impls(&ccx));
+    try!(time(time_passes, "drop-impl checking", ||
+        check::check_drop_impls(&ccx)));
 
     check_for_entry_fn(&ccx);
-    tcx.sess.abort_if_errors();
+
+    let err_count = tcx.sess.err_count();
+    if err_count == 0 {
+        Ok(())
+    } else {
+        Err(err_count)
+    }
 }
 
 __build_diagnostic_array! { librustc_typeck, DIAGNOSTICS }

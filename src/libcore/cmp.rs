@@ -19,7 +19,6 @@
 
 use self::Ordering::*;
 
-use mem;
 use marker::Sized;
 use option::Option::{self, Some};
 
@@ -119,10 +118,6 @@ pub enum Ordering {
 }
 
 impl Ordering {
-    unsafe fn from_i8_unchecked(v: i8) -> Ordering {
-        mem::transmute(v)
-    }
-
     /// Reverse the `Ordering`.
     ///
     /// * `Less` becomes `Greater`.
@@ -155,14 +150,10 @@ impl Ordering {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn reverse(self) -> Ordering {
-        unsafe {
-            // this compiles really nicely (to a single instruction);
-            // an explicit match has a pile of branches and
-            // comparisons.
-            //
-            // NB. it is safe because of the explicit discriminants
-            // given above.
-            Ordering::from_i8_unchecked(-(self as i8))
+        match self {
+            Less => Greater,
+            Equal => Equal,
+            Greater => Less,
         }
     }
 }
@@ -174,9 +165,8 @@ impl Ordering {
 /// - total and antisymmetric: exactly one of `a < b`, `a == b` or `a > b` is true; and
 /// - transitive, `a < b` and `b < c` implies `a < c`. The same must hold for both `==` and `>`.
 ///
-/// When this trait is `derive`d, it produces a lexicographic ordering.
-///
-/// This trait can be used with `#[derive]`.
+/// This trait can be used with `#[derive]`. When `derive`d, it will produce a lexicographic
+/// ordering based on the top-to-bottom declaration order of the struct's members.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait Ord: Eq + PartialOrd<Self> {
     /// This method returns an `Ordering` between `self` and `other`.
@@ -234,7 +224,8 @@ impl PartialOrd for Ordering {
 /// total order. For example, for floating point numbers, `NaN < 0 == false` and `NaN >= 0 ==
 /// false` (cf. IEEE 754-2008 section 5.11).
 ///
-/// This trait can be used with `#[derive]`.
+/// This trait can be used with `#[derive]`. When `derive`d, it will produce an ordering
+/// based on the top-to-bottom declaration order of the struct's members.
 #[lang = "ord"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {

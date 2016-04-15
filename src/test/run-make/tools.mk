@@ -83,6 +83,9 @@ ifeq ($(UNAME),Bitrig)
 	EXTRACFLAGS := -lm -lpthread
 	EXTRACXXFLAGS := -lc++ -lc++abi
 else
+ifeq ($(UNAME),SunOS)
+	EXTRACFLAGS := -lm -lpthread -lposix4 -lsocket
+else
 ifeq ($(UNAME),OpenBSD)
 	EXTRACFLAGS := -lm -lpthread
 	RUSTC := $(RUSTC) -C linker="$(word 1,$(CC:ccache=))"
@@ -94,14 +97,20 @@ endif
 endif
 endif
 endif
+endif
 
 REMOVE_DYLIBS     = rm $(TMPDIR)/$(call DYLIB_GLOB,$(1))
 REMOVE_RLIBS      = rm $(TMPDIR)/$(call RLIB_GLOB,$(1))
 
 %.a: %.o
 	ar crus $@ $<
+ifdef IS_MSVC
+%.lib: lib%.o
+	$(MSVC_LIB) -out:`cygpath -w $@` $<
+else
 %.lib: lib%.o
 	ar crus $@ $<
+endif
 %.dylib: %.o
 	$(CC) -dynamiclib -Wl,-dylib -o $@ $<
 %.so: %.o

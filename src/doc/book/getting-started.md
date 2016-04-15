@@ -39,6 +39,7 @@ Specifically they will each satisfy the following requirements:
 
 |  Target                       | std |rustc|cargo| notes                      |
 |-------------------------------|-----|-----|-----|----------------------------|
+| `i686-pc-windows-msvc`        |  ✓  |  ✓  |  ✓  | 32-bit MSVC (Windows 7+)   |
 | `x86_64-pc-windows-msvc`      |  ✓  |  ✓  |  ✓  | 64-bit MSVC (Windows 7+)   |
 | `i686-pc-windows-gnu`         |  ✓  |  ✓  |  ✓  | 32-bit MinGW (Windows 7+)  |
 | `x86_64-pc-windows-gnu`       |  ✓  |  ✓  |  ✓  | 64-bit MinGW (Windows 7+)  |
@@ -62,7 +63,6 @@ these platforms are required to have each of the following:
 
 |  Target                       | std |rustc|cargo| notes                      |
 |-------------------------------|-----|-----|-----|----------------------------|
-| `i686-pc-windows-msvc`        |  ✓  |  ✓  |  ✓  | 32-bit MSVC (Windows 7+)   |
 | `x86_64-unknown-linux-musl`   |  ✓  |     |     | 64-bit Linux with MUSL     |
 | `arm-linux-androideabi`       |  ✓  |     |     | ARM Android                |
 | `arm-unknown-linux-gnueabi`   |  ✓  |  ✓  |     | ARM Linux (2.6.18+)        |
@@ -85,6 +85,9 @@ unofficial locations.
 | `i686-linux-android`          |  ✓  |     |     | 32-bit x86 Android         |
 | `aarch64-linux-android`       |  ✓  |     |     | ARM64 Android              |
 | `powerpc-unknown-linux-gnu`   |  ✓  |     |     | PowerPC Linux (2.6.18+)    |
+| `powerpc64-unknown-linux-gnu` |  ✓  |     |     | PPC64 Linux (2.6.18+)      |
+|`powerpc64le-unknown-linux-gnu`|  ✓  |     |     | PPC64LE Linux (2.6.18+)    |
+|`armv7-unknown-linux-gnueabihf`|  ✓  |     |     | ARMv7 Linux (2.6.18+)      |
 | `i386-apple-ios`              |  ✓  |     |     | 32-bit x86 iOS             |
 | `x86_64-apple-ios`            |  ✓  |     |     | 64-bit x86 iOS             |
 | `armv7-apple-ios`             |  ✓  |     |     | ARM iOS                    |
@@ -97,6 +100,7 @@ unofficial locations.
 | `x86_64-unknown-bitrig`       |  ✓  |  ✓  |     | 64-bit Bitrig              |
 | `x86_64-unknown-dragonfly`    |  ✓  |  ✓  |     | 64-bit DragonFlyBSD        |
 | `x86_64-rumprun-netbsd`       |  ✓  |     |     | 64-bit NetBSD Rump Kernel  |
+| `x86_64-sun-solaris`          |  ✓  |  ✓  |     | 64-bit Solaris/SunOS       |
 | `i686-pc-windows-msvc` (XP)   |  ✓  |     |     | Windows XP support         |
 | `x86_64-pc-windows-msvc` (XP) |  ✓  |     |     | Windows XP support         |
 
@@ -111,7 +115,7 @@ If we're on Linux or a Mac, all we need to do is open a terminal and type this:
 $ curl -sSf https://static.rust-lang.org/rustup.sh | sh
 ```
 
-This will download a script, and stat the installation. If it all goes well,
+This will download a script, and start the installation. If it all goes well,
 you’ll see this appear:
 
 ```text
@@ -166,6 +170,10 @@ If you don't and you're on Windows, check that Rust is in your %PATH% system
 variable. If it isn't, run the installer again, select "Change" on the "Change,
 repair, or remove installation" page and ensure "Add to PATH" is installed on
 the local hard drive.
+
+Rust does not do its own linking, and so you’ll need to have a linker
+installed. Doing so will depend on your specific system, consult its
+documentation for more details.
 
 If not, there are a number of places where we can get help. The easiest is
 [the #rust IRC channel on irc.mozilla.org][irc], which we can access through
@@ -511,15 +519,17 @@ programming languages. For complex projects composed of multiple crates, it’s
 much easier to let Cargo coordinate the build. Using Cargo, you can run `cargo
 build`, and it should work the right way.
 
-## Building for Release
+### Building for Release
 
-When your project is finally ready for release, you can use `cargo build
+When your project is ready for release, you can use `cargo build
 --release` to compile your project with optimizations. These optimizations make
 your Rust code run faster, but turning them on makes your program take longer
 to compile. This is why there are two different profiles, one for development,
 and one for building the final program you’ll give to a user.
 
-Running this command also causes Cargo to create a new file called
+### What Is That `Cargo.lock`?
+
+Running `cargo build` also causes Cargo to create a new file called
 *Cargo.lock*, which looks like this:
 
 ```toml
@@ -563,7 +573,7 @@ executable application, as opposed to a library. Executables are often called
 *binaries* (as in `/usr/bin`, if you’re on a Unix system).
 
 Cargo has generated two files and one directory for us: a `Cargo.toml` and a
-*src* directory with a *main.rs* file inside. These should look familliar,
+*src* directory with a *main.rs* file inside. These should look familiar,
 they’re exactly what we created by hand, above.
 
 This output is all you need to get started. First, open `Cargo.toml`. It should
@@ -602,11 +612,11 @@ This chapter covered the basics that will serve you well through the rest of
 this book, and the rest of your time with Rust. Now that you’ve got the tools
 down, we'll cover more about the Rust language itself.
 
-You have two options: Dive into a project with ‘[Learn Rust][learnrust]’, or
+You have two options: Dive into a project with ‘[Tutorial: Guessing Game][guessinggame]’, or
 start from the bottom and work your way up with ‘[Syntax and
 Semantics][syntax]’. More experienced systems programmers will probably prefer
-‘Learn Rust’, while those from dynamic backgrounds may enjoy either. Different
+‘Tutorial: Guessing Game’, while those from dynamic backgrounds may enjoy either. Different
 people learn differently! Choose whatever’s right for you.
 
-[learnrust]: learn-rust.html
+[guessinggame]: guessing-game.html
 [syntax]: syntax-and-semantics.html

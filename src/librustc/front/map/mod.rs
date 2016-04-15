@@ -14,11 +14,13 @@ use self::MapEntry::*;
 use self::collector::NodeCollector;
 pub use self::definitions::{Definitions, DefKey, DefPath, DefPathData, DisambiguatedDefPathData};
 
+use dep_graph::{DepGraph, DepNode};
+
 use middle::cstore::InlinedItem;
 use middle::cstore::InlinedItem as II;
 use middle::def_id::DefId;
 
-use syntax::abi;
+use syntax::abi::Abi;
 use syntax::ast::{self, Name, NodeId, DUMMY_NODE_ID};
 use syntax::codemap::{Span, Spanned};
 use syntax::parse::token;
@@ -228,19 +230,22 @@ impl<'ast> MapEntry<'ast> {
 
 /// Stores a crate and any number of inlined items from other crates.
 pub struct Forest {
-    pub krate: Crate,
+    krate: Crate,
+    pub dep_graph: DepGraph,
     inlined_items: TypedArena<InlinedParent>
 }
 
 impl Forest {
-    pub fn new(krate: Crate) -> Forest {
+    pub fn new(krate: Crate, dep_graph: DepGraph) -> Forest {
         Forest {
             krate: krate,
+            dep_graph: dep_graph,
             inlined_items: TypedArena::new()
         }
     }
 
     pub fn krate<'ast>(&'ast self) -> &'ast Crate {
+        self.dep_graph.read(DepNode::Krate);
         &self.krate
     }
 }
@@ -251,6 +256,10 @@ impl Forest {
 pub struct Map<'ast> {
     /// The backing storage for all the AST nodes.
     pub forest: &'ast Forest,
+
+    /// Same as the dep_graph in forest, just available with one fewer
+    /// deref. This is a gratuitious micro-optimization.
+    pub dep_graph: DepGraph,
 
     /// NodeIds are sequential integers from 0, so we can be
     /// super-compact by storing them in a vector. Not everything with
@@ -267,6 +276,70 @@ pub struct Map<'ast> {
 }
 
 impl<'ast> Map<'ast> {
+    /// Registers a read in the dependency graph of the AST node with
+    /// the given `id`. This needs to be called each time a public
+    /// function returns the HIR for a node -- in other words, when it
+    /// "reveals" the content of a node to the caller (who might not
+    /// otherwise have had access to those contents, and hence needs a
+    /// read recorded). If the function just returns a DefId or
+    /// NodeId, no actual content was returned, so no read is needed.
+    fn read(&self, id: NodeId) {
+        self.dep_graph.read(self.dep_node(id));
+    }
+
+    fn dep_node(&self, id0: NodeId) -> DepNode {
+        let map = self.map.borrow();
+        let mut id = id0;
+        loop {
+            match map[id as usize] {
+                EntryItem(_, item) => {
+                    let def_id = self.local_def_id(item.id);
+                    // NB                          ^~~~~~~
+                    //
+                    // You would expect that `item.id == id`, but this
+                    // is not always the case. In particular, for a
+                    // ViewPath item like `use self::{mem, foo}`, we
+                    // map the ids for `mem` and `foo` to the
+                    // enclosing view path item. This seems mega super
+                    // ultra wrong, but then who am I to judge?
+                    // -nmatsakis
+                    return DepNode::Hir(def_id);
+                }
+
+                EntryForeignItem(p, _) |
+                EntryTraitItem(p, _) |
+                EntryImplItem(p, _) |
+                EntryVariant(p, _) |
+                EntryExpr(p, _) |
+                EntryStmt(p, _) |
+                EntryLocal(p, _) |
+                EntryPat(p, _) |
+                EntryBlock(p, _) |
+                EntryStructCtor(p, _) |
+                EntryLifetime(p, _) |
+                EntryTyParam(p, _) =>
+                    id = p,
+
+                RootCrate |
+                RootInlinedParent(_) => // FIXME(#2369) clarify story about cross-crate dep tracking
+                    return DepNode::Krate,
+
+                NotPresent =>
+                    // Some nodes, notably struct fields, are not
+                    // present in the map for whatever reason, but
+                    // they *do* have def-ids. So if we encounter an
+                    // empty hole, check for that case.
+                    return self.opt_local_def_id(id)
+                               .map(|def_id| DepNode::Hir(def_id))
+                               .unwrap_or_else(|| {
+                                   panic!("Walking parents from `{}` \
+                                           led to `NotPresent` at `{}`",
+                                          id0, id)
+                               }),
+            }
+        }
+    }
+
     pub fn num_local_def_ids(&self) -> usize {
         self.definitions.borrow().len()
     }
@@ -309,26 +382,30 @@ impl<'ast> Map<'ast> {
     }
 
     pub fn krate(&self) -> &'ast Crate {
-        &self.forest.krate
+        self.forest.krate()
     }
 
     /// Retrieve the Node corresponding to `id`, panicking if it cannot
     /// be found.
     pub fn get(&self, id: NodeId) -> Node<'ast> {
         match self.find(id) {
-            Some(node) => node,
+            Some(node) => node, // read recorded by `find`
             None => panic!("couldn't find node id {} in the AST map", id)
         }
     }
 
     pub fn get_if_local(&self, id: DefId) -> Option<Node<'ast>> {
-        self.as_local_node_id(id).map(|id| self.get(id))
+        self.as_local_node_id(id).map(|id| self.get(id)) // read recorded by `get`
     }
 
     /// Retrieve the Node corresponding to `id`, returning None if
     /// cannot be found.
     pub fn find(&self, id: NodeId) -> Option<Node<'ast>> {
-        self.find_entry(id).and_then(|x| x.to_node())
+        let result = self.find_entry(id).and_then(|x| x.to_node());
+        if result.is_some() {
+            self.read(id);
+        }
+        result
     }
 
     /// Similar to get_parent, returns the parent node id or id if there is no
@@ -445,7 +522,7 @@ impl<'ast> Map<'ast> {
         }
     }
 
-    pub fn get_foreign_abi(&self, id: NodeId) -> abi::Abi {
+    pub fn get_foreign_abi(&self, id: NodeId) -> Abi {
         let parent = self.get_parent(id);
         let abi = match self.find_entry(parent) {
             Some(EntryItem(_, i)) => {
@@ -455,26 +532,29 @@ impl<'ast> Map<'ast> {
                 }
             }
             /// Wrong but OK, because the only inlined foreign items are intrinsics.
-            Some(RootInlinedParent(_)) => Some(abi::RustIntrinsic),
+            Some(RootInlinedParent(_)) => Some(Abi::RustIntrinsic),
             _ => None
         };
         match abi {
-            Some(abi) => abi,
+            Some(abi) => {
+                self.read(id); // reveals some of the content of a node
+                abi
+            }
             None => panic!("expected foreign mod or inlined parent, found {}",
                           self.node_to_string(parent))
         }
     }
 
     pub fn get_foreign_vis(&self, id: NodeId) -> Visibility {
-        let vis = self.expect_foreign_item(id).vis;
-        match self.find(self.get_parent(id)) {
+        let vis = self.expect_foreign_item(id).vis; // read recorded by `expect_foreign_item`
+        match self.find(self.get_parent(id)) { // read recorded by `find`
             Some(NodeItem(i)) => vis.inherit_from(i.vis),
             _ => vis
         }
     }
 
     pub fn expect_item(&self, id: NodeId) -> &'ast Item {
-        match self.find(id) {
+        match self.find(id) { // read recorded by `find`
             Some(NodeItem(item)) => item,
             _ => panic!("expected item, found {}", self.node_to_string(id))
         }
@@ -521,7 +601,7 @@ impl<'ast> Map<'ast> {
     }
 
     pub fn expect_expr(&self, id: NodeId) -> &'ast Expr {
-        match self.find(id) {
+        match self.find(id) { // read recorded by find
             Some(NodeExpr(expr)) => expr,
             _ => panic!("expected expr, found {}", self.node_to_string(id))
         }
@@ -545,7 +625,7 @@ impl<'ast> Map<'ast> {
             NodeVariant(v) => PathName(v.node.name),
             NodeLifetime(lt) => PathName(lt.name),
             NodeTyParam(tp) => PathName(tp.name),
-            NodeLocal(&Pat { node: PatIdent(_,l,_), .. }) => {
+            NodeLocal(&Pat { node: PatKind::Ident(_,l,_), .. }) => {
                 PathName(l.node.name)
             },
             _ => panic!("no path elem for {:?}", node)
@@ -571,6 +651,11 @@ impl<'ast> Map<'ast> {
     fn with_path_next<T, F>(&self, id: NodeId, next: LinkedPath, f: F) -> T where
         F: FnOnce(PathElems) -> T,
     {
+        // This function reveals the name of the item and hence is a
+        // kind of read. This is inefficient, since it walks ancestors
+        // and we are walking them anyhow, but whatever.
+        self.read(id);
+
         let parent = self.get_parent(id);
         let parent = match self.find_entry(id) {
             Some(EntryForeignItem(..)) => {
@@ -602,6 +687,7 @@ impl<'ast> Map<'ast> {
     /// Given a node ID, get a list of attributes associated with the AST
     /// corresponding to the Node ID
     pub fn attrs(&self, id: NodeId) -> &'ast [ast::Attribute] {
+        self.read(id); // reveals attributes on the node
         let attrs = match self.find(id) {
             Some(NodeItem(i)) => Some(&i.attrs[..]),
             Some(NodeForeignItem(fi)) => Some(&fi.attrs[..]),
@@ -655,6 +741,7 @@ impl<'ast> Map<'ast> {
     }
 
     pub fn span(&self, id: NodeId) -> Span {
+        self.read(id); // reveals span from node
         self.opt_span(id)
             .unwrap_or_else(|| panic!("AstMap.span: could not find span for id {:?}", id))
     }
@@ -718,7 +805,7 @@ impl<'a, 'ast> NodesMatchingSuffix<'a, 'ast> {
             loop {
                 match map.find(id) {
                     None => return None,
-                    Some(NodeItem(item)) if item_is_mod(&*item) =>
+                    Some(NodeItem(item)) if item_is_mod(&item) =>
                         return Some((id, item.name)),
                     _ => {}
                 }
@@ -833,6 +920,7 @@ pub fn map_crate<'ast>(forest: &'ast mut Forest) -> Map<'ast> {
 
     Map {
         forest: forest,
+        dep_graph: forest.dep_graph.clone(),
         map: RefCell::new(map),
         definitions: RefCell::new(definitions),
     }
@@ -889,16 +977,16 @@ pub trait NodePrinter {
 impl<'a> NodePrinter for pprust::State<'a> {
     fn print_node(&mut self, node: &Node) -> io::Result<()> {
         match *node {
-            NodeItem(a)        => self.print_item(&*a),
-            NodeForeignItem(a) => self.print_foreign_item(&*a),
+            NodeItem(a)        => self.print_item(&a),
+            NodeForeignItem(a) => self.print_foreign_item(&a),
             NodeTraitItem(a)   => self.print_trait_item(a),
             NodeImplItem(a)    => self.print_impl_item(a),
-            NodeVariant(a)     => self.print_variant(&*a),
-            NodeExpr(a)        => self.print_expr(&*a),
-            NodeStmt(a)        => self.print_stmt(&*a),
-            NodePat(a)         => self.print_pat(&*a),
-            NodeBlock(a)       => self.print_block(&*a),
-            NodeLifetime(a)    => self.print_lifetime(&*a),
+            NodeVariant(a)     => self.print_variant(&a),
+            NodeExpr(a)        => self.print_expr(&a),
+            NodeStmt(a)        => self.print_stmt(&a),
+            NodePat(a)         => self.print_pat(&a),
+            NodeBlock(a)       => self.print_block(&a),
+            NodeLifetime(a)    => self.print_lifetime(&a),
             NodeTyParam(_)     => panic!("cannot print TyParam"),
             // these cases do not carry enough information in the
             // ast_map to reconstruct their full structure for pretty
@@ -977,26 +1065,26 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
                     map.path_to_string(id), id_str)
         }
         Some(NodeExpr(ref expr)) => {
-            format!("expr {}{}", pprust::expr_to_string(&**expr), id_str)
+            format!("expr {}{}", pprust::expr_to_string(&expr), id_str)
         }
         Some(NodeStmt(ref stmt)) => {
-            format!("stmt {}{}", pprust::stmt_to_string(&**stmt), id_str)
+            format!("stmt {}{}", pprust::stmt_to_string(&stmt), id_str)
         }
         Some(NodeLocal(ref pat)) => {
-            format!("local {}{}", pprust::pat_to_string(&**pat), id_str)
+            format!("local {}{}", pprust::pat_to_string(&pat), id_str)
         }
         Some(NodePat(ref pat)) => {
-            format!("pat {}{}", pprust::pat_to_string(&**pat), id_str)
+            format!("pat {}{}", pprust::pat_to_string(&pat), id_str)
         }
         Some(NodeBlock(ref block)) => {
-            format!("block {}{}", pprust::block_to_string(&**block), id_str)
+            format!("block {}{}", pprust::block_to_string(&block), id_str)
         }
         Some(NodeStructCtor(_)) => {
             format!("struct_ctor {}{}", map.path_to_string(id), id_str)
         }
         Some(NodeLifetime(ref l)) => {
             format!("lifetime {}{}",
-                    pprust::lifetime_to_string(&**l), id_str)
+                    pprust::lifetime_to_string(&l), id_str)
         }
         Some(NodeTyParam(ref ty_param)) => {
             format!("typaram {:?}{}", ty_param, id_str)

@@ -18,6 +18,7 @@ use decoder;
 use loader::{self, CratePaths};
 
 use rustc::back::svh::Svh;
+use rustc::dep_graph::DepNode;
 use rustc::session::{config, Session};
 use rustc::session::search_paths::PathKind;
 use rustc::middle::cstore::{CrateStore, validate_crate_name};
@@ -30,7 +31,7 @@ use std::rc::Rc;
 use std::fs;
 
 use syntax::ast;
-use syntax::abi;
+use syntax::abi::Abi;
 use syntax::codemap::{self, Span, mk_sp, Pos};
 use syntax::parse;
 use syntax::attr;
@@ -156,7 +157,7 @@ impl<'a> CrateReader<'a> {
 
     fn extract_crate_info(&self, i: &ast::Item) -> Option<CrateInfo> {
         match i.node {
-            ast::ItemExternCrate(ref path_opt) => {
+            ast::ItemKind::ExternCrate(ref path_opt) => {
                 debug!("resolving extern crate stmt. ident: {} path_opt: {:?}",
                        i.ident, path_opt);
                 let name = match *path_opt {
@@ -258,15 +259,14 @@ impl<'a> CrateReader<'a> {
                             metadata: &MetadataBlob) {
         let crate_rustc_version = decoder::crate_rustc_version(metadata.as_slice());
         if crate_rustc_version != Some(rustc_version()) {
-            span_err!(self.sess, span, E0514,
-                      "the crate `{}` has been compiled with {}, which is \
-                       incompatible with this version of rustc",
-                      name,
-                      crate_rustc_version
-                          .as_ref().map(|s|&**s)
-                          .unwrap_or("an old version of rustc")
+            span_fatal!(self.sess, span, E0514,
+                        "the crate `{}` has been compiled with {}, which is \
+                         incompatible with this version of rustc",
+                        name,
+                        crate_rustc_version
+                            .as_ref().map(|s| &**s)
+                            .unwrap_or("an old version of rustc")
             );
-            self.sess.abort_if_errors();
         }
     }
 
@@ -494,8 +494,8 @@ impl<'a> CrateReader<'a> {
         let source_name = format!("<{} macros>", item.ident);
         let mut macros = vec![];
         decoder::each_exported_macro(ekrate.metadata.as_slice(),
-                                     &*self.cstore.intr,
-            |name, attrs, body| {
+                                     &self.cstore.intr,
+            |name, attrs, span, body| {
                 // NB: Don't use parse::parse_tts_from_source_str because it parses with
                 // quote_depth > 0.
                 let mut p = parse::new_parser_from_source_str(&self.sess.parse_sess,
@@ -510,8 +510,7 @@ impl<'a> CrateReader<'a> {
                         panic!(FatalError);
                     }
                 };
-                let span = mk_sp(lo, p.last_span.hi);
-                p.abort_if_errors();
+                let local_span = mk_sp(lo, p.last_span.hi);
 
                 // Mark the attrs as used
                 for attr in &attrs {
@@ -522,7 +521,7 @@ impl<'a> CrateReader<'a> {
                     ident: ast::Ident::with_empty_ctxt(name),
                     attrs: attrs,
                     id: ast::DUMMY_NODE_ID,
-                    span: span,
+                    span: local_span,
                     imported_from: Some(item.ident),
                     // overridden in plugin/load.rs
                     export: false,
@@ -531,6 +530,8 @@ impl<'a> CrateReader<'a> {
 
                     body: body,
                 });
+                self.sess.imported_macro_spans.borrow_mut()
+                    .insert(local_span, (name.as_str().to_string(), span));
                 true
             }
         );
@@ -554,8 +555,7 @@ impl<'a> CrateReader<'a> {
                                   name,
                                   config::host_triple(),
                                   self.sess.opts.target_triple);
-            span_err!(self.sess, span, E0456, "{}", &message[..]);
-            self.sess.abort_if_errors();
+            span_fatal!(self.sess, span, E0456, "{}", &message[..]);
         }
 
         let registrar =
@@ -724,7 +724,10 @@ impl<'a, 'b> LocalCrateReader<'a, 'b> {
     // Traverses an AST, reading all the information about use'd crates and
     // extern libraries necessary for later resolving, typechecking, linking,
     // etc.
-    pub fn read_crates(&mut self, krate: &hir::Crate) {
+    pub fn read_crates(&mut self) {
+        let _task = self.ast_map.dep_graph.in_task(DepNode::CrateReader);
+        let krate = self.ast_map.krate();
+
         self.process_crate(krate);
         krate.visit_all_items(self);
         self.creader.inject_allocator_crate();
@@ -781,7 +784,7 @@ impl<'a, 'b> LocalCrateReader<'a, 'b> {
     }
 
     fn process_foreign_mod(&mut self, i: &hir::Item, fm: &hir::ForeignMod) {
-        if fm.abi == abi::Rust || fm.abi == abi::RustIntrinsic || fm.abi == abi::PlatformIntrinsic {
+        if fm.abi == Abi::Rust || fm.abi == Abi::RustIntrinsic || fm.abi == Abi::PlatformIntrinsic {
             return;
         }
 

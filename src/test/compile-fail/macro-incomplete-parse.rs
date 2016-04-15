@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// compile-flags: -Z continue-parse-after-error
+
 macro_rules! ignored_item {
     () => {
         fn foo() {}
@@ -18,7 +20,7 @@ macro_rules! ignored_item {
 
 macro_rules! ignored_expr {
     () => ( 1,  //~ ERROR unexpected token: `,`
-            2 ) //~ ERROR macro expansion ignores token `2`
+            2 )
 }
 
 macro_rules! ignored_pat {
@@ -28,7 +30,7 @@ macro_rules! ignored_pat {
 ignored_item!(); //~ NOTE caused by the macro expansion here
 
 fn main() {
-    ignored_expr!(); //~ NOTE caused by the macro expansion here
+    ignored_expr!();
     match 1 {
         ignored_pat!() => (), //~ NOTE caused by the macro expansion here
         _ => (),

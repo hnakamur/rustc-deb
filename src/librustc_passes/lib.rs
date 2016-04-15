@@ -19,8 +19,9 @@
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-      html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
-      html_root_url = "https://doc.rust-lang.org/nightly/")]
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
+       html_root_url = "https://doc.rust-lang.org/nightly/")]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(rustc_diagnostic_macros)]
 #![feature(staged_api)]
@@ -28,9 +29,16 @@
 
 extern crate core;
 extern crate rustc;
+extern crate rustc_front;
 
+#[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
 
 pub mod diagnostics;
+
 pub mod const_fn;
+pub mod consts;
+pub mod loops;
 pub mod no_asm;
+pub mod rvalues;
+pub mod static_recursion;

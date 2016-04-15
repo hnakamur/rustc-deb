@@ -83,20 +83,14 @@
 
 // Many of the usings in this module are only used in the test configuration.
 // It's cleaner to just turn off the unused_imports warning than to fix them.
-#![allow(unused_imports)]
+#![cfg_attr(test, allow(unused_imports, dead_code))]
 
 use alloc::boxed::Box;
-use core::clone::Clone;
 use core::cmp::Ordering::{self, Greater, Less};
-use core::cmp::{self, Ord, PartialEq};
-use core::iter::Iterator;
-use core::marker::Sized;
+use core::cmp;
 use core::mem::size_of;
 use core::mem;
-use core::ops::FnMut;
-use core::option::Option::{self, Some, None};
 use core::ptr;
-use core::result::Result;
 use core::slice as core_slice;
 
 use borrow::{Borrow, BorrowMut, ToOwned};
@@ -136,12 +130,7 @@ pub use self::hack::to_vec;
 // `test_permutations` test
 mod hack {
     use alloc::boxed::Box;
-    use core::clone::Clone;
-    #[cfg(test)]
-    use core::iter::Iterator;
     use core::mem;
-    #[cfg(test)]
-    use core::option::Option::{Some, None};
 
     #[cfg(test)]
     use string::ToString;
@@ -418,7 +407,7 @@ impl<T> [T] {
     }
 
     /// Returns an iterator over `size` elements of the slice at a
-    /// time. The chunks do not overlap. If `size` does not divide the
+    /// time. The chunks are slices and do not overlap. If `size` does not divide the
     /// length of the slice, then the last chunk will not have length
     /// `size`.
     ///
@@ -444,7 +433,7 @@ impl<T> [T] {
     }
 
     /// Returns an iterator over `chunk_size` elements of the slice at a time.
-    /// The chunks are mutable and do not overlap. If `chunk_size` does
+    /// The chunks are mutable slices, and do not overlap. If `chunk_size` does
     /// not divide the length of the slice, then the last chunk will not
     /// have length `chunk_size`.
     ///
@@ -847,6 +836,30 @@ impl<T> [T] {
     pub fn clone_from_slice(&mut self, src: &[T]) where T: Clone {
         core_slice::SliceExt::clone_from_slice(self, src)
     }
+
+    /// Copies all elements from `src` into `self`, using a memcpy.
+    ///
+    /// The length of `src` must be the same as `self`.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the two slices have different lengths.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// #![feature(copy_from_slice)]
+    /// let mut dst = [0, 0, 0];
+    /// let src = [1, 2, 3];
+    ///
+    /// dst.copy_from_slice(&src);
+    /// assert_eq!(src, dst);
+    /// ```
+    #[unstable(feature = "copy_from_slice", issue = "31755")]
+    pub fn copy_from_slice(&mut self, src: &[T]) where T: Copy {
+        core_slice::SliceExt::copy_from_slice(self, src)
+    }
+
 
     /// Copies `self` into a new `Vec`.
     #[stable(feature = "rust1", since = "1.0.0")]

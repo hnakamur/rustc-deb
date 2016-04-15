@@ -238,13 +238,13 @@ pub enum Entry<'a, K: 'a, V: 'a> {
     /// A vacant Entry
     #[stable(feature = "rust1", since = "1.0.0")]
     Vacant(
-        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] VacantEntry<'a, K, V>
+        #[stable(feature = "rust1", since = "1.0.0")] VacantEntry<'a, K, V>
     ),
 
     /// An occupied Entry
     #[stable(feature = "rust1", since = "1.0.0")]
     Occupied(
-        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] OccupiedEntry<'a, K, V>
+        #[stable(feature = "rust1", since = "1.0.0")] OccupiedEntry<'a, K, V>
     ),
 }
 
@@ -375,9 +375,10 @@ impl<K: Ord, V> BTreeMap<K, V> {
     ///
     /// If the map did not have this key present, `None` is returned.
     ///
-    /// If the map did have this key present, the key is not updated, the
-    /// value is updated and the old value is returned.
-    /// See the [module-level documentation] for more.
+    /// If the map did have this key present, the value is updated, and the old
+    /// value is returned. The key is not updated, though; this matters for
+    /// types that can be `==` without being identical. See the [module-level
+    /// documentation] for more.
     ///
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
@@ -1194,7 +1195,7 @@ unsafe fn unwrap_unchecked<T>(val: Option<T>) -> T {
 }
 
 impl<K, V> BTreeMap<K, V> {
-    /// Gets an iterator over the entries of the map.
+    /// Gets an iterator over the entries of the map, sorted by key.
     ///
     /// # Examples
     ///
@@ -1202,9 +1203,9 @@ impl<K, V> BTreeMap<K, V> {
     /// use std::collections::BTreeMap;
     ///
     /// let mut map = BTreeMap::new();
-    /// map.insert(1, "a");
-    /// map.insert(2, "b");
     /// map.insert(3, "c");
+    /// map.insert(2, "b");
+    /// map.insert(1, "a");
     ///
     /// for (key, value) in map.iter() {
     ///     println!("{}: {}", key, value);
@@ -1224,7 +1225,7 @@ impl<K, V> BTreeMap<K, V> {
         }
     }
 
-    /// Gets a mutable iterator over the entries of the map.
+    /// Gets a mutable iterator over the entries of the map, sorted by key.
     ///
     /// # Examples
     ///
@@ -1257,7 +1258,7 @@ impl<K, V> BTreeMap<K, V> {
         }
     }
 
-    /// Gets an iterator over the keys of the map.
+    /// Gets an iterator over the keys of the map, in sorted order.
     ///
     /// # Examples
     ///
@@ -1265,8 +1266,8 @@ impl<K, V> BTreeMap<K, V> {
     /// use std::collections::BTreeMap;
     ///
     /// let mut a = BTreeMap::new();
-    /// a.insert(1, "a");
     /// a.insert(2, "b");
+    /// a.insert(1, "a");
     ///
     /// let keys: Vec<_> = a.keys().cloned().collect();
     /// assert_eq!(keys, [1, 2]);
@@ -1276,7 +1277,7 @@ impl<K, V> BTreeMap<K, V> {
         Keys { inner: self.iter() }
     }
 
-    /// Gets an iterator over the values of the map.
+    /// Gets an iterator over the values of the map, in order by key.
     ///
     /// # Examples
     ///
@@ -1284,11 +1285,11 @@ impl<K, V> BTreeMap<K, V> {
     /// use std::collections::BTreeMap;
     ///
     /// let mut a = BTreeMap::new();
-    /// a.insert(1, "a");
-    /// a.insert(2, "b");
+    /// a.insert(1, "hello");
+    /// a.insert(2, "goodbye");
     ///
     /// let values: Vec<&str> = a.values().cloned().collect();
-    /// assert_eq!(values, ["a", "b"]);
+    /// assert_eq!(values, ["hello", "goodbye"]);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn values<'a>(&'a self) -> Values<'a, K, V> {

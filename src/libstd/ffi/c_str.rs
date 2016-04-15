@@ -60,6 +60,18 @@ use vec::Vec;
 /// }
 /// # }
 /// ```
+///
+/// # Safety
+///
+/// `CString` is intended for working with traditional C-style strings
+/// (a sequence of non-null bytes terminated by a single null byte); the
+/// primary use case for these kinds of strings is interoperating with C-like
+/// code. Often you will need to transfer ownership to/from that external
+/// code. It is strongly recommended that you thoroughly read through the
+/// documentation of `CString` before use, as improper ownership management
+/// of `CString` instances can lead to invalid memory accesses, memory leaks,
+/// and other memory errors.
+
 #[derive(PartialEq, PartialOrd, Eq, Ord, Hash, Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct CString {
@@ -207,11 +219,11 @@ impl CString {
         CString { inner: v.into_boxed_slice() }
     }
 
-    /// Retakes ownership of a CString that was transferred to C.
+    /// Retakes ownership of a `CString` that was transferred to C.
     ///
-    /// The only appropriate argument is a pointer obtained by calling
-    /// `into_raw`. The length of the string will be recalculated
-    /// using the pointer.
+    /// This should only ever be called with a pointer that was earlier
+    /// obtained by calling `into_raw` on a `CString`. Additionally, the length
+    /// of the string will be recalculated from the pointer.
     #[stable(feature = "cstr_memory", since = "1.4.0")]
     pub unsafe fn from_raw(ptr: *mut c_char) -> CString {
         let len = libc::strlen(ptr) + 1; // Including the NUL byte
@@ -407,7 +419,6 @@ impl CStr {
     /// # fn main() {
     /// use std::ffi::CStr;
     /// use std::os::raw::c_char;
-    /// use std::str;
     ///
     /// extern {
     ///     fn my_string() -> *const c_char;
@@ -415,8 +426,7 @@ impl CStr {
     ///
     /// unsafe {
     ///     let slice = CStr::from_ptr(my_string());
-    ///     println!("string returned: {}",
-    ///              str::from_utf8(slice.to_bytes()).unwrap());
+    ///     println!("string returned: {}", slice.to_str().unwrap());
     /// }
     /// # }
     /// ```
@@ -424,6 +434,57 @@ impl CStr {
     pub unsafe fn from_ptr<'a>(ptr: *const c_char) -> &'a CStr {
         let len = libc::strlen(ptr);
         mem::transmute(slice::from_raw_parts(ptr, len as usize + 1))
+    }
+
+    /// Creates a C string wrapper from a byte slice.
+    ///
+    /// This function will cast the provided `bytes` to a `CStr` wrapper after
+    /// ensuring that it is null terminated and does not contain any interior
+    /// nul bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #![feature(cstr_from_bytes)]
+    /// use std::ffi::CStr;
+    ///
+    /// # fn main() {
+    /// let cstr = CStr::from_bytes_with_nul(b"hello\0");
+    /// assert!(cstr.is_some());
+    /// # }
+    /// ```
+    #[unstable(feature = "cstr_from_bytes", reason = "recently added", issue = "31190")]
+    pub fn from_bytes_with_nul(bytes: &[u8]) -> Option<&CStr> {
+        if bytes.is_empty() || memchr::memchr(0, &bytes) != Some(bytes.len() - 1) {
+            None
+        } else {
+            Some(unsafe { Self::from_bytes_with_nul_unchecked(bytes) })
+        }
+    }
+
+    /// Unsafely creates a C string wrapper from a byte slice.
+    ///
+    /// This function will cast the provided `bytes` to a `CStr` wrapper without
+    /// performing any sanity checks. The provided slice must be null terminated
+    /// and not contain any interior nul bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #![feature(cstr_from_bytes)]
+    /// use std::ffi::{CStr, CString};
+    ///
+    /// # fn main() {
+    /// unsafe {
+    ///     let cstring = CString::new("hello").unwrap();
+    ///     let cstr = CStr::from_bytes_with_nul_unchecked(cstring.to_bytes_with_nul());
+    ///     assert_eq!(cstr, &*cstring);
+    /// }
+    /// # }
+    /// ```
+    #[unstable(feature = "cstr_from_bytes", reason = "recently added", issue = "31190")]
+    pub unsafe fn from_bytes_with_nul_unchecked(bytes: &[u8]) -> &CStr {
+        mem::transmute(bytes)
     }
 
     /// Returns the inner pointer to this C string.
@@ -659,5 +720,32 @@ mod tests {
         let cstring_hash = s.finish();
 
         assert_eq!(cstr_hash, cstring_hash);
+    }
+
+    #[test]
+    fn from_bytes_with_nul() {
+        let data = b"123\0";
+        let cstr = CStr::from_bytes_with_nul(data);
+        assert_eq!(cstr.map(CStr::to_bytes), Some(&b"123"[..]));
+        assert_eq!(cstr.map(CStr::to_bytes_with_nul), Some(&b"123\0"[..]));
+
+        unsafe {
+            let cstr_unchecked = CStr::from_bytes_with_nul_unchecked(data);
+            assert_eq!(cstr, Some(cstr_unchecked));
+        }
+    }
+
+    #[test]
+    fn from_bytes_with_nul_unterminated() {
+        let data = b"123";
+        let cstr = CStr::from_bytes_with_nul(data);
+        assert!(cstr.is_none());
+    }
+
+    #[test]
+    fn from_bytes_with_nul_interior() {
+        let data = b"1\023\0";
+        let cstr = CStr::from_bytes_with_nul(data);
+        assert!(cstr.is_none());
     }
 }

@@ -1,5 +1,13 @@
 #!/bin/sh
 
+# /bin/sh on Solaris is not a POSIX compatible shell, but /usr/bin/bash is.
+if [ `uname -s` = 'SunOS' -a "${POSIX_SHELL}" != "true" ]; then
+    POSIX_SHELL="true"
+    export POSIX_SHELL
+    exec /usr/bin/env bash $0 "$@"
+fi
+unset POSIX_SHELL # clear it so if we invoke other scripts, they run as bash as well
+
 msg() {
     echo "configure: $*"
 }
@@ -334,14 +342,6 @@ enable_if_not_disabled() {
     fi
 }
 
-to_llvm_triple() {
-    case $1 in
-        i686-w64-mingw32) echo i686-pc-windows-gnu ;;
-        x86_64-w64-mingw32) echo x86_64-pc-windows-gnu ;;
-        *) echo $1 ;;
-    esac
-}
-
 to_gnu_triple() {
     case $1 in
         i686-pc-windows-gnu) echo i686-w64-mingw32 ;;
@@ -422,6 +422,11 @@ case $CFG_OSTYPE in
 
     Darwin)
         CFG_OSTYPE=apple-darwin
+        ;;
+
+    SunOS)
+        CFG_OSTYPE=sun-solaris
+        CFG_CPUTYPE=$(isainfo -n)
         ;;
 
     MINGW*)
@@ -550,7 +555,7 @@ CFG_SELF="$0"
 CFG_CONFIGURE_ARGS="$@"
 
 
-case "${CFG_SRC_DIR}" in  
+case "${CFG_SRC_DIR}" in
     *\ * )
         err "The path to the rust source directory contains spaces, which is not supported"
         ;;
@@ -601,6 +606,7 @@ opt stage0-landing-pads 1 "enable landing pads during bootstrap with stage0"
 opt dist-host-only 0 "only install bins for the host architecture"
 opt inject-std-version 1 "inject the current compiler version of libstd into programs"
 opt llvm-version-check 1 "check if the LLVM version is supported, build anyway"
+opt rustbuild 0 "use the rust and cargo based build system"
 
 # Optimization and debugging options. These may be overridden by the release channel, etc.
 opt_nosave optimize 1 "build optimized rust code"
@@ -620,7 +626,7 @@ valopt llvm-root "" "set LLVM root"
 valopt python "" "set path to python"
 valopt jemalloc-root "" "set directory where libjemalloc_pic.a is located"
 valopt build "${DEFAULT_BUILD}" "GNUs ./configure syntax LLVM build triple"
-valopt android-cross-path "/opt/ndk_standalone" "Android NDK standalone path (deprecated)"
+valopt android-cross-path "" "Android NDK standalone path (deprecated)"
 valopt i686-linux-android-ndk "" "i686-linux-android NDK standalone path"
 valopt arm-linux-androideabi-ndk "" "arm-linux-androideabi NDK standalone path"
 valopt aarch64-linux-android-ndk "" "aarch64-linux-android NDK standalone path"
@@ -645,12 +651,6 @@ valopt_nosave local-rust-root "/usr/local" "set prefix for local rust binary"
 valopt_nosave host "${CFG_BUILD}" "GNUs ./configure syntax LLVM host triples"
 valopt_nosave target "${CFG_HOST}" "GNUs ./configure syntax LLVM target triples"
 valopt_nosave mandir "${CFG_PREFIX}/share/man" "install man pages in PATH"
-
-# Temporarily support old triples until buildbots get updated
-CFG_BUILD=$(to_llvm_triple $CFG_BUILD)
-putvar CFG_BUILD # Yes, this creates a duplicate entry, but the last one wins.
-CFG_HOST=$(to_llvm_triple $CFG_HOST)
-CFG_TARGET=$(to_llvm_triple $CFG_TARGET)
 
 # On Windows this determines root of the subtree for target libraries.
 # Host runtime libs always go to 'bin'.
@@ -729,12 +729,12 @@ step_msg "looking for build programs"
 
 probe_need CFG_CURLORWGET  curl wget
 if [ -z "$CFG_PYTHON_PROVIDED" ]; then
-    probe_need CFG_PYTHON      python2.7 python2.6 python2 python
+    probe_need CFG_PYTHON      python2.7 python2 python
 fi
 
 python_version=$($CFG_PYTHON -V 2>&1)
-if [ $(echo $python_version | grep -c '^Python 2\.[4567]') -ne 1 ]; then
-    err "Found $python_version, but LLVM requires Python 2.4-2.7"
+if [ $(echo $python_version | grep -c '^Python 2\.7') -ne 1 ]; then
+    err "Found $python_version, but Python 2.7 is required"
 fi
 
 # If we have no git directory then we are probably a tarball distribution
@@ -865,9 +865,8 @@ fi
 # Force bitrig to build with clang; gcc doesn't like us there
 if [ $CFG_OSTYPE = unknown-bitrig ]
 then
-    step_msg "on Bitrig, forcing use of clang, disabling jemalloc"
+    step_msg "on Bitrig, forcing use of clang"
     CFG_ENABLE_CLANG=1
-    CFG_DISABLE_JEMALLOC=1
 fi
 
 # default gcc version under OpenBSD maybe too old, try using egcc, which is a
@@ -887,9 +886,6 @@ then
             CXX="${CXX:-eg++}"
         fi
     fi
-
-    step_msg "on OpenBSD, disabling jemalloc"
-    CFG_DISABLE_JEMALLOC=1
 fi
 
 # OS X 10.9, gcc is actually clang. This can cause some confusion in the build
@@ -1044,7 +1040,7 @@ then
             esac
         else
             case $CFG_CLANG_VERSION in
-                (3.2* | 3.3* | 3.4* | 3.5* | 3.6* | 3.7* | 3.8*)
+                (3.2* | 3.3* | 3.4* | 3.5* | 3.6* | 3.7* | 3.8* | 3.9*)
                 step_msg "found ok version of CLANG: $CFG_CLANG_VERSION"
                 ;;
                 (*)
@@ -1171,7 +1167,7 @@ do
             ;;
 
 
-        *-musl)
+        x86_64-*-musl)
             if [ ! -f $CFG_MUSL_ROOT/lib/libc.a ]
             then
                 err "musl libc $CFG_MUSL_ROOT/lib/libc.a not found"
@@ -1179,12 +1175,6 @@ do
             ;;
 
         *-msvc)
-            # Currently the build system is not configured to build jemalloc
-            # with MSVC, so we omit this optional dependency.
-            step_msg "targeting MSVC, disabling jemalloc"
-            CFG_DISABLE_JEMALLOC=1
-            putvar CFG_DISABLE_JEMALLOC
-
             # There are some MSYS python builds which will auto-translate
             # windows-style paths to MSYS-style paths in Python itself.
             # Unfortunately this breaks LLVM's build system as somewhere along
@@ -1293,12 +1283,6 @@ $ pacman -R cmake && pacman -S mingw-w64-x86_64-cmake
             putvar CFG_MSVC_LIB_PATH_${bits}
             ;;
 
-        *-rumprun-netbsd)
-            step_msg "targeting rumprun-netbsd, disabling jemalloc"
-            CFG_DISABLE_JEMALLOC=1
-            putvar CFG_DISABLE_JEMALLOC
-            ;;
-
         *)
             ;;
     esac
@@ -1314,96 +1298,107 @@ then
     fi
 fi
 
-step_msg "making directories"
+if [ -z "$CFG_ENABLE_RUSTBUILD" ]; then
 
-for i in \
-    doc doc/std doc/extra \
-    dl tmp dist
-do
-    make_dir $i
-done
+  step_msg "making directories"
 
-for t in $CFG_HOST
-do
-    make_dir $t/llvm
-done
-
-for t in $CFG_HOST
-do
-    make_dir $t/rustllvm
-done
-
-for t in $CFG_TARGET
-do
-  make_dir $t/rt
-  for s in 0 1 2 3
+  for i in \
+      doc doc/std doc/extra \
+      dl tmp dist
   do
-    make_dir $t/rt/stage$s
-    make_dir $t/rt/jemalloc
-    make_dir $t/rt/compiler-rt
-    for i in                                          \
-      isaac sync test \
-      arch/i386 arch/x86_64 arch/arm arch/aarch64 arch/mips arch/powerpc
+      make_dir $i
+  done
+
+  for t in $CFG_HOST
+  do
+      make_dir $t/llvm
+  done
+
+  for t in $CFG_HOST
+  do
+      make_dir $t/rustllvm
+  done
+
+  for t in $CFG_TARGET
+  do
+    make_dir $t/rt
+    for s in 0 1 2 3
     do
-      make_dir $t/rt/stage$s/$i
+      make_dir $t/rt/stage$s
+      make_dir $t/rt/jemalloc
+      make_dir $t/rt/compiler-rt
+      for i in                                          \
+        isaac sync test \
+        arch/i386 arch/x86_64 arch/arm arch/aarch64 arch/mips arch/powerpc
+      do
+        make_dir $t/rt/stage$s/$i
+      done
     done
   done
-done
 
-for h in $CFG_HOST
-do
-    for t in $CFG_TARGET
-    do
-        # host lib dir stage0
-        make_dir $h/stage0/lib
+  for h in $CFG_HOST
+  do
+      for t in $CFG_TARGET
+      do
+          # host bin dir stage0
+          make_dir $h/stage0/bin
 
-        # target bin dir stage0
-        make_dir $h/stage0/lib/rustlib/$t/bin
+          # host lib dir stage0
+          make_dir $h/stage0/lib
 
-        # target lib dir stage0
-        make_dir $h/stage0/lib/rustlib/$t/lib
+          # host test dir stage0
+          make_dir $h/stage0/test
 
-        for i in 0 1 2 3
-        do
-            # host bin dir
-            make_dir $h/stage$i/bin
+          # target bin dir stage0
+          make_dir $h/stage0/lib/rustlib/$t/bin
 
-            # host lib dir
-            make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE
+          # target lib dir stage0
+          make_dir $h/stage0/lib/rustlib/$t/lib
 
-            # host test dir
-            make_dir $h/stage$i/test
+          for i in 1 2 3
+          do
+              # host bin dir
+              make_dir $h/stage$i/bin
 
-            # target bin dir
-            make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE/rustlib/$t/bin
+              # host lib dir
+              make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE
 
-            # target lib dir
-            make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE/rustlib/$t/lib
-        done
-    done
+              # host test dir
+              make_dir $h/stage$i/test
 
-    make_dir $h/test/run-pass
-    make_dir $h/test/run-pass-valgrind
-    make_dir $h/test/run-pass-fulldeps
-    make_dir $h/test/run-fail
-    make_dir $h/test/run-fail-fulldeps
-    make_dir $h/test/compile-fail
-    make_dir $h/test/parse-fail
-    make_dir $h/test/compile-fail-fulldeps
-    make_dir $h/test/bench
-    make_dir $h/test/perf
-    make_dir $h/test/pretty
-    make_dir $h/test/debuginfo-gdb
-    make_dir $h/test/debuginfo-lldb
-    make_dir $h/test/codegen
-    make_dir $h/test/rustdoc
-done
+              # target bin dir
+              make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE/rustlib/$t/bin
+
+              # target lib dir
+              make_dir $h/stage$i/$CFG_LIBDIR_RELATIVE/rustlib/$t/lib
+          done
+      done
+
+      make_dir $h/test/run-pass
+      make_dir $h/test/run-pass-valgrind
+      make_dir $h/test/run-pass-fulldeps
+      make_dir $h/test/run-fail
+      make_dir $h/test/run-fail-fulldeps
+      make_dir $h/test/compile-fail
+      make_dir $h/test/parse-fail
+      make_dir $h/test/compile-fail-fulldeps
+      make_dir $h/test/bench
+      make_dir $h/test/perf
+      make_dir $h/test/pretty
+      make_dir $h/test/debuginfo-gdb
+      make_dir $h/test/debuginfo-lldb
+      make_dir $h/test/codegen
+      make_dir $h/test/codegen-units
+      make_dir $h/test/rustdoc
+  done
+
+fi
 
 # Configure submodules
 step_msg "configuring submodules"
 
 # Have to be in the top of src directory for this
-if [ -z $CFG_DISABLE_MANAGE_SUBMODULES ]
+if [ -z $CFG_DISABLE_MANAGE_SUBMODULES ] && [ -z $CFG_ENABLE_RUSTBUILD ]
 then
     cd ${CFG_SRC_DIR}
 
@@ -1462,7 +1457,11 @@ do
         ;;
     esac
 
-    if [ -z $CFG_LLVM_ROOT ]
+    if [ -n "$CFG_ENABLE_RUSTBUILD" ]
+    then
+        msg "not configuring LLVM, rustbuild in use"
+        do_reconfigure=0
+    elif [ -z $CFG_LLVM_ROOT ]
     then
         LLVM_BUILD_DIR=${CFG_BUILD_DIR}$t/llvm
         if [ -n "$CFG_DISABLE_OPTIMIZE_LLVM" ]
@@ -1793,8 +1792,15 @@ do
     putvar $CFG_LLVM_INST_DIR
 done
 
+if [ -n "$CFG_ENABLE_RUSTBUILD" ]
+then
+    INPUT_MAKEFILE=src/bootstrap/mk/Makefile.in
+else
+    INPUT_MAKEFILE=Makefile.in
+fi
+
 msg
-copy_if_changed ${CFG_SRC_DIR}Makefile.in ./Makefile
+copy_if_changed ${CFG_SRC_DIR}${INPUT_MAKEFILE} ./Makefile
 move_if_changed config.tmp config.mk
 rm -f config.tmp
 touch config.stamp

@@ -13,7 +13,7 @@ use deriving::generic::ty::*;
 
 use syntax::ast;
 use syntax::ast::{MetaItem, Expr};
-use syntax::codemap::{Span, respan};
+use syntax::codemap::{Span, respan, DUMMY_SP};
 use syntax::ext::base::{ExtCtxt, Annotatable};
 use syntax::ext::build::AstBuilder;
 use syntax::parse::token;
@@ -27,7 +27,7 @@ pub fn expand_deriving_debug(cx: &mut ExtCtxt,
 {
     // &mut ::std::fmt::Formatter
     let fmtr = Ptr(Box::new(Literal(path_std!(cx, core::fmt::Formatter))),
-                   Borrowed(None, ast::MutMutable));
+                   Borrowed(None, ast::Mutability::Mutable));
 
     let trait_def = TraitDef {
         span: span,
@@ -61,9 +61,9 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
     // build fmt.debug_struct(<name>).field(<fieldname>, &<fieldval>)....build()
     // or fmt.debug_tuple(<name>).field(&<fieldval>)....build()
     // based on the "shape".
-    let ident = match *substr.fields {
-        Struct(_) => substr.type_ident,
-        EnumMatching(_, v, _) => v.node.name,
+    let (ident, is_struct) = match *substr.fields {
+        Struct(vdata, _) => (substr.type_ident, vdata.is_struct()),
+        EnumMatching(_, v, _) => (v.node.name, v.node.data.is_struct()),
         EnumNonMatchingCollapsed(..) | StaticStruct(..) | StaticEnum(..) => {
             cx.span_bug(span, "nonsensical .fields in `#[derive(Debug)]`")
         }
@@ -71,23 +71,22 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
 
     // We want to make sure we have the expn_id set so that we can use unstable methods
     let span = Span { expn_id: cx.backtrace(), .. span };
-    let name = cx.expr_lit(span, ast::Lit_::LitStr(ident.name.as_str(),
-                                                   ast::StrStyle::CookedStr));
+    let name = cx.expr_lit(span, ast::LitKind::Str(ident.name.as_str(), ast::StrStyle::Cooked));
     let builder = token::str_to_ident("builder");
     let builder_expr = cx.expr_ident(span, builder.clone());
 
     let fmt = substr.nonself_args[0].clone();
 
     let stmts = match *substr.fields {
-        Struct(ref fields) | EnumMatching(_, _, ref fields) => {
+        Struct(_, ref fields) | EnumMatching(_, _, ref fields) => {
             let mut stmts = vec![];
-            if fields.is_empty() || fields[0].name.is_none() {
+            if !is_struct {
                 // tuple struct/"normal" variant
                 let expr = cx.expr_method_call(span,
                                                fmt,
                                                token::str_to_ident("debug_tuple"),
                                                vec![name]);
-                stmts.push(cx.stmt_let(span, true, builder, expr));
+                stmts.push(cx.stmt_let(DUMMY_SP, true, builder, expr));
 
                 for field in fields {
                     // Use double indirection to make sure this works for unsized types
@@ -109,12 +108,12 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
                                                fmt,
                                                token::str_to_ident("debug_struct"),
                                                vec![name]);
-                stmts.push(cx.stmt_let(span, true, builder, expr));
+                stmts.push(cx.stmt_let(DUMMY_SP, true, builder, expr));
 
                 for field in fields {
-                    let name = cx.expr_lit(field.span, ast::Lit_::LitStr(
+                    let name = cx.expr_lit(field.span, ast::LitKind::Str(
                             field.name.unwrap().name.as_str(),
-                            ast::StrStyle::CookedStr));
+                            ast::StrStyle::Cooked));
 
                     // Use double indirection to make sure this works for unsized types
                     let field = cx.expr_addr_of(field.span, field.self_.clone());
@@ -142,7 +141,7 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span,
 
 fn stmt_let_undescore(cx: &mut ExtCtxt,
                       sp: Span,
-                      expr: P<ast::Expr>) -> P<ast::Stmt> {
+                      expr: P<ast::Expr>) -> ast::Stmt {
     let local = P(ast::Local {
         pat: cx.pat_wild(sp),
         ty: None,
@@ -151,6 +150,6 @@ fn stmt_let_undescore(cx: &mut ExtCtxt,
         span: sp,
         attrs: None,
     });
-    let decl = respan(sp, ast::DeclLocal(local));
-    P(respan(sp, ast::StmtDecl(P(decl), ast::DUMMY_NODE_ID)))
+    let decl = respan(sp, ast::DeclKind::Local(local));
+    respan(sp, ast::StmtKind::Decl(P(decl), ast::DUMMY_NODE_ID))
 }

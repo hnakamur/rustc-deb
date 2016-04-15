@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use std::cmp::Ordering::{Equal, Greater, Less};
-use std::default::Default;
 use std::mem;
 use std::__rand::{Rng, thread_rng};
 use std::rc::Rc;
@@ -867,6 +866,7 @@ fn test_vec_default() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_bytes_set_memory() {
     use std::slice::bytes::MutableByteVector;
 
@@ -1136,6 +1136,30 @@ fn test_box_slice_clone_panics() {
 
     // Total = 8
     assert_eq!(drop_count.load(Ordering::SeqCst), 8);
+}
+
+#[test]
+fn test_copy_from_slice() {
+    let src = [0, 1, 2, 3, 4, 5];
+    let mut dst = [0; 6];
+    dst.copy_from_slice(&src);
+    assert_eq!(src, dst)
+}
+
+#[test]
+#[should_panic(expected = "destination and source slices have different lengths")]
+fn test_copy_from_slice_dst_longer() {
+    let src = [0, 1, 2, 3];
+    let mut dst = [0; 5];
+    dst.copy_from_slice(&src);
+}
+
+#[test]
+#[should_panic(expected = "destination and source slices have different lengths")]
+fn test_copy_from_slice_dst_shorter() {
+    let src = [0, 1, 2, 3];
+    let mut dst = [0; 3];
+    dst.copy_from_slice(&src);
 }
 
 mod bench {

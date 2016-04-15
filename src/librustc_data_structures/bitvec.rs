@@ -24,12 +24,14 @@ impl BitVector {
         (self.data[word] & mask) != 0
     }
 
+    /// Returns true if the bit has changed.
     pub fn insert(&mut self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &mut self.data[word];
         let value = *data;
-        *data = value | mask;
-        (value | mask) != value
+        let new_value = value | mask;
+        *data = new_value;
+        new_value != value
     }
 
     pub fn insert_all(&mut self, all: &BitVector) -> bool {
@@ -47,6 +49,45 @@ impl BitVector {
         let num_words = u64s(num_bits);
         let extra_words = self.data.len() - num_words;
         self.data.extend((0..extra_words).map(|_| 0));
+    }
+
+    /// Iterates over indexes of set bits in a sorted order
+    pub fn iter<'a>(&'a self) -> BitVectorIter<'a> {
+        BitVectorIter {
+            iter: self.data.iter(),
+            current: 0,
+            idx: 0
+        }
+    }
+}
+
+pub struct BitVectorIter<'a> {
+    iter: ::std::slice::Iter<'a, u64>,
+    current: u64,
+    idx: usize
+}
+
+impl<'a> Iterator for BitVectorIter<'a> {
+    type Item = usize;
+    fn next(&mut self) -> Option<usize> {
+        while self.current == 0 {
+            self.current = if let Some(&i) = self.iter.next() {
+                if i == 0 {
+                    self.idx += 64;
+                    continue;
+                } else {
+                    self.idx = u64s(self.idx) * 64;
+                    i
+                }
+            } else {
+                return None;
+            }
+        }
+        let offset = self.current.trailing_zeros() as usize;
+        self.current >>= offset;
+        self.current >>= 1; // shift otherwise overflows for 0b1000_0000_…_0000
+        self.idx += offset + 1;
+        return Some(self.idx - 1);
     }
 }
 
@@ -149,6 +190,46 @@ fn word_mask(index: usize) -> (usize, u64) {
     let word = index / 64;
     let mask = 1 << (index % 64);
     (word, mask)
+}
+
+#[test]
+fn bitvec_iter_works() {
+    let mut bitvec = BitVector::new(100);
+    bitvec.insert(1);
+    bitvec.insert(10);
+    bitvec.insert(19);
+    bitvec.insert(62);
+    bitvec.insert(63);
+    bitvec.insert(64);
+    bitvec.insert(65);
+    bitvec.insert(66);
+    bitvec.insert(99);
+    assert_eq!(bitvec.iter().collect::<Vec<_>>(), [1, 10, 19, 62, 63, 64, 65, 66, 99]);
+}
+
+#[test]
+fn bitvec_iter_works_2() {
+    let mut bitvec = BitVector::new(300);
+    bitvec.insert(1);
+    bitvec.insert(10);
+    bitvec.insert(19);
+    bitvec.insert(62);
+    bitvec.insert(66);
+    bitvec.insert(99);
+    bitvec.insert(299);
+    assert_eq!(bitvec.iter().collect::<Vec<_>>(), [1, 10, 19, 62, 66, 99, 299]);
+
+}
+
+#[test]
+fn bitvec_iter_works_3() {
+    let mut bitvec = BitVector::new(319);
+    bitvec.insert(0);
+    bitvec.insert(127);
+    bitvec.insert(191);
+    bitvec.insert(255);
+    bitvec.insert(319);
+    assert_eq!(bitvec.iter().collect::<Vec<_>>(), [0, 127, 191, 255, 319]);
 }
 
 #[test]

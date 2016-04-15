@@ -46,7 +46,7 @@ use middle::ty::relate::TypeRelation;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
-use syntax::abi;
+use syntax::abi::Abi;
 use rustc_front::hir;
 use util::common::ErrorReported;
 use util::nodemap::FnvHashMap;
@@ -307,7 +307,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         debug!("select({:?})", obligation);
         assert!(!obligation.predicate.has_escaping_regions());
 
-        let dep_node = obligation.dep_node(self.tcx());
+        let dep_node = obligation.predicate.dep_node();
         let _task = self.tcx().dep_graph.in_task(dep_node);
 
         let stack = self.push_stack(TraitObligationStackList::empty(), obligation);
@@ -462,7 +462,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         // have been proven elsewhere. This cache only contains
         // predicates that are global in scope and hence unaffected by
         // the current environment.
-        if self.tcx().fulfilled_predicates.borrow().is_duplicate(&obligation.predicate) {
+        if self.tcx().fulfilled_predicates.borrow().check_duplicate(&obligation.predicate) {
             return EvaluatedToOk;
         }
 
@@ -711,7 +711,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         // not update) the cache.
         let recursion_limit = self.infcx.tcx.sess.recursion_limit.get();
         if stack.obligation.recursion_depth >= recursion_limit {
-            report_overflow_error(self.infcx(), &stack.obligation);
+            report_overflow_error(self.infcx(), &stack.obligation, true);
         }
 
         // Check the cache. Note that we skolemize the trait-ref
@@ -1288,7 +1288,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
             // provide an impl, but only for suitable `fn` pointers
             ty::TyBareFn(_, &ty::BareFnTy {
                 unsafety: hir::Unsafety::Normal,
-                abi: abi::Rust,
+                abi: Abi::Rust,
                 sig: ty::Binder(ty::FnSig {
                     inputs: _,
                     output: ty::FnConverging(_),
@@ -2124,6 +2124,9 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                            nested: ty::Binder<Vec<Ty<'tcx>>>)
                            -> VtableBuiltinData<PredicateObligation<'tcx>>
     {
+        debug!("vtable_builtin_data(obligation={:?}, bound={:?}, nested={:?})",
+               obligation, bound, nested);
+
         let trait_def = match self.tcx().lang_items.from_builtin_kind(bound) {
             Ok(def_id) => def_id,
             Err(_) => {

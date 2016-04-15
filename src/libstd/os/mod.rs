@@ -30,5 +30,11 @@ pub use sys::ext as windows;
 #[cfg(target_os = "nacl")]      pub mod nacl;
 #[cfg(target_os = "netbsd")]   pub mod netbsd;
 #[cfg(target_os = "openbsd")]   pub mod openbsd;
+#[cfg(target_os = "solaris")]   pub mod solaris;
+
+// Emscripten is just like linux
+#[cfg(target_os = "emscripten")]
+#[path = "linux/mod.rs"]
+pub mod emscripten;
 
 pub mod raw;

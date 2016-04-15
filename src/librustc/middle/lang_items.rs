@@ -21,6 +21,7 @@
 
 pub use self::LangItem::*;
 
+use dep_graph::DepNode;
 use front::map as hir_map;
 use session::Session;
 use middle::cstore::CrateStore;
@@ -35,9 +36,6 @@ use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
 use rustc_front::intravisit::Visitor;
 use rustc_front::hir;
-
-use std::iter::Enumerate;
-use std::slice;
 
 // The actual lang items defined come at the end of this file in one handy table.
 // So you probably just want to nip down to the end.
@@ -69,8 +67,8 @@ impl LanguageItems {
         }
     }
 
-    pub fn items<'a>(&'a self) -> Enumerate<slice::Iter<'a, Option<DefId>>> {
-        self.items.iter().enumerate()
+    pub fn items(&self) -> &[Option<DefId>] {
+        &*self.items
     }
 
     pub fn item_name(index: usize) -> &'static str {
@@ -186,10 +184,13 @@ impl<'a, 'tcx> LanguageItemCollector<'a, 'tcx> {
         // Check for duplicates.
         match self.items.items[item_index] {
             Some(original_def_id) if original_def_id != item_def_id => {
+                let cstore = &self.session.cstore;
                 span_err!(self.session, span, E0152,
-                    "duplicate entry for `{}`", LanguageItems::item_name(item_index));
+                          "duplicate entry for `{}`, first definition found in `{}`",
+                          LanguageItems::item_name(item_index),
+                          cstore.crate_name(item_def_id.krate));
             }
-            Some(_) | None => {
+            _ => {
                 // OK.
             }
         }
@@ -234,12 +235,12 @@ pub fn extract(attrs: &[ast::Attribute]) -> Option<InternedString> {
 pub fn collect_language_items(session: &Session,
                               map: &hir_map::Map)
                               -> LanguageItems {
+    let _task = map.dep_graph.in_task(DepNode::CollectLanguageItems);
     let krate: &hir::Crate = map.krate();
     let mut collector = LanguageItemCollector::new(session, map);
     collector.collect(krate);
     let LanguageItemCollector { mut items, .. } = collector;
     weak_lang_items::check_crate(krate, session, &mut items);
-    session.abort_if_errors();
     items
 }
 
@@ -335,6 +336,7 @@ lets_do_this! {
 
     ExchangeMallocFnLangItem,        "exchange_malloc",         exchange_malloc_fn;
     ExchangeFreeFnLangItem,          "exchange_free",           exchange_free_fn;
+    BoxFreeFnLangItem,               "box_free",                box_free_fn;
     StrDupUniqFnLangItem,            "strdup_uniq",             strdup_uniq_fn;
 
     StartFnLangItem,                 "start",                   start_fn;

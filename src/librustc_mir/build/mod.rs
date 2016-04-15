@@ -26,6 +26,7 @@ pub struct Builder<'a, 'tcx: 'a> {
     var_decls: Vec<VarDecl<'tcx>>,
     var_indices: FnvHashMap<ast::NodeId, u32>,
     temp_decls: Vec<TempDecl<'tcx>>,
+    unit_temp: Option<Lvalue<'tcx>>,
 }
 
 struct CFG<'tcx> {
@@ -33,10 +34,10 @@ struct CFG<'tcx> {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-// The `BlockAnd` "monad" packages up the new basic block along with a
-// produced value (sometimes just unit, of course). The `unpack!`
-// macro (and methods below) makes working with `BlockAnd` much more
-// convenient.
+/// The `BlockAnd` "monad" packages up the new basic block along with a
+/// produced value (sometimes just unit, of course). The `unpack!`
+/// macro (and methods below) makes working with `BlockAnd` much more
+/// convenient.
 
 #[must_use] // if you don't use one of these results, you're leaving a dangling edge
 pub struct BlockAnd<T>(BasicBlock, T);
@@ -76,10 +77,10 @@ macro_rules! unpack {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-// construct() -- the main entry point for building MIR for a function
+/// the main entry point for building MIR for a function
 
 pub fn construct<'a,'tcx>(hir: Cx<'a,'tcx>,
-                          _span: Span,
+                          span: Span,
                           implicit_arguments: Vec<Ty<'tcx>>,
                           explicit_arguments: Vec<(Ty<'tcx>, &'tcx hir::Pat)>,
                           argument_extent: CodeExtent,
@@ -96,6 +97,7 @@ pub fn construct<'a,'tcx>(hir: Cx<'a,'tcx>,
         temp_decls: vec![],
         var_decls: vec![],
         var_indices: FnvHashMap(),
+        unit_temp: None,
     };
 
     assert_eq!(builder.cfg.start_new_block(), START_BLOCK);
@@ -117,6 +119,7 @@ pub fn construct<'a,'tcx>(hir: Cx<'a,'tcx>,
         arg_decls: arg_decls,
         temp_decls: builder.temp_decls,
         return_ty: return_ty,
+        span: span
     }
 }
 
@@ -155,6 +158,18 @@ impl<'a,'tcx> Builder<'a,'tcx> {
 
             block.and(arg_decls)
         })
+    }
+
+    fn get_unit_temp(&mut self) -> Lvalue<'tcx> {
+        match self.unit_temp {
+            Some(ref tmp) => tmp.clone(),
+            None => {
+                let ty = self.hir.unit_ty();
+                let tmp = self.temp(ty);
+                self.unit_temp = Some(tmp.clone());
+                tmp
+            }
+        }
     }
 }
 

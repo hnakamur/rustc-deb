@@ -26,9 +26,9 @@ use llvm::debuginfo::{DIType, DIFile, DIScope, DIDescriptor, DICompositeType};
 use middle::def_id::DefId;
 use middle::infer;
 use middle::pat_util;
-use middle::subst::{self, Substs};
+use middle::subst;
 use rustc::front::map as hir_map;
-use rustc_front::hir;
+use rustc_front::hir::{self, PatKind};
 use trans::{type_of, adt, machine, monomorphize};
 use trans::common::{self, CrateContext, FunctionContext, Block};
 use trans::_match::{BindingInfo, TransBindingMode};
@@ -1919,7 +1919,7 @@ pub fn create_local_var_metadata(bcx: Block, local: &hir::Local) {
     let def_map = &cx.tcx().def_map;
     let locals = bcx.fcx.lllocals.borrow();
 
-    pat_util::pat_bindings(def_map, &*local.pat, |_, node_id, span, var_name| {
+    pat_util::pat_bindings(def_map, &local.pat, |_, node_id, span, var_name| {
         let datum = match locals.get(&node_id) {
             Some(datum) => datum,
             None => {
@@ -1971,7 +1971,7 @@ pub fn create_captured_var_metadata<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         }
         Some(hir_map::NodeLocal(pat)) => {
             match pat.node {
-                hir::PatIdent(_, ref path1, _) => {
+                PatKind::Ident(_, ref path1, _) => {
                     path1.node.name
                 }
                 _ => {
@@ -2099,7 +2099,7 @@ pub fn create_argument_metadata(bcx: Block, arg: &hir::Arg) {
                          .fn_metadata;
     let locals = bcx.fcx.lllocals.borrow();
 
-    pat_util::pat_bindings(def_map, &*arg.pat, |_, node_id, span, var_name| {
+    pat_util::pat_bindings(def_map, &arg.pat, |_, node_id, span, var_name| {
         let datum = match locals.get(&node_id) {
             Some(v) => v,
             None => {

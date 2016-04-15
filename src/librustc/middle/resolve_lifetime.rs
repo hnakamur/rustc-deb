@@ -18,8 +18,10 @@
 pub use self::DefRegion::*;
 use self::ScopeChain::*;
 
+use dep_graph::DepNode;
+use front::map::Map;
 use session::Session;
-use middle::def::{self, DefMap};
+use middle::def::{Def, DefMap};
 use middle::region;
 use middle::subst;
 use middle::ty;
@@ -93,9 +95,14 @@ type Scope<'a> = &'a ScopeChain<'a>;
 
 static ROOT_SCOPE: ScopeChain<'static> = RootScope;
 
-pub fn krate(sess: &Session, krate: &hir::Crate, def_map: &DefMap) -> NamedRegionMap {
+pub fn krate(sess: &Session,
+             hir_map: &Map,
+             def_map: &DefMap)
+             -> Result<NamedRegionMap, usize> {
+    let _task = hir_map.dep_graph.in_task(DepNode::ResolveLifetimes);
+    let krate = hir_map.krate();
     let mut named_region_map = NodeMap();
-    sess.abort_if_new_errors(|| {
+    try!(sess.track_errors(|| {
         krate.visit_all_items(&mut LifetimeContext {
             sess: sess,
             named_region_map: &mut named_region_map,
@@ -104,8 +111,8 @@ pub fn krate(sess: &Session, krate: &hir::Crate, def_map: &DefMap) -> NamedRegio
             trait_ref_hack: false,
             labels_in_fn: vec![],
         });
-    });
-    named_region_map
+    }));
+    Ok(named_region_map)
 }
 
 impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
@@ -205,7 +212,7 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
                 // if this path references a trait, then this will resolve to
                 // a trait ref, which introduces a binding scope.
                 match self.def_map.get(&ty.id).map(|d| (d.base_def, d.depth)) {
-                    Some((def::DefTrait(..), 0)) => {
+                    Some((Def::Trait(..), 0)) => {
                         self.with(LateScope(&[], self.scope), |_, this| {
                             this.visit_path(path, ty.id);
                         });
@@ -249,7 +256,7 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
         for ty_param in generics.ty_params.iter() {
             walk_list!(self, visit_ty_param_bound, &ty_param.bounds);
             match ty_param.default {
-                Some(ref ty) => self.visit_ty(&**ty),
+                Some(ref ty) => self.visit_ty(&ty),
                 None => {}
             }
         }
@@ -264,13 +271,13 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
                         let result = self.with(LateScope(bound_lifetimes, self.scope),
                                                |old_scope, this| {
                             this.check_lifetime_defs(old_scope, bound_lifetimes);
-                            this.visit_ty(&**bounded_ty);
+                            this.visit_ty(&bounded_ty);
                             walk_list!(this, visit_ty_param_bound, bounds);
                         });
                         self.trait_ref_hack = false;
                         result
                     } else {
-                        self.visit_ty(&**bounded_ty);
+                        self.visit_ty(&bounded_ty);
                         walk_list!(self, visit_ty_param_bound, bounds);
                     }
                 }
@@ -288,7 +295,7 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
                                                                          ref ty,
                                                                          .. }) => {
                     self.visit_path(path, id);
-                    self.visit_ty(&**ty);
+                    self.visit_ty(&ty);
                 }
             }
         }
@@ -803,7 +810,7 @@ fn early_bound_lifetime_names(generics: &hir::Generics) -> Vec<ast::Name> {
                 &hir::WherePredicate::BoundPredicate(hir::WhereBoundPredicate{ref bounds,
                                                                               ref bounded_ty,
                                                                               ..}) => {
-                    collector.visit_ty(&**bounded_ty);
+                    collector.visit_ty(&bounded_ty);
                     walk_list!(&mut collector, visit_ty_param_bound, bounds);
                 }
                 &hir::WherePredicate::RegionPredicate(hir::WhereRegionPredicate{ref lifetime,

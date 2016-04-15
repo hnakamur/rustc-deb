@@ -11,6 +11,7 @@
 //! # Standalone Tests for the Inference Module
 
 use driver;
+use rustc::dep_graph::DepGraph;
 use rustc_lint;
 use rustc_resolve as resolve;
 use rustc_typeck::middle::lang_items;
@@ -31,8 +32,9 @@ use rustc_metadata::cstore::CStore;
 use rustc::front::map as hir_map;
 use rustc::session::{self, config};
 use std::rc::Rc;
-use syntax::{abi, ast};
-use syntax::codemap::{Span, CodeMap, DUMMY_SP};
+use syntax::ast;
+use syntax::abi::Abi;
+use syntax::codemap::{MultiSpan, CodeMap, DUMMY_SP};
 use syntax::errors;
 use syntax::errors::emitter::Emitter;
 use syntax::errors::{Level, RenderSpan};
@@ -78,14 +80,14 @@ fn remove_message(e: &mut ExpectErrorEmitter, msg: &str, lvl: Level) {
 
 impl Emitter for ExpectErrorEmitter {
     fn emit(&mut self,
-            _sp: Option<Span>,
+            _sp: Option<&MultiSpan>,
             msg: &str,
             _: Option<&str>,
             lvl: Level) {
         remove_message(self, msg, lvl);
     }
 
-    fn custom_emit(&mut self, _sp: RenderSpan, msg: &str, lvl: Level) {
+    fn custom_emit(&mut self, _sp: &RenderSpan, msg: &str, lvl: Level) {
         remove_message(self, msg, lvl);
     }
 }
@@ -118,28 +120,30 @@ fn test_env<F>(source_string: &str,
 
     let krate = driver::assign_node_ids(&sess, krate);
     let lcx = LoweringContext::new(&sess, Some(&krate));
-    let mut hir_forest = hir_map::Forest::new(lower_crate(&lcx, &krate));
+    let dep_graph = DepGraph::new(false);
+    let _ignore = dep_graph.in_ignore();
+    let mut hir_forest = hir_map::Forest::new(lower_crate(&lcx, &krate), dep_graph.clone());
     let arenas = ty::CtxtArenas::new();
     let ast_map = driver::make_map(&sess, &mut hir_forest);
-    let krate = ast_map.krate();
 
     // run just enough stuff to build a tcx:
     let lang_items = lang_items::collect_language_items(&sess, &ast_map);
     let resolve::CrateMap { def_map, freevars, .. } =
         resolve::resolve_crate(&sess, &ast_map, resolve::MakeGlobMap::No);
-    let named_region_map = resolve_lifetime::krate(&sess, krate, &def_map.borrow());
-    let region_map = region::resolve_crate(&sess, krate);
+    let named_region_map = resolve_lifetime::krate(&sess, &ast_map, &def_map.borrow());
+    let region_map = region::resolve_crate(&sess, &ast_map);
+    let index = stability::Index::new(&ast_map);
     ty::ctxt::create_and_enter(&sess,
                                &arenas,
                                def_map,
-                               named_region_map,
+                               named_region_map.unwrap(),
                                ast_map,
                                freevars,
                                region_map,
                                lang_items,
-                               stability::Index::new(krate),
+                               index,
                                |tcx| {
-                                   let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None, false);
+                                   let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None);
                                    body(Env { infcx: &infcx });
                                    let free_regions = FreeRegionMap::new();
                                    infcx.resolve_regions_and_report_errors(&free_regions,
@@ -260,7 +264,7 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
         self.infcx.tcx.mk_fn(None,
                              self.infcx.tcx.mk_bare_fn(ty::BareFnTy {
                                  unsafety: hir::Unsafety::Normal,
-                                 abi: abi::Rust,
+                                 abi: Abi::Rust,
                                  sig: ty::Binder(ty::FnSig {
                                      inputs: input_args,
                                      output: ty::FnConverging(output_ty),

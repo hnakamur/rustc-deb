@@ -14,10 +14,11 @@
 pub use self::StabilityLevel::*;
 
 use dep_graph::DepNode;
+use front::map as hir_map;
 use session::Session;
 use lint;
 use middle::cstore::{CrateStore, LOCAL_CRATE};
-use middle::def;
+use middle::def::Def;
 use middle::def_id::{CRATE_DEF_INDEX, DefId};
 use middle::ty;
 use middle::privacy::AccessLevels;
@@ -30,7 +31,7 @@ use syntax::attr::{self, Stability, Deprecation, AttrMetaMethods};
 use util::nodemap::{DefIdMap, FnvHashSet, FnvHashMap};
 
 use rustc_front::hir;
-use rustc_front::hir::{Crate, Item, Generics, StructField, Variant};
+use rustc_front::hir::{Item, Generics, StructField, Variant, PatKind};
 use rustc_front::intravisit::{self, Visitor};
 
 use std::mem::replace;
@@ -278,7 +279,9 @@ impl<'a, 'tcx, 'v> Visitor<'v> for Annotator<'a, 'tcx> {
 
 impl<'tcx> Index<'tcx> {
     /// Construct the stability index for a crate being compiled.
-    pub fn build(&mut self, tcx: &ty::ctxt<'tcx>, krate: &Crate, access_levels: &AccessLevels) {
+    pub fn build(&mut self, tcx: &ty::ctxt<'tcx>, access_levels: &AccessLevels) {
+        let _task = tcx.dep_graph.in_task(DepNode::StabilityIndex);
+        let krate = tcx.map.krate();
         let mut annotator = Annotator {
             tcx: tcx,
             index: self,
@@ -291,7 +294,10 @@ impl<'tcx> Index<'tcx> {
                            |v| intravisit::walk_crate(v, krate));
     }
 
-    pub fn new(krate: &Crate) -> Index<'tcx> {
+    pub fn new(hir_map: &hir_map::Map) -> Index<'tcx> {
+        let _task = hir_map.dep_graph.in_task(DepNode::StabilityIndex);
+        let krate = hir_map.krate();
+
         let mut is_staged_api = false;
         for attr in &krate.attrs {
             if attr.name() == "stable" || attr.name() == "unstable" {
@@ -561,8 +567,8 @@ pub fn check_expr(tcx: &ty::ctxt, e: &hir::Expr,
 pub fn check_path(tcx: &ty::ctxt, path: &hir::Path, id: ast::NodeId,
                   cb: &mut FnMut(DefId, Span, &Option<&Stability>, &Option<Deprecation>)) {
     match tcx.def_map.borrow().get(&id).map(|d| d.full_def()) {
-        Some(def::DefPrimTy(..)) => {}
-        Some(def::DefSelfTy(..)) => {}
+        Some(Def::PrimTy(..)) => {}
+        Some(Def::SelfTy(..)) => {}
         Some(def) => {
             maybe_do_stability_check(tcx, def.def_id(), path.span, cb);
         }
@@ -573,7 +579,7 @@ pub fn check_path(tcx: &ty::ctxt, path: &hir::Path, id: ast::NodeId,
 pub fn check_path_list_item(tcx: &ty::ctxt, item: &hir::PathListItem,
                   cb: &mut FnMut(DefId, Span, &Option<&Stability>, &Option<Deprecation>)) {
     match tcx.def_map.borrow().get(&item.node.id()).map(|d| d.full_def()) {
-        Some(def::DefPrimTy(..)) => {}
+        Some(Def::PrimTy(..)) => {}
         Some(def) => {
             maybe_do_stability_check(tcx, def.def_id(), item.span, cb);
         }
@@ -592,14 +598,14 @@ pub fn check_pat(tcx: &ty::ctxt, pat: &hir::Pat,
     };
     match pat.node {
         // Foo(a, b, c)
-        // A Variant(..) pattern `hir::PatEnum(_, None)` doesn't have to be recursed into.
-        hir::PatEnum(_, Some(ref pat_fields)) => {
+        // A Variant(..) pattern `PatKind::TupleStruct(_, None)` doesn't have to be recursed into.
+        PatKind::TupleStruct(_, Some(ref pat_fields)) => {
             for (field, struct_field) in pat_fields.iter().zip(&v.fields) {
                 maybe_do_stability_check(tcx, struct_field.did, field.span, cb)
             }
         }
         // Foo { a, b, c }
-        hir::PatStruct(_, ref pat_fields, _) => {
+        PatKind::Struct(_, ref pat_fields, _) => {
             for field in pat_fields {
                 let did = v.field_named(field.node.name).did;
                 maybe_do_stability_check(tcx, did, field.span, cb);

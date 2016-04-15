@@ -12,6 +12,8 @@
 //! the standard library This varies per-platform, but these libraries are
 //! necessary for running libstd.
 
+#![cfg(not(cargobuild))]
+
 // LLVM implements the `frem` instruction as a call to `fmod`, which lives in
 // libm. Hence, we must explicitly link to it.
 //
@@ -36,6 +38,12 @@ extern {}
           target_os = "bitrig",
           target_os = "netbsd",
           target_os = "openbsd"))]
+#[link(name = "pthread")]
+extern {}
+
+#[cfg(target_os = "solaris")]
+#[link(name = "socket")]
+#[link(name = "posix4")]
 #[link(name = "pthread")]
 extern {}
 

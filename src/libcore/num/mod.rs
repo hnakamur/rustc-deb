@@ -479,7 +479,7 @@ macro_rules! int_impl {
             }
         }
 
-        /// Checked negation. Computes `!self`, returning `None` if `self ==
+        /// Checked negation. Computes `-self`, returning `None` if `self ==
         /// MIN`.
         ///
         /// # Examples
@@ -741,6 +741,13 @@ macro_rules! int_impl {
         /// where `mask` removes any high-order bits of `rhs` that
         /// would cause the shift to exceed the bitwidth of the type.
         ///
+        /// Note that this is *not* the same as a rotate-left; the
+        /// RHS of a wrapping shift-left is restricted to the range
+        /// of the type, rather than the bits shifted out of the LHS
+        /// being returned to the other end. The primitive integer
+        /// types all implement a `rotate_left` function, which may
+        /// be what you want instead.
+        ///
         /// # Examples
         ///
         /// Basic usage:
@@ -758,6 +765,13 @@ macro_rules! int_impl {
         /// Panic-free bitwise shift-right; yields `self >> mask(rhs)`,
         /// where `mask` removes any high-order bits of `rhs` that
         /// would cause the shift to exceed the bitwidth of the type.
+        ///
+        /// Note that this is *not* the same as a rotate-right; the
+        /// RHS of a wrapping shift-right is restricted to the range
+        /// of the type, rather than the bits shifted out of the LHS
+        /// being returned to the other end. The primitive integer
+        /// types all implement a `rotate_right` function, which may
+        /// be what you want instead.
         ///
         /// # Examples
         ///
@@ -2160,7 +2174,13 @@ impl usize {
         intrinsics::mul_with_overflow }
 }
 
-/// Used for representing the classification of floating point numbers
+/// A classification of floating point numbers.
+///
+/// This `enum` is used as the return type for [`f32::classify()`] and [`f64::classify()`]. See
+/// their documentation for more.
+///
+/// [`f32::classify()`]: ../primitive.f32.html#method.classify
+/// [`f64::classify()`]: ../primitive.f64.html#method.classify
 #[derive(Copy, Clone, PartialEq, Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub enum FpCategory {
@@ -2387,6 +2407,11 @@ fn from_str_radix<T: FromStrRadixHelper>(src: &str, radix: u32)
 }
 
 /// An error which can be returned when parsing an integer.
+///
+/// This error is used as the error type for the `from_str_radix()` functions
+/// on the primitive integer types, such as [`i8::from_str_radix()`].
+///
+/// [`i8::from_str_radix()`]: ../std/primitive.i8.html#method.from_str_radix
 #[derive(Debug, Clone, PartialEq)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct ParseIntError { kind: IntErrorKind }

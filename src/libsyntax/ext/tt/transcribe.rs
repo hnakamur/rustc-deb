@@ -55,11 +55,11 @@ pub struct TtReader<'a> {
 /// This can do Macro-By-Example transcription. On the other hand, if
 /// `src` contains no `TokenTree::Sequence`s, `MatchNt`s or `SubstNt`s, `interp` can
 /// (and should) be None.
-pub fn new_tt_reader<'a>(sp_diag: &'a Handler,
-                         interp: Option<HashMap<Name, Rc<NamedMatch>>>,
-                         imported_from: Option<Ident>,
-                         src: Vec<ast::TokenTree>)
-                         -> TtReader<'a> {
+pub fn new_tt_reader(sp_diag: &Handler,
+                     interp: Option<HashMap<Name, Rc<NamedMatch>>>,
+                     imported_from: Option<Ident>,
+                     src: Vec<ast::TokenTree>)
+                     -> TtReader {
     new_tt_reader_with_doc_flag(sp_diag, interp, imported_from, src, false)
 }
 
@@ -69,19 +69,19 @@ pub fn new_tt_reader<'a>(sp_diag: &'a Handler,
 /// This can do Macro-By-Example transcription. On the other hand, if
 /// `src` contains no `TokenTree::Sequence`s, `MatchNt`s or `SubstNt`s, `interp` can
 /// (and should) be None.
-pub fn new_tt_reader_with_doc_flag<'a>(sp_diag: &'a Handler,
-                                       interp: Option<HashMap<Name, Rc<NamedMatch>>>,
-                                       imported_from: Option<Ident>,
-                                       src: Vec<ast::TokenTree>,
-                                       desugar_doc_comments: bool)
-                                       -> TtReader<'a> {
+pub fn new_tt_reader_with_doc_flag(sp_diag: &Handler,
+                                   interp: Option<HashMap<Name, Rc<NamedMatch>>>,
+                                   imported_from: Option<Ident>,
+                                   src: Vec<ast::TokenTree>,
+                                   desugar_doc_comments: bool)
+                                   -> TtReader {
     let mut r = TtReader {
         sp_diag: sp_diag,
         stack: vec!(TtFrame {
             forest: TokenTree::Sequence(DUMMY_SP, Rc::new(ast::SequenceRepetition {
                 tts: src,
                 // doesn't matter. This merely holds the root unzipping.
-                separator: None, op: ast::ZeroOrMore, num_captures: 0
+                separator: None, op: ast::KleeneOp::ZeroOrMore, num_captures: 0
             })),
             idx: 0,
             dotdotdoted: false,
@@ -257,7 +257,7 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
                     }
                     LisConstraint(len, _) => {
                         if len == 0 {
-                            if seq.op == ast::OneOrMore {
+                            if seq.op == ast::KleeneOp::OneOrMore {
                                 // FIXME #2887 blame invoker
                                 panic!(r.sp_diag.span_fatal(sp.clone(),
                                                      "this must repeat at least once"));

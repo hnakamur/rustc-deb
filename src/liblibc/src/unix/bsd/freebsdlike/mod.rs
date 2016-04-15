@@ -12,8 +12,6 @@ pub type pthread_mutexattr_t = *mut ::c_void;
 pub type pthread_cond_t = *mut ::c_void;
 pub type pthread_rwlock_t = *mut ::c_void;
 pub type pthread_key_t = ::c_int;
-pub type fsblkcnt_t = ::c_uint;
-pub type fsfilcnt_t = ::c_uint;
 pub type tcflag_t = ::c_uint;
 pub type speed_t = ::c_uint;
 
@@ -24,7 +22,7 @@ s! {
         pub d_fileno: u32,
         pub d_reclen: u16,
         pub d_type: u8,
-        pub d_namelen: u8,
+        pub d_namlen: u8,
         pub d_name: [::c_char; 256],
     }
 
@@ -85,7 +83,7 @@ s! {
     }
 
     pub struct stack_t {
-        pub ss_sp: *mut ::c_void,
+        pub ss_sp: *mut ::c_char,
         pub ss_size: ::size_t,
         pub ss_flags: ::c_int,
     }
@@ -132,6 +130,22 @@ s! {
         pub c_ispeed: ::speed_t,
         pub c_ospeed: ::speed_t,
     }
+
+    pub struct flock {
+        pub l_start: ::off_t,
+        pub l_len: ::off_t,
+        pub l_pid: ::pid_t,
+        pub l_type: ::c_short,
+        pub l_whence: ::c_short,
+        pub l_sysid: ::c_int,
+    }
+
+    pub struct sf_hdtr {
+        pub headers: *mut ::iovec,
+        pub hdr_cnt: ::c_int,
+        pub trailers: *mut ::iovec,
+        pub trl_cnt: ::c_int,
+    }
 }
 
 pub const EXIT_FAILURE: ::c_int = 1;
@@ -153,6 +167,7 @@ pub const TMP_MAX: ::c_uint = 308915776;
 pub const O_RDONLY: ::c_int = 0;
 pub const O_WRONLY: ::c_int = 1;
 pub const O_RDWR: ::c_int = 2;
+pub const O_ACCMODE: ::c_int = 3;
 pub const O_APPEND: ::c_int = 8;
 pub const O_CREAT: ::c_int = 512;
 pub const O_EXCL: ::c_int = 2048;
@@ -194,6 +209,9 @@ pub const F_TEST: ::c_int = 3;
 pub const F_TLOCK: ::c_int = 2;
 pub const F_ULOCK: ::c_int = 0;
 pub const F_DUPFD_CLOEXEC: ::c_int = 17;
+pub const F_GETLK: ::c_int = 11;
+pub const F_SETLK: ::c_int = 12;
+pub const F_SETLKW: ::c_int = 13;
 pub const SIGHUP: ::c_int = 1;
 pub const SIGINT: ::c_int = 2;
 pub const SIGQUIT: ::c_int = 3;
@@ -347,11 +365,19 @@ pub const POSIX_MADV_SEQUENTIAL: ::c_int = 2;
 pub const POSIX_MADV_WILLNEED: ::c_int = 3;
 pub const POSIX_MADV_DONTNEED: ::c_int = 4;
 
+pub const POSIX_FADV_NORMAL: ::c_int = 0;
+pub const POSIX_FADV_RANDOM: ::c_int = 1;
+pub const POSIX_FADV_SEQUENTIAL: ::c_int = 2;
+pub const POSIX_FADV_WILLNEED: ::c_int = 3;
+pub const POSIX_FADV_DONTNEED: ::c_int = 4;
+pub const POSIX_FADV_NOREUSE: ::c_int = 5;
+
 pub const _SC_IOV_MAX: ::c_int = 56;
 pub const _SC_GETGR_R_SIZE_MAX: ::c_int = 70;
 pub const _SC_GETPW_R_SIZE_MAX: ::c_int = 71;
 pub const _SC_LOGIN_NAME_MAX: ::c_int = 73;
 pub const _SC_MQ_PRIO_MAX: ::c_int = 75;
+pub const _SC_NPROCESSORS_ONLN: ::c_int = 58;
 pub const _SC_THREAD_ATTR_STACKADDR: ::c_int = 82;
 pub const _SC_THREAD_ATTR_STACKSIZE: ::c_int = 83;
 pub const _SC_THREAD_DESTRUCTOR_ITERATIONS: ::c_int = 85;
@@ -536,6 +562,7 @@ pub const _SC_AIO_PRIO_DELTA_MAX: ::c_int = 44;
 pub const _SC_DELAYTIMER_MAX: ::c_int = 45;
 pub const _SC_MQ_OPEN_MAX: ::c_int = 46;
 pub const _SC_PAGESIZE: ::c_int = 47;
+pub const _SC_PAGE_SIZE: ::c_int = _SC_PAGESIZE;
 pub const _SC_RTSIG_MAX: ::c_int = 48;
 pub const _SC_SEM_NSEMS_MAX: ::c_int = 49;
 pub const _SC_SEM_VALUE_MAX: ::c_int = 50;
@@ -555,9 +582,15 @@ pub const FD_SETSIZE: usize = 1024;
 
 pub const ST_NOSUID: ::c_ulong = 2;
 
-pub const HW_AVAILCPU: ::c_int = 25;
-
 pub const NI_MAXHOST: ::size_t = 1025;
+
+pub const Q_GETQUOTA: ::c_int = 0x700;
+pub const Q_SETQUOTA: ::c_int = 0x800;
+
+pub const RTLD_LOCAL: ::c_int = 0;
+pub const RTLD_NODELETE: ::c_int = 0x1000;
+pub const RTLD_NOLOAD: ::c_int = 0x2000;
+pub const RTLD_GLOBAL: ::c_int = 0x100;
 
 extern {
     pub fn getnameinfo(sa: *const ::sockaddr,
@@ -597,6 +630,18 @@ extern {
     pub fn sched_setscheduler(pid: ::pid_t, policy: ::c_int, param: *const sched_param) -> ::c_int;
     pub fn sched_getscheduler(pid: ::pid_t) -> ::c_int;
     pub fn memrchr(cx: *const ::c_void, c: ::c_int, n: ::size_t) -> *mut ::c_void;
+    pub fn sendfile(fd: ::c_int,
+                    s: ::c_int,
+                    offset: ::off_t,
+                    nbytes: ::size_t,
+                    hdtr: *mut ::sf_hdtr,
+                    sbytes: *mut ::off_t,
+                    flags: ::c_int) -> ::c_int;
+
+    pub fn posix_fadvise(fd: ::c_int, offset: ::off_t, len: ::off_t, 
+                         advise: ::c_int) -> ::c_int;
+    pub fn mkostemp(template: *mut ::c_char, flags: ::c_int) -> ::c_int;
+    pub fn mkostemps(template: *mut ::c_char, suffixlen: ::c_int, flags: ::c_int) -> ::c_int;
 }
 
 cfg_if! {
