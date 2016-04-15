@@ -11,15 +11,16 @@
 //! Verifies that const fn arguments are immutable by value bindings
 //! and the const fn body doesn't contain any statements
 
-use rustc::session::Session;
+use rustc::session::{Session, CompileResult};
 
-use syntax::ast;
+use syntax::ast::{self, PatKind};
 use syntax::visit::{self, Visitor, FnKind};
 use syntax::codemap::Span;
 
-pub fn check_crate(sess: &Session, krate: &ast::Crate) {
-    visit::walk_crate(&mut CheckConstFn{ sess: sess }, krate);
-    sess.abort_if_errors();
+pub fn check_crate(sess: &Session, krate: &ast::Crate) -> CompileResult {
+    sess.track_errors(|| {
+        visit::walk_crate(&mut CheckConstFn{ sess: sess }, krate);
+    })
 }
 
 struct CheckConstFn<'a> {
@@ -37,7 +38,7 @@ impl<'a, 'v> Visitor<'v> for CheckBlock<'a> {
         CheckConstFn{ sess: self.sess}.visit_block(block);
     }
     fn visit_expr(&mut self, e: &'v ast::Expr) {
-        if let ast::ExprClosure(..) = e.node {
+        if let ast::ExprKind::Closure(..) = e.node {
             CheckConstFn{ sess: self.sess}.visit_expr(e);
         } else {
             visit::walk_expr(self, e);
@@ -56,17 +57,17 @@ fn check_block(sess: &Session, b: &ast::Block, kind: &'static str) {
     // Check all statements in the block
     for stmt in &b.stmts {
         let span = match stmt.node {
-            ast::StmtDecl(ref decl, _) => {
+            ast::StmtKind::Decl(ref decl, _) => {
                 match decl.node {
-                    ast::DeclLocal(_) => decl.span,
+                    ast::DeclKind::Local(_) => decl.span,
 
                     // Item statements are allowed
-                    ast::DeclItem(_) => continue,
+                    ast::DeclKind::Item(_) => continue,
                 }
             }
-            ast::StmtExpr(ref expr, _) => expr.span,
-            ast::StmtSemi(ref semi, _) => semi.span,
-            ast::StmtMac(..) => unreachable!(),
+            ast::StmtKind::Expr(ref expr, _) => expr.span,
+            ast::StmtKind::Semi(ref semi, _) => semi.span,
+            ast::StmtKind::Mac(..) => unreachable!(),
         };
         span_err!(sess, span, E0016,
                   "blocks in {}s are limited to items and tail expressions", kind);
@@ -77,10 +78,10 @@ impl<'a, 'v> Visitor<'v> for CheckConstFn<'a> {
     fn visit_item(&mut self, i: &'v ast::Item) {
         visit::walk_item(self, i);
         match i.node {
-            ast::ItemConst(_, ref e) => {
+            ast::ItemKind::Const(_, ref e) => {
                 CheckBlock{ sess: self.sess, kind: "constant"}.visit_expr(e)
             },
-            ast::ItemStatic(_, _, ref e) => {
+            ast::ItemKind::Static(_, _, ref e) => {
                 CheckBlock{ sess: self.sess, kind: "static"}.visit_expr(e)
             },
             _ => {},
@@ -103,8 +104,8 @@ impl<'a, 'v> Visitor<'v> for CheckConstFn<'a> {
         // Ensure the arguments are simple, not mutable/by-ref or patterns.
         for arg in &fd.inputs {
             match arg.pat.node {
-                ast::PatWild => {}
-                ast::PatIdent(ast::BindingMode::ByValue(ast::MutImmutable), _, None) => {}
+                PatKind::Wild => {}
+                PatKind::Ident(ast::BindingMode::ByValue(ast::Mutability::Immutable), _, None) => {}
                 _ => {
                     span_err!(self.sess, arg.pat.span, E0022,
                               "arguments of constant functions can only \

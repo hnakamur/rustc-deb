@@ -1,5 +1,7 @@
 //! Linux-specific definitions for linux-like values
 
+use dox::mem;
+
 pub type useconds_t = u32;
 pub type dev_t = u64;
 pub type socklen_t = u32;
@@ -9,8 +11,6 @@ pub type ino64_t = u64;
 pub type off64_t = i64;
 pub type blkcnt64_t = i64;
 pub type rlim64_t = u64;
-pub type fsblkcnt_t = ::c_ulong;
-pub type fsfilcnt_t = ::c_ulong;
 pub type key_t = ::c_int;
 pub type shmatt_t = ::c_ulong;
 pub type mqd_t = ::c_int;
@@ -84,16 +84,17 @@ s! {
     }
 
     pub struct pthread_mutexattr_t {
-        #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64",
-                  target_arch = "powerpc64le"))]
+        #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
         __align: [::c_int; 0],
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "powerpc64",
-                      target_arch = "powerpc64le")))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "powerpc64")))]
         __align: [::c_long; 0],
         size: [u8; __SIZEOF_PTHREAD_MUTEXATTR_T],
     }
 
     pub struct pthread_cond_t {
+        #[cfg(target_env = "musl")]
+        __align: [*const ::c_void; 0],
+        #[cfg(not(target_env = "musl"))]
         __align: [::c_longlong; 0],
         size: [u8; __SIZEOF_PTHREAD_COND_T],
     }
@@ -184,6 +185,31 @@ s! {
     }
 }
 
+f! {
+    pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
+        for slot in cpuset.bits.iter_mut() {
+            *slot = 0;
+        }
+    }
+
+    pub fn CPU_SET(cpu: usize, cpuset: &mut cpu_set_t) -> () {
+        let size = mem::size_of_val(&cpuset.bits[0]);
+        let (idx, offset) = (cpu / size, cpu % size);
+        cpuset.bits[idx] |= 1 << offset;
+        ()
+    }
+
+    pub fn CPU_ISSET(cpu: usize, cpuset: &cpu_set_t) -> bool {
+        let size = mem::size_of_val(&cpuset.bits[0]);
+        let (idx, offset) = (cpu / size, cpu % size);
+        0 != (cpuset.bits[idx] & (1 << offset))
+    }
+
+    pub fn CPU_EQUAL(set1: &cpu_set_t, set2: &cpu_set_t) -> bool {
+        set1.bits == set2.bits
+    }
+}
+
 pub const FILENAME_MAX: ::c_uint = 4096;
 pub const L_tmpnam: ::c_uint = 20;
 pub const _PC_NAME_MAX: ::c_int = 3;
@@ -219,6 +245,7 @@ pub const _SC_MQ_OPEN_MAX: ::c_int = 27;
 pub const _SC_MQ_PRIO_MAX: ::c_int = 28;
 pub const _SC_VERSION: ::c_int = 29;
 pub const _SC_PAGESIZE: ::c_int = 30;
+pub const _SC_PAGE_SIZE: ::c_int = _SC_PAGESIZE;
 pub const _SC_RTSIG_MAX: ::c_int = 31;
 pub const _SC_SEM_NSEMS_MAX: ::c_int = 32;
 pub const _SC_SEM_VALUE_MAX: ::c_int = 33;
@@ -315,6 +342,8 @@ pub const ST_NODIRATIME: ::c_ulong = 2048;
 
 pub const RTLD_NEXT: *mut ::c_void = -1i64 as *mut ::c_void;
 pub const RTLD_DEFAULT: *mut ::c_void = 0i64 as *mut ::c_void;
+pub const RTLD_NODELETE: ::c_int = 0x1000;
+pub const RTLD_NOW: ::c_int = 0x2;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub const MAP_32BIT: ::c_int = 0x0040;
@@ -384,12 +413,12 @@ pub const EFD_SEMAPHORE: ::c_int = 0x1;
 
 pub const NCCS: usize = 32;
 
-pub const CLONE_NEWUTS: ::c_uint = 0x04000000;
-pub const CLONE_NEWIPC: ::c_uint = 0x08000000;
-pub const CLONE_NEWUSER: ::c_uint = 0x10000000;
-pub const CLONE_NEWPID: ::c_uint = 0x20000000;
-pub const CLONE_NEWNET: ::c_uint = 0x40000000;
-pub const CLONE_IO: ::c_uint = 0x80000000;
+pub const CLONE_NEWUTS: ::c_int = 0x04000000;
+pub const CLONE_NEWIPC: ::c_int = 0x08000000;
+pub const CLONE_NEWUSER: ::c_int = 0x10000000;
+pub const CLONE_NEWPID: ::c_int = 0x20000000;
+pub const CLONE_NEWNET: ::c_int = 0x40000000;
+pub const CLONE_IO: ::c_int = 0x80000000;
 
 extern {
     pub fn shm_open(name: *const c_char, oflag: ::c_int,
@@ -510,6 +539,9 @@ extern {
     pub fn dup3(oldfd: ::c_int, newfd: ::c_int, flags: ::c_int) -> ::c_int;
     pub fn unshare(flags: ::c_int) -> ::c_int;
     pub fn sethostname(name: *const ::c_char, len: ::size_t) -> ::c_int;
+    pub fn setns(fd: ::c_int, nstype: ::c_int) -> ::c_int;
+    pub fn mkostemp(template: *mut ::c_char, flags: ::c_int) -> ::c_int;
+    pub fn mkostemps(template: *mut ::c_char, suffixlen: ::c_int, flags: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

@@ -17,7 +17,7 @@ s! {
         pub d_off: ::off_t,
         pub d_reclen: u16,
         pub d_type: u8,
-        pub d_namelen: u8,
+        pub d_namlen: u8,
         __d_padding: [u8; 4],
         pub d_name: [::c_char; 256],
     }
@@ -155,6 +155,7 @@ pub const _SC_GETGR_R_SIZE_MAX : ::c_int = 100;
 pub const _SC_GETPW_R_SIZE_MAX : ::c_int = 101;
 pub const _SC_LOGIN_NAME_MAX : ::c_int = 102;
 pub const _SC_MQ_PRIO_MAX : ::c_int = 59;
+pub const _SC_NPROCESSORS_ONLN : ::c_int = 503;
 pub const _SC_THREADS : ::c_int = 91;
 pub const _SC_THREAD_ATTR_STACKADDR : ::c_int = 77;
 pub const _SC_THREAD_ATTR_STACKSIZE : ::c_int = 78;
@@ -201,8 +202,6 @@ pub const _SC_RTSIG_MAX : ::c_int = 66;
 pub const _SC_SIGQUEUE_MAX : ::c_int = 70;
 pub const _SC_TIMER_MAX : ::c_int = 93;
 
-pub const SIGSTKSZ: ::size_t = 131072;
-
 pub const FD_SETSIZE: usize = 1024;
 
 pub const ST_NOSUID: ::c_ulong = 2;
@@ -212,7 +211,6 @@ pub const PTHREAD_COND_INITIALIZER: pthread_cond_t = 0 as *mut _;
 pub const PTHREAD_RWLOCK_INITIALIZER: pthread_rwlock_t = 0 as *mut _;
 pub const PTHREAD_MUTEX_RECURSIVE: ::c_int = 2;
 
-pub const HW_AVAILCPU: ::c_int = 25;
 pub const KERN_PROC_ARGS: ::c_int = 55;
 
 pub const TMP_MAX : ::c_uint = 0x7fffffff;

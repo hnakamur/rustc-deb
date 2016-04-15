@@ -34,13 +34,12 @@ use middle::subst::Substs;
 use std::cmp;
 use std::iter::once;
 use libc::c_uint;
-use syntax::abi::{Cdecl, Aapcs, C, Win64, Abi};
-use syntax::abi::{PlatformIntrinsic, RustIntrinsic, Rust, RustCall, Stdcall};
-use syntax::abi::{Fastcall, Vectorcall, System};
+use syntax::abi::Abi;
 use syntax::attr;
 use syntax::codemap::Span;
 use syntax::parse::token::{InternedString, special_idents};
 use syntax::ast;
+use syntax::attr::AttrMetaMethods;
 
 use rustc_front::print::pprust;
 use rustc_front::hir;
@@ -80,6 +79,7 @@ struct LlvmSignature {
 
 pub fn llvm_calling_convention(ccx: &CrateContext,
                                abi: Abi) -> CallConv {
+    use syntax::abi::Abi::*;
     match ccx.sess().target.target.adjust_abi(abi) {
         RustIntrinsic => {
             // Intrinsics are emitted at the call site
@@ -121,8 +121,8 @@ pub fn register_static(ccx: &CrateContext,
     let llty = type_of::type_of(ccx, ty);
 
     let ident = link_name(foreign_item);
-    match attr::first_attr_value_str_by_name(&foreign_item.attrs,
-                                             "linkage") {
+    let c = match attr::first_attr_value_str_by_name(&foreign_item.attrs,
+                                                     "linkage") {
         // If this is a static with a linkage specified, then we need to handle
         // it a little specially. The typesystem prevents things like &T and
         // extern "C" fn() from being non-null, so we can't just declare a
@@ -167,7 +167,16 @@ pub fn register_static(ccx: &CrateContext,
         }
         None => // Generate an external declaration.
             declare::declare_global(ccx, &ident[..], llty),
+    };
+
+    // Handle thread-local external statics.
+    for attr in foreign_item.attrs.iter() {
+        if attr.check_name("thread_local") {
+            llvm::set_thread_local(c, true);
+        }
     }
+
+    return c;
 }
 
 // only use this for foreign function ABIs and glue, use `get_extern_rust_fn` for Rust functions
@@ -473,10 +482,10 @@ fn gate_simd_ffi(tcx: &ty::ctxt, decl: &hir::FnDecl, ty: &ty::BareFnTy) {
         };
         let sig = &ty.sig.0;
         for (input, ty) in decl.inputs.iter().zip(&sig.inputs) {
-            check(&*input.ty, *ty)
+            check(&input.ty, *ty)
         }
         if let hir::Return(ref ty) = decl.output {
-            check(&**ty, sig.output.unwrap())
+            check(&ty, sig.output.unwrap())
         }
     }
 }
@@ -488,11 +497,11 @@ pub fn trans_foreign_mod(ccx: &CrateContext, foreign_mod: &hir::ForeignMod) {
 
         if let hir::ForeignItemFn(ref decl, _) = foreign_item.node {
             match foreign_mod.abi {
-                Rust | RustIntrinsic | PlatformIntrinsic => {}
+                Abi::Rust | Abi::RustIntrinsic | Abi::PlatformIntrinsic => {}
                 abi => {
                     let ty = ccx.tcx().node_id_to_type(foreign_item.id);
                     match ty.sty {
-                        ty::TyBareFn(_, bft) => gate_simd_ffi(ccx.tcx(), &**decl, bft),
+                        ty::TyBareFn(_, bft) => gate_simd_ffi(ccx.tcx(), &decl, bft),
                         _ => ccx.tcx().sess.span_bug(foreign_item.span,
                                                      "foreign fn's sty isn't a bare_fn_ty?")
                     }
@@ -626,7 +635,9 @@ pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         // normal Rust function. This will be the type of the wrappee fn.
         match t.sty {
             ty::TyBareFn(_, ref f) => {
-                assert!(f.abi != Rust && f.abi != RustIntrinsic && f.abi != PlatformIntrinsic);
+                assert!(f.abi != Abi::Rust);
+                assert!(f.abi != Abi::RustIntrinsic);
+                assert!(f.abi != Abi::PlatformIntrinsic);
             }
             _ => {
                 ccx.sess().bug(&format!("build_rust_fn: extern fn {} has ty {:?}, \
@@ -844,7 +855,8 @@ pub fn trans_rust_fn_with_foreign_abi<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         debug!("calling llrustfn = {}, t = {:?}",
                ccx.tn().val_to_string(llrustfn), t);
         let attributes = attributes::from_fn_type(ccx, t);
-        let llrust_ret_val = builder.call(llrustfn, &llrust_args, Some(attributes));
+        let llrust_ret_val = builder.call(llrustfn, &llrust_args,
+                                          None, Some(attributes));
 
         // Get the return value where the foreign fn expects it.
         let llforeign_ret_ty = match tys.fn_ty.ret_ty.cast {

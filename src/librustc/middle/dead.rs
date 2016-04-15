@@ -14,10 +14,11 @@
 
 use dep_graph::DepNode;
 use front::map as ast_map;
-use rustc_front::hir;
+use rustc_front::hir::{self, PatKind};
 use rustc_front::intravisit::{self, Visitor};
 
-use middle::{def, pat_util, privacy, ty};
+use middle::{pat_util, privacy, ty};
+use middle::def::Def;
 use middle::def_id::{DefId};
 use lint;
 
@@ -94,13 +95,13 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
 
         self.tcx.def_map.borrow().get(id).map(|def| {
             match def.full_def() {
-                def::DefConst(_) | def::DefAssociatedConst(..) => {
+                Def::Const(_) | Def::AssociatedConst(..) => {
                     self.check_def_id(def.def_id());
                 }
                 _ if self.ignore_non_const_paths => (),
-                def::DefPrimTy(_) => (),
-                def::DefSelfTy(..) => (),
-                def::DefVariant(enum_id, variant_id, _) => {
+                Def::PrimTy(_) => (),
+                Def::SelfTy(..) => (),
+                Def::Variant(enum_id, variant_id) => {
                     self.check_def_id(enum_id);
                     if !self.ignore_variant_stack.contains(&variant_id) {
                         self.check_def_id(variant_id);
@@ -142,7 +143,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
             _ => self.tcx.sess.span_bug(lhs.span, "non-ADT in struct pattern")
         };
         for pat in pats {
-            if let hir::PatWild = pat.node.pat.node {
+            if let PatKind::Wild = pat.node.pat.node {
                 continue;
             }
             self.insert_def_id(variant.field_named(pat.node.name).did);
@@ -182,17 +183,17 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
                                 .contains(&attr::ReprExtern)
                         });
 
-                        intravisit::walk_item(self, &*item);
+                        intravisit::walk_item(self, &item);
                     }
                     hir::ItemEnum(..) => {
                         self.inherited_pub_visibility = item.vis == hir::Public;
-                        intravisit::walk_item(self, &*item);
+                        intravisit::walk_item(self, &item);
                     }
                     hir::ItemFn(..)
                     | hir::ItemTy(..)
                     | hir::ItemStatic(..)
                     | hir::ItemConst(..) => {
-                        intravisit::walk_item(self, &*item);
+                        intravisit::walk_item(self, &item);
                     }
                     _ => ()
                 }
@@ -204,7 +205,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
                 intravisit::walk_impl_item(self, impl_item);
             }
             ast_map::NodeForeignItem(foreign_item) => {
-                intravisit::walk_foreign_item(self, &*foreign_item);
+                intravisit::walk_foreign_item(self, &foreign_item);
             }
             _ => ()
         }
@@ -236,10 +237,10 @@ impl<'a, 'tcx, 'v> Visitor<'v> for MarkSymbolVisitor<'a, 'tcx> {
                 self.lookup_and_handle_method(expr.id);
             }
             hir::ExprField(ref lhs, ref name) => {
-                self.handle_field_access(&**lhs, name.node);
+                self.handle_field_access(&lhs, name.node);
             }
             hir::ExprTupField(ref lhs, idx) => {
-                self.handle_tup_field_access(&**lhs, idx.node);
+                self.handle_tup_field_access(&lhs, idx.node);
             }
             _ => ()
         }
@@ -256,7 +257,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for MarkSymbolVisitor<'a, 'tcx> {
             // necessary for the pattern to match. Those construction sites
             // can't be reached unless the variant is constructed elsewhere.
             let len = self.ignore_variant_stack.len();
-            self.ignore_variant_stack.extend_from_slice(&*variants);
+            self.ignore_variant_stack.extend_from_slice(&variants);
             intravisit::walk_arm(self, arm);
             self.ignore_variant_stack.truncate(len);
         } else {
@@ -267,7 +268,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for MarkSymbolVisitor<'a, 'tcx> {
     fn visit_pat(&mut self, pat: &hir::Pat) {
         let def_map = &self.tcx.def_map;
         match pat.node {
-            hir::PatStruct(_, ref fields, _) => {
+            PatKind::Struct(_, ref fields, _) => {
                 self.handle_field_pattern_match(pat, fields);
             }
             _ if pat_util::pat_is_const(&def_map.borrow(), pat) => {
@@ -434,7 +435,7 @@ impl<'a, 'tcx> DeadVisitor<'a, 'tcx> {
         let is_named = node.name().is_some();
         let field_type = self.tcx.node_id_to_type(node.id);
         let is_marker_field = match field_type.ty_to_def_id() {
-            Some(def_id) => self.tcx.lang_items.items().any(|(_, item)| *item == Some(def_id)),
+            Some(def_id) => self.tcx.lang_items.items().iter().any(|item| *item == Some(def_id)),
             _ => false
         };
         is_named

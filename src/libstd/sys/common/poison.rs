@@ -71,7 +71,7 @@ pub enum TryLockError<T> {
     /// The lock could not be acquired because another thread failed while holding
     /// the lock.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Poisoned(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] PoisonError<T>),
+    Poisoned(#[stable(feature = "rust1", since = "1.0.0")] PoisonError<T>),
     /// The lock could not be acquired at this time because the operation would
     /// otherwise block.
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -111,7 +111,7 @@ impl<T> fmt::Display for PoisonError<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Send + Reflect> Error for PoisonError<T> {
+impl<T: Reflect> Error for PoisonError<T> {
     fn description(&self) -> &str {
         "poisoned lock: another task failed inside"
     }
@@ -158,14 +158,17 @@ impl<T> fmt::Debug for TryLockError<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Send + Reflect> fmt::Display for TryLockError<T> {
+impl<T> fmt::Display for TryLockError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.description().fmt(f)
+        match *self {
+            TryLockError::Poisoned(..) => "poisoned lock: another task failed inside",
+            TryLockError::WouldBlock => "try_lock failed because the operation would block"
+        }.fmt(f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Send + Reflect> Error for TryLockError<T> {
+impl<T: Reflect> Error for TryLockError<T> {
     fn description(&self) -> &str {
         match *self {
             TryLockError::Poisoned(ref p) => p.description(),

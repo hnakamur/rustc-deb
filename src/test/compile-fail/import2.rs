@@ -11,9 +11,10 @@
 use baz::zed::bar;
 //~^ ERROR unresolved import `baz::zed::bar`. Could not find `zed` in `baz`
 
-
 mod baz {}
 mod zed {
     pub fn bar() { println!("bar3"); }
 }
-fn main(args: Vec<String>) { bar(); }
+fn main() {
+    bar();
+}

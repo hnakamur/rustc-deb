@@ -44,7 +44,7 @@ use std::borrow::Borrow;
 use std::cell::{Cell, RefCell, Ref};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
-use syntax::abi;
+use syntax::abi::Abi;
 use syntax::ast::{self, Name, NodeId};
 use syntax::attr;
 use syntax::parse::token::special_idents;
@@ -131,6 +131,12 @@ pub struct Tables<'tcx> {
     /// equivalents. This table is not used in trans (since regions
     /// are erased there) and hence is not serialized to metadata.
     pub liberated_fn_sigs: NodeMap<ty::FnSig<'tcx>>,
+
+    /// For each FRU expression, record the normalized types of the fields
+    /// of the struct - this is needed because it is non-trivial to
+    /// normalize while preserving regions. This table is used only in
+    /// MIR construction and hence is not serialized to metadata.
+    pub fru_field_types: NodeMap<Vec<Ty<'tcx>>>
 }
 
 impl<'tcx> Tables<'tcx> {
@@ -144,6 +150,7 @@ impl<'tcx> Tables<'tcx> {
             closure_tys: DefIdMap(),
             closure_kinds: DefIdMap(),
             liberated_fn_sigs: NodeMap(),
+            fru_field_types: NodeMap()
         }
     }
 
@@ -192,18 +199,18 @@ impl<'tcx> CommonTypes<'tcx> {
             bool: mk(TyBool),
             char: mk(TyChar),
             err: mk(TyError),
-            isize: mk(TyInt(ast::TyIs)),
-            i8: mk(TyInt(ast::TyI8)),
-            i16: mk(TyInt(ast::TyI16)),
-            i32: mk(TyInt(ast::TyI32)),
-            i64: mk(TyInt(ast::TyI64)),
-            usize: mk(TyUint(ast::TyUs)),
-            u8: mk(TyUint(ast::TyU8)),
-            u16: mk(TyUint(ast::TyU16)),
-            u32: mk(TyUint(ast::TyU32)),
-            u64: mk(TyUint(ast::TyU64)),
-            f32: mk(TyFloat(ast::TyF32)),
-            f64: mk(TyFloat(ast::TyF64)),
+            isize: mk(TyInt(ast::IntTy::Is)),
+            i8: mk(TyInt(ast::IntTy::I8)),
+            i16: mk(TyInt(ast::IntTy::I16)),
+            i32: mk(TyInt(ast::IntTy::I32)),
+            i64: mk(TyInt(ast::IntTy::I64)),
+            usize: mk(TyUint(ast::UintTy::Us)),
+            u8: mk(TyUint(ast::UintTy::U8)),
+            u16: mk(TyUint(ast::UintTy::U16)),
+            u32: mk(TyUint(ast::UintTy::U32)),
+            u64: mk(TyUint(ast::UintTy::U64)),
+            f32: mk(TyFloat(ast::FloatTy::F32)),
+            f64: mk(TyFloat(ast::FloatTy::F64)),
         }
     }
 }
@@ -367,13 +374,13 @@ pub struct ctxt<'tcx> {
     /// This is used to avoid duplicate work. Predicates are only
     /// added to this set when they mention only "global" names
     /// (i.e., no type or lifetime parameters).
-    pub fulfilled_predicates: RefCell<traits::FulfilledPredicates<'tcx>>,
+    pub fulfilled_predicates: RefCell<traits::GlobalFulfilledPredicates<'tcx>>,
 
     /// Caches the representation hints for struct definitions.
     repr_hint_cache: RefCell<DepTrackingMap<maps::ReprHints<'tcx>>>,
 
     /// Maps Expr NodeId's to their constant qualification.
-    pub const_qualif_map: RefCell<NodeMap<middle::check_const::ConstQualif>>,
+    pub const_qualif_map: RefCell<NodeMap<middle::const_qualif::ConstQualif>>,
 
     /// Caches CoerceUnsized kinds for impls on custom types.
     pub custom_coerce_unsized_kinds: RefCell<DefIdMap<ty::adjustment::CustomCoerceUnsized>>,
@@ -509,7 +516,8 @@ impl<'tcx> ctxt<'tcx> {
     {
         let interner = RefCell::new(FnvHashMap());
         let common_types = CommonTypes::new(&arenas.type_, &interner);
-        let dep_graph = DepGraph::new(s.opts.incremental_compilation);
+        let dep_graph = map.dep_graph.clone();
+        let fulfilled_predicates = traits::GlobalFulfilledPredicates::new(dep_graph.clone());
         tls::enter(ctxt {
             arenas: arenas,
             interner: interner,
@@ -532,7 +540,7 @@ impl<'tcx> ctxt<'tcx> {
             adt_defs: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             predicates: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             super_predicates: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
-            fulfilled_predicates: RefCell::new(traits::FulfilledPredicates::new()),
+            fulfilled_predicates: RefCell::new(fulfilled_predicates),
             map: map,
             freevars: RefCell::new(freevars),
             tcache: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
@@ -562,7 +570,7 @@ impl<'tcx> ctxt<'tcx> {
             const_qualif_map: RefCell::new(NodeMap()),
             custom_coerce_unsized_kinds: RefCell::new(DefIdMap()),
             cast_kinds: RefCell::new(NodeMap()),
-            fragment_infos: RefCell::new(DefIdMap()),
+            fragment_infos: RefCell::new(DefIdMap())
        }, f)
     }
 }
@@ -611,6 +619,7 @@ impl<'a, 'tcx> Lift<'tcx> for &'a Substs<'a> {
 pub mod tls {
     use middle::ty;
 
+    use std::cell::Cell;
     use std::fmt;
     use syntax::codemap;
 
@@ -619,7 +628,9 @@ pub mod tls {
     /// in libstd doesn't allow types generic over lifetimes.
     struct ThreadLocalTyCx;
 
-    scoped_thread_local!(static TLS_TCX: ThreadLocalTyCx);
+    thread_local! {
+        static TLS_TCX: Cell<Option<*const ThreadLocalTyCx>> = Cell::new(None)
+    }
 
     fn span_debug(span: codemap::Span, f: &mut fmt::Formatter) -> fmt::Result {
         with(|tcx| {
@@ -632,18 +643,27 @@ pub mod tls {
             let original_span_debug = span_dbg.get();
             span_dbg.set(span_debug);
             let tls_ptr = &tcx as *const _ as *const ThreadLocalTyCx;
-            let result = TLS_TCX.set(unsafe { &*tls_ptr }, || f(&tcx));
+            let result = TLS_TCX.with(|tls| {
+                let prev = tls.get();
+                tls.set(Some(tls_ptr));
+                let ret = f(&tcx);
+                tls.set(prev);
+                ret
+            });
             span_dbg.set(original_span_debug);
             result
         })
     }
 
     pub fn with<F: FnOnce(&ty::ctxt) -> R, R>(f: F) -> R {
-        TLS_TCX.with(|tcx| f(unsafe { &*(tcx as *const _ as *const ty::ctxt) }))
+        TLS_TCX.with(|tcx| {
+            let tcx = tcx.get().unwrap();
+            f(unsafe { &*(tcx as *const ty::ctxt) })
+        })
     }
 
     pub fn with_opt<F: FnOnce(Option<&ty::ctxt>) -> R, R>(f: F) -> R {
-        if TLS_TCX.is_set() {
+        if TLS_TCX.with(|tcx| tcx.get().is_some()) {
             with(|v| f(Some(v)))
         } else {
             f(None)
@@ -839,28 +859,28 @@ impl<'tcx> ctxt<'tcx> {
 
     pub fn mk_mach_int(&self, tm: ast::IntTy) -> Ty<'tcx> {
         match tm {
-            ast::TyIs   => self.types.isize,
-            ast::TyI8   => self.types.i8,
-            ast::TyI16  => self.types.i16,
-            ast::TyI32  => self.types.i32,
-            ast::TyI64  => self.types.i64,
+            ast::IntTy::Is   => self.types.isize,
+            ast::IntTy::I8   => self.types.i8,
+            ast::IntTy::I16  => self.types.i16,
+            ast::IntTy::I32  => self.types.i32,
+            ast::IntTy::I64  => self.types.i64,
         }
     }
 
     pub fn mk_mach_uint(&self, tm: ast::UintTy) -> Ty<'tcx> {
         match tm {
-            ast::TyUs   => self.types.usize,
-            ast::TyU8   => self.types.u8,
-            ast::TyU16  => self.types.u16,
-            ast::TyU32  => self.types.u32,
-            ast::TyU64  => self.types.u64,
+            ast::UintTy::Us   => self.types.usize,
+            ast::UintTy::U8   => self.types.u8,
+            ast::UintTy::U16  => self.types.u16,
+            ast::UintTy::U32  => self.types.u32,
+            ast::UintTy::U64  => self.types.u64,
         }
     }
 
     pub fn mk_mach_float(&self, tm: ast::FloatTy) -> Ty<'tcx> {
         match tm {
-            ast::TyF32  => self.types.f32,
-            ast::TyF64  => self.types.f64,
+            ast::FloatTy::F32  => self.types.f32,
+            ast::FloatTy::F64  => self.types.f64,
         }
     }
 
@@ -942,7 +962,7 @@ impl<'tcx> ctxt<'tcx> {
         let input_args = input_tys.iter().cloned().collect();
         self.mk_fn(Some(def_id), self.mk_bare_fn(BareFnTy {
             unsafety: hir::Unsafety::Normal,
-            abi: abi::Rust,
+            abi: Abi::Rust,
             sig: ty::Binder(ty::FnSig {
                 inputs: input_args,
                 output: ty::FnConverging(output),

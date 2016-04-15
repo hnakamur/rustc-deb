@@ -194,7 +194,7 @@ impl char {
     /// * `a-z`
     /// * `A-Z`
     ///
-    /// # Failure
+    /// # Errors
     ///
     /// Returns `None` if the `char` does not refer to a digit in the given radix.
     ///
@@ -457,16 +457,16 @@ impl char {
     ///
     /// # Examples
     ///
-    /// In both of these examples, 'ß' takes one `u16` to encode.
+    /// In both of these examples, '𝕊' takes two `u16`s to encode.
     ///
     /// ```
     /// #![feature(unicode)]
     ///
-    /// let mut b = [0; 1];
+    /// let mut b = [0; 2];
     ///
-    /// let result = 'ß'.encode_utf16(&mut b);
+    /// let result = '𝕊'.encode_utf16(&mut b);
     ///
-    /// assert_eq!(result, Some(1));
+    /// assert_eq!(result, Some(2));
     /// ```
     ///
     /// A buffer that's too small:
@@ -474,9 +474,9 @@ impl char {
     /// ```
     /// #![feature(unicode)]
     ///
-    /// let mut b = [0; 0];
+    /// let mut b = [0; 1];
     ///
-    /// let result = 'ß'.encode_utf8(&mut b);
+    /// let result = '𝕊'.encode_utf16(&mut b);
     ///
     /// assert_eq!(result, None);
     /// ```
@@ -776,13 +776,13 @@ impl char {
     /// Basic usage:
     ///
     /// ```
-    /// let c = 'c';
+    /// let c = 'C';
     ///
-    /// assert_eq!(c.to_uppercase().next(), Some('C'));
+    /// assert_eq!(c.to_lowercase().next(), Some('c'));
     ///
     /// // Japanese scripts do not have case, and so:
     /// let c = '山';
-    /// assert_eq!(c.to_uppercase().next(), Some('山'));
+    /// assert_eq!(c.to_lowercase().next(), Some('山'));
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]

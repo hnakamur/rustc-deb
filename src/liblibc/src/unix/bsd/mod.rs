@@ -1,3 +1,5 @@
+use dox::mem;
+
 pub type c_char = i8;
 pub type wchar_t = i32;
 pub type off_t = i64;
@@ -60,6 +62,11 @@ s! {
     }
 
     pub struct fd_set {
+        #[cfg(all(target_pointer_width = "64",
+                  target_os = "freebsd"))]
+        fds_bits: [i64; FD_SETSIZE / 64],
+        #[cfg(not(all(target_pointer_width = "64",
+                      target_os = "freebsd")))]
         fds_bits: [i32; FD_SETSIZE / 32],
     }
 
@@ -95,14 +102,6 @@ s! {
         pub msg_flags: ::c_int,
     }
 
-    pub struct flock {
-        pub l_start: ::off_t,
-        pub l_len: ::off_t,
-        pub l_pid: ::pid_t,
-        pub l_type: ::c_short,
-        pub l_whence: ::c_short,
-    }
-
     pub struct fsid_t {
         __fsid_val: [::int32_t; 2],
     }
@@ -120,6 +119,9 @@ pub const SA_RESETHAND: ::c_int = 0x0004;
 pub const SA_NOCLDSTOP: ::c_int = 0x0008;
 pub const SA_NODEFER: ::c_int = 0x0010;
 pub const SA_NOCLDWAIT: ::c_int = 0x0020;
+
+pub const SS_ONSTACK: ::c_int = 1;
+pub const SS_DISABLE: ::c_int = 4;
 
 pub const SIGCHLD: ::c_int = 20;
 pub const SIGBUS: ::c_int = 10;
@@ -185,10 +187,7 @@ pub const O_FSYNC: ::c_int = 0x80;
 pub const O_NDELAY: ::c_int = 0x4;
 pub const O_NOFOLLOW: ::c_int = 0x100;
 
-pub const F_GETLK: ::c_int = 7;
 pub const F_GETOWN: ::c_int = 5;
-pub const F_SETLK: ::c_int = 8;
-pub const F_SETLKW: ::c_int = 9;
 pub const F_SETOWN: ::c_int = 6;
 
 pub const MNT_FORCE: ::c_int = 0x80000;
@@ -196,8 +195,6 @@ pub const MNT_FORCE: ::c_int = 0x80000;
 pub const Q_SYNC: ::c_int = 0x600;
 pub const Q_QUOTAON: ::c_int = 0x100;
 pub const Q_QUOTAOFF: ::c_int = 0x200;
-pub const Q_GETQUOTA: ::c_int = 0x300;
-pub const Q_SETQUOTA: ::c_int = 0x400;
 
 pub const TCIOFF: ::c_int = 3;
 pub const TCION: ::c_int = 4;
@@ -209,19 +206,6 @@ pub const TCIOFLUSH: ::c_int = 3;
 pub const TCSANOW: ::c_int = 0;
 pub const TCSADRAIN: ::c_int = 1;
 pub const TCSAFLUSH: ::c_int = 2;
-pub const NL0: ::c_int  = 0x00000000;
-pub const NL1: ::c_int  = 0x00000100;
-pub const TAB0: ::c_int = 0x00000000;
-pub const TAB1: ::c_int = 0x00000400;
-pub const TAB2: ::c_int = 0x00000800;
-pub const CR0: ::c_int  = 0x00000000;
-pub const CR1: ::c_int  = 0x00001000;
-pub const CR2: ::c_int  = 0x00002000;
-pub const CR3: ::c_int  = 0x00003000;
-pub const FF0: ::c_int  = 0x00000000;
-pub const FF1: ::c_int  = 0x00004000;
-pub const BS0: ::c_int  = 0x00000000;
-pub const BS1: ::c_int  = 0x00008000;
 pub const VEOF: usize = 0;
 pub const VEOL: usize = 1;
 pub const VEOL2: usize = 2;
@@ -280,21 +264,28 @@ pub const FLUSHO: ::tcflag_t = 0x00800000;
 pub const PENDIN: ::tcflag_t = 0x20000000;
 pub const NOFLSH: ::tcflag_t = 0x80000000;
 
+pub const WNOHANG: ::c_int = 1;
+
+pub const RTLD_NOW: ::c_int = 0x2;
+
 f! {
     pub fn FD_CLR(fd: ::c_int, set: *mut fd_set) -> () {
+        let bits = mem::size_of_val(&(*set).fds_bits[0]) * 8;
         let fd = fd as usize;
-        (*set).fds_bits[fd / 32] &= !(1 << (fd % 32));
+        (*set).fds_bits[fd / bits] &= !(1 << (fd % bits));
         return
     }
 
     pub fn FD_ISSET(fd: ::c_int, set: *mut fd_set) -> bool {
+        let bits = mem::size_of_val(&(*set).fds_bits[0]) * 8;
         let fd = fd as usize;
-        return ((*set).fds_bits[fd / 32] & (1 << (fd % 32))) != 0
+        return ((*set).fds_bits[fd / bits] & (1 << (fd % bits))) != 0
     }
 
     pub fn FD_SET(fd: ::c_int, set: *mut fd_set) -> () {
+        let bits = mem::size_of_val(&(*set).fds_bits[0]) * 8;
         let fd = fd as usize;
-        (*set).fds_bits[fd / 32] |= 1 << (fd % 32);
+        (*set).fds_bits[fd / bits] |= 1 << (fd % bits);
         return
     }
 
@@ -324,6 +315,12 @@ extern {
     pub fn kqueue() -> ::c_int;
     pub fn unmount(target: *const ::c_char, arg: ::c_int) -> ::c_int;
     pub fn syscall(num: ::c_int, ...) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwuid_r50")]
+    pub fn getpwuid_r(uid: ::uid_t,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut passwd) -> ::c_int;
 }
 
 cfg_if! {

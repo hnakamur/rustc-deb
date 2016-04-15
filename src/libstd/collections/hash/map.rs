@@ -72,7 +72,10 @@ impl DefaultResizePolicy {
         //
         // This doesn't have to be checked for overflow since allocation size
         // in bytes will overflow earlier than multiplication by 10.
-        cap * 10 / 11
+        //
+        // As per https://github.com/rust-lang/rust/pull/30991 this is updated
+        // to be: (cap * den + den - 1) / num
+        (cap * 10 + 10 - 1) / 11
     }
 }
 
@@ -265,6 +268,35 @@ fn test_resize_policy() {
 /// for (book, review) in &book_reviews {
 ///     println!("{}: \"{}\"", book, review);
 /// }
+/// ```
+///
+/// `HashMap` also implements an [`Entry API`](#method.entry), which allows
+/// for more complex methods of getting, setting, updating and removing keys and
+/// their values:
+///
+/// ```
+/// use std::collections::HashMap;
+///
+/// // type inference lets us omit an explicit type signature (which
+/// // would be `HashMap<&str, u8>` in this example).
+/// let mut player_stats = HashMap::new();
+///
+/// fn random_stat_buff() -> u8 {
+///     // could actually return some random value here - let's just return
+///     // some fixed value for now
+///     42
+/// }
+///
+/// // insert a key only if it doesn't already exist
+/// player_stats.entry("health").or_insert(100);
+///
+/// // insert a key using a function that provides a new value only if it
+/// // doesn't already exist
+/// player_stats.entry("defence").or_insert_with(random_stat_buff);
+///
+/// // update a key, guarding against the key possibly not being set
+/// let stat = player_stats.entry("attack").or_insert(100);
+/// *stat += random_stat_buff();
 /// ```
 ///
 /// The easiest way to use `HashMap` with a custom type as key is to derive `Eq` and `Hash`.
@@ -611,6 +643,13 @@ impl<K, V, S> HashMap<K, V, S>
     pub fn with_capacity_and_hash_state(capacity: usize, hash_state: S)
                                         -> HashMap<K, V, S> {
         HashMap::with_capacity_and_hasher(capacity, hash_state)
+    }
+
+    /// Returns a reference to the map's hasher.
+    #[unstable(feature = "hashmap_public_hasher", reason = "don't want to make insta-stable",
+               issue = "31262")]
+    pub fn hasher(&self) -> &S {
+        &self.hash_builder
     }
 
     /// Returns the number of elements the map can hold without reallocating.
@@ -1118,9 +1157,10 @@ impl<K, V, S> HashMap<K, V, S>
     ///
     /// If the map did not have this key present, `None` is returned.
     ///
-    /// If the map did have this key present, the key is not updated, the
-    /// value is updated and the old value is returned.
-    /// See the [module-level documentation] for more.
+    /// If the map did have this key present, the value is updated, and the old
+    /// value is returned. The key is not updated, though; this matters for
+    /// types that can be `==` without being identical. See the [module-level
+    /// documentation] for more.
     ///
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
@@ -1362,13 +1402,13 @@ pub enum Entry<'a, K: 'a, V: 'a> {
     /// An occupied Entry.
     #[stable(feature = "rust1", since = "1.0.0")]
     Occupied(
-        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] OccupiedEntry<'a, K, V>
+        #[stable(feature = "rust1", since = "1.0.0")] OccupiedEntry<'a, K, V>
     ),
 
     /// A vacant Entry.
     #[stable(feature = "rust1", since = "1.0.0")]
     Vacant(
-        #[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] VacantEntry<'a, K, V>
+        #[stable(feature = "rust1", since = "1.0.0")] VacantEntry<'a, K, V>
     ),
 }
 
@@ -2388,5 +2428,30 @@ mod test_map {
         assert_eq!(a[&1], "one");
         assert_eq!(a[&2], "two");
         assert_eq!(a[&3], "three");
+    }
+
+    #[test]
+    fn test_capacity_not_less_than_len() {
+        let mut a = HashMap::new();
+        let mut item = 0;
+
+        for _ in 0..116 {
+            a.insert(item, 0);
+            item += 1;
+        }
+
+        assert!(a.capacity() > a.len());
+
+        let free = a.capacity() - a.len();
+        for _ in 0..free {
+            a.insert(item, 0);
+            item += 1;
+        }
+
+        assert_eq!(a.len(), a.capacity());
+
+        // Insert at capacity should cause allocation.
+        a.insert(item, 0);
+        assert!(a.capacity() > a.len());
     }
 }

@@ -41,12 +41,14 @@ use middle::infer;
 use middle::lang_items::{LangItem, ExchangeMallocFnLangItem, StartFnLangItem};
 use middle::weak_lang_items;
 use middle::pat_util::simple_name;
-use middle::subst::Substs;
+use middle::subst::{self, Substs};
+use middle::traits;
 use middle::ty::{self, Ty, TypeFoldable};
+use middle::ty::adjustment::CustomCoerceUnsized;
 use rustc::dep_graph::DepNode;
 use rustc::front::map as hir_map;
 use rustc::util::common::time;
-use rustc_mir::mir_map::MirMap;
+use rustc::mir::mir_map::MirMap;
 use session::config::{self, NoDebugInfo, FullDebugInfo};
 use session::Session;
 use trans::_match;
@@ -59,10 +61,11 @@ use trans::callee;
 use trans::cleanup::{self, CleanupMethods, DropHint};
 use trans::closure;
 use trans::common::{Block, C_bool, C_bytes_in_context, C_i32, C_int, C_uint, C_integral};
+use trans::collector::{self, TransItem, TransItemState, TransItemCollectionMode};
 use trans::common::{C_null, C_struct_in_context, C_u64, C_u8, C_undef};
 use trans::common::{CrateContext, DropFlagHintsMap, Field, FunctionContext};
 use trans::common::{Result, NodeIdAndSpan, VariantInfo};
-use trans::common::{node_id_type, return_type_is_void};
+use trans::common::{node_id_type, return_type_is_void, fulfill_obligation};
 use trans::common::{type_is_immediate, type_is_zero_size, val_ty};
 use trans::common;
 use trans::consts;
@@ -97,8 +100,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::str;
 use std::{i8, i16, i32, i64};
-use syntax::abi::{Rust, RustCall, RustIntrinsic, PlatformIntrinsic, Abi};
-use syntax::codemap::Span;
+use syntax::abi::Abi;
+use syntax::codemap::{Span, DUMMY_SP};
 use syntax::parse::token::InternedString;
 use syntax::attr::AttrMetaMethods;
 use syntax::attr;
@@ -147,9 +150,8 @@ impl Drop for _InsnCtxt {
 pub fn push_ctxt(s: &'static str) -> _InsnCtxt {
     debug!("new InsnCtxt: {}", s);
     TASK_LOCAL_INSN_KEY.with(|slot| {
-        match slot.borrow_mut().as_mut() {
-            Some(ctx) => ctx.push(s),
-            None => {}
+        if let Some(ctx) = slot.borrow_mut().as_mut() {
+            ctx.push(s)
         }
     });
     _InsnCtxt {
@@ -195,9 +197,8 @@ fn get_extern_rust_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                 name: &str,
                                 did: DefId)
                                 -> ValueRef {
-    match ccx.externs().borrow().get(name) {
-        Some(n) => return *n,
-        None => (),
+    if let Some(n) = ccx.externs().borrow().get(name) {
+        return *n;
     }
 
     let f = declare::declare_rust_fn(ccx, name, fn_ty);
@@ -235,9 +236,8 @@ pub fn get_extern_const<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                   -> ValueRef {
     let name = ccx.sess().cstore.item_symbol(did);
     let ty = type_of(ccx, t);
-    match ccx.externs().borrow_mut().get(&name) {
-        Some(n) => return *n,
-        None => (),
+    if let Some(n) = ccx.externs().borrow_mut().get(&name) {
+        return *n;
     }
     // FIXME(nagisa): perhaps the map of externs could be offloaded to llvm somehow?
     // FIXME(nagisa): investigate whether it can be changed into define_global
@@ -510,7 +510,7 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
             let repr = adt::represent_type(cx.ccx(), t);
             let VariantInfo { fields, discr } = VariantInfo::from_ty(cx.tcx(), t, None);
             for (i, &Field(_, field_ty)) in fields.iter().enumerate() {
-                let llfld_a = adt::trans_field_ptr(cx, &*repr, value, Disr::from(discr), i);
+                let llfld_a = adt::trans_field_ptr(cx, &repr, value, Disr::from(discr), i);
 
                 let val = if common::type_is_sized(cx.tcx(), field_ty) {
                     llfld_a
@@ -526,7 +526,7 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
         ty::TyClosure(_, ref substs) => {
             let repr = adt::represent_type(cx.ccx(), t);
             for (i, upvar_ty) in substs.upvar_tys.iter().enumerate() {
-                let llupvar = adt::trans_field_ptr(cx, &*repr, value, Disr(0), i);
+                let llupvar = adt::trans_field_ptr(cx, &repr, value, Disr(0), i);
                 cx = f(cx, llupvar, upvar_ty);
             }
         }
@@ -542,7 +542,7 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
         ty::TyTuple(ref args) => {
             let repr = adt::represent_type(cx.ccx(), t);
             for (i, arg) in args.iter().enumerate() {
-                let llfld_a = adt::trans_field_ptr(cx, &*repr, value, Disr(0), i);
+                let llfld_a = adt::trans_field_ptr(cx, &repr, value, Disr(0), i);
                 cx = f(cx, llfld_a, *arg);
             }
         }
@@ -556,11 +556,11 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
             // NB: we must hit the discriminant first so that structural
             // comparison know not to proceed when the discriminants differ.
 
-            match adt::trans_switch(cx, &*repr, av) {
+            match adt::trans_switch(cx, &repr, av, false) {
                 (_match::Single, None) => {
                     if n_variants != 0 {
                         assert!(n_variants == 1);
-                        cx = iter_variant(cx, &*repr, adt::MaybeSizedValue::sized(av),
+                        cx = iter_variant(cx, &repr, adt::MaybeSizedValue::sized(av),
                                           &en.variants[0], substs, &mut f);
                     }
                 }
@@ -589,10 +589,10 @@ pub fn iter_structural_ty<'blk, 'tcx, F>(cx: Block<'blk, 'tcx>,
                         let variant_cx = fcx.new_temp_block(&format!("enum-iter-variant-{}",
                                                                      &variant.disr_val
                                                                              .to_string()));
-                        let case_val = adt::trans_case(cx, &*repr, Disr::from(variant.disr_val));
+                        let case_val = adt::trans_case(cx, &repr, Disr::from(variant.disr_val));
                         AddCase(llswitch, case_val, variant_cx.llbb);
                         let variant_cx = iter_variant(variant_cx,
-                                                      &*repr,
+                                                      &repr,
                                                       value,
                                                       variant,
                                                       substs,
@@ -736,6 +736,29 @@ pub fn coerce_unsized_into<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     }
 }
 
+pub fn custom_coerce_unsize_info<'ccx, 'tcx>(ccx: &CrateContext<'ccx, 'tcx>,
+                                             source_ty: Ty<'tcx>,
+                                             target_ty: Ty<'tcx>)
+                                             -> CustomCoerceUnsized {
+    let trait_substs = Substs::erased(subst::VecPerParamSpace::new(vec![target_ty],
+                                                                   vec![source_ty],
+                                                                   Vec::new()));
+    let trait_ref = ty::Binder(ty::TraitRef {
+        def_id: ccx.tcx().lang_items.coerce_unsized_trait().unwrap(),
+        substs: ccx.tcx().mk_substs(trait_substs)
+    });
+
+    match fulfill_obligation(ccx, DUMMY_SP, trait_ref) {
+        traits::VtableImpl(traits::VtableImplData { impl_def_id, .. }) => {
+            ccx.tcx().custom_coerce_unsized_kind(impl_def_id)
+        }
+        vtable => {
+            ccx.sess().bug(&format!("invalid CoerceUnsized vtable: {:?}",
+                                    vtable));
+        }
+    }
+}
+
 pub fn cast_shift_expr_rhs(cx: Block, op: hir::BinOp_, lhs: ValueRef, rhs: ValueRef) -> ValueRef {
     cast_shift_rhs(op, lhs, rhs, |a, b| Trunc(cx, a, b), |a, b| ZExt(cx, a, b))
 }
@@ -790,12 +813,12 @@ pub fn llty_and_min_for_signed_ty<'blk, 'tcx>(cx: Block<'blk, 'tcx>,
         ty::TyInt(t) => {
             let llty = Type::int_from_ty(cx.ccx(), t);
             let min = match t {
-                ast::TyIs if llty == Type::i32(cx.ccx()) => i32::MIN as u64,
-                ast::TyIs => i64::MIN as u64,
-                ast::TyI8 => i8::MIN as u64,
-                ast::TyI16 => i16::MIN as u64,
-                ast::TyI32 => i32::MIN as u64,
-                ast::TyI64 => i64::MIN as u64,
+                ast::IntTy::Is if llty == Type::i32(cx.ccx()) => i32::MIN as u64,
+                ast::IntTy::Is => i64::MIN as u64,
+                ast::IntTy::I8 => i8::MIN as u64,
+                ast::IntTy::I16 => i16::MIN as u64,
+                ast::IntTy::I32 => i32::MIN as u64,
+                ast::IntTy::I64 => i64::MIN as u64,
             };
             (llty, min)
         }
@@ -885,10 +908,10 @@ pub fn trans_external_path<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     match t.sty {
         ty::TyBareFn(_, ref fn_ty) => {
             match ccx.sess().target.target.adjust_abi(fn_ty.abi) {
-                Rust | RustCall => {
+                Abi::Rust | Abi::RustCall => {
                     get_extern_rust_fn(ccx, t, &name[..], did)
                 }
-                RustIntrinsic | PlatformIntrinsic => {
+                Abi::RustIntrinsic | Abi::PlatformIntrinsic => {
                     ccx.sess().bug("unexpected intrinsic in trans_external_path")
                 }
                 _ => {
@@ -958,23 +981,11 @@ pub fn invoke<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 /// currently uses SEH-ish unwinding with DWARF info tables to the side (same as
 /// 64-bit MinGW) instead of "full SEH".
 pub fn wants_msvc_seh(sess: &Session) -> bool {
-    sess.target.target.options.is_like_msvc && sess.target.target.arch == "x86"
+    sess.target.target.options.is_like_msvc
 }
 
 pub fn avoid_invoke(bcx: Block) -> bool {
-    // FIXME(#25869) currently SEH-based unwinding is pretty buggy in LLVM and
-    //               is being overhauled as this is being written. Until that
-    //               time such that upstream LLVM's implementation is more solid
-    //               and we start binding it we need to skip invokes for any
-    //               target which wants SEH-based unwinding.
-    if bcx.sess().no_landing_pads() || wants_msvc_seh(bcx.sess()) {
-        true
-    } else if bcx.is_lpad {
-        // Avoid using invoke if we are already inside a landing pad.
-        true
-    } else {
-        false
-    }
+    bcx.sess().no_landing_pads() || bcx.lpad().is_some()
 }
 
 pub fn need_invoke(bcx: Block) -> bool {
@@ -1122,10 +1133,9 @@ pub fn init_local<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, local: &hir::Local) -> Blo
 }
 
 pub fn raw_block<'blk, 'tcx>(fcx: &'blk FunctionContext<'blk, 'tcx>,
-                             is_lpad: bool,
                              llbb: BasicBlockRef)
                              -> Block<'blk, 'tcx> {
-    common::BlockS::new(llbb, is_lpad, None, fcx)
+    common::BlockS::new(llbb, None, fcx)
 }
 
 pub fn with_cond<'blk, 'tcx, F>(bcx: Block<'blk, 'tcx>, val: ValueRef, f: F) -> Block<'blk, 'tcx>
@@ -1298,7 +1308,7 @@ fn memfill<'a, 'tcx>(b: &Builder<'a, 'tcx>, llptr: ValueRef, ty: Ty<'tcx>, byte:
     let volatile = C_bool(ccx, false);
     b.call(llintrinsicfn,
            &[llptr, llzeroval, size, align, volatile],
-           None);
+           None, None);
 }
 
 /// In general, when we create an scratch value in an alloca, the
@@ -1372,7 +1382,7 @@ pub fn alloca_dropped<'blk, 'tcx>(cx: Block<'blk, 'tcx>, ty: Ty<'tcx>, name: &st
     // Block, which we do not have for `alloca_insert_pt`).
     core_lifetime_emit(cx.ccx(), p, Lifetime::Start, |ccx, size, lifetime_start| {
         let ptr = b.pointercast(p, Type::i8p(ccx));
-        b.call(lifetime_start, &[C_u64(ccx, size), ptr], None);
+        b.call(lifetime_start, &[C_u64(ccx, size), ptr], None, None);
     });
     memfill(&b, p, ty, adt::DTOR_DONE);
     p
@@ -1517,7 +1527,7 @@ fn has_nested_returns(tcx: &ty::ctxt, cfg: &cfg::CFG, blk_id: ast::NodeId) -> bo
             Some(hir_map::NodeExpr(ex)) => {
                 if let hir::ExprRet(Some(ref ret_expr)) = ex.node {
                     let mut visitor = FindNestedReturn::new();
-                    intravisit::walk_expr(&mut visitor, &**ret_expr);
+                    intravisit::walk_expr(&mut visitor, &ret_expr);
                     if visitor.found {
                         return true;
                     }
@@ -1583,7 +1593,7 @@ pub fn new_fn_ctxt<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
         false
     };
 
-    let mir = ccx.mir_map().get(&id);
+    let mir = ccx.mir_map().map.get(&id);
 
     let mut fcx = FunctionContext {
         mir: mir,
@@ -1594,7 +1604,7 @@ pub fn new_fn_ctxt<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
         alloca_insert_pt: Cell::new(None),
         llreturn: Cell::new(None),
         needs_ret_allocas: nested_returns,
-        personality: Cell::new(None),
+        landingpad_alloca: Cell::new(None),
         caller_expects_out_pointer: uses_outptr,
         lllocals: RefCell::new(NodeMap()),
         llupvars: RefCell::new(NodeMap()),
@@ -1603,6 +1613,7 @@ pub fn new_fn_ctxt<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
         param_substs: param_substs,
         span: sp,
         block_arena: block_arena,
+        lpad_arena: TypedArena::new(),
         ccx: ccx,
         debug_context: debug_context,
         scopes: RefCell::new(Vec::new()),
@@ -1873,7 +1884,7 @@ pub fn finish_fn<'blk, 'tcx>(fcx: &'blk FunctionContext<'blk, 'tcx>,
             if !last_bcx.terminated.get() {
                 Br(last_bcx, llreturn, DebugLoc::None);
             }
-            raw_block(fcx, false, llreturn)
+            raw_block(fcx, llreturn)
         }
         None => last_bcx,
     };
@@ -1965,6 +1976,8 @@ pub fn trans_closure<'a, 'b, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                    closure_env: closure::ClosureEnv<'b>) {
     ccx.stats().n_closures.set(ccx.stats().n_closures.get() + 1);
 
+    record_translation_item_as_generated(ccx, fn_ast_id, param_substs);
+
     let _icx = push_ctxt("trans_closure");
     attributes::emit_uwtable(llfndecl, true);
 
@@ -1988,7 +2001,7 @@ pub fn trans_closure<'a, 'b, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let mut bcx = init_function(&fcx, false, output_type);
 
     if attributes.iter().any(|item| item.check_name("rustc_mir")) {
-        mir::trans_mir(bcx);
+        mir::trans_mir(bcx.build());
         fcx.cleanup();
         return;
     }
@@ -2015,7 +2028,7 @@ pub fn trans_closure<'a, 'b, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
            bcx.fcx.ccx.tn().val_to_string(bcx.fcx.llfn));
 
     let has_tupled_arg = match closure_env {
-        closure::ClosureEnv::NotClosure => abi == RustCall,
+        closure::ClosureEnv::NotClosure => abi == Abi::RustCall,
         _ => false,
     };
 
@@ -2078,6 +2091,28 @@ pub fn trans_closure<'a, 'b, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     // Insert the mandatory first few basic blocks before lltop.
     finish_fn(&fcx, bcx, output_type, ret_debug_loc);
+
+    fn record_translation_item_as_generated<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                                                      node_id: ast::NodeId,
+                                                      param_substs: &'tcx Substs<'tcx>) {
+        if !collector::collecting_debug_information(ccx) {
+            return;
+        }
+
+        let def_id = match ccx.tcx().node_id_to_type(node_id).sty {
+            ty::TyClosure(def_id, _) => def_id,
+            _ => ccx.external_srcs()
+                    .borrow()
+                    .get(&node_id)
+                    .map(|did| *did)
+                    .unwrap_or_else(|| ccx.tcx().map.local_def_id(node_id)),
+        };
+
+        ccx.record_translation_item_as_generated(TransItem::Fn{
+            def_id: def_id,
+            substs: ccx.tcx().mk_substs(ccx.tcx().erase_regions(param_substs)),
+        });
+    }
 }
 
 /// Creates an LLVM function corresponding to a source language function.
@@ -2234,7 +2269,7 @@ fn trans_enum_variant_or_tuple_like_struct<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx
         let repr = adt::represent_type(ccx, result_ty.unwrap());
         let mut llarg_idx = fcx.arg_offset() as c_uint;
         for (i, arg_ty) in arg_tys.into_iter().enumerate() {
-            let lldestptr = adt::trans_field_ptr(bcx, &*repr, dest_val, Disr::from(disr), i);
+            let lldestptr = adt::trans_field_ptr(bcx, &repr, dest_val, Disr::from(disr), i);
             if common::type_is_fat_ptr(bcx.tcx(), arg_ty) {
                 Store(bcx,
                       get_param(fcx.llfn, llarg_idx),
@@ -2254,7 +2289,7 @@ fn trans_enum_variant_or_tuple_like_struct<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx
                 }
             }
         }
-        adt::trans_set_discr(bcx, &*repr, dest, disr);
+        adt::trans_set_discr(bcx, &repr, dest, disr);
     }
 
     finish_fn(&fcx, bcx, result_ty, DebugLoc::None);
@@ -2308,14 +2343,14 @@ fn enum_variant_size_lint(ccx: &CrateContext, enum_def: &hir::EnumDef, sp: Span,
 
         let sess = &ccx.tcx().sess;
         sess.span_note_without_error(sp,
-                                     &*format!("total size: {} bytes", llsize_of_real(ccx, llty)));
+                                     &format!("total size: {} bytes", llsize_of_real(ccx, llty)));
         match *avar {
             adt::General(..) => {
                 for (i, var) in enum_def.variants.iter().enumerate() {
                     ccx.tcx()
                        .sess
                        .span_note_without_error(var.span,
-                                                &*format!("variant data: {} bytes", sizes[i]));
+                                                &format!("variant data: {} bytes", sizes[i]));
                 }
             }
             _ => {}
@@ -2465,10 +2500,10 @@ pub fn trans_item(ccx: &CrateContext, item: &hir::Item) {
                 for (ref ccx, is_origin) in ccx.maybe_iter(!from_external && trans_everywhere) {
                     let llfn = get_item_val(ccx, item.id);
                     let empty_substs = ccx.tcx().mk_substs(Substs::trans_empty());
-                    if abi != Rust {
+                    if abi != Abi::Rust {
                         foreign::trans_rust_fn_with_foreign_abi(ccx,
-                                                                &**decl,
-                                                                &**body,
+                                                                &decl,
+                                                                &body,
                                                                 &item.attrs,
                                                                 llfn,
                                                                 empty_substs,
@@ -2476,8 +2511,8 @@ pub fn trans_item(ccx: &CrateContext, item: &hir::Item) {
                                                                 None);
                     } else {
                         trans_fn(ccx,
-                                 &**decl,
-                                 &**body,
+                                 &decl,
+                                 &body,
                                  llfn,
                                  empty_substs,
                                  item.id,
@@ -2569,12 +2604,12 @@ fn register_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                          node_type: Ty<'tcx>)
                          -> ValueRef {
     if let ty::TyBareFn(_, ref f) = node_type.sty {
-        if f.abi != Rust && f.abi != RustCall {
+        if f.abi != Abi::Rust && f.abi != Abi::RustCall {
             ccx.sess().span_bug(sp,
                                 &format!("only the `{}` or `{}` calling conventions are valid \
                                           for this function; `{}` was specified",
-                                         Rust.name(),
-                                         RustCall.name(),
+                                         Abi::Rust.name(),
+                                         Abi::RustCall.name(),
                                          f.abi.name()));
         }
     } else {
@@ -2663,11 +2698,12 @@ pub fn create_entry_wrapper(ccx: &CrateContext, sp: Span, main_llfn: ValueRef) {
                 (rust_main, args)
             };
 
-            let result = llvm::LLVMBuildCall(bld,
-                                             start_fn,
-                                             args.as_ptr(),
-                                             args.len() as c_uint,
-                                             noname());
+            let result = llvm::LLVMRustBuildCall(bld,
+                                                 start_fn,
+                                                 args.as_ptr(),
+                                                 args.len() as c_uint,
+                                                 0 as *mut _,
+                                                 noname());
 
             llvm::LLVMBuildRet(bld, result);
         }
@@ -2716,9 +2752,8 @@ fn contains_null(s: &str) -> bool {
 pub fn get_item_val(ccx: &CrateContext, id: ast::NodeId) -> ValueRef {
     debug!("get_item_val(id=`{}`)", id);
 
-    match ccx.item_vals().borrow().get(&id).cloned() {
-        Some(v) => return v,
-        None => {}
+    if let Some(v) = ccx.item_vals().borrow().get(&id).cloned() {
+        return v;
     }
 
     let item = ccx.tcx().map.get(id);
@@ -2751,7 +2786,7 @@ pub fn get_item_val(ccx: &CrateContext, id: ast::NodeId) -> ValueRef {
 
                 hir::ItemFn(_, _, _, abi, _, _) => {
                     let sym = sym();
-                    let llfn = if abi == Rust {
+                    let llfn = if abi == Abi::Rust {
                         register_fn(ccx, i.span, sym, i.id, ty)
                     } else {
                         foreign::register_rust_fn_with_foreign_abi(ccx, i.span, sym, i.id)
@@ -2798,11 +2833,11 @@ pub fn get_item_val(ccx: &CrateContext, id: ast::NodeId) -> ValueRef {
                 hir::ForeignItemFn(..) => {
                     let abi = ccx.tcx().map.get_foreign_abi(id);
                     let ty = ccx.tcx().node_id_to_type(ni.id);
-                    let name = foreign::link_name(&*ni);
+                    let name = foreign::link_name(&ni);
                     foreign::register_foreign_item_fn(ccx, abi, ty, &name, &ni.attrs)
                 }
                 hir::ForeignItemStatic(..) => {
-                    foreign::register_static(ccx, &*ni)
+                    foreign::register_static(ccx, &ni)
                 }
             }
         }
@@ -2874,7 +2909,7 @@ fn register_method(ccx: &CrateContext,
     let sym = exported_name(ccx, id, mty, &attrs);
 
     if let ty::TyBareFn(_, ref f) = mty.sty {
-        let llfn = if f.abi == Rust || f.abi == RustCall {
+        let llfn = if f.abi == Abi::Rust || f.abi == Abi::RustCall {
             register_fn(ccx, span, sym, id, mty)
         } else {
             foreign::register_rust_fn_with_foreign_abi(ccx, span, sym, id)
@@ -3161,6 +3196,8 @@ pub fn trans_crate<'tcx>(tcx: &ty::ctxt<'tcx>,
         // First, verify intrinsics.
         intrinsic::check_intrinsics(&ccx);
 
+        collect_translation_items(&ccx);
+
         // Next, translate all items. See `TransModVisitor` for
         // details on why we walk in this particular way.
         {
@@ -3168,6 +3205,8 @@ pub fn trans_crate<'tcx>(tcx: &ty::ctxt<'tcx>,
             intravisit::walk_mod(&mut TransItemsWithinModVisitor { ccx: &ccx }, &krate.module);
             krate.visit_all_items(&mut TransModVisitor { ccx: &ccx });
         }
+
+        collector::print_collection_results(&ccx);
     }
 
     for ccx in shared_ccx.iter() {
@@ -3238,8 +3277,7 @@ pub fn trans_crate<'tcx>(tcx: &ty::ctxt<'tcx>,
         for cnum in sess.cstore.crates() {
             let syms = sess.cstore.reachable_ids(cnum);
             reachable_symbols.extend(syms.into_iter().filter(|did| {
-                sess.cstore.is_extern_fn(shared_ccx.tcx(), *did) ||
-                sess.cstore.is_static(*did)
+                sess.cstore.is_extern_item(shared_ccx.tcx(), *did)
             }).map(|did| {
                 sess.cstore.item_symbol(did)
             }));
@@ -3323,11 +3361,64 @@ impl<'a, 'tcx, 'v> Visitor<'v> for TransItemsWithinModVisitor<'a, 'tcx> {
                 // giving `trans_item` access to this item, so also record a read.
                 tcx.dep_graph.with_task(DepNode::TransCrateItem(def_id), || {
                     tcx.dep_graph.read(DepNode::Hir(def_id));
+
+                    // We are going to be accessing various tables
+                    // generated by TypeckItemBody; we also assume
+                    // that the body passes type check. These tables
+                    // are not individually tracked, so just register
+                    // a read here.
+                    tcx.dep_graph.read(DepNode::TypeckItemBody(def_id));
+
                     trans_item(self.ccx, i);
                 });
 
                 intravisit::walk_item(self, i);
             }
+        }
+    }
+}
+
+fn collect_translation_items<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>) {
+    let time_passes = ccx.sess().time_passes();
+
+    let collection_mode = match ccx.sess().opts.debugging_opts.print_trans_items {
+        Some(ref s) => {
+            let mode_string = s.to_lowercase();
+            let mode_string = mode_string.trim();
+            if mode_string == "eager" {
+                TransItemCollectionMode::Eager
+            } else {
+                if mode_string != "lazy" {
+                    let message = format!("Unknown codegen-item collection mode '{}'. \
+                                           Falling back to 'lazy' mode.",
+                                           mode_string);
+                    ccx.sess().warn(&message);
+                }
+
+                TransItemCollectionMode::Lazy
+            }
+        }
+        None => TransItemCollectionMode::Lazy
+    };
+
+    let items = time(time_passes, "translation item collection", || {
+        collector::collect_crate_translation_items(&ccx, collection_mode)
+    });
+
+    if ccx.sess().opts.debugging_opts.print_trans_items.is_some() {
+        let mut item_keys: Vec<_> = items.iter()
+                                         .map(|i| i.to_string(ccx))
+                                         .collect();
+        item_keys.sort();
+
+        for item in item_keys {
+            println!("TRANS_ITEM {}", item);
+        }
+
+        let mut ccx_map = ccx.translation_items().borrow_mut();
+
+        for cgi in items {
+            ccx_map.insert(cgi, TransItemState::PredictedButNotGenerated);
         }
     }
 }

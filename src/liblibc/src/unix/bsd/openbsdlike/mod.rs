@@ -41,6 +41,14 @@ s! {
         pub c_ispeed: ::c_int,
         pub c_ospeed: ::c_int,
     }
+
+    pub struct flock {
+        pub l_start: ::off_t,
+        pub l_len: ::off_t,
+        pub l_pid: ::pid_t,
+        pub l_type: ::c_short,
+        pub l_whence: ::c_short,
+    }
 }
 
 pub const EXIT_FAILURE : ::c_int = 1;
@@ -60,6 +68,7 @@ pub const L_tmpnam : ::c_uint = 1024;
 pub const O_RDONLY : ::c_int = 0;
 pub const O_WRONLY : ::c_int = 1;
 pub const O_RDWR : ::c_int = 2;
+pub const O_ACCMODE : ::c_int = 3;
 pub const O_APPEND : ::c_int = 8;
 pub const O_CREAT : ::c_int = 512;
 pub const O_EXCL : ::c_int = 2048;
@@ -100,6 +109,9 @@ pub const F_LOCK : ::c_int = 1;
 pub const F_TEST : ::c_int = 3;
 pub const F_TLOCK : ::c_int = 2;
 pub const F_ULOCK : ::c_int = 0;
+pub const F_GETLK: ::c_int = 7;
+pub const F_SETLK: ::c_int = 8;
+pub const F_SETLKW: ::c_int = 9;
 pub const SIGHUP : ::c_int = 1;
 pub const SIGINT : ::c_int = 2;
 pub const SIGQUIT : ::c_int = 3;
@@ -111,6 +123,7 @@ pub const SIGSEGV : ::c_int = 11;
 pub const SIGPIPE : ::c_int = 13;
 pub const SIGALRM : ::c_int = 14;
 pub const SIGTERM : ::c_int = 15;
+pub const SIGSTKSZ : ::size_t = 40960;
 
 pub const PROT_NONE : ::c_int = 0;
 pub const PROT_READ : ::c_int = 1;
@@ -350,9 +363,18 @@ pub const _SC_2_UPE : ::c_int = 25;
 pub const _SC_STREAM_MAX : ::c_int = 26;
 pub const _SC_TZNAME_MAX : ::c_int = 27;
 pub const _SC_PAGESIZE : ::c_int = 28;
+pub const _SC_PAGE_SIZE: ::c_int = _SC_PAGESIZE;
 pub const _SC_FSYNC : ::c_int = 29;
 
 pub const KERN_PROC_ARGV: ::c_int = 1;
+pub const KERN_PROC_NARGV: ::c_int = 2;
+pub const KERN_PROC_ENV: ::c_int = 3;
+pub const KERN_PROC_NENV: ::c_int = 4;
+
+pub const Q_GETQUOTA: ::c_int = 0x300;
+pub const Q_SETQUOTA: ::c_int = 0x400;
+
+pub const RTLD_GLOBAL: ::c_int = 0x100;
 
 extern {
     pub fn mincore(addr: *mut ::c_void, len: ::size_t,
@@ -367,6 +389,8 @@ extern {
     pub fn pthread_stackseg_np(thread: ::pthread_t,
                                sinfo: *mut ::stack_t) -> ::c_int;
     pub fn memrchr(cx: *const ::c_void, c: ::c_int, n: ::size_t) -> *mut ::c_void;
+    pub fn mkostemp(template: *mut ::c_char, flags: ::c_int) -> ::c_int;
+    pub fn mkostemps(template: *mut ::c_char, suffixlen: ::c_int, flags: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

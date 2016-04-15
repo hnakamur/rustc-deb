@@ -17,7 +17,7 @@
 //!
 //! * **Identity**: sharing AST nodes is problematic for the various analysis
 //!   passes (e.g. one may be able to bypass the borrow checker with a shared
-//!   `ExprAddrOf` node taking a mutable borrow). The only reason `@T` in the
+//!   `ExprKind::AddrOf` node taking a mutable borrow). The only reason `@T` in the
 //!   AST hasn't caused issues is because of inefficient folding passes which
 //!   would always deduplicate any such shared nodes. Even if the AST were to
 //!   switch to an arena, this would still hold, i.e. it couldn't use `&'a T`,
@@ -65,6 +65,10 @@ impl<T: 'static> P<T> {
     {
         f(*self.ptr)
     }
+    /// Equivalent to and_then(|x| x)
+    pub fn unwrap(self) -> T {
+        *self.ptr
+    }
 
     /// Transform the inner value, consuming `self` and producing a new `P<T>`.
     pub fn map<F>(mut self, f: F) -> P<T> where
@@ -83,7 +87,7 @@ impl<T> Deref for P<T> {
     type Target = T;
 
     fn deref<'a>(&'a self) -> &'a T {
-        &*self.ptr
+        &self.ptr
     }
 }
 
@@ -149,7 +153,7 @@ impl<T> P<[T]> {
     }
 
     pub fn as_slice<'a>(&'a self) -> &'a [T] {
-        &*self.ptr
+        &self.ptr
     }
 
     pub fn move_iter(self) -> vec::IntoIter<T> {

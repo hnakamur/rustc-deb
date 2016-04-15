@@ -96,7 +96,7 @@ use sys_common::poison::{self, TryLockError, TryLockResult, LockResult};
 /// let _ = thread::spawn(move || -> () {
 ///     // This thread will acquire the mutex first, unwrapping the result of
 ///     // `lock` because the lock has not been poisoned.
-///     let _lock = lock2.lock().unwrap();
+///     let _guard = lock2.lock().unwrap();
 ///
 ///     // This panic while holding the lock (`_guard` is in scope) will poison
 ///     // the mutex.
@@ -172,7 +172,7 @@ pub struct MutexGuard<'a, T: ?Sized + 'a> {
     // funny underscores due to how Deref/DerefMut currently work (they
     // disregard field privacy).
     __lock: &'a StaticMutex,
-    __data: &'a UnsafeCell<T>,
+    __data: &'a mut T,
     __poison: poison::Guard,
 }
 
@@ -205,14 +205,16 @@ impl<T: ?Sized> Mutex<T> {
     /// held. An RAII guard is returned to allow scoped unlock of the lock. When
     /// the guard goes out of scope, the mutex will be unlocked.
     ///
-    /// # Failure
+    /// # Errors
     ///
     /// If another user of this mutex panicked while holding the mutex, then
     /// this call will return an error once the mutex is acquired.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn lock(&self) -> LockResult<MutexGuard<T>> {
-        unsafe { self.inner.lock.lock() }
-        MutexGuard::new(&*self.inner, &self.data)
+        unsafe {
+            self.inner.lock.lock();
+            MutexGuard::new(&*self.inner, &self.data)
+        }
     }
 
     /// Attempts to acquire this lock.
@@ -223,17 +225,19 @@ impl<T: ?Sized> Mutex<T> {
     ///
     /// This function does not block.
     ///
-    /// # Failure
+    /// # Errors
     ///
     /// If another user of this mutex panicked while holding the mutex, then
     /// this call will return failure if the mutex would otherwise be
     /// acquired.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn try_lock(&self) -> TryLockResult<MutexGuard<T>> {
-        if unsafe { self.inner.lock.try_lock() } {
-            Ok(try!(MutexGuard::new(&*self.inner, &self.data)))
-        } else {
-            Err(TryLockError::WouldBlock)
+        unsafe {
+            if self.inner.lock.try_lock() {
+                Ok(try!(MutexGuard::new(&*self.inner, &self.data)))
+            } else {
+                Err(TryLockError::WouldBlock)
+            }
         }
     }
 
@@ -250,7 +254,7 @@ impl<T: ?Sized> Mutex<T> {
 
     /// Consumes this mutex, returning the underlying data.
     ///
-    /// # Failure
+    /// # Errors
     ///
     /// If another user of this mutex panicked while holding the mutex, then
     /// this call will return an error instead.
@@ -280,7 +284,7 @@ impl<T: ?Sized> Mutex<T> {
     /// Since this call borrows the `Mutex` mutably, no actual locking needs to
     /// take place---the mutable borrow statically guarantees no locks exist.
     ///
-    /// # Failure
+    /// # Errors
     ///
     /// If another user of this mutex panicked while holding the mutex, then
     /// this call will return an error instead.
@@ -307,7 +311,7 @@ impl<T: ?Sized> Drop for Mutex<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized + fmt::Debug + 'static> fmt::Debug for Mutex<T> {
+impl<T: ?Sized + fmt::Debug> fmt::Debug for Mutex<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.try_lock() {
             Ok(guard) => write!(f, "Mutex {{ data: {:?} }}", &*guard),
@@ -338,17 +342,21 @@ impl StaticMutex {
     /// Acquires this lock, see `Mutex::lock`
     #[inline]
     pub fn lock(&'static self) -> LockResult<MutexGuard<()>> {
-        unsafe { self.lock.lock() }
-        MutexGuard::new(self, &DUMMY.0)
+        unsafe {
+            self.lock.lock();
+            MutexGuard::new(self, &DUMMY.0)
+        }
     }
 
     /// Attempts to grab this lock, see `Mutex::try_lock`
     #[inline]
     pub fn try_lock(&'static self) -> TryLockResult<MutexGuard<()>> {
-        if unsafe { self.lock.try_lock() } {
-            Ok(try!(MutexGuard::new(self, &DUMMY.0)))
-        } else {
-            Err(TryLockError::WouldBlock)
+        unsafe {
+            if self.lock.try_lock() {
+                Ok(try!(MutexGuard::new(self, &DUMMY.0)))
+            } else {
+                Err(TryLockError::WouldBlock)
+            }
         }
     }
 
@@ -369,12 +377,12 @@ impl StaticMutex {
 
 impl<'mutex, T: ?Sized> MutexGuard<'mutex, T> {
 
-    fn new(lock: &'mutex StaticMutex, data: &'mutex UnsafeCell<T>)
+    unsafe fn new(lock: &'mutex StaticMutex, data: &'mutex UnsafeCell<T>)
            -> LockResult<MutexGuard<'mutex, T>> {
         poison::map_result(lock.poison.borrow(), |guard| {
             MutexGuard {
                 __lock: lock,
-                __data: data,
+                __data: &mut *data.get(),
                 __poison: guard,
             }
         })
@@ -385,16 +393,12 @@ impl<'mutex, T: ?Sized> MutexGuard<'mutex, T> {
 impl<'mutex, T: ?Sized> Deref for MutexGuard<'mutex, T> {
     type Target = T;
 
-    fn deref(&self) -> &T {
-        unsafe { &*self.__data.get() }
-    }
+    fn deref(&self) -> &T {self.__data }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'mutex, T: ?Sized> DerefMut for MutexGuard<'mutex, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.__data.get() }
-    }
+    fn deref_mut(&mut self) -> &mut T { self.__data }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]

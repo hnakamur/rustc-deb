@@ -116,7 +116,8 @@ s! {
         pub si_code: ::c_int,
         pub si_errno: ::c_int,
         __pad1: ::c_int,
-        __pad2: [u64; 14],
+        pub si_addr: *mut ::c_void,
+        __pad2: [u64; 13],
     }
 
     pub struct pthread_attr_t {
@@ -238,6 +239,7 @@ pub const _SC_GETGR_R_SIZE_MAX : ::c_int = 47;
 pub const _SC_GETPW_R_SIZE_MAX : ::c_int = 48;
 pub const _SC_LOGIN_NAME_MAX : ::c_int = 37;
 pub const _SC_MQ_PRIO_MAX : ::c_int = 55;
+pub const _SC_NPROCESSORS_ONLN : ::c_int = 1002;
 pub const _SC_THREADS : ::c_int = 41;
 pub const _SC_THREAD_ATTR_STACKADDR : ::c_int = 61;
 pub const _SC_THREAD_ATTR_STACKSIZE : ::c_int = 62;
@@ -267,8 +269,6 @@ pub const _SC_SEMAPHORES : ::c_int = 42;
 pub const _SC_SHARED_MEMORY_OBJECTS : ::c_int = 87;
 pub const _SC_SYNCHRONIZED_IO : ::c_int = 31;
 pub const _SC_TIMERS : ::c_int = 44;
-
-pub const SIGSTKSZ: ::size_t = 0xa000;
 
 pub const FD_SETSIZE: usize = 0x100;
 
@@ -324,6 +324,9 @@ pub const TMP_MAX : ::c_uint = 308915776;
 
 pub const NI_MAXHOST: ::socklen_t = 1025;
 
+pub const RTLD_NOLOAD: ::c_int = 0x2000;
+pub const RTLD_LOCAL: ::c_int = 0x200;
+
 extern {
     pub fn getnameinfo(sa: *const ::sockaddr,
                        salen: ::socklen_t,
@@ -365,4 +368,14 @@ extern {
                   addr: *mut ::c_void,
                   data: ::c_int) -> ::c_int;
     pub fn sethostname(name: *const ::c_char, len: ::size_t) -> ::c_int;
+    pub fn pthread_setname_np(t: ::pthread_t,
+                              name: *const ::c_char,
+                              arg: *mut ::c_void) -> ::c_int;
+    pub fn pthread_getattr_np(native: ::pthread_t,
+                              attr: *mut ::pthread_attr_t) -> ::c_int;
+    pub fn pthread_attr_getguardsize(attr: *const ::pthread_attr_t,
+                                     guardsize: *mut ::size_t) -> ::c_int;
+    pub fn pthread_attr_getstack(attr: *const ::pthread_attr_t,
+                                 stackaddr: *mut *mut ::c_void,
+                                 stacksize: *mut ::size_t) -> ::c_int;
 }

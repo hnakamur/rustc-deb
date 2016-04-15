@@ -242,6 +242,21 @@ s! {
         pub c_ispeed: ::speed_t,
         pub c_ospeed: ::speed_t,
     }
+
+    pub struct flock {
+        pub l_start: ::off_t,
+        pub l_len: ::off_t,
+        pub l_pid: ::pid_t,
+        pub l_type: ::c_short,
+        pub l_whence: ::c_short,
+    }
+
+    pub struct sf_hdtr {
+        pub headers: *mut ::iovec,
+        pub hdr_cnt: ::c_int,
+        pub trailers: *mut ::iovec,
+        pub trl_cnt: ::c_int,
+    }
 }
 
 pub const EXIT_FAILURE: ::c_int = 1;
@@ -305,6 +320,9 @@ pub const F_LOCK: ::c_int = 1;
 pub const F_TEST: ::c_int = 3;
 pub const F_TLOCK: ::c_int = 2;
 pub const F_ULOCK: ::c_int = 0;
+pub const F_GETLK: ::c_int = 7;
+pub const F_SETLK: ::c_int = 8;
+pub const F_SETLKW: ::c_int = 9;
 pub const SIGHUP: ::c_int = 1;
 pub const SIGINT: ::c_int = 2;
 pub const SIGQUIT: ::c_int = 3;
@@ -803,6 +821,19 @@ pub const NOTE_VM_PRESSURE_SUDDEN_TERMINATE: ::uint32_t = 0x20000000;
 pub const NOTE_VM_PRESSURE_TERMINATE: ::uint32_t = 0x40000000;
 pub const NOTE_PCTRLMASK: ::uint32_t = 0xfff00000;
 
+pub const NL0: ::c_int  = 0x00000000;
+pub const NL1: ::c_int  = 0x00000100;
+pub const TAB0: ::c_int = 0x00000000;
+pub const TAB1: ::c_int = 0x00000400;
+pub const TAB2: ::c_int = 0x00000800;
+pub const CR0: ::c_int  = 0x00000000;
+pub const CR1: ::c_int  = 0x00001000;
+pub const CR2: ::c_int  = 0x00002000;
+pub const CR3: ::c_int  = 0x00003000;
+pub const FF0: ::c_int  = 0x00000000;
+pub const FF1: ::c_int  = 0x00004000;
+pub const BS0: ::c_int  = 0x00000000;
+pub const BS1: ::c_int  = 0x00008000;
 pub const TAB3: ::c_int = 0x00000004;
 pub const VT0: ::c_int  = 0x00000000;
 pub const VT1: ::c_int  = 0x00010000;
@@ -810,6 +841,15 @@ pub const IUTF8: ::tcflag_t = 0x00004000;
 pub const CRTSCTS: ::tcflag_t = 0x00030000;
 
 pub const NI_MAXHOST: ::socklen_t = 1025;
+
+pub const Q_GETQUOTA: ::c_int = 0x300;
+pub const Q_SETQUOTA: ::c_int = 0x400;
+
+pub const RTLD_LOCAL: ::c_int = 0x4;
+pub const RTLD_FIRST: ::c_int = 0x100;
+pub const RTLD_NODELETE: ::c_int = 0x80;
+pub const RTLD_NOLOAD: ::c_int = 0x10;
+pub const RTLD_GLOBAL: ::c_int = 0x8;
 
 extern {
     pub fn getnameinfo(sa: *const ::sockaddr,
@@ -881,6 +921,12 @@ extern {
                     id: ::c_int,
                     data: *mut ::c_char) -> ::c_int;
     pub fn sethostname(name: *const ::c_char, len: ::c_int) -> ::c_int;
+    pub fn sendfile(fd: ::c_int,
+                    s: ::c_int,
+                    offset: ::off_t,
+                    len: *mut ::off_t,
+                    hdtr: *mut ::sf_hdtr,
+                    flags: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

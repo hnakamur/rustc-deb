@@ -489,7 +489,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
                 let bits = &mut self.scope_kills[start.. end];
                 debug!("{} add_kills_from_flow_exits flow_exit={:?} bits={} [before]",
                        self.analysis_name, flow_exit, mut_bits_to_string(bits));
-                bits.clone_from_slice(&orig_kills[..]);
+                bits.copy_from_slice(&orig_kills[..]);
                 debug!("{} add_kills_from_flow_exits flow_exit={:?} bits={} [after]",
                        self.analysis_name, flow_exit, mut_bits_to_string(bits));
             }
@@ -527,8 +527,7 @@ impl<'a, 'tcx, O:DataFlowOperator+Clone+'static> DataFlowContext<'a, 'tcx, O> {
         debug!("{}", {
             let mut v = Vec::new();
             self.pretty_print_to(box &mut v, blk).unwrap();
-            println!("{}", String::from_utf8(v).unwrap());
-            ""
+            String::from_utf8(v).unwrap()
         });
     }
 
@@ -557,7 +556,7 @@ impl<'a, 'b, 'tcx, O:DataFlowOperator> PropagationContext<'a, 'b, 'tcx, O> {
             let (start, end) = self.dfcx.compute_id_range(node_index);
 
             // Initialize local bitvector with state on-entry.
-            in_out.clone_from_slice(&self.dfcx.on_entry[start.. end]);
+            in_out.copy_from_slice(&self.dfcx.on_entry[start.. end]);
 
             // Compute state on-exit by applying transfer function to
             // state on-entry.

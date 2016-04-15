@@ -27,7 +27,7 @@ use self::AttributeType::*;
 use self::AttributeGate::*;
 
 use abi::Abi;
-use ast::NodeId;
+use ast::{NodeId, PatKind};
 use ast;
 use attr;
 use attr::AttrMetaMethods;
@@ -213,10 +213,10 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("unwind_attributes", "1.4.0", None, Active),
 
     // allow empty structs and enum variants with braces
-    ("braced_empty_structs", "1.5.0", Some(29720), Active),
+    ("braced_empty_structs", "1.5.0", Some(29720), Accepted),
 
     // allow overloading augmented assignment operations like `a += b`
-    ("augmented_assignments", "1.5.0", Some(28235), Active),
+    ("augmented_assignments", "1.5.0", Some(28235), Accepted),
 
     // allow `#[no_debug]`
     ("no_debug", "1.5.0", Some(29721), Active),
@@ -563,8 +563,6 @@ pub struct Features {
     pub cfg_target_feature: bool,
     pub cfg_target_vendor: bool,
     pub cfg_target_thread_local: bool,
-    pub augmented_assignments: bool,
-    pub braced_empty_structs: bool,
     pub staged_api: bool,
     pub stmt_expr_attributes: bool,
     pub deprecated: bool,
@@ -597,8 +595,6 @@ impl Features {
             cfg_target_feature: false,
             cfg_target_vendor: false,
             cfg_target_thread_local: false,
-            augmented_assignments: false,
-            braced_empty_structs: false,
             staged_api: false,
             stmt_expr_attributes: false,
             deprecated: false,
@@ -676,7 +672,7 @@ impl<'a> Context<'a> {
             }
         }
         for &(ref n, ref ty) in self.plugin_attributes {
-            if &*n == name {
+            if n == name {
                 // Plugins can't gate attributes, so we don't check for it
                 // unlike the code above; we only use this loop to
                 // short-circuit to avoid the checks below
@@ -815,11 +811,11 @@ impl<'a, 'v> Visitor<'v> for MacroVisitor<'a> {
         // But we keep these checks as a pre-expansion check to catch
         // uses in e.g. conditionalized code.
 
-        if let ast::ExprBox(_) = e.node {
+        if let ast::ExprKind::Box(_) = e.node {
             self.context.gate_feature("box_syntax", e.span, EXPLAIN_BOX_SYNTAX);
         }
 
-        if let ast::ExprInPlace(..) = e.node {
+        if let ast::ExprKind::InPlace(..) = e.node {
             self.context.gate_feature("placement_in_syntax", e.span, EXPLAIN_PLACEMENT_IN);
         }
 
@@ -855,7 +851,7 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
 
     fn visit_item(&mut self, i: &ast::Item) {
         match i.node {
-            ast::ItemExternCrate(_) => {
+            ast::ItemKind::ExternCrate(_) => {
                 if attr::contains_name(&i.attrs[..], "macro_reexport") {
                     self.gate_feature("macro_reexport", i.span,
                                       "macros reexports are experimental \
@@ -863,7 +859,7 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                 }
             }
 
-            ast::ItemForeignMod(ref foreign_module) => {
+            ast::ItemKind::ForeignMod(ref foreign_module) => {
                 if attr::contains_name(&i.attrs[..], "link_args") {
                     self.gate_feature("link_args", i.span,
                                       "the `link_args` attribute is not portable \
@@ -888,7 +884,7 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                 }
             }
 
-            ast::ItemFn(..) => {
+            ast::ItemKind::Fn(..) => {
                 if attr::contains_name(&i.attrs[..], "plugin_registrar") {
                     self.gate_feature("plugin_registrar", i.span,
                                       "compiler plugins are experimental and possibly buggy");
@@ -907,7 +903,7 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                 }
             }
 
-            ast::ItemStruct(..) => {
+            ast::ItemKind::Struct(..) => {
                 if attr::contains_name(&i.attrs[..], "simd") {
                     self.gate_feature("simd", i.span,
                                       "SIMD types are experimental and possibly buggy");
@@ -928,14 +924,14 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                 }
             }
 
-            ast::ItemDefaultImpl(..) => {
+            ast::ItemKind::DefaultImpl(..) => {
                 self.gate_feature("optin_builtin_traits",
                                   i.span,
                                   "default trait implementations are experimental \
                                    and possibly buggy");
             }
 
-            ast::ItemImpl(_, polarity, _, _, _, _) => {
+            ast::ItemKind::Impl(_, polarity, _, _, _, _) => {
                 match polarity {
                     ast::ImplPolarity::Negative => {
                         self.gate_feature("optin_builtin_traits",
@@ -956,10 +952,7 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
     fn visit_variant_data(&mut self, s: &'v ast::VariantData, _: ast::Ident,
                         _: &'v ast::Generics, _: ast::NodeId, span: Span) {
         if s.fields().is_empty() {
-            if s.is_struct() {
-                self.gate_feature("braced_empty_structs", span,
-                                  "empty structs and enum variants with braces are unstable");
-            } else if s.is_tuple() {
+            if s.is_tuple() {
                 self.context.span_handler.struct_span_err(span, "empty tuple structs and enum \
                                                                  variants are not allowed, use \
                                                                  unit structs and enum variants \
@@ -988,13 +981,13 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
 
     fn visit_expr(&mut self, e: &ast::Expr) {
         match e.node {
-            ast::ExprBox(_) => {
+            ast::ExprKind::Box(_) => {
                 self.gate_feature("box_syntax",
                                   e.span,
                                   "box expression syntax is experimental; \
                                    you can call `Box::new` instead.");
             }
-            ast::ExprType(..) => {
+            ast::ExprKind::Type(..) => {
                 self.gate_feature("type_ascription", e.span,
                                   "type ascription is experimental");
             }
@@ -1005,19 +998,19 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
 
     fn visit_pat(&mut self, pattern: &ast::Pat) {
         match pattern.node {
-            ast::PatVec(_, Some(_), ref last) if !last.is_empty() => {
+            PatKind::Vec(_, Some(_), ref last) if !last.is_empty() => {
                 self.gate_feature("advanced_slice_patterns",
                                   pattern.span,
                                   "multiple-element slice matches anywhere \
                                    but at the end of a slice (e.g. \
                                    `[0, ..xs, 0]`) are experimental")
             }
-            ast::PatVec(..) => {
+            PatKind::Vec(..) => {
                 self.gate_feature("slice_patterns",
                                   pattern.span,
                                   "slice pattern syntax is experimental");
             }
-            ast::PatBox(..) => {
+            PatKind::Box(..) => {
                 self.gate_feature("box_patterns",
                                   pattern.span,
                                   "box pattern syntax is experimental");
@@ -1071,17 +1064,17 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
 
     fn visit_trait_item(&mut self, ti: &'v ast::TraitItem) {
         match ti.node {
-            ast::ConstTraitItem(..) => {
+            ast::TraitItemKind::Const(..) => {
                 self.gate_feature("associated_consts",
                                   ti.span,
                                   "associated constants are experimental")
             }
-            ast::MethodTraitItem(ref sig, _) => {
+            ast::TraitItemKind::Method(ref sig, _) => {
                 if sig.constness == ast::Constness::Const {
                     self.gate_feature("const_fn", ti.span, "const fn is unstable");
                 }
             }
-            ast::TypeTraitItem(_, Some(_)) => {
+            ast::TraitItemKind::Type(_, Some(_)) => {
                 self.gate_feature("associated_type_defaults", ti.span,
                                   "associated type defaults are unstable");
             }
@@ -1138,7 +1131,7 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &Handler,
             Some(list) => {
                 for mi in list {
                     let name = match mi.node {
-                        ast::MetaWord(ref word) => (*word).clone(),
+                        ast::MetaItemKind::Word(ref word) => (*word).clone(),
                         _ => {
                             span_handler.span_err(mi.span,
                                                   "malformed feature, expected just \
@@ -1196,8 +1189,6 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &Handler,
         cfg_target_feature: cx.has_feature("cfg_target_feature"),
         cfg_target_vendor: cx.has_feature("cfg_target_vendor"),
         cfg_target_thread_local: cx.has_feature("cfg_target_thread_local"),
-        augmented_assignments: cx.has_feature("augmented_assignments"),
-        braced_empty_structs: cx.has_feature("braced_empty_structs"),
         staged_api: cx.has_feature("staged_api"),
         stmt_expr_attributes: cx.has_feature("stmt_expr_attributes"),
         deprecated: cx.has_feature("deprecated"),

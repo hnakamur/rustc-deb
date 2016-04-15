@@ -27,6 +27,7 @@
 #![allow(non_camel_case_types)]
 
 use libc;
+use rustc::session::config::get_unstable_features_setting;
 use std::ascii::AsciiExt;
 use std::cell::RefCell;
 use std::default::Default;
@@ -34,6 +35,7 @@ use std::ffi::CString;
 use std::fmt;
 use std::slice;
 use std::str;
+use syntax::feature_gate::UnstableFeatures;
 
 use html::render::derive_id;
 use html::toc::TocBuilder;
@@ -157,6 +159,9 @@ struct hoedown_buffer {
 
 // hoedown FFI
 #[link(name = "hoedown", kind = "static")]
+#[cfg(not(cargobuild))]
+extern {}
+
 extern {
     fn hoedown_html_renderer_new(render_flags: libc::c_uint,
                                  nesting_level: libc::c_int)
@@ -245,7 +250,9 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
             let text = lines.collect::<Vec<&str>>().join("\n");
             if rendered { return }
             PLAYGROUND_KRATE.with(|krate| {
-                let mut s = String::new();
+                // insert newline to clearly separate it from the
+                // previous block so we can shorten the html output
+                let mut s = String::from("\n");
                 krate.borrow().as_ref().map(|krate| {
                     let test = origtext.lines().map(|l| {
                         stripped_filtered_line(l).unwrap_or(l)
@@ -400,7 +407,8 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector) {
             let text = lines.collect::<Vec<&str>>().join("\n");
             tests.add_test(text.to_owned(),
                            block_info.should_panic, block_info.no_run,
-                           block_info.ignore, block_info.test_harness);
+                           block_info.ignore, block_info.test_harness,
+                           block_info.compile_fail);
         }
     }
 
@@ -445,6 +453,7 @@ struct LangString {
     ignore: bool,
     rust: bool,
     test_harness: bool,
+    compile_fail: bool,
 }
 
 impl LangString {
@@ -455,6 +464,7 @@ impl LangString {
             ignore: false,
             rust: true,  // NB This used to be `notrust = false`
             test_harness: false,
+            compile_fail: false,
         }
     }
 
@@ -462,6 +472,10 @@ impl LangString {
         let mut seen_rust_tags = false;
         let mut seen_other_tags = false;
         let mut data = LangString::all_false();
+        let allow_compile_fail = match get_unstable_features_setting() {
+            UnstableFeatures::Allow | UnstableFeatures::Cheat=> true,
+            _ => false,
+        };
 
         let tokens = string.split(|c: char|
             !(c == '_' || c == '-' || c.is_alphanumeric())
@@ -474,7 +488,12 @@ impl LangString {
                 "no_run" => { data.no_run = true; seen_rust_tags = true; },
                 "ignore" => { data.ignore = true; seen_rust_tags = true; },
                 "rust" => { data.rust = true; seen_rust_tags = true; },
-                "test_harness" => { data.test_harness = true; seen_rust_tags = true; }
+                "test_harness" => { data.test_harness = true; seen_rust_tags = true; },
+                "compile_fail" if allow_compile_fail => {
+                    data.compile_fail = true;
+                    seen_rust_tags = true;
+                    data.no_run = true;
+                },
                 _ => { seen_other_tags = true }
             }
         }
@@ -557,28 +576,31 @@ mod tests {
     #[test]
     fn test_lang_string_parse() {
         fn t(s: &str,
-            should_panic: bool, no_run: bool, ignore: bool, rust: bool, test_harness: bool) {
+            should_panic: bool, no_run: bool, ignore: bool, rust: bool, test_harness: bool,
+            compile_fail: bool) {
             assert_eq!(LangString::parse(s), LangString {
                 should_panic: should_panic,
                 no_run: no_run,
                 ignore: ignore,
                 rust: rust,
                 test_harness: test_harness,
+                compile_fail: compile_fail,
             })
         }
 
-        // marker                | should_panic| no_run | ignore | rust | test_harness
-        t("",                      false,        false,   false,   true,  false);
-        t("rust",                  false,        false,   false,   true,  false);
-        t("sh",                    false,        false,   false,   false, false);
-        t("ignore",                false,        false,   true,    true,  false);
-        t("should_panic",          true,         false,   false,   true,  false);
-        t("no_run",                false,        true,    false,   true,  false);
-        t("test_harness",          false,        false,   false,   true,  true);
-        t("{.no_run .example}",    false,        true,    false,   true,  false);
-        t("{.sh .should_panic}",   true,         false,   false,   true,  false);
-        t("{.example .rust}",      false,        false,   false,   true,  false);
-        t("{.test_harness .rust}", false,        false,   false,   true,  true);
+        // marker                | should_panic| no_run| ignore| rust | test_harness| compile_fail
+        t("",                      false,        false,  false,  true,  false,        false);
+        t("rust",                  false,        false,  false,  true,  false,        false);
+        t("sh",                    false,        false,  false,  false, false,        false);
+        t("ignore",                false,        false,  true,   true,  false,        false);
+        t("should_panic",          true,         false,  false,  true,  false,        false);
+        t("no_run",                false,        true,   false,  true,  false,        false);
+        t("test_harness",          false,        false,  false,  true,  true,         false);
+        t("compile_fail",          false,        true,   false,  true,  false,        true);
+        t("{.no_run .example}",    false,        true,   false,  true,  false,        false);
+        t("{.sh .should_panic}",   true,         false,  false,  true,  false,        false);
+        t("{.example .rust}",      false,        false,  false,  true,  false,        false);
+        t("{.test_harness .rust}", false,        false,  false,  true,  true,         false);
     }
 
     #[test]

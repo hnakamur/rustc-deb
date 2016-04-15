@@ -20,7 +20,7 @@ use middle::ty::{TyBox, TyTrait, TyInt, TyUint, TyInfer};
 use middle::ty::{self, Ty, TypeFoldable};
 
 use std::fmt;
-use syntax::{abi};
+use syntax::abi::Abi;
 use syntax::parse::token;
 use syntax::ast::CRATE_NODE_ID;
 use rustc_front::hir;
@@ -395,6 +395,9 @@ impl<'tcx> fmt::Debug for ty::adjustment::AutoAdjustment<'tcx> {
             }
             ty::adjustment::AdjustUnsafeFnPointer => {
                 write!(f, "AdjustUnsafeFnPointer")
+            }
+            ty::adjustment::AdjustMutToConstPointer => {
+                write!(f, "AdjustMutToConstPointer")
             }
             ty::adjustment::AdjustDerefRef(ref data) => {
                 write!(f, "{:?}", data)
@@ -814,7 +817,7 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                     try!(write!(f, "unsafe "));
                 }
 
-                if bare_fn.abi != abi::Rust {
+                if bare_fn.abi != Abi::Rust {
                     try!(write!(f, "extern {} ", bare_fn.abi));
                 }
 

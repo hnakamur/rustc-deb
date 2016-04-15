@@ -56,6 +56,26 @@ use mem;
 ///     assert_eq!(*f.borrow(), 2);
 /// });
 /// ```
+///
+/// # Platform-specific behavior
+///
+/// Note that a "best effort" is made to ensure that destructors for types
+/// stored in thread local storage are run, but not all platforms can gurantee
+/// that destructors will be run for all types in thread local storage. For
+/// example, there are a number of known caveats where destructors are not run:
+///
+/// 1. On Unix systems when pthread-based TLS is being used, destructors will
+///    not be run for TLS values on the main thread when it exits. Note that the
+///    application will exit immediately after the main thread exits as well.
+/// 2. On all platforms it's possible for TLS to re-initialize other TLS slots
+///    during destruction. Some platforms ensure that this cannot happen
+///    infinitely by preventing re-initialization of any slot that has been
+///    destroyed, but not all platforms have this guard. Those platforms that do
+///    not guard typically have a synthetic limit after which point no more
+///    destructors are run.
+/// 3. On OSX, initializing TLS during destruction of other TLS slots can
+///    sometimes cancel *all* destructors for the current thread, whether or not
+///    the slots have already had their destructors run or not.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct LocalKey<T: 'static> {
     // This outer `LocalKey<T>` type is what's going to be stored in statics,
@@ -72,7 +92,7 @@ pub struct LocalKey<T: 'static> {
     // trivially devirtualizable by LLVM because the value of `inner` never
     // changes and the constant should be readonly within a crate. This mainly
     // only runs into problems when TLS statics are exported across crates.
-    inner: unsafe fn() -> Option<&'static UnsafeCell<Option<T>>>,
+    inner: fn() -> Option<&'static UnsafeCell<Option<T>>>,
 
     // initialization routine to invoke to create a value
     init: fn() -> T,
@@ -106,7 +126,7 @@ macro_rules! __thread_local_inner {
     ($t:ty, $init:expr) => {{
         fn __init() -> $t { $init }
 
-        unsafe fn __getit() -> $crate::option::Option<
+        fn __getit() -> $crate::option::Option<
             &'static $crate::cell::UnsafeCell<
                 $crate::option::Option<$t>>>
         {
@@ -163,7 +183,7 @@ impl<T: 'static> LocalKey<T> {
     #[unstable(feature = "thread_local_internals",
                reason = "recently added to create a key",
                issue = "0")]
-    pub const fn new(inner: unsafe fn() -> Option<&'static UnsafeCell<Option<T>>>,
+    pub const fn new(inner: fn() -> Option<&'static UnsafeCell<Option<T>>>,
                      init: fn() -> T) -> LocalKey<T> {
         LocalKey {
             inner: inner,
@@ -283,11 +303,13 @@ pub mod elf {
             }
         }
 
-        pub unsafe fn get(&'static self) -> Option<&'static UnsafeCell<Option<T>>> {
-            if intrinsics::needs_drop::<T>() && self.dtor_running.get() {
-                return None
+        pub fn get(&'static self) -> Option<&'static UnsafeCell<Option<T>>> {
+            unsafe {
+                if intrinsics::needs_drop::<T>() && self.dtor_running.get() {
+                    return None
+                }
+                self.register_dtor();
             }
-            self.register_dtor();
             Some(&self.inner)
         }
 
@@ -432,24 +454,26 @@ pub mod os {
             }
         }
 
-        pub unsafe fn get(&'static self) -> Option<&'static UnsafeCell<Option<T>>> {
-            let ptr = self.os.get() as *mut Value<T>;
-            if !ptr.is_null() {
-                if ptr as usize == 1 {
-                    return None
+        pub fn get(&'static self) -> Option<&'static UnsafeCell<Option<T>>> {
+            unsafe {
+                let ptr = self.os.get() as *mut Value<T>;
+                if !ptr.is_null() {
+                    if ptr as usize == 1 {
+                        return None
+                    }
+                    return Some(&(*ptr).value);
                 }
-                return Some(&(*ptr).value);
-            }
 
-            // If the lookup returned null, we haven't initialized our own local
-            // copy, so do that now.
-            let ptr: Box<Value<T>> = box Value {
-                key: self,
-                value: UnsafeCell::new(None),
-            };
-            let ptr = Box::into_raw(ptr);
-            self.os.set(ptr as *mut u8);
-            Some(&(*ptr).value)
+                // If the lookup returned null, we haven't initialized our own local
+                // copy, so do that now.
+                let ptr: Box<Value<T>> = box Value {
+                    key: self,
+                    value: UnsafeCell::new(None),
+                };
+                let ptr = Box::into_raw(ptr);
+                self.os.set(ptr as *mut u8);
+                Some(&(*ptr).value)
+            }
         }
     }
 
@@ -602,7 +626,12 @@ mod tests {
         }).join().ok().unwrap();
     }
 
+    // Note that this test will deadlock if TLS destructors aren't run (this
+    // requires the destructor to be run to pass the test). OSX has a known bug
+    // where dtors-in-dtors may cancel other destructors, so we just ignore this
+    // test on OSX.
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn dtors_in_dtors_in_dtors() {
         struct S1(Sender<()>);
         thread_local!(static K1: UnsafeCell<Option<S1>> = UnsafeCell::new(None));

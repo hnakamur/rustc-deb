@@ -18,13 +18,34 @@ use mem;
 use ops::Range;
 
 /// Extension methods for ASCII-subset only operations on string slices.
+///
+/// Be aware that operations on seemingly non-ASCII characters can sometimes
+/// have unexpected results. Consider this example:
+///
+/// ```
+/// use std::ascii::AsciiExt;
+///
+/// assert_eq!("café".to_ascii_uppercase(), "CAFÉ");
+/// assert_eq!("café".to_ascii_uppercase(), "CAFé");
+/// ```
+///
+/// In the first example, the lowercased string is represented `"cafe\u{301}"`
+/// (the last character is an acute accent [combining character]). Unlike the
+/// other characters in the string, the combining character will not get mapped
+/// to an uppercase variant, resulting in `"CAFE\u{301}"`. In the second
+/// example, the lowercased string is represented `"caf\u{e9}"` (the last
+/// character is a single Unicode character representing an 'e' with an acute
+/// accent). Since the last character is defined outside the scope of ASCII,
+/// it will not get mapped to an uppercase variant, resulting in `"CAF\u{e9}"`.
+///
+/// [combining character]: https://en.wikipedia.org/wiki/Combining_character
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait AsciiExt {
     /// Container type for copied ASCII characters.
     #[stable(feature = "rust1", since = "1.0.0")]
     type Owned;
 
-    /// Checks if within the ASCII range.
+    /// Checks if the value is within the ASCII range.
     ///
     /// # Examples
     ///
@@ -34,8 +55,8 @@ pub trait AsciiExt {
     /// let ascii = 'a';
     /// let utf8 = '❤';
     ///
-    /// assert_eq!(true, ascii.is_ascii());
-    /// assert_eq!(false, utf8.is_ascii())
+    /// assert!(ascii.is_ascii());
+    /// assert!(!utf8.is_ascii());
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn is_ascii(&self) -> bool;
@@ -93,9 +114,9 @@ pub trait AsciiExt {
     /// let ascii3 = 'A';
     /// let ascii4 = 'z';
     ///
-    /// assert_eq!(true, ascii1.eq_ignore_ascii_case(&ascii2));
-    /// assert_eq!(true, ascii1.eq_ignore_ascii_case(&ascii3));
-    /// assert_eq!(false, ascii1.eq_ignore_ascii_case(&ascii4));
+    /// assert!(ascii1.eq_ignore_ascii_case(&ascii2));
+    /// assert!(ascii1.eq_ignore_ascii_case(&ascii3));
+    /// assert!(!ascii1.eq_ignore_ascii_case(&ascii4));
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn eq_ignore_ascii_case(&self, other: &Self) -> bool;

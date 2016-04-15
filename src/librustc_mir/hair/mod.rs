@@ -14,7 +14,8 @@
 //! unit-tested and separated from the Rust source and compiler data
 //! structures.
 
-use rustc::mir::repr::{BinOp, BorrowKind, Field, Literal, Mutability, UnOp, ItemKind};
+use rustc::mir::repr::{BinOp, BorrowKind, Field, Literal, Mutability, UnOp, ItemKind,
+    TypedConstVal};
 use rustc::middle::const_eval::ConstVal;
 use rustc::middle::def_id::DefId;
 use rustc::middle::region::CodeExtent;
@@ -84,33 +85,33 @@ pub enum StmtKind<'tcx> {
     },
 }
 
-// The Hair trait implementor translates their expressions (`&'tcx H::Expr`)
-// into instances of this `Expr` enum. This translation can be done
-// basically as lazilly or as eagerly as desired: every recursive
-// reference to an expression in this enum is an `ExprRef<'tcx>`, which
-// may in turn be another instance of this enum (boxed), or else an
-// untranslated `&'tcx H::Expr`. Note that instances of `Expr` are very
-// shortlived. They are created by `Hair::to_expr`, analyzed and
-// converted into MIR, and then discarded.
-//
-// If you compare `Expr` to the full compiler AST, you will see it is
-// a good bit simpler. In fact, a number of the more straight-forward
-// MIR simplifications are already done in the impl of `Hair`. For
-// example, method calls and overloaded operators are absent: they are
-// expected to be converted into `Expr::Call` instances.
+/// The Hair trait implementor translates their expressions (`&'tcx H::Expr`)
+/// into instances of this `Expr` enum. This translation can be done
+/// basically as lazilly or as eagerly as desired: every recursive
+/// reference to an expression in this enum is an `ExprRef<'tcx>`, which
+/// may in turn be another instance of this enum (boxed), or else an
+/// untranslated `&'tcx H::Expr`. Note that instances of `Expr` are very
+/// shortlived. They are created by `Hair::to_expr`, analyzed and
+/// converted into MIR, and then discarded.
+///
+/// If you compare `Expr` to the full compiler AST, you will see it is
+/// a good bit simpler. In fact, a number of the more straight-forward
+/// MIR simplifications are already done in the impl of `Hair`. For
+/// example, method calls and overloaded operators are absent: they are
+/// expected to be converted into `Expr::Call` instances.
 #[derive(Clone, Debug)]
 pub struct Expr<'tcx> {
-    // type of this expression
+    /// type of this expression
     pub ty: Ty<'tcx>,
 
-    // lifetime of this expression if it should be spilled into a
-    // temporary; should be None only if in a constant context
+    /// lifetime of this expression if it should be spilled into a
+    /// temporary; should be None only if in a constant context
     pub temp_lifetime: Option<CodeExtent>,
 
-    // span of the expression in the source
+    /// span of the expression in the source
     pub span: Span,
 
-    // kind of expression
+    /// kind of expression
     pub kind: ExprKind<'tcx>,
 }
 
@@ -122,6 +123,7 @@ pub enum ExprKind<'tcx> {
     },
     Box {
         value: ExprRef<'tcx>,
+        value_extents: CodeExtent,
     },
     Call {
         ty: ty::Ty<'tcx>,
@@ -193,7 +195,8 @@ pub enum ExprKind<'tcx> {
     VarRef {
         id: ast::NodeId,
     },
-    SelfRef, // first argument, used for self in a closure
+    /// first argument, used for self in a closure
+    SelfRef,
     StaticRef {
         id: DefId,
     },
@@ -213,10 +216,7 @@ pub enum ExprKind<'tcx> {
     },
     Repeat {
         value: ExprRef<'tcx>,
-        // FIXME(#29789): Add a separate hair::Constant<'tcx> so this could be more explicit about
-        // its contained data. Currently this should only contain expression of ExprKind::Literal
-        // kind.
-        count: ExprRef<'tcx>,
+        count: TypedConstVal<'tcx>,
     },
     Vec {
         fields: Vec<ExprRef<'tcx>>,
@@ -229,7 +229,7 @@ pub enum ExprKind<'tcx> {
         variant_index: usize,
         substs: &'tcx Substs<'tcx>,
         fields: Vec<FieldExprRef<'tcx>>,
-        base: Option<ExprRef<'tcx>>,
+        base: Option<FruInfo<'tcx>>
     },
     Closure {
         closure_id: DefId,
@@ -257,6 +257,12 @@ pub struct FieldExprRef<'tcx> {
 }
 
 #[derive(Clone, Debug)]
+pub struct FruInfo<'tcx> {
+    pub base: ExprRef<'tcx>,
+    pub field_types: Vec<Ty<'tcx>>
+}
+
+#[derive(Clone, Debug)]
 pub struct Arm<'tcx> {
     pub patterns: Vec<Pattern<'tcx>>,
     pub guard: Option<ExprRef<'tcx>>,
@@ -280,7 +286,7 @@ pub enum LogicalOp {
 pub enum PatternKind<'tcx> {
     Wild,
 
-    // x, ref x, x @ P, etc
+    /// x, ref x, x @ P, etc
     Binding {
         mutability: Mutability,
         name: ast::Name,
@@ -290,21 +296,22 @@ pub enum PatternKind<'tcx> {
         subpattern: Option<Pattern<'tcx>>,
     },
 
-    // Foo(...) or Foo{...} or Foo, where `Foo` is a variant name from an adt with >1 variants
+    /// Foo(...) or Foo{...} or Foo, where `Foo` is a variant name from an adt with >1 variants
     Variant {
         adt_def: AdtDef<'tcx>,
         variant_index: usize,
         subpatterns: Vec<FieldPattern<'tcx>>,
     },
 
-    // (...), Foo(...), Foo{...}, or Foo, where `Foo` is a variant name from an adt with 1 variant
+    /// (...), Foo(...), Foo{...}, or Foo, where `Foo` is a variant name from an adt with 1 variant
     Leaf {
         subpatterns: Vec<FieldPattern<'tcx>>,
     },
 
+    /// box P, &P, &mut P, etc
     Deref {
         subpattern: Pattern<'tcx>,
-    }, // box P, &P, &mut P, etc
+    },
 
     Constant {
         value: ConstVal,
@@ -315,14 +322,14 @@ pub enum PatternKind<'tcx> {
         hi: Literal<'tcx>,
     },
 
-    // matches against a slice, checking the length and extracting elements
+    /// matches against a slice, checking the length and extracting elements
     Slice {
         prefix: Vec<Pattern<'tcx>>,
         slice: Option<Pattern<'tcx>>,
         suffix: Vec<Pattern<'tcx>>,
     },
 
-    // fixed match against an array, irrefutable
+    /// fixed match against an array, irrefutable
     Array {
         prefix: Vec<Pattern<'tcx>>,
         slice: Option<Pattern<'tcx>>,

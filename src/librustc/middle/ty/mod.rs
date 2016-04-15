@@ -24,7 +24,7 @@ use front::map as ast_map;
 use front::map::LinkedPath;
 use middle;
 use middle::cstore::{self, CrateStore, LOCAL_CRATE};
-use middle::def::{self, ExportMap};
+use middle::def::{self, Def, ExportMap};
 use middle::def_id::DefId;
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangItem};
 use middle::region::{CodeExtent};
@@ -52,7 +52,7 @@ use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
 
 use rustc_front::hir;
-use rustc_front::hir::{ItemImpl, ItemTrait};
+use rustc_front::hir::{ItemImpl, ItemTrait, PatKind};
 use rustc_front::intravisit::Visitor;
 
 pub use self::sty::{Binder, DebruijnIndex};
@@ -587,7 +587,7 @@ pub type UpvarCaptureMap = FnvHashMap<UpvarId, UpvarCapture>;
 
 #[derive(Copy, Clone)]
 pub struct ClosureUpvar<'tcx> {
-    pub def: def::Def,
+    pub def: Def,
     pub span: Span,
     pub ty: Ty<'tcx>,
 }
@@ -838,6 +838,11 @@ impl<'tcx> TraitPredicate<'tcx> {
         self.trait_ref.def_id
     }
 
+    /// Creates the dep-node for selecting/evaluating this trait reference.
+    fn dep_node(&self) -> DepNode {
+        DepNode::TraitSelect(self.def_id())
+    }
+
     pub fn input_types(&self) -> &[Ty<'tcx>] {
         self.trait_ref.substs.types.as_slice()
     }
@@ -849,7 +854,13 @@ impl<'tcx> TraitPredicate<'tcx> {
 
 impl<'tcx> PolyTraitPredicate<'tcx> {
     pub fn def_id(&self) -> DefId {
+        // ok to skip binder since trait def-id does not care about regions
         self.0.def_id()
+    }
+
+    pub fn dep_node(&self) -> DepNode {
+        // ok to skip binder since depnode does not care about regions
+        self.0.dep_node()
     }
 }
 
@@ -906,7 +917,7 @@ impl<'tcx> ToPolyTraitRef<'tcx> for TraitRef<'tcx> {
 
 impl<'tcx> ToPolyTraitRef<'tcx> for PolyTraitPredicate<'tcx> {
     fn to_poly_trait_ref(&self) -> PolyTraitRef<'tcx> {
-        self.map_bound_ref(|trait_pred| trait_pred.trait_ref.clone())
+        self.map_bound_ref(|trait_pred| trait_pred.trait_ref)
     }
 }
 
@@ -917,7 +928,7 @@ impl<'tcx> ToPolyTraitRef<'tcx> for PolyProjectionPredicate<'tcx> {
         // This is because here `self` has a `Binder` and so does our
         // return value, so we are preserving the number of binding
         // levels.
-        ty::Binder(self.0.projection_ty.trait_ref.clone())
+        ty::Binder(self.0.projection_ty.trait_ref)
     }
 }
 
@@ -1429,8 +1440,18 @@ impl<'tcx> Decodable for AdtDef<'tcx> {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AdtKind { Struct, Enum }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub enum VariantKind { Struct, Tuple, Unit }
+
+impl VariantKind {
+    pub fn from_variant_data(vdata: &hir::VariantData) -> Self {
+        match *vdata {
+            hir::VariantData::Struct(..) => VariantKind::Struct,
+            hir::VariantData::Tuple(..) => VariantKind::Tuple,
+            hir::VariantData::Unit(..) => VariantKind::Unit,
+        }
+    }
+}
 
 impl<'tcx, 'container> AdtDefData<'tcx, 'container> {
     fn new(tcx: &ctxt<'tcx>,
@@ -1575,10 +1596,10 @@ impl<'tcx, 'container> AdtDefData<'tcx, 'container> {
             .expect("variant_index_with_id: unknown variant")
     }
 
-    pub fn variant_of_def(&self, def: def::Def) -> &VariantDefData<'tcx, 'container> {
+    pub fn variant_of_def(&self, def: Def) -> &VariantDefData<'tcx, 'container> {
         match def {
-            def::DefVariant(_, vid, _) => self.variant_with_id(vid),
-            def::DefStruct(..) | def::DefTy(..) => self.struct_variant(),
+            Def::Variant(_, vid) => self.variant_with_id(vid),
+            Def::Struct(..) | Def::TyAlias(..) => self.struct_variant(),
             _ => panic!("unexpected def {:?} in variant_of_def", def)
         }
     }
@@ -1894,6 +1915,16 @@ impl<'tcx> ctxt<'tcx> {
         })
     }
 
+    pub fn expr_ty_adjusted_opt(&self, expr: &hir::Expr) -> Option<Ty<'tcx>> {
+        self.expr_ty_opt(expr).map(|t| t.adjust(self,
+                                                expr.span,
+                                                expr.id,
+                                                self.tables.borrow().adjustments.get(&expr.id),
+                                                |method_call| {
+            self.tables.borrow().method_map.get(&method_call).map(|method| method.ty)
+        }))
+    }
+
     pub fn expr_span(&self, id: NodeId) -> Span {
         match self.map.find(id) {
             Some(ast_map::NodeExpr(e)) => {
@@ -1914,7 +1945,7 @@ impl<'tcx> ctxt<'tcx> {
         match self.map.find(id) {
             Some(ast_map::NodeLocal(pat)) => {
                 match pat.node {
-                    hir::PatIdent(_, ref path1, _) => path1.node.name.as_str(),
+                    PatKind::Ident(_, ref path1, _) => path1.node.name.as_str(),
                     _ => {
                         self.sess.bug(&format!("Variable id {} maps to {:?}, not local", id, pat));
                     },
@@ -1924,7 +1955,7 @@ impl<'tcx> ctxt<'tcx> {
         }
     }
 
-    pub fn resolve_expr(&self, expr: &hir::Expr) -> def::Def {
+    pub fn resolve_expr(&self, expr: &hir::Expr) -> Def {
         match self.def_map.borrow().get(&expr.id) {
             Some(def) => def.full_def(),
             None => {
@@ -1942,15 +1973,15 @@ impl<'tcx> ctxt<'tcx> {
                 // rvalues.
                 match self.def_map.borrow().get(&expr.id) {
                     Some(&def::PathResolution {
-                        base_def: def::DefStatic(..), ..
+                        base_def: Def::Static(..), ..
                     }) | Some(&def::PathResolution {
-                        base_def: def::DefUpvar(..), ..
+                        base_def: Def::Upvar(..), ..
                     }) | Some(&def::PathResolution {
-                        base_def: def::DefLocal(..), ..
+                        base_def: Def::Local(..), ..
                     }) => {
                         true
                     }
-                    Some(&def::PathResolution { base_def: def::DefErr, .. })=> true,
+                    Some(&def::PathResolution { base_def: Def::Err, .. })=> true,
                     Some(..) => false,
                     None => self.sess.span_bug(expr.span, &format!(
                         "no def for path {}", expr.id))
@@ -2205,7 +2236,7 @@ impl<'tcx> ctxt<'tcx> {
     /// Given the did of an ADT, return a reference to its definition.
     pub fn lookup_adt_def(&self, did: DefId) -> AdtDef<'tcx> {
         // when reverse-variance goes away, a transmute::<AdtDefMaster,AdtDef>
-        // woud be needed here.
+        // would be needed here.
         self.lookup_adt_def_master(did)
     }
 
@@ -2612,7 +2643,7 @@ pub enum ExplicitSelfCategory {
 #[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
 pub struct Freevar {
     /// The variable being accessed free.
-    pub def: def::Def,
+    pub def: Def,
 
     // First span where it is accessed (there can be multiple).
     pub span: Span

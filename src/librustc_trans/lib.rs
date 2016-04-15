@@ -21,6 +21,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
@@ -36,8 +37,6 @@
 #![feature(staged_api)]
 #![feature(unicode)]
 
-#![allow(trivial_casts)]
-
 extern crate arena;
 extern crate flate;
 extern crate getopts;
@@ -47,7 +46,7 @@ extern crate rustc;
 extern crate rustc_back;
 extern crate rustc_data_structures;
 extern crate rustc_front;
-extern crate rustc_llvm as llvm;
+pub extern crate rustc_llvm as llvm;
 extern crate rustc_mir;
 extern crate rustc_platform_intrinsics as intrinsics;
 extern crate serialize;

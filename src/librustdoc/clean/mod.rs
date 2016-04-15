@@ -25,7 +25,7 @@ pub use self::SelfTy::*;
 pub use self::FunctionRetTy::*;
 
 use syntax;
-use syntax::abi;
+use syntax::abi::Abi;
 use syntax::ast;
 use syntax::attr;
 use syntax::attr::{AttributeMethods, AttrMetaMethods};
@@ -36,7 +36,7 @@ use syntax::ptr::P;
 
 use rustc_trans::back::link;
 use rustc::middle::cstore::{self, CrateStore};
-use rustc::middle::def;
+use rustc::middle::def::Def;
 use rustc::middle::def_id::{DefId, DefIndex};
 use rustc::middle::subst::{self, ParamSpace, VecPerParamSpace};
 use rustc::middle::ty;
@@ -48,6 +48,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::u32;
+use std::env::current_dir;
 
 use core::DocContext;
 use doctree;
@@ -201,7 +202,13 @@ impl<'a, 'tcx> Clean<Crate> for visit_ast::RustdocVisitor<'a, 'tcx> {
         }
 
         let src = match cx.input {
-            Input::File(ref path) => path.clone(),
+            Input::File(ref path) => {
+                if path.is_absolute() {
+                    path.clone()
+                } else {
+                    current_dir().unwrap().join(path)
+                }
+            },
             Input::Str(_) => PathBuf::new() // FIXME: this is wrong
         };
 
@@ -230,7 +237,7 @@ impl Clean<ExternalCrate> for CrateNum {
         cx.tcx_opt().map(|tcx| {
             for item in tcx.sess.cstore.crate_top_level_items(self.0) {
                 let did = match item.def {
-                    cstore::DlDef(def::DefMod(did)) => did,
+                    cstore::DlDef(Def::Mod(did)) => did,
                     _ => continue
                 };
                 let attrs = inline::load_attrs(cx, tcx, did);
@@ -339,6 +346,14 @@ impl Item {
             _ => String::new(),
         }
     }
+
+    pub fn stable_since(&self) -> Option<&str> {
+        if let Some(ref s) = self.stability {
+            return Some(&s.since[..]);
+        }
+
+        None
+    }
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
@@ -443,11 +458,11 @@ pub enum Attribute {
 impl Clean<Attribute> for ast::MetaItem {
     fn clean(&self, cx: &DocContext) -> Attribute {
         match self.node {
-            ast::MetaWord(ref s) => Word(s.to_string()),
-            ast::MetaList(ref s, ref l) => {
+            ast::MetaItemKind::Word(ref s) => Word(s.to_string()),
+            ast::MetaItemKind::List(ref s, ref l) => {
                 List(s.to_string(), l.clean(cx))
             }
-            ast::MetaNameValue(ref s, ref v) => {
+            ast::MetaItemKind::NameValue(ref s, ref v) => {
                 NameValue(s.to_string(), lit_to_string(v))
             }
         }
@@ -985,7 +1000,7 @@ pub struct Method {
     pub unsafety: hir::Unsafety,
     pub constness: hir::Constness,
     pub decl: FnDecl,
-    pub abi: abi::Abi
+    pub abi: Abi,
 }
 
 impl Clean<Method> for hir::MethodSig {
@@ -1020,7 +1035,7 @@ pub struct TyMethod {
     pub decl: FnDecl,
     pub generics: Generics,
     pub self_: SelfTy,
-    pub abi: abi::Abi
+    pub abi: Abi,
 }
 
 impl Clean<TyMethod> for hir::MethodSig {
@@ -1074,7 +1089,7 @@ pub struct Function {
     pub generics: Generics,
     pub unsafety: hir::Unsafety,
     pub constness: hir::Constness,
-    pub abi: abi::Abi,
+    pub abi: Abi,
 }
 
 impl Clean<Item> for doctree::Function {
@@ -1273,10 +1288,8 @@ impl Clean<Item> for hir::ImplItem {
     fn clean(&self, cx: &DocContext) -> Item {
         let inner = match self.node {
             hir::ImplItemKind::Const(ref ty, ref expr) => {
-                ConstantItem(Constant{
-                    type_: ty.clean(cx),
-                    expr: expr.span.to_src(cx),
-                })
+                AssociatedConstItem(ty.clean(cx),
+                                    Some(expr.span.to_src(cx)))
             }
             hir::ImplItemKind::Method(ref sig, _) => {
                 MethodItem(sig.clean(cx))
@@ -1632,18 +1645,18 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
         match self.sty {
             ty::TyBool => Primitive(Bool),
             ty::TyChar => Primitive(Char),
-            ty::TyInt(ast::TyIs) => Primitive(Isize),
-            ty::TyInt(ast::TyI8) => Primitive(I8),
-            ty::TyInt(ast::TyI16) => Primitive(I16),
-            ty::TyInt(ast::TyI32) => Primitive(I32),
-            ty::TyInt(ast::TyI64) => Primitive(I64),
-            ty::TyUint(ast::TyUs) => Primitive(Usize),
-            ty::TyUint(ast::TyU8) => Primitive(U8),
-            ty::TyUint(ast::TyU16) => Primitive(U16),
-            ty::TyUint(ast::TyU32) => Primitive(U32),
-            ty::TyUint(ast::TyU64) => Primitive(U64),
-            ty::TyFloat(ast::TyF32) => Primitive(F32),
-            ty::TyFloat(ast::TyF64) => Primitive(F64),
+            ty::TyInt(ast::IntTy::Is) => Primitive(Isize),
+            ty::TyInt(ast::IntTy::I8) => Primitive(I8),
+            ty::TyInt(ast::IntTy::I16) => Primitive(I16),
+            ty::TyInt(ast::IntTy::I32) => Primitive(I32),
+            ty::TyInt(ast::IntTy::I64) => Primitive(I64),
+            ty::TyUint(ast::UintTy::Us) => Primitive(Usize),
+            ty::TyUint(ast::UintTy::U8) => Primitive(U8),
+            ty::TyUint(ast::UintTy::U16) => Primitive(U16),
+            ty::TyUint(ast::UintTy::U32) => Primitive(U32),
+            ty::TyUint(ast::UintTy::U64) => Primitive(U64),
+            ty::TyFloat(ast::FloatTy::F32) => Primitive(F32),
+            ty::TyFloat(ast::FloatTy::F64) => Primitive(F64),
             ty::TyStr => Primitive(Str),
             ty::TyBox(t) => {
                 let box_did = cx.tcx_opt().and_then(|tcx| {
@@ -2478,7 +2491,7 @@ impl Clean<Item> for hir::ForeignItem {
                     decl: decl.clean(cx),
                     generics: generics.clean(cx),
                     unsafety: hir::Unsafety::Unsafe,
-                    abi: abi::Rust,
+                    abi: Abi::Rust,
                     constness: hir::Constness::NotConst,
                 })
             }
@@ -2523,9 +2536,9 @@ impl ToSource for syntax::codemap::Span {
 
 fn lit_to_string(lit: &ast::Lit) -> String {
     match lit.node {
-        ast::LitStr(ref st, _) => st.to_string(),
-        ast::LitByteStr(ref data) => format!("{:?}", data),
-        ast::LitByte(b) => {
+        ast::LitKind::Str(ref st, _) => st.to_string(),
+        ast::LitKind::ByteStr(ref data) => format!("{:?}", data),
+        ast::LitKind::Byte(b) => {
             let mut res = String::from("b'");
             for c in (b as char).escape_default() {
                 res.push(c);
@@ -2533,11 +2546,11 @@ fn lit_to_string(lit: &ast::Lit) -> String {
             res.push('\'');
             res
         },
-        ast::LitChar(c) => format!("'{}'", c),
-        ast::LitInt(i, _t) => i.to_string(),
-        ast::LitFloat(ref f, _t) => f.to_string(),
-        ast::LitFloatUnsuffixed(ref f) => f.to_string(),
-        ast::LitBool(b) => b.to_string(),
+        ast::LitKind::Char(c) => format!("'{}'", c),
+        ast::LitKind::Int(i, _t) => i.to_string(),
+        ast::LitKind::Float(ref f, _t) => f.to_string(),
+        ast::LitKind::FloatUnsuffixed(ref f) => f.to_string(),
+        ast::LitKind::Bool(b) => b.to_string(),
     }
 }
 
@@ -2546,12 +2559,12 @@ fn name_from_pat(p: &hir::Pat) -> String {
     debug!("Trying to get a name from pattern: {:?}", p);
 
     match p.node {
-        PatWild => "_".to_string(),
-        PatIdent(_, ref p, _) => p.node.to_string(),
-        PatEnum(ref p, _) => path_to_string(p),
-        PatQPath(..) => panic!("tried to get argument name from PatQPath, \
+        PatKind::Wild => "_".to_string(),
+        PatKind::Ident(_, ref p, _) => p.node.to_string(),
+        PatKind::TupleStruct(ref p, _) | PatKind::Path(ref p) => path_to_string(p),
+        PatKind::QPath(..) => panic!("tried to get argument name from PatKind::QPath, \
                                 which is not allowed in function arguments"),
-        PatStruct(ref name, ref fields, etc) => {
+        PatKind::Struct(ref name, ref fields, etc) => {
             format!("{} {{ {}{} }}", path_to_string(name),
                 fields.iter().map(|&Spanned { node: ref fp, .. }|
                                   format!("{}: {}", fp.name, name_from_pat(&*fp.pat)))
@@ -2559,18 +2572,18 @@ fn name_from_pat(p: &hir::Pat) -> String {
                 if etc { ", ..." } else { "" }
             )
         },
-        PatTup(ref elts) => format!("({})", elts.iter().map(|p| name_from_pat(&**p))
+        PatKind::Tup(ref elts) => format!("({})", elts.iter().map(|p| name_from_pat(&**p))
                                             .collect::<Vec<String>>().join(", ")),
-        PatBox(ref p) => name_from_pat(&**p),
-        PatRegion(ref p, _) => name_from_pat(&**p),
-        PatLit(..) => {
-            warn!("tried to get argument name from PatLit, \
+        PatKind::Box(ref p) => name_from_pat(&**p),
+        PatKind::Ref(ref p, _) => name_from_pat(&**p),
+        PatKind::Lit(..) => {
+            warn!("tried to get argument name from PatKind::Lit, \
                   which is silly in function arguments");
             "()".to_string()
         },
-        PatRange(..) => panic!("tried to get argument name from PatRange, \
+        PatKind::Range(..) => panic!("tried to get argument name from PatKind::Range, \
                               which is not allowed in function arguments"),
-        PatVec(ref begin, ref mid, ref end) => {
+        PatKind::Vec(ref begin, ref mid, ref end) => {
             let begin = begin.iter().map(|p| name_from_pat(&**p));
             let mid = mid.as_ref().map(|p| format!("..{}", name_from_pat(&**p))).into_iter();
             let end = end.iter().map(|p| name_from_pat(&**p));
@@ -2607,47 +2620,47 @@ fn resolve_type(cx: &DocContext,
     debug!("resolve_type: def={:?}", def);
 
     let is_generic = match def {
-        def::DefPrimTy(p) => match p {
+        Def::PrimTy(p) => match p {
             hir::TyStr => return Primitive(Str),
             hir::TyBool => return Primitive(Bool),
             hir::TyChar => return Primitive(Char),
-            hir::TyInt(ast::TyIs) => return Primitive(Isize),
-            hir::TyInt(ast::TyI8) => return Primitive(I8),
-            hir::TyInt(ast::TyI16) => return Primitive(I16),
-            hir::TyInt(ast::TyI32) => return Primitive(I32),
-            hir::TyInt(ast::TyI64) => return Primitive(I64),
-            hir::TyUint(ast::TyUs) => return Primitive(Usize),
-            hir::TyUint(ast::TyU8) => return Primitive(U8),
-            hir::TyUint(ast::TyU16) => return Primitive(U16),
-            hir::TyUint(ast::TyU32) => return Primitive(U32),
-            hir::TyUint(ast::TyU64) => return Primitive(U64),
-            hir::TyFloat(ast::TyF32) => return Primitive(F32),
-            hir::TyFloat(ast::TyF64) => return Primitive(F64),
+            hir::TyInt(ast::IntTy::Is) => return Primitive(Isize),
+            hir::TyInt(ast::IntTy::I8) => return Primitive(I8),
+            hir::TyInt(ast::IntTy::I16) => return Primitive(I16),
+            hir::TyInt(ast::IntTy::I32) => return Primitive(I32),
+            hir::TyInt(ast::IntTy::I64) => return Primitive(I64),
+            hir::TyUint(ast::UintTy::Us) => return Primitive(Usize),
+            hir::TyUint(ast::UintTy::U8) => return Primitive(U8),
+            hir::TyUint(ast::UintTy::U16) => return Primitive(U16),
+            hir::TyUint(ast::UintTy::U32) => return Primitive(U32),
+            hir::TyUint(ast::UintTy::U64) => return Primitive(U64),
+            hir::TyFloat(ast::FloatTy::F32) => return Primitive(F32),
+            hir::TyFloat(ast::FloatTy::F64) => return Primitive(F64),
         },
-        def::DefSelfTy(..) if path.segments.len() == 1 => {
+        Def::SelfTy(..) if path.segments.len() == 1 => {
             return Generic(special_idents::type_self.name.to_string());
         }
-        def::DefSelfTy(..) | def::DefTyParam(..) => true,
+        Def::SelfTy(..) | Def::TyParam(..) => true,
         _ => false,
     };
     let did = register_def(&*cx, def);
     ResolvedPath { path: path, typarams: None, did: did, is_generic: is_generic }
 }
 
-fn register_def(cx: &DocContext, def: def::Def) -> DefId {
+fn register_def(cx: &DocContext, def: Def) -> DefId {
     debug!("register_def({:?})", def);
 
     let (did, kind) = match def {
-        def::DefFn(i, _) => (i, TypeFunction),
-        def::DefTy(i, false) => (i, TypeTypedef),
-        def::DefTy(i, true) => (i, TypeEnum),
-        def::DefTrait(i) => (i, TypeTrait),
-        def::DefStruct(i) => (i, TypeStruct),
-        def::DefMod(i) => (i, TypeModule),
-        def::DefStatic(i, _) => (i, TypeStatic),
-        def::DefVariant(i, _, _) => (i, TypeEnum),
-        def::DefSelfTy(Some(def_id), _) => (def_id, TypeTrait),
-        def::DefSelfTy(_, Some((impl_id, _))) => return cx.map.local_def_id(impl_id),
+        Def::Fn(i) => (i, TypeFunction),
+        Def::TyAlias(i) => (i, TypeTypedef),
+        Def::Enum(i) => (i, TypeEnum),
+        Def::Trait(i) => (i, TypeTrait),
+        Def::Struct(i) => (i, TypeStruct),
+        Def::Mod(i) => (i, TypeModule),
+        Def::Static(i, _) => (i, TypeStatic),
+        Def::Variant(i, _) => (i, TypeEnum),
+        Def::SelfTy(Some(def_id), _) => (def_id, TypeTrait),
+        Def::SelfTy(_, Some((impl_id, _))) => return cx.map.local_def_id(impl_id),
         _ => return def.def_id()
     };
     if did.is_local() { return did }

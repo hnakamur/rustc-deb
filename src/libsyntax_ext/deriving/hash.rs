@@ -11,7 +11,7 @@
 use deriving::generic::*;
 use deriving::generic::ty::*;
 
-use syntax::ast::{MetaItem, Expr, MutMutable};
+use syntax::ast::{MetaItem, Expr, Mutability};
 use syntax::codemap::Span;
 use syntax::ext::base::{ExtCtxt, Annotatable};
 use syntax::ext::build::AstBuilder;
@@ -43,7 +43,7 @@ pub fn expand_deriving_hash(cx: &mut ExtCtxt,
                                   vec![path_std!(cx, core::hash::Hasher)])],
                 },
                 explicit_self: borrowed_explicit_self(),
-                args: vec!(Ptr(Box::new(Literal(arg)), Borrowed(None, MutMutable))),
+                args: vec!(Ptr(Box::new(Literal(arg)), Borrowed(None, Mutability::Mutable))),
                 ret_ty: nil_ty(),
                 attributes: vec![],
                 is_unsafe: false,
@@ -76,7 +76,7 @@ fn hash_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substructure) 
     let mut stmts = Vec::new();
 
     let fields = match *substr.fields {
-        Struct(ref fs) => fs,
+        Struct(_, ref fs) => fs,
         EnumMatching(index, variant, ref fs) => {
             // Determine the discriminant. We will feed this value to the byte
             // iteration function.

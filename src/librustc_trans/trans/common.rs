@@ -17,15 +17,16 @@ pub use self::ExprOrMethodCall::*;
 use session::Session;
 use llvm;
 use llvm::{ValueRef, BasicBlockRef, BuilderRef, ContextRef, TypeKind};
-use llvm::{True, False, Bool};
+use llvm::{True, False, Bool, OperandBundleDef};
 use middle::cfg;
-use middle::def;
+use middle::def::Def;
 use middle::def_id::DefId;
 use middle::infer;
 use middle::lang_items::LangItem;
 use middle::subst::{self, Substs};
 use trans::base;
 use trans::build;
+use trans::builder::Builder;
 use trans::callee;
 use trans::cleanup;
 use trans::consts;
@@ -45,6 +46,7 @@ use util::nodemap::{FnvHashMap, NodeMap};
 
 use arena::TypedArena;
 use libc::{c_uint, c_char};
+use std::ops::Deref;
 use std::ffi::CString;
 use std::cell::{Cell, RefCell};
 use std::vec::Vec;
@@ -184,7 +186,7 @@ pub struct VariantInfo<'tcx> {
 impl<'tcx> VariantInfo<'tcx> {
     pub fn from_ty(tcx: &ty::ctxt<'tcx>,
                    ty: Ty<'tcx>,
-                   opt_def: Option<def::Def>)
+                   opt_def: Option<Def>)
                    -> Self
     {
         match ty.sty {
@@ -326,9 +328,13 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
     // we use a separate alloca for each return
     pub needs_ret_allocas: bool,
 
-    // The a value alloca'd for calls to upcalls.rust_personality. Used when
-    // outputting the resume instruction.
-    pub personality: Cell<Option<ValueRef>>,
+    // When working with landingpad-based exceptions this value is alloca'd and
+    // later loaded when using the resume instruction. This ends up being
+    // critical to chaining landing pads and resuing already-translated
+    // cleanups.
+    //
+    // Note that for cleanuppad-based exceptions this is not used.
+    pub landingpad_alloca: Cell<Option<ValueRef>>,
 
     // True if the caller expects this fn to use the out pointer to
     // return. Either way, your code should write into the slot llretslotptr
@@ -360,6 +366,9 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 
     // The arena that blocks are allocated from.
     pub block_arena: &'a TypedArena<BlockS<'a, 'tcx>>,
+
+    // The arena that landing pads are allocated from.
+    pub lpad_arena: TypedArena<LandingPad>,
 
     // This function's enclosing crate context.
     pub ccx: &'a CrateContext<'a, 'tcx>,
@@ -424,7 +433,6 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
     }
 
     pub fn new_block(&'a self,
-                     is_lpad: bool,
                      name: &str,
                      opt_node_id: Option<ast::NodeId>)
                      -> Block<'a, 'tcx> {
@@ -433,7 +441,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
             let llbb = llvm::LLVMAppendBasicBlockInContext(self.ccx.llcx(),
                                                            self.llfn,
                                                            name.as_ptr());
-            BlockS::new(llbb, is_lpad, opt_node_id, self)
+            BlockS::new(llbb, opt_node_id, self)
         }
     }
 
@@ -441,13 +449,13 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
                         name: &str,
                         node_id: ast::NodeId)
                         -> Block<'a, 'tcx> {
-        self.new_block(false, name, Some(node_id))
+        self.new_block(name, Some(node_id))
     }
 
     pub fn new_temp_block(&'a self,
                           name: &str)
                           -> Block<'a, 'tcx> {
-        self.new_block(false, name, None)
+        self.new_block(name, None)
     }
 
     pub fn join_blocks(&'a self,
@@ -533,7 +541,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
     }
 
     // Returns a ValueRef of the "eh_unwind_resume" lang item if one is defined,
-    // otherwise declares it as an external funtion.
+    // otherwise declares it as an external function.
     pub fn eh_unwind_resume(&self) -> ValueRef {
         use trans::attributes;
         assert!(self.ccx.sess().target.target.options.custom_unwind_resume);
@@ -577,8 +585,9 @@ pub struct BlockS<'blk, 'tcx: 'blk> {
     pub terminated: Cell<bool>,
     pub unreachable: Cell<bool>,
 
-    // Is this block part of a landing pad?
-    pub is_lpad: bool,
+    // If this block part of a landing pad, then this is `Some` indicating what
+    // kind of landing pad its in, otherwise this is none.
+    pub lpad: Cell<Option<&'blk LandingPad>>,
 
     // AST node-id associated with this block, if any. Used for
     // debugging purposes only.
@@ -593,7 +602,6 @@ pub type Block<'blk, 'tcx> = &'blk BlockS<'blk, 'tcx>;
 
 impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     pub fn new(llbb: BasicBlockRef,
-               is_lpad: bool,
                opt_node_id: Option<ast::NodeId>,
                fcx: &'blk FunctionContext<'blk, 'tcx>)
                -> Block<'blk, 'tcx> {
@@ -601,7 +609,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
             llbb: llbb,
             terminated: Cell::new(false),
             unreachable: Cell::new(false),
-            is_lpad: is_lpad,
+            lpad: Cell::new(None),
             opt_node_id: opt_node_id,
             fcx: fcx
         })
@@ -610,10 +618,17 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     pub fn ccx(&self) -> &'blk CrateContext<'blk, 'tcx> {
         self.fcx.ccx
     }
+    pub fn fcx(&self) -> &'blk FunctionContext<'blk, 'tcx> {
+        self.fcx
+    }
     pub fn tcx(&self) -> &'blk ty::ctxt<'tcx> {
         self.fcx.ccx.tcx()
     }
     pub fn sess(&self) -> &'blk Session { self.fcx.ccx.sess() }
+
+    pub fn lpad(&self) -> Option<&'blk LandingPad> {
+        self.lpad.get()
+    }
 
     pub fn mir(&self) -> &'blk Mir<'tcx> {
         self.fcx.mir()
@@ -627,7 +642,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
         self.tcx().map.node_to_string(id).to_string()
     }
 
-    pub fn def(&self, nid: ast::NodeId) -> def::Def {
+    pub fn def(&self, nid: ast::NodeId) -> Def {
         match self.tcx().def_map.borrow().get(&nid) {
             Some(v) => v.full_def(),
             None => {
@@ -655,6 +670,160 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
         monomorphize::apply_param_substs(self.tcx(),
                                          self.fcx.param_substs,
                                          value)
+    }
+
+    pub fn build(&'blk self) -> BlockAndBuilder<'blk, 'tcx> {
+        BlockAndBuilder::new(self, OwnedBuilder::new_with_ccx(self.ccx()))
+    }
+}
+
+pub struct OwnedBuilder<'blk, 'tcx: 'blk> {
+    builder: Builder<'blk, 'tcx>
+}
+
+impl<'blk, 'tcx> OwnedBuilder<'blk, 'tcx> {
+    pub fn new_with_ccx(ccx: &'blk CrateContext<'blk, 'tcx>) -> Self {
+        // Create a fresh builder from the crate context.
+        let llbuilder = unsafe {
+            llvm::LLVMCreateBuilderInContext(ccx.llcx())
+        };
+        OwnedBuilder {
+            builder: Builder {
+                llbuilder: llbuilder,
+                ccx: ccx,
+            }
+        }
+    }
+}
+
+impl<'blk, 'tcx> Drop for OwnedBuilder<'blk, 'tcx> {
+    fn drop(&mut self) {
+        unsafe {
+            llvm::LLVMDisposeBuilder(self.builder.llbuilder);
+        }
+    }
+}
+
+pub struct BlockAndBuilder<'blk, 'tcx: 'blk> {
+    bcx: Block<'blk, 'tcx>,
+    owned_builder: OwnedBuilder<'blk, 'tcx>,
+}
+
+impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
+    pub fn new(bcx: Block<'blk, 'tcx>, owned_builder: OwnedBuilder<'blk, 'tcx>) -> Self {
+        // Set the builder's position to this block's end.
+        owned_builder.builder.position_at_end(bcx.llbb);
+        BlockAndBuilder {
+            bcx: bcx,
+            owned_builder: owned_builder,
+        }
+    }
+
+    pub fn with_block<F, R>(&self, f: F) -> R
+        where F: FnOnce(Block<'blk, 'tcx>) -> R
+    {
+        let result = f(self.bcx);
+        self.position_at_end(self.bcx.llbb);
+        result
+    }
+
+    pub fn map_block<F>(self, f: F) -> Self
+        where F: FnOnce(Block<'blk, 'tcx>) -> Block<'blk, 'tcx>
+    {
+        let BlockAndBuilder { bcx, owned_builder } = self;
+        let bcx = f(bcx);
+        BlockAndBuilder::new(bcx, owned_builder)
+    }
+
+    // Methods delegated to bcx
+
+    pub fn ccx(&self) -> &'blk CrateContext<'blk, 'tcx> {
+        self.bcx.ccx()
+    }
+    pub fn fcx(&self) -> &'blk FunctionContext<'blk, 'tcx> {
+        self.bcx.fcx()
+    }
+    pub fn tcx(&self) -> &'blk ty::ctxt<'tcx> {
+        self.bcx.tcx()
+    }
+    pub fn sess(&self) -> &'blk Session {
+        self.bcx.sess()
+    }
+
+    pub fn llbb(&self) -> BasicBlockRef {
+        self.bcx.llbb
+    }
+
+    pub fn mir(&self) -> &'blk Mir<'tcx> {
+        self.bcx.mir()
+    }
+
+    pub fn val_to_string(&self, val: ValueRef) -> String {
+        self.bcx.val_to_string(val)
+    }
+
+    pub fn monomorphize<T>(&self, value: &T) -> T
+        where T: TypeFoldable<'tcx>
+    {
+        self.bcx.monomorphize(value)
+    }
+
+    pub fn set_lpad(&self, lpad: Option<LandingPad>) {
+        self.bcx.lpad.set(lpad.map(|p| &*self.fcx().lpad_arena.alloc(p)))
+    }
+}
+
+impl<'blk, 'tcx> Deref for BlockAndBuilder<'blk, 'tcx> {
+    type Target = Builder<'blk, 'tcx>;
+    fn deref(&self) -> &Self::Target {
+        &self.owned_builder.builder
+    }
+}
+
+/// A structure representing an active landing pad for the duration of a basic
+/// block.
+///
+/// Each `Block` may contain an instance of this, indicating whether the block
+/// is part of a landing pad or not. This is used to make decision about whether
+/// to emit `invoke` instructions (e.g. in a landing pad we don't continue to
+/// use `invoke`) and also about various function call metadata.
+///
+/// For GNU exceptions (`landingpad` + `resume` instructions) this structure is
+/// just a bunch of `None` instances (not too interesting), but for MSVC
+/// exceptions (`cleanuppad` + `cleanupret` instructions) this contains data.
+/// When inside of a landing pad, each function call in LLVM IR needs to be
+/// annotated with which landing pad it's a part of. This is accomplished via
+/// the `OperandBundleDef` value created for MSVC landing pads.
+pub struct LandingPad {
+    cleanuppad: Option<ValueRef>,
+    operand: Option<OperandBundleDef>,
+}
+
+impl LandingPad {
+    pub fn gnu() -> LandingPad {
+        LandingPad { cleanuppad: None, operand: None }
+    }
+
+    pub fn msvc(cleanuppad: ValueRef) -> LandingPad {
+        LandingPad {
+            cleanuppad: Some(cleanuppad),
+            operand: Some(OperandBundleDef::new("funclet", &[cleanuppad])),
+        }
+    }
+
+    pub fn bundle(&self) -> Option<&OperandBundleDef> {
+        self.operand.as_ref()
+    }
+}
+
+impl Clone for LandingPad {
+    fn clone(&self) -> LandingPad {
+        LandingPad {
+            cleanuppad: self.cleanuppad,
+            operand: self.cleanuppad.map(|p| {
+                OperandBundleDef::new("funclet", &[p])
+            }),
+        }
     }
 }
 
@@ -778,9 +947,8 @@ pub fn C_u8(ccx: &CrateContext, i: u8) -> ValueRef {
 // our boxed-and-length-annotated strings.
 pub fn C_cstr(cx: &CrateContext, s: InternedString, null_terminated: bool) -> ValueRef {
     unsafe {
-        match cx.const_cstr_cache().borrow().get(&s) {
-            Some(&llval) => return llval,
-            None => ()
+        if let Some(&llval) = cx.const_cstr_cache().borrow().get(&s) {
+            return llval;
         }
 
         let sc = llvm::LLVMConstStringInContext(cx.llcx(),
@@ -994,7 +1162,7 @@ pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     // Currently, we use a fulfillment context to completely resolve
     // all nested obligations. This is because they can inform the
     // inference of the impl's type parameters.
-    let mut fulfill_cx = infcx.fulfillment_cx.borrow_mut();
+    let mut fulfill_cx = traits::FulfillmentContext::new();
     let vtable = selection.map(|predicate| {
         fulfill_cx.register_predicate_obligation(&infcx, predicate);
     });
@@ -1023,7 +1191,7 @@ pub fn normalize_and_test_predicates<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let tcx = ccx.tcx();
     let infcx = infer::normalizing_infer_ctxt(tcx, &tcx.tables);
     let mut selcx = traits::SelectionContext::new(&infcx);
-    let mut fulfill_cx = infcx.fulfillment_cx.borrow_mut();
+    let mut fulfill_cx = traits::FulfillmentContext::new();
     let cause = traits::ObligationCause::dummy();
     let traits::Normalized { value: predicates, obligations } =
         traits::normalize(&mut selcx, cause.clone(), &predicates);
@@ -1049,9 +1217,9 @@ pub enum ExprOrMethodCall {
 }
 
 pub fn node_id_substs<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                            node: ExprOrMethodCall,
-                            param_substs: &subst::Substs<'tcx>)
-                            -> subst::Substs<'tcx> {
+                                node: ExprOrMethodCall,
+                                param_substs: &subst::Substs<'tcx>)
+                                -> subst::Substs<'tcx> {
     let tcx = ccx.tcx();
 
     let substs = match node {
@@ -1064,13 +1232,13 @@ pub fn node_id_substs<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     };
 
     if substs.types.needs_infer() {
-            tcx.sess.bug(&format!("type parameters for node {:?} include inference types: {:?}",
-                                 node, substs));
-        }
+        tcx.sess.bug(&format!("type parameters for node {:?} include inference types: {:?}",
+                              node, substs));
+    }
 
-        monomorphize::apply_param_substs(tcx,
-                                         param_substs,
-                                         &substs.erase_regions())
+    monomorphize::apply_param_substs(tcx,
+                                     param_substs,
+                                     &substs.erase_regions())
 }
 
 pub fn langcall(bcx: Block,

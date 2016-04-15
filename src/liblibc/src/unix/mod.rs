@@ -99,7 +99,6 @@ s! {
     }
 }
 
-pub const WNOHANG: ::c_int = 1;
 pub const SIG_DFL: sighandler_t = 0 as sighandler_t;
 pub const SIG_IGN: sighandler_t = 1 as sighandler_t;
 pub const SIG_ERR: sighandler_t = !0 as sighandler_t;
@@ -130,11 +129,15 @@ pub const POLLERR: ::c_short = 0x8;
 pub const POLLHUP: ::c_short = 0x10;
 pub const POLLNVAL: ::c_short = 0x20;
 
+pub const IF_NAMESIZE: ::size_t = 16;
+
+pub const RTLD_LAZY: ::c_int = 0x1;
+
 cfg_if! {
-    if #[cfg(feature = "default")] {
+    if #[cfg(not(stdbuild))] {
         // cargo build, don't pull in anything extra as the libstd  dep
         // already pulls in all libs.
-    } else if #[cfg(target_env = "musl")] {
+    } else if #[cfg(all(target_env = "musl", not(target_arch = "mips")))] {
         #[link(name = "c", kind = "static")]
         extern {}
     } else if #[cfg(target_os = "emscripten")] {
@@ -364,6 +367,7 @@ extern {
     pub fn munmap(addr: *mut ::c_void, len: ::size_t) -> ::c_int;
 
     pub fn if_nametoindex(ifname: *const c_char) -> ::c_uint;
+    pub fn if_indextoname(ifindex: ::c_uint, ifname: *mut ::c_char) -> *mut ::c_char;
 
     #[cfg_attr(target_os = "macos", link_name = "lstat$INODE64")]
     #[cfg_attr(target_os = "netbsd", link_name = "__lstat50")]
@@ -407,7 +411,7 @@ extern {
 
     pub fn flock(fd: ::c_int, operation: ::c_int) -> ::c_int;
 
-    #[cfg_attr(arget_os = "netbsd", link_name = "__gettimeofday50")]
+    #[cfg_attr(target_os = "netbsd", link_name = "__gettimeofday50")]
     pub fn gettimeofday(tp: *mut ::timeval,
                         tz: *mut ::c_void) -> ::c_int;
 
@@ -484,6 +488,7 @@ extern {
                link_name = "pthread_sigmask$UNIX2003")]
     pub fn pthread_sigmask(how: ::c_int, set: *const sigset_t,
                            oldset: *mut sigset_t) -> ::c_int;
+    pub fn pthread_kill(thread: ::pthread_t, sig: ::c_int) -> ::c_int;
 
     // #[cfg_attr(target_os = "linux", link_name = "__xpg_strerror_r")]
     pub fn strerror_r(errnum: ::c_int, buf: *mut c_char,
@@ -621,12 +626,6 @@ extern {
                     addrlen: *mut socklen_t) -> ::ssize_t;
     pub fn mkfifo(path: *const c_char, mode: mode_t) -> ::c_int;
 
-    #[cfg_attr(target_os = "netbsd", link_name = "__getpwuid_r50")]
-    pub fn getpwuid_r(uid: ::uid_t,
-                      pwd: *mut passwd,
-                      buf: *mut ::c_char,
-                      buflen: ::size_t,
-                      result: *mut *mut passwd) -> ::c_int;
     #[cfg_attr(target_os = "netbsd", link_name = "__sigemptyset14")]
     pub fn sigemptyset(set: *mut sigset_t) -> ::c_int;
     #[cfg_attr(target_os = "netbsd", link_name = "__sigaddset14")]
@@ -680,6 +679,9 @@ extern {
     pub fn tcflow(fd: ::c_int, action: ::c_int) -> ::c_int;
     pub fn tcflush(fd: ::c_int, action: ::c_int) -> ::c_int;
     pub fn tcsendbreak(fd: ::c_int, duration: ::c_int) -> ::c_int;
+    pub fn mkstemp(template: *mut ::c_char) -> ::c_int;
+    pub fn mkstemps(template: *mut ::c_char, suffixlen: ::c_int) -> ::c_int;
+    pub fn mkdtemp(template: *mut ::c_char) -> *mut ::c_char;
 }
 
 cfg_if! {
@@ -697,6 +699,9 @@ cfg_if! {
                         target_os = "bitrig"))] {
         mod bsd;
         pub use self::bsd::*;
+    } else if #[cfg(target_os = "solaris")] {
+        mod solaris;
+        pub use self::solaris::*;
     } else {
         // ...
     }

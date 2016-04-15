@@ -12,8 +12,6 @@
 
 // aux-build:empty-struct.rs
 
-#![feature(braced_empty_structs)]
-
 extern crate empty_struct;
 use empty_struct::*;
 
@@ -36,6 +34,6 @@ fn main() {
         E::Empty3(..) => () //~ ERROR `E::Empty3` does not name a tuple variant or a tuple struct
     }
     match xe3 {
-        XE::XEmpty3(..) => () //~ ERROR no associated item named `XEmpty3` found for type
+        XE::XEmpty3(..) => () //~ ERROR `XE::XEmpty3` does not name a tuple variant or a tuple
     }
 }

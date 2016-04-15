@@ -77,23 +77,6 @@ define DEF_GOOD_VALGRIND
 endef
 $(foreach t,$(CFG_TARGET),$(eval $(call DEF_GOOD_VALGRIND,$(t))))
 
-ifneq ($(findstring linux,$(CFG_OSTYPE)),)
-  ifdef CFG_PERF
-    ifneq ($(CFG_PERF_WITH_LOGFD),)
-        CFG_PERF_TOOL := $(CFG_PERF) stat -r 3 --log-fd 2
-    else
-        CFG_PERF_TOOL := $(CFG_PERF) stat -r 3
-    endif
-  else
-    ifdef CFG_VALGRIND
-      CFG_PERF_TOOL := \
-        $(CFG_VALGRIND) --tool=cachegrind --cache-sim=yes --branch-sim=yes
-    else
-      CFG_PERF_TOOL := /usr/bin/time --verbose
-    endif
-  endif
-endif
-
 AR := ar
 
 define SET_FROM_CFG
@@ -134,6 +117,18 @@ endef
 
 $(foreach target,$(CFG_TARGET), \
   $(eval $(call DEFINE_LINKER,$(target))))
+
+define ADD_JEMALLOC_DEP
+  ifndef CFG_DISABLE_JEMALLOC_$(1)
+    ifndef CFG_DISABLE_JEMALLOC
+      RUST_DEPS_std_T_$(1) += alloc_jemalloc
+      TARGET_CRATES_$(1) += alloc_jemalloc
+    endif
+  endif
+endef
+
+$(foreach target,$(CFG_TARGET), \
+  $(eval $(call ADD_JEMALLOC_DEP,$(target))))
 
 # The -Qunused-arguments sidesteps spurious warnings from clang
 define FILTER_FLAGS

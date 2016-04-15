@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::borrow::Cow;
 use std::iter::{FromIterator, repeat};
 use std::mem::size_of;
 
@@ -466,6 +467,34 @@ fn test_into_iter_count() {
     assert_eq!(vec![1, 2, 3].into_iter().count(), 3);
 }
 
+#[test]
+fn test_into_iter_clone() {
+    fn iter_equal<I: Iterator<Item=i32>>(it: I, slice: &[i32]) {
+        let v: Vec<i32> = it.collect();
+        assert_eq!(&v[..], slice);
+    }
+    let mut it = vec![1, 2, 3].into_iter();
+    iter_equal(it.clone(), &[1, 2, 3]);
+    assert_eq!(it.next(), Some(1));
+    let mut it = it.rev();
+    iter_equal(it.clone(), &[3, 2]);
+    assert_eq!(it.next(), Some(3));
+    iter_equal(it.clone(), &[2]);
+    assert_eq!(it.next(), Some(2));
+    iter_equal(it.clone(), &[]);
+    assert_eq!(it.next(), None);
+}
+
+#[test]
+fn test_cow_from() {
+    let borrowed: &[_] = &["borrowed", "(slice)"];
+    let owned = vec!["owned", "(vec)"];
+    match (Cow::from(owned.clone()), Cow::from(borrowed)) {
+        (Cow::Owned(o), Cow::Borrowed(b)) => assert!(o == owned && b == borrowed),
+        _ => panic!("invalid `Cow::from`"),
+    }
+}
+
 #[bench]
 fn bench_new(b: &mut Bencher) {
     b.iter(|| {
@@ -686,7 +715,7 @@ fn do_bench_push_all(b: &mut Bencher, dst_len: usize, src_len: usize) {
 
     b.iter(|| {
         let mut dst = dst.clone();
-        dst.push_all(&src);
+        dst.extend_from_slice(&src);
         assert_eq!(dst.len(), dst_len + src_len);
         assert!(dst.iter().enumerate().all(|(i, x)| i == *x));
     });

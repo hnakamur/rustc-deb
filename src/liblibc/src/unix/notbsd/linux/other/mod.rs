@@ -1,3 +1,7 @@
+pub type fsblkcnt_t = ::c_ulong;
+pub type fsfilcnt_t = ::c_ulong;
+pub type rlim_t = c_ulong;
+
 s! {
     pub struct sigaction {
         pub sa_sigaction: ::sighandler_t,
@@ -104,6 +108,8 @@ pub const O_SYNC: ::c_int = 1052672;
 pub const O_RSYNC: ::c_int = 1052672;
 pub const O_DSYNC: ::c_int = 4096;
 pub const O_FSYNC: ::c_int = 0x101000;
+
+pub const SOCK_NONBLOCK: ::c_int = O_NONBLOCK;
 
 pub const MAP_ANON: ::c_int = 0x0020;
 pub const MAP_ANONYMOUS: ::c_int = 0x0020;
@@ -352,6 +358,8 @@ pub const EFD_NONBLOCK: ::c_int = 0x800;
 pub const F_GETLK: ::c_int = 5;
 pub const F_GETOWN: ::c_int = 9;
 pub const F_SETOWN: ::c_int = 8;
+pub const F_SETLK: ::c_int = 6;
+pub const F_SETLKW: ::c_int = 7;
 
 pub const SFD_NONBLOCK: ::c_int = 0x0800;
 
@@ -391,6 +399,10 @@ pub const TIOCMSET: ::c_ulong = 0x5418;
 pub const FIONREAD: ::c_ulong = 0x541B;
 pub const TIOCCONS: ::c_ulong = 0x541D;
 
+pub const RTLD_DEEPBIND: ::c_int = 0x8;
+pub const RTLD_GLOBAL: ::c_int = 0x100;
+pub const RTLD_NOLOAD: ::c_int = 0x4;
+
 cfg_if! {
     if #[cfg(any(target_arch = "arm", target_arch = "x86",
                  target_arch = "x86_64"))] {
@@ -424,18 +436,25 @@ extern {
                        serv: *mut ::c_char,
                        sevlen: ::socklen_t,
                        flags: ::c_int) -> ::c_int;
-    pub fn eventfd(init: ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn eventfd(init: ::c_uint, flags: ::c_int) -> ::c_int;
     pub fn ptrace(request: ::c_uint, ...) -> ::c_long;
+    pub fn pthread_attr_getaffinity_np(attr: *const ::pthread_attr_t,
+                                       cpusetsize: ::size_t,
+                                       cpuset: *mut ::cpu_set_t) -> ::c_int;
+    pub fn pthread_attr_setaffinity_np(attr: *mut ::pthread_attr_t,
+                                       cpusetsize: ::size_t,
+                                       cpuset: *const ::cpu_set_t) -> ::c_int;
 }
 
 cfg_if! {
-    if #[cfg(any(target_arch = "x86", target_arch = "arm"))] {
+    if #[cfg(any(target_arch = "x86",
+                 target_arch = "arm",
+                 target_arch = "powerpc"))] {
         mod b32;
         pub use self::b32::*;
     } else if #[cfg(any(target_arch = "x86_64",
                         target_arch = "aarch64",
-                        target_arch = "powerpc64",
-                        target_arch = "powerpc64le"))] {
+                        target_arch = "powerpc64"))] {
         mod b64;
         pub use self::b64::*;
     } else {

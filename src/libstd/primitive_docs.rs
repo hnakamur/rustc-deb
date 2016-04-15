@@ -12,6 +12,50 @@
 //
 /// The boolean type.
 ///
+/// The `bool` represents a value, which could only be either `true` or `false`.
+///
+/// # Basic usage
+///
+/// `bool` implements various traits, such as [`BitAnd`], [`BitOr`], [`Not`], etc.,
+/// which allow us to perform boolean operations using `&`, `|` and `!`.
+///
+/// [`if`] always demands a `bool` value. [`assert!`], being an important macro in testing,
+/// checks whether an expression returns `true`.
+///
+/// ```
+/// let bool_val = true & false | false;
+/// assert!(!bool_val);
+/// ```
+///
+/// [`assert!`]: std/macro.assert!.html
+/// [`if` conditionals]: ../../book/if.html
+/// [`BitAnd`]: ../ops/trait.BitAnd.html
+/// [`BitOr`]: ../ops/trait.BitOr.html
+/// [`Not`]: ../ops/trait.Not.html
+///
+/// # Examples
+///
+/// A trivial example of the usage of `bool`,
+///
+/// ```
+/// let praise_the_borrow_checker = true;
+///
+/// // using the `if` conditional
+/// if praise_the_borrow_checker {
+///     println!("oh, yeah!");
+/// } else {
+///     println!("what?!!");
+/// }
+///
+/// // ... or, a match pattern
+/// match praise_the_borrow_checker {
+///     true => println!("keep praising!"),
+///     false => println!("you should praise!"),
+/// }
+/// ```
+///
+/// Also, since `bool` implements the [`Copy`](../marker/trait.Copy.html) trait, we don't
+/// have to worry about the move semantics (just like the integer and float primitives).
 mod prim_bool { }
 
 #[doc(primitive = "char")]
@@ -50,18 +94,21 @@ mod prim_bool { }
 /// [`String`]: string/struct.String.html
 ///
 /// As always, remember that a human intuition for 'character' may not map to
-/// Unicode's definitions. For example, emoji symbols such as '❤️' are more than
-/// one byte; ❤️ in particular is six:
+/// Unicode's definitions. For example, emoji symbols such as '❤️' can be more
+/// than one Unicode code point; this ❤️ in particular is two:
 ///
 /// ```
 /// let s = String::from("❤️");
 ///
-/// // six bytes times one byte for each element
-/// assert_eq!(6, s.len() * std::mem::size_of::<u8>());
+/// // we get two chars out of a single ❤️
+/// let mut iter = s.chars();
+/// assert_eq!(Some('\u{2764}'), iter.next());
+/// assert_eq!(Some('\u{fe0f}'), iter.next());
+/// assert_eq!(None, iter.next());
 /// ```
 ///
-/// This also means it won't fit into a `char`, and so trying to create a
-/// literal with `let heart = '❤️';` gives an error:
+/// This means it won't fit into a `char`. Trying to create a literal with
+/// `let heart = '❤️';` gives an error:
 ///
 /// ```text
 /// error: character literal may only contain one codepoint: '❤
@@ -69,8 +116,8 @@ mod prim_bool { }
 ///             ^~
 /// ```
 ///
-/// Another implication of this is that if you want to do per-`char`acter
-/// processing, it can end up using a lot more memory:
+/// Another implication of the 4-byte fixed size of a `char`, is that
+/// per-`char`acter processing can end up using a lot more memory:
 ///
 /// ```
 /// let s = String::from("love: ❤️");
@@ -78,19 +125,6 @@ mod prim_bool { }
 ///
 /// assert_eq!(12, s.len() * std::mem::size_of::<u8>());
 /// assert_eq!(32, v.len() * std::mem::size_of::<char>());
-/// ```
-///
-/// Or may give you results you may not expect:
-///
-/// ```
-/// let s = String::from("❤️");
-///
-/// let mut iter = s.chars();
-///
-/// // we get two chars out of a single ❤️
-/// assert_eq!(Some('\u{2764}'), iter.next());
-/// assert_eq!(Some('\u{fe0f}'), iter.next());
-/// assert_eq!(None, iter.next());
 /// ```
 mod prim_char { }
 
@@ -357,50 +391,94 @@ mod prim_str { }
 //
 /// A finite heterogeneous sequence, `(T, U, ..)`.
 ///
-/// To access the _N_-th element of a tuple one can use `N` itself
-/// as a field of the tuple.
+/// Let's cover each of those in turn:
 ///
-/// Indexing starts from zero, so `0` returns first value, `1`
-/// returns second value, and so on. In general, a tuple with _S_
-/// elements provides aforementioned fields from `0` to `S-1`.
+/// Tuples are *finite*. In other words, a tuple has a length. Here's a tuple
+/// of length `3`:
+///
+/// ```
+/// ("hello", 5, 'c');
+/// ```
+///
+/// 'Length' is also sometimes called 'arity' here; each tuple of a different
+/// length is a different, distinct type.
+///
+/// Tuples are *heterogeneous*. This means that each element of the tuple can
+/// have a different type. In that tuple above, it has the type:
+///
+/// ```rust,ignore
+/// (&'static str, i32, char)
+/// ```
+///
+/// Tuples are a *sequence*. This means that they can be accessed by position;
+/// this is called 'tuple indexing', and it looks like this:
+///
+/// ```rust
+/// let tuple = ("hello", 5, 'c');
+///
+/// assert_eq!(tuple.0, "hello");
+/// assert_eq!(tuple.1, 5);
+/// assert_eq!(tuple.2, 'c');
+/// ```
+///
+/// For more about tuples, see [the book](../../book/primitive-types.html#tuples).
+///
+/// # Trait implementations
 ///
 /// If every type inside a tuple implements one of the following
 /// traits, then a tuple itself also implements it.
 ///
-/// * `Clone`
-/// * `PartialEq`
-/// * `Eq`
-/// * `PartialOrd`
-/// * `Ord`
-/// * `Debug`
-/// * `Default`
-/// * `Hash`
+/// * [`Clone`]
+/// * [`PartialEq`]
+/// * [`Eq`]
+/// * [`PartialOrd`]
+/// * [`Ord`]
+/// * [`Debug`]
+/// * [`Default`]
+/// * [`Hash`]
+///
+/// [`Clone`]: ../clone/trait.Clone.html
+/// [`PartialEq`]: ../cmp/trait.PartialEq.html
+/// [`Eq`]: ../cmp/trait.Eq.html
+/// [`PartialOrd`]: ../cmp/trait.PartialOrd.html
+/// [`Ord`]: ../cmp/trait.Ord.html
+/// [`Debug`]: ../fmt/trait.Debug.html
+/// [`Default`]: ../default/trait.Default.html
+/// [`Hash`]: ../hash/trait.Hash.html
+///
+/// Due to a temporary restriction in Rust's type system, these traits are only
+/// implemented on tuples of arity 32 or less. In the future, this may change.
 ///
 /// # Examples
 ///
-/// Accessing elements of a tuple at specified indices:
+/// Basic usage:
 ///
 /// ```
-/// let x = ("colorless",  "green", "ideas", "sleep", "furiously");
-/// assert_eq!(x.3, "sleep");
+/// let tuple = ("hello", 5, 'c');
 ///
-/// let v = (3, 3);
-/// let u = (1, -5);
-/// assert_eq!(v.0 * u.0 + v.1 * u.1, -12);
+/// assert_eq!(tuple.0, "hello");
 /// ```
 ///
-/// Using traits implemented for tuples:
+/// Tuples are often used as a return type when you want to return more than
+/// one value:
 ///
 /// ```
-/// let a = (1, 2);
-/// let b = (3, 4);
-/// assert!(a != b);
+/// fn calculate_point() -> (i32, i32) {
+///     // Don't do a calculation, that's not the point of the example
+///     (4, 5)
+/// }
 ///
-/// let c = b.clone();
-/// assert!(b == c);
+/// let point = calculate_point();
 ///
-/// let d : (u32, f32) = Default::default();
-/// assert_eq!(d, (0, 0.0f32));
+/// assert_eq!(point.0, 4);
+/// assert_eq!(point.1, 5);
+///
+/// // Combining this with patterns can be nicer.
+///
+/// let (x, y) = calculate_point();
+///
+/// assert_eq!(x, 4);
+/// assert_eq!(y, 5);
 /// ```
 ///
 mod prim_tuple { }
@@ -410,6 +488,9 @@ mod prim_tuple { }
 ///
 /// *[See also the `std::f32` module](f32/index.html).*
 ///
+/// However, please note that examples are shared between the `f64` and `f32`
+/// primitive types. So it's normal if you see usage of `f64` in there.
+///
 mod prim_f32 { }
 
 #[doc(primitive = "f64")]
@@ -417,6 +498,9 @@ mod prim_f32 { }
 /// The 64-bit floating point type.
 ///
 /// *[See also the `std::f64` module](f64/index.html).*
+///
+/// However, please note that examples are shared between the `f64` and `f32`
+/// primitive types. So it's normal if you see usage of `f32` in there.
 ///
 mod prim_f64 { }
 
@@ -499,4 +583,3 @@ mod prim_isize { }
 /// *[See also the `std::usize` module](usize/index.html).*
 ///
 mod prim_usize { }
-

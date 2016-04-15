@@ -26,13 +26,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::thread::Builder;
 
+use rustc::dep_graph::DepGraph;
 use rustc::front::map as ast_map;
 use rustc::llvm;
 use rustc::middle::cstore::{CrateStore, LinkagePreference};
 use rustc::middle::ty;
 use rustc::session::config::{self, basic_options, build_configuration, Input, Options};
 use rustc::session::build_session;
-use rustc_driver::driver;
+use rustc_driver::{driver, abort_on_err};
 use rustc_front::lowering::{lower_crate, LoweringContext};
 use rustc_resolve::MakeGlobMap;
 use rustc_metadata::cstore::CStore;
@@ -42,6 +43,12 @@ use syntax::diagnostics::registry::Registry;
 use syntax::parse::token;
 
 fn main() {
+    // Currently trips an assertion on i686-msvc, presumably because the support
+    // in LLVM is a little young.
+    if cfg!(target_env = "msvc") && cfg!(target_arch = "x86") {
+        return
+    }
+
     let program = r#"
     #[no_mangle]
     pub static TEST_STATIC: i32 = 42;
@@ -230,15 +237,16 @@ fn compile_program(input: &str, sysroot: PathBuf)
 
         let krate = driver::assign_node_ids(&sess, krate);
         let lcx = LoweringContext::new(&sess, Some(&krate));
-        let mut hir_forest = ast_map::Forest::new(lower_crate(&lcx, &krate));
+        let dep_graph = DepGraph::new(sess.opts.build_dep_graph);
+        let mut hir_forest = ast_map::Forest::new(lower_crate(&lcx, &krate), dep_graph);
         let arenas = ty::CtxtArenas::new();
         let ast_map = driver::make_map(&sess, &mut hir_forest);
 
-        driver::phase_3_run_analysis_passes(
+        abort_on_err(driver::phase_3_run_analysis_passes(
             &sess, &cstore, ast_map, &arenas, &id,
-            MakeGlobMap::No, |tcx, mir_map, analysis| {
+            MakeGlobMap::No, |tcx, mir_map, analysis, _| {
 
-            let trans = driver::phase_4_translate_to_llvm(tcx, mir_map, analysis);
+            let trans = driver::phase_4_translate_to_llvm(tcx, mir_map.unwrap(), analysis);
 
             let crates = tcx.sess.cstore.used_crates(LinkagePreference::RequireDynamic);
 
@@ -254,7 +262,7 @@ fn compile_program(input: &str, sysroot: PathBuf)
             let modp = llmod as usize;
 
             (modp, deps)
-        })
+        }), &sess)
     }).unwrap();
 
     match handle.join() {

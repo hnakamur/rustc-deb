@@ -43,6 +43,7 @@ pub fn resolve_type_vars_in_expr(fcx: &FnCtxt, e: &hir::Expr) {
     wbcx.visit_upvar_borrow_map();
     wbcx.visit_closures();
     wbcx.visit_liberated_fn_sigs();
+    wbcx.visit_fru_field_types();
 }
 
 pub fn resolve_type_vars_in_fn(fcx: &FnCtxt,
@@ -53,10 +54,10 @@ pub fn resolve_type_vars_in_fn(fcx: &FnCtxt,
     wbcx.visit_block(blk);
     for arg in &decl.inputs {
         wbcx.visit_node_id(ResolvingPattern(arg.pat.span), arg.id);
-        wbcx.visit_pat(&*arg.pat);
+        wbcx.visit_pat(&arg.pat);
 
         // Privacy needs the type for the whole pattern, not just each binding
-        if !pat_util::pat_is_binding(&fcx.tcx().def_map.borrow(), &*arg.pat) {
+        if !pat_util::pat_is_binding(&fcx.tcx().def_map.borrow(), &arg.pat) {
             wbcx.visit_node_id(ResolvingPattern(arg.pat.span),
                                arg.pat.id);
         }
@@ -64,6 +65,7 @@ pub fn resolve_type_vars_in_fn(fcx: &FnCtxt,
     wbcx.visit_upvar_borrow_map();
     wbcx.visit_closures();
     wbcx.visit_liberated_fn_sigs();
+    wbcx.visit_fru_field_types();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -118,25 +120,6 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
                             self.fcx.inh.tables.borrow_mut().adjustments.remove(&lhs.id);
                         },
                         _ => {},
-                    }
-                } else {
-                    let tcx = self.tcx();
-
-                    if let hir::ExprAssignOp(_, ref lhs, ref rhs) = e.node {
-                        if
-                            !tcx.sess.features.borrow().augmented_assignments &&
-                            !self.fcx.expr_ty(e).references_error() &&
-                            !self.fcx.expr_ty(lhs).references_error() &&
-                            !self.fcx.expr_ty(rhs).references_error()
-                        {
-                            tcx.sess.struct_span_err(e.span,
-                                                     "overloaded augmented assignments \
-                                                      are not stable")
-                                .fileline_help(e.span,
-                                               "add #![feature(augmented_assignments)] to the \
-                                                crate root to enable")
-                                .emit()
-                        }
                     }
                 }
             }
@@ -221,7 +204,7 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
     fn visit_ty(&mut self, t: &hir::Ty) {
         match t.node {
             hir::TyFixedLengthVec(ref ty, ref count_expr) => {
-                self.visit_ty(&**ty);
+                self.visit_ty(&ty);
                 write_ty_to_tcx(self.tcx(), count_expr.id, self.tcx().types.usize);
             }
             hir::TyBareFn(ref function_declaration) => {
@@ -305,6 +288,10 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
                         adjustment::AdjustReifyFnPointer
                     }
 
+                    adjustment::AdjustMutToConstPointer => {
+                        adjustment::AdjustMutToConstPointer
+                    }
+
                     adjustment::AdjustUnsafeFnPointer => {
                         adjustment::AdjustUnsafeFnPointer
                     }
@@ -367,6 +354,13 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         }
     }
 
+    fn visit_fru_field_types(&self) {
+        for (&node_id, ftys) in self.fcx.inh.tables.borrow().fru_field_types.iter() {
+            let ftys = self.resolve(ftys, ResolvingFieldTypes(node_id));
+            self.tcx().tables.borrow_mut().fru_field_types.insert(node_id, ftys);
+        }
+    }
+
     fn resolve<T:TypeFoldable<'tcx>>(&self, t: &T, reason: ResolveReason) -> T {
         t.fold_with(&mut Resolver::new(self.fcx, reason))
     }
@@ -383,6 +377,7 @@ enum ResolveReason {
     ResolvingUpvar(ty::UpvarId),
     ResolvingClosure(DefId),
     ResolvingFnSig(ast::NodeId),
+    ResolvingFieldTypes(ast::NodeId)
 }
 
 impl ResolveReason {
@@ -395,6 +390,9 @@ impl ResolveReason {
                 tcx.expr_span(upvar_id.closure_expr_id)
             }
             ResolvingFnSig(id) => {
+                tcx.map.span(id)
+            }
+            ResolvingFieldTypes(id) => {
                 tcx.map.span(id)
             }
             ResolvingClosure(did) => {
@@ -474,14 +472,14 @@ impl<'cx, 'tcx> Resolver<'cx, 'tcx> {
                               "cannot determine a type for this closure")
                 }
 
-                ResolvingFnSig(id) => {
+                ResolvingFnSig(id) | ResolvingFieldTypes(id) => {
                     // any failures here should also fail when
                     // resolving the patterns, closure types, or
                     // something else.
                     let span = self.reason.span(self.tcx);
                     self.tcx.sess.delay_span_bug(
                         span,
-                        &format!("cannot resolve some aspect of fn sig for {:?}", id));
+                        &format!("cannot resolve some aspect of data for {:?}", id));
                 }
             }
         }

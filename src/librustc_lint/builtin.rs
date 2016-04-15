@@ -28,7 +28,8 @@
 //! Use the former for unit-like structs and the latter for structs with
 //! a `pub fn new()`.
 
-use middle::{cfg, def, infer, stability, traits};
+use middle::{cfg, infer, stability, traits};
+use middle::def::Def;
 use middle::cstore::CrateStore;
 use middle::def_id::DefId;
 use middle::subst::Substs;
@@ -45,7 +46,7 @@ use syntax::{ast};
 use syntax::attr::{self, AttrMetaMethods};
 use syntax::codemap::{self, Span};
 
-use rustc_front::hir;
+use rustc_front::hir::{self, PatKind};
 use rustc_front::intravisit::FnKind;
 
 use bad_style::{MethodLateContext, method_context};
@@ -72,7 +73,7 @@ impl LateLintPass for WhileTrue {
     fn check_expr(&mut self, cx: &LateContext, e: &hir::Expr) {
         if let hir::ExprWhile(ref cond, _, _) = e.node {
             if let hir::ExprLit(ref lit) = cond.node {
-                if let ast::LitBool(true) = lit.node {
+                if let ast::LitKind::Bool(true) = lit.node {
                     cx.span_lint(WHILE_TRUE, e.span,
                                  "denote infinite loops with loop { ... }");
                 }
@@ -156,20 +157,20 @@ impl LintPass for NonShorthandFieldPatterns {
 impl LateLintPass for NonShorthandFieldPatterns {
     fn check_pat(&mut self, cx: &LateContext, pat: &hir::Pat) {
         let def_map = cx.tcx.def_map.borrow();
-        if let hir::PatStruct(_, ref v, _) = pat.node {
+        if let PatKind::Struct(_, ref v, _) = pat.node {
             let field_pats = v.iter().filter(|fieldpat| {
                 if fieldpat.node.is_shorthand {
                     return false;
                 }
                 let def = def_map.get(&fieldpat.node.pat.id).map(|d| d.full_def());
                 if let Some(def_id) = cx.tcx.map.opt_local_def_id(fieldpat.node.pat.id) {
-                    def == Some(def::DefLocal(def_id, fieldpat.node.pat.id))
+                    def == Some(Def::Local(def_id, fieldpat.node.pat.id))
                 } else {
                     false
                 }
             });
             for fieldpat in field_pats {
-                if let hir::PatIdent(_, ident, None) = fieldpat.node.pat.node {
+                if let PatKind::Ident(_, ident, None) = fieldpat.node.pat.node {
                     if ident.node.unhygienic_name == fieldpat.node.name {
                         cx.span_lint(NON_SHORTHAND_FIELD_PATTERNS, fieldpat.span,
                                      &format!("the `{}:` in this pattern is redundant and can \
@@ -307,7 +308,7 @@ impl MissingDoc {
 
         let has_doc = attrs.iter().any(|a| {
             match a.node.value.node {
-                ast::MetaNameValue(ref name, _) if *name == "doc" => true,
+                ast::MetaItemKind::NameValue(ref name, _) if *name == "doc" => true,
                 _ => false
             }
         });
@@ -819,7 +820,7 @@ impl LateLintPass for UnconditionalRecursion {
             match tcx.map.get(id) {
                 hir_map::NodeExpr(&hir::Expr { node: hir::ExprCall(ref callee, _), .. }) => {
                     match tcx.def_map.borrow().get(&callee.id).map(|d| d.full_def()) {
-                        Some(def::DefMethod(def_id)) => {
+                        Some(Def::Method(def_id)) => {
                             let item_substs =
                                 tcx.tables.borrow().item_substs
                                                    .get(&callee.id)
@@ -854,9 +855,7 @@ impl LateLintPass for UnconditionalRecursion {
                 // A trait method, from any number of possible sources.
                 // Attempt to select a concrete impl before checking.
                 ty::TraitContainer(trait_def_id) => {
-                    let trait_substs = callee_substs.clone().method_to_trait();
-                    let trait_substs = tcx.mk_substs(trait_substs);
-                    let trait_ref = ty::TraitRef::new(trait_def_id, trait_substs);
+                    let trait_ref = callee_substs.to_trait_ref(tcx, trait_def_id);
                     let trait_ref = ty::Binder(trait_ref);
                     let span = tcx.map.span(expr_id);
                     let obligation =
@@ -869,7 +868,7 @@ impl LateLintPass for UnconditionalRecursion {
                     let node_id = tcx.map.as_local_node_id(method.def_id).unwrap();
 
                     let param_env = ty::ParameterEnvironment::for_item(tcx, node_id);
-                    let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, Some(param_env), false);
+                    let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, Some(param_env));
                     let mut selcx = traits::SelectionContext::new(&infcx);
                     match selcx.select(&obligation) {
                         // The method comes from a `T: Trait` bound.
@@ -1040,7 +1039,7 @@ impl LintPass for MutableTransmutes {
 
 impl LateLintPass for MutableTransmutes {
     fn check_expr(&mut self, cx: &LateContext, expr: &hir::Expr) {
-        use syntax::abi::RustIntrinsic;
+        use syntax::abi::Abi::RustIntrinsic;
 
         let msg = "mutating transmuted &mut T from &T may cause undefined behavior,\
                    consider instead using an UnsafeCell";
@@ -1060,7 +1059,7 @@ impl LateLintPass for MutableTransmutes {
                 hir::ExprPath(..) => (),
                 _ => return None
             }
-            if let def::DefFn(did, _) = cx.tcx.resolve_expr(expr) {
+            if let Def::Fn(did) = cx.tcx.resolve_expr(expr) {
                 if !def_id_is_transmute(cx, did) {
                     return None;
                 }

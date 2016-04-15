@@ -107,7 +107,7 @@
 //!
 //! - `Opaque` (`17`): An opaque, custom-format tag.
 //!   Used to wrap ordinary custom tags or data in the auto-serialized context.
-//!   Rustc typically uses this to encode type informations.
+//!   Rustc typically uses this to encode type information.
 //!
 //! First 0x20 tags are reserved by RBML; custom tags start at 0x20.
 
@@ -120,7 +120,9 @@
        html_root_url = "https://doc.rust-lang.org/nightly/",
        html_playground_url = "https://play.rust-lang.org/",
        test(attr(deny(warnings))))]
+#![cfg_attr(not(stage0), deny(warnings))]
 
+#![feature(copy_from_slice)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
 
@@ -518,7 +520,7 @@ pub mod reader {
             // of the page and segfault.
 
             let mut b = [0; 8];
-            b.clone_from_slice(&d.data[d.end - 8..d.end]);
+            b.copy_from_slice(&d.data[d.end - 8..d.end]);
             let data = unsafe { (*(b.as_ptr() as *const u64)).to_be() };
             let len = d.end - d.start;
             if len < 8 {
@@ -1042,7 +1044,7 @@ pub mod writer {
                 {
                     let last_size_pos = last_size_pos as usize;
                     let data = &self.writer.get_ref()[last_size_pos + 4..cur_pos as usize];
-                    buf[..size].clone_from_slice(data);
+                    buf[..size].copy_from_slice(data);
                 }
 
                 // overwrite the size and data and continue

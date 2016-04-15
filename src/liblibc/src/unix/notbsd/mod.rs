@@ -1,10 +1,10 @@
 use dox::mem;
 
-pub type rlim_t = c_ulong;
 pub type sa_family_t = u16;
 pub type pthread_key_t = ::c_uint;
 pub type speed_t = ::c_uint;
 pub type tcflag_t = ::c_uint;
+pub type loff_t = ::c_longlong;
 
 pub enum timezone {}
 
@@ -108,7 +108,8 @@ s! {
         pub dli_saddr: *mut ::c_void,
     }
 
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"),
+    #[cfg_attr(any(all(target_arch = "x86", not(target_env = "musl")),
+                   target_arch = "x86_64"),
                repr(packed))]
     pub struct epoll_event {
         pub events: ::uint32_t,
@@ -174,6 +175,9 @@ pub const O_WRONLY: ::c_int = 1;
 pub const O_RDWR: ::c_int = 2;
 pub const O_TRUNC: ::c_int = 512;
 pub const O_CLOEXEC: ::c_int = 0x80000;
+
+pub const SOCK_CLOEXEC: ::c_int = O_CLOEXEC;
+
 pub const S_IFIFO: ::mode_t = 4096;
 pub const S_IFCHR: ::mode_t = 8192;
 pub const S_IFBLK: ::mode_t = 24576;
@@ -342,6 +346,7 @@ pub const IP_TTL: ::c_int = 2;
 pub const IP_HDRINCL: ::c_int = 3;
 pub const IP_ADD_MEMBERSHIP: ::c_int = 35;
 pub const IP_DROP_MEMBERSHIP: ::c_int = 36;
+pub const IP_TRANSPARENT: ::c_int = 19;
 pub const IPV6_ADD_MEMBERSHIP: ::c_int = 20;
 pub const IPV6_DROP_MEMBERSHIP: ::c_int = 21;
 
@@ -379,6 +384,9 @@ pub const SA_NODEFER: ::c_int = 0x40000000;
 pub const SA_RESETHAND: ::c_int = 0x80000000;
 pub const SA_RESTART: ::c_int = 0x10000000;
 pub const SA_NOCLDSTOP: ::c_int = 0x00000001;
+
+pub const SS_ONSTACK: ::c_int = 1;
+pub const SS_DISABLE: ::c_int = 2;
 
 pub const PATH_MAX: ::c_int = 4096;
 
@@ -420,9 +428,6 @@ pub const QIF_ALL: ::uint32_t = 63;
 pub const CBAUD: ::tcflag_t = 0o0010017;
 
 pub const EFD_CLOEXEC: ::c_int = 0x80000;
-
-pub const F_SETLK: ::c_int = 6;
-pub const F_SETLKW: ::c_int = 7;
 
 pub const MNT_FORCE: ::c_int = 0x1;
 
@@ -523,6 +528,22 @@ pub const CLONE_DETACHED: ::c_int = 0x400000;
 pub const CLONE_UNTRACED: ::c_int = 0x800000;
 pub const CLONE_CHILD_SETTID: ::c_int = 0x01000000;
 
+pub const WNOHANG: ::c_int = 1;
+
+pub const SPLICE_F_MOVE: ::c_uint = 0x01;
+pub const SPLICE_F_NONBLOCK: ::c_uint = 0x02;
+pub const SPLICE_F_MORE: ::c_uint = 0x04;
+pub const SPLICE_F_GIFT: ::c_uint = 0x08;
+
+pub const RTLD_LOCAL: ::c_int = 0;
+
+pub const POSIX_FADV_NORMAL: ::c_int = 0;
+pub const POSIX_FADV_RANDOM: ::c_int = 1;
+pub const POSIX_FADV_SEQUENTIAL: ::c_int = 2;
+pub const POSIX_FADV_WILLNEED: ::c_int = 3;
+pub const POSIX_FADV_DONTNEED: ::c_int = 4;
+pub const POSIX_FADV_NOREUSE: ::c_int = 5;
+
 f! {
     pub fn FD_CLR(fd: ::c_int, set: *mut fd_set) -> () {
         let fd = fd as usize;
@@ -564,6 +585,11 @@ f! {
 }
 
 extern {
+    pub fn getpwuid_r(uid: ::uid_t,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut passwd) -> ::c_int;
     pub fn fdatasync(fd: ::c_int) -> ::c_int;
     pub fn mincore(addr: *mut ::c_void, len: ::size_t,
                    vec: *mut ::c_uchar) -> ::c_int;
@@ -608,6 +634,27 @@ extern {
     pub fn fstatfs(fd: ::c_int, buf: *mut statfs) -> ::c_int;
     pub fn memrchr(cx: *const ::c_void, c: ::c_int, n: ::size_t) -> *mut ::c_void;
     pub fn syscall(num: ::c_long, ...) -> ::c_long;
+    pub fn sendfile(out_fd: ::c_int,
+                    in_fd: ::c_int,
+                    offset: *mut off_t,
+                    count: ::size_t) -> ::ssize_t;
+    pub fn splice(fd_in: ::c_int,
+                  off_in: *mut ::loff_t,
+                  fd_out: ::c_int,
+                  off_out: *mut ::loff_t,
+                  len: ::size_t,
+                  flags: ::c_uint) -> ::ssize_t;
+    pub fn tee(fd_in: ::c_int,
+               fd_out: ::c_int,
+               len: ::size_t,
+               flags: ::c_uint) -> ::ssize_t;
+    pub fn vmsplice(fd: ::c_int,
+                    iov: *const ::iovec,
+                    nr_segs: ::size_t,
+                    flags: ::c_uint) -> ::ssize_t;
+
+    pub fn posix_fadvise(fd: ::c_int, offset: ::off_t, len: ::off_t, 
+                         advise: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

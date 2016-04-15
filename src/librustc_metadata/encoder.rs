@@ -30,7 +30,7 @@ use middle::ty::{self, Ty};
 use rustc::back::svh::Svh;
 use rustc::front::map::{LinkedPath, PathElem, PathElems};
 use rustc::front::map as ast_map;
-use rustc::mir::repr::Mir;
+use rustc::mir::mir_map::MirMap;
 use rustc::session::config;
 use rustc::util::nodemap::{FnvHashMap, NodeMap, NodeSet};
 
@@ -40,8 +40,9 @@ use std::io::prelude::*;
 use std::io::{Cursor, SeekFrom};
 use std::rc::Rc;
 use std::u32;
-use syntax::abi;
+use syntax::abi::Abi;
 use syntax::ast::{self, NodeId, Name, CRATE_NODE_ID, CrateNum};
+use syntax::codemap::BytePos;
 use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::errors::Handler;
@@ -49,7 +50,7 @@ use syntax::parse::token::special_idents;
 use syntax;
 use rbml::writer::Encoder;
 
-use rustc_front::hir;
+use rustc_front::hir::{self, PatKind};
 use rustc_front::intravisit::Visitor;
 use rustc_front::intravisit;
 
@@ -65,7 +66,7 @@ pub struct EncodeParams<'a, 'tcx: 'a> {
     pub cstore: &'a cstore::CStore,
     pub encode_inlined_item: EncodeInlinedItem<'a>,
     pub reachable: &'a NodeSet,
-    pub mir_map: &'a NodeMap<Mir<'tcx>>,
+    pub mir_map: &'a MirMap<'tcx>,
 }
 
 pub struct EncodeContext<'a, 'tcx: 'a> {
@@ -78,7 +79,7 @@ pub struct EncodeContext<'a, 'tcx: 'a> {
     pub encode_inlined_item: RefCell<EncodeInlinedItem<'a>>,
     pub type_abbrevs: tyencode::abbrev_map<'tcx>,
     pub reachable: &'a NodeSet,
-    pub mir_map: &'a NodeMap<Mir<'tcx>>,
+    pub mir_map: &'a MirMap<'tcx>,
 }
 
 impl<'a, 'tcx> EncodeContext<'a,'tcx> {
@@ -508,15 +509,20 @@ fn encode_field<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
 fn encode_info_for_struct_ctor<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
                                          rbml_w: &mut Encoder,
                                          name: Name,
-                                         ctor_id: NodeId,
+                                         struct_def: &hir::VariantData,
                                          index: &mut CrateIndex<'tcx>,
                                          struct_id: NodeId) {
+    let ctor_id = struct_def.id();
     let ctor_def_id = ecx.tcx.map.local_def_id(ctor_id);
 
     index.record(ctor_def_id, rbml_w);
     rbml_w.start_tag(tag_items_data_item);
     encode_def_id_and_key(ecx, rbml_w, ctor_def_id);
-    encode_family(rbml_w, 'o');
+    encode_family(rbml_w, match *struct_def {
+        hir::VariantData::Struct(..) => 'S',
+        hir::VariantData::Tuple(..) => 's',
+        hir::VariantData::Unit(..) => 'u',
+    });
     encode_bounds_and_type_for_item(rbml_w, ecx, index, ctor_id);
     encode_name(rbml_w, name);
     ecx.tcx.map.with_path(ctor_id, |path| encode_path(rbml_w, path));
@@ -777,7 +783,7 @@ fn encode_method_argument_names(rbml_w: &mut Encoder,
     rbml_w.start_tag(tag_method_argument_names);
     for arg in &decl.inputs {
         let tag = tag_method_argument_name;
-        if let hir::PatIdent(_, ref path1, _) = arg.pat.node {
+        if let PatKind::Ident(_, ref path1, _) = arg.pat.node {
             let name = path1.node.name.as_str();
             rbml_w.wr_tagged_bytes(tag, name.as_bytes());
         } else {
@@ -818,7 +824,7 @@ fn encode_inlined_item(ecx: &EncodeContext,
 }
 
 fn encode_mir(ecx: &EncodeContext, rbml_w: &mut Encoder, node_id: NodeId) {
-    if let Some(mir) = ecx.mir_map.get(&node_id) {
+    if let Some(mir) = ecx.mir_map.map.get(&node_id) {
         rbml_w.start_tag(tag_mir as usize);
         rbml_w.emit_opaque(|opaque_encoder| {
             tls::enter_encoding_context(ecx, opaque_encoder, |_, opaque_encoder| {
@@ -958,7 +964,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         encode_visibility(rbml_w, vis);
         encode_stability(rbml_w, stab);
         encode_deprecation(rbml_w, depr);
-        encode_method_argument_names(rbml_w, &**decl);
+        encode_method_argument_names(rbml_w, &decl);
         rbml_w.end_tag();
       }
       hir::ItemMod(ref m) => {
@@ -1084,7 +1090,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
 
         // If this is a tuple-like struct, encode the type of the constructor.
         if !struct_def.is_struct() {
-            encode_info_for_struct_ctor(ecx, rbml_w, item.name, struct_def.id(), index, item.id);
+            encode_info_for_struct_ctor(ecx, rbml_w, item.name, struct_def, index, item.id);
         }
       }
       hir::ItemDefaultImpl(unsafety, _) => {
@@ -1167,7 +1173,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
                     encode_info_for_associated_const(ecx,
                                                      rbml_w,
                                                      index,
-                                                     &*associated_const,
+                                                     &associated_const,
                                                      path.clone(),
                                                      item.id,
                                                      ast_item)
@@ -1176,7 +1182,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
                     encode_info_for_method(ecx,
                                            rbml_w,
                                            index,
-                                           &**method_type,
+                                           &method_type,
                                            path.clone(),
                                            false,
                                            item.id,
@@ -1186,7 +1192,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
                     encode_info_for_associated_type(ecx,
                                                     rbml_w,
                                                     index,
-                                                    &**associated_type,
+                                                    &associated_type,
                                                     path.clone(),
                                                     item.id,
                                                     ast_item)
@@ -1284,7 +1290,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
                 ty::MethodTraitItem(method_ty) => {
                     let method_def_id = item_def_id.def_id();
 
-                    encode_method_ty_fields(ecx, rbml_w, index, &*method_ty);
+                    encode_method_ty_fields(ecx, rbml_w, index, &method_ty);
 
                     let elem = ast_map::PathName(method_ty.name);
                     encode_path(rbml_w,
@@ -1375,7 +1381,7 @@ fn encode_info_for_foreign_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
                                           nitem: &hir::ForeignItem,
                                           index: &mut CrateIndex<'tcx>,
                                           path: PathElems,
-                                          abi: abi::Abi) {
+                                          abi: Abi) {
     let def_id = ecx.tcx.map.local_def_id(nitem.id);
 
     index.record(def_id, rbml_w);
@@ -1387,16 +1393,16 @@ fn encode_info_for_foreign_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         encode_family(rbml_w, FN_FAMILY);
         encode_bounds_and_type_for_item(rbml_w, ecx, index, nitem.id);
         encode_name(rbml_w, nitem.name);
-        if abi == abi::RustIntrinsic || abi == abi::PlatformIntrinsic {
+        if abi == Abi::RustIntrinsic || abi == Abi::PlatformIntrinsic {
             encode_inlined_item(ecx, rbml_w, InlinedItemRef::Foreign(nitem));
         }
-        encode_attributes(rbml_w, &*nitem.attrs);
+        encode_attributes(rbml_w, &nitem.attrs);
         let stab = stability::lookup_stability(ecx.tcx, ecx.tcx.map.local_def_id(nitem.id));
         let depr = stability::lookup_deprecation(ecx.tcx, ecx.tcx.map.local_def_id(nitem.id));
         encode_stability(rbml_w, stab);
         encode_deprecation(rbml_w, depr);
         encode_symbol(ecx, rbml_w, nitem.id);
-        encode_method_argument_names(rbml_w, &*fndecl);
+        encode_method_argument_names(rbml_w, &fndecl);
       }
       hir::ForeignItemStatic(_, mutbl) => {
         if mutbl {
@@ -1405,7 +1411,7 @@ fn encode_info_for_foreign_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
             encode_family(rbml_w, 'c');
         }
         encode_bounds_and_type_for_item(rbml_w, ecx, index, nitem.id);
-        encode_attributes(rbml_w, &*nitem.attrs);
+        encode_attributes(rbml_w, &nitem.attrs);
         let stab = stability::lookup_stability(ecx.tcx, ecx.tcx.map.local_def_id(nitem.id));
         let depr = stability::lookup_deprecation(ecx.tcx, ecx.tcx.map.local_def_id(nitem.id));
         encode_stability(rbml_w, stab);
@@ -1441,7 +1447,7 @@ fn my_visit_expr(expr: &hir::Expr,
 
             ecx.tcx.map.with_path(expr.id, |path| encode_path(rbml_w, path));
 
-            assert!(ecx.mir_map.contains_key(&expr.id));
+            assert!(ecx.mir_map.map.contains_key(&expr.id));
             encode_mir(ecx, rbml_w, expr.id);
 
             rbml_w.end_tag();
@@ -1535,14 +1541,14 @@ fn encode_item_index(rbml_w: &mut Encoder, index: IndexData) {
 
 fn encode_meta_item(rbml_w: &mut Encoder, mi: &ast::MetaItem) {
     match mi.node {
-      ast::MetaWord(ref name) => {
+      ast::MetaItemKind::Word(ref name) => {
         rbml_w.start_tag(tag_meta_item_word);
         rbml_w.wr_tagged_str(tag_meta_item_name, name);
         rbml_w.end_tag();
       }
-      ast::MetaNameValue(ref name, ref value) => {
+      ast::MetaItemKind::NameValue(ref name, ref value) => {
         match value.node {
-          ast::LitStr(ref value, _) => {
+          ast::LitKind::Str(ref value, _) => {
             rbml_w.start_tag(tag_meta_item_name_value);
             rbml_w.wr_tagged_str(tag_meta_item_name, name);
             rbml_w.wr_tagged_str(tag_meta_item_value, value);
@@ -1551,11 +1557,11 @@ fn encode_meta_item(rbml_w: &mut Encoder, mi: &ast::MetaItem) {
           _ => {/* FIXME (#623): encode other variants */ }
         }
       }
-      ast::MetaList(ref name, ref items) => {
+      ast::MetaItemKind::List(ref name, ref items) => {
         rbml_w.start_tag(tag_meta_item_list);
         rbml_w.wr_tagged_str(tag_meta_item_name, name);
         for inner_item in items {
-            encode_meta_item(rbml_w, &**inner_item);
+            encode_meta_item(rbml_w, &inner_item);
         }
         rbml_w.end_tag();
       }
@@ -1567,7 +1573,7 @@ fn encode_attributes(rbml_w: &mut Encoder, attrs: &[ast::Attribute]) {
     for attr in attrs {
         rbml_w.start_tag(tag_attribute);
         rbml_w.wr_tagged_u8(tag_attribute_is_sugared_doc, attr.node.is_sugared_doc as u8);
-        encode_meta_item(rbml_w, &*attr.node.value);
+        encode_meta_item(rbml_w, &attr.node.value);
         rbml_w.end_tag();
     }
     rbml_w.end_tag();
@@ -1643,7 +1649,7 @@ fn encode_crate_deps(rbml_w: &mut Encoder, cstore: &cstore::CStore) {
 fn encode_lang_items(ecx: &EncodeContext, rbml_w: &mut Encoder) {
     rbml_w.start_tag(tag_lang_items);
 
-    for (i, &opt_def_id) in ecx.tcx.lang_items.items() {
+    for (i, &opt_def_id) in ecx.tcx.lang_items.items().iter().enumerate() {
         if let Some(def_id) = opt_def_id {
             if def_id.is_local() {
                 rbml_w.start_tag(tag_lang_items_item);
@@ -1722,6 +1728,10 @@ fn encode_macro_defs(rbml_w: &mut Encoder,
 
         encode_name(rbml_w, def.name);
         encode_attributes(rbml_w, &def.attrs);
+        let &BytePos(lo) = &def.span.lo;
+        let &BytePos(hi) = &def.span.hi;
+        rbml_w.wr_tagged_u32(tag_macro_def_span_lo, lo);
+        rbml_w.wr_tagged_u32(tag_macro_def_span_hi, hi);
 
         rbml_w.wr_tagged_str(tag_macro_def_body,
                              &::syntax::print::pprust::tts_to_string(&def.body));

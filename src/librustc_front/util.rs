@@ -23,32 +23,33 @@ pub fn walk_pat<F>(pat: &Pat, mut it: F) -> bool
     fn walk_pat_<G>(pat: &Pat, it: &mut G) -> bool
         where G: FnMut(&Pat) -> bool
     {
-        if !(*it)(pat) {
+        if !it(pat) {
             return false;
         }
 
         match pat.node {
-            PatIdent(_, _, Some(ref p)) => walk_pat_(&**p, it),
-            PatStruct(_, ref fields, _) => {
-                fields.iter().all(|field| walk_pat_(&*field.node.pat, it))
+            PatKind::Ident(_, _, Some(ref p)) => walk_pat_(&p, it),
+            PatKind::Struct(_, ref fields, _) => {
+                fields.iter().all(|field| walk_pat_(&field.node.pat, it))
             }
-            PatEnum(_, Some(ref s)) | PatTup(ref s) => {
-                s.iter().all(|p| walk_pat_(&**p, it))
+            PatKind::TupleStruct(_, Some(ref s)) | PatKind::Tup(ref s) => {
+                s.iter().all(|p| walk_pat_(&p, it))
             }
-            PatBox(ref s) | PatRegion(ref s, _) => {
-                walk_pat_(&**s, it)
+            PatKind::Box(ref s) | PatKind::Ref(ref s, _) => {
+                walk_pat_(&s, it)
             }
-            PatVec(ref before, ref slice, ref after) => {
-                before.iter().all(|p| walk_pat_(&**p, it)) &&
-                slice.iter().all(|p| walk_pat_(&**p, it)) &&
-                after.iter().all(|p| walk_pat_(&**p, it))
+            PatKind::Vec(ref before, ref slice, ref after) => {
+                before.iter().all(|p| walk_pat_(&p, it)) &&
+                slice.iter().all(|p| walk_pat_(&p, it)) &&
+                after.iter().all(|p| walk_pat_(&p, it))
             }
-            PatWild |
-            PatLit(_) |
-            PatRange(_, _) |
-            PatIdent(_, _, _) |
-            PatEnum(_, _) |
-            PatQPath(_, _) => {
+            PatKind::Wild |
+            PatKind::Lit(_) |
+            PatKind::Range(_, _) |
+            PatKind::Ident(_, _, _) |
+            PatKind::TupleStruct(..) |
+            PatKind::Path(..) |
+            PatKind::QPath(_, _) => {
                 true
             }
         }

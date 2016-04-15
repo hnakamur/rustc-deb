@@ -13,9 +13,10 @@ use middle::cstore::CrateStore;
 use middle::dependency_format;
 use session::search_paths::PathKind;
 use util::nodemap::{NodeMap, FnvHashMap};
+use mir::transform::MirPass;
 
 use syntax::ast::{NodeId, NodeIdAssigner, Name};
-use syntax::codemap::Span;
+use syntax::codemap::{Span, MultiSpan};
 use syntax::errors::{self, DiagnosticBuilder};
 use syntax::errors::emitter::{Emitter, BasicEmitter, EmitterWriter};
 use syntax::errors::json::JsonEmitter;
@@ -30,7 +31,7 @@ use rustc_back::target::Target;
 
 use std::path::{Path, PathBuf};
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::rc::Rc;
 
@@ -47,7 +48,7 @@ pub struct Session {
     pub cstore: Rc<for<'a> CrateStore<'a>>,
     pub parse_sess: ParseSess,
     // For a library crate, this is always none
-    pub entry_fn: RefCell<Option<(NodeId, codemap::Span)>>,
+    pub entry_fn: RefCell<Option<(NodeId, Span)>>,
     pub entry_type: Cell<Option<config::EntryFnType>>,
     pub plugin_registrar_fn: Cell<Option<ast::NodeId>>,
     pub default_sysroot: Option<PathBuf>,
@@ -57,8 +58,9 @@ pub struct Session {
     pub local_crate_source_file: Option<PathBuf>,
     pub working_dir: PathBuf,
     pub lint_store: RefCell<lint::LintStore>,
-    pub lints: RefCell<NodeMap<Vec<(lint::LintId, codemap::Span, String)>>>,
+    pub lints: RefCell<NodeMap<Vec<(lint::LintId, Span, String)>>>,
     pub plugin_llvm_passes: RefCell<Vec<String>>,
+    pub plugin_mir_passes: RefCell<Vec<Box<MirPass>>>,
     pub plugin_attributes: RefCell<Vec<(String, AttributeType)>>,
     pub crate_types: RefCell<Vec<config::CrateType>>,
     pub dependency_formats: RefCell<dependency_format::Dependencies>,
@@ -77,40 +79,45 @@ pub struct Session {
     /// available in this crate
     pub available_macros: RefCell<HashSet<Name>>,
 
+    /// Map from imported macro spans (which consist of
+    /// the localized span for the macro body) to the
+    /// macro name and defintion span in the source crate.
+    pub imported_macro_spans: RefCell<HashMap<Span, (String, Span)>>,
+
     next_node_id: Cell<ast::NodeId>,
 }
 
 impl Session {
-    pub fn struct_span_warn<'a>(&'a self,
-                                sp: Span,
-                                msg: &str)
-                                -> DiagnosticBuilder<'a>  {
+    pub fn struct_span_warn<'a, S: Into<MultiSpan>>(&'a self,
+                                                    sp: S,
+                                                    msg: &str)
+                                                    -> DiagnosticBuilder<'a>  {
         self.diagnostic().struct_span_warn(sp, msg)
     }
-    pub fn struct_span_warn_with_code<'a>(&'a self,
-                                          sp: Span,
-                                          msg: &str,
-                                          code: &str)
-                                          -> DiagnosticBuilder<'a>  {
+    pub fn struct_span_warn_with_code<'a, S: Into<MultiSpan>>(&'a self,
+                                                              sp: S,
+                                                              msg: &str,
+                                                              code: &str)
+                                                              -> DiagnosticBuilder<'a>  {
         self.diagnostic().struct_span_warn_with_code(sp, msg, code)
     }
     pub fn struct_warn<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a>  {
         self.diagnostic().struct_warn(msg)
     }
-    pub fn struct_span_err<'a>(&'a self,
-                               sp: Span,
-                               msg: &str)
-                               -> DiagnosticBuilder<'a>  {
+    pub fn struct_span_err<'a, S: Into<MultiSpan>>(&'a self,
+                                                   sp: S,
+                                                   msg: &str)
+                                                   -> DiagnosticBuilder<'a>  {
         match split_msg_into_multilines(msg) {
             Some(ref msg) => self.diagnostic().struct_span_err(sp, msg),
             None => self.diagnostic().struct_span_err(sp, msg),
         }
     }
-    pub fn struct_span_err_with_code<'a>(&'a self,
-                                         sp: Span,
-                                         msg: &str,
-                                         code: &str)
-                                         -> DiagnosticBuilder<'a>  {
+    pub fn struct_span_err_with_code<'a, S: Into<MultiSpan>>(&'a self,
+                                                             sp: S,
+                                                             msg: &str,
+                                                             code: &str)
+                                                             -> DiagnosticBuilder<'a>  {
         match split_msg_into_multilines(msg) {
             Some(ref msg) => self.diagnostic().struct_span_err_with_code(sp, msg, code),
             None => self.diagnostic().struct_span_err_with_code(sp, msg, code),
@@ -119,46 +126,46 @@ impl Session {
     pub fn struct_err<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a>  {
         self.diagnostic().struct_err(msg)
     }
-    pub fn struct_span_fatal<'a>(&'a self,
-                                 sp: Span,
-                                 msg: &str)
-                                 -> DiagnosticBuilder<'a>  {
+    pub fn struct_span_fatal<'a, S: Into<MultiSpan>>(&'a self,
+                                                     sp: S,
+                                                     msg: &str)
+                                                     -> DiagnosticBuilder<'a>  {
         self.diagnostic().struct_span_fatal(sp, msg)
     }
-    pub fn struct_span_fatal_with_code<'a>(&'a self,
-                                           sp: Span,
-                                           msg: &str,
-                                           code: &str)
-                                           -> DiagnosticBuilder<'a>  {
+    pub fn struct_span_fatal_with_code<'a, S: Into<MultiSpan>>(&'a self,
+                                                               sp: S,
+                                                               msg: &str,
+                                                               code: &str)
+                                                               -> DiagnosticBuilder<'a>  {
         self.diagnostic().struct_span_fatal_with_code(sp, msg, code)
     }
     pub fn struct_fatal<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a>  {
         self.diagnostic().struct_fatal(msg)
     }
 
-    pub fn span_fatal(&self, sp: Span, msg: &str) -> ! {
+    pub fn span_fatal<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
         panic!(self.diagnostic().span_fatal(sp, msg))
     }
-    pub fn span_fatal_with_code(&self, sp: Span, msg: &str, code: &str) -> ! {
+    pub fn span_fatal_with_code<S: Into<MultiSpan>>(&self, sp: S, msg: &str, code: &str) -> ! {
         panic!(self.diagnostic().span_fatal_with_code(sp, msg, code))
     }
     pub fn fatal(&self, msg: &str) -> ! {
         panic!(self.diagnostic().fatal(msg))
     }
-    pub fn span_err_or_warn(&self, is_warning: bool, sp: Span, msg: &str) {
+    pub fn span_err_or_warn<S: Into<MultiSpan>>(&self, is_warning: bool, sp: S, msg: &str) {
         if is_warning {
             self.span_warn(sp, msg);
         } else {
             self.span_err(sp, msg);
         }
     }
-    pub fn span_err(&self, sp: Span, msg: &str) {
+    pub fn span_err<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         match split_msg_into_multilines(msg) {
             Some(msg) => self.diagnostic().span_err(sp, &msg),
             None => self.diagnostic().span_err(sp, msg)
         }
     }
-    pub fn span_err_with_code(&self, sp: Span, msg: &str, code: &str) {
+    pub fn span_err_with_code<S: Into<MultiSpan>>(&self, sp: S, msg: &str, code: &str) {
         match split_msg_into_multilines(msg) {
             Some(msg) => self.diagnostic().span_err_with_code(sp, &msg, code),
             None => self.diagnostic().span_err_with_code(sp, msg, code)
@@ -176,41 +183,44 @@ impl Session {
     pub fn abort_if_errors(&self) {
         self.diagnostic().abort_if_errors();
     }
-    pub fn abort_if_new_errors<F>(&self, mut f: F)
-        where F: FnMut()
+    pub fn track_errors<F, T>(&self, f: F) -> Result<T, usize>
+        where F: FnOnce() -> T
     {
-        let count = self.err_count();
-        f();
-        if self.err_count() > count {
-            self.abort_if_errors();
+        let old_count = self.err_count();
+        let result = f();
+        let errors = self.err_count() - old_count;
+        if errors == 0 {
+            Ok(result)
+        } else {
+            Err(errors)
         }
     }
-    pub fn span_warn(&self, sp: Span, msg: &str) {
+    pub fn span_warn<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         self.diagnostic().span_warn(sp, msg)
     }
-    pub fn span_warn_with_code(&self, sp: Span, msg: &str, code: &str) {
+    pub fn span_warn_with_code<S: Into<MultiSpan>>(&self, sp: S, msg: &str, code: &str) {
         self.diagnostic().span_warn_with_code(sp, msg, code)
     }
     pub fn warn(&self, msg: &str) {
         self.diagnostic().warn(msg)
     }
-    pub fn opt_span_warn(&self, opt_sp: Option<Span>, msg: &str) {
+    pub fn opt_span_warn<S: Into<MultiSpan>>(&self, opt_sp: Option<S>, msg: &str) {
         match opt_sp {
             Some(sp) => self.span_warn(sp, msg),
             None => self.warn(msg),
         }
     }
-    pub fn opt_span_bug(&self, opt_sp: Option<Span>, msg: &str) -> ! {
+    pub fn opt_span_bug<S: Into<MultiSpan>>(&self, opt_sp: Option<S>, msg: &str) -> ! {
         match opt_sp {
             Some(sp) => self.span_bug(sp, msg),
             None => self.bug(msg),
         }
     }
     /// Delay a span_bug() call until abort_if_errors()
-    pub fn delay_span_bug(&self, sp: Span, msg: &str) {
+    pub fn delay_span_bug<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         self.diagnostic().delay_span_bug(sp, msg)
     }
-    pub fn span_bug(&self, sp: Span, msg: &str) -> ! {
+    pub fn span_bug<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
         self.diagnostic().span_bug(sp, msg)
     }
     pub fn bug(&self, msg: &str) -> ! {
@@ -219,10 +229,10 @@ impl Session {
     pub fn note_without_error(&self, msg: &str) {
         self.diagnostic().note_without_error(msg)
     }
-    pub fn span_note_without_error(&self, sp: Span, msg: &str) {
+    pub fn span_note_without_error<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         self.diagnostic().span_note_without_error(sp, msg)
     }
-    pub fn span_unimpl(&self, sp: Span, msg: &str) -> ! {
+    pub fn span_unimpl<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
         self.diagnostic().span_unimpl(sp, msg)
     }
     pub fn unimpl(&self, msg: &str) -> ! {
@@ -259,7 +269,7 @@ impl Session {
     }
     // This exists to help with refactoring to eliminate impossible
     // cases later on
-    pub fn impossible_case(&self, sp: Span, msg: &str) -> ! {
+    pub fn impossible_case<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
         self.span_bug(sp, &format!("impossible case reached: {}", msg));
     }
     pub fn verbose(&self) -> bool { self.opts.debugging_opts.verbose }
@@ -467,6 +477,7 @@ pub fn build_session_(sopts: config::Options,
         lint_store: RefCell::new(lint::LintStore::new()),
         lints: RefCell::new(NodeMap()),
         plugin_llvm_passes: RefCell::new(Vec::new()),
+        plugin_mir_passes: RefCell::new(Vec::new()),
         plugin_attributes: RefCell::new(Vec::new()),
         crate_types: RefCell::new(Vec::new()),
         dependency_formats: RefCell::new(FnvHashMap()),
@@ -476,6 +487,7 @@ pub fn build_session_(sopts: config::Options,
         next_node_id: Cell::new(1),
         injected_allocator: Cell::new(None),
         available_macros: RefCell::new(HashSet::new()),
+        imported_macro_spans: RefCell::new(HashMap::new()),
     };
 
     sess
@@ -500,4 +512,16 @@ pub fn early_warn(output: config::ErrorOutputType, msg: &str) {
         config::ErrorOutputType::Json => Box::new(JsonEmitter::basic()),
     };
     emitter.emit(None, msg, None, errors::Level::Warning);
+}
+
+// Err(0) means compilation was stopped, but no errors were found.
+// This would be better as a dedicated enum, but using try! is so convenient.
+pub type CompileResult = Result<(), usize>;
+
+pub fn compile_result_from_err_count(err_count: usize) -> CompileResult {
+    if err_count == 0 {
+        Ok(())
+    } else {
+        Err(err_count)
+    }
 }

@@ -17,8 +17,8 @@ use astconv::AstConv;
 use check::{self, FnCtxt};
 use front::map as hir_map;
 use middle::ty::{self, Ty, ToPolyTraitRef, ToPredicate, TypeFoldable};
-use middle::cstore::{self, CrateStore, DefLike};
-use middle::def;
+use middle::cstore::{self, CrateStore};
+use middle::def::Def;
 use middle::def_id::DefId;
 use middle::lang_items::FnOnceTraitLangItem;
 use middle::subst::Substs;
@@ -271,7 +271,7 @@ fn suggest_traits_to_import<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 
         for (i, trait_did) in candidates.iter().enumerate() {
             err.fileline_help(span,
-                              &*format!("candidate #{}: use `{}`",
+                              &format!("candidate #{}: `use {}`",
                                         i + 1,
                                         fcx.tcx().item_path_str(*trait_did)));
         }
@@ -316,7 +316,7 @@ fn suggest_traits_to_import<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 
         for (i, trait_info) in candidates.iter().enumerate() {
             err.fileline_help(span,
-                              &*format!("candidate #{}: `{}`",
+                              &format!("candidate #{}: `{}`",
                                         i + 1,
                                         fcx.tcx().item_path_str(trait_info.def_id)));
         }
@@ -432,10 +432,10 @@ pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
                                cstore: &for<'a> cstore::CrateStore<'a>,
                                dl: cstore::DefLike) {
             match dl {
-                cstore::DlDef(def::DefTrait(did)) => {
+                cstore::DlDef(Def::Trait(did)) => {
                     traits.push(TraitInfo::new(did));
                 }
-                cstore::DlDef(def::DefMod(did)) => {
+                cstore::DlDef(Def::Mod(did)) => {
                     if !external_mods.insert(did) {
                         return;
                     }

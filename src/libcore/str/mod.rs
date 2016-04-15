@@ -157,7 +157,7 @@ impl Utf8Error {
     /// // std::str::from_utf8 returns a Utf8Error
     /// let error = str::from_utf8(&sparkle_heart).unwrap_err();
     ///
-    /// // the first byte is invalid here
+    /// // the second byte is invalid here
     /// assert_eq!(1, error.valid_up_to());
     /// ```
     #[stable(feature = "utf8_error", since = "1.5.0")]
@@ -174,10 +174,10 @@ impl Utf8Error {
 ///
 /// If you are sure that the byte slice is valid UTF-8, and you don't want to
 /// incur the overhead of the validity check, there is an unsafe version of
-/// this function, [`from_utf8_unchecked()`][fromutf8], which has the same
+/// this function, [`from_utf8_unchecked()`][fromutf8u], which has the same
 /// behavior but skips the check.
 ///
-/// [fromutf8]: fn.from_utf8.html
+/// [fromutf8u]: fn.from_utf8_unchecked.html
 ///
 /// If you need a `String` instead of a `&str`, consider
 /// [`String::from_utf8()`][string].
@@ -188,7 +188,7 @@ impl Utf8Error {
 /// it, this function is one way to have a stack-allocated string. There is
 /// an example of this in the examples section below.
 ///
-/// # Failure
+/// # Errors
 ///
 /// Returns `Err` if the slice is not UTF-8 with a description as to why the
 /// provided slice is not UTF-8.
@@ -244,10 +244,38 @@ pub fn from_utf8(v: &[u8]) -> Result<&str, Utf8Error> {
     Ok(unsafe { from_utf8_unchecked(v) })
 }
 
+/// Forms a str from a pointer and a length.
+///
+/// The `len` argument is the number of bytes in the string.
+///
+/// # Safety
+///
+/// This function is unsafe as there is no guarantee that the given pointer is
+/// valid for `len` bytes, nor whether the lifetime inferred is a suitable
+/// lifetime for the returned str.
+///
+/// The data must be valid UTF-8
+///
+/// `p` must be non-null, even for zero-length str.
+///
+/// # Caveat
+///
+/// The lifetime for the returned str is inferred from its usage. To
+/// prevent accidental misuse, it's suggested to tie the lifetime to whichever
+/// source lifetime is safe in the context, such as by providing a helper
+/// function taking the lifetime of a host value for the str, or by explicit
+/// annotation.
+/// Performs the same functionality as `from_raw_parts`, except that a mutable
+/// str is returned.
+///
+unsafe fn from_raw_parts_mut<'a>(p: *mut u8, len: usize) -> &'a mut str {
+    mem::transmute::<&mut [u8], &mut str>(slice::from_raw_parts_mut(p, len))
+}
+
 /// Converts a slice of bytes to a string slice without checking
 /// that the string contains valid UTF-8.
 ///
-/// See the safe version, [`from_utf8()`][fromutf8], for more.
+/// See the safe version, [`from_utf8()`][fromutf8], for more information.
 ///
 /// [fromutf8]: fn.from_utf8.html
 ///
@@ -1712,7 +1740,7 @@ impl StrExt for str {
         let mut matcher = pat.into_searcher(self);
         if let Some((a, b)) = matcher.next_reject() {
             i = a;
-            j = b; // Rember earliest known match, correct it below if
+            j = b; // Remember earliest known match, correct it below if
                    // last match is different
         }
         if let Some((_, b)) = matcher.next_reject_back() {
@@ -1843,10 +1871,10 @@ impl StrExt for str {
         // is_char_boundary checks that the index is in [0, .len()]
         if self.is_char_boundary(mid) {
             let len = self.len();
+            let ptr = self.as_ptr() as *mut u8;
             unsafe {
-                let self2: &mut str = mem::transmute_copy(&self);
-                (self.slice_mut_unchecked(0, mid),
-                 self2.slice_mut_unchecked(mid, len))
+                (from_raw_parts_mut(ptr, mid),
+                 from_raw_parts_mut(ptr.offset(mid as isize), len - mid))
             }
         } else {
             slice_error_fail(self, 0, mid)

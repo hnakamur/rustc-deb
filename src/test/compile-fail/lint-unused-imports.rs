@@ -56,13 +56,23 @@ mod bar {
         use foo::Point;
         use foo::Square; //~ ERROR unused import
         pub fn cc(_p: Point) -> super::Square {
-            super::Square
+            fn f() -> super::Square {
+                super::Square
+            }
+            f()
         }
     }
 
     #[allow(unused_imports)]
     mod foo {
         use std::cmp::PartialEq;
+    }
+}
+
+fn g() {
+    use self::g; //~ ERROR unused import
+    fn f() {
+        self::g();
     }
 }
 

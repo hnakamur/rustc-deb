@@ -148,7 +148,15 @@ ifeq ($$(CFG_WINDOWSY_$(1)),1)
 else ifeq ($(OSTYPE_$(1)), apple-ios)
   JEMALLOC_ARGS_$(1) := --disable-tls
 else ifeq ($(findstring android, $(OSTYPE_$(1))), android)
-  JEMALLOC_ARGS_$(1) := --disable-tls
+  # We force android to have prefixed symbols because apparently replacement of
+  # the libc allocator doesn't quite work. When this was tested (unprefixed
+  # symbols), it was found that the `realpath` function in libc would allocate
+  # with libc malloc (not jemalloc malloc), and then the standard library would
+  # free with jemalloc free, causing a segfault.
+  #
+  # If the test suite passes, however, without symbol prefixes then we should be
+  # good to go!
+  JEMALLOC_ARGS_$(1) := --disable-tls --with-jemalloc-prefix=je_
 endif
 
 ifdef CFG_ENABLE_DEBUG_JEMALLOC
@@ -186,7 +194,7 @@ JEMALLOC_LOCAL_$(1) := $$(JEMALLOC_BUILD_DIR_$(1))/lib/$$(JEMALLOC_REAL_NAME_$(1
 $$(JEMALLOC_LOCAL_$(1)): $$(JEMALLOC_DEPS) $$(MKFILE_DEPS)
 	@$$(call E, make: jemalloc)
 	cd "$$(JEMALLOC_BUILD_DIR_$(1))"; "$(S)src/jemalloc/configure" \
-		$$(JEMALLOC_ARGS_$(1)) --with-jemalloc-prefix=je_ $(CFG_JEMALLOC_FLAGS) \
+		$$(JEMALLOC_ARGS_$(1)) $(CFG_JEMALLOC_FLAGS) \
 		--build=$$(CFG_GNU_TRIPLE_$(CFG_BUILD)) --host=$$(CFG_GNU_TRIPLE_$(1)) \
 		CC="$$(CC_$(1)) $$(CFG_JEMALLOC_CFLAGS_$(1))" \
 		AR="$$(AR_$(1))" \
@@ -245,7 +253,7 @@ COMPRT_AR_$(1) := $$(AR_$(1))
 # We chomp -Werror here because GCC warns about the type signature of
 # builtins not matching its own and the build fails. It's a bit hacky,
 # but what can we do, we're building libclang-rt using GCC ......
-COMPRT_CFLAGS_$(1) := $$(subst -Werror,,$$(CFG_GCCISH_CFLAGS_$(1))) -std=c99
+COMPRT_CFLAGS_$(1) := $$(filter-out -Werror -Werror=*,$$(CFG_GCCISH_CFLAGS_$(1))) -std=c99
 
 # FreeBSD Clang's packaging is problematic; it doesn't copy unwind.h to
 # the standard include directory. This should really be in our changes to
@@ -253,6 +261,15 @@ COMPRT_CFLAGS_$(1) := $$(subst -Werror,,$$(CFG_GCCISH_CFLAGS_$(1))) -std=c99
 ifeq ($$(findstring freebsd,$(1)),freebsd)
 	COMPRT_CFLAGS_$(1) += -I/usr/include/c++/v1
 endif
+
+ifeq ($$(findstring emscripten,$(1)),emscripten)
+
+# FIXME: emscripten doesn't use compiler-rt and can't build it without
+# further hacks
+$$(COMPRT_LIB_$(1)):
+	touch $$@
+
+else
 
 $$(COMPRT_LIB_$(1)): $$(COMPRT_DEPS) $$(MKFILE_DEPS)
 	@$$(call E, make: compiler-rt)
@@ -266,7 +283,10 @@ $$(COMPRT_LIB_$(1)): $$(COMPRT_DEPS) $$(MKFILE_DEPS)
 		TargetTriple=$(1) \
 		triple-builtins
 	$$(Q)cp $$(COMPRT_BUILD_DIR_$(1))/triple/builtins/libcompiler_rt.a $$@
+
+endif # if emscripten
 endif
+
 ################################################################################
 # libbacktrace
 #
@@ -297,6 +317,12 @@ else
 
 ifeq ($$(findstring msvc,$(1)),msvc)
 # See comment above
+$$(BACKTRACE_LIB_$(1)):
+	touch $$@
+else
+
+ifeq ($$(findstring emscripten,$(1)),emscripten)
+# FIXME: libbacktrace doesn't understand the emscripten triple
 $$(BACKTRACE_LIB_$(1)):
 	touch $$@
 else
@@ -348,6 +374,7 @@ $$(BACKTRACE_LIB_$(1)): $$(BACKTRACE_BUILD_DIR_$(1))/Makefile $$(MKFILE_DEPS)
 		INCDIR=$(S)src/libbacktrace
 	$$(Q)cp $$(BACKTRACE_BUILD_DIR_$(1))/.libs/libbacktrace.a $$@
 
+endif # endif for emscripten
 endif # endif for msvc
 endif # endif for ios
 endif # endif for darwin

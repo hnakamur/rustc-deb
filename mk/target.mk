@@ -17,14 +17,6 @@ export CFG_COMPILER_HOST_TRIPLE
 export CFG_DEFAULT_LINKER
 export CFG_DEFAULT_AR
 
-# The standard libraries should be held up to a higher standard than any old
-# code, make sure that these common warnings are denied by default. These can
-# be overridden during development temporarily. For stage0, we allow warnings
-# which may be bugs in stage0 (should be fixed in stage1+)
-RUST_LIB_FLAGS_ST0 += -W warnings
-RUST_LIB_FLAGS_ST1 += -D warnings
-RUST_LIB_FLAGS_ST2 += -D warnings
-
 # Macro that generates the full list of dependencies for a crate at a particular
 # stage/target/host tuple.
 #
@@ -36,7 +28,7 @@ define RUST_CRATE_FULLDEPS
 CRATE_FULLDEPS_$(1)_T_$(2)_H_$(3)_$(4) := \
 		$$(CRATEFILE_$(4)) \
 		$$(RSINPUTS_$(4)) \
-		$$(foreach dep,$$(RUST_DEPS_$(4)), \
+		$$(foreach dep,$$(RUST_DEPS_$(4)_T_$(2)), \
 		  $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(dep)) \
 		$$(foreach dep,$$(NATIVE_DEPS_$(4)), \
 		  $$(RT_OUTPUT_DIR_$(2))/$$(call CFG_STATIC_LIB_NAME_$(2),$$(dep))) \
@@ -155,7 +147,7 @@ ifeq ($$(CFG_RUSTRT_HAS_STARTUP_OBJS_$(2)), 1)
 # Add dependencies on Rust startup objects to all crates that depend on core.
 # This ensures that they are built after core (since they depend on it),
 # but before everything else (since they are needed for linking dylib crates).
-$$(foreach crate, $$(TARGET_CRATES), \
+$$(foreach crate, $$(TARGET_CRATES_$(2)), \
 	$$(if $$(findstring core,$$(DEPS_$$(crate))), \
 		$$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(crate))) : $$(TLIB$(1)_T_$(2)_H_$(3))/$(4).o
 endif

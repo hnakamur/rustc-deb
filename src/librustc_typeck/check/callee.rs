@@ -26,7 +26,7 @@ use super::write_call;
 
 use CrateCtxt;
 use middle::cstore::LOCAL_CRATE;
-use middle::def;
+use middle::def::Def;
 use middle::def_id::DefId;
 use middle::infer;
 use middle::ty::{self, LvaluePreference, Ty};
@@ -199,7 +199,7 @@ fn try_overloaded_call_traits<'a,'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 
         match method::lookup_in_trait_adjusted(fcx,
                                                call_expr.span,
-                                               Some(&*callee_expr),
+                                               Some(&callee_expr),
                                                method_name,
                                                trait_def_id,
                                                autoderefs,
@@ -236,7 +236,7 @@ fn confirm_builtin_call<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
             if let hir::ExprCall(ref expr, _) = call_expr.node {
                 let tcx = fcx.tcx();
                 if let Some(pr) = tcx.def_map.borrow().get(&expr.id) {
-                    if pr.depth == 0 && pr.base_def != def::DefErr {
+                    if pr.depth == 0 && pr.base_def != Def::Err {
                         if let Some(span) = tcx.map.span_if_local(pr.def_id()) {
                             err.span_note(span, "defined here");
                         }
@@ -304,12 +304,12 @@ fn confirm_deferred_closure_call<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
                                    call_expr.span,
                                    expected,
                                    fn_sig.output.clone(),
-                                   &*fn_sig.inputs);
+                                   &fn_sig.inputs);
 
     check_argument_types(fcx,
                          call_expr.span,
-                         &*fn_sig.inputs,
-                         &*expected_arg_tys,
+                         &fn_sig.inputs,
+                         &expected_arg_tys,
                          arg_exprs,
                          fn_sig.variadic,
                          TupleArgumentsFlag::TupleArguments);

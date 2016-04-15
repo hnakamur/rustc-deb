@@ -15,7 +15,7 @@ use super::namespace::crate_root_namespace;
 use trans::common::CrateContext;
 use middle::def_id::DefId;
 use middle::infer;
-use middle::subst::{self, Substs};
+use middle::subst;
 use middle::ty::{self, Ty};
 
 use rustc_front::hir;
@@ -106,7 +106,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 output.push_str("unsafe ");
             }
 
-            if abi != ::syntax::abi::Rust {
+            if abi != ::syntax::abi::Abi::Rust {
                 output.push_str("extern \"");
                 output.push_str(abi.name());
                 output.push_str("\" ");

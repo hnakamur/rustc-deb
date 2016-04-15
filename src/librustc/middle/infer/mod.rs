@@ -88,8 +88,6 @@ pub struct InferCtxt<'a, 'tcx: 'a> {
 
     pub parameter_environment: ty::ParameterEnvironment<'a, 'tcx>,
 
-    pub fulfillment_cx: RefCell<traits::FulfillmentContext<'tcx>>,
-
     // the set of predicates on which errors have been reported, to
     // avoid reporting the same error twice.
     pub reported_trait_errors: RefCell<FnvHashSet<traits::TraitErrorKey<'tcx>>>,
@@ -354,16 +352,9 @@ pub fn fixup_err_to_string(f: FixupError) -> String {
     }
 }
 
-/// errors_will_be_reported is required to proxy to the fulfillment context
-/// FIXME -- a better option would be to hold back on modifying
-/// the global cache until we know that all dependent obligations
-/// are also satisfied. In that case, we could actually remove
-/// this boolean flag, and we'd also avoid the problem of squelching
-/// duplicate errors that occur across fns.
 pub fn new_infer_ctxt<'a, 'tcx>(tcx: &'a ty::ctxt<'tcx>,
                                 tables: &'a RefCell<ty::Tables<'tcx>>,
-                                param_env: Option<ty::ParameterEnvironment<'a, 'tcx>>,
-                                errors_will_be_reported: bool)
+                                param_env: Option<ty::ParameterEnvironment<'a, 'tcx>>)
                                 -> InferCtxt<'a, 'tcx> {
     InferCtxt {
         tcx: tcx,
@@ -373,7 +364,6 @@ pub fn new_infer_ctxt<'a, 'tcx>(tcx: &'a ty::ctxt<'tcx>,
         float_unification_table: RefCell::new(UnificationTable::new()),
         region_vars: RegionVarBindings::new(tcx),
         parameter_environment: param_env.unwrap_or(tcx.empty_parameter_environment()),
-        fulfillment_cx: RefCell::new(traits::FulfillmentContext::new(errors_will_be_reported)),
         reported_trait_errors: RefCell::new(FnvHashSet()),
         normalize: false,
         err_count_on_creation: tcx.sess.err_count()
@@ -383,7 +373,7 @@ pub fn new_infer_ctxt<'a, 'tcx>(tcx: &'a ty::ctxt<'tcx>,
 pub fn normalizing_infer_ctxt<'a, 'tcx>(tcx: &'a ty::ctxt<'tcx>,
                                         tables: &'a RefCell<ty::Tables<'tcx>>)
                                         -> InferCtxt<'a, 'tcx> {
-    let mut infcx = new_infer_ctxt(tcx, tables, None, false);
+    let mut infcx = new_infer_ctxt(tcx, tables, None);
     infcx.normalize = true;
     infcx
 }
@@ -522,7 +512,7 @@ pub fn normalize_associated_type<'tcx,T>(tcx: &ty::ctxt<'tcx>, value: &T) -> T
         return value;
     }
 
-    let infcx = new_infer_ctxt(tcx, &tcx.tables, None, true);
+    let infcx = new_infer_ctxt(tcx, &tcx.tables, None);
     let mut selcx = traits::SelectionContext::new(&infcx);
     let cause = traits::ObligationCause::dummy();
     let traits::Normalized { value: result, obligations } =
@@ -532,7 +522,7 @@ pub fn normalize_associated_type<'tcx,T>(tcx: &ty::ctxt<'tcx>, value: &T) -> T
            result,
            obligations);
 
-    let mut fulfill_cx = infcx.fulfillment_cx.borrow_mut();
+    let mut fulfill_cx = traits::FulfillmentContext::new();
 
     for obligation in obligations {
         fulfill_cx.register_predicate_obligation(&infcx, obligation);
@@ -1117,11 +1107,15 @@ impl<'a, 'tcx> InferCtxt<'a, 'tcx> {
                                         .map(|method| resolve_ty(method.ty)))
     }
 
+    pub fn errors_since_creation(&self) -> bool {
+        self.tcx.sess.err_count() - self.err_count_on_creation != 0
+    }
+
     pub fn node_type(&self, id: ast::NodeId) -> Ty<'tcx> {
         match self.tables.borrow().node_types.get(&id) {
             Some(&t) => t,
             // FIXME
-            None if self.tcx.sess.err_count() - self.err_count_on_creation != 0 =>
+            None if self.errors_since_creation() =>
                 self.tcx.types.err,
             None => {
                 self.tcx.sess.bug(
@@ -1144,7 +1138,14 @@ impl<'a, 'tcx> InferCtxt<'a, 'tcx> {
                                              free_regions: &FreeRegionMap,
                                              subject_node_id: ast::NodeId) {
         let errors = self.region_vars.resolve_regions(free_regions, subject_node_id);
-        self.report_region_errors(&errors); // see error_reporting.rs
+        if !self.errors_since_creation() {
+            // As a heuristic, just skip reporting region errors
+            // altogether if other errors have been reported while
+            // this infcx was in use.  This is totally hokey but
+            // otherwise we have a hard time separating legit region
+            // errors from silly ones.
+            self.report_region_errors(&errors); // see error_reporting.rs
+        }
     }
 
     pub fn ty_to_string(&self, t: Ty<'tcx>) -> String {

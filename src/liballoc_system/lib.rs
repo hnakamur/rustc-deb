@@ -12,6 +12,7 @@
 #![crate_type = "rlib"]
 #![no_std]
 #![allocator]
+#![cfg_attr(not(stage0), deny(warnings))]
 #![unstable(feature = "alloc_system",
             reason = "this library is unlikely to be stabilized in its current \
                       form or name",
@@ -28,10 +29,9 @@ extern crate libc;
 #[cfg(all(any(target_arch = "x86",
               target_arch = "arm",
               target_arch = "mips",
-              target_arch = "mipsel",
               target_arch = "powerpc",
               target_arch = "powerpc64",
-              target_arch = "powerpc64le")))]
+              target_arch = "asmjs")))]
 const MIN_ALIGN: usize = 8;
 #[cfg(all(any(target_arch = "x86_64",
               target_arch = "aarch64")))]

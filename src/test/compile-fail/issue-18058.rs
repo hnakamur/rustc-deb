@@ -9,6 +9,6 @@
 // except according to those terms.
 
 impl Undefined {}
-//~^ ERROR use of undeclared type name `Undefined`
+//~^ ERROR type name `Undefined` is undefined or not in scope
 
 fn main() {}

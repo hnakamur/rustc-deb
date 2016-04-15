@@ -40,7 +40,7 @@ pub use intrinsics::copy;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use intrinsics::write_bytes;
 
-#[unstable(feature = "drop_in_place", reason = "just exposed, needs FCP", issue = "27908")]
+#[stable(feature = "drop_in_place", since = "1.8.0")]
 pub use intrinsics::drop_in_place;
 
 /// Creates a null raw pointer.
@@ -127,8 +127,7 @@ pub unsafe fn read<T>(src: *const T) -> T {
     tmp
 }
 
-/// Variant of read_and_zero that writes the specific drop-flag byte
-/// (which may be more appropriate than zero).
+#[allow(missing_docs)]
 #[inline(always)]
 #[unstable(feature = "filling_drop",
            reason = "may play a larger role in std::ptr future extensions",
@@ -160,6 +159,54 @@ pub unsafe fn read_and_drop<T>(dest: *mut T) -> T {
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn write<T>(dst: *mut T, src: T) {
     intrinsics::move_val_init(&mut *dst, src)
+}
+
+/// Performs a volatile read of the value from `src` without moving it. This
+/// leaves the memory in `src` unchanged.
+///
+/// Volatile operations are intended to act on I/O memory, and are guaranteed
+/// to not be elided or reordered by the compiler across other volatile
+/// operations. See the LLVM documentation on [[volatile]].
+///
+/// [volatile]: http://llvm.org/docs/LangRef.html#volatile-memory-accesses
+///
+/// # Safety
+///
+/// Beyond accepting a raw pointer, this is unsafe because it semantically
+/// moves the value out of `src` without preventing further usage of `src`.
+/// If `T` is not `Copy`, then care must be taken to ensure that the value at
+/// `src` is not used before the data is overwritten again (e.g. with `write`,
+/// `zero_memory`, or `copy_memory`). Note that `*src = foo` counts as a use
+/// because it will attempt to drop the value previously at `*src`.
+#[inline]
+#[unstable(feature = "volatile", reason = "recently added", issue = "31756")]
+pub unsafe fn read_volatile<T>(src: *const T) -> T {
+    intrinsics::volatile_load(src)
+}
+
+/// Performs a volatile write of a memory location with the given value without
+/// reading or dropping the old value.
+///
+/// Volatile operations are intended to act on I/O memory, and are guaranteed
+/// to not be elided or reordered by the compiler across other volatile
+/// operations. See the LLVM documentation on [[volatile]].
+///
+/// [volatile]: http://llvm.org/docs/LangRef.html#volatile-memory-accesses
+///
+/// # Safety
+///
+/// This operation is marked unsafe because it accepts a raw pointer.
+///
+/// It does not drop the contents of `dst`. This is safe, but it could leak
+/// allocations or resources, so care must be taken not to overwrite an object
+/// that should be dropped.
+///
+/// This is appropriate for initializing uninitialized memory, or overwriting
+/// memory that has previously been `read` from.
+#[inline]
+#[unstable(feature = "volatile", reason = "recently added", issue = "31756")]
+pub unsafe fn write_volatile<T>(dst: *mut T, src: T) {
+    intrinsics::volatile_store(dst, src);
 }
 
 #[lang = "const_ptr"]
@@ -465,7 +512,7 @@ impl<T: ?Sized> PartialOrd for *mut T {
     fn ge(&self, other: &*mut T) -> bool { *self >= *other }
 }
 
-/// A wrapper around a raw `*mut T` that indicates that the possessor
+/// A wrapper around a raw non-null `*mut T` that indicates that the possessor
 /// of this wrapper owns the referent. This in turn implies that the
 /// `Unique<T>` is `Send`/`Sync` if `T` is `Send`/`Sync`, unlike a raw
 /// `*mut T` (which conveys no particular ownership semantics).  It
@@ -502,6 +549,10 @@ unsafe impl<T: Sync + ?Sized> Sync for Unique<T> { }
 #[unstable(feature = "unique", issue = "27730")]
 impl<T: ?Sized> Unique<T> {
     /// Creates a new `Unique`.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be non-null.
     pub const unsafe fn new(ptr: *mut T) -> Unique<T> {
         Unique { pointer: NonZero::new(ptr), _marker: PhantomData }
     }
@@ -537,7 +588,7 @@ impl<T> fmt::Pointer for Unique<T> {
     }
 }
 
-/// A wrapper around a raw `*mut T` that indicates that the possessor
+/// A wrapper around a raw non-null `*mut T` that indicates that the possessor
 /// of this wrapper has shared ownership of the referent. Useful for
 /// building abstractions like `Rc<T>` or `Arc<T>`, which internally
 /// use raw pointers to manage the memory that they own.
@@ -566,6 +617,10 @@ impl<T: ?Sized> !Sync for Shared<T> { }
 #[unstable(feature = "shared", issue = "27730")]
 impl<T: ?Sized> Shared<T> {
     /// Creates a new `Shared`.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be non-null.
     pub unsafe fn new(ptr: *mut T) -> Self {
         Shared { pointer: NonZero::new(ptr), _marker: PhantomData }
     }

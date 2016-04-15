@@ -385,12 +385,12 @@ pub enum TrySendError<T> {
     /// this is not a buffered channel, then there is no receiver available to
     /// acquire the data.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Full(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] T),
+    Full(#[stable(feature = "rust1", since = "1.0.0")] T),
 
     /// This channel's receiving half has disconnected, so the data could not be
     /// sent. The data is returned back to the callee in this case.
     #[stable(feature = "rust1", since = "1.0.0")]
-    Disconnected(#[cfg_attr(not(stage0), stable(feature = "rust1", since = "1.0.0"))] T),
+    Disconnected(#[stable(feature = "rust1", since = "1.0.0")] T),
 }
 
 enum Flavor<T> {
@@ -403,10 +403,10 @@ enum Flavor<T> {
 #[doc(hidden)]
 trait UnsafeFlavor<T> {
     fn inner_unsafe(&self) -> &UnsafeCell<Flavor<T>>;
-    unsafe fn inner_mut<'a>(&'a self) -> &'a mut Flavor<T> {
+    unsafe fn inner_mut(&self) -> &mut Flavor<T> {
         &mut *self.inner_unsafe().get()
     }
-    unsafe fn inner<'a>(&'a self) -> &'a Flavor<T> {
+    unsafe fn inner(&self) -> &Flavor<T> {
         &*self.inner_unsafe().get()
     }
 }
@@ -635,6 +635,13 @@ impl<T> Drop for Sender<T> {
     }
 }
 
+#[stable(feature = "mpsc_debug", since = "1.7.0")]
+impl<T> fmt::Debug for Sender<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Sender {{ .. }}")
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // SyncSender
 ////////////////////////////////////////////////////////////////////////////////
@@ -690,6 +697,13 @@ impl<T> Clone for SyncSender<T> {
 impl<T> Drop for SyncSender<T> {
     fn drop(&mut self) {
         unsafe { (*self.inner.get()).drop_chan(); }
+    }
+}
+
+#[stable(feature = "mpsc_debug", since = "1.7.0")]
+impl<T> fmt::Debug for SyncSender<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SyncSender {{ .. }}")
     }
 }
 
@@ -984,6 +998,13 @@ impl<T> Drop for Receiver<T> {
             Flavor::Shared(ref mut p) => unsafe { (*p.get()).drop_port(); },
             Flavor::Sync(ref mut p) => unsafe { (*p.get()).drop_port(); },
         }
+    }
+}
+
+#[stable(feature = "mpsc_debug", since = "1.7.0")]
+impl<T> fmt::Debug for Receiver<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Receiver {{ .. }}")
     }
 }
 
@@ -2198,5 +2219,23 @@ mod sync_tests {
         for _ in 0..100 {
             repro()
         }
+    }
+
+    #[test]
+    fn fmt_debug_sender() {
+        let (tx, _) = channel::<i32>();
+        assert_eq!(format!("{:?}", tx), "Sender { .. }");
+    }
+
+    #[test]
+    fn fmt_debug_recv() {
+        let (_, rx) = channel::<i32>();
+        assert_eq!(format!("{:?}", rx), "Receiver { .. }");
+    }
+
+    #[test]
+    fn fmt_debug_sync_sender() {
+        let (tx, _) = sync_channel::<i32>(1);
+        assert_eq!(format!("{:?}", tx), "SyncSender { .. }");
     }
 }

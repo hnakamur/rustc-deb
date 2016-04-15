@@ -12,7 +12,6 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(dead_code)]
-#![allow(trivial_casts)]
 
 #![crate_name = "rustc_llvm"]
 #![unstable(feature = "rustc_private", issue = "27812")]
@@ -21,6 +20,7 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/")]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(associated_consts)]
 #![feature(box_syntax)]
@@ -55,7 +55,7 @@ pub use self::DiagnosticSeverity::*;
 pub use self::Linkage::*;
 pub use self::DLLStorageClassTypes::*;
 
-use std::ffi::CString;
+use std::ffi::{CString, CStr};
 use std::cell::RefCell;
 use std::slice;
 use libc::{c_uint, c_ushort, uint64_t, c_int, size_t, c_char};
@@ -261,12 +261,12 @@ impl AttrBuilder {
         }
     }
 
-    pub fn arg<'a, T: AttrHelper + 'static>(&'a mut self, idx: usize, a: T) -> &'a mut AttrBuilder {
+    pub fn arg<T: AttrHelper + 'static>(&mut self, idx: usize, a: T) -> &mut AttrBuilder {
         self.attrs.push((idx, box a as Box<AttrHelper+'static>));
         self
     }
 
-    pub fn ret<'a, T: AttrHelper + 'static>(&'a mut self, a: T) -> &'a mut AttrBuilder {
+    pub fn ret<T: AttrHelper + 'static>(&mut self, a: T) -> &mut AttrBuilder {
         self.attrs.push((ReturnIndex as usize, box a as Box<AttrHelper+'static>));
         self
     }
@@ -461,6 +461,15 @@ pub enum ArchiveKind {
     K_COFF,
 }
 
+/// Represents the different LLVM passes Rust supports
+#[derive(Copy, Clone, PartialEq, Debug)]
+#[repr(C)]
+pub enum SupportedPassKind {
+    Function,
+    Module,
+    Unsupported,
+}
+
 // Opaque pointer types
 #[allow(missing_copy_implementations)]
 pub enum Module_opaque {}
@@ -534,6 +543,9 @@ pub type SMDiagnosticRef = *mut SMDiagnostic_opaque;
 #[allow(missing_copy_implementations)]
 pub enum RustArchiveMember_opaque {}
 pub type RustArchiveMemberRef = *mut RustArchiveMember_opaque;
+#[allow(missing_copy_implementations)]
+pub enum OperandBundleDef_opaque {}
+pub type OperandBundleDefRef = *mut OperandBundleDef_opaque;
 
 pub type DiagnosticHandler = unsafe extern "C" fn(DiagnosticInfoRef, *mut c_void);
 pub type InlineAsmDiagHandler = unsafe extern "C" fn(SMDiagnosticRef, *const c_void, c_uint);
@@ -597,6 +609,9 @@ pub mod debuginfo {
 // automatically updated whenever LLVM is updated to include an up-to-date
 // set of the libraries we need to link to LLVM for.
 #[link(name = "rustllvm", kind = "static")]
+#[cfg(not(cargobuild))]
+extern {}
+
 #[linked_from = "rustllvm"] // not quite true but good enough
 extern {
     /* Create and destroy contexts. */
@@ -1139,14 +1154,15 @@ extern {
                                Addr: ValueRef,
                                NumDests: c_uint)
                                -> ValueRef;
-    pub fn LLVMBuildInvoke(B: BuilderRef,
-                           Fn: ValueRef,
-                           Args: *const ValueRef,
-                           NumArgs: c_uint,
-                           Then: BasicBlockRef,
-                           Catch: BasicBlockRef,
-                           Name: *const c_char)
-                           -> ValueRef;
+    pub fn LLVMRustBuildInvoke(B: BuilderRef,
+                               Fn: ValueRef,
+                               Args: *const ValueRef,
+                               NumArgs: c_uint,
+                               Then: BasicBlockRef,
+                               Catch: BasicBlockRef,
+                               Bundle: OperandBundleDefRef,
+                               Name: *const c_char)
+                               -> ValueRef;
     pub fn LLVMRustBuildLandingPad(B: BuilderRef,
                                    Ty: TypeRef,
                                    PersFn: ValueRef,
@@ -1156,6 +1172,31 @@ extern {
                                    -> ValueRef;
     pub fn LLVMBuildResume(B: BuilderRef, Exn: ValueRef) -> ValueRef;
     pub fn LLVMBuildUnreachable(B: BuilderRef) -> ValueRef;
+
+    pub fn LLVMRustBuildCleanupPad(B: BuilderRef,
+                                   ParentPad: ValueRef,
+                                   ArgCnt: c_uint,
+                                   Args: *const ValueRef,
+                                   Name: *const c_char) -> ValueRef;
+    pub fn LLVMRustBuildCleanupRet(B: BuilderRef,
+                                   CleanupPad: ValueRef,
+                                   UnwindBB: BasicBlockRef) -> ValueRef;
+    pub fn LLVMRustBuildCatchPad(B: BuilderRef,
+                                 ParentPad: ValueRef,
+                                 ArgCnt: c_uint,
+                                 Args: *const ValueRef,
+                                 Name: *const c_char) -> ValueRef;
+    pub fn LLVMRustBuildCatchRet(B: BuilderRef,
+                                 Pad: ValueRef,
+                                 BB: BasicBlockRef) -> ValueRef;
+    pub fn LLVMRustBuildCatchSwitch(Builder: BuilderRef,
+                                    ParentPad: ValueRef,
+                                    BB: BasicBlockRef,
+                                    NumHandlers: c_uint,
+                                    Name: *const c_char) -> ValueRef;
+    pub fn LLVMRustAddHandler(CatchSwitch: ValueRef,
+                              Handler: BasicBlockRef);
+    pub fn LLVMRustSetPersonalityFn(B: BuilderRef, Pers: ValueRef);
 
     /* Add a case to the switch instruction */
     pub fn LLVMAddCase(Switch: ValueRef,
@@ -1466,12 +1507,13 @@ extern {
     /* Miscellaneous instructions */
     pub fn LLVMBuildPhi(B: BuilderRef, Ty: TypeRef, Name: *const c_char)
                         -> ValueRef;
-    pub fn LLVMBuildCall(B: BuilderRef,
-                         Fn: ValueRef,
-                         Args: *const ValueRef,
-                         NumArgs: c_uint,
-                         Name: *const c_char)
-                         -> ValueRef;
+    pub fn LLVMRustBuildCall(B: BuilderRef,
+                             Fn: ValueRef,
+                             Args: *const ValueRef,
+                             NumArgs: c_uint,
+                             Bundle: OperandBundleDefRef,
+                             Name: *const c_char)
+                             -> ValueRef;
     pub fn LLVMBuildSelect(B: BuilderRef,
                            If: ValueRef,
                            Then: ValueRef,
@@ -1542,7 +1584,8 @@ extern {
                                   CMP: ValueRef,
                                   RHS: ValueRef,
                                   Order: AtomicOrdering,
-                                  FailureOrder: AtomicOrdering)
+                                  FailureOrder: AtomicOrdering,
+                                  Weak: Bool)
                                   -> ValueRef;
     pub fn LLVMBuildAtomicRMW(B: BuilderRef,
                               Op: AtomicBinOp,
@@ -2008,7 +2051,10 @@ extern {
     pub fn LLVMIsAAllocaInst(value_ref: ValueRef) -> ValueRef;
     pub fn LLVMIsAConstantInt(value_ref: ValueRef) -> ValueRef;
 
-    pub fn LLVMRustAddPass(PM: PassManagerRef, Pass: *const c_char) -> bool;
+    pub fn LLVMRustPassKind(Pass: PassRef) -> SupportedPassKind;
+    pub fn LLVMRustFindAndCreatePass(Pass: *const c_char) -> PassRef;
+    pub fn LLVMRustAddPass(PM: PassManagerRef, Pass: PassRef);
+
     pub fn LLVMRustCreateTargetMachine(Triple: *const c_char,
                                        CPU: *const c_char,
                                        Features: *const c_char,
@@ -2113,53 +2159,12 @@ extern {
     pub fn LLVMRustSetDataLayoutFromTargetMachine(M: ModuleRef,
                                                   TM: TargetMachineRef);
     pub fn LLVMRustGetModuleDataLayout(M: ModuleRef) -> TargetDataRef;
-}
 
-#[cfg(have_component_x86)]
-extern {
-    pub fn LLVMInitializeX86TargetInfo();
-    pub fn LLVMInitializeX86Target();
-    pub fn LLVMInitializeX86TargetMC();
-    pub fn LLVMInitializeX86AsmPrinter();
-    pub fn LLVMInitializeX86AsmParser();
-}
-#[cfg(have_component_arm)]
-extern {
-    pub fn LLVMInitializeARMTargetInfo();
-    pub fn LLVMInitializeARMTarget();
-    pub fn LLVMInitializeARMTargetMC();
-    pub fn LLVMInitializeARMAsmPrinter();
-    pub fn LLVMInitializeARMAsmParser();
-}
-#[cfg(have_component_aarch64)]
-extern {
-    pub fn LLVMInitializeAArch64TargetInfo();
-    pub fn LLVMInitializeAArch64Target();
-    pub fn LLVMInitializeAArch64TargetMC();
-    pub fn LLVMInitializeAArch64AsmPrinter();
-    pub fn LLVMInitializeAArch64AsmParser();
-}
-#[cfg(have_component_mips)]
-extern {
-    pub fn LLVMInitializeMipsTargetInfo();
-    pub fn LLVMInitializeMipsTarget();
-    pub fn LLVMInitializeMipsTargetMC();
-    pub fn LLVMInitializeMipsAsmPrinter();
-    pub fn LLVMInitializeMipsAsmParser();
-}
-#[cfg(have_component_powerpc)]
-extern {
-    pub fn LLVMInitializePowerPCTargetInfo();
-    pub fn LLVMInitializePowerPCTarget();
-    pub fn LLVMInitializePowerPCTargetMC();
-    pub fn LLVMInitializePowerPCAsmPrinter();
-    pub fn LLVMInitializePowerPCAsmParser();
-}
-#[cfg(have_component_pnacl)]
-extern {
-    pub fn LLVMInitializePNaClTargetInfo();
-    pub fn LLVMInitializePNaClTarget();
-    pub fn LLVMInitializePNaClTargetMC();
+    pub fn LLVMRustBuildOperandBundleDef(Name: *const c_char,
+                                         Inputs: *const ValueRef,
+                                         NumInputs: c_uint)
+                                         -> OperandBundleDefRef;
+    pub fn LLVMRustFreeOperandBundleDef(Bundle: OperandBundleDefRef);
 }
 
 // LLVM requires symbols from this library, but apparently they're not printed
@@ -2348,20 +2353,14 @@ pub unsafe fn debug_loc_to_string(c: ContextRef, tr: DebugLocRef) -> String {
 
 pub fn initialize_available_targets() {
     macro_rules! init_target(
-        ($cfg:ident $arch:ident) => { {
+        ($cfg:meta, $($method:ident),*) => { {
             #[cfg($cfg)]
             fn init() {
+                extern {
+                    $(fn $method();)*
+                }
                 unsafe {
-                    let f = concat_idents!(LLVMInitialize, $arch, TargetInfo);
-                    f();
-                    let f = concat_idents!(LLVMInitialize, $arch, Target);
-                    f();
-                    let f = concat_idents!(LLVMInitialize, $arch, TargetMC);
-                    f();
-                    let f = concat_idents!(LLVMInitialize, $arch, AsmPrinter);
-                    f();
-                    let f = concat_idents!(LLVMInitialize, $arch, AsmParser);
-                    f();
+                    $($method();)*
                 }
             }
             #[cfg(not($cfg))]
@@ -2369,26 +2368,82 @@ pub fn initialize_available_targets() {
             init();
         } }
     );
+    init_target!(llvm_component = "x86",
+                 LLVMInitializeX86TargetInfo,
+                 LLVMInitializeX86Target,
+                 LLVMInitializeX86TargetMC,
+                 LLVMInitializeX86AsmPrinter,
+                 LLVMInitializeX86AsmParser);
+    init_target!(llvm_component = "arm",
+                 LLVMInitializeARMTargetInfo,
+                 LLVMInitializeARMTarget,
+                 LLVMInitializeARMTargetMC,
+                 LLVMInitializeARMAsmPrinter,
+                 LLVMInitializeARMAsmParser);
+    init_target!(llvm_component = "aarch64",
+                 LLVMInitializeAArch64TargetInfo,
+                 LLVMInitializeAArch64Target,
+                 LLVMInitializeAArch64TargetMC,
+                 LLVMInitializeAArch64AsmPrinter,
+                 LLVMInitializeAArch64AsmParser);
+    init_target!(llvm_component = "mips",
+                 LLVMInitializeMipsTargetInfo,
+                 LLVMInitializeMipsTarget,
+                 LLVMInitializeMipsTargetMC,
+                 LLVMInitializeMipsAsmPrinter,
+                 LLVMInitializeMipsAsmParser);
+    init_target!(llvm_component = "powerpc",
+                 LLVMInitializePowerPCTargetInfo,
+                 LLVMInitializePowerPCTarget,
+                 LLVMInitializePowerPCTargetMC,
+                 LLVMInitializePowerPCAsmPrinter,
+                 LLVMInitializePowerPCAsmParser);
+    init_target!(llvm_component = "pnacl",
+                 LLVMInitializePNaClTargetInfo,
+                 LLVMInitializePNaClTarget,
+                 LLVMInitializePNaClTargetMC);
+}
 
-    init_target!(have_component_powerpc PowerPC);
-    init_target!(have_component_mips Mips);
-    init_target!(have_component_aarch64 AArch64);
-    init_target!(have_component_arm ARM);
-    init_target!(have_component_x86 X86);
-
-    // PNaCl doesn't provide some of the optional target components, so we
-    // manually initialize it here.
-    #[cfg(have_component_pnacl)]
-    fn init_pnacl() {
-        unsafe {
-            LLVMInitializePNaClTargetInfo();
-            LLVMInitializePNaClTarget();
-            LLVMInitializePNaClTargetMC();
+pub fn last_error() -> Option<String> {
+    unsafe {
+        let cstr = LLVMRustGetLastError();
+        if cstr.is_null() {
+            None
+        } else {
+            let err = CStr::from_ptr(cstr).to_bytes();
+            let err = String::from_utf8_lossy(err).to_string();
+            libc::free(cstr as *mut _);
+            Some(err)
         }
     }
-    #[cfg(not(have_component_pnacl))]
-    fn init_pnacl() { }
-    init_pnacl();
+}
+
+pub struct OperandBundleDef {
+    inner: OperandBundleDefRef,
+}
+
+impl OperandBundleDef {
+    pub fn new(name: &str, vals: &[ValueRef]) -> OperandBundleDef {
+        let name = CString::new(name).unwrap();
+        let def = unsafe {
+            LLVMRustBuildOperandBundleDef(name.as_ptr(),
+                                          vals.as_ptr(),
+                                          vals.len() as c_uint)
+        };
+        OperandBundleDef { inner: def }
+    }
+
+    pub fn raw(&self) -> OperandBundleDefRef {
+        self.inner
+    }
+}
+
+impl Drop for OperandBundleDef {
+    fn drop(&mut self) {
+        unsafe {
+            LLVMRustFreeOperandBundleDef(self.inner);
+        }
+    }
 }
 
 // The module containing the native LLVM dependencies, generated by the build system
@@ -2396,6 +2451,7 @@ pub fn initialize_available_targets() {
 // parts of LLVM that rustllvm depends on aren't thrown away by the linker.
 // Works to the above fix for #15460 to ensure LLVM dependencies that
 // are only used by rustllvm don't get stripped by the linker.
+#[cfg(not(cargobuild))]
 mod llvmdeps {
     include! { env!("CFG_LLVM_LINKAGE_FILE") }
 }

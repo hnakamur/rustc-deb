@@ -12,11 +12,11 @@ use hair::*;
 use hair::cx::Cx;
 use rustc_data_structures::fnv::FnvHashMap;
 use rustc::middle::const_eval;
-use rustc::middle::def;
+use rustc::middle::def::Def;
 use rustc::middle::pat_util::{pat_is_resolved_const, pat_is_binding};
 use rustc::middle::ty::{self, Ty};
 use rustc::mir::repr::*;
-use rustc_front::hir;
+use rustc_front::hir::{self, PatKind};
 use syntax::ast;
 use syntax::codemap::Span;
 use syntax::ptr::P;
@@ -64,14 +64,14 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
 
     fn to_pattern(&mut self, pat: &hir::Pat) -> Pattern<'tcx> {
         let kind = match pat.node {
-            hir::PatWild => PatternKind::Wild,
+            PatKind::Wild => PatternKind::Wild,
 
-            hir::PatLit(ref value) => {
+            PatKind::Lit(ref value) => {
                 let value = const_eval::eval_const_expr(self.cx.tcx, value);
                 PatternKind::Constant { value: value }
             }
 
-            hir::PatRange(ref lo, ref hi) => {
+            PatKind::Range(ref lo, ref hi) => {
                 let lo = const_eval::eval_const_expr(self.cx.tcx, lo);
                 let lo = Literal::Value { value: lo };
                 let hi = const_eval::eval_const_expr(self.cx.tcx, hi);
@@ -79,18 +79,18 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 PatternKind::Range { lo: lo, hi: hi }
             },
 
-            hir::PatEnum(..) | hir::PatIdent(..) | hir::PatQPath(..)
+            PatKind::Path(..) | PatKind::Ident(..) | PatKind::QPath(..)
                 if pat_is_resolved_const(&self.cx.tcx.def_map.borrow(), pat) =>
             {
                 let def = self.cx.tcx.def_map.borrow().get(&pat.id).unwrap().full_def();
                 match def {
-                    def::DefConst(def_id) | def::DefAssociatedConst(def_id) =>
+                    Def::Const(def_id) | Def::AssociatedConst(def_id) =>
                         match const_eval::lookup_const_by_id(self.cx.tcx, def_id,
                                                              Some(pat.id), None) {
                             Some(const_expr) => {
                                 let pat = const_eval::const_expr_to_pat(self.cx.tcx, const_expr,
                                                                         pat.span);
-                                return self.to_pattern(&*pat);
+                                return self.to_pattern(&pat);
                             }
                             None => {
                                 self.cx.tcx.sess.span_bug(
@@ -105,12 +105,12 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 }
             }
 
-            hir::PatRegion(ref subpattern, _) |
-            hir::PatBox(ref subpattern) => {
+            PatKind::Ref(ref subpattern, _) |
+            PatKind::Box(ref subpattern) => {
                 PatternKind::Deref { subpattern: self.to_pattern(subpattern) }
             }
 
-            hir::PatVec(ref prefix, ref slice, ref suffix) => {
+            PatKind::Vec(ref prefix, ref slice, ref suffix) => {
                 let ty = self.cx.tcx.node_id_to_type(pat.id);
                 match ty.sty {
                     ty::TyRef(_, mt) =>
@@ -134,7 +134,7 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 }
             }
 
-            hir::PatTup(ref subpatterns) => {
+            PatKind::Tup(ref subpatterns) => {
                 let subpatterns =
                     subpatterns.iter()
                                .enumerate()
@@ -147,7 +147,7 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 PatternKind::Leaf { subpatterns: subpatterns }
             }
 
-            hir::PatIdent(bm, ref ident, ref sub)
+            PatKind::Ident(bm, ref ident, ref sub)
                 if pat_is_binding(&self.cx.tcx.def_map.borrow(), pat) =>
             {
                 let id = match self.binding_map {
@@ -179,11 +179,11 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 }
             }
 
-            hir::PatIdent(..) => {
+            PatKind::Ident(..) | PatKind::Path(..) => {
                 self.variant_or_leaf(pat, vec![])
             }
 
-            hir::PatEnum(_, ref opt_subpatterns) => {
+            PatKind::TupleStruct(_, ref opt_subpatterns) => {
                 let subpatterns =
                     opt_subpatterns.iter()
                                    .flat_map(|v| v.iter())
@@ -196,7 +196,7 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 self.variant_or_leaf(pat, subpatterns)
             }
 
-            hir::PatStruct(_, ref fields, _) => {
+            PatKind::Struct(_, ref fields, _) => {
                 let pat_ty = self.cx.tcx.node_id_to_type(pat.id);
                 let adt_def = match pat_ty.sty {
                     ty::TyStruct(adt_def, _) | ty::TyEnum(adt_def, _) => adt_def,
@@ -229,7 +229,7 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 self.variant_or_leaf(pat, subpatterns)
             }
 
-            hir::PatQPath(..) => {
+            PatKind::QPath(..) => {
                 self.cx.tcx.sess.span_bug(pat.span, "unexpanded macro or bad constant etc");
             }
         };
@@ -290,7 +290,7 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                        -> PatternKind<'tcx> {
         let def = self.cx.tcx.def_map.borrow().get(&pat.id).unwrap().full_def();
         match def {
-            def::DefVariant(enum_id, variant_id, _) => {
+            Def::Variant(enum_id, variant_id) => {
                 let adt_def = self.cx.tcx.lookup_adt_def(enum_id);
                 if adt_def.variants.len() > 1 {
                     PatternKind::Variant {
@@ -303,9 +303,7 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 }
             }
 
-            // NB: resolving to DefStruct means the struct *constructor*,
-            // not the struct as a type.
-            def::DefStruct(..) | def::DefTy(..) => {
+            Def::Struct(..) | Def::TyAlias(..) => {
                 PatternKind::Leaf { subpatterns: subpatterns }
             }
 
@@ -314,5 +312,22 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                                           &format!("inappropriate def for pattern: {:?}", def));
             }
         }
+    }
+}
+
+impl<'tcx> FieldPattern<'tcx> {
+    pub fn field_ty(&self) -> Ty<'tcx> {
+        debug!("field_ty({:?},ty={:?})", self, self.pattern.ty);
+        let r = match *self.pattern.kind {
+            PatternKind::Binding { mode: BindingMode::ByRef(..), ..} => {
+                match self.pattern.ty.sty {
+                    ty::TyRef(_, mt) => mt.ty,
+                    _ => unreachable!()
+                }
+            }
+            _ => self.pattern.ty
+        };
+        debug!("field_ty -> {:?}", r);
+        r
     }
 }

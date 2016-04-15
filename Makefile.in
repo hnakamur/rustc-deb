@@ -100,6 +100,10 @@
 #     // Having trouble figuring out which test is failing? Turn off parallel tests
 #     make check-stage1-std RUST_TEST_THREADS=1
 #
+#     // To make debug!() and other logging calls visible, reconfigure:
+#     ./configure --enable-debug-assertions
+#     make ....
+#
 # If you really feel like getting your hands dirty, then:
 #
 #     run `make nitty-gritty`
@@ -220,17 +224,10 @@ endif
 # The test suite
 ifneq ($(strip $(findstring check,$(MAKECMDGOALS)) \
                $(findstring test,$(MAKECMDGOALS))  \
-               $(findstring perf,$(MAKECMDGOALS))  \
                $(findstring tidy,$(MAKECMDGOALS))),)
   CFG_INFO := $(info cfg: including test rules)
   include $(CFG_SRC_DIR)mk/tests.mk
   include $(CFG_SRC_DIR)mk/grammar.mk
-endif
-
-# Performance and benchmarking
-ifneq ($(findstring perf,$(MAKECMDGOALS)),)
-  CFG_INFO := $(info cfg: including perf rules)
-  include $(CFG_SRC_DIR)mk/perf.mk
 endif
 
 # Copy all the distributables to another directory for binary install

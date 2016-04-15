@@ -13,12 +13,12 @@
 ######################################################################
 
 # The version number
-CFG_RELEASE_NUM=1.7.0
+CFG_RELEASE_NUM=1.8.0
 
 # An optional number to put after the label, e.g. '.2' -> '-beta.2'
 # NB Make sure it starts with a dot to conform to semver pre-release
 # versions (section 9)
-CFG_PRERELEASE_VERSION=.4
+CFG_PRERELEASE_VERSION=.2
 
 # Append a version-dependent hash to each library, so we can install different
 # versions in the same place
@@ -361,6 +361,9 @@ export CFG_DISABLE_UNSTABLE_FEATURES
 export RUSTC_BOOTSTRAP_KEY:=$(CFG_BOOTSTRAP_KEY)
 endif
 export CFG_BOOTSTRAP_KEY
+ifdef CFG_MUSL_ROOT
+export CFG_MUSL_ROOT
+endif
 
 ######################################################################
 # Per-stage targets and runner
@@ -429,7 +432,7 @@ TSREQ$(1)_T_$(2)_H_$(3) = \
 # target
 SREQ$(1)_T_$(2)_H_$(3) = \
 	$$(TSREQ$(1)_T_$(2)_H_$(3)) \
-	$$(foreach dep,$$(TARGET_CRATES), \
+	$$(foreach dep,$$(TARGET_CRATES_$(2)), \
 	    $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(dep)) \
 	tmp/install-debugger-scripts$(1)_T_$(2)_H_$(3)-$$(call TRIPLE_TO_DEBUGGER_SCRIPT_SETTING,$(2)).done
 
@@ -438,7 +441,7 @@ SREQ$(1)_T_$(2)_H_$(3) = \
 CSREQ$(1)_T_$(2)_H_$(3) = \
 	$$(TSREQ$(1)_T_$(2)_H_$(3)) \
 	$$(HBIN$(1)_H_$(3))/rustdoc$$(X_$(3)) \
-	$$(foreach dep,$$(CRATES),$$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(dep))
+	$$(foreach dep,$$(HOST_CRATES),$$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(dep))
 
 ifeq ($(1),0)
 # Don't run the stage0 compiler under valgrind - that ship has sailed
@@ -517,14 +520,6 @@ STAGE$(1)_T_$(2)_H_$(3) := \
 	$$(Q)$$(RPATH_VAR$(1)_T_$(2)_H_$(3)) \
 		$$(call CFG_RUN_TARG_$(3),$(1), \
 		$$(CFG_VALGRIND_COMPILE$(1)) \
-		$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
-		--cfg $$(CFGFLAG$(1)_T_$(2)_H_$(3)) \
-		$$(CFG_RUSTC_FLAGS) $$(EXTRAFLAGS_STAGE$(1)) --target=$(2)) \
-                $$(RUSTC_FLAGS_$(2))
-
-PERF_STAGE$(1)_T_$(2)_H_$(3) := \
-	$$(Q)$$(call CFG_RUN_TARG_$(3),$(1), \
-		$$(CFG_PERF_TOOL) \
 		$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
 		--cfg $$(CFGFLAG$(1)_T_$(2)_H_$(3)) \
 		$$(CFG_RUSTC_FLAGS) $$(EXTRAFLAGS_STAGE$(1)) --target=$(2)) \

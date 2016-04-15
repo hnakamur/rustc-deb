@@ -134,6 +134,9 @@ pub const RLIM_NLIMITS: ::c_int = 9;
 pub const SO_SNDTIMEO: ::c_int = 0x1005;
 pub const SO_RCVTIMEO: ::c_int = 0x1006;
 
+pub const IPV6_JOIN_GROUP: ::c_int = 12;
+pub const IPV6_LEAVE_GROUP: ::c_int = 13;
+
 pub const KERN_PROC : ::c_int = 66;
 pub const O_DSYNC : ::c_int = 128;
 
@@ -156,6 +159,7 @@ pub const _SC_GETGR_R_SIZE_MAX : ::c_int = 100;
 pub const _SC_GETPW_R_SIZE_MAX : ::c_int = 101;
 pub const _SC_LOGIN_NAME_MAX : ::c_int = 102;
 pub const _SC_MQ_PRIO_MAX : ::c_int = 59;
+pub const _SC_NPROCESSORS_ONLN : ::c_int = 503;
 pub const _SC_THREADS : ::c_int = 91;
 pub const _SC_THREAD_ATTR_STACKADDR : ::c_int = 77;
 pub const _SC_THREAD_ATTR_STACKSIZE : ::c_int = 78;
@@ -201,8 +205,6 @@ pub const _SC_RTSIG_MAX : ::c_int = 66;
 pub const _SC_SIGQUEUE_MAX : ::c_int = 70;
 pub const _SC_TIMER_MAX : ::c_int = 93;
 
-pub const SIGSTKSZ: ::size_t = 40960;
-
 pub const FD_SETSIZE: usize = 1024;
 
 pub const ST_NOSUID: ::c_ulong = 2;
@@ -217,6 +219,8 @@ pub const KERN_PROC_ARGS: ::c_int = 55;
 pub const TMP_MAX : ::c_uint = 0x7fffffff;
 
 pub const NI_MAXHOST: ::size_t = 256;
+
+pub const RTLD_LOCAL: ::c_int = 0;
 
 extern {
     pub fn getnameinfo(sa: *const ::sockaddr,
