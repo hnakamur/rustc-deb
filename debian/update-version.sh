@@ -1,6 +1,6 @@
 #!/bin/bash
-ORIG=1.7
-NEW=1.8
+ORIG=1.8
+NEW=1.9
 
 sed -i -e "s|libstd-rust-$ORIG|libstd-rust-$NEW|g" control
 

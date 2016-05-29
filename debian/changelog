@@ -1,3 +1,9 @@
+rustc (1.9.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release (Closes: #825752)
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sun, 29 May 2016 17:57:38 +0200
+
 rustc (1.8.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
