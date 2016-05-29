@@ -11,11 +11,10 @@
 #![crate_type = "bin"]
 
 #![feature(box_syntax)]
-#![feature(dynamic_lib)]
 #![feature(libc)]
 #![feature(rustc_private)]
-#![feature(str_char)]
 #![feature(test)]
+#![feature(question_mark)]
 
 #![deny(warnings)]
 
@@ -71,13 +70,15 @@ pub fn parse_config(args: Vec<String> ) -> Config {
           reqopt("", "aux-base", "directory to find auxiliary test files", "PATH"),
           reqopt("", "stage-id", "the target-stage identifier", "stageN-TARGET"),
           reqopt("", "mode", "which sort of compile tests to run",
-                 "(compile-fail|parse-fail|run-fail|run-pass|run-pass-valgrind|pretty|debug-info)"),
+                 "(compile-fail|parse-fail|run-fail|run-pass|\
+                  run-pass-valgrind|pretty|debug-info|incremental)"),
           optflag("", "ignored", "run tests marked as ignored"),
           optopt("", "runtool", "supervisor program to run tests under \
                                  (eg. emulator, valgrind)", "PROGRAM"),
           optopt("", "host-rustcflags", "flags to pass to rustc for host", "FLAGS"),
           optopt("", "target-rustcflags", "flags to pass to rustc for target", "FLAGS"),
           optflag("", "verbose", "run tests verbosely, showing all output"),
+          optflag("", "quiet", "print one character per test instead of one line"),
           optopt("", "logfile", "file to log test execution to", "FILE"),
           optopt("", "target", "the target to build for", "TARGET"),
           optopt("", "host", "the host to build for", "HOST"),
@@ -117,15 +118,17 @@ pub fn parse_config(args: Vec<String> ) -> Config {
         }
     }
 
-    let filter = if !matches.free.is_empty() {
-        Some(matches.free[0].clone())
-    } else {
-        None
-    };
+    fn make_absolute(path: PathBuf) -> PathBuf {
+        if path.is_relative() {
+            env::current_dir().unwrap().join(path)
+        } else {
+            path
+        }
+    }
 
     Config {
-        compile_lib_path: matches.opt_str("compile-lib-path").unwrap(),
-        run_lib_path: matches.opt_str("run-lib-path").unwrap(),
+        compile_lib_path: make_absolute(opt_path(matches, "compile-lib-path")),
+        run_lib_path: make_absolute(opt_path(matches, "run-lib-path")),
         rustc_path: opt_path(matches, "rustc-path"),
         rustdoc_path: opt_path(matches, "rustdoc-path"),
         python: matches.opt_str("python").unwrap(),
@@ -138,7 +141,7 @@ pub fn parse_config(args: Vec<String> ) -> Config {
         stage_id: matches.opt_str("stage-id").unwrap(),
         mode: matches.opt_str("mode").unwrap().parse().ok().expect("invalid mode"),
         run_ignored: matches.opt_present("ignored"),
-        filter: filter,
+        filter: matches.free.first().cloned(),
         logfile: matches.opt_str("logfile").map(|s| PathBuf::from(&s)),
         runtool: matches.opt_str("runtool"),
         host_rustcflags: matches.opt_str("host-rustcflags"),
@@ -158,6 +161,7 @@ pub fn parse_config(args: Vec<String> ) -> Config {
             !opt_str2(matches.opt_str("adb-test-dir")).is_empty(),
         lldb_python_dir: matches.opt_str("lldb-python-dir"),
         verbose: matches.opt_present("verbose"),
+        quiet: matches.opt_present("quiet"),
     }
 }
 
@@ -191,6 +195,7 @@ pub fn log_config(config: &Config) {
     logv(c, format!("adb_device_status: {}",
                     config.adb_device_status));
     logv(c, format!("verbose: {}", config.verbose));
+    logv(c, format!("quiet: {}", config.quiet));
     logv(c, format!("\n"));
 }
 
@@ -252,15 +257,16 @@ pub fn run_tests(config: &Config) {
 
 pub fn test_opts(config: &Config) -> test::TestOpts {
     test::TestOpts {
-        filter: match config.filter {
-            None => None,
-            Some(ref filter) => Some(filter.clone()),
-        },
+        filter: config.filter.clone(),
         run_ignored: config.run_ignored,
+        quiet: config.quiet,
         logfile: config.logfile.clone(),
         run_tests: true,
         bench_benchmarks: true,
-        nocapture: env::var("RUST_TEST_NOCAPTURE").is_ok(),
+        nocapture: match env::var("RUST_TEST_NOCAPTURE") {
+            Ok(val) => &val != "0",
+            Err(_) => false
+        },
         color: test::AutoColor,
     }
 }
@@ -286,16 +292,16 @@ fn collect_tests_from_dir(config: &Config,
                           -> io::Result<()> {
     // Ignore directories that contain a file
     // `compiletest-ignore-dir`.
-    for file in try!(fs::read_dir(dir)) {
-        let file = try!(file);
+    for file in fs::read_dir(dir)? {
+        let file = file?;
         if file.file_name() == *"compiletest-ignore-dir" {
             return Ok(());
         }
     }
 
-    let dirs = try!(fs::read_dir(dir));
+    let dirs = fs::read_dir(dir)?;
     for file in dirs {
-        let file = try!(file);
+        let file = file?;
         let file_path = file.path();
         debug!("inspecting file {:?}", file_path.display());
         if is_test(config, &file_path) {
@@ -316,11 +322,11 @@ fn collect_tests_from_dir(config: &Config,
             tests.push(make_test(config, &paths))
         } else if file_path.is_dir() {
             let relative_file_path = relative_dir_path.join(file.file_name());
-            try!(collect_tests_from_dir(config,
-                                        base,
-                                        &file_path,
-                                        &relative_file_path,
-                                        tests));
+            collect_tests_from_dir(config,
+                                   base,
+                                   &file_path,
+                                   &relative_file_path,
+                                   tests)?;
         }
     }
     Ok(())
@@ -354,11 +360,25 @@ pub fn is_test(config: &Config, testfile: &Path) -> bool {
 }
 
 pub fn make_test(config: &Config, testpaths: &TestPaths) -> test::TestDescAndFn {
+    let early_props = header::early_props(config, &testpaths.file);
+
+    // The `should-fail` annotation doesn't apply to pretty tests,
+    // since we run the pretty printer across all tests by default.
+    // If desired, we could add a `should-fail-pretty` annotation.
+    let should_panic = match config.mode {
+        Pretty => test::ShouldPanic::No,
+        _ => if early_props.should_fail {
+            test::ShouldPanic::Yes
+        } else {
+            test::ShouldPanic::No
+        }
+    };
+
     test::TestDescAndFn {
         desc: test::TestDesc {
             name: make_test_name(config, testpaths),
-            ignore: header::is_test_ignored(config, &testpaths.file),
-            should_panic: test::ShouldPanic::No,
+            ignore: early_props.ignore,
+            should_panic: should_panic,
         },
         testfn: make_test_closure(config, testpaths),
     }
@@ -391,16 +411,26 @@ fn extract_gdb_version(full_version_line: Option<String>) -> Option<String> {
 
             // used to be a regex "(^|[^0-9])([0-9]\.[0-9]+)"
             for (pos, c) in full_version_line.char_indices() {
-                if !c.is_digit(10) { continue }
-                if pos + 2 >= full_version_line.len() { continue }
-                if full_version_line.char_at(pos + 1) != '.' { continue }
-                if !full_version_line.char_at(pos + 2).is_digit(10) { continue }
-                if pos > 0 && full_version_line.char_at_reverse(pos).is_digit(10) {
+                if !c.is_digit(10) {
+                    continue
+                }
+                if pos + 2 >= full_version_line.len() {
+                    continue
+                }
+                if full_version_line[pos + 1..].chars().next().unwrap() != '.' {
+                    continue
+                }
+                if !full_version_line[pos + 2..].chars().next().unwrap().is_digit(10) {
+                    continue
+                }
+                if pos > 0 && full_version_line[..pos].chars().next_back()
+                                                      .unwrap().is_digit(10) {
                     continue
                 }
                 let mut end = pos + 3;
                 while end < full_version_line.len() &&
-                      full_version_line.char_at(end).is_digit(10) {
+                      full_version_line[end..].chars().next()
+                                              .unwrap().is_digit(10) {
                     end += 1;
                 }
                 return Some(full_version_line[pos..end].to_owned());
@@ -432,13 +462,13 @@ fn extract_lldb_version(full_version_line: Option<String>) -> Option<String> {
             for (pos, l) in full_version_line.char_indices() {
                 if l != 'l' && l != 'L' { continue }
                 if pos + 5 >= full_version_line.len() { continue }
-                let l = full_version_line.char_at(pos + 1);
+                let l = full_version_line[pos + 1..].chars().next().unwrap();
                 if l != 'l' && l != 'L' { continue }
-                let d = full_version_line.char_at(pos + 2);
+                let d = full_version_line[pos + 2..].chars().next().unwrap();
                 if d != 'd' && d != 'D' { continue }
-                let b = full_version_line.char_at(pos + 3);
+                let b = full_version_line[pos + 3..].chars().next().unwrap();
                 if b != 'b' && b != 'B' { continue }
-                let dash = full_version_line.char_at(pos + 4);
+                let dash = full_version_line[pos + 4..].chars().next().unwrap();
                 if dash != '-' { continue }
 
                 let vers = full_version_line[pos + 5..].chars().take_while(|c| {

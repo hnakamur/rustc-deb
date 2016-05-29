@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::char;
+
 #[test]
 fn test_is_lowercase() {
     assert!('a'.is_lowercase());
@@ -175,9 +177,10 @@ fn test_escape_unicode() {
 #[test]
 fn test_encode_utf8() {
     fn check(input: char, expect: &[u8]) {
-        let mut buf = [0; 4];
-        let n = input.encode_utf8(&mut buf).unwrap_or(0);
-        assert_eq!(&buf[..n], expect);
+        assert_eq!(input.encode_utf8().as_slice(), expect);
+        for (a, b) in input.encode_utf8().zip(expect) {
+            assert_eq!(a, *b);
+        }
     }
 
     check('x', &[0x78]);
@@ -189,9 +192,10 @@ fn test_encode_utf8() {
 #[test]
 fn test_encode_utf16() {
     fn check(input: char, expect: &[u16]) {
-        let mut buf = [0; 2];
-        let n = input.encode_utf16(&mut buf).unwrap_or(0);
-        assert_eq!(&buf[..n], expect);
+        assert_eq!(input.encode_utf16().as_slice(), expect);
+        for (a, b) in input.encode_utf16().zip(expect) {
+            assert_eq!(a, *b);
+        }
     }
 
     check('x', &[0x0078]);
@@ -211,7 +215,10 @@ fn test_len_utf16() {
 #[test]
 fn test_decode_utf16() {
     fn check(s: &[u16], expected: &[Result<char, u16>]) {
-        assert_eq!(::std::char::decode_utf16(s.iter().cloned()).collect::<Vec<_>>(), expected);
+        let v = char::decode_utf16(s.iter().cloned())
+                     .map(|r| r.map_err(|e| e.unpaired_surrogate()))
+                     .collect::<Vec<_>>();
+        assert_eq!(v, expected);
     }
     check(&[0xD800, 0x41, 0x42], &[Err(0xD800), Ok('A'), Ok('B')]);
     check(&[0xD800, 0], &[Err(0xD800), Ok('\0')]);

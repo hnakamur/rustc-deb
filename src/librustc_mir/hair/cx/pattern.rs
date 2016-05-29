@@ -11,12 +11,12 @@
 use hair::*;
 use hair::cx::Cx;
 use rustc_data_structures::fnv::FnvHashMap;
-use rustc::middle::const_eval;
-use rustc::middle::def::Def;
-use rustc::middle::pat_util::{pat_is_resolved_const, pat_is_binding};
-use rustc::middle::ty::{self, Ty};
+use rustc_const_eval as const_eval;
+use rustc::hir::def::Def;
+use rustc::hir::pat_util::{pat_is_resolved_const, pat_is_binding};
+use rustc::ty::{self, Ty};
 use rustc::mir::repr::*;
-use rustc_front::hir::{self, PatKind};
+use rustc::hir::{self, PatKind};
 use syntax::ast;
 use syntax::codemap::Span;
 use syntax::ptr::P;
@@ -63,6 +63,8 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
     }
 
     fn to_pattern(&mut self, pat: &hir::Pat) -> Pattern<'tcx> {
+        let mut ty = self.cx.tcx.node_id_to_type(pat.id);
+
         let kind = match pat.node {
             PatKind::Wild => PatternKind::Wild,
 
@@ -84,24 +86,34 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
             {
                 let def = self.cx.tcx.def_map.borrow().get(&pat.id).unwrap().full_def();
                 match def {
-                    Def::Const(def_id) | Def::AssociatedConst(def_id) =>
-                        match const_eval::lookup_const_by_id(self.cx.tcx, def_id,
-                                                             Some(pat.id), None) {
-                            Some(const_expr) => {
-                                let pat = const_eval::const_expr_to_pat(self.cx.tcx, const_expr,
-                                                                        pat.span);
-                                return self.to_pattern(&pat);
+                    Def::Const(def_id) | Def::AssociatedConst(def_id) => {
+                        let substs = Some(self.cx.tcx.node_id_item_substs(pat.id).substs);
+                        match const_eval::lookup_const_by_id(self.cx.tcx, def_id, substs) {
+                            Some((const_expr, _const_ty)) => {
+                                match const_eval::const_expr_to_pat(self.cx.tcx,
+                                                                    const_expr,
+                                                                    pat.id,
+                                                                    pat.span) {
+                                    Ok(pat) =>
+                                        return self.to_pattern(&pat),
+                                    Err(_) =>
+                                        span_bug!(
+                                            pat.span, "illegal constant"),
+                                }
                             }
                             None => {
-                                self.cx.tcx.sess.span_bug(
+                                span_bug!(
                                     pat.span,
-                                    &format!("cannot eval constant: {:?}", def_id))
+                                    "cannot eval constant: {:?}",
+                                    def_id)
                             }
-                        },
+                        }
+                    }
                     _ =>
-                        self.cx.tcx.sess.span_bug(
+                        span_bug!(
                             pat.span,
-                            &format!("def not a constant: {:?}", def)),
+                            "def not a constant: {:?}",
+                            def),
                 }
             }
 
@@ -128,9 +140,10 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                         self.slice_or_array_pattern(pat.span, ty, prefix, slice, suffix),
 
                     ref sty =>
-                        self.cx.tcx.sess.span_bug(
+                        span_bug!(
                             pat.span,
-                            &format!("unexpanded type for vector pattern: {:?}", sty)),
+                            "unexpanded type for vector pattern: {:?}",
+                            sty),
                 }
             }
 
@@ -169,6 +182,17 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                     hir::BindByRef(hir::MutImmutable) =>
                         (Mutability::Not, BindingMode::ByRef(region.unwrap(), BorrowKind::Shared)),
                 };
+
+                // A ref x pattern is the same node used for x, and as such it has
+                // x's type, which is &T, where we want T (the type being matched).
+                if let hir::BindByRef(_) = bm {
+                    if let ty::TyRef(_, mt) = ty.sty {
+                        ty = mt.ty;
+                    } else {
+                        bug!("`ref {}` has wrong type {}", ident.node, ty);
+                    }
+                }
+
                 PatternKind::Binding {
                     mutability: mutability,
                     mode: mode,
@@ -201,7 +225,7 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                 let adt_def = match pat_ty.sty {
                     ty::TyStruct(adt_def, _) | ty::TyEnum(adt_def, _) => adt_def,
                     _ => {
-                        self.cx.tcx.sess.span_bug(
+                        span_bug!(
                             pat.span,
                             "struct pattern not applied to struct or enum");
                     }
@@ -215,9 +239,10 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
                           .map(|field| {
                               let index = variant_def.index_of_field_named(field.node.name);
                               let index = index.unwrap_or_else(|| {
-                                  self.cx.tcx.sess.span_bug(
+                                  span_bug!(
                                       pat.span,
-                                      &format!("no field with name {:?}", field.node.name));
+                                      "no field with name {:?}",
+                                      field.node.name);
                               });
                               FieldPattern {
                                   field: Field::new(index),
@@ -230,11 +255,9 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
             }
 
             PatKind::QPath(..) => {
-                self.cx.tcx.sess.span_bug(pat.span, "unexpanded macro or bad constant etc");
+                span_bug!(pat.span, "unexpanded macro or bad constant etc");
             }
         };
-
-        let ty = self.cx.tcx.node_id_to_type(pat.id);
 
         Pattern {
             span: pat.span,
@@ -279,7 +302,7 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
             }
 
             _ => {
-                self.cx.tcx.sess.span_bug(span, "unexpanded macro or bad constant etc");
+                span_bug!(span, "unexpanded macro or bad constant etc");
             }
         }
     }
@@ -308,26 +331,8 @@ impl<'patcx, 'cx, 'tcx> PatCx<'patcx, 'cx, 'tcx> {
             }
 
             _ => {
-                self.cx.tcx.sess.span_bug(pat.span,
-                                          &format!("inappropriate def for pattern: {:?}", def));
+                span_bug!(pat.span, "inappropriate def for pattern: {:?}", def);
             }
         }
-    }
-}
-
-impl<'tcx> FieldPattern<'tcx> {
-    pub fn field_ty(&self) -> Ty<'tcx> {
-        debug!("field_ty({:?},ty={:?})", self, self.pattern.ty);
-        let r = match *self.pattern.kind {
-            PatternKind::Binding { mode: BindingMode::ByRef(..), ..} => {
-                match self.pattern.ty.sty {
-                    ty::TyRef(_, mt) => mt.ty,
-                    _ => unreachable!()
-                }
-            }
-            _ => self.pattern.ty
-        };
-        debug!("field_ty -> {:?}", r);
-        r
     }
 }

@@ -77,7 +77,7 @@ build.
 
 Download [MinGW from
 here](http://mingw-w64.org/doku.php/download/mingw-builds), and choose the
-`threads=win32,exceptions=dwarf/seh` flavor when installing. After installing,
+`version=4.9.x,threads=win32,exceptions=dwarf/seh` flavor when installing. Also, make sure to install to a path without spaces in it. After installing,
 add its `bin` directory to your `PATH`. This is due to [#28260](https://github.com/rust-lang/rust/issues/28260), in the future,
 installing from pacman should be just fine.
 
@@ -177,10 +177,11 @@ To contribute to Rust, please see [CONTRIBUTING](CONTRIBUTING.md).
 Rust has an [IRC] culture and most real-time collaboration happens in a
 variety of channels on Mozilla's IRC network, irc.mozilla.org. The
 most popular channel is [#rust], a venue for general discussion about
-Rust, and a good place to ask for help.
+Rust. And a good place to ask for help would be [#rust-beginners].
 
 [IRC]: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 [#rust]: irc://irc.mozilla.org/rust
+[#rust-beginners]: irc://irc.mozilla.org/rust-beginners
 
 ## License
 

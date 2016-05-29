@@ -34,10 +34,40 @@ use Bound;
 /// to any other item, as determined by the [`Ord`] trait, changes while it is in the set. This is
 /// normally only possible through [`Cell`], [`RefCell`], global state, I/O, or unsafe code.
 ///
-/// [`BTreeMap`]: ../struct.BTreeMap.html
-/// [`Ord`]: ../../core/cmp/trait.Ord.html
+/// [`BTreeMap`]: struct.BTreeMap.html
+/// [`Ord`]: ../../std/cmp/trait.Ord.html
 /// [`Cell`]: ../../std/cell/struct.Cell.html
 /// [`RefCell`]: ../../std/cell/struct.RefCell.html
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeSet;
+///
+/// // Type inference lets us omit an explicit type signature (which
+/// // would be `BTreeSet<&str>` in this example).
+/// let mut books = BTreeSet::new();
+///
+/// // Add some books.
+/// books.insert("A Dance With Dragons");
+/// books.insert("To Kill a Mockingbird");
+/// books.insert("The Odyssey");
+/// books.insert("The Great Gatsby");
+///
+/// // Check for a specific one.
+/// if !books.contains("The Winds of Winter") {
+///     println!("We have {} books, but The Winds of Winter ain't one.",
+///              books.len());
+/// }
+///
+/// // Remove a book.
+/// books.remove("The Odyssey");
+///
+/// // Iterate over everything.
+/// for book in &books {
+///     println!("{}", book);
+/// }
+/// ```
 #[derive(Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct BTreeSet<T> {
@@ -349,7 +379,7 @@ impl<T: Ord> BTreeSet<T> {
     /// The value may be any borrowed form of the set's value type,
     /// but the ordering on the borrowed form *must* match the
     /// ordering on the value type.
-    #[unstable(feature = "set_recovery", issue = "28050")]
+    #[stable(feature = "set_recovery", since = "1.9.0")]
     pub fn get<Q: ?Sized>(&self, value: &Q) -> Option<&T>
         where T: Borrow<Q>,
               Q: Ord
@@ -472,7 +502,7 @@ impl<T: Ord> BTreeSet<T> {
 
     /// Adds a value to the set, replacing the existing value, if any, that is equal to the given
     /// one. Returns the replaced value.
-    #[unstable(feature = "set_recovery", issue = "28050")]
+    #[stable(feature = "set_recovery", since = "1.9.0")]
     pub fn replace(&mut self, value: T) -> Option<T> {
         Recover::replace(&mut self.map, value)
     }
@@ -508,7 +538,7 @@ impl<T: Ord> BTreeSet<T> {
     /// The value may be any borrowed form of the set's value type,
     /// but the ordering on the borrowed form *must* match the
     /// ordering on the value type.
-    #[unstable(feature = "set_recovery", issue = "28050")]
+    #[stable(feature = "set_recovery", since = "1.9.0")]
     pub fn take<Q: ?Sized>(&mut self, value: &Q) -> Option<T>
         where T: Borrow<Q>,
               Q: Ord

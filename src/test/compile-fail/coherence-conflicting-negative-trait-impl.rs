@@ -15,14 +15,12 @@ trait MyTrait {}
 struct TestType<T>(::std::marker::PhantomData<T>);
 
 unsafe impl<T: MyTrait+'static> Send for TestType<T> {}
-//~^ ERROR conflicting implementations of trait `core::marker::Send`
-//~^^ ERROR conflicting implementations of trait `core::marker::Send`
 
 impl<T: MyTrait> !Send for TestType<T> {}
-//~^ ERROR conflicting implementations of trait `core::marker::Send`
+//~^ ERROR conflicting implementations of trait `std::marker::Send`
 
 unsafe impl<T:'static> Send for TestType<T> {}
-//~^ ERROR error: conflicting implementations of trait `core::marker::Send`
+//~^ ERROR error: conflicting implementations of trait `std::marker::Send`
 
 impl !Send for TestType<i32> {}
 

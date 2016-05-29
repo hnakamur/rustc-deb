@@ -190,7 +190,7 @@
 //! [`thread`]: thread/index.html
 //! [`use std::env`]: env/index.html
 //! [`use`]: ../book/crates-and-modules.html#importing-modules-with-use
-//! [crate root]: ../book/crates-and-modules.html#basic-terminology:-crates-and-modules
+//! [crate root]: ../book/crates-and-modules.html#basic-terminology-crates-and-modules
 //! [crates.io]: https://crates.io
 //! [deref coercions]: ../book/deref-coercions.html
 //! [files]: fs/struct.File.html
@@ -222,16 +222,16 @@
 #![feature(collections)]
 #![feature(collections_bound)]
 #![feature(const_fn)]
-#![feature(copy_from_slice)]
 #![feature(core_float)]
 #![feature(core_intrinsics)]
-#![feature(decode_utf16)]
 #![feature(dropck_parametricity)]
 #![feature(float_extras)]
 #![feature(float_from_str_radix)]
 #![feature(fnbox)]
+#![feature(fn_traits)]
 #![feature(heap_api)]
 #![feature(hashmap_hasher)]
+#![feature(inclusive_range)]
 #![feature(int_error_internals)]
 #![feature(into_cow)]
 #![feature(lang_items)]
@@ -239,6 +239,7 @@
 #![feature(link_args)]
 #![feature(linkage)]
 #![feature(macro_reexport)]
+#![cfg_attr(test, feature(map_values_mut))]
 #![feature(num_bits_bytes)]
 #![feature(old_wrapping)]
 #![feature(on_unimplemented)]
@@ -246,10 +247,10 @@
 #![feature(optin_builtin_traits)]
 #![feature(placement_in_syntax)]
 #![feature(rand)]
-#![feature(range_inclusive)]
 #![feature(raw)]
 #![feature(repr_simd)]
 #![feature(reflect_marker)]
+#![feature(rustc_attrs)]
 #![feature(shared)]
 #![feature(slice_bytes)]
 #![feature(slice_concat_ext)]
@@ -268,6 +269,7 @@
 #![feature(unwind_attributes)]
 #![feature(vec_push_all)]
 #![feature(zero_one)]
+#![feature(question_mark)]
 
 // Issue# 30592: Systematically use alloc_system during stage0 since jemalloc
 // might be unavailable or disabled
@@ -281,7 +283,6 @@
 #![cfg_attr(not(stage0), deny(warnings))]
 
 #[cfg(test)] extern crate test;
-#[cfg(test)] #[macro_use] extern crate log;
 
 // We want to reexport a few macros from core but libcore has already been
 // imported by the compiler (via our #[no_std] attribute) In this case we just
@@ -418,7 +419,6 @@ pub mod num;
 pub mod thread;
 
 pub mod collections;
-pub mod dynamic_lib;
 pub mod env;
 pub mod ffi;
 pub mod fs;

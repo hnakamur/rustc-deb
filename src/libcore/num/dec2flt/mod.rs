@@ -154,8 +154,8 @@ from_str_float_impl!(f64);
 /// for [`f32`] and [`f64`].
 ///
 /// [`FromStr`]: ../str/trait.FromStr.html
-/// [`f32`]: ../primitive.f32.html
-/// [`f64`]: ../primitive.f64.html
+/// [`f32`]: ../../std/primitive.f32.html
+/// [`f64`]: ../../std/primitive.f64.html
 #[derive(Debug, Clone, PartialEq)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct ParseFloatError {
@@ -214,7 +214,7 @@ fn dec2flt<T: RawFloat>(s: &str) -> Result<T, ParseFloatError> {
     }
     let (sign, s) = extract_sign(s);
     let flt = match parse_decimal(s) {
-        ParseResult::Valid(decimal) => try!(convert(decimal)),
+        ParseResult::Valid(decimal) => convert(decimal)?,
         ParseResult::ShortcutToInf => T::infinity(),
         ParseResult::ShortcutToZero => T::zero(),
         ParseResult::Invalid => match s {

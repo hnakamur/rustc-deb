@@ -73,6 +73,7 @@
 
 use prelude::v1::*;
 
+use fmt;
 use marker;
 use mem;
 
@@ -215,6 +216,13 @@ pub trait BuildHasher {
 #[stable(since = "1.7.0", feature = "build_hasher")]
 pub struct BuildHasherDefault<H>(marker::PhantomData<H>);
 
+#[stable(since = "1.9.0", feature = "core_impl_debug")]
+impl<H> fmt::Debug for BuildHasherDefault<H> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("BuildHasherDefault")
+    }
+}
+
 #[stable(since = "1.7.0", feature = "build_hasher")]
 impl<H: Default + Hasher> BuildHasher for BuildHasherDefault<H> {
     type Hasher = H;
@@ -236,30 +244,6 @@ impl<H> Default for BuildHasherDefault<H> {
     fn default() -> BuildHasherDefault<H> {
         BuildHasherDefault(marker::PhantomData)
     }
-}
-
-// The HashState trait is super deprecated, but it's here to have the blanket
-// impl that goes from HashState -> BuildHasher
-
-/// Deprecated, renamed to `BuildHasher`
-#[unstable(feature = "hashmap_hasher", reason = "hasher stuff is unclear",
-           issue = "27713")]
-#[rustc_deprecated(since = "1.7.0", reason = "support moved to std::hash and \
-                                              renamed to BuildHasher")]
-pub trait HashState {
-    /// Type of the hasher that will be created.
-    type Hasher: Hasher;
-
-    /// Creates a new hasher based on the given state of this object.
-    fn hasher(&self) -> Self::Hasher;
-}
-
-#[unstable(feature = "hashmap_hasher", reason = "hasher stuff is unclear",
-           issue = "27713")]
-#[allow(deprecated)]
-impl<T: HashState> BuildHasher for T {
-    type Hasher = T::Hasher;
-    fn build_hasher(&self) -> T::Hasher { self.hasher() }
 }
 
 //////////////////////////////////////////////////////////////////////////////

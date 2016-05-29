@@ -186,7 +186,6 @@
 
 pub use self::StaticFields::*;
 pub use self::SubstructureFields::*;
-use self::StructType::*;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -194,7 +193,6 @@ use std::vec;
 
 use syntax::abi::Abi;
 use syntax::ast::{self, EnumDef, Expr, Ident, Generics, VariantData, BinOpKind, PatKind};
-use syntax::ast_util;
 use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::ext::base::{ExtCtxt, Annotatable};
@@ -208,6 +206,8 @@ use syntax::parse::token::special_idents;
 use syntax::ptr::P;
 
 use self::ty::{LifetimeBounds, Path, Ptr, PtrTy, Self_, Ty};
+
+use deriving;
 
 pub mod ty;
 
@@ -476,6 +476,7 @@ impl<'a> TraitDef<'a> {
                 span: self.span,
                 ident: ident,
                 vis: ast::Visibility::Inherited,
+                defaultness: ast::Defaultness::Final,
                 attrs: Vec::new(),
                 node: ast::ImplItemKind::Type(type_def.to_ty(cx,
                     self.span,
@@ -617,7 +618,6 @@ impl<'a> TraitDef<'a> {
         // Just mark it now since we know that it'll end up used downstream
         attr::mark_used(&attr);
         let opt_trait_ref = Some(trait_ref);
-        let ident = ast_util::impl_pretty_name(&opt_trait_ref, Some(&self_type));
         let unused_qual = cx.attribute(
             self.span,
             cx.meta_list(self.span,
@@ -635,7 +635,7 @@ impl<'a> TraitDef<'a> {
 
         cx.item(
             self.span,
-            ident,
+            special_idents::invalid,
             a,
             ast::ItemKind::Impl(unsafety,
                                 ast::ImplPolarity::Positive,
@@ -651,7 +651,7 @@ impl<'a> TraitDef<'a> {
                          type_ident: Ident,
                          generics: &Generics) -> P<ast::Item> {
         let field_tys: Vec<P<ast::Ty>> = struct_def.fields().iter()
-            .map(|field| field.node.ty.clone())
+            .map(|field| field.ty.clone())
             .collect();
 
         let methods = self.methods.iter().map(|method_def| {
@@ -699,7 +699,7 @@ impl<'a> TraitDef<'a> {
 
         for variant in &enum_def.variants {
             field_tys.extend(variant.node.data.fields().iter()
-                .map(|field| field.node.ty.clone()));
+                .map(|field| field.ty.clone()));
         }
 
         let methods = self.methods.iter().map(|method_def| {
@@ -741,7 +741,7 @@ impl<'a> TraitDef<'a> {
 
 fn find_repr_type_name(diagnostic: &Handler,
                        type_attrs: &[ast::Attribute]) -> &'static str {
-    let mut repr_type_name = "i32";
+    let mut repr_type_name = "isize";
     for a in type_attrs {
         for r in &attr::find_repr_attrs(diagnostic, a) {
             repr_type_name = match *r {
@@ -893,6 +893,7 @@ impl<'a> MethodDef<'a> {
             attrs: self.attributes.clone(),
             span: trait_.span,
             vis: ast::Visibility::Inherited,
+            defaultness: ast::Defaultness::Final,
             ident: method_ident,
             node: ast::ImplItemKind::Method(ast::MethodSig {
                 generics: fn_generics,
@@ -1023,8 +1024,8 @@ impl<'a> MethodDef<'a> {
     ///     fn eq(&self, __arg_1: &A) -> ::bool {
     ///         match (&*self, &*__arg_1) {
     ///             (&A1, &A1) => true,
-    ///             (&A2(ref __self_0),
-    ///              &A2(ref __arg_1_0)) => (*__self_0).eq(&(*__arg_1_0)),
+    ///             (&A2(ref self_0),
+    ///              &A2(ref __arg_1_0)) => (*self_0).eq(&(*__arg_1_0)),
     ///             _ => {
     ///                 let __self_vi = match *self { A1(..) => 0, A2(..) => 1 };
     ///                 let __arg_1_vi = match *__arg_1 { A1(..) => 0, A2(..) => 1 };
@@ -1072,9 +1073,9 @@ impl<'a> MethodDef<'a> {
     /// let __self0_vi = unsafe {
     ///     std::intrinsics::discriminant_value(&self) } as i32;
     /// let __self1_vi = unsafe {
-    ///     std::intrinsics::discriminant_value(&__arg1) } as i32;
+    ///     std::intrinsics::discriminant_value(&arg1) } as i32;
     /// let __self2_vi = unsafe {
-    ///     std::intrinsics::discriminant_value(&__arg2) } as i32;
+    ///     std::intrinsics::discriminant_value(&arg2) } as i32;
     ///
     /// if __self0_vi == __self1_vi && __self0_vi == __self2_vi && ... {
     ///     match (...) {
@@ -1246,9 +1247,9 @@ impl<'a> MethodDef<'a> {
             // let __self0_vi = unsafe {
             //     std::intrinsics::discriminant_value(&self) } as i32;
             // let __self1_vi = unsafe {
-            //     std::intrinsics::discriminant_value(&__arg1) } as i32;
+            //     std::intrinsics::discriminant_value(&arg1) } as i32;
             // let __self2_vi = unsafe {
-            //     std::intrinsics::discriminant_value(&__arg2) } as i32;
+            //     std::intrinsics::discriminant_value(&arg2) } as i32;
             // ```
             let mut index_let_stmts: Vec<ast::Stmt> = Vec::new();
 
@@ -1261,15 +1262,11 @@ impl<'a> MethodDef<'a> {
 
             let mut first_ident = None;
             for (&ident, self_arg) in vi_idents.iter().zip(&self_args) {
-                let path = cx.std_path(&["intrinsics", "discriminant_value"]);
-                let call = cx.expr_call_global(
-                    sp, path, vec![cx.expr_addr_of(sp, self_arg.clone())]);
-                let variant_value = cx.expr_block(P(ast::Block {
-                    stmts: vec![],
-                    expr: Some(call),
-                    id: ast::DUMMY_NODE_ID,
-                    rules: ast::BlockCheckMode::Unsafe(ast::CompilerGenerated),
-                    span: sp }));
+                let self_addr = cx.expr_addr_of(sp, self_arg.clone());
+                let variant_value = deriving::call_intrinsic(cx,
+                                                             sp,
+                                                             "discriminant_value",
+                                                             vec![self_addr]);
 
                 let target_ty = cx.ty_ident(sp, cx.ident_of(target_type_name));
                 let variant_disr = cx.expr_cast(sp, variant_value, target_ty);
@@ -1297,16 +1294,9 @@ impl<'a> MethodDef<'a> {
             //Since we know that all the arguments will match if we reach the match expression we
             //add the unreachable intrinsics as the result of the catch all which should help llvm
             //in optimizing it
-            let path = cx.std_path(&["intrinsics", "unreachable"]);
-            let call = cx.expr_call_global(
-                sp, path, vec![]);
-            let unreachable = cx.expr_block(P(ast::Block {
-                stmts: vec![],
-                expr: Some(call),
-                id: ast::DUMMY_NODE_ID,
-                rules: ast::BlockCheckMode::Unsafe(ast::CompilerGenerated),
-                span: sp }));
-            match_arms.push(cx.arm(sp, vec![cx.pat_wild(sp)], unreachable));
+            match_arms.push(cx.arm(sp,
+                                   vec![cx.pat_wild(sp)],
+                                   deriving::call_intrinsic(cx, sp, "unreachable", vec![])));
 
             // Final wrinkle: the self_args are expressions that deref
             // down to desired l-values, but we cannot actually deref
@@ -1382,7 +1372,7 @@ impl<'a> MethodDef<'a> {
             // derive Debug on such a type could here generate code
             // that needs the feature gate enabled.)
 
-            cx.expr_unreachable(sp)
+            deriving::call_intrinsic(cx, sp, "unreachable", vec![])
         }
         else {
 
@@ -1416,11 +1406,6 @@ impl<'a> MethodDef<'a> {
     }
 }
 
-#[derive(PartialEq)] // dogfooding!
-enum StructType {
-    Unknown, Record, Tuple
-}
-
 // general helper methods.
 impl<'a> TraitDef<'a> {
     fn set_expn_info(&self,
@@ -1448,9 +1433,9 @@ impl<'a> TraitDef<'a> {
         let mut just_spans = Vec::new();
         for field in struct_def.fields(){
             let sp = self.set_expn_info(cx, field.span);
-            match field.node.kind {
-                ast::NamedField(ident, _) => named_idents.push((ident, sp)),
-                ast::UnnamedField(..) => just_spans.push(sp),
+            match field.ident {
+                Some(ident) => named_idents.push((ident, sp)),
+                _ => just_spans.push(sp),
             }
         }
 
@@ -1486,53 +1471,26 @@ impl<'a> TraitDef<'a> {
                              -> (P<ast::Pat>, Vec<(Span, Option<Ident>,
                                                    P<Expr>,
                                                    &'a [ast::Attribute])>) {
-        if struct_def.fields().is_empty() {
-            if struct_def.is_struct() {
-                return (cx.pat_struct(self.span, struct_path, vec![]), vec![]);
-            } else {
-                return (cx.pat_enum(self.span, struct_path, vec![]), vec![]);
-            }
-        }
-
         let mut paths = Vec::new();
-        let mut ident_expr = Vec::new();
-        let mut struct_type = Unknown;
-
+        let mut ident_exprs = Vec::new();
         for (i, struct_field) in struct_def.fields().iter().enumerate() {
             let sp = self.set_expn_info(cx, struct_field.span);
-            let opt_id = match struct_field.node.kind {
-                ast::NamedField(ident, _) if (struct_type == Unknown ||
-                                              struct_type == Record) => {
-                    struct_type = Record;
-                    Some(ident)
-                }
-                ast::UnnamedField(..) if (struct_type == Unknown ||
-                                          struct_type == Tuple) => {
-                    struct_type = Tuple;
-                    None
-                }
-                _ => {
-                    cx.span_bug(sp, "a struct with named and unnamed fields in `derive`");
-                }
-            };
             let ident = cx.ident_of(&format!("{}_{}", prefix, i));
             paths.push(codemap::Spanned{span: sp, node: ident});
             let val = cx.expr_deref(sp, cx.expr_path(cx.path_ident(sp,ident)));
             let val = cx.expr(sp, ast::ExprKind::Paren(val));
-            ident_expr.push((sp, opt_id, val, &struct_field.node.attrs[..]));
+            ident_exprs.push((sp, struct_field.ident, val, &struct_field.attrs[..]));
         }
 
         let subpats = self.create_subpatterns(cx, paths, mutbl);
-
-        // struct_type is definitely not Unknown, since struct_def.fields
-        // must be nonempty to reach here
         let pattern = if struct_def.is_struct() {
-            let field_pats = subpats.into_iter().zip(&ident_expr)
-                                    .map(|(pat, &(_, id, _, _))| {
-                // id is guaranteed to be Some
+            let field_pats = subpats.into_iter().zip(&ident_exprs).map(|(pat, &(sp, ident, _, _))| {
+                if ident.is_none() {
+                    cx.span_bug(sp, "a braced struct with unnamed fields in `derive`");
+                }
                 codemap::Spanned {
                     span: pat.span,
-                    node: ast::FieldPat { ident: id.unwrap(), pat: pat, is_shorthand: false },
+                    node: ast::FieldPat { ident: ident.unwrap(), pat: pat, is_shorthand: false },
                 }
             }).collect();
             cx.pat_struct(self.span, struct_path, field_pats)
@@ -1540,7 +1498,7 @@ impl<'a> TraitDef<'a> {
             cx.pat_enum(self.span, struct_path, subpats)
         };
 
-        (pattern, ident_expr)
+        (pattern, ident_exprs)
     }
 
     fn create_enum_variant_pattern(&self,
@@ -1636,5 +1594,23 @@ pub fn cs_same_method<F>(f: F,
         StaticEnum(..) | StaticStruct(..) => {
             cx.span_bug(trait_span, "static function in `derive`")
         }
+    }
+}
+
+/// Return true if the type has no value fields
+/// (for an enum, no variant has any fields)
+pub fn is_type_without_fields(item: &Annotatable) -> bool {
+    if let Annotatable::Item(ref item) = *item {
+        match item.node {
+            ast::ItemKind::Enum(ref enum_def, _) => {
+                enum_def.variants.iter().all(|v| v.node.data.fields().is_empty())
+            }
+            ast::ItemKind::Struct(ref variant_data, _) => {
+                variant_data.fields().is_empty()
+            }
+            _ => false
+        }
+    } else {
+        false
     }
 }

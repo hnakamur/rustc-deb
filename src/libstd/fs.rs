@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Filesystem manipulation operations
+//! Filesystem manipulation operations.
 //!
 //! This module contains basic methods to manipulate the contents of the local
 //! filesystem. All methods in this module represent cross-platform filesystem
@@ -22,7 +22,6 @@ use ffi::OsString;
 use io::{self, SeekFrom, Seek, Read, Write};
 use path::{Path, PathBuf};
 use sys::fs as fs_imp;
-use sys_common::io::read_to_end_uninitialized;
 use sys_common::{AsInnerMut, FromInner, AsInner, IntoInner};
 use vec::Vec;
 use time::SystemTime;
@@ -85,19 +84,6 @@ pub struct ReadDir(fs_imp::ReadDir);
 /// path or possibly other metadata through per-platform extension traits.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct DirEntry(fs_imp::DirEntry);
-
-/// An iterator that recursively walks over the contents of a directory.
-#[unstable(feature = "fs_walk",
-           reason = "the precise semantics and defaults for a recursive walk \
-                     may change and this may end up accounting for files such \
-                     as symlinks differently",
-           issue = "27707")]
-#[rustc_deprecated(reason = "superceded by the walkdir crate",
-                   since = "1.6.0")]
-pub struct WalkDir {
-    cur: Option<ReadDir>,
-    stack: Vec<io::Result<ReadDir>>,
-}
 
 /// Options and flags which can be used to configure how a file is opened.
 ///
@@ -316,10 +302,10 @@ impl File {
     /// The returned `File` is a reference to the same state that this object
     /// references. Both handles will read and write with the same cursor
     /// position.
-    #[unstable(feature = "file_try_clone", reason = "newly added", issue = "31405")]
+    #[stable(feature = "file_try_clone", since = "1.9.0")]
     pub fn try_clone(&self) -> io::Result<File> {
         Ok(File {
-            inner: try!(self.inner.duplicate())
+            inner: self.inner.duplicate()?
         })
     }
 }
@@ -351,7 +337,7 @@ impl Read for File {
         self.inner.read(buf)
     }
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
-        unsafe { read_to_end_uninitialized(self, buf) }
+        self.inner.read_to_end(buf)
     }
 }
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -371,6 +357,9 @@ impl Seek for File {
 impl<'a> Read for &'a File {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.read(buf)
+    }
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        self.inner.read_to_end(buf)
     }
 }
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -534,16 +523,13 @@ impl OpenOptions {
     /// # Examples
     ///
     /// ```no_run
-    /// #![feature(expand_open_options)]
     /// use std::fs::OpenOptions;
     ///
     /// let file = OpenOptions::new().write(true)
     ///                              .create_new(true)
     ///                              .open("foo.txt");
     /// ```
-    #[unstable(feature = "expand_open_options",
-               reason = "recently added",
-               issue = "30014")]
+    #[stable(feature = "expand_open_options2", since = "1.9.0")]
     pub fn create_new(&mut self, create_new: bool) -> &mut OpenOptions {
         self.0.create_new(create_new); self
     }
@@ -576,7 +562,7 @@ impl OpenOptions {
     }
 
     fn _open(&self, path: &Path) -> io::Result<File> {
-        let inner = try!(fs_imp::File::open(path, &self.0));
+        let inner = fs_imp::File::open(path, &self.0)?;
         Ok(File { inner: inner })
     }
 }
@@ -1343,7 +1329,7 @@ pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// use std::fs::{self, DirEntry};
 /// use std::path::Path;
 ///
-/// // one possible implementation of fs::walk_dir only visiting files
+/// // one possible implementation of walking a directory only visiting files
 /// fn visit_dirs(dir: &Path, cb: &Fn(&DirEntry)) -> io::Result<()> {
 ///     if try!(fs::metadata(dir)).is_dir() {
 ///         for entry in try!(fs::read_dir(dir)) {
@@ -1361,64 +1347,6 @@ pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn read_dir<P: AsRef<Path>>(path: P) -> io::Result<ReadDir> {
     fs_imp::readdir(path.as_ref()).map(ReadDir)
-}
-
-/// Returns an iterator that will recursively walk the directory structure
-/// rooted at `path`.
-///
-/// The path given will not be iterated over, and this will perform iteration in
-/// some top-down order.  The contents of unreadable subdirectories are ignored.
-///
-/// The iterator will yield instances of `io::Result<DirEntry>`. New errors may
-/// be encountered after an iterator is initially constructed.
-#[unstable(feature = "fs_walk",
-           reason = "the precise semantics and defaults for a recursive walk \
-                     may change and this may end up accounting for files such \
-                     as symlinks differently",
-           issue = "27707")]
-#[rustc_deprecated(reason = "superceded by the walkdir crate",
-                   since = "1.6.0")]
-#[allow(deprecated)]
-pub fn walk_dir<P: AsRef<Path>>(path: P) -> io::Result<WalkDir> {
-    _walk_dir(path.as_ref())
-}
-
-#[allow(deprecated)]
-fn _walk_dir(path: &Path) -> io::Result<WalkDir> {
-    let start = try!(read_dir(path));
-    Ok(WalkDir { cur: Some(start), stack: Vec::new() })
-}
-
-#[unstable(feature = "fs_walk", issue = "27707")]
-#[rustc_deprecated(reason = "superceded by the walkdir crate",
-                   since = "1.6.0")]
-#[allow(deprecated)]
-impl Iterator for WalkDir {
-    type Item = io::Result<DirEntry>;
-
-    fn next(&mut self) -> Option<io::Result<DirEntry>> {
-        loop {
-            if let Some(ref mut cur) = self.cur {
-                match cur.next() {
-                    Some(Err(e)) => return Some(Err(e)),
-                    Some(Ok(next)) => {
-                        let path = next.path();
-                        if path.is_dir() {
-                            self.stack.push(read_dir(&*path));
-                        }
-                        return Some(Ok(next))
-                    }
-                    None => {}
-                }
-            }
-            self.cur = None;
-            match self.stack.pop() {
-                Some(Err(e)) => return Some(Err(e)),
-                Some(Ok(next)) => self.cur = Some(next),
-                None => return None,
-            }
-        }
-    }
 }
 
 /// Changes the permissions found on a file or a directory.
@@ -1509,7 +1437,7 @@ impl DirBuilder {
     fn create_dir_all(&self, path: &Path) -> io::Result<()> {
         if path == Path::new("") || path.is_dir() { return Ok(()) }
         if let Some(p) = path.parent() {
-            try!(self.create_dir_all(p))
+            self.create_dir_all(p)?
         }
         self.inner.mkdir(path)
     }
@@ -1526,12 +1454,12 @@ mod tests {
     use prelude::v1::*;
     use io::prelude::*;
 
-    use env;
     use fs::{self, File, OpenOptions};
     use io::{ErrorKind, SeekFrom};
-    use path::{Path, PathBuf};
-    use rand::{self, StdRng, Rng};
+    use path::Path;
+    use rand::{StdRng, Rng};
     use str;
+    use sys_common::io::test::{TempDir, tmpdir};
 
     #[cfg(windows)]
     use os::windows::fs::{symlink_dir, symlink_file};
@@ -1558,37 +1486,6 @@ mod tests {
                                     format!("`{}` did not contain `{}`", err, $s))
         }
     ) }
-
-    pub struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn join(&self, path: &str) -> PathBuf {
-            let TempDir(ref p) = *self;
-            p.join(path)
-        }
-
-        fn path<'a>(&'a self) -> &'a Path {
-            let TempDir(ref p) = *self;
-            p
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            // Gee, seeing how we're testing the fs module I sure hope that we
-            // at least implement this correctly!
-            let TempDir(ref p) = *self;
-            check!(fs::remove_dir_all(p));
-        }
-    }
-
-    pub fn tmpdir() -> TempDir {
-        let p = env::temp_dir();
-        let mut r = rand::thread_rng();
-        let ret = p.join(&format!("rust-{}", r.next_u32()));
-        check!(fs::create_dir(&ret));
-        TempDir(ret)
-    }
 
     // Several test fail on windows if the user does not have permission to
     // create symlinks (the `SeCreateSymbolicLinkPrivilege`). Instead of
@@ -1808,7 +1705,7 @@ mod tests {
         let tmpdir = tmpdir();
         let dir = &tmpdir.join("fileinfo_false_on_dir");
         check!(fs::create_dir(dir));
-        assert!(dir.is_file() == false);
+        assert!(!dir.is_file());
         check!(fs::remove_dir(dir));
     }
 
@@ -1861,35 +1758,6 @@ mod tests {
             check!(fs::remove_file(&f));
         }
         check!(fs::remove_dir(dir));
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn file_test_walk_dir() {
-        let tmpdir = tmpdir();
-        let dir = &tmpdir.join("walk_dir");
-        check!(fs::create_dir(dir));
-
-        let dir1 = &dir.join("01/02/03");
-        check!(fs::create_dir_all(dir1));
-        check!(File::create(&dir1.join("04")));
-
-        let dir2 = &dir.join("11/12/13");
-        check!(fs::create_dir_all(dir2));
-        check!(File::create(&dir2.join("14")));
-
-        let files = check!(fs::walk_dir(dir));
-        let mut cur = [0; 2];
-        for f in files {
-            let f = f.unwrap().path();
-            let stem = f.file_stem().unwrap().to_str().unwrap();
-            let root = stem.as_bytes()[0] - b'0';
-            let name = stem.as_bytes()[1] - b'0';
-            assert!(cur[root as usize] < name);
-            cur[root as usize] = name;
-        }
-
-        check!(fs::remove_dir_all(dir));
     }
 
     #[test]

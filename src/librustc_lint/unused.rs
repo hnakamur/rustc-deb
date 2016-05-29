@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use middle::pat_util;
-use middle::ty;
-use middle::ty::adjustment;
+use rustc::hir::pat_util;
+use rustc::ty;
+use rustc::ty::adjustment;
 use util::nodemap::FnvHashMap;
 use lint::{LateContext, EarlyContext, LintContext, LintArray};
 use lint::{LintPass, EarlyLintPass, LateLintPass};
@@ -24,8 +24,8 @@ use syntax::feature_gate::{KNOWN_ATTRIBUTES, AttributeType};
 use syntax::ptr::P;
 
 use rustc_back::slice;
-use rustc_front::hir;
-use rustc_front::intravisit::FnKind;
+use rustc::hir;
+use rustc::hir::intravisit::FnKind;
 
 declare_lint! {
     pub UNUSED_MUT,

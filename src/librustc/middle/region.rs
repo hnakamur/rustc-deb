@@ -17,11 +17,11 @@
 //! `middle/infer/region_inference/README.md`
 
 use dep_graph::DepNode;
-use front::map as ast_map;
+use hir::map as ast_map;
 use session::Session;
 use util::nodemap::{FnvHashMap, NodeMap, NodeSet};
 use middle::cstore::InlinedItem;
-use middle::ty;
+use ty;
 
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
@@ -30,10 +30,9 @@ use std::mem;
 use syntax::codemap::{self, Span};
 use syntax::ast::{self, NodeId};
 
-use rustc_front::hir;
-use rustc_front::intravisit::{self, Visitor, FnKind};
-use rustc_front::hir::{Block, Item, FnDecl, Arm, Pat, PatKind, Stmt, Expr, Local};
-use rustc_front::util::stmt_id;
+use hir;
+use hir::intravisit::{self, Visitor, FnKind};
+use hir::{Block, Item, FnDecl, Arm, Pat, PatKind, Stmt, Expr, Local};
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord, Hash, RustcEncodable,
            RustcDecodable, Copy)]
@@ -41,15 +40,16 @@ pub struct CodeExtent(u32);
 
 impl fmt::Debug for CodeExtent {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "CodeExtent({:?}", self.0));
+        write!(f, "CodeExtent({:?}", self.0)?;
 
-        try!(ty::tls::with_opt(|opt_tcx| {
+        ty::tls::with_opt(|opt_tcx| {
             if let Some(tcx) = opt_tcx {
-                let data = tcx.region_maps.code_extents.borrow()[self.0 as usize];
-                try!(write!(f, "/{:?}", data));
+                if let Some(data) = tcx.region_maps.code_extents.borrow().get(self.0 as usize) {
+                    write!(f, "/{:?}", data)?;
+                }
             }
             Ok(())
-        }));
+        })?;
 
         write!(f, ")")
     }
@@ -280,7 +280,7 @@ pub struct RegionMaps {
     /// hierarchy based on their lexical mapping. This is used to
     /// handle the relationships between regions in a fn and in a
     /// closure defined by that fn. See the "Modeling closures"
-    /// section of the README in middle::infer::region_inference for
+    /// section of the README in infer::region_inference for
     /// more details.
     fn_tree: RefCell<NodeMap<ast::NodeId>>,
 }
@@ -291,7 +291,7 @@ pub struct Context {
     /// of the innermost fn body. Each fn forms its own disjoint tree
     /// in the region hierarchy. These fn bodies are themselves
     /// arranged into a tree. See the "Modeling closures" section of
-    /// the README in middle::infer::region_inference for more
+    /// the README in infer::region_inference for more
     /// details.
     root_id: Option<ast::NodeId>,
 
@@ -343,7 +343,7 @@ impl RegionMaps {
     pub fn lookup_code_extent(&self, e: CodeExtentData) -> CodeExtent {
         match self.code_extent_interner.borrow().get(&e) {
             Some(&d) => d,
-            None => panic!("unknown code extent {:?}", e)
+            None => bug!("unknown code extent {:?}", e)
         }
     }
     pub fn node_extent(&self, n: ast::NodeId) -> CodeExtent {
@@ -385,8 +385,8 @@ impl RegionMaps {
             }
             Entry::Vacant(v) => {
                 if self.code_extents.borrow().len() > 0xffffffffusize {
-                    unreachable!() // should pass a sess,
-                                   // but this isn't the only place
+                    bug!() // should pass a sess,
+                           // but this isn't the only place
                 }
                 let idx = CodeExtent(self.code_extents.borrow().len() as u32);
                 info!("CodeExtent({}) = {:?} [parent={}]", idx.0, e, parent.0);
@@ -460,7 +460,7 @@ impl RegionMaps {
         self.scope_map.borrow()[id.0 as usize].into_option()
     }
 
-    #[allow(dead_code)] // used in middle::cfg
+    #[allow(dead_code)] // used in cfg
     pub fn encl_scope(&self, id: CodeExtent) -> CodeExtent {
         //! Returns the narrowest scope that encloses `id`, if any.
         self.opt_encl_scope(id).unwrap()
@@ -470,7 +470,7 @@ impl RegionMaps {
     pub fn var_scope(&self, var_id: ast::NodeId) -> CodeExtent {
         match self.var_map.borrow().get(&var_id) {
             Some(&r) => r,
-            None => { panic!("no enclosing scope for id {:?}", var_id); }
+            None => { bug!("no enclosing scope for id {:?}", var_id); }
         }
     }
 
@@ -587,7 +587,7 @@ impl RegionMaps {
             // different functions.  Compare those fn for lexical
             // nesting. The reasoning behind this is subtle.  See the
             // "Modeling closures" section of the README in
-            // middle::infer::region_inference for more details.
+            // infer::region_inference for more details.
             let a_root_scope = self.code_extent_data(a_ancestors[a_index]);
             let b_root_scope = self.code_extent_data(a_ancestors[a_index]);
             return match (a_root_scope, b_root_scope) {
@@ -601,12 +601,12 @@ impl RegionMaps {
                         scope_a
                     } else {
                         // neither fn encloses the other
-                        unreachable!()
+                        bug!()
                     }
                 }
                 _ => {
                     // root ids are always Misc right now
-                    unreachable!()
+                    bug!()
                 }
             };
         }
@@ -765,7 +765,7 @@ fn resolve_pat(visitor: &mut RegionResolutionVisitor, pat: &hir::Pat) {
 }
 
 fn resolve_stmt(visitor: &mut RegionResolutionVisitor, stmt: &hir::Stmt) {
-    let stmt_id = stmt_id(stmt);
+    let stmt_id = stmt.node.id();
     debug!("resolve_stmt(stmt.id={:?})", stmt_id);
 
     // Every statement will clean up the temporaries created during

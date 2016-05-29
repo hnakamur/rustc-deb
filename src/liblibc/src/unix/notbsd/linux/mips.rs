@@ -294,6 +294,13 @@ pub const EOWNERDEAD: ::c_int = 165;
 pub const ENOTRECOVERABLE: ::c_int = 166;
 pub const ERFKILL: ::c_int = 167;
 
+pub const LC_PAPER: ::c_int = 7;
+pub const LC_NAME: ::c_int = 8;
+pub const LC_ADDRESS: ::c_int = 9;
+pub const LC_TELEPHONE: ::c_int = 10;
+pub const LC_MEASUREMENT: ::c_int = 11;
+pub const LC_IDENTIFICATION: ::c_int = 12;
+
 pub const MAP_NORESERVE: ::c_int = 0x400;
 pub const MAP_ANON: ::c_int = 0x800;
 pub const MAP_ANONYMOUS: ::c_int = 0x800;
@@ -303,6 +310,7 @@ pub const MAP_EXECUTABLE: ::c_int = 0x4000;
 pub const MAP_LOCKED: ::c_int = 0x8000;
 pub const MAP_POPULATE: ::c_int = 0x10000;
 pub const MAP_NONBLOCK: ::c_int = 0x20000;
+pub const MAP_STACK: ::c_int = 0x40000;
 
 pub const SOCK_STREAM: ::c_int = 2;
 pub const SOCK_DGRAM: ::c_int = 1;
@@ -426,6 +434,8 @@ pub const PTRACE_SETFPXREGS: ::c_uint = 19;
 pub const PTRACE_GETREGS: ::c_uint = 12;
 pub const PTRACE_SETREGS: ::c_uint = 13;
 
+pub const MAP_HUGETLB: ::c_int = 0x080000;
+
 pub const EFD_NONBLOCK: ::c_int = 0x80;
 
 pub const F_GETLK: ::c_int = 14;
@@ -472,6 +482,8 @@ pub const RTLD_DEEPBIND: ::c_int = 0x10;
 pub const RTLD_GLOBAL: ::c_int = 0x4;
 pub const RTLD_NOLOAD: ::c_int = 0x8;
 
+pub const SYS_gettid: ::c_long = 4222;   // Valid for O32
+
 extern {
     pub fn sysctl(name: *mut ::c_int,
                   namelen: ::c_int,
@@ -485,8 +497,9 @@ extern {
                      sz: ::c_int) -> ::c_int;
     pub fn glob64(pattern: *const ::c_char,
                   flags: ::c_int,
-                  errfunc: ::dox::Option<extern "C" fn(epath: *const ::c_char,
-                                                       errno: ::c_int) -> ::c_int>,
+                  errfunc: ::dox::Option<extern fn(epath: *const ::c_char,
+                                                   errno: ::c_int)
+                                                   -> ::c_int>,
                   pglob: *mut glob64_t) -> ::c_int;
     pub fn globfree64(pglob: *mut glob64_t);
     pub fn getnameinfo(sa: *const ::sockaddr,

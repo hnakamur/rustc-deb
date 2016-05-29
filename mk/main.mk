@@ -13,16 +13,27 @@
 ######################################################################
 
 # The version number
-CFG_RELEASE_NUM=1.8.0
+CFG_RELEASE_NUM=1.9.0
 
 # An optional number to put after the label, e.g. '.2' -> '-beta.2'
 # NB Make sure it starts with a dot to conform to semver pre-release
 # versions (section 9)
-CFG_PRERELEASE_VERSION=.2
+CFG_PRERELEASE_VERSION=.3
 
 # Append a version-dependent hash to each library, so we can install different
 # versions in the same place
 CFG_FILENAME_EXTRA=$(shell printf '%s' $(CFG_RELEASE)$(CFG_EXTRA_FILENAME) | $(CFG_HASH_COMMAND))
+
+# A magic value that allows the compiler to use unstable features during the
+# bootstrap even when doing so would normally be an error because of feature
+# staging or because the build turns on warnings-as-errors and unstable features
+# default to warnings. The build has to match this key in an env var.
+#
+# This value is keyed off the release to ensure that all compilers for one
+# particular release have the same bootstrap key. Note that this is
+# intentionally not "secure" by any definition, this is largely just a deterrent
+# from users enabling unstable features on the stable compiler.
+CFG_BOOTSTRAP_KEY=$(CFG_FILENAME_EXTRA)
 
 ifeq ($(CFG_RELEASE_CHANNEL),stable)
 # This is the normal semver version string, e.g. "0.12.0", "0.12.0-nightly"
@@ -132,6 +143,11 @@ endif
 ifdef CFG_ENABLE_DEBUGINFO
   $(info cfg: enabling debuginfo (CFG_ENABLE_DEBUGINFO))
   CFG_RUSTC_FLAGS += -g
+endif
+
+ifdef CFG_ENABLE_ORBIT
+  $(info cfg: launching MIR (CFG_ENABLE_ORBIT))
+  CFG_RUSTC_FLAGS += -Z orbit
 endif
 
 ifdef SAVE_TEMPS
@@ -488,7 +504,7 @@ endif
 LD_LIBRARY_PATH_ENV_HOSTDIR$(1)_T_$(2)_H_$(3) := \
     $$(CURDIR)/$$(HLIB$(1)_H_$(3)):$$(CFG_LLVM_INST_DIR_$(3))/lib
 LD_LIBRARY_PATH_ENV_TARGETDIR$(1)_T_$(2)_H_$(3) := \
-    $$(CURDIR)/$$(TLIB1_T_$(2)_H_$(CFG_BUILD))
+    $$(CURDIR)/$$(TLIB$(1)_T_$(2)_H_$(3))
 
 HOST_RPATH_VAR$(1)_T_$(2)_H_$(3) := \
   $$(LD_LIBRARY_PATH_ENV_NAME$(1)_T_$(2)_H_$(3))=$$(LD_LIBRARY_PATH_ENV_HOSTDIR$(1)_T_$(2)_H_$(3)):$$$$$$(LD_LIBRARY_PATH_ENV_NAME$(1)_T_$(2)_H_$(3))
@@ -501,18 +517,14 @@ RPATH_VAR$(1)_T_$(2)_H_$(3) := $$(HOST_RPATH_VAR$(1)_T_$(2)_H_$(3))
 # if you're building a cross config, the host->* parts are
 # effectively stage1, since it uses the just-built stage0.
 #
-# This logic is similar to how the LD_LIBRARY_PATH variable must
-# change be slightly different when doing cross compilations.
-# The build doesn't copy over all target libraries into
-# a new directory, so we need to point the library path at
-# the build directory where all the target libraries came
-# from (the stage0 build host). Otherwise the relative rpaths
-# inside of the rustc binary won't get resolved correctly.
+# Also be sure to use the right rpath because we're loading libraries from the
+# CFG_BUILD's stage1 directory for our target, so switch this one instance of
+# `RPATH_VAR` to get the bootstrap working.
 ifeq ($(1),0)
 ifneq ($(strip $(CFG_BUILD)),$(strip $(3)))
 CFGFLAG$(1)_T_$(2)_H_$(3) = stage1
 
-RPATH_VAR$(1)_T_$(2)_H_$(3) := $$(TARGET_RPATH_VAR$(1)_T_$(2)_H_$(3))
+RPATH_VAR$(1)_T_$(2)_H_$(3) := $$(TARGET_RPATH_VAR1_T_$(2)_H_$$(CFG_BUILD))
 endif
 endif
 

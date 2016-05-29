@@ -121,6 +121,8 @@ impl Ipv4Addr {
     }
 
     /// Returns true if the address appears to be globally routable.
+    /// See [iana-ipv4-special-registry][ipv4-sr].
+    /// [ipv4-sr]: http://goo.gl/RaZ7lg
     ///
     /// The following return false:
     ///
@@ -129,9 +131,10 @@ impl Ipv4Addr {
     /// - the link-local address (169.254.0.0/16)
     /// - the broadcast address (255.255.255.255/32)
     /// - test addresses used for documentation (192.0.2.0/24, 198.51.100.0/24 and 203.0.113.0/24)
+    /// - the unspecified address (0.0.0.0)
     pub fn is_global(&self) -> bool {
         !self.is_private() && !self.is_loopback() && !self.is_link_local() &&
-        !self.is_broadcast() && !self.is_documentation()
+        !self.is_broadcast() && !self.is_documentation() && !self.is_unspecified()
     }
 
     /// Returns true if this is a multicast address.
@@ -276,6 +279,13 @@ impl From<u32> for Ipv4Addr {
     }
 }
 
+#[stable(feature = "from_slice_v4", since = "1.9.0")]
+impl From<[u8; 4]> for Ipv4Addr {
+    fn from(octets: [u8; 4]) -> Ipv4Addr {
+        Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3])
+    }
+}
+
 impl Ipv6Addr {
     /// Creates a new IPv6 address from eight 16-bit segments.
     ///
@@ -360,6 +370,12 @@ impl Ipv6Addr {
         (self.segments()[0] & 0xffc0) == 0xfec0
     }
 
+    /// Returns true if this is an address reserved for documentation
+    /// This is defined to be 2001:db8::/32 in RFC RFC 3849
+    pub fn is_documentation(&self) -> bool {
+        (self.segments()[0] == 0x2001) && (self.segments()[1] == 0xdb8)
+    }
+
     /// Returns true if the address is a globally routable unicast address.
     ///
     /// The following return false:
@@ -368,10 +384,13 @@ impl Ipv6Addr {
     /// - the link-local addresses
     /// - the (deprecated) site-local addresses
     /// - unique local addresses
+    /// - the unspecified address
+    /// - the address range reserved for documentation
     pub fn is_unicast_global(&self) -> bool {
         !self.is_multicast()
             && !self.is_loopback() && !self.is_unicast_link_local()
             && !self.is_unicast_site_local() && !self.is_unique_local()
+            && !self.is_unspecified() && !self.is_documentation()
     }
 
     /// Returns the address's multicast scope if the address is multicast.
@@ -414,6 +433,13 @@ impl Ipv6Addr {
             },
             _ => None
         }
+    }
+
+    /// Returns the sixteen eight-bit integers the IPv6 address consists of.
+    #[unstable(feature = "ipv6_to_octets", reason = "needs some testing",
+               issue = "32313")]
+    pub fn octets(&self) -> [u8; 16] {
+        self.inner.s6_addr
     }
 }
 
@@ -468,16 +494,16 @@ impl fmt::Display for Ipv6Addr {
                 if zeros_len > 1 {
                     fn fmt_subslice(segments: &[u16], fmt: &mut fmt::Formatter) -> fmt::Result {
                         if !segments.is_empty() {
-                            try!(write!(fmt, "{:x}", segments[0]));
+                            write!(fmt, "{:x}", segments[0])?;
                             for &seg in &segments[1..] {
-                                try!(write!(fmt, ":{:x}", seg));
+                                write!(fmt, ":{:x}", seg)?;
                             }
                         }
                         Ok(())
                     }
 
-                    try!(fmt_subslice(&self.segments()[..zeros_at], fmt));
-                    try!(fmt.write_str("::"));
+                    fmt_subslice(&self.segments()[..zeros_at], fmt)?;
+                    fmt.write_str("::")?;
                     fmt_subslice(&self.segments()[zeros_at + zeros_len..], fmt)
                 } else {
                     let &[a, b, c, d, e, f, g, h] = &self.segments();
@@ -538,6 +564,15 @@ impl AsInner<c::in6_addr> for Ipv6Addr {
 impl FromInner<c::in6_addr> for Ipv6Addr {
     fn from_inner(addr: c::in6_addr) -> Ipv6Addr {
         Ipv6Addr { inner: addr }
+    }
+}
+
+#[stable(feature = "ipv6_from_octets", since = "1.9.0")]
+impl From<[u8; 16]> for Ipv6Addr {
+    fn from(octets: [u8; 16]) -> Ipv6Addr {
+        let mut inner: c::in6_addr = unsafe { mem::zeroed() };
+        inner.s6_addr = octets;
+        Ipv6Addr::from_inner(inner)
     }
 }
 
@@ -725,32 +760,34 @@ mod tests {
         }
 
         //    address                unspec loopbk privt  linloc global multicast brdcast doc
-        check(&[0, 0, 0, 0],         true,  false, false, false, true,  false,    false,  false);
-        check(&[0, 0, 0, 1],         false, false, false, false, true,  false,    false,  false);
-        check(&[1, 0, 0, 0],         false, false, false, false, true,  false,    false,  false);
-        check(&[10, 9, 8, 7],        false, false, true,  false, false, false,    false,  false);
-        check(&[127, 1, 2, 3],       false, true,  false, false, false, false,    false,  false);
-        check(&[172, 31, 254, 253],  false, false, true,  false, false, false,    false,  false);
-        check(&[169, 254, 253, 242], false, false, false, true,  false, false,    false,  false);
-        check(&[192, 0, 2, 183],     false, false, false, false, false, false,    false,  true);
-        check(&[192, 1, 2, 183],     false, false, false, false, true,  false,    false,  false);
-        check(&[192, 168, 254, 253], false, false, true,  false, false, false,    false,  false);
-        check(&[198, 51, 100, 0],    false, false, false, false, false, false,    false,  true);
-        check(&[203, 0, 113, 0],     false, false, false, false, false, false,    false,  true);
-        check(&[203, 2, 113, 0],     false, false, false, false, true,  false,    false,  false);
-        check(&[224, 0, 0, 0],       false, false, false, false, true,  true,     false,  false);
-        check(&[239, 255, 255, 255], false, false, false, false, true,  true,     false,  false);
-        check(&[255, 255, 255, 255], false, false, false, false, false, false,    true,   false);
+        check(&[0, 0, 0, 0],         true,  false, false, false, false,  false,    false,  false);
+        check(&[0, 0, 0, 1],         false, false, false, false, true,   false,    false,  false);
+        check(&[0, 1, 0, 0],         false, false, false, false, true,   false,    false,  false);
+        check(&[10, 9, 8, 7],        false, false, true,  false, false,  false,    false,  false);
+        check(&[127, 1, 2, 3],       false, true,  false, false, false,  false,    false,  false);
+        check(&[172, 31, 254, 253],  false, false, true,  false, false,  false,    false,  false);
+        check(&[169, 254, 253, 242], false, false, false, true,  false,  false,    false,  false);
+        check(&[192, 0, 2, 183],     false, false, false, false, false,  false,    false,  true);
+        check(&[192, 1, 2, 183],     false, false, false, false, true,   false,    false,  false);
+        check(&[192, 168, 254, 253], false, false, true,  false, false,  false,    false,  false);
+        check(&[198, 51, 100, 0],    false, false, false, false, false,  false,    false,  true);
+        check(&[203, 0, 113, 0],     false, false, false, false, false,  false,    false,  true);
+        check(&[203, 2, 113, 0],     false, false, false, false, true,   false,    false,  false);
+        check(&[224, 0, 0, 0],       false, false, false, false, true,   true,     false,  false);
+        check(&[239, 255, 255, 255], false, false, false, false, true,   true,     false,  false);
+        check(&[255, 255, 255, 255], false, false, false, false, false,  false,    true,   false);
     }
 
     #[test]
     fn ipv6_properties() {
-        fn check(str_addr: &str, unspec: bool, loopback: bool,
+        fn check(str_addr: &str, octets: &[u8; 16], unspec: bool, loopback: bool,
                  unique_local: bool, global: bool,
-                 u_link_local: bool, u_site_local: bool, u_global: bool,
+                 u_link_local: bool, u_site_local: bool, u_global: bool, u_doc: bool,
                  m_scope: Option<Ipv6MulticastScope>) {
             let ip: Ipv6Addr = str_addr.parse().unwrap();
             assert_eq!(str_addr, ip.to_string());
+            assert_eq!(&ip.octets(), octets);
+            assert_eq!(Ipv6Addr::from(*octets), ip);
 
             assert_eq!(ip.is_unspecified(), unspec);
             assert_eq!(ip.is_loopback(), loopback);
@@ -759,43 +796,50 @@ mod tests {
             assert_eq!(ip.is_unicast_link_local(), u_link_local);
             assert_eq!(ip.is_unicast_site_local(), u_site_local);
             assert_eq!(ip.is_unicast_global(), u_global);
+            assert_eq!(ip.is_documentation(), u_doc);
             assert_eq!(ip.multicast_scope(), m_scope);
             assert_eq!(ip.is_multicast(), m_scope.is_some());
         }
 
-        //    unspec loopbk uniqlo global unill  unisl  uniglo mscope
-        check("::",
-              true,  false, false, true,  false, false, true,  None);
-        check("::1",
-              false, true,  false, false, false, false, false, None);
-        check("::0.0.0.2",
-              false, false, false, true,  false, false, true,  None);
-        check("1::",
-              false, false, false, true,  false, false, true,  None);
-        check("fc00::",
-              false, false, true,  false, false, false, false, None);
-        check("fdff:ffff::",
-              false, false, true,  false, false, false, false, None);
-        check("fe80:ffff::",
-              false, false, false, false, true,  false, false, None);
-        check("febf:ffff::",
-              false, false, false, false, true,  false, false, None);
-        check("fec0::",
-              false, false, false, false, false, true,  false, None);
-        check("ff01::",
-              false, false, false, false, false, false, false, Some(InterfaceLocal));
-        check("ff02::",
-              false, false, false, false, false, false, false, Some(LinkLocal));
-        check("ff03::",
-              false, false, false, false, false, false, false, Some(RealmLocal));
-        check("ff04::",
-              false, false, false, false, false, false, false, Some(AdminLocal));
-        check("ff05::",
-              false, false, false, false, false, false, false, Some(SiteLocal));
-        check("ff08::",
-              false, false, false, false, false, false, false, Some(OrganizationLocal));
-        check("ff0e::",
-              false, false, false, true,  false, false, false, Some(Global));
+        //    unspec loopbk uniqlo global unill  unisl  uniglo doc    mscope
+        check("::", &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              true,  false, false, false, false, false, false, false, None);
+        check("::1", &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+              false, true,  false, false, false, false, false, false, None);
+        check("::0.0.0.2", &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
+              false, false, false, true,  false, false, true,  false, None);
+        check("1::", &[0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, true,  false, false, true,  false, None);
+        check("fc00::", &[0xfc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, true,  false, false, false, false, false, None);
+        check("fdff:ffff::", &[0xfd, 0xff, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, true,  false, false, false, false, false, None);
+        check("fe80:ffff::", &[0xfe, 0x80, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, true,  false, false, false, None);
+        check("febf:ffff::", &[0xfe, 0xbf, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, true,  false, false, false, None);
+        check("fec0::", &[0xfe, 0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, false, true,  false, false, None);
+        check("ff01::", &[0xff, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, false, false, false, false, Some(InterfaceLocal));
+        check("ff02::", &[0xff, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, false, false, false, false, Some(LinkLocal));
+        check("ff03::", &[0xff, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, false, false, false, false, Some(RealmLocal));
+        check("ff04::", &[0xff, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, false, false, false, false, Some(AdminLocal));
+        check("ff05::", &[0xff, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, false, false, false, false, Some(SiteLocal));
+        check("ff08::", &[0xff, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, false, false, false, false, false, Some(OrganizationLocal));
+        check("ff0e::", &[0xff, 0xe, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+              false, false, false, true,  false, false, false, false, Some(Global));
+        check("2001:db8:85a3::8a2e:370:7334",
+              &[0x20, 1, 0xd, 0xb8, 0x85, 0xa3, 0, 0, 0, 0, 0x8a, 0x2e, 3, 0x70, 0x73, 0x34],
+              false, false, false, false, false, false, false, true, None);
+        check("102:304:506:708:90a:b0c:d0e:f10",
+              &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+              false, false, false, true,  false, false, true,  false, None);
     }
 
     #[test]
@@ -814,6 +858,11 @@ mod tests {
     fn test_int_to_ipv4() {
         let a = Ipv4Addr::new(127, 0, 0, 1);
         assert_eq!(Ipv4Addr::from(2130706433), a);
+    }
+
+    #[test]
+    fn ipv4_from_u32_slice() {
+        assert_eq!(Ipv4Addr::from([127, 0, 0, 1]), Ipv4Addr::new(127, 0, 0, 1))
     }
 
     #[test]

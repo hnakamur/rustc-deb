@@ -12,12 +12,13 @@
 // FIXME: remove this after snapshot, and Results are handled
 #![allow(unused_must_use)]
 
-use rustc::front::map as ast_map;
+use rustc::hir::map as ast_map;
 use rustc::session::Session;
 
-use rustc_front::hir;
-use rustc_front::fold;
-use rustc_front::fold::Folder;
+use rustc::hir;
+use rustc::hir::fold;
+use rustc::hir::fold::Folder;
+use rustc::hir::intravisit::{IdRange, IdRangeComputingVisitor, IdVisitingOperation};
 
 use common as c;
 use cstore;
@@ -27,17 +28,16 @@ use tydecode;
 use tyencode;
 
 use middle::cstore::{InlinedItem, InlinedItemRef};
-use middle::ty::adjustment;
-use middle::ty::cast;
+use rustc::ty::adjustment;
+use rustc::ty::cast;
 use middle::const_qualif::ConstQualif;
-use middle::def::{self, Def};
-use middle::def_id::DefId;
-use middle::privacy::{AllPublic, LastMod};
+use rustc::hir::def::{self, Def};
+use rustc::hir::def_id::DefId;
 use middle::region;
-use middle::subst;
-use middle::ty::{self, Ty};
+use rustc::ty::subst;
+use rustc::ty::{self, Ty, TyCtxt};
 
-use syntax::{ast, ast_util, codemap};
+use syntax::{ast, codemap};
 use syntax::ast::NodeIdAssigner;
 use syntax::ptr::P;
 
@@ -56,14 +56,14 @@ use serialize::EncoderHelpers;
 #[cfg(test)] use std::io::Cursor;
 #[cfg(test)] use syntax::parse;
 #[cfg(test)] use syntax::ast::NodeId;
-#[cfg(test)] use rustc_front::print::pprust;
-#[cfg(test)] use rustc_front::lowering::{lower_item, LoweringContext};
+#[cfg(test)] use rustc::hir::print as pprust;
+#[cfg(test)] use rustc::hir::lowering::{lower_item, LoweringContext};
 
 struct DecodeContext<'a, 'b, 'tcx: 'a> {
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
     cdata: &'b cstore::crate_metadata,
-    from_id_range: ast_util::IdRange,
-    to_id_range: ast_util::IdRange,
+    from_id_range: IdRange,
+    to_id_range: IdRange,
     // Cache the last used filemap for translating spans as an optimization.
     last_filemap_index: Cell<usize>,
 }
@@ -85,7 +85,7 @@ pub fn encode_inlined_item(ecx: &e::EncodeContext,
         InlinedItemRef::ImplItem(_, ii) => ii.id,
     };
     debug!("> Encoding inlined item: {} ({:?})",
-           ecx.tcx.map.path_to_string(id),
+           ecx.tcx.node_path_str(id),
            rbml_w.writer.seek(SeekFrom::Current(0)));
 
     // Folding could be avoided with a smarter encoder.
@@ -99,7 +99,7 @@ pub fn encode_inlined_item(ecx: &e::EncodeContext,
     rbml_w.end_tag();
 
     debug!("< Encoded inlined fn: {} ({:?})",
-           ecx.tcx.map.path_to_string(id),
+           ecx.tcx.node_path_str(id),
            rbml_w.writer.seek(SeekFrom::Current(0)));
 }
 
@@ -123,77 +123,60 @@ impl<'a, 'b, 'c, 'tcx> ast_map::FoldOps for &'a DecodeContext<'b, 'c, 'tcx> {
 /// Decodes an item from its AST in the cdata's metadata and adds it to the
 /// ast-map.
 pub fn decode_inlined_item<'tcx>(cdata: &cstore::crate_metadata,
-                                 tcx: &ty::ctxt<'tcx>,
-                                 parent_path: Vec<ast_map::PathElem>,
+                                 tcx: &TyCtxt<'tcx>,
                                  parent_def_path: ast_map::DefPath,
-                                 par_doc: rbml::Doc,
+                                 parent_did: DefId,
+                                 ast_doc: rbml::Doc,
                                  orig_did: DefId)
-                                 -> Result<&'tcx InlinedItem, (Vec<ast_map::PathElem>,
-                                                               ast_map::DefPath)> {
-    match par_doc.opt_child(c::tag_ast) {
-      None => Err((parent_path, parent_def_path)),
-      Some(ast_doc) => {
-        let mut path_as_str = None;
-        debug!("> Decoding inlined fn: {:?}::?",
-        {
-            // Do an Option dance to use the path after it is moved below.
-            let s = ast_map::path_to_string(parent_path.iter().cloned());
-            path_as_str = Some(s);
-            path_as_str.as_ref().map(|x| &x[..])
-        });
-        let mut ast_dsr = reader::Decoder::new(ast_doc);
-        let from_id_range = Decodable::decode(&mut ast_dsr).unwrap();
-        let to_id_range = reserve_id_range(&tcx.sess, from_id_range);
-        let dcx = &DecodeContext {
-            cdata: cdata,
-            tcx: tcx,
-            from_id_range: from_id_range,
-            to_id_range: to_id_range,
-            last_filemap_index: Cell::new(0)
-        };
-        let raw_ii = decode_ast(ast_doc);
-        let ii = ast_map::map_decoded_item(&dcx.tcx.map,
-                                           parent_path,
-                                           parent_def_path,
-                                           raw_ii,
-                                           dcx);
-        let name = match *ii {
-            InlinedItem::Item(ref i) => i.name,
-            InlinedItem::Foreign(ref i) => i.name,
-            InlinedItem::TraitItem(_, ref ti) => ti.name,
-            InlinedItem::ImplItem(_, ref ii) => ii.name
-        };
-        debug!("Fn named: {}", name);
-        debug!("< Decoded inlined fn: {}::{}",
-               path_as_str.unwrap(),
-               name);
-        region::resolve_inlined_item(&tcx.sess, &tcx.region_maps, ii);
-        decode_side_tables(dcx, ast_doc);
-        copy_item_types(dcx, ii, orig_did);
-        match *ii {
-          InlinedItem::Item(ref i) => {
-            debug!(">>> DECODED ITEM >>>\n{}\n<<< DECODED ITEM <<<",
-                   ::rustc_front::print::pprust::item_to_string(&i));
-          }
-          _ => { }
-        }
-
-        Ok(ii)
-      }
+                                 -> &'tcx InlinedItem {
+    debug!("> Decoding inlined fn: {:?}", tcx.item_path_str(orig_did));
+    let mut ast_dsr = reader::Decoder::new(ast_doc);
+    let from_id_range = Decodable::decode(&mut ast_dsr).unwrap();
+    let to_id_range = reserve_id_range(&tcx.sess, from_id_range);
+    let dcx = &DecodeContext {
+        cdata: cdata,
+        tcx: tcx,
+        from_id_range: from_id_range,
+        to_id_range: to_id_range,
+        last_filemap_index: Cell::new(0)
+    };
+    let ii = ast_map::map_decoded_item(&dcx.tcx.map,
+                                       parent_def_path,
+                                       parent_did,
+                                       decode_ast(ast_doc),
+                                       dcx);
+    let name = match *ii {
+        InlinedItem::Item(ref i) => i.name,
+        InlinedItem::Foreign(ref i) => i.name,
+        InlinedItem::TraitItem(_, ref ti) => ti.name,
+        InlinedItem::ImplItem(_, ref ii) => ii.name
+    };
+    debug!("Fn named: {}", name);
+    debug!("< Decoded inlined fn: {}::{}",
+            tcx.item_path_str(parent_did),
+            name);
+    region::resolve_inlined_item(&tcx.sess, &tcx.region_maps, ii);
+    decode_side_tables(dcx, ast_doc);
+    copy_item_types(dcx, ii, orig_did);
+    if let InlinedItem::Item(ref i) = *ii {
+        debug!(">>> DECODED ITEM >>>\n{}\n<<< DECODED ITEM <<<",
+               ::rustc::hir::print::item_to_string(&i));
     }
+
+    ii
 }
 
 // ______________________________________________________________________
 // Enumerating the IDs which appear in an AST
 
 fn reserve_id_range(sess: &Session,
-                    from_id_range: ast_util::IdRange) -> ast_util::IdRange {
+                    from_id_range: IdRange) -> IdRange {
     // Handle the case of an empty range:
     if from_id_range.empty() { return from_id_range; }
     let cnt = from_id_range.max - from_id_range.min;
     let to_id_min = sess.reserve_node_ids(cnt);
     let to_id_max = to_id_min + cnt;
-    ast_util::IdRange { min: to_id_min, max: to_id_max }
+    IdRange { min: to_id_min, max: to_id_max }
 }
 
 impl<'a, 'b, 'tcx> DecodeContext<'a, 'b, 'tcx> {
@@ -254,7 +237,7 @@ trait def_id_encoder_helpers {
 }
 
 impl<S:serialize::Encoder> def_id_encoder_helpers for S
-    where <S as serialize::serialize::Encoder>::Error: Debug
+    where <S as serialize::Encoder>::Error: Debug
 {
     fn emit_def_id(&mut self, did: DefId) {
         did.encode(self).unwrap()
@@ -268,7 +251,7 @@ trait def_id_decoder_helpers {
 }
 
 impl<D:serialize::Decoder> def_id_decoder_helpers for D
-    where <D as serialize::serialize::Decoder>::Error: Debug
+    where <D as serialize::Decoder>::Error: Debug
 {
     fn read_def_id(&mut self, dcx: &DecodeContext) -> DefId {
         let did: DefId = Decodable::decode(self).unwrap();
@@ -360,8 +343,8 @@ fn simplify_ast(ii: InlinedItemRef) -> InlinedItem {
     }
 }
 
-fn decode_ast(par_doc: rbml::Doc) -> InlinedItem {
-    let chi_doc = par_doc.get(c::tag_tree as usize);
+fn decode_ast(item_doc: rbml::Doc) -> InlinedItem {
+    let chi_doc = item_doc.get(c::tag_tree as usize);
     let mut rbml_r = reader::Decoder::new(chi_doc);
     rbml_r.read_opaque(|decoder, _| Decodable::decode(decoder)).unwrap()
 }
@@ -418,20 +401,20 @@ impl tr for Def {
 // ______________________________________________________________________
 // Encoding and decoding of freevar information
 
-fn encode_freevar_entry(rbml_w: &mut Encoder, fv: &ty::Freevar) {
+fn encode_freevar_entry(rbml_w: &mut Encoder, fv: &hir::Freevar) {
     (*fv).encode(rbml_w).unwrap();
 }
 
 trait rbml_decoder_helper {
     fn read_freevar_entry(&mut self, dcx: &DecodeContext)
-                          -> ty::Freevar;
+                          -> hir::Freevar;
     fn read_capture_mode(&mut self) -> hir::CaptureClause;
 }
 
 impl<'a> rbml_decoder_helper for reader::Decoder<'a> {
     fn read_freevar_entry(&mut self, dcx: &DecodeContext)
-                          -> ty::Freevar {
-        let fv: ty::Freevar = Decodable::decode(self).unwrap();
+                          -> hir::Freevar {
+        let fv: hir::Freevar = Decodable::decode(self).unwrap();
         fv.tr(dcx)
     }
 
@@ -441,9 +424,9 @@ impl<'a> rbml_decoder_helper for reader::Decoder<'a> {
     }
 }
 
-impl tr for ty::Freevar {
-    fn tr(&self, dcx: &DecodeContext) -> ty::Freevar {
-        ty::Freevar {
+impl tr for hir::Freevar {
+    fn tr(&self, dcx: &DecodeContext) -> hir::Freevar {
+        hir::Freevar {
             def: self.def.tr(dcx),
             span: self.span.tr(dcx),
         }
@@ -714,7 +697,7 @@ struct SideTableEncodingIdVisitor<'a, 'b:'a, 'c:'a, 'tcx:'c> {
     rbml_w: &'a mut Encoder<'b>,
 }
 
-impl<'a, 'b, 'c, 'tcx> ast_util::IdVisitingOperation for
+impl<'a, 'b, 'c, 'tcx> IdVisitingOperation for
         SideTableEncodingIdVisitor<'a, 'b, 'c, 'tcx> {
     fn visit_id(&mut self, id: ast::NodeId) {
         encode_side_tables_for_id(self.ecx, self.rbml_w, id)
@@ -879,18 +862,18 @@ trait rbml_decoder_decoder_helpers<'tcx> {
     // Versions of the type reading functions that don't need the full
     // DecodeContext.
     fn read_ty_nodcx(&mut self,
-                     tcx: &ty::ctxt<'tcx>, cdata: &cstore::crate_metadata) -> Ty<'tcx>;
+                     tcx: &TyCtxt<'tcx>, cdata: &cstore::crate_metadata) -> Ty<'tcx>;
     fn read_tys_nodcx(&mut self,
-                      tcx: &ty::ctxt<'tcx>,
+                      tcx: &TyCtxt<'tcx>,
                       cdata: &cstore::crate_metadata) -> Vec<Ty<'tcx>>;
-    fn read_substs_nodcx(&mut self, tcx: &ty::ctxt<'tcx>,
+    fn read_substs_nodcx(&mut self, tcx: &TyCtxt<'tcx>,
                          cdata: &cstore::crate_metadata)
                          -> subst::Substs<'tcx>;
 }
 
 impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
     fn read_ty_nodcx(&mut self,
-                     tcx: &ty::ctxt<'tcx>,
+                     tcx: &TyCtxt<'tcx>,
                      cdata: &cstore::crate_metadata)
                      -> Ty<'tcx> {
         self.read_opaque(|_, doc| {
@@ -902,7 +885,7 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
     }
 
     fn read_tys_nodcx(&mut self,
-                      tcx: &ty::ctxt<'tcx>,
+                      tcx: &TyCtxt<'tcx>,
                       cdata: &cstore::crate_metadata) -> Vec<Ty<'tcx>> {
         self.read_to_vec(|this| Ok(this.read_ty_nodcx(tcx, cdata)) )
             .unwrap()
@@ -911,7 +894,7 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
     }
 
     fn read_substs_nodcx(&mut self,
-                         tcx: &ty::ctxt<'tcx>,
+                         tcx: &TyCtxt<'tcx>,
                          cdata: &cstore::crate_metadata)
                          -> subst::Substs<'tcx>
     {
@@ -1000,7 +983,7 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
                         region: this.read_enum_variant_arg(1,
                                     |this| Ok(this.read_region(dcx))).unwrap()
                     }),
-                    _ => panic!("bad enum variant for ty::UpvarCapture")
+                    _ => bug!("bad enum variant for ty::UpvarCapture")
                 })
             })
         }).unwrap()
@@ -1022,7 +1005,7 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
 
                         adjustment::AdjustDerefRef(auto_deref_ref)
                     }
-                    _ => panic!("bad enum variant for adjustment::AutoAdjustment")
+                    _ => bug!("bad enum variant for adjustment::AutoAdjustment")
                 })
             })
         }).unwrap()
@@ -1081,7 +1064,7 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
 
                         adjustment::AutoUnsafe(m)
                     }
-                    _ => panic!("bad enum variant for adjustment::AutoRef")
+                    _ => bug!("bad enum variant for adjustment::AutoRef")
                 })
             })
         }).unwrap()
@@ -1149,9 +1132,7 @@ fn decode_side_tables(dcx: &DecodeContext,
         let decoded_tag: Option<c::astencode_tag> = c::astencode_tag::from_u32(tag);
         match decoded_tag {
             None => {
-                dcx.tcx.sess.bug(
-                    &format!("unknown tag found in side tables: {:x}",
-                            tag));
+                bug!("unknown tag found in side tables: {:x}", tag);
             }
             Some(value) => {
                 let val_dsr = &mut entry_dsr;
@@ -1161,8 +1142,6 @@ fn decode_side_tables(dcx: &DecodeContext,
                         let def = decode_def(dcx, val_dsr);
                         dcx.tcx.def_map.borrow_mut().insert(id, def::PathResolution {
                             base_def: def,
-                            // This doesn't matter cross-crate.
-                            last_private: LastMod(AllPublic),
                             depth: 0
                         });
                     }
@@ -1217,9 +1196,7 @@ fn decode_side_tables(dcx: &DecodeContext,
                         dcx.tcx.const_qualif_map.borrow_mut().insert(id, qualif);
                     }
                     _ => {
-                        dcx.tcx.sess.bug(
-                            &format!("unknown tag found in side tables: {:x}",
-                                    tag));
+                        bug!("unknown tag found in side tables: {:x}", tag);
                     }
                 }
             }
@@ -1276,8 +1253,8 @@ fn copy_item_types(dcx: &DecodeContext, ii: &InlinedItem, orig_did: DefId) {
     }
 }
 
-fn inlined_item_id_range(v: &InlinedItem) -> ast_util::IdRange {
-    let mut visitor = ast_util::IdRangeComputingVisitor::new();
+fn inlined_item_id_range(v: &InlinedItem) -> IdRange {
+    let mut visitor = IdRangeComputingVisitor::new();
     v.visit_ids(&mut visitor);
     visitor.result()
 }
@@ -1293,8 +1270,8 @@ fn encode_item_ast(rbml_w: &mut Encoder, item: &hir::Item) {
 }
 
 #[cfg(test)]
-fn decode_item_ast(par_doc: rbml::Doc) -> hir::Item {
-    let chi_doc = par_doc.get(c::tag_tree as usize);
+fn decode_item_ast(item_doc: rbml::Doc) -> hir::Item {
+    let chi_doc = item_doc.get(c::tag_tree as usize);
     let mut d = reader::Decoder::new(chi_doc);
     Decodable::decode(&mut d).unwrap()
 }
@@ -1415,6 +1392,6 @@ fn test_simplification() {
         assert!(pprust::item_to_string(&item_out) ==
                 pprust::item_to_string(&item_exp));
       }
-      _ => panic!()
+      _ => bug!()
     }
 }

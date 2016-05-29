@@ -13,10 +13,10 @@
 
 use astconv::AstConv;
 use intrinsics;
-use middle::subst;
-use middle::ty::FnSig;
-use middle::ty::{self, Ty};
-use middle::ty::fold::TypeFolder;
+use rustc::ty::subst::{self, Substs};
+use rustc::ty::FnSig;
+use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::fold::TypeFolder;
 use {CrateCtxt, require_same_types};
 
 use std::collections::{HashMap};
@@ -26,14 +26,20 @@ use syntax::attr::AttrMetaMethods;
 use syntax::codemap::Span;
 use syntax::parse::token;
 
-use rustc_front::hir;
+use rustc::hir;
 
-fn equate_intrinsic_type<'a, 'tcx>(tcx: &ty::ctxt<'tcx>, it: &hir::ForeignItem,
+fn equate_intrinsic_type<'a, 'tcx>(tcx: &TyCtxt<'tcx>, it: &hir::ForeignItem,
                                    n_tps: usize,
                                    abi: Abi,
                                    inputs: Vec<ty::Ty<'tcx>>,
                                    output: ty::FnOutput<'tcx>) {
-    let fty = tcx.mk_fn(None, tcx.mk_bare_fn(ty::BareFnTy {
+    let def_id = tcx.map.local_def_id(it.id);
+    let i_ty = tcx.lookup_item_type(def_id);
+
+    let mut substs = Substs::empty();
+    substs.types = i_ty.generics.types.map(|def| tcx.mk_param_from_def(def));
+
+    let fty = tcx.mk_fn_def(def_id, tcx.mk_substs(substs), ty::BareFnTy {
         unsafety: hir::Unsafety::Unsafe,
         abi: abi,
         sig: ty::Binder(FnSig {
@@ -41,8 +47,7 @@ fn equate_intrinsic_type<'a, 'tcx>(tcx: &ty::ctxt<'tcx>, it: &hir::ForeignItem,
             output: output,
             variadic: false,
         }),
-    }));
-    let i_ty = tcx.lookup_item_type(tcx.map.local_def_id(it.id));
+    });
     let i_n_tps = i_ty.generics.types.len(subst::FnSpace);
     if i_n_tps != n_tps {
         span_err!(tcx.sess, it.span, E0094,
@@ -79,14 +84,10 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
 
         //We only care about the operation here
         let (n_tps, inputs, output) = match split[1] {
-            "cxchg" => (1, vec!(tcx.mk_mut_ptr(param(ccx, 0)),
-                                param(ccx, 0),
-                                param(ccx, 0)),
-                        param(ccx, 0)),
-            "cxchgweak" => (1, vec!(tcx.mk_mut_ptr(param(ccx, 0)),
-                                param(ccx, 0),
-                                param(ccx, 0)),
-                            tcx.mk_tup(vec!(param(ccx, 0), tcx.types.bool))),
+            "cxchg" | "cxchgweak" => (1, vec!(tcx.mk_mut_ptr(param(ccx, 0)),
+                                              param(ccx, 0),
+                                              param(ccx, 0)),
+                                      tcx.mk_tup(vec!(param(ccx, 0), tcx.types.bool))),
             "load" => (1, vec!(tcx.mk_imm_ptr(param(ccx, 0))),
                        param(ccx, 0)),
             "store" => (1, vec!(tcx.mk_mut_ptr(param(ccx, 0)), param(ccx, 0)),
@@ -275,6 +276,8 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
 
             "overflowing_add" | "overflowing_sub" | "overflowing_mul" =>
                 (1, vec![param(ccx, 0), param(ccx, 0)], param(ccx, 0)),
+            "fadd_fast" | "fsub_fast" | "fmul_fast" | "fdiv_fast" | "frem_fast" =>
+                (1, vec![param(ccx, 0), param(ccx, 0)], param(ccx, 0)),
 
             "return_address" => (0, vec![], tcx.mk_imm_ptr(tcx.types.u8)),
 
@@ -296,8 +299,7 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
                         variadic: false,
                     }),
                 };
-                let fn_ty = tcx.mk_bare_fn(fn_ty);
-                (0, vec![tcx.mk_fn(None, fn_ty), mut_u8, mut_u8], tcx.types.i32)
+                (0, vec![tcx.mk_fn_ptr(fn_ty), mut_u8, mut_u8], tcx.types.i32)
             }
 
             ref other => {
@@ -358,7 +360,7 @@ pub fn check_platform_intrinsic_type(ccx: &CrateCtxt,
             }
         }
         _ => {
-            match intrinsics::Intrinsic::find(tcx, &name) {
+            match intrinsics::Intrinsic::find(&name) {
                 Some(intr) => {
                     // this function is a platform specific intrinsic
                     if i_n_tps != 0 {
@@ -412,7 +414,7 @@ pub fn check_platform_intrinsic_type(ccx: &CrateCtxt,
 // the same, in a kinda-structural way, i.e. `Vector`s have to be simd structs with
 // exactly the right element type
 fn match_intrinsic_type_to_type<'tcx, 'a>(
-        tcx: &ty::ctxt<'tcx>,
+        tcx: &TyCtxt<'tcx>,
         position: &str,
         span: Span,
         structural_to_nominal: &mut HashMap<&'a intrinsics::Type, ty::Ty<'tcx>>,

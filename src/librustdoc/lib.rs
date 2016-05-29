@@ -20,30 +20,28 @@
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(dynamic_lib)]
 #![feature(libc)]
-#![feature(recover)]
 #![feature(rustc_private)]
 #![feature(set_stdio)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
-#![feature(std_panic)]
 #![feature(test)]
 #![feature(unicode)]
+#![feature(question_mark)]
 
 extern crate arena;
 extern crate getopts;
 extern crate libc;
 extern crate rustc;
+extern crate rustc_const_eval;
 extern crate rustc_trans;
 extern crate rustc_driver;
 extern crate rustc_resolve;
 extern crate rustc_lint;
 extern crate rustc_back;
-extern crate rustc_front;
 extern crate rustc_metadata;
 extern crate serialize;
-extern crate syntax;
+#[macro_use] extern crate syntax;
 extern crate test as testing;
 extern crate rustc_unicode;
 #[macro_use] extern crate log;
@@ -54,21 +52,15 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::default::Default;
 use std::env;
-use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::Read;
 use std::path::PathBuf;
 use std::process;
 use std::rc::Rc;
 use std::sync::mpsc::channel;
 
 use externalfiles::ExternalHtml;
-use serialize::Decodable;
-use serialize::json::{self, Json};
 use rustc::session::search_paths::SearchPaths;
-use rustc::session::config::ErrorOutputType;
-
-// reexported from `clean` so it can be easily updated with the mod itself
-pub use clean::SCHEMA_VERSION;
+use rustc::session::config::{ErrorOutputType, RustcOptGroup, nightly_options};
 
 #[macro_use]
 pub mod externalfiles;
@@ -94,6 +86,8 @@ pub mod visit_ast;
 pub mod test;
 mod flock;
 
+use clean::Attributes;
+
 type Pass = (&'static str,                                      // name
              fn(clean::Crate) -> plugins::PluginResult,         // fn
              &'static str);                                     // description
@@ -106,7 +100,10 @@ const PASSES: &'static [Pass] = &[
     ("collapse-docs", passes::collapse_docs,
      "concatenates all document attributes into one document attribute"),
     ("strip-private", passes::strip_private,
-     "strips all private items from a crate which cannot be seen externally"),
+     "strips all private items from a crate which cannot be seen externally, \
+      implies strip-priv-imports"),
+    ("strip-priv-imports", passes::strip_priv_imports,
+     "strips all private import statements (`use`, `extern crate`) from a crate"),
 ];
 
 const DEFAULT_PASSES: &'static [&'static str] = &[
@@ -122,7 +119,6 @@ thread_local!(pub static ANALYSISKEY: Rc<RefCell<Option<core::CrateAnalysis>>> =
 
 struct Output {
     krate: clean::Crate,
-    json_plugins: Vec<plugins::PluginJson>,
     passes: Vec<String>,
 }
 
@@ -135,68 +131,87 @@ pub fn main() {
     process::exit(res as i32);
 }
 
-pub fn opts() -> Vec<getopts::OptGroup> {
+fn stable(g: getopts::OptGroup) -> RustcOptGroup { RustcOptGroup::stable(g) }
+fn unstable(g: getopts::OptGroup) -> RustcOptGroup { RustcOptGroup::unstable(g) }
+
+pub fn opts() -> Vec<RustcOptGroup> {
     use getopts::*;
     vec!(
-        optflag("h", "help", "show this help message"),
-        optflag("V", "version", "print rustdoc's version"),
-        optflag("v", "verbose", "use verbose output"),
-        optopt("r", "input-format", "the input type of the specified file",
-               "[rust|json]"),
-        optopt("w", "output-format", "the output type to write",
-               "[html|json]"),
-        optopt("o", "output", "where to place the output", "PATH"),
-        optopt("", "crate-name", "specify the name of this crate", "NAME"),
-        optmulti("L", "library-path", "directory to add to crate search path",
-                 "DIR"),
-        optmulti("", "cfg", "pass a --cfg to rustc", ""),
-        optmulti("", "extern", "pass an --extern to rustc", "NAME=PATH"),
-        optmulti("", "plugin-path", "directory to load plugins from", "DIR"),
-        optmulti("", "passes", "list of passes to also run, you might want \
-                                to pass it multiple times; a value of `list` \
-                                will print available passes",
-                 "PASSES"),
-        optmulti("", "plugins", "space separated list of plugins to also load",
-                 "PLUGINS"),
-        optflag("", "no-defaults", "don't run the default passes"),
-        optflag("", "test", "run code examples as tests"),
-        optmulti("", "test-args", "arguments to pass to the test runner",
-                 "ARGS"),
-        optopt("", "target", "target triple to document", "TRIPLE"),
-        optmulti("", "markdown-css", "CSS files to include via <link> in a rendered Markdown file",
-                 "FILES"),
-        optmulti("", "html-in-header",
-                 "files to include inline in the <head> section of a rendered Markdown file \
-                 or generated documentation",
-                 "FILES"),
-        optmulti("", "html-before-content",
-                 "files to include inline between <body> and the content of a rendered \
-                 Markdown file or generated documentation",
-                 "FILES"),
-        optmulti("", "html-after-content",
-                 "files to include inline between the content and </body> of a rendered \
-                 Markdown file or generated documentation",
-                 "FILES"),
-        optopt("", "markdown-playground-url",
-               "URL to send code snippets to", "URL"),
-        optflag("", "markdown-no-toc", "don't include table of contents")
+        stable(optflag("h", "help", "show this help message")),
+        stable(optflag("V", "version", "print rustdoc's version")),
+        stable(optflag("v", "verbose", "use verbose output")),
+        stable(optopt("r", "input-format", "the input type of the specified file",
+                      "[rust]")),
+        stable(optopt("w", "output-format", "the output type to write",
+                      "[html]")),
+        stable(optopt("o", "output", "where to place the output", "PATH")),
+        stable(optopt("", "crate-name", "specify the name of this crate", "NAME")),
+        stable(optmulti("L", "library-path", "directory to add to crate search path",
+                        "DIR")),
+        stable(optmulti("", "cfg", "pass a --cfg to rustc", "")),
+        stable(optmulti("", "extern", "pass an --extern to rustc", "NAME=PATH")),
+        stable(optmulti("", "plugin-path", "directory to load plugins from", "DIR")),
+        stable(optmulti("", "passes",
+                        "list of passes to also run, you might want \
+                         to pass it multiple times; a value of `list` \
+                         will print available passes",
+                        "PASSES")),
+        stable(optmulti("", "plugins", "space separated list of plugins to also load",
+                        "PLUGINS")),
+        stable(optflag("", "no-defaults", "don't run the default passes")),
+        stable(optflag("", "test", "run code examples as tests")),
+        stable(optmulti("", "test-args", "arguments to pass to the test runner",
+                        "ARGS")),
+        stable(optopt("", "target", "target triple to document", "TRIPLE")),
+        stable(optmulti("", "markdown-css",
+                        "CSS files to include via <link> in a rendered Markdown file",
+                        "FILES")),
+        stable(optmulti("", "html-in-header",
+                        "files to include inline in the <head> section of a rendered Markdown file \
+                         or generated documentation",
+                        "FILES")),
+        stable(optmulti("", "html-before-content",
+                        "files to include inline between <body> and the content of a rendered \
+                         Markdown file or generated documentation",
+                        "FILES")),
+        stable(optmulti("", "html-after-content",
+                        "files to include inline between the content and </body> of a rendered \
+                         Markdown file or generated documentation",
+                        "FILES")),
+        stable(optopt("", "markdown-playground-url",
+                      "URL to send code snippets to", "URL")),
+        stable(optflag("", "markdown-no-toc", "don't include table of contents")),
+        unstable(optopt("e", "extend-css",
+                        "to redefine some css rules with a given file to generate doc with your \
+                         own theme", "PATH")),
+        unstable(optmulti("Z", "",
+                          "internal and debugging options (only on nightly build)", "FLAG")),
     )
 }
 
 pub fn usage(argv0: &str) {
     println!("{}",
              getopts::usage(&format!("{} [options] <input>", argv0),
-                            &opts()));
+                            &opts().into_iter()
+                                   .map(|x| x.opt_group)
+                                   .collect::<Vec<getopts::OptGroup>>()));
 }
 
 pub fn main_args(args: &[String]) -> isize {
-    let matches = match getopts::getopts(&args[1..], &opts()) {
+    let all_groups: Vec<getopts::OptGroup> = opts()
+                                             .into_iter()
+                                             .map(|x| x.opt_group)
+                                             .collect();
+    let matches = match getopts::getopts(&args[1..], &all_groups) {
         Ok(m) => m,
         Err(err) => {
             println!("{}", err);
             return 1;
         }
     };
+    // Check for unstable options.
+    nightly_options::check_nightly_options(&matches, &opts());
+
     if matches.opt_present("h") || matches.opt_present("help") {
         usage(&args[0]);
         return 0;
@@ -248,7 +263,15 @@ pub fn main_args(args: &[String]) -> isize {
     let markdown_input = input.ends_with(".md") || input.ends_with(".markdown");
 
     let output = matches.opt_str("o").map(|s| PathBuf::from(&s));
+    let css_file_extension = matches.opt_str("e").map(|s| PathBuf::from(&s));
     let cfgs = matches.opt_strs("cfg");
+
+    if let Some(ref p) = css_file_extension {
+        if !p.is_file() {
+            println!("{}", "--extend-css option must take a css file as input");
+            return 1;
+        }
+    }
 
     let external_html = match ExternalHtml::load(
             &matches.opt_strs("html-in-header"),
@@ -279,23 +302,15 @@ pub fn main_args(args: &[String]) -> isize {
             return 1;
         }
     };
-    let Output { krate, json_plugins, passes, } = out;
+    let Output { krate, passes, } = out;
     info!("going to format");
     match matches.opt_str("w").as_ref().map(|s| &**s) {
         Some("html") | None => {
-            match html::render::run(krate, &external_html,
-                                    output.unwrap_or(PathBuf::from("doc")),
-                                    passes.into_iter().collect()) {
-                Ok(()) => {}
-                Err(e) => panic!("failed to generate documentation: {}", e),
-            }
-        }
-        Some("json") => {
-            match json_output(krate, json_plugins,
-                              output.unwrap_or(PathBuf::from("doc.json"))) {
-                Ok(()) => {}
-                Err(e) => panic!("failed to write json: {}", e),
-            }
+            html::render::run(krate, &external_html,
+                              output.unwrap_or(PathBuf::from("doc")),
+                              passes.into_iter().collect(),
+                              css_file_extension)
+                .expect("failed to generate documentation")
         }
         Some(s) => {
             println!("unknown output format: {}", s);
@@ -313,14 +328,9 @@ fn acquire_input(input: &str,
                  matches: &getopts::Matches) -> Result<Output, String> {
     match matches.opt_str("r").as_ref().map(|s| &**s) {
         Some("rust") => Ok(rust_input(input, externs, matches)),
-        Some("json") => json_input(input),
         Some(s) => Err(format!("unknown input format: {}", s)),
         None => {
-            if input.ends_with(".json") {
-                json_input(input)
-            } else {
-                Ok(rust_input(input, externs, matches))
-            }
+            Ok(rust_input(input, externs, matches))
         }
     }
 }
@@ -332,18 +342,10 @@ fn parse_externs(matches: &getopts::Matches) -> Result<core::Externs, String> {
     let mut externs = HashMap::new();
     for arg in &matches.opt_strs("extern") {
         let mut parts = arg.splitn(2, '=');
-        let name = match parts.next() {
-            Some(s) => s,
-            None => {
-                return Err("--extern value must not be empty".to_string());
-            }
-        };
-        let location = match parts.next() {
-            Some(s) => s,
-            None => {
-                return Err("--extern value must be of the format `foo=bar`".to_string());
-            }
-        };
+        let name = parts.next().ok_or("--extern value must not be empty".to_string())?;
+        let location = parts.next()
+                                 .ok_or("--extern value must be of the format `foo=bar`"
+                                    .to_string())?;
         let name = name.to_string();
         externs.entry(name).or_insert(vec![]).push(location.to_string());
     }
@@ -391,32 +393,25 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
 
     // Process all of the crate attributes, extracting plugin metadata along
     // with the passes which we are supposed to run.
-    match krate.module.as_ref().unwrap().doc_list() {
-        Some(nested) => {
-            for inner in nested {
-                match *inner {
-                    clean::Word(ref x)
-                            if "no_default_passes" == *x => {
-                        default_passes = false;
-                    }
-                    clean::NameValue(ref x, ref value)
-                            if "passes" == *x => {
-                        for pass in value.split_whitespace() {
-                            passes.push(pass.to_string());
-                        }
-                    }
-                    clean::NameValue(ref x, ref value)
-                            if "plugins" == *x => {
-                        for p in value.split_whitespace() {
-                            plugins.push(p.to_string());
-                        }
-                    }
-                    _ => {}
+    for attr in krate.module.as_ref().unwrap().attrs.list("doc") {
+        match *attr {
+            clean::Word(ref w) if "no_default_passes" == *w => {
+                default_passes = false;
+            },
+            clean::NameValue(ref name, ref value) => {
+                let sink = match &name[..] {
+                    "passes" => &mut passes,
+                    "plugins" => &mut plugins,
+                    _ => continue,
+                };
+                for p in value.split_whitespace() {
+                    sink.push(p.to_string());
                 }
             }
+            _ => (),
         }
-        None => {}
     }
+
     if default_passes {
         for name in DEFAULT_PASSES.iter().rev() {
             passes.insert(0, name.to_string());
@@ -447,85 +442,6 @@ fn rust_input(cratefile: &str, externs: core::Externs, matches: &getopts::Matche
 
     // Run everything!
     info!("Executing passes/plugins");
-    let (krate, json) = pm.run_plugins(krate);
-    return Output { krate: krate, json_plugins: json, passes: passes, };
-}
-
-/// This input format purely deserializes the json output file. No passes are
-/// run over the deserialized output.
-fn json_input(input: &str) -> Result<Output, String> {
-    let mut bytes = Vec::new();
-    match File::open(input).and_then(|mut f| f.read_to_end(&mut bytes)) {
-        Ok(_) => {}
-        Err(e) => return Err(format!("couldn't open {}: {}", input, e)),
-    };
-    match json::from_reader(&mut &bytes[..]) {
-        Err(s) => Err(format!("{:?}", s)),
-        Ok(Json::Object(obj)) => {
-            let mut obj = obj;
-            // Make sure the schema is what we expect
-            match obj.remove(&"schema".to_string()) {
-                Some(Json::String(version)) => {
-                    if version != SCHEMA_VERSION {
-                        return Err(format!(
-                                "sorry, but I only understand version {}",
-                                SCHEMA_VERSION))
-                    }
-                }
-                Some(..) => return Err("malformed json".to_string()),
-                None => return Err("expected a schema version".to_string()),
-            }
-            let krate = match obj.remove(&"crate".to_string()) {
-                Some(json) => {
-                    let mut d = json::Decoder::new(json);
-                    Decodable::decode(&mut d).unwrap()
-                }
-                None => return Err("malformed json".to_string()),
-            };
-            // FIXME: this should read from the "plugins" field, but currently
-            //      Json doesn't implement decodable...
-            let plugin_output = Vec::new();
-            Ok(Output { krate: krate, json_plugins: plugin_output, passes: Vec::new(), })
-        }
-        Ok(..) => {
-            Err("malformed json input: expected an object at the \
-                 top".to_string())
-        }
-    }
-}
-
-/// Outputs the crate/plugin json as a giant json blob at the specified
-/// destination.
-fn json_output(krate: clean::Crate, res: Vec<plugins::PluginJson> ,
-               dst: PathBuf) -> io::Result<()> {
-    // {
-    //   "schema": version,
-    //   "crate": { parsed crate ... },
-    //   "plugins": { output of plugins ... }
-    // }
-    let mut json = std::collections::BTreeMap::new();
-    json.insert("schema".to_string(), Json::String(SCHEMA_VERSION.to_string()));
-    let plugins_json = res.into_iter()
-                          .filter_map(|opt| {
-                              match opt {
-                                  None => None,
-                                  Some((string, json)) => {
-                                      Some((string.to_string(), json))
-                                  }
-                              }
-                          }).collect();
-
-    // FIXME #8335: yuck, Rust -> str -> JSON round trip! No way to .encode
-    // straight to the Rust JSON representation.
-    let crate_json_str = format!("{}", json::as_json(&krate));
-    let crate_json = match json::from_str(&crate_json_str) {
-        Ok(j) => j,
-        Err(e) => panic!("Rust generated JSON is invalid: {:?}", e)
-    };
-
-    json.insert("crate".to_string(), crate_json);
-    json.insert("plugins".to_string(), Json::Object(plugins_json));
-
-    let mut file = try!(File::create(&dst));
-    write!(&mut file, "{}", Json::Object(json))
+    let krate = pm.run_plugins(krate);
+    Output { krate: krate, passes: passes }
 }

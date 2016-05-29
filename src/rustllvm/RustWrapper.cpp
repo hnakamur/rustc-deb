@@ -151,6 +151,16 @@ extern "C" void LLVMAddFunctionAttrStringValue(LLVMValueRef Fn, unsigned index,
   F->addAttributes(index, AttributeSet::get(F->getContext(), index, B));
 }
 
+extern "C" void LLVMRemoveFunctionAttributes(LLVMValueRef Fn, unsigned index, uint64_t Val) {
+  Function *A = unwrap<Function>(Fn);
+  const AttributeSet PAL = A->getAttributes();
+  AttrBuilder B(Val);
+  const AttributeSet PALnew =
+    PAL.removeAttributes(A->getContext(), index,
+                         AttributeSet::get(A->getContext(), index, B));
+  A->setAttributes(PALnew);
+}
+
 extern "C" void LLVMRemoveFunctionAttrString(LLVMValueRef fn, unsigned index, const char *Name) {
   Function *f = unwrap<Function>(fn);
   LLVMContext &C = f->getContext();
@@ -162,6 +172,13 @@ extern "C" void LLVMRemoveFunctionAttrString(LLVMValueRef fn, unsigned index, co
   f->setAttributes(attrs.removeAttributes(f->getContext(),
                                           index,
                                           to_remove));
+}
+
+// enable fpmath flag UnsafeAlgebra
+extern "C" void LLVMRustSetHasUnsafeAlgebra(LLVMValueRef V) {
+    if (auto I = dyn_cast<Instruction>(unwrap<Value>(V))) {
+        I->setHasUnsafeAlgebra(true);
+    }
 }
 
 extern "C" LLVMValueRef LLVMBuildAtomicLoad(LLVMBuilderRef B,
@@ -1167,3 +1184,21 @@ LLVMRustBuildInvoke(LLVMBuilderRef B,
     return LLVMBuildInvoke(B, Fn, Args, NumArgs, Then, Catch, Name);
 }
 #endif
+
+extern "C" void LLVMRustPositionBuilderAtStart(LLVMBuilderRef B, LLVMBasicBlockRef BB) {
+    auto point = unwrap(BB)->getFirstInsertionPt();
+    unwrap(B)->SetInsertPoint(unwrap(BB), point);
+}
+
+extern "C" void LLVMRustSetComdat(LLVMModuleRef M, LLVMValueRef V, const char *Name) {
+    Triple TargetTriple(unwrap(M)->getTargetTriple());
+    GlobalObject *GV = unwrap<GlobalObject>(V);
+    if (!TargetTriple.isOSBinFormatMachO()) {
+        GV->setComdat(unwrap(M)->getOrInsertComdat(Name));
+    }
+}
+
+extern "C" void LLVMRustUnsetComdat(LLVMValueRef V) {
+    GlobalObject *GV = unwrap<GlobalObject>(V);
+    GV->setComdat(nullptr);
+}

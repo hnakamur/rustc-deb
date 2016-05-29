@@ -19,15 +19,14 @@ pub use self::MatchMode::*;
 use self::TrackMatchMode::*;
 use self::OverloadedCallType::*;
 
-use middle::pat_util;
-use middle::def::Def;
-use middle::def_id::{DefId};
-use middle::infer;
+use hir::pat_util;
+use hir::def::Def;
+use hir::def_id::{DefId};
+use infer;
 use middle::mem_categorization as mc;
-use middle::ty;
-use middle::ty::adjustment;
+use ty::{self, TyCtxt, adjustment};
 
-use rustc_front::hir::{self, PatKind};
+use hir::{self, PatKind};
 
 use syntax::ast;
 use syntax::ptr::P;
@@ -210,7 +209,7 @@ enum OverloadedCallType {
 }
 
 impl OverloadedCallType {
-    fn from_trait_id(tcx: &ty::ctxt, trait_id: DefId)
+    fn from_trait_id(tcx: &TyCtxt, trait_id: DefId)
                      -> OverloadedCallType {
         for &(maybe_function_trait, overloaded_call_type) in &[
             (tcx.lang_items.fn_once_trait(), FnOnceOverloadedCall),
@@ -225,10 +224,10 @@ impl OverloadedCallType {
             }
         }
 
-        tcx.sess.bug("overloaded call didn't map to known function trait")
+        bug!("overloaded call didn't map to known function trait")
     }
 
-    fn from_method_id(tcx: &ty::ctxt, method_id: DefId)
+    fn from_method_id(tcx: &TyCtxt, method_id: DefId)
                       -> OverloadedCallType {
         let method = tcx.impl_or_trait_item(method_id);
         OverloadedCallType::from_trait_id(tcx, method.container().id())
@@ -307,7 +306,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         }
     }
 
-    fn tcx(&self) -> &'t ty::ctxt<'tcx> {
+    fn tcx(&self) -> &'t TyCtxt<'tcx> {
         self.typer.tcx
     }
 
@@ -399,11 +398,6 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                 }
             }
 
-            hir::ExprRange(ref start, ref end) => {
-                start.as_ref().map(|e| self.consume_expr(&e));
-                end.as_ref().map(|e| self.consume_expr(&e));
-            }
-
             hir::ExprCall(ref callee, ref args) => {    // callee(args)
                 self.walk_callee(expr, &callee);
                 self.consume_exprs(args);
@@ -455,23 +449,20 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                 }
             }
 
-            hir::ExprInlineAsm(ref ia) => {
-                for &(_, ref input) in &ia.inputs {
-                    self.consume_expr(&input);
-                }
-
-                for output in &ia.outputs {
-                    if output.is_indirect {
-                        self.consume_expr(&output.expr);
+            hir::ExprInlineAsm(ref ia, ref outputs, ref inputs) => {
+                for (o, output) in ia.outputs.iter().zip(outputs) {
+                    if o.is_indirect {
+                        self.consume_expr(output);
                     } else {
-                        self.mutate_expr(expr, &output.expr,
-                                         if output.is_rw {
+                        self.mutate_expr(expr, output,
+                                         if o.is_rw {
                                              MutateMode::WriteAndRead
                                          } else {
                                              MutateMode::JustWrite
                                          });
                     }
                 }
+                self.consume_exprs(inputs);
             }
 
             hir::ExprBreak(..) |
@@ -488,7 +479,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
             }
 
             hir::ExprUnary(op, ref lhs) => {
-                let pass_args = if ::rustc_front::util::is_by_value_unop(op) {
+                let pass_args = if op.is_by_value() {
                     PassArgs::ByValue
                 } else {
                     PassArgs::ByRef
@@ -500,7 +491,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
             }
 
             hir::ExprBinary(op, ref lhs, ref rhs) => {
-                let pass_args = if ::rustc_front::util::is_by_value_binop(op.node) {
+                let pass_args = if op.node.is_by_value() {
                     PassArgs::ByValue
                 } else {
                     PassArgs::ByRef
@@ -533,7 +524,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
 
             hir::ExprAssignOp(op, ref lhs, ref rhs) => {
                 // NB All our assignment operations take the RHS by value
-                assert!(::rustc_front::util::is_by_value_binop(op.node));
+                assert!(op.node.is_by_value());
 
                 if !self.walk_overloaded_operator(expr, lhs, vec![rhs], PassArgs::ByValue) {
                     self.mutate_expr(expr, &lhs, MutateMode::WriteAndRead);
@@ -562,7 +553,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                callee, callee_ty);
         let call_scope = self.tcx().region_maps.node_extent(call.id);
         match callee_ty.sty {
-            ty::TyBareFn(..) => {
+            ty::TyFnDef(..) | ty::TyFnPtr(_) => {
                 self.consume_expr(callee);
             }
             ty::TyError => { }
@@ -573,9 +564,10 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                             OverloadedCallType::from_method_id(self.tcx(), method_id)
                         }
                         None => {
-                            self.tcx().sess.span_bug(
+                            span_bug!(
                                 callee.span,
-                                &format!("unexpected callee type {}", callee_ty))
+                                "unexpected callee type {}",
+                                callee_ty)
                         }
                     };
                 match overloaded_call_type {
@@ -692,7 +684,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
             // may not. This will generate an error earlier in typeck,
             // so we can just ignore it.
             if !self.tcx().sess.has_errors() {
-                self.tcx().sess.span_bug(
+                span_bug!(
                     with_expr.span,
                     "with expression doesn't evaluate to a struct");
             }
@@ -759,9 +751,9 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
 
                     let (m, r) = match self_ty.sty {
                         ty::TyRef(r, ref m) => (m.mutbl, r),
-                        _ => self.tcx().sess.span_bug(expr.span,
-                                &format!("bad overloaded deref type {:?}",
-                                    method_ty))
+                        _ => span_bug!(expr.span,
+                                "bad overloaded deref type {:?}",
+                                method_ty)
                     };
                     let bk = ty::BorrowKind::from_mutbl(m);
                     self.delegate.borrow(expr.id, expr.span, cmt,
@@ -943,7 +935,6 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         debug!("determine_pat_move_mode cmt_discr={:?} pat={:?}", cmt_discr,
                pat);
         return_if_err!(self.mc.cat_pattern(cmt_discr, pat, |_mc, cmt_pat, pat| {
-            let tcx = self.tcx();
             let def_map = &self.tcx().def_map;
             if pat_util::pat_is_binding(&def_map.borrow(), pat) {
                 match pat.node {
@@ -956,7 +947,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                         }
                     }
                     _ => {
-                        tcx.sess.span_bug(
+                        span_bug!(
                             pat.span,
                             "binding pattern not an identifier");
                     }
@@ -981,8 +972,6 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         let delegate = &mut self.delegate;
         return_if_err!(mc.cat_pattern(cmt_discr.clone(), pat, |mc, cmt_pat, pat| {
             if pat_util::pat_is_binding(&def_map.borrow(), pat) {
-                let tcx = typer.tcx;
-
                 debug!("binding cmt_pat={:?} pat={:?} match_mode={:?}",
                        cmt_pat,
                        pat,
@@ -1016,7 +1005,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                         delegate.consume_pat(pat, cmt_pat, mode);
                     }
                     _ => {
-                        tcx.sess.span_bug(
+                        span_bug!(
                             pat.span,
                             "binding pattern not an identifier");
                     }
@@ -1126,10 +1115,10 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
                             // reported.
 
                             if !tcx.sess.has_errors() {
-                                let msg = format!("Pattern has unexpected def: {:?} and type {:?}",
-                                                  def,
-                                                  cmt_pat.ty);
-                                tcx.sess.span_bug(pat.span, &msg[..])
+                                span_bug!(pat.span,
+                                          "Pattern has unexpected def: {:?} and type {:?}",
+                                          def,
+                                          cmt_pat.ty);
                             }
                         }
                     }
@@ -1191,7 +1180,7 @@ impl<'d,'t,'a,'tcx> ExprUseVisitor<'d,'t,'a,'tcx> {
         // Create the cmt for the variable being borrowed, from the
         // caller's perspective
         let var_id = upvar_def.var_id();
-        let var_ty = try!(self.typer.node_ty(var_id));
+        let var_ty = self.typer.node_ty(var_id)?;
         self.mc.cat_def(closure_id, closure_span, var_ty, upvar_def)
     }
 }

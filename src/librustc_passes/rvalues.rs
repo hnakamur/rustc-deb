@@ -13,22 +13,23 @@
 
 use rustc::dep_graph::DepNode;
 use rustc::middle::expr_use_visitor as euv;
-use rustc::middle::infer;
+use rustc::infer;
 use rustc::middle::mem_categorization as mc;
-use rustc::middle::ty::{self, ParameterEnvironment};
+use rustc::ty::{self, TyCtxt, ParameterEnvironment};
+use rustc::traits::ProjectionMode;
 
-use rustc_front::hir;
-use rustc_front::intravisit;
+use rustc::hir;
+use rustc::hir::intravisit;
 use syntax::ast;
 use syntax::codemap::Span;
 
-pub fn check_crate(tcx: &ty::ctxt) {
+pub fn check_crate(tcx: &TyCtxt) {
     let mut rvcx = RvalueContext { tcx: tcx };
     tcx.visit_all_items_in_krate(DepNode::RvalueCheck, &mut rvcx);
 }
 
 struct RvalueContext<'a, 'tcx: 'a> {
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
 }
 
 impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for RvalueContext<'a, 'tcx> {
@@ -43,7 +44,8 @@ impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for RvalueContext<'a, 'tcx> {
             let param_env = ParameterEnvironment::for_item(self.tcx, fn_id);
             let infcx = infer::new_infer_ctxt(self.tcx,
                                               &self.tcx.tables,
-                                              Some(param_env.clone()));
+                                              Some(param_env.clone()),
+                                              ProjectionMode::AnyFinal);
             let mut delegate = RvalueContextDelegate { tcx: self.tcx, param_env: &param_env };
             let mut euv = euv::ExprUseVisitor::new(&mut delegate, &infcx);
             euv.walk_fn(fd, b);
@@ -53,7 +55,7 @@ impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for RvalueContext<'a, 'tcx> {
 }
 
 struct RvalueContextDelegate<'a, 'tcx: 'a> {
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
     param_env: &'a ty::ParameterEnvironment<'a,'tcx>,
 }
 

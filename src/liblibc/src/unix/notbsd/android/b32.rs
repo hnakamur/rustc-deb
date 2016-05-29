@@ -8,3 +8,5 @@ s! {
         pub sa_restorer: ::dox::Option<extern fn()>,
     }
 }
+
+pub const SYS_gettid: ::c_long = 224;

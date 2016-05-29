@@ -292,7 +292,7 @@ mod lazy;
 mod util;
 mod stdio;
 
-const DEFAULT_BUF_SIZE: usize = 64 * 1024;
+const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
 // A few methods below (read_to_string, read_line) will append data into a
 // `String` buffer, but we need to be pretty careful when doing this. The
@@ -811,49 +811,6 @@ pub trait Read {
     fn take(self, limit: u64) -> Take<Self> where Self: Sized {
         Take { inner: self, limit: limit }
     }
-
-    /// Creates a reader adaptor which will write all read data into the given
-    /// output stream.
-    ///
-    /// Whenever the returned `Read` instance is read it will write the read
-    /// data to `out`. The current semantics of this implementation imply that
-    /// a `write` error will not report how much data was initially read.
-    ///
-    /// # Examples
-    ///
-    /// [`File`][file]s implement `Read`:
-    ///
-    /// [file]: ../fs/struct.File.html
-    ///
-    /// ```
-    /// #![feature(io)]
-    /// use std::io;
-    /// use std::io::prelude::*;
-    /// use std::fs::File;
-    ///
-    /// # fn foo() -> io::Result<()> {
-    /// let mut f = try!(File::open("foo.txt"));
-    /// let mut buffer1 = Vec::with_capacity(10);
-    /// let mut buffer2 = Vec::with_capacity(10);
-    ///
-    /// // write the output to buffer1 as we read
-    /// let mut handle = f.tee(&mut buffer1);
-    ///
-    /// try!(handle.read(&mut buffer2));
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[unstable(feature = "io", reason = "the semantics of a partial read/write \
-                                         of where errors happen is currently \
-                                         unclear and may change",
-               issue = "27802")]
-    #[rustc_deprecated(reason = "error handling semantics unclear and \
-                                 don't seem to have an ergonomic resolution",
-                       since = "1.6.0")]
-    #[allow(deprecated)]
-    fn tee<W: Write>(self, out: W) -> Tee<Self, W> where Self: Sized {
-        Tee { reader: self, writer: out }
-    }
 }
 
 /// A trait for objects which are byte-oriented sinks.
@@ -1089,47 +1046,6 @@ pub trait Write {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn by_ref(&mut self) -> &mut Self where Self: Sized { self }
-
-    /// Creates a new writer which will write all data to both this writer and
-    /// another writer.
-    ///
-    /// All data written to the returned writer will both be written to `self`
-    /// as well as `other`. Note that the error semantics of the current
-    /// implementation do not precisely track where errors happen. For example
-    /// an error on the second call to `write` will not report that the first
-    /// call to `write` succeeded.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(io)]
-    /// use std::io::prelude::*;
-    /// use std::fs::File;
-    ///
-    /// # fn foo() -> std::io::Result<()> {
-    /// let mut buffer1 = try!(File::create("foo.txt"));
-    /// let mut buffer2 = Vec::new();
-    ///
-    /// // write the output to buffer1 as we read
-    /// let mut handle = buffer1.broadcast(&mut buffer2);
-    ///
-    /// try!(handle.write(b"some bytes"));
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[unstable(feature = "io", reason = "the semantics of a partial read/write \
-                                         of where errors happen is currently \
-                                         unclear and may change",
-               issue = "27802")]
-    #[rustc_deprecated(reason = "error handling semantics unclear and \
-                                 don't seem to have an ergonomic resolution",
-                       since = "1.6.0")]
-    #[allow(deprecated)]
-    fn broadcast<W: Write>(self, other: W) -> Broadcast<Self, W>
-        where Self: Sized
-    {
-        Broadcast { first: self, second: other }
-    }
 }
 
 /// The `Seek` trait provides a cursor which can be moved within a stream of
@@ -1338,7 +1254,7 @@ pub trait BufRead: Read {
     /// longer be returned. As such, this function may do odd things if
     /// `fill_buf` isn't called before calling it.
     ///
-    /// [fillbuf]: #tymethod.fill_buff
+    /// [fillbuf]: #tymethod.fill_buf
     ///
     /// The `amt` must be `<=` the number of bytes in the buffer returned by
     /// `fill_buf`.
@@ -1500,41 +1416,6 @@ pub trait BufRead: Read {
     }
 }
 
-/// A `Write` adaptor which will write data to multiple locations.
-///
-/// This struct is generally created by calling [`broadcast()`][broadcast] on a
-/// writer. Please see the documentation of `broadcast()` for more details.
-///
-/// [broadcast]: trait.Write.html#method.broadcast
-#[unstable(feature = "io", reason = "awaiting stability of Write::broadcast",
-           issue = "27802")]
-#[rustc_deprecated(reason = "error handling semantics unclear and \
-                             don't seem to have an ergonomic resolution",
-                   since = "1.6.0")]
-pub struct Broadcast<T, U> {
-    first: T,
-    second: U,
-}
-
-#[unstable(feature = "io", reason = "awaiting stability of Write::broadcast",
-           issue = "27802")]
-#[rustc_deprecated(reason = "error handling semantics unclear and \
-                             don't seem to have an ergonomic resolution",
-                   since = "1.6.0")]
-#[allow(deprecated)]
-impl<T: Write, U: Write> Write for Broadcast<T, U> {
-    fn write(&mut self, data: &[u8]) -> Result<usize> {
-        let n = try!(self.first.write(data));
-        // FIXME: what if the write fails? (we wrote something)
-        try!(self.second.write_all(&data[..n]));
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        self.first.flush().and(self.second.flush())
-    }
-}
-
 /// Adaptor to chain together two readers.
 ///
 /// This struct is generally created by calling [`chain()`][chain] on a reader.
@@ -1552,12 +1433,33 @@ pub struct Chain<T, U> {
 impl<T: Read, U: Read> Read for Chain<T, U> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         if !self.done_first {
-            match try!(self.first.read(buf)) {
+            match self.first.read(buf)? {
                 0 => { self.done_first = true; }
                 n => return Ok(n),
             }
         }
         self.second.read(buf)
+    }
+}
+
+#[stable(feature = "chain_bufread", since = "1.9.0")]
+impl<T: BufRead, U: BufRead> BufRead for Chain<T, U> {
+    fn fill_buf(&mut self) -> Result<&[u8]> {
+        if !self.done_first {
+            match self.first.fill_buf()? {
+                buf if buf.len() == 0 => { self.done_first = true; }
+                buf => return Ok(buf),
+            }
+        }
+        self.second.fill_buf()
+    }
+
+    fn consume(&mut self, amt: usize) {
+        if !self.done_first {
+            self.first.consume(amt)
+        } else {
+            self.second.consume(amt)
+        }
     }
 }
 
@@ -1594,7 +1496,7 @@ impl<T: Read> Read for Take<T> {
         }
 
         let max = cmp::min(buf.len() as u64, self.limit) as usize;
-        let n = try!(self.inner.read(&mut buf[..max]));
+        let n = self.inner.read(&mut buf[..max])?;
         self.limit -= n as u64;
         Ok(n)
     }
@@ -1603,7 +1505,7 @@ impl<T: Read> Read for Take<T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: BufRead> BufRead for Take<T> {
     fn fill_buf(&mut self) -> Result<&[u8]> {
-        let buf = try!(self.inner.fill_buf());
+        let buf = self.inner.fill_buf()?;
         let cap = cmp::min(buf.len() as u64, self.limit) as usize;
         Ok(&buf[..cap])
     }
@@ -1613,37 +1515,6 @@ impl<T: BufRead> BufRead for Take<T> {
         let amt = cmp::min(amt as u64, self.limit) as usize;
         self.limit -= amt as u64;
         self.inner.consume(amt);
-    }
-}
-
-/// An adaptor which will emit all read data to a specified writer as well.
-///
-/// This struct is generally created by calling [`tee()`][tee] on a reader.
-/// Please see the documentation of `tee()` for more details.
-///
-/// [tee]: trait.Read.html#method.tee
-#[unstable(feature = "io", reason = "awaiting stability of Read::tee",
-           issue = "27802")]
-#[rustc_deprecated(reason = "error handling semantics unclear and \
-                             don't seem to have an ergonomic resolution",
-                   since = "1.6.0")]
-pub struct Tee<R, W> {
-    reader: R,
-    writer: W,
-}
-
-#[unstable(feature = "io", reason = "awaiting stability of Read::tee",
-           issue = "27802")]
-#[rustc_deprecated(reason = "error handling semantics unclear and \
-                             don't seem to have an ergonomic resolution",
-                   since = "1.6.0")]
-#[allow(deprecated)]
-impl<R: Read, W: Write> Read for Tee<R, W> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let n = try!(self.reader.read(buf));
-        // FIXME: what if the write fails? (we read something)
-        try!(self.writer.write_all(&buf[..n]));
-        Ok(n)
     }
 }
 
@@ -1725,7 +1596,7 @@ impl<R: Read> Iterator for Chars<R> {
             }
         }
         Some(match str::from_utf8(&buf[..width]).ok() {
-            Some(s) => Ok(s.char_at(0)),
+            Some(s) => Ok(s.chars().next().unwrap()),
             None => Err(CharsError::NotUtf8),
         })
     }
@@ -1992,6 +1863,39 @@ mod tests {
 
         let mut buf = [0; 1];
         assert_eq!(0, R.take(0).read(&mut buf).unwrap());
+    }
+
+    fn cmp_bufread<Br1: BufRead, Br2: BufRead>(mut br1: Br1, mut br2: Br2, exp: &[u8]) {
+        let mut cat = Vec::new();
+        loop {
+            let consume = {
+                let buf1 = br1.fill_buf().unwrap();
+                let buf2 = br2.fill_buf().unwrap();
+                let minlen = if buf1.len() < buf2.len() { buf1.len() } else { buf2.len() };
+                assert_eq!(buf1[..minlen], buf2[..minlen]);
+                cat.extend_from_slice(&buf1[..minlen]);
+                minlen
+            };
+            if consume == 0 {
+                break;
+            }
+            br1.consume(consume);
+            br2.consume(consume);
+        }
+        assert_eq!(br1.fill_buf().unwrap().len(), 0);
+        assert_eq!(br2.fill_buf().unwrap().len(), 0);
+        assert_eq!(&cat[..], &exp[..])
+    }
+
+    #[test]
+    fn chain_bufread() {
+        let testdata = b"ABCDEFGHIJKL";
+        let chain1 = (&testdata[..3]).chain(&testdata[3..6])
+                                     .chain(&testdata[6..9])
+                                     .chain(&testdata[9..]);
+        let chain2 = (&testdata[..4]).chain(&testdata[4..8])
+                                     .chain(&testdata[8..]);
+        cmp_bufread(chain1, chain2, &testdata[..]);
     }
 
     #[bench]

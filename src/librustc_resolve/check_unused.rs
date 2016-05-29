@@ -23,13 +23,12 @@ use Resolver;
 use Namespace::{TypeNS, ValueNS};
 
 use rustc::lint;
-use rustc::middle::privacy::{DependsOn, LastImport, Used, Unused};
 use syntax::ast;
 use syntax::codemap::{Span, DUMMY_SP};
 
-use rustc_front::hir;
-use rustc_front::hir::{ViewPathGlob, ViewPathList, ViewPathSimple};
-use rustc_front::intravisit::Visitor;
+use rustc::hir;
+use rustc::hir::{ViewPathGlob, ViewPathList, ViewPathSimple};
+use rustc::hir::intravisit::Visitor;
 
 struct UnusedImportCheckVisitor<'a, 'b: 'a, 'tcx: 'b> {
     resolver: &'a mut Resolver<'b, 'tcx>,
@@ -52,16 +51,8 @@ impl<'a, 'b, 'tcx:'b> DerefMut for UnusedImportCheckVisitor<'a, 'b, 'tcx> {
 
 impl<'a, 'b, 'tcx> UnusedImportCheckVisitor<'a, 'b, 'tcx> {
     // We have information about whether `use` (import) directives are actually
-    // used now. If an import is not used at all, we signal a lint error. If an
-    // import is only used for a single namespace, we remove the other namespace
-    // from the recorded privacy information. That means in privacy.rs, we will
-    // only check imports and namespaces which are used. In particular, this
-    // means that if an import could name either a public or private item, we
-    // will check the correct thing, dependent on how the import is used.
-    fn finalize_import(&mut self, id: ast::NodeId, span: Span) {
-        debug!("finalizing import uses for {:?}",
-               self.session.codemap().span_to_snippet(span));
-
+    // used now. If an import is not used at all, we signal a lint error.
+    fn check_import(&mut self, id: ast::NodeId, span: Span) {
         if !self.used_imports.contains(&(id, TypeNS)) &&
            !self.used_imports.contains(&(id, ValueNS)) {
             self.session.add_lint(lint::builtin::UNUSED_IMPORTS,
@@ -69,45 +60,6 @@ impl<'a, 'b, 'tcx> UnusedImportCheckVisitor<'a, 'b, 'tcx> {
                                   span,
                                   "unused import".to_string());
         }
-
-        let mut def_map = self.def_map.borrow_mut();
-        let path_res = if let Some(r) = def_map.get_mut(&id) {
-            r
-        } else {
-            return;
-        };
-        let (v_priv, t_priv) = match path_res.last_private {
-            LastImport { value_priv, type_priv, .. } => (value_priv, type_priv),
-            _ => {
-                panic!("we should only have LastImport for `use` directives")
-            }
-        };
-
-        let mut v_used = if self.used_imports.contains(&(id, ValueNS)) {
-            Used
-        } else {
-            Unused
-        };
-        let t_used = if self.used_imports.contains(&(id, TypeNS)) {
-            Used
-        } else {
-            Unused
-        };
-
-        match (v_priv, t_priv) {
-            // Since some items may be both in the value _and_ type namespaces (e.g., structs)
-            // we might have two LastPrivates pointing at the same thing. There is no point
-            // checking both, so lets not check the value one.
-            (Some(DependsOn(def_v)), Some(DependsOn(def_t))) if def_v == def_t => v_used = Unused,
-            _ => {}
-        }
-
-        path_res.last_private = LastImport {
-            value_priv: v_priv,
-            value_used: v_used,
-            type_priv: t_priv,
-            type_used: t_used,
-        };
     }
 }
 
@@ -135,23 +87,16 @@ impl<'a, 'b, 'v, 'tcx> Visitor<'v> for UnusedImportCheckVisitor<'a, 'b, 'tcx> {
             hir::ItemUse(ref p) => {
                 match p.node {
                     ViewPathSimple(_, _) => {
-                        self.finalize_import(item.id, p.span)
+                        self.check_import(item.id, p.span)
                     }
 
                     ViewPathList(_, ref list) => {
                         for i in list {
-                            self.finalize_import(i.node.id(), i.span);
+                            self.check_import(i.node.id(), i.span);
                         }
                     }
                     ViewPathGlob(_) => {
-                        if !self.used_imports.contains(&(item.id, TypeNS)) &&
-                           !self.used_imports.contains(&(item.id, ValueNS)) {
-                            self.session
-                                .add_lint(lint::builtin::UNUSED_IMPORTS,
-                                          item.id,
-                                          p.span,
-                                          "unused import".to_string());
-                        }
+                        self.check_import(item.id, p.span)
                     }
                 }
             }

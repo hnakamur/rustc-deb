@@ -93,8 +93,8 @@ unofficial locations.
 | `armv7-apple-ios`             |  ✓  |     |     | ARM iOS                    |
 | `armv7s-apple-ios`            |  ✓  |     |     | ARM iOS                    |
 | `aarch64-apple-ios`           |  ✓  |     |     | ARM64 iOS                  |
-| `i686-unknown-freebsd`        |  ✓  |  ✓  |     | 32-bit FreeBSD             |
-| `x86_64-unknown-freebsd`      |  ✓  |  ✓  |     | 64-bit FreeBSD             |
+| `i686-unknown-freebsd`        |  ✓  |  ✓  |  ✓  | 32-bit FreeBSD             |
+| `x86_64-unknown-freebsd`      |  ✓  |  ✓  |  ✓  | 64-bit FreeBSD             |
 | `x86_64-unknown-openbsd`      |  ✓  |  ✓  |     | 64-bit OpenBSD             |
 | `x86_64-unknown-netbsd`       |  ✓  |  ✓  |     | 64-bit NetBSD              |
 | `x86_64-unknown-bitrig`       |  ✓  |  ✓  |     | 64-bit Bitrig              |
@@ -119,19 +119,7 @@ This will download a script, and start the installation. If it all goes well,
 you’ll see this appear:
 
 ```text
-Welcome to Rust.
-
-This script will download the Rust compiler and its package manager, Cargo, and
-install them to /usr/local. You may install elsewhere by running this script
-with the --prefix=<path> option.
-
-The installer will run under ‘sudo’ and may ask you for your password. If you do
-not want the script to run ‘sudo’ then pass it the --disable-sudo flag.
-
-You may uninstall later by running /usr/local/lib/rustlib/uninstall.sh,
-or by running this script again with the --uninstall flag.
-
-Continue? (y/N)
+Rust is ready to roll.
 ```
 
 From here, press `y` for ‘yes’, and then follow the rest of the prompts.
@@ -176,13 +164,15 @@ installed. Doing so will depend on your specific system, consult its
 documentation for more details.
 
 If not, there are a number of places where we can get help. The easiest is
-[the #rust IRC channel on irc.mozilla.org][irc], which we can access through
-[Mibbit][mibbit]. Click that link, and we'll be chatting with other Rustaceans
-(a silly nickname we call ourselves) who can help us out. Other great resources
-include [the user’s forum][users], and [Stack Overflow][stackoverflow].
+[the #rust-beginners IRC channel on irc.mozilla.org][irc-beginners] and for
+general discussion [the #rust IRC channel on irc.mozilla.org][irc], which we
+can access through [Mibbit][mibbit]. Then we'll be chatting with other
+Rustaceans (a silly nickname we call ourselves) who can help us out. Other great
+resources include [the user’s forum][users] and [Stack Overflow][stackoverflow].
 
+[irc-beginners]: irc://irc.mozilla.org/#rust-beginners
 [irc]: irc://irc.mozilla.org/#rust
-[mibbit]: http://chat.mibbit.com/?server=irc.mozilla.org&channel=%23rust
+[mibbit]: http://chat.mibbit.com/?server=irc.mozilla.org&channel=%23rust-beginners,%23rust
 [users]: https://users.rust-lang.org/
 [stackoverflow]: http://stackoverflow.com/questions/tagged/rust
 
@@ -429,7 +419,7 @@ first. This leaves the top-level project directory (in this case,
 to your code. In this way, using Cargo helps you keep your projects nice and
 tidy. There's a place for everything, and everything is in its place.
 
-Now, copy *main.rs* to the *src* directory, and delete the compiled file you
+Now, move *main.rs* into the *src* directory, and delete the compiled file you
 created with `rustc`. As usual, replace `main` with `main.exe` if you're on
 Windows.
 
@@ -513,7 +503,7 @@ Cargo checks to see if any of your project’s files have been modified, and onl
 rebuilds your project if they’ve changed since the last time you built it.
 
 With simple projects, Cargo doesn't bring a whole lot over just using `rustc`,
-but it will become useful in future. This is especially true when you start
+but it will become useful in the future. This is especially true when you start
 using crates; these are synonymous with a ‘library’ or ‘package’ in other
 programming languages. For complex projects composed of multiple crates, it’s
 much easier to let Cargo coordinate the build. Using Cargo, you can run `cargo

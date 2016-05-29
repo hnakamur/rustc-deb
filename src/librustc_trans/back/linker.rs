@@ -22,7 +22,7 @@ use session::Session;
 use session::config::CrateTypeDylib;
 use session::config;
 use syntax::ast;
-use trans::CrateTranslation;
+use CrateTranslation;
 
 /// Linker abstraction used by back::link to build up the command to invoke a
 /// linker.
@@ -271,10 +271,10 @@ impl<'a> Linker for MsvcLinker<'a> {
     }
 
     fn framework_path(&mut self, _path: &Path) {
-        panic!("frameworks are not supported on windows")
+        bug!("frameworks are not supported on windows")
     }
     fn link_framework(&mut self, _framework: &str) {
-        panic!("frameworks are not supported on windows")
+        bug!("frameworks are not supported on windows")
     }
 
     fn link_whole_staticlib(&mut self, lib: &str, _search_path: &[PathBuf]) {
@@ -327,16 +327,16 @@ impl<'a> Linker for MsvcLinker<'a> {
                       tmpdir: &Path) {
         let path = tmpdir.join("lib.def");
         let res = (|| -> io::Result<()> {
-            let mut f = BufWriter::new(try!(File::create(&path)));
+            let mut f = BufWriter::new(File::create(&path)?);
 
             // Start off with the standard module name header and then go
             // straight to exports.
-            try!(writeln!(f, "LIBRARY"));
-            try!(writeln!(f, "EXPORTS"));
+            writeln!(f, "LIBRARY")?;
+            writeln!(f, "EXPORTS")?;
 
             // Write out all our local symbols
             for sym in trans.reachable.iter() {
-                try!(writeln!(f, "  {}", sym));
+                writeln!(f, "  {}", sym)?;
             }
 
             // Take a look at how all upstream crates are linked into this
@@ -357,8 +357,9 @@ impl<'a> Linker for MsvcLinker<'a> {
                 cstore.item_symbol(did)
             });
             for symbol in symbols {
-                try!(writeln!(f, "  {}", symbol));
+                writeln!(f, "  {}", symbol)?;
             }
+
             Ok(())
         })();
         if let Err(e) = res {

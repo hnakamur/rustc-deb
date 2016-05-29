@@ -262,9 +262,9 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
                                               &Default::default());
                     s.push_str(&format!("<span class='rusttest'>{}</span>", Escape(&test)));
                 });
-                s.push_str(&highlight::highlight(&text,
-                                                 Some("rust-example-rendered"),
-                                                 None));
+                s.push_str(&highlight::render_with_highlighting(&text,
+                                                                Some("rust-example-rendered"),
+                                                                None));
                 let output = CString::new(s).unwrap();
                 hoedown_buffer_puts(ob, output.as_ptr());
             })
@@ -607,7 +607,7 @@ mod tests {
     fn issue_17736() {
         let markdown = "# title";
         format!("{}", Markdown(markdown));
-        reset_ids();
+        reset_ids(true);
     }
 
     #[test]
@@ -615,7 +615,7 @@ mod tests {
         fn t(input: &str, expect: &str) {
             let output = format!("{}", Markdown(input));
             assert_eq!(output, expect);
-            reset_ids();
+            reset_ids(true);
         }
 
         t("# Foo bar", "\n<h1 id='foo-bar' class='section-header'>\
@@ -654,7 +654,7 @@ mod tests {
               <a href='#panics-1'>Panics</a></h1>");
         };
         test();
-        reset_ids();
+        reset_ids(true);
         test();
     }
 

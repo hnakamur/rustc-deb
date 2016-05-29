@@ -44,9 +44,12 @@ fn call_malformed_plugin_attribute(a: &Session, b: Span) {
 }
 
 /// Read plugin metadata and dynamically load registrar functions.
-pub fn load_plugins(sess: &Session, cstore: &CStore, krate: &ast::Crate,
+pub fn load_plugins(sess: &Session,
+                    cstore: &CStore,
+                    krate: &ast::Crate,
+                    crate_name: &str,
                     addl_plugins: Option<Vec<String>>) -> Vec<PluginRegistrar> {
-    let mut loader = PluginLoader::new(sess, cstore);
+    let mut loader = PluginLoader::new(sess, cstore, crate_name);
 
     for attr in &krate.attrs {
         if !attr.check_name("plugin") {
@@ -82,10 +85,10 @@ pub fn load_plugins(sess: &Session, cstore: &CStore, krate: &ast::Crate,
 }
 
 impl<'a> PluginLoader<'a> {
-    fn new(sess: &'a Session, cstore: &'a CStore) -> PluginLoader<'a> {
+    fn new(sess: &'a Session, cstore: &'a CStore, crate_name: &str) -> PluginLoader<'a> {
         PluginLoader {
             sess: sess,
-            reader: CrateReader::new(sess, cstore),
+            reader: CrateReader::new(sess, cstore, crate_name),
             plugins: vec![],
         }
     }
@@ -103,12 +106,11 @@ impl<'a> PluginLoader<'a> {
     }
 
     // Dynamically link a registrar function into the compiler process.
-    #[allow(deprecated)]
     fn dylink_registrar(&mut self,
                         span: Span,
                         path: PathBuf,
                         symbol: String) -> PluginRegistrarFun {
-        use std::dynamic_lib::DynamicLibrary;
+        use rustc_back::dynamic_lib::DynamicLibrary;
 
         // Make sure the path contains a / or the linker will search for it.
         let path = env::current_dir().unwrap().join(&path);

@@ -49,6 +49,18 @@ pub trait ToOwned {
     type Owned: Borrow<Self>;
 
     /// Creates owned data from borrowed data, usually by cloning.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// let s = "a"; // &str
+    /// let ss = s.to_owned(); // String
+    ///
+    /// let v = &[1, 2]; // slice
+    /// let vv = v.to_owned(); // Vec
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     fn to_owned(&self) -> Self::Owned;
 }
@@ -241,24 +253,6 @@ impl<'a, B: ?Sized> Hash for Cow<'a, B> where B: Hash + ToOwned {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         Hash::hash(&**self, state)
-    }
-}
-
-/// Trait for moving into a `Cow`.
-#[unstable(feature = "into_cow", reason = "may be replaced by `convert::Into`",
-           issue = "27735")]
-#[rustc_deprecated(since = "1.7.0",
-                   reason = "conflicts with Into, may return with specialization")]
-pub trait IntoCow<'a, B: ?Sized> where B: ToOwned {
-    /// Moves `self` into `Cow`
-    fn into_cow(self) -> Cow<'a, B>;
-}
-
-#[stable(feature = "rust1", since = "1.0.0")]
-#[allow(deprecated)]
-impl<'a, B: ?Sized> IntoCow<'a, B> for Cow<'a, B> where B: ToOwned {
-    fn into_cow(self) -> Cow<'a, B> {
-        self
     }
 }
 

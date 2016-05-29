@@ -20,14 +20,14 @@ use borrowck::LoanPathKind::{LpVar, LpUpvar, LpDowncast, LpExtend};
 use borrowck::LoanPathElem::{LpDeref, LpInterior};
 use borrowck::move_data::InvalidMovePathIndex;
 use borrowck::move_data::{MoveData, MovePathIndex};
-use rustc::middle::def_id::{DefId};
-use rustc::middle::ty;
+use rustc::hir::def_id::{DefId};
+use rustc::ty::{self, TyCtxt};
 use rustc::middle::mem_categorization as mc;
 
 use std::mem;
 use std::rc::Rc;
 use syntax::ast;
-use syntax::codemap::Span;
+use syntax::codemap::{Span, DUMMY_SP};
 use syntax::attr::AttrMetaMethods;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -200,7 +200,7 @@ impl FragmentSets {
 }
 
 pub fn instrument_move_fragments<'tcx>(this: &MoveData<'tcx>,
-                                       tcx: &ty::ctxt<'tcx>,
+                                       tcx: &TyCtxt<'tcx>,
                                        sp: Span,
                                        id: ast::NodeId) {
     let span_err = tcx.map.attrs(id).iter()
@@ -245,7 +245,7 @@ pub fn instrument_move_fragments<'tcx>(this: &MoveData<'tcx>,
 ///
 /// Note: "left-over fragments" means paths that were not directly referenced in moves nor
 /// assignments, but must nonetheless be tracked as potential drop obligations.
-pub fn fixup_fragment_sets<'tcx>(this: &MoveData<'tcx>, tcx: &ty::ctxt<'tcx>) {
+pub fn fixup_fragment_sets<'tcx>(this: &MoveData<'tcx>, tcx: &TyCtxt<'tcx>) {
 
     let mut fragments = this.fragments.borrow_mut();
 
@@ -347,7 +347,7 @@ pub fn fixup_fragment_sets<'tcx>(this: &MoveData<'tcx>, tcx: &ty::ctxt<'tcx>) {
 /// example, if `lp` represents `s.x.j`, then adds moves paths for `s.x.i` and `s.x.k`, the
 /// siblings of `s.x.j`.
 fn add_fragment_siblings<'tcx>(this: &MoveData<'tcx>,
-                               tcx: &ty::ctxt<'tcx>,
+                               tcx: &TyCtxt<'tcx>,
                                gathered_fragments: &mut Vec<Fragment>,
                                lp: Rc<LoanPath<'tcx>>,
                                origin_id: Option<ast::NodeId>) {
@@ -406,7 +406,7 @@ fn add_fragment_siblings<'tcx>(this: &MoveData<'tcx>,
 /// We have determined that `origin_lp` destructures to LpExtend(parent, original_field_name).
 /// Based on this, add move paths for all of the siblings of `origin_lp`.
 fn add_fragment_siblings_for_extension<'tcx>(this: &MoveData<'tcx>,
-                                             tcx: &ty::ctxt<'tcx>,
+                                             tcx: &TyCtxt<'tcx>,
                                              gathered_fragments: &mut Vec<Fragment>,
                                              parent_lp: &Rc<LoanPath<'tcx>>,
                                              mc: mc::MutabilityCategory,
@@ -428,8 +428,8 @@ fn add_fragment_siblings_for_extension<'tcx>(this: &MoveData<'tcx>,
             let tuple_idx = match *origin_field_name {
                 mc::PositionalField(tuple_idx) => tuple_idx,
                 mc::NamedField(_) =>
-                    panic!("tuple type {:?} should not have named fields.",
-                           parent_ty),
+                    bug!("tuple type {:?} should not have named fields.",
+                         parent_ty),
             };
             let tuple_len = v.len();
             for i in 0..tuple_len {
@@ -493,10 +493,11 @@ fn add_fragment_siblings_for_extension<'tcx>(this: &MoveData<'tcx>,
         }
 
         ref sty_and_variant_info => {
-            let msg = format!("type {:?} ({:?}) is not fragmentable",
-                              parent_ty, sty_and_variant_info);
             let opt_span = origin_id.and_then(|id|tcx.map.opt_span(id));
-            tcx.sess.opt_span_bug(opt_span, &msg[..])
+            span_bug!(opt_span.unwrap_or(DUMMY_SP),
+                      "type {:?} ({:?}) is not fragmentable",
+                      parent_ty,
+                      sty_and_variant_info);
         }
     }
 }
@@ -504,7 +505,7 @@ fn add_fragment_siblings_for_extension<'tcx>(this: &MoveData<'tcx>,
 /// Adds the single sibling `LpExtend(parent, new_field_name)` of `origin_lp` (the original
 /// loan-path).
 fn add_fragment_sibling_core<'tcx>(this: &MoveData<'tcx>,
-                                   tcx: &ty::ctxt<'tcx>,
+                                   tcx: &TyCtxt<'tcx>,
                                    gathered_fragments: &mut Vec<Fragment>,
                                    parent: Rc<LoanPath<'tcx>>,
                                    mc: mc::MutabilityCategory,

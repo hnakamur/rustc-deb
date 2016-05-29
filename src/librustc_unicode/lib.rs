@@ -35,6 +35,7 @@
 #![feature(core_char_ext)]
 #![feature(lang_items)]
 #![feature(staged_api)]
+#![feature(unicode)]
 
 mod tables;
 mod u_str;
@@ -50,4 +51,9 @@ pub mod str {
 // For use in libcollections, not re-exported in libstd.
 pub mod derived_property {
     pub use tables::derived_property::{Cased, Case_Ignorable};
+}
+
+// For use in libsyntax
+pub mod property {
+    pub use tables::property::Pattern_White_Space;
 }

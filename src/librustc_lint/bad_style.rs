@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use middle::def::Def;
-use middle::ty;
+use rustc::hir::def::Def;
+use rustc::ty;
 use lint::{LateContext, LintContext, LintArray};
 use lint::{LintPass, LateLintPass};
 
@@ -17,8 +17,8 @@ use syntax::ast;
 use syntax::attr::{self, AttrMetaMethods};
 use syntax::codemap::Span;
 
-use rustc_front::hir::{self, PatKind};
-use rustc_front::intravisit::FnKind;
+use rustc::hir::{self, PatKind};
+use rustc::hir::intravisit::FnKind;
 
 #[derive(PartialEq)]
 pub enum MethodLateContext {
@@ -30,7 +30,7 @@ pub enum MethodLateContext {
 pub fn method_context(cx: &LateContext, id: ast::NodeId, span: Span) -> MethodLateContext {
     let def_id = cx.tcx.map.local_def_id(id);
     match cx.tcx.impl_or_trait_items.borrow().get(&def_id) {
-        None => cx.sess().span_bug(span, "missing method descriptor?!"),
+        None => span_bug!(span, "missing method descriptor?!"),
         Some(item) => match item.container() {
             ty::TraitContainer(..) => MethodLateContext::TraitDefaultImpl,
             ty::ImplContainer(cid) => {
@@ -63,7 +63,9 @@ impl NonCamelCaseTypes {
 
             // start with a non-lowercase letter rather than non-uppercase
             // ones (some scripts don't have a concept of upper/lowercase)
-            !name.is_empty() && !name.char_at(0).is_lowercase() && !name.contains('_')
+            !name.is_empty() &&
+                !name.chars().next().unwrap().is_lowercase() &&
+                !name.contains('_')
         }
 
         fn to_camel_case(s: &str) -> String {
@@ -237,7 +239,7 @@ impl LateLintPass for NonSnakeCase {
                 fk: FnKind, _: &hir::FnDecl,
                 _: &hir::Block, span: Span, id: ast::NodeId) {
         match fk {
-            FnKind::Method(name, _, _) => match method_context(cx, id, span) {
+            FnKind::Method(name, _, _, _) => match method_context(cx, id, span) {
                 MethodLateContext::PlainImpl => {
                     self.check_snake_case(cx, "method", &name.as_str(), Some(span))
                 },
@@ -246,10 +248,10 @@ impl LateLintPass for NonSnakeCase {
                 },
                 _ => (),
             },
-            FnKind::ItemFn(name, _, _, _, _, _) => {
+            FnKind::ItemFn(name, _, _, _, _, _, _) => {
                 self.check_snake_case(cx, "function", &name.as_str(), Some(span))
             },
-            _ => (),
+            FnKind::Closure(_) => (),
         }
     }
 
@@ -283,10 +285,7 @@ impl LateLintPass for NonSnakeCase {
     fn check_struct_def(&mut self, cx: &LateContext, s: &hir::VariantData,
                         _: ast::Name, _: &hir::Generics, _: ast::NodeId) {
         for sf in s.fields() {
-            if let hir::StructField_ { kind: hir::NamedField(name, _), .. } = sf.node {
-                self.check_snake_case(cx, "structure field", &name.as_str(),
-                                      Some(sf.span));
-            }
+            self.check_snake_case(cx, "structure field", &sf.name.as_str(), Some(sf.span));
         }
     }
 }

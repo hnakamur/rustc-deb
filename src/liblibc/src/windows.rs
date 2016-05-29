@@ -72,9 +72,11 @@ cfg_if! {
     if #[cfg(all(target_env = "gnu"))] {
         pub const L_tmpnam: ::c_uint = 14;
         pub const TMP_MAX: ::c_uint = 0x7fff;
-    } else {
+    } else if #[cfg(all(target_env = "msvc"))] {
         pub const L_tmpnam: ::c_uint = 260;
         pub const TMP_MAX: ::c_uint = 0x7fff_ffff;
+    } else {
+        // Unknown target_env
     }
 }
 
@@ -96,7 +98,7 @@ pub const S_IEXEC: ::c_int = 64;
 pub const S_IWRITE: ::c_int = 128;
 pub const S_IREAD: ::c_int = 256;
 
-#[cfg(target_env = "msvc")]
+#[cfg(target_env = "msvc")] // " if " -- appease style checker
 #[link(name = "msvcrt")]
 extern {}
 
@@ -160,7 +162,9 @@ extern {
     #[link_name = "_lseek"]
     pub fn lseek(fd: ::c_int, offset: c_long, origin: ::c_int) -> c_long;
     #[link_name = "_pipe"]
-    pub fn pipe(fds: *mut ::c_int, psize: ::c_uint, textmode: ::c_int) -> ::c_int;
+    pub fn pipe(fds: *mut ::c_int,
+                psize: ::c_uint,
+                textmode: ::c_int) -> ::c_int;
     #[link_name = "_read"]
     pub fn read(fd: ::c_int, buf: *mut ::c_void, count: ::c_uint) -> ::c_int;
     #[link_name = "_rmdir"]

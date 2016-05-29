@@ -40,10 +40,9 @@
 #![feature(rustc_private)]
 #![feature(set_stdio)]
 #![feature(staged_api)]
+#![feature(question_mark)]
 
 extern crate getopts;
-extern crate serialize;
-extern crate serialize as rustc_serialize;
 extern crate term;
 extern crate libc;
 
@@ -56,7 +55,6 @@ use self::NamePadding::*;
 use self::OutputLocation::*;
 
 use stats::Stats;
-use serialize::Encodable;
 use std::boxed::FnBox;
 use term::Terminal;
 
@@ -109,7 +107,7 @@ impl fmt::Display for TestName {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum NamePadding {
     PadNone,
     PadOnRight,
@@ -215,7 +213,7 @@ pub struct TestDescAndFn {
     pub testfn: TestFn,
 }
 
-#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Debug, Copy)]
+#[derive(Clone, PartialEq, Debug, Copy)]
 pub struct Metric {
     value: f64,
     noise: f64,
@@ -301,6 +299,7 @@ pub struct TestOpts {
     pub logfile: Option<PathBuf>,
     pub nocapture: bool,
     pub color: ColorConfig,
+    pub quiet: bool,
 }
 
 impl TestOpts {
@@ -314,6 +313,7 @@ impl TestOpts {
             logfile: None,
             nocapture: false,
             color: AutoColor,
+            quiet: false,
         }
     }
 }
@@ -331,6 +331,7 @@ fn optgroups() -> Vec<getopts::OptGroup> {
                           of stdout", "PATH"),
       getopts::optflag("", "nocapture", "don't capture stdout/stderr of each \
                                          task, allow printing directly"),
+      getopts::optflag("q", "quiet", "Display one character per test instead of one line"),
       getopts::optopt("", "color", "Configure coloring of output:
             auto   = colorize if stdout is a tty and tests are run on serially (default);
             always = always colorize output;
@@ -348,8 +349,8 @@ By default, all tests are run in parallel. This can be altered with the
 RUST_TEST_THREADS environment variable when running tests (set it to 1).
 
 All tests have their standard output and standard error captured by default.
-This can be overridden with the --nocapture flag or the RUST_TEST_NOCAPTURE=1
-environment variable. Logging is not captured by default.
+This can be overridden with the --nocapture flag or setting RUST_TEST_NOCAPTURE
+environment variable to a value other than "0". Logging is not captured by default.
 
 Test Attributes:
 
@@ -388,6 +389,7 @@ pub fn parse_opts(args: &[String]) -> Option<OptRes> {
     };
 
     let run_ignored = matches.opt_present("ignored");
+    let quiet = matches.opt_present("quiet");
 
     let logfile = matches.opt_str("logfile");
     let logfile = logfile.map(|s| PathBuf::from(&s));
@@ -397,7 +399,10 @@ pub fn parse_opts(args: &[String]) -> Option<OptRes> {
 
     let mut nocapture = matches.opt_present("nocapture");
     if !nocapture {
-        nocapture = env::var("RUST_TEST_NOCAPTURE").is_ok();
+        nocapture = match env::var("RUST_TEST_NOCAPTURE") {
+            Ok(val) => &val != "0",
+            Err(_) => false
+        };
     }
 
     let color = match matches.opt_str("color").as_ref().map(|s| &**s) {
@@ -420,6 +425,7 @@ pub fn parse_opts(args: &[String]) -> Option<OptRes> {
         logfile: logfile,
         nocapture: nocapture,
         color: color,
+        quiet: quiet,
     };
 
     Some(Ok(test_opts))
@@ -451,6 +457,7 @@ struct ConsoleTestState<T> {
     log_out: Option<File>,
     out: OutputLocation<T>,
     use_color: bool,
+    quiet: bool,
     total: usize,
     passed: usize,
     failed: usize,
@@ -464,7 +471,7 @@ struct ConsoleTestState<T> {
 impl<T: Write> ConsoleTestState<T> {
     pub fn new(opts: &TestOpts, _: Option<T>) -> io::Result<ConsoleTestState<io::Stdout>> {
         let log_out = match opts.logfile {
-            Some(ref path) => Some(try!(File::create(path))),
+            Some(ref path) => Some(File::create(path)?),
             None => None,
         };
         let out = match term::stdout() {
@@ -476,6 +483,7 @@ impl<T: Write> ConsoleTestState<T> {
             out: out,
             log_out: log_out,
             use_color: use_color(opts),
+            quiet: opts.quiet,
             total: 0,
             passed: 0,
             failed: 0,
@@ -488,15 +496,15 @@ impl<T: Write> ConsoleTestState<T> {
     }
 
     pub fn write_ok(&mut self) -> io::Result<()> {
-        self.write_pretty("ok", term::color::GREEN)
+        self.write_short_result("ok", ".", term::color::GREEN)
     }
 
     pub fn write_failed(&mut self) -> io::Result<()> {
-        self.write_pretty("FAILED", term::color::RED)
+        self.write_short_result("FAILED", "F", term::color::RED)
     }
 
     pub fn write_ignored(&mut self) -> io::Result<()> {
-        self.write_pretty("ignored", term::color::YELLOW)
+        self.write_short_result("ignored", "i", term::color::YELLOW)
     }
 
     pub fn write_metric(&mut self) -> io::Result<()> {
@@ -507,20 +515,30 @@ impl<T: Write> ConsoleTestState<T> {
         self.write_pretty("bench", term::color::CYAN)
     }
 
+    pub fn write_short_result(&mut self, verbose: &str, quiet: &str, color: term::color::Color)
+                              -> io::Result<()> {
+        if self.quiet {
+            self.write_pretty(quiet, color)
+        } else {
+            self.write_pretty(verbose, color)?;
+            self.write_plain("\n")
+        }
+    }
+
     pub fn write_pretty(&mut self, word: &str, color: term::color::Color) -> io::Result<()> {
         match self.out {
             Pretty(ref mut term) => {
                 if self.use_color {
-                    try!(term.fg(color));
+                    term.fg(color)?;
                 }
-                try!(term.write_all(word.as_bytes()));
+                term.write_all(word.as_bytes())?;
                 if self.use_color {
-                    try!(term.reset());
+                    term.reset()?;
                 }
                 term.flush()
             }
             Raw(ref mut stdout) => {
-                try!(stdout.write_all(word.as_bytes()));
+                stdout.write_all(word.as_bytes())?;
                 stdout.flush()
             }
         }
@@ -529,11 +547,11 @@ impl<T: Write> ConsoleTestState<T> {
     pub fn write_plain(&mut self, s: &str) -> io::Result<()> {
         match self.out {
             Pretty(ref mut term) => {
-                try!(term.write_all(s.as_bytes()));
+                term.write_all(s.as_bytes())?;
                 term.flush()
             }
             Raw(ref mut stdout) => {
-                try!(stdout.write_all(s.as_bytes()));
+                stdout.write_all(s.as_bytes())?;
                 stdout.flush()
             }
         }
@@ -550,28 +568,28 @@ impl<T: Write> ConsoleTestState<T> {
     }
 
     pub fn write_test_start(&mut self, test: &TestDesc, align: NamePadding) -> io::Result<()> {
-        let name = test.padded_name(self.max_name_len, align);
-        self.write_plain(&format!("test {} ... ", name))
+        if self.quiet && align != PadOnRight {
+            Ok(())
+        } else {
+            let name = test.padded_name(self.max_name_len, align);
+            self.write_plain(&format!("test {} ... ", name))
+        }
     }
 
     pub fn write_result(&mut self, result: &TestResult) -> io::Result<()> {
-        try!(match *result {
+        match *result {
             TrOk => self.write_ok(),
             TrFailed => self.write_failed(),
             TrIgnored => self.write_ignored(),
             TrMetrics(ref mm) => {
-                try!(self.write_metric());
-                self.write_plain(&format!(": {}", mm.fmt_metrics()))
+                self.write_metric()?;
+                self.write_plain(&format!(": {}\n", mm.fmt_metrics()))
             }
             TrBench(ref bs) => {
-                try!(self.write_bench());
-
-                try!(self.write_plain(&format!(": {}", fmt_bench_samples(bs))));
-
-                Ok(())
+                self.write_bench()?;
+                self.write_plain(&format!(": {}\n", fmt_bench_samples(bs)))
             }
-        });
-        self.write_plain("\n")
+        }
     }
 
     pub fn write_log(&mut self, test: &TestDesc, result: &TestResult) -> io::Result<()> {
@@ -593,7 +611,7 @@ impl<T: Write> ConsoleTestState<T> {
     }
 
     pub fn write_failures(&mut self) -> io::Result<()> {
-        try!(self.write_plain("\nfailures:\n"));
+        self.write_plain("\nfailures:\n")?;
         let mut failures = Vec::new();
         let mut fail_out = String::new();
         for &(ref f, ref stdout) in &self.failures {
@@ -606,14 +624,14 @@ impl<T: Write> ConsoleTestState<T> {
             }
         }
         if !fail_out.is_empty() {
-            try!(self.write_plain("\n"));
-            try!(self.write_plain(&fail_out));
+            self.write_plain("\n")?;
+            self.write_plain(&fail_out)?;
         }
 
-        try!(self.write_plain("\nfailures:\n"));
+        self.write_plain("\nfailures:\n")?;
         failures.sort();
         for name in &failures {
-            try!(self.write_plain(&format!("    {}\n", name)));
+            self.write_plain(&format!("    {}\n", name))?;
         }
         Ok(())
     }
@@ -623,22 +641,22 @@ impl<T: Write> ConsoleTestState<T> {
 
         let success = self.failed == 0;
         if !success {
-            try!(self.write_failures());
+            self.write_failures()?;
         }
 
-        try!(self.write_plain("\ntest result: "));
+        self.write_plain("\ntest result: ")?;
         if success {
             // There's no parallelism at this point so it's safe to use color
-            try!(self.write_ok());
+            self.write_pretty("ok", term::color::GREEN)?;
         } else {
-            try!(self.write_failed());
+            self.write_pretty("FAILED", term::color::RED)?;
         }
         let s = format!(". {} passed; {} failed; {} ignored; {} measured\n\n",
                         self.passed,
                         self.failed,
                         self.ignored,
                         self.measured);
-        try!(self.write_plain(&s));
+        self.write_plain(&s)?;
         return Ok(success);
     }
 }
@@ -692,8 +710,8 @@ pub fn run_tests_console(opts: &TestOpts, tests: Vec<TestDescAndFn>) -> io::Resu
             TeFiltered(ref filtered_tests) => st.write_run_start(filtered_tests.len()),
             TeWait(ref test, padding) => st.write_test_start(test, padding),
             TeResult(test, result, stdout) => {
-                try!(st.write_log(&test, &result));
-                try!(st.write_result(&result));
+                st.write_log(&test, &result)?;
+                st.write_result(&result)?;
                 match result {
                     TrOk => st.passed += 1,
                     TrIgnored => st.ignored += 1,
@@ -722,7 +740,7 @@ pub fn run_tests_console(opts: &TestOpts, tests: Vec<TestDescAndFn>) -> io::Resu
         }
     }
 
-    let mut st = try!(ConsoleTestState::new(opts, None::<io::Stdout>));
+    let mut st = ConsoleTestState::new(opts, None::<io::Stdout>)?;
     fn len_if_padded(t: &TestDescAndFn) -> usize {
         match t.testfn.padding() {
             PadNone => 0,
@@ -736,7 +754,7 @@ pub fn run_tests_console(opts: &TestOpts, tests: Vec<TestDescAndFn>) -> io::Resu
         }
         None => {}
     }
-    try!(run_tests(opts, tests, |x| callback(&x, &mut st)));
+    run_tests(opts, tests, |x| callback(&x, &mut st))?;
     return st.write_run_finish();
 }
 
@@ -758,6 +776,7 @@ fn should_sort_failures_before_printing_them() {
         log_out: None,
         out: Raw(Vec::new()),
         use_color: false,
+        quiet: false,
         total: 0,
         passed: 0,
         failed: 0,
@@ -831,7 +850,7 @@ fn run_tests<F>(opts: &TestOpts, tests: Vec<TestDescAndFn>, mut callback: F) -> 
                                        .map(|t| t.desc.clone())
                                        .collect();
 
-    try!(callback(TeFiltered(filtered_descs)));
+    callback(TeFiltered(filtered_descs))?;
 
     let (filtered_tests, filtered_benchs_and_metrics): (Vec<_>, _) =
         filtered_tests.into_iter().partition(|e| {
@@ -858,7 +877,7 @@ fn run_tests<F>(opts: &TestOpts, tests: Vec<TestDescAndFn>, mut callback: F) -> 
                 // We are doing one test at a time so we can print the name
                 // of the test before we run it. Useful for debugging tests
                 // that hang forever.
-                try!(callback(TeWait(test.desc.clone(), test.testfn.padding())));
+                callback(TeWait(test.desc.clone(), test.testfn.padding()))?;
             }
             run_test(opts, !opts.run_tests, test, tx.clone());
             pending += 1;
@@ -866,9 +885,9 @@ fn run_tests<F>(opts: &TestOpts, tests: Vec<TestDescAndFn>, mut callback: F) -> 
 
         let (desc, result, stdout) = rx.recv().unwrap();
         if concurrency != 1 {
-            try!(callback(TeWait(desc.clone(), PadNone)));
+            callback(TeWait(desc.clone(), PadNone))?;
         }
-        try!(callback(TeResult(desc, result, stdout)));
+        callback(TeResult(desc, result, stdout))?;
         pending -= 1;
     }
 
@@ -876,10 +895,10 @@ fn run_tests<F>(opts: &TestOpts, tests: Vec<TestDescAndFn>, mut callback: F) -> 
         // All benchmarks run at the end, in serial.
         // (this includes metric fns)
         for b in filtered_benchs_and_metrics {
-            try!(callback(TeWait(b.desc.clone(), b.testfn.padding())));
+            callback(TeWait(b.desc.clone(), b.testfn.padding()))?;
             run_test(opts, false, b, tx.clone());
             let (test, result, stdout) = rx.recv().unwrap();
-            try!(callback(TeResult(test, result, stdout)));
+            callback(TeResult(test, result, stdout))?;
         }
     }
     Ok(())
@@ -1490,7 +1509,7 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].desc.name.to_string(), "1");
-        assert!(filtered[0].desc.ignore == false);
+        assert!(!filtered[0].desc.ignore);
     }
 
     #[test]

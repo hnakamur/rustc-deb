@@ -12,13 +12,11 @@ use prelude::v1::*;
 use io::prelude::*;
 
 use cell::{RefCell, BorrowState};
-use cmp;
 use fmt;
 use io::lazy::Lazy;
 use io::{self, BufReader, LineWriter};
 use sync::{Arc, Mutex, MutexGuard};
 use sys::stdio;
-use sys_common::io::{read_to_end_uninitialized};
 use sys_common::remutex::{ReentrantMutex, ReentrantMutexGuard};
 use thread::LocalKeyState;
 
@@ -78,6 +76,9 @@ fn stderr_raw() -> io::Result<StderrRaw> { stdio::Stderr::new().map(StderrRaw) }
 
 impl Read for StdinRaw {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        self.0.read_to_end(buf)
+    }
 }
 impl Write for StdoutRaw {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
@@ -116,6 +117,12 @@ impl<R: io::Read> io::Read for Maybe<R> {
             Maybe::Fake => Ok(0)
         }
     }
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        match *self {
+            Maybe::Real(ref mut r) => handle_ebadf(r.read_to_end(buf), 0),
+            Maybe::Fake => Ok(0)
+        }
+    }
 }
 
 fn handle_ebadf<T>(r: io::Result<T>, default: T) -> io::Result<T> {
@@ -134,8 +141,8 @@ fn handle_ebadf<T>(r: io::Result<T>, default: T) -> io::Result<T> {
 ///
 /// Each handle is a shared reference to a global buffer of input data to this
 /// process. A handle can be `lock`'d to gain full access to [`BufRead`] methods
-/// (e.g. `.lines()`). Writes to this handle are otherwise locked with respect
-/// to other writes.
+/// (e.g. `.lines()`). Reads to this handle are otherwise locked with respect
+/// to other reads.
 ///
 /// This handle implements the `Read` trait, but beware that concurrent reads
 /// of `Stdin` must be executed with care.
@@ -294,7 +301,7 @@ impl<'a> Read for StdinLock<'a> {
         self.inner.read(buf)
     }
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
-        unsafe { read_to_end_uninitialized(self, buf) }
+        self.inner.read_to_end(buf)
     }
 }
 
@@ -303,22 +310,6 @@ impl<'a> BufRead for StdinLock<'a> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> { self.inner.fill_buf() }
     fn consume(&mut self, n: usize) { self.inner.consume(n) }
 }
-
-// As with stdin on windows, stdout often can't handle writes of large
-// sizes. For an example, see #14940. For this reason, don't try to
-// write the entire output buffer on windows. On unix we can just
-// write the whole buffer all at once.
-//
-// For some other references, it appears that this problem has been
-// encountered by others [1] [2]. We choose the number 8KB just because
-// libuv does the same.
-//
-// [1]: https://tahoe-lafs.org/trac/tahoe-lafs/ticket/1232
-// [2]: http://www.mail-archive.com/log4net-dev@logging.apache.org/msg00661.html
-#[cfg(windows)]
-const OUT_MAX: usize = 8192;
-#[cfg(unix)]
-const OUT_MAX: usize = ::usize::MAX;
 
 /// A handle to the global standard output stream of the current process.
 ///
@@ -432,7 +423,7 @@ impl Write for Stdout {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Write for StdoutLock<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.borrow_mut().write(&buf[..cmp::min(buf.len(), OUT_MAX)])
+        self.inner.borrow_mut().write(buf)
     }
     fn flush(&mut self) -> io::Result<()> {
         self.inner.borrow_mut().flush()
@@ -538,7 +529,7 @@ impl Write for Stderr {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Write for StderrLock<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.borrow_mut().write(&buf[..cmp::min(buf.len(), OUT_MAX)])
+        self.inner.borrow_mut().write(buf)
     }
     fn flush(&mut self) -> io::Result<()> {
         self.inner.borrow_mut().flush()

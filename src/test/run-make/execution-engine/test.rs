@@ -14,11 +14,11 @@
 extern crate libc;
 extern crate rustc;
 extern crate rustc_driver;
-extern crate rustc_front;
 extern crate rustc_lint;
+extern crate rustc_llvm as llvm;
 extern crate rustc_metadata;
 extern crate rustc_resolve;
-extern crate syntax;
+#[macro_use] extern crate syntax;
 
 use std::ffi::{CStr, CString};
 use std::mem::transmute;
@@ -27,14 +27,13 @@ use std::rc::Rc;
 use std::thread::Builder;
 
 use rustc::dep_graph::DepGraph;
-use rustc::front::map as ast_map;
-use rustc::llvm;
+use rustc::hir::map as ast_map;
 use rustc::middle::cstore::{CrateStore, LinkagePreference};
-use rustc::middle::ty;
+use rustc::ty;
 use rustc::session::config::{self, basic_options, build_configuration, Input, Options};
 use rustc::session::build_session;
 use rustc_driver::{driver, abort_on_err};
-use rustc_front::lowering::{lower_crate, LoweringContext};
+use rustc::hir::lowering::{lower_crate, LoweringContext};
 use rustc_resolve::MakeGlobMap;
 use rustc_metadata::cstore::CStore;
 use libc::c_void;
@@ -216,7 +215,10 @@ fn build_exec_options(sysroot: PathBuf) -> Options {
 /// for crates used in the given input.
 fn compile_program(input: &str, sysroot: PathBuf)
                    -> Option<(llvm::ModuleRef, Vec<PathBuf>)> {
-    let input = Input::Str(input.to_string());
+    let input = Input::Str {
+        name: driver::anon_src(),
+        input: input.to_string(),
+    };
     let thread = Builder::new().name("compile_program".to_string());
 
     let handle = thread.spawn(move || {
@@ -230,14 +232,14 @@ fn compile_program(input: &str, sysroot: PathBuf)
 
         let id = "input".to_string();
 
-        let krate = driver::phase_1_parse_input(&sess, cfg, &input);
+        let krate = panictry!(driver::phase_1_parse_input(&sess, cfg, &input));
 
         let krate = driver::phase_2_configure_and_expand(&sess, &cstore, krate, &id, None)
             .expect("phase_2 returned `None`");
 
         let krate = driver::assign_node_ids(&sess, krate);
         let lcx = LoweringContext::new(&sess, Some(&krate));
-        let dep_graph = DepGraph::new(sess.opts.build_dep_graph);
+        let dep_graph = DepGraph::new(sess.opts.build_dep_graph());
         let mut hir_forest = ast_map::Forest::new(lower_crate(&lcx, &krate), dep_graph);
         let arenas = ty::CtxtArenas::new();
         let ast_map = driver::make_map(&sess, &mut hir_forest);

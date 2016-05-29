@@ -172,8 +172,8 @@ impl<R: Read> Read for BufReader<R> {
             return self.inner.read(buf);
         }
         let nread = {
-            let mut rem = try!(self.fill_buf());
-            try!(rem.read(buf))
+            let mut rem = self.fill_buf()?;
+            rem.read(buf)?
         };
         self.consume(nread);
         Ok(nread)
@@ -186,7 +186,7 @@ impl<R: Read> BufRead for BufReader<R> {
         // If we've reached the end of our internal buffer then we need to fetch
         // some more data from the underlying reader.
         if self.pos == self.cap {
-            self.cap = try!(self.inner.read(&mut self.buf));
+            self.cap = self.inner.read(&mut self.buf)?;
             self.pos = 0;
         }
         Ok(&self.buf[self.pos..self.cap])
@@ -237,16 +237,16 @@ impl<R: Seek> Seek for BufReader<R> {
             // support seeking by i64::min_value() so we need to handle underflow when subtracting
             // remainder.
             if let Some(offset) = n.checked_sub(remainder) {
-                result = try!(self.inner.seek(SeekFrom::Current(offset)));
+                result = self.inner.seek(SeekFrom::Current(offset))?;
             } else {
                 // seek backwards by our remainder, and then by the offset
-                try!(self.inner.seek(SeekFrom::Current(-remainder)));
+                self.inner.seek(SeekFrom::Current(-remainder))?;
                 self.pos = self.cap; // empty the buffer
-                result = try!(self.inner.seek(SeekFrom::Current(n)));
+                result = self.inner.seek(SeekFrom::Current(n))?;
             }
         } else {
             // Seeking with Start/End doesn't care about our buffer length.
-            result = try!(self.inner.seek(pos));
+            result = self.inner.seek(pos)?;
         }
         self.pos = self.cap; // empty the buffer
         Ok(result)
@@ -461,7 +461,7 @@ impl<W: Write> BufWriter<W> {
 impl<W: Write> Write for BufWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.buf.len() + buf.len() > self.buf.capacity() {
-            try!(self.flush_buf());
+            self.flush_buf()?;
         }
         if buf.len() >= self.buf.capacity() {
             self.panicked = true;
@@ -761,9 +761,11 @@ impl<W: Write> Write for LineWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match memchr::memrchr(b'\n', buf) {
             Some(i) => {
-                let n = try!(self.inner.write(&buf[..i + 1]));
-                if n != i + 1 { return Ok(n) }
-                try!(self.inner.flush());
+                let n = self.inner.write(&buf[..i + 1])?;
+                if n != i + 1 || self.inner.flush().is_err() {
+                    // Do not return errors on partial writes.
+                    return Ok(n);
+                }
                 self.inner.write(&buf[i + 1..]).map(|i| n + i)
             }
             None => self.inner.write(buf),
@@ -980,6 +982,34 @@ mod tests {
         v.truncate(0);
         reader.read_until(9, &mut v).unwrap();
         assert_eq!(v, []);
+    }
+
+    #[test]
+    fn test_line_buffer_fail_flush() {
+        // Issue #32085
+        struct FailFlushWriter<'a>(&'a mut Vec<u8>);
+
+        impl<'a> Write for FailFlushWriter<'a> {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
+            }
+        }
+
+        let mut buf = Vec::new();
+        {
+            let mut writer = LineWriter::new(FailFlushWriter(&mut buf));
+            let to_write = b"abc\ndef";
+            if let Ok(written) = writer.write(to_write) {
+                assert!(written < to_write.len(), "didn't flush on new line");
+                // PASS
+                return;
+            }
+        }
+        assert!(buf.is_empty(), "write returned an error but wrote data");
     }
 
     #[test]

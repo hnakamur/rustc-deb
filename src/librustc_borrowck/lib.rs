@@ -23,15 +23,19 @@
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
-
+#![feature(associated_consts)]
+#![feature(nonzero)]
+#![feature(question_mark)]
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
 
 // for "clarity", rename the graphviz crate to dot; graphviz within `borrowck`
 // refers to the borrowck-specific graphviz adapter traits.
 extern crate graphviz as dot;
+#[macro_use]
 extern crate rustc;
-extern crate rustc_front;
+extern crate rustc_mir;
+extern crate core; // for NonZero
 
 pub use borrowck::check_crate;
 pub use borrowck::build_borrowck_dataflow_data_for_fn;
@@ -42,6 +46,7 @@ pub use borrowck::{AnalysisData, BorrowckCtxt};
 pub mod diagnostics;
 
 mod borrowck;
+mod bitslice;
 
 pub mod graphviz;
 

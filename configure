@@ -607,6 +607,8 @@ opt dist-host-only 0 "only install bins for the host architecture"
 opt inject-std-version 1 "inject the current compiler version of libstd into programs"
 opt llvm-version-check 1 "check if the LLVM version is supported, build anyway"
 opt rustbuild 0 "use the rust and cargo based build system"
+opt orbit 0 "get MIR where it belongs - everywhere; most importantly, in orbit"
+opt codegen-tests 1 "run the src/test/codegen tests"
 
 # Optimization and debugging options. These may be overridden by the release channel, etc.
 opt_nosave optimize 1 "build optimized rust code"
@@ -713,17 +715,7 @@ if [ -n "$CFG_ENABLE_DEBUG_ASSERTIONS" ]; then putvar CFG_ENABLE_DEBUG_ASSERTION
 if [ -n "$CFG_ENABLE_DEBUGINFO" ]; then putvar CFG_ENABLE_DEBUGINFO; fi
 if [ -n "$CFG_ENABLE_DEBUG_JEMALLOC" ]; then putvar CFG_ENABLE_DEBUG_JEMALLOC; fi
 
-# A magic value that allows the compiler to use unstable features
-# during the bootstrap even when doing so would normally be an error
-# because of feature staging or because the build turns on
-# warnings-as-errors and unstable features default to warnings.  The
-# build has to match this key in an env var. Meant to be a mild
-# deterrent from users just turning on unstable features on the stable
-# channel.
-# Basing CFG_BOOTSTRAP_KEY on CFG_BOOTSTRAP_KEY lets it get picked up
-# during a Makefile reconfig.
-CFG_BOOTSTRAP_KEY="${CFG_BOOTSTRAP_KEY-`date +%H:%M:%S`}"
-putvar CFG_BOOTSTRAP_KEY
+if [ -n "$CFG_ENABLE_ORBIT" ]; then putvar CFG_ENABLE_ORBIT; fi
 
 step_msg "looking for build programs"
 
@@ -966,11 +958,11 @@ then
     LLVM_VERSION=$($LLVM_CONFIG --version)
 
     case $LLVM_VERSION in
-        (3.[5-8]*)
+        (3.[6-8]*)
             msg "found ok version of LLVM: $LLVM_VERSION"
             ;;
         (*)
-            err "bad LLVM version: $LLVM_VERSION, need >=3.5"
+            err "bad LLVM version: $LLVM_VERSION, need >=3.6"
             ;;
     esac
 fi
@@ -1031,7 +1023,7 @@ then
         if [ -n "$CFG_OSX_CLANG_VERSION" ]
         then
             case $CFG_OSX_CLANG_VERSION in
-                (7.0* | 7.1* | 7.2*)
+                (7.0* | 7.1* | 7.2* | 7.3*)
                 step_msg "found ok version of APPLE CLANG: $CFG_OSX_CLANG_VERSION"
                 ;;
                 (*)
@@ -1249,7 +1241,7 @@ $ pacman -R cmake && pacman -S mingw-w64-x86_64-cmake
                     bits=x86_64
                     msvc_part=amd64
                     ;;
-                i686-*)
+                i*86-*)
                     bits=i386
                     msvc_part=
                     ;;
@@ -1494,7 +1486,9 @@ do
         LLVM_INST_DIR=$CFG_LLVM_ROOT
         do_reconfigure=0
         # Check that LLVm FileCheck is available. Needed for the tests
-        need_cmd $LLVM_INST_DIR/bin/FileCheck
+        if [ -z "$CFG_DISABLE_CODEGEN_TESTS" ]; then
+            need_cmd $LLVM_INST_DIR/bin/FileCheck
+        fi
     fi
 
     if [ ${do_reconfigure} -ne 0 ]

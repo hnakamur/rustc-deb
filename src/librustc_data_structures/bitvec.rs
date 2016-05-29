@@ -8,9 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::iter::FromIterator;
+
 /// A very simple BitVector type.
+#[derive(Clone)]
 pub struct BitVector {
-    data: Vec<u64>
+    data: Vec<u64>,
 }
 
 impl BitVector {
@@ -40,7 +43,9 @@ impl BitVector {
         for (i, j) in self.data.iter_mut().zip(&all.data) {
             let value = *i;
             *i = value | *j;
-            if value != *i { changed = true; }
+            if value != *i {
+                changed = true;
+            }
         }
         changed
     }
@@ -48,7 +53,9 @@ impl BitVector {
     pub fn grow(&mut self, num_bits: usize) {
         let num_words = u64s(num_bits);
         let extra_words = self.data.len() - num_words;
-        self.data.extend((0..extra_words).map(|_| 0));
+        if extra_words > 0 {
+            self.data.extend((0..extra_words).map(|_| 0));
+        }
     }
 
     /// Iterates over indexes of set bits in a sorted order
@@ -56,7 +63,7 @@ impl BitVector {
         BitVectorIter {
             iter: self.data.iter(),
             current: 0,
-            idx: 0
+            idx: 0,
         }
     }
 }
@@ -64,7 +71,7 @@ impl BitVector {
 pub struct BitVectorIter<'a> {
     iter: ::std::slice::Iter<'a, u64>,
     current: u64,
-    idx: usize
+    idx: usize,
 }
 
 impl<'a> Iterator for BitVectorIter<'a> {
@@ -91,6 +98,27 @@ impl<'a> Iterator for BitVectorIter<'a> {
     }
 }
 
+impl FromIterator<bool> for BitVector {
+    fn from_iter<I>(iter: I) -> BitVector where I: IntoIterator<Item=bool> {
+        let iter = iter.into_iter();
+        let (len, _) = iter.size_hint();
+        // Make the minimum length for the bitvector 64 bits since that's
+        // the smallest non-zero size anyway.
+        let len = if len < 64 { 64 } else { len };
+        let mut bv = BitVector::new(len);
+        for (idx, val) in iter.enumerate() {
+            if idx > len {
+                bv.grow(idx);
+            }
+            if val {
+                bv.insert(idx);
+            }
+        }
+
+        bv
+    }
+}
+
 /// A "bit matrix" is basically a square matrix of booleans
 /// represented as one gigantic bitvector. In other words, it is as if
 /// you have N bitvectors, each of length N. Note that `elements` here is `N`/
@@ -108,7 +136,7 @@ impl BitMatrix {
         let u64s_per_elem = u64s(elements);
         BitMatrix {
             elements: elements,
-            vector: vec![0; elements * u64s_per_elem]
+            vector: vec![0; elements * u64s_per_elem],
         }
     }
 
@@ -123,9 +151,9 @@ impl BitMatrix {
         let (start, _) = self.range(source);
         let (word, mask) = word_mask(target);
         let mut vector = &mut self.vector[..];
-        let v1 = vector[start+word];
+        let v1 = vector[start + word];
         let v2 = v1 | mask;
-        vector[start+word] = v2;
+        vector[start + word] = v2;
         v1 != v2
     }
 
@@ -136,7 +164,7 @@ impl BitMatrix {
     pub fn contains(&self, source: usize, target: usize) -> bool {
         let (start, _) = self.range(source);
         let (word, mask) = word_mask(target);
-        (self.vector[start+word] & mask) != 0
+        (self.vector[start + word] & mask) != 0
     }
 
     /// Returns those indices that are reachable from both `a` and
@@ -150,8 +178,12 @@ impl BitMatrix {
         for (base, (i, j)) in (a_start..a_end).zip(b_start..b_end).enumerate() {
             let mut v = self.vector[i] & self.vector[j];
             for bit in 0..64 {
-                if v == 0 { break; }
-                if v & 0x1 != 0 { result.push(base*64 + bit); }
+                if v == 0 {
+                    break;
+                }
+                if v & 0x1 != 0 {
+                    result.push(base * 64 + bit);
+                }
                 v >>= 1;
             }
         }
@@ -170,9 +202,7 @@ impl BitMatrix {
         let (write_start, write_end) = self.range(write);
         let vector = &mut self.vector[..];
         let mut changed = false;
-        for (read_index, write_index) in
-            (read_start..read_end).zip(write_start..write_end)
-        {
+        for (read_index, write_index) in (read_start..read_end).zip(write_start..write_end) {
             let v1 = vector[write_index];
             let v2 = v1 | vector[read_index];
             vector[write_index] = v2;
@@ -204,7 +234,8 @@ fn bitvec_iter_works() {
     bitvec.insert(65);
     bitvec.insert(66);
     bitvec.insert(99);
-    assert_eq!(bitvec.iter().collect::<Vec<_>>(), [1, 10, 19, 62, 63, 64, 65, 66, 99]);
+    assert_eq!(bitvec.iter().collect::<Vec<_>>(),
+               [1, 10, 19, 62, 63, 64, 65, 66, 99]);
 }
 
 #[test]
@@ -217,7 +248,8 @@ fn bitvec_iter_works_2() {
     bitvec.insert(66);
     bitvec.insert(99);
     bitvec.insert(299);
-    assert_eq!(bitvec.iter().collect::<Vec<_>>(), [1, 10, 19, 62, 66, 99, 299]);
+    assert_eq!(bitvec.iter().collect::<Vec<_>>(),
+               [1, 10, 19, 62, 66, 99, 299]);
 
 }
 

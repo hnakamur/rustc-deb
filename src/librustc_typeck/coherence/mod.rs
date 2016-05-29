@@ -15,34 +15,34 @@
 // done by the orphan and overlap modules. Then we build up various
 // mappings. That mapping code resides here.
 
-
-use middle::def_id::DefId;
+use hir::def_id::DefId;
 use middle::lang_items::UnsizeTraitLangItem;
-use middle::subst::{self, Subst};
-use middle::traits;
-use middle::ty::{self, TypeFoldable};
-use middle::ty::{ImplOrTraitItemId, ConstTraitItemId};
-use middle::ty::{MethodTraitItemId, TypeTraitItemId, ParameterEnvironment};
-use middle::ty::{Ty, TyBool, TyChar, TyEnum, TyError};
-use middle::ty::{TyParam, TyRawPtr};
-use middle::ty::{TyRef, TyStruct, TyTrait, TyTuple};
-use middle::ty::{TyStr, TyArray, TySlice, TyFloat, TyInfer, TyInt};
-use middle::ty::{TyUint, TyClosure, TyBox, TyBareFn};
-use middle::ty::TyProjection;
-use middle::ty::util::CopyImplementationError;
+use rustc::ty::subst::{self, Subst};
+use rustc::ty::{self, TyCtxt, TypeFoldable};
+use rustc::traits::{self, ProjectionMode};
+use rustc::ty::{ImplOrTraitItemId, ConstTraitItemId};
+use rustc::ty::{MethodTraitItemId, TypeTraitItemId, ParameterEnvironment};
+use rustc::ty::{Ty, TyBool, TyChar, TyEnum, TyError};
+use rustc::ty::{TyParam, TyRawPtr};
+use rustc::ty::{TyRef, TyStruct, TyTrait, TyTuple};
+use rustc::ty::{TyStr, TyArray, TySlice, TyFloat, TyInfer, TyInt};
+use rustc::ty::{TyUint, TyClosure, TyBox, TyFnDef, TyFnPtr};
+use rustc::ty::TyProjection;
+use rustc::ty::util::CopyImplementationError;
 use middle::free_region::FreeRegionMap;
 use CrateCtxt;
-use middle::infer::{self, InferCtxt, TypeOrigin, new_infer_ctxt};
+use rustc::infer::{self, InferCtxt, TypeOrigin, new_infer_ctxt};
 use std::cell::RefCell;
 use std::rc::Rc;
+use syntax::ast;
 use syntax::codemap::Span;
-use syntax::parse::token;
+use syntax::errors::DiagnosticBuilder;
 use util::nodemap::{DefIdMap, FnvHashMap};
 use rustc::dep_graph::DepNode;
-use rustc::front::map as hir_map;
-use rustc_front::intravisit;
-use rustc_front::hir::{Item, ItemImpl};
-use rustc_front::hir;
+use rustc::hir::map as hir_map;
+use rustc::hir::intravisit;
+use rustc::hir::{Item, ItemImpl};
+use rustc::hir;
 
 mod orphan;
 mod overlap;
@@ -68,8 +68,8 @@ fn get_base_type_def_id<'a, 'tcx>(inference_context: &InferCtxt<'a, 'tcx>,
         }
 
         TyBool | TyChar | TyInt(..) | TyUint(..) | TyFloat(..) |
-        TyStr | TyArray(..) | TySlice(..) | TyBareFn(..) | TyTuple(..) |
-        TyParam(..) | TyError |
+        TyStr | TyArray(..) | TySlice(..) | TyFnDef(..) | TyFnPtr(_) |
+        TyTuple(..) | TyParam(..) | TyError |
         TyRawPtr(_) | TyRef(_, _) | TyProjection(..) => {
             None
         }
@@ -77,10 +77,10 @@ fn get_base_type_def_id<'a, 'tcx>(inference_context: &InferCtxt<'a, 'tcx>,
         TyInfer(..) | TyClosure(..) => {
             // `ty` comes from a user declaration so we should only expect types
             // that the user can type
-            inference_context.tcx.sess.span_bug(
+            span_bug!(
                 span,
-                &format!("coherence encountered unexpected type searching for base type: {}",
-                         ty));
+                "coherence encountered unexpected type searching for base type: {}",
+                ty);
         }
     }
 }
@@ -196,7 +196,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
         debug!("add_trait_impl: impl_trait_ref={:?} impl_def_id={:?}",
                impl_trait_ref, impl_def_id);
         let trait_def = self.crate_context.tcx.lookup_trait_def(impl_trait_ref.def_id);
-        trait_def.record_impl(self.crate_context.tcx, impl_def_id, impl_trait_ref);
+        trait_def.record_local_impl(self.crate_context.tcx, impl_def_id, impl_trait_ref);
     }
 
     // Converts an implementation in the AST to a vector of items.
@@ -219,9 +219,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                 }).collect()
             }
             _ => {
-                self.crate_context.tcx.sess.span_bug(item.span,
-                                                     "can't convert a non-impl \
-                                                      to an impl");
+                span_bug!(item.span, "can't convert a non-impl to an impl");
             }
         }
     }
@@ -263,13 +261,12 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                                           "the Drop trait may only be implemented on structures");
                             }
                             _ => {
-                                tcx.sess.bug("didn't find impl in ast \
-                                              map");
+                                bug!("didn't find impl in ast map");
                             }
                         }
                     } else {
-                        tcx.sess.bug("found external impl of Drop trait on \
-                                      something other than a struct");
+                        bug!("found external impl of Drop trait on \
+                              :omething other than a struct");
                     }
                 }
             }
@@ -384,13 +381,14 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
             debug!("check_implementations_of_coerce_unsized: {:?} -> {:?} (free)",
                    source, target);
 
-            let infcx = new_infer_ctxt(tcx, &tcx.tables, Some(param_env));
+            let infcx = new_infer_ctxt(tcx, &tcx.tables, Some(param_env), ProjectionMode::Topmost);
 
+            let origin = TypeOrigin::Misc(span);
             let check_mutbl = |mt_a: ty::TypeAndMut<'tcx>, mt_b: ty::TypeAndMut<'tcx>,
                                mk_ptr: &Fn(Ty<'tcx>) -> Ty<'tcx>| {
                 if (mt_a.mutbl, mt_b.mutbl) == (hir::MutImmutable, hir::MutMutable) {
-                    infcx.report_mismatched_types(span, mk_ptr(mt_b.ty),
-                                                  target, &ty::error::TypeError::Mutability);
+                    infcx.report_mismatched_types(origin, mk_ptr(mt_b.ty),
+                                                  target, ty::error::TypeError::Mutability);
                 }
                 (mt_a.ty, mt_b.ty, unsize_trait, None)
             };
@@ -419,7 +417,6 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                         return;
                     }
 
-                    let origin = TypeOrigin::Misc(span);
                     let fields = &def_a.struct_variant().fields;
                     let diff_fields = fields.iter().enumerate().filter_map(|(i, f)| {
                         let (a, b) = (f.ty(tcx, substs_a), f.ty(tcx, substs_b));
@@ -449,13 +446,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
                                    for a coercion between structures with one field \
                                    being coerced, but {} fields need coercions: {}",
                                    diff_fields.len(), diff_fields.iter().map(|&(i, a, b)| {
-                                        let name = fields[i].name;
-                                        format!("{} ({} to {})",
-                                                if name == token::special_names::unnamed_field {
-                                                    i.to_string()
-                                                } else {
-                                                    name.to_string()
-                                                }, a, b)
+                                        format!("{} ({} to {})", fields[i].name, a, b)
                                    }).collect::<Vec<_>>().join(", "));
                         return;
                     }
@@ -499,7 +490,7 @@ impl<'a, 'tcx> CoherenceChecker<'a, 'tcx> {
     }
 }
 
-fn enforce_trait_manually_implementable(tcx: &ty::ctxt, sp: Span, trait_def_id: DefId) {
+fn enforce_trait_manually_implementable(tcx: &TyCtxt, sp: Span, trait_def_id: DefId) {
     if tcx.sess.features.borrow().unboxed_closures {
         // the feature gate allows all of them
         return
@@ -526,9 +517,19 @@ fn enforce_trait_manually_implementable(tcx: &ty::ctxt, sp: Span, trait_def_id: 
     err.emit();
 }
 
+// Factored out into helper because the error cannot be defined in multiple locations.
+pub fn report_duplicate_item<'tcx>(tcx: &TyCtxt<'tcx>, sp: Span, name: ast::Name)
+                                   -> DiagnosticBuilder<'tcx>
+{
+    struct_span_err!(tcx.sess, sp, E0201, "duplicate definitions with name `{}`:", name)
+}
+
 pub fn check_coherence(crate_context: &CrateCtxt) {
     let _task = crate_context.tcx.dep_graph.in_task(DepNode::Coherence);
-    let infcx = new_infer_ctxt(crate_context.tcx, &crate_context.tcx.tables, None);
+    let infcx = new_infer_ctxt(crate_context.tcx,
+                               &crate_context.tcx.tables,
+                               None,
+                               ProjectionMode::Topmost);
     CoherenceChecker {
         crate_context: crate_context,
         inference_context: infcx,
