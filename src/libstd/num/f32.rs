@@ -262,7 +262,7 @@ impl f32 {
     ///
     /// assert!(abs_difference <= f32::EPSILON);
     /// ```
-    /// [floating-point]: ../../../../../reference.html#machine-types
+    /// [floating-point]: ../reference.html#machine-types
     #[unstable(feature = "float_extras", reason = "signature is undecided",
                issue = "27752")]
     #[inline]
@@ -1152,9 +1152,10 @@ impl f32 {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn asinh(self) -> f32 {
-        match self {
-            NEG_INFINITY => NEG_INFINITY,
-            x => (x + ((x * x) + 1.0).sqrt()).ln(),
+        if self == NEG_INFINITY {
+            NEG_INFINITY
+        } else {
+            (self + ((self * self) + 1.0).sqrt()).ln()
         }
     }
 
@@ -1371,6 +1372,7 @@ mod tests {
     }
 
     #[test]
+    #[rustc_no_mir] // FIXME #27840 MIR NAN ends up negative.
     fn test_integer_decode() {
         assert_eq!(3.14159265359f32.integer_decode(), (13176795, -22, 1));
         assert_eq!((-8573.5918555f32).integer_decode(), (8779358, -10, -1));

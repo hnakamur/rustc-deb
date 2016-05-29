@@ -115,6 +115,21 @@ fn test_iter_rev() {
 }
 
 #[test]
+fn test_values_mut() {
+    let mut a = BTreeMap::new();
+    a.insert(1, String::from("hello"));
+    a.insert(2, String::from("goodbye"));
+
+    for value in a.values_mut() {
+        value.push_str("!");
+    }
+
+    let values: Vec<String> = a.values().cloned().collect();
+    assert_eq!(values, [String::from("hello!"),
+                        String::from("goodbye!")]);
+}
+
+#[test]
 fn test_iter_mixed() {
     let size = 10000;
 
@@ -393,6 +408,42 @@ fn test_variance() {
     fn range_val<'a, 'new>(v: Range<'a, (), &'static str>) -> Range<'a, (), &'new str> { v }
     fn keys<'a, 'new>(v: Keys<'a, &'static str, ()>) -> Keys<'a, &'new str, ()> { v }
     fn vals<'a, 'new>(v: Values<'a, (), &'static str>) -> Values<'a, (), &'new str> { v }
+}
+
+#[test]
+fn test_occupied_entry_key() {
+    let mut a = BTreeMap::new();
+    let key = "hello there";
+    let value = "value goes here";
+    assert!(a.is_empty());
+    a.insert(key.clone(), value.clone());
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[key], value);
+
+    match a.entry(key.clone()) {
+        Vacant(_) => panic!(),
+        Occupied(e) => assert_eq!(key, *e.key()),
+    }
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[key], value);
+}
+
+#[test]
+fn test_vacant_entry_key() {
+    let mut a = BTreeMap::new();
+    let key = "hello there";
+    let value = "value goes here";
+
+    assert!(a.is_empty());
+    match a.entry(key.clone()) {
+        Occupied(_) => panic!(),
+        Vacant(e) => {
+            assert_eq!(key, *e.key());
+            e.insert(value.clone());
+        },
+    }
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[key], value);
 }
 
 mod bench {

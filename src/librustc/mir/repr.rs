@@ -9,12 +9,14 @@
 // except according to those terms.
 
 use graphviz::IntoCow;
-use middle::const_eval::ConstVal;
-use middle::def_id::DefId;
-use middle::subst::Substs;
-use middle::ty::{self, AdtDef, ClosureSubsts, FnOutput, Region, Ty};
+use middle::const_val::ConstVal;
+use rustc_const_math::{ConstUsize, ConstInt};
+use hir::def_id::DefId;
+use ty::subst::Substs;
+use ty::{self, AdtDef, ClosureSubsts, FnOutput, Region, Ty};
+use util::ppaux;
 use rustc_back::slice;
-use rustc_front::hir::InlineAsm;
+use hir::InlineAsm;
 use std::ascii;
 use std::borrow::{Cow};
 use std::fmt::{self, Debug, Formatter, Write};
@@ -29,6 +31,10 @@ pub struct Mir<'tcx> {
     /// List of basic blocks. References to basic block use a newtyped index type `BasicBlock`
     /// that indexes into this vector.
     pub basic_blocks: Vec<BasicBlockData<'tcx>>,
+
+    /// List of lexical scopes; these are referenced by statements and
+    /// used (eventually) for debuginfo. Indexed by a `ScopeId`.
+    pub scopes: Vec<ScopeData>,
 
     /// Return type of the function.
     pub return_ty: FnOutput<'tcx>,
@@ -150,9 +156,21 @@ pub enum BorrowKind {
 /// decl, a let, etc.
 #[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct VarDecl<'tcx> {
+    /// `let mut x` vs `let x`
     pub mutability: Mutability,
+
+    /// name that user gave the variable; not that, internally,
+    /// mir references variables by index
     pub name: Name,
+
+    /// type inferred for this variable (`let x: ty = ...`)
     pub ty: Ty<'tcx>,
+
+    /// scope in which variable was declared
+    pub scope: ScopeId,
+
+    /// span where variable was declared
+    pub span: Span,
 }
 
 /// A "temp" is a temporary that we place on the stack. They are
@@ -176,6 +194,10 @@ pub struct TempDecl<'tcx> {
 #[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct ArgDecl<'tcx> {
     pub ty: Ty<'tcx>,
+
+    /// If true, this argument is a tuple after monomorphization,
+    /// and has to be collected from multiple actual arguments.
+    pub spread: bool
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -185,7 +207,7 @@ pub struct ArgDecl<'tcx> {
 /// list of the `Mir`.
 ///
 /// (We use a `u32` internally just to save memory.)
-#[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
 pub struct BasicBlock(u32);
 
 impl BasicBlock {
@@ -207,17 +229,39 @@ impl Debug for BasicBlock {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-// BasicBlock and Terminator
+// BasicBlockData and Terminator
 
 #[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct BasicBlockData<'tcx> {
+    /// List of statements in this block.
     pub statements: Vec<Statement<'tcx>>,
+
+    /// Terminator for this block.
+    ///
+    /// NB. This should generally ONLY be `None` during construction.
+    /// Therefore, you should generally access it via the
+    /// `terminator()` or `terminator_mut()` methods. The only
+    /// exception is that certain passes, such as `simplify_cfg`, swap
+    /// out the terminator temporarily with `None` while they continue
+    /// to recurse over the set of basic blocks.
     pub terminator: Option<Terminator<'tcx>>,
+
+    /// If true, this block lies on an unwind path. This is used
+    /// during trans where distinct kinds of basic blocks may be
+    /// generated (particularly for MSVC cleanup). Unwind blocks must
+    /// only branch to other unwind blocks.
     pub is_cleanup: bool,
 }
 
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
+pub struct Terminator<'tcx> {
+    pub span: Span,
+    pub scope: ScopeId,
+    pub kind: TerminatorKind<'tcx>
+}
+
 #[derive(Clone, RustcEncodable, RustcDecodable)]
-pub enum Terminator<'tcx> {
+pub enum TerminatorKind<'tcx> {
     /// block should have one successor in the graph; we jump there
     Goto {
         target: BasicBlock,
@@ -287,7 +331,17 @@ pub enum Terminator<'tcx> {
 
 impl<'tcx> Terminator<'tcx> {
     pub fn successors(&self) -> Cow<[BasicBlock]> {
-        use self::Terminator::*;
+        self.kind.successors()
+    }
+
+    pub fn successors_mut(&mut self) -> Vec<&mut BasicBlock> {
+        self.kind.successors_mut()
+    }
+}
+
+impl<'tcx> TerminatorKind<'tcx> {
+    pub fn successors(&self) -> Cow<[BasicBlock]> {
+        use self::TerminatorKind::*;
         match *self {
             Goto { target: ref b } => slice::ref_slice(b).into_cow(),
             If { targets: (b1, b2), .. } => vec![b1, b2].into_cow(),
@@ -308,7 +362,7 @@ impl<'tcx> Terminator<'tcx> {
     // FIXME: no mootable cow. I’m honestly not sure what a “cow” between `&mut [BasicBlock]` and
     // `Vec<&mut BasicBlock>` would look like in the first place.
     pub fn successors_mut(&mut self) -> Vec<&mut BasicBlock> {
-        use self::Terminator::*;
+        use self::TerminatorKind::*;
         match *self {
             Goto { target: ref mut b } => vec![b],
             If { targets: (ref mut b1, ref mut b2), .. } => vec![b1, b2],
@@ -348,9 +402,9 @@ impl<'tcx> BasicBlockData<'tcx> {
     }
 }
 
-impl<'tcx> Debug for Terminator<'tcx> {
+impl<'tcx> Debug for TerminatorKind<'tcx> {
     fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
-        try!(self.fmt_head(fmt));
+        self.fmt_head(fmt)?;
         let successors = self.successors();
         let labels = self.fmt_successor_labels();
         assert_eq!(successors.len(), labels.len());
@@ -361,12 +415,12 @@ impl<'tcx> Debug for Terminator<'tcx> {
             1 => write!(fmt, " -> {:?}", successors[0]),
 
             _ => {
-                try!(write!(fmt, " -> ["));
+                write!(fmt, " -> [")?;
                 for (i, target) in successors.iter().enumerate() {
                     if i > 0 {
-                        try!(write!(fmt, ", "));
+                        write!(fmt, ", ")?;
                     }
-                    try!(write!(fmt, "{}: {:?}", labels[i], target));
+                    write!(fmt, "{}: {:?}", labels[i], target)?;
                 }
                 write!(fmt, "]")
             }
@@ -375,12 +429,12 @@ impl<'tcx> Debug for Terminator<'tcx> {
     }
 }
 
-impl<'tcx> Terminator<'tcx> {
+impl<'tcx> TerminatorKind<'tcx> {
     /// Write the "head" part of the terminator; that is, its name and the data it uses to pick the
     /// successor basic block, if any. The only information not inlcuded is the list of possible
     /// successors, which may be rendered differently between the text and the graphviz format.
     pub fn fmt_head<W: Write>(&self, fmt: &mut W) -> fmt::Result {
-        use self::Terminator::*;
+        use self::TerminatorKind::*;
         match *self {
             Goto { .. } => write!(fmt, "goto"),
             If { cond: ref lv, .. } => write!(fmt, "if({:?})", lv),
@@ -391,14 +445,14 @@ impl<'tcx> Terminator<'tcx> {
             Drop { ref value, .. } => write!(fmt, "drop({:?})", value),
             Call { ref func, ref args, ref destination, .. } => {
                 if let Some((ref destination, _)) = *destination {
-                    try!(write!(fmt, "{:?} = ", destination));
+                    write!(fmt, "{:?} = ", destination)?;
                 }
-                try!(write!(fmt, "{:?}(", func));
+                write!(fmt, "{:?}(", func)?;
                 for (index, arg) in args.iter().enumerate() {
                     if index > 0 {
-                        try!(write!(fmt, ", "));
+                        write!(fmt, ", ")?;
                     }
-                    try!(write!(fmt, "{:?}", arg));
+                    write!(fmt, "{:?}", arg)?;
                 }
                 write!(fmt, ")")
             }
@@ -407,7 +461,7 @@ impl<'tcx> Terminator<'tcx> {
 
     /// Return the list of labels for the edges to the successor basic blocks.
     pub fn fmt_successor_labels(&self) -> Vec<Cow<'static, str>> {
-        use self::Terminator::*;
+        use self::TerminatorKind::*;
         match *self {
             Return | Resume => vec![],
             Goto { .. } => vec!["".into()],
@@ -446,6 +500,7 @@ impl<'tcx> Terminator<'tcx> {
 #[derive(Clone, RustcEncodable, RustcDecodable)]
 pub struct Statement<'tcx> {
     pub span: Span,
+    pub scope: ScopeId,
     pub kind: StatementKind<'tcx>,
 }
 
@@ -462,6 +517,7 @@ impl<'tcx> Debug for Statement<'tcx> {
         }
     }
 }
+
 ///////////////////////////////////////////////////////////////////////////
 // Lvalues
 
@@ -493,13 +549,13 @@ pub enum Lvalue<'tcx> {
 /// or `*B` or `B[index]`. Note that it is parameterized because it is
 /// shared between `Constant` and `Lvalue`. See the aliases
 /// `LvalueProjection` etc below.
-#[derive(Clone, Debug, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
 pub struct Projection<'tcx, B, V> {
     pub base: B,
     pub elem: ProjectionElem<'tcx, V>,
 }
 
-#[derive(Clone, Debug, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
 pub enum ProjectionElem<'tcx, V> {
     Deref,
     Field(Field, Ty<'tcx>),
@@ -608,12 +664,49 @@ impl<'tcx> Debug for Lvalue<'tcx> {
 }
 
 ///////////////////////////////////////////////////////////////////////////
+// Scopes
+
+impl Index<ScopeId> for Vec<ScopeData> {
+    type Output = ScopeData;
+
+    #[inline]
+    fn index(&self, index: ScopeId) -> &ScopeData {
+        &self[index.index()]
+    }
+}
+
+impl IndexMut<ScopeId> for Vec<ScopeData> {
+    #[inline]
+    fn index_mut(&mut self, index: ScopeId) -> &mut ScopeData {
+        &mut self[index.index()]
+    }
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+pub struct ScopeId(u32);
+
+impl ScopeId {
+    pub fn new(index: usize) -> ScopeId {
+        assert!(index < (u32::MAX as usize));
+        ScopeId(index as u32)
+    }
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
+pub struct ScopeData {
+    pub parent_scope: Option<ScopeId>,
+}
+
+///////////////////////////////////////////////////////////////////////////
 // Operands
-//
+
 /// These are values that can appear inside an rvalue (or an index
 /// lvalue). They are intentionally limited to prevent rvalues from
 /// being nested in one another.
-
 #[derive(Clone, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum Operand<'tcx> {
     Consume(Lvalue<'tcx>),
@@ -674,7 +767,11 @@ pub enum Rvalue<'tcx> {
         from_end: usize,
     },
 
-    InlineAsm(InlineAsm),
+    InlineAsm {
+        asm: InlineAsm,
+        outputs: Vec<Lvalue<'tcx>>,
+        inputs: Vec<Operand<'tcx>>
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, RustcEncodable, RustcDecodable)]
@@ -759,7 +856,9 @@ impl<'tcx> Debug for Rvalue<'tcx> {
             BinaryOp(ref op, ref a, ref b) => write!(fmt, "{:?}({:?}, {:?})", op, a, b),
             UnaryOp(ref op, ref a) => write!(fmt, "{:?}({:?})", op, a),
             Box(ref t) => write!(fmt, "Box({:?})", t),
-            InlineAsm(ref asm) => write!(fmt, "InlineAsm({:?})", asm),
+            InlineAsm { ref asm, ref outputs, ref inputs } => {
+                write!(fmt, "asm!({:?} : {:?} : {:?})", asm, outputs, inputs)
+            }
             Slice { ref input, from_start, from_end } =>
                 write!(fmt, "{:?}[{:?}..-{:?}]", input, from_start, from_end),
 
@@ -774,8 +873,8 @@ impl<'tcx> Debug for Rvalue<'tcx> {
             Aggregate(ref kind, ref lvs) => {
                 use self::AggregateKind::*;
 
-                fn fmt_tuple(fmt: &mut Formatter, name: &str, lvs: &[Operand]) -> fmt::Result {
-                    let mut tuple_fmt = fmt.debug_tuple(name);
+                fn fmt_tuple(fmt: &mut Formatter, lvs: &[Operand]) -> fmt::Result {
+                    let mut tuple_fmt = fmt.debug_tuple("");
                     for lv in lvs {
                         tuple_fmt.field(lv);
                     }
@@ -789,19 +888,24 @@ impl<'tcx> Debug for Rvalue<'tcx> {
                         match lvs.len() {
                             0 => write!(fmt, "()"),
                             1 => write!(fmt, "({:?},)", lvs[0]),
-                            _ => fmt_tuple(fmt, "", lvs),
+                            _ => fmt_tuple(fmt, lvs),
                         }
                     }
 
-                    Adt(adt_def, variant, _) => {
+                    Adt(adt_def, variant, substs) => {
                         let variant_def = &adt_def.variants[variant];
-                        let name = ty::tls::with(|tcx| tcx.item_path_str(variant_def.did));
+
+                        ppaux::parameterized(fmt, substs, variant_def.did,
+                                             ppaux::Ns::Value, &[],
+                                             |tcx| {
+                            tcx.lookup_item_type(variant_def.did).generics
+                        })?;
 
                         match variant_def.kind() {
-                            ty::VariantKind::Unit => write!(fmt, "{}", name),
-                            ty::VariantKind::Tuple => fmt_tuple(fmt, &name, lvs),
+                            ty::VariantKind::Unit => Ok(()),
+                            ty::VariantKind::Tuple => fmt_tuple(fmt, lvs),
                             ty::VariantKind::Struct => {
-                                let mut struct_fmt = fmt.debug_struct(&name);
+                                let mut struct_fmt = fmt.debug_struct("");
                                 for (field, lv) in variant_def.fields.iter().zip(lvs) {
                                     struct_fmt.field(&field.name.as_str(), lv);
                                 }
@@ -840,7 +944,7 @@ impl<'tcx> Debug for Rvalue<'tcx> {
 /// this does not necessarily mean that they are "==" in Rust -- in
 /// particular one must be wary of `NaN`!
 
-#[derive(Clone, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
 pub struct Constant<'tcx> {
     pub span: Span,
     pub ty: Ty<'tcx>,
@@ -851,30 +955,19 @@ pub struct Constant<'tcx> {
 pub struct TypedConstVal<'tcx> {
     pub ty: Ty<'tcx>,
     pub span: Span,
-    pub value: ConstVal
+    pub value: ConstUsize,
 }
 
 impl<'tcx> Debug for TypedConstVal<'tcx> {
     fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
-        try!(write!(fmt, "const "));
-        fmt_const_val(fmt, &self.value)
+        write!(fmt, "const {}", ConstInt::Usize(self.value))
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, RustcEncodable, RustcDecodable)]
-pub enum ItemKind {
-    Constant,
-    /// This is any sort of callable (usually those that have a type of `fn(…) -> …`). This
-    /// includes functions, constructors, but not methods which have their own ItemKind.
-    Function,
-    Method,
-}
-
-#[derive(Clone, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
 pub enum Literal<'tcx> {
     Item {
         def_id: DefId,
-        kind: ItemKind,
         substs: &'tcx Substs<'tcx>,
     },
     Value {
@@ -892,10 +985,12 @@ impl<'tcx> Debug for Literal<'tcx> {
     fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
         use self::Literal::*;
         match *self {
-            Item { def_id, .. } =>
-                write!(fmt, "{}", item_path_str(def_id)),
+            Item { def_id, substs } => {
+                ppaux::parameterized(fmt, substs, def_id, ppaux::Ns::Value, &[],
+                                     |tcx| tcx.lookup_item_type(def_id).generics)
+            }
             Value { ref value } => {
-                try!(write!(fmt, "const "));
+                write!(fmt, "const ")?;
                 fmt_const_val(fmt, value)
             }
         }
@@ -904,11 +999,10 @@ impl<'tcx> Debug for Literal<'tcx> {
 
 /// Write a `ConstVal` in a way closer to the original source code than the `Debug` output.
 fn fmt_const_val<W: Write>(fmt: &mut W, const_val: &ConstVal) -> fmt::Result {
-    use middle::const_eval::ConstVal::*;
+    use middle::const_val::ConstVal::*;
     match *const_val {
         Float(f) => write!(fmt, "{:?}", f),
-        Int(n) => write!(fmt, "{:?}", n),
-        Uint(n) => write!(fmt, "{:?}", n),
+        Integral(n) => write!(fmt, "{}", n),
         Str(ref s) => write!(fmt, "{:?}", s),
         ByteStr(ref bytes) => {
             let escaped: String = bytes
@@ -921,6 +1015,8 @@ fn fmt_const_val<W: Write>(fmt: &mut W, const_val: &ConstVal) -> fmt::Result {
         Function(def_id) => write!(fmt, "{}", item_path_str(def_id)),
         Struct(node_id) | Tuple(node_id) | Array(node_id, _) | Repeat(node_id, _) =>
             write!(fmt, "{}", node_to_string(node_id)),
+        Char(c) => write!(fmt, "{:?}", c),
+        Dummy => bug!(),
     }
 }
 

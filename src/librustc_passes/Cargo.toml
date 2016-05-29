@@ -11,5 +11,5 @@ crate-type = ["dylib"]
 [dependencies]
 log = { path = "../liblog" }
 rustc = { path = "../librustc" }
-rustc_front = { path = "../librustc_front" }
+rustc_const_eval = { path = "../librustc_const_eval" }
 syntax = { path = "../libsyntax" }

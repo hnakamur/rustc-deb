@@ -14,27 +14,19 @@
 //! unit-tested and separated from the Rust source and compiler data
 //! structures.
 
-use rustc::mir::repr::{BinOp, BorrowKind, Field, Literal, Mutability, UnOp, ItemKind,
+use rustc::mir::repr::{BinOp, BorrowKind, Field, Literal, Mutability, UnOp,
     TypedConstVal};
-use rustc::middle::const_eval::ConstVal;
-use rustc::middle::def_id::DefId;
+use rustc::middle::const_val::ConstVal;
+use rustc::hir::def_id::DefId;
 use rustc::middle::region::CodeExtent;
-use rustc::middle::subst::Substs;
-use rustc::middle::ty::{self, AdtDef, ClosureSubsts, Region, Ty};
-use rustc_front::hir;
+use rustc::ty::subst::Substs;
+use rustc::ty::{self, AdtDef, ClosureSubsts, Region, Ty};
+use rustc::hir;
 use syntax::ast;
 use syntax::codemap::Span;
 use self::cx::Cx;
 
 pub mod cx;
-
-#[derive(Clone, Debug)]
-pub struct ItemRef<'tcx> {
-    pub ty: Ty<'tcx>,
-    pub kind: ItemKind,
-    pub def_id: DefId,
-    pub substs: &'tcx Substs<'tcx>,
-}
 
 #[derive(Clone, Debug)]
 pub struct Block<'tcx> {
@@ -78,10 +70,7 @@ pub enum StmtKind<'tcx> {
         pattern: Pattern<'tcx>,
 
         /// let pat = <INIT> ...
-        initializer: Option<ExprRef<'tcx>>,
-
-        /// let pat = init; <STMTS>
-        stmts: Vec<StmtRef<'tcx>>,
+        initializer: Option<ExprRef<'tcx>>
     },
 }
 
@@ -241,6 +230,8 @@ pub enum ExprKind<'tcx> {
     },
     InlineAsm {
         asm: &'tcx hir::InlineAsm,
+        outputs: Vec<ExprRef<'tcx>>,
+        inputs: Vec<ExprRef<'tcx>>
     },
 }
 

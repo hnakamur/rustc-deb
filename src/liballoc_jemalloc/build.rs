@@ -86,6 +86,8 @@ fn main() {
         // should be good to go!
         cmd.arg("--with-jemalloc-prefix=je_");
         cmd.arg("--disable-tls");
+    } else if target.contains("dragonfly") {
+        cmd.arg("--with-jemalloc-prefix=je_");
     }
 
     if cfg!(feature = "debug-jemalloc") {
@@ -111,7 +113,7 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib", build_dir.display());
     if target.contains("android") {
         println!("cargo:rustc-link-lib=gcc");
-    } else if !target.contains("windows") {
+    } else if !target.contains("windows") && !target.contains("musl") {
         println!("cargo:rustc-link-lib=pthread");
     }
 }

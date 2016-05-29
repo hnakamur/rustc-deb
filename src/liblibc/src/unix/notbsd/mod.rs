@@ -5,6 +5,7 @@ pub type pthread_key_t = ::c_uint;
 pub type speed_t = ::c_uint;
 pub type tcflag_t = ::c_uint;
 pub type loff_t = ::c_longlong;
+pub type clockid_t = ::c_int;
 
 pub enum timezone {}
 
@@ -59,6 +60,13 @@ s! {
         pub ai_addr: *mut ::sockaddr,
 
         pub ai_next: *mut addrinfo,
+    }
+
+    pub struct sockaddr_nl {
+        pub nl_family: ::sa_family_t,
+        nl_pad: ::c_ushort,
+        pub nl_pid: u32,
+        pub nl_groups: u32
     }
 
     pub struct sockaddr_ll {
@@ -124,13 +132,45 @@ s! {
         pub machine: [::c_char; 65],
         pub domainname: [::c_char; 65]
     }
+
+    pub struct lconv {
+        pub decimal_point: *mut ::c_char,
+        pub thousands_sep: *mut ::c_char,
+        pub grouping: *mut ::c_char,
+        pub int_curr_symbol: *mut ::c_char,
+        pub currency_symbol: *mut ::c_char,
+        pub mon_decimal_point: *mut ::c_char,
+        pub mon_thousands_sep: *mut ::c_char,
+        pub mon_grouping: *mut ::c_char,
+        pub positive_sign: *mut ::c_char,
+        pub negative_sign: *mut ::c_char,
+        pub int_frac_digits: ::c_char,
+        pub frac_digits: ::c_char,
+        pub p_cs_precedes: ::c_char,
+        pub p_sep_by_space: ::c_char,
+        pub n_cs_precedes: ::c_char,
+        pub n_sep_by_space: ::c_char,
+        pub p_sign_posn: ::c_char,
+        pub n_sign_posn: ::c_char,
+        pub int_p_cs_precedes: ::c_char,
+        pub int_p_sep_by_space: ::c_char,
+        pub int_n_cs_precedes: ::c_char,
+        pub int_n_sep_by_space: ::c_char,
+        pub int_p_sign_posn: ::c_char,
+        pub int_n_sign_posn: ::c_char,
+    }
 }
 
 // intentionally not public, only used for fd_set
-#[cfg(target_pointer_width = "32")]
-const ULONG_SIZE: usize = 32;
-#[cfg(target_pointer_width = "64")]
-const ULONG_SIZE: usize = 64;
+cfg_if! {
+    if #[cfg(target_pointer_width = "32")] {
+        const ULONG_SIZE: usize = 32;
+    } else if #[cfg(target_pointer_width = "64")] {
+        const ULONG_SIZE: usize = 64;
+    } else {
+        // Unknown target_pointer_width
+    }
+}
 
 pub const EXIT_FAILURE: ::c_int = 1;
 pub const EXIT_SUCCESS: ::c_int = 0;
@@ -149,13 +189,35 @@ pub const F_SETFD: ::c_int = 2;
 pub const F_GETFL: ::c_int = 3;
 pub const F_SETFL: ::c_int = 4;
 
+// Linux-specific fcntls
+pub const F_SETLEASE: ::c_int = 1024;
+pub const F_GETLEASE: ::c_int = 1025;
+pub const F_NOTIFY: ::c_int = 1026;
+pub const F_DUPFD_CLOEXEC: ::c_int = 1030;
+pub const F_SETPIPE_SZ: ::c_int = 1031;
+pub const F_GETPIPE_SZ: ::c_int = 1032;
+
+// TODO(#235): Include file sealing fcntls once we have a way to verify them.
+
 pub const SIGTRAP: ::c_int = 5;
 
 pub const PTHREAD_CREATE_JOINABLE: ::c_int = 0;
 pub const PTHREAD_CREATE_DETACHED: ::c_int = 1;
 
-pub const CLOCK_REALTIME: ::c_int = 0;
-pub const CLOCK_MONOTONIC: ::c_int = 1;
+pub const CLOCK_REALTIME: clockid_t = 0;
+pub const CLOCK_MONOTONIC: clockid_t = 1;
+pub const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 2;
+pub const CLOCK_THREAD_CPUTIME_ID: clockid_t = 3;
+pub const CLOCK_MONOTONIC_RAW: clockid_t = 4;
+pub const CLOCK_REALTIME_COARSE: clockid_t = 5;
+pub const CLOCK_MONOTONIC_COARSE: clockid_t = 6;
+pub const CLOCK_BOOTTIME: clockid_t = 7;
+pub const CLOCK_REALTIME_ALARM: clockid_t = 8;
+pub const CLOCK_BOOTTIME_ALARM: clockid_t = 9;
+// TODO(#247) Someday our Travis shall have glibc 2.21 (released in Sep
+// 2014.) See also musl/mod.rs
+// pub const CLOCK_SGI_CYCLE: clockid_t = 10;
+// pub const CLOCK_TAI: clockid_t = 11;
 
 pub const RLIMIT_CPU: ::c_int = 0;
 pub const RLIMIT_FSIZE: ::c_int = 1;
@@ -222,6 +284,14 @@ pub const PROT_READ: ::c_int = 1;
 pub const PROT_WRITE: ::c_int = 2;
 pub const PROT_EXEC: ::c_int = 4;
 
+pub const LC_CTYPE: ::c_int = 0;
+pub const LC_NUMERIC: ::c_int = 1;
+pub const LC_TIME: ::c_int = 2;
+pub const LC_COLLATE: ::c_int = 3;
+pub const LC_MONETARY: ::c_int = 4;
+pub const LC_MESSAGES: ::c_int = 5;
+pub const LC_ALL: ::c_int = 6;
+
 pub const MAP_FILE: ::c_int = 0x0000;
 pub const MAP_SHARED: ::c_int = 0x0001;
 pub const MAP_PRIVATE: ::c_int = 0x0002;
@@ -232,9 +302,12 @@ pub const MAP_FAILED: *mut ::c_void = !0 as *mut ::c_void;
 pub const MCL_CURRENT: ::c_int = 0x0001;
 pub const MCL_FUTURE: ::c_int = 0x0002;
 
+// MS_ flags for msync(2)
 pub const MS_ASYNC: ::c_int = 0x0001;
 pub const MS_INVALIDATE: ::c_int = 0x0002;
 pub const MS_SYNC: ::c_int = 0x0004;
+
+// MS_ flags for mount(2)
 pub const MS_RDONLY: ::c_ulong = 0x01;
 pub const MS_NOSUID: ::c_ulong = 0x02;
 pub const MS_NODEV: ::c_ulong = 0x04;
@@ -254,6 +327,10 @@ pub const MS_UNBINDABLE: ::c_ulong = 0x020000;
 pub const MS_PRIVATE: ::c_ulong = 0x040000;
 pub const MS_SLAVE: ::c_ulong = 0x080000;
 pub const MS_SHARED: ::c_ulong = 0x100000;
+pub const MS_RELATIME: ::c_ulong = 0x200000;
+pub const MS_KERNMOUNT: ::c_ulong = 0x400000;
+pub const MS_I_VERSION: ::c_ulong = 0x800000;
+pub const MS_STRICTATIME: ::c_ulong = 0x1000000;
 pub const MS_ACTIVE: ::c_ulong = 0x40000000;
 pub const MS_NOUSER: ::c_ulong = 0x80000000;
 pub const MS_MGC_VAL: ::c_ulong = 0xc0ed0000;
@@ -527,6 +604,12 @@ pub const CLONE_CHILD_CLEARTID: ::c_int = 0x200000;
 pub const CLONE_DETACHED: ::c_int = 0x400000;
 pub const CLONE_UNTRACED: ::c_int = 0x800000;
 pub const CLONE_CHILD_SETTID: ::c_int = 0x01000000;
+pub const CLONE_NEWUTS: ::c_int = 0x04000000;
+pub const CLONE_NEWIPC: ::c_int = 0x08000000;
+pub const CLONE_NEWUSER: ::c_int = 0x10000000;
+pub const CLONE_NEWPID: ::c_int = 0x20000000;
+pub const CLONE_NEWNET: ::c_int = 0x40000000;
+pub const CLONE_IO: ::c_int = 0x80000000;
 
 pub const WNOHANG: ::c_int = 1;
 
@@ -543,6 +626,9 @@ pub const POSIX_FADV_SEQUENTIAL: ::c_int = 2;
 pub const POSIX_FADV_WILLNEED: ::c_int = 3;
 pub const POSIX_FADV_DONTNEED: ::c_int = 4;
 pub const POSIX_FADV_NOREUSE: ::c_int = 5;
+
+pub const AT_FDCWD: ::c_int = -100;
+pub const AT_SYMLINK_NOFOLLOW: ::c_int = 0x100;
 
 f! {
     pub fn FD_CLR(fd: ::c_int, set: *mut fd_set) -> () {
@@ -593,7 +679,8 @@ extern {
     pub fn fdatasync(fd: ::c_int) -> ::c_int;
     pub fn mincore(addr: *mut ::c_void, len: ::size_t,
                    vec: *mut ::c_uchar) -> ::c_int;
-    pub fn clock_gettime(clk_id: ::c_int, tp: *mut ::timespec) -> ::c_int;
+    pub fn clock_getres(clk_id: clockid_t, tp: *mut ::timespec) -> ::c_int;
+    pub fn clock_gettime(clk_id: clockid_t, tp: *mut ::timespec) -> ::c_int;
     pub fn prctl(option: ::c_int, ...) -> ::c_int;
     pub fn pthread_getattr_np(native: ::pthread_t,
                               attr: *mut ::pthread_attr_t) -> ::c_int;
@@ -605,7 +692,9 @@ extern {
     pub fn memalign(align: ::size_t, size: ::size_t) -> *mut ::c_void;
     pub fn setgroups(ngroups: ::size_t,
                      ptr: *const ::gid_t) -> ::c_int;
-    pub fn sched_setscheduler(pid: ::pid_t, policy: ::c_int, param: *const sched_param) -> ::c_int;
+    pub fn sched_setscheduler(pid: ::pid_t,
+                              policy: ::c_int,
+                              param: *const sched_param) -> ::c_int;
     pub fn sched_getscheduler(pid: ::pid_t) -> ::c_int;
     pub fn sched_get_priority_max(policy: ::c_int) -> ::c_int;
     pub fn sched_get_priority_min(policy: ::c_int) -> ::c_int;
@@ -632,7 +721,9 @@ extern {
                  arg: *mut ::c_void, ...) -> ::c_int;
     pub fn statfs(path: *const ::c_char, buf: *mut statfs) -> ::c_int;
     pub fn fstatfs(fd: ::c_int, buf: *mut statfs) -> ::c_int;
-    pub fn memrchr(cx: *const ::c_void, c: ::c_int, n: ::size_t) -> *mut ::c_void;
+    pub fn memrchr(cx: *const ::c_void,
+                   c: ::c_int,
+                   n: ::size_t) -> *mut ::c_void;
     pub fn syscall(num: ::c_long, ...) -> ::c_long;
     pub fn sendfile(out_fd: ::c_int,
                     in_fd: ::c_int,
@@ -653,8 +744,11 @@ extern {
                     nr_segs: ::size_t,
                     flags: ::c_uint) -> ::ssize_t;
 
-    pub fn posix_fadvise(fd: ::c_int, offset: ::off_t, len: ::off_t, 
+    pub fn posix_fadvise(fd: ::c_int, offset: ::off_t, len: ::off_t,
                          advise: ::c_int) -> ::c_int;
+    pub fn futimens(fd: ::c_int, times: *const ::timespec) -> ::c_int;
+    pub fn utimensat(dirfd: ::c_int, path: *const ::c_char,
+                     times: *const ::timespec, flag: ::c_int) -> ::c_int;
 }
 
 cfg_if! {
@@ -666,6 +760,6 @@ cfg_if! {
         mod android;
         pub use self::android::*;
     } else {
-        // ...
+        // Unknown target_os
     }
 }

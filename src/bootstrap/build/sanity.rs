@@ -79,7 +79,7 @@ pub fn check(build: &mut Build) {
         }
 
         // Make sure musl-root is valid if specified
-        if target.contains("musl") {
+        if target.contains("musl") && (target.contains("x86_64") || target.contains("i686")) {
             match build.config.musl_root {
                 Some(ref root) => {
                     if fs::metadata(root.join("lib/libc.a")).is_err() {
@@ -117,6 +117,18 @@ package instead of cmake:
 $ pacman -R cmake && pacman -S mingw-w64-x86_64-cmake
 ");
             }
+        }
+    }
+
+    for host in build.flags.host.iter() {
+        if !build.config.host.contains(host) {
+            panic!("specified host `{}` is not in the ./configure list", host);
+        }
+    }
+    for target in build.flags.target.iter() {
+        if !build.config.target.contains(target) {
+            panic!("specified target `{}` is not in the ./configure list",
+                   target);
         }
     }
 }

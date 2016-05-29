@@ -1232,7 +1232,7 @@ mod tests {
         m.append(&mut n);
         check_links(&m);
         let mut sum = v;
-        sum.push_all(&u);
+        sum.extend_from_slice(&u);
         assert_eq!(sum.len(), m.len());
         for elt in sum {
             assert_eq!(m.pop_front(), Some(elt))
@@ -1305,10 +1305,10 @@ mod tests {
         //
         // https://github.com/rust-lang/rust/issues/26021
         let mut v1 = LinkedList::new();
-        v1.push_front(1u8);
-        v1.push_front(1u8);
-        v1.push_front(1u8);
-        v1.push_front(1u8);
+        v1.push_front(1);
+        v1.push_front(1);
+        v1.push_front(1);
+        v1.push_front(1);
         let _ = v1.split_off(3); // Dropping this now should not cause laundry consumption
         assert_eq!(v1.len(), 3);
 
@@ -1319,10 +1319,10 @@ mod tests {
     #[test]
     fn test_split_off() {
         let mut v1 = LinkedList::new();
-        v1.push_front(1u8);
-        v1.push_front(1u8);
-        v1.push_front(1u8);
-        v1.push_front(1u8);
+        v1.push_front(1);
+        v1.push_front(1);
+        v1.push_front(1);
+        v1.push_front(1);
 
         // test all splits
         for ix in 0..1 + v1.len() {

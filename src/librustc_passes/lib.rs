@@ -28,8 +28,8 @@
 #![feature(rustc_private)]
 
 extern crate core;
-extern crate rustc;
-extern crate rustc_front;
+#[macro_use] extern crate rustc;
+extern crate rustc_const_eval;
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;

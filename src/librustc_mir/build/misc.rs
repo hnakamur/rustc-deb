@@ -12,8 +12,7 @@
 //! kind of thing.
 
 use build::Builder;
-use hair::*;
-use rustc::middle::ty::Ty;
+use rustc::ty::Ty;
 use rustc::mir::repr::*;
 use std::u32;
 use syntax::codemap::Span;
@@ -47,28 +46,21 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         Operand::Constant(constant)
     }
 
-    pub fn push_usize(&mut self, block: BasicBlock, span: Span, value: usize) -> Lvalue<'tcx> {
+    pub fn push_usize(&mut self,
+                      block: BasicBlock,
+                      scope_id: ScopeId,
+                      span: Span,
+                      value: u64)
+                      -> Lvalue<'tcx> {
         let usize_ty = self.hir.usize_ty();
         let temp = self.temp(usize_ty);
         self.cfg.push_assign_constant(
-            block, span, &temp,
+            block, scope_id, span, &temp,
             Constant {
                 span: span,
                 ty: self.hir.usize_ty(),
                 literal: self.hir.usize_literal(value),
             });
         temp
-    }
-
-    pub fn item_ref_operand(&mut self,
-                            span: Span,
-                            item_ref: ItemRef<'tcx>)
-                            -> Operand<'tcx> {
-        let literal = Literal::Item {
-            def_id: item_ref.def_id,
-            kind: item_ref.kind,
-            substs: item_ref.substs,
-        };
-        self.literal_operand(span, item_ref.ty, literal)
     }
 }

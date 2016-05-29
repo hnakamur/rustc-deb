@@ -86,6 +86,9 @@ pub fn llvm(build: &Build, target: &str) {
               .define("CMAKE_CXX_COMPILER", build.cxx(target));
         }
         cfg.build_arg("-j").build_arg(build.jobs().to_string());
+
+        cfg.define("CMAKE_C_FLAGS", build.cflags(target).join(" "));
+        cfg.define("CMAKE_CXX_FLAGS", build.cflags(target).join(" "));
     }
 
     // FIXME: we don't actually need to build all LLVM tools and all LLVM
@@ -113,7 +116,9 @@ pub fn compiler_rt(build: &Build, target: &str) {
     let dst = build.compiler_rt_out(target);
     let arch = target.split('-').next().unwrap();
     let mode = if build.config.rust_optimize {"Release"} else {"Debug"};
-    let (dir, build_target, libname) = if target.contains("linux") {
+    let (dir, build_target, libname) = if target.contains("linux") ||
+                                          target.contains("freebsd") ||
+                                          target.contains("netbsd") {
         let os = if target.contains("android") {"-android"} else {""};
         let arch = if arch.starts_with("arm") && target.contains("eabihf") {
             "armhf"

@@ -2,9 +2,6 @@ pub type c_long = i32;
 pub type c_ulong = u32;
 pub type nlink_t = u32;
 
-pub const __SIZEOF_PTHREAD_RWLOCK_T: usize = 32;
-pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 24;
-
 s! {
     pub struct pthread_attr_t {
         __size: [u32; 9]
@@ -25,6 +22,9 @@ s! {
     }
 }
 
+pub const __SIZEOF_PTHREAD_RWLOCK_T: usize = 32;
+pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 24;
+
 cfg_if! {
     if #[cfg(any(target_arch = "x86"))] {
         mod x86;
@@ -38,5 +38,7 @@ cfg_if! {
     } else if #[cfg(any(target_arch = "asmjs"))] {
         mod asmjs;
         pub use self::asmjs::*;
-    } else { }
+    } else {
+        // Unknown target_arch
+    }
 }

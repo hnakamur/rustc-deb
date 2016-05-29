@@ -12,19 +12,18 @@
 
 use astconv::AstConv;
 use check::FnCtxt;
-use middle::def::Def;
-use middle::def_id::DefId;
-use middle::privacy::{AllPublic, DependsOn, LastPrivate, LastMod};
-use middle::subst;
-use middle::traits;
-use middle::ty::{self, ToPredicate, ToPolyTraitRef, TraitRef, TypeFoldable};
-use middle::ty::adjustment::{AdjustDerefRef, AutoDerefRef, AutoPtr};
-use middle::infer;
+use hir::def::Def;
+use hir::def_id::DefId;
+use rustc::ty::subst;
+use rustc::traits;
+use rustc::ty::{self, TyCtxt, ToPredicate, ToPolyTraitRef, TraitRef, TypeFoldable};
+use rustc::ty::adjustment::{AdjustDerefRef, AutoDerefRef, AutoPtr};
+use rustc::infer;
 
 use syntax::ast;
 use syntax::codemap::Span;
 
-use rustc_front::hir;
+use rustc::hir;
 
 pub use self::MethodError::*;
 pub use self::CandidateSource::*;
@@ -44,6 +43,9 @@ pub enum MethodError<'tcx> {
 
     // Using a `Fn`/`FnMut`/etc method on a raw closure type before we have inferred its kind.
     ClosureAmbiguity(/* DefId of fn trait */ DefId),
+
+    // Found an applicable method, but it is not visible.
+    PrivateMatch(Def),
 }
 
 // Contains a list of static methods that may apply, a list of unsatisfied trait predicates which
@@ -91,6 +93,7 @@ pub fn exists<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
         Err(NoMatch(..)) => false,
         Err(Ambiguity(..)) => true,
         Err(ClosureAmbiguity(..)) => true,
+        Err(PrivateMatch(..)) => true,
     }
 }
 
@@ -125,7 +128,7 @@ pub fn lookup<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
 
     let mode = probe::Mode::MethodCall;
     let self_ty = fcx.infcx().resolve_type_vars_if_possible(&self_ty);
-    let pick = try!(probe::probe(fcx, span, mode, method_name, self_ty, call_expr.id));
+    let pick = probe::probe(fcx, span, mode, method_name, self_ty, call_expr.id)?;
     Ok(confirm::confirm(fcx, span, self_expr, call_expr, self_ty, pick, supplied_method_types))
 }
 
@@ -231,11 +234,12 @@ pub fn lookup_in_trait_adjusted<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                                                                        &method_ty.fty.sig).0;
     let fn_sig = fcx.instantiate_type_scheme(span, trait_ref.substs, &fn_sig);
     let transformed_self_ty = fn_sig.inputs[0];
-    let fty = tcx.mk_fn(None, tcx.mk_bare_fn(ty::BareFnTy {
+    let def_id = method_item.def_id();
+    let fty = tcx.mk_fn_def(def_id, trait_ref.substs, ty::BareFnTy {
         sig: ty::Binder(fn_sig),
         unsafety: method_ty.fty.unsafety,
         abi: method_ty.fty.abi.clone(),
-    }));
+    });
 
     debug!("lookup_in_trait_adjusted: matched method fty={:?} obligation={:?}",
            fty,
@@ -298,28 +302,26 @@ pub fn lookup_in_trait_adjusted<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                         }
 
                         _ => {
-                            fcx.tcx().sess.span_bug(
+                            span_bug!(
                                 span,
-                                &format!(
-                                    "trait method is &self but first arg is: {}",
-                                    transformed_self_ty));
+                                "trait method is &self but first arg is: {}",
+                                transformed_self_ty);
                         }
                     }
                 }
 
                 _ => {
-                    fcx.tcx().sess.span_bug(
+                    span_bug!(
                         span,
-                        &format!(
-                            "unexpected explicit self type in operator method: {:?}",
-                            method_ty.explicit_self));
+                        "unexpected explicit self type in operator method: {:?}",
+                        method_ty.explicit_self);
                 }
             }
         }
     }
 
     let callee = ty::MethodCallee {
-        def_id: method_item.def_id(),
+        def_id: def_id,
         ty: fty,
         substs: trait_ref.substs
     };
@@ -334,31 +336,24 @@ pub fn resolve_ufcs<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                               method_name: ast::Name,
                               self_ty: ty::Ty<'tcx>,
                               expr_id: ast::NodeId)
-                              -> Result<(Def, LastPrivate), MethodError<'tcx>>
+                              -> Result<Def, MethodError<'tcx>>
 {
     let mode = probe::Mode::Path;
-    let pick = try!(probe::probe(fcx, span, mode, method_name, self_ty, expr_id));
-    let def_id = pick.item.def_id();
-    let mut lp = LastMod(AllPublic);
+    let pick = probe::probe(fcx, span, mode, method_name, self_ty, expr_id)?;
+    let def = pick.item.def();
+
     if let probe::InherentImplPick = pick.kind {
-        if pick.item.vis() != hir::Public {
-            lp = LastMod(DependsOn(def_id));
+        if !pick.item.vis().is_accessible_from(fcx.body_id, &fcx.tcx().map) {
+            let msg = format!("{} `{}` is private", def.kind_name(), &method_name.as_str());
+            fcx.tcx().sess.span_err(span, &msg);
         }
     }
-    let def_result = match pick.item {
-        ty::ImplOrTraitItem::MethodTraitItem(..) => Def::Method(def_id),
-        ty::ImplOrTraitItem::ConstTraitItem(..) => Def::AssociatedConst(def_id),
-        ty::ImplOrTraitItem::TypeTraitItem(..) => {
-            fcx.tcx().sess.span_bug(span, "resolve_ufcs: probe picked associated type");
-        }
-    };
-    Ok((def_result, lp))
+    Ok(def)
 }
-
 
 /// Find item with name `item_name` defined in `trait_def_id`
 /// and return it, or `None`, if no such item.
-fn trait_item<'tcx>(tcx: &ty::ctxt<'tcx>,
+fn trait_item<'tcx>(tcx: &TyCtxt<'tcx>,
                     trait_def_id: DefId,
                     item_name: ast::Name)
                     -> Option<ty::ImplOrTraitItem<'tcx>>
@@ -369,7 +364,7 @@ fn trait_item<'tcx>(tcx: &ty::ctxt<'tcx>,
                .cloned()
 }
 
-fn impl_item<'tcx>(tcx: &ty::ctxt<'tcx>,
+fn impl_item<'tcx>(tcx: &TyCtxt<'tcx>,
                    impl_def_id: DefId,
                    item_name: ast::Name)
                    -> Option<ty::ImplOrTraitItem<'tcx>>

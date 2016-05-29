@@ -18,3 +18,6 @@ pub const SO_SNDTIMEO: ::c_int = 19;
 
 pub const FIOCLEX: ::c_ulong = 0x20006601;
 pub const FIONBIO: ::c_ulong = 0x8004667e;
+
+pub const SYS_gettid: ::c_long = 207;
+pub const SYS_perf_event_open: ::c_long = 319;

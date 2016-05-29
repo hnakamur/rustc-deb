@@ -14,22 +14,20 @@ use driver;
 use rustc::dep_graph::DepGraph;
 use rustc_lint;
 use rustc_resolve as resolve;
-use rustc_typeck::middle::lang_items;
-use rustc_typeck::middle::free_region::FreeRegionMap;
-use rustc_typeck::middle::region::{self, CodeExtent};
-use rustc_typeck::middle::region::CodeExtentData;
-use rustc_typeck::middle::resolve_lifetime;
-use rustc_typeck::middle::stability;
-use rustc_typeck::middle::subst;
-use rustc_typeck::middle::subst::Subst;
-use rustc_typeck::middle::ty::{self, Ty, TypeFoldable};
-use rustc_typeck::middle::ty::relate::TypeRelation;
-use rustc_typeck::middle::infer::{self, TypeOrigin};
-use rustc_typeck::middle::infer::lub::Lub;
-use rustc_typeck::middle::infer::glb::Glb;
-use rustc_typeck::middle::infer::sub::Sub;
+use rustc::middle::lang_items;
+use rustc::middle::free_region::FreeRegionMap;
+use rustc::middle::region::{self, CodeExtent};
+use rustc::middle::region::CodeExtentData;
+use rustc::middle::resolve_lifetime;
+use rustc::middle::stability;
+use rustc::ty::subst;
+use rustc::ty::subst::Subst;
+use rustc::traits::ProjectionMode;
+use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
+use rustc::ty::relate::TypeRelation;
+use rustc::infer::{self, InferOk, InferResult, TypeOrigin};
 use rustc_metadata::cstore::CStore;
-use rustc::front::map as hir_map;
+use rustc::hir::map as hir_map;
 use rustc::session::{self, config};
 use std::rc::Rc;
 use syntax::ast;
@@ -41,8 +39,8 @@ use syntax::errors::{Level, RenderSpan};
 use syntax::parse::token;
 use syntax::feature_gate::UnstableFeatures;
 
-use rustc_front::lowering::{lower_crate, LoweringContext};
-use rustc_front::hir;
+use rustc::hir::lowering::{lower_crate, LoweringContext};
+use rustc::hir;
 
 struct Env<'a, 'tcx: 'a> {
     infcx: &'a infer::InferCtxt<'a, 'tcx>,
@@ -113,8 +111,11 @@ fn test_env<F>(source_string: &str,
                                        Rc::new(CodeMap::new()), cstore.clone());
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
     let krate_config = Vec::new();
-    let input = config::Input::Str(source_string.to_string());
-    let krate = driver::phase_1_parse_input(&sess, krate_config, &input);
+    let input = config::Input::Str {
+        name: driver::anon_src(),
+        input: source_string.to_string(),
+    };
+    let krate = driver::phase_1_parse_input(&sess, krate_config, &input).unwrap();
     let krate = driver::phase_2_configure_and_expand(&sess, &cstore, krate, "test", None)
                     .expect("phase 2 aborted");
 
@@ -133,7 +134,7 @@ fn test_env<F>(source_string: &str,
     let named_region_map = resolve_lifetime::krate(&sess, &ast_map, &def_map.borrow());
     let region_map = region::resolve_crate(&sess, &ast_map);
     let index = stability::Index::new(&ast_map);
-    ty::ctxt::create_and_enter(&sess,
+    TyCtxt::create_and_enter(&sess,
                                &arenas,
                                def_map,
                                named_region_map.unwrap(),
@@ -142,8 +143,12 @@ fn test_env<F>(source_string: &str,
                                region_map,
                                lang_items,
                                index,
+                               "test_crate",
                                |tcx| {
-                                   let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None);
+                                   let infcx = infer::new_infer_ctxt(tcx,
+                                                                     &tcx.tables,
+                                                                     None,
+                                                                     ProjectionMode::AnyFinal);
                                    body(Env { infcx: &infcx });
                                    let free_regions = FreeRegionMap::new();
                                    infcx.resolve_regions_and_report_errors(&free_regions,
@@ -153,7 +158,7 @@ fn test_env<F>(source_string: &str,
 }
 
 impl<'a, 'tcx> Env<'a, 'tcx> {
-    pub fn tcx(&self) -> &ty::ctxt<'tcx> {
+    pub fn tcx(&self) -> &TyCtxt<'tcx> {
         self.infcx.tcx
     }
 
@@ -261,16 +266,15 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
 
     pub fn t_fn(&self, input_tys: &[Ty<'tcx>], output_ty: Ty<'tcx>) -> Ty<'tcx> {
         let input_args = input_tys.iter().cloned().collect();
-        self.infcx.tcx.mk_fn(None,
-                             self.infcx.tcx.mk_bare_fn(ty::BareFnTy {
-                                 unsafety: hir::Unsafety::Normal,
-                                 abi: Abi::Rust,
-                                 sig: ty::Binder(ty::FnSig {
-                                     inputs: input_args,
-                                     output: ty::FnConverging(output_ty),
-                                     variadic: false,
-                                 }),
-                             }))
+        self.infcx.tcx.mk_fn_ptr(ty::BareFnTy {
+            unsafety: hir::Unsafety::Normal,
+            abi: Abi::Rust,
+            sig: ty::Binder(ty::FnSig {
+                inputs: input_args,
+                output: ty::FnConverging(output_ty),
+                variadic: false,
+            }),
+        })
     }
 
     pub fn t_nil(&self) -> Ty<'tcx> {
@@ -351,26 +355,29 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
         infer::TypeTrace::dummy(self.tcx())
     }
 
-    pub fn sub(&self) -> Sub<'a, 'tcx> {
+    pub fn sub(&self, t1: &Ty<'tcx>, t2: &Ty<'tcx>) -> InferResult<'tcx, Ty<'tcx>> {
         let trace = self.dummy_type_trace();
-        self.infcx.sub(true, trace)
+        self.infcx.sub(true, trace, t1, t2)
     }
 
-    pub fn lub(&self) -> Lub<'a, 'tcx> {
+    pub fn lub(&self, t1: &Ty<'tcx>, t2: &Ty<'tcx>) -> InferResult<'tcx, Ty<'tcx>> {
         let trace = self.dummy_type_trace();
-        self.infcx.lub(true, trace)
+        self.infcx.lub(true, trace, t1, t2)
     }
 
-    pub fn glb(&self) -> Glb<'a, 'tcx> {
+    pub fn glb(&self, t1: &Ty<'tcx>, t2: &Ty<'tcx>) -> InferResult<'tcx, Ty<'tcx>> {
         let trace = self.dummy_type_trace();
-        self.infcx.glb(true, trace)
+        self.infcx.glb(true, trace, t1, t2)
     }
 
     /// Checks that `t1 <: t2` is true (this may register additional
     /// region checks).
     pub fn check_sub(&self, t1: Ty<'tcx>, t2: Ty<'tcx>) {
-        match self.sub().relate(&t1, &t2) {
-            Ok(_) => {}
+        match self.sub(&t1, &t2) {
+            Ok(InferOk { obligations, .. }) => {
+                // FIXME(#32730) once obligations are being propagated, assert the right thing.
+                assert!(obligations.is_empty());
+            }
             Err(ref e) => {
                 panic!("unexpected error computing sub({:?},{:?}): {}", t1, t2, e);
             }
@@ -380,7 +387,7 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
     /// Checks that `t1 <: t2` is false (this may register additional
     /// region checks).
     pub fn check_not_sub(&self, t1: Ty<'tcx>, t2: Ty<'tcx>) {
-        match self.sub().relate(&t1, &t2) {
+        match self.sub(&t1, &t2) {
             Err(_) => {}
             Ok(_) => {
                 panic!("unexpected success computing sub({:?},{:?})", t1, t2);
@@ -390,8 +397,11 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
 
     /// Checks that `LUB(t1,t2) == t_lub`
     pub fn check_lub(&self, t1: Ty<'tcx>, t2: Ty<'tcx>, t_lub: Ty<'tcx>) {
-        match self.lub().relate(&t1, &t2) {
-            Ok(t) => {
+        match self.lub(&t1, &t2) {
+            Ok(InferOk { obligations, value: t }) => {
+                // FIXME(#32730) once obligations are being propagated, assert the right thing.
+                assert!(obligations.is_empty());
+
                 self.assert_eq(t, t_lub);
             }
             Err(ref e) => {
@@ -403,11 +413,14 @@ impl<'a, 'tcx> Env<'a, 'tcx> {
     /// Checks that `GLB(t1,t2) == t_glb`
     pub fn check_glb(&self, t1: Ty<'tcx>, t2: Ty<'tcx>, t_glb: Ty<'tcx>) {
         debug!("check_glb(t1={}, t2={}, t_glb={})", t1, t2, t_glb);
-        match self.glb().relate(&t1, &t2) {
+        match self.glb(&t1, &t2) {
             Err(e) => {
                 panic!("unexpected error computing LUB: {:?}", e)
             }
-            Ok(t) => {
+            Ok(InferOk { obligations, value: t }) => {
+                // FIXME(#32730) once obligations are being propagated, assert the right thing.
+                assert!(obligations.is_empty());
+
                 self.assert_eq(t, t_glb);
 
                 // sanity check for good measure:

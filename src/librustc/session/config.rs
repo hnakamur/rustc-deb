@@ -38,8 +38,6 @@ use std::env;
 use std::fmt;
 use std::path::PathBuf;
 
-use llvm;
-
 pub struct Config {
     pub target: Target,
     pub int_type: IntTy,
@@ -141,11 +139,9 @@ pub struct Options {
     pub continue_parse_after_error: bool,
     pub mir_opt_level: usize,
 
-    /// if true, build up the dep-graph
-    pub build_dep_graph: bool,
-
-    /// if true, -Z dump-dep-graph was passed to dump out the dep-graph
-    pub dump_dep_graph: bool,
+    /// if Some, enable incremental compilation, using the given
+    /// directory to store intermediate results
+    pub incremental: Option<PathBuf>,
 
     pub no_analysis: bool,
     pub debugging_opts: DebuggingOptions,
@@ -173,8 +169,12 @@ pub enum PrintRequest {
 pub enum Input {
     /// Load source from file
     File(PathBuf),
-    /// The string is the source
-    Str(String)
+    Str {
+        /// String that is shown in place of a filename
+        name: String,
+        /// Anonymous source string
+        input: String,
+    },
 }
 
 impl Input {
@@ -182,7 +182,7 @@ impl Input {
         match *self {
             Input::File(ref ifile) => ifile.file_stem().unwrap()
                                            .to_str().unwrap().to_string(),
-            Input::Str(_) => "rust_out".to_string(),
+            Input::Str { .. } => "rust_out".to_string(),
         }
     }
 }
@@ -258,8 +258,7 @@ pub fn basic_options() -> Options {
         treat_err_as_bug: false,
         continue_parse_after_error: false,
         mir_opt_level: 1,
-        build_dep_graph: false,
-        dump_dep_graph: false,
+        incremental: None,
         no_analysis: false,
         debugging_opts: basic_debugging_options(),
         prints: Vec::new(),
@@ -271,6 +270,15 @@ pub fn basic_options() -> Options {
         libs: Vec::new(),
         unstable_features: UnstableFeatures::Disallow,
         debug_assertions: true,
+    }
+}
+
+impl Options {
+    /// True if there is a reason to build the dep graph.
+    pub fn build_dep_graph(&self) -> bool {
+        self.incremental.is_some() ||
+            self.debugging_opts.dump_dep_graph ||
+            self.debugging_opts.query_dep_graph
     }
 }
 
@@ -360,7 +368,7 @@ macro_rules! options {
                                                              value, $outputname,
                                                              key, type_desc))
                         }
-                        (None, None) => unreachable!()
+                        (None, None) => bug!()
                     }
                 }
                 found = true;
@@ -633,10 +641,12 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "treat all errors that occur as bugs"),
     continue_parse_after_error: bool = (false, parse_bool,
           "attempt to recover from parse errors (experimental)"),
-    incr_comp: bool = (false, parse_bool,
+    incremental: Option<String> = (None, parse_opt_string,
           "enable incremental compilation (experimental)"),
     dump_dep_graph: bool = (false, parse_bool,
           "dump the dependency graph to $RUST_DEP_GRAPH (default: /tmp/dep_graph.gv)"),
+    query_dep_graph: bool = (false, parse_bool,
+          "enable queries of the dependency graph for regression testing"),
     no_analysis: bool = (false, parse_bool,
           "parse and expand the source, but run no analysis"),
     extra_plugins: Vec<String> = (Vec::new(), parse_list,
@@ -663,6 +673,10 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "print the result of the translation item collection pass"),
     mir_opt_level: Option<usize> = (None, parse_opt_uint,
           "set the MIR optimization level (0-3)"),
+    dump_mir: Option<String> = (None, parse_opt_string,
+          "dump MIR state at various points in translation"),
+    orbit: bool = (false, parse_bool,
+          "get MIR where it belongs - everywhere; most importantly, in orbit"),
 }
 
 pub fn default_lib_output() -> CrateType {
@@ -779,12 +793,12 @@ impl RustcOptGroup {
         self.stability == OptionStability::Stable
     }
 
-    fn stable(g: getopts::OptGroup) -> RustcOptGroup {
+    pub fn stable(g: getopts::OptGroup) -> RustcOptGroup {
         RustcOptGroup { opt_group: g, stability: OptionStability::Stable }
     }
 
     #[allow(dead_code)] // currently we have no "truly unstable" options
-    fn unstable(g: getopts::OptGroup) -> RustcOptGroup {
+    pub fn unstable(g: getopts::OptGroup) -> RustcOptGroup {
         RustcOptGroup { opt_group: g, stability: OptionStability::Unstable }
     }
 
@@ -891,7 +905,7 @@ pub fn rustc_short_optgroups() -> Vec<RustcOptGroup> {
                  "[asm|llvm-bc|llvm-ir|obj|link|dep-info]"),
         opt::multi_s("", "print", "Comma separated list of compiler information to \
                                print on stdout",
-                 "[crate-name|file-names|sysroot|target-list]"),
+                 "[crate-name|file-names|sysroot|cfg|target-list]"),
         opt::flagmulti_s("g",  "",  "Equivalent to -C debuginfo=2"),
         opt::flagmulti_s("O", "", "Equivalent to -C opt-level=2"),
         opt::opt_s("o", "", "Write output to <filename>", "FILENAME"),
@@ -920,33 +934,32 @@ pub fn rustc_short_optgroups() -> Vec<RustcOptGroup> {
 pub fn rustc_optgroups() -> Vec<RustcOptGroup> {
     let mut opts = rustc_short_optgroups();
     opts.extend_from_slice(&[
-        opt::multi_s("", "extern", "Specify where an external rust library is \
-                                located",
-                 "NAME=PATH"),
+        opt::multi_s("", "extern", "Specify where an external rust library is located",
+                     "NAME=PATH"),
         opt::opt_s("", "sysroot", "Override the system root", "PATH"),
         opt::multi_ubnr("Z", "", "Set internal debugging options", "FLAG"),
         opt::opt_ubnr("", "error-format",
                       "How errors and other messages are produced",
                       "human|json"),
         opt::opt_s("", "color", "Configure coloring of output:
-            auto   = colorize, if output goes to a tty (default);
-            always = always colorize output;
-            never  = never colorize output", "auto|always|never"),
+                                 auto   = colorize, if output goes to a tty (default);
+                                 always = always colorize output;
+                                 never  = never colorize output", "auto|always|never"),
 
         opt::flagopt_ubnr("", "pretty",
-                   "Pretty-print the input instead of compiling;
-                   valid types are: `normal` (un-annotated source),
-                   `expanded` (crates expanded), or
-                   `expanded,identified` (fully parenthesized, AST nodes with IDs).",
-                 "TYPE"),
+                          "Pretty-print the input instead of compiling;
+                           valid types are: `normal` (un-annotated source),
+                           `expanded` (crates expanded), or
+                           `expanded,identified` (fully parenthesized, AST nodes with IDs).",
+                          "TYPE"),
         opt::flagopt_ubnr("", "unpretty",
-                     "Present the input source, unstable (and less-pretty) variants;
-                      valid types are any of the types for `--pretty`, as well as:
-                      `flowgraph=<nodeid>` (graphviz formatted flowgraph for node),
-                      `everybody_loops` (all function bodies replaced with `loop {}`),
-                      `hir` (the HIR), `hir,identified`, or
-                      `hir,typed` (HIR with types for each node).",
-                     "TYPE"),
+                          "Present the input source, unstable (and less-pretty) variants;
+                           valid types are any of the types for `--pretty`, as well as:
+                           `flowgraph=<nodeid>` (graphviz formatted flowgraph for node),
+                           `everybody_loops` (all function bodies replaced with `loop {}`),
+                           `hir` (the HIR), `hir,identified`, or
+                           `hir,typed` (HIR with types for each node).",
+                          "TYPE"),
 
         // new options here should **not** use the `_ubnr` functions, all new
         // unstable options should use the short variants to indicate that they
@@ -1045,13 +1058,7 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
     let treat_err_as_bug = debugging_opts.treat_err_as_bug;
     let continue_parse_after_error = debugging_opts.continue_parse_after_error;
     let mir_opt_level = debugging_opts.mir_opt_level.unwrap_or(1);
-    let incremental_compilation = debugging_opts.incr_comp;
-    let dump_dep_graph = debugging_opts.dump_dep_graph;
     let no_analysis = debugging_opts.no_analysis;
-
-    if debugging_opts.debug_llvm {
-        unsafe { llvm::LLVMSetDebug(1); }
-    }
 
     let mut output_types = HashMap::new();
     if !debugging_opts.parse_only && !no_trans {
@@ -1098,6 +1105,10 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
             early_warn(error_format, "resetting to default -C codegen-units=1");
             cg.codegen_units = 1;
         }
+    }
+
+    if cg.codegen_units < 1 {
+        early_error(error_format, "Value for codegen units must be a positive nonzero integer");
     }
 
     let cg = cg;
@@ -1206,6 +1217,8 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
 
     let crate_name = matches.opt_str("crate-name");
 
+    let incremental = debugging_opts.incremental.as_ref().map(|m| PathBuf::from(m));
+
     Options {
         crate_types: crate_types,
         gc: gc,
@@ -1225,8 +1238,7 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
         treat_err_as_bug: treat_err_as_bug,
         continue_parse_after_error: continue_parse_after_error,
         mir_opt_level: mir_opt_level,
-        build_dep_graph: incremental_compilation || dump_dep_graph,
-        dump_dep_graph: dump_dep_graph,
+        incremental: incremental,
         no_analysis: no_analysis,
         debugging_opts: debugging_opts,
         prints: prints,
@@ -1257,7 +1269,6 @@ pub fn get_unstable_features_setting() -> UnstableFeatures {
 }
 
 pub fn parse_crate_types_from_list(list_list: Vec<String>) -> Result<Vec<CrateType>, String> {
-
     let mut crate_types: Vec<CrateType> = Vec::new();
     for unparsed_crate_type in &list_list {
         for part in unparsed_crate_type.split(',') {
@@ -1279,6 +1290,72 @@ pub fn parse_crate_types_from_list(list_list: Vec<String>) -> Result<Vec<CrateTy
     }
 
     return Ok(crate_types);
+}
+
+pub mod nightly_options {
+    use getopts;
+    use syntax::feature_gate::UnstableFeatures;
+    use super::{ErrorOutputType, OptionStability, RustcOptGroup, get_unstable_features_setting};
+    use session::{early_error, early_warn};
+
+    pub fn is_unstable_enabled(matches: &getopts::Matches) -> bool {
+        is_nightly_build() && matches.opt_strs("Z").iter().any(|x| *x == "unstable-options")
+    }
+
+    fn is_nightly_build() -> bool {
+        match get_unstable_features_setting() {
+            UnstableFeatures::Allow | UnstableFeatures::Cheat => true,
+            _ => false,
+        }
+    }
+
+    pub fn check_nightly_options(matches: &getopts::Matches, flags: &[RustcOptGroup]) {
+        let has_z_unstable_option = matches.opt_strs("Z").iter().any(|x| *x == "unstable-options");
+        let really_allows_unstable_options = match get_unstable_features_setting() {
+            UnstableFeatures::Disallow => false,
+            _ => true,
+        };
+
+        for opt in flags.iter() {
+            if opt.stability == OptionStability::Stable {
+                continue
+            }
+            let opt_name = if opt.opt_group.long_name.is_empty() {
+                &opt.opt_group.short_name
+            } else {
+                &opt.opt_group.long_name
+            };
+            if !matches.opt_present(opt_name) {
+                continue
+            }
+            if opt_name != "Z" && !has_z_unstable_option {
+                early_error(ErrorOutputType::default(),
+                            &format!("the `-Z unstable-options` flag must also be passed to enable \
+                                      the flag `{}`",
+                                     opt_name));
+            }
+            if really_allows_unstable_options {
+                continue
+            }
+            match opt.stability {
+                OptionStability::Unstable => {
+                    let msg = format!("the option `{}` is only accepted on the \
+                                       nightly compiler", opt_name);
+                    early_error(ErrorOutputType::default(), &msg);
+                }
+                OptionStability::UnstableButNotReally => {
+                    let msg = format!("the option `{}` is is unstable and should \
+                                       only be used on the nightly compiler, but \
+                                       it is currently accepted for backwards \
+                                       compatibility; this will soon change, \
+                                       see issue #31847 for more details",
+                                      opt_name);
+                    early_warn(ErrorOutputType::default(), &msg);
+                }
+                OptionStability::Stable => {}
+            }
+        }
+    }
 }
 
 impl fmt::Display for CrateType {

@@ -15,8 +15,8 @@
 //! `TransitiveRelation` type and use that to decide when one free
 //! region outlives another and so forth.
 
-use middle::ty::{self, FreeRegion, Region};
-use middle::ty::wf::ImpliedBound;
+use ty::{self, TyCtxt, FreeRegion, Region};
+use ty::wf::ImpliedBound;
 use rustc_data_structures::transitive_relation::TransitiveRelation;
 
 #[derive(Clone)]
@@ -49,7 +49,7 @@ impl FreeRegionMap {
     }
 
     pub fn relate_free_regions_from_predicates<'tcx>(&mut self,
-                                                     tcx: &ty::ctxt<'tcx>,
+                                                     _tcx: &TyCtxt<'tcx>,
                                                      predicates: &[ty::Predicate<'tcx>]) {
         debug!("relate_free_regions_from_predicates(predicates={:?})", predicates);
         for predicate in predicates {
@@ -72,10 +72,9 @@ impl FreeRegionMap {
                         }
                         _ => {
                             // All named regions are instantiated with free regions.
-                            tcx.sess.bug(
-                                &format!("record_region_bounds: non free region: {:?} / {:?}",
-                                         r_a,
-                                         r_b));
+                            bug!("record_region_bounds: non free region: {:?} / {:?}",
+                                 r_a,
+                                 r_b);
                         }
                     }
                 }
@@ -121,7 +120,7 @@ impl FreeRegionMap {
     /// Determines whether one region is a subregion of another.  This is intended to run *after
     /// inference* and sadly the logic is somewhat duplicated with the code in infer.rs.
     pub fn is_subregion_of(&self,
-                           tcx: &ty::ctxt,
+                           tcx: &TyCtxt,
                            sub_region: ty::Region,
                            super_region: ty::Region)
                            -> bool {

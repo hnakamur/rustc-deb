@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Composable external iteration
+//! Composable external iteration.
 //!
 //! If you've found yourself with a collection of some kind, and needed to
 //! perform an operation on the elements of said collection, you'll quickly run
@@ -65,7 +65,7 @@
 //!
 //! [`Iterator`]: trait.Iterator.html
 //! [`next()`]: trait.Iterator.html#tymethod.next
-//! [`Option`]: ../option/enum.Option.html
+//! [`Option`]: ../../std/option/enum.Option.html
 //!
 //! # The three forms of iteration
 //!
@@ -303,10 +303,11 @@ use clone::Clone;
 use cmp;
 use cmp::{Ord, PartialOrd, PartialEq, Ordering};
 use default::Default;
+use fmt;
 use marker;
 use mem;
 use num::{Zero, One};
-use ops::{self, Add, Sub, FnMut, Mul, RangeFrom};
+use ops::{self, Add, Sub, FnMut, Mul};
 use option::Option::{self, Some, None};
 use marker::Sized;
 use usize;
@@ -433,7 +434,7 @@ pub trait Iterator {
     /// `None`. Once `None` is encountered, `count()` returns the number of
     /// times it called [`next()`].
     ///
-    /// [`next()`]: #method.next
+    /// [`next()`]: #tymethod.next
     ///
     /// # Overflow Behavior
     ///
@@ -496,7 +497,7 @@ pub trait Iterator {
     /// This method will evaluate the iterator `n` times, discarding those elements.
     /// After it does so, it will call [`next()`] and return its value.
     ///
-    /// [`next()`]: #method.next
+    /// [`next()`]: #tymethod.next
     ///
     /// Like most indexing operations, the count starts from zero, so `nth(0)`
     /// returns the first value, `nth(1)` the second, and so on.
@@ -804,7 +805,7 @@ pub trait Iterator {
     /// closure returns `None`, it will try again, and call the closure on the
     /// next element, seeing if it will return `Some`.
     ///
-    /// [`Option<T>`]: ../option/enum.Option.html
+    /// [`Option<T>`]: ../../std/option/enum.Option.html
     ///
     /// Why `filter_map()` and not just [`filter()`].[`map()`]? The key is in this
     /// part:
@@ -866,7 +867,7 @@ pub trait Iterator {
     /// different sized integer, the [`zip()`] function provides similar
     /// functionality.
     ///
-    /// [`usize`]: ../primitive.usize.html
+    /// [`usize`]: ../../std/primitive.usize.html
     /// [`zip()`]: #method.zip
     ///
     /// # Overflow Behavior
@@ -875,7 +876,7 @@ pub trait Iterator {
     /// [`usize::MAX`] elements either produces the wrong result or panics. If
     /// debug assertions are enabled, a panic is guaranteed.
     ///
-    /// [`usize::MAX`]: ../usize/constant.MAX.html
+    /// [`usize::MAX`]: ../../std/usize/constant.MAX.html
     ///
     /// # Panics
     ///
@@ -1151,7 +1152,7 @@ pub trait Iterator {
     /// iterator and the return value from the closure, an [`Option`], is
     /// yielded by the iterator.
     ///
-    /// [`Option`]: ../option/enum.Option.html
+    /// [`Option`]: ../../std/option/enum.Option.html
     ///
     /// # Examples
     ///
@@ -1385,9 +1386,9 @@ pub trait Iterator {
     /// be thought of as single `Result<Collection<T>, E>`. See the examples
     /// below for more.
     ///
-    /// [`String`]: ../string/struct.String.html
-    /// [`Result<T, E>`]: ../result/enum.Result.html
-    /// [`char`]: ../primitive.char.html
+    /// [`String`]: ../../std/string/struct.String.html
+    /// [`Result<T, E>`]: ../../std/result/enum.Result.html
+    /// [`char`]: ../../std/primitive.char.html
     ///
     /// Because `collect()` is so general, it can cause problems with type
     /// inference. As such, `collect()` is one of the few times you'll see
@@ -1412,7 +1413,7 @@ pub trait Iterator {
     /// Note that we needed the `: Vec<i32>` on the left-hand side. This is because
     /// we could collect into, for example, a [`VecDeque<T>`] instead:
     ///
-    /// [`VecDeque<T>`]: ../collections/struct.VecDeque.html
+    /// [`VecDeque<T>`]: ../../std/collections/struct.VecDeque.html
     ///
     /// ```
     /// use std::collections::VecDeque;
@@ -1532,7 +1533,7 @@ pub trait Iterator {
     /// An iterator adaptor that applies a function, producing a single, final value.
     ///
     /// `fold()` takes two arguments: an initial value, and a closure with two
-    /// arguments: an 'accumulator', and an element. It returns the value that
+    /// arguments: an 'accumulator', and an element. The closure returns the value that
     /// the accumulator should have for the next iteration.
     ///
     /// The initial value is the value the accumulator will have on the first
@@ -1922,19 +1923,6 @@ pub trait Iterator {
             .map(|(_, x)| x)
     }
 
-    #[allow(missing_docs)]
-    #[inline]
-    #[unstable(feature = "iter_cmp",
-               reason = "may want to produce an Ordering directly; see #15311",
-               issue = "27724")]
-    #[rustc_deprecated(reason = "renamed to max_by_key", since = "1.6.0")]
-    fn max_by<B: Ord, F>(self, f: F) -> Option<Self::Item> where
-        Self: Sized,
-        F: FnMut(&Self::Item) -> B,
-    {
-        self.max_by_key(f)
-    }
-
     /// Returns the element that gives the maximum value from the
     /// specified function.
     ///
@@ -1958,19 +1946,6 @@ pub trait Iterator {
                      // stability.
                      |x_p, _, y_p, _| x_p <= y_p)
             .map(|(_, x)| x)
-    }
-
-    #[inline]
-    #[allow(missing_docs)]
-    #[unstable(feature = "iter_cmp",
-               reason = "may want to produce an Ordering directly; see #15311",
-               issue = "27724")]
-    #[rustc_deprecated(reason = "renamed to min_by_key", since = "1.6.0")]
-    fn min_by<B: Ord, F>(self, f: F) -> Option<Self::Item> where
-        Self: Sized,
-        F: FnMut(&Self::Item) -> B,
-    {
-        self.min_by_key(f)
     }
 
     /// Returns the element that gives the minimum value from the
@@ -2483,10 +2458,10 @@ impl<'a, I: Iterator + ?Sized> Iterator for &'a mut I {
 ///
 /// // and we'll implement FromIterator
 /// impl FromIterator<i32> for MyCollection {
-///     fn from_iter<I: IntoIterator<Item=i32>>(iterator: I) -> Self {
+///     fn from_iter<I: IntoIterator<Item=i32>>(iter: I) -> Self {
 ///         let mut c = MyCollection::new();
 ///
-///         for i in iterator {
+///         for i in iter {
 ///             c.add(i);
 ///         }
 ///
@@ -2533,7 +2508,7 @@ pub trait FromIterator<A>: Sized {
     /// assert_eq!(v, vec![5, 5, 5, 5, 5]);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    fn from_iter<T: IntoIterator<Item=A>>(iterator: T) -> Self;
+    fn from_iter<T: IntoIterator<Item=A>>(iter: T) -> Self;
 }
 
 /// Conversion into an `Iterator`.
@@ -2708,11 +2683,11 @@ impl<I: Iterator> IntoIterator for I {
 ///     // This is a bit simpler with the concrete type signature: we can call
 ///     // extend on anything which can be turned into an Iterator which gives
 ///     // us i32s. Because we need i32s to put into MyCollection.
-///     fn extend<T: IntoIterator<Item=i32>>(&mut self, iterable: T) {
+///     fn extend<T: IntoIterator<Item=i32>>(&mut self, iter: T) {
 ///
 ///         // The implementation is very straightforward: loop through the
 ///         // iterator, and add() each element to ourselves.
-///         for elem in iterable {
+///         for elem in iter {
 ///             self.add(elem);
 ///         }
 ///     }
@@ -2752,7 +2727,7 @@ pub trait Extend<A> {
     /// assert_eq!("abcdef", &message);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    fn extend<T: IntoIterator<Item=A>>(&mut self, iterable: T);
+    fn extend<T: IntoIterator<Item=A>>(&mut self, iter: T);
 }
 
 /// An iterator able to yield elements from both ends.
@@ -2955,7 +2930,7 @@ impl<A, B> ExactSizeIterator for Zip<A, B>
 ///
 /// [`rev()`]: trait.Iterator.html#method.rev
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Rev<T> {
@@ -2987,7 +2962,7 @@ impl<I> DoubleEndedIterator for Rev<I> where I: DoubleEndedIterator {
 /// [`Iterator`]: trait.Iterator.html
 #[stable(feature = "iter_cloned", since = "1.1.0")]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Cloned<I> {
     it: I,
 }
@@ -3028,7 +3003,7 @@ impl<'a, I, T: 'a> ExactSizeIterator for Cloned<I>
 ///
 /// [`cycle()`]: trait.Iterator.html#method.cycle
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Cycle<I> {
@@ -3066,7 +3041,7 @@ impl<I> Iterator for Cycle<I> where I: Clone + Iterator {
 ///
 /// [`chain()`]: trait.Iterator.html#method.chain
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Chain<A, B> {
@@ -3088,7 +3063,7 @@ pub struct Chain<A, B> {
 //
 //  The fourth state (neither iterator is remaining) only occurs after Chain has
 //  returned None once, so we don't need to store this state.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum ChainState {
     // both front and back iterator are remaining
     Both,
@@ -3210,7 +3185,7 @@ impl<A, B> DoubleEndedIterator for Chain<A, B> where
 ///
 /// [`zip()`]: trait.Iterator.html#method.zip
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Zip<A, B> {
@@ -3333,6 +3308,15 @@ pub struct Map<I, F> {
     f: F,
 }
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<I: fmt::Debug, F> fmt::Debug for Map<I, F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Map")
+            .field("iter", &self.iter)
+            .finish()
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<B, I: Iterator, F> Iterator for Map<I, F> where F: FnMut(I::Item) -> B {
     type Item = B;
@@ -3371,6 +3355,15 @@ impl<B, I: DoubleEndedIterator, F> DoubleEndedIterator for Map<I, F> where
 pub struct Filter<I, P> {
     iter: I,
     predicate: P,
+}
+
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<I: fmt::Debug, P> fmt::Debug for Filter<I, P> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Filter")
+            .field("iter", &self.iter)
+            .finish()
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -3424,6 +3417,15 @@ pub struct FilterMap<I, F> {
     f: F,
 }
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<I: fmt::Debug, F> fmt::Debug for FilterMap<I, F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("FilterMap")
+            .field("iter", &self.iter)
+            .finish()
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<B, I: Iterator, F> Iterator for FilterMap<I, F>
     where F: FnMut(I::Item) -> Option<B>,
@@ -3469,7 +3471,7 @@ impl<B, I: DoubleEndedIterator, F> DoubleEndedIterator for FilterMap<I, F>
 ///
 /// [`enumerate()`]: trait.Iterator.html#method.enumerate
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Enumerate<I> {
@@ -3543,7 +3545,7 @@ impl<I> DoubleEndedIterator for Enumerate<I> where
 ///
 /// [`peekable()`]: trait.Iterator.html#method.peekable
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Peekable<I: Iterator> {
@@ -3679,7 +3681,7 @@ impl<I: Iterator> Peekable<I> {
     ///
     /// assert_eq!(iter.is_empty(), true);
     /// ```
-    #[unstable(feature = "peekable_is_empty", issue = "27701")]
+    #[unstable(feature = "peekable_is_empty", issue = "32111")]
     #[inline]
     pub fn is_empty(&mut self) -> bool {
         self.peek().is_none()
@@ -3700,6 +3702,16 @@ pub struct SkipWhile<I, P> {
     iter: I,
     flag: bool,
     predicate: P,
+}
+
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<I: fmt::Debug, P> fmt::Debug for SkipWhile<I, P> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SkipWhile")
+            .field("iter", &self.iter)
+            .field("flag", &self.flag)
+            .finish()
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -3742,6 +3754,16 @@ pub struct TakeWhile<I, P> {
     predicate: P,
 }
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<I: fmt::Debug, P> fmt::Debug for TakeWhile<I, P> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("TakeWhile")
+            .field("iter", &self.iter)
+            .field("flag", &self.flag)
+            .finish()
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<I: Iterator, P> Iterator for TakeWhile<I, P>
     where P: FnMut(&I::Item) -> bool
@@ -3778,7 +3800,7 @@ impl<I: Iterator, P> Iterator for TakeWhile<I, P>
 ///
 /// [`skip()`]: trait.Iterator.html#method.skip
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Skip<I> {
@@ -3851,6 +3873,17 @@ impl<I> Iterator for Skip<I> where I: Iterator {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<I> ExactSizeIterator for Skip<I> where I: ExactSizeIterator {}
 
+#[stable(feature = "double_ended_skip_iterator", since = "1.8.0")]
+impl<I> DoubleEndedIterator for Skip<I> where I: DoubleEndedIterator + ExactSizeIterator {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.len() > 0 {
+            self.iter.next_back()
+        } else {
+            None
+        }
+    }
+}
+
 /// An iterator that only iterates over the first `n` iterations of `iter`.
 ///
 /// This `struct` is created by the [`take()`] method on [`Iterator`]. See its
@@ -3858,7 +3891,7 @@ impl<I> ExactSizeIterator for Skip<I> where I: ExactSizeIterator {}
 ///
 /// [`take()`]: trait.Iterator.html#method.take
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Take<I> {
@@ -3929,6 +3962,16 @@ pub struct Scan<I, St, F> {
     state: St,
 }
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<I: fmt::Debug, St: fmt::Debug, F> fmt::Debug for Scan<I, St, F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Scan")
+            .field("iter", &self.iter)
+            .field("state", &self.state)
+            .finish()
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<B, I, St, F> Iterator for Scan<I, St, F> where
     I: Iterator,
@@ -3964,6 +4007,19 @@ pub struct FlatMap<I, U: IntoIterator, F> {
     f: F,
     frontiter: Option<U::IntoIter>,
     backiter: Option<U::IntoIter>,
+}
+
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<I: fmt::Debug, U: IntoIterator, F> fmt::Debug for FlatMap<I, U, F>
+    where U::IntoIter: fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("FlatMap")
+            .field("iter", &self.iter)
+            .field("frontiter", &self.frontiter)
+            .field("backiter", &self.backiter)
+            .finish()
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -4029,7 +4085,7 @@ impl<I: DoubleEndedIterator, U, F> DoubleEndedIterator for FlatMap<I, U, F> wher
 ///
 /// [`fuse()`]: trait.Iterator.html#method.fuse
 /// [`Iterator`]: trait.Iterator.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Fuse<I> {
@@ -4122,6 +4178,15 @@ impl<I> ExactSizeIterator for Fuse<I> where I: ExactSizeIterator {}
 pub struct Inspect<I, F> {
     iter: I,
     f: F,
+}
+
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<I: fmt::Debug, F> fmt::Debug for Inspect<I, F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Inspect")
+            .field("iter", &self.iter)
+            .finish()
+    }
 }
 
 impl<I: Iterator, F> Inspect<I, F> where F: FnMut(&I::Item) {
@@ -4286,8 +4351,8 @@ step_impl_no_between!(u64 i64);
 ///
 /// The resulting iterator handles overflow by stopping. The `A`
 /// parameter is the type being iterated over, while `R` is the range
-/// type (usually one of `std::ops::{Range, RangeFrom}`.
-#[derive(Clone)]
+/// type (usually one of `std::ops::{Range, RangeFrom, RangeInclusive}`.
+#[derive(Clone, Debug)]
 #[unstable(feature = "step_by", reason = "recent addition",
            issue = "27741")]
 pub struct StepBy<A, R> {
@@ -4295,7 +4360,7 @@ pub struct StepBy<A, R> {
     range: R,
 }
 
-impl<A: Step> RangeFrom<A> {
+impl<A: Step> ops::RangeFrom<A> {
     /// Creates an iterator starting at the same point, but stepping by
     /// the given amount at each iteration.
     ///
@@ -4355,8 +4420,44 @@ impl<A: Step> ops::Range<A> {
     }
 }
 
+impl<A: Step> ops::RangeInclusive<A> {
+    /// Creates an iterator with the same range, but stepping by the
+    /// given amount at each iteration.
+    ///
+    /// The resulting iterator handles overflow by stopping.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(step_by, inclusive_range_syntax)]
+    ///
+    /// for i in (0...10).step_by(2) {
+    ///     println!("{}", i);
+    /// }
+    /// ```
+    ///
+    /// This prints:
+    ///
+    /// ```text
+    /// 0
+    /// 2
+    /// 4
+    /// 6
+    /// 8
+    /// 10
+    /// ```
+    #[unstable(feature = "step_by", reason = "recent addition",
+               issue = "27741")]
+    pub fn step_by(self, by: A) -> StepBy<A, Self> {
+        StepBy {
+            step_by: by,
+            range: self
+        }
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A> Iterator for StepBy<A, RangeFrom<A>> where
+impl<A> Iterator for StepBy<A, ops::RangeFrom<A>> where
     A: Clone,
     for<'a> &'a A: Add<&'a A, Output = A>
 {
@@ -4372,95 +4473,6 @@ impl<A> Iterator for StepBy<A, RangeFrom<A>> where
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         (usize::MAX, None) // Too bad we can't specify an infinite lower bound
-    }
-}
-
-/// An iterator over the range [start, stop]
-#[derive(Clone)]
-#[unstable(feature = "range_inclusive",
-           reason = "likely to be replaced by range notation and adapters",
-           issue = "27777")]
-#[rustc_deprecated(since = "1.5.0", reason = "replaced with ... syntax")]
-#[allow(deprecated)]
-pub struct RangeInclusive<A> {
-    range: ops::Range<A>,
-    done: bool,
-}
-
-/// Returns an iterator over the range [start, stop].
-#[inline]
-#[unstable(feature = "range_inclusive",
-           reason = "likely to be replaced by range notation and adapters",
-           issue = "27777")]
-#[rustc_deprecated(since = "1.5.0", reason = "replaced with ... syntax")]
-#[allow(deprecated)]
-pub fn range_inclusive<A>(start: A, stop: A) -> RangeInclusive<A>
-    where A: Step + One + Clone
-{
-    RangeInclusive {
-        range: start..stop,
-        done: false,
-    }
-}
-
-#[unstable(feature = "range_inclusive",
-           reason = "likely to be replaced by range notation and adapters",
-           issue = "27777")]
-#[rustc_deprecated(since = "1.5.0", reason = "replaced with ... syntax")]
-#[allow(deprecated)]
-impl<A> Iterator for RangeInclusive<A> where
-    A: PartialEq + Step + One + Clone,
-    for<'a> &'a A: Add<&'a A, Output = A>
-{
-    type Item = A;
-
-    #[inline]
-    fn next(&mut self) -> Option<A> {
-        self.range.next().or_else(|| {
-            if !self.done && self.range.start == self.range.end {
-                self.done = true;
-                Some(self.range.end.clone())
-            } else {
-                None
-            }
-        })
-    }
-
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let (lo, hi) = self.range.size_hint();
-        if self.done {
-            (lo, hi)
-        } else {
-            let lo = lo.saturating_add(1);
-            let hi = hi.and_then(|x| x.checked_add(1));
-            (lo, hi)
-        }
-    }
-}
-
-#[unstable(feature = "range_inclusive",
-           reason = "likely to be replaced by range notation and adapters",
-           issue = "27777")]
-#[rustc_deprecated(since = "1.5.0", reason = "replaced with ... syntax")]
-#[allow(deprecated)]
-impl<A> DoubleEndedIterator for RangeInclusive<A> where
-    A: PartialEq + Step + One + Clone,
-    for<'a> &'a A: Add<&'a A, Output = A>,
-    for<'a> &'a A: Sub<Output=A>
-{
-    #[inline]
-    fn next_back(&mut self) -> Option<A> {
-        if self.range.end > self.range.start {
-            let result = self.range.end.clone();
-            self.range.end = &self.range.end - &A::one();
-            Some(result)
-        } else if !self.done && self.range.start == self.range.end {
-            self.done = true;
-            Some(self.range.end.clone())
-        } else {
-            None
-        }
     }
 }
 
@@ -4501,10 +4513,83 @@ impl<A: Step + Zero + Clone> Iterator for StepBy<A, ops::Range<A>> {
     }
 }
 
+#[unstable(feature = "inclusive_range",
+           reason = "recently added, follows RFC",
+           issue = "28237")]
+impl<A: Step + Zero + Clone> Iterator for StepBy<A, ops::RangeInclusive<A>> {
+    type Item = A;
+
+    #[inline]
+    fn next(&mut self) -> Option<A> {
+        use ops::RangeInclusive::*;
+
+        // this function has a sort of odd structure due to borrowck issues
+        // we may need to replace self.range, so borrows of start and end need to end early
+
+        let (finishing, n) = match self.range {
+            Empty { .. } => return None, // empty iterators yield no values
+
+            NonEmpty { ref mut start, ref mut end } => {
+                let zero = A::zero();
+                let rev = self.step_by < zero;
+
+                // march start towards (maybe past!) end and yield the old value
+                if (rev && start >= end) ||
+                   (!rev && start <= end)
+                {
+                    match start.step(&self.step_by) {
+                        Some(mut n) => {
+                            mem::swap(start, &mut n);
+                            (None, Some(n)) // yield old value, remain non-empty
+                        },
+                        None => {
+                            let mut n = end.clone();
+                            mem::swap(start, &mut n);
+                            (None, Some(n)) // yield old value, remain non-empty
+                        }
+                    }
+                } else {
+                    // found range in inconsistent state (start at or past end), so become empty
+                    (Some(mem::replace(end, zero)), None)
+                }
+            }
+        };
+
+        // turn into an empty iterator if we've reached the end
+        if let Some(end) = finishing {
+            self.range = Empty { at: end };
+        }
+
+        n
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        use ops::RangeInclusive::*;
+
+        match self.range {
+            Empty { .. } => (0, Some(0)),
+
+            NonEmpty { ref start, ref end } =>
+                match Step::steps_between(start,
+                                          end,
+                                          &self.step_by) {
+                    Some(hint) => (hint.saturating_add(1), hint.checked_add(1)),
+                    None       => (0, None)
+                }
+        }
+    }
+}
+
 macro_rules! range_exact_iter_impl {
     ($($t:ty)*) => ($(
         #[stable(feature = "rust1", since = "1.0.0")]
         impl ExactSizeIterator for ops::Range<$t> { }
+
+        #[unstable(feature = "inclusive_range",
+                   reason = "recently added, follows RFC",
+                   issue = "28237")]
+        impl ExactSizeIterator for ops::RangeInclusive<$t> { }
     )*)
 }
 
@@ -4568,12 +4653,113 @@ impl<A: Step + One> Iterator for ops::RangeFrom<A> where
     }
 }
 
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<A: Step + One> Iterator for ops::RangeInclusive<A> where
+    for<'a> &'a A: Add<&'a A, Output = A>
+{
+    type Item = A;
+
+    #[inline]
+    fn next(&mut self) -> Option<A> {
+        use ops::RangeInclusive::*;
+
+        // this function has a sort of odd structure due to borrowck issues
+        // we may need to replace self, so borrows of self.start and self.end need to end early
+
+        let (finishing, n) = match *self {
+            Empty { .. } => (None, None), // empty iterators yield no values
+
+            NonEmpty { ref mut start, ref mut end } => {
+                if start == end {
+                    (Some(mem::replace(end, A::one())), Some(mem::replace(start, A::one())))
+                } else if start < end {
+                    let one = A::one();
+                    let mut n = &*start + &one;
+                    mem::swap(&mut n, start);
+
+                    // if the iterator is done iterating, it will change from NonEmpty to Empty
+                    // to avoid unnecessary drops or clones, we'll reuse either start or end
+                    // (they are equal now, so it doesn't matter which)
+                    // to pull out end, we need to swap something back in -- use the previously
+                    // created A::one() as a dummy value
+
+                    (if n == *end { Some(mem::replace(end, one)) } else { None },
+                    // ^ are we done yet?
+                    Some(n)) // < the value to output
+                } else {
+                    (Some(mem::replace(start, A::one())), None)
+                }
+            }
+        };
+
+        // turn into an empty iterator if this is the last value
+        if let Some(end) = finishing {
+            *self = Empty { at: end };
+        }
+
+        n
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        use ops::RangeInclusive::*;
+
+        match *self {
+            Empty { .. } => (0, Some(0)),
+
+            NonEmpty { ref start, ref end } =>
+                match Step::steps_between(start, end, &A::one()) {
+                    Some(hint) => (hint.saturating_add(1), hint.checked_add(1)),
+                    None => (0, None),
+                }
+        }
+    }
+}
+
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<A: Step + One> DoubleEndedIterator for ops::RangeInclusive<A> where
+    for<'a> &'a A: Add<&'a A, Output = A>,
+    for<'a> &'a A: Sub<&'a A, Output = A>
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<A> {
+        use ops::RangeInclusive::*;
+
+        // see Iterator::next for comments
+
+        let (finishing, n) = match *self {
+            Empty { .. } => return None,
+
+            NonEmpty { ref mut start, ref mut end } => {
+                if start == end {
+                    (Some(mem::replace(start, A::one())), Some(mem::replace(end, A::one())))
+                } else if start < end {
+                    let one = A::one();
+                    let mut n = &*end - &one;
+                    mem::swap(&mut n, end);
+
+                    (if n == *start { Some(mem::replace(start, one)) } else { None },
+                     Some(n))
+                } else {
+                    (Some(mem::replace(end, A::one())), None)
+                }
+            }
+        };
+
+        if let Some(start) = finishing {
+            *self = Empty { at: start };
+        }
+
+        n
+    }
+}
+
 /// An iterator that repeats an element endlessly.
 ///
 /// This `struct` is created by the [`repeat()`] function. See its documentation for more.
 ///
 /// [`repeat()`]: fn.repeat.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Repeat<A> {
     element: A
@@ -4655,6 +4841,13 @@ pub fn repeat<T: Clone>(elt: T) -> Repeat<T> {
 #[stable(feature = "iter_empty", since = "1.2.0")]
 pub struct Empty<T>(marker::PhantomData<T>);
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<T> fmt::Debug for Empty<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("Empty")
+    }
+}
+
 #[stable(feature = "iter_empty", since = "1.2.0")]
 impl<T> Iterator for Empty<T> {
     type Item = T;
@@ -4724,7 +4917,7 @@ pub fn empty<T>() -> Empty<T> {
 /// This `struct` is created by the [`once()`] function. See its documentation for more.
 ///
 /// [`once()`]: fn.once.html
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[stable(feature = "iter_once", since = "1.2.0")]
 pub struct Once<T> {
     inner: ::option::IntoIter<T>

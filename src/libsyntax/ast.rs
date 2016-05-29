@@ -10,7 +10,6 @@
 
 // The Rust abstract syntax tree.
 
-pub use self::StructFieldKind::*;
 pub use self::TyParamBound::*;
 pub use self::UnsafeSource::*;
 pub use self::ViewPath_::*;
@@ -19,6 +18,7 @@ pub use self::PathParameters::*;
 use attr::ThinAttributes;
 use codemap::{Span, Spanned, DUMMY_SP, ExpnId};
 use abi::Abi;
+use errors;
 use ext::base;
 use ext::tt::macro_parser;
 use parse::token::InternedString;
@@ -83,7 +83,7 @@ impl Encodable for Name {
 
 impl Decodable for Name {
     fn decode<D: Decoder>(d: &mut D) -> Result<Name, D::Error> {
-        Ok(token::intern(&try!(d.read_str())[..]))
+        Ok(token::intern(&d.read_str()?[..]))
     }
 }
 
@@ -152,7 +152,7 @@ impl Encodable for Ident {
 
 impl Decodable for Ident {
     fn decode<D: Decoder>(d: &mut D) -> Result<Ident, D::Error> {
-        Ok(Ident::with_empty_ctxt(try!(Name::decode(d))))
+        Ok(Ident::with_empty_ctxt(Name::decode(d)?))
     }
 }
 
@@ -201,6 +201,23 @@ impl fmt::Debug for Path {
 impl fmt::Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", pprust::path_to_string(self))
+    }
+}
+
+impl Path {
+    // convert a span and an identifier to the corresponding
+    // 1-segment path
+    pub fn from_ident(s: Span, identifier: Ident) -> Path {
+        Path {
+            span: s,
+            global: false,
+            segments: vec!(
+                PathSegment {
+                    identifier: identifier,
+                    parameters: PathParameters::none()
+                }
+            ),
+        }
     }
 }
 
@@ -344,6 +361,10 @@ pub const DUMMY_NODE_ID: NodeId = !0;
 pub trait NodeIdAssigner {
     fn next_node_id(&self) -> NodeId;
     fn peek_node_id(&self) -> NodeId;
+
+    fn diagnostic(&self) -> &errors::Handler {
+        panic!("this ID assigner cannot emit diagnostics")
+    }
 }
 
 /// The AST represents all type param bounds as types.
@@ -458,7 +479,7 @@ pub struct WhereEqPredicate {
 
 /// The set of MetaItems that define the compilation environment of the crate,
 /// used to drive conditional compilation
-pub type CrateConfig = Vec<P<MetaItem>> ;
+pub type CrateConfig = Vec<P<MetaItem>>;
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct Crate {
@@ -886,6 +907,15 @@ impl fmt::Debug for Expr {
     }
 }
 
+/// Limit types of a range (inclusive or exclusive)
+#[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub enum RangeLimits {
+    /// Inclusive at the beginning, exclusive at the end
+    HalfOpen,
+    /// Inclusive at the beginning and end
+    Closed,
+}
+
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum ExprKind {
     /// A `box x` expression.
@@ -918,7 +948,7 @@ pub enum ExprKind {
     Binary(BinOp, P<Expr>, P<Expr>),
     /// A unary operation (For example: `!x`, `*x`)
     Unary(UnOp, P<Expr>),
-    /// A literal (For example: `1u8`, `"foo"`)
+    /// A literal (For example: `1`, `"foo"`)
     Lit(P<Lit>),
     /// A cast (`foo as f64`)
     Cast(P<Expr>, P<Ty>),
@@ -974,8 +1004,8 @@ pub enum ExprKind {
     TupField(P<Expr>, Spanned<usize>),
     /// An indexing operation (`foo[2]`)
     Index(P<Expr>, P<Expr>),
-    /// A range (`1..2`, `1..`, or `..2`)
-    Range(Option<P<Expr>>, Option<P<Expr>>),
+    /// A range (`1..2`, `1..`, `..2`, `1...2`, `1...`, `...2`)
+    Range(Option<P<Expr>>, Option<P<Expr>>, RangeLimits),
 
     /// Variable reference, possibly containing `::` and/or type
     /// parameters, e.g. foo::bar::<baz>.
@@ -1007,12 +1037,15 @@ pub enum ExprKind {
 
     /// An array literal constructed from one repeated element.
     ///
-    /// For example, `[1u8; 5]`. The first expression is the element
+    /// For example, `[1; 5]`. The first expression is the element
     /// to be repeated; the second is the number of times to repeat it.
     Repeat(P<Expr>, P<Expr>),
 
     /// No-op: used solely so we can pretty-print faithfully
     Paren(P<Expr>),
+
+    /// `expr?`
+    Try(P<Expr>),
 }
 
 /// The explicit Self type in a "qualified path". The actual
@@ -1276,7 +1309,7 @@ pub enum LitKind {
     Byte(u8),
     /// A character literal (`'a'`)
     Char(char),
-    /// An integer literal (`1u8`)
+    /// An integer literal (`1`)
     Int(u64, LitIntType),
     /// A float literal (`1f64` or `1E10f64`)
     Float(InternedString, FloatTy),
@@ -1316,10 +1349,10 @@ pub struct MethodSig {
     pub explicit_self: ExplicitSelf,
 }
 
-/// Represents a method declaration in a trait declaration, possibly including
-/// a default implementation. A trait method is either required (meaning it
-/// doesn't have an implementation, just a signature) or provided (meaning it
-/// has a default implementation).
+/// Represents an item declaration within a trait declaration,
+/// possibly including a default implementation. A trait item is
+/// either required (meaning it doesn't have an implementation, just a
+/// signature) or provided (meaning it has a default implementation).
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct TraitItem {
     pub id: NodeId,
@@ -1341,6 +1374,7 @@ pub struct ImplItem {
     pub id: NodeId,
     pub ident: Ident,
     pub vis: Visibility,
+    pub defaultness: Defaultness,
     pub attrs: Vec<Attribute>,
     pub node: ImplItemKind,
     pub span: Span,
@@ -1642,6 +1676,12 @@ pub enum Constness {
     NotConst,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub enum Defaultness {
+    Default,
+    Final,
+}
+
 impl fmt::Display for Unsafety {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(match *self {
@@ -1844,60 +1884,22 @@ pub struct PolyTraitRef {
     pub span: Span,
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Visibility {
     Public,
+    Crate,
+    Restricted { path: P<Path>, id: NodeId },
     Inherited,
 }
 
-impl Visibility {
-    pub fn inherit_from(&self, parent_visibility: Visibility) -> Visibility {
-        match *self {
-            Visibility::Inherited => parent_visibility,
-            Visibility::Public => *self
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
-pub struct StructField_ {
-    pub kind: StructFieldKind,
+pub struct StructField {
+    pub span: Span,
+    pub ident: Option<Ident>,
+    pub vis: Visibility,
     pub id: NodeId,
     pub ty: P<Ty>,
     pub attrs: Vec<Attribute>,
-}
-
-impl StructField_ {
-    pub fn ident(&self) -> Option<Ident> {
-        match self.kind {
-            NamedField(ref ident, _) => Some(ident.clone()),
-            UnnamedField(_) => None
-        }
-    }
-}
-
-pub type StructField = Spanned<StructField_>;
-
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
-pub enum StructFieldKind {
-    NamedField(Ident, Visibility),
-    /// Element of a tuple-like struct
-    UnnamedField(Visibility),
-}
-
-impl StructFieldKind {
-    pub fn is_unnamed(&self) -> bool {
-        match *self {
-            UnnamedField(..) => true,
-            NamedField(..) => false,
-        }
-    }
-
-    pub fn visibility(&self) -> Visibility {
-        match *self {
-            NamedField(_, vis) | UnnamedField(vis) => vis
-        }
-    }
 }
 
 /// Fields and Ids of enum variants and structs

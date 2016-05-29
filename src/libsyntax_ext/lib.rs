@@ -21,9 +21,9 @@
 
 #![feature(rustc_private)]
 #![feature(staged_api)]
-#![feature(str_char)]
 
 extern crate fmt_macros;
+#[macro_use] extern crate log;
 #[macro_use]
 extern crate syntax;
 

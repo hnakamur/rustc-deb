@@ -16,7 +16,7 @@ use session::config::{self, OutputType};
 use llvm;
 use llvm::{ModuleRef, TargetMachineRef, PassManagerRef, DiagnosticInfoRef, ContextRef};
 use llvm::SMDiagnosticRef;
-use trans::{CrateTranslation, ModuleTranslation};
+use {CrateTranslation, ModuleTranslation};
 use util::common::time;
 use util::common::path2cstr;
 use syntax::codemap;
@@ -113,7 +113,7 @@ impl Emitter for SharedEmitter {
     }
 
     fn custom_emit(&mut self, _sp: &errors::RenderSpan, _msg: &str, _lvl: Level) {
-        panic!("SharedEmitter doesn't support custom_emit");
+        bug!("SharedEmitter doesn't support custom_emit");
     }
 }
 
@@ -159,7 +159,7 @@ pub fn create_target_machine(sess: &Session) -> TargetMachineRef {
                                  .cg
                                  .relocation_model));
             sess.abort_if_errors();
-            unreachable!();
+            bug!();
         }
     };
 
@@ -190,7 +190,7 @@ pub fn create_target_machine(sess: &Session) -> TargetMachineRef {
                                  .cg
                                  .code_model));
             sess.abort_if_errors();
-            unreachable!();
+            bug!();
         }
     };
 

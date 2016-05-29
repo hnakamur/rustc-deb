@@ -14,28 +14,80 @@
 use CrateCtxt;
 
 use astconv::AstConv;
-use check::{self, FnCtxt};
-use front::map as hir_map;
-use middle::ty::{self, Ty, ToPolyTraitRef, ToPredicate, TypeFoldable};
+use check::{self, FnCtxt, UnresolvedTypeAction, autoderef};
+use rustc::hir::map as hir_map;
+use rustc::ty::{self, Ty, ToPolyTraitRef, ToPredicate, TypeFoldable};
 use middle::cstore::{self, CrateStore};
-use middle::def::Def;
-use middle::def_id::DefId;
+use hir::def::Def;
+use hir::def_id::DefId;
 use middle::lang_items::FnOnceTraitLangItem;
-use middle::subst::Substs;
-use middle::traits::{Obligation, SelectionContext};
+use rustc::ty::subst::Substs;
+use rustc::ty::LvaluePreference;
+use rustc::traits::{Obligation, SelectionContext};
 use util::nodemap::{FnvHashSet};
+
 
 use syntax::ast;
 use syntax::codemap::Span;
 use syntax::errors::DiagnosticBuilder;
-use rustc_front::print::pprust;
-use rustc_front::hir;
+use rustc::hir::print as pprust;
+use rustc::hir;
+use rustc::hir::Expr_;
 
 use std::cell;
 use std::cmp::Ordering;
 
 use super::{MethodError, NoMatchData, CandidateSource, impl_item, trait_item};
 use super::probe::Mode;
+
+fn is_fn_ty<'a, 'tcx>(ty: &Ty<'tcx>, fcx: &FnCtxt<'a, 'tcx>, span: Span) -> bool {
+    let cx = fcx.tcx();
+    match ty.sty {
+        // Not all of these (e.g. unsafe fns) implement FnOnce
+        // so we look for these beforehand
+        ty::TyClosure(..) | ty::TyFnDef(..) | ty::TyFnPtr(_) => true,
+        // If it's not a simple function, look for things which implement FnOnce
+        _ => {
+            if let Ok(fn_once_trait_did) =
+                    cx.lang_items.require(FnOnceTraitLangItem) {
+                let infcx = fcx.infcx();
+                let (_, _, opt_is_fn) = autoderef(fcx,
+                                                  span,
+                                                  ty,
+                                                  || None,
+                                                  UnresolvedTypeAction::Ignore,
+                                                  LvaluePreference::NoPreference,
+                                                  |ty, _| {
+                    infcx.probe(|_| {
+                        let fn_once_substs =
+                            Substs::new_trait(vec![infcx.next_ty_var()],
+                                              Vec::new(),
+                                              ty);
+                        let trait_ref =
+                          ty::TraitRef::new(fn_once_trait_did,
+                                            cx.mk_substs(fn_once_substs));
+                        let poly_trait_ref = trait_ref.to_poly_trait_ref();
+                        let obligation = Obligation::misc(span,
+                                                          fcx.body_id,
+                                                          poly_trait_ref
+                                                             .to_predicate());
+                        let mut selcx = SelectionContext::new(infcx);
+
+                        if selcx.evaluate_obligation(&obligation) {
+                            Some(())
+                        } else {
+                            None
+                        }
+                    })
+                });
+
+                opt_is_fn.is_some()
+            } else {
+                false
+            }
+        }
+    }
+}
 
 pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                               span: Span,
@@ -53,7 +105,7 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
         MethodError::NoMatch(NoMatchData { static_candidates: static_sources,
                                            unsatisfied_predicates,
                                            out_of_scope_traits,
-                                           mode }) => {
+                                           mode, .. }) => {
             let cx = fcx.tcx();
 
             let mut err = fcx.type_error_struct(
@@ -79,60 +131,41 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                                         // snippet
                     };
 
-                    macro_rules! span_stored_function {
-                        () => {
-                            err.span_note(span,
-                                          &format!("use `({0}.{1})(...)` if you meant to call \
-                                                    the function stored in the `{1}` field",
-                                                   expr_string, item_name));
-                        }
-                    }
-
-                    macro_rules! span_did_you_mean {
-                        () => {
-                            err.span_note(span, &format!("did you mean to write `{0}.{1}`?",
-                                                         expr_string, item_name));
-                        }
-                    }
-
-                    // Determine if the field can be used as a function in some way
                     let field_ty = field.ty(cx, substs);
 
-                    match field_ty.sty {
-                        // Not all of these (e.g. unsafe fns) implement FnOnce
-                        // so we look for these beforehand
-                        ty::TyClosure(..) | ty::TyBareFn(..) => {
-                            span_stored_function!();
-                        }
-                        // If it's not a simple function, look for things which implement FnOnce
-                        _ => {
-                            if let Ok(fn_once_trait_did) =
-                                    cx.lang_items.require(FnOnceTraitLangItem) {
-                                let infcx = fcx.infcx();
-                                infcx.probe(|_| {
-                                    let fn_once_substs =
-                                        Substs::new_trait(vec![infcx.next_ty_var()],
-                                                          Vec::new(),
-                                                          field_ty);
-                                    let trait_ref =
-                                      ty::TraitRef::new(fn_once_trait_did,
-                                                        cx.mk_substs(fn_once_substs));
-                                    let poly_trait_ref = trait_ref.to_poly_trait_ref();
-                                    let obligation = Obligation::misc(span,
-                                                                      fcx.body_id,
-                                                                      poly_trait_ref
-                                                                         .to_predicate());
-                                    let mut selcx = SelectionContext::new(infcx);
+                    if is_fn_ty(&field_ty, &fcx, span) {
+                        err.span_note(span,
+                                      &format!("use `({0}.{1})(...)` if you meant to call \
+                                               the function stored in the `{1}` field",
+                                               expr_string, item_name));
+                    } else {
+                        err.span_note(span, &format!("did you mean to write `{0}.{1}`?",
+                                                     expr_string, item_name));
+                    }
+                }
+            }
 
-                                    if selcx.evaluate_obligation(&obligation) {
-                                        span_stored_function!();
-                                    } else {
-                                        span_did_you_mean!();
-                                    }
-                                });
-                            } else {
-                                span_did_you_mean!();
-                            }
+            if is_fn_ty(&rcvr_ty, &fcx, span) {
+                macro_rules! report_function {
+                    ($span:expr, $name:expr) => {
+                        err.fileline_note(
+                            $span,
+                            &format!("{} is a function, perhaps you wish to call it",
+                                     $name));
+                    }
+                }
+
+                if let Some(expr) = rcvr_expr {
+                    if let Ok (expr_string) = cx.sess.codemap().span_to_snippet(expr.span) {
+                        report_function!(expr.span, expr_string);
+                        err.span_suggestion(expr.span,
+                                            "try calling the base function:",
+                                            format!("{}()",
+                                                    expr_string));
+                    }
+                    else if let Expr_::ExprPath(_, path) = expr.node.clone() {
+                        if let Some(segment) = path.segments.last() {
+                            report_function!(expr.span, segment.identifier.name);
                         }
                     }
                 }
@@ -141,7 +174,8 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
             if !static_sources.is_empty() {
                 err.fileline_note(
                     span,
-                    "found defined static methods, maybe a `self` is missing?");
+                    "found the following associated functions; to be used as \
+                     methods, functions must have a `self` parameter");
 
                 report_candidates(fcx, &mut err, span, item_name, static_sources);
             }
@@ -187,6 +221,11 @@ pub fn report_error<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
                 msg
             };
             fcx.sess().span_err(span, &msg);
+        }
+
+        MethodError::PrivateMatch(def) => {
+            let msg = format!("{} `{}` is private", def.kind_name(), item_name);
+            fcx.tcx().sess.span_err(span, &msg);
         }
     }
 
@@ -351,7 +390,7 @@ fn type_derefs_to_local<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
         return is_local(fcx.resolve_type_vars_if_possible(rcvr_ty));
     }
 
-    check::autoderef(fcx, span, rcvr_ty, None,
+    check::autoderef(fcx, span, rcvr_ty, || None,
                      check::UnresolvedTypeAction::Ignore, ty::NoPreference,
                      |ty, _| {
         if is_local(ty) {
@@ -397,7 +436,7 @@ impl Ord for TraitInfo {
 /// Retrieve all traits in this crate and any dependent crates.
 pub fn all_traits<'a>(ccx: &'a CrateCtxt) -> AllTraits<'a> {
     if ccx.all_traits.borrow().is_none() {
-        use rustc_front::intravisit;
+        use rustc::hir::intravisit;
 
         let mut traits = vec![];
 

@@ -59,15 +59,13 @@ use core::fmt;
 use core::hash;
 use core::iter::FromIterator;
 use core::mem;
-use core::ops::{self, Add};
+use core::ops::{self, Add, Index, IndexMut};
 use core::ptr;
-use core::slice;
 use core::str::pattern::Pattern;
 use rustc_unicode::char::{decode_utf16, REPLACEMENT_CHARACTER};
 use rustc_unicode::str as unicode_str;
 
-#[allow(deprecated)]
-use borrow::{Cow, IntoCow};
+use borrow::{Cow, ToOwned};
 use range::RangeArgument;
 use str::{self, FromStr, Utf8Error, Chars};
 use vec::Vec;
@@ -79,7 +77,7 @@ use boxed::Box;
 /// contents of the string. It has a close relationship with its borrowed
 /// counterpart, the primitive [`str`].
 ///
-/// [`str`]: ../primitive.str.html
+/// [`str`]: ../../std/primitive.str.html
 ///
 /// # Examples
 ///
@@ -99,7 +97,7 @@ use boxed::Box;
 /// hello.push_str("orld!");
 /// ```
 ///
-/// [`char`]: ../primitive.char.html
+/// [`char`]: ../../std/primitive.char.html
 /// [`push()`]: #method.push
 /// [`push_str()`]: #method.push_str
 ///
@@ -131,7 +129,7 @@ use boxed::Box;
 /// println!("The first letter of s is {}", s[0]); // ERROR!!!
 /// ```
 ///
-/// [`OsString`]: ../ffi/struct.OsString.html
+/// [`OsString`]: ../../std/ffi/struct.OsString.html
 ///
 /// Indexing is intended to be a constant-time operation, but UTF-8 encoding
 /// does not allow us to do this. Furtheremore, it's not clear what sort of
@@ -156,8 +154,8 @@ use boxed::Box;
 /// takes_str(&s);
 /// ```
 ///
-/// [`&str`]: ../primitive.str.html
-/// [`Deref`]: ../ops/trait.Deref.html
+/// [`&str`]: ../../std/primitive.str.html
+/// [`Deref`]: ../../std/ops/trait.Deref.html
 ///
 /// This will create a [`&str`] from the `String` and pass it in. This
 /// conversion is very inexpensive, and so generally, functions will accept
@@ -280,10 +278,10 @@ pub struct String {
 /// an analogue to `FromUtf8Error`, and you can get one from a `FromUtf8Error`
 /// through the [`utf8_error()`] method.
 ///
-/// [`Utf8Error`]: ../str/struct.Utf8Error.html
-/// [`std::str`]: ../str/index.html
-/// [`u8`]: ../primitive.u8.html
-/// [`&str`]: ../primitive.str.html
+/// [`Utf8Error`]: ../../std/str/struct.Utf8Error.html
+/// [`std::str`]: ../../std/str/index.html
+/// [`u8`]: ../../std/primitive.u8.html
+/// [`&str`]: ../../std/primitive.str.html
 /// [`utf8_error()`]: #method.utf8_error
 ///
 /// # Examples
@@ -414,9 +412,9 @@ impl String {
     /// requires that it is valid UTF-8. `from_utf8()` checks to ensure that
     /// the bytes are valid UTF-8, and then does the conversion.
     ///
-    /// [`&str`]: ../primitive.str.html
-    /// [`u8`]: ../primitive.u8.html
-    /// [`Vec<u8>`]: ../vec/struct.Vec.html
+    /// [`&str`]: ../../std/primitive.str.html
+    /// [`u8`]: ../../std/primitive.u8.html
+    /// [`Vec<u8>`]: ../../std/vec/struct.Vec.html
     ///
     /// If you are sure that the byte slice is valid UTF-8, and you don't want
     /// to incur the overhead of the validity check, there is an unsafe version
@@ -431,7 +429,7 @@ impl String {
     /// If you need a `&str` instead of a `String`, consider
     /// [`str::from_utf8()`].
     ///
-    /// [`str::from_utf8()`]: ../str/fn.from_utf8.html
+    /// [`str::from_utf8()`]: ../../std/str/fn.from_utf8.html
     ///
     /// # Errors
     ///
@@ -488,8 +486,8 @@ impl String {
     /// `from_utf8_lossy()` will replace any invalid UTF-8 sequences with
     /// `U+FFFD REPLACEMENT CHARACTER`, which looks like this: �
     ///
-    /// [`u8`]: ../primitive.u8.html
-    /// [byteslice]: ../primitive.slice.html
+    /// [`u8`]: ../../std/primitive.u8.html
+    /// [byteslice]: ../../std/primitive.slice.html
     ///
     /// If you are sure that the byte slice is valid UTF-8, and you don't want
     /// to incur the overhead of the conversion, there is an unsafe version
@@ -504,7 +502,7 @@ impl String {
     /// it's already valid UTF-8, we don't need a new allocation. This return
     /// type allows us to handle both cases.
     ///
-    /// [`Cow<'a, str>`]: ../borrow/enum.Cow.html
+    /// [`Cow<'a, str>`]: ../../std/borrow/enum.Cow.html
     ///
     /// # Examples
     ///
@@ -971,22 +969,7 @@ impl String {
     pub fn push(&mut self, ch: char) {
         match ch.len_utf8() {
             1 => self.vec.push(ch as u8),
-            ch_len => {
-                let cur_len = self.len();
-                // This may use up to 4 bytes.
-                self.vec.reserve(ch_len);
-
-                unsafe {
-                    // Attempt to not use an intermediate buffer by just pushing bytes
-                    // directly onto this string.
-                    let slice = slice::from_raw_parts_mut(self.vec
-                                                              .as_mut_ptr()
-                                                              .offset(cur_len as isize),
-                                                          ch_len);
-                    let used = ch.encode_utf8(slice).unwrap_or(0);
-                    self.vec.set_len(cur_len + used);
-                }
-            }
+            _ => self.vec.extend_from_slice(ch.encode_utf8().as_slice()),
         }
     }
 
@@ -1014,7 +997,7 @@ impl String {
     /// Panics if `new_len` > current length, or if `new_len` does not lie on a
     /// [`char`] boundary.
     ///
-    /// [`char`]: ../primitive.char.html
+    /// [`char`]: ../../std/primitive.char.html
     ///
     /// # Examples
     ///
@@ -1054,14 +1037,13 @@ impl String {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn pop(&mut self) -> Option<char> {
-        let len = self.len();
-        if len == 0 {
-            return None;
-        }
-
-        let ch = self.char_at_reverse(len);
+        let ch = match self.chars().rev().next() {
+            Some(ch) => ch,
+            None => return None,
+        };
+        let newlen = self.len() - ch.len_utf8();
         unsafe {
-            self.vec.set_len(len - ch.len_utf8());
+            self.vec.set_len(newlen);
         }
         Some(ch)
     }
@@ -1076,7 +1058,7 @@ impl String {
     /// Panics if `idx` is larger than or equal to the `String`'s length,
     /// or if it does not lie on a [`char`] boundary.
     ///
-    /// [`char`]: ../primitive.char.html
+    /// [`char`]: ../../std/primitive.char.html
     ///
     /// # Examples
     ///
@@ -1092,11 +1074,13 @@ impl String {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn remove(&mut self, idx: usize) -> char {
-        let len = self.len();
-        assert!(idx < len);
+        let ch = match self[idx..].chars().next() {
+            Some(ch) => ch,
+            None => panic!("cannot remove a char from the end of a string"),
+        };
 
-        let ch = self.char_at(idx);
         let next = idx + ch.len_utf8();
+        let len = self.len();
         unsafe {
             ptr::copy(self.vec.as_ptr().offset(next as isize),
                       self.vec.as_mut_ptr().offset(idx as isize),
@@ -1116,7 +1100,7 @@ impl String {
     /// Panics if `idx` is larger than the `String`'s length, or if it does not
     /// lie on a [`char`] boundary.
     ///
-    /// [`char`]: ../primitive.char.html
+    /// [`char`]: ../../std/primitive.char.html
     ///
     /// # Examples
     ///
@@ -1137,9 +1121,10 @@ impl String {
         let len = self.len();
         assert!(idx <= len);
         assert!(self.is_char_boundary(idx));
-        self.vec.reserve(4);
-        let mut bits = [0; 4];
-        let amt = ch.encode_utf8(&mut bits).unwrap();
+        let bits = ch.encode_utf8();
+        let bits = bits.as_slice();
+        let amt = bits.len();
+        self.vec.reserve(amt);
 
         unsafe {
             ptr::copy(self.vec.as_ptr().offset(idx as isize),
@@ -1255,7 +1240,7 @@ impl String {
     /// Panics if the starting point or end point do not lie on a [`char`]
     /// boundary, or if they're out of bounds.
     ///
-    /// [`char`]: ../primitive.char.html
+    /// [`char`]: ../../std/primitive.char.html
     ///
     /// # Examples
     ///
@@ -1353,10 +1338,10 @@ impl FromUtf8Error {
     /// an analogue to `FromUtf8Error`. See its documentation for more details
     /// on using it.
     ///
-    /// [`Utf8Error`]: ../str/struct.Utf8Error.html
-    /// [`std::str`]: ../str/index.html
-    /// [`u8`]: ../primitive.u8.html
-    /// [`&str`]: ../primitive.str.html
+    /// [`Utf8Error`]: ../../std/str/struct.Utf8Error.html
+    /// [`std::str`]: ../../std/str/index.html
+    /// [`u8`]: ../../std/primitive.u8.html
+    /// [`&str`]: ../../std/primitive.str.html
     ///
     /// # Examples
     ///
@@ -1404,35 +1389,35 @@ impl Clone for String {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl FromIterator<char> for String {
-    fn from_iter<I: IntoIterator<Item = char>>(iterable: I) -> String {
+    fn from_iter<I: IntoIterator<Item = char>>(iter: I) -> String {
         let mut buf = String::new();
-        buf.extend(iterable);
+        buf.extend(iter);
         buf
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> FromIterator<&'a str> for String {
-    fn from_iter<I: IntoIterator<Item = &'a str>>(iterable: I) -> String {
+    fn from_iter<I: IntoIterator<Item = &'a str>>(iter: I) -> String {
         let mut buf = String::new();
-        buf.extend(iterable);
+        buf.extend(iter);
         buf
     }
 }
 
 #[stable(feature = "extend_string", since = "1.4.0")]
 impl FromIterator<String> for String {
-    fn from_iter<I: IntoIterator<Item = String>>(iterable: I) -> String {
+    fn from_iter<I: IntoIterator<Item = String>>(iter: I) -> String {
         let mut buf = String::new();
-        buf.extend(iterable);
+        buf.extend(iter);
         buf
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Extend<char> for String {
-    fn extend<I: IntoIterator<Item = char>>(&mut self, iterable: I) {
-        let iterator = iterable.into_iter();
+    fn extend<I: IntoIterator<Item = char>>(&mut self, iter: I) {
+        let iterator = iter.into_iter();
         let (lower_bound, _) = iterator.size_hint();
         self.reserve(lower_bound);
         for ch in iterator {
@@ -1443,15 +1428,15 @@ impl Extend<char> for String {
 
 #[stable(feature = "extend_ref", since = "1.2.0")]
 impl<'a> Extend<&'a char> for String {
-    fn extend<I: IntoIterator<Item = &'a char>>(&mut self, iterable: I) {
-        self.extend(iterable.into_iter().cloned());
+    fn extend<I: IntoIterator<Item = &'a char>>(&mut self, iter: I) {
+        self.extend(iter.into_iter().cloned());
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> Extend<&'a str> for String {
-    fn extend<I: IntoIterator<Item = &'a str>>(&mut self, iterable: I) {
-        for s in iterable {
+    fn extend<I: IntoIterator<Item = &'a str>>(&mut self, iter: I) {
+        for s in iter {
             self.push_str(s)
         }
     }
@@ -1459,8 +1444,8 @@ impl<'a> Extend<&'a str> for String {
 
 #[stable(feature = "extend_string", since = "1.4.0")]
 impl Extend<String> for String {
-    fn extend<I: IntoIterator<Item = String>>(&mut self, iterable: I) {
-        for s in iterable {
+    fn extend<I: IntoIterator<Item = String>>(&mut self, iter: I) {
+        for s in iter {
             self.push_str(&s)
         }
     }
@@ -1606,6 +1591,24 @@ impl ops::Index<ops::RangeFull> for String {
         unsafe { str::from_utf8_unchecked(&self.vec) }
     }
 }
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl ops::Index<ops::RangeInclusive<usize>> for String {
+    type Output = str;
+
+    #[inline]
+    fn index(&self, index: ops::RangeInclusive<usize>) -> &str {
+        Index::index(&**self, index)
+    }
+}
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl ops::Index<ops::RangeToInclusive<usize>> for String {
+    type Output = str;
+
+    #[inline]
+    fn index(&self, index: ops::RangeToInclusive<usize>) -> &str {
+        Index::index(&**self, index)
+    }
+}
 
 #[stable(feature = "derefmut_for_string", since = "1.2.0")]
 impl ops::IndexMut<ops::Range<usize>> for String {
@@ -1633,6 +1636,20 @@ impl ops::IndexMut<ops::RangeFull> for String {
     #[inline]
     fn index_mut(&mut self, _index: ops::RangeFull) -> &mut str {
         unsafe { mem::transmute(&mut *self.vec) }
+    }
+}
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl ops::IndexMut<ops::RangeInclusive<usize>> for String {
+    #[inline]
+    fn index_mut(&mut self, index: ops::RangeInclusive<usize>) -> &mut str {
+        IndexMut::index_mut(&mut **self, index)
+    }
+}
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl ops::IndexMut<ops::RangeToInclusive<usize>> for String {
+    #[inline]
+    fn index_mut(&mut self, index: ops::RangeToInclusive<usize>) -> &mut str {
+        IndexMut::index_mut(&mut **self, index)
     }
 }
 
@@ -1663,9 +1680,9 @@ impl ops::DerefMut for String {
 /// [`String`] without error, this type will never actually be returned. As
 /// such, it is only here to satisfy said signature, and is useless otherwise.
 ///
-/// [`FromStr`]: ../str/trait.FromStr.html
+/// [`FromStr`]: ../../std/str/trait.FromStr.html
 /// [`String`]: struct.String.html
-/// [`from_str()`]: ../str/trait.FromStr.html#tymethod.from_str
+/// [`from_str()`]: ../../std/str/trait.FromStr.html#tymethod.from_str
 #[stable(feature = "str_parse_error", since = "1.5.0")]
 #[derive(Copy)]
 pub enum ParseError {}
@@ -1717,7 +1734,7 @@ impl Eq for ParseError {}
 /// [`Display`] should be implemented instead, and you get the `ToString`
 /// implementation for free.
 ///
-/// [`Display`]: ../fmt/trait.Display.html
+/// [`Display`]: ../../std/fmt/trait.Display.html
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait ToString {
     /// Converts the given value to a `String`.
@@ -1739,12 +1756,20 @@ pub trait ToString {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: fmt::Display + ?Sized> ToString for T {
     #[inline]
-    fn to_string(&self) -> String {
+    default fn to_string(&self) -> String {
         use core::fmt::Write;
         let mut buf = String::new();
         let _ = buf.write_fmt(format_args!("{}", self));
         buf.shrink_to_fit();
         buf
+    }
+}
+
+#[stable(feature = "str_to_string_specialization", since = "1.9.0")]
+impl ToString for str {
+    #[inline]
+    fn to_string(&self) -> String {
+        String::from(self)
     }
 }
 
@@ -1766,20 +1791,8 @@ impl AsRef<[u8]> for String {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> From<&'a str> for String {
-    #[cfg(not(test))]
-    #[inline]
     fn from(s: &'a str) -> String {
-        String { vec: <[_]>::to_vec(s.as_bytes()) }
-    }
-
-    // HACK(japaric): with cfg(test) the inherent `[T]::to_vec` method, which is
-    // required for this method definition, is not available. Since we don't
-    // require this method for testing purposes, I'll just stub it
-    // NB see the slice::hack module in slice.rs for more information
-    #[inline]
-    #[cfg(test)]
-    fn from(_: &str) -> String {
-        panic!("not available with cfg(test)");
+        s.to_owned()
     }
 }
 
@@ -1803,26 +1816,6 @@ impl<'a> From<String> for Cow<'a, str> {
 impl Into<Vec<u8>> for String {
     fn into(self) -> Vec<u8> {
         self.into_bytes()
-    }
-}
-
-#[unstable(feature = "into_cow", reason = "may be replaced by `convert::Into`",
-           issue= "27735")]
-#[allow(deprecated)]
-impl IntoCow<'static, str> for String {
-    #[inline]
-    fn into_cow(self) -> Cow<'static, str> {
-        Cow::Owned(self)
-    }
-}
-
-#[unstable(feature = "into_cow", reason = "may be replaced by `convert::Into`",
-           issue = "27735")]
-#[allow(deprecated)]
-impl<'a> IntoCow<'a, str> for &'a str {
-    #[inline]
-    fn into_cow(self) -> Cow<'a, str> {
-        Cow::Borrowed(self)
     }
 }
 

@@ -19,12 +19,12 @@ pub use self::DefRegion::*;
 use self::ScopeChain::*;
 
 use dep_graph::DepNode;
-use front::map::Map;
+use hir::map::Map;
 use session::Session;
-use middle::def::{Def, DefMap};
+use hir::def::{Def, DefMap};
 use middle::region;
-use middle::subst;
-use middle::ty;
+use ty::subst;
+use ty;
 use std::fmt;
 use std::mem::replace;
 use syntax::ast;
@@ -32,9 +32,9 @@ use syntax::codemap::Span;
 use syntax::parse::token::special_idents;
 use util::nodemap::NodeMap;
 
-use rustc_front::hir;
-use rustc_front::print::pprust::lifetime_to_string;
-use rustc_front::intravisit::{self, Visitor, FnKind};
+use hir;
+use hir::print::lifetime_to_string;
+use hir::intravisit::{self, Visitor, FnKind};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Debug)]
 pub enum DefRegion {
@@ -102,7 +102,7 @@ pub fn krate(sess: &Session,
     let _task = hir_map.dep_graph.in_task(DepNode::ResolveLifetimes);
     let krate = hir_map.krate();
     let mut named_region_map = NodeMap();
-    try!(sess.track_errors(|| {
+    sess.track_errors(|| {
         krate.visit_all_items(&mut LifetimeContext {
             sess: sess,
             named_region_map: &mut named_region_map,
@@ -111,7 +111,7 @@ pub fn krate(sess: &Session,
             trait_ref_hack: false,
             labels_in_fn: vec![],
         });
-    }));
+    })?;
     Ok(named_region_map)
 }
 
@@ -182,17 +182,17 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
     fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v hir::FnDecl,
                 b: &'v hir::Block, s: Span, fn_id: ast::NodeId) {
         match fk {
-            FnKind::ItemFn(_, generics, _, _, _, _) => {
+            FnKind::ItemFn(_, generics, _, _, _, _, _) => {
                 self.visit_early_late(subst::FnSpace, generics, |this| {
                     this.add_scope_and_walk_fn(fk, fd, b, s, fn_id)
                 })
             }
-            FnKind::Method(_, sig, _) => {
+            FnKind::Method(_, sig, _, _) => {
                 self.visit_early_late(subst::FnSpace, &sig.generics, |this| {
                     this.add_scope_and_walk_fn(fk, fd, b, s, fn_id)
                 })
             }
-            FnKind::Closure => {
+            FnKind::Closure(_) => {
                 self.add_scope_and_walk_fn(fk, fd, b, s, fn_id)
             }
         }
@@ -471,16 +471,16 @@ impl<'a> LifetimeContext<'a> {
                                  fn_id: ast::NodeId) {
 
         match fk {
-            FnKind::ItemFn(_, generics, _, _, _, _) => {
+            FnKind::ItemFn(_, generics, _, _, _, _, _) => {
                 intravisit::walk_fn_decl(self, fd);
                 self.visit_generics(generics);
             }
-            FnKind::Method(_, sig, _) => {
+            FnKind::Method(_, sig, _, _) => {
                 intravisit::walk_fn_decl(self, fd);
                 self.visit_generics(&sig.generics);
                 self.visit_explicit_self(&sig.explicit_self);
             }
-            FnKind::Closure => {
+            FnKind::Closure(_) => {
                 intravisit::walk_fn_decl(self, fd);
             }
         }
@@ -747,9 +747,9 @@ impl<'a> LifetimeContext<'a> {
                        lifetime_ref: &hir::Lifetime,
                        def: DefRegion) {
         if lifetime_ref.id == ast::DUMMY_NODE_ID {
-            self.sess.span_bug(lifetime_ref.span,
-                               "lifetime reference not renumbered, \
-                               probably a bug in syntax::fold");
+            span_bug!(lifetime_ref.span,
+                      "lifetime reference not renumbered, \
+                       probably a bug in syntax::fold");
         }
 
         debug!("lifetime_ref={:?} id={:?} resolved to {:?}",
@@ -822,7 +822,7 @@ fn early_bound_lifetime_names(generics: &hir::Generics) -> Vec<ast::Name> {
                         collector.visit_lifetime(bound);
                     }
                 }
-                &hir::WherePredicate::EqPredicate(_) => unimplemented!()
+                &hir::WherePredicate::EqPredicate(_) => bug!("unimplemented")
             }
         }
     }

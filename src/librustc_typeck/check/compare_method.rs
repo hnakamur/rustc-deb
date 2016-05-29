@@ -9,10 +9,10 @@
 // except according to those terms.
 
 use middle::free_region::FreeRegionMap;
-use middle::infer::{self, TypeOrigin};
-use middle::traits;
-use middle::ty::{self};
-use middle::subst::{self, Subst, Substs, VecPerParamSpace};
+use rustc::infer::{self, InferOk, TypeOrigin};
+use rustc::ty::{self, TyCtxt};
+use rustc::traits::{self, ProjectionMode};
+use rustc::ty::subst::{self, Subst, Substs, VecPerParamSpace};
 
 use syntax::ast;
 use syntax::codemap::Span;
@@ -30,7 +30,7 @@ use super::assoc;
 /// - trait_m: the method in the trait
 /// - impl_trait_ref: the TraitRef corresponding to the trait implementation
 
-pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
+pub fn compare_impl_method<'tcx>(tcx: &TyCtxt<'tcx>,
                                  impl_m: &ty::Method<'tcx>,
                                  impl_m_span: Span,
                                  impl_m_body_id: ast::NodeId,
@@ -42,7 +42,7 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
     debug!("compare_impl_method: impl_trait_ref (liberated) = {:?}",
            impl_trait_ref);
 
-    let mut infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None);
+    let mut infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None, ProjectionMode::AnyFinal);
     let mut fulfillment_cx = traits::FulfillmentContext::new();
 
     let trait_to_impl_substs = &impl_trait_ref.substs;
@@ -180,7 +180,7 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
         trait_to_impl_substs
         .subst(tcx, impl_to_skol_substs)
         .with_method(impl_to_skol_substs.types.get_slice(subst::FnSpace).to_vec(),
-                     impl_to_skol_substs.regions().get_slice(subst::FnSpace).to_vec());
+                     impl_to_skol_substs.regions.get_slice(subst::FnSpace).to_vec());
     debug!("compare_impl_method: trait_to_skol_substs={:?}",
            trait_to_skol_substs);
 
@@ -276,9 +276,9 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
     // type.
 
     // Compute skolemized form of impl and trait method tys.
-    let impl_fty = tcx.mk_fn(None, tcx.mk_bare_fn(impl_m.fty.clone()));
+    let impl_fty = tcx.mk_fn_ptr(impl_m.fty.clone());
     let impl_fty = impl_fty.subst(tcx, impl_to_skol_substs);
-    let trait_fty = tcx.mk_fn(None, tcx.mk_bare_fn(trait_m.fty.clone()));
+    let trait_fty = tcx.mk_fn_ptr(trait_m.fty.clone());
     let trait_fty = trait_fty.subst(tcx, &trait_to_skol_substs);
 
     let err = infcx.commit_if_ok(|snapshot| {
@@ -296,11 +296,11 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
                                                  impl_m_span,
                                                  impl_m_body_id,
                                                  &impl_sig);
-        let impl_fty = tcx.mk_fn(None, tcx.mk_bare_fn(ty::BareFnTy {
+        let impl_fty = tcx.mk_fn_ptr(ty::BareFnTy {
             unsafety: impl_m.fty.unsafety,
             abi: impl_m.fty.abi,
             sig: ty::Binder(impl_sig)
-        }));
+        });
         debug!("compare_impl_method: impl_fty={:?}",
                impl_fty);
 
@@ -314,16 +314,16 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
                                                  impl_m_span,
                                                  impl_m_body_id,
                                                  &trait_sig);
-        let trait_fty = tcx.mk_fn(None, tcx.mk_bare_fn(ty::BareFnTy {
+        let trait_fty = tcx.mk_fn_ptr(ty::BareFnTy {
             unsafety: trait_m.fty.unsafety,
             abi: trait_m.fty.abi,
             sig: ty::Binder(trait_sig)
-        }));
+        });
 
         debug!("compare_impl_method: trait_fty={:?}",
                trait_fty);
 
-        try!(infer::mk_subty(&infcx, false, origin, impl_fty, trait_fty));
+        infer::mk_subty(&infcx, false, origin, impl_fty, trait_fty)?;
 
         infcx.leak_check(&skol_map, snapshot)
     });
@@ -364,7 +364,7 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
 
     infcx.resolve_regions_and_report_errors(&free_regions, impl_m_body_id);
 
-    fn check_region_bounds_on_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
+    fn check_region_bounds_on_impl_method<'tcx>(tcx: &TyCtxt<'tcx>,
                                                 span: Span,
                                                 impl_m: &ty::Method<'tcx>,
                                                 trait_generics: &ty::Generics<'tcx>,
@@ -408,7 +408,7 @@ pub fn compare_impl_method<'tcx>(tcx: &ty::ctxt<'tcx>,
     }
 }
 
-pub fn compare_const_impl<'tcx>(tcx: &ty::ctxt<'tcx>,
+pub fn compare_const_impl<'tcx>(tcx: &TyCtxt<'tcx>,
                                 impl_c: &ty::AssociatedConst<'tcx>,
                                 impl_c_span: Span,
                                 trait_c: &ty::AssociatedConst<'tcx>,
@@ -416,7 +416,7 @@ pub fn compare_const_impl<'tcx>(tcx: &ty::ctxt<'tcx>,
     debug!("compare_const_impl(impl_trait_ref={:?})",
            impl_trait_ref);
 
-    let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None);
+    let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None, ProjectionMode::AnyFinal);
     let mut fulfillment_cx = traits::FulfillmentContext::new();
 
     // The below is for the most part highly similar to the procedure
@@ -439,7 +439,7 @@ pub fn compare_const_impl<'tcx>(tcx: &ty::ctxt<'tcx>,
         trait_to_impl_substs
         .subst(tcx, impl_to_skol_substs)
         .with_method(impl_to_skol_substs.types.get_slice(subst::FnSpace).to_vec(),
-                     impl_to_skol_substs.regions().get_slice(subst::FnSpace).to_vec());
+                     impl_to_skol_substs.regions.get_slice(subst::FnSpace).to_vec());
     debug!("compare_const_impl: trait_to_skol_substs={:?}",
            trait_to_skol_substs);
 
@@ -475,7 +475,10 @@ pub fn compare_const_impl<'tcx>(tcx: &ty::ctxt<'tcx>,
     });
 
     match err {
-        Ok(()) => { }
+        Ok(InferOk { obligations, .. }) => {
+            // FIXME(#32730) propagate obligations
+            assert!(obligations.is_empty())
+        }
         Err(terr) => {
             debug!("checking associated const for compatibility: impl ty {:?}, trait ty {:?}",
                    impl_ty,

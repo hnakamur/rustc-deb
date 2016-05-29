@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use borrow::{Borrow, Cow, ToOwned};
-use ffi::CString;
 use fmt::{self, Debug};
 use mem;
 use string::String;
@@ -22,7 +21,7 @@ use sys::os_str::{Buf, Slice};
 use sys_common::{AsInner, IntoInner, FromInner};
 
 /// A type that can represent owned, mutable platform-native strings, but is
-/// cheaply interconvertable with Rust strings.
+/// cheaply inter-convertible with Rust strings.
 ///
 /// The need for this type arises from the fact that:
 ///
@@ -56,22 +55,6 @@ impl OsString {
         OsString { inner: Buf::from_string(String::new()) }
     }
 
-    /// Constructs an `OsString` from a byte sequence.
-    ///
-    /// # Platform behavior
-    ///
-    /// On Unix systems, any byte sequence can be successfully
-    /// converted into an `OsString`.
-    ///
-    /// On Windows system, only UTF-8 byte sequences will successfully
-    /// convert; non UTF-8 data will produce `None`.
-    #[unstable(feature = "convert", reason = "recently added", issue = "27704")]
-    #[rustc_deprecated(reason = "RFC was closed, hides subtle Windows semantics",
-                       since = "1.6.0")]
-    pub fn from_bytes<B>(bytes: B) -> Option<OsString> where B: Into<Vec<u8>> {
-        Self::_from_bytes(bytes.into())
-    }
-
     #[cfg(unix)]
     fn _from_bytes(vec: Vec<u8>) -> Option<OsString> {
         use os::unix::ffi::OsStringExt;
@@ -103,13 +86,14 @@ impl OsString {
         self.inner.push_slice(&s.as_ref().inner)
     }
 
-    /// Creates a new `OsString` with the given capacity. The string will be
-    /// able to hold exactly `capacity` bytes without reallocating. If
-    /// `capacity` is 0, the string will not allocate.
+    /// Creates a new `OsString` with the given capacity.
+    ///
+    /// The string will be able to hold exactly `capacity` lenth units of other
+    /// OS strings without reallocating. If `capacity` is 0, the string will not
+    /// allocate.
     ///
     /// See main `OsString` documentation information about encoding.
-    #[unstable(feature = "osstring_simple_functions",
-               reason = "recently added", issue = "29453")]
+    #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn with_capacity(capacity: usize) -> OsString {
         OsString {
             inner: Buf::with_capacity(capacity)
@@ -117,40 +101,36 @@ impl OsString {
     }
 
     /// Truncates the `OsString` to zero length.
-    #[unstable(feature = "osstring_simple_functions",
-               reason = "recently added", issue = "29453")]
+    #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn clear(&mut self) {
         self.inner.clear()
     }
 
-    /// Returns the number of bytes this `OsString` can hold without
-    /// reallocating.
+    /// Returns the capacity this `OsString` can hold without reallocating.
     ///
     /// See `OsString` introduction for information about encoding.
-    #[unstable(feature = "osstring_simple_functions",
-               reason = "recently added", issue = "29453")]
+    #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn capacity(&self) -> usize {
         self.inner.capacity()
     }
 
-    /// Reserves capacity for at least `additional` more bytes to be inserted
-    /// in the given `OsString`. The collection may reserve more space to avoid
-    /// frequent reallocations.
-    #[unstable(feature = "osstring_simple_functions",
-               reason = "recently added", issue = "29453")]
+    /// Reserves capacity for at least `additional` more capacity to be inserted
+    /// in the given `OsString`.
+    ///
+    /// The collection may reserve more space to avoid frequent reallocations.
+    #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn reserve(&mut self, additional: usize) {
         self.inner.reserve(additional)
     }
 
-    /// Reserves the minimum capacity for exactly `additional` more bytes to be
-    /// inserted in the given `OsString`. Does nothing if the capacity is
+    /// Reserves the minimum capacity for exactly `additional` more capacity to
+    /// be inserted in the given `OsString`. Does nothing if the capacity is
     /// already sufficient.
     ///
     /// Note that the allocator may give the collection more space than it
     /// requests. Therefore capacity can not be relied upon to be precisely
     /// minimal. Prefer reserve if future insertions are expected.
-    #[unstable(feature = "osstring_simple_functions",
-               reason = "recently added", issue = "29453")]
+    #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn reserve_exact(&mut self, additional: usize) {
         self.inner.reserve_exact(additional)
     }
@@ -187,6 +167,14 @@ impl ops::Deref for OsString {
     #[inline]
     fn deref(&self) -> &OsStr {
         &self[..]
+    }
+}
+
+#[stable(feature = "osstring_default", since = "1.9.0")]
+impl Default for OsString {
+    #[inline]
+    fn default() -> OsString {
+        OsString::new()
     }
 }
 
@@ -272,7 +260,7 @@ impl OsStr {
         unsafe { mem::transmute(inner) }
     }
 
-    /// Yields a `&str` slice if the `OsStr` is valid unicode.
+    /// Yields a `&str` slice if the `OsStr` is valid Unicode.
     ///
     /// This conversion may entail doing a check for UTF-8 validity.
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -294,53 +282,21 @@ impl OsStr {
         OsString { inner: self.inner.to_owned() }
     }
 
-    /// Yields this `OsStr` as a byte slice.
-    ///
-    /// # Platform behavior
-    ///
-    /// On Unix systems, this is a no-op.
-    ///
-    /// On Windows systems, this returns `None` unless the `OsStr` is
-    /// valid unicode, in which case it produces UTF-8-encoded
-    /// data. This may entail checking validity.
-    #[unstable(feature = "convert", reason = "recently added", issue = "27704")]
-    #[rustc_deprecated(reason = "RFC was closed, hides subtle Windows semantics",
-                       since = "1.6.0")]
-    pub fn to_bytes(&self) -> Option<&[u8]> {
-        if cfg!(windows) {
-            self.to_str().map(|s| s.as_bytes())
-        } else {
-            Some(self.bytes())
-        }
-    }
-
-    /// Creates a `CString` containing this `OsStr` data.
-    ///
-    /// Fails if the `OsStr` contains interior nulls.
-    ///
-    /// This is a convenience for creating a `CString` from
-    /// `self.to_bytes()`, and inherits the platform behavior of the
-    /// `to_bytes` method.
-    #[unstable(feature = "convert", reason = "recently added", issue = "27704")]
-    #[rustc_deprecated(reason = "RFC was closed, hides subtle Windows semantics",
-                       since = "1.6.0")]
-    #[allow(deprecated)]
-    pub fn to_cstring(&self) -> Option<CString> {
-        self.to_bytes().and_then(|b| CString::new(b).ok())
-    }
-
     /// Checks whether the `OsStr` is empty.
-    #[unstable(feature = "osstring_simple_functions",
-               reason = "recently added", issue = "29453")]
+    #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn is_empty(&self) -> bool {
         self.inner.inner.is_empty()
     }
 
-    /// Returns the number of bytes in this `OsStr`.
+    /// Returns the length of this `OsStr`.
     ///
-    /// See `OsStr` introduction for information about encoding.
-    #[unstable(feature = "osstring_simple_functions",
-               reason = "recently added", issue = "29453")]
+    /// Note that this does **not** return the number of bytes in this string
+    /// as, for example, OS strings on Windows are encoded as a list of `u16`
+    /// rather than a list of bytes. This number is simply useful for passing to
+    /// other methods like `OsString::with_capacity` to avoid reallocations.
+    ///
+    /// See `OsStr` introduction for more information about encoding.
+    #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn len(&self) -> usize {
         self.inner.inner.len()
     }
@@ -351,6 +307,14 @@ impl OsStr {
     /// revealing the internal, platform-specific encodings.
     fn bytes(&self) -> &[u8] {
         unsafe { mem::transmute(&self.inner) }
+    }
+}
+
+#[stable(feature = "osstring_default", since = "1.9.0")]
+impl<'a> Default for &'a OsStr {
+    #[inline]
+    fn default() -> &'a OsStr {
+        OsStr::new("")
     }
 }
 
@@ -607,6 +571,12 @@ mod tests {
     }
 
     #[test]
+    fn test_os_string_default() {
+        let os_string: OsString = Default::default();
+        assert_eq!("", &os_string);
+    }
+
+    #[test]
     fn test_os_str_is_empty() {
         let mut os_string = OsString::new();
         assert!(os_string.is_empty());
@@ -628,5 +598,11 @@ mod tests {
 
         os_string.clear();
         assert_eq!(0, os_string.len());
+    }
+
+    #[test]
+    fn test_os_str_default() {
+        let os_str: &OsStr = Default::default();
+        assert_eq!("", os_str);
     }
 }

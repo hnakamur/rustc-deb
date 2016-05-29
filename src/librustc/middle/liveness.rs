@@ -110,9 +110,12 @@ use self::LiveNodeKind::*;
 use self::VarKind::*;
 
 use dep_graph::DepNode;
-use middle::def::*;
-use middle::pat_util;
-use middle::ty;
+use hir::def::*;
+use hir::pat_util;
+use ty::{self, TyCtxt, ParameterEnvironment};
+use traits::{self, ProjectionMode};
+use infer;
+use ty::subst::Subst;
 use lint;
 use util::nodemap::NodeMap;
 
@@ -125,10 +128,10 @@ use syntax::codemap::{BytePos, original_sp, Span};
 use syntax::parse::token::special_idents;
 use syntax::ptr::P;
 
-use rustc_front::hir::Expr;
-use rustc_front::hir;
-use rustc_front::print::pprust::{expr_to_string, block_to_string};
-use rustc_front::intravisit::{self, Visitor, FnKind};
+use hir::Expr;
+use hir;
+use hir::print::{expr_to_string, block_to_string};
+use hir::intravisit::{self, Visitor, FnKind};
 
 /// For use with `propagate_through_loop`.
 enum LoopKind<'a> {
@@ -166,7 +169,7 @@ enum LiveNodeKind {
     ExitNode
 }
 
-fn live_node_kind_to_string(lnk: LiveNodeKind, cx: &ty::ctxt) -> String {
+fn live_node_kind_to_string(lnk: LiveNodeKind, cx: &TyCtxt) -> String {
     let cm = cx.sess.codemap();
     match lnk {
         FreeVarNode(s) => {
@@ -192,7 +195,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for IrMaps<'a, 'tcx> {
     fn visit_arm(&mut self, a: &hir::Arm) { visit_arm(self, a); }
 }
 
-pub fn check_crate(tcx: &ty::ctxt) {
+pub fn check_crate(tcx: &TyCtxt) {
     let _task = tcx.dep_graph.in_task(DepNode::Liveness);
     tcx.map.krate().visit_all_items(&mut IrMaps::new(tcx));
     tcx.sess.abort_if_errors();
@@ -260,7 +263,7 @@ enum VarKind {
 }
 
 struct IrMaps<'a, 'tcx: 'a> {
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
 
     num_live_nodes: usize,
     num_vars: usize,
@@ -272,7 +275,7 @@ struct IrMaps<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx> IrMaps<'a, 'tcx> {
-    fn new(tcx: &'a ty::ctxt<'tcx>) -> IrMaps<'a, 'tcx> {
+    fn new(tcx: &'a TyCtxt<'tcx>) -> IrMaps<'a, 'tcx> {
         IrMaps {
             tcx: tcx,
             num_live_nodes: 0,
@@ -322,13 +325,10 @@ impl<'a, 'tcx> IrMaps<'a, 'tcx> {
 
     fn variable(&self, node_id: NodeId, span: Span) -> Variable {
         match self.variable_map.get(&node_id) {
-          Some(&var) => var,
-          None => {
-            self.tcx
-                .sess
-                .span_bug(span, &format!("no variable registered for id {}",
-                                        node_id));
-          }
+            Some(&var) => var,
+            None => {
+                span_bug!(span, "no variable registered for id {}", node_id);
+            }
         }
     }
 
@@ -484,7 +484,7 @@ fn visit_expr(ir: &mut IrMaps, expr: &Expr) {
         ir.add_live_node_for_node(expr.id, ExprNode(expr.span));
         intravisit::walk_expr(ir, expr);
       }
-      hir::ExprBinary(op, _, _) if ::rustc_front::util::lazy_binop(op.node) => {
+      hir::ExprBinary(op, _, _) if op.node.is_lazy() => {
         ir.add_live_node_for_node(expr.id, ExprNode(expr.span));
         intravisit::walk_expr(ir, expr);
       }
@@ -498,7 +498,7 @@ fn visit_expr(ir: &mut IrMaps, expr: &Expr) {
       hir::ExprBlock(..) | hir::ExprAssign(..) | hir::ExprAssignOp(..) |
       hir::ExprStruct(..) | hir::ExprRepeat(..) |
       hir::ExprInlineAsm(..) | hir::ExprBox(..) |
-      hir::ExprRange(..) | hir::ExprType(..) => {
+      hir::ExprType(..) => {
           intravisit::walk_expr(ir, expr);
       }
     }
@@ -575,10 +575,10 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
             // above and the propagation code below; the two sets of
             // code have to agree about which AST nodes are worth
             // creating liveness nodes for.
-            self.ir.tcx.sess.span_bug(
+            span_bug!(
                 span,
-                &format!("no live node registered for node {}",
-                        node_id));
+                "no live node registered for node {}",
+                node_id);
           }
         }
     }
@@ -683,7 +683,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
         for var_idx in 0..self.ir.num_vars {
             let idx = node_base_idx + var_idx;
             if test(idx).is_valid() {
-                try!(write!(wr, " {:?}", Variable(var_idx)));
+                write!(wr, " {:?}", Variable(var_idx))?;
             }
         }
         Ok(())
@@ -700,15 +700,15 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                 // to find with one
                 match self.ir.tcx.def_map.borrow().get(&id).map(|d| d.full_def()) {
                     Some(Def::Label(loop_id)) => loop_id,
-                    _ => self.ir.tcx.sess.span_bug(sp, "label on break/loop \
-                                                        doesn't refer to a loop")
+                    _ => span_bug!(sp, "label on break/loop \
+                                        doesn't refer to a loop")
                 }
             }
             None => {
                 // Vanilla 'break' or 'loop', so use the enclosing
                 // loop scope
                 if self.loop_scope.is_empty() {
-                    self.ir.tcx.sess.span_bug(sp, "break outside loop");
+                    span_bug!(sp, "break outside loop");
                 } else {
                     *self.loop_scope.last().unwrap()
                 }
@@ -964,7 +964,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                  let caps = match this.ir.capture_info_map.get(&expr.id) {
                     Some(caps) => caps.clone(),
                     None => {
-                        this.ir.tcx.sess.span_bug(expr.span, "no registered caps");
+                        span_bug!(expr.span, "no registered caps");
                      }
                  };
                  caps.iter().rev().fold(succ, |succ, cap| {
@@ -1058,8 +1058,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
               match self.break_ln.get(&sc) {
                   Some(&b) => b,
-                  None => self.ir.tcx.sess.span_bug(expr.span,
-                                                    "break to unknown label")
+                  None => span_bug!(expr.span, "break to unknown label")
               }
           }
 
@@ -1072,8 +1071,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
               match self.cont_ln.get(&sc) {
                   Some(&b) => b,
-                  None => self.ir.tcx.sess.span_bug(expr.span,
-                                                    "loop to unknown label")
+                  None => span_bug!(expr.span, "loop to unknown label")
               }
           }
 
@@ -1086,11 +1084,17 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
           }
 
           hir::ExprAssignOp(_, ref l, ref r) => {
-            // see comment on lvalues in
-            // propagate_through_lvalue_components()
-            let succ = self.write_lvalue(&l, succ, ACC_WRITE|ACC_READ);
-            let succ = self.propagate_through_expr(&r, succ);
-            self.propagate_through_lvalue_components(&l, succ)
+            // an overloaded assign op is like a method call
+            if self.ir.tcx.is_method_call(expr.id) {
+                let succ = self.propagate_through_expr(&l, succ);
+                self.propagate_through_expr(&r, succ)
+            } else {
+                // see comment on lvalues in
+                // propagate_through_lvalue_components()
+                let succ = self.write_lvalue(&l, succ, ACC_WRITE|ACC_READ);
+                let succ = self.propagate_through_expr(&r, succ);
+                self.propagate_through_lvalue_components(&l, succ)
+            }
           }
 
           // Uninteresting cases: just propagate in rev exec order
@@ -1138,7 +1142,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
             self.propagate_through_exprs(&exprs[..], succ)
           }
 
-          hir::ExprBinary(op, ref l, ref r) if ::rustc_front::util::lazy_binop(op.node) => {
+          hir::ExprBinary(op, ref l, ref r) if op.node.is_lazy() => {
             let r_succ = self.propagate_through_expr(&r, succ);
 
             let ln = self.live_node(expr.id, expr.span);
@@ -1154,11 +1158,6 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
             self.propagate_through_expr(&l, r_succ)
           }
 
-          hir::ExprRange(ref e1, ref e2) => {
-            let succ = e2.as_ref().map_or(succ, |e| self.propagate_through_expr(&e, succ));
-            e1.as_ref().map_or(succ, |e| self.propagate_through_expr(&e, succ))
-          }
-
           hir::ExprBox(ref e) |
           hir::ExprAddrOf(_, ref e) |
           hir::ExprCast(ref e, _) |
@@ -1167,25 +1166,21 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
             self.propagate_through_expr(&e, succ)
           }
 
-          hir::ExprInlineAsm(ref ia) => {
-
-            let succ = ia.outputs.iter().rev().fold(succ,
-                |succ, out| {
-                    // see comment on lvalues
-                    // in propagate_through_lvalue_components()
-                    if out.is_indirect {
-                        self.propagate_through_expr(&out.expr, succ)
-                    } else {
-                        let acc = if out.is_rw { ACC_WRITE|ACC_READ } else { ACC_WRITE };
-                        let succ = self.write_lvalue(&out.expr, succ, acc);
-                        self.propagate_through_lvalue_components(&out.expr, succ)
-                    }
+          hir::ExprInlineAsm(ref ia, ref outputs, ref inputs) => {
+            let succ = ia.outputs.iter().zip(outputs).rev().fold(succ, |succ, (o, output)| {
+                // see comment on lvalues
+                // in propagate_through_lvalue_components()
+                if o.is_indirect {
+                    self.propagate_through_expr(output, succ)
+                } else {
+                    let acc = if o.is_rw { ACC_WRITE|ACC_READ } else { ACC_WRITE };
+                    let succ = self.write_lvalue(output, succ, acc);
+                    self.propagate_through_lvalue_components(output, succ)
                 }
-            );
+            });
+
             // Inputs are executed first. Propagate last because of rev order
-            ia.inputs.iter().rev().fold(succ, |succ, &(_, ref expr)| {
-                self.propagate_through_expr(&expr, succ)
-            })
+            self.propagate_through_exprs(inputs, succ)
           }
 
           hir::ExprLit(..) => {
@@ -1415,22 +1410,24 @@ fn check_expr(this: &mut Liveness, expr: &Expr) {
       }
 
       hir::ExprAssignOp(_, ref l, _) => {
-        this.check_lvalue(&l);
+        if !this.ir.tcx.is_method_call(expr.id) {
+            this.check_lvalue(&l);
+        }
 
         intravisit::walk_expr(this, expr);
       }
 
-      hir::ExprInlineAsm(ref ia) => {
-        for &(_, ref input) in &ia.inputs {
-          this.visit_expr(&input);
+      hir::ExprInlineAsm(ref ia, ref outputs, ref inputs) => {
+        for input in inputs {
+          this.visit_expr(input);
         }
 
         // Output operands must be lvalues
-        for out in &ia.outputs {
-          if !out.is_indirect {
-            this.check_lvalue(&out.expr);
+        for (o, output) in ia.outputs.iter().zip(outputs) {
+          if !o.is_indirect {
+            this.check_lvalue(output);
           }
-          this.visit_expr(&out.expr);
+          this.visit_expr(output);
         }
 
         intravisit::walk_expr(this, expr);
@@ -1446,7 +1443,7 @@ fn check_expr(this: &mut Liveness, expr: &Expr) {
       hir::ExprBlock(..) | hir::ExprAddrOf(..) |
       hir::ExprStruct(..) | hir::ExprRepeat(..) |
       hir::ExprClosure(..) | hir::ExprPath(..) | hir::ExprBox(..) |
-      hir::ExprRange(..) | hir::ExprType(..) => {
+      hir::ExprType(..) => {
         intravisit::walk_expr(this, expr);
       }
     }
@@ -1487,14 +1484,25 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
         match fn_ret {
             ty::FnConverging(t_ret)
-                if self.live_on_entry(entry_ln, self.s.no_ret_var).is_some() => {
+                    if self.live_on_entry(entry_ln, self.s.no_ret_var).is_some() => {
 
-                if t_ret.is_nil() {
+                let param_env = ParameterEnvironment::for_item(&self.ir.tcx, id);
+                let t_ret_subst = t_ret.subst(&self.ir.tcx, &param_env.free_substs);
+                let infcx = infer::new_infer_ctxt(&self.ir.tcx,
+                                                  &self.ir.tcx.tables,
+                                                  Some(param_env),
+                                                  ProjectionMode::Any);
+                let cause = traits::ObligationCause::dummy();
+                let norm = traits::fully_normalize(&infcx,
+                                                   cause,
+                                                   &t_ret_subst);
+
+                if norm.unwrap().is_nil() {
                     // for nil return types, it is ok to not return a value expl.
                 } else {
                     let ends_with_stmt = match body.expr {
                         None if !body.stmts.is_empty() =>
-                            match body.stmts.first().unwrap().node {
+                            match body.stmts.last().unwrap().node {
                                 hir::StmtSemi(ref e, _) => {
                                     self.ir.tcx.expr_ty(&e) == t_ret
                                 },
@@ -1507,7 +1515,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                                                    E0269,
                                                    "not all control paths return a value");
                     if ends_with_stmt {
-                        let last_stmt = body.stmts.first().unwrap();
+                        let last_stmt = body.stmts.last().unwrap();
                         let original_span = original_sp(self.ir.tcx.sess.codemap(),
                                                         last_stmt.span, sp);
                         let span_semicolon = Span {

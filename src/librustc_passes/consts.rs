@@ -25,27 +25,28 @@
 // by borrowck::gather_loans
 
 use rustc::dep_graph::DepNode;
-use rustc::middle::ty::cast::{CastKind};
-use rustc::middle::const_eval::{self, ConstEvalErr};
-use rustc::middle::const_eval::ErrKind::IndexOpFeatureGated;
-use rustc::middle::const_eval::EvalHint::ExprTypeChecked;
-use rustc::middle::def::Def;
-use rustc::middle::def_id::DefId;
+use rustc::ty::cast::{CastKind};
+use rustc_const_eval::{ConstEvalErr, lookup_const_fn_by_id, compare_lit_exprs};
+use rustc_const_eval::{eval_const_expr_partial, lookup_const_by_id};
+use rustc_const_eval::ErrKind::{IndexOpFeatureGated, UnimplementedConstVal};
+use rustc_const_eval::EvalHint::ExprTypeChecked;
+use rustc::hir::def::Def;
+use rustc::hir::def_id::DefId;
 use rustc::middle::expr_use_visitor as euv;
-use rustc::middle::infer;
+use rustc::infer;
 use rustc::middle::mem_categorization as mc;
 use rustc::middle::mem_categorization::Categorization;
-use rustc::middle::traits;
-use rustc::middle::ty::{self, Ty};
+use rustc::ty::{self, Ty, TyCtxt};
+use rustc::traits::{self, ProjectionMode};
 use rustc::util::nodemap::NodeMap;
 use rustc::middle::const_qualif::ConstQualif;
 use rustc::lint::builtin::CONST_ERR;
 
-use rustc_front::hir::{self, PatKind};
+use rustc::hir::{self, PatKind};
 use syntax::ast;
 use syntax::codemap::Span;
 use syntax::feature_gate::UnstableFeatures;
-use rustc_front::intravisit::{self, FnKind, Visitor};
+use rustc::hir::intravisit::{self, FnKind, Visitor};
 
 use std::collections::hash_map::Entry;
 use std::cmp::Ordering;
@@ -65,7 +66,7 @@ enum Mode {
 }
 
 struct CheckCrateVisitor<'a, 'tcx: 'a> {
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
     mode: Mode,
     qualif: ConstQualif,
     rvalue_borrows: NodeMap<hir::Mutability>
@@ -92,7 +93,10 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
             None => self.tcx.empty_parameter_environment()
         };
 
-        let infcx = infer::new_infer_ctxt(self.tcx, &self.tcx.tables, Some(param_env));
+        let infcx = infer::new_infer_ctxt(self.tcx,
+                                          &self.tcx.tables,
+                                          Some(param_env),
+                                          ProjectionMode::AnyFinal);
 
         f(&mut euv::ExprUseVisitor::new(self, &infcx))
     }
@@ -104,6 +108,16 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
             Entry::Vacant(entry) => {
                 // Prevent infinite recursion on re-entry.
                 entry.insert(ConstQualif::empty());
+            }
+        }
+        if let Err(err) = eval_const_expr_partial(self.tcx, expr, ExprTypeChecked, None) {
+            match err.kind {
+                UnimplementedConstVal(_) => {},
+                IndexOpFeatureGated => {},
+                _ => self.tcx.sess.add_lint(CONST_ERR, expr.id, expr.span,
+                                         format!("constant evaluation error: {}. This will \
+                                                 become a HARD ERROR in the future",
+                                                 err.description())),
             }
         }
         self.with_mode(mode, |this| {
@@ -129,10 +143,10 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
         }
 
         let mode = match fk {
-            FnKind::ItemFn(_, _, _, hir::Constness::Const, _, _) => {
+            FnKind::ItemFn(_, _, _, hir::Constness::Const, _, _, _) => {
                 Mode::ConstFn
             }
-            FnKind::Method(_, m, _) => {
+            FnKind::Method(_, m, _, _) => {
                 if m.constness == hir::Constness::Const {
                     Mode::ConstFn
                 } else {
@@ -166,7 +180,7 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
                             def_id: DefId,
                             ret_ty: Ty<'tcx>)
                             -> bool {
-        if let Some(fn_like) = const_eval::lookup_const_fn_by_id(self.tcx, def_id) {
+        if let Some(fn_like) = lookup_const_fn_by_id(self.tcx, def_id) {
             if
                 // we are in a static/const initializer
                 self.mode != Mode::Var &&
@@ -225,7 +239,7 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
             Mode::Const => "constant",
             Mode::ConstFn => "constant function",
             Mode::StaticMut | Mode::Static => "static",
-            Mode::Var => unreachable!(),
+            Mode::Var => bug!(),
         }
     }
 
@@ -247,7 +261,10 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
 
     fn check_static_type(&self, e: &hir::Expr) {
         let ty = self.tcx.node_id_to_type(e.id);
-        let infcx = infer::new_infer_ctxt(self.tcx, &self.tcx.tables, None);
+        let infcx = infer::new_infer_ctxt(self.tcx,
+                                          &self.tcx.tables,
+                                          None,
+                                          ProjectionMode::AnyFinal);
         let cause = traits::ObligationCause::new(e.span, e.id, traits::SharedStatic);
         let mut fulfillment_cx = traits::FulfillmentContext::new();
         fulfillment_cx.register_builtin_bound(&infcx, ty, ty::BoundSync, cause);
@@ -329,7 +346,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                 self.global_expr(Mode::Const, &start);
                 self.global_expr(Mode::Const, &end);
 
-                match const_eval::compare_lit_exprs(self.tcx, start, end) {
+                match compare_lit_exprs(self.tcx, start, end) {
                     Some(Ordering::Less) |
                     Some(Ordering::Equal) => {}
                     Some(Ordering::Greater) => {
@@ -393,7 +410,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                 // The count is checked elsewhere (typeck).
                 let count = match node_ty.sty {
                     ty::TyArray(_, n) => n,
-                    _ => unreachable!()
+                    _ => bug!()
                 };
                 // [element; 0] is always zero-sized.
                 if count == 0 {
@@ -425,9 +442,10 @@ impl<'a, 'tcx, 'v> Visitor<'v> for CheckCrateVisitor<'a, 'tcx> {
                 match node_ty.sty {
                     ty::TyUint(_) | ty::TyInt(_) if div_or_rem => {
                         if !self.qualif.intersects(ConstQualif::NOT_CONST) {
-                            match const_eval::eval_const_expr_partial(
+                            match eval_const_expr_partial(
                                     self.tcx, ex, ExprTypeChecked, None) {
                                 Ok(_) => {}
+                                Err(ConstEvalErr { kind: UnimplementedConstVal(_), ..}) |
                                 Err(ConstEvalErr { kind: IndexOpFeatureGated, ..}) => {},
                                 Err(msg) => {
                                     self.tcx.sess.add_lint(CONST_ERR, ex.id,
@@ -563,7 +581,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
         hir::ExprCast(ref from, _) => {
             debug!("Checking const cast(id={})", from.id);
             match v.tcx.cast_kinds.borrow().get(&from.id) {
-                None => v.tcx.sess.span_bug(e.span, "no kind for cast"),
+                None => span_bug!(e.span, "no kind for cast"),
                 Some(&CastKind::PtrAddrCast) | Some(&CastKind::FnPtrAddrCast) => {
                     v.add_qualif(ConstQualif::NOT_CONST);
                     if v.mode != Mode::Var {
@@ -582,7 +600,7 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                     v.add_qualif(ConstQualif::NON_ZERO_SIZED);
                 }
                 Some(Def::Struct(..)) => {
-                    if let ty::TyBareFn(..) = node_ty.sty {
+                    if let ty::TyFnDef(..) = node_ty.sty {
                         // Count the function pointer.
                         v.add_qualif(ConstQualif::NON_ZERO_SIZED);
                     }
@@ -604,9 +622,8 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
                 }
                 Some(Def::Const(did)) |
                 Some(Def::AssociatedConst(did)) => {
-                    if let Some(expr) = const_eval::lookup_const_by_id(v.tcx, did,
-                                                                       Some(e.id),
-                                                                       None) {
+                    let substs = Some(v.tcx.node_id_item_substs(e.id).substs);
+                    if let Some((expr, _)) = lookup_const_by_id(v.tcx, did, substs) {
                         let inner = v.global_expr(Mode::Const, expr);
                         v.add_qualif(inner);
                     }
@@ -747,13 +764,10 @@ fn check_expr<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>,
         hir::ExprAgain(_) |
         hir::ExprRet(_) |
 
-        // Miscellaneous expressions that could be implemented.
-        hir::ExprRange(..) |
-
         // Expressions with side-effects.
         hir::ExprAssign(..) |
         hir::ExprAssignOp(..) |
-        hir::ExprInlineAsm(_) => {
+        hir::ExprInlineAsm(..) => {
             v.add_qualif(ConstQualif::NOT_CONST);
             if v.mode != Mode::Var {
                 span_err!(v.tcx.sess, e.span, E0019,
@@ -788,7 +802,7 @@ fn check_adjustments<'a, 'tcx>(v: &mut CheckCrateVisitor<'a, 'tcx>, e: &hir::Exp
     }
 }
 
-pub fn check_crate(tcx: &ty::ctxt) {
+pub fn check_crate(tcx: &TyCtxt) {
     tcx.visit_all_items_in_krate(DepNode::CheckConst, &mut CheckCrateVisitor {
         tcx: tcx,
         mode: Mode::Var,

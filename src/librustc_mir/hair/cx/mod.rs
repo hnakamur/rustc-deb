@@ -18,16 +18,19 @@
 use hair::*;
 use rustc::mir::repr::*;
 
-use rustc::middle::const_eval::{self, ConstVal};
-use rustc::middle::infer::InferCtxt;
-use rustc::middle::ty::{self, Ty};
-use syntax::codemap::Span;
+use rustc::middle::const_val::ConstVal;
+use rustc_const_eval as const_eval;
+use rustc::hir::def_id::DefId;
+use rustc::infer::InferCtxt;
+use rustc::ty::subst::{Subst, Substs};
+use rustc::ty::{self, Ty, TyCtxt};
 use syntax::parse::token;
-use rustc_front::hir;
+use rustc::hir;
+use rustc_const_math::{ConstInt, ConstUsize};
 
 #[derive(Copy, Clone)]
 pub struct Cx<'a, 'tcx: 'a> {
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
     infcx: &'a InferCtxt<'a, 'tcx>,
 }
 
@@ -50,8 +53,11 @@ impl<'a,'tcx:'a> Cx<'a, 'tcx> {
         self.tcx.types.usize
     }
 
-    pub fn usize_literal(&mut self, value: usize) -> Literal<'tcx> {
-        Literal::Value { value: ConstVal::Uint(value as u64) }
+    pub fn usize_literal(&mut self, value: u64) -> Literal<'tcx> {
+        match ConstUsize::new(value, self.tcx.sess.target.uint_type) {
+            Ok(val) => Literal::Value { value: ConstVal::Integral(ConstInt::Usize(val))},
+            Err(_) => bug!("usize literal out of range for target"),
+        }
     }
 
     pub fn bool_ty(&mut self) -> Ty<'tcx> {
@@ -80,9 +86,44 @@ impl<'a,'tcx:'a> Cx<'a, 'tcx> {
 
     pub fn try_const_eval_literal(&mut self, e: &hir::Expr) -> Option<Literal<'tcx>> {
         let hint = const_eval::EvalHint::ExprTypeChecked;
-        const_eval::eval_const_expr_partial(self.tcx, e, hint, None)
-            .ok()
-            .map(|v| Literal::Value { value: v })
+        const_eval::eval_const_expr_partial(self.tcx, e, hint, None).ok().and_then(|v| {
+            match v {
+                // All of these contain local IDs, unsuitable for storing in MIR.
+                ConstVal::Struct(_) | ConstVal::Tuple(_) |
+                ConstVal::Array(..) | ConstVal::Repeat(..) |
+                ConstVal::Function(_) => None,
+
+                _ => Some(Literal::Value { value: v })
+            }
+        })
+    }
+
+    pub fn trait_method(&mut self,
+                        trait_def_id: DefId,
+                        method_name: &str,
+                        self_ty: Ty<'tcx>,
+                        params: Vec<Ty<'tcx>>)
+                        -> (Ty<'tcx>, Literal<'tcx>) {
+        let method_name = token::intern(method_name);
+        let substs = Substs::new_trait(params, vec![], self_ty);
+        for trait_item in self.tcx.trait_items(trait_def_id).iter() {
+            match *trait_item {
+                ty::ImplOrTraitItem::MethodTraitItem(ref method) => {
+                    if method.name == method_name {
+                        let method_ty = self.tcx.lookup_item_type(method.def_id);
+                        let method_ty = method_ty.ty.subst(self.tcx, &substs);
+                        return (method_ty, Literal::Item {
+                            def_id: method.def_id,
+                            substs: self.tcx.mk_substs(substs),
+                        });
+                    }
+                }
+                ty::ImplOrTraitItem::ConstTraitItem(..) |
+                ty::ImplOrTraitItem::TypeTraitItem(..) => {}
+            }
+        }
+
+        bug!("found no method `{}` in `{:?}`", method_name, trait_def_id);
     }
 
     pub fn num_variants(&mut self, adt_def: ty::AdtDef<'tcx>) -> usize {
@@ -99,11 +140,7 @@ impl<'a,'tcx:'a> Cx<'a, 'tcx> {
         self.tcx.type_needs_drop_given_env(ty, &self.infcx.parameter_environment)
     }
 
-    pub fn span_bug(&mut self, span: Span, message: &str) -> ! {
-        self.tcx.sess.span_bug(span, message)
-    }
-
-    pub fn tcx(&self) -> &'a ty::ctxt<'tcx> {
+    pub fn tcx(&self) -> &'a TyCtxt<'tcx> {
         self.tcx
     }
 }

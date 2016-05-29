@@ -9,17 +9,17 @@
 // except according to those terms.
 
 mod Y {
-    type X = usize;
+    pub type X = usize;
     extern {
-        static x: *const usize;
+        pub static x: *const usize;
     }
-    fn foo(value: *const X) -> *const X {
+    pub fn foo(value: *const X) -> *const X {
         value
     }
 }
 
 static foo: *const Y::X = Y::foo(Y::x as *const Y::X);
-//~^ ERROR the trait `core::marker::Sync` is not implemented for the type
+//~^ ERROR `*const usize: std::marker::Sync` is not satisfied
 //~| ERROR cannot refer to other statics by value, use the address-of operator or a constant instead
 //~| ERROR E0015
 

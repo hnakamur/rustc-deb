@@ -15,12 +15,12 @@ use self::ResolveReason::*;
 
 use astconv::AstConv;
 use check::FnCtxt;
-use middle::def_id::DefId;
-use middle::pat_util;
-use middle::ty::{self, Ty, MethodCall, MethodCallee};
-use middle::ty::adjustment;
-use middle::ty::fold::{TypeFolder,TypeFoldable};
-use middle::infer;
+use hir::def_id::DefId;
+use hir::pat_util;
+use rustc::ty::{self, Ty, TyCtxt, MethodCall, MethodCallee};
+use rustc::ty::adjustment;
+use rustc::ty::fold::{TypeFolder,TypeFoldable};
+use rustc::infer;
 use write_substs_to_tcx;
 use write_ty_to_tcx;
 
@@ -28,10 +28,9 @@ use std::cell::Cell;
 
 use syntax::ast;
 use syntax::codemap::{DUMMY_SP, Span};
-use rustc_front::print::pprust::pat_to_string;
-use rustc_front::intravisit::{self, Visitor};
-use rustc_front::util as hir_util;
-use rustc_front::hir;
+use rustc::hir::print::pat_to_string;
+use rustc::hir::intravisit::{self, Visitor};
+use rustc::hir;
 
 ///////////////////////////////////////////////////////////////////////////
 // Entry point functions
@@ -85,7 +84,7 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         WritebackCx { fcx: fcx }
     }
 
-    fn tcx(&self) -> &'cx ty::ctxt<'tcx> {
+    fn tcx(&self) -> &'cx TyCtxt<'tcx> {
         self.fcx.tcx()
     }
 
@@ -112,7 +111,7 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
                     // system.
                     match e.node {
                         hir::ExprBinary(..) => {
-                            if !hir_util::is_by_value_binop(op.node) {
+                            if !op.node.is_by_value() {
                                 self.fcx.inh.tables.borrow_mut().adjustments.remove(&lhs.id);
                             }
                         },
@@ -142,7 +141,7 @@ impl<'cx, 'tcx, 'v> Visitor<'v> for WritebackCx<'cx, 'tcx> {
             return;
         }
 
-        self.visit_node_id(ResolvingExpr(s.span), hir_util::stmt_id(s));
+        self.visit_node_id(ResolvingExpr(s.span), s.node.id());
         intravisit::walk_stmt(self, s);
     }
 
@@ -381,7 +380,7 @@ enum ResolveReason {
 }
 
 impl ResolveReason {
-    fn span(&self, tcx: &ty::ctxt) -> Span {
+    fn span(&self, tcx: &TyCtxt) -> Span {
         match *self {
             ResolvingExpr(s) => s,
             ResolvingLocal(s) => s,
@@ -411,7 +410,7 @@ impl ResolveReason {
 // unresolved types and so forth.
 
 struct Resolver<'cx, 'tcx: 'cx> {
-    tcx: &'cx ty::ctxt<'tcx>,
+    tcx: &'cx TyCtxt<'tcx>,
     infcx: &'cx infer::InferCtxt<'cx, 'tcx>,
     writeback_errors: &'cx Cell<bool>,
     reason: ResolveReason,
@@ -487,7 +486,7 @@ impl<'cx, 'tcx> Resolver<'cx, 'tcx> {
 }
 
 impl<'cx, 'tcx> TypeFolder<'tcx> for Resolver<'cx, 'tcx> {
-    fn tcx<'a>(&'a self) -> &'a ty::ctxt<'tcx> {
+    fn tcx<'a>(&'a self) -> &'a TyCtxt<'tcx> {
         self.tcx
     }
 

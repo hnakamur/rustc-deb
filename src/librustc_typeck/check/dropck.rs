@@ -10,18 +10,17 @@
 
 use check::regionck::{self, Rcx};
 
-use middle::def_id::DefId;
+use hir::def_id::DefId;
 use middle::free_region::FreeRegionMap;
-use middle::infer;
+use rustc::infer;
 use middle::region;
-use middle::subst::{self, Subst};
-use middle::traits;
-use middle::ty::{self, Ty};
+use rustc::ty::subst::{self, Subst};
+use rustc::ty::{self, Ty, TyCtxt};
+use rustc::traits::{self, ProjectionMode};
 use util::nodemap::FnvHashSet;
 
 use syntax::ast;
 use syntax::codemap::{self, Span};
-use syntax::parse::token::special_idents;
 
 /// check_drop_impl confirms that the Drop implementation identfied by
 /// `drop_impl_did` is not any more specialized than the type it is
@@ -40,18 +39,18 @@ use syntax::parse::token::special_idents;
 ///    struct/enum definition for the nominal type itself (i.e.
 ///    cannot do `struct S<T>; impl<T:Clone> Drop for S<T> { ... }`).
 ///
-pub fn check_drop_impl(tcx: &ty::ctxt, drop_impl_did: DefId) -> Result<(), ()> {
+pub fn check_drop_impl(tcx: &TyCtxt, drop_impl_did: DefId) -> Result<(), ()> {
     let ty::TypeScheme { generics: ref dtor_generics,
                          ty: dtor_self_type } = tcx.lookup_item_type(drop_impl_did);
     let dtor_predicates = tcx.lookup_predicates(drop_impl_did);
     match dtor_self_type.sty {
         ty::TyEnum(adt_def, self_to_impl_substs) |
         ty::TyStruct(adt_def, self_to_impl_substs) => {
-            try!(ensure_drop_params_and_item_params_correspond(tcx,
-                                                               drop_impl_did,
-                                                               dtor_generics,
-                                                               &dtor_self_type,
-                                                               adt_def.did));
+            ensure_drop_params_and_item_params_correspond(tcx,
+                                                          drop_impl_did,
+                                                          dtor_generics,
+                                                          &dtor_self_type,
+                                                          adt_def.did)?;
 
             ensure_drop_predicates_are_implied_by_item_defn(tcx,
                                                             drop_impl_did,
@@ -63,15 +62,15 @@ pub fn check_drop_impl(tcx: &ty::ctxt, drop_impl_did: DefId) -> Result<(), ()> {
             // Destructors only work on nominal types.  This was
             // already checked by coherence, so we can panic here.
             let span = tcx.map.def_id_span(drop_impl_did, codemap::DUMMY_SP);
-            tcx.sess.span_bug(
-                span, &format!("should have been rejected by coherence check: {}",
-                               dtor_self_type));
+            span_bug!(span,
+                      "should have been rejected by coherence check: {}",
+                      dtor_self_type);
         }
     }
 }
 
 fn ensure_drop_params_and_item_params_correspond<'tcx>(
-    tcx: &ty::ctxt<'tcx>,
+    tcx: &TyCtxt<'tcx>,
     drop_impl_did: DefId,
     drop_impl_generics: &ty::Generics<'tcx>,
     drop_impl_ty: &ty::Ty<'tcx>,
@@ -83,7 +82,10 @@ fn ensure_drop_params_and_item_params_correspond<'tcx>(
     // check that the impl type can be made to match the trait type.
 
     let impl_param_env = ty::ParameterEnvironment::for_item(tcx, self_type_node_id);
-    let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, Some(impl_param_env));
+    let infcx = infer::new_infer_ctxt(tcx,
+                                      &tcx.tables,
+                                      Some(impl_param_env),
+                                      ProjectionMode::AnyFinal);
     let mut fulfillment_cx = traits::FulfillmentContext::new();
 
     let named_type = tcx.lookup_item_type(self_type_did).ty;
@@ -120,7 +122,7 @@ fn ensure_drop_params_and_item_params_correspond<'tcx>(
 /// Confirms that every predicate imposed by dtor_predicates is
 /// implied by assuming the predicates attached to self_type_did.
 fn ensure_drop_predicates_are_implied_by_item_defn<'tcx>(
-    tcx: &ty::ctxt<'tcx>,
+    tcx: &TyCtxt<'tcx>,
     drop_impl_did: DefId,
     dtor_predicates: &ty::GenericPredicates<'tcx>,
     self_type_did: DefId,
@@ -274,8 +276,7 @@ pub fn check_safety_of_destructor_if_necessary<'a, 'tcx>(rcx: &mut Rcx<'a, 'tcx>
            typ, scope);
 
     let parent_scope = rcx.tcx().region_maps.opt_encl_scope(scope).unwrap_or_else(|| {
-        rcx.tcx().sess.span_bug(
-            span, &format!("no enclosing scope found for scope: {:?}", scope))
+        span_bug!(span, "no enclosing scope found for scope: {:?}", scope)
     });
 
     let result = iterate_over_potentially_unsafe_regions_in_type(
@@ -299,7 +300,7 @@ pub fn check_safety_of_destructor_if_necessary<'a, 'tcx>(rcx: &mut Rcx<'a, 'tcx>
                     // no need for an additional note if the overflow
                     // was somehow on the root.
                 }
-                TypeContext::ADT { def_id, variant, field, field_index } => {
+                TypeContext::ADT { def_id, variant, field } => {
                     let adt = tcx.lookup_adt_def(def_id);
                     let variant_name = match adt.adt_kind() {
                         ty::AdtKind::Enum => format!("enum {} variant {}",
@@ -308,17 +309,12 @@ pub fn check_safety_of_destructor_if_necessary<'a, 'tcx>(rcx: &mut Rcx<'a, 'tcx>
                         ty::AdtKind::Struct => format!("struct {}",
                                                        tcx.item_path_str(def_id))
                     };
-                    let field_name = if field == special_idents::unnamed_field.name {
-                        format!("#{}", field_index)
-                    } else {
-                        format!("`{}`", field)
-                    };
                     span_note!(
                         &mut err,
                         span,
                         "overflowed on {} field {} type: {}",
                         variant_name,
-                        field_name,
+                        field,
                         detected_on_typ);
                 }
             }
@@ -338,7 +334,6 @@ enum TypeContext {
         def_id: DefId,
         variant: ast::Name,
         field: ast::Name,
-        field_index: usize
     }
 }
 
@@ -452,20 +447,19 @@ fn iterate_over_potentially_unsafe_regions_in_type<'a, 'b, 'tcx>(
         ty::TyStruct(def, substs) | ty::TyEnum(def, substs) => {
             let did = def.did;
             for variant in &def.variants {
-                for (i, field) in variant.fields.iter().enumerate() {
+                for field in variant.fields.iter() {
                     let fty = field.ty(tcx, substs);
                     let fty = cx.rcx.fcx.resolve_type_vars_if_possible(
                         cx.rcx.fcx.normalize_associated_types_in(cx.span, &fty));
-                    try!(iterate_over_potentially_unsafe_regions_in_type(
+                    iterate_over_potentially_unsafe_regions_in_type(
                         cx,
                         TypeContext::ADT {
                             def_id: did,
                             field: field.name,
                             variant: variant.name,
-                            field_index: i
                         },
                         fty,
-                        depth+1))
+                        depth+1)?
                 }
             }
             Ok(())
@@ -474,8 +468,7 @@ fn iterate_over_potentially_unsafe_regions_in_type<'a, 'b, 'tcx>(
         ty::TyTuple(ref tys) |
         ty::TyClosure(_, box ty::ClosureSubsts { upvar_tys: ref tys, .. }) => {
             for ty in tys {
-                try!(iterate_over_potentially_unsafe_regions_in_type(
-                    cx, context, ty, depth+1))
+                iterate_over_potentially_unsafe_regions_in_type(cx, context, ty, depth+1)?
             }
             Ok(())
         }
@@ -487,7 +480,7 @@ fn iterate_over_potentially_unsafe_regions_in_type<'a, 'b, 'tcx>(
             Ok(())
         }
 
-        ty::TyBareFn(..) => {
+        ty::TyFnDef(..) | ty::TyFnPtr(_) => {
             // FIXME(#26656): this type is always destruction-safe, but
             // it implicitly witnesses Self: Fn, which can be false.
             Ok(())
@@ -499,11 +492,11 @@ fn iterate_over_potentially_unsafe_regions_in_type<'a, 'b, 'tcx>(
         }
 
         // these are always dtorck
-        ty::TyTrait(..) | ty::TyProjection(_) => unreachable!(),
+        ty::TyTrait(..) | ty::TyProjection(_) => bug!(),
     }
 }
 
-fn has_dtor_of_interest<'tcx>(tcx: &ty::ctxt<'tcx>,
+fn has_dtor_of_interest<'tcx>(tcx: &TyCtxt<'tcx>,
                               ty: ty::Ty<'tcx>) -> bool {
     match ty.sty {
         ty::TyEnum(def, _) | ty::TyStruct(def, _) => {

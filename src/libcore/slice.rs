@@ -38,6 +38,7 @@ use cmp::{Ordering, PartialEq, PartialOrd, Eq, Ord};
 use cmp::Ordering::{Less, Equal, Greater};
 use cmp;
 use default::Default;
+use fmt;
 use intrinsics::assume;
 use iter::*;
 use ops::{FnMut, self, Index};
@@ -49,10 +50,12 @@ use result::Result::{Ok, Err};
 use ptr;
 use mem;
 use marker::{Copy, Send, Sync, self};
-use raw::Repr;
-// Avoid conflicts with *both* the Slice trait (buggy) and the `slice::raw` module.
-use raw::Slice as RawSlice;
 
+#[repr(C)]
+struct Repr<T> {
+    pub data: *const T,
+    pub len: usize,
+}
 
 //
 // Extension traits
@@ -61,7 +64,7 @@ use raw::Slice as RawSlice;
 /// Extension methods for slices.
 #[unstable(feature = "core_slice_ext",
            reason = "stable interface provided by `impl [T]` in later crates",
-           issue = "27701")]
+           issue = "32110")]
 #[allow(missing_docs)] // documented elsewhere
 pub trait SliceExt {
     type Item;
@@ -151,8 +154,8 @@ pub trait SliceExt {
     fn ends_with(&self, needle: &[Self::Item]) -> bool where Self::Item: PartialEq;
 
     #[stable(feature = "clone_from_slice", since = "1.7.0")]
-    fn clone_from_slice(&mut self, &[Self::Item]) where Self::Item: Clone;
-    #[unstable(feature = "copy_from_slice", issue = "31755")]
+    fn clone_from_slice(&mut self, src: &[Self::Item]) where Self::Item: Clone;
+    #[stable(feature = "copy_from_slice", since = "1.9.0")]
     fn copy_from_slice(&mut self, src: &[Self::Item]) where Self::Item: Copy;
 }
 
@@ -182,7 +185,7 @@ macro_rules! slice_ref {
 
 #[unstable(feature = "core_slice_ext",
            reason = "stable interface provided by `impl [T]` in later crates",
-           issue = "27701")]
+           issue = "32110")]
 impl<T> SliceExt for [T] {
     type Item = T;
 
@@ -285,12 +288,12 @@ impl<T> SliceExt for [T] {
 
     #[inline]
     unsafe fn get_unchecked(&self, index: usize) -> &T {
-        &*(self.repr().data.offset(index as isize))
+        &*(self.as_ptr().offset(index as isize))
     }
 
     #[inline]
     fn as_ptr(&self) -> *const T {
-        self.repr().data
+        self as *const [T] as *const T
     }
 
     fn binary_search_by<F>(&self, mut f: F) -> Result<usize, usize> where
@@ -316,7 +319,11 @@ impl<T> SliceExt for [T] {
     }
 
     #[inline]
-    fn len(&self) -> usize { self.repr().len }
+    fn len(&self) -> usize {
+        unsafe {
+            mem::transmute::<&[T], Repr<T>>(self).len
+        }
+    }
 
     #[inline]
     fn get_mut(&mut self, index: usize) -> Option<&mut T> {
@@ -448,12 +455,12 @@ impl<T> SliceExt for [T] {
 
     #[inline]
     unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut T {
-        &mut *(self.repr().data as *mut T).offset(index as isize)
+        &mut *self.as_mut_ptr().offset(index as isize)
     }
 
     #[inline]
     fn as_mut_ptr(&mut self) -> *mut T {
-        self.repr().data as *mut T
+        self as *mut [T] as *mut T
     }
 
     #[inline]
@@ -533,6 +540,18 @@ fn slice_index_order_fail(index: usize, end: usize) -> ! {
     panic!("slice index starts at {} but ends at {}", index, end);
 }
 
+// FIXME implement indexing with inclusive ranges
+
+/// Implements slicing with syntax `&self[begin .. end]`.
+///
+/// Returns a slice of self for the index range [`begin`..`end`).
+///
+/// This operation is `O(1)`.
+///
+/// # Panics
+///
+/// Requires that `begin <= end` and `end <= self.len()`,
+/// otherwise slicing will panic.
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ops::Index<ops::Range<usize>> for [T] {
     type Output = [T];
@@ -552,24 +571,43 @@ impl<T> ops::Index<ops::Range<usize>> for [T] {
         }
     }
 }
+
+/// Implements slicing with syntax `&self[.. end]`.
+///
+/// Returns a slice of self from the beginning until but not including
+/// the index `end`.
+///
+/// Equivalent to `&self[0 .. end]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ops::Index<ops::RangeTo<usize>> for [T] {
     type Output = [T];
 
     #[inline]
     fn index(&self, index: ops::RangeTo<usize>) -> &[T] {
-        self.index(ops::Range{ start: 0, end: index.end })
+        self.index(0 .. index.end)
     }
 }
+
+/// Implements slicing with syntax `&self[begin ..]`.
+///
+/// Returns a slice of self from and including the index `begin` until the end.
+///
+/// Equivalent to `&self[begin .. self.len()]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ops::Index<ops::RangeFrom<usize>> for [T] {
     type Output = [T];
 
     #[inline]
     fn index(&self, index: ops::RangeFrom<usize>) -> &[T] {
-        self.index(ops::Range{ start: index.start, end: self.len() })
+        self.index(index.start .. self.len())
     }
 }
+
+/// Implements slicing with syntax `&self[..]`.
+///
+/// Returns a slice of the whole slice. This operation can not panic.
+///
+/// Equivalent to `&self[0 .. self.len()]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ops::Index<RangeFull> for [T] {
     type Output = [T];
@@ -580,6 +618,41 @@ impl<T> ops::Index<RangeFull> for [T] {
     }
 }
 
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<T> ops::Index<ops::RangeInclusive<usize>> for [T] {
+    type Output = [T];
+
+    #[inline]
+    fn index(&self, index: ops::RangeInclusive<usize>) -> &[T] {
+        match index {
+            ops::RangeInclusive::Empty { .. } => &[],
+            ops::RangeInclusive::NonEmpty { end, .. } if end == usize::max_value() =>
+                panic!("attempted to index slice up to maximum usize"),
+            ops::RangeInclusive::NonEmpty { start, end } =>
+                self.index(start .. end+1)
+        }
+    }
+}
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<T> ops::Index<ops::RangeToInclusive<usize>> for [T] {
+    type Output = [T];
+
+    #[inline]
+    fn index(&self, index: ops::RangeToInclusive<usize>) -> &[T] {
+        self.index(0...index.end)
+    }
+}
+
+/// Implements mutable slicing with syntax `&mut self[begin .. end]`.
+///
+/// Returns a slice of self for the index range [`begin`..`end`).
+///
+/// This operation is `O(1)`.
+///
+/// # Panics
+///
+/// Requires that `begin <= end` and `end <= self.len()`,
+/// otherwise slicing will panic.
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ops::IndexMut<ops::Range<usize>> for [T] {
     #[inline]
@@ -597,21 +670,40 @@ impl<T> ops::IndexMut<ops::Range<usize>> for [T] {
         }
     }
 }
+
+/// Implements mutable slicing with syntax `&mut self[.. end]`.
+///
+/// Returns a slice of self from the beginning until but not including
+/// the index `end`.
+///
+/// Equivalent to `&mut self[0 .. end]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ops::IndexMut<ops::RangeTo<usize>> for [T] {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeTo<usize>) -> &mut [T] {
-        self.index_mut(ops::Range{ start: 0, end: index.end })
+        self.index_mut(0 .. index.end)
     }
 }
+
+/// Implements mutable slicing with syntax `&mut self[begin ..]`.
+///
+/// Returns a slice of self from and including the index `begin` until the end.
+///
+/// Equivalent to `&mut self[begin .. self.len()]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ops::IndexMut<ops::RangeFrom<usize>> for [T] {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeFrom<usize>) -> &mut [T] {
         let len = self.len();
-        self.index_mut(ops::Range{ start: index.start, end: len })
+        self.index_mut(index.start .. len)
     }
 }
+
+/// Implements mutable slicing with syntax `&mut self[..]`.
+///
+/// Returns a slice of the whole slice. This operation can not panic.
+///
+/// Equivalent to `&mut self[0 .. self.len()]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ops::IndexMut<RangeFull> for [T] {
     #[inline]
@@ -620,6 +712,26 @@ impl<T> ops::IndexMut<RangeFull> for [T] {
     }
 }
 
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<T> ops::IndexMut<ops::RangeInclusive<usize>> for [T] {
+    #[inline]
+    fn index_mut(&mut self, index: ops::RangeInclusive<usize>) -> &mut [T] {
+        match index {
+            ops::RangeInclusive::Empty { .. } => &mut [],
+            ops::RangeInclusive::NonEmpty { end, .. } if end == usize::max_value() =>
+                panic!("attempted to index slice up to maximum usize"),
+            ops::RangeInclusive::NonEmpty { start, end } =>
+                self.index_mut(start .. end+1)
+        }
+    }
+}
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<T> ops::IndexMut<ops::RangeToInclusive<usize>> for [T] {
+    #[inline]
+    fn index_mut(&mut self, index: ops::RangeToInclusive<usize>) -> &mut [T] {
+        self.index_mut(0...index.end)
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Common traits
@@ -772,6 +884,15 @@ pub struct Iter<'a, T: 'a> {
     _marker: marker::PhantomData<&'a T>,
 }
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<'a, T: 'a + fmt::Debug> fmt::Debug for Iter<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("Iter")
+            .field(&self.as_slice())
+            .finish()
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<'a, T: Sync> Sync for Iter<'a, T> {}
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -820,6 +941,15 @@ pub struct IterMut<'a, T: 'a> {
     _marker: marker::PhantomData<&'a mut T>,
 }
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<'a, T: 'a + fmt::Debug> fmt::Debug for IterMut<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("IterMut")
+            .field(&make_slice!(self.ptr, self.end))
+            .finish()
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<'a, T: Sync> Sync for IterMut<'a, T> {}
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -859,6 +989,7 @@ impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
 
 /// An internal abstraction over the splitting iterators, so that
 /// splitn, splitn_mut etc can be implemented once.
+#[doc(hidden)]
 trait SplitIter: DoubleEndedIterator {
     /// Mark the underlying iterator as complete, extracting the remaining
     /// portion of the slice.
@@ -872,6 +1003,16 @@ pub struct Split<'a, T:'a, P> where P: FnMut(&T) -> bool {
     v: &'a [T],
     pred: P,
     finished: bool
+}
+
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for Split<'a, T, P> where P: FnMut(&T) -> bool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Split")
+            .field("v", &self.v)
+            .field("finished", &self.finished)
+            .finish()
+    }
 }
 
 // FIXME(#19839) Remove in favor of `#[derive(Clone)]`
@@ -945,6 +1086,16 @@ pub struct SplitMut<'a, T:'a, P> where P: FnMut(&T) -> bool {
     v: &'a mut [T],
     pred: P,
     finished: bool
+}
+
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitMut<'a, T, P> where P: FnMut(&T) -> bool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SplitMut")
+            .field("v", &self.v)
+            .field("finished", &self.finished)
+            .finish()
+    }
 }
 
 impl<'a, T, P> SplitIter for SplitMut<'a, T, P> where P: FnMut(&T) -> bool {
@@ -1021,6 +1172,7 @@ impl<'a, T, P> DoubleEndedIterator for SplitMut<'a, T, P> where
 /// An private iterator over subslices separated by elements that
 /// match a predicate function, splitting at most a fixed number of
 /// times.
+#[derive(Debug)]
 struct GenericSplitN<I> {
     iter: I,
     count: usize,
@@ -1056,12 +1208,30 @@ pub struct SplitN<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     inner: GenericSplitN<Split<'a, T, P>>
 }
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitN<'a, T, P> where P: FnMut(&T) -> bool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SplitN")
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
 /// An iterator over subslices separated by elements that match a
 /// predicate function, limited to a given number of splits, starting
 /// from the end of the slice.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct RSplitN<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     inner: GenericSplitN<Split<'a, T, P>>
+}
+
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for RSplitN<'a, T, P> where P: FnMut(&T) -> bool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("RSplitN")
+            .field("inner", &self.inner)
+            .finish()
+    }
 }
 
 /// An iterator over subslices separated by elements that match a predicate
@@ -1071,12 +1241,30 @@ pub struct SplitNMut<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     inner: GenericSplitN<SplitMut<'a, T, P>>
 }
 
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitNMut<'a, T, P> where P: FnMut(&T) -> bool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SplitNMut")
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
 /// An iterator over subslices separated by elements that match a
 /// predicate function, limited to a given number of splits, starting
 /// from the end of the slice.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct RSplitNMut<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     inner: GenericSplitN<SplitMut<'a, T, P>>
+}
+
+#[stable(feature = "core_impl_debug", since = "1.9.0")]
+impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for RSplitNMut<'a, T, P> where P: FnMut(&T) -> bool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("RSplitNMut")
+            .field("inner", &self.inner)
+            .finish()
+    }
 }
 
 macro_rules! forward_iterator {
@@ -1106,6 +1294,7 @@ forward_iterator! { SplitNMut: T, &'a mut [T] }
 forward_iterator! { RSplitNMut: T, &'a mut [T] }
 
 /// An iterator over overlapping subslices of length `size`.
+#[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Windows<'a, T:'a> {
     v: &'a [T],
@@ -1199,6 +1388,7 @@ impl<'a, T> ExactSizeIterator for Windows<'a, T> {}
 ///
 /// When the slice len is not evenly divided by the chunk size, the last slice
 /// of the iteration will be the remainder.
+#[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Chunks<'a, T:'a> {
     v: &'a [T],
@@ -1299,6 +1489,7 @@ impl<'a, T> ExactSizeIterator for Chunks<'a, T> {}
 /// An iterator over a slice in (non-overlapping) mutable chunks (`size`
 /// elements at a time). When the slice len is not evenly divided by the chunk
 /// size, the last slice of the iteration will be the remainder.
+#[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct ChunksMut<'a, T:'a> {
     v: &'a mut [T],
@@ -1429,7 +1620,7 @@ impl<'a, T> ExactSizeIterator for ChunksMut<'a, T> {}
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn from_raw_parts<'a, T>(p: *const T, len: usize) -> &'a [T] {
-    mem::transmute(RawSlice { data: p, len: len })
+    mem::transmute(Repr { data: p, len: len })
 }
 
 /// Performs the same functionality as `from_raw_parts`, except that a mutable
@@ -1441,62 +1632,64 @@ pub unsafe fn from_raw_parts<'a, T>(p: *const T, len: usize) -> &'a [T] {
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn from_raw_parts_mut<'a, T>(p: *mut T, len: usize) -> &'a mut [T] {
-    mem::transmute(RawSlice { data: p, len: len })
+    mem::transmute(Repr { data: p, len: len })
 }
 
 //
-// Submodules
+// Comparison traits
 //
 
-/// Operations on `[u8]`.
-#[unstable(feature = "slice_bytes", reason = "needs review",
-           issue = "27740")]
-#[rustc_deprecated(reason = "unidiomatic functions not pulling their weight",
-                   since = "1.6.0")]
-#[allow(deprecated)]
-pub mod bytes {
-    use ptr;
-    use slice::SliceExt;
-
-    /// A trait for operations on mutable `[u8]`s.
-    pub trait MutableByteVector {
-        /// Sets all bytes of the receiver to the given value.
-        fn set_memory(&mut self, value: u8);
-    }
-
-    impl MutableByteVector for [u8] {
-        #[inline]
-        fn set_memory(&mut self, value: u8) {
-            unsafe { ptr::write_bytes(self.as_mut_ptr(), value, self.len()) };
-        }
-    }
-
-    /// Copies data from `src` to `dst`
+extern {
+    /// Call implementation provided memcmp
     ///
-    /// Panics if the length of `dst` is less than the length of `src`.
-    #[inline]
-    pub fn copy_memory(src: &[u8], dst: &mut [u8]) {
-        let len_src = src.len();
-        assert!(dst.len() >= len_src);
-        // `dst` is unaliasable, so we know statically it doesn't overlap
-        // with `src`.
-        unsafe {
-            ptr::copy_nonoverlapping(src.as_ptr(),
-                                     dst.as_mut_ptr(),
-                                     len_src);
-        }
-    }
+    /// Interprets the data as u8.
+    ///
+    /// Return 0 for equal, < 0 for less than and > 0 for greater
+    /// than.
+    // FIXME(#32610): Return type should be c_int
+    fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32;
 }
-
-
-
-//
-// Boilerplate traits
-//
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<A, B> PartialEq<[B]> for [A] where A: PartialEq<B> {
     fn eq(&self, other: &[B]) -> bool {
+        SlicePartialEq::equal(self, other)
+    }
+
+    fn ne(&self, other: &[B]) -> bool {
+        SlicePartialEq::not_equal(self, other)
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: Eq> Eq for [T] {}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: Ord> Ord for [T] {
+    fn cmp(&self, other: &[T]) -> Ordering {
+        SliceOrd::compare(self, other)
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: PartialOrd> PartialOrd for [T] {
+    fn partial_cmp(&self, other: &[T]) -> Option<Ordering> {
+        SlicePartialOrd::partial_compare(self, other)
+    }
+}
+
+#[doc(hidden)]
+// intermediate trait for specialization of slice's PartialEq
+trait SlicePartialEq<B> {
+    fn equal(&self, other: &[B]) -> bool;
+    fn not_equal(&self, other: &[B]) -> bool;
+}
+
+// Generic slice equality
+impl<A, B> SlicePartialEq<B> for [A]
+    where A: PartialEq<B>
+{
+    default fn equal(&self, other: &[B]) -> bool {
         if self.len() != other.len() {
             return false;
         }
@@ -1509,7 +1702,8 @@ impl<A, B> PartialEq<[B]> for [A] where A: PartialEq<B> {
 
         true
     }
-    fn ne(&self, other: &[B]) -> bool {
+
+    default fn not_equal(&self, other: &[B]) -> bool {
         if self.len() != other.len() {
             return true;
         }
@@ -1524,12 +1718,71 @@ impl<A, B> PartialEq<[B]> for [A] where A: PartialEq<B> {
     }
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Eq> Eq for [T] {}
+// Use memcmp for bytewise equality when the types allow
+impl<A> SlicePartialEq<A> for [A]
+    where A: PartialEq<A> + BytewiseEquality
+{
+    fn equal(&self, other: &[A]) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        unsafe {
+            let size = mem::size_of_val(self);
+            memcmp(self.as_ptr() as *const u8,
+                   other.as_ptr() as *const u8, size) == 0
+        }
+    }
 
-#[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Ord> Ord for [T] {
-    fn cmp(&self, other: &[T]) -> Ordering {
+    fn not_equal(&self, other: &[A]) -> bool {
+        !self.equal(other)
+    }
+}
+
+#[doc(hidden)]
+// intermediate trait for specialization of slice's PartialOrd
+trait SlicePartialOrd<B> {
+    fn partial_compare(&self, other: &[B]) -> Option<Ordering>;
+}
+
+impl<A> SlicePartialOrd<A> for [A]
+    where A: PartialOrd
+{
+    default fn partial_compare(&self, other: &[A]) -> Option<Ordering> {
+        let l = cmp::min(self.len(), other.len());
+
+        // Slice to the loop iteration range to enable bound check
+        // elimination in the compiler
+        let lhs = &self[..l];
+        let rhs = &other[..l];
+
+        for i in 0..l {
+            match lhs[i].partial_cmp(&rhs[i]) {
+                Some(Ordering::Equal) => (),
+                non_eq => return non_eq,
+            }
+        }
+
+        self.len().partial_cmp(&other.len())
+    }
+}
+
+impl SlicePartialOrd<u8> for [u8] {
+    #[inline]
+    fn partial_compare(&self, other: &[u8]) -> Option<Ordering> {
+        Some(SliceOrd::compare(self, other))
+    }
+}
+
+#[doc(hidden)]
+// intermediate trait for specialization of slice's Ord
+trait SliceOrd<B> {
+    fn compare(&self, other: &[B]) -> Ordering;
+}
+
+impl<A> SliceOrd<A> for [A]
+    where A: Ord
+{
+    default fn compare(&self, other: &[A]) -> Ordering {
         let l = cmp::min(self.len(), other.len());
 
         // Slice to the loop iteration range to enable bound check
@@ -1548,23 +1801,38 @@ impl<T: Ord> Ord for [T] {
     }
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
-impl<T: PartialOrd> PartialOrd for [T] {
-    fn partial_cmp(&self, other: &[T]) -> Option<Ordering> {
-        let l = cmp::min(self.len(), other.len());
-
-        // Slice to the loop iteration range to enable bound check
-        // elimination in the compiler
-        let lhs = &self[..l];
-        let rhs = &other[..l];
-
-        for i in 0..l {
-            match lhs[i].partial_cmp(&rhs[i]) {
-                Some(Ordering::Equal) => (),
-                non_eq => return non_eq,
-            }
+// memcmp compares a sequence of unsigned bytes lexicographically.
+// this matches the order we want for [u8], but no others (not even [i8]).
+impl SliceOrd<u8> for [u8] {
+    #[inline]
+    fn compare(&self, other: &[u8]) -> Ordering {
+        let order = unsafe {
+            memcmp(self.as_ptr(), other.as_ptr(),
+                   cmp::min(self.len(), other.len()))
+        };
+        if order == 0 {
+            self.len().cmp(&other.len())
+        } else if order < 0 {
+            Less
+        } else {
+            Greater
         }
-
-        self.len().partial_cmp(&other.len())
     }
 }
+
+#[doc(hidden)]
+/// Trait implemented for types that can be compared for equality using
+/// their bytewise representation
+trait BytewiseEquality { }
+
+macro_rules! impl_marker_for {
+    ($traitname:ident, $($ty:ty)*) => {
+        $(
+            impl $traitname for $ty { }
+        )*
+    }
+}
+
+impl_marker_for!(BytewiseEquality,
+                 u8 i8 u16 i16 u32 i32 u64 i64 usize isize char bool);
+

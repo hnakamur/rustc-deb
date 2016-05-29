@@ -8,3 +8,5 @@ s! {
         _restorer: *mut ::c_void,
     }
 }
+
+pub const SYS_gettid: ::c_long = 178;

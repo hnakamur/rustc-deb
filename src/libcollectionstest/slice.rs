@@ -267,9 +267,9 @@ fn test_swap_remove_fail() {
 fn test_swap_remove_noncopyable() {
     // Tests that we don't accidentally run destructors twice.
     let mut v: Vec<Box<_>> = Vec::new();
-    v.push(box 0u8);
-    v.push(box 0u8);
-    v.push(box 0u8);
+    v.push(box 0);
+    v.push(box 0);
+    v.push(box 0);
     let mut _e = v.swap_remove(0);
     assert_eq!(v.len(), 2);
     _e = v.swap_remove(1);
@@ -574,18 +574,48 @@ fn test_slice_2() {
     assert_eq!(v[1], 3);
 }
 
+macro_rules! assert_order {
+    (Greater, $a:expr, $b:expr) => {
+        assert_eq!($a.cmp($b), Greater);
+        assert!($a > $b);
+    };
+    (Less, $a:expr, $b:expr) => {
+        assert_eq!($a.cmp($b), Less);
+        assert!($a < $b);
+    };
+    (Equal, $a:expr, $b:expr) => {
+        assert_eq!($a.cmp($b), Equal);
+        assert_eq!($a, $b);
+    }
+}
+
 #[test]
-fn test_total_ord() {
+fn test_total_ord_u8() {
+    let c = &[1u8, 2, 3];
+    assert_order!(Greater, &[1u8, 2, 3, 4][..], &c[..]);
+    let c = &[1u8, 2, 3, 4];
+    assert_order!(Less, &[1u8, 2, 3][..], &c[..]);
+    let c = &[1u8, 2, 3, 6];
+    assert_order!(Equal, &[1u8, 2, 3, 6][..], &c[..]);
+    let c = &[1u8, 2, 3, 4, 5, 6];
+    assert_order!(Less, &[1u8, 2, 3, 4, 5, 5, 5, 5][..], &c[..]);
+    let c = &[1u8, 2, 3, 4];
+    assert_order!(Greater, &[2u8, 2][..], &c[..]);
+}
+
+
+#[test]
+fn test_total_ord_i32() {
     let c = &[1, 2, 3];
-    [1, 2, 3, 4][..].cmp(c) == Greater;
+    assert_order!(Greater, &[1, 2, 3, 4][..], &c[..]);
     let c = &[1, 2, 3, 4];
-    [1, 2, 3][..].cmp(c) == Less;
+    assert_order!(Less, &[1, 2, 3][..], &c[..]);
     let c = &[1, 2, 3, 6];
-    [1, 2, 3, 4][..].cmp(c) == Equal;
+    assert_order!(Equal, &[1, 2, 3, 6][..], &c[..]);
     let c = &[1, 2, 3, 4, 5, 6];
-    [1, 2, 3, 4, 5, 5, 5, 5][..].cmp(c) == Less;
+    assert_order!(Less, &[1, 2, 3, 4, 5, 5, 5, 5][..], &c[..]);
     let c = &[1, 2, 3, 4];
-    [2, 2][..].cmp(c) == Greater;
+    assert_order!(Greater, &[2, 2][..], &c[..]);
 }
 
 #[test]
@@ -866,18 +896,6 @@ fn test_vec_default() {
 }
 
 #[test]
-#[allow(deprecated)]
-fn test_bytes_set_memory() {
-    use std::slice::bytes::MutableByteVector;
-
-    let mut values = [1,2,3,4,5];
-    values[0..5].set_memory(0xAB);
-    assert!(values == [0xAB, 0xAB, 0xAB, 0xAB, 0xAB]);
-    values[2..4].set_memory(0xFF);
-    assert!(values == [0xAB, 0xAB, 0xFF, 0xFF, 0xAB]);
-}
-
-#[test]
 #[should_panic]
 fn test_overflow_does_not_cause_segfault() {
     let mut v = vec![];
@@ -896,7 +914,7 @@ fn test_overflow_does_not_cause_segfault_managed() {
 
 #[test]
 fn test_mut_split_at() {
-    let mut values = [1u8,2,3,4,5];
+    let mut values = [1,2,3,4,5];
     {
         let (left, right) = values.split_at_mut(2);
         {

@@ -216,7 +216,7 @@ use cstore::{MetadataBlob, MetadataVec, MetadataArchive};
 use decoder;
 use encoder;
 
-use rustc::back::svh::Svh;
+use rustc::hir::svh::Svh;
 use rustc::session::Session;
 use rustc::session::filesearch::{FileSearch, FileMatches, FileDoesntMatch};
 use rustc::session::search_paths::PathKind;
@@ -300,16 +300,10 @@ impl<'a> Context<'a> {
     }
 
     pub fn load_library_crate(&mut self) -> Library {
-        match self.find_library_crate() {
-            Some(t) => t,
-            None => {
-                self.report_load_errs();
-                unreachable!()
-            }
-        }
+        self.find_library_crate().unwrap_or_else(|| self.report_load_errs())
     }
 
-    pub fn report_load_errs(&mut self) {
+    pub fn report_load_errs(&mut self) -> ! {
         let add = match self.root {
             &None => String::new(),
             &Some(ref r) => format!(" which `{}` depends on",
@@ -374,6 +368,7 @@ impl<'a> Context<'a> {
 
         err.emit();
         self.sess.abort_if_errors();
+        unreachable!();
     }
 
     fn find_library_crate(&mut self) -> Option<Library> {

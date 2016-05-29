@@ -12,8 +12,9 @@ use lint;
 use middle::cstore::CrateStore;
 use middle::dependency_format;
 use session::search_paths::PathKind;
+use ty::tls;
 use util::nodemap::{NodeMap, FnvHashMap};
-use mir::transform::MirPass;
+use mir::transform as mir_pass;
 
 use syntax::ast::{NodeId, NodeIdAssigner, Name};
 use syntax::codemap::{Span, MultiSpan};
@@ -24,6 +25,7 @@ use syntax::diagnostics;
 use syntax::feature_gate;
 use syntax::parse;
 use syntax::parse::ParseSess;
+use syntax::parse::token;
 use syntax::{ast, codemap};
 use syntax::feature_gate::AttributeType;
 
@@ -34,6 +36,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::rc::Rc;
+use std::fmt;
 
 pub mod config;
 pub mod filesearch;
@@ -60,11 +63,16 @@ pub struct Session {
     pub lint_store: RefCell<lint::LintStore>,
     pub lints: RefCell<NodeMap<Vec<(lint::LintId, Span, String)>>>,
     pub plugin_llvm_passes: RefCell<Vec<String>>,
-    pub plugin_mir_passes: RefCell<Vec<Box<MirPass>>>,
+    pub mir_passes: RefCell<mir_pass::Passes>,
     pub plugin_attributes: RefCell<Vec<(String, AttributeType)>>,
     pub crate_types: RefCell<Vec<config::CrateType>>,
     pub dependency_formats: RefCell<dependency_format::Dependencies>,
-    pub crate_metadata: RefCell<Vec<String>>,
+    // The crate_disambiguator is constructed out of all the `-C metadata`
+    // arguments passed to the compiler. Its value together with the crate-name
+    // forms a unique global identifier for the crate. It is used to allow
+    // multiple crates with the same name to coexist. See the
+    // trans::back::symbol_names module for more information.
+    pub crate_disambiguator: Cell<ast::Name>,
     pub features: RefCell<feature_gate::Features>,
 
     /// The maximum recursion limit for potentially infinitely recursive
@@ -210,21 +218,9 @@ impl Session {
             None => self.warn(msg),
         }
     }
-    pub fn opt_span_bug<S: Into<MultiSpan>>(&self, opt_sp: Option<S>, msg: &str) -> ! {
-        match opt_sp {
-            Some(sp) => self.span_bug(sp, msg),
-            None => self.bug(msg),
-        }
-    }
     /// Delay a span_bug() call until abort_if_errors()
     pub fn delay_span_bug<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         self.diagnostic().delay_span_bug(sp, msg)
-    }
-    pub fn span_bug<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
-        self.diagnostic().span_bug(sp, msg)
-    }
-    pub fn bug(&self, msg: &str) -> ! {
-        self.diagnostic().bug(msg)
     }
     pub fn note_without_error(&self, msg: &str) {
         self.diagnostic().note_without_error(msg)
@@ -246,7 +242,13 @@ impl Session {
         let lint_id = lint::LintId::of(lint);
         let mut lints = self.lints.borrow_mut();
         match lints.get_mut(&id) {
-            Some(arr) => { arr.push((lint_id, sp, msg)); return; }
+            Some(arr) => {
+                let tuple = (lint_id, sp, msg);
+                if !arr.contains(&tuple) {
+                    arr.push(tuple);
+                }
+                return;
+            }
             None => {}
         }
         lints.insert(id, vec!((lint_id, sp, msg)));
@@ -256,7 +258,7 @@ impl Session {
 
         match id.checked_add(count) {
             Some(next) => self.next_node_id.set(next),
-            None => self.bug("Input too large, ran out of node ids!")
+            None => bug!("Input too large, ran out of node ids!")
         }
 
         id
@@ -266,11 +268,6 @@ impl Session {
     }
     pub fn codemap<'a>(&'a self) -> &'a codemap::CodeMap {
         self.parse_sess.codemap()
-    }
-    // This exists to help with refactoring to eliminate impossible
-    // cases later on
-    pub fn impossible_case<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
-        self.span_bug(sp, &format!("impossible case reached: {}", msg));
     }
     pub fn verbose(&self) -> bool { self.opts.debugging_opts.verbose }
     pub fn time_passes(&self) -> bool { self.opts.debugging_opts.time_passes }
@@ -336,6 +333,10 @@ impl NodeIdAssigner for Session {
     fn peek_node_id(&self) -> NodeId {
         self.next_node_id.get().checked_add(1).unwrap()
     }
+
+    fn diagnostic(&self) -> &errors::Handler {
+        self.diagnostic()
+    }
 }
 
 fn split_msg_into_multilines(msg: &str) -> Option<String> {
@@ -350,11 +351,11 @@ fn split_msg_into_multilines(msg: &str) -> Option<String> {
             return None
     }
     let first = msg.match_indices("expected").filter(|s| {
-        s.0 > 0 && (msg.char_at_reverse(s.0) == ' ' ||
-                    msg.char_at_reverse(s.0) == '(')
+        let last = msg[..s.0].chars().rev().next();
+        last == Some(' ') || last == Some('(')
     }).map(|(a, b)| (a - 1, a + b.len()));
     let second = msg.match_indices("found").filter(|s| {
-        msg.char_at_reverse(s.0) == ' '
+        msg[..s.0].chars().rev().next() == Some(' ')
     }).map(|(a, b)| (a - 1, a + b.len()));
 
     let mut new_msg = String::new();
@@ -477,11 +478,11 @@ pub fn build_session_(sopts: config::Options,
         lint_store: RefCell::new(lint::LintStore::new()),
         lints: RefCell::new(NodeMap()),
         plugin_llvm_passes: RefCell::new(Vec::new()),
-        plugin_mir_passes: RefCell::new(Vec::new()),
+        mir_passes: RefCell::new(mir_pass::Passes::new()),
         plugin_attributes: RefCell::new(Vec::new()),
         crate_types: RefCell::new(Vec::new()),
         dependency_formats: RefCell::new(FnvHashMap()),
-        crate_metadata: RefCell::new(Vec::new()),
+        crate_disambiguator: Cell::new(token::intern("")),
         features: RefCell::new(feature_gate::Features::new()),
         recursion_limit: Cell::new(64),
         next_node_id: Cell::new(1),
@@ -524,4 +525,36 @@ pub fn compile_result_from_err_count(err_count: usize) -> CompileResult {
     } else {
         Err(err_count)
     }
+}
+
+#[cold]
+#[inline(never)]
+pub fn bug_fmt(file: &'static str, line: u32, args: fmt::Arguments) -> ! {
+    // this wrapper mostly exists so I don't have to write a fully
+    // qualified path of None::<Span> inside the bug!() macro defintion
+    opt_span_bug_fmt(file, line, None::<Span>, args);
+}
+
+#[cold]
+#[inline(never)]
+pub fn span_bug_fmt<S: Into<MultiSpan>>(file: &'static str,
+                                        line: u32,
+                                        span: S,
+                                        args: fmt::Arguments) -> ! {
+    opt_span_bug_fmt(file, line, Some(span), args);
+}
+
+fn opt_span_bug_fmt<S: Into<MultiSpan>>(file: &'static str,
+                                          line: u32,
+                                          span: Option<S>,
+                                          args: fmt::Arguments) -> ! {
+    tls::with_opt(move |tcx| {
+        let msg = format!("{}:{}: {}", file, line, args);
+        match (tcx, span) {
+            (Some(tcx), Some(span)) => tcx.sess.diagnostic().span_bug(span, &msg),
+            (Some(tcx), None) => tcx.sess.diagnostic().bug(&msg),
+            (None, _) => panic!(msg)
+        }
+    });
+    unreachable!();
 }

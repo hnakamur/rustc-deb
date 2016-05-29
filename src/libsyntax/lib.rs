@@ -29,15 +29,16 @@
 #![feature(libc)]
 #![feature(rustc_private)]
 #![feature(staged_api)]
-#![feature(str_char)]
 #![feature(str_escape)]
 #![feature(unicode)]
+#![feature(question_mark)]
 
 extern crate serialize;
 extern crate term;
 extern crate libc;
 #[macro_use] extern crate log;
 #[macro_use] #[no_link] extern crate rustc_bitflags;
+extern crate rustc_unicode;
 
 extern crate serialize as rustc_serialize; // used by deriving
 
@@ -89,7 +90,6 @@ pub mod syntax {
 
 pub mod abi;
 pub mod ast;
-pub mod ast_util;
 pub mod attr;
 pub mod codemap;
 pub mod config;

@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Error handling with the `Result` type
+//! Error handling with the `Result` type.
 //!
 //! `Result<T, E>` is the type used for returning and propagating
 //! errors. It is an enum with the variants, `Ok(T)`, representing
@@ -799,6 +799,7 @@ impl<'a, T, E> IntoIterator for &'a mut Result<T, E> {
 /////////////////////////////////////////////////////////////////////////////
 
 /// An iterator over a reference to the `Ok` variant of a `Result`.
+#[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Iter<'a, T: 'a> { inner: Option<&'a T> }
 
@@ -830,6 +831,7 @@ impl<'a, T> Clone for Iter<'a, T> {
 }
 
 /// An iterator over a mutable reference to the `Ok` variant of a `Result`.
+#[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IterMut<'a, T: 'a> { inner: Option<&'a mut T> }
 
@@ -856,6 +858,7 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
 impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
 
 /// An iterator over the value in a `Ok` variant of a `Result`.
+#[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IntoIter<T> { inner: Option<T> }
 

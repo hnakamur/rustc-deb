@@ -63,10 +63,10 @@ s! {
 
     pub struct fd_set {
         #[cfg(all(target_pointer_width = "64",
-                  target_os = "freebsd"))]
+                  any(target_os = "freebsd", target_os = "dragonfly")))]
         fds_bits: [i64; FD_SETSIZE / 64],
         #[cfg(not(all(target_pointer_width = "64",
-                      target_os = "freebsd")))]
+                      any(target_os = "freebsd", target_os = "dragonfly"))))]
         fds_bits: [i32; FD_SETSIZE / 32],
     }
 
@@ -85,11 +85,26 @@ s! {
     }
 
     pub struct utsname {
+        #[cfg(not(target_os = "dragonfly"))]
         pub sysname: [::c_char; 256],
+        #[cfg(target_os = "dragonfly")]
+        pub sysname: [::c_char; 32],
+        #[cfg(not(target_os = "dragonfly"))]
         pub nodename: [::c_char; 256],
+        #[cfg(target_os = "dragonfly")]
+        pub nodename: [::c_char; 32],
+        #[cfg(not(target_os = "dragonfly"))]
         pub release: [::c_char; 256],
+        #[cfg(target_os = "dragonfly")]
+        pub release: [::c_char; 32],
+        #[cfg(not(target_os = "dragonfly"))]
         pub version: [::c_char; 256],
+        #[cfg(target_os = "dragonfly")]
+        pub version: [::c_char; 32],
+        #[cfg(not(target_os = "dragonfly"))]
         pub machine: [::c_char; 256],
+        #[cfg(target_os = "dragonfly")]
+        pub machine: [::c_char; 32],
     }
 
     pub struct msghdr {
@@ -106,6 +121,14 @@ s! {
         __fsid_val: [::int32_t; 2],
     }
 }
+
+pub const LC_ALL: ::c_int = 0;
+pub const LC_COLLATE: ::c_int = 1;
+pub const LC_CTYPE: ::c_int = 2;
+pub const LC_MONETARY: ::c_int = 3;
+pub const LC_NUMERIC: ::c_int = 4;
+pub const LC_TIME: ::c_int = 5;
+pub const LC_MESSAGES: ::c_int = 6;
 
 pub const FIOCLEX: ::c_ulong = 0x20006601;
 pub const FIONBIO: ::c_ulong = 0x8004667e;
@@ -267,6 +290,7 @@ pub const NOFLSH: ::tcflag_t = 0x80000000;
 pub const WNOHANG: ::c_int = 1;
 
 pub const RTLD_NOW: ::c_int = 0x2;
+pub const RTLD_DEFAULT: *mut ::c_void = -2isize as *mut ::c_void;
 
 f! {
     pub fn FD_CLR(fd: ::c_int, set: *mut fd_set) -> () {
@@ -335,6 +359,6 @@ cfg_if! {
         mod freebsdlike;
         pub use self::freebsdlike::*;
     } else {
-        // ...
+        // Unknown target_os
     }
 }

@@ -12,12 +12,12 @@ use astconv::AstConv;
 use check::{FnCtxt, Inherited, blank_fn_ctxt, regionck};
 use constrained_type_params::{identify_constrained_type_params, Parameter};
 use CrateCtxt;
-use middle::def_id::DefId;
+use hir::def_id::DefId;
 use middle::region::{CodeExtent};
-use middle::subst::{self, TypeSpace, FnSpace, ParamSpace, SelfSpace};
-use middle::traits;
-use middle::ty::{self, Ty};
-use middle::ty::fold::{TypeFolder};
+use rustc::ty::subst::{self, TypeSpace, FnSpace, ParamSpace, SelfSpace};
+use rustc::traits;
+use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::fold::{TypeFolder};
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -25,8 +25,8 @@ use syntax::ast;
 use syntax::codemap::{Span};
 use syntax::errors::DiagnosticBuilder;
 use syntax::parse::token::{special_idents};
-use rustc_front::intravisit::{self, Visitor};
-use rustc_front::hir;
+use rustc::hir::intravisit::{self, Visitor};
+use rustc::hir;
 
 pub struct CheckTypeWellFormedVisitor<'ccx, 'tcx:'ccx> {
     ccx: &'ccx CrateCtxt<'ccx, 'tcx>,
@@ -42,7 +42,7 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
         }
     }
 
-    fn tcx(&self) -> &ty::ctxt<'tcx> {
+    fn tcx(&self) -> &TyCtxt<'tcx> {
         self.ccx.tcx
     }
 
@@ -255,9 +255,9 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
             let type_scheme = fcx.tcx().lookup_item_type(fcx.tcx().map.local_def_id(item.id));
             let item_ty = fcx.instantiate_type_scheme(item.span, free_substs, &type_scheme.ty);
             let bare_fn_ty = match item_ty.sty {
-                ty::TyBareFn(_, ref bare_fn_ty) => bare_fn_ty,
+                ty::TyFnDef(_, _, ref bare_fn_ty) => bare_fn_ty,
                 _ => {
-                    this.tcx().sess.span_bug(item.span, "Fn item without bare fn type");
+                    span_bug!(item.span, "Fn item without fn type");
                 }
             };
 
@@ -473,7 +473,7 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
         let name = match space {
             TypeSpace => ast_generics.ty_params[index].name,
             SelfSpace => special_idents::type_self.name,
-            FnSpace => self.tcx().sess.bug("Fn space occupied?"),
+            FnSpace => bug!("Fn space occupied?"),
         };
 
         ty::ParamTy { space: space, idx: index as u32, name: name }
@@ -489,7 +489,7 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
         match space {
             TypeSpace => ast_generics.ty_params[index].span,
             SelfSpace => item.span,
-            FnSpace => self.tcx().sess.span_bug(item.span, "Fn space occupied?"),
+            FnSpace => span_bug!(item.span, "Fn space occupied?"),
         }
     }
 
@@ -516,7 +516,7 @@ impl<'ccx, 'tcx> CheckTypeWellFormedVisitor<'ccx, 'tcx> {
     }
 }
 
-fn reject_shadowing_type_parameters<'tcx>(tcx: &ty::ctxt<'tcx>,
+fn reject_shadowing_type_parameters<'tcx>(tcx: &TyCtxt<'tcx>,
                                           span: Span,
                                           generics: &ty::Generics<'tcx>) {
     let impl_params = generics.types.get_slice(subst::TypeSpace).iter()
@@ -567,7 +567,7 @@ fn struct_variant<'a, 'tcx>(fcx: &FnCtxt<'a, 'tcx>,
     let fields =
         struct_def.fields().iter()
         .map(|field| {
-            let field_ty = fcx.tcx().node_id_to_type(field.node.id);
+            let field_ty = fcx.tcx().node_id_to_type(field.id);
             let field_ty = fcx.instantiate_type_scheme(field.span,
                                                        &fcx.inh
                                                            .infcx
@@ -623,13 +623,13 @@ pub fn error_380<'ccx,'tcx>(ccx: &'ccx CrateCtxt<'ccx, 'tcx>, span: Span) {
                Trait for ..`) must have no methods or associated items")
 }
 
-pub fn error_392<'tcx>(tcx: &ty::ctxt<'tcx>, span: Span, param_name: ast::Name)
+pub fn error_392<'tcx>(tcx: &TyCtxt<'tcx>, span: Span, param_name: ast::Name)
                        -> DiagnosticBuilder<'tcx> {
     struct_span_err!(tcx.sess, span, E0392,
                      "parameter `{}` is never used", param_name)
 }
 
-pub fn error_194<'tcx>(tcx: &ty::ctxt<'tcx>, span: Span, name: ast::Name) {
+pub fn error_194<'tcx>(tcx: &TyCtxt<'tcx>, span: Span, name: ast::Name) {
     span_err!(tcx.sess, span, E0194,
               "type parameter `{}` shadows another type parameter of the same name",
               name);

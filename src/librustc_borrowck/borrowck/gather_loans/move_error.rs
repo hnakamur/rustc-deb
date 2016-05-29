@@ -12,11 +12,11 @@ use borrowck::BorrowckCtxt;
 use rustc::middle::mem_categorization as mc;
 use rustc::middle::mem_categorization::Categorization;
 use rustc::middle::mem_categorization::InteriorOffsetKind as Kind;
-use rustc::middle::ty;
+use rustc::ty;
 use syntax::ast;
 use syntax::codemap;
 use syntax::errors::DiagnosticBuilder;
-use rustc_front::hir;
+use rustc::hir;
 
 pub struct MoveErrorCollector<'tcx> {
     errors: Vec<MoveError<'tcx>>
@@ -134,8 +134,7 @@ fn report_cannot_move_out_of<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                   a non-copy fixed-size array",
                                  b.ty)
             } else {
-                bccx.span_bug(move_from.span, "this path should not cause illegal move");
-                unreachable!();
+                span_bug!(move_from.span, "this path should not cause illegal move");
             }
         }
 
@@ -150,14 +149,12 @@ fn report_cannot_move_out_of<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                      b.ty)
                 },
                 _ => {
-                    bccx.span_bug(move_from.span, "this path should not cause illegal move");
-                    unreachable!();
+                    span_bug!(move_from.span, "this path should not cause illegal move");
                 }
             }
         }
         _ => {
-            bccx.span_bug(move_from.span, "this path should not cause illegal move");
-            unreachable!();
+            span_bug!(move_from.span, "this path should not cause illegal move");
         }
     }
 }

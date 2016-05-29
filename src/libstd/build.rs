@@ -23,23 +23,23 @@ fn main() {
 
     let target = env::var("TARGET").unwrap();
     let host = env::var("HOST").unwrap();
-    if !target.contains("apple") && !target.contains("msvc") {
+    if !target.contains("apple") && !target.contains("msvc") && !target.contains("emscripten"){
         build_libbacktrace(&host, &target);
     }
 
-    if target.contains("unknown-linux") {
-        if target.contains("musl") {
+    if target.contains("linux") {
+        if target.contains("musl") && (target.contains("x86_64") || target.contains("i686")) {
             println!("cargo:rustc-link-lib=static=unwind");
+        } else if target.contains("android") {
+            println!("cargo:rustc-link-lib=dl");
+            println!("cargo:rustc-link-lib=log");
+            println!("cargo:rustc-link-lib=gcc");
         } else {
             println!("cargo:rustc-link-lib=dl");
             println!("cargo:rustc-link-lib=rt");
             println!("cargo:rustc-link-lib=pthread");
             println!("cargo:rustc-link-lib=gcc_s");
         }
-    } else if target.contains("android") {
-        println!("cargo:rustc-link-lib=dl");
-        println!("cargo:rustc-link-lib=log");
-        println!("cargo:rustc-link-lib=gcc");
     } else if target.contains("freebsd") {
         println!("cargo:rustc-link-lib=execinfo");
         println!("cargo:rustc-link-lib=pthread");
@@ -50,7 +50,9 @@ fn main() {
 
         if target.contains("rumprun") {
             println!("cargo:rustc-link-lib=unwind");
-        } else if target.contains("netbsd") || target.contains("openbsd") {
+        } else if target.contains("netbsd") {
+            println!("cargo:rustc-link-lib=gcc_s");
+        } else if target.contains("openbsd") {
             println!("cargo:rustc-link-lib=gcc");
         } else if target.contains("bitrig") {
             println!("cargo:rustc-link-lib=c++abi");

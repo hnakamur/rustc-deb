@@ -8,19 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use rustc::middle::def_id::DefId;
+use rustc::hir::def_id::DefId;
 use rustc::middle::privacy::AccessLevels;
 use rustc::util::nodemap::DefIdSet;
 use std::cmp;
 use std::string::String;
 use std::usize;
-use rustc_front::hir;
+use rustc::hir;
 
-use clean;
+use clean::{self, Attributes, GetDefId};
 use clean::Item;
 use plugins;
 use fold;
 use fold::DocFolder;
+use fold::FoldItem::Strip;
 
 /// Strip items marked `#[doc(hidden)]`
 pub fn strip_hidden(krate: clean::Crate) -> plugins::PluginResult {
@@ -33,24 +34,18 @@ pub fn strip_hidden(krate: clean::Crate) -> plugins::PluginResult {
         }
         impl<'a> fold::DocFolder for Stripper<'a> {
             fn fold_item(&mut self, i: Item) -> Option<Item> {
-                if i.is_hidden_from_doc() {
+                if i.attrs.list("doc").has_word("hidden") {
                     debug!("found one in strip_hidden; removing");
                     self.stripped.insert(i.def_id);
 
                     // use a dedicated hidden item for given item type if any
                     match i.inner {
-                        clean::StructFieldItem(..) => {
-                            return Some(clean::Item {
-                                inner: clean::StructFieldItem(clean::HiddenStructField),
-                                ..i
-                            });
+                        clean::StructFieldItem(..) | clean::ModuleItem(..) => {
+                            return Strip(i).fold()
                         }
-                        _ => {
-                            return None;
-                        }
+                        _ => return None,
                     }
                 }
-
                 self.fold_item_recur(i)
             }
         }
@@ -59,7 +54,7 @@ pub fn strip_hidden(krate: clean::Crate) -> plugins::PluginResult {
     };
 
     // strip any traits implemented on stripped items
-    let krate = {
+    {
         struct ImplStripper<'a> {
             stripped: &'a mut DefIdSet
         }
@@ -74,7 +69,7 @@ pub fn strip_hidden(krate: clean::Crate) -> plugins::PluginResult {
                         return None;
                     }
                     // Impls of stripped traits also don't need to exist
-                    if let Some(clean::ResolvedPath { did, .. }) = *trait_ {
+                    if let Some(did) = trait_.def_id() {
                         if self.stripped.contains(&did) {
                             return None;
                         }
@@ -85,9 +80,7 @@ pub fn strip_hidden(krate: clean::Crate) -> plugins::PluginResult {
         }
         let mut stripper = ImplStripper{ stripped: &mut stripped };
         stripper.fold_crate(krate)
-    };
-
-    (krate, None)
+    }
 }
 
 /// Strip private items from the point of view of a crate or externally from a
@@ -106,15 +99,14 @@ pub fn strip_private(mut krate: clean::Crate) -> plugins::PluginResult {
             retained: &mut retained,
             access_levels: &access_levels,
         };
-        krate = stripper.fold_crate(krate);
+        krate = ImportStripper.fold_crate(stripper.fold_crate(krate));
     }
 
     // strip all private implementations of traits
     {
         let mut stripper = ImplStripper(&retained);
-        krate = stripper.fold_crate(krate);
+        stripper.fold_crate(krate)
     }
-    (krate, None)
 }
 
 struct Stripper<'a> {
@@ -125,12 +117,14 @@ struct Stripper<'a> {
 impl<'a> fold::DocFolder for Stripper<'a> {
     fn fold_item(&mut self, i: Item) -> Option<Item> {
         match i.inner {
+            clean::StrippedItem(..) => return Some(i),
             // These items can all get re-exported
             clean::TypedefItem(..) | clean::StaticItem(..) |
             clean::StructItem(..) | clean::EnumItem(..) |
             clean::TraitItem(..) | clean::FunctionItem(..) |
             clean::VariantItem(..) | clean::MethodItem(..) |
-            clean::ForeignFunctionItem(..) | clean::ForeignStaticItem(..) => {
+            clean::ForeignFunctionItem(..) | clean::ForeignStaticItem(..) |
+            clean::ConstantItem(..) => {
                 if i.def_id.is_local() {
                     if !self.access_levels.is_exported(i.def_id) {
                         return None;
@@ -138,29 +132,17 @@ impl<'a> fold::DocFolder for Stripper<'a> {
                 }
             }
 
-            clean::ConstantItem(..) => {
-                if i.def_id.is_local() && !self.access_levels.is_exported(i.def_id) {
-                    return None;
-                }
-            }
-
-            clean::ExternCrateItem(..) | clean::ImportItem(_) => {
-                if i.visibility != Some(hir::Public) {
-                    return None
-                }
-            }
-
             clean::StructFieldItem(..) => {
                 if i.visibility != Some(hir::Public) {
-                    return Some(clean::Item {
-                        inner: clean::StructFieldItem(clean::HiddenStructField),
-                        ..i
-                    })
+                    return Strip(i).fold();
                 }
             }
 
-            // handled below
-            clean::ModuleItem(..) => {}
+            clean::ModuleItem(..) => {
+                if i.def_id.is_local() && i.visibility != Some(hir::Public) {
+                    return Strip(self.fold_item_recur(i).unwrap()).fold()
+                }
+            }
 
             // trait impls for private items should be stripped
             clean::ImplItem(clean::Impl{
@@ -170,6 +152,9 @@ impl<'a> fold::DocFolder for Stripper<'a> {
                     return None;
                 }
             }
+            // handled in the `strip-priv-imports` pass
+            clean::ExternCrateItem(..) | clean::ImportItem(..) => {}
+
             clean::DefaultImplItem(..) | clean::ImplItem(..) => {}
 
             // tymethods/macros have no control over privacy
@@ -190,7 +175,6 @@ impl<'a> fold::DocFolder for Stripper<'a> {
 
             // implementations of traits are always public.
             clean::ImplItem(ref imp) if imp.trait_.is_some() => true,
-
             // Struct variant fields have inherited visibility
             clean::VariantItem(clean::Variant {
                 kind: clean::StructVariant(..)
@@ -205,22 +189,19 @@ impl<'a> fold::DocFolder for Stripper<'a> {
             self.fold_item_recur(i)
         };
 
-        match i {
-            Some(i) => {
-                match i.inner {
-                    // emptied modules/impls have no need to exist
-                    clean::ModuleItem(ref m)
-                        if m.items.is_empty() &&
-                           i.doc_value().is_none() => None,
-                    clean::ImplItem(ref i) if i.items.is_empty() => None,
-                    _ => {
-                        self.retained.insert(i.def_id);
-                        Some(i)
-                    }
+        i.and_then(|i| {
+            match i.inner {
+                // emptied modules/impls have no need to exist
+                clean::ModuleItem(ref m)
+                    if m.items.is_empty() &&
+                       i.doc_value().is_none() => None,
+                clean::ImplItem(ref i) if i.items.is_empty() => None,
+                _ => {
+                    self.retained.insert(i.def_id);
+                    Some(i)
                 }
             }
-            None => None,
-        }
+        })
     }
 }
 
@@ -229,25 +210,36 @@ struct ImplStripper<'a>(&'a DefIdSet);
 impl<'a> fold::DocFolder for ImplStripper<'a> {
     fn fold_item(&mut self, i: Item) -> Option<Item> {
         if let clean::ImplItem(ref imp) = i.inner {
-            match imp.trait_ {
-                Some(clean::ResolvedPath{ did, .. }) => {
-                    if did.is_local() && !self.0.contains(&did) {
-                        return None;
-                    }
+            if let Some(did) = imp.trait_.def_id() {
+                if did.is_local() && !self.0.contains(&did) {
+                    return None;
                 }
-                Some(..) | None => {}
             }
         }
         self.fold_item_recur(i)
     }
 }
 
+// This stripper discards all private import statements (`use`, `extern crate`)
+struct ImportStripper;
+impl fold::DocFolder for ImportStripper {
+    fn fold_item(&mut self, i: Item) -> Option<Item> {
+        match i.inner {
+            clean::ExternCrateItem(..) |
+            clean::ImportItem(..) if i.visibility != Some(hir::Public) => None,
+            _ => self.fold_item_recur(i)
+        }
+    }
+}
+
+pub fn strip_priv_imports(krate: clean::Crate)  -> plugins::PluginResult {
+    ImportStripper.fold_crate(krate)
+}
 
 pub fn unindent_comments(krate: clean::Crate) -> plugins::PluginResult {
     struct CommentCleaner;
     impl fold::DocFolder for CommentCleaner {
-        fn fold_item(&mut self, i: Item) -> Option<Item> {
-            let mut i = i;
+        fn fold_item(&mut self, mut i: Item) -> Option<Item> {
             let mut avec: Vec<clean::Attribute> = Vec::new();
             for attr in &i.attrs {
                 match attr {
@@ -265,23 +257,20 @@ pub fn unindent_comments(krate: clean::Crate) -> plugins::PluginResult {
     }
     let mut cleaner = CommentCleaner;
     let krate = cleaner.fold_crate(krate);
-    (krate, None)
+    krate
 }
 
 pub fn collapse_docs(krate: clean::Crate) -> plugins::PluginResult {
     struct Collapser;
     impl fold::DocFolder for Collapser {
-        fn fold_item(&mut self, i: Item) -> Option<Item> {
+        fn fold_item(&mut self, mut i: Item) -> Option<Item> {
             let mut docstr = String::new();
-            let mut i = i;
             for attr in &i.attrs {
-                match *attr {
-                    clean::NameValue(ref x, ref s)
-                            if "doc" == *x => {
+                if let clean::NameValue(ref x, ref s) = *attr {
+                    if "doc" == *x {
                         docstr.push_str(s);
                         docstr.push('\n');
-                    },
-                    _ => ()
+                    }
                 }
             }
             let mut a: Vec<clean::Attribute> = i.attrs.iter().filter(|&a| match a {
@@ -297,7 +286,7 @@ pub fn collapse_docs(krate: clean::Crate) -> plugins::PluginResult {
     }
     let mut collapser = Collapser;
     let krate = collapser.fold_crate(krate);
-    (krate, None)
+    krate
 }
 
 pub fn unindent(s: &str) -> String {

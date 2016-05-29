@@ -9,14 +9,54 @@
 // except according to those terms.
 use self::WhichLine::*;
 
+use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
 use std::path::Path;
+use std::str::FromStr;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ErrorKind {
+    Help,
+    Error,
+    Note,
+    Suggestion,
+    Warning,
+}
+
+impl FromStr for ErrorKind {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match &s.trim_right_matches(':') as &str {
+            "HELP" => Ok(ErrorKind::Help),
+            "ERROR" => Ok(ErrorKind::Error),
+            "NOTE" => Ok(ErrorKind::Note),
+            "SUGGESTION" => Ok(ErrorKind::Suggestion),
+            "WARN" => Ok(ErrorKind::Warning),
+            "WARNING" => Ok(ErrorKind::Warning),
+            _ => Err(()),
+        }
+    }
+}
+
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ErrorKind::Help => write!(f, "help"),
+            ErrorKind::Error => write!(f, "error"),
+            ErrorKind::Note => write!(f, "note"),
+            ErrorKind::Suggestion => write!(f, "suggestion"),
+            ErrorKind::Warning => write!(f, "warning"),
+        }
+    }
+}
 
 pub struct ExpectedError {
-    pub line: usize,
-    pub kind: String,
+    pub line_num: usize,
+    /// What kind of message we expect (e.g. warning, error, suggestion).
+    /// `None` if not specified or unknown message kind.
+    pub kind: Option<ErrorKind>,
     pub msg: String,
 }
 
@@ -30,8 +70,10 @@ enum WhichLine { ThisLine, FollowPrevious(usize), AdjustBackward(usize) }
 /// Goal is to enable tests both like: //~^^^ ERROR go up three
 /// and also //~^ ERROR message one for the preceding line, and
 ///          //~| ERROR message two for that same line.
-// Load any test directives embedded in the file
-pub fn load_errors(testfile: &Path) -> Vec<ExpectedError> {
+///
+/// If cfg is not None (i.e., in an incremental test), then we look
+/// for `//[X]~` instead, where `X` is the current `cfg`.
+pub fn load_errors(testfile: &Path, cfg: Option<&str>) -> Vec<ExpectedError> {
     let rdr = BufReader::new(File::open(testfile).unwrap());
 
     // `last_nonfollow_error` tracks the most recently seen
@@ -44,55 +86,66 @@ pub fn load_errors(testfile: &Path) -> Vec<ExpectedError> {
     // updating it in the map callback below.)
     let mut last_nonfollow_error = None;
 
-    rdr.lines().enumerate().filter_map(|(line_no, ln)| {
-        parse_expected(last_nonfollow_error,
-                       line_no + 1,
-                       &ln.unwrap())
-            .map(|(which, error)| {
-                match which {
-                    FollowPrevious(_) => {}
-                    _ => last_nonfollow_error = Some(error.line),
-                }
-                error
-            })
-    }).collect()
+    let tag = match cfg {
+        Some(rev) => format!("//[{}]~", rev),
+        None => format!("//~")
+    };
+
+    rdr.lines()
+       .enumerate()
+       .filter_map(|(line_num, line)| {
+           parse_expected(last_nonfollow_error,
+                          line_num + 1,
+                          &line.unwrap(),
+                          &tag)
+               .map(|(which, error)| {
+                   match which {
+                       FollowPrevious(_) => {}
+                       _ => last_nonfollow_error = Some(error.line_num),
+                   }
+                   error
+               })
+       })
+       .collect()
 }
 
 fn parse_expected(last_nonfollow_error: Option<usize>,
                   line_num: usize,
-                  line: &str) -> Option<(WhichLine, ExpectedError)> {
-    let start = match line.find("//~") { Some(i) => i, None => return None };
-    let (follow, adjusts) = if line.char_at(start + 3) == '|' {
+                  line: &str,
+                  tag: &str)
+                  -> Option<(WhichLine, ExpectedError)> {
+    let start = match line.find(tag) { Some(i) => i, None => return None };
+    let (follow, adjusts) = if line[start + tag.len()..].chars().next().unwrap() == '|' {
         (true, 0)
     } else {
-        (false, line[start + 3..].chars().take_while(|c| *c == '^').count())
+        (false, line[start + tag.len()..].chars().take_while(|c| *c == '^').count())
     };
-    let kind_start = start + 3 + adjusts + (follow as usize);
-    let letters = line[kind_start..].chars();
-    let kind = letters.skip_while(|c| c.is_whitespace())
-                      .take_while(|c| !c.is_whitespace())
-                      .flat_map(|c| c.to_lowercase())
-                      .collect::<String>();
+    let kind_start = start + tag.len() + adjusts + (follow as usize);
+    let kind = line[kind_start..].split_whitespace()
+                                 .next()
+                                 .expect("Encountered unexpected empty comment")
+                                 .parse::<ErrorKind>()
+                                 .ok();
     let letters = line[kind_start..].chars();
     let msg = letters.skip_while(|c| c.is_whitespace())
                      .skip_while(|c| !c.is_whitespace())
                      .collect::<String>().trim().to_owned();
 
-    let (which, line) = if follow {
+    let (which, line_num) = if follow {
         assert!(adjusts == 0, "use either //~| or //~^, not both.");
-        let line = last_nonfollow_error.unwrap_or_else(|| {
-            panic!("encountered //~| without preceding //~^ line.")
-        });
-        (FollowPrevious(line), line)
+        let line_num = last_nonfollow_error.expect("encountered //~| without \
+                                                    preceding //~^ line.");
+        (FollowPrevious(line_num), line_num)
     } else {
         let which =
             if adjusts > 0 { AdjustBackward(adjusts) } else { ThisLine };
-        let line = line_num - adjusts;
-        (which, line)
+        let line_num = line_num - adjusts;
+        (which, line_num)
     };
 
-    debug!("line={} which={:?} kind={:?} msg={:?}", line_num, which, kind, msg);
-    Some((which, ExpectedError { line: line,
+    debug!("line={} tag={:?} which={:?} kind={:?} msg={:?}",
+           line_num, tag, which, kind, msg);
+    Some((which, ExpectedError { line_num: line_num,
                                  kind: kind,
                                  msg: msg, }))
 }

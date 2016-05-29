@@ -14,11 +14,12 @@ fn main() {
     let apple = target.contains("apple");
     let musl = target.contains("musl");
     let freebsd = target.contains("freebsd");
+    let dragonfly = target.contains("dragonfly");
     let mips = target.contains("mips");
     let netbsd = target.contains("netbsd");
     let openbsd = target.contains("openbsd");
     let rumprun = target.contains("rumprun");
-    let bsdlike = freebsd || apple || netbsd || openbsd;
+    let bsdlike = freebsd || apple || netbsd || openbsd || dragonfly;
     let mut cfg = ctest::TestGenerator::new();
 
     // Pull in extra goodies on linux/mingw
@@ -37,6 +38,7 @@ fn main() {
     cfg.header("errno.h")
        .header("fcntl.h")
        .header("limits.h")
+       .header("locale.h")
        .header("stddef.h")
        .header("stdint.h")
        .header("stdio.h")
@@ -103,7 +105,7 @@ fn main() {
         cfg.header("ifaddrs.h");
         cfg.header("sys/statvfs.h");
 
-        if !openbsd && !freebsd {
+        if !openbsd && !freebsd && !dragonfly {
             cfg.header("sys/quota.h");
         }
 
@@ -120,6 +122,7 @@ fn main() {
         cfg.header("mach-o/dyld.h");
         cfg.header("mach/mach_time.h");
         cfg.header("malloc/malloc.h");
+        cfg.header("util.h");
         if target.starts_with("x86") {
             cfg.header("crt_externs.h");
         }
@@ -127,14 +130,22 @@ fn main() {
 
     if bsdlike {
         cfg.header("sys/event.h");
+
+        if freebsd {
+            cfg.header("libutil.h");
+        } else {
+            cfg.header("util.h");
+        }
     }
 
     if linux {
         cfg.header("mqueue.h");
+        cfg.header("ucontext.h");
         cfg.header("sys/signalfd.h");
         cfg.header("sys/xattr.h");
         cfg.header("sys/ipc.h");
         cfg.header("sys/shm.h");
+        cfg.header("pty.h");
     }
 
     if linux || android {
@@ -175,6 +186,12 @@ fn main() {
         cfg.header("rpcsvc/rex.h");
         cfg.header("pthread_np.h");
         cfg.header("sys/syscall.h");
+    }
+
+    if dragonfly {
+        cfg.header("ufs/ufs/quota.h");
+        cfg.header("pthread_np.h");
+        cfg.header("sys/ioctl_compat.h");
     }
 
     cfg.type_name(move |ty, is_struct| {
@@ -254,12 +271,14 @@ fn main() {
         }
     });
 
-    cfg.skip_signededness(|c| {
+    cfg.skip_signededness(move |c| {
         match c {
             "LARGE_INTEGER" |
             "mach_timebase_info_data_t" |
             "float" |
             "double" => true,
+            // uuid_t is a struct, not an integer.
+            "uuid_t" if dragonfly => true,
             n if n.starts_with("pthread") => true,
 
             // windows-isms
@@ -293,6 +312,7 @@ fn main() {
 
             // weird signed extension or something like that?
             "MS_NOUSER" => true,
+            "MS_RMT_MASK" => true, // updated in glibc 2.22 and musl 1.1.13
 
             // These OSX constants are flagged as deprecated
             "NOTE_EXIT_REPARENTED" |
@@ -321,7 +341,7 @@ fn main() {
             "strerror_r" if linux => true,   // actually xpg-something-or-other
 
             // typed 2nd arg on linux and android
-            "gettimeofday" if linux || android || freebsd || openbsd => true,
+            "gettimeofday" if linux || android || freebsd || openbsd || dragonfly => true,
 
             // not declared in newer android toolchains
             "getdtablesize" if android => true,
@@ -341,10 +361,6 @@ fn main() {
             // they're implemented on rumprun yet, just let them slide for now.
             // Some of them look like they have headers but then don't have
             // corresponding actual definitions either...
-            "backtrace" |
-            "pthread_main_np" |
-            "pthread_set_name_np" |
-            "pthread_stackseg_np" |
             "shm_open" |
             "shm_unlink" |
             "syscall" |

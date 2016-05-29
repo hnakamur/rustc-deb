@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Overloadable operators
+//! Overloadable operators.
 //!
 //! Implementing these traits allows you to get an effect similar to
 //! overloading operators.
@@ -67,8 +67,11 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use marker::{Sized, Unsize};
+use cmp::PartialOrd;
 use fmt;
+use convert::From;
+use marker::{Sized, Unsize};
+use num::One;
 
 /// The `Drop` trait is used to run some code when a value goes out of scope.
 /// This is sometimes called a 'destructor'.
@@ -1443,9 +1446,25 @@ pub trait IndexMut<Idx: ?Sized>: Index<Idx> {
     fn index_mut(&mut self, index: Idx) -> &mut Self::Output;
 }
 
-/// An unbounded range.
+/// An unbounded range. Use `..` (two dots) for its shorthand.
+///
+/// Its primary use case is slicing index. It cannot serve as an iterator
+/// because it doesn't have a starting point.
+///
+/// # Examples
+///
+/// ```
+/// fn main() {
+///     assert_eq!((..), std::ops::RangeFull);
+///
+///     let arr = [0, 1, 2, 3];
+///     assert_eq!(arr[ .. ], [0,1,2,3]);  // RangeFull
+///     assert_eq!(arr[ ..3], [0,1,2  ]);
+///     assert_eq!(arr[1.. ], [  1,2,3]);
+///     assert_eq!(arr[1..3], [  1,2  ]);
+/// }
+/// ```
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[lang = "range_full"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct RangeFull;
 
@@ -1456,9 +1475,27 @@ impl fmt::Debug for RangeFull {
     }
 }
 
-/// A (half-open) range which is bounded at both ends.
+/// A (half-open) range which is bounded at both ends: { x | start <= x < end }.
+/// Use `start..end` (two dots) for its shorthand.
+///
+/// See the [`contains()`](#method.contains) method for its characterization.
+///
+/// # Examples
+///
+/// ```
+/// #![feature(iter_arith)]
+/// fn main() {
+///     assert_eq!((3..5), std::ops::Range{ start: 3, end: 5 });
+///     assert_eq!(3+4+5, (3..6).sum());
+///
+///     let arr = [0, 1, 2, 3];
+///     assert_eq!(arr[ .. ], [0,1,2,3]);
+///     assert_eq!(arr[ ..3], [0,1,2  ]);
+///     assert_eq!(arr[1.. ], [  1,2,3]);
+///     assert_eq!(arr[1..3], [  1,2  ]);  // Range
+/// }
+/// ```
 #[derive(Clone, PartialEq, Eq)]
-#[lang = "range"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Range<Idx> {
     /// The lower bound of the range (inclusive).
@@ -1476,9 +1513,48 @@ impl<Idx: fmt::Debug> fmt::Debug for Range<Idx> {
     }
 }
 
-/// A range which is only bounded below.
+#[unstable(feature = "range_contains", reason = "recently added as per RFC", issue = "32311")]
+impl<Idx: PartialOrd<Idx>> Range<Idx> {
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(range_contains)]
+    /// fn main() {
+    ///     assert!( ! (3..5).contains(2));
+    ///     assert!(   (3..5).contains(3));
+    ///     assert!(   (3..5).contains(4));
+    ///     assert!( ! (3..5).contains(5));
+    ///
+    ///     assert!( ! (3..3).contains(3));
+    ///     assert!( ! (3..2).contains(3));
+    /// }
+    /// ```
+    pub fn contains(&self, item: Idx) -> bool {
+        (self.start <= item) && (item < self.end)
+    }
+}
+
+/// A range which is only bounded below: { x | start <= x }.
+/// Use `start..` for its shorthand.
+///
+/// See the [`contains()`](#method.contains) method for its characterization.
+///
+/// # Examples
+///
+/// ```
+/// #![feature(iter_arith)]
+/// fn main() {
+///     assert_eq!((2..), std::ops::RangeFrom{ start: 2 });
+///     assert_eq!(2+3+4, (2..).take(3).sum());
+///
+///     let arr = [0, 1, 2, 3];
+///     assert_eq!(arr[ .. ], [0,1,2,3]);
+///     assert_eq!(arr[ ..3], [0,1,2  ]);
+///     assert_eq!(arr[1.. ], [  1,2,3]);  // RangeFrom
+///     assert_eq!(arr[1..3], [  1,2  ]);
+/// }
+/// ```
 #[derive(Clone, PartialEq, Eq)]
-#[lang = "range_from"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct RangeFrom<Idx> {
     /// The lower bound of the range (inclusive).
@@ -1493,9 +1569,41 @@ impl<Idx: fmt::Debug> fmt::Debug for RangeFrom<Idx> {
     }
 }
 
-/// A range which is only bounded above.
+#[unstable(feature = "range_contains", reason = "recently added as per RFC", issue = "32311")]
+impl<Idx: PartialOrd<Idx>> RangeFrom<Idx> {
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(range_contains)]
+    /// fn main() {
+    ///     assert!( ! (3..).contains(2));
+    ///     assert!(   (3..).contains(3));
+    ///     assert!(   (3..).contains(1_000_000_000));
+    /// }
+    /// ```
+    pub fn contains(&self, item: Idx) -> bool {
+        (self.start <= item)
+    }
+}
+
+/// A range which is only bounded above: { x | x < end }.
+/// Use `..end` (two dots) for its shorthand.
+///
+/// See the [`contains()`](#method.contains) method for its characterization.
+///
+/// It cannot serve as an iterator because it doesn't have a starting point.
+/// ```
+/// fn main() {
+///     assert_eq!((..5), std::ops::RangeTo{ end: 5 });
+///
+///     let arr = [0, 1, 2, 3];
+///     assert_eq!(arr[ .. ], [0,1,2,3]);
+///     assert_eq!(arr[ ..3], [0,1,2  ]);  // RangeTo
+///     assert_eq!(arr[1.. ], [  1,2,3]);
+///     assert_eq!(arr[1..3], [  1,2  ]);
+/// }
+/// ```
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[lang = "range_to"]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct RangeTo<Idx> {
     /// The upper bound of the range (exclusive).
@@ -1509,6 +1617,183 @@ impl<Idx: fmt::Debug> fmt::Debug for RangeTo<Idx> {
         write!(fmt, "..{:?}", self.end)
     }
 }
+
+#[unstable(feature = "range_contains", reason = "recently added as per RFC", issue = "32311")]
+impl<Idx: PartialOrd<Idx>> RangeTo<Idx> {
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(range_contains)]
+    /// fn main() {
+    ///     assert!(   (..5).contains(-1_000_000_000));
+    ///     assert!(   (..5).contains(4));
+    ///     assert!( ! (..5).contains(5));
+    /// }
+    /// ```
+    pub fn contains(&self, item: Idx) -> bool {
+        (item < self.end)
+    }
+}
+
+/// An inclusive range which is bounded at both ends: { x | start <= x <= end }.
+/// Use `start...end` (three dots) for its shorthand.
+///
+/// See the [`contains()`](#method.contains) method for its characterization.
+///
+/// # Examples
+///
+/// ```
+/// #![feature(inclusive_range,inclusive_range_syntax,iter_arith)]
+/// fn main() {
+///     assert_eq!((3...5), std::ops::RangeInclusive::NonEmpty{ start: 3, end: 5 });
+///     assert_eq!(3+4+5, (3...5).sum());
+///
+///     let arr = [0, 1, 2, 3];
+///     assert_eq!(arr[ ...2], [0,1,2  ]);
+///     assert_eq!(arr[1...2], [  1,2  ]);  // RangeInclusive
+/// }
+/// ```
+#[derive(Copy, Clone, PartialEq, Eq)]
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+pub enum RangeInclusive<Idx> {
+    /// Empty range (iteration has finished)
+    #[unstable(feature = "inclusive_range",
+               reason = "recently added, follows RFC",
+               issue = "28237")]
+    Empty {
+        /// The point at which iteration finished
+        #[unstable(feature = "inclusive_range",
+                   reason = "recently added, follows RFC",
+                   issue = "28237")]
+        at: Idx
+    },
+    /// Non-empty range (iteration will yield value(s))
+    #[unstable(feature = "inclusive_range",
+               reason = "recently added, follows RFC",
+               issue = "28237")]
+    NonEmpty {
+        /// The lower bound of the range (inclusive).
+        #[unstable(feature = "inclusive_range",
+                   reason = "recently added, follows RFC",
+                   issue = "28237")]
+        start: Idx,
+        /// The upper bound of the range (inclusive).
+        #[unstable(feature = "inclusive_range",
+                   reason = "recently added, follows RFC",
+                   issue = "28237")]
+        end: Idx,
+    },
+}
+
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<Idx: fmt::Debug> fmt::Debug for RangeInclusive<Idx> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        use self::RangeInclusive::*;
+
+        match *self {
+            Empty { ref at } => write!(fmt, "[empty range @ {:?}]", at),
+            NonEmpty { ref start, ref end } => write!(fmt, "{:?}...{:?}", start, end),
+        }
+    }
+}
+
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<Idx: PartialOrd + One + Sub<Output=Idx>> From<Range<Idx>> for RangeInclusive<Idx> {
+    fn from(range: Range<Idx>) -> RangeInclusive<Idx> {
+        use self::RangeInclusive::*;
+
+        if range.start < range.end {
+            NonEmpty {
+                start: range.start,
+                end: range.end - Idx::one() // can't underflow because end > start >= MIN
+            }
+        } else {
+            Empty {
+                at: range.start
+            }
+        }
+    }
+}
+
+#[unstable(feature = "range_contains", reason = "recently added as per RFC", issue = "32311")]
+impl<Idx: PartialOrd<Idx>> RangeInclusive<Idx> {
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(range_contains,inclusive_range_syntax)]
+    /// fn main() {
+    ///     assert!( ! (3...5).contains(2));
+    ///     assert!(   (3...5).contains(3));
+    ///     assert!(   (3...5).contains(4));
+    ///     assert!(   (3...5).contains(5));
+    ///     assert!( ! (3...5).contains(6));
+    ///
+    ///     assert!(   (3...3).contains(3));
+    ///     assert!( ! (3...2).contains(3));
+    /// }
+    /// ```
+    pub fn contains(&self, item: Idx) -> bool {
+        if let &RangeInclusive::NonEmpty{ref start, ref end} = self {
+            (*start <= item) && (item <= *end)
+        } else { false }
+    }
+}
+
+/// An inclusive range which is only bounded above: { x | x <= end }.
+/// Use `...end` (three dots) for its shorthand.
+///
+/// See the [`contains()`](#method.contains) method for its characterization.
+///
+/// It cannot serve as an iterator because it doesn't have a starting point.
+///
+/// # Examples
+///
+/// ```
+/// #![feature(inclusive_range,inclusive_range_syntax)]
+/// fn main() {
+///     assert_eq!((...5), std::ops::RangeToInclusive{ end: 5 });
+///
+///     let arr = [0, 1, 2, 3];
+///     assert_eq!(arr[ ...2], [0,1,2  ]);  // RangeToInclusive
+///     assert_eq!(arr[1...2], [  1,2  ]);
+/// }
+/// ```
+#[derive(Copy, Clone, PartialEq, Eq)]
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+pub struct RangeToInclusive<Idx> {
+    /// The upper bound of the range (inclusive)
+    #[unstable(feature = "inclusive_range",
+               reason = "recently added, follows RFC",
+               issue = "28237")]
+    pub end: Idx,
+}
+
+#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+impl<Idx: fmt::Debug> fmt::Debug for RangeToInclusive<Idx> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "...{:?}", self.end)
+    }
+}
+
+#[unstable(feature = "range_contains", reason = "recently added as per RFC", issue = "32311")]
+impl<Idx: PartialOrd<Idx>> RangeToInclusive<Idx> {
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(range_contains,inclusive_range_syntax)]
+    /// fn main() {
+    ///     assert!(   (...5).contains(-1_000_000_000));
+    ///     assert!(   (...5).contains(5));
+    ///     assert!( ! (...5).contains(6));
+    /// }
+    /// ```
+    pub fn contains(&self, item: Idx) -> bool {
+        (item <= self.end)
+    }
+}
+
+// RangeToInclusive<Idx> cannot impl From<RangeTo<Idx>>
+// because underflow would be possible with (..0).into()
 
 /// The `Deref` trait is used to specify the functionality of dereferencing
 /// operations, like `*v`.

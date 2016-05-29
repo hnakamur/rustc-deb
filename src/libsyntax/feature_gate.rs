@@ -109,6 +109,8 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     // to bootstrap fix for #5723.
     ("issue_5723_bootstrap", "1.0.0", None, Accepted),
 
+    ("structural_match", "1.8.0", Some(31434), Active),
+
     // A way to temporarily opt out of opt in copy. This will *never* be accepted.
     ("opt_out_copy", "1.0.0", None, Removed),
 
@@ -197,7 +199,7 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("associated_type_defaults", "1.2.0", Some(29661), Active),
 
     // Allows macros to appear in the type position.
-    ("type_macros", "1.3.0", Some(27336), Active),
+    ("type_macros", "1.3.0", Some(27245), Active),
 
     // allow `repr(simd)`, and importing the various simd intrinsics
     ("repr_simd", "1.4.0", Some(27731), Active),
@@ -212,11 +214,14 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     // rust runtime internal
     ("unwind_attributes", "1.4.0", None, Active),
 
+    // allow the use of `#[naked]` on functions.
+    ("naked_functions", "1.9.0", Some(32408), Active),
+
     // allow empty structs and enum variants with braces
-    ("braced_empty_structs", "1.5.0", Some(29720), Accepted),
+    ("braced_empty_structs", "1.8.0", Some(29720), Accepted),
 
     // allow overloading augmented assignment operations like `a += b`
-    ("augmented_assignments", "1.5.0", Some(28235), Accepted),
+    ("augmented_assignments", "1.8.0", Some(28235), Accepted),
 
     // allow `#[no_debug]`
     ("no_debug", "1.5.0", Some(29721), Active),
@@ -232,7 +237,7 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("stmt_expr_attributes", "1.6.0", Some(15701), Active),
 
     // Allows `#[deprecated]` attribute
-    ("deprecated", "1.6.0", Some(29935), Active),
+    ("deprecated", "1.9.0", Some(29935), Accepted),
 
     // allow using type ascription in expressions
     ("type_ascription", "1.6.0", Some(23416), Active),
@@ -241,7 +246,16 @@ const KNOWN_FEATURES: &'static [(&'static str, &'static str, Option<u32>, Status
     ("cfg_target_thread_local", "1.7.0", Some(29594), Active),
 
     // rustc internal
-    ("abi_vectorcall", "1.7.0", None, Active)
+    ("abi_vectorcall", "1.7.0", None, Active),
+
+    // a...b and ...b
+    ("inclusive_range_syntax", "1.7.0", Some(28237), Active),
+
+    // `expr?`
+    ("question_mark", "1.9.0", Some(31436), Active),
+
+    // impl specialization (RFC 1210)
+    ("specialization", "1.7.0", Some(31844), Active),
 ];
 // (changing above list without updating src/doc/reference.md makes @cmr sad)
 
@@ -292,6 +306,11 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
     ("link_args", Normal, Ungated),
     ("macro_escape", Normal, Ungated),
 
+    // RFC #1445.
+    ("structural_match", Whitelisted, Gated("structural_match",
+                                            "the semantics of constant patterns is \
+                                             not yet settled")),
+
     // Not used any more, but we can't feature gate it
     ("no_stack_check", Normal, Ungated),
 
@@ -337,14 +356,30 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
                                        "the `#[rustc_if_this_changed]` attribute \
                                         is just used for rustc unit tests \
                                         and will never be stable")),
+    ("rustc_dirty", Whitelisted, Gated("rustc_attrs",
+                                       "the `#[rustc_dirty]` attribute \
+                                        is just used for rustc unit tests \
+                                        and will never be stable")),
+    ("rustc_clean", Whitelisted, Gated("rustc_attrs",
+                                       "the `#[rustc_clean]` attribute \
+                                        is just used for rustc unit tests \
+                                        and will never be stable")),
+    ("rustc_symbol_name", Whitelisted, Gated("rustc_attrs",
+                                       "internal rustc attributes will never be stable")),
+    ("rustc_item_path", Whitelisted, Gated("rustc_attrs",
+                                       "internal rustc attributes will never be stable")),
     ("rustc_move_fragments", Normal, Gated("rustc_attrs",
                                            "the `#[rustc_move_fragments]` attribute \
                                             is just used for rustc unit tests \
                                             and will never be stable")),
-    ("rustc_mir", Normal, Gated("rustc_attrs",
-                                "the `#[rustc_mir]` attribute \
-                                 is just used for rustc unit tests \
-                                 and will never be stable")),
+    ("rustc_mir", Whitelisted, Gated("rustc_attrs",
+                                     "the `#[rustc_mir]` attribute \
+                                      is just used for rustc unit tests \
+                                      and will never be stable")),
+    ("rustc_no_mir", Whitelisted, Gated("rustc_attrs",
+                                        "the `#[rustc_no_mir]` attribute \
+                                         is just used to make tests pass \
+                                         and will never be stable")),
 
     ("allow_internal_unstable", Normal, Gated("allow_internal_unstable",
                                               EXPLAIN_ALLOW_INTERNAL_UNSTABLE)),
@@ -363,6 +398,9 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
     // FIXME: #14406 these are processed in trans, which happens after the
     // lint pass
     ("cold", Whitelisted, Ungated),
+    ("naked", Whitelisted, Gated("naked_functions",
+                                 "the `#[naked]` attribute \
+                                  is an experimental feature")),
     ("export_name", Whitelisted, Ungated),
     ("inline", Whitelisted, Ungated),
     ("link", Whitelisted, Ungated),
@@ -397,7 +435,7 @@ pub const KNOWN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeGat
     ("must_use", Whitelisted, Ungated),
     ("stable", Whitelisted, Ungated),
     ("unstable", Whitelisted, Ungated),
-    ("deprecated", Normal, Gated("deprecated", "`#[deprecated]` attribute is unstable")),
+    ("deprecated", Normal, Ungated),
 
     ("rustc_paren_sugar", Normal, Gated("unboxed_closures",
                                         "unboxed_closures are still evolving")),
@@ -549,6 +587,7 @@ pub struct Features {
     pub allow_placement_in: bool,
     pub allow_box: bool,
     pub allow_pushpop_unsafe: bool,
+    pub allow_inclusive_range: bool,
     pub simd_ffi: bool,
     pub unmarked_api: bool,
     /// spans of #![feature] attrs for stable language features. for error reporting
@@ -559,6 +598,7 @@ pub struct Features {
     pub const_indexing: bool,
     pub static_recursion: bool,
     pub default_type_parameter_fallback: bool,
+    pub rustc_attrs: bool,
     pub type_macros: bool,
     pub cfg_target_feature: bool,
     pub cfg_target_vendor: bool,
@@ -566,6 +606,8 @@ pub struct Features {
     pub staged_api: bool,
     pub stmt_expr_attributes: bool,
     pub deprecated: bool,
+    pub question_mark: bool,
+    pub specialization: bool,
 }
 
 impl Features {
@@ -583,6 +625,7 @@ impl Features {
             allow_placement_in: false,
             allow_box: false,
             allow_pushpop_unsafe: false,
+            allow_inclusive_range: false,
             simd_ffi: false,
             unmarked_api: false,
             declared_stable_lang_features: Vec::new(),
@@ -591,6 +634,7 @@ impl Features {
             const_indexing: false,
             static_recursion: false,
             default_type_parameter_fallback: false,
+            rustc_attrs: false,
             type_macros: false,
             cfg_target_feature: false,
             cfg_target_vendor: false,
@@ -598,6 +642,8 @@ impl Features {
             staged_api: false,
             stmt_expr_attributes: false,
             deprecated: false,
+            question_mark: false,
+            specialization: false,
         }
     }
 }
@@ -651,7 +697,7 @@ impl<'a> Context<'a> {
     fn gate_feature(&self, feature: &str, span: Span, explain: &str) {
         let has_feature = self.has_feature(feature);
         debug!("gate_feature(feature = {:?}, span = {:?}); has? {}", feature, span, has_feature);
-        if !has_feature {
+        if !has_feature && !self.cm.span_allows_unstable(span) {
             emit_feature_err(self.span_handler, feature, span, GateIssue::Language, explain);
         }
     }
@@ -991,6 +1037,14 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
                 self.gate_feature("type_ascription", e.span,
                                   "type ascription is experimental");
             }
+            ast::ExprKind::Range(_, _, ast::RangeLimits::Closed) => {
+                self.gate_feature("inclusive_range_syntax",
+                                  e.span,
+                                  "inclusive range syntax is experimental");
+            }
+            ast::ExprKind::Try(..) => {
+                self.gate_feature("question_mark", e.span, "the `?` operator is not stable");
+            }
             _ => {}
         }
         visit::walk_expr(self, e);
@@ -1084,6 +1138,12 @@ impl<'a, 'v> Visitor<'v> for PostExpansionVisitor<'a> {
     }
 
     fn visit_impl_item(&mut self, ii: &'v ast::ImplItem) {
+        if ii.defaultness == ast::Defaultness::Default {
+            self.gate_feature("specialization",
+                              ii.span,
+                              "specialization is unstable");
+        }
+
         match ii.node {
             ast::ImplItemKind::Const(..) => {
                 self.gate_feature("associated_consts",
@@ -1177,6 +1237,7 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &Handler,
         allow_placement_in: cx.has_feature("placement_in_syntax"),
         allow_box: cx.has_feature("box_syntax"),
         allow_pushpop_unsafe: cx.has_feature("pushpop_unsafe"),
+        allow_inclusive_range: cx.has_feature("inclusive_range_syntax"),
         simd_ffi: cx.has_feature("simd_ffi"),
         unmarked_api: cx.has_feature("unmarked_api"),
         declared_stable_lang_features: accepted_features,
@@ -1185,6 +1246,7 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &Handler,
         const_indexing: cx.has_feature("const_indexing"),
         static_recursion: cx.has_feature("static_recursion"),
         default_type_parameter_fallback: cx.has_feature("default_type_parameter_fallback"),
+        rustc_attrs: cx.has_feature("rustc_attrs"),
         type_macros: cx.has_feature("type_macros"),
         cfg_target_feature: cx.has_feature("cfg_target_feature"),
         cfg_target_vendor: cx.has_feature("cfg_target_vendor"),
@@ -1192,6 +1254,8 @@ fn check_crate_inner<F>(cm: &CodeMap, span_handler: &Handler,
         staged_api: cx.has_feature("staged_api"),
         stmt_expr_attributes: cx.has_feature("stmt_expr_attributes"),
         deprecated: cx.has_feature("deprecated"),
+        question_mark: cx.has_feature("question_mark"),
+        specialization: cx.has_feature("specialization"),
     }
 }
 

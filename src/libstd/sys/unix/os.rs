@@ -36,6 +36,7 @@ const TMPBUF_SZ: usize = 128;
 static ENV_LOCK: StaticMutex = StaticMutex::new();
 
 /// Returns the platform-specific value of errno
+#[cfg(not(target_os = "dragonfly"))]
 pub fn errno() -> i32 {
     extern {
         #[cfg_attr(any(target_os = "linux", target_os = "emscripten"),
@@ -47,7 +48,6 @@ pub fn errno() -> i32 {
                        target_env = "newlib"),
                    link_name = "__errno")]
         #[cfg_attr(target_os = "solaris", link_name = "___errno")]
-        #[cfg_attr(target_os = "dragonfly", link_name = "__dfly_error")]
         #[cfg_attr(any(target_os = "macos",
                        target_os = "ios",
                        target_os = "freebsd"),
@@ -58,6 +58,16 @@ pub fn errno() -> i32 {
     unsafe {
         (*errno_location()) as i32
     }
+}
+
+#[cfg(target_os = "dragonfly")]
+pub fn errno() -> i32 {
+    extern {
+        #[thread_local]
+        static errno: c_int;
+    }
+
+    errno as i32
 }
 
 /// Gets a detailed string description for the given error number.
@@ -110,7 +120,7 @@ pub fn getcwd() -> io::Result<PathBuf> {
 
 pub fn chdir(p: &path::Path) -> io::Result<()> {
     let p: &OsStr = p.as_ref();
-    let p = try!(CString::new(p.as_bytes()));
+    let p = CString::new(p.as_bytes())?;
     unsafe {
         match libc::chdir(p.as_ptr()) == (0 as c_int) {
             true => Ok(()),
@@ -180,16 +190,16 @@ pub fn current_exe() -> io::Result<PathBuf> {
                        libc::KERN_PROC_PATHNAME as c_int,
                        -1 as c_int];
         let mut sz: libc::size_t = 0;
-        try!(cvt(libc::sysctl(mib.as_mut_ptr(), mib.len() as ::libc::c_uint,
-                              ptr::null_mut(), &mut sz, ptr::null_mut(),
-                              0 as libc::size_t)));
+        cvt(libc::sysctl(mib.as_mut_ptr(), mib.len() as ::libc::c_uint,
+                         ptr::null_mut(), &mut sz, ptr::null_mut(),
+                         0 as libc::size_t))?;
         if sz == 0 {
             return Err(io::Error::last_os_error())
         }
         let mut v: Vec<u8> = Vec::with_capacity(sz as usize);
-        try!(cvt(libc::sysctl(mib.as_mut_ptr(), mib.len() as ::libc::c_uint,
-                              v.as_mut_ptr() as *mut libc::c_void, &mut sz,
-                              ptr::null_mut(), 0 as libc::size_t)));
+        cvt(libc::sysctl(mib.as_mut_ptr(), mib.len() as ::libc::c_uint,
+                         v.as_mut_ptr() as *mut libc::c_void, &mut sz,
+                         ptr::null_mut(), 0 as libc::size_t))?;
         if sz == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -217,11 +227,11 @@ pub fn current_exe() -> io::Result<PathBuf> {
                        libc::KERN_PROC_ARGV];
         let mib = mib.as_mut_ptr();
         let mut argv_len = 0;
-        try!(cvt(libc::sysctl(mib, 4, 0 as *mut _, &mut argv_len,
-                              0 as *mut _, 0)));
+        cvt(libc::sysctl(mib, 4, 0 as *mut _, &mut argv_len,
+                         0 as *mut _, 0))?;
         let mut argv = Vec::<*const libc::c_char>::with_capacity(argv_len as usize);
-        try!(cvt(libc::sysctl(mib, 4, argv.as_mut_ptr() as *mut _,
-                              &mut argv_len, 0 as *mut _, 0)));
+        cvt(libc::sysctl(mib, 4, argv.as_mut_ptr() as *mut _,
+                         &mut argv_len, 0 as *mut _, 0))?;
         argv.set_len(argv_len as usize);
         if argv[0].is_null() {
             return Err(io::Error::new(io::ErrorKind::Other,
@@ -460,7 +470,7 @@ pub fn env() -> Env {
 pub fn getenv(k: &OsStr) -> io::Result<Option<OsString>> {
     // environment variables with a nul byte can't be set, so their value is
     // always None as well
-    let k = try!(CString::new(k.as_bytes()));
+    let k = CString::new(k.as_bytes())?;
     let _g = ENV_LOCK.lock();
     Ok(unsafe {
         let s = libc::getenv(k.as_ptr()) as *const _;
@@ -473,8 +483,8 @@ pub fn getenv(k: &OsStr) -> io::Result<Option<OsString>> {
 }
 
 pub fn setenv(k: &OsStr, v: &OsStr) -> io::Result<()> {
-    let k = try!(CString::new(k.as_bytes()));
-    let v = try!(CString::new(v.as_bytes()));
+    let k = CString::new(k.as_bytes())?;
+    let v = CString::new(v.as_bytes())?;
     let _g = ENV_LOCK.lock();
     cvt(unsafe {
         libc::setenv(k.as_ptr(), v.as_ptr(), 1)
@@ -482,7 +492,7 @@ pub fn setenv(k: &OsStr, v: &OsStr) -> io::Result<()> {
 }
 
 pub fn unsetenv(n: &OsStr) -> io::Result<()> {
-    let nbuf = try!(CString::new(n.as_bytes()));
+    let nbuf = CString::new(n.as_bytes())?;
     let _g = ENV_LOCK.lock();
     cvt(unsafe {
         libc::unsetenv(nbuf.as_ptr())

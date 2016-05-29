@@ -10,7 +10,7 @@
 
 // aux-build:issue-27362.rs
 // ignore-cross-compile
-// ignore-test This test fails on beta/stable
+// ignore-test This test fails on beta/stable #32019
 
 extern crate issue_27362;
 pub use issue_27362 as quux;

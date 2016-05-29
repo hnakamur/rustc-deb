@@ -88,11 +88,11 @@ mod inner {
                         -> Result<Duration, Duration> {
             if self >= other {
                 Ok(if self.t.tv_usec >= other.t.tv_usec {
-                    Duration::new(self.t.tv_sec as u64 - other.t.tv_sec as u64,
-                                  (self.t.tv_usec as u32 -
-                                   other.t.tv_usec as u32) * 1000)
+                    Duration::new((self.t.tv_sec - other.t.tv_sec) as u64,
+                                  ((self.t.tv_usec -
+                                    other.t.tv_usec) as u32) * 1000)
                 } else {
-                    Duration::new(self.t.tv_sec as u64 - 1 - other.t.tv_sec as u64,
+                    Duration::new((self.t.tv_sec - 1 - other.t.tv_sec) as u64,
                                   (self.t.tv_usec as u32 + (USEC_PER_SEC as u32) -
                                    other.t.tv_usec as u32) * 1000)
                 })
@@ -303,8 +303,13 @@ mod inner {
         }
     }
 
+    #[cfg(not(target_os = "dragonfly"))]
+    pub type clock_t = libc::c_int;
+    #[cfg(target_os = "dragonfly")]
+    pub type clock_t = libc::c_ulong;
+
     impl Timespec {
-        pub fn now(clock: libc::c_int) -> Timespec {
+        pub fn now(clock: clock_t) -> Timespec {
             let mut t = Timespec {
                 t: libc::timespec {
                     tv_sec: 0,

@@ -36,7 +36,6 @@
 #![feature(rustc_private)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
-#![feature(str_char)]
 
 #[macro_use]
 extern crate syntax;
@@ -44,8 +43,8 @@ extern crate syntax;
 extern crate rustc;
 #[macro_use]
 extern crate log;
-extern crate rustc_front;
 extern crate rustc_back;
+extern crate rustc_const_eval;
 
 pub use rustc::lint as lint;
 pub use rustc::middle as middle;
@@ -167,9 +166,29 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             reference: "PR 30742 <https://github.com/rust-lang/rust/pull/30724>",
         },
         FutureIncompatibleInfo {
+            id: LintId::of(SUPER_OR_SELF_IN_GLOBAL_PATH),
+            reference: "PR #32403 <https://github.com/rust-lang/rust/pull/32403>",
+        },
+        FutureIncompatibleInfo {
             id: LintId::of(MATCH_OF_UNIT_VARIANT_VIA_PAREN_DOTDOT),
             reference: "RFC 218 <https://github.com/rust-lang/rfcs/blob/\
                         master/text/0218-empty-struct-with-braces.md>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(TRANSMUTE_FROM_FN_ITEM_TYPES),
+            reference: "issue #19925 <https://github.com/rust-lang/rust/issues/19925>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(OVERLAPPING_INHERENT_IMPLS),
+            reference: "issue #22889 <https://github.com/rust-lang/rust/issues/22889>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(ILLEGAL_FLOATING_POINT_CONSTANT_PATTERN),
+            reference: "RFC 1445 <https://github.com/rust-lang/rfcs/pull/1445>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(ILLEGAL_STRUCT_OR_ENUM_CONSTANT_PATTERN),
+            reference: "RFC 1445 <https://github.com/rust-lang/rfcs/pull/1445>",
         },
         ]);
 

@@ -8,17 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(deprecated)]
-
 use std::cell::{RefCell, Cell};
-use std::collections::{HashSet, HashMap};
-use std::dynamic_lib::DynamicLibrary;
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::io::prelude::*;
 use std::io;
 use std::path::PathBuf;
-use std::panic::{self, AssertRecoverSafe};
+use std::panic::{self, AssertUnwindSafe};
 use std::process::Command;
 use std::rc::Rc;
 use std::str;
@@ -27,11 +24,12 @@ use std::sync::{Arc, Mutex};
 use testing;
 use rustc_lint;
 use rustc::dep_graph::DepGraph;
-use rustc::front::map as hir_map;
+use rustc::hir::map as hir_map;
 use rustc::session::{self, config};
 use rustc::session::config::{get_unstable_features_setting, OutputType};
 use rustc::session::search_paths::{SearchPaths, PathKind};
-use rustc_front::lowering::{lower_crate, LoweringContext};
+use rustc::hir::lowering::{lower_crate, LoweringContext};
+use rustc_back::dynamic_lib::DynamicLibrary;
 use rustc_back::tempdir::TempDir;
 use rustc_driver::{driver, Compilation};
 use rustc_metadata::cstore::CStore;
@@ -91,7 +89,7 @@ pub fn run(input: &str,
 
     let mut cfg = config::build_configuration(&sess);
     cfg.extend(config::parse_cfgspecs(cfgs.clone()));
-    let krate = driver::phase_1_parse_input(&sess, cfg, &input);
+    let krate = panictry!(driver::phase_1_parse_input(&sess, cfg, &input));
     let krate = driver::phase_2_configure_and_expand(&sess, &cstore, krate,
                                                      "rustdoc-test", None)
         .expect("phase_2_configure_and_expand aborted in rustdoc!");
@@ -114,19 +112,18 @@ pub fn run(input: &str,
         external_traits: RefCell::new(None),
         external_typarams: RefCell::new(None),
         inlined: RefCell::new(None),
-        populated_crate_impls: RefCell::new(HashSet::new()),
+        all_crate_impls: RefCell::new(HashMap::new()),
         deref_trait_did: Cell::new(None),
     };
 
     let mut v = RustdocVisitor::new(&ctx, None);
     v.visit(ctx.map.krate());
     let mut krate = v.clean(&ctx);
-    match crate_name {
-        Some(name) => krate.name = name,
-        None => {}
+    if let Some(name) = crate_name {
+        krate.name = name;
     }
-    let (krate, _) = passes::collapse_docs(krate);
-    let (krate, _) = passes::unindent_comments(krate);
+    let krate = passes::collapse_docs(krate);
+    let krate = passes::unindent_comments(krate);
 
     let mut collector = Collector::new(krate.name.to_string(),
                                        cfgs,
@@ -144,7 +141,7 @@ pub fn run(input: &str,
 }
 
 // Look for #![doc(test(no_crate_inject))], used by crates in the std facade
-fn scrape_test_config(krate: &::rustc_front::hir::Crate) -> TestOptions {
+fn scrape_test_config(krate: &::rustc::hir::Crate) -> TestOptions {
     use syntax::attr::AttrMetaMethods;
     use syntax::print::pprust;
 
@@ -183,7 +180,10 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
     // the test harness wants its own `main` & top level functions, so
     // never wrap the test in `fn main() { ... }`
     let test = maketest(test, Some(cratename), as_test_harness, opts);
-    let input = config::Input::Str(test.to_string());
+    let input = config::Input::Str {
+        name: driver::anon_src(),
+        input: test.to_owned(),
+    };
     let mut outputs = HashMap::new();
     outputs.insert(OutputType::Exe, None);
 
@@ -256,18 +256,13 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
         control.after_analysis.stop = Compilation::Stop;
     }
 
-    match {
-        let b_sess = AssertRecoverSafe::new(&sess);
-        let b_cstore = AssertRecoverSafe::new(&cstore);
-        let b_cfg = AssertRecoverSafe::new(cfg.clone());
-        let b_control = AssertRecoverSafe::new(&control);
+    let res = panic::catch_unwind(AssertUnwindSafe(|| {
+        driver::compile_input(&sess, &cstore, cfg.clone(),
+                              &input, &out,
+                              &None, None, &control)
+    }));
 
-        panic::recover(|| {
-            driver::compile_input(&b_sess, &b_cstore, (*b_cfg).clone(),
-                                  &input, &out,
-                                  &None, None, &b_control)
-        })
-    } {
+    match res {
         Ok(r) => {
             match r {
                 Err(count) if count > 0 && compile_fail == false => {
@@ -334,13 +329,10 @@ pub fn maketest(s: &str, cratename: Option<&str>, dont_insert_main: bool,
     // Don't inject `extern crate std` because it's already injected by the
     // compiler.
     if !s.contains("extern crate") && !opts.no_crate_inject && cratename != Some("std") {
-        match cratename {
-            Some(cratename) => {
-                if s.contains(cratename) {
-                    prog.push_str(&format!("extern crate {};\n", cratename));
-                }
+        if let Some(cratename) = cratename {
+            if s.contains(cratename) {
+                prog.push_str(&format!("extern crate {};\n", cratename));
             }
-            None => {}
         }
     }
     if dont_insert_main || s.contains("fn main") {
@@ -434,7 +426,7 @@ impl Collector {
                 // compiler failures are test failures
                 should_panic: testing::ShouldPanic::No,
             },
-            testfn: testing::DynTestFn(Box::new(move|| {
+            testfn: testing::DynTestFn(box move|| {
                 runtest(&test,
                         &cratename,
                         cfgs,
@@ -445,7 +437,7 @@ impl Collector {
                         as_test_harness,
                         compile_fail,
                         &opts);
-            }))
+            })
         });
     }
 
@@ -476,12 +468,7 @@ impl DocFolder for Collector {
             _ => typename_if_impl(&item)
         };
 
-        let pushed = if let Some(name) = current_name {
-            self.names.push(name);
-            true
-        } else {
-            false
-        };
+        let pushed = current_name.map(|name| self.names.push(name)).is_some();
 
         if let Some(doc) = item.doc_value() {
             self.cnt = 0;

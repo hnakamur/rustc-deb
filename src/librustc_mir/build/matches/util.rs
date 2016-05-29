@@ -22,7 +22,7 @@ impl<'a,'tcx> Builder<'a,'tcx> {
         subpatterns.iter()
                    .map(|fieldpat| {
                        let lvalue = lvalue.clone().field(fieldpat.field,
-                                                         fieldpat.field_ty());
+                                                         fieldpat.pattern.ty);
                        MatchPair::new(lvalue, &fieldpat.pattern)
                    })
                    .collect()
@@ -61,7 +61,8 @@ impl<'a,'tcx> Builder<'a,'tcx> {
                 from_end: suffix_len,
             };
             let temp = self.temp(slice.ty.clone()); // no need to schedule drop, temp is always copy
-            self.cfg.push_assign(block, slice.span, &temp, rvalue);
+            let scope_id = self.innermost_scope_id();
+            self.cfg.push_assign(block, scope_id, slice.span, &temp, rvalue);
             match_pairs.push(MatchPair::new(temp, slice));
         }
 
@@ -118,6 +119,7 @@ impl<'pat, 'tcx> MatchPair<'pat, 'tcx> {
         MatchPair {
             lvalue: lvalue,
             pattern: pattern,
+            slice_len_checked: false,
         }
     }
 }

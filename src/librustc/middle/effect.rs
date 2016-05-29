@@ -13,15 +13,15 @@
 use self::RootUnsafeContext::*;
 
 use dep_graph::DepNode;
-use middle::def::Def;
-use middle::ty::{self, Ty};
-use middle::ty::MethodCall;
+use hir::def::Def;
+use ty::{self, Ty, TyCtxt};
+use ty::MethodCall;
 
 use syntax::ast;
 use syntax::codemap::Span;
-use rustc_front::hir;
-use rustc_front::intravisit;
-use rustc_front::intravisit::{FnKind, Visitor};
+use hir;
+use hir::intravisit;
+use hir::intravisit::{FnKind, Visitor};
 
 #[derive(Copy, Clone)]
 struct UnsafeContext {
@@ -44,13 +44,14 @@ enum RootUnsafeContext {
 
 fn type_is_unsafe_function(ty: Ty) -> bool {
     match ty.sty {
-        ty::TyBareFn(_, ref f) => f.unsafety == hir::Unsafety::Unsafe,
+        ty::TyFnDef(_, _, ref f) |
+        ty::TyFnPtr(ref f) => f.unsafety == hir::Unsafety::Unsafe,
         _ => false,
     }
 }
 
 struct EffectCheckVisitor<'a, 'tcx: 'a> {
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
 
     /// Whether we're in an unsafe context.
     unsafe_context: UnsafeContext,
@@ -81,9 +82,9 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
                 block: &'v hir::Block, span: Span, _: ast::NodeId) {
 
         let (is_item_fn, is_unsafe_fn) = match fn_kind {
-            FnKind::ItemFn(_, _, unsafety, _, _, _) =>
+            FnKind::ItemFn(_, _, unsafety, _, _, _, _) =>
                 (true, unsafety == hir::Unsafety::Unsafe),
-            FnKind::Method(_, sig, _) =>
+            FnKind::Method(_, sig, _, _) =>
                 (true, sig.unsafety == hir::Unsafety::Unsafe),
             _ => (false, false),
         };
@@ -182,7 +183,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
     }
 }
 
-pub fn check_crate(tcx: &ty::ctxt) {
+pub fn check_crate(tcx: &TyCtxt) {
     let _task = tcx.dep_graph.in_task(DepNode::EffectCheck);
 
     let mut visitor = EffectCheckVisitor {

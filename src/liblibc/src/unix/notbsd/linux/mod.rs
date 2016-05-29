@@ -126,13 +126,6 @@ s! {
         __f_spare: [::c_int; 6],
     }
 
-    pub struct sockaddr_nl {
-        pub nl_family: ::sa_family_t,
-        nl_pad: ::c_ushort,
-        pub nl_pid: u32,
-        pub nl_groups: u32
-    }
-
     pub struct dqblk {
         pub dqb_bhardlimit: ::uint64_t,
         pub dqb_bsoftlimit: ::uint64_t,
@@ -182,31 +175,6 @@ s! {
         bits: [u32; 32],
         #[cfg(target_pointer_width = "64")]
         bits: [u64; 16],
-    }
-}
-
-f! {
-    pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
-        for slot in cpuset.bits.iter_mut() {
-            *slot = 0;
-        }
-    }
-
-    pub fn CPU_SET(cpu: usize, cpuset: &mut cpu_set_t) -> () {
-        let size = mem::size_of_val(&cpuset.bits[0]);
-        let (idx, offset) = (cpu / size, cpu % size);
-        cpuset.bits[idx] |= 1 << offset;
-        ()
-    }
-
-    pub fn CPU_ISSET(cpu: usize, cpuset: &cpu_set_t) -> bool {
-        let size = mem::size_of_val(&cpuset.bits[0]);
-        let (idx, offset) = (cpu / size, cpu % size);
-        0 != (cpuset.bits[idx] & (1 << offset))
-    }
-
-    pub fn CPU_EQUAL(set1: &cpu_set_t, set2: &cpu_set_t) -> bool {
-        set1.bits == set2.bits
     }
 }
 
@@ -345,12 +313,7 @@ pub const RTLD_DEFAULT: *mut ::c_void = 0i64 as *mut ::c_void;
 pub const RTLD_NODELETE: ::c_int = 0x1000;
 pub const RTLD_NOW: ::c_int = 0x2;
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-pub const MAP_32BIT: ::c_int = 0x0040;
-
 pub const TCP_MD5SIG: ::c_int = 14;
-
-pub const F_DUPFD_CLOEXEC: ::c_int = 1030;
 
 pub const PTHREAD_MUTEX_INITIALIZER: pthread_mutex_t = pthread_mutex_t {
     __align: [],
@@ -396,11 +359,6 @@ pub const SHM_UNLOCK: ::c_int = 12;
 pub const SHM_HUGETLB: ::c_int = 0o4000;
 pub const SHM_NORESERVE: ::c_int = 0o10000;
 
-pub const MS_RELATIME: ::c_ulong = 0x200000;
-pub const MS_KERNMOUNT: ::c_ulong = 0x400000;
-pub const MS_I_VERSION: ::c_ulong = 0x800000;
-pub const MS_STRICTATIME: ::c_ulong = 0x01000000;
-
 pub const EPOLLRDHUP: ::c_int = 0x2000;
 pub const EPOLLONESHOT: ::c_int = 0x40000000;
 
@@ -413,20 +371,45 @@ pub const EFD_SEMAPHORE: ::c_int = 0x1;
 
 pub const NCCS: usize = 32;
 
-pub const CLONE_NEWUTS: ::c_int = 0x04000000;
-pub const CLONE_NEWIPC: ::c_int = 0x08000000;
-pub const CLONE_NEWUSER: ::c_int = 0x10000000;
-pub const CLONE_NEWPID: ::c_int = 0x20000000;
-pub const CLONE_NEWNET: ::c_int = 0x40000000;
-pub const CLONE_IO: ::c_int = 0x80000000;
+pub const AF_NETLINK: ::c_int = 16;
 
+f! {
+    pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
+        for slot in cpuset.bits.iter_mut() {
+            *slot = 0;
+        }
+    }
+
+    pub fn CPU_SET(cpu: usize, cpuset: &mut cpu_set_t) -> () {
+        let size = mem::size_of_val(&cpuset.bits[0]);
+        let (idx, offset) = (cpu / size, cpu % size);
+        cpuset.bits[idx] |= 1 << offset;
+        ()
+    }
+
+    pub fn CPU_ISSET(cpu: usize, cpuset: &cpu_set_t) -> bool {
+        let size = mem::size_of_val(&cpuset.bits[0]);
+        let (idx, offset) = (cpu / size, cpu % size);
+        0 != (cpuset.bits[idx] & (1 << offset))
+    }
+
+    pub fn CPU_EQUAL(set1: &cpu_set_t, set2: &cpu_set_t) -> bool {
+        set1.bits == set2.bits
+    }
+}
+
+#[link(name = "util")]
 extern {
     pub fn shm_open(name: *const c_char, oflag: ::c_int,
                     mode: mode_t) -> ::c_int;
     pub fn shmget(key: ::key_t, size: ::size_t, shmflg: ::c_int) -> ::c_int;
-    pub fn shmat(shmid: ::c_int, shmaddr: *const ::c_void, shmflg: ::c_int) -> *mut ::c_void;
+    pub fn shmat(shmid: ::c_int,
+                 shmaddr: *const ::c_void,
+                 shmflg: ::c_int) -> *mut ::c_void;
     pub fn shmdt(shmaddr: *const ::c_void) -> ::c_int;
-    pub fn shmctl(shmid: ::c_int, cmd: ::c_int, buf: *mut ::shmid_ds) -> ::c_int;
+    pub fn shmctl(shmid: ::c_int,
+                  cmd: ::c_int,
+                  buf: *mut ::shmid_ds) -> ::c_int;
     pub fn mprotect(addr: *mut ::c_void, len: ::size_t, prot: ::c_int)
                     -> ::c_int;
     pub fn __errno_location() -> *mut ::c_int;
@@ -541,7 +524,23 @@ extern {
     pub fn sethostname(name: *const ::c_char, len: ::size_t) -> ::c_int;
     pub fn setns(fd: ::c_int, nstype: ::c_int) -> ::c_int;
     pub fn mkostemp(template: *mut ::c_char, flags: ::c_int) -> ::c_int;
-    pub fn mkostemps(template: *mut ::c_char, suffixlen: ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn mkostemps(template: *mut ::c_char,
+                     suffixlen: ::c_int,
+                     flags: ::c_int) -> ::c_int;
+    pub fn sigtimedwait(set: *const sigset_t,
+                        info: *mut siginfo_t,
+                        timeout: *const ::timespec) -> ::c_int;
+    pub fn sigwaitinfo(set: *const sigset_t,
+                       info: *mut siginfo_t) -> ::c_int;
+    pub fn openpty(amaster: *mut ::c_int,
+                   aslave: *mut ::c_int,
+                   name: *mut ::c_char,
+                   termp: *const termios,
+                   winp: *const ::winsize) -> ::c_int;
+    pub fn forkpty(amaster: *mut ::c_int,
+                   name: *mut ::c_char,
+                   termp: *const termios,
+                   winp: *const ::winsize) -> ::pid_t;
 }
 
 cfg_if! {
@@ -557,5 +556,3 @@ cfg_if! {
         pub use self::other::*;
     }
 }
-
-pub const AF_NETLINK: ::c_int = 16;

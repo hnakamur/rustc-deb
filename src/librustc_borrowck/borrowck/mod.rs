@@ -21,39 +21,43 @@ pub use self::MovedValueUseKind::*;
 use self::InteriorKind::*;
 
 use rustc::dep_graph::DepNode;
-use rustc::front::map as hir_map;
-use rustc::front::map::blocks::FnParts;
-use rustc::middle::cfg;
+use rustc::hir::map as hir_map;
+use rustc::hir::map::blocks::FnParts;
+use rustc::cfg;
 use rustc::middle::dataflow::DataFlowContext;
 use rustc::middle::dataflow::BitwiseOperator;
 use rustc::middle::dataflow::DataFlowOperator;
 use rustc::middle::dataflow::KillFrom;
-use rustc::middle::def_id::DefId;
+use rustc::hir::def_id::DefId;
 use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::free_region::FreeRegionMap;
 use rustc::middle::mem_categorization as mc;
 use rustc::middle::mem_categorization::Categorization;
 use rustc::middle::region;
-use rustc::middle::ty::{self, Ty};
+use rustc::ty::{self, Ty, TyCtxt};
 
 use std::fmt;
 use std::mem;
 use std::rc::Rc;
 use syntax::ast;
+use syntax::attr::AttrMetaMethods;
 use syntax::codemap::Span;
 use syntax::errors::DiagnosticBuilder;
 
-use rustc_front::hir;
-use rustc_front::hir::{FnDecl, Block};
-use rustc_front::intravisit;
-use rustc_front::intravisit::{Visitor, FnKind};
-use rustc_front::util as hir_util;
+use rustc::hir;
+use rustc::hir::{FnDecl, Block};
+use rustc::hir::intravisit;
+use rustc::hir::intravisit::{Visitor, FnKind};
+
+use rustc::mir::mir_map::MirMap;
 
 pub mod check_loans;
 
 pub mod gather_loans;
 
 pub mod move_data;
+
+mod mir;
 
 #[derive(Clone, Copy)]
 pub struct LoanDataFlowOperator;
@@ -66,15 +70,13 @@ impl<'a, 'tcx, 'v> Visitor<'v> for BorrowckCtxt<'a, 'tcx> {
         match fk {
             FnKind::ItemFn(..) |
             FnKind::Method(..) => {
-                let new_free_region_map = self.tcx.free_region_map(id);
-                let old_free_region_map =
-                    mem::replace(&mut self.free_region_map, new_free_region_map);
-                borrowck_fn(self, fk, fd, b, s, id);
-                self.free_region_map = old_free_region_map;
+                self.with_temp_region_map(id, |this| {
+                    borrowck_fn(this, fk, fd, b, s, id, fk.attrs())
+                });
             }
 
-            FnKind::Closure => {
-                borrowck_fn(self, fk, fd, b, s, id);
+            FnKind::Closure(..) => {
+                borrowck_fn(self, fk, fd, b, s, id, fk.attrs());
             }
         }
     }
@@ -98,9 +100,10 @@ impl<'a, 'tcx, 'v> Visitor<'v> for BorrowckCtxt<'a, 'tcx> {
     }
 }
 
-pub fn check_crate(tcx: &ty::ctxt) {
+pub fn check_crate<'tcx>(tcx: &TyCtxt<'tcx>, mir_map: &MirMap<'tcx>) {
     let mut bccx = BorrowckCtxt {
         tcx: tcx,
+        mir_map: Some(mir_map),
         free_region_map: FreeRegionMap::new(),
         stats: BorrowStats {
             loaned_paths_same: 0,
@@ -159,8 +162,17 @@ fn borrowck_fn(this: &mut BorrowckCtxt,
                decl: &hir::FnDecl,
                body: &hir::Block,
                sp: Span,
-               id: ast::NodeId) {
+               id: ast::NodeId,
+               attributes: &[ast::Attribute]) {
     debug!("borrowck_fn(id={})", id);
+
+    if attributes.iter().any(|item| item.check_name("rustc_mir_borrowck")) {
+        let mir = this.mir_map.unwrap().map.get(&id).unwrap();
+        this.with_temp_region_map(id, |this| {
+            mir::borrowck_mir(this, fk, decl, mir, body, sp, id, attributes)
+        });
+    }
+
     let cfg = cfg::CFG::new(this.tcx, body);
     let AnalysisData { all_loans,
                        loans: loan_dfcx,
@@ -197,7 +209,7 @@ fn build_borrowck_dataflow_data<'a, 'tcx>(this: &mut BorrowckCtxt<'a, 'tcx>,
 {
     // Check the body of fn items.
     let tcx = this.tcx;
-    let id_range = hir_util::compute_id_range_for_fn_body(fk, decl, body, sp, id);
+    let id_range = intravisit::compute_id_range_for_fn_body(fk, decl, body, sp, id);
     let (all_loans, move_data) =
         gather_loans::gather_loans_in_fn(this, id, decl, body);
 
@@ -232,7 +244,8 @@ fn build_borrowck_dataflow_data<'a, 'tcx>(this: &mut BorrowckCtxt<'a, 'tcx>,
 /// Accessor for introspective clients inspecting `AnalysisData` and
 /// the `BorrowckCtxt` itself , e.g. the flowgraph visualizer.
 pub fn build_borrowck_dataflow_data_for_fn<'a, 'tcx>(
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
+    mir_map: Option<&'a MirMap<'tcx>>,
     fn_parts: FnParts<'a>,
     cfg: &cfg::CFG)
     -> (BorrowckCtxt<'a, 'tcx>, AnalysisData<'a, 'tcx>)
@@ -240,6 +253,7 @@ pub fn build_borrowck_dataflow_data_for_fn<'a, 'tcx>(
 
     let mut bccx = BorrowckCtxt {
         tcx: tcx,
+        mir_map: mir_map,
         free_region_map: FreeRegionMap::new(),
         stats: BorrowStats {
             loaned_paths_same: 0,
@@ -264,7 +278,7 @@ pub fn build_borrowck_dataflow_data_for_fn<'a, 'tcx>(
 // Type definitions
 
 pub struct BorrowckCtxt<'a, 'tcx: 'a> {
-    tcx: &'a ty::ctxt<'tcx>,
+    tcx: &'a TyCtxt<'tcx>,
 
     // Hacky. As we visit various fns, we have to load up the
     // free-region map for each one. This map is computed by during
@@ -279,9 +293,13 @@ pub struct BorrowckCtxt<'a, 'tcx: 'a> {
     free_region_map: FreeRegionMap,
 
     // Statistics:
-    stats: BorrowStats
+    stats: BorrowStats,
+
+    // NodeId to MIR mapping (for methods that carry the #[rustc_mir] attribute).
+    mir_map: Option<&'a MirMap<'tcx>>,
 }
 
+#[derive(Clone)]
 struct BorrowStats {
     loaned_paths_same: usize,
     loaned_paths_imm: usize,
@@ -394,22 +412,22 @@ pub enum LoanPathElem {
 }
 
 pub fn closure_to_block(closure_id: ast::NodeId,
-                        tcx: &ty::ctxt) -> ast::NodeId {
+                        tcx: &TyCtxt) -> ast::NodeId {
     match tcx.map.get(closure_id) {
         hir_map::NodeExpr(expr) => match expr.node {
             hir::ExprClosure(_, _, ref block) => {
                 block.id
             }
             _ => {
-                panic!("encountered non-closure id: {}", closure_id)
+                bug!("encountered non-closure id: {}", closure_id)
             }
         },
-        _ => panic!("encountered non-expr id: {}", closure_id)
+        _ => bug!("encountered non-expr id: {}", closure_id)
     }
 }
 
 impl<'tcx> LoanPath<'tcx> {
-    pub fn kill_scope(&self, tcx: &ty::ctxt<'tcx>) -> region::CodeExtent {
+    pub fn kill_scope(&self, tcx: &TyCtxt<'tcx>) -> region::CodeExtent {
         match self.kind {
             LpVar(local_id) => tcx.region_maps.var_scope(local_id),
             LpUpvar(upvar_id) => {
@@ -574,6 +592,15 @@ pub enum MovedValueUseKind {
 // Misc
 
 impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
+    fn with_temp_region_map<F>(&mut self, id: ast::NodeId, f: F)
+        where F: for <'b> FnOnce(&'b mut BorrowckCtxt<'a, 'tcx>)
+    {
+        let new_free_region_map = self.tcx.free_region_map(id);
+        let old_free_region_map = mem::replace(&mut self.free_region_map, new_free_region_map);
+        f(self);
+        self.free_region_map = old_free_region_map;
+    }
+
     pub fn is_subregion_of(&self, r_sub: ty::Region, r_sup: ty::Region)
                            -> bool
     {
@@ -676,10 +703,9 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                         (self.tcx.expr_ty_adjusted(&expr), expr.span)
                     }
                     r => {
-                        self.tcx.sess.bug(&format!("MoveExpr({}) maps to \
-                                                   {:?}, not Expr",
-                                                  the_move.id,
-                                                  r))
+                        bug!("MoveExpr({}) maps to {:?}, not Expr",
+                             the_move.id,
+                             r)
                     }
                 };
                 let (suggestion, _) =
@@ -738,10 +764,9 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                         (self.tcx.expr_ty_adjusted(&expr), expr.span)
                     }
                     r => {
-                        self.tcx.sess.bug(&format!("Captured({}) maps to \
-                                                   {:?}, not Expr",
-                                                  the_move.id,
-                                                  r))
+                        bug!("Captured({}) maps to {:?}, not Expr",
+                             the_move.id,
+                             r)
                     }
                 };
                 let (suggestion, help) =
@@ -824,10 +849,6 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
         self.tcx.sess.span_err_with_code(s, msg, code);
     }
 
-    pub fn span_bug(&self, s: Span, m: &str) {
-        self.tcx.sess.span_bug(s, m);
-    }
-
     pub fn bckerr_to_string(&self, err: &BckError<'tcx>) -> String {
         match err.code {
             err_mutbl => {
@@ -867,7 +888,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                         format!("cannot borrow {} as mutable", descr)
                     }
                     BorrowViolation(euv::ClosureInvocation) => {
-                        self.tcx.sess.span_bug(err.span,
+                        span_bug!(err.span,
                             "err_mutbl with a closure invocation");
                     }
                 }
@@ -1007,9 +1028,9 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                         // We need to determine which is the case here.
                         let kind = match err.cmt.upvar().unwrap().cat {
                             Categorization::Upvar(mc::Upvar { kind, .. }) => kind,
-                            _ => unreachable!()
+                            _ => bug!()
                         };
-                        if kind == ty::FnClosureKind {
+                        if kind == ty::ClosureKind::Fn {
                             db.span_help(
                                 self.tcx.map.span(upvar_id.closure_expr_id),
                                 "consider changing this closure to take \
@@ -1157,7 +1178,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
     }
 }
 
-fn statement_scope_span(tcx: &ty::ctxt, region: ty::Region) -> Option<Span> {
+fn statement_scope_span(tcx: &TyCtxt, region: ty::Region) -> Option<Span> {
     match region {
         ty::ReScope(scope) => {
             match tcx.map.find(scope.node_id(&tcx.region_maps)) {

@@ -302,6 +302,13 @@ pub const SIG_UNBLOCK: ::c_int = 0x01;
 
 pub const RUSAGE_CHILDREN: ::c_int = -1;
 
+pub const LC_PAPER: ::c_int = 7;
+pub const LC_NAME: ::c_int = 8;
+pub const LC_ADDRESS: ::c_int = 9;
+pub const LC_TELEPHONE: ::c_int = 10;
+pub const LC_MEASUREMENT: ::c_int = 11;
+pub const LC_IDENTIFICATION: ::c_int = 12;
+
 pub const MAP_ANON: ::c_int = 0x0020;
 pub const MAP_ANONYMOUS: ::c_int = 0x0020;
 pub const MAP_GROWSDOWN: ::c_int = 0x0100;
@@ -543,6 +550,7 @@ pub const TIOCCONS: ::c_int = 0x541D;
 pub const RTLD_GLOBAL: ::c_int = 0x2;
 pub const RTLD_NOLOAD: ::c_int = 0x4;
 pub const RTLD_NOW: ::c_int = 0;
+pub const RTLD_DEFAULT: *mut ::c_void = -1isize as *mut ::c_void;
 
 f! {
     pub fn sigemptyset(set: *mut sigset_t) -> ::c_int {
@@ -571,11 +579,13 @@ f! {
         (*termios).c_cflag & ::CBAUD
     }
     pub fn cfsetispeed(termios: *mut ::termios, speed: ::speed_t) -> ::c_int {
-        (*termios).c_cflag = ((*termios).c_cflag & !::CBAUD) | (speed & ::CBAUD);
+        let cbaud = ::CBAUD;
+        (*termios).c_cflag = ((*termios).c_cflag & !cbaud) | (speed & cbaud);
         return 0
     }
     pub fn cfsetospeed(termios: *mut ::termios, speed: ::speed_t) -> ::c_int {
-        (*termios).c_cflag = ((*termios).c_cflag & !::CBAUD) | (speed & ::CBAUD);
+        let cbaud = ::CBAUD;
+        (*termios).c_cflag = ((*termios).c_cflag & !cbaud) | (speed & cbaud);
         return 0
     }
     pub fn tcgetattr(fd: ::c_int, termios: *mut ::termios) -> ::c_int {
@@ -655,8 +665,6 @@ cfg_if! {
         mod b64;
         pub use self::b64::*;
     } else {
-        // ...
+        // Unknown target_pointer_width
     }
 }
-
-
