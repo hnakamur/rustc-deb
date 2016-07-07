@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use std::fmt;
-use std::io::prelude::*;
 use std::io;
 
 use externalfiles::ExternalHtml;
@@ -104,6 +103,8 @@ r##"<!DOCTYPE html>
                     <dd>Move down in search results</dd>
                     <dt>&#9166;</dt>
                     <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
                 </dl>
             </div>
 

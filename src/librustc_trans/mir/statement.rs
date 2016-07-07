@@ -9,7 +9,8 @@
 // except according to those terms.
 
 use rustc::mir::repr as mir;
-use common::BlockAndBuilder;
+use common::{self, BlockAndBuilder};
+use debuginfo::DebugLoc;
 
 use super::MirContext;
 use super::TempRef;
@@ -21,6 +22,10 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                            -> BlockAndBuilder<'bcx, 'tcx> {
         debug!("trans_statement(statement={:?})", statement);
 
+        let debug_loc = DebugLoc::ScopeAt(self.scopes[statement.scope.index()],
+                                          statement.span);
+        debug_loc.apply_to_bcx(&bcx);
+        debug_loc.apply(bcx.fcx());
         match statement.kind {
             mir::StatementKind::Assign(ref lvalue, ref rvalue) => {
                 match *lvalue {
@@ -28,23 +33,33 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         let index = index as usize;
                         match self.temps[index as usize] {
                             TempRef::Lvalue(tr_dest) => {
-                                self.trans_rvalue(bcx, tr_dest, rvalue)
+                                self.trans_rvalue(bcx, tr_dest, rvalue, debug_loc)
                             }
                             TempRef::Operand(None) => {
-                                let (bcx, operand) = self.trans_rvalue_operand(bcx, rvalue);
+                                let (bcx, operand) = self.trans_rvalue_operand(bcx, rvalue,
+                                                                               debug_loc);
                                 self.temps[index] = TempRef::Operand(Some(operand));
                                 bcx
                             }
                             TempRef::Operand(Some(_)) => {
-                                span_bug!(statement.span,
-                                          "operand {:?} already assigned",
-                                          rvalue);
+                                let ty = self.mir.lvalue_ty(bcx.tcx(), lvalue);
+                                let ty = bcx.monomorphize(&ty.to_ty(bcx.tcx()));
+
+                                if !common::type_is_zero_size(bcx.ccx(), ty) {
+                                    span_bug!(statement.span,
+                                              "operand {:?} already assigned",
+                                              rvalue);
+                                } else {
+                                    // If the type is zero-sized, it's already been set here,
+                                    // but we still need to make sure we translate the operand
+                                    self.trans_rvalue_operand(bcx, rvalue, debug_loc).0
+                                }
                             }
                         }
                     }
                     _ => {
                         let tr_dest = self.trans_lvalue(&bcx, lvalue);
-                        self.trans_rvalue(bcx, tr_dest, rvalue)
+                        self.trans_rvalue(bcx, tr_dest, rvalue, debug_loc)
                     }
                 }
             }

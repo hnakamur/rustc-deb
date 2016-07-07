@@ -19,7 +19,8 @@ use llvm::{True, False, Bool, OperandBundleDef};
 use rustc::cfg;
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
-use rustc::infer;
+use rustc::infer::TransNormalize;
+use rustc::util::common::MemoizationMap;
 use middle::lang_items::LangItem;
 use rustc::ty::subst::Substs;
 use abi::{Abi, FnType};
@@ -39,7 +40,7 @@ use type_::Type;
 use value::Value;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::traits::{self, SelectionContext, ProjectionMode};
-use rustc::ty::fold::{TypeFolder, TypeFoldable};
+use rustc::ty::fold::TypeFoldable;
 use rustc::hir;
 use util::nodemap::NodeMap;
 
@@ -54,19 +55,19 @@ use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
 use syntax::parse::token;
 
-pub use context::CrateContext;
+pub use context::{CrateContext, SharedCrateContext};
 
 /// Is the type's representation size known at compile time?
-pub fn type_is_sized<'tcx>(tcx: &TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    ty.is_sized(&tcx.empty_parameter_environment(), DUMMY_SP)
+pub fn type_is_sized<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, ty: Ty<'tcx>) -> bool {
+    ty.is_sized(tcx, &tcx.empty_parameter_environment(), DUMMY_SP)
 }
 
-pub fn type_is_fat_ptr<'tcx>(cx: &TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+pub fn type_is_fat_ptr<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, ty: Ty<'tcx>) -> bool {
     match ty.sty {
         ty::TyRawPtr(ty::TypeAndMut{ty, ..}) |
         ty::TyRef(_, ty::TypeAndMut{ty, ..}) |
         ty::TyBox(ty) => {
-            !type_is_sized(cx, ty)
+            !type_is_sized(tcx, ty)
         }
         _ => {
             false
@@ -163,8 +164,8 @@ pub struct VariantInfo<'tcx> {
     pub fields: Vec<Field<'tcx>>
 }
 
-impl<'tcx> VariantInfo<'tcx> {
-    pub fn from_ty(tcx: &TyCtxt<'tcx>,
+impl<'a, 'tcx> VariantInfo<'tcx> {
+    pub fn from_ty(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                    ty: Ty<'tcx>,
                    opt_def: Option<Def>)
                    -> Self
@@ -200,7 +201,7 @@ impl<'tcx> VariantInfo<'tcx> {
     }
 
     /// Return the variant corresponding to a given node (e.g. expr)
-    pub fn of_node(tcx: &TyCtxt<'tcx>, ty: Ty<'tcx>, id: ast::NodeId) -> Self {
+    pub fn of_node(tcx: TyCtxt<'a, 'tcx, 'tcx>, ty: Ty<'tcx>, id: ast::NodeId) -> Self {
         let node_def = tcx.def_map.borrow().get(&id).map(|v| v.full_def());
         Self::from_ty(tcx, ty, node_def)
     }
@@ -280,7 +281,7 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
     pub llfn: ValueRef,
 
     // always an empty parameter-environment NOTE: @jroesch another use of ParamEnv
-    pub param_env: ty::ParameterEnvironment<'a, 'tcx>,
+    pub param_env: ty::ParameterEnvironment<'tcx>,
 
     // A pointer to where to store the return value. If the return type is
     // immediate, this points to an alloca in the function. Otherwise, it's a
@@ -427,7 +428,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
-        where T : TypeFoldable<'tcx>
+        where T: TransNormalize<'tcx>
     {
         monomorphize::apply_param_substs(self.ccx.tcx(),
                                          self.param_substs,
@@ -463,20 +464,18 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         // landing pads as "landing pads for SEH".
         let ccx = self.ccx;
         let tcx = ccx.tcx();
-        let target = &ccx.sess().target.target;
         match tcx.lang_items.eh_personality() {
             Some(def_id) if !base::wants_msvc_seh(ccx.sess()) => {
                 Callee::def(ccx, def_id, tcx.mk_substs(Substs::empty())).reify(ccx).val
             }
-            _ => if let Some(llpersonality) = ccx.eh_personality().get() {
-                llpersonality
-            } else {
-                let name = if !base::wants_msvc_seh(ccx.sess()) {
-                    "rust_eh_personality"
-                } else if target.arch == "x86" {
-                    "_except_handler3"
+            _ => {
+                if let Some(llpersonality) = ccx.eh_personality().get() {
+                    return llpersonality
+                }
+                let name = if base::wants_msvc_seh(ccx.sess()) {
+                    "__CxxFrameHandler3"
                 } else {
-                    "__C_specific_handler"
+                    "rust_eh_personality"
                 };
                 let fty = Type::variadic_func(&[], &Type::i32(ccx));
                 let f = declare::declare_cfn(ccx, name, fty);
@@ -497,7 +496,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
             return Callee::def(ccx, def_id, tcx.mk_substs(Substs::empty()));
         }
 
-        let ty = tcx.mk_fn_ptr(ty::BareFnTy {
+        let ty = tcx.mk_fn_ptr(tcx.mk_bare_fn(ty::BareFnTy {
             unsafety: hir::Unsafety::Unsafe,
             abi: Abi::C,
             sig: ty::Binder(ty::FnSig {
@@ -505,7 +504,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
                 output: ty::FnDiverging,
                 variadic: false
             }),
-        });
+        }));
 
         let unwresume = ccx.eh_unwind_resume();
         if let Some(llfn) = unwresume.get() {
@@ -569,7 +568,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     pub fn fcx(&self) -> &'blk FunctionContext<'blk, 'tcx> {
         self.fcx
     }
-    pub fn tcx(&self) -> &'blk TyCtxt<'tcx> {
+    pub fn tcx(&self) -> TyCtxt<'blk, 'tcx, 'tcx> {
         self.fcx.ccx.tcx()
     }
     pub fn sess(&self) -> &'blk Session { self.fcx.ccx.sess() }
@@ -604,7 +603,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
-        where T : TypeFoldable<'tcx>
+        where T: TransNormalize<'tcx>
     {
         monomorphize::apply_param_substs(self.tcx(),
                                          self.fcx.param_substs,
@@ -695,7 +694,7 @@ impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
     pub fn fcx(&self) -> &'blk FunctionContext<'blk, 'tcx> {
         self.bcx.fcx()
     }
-    pub fn tcx(&self) -> &'blk TyCtxt<'tcx> {
+    pub fn tcx(&self) -> TyCtxt<'blk, 'tcx, 'tcx> {
         self.bcx.tcx()
     }
     pub fn sess(&self) -> &'blk Session {
@@ -711,7 +710,7 @@ impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
-        where T: TypeFoldable<'tcx>
+        where T: TransNormalize<'tcx>
     {
         self.bcx.monomorphize(value)
     }
@@ -1051,107 +1050,94 @@ pub fn expr_ty_adjusted<'blk, 'tcx>(bcx: &BlockS<'blk, 'tcx>, ex: &hir::Expr) ->
 /// Attempts to resolve an obligation. The result is a shallow vtable resolution -- meaning that we
 /// do not (necessarily) resolve all nested obligations on the impl. Note that type check should
 /// guarantee to us that all nested obligations *could be* resolved if we wanted to.
-pub fn fulfill_obligation<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+pub fn fulfill_obligation<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                                     span: Span,
                                     trait_ref: ty::PolyTraitRef<'tcx>)
                                     -> traits::Vtable<'tcx, ()>
 {
-    let tcx = ccx.tcx();
+    let tcx = scx.tcx();
 
     // Remove any references to regions; this helps improve caching.
     let trait_ref = tcx.erase_regions(&trait_ref);
 
-    // First check the cache.
-    match ccx.trait_cache().borrow().get(&trait_ref) {
-        Some(vtable) => {
-            info!("Cache hit: {:?}", trait_ref);
-            return (*vtable).clone();
-        }
-        None => { }
-    }
+    scx.trait_cache().memoize(trait_ref, || {
+        debug!("trans fulfill_obligation: trait_ref={:?} def_id={:?}",
+               trait_ref, trait_ref.def_id());
 
-    debug!("trans fulfill_obligation: trait_ref={:?} def_id={:?}",
-           trait_ref, trait_ref.def_id());
+        // Do the initial selection for the obligation. This yields the
+        // shallow result we are looking for -- that is, what specific impl.
+        tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+            let mut selcx = SelectionContext::new(&infcx);
 
+            let obligation_cause = traits::ObligationCause::misc(span,
+                                                             ast::DUMMY_NODE_ID);
+            let obligation = traits::Obligation::new(obligation_cause,
+                                                     trait_ref.to_poly_trait_predicate());
 
-    // Do the initial selection for the obligation. This yields the
-    // shallow result we are looking for -- that is, what specific impl.
-    let infcx = infer::normalizing_infer_ctxt(tcx, &tcx.tables, ProjectionMode::Any);
-    let mut selcx = SelectionContext::new(&infcx);
+            let selection = match selcx.select(&obligation) {
+                Ok(Some(selection)) => selection,
+                Ok(None) => {
+                    // Ambiguity can happen when monomorphizing during trans
+                    // expands to some humongo type that never occurred
+                    // statically -- this humongo type can then overflow,
+                    // leading to an ambiguous result. So report this as an
+                    // overflow bug, since I believe this is the only case
+                    // where ambiguity can result.
+                    debug!("Encountered ambiguity selecting `{:?}` during trans, \
+                            presuming due to overflow",
+                           trait_ref);
+                    tcx.sess.span_fatal(span,
+                        "reached the recursion limit during monomorphization \
+                         (selection ambiguity)");
+                }
+                Err(e) => {
+                    span_bug!(span, "Encountered error `{:?}` selecting `{:?}` during trans",
+                              e, trait_ref)
+                }
+            };
 
-    let obligation =
-        traits::Obligation::new(traits::ObligationCause::misc(span, ast::DUMMY_NODE_ID),
-                                trait_ref.to_poly_trait_predicate());
-    let selection = match selcx.select(&obligation) {
-        Ok(Some(selection)) => selection,
-        Ok(None) => {
-            // Ambiguity can happen when monomorphizing during trans
-            // expands to some humongo type that never occurred
-            // statically -- this humongo type can then overflow,
-            // leading to an ambiguous result. So report this as an
-            // overflow bug, since I believe this is the only case
-            // where ambiguity can result.
-            debug!("Encountered ambiguity selecting `{:?}` during trans, \
-                    presuming due to overflow",
-                   trait_ref);
-            ccx.sess().span_fatal(
-                span,
-                "reached the recursion limit during monomorphization (selection ambiguity)");
-        }
-        Err(e) => {
-            span_bug!(
-                span,
-                "Encountered error `{:?}` selecting `{:?}` during trans",
-                e,
-                trait_ref)
-        }
-    };
+            // Currently, we use a fulfillment context to completely resolve
+            // all nested obligations. This is because they can inform the
+            // inference of the impl's type parameters.
+            let mut fulfill_cx = traits::FulfillmentContext::new();
+            let vtable = selection.map(|predicate| {
+                fulfill_cx.register_predicate_obligation(&infcx, predicate);
+            });
+            let vtable = infcx.drain_fulfillment_cx_or_panic(span, &mut fulfill_cx, &vtable);
 
-    // Currently, we use a fulfillment context to completely resolve
-    // all nested obligations. This is because they can inform the
-    // inference of the impl's type parameters.
-    let mut fulfill_cx = traits::FulfillmentContext::new();
-    let vtable = selection.map(|predicate| {
-        fulfill_cx.register_predicate_obligation(&infcx, predicate);
-    });
-    let vtable = infer::drain_fulfillment_cx_or_panic(
-        span, &infcx, &mut fulfill_cx, &vtable
-    );
-
-    info!("Cache miss: {:?} => {:?}", trait_ref, vtable);
-
-    ccx.trait_cache().borrow_mut().insert(trait_ref, vtable.clone());
-
-    vtable
+            info!("Cache miss: {:?} => {:?}", trait_ref, vtable);
+            vtable
+        })
+    })
 }
 
 /// Normalizes the predicates and checks whether they hold.  If this
 /// returns false, then either normalize encountered an error or one
 /// of the predicates did not hold. Used when creating vtables to
 /// check for unsatisfiable methods.
-pub fn normalize_and_test_predicates<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+pub fn normalize_and_test_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                predicates: Vec<ty::Predicate<'tcx>>)
                                                -> bool
 {
     debug!("normalize_and_test_predicates(predicates={:?})",
            predicates);
 
-    let tcx = ccx.tcx();
-    let infcx = infer::normalizing_infer_ctxt(tcx, &tcx.tables, ProjectionMode::Any);
-    let mut selcx = SelectionContext::new(&infcx);
-    let mut fulfill_cx = traits::FulfillmentContext::new();
-    let cause = traits::ObligationCause::dummy();
-    let traits::Normalized { value: predicates, obligations } =
-        traits::normalize(&mut selcx, cause.clone(), &predicates);
-    for obligation in obligations {
-        fulfill_cx.register_predicate_obligation(&infcx, obligation);
-    }
-    for predicate in predicates {
-        let obligation = traits::Obligation::new(cause.clone(), predicate);
-        fulfill_cx.register_predicate_obligation(&infcx, obligation);
-    }
+    tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+        let mut selcx = SelectionContext::new(&infcx);
+        let mut fulfill_cx = traits::FulfillmentContext::new();
+        let cause = traits::ObligationCause::dummy();
+        let traits::Normalized { value: predicates, obligations } =
+            traits::normalize(&mut selcx, cause.clone(), &predicates);
+        for obligation in obligations {
+            fulfill_cx.register_predicate_obligation(&infcx, obligation);
+        }
+        for predicate in predicates {
+            let obligation = traits::Obligation::new(cause.clone(), predicate);
+            fulfill_cx.register_predicate_obligation(&infcx, obligation);
+        }
 
-    infer::drain_fulfillment_cx(&infcx, &mut fulfill_cx, &()).is_ok()
+        infcx.drain_fulfillment_cx(&mut fulfill_cx, &()).is_ok()
+    })
 }
 
 pub fn langcall(bcx: Block,

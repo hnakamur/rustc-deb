@@ -11,7 +11,7 @@
 use core::cmp::Ordering;
 use core::fmt::Debug;
 use core::hash::{Hash, Hasher};
-use core::iter::FromIterator;
+use core::iter::{FromIterator, Peekable};
 use core::marker::PhantomData;
 use core::ops::Index;
 use core::{fmt, intrinsics, mem, ptr};
@@ -286,7 +286,7 @@ pub struct Values<'a, K: 'a, V: 'a> {
 }
 
 /// A mutable iterator over a BTreeMap's values.
-#[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
+#[stable(feature = "map_values_mut", since = "1.10.0")]
 pub struct ValuesMut<'a, K: 'a, V: 'a> {
     inner: IterMut<'a, K, V>,
 }
@@ -346,6 +346,12 @@ pub struct OccupiedEntry<'a, K: 'a, V: 'a> {
 
     // Be invariant in `K` and `V`
     _marker: PhantomData<&'a mut (K, V)>,
+}
+
+// An iterator for merging two sorted sequences into one
+struct MergeIter<K, V, I: Iterator<Item=(K, V)>> {
+    left: Peekable<I>,
+    right: Peekable<I>,
 }
 
 impl<K: Ord, V> BTreeMap<K, V> {
@@ -535,6 +541,62 @@ impl<K: Ord, V> BTreeMap<K, V> {
         }
     }
 
+    /// Moves all elements from `other` into `Self`, leaving `other` empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(btree_append)]
+    /// use std::collections::BTreeMap;
+    ///
+    /// let mut a = BTreeMap::new();
+    /// a.insert(1, "a");
+    /// a.insert(2, "b");
+    /// a.insert(3, "c");
+    ///
+    /// let mut b = BTreeMap::new();
+    /// b.insert(3, "d");
+    /// b.insert(4, "e");
+    /// b.insert(5, "f");
+    ///
+    /// a.append(&mut b);
+    ///
+    /// assert_eq!(a.len(), 5);
+    /// assert_eq!(b.len(), 0);
+    ///
+    /// assert_eq!(a[&1], "a");
+    /// assert_eq!(a[&2], "b");
+    /// assert_eq!(a[&3], "d");
+    /// assert_eq!(a[&4], "e");
+    /// assert_eq!(a[&5], "f");
+    /// ```
+    #[unstable(feature = "btree_append", reason = "recently added as part of collections reform 2",
+               issue = "19986")]
+    pub fn append(&mut self, other: &mut Self) {
+        // Do we have to append anything at all?
+        if other.len() == 0 {
+            return;
+        }
+
+        // We can just swap `self` and `other` if `self` is empty.
+        if self.len() == 0 {
+            mem::swap(self, other);
+            return;
+        }
+
+        // First, we merge `self` and `other` into a sorted sequence in linear time.
+        let self_iter = mem::replace(self, BTreeMap::new()).into_iter();
+        let other_iter = mem::replace(other, BTreeMap::new()).into_iter();
+        let iter = MergeIter {
+            left: self_iter.peekable(),
+            right: other_iter.peekable(),
+        };
+
+        // Second, we build a tree from the sorted sequence in linear time.
+        self.from_sorted_iter(iter);
+        self.fix_right_edge();
+    }
+
     /// Constructs a double-ended iterator over a sub-range of elements in the map, starting
     /// at min, and ending at max. If min is `Unbounded`, then it will be treated as "negative
     /// infinity", and if max is `Unbounded`, then it will be treated as "positive infinity".
@@ -722,6 +784,76 @@ impl<K: Ord, V> BTreeMap<K, V> {
                 length: &mut self.length,
                 _marker: PhantomData,
             })
+        }
+    }
+
+    fn from_sorted_iter<I: Iterator<Item=(K, V)>>(&mut self, iter: I) {
+        let mut cur_node = last_leaf_edge(self.root.as_mut()).into_node();
+        // Iterate through all key-value pairs, pushing them into nodes at the right level.
+        for (key, value) in iter {
+            // Try to push key-value pair into the current leaf node.
+            if cur_node.len() < node::CAPACITY {
+                cur_node.push(key, value);
+            } else {
+                // No space left, go up and push there.
+                let mut open_node;
+                let mut test_node = cur_node.forget_type();
+                loop {
+                    match test_node.ascend() {
+                        Ok(parent) => {
+                            let parent = parent.into_node();
+                            if parent.len() < node::CAPACITY {
+                                // Found a node with space left, push here.
+                                open_node = parent;
+                                break;
+                            } else {
+                                // Go up again.
+                                test_node = parent.forget_type();
+                            }
+                        },
+                        Err(node) => {
+                            // We are at the top, create a new root node and push there.
+                            open_node = node.into_root_mut().push_level();
+                            break;
+                        },
+                    }
+                }
+
+                // Push key-value pair and new right subtree.
+                let tree_height = open_node.height() - 1;
+                let mut right_tree = node::Root::new_leaf();
+                for _ in 0..tree_height {
+                    right_tree.push_level();
+                }
+                open_node.push(key, value, right_tree);
+
+                // Go down to the right-most leaf again.
+                cur_node = last_leaf_edge(open_node.forget_type()).into_node();
+            }
+
+            self.length += 1;
+        }
+    }
+
+    fn fix_right_edge(&mut self) {
+        // Handle underfull nodes, start from the top.
+        let mut cur_node = self.root.as_mut();
+        while let Internal(internal) = cur_node.force() {
+            // Check if right-most child is underfull.
+            let mut last_edge = internal.last_edge();
+            let right_child_len = last_edge.reborrow().descend().len();
+            if right_child_len < node::CAPACITY / 2 {
+                // We need to steal.
+                let mut last_kv = match last_edge.left_kv() {
+                    Ok(left) => left,
+                    Err(_) => unreachable!(),
+                };
+                last_kv.bulk_steal_left(node::CAPACITY/2 - right_child_len);
+                last_edge = last_kv.right_edge();
+            }
+
+            // Go further down.
+            cur_node = last_edge.descend();
         }
     }
 }
@@ -1012,7 +1144,7 @@ impl<'a, K, V> Iterator for Range<'a, K, V> {
     }
 }
 
-#[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
+#[stable(feature = "map_values_mut", since = "1.10.0")]
 impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
     type Item = &'a mut V;
 
@@ -1025,14 +1157,14 @@ impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
     }
 }
 
-#[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
+#[stable(feature = "map_values_mut", since = "1.10.0")]
 impl<'a, K, V> DoubleEndedIterator for ValuesMut<'a, K, V> {
     fn next_back(&mut self) -> Option<&'a mut V> {
         self.inner.next_back().map(|(_, v)| v)
     }
 }
 
-#[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
+#[stable(feature = "map_values_mut", since = "1.10.0")]
 impl<'a, K, V> ExactSizeIterator for ValuesMut<'a, K, V> {
     fn len(&self) -> usize {
         self.inner.len()
@@ -1443,7 +1575,6 @@ impl<K, V> BTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// # #![feature(map_values_mut)]
     /// use std::collections::BTreeMap;
     ///
     /// let mut a = BTreeMap::new();
@@ -1458,8 +1589,8 @@ impl<K, V> BTreeMap<K, V> {
     /// assert_eq!(values, [String::from("hello!"),
     ///                     String::from("goodbye!")]);
     /// ```
-    #[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
-    pub fn values_mut<'a>(&'a mut self) -> ValuesMut<'a, K, V> {
+    #[stable(feature = "map_values_mut", since = "1.10.0")]
+    pub fn values_mut(&mut self) -> ValuesMut<K, V> {
         ValuesMut { inner: self.iter_mut() }
     }
 
@@ -1522,12 +1653,21 @@ impl<'a, K: Ord, V> Entry<'a, K, V> {
             Vacant(entry) => entry.insert(default()),
         }
     }
+
+    /// Returns a reference to this entry's key.
+    #[stable(feature = "map_entry_keys", since = "1.10.0")]
+    pub fn key(&self) -> &K {
+        match *self {
+            Occupied(ref entry) => entry.key(),
+            Vacant(ref entry) => entry.key(),
+        }
+    }
 }
 
 impl<'a, K: Ord, V> VacantEntry<'a, K, V> {
     /// Gets a reference to the key that would be used when inserting a value
     /// through the VacantEntry.
-    #[unstable(feature = "map_entry_keys", issue = "32281")]
+    #[stable(feature = "map_entry_keys", since = "1.10.0")]
     pub fn key(&self) -> &K {
         &self.key
     }
@@ -1577,7 +1717,7 @@ impl<'a, K: Ord, V> VacantEntry<'a, K, V> {
 
 impl<'a, K: Ord, V> OccupiedEntry<'a, K, V> {
     /// Gets a reference to the key in the entry.
-    #[unstable(feature = "map_entry_keys", issue = "32281")]
+    #[stable(feature = "map_entry_keys", since = "1.10.0")]
     pub fn key(&self) -> &K {
         self.handle.reborrow().into_kv().0
     }
@@ -1690,32 +1830,41 @@ fn handle_underfull_node<'a, K, V>(node: NodeRef<marker::Mut<'a>,
     };
 
     if handle.can_merge() {
-        return Merged(handle.merge().into_node());
+        Merged(handle.merge().into_node())
     } else {
-        unsafe {
-            let (k, v, edge) = if is_left {
-                handle.reborrow_mut().left_edge().descend().pop()
-            } else {
-                handle.reborrow_mut().right_edge().descend().pop_front()
-            };
-
-            let k = mem::replace(handle.reborrow_mut().into_kv_mut().0, k);
-            let v = mem::replace(handle.reborrow_mut().into_kv_mut().1, v);
-
-            // FIXME: reuse cur_node?
-            if is_left {
-                match handle.reborrow_mut().right_edge().descend().force() {
-                    Leaf(mut leaf) => leaf.push_front(k, v),
-                    Internal(mut internal) => internal.push_front(k, v, edge.unwrap())
-                }
-            } else {
-                match handle.reborrow_mut().left_edge().descend().force() {
-                    Leaf(mut leaf) => leaf.push(k, v),
-                    Internal(mut internal) => internal.push(k, v, edge.unwrap())
-                }
-            }
+        if is_left {
+            handle.steal_left();
+        } else {
+            handle.steal_right();
         }
+        Stole(handle.into_node())
+    }
+}
 
-        return Stole(handle.into_node());
+impl<K: Ord, V, I: Iterator<Item=(K, V)>> Iterator for MergeIter<K, V, I> {
+    type Item = (K, V);
+
+    fn next(&mut self) -> Option<(K, V)> {
+        let res = match (self.left.peek(), self.right.peek()) {
+            (Some(&(ref left_key, _)), Some(&(ref right_key, _))) => left_key.cmp(right_key),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => return None,
+        };
+
+        // Check which elements comes first and only advance the corresponding iterator.
+        // If two keys are equal, take the value from `right`.
+        match res {
+            Ordering::Less => {
+                self.left.next()
+            },
+            Ordering::Greater => {
+                self.right.next()
+            },
+            Ordering::Equal => {
+                self.left.next();
+                self.right.next()
+            },
+        }
     }
 }

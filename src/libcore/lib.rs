@@ -43,6 +43,7 @@
 // Since libcore defines many fundamental lang items, all tests live in a
 // separate crate, libcoretest, to avoid bizarre issues.
 
+#![cfg_attr(stage0, allow(unused_attributes))]
 #![crate_name = "core"]
 #![stable(feature = "core", since = "1.6.0")]
 #![crate_type = "rlib"]
@@ -60,9 +61,12 @@
 #![cfg_attr(not(stage0), deny(warnings))]
 
 #![feature(allow_internal_unstable)]
+#![feature(asm)]
 #![feature(associated_type_defaults)]
+#![feature(cfg_target_feature)]
 #![feature(concat_idents)]
 #![feature(const_fn)]
+#![feature(cfg_target_has_atomic)]
 #![feature(custom_attribute)]
 #![feature(fundamental)]
 #![feature(inclusive_range_syntax)]

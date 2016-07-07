@@ -497,6 +497,91 @@ impl Bar {
 ```
 "##,
 
+E0408: r##"
+An "or" pattern was used where the variable bindings are not consistently bound
+across patterns.
+
+Example of erroneous code:
+
+```compile_fail
+match x {
+    Some(y) | None => { /* use y */ } // error: variable `y` from pattern #1 is
+                                      //        not bound in pattern #2
+    _ => ()
+}
+```
+
+Here, `y` is bound to the contents of the `Some` and can be used within the
+block corresponding to the match arm. However, in case `x` is `None`, we have
+not specified what `y` is, and the block will use a nonexistent variable.
+
+To fix this error, either split into multiple match arms:
+
+```
+let x = Some(1);
+match x {
+    Some(y) => { /* use y */ }
+    None => { /* ... */ }
+}
+```
+
+or, bind the variable to a field of the same type in all sub-patterns of the
+or pattern:
+
+```
+let x = (0, 2);
+match x {
+    (0, y) | (y, 0) => { /* use y */}
+    _ => {}
+}
+```
+
+In this example, if `x` matches the pattern `(0, _)`, the second field is set
+to `y`. If it matches `(_, 0)`, the first field is set to `y`; so in all
+cases `y` is set to some value.
+"##,
+
+E0409: r##"
+An "or" pattern was used where the variable bindings are not consistently bound
+across patterns.
+
+Example of erroneous code:
+
+```compile_fail
+let x = (0, 2);
+match x {
+    (0, ref y) | (y, 0) => { /* use y */} // error: variable `y` is bound with
+                                          //        different mode in pattern #2
+                                          //        than in pattern #1
+    _ => ()
+}
+```
+
+Here, `y` is bound by-value in one case and by-reference in the other.
+
+To fix this error, just use the same mode in both cases.
+Generally using `ref` or `ref mut` where not already used will fix this:
+
+```ignore
+let x = (0, 2);
+match x {
+    (0, ref y) | (ref y, 0) => { /* use y */}
+    _ => ()
+}
+```
+
+Alternatively, split the pattern:
+
+```
+let x = (0, 2);
+match x {
+    (y, 0) => { /* use y */ }
+    (0, ref y) => { /* use y */}
+    _ => ()
+}
+```
+"##,
+
 E0411: r##"
 The `Self` keyword was used outside an impl or a trait. Erroneous code example:
 
@@ -621,6 +706,69 @@ let Foo = 12i32; // ok!
 ```
 
 The goal here is to avoid a conflict of names.
+"##,
+
+E0414: r##"
+A variable binding in an irrefutable pattern is shadowing the name of a
+constant. Example of erroneous code:
+
+```compile_fail
+const FOO: u8 = 7;
+
+let FOO = 5; // error: variable bindings cannot shadow constants
+
+// or
+
+fn bar(FOO: u8) { // error: variable bindings cannot shadow constants
+
+}
+
+// or
+
+for FOO in bar {
+
+}
+```
+
+Introducing a new variable in Rust is done through a pattern. Thus you can have
+`let` bindings like `let (a, b) = ...`. However, patterns also allow constants
+in them, e.g. if you want to match over a constant:
+
+```ignore
+const FOO: u8 = 1;
+
+match (x,y) {
+ (3, 4) => { .. }, // it is (3,4)
+ (FOO, 1) => { .. }, // it is (1,1)
+ (foo, 1) => { .. }, // it is (anything, 1)
+                     // call the value in the first slot "foo"
+ _ => { .. } // it is anything
+}
+```
+
+Here, the second arm matches the value of `x` against the constant `FOO`,
+whereas the third arm will accept any value of `x` and call it `foo`.
+
+This works for `match`, however in cases where an irrefutable pattern is
+required, constants can't be used. An irrefutable pattern is one which always
+matches, whose purpose is only to bind variable names to values. These are
+required by let, for, and function argument patterns.
+
+Refutable patterns in such a situation do not make sense, for example:
+
+```ignore
+let Some(x) = foo; // what if foo is None, instead?
+
+let (1, x) = foo; // what if foo.0 is not 1?
+
+let (SOME_CONST, x) = foo; // what if foo.0 is not SOME_CONST?
+
+let SOME_CONST = foo; // what if foo is not SOME_CONST?
+```
+
+Thus, an irrefutable variable binding can't contain a constant.
+
+To fix this error, just give the marked variable a different name.
 "##,
 
 E0415: r##"
@@ -916,11 +1064,14 @@ An import was unresolved. Erroneous code example:
 use something::Foo; // error: unresolved import `something::Foo`.
 ```
 
-Please verify you didn't misspell the import name or the import does exist
-in the module from where you tried to import it. Example:
+Paths in `use` statements are relative to the crate root. To import items
+relative to the current and parent modules, use the `self::` and `super::`
+prefixes, respectively. Also verify that you didn't misspell the import
+name and that the import exists in the module from where you tried to
+import it. Example:
 
 ```ignore
-use something::Foo; // ok!
+use self::something::Foo; // ok!
 
 mod something {
     pub struct Foo;
@@ -928,7 +1079,7 @@ mod something {
 ```
 
 Or, if you tried to use a module from an external crate, you may have missed
-the `extern crate` declaration:
+the `extern crate` declaration (which is usually placed in the crate root):
 
 ```ignore
 extern crate homura; // Required to use the `homura` crate
@@ -946,6 +1097,51 @@ use something_which_doesnt_exist;
 ```
 
 Please verify you didn't misspell the import's name.
+"##,
+
+E0434: r##"
+This error indicates that a variable usage inside an inner function is invalid
+because the variable comes from a dynamic environment. Inner functions do not
+have access to their containing environment.
+
+Example of erroneous code:
+
+```compile_fail
+fn foo() {
+    let y = 5;
+    fn bar() -> u32 {
+        y // error: can't capture dynamic environment in a fn item; use the
+          //        || { ... } closure form instead.
+    }
+}
+```
+
+Functions do not capture local variables. To fix this error, you can replace the
+function with a closure:
+
+```
+fn foo() {
+    let y = 5;
+    let bar = || {
+        y
+    };
+}
+```
+
+or replace the captured variable with a constant or a static item:
+
+```
+fn foo() {
+    static mut X: u32 = 4;
+    const Y: u32 = 5;
+    fn bar() -> u32 {
+        unsafe {
+            X = 3;
+        }
+        Y
+    }
+}
+```
 "##,
 
 E0435: r##"
@@ -1034,15 +1230,10 @@ register_diagnostics! {
 //  E0258,
     E0402, // cannot use an outer type parameter in this context
     E0406, // undeclared associated type
-    E0408, // variable from pattern #1 is not bound in pattern #
-    E0409, // variable is bound with different mode in pattern # than in
-           // pattern #1
-    E0410, // variable from pattern is not bound in pattern 1
-    E0414, // only irrefutable patterns allowed here
+//  E0410, merged into 408
     E0418, // is not an enum variant, struct or const
     E0420, // is not an associated const
     E0421, // unresolved associated const
     E0427, // cannot use `ref` binding mode with ...
     E0429, // `self` imports are only allowed within a { } list
-    E0434, // can't capture dynamic environment in a fn item
 }

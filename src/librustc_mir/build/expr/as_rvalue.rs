@@ -17,7 +17,7 @@ use build::expr::category::{Category, RvalueFunc};
 use hair::*;
 use rustc::mir::repr::*;
 
-impl<'a,'tcx> Builder<'a,'tcx> {
+impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     /// Compile `expr`, yielding an rvalue.
     pub fn as_rvalue<M>(&mut self, block: BasicBlock, expr: M) -> BlockAnd<Rvalue<'tcx>>
         where M: Mirror<'tcx, Output = Expr<'tcx>>
@@ -87,12 +87,9 @@ impl<'a,'tcx> Builder<'a,'tcx> {
             }
             ExprKind::Cast { source } => {
                 let source = this.hir.mirror(source);
-                if source.ty == expr.ty {
-                    this.expr_as_rvalue(block, source)
-                } else {
-                    let source = unpack!(block = this.as_operand(block, source));
-                    block.and(Rvalue::Cast(CastKind::Misc, source, expr.ty))
-                }
+
+                let source = unpack!(block = this.as_operand(block, source));
+                block.and(Rvalue::Cast(CastKind::Misc, source, expr.ty))
             }
             ExprKind::ReifyFnPointer { source } => {
                 let source = unpack!(block = this.as_operand(block, source));
@@ -189,6 +186,11 @@ impl<'a,'tcx> Builder<'a,'tcx> {
                 block.and(Rvalue::Aggregate(AggregateKind::Adt(adt_def, variant_index, substs),
                                             fields))
             }
+            ExprKind::Assign { .. } |
+            ExprKind::AssignOp { .. } => {
+                block = unpack!(this.stmt_expr(block, expr));
+                block.and(this.unit_rvalue())
+            }
             ExprKind::Literal { .. } |
             ExprKind::Block { .. } |
             ExprKind::Match { .. } |
@@ -201,8 +203,6 @@ impl<'a,'tcx> Builder<'a,'tcx> {
             ExprKind::Index { .. } |
             ExprKind::VarRef { .. } |
             ExprKind::SelfRef |
-            ExprKind::Assign { .. } |
-            ExprKind::AssignOp { .. } |
             ExprKind::Break { .. } |
             ExprKind::Continue { .. } |
             ExprKind::Return { .. } |

@@ -36,6 +36,11 @@ pub struct Mir<'tcx> {
     /// used (eventually) for debuginfo. Indexed by a `ScopeId`.
     pub scopes: Vec<ScopeData>,
 
+    /// Rvalues promoted from this function, such as borrows of constants.
+    /// Each of them is the Mir of a constant with the fn's type parameters
+    /// in scope, but no vars or args and a separate set of temps.
+    pub promoted: Vec<Mir<'tcx>>,
+
     /// Return type of the function.
     pub return_ty: FnOutput<'tcx>,
 
@@ -52,15 +57,16 @@ pub struct Mir<'tcx> {
     /// through the resulting reference.
     pub temp_decls: Vec<TempDecl<'tcx>>,
 
+    /// Names and capture modes of all the closure upvars, assuming
+    /// the first argument is either the closure or a reference to it.
+    pub upvar_decls: Vec<UpvarDecl>,
+
     /// A span representing this MIR, for error reporting
     pub span: Span,
 }
 
 /// where execution begins
 pub const START_BLOCK: BasicBlock = BasicBlock(0);
-
-/// where execution ends, on normal return
-pub const END_BLOCK: BasicBlock = BasicBlock(1);
 
 impl<'tcx> Mir<'tcx> {
     pub fn all_basic_blocks(&self) -> Vec<BasicBlock> {
@@ -197,7 +203,20 @@ pub struct ArgDecl<'tcx> {
 
     /// If true, this argument is a tuple after monomorphization,
     /// and has to be collected from multiple actual arguments.
-    pub spread: bool
+    pub spread: bool,
+
+    /// Either keywords::Invalid or the name of a single-binding
+    /// pattern associated with this argument. Useful for debuginfo.
+    pub debug_name: Name
+}
+
+/// A closure capture, with its name and mode.
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
+pub struct UpvarDecl {
+    pub debug_name: Name,
+
+    /// If true, the capture is behind a reference.
+    pub by_ref: bool
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -305,8 +324,7 @@ pub enum TerminatorKind<'tcx> {
     Resume,
 
     /// Indicates a normal return. The ReturnPointer lvalue should
-    /// have been filled in by now. This should only occur in the
-    /// `END_BLOCK`.
+    /// have been filled in by now. This should occur at most once.
     Return,
 
     /// Drop the Lvalue
@@ -698,6 +716,7 @@ impl ScopeId {
 
 #[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct ScopeData {
+    pub span: Span,
     pub parent_scope: Option<ScopeId>,
 }
 
@@ -797,7 +816,7 @@ pub enum AggregateKind<'tcx> {
     Vec,
     Tuple,
     Adt(AdtDef<'tcx>, usize, &'tcx Substs<'tcx>),
-    Closure(DefId, &'tcx ClosureSubsts<'tcx>),
+    Closure(DefId, ClosureSubsts<'tcx>),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, RustcEncodable, RustcDecodable)]
@@ -973,6 +992,10 @@ pub enum Literal<'tcx> {
     Value {
         value: ConstVal,
     },
+    Promoted {
+        // Index into the `promoted` vector of `Mir`.
+        index: usize
+    },
 }
 
 impl<'tcx> Debug for Constant<'tcx> {
@@ -992,6 +1015,9 @@ impl<'tcx> Debug for Literal<'tcx> {
             Value { ref value } => {
                 write!(fmt, "const ")?;
                 fmt_const_val(fmt, value)
+            }
+            Promoted { index } => {
+                write!(fmt, "promoted{}", index)
             }
         }
     }

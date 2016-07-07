@@ -10,21 +10,65 @@
 
 import argparse
 import contextlib
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+
 
 def get(url, path, verbose=False):
-    print("downloading " + url)
+    sha_url = url + ".sha256"
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_path = temp_file.name
+    with tempfile.NamedTemporaryFile(suffix=".sha256", delete=False) as sha_file:
+        sha_path = sha_file.name
+
+    try:
+        download(sha_path, sha_url, verbose)
+        download(temp_path, url, verbose)
+        verify(temp_path, sha_path, verbose)
+        print("moving " + temp_path + " to " + path)
+        shutil.move(temp_path, path)
+    finally:
+        delete_if_present(sha_path)
+        delete_if_present(temp_path)
+
+
+def delete_if_present(path):
+    if os.path.isfile(path):
+        print("removing " + path)
+        os.unlink(path)
+
+
+def download(path, url, verbose):
+    print("downloading " + url + " to " + path)
     # see http://serverfault.com/questions/301128/how-to-download
     if sys.platform == 'win32':
         run(["PowerShell.exe", "/nologo", "-Command",
-             "(New-Object System.Net.WebClient).DownloadFile('" + url +
-                "', '" + path + "')"], verbose=verbose)
+             "(New-Object System.Net.WebClient)"
+             ".DownloadFile('{}', '{}')".format(url, path)],
+            verbose=verbose)
     else:
         run(["curl", "-o", path, url], verbose=verbose)
+
+
+def verify(path, sha_path, verbose):
+    print("verifying " + path)
+    with open(path, "rb") as f:
+        found = hashlib.sha256(f.read()).hexdigest()
+    with open(sha_path, "r") as f:
+        expected, _ = f.readline().split()
+    if found != expected:
+        err = ("invalid checksum:\n"
+               "    found:    {}\n"
+               "    expected: {}".format(found, expected))
+        if verbose:
+            raise RuntimeError(err)
+        sys.exit(err)
+
 
 def unpack(tarball, dst, verbose=False, match=None):
     print("extracting " + tarball)
@@ -57,15 +101,27 @@ def run(args, verbose=False):
     ret = subprocess.Popen(args)
     code = ret.wait()
     if code != 0:
-        if not verbose:
-            print("failed to run: " + ' '.join(args))
-        raise RuntimeError("failed to run command")
+        err = "failed to run: " + ' '.join(args)
+        if verbose:
+            raise RuntimeError(err)
+        sys.exit(err)
+
+def stage0_data(rust_root):
+    nightlies = os.path.join(rust_root, "src/stage0.txt")
+    with open(nightlies, 'r') as nightlies:
+        data = {}
+        for line in nightlies.read().split("\n"):
+            if line.startswith("#") or line == '':
+                continue
+            a, b = line.split(": ", 1)
+            data[a] = b
+        return data
 
 class RustBuild:
-    def download_rust_nightly(self):
+    def download_stage0(self):
         cache_dst = os.path.join(self.build_dir, "cache")
-        rustc_cache = os.path.join(cache_dst, self.snap_rustc_date())
-        cargo_cache = os.path.join(cache_dst, self.snap_cargo_date())
+        rustc_cache = os.path.join(cache_dst, self.stage0_rustc_date())
+        cargo_cache = os.path.join(cache_dst, self.stage0_cargo_date())
         if not os.path.exists(rustc_cache):
             os.makedirs(rustc_cache)
         if not os.path.exists(cargo_cache):
@@ -75,8 +131,9 @@ class RustBuild:
            (not os.path.exists(self.rustc()) or self.rustc_out_of_date()):
             if os.path.exists(self.bin_root()):
                 shutil.rmtree(self.bin_root())
-            filename = "rust-std-nightly-" + self.build + ".tar.gz"
-            url = "https://static.rust-lang.org/dist/" + self.snap_rustc_date()
+            channel = self.stage0_rustc_channel()
+            filename = "rust-std-" + channel + "-" + self.build + ".tar.gz"
+            url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
             if not os.path.exists(tarball):
                 get(url + "/" + filename, tarball, verbose=self.verbose)
@@ -84,31 +141,38 @@ class RustBuild:
                    match="rust-std-" + self.build,
                    verbose=self.verbose)
 
-            filename = "rustc-nightly-" + self.build + ".tar.gz"
-            url = "https://static.rust-lang.org/dist/" + self.snap_rustc_date()
+            filename = "rustc-" + channel + "-" + self.build + ".tar.gz"
+            url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
             if not os.path.exists(tarball):
                 get(url + "/" + filename, tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(), match="rustc", verbose=self.verbose)
             with open(self.rustc_stamp(), 'w') as f:
-                f.write(self.snap_rustc_date())
+                f.write(self.stage0_rustc_date())
 
         if self.cargo().startswith(self.bin_root()) and \
            (not os.path.exists(self.cargo()) or self.cargo_out_of_date()):
-            filename = "cargo-nightly-" + self.build + ".tar.gz"
-            url = "https://static.rust-lang.org/cargo-dist/" + self.snap_cargo_date()
+            channel = self.stage0_cargo_channel()
+            filename = "cargo-" + channel + "-" + self.build + ".tar.gz"
+            url = "https://static.rust-lang.org/cargo-dist/" + self.stage0_cargo_date()
             tarball = os.path.join(cargo_cache, filename)
             if not os.path.exists(tarball):
                 get(url + "/" + filename, tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(), match="cargo", verbose=self.verbose)
             with open(self.cargo_stamp(), 'w') as f:
-                f.write(self.snap_cargo_date())
+                f.write(self.stage0_cargo_date())
 
-    def snap_cargo_date(self):
+    def stage0_cargo_date(self):
         return self._cargo_date
 
-    def snap_rustc_date(self):
+    def stage0_cargo_channel(self):
+        return self._cargo_channel
+
+    def stage0_rustc_date(self):
         return self._rustc_date
+
+    def stage0_rustc_channel(self):
+        return self._rustc_channel
 
     def rustc_stamp(self):
         return os.path.join(self.bin_root(), '.rustc-stamp')
@@ -120,13 +184,13 @@ class RustBuild:
         if not os.path.exists(self.rustc_stamp()):
             return True
         with open(self.rustc_stamp(), 'r') as f:
-            return self.snap_rustc_date() != f.read()
+            return self.stage0_rustc_date() != f.read()
 
     def cargo_out_of_date(self):
         if not os.path.exists(self.cargo_stamp()):
             return True
         with open(self.cargo_stamp(), 'r') as f:
-            return self.snap_cargo_date() != f.read()
+            return self.stage0_cargo_date() != f.read()
 
     def bin_root(self):
         return os.path.join(self.build_dir, self.build, "stage0")
@@ -169,15 +233,6 @@ class RustBuild:
         else:
             return ''
 
-    def parse_nightly_dates(self):
-        nightlies = os.path.join(self.rust_root, "src/nightlies.txt")
-        with open(nightlies, 'r') as nightlies:
-            rustc, cargo = nightlies.read().split("\n")[:2]
-            assert rustc.startswith("rustc: ")
-            assert cargo.startswith("cargo: ")
-            self._rustc_date = rustc[len("rustc: "):]
-            self._cargo_date = cargo[len("cargo: "):]
-
     def build_bootstrap(self):
         env = os.environ.copy()
         env["CARGO_TARGET_DIR"] = os.path.join(self.build_dir, "bootstrap")
@@ -210,7 +265,10 @@ class RustBuild:
             if sys.platform == 'win32':
                 return 'x86_64-pc-windows-msvc'
             else:
-                raise
+                err = "uname not found"
+                if self.verbose:
+                    raise Exception(err)
+                sys.exit(err)
 
         # Darwin's `uname -s` lies and always returns i386. We have to use
         # sysctl instead.
@@ -253,7 +311,10 @@ class RustBuild:
                 cputype = 'x86_64'
             ostype = 'pc-windows-gnu'
         else:
-            raise ValueError("unknown OS type: " + ostype)
+            err = "unknown OS type: " + ostype
+            if self.verbose:
+                raise ValueError(err)
+            sys.exit(err)
 
         if cputype in {'i386', 'i486', 'i686', 'i786', 'x86'}:
             cputype = 'i686'
@@ -269,50 +330,60 @@ class RustBuild:
         elif cputype in {'amd64', 'x86_64', 'x86-64', 'x64'}:
             cputype = 'x86_64'
         else:
-            raise ValueError("unknown cpu type: " + cputype)
+            err = "unknown cpu type: " + cputype
+            if self.verbose:
+                raise ValueError(err)
+            sys.exit(err)
 
         return cputype + '-' + ostype
 
-parser = argparse.ArgumentParser(description='Build rust')
-parser.add_argument('--config')
-parser.add_argument('-v', '--verbose', action='store_true')
+def main():
+    parser = argparse.ArgumentParser(description='Build rust')
+    parser.add_argument('--config')
+    parser.add_argument('-v', '--verbose', action='store_true')
 
-args = [a for a in sys.argv if a != '-h']
-args, _ = parser.parse_known_args(args)
+    args = [a for a in sys.argv if a != '-h']
+    args, _ = parser.parse_known_args(args)
 
-# Configure initial bootstrap
-rb = RustBuild()
-rb.config_toml = ''
-rb.config_mk = ''
-rb.rust_root = os.path.abspath(os.path.join(__file__, '../../..'))
-rb.build_dir = os.path.join(os.getcwd(), "build")
-rb.verbose = args.verbose
+    # Configure initial bootstrap
+    rb = RustBuild()
+    rb.config_toml = ''
+    rb.config_mk = ''
+    rb.rust_root = os.path.abspath(os.path.join(__file__, '../../..'))
+    rb.build_dir = os.path.join(os.getcwd(), "build")
+    rb.verbose = args.verbose
 
-try:
-    with open(args.config or 'config.toml') as config:
-        rb.config_toml = config.read()
-except:
-    pass
-try:
-    rb.config_mk = open('config.mk').read()
-except:
-    pass
+    try:
+        with open(args.config or 'config.toml') as config:
+            rb.config_toml = config.read()
+    except:
+        pass
+    try:
+        rb.config_mk = open('config.mk').read()
+    except:
+        pass
 
-# Fetch/build the bootstrap
-rb.build = rb.build_triple()
-rb.parse_nightly_dates()
-rb.download_rust_nightly()
-sys.stdout.flush()
-rb.build_bootstrap()
-sys.stdout.flush()
+    data = stage0_data(rb.rust_root)
+    rb._rustc_channel, rb._rustc_date = data['rustc'].split('-', 1)
+    rb._cargo_channel, rb._cargo_date = data['cargo'].split('-', 1)
 
-# Run the bootstrap
-args = [os.path.join(rb.build_dir, "bootstrap/debug/bootstrap")]
-args.extend(sys.argv[1:])
-args.append('--src')
-args.append(rb.rust_root)
-args.append('--build')
-args.append(rb.build)
-env = os.environ.copy()
-env["BOOTSTRAP_PARENT_ID"] = str(os.getpid())
-rb.run(args, env)
+    # Fetch/build the bootstrap
+    rb.build = rb.build_triple()
+    rb.download_stage0()
+    sys.stdout.flush()
+    rb.build_bootstrap()
+    sys.stdout.flush()
+
+    # Run the bootstrap
+    args = [os.path.join(rb.build_dir, "bootstrap/debug/bootstrap")]
+    args.append('--src')
+    args.append(rb.rust_root)
+    args.append('--build')
+    args.append(rb.build)
+    args.extend(sys.argv[1:])
+    env = os.environ.copy()
+    env["BOOTSTRAP_PARENT_ID"] = str(os.getpid())
+    rb.run(args, env)
+
+if __name__ == '__main__':
+    main()

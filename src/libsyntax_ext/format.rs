@@ -19,8 +19,7 @@ use syntax::ext::base::*;
 use syntax::ext::base;
 use syntax::ext::build::AstBuilder;
 use syntax::fold::Folder;
-use syntax::parse::token::special_idents;
-use syntax::parse::token;
+use syntax::parse::token::{self, keywords};
 use syntax::ptr::P;
 
 use std::collections::HashMap;
@@ -68,8 +67,7 @@ struct Context<'a, 'b:'a> {
 
     name_positions: HashMap<String, usize>,
 
-    /// Updated as arguments are consumed or methods are entered
-    nest_level: usize,
+    /// Updated as arguments are consumed
     next_arg: usize,
 }
 
@@ -106,7 +104,7 @@ fn parse_args(ecx: &mut ExtCtxt, sp: Span, tts: &[ast::TokenTree])
         if named || (p.token.is_ident() && p.look_ahead(1, |t| *t == token::Eq)) {
             named = true;
             let ident = match p.token {
-                token::Ident(i, _) => {
+                token::Ident(i) => {
                     p.bump();
                     i
                 }
@@ -165,9 +163,7 @@ impl<'a, 'b> Context<'a, 'b> {
                 let pos = match arg.position {
                     parse::ArgumentNext => {
                         let i = self.next_arg;
-                        if self.check_positional_ok() {
-                            self.next_arg += 1;
-                        }
+                        self.next_arg += 1;
                         Exact(i)
                     }
                     parse::ArgumentIs(i) => Exact(i),
@@ -190,22 +186,10 @@ impl<'a, 'b> Context<'a, 'b> {
                 self.verify_arg_type(Named(s.to_string()), Unsigned);
             }
             parse::CountIsNextParam => {
-                if self.check_positional_ok() {
-                    let next_arg = self.next_arg;
-                    self.verify_arg_type(Exact(next_arg), Unsigned);
-                    self.next_arg += 1;
-                }
+                let next_arg = self.next_arg;
+                self.verify_arg_type(Exact(next_arg), Unsigned);
+                self.next_arg += 1;
             }
-        }
-    }
-
-    fn check_positional_ok(&mut self) -> bool {
-        if self.nest_level != 0 {
-            self.ecx.span_err(self.fmtsp, "cannot use implicit positional \
-                                           arguments nested inside methods");
-            false
-        } else {
-            true
         }
     }
 
@@ -449,7 +433,7 @@ impl<'a, 'b> Context<'a, 'b> {
         let sp = piece_ty.span;
         let ty = ecx.ty_rptr(sp,
             ecx.ty(sp, ast::TyKind::Vec(piece_ty)),
-            Some(ecx.lifetime(sp, special_idents::static_lifetime.name)),
+            Some(ecx.lifetime(sp, keywords::StaticLifetime.name())),
             ast::Mutability::Immutable);
         let slice = ecx.expr_vec_slice(sp, pieces);
         // static instead of const to speed up codegen by not requiring this to be inlined
@@ -475,7 +459,7 @@ impl<'a, 'b> Context<'a, 'b> {
 
         // First, build up the static array which will become our precompiled
         // format "string"
-        let static_lifetime = self.ecx.lifetime(self.fmtsp, special_idents::static_lifetime.name);
+        let static_lifetime = self.ecx.lifetime(self.fmtsp, keywords::StaticLifetime.name());
         let piece_ty = self.ecx.ty_rptr(
                 self.fmtsp,
                 self.ecx.ty_ident(self.fmtsp, self.ecx.ident_of("str")),
@@ -656,7 +640,6 @@ pub fn expand_preparsed_format_args(ecx: &mut ExtCtxt, sp: Span,
         name_positions: HashMap::new(),
         name_types: HashMap::new(),
         name_ordering: name_ordering,
-        nest_level: 0,
         next_arg: 0,
         literal: String::new(),
         pieces: Vec::new(),

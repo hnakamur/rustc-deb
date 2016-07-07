@@ -86,7 +86,7 @@ macro_rules! assert {
 #[stable(feature = "rust1", since = "1.0.0")]
 macro_rules! assert_eq {
     ($left:expr , $right:expr) => ({
-        match (&($left), &($right)) {
+        match (&$left, &$right) {
             (left_val, right_val) => {
                 if !(*left_val == *right_val) {
                     panic!("assertion failed: `(left == right)` \
@@ -182,7 +182,7 @@ macro_rules! debug_assert_eq {
 /// fn write_to_file_using_match() -> Result<(), io::Error> {
 ///     let mut file = try!(File::create("my_best_friends.txt"));
 ///     match file.write_all(b"This is a list of my best friends.") {
-///         Ok(_) => (),
+///         Ok(v) => v,
 ///         Err(e) => return Err(e),
 ///     }
 ///     println!("I wrote to the file");

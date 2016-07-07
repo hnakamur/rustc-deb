@@ -8,6 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Sanity checking performed by rustbuild before actually executing anything.
+//!
+//! This module contains the implementation of ensuring that the build
+//! environment looks reasonable before progressing. This will verify that
+//! various programs like git and python exist, along with ensuring that all C
+//! compilers for cross-compiling are found.
+//!
+//! In theory if we get past this phase it's a bug if a build fails, but in
+//! practice that's likely not true!
+
 use std::collections::HashSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -48,6 +58,9 @@ pub fn check(build: &mut Build) {
             }
         }
         need_cmd("cmake".as_ref());
+        if build.config.ninja {
+            need_cmd("ninja".as_ref())
+        }
         break
     }
 
@@ -61,6 +74,12 @@ pub fn check(build: &mut Build) {
     }
     for host in build.config.host.iter() {
         need_cmd(build.cxx(host).as_ref());
+    }
+
+    // Externally configured LLVM requires FileCheck to exist
+    let filecheck = build.llvm_filecheck(&build.config.build);
+    if !filecheck.starts_with(&build.out) && !filecheck.exists() {
+        panic!("filecheck executable {:?} does not exist", filecheck);
     }
 
     for target in build.config.target.iter() {
@@ -130,5 +149,18 @@ $ pacman -R cmake && pacman -S mingw-w64-x86_64-cmake
             panic!("specified target `{}` is not in the ./configure list",
                    target);
         }
+    }
+
+    let run = |cmd: &mut Command| {
+        cmd.output().map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                   .lines().next().unwrap()
+                   .to_string()
+        })
+    };
+    build.gdb_version = run(Command::new("gdb").arg("--version")).ok();
+    build.lldb_version = run(Command::new("lldb").arg("--version")).ok();
+    if build.lldb_version.is_some() {
+        build.lldb_python_dir = run(Command::new("lldb").arg("-P")).ok();
     }
 }

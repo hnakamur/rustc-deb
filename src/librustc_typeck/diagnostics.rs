@@ -53,8 +53,8 @@ let x = Fruit::Apple(String::new(), String::new());
 
 // Incorrect.
 match x {
-    Apple(a) => {},
-    Apple(a, b, c) => {},
+    Fruit::Apple(a) => {},
+    Fruit::Apple(a, b, c) => {},
 }
 ```
 
@@ -77,8 +77,8 @@ enum Number {
 
 // Assuming x is a Number we can pattern match on its contents.
 match x {
-    Zero(inside) => {},
-    One(inside) => {},
+    Number::Zero(inside) => {},
+    Number::One(inside) => {},
 }
 ```
 
@@ -632,7 +632,7 @@ recursion limit (which can be set via the `recursion_limit` attribute).
 
 For a somewhat artificial example:
 
-```compile_fail
+```compile_fail,ignore
 #![recursion_limit="2"]
 
 struct Foo;
@@ -742,7 +742,7 @@ fn f(a: u16, b: &str) {}
 
 Must always be called with exactly two arguments, e.g. `f(2, "test")`.
 
-Note, that Rust does not have a notion of optional function arguments or
+Note that Rust does not have a notion of optional function arguments or
 variadic functions (except for its C-FFI).
 "##,
 
@@ -1002,18 +1002,18 @@ operate on.
 This will cause an error:
 
 ```compile_fail
-#![feature(simd)]
+#![feature(repr_simd)]
 
-#[simd]
+#[repr(simd)]
 struct Bad;
 ```
 
 This will not:
 
 ```
-#![feature(simd)]
+#![feature(repr_simd)]
 
-#[simd]
+#[repr(simd)]
 struct Good(u32);
 ```
 "##,
@@ -1420,45 +1420,24 @@ fn main() {
 "##,
 
 E0102: r##"
-You hit this error because the compiler lacks information to
-determine a type for this variable. Erroneous code example:
+You hit this error because the compiler lacks the information to
+determine the type of this variable. Erroneous code example:
 
 ```compile_fail
-fn demo(devil: fn () -> !) {
-    let x: &_ = devil();
-    // error: cannot determine a type for this local variable
-}
-
-fn oh_no() -> ! { panic!("the devil is in the details") }
-
 fn main() {
-    demo(oh_no);
+    // could be an array of anything
+    let x = []; // error: cannot determine a type for this local variable
 }
 ```
 
 To solve this situation, constrain the type of the variable.
 Examples:
 
-```no_run
+```
 #![allow(unused_variables)]
 
-fn some_func(x: &u32) {
-    // some code
-}
-
-fn demo(devil: fn () -> !) {
-    let x: &u32 = devil();
-    // Here we defined the type at the variable creation
-
-    let x: &_ = devil();
-    some_func(x);
-    // Here, the type is determined by the function argument type
-}
-
-fn oh_no() -> ! { panic!("the devil is in the details") }
-
 fn main() {
-    demo(oh_no);
+    let x: [u8; 0] = [];
 }
 ```
 "##,
@@ -2717,7 +2696,7 @@ Rust does not currently support this. A simple example that causes this error:
 
 ```compile_fail
 fn main() {
-    let _: Box<std::io::Read+std::io::Write>;
+    let _: Box<std::io::Read + std::io::Write>;
 }
 ```
 
@@ -2727,7 +2706,7 @@ following compiles correctly:
 
 ```
 fn main() {
-    let _: Box<std::io::Read+Copy+Sync>;
+    let _: Box<std::io::Read + Send + Sync>;
 }
 ```
 "##,
@@ -3305,6 +3284,164 @@ impl Baz for Bar { } // Note: This is OK
 ```
 "##,
 
+E0374: r##"
+A struct without a field containing an unsized type cannot implement
+`CoerceUnsized`. An
+[unsized type](https://doc.rust-lang.org/book/unsized-types.html)
+is any type that the compiler doesn't know the length or alignment of at
+compile time. Any struct containing an unsized type is also unsized.
+
+Example of erroneous code:
+
+```compile_fail
+#![feature(coerce_unsized)]
+use std::ops::CoerceUnsized;
+
+struct Foo<T: ?Sized> {
+    a: i32,
+}
+
+// error: Struct `Foo` has no unsized fields that need `CoerceUnsized`.
+impl<T, U> CoerceUnsized<Foo<U>> for Foo<T>
+    where T: CoerceUnsized<U> {}
+```
+
+`CoerceUnsized` is used to coerce one struct containing an unsized type
+into another struct containing a different unsized type. If the struct
+doesn't have any fields of unsized types then you don't need explicit
+coercion to get the types you want. To fix this you can either
+not try to implement `CoerceUnsized` or you can add a field that is
+unsized to the struct.
+
+Example:
+
+```
+#![feature(coerce_unsized)]
+use std::ops::CoerceUnsized;
+
+// We don't need to impl `CoerceUnsized` here.
+struct Foo {
+    a: i32,
+}
+
+// We add the unsized type field to the struct.
+struct Bar<T: ?Sized> {
+    a: i32,
+    b: T,
+}
+
+// The struct has an unsized field so we can implement
+// `CoerceUnsized` for it.
+impl<T, U> CoerceUnsized<Bar<U>> for Bar<T>
+    where T: CoerceUnsized<U> {}
+```
+
+Note that `CoerceUnsized` is mainly used by smart pointers like `Box`, `Rc`
+and `Arc` to be able to mark that they can coerce unsized types that they
+are pointing at.
+"##,
+
+E0375: r##"
+A struct with more than one field containing an unsized type cannot implement
+`CoerceUnsized`. This only occurs when you are trying to coerce one of the
+types in your struct to another type in the struct. In this case we try to
+impl `CoerceUnsized` from `T` to `U` which are both types that the struct
+takes. An [unsized type](https://doc.rust-lang.org/book/unsized-types.html)
+is any type that the compiler doesn't know the length or alignment of at
+compile time. Any struct containing an unsized type is also unsized.
+
+Example of erroneous code:
+
+```compile_fail
+#![feature(coerce_unsized)]
+use std::ops::CoerceUnsized;
+
+struct Foo<T: ?Sized, U: ?Sized> {
+    a: i32,
+    b: T,
+    c: U,
+}
+
+// error: Struct `Foo` has more than one unsized field.
+impl<T, U> CoerceUnsized<Foo<U, T>> for Foo<T, U> {}
+```
+
+`CoerceUnsized` only allows for coercion from a structure with a single
+unsized type field to another struct with a single unsized type field.
+In fact Rust only allows for a struct to have one unsized type in a struct
+and that unsized type must be the last field in the struct. So having two
+unsized types in a single struct is not allowed by the compiler. To fix this
+use only one field containing an unsized type in the struct and then use
+multiple structs to manage each unsized type field you need.
+
+Example:
+
+```
+#![feature(coerce_unsized)]
+use std::ops::CoerceUnsized;
+
+struct Foo<T: ?Sized> {
+    a: i32,
+    b: T,
+}
+
+impl <T, U> CoerceUnsized<Foo<U>> for Foo<T>
+    where T: CoerceUnsized<U> {}
+
+fn coerce_foo<T: CoerceUnsized<U>, U>(t: T) -> Foo<U> {
+    Foo { a: 12i32, b: t } // we use coercion to get the `Foo<U>` type we need
+}
+```
+
+"##,
+
+E0376: r##"
+The type you are trying to impl `CoerceUnsized` for is not a struct.
+`CoerceUnsized` can only be implemented for a struct. Unsized types are
+already able to be coerced without an implementation of `CoerceUnsized`
+whereas a struct containing an unsized type needs to know the unsized type
+field it's containing is able to be coerced. An
+[unsized type](https://doc.rust-lang.org/book/unsized-types.html)
+is any type that the compiler doesn't know the length or alignment of at
+compile time. Any struct containing an unsized type is also unsized.
+
+Example of erroneous code:
+
+```compile_fail
+#![feature(coerce_unsized)]
+use std::ops::CoerceUnsized;
+
+struct Foo<T: ?Sized> {
+    a: T,
+}
+
+// error: The type `U` is not a struct
+impl<T, U> CoerceUnsized<U> for Foo<T> {}
+```
+
+The `CoerceUnsized` trait takes a struct type. Make sure the type you are
+providing to `CoerceUnsized` is a struct with only the last field containing an
+unsized type.
+
+Example:
+
+```
+#![feature(coerce_unsized)]
+use std::ops::CoerceUnsized;
+
+struct Foo<T> {
+    a: T,
+}
+
+// The `Foo<U>` is a struct so `CoerceUnsized` can be implemented
+impl<T, U> CoerceUnsized<Foo<U>> for Foo<T> where T: CoerceUnsized<U> {}
+```
+
+Note that in Rust, structs can only contain an unsized type if the field
+containing the unsized type is the last and only unsized type field in the
+struct.
+"##,
+
 E0379: r##"
 Trait methods cannot be declared `const` by design. For more information, see
 [RFC 911].
@@ -3424,6 +3561,37 @@ PhantomData can also be used to express information about unused type
 parameters. You can read more about it in the API documentation:
 
 https://doc.rust-lang.org/std/marker/struct.PhantomData.html
+"##,
+
+E0393: r##"
+A type parameter which references `Self` in its default value was not specified.
+Example of erroneous code:
+
+```compile_fail
+trait A<T=Self> {}
+
+fn together_we_will_rule_the_galaxy(son: &A) {}
+// error: the type parameter `T` must be explicitly specified in an
+//        object type because its default value `Self` references the
+//        type `Self`
+```
+
+A trait object is defined over a single, fully-defined trait. With a regular
+default parameter, this parameter can just be substituted in. However, if the
+default parameter is `Self`, the trait changes for each concrete type; i.e.
+`i32` will be expected to implement `A<i32>`, `bool` will be expected to
+implement `A<bool>`, etc... These types will not share an implementation of a
+fully-defined trait; instead they share implementations of a trait with
+different parameters substituted in for each implementation. This is
+irreconcilable with what we need to make a trait object work, and is thus
+disallowed. Making the trait concrete by explicitly specifying the value of the
+defaulted parameter will fix this issue. Fixed example:
+
+```
+trait A<T=Self> {}
+
+fn together_we_will_rule_the_galaxy(son: &A<i32>) {} // Ok!
+```
 "##,
 
 E0439: r##"
@@ -3767,17 +3935,8 @@ register_diagnostics! {
     E0320, // recursive overflow during dropck
     E0328, // cannot implement Unsize explicitly
 //  E0372, // coherence not object safe
-    E0374, // the trait `CoerceUnsized` may only be implemented for a coercion
-           // between structures with one field being coerced, none found
-    E0375, // the trait `CoerceUnsized` may only be implemented for a coercion
-           // between structures with one field being coerced, but multiple
-           // fields need coercions
-    E0376, // the trait `CoerceUnsized` may only be implemented for a coercion
-           // between structures
     E0377, // the trait `CoerceUnsized` may only be implemented for a coercion
            // between structures with the same definition
-    E0393, // the type parameter `{}` must be explicitly specified in an object
-           // type because its default value `{}` references the type `Self`"
     E0399, // trait items need to be implemented because the associated
            // type `{}` was overridden
     E0436, // functional record update requires a struct

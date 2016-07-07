@@ -63,7 +63,6 @@ use cleanup::{self, CleanupMethods, DropHintMethods};
 use common::*;
 use datum::*;
 use debuginfo::{self, DebugLoc, ToDebugLoc};
-use declare;
 use glue;
 use machine;
 use tvec;
@@ -115,7 +114,7 @@ pub fn trans_into<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                               -> Block<'blk, 'tcx> {
     let mut bcx = bcx;
 
-    debuginfo::set_source_location(bcx.fcx, expr.id, expr.span);
+    expr.debug_loc().apply(bcx.fcx);
 
     if adjustment_required(bcx, expr) {
         // use trans, which may be less efficient but
@@ -510,7 +509,9 @@ fn coerce_unsized<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             let source = unpack_datum!(bcx, source.to_ref_datum(bcx));
             assert!(target.kind.is_by_ref());
 
-            let kind = custom_coerce_unsize_info(bcx.ccx(), source.ty, target.ty);
+            let kind = custom_coerce_unsize_info(bcx.ccx().shared(),
+                                                 source.ty,
+                                                 target.ty);
 
             let repr_source = adt::represent_type(bcx.ccx(), source.ty);
             let src_fields = match &*repr_source {
@@ -587,7 +588,7 @@ fn trans_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     debug!("trans_unadjusted(expr={:?})", expr);
     let _indenter = indenter();
 
-    debuginfo::set_source_location(bcx.fcx, expr.id, expr.span);
+    expr.debug_loc().apply(bcx.fcx);
 
     return match expr_kind(bcx.tcx(), expr) {
         ExprKind::Lvalue | ExprKind::RvalueDatum => {
@@ -720,7 +721,7 @@ fn trans_field<'blk, 'tcx, F>(bcx: Block<'blk, 'tcx>,
                               base: &hir::Expr,
                               get_idx: F)
                               -> DatumBlock<'blk, 'tcx, Expr> where
-    F: FnOnce(&'blk TyCtxt<'tcx>, &VariantInfo<'tcx>) -> usize,
+    F: FnOnce(TyCtxt<'blk, 'tcx, 'tcx>, &VariantInfo<'tcx>) -> usize,
 {
     let mut bcx = bcx;
     let _icx = push_ctxt("trans_rec_field");
@@ -923,17 +924,17 @@ fn trans_rvalue_stmt_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         return bcx;
     }
 
-    debuginfo::set_source_location(bcx.fcx, expr.id, expr.span);
+    expr.debug_loc().apply(bcx.fcx);
 
     match expr.node {
         hir::ExprBreak(label_opt) => {
-            controlflow::trans_break(bcx, expr, label_opt.map(|l| l.node.name))
+            controlflow::trans_break(bcx, expr, label_opt.map(|l| l.node))
         }
         hir::ExprType(ref e, _) => {
             trans_into(bcx, &e, Ignore)
         }
         hir::ExprAgain(label_opt) => {
-            controlflow::trans_cont(bcx, expr, label_opt.map(|l| l.node.name))
+            controlflow::trans_cont(bcx, expr, label_opt.map(|l| l.node))
         }
         hir::ExprRet(ref ex) => {
             // Check to see if the return expression itself is reachable.
@@ -987,7 +988,7 @@ fn trans_rvalue_stmt_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 //
                 // We could avoid this intermediary with some analysis
                 // to determine whether `dst` may possibly own `src`.
-                debuginfo::set_source_location(bcx.fcx, expr.id, expr.span);
+                expr.debug_loc().apply(bcx.fcx);
                 let src_datum = unpack_datum!(
                     bcx, src_datum.to_rvalue_datum(bcx, "ExprAssign"));
                 let opt_hint_datum = dst_datum.kind.drop_flag_info.hint_datum(bcx);
@@ -1062,7 +1063,7 @@ fn trans_rvalue_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     let _icx = push_ctxt("trans_rvalue_dps_unadjusted");
     let mut bcx = bcx;
 
-    debuginfo::set_source_location(bcx.fcx, expr.id, expr.span);
+    expr.debug_loc().apply(bcx.fcx);
 
     // Entry into the method table if this is an overloaded call/op.
     let method_call = MethodCall::expr(expr.id);
@@ -1118,7 +1119,7 @@ fn trans_rvalue_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         hir::ExprVec(..) | hir::ExprRepeat(..) => {
             tvec::trans_fixed_vstore(bcx, expr, dest)
         }
-        hir::ExprClosure(_, ref decl, ref body) => {
+        hir::ExprClosure(_, ref decl, ref body, _) => {
             let dest = match dest {
                 SaveIn(lldest) => closure::Dest::SaveIn(bcx, lldest),
                 Ignore => closure::Dest::Ignore(bcx.ccx())
@@ -1132,7 +1133,7 @@ fn trans_rvalue_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             // the key we need to find the closure-kind and
             // closure-type etc.
             let (def_id, substs) = match expr_ty(bcx, expr).sty {
-                ty::TyClosure(def_id, ref substs) => (def_id, substs),
+                ty::TyClosure(def_id, substs) => (def_id, substs),
                 ref t =>
                     span_bug!(
                         expr.span,
@@ -1591,7 +1592,6 @@ fn trans_scalar_binop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 {
     let _icx = push_ctxt("trans_scalar_binop");
 
-    let tcx = bcx.tcx();
     let lhs_t = lhs.ty;
     assert!(!lhs_t.is_simd());
     let is_float = lhs_t.is_fp();
@@ -1654,42 +1654,7 @@ fn trans_scalar_binop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
       }
       hir::BiRem => {
         if is_float {
-            // LLVM currently always lowers the `frem` instructions appropriate
-            // library calls typically found in libm. Notably f64 gets wired up
-            // to `fmod` and f32 gets wired up to `fmodf`. Inconveniently for
-            // us, 32-bit MSVC does not actually have a `fmodf` symbol, it's
-            // instead just an inline function in a header that goes up to a
-            // f64, uses `fmod`, and then comes back down to a f32.
-            //
-            // Although LLVM knows that `fmodf` doesn't exist on MSVC, it will
-            // still unconditionally lower frem instructions over 32-bit floats
-            // to a call to `fmodf`. To work around this we special case MSVC
-            // 32-bit float rem instructions and instead do the call out to
-            // `fmod` ourselves.
-            //
-            // Note that this is currently duplicated with src/libcore/ops.rs
-            // which does the same thing, and it would be nice to perhaps unify
-            // these two implementations on day! Also note that we call `fmod`
-            // for both 32 and 64-bit floats because if we emit any FRem
-            // instruction at all then LLVM is capable of optimizing it into a
-            // 32-bit FRem (which we're trying to avoid).
-            let use_fmod = tcx.sess.target.target.options.is_like_msvc &&
-                           tcx.sess.target.target.arch == "x86";
-            if use_fmod {
-                let f64t = Type::f64(bcx.ccx());
-                let fty = Type::func(&[f64t, f64t], &f64t);
-                let llfn = declare::declare_cfn(bcx.ccx(), "fmod", fty);
-                if lhs_t == tcx.types.f32 {
-                    let lhs = FPExt(bcx, lhs, f64t);
-                    let rhs = FPExt(bcx, rhs, f64t);
-                    let res = Call(bcx, llfn, &[lhs, rhs], binop_debug_loc);
-                    FPTrunc(bcx, res, Type::f32(bcx.ccx()))
-                } else {
-                    Call(bcx, llfn, &[lhs, rhs], binop_debug_loc)
-                }
-            } else {
-                FRem(bcx, lhs, rhs, binop_debug_loc)
-            }
+            FRem(bcx, lhs, rhs, binop_debug_loc)
         } else {
             // Only zero-check integers; fp %0 is NaN
             bcx = base::fail_if_zero_or_overflows(bcx,
@@ -1824,11 +1789,11 @@ fn trans_binary<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     }
 }
 
-pub fn cast_is_noop<'tcx>(tcx: &TyCtxt<'tcx>,
-                          expr: &hir::Expr,
-                          t_in: Ty<'tcx>,
-                          t_out: Ty<'tcx>)
-                          -> bool {
+pub fn cast_is_noop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                              expr: &hir::Expr,
+                              t_in: Ty<'tcx>,
+                              t_out: Ty<'tcx>)
+                              -> bool {
     if let Some(&CastKind::CoercionCast) = tcx.cast_kinds.borrow().get(&expr.id) {
         return true;
     }
@@ -2183,7 +2148,7 @@ impl OverflowOpViaIntrinsic {
         let name = self.to_intrinsic_name(bcx.tcx(), lhs_ty);
         bcx.ccx().get_intrinsic(&name)
     }
-    fn to_intrinsic_name(&self, tcx: &TyCtxt, ty: Ty) -> &'static str {
+    fn to_intrinsic_name(&self, tcx: TyCtxt, ty: Ty) -> &'static str {
         use syntax::ast::IntTy::*;
         use syntax::ast::UintTy::*;
         use rustc::ty::{TyInt, TyUint};
@@ -2375,7 +2340,7 @@ enum ExprKind {
     RvalueStmt
 }
 
-fn expr_kind(tcx: &TyCtxt, expr: &hir::Expr) -> ExprKind {
+fn expr_kind<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, expr: &hir::Expr) -> ExprKind {
     if tcx.is_method_call(expr.id) {
         // Overloaded operations are generally calls, and hence they are
         // generated via DPS, but there are a few exceptions:

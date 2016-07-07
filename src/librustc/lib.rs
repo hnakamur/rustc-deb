@@ -37,7 +37,6 @@
 #![feature(rustc_private)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
-#![feature(step_by)]
 #![feature(question_mark)]
 #![cfg_attr(test, feature(test))]
 
@@ -49,6 +48,7 @@ extern crate getopts;
 extern crate graphviz;
 extern crate libc;
 extern crate rbml;
+extern crate rustc_llvm as llvm;
 extern crate rustc_back;
 extern crate rustc_data_structures;
 extern crate serialize;

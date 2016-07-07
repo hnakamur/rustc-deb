@@ -15,7 +15,6 @@
 #![feature(box_syntax)]
 #![feature(cell_extras)]
 #![feature(const_fn)]
-#![feature(core_float)]
 #![feature(core_private_bignum)]
 #![feature(core_private_diy_float)]
 #![feature(dec2flt)]
@@ -25,7 +24,6 @@
 #![feature(iter_arith)]
 #![feature(libc)]
 #![feature(nonzero)]
-#![feature(peekable_is_empty)]
 #![feature(rand)]
 #![feature(raw)]
 #![feature(slice_patterns)]
@@ -34,6 +32,7 @@
 #![feature(unboxed_closures)]
 #![feature(unicode)]
 #![feature(unique)]
+#![feature(try_from)]
 
 extern crate core;
 extern crate test;

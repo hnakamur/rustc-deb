@@ -9,7 +9,9 @@
 // except according to those terms.
 
 use build::{Location, ScopeAuxiliaryVec};
+use rustc::hir;
 use rustc::mir::repr::*;
+use rustc::mir::transform::MirSource;
 use rustc::ty::{self, TyCtxt};
 use rustc_data_structures::fnv::FnvHashMap;
 use std::fmt::Display;
@@ -19,11 +21,13 @@ use syntax::ast::NodeId;
 use syntax::codemap::Span;
 
 const INDENT: &'static str = "    ";
+/// Alignment for lining up comments following MIR statements
+const ALIGN: usize = 40;
 
 /// If the session is properly configured, dumps a human-readable
 /// representation of the mir into:
 ///
-/// ```
+/// ```text
 /// rustc.node<node_id>.<pass_name>.<disambiguator>
 /// ```
 ///
@@ -34,16 +38,17 @@ const INDENT: &'static str = "    ";
 /// - `substring1&substring2,...` -- `&`-separated list of substrings
 ///   that can appear in the pass-name or the `item_path_str` for the given
 ///   node-id. If any one of the substrings match, the data is dumped out.
-pub fn dump_mir<'a, 'tcx>(tcx: &TyCtxt<'tcx>,
+pub fn dump_mir<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                           pass_name: &str,
                           disambiguator: &Display,
-                          node_id: NodeId,
+                          src: MirSource,
                           mir: &Mir<'tcx>,
                           auxiliary: Option<&ScopeAuxiliaryVec>) {
     let filters = match tcx.sess.opts.debugging_opts.dump_mir {
         None => return,
         Some(ref filters) => filters,
     };
+    let node_id = src.item_id();
     let node_path = tcx.item_path_str(tcx.map.local_def_id(node_id));
     let is_matched =
         filters.split("&")
@@ -64,20 +69,34 @@ pub fn dump_mir<'a, 'tcx>(tcx: &TyCtxt<'tcx>,
         try!(writeln!(file, "// pass_name = {}", pass_name));
         try!(writeln!(file, "// disambiguator = {}", disambiguator));
         try!(writeln!(file, ""));
-        try!(write_mir_fn(tcx, node_id, mir, &mut file, auxiliary));
+        try!(write_mir_fn(tcx, src, mir, &mut file, auxiliary));
         Ok(())
     });
 }
 
 /// Write out a human-readable textual representation for the given MIR.
-pub fn write_mir_pretty<'a, 'tcx, I>(tcx: &TyCtxt<'tcx>,
-                                     iter: I,
-                                     w: &mut Write)
-                                     -> io::Result<()>
+pub fn write_mir_pretty<'a, 'b, 'tcx, I>(tcx: TyCtxt<'b, 'tcx, 'tcx>,
+                                         iter: I,
+                                         w: &mut Write)
+                                         -> io::Result<()>
     where I: Iterator<Item=(&'a NodeId, &'a Mir<'tcx>)>, 'tcx: 'a
 {
-    for (&node_id, mir) in iter {
-        write_mir_fn(tcx, node_id, mir, w, None)?;
+    let mut first = true;
+    for (&id, mir) in iter {
+        if first {
+            first = false;
+        } else {
+            // Put empty lines between all items
+            writeln!(w, "")?;
+        }
+
+        let src = MirSource::from_node(tcx, id);
+        write_mir_fn(tcx, src, mir, w, None)?;
+
+        for (i, mir) in mir.promoted.iter().enumerate() {
+            writeln!(w, "")?;
+            write_mir_fn(tcx, MirSource::Promoted(id, i), mir, w, None)?;
+        }
     }
     Ok(())
 }
@@ -87,12 +106,12 @@ enum Annotation {
     ExitScope(ScopeId),
 }
 
-pub fn write_mir_fn<'tcx>(tcx: &TyCtxt<'tcx>,
-                          node_id: NodeId,
-                          mir: &Mir<'tcx>,
-                          w: &mut Write,
-                          auxiliary: Option<&ScopeAuxiliaryVec>)
-                          -> io::Result<()> {
+pub fn write_mir_fn<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                              src: MirSource,
+                              mir: &Mir<'tcx>,
+                              w: &mut Write,
+                              auxiliary: Option<&ScopeAuxiliaryVec>)
+                              -> io::Result<()> {
     // compute scope/entry exit annotations
     let mut annotations = FnvHashMap();
     if let Some(auxiliary) = auxiliary {
@@ -111,7 +130,7 @@ pub fn write_mir_fn<'tcx>(tcx: &TyCtxt<'tcx>,
         }
     }
 
-    write_mir_intro(tcx, node_id, mir, w)?;
+    write_mir_intro(tcx, src, mir, w)?;
     for block in mir.all_basic_blocks() {
         write_basic_block(tcx, block, mir, w, &annotations)?;
     }
@@ -123,14 +142,17 @@ pub fn write_mir_fn<'tcx>(tcx: &TyCtxt<'tcx>,
                   .or_insert(vec![])
                   .push(ScopeId::new(index));
     }
-    write_scope_tree(tcx, mir, auxiliary, &scope_tree, w, None, 1)?;
+
+    writeln!(w, "{}scope tree:", INDENT)?;
+    write_scope_tree(tcx, mir, auxiliary, &scope_tree, w, None, 1, false)?;
+    writeln!(w, "")?;
 
     writeln!(w, "}}")?;
     Ok(())
 }
 
 /// Write out a human-readable textual representation for the given basic block.
-fn write_basic_block(tcx: &TyCtxt,
+fn write_basic_block(tcx: TyCtxt,
                      block: BasicBlock,
                      mir: &Mir,
                      w: &mut Write,
@@ -139,7 +161,7 @@ fn write_basic_block(tcx: &TyCtxt,
     let data = mir.basic_block_data(block);
 
     // Basic block label at the top.
-    writeln!(w, "\n{}{:?}: {{", INDENT, block)?;
+    writeln!(w, "{}{:?}: {{", INDENT, block)?;
 
     // List of statements in the middle.
     let mut current_location = Location { block: block, statement_index: 0 };
@@ -157,48 +179,61 @@ fn write_basic_block(tcx: &TyCtxt,
             }
         }
 
-        writeln!(w, "{0}{0}{1:?}; // {2}",
-                 INDENT,
-                 statement,
+        let indented_mir = format!("{0}{0}{1:?};", INDENT, statement);
+        writeln!(w, "{0:1$} // {2}",
+                 indented_mir,
+                 ALIGN,
                  comment(tcx, statement.scope, statement.span))?;
 
         current_location.statement_index += 1;
     }
 
     // Terminator at the bottom.
-    writeln!(w, "{0}{0}{1:?}; // {2}",
-             INDENT,
-             data.terminator().kind,
+    let indented_terminator = format!("{0}{0}{1:?};", INDENT, data.terminator().kind);
+    writeln!(w, "{0:1$} // {2}",
+             indented_terminator,
+             ALIGN,
              comment(tcx, data.terminator().scope, data.terminator().span))?;
 
-    writeln!(w, "{}}}", INDENT)
+    writeln!(w, "{}}}\n", INDENT)
 }
 
-fn comment(tcx: &TyCtxt,
-           scope: ScopeId,
-           span: Span)
-           -> String {
-    format!("Scope({}) at {}", scope.index(), tcx.sess.codemap().span_to_string(span))
+fn comment(tcx: TyCtxt, scope: ScopeId, span: Span) -> String {
+    format!("scope {} at {}", scope.index(), tcx.sess.codemap().span_to_string(span))
 }
 
-fn write_scope_tree(tcx: &TyCtxt,
+fn write_scope_tree(tcx: TyCtxt,
                     mir: &Mir,
                     auxiliary: Option<&ScopeAuxiliaryVec>,
                     scope_tree: &FnvHashMap<Option<ScopeId>, Vec<ScopeId>>,
                     w: &mut Write,
                     parent: Option<ScopeId>,
-                    depth: usize)
+                    depth: usize,
+                    same_line: bool)
                     -> io::Result<()> {
-    for &child in scope_tree.get(&parent).unwrap_or(&vec![]) {
-        let indent = depth * INDENT.len();
+    let indent = if same_line {
+        0
+    } else {
+        depth * INDENT.len()
+    };
+
+    let children = match scope_tree.get(&parent) {
+        Some(childs) => childs,
+        None => return Ok(()),
+    };
+
+    for (index, &child) in children.iter().enumerate() {
+        if index == 0 && same_line {
+            // We know we're going to output a scope, so prefix it with a space to separate it from
+            // the previous scopes on this line
+            write!(w, " ")?;
+        }
+
         let data = &mir.scopes[child];
         assert_eq!(data.parent_scope, parent);
-        writeln!(w, "{0:1$}Scope({2}) {{", "", indent, child.index())?;
+        write!(w, "{0:1$}{2}", "", indent, child.index())?;
 
         let indent = indent + INDENT.len();
-        if let Some(parent) = parent {
-            writeln!(w, "{0:1$}Parent: Scope({2})", "", indent, parent.index())?;
-        }
 
         if let Some(auxiliary) = auxiliary {
             let extent = auxiliary[child].extent;
@@ -206,48 +241,98 @@ fn write_scope_tree(tcx: &TyCtxt,
             writeln!(w, "{0:1$}Extent: {2:?}", "", indent, data)?;
         }
 
-        write_scope_tree(tcx, mir, auxiliary, scope_tree, w,
-                         Some(child), depth + 1)?;
+        let child_count = scope_tree.get(&Some(child)).map(Vec::len).unwrap_or(0);
+        if child_count < 2 {
+            // Skip the braces when there's no or only a single subscope
+            write_scope_tree(tcx, mir, auxiliary, scope_tree, w,
+                             Some(child), depth, true)?;
+        } else {
+            // 2 or more child scopes? Put them in braces and on new lines.
+            writeln!(w, " {{")?;
+            write_scope_tree(tcx, mir, auxiliary, scope_tree, w,
+                             Some(child), depth + 1, false)?;
+
+            write!(w, "\n{0:1$}}}", "", depth * INDENT.len())?;
+        }
+
+        if !same_line && index + 1 < children.len() {
+            writeln!(w, "")?;
+        }
     }
+
     Ok(())
 }
 
 /// Write out a human-readable textual representation of the MIR's `fn` type and the types of its
 /// local variables (both user-defined bindings and compiler temporaries).
-fn write_mir_intro(tcx: &TyCtxt, nid: NodeId, mir: &Mir, w: &mut Write)
-                   -> io::Result<()> {
-    write!(w, "fn {}(", tcx.node_path_str(nid))?;
-
-    // fn argument types.
-    for (i, arg) in mir.arg_decls.iter().enumerate() {
-        if i > 0 {
-            write!(w, ", ")?;
-        }
-        write!(w, "{:?}: {}", Lvalue::Arg(i as u32), arg.ty)?;
+fn write_mir_intro<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                             src: MirSource,
+                             mir: &Mir,
+                             w: &mut Write)
+                             -> io::Result<()> {
+    match src {
+        MirSource::Fn(_) => write!(w, "fn")?,
+        MirSource::Const(_) => write!(w, "const")?,
+        MirSource::Static(_, hir::MutImmutable) => write!(w, "static")?,
+        MirSource::Static(_, hir::MutMutable) => write!(w, "static mut")?,
+        MirSource::Promoted(_, i) => write!(w, "promoted{} in", i)?
     }
 
-    write!(w, ") -> ")?;
+    write!(w, " {}", tcx.node_path_str(src.item_id()))?;
 
-    // fn return type.
-    match mir.return_ty {
-        ty::FnOutput::FnConverging(ty) => write!(w, "{}", ty)?,
-        ty::FnOutput::FnDiverging => write!(w, "!")?,
+    if let MirSource::Fn(_) = src {
+        write!(w, "(")?;
+
+        // fn argument types.
+        for (i, arg) in mir.arg_decls.iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            write!(w, "{:?}: {}", Lvalue::Arg(i as u32), arg.ty)?;
+        }
+
+        write!(w, ") -> ")?;
+
+        // fn return type.
+        match mir.return_ty {
+            ty::FnOutput::FnConverging(ty) => write!(w, "{}", ty)?,
+            ty::FnOutput::FnDiverging => write!(w, "!")?,
+        }
+    } else {
+        assert!(mir.arg_decls.is_empty());
+        write!(w, ": {} =", mir.return_ty.unwrap())?;
     }
 
     writeln!(w, " {{")?;
 
     // User variable types (including the user's name in a comment).
     for (i, var) in mir.var_decls.iter().enumerate() {
-        write!(w, "{}let ", INDENT)?;
-        if var.mutability == Mutability::Mut {
-            write!(w, "mut ")?;
-        }
-        writeln!(w, "{:?}: {}; // {}", Lvalue::Var(i as u32), var.ty, var.name)?;
+        let mut_str = if var.mutability == Mutability::Mut {
+            "mut "
+        } else {
+            ""
+        };
+
+        let indented_var = format!("{}let {}{:?}: {};",
+                                   INDENT,
+                                   mut_str,
+                                   Lvalue::Var(i as u32),
+                                   var.ty);
+        writeln!(w, "{0:1$} // \"{2}\" in {3}",
+                 indented_var,
+                 ALIGN,
+                 var.name,
+                 comment(tcx, var.scope, var.span))?;
     }
 
     // Compiler-introduced temporary types.
     for (i, temp) in mir.temp_decls.iter().enumerate() {
         writeln!(w, "{}let mut {:?}: {};", INDENT, Lvalue::Temp(i as u32), temp.ty)?;
+    }
+
+    // Wrote any declaration? Add an empty line before the first block is printed.
+    if !mir.var_decls.is_empty() || !mir.temp_decls.is_empty() {
+        writeln!(w, "")?;
     }
 
     Ok(())

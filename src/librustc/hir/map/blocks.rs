@@ -133,7 +133,13 @@ struct ClosureParts<'a> {
 
 impl<'a> ClosureParts<'a> {
     fn new(d: &'a FnDecl, b: &'a Block, id: NodeId, s: Span, attrs: &'a [Attribute]) -> Self {
-        ClosureParts { decl: d, body: b, id: id, span: s, attrs: attrs }
+        ClosureParts {
+            decl: d,
+            body: b,
+            id: id,
+            span: s,
+            attrs: attrs,
+        }
     }
 }
 
@@ -250,7 +256,7 @@ impl<'a> FnLikeNode<'a> {
                 }
             }
             map::NodeExpr(e) => match e.node {
-                ast::ExprClosure(_, ref decl, ref block) =>
+                ast::ExprClosure(_, ref decl, ref block, _fn_decl_span) =>
                     closure(ClosureParts::new(&decl,
                                               &block,
                                               e.id,

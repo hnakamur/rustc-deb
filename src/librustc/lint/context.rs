@@ -30,7 +30,7 @@ use middle::privacy::AccessLevels;
 use ty::TyCtxt;
 use session::{config, early_error, Session};
 use lint::{Level, LevelSource, Lint, LintId, LintArray, LintPass};
-use lint::{EarlyLintPass, EarlyLintPassObject, LateLintPass, LateLintPassObject};
+use lint::{EarlyLintPassObject, LateLintPass, LateLintPassObject};
 use lint::{Default, CommandLine, Node, Allow, Warn, Deny, Forbid};
 use lint::builtin;
 use util::nodemap::FnvHashMap;
@@ -297,7 +297,7 @@ impl LintStore {
 /// Context for lint checking after type checking.
 pub struct LateContext<'a, 'tcx: 'a> {
     /// Type context we're checking in.
-    pub tcx: &'a TyCtxt<'tcx>,
+    pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     /// The crate being checked.
     pub krate: &'a hir::Crate,
@@ -456,17 +456,13 @@ pub fn raw_struct_lint<'a>(sess: &'a Session,
                                    it will become a hard error in a future release!");
         let citation = format!("for more information, see {}",
                                future_incompatible.reference);
-        if let Some(sp) = span {
-            err.fileline_warn(sp, &explanation);
-            err.fileline_note(sp, &citation);
-        } else {
-            err.warn(&explanation);
-            err.note(&citation);
-        }
+        err.warn(&explanation);
+        err.note(&citation);
     }
 
     if let Some(span) = def {
-        err.span_note(span, "lint level defined here");
+        let explanation = "lint level defined here";
+        err.span_note(span, &explanation);
     }
 
     err
@@ -542,7 +538,7 @@ pub trait LintContext: Sized {
         let mut err = self.lookup(lint, Some(span), msg);
         if self.current_level(lint) != Level::Allow {
             if note_span == span {
-                err.fileline_note(note_span, note);
+                err.note(note);
             } else {
                 err.span_note(note_span, note);
             }
@@ -656,7 +652,7 @@ impl<'a> EarlyContext<'a> {
 }
 
 impl<'a, 'tcx> LateContext<'a, 'tcx> {
-    fn new(tcx: &'a TyCtxt<'tcx>,
+    fn new(tcx: TyCtxt<'a, 'tcx, 'tcx>,
            krate: &'a hir::Crate,
            access_levels: &'a AccessLevels) -> LateContext<'a, 'tcx> {
         // We want to own the lint store, so move it out of the session.
@@ -744,7 +740,8 @@ impl<'a, 'tcx, 'v> hir_visit::Visitor<'v> for LateContext<'a, 'tcx> {
     /// items in the context of the outer item, so enable
     /// deep-walking.
     fn visit_nested_item(&mut self, item: hir::ItemId) {
-        self.visit_item(self.tcx.map.expect_item(item.id))
+        let tcx = self.tcx;
+        self.visit_item(tcx.map.expect_item(item.id))
     }
 
     fn visit_item(&mut self, it: &hir::Item) {
@@ -890,11 +887,6 @@ impl<'a, 'tcx, 'v> hir_visit::Visitor<'v> for LateContext<'a, 'tcx> {
 
     fn visit_lifetime_def(&mut self, lt: &hir::LifetimeDef) {
         run_lints!(self, check_lifetime_def, late_passes, lt);
-    }
-
-    fn visit_explicit_self(&mut self, es: &hir::ExplicitSelf) {
-        run_lints!(self, check_explicit_self, late_passes, es);
-        hir_visit::walk_explicit_self(self, es);
     }
 
     fn visit_path(&mut self, p: &hir::Path, id: ast::NodeId) {
@@ -1223,7 +1215,8 @@ fn check_lint_name_cmdline(sess: &Session, lint_cx: &LintStore,
 /// Perform lint checking on a crate.
 ///
 /// Consumes the `lint_store` field of the `Session`.
-pub fn check_crate(tcx: &TyCtxt, access_levels: &AccessLevels) {
+pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                             access_levels: &AccessLevels) {
     let _task = tcx.dep_graph.in_task(DepNode::LateLintCheck);
 
     let krate = tcx.map.krate();

@@ -197,7 +197,7 @@ macro_rules! make_mir_visitor {
             }
 
             fn visit_closure_substs(&mut self,
-                                    substs: & $($mutability)* &'tcx ClosureSubsts<'tcx>) {
+                                    substs: & $($mutability)* ClosureSubsts<'tcx>) {
                 self.super_closure_substs(substs);
             }
 
@@ -244,10 +244,12 @@ macro_rules! make_mir_visitor {
                 let Mir {
                     ref $($mutability)* basic_blocks,
                     ref $($mutability)* scopes,
+                    promoted: _, // Visited by passes separately.
                     ref $($mutability)* return_ty,
                     ref $($mutability)* var_decls,
                     ref $($mutability)* arg_decls,
                     ref $($mutability)* temp_decls,
+                    upvar_decls: _,
                     ref $($mutability)* span,
                 } = *mir;
 
@@ -298,9 +300,11 @@ macro_rules! make_mir_visitor {
             fn super_scope_data(&mut self,
                                 scope_data: & $($mutability)* ScopeData) {
                 let ScopeData {
+                    ref $($mutability)* span,
                     ref $($mutability)* parent_scope,
                 } = *scope_data;
 
+                self.visit_span(span);
                 if let Some(ref $($mutability)* parent_scope) = *parent_scope {
                     self.visit_scope_id(parent_scope);
                 }
@@ -597,7 +601,8 @@ macro_rules! make_mir_visitor {
                               arg_decl: & $($mutability)* ArgDecl<'tcx>) {
                 let ArgDecl {
                     ref $($mutability)* ty,
-                    spread: _
+                    spread: _,
+                    debug_name: _
                 } = *arg_decl;
 
                 self.visit_ty(ty);
@@ -645,10 +650,11 @@ macro_rules! make_mir_visitor {
                                     ref $($mutability)* substs } => {
                         self.visit_def_id(def_id);
                         self.visit_substs(substs);
-                    },
+                    }
                     Literal::Value { ref $($mutability)* value } => {
                         self.visit_const_val(value);
                     }
+                    Literal::Promoted { index: _ } => {}
                 }
             }
 
@@ -675,7 +681,7 @@ macro_rules! make_mir_visitor {
             }
 
             fn super_closure_substs(&mut self,
-                                    _substs: & $($mutability)* &'tcx ClosureSubsts<'tcx>) {
+                                    _substs: & $($mutability)* ClosureSubsts<'tcx>) {
             }
 
             fn super_const_val(&mut self, _substs: & $($mutability)* ConstVal) {

@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use dep_graph::DepGraph;
 use lint;
 use middle::cstore::CrateStore;
 use middle::dependency_format;
 use session::search_paths::PathKind;
+use session::config::PanicStrategy;
 use ty::tls;
 use util::nodemap::{NodeMap, FnvHashMap};
 use mir::transform as mir_pass;
@@ -30,13 +32,16 @@ use syntax::{ast, codemap};
 use syntax::feature_gate::AttributeType;
 
 use rustc_back::target::Target;
+use llvm;
 
 use std::path::{Path, PathBuf};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::ffi::CString;
 use std::rc::Rc;
 use std::fmt;
+use libc::c_int;
 
 pub mod config;
 pub mod filesearch;
@@ -45,6 +50,7 @@ pub mod search_paths;
 // Represents the data associated with a compilation
 // session for a single crate.
 pub struct Session {
+    pub dep_graph: DepGraph,
     pub target: config::Config,
     pub host: Target,
     pub opts: config::Options,
@@ -79,9 +85,11 @@ pub struct Session {
     /// operations such as auto-dereference and monomorphization.
     pub recursion_limit: Cell<usize>,
 
-    /// The metadata::creader module may inject an allocator dependency if it
-    /// didn't already find one, and this tracks what was injected.
+    /// The metadata::creader module may inject an allocator/panic_runtime
+    /// dependency if it didn't already find one, and this tracks what was
+    /// injected.
     pub injected_allocator: Cell<Option<ast::CrateNum>>,
+    pub injected_panic_runtime: Cell<Option<ast::CrateNum>>,
 
     /// Names of all bang-style macros and syntax extensions
     /// available in this crate
@@ -292,7 +300,8 @@ impl Session {
         self.opts.cg.lto
     }
     pub fn no_landing_pads(&self) -> bool {
-        self.opts.debugging_opts.no_landing_pads
+        self.opts.debugging_opts.no_landing_pads ||
+            self.opts.cg.panic == PanicStrategy::Abort
     }
     pub fn unstable_options(&self) -> bool {
         self.opts.debugging_opts.unstable_options
@@ -401,10 +410,26 @@ fn split_msg_into_multilines(msg: &str) -> Option<String> {
 }
 
 pub fn build_session(sopts: config::Options,
+                     dep_graph: &DepGraph,
                      local_crate_source_file: Option<PathBuf>,
                      registry: diagnostics::registry::Registry,
                      cstore: Rc<for<'a> CrateStore<'a>>)
                      -> Session {
+    build_session_with_codemap(sopts,
+                               dep_graph,
+                               local_crate_source_file,
+                               registry,
+                               cstore,
+                               Rc::new(codemap::CodeMap::new()))
+}
+
+pub fn build_session_with_codemap(sopts: config::Options,
+                                  dep_graph: &DepGraph,
+                                  local_crate_source_file: Option<PathBuf>,
+                                  registry: diagnostics::registry::Registry,
+                                  cstore: Rc<for<'a> CrateStore<'a>>,
+                                  codemap: Rc<codemap::CodeMap>)
+                                  -> Session {
     // FIXME: This is not general enough to make the warning lint completely override
     // normal diagnostic warnings, since the warning lint can also be denied and changed
     // later via the source code.
@@ -416,7 +441,6 @@ pub fn build_session(sopts: config::Options,
         .unwrap_or(true);
     let treat_err_as_bug = sopts.treat_err_as_bug;
 
-    let codemap = Rc::new(codemap::CodeMap::new());
     let emitter: Box<Emitter> = match sopts.error_format {
         config::ErrorOutputType::HumanReadable(color_config) => {
             Box::new(EmitterWriter::stderr(color_config, Some(registry), codemap.clone()))
@@ -431,10 +455,16 @@ pub fn build_session(sopts: config::Options,
                                       treat_err_as_bug,
                                       emitter);
 
-    build_session_(sopts, local_crate_source_file, diagnostic_handler, codemap, cstore)
+    build_session_(sopts,
+                   dep_graph,
+                   local_crate_source_file,
+                   diagnostic_handler,
+                   codemap,
+                   cstore)
 }
 
 pub fn build_session_(sopts: config::Options,
+                      dep_graph: &DepGraph,
                       local_crate_source_file: Option<PathBuf>,
                       span_diagnostic: errors::Handler,
                       codemap: Rc<codemap::CodeMap>,
@@ -463,6 +493,7 @@ pub fn build_session_(sopts: config::Options,
     );
 
     let sess = Session {
+        dep_graph: dep_graph.clone(),
         target: target_cfg,
         host: host,
         opts: sopts,
@@ -487,11 +518,63 @@ pub fn build_session_(sopts: config::Options,
         recursion_limit: Cell::new(64),
         next_node_id: Cell::new(1),
         injected_allocator: Cell::new(None),
+        injected_panic_runtime: Cell::new(None),
         available_macros: RefCell::new(HashSet::new()),
         imported_macro_spans: RefCell::new(HashMap::new()),
     };
 
+    init_llvm(&sess);
+
     sess
+}
+
+fn init_llvm(sess: &Session) {
+    unsafe {
+        // Before we touch LLVM, make sure that multithreading is enabled.
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        static mut POISONED: bool = false;
+        INIT.call_once(|| {
+            if llvm::LLVMStartMultithreaded() != 1 {
+                // use an extra bool to make sure that all future usage of LLVM
+                // cannot proceed despite the Once not running more than once.
+                POISONED = true;
+            }
+
+            configure_llvm(sess);
+        });
+
+        if POISONED {
+            bug!("couldn't enable multi-threaded LLVM");
+        }
+    }
+}
+
+unsafe fn configure_llvm(sess: &Session) {
+    let mut llvm_c_strs = Vec::new();
+    let mut llvm_args = Vec::new();
+
+    {
+        let mut add = |arg: &str| {
+            let s = CString::new(arg).unwrap();
+            llvm_args.push(s.as_ptr());
+            llvm_c_strs.push(s);
+        };
+        add("rustc"); // fake program name
+        if sess.time_llvm_passes() { add("-time-passes"); }
+        if sess.print_llvm_passes() { add("-debug-pass=Structure"); }
+
+        for arg in &sess.opts.cg.llvm_args {
+            add(&(*arg));
+        }
+    }
+
+    llvm::LLVMInitializePasses();
+
+    llvm::initialize_available_targets();
+
+    llvm::LLVMRustSetLLVMOptions(llvm_args.len() as c_int,
+                                 llvm_args.as_ptr());
 }
 
 pub fn early_error(output: config::ErrorOutputType, msg: &str) -> ! {
@@ -501,7 +584,7 @@ pub fn early_error(output: config::ErrorOutputType, msg: &str) -> ! {
         }
         config::ErrorOutputType::Json => Box::new(JsonEmitter::basic()),
     };
-    emitter.emit(None, msg, None, errors::Level::Fatal);
+    emitter.emit(&MultiSpan::new(), msg, None, errors::Level::Fatal);
     panic!(errors::FatalError);
 }
 
@@ -512,7 +595,7 @@ pub fn early_warn(output: config::ErrorOutputType, msg: &str) {
         }
         config::ErrorOutputType::Json => Box::new(JsonEmitter::basic()),
     };
-    emitter.emit(None, msg, None, errors::Level::Warning);
+    emitter.emit(&MultiSpan::new(), msg, None, errors::Level::Warning);
 }
 
 // Err(0) means compilation was stopped, but no errors were found.
@@ -545,9 +628,9 @@ pub fn span_bug_fmt<S: Into<MultiSpan>>(file: &'static str,
 }
 
 fn opt_span_bug_fmt<S: Into<MultiSpan>>(file: &'static str,
-                                          line: u32,
-                                          span: Option<S>,
-                                          args: fmt::Arguments) -> ! {
+                                        line: u32,
+                                        span: Option<S>,
+                                        args: fmt::Arguments) -> ! {
     tls::with_opt(move |tcx| {
         let msg = format!("{}:{}: {}", file, line, args);
         match (tcx, span) {

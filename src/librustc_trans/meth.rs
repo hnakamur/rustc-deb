@@ -14,7 +14,6 @@ use arena::TypedArena;
 use back::symbol_names;
 use llvm::{ValueRef, get_params};
 use rustc::hir::def_id::DefId;
-use rustc::infer;
 use rustc::ty::subst::{FnSpace, Subst, Substs};
 use rustc::ty::subst;
 use rustc::traits::{self, ProjectionMode};
@@ -86,17 +85,16 @@ pub fn trans_object_shim<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
            method_ty);
 
     let sig = tcx.erase_late_bound_regions(&method_ty.fn_sig());
-    let sig = infer::normalize_associated_type(tcx, &sig);
+    let sig = tcx.normalize_associated_type(&sig);
     let fn_ty = FnType::new(ccx, method_ty.fn_abi(), &sig, &[]);
 
     let function_name =
         symbol_names::internal_name_from_type_and_suffix(ccx, method_ty, "object_shim");
     let llfn = declare::define_internal_fn(ccx, &function_name, method_ty);
 
-    let empty_substs = tcx.mk_substs(Substs::empty());
     let (block_arena, fcx): (TypedArena<_>, FunctionContext);
     block_arena = TypedArena::new();
-    fcx = FunctionContext::new(ccx, llfn, fn_ty, None, empty_substs, &block_arena);
+    fcx = FunctionContext::new(ccx, llfn, fn_ty, None, &block_arena);
     let mut bcx = fcx.init(false, None);
     assert!(!fcx.needs_ret_allocas);
 
@@ -145,7 +143,7 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     // Not in the cache. Build it.
     let methods = traits::supertraits(tcx, trait_ref.clone()).flat_map(|trait_ref| {
-        let vtable = fulfill_obligation(ccx, DUMMY_SP, trait_ref.clone());
+        let vtable = fulfill_obligation(ccx.shared(), DUMMY_SP, trait_ref.clone());
         match vtable {
             // Should default trait error here?
             traits::VtableDefaultImpl(_) |
@@ -158,7 +156,7 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                     substs,
                     nested: _ }) => {
                 let nullptr = C_null(Type::nil(ccx).ptr_to());
-                get_vtable_methods(ccx, id, substs)
+                get_vtable_methods(tcx, id, substs)
                     .into_iter()
                     .map(|opt_mth| opt_mth.map_or(nullptr, |mth| {
                         Callee::def(ccx, mth.method.def_id, &mth.substs).reify(ccx).val
@@ -178,7 +176,10 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                                          trait_closure_kind);
                 vec![llfn].into_iter()
             }
-            traits::VtableFnPointer(bare_fn_ty) => {
+            traits::VtableFnPointer(
+                traits::VtableFnPointerData {
+                    fn_ty: bare_fn_ty,
+                    nested: _ }) => {
                 let trait_closure_kind = tcx.lang_items.fn_trait_kind(trait_ref.def_id()).unwrap();
                 vec![trans_fn_pointer_shim(ccx, trait_closure_kind, bare_fn_ty)].into_iter()
             }
@@ -216,13 +217,11 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     vtable
 }
 
-pub fn get_vtable_methods<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+pub fn get_vtable_methods<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                     impl_id: DefId,
                                     substs: &'tcx subst::Substs<'tcx>)
                                     -> Vec<Option<ImplMethod<'tcx>>>
 {
-    let tcx = ccx.tcx();
-
     debug!("get_vtable_methods(impl_id={:?}, substs={:?}", impl_id, substs);
 
     let trt_id = match tcx.impl_trait_ref(impl_id) {
@@ -259,7 +258,7 @@ pub fn get_vtable_methods<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
             let name = trait_method_type.name;
 
             // Some methods cannot be called on an object; skip those.
-            if !traits::is_vtable_safe_method(tcx, trt_id, &trait_method_type) {
+            if !tcx.is_vtable_safe_method(trt_id, &trait_method_type) {
                 debug!("get_vtable_methods: not vtable safe");
                 return None;
             }
@@ -288,7 +287,7 @@ pub fn get_vtable_methods<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
             // try and trans it, in that case. Issue #23435.
             if mth.is_provided {
                 let predicates = mth.method.predicates.predicates.subst(tcx, &mth.substs);
-                if !normalize_and_test_predicates(ccx, predicates.into_vec()) {
+                if !normalize_and_test_predicates(tcx, predicates.into_vec()) {
                     debug!("get_vtable_methods: predicates do not hold");
                     return None;
                 }
@@ -307,23 +306,31 @@ pub struct ImplMethod<'tcx> {
 }
 
 /// Locates the applicable definition of a method, given its name.
-pub fn get_impl_method<'tcx>(tcx: &TyCtxt<'tcx>,
-                             impl_def_id: DefId,
-                             substs: &'tcx Substs<'tcx>,
-                             name: Name)
-                             -> ImplMethod<'tcx>
+pub fn get_impl_method<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                 impl_def_id: DefId,
+                                 substs: &'tcx Substs<'tcx>,
+                                 name: Name)
+                                 -> ImplMethod<'tcx>
 {
     assert!(!substs.types.needs_infer());
 
     let trait_def_id = tcx.trait_id_of_impl(impl_def_id).unwrap();
     let trait_def = tcx.lookup_trait_def(trait_def_id);
-    let infcx = infer::normalizing_infer_ctxt(tcx, &tcx.tables, ProjectionMode::Any);
 
     match trait_def.ancestors(impl_def_id).fn_defs(tcx, name).next() {
         Some(node_item) => {
+            let substs = tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+                let substs = traits::translate_substs(&infcx, impl_def_id,
+                                                      substs, node_item.node);
+                tcx.lift(&substs).unwrap_or_else(|| {
+                    bug!("trans::meth::get_impl_method: translate_substs \
+                          returned {:?} which contains inference types/regions",
+                         substs);
+                })
+            });
             ImplMethod {
                 method: node_item.item,
-                substs: traits::translate_substs(&infcx, impl_def_id, substs, node_item.node),
+                substs: substs,
                 is_provided: node_item.node.is_from_trait(),
             }
         }

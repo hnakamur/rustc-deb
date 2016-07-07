@@ -49,6 +49,11 @@ use marker::Sized;
 /// A common trait for cloning an object.
 ///
 /// This trait can be used with `#[derive]`.
+///
+/// Types that are `Copy` should have a trivial implementation of `Clone`. More formally:
+/// if `T: Copy`, `x: T`, and `y: &T`, then `let x = y.clone();` is equivalent to `let x = *y;`.
+/// Manual implementations should be careful to uphold this invariant; however, unsafe code
+/// must not rely on it to ensure memory safety.
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait Clone : Sized {
     /// Returns a copy of the value.
@@ -74,6 +79,17 @@ pub trait Clone : Sized {
         *self = source.clone()
     }
 }
+
+// FIXME(aburka): this method is used solely by #[derive] to
+// assert that every component of a type implements Clone.
+//
+// This should never be called by user code.
+#[doc(hidden)]
+#[inline(always)]
+#[unstable(feature = "derive_clone_copy",
+           reason = "deriving hack, should not be public",
+           issue = "0")]
+pub fn assert_receiver_is_clone<T: Clone + ?Sized>(_: &T) {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T: ?Sized> Clone for &'a T {

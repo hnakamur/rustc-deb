@@ -19,7 +19,7 @@ use syntax::ptr::P;
 use hir::{self, PatKind};
 
 struct CFGBuilder<'a, 'tcx: 'a> {
-    tcx: &'a TyCtxt<'tcx>,
+    tcx: TyCtxt<'a, 'tcx, 'tcx>,
     graph: CFGGraph,
     fn_exit: CFGIndex,
     loop_scopes: Vec<LoopScope>,
@@ -32,8 +32,8 @@ struct LoopScope {
     break_index: CFGIndex,    // where to go on a `break
 }
 
-pub fn construct(tcx: &TyCtxt,
-                 blk: &hir::Block) -> CFG {
+pub fn construct<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                           blk: &hir::Block) -> CFG {
     let mut graph = graph::Graph::new();
     let entry = graph.add_node(CFGNodeData::Entry);
 
@@ -285,7 +285,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             }
 
             hir::ExprBreak(label) => {
-                let loop_scope = self.find_scope(expr, label.map(|l| l.node.name));
+                let loop_scope = self.find_scope(expr, label.map(|l| l.node));
                 let b = self.add_ast_node(expr.id, &[pred]);
                 self.add_exiting_edge(expr, b,
                                       loop_scope, loop_scope.break_index);
@@ -293,7 +293,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             }
 
             hir::ExprAgain(label) => {
-                let loop_scope = self.find_scope(expr, label.map(|l| l.node.name));
+                let loop_scope = self.find_scope(expr, label.map(|l| l.node));
                 let a = self.add_ast_node(expr.id, &[pred]);
                 self.add_exiting_edge(expr, a,
                                       loop_scope, loop_scope.continue_index);

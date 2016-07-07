@@ -8,16 +8,28 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Compilation of native dependencies like LLVM.
+//!
+//! Native projects like LLVM unfortunately aren't suited just yet for
+//! compilation in build scripts that Cargo has. This is because thie
+//! compilation takes a *very* long time but also because we don't want to
+//! compile LLVM 3 times as part of a normal bootstrap (we want it cached).
+//!
+//! LLVM and compiler-rt are essentially just wired up to everything else to
+//! ensure that they're always in place if needed.
+
 use std::path::Path;
 use std::process::Command;
 use std::fs;
 
 use build_helper::output;
 use cmake;
+use gcc;
 
 use build::Build;
-use build::util::{exe, staticlib};
+use build::util::{exe, staticlib, up_to_date};
 
+/// Compile LLVM for `target`.
 pub fn llvm(build: &Build, target: &str) {
     // If we're using a custom LLVM bail out here, but we can only use a
     // custom LLVM for the build triple.
@@ -43,6 +55,9 @@ pub fn llvm(build: &Build, target: &str) {
 
     // http://llvm.org/docs/CMake.html
     let mut cfg = cmake::Config::new(build.src.join("src/llvm"));
+    if build.config.ninja {
+        cfg.generator("Ninja");
+    }
     cfg.target(target)
        .host(&build.config.build)
        .out_dir(&dst)
@@ -112,6 +127,10 @@ fn check_llvm_version(build: &Build, llvm_config: &Path) {
     panic!("\n\nbad LLVM version: {}, need >=3.5\n\n", version)
 }
 
+/// Compiles the `compiler-rt` library, or at least the builtins part of it.
+///
+/// This uses the CMake build system and an existing LLVM build directory to
+/// compile the project.
 pub fn compiler_rt(build: &Build, target: &str) {
     let dst = build.compiler_rt_out(target);
     let arch = target.split('-').next().unwrap();
@@ -149,9 +168,7 @@ pub fn compiler_rt(build: &Build, target: &str) {
     }
     let _ = fs::remove_dir_all(&dst);
     t!(fs::create_dir_all(&dst));
-    let build_llvm_config = build.llvm_out(&build.config.build)
-                                 .join("bin")
-                                 .join(exe("llvm-config", &build.config.build));
+    let build_llvm_config = build.llvm_config(&build.config.build);
     let mut cfg = cmake::Config::new(build.src.join("src/compiler-rt"));
     cfg.target(target)
        .host(&build.config.build)
@@ -167,4 +184,26 @@ pub fn compiler_rt(build: &Build, target: &str) {
        .define("CMAKE_CXX_COMPILER", build.cc(target))
        .build_target(&build_target);
     cfg.build();
+}
+
+/// Compiles the `rust_test_helpers.c` library which we used in various
+/// `run-pass` test suites for ABI testing.
+pub fn test_helpers(build: &Build, target: &str) {
+    let dst = build.test_helpers_out(target);
+    let src = build.src.join("src/rt/rust_test_helpers.c");
+    if up_to_date(&src, &dst.join("librust_test_helpers.a")) {
+        return
+    }
+
+    println!("Building test helpers");
+    t!(fs::create_dir_all(&dst));
+    let mut cfg = gcc::Config::new();
+    cfg.cargo_metadata(false)
+       .out_dir(&dst)
+       .target(target)
+       .host(&build.config.build)
+       .opt_level(0)
+       .debug(false)
+       .file(build.src.join("src/rt/rust_test_helpers.c"))
+       .compile("librust_test_helpers.a");
 }

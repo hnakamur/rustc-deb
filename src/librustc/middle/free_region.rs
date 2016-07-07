@@ -48,17 +48,18 @@ impl FreeRegionMap {
         }
     }
 
-    pub fn relate_free_regions_from_predicates<'tcx>(&mut self,
-                                                     _tcx: &TyCtxt<'tcx>,
-                                                     predicates: &[ty::Predicate<'tcx>]) {
+    pub fn relate_free_regions_from_predicates(&mut self,
+                                               predicates: &[ty::Predicate]) {
         debug!("relate_free_regions_from_predicates(predicates={:?})", predicates);
         for predicate in predicates {
             match *predicate {
                 ty::Predicate::Projection(..) |
                 ty::Predicate::Trait(..) |
+                ty::Predicate::Rfc1592(..) |
                 ty::Predicate::Equate(..) |
                 ty::Predicate::WellFormed(..) |
                 ty::Predicate::ObjectSafe(..) |
+                ty::Predicate::ClosureKind(..) |
                 ty::Predicate::TypeOutlives(..) => {
                     // No region bounds here
                 }
@@ -120,7 +121,7 @@ impl FreeRegionMap {
     /// Determines whether one region is a subregion of another.  This is intended to run *after
     /// inference* and sadly the logic is somewhat duplicated with the code in infer.rs.
     pub fn is_subregion_of(&self,
-                           tcx: &TyCtxt,
+                           tcx: TyCtxt,
                            sub_region: ty::Region,
                            super_region: ty::Region)
                            -> bool {

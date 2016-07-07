@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use prelude::v1::*;
-use io::prelude::*;
 use os::unix::prelude::*;
 
 use ffi::{CString, CStr, OsString, OsStr};
@@ -28,7 +27,7 @@ use sys_common::{AsInner, FromInner};
 #[cfg(any(target_os = "linux", target_os = "emscripten"))]
 use libc::{stat64, fstat64, lstat64, off64_t, ftruncate64, lseek64, dirent64, readdir64_r, open64};
 #[cfg(target_os = "android")]
-use libc::{stat as stat64, fstat as fstat64, lstat as lstat64, off64_t, ftruncate64, lseek64,
+use libc::{stat as stat64, fstat as fstat64, lstat as lstat64, off64_t, lseek64,
            dirent as dirent64, open as open64};
 #[cfg(not(any(target_os = "linux",
               target_os = "emscripten",
@@ -101,31 +100,6 @@ impl FileAttr {
     }
 }
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-// FIXME: update SystemTime to store a timespec and don't lose precision
-impl FileAttr {
-    pub fn modified(&self) -> io::Result<SystemTime> {
-        Ok(SystemTime::from(libc::timeval {
-            tv_sec: self.stat.st_mtime,
-            tv_usec: (self.stat.st_mtime_nsec / 1000) as libc::suseconds_t,
-        }))
-    }
-
-    pub fn accessed(&self) -> io::Result<SystemTime> {
-        Ok(SystemTime::from(libc::timeval {
-            tv_sec: self.stat.st_atime,
-            tv_usec: (self.stat.st_atime_nsec / 1000) as libc::suseconds_t,
-        }))
-    }
-
-    pub fn created(&self) -> io::Result<SystemTime> {
-        Ok(SystemTime::from(libc::timeval {
-            tv_sec: self.stat.st_birthtime,
-            tv_usec: (self.stat.st_birthtime_nsec / 1000) as libc::suseconds_t,
-        }))
-    }
-}
-
 #[cfg(target_os = "netbsd")]
 impl FileAttr {
     pub fn modified(&self) -> io::Result<SystemTime> {
@@ -150,7 +124,7 @@ impl FileAttr {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "netbsd")))]
+#[cfg(not(target_os = "netbsd"))]
 impl FileAttr {
     pub fn modified(&self) -> io::Result<SystemTime> {
         Ok(SystemTime::from(libc::timespec {
@@ -168,7 +142,9 @@ impl FileAttr {
 
     #[cfg(any(target_os = "bitrig",
               target_os = "freebsd",
-              target_os = "openbsd"))]
+              target_os = "openbsd",
+              target_os = "macos",
+              target_os = "ios"))]
     pub fn created(&self) -> io::Result<SystemTime> {
         Ok(SystemTime::from(libc::timespec {
             tv_sec: self.stat.st_birthtime as libc::time_t,
@@ -178,7 +154,9 @@ impl FileAttr {
 
     #[cfg(not(any(target_os = "bitrig",
                   target_os = "freebsd",
-                  target_os = "openbsd")))]
+                  target_os = "openbsd",
+                  target_os = "macos",
+                  target_os = "ios")))]
     pub fn created(&self) -> io::Result<SystemTime> {
         Err(io::Error::new(io::ErrorKind::Other,
                            "creation time is not available on this platform \
@@ -476,10 +454,13 @@ impl File {
     }
 
     pub fn truncate(&self, size: u64) -> io::Result<()> {
-        cvt_r(|| unsafe {
+        #[cfg(target_os = "android")]
+        return ::sys::android::ftruncate64(self.0.raw(), size);
+
+        #[cfg(not(target_os = "android"))]
+        return cvt_r(|| unsafe {
             ftruncate64(self.0.raw(), size as off64_t)
-        })?;
-        Ok(())
+        }).map(|_| ());
     }
 
     pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {

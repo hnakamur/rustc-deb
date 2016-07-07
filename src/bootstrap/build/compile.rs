@@ -8,6 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Implementation of compiling various phases of the compiler and standard
+//! library.
+//!
+//! This module contains some of the real meat in the rustbuild build system
+//! which is where Cargo is used to compiler the standard library, libtest, and
+//! compiler. This module is also responsible for assembling the sysroot as it
+//! goes along from the output of the previous stage.
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,6 +43,8 @@ pub fn std<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
     copy(&build.compiler_rt_built.borrow()[target],
          &libdir.join(staticlib("compiler-rt", target)));
 
+    // Some platforms have startup objects that may be required to produce the
+    // libstd dynamic library, for example.
     build_startup_objects(build, target, &libdir);
 
     let out_dir = build.cargo_out(compiler, Mode::Libstd, target);
@@ -154,7 +164,6 @@ pub fn test_link(build: &Build,
     add_to_sysroot(&out_dir, &libdir);
 }
 
-
 /// Build the compiler.
 ///
 /// This will build the compiler for a particular stage of the build using
@@ -179,7 +188,6 @@ pub fn rustc<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
          .env("CFG_VERSION", &build.version)
          .env("CFG_BOOTSTRAP_KEY", &build.bootstrap_key)
          .env("CFG_PREFIX", build.config.prefix.clone().unwrap_or(String::new()))
-         .env("RUSTC_BOOTSTRAP_KEY", &build.bootstrap_key)
          .env("CFG_LIBDIR_RELATIVE", "lib");
 
     if let Some(ref ver_date) = build.ver_date {
@@ -191,14 +199,7 @@ pub fn rustc<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
     if !build.unstable_features {
         cargo.env("CFG_DISABLE_UNSTABLE_FEATURES", "1");
     }
-    let target_config = build.config.target_config.get(target);
-    if let Some(ref s) = target_config.and_then(|c| c.llvm_config.as_ref()) {
-        cargo.env("LLVM_CONFIG", s);
-    } else {
-        let llvm_config = build.llvm_out(&build.config.build).join("bin")
-                               .join(exe("llvm-config", target));
-        cargo.env("LLVM_CONFIG", llvm_config);
-    }
+    cargo.env("LLVM_CONFIG", build.llvm_config(target));
     if build.config.llvm_static_stdcpp {
         cargo.env("LLVM_STATIC_STDCPP",
                   compiler_file(build.cxx(target), "libstdc++.a"));

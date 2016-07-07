@@ -8,6 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Serialized configuration of a build.
+//!
+//! This module implements parsing `config.mk` and `config.toml` configuration
+//! files to tweak how the build runs.
+
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
@@ -27,10 +32,13 @@ use toml::{Parser, Decoder, Value};
 /// is generated from `./configure`.
 ///
 /// Note that this structure is not decoded directly into, but rather it is
-/// filled out from the decoded forms of the structs below.
+/// filled out from the decoded forms of the structs below. For documentation
+/// each field, see the corresponding fields in
+/// `src/bootstrap/config.toml.example`.
 #[derive(Default)]
 pub struct Config {
     pub ccache: bool,
+    pub ninja: bool,
     pub verbose: bool,
     pub submodules: bool,
     pub compiler_docs: bool,
@@ -51,6 +59,8 @@ pub struct Config {
     pub rust_rpath: bool,
     pub rustc_default_linker: Option<String>,
     pub rustc_default_ar: Option<String>,
+    pub rust_optimize_tests: bool,
+    pub rust_debuginfo_tests: bool,
 
     pub build: String,
     pub host: Vec<String>,
@@ -107,6 +117,7 @@ struct Build {
 #[derive(RustcDecodable, Default)]
 struct Llvm {
     ccache: Option<bool>,
+    ninja: Option<bool>,
     assertions: Option<bool>,
     optimize: Option<bool>,
     version_check: Option<bool>,
@@ -127,6 +138,8 @@ struct Rust {
     channel: Option<String>,
     musl_root: Option<String>,
     rpath: Option<bool>,
+    optimize_tests: Option<bool>,
+    debuginfo_tests: Option<bool>,
 }
 
 /// TOML representation of how each build target is configured.
@@ -145,6 +158,7 @@ impl Config {
         config.llvm_optimize = true;
         config.use_jemalloc = true;
         config.rust_optimize = true;
+        config.rust_optimize_tests = true;
         config.submodules = true;
         config.docs = true;
         config.rust_rpath = true;
@@ -200,8 +214,8 @@ impl Config {
 
         if let Some(ref llvm) = toml.llvm {
             set(&mut config.ccache, llvm.ccache);
+            set(&mut config.ninja, llvm.ninja);
             set(&mut config.llvm_assertions, llvm.assertions);
-            set(&mut config.llvm_optimize, llvm.optimize);
             set(&mut config.llvm_optimize, llvm.optimize);
             set(&mut config.llvm_version_check, llvm.version_check);
             set(&mut config.llvm_static_stdcpp, llvm.static_libstdcpp);
@@ -210,6 +224,8 @@ impl Config {
             set(&mut config.rust_debug_assertions, rust.debug_assertions);
             set(&mut config.rust_debuginfo, rust.debuginfo);
             set(&mut config.rust_optimize, rust.optimize);
+            set(&mut config.rust_optimize_tests, rust.optimize_tests);
+            set(&mut config.rust_debuginfo_tests, rust.debuginfo_tests);
             set(&mut config.rust_rpath, rust.rpath);
             set(&mut config.debug_jemalloc, rust.debug_jemalloc);
             set(&mut config.use_jemalloc, rust.use_jemalloc);
@@ -248,6 +264,11 @@ impl Config {
         return config
     }
 
+    /// "Temporary" routine to parse `config.mk` into this configuration.
+    ///
+    /// While we still have `./configure` this implements the ability to decode
+    /// that configuration into this. This isn't exactly a full-blown makefile
+    /// parser, but hey it gets the job done!
     pub fn update_with_config_mk(&mut self) {
         let mut config = String::new();
         File::open("config.mk").unwrap().read_to_string(&mut config).unwrap();
@@ -292,6 +313,8 @@ impl Config {
                 ("JEMALLOC", self.use_jemalloc),
                 ("DEBUG_JEMALLOC", self.debug_jemalloc),
                 ("RPATH", self.rust_rpath),
+                ("OPTIMIZE_TESTS", self.rust_optimize_tests),
+                ("DEBUGINFO_TESTS", self.rust_debuginfo_tests),
             }
 
             match key {
@@ -332,6 +355,12 @@ impl Config {
                 }
                 "CFG_ARM_LINUX_ANDROIDEABI_NDK" if value.len() > 0 => {
                     let target = "arm-linux-androideabi".to_string();
+                    let target = self.target_config.entry(target)
+                                     .or_insert(Target::default());
+                    target.ndk = Some(PathBuf::from(value));
+                }
+                "CFG_ARMV7_LINUX_ANDROIDEABI_NDK" if value.len() > 0 => {
+                    let target = "armv7-linux-androideabi".to_string();
                     let target = self.target_config.entry(target)
                                      .or_insert(Target::default());
                     target.ndk = Some(PathBuf::from(value));

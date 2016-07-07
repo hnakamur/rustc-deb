@@ -657,7 +657,7 @@ impl Metadata {
     ///
     /// This field may not be available on all platforms, and will return an
     /// `Err` on platforms where it is not available.
-    #[unstable(feature = "fs_time", issue = "31399")]
+    #[stable(feature = "fs_time", since = "1.10.0")]
     pub fn modified(&self) -> io::Result<SystemTime> {
         self.0.modified().map(FromInner::from_inner)
     }
@@ -675,7 +675,7 @@ impl Metadata {
     ///
     /// This field may not be available on all platforms, and will return an
     /// `Err` on platforms where it is not available.
-    #[unstable(feature = "fs_time", issue = "31399")]
+    #[stable(feature = "fs_time", since = "1.10.0")]
     pub fn accessed(&self) -> io::Result<SystemTime> {
         self.0.accessed().map(FromInner::from_inner)
     }
@@ -689,7 +689,7 @@ impl Metadata {
     ///
     /// This field may not be available on all platforms, and will return an
     /// `Err` on platforms where it is not available.
-    #[unstable(feature = "fs_time", issue = "31399")]
+    #[stable(feature = "fs_time", since = "1.10.0")]
     pub fn created(&self) -> io::Result<SystemTime> {
         self.0.created().map(FromInner::from_inner)
     }
@@ -965,7 +965,8 @@ pub fn symlink_metadata<P: AsRef<Path>>(path: P) -> io::Result<Metadata> {
     fs_imp::lstat(path.as_ref()).map(Metadata)
 }
 
-/// Rename a file or directory to a new name.
+/// Rename a file or directory to a new name, replacing the original file if
+/// `to` already exists.
 ///
 /// This will not work if the new name is on a different mount point.
 ///
@@ -973,6 +974,12 @@ pub fn symlink_metadata<P: AsRef<Path>>(path: P) -> io::Result<Metadata> {
 ///
 /// This function currently corresponds to the `rename` function on Unix
 /// and the `MoveFileEx` function with the `MOVEFILE_REPLACE_EXISTING` flag on Windows.
+///
+/// Because of this, the behavior when both `from` and `to` exist differs. On
+/// Unix, if `from` is a directory, `to` must also be an (empty) directory. If
+/// `from` is not a directory, `to` must also be not a directory. In contrast,
+/// on Windows, `from` can be anything, but `to` must *not* be a directory.
+///
 /// Note that, this [may change in the future][changes].
 /// [changes]: ../io/index.html#platform-specific-behavior
 ///
@@ -1536,7 +1543,7 @@ mod tests {
         let result = File::open(filename);
 
         if cfg!(unix) {
-            error!(result, "o such file or directory");
+            error!(result, "No such file or directory");
         }
         if cfg!(windows) {
             error!(result, "The system cannot find the file specified");
@@ -1551,7 +1558,7 @@ mod tests {
         let result = fs::remove_file(filename);
 
         if cfg!(unix) {
-            error!(result, "o such file or directory");
+            error!(result, "No such file or directory");
         }
         if cfg!(windows) {
             error!(result, "The system cannot find the file specified");
@@ -1765,7 +1772,7 @@ mod tests {
         let tmpdir = tmpdir();
         let dir = &tmpdir.join("mkdir_error_twice");
         check!(fs::create_dir(dir));
-        let e = fs::create_dir(dir).err().unwrap();
+        let e = fs::create_dir(dir).unwrap_err();
         assert_eq!(e.kind(), ErrorKind::AlreadyExists);
     }
 

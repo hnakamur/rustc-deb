@@ -27,8 +27,7 @@
 //! rustc will search each directory in the environment variable
 //! `RUST_TARGET_PATH` for a file named `TRIPLE.json`. The first one found will
 //! be loaded. If no file is found in any of those directories, a fatal error
-//! will be given.  `RUST_TARGET_PATH` includes `/etc/rustc` as its last entry,
-//! to be searched by default.
+//! will be given.
 //!
 //! Projects defining their own targets should use
 //! `--target=path/to/my-awesome-platform.json` instead of adding to
@@ -57,6 +56,7 @@ mod bitrig_base;
 mod dragonfly_base;
 mod freebsd_base;
 mod linux_base;
+mod linux_musl_base;
 mod openbsd_base;
 mod netbsd_base;
 mod solaris_base;
@@ -108,6 +108,7 @@ supported_targets! {
 
     ("i686-linux-android", i686_linux_android),
     ("arm-linux-androideabi", arm_linux_androideabi),
+    ("armv7-linux-androideabi", armv7_linux_androideabi),
     ("aarch64-linux-android", aarch64_linux_android),
 
     ("i686-unknown-freebsd", i686_unknown_freebsd),
@@ -202,7 +203,7 @@ pub struct TargetOptions {
     pub post_link_args: Vec<String>,
 
     /// Default CPU to pass to LLVM. Corresponds to `llc -mcpu=$cpu`. Defaults
-    /// to "default".
+    /// to "generic".
     pub cpu: String,
     /// Default target features to pass to LLVM. These features will *always* be
     /// passed, and cannot be disabled even via `-C`. Corresponds to `llc
@@ -291,6 +292,10 @@ pub struct TargetOptions {
     // If we give emcc .o files that are actually .bc files it
     // will 'just work'.
     pub obj_is_bitcode: bool,
+
+    /// Maximum integer size in bits that this target can perform atomic
+    /// operations on.
+    pub max_atomic_width: u64,
 }
 
 impl Default for TargetOptions {
@@ -339,6 +344,7 @@ impl Default for TargetOptions {
             allow_asm: true,
             has_elf_tls: false,
             obj_is_bitcode: false,
+            max_atomic_width: 0,
         }
     }
 }
@@ -391,6 +397,9 @@ impl Target {
             options: Default::default(),
         };
 
+        // Default max-atomic-width to target-pointer-width
+        base.options.max_atomic_width = base.target_pointer_width.parse().unwrap();
+
         macro_rules! key {
             ($key_name:ident) => ( {
                 let name = (stringify!($key_name)).replace("_", "-");
@@ -401,6 +410,12 @@ impl Target {
                 let name = (stringify!($key_name)).replace("_", "-");
                 obj.find(&name[..])
                     .map(|o| o.as_boolean()
+                         .map(|s| base.options.$key_name = s));
+            } );
+            ($key_name:ident, u64) => ( {
+                let name = (stringify!($key_name)).replace("_", "-");
+                obj.find(&name[..])
+                    .map(|o| o.as_u64()
                          .map(|s| base.options.$key_name = s));
             } );
             ($key_name:ident, list) => ( {
@@ -440,6 +455,7 @@ impl Target {
         key!(target_family, optional);
         key!(is_like_osx, bool);
         key!(is_like_windows, bool);
+        key!(is_like_msvc, bool);
         key!(linker_is_gnu, bool);
         key!(has_rpath, bool);
         key!(no_compiler_rt, bool);
@@ -449,6 +465,7 @@ impl Target {
         key!(archive_format);
         key!(allow_asm, bool);
         key!(custom_unwind_resume, bool);
+        key!(max_atomic_width, u64);
 
         base
     }

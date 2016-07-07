@@ -14,21 +14,21 @@
 use std::hash::{Hash, SipHasher, Hasher};
 use rustc::hir::def_id::{CRATE_DEF_INDEX, DefId};
 use rustc::hir::svh::Svh;
-use rustc::ty;
+use rustc::ty::TyCtxt;
 use rustc::hir::intravisit::{self, Visitor};
 
 use self::svh_visitor::StrictVersionHashVisitor;
 
 pub trait SvhCalculate {
     /// Calculate the SVH for an entire krate.
-    fn calculate_krate_hash(&self) -> Svh;
+    fn calculate_krate_hash(self) -> Svh;
 
     /// Calculate the SVH for a particular item.
-    fn calculate_item_hash(&self, def_id: DefId) -> u64;
+    fn calculate_item_hash(self, def_id: DefId) -> u64;
 }
 
-impl<'tcx> SvhCalculate for ty::TyCtxt<'tcx> {
-    fn calculate_krate_hash(&self) -> Svh {
+impl<'a, 'tcx> SvhCalculate for TyCtxt<'a, 'tcx, 'tcx> {
+    fn calculate_krate_hash(self) -> Svh {
         // FIXME (#14132): This is better than it used to be, but it still not
         // ideal. We now attempt to hash only the relevant portions of the
         // Crate AST as well as the top-level crate attributes. (However,
@@ -72,11 +72,13 @@ impl<'tcx> SvhCalculate for ty::TyCtxt<'tcx> {
             attr.node.value.hash(&mut state);
         }
 
-        Svh::from_hash(state.finish())
+        Svh::new(state.finish())
     }
 
-    fn calculate_item_hash(&self, def_id: DefId) -> u64 {
+    fn calculate_item_hash(self, def_id: DefId) -> u64 {
         assert!(def_id.is_local());
+
+        debug!("calculate_item_hash(def_id={:?})", def_id);
 
         let mut state = SipHasher::new();
 
@@ -89,11 +91,16 @@ impl<'tcx> SvhCalculate for ty::TyCtxt<'tcx> {
                 intravisit::walk_crate(&mut visit, krate);
             } else {
                 let node_id = self.map.as_local_node_id(def_id).unwrap();
-                visit.visit_item(self.map.expect_item(node_id));
+                let item = self.map.expect_item(node_id);
+                visit.visit_item(item);
             }
         }
 
-        state.finish()
+        let hash = state.finish();
+
+        debug!("calculate_item_hash: def_id={:?} hash={:?}", def_id, hash);
+
+        hash
     }
 }
 
@@ -109,7 +116,7 @@ mod svh_visitor {
     use syntax::ast::{self, Name, NodeId};
     use syntax::codemap::Span;
     use syntax::parse::token;
-    use rustc::ty;
+    use rustc::ty::TyCtxt;
     use rustc::hir;
     use rustc::hir::*;
     use rustc::hir::intravisit as visit;
@@ -118,13 +125,13 @@ mod svh_visitor {
     use std::hash::{Hash, SipHasher};
 
     pub struct StrictVersionHashVisitor<'a, 'tcx: 'a> {
-        pub tcx: &'a ty::TyCtxt<'tcx>,
+        pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
         pub st: &'a mut SipHasher,
     }
 
     impl<'a, 'tcx> StrictVersionHashVisitor<'a, 'tcx> {
         pub fn new(st: &'a mut SipHasher,
-                   tcx: &'a ty::TyCtxt<'tcx>)
+                   tcx: TyCtxt<'a, 'tcx, 'tcx>)
                    -> Self {
             StrictVersionHashVisitor { st: st, tcx: tcx }
         }
@@ -172,7 +179,6 @@ mod svh_visitor {
         SawImplItem,
         SawStructField,
         SawVariant,
-        SawExplicitSelf,
         SawPath,
         SawBlock,
         SawPat,
@@ -245,7 +251,7 @@ mod svh_visitor {
             ExprType(..)             => SawExprType,
             ExprIf(..)               => SawExprIf,
             ExprWhile(..)            => SawExprWhile,
-            ExprLoop(_, id)          => SawExprLoop(id.map(|id| id.name.as_str())),
+            ExprLoop(_, id)          => SawExprLoop(id.map(|id| id.as_str())),
             ExprMatch(..)            => SawExprMatch,
             ExprClosure(..)          => SawExprClosure,
             ExprBlock(..)            => SawExprBlock,
@@ -256,8 +262,8 @@ mod svh_visitor {
             ExprIndex(..)            => SawExprIndex,
             ExprPath(ref qself, _)   => SawExprPath(qself.as_ref().map(|q| q.position)),
             ExprAddrOf(m, _)         => SawExprAddrOf(m),
-            ExprBreak(id)            => SawExprBreak(id.map(|id| id.node.name.as_str())),
-            ExprAgain(id)            => SawExprAgain(id.map(|id| id.node.name.as_str())),
+            ExprBreak(id)            => SawExprBreak(id.map(|id| id.node.as_str())),
+            ExprAgain(id)            => SawExprAgain(id.map(|id| id.node.as_str())),
             ExprRet(..)              => SawExprRet,
             ExprInlineAsm(ref a,_,_) => SawExprInlineAsm(a),
             ExprStruct(..)           => SawExprStruct,
@@ -389,10 +395,6 @@ mod svh_visitor {
 
         fn visit_struct_field(&mut self, s: &'a StructField) {
             SawStructField.hash(self.st); visit::walk_struct_field(self, s)
-        }
-
-        fn visit_explicit_self(&mut self, es: &'a ExplicitSelf) {
-            SawExplicitSelf.hash(self.st); visit::walk_explicit_self(self, es)
         }
 
         fn visit_path(&mut self, path: &'a Path, _: ast::NodeId) {

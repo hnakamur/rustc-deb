@@ -25,7 +25,7 @@ use fold;
 use fold::*;
 use util::move_map::MoveMap;
 use parse;
-use parse::token::{fresh_mark, fresh_name, intern};
+use parse::token::{fresh_mark, fresh_name, intern, keywords};
 use ptr::P;
 use util::small_vector::SmallVector;
 use visit;
@@ -35,6 +35,16 @@ use std_inject;
 use std::collections::HashSet;
 use std::env;
 
+// this function is called to detect use of feature-gated or invalid attributes
+// on macro invoations since they will not be detected after macro expansion
+fn check_attributes(attrs: &[ast::Attribute], fld: &MacroExpander) {
+    for attr in attrs.iter() {
+        feature_gate::check_attribute(&attr, &fld.cx.parse_sess.span_diagnostic,
+                                      &fld.cx.parse_sess.codemap(),
+                                      &fld.cx.ecfg.features.unwrap());
+    }
+}
+
 pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
     let expr_span = e.span;
     return e.and_then(|ast::Expr {id, node, span, attrs}| match node {
@@ -42,6 +52,9 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
         // expr_mac should really be expr_ext or something; it's the
         // entry-point for all syntax extensions.
         ast::ExprKind::Mac(mac) => {
+            if let Some(ref attrs) = attrs {
+                check_attributes(attrs, fld);
+            }
 
             // Assert that we drop any macro attributes on the floor here
             drop(attrs);
@@ -57,23 +70,19 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
 
             // Keep going, outside-in.
             let fully_expanded = fld.fold_expr(expanded_expr);
-            let span = fld.new_span(span);
             fld.cx.bt_pop();
 
-            fully_expanded.map(|e| ast::Expr {
-                id: ast::DUMMY_NODE_ID,
-                node: e.node,
-                span: span,
-                attrs: e.attrs,
-            })
+            fully_expanded
         }
 
         ast::ExprKind::InPlace(placer, value_expr) => {
             // Ensure feature-gate is enabled
-            feature_gate::check_for_placement_in(
-                fld.cx.ecfg.features,
-                &fld.cx.parse_sess.span_diagnostic,
-                expr_span);
+            if !fld.cx.ecfg.features.unwrap().placement_in_syntax {
+                feature_gate::emit_feature_err(
+                    &fld.cx.parse_sess.span_diagnostic, "placement_in_syntax", expr_span,
+                    feature_gate::GateIssue::Language, feature_gate::EXPLAIN_PLACEMENT_IN
+                );
+            }
 
             let placer = fld.fold_expr(placer);
             let value_expr = fld.fold_expr(value_expr);
@@ -149,14 +158,17 @@ pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
             fld.cx.expr(span, il).with_attrs(fold_thin_attrs(attrs, fld))
         }
 
-        ast::ExprKind::Closure(capture_clause, fn_decl, block) => {
+        ast::ExprKind::Closure(capture_clause, fn_decl, block, fn_decl_span) => {
             let (rewritten_fn_decl, rewritten_block)
                 = expand_and_rename_fn_decl_and_block(fn_decl, block, fld);
             let new_node = ast::ExprKind::Closure(capture_clause,
-                                            rewritten_fn_decl,
-                                            rewritten_block);
-            P(ast::Expr{id:id, node: new_node, span: fld.new_span(span),
-                        attrs: fold_thin_attrs(attrs, fld)})
+                                                  rewritten_fn_decl,
+                                                  rewritten_block,
+                                                  fld.new_span(fn_decl_span));
+            P(ast::Expr{ id:id,
+                         node: new_node,
+                         span: fld.new_span(span),
+                         attrs: fold_thin_attrs(attrs, fld) })
         }
 
         _ => {
@@ -204,7 +216,7 @@ fn expand_mac_invoc<T, F, G>(mac: ast::Mac,
                 pth.span,
                 &format!("macro undefined: '{}!'",
                         &extname));
-            fld.cx.suggest_macro_name(&extname.as_str(), pth.span, &mut err);
+            fld.cx.suggest_macro_name(&extname.as_str(), &mut err);
             err.emit();
 
             // let compilation continue
@@ -309,9 +321,7 @@ macro_rules! with_exts_frame {
 // When we enter a module, record it, for the sake of `module!`
 pub fn expand_item(it: P<ast::Item>, fld: &mut MacroExpander)
                    -> SmallVector<P<ast::Item>> {
-    let it = expand_item_multi_modifier(Annotatable::Item(it), fld);
-
-    expand_annotatable(it, fld)
+    expand_annotatable(Annotatable::Item(it), fld)
         .into_iter().map(|i| i.expect_item()).collect()
 }
 
@@ -339,8 +349,8 @@ fn contains_macro_use(fld: &mut MacroExpander, attrs: &[ast::Attribute]) -> bool
                                         "macro_escape is a deprecated synonym for macro_use");
             is_use = true;
             if let ast::AttrStyle::Inner = attr.node.style {
-                err.fileline_help(attr.span, "consider an outer attribute, \
-                                              #[macro_use] mod ...").emit();
+                err.help("consider an outer attribute, \
+                          #[macro_use] mod ...").emit();
             } else {
                 err.emit();
             }
@@ -367,6 +377,8 @@ pub fn expand_item_mac(it: P<ast::Item>,
         _ => fld.cx.span_bug(it.span, "invalid item macro invocation")
     });
 
+    check_attributes(&attrs, fld);
+
     let fm = fresh_mark();
     let items = {
         let expanded = match fld.cx.syntax_env.find(extname) {
@@ -380,7 +392,7 @@ pub fn expand_item_mac(it: P<ast::Item>,
 
             Some(rc) => match *rc {
                 NormalTT(ref expander, tt_span, allow_internal_unstable) => {
-                    if ident.name != parse::token::special_idents::invalid.name {
+                    if ident.name != keywords::Invalid.name() {
                         fld.cx
                             .span_err(path_span,
                                       &format!("macro {}! expects no ident argument, given '{}'",
@@ -401,7 +413,7 @@ pub fn expand_item_mac(it: P<ast::Item>,
                     expander.expand(fld.cx, span, &marked_before[..])
                 }
                 IdentTT(ref expander, tt_span, allow_internal_unstable) => {
-                    if ident.name == parse::token::special_idents::invalid.name {
+                    if ident.name == keywords::Invalid.name() {
                         fld.cx.span_err(path_span,
                                         &format!("macro {}! expects an ident argument",
                                                 extname));
@@ -420,7 +432,7 @@ pub fn expand_item_mac(it: P<ast::Item>,
                     expander.expand(fld.cx, span, ident, marked_tts)
                 }
                 MacroRulesTT => {
-                    if ident.name == parse::token::special_idents::invalid.name {
+                    if ident.name == keywords::Invalid.name() {
                         fld.cx.span_err(path_span, "macro_rules! expects an ident argument");
                         return SmallVector::zero();
                     }
@@ -440,18 +452,6 @@ pub fn expand_item_mac(it: P<ast::Item>,
 
                     let allow_internal_unstable = attr::contains_name(&attrs,
                                                                       "allow_internal_unstable");
-
-                    // ensure any #[allow_internal_unstable]s are
-                    // detected (including nested macro definitions
-                    // etc.)
-                    if allow_internal_unstable && !fld.cx.ecfg.enable_allow_internal_unstable() {
-                        feature_gate::emit_feature_err(
-                            &fld.cx.parse_sess.span_diagnostic,
-                            "allow_internal_unstable",
-                            span,
-                            feature_gate::GateIssue::Language,
-                            feature_gate::EXPLAIN_ALLOW_INTERNAL_UNSTABLE)
-                    }
 
                     let export = attr::contains_name(&attrs, "macro_export");
                     let def = ast::MacroDef {
@@ -504,10 +504,21 @@ pub fn expand_item_mac(it: P<ast::Item>,
 
 /// Expand a stmt
 fn expand_stmt(stmt: Stmt, fld: &mut MacroExpander) -> SmallVector<Stmt> {
+    // perform all pending renames
+    let stmt = {
+        let pending_renames = &mut fld.cx.syntax_env.info().pending_renames;
+        let mut rename_fld = IdentRenamer{renames:pending_renames};
+        rename_fld.fold_stmt(stmt).expect_one("rename_fold didn't return one value")
+    };
+
     let (mac, style, attrs) = match stmt.node {
         StmtKind::Mac(mac, style, attrs) => (mac, style, attrs),
         _ => return expand_non_macro_stmt(stmt, fld)
     };
+
+    if let Some(ref attrs) = attrs {
+        check_attributes(attrs, fld);
+    }
 
     // Assert that we drop any macro attributes on the floor here
     drop(attrs);
@@ -717,14 +728,8 @@ pub fn expand_block(blk: P<Block>, fld: &mut MacroExpander) -> P<Block> {
 pub fn expand_block_elts(b: P<Block>, fld: &mut MacroExpander) -> P<Block> {
     b.map(|Block {id, stmts, expr, rules, span}| {
         let new_stmts = stmts.into_iter().flat_map(|x| {
-            // perform all pending renames
-            let renamed_stmt = {
-                let pending_renames = &mut fld.cx.syntax_env.info().pending_renames;
-                let mut rename_fld = IdentRenamer{renames:pending_renames};
-                rename_fld.fold_stmt(x).expect_one("rename_fold didn't return one value")
-            };
-            // expand macros in the statement
-            fld.fold_stmt(renamed_stmt).into_iter()
+            // perform pending renames and expand macros in the statement
+            fld.fold_stmt(x).into_iter()
         }).collect();
         let new_expr = expr.map(|x| {
             let expr = {
@@ -892,7 +897,7 @@ fn expand_annotatable(a: Annotatable,
             }
             ast::ItemKind::Mod(_) | ast::ItemKind::ForeignMod(_) => {
                 let valid_ident =
-                    it.ident.name != parse::token::special_idents::invalid.name;
+                    it.ident.name != keywords::Invalid.name();
 
                 if valid_ident {
                     fld.cx.mod_push(it.ident);
@@ -1062,7 +1067,7 @@ fn expand_impl_item(ii: ast::ImplItem, fld: &mut MacroExpander)
             attrs: ii.attrs,
             vis: ii.vis,
             defaultness: ii.defaultness,
-            node: match ii.node  {
+            node: match ii.node {
                 ast::ImplItemKind::Method(sig, body) => {
                     let (sig, body) = expand_and_rename_method(sig, body, fld);
                     ast::ImplItemKind::Method(sig, body)
@@ -1071,13 +1076,11 @@ fn expand_impl_item(ii: ast::ImplItem, fld: &mut MacroExpander)
             },
             span: fld.new_span(ii.span)
         }),
-        ast::ImplItemKind::Macro(_) => {
-            let (span, mac) = match ii.node {
-                ast::ImplItemKind::Macro(mac) => (ii.span, mac),
-                _ => unreachable!()
-            };
+        ast::ImplItemKind::Macro(mac) => {
+            check_attributes(&ii.attrs, fld);
+
             let maybe_new_items =
-                expand_mac_invoc(mac, span,
+                expand_mac_invoc(mac, ii.span,
                                  |r| r.make_impl_items(),
                                  |meths, mark| meths.move_map(|m| mark_impl_item(m, mark)),
                                  fld);
@@ -1344,14 +1347,14 @@ impl<'feat> ExpansionConfig<'feat> {
     }
 
     feature_tests! {
-        fn enable_quotes = allow_quote,
-        fn enable_asm = allow_asm,
-        fn enable_log_syntax = allow_log_syntax,
-        fn enable_concat_idents = allow_concat_idents,
-        fn enable_trace_macros = allow_trace_macros,
+        fn enable_quotes = quote,
+        fn enable_asm = asm,
+        fn enable_log_syntax = log_syntax,
+        fn enable_concat_idents = concat_idents,
+        fn enable_trace_macros = trace_macros,
         fn enable_allow_internal_unstable = allow_internal_unstable,
-        fn enable_custom_derive = allow_custom_derive,
-        fn enable_pushpop_unsafe = allow_pushpop_unsafe,
+        fn enable_custom_derive = custom_derive,
+        fn enable_pushpop_unsafe = pushpop_unsafe,
     }
 }
 
@@ -1485,7 +1488,7 @@ mod tests {
     use ext::mtwt;
     use fold::Folder;
     use parse;
-    use parse::token;
+    use parse::token::{self, keywords};
     use util::parser_testing::{string_to_parser};
     use util::parser_testing::{string_to_pat, string_to_crate, strs_to_idents};
     use visit;
@@ -1806,7 +1809,7 @@ mod tests {
 
     // run one of the renaming tests
     fn run_renaming_test(t: &RenamingTest, test_idx: usize) {
-        let invalid_name = token::special_idents::invalid.name;
+        let invalid_name = keywords::Invalid.name();
         let (teststr, bound_connections, bound_ident_check) = match *t {
             (ref str,ref conns, bic) => (str.to_string(), conns.clone(), bic)
         };

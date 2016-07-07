@@ -10,12 +10,11 @@
 
 //! Code to save/load the dep-graph from files.
 
-use calculate_svh::SvhCalculate;
 use rbml::Error;
 use rbml::opaque::Decoder;
 use rustc::dep_graph::DepNode;
 use rustc::hir::def_id::DefId;
-use rustc::ty;
+use rustc::ty::TyCtxt;
 use rustc_data_structures::fnv::FnvHashSet;
 use rustc_serialize::Decodable as RustcDecodable;
 use std::io::Read;
@@ -25,6 +24,7 @@ use std::path::Path;
 use super::data::*;
 use super::directory::*;
 use super::dirty_clean;
+use super::hash::*;
 use super::util::*;
 
 type DirtyNodes = FnvHashSet<DepNode<DefId>>;
@@ -37,7 +37,7 @@ type CleanEdges = Vec<(DepNode<DefId>, DepNode<DefId>)>;
 /// early in compilation, before we've really done any work, but
 /// actually it doesn't matter all that much.) See `README.md` for
 /// more general overview.
-pub fn load_dep_graph<'tcx>(tcx: &ty::TyCtxt<'tcx>) {
+pub fn load_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     let _ignore = tcx.dep_graph.in_ignore();
 
     if let Some(dep_graph) = dep_graph_path(tcx) {
@@ -47,7 +47,7 @@ pub fn load_dep_graph<'tcx>(tcx: &ty::TyCtxt<'tcx>) {
     }
 }
 
-pub fn load_dep_graph_if_exists<'tcx>(tcx: &ty::TyCtxt<'tcx>, path: &Path) {
+pub fn load_dep_graph_if_exists<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, path: &Path) {
     if !path.exists() {
         return;
     }
@@ -74,8 +74,9 @@ pub fn load_dep_graph_if_exists<'tcx>(tcx: &ty::TyCtxt<'tcx>, path: &Path) {
     }
 }
 
-pub fn decode_dep_graph<'tcx>(tcx: &ty::TyCtxt<'tcx>, data: &[u8])
-                              -> Result<(), Error>
+pub fn decode_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                  data: &[u8])
+                                  -> Result<(), Error>
 {
     // Deserialize the directory and dep-graph.
     let mut decoder = Decoder::new(data, 0);
@@ -129,21 +130,21 @@ pub fn decode_dep_graph<'tcx>(tcx: &ty::TyCtxt<'tcx>, data: &[u8])
     Ok(())
 }
 
-fn initial_dirty_nodes<'tcx>(tcx: &ty::TyCtxt<'tcx>,
-                             hashed_items: &[SerializedHash],
-                             retraced: &RetracedDefIdDirectory)
-                             -> DirtyNodes {
+fn initial_dirty_nodes<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                 hashes: &[SerializedHash],
+                                 retraced: &RetracedDefIdDirectory)
+                                 -> DirtyNodes {
+    let mut hcx = HashContext::new(tcx);
     let mut items_removed = false;
     let mut dirty_nodes = FnvHashSet();
-    for hashed_item in hashed_items {
-        match retraced.def_id(hashed_item.index) {
-            Some(def_id) => {
-                // FIXME(#32753) -- should we use a distinct hash here
-                let current_hash = tcx.calculate_item_hash(def_id);
+    for hash in hashes {
+        match hash.node.map_def(|&i| retraced.def_id(i)) {
+            Some(dep_node) => {
+                let current_hash = hcx.hash(dep_node).unwrap();
                 debug!("initial_dirty_nodes: hash of {:?} is {:?}, was {:?}",
-                       def_id, current_hash, hashed_item.hash);
-                if current_hash != hashed_item.hash {
-                    dirty_nodes.insert(DepNode::Hir(def_id));
+                       dep_node, current_hash, hash.hash);
+                if current_hash != hash.hash {
+                    dirty_nodes.insert(dep_node);
                 }
             }
             None => {

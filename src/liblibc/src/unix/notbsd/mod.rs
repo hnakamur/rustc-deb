@@ -99,13 +99,21 @@ s! {
 
     pub struct sched_param {
         pub sched_priority: ::c_int,
-        #[cfg(target_env = "musl")]
+        #[cfg(any(target_env = "musl",
+                  target_env = "musleabi",
+                  target_env = "musleabihf"))]
         pub sched_ss_low_priority: ::c_int,
-        #[cfg(target_env = "musl")]
+        #[cfg(any(target_env = "musl",
+                  target_env = "musleabi",
+                  target_env = "musleabihf"))]
         pub sched_ss_repl_period: ::timespec,
-        #[cfg(target_env = "musl")]
+        #[cfg(any(target_env = "musl",
+                  target_env = "musleabi",
+                  target_env = "musleabihf"))]
         pub sched_ss_init_budget: ::timespec,
-        #[cfg(target_env = "musl")]
+        #[cfg(any(target_env = "musl",
+                  target_env = "musleabi",
+                  target_env = "musleabihf"))]
         pub sched_ss_max_repl: ::c_int,
     }
 
@@ -291,6 +299,13 @@ pub const LC_COLLATE: ::c_int = 3;
 pub const LC_MONETARY: ::c_int = 4;
 pub const LC_MESSAGES: ::c_int = 5;
 pub const LC_ALL: ::c_int = 6;
+pub const LC_CTYPE_MASK: ::c_int = (1 << LC_CTYPE);
+pub const LC_NUMERIC_MASK: ::c_int = (1 << LC_NUMERIC);
+pub const LC_TIME_MASK: ::c_int = (1 << LC_TIME);
+pub const LC_COLLATE_MASK: ::c_int = (1 << LC_COLLATE);
+pub const LC_MONETARY_MASK: ::c_int = (1 << LC_MONETARY);
+pub const LC_MESSAGES_MASK: ::c_int = (1 << LC_MESSAGES);
+// LC_ALL_MASK defined per platform
 
 pub const MAP_FILE: ::c_int = 0x0000;
 pub const MAP_SHARED: ::c_int = 0x0001;
@@ -630,6 +645,13 @@ pub const POSIX_FADV_NOREUSE: ::c_int = 5;
 pub const AT_FDCWD: ::c_int = -100;
 pub const AT_SYMLINK_NOFOLLOW: ::c_int = 0x100;
 
+pub const LOG_CRON: ::c_int = 9 << 3;
+pub const LOG_AUTHPRIV: ::c_int = 10 << 3;
+pub const LOG_FTP: ::c_int = 11 << 3;
+pub const LOG_PERROR: ::c_int = 0x20;
+
+pub const PIPE_BUF: usize = 4096;
+
 f! {
     pub fn FD_CLR(fd: ::c_int, set: *mut fd_set) -> () {
         let fd = fd as usize;
@@ -749,6 +771,35 @@ extern {
     pub fn futimens(fd: ::c_int, times: *const ::timespec) -> ::c_int;
     pub fn utimensat(dirfd: ::c_int, path: *const ::c_char,
                      times: *const ::timespec, flag: ::c_int) -> ::c_int;
+    pub fn duplocale(base: ::locale_t) -> ::locale_t;
+    pub fn freelocale(loc: ::locale_t);
+    pub fn newlocale(mask: ::c_int,
+                     locale: *const ::c_char,
+                     base: ::locale_t) -> ::locale_t;
+    pub fn uselocale(loc: ::locale_t) -> ::locale_t;
+    pub fn creat64(path: *const c_char, mode: mode_t) -> ::c_int;
+    pub fn fstat64(fildes: ::c_int, buf: *mut stat64) -> ::c_int;
+    pub fn ftruncate64(fd: ::c_int, length: off64_t) -> ::c_int;
+    pub fn getrlimit64(resource: ::c_int, rlim: *mut rlimit64) -> ::c_int;
+    pub fn lseek64(fd: ::c_int, offset: off64_t, whence: ::c_int) -> off64_t;
+    pub fn lstat64(path: *const c_char, buf: *mut stat64) -> ::c_int;
+    pub fn mmap64(addr: *mut ::c_void,
+                  len: ::size_t,
+                  prot: ::c_int,
+                  flags: ::c_int,
+                  fd: ::c_int,
+                  offset: off64_t)
+                  -> *mut ::c_void;
+    pub fn open64(path: *const c_char, oflag: ::c_int, ...) -> ::c_int;
+    pub fn pread64(fd: ::c_int, buf: *mut ::c_void, count: ::size_t,
+                   offset: off64_t) -> ::ssize_t;
+    pub fn pwrite64(fd: ::c_int, buf: *const ::c_void, count: ::size_t,
+                    offset: off64_t) -> ::ssize_t;
+    pub fn readdir64_r(dirp: *mut ::DIR, entry: *mut ::dirent64,
+                       result: *mut *mut ::dirent64) -> ::c_int;
+    pub fn setrlimit64(resource: ::c_int, rlim: *const rlimit64) -> ::c_int;
+    pub fn stat64(path: *const c_char, buf: *mut stat64) -> ::c_int;
+    pub fn eventfd(init: ::c_uint, flags: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

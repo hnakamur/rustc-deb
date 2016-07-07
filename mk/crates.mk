@@ -53,7 +53,8 @@ TARGET_CRATES := libc std term \
                  getopts collections test rand \
                  core alloc \
                  rustc_unicode rustc_bitflags \
-		 alloc_system alloc_jemalloc
+		 alloc_system alloc_jemalloc \
+		 panic_abort panic_unwind unwind
 RUSTC_CRATES := rustc rustc_typeck rustc_mir rustc_borrowck rustc_resolve rustc_driver \
                 rustc_trans rustc_back rustc_llvm rustc_privacy rustc_lint \
                 rustc_data_structures rustc_platform_intrinsics \
@@ -72,10 +73,18 @@ DEPS_libc := core
 DEPS_rand := core
 DEPS_rustc_bitflags := core
 DEPS_rustc_unicode := core
+DEPS_panic_abort := libc alloc
+DEPS_panic_unwind := libc alloc unwind
+DEPS_unwind := libc
+
+# FIXME(stage0): change this to just `RUSTFLAGS_panic_abort := ...`
+RUSTFLAGS1_panic_abort := -C panic=abort
+RUSTFLAGS2_panic_abort := -C panic=abort
+RUSTFLAGS3_panic_abort := -C panic=abort
 
 DEPS_std := core libc rand alloc collections rustc_unicode \
 	native:backtrace \
-	alloc_system
+	alloc_system panic_abort panic_unwind unwind
 DEPS_arena := std
 DEPS_glob := std
 DEPS_flate := std native:miniz
@@ -97,7 +106,7 @@ DEPS_rustc_const_eval := rustc_const_math rustc syntax log serialize \
 					     rustc_back graphviz
 
 DEPS_rustc := syntax fmt_macros flate arena serialize getopts rbml \
-              log graphviz rustc_back rustc_data_structures\
+              log graphviz rustc_llvm rustc_back rustc_data_structures\
 		  	  rustc_const_math
 DEPS_rustc_back := std syntax flate log libc
 DEPS_rustc_borrowck := rustc rustc_mir log graphviz syntax
@@ -111,7 +120,7 @@ DEPS_rustc_lint := rustc log syntax rustc_const_eval
 DEPS_rustc_llvm := native:rustllvm libc std rustc_bitflags
 DEPS_rustc_metadata := rustc syntax rbml rustc_const_math
 DEPS_rustc_passes := syntax rustc core rustc_const_eval
-DEPS_rustc_mir := rustc syntax rustc_const_math rustc_const_eval
+DEPS_rustc_mir := rustc syntax rustc_const_math rustc_const_eval rustc_bitflags
 DEPS_rustc_resolve := arena rustc log syntax
 DEPS_rustc_platform_intrinsics := std
 DEPS_rustc_plugin := rustc rustc_metadata syntax rustc_mir
@@ -120,7 +129,7 @@ DEPS_rustc_trans := arena flate getopts graphviz libc rustc rustc_back rustc_mir
                     log syntax serialize rustc_llvm rustc_platform_intrinsics \
                     rustc_const_math rustc_const_eval rustc_incremental
 DEPS_rustc_incremental := rbml rustc serialize rustc_data_structures
-DEPS_rustc_save_analysis := rustc log syntax
+DEPS_rustc_save_analysis := rustc log syntax serialize
 DEPS_rustc_typeck := rustc syntax rustc_platform_intrinsics rustc_const_math \
                      rustc_const_eval
 
@@ -128,12 +137,12 @@ DEPS_rustdoc := rustc rustc_driver native:hoedown serialize getopts \
                 test rustc_lint rustc_const_eval
 
 
-TOOL_DEPS_compiletest := test getopts log
+TOOL_DEPS_compiletest := test getopts log serialize
 TOOL_DEPS_rustdoc := rustdoc
 TOOL_DEPS_rustc := rustc_driver
 TOOL_DEPS_rustbook := std rustdoc
 TOOL_DEPS_error_index_generator := rustdoc syntax serialize
-TOOL_SOURCE_compiletest := $(S)src/compiletest/compiletest.rs
+TOOL_SOURCE_compiletest := $(S)src/tools/compiletest/src/main.rs
 TOOL_SOURCE_rustdoc := $(S)src/driver/driver.rs
 TOOL_SOURCE_rustc := $(S)src/driver/driver.rs
 TOOL_SOURCE_rustbook := $(S)src/tools/rustbook/main.rs
@@ -148,6 +157,9 @@ ONLY_RLIB_rustc_unicode := 1
 ONLY_RLIB_rustc_bitflags := 1
 ONLY_RLIB_alloc_system := 1
 ONLY_RLIB_alloc_jemalloc := 1
+ONLY_RLIB_panic_unwind := 1
+ONLY_RLIB_panic_abort := 1
+ONLY_RLIB_unwind := 1
 
 TARGET_SPECIFIC_alloc_jemalloc := 1
 

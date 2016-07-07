@@ -477,9 +477,9 @@ impl<T: Ord> BTreeSet<T> {
 
     /// Adds a value to the set.
     ///
-    /// If the set did not have a value present, `true` is returned.
+    /// If the set did not have this value present, `true` is returned.
     ///
-    /// If the set did have this key present, `false` is returned, and the
+    /// If the set did have this value present, `false` is returned, and the
     /// entry is not updated. See the [module-level documentation] for more.
     ///
     /// [module-level documentation]: index.html#insert-and-complex-keys
@@ -544,6 +544,41 @@ impl<T: Ord> BTreeSet<T> {
               Q: Ord
     {
         Recover::take(&mut self.map, value)
+    }
+
+    /// Moves all elements from `other` into `Self`, leaving `other` empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(btree_append)]
+    /// use std::collections::BTreeSet;
+    ///
+    /// let mut a = BTreeSet::new();
+    /// a.insert(1);
+    /// a.insert(2);
+    /// a.insert(3);
+    ///
+    /// let mut b = BTreeSet::new();
+    /// b.insert(3);
+    /// b.insert(4);
+    /// b.insert(5);
+    ///
+    /// a.append(&mut b);
+    ///
+    /// assert_eq!(a.len(), 5);
+    /// assert_eq!(b.len(), 0);
+    ///
+    /// assert!(a.contains(&1));
+    /// assert!(a.contains(&2));
+    /// assert!(a.contains(&3));
+    /// assert!(a.contains(&4));
+    /// assert!(a.contains(&5));
+    /// ```
+    #[unstable(feature = "btree_append", reason = "recently added as part of collections reform 2",
+               issue = "19986")]
+    pub fn append(&mut self, other: &mut Self) {
+        self.map.append(&mut other.map);
     }
 }
 

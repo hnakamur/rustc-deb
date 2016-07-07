@@ -26,8 +26,18 @@
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
+extern crate serialize as rustc_serialize;
 
-use rustc::hir::{self, lowering};
+mod csv_dumper;
+mod json_dumper;
+mod data;
+mod dump;
+mod dump_visitor;
+pub mod external_data;
+#[macro_use]
+pub mod span_utils;
+
+use rustc::hir;
 use rustc::hir::map::NodeItem;
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
@@ -42,16 +52,10 @@ use syntax::ast::{self, NodeId, PatKind};
 use syntax::codemap::*;
 use syntax::parse::token::{self, keywords};
 use syntax::visit::{self, Visitor};
-use syntax::print::pprust::ty_to_string;
-
-mod csv_dumper;
-mod data;
-mod dump;
-mod dump_visitor;
-#[macro_use]
-pub mod span_utils;
+use syntax::print::pprust::{ty_to_string, arg_to_string};
 
 pub use self::csv_dumper::CsvDumper;
+pub use self::json_dumper::JsonDumper;
 pub use self::data::*;
 pub use self::dump::Dump;
 pub use self::dump_visitor::DumpVisitor;
@@ -71,9 +75,8 @@ pub mod recorder {
 }
 
 pub struct SaveContext<'l, 'tcx: 'l> {
-    tcx: &'l TyCtxt<'tcx>,
-    lcx: &'l lowering::LoweringContext<'l>,
-    span_utils: SpanUtils<'l>,
+    tcx: TyCtxt<'l, 'tcx, 'tcx>,
+    span_utils: SpanUtils<'tcx>,
 }
 
 macro_rules! option_try(
@@ -81,20 +84,16 @@ macro_rules! option_try(
 );
 
 impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
-    pub fn new(tcx: &'l TyCtxt<'tcx>,
-               lcx: &'l lowering::LoweringContext<'l>)
-               -> SaveContext<'l, 'tcx> {
+    pub fn new(tcx: TyCtxt<'l, 'tcx, 'tcx>) -> SaveContext<'l, 'tcx> {
         let span_utils = SpanUtils::new(&tcx.sess);
-        SaveContext::from_span_utils(tcx, lcx, span_utils)
+        SaveContext::from_span_utils(tcx, span_utils)
     }
 
-    pub fn from_span_utils(tcx: &'l TyCtxt<'tcx>,
-                           lcx: &'l lowering::LoweringContext<'l>,
-                           span_utils: SpanUtils<'l>)
+    pub fn from_span_utils(tcx: TyCtxt<'l, 'tcx, 'tcx>,
+                           span_utils: SpanUtils<'tcx>)
                            -> SaveContext<'l, 'tcx> {
         SaveContext {
             tcx: tcx,
-            lcx: lcx,
             span_utils: span_utils,
         }
     }
@@ -104,9 +103,17 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
         let mut result = Vec::new();
 
         for n in self.tcx.sess.cstore.crates() {
+            let span = match self.tcx.sess.cstore.extern_crate(n) {
+                Some(ref c) => c.span,
+                None => {
+                    debug!("Skipping crate {}, no data", n);
+                    continue;
+                }
+            };
             result.push(CrateData {
                 name: (&self.tcx.sess.cstore.crate_name(n)[..]).to_owned(),
                 number: n,
+                span: span,
             });
         }
 
@@ -115,11 +122,13 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
 
     pub fn get_item_data(&self, item: &ast::Item) -> Option<Data> {
         match item.node {
-            ast::ItemKind::Fn(..) => {
+            ast::ItemKind::Fn(ref decl, _, _, _, ref generics, _) => {
                 let name = self.tcx.node_path_str(item.id);
                 let qualname = format!("::{}", name);
                 let sub_span = self.span_utils.sub_span_after_keyword(item.span, keywords::Fn);
                 filter!(self.span_utils, sub_span, item.span, None);
+
+
                 Some(Data::FunctionData(FunctionData {
                     id: item.id,
                     name: name,
@@ -127,6 +136,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     declaration: None,
                     span: sub_span.unwrap(),
                     scope: self.enclosing_scope(item.id),
+                    value: make_signature(decl, generics),
                 }))
             }
             ast::ItemKind::Static(ref typ, mt, ref expr) => {
@@ -183,16 +193,22 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     filename: filename,
                 }))
             }
-            ast::ItemKind::Enum(..) => {
-                let enum_name = format!("::{}", self.tcx.node_path_str(item.id));
-                let val = self.span_utils.snippet(item.span);
+            ast::ItemKind::Enum(ref def, _) => {
+                let name = item.ident.to_string();
+                let qualname = format!("::{}", self.tcx.node_path_str(item.id));
                 let sub_span = self.span_utils.sub_span_after_keyword(item.span, keywords::Enum);
                 filter!(self.span_utils, sub_span, item.span, None);
+                let variants_str = def.variants.iter()
+                                      .map(|v| v.node.name.to_string())
+                                      .collect::<Vec<_>>()
+                                      .join(", ");
+                let val = format!("{}::{{{}}}", name, variants_str);
                 Some(Data::EnumData(EnumData {
                     id: item.id,
+                    name: name,
                     value: val,
                     span: sub_span.unwrap(),
-                    qualname: enum_name,
+                    qualname: qualname,
                     scope: self.enclosing_scope(item.id),
                 }))
             }
@@ -346,6 +362,8 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
             declaration: decl_id,
             span: sub_span.unwrap(),
             scope: self.enclosing_scope(id),
+            // FIXME you get better data here by using the visitor.
+            value: String::new(),
         })
     }
 
@@ -367,14 +385,14 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     }
 
     pub fn get_expr_data(&self, expr: &ast::Expr) -> Option<Data> {
-        let hir_node = lowering::lower_expr(self.lcx, expr);
+        let hir_node = self.tcx.map.expect_expr(expr.id);
         let ty = self.tcx.expr_ty_adjusted_opt(&hir_node);
         if ty.is_none() || ty.unwrap().sty == ty::TyError {
             return None;
         }
         match expr.node {
             ast::ExprKind::Field(ref sub_ex, ident) => {
-                let hir_node = lowering::lower_expr(self.lcx, sub_ex);
+                let hir_node = self.tcx.map.expect_expr(sub_ex.id);
                 match self.tcx.expr_ty_adjusted(&hir_node).sty {
                     ty::TyStruct(def, _) => {
                         let f = def.struct_variant().field_named(ident.node.name);
@@ -394,7 +412,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 }
             }
             ast::ExprKind::Struct(ref path, _, _) => {
-                let hir_node = lowering::lower_expr(self.lcx, expr);
+                let hir_node = self.tcx.map.expect_expr(expr.id);
                 match self.tcx.expr_ty_adjusted(&hir_node).sty {
                     ty::TyStruct(def, _) => {
                         let sub_span = self.span_utils.span_for_last_ident(path.span);
@@ -630,6 +648,35 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     }
 }
 
+fn make_signature(decl: &ast::FnDecl, generics: &ast::Generics) -> String {
+    let mut sig = String::new();
+    if !generics.lifetimes.is_empty() || !generics.ty_params.is_empty() {
+        sig.push('<');
+        sig.push_str(&generics.lifetimes.iter()
+                              .map(|l| l.lifetime.name.to_string())
+                              .collect::<Vec<_>>()
+                              .join(", "));
+        if !generics.lifetimes.is_empty() {
+            sig.push_str(", ");
+        }
+        sig.push_str(&generics.ty_params.iter()
+                              .map(|l| l.ident.to_string())
+                              .collect::<Vec<_>>()
+                              .join(", "));
+        sig.push_str("> ");
+    }
+    sig.push('(');
+    sig.push_str(&decl.inputs.iter().map(arg_to_string).collect::<Vec<_>>().join(", "));
+    sig.push(')');
+    match decl.output {
+        ast::FunctionRetTy::None(_) => sig.push_str(" -> !"),
+        ast::FunctionRetTy::Default(_) => {}
+        ast::FunctionRetTy::Ty(ref t) => sig.push_str(&format!(" -> {}", ty_to_string(t))),
+    }
+
+    sig
+}
+
 // An AST visitor for collecting paths from patterns.
 struct PathCollector {
     // The Row field identifies the kind of pattern.
@@ -677,12 +724,27 @@ impl<'v> Visitor<'v> for PathCollector {
     }
 }
 
-pub fn process_crate<'l, 'tcx>(tcx: &'l TyCtxt<'tcx>,
-                               lcx: &'l lowering::LoweringContext<'l>,
+#[derive(Clone, Copy, Debug)]
+pub enum Format {
+    Csv,
+    Json,
+}
+
+impl Format {
+    fn extension(&self) -> &'static str {
+        match *self {
+            Format::Csv => ".csv",
+            Format::Json => ".json",
+        }
+    }
+}
+
+pub fn process_crate<'l, 'tcx>(tcx: TyCtxt<'l, 'tcx, 'tcx>,
                                krate: &ast::Crate,
-                               analysis: &ty::CrateAnalysis,
+                               analysis: &'l ty::CrateAnalysis<'l>,
                                cratename: &str,
-                               odir: Option<&Path>) {
+                               odir: Option<&Path>,
+                               format: Format) {
     let _ignore = tcx.dep_graph.in_ignore();
 
     assert!(analysis.glob_map.is_some());
@@ -690,11 +752,11 @@ pub fn process_crate<'l, 'tcx>(tcx: &'l TyCtxt<'tcx>,
     info!("Dumping crate {}", cratename);
 
     // find a path to dump our data to
-    let mut root_path = match env::var_os("DXR_RUST_TEMP_FOLDER") {
+    let mut root_path = match env::var_os("RUST_SAVE_ANALYSIS_FOLDER") {
         Some(val) => PathBuf::from(val),
         None => match odir {
-            Some(val) => val.join("dxr"),
-            None => PathBuf::from("dxr-temp"),
+            Some(val) => val.join("save-analysis"),
+            None => PathBuf::from("save-analysis-temp"),
         },
     };
 
@@ -718,21 +780,31 @@ pub fn process_crate<'l, 'tcx>(tcx: &'l TyCtxt<'tcx>,
     };
     out_name.push_str(&cratename);
     out_name.push_str(&tcx.sess.opts.cg.extra_filename);
-    out_name.push_str(".csv");
+    out_name.push_str(format.extension());
     root_path.push(&out_name);
     let mut output_file = File::create(&root_path).unwrap_or_else(|e| {
         let disp = root_path.display();
         tcx.sess.fatal(&format!("Could not open {}: {}", disp, e));
     });
     root_path.pop();
+    let output = &mut output_file;
 
-    let utils = SpanUtils::new(&tcx.sess);
-    let mut dumper = CsvDumper::new(&mut output_file, utils);
-    let mut visitor = DumpVisitor::new(tcx, lcx, analysis, &mut dumper);
-    // FIXME: we don't write anything!
+    let save_ctxt = SaveContext::new(tcx);
 
-    visitor.dump_crate_info(cratename, krate);
-    visit::walk_crate(&mut visitor, krate);
+    macro_rules! dump {
+        ($new_dumper: expr) => {{
+            let mut dumper = $new_dumper;
+            let mut visitor = DumpVisitor::new(tcx, save_ctxt, analysis, &mut dumper);
+
+            visitor.dump_crate_info(cratename, krate);
+            visit::walk_crate(&mut visitor, krate);
+        }}
+    }
+
+    match format {
+        Format::Csv => dump!(CsvDumper::new(output)),
+        Format::Json => dump!(JsonDumper::new(output)),
+    }
 }
 
 // Utility functions for the module.

@@ -16,7 +16,7 @@ use self::EnumDiscriminantInfo::*;
 use super::utils::{debug_context, DIB, span_start, bytes_to_bits, size_and_align_of,
                    get_namespace_and_span_for_item, create_DIArray,
                    fn_should_be_ignored, is_node_local_to_unit};
-use super::namespace::namespace_for_item;
+use super::namespace::mangled_name_of_item;
 use super::type_names::{compute_debuginfo_type_name, push_debuginfo_type_name};
 use super::{declare_local, VariableKind, VariableAccess};
 
@@ -24,7 +24,6 @@ use llvm::{self, ValueRef};
 use llvm::debuginfo::{DIType, DIFile, DIScope, DIDescriptor, DICompositeType};
 
 use rustc::hir::def_id::DefId;
-use rustc::infer;
 use rustc::hir::pat_util;
 use rustc::ty::subst;
 use rustc::hir::map as hir_map;
@@ -68,8 +67,8 @@ pub const UNKNOWN_LINE_NUMBER: c_uint = 0;
 pub const UNKNOWN_COLUMN_NUMBER: c_uint = 0;
 
 // ptr::null() doesn't work :(
-const NO_FILE_METADATA: DIFile = (0 as DIFile);
-const NO_SCOPE_METADATA: DIScope = (0 as DIScope);
+pub const NO_FILE_METADATA: DIFile = (0 as DIFile);
+pub const NO_SCOPE_METADATA: DIScope = (0 as DIScope);
 
 const FLAGS_NONE: c_uint = 0;
 
@@ -188,10 +187,10 @@ impl<'tcx> TypeMap<'tcx> {
                 unique_type_id.push_str("struct ");
                 from_def_id_and_substs(self, cx, def.did, substs, &mut unique_type_id);
             },
-            ty::TyTuple(ref component_types) if component_types.is_empty() => {
+            ty::TyTuple(component_types) if component_types.is_empty() => {
                 push_debuginfo_type_name(cx, type_, false, &mut unique_type_id);
             },
-            ty::TyTuple(ref component_types) => {
+            ty::TyTuple(component_types) => {
                 unique_type_id.push_str("tuple ");
                 for &component_type in component_types {
                     let component_type_id =
@@ -263,7 +262,7 @@ impl<'tcx> TypeMap<'tcx> {
                 unique_type_id.push_str(" fn(");
 
                 let sig = cx.tcx().erase_late_bound_regions(sig);
-                let sig = infer::normalize_associated_type(cx.tcx(), &sig);
+                let sig = cx.tcx().normalize_associated_type(&sig);
 
                 for &parameter_type in &sig.inputs {
                     let parameter_type_id =
@@ -290,12 +289,12 @@ impl<'tcx> TypeMap<'tcx> {
                     }
                 }
             },
-            ty::TyClosure(_, ref substs) if substs.upvar_tys.is_empty() => {
+            ty::TyClosure(_, substs) if substs.upvar_tys.is_empty() => {
                 push_debuginfo_type_name(cx, type_, false, &mut unique_type_id);
             },
-            ty::TyClosure(_, ref substs) => {
+            ty::TyClosure(_, substs) => {
                 unique_type_id.push_str("closure ");
-                for upvar_type in &substs.upvar_tys {
+                for upvar_type in substs.upvar_tys {
                     let upvar_type_id =
                         self.get_unique_type_id_of_type(cx, upvar_type);
                     let upvar_type_id =
@@ -1159,12 +1158,12 @@ fn prepare_struct_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     let struct_name = compute_debuginfo_type_name(cx, struct_type, false);
     let struct_llvm_type = type_of::in_memory_type_of(cx, struct_type);
 
-    let (variant, substs) = match struct_type.sty {
-        ty::TyStruct(def, substs) => (def.struct_variant(), substs),
+    let (struct_def_id, variant, substs) = match struct_type.sty {
+        ty::TyStruct(def, substs) => (def.did, def.struct_variant(), substs),
         _ => bug!("prepare_struct_metadata on a non-struct")
     };
 
-    let (containing_scope, _) = get_namespace_and_span_for_item(cx, variant.did);
+    let (containing_scope, _) = get_namespace_and_span_for_item(cx, struct_def_id);
 
     let struct_metadata_stub = create_struct_stub(cx,
                                                   struct_llvm_type,
@@ -1846,28 +1845,8 @@ pub fn create_global_var_metadata(cx: &CrateContext,
         return;
     }
 
-    let var_item = cx.tcx().map.get(node_id);
-
-    let (name, span) = match var_item {
-        hir_map::NodeItem(item) => {
-            match item.node {
-                hir::ItemStatic(..) => (item.name, item.span),
-                hir::ItemConst(..) => (item.name, item.span),
-                _ => {
-                    span_bug!(item.span,
-                              "debuginfo::\
-                               create_global_var_metadata() -
-                               Captured var-id refers to \
-                               unexpected ast_item variant: {:?}",
-                              var_item)
-                }
-            }
-        },
-        _ => bug!("debuginfo::create_global_var_metadata() \
-                   - Captured var-id refers to unexpected \
-                   hir_map variant: {:?}",
-                  var_item)
-    };
+    let node_def_id = cx.tcx().map.local_def_id(node_id);
+    let (var_scope, span) = get_namespace_and_span_for_item(cx, node_def_id);
 
     let (file_metadata, line_number) = if span != codemap::DUMMY_SP {
         let loc = span_start(cx, span);
@@ -1879,12 +1858,8 @@ pub fn create_global_var_metadata(cx: &CrateContext,
     let is_local_to_unit = is_node_local_to_unit(cx, node_id);
     let variable_type = cx.tcx().node_id_to_type(node_id);
     let type_metadata = type_metadata(cx, variable_type, span);
-    let node_def_id = cx.tcx().map.local_def_id(node_id);
-    let namespace_node = namespace_for_item(cx, node_def_id);
-    let var_name = name.to_string();
-    let linkage_name =
-        namespace_node.mangled_name_of_contained_item(&var_name[..]);
-    let var_scope = namespace_node.scope;
+    let var_name = cx.tcx().item_name(node_def_id).to_string();
+    let linkage_name = mangled_name_of_item(cx, node_def_id, "");
 
     let var_name = CString::new(var_name).unwrap();
     let linkage_name = CString::new(linkage_name).unwrap();
@@ -1971,7 +1946,7 @@ pub fn create_captured_var_metadata<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         Some(hir_map::NodeLocal(pat)) => {
             match pat.node {
                 PatKind::Ident(_, ref path1, _) => {
-                    path1.node.name
+                    path1.node
                 }
                 _ => {
                     span_bug!(span,

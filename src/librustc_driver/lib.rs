@@ -31,6 +31,7 @@
 #![feature(set_stdio)]
 #![feature(staged_api)]
 #![feature(question_mark)]
+#![feature(unboxed_closures)]
 
 extern crate arena;
 extern crate flate;
@@ -66,10 +67,10 @@ use pretty::{PpMode, UserIdentifiedItem};
 use rustc_resolve as resolve;
 use rustc_save_analysis as save;
 use rustc_trans::back::link;
-use rustc::session::{config, Session, build_session, CompileResult};
+use rustc::dep_graph::DepGraph;
+use rustc::session::{self, config, Session, build_session, CompileResult};
 use rustc::session::config::{Input, PrintRequest, OutputType, ErrorOutputType};
 use rustc::session::config::{get_unstable_features_setting, nightly_options};
-use rustc::middle::cstore::CrateStore;
 use rustc::lint::Lint;
 use rustc::lint;
 use rustc_metadata::loader;
@@ -91,13 +92,11 @@ use std::thread;
 
 use rustc::session::early_error;
 
-use syntax::ast;
-use syntax::parse::{self, PResult};
-use syntax::errors;
+use syntax::{ast, errors, diagnostics};
+use syntax::codemap::{CodeMap, FileLoader, RealFileLoader, MultiSpan};
 use syntax::errors::emitter::Emitter;
-use syntax::diagnostics;
-use syntax::parse::token;
 use syntax::feature_gate::{GatedCfg, UnstableFeatures};
+use syntax::parse::{self, PResult, token};
 
 #[cfg(test)]
 pub mod test;
@@ -138,7 +137,8 @@ pub fn run(args: Vec<String>) -> isize {
                     None => {
                         let mut emitter =
                             errors::emitter::BasicEmitter::stderr(errors::ColorConfig::Auto);
-                        emitter.emit(None, &abort_msg(err_count), None, errors::Level::Fatal);
+                        emitter.emit(&MultiSpan::new(), &abort_msg(err_count), None,
+                            errors::Level::Fatal);
                         exit_on_err();
                     }
                 }
@@ -148,11 +148,20 @@ pub fn run(args: Vec<String>) -> isize {
     0
 }
 
-// Parse args and run the compiler. This is the primary entry point for rustc.
-// See comments on CompilerCalls below for details about the callbacks argument.
 pub fn run_compiler<'a>(args: &[String],
                         callbacks: &mut CompilerCalls<'a>)
                         -> (CompileResult, Option<Session>) {
+    run_compiler_with_file_loader(args, callbacks, box RealFileLoader)
+}
+
+// Parse args and run the compiler. This is the primary entry point for rustc.
+// See comments on CompilerCalls below for details about the callbacks argument.
+// The FileLoader provides a way to load files from sources other than the file system.
+pub fn run_compiler_with_file_loader<'a, L>(args: &[String],
+                                            callbacks: &mut CompilerCalls<'a>,
+                                            loader: Box<L>)
+                                            -> (CompileResult, Option<Session>)
+    where L: FileLoader + 'static {
     macro_rules! do_or_return {($expr: expr, $sess: expr) => {
         match $expr {
             Compilation::Stop => return (Ok(()), $sess),
@@ -188,29 +197,23 @@ pub fn run_compiler<'a>(args: &[String],
         },
     };
 
-    let cstore = Rc::new(CStore::new(token::get_ident_interner()));
-    let sess = build_session(sopts, input_file_path, descriptions, cstore.clone());
+    let dep_graph = DepGraph::new(sopts.build_dep_graph());
+    let cstore = Rc::new(CStore::new(&dep_graph, token::get_ident_interner()));
+    let codemap = Rc::new(CodeMap::with_file_loader(loader));
+    let sess = session::build_session_with_codemap(sopts,
+                                                   &dep_graph,
+                                                   input_file_path,
+                                                   descriptions,
+                                                   cstore.clone(),
+                                                   codemap);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
     let mut cfg = config::build_configuration(&sess);
     target_features::add_configuration(&mut cfg, &sess);
 
     do_or_return!(callbacks.late_callback(&matches, &sess, &input, &odir, &ofile), Some(sess));
 
-    // It is somewhat unfortunate that this is hardwired in - this is forced by
-    // the fact that pretty_print_input requires the session by value.
-    let pretty = callbacks.parse_pretty(&sess, &matches);
-    match pretty {
-        Some((ppm, opt_uii)) => {
-            pretty::pretty_print_input(sess, &cstore, cfg, &input, ppm, opt_uii, ofile);
-            return (Ok(()), None);
-        }
-        None => {
-            // continue
-        }
-    }
-
     let plugins = sess.opts.debugging_opts.extra_plugins.clone();
-    let control = callbacks.build_controller(&sess);
+    let control = callbacks.build_controller(&sess, &matches);
     (driver::compile_input(&sess, &cstore, cfg, &input, &odir, &ofile,
                            Some(plugins), &control),
      Some(sess))
@@ -238,6 +241,27 @@ fn make_input(free_matches: &[String]) -> Option<(Input, Option<PathBuf>)> {
         }
     } else {
         None
+    }
+}
+
+fn parse_pretty(sess: &Session,
+                matches: &getopts::Matches)
+                -> Option<(PpMode, Option<UserIdentifiedItem>)> {
+    let pretty = if sess.opts.debugging_opts.unstable_options {
+        matches.opt_default("pretty", "normal").map(|a| {
+            // stable pretty-print variants only
+            pretty::parse_pretty(sess, &a, false)
+        })
+    } else {
+        None
+    };
+    if pretty.is_none() && sess.unstable_options() {
+        matches.opt_str("unpretty").map(|a| {
+            // extended with unstable pretty-print variants
+            pretty::parse_pretty(sess, &a, true)
+        })
+    } else {
+        pretty
     }
 }
 
@@ -310,29 +334,9 @@ pub trait CompilerCalls<'a> {
         None
     }
 
-    // Parse pretty printing information from the arguments. The implementer can
-    // choose to ignore this (the default will return None) which will skip pretty
-    // printing. If you do want to pretty print, it is recommended to use the
-    // implementation of this method from RustcDefaultCalls.
-    // FIXME, this is a terrible bit of API. Parsing of pretty printing stuff
-    // should be done as part of the framework and the implementor should customise
-    // handling of it. However, that is not possible atm because pretty printing
-    // essentially goes off and takes another path through the compiler which
-    // means the session is either moved or not depending on what parse_pretty
-    // returns (we could fix this by cloning, but it's another hack). The proper
-    // solution is to handle pretty printing as if it were a compiler extension,
-    // extending CompileController to make this work (see for example the treatment
-    // of save-analysis in RustcDefaultCalls::build_controller).
-    fn parse_pretty(&mut self,
-                    _sess: &Session,
-                    _matches: &getopts::Matches)
-                    -> Option<(PpMode, Option<UserIdentifiedItem>)> {
-        None
-    }
-
     // Create a CompilController struct for controlling the behaviour of
     // compilation.
-    fn build_controller(&mut self, &Session) -> CompileController<'a>;
+    fn build_controller(&mut self, &Session, &getopts::Matches) -> CompileController<'a>;
 }
 
 // CompilerCalls instance for a regular rustc build.
@@ -350,7 +354,13 @@ fn handle_explain(code: &str,
     match descriptions.find_description(&normalised) {
         Some(ref description) => {
             // Slice off the leading newline and print.
-            print!("{}", &description[1..]);
+            print!("{}", &(&description[1..]).split("\n").map(|x| {
+                format!("{}\n", if x.starts_with("```") {
+                    "```"
+                } else {
+                    x
+                })
+            }).collect::<String>());
         }
         None => {
             early_error(output, &format!("no extended information for {}", code));
@@ -372,7 +382,7 @@ fn check_cfg(sopts: &config::Options,
         match item.node {
             ast::MetaItemKind::List(ref pred, _) => {
                 saw_invalid_predicate = true;
-                emitter.emit(None,
+                emitter.emit(&MultiSpan::new(),
                              &format!("invalid predicate in --cfg command line argument: `{}`",
                                       pred),
                              None,
@@ -418,9 +428,13 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                     describe_lints(&ls, false);
                     return None;
                 }
-                let cstore = Rc::new(CStore::new(token::get_ident_interner()));
-                let sess = build_session(sopts.clone(), None, descriptions.clone(),
-                                         cstore.clone());
+                let dep_graph = DepGraph::new(sopts.build_dep_graph());
+                let cstore = Rc::new(CStore::new(&dep_graph, token::get_ident_interner()));
+                let sess = build_session(sopts.clone(),
+                    &dep_graph,
+                    None,
+                    descriptions.clone(),
+                    cstore.clone());
                 rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
                 let should_stop = RustcDefaultCalls::print_crate_info(&sess, None, odir, ofile);
                 if should_stop == Compilation::Stop {
@@ -435,28 +449,6 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
         None
     }
 
-    fn parse_pretty(&mut self,
-                    sess: &Session,
-                    matches: &getopts::Matches)
-                    -> Option<(PpMode, Option<UserIdentifiedItem>)> {
-        let pretty = if sess.opts.debugging_opts.unstable_options {
-            matches.opt_default("pretty", "normal").map(|a| {
-                // stable pretty-print variants only
-                pretty::parse_pretty(sess, &a, false)
-            })
-        } else {
-            None
-        };
-        if pretty.is_none() && sess.unstable_options() {
-            matches.opt_str("unpretty").map(|a| {
-                // extended with unstable pretty-print variants
-                pretty::parse_pretty(sess, &a, true)
-            })
-        } else {
-            pretty
-        }
-    }
-
     fn late_callback(&mut self,
                      matches: &getopts::Matches,
                      sess: &Session,
@@ -468,8 +460,47 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
             .and_then(|| RustcDefaultCalls::list_metadata(sess, matches, input))
     }
 
-    fn build_controller(&mut self, sess: &Session) -> CompileController<'a> {
+    fn build_controller(&mut self,
+                        sess: &Session,
+                        matches: &getopts::Matches)
+                        -> CompileController<'a> {
         let mut control = CompileController::basic();
+
+        if let Some((ppm, opt_uii)) = parse_pretty(sess, matches) {
+            if ppm.needs_ast_map(&opt_uii) {
+                control.after_hir_lowering.stop = Compilation::Stop;
+
+                control.after_parse.callback = box move |state| {
+                    state.krate = Some(pretty::fold_crate(state.krate.take().unwrap(), ppm));
+                };
+                control.after_hir_lowering.callback = box move |state| {
+                    pretty::print_after_hir_lowering(state.session,
+                                                     state.ast_map.unwrap(),
+                                                     state.analysis.unwrap(),
+                                                     state.resolutions.unwrap(),
+                                                     state.input,
+                                                     &state.expanded_crate.take().unwrap(),
+                                                     state.crate_name.unwrap(),
+                                                     ppm,
+                                                     state.arenas.unwrap(),
+                                                     opt_uii.clone(),
+                                                     state.out_file);
+                };
+            } else {
+                control.after_parse.stop = Compilation::Stop;
+
+                control.after_parse.callback = box move |state| {
+                    let krate = pretty::fold_crate(state.krate.take().unwrap(), ppm);
+                    pretty::print_after_parsing(state.session,
+                                                state.input,
+                                                &krate,
+                                                ppm,
+                                                state.out_file);
+                };
+            }
+
+            return control;
+        }
 
         if sess.opts.parse_only || sess.opts.debugging_opts.show_span.is_some() ||
            sess.opts.debugging_opts.ast_json_noexpand {
@@ -488,15 +519,15 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
             control.after_llvm.stop = Compilation::Stop;
         }
 
-        if sess.opts.debugging_opts.save_analysis {
+        if save_analysis(sess) {
             control.after_analysis.callback = box |state| {
                 time(state.session.time_passes(), "save analysis", || {
                     save::process_crate(state.tcx.unwrap(),
-                                        state.lcx.unwrap(),
-                                        state.krate.unwrap(),
+                                        state.expanded_crate.unwrap(),
                                         state.analysis.unwrap(),
                                         state.crate_name.unwrap(),
-                                        state.out_dir)
+                                        state.out_dir,
+                                        save_analysis_format(state.session))
                 });
             };
             control.after_analysis.run_callback_on_error = true;
@@ -504,6 +535,21 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
         }
 
         control
+    }
+}
+
+fn save_analysis(sess: &Session) -> bool {
+    sess.opts.debugging_opts.save_analysis ||
+    sess.opts.debugging_opts.save_analysis_csv
+}
+
+fn save_analysis_format(sess: &Session) -> save::Format {
+    if sess.opts.debugging_opts.save_analysis {
+        save::Format::Json
+    } else if sess.opts.debugging_opts.save_analysis_csv {
+        save::Format::Csv
+    } else {
+        unreachable!();
     }
 }
 
@@ -1006,19 +1052,19 @@ pub fn monitor<F: FnOnce() + Send + 'static>(f: F) {
             // a .span_bug or .bug call has already printed what
             // it wants to print.
             if !value.is::<errors::ExplicitBug>() {
-                emitter.emit(None, "unexpected panic", None, errors::Level::Bug);
+                emitter.emit(&MultiSpan::new(), "unexpected panic", None, errors::Level::Bug);
             }
 
             let xs = ["the compiler unexpectedly panicked. this is a bug.".to_string(),
                       format!("we would appreciate a bug report: {}", BUG_REPORT_URL)];
             for note in &xs {
-                emitter.emit(None, &note[..], None, errors::Level::Note)
+                emitter.emit(&MultiSpan::new(), &note[..], None, errors::Level::Note)
             }
             if match env::var_os("RUST_BACKTRACE") {
                 Some(val) => &val != "0",
                 None => false,
             } {
-                emitter.emit(None,
+                emitter.emit(&MultiSpan::new(),
                              "run with `RUST_BACKTRACE=1` for a backtrace",
                              None,
                              errors::Level::Note);

@@ -22,13 +22,13 @@ use super::dep_node::DepNode;
 /// read edge from the corresponding AST node. This is used in
 /// compiler passes to automatically record the item that they are
 /// working on.
-pub fn visit_all_items_in_krate<'tcx,V,F>(tcx: &TyCtxt<'tcx>,
-                                          mut dep_node_fn: F,
-                                          visitor: &mut V)
+pub fn visit_all_items_in_krate<'a, 'tcx, V, F>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                                mut dep_node_fn: F,
+                                                visitor: &mut V)
     where F: FnMut(DefId) -> DepNode<DefId>, V: Visitor<'tcx>
 {
     struct TrackingVisitor<'visit, 'tcx: 'visit, F: 'visit, V: 'visit> {
-        tcx: &'visit TyCtxt<'tcx>,
+        tcx: TyCtxt<'visit, 'tcx, 'tcx>,
         dep_node_fn: &'visit mut F,
         visitor: &'visit mut V
     }
@@ -42,7 +42,8 @@ pub fn visit_all_items_in_krate<'tcx,V,F>(tcx: &TyCtxt<'tcx>,
             let _task = self.tcx.dep_graph.in_task(task_id);
             debug!("Started task {:?}", task_id);
             self.tcx.dep_graph.read(DepNode::Hir(item_def_id));
-            self.visitor.visit_item(i)
+            self.visitor.visit_item(i);
+            debug!("Ended task {:?}", task_id);
         }
     }
 

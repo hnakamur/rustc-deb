@@ -44,6 +44,7 @@
 
 use graphviz as dot;
 use rustc::dep_graph::{DepGraphQuery, DepNode};
+use rustc::dep_graph::debug::{DepNodeFilter, EdgeFilter};
 use rustc::hir::def_id::DefId;
 use rustc::ty::TyCtxt;
 use rustc_data_structures::fnv::{FnvHashMap, FnvHashSet};
@@ -63,7 +64,7 @@ const IF_THIS_CHANGED: &'static str = "rustc_if_this_changed";
 const THEN_THIS_WOULD_NEED: &'static str = "rustc_then_this_would_need";
 const ID: &'static str = "id";
 
-pub fn assert_dep_graph(tcx: &TyCtxt) {
+pub fn assert_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     let _ignore = tcx.dep_graph.in_ignore();
 
     if tcx.sess.opts.debugging_opts.dump_dep_graph {
@@ -98,7 +99,7 @@ type TargetHashMap =
                FnvHashSet<(Span, InternedString, ast::NodeId, DepNode<DefId>)>>;
 
 struct IfThisChanged<'a, 'tcx:'a> {
-    tcx: &'a TyCtxt<'tcx>,
+    tcx: TyCtxt<'a, 'tcx, 'tcx>,
     if_this_changed: SourceHashMap,
     then_this_would_need: TargetHashMap,
 }
@@ -172,9 +173,9 @@ impl<'a, 'tcx> Visitor<'tcx> for IfThisChanged<'a, 'tcx> {
     }
 }
 
-fn check_paths(tcx: &TyCtxt,
-               if_this_changed: &SourceHashMap,
-               then_this_would_need: &TargetHashMap)
+fn check_paths<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                         if_this_changed: &SourceHashMap,
+                         then_this_would_need: &TargetHashMap)
 {
     // Return early here so as not to construct the query, which is not cheap.
     if if_this_changed.is_empty() {
@@ -195,7 +196,7 @@ fn check_paths(tcx: &TyCtxt,
         };
 
         for &(_, source_def_id, source_dep_node) in sources {
-            let dependents = query.transitive_dependents(source_dep_node);
+            let dependents = query.transitive_successors(source_dep_node);
             for &(target_span, ref target_pass, _, ref target_dep_node) in targets {
                 if !dependents.contains(&target_dep_node) {
                     tcx.sess.span_err(
@@ -213,19 +214,18 @@ fn check_paths(tcx: &TyCtxt,
     }
 }
 
-fn dump_graph(tcx: &TyCtxt) {
+fn dump_graph(tcx: TyCtxt) {
     let path: String = env::var("RUST_DEP_GRAPH").unwrap_or_else(|_| format!("dep_graph"));
     let query = tcx.dep_graph.query();
 
     let nodes = match env::var("RUST_DEP_GRAPH_FILTER") {
         Ok(string) => {
             // Expect one of: "-> target", "source -> target", or "source ->".
-            let parts: Vec<_> = string.split("->").collect();
-            if parts.len() > 2 {
-                bug!("Invalid RUST_DEP_GRAPH_FILTER: expected '[source] -> [target]'");
-            }
-            let sources = node_set(&query, &parts[0]);
-            let targets = node_set(&query, &parts[1]);
+            let edge_filter = EdgeFilter::new(&string).unwrap_or_else(|e| {
+                bug!("invalid filter: {}", e)
+            });
+            let sources = node_set(&query, &edge_filter.source);
+            let targets = node_set(&query, &edge_filter.target);
             filter_nodes(&query, &sources, &targets)
         }
         Err(_) => {
@@ -295,26 +295,16 @@ impl<'a, 'tcx> dot::Labeller<'a> for GraphvizDepGraph {
 // Given an optional filter like `"x,y,z"`, returns either `None` (no
 // filter) or the set of nodes whose labels contain all of those
 // substrings.
-fn node_set(query: &DepGraphQuery<DefId>, filter: &str)
+fn node_set(query: &DepGraphQuery<DefId>, filter: &DepNodeFilter)
             -> Option<FnvHashSet<DepNode<DefId>>>
 {
     debug!("node_set(filter={:?})", filter);
 
-    if filter.trim().is_empty() {
+    if filter.accepts_all() {
         return None;
     }
 
-    let filters: Vec<&str> = filter.split("&").map(|s| s.trim()).collect();
-
-    debug!("node_set: filters={:?}", filters);
-
-    Some(query.nodes()
-         .into_iter()
-         .filter(|n| {
-             let s = format!("{:?}", n);
-             filters.iter().all(|f| s.contains(f))
-         })
-        .collect())
+    Some(query.nodes().into_iter().filter(|n| filter.test(n)).collect())
 }
 
 fn filter_nodes(query: &DepGraphQuery<DefId>,

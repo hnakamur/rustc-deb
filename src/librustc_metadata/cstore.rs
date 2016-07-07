@@ -15,14 +15,18 @@
 
 pub use self::MetadataBlob::*;
 
+use common;
 use creader;
 use decoder;
 use index;
 use loader;
 
-use rustc::hir::def_id::DefId;
+use rustc::dep_graph::DepGraph;
+use rustc::hir::def_id::{DefIndex, DefId};
+use rustc::hir::map::DefKey;
 use rustc::hir::svh::Svh;
 use rustc::middle::cstore::{ExternCrate};
+use rustc::session::config::PanicStrategy;
 use rustc::util::nodemap::{FnvHashMap, NodeMap, NodeSet, DefIdMap};
 
 use std::cell::{RefCell, Ref, Cell};
@@ -77,6 +81,13 @@ pub struct crate_metadata {
     pub index: index::Index,
     pub xref_index: index::DenseIndex,
 
+    /// For each public item in this crate, we encode a key.  When the
+    /// crate is loaded, we read all the keys and put them in this
+    /// hashmap, which gives the reverse mapping.  This allows us to
+    /// quickly retrace a `DefPath`, which is needed for incremental
+    /// compilation support.
+    pub key_map: FnvHashMap<DefKey, DefIndex>,
+
     /// Flag if this crate is required by an rlib version of this crate, or in
     /// other words whether it was explicitly linked to. An example of a crate
     /// where this is false is when an allocator crate is injected into the
@@ -85,6 +96,7 @@ pub struct crate_metadata {
 }
 
 pub struct CStore {
+    pub dep_graph: DepGraph,
     metas: RefCell<FnvHashMap<ast::CrateNum, Rc<crate_metadata>>>,
     /// Map from NodeId's of local extern crate statements to crate numbers
     extern_mod_crate_map: RefCell<NodeMap<ast::CrateNum>>,
@@ -97,8 +109,10 @@ pub struct CStore {
 }
 
 impl CStore {
-    pub fn new(intr: Rc<IdentInterner>) -> CStore {
+    pub fn new(dep_graph: &DepGraph,
+               intr: Rc<IdentInterner>) -> CStore {
         CStore {
+            dep_graph: dep_graph.clone(),
             metas: RefCell::new(FnvHashMap()),
             extern_mod_crate_map: RefCell::new(FnvHashMap()),
             used_crate_sources: RefCell::new(Vec::new()),
@@ -281,23 +295,42 @@ impl crate_metadata {
         let attrs = decoder::get_crate_attributes(self.data());
         attr::contains_name(&attrs, "needs_allocator")
     }
+
+    pub fn is_panic_runtime(&self) -> bool {
+        let attrs = decoder::get_crate_attributes(self.data());
+        attr::contains_name(&attrs, "panic_runtime")
+    }
+
+    pub fn needs_panic_runtime(&self) -> bool {
+        let attrs = decoder::get_crate_attributes(self.data());
+        attr::contains_name(&attrs, "needs_panic_runtime")
+    }
+
+    pub fn panic_strategy(&self) -> PanicStrategy {
+        decoder::get_panic_strategy(self.data())
+    }
 }
 
 impl MetadataBlob {
-    pub fn as_slice<'a>(&'a self) -> &'a [u8] {
-        let slice = match *self {
+    pub fn as_slice_raw<'a>(&'a self) -> &'a [u8] {
+        match *self {
             MetadataVec(ref vec) => &vec[..],
             MetadataArchive(ref ar) => ar.as_slice(),
-        };
-        if slice.len() < 4 {
+        }
+    }
+
+    pub fn as_slice<'a>(&'a self) -> &'a [u8] {
+        let slice = self.as_slice_raw();
+        let len_offset = 4 + common::metadata_encoding_version.len();
+        if slice.len() < len_offset+4 {
             &[] // corrupt metadata
         } else {
-            let len = (((slice[0] as u32) << 24) |
-                       ((slice[1] as u32) << 16) |
-                       ((slice[2] as u32) << 8) |
-                       ((slice[3] as u32) << 0)) as usize;
-            if len + 4 <= slice.len() {
-                &slice[4.. len + 4]
+            let len = (((slice[len_offset+0] as u32) << 24) |
+                       ((slice[len_offset+1] as u32) << 16) |
+                       ((slice[len_offset+2] as u32) << 8) |
+                       ((slice[len_offset+3] as u32) << 0)) as usize;
+            if len <= slice.len() - 4 - len_offset {
+                &slice[len_offset + 4..len_offset + len + 4]
             } else {
                 &[] // corrupt or old metadata
             }

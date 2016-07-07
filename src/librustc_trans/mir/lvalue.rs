@@ -16,11 +16,11 @@ use abi;
 use adt;
 use base;
 use builder::Builder;
-use common::{self, BlockAndBuilder, C_uint};
+use common::{self, BlockAndBuilder, CrateContext, C_uint, C_undef};
 use consts;
 use machine;
+use type_of::type_of;
 use mir::drop;
-use llvm;
 use Disr;
 
 use std::ptr;
@@ -56,6 +56,18 @@ impl<'tcx> LvalueRef<'tcx> {
         }
         LvalueRef::new_sized(lltemp, LvalueTy::from_ty(ty))
     }
+
+    pub fn len<'a>(&self, ccx: &CrateContext<'a, 'tcx>) -> ValueRef {
+        let ty = self.ty.to_ty(ccx.tcx());
+        match ty.sty {
+            ty::TyArray(_, n) => common::C_uint(ccx, n),
+            ty::TySlice(_) | ty::TyStr => {
+                assert!(self.llextra != ptr::null_mut());
+                self.llextra
+            }
+            _ => bug!("unexpected type `{}` in LvalueRef::len", ty)
+        }
+    }
 }
 
 pub fn get_meta(b: &Builder, fat_ptr: ValueRef) -> ValueRef {
@@ -71,20 +83,6 @@ pub fn load_fat_ptr(b: &Builder, fat_ptr: ValueRef) -> (ValueRef, ValueRef) {
 }
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
-    pub fn lvalue_len(&mut self,
-                      bcx: &BlockAndBuilder<'bcx, 'tcx>,
-                      lvalue: LvalueRef<'tcx>)
-                      -> ValueRef {
-        match lvalue.ty.to_ty(bcx.tcx()).sty {
-            ty::TyArray(_, n) => common::C_uint(bcx.ccx(), n),
-            ty::TySlice(_) | ty::TyStr => {
-                assert!(lvalue.llextra != ptr::null_mut());
-                lvalue.llextra
-            }
-            _ => bug!("unexpected type in lvalue_len"),
-        }
-    }
-
     pub fn trans_lvalue(&mut self,
                         bcx: &BlockAndBuilder<'bcx, 'tcx>,
                         lvalue: &mir::Lvalue<'tcx>)
@@ -118,10 +116,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     // Ergo, we return an undef ValueRef, so we do not have to special-case every
                     // place using lvalues, and could use it the same way you use a regular
                     // ReturnPointer LValue (i.e. store into it, load from it etc).
-                    let llty = fcx.fn_ty.ret.original_ty.ptr_to();
-                    unsafe {
-                        llvm::LLVMGetUndef(llty.to_ref())
-                    }
+                    C_undef(fcx.fn_ty.ret.original_ty.ptr_to())
                 };
                 let fn_return_ty = bcx.monomorphize(&self.mir.return_ty);
                 let return_ty = fn_return_ty.unwrap();
@@ -190,7 +185,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                                          from_end: true,
                                                          min_length: _ } => {
                         let lloffset = C_uint(bcx.ccx(), offset);
-                        let lllen = self.lvalue_len(bcx, tr_base);
+                        let lllen = tr_base.len(bcx.ccx());
                         let llindex = bcx.sub(lllen, lloffset);
                         project_index(self.prepare_index(bcx, llindex))
                     }
@@ -230,7 +225,19 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         ret
                     }
                     TempRef::Operand(Some(_)) => {
-                        bug!("Lvalue temp already set");
+                        let lvalue_ty = self.mir.lvalue_ty(bcx.tcx(), lvalue);
+                        let lvalue_ty = bcx.monomorphize(&lvalue_ty);
+
+                        // See comments in TempRef::new_operand as to why
+                        // we always have Some in a ZST TempRef::Operand.
+                        let ty = lvalue_ty.to_ty(bcx.tcx());
+                        if common::type_is_zero_size(bcx.ccx(), ty) {
+                            // Pass an undef pointer as no stores can actually occur.
+                            let llptr = C_undef(type_of(bcx.ccx(), ty).ptr_to());
+                            f(self, LvalueRef::new_sized(llptr, lvalue_ty))
+                        } else {
+                            bug!("Lvalue temp already set");
+                        }
                     }
                 }
             }

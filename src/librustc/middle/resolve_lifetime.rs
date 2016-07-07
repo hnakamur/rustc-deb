@@ -29,7 +29,7 @@ use std::fmt;
 use std::mem::replace;
 use syntax::ast;
 use syntax::codemap::Span;
-use syntax::parse::token::special_idents;
+use syntax::parse::token::keywords;
 use util::nodemap::NodeMap;
 
 use hir;
@@ -193,7 +193,12 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
                 })
             }
             FnKind::Closure(_) => {
-                self.add_scope_and_walk_fn(fk, fd, b, s, fn_id)
+                // Closures have their own set of labels, save labels just
+                // like for foreign items above.
+                let saved = replace(&mut self.labels_in_fn, vec![]);
+                let result = self.add_scope_and_walk_fn(fk, fd, b, s, fn_id);
+                replace(&mut self.labels_in_fn, saved);
+                result
             }
         }
     }
@@ -245,7 +250,7 @@ impl<'a, 'v> Visitor<'v> for LifetimeContext<'a> {
     }
 
     fn visit_lifetime(&mut self, lifetime_ref: &hir::Lifetime) {
-        if lifetime_ref.name == special_idents::static_lifetime.name {
+        if lifetime_ref.name == keywords::StaticLifetime.name() {
             self.insert_lifetime(lifetime_ref, DefStaticRegion);
             return;
         }
@@ -428,7 +433,7 @@ fn extract_labels<'v, 'a>(ctxt: &mut LifetimeContext<'a>, b: &'v hir::Block) {
     fn expression_label(ex: &hir::Expr) -> Option<ast::Name> {
         match ex.node {
             hir::ExprWhile(_, _, Some(label)) |
-            hir::ExprLoop(_, Some(label)) => Some(label.unhygienic_name),
+            hir::ExprLoop(_, Some(label)) => Some(label.unhygienize()),
             _ => None,
         }
     }
@@ -478,7 +483,6 @@ impl<'a> LifetimeContext<'a> {
             FnKind::Method(_, sig, _, _) => {
                 intravisit::walk_fn_decl(self, fd);
                 self.visit_generics(&sig.generics);
-                self.visit_explicit_self(&sig.explicit_self);
             }
             FnKind::Closure(_) => {
                 intravisit::walk_fn_decl(self, fd);
@@ -672,9 +676,8 @@ impl<'a> LifetimeContext<'a> {
         for i in 0..lifetimes.len() {
             let lifetime_i = &lifetimes[i];
 
-            let special_idents = [special_idents::static_lifetime];
             for lifetime in lifetimes {
-                if special_idents.iter().any(|&i| i.name == lifetime.lifetime.name) {
+                if lifetime.lifetime.name == keywords::StaticLifetime.name() {
                     span_err!(self.sess, lifetime.lifetime.span, E0262,
                         "invalid lifetime parameter name: `{}`", lifetime.lifetime.name);
                 }

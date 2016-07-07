@@ -11,6 +11,11 @@
 use target::Target;
 
 pub fn target() -> Target {
+    let mut base = super::android_base::opts();
+    base.max_atomic_width = 128;
+    // As documented in http://developer.android.com/ndk/guides/cpu-features.html
+    // the neon (ASIMD) and FP must exist on all android aarch64 targets.
+    base.features = "+neon,+fp-armv8".to_string();
     Target {
         llvm_target: "aarch64-linux-android".to_string(),
         target_endian: "little".to_string(),
@@ -20,6 +25,6 @@ pub fn target() -> Target {
         target_os: "android".to_string(),
         target_env: "".to_string(),
         target_vendor: "unknown".to_string(),
-        options: super::android_base::opts(),
+        options: base,
     }
 }

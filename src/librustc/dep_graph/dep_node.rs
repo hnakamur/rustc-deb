@@ -32,6 +32,10 @@ pub enum DepNode<D: Clone + Debug> {
     // Represents the HIR node with the given node-id
     Hir(D),
 
+    // Represents the metadata for a given HIR node, typically found
+    // in an extern crate.
+    MetaData(D),
+
     // Represents different phases in the compiler.
     CrateReader,
     CollectLanguageItems,
@@ -59,11 +63,13 @@ pub enum DepNode<D: Clone + Debug> {
     TypeckItemBody(D),
     Dropck,
     DropckImpl(D),
+    UnusedTraitCheck,
     CheckConst(D),
     Privacy,
     IntrinsicCheck(D),
     MatchCheck(D),
     MirMapConstruction(D),
+    MirPass(D),
     MirTypeck(D),
     BorrowCheck(D),
     RvalueCheck(D),
@@ -75,6 +81,7 @@ pub enum DepNode<D: Clone + Debug> {
     TransCrateItem(D),
     TransInlinedItem(D),
     TransWriteMetadata,
+    LinkBinary,
 
     // Nodes representing bits of computed IR in the tcx. Each shared
     // table in the tcx (or elsewhere) maps to one of these
@@ -88,6 +95,7 @@ pub enum DepNode<D: Clone + Debug> {
     ImplOrTraitItems(D),
     ItemSignature(D),
     FieldTy(D),
+    SizedConstraint(D),
     TraitItemDefIds(D),
     InherentImpls(D),
     ImplItems(D),
@@ -163,6 +171,7 @@ impl<D: Clone + Debug> DepNode<D> {
             CheckEntryFn => Some(CheckEntryFn),
             Variance => Some(Variance),
             Dropck => Some(Dropck),
+            UnusedTraitCheck => Some(UnusedTraitCheck),
             Privacy => Some(Privacy),
             Reachability => Some(Reachability),
             DeadCheck => Some(DeadCheck),
@@ -170,7 +179,9 @@ impl<D: Clone + Debug> DepNode<D> {
             LateLintCheck => Some(LateLintCheck),
             TransCrate => Some(TransCrate),
             TransWriteMetadata => Some(TransWriteMetadata),
+            LinkBinary => Some(LinkBinary),
             Hir(ref d) => op(d).map(Hir),
+            MetaData(ref d) => op(d).map(MetaData),
             CollectItem(ref d) => op(d).map(CollectItem),
             CoherenceCheckImpl(ref d) => op(d).map(CoherenceCheckImpl),
             CoherenceOverlapCheck(ref d) => op(d).map(CoherenceOverlapCheck),
@@ -185,6 +196,7 @@ impl<D: Clone + Debug> DepNode<D> {
             IntrinsicCheck(ref d) => op(d).map(IntrinsicCheck),
             MatchCheck(ref d) => op(d).map(MatchCheck),
             MirMapConstruction(ref d) => op(d).map(MirMapConstruction),
+            MirPass(ref d) => op(d).map(MirPass),
             MirTypeck(ref d) => op(d).map(MirTypeck),
             BorrowCheck(ref d) => op(d).map(BorrowCheck),
             RvalueCheck(ref d) => op(d).map(RvalueCheck),
@@ -193,6 +205,7 @@ impl<D: Clone + Debug> DepNode<D> {
             ImplOrTraitItems(ref d) => op(d).map(ImplOrTraitItems),
             ItemSignature(ref d) => op(d).map(ItemSignature),
             FieldTy(ref d) => op(d).map(FieldTy),
+            SizedConstraint(ref d) => op(d).map(SizedConstraint),
             TraitItemDefIds(ref d) => op(d).map(TraitItemDefIds),
             InherentImpls(ref d) => op(d).map(InherentImpls),
             ImplItems(ref d) => op(d).map(ImplItems),

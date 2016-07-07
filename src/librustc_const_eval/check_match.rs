@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub use self::Constructor::*;
+use self::Constructor::*;
 use self::Usefulness::*;
 use self::WitnessPreference::*;
 
@@ -22,7 +22,6 @@ use rustc::hir::def_id::{DefId};
 use rustc::middle::expr_use_visitor::{ConsumeMode, Delegate, ExprUseVisitor};
 use rustc::middle::expr_use_visitor::{LoanCause, MutateMode};
 use rustc::middle::expr_use_visitor as euv;
-use rustc::infer;
 use rustc::middle::mem_categorization::{cmt};
 use rustc::hir::pat_util::*;
 use rustc::traits::ProjectionMode;
@@ -106,8 +105,8 @@ impl<'a> FromIterator<Vec<&'a Pat>> for Matrix<'a> {
 
 //NOTE: appears to be the only place other then InferCtxt to contain a ParamEnv
 pub struct MatchCheckCtxt<'a, 'tcx: 'a> {
-    pub tcx: &'a TyCtxt<'tcx>,
-    pub param_env: ParameterEnvironment<'a, 'tcx>,
+    pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    pub param_env: ParameterEnvironment<'tcx>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -153,7 +152,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for MatchCheckCtxt<'a, 'tcx> {
     }
 }
 
-pub fn check_crate(tcx: &TyCtxt) {
+pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     tcx.visit_all_items_in_krate(DepNode::MatchCheck, &mut MatchCheckCtxt {
         tcx: tcx,
         param_env: tcx.empty_parameter_environment(),
@@ -241,24 +240,24 @@ fn check_expr(cx: &mut MatchCheckCtxt, ex: &hir::Expr) {
 fn check_for_bindings_named_the_same_as_variants(cx: &MatchCheckCtxt, pat: &Pat) {
     pat.walk(|p| {
         match p.node {
-            PatKind::Ident(hir::BindByValue(hir::MutImmutable), ident, None) => {
+            PatKind::Ident(hir::BindByValue(hir::MutImmutable), name, None) => {
                 let pat_ty = cx.tcx.pat_ty(p);
                 if let ty::TyEnum(edef, _) = pat_ty.sty {
                     let def = cx.tcx.def_map.borrow().get(&p.id).map(|d| d.full_def());
                     if let Some(Def::Local(..)) = def {
                         if edef.variants.iter().any(|variant|
-                            variant.name == ident.node.unhygienic_name
+                            variant.name == name.node.unhygienize()
                                 && variant.kind() == VariantKind::Unit
                         ) {
                             let ty_path = cx.tcx.item_path_str(edef.did);
                             let mut err = struct_span_warn!(cx.tcx.sess, p.span, E0170,
                                 "pattern binding `{}` is named the same as one \
                                  of the variants of the type `{}`",
-                                ident.node, ty_path);
-                            fileline_help!(err, p.span,
+                                name.node, ty_path);
+                            help!(err,
                                 "if you meant to match on a variant, \
                                  consider making the path in the pattern qualified: `{}::{}`",
-                                ty_path, ident.node);
+                                ty_path, name.node);
                             err.emit();
                         }
                     }
@@ -341,7 +340,15 @@ fn check_arms(cx: &MatchCheckCtxt,
                         },
 
                         hir::MatchSource::Normal => {
-                            span_err!(cx.tcx.sess, pat.span, E0001, "unreachable pattern")
+                            let mut err = struct_span_err!(cx.tcx.sess, pat.span, E0001,
+                                                           "unreachable pattern");
+                            // if we had a catchall pattern, hint at that
+                            for row in &seen.0 {
+                                if pat_is_catchall(&cx.tcx.def_map.borrow(), row[0]) {
+                                    span_note!(err, row[0].span, "this pattern matches any value");
+                                }
+                            }
+                            err.emit();
                         },
 
                         hir::MatchSource::TryDesugar => {
@@ -361,7 +368,18 @@ fn check_arms(cx: &MatchCheckCtxt,
     }
 }
 
-fn raw_pat<'a>(p: &'a Pat) -> &'a Pat {
+/// Checks for common cases of "catchall" patterns that may not be intended as such.
+fn pat_is_catchall(dm: &DefMap, p: &Pat) -> bool {
+    match p.node {
+        PatKind::Ident(_, _, None) => pat_is_binding(dm, p),
+        PatKind::Ident(_, _, Some(ref s)) => pat_is_catchall(dm, &s),
+        PatKind::Ref(ref s, _) => pat_is_catchall(dm, &s),
+        PatKind::Tup(ref v) => v.iter().all(|p| pat_is_catchall(dm, &p)),
+        _ => false
+    }
+}
+
+fn raw_pat(p: &Pat) -> &Pat {
     match p.node {
         PatKind::Ident(_, _, Some(ref s)) => raw_pat(&s),
         _ => p
@@ -436,13 +454,13 @@ fn const_val_to_expr(value: &ConstVal) -> P<hir::Expr> {
 }
 
 pub struct StaticInliner<'a, 'tcx: 'a> {
-    pub tcx: &'a TyCtxt<'tcx>,
+    pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
     pub failed: bool,
     pub renaming_map: Option<&'a mut FnvHashMap<(NodeId, Span), NodeId>>,
 }
 
 impl<'a, 'tcx> StaticInliner<'a, 'tcx> {
-    pub fn new<'b>(tcx: &'b TyCtxt<'tcx>,
+    pub fn new<'b>(tcx: TyCtxt<'b, 'tcx, 'tcx>,
                    renaming_map: Option<&'b mut FnvHashMap<(NodeId, Span), NodeId>>)
                    -> StaticInliner<'b, 'tcx> {
         StaticInliner {
@@ -1104,13 +1122,12 @@ fn check_legality_of_move_bindings(cx: &MatchCheckCtxt,
                     PatKind::Ident(hir::BindByValue(_), _, ref sub) => {
                         let pat_ty = tcx.node_id_to_type(p.id);
                         //FIXME: (@jroesch) this code should be floated up as well
-                        let infcx = infer::new_infer_ctxt(cx.tcx,
-                                                          &cx.tcx.tables,
-                                                          Some(cx.param_env.clone()),
-                                                          ProjectionMode::AnyFinal);
-                        if infcx.type_moves_by_default(pat_ty, pat.span) {
-                            check_move(p, sub.as_ref().map(|p| &**p));
-                        }
+                        cx.tcx.infer_ctxt(None, Some(cx.param_env.clone()),
+                                          ProjectionMode::AnyFinal).enter(|infcx| {
+                            if infcx.type_moves_by_default(pat_ty, pat.span) {
+                                check_move(p, sub.as_ref().map(|p| &**p));
+                            }
+                        });
                     }
                     PatKind::Ident(hir::BindByRef(_), _, _) => {
                     }
@@ -1132,24 +1149,21 @@ fn check_legality_of_move_bindings(cx: &MatchCheckCtxt,
 /// assign.
 fn check_for_mutation_in_guard<'a, 'tcx>(cx: &'a MatchCheckCtxt<'a, 'tcx>,
                                          guard: &hir::Expr) {
-    let mut checker = MutationChecker {
-        cx: cx,
-    };
-
-    let infcx = infer::new_infer_ctxt(cx.tcx,
-                                      &cx.tcx.tables,
-                                      Some(checker.cx.param_env.clone()),
-                                      ProjectionMode::AnyFinal);
-
-    let mut visitor = ExprUseVisitor::new(&mut checker, &infcx);
-    visitor.walk_expr(guard);
+    cx.tcx.infer_ctxt(None, Some(cx.param_env.clone()),
+                      ProjectionMode::AnyFinal).enter(|infcx| {
+        let mut checker = MutationChecker {
+            cx: cx,
+        };
+        let mut visitor = ExprUseVisitor::new(&mut checker, &infcx);
+        visitor.walk_expr(guard);
+    });
 }
 
-struct MutationChecker<'a, 'tcx: 'a> {
-    cx: &'a MatchCheckCtxt<'a, 'tcx>,
+struct MutationChecker<'a, 'gcx: 'a> {
+    cx: &'a MatchCheckCtxt<'a, 'gcx>,
 }
 
-impl<'a, 'tcx> Delegate<'tcx> for MutationChecker<'a, 'tcx> {
+impl<'a, 'gcx, 'tcx> Delegate<'tcx> for MutationChecker<'a, 'gcx> {
     fn matched_pat(&mut self, _: &Pat, _: cmt, _: euv::MatchMode) {}
     fn consume(&mut self, _: NodeId, _: Span, _: cmt, _: ConsumeMode) {}
     fn consume_pat(&mut self, _: &Pat, _: cmt, _: ConsumeMode) {}

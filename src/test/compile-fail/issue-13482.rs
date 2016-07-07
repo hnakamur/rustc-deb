@@ -15,9 +15,9 @@ fn main() {
   let y = match x {
     [] => None,
     //~^ ERROR mismatched types
-    //~| expected `[_; 2]`
-    //~| found `[_; 0]`
-    //~| expected array with a fixed size of 2 elements
+    //~| expected type `[_; 2]`
+    //~| found type `[_; 0]`
+    //~| expected an array with a fixed size of 2 elements
     [a,_] => Some(a)
   };
 }
