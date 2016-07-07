@@ -8,6 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Implementation of `make clean` in rustbuild.
+//!
+//! Responsible for cleaning out a build directory of all old and stale
+//! artifacts to prepare for a fresh build. Currently doesn't remove the
+//! `build/cache` directory (download cache) or the `build/$target/llvm`
+//! directory as we want that cached between builds.
+
 use std::fs;
 use std::path::Path;
 
@@ -19,11 +26,14 @@ pub fn clean(build: &Build) {
         let out = build.out.join(host);
 
         rm_rf(build, &out.join("compiler-rt"));
+        rm_rf(build, &out.join("doc"));
 
         for stage in 0..4 {
             rm_rf(build, &out.join(format!("stage{}", stage)));
             rm_rf(build, &out.join(format!("stage{}-std", stage)));
             rm_rf(build, &out.join(format!("stage{}-rustc", stage)));
+            rm_rf(build, &out.join(format!("stage{}-tools", stage)));
+            rm_rf(build, &out.join(format!("stage{}-test", stage)));
         }
     }
 }

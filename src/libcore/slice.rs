@@ -41,7 +41,7 @@ use default::Default;
 use fmt;
 use intrinsics::assume;
 use iter::*;
-use ops::{FnMut, self, Index};
+use ops::{FnMut, self};
 use ops::RangeFull;
 use option::Option;
 use option::Option::{None, Some};
@@ -106,6 +106,10 @@ pub trait SliceExt {
     #[stable(feature = "core", since = "1.6.0")]
     fn binary_search_by<F>(&self, f: F) -> Result<usize, usize>
         where F: FnMut(&Self::Item) -> Ordering;
+    #[stable(feature = "slice_binary_search_by_key", since = "1.10.0")]
+    fn binary_search_by_key<B, F>(&self, b: &B, f: F) -> Result<usize, usize>
+        where F: FnMut(&Self::Item) -> B,
+              B: Ord;
     #[stable(feature = "core", since = "1.6.0")]
     fn len(&self) -> usize;
     #[stable(feature = "core", since = "1.6.0")]
@@ -507,9 +511,18 @@ impl<T> SliceExt for [T] {
                 src.as_ptr(), self.as_mut_ptr(), self.len());
         }
     }
+
+    #[inline]
+    fn binary_search_by_key<B, F>(&self, b: &B, mut f: F) -> Result<usize, usize>
+        where F: FnMut(&Self::Item) -> B,
+              B: Ord
+    {
+        self.binary_search_by(|k| f(k).cmp(b))
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::Index<usize> for [T] {
     type Output = T;
 
@@ -520,6 +533,7 @@ impl<T> ops::Index<usize> for [T] {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::IndexMut<usize> for [T] {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut T {
@@ -553,6 +567,7 @@ fn slice_index_order_fail(index: usize, end: usize) -> ! {
 /// Requires that `begin <= end` and `end <= self.len()`,
 /// otherwise slicing will panic.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::Index<ops::Range<usize>> for [T] {
     type Output = [T];
 
@@ -579,6 +594,7 @@ impl<T> ops::Index<ops::Range<usize>> for [T] {
 ///
 /// Equivalent to `&self[0 .. end]`
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::Index<ops::RangeTo<usize>> for [T] {
     type Output = [T];
 
@@ -594,6 +610,7 @@ impl<T> ops::Index<ops::RangeTo<usize>> for [T] {
 ///
 /// Equivalent to `&self[begin .. self.len()]`
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::Index<ops::RangeFrom<usize>> for [T] {
     type Output = [T];
 
@@ -619,6 +636,7 @@ impl<T> ops::Index<RangeFull> for [T] {
 }
 
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::Index<ops::RangeInclusive<usize>> for [T] {
     type Output = [T];
 
@@ -634,6 +652,7 @@ impl<T> ops::Index<ops::RangeInclusive<usize>> for [T] {
     }
 }
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::Index<ops::RangeToInclusive<usize>> for [T] {
     type Output = [T];
 
@@ -654,6 +673,7 @@ impl<T> ops::Index<ops::RangeToInclusive<usize>> for [T] {
 /// Requires that `begin <= end` and `end <= self.len()`,
 /// otherwise slicing will panic.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::IndexMut<ops::Range<usize>> for [T] {
     #[inline]
     fn index_mut(&mut self, index: ops::Range<usize>) -> &mut [T] {
@@ -678,6 +698,7 @@ impl<T> ops::IndexMut<ops::Range<usize>> for [T] {
 ///
 /// Equivalent to `&mut self[0 .. end]`
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::IndexMut<ops::RangeTo<usize>> for [T] {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeTo<usize>) -> &mut [T] {
@@ -691,6 +712,7 @@ impl<T> ops::IndexMut<ops::RangeTo<usize>> for [T] {
 ///
 /// Equivalent to `&mut self[begin .. self.len()]`
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::IndexMut<ops::RangeFrom<usize>> for [T] {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeFrom<usize>) -> &mut [T] {
@@ -713,6 +735,7 @@ impl<T> ops::IndexMut<RangeFull> for [T] {
 }
 
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::IndexMut<ops::RangeInclusive<usize>> for [T] {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeInclusive<usize>) -> &mut [T] {
@@ -726,6 +749,7 @@ impl<T> ops::IndexMut<ops::RangeInclusive<usize>> for [T] {
     }
 }
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[rustc_on_unimplemented = "slice indices are of type `usize`"]
 impl<T> ops::IndexMut<ops::RangeToInclusive<usize>> for [T] {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeToInclusive<usize>) -> &mut [T] {
@@ -877,6 +901,20 @@ macro_rules! make_mut_slice {
 }
 
 /// Immutable slice iterator
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// // First, we declare a type which has `iter` method to get the `Iter` struct (&[usize here]):
+/// let slice = &[1, 2, 3];
+///
+/// // Then, we iterate over it:
+/// for element in slice.iter() {
+///     println!("{}", element);
+/// }
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Iter<'a, T: 'a> {
     ptr: *const T,
@@ -903,6 +941,26 @@ impl<'a, T> Iter<'a, T> {
     ///
     /// This has the same lifetime as the original slice, and so the
     /// iterator can continue to be used while this exists.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// // First, we declare a type which has the `iter` method to get the `Iter`
+    /// // struct (&[usize here]):
+    /// let slice = &[1, 2, 3];
+    ///
+    /// // Then, we get the iterator:
+    /// let mut iter = slice.iter();
+    /// // So if we print what `as_slice` method returns here, we have "[1, 2, 3]":
+    /// println!("{:?}", iter.as_slice());
+    ///
+    /// // Next, we move to the second element of the slice:
+    /// iter.next();
+    /// // Now `as_slice` returns "[2, 3]":
+    /// println!("{:?}", iter.as_slice());
+    /// ```
     #[stable(feature = "iter_to_slice", since = "1.4.0")]
     pub fn as_slice(&self) -> &'a [T] {
         make_slice!(self.ptr, self.end)
@@ -934,6 +992,24 @@ impl<'a, T> Clone for Iter<'a, T> {
 }
 
 /// Mutable slice iterator.
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// // First, we declare a type which has `iter_mut` method to get the `IterMut`
+/// // struct (&[usize here]):
+/// let mut slice = &mut [1, 2, 3];
+///
+/// // Then, we iterate over it and increment each element value:
+/// for element in slice.iter_mut() {
+///     *element += 1;
+/// }
+///
+/// // We now have "[2, 3, 4]":
+/// println!("{:?}", slice);
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IterMut<'a, T: 'a> {
     ptr: *mut T,
@@ -962,6 +1038,35 @@ impl<'a, T> IterMut<'a, T> {
     /// to consume the iterator. Consider using the `Slice` and
     /// `SliceMut` implementations for obtaining slices with more
     /// restricted lifetimes that do not consume the iterator.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// // First, we declare a type which has `iter_mut` method to get the `IterMut`
+    /// // struct (&[usize here]):
+    /// let mut slice = &mut [1, 2, 3];
+    ///
+    /// {
+    ///     // Then, we get the iterator:
+    ///     let mut iter = slice.iter_mut();
+    ///     // We move to next element:
+    ///     iter.next();
+    ///     // So if we print what `into_slice` method returns here, we have "[2, 3]":
+    ///     println!("{:?}", iter.into_slice());
+    /// }
+    ///
+    /// // Now let's modify a value of the slice:
+    /// {
+    ///     // First we get back the iterator:
+    ///     let mut iter = slice.iter_mut();
+    ///     // We change the value of the first element of the slice returned by the `next` method:
+    ///     *iter.next().unwrap() += 1;
+    /// }
+    /// // Now slice is "[2, 2, 3]":
+    /// println!("{:?}", slice);
+    /// ```
     #[stable(feature = "iter_to_slice", since = "1.4.0")]
     pub fn into_slice(self) -> &'a mut [T] {
         make_mut_slice!(self.ptr, self.end)
@@ -1835,4 +1940,3 @@ macro_rules! impl_marker_for {
 
 impl_marker_for!(BytewiseEquality,
                  u8 i8 u16 i16 u32 i32 u64 i64 usize isize char bool);
-

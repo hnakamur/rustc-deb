@@ -14,23 +14,22 @@ use std::collections::HashSet;
 use std::iter::once;
 
 use syntax::ast;
-use syntax::attr::AttrMetaMethods;
 use rustc::hir;
 
-use rustc::middle::cstore::{self, CrateStore};
+use rustc::middle::cstore;
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
+use rustc::hir::print as pprust;
 use rustc::ty::{self, TyCtxt};
 use rustc::ty::subst;
-use rustc::middle::stability;
 
 use rustc_const_eval::lookup_const_by_id;
 
-use core::DocContext;
+use core::{DocContext, DocAccessLevels};
 use doctree;
-use clean::{self, Attributes, GetDefId};
+use clean::{self, GetDefId};
 
-use super::{Clean, ToSource};
+use super::Clean;
 
 /// Attempt to inline the definition of a local node id into this AST.
 ///
@@ -69,13 +68,14 @@ pub fn try_inline(cx: &DocContext, id: ast::NodeId, into: Option<ast::Name>)
     })
 }
 
-fn try_inline_def(cx: &DocContext, tcx: &TyCtxt,
-                  def: Def) -> Option<Vec<clean::Item>> {
+fn try_inline_def<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                            def: Def) -> Option<Vec<clean::Item>> {
     let mut ret = Vec::new();
     let did = def.def_id();
     let inner = match def {
         Def::Trait(did) => {
             record_extern_fqn(cx, did, clean::TypeTrait);
+            ret.extend(build_impls(cx, tcx, did));
             clean::TraitItem(build_external_trait(cx, tcx, did))
         }
         Def::Fn(did) => {
@@ -116,22 +116,22 @@ fn try_inline_def(cx: &DocContext, tcx: &TyCtxt,
         }
         _ => return None,
     };
-    cx.inlined.borrow_mut().as_mut().unwrap().insert(did);
+    cx.renderinfo.borrow_mut().inlined.insert(did);
     ret.push(clean::Item {
         source: clean::Span::empty(),
         name: Some(tcx.item_name(did).to_string()),
         attrs: load_attrs(cx, tcx, did),
         inner: inner,
-        visibility: Some(hir::Public),
-        stability: stability::lookup_stability(tcx, did).clean(cx),
-        deprecation: stability::lookup_deprecation(tcx, did).clean(cx),
+        visibility: Some(clean::Public),
+        stability: tcx.lookup_stability(did).clean(cx),
+        deprecation: tcx.lookup_deprecation(did).clean(cx),
         def_id: did,
     });
     Some(ret)
 }
 
-pub fn load_attrs(cx: &DocContext, tcx: &TyCtxt,
-                  did: DefId) -> Vec<clean::Attribute> {
+pub fn load_attrs<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                            did: DefId) -> Vec<clean::Attribute> {
     tcx.get_attrs(did).iter().map(|a| a.clean(cx)).collect()
 }
 
@@ -146,12 +146,12 @@ pub fn record_extern_fqn(cx: &DocContext, did: DefId, kind: clean::TypeKind) {
             elem.data.to_string()
         });
         let fqn = once(crate_name).chain(relative).collect();
-        cx.external_paths.borrow_mut().as_mut().unwrap().insert(did, (fqn, kind));
+        cx.renderinfo.borrow_mut().external_paths.insert(did, (fqn, kind));
     }
 }
 
-pub fn build_external_trait(cx: &DocContext, tcx: &TyCtxt,
-                            did: DefId) -> clean::Trait {
+pub fn build_external_trait<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                      did: DefId) -> clean::Trait {
     let def = tcx.lookup_trait_def(did);
     let trait_items = tcx.trait_items(did).clean(cx);
     let predicates = tcx.lookup_predicates(did);
@@ -166,7 +166,8 @@ pub fn build_external_trait(cx: &DocContext, tcx: &TyCtxt,
     }
 }
 
-fn build_external_function(cx: &DocContext, tcx: &TyCtxt, did: DefId) -> clean::Function {
+fn build_external_function<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                     did: DefId) -> clean::Function {
     let t = tcx.lookup_item_type(did);
     let (decl, style, abi) = match t.ty.sty {
         ty::TyFnDef(_, _, ref f) => ((did, &f.sig).clean(cx), f.unsafety, f.abi),
@@ -189,7 +190,8 @@ fn build_external_function(cx: &DocContext, tcx: &TyCtxt, did: DefId) -> clean::
     }
 }
 
-fn build_struct(cx: &DocContext, tcx: &TyCtxt, did: DefId) -> clean::Struct {
+fn build_struct<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          did: DefId) -> clean::Struct {
     let t = tcx.lookup_item_type(did);
     let predicates = tcx.lookup_predicates(did);
     let variant = tcx.lookup_adt_def(did).struct_variant();
@@ -207,7 +209,8 @@ fn build_struct(cx: &DocContext, tcx: &TyCtxt, did: DefId) -> clean::Struct {
     }
 }
 
-fn build_type(cx: &DocContext, tcx: &TyCtxt, did: DefId) -> clean::ItemEnum {
+fn build_type<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                        did: DefId) -> clean::ItemEnum {
     let t = tcx.lookup_item_type(did);
     let predicates = tcx.lookup_predicates(did);
     match t.ty.sty {
@@ -227,9 +230,9 @@ fn build_type(cx: &DocContext, tcx: &TyCtxt, did: DefId) -> clean::ItemEnum {
     }, false)
 }
 
-pub fn build_impls(cx: &DocContext,
-                   tcx: &TyCtxt,
-                   did: DefId) -> Vec<clean::Item> {
+pub fn build_impls<'a, 'tcx>(cx: &DocContext,
+                             tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                             did: DefId) -> Vec<clean::Item> {
     tcx.populate_inherent_implementations_for_type_if_necessary(did);
     let mut impls = Vec::new();
 
@@ -247,24 +250,17 @@ pub fn build_impls(cx: &DocContext,
     // Primarily, the impls will be used to populate the documentation for this
     // type being inlined, but impls can also be used when generating
     // documentation for primitives (no way to find those specifically).
-    if !cx.all_crate_impls.borrow_mut().contains_key(&did.krate) {
-        let mut impls = Vec::new();
+    if cx.populated_crate_impls.borrow_mut().insert(did.krate) {
         for item in tcx.sess.cstore.crate_top_level_items(did.krate) {
             populate_impls(cx, tcx, item.def, &mut impls);
         }
-        cx.all_crate_impls.borrow_mut().insert(did.krate, impls);
 
-        fn populate_impls(cx: &DocContext, tcx: &TyCtxt,
-                          def: cstore::DefLike,
-                          impls: &mut Vec<clean::Item>) {
+        fn populate_impls<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                    def: cstore::DefLike,
+                                    impls: &mut Vec<clean::Item>) {
             match def {
                 cstore::DlImpl(did) => build_impl(cx, tcx, did, impls),
                 cstore::DlDef(Def::Mod(did)) => {
-                    // Don't recurse if this is a #[doc(hidden)] module
-                    if load_attrs(cx, tcx, did).list("doc").has_word("hidden") {
-                        return;
-                    }
-
                     for item in tcx.sess.cstore.item_children(did) {
                         populate_impls(cx, tcx, item.def, impls)
                     }
@@ -274,37 +270,24 @@ pub fn build_impls(cx: &DocContext,
         }
     }
 
-    let mut candidates = cx.all_crate_impls.borrow_mut();
-    let candidates = candidates.get_mut(&did.krate).unwrap();
-    for i in (0..candidates.len()).rev() {
-        let remove = match candidates[i].inner {
-            clean::ImplItem(ref i) => {
-                i.for_.def_id() == Some(did) || i.for_.primitive_type().is_some()
-            }
-            _ => continue,
-        };
-        if remove {
-            impls.push(candidates.swap_remove(i));
-        }
-    }
-
-    return impls;
+    impls
 }
 
-pub fn build_impl(cx: &DocContext,
-                  tcx: &TyCtxt,
-                  did: DefId,
-                  ret: &mut Vec<clean::Item>) {
-    if !cx.inlined.borrow_mut().as_mut().unwrap().insert(did) {
+pub fn build_impl<'a, 'tcx>(cx: &DocContext,
+                            tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                            did: DefId,
+                            ret: &mut Vec<clean::Item>) {
+    if !cx.renderinfo.borrow_mut().inlined.insert(did) {
         return
     }
 
     let attrs = load_attrs(cx, tcx, did);
     let associated_trait = tcx.impl_trait_ref(did);
-    if let Some(ref t) = associated_trait {
-        // If this is an impl for a #[doc(hidden)] trait, be sure to not inline
-        let trait_attrs = load_attrs(cx, tcx, t.def_id);
-        if trait_attrs.list("doc").has_word("hidden") {
+
+    // Only inline impl if the implemented trait is
+    // reachable in rustdoc generated documentation
+    if let Some(traitref) = associated_trait {
+        if !cx.access_levels.borrow().is_doc_reachable(traitref.def_id) {
             return
         }
     }
@@ -323,11 +306,22 @@ pub fn build_impl(cx: &DocContext,
             source: clean::Span::empty(),
             name: None,
             attrs: attrs,
-            visibility: Some(hir::Inherited),
-            stability: stability::lookup_stability(tcx, did).clean(cx),
-            deprecation: stability::lookup_deprecation(tcx, did).clean(cx),
+            visibility: Some(clean::Inherited),
+            stability: tcx.lookup_stability(did).clean(cx),
+            deprecation: tcx.lookup_deprecation(did).clean(cx),
             def_id: did,
         });
+    }
+
+    let ty = tcx.lookup_item_type(did);
+    let for_ = ty.ty.clean(cx);
+
+    // Only inline impl if the implementing type is
+    // reachable in rustdoc generated documentation
+    if let Some(did) = for_.def_id() {
+        if !cx.access_levels.borrow().is_doc_reachable(did) {
+            return
+        }
     }
 
     let predicates = tcx.lookup_predicates(did);
@@ -341,8 +335,8 @@ pub fn build_impl(cx: &DocContext,
                 let did = assoc_const.def_id;
                 let type_scheme = tcx.lookup_item_type(did);
                 let default = if assoc_const.has_value {
-                    Some(lookup_const_by_id(tcx, did, None)
-                         .unwrap().0.span.to_src(cx))
+                    Some(pprust::expr_to_string(
+                        lookup_const_by_id(tcx, did, None).unwrap().0))
                 } else {
                     None
                 };
@@ -355,8 +349,8 @@ pub fn build_impl(cx: &DocContext,
                     source: clean::Span::empty(),
                     attrs: vec![],
                     visibility: None,
-                    stability: stability::lookup_stability(tcx, did).clean(cx),
-                    deprecation: stability::lookup_deprecation(tcx, did).clean(cx),
+                    stability: tcx.lookup_stability(did).clean(cx),
+                    deprecation: tcx.lookup_deprecation(did).clean(cx),
                     def_id: did
                 })
             }
@@ -367,7 +361,7 @@ pub fn build_impl(cx: &DocContext,
                 let mut item = method.clean(cx);
                 item.inner = match item.inner.clone() {
                     clean::TyMethodItem(clean::TyMethod {
-                        unsafety, decl, self_, generics, abi
+                        unsafety, decl, generics, abi
                     }) => {
                         let constness = if tcx.sess.cstore.is_const_fn(did) {
                             hir::Constness::Const
@@ -379,7 +373,6 @@ pub fn build_impl(cx: &DocContext,
                             unsafety: unsafety,
                             constness: constness,
                             decl: decl,
-                            self_: self_,
                             generics: generics,
                             abi: abi
                         })
@@ -404,15 +397,14 @@ pub fn build_impl(cx: &DocContext,
                     source: clean::Span::empty(),
                     attrs: vec![],
                     visibility: None,
-                    stability: stability::lookup_stability(tcx, did).clean(cx),
-                    deprecation: stability::lookup_deprecation(tcx, did).clean(cx),
+                    stability: tcx.lookup_stability(did).clean(cx),
+                    deprecation: tcx.lookup_deprecation(did).clean(cx),
                     def_id: did
                 })
             }
         }
     }).collect::<Vec<_>>();
     let polarity = tcx.trait_impl_polarity(did);
-    let ty = tcx.lookup_item_type(did);
     let trait_ = associated_trait.clean(cx).map(|bound| {
         match bound {
             clean::TraitBound(polyt, _) => polyt.trait_,
@@ -436,7 +428,7 @@ pub fn build_impl(cx: &DocContext,
             derived: clean::detect_derived(&attrs),
             provided_trait_methods: provided,
             trait_: trait_,
-            for_: ty.ty.clean(cx),
+            for_: for_,
             generics: (&ty.generics, &predicates, subst::TypeSpace).clean(cx),
             items: trait_items,
             polarity: polarity.map(|p| { p.clean(cx) }),
@@ -444,15 +436,15 @@ pub fn build_impl(cx: &DocContext,
         source: clean::Span::empty(),
         name: None,
         attrs: attrs,
-        visibility: Some(hir::Inherited),
-        stability: stability::lookup_stability(tcx, did).clean(cx),
-        deprecation: stability::lookup_deprecation(tcx, did).clean(cx),
+        visibility: Some(clean::Inherited),
+        stability: tcx.lookup_stability(did).clean(cx),
+        deprecation: tcx.lookup_deprecation(did).clean(cx),
         def_id: did,
     });
 }
 
-fn build_module(cx: &DocContext, tcx: &TyCtxt,
-                did: DefId) -> clean::Module {
+fn build_module<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          did: DefId) -> clean::Module {
     let mut items = Vec::new();
     fill_in(cx, tcx, did, &mut items);
     return clean::Module {
@@ -460,8 +452,8 @@ fn build_module(cx: &DocContext, tcx: &TyCtxt,
         is_crate: false,
     };
 
-    fn fill_in(cx: &DocContext, tcx: &TyCtxt, did: DefId,
-               items: &mut Vec<clean::Item>) {
+    fn fill_in<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                         did: DefId, items: &mut Vec<clean::Item>) {
         // If we're reexporting a reexport it may actually reexport something in
         // two namespaces, so the target may be listed twice. Make sure we only
         // visit each node at most once.
@@ -486,10 +478,8 @@ fn build_module(cx: &DocContext, tcx: &TyCtxt,
     }
 }
 
-fn build_const(cx: &DocContext, tcx: &TyCtxt,
-               did: DefId) -> clean::Constant {
-    use rustc::hir::print as pprust;
-
+fn build_const<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                         did: DefId) -> clean::Constant {
     let (expr, ty) = lookup_const_by_id(tcx, did, None).unwrap_or_else(|| {
         panic!("expected lookup_const_by_id to succeed for {:?}", did);
     });
@@ -503,9 +493,9 @@ fn build_const(cx: &DocContext, tcx: &TyCtxt,
     }
 }
 
-fn build_static(cx: &DocContext, tcx: &TyCtxt,
-                did: DefId,
-                mutable: bool) -> clean::Static {
+fn build_static<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          did: DefId,
+                          mutable: bool) -> clean::Static {
     clean::Static {
         type_: tcx.lookup_item_type(did).ty.clean(cx),
         mutability: if mutable {clean::Mutable} else {clean::Immutable},

@@ -28,7 +28,6 @@ use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::errors::{ColorConfig, Handler};
 use syntax::parse;
-use syntax::parse::lexer::Reader;
 use syntax::parse::token::InternedString;
 use syntax::feature_gate::UnstableFeatures;
 
@@ -49,7 +48,9 @@ pub enum OptLevel {
     No, // -O0
     Less, // -O1
     Default, // -O2
-    Aggressive // -O3
+    Aggressive, // -O3
+    Size, // -Os
+    SizeMin, // -Oz
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -299,6 +300,7 @@ pub enum CrateType {
     CrateTypeDylib,
     CrateTypeRlib,
     CrateTypeStaticlib,
+    CrateTypeCdylib,
 }
 
 #[derive(Clone)]
@@ -312,6 +314,21 @@ impl Passes {
         match *self {
             SomePasses(ref v) => v.is_empty(),
             AllPasses => false,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub enum PanicStrategy {
+    Unwind,
+    Abort,
+}
+
+impl PanicStrategy {
+    pub fn desc(&self) -> &str {
+        match *self {
+            PanicStrategy::Unwind => "unwind",
+            PanicStrategy::Abort => "abort",
         }
     }
 }
@@ -401,11 +418,13 @@ macro_rules! options {
             Some("a space-separated list of passes, or `all`");
         pub const parse_opt_uint: Option<&'static str> =
             Some("a number");
+        pub const parse_panic_strategy: Option<&'static str> =
+            Some("either `panic` or `abort`");
     }
 
     #[allow(dead_code)]
     mod $mod_set {
-        use super::{$struct_name, Passes, SomePasses, AllPasses};
+        use super::{$struct_name, Passes, SomePasses, AllPasses, PanicStrategy};
 
         $(
             pub fn $opt(cg: &mut $struct_name, v: Option<&str>) -> bool {
@@ -509,6 +528,15 @@ macro_rules! options {
                 }
             }
         }
+
+        fn parse_panic_strategy(slot: &mut PanicStrategy, v: Option<&str>) -> bool {
+            match v {
+                Some("unwind") => *slot = PanicStrategy::Unwind,
+                Some("abort") => *slot = PanicStrategy::Abort,
+                _ => return false
+            }
+            true
+        }
     }
 ) }
 
@@ -568,12 +596,14 @@ options! {CodegenOptions, CodegenSetter, basic_codegen_options,
     debuginfo: Option<usize> = (None, parse_opt_uint,
         "debug info emission level, 0 = no debug info, 1 = line tables only, \
          2 = full debug info with variable and type information"),
-    opt_level: Option<usize> = (None, parse_opt_uint,
-        "optimize with possible levels 0-3"),
+    opt_level: Option<String> = (None, parse_opt_string,
+        "optimize with possible levels 0-3, s, or z"),
     debug_assertions: Option<bool> = (None, parse_opt_bool,
         "explicitly enable the cfg(debug_assertions) directive"),
     inline_threshold: Option<usize> = (None, parse_opt_uint,
         "set the inlining threshold for"),
+    panic: PanicStrategy = (PanicStrategy::Unwind, parse_panic_strategy,
+        "panic strategy to compile crate with"),
 }
 
 
@@ -619,7 +649,9 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
     ls: bool = (false, parse_bool,
         "list the symbols defined by a library crate"),
     save_analysis: bool = (false, parse_bool,
-        "write syntax and type analysis information in addition to normal output"),
+        "write syntax and type analysis (in JSON format) information in addition to normal output"),
+    save_analysis_csv: bool = (false, parse_bool,
+        "write syntax and type analysis (in CSV format) information in addition to normal output"),
     print_move_fragments: bool = (false, parse_bool,
         "print out move-fragment data for every fn"),
     flowgraph_print_loans: bool = (false, parse_bool,
@@ -692,6 +724,7 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
     let os = &sess.target.target.target_os;
     let env = &sess.target.target.target_env;
     let vendor = &sess.target.target.target_vendor;
+    let max_atomic_width = sess.target.target.options.max_atomic_width;
 
     let fam = if let Some(ref fam) = sess.target.target.options.target_family {
         intern(fam)
@@ -717,6 +750,15 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
     }
     if sess.target.target.options.has_elf_tls {
         ret.push(attr::mk_word_item(InternedString::new("target_thread_local")));
+    }
+    for &i in &[8, 16, 32, 64, 128] {
+        if i <= max_atomic_width {
+            let s = i.to_string();
+            ret.push(mk(InternedString::new("target_has_atomic"), intern(&s)));
+            if &s == wordsz {
+                ret.push(mk(InternedString::new("target_has_atomic"), intern("ptr")));
+            }
+        }
     }
     if sess.opts.debug_assertions {
         ret.push(attr::mk_word_item(InternedString::new("debug_assertions")));
@@ -889,10 +931,11 @@ pub fn rustc_short_optgroups() -> Vec<RustcOptGroup> {
     vec![
         opt::flag_s("h", "help", "Display this message"),
         opt::multi_s("", "cfg", "Configure the compilation environment", "SPEC"),
-        opt::multi_s("L", "",   "Add a directory to the library search path",
-                   "[KIND=]PATH"),
+        opt::multi_s("L", "",   "Add a directory to the library search path. The
+                             optional KIND can be one of dependency, crate, native,
+                             framework or all (the default).", "[KIND=]PATH"),
         opt::multi_s("l", "",   "Link the generated crate(s) to the specified native
-                             library NAME. The optional KIND can be one of,
+                             library NAME. The optional KIND can be one of
                              static, dylib, or framework. If omitted, dylib is
                              assumed.", "[KIND=]NAME"),
         opt::multi_s("", "crate-type", "Comma separated list of types of crates
@@ -1123,13 +1166,20 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
             }
             OptLevel::Default
         } else {
-            match cg.opt_level {
-                None => OptLevel::No,
-                Some(0) => OptLevel::No,
-                Some(1) => OptLevel::Less,
-                Some(2) => OptLevel::Default,
-                Some(3) => OptLevel::Aggressive,
-                Some(arg) => {
+            match (cg.opt_level.as_ref().map(String::as_ref),
+                   nightly_options::is_nightly_build()) {
+                (None, _) => OptLevel::No,
+                (Some("0"), _) => OptLevel::No,
+                (Some("1"), _) => OptLevel::Less,
+                (Some("2"), _) => OptLevel::Default,
+                (Some("3"), _) => OptLevel::Aggressive,
+                (Some("s"), true) => OptLevel::Size,
+                (Some("z"), true) => OptLevel::SizeMin,
+                (Some("s"), false) | (Some("z"), false) => {
+                    early_error(error_format, &format!("the optimizations s or z are only \
+                                                        accepted on the nightly compiler"));
+                },
+                (Some(arg), _) => {
                     early_error(error_format, &format!("optimization level needs to be \
                                                       between 0-3 (instead was `{}`)",
                                                      arg));
@@ -1277,6 +1327,7 @@ pub fn parse_crate_types_from_list(list_list: Vec<String>) -> Result<Vec<CrateTy
                 "rlib"      => CrateTypeRlib,
                 "staticlib" => CrateTypeStaticlib,
                 "dylib"     => CrateTypeDylib,
+                "cdylib"    => CrateTypeCdylib,
                 "bin"       => CrateTypeExecutable,
                 _ => {
                     return Err(format!("unknown crate type: `{}`",
@@ -1302,7 +1353,7 @@ pub mod nightly_options {
         is_nightly_build() && matches.opt_strs("Z").iter().any(|x| *x == "unstable-options")
     }
 
-    fn is_nightly_build() -> bool {
+    pub fn is_nightly_build() -> bool {
         match get_unstable_features_setting() {
             UnstableFeatures::Allow | UnstableFeatures::Cheat => true,
             _ => false,
@@ -1344,7 +1395,7 @@ pub mod nightly_options {
                     early_error(ErrorOutputType::default(), &msg);
                 }
                 OptionStability::UnstableButNotReally => {
-                    let msg = format!("the option `{}` is is unstable and should \
+                    let msg = format!("the option `{}` is unstable and should \
                                        only be used on the nightly compiler, but \
                                        it is currently accepted for backwards \
                                        compatibility; this will soon change, \
@@ -1364,13 +1415,15 @@ impl fmt::Display for CrateType {
             CrateTypeExecutable => "bin".fmt(f),
             CrateTypeDylib => "dylib".fmt(f),
             CrateTypeRlib => "rlib".fmt(f),
-            CrateTypeStaticlib => "staticlib".fmt(f)
+            CrateTypeStaticlib => "staticlib".fmt(f),
+            CrateTypeCdylib => "cdylib".fmt(f),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use dep_graph::DepGraph;
     use middle::cstore::DummyCrateStore;
     use session::config::{build_configuration, build_session_options};
     use session::build_session;
@@ -1390,6 +1443,7 @@ mod tests {
     // When the user supplies --test we should implicitly supply --cfg test
     #[test]
     fn test_switch_implies_cfg_test() {
+        let dep_graph = DepGraph::new(false);
         let matches =
             &match getopts(&["--test".to_string()], &optgroups()) {
               Ok(m) => m,
@@ -1397,7 +1451,7 @@ mod tests {
             };
         let registry = diagnostics::registry::Registry::new(&[]);
         let sessopts = build_session_options(matches);
-        let sess = build_session(sessopts, None, registry, Rc::new(DummyCrateStore));
+        let sess = build_session(sessopts, &dep_graph, None, registry, Rc::new(DummyCrateStore));
         let cfg = build_configuration(&sess);
         assert!((attr::contains_name(&cfg[..], "test")));
     }
@@ -1406,6 +1460,7 @@ mod tests {
     // another --cfg test
     #[test]
     fn test_switch_implies_cfg_test_unless_cfg_test() {
+        let dep_graph = DepGraph::new(false);
         let matches =
             &match getopts(&["--test".to_string(), "--cfg=test".to_string()],
                            &optgroups()) {
@@ -1416,7 +1471,7 @@ mod tests {
             };
         let registry = diagnostics::registry::Registry::new(&[]);
         let sessopts = build_session_options(matches);
-        let sess = build_session(sessopts, None, registry,
+        let sess = build_session(sessopts, &dep_graph, None, registry,
                                  Rc::new(DummyCrateStore));
         let cfg = build_configuration(&sess);
         let mut test_items = cfg.iter().filter(|m| m.name() == "test");
@@ -1426,13 +1481,14 @@ mod tests {
 
     #[test]
     fn test_can_print_warnings() {
+        let dep_graph = DepGraph::new(false);
         {
             let matches = getopts(&[
                 "-Awarnings".to_string()
             ], &optgroups()).unwrap();
             let registry = diagnostics::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
-            let sess = build_session(sessopts, None, registry,
+            let sess = build_session(sessopts, &dep_graph, None, registry,
                                      Rc::new(DummyCrateStore));
             assert!(!sess.diagnostic().can_emit_warnings);
         }
@@ -1444,7 +1500,7 @@ mod tests {
             ], &optgroups()).unwrap();
             let registry = diagnostics::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
-            let sess = build_session(sessopts, None, registry,
+            let sess = build_session(sessopts, &dep_graph, None, registry,
                                      Rc::new(DummyCrateStore));
             assert!(sess.diagnostic().can_emit_warnings);
         }
@@ -1455,7 +1511,7 @@ mod tests {
             ], &optgroups()).unwrap();
             let registry = diagnostics::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
-            let sess = build_session(sessopts, None, registry,
+            let sess = build_session(sessopts, &dep_graph, None, registry,
                                      Rc::new(DummyCrateStore));
             assert!(sess.diagnostic().can_emit_warnings);
         }

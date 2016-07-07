@@ -9,38 +9,41 @@
 // except according to those terms.
 
 use hair::cx::Cx;
-use rustc::middle::region::{CodeExtent, CodeExtentData};
-use rustc::ty::{FnOutput, Ty};
+use rustc::middle::region::{CodeExtent, CodeExtentData, ROOT_CODE_EXTENT};
+use rustc::ty::{self, Ty};
 use rustc::mir::repr::*;
 use rustc_data_structures::fnv::FnvHashMap;
 use rustc::hir;
+use rustc::hir::pat_util::pat_is_binding;
 use std::ops::{Index, IndexMut};
+use syntax::abi::Abi;
 use syntax::ast;
 use syntax::codemap::Span;
+use syntax::parse::token::keywords;
 
-pub struct Builder<'a, 'tcx: 'a> {
-    hir: Cx<'a, 'tcx>,
+pub struct Builder<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
+    hir: Cx<'a, 'gcx, 'tcx>,
     cfg: CFG<'tcx>,
 
     fn_span: Span,
 
-    // the current set of scopes, updated as we traverse;
-    // see the `scope` module for more details
+    /// the current set of scopes, updated as we traverse;
+    /// see the `scope` module for more details
     scopes: Vec<scope::Scope<'tcx>>,
 
-    // for each scope, a span of blocks that defines it;
-    // we track these for use in region and borrow checking,
-    // but these are liable to get out of date once optimization
-    // begins. They are also hopefully temporary, and will be
-    // no longer needed when we adopt graph-based regions.
+    ///  for each scope, a span of blocks that defines it;
+    ///  we track these for use in region and borrow checking,
+    ///  but these are liable to get out of date once optimization
+    ///  begins. They are also hopefully temporary, and will be
+    ///  no longer needed when we adopt graph-based regions.
     scope_auxiliary: ScopeAuxiliaryVec,
 
-    // the current set of loops; see the `scope` module for more
-    // details
+    /// the current set of loops; see the `scope` module for more
+    /// details
     loop_scopes: Vec<scope::LoopScope>,
 
-    // the vector of all scopes that we have created thus far;
-    // we track this for debuginfo later
+    /// the vector of all scopes that we have created thus far;
+    /// we track this for debuginfo later
     scope_datas: Vec<ScopeData>,
 
     var_decls: Vec<VarDecl<'tcx>>,
@@ -48,9 +51,11 @@ pub struct Builder<'a, 'tcx: 'a> {
     temp_decls: Vec<TempDecl<'tcx>>,
     unit_temp: Option<Lvalue<'tcx>>,
 
-    // cached block with a RESUME terminator; we create this at the
-    // first panic
+    /// cached block with the RESUME terminator; this is created
+    /// when first set of cleanups are built.
     cached_resume_block: Option<BasicBlock>,
+    /// cached block with the RETURN terminator
+    cached_return_block: Option<BasicBlock>,
 }
 
 struct CFG<'tcx> {
@@ -79,7 +84,7 @@ pub struct ScopeAuxiliary {
     pub postdoms: Vec<Location>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Location {
     /// the location is within this block
     pub block: BasicBlock,
@@ -155,126 +160,201 @@ macro_rules! unpack {
 ///////////////////////////////////////////////////////////////////////////
 /// the main entry point for building MIR for a function
 
-pub fn construct<'a,'tcx>(hir: Cx<'a,'tcx>,
-                          span: Span,
-                          fn_id: ast::NodeId,
-                          body_id: ast::NodeId,
-                          implicit_arguments: Vec<Ty<'tcx>>,
-                          explicit_arguments: Vec<(Ty<'tcx>, &'tcx hir::Pat)>,
-                          return_ty: FnOutput<'tcx>,
-                          ast_block: &'tcx hir::Block)
-                          -> (Mir<'tcx>, ScopeAuxiliaryVec) {
+pub fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
+                                       fn_id: ast::NodeId,
+                                       arguments: A,
+                                       return_ty: ty::FnOutput<'gcx>,
+                                       ast_block: &'gcx hir::Block)
+                                       -> (Mir<'tcx>, ScopeAuxiliaryVec)
+    where A: Iterator<Item=(Ty<'gcx>, Option<&'gcx hir::Pat>)>
+{
     let tcx = hir.tcx();
-    let cfg = CFG { basic_blocks: vec![] };
+    let span = tcx.map.span(fn_id);
+    let mut builder = Builder::new(hir, span);
 
-    let mut builder = Builder {
-        hir: hir,
-        cfg: cfg,
-        fn_span: span,
-        scopes: vec![],
-        scope_datas: vec![],
-        scope_auxiliary: ScopeAuxiliaryVec { vec: vec![] },
-        loop_scopes: vec![],
-        temp_decls: vec![],
-        var_decls: vec![],
-        var_indices: FnvHashMap(),
-        unit_temp: None,
-        cached_resume_block: None,
-    };
-
-    assert_eq!(builder.cfg.start_new_block(), START_BLOCK);
-    assert_eq!(builder.cfg.start_new_block(), END_BLOCK);
-
-
-    let mut arg_decls = None; // assigned to `Some` in closures below
+    let body_id = ast_block.id;
     let call_site_extent =
         tcx.region_maps.lookup_code_extent(
             CodeExtentData::CallSiteScope { fn_id: fn_id, body_id: body_id });
-    let _ = builder.in_scope(call_site_extent, START_BLOCK, |builder, call_site_scope_id| {
-        let mut block = START_BLOCK;
-        let arg_extent =
-            tcx.region_maps.lookup_code_extent(
-                CodeExtentData::ParameterScope { fn_id: fn_id, body_id: body_id });
-        unpack!(block = builder.in_scope(arg_extent, block, |builder, arg_scope_id| {
-            arg_decls = Some(unpack!(block = builder.args_and_body(block,
-                                                                   implicit_arguments,
-                                                                   explicit_arguments,
-                                                                   arg_scope_id,
-                                                                   ast_block)));
-            block.unit()
+    let arg_extent =
+        tcx.region_maps.lookup_code_extent(
+            CodeExtentData::ParameterScope { fn_id: fn_id, body_id: body_id });
+    let mut block = START_BLOCK;
+    let mut arg_decls = unpack!(block = builder.in_scope(call_site_extent, block,
+                                                         |builder, call_site_scope_id| {
+        let arg_decls = unpack!(block = builder.in_scope(arg_extent, block,
+                                                         |builder, arg_scope_id| {
+            builder.args_and_body(block, return_ty, arguments, arg_scope_id, ast_block)
         }));
 
+        let return_block = builder.return_block();
         builder.cfg.terminate(block, call_site_scope_id, span,
-                              TerminatorKind::Goto { target: END_BLOCK });
-        builder.cfg.terminate(END_BLOCK, call_site_scope_id, span,
+                              TerminatorKind::Goto { target: return_block });
+        builder.cfg.terminate(return_block, call_site_scope_id, span,
                               TerminatorKind::Return);
+        return_block.and(arg_decls)
+    }));
+    assert_eq!(block, builder.return_block());
 
-        END_BLOCK.unit()
+    match tcx.node_id_to_type(fn_id).sty {
+        ty::TyFnDef(_, _, f) if f.abi == Abi::RustCall => {
+            // RustCall pseudo-ABI untuples the last argument.
+            if let Some(arg_decl) = arg_decls.last_mut() {
+                arg_decl.spread = true;
+            }
+        }
+        _ => {}
+    }
+
+    // Gather the upvars of a closure, if any.
+    let upvar_decls: Vec<_> = tcx.with_freevars(fn_id, |freevars| {
+        freevars.iter().map(|fv| {
+            let by_ref = tcx.upvar_capture(ty::UpvarId {
+                var_id: fv.def.var_id(),
+                closure_expr_id: fn_id
+            }).map_or(false, |capture| match capture {
+                ty::UpvarCapture::ByValue => false,
+                ty::UpvarCapture::ByRef(..) => true
+            });
+            let mut decl = UpvarDecl {
+                debug_name: keywords::Invalid.name(),
+                by_ref: by_ref
+            };
+            if let Some(hir::map::NodeLocal(pat)) = tcx.map.find(fv.def.var_id()) {
+                if let hir::PatKind::Ident(_, ref ident, _) = pat.node {
+                    decl.debug_name = ident.node;
+                }
+            }
+            decl
+        }).collect()
     });
 
-    assert!(
-        builder.cfg.basic_blocks
-                   .iter()
-                   .enumerate()
-                   .all(|(index, block)| {
-                       if block.terminator.is_none() {
-                           bug!("no terminator on block {:?} in fn {:?}",
-                                index, fn_id)
-                       }
-                       true
-                   }));
-
-    (
-        Mir {
-            basic_blocks: builder.cfg.basic_blocks,
-            scopes: builder.scope_datas,
-            var_decls: builder.var_decls,
-            arg_decls: arg_decls.take().expect("args never built?"),
-            temp_decls: builder.temp_decls,
-            return_ty: return_ty,
-            span: span
-        },
-        builder.scope_auxiliary,
-    )
+    builder.finish(upvar_decls, arg_decls, return_ty)
 }
 
-impl<'a,'tcx> Builder<'a,'tcx> {
-    fn args_and_body(&mut self,
-                     mut block: BasicBlock,
-                     implicit_arguments: Vec<Ty<'tcx>>,
-                     explicit_arguments: Vec<(Ty<'tcx>, &'tcx hir::Pat)>,
-                     argument_scope_id: ScopeId,
-                     ast_block: &'tcx hir::Block)
-                     -> BlockAnd<Vec<ArgDecl<'tcx>>>
+pub fn construct_const<'a, 'gcx, 'tcx>(hir: Cx<'a, 'gcx, 'tcx>,
+                                       item_id: ast::NodeId,
+                                       ast_expr: &'tcx hir::Expr)
+                                       -> (Mir<'tcx>, ScopeAuxiliaryVec) {
+    let tcx = hir.tcx();
+    let span = tcx.map.span(item_id);
+    let mut builder = Builder::new(hir, span);
+
+    let extent = ROOT_CODE_EXTENT;
+    let mut block = START_BLOCK;
+    let _ = builder.in_scope(extent, block, |builder, call_site_scope_id| {
+        let expr = builder.hir.mirror(ast_expr);
+        unpack!(block = builder.into(&Lvalue::ReturnPointer, block, expr));
+
+        let return_block = builder.return_block();
+        builder.cfg.terminate(block, call_site_scope_id, span,
+                              TerminatorKind::Goto { target: return_block });
+        builder.cfg.terminate(return_block, call_site_scope_id, span,
+                              TerminatorKind::Return);
+
+        return_block.unit()
+    });
+
+    let ty = tcx.expr_ty_adjusted(ast_expr);
+    builder.finish(vec![], vec![], ty::FnConverging(ty))
+}
+
+impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
+    fn new(hir: Cx<'a, 'gcx, 'tcx>, span: Span) -> Builder<'a, 'gcx, 'tcx> {
+        let mut builder = Builder {
+            hir: hir,
+            cfg: CFG { basic_blocks: vec![] },
+            fn_span: span,
+            scopes: vec![],
+            scope_datas: vec![],
+            scope_auxiliary: ScopeAuxiliaryVec { vec: vec![] },
+            loop_scopes: vec![],
+            temp_decls: vec![],
+            var_decls: vec![],
+            var_indices: FnvHashMap(),
+            unit_temp: None,
+            cached_resume_block: None,
+            cached_return_block: None
+        };
+
+        assert_eq!(builder.cfg.start_new_block(), START_BLOCK);
+
+        builder
+    }
+
+    fn finish(self,
+              upvar_decls: Vec<UpvarDecl>,
+              arg_decls: Vec<ArgDecl<'tcx>>,
+              return_ty: ty::FnOutput<'tcx>)
+              -> (Mir<'tcx>, ScopeAuxiliaryVec) {
+        for (index, block) in self.cfg.basic_blocks.iter().enumerate() {
+            if block.terminator.is_none() {
+                span_bug!(self.fn_span, "no terminator on block {:?}", index);
+            }
+        }
+
+        (Mir {
+            basic_blocks: self.cfg.basic_blocks,
+            scopes: self.scope_datas,
+            promoted: vec![],
+            var_decls: self.var_decls,
+            arg_decls: arg_decls,
+            temp_decls: self.temp_decls,
+            upvar_decls: upvar_decls,
+            return_ty: return_ty,
+            span: self.fn_span
+        }, self.scope_auxiliary)
+    }
+
+    fn args_and_body<A>(&mut self,
+                        mut block: BasicBlock,
+                        return_ty: ty::FnOutput<'tcx>,
+                        arguments: A,
+                        argument_scope_id: ScopeId,
+                        ast_block: &'gcx hir::Block)
+                        -> BlockAnd<Vec<ArgDecl<'tcx>>>
+        where A: Iterator<Item=(Ty<'gcx>, Option<&'gcx hir::Pat>)>
     {
         // to start, translate the argument patterns and collect the argument types.
-        let implicits = implicit_arguments.into_iter().map(|ty| (ty, None));
-        let explicits = explicit_arguments.into_iter().map(|(ty, pat)| (ty, Some(pat)));
-            let arg_decls =
-            implicits
-            .chain(explicits)
-            .enumerate()
-            .map(|(index, (ty, pattern))| {
-                let lvalue = Lvalue::Arg(index as u32);
-                if let Some(pattern) = pattern {
-                    let pattern = self.hir.irrefutable_pat(pattern);
-                    unpack!(block = self.lvalue_into_pattern(block,
-                                                             argument_scope_id,
-                                                             pattern,
-                                                             &lvalue));
+        let arg_decls = arguments.enumerate().map(|(index, (ty, pattern))| {
+            let lvalue = Lvalue::Arg(index as u32);
+            if let Some(pattern) = pattern {
+                let pattern = self.hir.irrefutable_pat(pattern);
+                unpack!(block = self.lvalue_into_pattern(block,
+                                                         argument_scope_id,
+                                                         pattern,
+                                                         &lvalue));
+            }
+
+            // Make sure we drop (parts of) the argument even when not matched on.
+            let argument_extent = self.scope_auxiliary[argument_scope_id].extent;
+            self.schedule_drop(pattern.as_ref().map_or(ast_block.span, |pat| pat.span),
+                               argument_extent, &lvalue, ty);
+
+            let mut name = keywords::Invalid.name();
+            if let Some(pat) = pattern {
+                if let hir::PatKind::Ident(_, ref ident, _) = pat.node {
+                    if pat_is_binding(&self.hir.tcx().def_map.borrow(), pat) {
+                        name = ident.node;
+                    }
                 }
+            }
 
-                // Make sure we drop (parts of) the argument even when not matched on.
-                let argument_extent = self.scope_auxiliary[argument_scope_id].extent;
-                self.schedule_drop(pattern.as_ref().map_or(ast_block.span, |pat| pat.span),
-                                   argument_extent, &lvalue, ty);
+            ArgDecl {
+                ty: ty,
+                spread: false,
+                debug_name: name
+            }
+        }).collect();
 
-                ArgDecl { ty: ty, spread: false }
-            })
-            .collect();
-
+        // FIXME(#32959): temporary hack for the issue at hand
+        let return_is_unit = if let ty::FnConverging(t) = return_ty {
+            t.is_nil()
+        } else {
+            false
+        };
         // start the first basic block and translate the body
-        unpack!(block = self.ast_block(&Lvalue::ReturnPointer, block, ast_block));
+        unpack!(block = self.ast_block(&Lvalue::ReturnPointer, return_is_unit, block, ast_block));
 
         block.and(arg_decls)
     }
@@ -287,6 +367,17 @@ impl<'a,'tcx> Builder<'a,'tcx> {
                 let tmp = self.temp(ty);
                 self.unit_temp = Some(tmp.clone());
                 tmp
+            }
+        }
+    }
+
+    fn return_block(&mut self) -> BasicBlock {
+        match self.cached_return_block {
+            Some(rb) => rb,
+            None => {
+                let rb = self.cfg.start_new_block();
+                self.cached_return_block = Some(rb);
+                rb
             }
         }
     }

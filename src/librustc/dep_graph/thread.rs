@@ -28,6 +28,7 @@ use super::DepGraphQuery;
 use super::DepNode;
 use super::edges::DepGraphEdges;
 
+#[derive(Debug)]
 pub enum DepMessage {
     Read(DepNode<DefId>),
     Write(DepNode<DefId>),
@@ -117,6 +118,8 @@ impl DepGraphThreadData {
     /// the buffer is full, this may swap.)
     #[inline]
     pub fn enqueue(&self, message: DepMessage) {
+        debug!("enqueue: {:?} tasks_pushed={}", message, self.tasks_pushed.get());
+
         // Regardless of whether dep graph construction is enabled, we
         // still want to check that we always have a valid task on the
         // stack when a read/write/etc event occurs.
@@ -176,6 +179,9 @@ pub fn main(swap_in: Receiver<Vec<DepMessage>>,
                 DepMessage::Query => query_out.send(edges.query()).unwrap(),
             }
         }
-        swap_out.send(messages).unwrap();
+        if let Err(_) = swap_out.send(messages) {
+            // the receiver must have been dropped already
+            break;
+        }
     }
 }

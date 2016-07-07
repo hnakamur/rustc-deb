@@ -14,8 +14,8 @@
 #![allow(missing_docs)]
 
 use char::CharExt;
-use cmp::{Eq, PartialOrd};
-use convert::From;
+use cmp::PartialOrd;
+use convert::{From, TryFrom};
 use fmt;
 use intrinsics;
 use marker::{Copy, Sized};
@@ -37,9 +37,34 @@ use slice::SliceExt;
 /// `wrapping_add`, or through the `Wrapping<T>` type, which says that
 /// all standard arithmetic operations on the underlying value are
 /// intended to have wrapping semantics.
+///
+/// # Examples
+///
+/// ```
+/// use std::num::Wrapping;
+///
+/// let zero = Wrapping(0u32);
+/// let one = Wrapping(1u32);
+///
+/// assert_eq!(std::u32::MAX, (zero - one).0);
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Default)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Hash)]
 pub struct Wrapping<T>(#[stable(feature = "rust1", since = "1.0.0")] pub T);
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: fmt::Debug> fmt::Debug for Wrapping<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[stable(feature = "wrapping_display", since = "1.10.0")]
+impl<T: fmt::Display> fmt::Display for Wrapping<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 mod wrapping;
 
@@ -149,7 +174,7 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// assert_eq!(u32::from_str_radix("A", 16), Ok(10));
+        /// assert_eq!(i32::from_str_radix("A", 16), Ok(10));
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         pub fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
@@ -163,9 +188,9 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0b01001100u8;
+        /// let n = -0b1000_0000i8;
         ///
-        /// assert_eq!(n.count_ones(), 3);
+        /// assert_eq!(n.count_ones(), 1);
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
@@ -178,9 +203,9 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0b01001100u8;
+        /// let n = -0b1000_0000i8;
         ///
-        /// assert_eq!(n.count_zeros(), 5);
+        /// assert_eq!(n.count_zeros(), 7);
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
@@ -196,9 +221,9 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0b0101000u16;
+        /// let n = -1i16;
         ///
-        /// assert_eq!(n.leading_zeros(), 10);
+        /// assert_eq!(n.leading_zeros(), 0);
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
@@ -214,9 +239,9 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0b0101000u16;
+        /// let n = -4i8;
         ///
-        /// assert_eq!(n.trailing_zeros(), 3);
+        /// assert_eq!(n.trailing_zeros(), 2);
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
@@ -232,10 +257,10 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0x0123456789ABCDEFu64;
-        /// let m = 0x3456789ABCDEF012u64;
+        /// let n = 0x0123456789ABCDEFi64;
+        /// let m = -0x76543210FEDCBA99i64;
         ///
-        /// assert_eq!(n.rotate_left(12), m);
+        /// assert_eq!(n.rotate_left(32), m);
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
@@ -252,10 +277,10 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0x0123456789ABCDEFu64;
-        /// let m = 0xDEF0123456789ABCu64;
+        /// let n = 0x0123456789ABCDEFi64;
+        /// let m = -0xFEDCBA987654322i64;
         ///
-        /// assert_eq!(n.rotate_right(12), m);
+        /// assert_eq!(n.rotate_right(4), m);
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
@@ -270,8 +295,8 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0x0123456789ABCDEFu64;
-        /// let m = 0xEFCDAB8967452301u64;
+        /// let n =  0x0123456789ABCDEFi64;
+        /// let m = -0x1032547698BADCFFi64;
         ///
         /// assert_eq!(n.swap_bytes(), m);
         /// ```
@@ -291,12 +316,12 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0x0123456789ABCDEFu64;
+        /// let n = 0x0123456789ABCDEFi64;
         ///
         /// if cfg!(target_endian = "big") {
-        ///     assert_eq!(u64::from_be(n), n)
+        ///     assert_eq!(i64::from_be(n), n)
         /// } else {
-        ///     assert_eq!(u64::from_be(n), n.swap_bytes())
+        ///     assert_eq!(i64::from_be(n), n.swap_bytes())
         /// }
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
@@ -315,12 +340,12 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0x0123456789ABCDEFu64;
+        /// let n = 0x0123456789ABCDEFi64;
         ///
         /// if cfg!(target_endian = "little") {
-        ///     assert_eq!(u64::from_le(n), n)
+        ///     assert_eq!(i64::from_le(n), n)
         /// } else {
-        ///     assert_eq!(u64::from_le(n), n.swap_bytes())
+        ///     assert_eq!(i64::from_le(n), n.swap_bytes())
         /// }
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
@@ -339,7 +364,7 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0x0123456789ABCDEFu64;
+        /// let n = 0x0123456789ABCDEFi64;
         ///
         /// if cfg!(target_endian = "big") {
         ///     assert_eq!(n.to_be(), n)
@@ -363,7 +388,7 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// let n = 0x0123456789ABCDEFu64;
+        /// let n = 0x0123456789ABCDEFi64;
         ///
         /// if cfg!(target_endian = "little") {
         ///     assert_eq!(n.to_le(), n)
@@ -385,8 +410,8 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// assert_eq!(5u16.checked_add(65530), Some(65535));
-        /// assert_eq!(6u16.checked_add(65530), None);
+        /// assert_eq!(7i16.checked_add(32760), Some(32767));
+        /// assert_eq!(8i16.checked_add(32760), None);
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
@@ -421,8 +446,8 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// assert_eq!(5u8.checked_mul(51), Some(255));
-        /// assert_eq!(5u8.checked_mul(52), None);
+        /// assert_eq!(6i8.checked_mul(21), Some(126));
+        /// assert_eq!(6i8.checked_mul(22), None);
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
@@ -753,8 +778,8 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// assert_eq!(1u8.wrapping_shl(7), 128);
-        /// assert_eq!(1u8.wrapping_shl(8), 1);
+        /// assert_eq!((-1i8).wrapping_shl(7), -128);
+        /// assert_eq!((-1i8).wrapping_shl(8), -1);
         /// ```
         #[stable(feature = "num_wrapping", since = "1.2.0")]
         #[inline(always)]
@@ -778,8 +803,8 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// assert_eq!(128u8.wrapping_shr(7), 1);
-        /// assert_eq!(128u8.wrapping_shr(8), 128);
+        /// assert_eq!((-128i8).wrapping_shr(7), -1);
+        /// assert_eq!((-128i8).wrapping_shr(8), -128);
         /// ```
         #[stable(feature = "num_wrapping", since = "1.2.0")]
         #[inline(always)]
@@ -1193,15 +1218,13 @@ macro_rules! uint_impl {
         ///
         /// Leading and trailing whitespace represent an error.
         ///
-        /// # Arguments
+        /// # Examples
         ///
-        /// * src - A string slice
-        /// * radix - The base to use. Must lie in the range [2 .. 36]
+        /// Basic usage:
         ///
-        /// # Return value
-        ///
-        /// `Err(ParseIntError)` if the string did not represent a valid number.
-        /// Otherwise, `Ok(n)` where `n` is the integer represented by `src`.
+        /// ```
+        /// assert_eq!(u32::from_str_radix("A", 16), Ok(10));
+        /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         pub fn from_str_radix(src: &str, radix: u32) -> Result<Self, ParseIntError> {
             from_str_radix(src, radix)
@@ -1745,7 +1768,7 @@ macro_rules! uint_impl {
         /// Basic usage:
         ///
         /// ```
-        /// assert_eq!(100i8.wrapping_rem(10), 0);
+        /// assert_eq!(100u8.wrapping_rem(10), 0);
         /// ```
         #[stable(feature = "num_wrapping", since = "1.2.0")]
         #[inline(always)]
@@ -1783,6 +1806,13 @@ macro_rules! uint_impl {
         /// where `mask` removes any high-order bits of `rhs` that
         /// would cause the shift to exceed the bitwidth of the type.
         ///
+        /// Note that this is *not* the same as a rotate-left; the
+        /// RHS of a wrapping shift-left is restricted to the range
+        /// of the type, rather than the bits shifted out of the LHS
+        /// being returned to the other end. The primitive integer
+        /// types all implement a `rotate_left` function, which may
+        /// be what you want instead.
+        ///
         /// # Examples
         ///
         /// Basic usage:
@@ -1800,6 +1830,13 @@ macro_rules! uint_impl {
         /// Panic-free bitwise shift-right; yields `self >> mask(rhs)`,
         /// where `mask` removes any high-order bits of `rhs` that
         /// would cause the shift to exceed the bitwidth of the type.
+        ///
+        /// Note that this is *not* the same as a rotate-right; the
+        /// RHS of a wrapping shift-right is restricted to the range
+        /// of the type, rather than the bits shifted out of the LHS
+        /// being returned to the other end. The primitive integer
+        /// types all implement a `rotate_right` function, which may
+        /// be what you want instead.
         ///
         /// # Examples
         ///
@@ -2315,9 +2352,101 @@ macro_rules! from_str_radix_int_impl {
 }
 from_str_radix_int_impl! { isize i8 i16 i32 i64 usize u8 u16 u32 u64 }
 
+/// The error type returned when a checked integral type conversion fails.
+#[unstable(feature = "try_from", issue = "33417")]
+#[derive(Debug, Copy, Clone)]
+pub struct TryFromIntError(());
+
+impl TryFromIntError {
+    #[unstable(feature = "int_error_internals",
+               reason = "available through Error trait and this method should \
+                         not be exposed publicly",
+               issue = "0")]
+    #[doc(hidden)]
+    pub fn __description(&self) -> &str {
+        "out of range integral type conversion attempted"
+    }
+}
+
+#[unstable(feature = "try_from", issue = "33417")]
+impl fmt::Display for TryFromIntError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        self.__description().fmt(fmt)
+    }
+}
+
+macro_rules! same_sign_from_int_impl {
+    ($storage:ty, $target:ty, $($source:ty),*) => {$(
+        #[stable(feature = "rust1", since = "1.0.0")]
+        impl TryFrom<$source> for $target {
+            type Err = TryFromIntError;
+
+            fn try_from(u: $source) -> Result<$target, TryFromIntError> {
+                let min = <$target as FromStrRadixHelper>::min_value() as $storage;
+                let max = <$target as FromStrRadixHelper>::max_value() as $storage;
+                if u as $storage < min || u as $storage > max {
+                    Err(TryFromIntError(()))
+                } else {
+                    Ok(u as $target)
+                }
+            }
+        }
+    )*}
+}
+
+same_sign_from_int_impl!(u64, u8, u8, u16, u32, u64, usize);
+same_sign_from_int_impl!(i64, i8, i8, i16, i32, i64, isize);
+same_sign_from_int_impl!(u64, u16, u8, u16, u32, u64, usize);
+same_sign_from_int_impl!(i64, i16, i8, i16, i32, i64, isize);
+same_sign_from_int_impl!(u64, u32, u8, u16, u32, u64, usize);
+same_sign_from_int_impl!(i64, i32, i8, i16, i32, i64, isize);
+same_sign_from_int_impl!(u64, u64, u8, u16, u32, u64, usize);
+same_sign_from_int_impl!(i64, i64, i8, i16, i32, i64, isize);
+same_sign_from_int_impl!(u64, usize, u8, u16, u32, u64, usize);
+same_sign_from_int_impl!(i64, isize, i8, i16, i32, i64, isize);
+
+macro_rules! cross_sign_from_int_impl {
+    ($unsigned:ty, $($signed:ty),*) => {$(
+        #[stable(feature = "rust1", since = "1.0.0")]
+        impl TryFrom<$unsigned> for $signed {
+            type Err = TryFromIntError;
+
+            fn try_from(u: $unsigned) -> Result<$signed, TryFromIntError> {
+                let max = <$signed as FromStrRadixHelper>::max_value() as u64;
+                if u as u64 > max {
+                    Err(TryFromIntError(()))
+                } else {
+                    Ok(u as $signed)
+                }
+            }
+        }
+
+        #[stable(feature = "rust1", since = "1.0.0")]
+        impl TryFrom<$signed> for $unsigned {
+            type Err = TryFromIntError;
+
+            fn try_from(u: $signed) -> Result<$unsigned, TryFromIntError> {
+                let max = <$unsigned as FromStrRadixHelper>::max_value() as u64;
+                if u < 0 || u as u64 > max {
+                    Err(TryFromIntError(()))
+                } else {
+                    Ok(u as $unsigned)
+                }
+            }
+        }
+    )*}
+}
+
+cross_sign_from_int_impl!(u8, i8, i16, i32, i64, isize);
+cross_sign_from_int_impl!(u16, i8, i16, i32, i64, isize);
+cross_sign_from_int_impl!(u32, i8, i16, i32, i64, isize);
+cross_sign_from_int_impl!(u64, i8, i16, i32, i64, isize);
+cross_sign_from_int_impl!(usize, i8, i16, i32, i64, isize);
+
 #[doc(hidden)]
 trait FromStrRadixHelper: PartialOrd + Copy {
     fn min_value() -> Self;
+    fn max_value() -> Self;
     fn from_u32(u: u32) -> Self;
     fn checked_mul(&self, other: u32) -> Option<Self>;
     fn checked_sub(&self, other: u32) -> Option<Self>;
@@ -2327,6 +2456,7 @@ trait FromStrRadixHelper: PartialOrd + Copy {
 macro_rules! doit {
     ($($t:ty)*) => ($(impl FromStrRadixHelper for $t {
         fn min_value() -> Self { Self::min_value() }
+        fn max_value() -> Self { Self::max_value() }
         fn from_u32(u: u32) -> Self { u as Self }
         fn checked_mul(&self, other: u32) -> Option<Self> {
             Self::checked_mul(*self, other as Self)

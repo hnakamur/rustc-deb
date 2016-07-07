@@ -201,8 +201,7 @@ use syntax::codemap::{self, DUMMY_SP};
 use syntax::codemap::Span;
 use syntax::errors::Handler;
 use syntax::util::move_map::MoveMap;
-use syntax::parse::token::{intern, InternedString};
-use syntax::parse::token::special_idents;
+use syntax::parse::token::{intern, keywords, InternedString};
 use syntax::ptr::P;
 
 use self::ty::{LifetimeBounds, Path, Ptr, PtrTy, Self_, Ty};
@@ -257,6 +256,9 @@ pub struct MethodDef<'a> {
 
     // Is it an `unsafe fn`?
     pub is_unsafe: bool,
+
+    /// Can we combine fieldless variants for enums into a single match arm?
+    pub unify_fieldless_variants: bool,
 
     pub combine_substructure: RefCell<CombineSubstructureFunc<'a>>,
 }
@@ -526,7 +528,7 @@ impl<'a> TraitDef<'a> {
                         span: self.span,
                         bound_lifetimes: wb.bound_lifetimes.clone(),
                         bounded_ty: wb.bounded_ty.clone(),
-                        bounds: P::from_vec(wb.bounds.iter().cloned().collect())
+                        bounds: wb.bounds.iter().cloned().collect(),
                     })
                 }
                 ast::WherePredicate::RegionPredicate(ref rb) => {
@@ -596,9 +598,9 @@ impl<'a> TraitDef<'a> {
         let trait_ref = cx.trait_ref(trait_path);
 
         // Create the type parameters on the `self` path.
-        let self_ty_params = generics.ty_params.map(|ty_param| {
+        let self_ty_params = generics.ty_params.iter().map(|ty_param| {
             cx.ty_ident(self.span, ty_param.ident)
-        });
+        }).collect();
 
         let self_lifetimes: Vec<ast::Lifetime> =
             generics.lifetimes
@@ -609,7 +611,7 @@ impl<'a> TraitDef<'a> {
         // Create the type of `self`.
         let self_type = cx.ty_path(
             cx.path_all(self.span, false, vec!( type_ident ), self_lifetimes,
-                        self_ty_params.into_vec(), Vec::new()));
+                        self_ty_params, Vec::new()));
 
         let attr = cx.attribute(
             self.span,
@@ -635,7 +637,7 @@ impl<'a> TraitDef<'a> {
 
         cx.item(
             self.span,
-            special_idents::invalid,
+            keywords::Invalid.ident(),
             a,
             ast::ItemKind::Impl(unsafety,
                                 ast::ImplPolarity::Positive,
@@ -858,15 +860,15 @@ impl<'a> MethodDef<'a> {
                      explicit_self: ast::ExplicitSelf,
                      arg_types: Vec<(Ident, P<ast::Ty>)> ,
                      body: P<Expr>) -> ast::ImplItem {
+
         // create the generics that aren't for Self
         let fn_generics = self.generics.to_generics(cx, trait_.span, type_ident, generics);
 
         let self_arg = match explicit_self.node {
             ast::SelfKind::Static => None,
             // creating fresh self id
-            _ => Some(ast::Arg::new_self(trait_.span,
-                                         ast::Mutability::Immutable,
-                                         special_idents::self_))
+            _ => Some(ast::Arg::from_self(explicit_self.clone(), trait_.span,
+                                          ast::Mutability::Immutable)),
         };
         let args = {
             let args = arg_types.into_iter().map(|(name, ty)| {
@@ -991,6 +993,7 @@ impl<'a> MethodDef<'a> {
             body = cx.expr_match(trait_.span, arg_expr.clone(),
                                      vec!( cx.arm(trait_.span, vec!(pat.clone()), body) ))
         }
+
         body
     }
 
@@ -1130,12 +1133,15 @@ impl<'a> MethodDef<'a> {
         let catch_all_substructure = EnumNonMatchingCollapsed(
             self_arg_idents, &variants[..], &vi_idents[..]);
 
+        let first_fieldless = variants.iter().find(|v| v.node.data.fields().is_empty());
+
         // These arms are of the form:
         // (Variant1, Variant1, ...) => Body1
         // (Variant2, Variant2, ...) => Body2
         // ...
         // where each tuple has length = self_args.len()
         let mut match_arms: Vec<ast::Arm> = variants.iter().enumerate()
+            .filter(|&(_, v)| !(self.unify_fieldless_variants && v.node.data.fields().is_empty()))
             .map(|(index, variant)| {
                 let mk_self_pat = |cx: &mut ExtCtxt, self_arg_name: &str| {
                     let (p, idents) = trait_.create_enum_variant_pattern(
@@ -1218,6 +1224,28 @@ impl<'a> MethodDef<'a> {
 
                 cx.arm(sp, vec![single_pat], arm_expr)
             }).collect();
+
+        let default = match first_fieldless {
+            Some(v) if self.unify_fieldless_variants => {
+                // We need a default case that handles the fieldless variants.
+                // The index and actual variant aren't meaningful in this case,
+                // so just use whatever
+                Some(self.call_substructure_method(
+                    cx, trait_, type_ident, &self_args[..], nonself_args,
+                    &EnumMatching(0, v, Vec::new())))
+            }
+            _ if variants.len() > 1 && self_args.len() > 1 => {
+                // Since we know that all the arguments will match if we reach
+                // the match expression we add the unreachable intrinsics as the
+                // result of the catch all which should help llvm in optimizing it
+                Some(deriving::call_intrinsic(cx, sp, "unreachable", vec![]))
+            }
+            _ => None
+        };
+        if let Some(arm) = default {
+            match_arms.push(cx.arm(sp, vec![cx.pat_wild(sp)], arm));
+        }
+
         // We will usually need the catch-all after matching the
         // tuples `(VariantK, VariantK, ...)` for each VariantK of the
         // enum.  But:
@@ -1290,13 +1318,6 @@ impl<'a> MethodDef<'a> {
             let arm_expr = self.call_substructure_method(
                 cx, trait_, type_ident, &self_args[..], nonself_args,
                 &catch_all_substructure);
-
-            //Since we know that all the arguments will match if we reach the match expression we
-            //add the unreachable intrinsics as the result of the catch all which should help llvm
-            //in optimizing it
-            match_arms.push(cx.arm(sp,
-                                   vec![cx.pat_wild(sp)],
-                                   deriving::call_intrinsic(cx, sp, "unreachable", vec![])));
 
             // Final wrinkle: the self_args are expressions that deref
             // down to desired l-values, but we cannot actually deref

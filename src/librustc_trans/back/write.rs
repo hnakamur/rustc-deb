@@ -19,9 +19,9 @@ use llvm::SMDiagnosticRef;
 use {CrateTranslation, ModuleTranslation};
 use util::common::time;
 use util::common::path2cstr;
-use syntax::codemap;
-use syntax::errors::{self, Handler, Level};
-use syntax::errors::emitter::Emitter;
+use syntax::codemap::MultiSpan;
+use syntax::errors::{self, Handler, Level, RenderSpan};
+use syntax::errors::emitter::CoreEmitter;
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -31,7 +31,7 @@ use std::str;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::channel;
 use std::thread;
-use libc::{c_uint, c_int, c_void};
+use libc::{c_uint, c_void};
 
 pub fn llvm_err(handler: &errors::Handler, msg: String) -> ! {
     match llvm::last_error() {
@@ -84,13 +84,13 @@ impl SharedEmitter {
         for diag in &*buffer {
             match diag.code {
                 Some(ref code) => {
-                    handler.emit_with_code(None,
+                    handler.emit_with_code(&MultiSpan::new(),
                                            &diag.msg,
                                            &code[..],
                                            diag.lvl);
                 },
                 None => {
-                    handler.emit(None,
+                    handler.emit(&MultiSpan::new(),
                                  &diag.msg,
                                  diag.lvl);
                 },
@@ -100,20 +100,19 @@ impl SharedEmitter {
     }
 }
 
-impl Emitter for SharedEmitter {
-    fn emit(&mut self, sp: Option<&codemap::MultiSpan>,
-            msg: &str, code: Option<&str>, lvl: Level) {
-        assert!(sp.is_none(), "SharedEmitter doesn't support spans");
-
+impl CoreEmitter for SharedEmitter {
+    fn emit_message(&mut self,
+                    _rsp: &RenderSpan,
+                    msg: &str,
+                    code: Option<&str>,
+                    lvl: Level,
+                    _is_header: bool,
+                    _show_snippet: bool) {
         self.buffer.lock().unwrap().push(Diagnostic {
             msg: msg.to_string(),
             code: code.map(|s| s.to_string()),
             lvl: lvl,
         });
-    }
-
-    fn custom_emit(&mut self, _sp: &errors::RenderSpan, _msg: &str, _lvl: Level) {
-        bug!("SharedEmitter doesn't support custom_emit");
     }
 }
 
@@ -140,6 +139,15 @@ fn get_llvm_opt_level(optimize: config::OptLevel) -> llvm::CodeGenOptLevel {
       config::OptLevel::Less => llvm::CodeGenLevelLess,
       config::OptLevel::Default => llvm::CodeGenLevelDefault,
       config::OptLevel::Aggressive => llvm::CodeGenLevelAggressive,
+      _ => llvm::CodeGenLevelDefault,
+    }
+}
+
+fn get_llvm_opt_size(optimize: config::OptLevel) -> llvm::CodeGenOptSize {
+    match optimize {
+      config::OptLevel::Size => llvm::CodeGenOptSizeDefault,
+      config::OptLevel::SizeMin => llvm::CodeGenOptSizeAggressive,
+      _ => llvm::CodeGenOptSizeNone,
     }
 }
 
@@ -237,6 +245,9 @@ pub struct ModuleConfig {
     /// absolutely no optimizations (used for the metadata module).
     opt_level: Option<llvm::CodeGenOptLevel>,
 
+    /// Some(level) to optimize binary size, or None to not affect program size.
+    opt_size: Option<llvm::CodeGenOptSize>,
+
     // Flags indicating which outputs to produce.
     emit_no_opt_bc: bool,
     emit_bc: bool,
@@ -268,6 +279,7 @@ impl ModuleConfig {
             tm: tm,
             passes: passes,
             opt_level: None,
+            opt_size: None,
 
             emit_no_opt_bc: false,
             emit_bc: false,
@@ -627,7 +639,8 @@ pub fn run_passes(sess: &Session,
     }
 
     // Sanity check
-    assert!(trans.modules.len() == sess.opts.cg.codegen_units);
+    assert!(trans.modules.len() == sess.opts.cg.codegen_units ||
+            sess.opts.debugging_opts.incremental.is_some());
 
     let tm = create_target_machine(sess);
 
@@ -637,6 +650,7 @@ pub fn run_passes(sess: &Session,
     let mut metadata_config = ModuleConfig::new(tm, vec!());
 
     modules_config.opt_level = Some(get_llvm_opt_level(sess.opts.optimize));
+    modules_config.opt_size = Some(get_llvm_opt_size(sess.opts.optimize));
 
     // Save all versions of the bytecode if we're saving our temporaries.
     if sess.opts.cg.save_temps {
@@ -984,36 +998,6 @@ pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
     }
 }
 
-pub unsafe fn configure_llvm(sess: &Session) {
-    let mut llvm_c_strs = Vec::new();
-    let mut llvm_args = Vec::new();
-
-    {
-        let mut add = |arg: &str| {
-            let s = CString::new(arg).unwrap();
-            llvm_args.push(s.as_ptr());
-            llvm_c_strs.push(s);
-        };
-        add("rustc"); // fake program name
-        if sess.time_llvm_passes() { add("-time-passes"); }
-        if sess.print_llvm_passes() { add("-debug-pass=Structure"); }
-
-        // FIXME #21627 disable faulty FastISel on AArch64 (even for -O0)
-        if sess.target.target.arch == "aarch64" { add("-fast-isel=0"); }
-
-        for arg in &sess.opts.cg.llvm_args {
-            add(&(*arg));
-        }
-    }
-
-    llvm::LLVMInitializePasses();
-
-    llvm::initialize_available_targets();
-
-    llvm::LLVMRustSetLLVMOptions(llvm_args.len() as c_int,
-                                 llvm_args.as_ptr());
-}
-
 pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
                             config: &ModuleConfig,
                             f: &mut FnMut(llvm::PassManagerBuilderRef)) {
@@ -1021,13 +1005,19 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
     // reasonable defaults and prepare it to actually populate the pass
     // manager.
     let builder = llvm::LLVMPassManagerBuilderCreate();
-    let opt = config.opt_level.unwrap_or(llvm::CodeGenLevelNone);
+    let opt_level = config.opt_level.unwrap_or(llvm::CodeGenLevelNone);
+    let opt_size = config.opt_size.unwrap_or(llvm::CodeGenOptSizeNone);
     let inline_threshold = config.inline_threshold;
 
-    llvm::LLVMRustConfigurePassManagerBuilder(builder, opt,
+    llvm::LLVMRustConfigurePassManagerBuilder(builder, opt_level,
                                               config.merge_functions,
                                               config.vectorize_slp,
                                               config.vectorize_loop);
+    llvm::LLVMPassManagerBuilderSetSizeLevel(builder, opt_size as u32);
+
+    if opt_size != llvm::CodeGenOptSizeNone {
+        llvm::LLVMPassManagerBuilderSetDisableUnrollLoops(builder, 1);
+    }
 
     llvm::LLVMRustAddBuilderLibraryInfo(builder, llmod, config.no_builtins);
 
@@ -1035,21 +1025,27 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
     // always-inline functions (but don't add lifetime intrinsics), at O1 we
     // inline with lifetime intrinsics, and O2+ we add an inliner with a
     // thresholds copied from clang.
-    match (opt, inline_threshold) {
-        (_, Some(t)) => {
+    match (opt_level, opt_size, inline_threshold) {
+        (_, _, Some(t)) => {
             llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, t as u32);
         }
-        (llvm::CodeGenLevelNone, _) => {
+        (llvm::CodeGenLevelAggressive, _, _) => {
+            llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 275);
+        }
+        (_, llvm::CodeGenOptSizeDefault, _) => {
+            llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 75);
+        }
+        (_, llvm::CodeGenOptSizeAggressive, _) => {
+            llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 25);
+        }
+        (llvm::CodeGenLevelNone, _, _) => {
             llvm::LLVMRustAddAlwaysInlinePass(builder, false);
         }
-        (llvm::CodeGenLevelLess, _) => {
+        (llvm::CodeGenLevelLess, _, _) => {
             llvm::LLVMRustAddAlwaysInlinePass(builder, true);
         }
-        (llvm::CodeGenLevelDefault, _) => {
+        (llvm::CodeGenLevelDefault, _, _) => {
             llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 225);
-        }
-        (llvm::CodeGenLevelAggressive, _) => {
-            llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 275);
         }
     }
 

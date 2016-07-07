@@ -13,12 +13,12 @@
 ######################################################################
 
 # The version number
-CFG_RELEASE_NUM=1.9.0
+CFG_RELEASE_NUM=1.10.0
 
 # An optional number to put after the label, e.g. '.2' -> '-beta.2'
 # NB Make sure it starts with a dot to conform to semver pre-release
 # versions (section 9)
-CFG_PRERELEASE_VERSION=.3
+CFG_PRERELEASE_VERSION=.4
 
 # Append a version-dependent hash to each library, so we can install different
 # versions in the same place
@@ -34,6 +34,7 @@ CFG_FILENAME_EXTRA=$(shell printf '%s' $(CFG_RELEASE)$(CFG_EXTRA_FILENAME) | $(C
 # intentionally not "secure" by any definition, this is largely just a deterrent
 # from users enabling unstable features on the stable compiler.
 CFG_BOOTSTRAP_KEY=$(CFG_FILENAME_EXTRA)
+CFG_BOOTSTRAP_KEY_STAGE0=$(shell grep 'rustc_key' $(S)src/stage0.txt | sed 's/rustc_key: '//)
 
 ifeq ($(CFG_RELEASE_CHANNEL),stable)
 # This is the normal semver version string, e.g. "0.12.0", "0.12.0-nightly"
@@ -389,7 +390,7 @@ endif
 # This 'function' will determine which debugger scripts to copy based on a
 # target triple. See debuggers.mk for more information.
 TRIPLE_TO_DEBUGGER_SCRIPT_SETTING=\
- $(if $(findstring windows,$(1)),none,$(if $(findstring darwin,$(1)),lldb,gdb))
+ $(if $(findstring windows-msvc,$(1)),none,all)
 
 STAGES = 0 1 2 3
 

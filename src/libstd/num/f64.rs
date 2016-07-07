@@ -546,7 +546,12 @@ impl f64 {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn log2(self) -> f64 {
-        self.log_wrapper(|n| { unsafe { intrinsics::log2f64(n) } })
+        self.log_wrapper(|n| {
+            #[cfg(target_os = "android")]
+            return ::sys::android::log2f64(n);
+            #[cfg(not(target_os = "android"))]
+            return unsafe { intrinsics::log2f64(n) };
+        })
     }
 
     /// Returns the base 10 logarithm of the number.
@@ -903,7 +908,7 @@ impl f64 {
     /// let abs_difference_1 = (f.1 - x.cos()).abs();
     ///
     /// assert!(abs_difference_0 < 1e-10);
-    /// assert!(abs_difference_0 < 1e-10);
+    /// assert!(abs_difference_1 < 1e-10);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]

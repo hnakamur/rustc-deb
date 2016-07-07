@@ -13,9 +13,11 @@ use hair::*;
 use rustc::mir::repr::*;
 use rustc::hir;
 
-impl<'a,'tcx> Builder<'a,'tcx> {
+impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     pub fn ast_block(&mut self,
                      destination: &Lvalue<'tcx>,
+                     // FIXME(#32959): temporary measure for the issue
+                     dest_is_unit: bool,
                      mut block: BasicBlock,
                      ast_block: &'tcx hir::Block)
                      -> BlockAnd<()> {
@@ -44,11 +46,7 @@ impl<'a,'tcx> Builder<'a,'tcx> {
                     StmtKind::Expr { scope, expr } => {
                         unpack!(block = this.in_scope(scope, block, |this, _| {
                             let expr = this.hir.mirror(expr);
-                            let expr_span = expr.span;
-                            let temp = this.temp(expr.ty.clone());
-                            unpack!(block = this.into(&temp, block, expr));
-                            unpack!(block = this.build_drop(block, expr_span, temp));
-                            block.unit()
+                            this.stmt_expr(block, expr)
                         }));
                     }
                     StmtKind::Let { remainder_scope, init_scope, pattern, initializer } => {
@@ -70,7 +68,7 @@ impl<'a,'tcx> Builder<'a,'tcx> {
             // of the block.
             if let Some(expr) = expr {
                 unpack!(block = this.into(destination, block, expr));
-            } else {
+            } else if dest_is_unit {
                 // FIXME(#31472)
                 let scope_id = this.innermost_scope_id();
                 this.cfg.push_assign_unit(block, scope_id, span, destination);

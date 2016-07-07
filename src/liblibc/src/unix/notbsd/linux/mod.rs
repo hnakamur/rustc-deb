@@ -15,6 +15,7 @@ pub type key_t = ::c_int;
 pub type shmatt_t = ::c_ulong;
 pub type mqd_t = ::c_int;
 pub type nfds_t = ::c_ulong;
+pub type nl_item = ::c_int;
 
 pub enum fpos64_t {} // TODO: fill this out with a struct
 
@@ -92,9 +93,13 @@ s! {
     }
 
     pub struct pthread_cond_t {
-        #[cfg(target_env = "musl")]
+        #[cfg(any(target_env = "musl",
+                  target_env = "musleabi",
+                  target_env = "musleabihf"))]
         __align: [*const ::c_void; 0],
-        #[cfg(not(target_env = "musl"))]
+        #[cfg(not(any(target_env = "musl",
+                      target_env = "musleabi",
+                      target_env = "musleabihf")))]
         __align: [::c_longlong; 0],
         size: [u8; __SIZEOF_PTHREAD_COND_T],
     }
@@ -177,6 +182,74 @@ s! {
         bits: [u64; 16],
     }
 }
+
+pub const ABDAY_1: ::nl_item = 0x20000;
+pub const ABDAY_2: ::nl_item = 0x20001;
+pub const ABDAY_3: ::nl_item = 0x20002;
+pub const ABDAY_4: ::nl_item = 0x20003;
+pub const ABDAY_5: ::nl_item = 0x20004;
+pub const ABDAY_6: ::nl_item = 0x20005;
+pub const ABDAY_7: ::nl_item = 0x20006;
+
+pub const DAY_1: ::nl_item = 0x20007;
+pub const DAY_2: ::nl_item = 0x20008;
+pub const DAY_3: ::nl_item = 0x20009;
+pub const DAY_4: ::nl_item = 0x2000A;
+pub const DAY_5: ::nl_item = 0x2000B;
+pub const DAY_6: ::nl_item = 0x2000C;
+pub const DAY_7: ::nl_item = 0x2000D;
+
+pub const ABMON_1: ::nl_item = 0x2000E;
+pub const ABMON_2: ::nl_item = 0x2000F;
+pub const ABMON_3: ::nl_item = 0x20010;
+pub const ABMON_4: ::nl_item = 0x20011;
+pub const ABMON_5: ::nl_item = 0x20012;
+pub const ABMON_6: ::nl_item = 0x20013;
+pub const ABMON_7: ::nl_item = 0x20014;
+pub const ABMON_8: ::nl_item = 0x20015;
+pub const ABMON_9: ::nl_item = 0x20016;
+pub const ABMON_10: ::nl_item = 0x20017;
+pub const ABMON_11: ::nl_item = 0x20018;
+pub const ABMON_12: ::nl_item = 0x20019;
+
+pub const MON_1: ::nl_item = 0x2001A;
+pub const MON_2: ::nl_item = 0x2001B;
+pub const MON_3: ::nl_item = 0x2001C;
+pub const MON_4: ::nl_item = 0x2001D;
+pub const MON_5: ::nl_item = 0x2001E;
+pub const MON_6: ::nl_item = 0x2001F;
+pub const MON_7: ::nl_item = 0x20020;
+pub const MON_8: ::nl_item = 0x20021;
+pub const MON_9: ::nl_item = 0x20022;
+pub const MON_10: ::nl_item = 0x20023;
+pub const MON_11: ::nl_item = 0x20024;
+pub const MON_12: ::nl_item = 0x20025;
+
+pub const AM_STR: ::nl_item = 0x20026;
+pub const PM_STR: ::nl_item = 0x20027;
+
+pub const D_T_FMT: ::nl_item = 0x20028;
+pub const D_FMT: ::nl_item = 0x20029;
+pub const T_FMT: ::nl_item = 0x2002A;
+pub const T_FMT_AMPM: ::nl_item = 0x2002B;
+
+pub const ERA: ::nl_item = 0x2002C;
+pub const ERA_D_FMT: ::nl_item = 0x2002E;
+pub const ALT_DIGITS: ::nl_item = 0x2002F;
+pub const ERA_D_T_FMT: ::nl_item = 0x20030;
+pub const ERA_T_FMT: ::nl_item = 0x20031;
+
+pub const CODESET: ::nl_item = 14;
+
+pub const CRNCYSTR: ::nl_item = 0x4000F;
+
+pub const RADIXCHAR: ::nl_item = 0x10000;
+pub const THOUSEP: ::nl_item = 0x10001;
+
+pub const YESEXPR: ::nl_item = 0x50000;
+pub const NOEXPR: ::nl_item = 0x50001;
+pub const YESSTR: ::nl_item = 0x50002;
+pub const NOSTR: ::nl_item = 0x50003;
 
 pub const FILENAME_MAX: ::c_uint = 4096;
 pub const L_tmpnam: ::c_uint = 20;
@@ -266,6 +339,7 @@ pub const _SC_XBS5_LPBIG_OFFBIG: ::c_int = 128;
 pub const _SC_XOPEN_LEGACY: ::c_int = 129;
 pub const _SC_XOPEN_REALTIME: ::c_int = 130;
 pub const _SC_XOPEN_REALTIME_THREADS: ::c_int = 131;
+pub const _SC_HOST_NAME_MAX: ::c_int = 180;
 
 pub const RLIM_SAVED_MAX: ::rlim_t = RLIM_INFINITY;
 pub const RLIM_SAVED_CUR: ::rlim_t = RLIM_INFINITY;
@@ -373,6 +447,8 @@ pub const NCCS: usize = 32;
 
 pub const AF_NETLINK: ::c_int = 16;
 
+pub const LOG_NFACILITIES: ::c_int = 24;
+
 f! {
     pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
         for slot in cpuset.bits.iter_mut() {
@@ -381,15 +457,15 @@ f! {
     }
 
     pub fn CPU_SET(cpu: usize, cpuset: &mut cpu_set_t) -> () {
-        let size = mem::size_of_val(&cpuset.bits[0]);
-        let (idx, offset) = (cpu / size, cpu % size);
+        let size_in_bits = 8 * mem::size_of_val(&cpuset.bits[0]); // 32, 64 etc
+        let (idx, offset) = (cpu / size_in_bits, cpu % size_in_bits);
         cpuset.bits[idx] |= 1 << offset;
         ()
     }
 
     pub fn CPU_ISSET(cpu: usize, cpuset: &cpu_set_t) -> bool {
-        let size = mem::size_of_val(&cpuset.bits[0]);
-        let (idx, offset) = (cpu / size, cpu % size);
+        let size_in_bits = 8 * mem::size_of_val(&cpuset.bits[0]);
+        let (idx, offset) = (cpu / size_in_bits, cpu % size_in_bits);
         0 != (cpuset.bits[idx] & (1 << offset))
     }
 
@@ -398,7 +474,10 @@ f! {
     }
 }
 
-#[link(name = "util")]
+extern {
+    static mut program_invocation_short_name: *mut ::c_char;
+}
+
 extern {
     pub fn shm_open(name: *const c_char, oflag: ::c_int,
                     mode: mode_t) -> ::c_int;
@@ -421,29 +500,6 @@ extern {
     pub fn tmpfile64() -> *mut ::FILE;
     pub fn fgetpos64(stream: *mut ::FILE, ptr: *mut fpos64_t) -> ::c_int;
     pub fn fsetpos64(stream: *mut ::FILE, ptr: *const fpos64_t) -> ::c_int;
-    pub fn fstat64(fildes: ::c_int, buf: *mut stat64) -> ::c_int;
-    pub fn stat64(path: *const c_char, buf: *mut stat64) -> ::c_int;
-    pub fn open64(path: *const c_char, oflag: ::c_int, ...) -> ::c_int;
-    pub fn creat64(path: *const c_char, mode: mode_t) -> ::c_int;
-    pub fn lseek64(fd: ::c_int, offset: off64_t, whence: ::c_int) -> off64_t;
-    pub fn pread64(fd: ::c_int, buf: *mut ::c_void, count: ::size_t,
-                   offset: off64_t) -> ::ssize_t;
-    pub fn pwrite64(fd: ::c_int, buf: *const ::c_void, count: ::size_t,
-                    offset: off64_t) -> ::ssize_t;
-    pub fn mmap64(addr: *mut ::c_void,
-                  len: ::size_t,
-                  prot: ::c_int,
-                  flags: ::c_int,
-                  fd: ::c_int,
-                  offset: off64_t)
-                  -> *mut ::c_void;
-    pub fn lstat64(path: *const c_char, buf: *mut stat64) -> ::c_int;
-    pub fn ftruncate64(fd: ::c_int, length: off64_t) -> ::c_int;
-    pub fn readdir64_r(dirp: *mut ::DIR, entry: *mut ::dirent64,
-                       result: *mut *mut ::dirent64) -> ::c_int;
-
-    pub fn getrlimit64(resource: ::c_int, rlim: *mut rlimit64) -> ::c_int;
-    pub fn setrlimit64(resource: ::c_int, rlim: *const rlimit64) -> ::c_int;
     pub fn fseeko64(stream: *mut ::FILE,
                     offset: ::off64_t,
                     whence: ::c_int) -> ::c_int;
@@ -541,10 +597,39 @@ extern {
                    name: *mut ::c_char,
                    termp: *const termios,
                    winp: *const ::winsize) -> ::pid_t;
+    pub fn nl_langinfo_l(item: ::nl_item, locale: ::locale_t) -> *mut ::c_char;
+    pub fn getnameinfo(sa: *const ::sockaddr,
+                       salen: ::socklen_t,
+                       host: *mut ::c_char,
+                       hostlen: ::socklen_t,
+                       serv: *mut ::c_char,
+                       sevlen: ::socklen_t,
+                       flags: ::c_int) -> ::c_int;
+    pub fn prlimit(pid: ::pid_t, resource: ::c_int, new_limit: *const ::rlimit,
+                   old_limit: *mut ::rlimit) -> ::c_int;
+    pub fn prlimit64(pid: ::pid_t,
+                     resource: ::c_int,
+                     new_limit: *const ::rlimit64,
+                     old_limit: *mut ::rlimit64) -> ::c_int;
+    pub fn getloadavg(loadavg: *mut ::c_double, nelem: ::c_int) -> ::c_int;
+    pub fn process_vm_readv(pid: ::pid_t,
+                            local_iov: *const ::iovec,
+                            liovcnt: ::c_ulong,
+                            remote_iov: *const ::iovec,
+                            riovcnt: ::c_ulong,
+                            flags: ::c_ulong) -> isize;
+    pub fn process_vm_writev(pid: ::pid_t,
+                             local_iov: *const ::iovec,
+                             liovcnt: ::c_ulong,
+                             remote_iov: *const ::iovec,
+                             riovcnt: ::c_ulong,
+                             flags: ::c_ulong) -> isize;
 }
 
 cfg_if! {
     if #[cfg(any(target_env = "musl",
+                 target_env = "musleabi",
+                 target_env = "musleabihf",
                  target_os = "emscripten"))] {
         mod musl;
         pub use self::musl::*;

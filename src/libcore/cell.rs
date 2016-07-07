@@ -145,7 +145,7 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use clone::Clone;
-use cmp::{PartialEq, Eq};
+use cmp::{PartialEq, Eq, PartialOrd, Ord, Ordering};
 use default::Default;
 use marker::{Copy, Send, Sync, Sized, Unsize};
 use ops::{Deref, DerefMut, Drop, FnOnce, CoerceUnsized};
@@ -232,6 +232,18 @@ impl<T:Copy> Cell<T> {
     pub fn as_unsafe_cell(&self) -> &UnsafeCell<T> {
         &self.value
     }
+
+    /// Returns a mutable reference to the underlying data.
+    ///
+    /// This call borrows `Cell` mutably (at compile-time) which guarantees
+    /// that we possess the only reference.
+    #[inline]
+    #[unstable(feature = "cell_get_mut", issue = "33444")]
+    pub fn get_mut(&mut self) -> &mut T {
+        unsafe {
+            &mut *self.value.get()
+        }
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -266,6 +278,42 @@ impl<T:PartialEq + Copy> PartialEq for Cell<T> {
 
 #[stable(feature = "cell_eq", since = "1.2.0")]
 impl<T:Eq + Copy> Eq for Cell<T> {}
+
+#[stable(feature = "cell_ord", since = "1.10.0")]
+impl<T:PartialOrd + Copy> PartialOrd for Cell<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Cell<T>) -> Option<Ordering> {
+        self.get().partial_cmp(&other.get())
+    }
+
+    #[inline]
+    fn lt(&self, other: &Cell<T>) -> bool {
+        self.get() < other.get()
+    }
+
+    #[inline]
+    fn le(&self, other: &Cell<T>) -> bool {
+        self.get() <= other.get()
+    }
+
+    #[inline]
+    fn gt(&self, other: &Cell<T>) -> bool {
+        self.get() > other.get()
+    }
+
+    #[inline]
+    fn ge(&self, other: &Cell<T>) -> bool {
+        self.get() >= other.get()
+    }
+}
+
+#[stable(feature = "cell_ord", since = "1.10.0")]
+impl<T:Ord + Copy> Ord for Cell<T> {
+    #[inline]
+    fn cmp(&self, other: &Cell<T>) -> Ordering {
+        self.get().cmp(&other.get())
+    }
+}
 
 /// A mutable memory location with dynamically checked borrow rules
 ///
@@ -455,6 +503,18 @@ impl<T: ?Sized> RefCell<T> {
     pub unsafe fn as_unsafe_cell(&self) -> &UnsafeCell<T> {
         &self.value
     }
+
+    /// Returns a mutable reference to the underlying data.
+    ///
+    /// This call borrows `RefCell` mutably (at compile-time) so there is no
+    /// need for dynamic checks.
+    #[inline]
+    #[unstable(feature = "cell_get_mut", issue="33444")]
+    pub fn get_mut(&mut self) -> &mut T {
+        unsafe {
+            &mut *self.value.get()
+        }
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -489,6 +549,42 @@ impl<T: ?Sized + PartialEq> PartialEq for RefCell<T> {
 
 #[stable(feature = "cell_eq", since = "1.2.0")]
 impl<T: ?Sized + Eq> Eq for RefCell<T> {}
+
+#[stable(feature = "cell_ord", since = "1.10.0")]
+impl<T: ?Sized + PartialOrd> PartialOrd for RefCell<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &RefCell<T>) -> Option<Ordering> {
+        self.borrow().partial_cmp(&*other.borrow())
+    }
+
+    #[inline]
+    fn lt(&self, other: &RefCell<T>) -> bool {
+        *self.borrow() < *other.borrow()
+    }
+
+    #[inline]
+    fn le(&self, other: &RefCell<T>) -> bool {
+        *self.borrow() <= *other.borrow()
+    }
+
+    #[inline]
+    fn gt(&self, other: &RefCell<T>) -> bool {
+        *self.borrow() > *other.borrow()
+    }
+
+    #[inline]
+    fn ge(&self, other: &RefCell<T>) -> bool {
+        *self.borrow() >= *other.borrow()
+    }
+}
+
+#[stable(feature = "cell_ord", since = "1.10.0")]
+impl<T: ?Sized + Ord> Ord for RefCell<T> {
+    #[inline]
+    fn cmp(&self, other: &RefCell<T>) -> Ordering {
+        self.borrow().cmp(&*other.borrow())
+    }
+}
 
 struct BorrowRef<'b> {
     borrow: &'b Cell<BorrowFlag>,
@@ -857,5 +953,12 @@ impl<T: ?Sized> UnsafeCell<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn get(&self) -> *mut T {
         &self.value as *const T as *mut T
+    }
+}
+
+#[stable(feature = "unsafe_cell_default", since = "1.9.0")]
+impl<T: Default> Default for UnsafeCell<T> {
+    fn default() -> UnsafeCell<T> {
+        UnsafeCell::new(Default::default())
     }
 }

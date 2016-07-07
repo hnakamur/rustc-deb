@@ -2063,33 +2063,43 @@ arbitrarily complex configurations through nesting.
 
 The following configurations must be defined by the implementation:
 
+* `target_arch = "..."` - Target CPU architecture, such as `"x86"`,
+  `"x86_64"` `"mips"`, `"powerpc"`, `"powerpc64"`, `"arm"`, or
+  `"aarch64"`. This value is closely related to the first element of
+  the platform target triple, though it is not identical.
+* `target_os = "..."` - Operating system of the target, examples
+  include `"windows"`, `"macos"`, `"ios"`, `"linux"`, `"android"`,
+  `"freebsd"`, `"dragonfly"`, `"bitrig"` , `"openbsd"` or
+  `"netbsd"`. This value is closely related to the second and third
+  element of the platform target triple, though it is not identical.
+* `target_family = "..."` - Operating system family of the target, e. g.
+  `"unix"` or `"windows"`. The value of this configuration option is defined
+  as a configuration itself, like `unix` or `windows`.
+* `unix` - See `target_family`.
+* `windows` - See `target_family`.
+* `target_env = ".."` - Further disambiguates the target platform with
+  information about the ABI/libc. Presently this value is either
+  `"gnu"`, `"msvc"`, `"musl"`, or the empty string. For historical
+  reasons this value has only been defined as non-empty when needed
+  for disambiguation. Thus on many GNU platforms this value will be
+  empty. This value is closely related to the fourth element of the
+  platform target triple, though it is not identical. For example,
+  embedded ABIs such as `gnueabihf` will simply define `target_env` as
+  `"gnu"`.
+* `target_endian = "..."` - Endianness of the target CPU, either `"little"` or
+  `"big"`.
+* `target_pointer_width = "..."` - Target pointer width in bits. This is set
+  to `"32"` for targets with 32-bit pointers, and likewise set to `"64"` for
+  64-bit pointers.
+* `target_has_atomic = "..."` - Set of integer sizes on which the target can perform
+  atomic operations. Values are `"8"`, `"16"`, `"32"`, `"64"` and `"ptr"`.
+* `target_vendor = "..."` - Vendor of the target, for example `apple`, `pc`, or
+  simply `"unknown"`.
+* `test` - Enabled when compiling the test harness (using the `--test` flag).
 * `debug_assertions` - Enabled by default when compiling without optimizations.
   This can be used to enable extra debugging code in development but not in
   production.  For example, it controls the behavior of the standard library's
   `debug_assert!` macro.
-* `target_arch = "..."` - Target CPU architecture, such as `"x86"`, `"x86_64"`
-  `"mips"`, `"powerpc"`, `"powerpc64"`, `"arm"`, or `"aarch64"`.
-* `target_endian = "..."` - Endianness of the target CPU, either `"little"` or
-  `"big"`.
-* `target_env = ".."` - An option provided by the compiler by default
-  describing the runtime environment of the target platform. Some examples of
-  this are `musl` for builds targeting the MUSL libc implementation, `msvc` for
-  Windows builds targeting MSVC, and `gnu` frequently the rest of the time. This
-  option may also be blank on some platforms.
-* `target_family = "..."` - Operating system family of the target, e. g.
-  `"unix"` or `"windows"`. The value of this configuration option is defined
-  as a configuration itself, like `unix` or `windows`.
-* `target_os = "..."` - Operating system of the target, examples include
-  `"windows"`, `"macos"`, `"ios"`, `"linux"`, `"android"`, `"freebsd"`, `"dragonfly"`,
-  `"bitrig"` , `"openbsd"` or `"netbsd"`.
-* `target_pointer_width = "..."` - Target pointer width in bits. This is set
-  to `"32"` for targets with 32-bit pointers, and likewise set to `"64"` for
-  64-bit pointers.
-* `target_vendor = "..."` - Vendor of the target, for example `apple`, `pc`, or
-  simply `"unknown"`.
-* `test` - Enabled when compiling the test harness (using the `--test` flag).
-* `unix` - See `target_family`.
-* `windows` - See `target_family`.
 
 You can also set another attribute based on a `cfg` variable with `cfg_attr`:
 
@@ -2286,6 +2296,9 @@ The currently implemented features of the reference compiler are:
 
 * `cfg_target_vendor` - Allows conditional compilation using the `target_vendor`
                         matcher which is subject to change.
+
+* `cfg_target_has_atomic` - Allows conditional compilation using the `target_has_atomic`
+                            matcher which is subject to change.
 
 * `concat_idents` - Allows use of the `concat_idents` macro, which is in many
                     ways insufficient for concatenating identifiers, and may be

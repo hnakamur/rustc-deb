@@ -8,6 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Major workhorse of rustbuild, definition and dependencies between stages of
+//! the copmile.
+//!
+//! The primary purpose of this module is to define the various `Step`s of
+//! execution of the build. Each `Step` has a corresponding `Source` indicating
+//! what it's actually doing along with a number of dependencies which must be
+//! executed first.
+//!
+//! This module will take the CLI as input and calculate the steps required for
+//! the build requested, ensuring that all intermediate pieces are in place.
+//! Essentially this module is a `make`-replacement, but not as good.
+
 use std::collections::HashSet;
 
 use build::{Build, Compiler};
@@ -18,6 +30,15 @@ pub struct Step<'a> {
     pub target: &'a str,
 }
 
+/// Macro used to iterate over all targets that are recognized by the build
+/// system.
+///
+/// Whenever a new step is added it will involve adding an entry here, updating
+/// the dependencies section below, and then adding an implementation of the
+/// step in `build/mod.rs`.
+///
+/// This macro takes another macro as an argument and then calls that macro with
+/// all steps that the build system knows about.
 macro_rules! targets {
     ($m:ident) => {
         $m! {
@@ -51,6 +72,8 @@ macro_rules! targets {
             (tool_rustbook, ToolRustbook { stage: u32 }),
             (tool_error_index, ToolErrorIndex { stage: u32 }),
             (tool_cargotest, ToolCargoTest { stage: u32 }),
+            (tool_tidy, ToolTidy { stage: u32 }),
+            (tool_compiletest, ToolCompiletest { stage: u32 }),
 
             // Steps for long-running native builds. Ideally these wouldn't
             // actually exist and would be part of build scripts, but for now
@@ -60,6 +83,8 @@ macro_rules! targets {
             // with braces are unstable so we just pick something that works.
             (llvm, Llvm { _dummy: () }),
             (compiler_rt, CompilerRt { _dummy: () }),
+            (test_helpers, TestHelpers { _dummy: () }),
+            (debugger_scripts, DebuggerScripts { stage: u32 }),
 
             // Steps for various pieces of documentation that we can generate,
             // the 'doc' step is just a pseudo target to depend on a bunch of
@@ -79,6 +104,33 @@ macro_rules! targets {
             (check, Check { stage: u32, compiler: Compiler<'a> }),
             (check_linkcheck, CheckLinkcheck { stage: u32 }),
             (check_cargotest, CheckCargoTest { stage: u32 }),
+            (check_tidy, CheckTidy { stage: u32 }),
+            (check_rpass, CheckRPass { compiler: Compiler<'a> }),
+            (check_rpass_full, CheckRPassFull { compiler: Compiler<'a> }),
+            (check_rpass_valgrind, CheckRPassValgrind { compiler: Compiler<'a> }),
+            (check_rfail, CheckRFail { compiler: Compiler<'a> }),
+            (check_rfail_full, CheckRFailFull { compiler: Compiler<'a> }),
+            (check_cfail, CheckCFail { compiler: Compiler<'a> }),
+            (check_cfail_full, CheckCFailFull { compiler: Compiler<'a> }),
+            (check_pfail, CheckPFail { compiler: Compiler<'a> }),
+            (check_pretty, CheckPretty { compiler: Compiler<'a> }),
+            (check_pretty_rpass, CheckPrettyRPass { compiler: Compiler<'a> }),
+            (check_pretty_rpass_full, CheckPrettyRPassFull { compiler: Compiler<'a> }),
+            (check_pretty_rfail, CheckPrettyRFail { compiler: Compiler<'a> }),
+            (check_pretty_rfail_full, CheckPrettyRFailFull { compiler: Compiler<'a> }),
+            (check_pretty_rpass_valgrind, CheckPrettyRPassValgrind { compiler: Compiler<'a> }),
+            (check_codegen, CheckCodegen { compiler: Compiler<'a> }),
+            (check_codegen_units, CheckCodegenUnits { compiler: Compiler<'a> }),
+            (check_incremental, CheckIncremental { compiler: Compiler<'a> }),
+            (check_ui, CheckUi { compiler: Compiler<'a> }),
+            (check_debuginfo, CheckDebuginfo { compiler: Compiler<'a> }),
+            (check_rustdoc, CheckRustdoc { compiler: Compiler<'a> }),
+            (check_docs, CheckDocs { compiler: Compiler<'a> }),
+            (check_error_index, CheckErrorIndex { compiler: Compiler<'a> }),
+            (check_rmake, CheckRMake { compiler: Compiler<'a> }),
+            (check_crate_std, CheckCrateStd { compiler: Compiler<'a> }),
+            (check_crate_test, CheckCrateTest { compiler: Compiler<'a> }),
+            (check_crate_rustc, CheckCrateRustc { compiler: Compiler<'a> }),
 
             // Distribution targets, creating tarballs
             (dist, Dist { stage: u32 }),
@@ -89,6 +141,9 @@ macro_rules! targets {
         }
     }
 }
+
+// Define the `Source` enum by iterating over all the steps and peeling out just
+// the types that we want to define.
 
 macro_rules! item { ($a:item) => ($a) }
 
@@ -105,6 +160,12 @@ macro_rules! define_source {
 
 targets!(define_source);
 
+/// Calculate a list of all steps described by `build`.
+///
+/// This will inspect the flags passed in on the command line and use that to
+/// build up a list of steps to execute. These steps will then be transformed
+/// into a topologically sorted list which when executed left-to-right will
+/// correctly sequence the entire build.
 pub fn all(build: &Build) -> Vec<Step> {
     let mut ret = Vec::new();
     let mut all = HashSet::new();
@@ -126,6 +187,8 @@ pub fn all(build: &Build) -> Vec<Step> {
     }
 }
 
+/// Determines what top-level targets are requested as part of this build,
+/// returning them as a list.
 fn top_level(build: &Build) -> Vec<Step> {
     let mut targets = Vec::new();
     let stage = build.flags.stage.unwrap_or(2);
@@ -141,14 +204,18 @@ fn top_level(build: &Build) -> Vec<Step> {
                      .unwrap_or(host.target)
     };
 
+    // First, try to find steps on the command line.
     add_steps(build, stage, &host, &target, &mut targets);
 
+    // If none are specified, then build everything.
     if targets.len() == 0 {
         let t = Step {
             src: Source::Llvm { _dummy: () },
             target: &build.config.build,
         };
-        targets.push(t.doc(stage));
+        if build.config.docs {
+          targets.push(t.doc(stage));
+        }
         for host in build.config.host.iter() {
             if !build.flags.host.contains(host) {
                 continue
@@ -238,8 +305,14 @@ impl<'a> Step<'a> {
         Step { target: target, src: self.src.clone() }
     }
 
+    // Define ergonomic constructors for each step defined above so they can be
+    // easily constructed.
     targets!(constructors);
 
+    /// Mapping of all dependencies for rustbuild.
+    ///
+    /// This function receives a step, the build that we're building for, and
+    /// then returns a list of all the dependencies of that step.
     pub fn deps(&self, build: &'a Build) -> Vec<Step<'a>> {
         match self.src {
             Source::Rustc { stage: 0 } => {
@@ -274,6 +347,8 @@ impl<'a> Step<'a> {
                 vec![self.llvm(()).target(&build.config.build)]
             }
             Source::Llvm { _dummy } => Vec::new(),
+            Source::TestHelpers { _dummy } => Vec::new(),
+            Source::DebuggerScripts { stage: _ } => Vec::new(),
 
             // Note that all doc targets depend on artifacts from the build
             // architecture, not the target (which is where we're generating
@@ -306,18 +381,104 @@ impl<'a> Step<'a> {
                      self.doc_std(stage),
                      self.doc_error_index(stage)]
             }
-            Source::Check { stage, compiler: _ } => {
-                vec![self.check_linkcheck(stage),
-                     self.dist(stage)]
+            Source::Check { stage, compiler } => {
+                vec![
+                    self.check_rpass(compiler),
+                    self.check_rpass_full(compiler),
+                    self.check_rfail(compiler),
+                    self.check_rfail_full(compiler),
+                    self.check_cfail(compiler),
+                    self.check_cfail_full(compiler),
+                    self.check_pfail(compiler),
+                    self.check_incremental(compiler),
+                    self.check_ui(compiler),
+                    self.check_crate_std(compiler),
+                    self.check_crate_test(compiler),
+                    self.check_crate_rustc(compiler),
+                    self.check_codegen(compiler),
+                    self.check_codegen_units(compiler),
+                    self.check_debuginfo(compiler),
+                    self.check_rustdoc(compiler),
+                    self.check_pretty(compiler),
+                    self.check_pretty_rpass(compiler),
+                    self.check_pretty_rpass_full(compiler),
+                    self.check_pretty_rfail(compiler),
+                    self.check_pretty_rfail_full(compiler),
+                    self.check_pretty_rpass_valgrind(compiler),
+                    self.check_rpass_valgrind(compiler),
+                    self.check_error_index(compiler),
+                    self.check_docs(compiler),
+                    self.check_rmake(compiler),
+                    self.check_linkcheck(stage),
+                    self.check_tidy(stage),
+                    self.dist(stage),
+                ]
             }
             Source::CheckLinkcheck { stage } => {
                 vec![self.tool_linkchecker(stage), self.doc(stage)]
             }
             Source::CheckCargoTest { stage } => {
-                vec![self.tool_cargotest(stage)]
+                vec![self.tool_cargotest(stage),
+                     self.librustc(self.compiler(stage))]
+            }
+            Source::CheckTidy { stage } => {
+                vec![self.tool_tidy(stage)]
+            }
+            Source::CheckPrettyRPass { compiler } |
+            Source::CheckPrettyRFail { compiler } |
+            Source::CheckRFail { compiler } |
+            Source::CheckPFail { compiler } |
+            Source::CheckCodegen { compiler } |
+            Source::CheckCodegenUnits { compiler } |
+            Source::CheckIncremental { compiler } |
+            Source::CheckUi { compiler } |
+            Source::CheckRustdoc { compiler } |
+            Source::CheckPretty { compiler } |
+            Source::CheckCFail { compiler } |
+            Source::CheckRPassValgrind { compiler } |
+            Source::CheckRPass { compiler } => {
+                vec![
+                    self.libtest(compiler),
+                    self.tool_compiletest(compiler.stage),
+                    self.test_helpers(()),
+                ]
+            }
+            Source::CheckDebuginfo { compiler } => {
+                vec![
+                    self.libtest(compiler),
+                    self.tool_compiletest(compiler.stage),
+                    self.test_helpers(()),
+                    self.debugger_scripts(compiler.stage),
+                ]
+            }
+            Source::CheckRPassFull { compiler } |
+            Source::CheckRFailFull { compiler } |
+            Source::CheckCFailFull { compiler } |
+            Source::CheckPrettyRPassFull { compiler } |
+            Source::CheckPrettyRFailFull { compiler } |
+            Source::CheckPrettyRPassValgrind { compiler } |
+            Source::CheckRMake { compiler } => {
+                vec![self.librustc(compiler),
+                     self.tool_compiletest(compiler.stage)]
+            }
+            Source::CheckDocs { compiler } => {
+                vec![self.libstd(compiler)]
+            }
+            Source::CheckErrorIndex { compiler } => {
+                vec![self.libstd(compiler), self.tool_error_index(compiler.stage)]
+            }
+            Source::CheckCrateStd { compiler } => {
+                vec![self.libtest(compiler)]
+            }
+            Source::CheckCrateTest { compiler } => {
+                vec![self.libtest(compiler)]
+            }
+            Source::CheckCrateRustc { compiler } => {
+                vec![self.libtest(compiler)]
             }
 
-            Source::ToolLinkchecker { stage } => {
+            Source::ToolLinkchecker { stage } |
+            Source::ToolTidy { stage } => {
                 vec![self.libstd(self.compiler(stage))]
             }
             Source::ToolErrorIndex { stage } |
@@ -325,7 +486,10 @@ impl<'a> Step<'a> {
                 vec![self.librustc(self.compiler(stage))]
             }
             Source::ToolCargoTest { stage } => {
-                vec![self.librustc(self.compiler(stage))]
+                vec![self.libstd(self.compiler(stage))]
+            }
+            Source::ToolCompiletest { stage } => {
+                vec![self.libtest(self.compiler(stage))]
             }
 
             Source::DistDocs { stage } => vec![self.doc(stage)],
@@ -334,7 +498,14 @@ impl<'a> Step<'a> {
                 vec![self.rustc(stage)]
             }
             Source::DistStd { compiler } => {
-                vec![self.libtest(compiler)]
+                // We want to package up as many target libraries as possible
+                // for the `rust-std` package, so if this is a host target we
+                // depend on librustc and otherwise we just depend on libtest.
+                if build.config.host.iter().any(|t| t == self.target) {
+                    vec![self.librustc(compiler)]
+                } else {
+                    vec![self.libtest(compiler)]
+                }
             }
 
             Source::Dist { stage } => {
@@ -350,7 +521,9 @@ impl<'a> Step<'a> {
                     let compiler = self.compiler(stage);
                     for target in build.config.target.iter() {
                         let target = self.target(target);
-                        base.push(target.dist_docs(stage));
+                        if build.config.docs {
+                            base.push(target.dist_docs(stage));
+                        }
                         base.push(target.dist_std(compiler));
                     }
                 }

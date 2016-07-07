@@ -30,13 +30,13 @@
 extern crate core;
 #[macro_use] extern crate rustc;
 extern crate rustc_const_eval;
+extern crate rustc_const_math;
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
 
 pub mod diagnostics;
 
-pub mod const_fn;
 pub mod consts;
 pub mod loops;
 pub mod no_asm;

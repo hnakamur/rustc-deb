@@ -1,7 +1,7 @@
 % Ownership
 
-This guide is one of three presenting Rust’s ownership system. This is one of
-Rust’s most unique and compelling features, with which Rust developers should
+This is the first of three sections presenting Rust’s ownership system. This is one of
+Rust’s most distinct and compelling features, with which Rust developers should
 become quite acquainted. Ownership is how Rust achieves its largest goal,
 memory safety. There are a few distinct concepts, each with its own
 chapter:
@@ -155,7 +155,7 @@ vector object and its data live in separate memory regions instead of being a
 single contiguous memory allocation (due to reasons we will not go into at
 this point of time). These two parts of the vector (the one on the stack and
 one on the heap) must agree with each other at all times with regards to
-things like the length, capacity etc.
+things like the length, capacity, etc.
 
 When we move `v` to `v2`, Rust actually does a bitwise copy of the vector
 object `v` into the stack allocation represented by `v2`. This shallow copy
@@ -173,11 +173,11 @@ For example if we truncated the vector to just two elements through `v2`:
 v2.truncate(2);
 ```
 
-and `v1` were still accessible we'd end up with an invalid vector since `v1`
+and `v` were still accessible we'd end up with an invalid vector since `v`
 would not know that the heap data has been truncated. Now, the part of the
-vector `v1` on the stack does not agree with the corresponding part on the
-heap. `v1` still thinks there are three elements in the vector and will
-happily let us access the non existent element `v1[2]` but as you might
+vector `v` on the stack does not agree with the corresponding part on the
+heap. `v` still thinks there are three elements in the vector and will
+happily let us access the non existent element `v[2]` but as you might
 already know this is a recipe for disaster. Especially because it might lead
 to a segmentation fault or worse allow an unauthorized user to read from
 memory to which they don't have access.

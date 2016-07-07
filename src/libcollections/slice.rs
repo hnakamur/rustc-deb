@@ -419,8 +419,8 @@ impl<T> [T] {
     ///
     /// ```rust
     /// let v = &[1, 2, 3, 4, 5];
-    /// for win in v.chunks(2) {
-    ///     println!("{:?}", win);
+    /// for chunk in v.chunks(2) {
+    ///     println!("{:?}", chunk);
     /// }
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -741,11 +741,47 @@ impl<T> [T] {
         core_slice::SliceExt::binary_search_by(self, f)
     }
 
-    /// Sorts the slice, in place.
+    /// Binary search a sorted slice with a key extraction function.
     ///
+    /// Assumes that the slice is sorted by the key, for instance with
+    /// `sort_by_key` using the same key extraction function.
+    ///
+    /// If a matching value is found then returns `Ok`, containing the
+    /// index for the matched element; if no match is found then `Err`
+    /// is returned, containing the index where a matching element could
+    /// be inserted while maintaining sorted order.
+    ///
+    /// # Examples
+    ///
+    /// Looks up a series of four elements in a slice of pairs sorted by
+    /// their second elements. The first is found, with a uniquely
+    /// determined position; the second and third are not found; the
+    /// fourth could match any position in `[1,4]`.
+    ///
+    /// ```rust
+    /// let s = [(0, 0), (2, 1), (4, 1), (5, 1), (3, 1),
+    ///          (1, 2), (2, 3), (4, 5), (5, 8), (3, 13),
+    ///          (1, 21), (2, 34), (4, 55)];
+    ///
+    /// assert_eq!(s.binary_search_by_key(&13, |&(a,b)| b),  Ok(9));
+    /// assert_eq!(s.binary_search_by_key(&4, |&(a,b)| b),   Err(7));
+    /// assert_eq!(s.binary_search_by_key(&100, |&(a,b)| b), Err(13));
+    /// let r = s.binary_search_by_key(&1, |&(a,b)| b);
+    /// assert!(match r { Ok(1...4) => true, _ => false, });
+    /// ```
+    #[stable(feature = "slice_binary_search_by_key", since = "1.10.0")]
+    #[inline]
+    pub fn binary_search_by_key<B, F>(&self, b: &B, f: F) -> Result<usize, usize>
+        where F: FnMut(&T) -> B,
+              B: Ord
+    {
+        core_slice::SliceExt::binary_search_by_key(self, b, f)
+    }
+
     /// This is equivalent to `self.sort_by(|a, b| a.cmp(b))`.
     ///
-    /// This is a stable sort.
+    /// This sort is stable and `O(n log n)` worst-case but allocates
+    /// approximately `2 * n` where `n` is the length of `self`.
     ///
     /// # Examples
     ///
@@ -766,10 +802,8 @@ impl<T> [T] {
     /// Sorts the slice, in place, using `key` to extract a key by which to
     /// order the sort by.
     ///
-    /// This sort is `O(n log n)` worst-case and stable, but allocates
+    /// This sort is stable and `O(n log n)` worst-case but allocates
     /// approximately `2 * n`, where `n` is the length of `self`.
-    ///
-    /// This is a stable sort.
     ///
     /// # Examples
     ///
@@ -790,7 +824,7 @@ impl<T> [T] {
     /// Sorts the slice, in place, using `compare` to compare
     /// elements.
     ///
-    /// This sort is `O(n log n)` worst-case and stable, but allocates
+    /// This sort is stable and `O(n log n)` worst-case but allocates
     /// approximately `2 * n`, where `n` is the length of `self`.
     ///
     /// # Examples

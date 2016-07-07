@@ -202,8 +202,10 @@ fn test_resize_policy() {
 /// The hashes are all keyed by the thread-local random number generator
 /// on creation by default. This means that the ordering of the keys is
 /// randomized, but makes the tables more resistant to
-/// denial-of-service attacks (Hash DoS). This behavior can be
-/// overridden with one of the constructors.
+/// denial-of-service attacks (Hash DoS). No guarantees are made to the
+/// quality of the random data. The implementation uses the best available
+/// random data from your platform at the time of creation. This behavior
+/// can be overridden with one of the constructors.
 ///
 /// It is required that the keys implement the `Eq` and `Hash` traits, although
 /// this can frequently be achieved by using `#[derive(PartialEq, Eq, Hash)]`.
@@ -830,7 +832,7 @@ impl<K, V, S> HashMap<K, V, S>
     /// }
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn keys<'a>(&'a self) -> Keys<'a, K, V> {
+    pub fn keys(&self) -> Keys<K, V> {
         Keys { inner: self.iter() }
     }
 
@@ -852,7 +854,7 @@ impl<K, V, S> HashMap<K, V, S>
     /// }
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn values<'a>(&'a self) -> Values<'a, K, V> {
+    pub fn values(&self) -> Values<K, V> {
         Values { inner: self.iter() }
     }
 
@@ -862,7 +864,6 @@ impl<K, V, S> HashMap<K, V, S>
     /// # Examples
     ///
     /// ```
-    /// # #![feature(map_values_mut)]
     /// use std::collections::HashMap;
     ///
     /// let mut map = HashMap::new();
@@ -879,8 +880,8 @@ impl<K, V, S> HashMap<K, V, S>
     ///     print!("{}", val);
     /// }
     /// ```
-    #[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
-    pub fn values_mut<'a>(&'a mut self) -> ValuesMut<'a, K, V> {
+    #[stable(feature = "map_values_mut", since = "1.10.0")]
+    pub fn values_mut(&mut self) -> ValuesMut<K, V> {
         ValuesMut { inner: self.iter_mut() }
     }
 
@@ -1286,7 +1287,7 @@ pub struct Drain<'a, K: 'a, V: 'a> {
 }
 
 /// Mutable HashMap values iterator.
-#[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
+#[stable(feature = "map_values_mut", since = "1.10.0")]
 pub struct ValuesMut<'a, K: 'a, V: 'a> {
     inner: IterMut<'a, K, V>
 }
@@ -1489,14 +1490,14 @@ impl<'a, K, V> ExactSizeIterator for Values<'a, K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
 
-#[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
+#[stable(feature = "map_values_mut", since = "1.10.0")]
 impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
     type Item = &'a mut V;
 
     #[inline] fn next(&mut self) -> Option<(&'a mut V)> { self.inner.next().map(|(_, v)| v) }
     #[inline] fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
 }
-#[unstable(feature = "map_values_mut", reason = "recently added", issue = "32551")]
+#[stable(feature = "map_values_mut", since = "1.10.0")]
 impl<'a, K, V> ExactSizeIterator for ValuesMut<'a, K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
@@ -1533,11 +1534,20 @@ impl<'a, K, V> Entry<'a, K, V> {
             Vacant(entry) => entry.insert(default()),
         }
     }
+
+    /// Returns a reference to this entry's key.
+    #[stable(feature = "map_entry_keys", since = "1.10.0")]
+    pub fn key(&self) -> &K {
+        match *self {
+            Occupied(ref entry) => entry.key(),
+            Vacant(ref entry) => entry.key(),
+        }
+    }
 }
 
 impl<'a, K, V> OccupiedEntry<'a, K, V> {
     /// Gets a reference to the key in the entry.
-    #[unstable(feature = "map_entry_keys", issue = "32281")]
+    #[stable(feature = "map_entry_keys", since = "1.10.0")]
     pub fn key(&self) -> &K {
         self.elem.read().0
     }
@@ -1585,7 +1595,7 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
 impl<'a, K: 'a, V: 'a> VacantEntry<'a, K, V> {
     /// Gets a reference to the key that would be used when inserting a value
     /// through the VacantEntry.
-    #[unstable(feature = "map_entry_keys", issue = "32281")]
+    #[stable(feature = "map_entry_keys", since = "1.10.0")]
     pub fn key(&self) -> &K {
         &self.key
     }
@@ -1656,8 +1666,33 @@ impl RandomState {
     #[allow(deprecated)] // rand
     #[stable(feature = "hashmap_build_hasher", since = "1.7.0")]
     pub fn new() -> RandomState {
-        let mut r = rand::thread_rng();
-        RandomState { k0: r.gen(), k1: r.gen() }
+        // Historically this function did not cache keys from the OS and instead
+        // simply always called `rand::thread_rng().gen()` twice. In #31356 it
+        // was discovered, however, that because we re-seed the thread-local RNG
+        // from the OS periodically that this can cause excessive slowdown when
+        // many hash maps are created on a thread. To solve this performance
+        // trap we cache the first set of randomly generated keys per-thread.
+        //
+        // In doing this, however, we lose the property that all hash maps have
+        // nondeterministic iteration order as all of those created on the same
+        // thread would have the same hash keys. This property has been nice in
+        // the past as it allows for maximal flexibility in the implementation
+        // of `HashMap` itself.
+        //
+        // The constraint here (if there even is one) is just that maps created
+        // on the same thread have the same iteration order, and that *may* be
+        // relied upon even though it is not a documented guarantee at all of
+        // the `HashMap` type. In any case we've decided that this is reasonable
+        // for now, so caching keys thread-locally seems fine.
+        thread_local!(static KEYS: (u64, u64) = {
+            let r = rand::OsRng::new();
+            let mut r = r.expect("failed to create an OS RNG");
+            (r.gen(), r.gen())
+        });
+
+        KEYS.with(|&(k0, k1)| {
+            RandomState { k0: k0, k1: k1 }
+        })
     }
 }
 

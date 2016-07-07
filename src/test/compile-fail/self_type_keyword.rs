@@ -14,7 +14,7 @@ struct Self;
 //~^ ERROR expected identifier, found keyword `Self`
 
 struct Bar<'Self>;
-//~^ ERROR invalid lifetime name
+//~^ ERROR lifetimes cannot use keyword names
 
 pub fn main() {
     let Self = 5;
@@ -38,9 +38,6 @@ pub fn main() {
         //~^ ERROR expected identifier, found keyword `Self`
     }
 }
-
-use self::Self as Foo;
-//~^ ERROR expected identifier, found keyword `Self`
 
 use std::option::Option as Self;
 //~^ ERROR expected identifier, found keyword `Self`

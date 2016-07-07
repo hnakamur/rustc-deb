@@ -16,13 +16,13 @@ use any::Any;
 use boxed::Box;
 use cell::UnsafeCell;
 use ops::{Deref, DerefMut};
+use panicking;
 use ptr::{Unique, Shared};
 use rc::Rc;
 use sync::{Arc, Mutex, RwLock};
-use sys_common::unwind;
 use thread::Result;
 
-#[unstable(feature = "panic_handler", issue = "30449")]
+#[stable(feature = "panic_hooks", since = "1.10.0")]
 pub use panicking::{take_hook, set_hook, PanicInfo, Location};
 
 ///
@@ -73,7 +73,7 @@ pub fn take_handler() -> Box<Fn(&PanicInfo) + 'static + Sync + Send> {
 ///
 /// [rfc]: https://github.com/rust-lang/rfcs/blob/master/text/1236-stabilize-catch-panic.md
 ///
-/// ## What is `RecoverSafe`?
+/// ## What is `UnwindSafe`?
 ///
 /// Now that we've got an idea of what panic safety is in Rust, it's also
 /// important to understand what this trait represents. As mentioned above, one
@@ -81,7 +81,7 @@ pub fn take_handler() -> Box<Fn(&PanicInfo) + 'static + Sync + Send> {
 /// module as it allows catching a panic and then re-using the environment of
 /// the closure.
 ///
-/// Simply put, a type `T` implements `RecoverSafe` if it cannot easily allow
+/// Simply put, a type `T` implements `UnwindSafe` if it cannot easily allow
 /// witnessing a broken invariant through the use of `recover` (catching a
 /// panic). This trait is a marker trait, so it is automatically implemented for
 /// many types, and it is also structurally composed (e.g. a struct is recover
@@ -108,7 +108,7 @@ pub fn take_handler() -> Box<Fn(&PanicInfo) + 'static + Sync + Send> {
 ///
 /// Is not intended that most types or functions need to worry about this trait.
 /// It is only used as a bound on the `recover` function and as mentioned above,
-/// the lack of `unsafe` means it is mostly an advisory. The `AssertRecoverSafe`
+/// the lack of `unsafe` means it is mostly an advisory. The `AssertUnwindSafe`
 /// wrapper struct in this module can be used to force this trait to be
 /// implemented for any closed over variables passed to the `recover` function
 /// (more on this below).
@@ -246,7 +246,7 @@ impl<T: RefUnwindSafe + ?Sized> UnwindSafe for Rc<T> {}
 #[stable(feature = "catch_unwind", since = "1.9.0")]
 impl<T: RefUnwindSafe + ?Sized> UnwindSafe for Arc<T> {}
 
-// Pretty simple implementations for the `RefRecoverSafe` marker trait,
+// Pretty simple implementations for the `RefUnwindSafe` marker trait,
 // basically just saying that this is a marker trait and `UnsafeCell` is the
 // only thing which doesn't implement it (which then transitively applies to
 // everything else).
@@ -346,9 +346,9 @@ impl<R, F: FnOnce() -> R> FnOnce<()> for AssertRecoverSafe<F> {
 /// It is **not** recommended to use this function for a general try/catch
 /// mechanism. The `Result` type is more appropriate to use for functions that
 /// can fail on a regular basis. Additionally, this function is not guaranteed
-/// to catch all panics, see the "Notes" sectino below.
+/// to catch all panics, see the "Notes" section below.
 ///
-/// The closure provided is required to adhere to the `UnwindSafe` to ensure
+/// The closure provided is required to adhere to the `UnwindSafe` trait to ensure
 /// that all captured variables are safe to cross this boundary. The purpose of
 /// this bound is to encode the concept of [exception safety][rfc] in the type
 /// system. Most usage of this function should not need to worry about this
@@ -383,12 +383,9 @@ impl<R, F: FnOnce() -> R> FnOnce<()> for AssertRecoverSafe<F> {
 /// ```
 #[stable(feature = "catch_unwind", since = "1.9.0")]
 pub fn catch_unwind<F: FnOnce() -> R + UnwindSafe, R>(f: F) -> Result<R> {
-    let mut result = None;
     unsafe {
-        let result = &mut result;
-        unwind::try(move || *result = Some(f()))?
+        panicking::try(f)
     }
-    Ok(result.unwrap())
 }
 
 /// Deprecated, renamed to `catch_unwind`
@@ -398,7 +395,7 @@ pub fn recover<F: FnOnce() -> R + UnwindSafe, R>(f: F) -> Result<R> {
     catch_unwind(f)
 }
 
-/// Triggers a panic without invoking the panic handler.
+/// Triggers a panic without invoking the panic hook.
 ///
 /// This is designed to be used in conjunction with `catch_unwind` to, for
 /// example, carry a panic across a layer of C code.
@@ -425,7 +422,7 @@ pub fn recover<F: FnOnce() -> R + UnwindSafe, R>(f: F) -> Result<R> {
 /// ```
 #[stable(feature = "resume_unwind", since = "1.9.0")]
 pub fn resume_unwind(payload: Box<Any + Send>) -> ! {
-    unwind::rust_panic(payload)
+    panicking::rust_panic(payload)
 }
 
 /// Deprecated, use resume_unwind instead

@@ -74,7 +74,7 @@ fn expand_deriving_decodable_imp(cx: &mut ExtCtxt,
                 },
                 explicit_self: None,
                 args: vec!(Ptr(Box::new(Literal(Path::new_local(typaram))),
-                            Borrowed(None, Mutability::Mutable))),
+                           Borrowed(None, Mutability::Mutable))),
                 ret_ty: Literal(Path::new_(
                     pathvec_std!(cx, core::result::Result),
                     None,
@@ -85,6 +85,7 @@ fn expand_deriving_decodable_imp(cx: &mut ExtCtxt,
                 )),
                 attributes: Vec::new(),
                 is_unsafe: false,
+                unify_fieldless_variants: false,
                 combine_substructure: combine_substructure(Box::new(|a, b, c| {
                     decodable_substructure(a, b, c, krate)
                 })),

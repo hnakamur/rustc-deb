@@ -11,6 +11,7 @@
 pub use self::Node::*;
 use self::MapEntry::*;
 use self::collector::NodeCollector;
+use self::def_collector::DefCollector;
 pub use self::definitions::{Definitions, DefKey, DefPath, DefPathData,
                             DisambiguatedDefPathData, InlinedRootPath};
 
@@ -18,12 +19,13 @@ use dep_graph::{DepGraph, DepNode};
 
 use middle::cstore::InlinedItem;
 use middle::cstore::InlinedItem as II;
-use hir::def_id::{CRATE_DEF_INDEX, DefId};
+use hir::def_id::{CRATE_DEF_INDEX, DefId, DefIndex};
 
 use syntax::abi::Abi;
-use syntax::ast::{self, Name, NodeId, DUMMY_NODE_ID};
+use syntax::ast::{self, Name, NodeId, DUMMY_NODE_ID, };
 use syntax::attr::ThinAttributesExt;
 use syntax::codemap::{Span, Spanned};
+use syntax::visit;
 
 use hir::*;
 use hir::fold::Folder;
@@ -36,6 +38,7 @@ use std::mem;
 
 pub mod blocks;
 mod collector;
+mod def_collector;
 pub mod definitions;
 
 #[derive(Copy, Clone, Debug)]
@@ -157,10 +160,10 @@ pub struct Forest {
 }
 
 impl Forest {
-    pub fn new(krate: Crate, dep_graph: DepGraph) -> Forest {
+    pub fn new(krate: Crate, dep_graph: &DepGraph) -> Forest {
         Forest {
             krate: krate,
-            dep_graph: dep_graph,
+            dep_graph: dep_graph.clone(),
             inlined_items: TypedArena::new()
         }
     }
@@ -282,9 +285,8 @@ impl<'ast> Map<'ast> {
         self.definitions.borrow().def_path(def_id.index)
     }
 
-    pub fn retrace_path(&self, path: &DefPath) -> Option<DefId> {
-        self.definitions.borrow().retrace_path(path)
-                                 .map(DefId::local)
+    pub fn def_index_for_def_key(&self, def_key: DefKey) -> Option<DefIndex> {
+        self.definitions.borrow().def_index_for_def_key(def_key)
     }
 
     pub fn local_def_id(&self, node: NodeId) -> DefId {
@@ -559,9 +561,7 @@ impl<'ast> Map<'ast> {
             NodeVariant(v) => v.node.name,
             NodeLifetime(lt) => lt.name,
             NodeTyParam(tp) => tp.name,
-            NodeLocal(&Pat { node: PatKind::Ident(_,l,_), .. }) => {
-                l.node.name
-            },
+            NodeLocal(&Pat { node: PatKind::Ident(_,l,_), .. }) => l.node,
             NodeStructCtor(_) => self.name(self.get_parent(id)),
             _ => bug!("no name for {}", self.node_to_string(id))
         }
@@ -780,12 +780,18 @@ impl<F: FoldOps> Folder for IdAndSpanUpdater<F> {
     }
 }
 
-pub fn map_crate<'ast>(forest: &'ast mut Forest) -> Map<'ast> {
-    let (map, definitions) = {
-        let mut collector = NodeCollector::root(&forest.krate);
-        intravisit::walk_crate(&mut collector, &forest.krate);
-        (collector.map, collector.definitions)
-    };
+pub fn collect_definitions<'ast>(krate: &'ast ast::Crate) -> Definitions {
+    let mut def_collector = DefCollector::root();
+    visit::walk_crate(&mut def_collector, krate);
+    def_collector.definitions
+}
+
+pub fn map_crate<'ast>(forest: &'ast mut Forest,
+                       definitions: Definitions)
+                       -> Map<'ast> {
+    let mut collector = NodeCollector::root(&forest.krate);
+    intravisit::walk_crate(&mut collector, &forest.krate);
+    let map = collector.map;
 
     if log_enabled!(::log::DEBUG) {
         // This only makes sense for ordered stores; note the
@@ -834,21 +840,24 @@ pub fn map_decoded_item<'ast, F: FoldOps>(map: &Map<'ast>,
     };
 
     let ii = map.forest.inlined_items.alloc(ii);
-
     let ii_parent_id = fld.new_id(DUMMY_NODE_ID);
-    let mut collector =
-        NodeCollector::extend(
-            map.krate(),
-            ii,
-            ii_parent_id,
-            parent_def_path,
-            parent_def_id,
-            mem::replace(&mut *map.map.borrow_mut(), vec![]),
-            mem::replace(&mut *map.definitions.borrow_mut(), Definitions::new()));
-    ii.visit(&mut collector);
 
+    let defs = mem::replace(&mut *map.definitions.borrow_mut(), Definitions::new());
+    let mut def_collector = DefCollector::extend(ii_parent_id,
+                                                 parent_def_path.clone(),
+                                                 parent_def_id,
+                                                 defs);
+    def_collector.walk_item(ii, map.krate());
+    *map.definitions.borrow_mut() = def_collector.definitions;
+
+    let mut collector = NodeCollector::extend(map.krate(),
+                                              ii,
+                                              ii_parent_id,
+                                              parent_def_path,
+                                              parent_def_id,
+                                              mem::replace(&mut *map.map.borrow_mut(), vec![]));
+    ii.visit(&mut collector);
     *map.map.borrow_mut() = collector.map;
-    *map.definitions.borrow_mut() = collector.definitions;
 
     ii
 }

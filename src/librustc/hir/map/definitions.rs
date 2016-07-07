@@ -15,6 +15,7 @@ use syntax::ast;
 use syntax::parse::token::InternedString;
 use util::nodemap::NodeMap;
 
+/// The definition table containing node definitions
 #[derive(Clone)]
 pub struct Definitions {
     data: Vec<DefData>,
@@ -82,8 +83,10 @@ impl DefPath {
         let mut data = vec![];
         let mut index = Some(start_index);
         loop {
+            debug!("DefPath::make: krate={:?} index={:?}", krate, index);
             let p = index.unwrap();
             let key = get_key(p);
+            debug!("DefPath::make: key={:?}", key);
             match key.disambiguated_data.data {
                 DefPathData::CrateRoot => {
                     assert!(key.parent.is_none());
@@ -137,30 +140,47 @@ pub struct InlinedRootPath {
 pub enum DefPathData {
     // Root: these should only be used for the root nodes, because
     // they are treated specially by the `def_path` function.
+    /// The crate root (marker)
     CrateRoot,
+    /// An inlined root
     InlinedRoot(Box<InlinedRootPath>),
 
     // Catch-all for random DefId things like DUMMY_NODE_ID
     Misc,
 
     // Different kinds of items and item-like things:
+    /// An impl
     Impl,
-    TypeNs(ast::Name), // something in the type NS
-    ValueNs(ast::Name), // something in the value NS
+    /// Something in the type NS
+    TypeNs(ast::Name),
+    /// Something in the value NS
+    ValueNs(ast::Name),
+    /// A module declaration
+    Module(ast::Name),
+    /// A macro rule
     MacroDef(ast::Name),
+    /// A closure expression
     ClosureExpr,
 
     // Subportions of items
+    /// A type parameter (generic parameter)
     TypeParam(ast::Name),
+    /// A lifetime definition
     LifetimeDef(ast::Name),
+    /// A variant of a enum
     EnumVariant(ast::Name),
+    /// A struct field
     Field(ast::Name),
-    StructCtor, // implicit ctor for a tuple-like struct
-    Initializer, // initializer for a const
-    Binding(ast::Name), // pattern binding
+    /// Implicit ctor for a tuple-like struct
+    StructCtor,
+    /// Initializer for a const
+    Initializer,
+    /// Pattern binding
+    Binding(ast::Name),
 }
 
 impl Definitions {
+    /// Create new empty definition map.
     pub fn new() -> Definitions {
         Definitions {
             data: vec![],
@@ -169,12 +189,17 @@ impl Definitions {
         }
     }
 
+    /// Get the number of definitions.
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     pub fn def_key(&self, index: DefIndex) -> DefKey {
         self.data[index.as_usize()].key.clone()
+    }
+
+    pub fn def_index_for_def_key(&self, key: DefKey) -> Option<DefIndex> {
+        self.key_map.get(&key).cloned()
     }
 
     /// Returns the path from the crate root to `index`. The root
@@ -194,6 +219,10 @@ impl Definitions {
         self.opt_def_index(node).map(DefId::local)
     }
 
+    pub fn local_def_id(&self, node: ast::NodeId) -> DefId {
+        self.opt_local_def_id(node).unwrap()
+    }
+
     pub fn as_local_node_id(&self, def_id: DefId) -> Option<ast::NodeId> {
         if def_id.krate == LOCAL_CRATE {
             assert!(def_id.index.as_usize() < self.data.len());
@@ -203,37 +232,7 @@ impl Definitions {
         }
     }
 
-    pub fn retrace_path(&self, path: &DefPath) -> Option<DefIndex> {
-        debug!("retrace_path(path={:?})", path);
-
-        // we assume that we only want to retrace paths relative to
-        // the crate root
-        assert!(path.is_local());
-
-        let root_key = DefKey {
-            parent: None,
-            disambiguated_data: DisambiguatedDefPathData {
-                data: DefPathData::CrateRoot,
-                disambiguator: 0,
-            },
-        };
-        let root_id = self.key_map[&root_key];
-
-        debug!("retrace_path: root_id={:?}", root_id);
-
-        let mut id = root_id;
-        for data in &path.data {
-            let key = DefKey { parent: Some(id), disambiguated_data: data.clone() };
-            debug!("key = {:?}", key);
-            id = match self.key_map.get(&key) {
-                Some(&id) => id,
-                None => return None
-            };
-        }
-
-        Some(id)
-    }
-
+    /// Add a definition with a parent definition.
     pub fn create_def_with_parent(&mut self,
                                   parent: Option<DefIndex>,
                                   node_id: ast::NodeId,
@@ -288,6 +287,7 @@ impl DefPathData {
         match *self {
             TypeNs(name) |
             ValueNs(name) |
+            Module(name) |
             MacroDef(name) |
             TypeParam(name) |
             LifetimeDef(name) |

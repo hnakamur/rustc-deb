@@ -14,6 +14,7 @@ pub type sighandler_t = ::size_t;
 pub type cc_t = ::c_uchar;
 
 pub enum DIR {}
+pub enum locale_t {}
 
 s! {
     pub struct utimbuf {
@@ -54,7 +55,9 @@ s! {
         pub ru_nvcsw: c_long,
         pub ru_nivcsw: c_long,
 
-        #[cfg(target_env = "musl")]
+        #[cfg(any(target_env = "musl",
+                  target_env = "musleabi",
+                  target_env = "musleabihf"))]
         __reserved: [c_long; 16],
     }
 
@@ -142,20 +145,57 @@ pub const IF_NAMESIZE: ::size_t = 16;
 
 pub const RTLD_LAZY: ::c_int = 0x1;
 
+pub const LOG_EMERG: ::c_int = 0;
+pub const LOG_ALERT: ::c_int = 1;
+pub const LOG_CRIT: ::c_int = 2;
+pub const LOG_ERR: ::c_int = 3;
+pub const LOG_WARNING: ::c_int = 4;
+pub const LOG_NOTICE: ::c_int = 5;
+pub const LOG_INFO: ::c_int = 6;
+pub const LOG_DEBUG: ::c_int = 7;
+
+pub const LOG_KERN: ::c_int = 0;
+pub const LOG_USER: ::c_int = 1 << 3;
+pub const LOG_MAIL: ::c_int = 2 << 3;
+pub const LOG_DAEMON: ::c_int = 3 << 3;
+pub const LOG_AUTH: ::c_int = 4 << 3;
+pub const LOG_SYSLOG: ::c_int = 5 << 3;
+pub const LOG_LPR: ::c_int = 6 << 3;
+pub const LOG_NEWS: ::c_int = 7 << 3;
+pub const LOG_UUCP: ::c_int = 8 << 3;
+pub const LOG_LOCAL0: ::c_int = 16 << 3;
+pub const LOG_LOCAL1: ::c_int = 17 << 3;
+pub const LOG_LOCAL2: ::c_int = 18 << 3;
+pub const LOG_LOCAL3: ::c_int = 19 << 3;
+pub const LOG_LOCAL4: ::c_int = 20 << 3;
+pub const LOG_LOCAL5: ::c_int = 21 << 3;
+pub const LOG_LOCAL6: ::c_int = 22 << 3;
+pub const LOG_LOCAL7: ::c_int = 23 << 3;
+
+pub const LOG_PID: ::c_int = 0x01;
+pub const LOG_CONS: ::c_int = 0x02;
+pub const LOG_ODELAY: ::c_int = 0x04;
+pub const LOG_NDELAY: ::c_int = 0x08;
+pub const LOG_NOWAIT: ::c_int = 0x10;
+
+pub const LOG_PRIMASK: ::c_int = 7;
+pub const LOG_FACMASK: ::c_int = 0x3f8;
+
 cfg_if! {
     if #[cfg(dox)] {
         // on dox builds don't pull in anything
     } else if #[cfg(all(not(stdbuild), feature = "use_std"))] {
         // cargo build, don't pull in anything extra as the libstd  dep
         // already pulls in all libs.
-    } else if #[cfg(all(target_env = "musl", not(any(target_arch = "mips",
-                                                     target_arch = "arm"))))] {
+    } else if #[cfg(any(all(target_env = "musl", not(target_arch = "mips")),
+                        target_env = "musleabi",
+                        target_env = "musleabihf"))] {
         #[link(name = "c", kind = "static")]
         extern {}
     } else if #[cfg(target_os = "emscripten")] {
         #[link(name = "c")]
         extern {}
-    } else if #[cfg(all(target_vendor = "rumprun", target_os = "netbsd"))] {
+    } else if #[cfg(all(target_os = "netbsd", target_vendor = "rumprun"))] {
         // Since we don't use -nodefaultlibs on Rumprun, libc is always pulled
         // in automatically by the linker. We avoid passing it explicitly, as it
         // causes some versions of binutils to crash with an assertion failure.
@@ -178,6 +218,16 @@ cfg_if! {
 }
 
 extern {
+    pub fn fprintf(stream: *mut ::FILE,
+                   format: *const ::c_char, ...) -> ::c_int;
+    pub fn printf(format: *const ::c_char, ...) -> ::c_int;
+    pub fn snprintf(s: *mut ::c_char, n: ::size_t,
+                    format: *const ::c_char, ...) -> ::c_int;
+    pub fn sprintf(s: *mut ::c_char, format: *const ::c_char, ...) -> ::c_int;
+    pub fn fscanf(stream: *mut ::FILE, format: *const ::c_char, ...) -> ::c_int;
+    pub fn scanf(format: *const ::c_char, ...) -> ::c_int;
+    pub fn sscanf(s: *const ::c_char, format: *const ::c_char, ...) -> ::c_int;
+
     #[cfg_attr(target_os = "netbsd", link_name = "__socket30")]
     pub fn socket(domain: ::c_int, ty: ::c_int, protocol: ::c_int) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
@@ -410,7 +460,6 @@ extern {
 
     pub fn ftruncate(fd: ::c_int, length: off_t) -> ::c_int;
 
-    #[cfg_attr(target_os = "android", link_name = "bsd_signal")]
     pub fn signal(signum: ::c_int, handler: sighandler_t) -> sighandler_t;
 
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
@@ -718,6 +767,12 @@ extern {
     pub fn mkstemps(template: *mut ::c_char, suffixlen: ::c_int) -> ::c_int;
     pub fn mkdtemp(template: *mut ::c_char) -> *mut ::c_char;
     pub fn futimes(fd: ::c_int, times: *const ::timeval) -> ::c_int;
+    pub fn nl_langinfo(item: ::nl_item) -> *mut ::c_char;
+
+    pub fn openlog(ident: *const ::c_char, logopt: ::c_int, facility: ::c_int);
+    pub fn closelog();
+    pub fn setlogmask(maskpri: ::c_int) -> ::c_int;
+    pub fn syslog(priority: ::c_int, message: *const ::c_char, ...);
 }
 
 cfg_if! {

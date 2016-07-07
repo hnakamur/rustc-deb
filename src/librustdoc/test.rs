@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use std::cell::{RefCell, Cell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
 use std::io::prelude::*;
@@ -28,7 +28,7 @@ use rustc::hir::map as hir_map;
 use rustc::session::{self, config};
 use rustc::session::config::{get_unstable_features_setting, OutputType};
 use rustc::session::search_paths::{SearchPaths, PathKind};
-use rustc::hir::lowering::{lower_crate, LoweringContext};
+use rustc::hir::lowering::{lower_crate, DummyResolver};
 use rustc_back::dynamic_lib::DynamicLibrary;
 use rustc_back::tempdir::TempDir;
 use rustc_driver::{driver, Compilation};
@@ -79,8 +79,11 @@ pub fn run(input: &str,
                                                                false,
                                                                codemap.clone());
 
-    let cstore = Rc::new(CStore::new(token::get_ident_interner()));
+    let dep_graph = DepGraph::new(false);
+    let _ignore = dep_graph.in_ignore();
+    let cstore = Rc::new(CStore::new(&dep_graph, token::get_ident_interner()));
     let sess = session::build_session_(sessopts,
+                                       &dep_graph,
                                        Some(input_path.clone()),
                                        diagnostic_handler,
                                        codemap,
@@ -94,29 +97,30 @@ pub fn run(input: &str,
                                                      "rustdoc-test", None)
         .expect("phase_2_configure_and_expand aborted in rustdoc!");
     let krate = driver::assign_node_ids(&sess, krate);
-    let lcx = LoweringContext::new(&sess, Some(&krate));
-    let krate = lower_crate(&lcx, &krate);
+    let dep_graph = DepGraph::new(false);
+    let defs = hir_map::collect_definitions(&krate);
+
+    let mut dummy_resolver = DummyResolver;
+    let krate = lower_crate(&sess, &krate, &sess, &mut dummy_resolver);
 
     let opts = scrape_test_config(&krate);
 
-    let dep_graph = DepGraph::new(false);
     let _ignore = dep_graph.in_ignore();
-    let mut forest = hir_map::Forest::new(krate, dep_graph.clone());
-    let map = hir_map::map_crate(&mut forest);
+    let mut forest = hir_map::Forest::new(krate, &dep_graph);
+    let map = hir_map::map_crate(&mut forest, defs);
 
     let ctx = core::DocContext {
         map: &map,
         maybe_typed: core::NotTyped(&sess),
         input: input,
-        external_paths: RefCell::new(Some(HashMap::new())),
-        external_traits: RefCell::new(None),
-        external_typarams: RefCell::new(None),
-        inlined: RefCell::new(None),
-        all_crate_impls: RefCell::new(HashMap::new()),
+        external_traits: RefCell::new(HashMap::new()),
+        populated_crate_impls: RefCell::new(HashSet::new()),
         deref_trait_did: Cell::new(None),
+        access_levels: Default::default(),
+        renderinfo: Default::default(),
     };
 
-    let mut v = RustdocVisitor::new(&ctx, None);
+    let mut v = RustdocVisitor::new(&ctx);
     v.visit(ctx.map.krate());
     let mut krate = v.clean(&ctx);
     if let Some(name) = crate_name {
@@ -237,8 +241,10 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
     // Compile the code
     let diagnostic_handler = errors::Handler::with_emitter(true, false, box emitter);
 
-    let cstore = Rc::new(CStore::new(token::get_ident_interner()));
+    let dep_graph = DepGraph::new(false);
+    let cstore = Rc::new(CStore::new(&dep_graph, token::get_ident_interner()));
     let sess = session::build_session_(sessopts,
+                                       &dep_graph,
                                        None,
                                        diagnostic_handler,
                                        codemap,
@@ -339,7 +345,7 @@ pub fn maketest(s: &str, cratename: Option<&str>, dont_insert_main: bool,
         prog.push_str(&everything_else);
     } else {
         prog.push_str("fn main() {\n    ");
-        prog.push_str(&everything_else.replace("\n", "\n    "));
+        prog.push_str(&everything_else);
         prog = prog.trim().into();
         prog.push_str("\n}");
     }

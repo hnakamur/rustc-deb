@@ -11,7 +11,9 @@
 #![deny(warnings)]
 
 #![feature(binary_heap_extras)]
+#![feature(binary_heap_append)]
 #![feature(box_syntax)]
+#![feature(btree_append)]
 #![feature(btree_range)]
 #![feature(collections)]
 #![feature(collections_bound)]
@@ -19,8 +21,7 @@
 #![feature(fn_traits)]
 #![feature(enumset)]
 #![feature(iter_arith)]
-#![feature(map_entry_keys)]
-#![feature(map_values_mut)]
+#![feature(linked_list_contains)]
 #![feature(pattern)]
 #![feature(rand)]
 #![feature(step_by)]
@@ -29,6 +30,7 @@
 #![feature(test)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
+#![feature(vec_deque_contains)]
 
 extern crate collections;
 extern crate test;

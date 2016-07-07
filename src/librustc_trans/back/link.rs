@@ -19,12 +19,13 @@ use session::config::{OutputFilenames, Input, OutputType};
 use session::filesearch;
 use session::search_paths::PathKind;
 use session::Session;
-use middle::cstore::{self, CrateStore, LinkMeta};
+use middle::cstore::{self, LinkMeta};
 use middle::cstore::{LinkagePreference, NativeLibraryKind};
 use middle::dependency_format::Linkage;
 use CrateTranslation;
 use util::common::time;
 use util::fs::fix_windows_verbatim_for_gcc;
+use rustc::dep_graph::DepNode;
 use rustc::ty::TyCtxt;
 use rustc_back::tempdir::TempDir;
 
@@ -124,9 +125,9 @@ pub fn find_crate_name(sess: Option<&Session>,
 
 }
 
-pub fn build_link_meta(tcx: &TyCtxt,
-                       name: &str)
-                       -> LinkMeta {
+pub fn build_link_meta<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                 name: &str)
+                                 -> LinkMeta {
     let r = LinkMeta {
         crate_name: name.to_owned(),
         crate_hash: tcx.calculate_krate_hash(),
@@ -183,6 +184,8 @@ pub fn link_binary(sess: &Session,
                    trans: &CrateTranslation,
                    outputs: &OutputFilenames,
                    crate_name: &str) -> Vec<PathBuf> {
+    let _task = sess.dep_graph.in_task(DepNode::LinkBinary);
+
     let mut out_filenames = Vec::new();
     for &crate_type in sess.crate_types.borrow().iter() {
         if invalid_output_for_target(sess, crate_type) {
@@ -228,6 +231,7 @@ pub fn invalid_output_for_target(sess: &Session,
                                  crate_type: config::CrateType) -> bool {
     match (sess.target.target.options.dynamic_linking,
            sess.target.target.options.executables, crate_type) {
+        (false, _, config::CrateTypeCdylib) |
         (false, _, config::CrateTypeDylib) => true,
         (_, false, config::CrateTypeExecutable) => true,
         _ => false
@@ -250,6 +254,7 @@ pub fn filename_for_input(sess: &Session,
         config::CrateTypeRlib => {
             outputs.out_directory.join(&format!("lib{}.rlib", libname))
         }
+        config::CrateTypeCdylib |
         config::CrateTypeDylib => {
             let (prefix, suffix) = (&sess.target.target.options.dll_prefix,
                                     &sess.target.target.options.dll_suffix);
@@ -278,9 +283,10 @@ pub fn each_linked_rlib(sess: &Session,
                         f: &mut FnMut(ast::CrateNum, &Path)) {
     let crates = sess.cstore.used_crates(LinkagePreference::RequireStatic).into_iter();
     let fmts = sess.dependency_formats.borrow();
-    let fmts = fmts.get(&config::CrateTypeExecutable).or_else(|| {
-        fmts.get(&config::CrateTypeStaticlib)
-    }).unwrap_or_else(|| {
+    let fmts = fmts.get(&config::CrateTypeExecutable)
+                   .or_else(|| fmts.get(&config::CrateTypeStaticlib))
+                   .or_else(|| fmts.get(&config::CrateTypeCdylib));
+    let fmts = fmts.unwrap_or_else(|| {
         bug!("could not find formats for rlibs")
     });
     for (cnum, path) in crates {
@@ -335,13 +341,9 @@ fn link_binary_output(sess: &Session,
         config::CrateTypeStaticlib => {
             link_staticlib(sess, &objects, &out_filename, tmpdir.path());
         }
-        config::CrateTypeExecutable => {
-            link_natively(sess, false, &objects, &out_filename, trans, outputs,
-                          tmpdir.path());
-        }
-        config::CrateTypeDylib => {
-            link_natively(sess, true, &objects, &out_filename, trans, outputs,
-                          tmpdir.path());
+        _ => {
+            link_natively(sess, crate_type, &objects, &out_filename, trans,
+                          outputs, tmpdir.path());
         }
     }
 
@@ -609,13 +611,14 @@ fn link_staticlib(sess: &Session, objects: &[PathBuf], out_filename: &Path,
 //
 // This will invoke the system linker/cc to create the resulting file. This
 // links to all upstream files as well.
-fn link_natively(sess: &Session, dylib: bool,
-                 objects: &[PathBuf], out_filename: &Path,
+fn link_natively(sess: &Session,
+                 crate_type: config::CrateType,
+                 objects: &[PathBuf],
+                 out_filename: &Path,
                  trans: &CrateTranslation,
                  outputs: &OutputFilenames,
                  tmpdir: &Path) {
-    info!("preparing dylib? ({}) from {:?} to {:?}", dylib, objects,
-          out_filename);
+    info!("preparing {:?} from {:?} to {:?}", crate_type, objects, out_filename);
 
     // The invocations of cc share some flags across platforms
     let (pname, mut cmd) = get_linker(sess);
@@ -624,10 +627,10 @@ fn link_natively(sess: &Session, dylib: bool,
     let root = sess.target_filesearch(PathKind::Native).get_lib_path();
     cmd.args(&sess.target.target.options.pre_link_args);
 
-    let pre_link_objects = if dylib {
-        &sess.target.target.options.pre_link_objects_dll
-    } else {
+    let pre_link_objects = if crate_type == config::CrateTypeExecutable {
         &sess.target.target.options.pre_link_objects_exe
+    } else {
+        &sess.target.target.options.pre_link_objects_dll
     };
     for obj in pre_link_objects {
         cmd.arg(root.join(obj));
@@ -639,7 +642,7 @@ fn link_natively(sess: &Session, dylib: bool,
         } else {
             Box::new(GnuLinker { cmd: &mut cmd, sess: &sess }) as Box<Linker>
         };
-        link_args(&mut *linker, sess, dylib, tmpdir,
+        link_args(&mut *linker, sess, crate_type, tmpdir,
                   objects, out_filename, trans, outputs);
         if !sess.target.target.options.no_compiler_rt {
             linker.link_staticlib("compiler-rt");
@@ -705,7 +708,7 @@ fn link_natively(sess: &Session, dylib: bool,
 
 fn link_args(cmd: &mut Linker,
              sess: &Session,
-             dylib: bool,
+             crate_type: config::CrateType,
              tmpdir: &Path,
              objects: &[PathBuf],
              out_filename: &Path,
@@ -727,26 +730,28 @@ fn link_args(cmd: &mut Linker,
 
     // If we're building a dynamic library then some platforms need to make sure
     // that all symbols are exported correctly from the dynamic library.
-    if dylib {
-        cmd.export_symbols(sess, trans, tmpdir);
+    if crate_type != config::CrateTypeExecutable {
+        cmd.export_symbols(sess, trans, tmpdir, crate_type);
     }
 
     // When linking a dynamic library, we put the metadata into a section of the
     // executable. This metadata is in a separate object file from the main
     // object file, so we link that in here.
-    if dylib {
+    if crate_type == config::CrateTypeDylib {
         cmd.add_object(&outputs.with_extension("metadata.o"));
     }
 
     // Try to strip as much out of the generated object by removing unused
     // sections if possible. See more comments in linker.rs
     if !sess.opts.cg.link_dead_code {
-        cmd.gc_sections(dylib);
+        let keep_metadata = crate_type == config::CrateTypeDylib;
+        cmd.gc_sections(keep_metadata);
     }
 
     let used_link_args = sess.cstore.used_link_args();
 
-    if !dylib && t.options.position_independent_executables {
+    if crate_type == config::CrateTypeExecutable &&
+       t.options.position_independent_executables {
         let empty_vec = Vec::new();
         let empty_str = String::new();
         let args = sess.opts.cg.link_args.as_ref().unwrap_or(&empty_vec);
@@ -801,12 +806,12 @@ fn link_args(cmd: &mut Linker,
     // in this DAG so far because they're only dylibs and dylibs can only depend
     // on other dylibs (e.g. other native deps).
     add_local_native_libraries(cmd, sess);
-    add_upstream_rust_crates(cmd, sess, dylib, tmpdir);
+    add_upstream_rust_crates(cmd, sess, crate_type, tmpdir);
     add_upstream_native_libraries(cmd, sess);
 
     // # Telling the linker what we're doing
 
-    if dylib {
+    if crate_type != config::CrateTypeExecutable {
         cmd.build_dylib(out_filename);
     }
 
@@ -904,8 +909,10 @@ fn add_local_native_libraries(cmd: &mut Linker, sess: &Session) {
 // Rust crates are not considered at all when creating an rlib output. All
 // dependencies will be linked when producing the final output (instead of
 // the intermediate rlib version)
-fn add_upstream_rust_crates(cmd: &mut Linker, sess: &Session,
-                            dylib: bool, tmpdir: &Path) {
+fn add_upstream_rust_crates(cmd: &mut Linker,
+                            sess: &Session,
+                            crate_type: config::CrateType,
+                            tmpdir: &Path) {
     // All of the heavy lifting has previously been accomplished by the
     // dependency_format module of the compiler. This is just crawling the
     // output of that module, adding crates as necessary.
@@ -915,11 +922,7 @@ fn add_upstream_rust_crates(cmd: &mut Linker, sess: &Session,
     // involves just passing the right -l flag.
 
     let formats = sess.dependency_formats.borrow();
-    let data = if dylib {
-        formats.get(&config::CrateTypeDylib).unwrap()
-    } else {
-        formats.get(&config::CrateTypeExecutable).unwrap()
-    };
+    let data = formats.get(&crate_type).unwrap();
 
     // Invoke get_used_crates to ensure that we get a topological sorting of
     // crates.
@@ -934,7 +937,8 @@ fn add_upstream_rust_crates(cmd: &mut Linker, sess: &Session,
             Linkage::NotLinked |
             Linkage::IncludedFromDylib => {}
             Linkage::Static => {
-                add_static_crate(cmd, sess, tmpdir, dylib, &src.rlib.unwrap().0)
+                add_static_crate(cmd, sess, tmpdir, crate_type,
+                                 &src.rlib.unwrap().0)
             }
             Linkage::Dynamic => {
                 add_dynamic_crate(cmd, sess, &src.dylib.unwrap().0)
@@ -979,9 +983,12 @@ fn add_upstream_rust_crates(cmd: &mut Linker, sess: &Session,
     // (aka we're making an executable), we can just pass the rlib blindly to
     // the linker (fast) because it's fine if it's not actually included as
     // we're at the end of the dependency chain.
-    fn add_static_crate(cmd: &mut Linker, sess: &Session, tmpdir: &Path,
-                        dylib: bool, cratepath: &Path) {
-        if !sess.lto() && !dylib {
+    fn add_static_crate(cmd: &mut Linker,
+                        sess: &Session,
+                        tmpdir: &Path,
+                        crate_type: config::CrateType,
+                        cratepath: &Path) {
+        if !sess.lto() && crate_type != config::CrateTypeDylib {
             cmd.link_rlib(&fix_windows_verbatim_for_gcc(cratepath));
             return
         }
@@ -1017,7 +1024,7 @@ fn add_upstream_rust_crates(cmd: &mut Linker, sess: &Session,
 
             if any_objects {
                 archive.build();
-                if dylib {
+                if crate_type == config::CrateTypeDylib {
                     cmd.link_whole_rlib(&fix_windows_verbatim_for_gcc(&dst));
                 } else {
                     cmd.link_rlib(&fix_windows_verbatim_for_gcc(&dst));

@@ -44,6 +44,7 @@ pub use self::FileType::*;
 pub use self::MetadataType::*;
 pub use self::AsmDialect::*;
 pub use self::CodeGenOptLevel::*;
+pub use self::CodeGenOptSize::*;
 pub use self::RelocMode::*;
 pub use self::CodeGenModel::*;
 pub use self::DiagnosticKind::*;
@@ -97,7 +98,7 @@ pub enum Visibility {
 // DLLExportLinkage, GhostLinkage and LinkOnceODRAutoHideLinkage.
 // LinkerPrivateLinkage and LinkerPrivateWeakLinkage are not included either;
 // they've been removed in upstream LLVM commit r203866.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Linkage {
     ExternalLinkage = 0,
     AvailableExternallyLinkage = 1,
@@ -373,6 +374,14 @@ pub enum CodeGenOptLevel {
     CodeGenLevelLess = 1,
     CodeGenLevelDefault = 2,
     CodeGenLevelAggressive = 3,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+#[repr(C)]
+pub enum CodeGenOptSize {
+    CodeGenOptSizeNone = 0,
+    CodeGenOptSizeDefault = 1,
+    CodeGenOptSizeAggressive = 2,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -2012,6 +2021,9 @@ extern {
     pub fn LLVMRustPassKind(Pass: PassRef) -> SupportedPassKind;
     pub fn LLVMRustFindAndCreatePass(Pass: *const c_char) -> PassRef;
     pub fn LLVMRustAddPass(PM: PassManagerRef, Pass: PassRef);
+
+    pub fn LLVMRustHasFeature(T: TargetMachineRef,
+                              s: *const c_char) -> bool;
 
     pub fn LLVMRustCreateTargetMachine(Triple: *const c_char,
                                        CPU: *const c_char,

@@ -14,7 +14,7 @@ use hair::*;
 use rustc::mir::repr::*;
 use std::u32;
 
-impl<'a,'tcx> Builder<'a,'tcx> {
+impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     pub fn field_match_pairs<'pat>(&mut self,
                                    lvalue: Lvalue<'tcx>,
                                    subpatterns: &'pat [FieldPattern<'tcx>])
@@ -32,14 +32,18 @@ impl<'a,'tcx> Builder<'a,'tcx> {
     /// this function converts the prefix (`x`, `y`) and suffix (`z`) into
     /// distinct match pairs:
     ///
+    /// ```rust,ignore
     ///     lv[0 of 3] @ x  // see ProjectionElem::ConstantIndex (and its Debug impl)
     ///     lv[1 of 3] @ y  // to explain the `[x of y]` notation
     ///     lv[-1 of 3] @ z
+    /// ```
     ///
     /// If a slice like `s` is present, then the function also creates
     /// a temporary like:
     ///
+    /// ```rust,ignore
     ///     tmp0 = lv[2..-1] // using the special Rvalue::Slice
+    /// ```
     ///
     /// and creates a match pair `tmp0 @ s`
     pub fn prefix_suffix_slice<'pat>(&mut self,

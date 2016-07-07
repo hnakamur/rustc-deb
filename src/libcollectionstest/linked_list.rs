@@ -339,6 +339,22 @@ fn test_extend_ref() {
     assert_eq!(a, list_from(&[1, 2, 3, 4, 5, 6]));
 }
 
+#[test]
+fn test_extend() {
+    let mut a = LinkedList::new();
+    a.push_back(1);
+    a.extend(vec![2, 3, 4]); // uses iterator
+
+    assert_eq!(a.len(), 4);
+    assert!(a.iter().eq(&[1, 2, 3, 4]));
+
+    let b: LinkedList<_> = vec![5, 6, 7].into_iter().collect();
+    a.extend(b); // specializes to `append`
+
+    assert_eq!(a.len(), 7);
+    assert!(a.iter().eq(&[1, 2, 3, 4, 5, 6, 7]));
+}
+
 #[bench]
 fn bench_collect_into(b: &mut test::Bencher) {
     let v = &[0; 64];
@@ -412,4 +428,17 @@ fn bench_iter_mut_rev(b: &mut test::Bencher) {
     b.iter(|| {
         assert!(m.iter_mut().rev().count() == 128);
     })
+}
+
+#[test]
+fn test_contains() {
+    let mut l = LinkedList::new();
+    l.extend(&[2, 3, 4]);
+
+    assert!(l.contains(&3));
+    assert!(!l.contains(&1));
+
+    l.clear();
+
+    assert!(!l.contains(&3));
 }

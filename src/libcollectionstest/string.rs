@@ -52,7 +52,7 @@ fn test_from_utf8() {
                String::from("ศไทย中华Việt Nam"));
 
     let xs = b"hello\xFF".to_vec();
-    let err = String::from_utf8(xs).err().unwrap();
+    let err = String::from_utf8(xs).unwrap_err();
     assert_eq!(err.into_bytes(), b"hello\xff".to_vec());
 }
 
@@ -248,10 +248,10 @@ fn test_str_truncate() {
 }
 
 #[test]
-#[should_panic]
 fn test_str_truncate_invalid_len() {
     let mut s = String::from("12345");
     s.truncate(6);
+    assert_eq!(s, "12345");
 }
 
 #[test]

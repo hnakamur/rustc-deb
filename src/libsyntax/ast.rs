@@ -16,13 +16,12 @@ pub use self::ViewPath_::*;
 pub use self::PathParameters::*;
 
 use attr::ThinAttributes;
-use codemap::{Span, Spanned, DUMMY_SP, ExpnId};
+use codemap::{mk_sp, respan, Span, Spanned, DUMMY_SP, ExpnId};
 use abi::Abi;
 use errors;
 use ext::base;
 use ext::tt::macro_parser;
-use parse::token::InternedString;
-use parse::token;
+use parse::token::{self, keywords, InternedString};
 use parse::lexer;
 use parse::lexer::comments::{doc_comment_style, strip_doc_comment_decoration};
 use print::pprust;
@@ -61,6 +60,10 @@ impl Name {
     pub fn as_str(self) -> token::InternedString {
         token::InternedString::new_from_name(self)
     }
+
+    pub fn unhygienize(self) -> Name {
+        token::intern(&self.as_str())
+    }
 }
 
 impl fmt::Debug for Name {
@@ -93,7 +96,7 @@ impl Ident {
     pub fn new(name: Name, ctxt: SyntaxContext) -> Ident {
         Ident {name: name, ctxt: ctxt}
     }
-    pub fn with_empty_ctxt(name: Name) -> Ident {
+    pub const fn with_empty_ctxt(name: Name) -> Ident {
         Ident {name: name, ctxt: EMPTY_CTXT}
     }
 }
@@ -248,8 +251,8 @@ impl PathParameters {
     pub fn none() -> PathParameters {
         PathParameters::AngleBracketed(AngleBracketedParameterData {
             lifetimes: Vec::new(),
-            types: P::empty(),
-            bindings: P::empty(),
+            types: P::new(),
+            bindings: P::new(),
         })
     }
 
@@ -421,7 +424,7 @@ impl Default for Generics {
     fn default() ->  Generics {
         Generics {
             lifetimes: Vec::new(),
-            ty_params: P::empty(),
+            ty_params: P::new(),
             where_clause: WhereClause {
                 id: DUMMY_NODE_ID,
                 predicates: Vec::new(),
@@ -548,6 +551,44 @@ pub struct Pat {
 impl fmt::Debug for Pat {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "pat({}: {})", self.id, pprust::pat_to_string(self))
+    }
+}
+
+impl Pat {
+    pub fn walk<F>(&self, it: &mut F) -> bool
+        where F: FnMut(&Pat) -> bool
+    {
+        if !it(self) {
+            return false;
+        }
+
+        match self.node {
+            PatKind::Ident(_, _, Some(ref p)) => p.walk(it),
+            PatKind::Struct(_, ref fields, _) => {
+                fields.iter().all(|field| field.node.pat.walk(it))
+            }
+            PatKind::TupleStruct(_, Some(ref s)) | PatKind::Tup(ref s) => {
+                s.iter().all(|p| p.walk(it))
+            }
+            PatKind::Box(ref s) | PatKind::Ref(ref s, _) => {
+                s.walk(it)
+            }
+            PatKind::Vec(ref before, ref slice, ref after) => {
+                before.iter().all(|p| p.walk(it)) &&
+                slice.iter().all(|p| p.walk(it)) &&
+                after.iter().all(|p| p.walk(it))
+            }
+            PatKind::Wild |
+            PatKind::Lit(_) |
+            PatKind::Range(_, _) |
+            PatKind::Ident(_, _, _) |
+            PatKind::TupleStruct(..) |
+            PatKind::Path(..) |
+            PatKind::QPath(_, _) |
+            PatKind::Mac(_) => {
+                true
+            }
+        }
     }
 }
 
@@ -986,7 +1027,9 @@ pub enum ExprKind {
     /// A `match` block.
     Match(P<Expr>, Vec<Arm>),
     /// A closure (for example, `move |a, b, c| {a + b + c}`)
-    Closure(CaptureBy, P<FnDecl>, P<Block>),
+    ///
+    /// The final span is the span of the argument block `|...|`
+    Closure(CaptureBy, P<FnDecl>, P<Block>, Span),
     /// A block (`{ ... }`)
     Block(P<Block>),
 
@@ -1206,8 +1249,7 @@ impl TokenTree {
                 TokenTree::Delimited(sp, Rc::new(Delimited {
                     delim: token::Bracket,
                     open_span: sp,
-                    tts: vec![TokenTree::Token(sp, token::Ident(token::str_to_ident("doc"),
-                                                                token::Plain)),
+                    tts: vec![TokenTree::Token(sp, token::Ident(token::str_to_ident("doc"))),
                               TokenTree::Token(sp, token::Eq),
                               TokenTree::Token(sp, token::Literal(
                                   token::StrRaw(token::intern(&stripped), num_of_hashes), None))],
@@ -1225,14 +1267,13 @@ impl TokenTree {
             }
             (&TokenTree::Token(sp, token::SpecialVarNt(var)), _) => {
                 let v = [TokenTree::Token(sp, token::Dollar),
-                         TokenTree::Token(sp, token::Ident(token::str_to_ident(var.as_str()),
-                                                  token::Plain))];
+                         TokenTree::Token(sp, token::Ident(token::str_to_ident(var.as_str())))];
                 v[index].clone()
             }
-            (&TokenTree::Token(sp, token::MatchNt(name, kind, name_st, kind_st)), _) => {
-                let v = [TokenTree::Token(sp, token::SubstNt(name, name_st)),
+            (&TokenTree::Token(sp, token::MatchNt(name, kind)), _) => {
+                let v = [TokenTree::Token(sp, token::SubstNt(name)),
                          TokenTree::Token(sp, token::Colon),
-                         TokenTree::Token(sp, token::Ident(kind, kind_st))];
+                         TokenTree::Token(sp, token::Ident(kind))];
                 v[index].clone()
             }
             (&TokenTree::Sequence(_, ref seq), _) => {
@@ -1636,7 +1677,25 @@ pub struct Arg {
     pub id: NodeId,
 }
 
+/// Represents the kind of 'self' associated with a method.
+/// String representation of `Ident` here is always "self", but hygiene contexts may differ.
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub enum SelfKind {
+    /// No self
+    Static,
+    /// `self`, `mut self`
+    Value(Ident),
+    /// `&'lt self`, `&'lt mut self`
+    Region(Option<Lifetime>, Mutability, Ident),
+    /// `self: TYPE`, `mut self: TYPE`
+    Explicit(P<Ty>, Ident),
+}
+
+pub type ExplicitSelf = Spanned<SelfKind>;
+
 impl Arg {
+    #[unstable(feature = "rustc_private", issue = "27812")]
+    #[rustc_deprecated(since = "1.10.0", reason = "use `from_self` instead")]
     pub fn new_self(span: Span, mutability: Mutability, self_ident: Ident) -> Arg {
         let path = Spanned{span:span,node:self_ident};
         Arg {
@@ -1652,6 +1711,51 @@ impl Arg {
                 span: span
             }),
             id: DUMMY_NODE_ID
+        }
+    }
+
+    pub fn to_self(&self) -> Option<ExplicitSelf> {
+        if let PatKind::Ident(_, ident, _) = self.pat.node {
+            if ident.node.name == keywords::SelfValue.name() {
+                return match self.ty.node {
+                    TyKind::Infer => Some(respan(self.pat.span, SelfKind::Value(ident.node))),
+                    TyKind::Rptr(lt, MutTy{ref ty, mutbl}) if ty.node == TyKind::Infer => {
+                        Some(respan(self.pat.span, SelfKind::Region(lt, mutbl, ident.node)))
+                    }
+                    _ => Some(respan(mk_sp(self.pat.span.lo, self.ty.span.hi),
+                                     SelfKind::Explicit(self.ty.clone(), ident.node))),
+                }
+            }
+        }
+        None
+    }
+
+    pub fn from_self(eself: ExplicitSelf, ident_sp: Span, mutbl: Mutability) -> Arg {
+        let pat = |ident, span| P(Pat {
+            id: DUMMY_NODE_ID,
+            node: PatKind::Ident(BindingMode::ByValue(mutbl), respan(ident_sp, ident), None),
+            span: span,
+        });
+        let infer_ty = P(Ty {
+            id: DUMMY_NODE_ID,
+            node: TyKind::Infer,
+            span: DUMMY_SP,
+        });
+        let arg = |ident, ty, span| Arg {
+            pat: pat(ident, span),
+            ty: ty,
+            id: DUMMY_NODE_ID,
+        };
+        match eself.node {
+            SelfKind::Static => panic!("bug: `Arg::from_self` is called \
+                                        with `SelfKind::Static` argument"),
+            SelfKind::Explicit(ty, ident) => arg(ident, ty, mk_sp(eself.span.lo, ident_sp.hi)),
+            SelfKind::Value(ident) => arg(ident, infer_ty, eself.span),
+            SelfKind::Region(lt, mutbl, ident) => arg(ident, P(Ty {
+                id: DUMMY_NODE_ID,
+                node: TyKind::Rptr(lt, MutTy { ty: infer_ty, mutbl: mutbl }),
+                span: DUMMY_SP,
+            }), eself.span),
         }
     }
 }
@@ -1733,21 +1837,6 @@ impl FunctionRetTy {
         }
     }
 }
-
-/// Represents the kind of 'self' associated with a method
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
-pub enum SelfKind {
-    /// No self
-    Static,
-    /// `self`
-    Value(Ident),
-    /// `&'lt self`, `&'lt mut self`
-    Region(Option<Lifetime>, Mutability, Ident),
-    /// `self: TYPE`
-    Explicit(P<Ty>, Ident),
-}
-
-pub type ExplicitSelf = Spanned<SelfKind>;
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct Mod {
@@ -1887,7 +1976,7 @@ pub struct PolyTraitRef {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Visibility {
     Public,
-    Crate,
+    Crate(Span),
     Restricted { path: P<Path>, id: NodeId },
     Inherited,
 }
@@ -1992,10 +2081,7 @@ pub enum ItemKind {
     /// A struct definition, e.g. `struct Foo<A> {x: A}`
     Struct(VariantData, Generics),
     /// Represents a Trait Declaration
-    Trait(Unsafety,
-              Generics,
-              TyParamBounds,
-              Vec<TraitItem>),
+    Trait(Unsafety, Generics, TyParamBounds, Vec<TraitItem>),
 
     // Default trait implementations
     ///

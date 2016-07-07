@@ -95,15 +95,18 @@ fn main() {
         cfg.header("sched.h");
         cfg.header("termios.h");
         cfg.header("poll.h");
+        cfg.header("syslog.h");
     }
 
     if android {
         cfg.header("arpa/inet.h");
         cfg.header("time64.h");
+        cfg.header("xlocale.h");
     } else if !windows {
         cfg.header("glob.h");
         cfg.header("ifaddrs.h");
         cfg.header("sys/statvfs.h");
+        cfg.header("langinfo.h");
 
         if !openbsd && !freebsd && !dragonfly {
             cfg.header("sys/quota.h");
@@ -114,6 +117,7 @@ fn main() {
 
             if !netbsd && !openbsd {
                 cfg.header("execinfo.h");
+                cfg.header("xlocale.h");
             }
         }
     }
@@ -338,6 +342,7 @@ fn main() {
 
             "getrlimit" | "getrlimit64" |    // non-int in 1st arg
             "setrlimit" | "setrlimit64" |    // non-int in 1st arg
+            "prlimit" | "prlimit64" |        // non-int in 2nd arg
             "strerror_r" if linux => true,   // actually xpg-something-or-other
 
             // typed 2nd arg on linux and android
@@ -394,12 +399,6 @@ fn main() {
 
     cfg.skip_fn_ptrcheck(move |name| {
         match name {
-            // This used to be called bsd_signal in rev 18 of the android
-            // platform and is now just called signal, the old `bsd_signal`
-            // symbol, however, still remains, just gives a different function
-            // pointer.
-            "signal" if android => true,
-
             // dllimport weirdness?
             _ if windows => true,
 

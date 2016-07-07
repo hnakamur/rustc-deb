@@ -13,6 +13,7 @@
 // Check that we can still call duplicated extern (imported) functions
 // which were declared in another crate. See issues #32740 and #32783.
 
+
 extern crate foreign_lib;
 
 pub fn main() {

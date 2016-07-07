@@ -168,6 +168,13 @@ declare_lint! {
 }
 
 declare_lint! {
+    pub HR_LIFETIME_IN_ASSOC_TYPE,
+    Warn,
+    "binding for associated type references higher-ranked lifetime \
+     that does not appear in the trait input types"
+}
+
+declare_lint! {
     pub OVERLAPPING_INHERENT_IMPLS,
     Warn,
     "two overlapping inherent impls define an item with the same name were erroneously allowed"
@@ -183,6 +190,18 @@ declare_lint! {
     pub SUPER_OR_SELF_IN_GLOBAL_PATH,
     Warn,
     "detects super or self keywords at the beginning of global path"
+}
+
+declare_lint! {
+    pub UNSIZED_IN_TUPLE,
+    Warn,
+    "unsized types in the interior of a tuple were erroneously allowed"
+}
+
+declare_lint! {
+    pub OBJECT_UNSAFE_FRAGMENT,
+    Warn,
+    "object-unsafe non-principal fragments in object types were erroneously allowed"
 }
 
 /// Does nothing as a lint pass, but registers some `Lint`s
@@ -220,7 +239,10 @@ impl LintPass for HardwiredLints {
             TRANSMUTE_FROM_FN_ITEM_TYPES,
             OVERLAPPING_INHERENT_IMPLS,
             RENAMED_AND_REMOVED_LINTS,
-            SUPER_OR_SELF_IN_GLOBAL_PATH
+            SUPER_OR_SELF_IN_GLOBAL_PATH,
+            UNSIZED_IN_TUPLE,
+            OBJECT_UNSAFE_FRAGMENT,
+            HR_LIFETIME_IN_ASSOC_TYPE
         )
     }
 }

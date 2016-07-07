@@ -18,7 +18,7 @@ use syntax::attr::ThinAttributesExt;
 use hir;
 use syntax::codemap::{respan, Span, Spanned};
 use syntax::ptr::P;
-use syntax::parse::token;
+use syntax::parse::token::keywords;
 use syntax::util::move_map::MoveMap;
 
 pub trait Folder : Sized {
@@ -126,10 +126,6 @@ pub trait Folder : Sized {
         noop_fold_name(n, self)
     }
 
-    fn fold_ident(&mut self, i: Ident) -> Ident {
-        noop_fold_ident(i, self)
-    }
-
     fn fold_usize(&mut self, i: usize) -> usize {
         noop_fold_usize(i, self)
     }
@@ -156,14 +152,6 @@ pub trait Folder : Sized {
 
     fn fold_local(&mut self, l: P<Local>) -> P<Local> {
         noop_fold_local(l, self)
-    }
-
-    fn fold_explicit_self(&mut self, es: ExplicitSelf) -> ExplicitSelf {
-        noop_fold_explicit_self(es, self)
-    }
-
-    fn fold_explicit_self_underscore(&mut self, es: ExplicitSelf_) -> ExplicitSelf_ {
-        noop_fold_explicit_self_underscore(es, self)
     }
 
     fn fold_lifetime(&mut self, l: Lifetime) -> Lifetime {
@@ -415,10 +403,6 @@ pub fn noop_fold_name<T: Folder>(n: Name, _: &mut T) -> Name {
     n
 }
 
-pub fn noop_fold_ident<T: Folder>(i: Ident, _: &mut T) -> Ident {
-    i
-}
-
 pub fn noop_fold_usize<T: Folder>(i: usize, _: &mut T) -> usize {
     i
 }
@@ -426,9 +410,9 @@ pub fn noop_fold_usize<T: Folder>(i: usize, _: &mut T) -> usize {
 pub fn noop_fold_path<T: Folder>(Path { global, segments, span }: Path, fld: &mut T) -> Path {
     Path {
         global: global,
-        segments: segments.move_map(|PathSegment { identifier, parameters }| {
+        segments: segments.move_map(|PathSegment { name, parameters }| {
             PathSegment {
-                identifier: fld.fold_ident(identifier),
+                name: fld.fold_name(name),
                 parameters: fld.fold_path_parameters(parameters),
             }
         }),
@@ -493,29 +477,6 @@ pub fn noop_fold_attribute<T: Folder>(at: Attribute, fld: &mut T) -> Option<Attr
         },
         span: fld.new_span(span),
     })
-}
-
-pub fn noop_fold_explicit_self_underscore<T: Folder>(es: ExplicitSelf_,
-                                                     fld: &mut T)
-                                                     -> ExplicitSelf_ {
-    match es {
-        SelfStatic | SelfValue(_) => es,
-        SelfRegion(lifetime, m, name) => {
-            SelfRegion(fld.fold_opt_lifetime(lifetime), m, name)
-        }
-        SelfExplicit(typ, name) => {
-            SelfExplicit(fld.fold_ty(typ), name)
-        }
-    }
-}
-
-pub fn noop_fold_explicit_self<T: Folder>(Spanned { span, node }: ExplicitSelf,
-                                          fld: &mut T)
-                                          -> ExplicitSelf {
-    Spanned {
-        node: fld.fold_explicit_self_underscore(node),
-        span: fld.new_span(span),
-    }
 }
 
 pub fn noop_fold_meta_item<T: Folder>(mi: P<MetaItem>, fld: &mut T) -> P<MetaItem> {
@@ -867,7 +828,7 @@ pub fn noop_fold_crate<T: Folder>(Crate { module, attrs, config, span,
     let config = folder.fold_meta_items(config);
 
     let crate_mod = folder.fold_item(hir::Item {
-        name: token::special_idents::invalid.name,
+        name: keywords::Invalid.name(),
         attrs: attrs,
         id: DUMMY_NODE_ID,
         vis: hir::Public,
@@ -941,7 +902,6 @@ pub fn noop_fold_method_sig<T: Folder>(sig: MethodSig, folder: &mut T) -> Method
     MethodSig {
         generics: folder.fold_generics(sig.generics),
         abi: sig.abi,
-        explicit_self: folder.fold_explicit_self(sig.explicit_self),
         unsafety: sig.unsafety,
         constness: sig.constness,
         decl: folder.fold_fn_decl(sig.decl),
@@ -958,7 +918,7 @@ pub fn noop_fold_pat<T: Folder>(p: P<Pat>, folder: &mut T) -> P<Pat> {
                     PatKind::Ident(binding_mode,
                              Spanned {
                                  span: folder.new_span(pth1.span),
-                                 node: folder.fold_ident(pth1.node),
+                                 node: folder.fold_name(pth1.node),
                              },
                              sub.map(|x| folder.fold_pat(x)))
                 }
@@ -1046,24 +1006,25 @@ pub fn noop_fold_expr<T: Folder>(Expr { id, node, span, attrs }: Expr, folder: &
                        folder.fold_block(tr),
                        fl.map(|x| folder.fold_expr(x)))
             }
-            ExprWhile(cond, body, opt_ident) => {
+            ExprWhile(cond, body, opt_name) => {
                 ExprWhile(folder.fold_expr(cond),
                           folder.fold_block(body),
-                          opt_ident.map(|i| folder.fold_ident(i)))
+                          opt_name.map(|i| folder.fold_name(i)))
             }
-            ExprLoop(body, opt_ident) => {
+            ExprLoop(body, opt_name) => {
                 ExprLoop(folder.fold_block(body),
-                         opt_ident.map(|i| folder.fold_ident(i)))
+                         opt_name.map(|i| folder.fold_name(i)))
             }
             ExprMatch(expr, arms, source) => {
                 ExprMatch(folder.fold_expr(expr),
                           arms.move_map(|x| folder.fold_arm(x)),
                           source)
             }
-            ExprClosure(capture_clause, decl, body) => {
+            ExprClosure(capture_clause, decl, body, fn_decl_span) => {
                 ExprClosure(capture_clause,
                             folder.fold_fn_decl(decl),
-                            folder.fold_block(body))
+                            folder.fold_block(body),
+                            folder.new_span(fn_decl_span))
             }
             ExprBlock(blk) => ExprBlock(folder.fold_block(blk)),
             ExprAssign(el, er) => {
@@ -1092,11 +1053,11 @@ pub fn noop_fold_expr<T: Folder>(Expr { id, node, span, attrs }: Expr, folder: &
                 });
                 ExprPath(qself, folder.fold_path(path))
             }
-            ExprBreak(opt_ident) => ExprBreak(opt_ident.map(|label| {
-                respan(folder.new_span(label.span), folder.fold_ident(label.node))
+            ExprBreak(opt_name) => ExprBreak(opt_name.map(|label| {
+                respan(folder.new_span(label.span), folder.fold_name(label.node))
             })),
-            ExprAgain(opt_ident) => ExprAgain(opt_ident.map(|label| {
-                respan(folder.new_span(label.span), folder.fold_ident(label.node))
+            ExprAgain(opt_name) => ExprAgain(opt_name.map(|label| {
+                respan(folder.new_span(label.span), folder.fold_name(label.node))
             })),
             ExprRet(e) => ExprRet(e.map(|x| folder.fold_expr(x))),
             ExprInlineAsm(asm, outputs, inputs) => {

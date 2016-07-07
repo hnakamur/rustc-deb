@@ -7,10 +7,10 @@ version = "0.0.0"
 name = "rustc_resolve"
 path = "lib.rs"
 crate-type = ["dylib"]
+test = false
 
 [dependencies]
 log = { path = "../liblog" }
 syntax = { path = "../libsyntax" }
 rustc = { path = "../librustc" }
-rustc_bitflags = { path = "../librustc_bitflags" }
 arena = { path = "../libarena" }

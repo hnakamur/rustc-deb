@@ -134,6 +134,19 @@ fn test_iterator_chain_count() {
 }
 
 #[test]
+fn test_iterator_chain_find() {
+    let xs = [0, 1, 2, 3, 4, 5];
+    let ys = [30, 40, 50, 60];
+    let mut iter = xs.iter().chain(&ys);
+    assert_eq!(iter.find(|&&i| i == 4), Some(&4));
+    assert_eq!(iter.next(), Some(&5));
+    assert_eq!(iter.find(|&&i| i == 40), Some(&40));
+    assert_eq!(iter.next(), Some(&50));
+    assert_eq!(iter.find(|&&i| i == 100), None);
+    assert_eq!(iter.next(), None);
+}
+
+#[test]
 fn test_filter_map() {
     let it = (0..).step_by(1).take(10)
         .filter_map(|x| if x % 2 == 0 { Some(x*x) } else { None });
@@ -887,15 +900,6 @@ fn test_range_step() {
     assert_eq!((i8::MAX..i8::MIN).step_by(i8::MIN).size_hint(), (2, Some(2)));
     assert_eq!((i16::MIN..i16::MAX).step_by(i16::MAX).size_hint(), (3, Some(3)));
     assert_eq!((isize::MIN..isize::MAX).step_by(1).size_hint(), (usize::MAX, Some(usize::MAX)));
-}
-
-#[test]
-fn test_peekable_is_empty() {
-    let a = [1];
-    let mut it = a.iter().peekable();
-    assert!( !it.is_empty() );
-    it.next();
-    assert!( it.is_empty() );
 }
 
 #[test]

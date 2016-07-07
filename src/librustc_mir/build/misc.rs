@@ -17,7 +17,7 @@ use rustc::mir::repr::*;
 use std::u32;
 use syntax::codemap::Span;
 
-impl<'a,'tcx> Builder<'a,'tcx> {
+impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     /// Add a new temporary value of type `ty` storing the result of
     /// evaluating `expr`.
     ///
@@ -44,6 +44,10 @@ impl<'a,'tcx> Builder<'a,'tcx> {
             literal: literal,
         };
         Operand::Constant(constant)
+    }
+
+    pub fn unit_rvalue(&mut self) -> Rvalue<'tcx> {
+        Rvalue::Aggregate(AggregateKind::Tuple, vec![])
     }
 
     pub fn push_usize(&mut self,

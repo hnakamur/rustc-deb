@@ -29,13 +29,14 @@ use build::*;
 use callee::{Callee, ArgVals};
 use cleanup;
 use cleanup::CleanupMethods;
-use collector::{self, TransItem};
+use collector;
 use common::*;
 use debuginfo::DebugLoc;
 use declare;
 use expr;
 use machine::*;
 use monomorphize;
+use trans_item::TransItem;
 use type_of::{type_of, sizing_type_of, align_of};
 use type_::Type;
 use value::Value;
@@ -88,17 +89,17 @@ pub fn trans_exchange_free_ty<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     }
 }
 
-pub fn type_needs_drop<'tcx>(tcx: &TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+pub fn type_needs_drop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                 ty: Ty<'tcx>) -> bool {
     tcx.type_needs_drop_given_env(ty, &tcx.empty_parameter_environment())
 }
 
-pub fn get_drop_glue_type<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+pub fn get_drop_glue_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                     t: Ty<'tcx>) -> Ty<'tcx> {
-    let tcx = ccx.tcx();
     // Even if there is no dtor for t, there might be one deeper down and we
     // might need to pass in the vtable ptr.
     if !type_is_sized(tcx, t) {
-        return t
+        return tcx.erase_regions(&t);
     }
 
     // FIXME (#22815): note that type_needs_drop conservatively
@@ -110,21 +111,23 @@ pub fn get_drop_glue_type<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     // returned `tcx.types.i8` does not appear unsound. The impact on
     // code quality is unknown at this time.)
 
-    if !type_needs_drop(&tcx, t) {
+    if !type_needs_drop(tcx, t) {
         return tcx.types.i8;
     }
     match t.sty {
-        ty::TyBox(typ) if !type_needs_drop(&tcx, typ)
+        ty::TyBox(typ) if !type_needs_drop(tcx, typ)
                          && type_is_sized(tcx, typ) => {
-            let llty = sizing_type_of(ccx, typ);
-            // `Box<ZeroSizeType>` does not allocate.
-            if llsize_of_alloc(ccx, llty) == 0 {
-                tcx.types.i8
-            } else {
-                t
-            }
+            tcx.normalizing_infer_ctxt(traits::ProjectionMode::Any).enter(|infcx| {
+                let layout = t.layout(&infcx).unwrap();
+                if layout.size(&tcx.data_layout).bytes() == 0 {
+                    // `Box<ZeroSizeType>` does not allocate.
+                    tcx.types.i8
+                } else {
+                    tcx.erase_regions(&t)
+                }
+            })
         }
-        _ => t
+        _ => tcx.erase_regions(&t)
     }
 }
 
@@ -154,7 +157,7 @@ pub fn drop_ty_core<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             DropGlueKind::Ty(t)
         };
         let glue = get_drop_glue_core(ccx, g);
-        let glue_type = get_drop_glue_type(ccx, t);
+        let glue_type = get_drop_glue_type(ccx.tcx(), t);
         let ptr = if glue_type != t {
             PointerCast(bcx, v, type_of(ccx, glue_type).ptr_to())
         } else {
@@ -215,11 +218,11 @@ pub enum DropGlueKind<'tcx> {
 }
 
 impl<'tcx> DropGlueKind<'tcx> {
-    fn ty(&self) -> Ty<'tcx> {
+    pub fn ty(&self) -> Ty<'tcx> {
         match *self { DropGlueKind::Ty(t) | DropGlueKind::TyContents(t) => t }
     }
 
-    fn map_ty<F>(&self, mut f: F) -> DropGlueKind<'tcx> where F: FnMut(Ty<'tcx>) -> Ty<'tcx>
+    pub fn map_ty<F>(&self, mut f: F) -> DropGlueKind<'tcx> where F: FnMut(Ty<'tcx>) -> Ty<'tcx>
     {
         match *self {
             DropGlueKind::Ty(t) => DropGlueKind::Ty(f(t)),
@@ -231,7 +234,7 @@ impl<'tcx> DropGlueKind<'tcx> {
 fn get_drop_glue_core<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                 g: DropGlueKind<'tcx>) -> ValueRef {
     debug!("make drop glue for {:?}", g);
-    let g = g.map_ty(|t| get_drop_glue_type(ccx, t));
+    let g = g.map_ty(|t| get_drop_glue_type(ccx.tcx(), t));
     debug!("drop glue type {:?}", g);
     match ccx.drop_glues().borrow().get(&g) {
         Some(&glue) => return glue,
@@ -272,10 +275,9 @@ fn get_drop_glue_core<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     let _s = StatRecorder::new(ccx, format!("drop {:?}", t));
 
-    let empty_substs = ccx.tcx().mk_substs(Substs::empty());
     let (arena, fcx): (TypedArena<_>, FunctionContext);
     arena = TypedArena::new();
-    fcx = FunctionContext::new(ccx, llfn, fn_ty, None, empty_substs, &arena);
+    fcx = FunctionContext::new(ccx, llfn, fn_ty, None, &arena);
 
     let bcx = fcx.init(false, None);
 
@@ -365,7 +367,7 @@ fn trans_struct_drop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         def_id: tcx.lang_items.drop_trait().unwrap(),
         substs: tcx.mk_substs(Substs::empty().with_self_ty(t))
     });
-    let vtbl = match fulfill_obligation(bcx.ccx(), DUMMY_SP, trait_ref) {
+    let vtbl = match fulfill_obligation(bcx.ccx().shared(), DUMMY_SP, trait_ref) {
         traits::VtableImpl(data) => data,
         _ => bug!("dtor for {:?} is not an impl???", t)
     };
@@ -488,13 +490,12 @@ pub fn size_and_align_of_dst<'blk, 'tcx>(bcx: &BlockAndBuilder<'blk, 'tcx>,
 
 fn make_drop_glue<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, v0: ValueRef, g: DropGlueKind<'tcx>)
                               -> Block<'blk, 'tcx> {
-    let t = g.ty();
-
-    if collector::collecting_debug_information(bcx.ccx()) {
+    if collector::collecting_debug_information(bcx.ccx().shared()) {
         bcx.ccx()
-           .record_translation_item_as_generated(TransItem::DropGlue(bcx.tcx()
-                                                                        .erase_regions(&t)));
+           .record_translation_item_as_generated(TransItem::DropGlue(g));
     }
+
+    let t = g.ty();
 
     let skip_dtor = match g { DropGlueKind::Ty(_) => false, DropGlueKind::TyContents(_) => true };
     // NB: v0 is an *alias* of type t here, not a direct value.

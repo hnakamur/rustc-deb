@@ -39,14 +39,13 @@ use syntax::ast::{self, NodeId, PatKind};
 use syntax::codemap::*;
 use syntax::parse::token::{self, keywords};
 use syntax::visit::{self, Visitor};
-use syntax::print::pprust::{path_to_string, ty_to_string};
+use syntax::print::pprust::{path_to_string, ty_to_string, bounds_to_string, generics_to_string};
 use syntax::ptr::P;
-
-use rustc::hir::lowering::{lower_expr, LoweringContext};
 
 use super::{escape, generated_code, SaveContext, PathCollector};
 use super::data::*;
 use super::dump::Dump;
+use super::external_data::Lower;
 use super::span_utils::SpanUtils;
 use super::recorder;
 
@@ -60,12 +59,12 @@ macro_rules! down_cast_data {
     };
 }
 
-pub struct DumpVisitor<'l, 'tcx: 'l, D: 'l> {
+pub struct DumpVisitor<'l, 'tcx: 'l, 'll, D: 'll> {
     save_ctxt: SaveContext<'l, 'tcx>,
     sess: &'l Session,
-    tcx: &'l TyCtxt<'tcx>,
+    tcx: TyCtxt<'l, 'tcx, 'tcx>,
     analysis: &'l ty::CrateAnalysis<'l>,
-    dumper: &'l mut D,
+    dumper: &'ll mut D,
 
     span: SpanUtils<'l>,
 
@@ -77,22 +76,19 @@ pub struct DumpVisitor<'l, 'tcx: 'l, D: 'l> {
     // one macro use per unique callsite span.
     mac_defs: HashSet<Span>,
     mac_uses: HashSet<Span>,
-
 }
 
-impl <'l, 'tcx, D> DumpVisitor<'l, 'tcx, D>
-where D: Dump
-{
-    pub fn new(tcx: &'l TyCtxt<'tcx>,
-               lcx: &'l LoweringContext<'l>,
+impl<'l, 'tcx: 'l, 'll, D: Dump + 'll> DumpVisitor<'l, 'tcx, 'll, D> {
+    pub fn new(tcx: TyCtxt<'l, 'tcx, 'tcx>,
+               save_ctxt: SaveContext<'l, 'tcx>,
                analysis: &'l ty::CrateAnalysis<'l>,
-               dumper: &'l mut D)
-               -> DumpVisitor<'l, 'tcx, D> {
+               dumper: &'ll mut D)
+               -> DumpVisitor<'l, 'tcx, 'll, D> {
         let span_utils = SpanUtils::new(&tcx.sess);
         DumpVisitor {
             sess: &tcx.sess,
             tcx: tcx,
-            save_ctxt: SaveContext::from_span_utils(tcx, lcx, span_utils.clone()),
+            save_ctxt: save_ctxt,
             analysis: analysis,
             dumper: dumper,
             span: span_utils.clone(),
@@ -103,7 +99,7 @@ where D: Dump
     }
 
     fn nest<F>(&mut self, scope_id: NodeId, f: F)
-        where F: FnOnce(&mut DumpVisitor<'l, 'tcx, D>)
+        where F: FnOnce(&mut DumpVisitor<'l, 'tcx, 'll, D>)
     {
         let parent_scope = self.cur_scope;
         self.cur_scope = scope_id;
@@ -122,20 +118,23 @@ where D: Dump
 
         // Info about all the external crates referenced from this crate.
         let external_crates = self.save_ctxt.get_external_crates().into_iter().map(|c| {
+            let lo_loc = self.span.sess.codemap().lookup_char_pos(c.span.lo);
             ExternalCrateData {
                 name: c.name,
-                num: c.number
+                num: c.number,
+                file_name: SpanUtils::make_path_string(&lo_loc.file.name),
             }
         }).collect();
 
         // The current crate.
         let data = CratePreludeData {
             crate_name: name.into(),
-            crate_root: crate_root,
-            external_crates: external_crates
+            crate_root: crate_root.unwrap_or("<no source>".to_owned()),
+            external_crates: external_crates,
+            span: krate.span,
         };
 
-        self.dumper.crate_prelude(krate.span, data);
+        self.dumper.crate_prelude(data.lower(self.tcx));
     }
 
     // Return all non-empty prefixes of a path.
@@ -200,12 +199,12 @@ where D: Dump
             } else {
                 qualname.clone()
             };
-            self.dumper.mod_ref(path.span, ModRefData {
+            self.dumper.mod_ref(ModRefData {
                 span: *span,
                 qualname: qualname,
                 scope: self.cur_scope,
                 ref_id: None
-            }.normalize(&self.tcx));
+            }.lower(self.tcx));
         }
     }
 
@@ -225,12 +224,12 @@ where D: Dump
             } else {
                 qualname.clone()
             };
-            self.dumper.mod_ref(path.span, ModRefData {
+            self.dumper.mod_ref(ModRefData {
                 span: *span,
                 qualname: qualname,
                 scope: self.cur_scope,
                 ref_id: None
-            }.normalize(&self.tcx));
+            }.lower(self.tcx));
         }
     }
 
@@ -246,12 +245,12 @@ where D: Dump
 
         // write the trait part of the sub-path
         let (ref span, ref qualname) = sub_paths[len-2];
-        self.dumper.type_ref(path.span, TypeRefData {
+        self.dumper.type_ref(TypeRefData {
             ref_id: None,
             span: *span,
             qualname: qualname.to_owned(),
             scope: 0
-        });
+        }.lower(self.tcx));
 
         // write the other sub-paths
         if len <= 2 {
@@ -259,12 +258,12 @@ where D: Dump
         }
         let sub_paths = &sub_paths[..len-2];
         for &(ref span, ref qualname) in sub_paths {
-            self.dumper.mod_ref(path.span, ModRefData {
+            self.dumper.mod_ref(ModRefData {
                 span: *span,
                 qualname: qualname.to_owned(),
                 scope: self.cur_scope,
                 ref_id: None
-            }.normalize(&self.tcx));
+            }.lower(self.tcx));
         }
     }
 
@@ -301,24 +300,24 @@ where D: Dump
         match def {
             Def::Mod(_) |
             Def::ForeignMod(_) => {
-                self.dumper.mod_ref(span, ModRefData {
+                self.dumper.mod_ref(ModRefData {
                     span: sub_span.expect("No span found for mod ref"),
                     ref_id: Some(def_id),
                     scope: scope,
                     qualname: String::new()
-                }.normalize(&self.tcx));
+                }.lower(self.tcx));
             }
             Def::Struct(..) |
             Def::Enum(..) |
             Def::TyAlias(..) |
             Def::AssociatedTy(..) |
             Def::Trait(_) => {
-                self.dumper.type_ref(span, TypeRefData {
+                self.dumper.type_ref(TypeRefData {
                     span: sub_span.expect("No span found for type ref"),
                     ref_id: Some(def_id),
                     scope: scope,
                     qualname: String::new()
-                }.normalize(&self.tcx));
+                }.lower(self.tcx));
             }
             Def::Static(_, _) |
             Def::Const(_) |
@@ -326,19 +325,19 @@ where D: Dump
             Def::Local(..) |
             Def::Variant(..) |
             Def::Upvar(..) => {
-                self.dumper.variable_ref(span, VariableRefData {
+                self.dumper.variable_ref(VariableRefData {
                     span: sub_span.expect("No span found for var ref"),
                     ref_id: def_id,
                     scope: scope,
                     name: String::new()
-                }.normalize(&self.tcx));
+                }.lower(self.tcx));
             }
             Def::Fn(..) => {
-                self.dumper.function_ref(span, FunctionRefData {
+                self.dumper.function_ref(FunctionRefData {
                     span: sub_span.expect("No span found for fn ref"),
                     ref_id: def_id,
                     scope: scope
-                }.normalize(&self.tcx));
+                }.lower(self.tcx));
             }
             Def::SelfTy(..) |
             Def::Label(_) |
@@ -365,7 +364,7 @@ where D: Dump
                 // variable name, but who knows?)
                 let sub_span = span_utils.span_for_last_ident(p.span);
                 if !self.span.filter_generated(sub_span, p.span) {
-                    self.dumper.variable(p.span, VariableData {
+                    self.dumper.variable(VariableData {
                         id: id,
                         span: sub_span.expect("No span found for variable"),
                         name: path_to_string(p),
@@ -373,7 +372,7 @@ where D: Dump
                         type_value: typ,
                         value: String::new(),
                         scope: 0
-                    }.normalize(&self.tcx));
+                    }.lower(self.tcx));
                 }
             }
         }
@@ -389,19 +388,24 @@ where D: Dump
 
         if let Some(method_data) = self.save_ctxt.get_method_data(id, name, span) {
 
+            let sig_str = ::make_signature(&sig.decl, &sig.generics);
             if body.is_some() {
                 if !self.span.filter_generated(Some(method_data.span), span) {
-                    self.dumper.function(span, method_data.clone().normalize(&self.tcx));
+                    let mut data = method_data.clone();
+                    data.value = sig_str;
+                    self.dumper.function(data.lower(self.tcx));
                 }
                 self.process_formals(&sig.decl.inputs, &method_data.qualname);
             } else {
                 if !self.span.filter_generated(Some(method_data.span), span) {
-                    self.dumper.method(span, MethodData {
+                    self.dumper.method(MethodData {
                         id: method_data.id,
+                        name: method_data.name,
                         span: method_data.span,
                         scope: method_data.scope,
                         qualname: method_data.qualname.clone(),
-                    }.normalize(&self.tcx));
+                        value: sig_str,
+                    }.lower(self.tcx));
                 }
             }
             self.process_generic_params(&sig.generics, span, &method_data.qualname, id);
@@ -426,7 +430,7 @@ where D: Dump
         let trait_ref_data = self.save_ctxt.get_trait_ref_data(trait_ref, self.cur_scope);
         if let Some(trait_ref_data) = trait_ref_data {
             if !self.span.filter_generated(Some(trait_ref_data.span), trait_ref.path.span) {
-                self.dumper.type_ref(trait_ref.path.span, trait_ref_data.normalize(&self.tcx));
+                self.dumper.type_ref(trait_ref_data.lower(self.tcx));
             }
 
             visit::walk_path(self, &trait_ref.path);
@@ -437,9 +441,8 @@ where D: Dump
         let field_data = self.save_ctxt.get_field_data(field, parent_id);
         if let Some(mut field_data) = field_data {
             if !self.span.filter_generated(Some(field_data.span), field.span) {
-                field_data.scope = normalize_node_id(&self.tcx, field_data.scope) as u32;
                 field_data.value = String::new();
-                self.dumper.variable(field.span, field_data.normalize(&self.tcx));
+                self.dumper.variable(field_data.lower(self.tcx));
             }
         }
     }
@@ -457,18 +460,20 @@ where D: Dump
         let param_sub_spans = self.span.spans_for_ty_params(full_span,
                                                             (generics.ty_params.len() as isize));
         for (param, param_ss) in generics.ty_params.iter().zip(param_sub_spans) {
+            let name = escape(self.span.snippet(param_ss));
             // Append $id to name to make sure each one is unique
-            let name = format!("{}::{}${}",
-                               prefix,
-                               escape(self.span.snippet(param_ss)),
-                               id);
+            let qualname = format!("{}::{}${}",
+                                   prefix,
+                                   name,
+                                   id);
             if !self.span.filter_generated(Some(param_ss), full_span) {
-                self.dumper.typedef(full_span, TypedefData {
+                self.dumper.typedef(TypeDefData {
                     span: param_ss,
+                    name: name,
                     id: param.id,
-                    qualname: name,
+                    qualname: qualname,
                     value: String::new()
-                }.normalize(&self.tcx));
+                }.lower(self.tcx));
             }
         }
         self.visit_generics(generics);
@@ -482,7 +487,7 @@ where D: Dump
         if let Some(fn_data) = self.save_ctxt.get_item_data(item) {
             down_cast_data!(fn_data, FunctionData, item.span);
             if !self.span.filter_generated(Some(fn_data.span), item.span) {
-                self.dumper.function(item.span, fn_data.clone().normalize(&self.tcx));
+                self.dumper.function(fn_data.clone().lower(self.tcx));
             }
 
             self.process_formals(&decl.inputs, &fn_data.qualname);
@@ -504,9 +509,7 @@ where D: Dump
         if let Some(var_data) = self.save_ctxt.get_item_data(item) {
             down_cast_data!(var_data, VariableData, item.span);
             if !self.span.filter_generated(Some(var_data.span), item.span) {
-                let mut var_data = var_data;
-                var_data.scope = normalize_node_id(&self.tcx, var_data.scope) as u32;
-                self.dumper.variable(item.span, var_data.normalize(&self.tcx));
+                self.dumper.variable(var_data.lower(self.tcx));
             }
         }
         self.visit_ty(&typ);
@@ -524,15 +527,15 @@ where D: Dump
         let sub_span = self.span.sub_span_after_keyword(span, keywords::Const);
 
         if !self.span.filter_generated(sub_span, span) {
-            self.dumper.variable(span, VariableData {
+            self.dumper.variable(VariableData {
                 span: sub_span.expect("No span found for variable"),
                 id: id,
                 name: name.to_string(),
                 qualname: qualname,
                 value: self.span.snippet(expr.span),
                 type_value: ty_to_string(&typ),
-                scope: normalize_node_id(&self.tcx, self.cur_scope) as u32
-            }.normalize(&self.tcx));
+                scope: self.cur_scope
+            }.lower(self.tcx));
         }
 
         // walk type and init value
@@ -540,23 +543,38 @@ where D: Dump
         self.visit_expr(expr);
     }
 
+    // FIXME tuple structs should generate tuple-specific data.
     fn process_struct(&mut self,
                       item: &ast::Item,
                       def: &ast::VariantData,
                       ty_params: &ast::Generics) {
+        let name = item.ident.to_string();
         let qualname = format!("::{}", self.tcx.node_path_str(item.id));
 
-        let val = self.span.snippet(item.span);
         let sub_span = self.span.sub_span_after_keyword(item.span, keywords::Struct);
+        let val = if let ast::ItemKind::Struct(ast::VariantData::Struct(ref fields, _), _) =
+                    item.node {
+            let fields_str = fields.iter()
+                                   .enumerate()
+                                   .map(|(i, f)| f.ident.map(|i| i.to_string())
+                                                  .unwrap_or(i.to_string()))
+                                   .collect::<Vec<_>>()
+                                   .join(", ");
+            format!("{} {{ {} }}", name, fields_str)
+        } else {
+            String::new()
+        };
+
         if !self.span.filter_generated(sub_span, item.span) {
-            self.dumper.struct_data(item.span, StructData {
+            self.dumper.struct_data(StructData {
                 span: sub_span.expect("No span found for struct"),
                 id: item.id,
+                name: name,
                 ctor_id: def.id(),
                 qualname: qualname.clone(),
                 scope: self.cur_scope,
                 value: val
-            }.normalize(&self.tcx));
+            }.lower(self.tcx));
         }
 
 
@@ -579,44 +597,59 @@ where D: Dump
             Some(data) => data,
         };
         down_cast_data!(enum_data, EnumData, item.span);
-        let normalized = enum_data.clone().normalize(&self.tcx);
-        if !self.span.filter_generated(Some(normalized.span), item.span) {
-            self.dumper.enum_data(item.span, normalized);
+        if !self.span.filter_generated(Some(enum_data.span), item.span) {
+            self.dumper.enum_data(enum_data.clone().lower(self.tcx));
         }
 
         for variant in &enum_definition.variants {
-            let name = &variant.node.name.name.as_str();
+            let name = variant.node.name.name.to_string();
             let mut qualname = enum_data.qualname.clone();
             qualname.push_str("::");
-            qualname.push_str(name);
-            let val = self.span.snippet(variant.span);
+            qualname.push_str(&name);
 
             match variant.node.data {
-                ast::VariantData::Struct(..) => {
+                ast::VariantData::Struct(ref fields, _) => {
                     let sub_span = self.span.span_for_first_ident(variant.span);
+                    let fields_str = fields.iter()
+                                           .enumerate()
+                                           .map(|(i, f)| f.ident.map(|i| i.to_string())
+                                                          .unwrap_or(i.to_string()))
+                                           .collect::<Vec<_>>()
+                                           .join(", ");
+                    let val = format!("{}::{} {{ {} }}", enum_data.name, name, fields_str);
                     if !self.span.filter_generated(sub_span, variant.span) {
-                        self.dumper.struct_variant(variant.span, StructVariantData {
+                        self.dumper.struct_variant(StructVariantData {
                             span: sub_span.expect("No span found for struct variant"),
                             id: variant.node.data.id(),
+                            name: name,
                             qualname: qualname,
                             type_value: enum_data.qualname.clone(),
                             value: val,
                             scope: enum_data.scope
-                        }.normalize(&self.tcx));
+                        }.lower(self.tcx));
                     }
                 }
-                _ => {
+                ref v => {
                     let sub_span = self.span.span_for_first_ident(variant.span);
+                    let mut val = format!("{}::{}", enum_data.name, name);
+                    if let &ast::VariantData::Tuple(ref fields, _) = v {
+                        val.push('(');
+                        val.push_str(&fields.iter()
+                                            .map(|f| ty_to_string(&f.ty))
+                                            .collect::<Vec<_>>()
+                                            .join(", "));
+                        val.push(')');
+                    }
                     if !self.span.filter_generated(sub_span, variant.span) {
-                        self.dumper.tuple_variant(variant.span, TupleVariantData {
+                        self.dumper.tuple_variant(TupleVariantData {
                             span: sub_span.expect("No span found for tuple variant"),
                             id: variant.node.data.id(),
-                            name: name.to_string(),
+                            name: name,
                             qualname: qualname,
                             type_value: enum_data.qualname.clone(),
                             value: val,
                             scope: enum_data.scope
-                        }.normalize(&self.tcx));
+                        }.lower(self.tcx));
                     }
                 }
             }
@@ -642,25 +675,25 @@ where D: Dump
             if let Some(ref self_ref) = impl_data.self_ref {
                 has_self_ref = true;
                 if !self.span.filter_generated(Some(self_ref.span), item.span) {
-                    self.dumper.type_ref(item.span, self_ref.clone().normalize(&self.tcx));
+                    self.dumper.type_ref(self_ref.clone().lower(self.tcx));
                 }
             }
             if let Some(ref trait_ref_data) = impl_data.trait_ref {
                 if !self.span.filter_generated(Some(trait_ref_data.span), item.span) {
-                    self.dumper.type_ref(item.span, trait_ref_data.clone().normalize(&self.tcx));
+                    self.dumper.type_ref(trait_ref_data.clone().lower(self.tcx));
                 }
 
                 visit::walk_path(self, &trait_ref.as_ref().unwrap().path);
             }
 
             if !self.span.filter_generated(Some(impl_data.span), item.span) {
-                self.dumper.impl_data(item.span, ImplData {
+                self.dumper.impl_data(ImplData {
                     id: impl_data.id,
                     span: impl_data.span,
                     scope: impl_data.scope,
                     trait_ref: impl_data.trait_ref.map(|d| d.ref_id.unwrap()),
                     self_ref: impl_data.self_ref.map(|d| d.ref_id.unwrap())
-                }.normalize(&self.tcx));
+                }.lower(self.tcx));
             }
         }
         if !has_self_ref {
@@ -677,17 +710,26 @@ where D: Dump
                      generics: &ast::Generics,
                      trait_refs: &ast::TyParamBounds,
                      methods: &[ast::TraitItem]) {
+        let name = item.ident.to_string();
         let qualname = format!("::{}", self.tcx.node_path_str(item.id));
-        let val = self.span.snippet(item.span);
+        let mut val = name.clone();
+        if !generics.lifetimes.is_empty() || !generics.ty_params.is_empty() {
+            val.push_str(&generics_to_string(generics));
+        }
+        if !trait_refs.is_empty() {
+            val.push_str(": ");
+            val.push_str(&bounds_to_string(trait_refs));
+        }
         let sub_span = self.span.sub_span_after_keyword(item.span, keywords::Trait);
         if !self.span.filter_generated(sub_span, item.span) {
-            self.dumper.trait_data(item.span, TraitData {
+            self.dumper.trait_data(TraitData {
                 span: sub_span.expect("No span found for trait"),
                 id: item.id,
+                name: name,
                 qualname: qualname.clone(),
                 scope: self.cur_scope,
                 value: val
-            }.normalize(&self.tcx));
+            }.lower(self.tcx));
         }
 
         // super-traits
@@ -705,12 +747,12 @@ where D: Dump
             if let Some(id) = self.lookup_type_ref(trait_ref.ref_id) {
                 let sub_span = self.span.sub_span_for_type_name(trait_ref.path.span);
                 if !self.span.filter_generated(sub_span, trait_ref.path.span) {
-                    self.dumper.type_ref(trait_ref.path.span, TypeRefData {
+                    self.dumper.type_ref(TypeRefData {
                         span: sub_span.expect("No span found for trait ref"),
                         ref_id: Some(id),
                         scope: self.cur_scope,
                         qualname: String::new()
-                    }.normalize(&self.tcx));
+                    }.lower(self.tcx));
                 }
 
                 if !self.span.filter_generated(sub_span, trait_ref.path.span) {
@@ -719,7 +761,7 @@ where D: Dump
                         span: sub_span,
                         base_id: id,
                         deriv_id: item.id
-                    }.normalize(&self.tcx));
+                    }.lower(self.tcx));
                 }
             }
         }
@@ -736,7 +778,7 @@ where D: Dump
         if let Some(mod_data) = self.save_ctxt.get_item_data(item) {
             down_cast_data!(mod_data, ModData, item.span);
             if !self.span.filter_generated(Some(mod_data.span), item.span) {
-                self.dumper.mod_data(mod_data.normalize(&self.tcx));
+                self.dumper.mod_data(mod_data.lower(self.tcx));
             }
         }
     }
@@ -762,47 +804,47 @@ where D: Dump
                 if !self.span.filter_generated(Some(vrd.span), path.span) {
                     match ref_kind {
                         Some(recorder::TypeRef) => {
-                            self.dumper.type_ref(path.span, TypeRefData {
+                            self.dumper.type_ref(TypeRefData {
                                 span: vrd.span,
                                 ref_id: Some(vrd.ref_id),
                                 scope: vrd.scope,
                                 qualname: String::new()
-                            }.normalize(&self.tcx));
+                            }.lower(self.tcx));
                         }
                         Some(recorder::FnRef) => {
-                            self.dumper.function_ref(path.span, FunctionRefData {
+                            self.dumper.function_ref(FunctionRefData {
                                 span: vrd.span,
                                 ref_id: vrd.ref_id,
                                 scope: vrd.scope
-                            }.normalize(&self.tcx));
+                            }.lower(self.tcx));
                         }
                         Some(recorder::ModRef) => {
-                            self.dumper.mod_ref(path.span, ModRefData {
+                            self.dumper.mod_ref( ModRefData {
                                 span: vrd.span,
                                 ref_id: Some(vrd.ref_id),
                                 scope: vrd.scope,
                                 qualname: String::new()
-                            }.normalize(&self.tcx));
+                            }.lower(self.tcx));
                         }
                         Some(recorder::VarRef) | None
-                            => self.dumper.variable_ref(path.span, vrd.normalize(&self.tcx))
+                            => self.dumper.variable_ref(vrd.lower(self.tcx))
                     }
                 }
 
             }
             Data::TypeRefData(trd) => {
                 if !self.span.filter_generated(Some(trd.span), path.span) {
-                    self.dumper.type_ref(path.span, trd.normalize(&self.tcx));
+                    self.dumper.type_ref(trd.lower(self.tcx));
                 }
             }
             Data::MethodCallData(mcd) => {
                 if !self.span.filter_generated(Some(mcd.span), path.span) {
-                    self.dumper.method_call(path.span, mcd.normalize(&self.tcx));
+                    self.dumper.method_call(mcd.lower(self.tcx));
                 }
             }
             Data::FunctionCallData(fcd) => {
                 if !self.span.filter_generated(Some(fcd.span), path.span) {
-                    self.dumper.function_call(path.span, fcd.normalize(&self.tcx));
+                    self.dumper.function_call(fcd.lower(self.tcx));
                 }
             }
             _ => {
@@ -844,7 +886,7 @@ where D: Dump
         if let Some(struct_lit_data) = self.save_ctxt.get_expr_data(ex) {
             down_cast_data!(struct_lit_data, TypeRefData, ex.span);
             if !self.span.filter_generated(Some(struct_lit_data.span), ex.span) {
-                self.dumper.type_ref(ex.span, struct_lit_data.normalize(&self.tcx));
+                self.dumper.type_ref(struct_lit_data.lower(self.tcx));
             }
 
             let scope = self.save_ctxt.enclosing_scope(ex.id);
@@ -854,7 +896,7 @@ where D: Dump
                                               .get_field_ref_data(field, variant, scope) {
 
                     if !self.span.filter_generated(Some(field_data.span), field.ident.span) {
-                        self.dumper.variable_ref(field.ident.span, field_data.normalize(&self.tcx));
+                        self.dumper.variable_ref(field_data.lower(self.tcx));
                     }
                 }
 
@@ -869,7 +911,7 @@ where D: Dump
         if let Some(mcd) = self.save_ctxt.get_expr_data(ex) {
             down_cast_data!(mcd, MethodCallData, ex.span);
             if !self.span.filter_generated(Some(mcd.span), ex.span) {
-                self.dumper.method_call(ex.span, mcd.normalize(&self.tcx));
+                self.dumper.method_call(mcd.lower(self.tcx));
             }
         }
 
@@ -889,12 +931,12 @@ where D: Dump
                     let sub_span = self.span.span_for_first_ident(span);
                     if let Some(f) = variant.find_field_named(field.ident.name) {
                         if !self.span.filter_generated(sub_span, span) {
-                            self.dumper.variable_ref(span, VariableRefData {
+                            self.dumper.variable_ref(VariableRefData {
                                 span: sub_span.expect("No span fund for var ref"),
                                 ref_id: f.did,
                                 scope: self.cur_scope,
                                 name: String::new()
-                            }.normalize(&self.tcx));
+                            }.lower(self.tcx));
                         }
                     }
                     self.visit_pat(&field.pat);
@@ -913,19 +955,21 @@ where D: Dump
         self.visit_pat(&p);
 
         for &(id, ref p, immut, _) in &collector.collected_paths {
-            let value = if immut == ast::Mutability::Immutable {
+            let mut value = if immut == ast::Mutability::Immutable {
                 value.to_string()
             } else {
                 "<mutable>".to_string()
             };
             let types = self.tcx.node_types();
             let typ = types.get(&id).map(|t| t.to_string()).unwrap_or(String::new());
+            value.push_str(": ");
+            value.push_str(&typ);
             // Get the span only for the name of the variable (I hope the path
             // is only ever a variable name, but who knows?).
             let sub_span = self.span.span_for_last_ident(p.span);
             // Rust uses the id of the pattern for var lookups, so we'll use it too.
             if !self.span.filter_generated(sub_span, p.span) {
-                self.dumper.variable(p.span, VariableData {
+                self.dumper.variable(VariableData {
                     span: sub_span.expect("No span found for variable"),
                     id: id,
                     name: path_to_string(p),
@@ -933,7 +977,7 @@ where D: Dump
                     value: value,
                     type_value: typ,
                     scope: 0
-                }.normalize(&self.tcx));
+                }.lower(self.tcx));
             }
         }
     }
@@ -959,30 +1003,30 @@ where D: Dump
             && !data.imported {
             self.mac_defs.insert(data.callee_span);
             if let Some(sub_span) = self.span.span_for_macro_def_name(data.callee_span) {
-                self.dumper.macro_data(data.callee_span, MacroData {
+                self.dumper.macro_data(MacroData {
                     span: sub_span,
                     name: data.name.clone(),
                     qualname: qualname.clone()
-                });
+                }.lower(self.tcx));
             }
         }
         if !self.mac_uses.contains(&data.span) {
             self.mac_uses.insert(data.span);
             if let Some(sub_span) = self.span.span_for_macro_use_name(data.span) {
-                self.dumper.macro_use(data.span, MacroUseData {
+                self.dumper.macro_use(MacroUseData {
                     span: sub_span,
                     name: data.name,
                     qualname: qualname,
                     scope: data.scope,
                     callee_span: data.callee_span,
                     imported: data.imported
-                }.normalize(&self.tcx));
+                }.lower(self.tcx));
             }
         }
     }
 }
 
-impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
+impl<'v, 'l, 'tcx: 'l, 'll, D: Dump +'ll> Visitor<'v> for DumpVisitor<'l, 'tcx, 'll, D> {
     fn visit_item(&mut self, item: &ast::Item) {
         use syntax::ast::ItemKind::*;
         self.process_macro_use(item.span, item.id);
@@ -1010,13 +1054,13 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                         };
 
                         if !self.span.filter_generated(sub_span, path.span) {
-                            self.dumper.use_data(path.span, UseData {
+                            self.dumper.use_data(UseData {
                                 span: sub_span.expect("No span found for use"),
                                 id: item.id,
                                 mod_id: mod_id,
-                                name: ident.name.to_string(),
+                                name: ident.to_string(),
                                 scope: self.cur_scope
-                            }.normalize(&self.tcx));
+                            }.lower(self.tcx));
                         }
                         self.write_sub_paths_truncated(path, true);
                     }
@@ -1032,14 +1076,14 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                         }
 
                         let sub_span = self.span
-                                           .sub_span_of_token(path.span, token::BinOp(token::Star));
-                        if !self.span.filter_generated(sub_span, path.span) {
-                            self.dumper.use_glob(path.span, UseGlobData {
+                                           .sub_span_of_token(item.span, token::BinOp(token::Star));
+                        if !self.span.filter_generated(sub_span, item.span) {
+                            self.dumper.use_glob(UseGlobData {
                                 span: sub_span.expect("No span found for use glob"),
                                 id: item.id,
                                 names: names,
                                 scope: self.cur_scope
-                            }.normalize(&self.tcx));
+                            }.lower(self.tcx));
                         }
                         self.write_sub_paths(path, true);
                     }
@@ -1076,14 +1120,14 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                 };
 
                 if !self.span.filter_generated(alias_span, item.span) {
-                    self.dumper.extern_crate(item.span, ExternCrateData {
+                    self.dumper.extern_crate(ExternCrateData {
                         id: item.id,
-                        name: item.ident.name.to_string(),
+                        name: item.ident.to_string(),
                         crate_num: cnum,
                         location: location,
                         span: alias_span.expect("No span found for extern crate"),
                         scope: self.cur_scope,
-                    }.normalize(&self.tcx));
+                    }.lower(self.tcx));
                 }
             }
             Fn(ref decl, _, _, _, ref ty_params, ref body) =>
@@ -1112,12 +1156,13 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                 let value = ty_to_string(&ty);
                 let sub_span = self.span.sub_span_after_keyword(item.span, keywords::Type);
                 if !self.span.filter_generated(sub_span, item.span) {
-                    self.dumper.typedef(item.span, TypedefData {
+                    self.dumper.typedef(TypeDefData {
                         span: sub_span.expect("No span found for typedef"),
+                        name: item.ident.to_string(),
                         id: item.id,
                         qualname: qualname.clone(),
                         value: value
-                    }.normalize(&self.tcx));
+                    }.lower(self.tcx));
                 }
 
                 self.visit_ty(&ty);
@@ -1192,12 +1237,12 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                 if let Some(id) = self.lookup_type_ref(t.id) {
                     let sub_span = self.span.sub_span_for_type_name(t.span);
                     if !self.span.filter_generated(sub_span, t.span) {
-                        self.dumper.type_ref(t.span, TypeRefData {
+                        self.dumper.type_ref(TypeRefData {
                             span: sub_span.expect("No span found for type ref"),
                             ref_id: Some(id),
                             scope: self.cur_scope,
                             qualname: String::new()
-                        }.normalize(&self.tcx));
+                        }.lower(self.tcx));
                     }
                 }
 
@@ -1222,7 +1267,7 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                 visit::walk_expr(self, ex);
             }
             ast::ExprKind::Struct(ref path, ref fields, ref base) => {
-                let hir_expr = lower_expr(self.save_ctxt.lcx, ex);
+                let hir_expr = self.save_ctxt.tcx.map.expect_expr(ex.id);
                 let adt = self.tcx.expr_ty(&hir_expr).ty_adt_def().unwrap();
                 let def = self.tcx.resolve_expr(&hir_expr);
                 self.process_struct_lit(ex, path, fields, adt.variant_of_def(def), base)
@@ -1234,25 +1279,25 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                 if let Some(field_data) = self.save_ctxt.get_expr_data(ex) {
                     down_cast_data!(field_data, VariableRefData, ex.span);
                     if !self.span.filter_generated(Some(field_data.span), ex.span) {
-                        self.dumper.variable_ref(ex.span, field_data.normalize(&self.tcx));
+                        self.dumper.variable_ref(field_data.lower(self.tcx));
                     }
                 }
             }
             ast::ExprKind::TupField(ref sub_ex, idx) => {
                 self.visit_expr(&sub_ex);
 
-                let hir_node = lower_expr(self.save_ctxt.lcx, sub_ex);
+                let hir_node = self.save_ctxt.tcx.map.expect_expr(sub_ex.id);
                 let ty = &self.tcx.expr_ty_adjusted(&hir_node).sty;
                 match *ty {
                     ty::TyStruct(def, _) => {
                         let sub_span = self.span.sub_span_after_token(ex.span, token::Dot);
                         if !self.span.filter_generated(sub_span, ex.span) {
-                            self.dumper.variable_ref(ex.span, VariableRefData {
+                            self.dumper.variable_ref(VariableRefData {
                                 span: sub_span.expect("No span found for var ref"),
                                 ref_id: def.struct_variant().fields[idx.node].did,
                                 scope: self.cur_scope,
                                 name: String::new()
-                            }.normalize(&self.tcx));
+                            }.lower(self.tcx));
                         }
                     }
                     ty::TyTuple(_) => {}
@@ -1261,7 +1306,7 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                                    ty),
                 }
             }
-            ast::ExprKind::Closure(_, ref decl, ref body) => {
+            ast::ExprKind::Closure(_, ref decl, ref body, _fn_decl_span) => {
                 let mut id = String::from("$");
                 id.push_str(&ex.id.to_string());
                 self.process_formals(&decl.inputs, &id);
@@ -1280,13 +1325,13 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
             }
             ast::ExprKind::ForLoop(ref pattern, ref subexpression, ref block, _) |
             ast::ExprKind::WhileLet(ref pattern, ref subexpression, ref block, _) => {
-                let value = self.span.snippet(mk_sp(ex.span.lo, subexpression.span.hi));
+                let value = self.span.snippet(subexpression.span);
                 self.process_var_decl(pattern, value);
                 visit::walk_expr(self, subexpression);
                 visit::walk_block(self, block);
             }
             ast::ExprKind::IfLet(ref pattern, ref subexpression, ref block, ref opt_else) => {
-                let value = self.span.snippet(mk_sp(ex.span.lo, subexpression.span.hi));
+                let value = self.span.snippet(subexpression.span);
                 self.process_var_decl(pattern, value);
                 visit::walk_expr(self, subexpression);
                 visit::walk_block(self, block);
@@ -1337,7 +1382,7 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                     assert!(p.segments.len() == 1,
                             "qualified path for local variable def in arm");
                     if !self.span.filter_generated(Some(p.span), p.span) {
-                        self.dumper.variable(p.span, VariableData {
+                        self.dumper.variable(VariableData {
                             span: p.span,
                             id: id,
                             name: path_to_string(p),
@@ -1345,7 +1390,7 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
                             value: value,
                             type_value: String::new(),
                             scope: 0
-                        }.normalize(&self.tcx));
+                        }.lower(self.tcx));
                     }
                 }
                 Def::Variant(..) | Def::Enum(..) |
@@ -1376,7 +1421,7 @@ impl<'l, 'tcx, 'v, D: Dump + 'l> Visitor<'v> for DumpVisitor<'l, 'tcx, D> {
 
     fn visit_local(&mut self, l: &ast::Local) {
         self.process_macro_use(l.span, l.id);
-        let value = self.span.snippet(l.span);
+        let value = l.init.as_ref().map(|i| self.span.snippet(i.span)).unwrap_or(String::new());
         self.process_var_decl(&l.pat, value);
 
         // Just walk the initialiser and type (don't want to walk the pattern again).

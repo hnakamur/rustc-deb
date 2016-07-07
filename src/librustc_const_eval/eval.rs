@@ -17,15 +17,14 @@ use self::EvalHint::*;
 
 use rustc::hir::map as ast_map;
 use rustc::hir::map::blocks::FnLikeNode;
-use rustc::middle::cstore::{self, CrateStore, InlinedItem};
-use rustc::{infer, traits};
+use rustc::middle::cstore::{self, InlinedItem};
+use rustc::traits;
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
 use rustc::hir::pat_util::def_to_path;
 use rustc::ty::{self, Ty, TyCtxt, subst};
 use rustc::ty::util::IntTypeExt;
 use rustc::traits::ProjectionMode;
-use rustc::middle::astconv_util::ast_ty_to_prim_ty;
 use rustc::util::nodemap::NodeMap;
 use rustc::lint;
 
@@ -54,10 +53,10 @@ macro_rules! math {
     }
 }
 
-fn lookup_variant_by_id<'a>(tcx: &'a ty::TyCtxt,
-                            enum_def: DefId,
-                            variant_def: DefId)
-                            -> Option<&'a Expr> {
+fn lookup_variant_by_id<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                  enum_def: DefId,
+                                  variant_def: DefId)
+                                  -> Option<&'tcx Expr> {
     fn variant_expr<'a>(variants: &'a [hir::Variant], id: ast::NodeId)
                         -> Option<&'a Expr> {
         for variant in variants {
@@ -90,16 +89,16 @@ fn lookup_variant_by_id<'a>(tcx: &'a ty::TyCtxt,
 ///
 /// `substs` is optional and is used for associated constants.
 /// This generally happens in late/trans const evaluation.
-pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: &'a TyCtxt<'tcx>,
+pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                         def_id: DefId,
-                                        substs: Option<subst::Substs<'tcx>>)
+                                        substs: Option<&'tcx subst::Substs<'tcx>>)
                                         -> Option<(&'tcx Expr, Option<ty::Ty<'tcx>>)> {
     if let Some(node_id) = tcx.map.as_local_node_id(def_id) {
         match tcx.map.find(node_id) {
             None => None,
             Some(ast_map::NodeItem(it)) => match it.node {
                 hir::ItemConst(ref ty, ref const_expr) => {
-                    Some((&const_expr, ast_ty_to_prim_ty(tcx, ty)))
+                    Some((&const_expr, tcx.ast_ty_to_prim_ty(ty)))
                 }
                 _ => None
             },
@@ -125,7 +124,7 @@ pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: &'a TyCtxt<'tcx>,
             },
             Some(ast_map::NodeImplItem(ii)) => match ii.node {
                 hir::ImplItemKind::Const(ref ty, ref expr) => {
-                    Some((&expr, ast_ty_to_prim_ty(tcx, ty)))
+                    Some((&expr, tcx.ast_ty_to_prim_ty(ty)))
                 }
                 _ => None
             },
@@ -143,7 +142,7 @@ pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: &'a TyCtxt<'tcx>,
         let expr_ty = match tcx.sess.cstore.maybe_get_item_ast(tcx, def_id) {
             cstore::FoundAst::Found(&InlinedItem::Item(ref item)) => match item.node {
                 hir::ItemConst(ref ty, ref const_expr) => {
-                    Some((&**const_expr, ast_ty_to_prim_ty(tcx, ty)))
+                    Some((&**const_expr, tcx.ast_ty_to_prim_ty(ty)))
                 },
                 _ => None
             },
@@ -164,7 +163,7 @@ pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: &'a TyCtxt<'tcx>,
             },
             cstore::FoundAst::Found(&InlinedItem::ImplItem(_, ref ii)) => match ii.node {
                 hir::ImplItemKind::Const(ref ty, ref expr) => {
-                    Some((&**expr, ast_ty_to_prim_ty(tcx, ty)))
+                    Some((&**expr, tcx.ast_ty_to_prim_ty(ty)))
                 },
                 _ => None
             },
@@ -182,8 +181,9 @@ pub fn lookup_const_by_id<'a, 'tcx: 'a>(tcx: &'a TyCtxt<'tcx>,
     }
 }
 
-fn inline_const_fn_from_external_crate(tcx: &TyCtxt, def_id: DefId)
-                                       -> Option<ast::NodeId> {
+fn inline_const_fn_from_external_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                                 def_id: DefId)
+                                                 -> Option<ast::NodeId> {
     match tcx.extern_const_fns.borrow().get(&def_id) {
         Some(&ast::DUMMY_NODE_ID) => return None,
         Some(&fn_id) => return Some(fn_id),
@@ -205,8 +205,8 @@ fn inline_const_fn_from_external_crate(tcx: &TyCtxt, def_id: DefId)
     fn_id
 }
 
-pub fn lookup_const_fn_by_id<'tcx>(tcx: &TyCtxt<'tcx>, def_id: DefId)
-                                   -> Option<FnLikeNode<'tcx>>
+pub fn lookup_const_fn_by_id<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId)
+                                       -> Option<FnLikeNode<'tcx>>
 {
     let fn_id = if let Some(node_id) = tcx.map.as_local_node_id(def_id) {
         node_id
@@ -238,8 +238,11 @@ pub fn lookup_const_fn_by_id<'tcx>(tcx: &TyCtxt<'tcx>, def_id: DefId)
     }
 }
 
-pub fn const_expr_to_pat(tcx: &ty::TyCtxt, expr: &Expr, pat_id: ast::NodeId, span: Span)
-                         -> Result<P<hir::Pat>, DefId> {
+pub fn const_expr_to_pat<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                   expr: &Expr,
+                                   pat_id: ast::NodeId,
+                                   span: Span)
+                                   -> Result<P<hir::Pat>, DefId> {
     let pat_ty = tcx.expr_ty(expr);
     debug!("expr={:?} pat_ty={:?} pat_id={}", expr, pat_ty, pat_id);
     match pat_ty.sty {
@@ -281,7 +284,7 @@ pub fn const_expr_to_pat(tcx: &ty::TyCtxt, expr: &Expr, pat_id: ast::NodeId, spa
             let path = match def.full_def() {
                 Def::Struct(def_id) => def_to_path(tcx, def_id),
                 Def::Variant(_, variant_did) => def_to_path(tcx, variant_did),
-                Def::Fn(..) => return Ok(P(hir::Pat {
+                Def::Fn(..) | Def::Method(..) => return Ok(P(hir::Pat {
                     id: expr.id,
                     node: PatKind::Lit(P(expr.clone())),
                     span: span,
@@ -339,7 +342,8 @@ pub fn const_expr_to_pat(tcx: &ty::TyCtxt, expr: &Expr, pat_id: ast::NodeId, spa
     Ok(P(hir::Pat { id: expr.id, node: pat, span: span }))
 }
 
-pub fn eval_const_expr(tcx: &TyCtxt, e: &Expr) -> ConstVal {
+pub fn eval_const_expr<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                 e: &Expr) -> ConstVal {
     match eval_const_expr_partial(tcx, e, ExprTypeChecked, None) {
         Ok(r) => r,
         // non-const path still needs to be a fatal error, because enums are funky
@@ -364,7 +368,7 @@ pub struct ConstEvalErr {
     pub kind: ErrKind,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum ErrKind {
     CannotCast,
     CannotCastTo(&'static str),
@@ -377,13 +381,6 @@ pub enum ErrKind {
     NotOn(ConstVal),
     CallOn(ConstVal),
 
-    NegateWithOverflow(i64),
-    AddiWithOverflow(i64, i64),
-    SubiWithOverflow(i64, i64),
-    MuliWithOverflow(i64, i64),
-    AdduWithOverflow(u64, u64),
-    SubuWithOverflow(u64, u64),
-    MuluWithOverflow(u64, u64),
     DivideByZero,
     DivideWithOverflow,
     ModuloByZero,
@@ -414,6 +411,8 @@ pub enum ErrKind {
     /// Expected, Got
     TypeMismatch(String, ConstInt),
     BadType(ConstVal),
+    ErroneousReferencedConstant(Box<ConstEvalErr>),
+    CharCast(ConstInt),
 }
 
 impl From<ConstMathErr> for ErrKind {
@@ -438,13 +437,6 @@ impl ConstEvalErr {
             NotOn(ref const_val) => format!("not on {}", const_val.description()).into_cow(),
             CallOn(ref const_val) => format!("call on {}", const_val.description()).into_cow(),
 
-            NegateWithOverflow(..) => "attempted to negate with overflow".into_cow(),
-            AddiWithOverflow(..) => "attempted to add with overflow".into_cow(),
-            SubiWithOverflow(..) => "attempted to sub with overflow".into_cow(),
-            MuliWithOverflow(..) => "attempted to mul with overflow".into_cow(),
-            AdduWithOverflow(..) => "attempted to add with overflow".into_cow(),
-            SubuWithOverflow(..) => "attempted to sub with overflow".into_cow(),
-            MuluWithOverflow(..) => "attempted to mul with overflow".into_cow(),
             DivideByZero         => "attempted to divide by zero".into_cow(),
             DivideWithOverflow   => "attempted to divide with overflow".into_cow(),
             ModuloByZero         => "attempted remainder with a divisor of zero".into_cow(),
@@ -480,6 +472,10 @@ impl ConstEvalErr {
                         expected, got.description()).into_cow()
             },
             BadType(ref i) => format!("value of wrong type: {:?}", i).into_cow(),
+            ErroneousReferencedConstant(_) => "could not evaluate referenced constant".into_cow(),
+            CharCast(ref got) => {
+                format!("only `u8` can be cast as `char`, not `{}`", got.description()).into_cow()
+            },
         }
     }
 }
@@ -534,10 +530,10 @@ macro_rules! signal {
 /// guaranteed to be evaluatable. `ty_hint` is usually ExprTypeChecked,
 /// but a few places need to evaluate constants during type-checking, like
 /// computing the length of an array. (See also the FIXME above EvalHint.)
-pub fn eval_const_expr_partial<'tcx>(tcx: &TyCtxt<'tcx>,
-                                     e: &Expr,
-                                     ty_hint: EvalHint<'tcx>,
-                                     fn_args: FnArgMap) -> EvalResult {
+pub fn eval_const_expr_partial<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                         e: &Expr,
+                                         ty_hint: EvalHint<'tcx>,
+                                         fn_args: FnArgMap) -> EvalResult {
     // Try to compute the type of the expression based on the EvalHint.
     // (See also the definition of EvalHint, and the FIXME above EvalHint.)
     let ety = match ty_hint {
@@ -679,7 +675,7 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &TyCtxt<'tcx>,
         }
       }
       hir::ExprCast(ref base, ref target_ty) => {
-        let ety = ast_ty_to_prim_ty(tcx, &target_ty).or_else(|| ety)
+        let ety = tcx.ast_ty_to_prim_ty(&target_ty).or(ety)
                 .unwrap_or_else(|| {
                     tcx.sess.span_fatal(target_ty.span,
                                         "target type not found for const cast")
@@ -696,6 +692,8 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &TyCtxt<'tcx>,
 
         let val = match eval_const_expr_partial(tcx, &base, base_hint, fn_args) {
             Ok(val) => val,
+            Err(ConstEvalErr { kind: ErroneousReferencedConstant(
+                box ConstEvalErr { kind: TypeMismatch(_, val), .. }), .. }) |
             Err(ConstEvalErr { kind: TypeMismatch(_, val), .. }) => {
                 // Something like `5i8 as usize` doesn't need a type hint for the base
                 // instead take the type hint from the inner value
@@ -737,19 +735,31 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &TyCtxt<'tcx>,
                   } else {
                       None
                   };
-                  if let Some((e, ty)) = lookup_const_by_id(tcx, def_id, substs) {
+                  if let Some((expr, ty)) = lookup_const_by_id(tcx, def_id, substs) {
                       let item_hint = match ty {
                           Some(ty) => ty_hint.checked_or(ty),
                           None => ty_hint,
                       };
-                      eval_const_expr_partial(tcx, e, item_hint, None)?
+                      match eval_const_expr_partial(tcx, expr, item_hint, None) {
+                          Ok(val) => val,
+                          Err(err) => {
+                              debug!("bad reference: {:?}, {:?}", err.description(), err.span);
+                              signal!(e, ErroneousReferencedConstant(box err))
+                          },
+                      }
                   } else {
                       signal!(e, NonConstPath);
                   }
               },
               Def::Variant(enum_def, variant_def) => {
                   if let Some(const_expr) = lookup_variant_by_id(tcx, enum_def, variant_def) {
-                      eval_const_expr_partial(tcx, const_expr, ty_hint, None)?
+                      match eval_const_expr_partial(tcx, const_expr, ty_hint, None) {
+                          Ok(val) => val,
+                          Err(err) => {
+                              debug!("bad reference: {:?}, {:?}", err.description(), err.span);
+                              signal!(e, ErroneousReferencedConstant(box err))
+                          },
+                      }
                   } else {
                       signal!(e, UnimplementedConstVal("enum variants"));
                   }
@@ -801,7 +811,10 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &TyCtxt<'tcx>,
           debug!("const call({:?})", call_args);
           eval_const_expr_partial(tcx, &result, ty_hint, Some(&call_args))?
       },
-      hir::ExprLit(ref lit) => lit_to_const(&lit.node, tcx, ety, lit.span)?,
+      hir::ExprLit(ref lit) => match lit_to_const(&lit.node, tcx, ety, lit.span) {
+          Ok(val) => val,
+          Err(err) => signal!(e, err),
+      },
       hir::ExprBlock(ref block) => {
         match block.expr {
             Some(ref expr) => eval_const_expr_partial(tcx, &expr, ty_hint, fn_args)?,
@@ -907,23 +920,19 @@ pub fn eval_const_expr_partial<'tcx>(tcx: &TyCtxt<'tcx>,
     };
 
     match (ety.map(|t| &t.sty), result) {
-        (Some(ref ty_hint), Integral(i)) => Ok(Integral(infer(i, tcx, ty_hint, e.span)?)),
+        (Some(ref ty_hint), Integral(i)) => match infer(i, tcx, ty_hint) {
+            Ok(inferred) => Ok(Integral(inferred)),
+            Err(err) => signal!(e, err),
+        },
         (_, result) => Ok(result),
     }
 }
 
-fn infer<'tcx>(
-    i: ConstInt,
-    tcx: &TyCtxt<'tcx>,
-    ty_hint: &ty::TypeVariants<'tcx>,
-    span: Span
-) -> Result<ConstInt, ConstEvalErr> {
+fn infer<'a, 'tcx>(i: ConstInt,
+                   tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                   ty_hint: &ty::TypeVariants<'tcx>)
+                   -> Result<ConstInt, ErrKind> {
     use syntax::ast::*;
-
-    let err = |e| ConstEvalErr {
-        span: span,
-        kind: e,
-    };
 
     match (ty_hint, i) {
         (&ty::TyInt(IntTy::I8), result @ I8(_)) => Ok(result),
@@ -970,78 +979,77 @@ fn infer<'tcx>(
                 Err(_) => Ok(Usize(ConstUsize::Us32(i as u32))),
             }
         },
-        (&ty::TyUint(_), InferSigned(_)) => Err(err(IntermediateUnsignedNegative)),
+        (&ty::TyUint(_), InferSigned(_)) => Err(IntermediateUnsignedNegative),
 
-        (&ty::TyInt(ity), i) => Err(err(TypeMismatch(ity.to_string(), i))),
-        (&ty::TyUint(ity), i) => Err(err(TypeMismatch(ity.to_string(), i))),
+        (&ty::TyInt(ity), i) => Err(TypeMismatch(ity.to_string(), i)),
+        (&ty::TyUint(ity), i) => Err(TypeMismatch(ity.to_string(), i)),
 
         (&ty::TyEnum(ref adt, _), i) => {
             let hints = tcx.lookup_repr_hints(adt.did);
             let int_ty = tcx.enum_repr_type(hints.iter().next());
-            infer(i, tcx, &int_ty.to_ty(tcx).sty, span)
+            infer(i, tcx, &int_ty.to_ty(tcx).sty)
         },
-        (_, i) => Err(err(BadType(ConstVal::Integral(i)))),
+        (_, i) => Err(BadType(ConstVal::Integral(i))),
     }
 }
 
-fn resolve_trait_associated_const<'a, 'tcx: 'a>(tcx: &'a TyCtxt<'tcx>,
+fn resolve_trait_associated_const<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                 ti: &'tcx hir::TraitItem,
                                                 trait_id: DefId,
-                                                rcvr_substs: subst::Substs<'tcx>)
+                                                rcvr_substs: &'tcx subst::Substs<'tcx>)
                                                 -> Option<(&'tcx Expr, Option<ty::Ty<'tcx>>)>
 {
     let trait_ref = ty::Binder(
-        rcvr_substs.erase_regions().to_trait_ref(tcx, trait_id)
+        rcvr_substs.clone().erase_regions().to_trait_ref(tcx, trait_id)
     );
     debug!("resolve_trait_associated_const: trait_ref={:?}",
            trait_ref);
 
     tcx.populate_implementations_for_trait_if_necessary(trait_ref.def_id());
-    let infcx = infer::new_infer_ctxt(tcx, &tcx.tables, None, ProjectionMode::AnyFinal);
+    tcx.infer_ctxt(None, None, ProjectionMode::AnyFinal).enter(|infcx| {
+        let mut selcx = traits::SelectionContext::new(&infcx);
+        let obligation = traits::Obligation::new(traits::ObligationCause::dummy(),
+                                                 trait_ref.to_poly_trait_predicate());
+        let selection = match selcx.select(&obligation) {
+            Ok(Some(vtable)) => vtable,
+            // Still ambiguous, so give up and let the caller decide whether this
+            // expression is really needed yet. Some associated constant values
+            // can't be evaluated until monomorphization is done in trans.
+            Ok(None) => {
+                return None
+            }
+            Err(_) => {
+                return None
+            }
+        };
 
-    let mut selcx = traits::SelectionContext::new(&infcx);
-    let obligation = traits::Obligation::new(traits::ObligationCause::dummy(),
-                                             trait_ref.to_poly_trait_predicate());
-    let selection = match selcx.select(&obligation) {
-        Ok(Some(vtable)) => vtable,
-        // Still ambiguous, so give up and let the caller decide whether this
-        // expression is really needed yet. Some associated constant values
-        // can't be evaluated until monomorphization is done in trans.
-        Ok(None) => {
-            return None
-        }
-        Err(_) => {
-            return None
-        }
-    };
-
-    // NOTE: this code does not currently account for specialization, but when
-    // it does so, it should hook into the ProjectionMode to determine when the
-    // constant should resolve; this will also require plumbing through to this
-    // function whether we are in "trans mode" to pick the right ProjectionMode
-    // when constructing the inference context above.
-    match selection {
-        traits::VtableImpl(ref impl_data) => {
-            match tcx.associated_consts(impl_data.impl_def_id)
-                     .iter().find(|ic| ic.name == ti.name) {
-                Some(ic) => lookup_const_by_id(tcx, ic.def_id, None),
-                None => match ti.node {
-                    hir::ConstTraitItem(ref ty, Some(ref expr)) => {
-                        Some((&*expr, ast_ty_to_prim_ty(tcx, ty)))
+        // NOTE: this code does not currently account for specialization, but when
+        // it does so, it should hook into the ProjectionMode to determine when the
+        // constant should resolve; this will also require plumbing through to this
+        // function whether we are in "trans mode" to pick the right ProjectionMode
+        // when constructing the inference context above.
+        match selection {
+            traits::VtableImpl(ref impl_data) => {
+                match tcx.associated_consts(impl_data.impl_def_id)
+                        .iter().find(|ic| ic.name == ti.name) {
+                    Some(ic) => lookup_const_by_id(tcx, ic.def_id, None),
+                    None => match ti.node {
+                        hir::ConstTraitItem(ref ty, Some(ref expr)) => {
+                            Some((&*expr, tcx.ast_ty_to_prim_ty(ty)))
+                        },
+                        _ => None,
                     },
-                    _ => None,
-                },
+                }
+            }
+            _ => {
+            span_bug!(ti.span,
+                      "resolve_trait_associated_const: unexpected vtable type")
             }
         }
-        _ => {
-            span_bug!(
-                ti.span,
-                "resolve_trait_associated_const: unexpected vtable type")
-        }
-    }
+    })
 }
 
-fn cast_const_int<'tcx>(tcx: &TyCtxt<'tcx>, val: ConstInt, ty: ty::Ty) -> CastResult {
+fn cast_const_int<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, val: ConstInt, ty: ty::Ty) -> CastResult {
     let v = val.to_u64_unchecked();
     match ty.sty {
         ty::TyBool if v == 0 => Ok(Bool(false)),
@@ -1066,28 +1074,27 @@ fn cast_const_int<'tcx>(tcx: &TyCtxt<'tcx>, val: ConstInt, ty: ty::Ty) -> CastRe
                 Err(_) => Ok(Integral(Usize(ConstUsize::Us32(v as u32)))),
             }
         },
-        ty::TyFloat(ast::FloatTy::F64) if val.is_negative() => {
-            // FIXME: this could probably be prettier
-            // there's no easy way to turn an `Infer` into a f64
-            let val = (-val).map_err(Math)?;
-            let val = val.to_u64().unwrap() as f64;
-            let val = -val;
-            Ok(Float(val))
+        ty::TyFloat(ast::FloatTy::F64) => match val.erase_type() {
+            Infer(u) => Ok(Float(u as f64)),
+            InferSigned(i) => Ok(Float(i as f64)),
+            _ => bug!("ConstInt::erase_type returned something other than Infer/InferSigned"),
         },
-        ty::TyFloat(ast::FloatTy::F64) => Ok(Float(val.to_u64().unwrap() as f64)),
-        ty::TyFloat(ast::FloatTy::F32) if val.is_negative() => {
-            let val = (-val).map_err(Math)?;
-            let val = val.to_u64().unwrap() as f32;
-            let val = -val;
-            Ok(Float(val as f64))
+        ty::TyFloat(ast::FloatTy::F32) => match val.erase_type() {
+            Infer(u) => Ok(Float(u as f32 as f64)),
+            InferSigned(i) => Ok(Float(i as f32 as f64)),
+            _ => bug!("ConstInt::erase_type returned something other than Infer/InferSigned"),
         },
-        ty::TyFloat(ast::FloatTy::F32) => Ok(Float(val.to_u64().unwrap() as f32 as f64)),
         ty::TyRawPtr(_) => Err(ErrKind::UnimplementedConstVal("casting an address to a raw ptr")),
+        ty::TyChar => match infer(val, tcx, &ty::TyUint(ast::UintTy::U8)) {
+            Ok(U8(u)) => Ok(Char(u as char)),
+            // can only occur before typeck, typeck blocks `T as char` for `T` != `u8`
+            _ => Err(CharCast(val)),
+        },
         _ => Err(CannotCast),
     }
 }
 
-fn cast_const_float<'tcx>(tcx: &TyCtxt<'tcx>, f: f64, ty: ty::Ty) -> CastResult {
+fn cast_const_float<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, f: f64, ty: ty::Ty) -> CastResult {
     match ty.sty {
         ty::TyInt(_) if f >= 0.0 => cast_const_int(tcx, Infer(f as u64), ty),
         ty::TyInt(_) => cast_const_int(tcx, InferSigned(f as i64), ty),
@@ -1098,22 +1105,28 @@ fn cast_const_float<'tcx>(tcx: &TyCtxt<'tcx>, f: f64, ty: ty::Ty) -> CastResult 
     }
 }
 
-fn cast_const<'tcx>(tcx: &TyCtxt<'tcx>, val: ConstVal, ty: ty::Ty) -> CastResult {
+fn cast_const<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, val: ConstVal, ty: ty::Ty) -> CastResult {
     match val {
         Integral(i) => cast_const_int(tcx, i, ty),
         Bool(b) => cast_const_int(tcx, Infer(b as u64), ty),
         Float(f) => cast_const_float(tcx, f, ty),
         Char(c) => cast_const_int(tcx, Infer(c as u64), ty),
         Function(_) => Err(UnimplementedConstVal("casting fn pointers")),
+        ByteStr(_) => match ty.sty {
+            ty::TyRawPtr(_) => {
+                Err(ErrKind::UnimplementedConstVal("casting a bytestr to a raw ptr"))
+            },
+            _ => Err(CannotCast),
+        },
         _ => Err(CannotCast),
     }
 }
 
-fn lit_to_const<'tcx>(lit: &ast::LitKind,
-                      tcx: &TyCtxt<'tcx>,
-                      ty_hint: Option<Ty<'tcx>>,
-                      span: Span,
-                      ) -> Result<ConstVal, ConstEvalErr> {
+fn lit_to_const<'a, 'tcx>(lit: &ast::LitKind,
+                          tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          ty_hint: Option<Ty<'tcx>>,
+                          span: Span)
+                          -> Result<ConstVal, ErrKind> {
     use syntax::ast::*;
     use syntax::ast::LitIntType::*;
     match *lit {
@@ -1121,28 +1134,28 @@ fn lit_to_const<'tcx>(lit: &ast::LitKind,
         LitKind::ByteStr(ref data) => Ok(ByteStr(data.clone())),
         LitKind::Byte(n) => Ok(Integral(U8(n))),
         LitKind::Int(n, Signed(ity)) => {
-            infer(InferSigned(n as i64), tcx, &ty::TyInt(ity), span).map(Integral)
+            infer(InferSigned(n as i64), tcx, &ty::TyInt(ity)).map(Integral)
         },
 
         LitKind::Int(n, Unsuffixed) => {
             match ty_hint.map(|t| &t.sty) {
                 Some(&ty::TyInt(ity)) => {
-                    infer(InferSigned(n as i64), tcx, &ty::TyInt(ity), span).map(Integral)
+                    infer(InferSigned(n as i64), tcx, &ty::TyInt(ity)).map(Integral)
                 },
                 Some(&ty::TyUint(uty)) => {
-                    infer(Infer(n), tcx, &ty::TyUint(uty), span).map(Integral)
+                    infer(Infer(n), tcx, &ty::TyUint(uty)).map(Integral)
                 },
                 None => Ok(Integral(Infer(n))),
                 Some(&ty::TyEnum(ref adt, _)) => {
                     let hints = tcx.lookup_repr_hints(adt.did);
                     let int_ty = tcx.enum_repr_type(hints.iter().next());
-                    infer(Infer(n), tcx, &int_ty.to_ty(tcx).sty, span).map(Integral)
+                    infer(Infer(n), tcx, &int_ty.to_ty(tcx).sty).map(Integral)
                 },
                 Some(ty_hint) => bug!("bad ty_hint: {:?}, {:?}", ty_hint, lit),
             }
         },
         LitKind::Int(n, Unsigned(ity)) => {
-            infer(Infer(n), tcx, &ty::TyUint(ity), span).map(Integral)
+            infer(Infer(n), tcx, &ty::TyUint(ity)).map(Integral)
         },
 
         LitKind::Float(ref n, _) |
@@ -1180,9 +1193,9 @@ pub fn compare_const_vals(a: &ConstVal, b: &ConstVal) -> Option<Ordering> {
     }
 }
 
-pub fn compare_lit_exprs<'tcx>(tcx: &TyCtxt<'tcx>,
-                               a: &Expr,
-                               b: &Expr) -> Option<Ordering> {
+pub fn compare_lit_exprs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                   a: &Expr,
+                                   b: &Expr) -> Option<Ordering> {
     let a = match eval_const_expr_partial(tcx, a, ExprTypeChecked, None) {
         Ok(a) => a,
         Err(e) => {
@@ -1202,7 +1215,8 @@ pub fn compare_lit_exprs<'tcx>(tcx: &TyCtxt<'tcx>,
 
 
 /// Returns the repeat count for a repeating vector expression.
-pub fn eval_repeat_count(tcx: &TyCtxt, count_expr: &hir::Expr) -> usize {
+pub fn eval_repeat_count<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                   count_expr: &hir::Expr) -> usize {
     let hint = UncheckedExprHint(tcx.types.usize);
     match eval_const_expr_partial(tcx, count_expr, hint, None) {
         Ok(Integral(Usize(count))) => {

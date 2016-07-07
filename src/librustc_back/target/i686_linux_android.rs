@@ -12,7 +12,12 @@ use target::Target;
 
 pub fn target() -> Target {
     let mut base = super::android_base::opts();
-    base.cpu = "pentium4".to_string();
+
+    base.max_atomic_width = 64;
+
+    // http://developer.android.com/ndk/guides/abis.html#x86
+    base.cpu = "pentiumpro".to_string();
+    base.features = "+mmx,+sse,+sse2,+sse3,+ssse3".to_string();
 
     Target {
         llvm_target: "i686-linux-android".to_string(),
@@ -21,7 +26,7 @@ pub fn target() -> Target {
         data_layout: "e-m:e-p:32:32-f64:32:64-f80:32-n8:16:32-S128".to_string(),
         arch: "x86".to_string(),
         target_os: "android".to_string(),
-        target_env: "gnu".to_string(),
+        target_env: "".to_string(),
         target_vendor: "unknown".to_string(),
         options: base,
     }

@@ -37,9 +37,9 @@ use encoder;
 pub struct ctxt<'a, 'tcx: 'a> {
     pub diag: &'a Handler,
     // Def -> str Callback:
-    pub ds: fn(&TyCtxt<'tcx>, DefId) -> String,
+    pub ds: for<'b> fn(TyCtxt<'b, 'tcx, 'tcx>, DefId) -> String,
     // The type context.
-    pub tcx: &'a TyCtxt<'tcx>,
+    pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
     pub abbrevs: &'a abbrev_map<'tcx>
 }
 
@@ -110,7 +110,7 @@ pub fn enc_ty<'a, 'tcx>(w: &mut Cursor<Vec<u8>>, cx: &ctxt<'a, 'tcx>, t: Ty<'tcx
             enc_existential_bounds(w, cx, bounds);
             write!(w, "]");
         }
-        ty::TyTuple(ref ts) => {
+        ty::TyTuple(ts) => {
             write!(w, "T[");
             for t in ts { enc_ty(w, cx, *t); }
             write!(w, "]");
@@ -156,10 +156,10 @@ pub fn enc_ty<'a, 'tcx>(w: &mut Cursor<Vec<u8>>, cx: &ctxt<'a, 'tcx>, t: Ty<'tcx
             enc_substs(w, cx, substs);
             write!(w, "]");
         }
-        ty::TyClosure(def, ref substs) => {
+        ty::TyClosure(def, substs) => {
             write!(w, "k[{}|", (cx.ds)(cx.tcx, def));
-            enc_substs(w, cx, &substs.func_substs);
-            for ty in &substs.upvar_tys {
+            enc_substs(w, cx, substs.func_substs);
+            for ty in substs.upvar_tys {
                 enc_ty(w, cx, ty);
             }
             write!(w, ".");
@@ -449,6 +449,9 @@ pub fn enc_predicate<'a, 'tcx>(w: &mut Cursor<Vec<u8>>,
                                p: &ty::Predicate<'tcx>)
 {
     match *p {
+        ty::Predicate::Rfc1592(..) => {
+            bug!("RFC1592 predicate in metadata `{:?}`", p);
+        }
         ty::Predicate::Trait(ref trait_ref) => {
             write!(w, "t");
             enc_trait_ref(w, cx, trait_ref.0.trait_ref);
@@ -478,6 +481,14 @@ pub fn enc_predicate<'a, 'tcx>(w: &mut Cursor<Vec<u8>>,
         }
         ty::Predicate::ObjectSafe(trait_def_id) => {
             write!(w, "O{}|", (cx.ds)(cx.tcx, trait_def_id));
+        }
+        ty::Predicate::ClosureKind(closure_def_id, kind) => {
+            let kind_char = match kind {
+                ty::ClosureKind::Fn => 'f',
+                ty::ClosureKind::FnMut => 'm',
+                ty::ClosureKind::FnOnce => 'o',
+            };
+            write!(w, "c{}|{}|", (cx.ds)(cx.tcx, closure_def_id), kind_char);
         }
     }
 }

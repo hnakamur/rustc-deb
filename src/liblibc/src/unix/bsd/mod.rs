@@ -163,6 +163,7 @@ pub const SIGXFSZ: ::c_int = 25;
 pub const SIGVTALRM: ::c_int = 26;
 pub const SIGPROF: ::c_int = 27;
 pub const SIGWINCH: ::c_int = 28;
+pub const SIGINFO: ::c_int = 29;
 
 pub const SIG_SETMASK: ::c_int = 3;
 pub const SIG_BLOCK: ::c_int = 0x1;
@@ -172,9 +173,6 @@ pub const IPV6_MULTICAST_LOOP: ::c_int = 11;
 pub const IPV6_V6ONLY: ::c_int = 27;
 
 pub const ST_RDONLY: ::c_ulong = 1;
-
-pub const CTL_HW: ::c_int = 6;
-pub const HW_NCPU: ::c_int = 3;
 
 pub const EV_ADD: ::uint16_t = 0x1;
 pub const EV_CLEAR: ::uint16_t = 0x20;
@@ -292,6 +290,13 @@ pub const WNOHANG: ::c_int = 1;
 pub const RTLD_NOW: ::c_int = 0x2;
 pub const RTLD_DEFAULT: *mut ::c_void = -2isize as *mut ::c_void;
 
+pub const LOG_CRON: ::c_int = 9 << 3;
+pub const LOG_AUTHPRIV: ::c_int = 10 << 3;
+pub const LOG_FTP: ::c_int = 11 << 3;
+pub const LOG_PERROR: ::c_int = 0x20;
+
+pub const PIPE_BUF: usize = 512;
+
 f! {
     pub fn FD_CLR(fd: ::c_int, set: *mut fd_set) -> () {
         let bits = mem::size_of_val(&(*set).fds_bits[0]) * 8;
@@ -330,6 +335,10 @@ f! {
     pub fn WTERMSIG(status: ::c_int) -> ::c_int {
         status & 0o177
     }
+
+    pub fn WCOREDUMP(status: ::c_int) -> bool {
+        (status & 0o200) != 0
+    }
 }
 
 extern {
@@ -345,6 +354,9 @@ extern {
                       buf: *mut ::c_char,
                       buflen: ::size_t,
                       result: *mut *mut passwd) -> ::c_int;
+    pub fn getprogname() -> *const ::c_char;
+    pub fn setprogname(name: *const ::c_char);
+    pub fn getloadavg(loadavg: *mut ::c_double, nelem: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

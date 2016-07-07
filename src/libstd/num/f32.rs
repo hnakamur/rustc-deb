@@ -646,7 +646,10 @@ impl f32 {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn log2(self) -> f32 {
-        unsafe { intrinsics::log2f32(self) }
+        #[cfg(target_os = "android")]
+        return ::sys::android::log2f32(self);
+        #[cfg(not(target_os = "android"))]
+        return unsafe { intrinsics::log2f32(self) };
     }
 
     /// Returns the base 10 logarithm of the number.
@@ -1030,7 +1033,7 @@ impl f32 {
     /// let abs_difference_1 = (f.1 - x.cos()).abs();
     ///
     /// assert!(abs_difference_0 <= f32::EPSILON);
-    /// assert!(abs_difference_0 <= f32::EPSILON);
+    /// assert!(abs_difference_1 <= f32::EPSILON);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]

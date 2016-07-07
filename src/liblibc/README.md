@@ -88,6 +88,16 @@ With that in mind, the steps for adding a new API are:
 4. Wait for CI to pass, fixing errors.
 5. Wait for a merge!
 
+### Test before you commit
+
+We have two automated tests running on [Travis](https://travis-ci.org/rust-lang/libc):
+
+1. [`libc-test`](https://github.com/alexcrichton/ctest)
+  - `cd libc-test && cargo run`
+  - Use the `skip_*()` functions in `build.rs` if you really need a workaround.
+2. Style checker
+  - `rustc ci/style.rs && ./style src`
+
 ## Platforms and Documentation
 
 The following platforms are currently tested and have documentation available:
@@ -101,9 +111,8 @@ Tested:
   * [`i686-apple-darwin`](https://doc.rust-lang.org/libc/i686-apple-darwin/libc/)
   * [`x86_64-apple-darwin`](https://doc.rust-lang.org/libc/x86_64-apple-darwin/libc/)
     (OSX)
-  * [`i686-apple-ios`](https://doc.rust-lang.org/libc/i686-apple-ios/libc/)
-  * [`x86_64-apple-ios`](https://doc.rust-lang.org/libc/x86_64-apple-ios/libc/)
-    (iOS)
+  * `i686-apple-ios`
+  * `x86_64-apple-ios`
   * [`i686-unknown-linux-gnu`](https://doc.rust-lang.org/libc/i686-unknown-linux-gnu/libc/)
   * [`x86_64-unknown-linux-gnu`](https://doc.rust-lang.org/libc/x86_64-unknown-linux-gnu/libc/)
     (Linux)

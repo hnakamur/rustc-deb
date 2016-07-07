@@ -250,3 +250,9 @@ pub fn rustc_version() -> String {
         option_env!("CFG_VERSION").unwrap_or("unknown version")
     )
 }
+
+pub const tag_panic_strategy: usize = 0x114;
+
+// NB: increment this if you change the format of metadata such that
+// rustc_version can't be found.
+pub const metadata_encoding_version : &'static [u8] = &[b'r', b'u', b's', b't', 0, 0, 0, 2];
