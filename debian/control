@@ -5,9 +5,11 @@ Maintainer: Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
 Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
  Luca Bruno <lucab@debian.org>,
  Sylvestre Ledru <sylvestre@debian.org>,
-  Angus Lees <gus@debian.org>
+ Angus Lees <gus@debian.org>,
+ Ximin Luo <infinity0@debian.org>
 Build-Depends: debhelper (>= 9.20141010),
                dpkg-dev (>= 1.17.14),
+               rustc (>= 1.9.0+dfsg-1) <!dlstage0>,
                autotools-dev,
                curl,
                python,
@@ -17,6 +19,7 @@ Build-Depends: debhelper (>= 9.20141010),
                valgrind,
                git,
                procps,
+               cmake,
 # git, procps are necessary for 'make check'
                antlr4,
                bison,
@@ -59,7 +62,7 @@ Description: Rust systems programming language
  generic programming and meta-programming, in both static and dynamic
  styles.
 
-Package: libstd-rust-1.9
+Package: libstd-rust-1.10
 Section: libs
 Architecture: amd64 i386
 Multi-Arch: same
@@ -85,7 +88,7 @@ Section: libdevel
 Architecture: amd64 i386
 Multi-Arch: same
 Pre-Depends: multiarch-support
-Depends: ${misc:Depends}, libstd-rust-1.9 (= ${binary:Version})
+Depends: ${misc:Depends}, libstd-rust-1.10 (= ${binary:Version})
 Description: Rust standard libraries - development files
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly

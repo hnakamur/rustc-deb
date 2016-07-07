@@ -6,10 +6,10 @@ Forwarded: not-needed
 
 --- a/src/etc/rust-lldb
 +++ b/src/etc/rust-lldb
-@@ -18,11 +18,8 @@ TMPFILE=`mktemp /tmp/rust-lldb-commands.XXXXXX`
+@@ -18,11 +18,8 @@
  # Make sure to delete the tempfile no matter what
  trap "rm -f $TMPFILE; exit" INT TERM EXIT
-
+ 
 -# Find out where to look for the pretty printer Python module
 -RUSTC_SYSROOT=`rustc --print sysroot`
 -
@@ -18,3 +18,4 @@ Forwarded: not-needed
 +echo "command script import \"/usr/share/rust-lldb/lldb_rust_formatters.py\"" >> $TMPFILE
  echo "type summary add --no-value --python-function lldb_rust_formatters.print_val -x \".*\" --category Rust" >> $TMPFILE
  echo "type category enable Rust" >> $TMPFILE
+ 

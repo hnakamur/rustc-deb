@@ -18,15 +18,13 @@ Description: Set DT_SONAME when building dylibs
 Author: Angus Lees <gus@debian.org>
 Forwarded: no
 
-Index: rustc.git/src/librustc_trans/back/link.rs
-===================================================================
---- rustc.git.orig/src/librustc_trans/back/link.rs
-+++ rustc.git/src/librustc_trans/back/link.rs
-@@ -1017,6 +1017,12 @@ fn link_args(cmd: &mut Linker,
+--- a/src/librustc_trans/back/link.rs
++++ b/src/librustc_trans/back/link.rs
+@@ -840,6 +840,12 @@
          cmd.args(&rpath::get_rpath_flags(&mut rpath_config));
      }
  
-+    if dylib && t.options.linker_is_gnu {
++    if crate_type == config::CrateTypeDylib && t.options.linker_is_gnu {
 +        let filename = String::from(out_filename.file_name().unwrap().to_str().unwrap());
 +        let soname = [String::from("-Wl,-soname=") + &filename];
 +        cmd.args(&soname);

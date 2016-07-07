@@ -1,7 +1,5 @@
-Index: rust.c/src/test/run-pass-valgrind/down-with-thread-dtors.rs
-===================================================================
---- rust.c.orig/src/test/run-pass-valgrind/down-with-thread-dtors.rs
-+++ rust.c/src/test/run-pass-valgrind/down-with-thread-dtors.rs
+--- a/src/test/run-pass-valgrind/down-with-thread-dtors.rs
++++ b/src/test/run-pass-valgrind/down-with-thread-dtors.rs
 @@ -10,6 +10,8 @@
  
  // no-prefer-dynamic

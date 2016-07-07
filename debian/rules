@@ -55,9 +55,10 @@ DEB_CONFIGURE_FLAGS = \
 DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.7
 
 ifeq (,$(findstring dlstage0,$(DEB_BUILD_PROFILES)))
-# Without these options, a pre-built stage0 will be downloaded from
-# rust-lang.org at build time (or looked for in dl/).
-  #DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=/usr
+# With the dlstage0 profile, rust build scripts will look for a pre-built
+# stage0 in dl/. This can either be satisfied by the make_orig-dl_tarball.sh
+# script, or else the build scripts will download these from rust-lang.org.
+  DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=/usr
 endif
 
 BUILD_DOCS = 1
