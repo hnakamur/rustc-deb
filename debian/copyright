@@ -3,6 +3,8 @@ Upstream-Name: rust
 Source: http://www.rust-lang.org
 Files-Excluded:
  src/llvm
+ src/librustdoc/html/static/jquery-*.min.js
+ src/rt/hoedown/src/html_blocks.c
 
 Files: *
 Copyright: 2006-2009 Graydon Hoare
@@ -10,7 +12,7 @@ Copyright: 2006-2009 Graydon Hoare
            2012-2015 The Rust Project Developers (see AUTHORS.txt)
 License: Expat or Apache-2.0
 
-Files: src/librustc_trans/trans/cabi_x86_64.rs
+Files: src/librustc_trans/cabi_x86_64.rs
 Copyright: 2008-2010 Tachyon Technologies
 License: BSD-2-clause
 
@@ -48,7 +50,7 @@ Copyright: 2002-2014 Jason Evans <jasone@canonware.com>
            2009-2014 Facebook, Inc.
 License: BSD-2-clause
 
-Files: src/jemalloc/bin/pprof
+Files: src/jemalloc/bin/jeprof.in
 Copyright: 1998-2007, Google Inc.
 License: BSD-3-Clause
 
@@ -113,6 +115,15 @@ License: Expat
 Files: src/librustdoc/html/static/main.js
 Copyright: 2014 The Rust Project Developers
 License: Expat or Apache-2.0
+
+Files: src/libstd/memchr.rs
+Copyright: 2015 Andrew Gallant, bluss and Nicolas Koch
+License: Expat or Apache-2.0
+
+Files: src/libstd/sync/mpsc/mpsc_queue.rs
+       src/libstd/sync/mpsc/spsc_queue.rs
+Copyright: 2010-2011 Dmitry Vyukov
+License: BSD-2-Clause
 
 Files: debian/icons/rust-logo-32x32-blk.png
 Copyright: Mozilla Foundation

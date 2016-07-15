@@ -7,6 +7,7 @@ sed -i -e "s|libstd-rust-$ORIG|libstd-rust-$NEW|g" \
 
 git mv libstd-rust-$ORIG.lintian-overrides libstd-rust-$NEW.lintian-overrides
 sed -i -e "s|libstd-rust-$ORIG|libstd-rust-$NEW|g" libstd-rust-$NEW.lintian-overrides
+sed -i -e "s|libstd-rust-$ORIG|libstd-rust-$NEW|g" source/lintian-overrides
 }
 
 update 1.8 1.9 1.10

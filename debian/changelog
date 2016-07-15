@@ -5,6 +5,7 @@ rustc (1.10.0+dfsg1-1) UNRELEASED; urgency=medium
   * Update our bootstrapping scripts. Now we can build either from upstream's
     stage0 snapshot (by setting DEB_BUILD_PROFILES=dlstage0) or from the
     previous Debian rustc stable version (default, when no build profile).
+  * Update to latest Standards-Version; no changes required.
 
  -- Ximin Luo <infinity0@debian.org>  Mon, 04 Jul 2016 15:05:50 +0200
 
