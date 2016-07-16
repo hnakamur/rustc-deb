@@ -3,7 +3,8 @@
 # and the official rust preview releases.
 #
 # infinity0 occasionally makes, builds and uploads them here:
-# https://people.debian.org/~infinity0/apt/pool/contrib/r/rustc/
+# https://launchpad.net/~infinity0/+archive/ubuntu/rust-nightly
+# https://launchpad.net/~infinity0/+archive/ubuntu/rust-beta
 
 # You can set these env vars to tweak the behaviour of this script.
 CHANNEL="${CHANNEL:-beta}" # either beta or nightly
