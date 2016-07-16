@@ -8,3 +8,4 @@ dont-download-stage0.diff
 auto-local-rebuild_01.patch
 auto-local-rebuild_02.patch
 auto-local-rebuild_03.patch
+reproducible-dl-stage0.patch

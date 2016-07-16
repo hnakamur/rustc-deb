@@ -11,31 +11,61 @@ The rational is the following:
 
  -- Sylvestre Ledru <sylvestre@debian.org>, Fri, 13 Feb 2015 15:08:43 +0100
 
-Bootstrapping from nothing
+Building from source
+--------------------
+
+By default, the Debian rustc package will use the system rustc to bootstrap
+itself from. The system rustc has to be either the previous or the same version
+as the rustc being built; the build will fail if this is not the case.
+
+  apt-get source --compile rustc
+
+Alternatively:
+
+a) You may give the "pkg.rustc.nolocal" DEB_BUILD_PROFILE to instead use the
+process defined by Rust upstream. This downloads the "official" stage0 compiler
+(for the version being built) from rust-lang.org. At the time of writing
+"official" means "the previous stable version".
+
+  apt-get source --compile --build-profiles=pkg.rustc.nolocal rustc
+
+b) You may give the "pkg.rustc.nodistro" DEB_BUILD_PROFILE to use a custom
+local Rust installed into /usr/local. As with the system rustc, this must be
+either the previous or the current version.
+
+  [install a custom rustc into /usr/local]
+  apt-get source --compile --build-profiles=pkg.rustc.nodistro rustc
+
+After building, you might want to re-build the version you just built, this
+time using itself to bootstrap from:
+
+  dpkg -i rustc*.deb libstd-rust-*.deb
+  apt-get source --compile rustc
+
+Bootstrapping a new distro
 --------------------------
 
-WARNING: This does not work for now as rust cannot bootstrap itself
+If you want to bootstrap [*] a new distro that does not already have rustc, you
+may run `debian/rules source_orig-dl` to create a .dsc that does not
+Build-Depend on rustc. Instead, it includes an extra orig-dl source tarball
+that contains the official stage0 compiler, pre-downloaded from rust-lang.org
+so that your build daemons don't need to access the network during the build.
 
+  debian/rules source_orig-dl
+  sbuild ../rustc_*.dsc
 
-You need a "stage0" rust compiler from somewhere.  You can download a
-pre-built minimal stage0 from http://www.rust-lang.org/ at build time,
-or use a rustc that was already in /usr/bin via whatever black magic
-(or some other path if you modify debian/rules).
-
-    apt-get source --compile --build-profiles=dlstage0,nodoc rustc
-
-"dlstage0" downloads a stage0 from rust-lang.org during the build.
-"nodoc" disables building rust-doc package and skips the long list of
-build-deps usually required.
-
-    dpkg -i rustc*.deb
-    apt-get source --compile rustc
-
-This produces the full rust compiler built using your now obsolete
-"dlstage0" rustc compiler.
+[*] We assume that you do this via a source upload, such that build daemons can
+recreate the binaries. We're not considering the scenario where you build a
+binary rustc locally, using bootstrapping steps that your distro's build
+daemons can't reproduce themselves. This latter scenario is not secure from the
+distro's perspective, since you could be uploading a backdoored binary. We
+expect that distros will eventually drop support for it with Reproducible
+Builds, so we don't bother to support it ourselves here.
 
 Bootstrapping a new architecture
 --------------------------------
+
+WARNING: This does not work yet
 
 0. Start with rust installed on an existing platform
 

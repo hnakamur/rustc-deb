@@ -54,11 +54,35 @@ DEB_CONFIGURE_FLAGS = \
 # Use system LLVM (comment out to use vendored LLVM)
 DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.7
 
-ifeq (,$(findstring dlstage0,$(DEB_BUILD_PROFILES)))
-# With the dlstage0 profile, rust build scripts will look for a pre-built
-# stage0 in dl/. This can either be satisfied by the make_orig-dl_tarball.sh
-# script, or else the build scripts will download these from rust-lang.org.
-  DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=/usr
+# Below we detect how we're supposed to bootstrap the stage0 compiler. See
+# README.Debian for more details of the cases described below.
+#
+# Sed expression that matches the "rustc" we have in our Build-Depends field
+SED_RUSTC_BUILDDEP := /^Build-Depends:/,/^[^[:space:]\#]/{/\s*rustc.*,/$$action}
+PRECONFIGURE_CHECK = :
+ifeq (0,$(shell ls -1 dl/ 2>/dev/null | wc -l))
+    # Case A (Building from source): the .dsc did not include an extra orig-dl
+    # tarball e.g. because the distro already has a rustc, or the uploader
+    # expects that this requirement be fulfilled in some other way.
+    #
+    # Case A-1: the builder did not select the "pkg.rustc.dlstage0" build profile.
+    # In this case, we use the distro's rustc - either the previous or current version.
+    ifeq (,$(findstring pkg.rustc.dlstage0,$(DEB_BUILD_PROFILES)))
+        DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=/usr
+    endif
+    #
+    # Case A-2: the builder selected the "dlstage0" build profile.
+    # In this case, the rust build scripts will download a stage0 into dl/ and use that.
+else
+    # Case B (Bootstrapping a new distro): the .dsc included an extra orig-dl
+    # tarball; see the `source_orig-dl` target below on how to build this.
+    #
+    # In this case, we'll bootstrap from the stage0 given in that tarball.
+    # To ensure the uploader of the .dsc didn't make a mistake, we first check
+    # that rustc isn't in our Build-Depends.
+    ifneq (,$(shell action=p; sed -ne "$(SED_RUSTC_BUILDDEP)" debian/control))
+        PRECONFIGURE_CHECK = $(error dl/ not empty but rustc in Build-Depends)
+    endif
 endif
 
 BUILD_DOCS = 1
@@ -77,10 +101,9 @@ endif
 
 # Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
+	$(PRECONFIGURE_CHECK)
 	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
-#	test "$$($(MAKE) --no-print-directory print-CFG_FILENAME_EXTRA | tail -n1 | cut -d= -f2)" = "$$(echo $(RUST_VERSION))"
-
 
 override_dh_auto_clean:
 	set -e; \
@@ -165,3 +188,17 @@ override_dh_makeshlibs:
 
 override_dh_shlibdeps:
 	dh_shlibdeps -- -x$(LIBSTD_PKG)
+
+QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE = x=$$?; if [ $$x = 2 ]; then exit 0; else exit $$x; fi
+source_orig-dl: clean
+	QUILT_PATCHES=debian/patches quilt push -a; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
+	debian/make_orig-dl_tarball.sh
+	cp debian/control debian/control.next
+	cp debian/changelog debian/changelog.old
+	dch -l+dl "Upload with extra orig-dl bootstrap tarball."
+	action=d; sed -i -e "$(SED_RUSTC_BUILDDEP)" debian/control
+	dpkg-source -b . # TODO: if this fails, you should restore d/{control,changelog}
+	mv debian/changelog.old debian/changelog
+	mv debian/control.next debian/control
+	QUILT_PATCHES=debian/patches quilt pop -a; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
+	rm -rf .pc dl/
