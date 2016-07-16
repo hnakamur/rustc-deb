@@ -109,9 +109,9 @@ override_dh_auto_clean:
 	set -e; \
 	if [ -f Makefile ]; then \
 	  $(PMAKE) clean-all; \
-	  $(RM) Makefile config.stamp; \
+	  $(RM) Makefile config.stamp config.mk; \
 	fi
-	$(RM) src/etc/snapshot.pyc
+	$(RM) src/bootstrap/bootstrap.pyc
 
 override_dh_auto_build-arch:
 	dh_auto_build -- all VERBOSE=1
