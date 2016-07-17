@@ -1,4 +1,4 @@
-rustc (1.10.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.10.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
   * Add myself to uploaders
@@ -6,7 +6,7 @@ rustc (1.10.0+dfsg1-1) UNRELEASED; urgency=medium
     version by default. See README.Debian for other options.
   * Update to latest Standards-Version; no changes required.
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 04 Jul 2016 15:05:50 +0200
+ -- Ximin Luo <infinity0@debian.org>  Sun, 17 Jul 2016 03:40:49 +0200
 
 rustc (1.9.0+dfsg1-1) unstable; urgency=medium
 
