@@ -9,3 +9,6 @@ auto-local-rebuild_01.patch
 auto-local-rebuild_02.patch
 auto-local-rebuild_03.patch
 reproducible-dl-stage0.patch
+backport-test-fixes-arm-01.patch
+backport-test-fixes-arm-02.patch
+backport-test-fixes-arm-03.patch
