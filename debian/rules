@@ -60,10 +60,11 @@ DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.7
 # Sed expression that matches the "rustc" we have in our Build-Depends field
 SED_RUSTC_BUILDDEP := /^Build-Depends:/,/^[^[:space:]\#]/{/\s*rustc.*,/$$action}
 PRECONFIGURE_CHECK = :
-ifeq (0,$(shell ls -1 dl/ 2>/dev/null | wc -l))
-    # Case A (Building from source): the .dsc did not include an extra orig-dl
-    # tarball e.g. because the distro already has a rustc, or the uploader
-    # expects that this requirement be fulfilled in some other way.
+ifeq (0,$(shell ls -1 dl/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l))
+    # Case A (Building from source): the extracted source tree does not include
+    # a bootstrapping tarball for the current architecture e.g. because the
+    # distro already has a rustc for this arch, or the uploader expects that
+    # this requirement be fulfilled in some other way.
     #
     # Case A-1: the builder did not select the "pkg.rustc.dlstage0" build profile.
     # In this case, we use the distro's rustc - either the previous or current version.
@@ -74,14 +75,18 @@ ifeq (0,$(shell ls -1 dl/ 2>/dev/null | wc -l))
     # Case A-2: the builder selected the "dlstage0" build profile.
     # In this case, the rust build scripts will download a stage0 into dl/ and use that.
 else
-    # Case B (Bootstrapping a new distro): the .dsc included an extra orig-dl
-    # tarball; see the `source_orig-dl` target below on how to build this.
+    # Case B (Bootstrapping a new distro): the extracted source tree does
+    # include a bootstrapping tarball for the current architecture; see the
+    # `source_orig-dl` target below on how to build this.
     #
     # In this case, we'll bootstrap from the stage0 given in that tarball.
     # To ensure the uploader of the .dsc didn't make a mistake, we first check
-    # that rustc isn't in our Build-Depends.
+    # that rustc isn't a Build-Depends for the current architecture.
     ifneq (,$(shell action=p; sed -ne "$(SED_RUSTC_BUILDDEP)" debian/control))
-        PRECONFIGURE_CHECK = $(error dl/ not empty but rustc in Build-Depends)
+    ifeq (,$(shell action=p; sed -ne "$(SED_RUSTC_BUILDDEP)" debian/control | grep '!$(DEB_HOST_ARCH)'))
+        PRECONFIGURE_CHECK = $(error found matches for dl/*$(DEB_HOST_RUST_TYPE)*, \
+          but rustc might be a Build-Depends for $(DEB_HOST_ARCH))
+    endif
     endif
 endif
 
@@ -190,15 +195,9 @@ override_dh_shlibdeps:
 	dh_shlibdeps -- -x$(LIBSTD_PKG)
 
 QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE = x=$$?; if [ $$x = 2 ]; then exit 0; else exit $$x; fi
-source_orig-dl: clean
-	QUILT_PATCHES=debian/patches quilt push -a; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
+source_orig-dl:
+	QUILT_PATCHES=debian/patches quilt push -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
+	$(MAKE) -f debian/rules clean
 	debian/make_orig-dl_tarball.sh
-	cp debian/control debian/control.next
-	cp debian/changelog debian/changelog.old
-	dch -l+dl "Upload with extra orig-dl bootstrap tarball."
-	action=d; sed -i -e "$(SED_RUSTC_BUILDDEP)" debian/control
-	dpkg-source -b . # TODO: if this fails, you should restore d/{control,changelog}
-	mv debian/changelog.old debian/changelog
-	mv debian/control.next debian/control
-	QUILT_PATCHES=debian/patches quilt pop -a; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
-	rm -rf .pc dl/
+	QUILT_PATCHES=debian/patches quilt pop -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
+	rm -rf .pc

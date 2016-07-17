@@ -54,6 +54,14 @@ so that your build daemons don't need to access the network during the build.
   debian/rules source_orig-dl
   sbuild ../rustc_*.dsc
 
+To only bootstrap specific architectures, run this instead:
+
+  upstream_bootstrap_arch="arm64 armel armhf" debian/rules source_orig-dl
+
+This way, other architectures will be omitted from the orig-dl tarball. You
+might want to do this e.g. if these other architectures are already present in
+your distro, but the $upstream_bootstrap_arch ones are not yet present.
+
 [*] We assume that you do this via a source upload, such that build daemons can
 recreate the binaries. We're not considering the scenario where you build a
 binary rustc locally, using bootstrapping steps that your distro's build
