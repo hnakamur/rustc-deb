@@ -1,7 +1,6 @@
 rust-gdb-paths
 rust-lldb-paths
 add-soname
-valgrind-workaround.diff
 fix-debian-cmake-path.diff
 avoid-redundant-dls.diff
 dont-download-stage0.diff
