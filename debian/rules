@@ -107,7 +107,7 @@ endif
 # Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
 	$(PRECONFIGURE_CHECK)
-	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" \
+	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" DEB_HOST_ARCH="$(DEB_HOST_ARCH)" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
 override_dh_auto_clean:
