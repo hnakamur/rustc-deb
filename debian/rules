@@ -183,7 +183,7 @@ override_dh_makeshlibs:
 	# dh_makeshlibs doesn't support our "libfoo-version.so" naming
 	# structure, so we have to do this ourselves.
 	install -o 0 -g 0 -d debian/$(LIBSTD_PKG)/DEBIAN
-	ls debian/$(LIBSTD_PKG)/usr/lib/$(DEB_HOST_MULTIARCH)/lib*.so | \
+	LC_ALL=C ls debian/$(LIBSTD_PKG)/usr/lib/$(DEB_HOST_MULTIARCH)/lib*.so | \
 	sed -n 's,^.*/\(lib.*\)-\(.\+\)\.so$$,\1 \2,p' | \
 	while read name version; do \
 	  echo "$$name $$version $(LIBSTD_PKG) (>= $(DEB_VERSION_UPSTREAM))"; \
