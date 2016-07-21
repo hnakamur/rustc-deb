@@ -1,7 +1,6 @@
 Description: doc/book: fix tests for non-x86 architectures, such as aarch64
  `rustdoc --test` gets confused when "main" exists for some architectures but not others.
 Author: Ximin Luo <infinity0@pwned.gg>
-Bug: https://github.com/rust-lang/rust/pull/34889
 Applied-Upstream: commit:8aaf0f894bfbbc8e1135e42ce7cb9258d55f41cc
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/

@@ -1,6 +1,5 @@
 Description: test: disable more stdcall tests for ARM arches. temp workaround for #24958
 Author: Ximin Luo <infinity0@pwned.gg>
-Bug: https://github.com/rust-lang/rust/pull/34889
 Applied-Upstream: commit:4e5e36fb79e1cffc6f7c3a9670df222060bb0e4b
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
