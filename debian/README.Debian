@@ -92,3 +92,18 @@ WARNING: This does not work yet
     #apt-get source --compile --host-architecture=$new_arch rustc
 
  -- Angus Lees <gus@debian.org>, Sun,  1 Feb 2015 16:16:44 +1100
+
+Other notes
+-----------
+
+Rust armv7-unknown-linux-gnueabihf requires a machine that supports NEON
+instructions which includes *most* ARMv7 chips these days.
+ 
+Unfortunately, Debian's armhf port is supposed to work on machines without
+NEON, which in practise means we can't generate or use NEON code in our armhf
+binaries. This includes all of Debian's current armhf buildds, which error
+with "Illegal instruction" when using the upstream stage0 bootstrap compiler.
+
+We're currently unsure of the best way forward on this. rustc does build and
+run (with all tests passing) on the armhf porterbox harris.debian.org, which
+does support NEON instructions.
