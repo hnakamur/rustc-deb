@@ -1,0 +1,65 @@
+--- a/src/librustc_llvm/build.rs
++++ b/src/librustc_llvm/build.rs
+@@ -125,6 +125,9 @@
+     }
+     cmd.args(&components[..]);
+ 
++    // Link in Debian full LLVM shared library.
++    println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM");
++
+     for lib in output(&mut cmd).split_whitespace() {
+         let name = if lib.starts_with("-l") {
+             &lib[2..]
+@@ -143,8 +146,12 @@
+             continue
+         }
+ 
+-        let kind = if name.starts_with("LLVM") {"static"} else {"dylib"};
+-        println!("cargo:rustc-link-lib={}={}", kind, name);
++        // On Debian we ignore the LLVM component static libs, and instead
++        // dynamically link in the full LLVM shared library, above.
++        // See #832565 for more details
++        if !name.starts_with("LLVM") {
++            println!("cargo:rustc-link-lib={}={}", "dylib", name);
++        }
+     }
+ 
+     // LLVM ldflags
+--- a/src/etc/mklldeps.py
++++ b/src/etc/mklldeps.py
+@@ -56,16 +56,14 @@
+ 
+ f.write("\n")
+ 
+-args = [llvm_config, '--shared-mode']
+-args.extend(components)
+-llvm_shared, out = runErr(args)
+-if llvm_shared:
+-    llvm_shared = 'shared' in out
++llvm_shared = True
+ 
+ # LLVM libs
+ args = [llvm_config, '--libs', '--system-libs']
+ args.extend(components)
+ out = run(args)
++# Link in Debian full LLVM shared library.
++f.write("#[link(name = \"LLVM\")]\n")
+ for lib in out.strip().replace("\n", ' ').split(' '):
+     if len(lib) == 0:
+         continue
+@@ -77,10 +75,11 @@
+         lib = lib.strip()[2:]
+     elif lib[0] == '-':
+         lib = lib.strip()[1:]
+-    f.write("#[link(name = \"" + lib + "\"")
+-    if not llvm_shared and 'LLVM' in lib:
+-        f.write(", kind = \"static\"")
+-    f.write(")]\n")
++    # On Debian we ignore the LLVM component static libs, and instead
++    # dynamically link in the full LLVM shared library, above.
++    # See #832565 for more details
++    if not 'LLVM' in lib:
++        f.write("#[link(name = \"" + lib + "\")]\n")
+ 
+ # LLVM ldflags
+ out = run([llvm_config, '--ldflags'])

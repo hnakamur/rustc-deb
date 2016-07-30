@@ -29,8 +29,8 @@ Build-Depends: debhelper (>= 9.20141010),
                gdb,
                default-jdk,
 # above are optional tools for 'make check'
-               llvm-3.7-dev,
-               llvm-3.7-tools
+               llvm-3.8-dev,
+               llvm-3.8-tools
 Build-Depends-Indep: pandoc (>= 1.9),
                      po4a,
                      texlive-xetex,

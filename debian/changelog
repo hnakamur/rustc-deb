@@ -1,3 +1,10 @@
+rustc (1.10.0+dfsg1-3) UNRELEASED; urgency=medium
+
+  * Rebuild with LLVM 3.8, same as what upstream are using
+  * Dynamically link against LLVM. (Closes: #832565)
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 29 Jul 2016 20:56:30 +0200
+
 rustc (1.10.0+dfsg1-2) unstable; urgency=medium
 
   * Tentatively support ARM architectures
