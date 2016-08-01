@@ -14,12 +14,29 @@ NOREMOTE="${NOREMOTE:-false}" # e.g. if you have already downloaded all necessar
 # note that we already use "wget -N" to avoid redundant downloads
 NOCLOBBER="${NOCLOBBER:-true}" # don't rebuild if we already have the .dsc
 DPUT_HOST="${DPUT_HOST}" # optional host dput the resulting .dsc to
+ARCHES="amd64 arm64 i386"
 
 do_temporary_fixups() {
 # patches needed to subsequent versions go here
 case "$1" in
-"1.8.0-nightly") # assume DEBDIR has 1.6
-	dquilt delete wno-error # patch obsolete; applied upstream
+"1.11.0-beta"*|"1.12.0-nightly") # assume DEBDIR has 1.10
+	# update patch for new version
+	mv debian/patches/avoid-redundant-dls_1.11.diff debian/patches/avoid-redundant-dls.diff
+	mv debian/patches/dynamic-link-llvm_1.11.patch debian/patches/dynamic-link-llvm.patch
+	diff -ru ./src/test/debuginfo/function-prologue-stepping-no-stack-check.rs /dev/null > debian/patches/ignore-failing-armhf-tests_01.patch && true
+	# rm patches applied upstream
+	dquilt delete auto-local-rebuild_01.patch
+	dquilt delete auto-local-rebuild_02.patch
+	dquilt delete auto-local-rebuild_03.patch
+	dquilt delete backport-test-fixes-arm-01.patch
+	dquilt delete backport-test-fixes-arm-02.patch
+	dquilt delete backport-test-fixes-arm-03.patch
+	case "$1" in
+	"1.12.0-nightly")
+		dquilt delete avoid-redundant-dls.diff
+		mv debian/patches/ignore-failing-armhf-tests_04_1.12.patch debian/patches/ignore-failing-armhf-tests_04.patch
+		;;
+	esac
 	;;
 esac
 }
@@ -89,16 +106,29 @@ libstd_ver() {
 
 cd "rustc-$NEWUPSTR"
 cp -a "$DEBDIR" .
+
 OLD_LIBVER="$(libstd_ver)"
 dch -D "$DIST" -v "$NEWUPSTR-1" "Team upload."
 dch -a "Switch to $CHANNEL channel."
 NEW_LIBVER="$(libstd_ver)"
-$NOREMOTE || debian/make_orig-dl_tarball.py
+do_temporary_fixups "$CFG_RELEASE"
+mkdir -p ../"dl_${CFG_RELEASE}"
+ln -sf ../"dl_${CFG_RELEASE}" dl
+# TODO: don't do this if orig-dl already exists
+$NOREMOTE || upstream_bootstrap_arch="$ARCHES" debian/rules source_orig-dl
+rm -f dl
+cp -al ../"dl_${CFG_RELEASE}" dl
+# set build-dep arch exceptions
+deb_bd_arch_ex="$(echo "$ARCHES" | sed -e 's/\S*/!\0/g')"
+sed -e 's/rustc (\(.*\)) \[\(.*\)\]/rustc (\1) ['"$deb_bd_arch_ex"']/g' -i debian/control
+
 rm debian/missing-sources/jquery-*
 cp "../$(basename "$JQUERY")" debian/missing-sources
 sed -i -e "s/$OLD_LIBVER/$NEW_LIBVER/" "debian/control"
 sed -i -e 's/\(RELEASE_CHANNEL := \)\(.*\)/\1'"$CHANNEL"'/g' debian/rules
-do_temporary_fixups "$CFG_RELEASE"
+sed -i -e 's/^update .*/update '"$OLD_LIBVER $NEW_LIBVER"'/' debian/update-version.sh
+( cd debian && bash ./update-version.sh )
+
 while dquilt push; do dquilt refresh; done
 dquilt pop -a
 rm -rf .pc

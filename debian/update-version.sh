@@ -1,14 +1,22 @@
 #!/bin/bash
+prev_stable() {
+local V=$1
+python -c 'import sys; k=map(int,sys.argv[1].split(".")); k[1]-=1; print ".".join(map(str,k))' "$V"
+}
+
 update() {
-local OLD=$1 ORIG=$2 NEW=$3
+local ORIG=$1 NEW=$2
+
+ORIG_M1=$(prev_stable $ORIG)
+NEW_M1=$(prev_stable $NEW)
 
 sed -i -e "s|libstd-rust-$ORIG|libstd-rust-$NEW|g" \
        -e "s|rustc (<= $ORIG|rustc (<= $NEW|g" \
-       -e "s|rustc (>= $OLD|rustc (>= $ORIG|g" control
+       -e "s|rustc (>= ${ORIG_M1}|rustc (>= ${NEW_M1}|g" control
 
 git mv libstd-rust-$ORIG.lintian-overrides libstd-rust-$NEW.lintian-overrides
 sed -i -e "s|libstd-rust-$ORIG|libstd-rust-$NEW|g" libstd-rust-$NEW.lintian-overrides
 sed -i -e "s|libstd-rust-$ORIG|libstd-rust-$NEW|g" source/lintian-overrides
 }
 
-update 1.8 1.9 1.10
+update 1.9 1.10
