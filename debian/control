@@ -31,7 +31,8 @@ Build-Depends: debhelper (>= 9.20141010),
                flex <!nocheck>,
                gdb <!nocheck>,
                default-jdk-headless <!nocheck>,
-Build-Depends-Indep: pandoc (>= 1.9),
+Build-Depends-Indep: libjs-jquery <!nodoc>,
+                     pandoc (>= 1.9),
                      po4a,
                      texlive-xetex,
                      texlive-latex-base,
@@ -48,7 +49,7 @@ Architecture: amd64 arm64 i386
 Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
- gcc, libc-dev, binutils (>= 2.26)
+ gcc, libc-dev, libjs-jquery, binutils (>= 2.26)
 Recommends: rust-gdb | rust-lldb
 Suggests: rust-doc
 Description: Rust systems programming language

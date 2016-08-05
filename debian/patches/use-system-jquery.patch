@@ -1,0 +1,21 @@
+--- a/src/librustdoc/html/render.rs
++++ b/src/librustdoc/html/render.rs
+@@ -655,8 +655,16 @@
+     // Add all the static files. These may already exist, but we just
+     // overwrite them anyway to make sure that they're fresh and up-to-date.
+ 
+-    write(cx.dst.join("jquery.js"),
+-          include_bytes!("static/jquery-2.1.4.min.js"))?;
++    {
++        // In Debian, just link to the system jquery instead
++        let jquery_system_path = "/usr/share/javascript/jquery/jquery.min.js";
++        let jquery = cx.dst.join("jquery.js");
++        let jquery = jquery.as_path();
++        if jquery.symlink_metadata().is_ok() { // exists() returns false for broken symlinks but we also need to rm those
++            try_err!(fs::remove_file(jquery), &jquery);
++        }
++        try_err!(::std::os::unix::fs::symlink(jquery_system_path, jquery), &jquery);
++    }
+     write(cx.dst.join("main.js"),
+           include_bytes!("static/main.js"))?;
+     write(cx.dst.join("playpen.js"),
