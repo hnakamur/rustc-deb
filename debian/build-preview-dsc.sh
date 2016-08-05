@@ -33,8 +33,9 @@ case "$1" in
 	dquilt delete backport-test-fixes-arm-03.patch
 	case "$1" in
 	"1.12.0-nightly")
+		mv debian/patches/dynamic-link-llvm_1.12.patch debian/patches/dynamic-link-llvm.patch
 		dquilt delete avoid-redundant-dls.diff
-		mv debian/patches/ignore-failing-armhf-tests_04_1.12.patch debian/patches/ignore-failing-armhf-tests_04.patch
+		dquilt delete ignore-failing-armhf-tests_04.patch
 		;;
 	esac
 	;;
