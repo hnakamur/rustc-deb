@@ -3,7 +3,6 @@ Upstream-Name: rust
 Source: http://www.rust-lang.org
 Files-Excluded:
  src/llvm
- src/librustdoc/html/static/jquery-*.min.js
  src/rt/hoedown/src/html_blocks.c
 
 Files: *
