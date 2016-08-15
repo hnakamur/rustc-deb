@@ -116,7 +116,7 @@ cp -al ../"dl_${CFG_RELEASE}" dl
 deb_bd_arch_ex="$(echo "$ARCHES" | sed -e 's/\S*/!\0/g')"
 sed -e 's/rustc (\(.*\))\( *\[\(.*\)\]\)\?/rustc (\1) ['"$deb_bd_arch_ex"']/g' -i debian/control
 
-rm debian/missing-sources/jquery-*
+rm -f debian/missing-sources/jquery-*
 cp "../$(basename "$JQUERY")" debian/missing-sources
 sed -i -e "s/$OLD_LIBVER/$NEW_LIBVER/" "debian/control"
 sed -i -e 's/\(RELEASE_CHANNEL := \)\(.*\)/\1'"$CHANNEL"'/g' debian/rules
