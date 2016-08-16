@@ -18,11 +18,19 @@ ARCHES="amd64 arm64 i386"
 
 do_temporary_fixups() {
 # patches needed to subsequent versions go here
+local verprefix="${1%.0-beta}"
+verprefix="${verprefix%.0-nightly}"
+( cd debian/patches
+local f
+for f in *; do
+	fb="${f%.patch}"
+	fb="${fb%.diff}"
+	# if an updated patch exists, use it
+	if test -f "${fb}_${verprefix}"*; then mv "${fb}_${verprefix}"* "$f"; fi
+done )
 case "$1" in
 "1.11.0-beta"*|"1.12.0-nightly") # assume DEBDIR has 1.10
 	# update patch for new version
-	mv debian/patches/avoid-redundant-dls_1.11.diff debian/patches/avoid-redundant-dls.diff
-	mv debian/patches/dynamic-link-llvm_1.11.patch debian/patches/dynamic-link-llvm.patch
 	diff -ru ./src/test/debuginfo/function-prologue-stepping-no-stack-check.rs /dev/null > debian/patches/ignore-failing-armhf-tests_01.patch && true
 	# rm patches applied upstream
 	dquilt delete auto-local-rebuild_01.patch
@@ -33,7 +41,6 @@ case "$1" in
 	dquilt delete backport-test-fixes-arm-03.patch
 	case "$1" in
 	"1.12.0-nightly")
-		mv debian/patches/dynamic-link-llvm_1.12.patch debian/patches/dynamic-link-llvm.patch
 		dquilt delete avoid-redundant-dls.diff
 		dquilt delete ignore-failing-armhf-tests_04.patch
 		;;
