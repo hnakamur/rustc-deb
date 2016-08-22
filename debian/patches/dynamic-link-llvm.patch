@@ -11,7 +11,7 @@ Forwarded: not-needed
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/librustc_llvm/build.rs
 +++ b/src/librustc_llvm/build.rs
-@@ -115,37 +115,10 @@
+@@ -120,41 +120,10 @@
         .cpp_link_stdlib(None) // we handle this below
         .compile("librustllvm.a");
  
@@ -31,7 +31,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -        } else if lib.starts_with("-") {
 -            &lib[1..]
 -        } else {
--            continue
+-            continue;
 -        };
 -
 -        // Don't need or want this library, but LLVM's CMake build system
@@ -40,10 +40,14 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -        // library and it otherwise may just pull in extra dependencies on
 -        // libedit which we don't want
 -        if name == "LLVMLineEditor" {
--            continue
+-            continue;
 -        }
 -
--        let kind = if name.starts_with("LLVM") {"static"} else {"dylib"};
+-        let kind = if name.starts_with("LLVM") {
+-            "static"
+-        } else {
+-            "dylib"
+-        };
 -        println!("cargo:rustc-link-lib={}={}", kind, name);
 -    }
 +    // Link in all LLVM libraries

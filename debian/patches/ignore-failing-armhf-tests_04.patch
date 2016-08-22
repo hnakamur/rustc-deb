@@ -6,7 +6,7 @@ Bug: https://github.com/rust-lang/rust/issues/34958
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/doc/book/no-stdlib.md
 +++ b/src/doc/book/no-stdlib.md
-@@ -19,7 +19,7 @@
+@@ -36,7 +36,7 @@
  The function marked `#[start]` is passed the command line parameters
  in the same format as C:
  
@@ -15,7 +15,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  # #![feature(libc)]
  #![feature(lang_items)]
  #![feature(start)]
-@@ -50,7 +50,7 @@
+@@ -67,7 +67,7 @@
  correct ABI and the correct name, which requires overriding the
  compiler's name mangling too:
  

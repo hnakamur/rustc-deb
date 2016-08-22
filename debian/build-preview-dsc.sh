@@ -29,22 +29,12 @@ for f in *; do
 	if test -f "${fb}_${verprefix}"*; then mv "${fb}_${verprefix}"* "$f"; fi
 done )
 case "$1" in
-"1.11."*|"1.12."*|"1.13."*) # assume DEBDIR has 1.10
+"1.12."*|"1.13."*)
 	# update patch for new version
 	diff -ru ./src/test/debuginfo/function-prologue-stepping-no-stack-check.rs /dev/null > debian/patches/ignore-failing-armhf-tests_01.patch && true
 	# rm patches applied upstream
-	dquilt delete auto-local-rebuild_01.patch
-	dquilt delete auto-local-rebuild_02.patch
-	dquilt delete auto-local-rebuild_03.patch
-	dquilt delete backport-test-fixes-arm-01.patch
-	dquilt delete backport-test-fixes-arm-02.patch
-	dquilt delete backport-test-fixes-arm-03.patch
-	case "$1" in
-	"1.12."*|"1.13."*)
-		dquilt delete avoid-redundant-dls.diff
-		dquilt delete ignore-failing-armhf-tests_04.patch
-		;;
-	esac
+	dquilt delete avoid-redundant-dls.diff
+	dquilt delete ignore-failing-armhf-tests_04.patch
 	;;
 esac
 }

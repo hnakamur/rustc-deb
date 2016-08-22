@@ -6,7 +6,7 @@ Forwarded: not-needed
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
-@@ -61,7 +61,7 @@
+@@ -64,7 +64,7 @@
               ".DownloadFile('{}', '{}')".format(url, path)],
              verbose=verbose)
      else:

@@ -6,7 +6,7 @@ Forwarded: not-needed
 
 --- a/src/etc/rust-lldb
 +++ b/src/etc/rust-lldb
-@@ -18,11 +18,8 @@
+@@ -29,11 +29,8 @@
  # Make sure to delete the tempfile no matter what
  trap "rm -f $TMPFILE; exit" INT TERM EXIT
  

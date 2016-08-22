@@ -12,7 +12,7 @@ Forwarded: not-needed
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/configure
 +++ b/configure
-@@ -496,8 +496,19 @@
+@@ -497,8 +497,19 @@
          ;;
  
      armv7l)

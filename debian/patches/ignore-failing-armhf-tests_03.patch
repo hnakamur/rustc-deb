@@ -13,7 +13,7 @@ Forwarded: not-needed
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/doc/reference.md
 +++ b/src/doc/reference.md
-@@ -1084,7 +1084,7 @@
+@@ -1092,7 +1092,7 @@
  in the same way as any other Rust function, except that they have the `extern`
  modifier.
  
