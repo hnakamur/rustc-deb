@@ -71,7 +71,6 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
 
     export_map: ExportMap,
     reachable: NodeSet,
-    item_symbols: RefCell<NodeMap<String>>,
     link_meta: LinkMeta,
     symbol_hasher: RefCell<Sha256>,
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
@@ -395,7 +394,6 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
             metadata_llcx: metadata_llcx,
             export_map: export_map,
             reachable: reachable,
-            item_symbols: RefCell::new(NodeMap()),
             link_meta: link_meta,
             symbol_hasher: RefCell::new(symbol_hasher),
             tcx: tcx,
@@ -437,10 +435,6 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
 
     pub fn reachable<'a>(&'a self) -> &'a NodeSet {
         &self.reachable
-    }
-
-    pub fn item_symbols<'a>(&'a self) -> &'a RefCell<NodeMap<String>> {
-        &self.item_symbols
     }
 
     pub fn trait_cache(&self) -> &RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>> {
@@ -501,7 +495,15 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
         assert!(scheme.generics.types.is_empty());
         self.tcx().mk_substs(
             Substs::new(VecPerParamSpace::empty(),
-                        scheme.generics.regions.map(|_| ty::ReStatic)))
+                        scheme.generics.regions.map(|_| ty::ReErased)))
+    }
+
+    pub fn symbol_hasher(&self) -> &RefCell<Sha256> {
+        &self.symbol_hasher
+    }
+
+    pub fn mir_map(&self) -> &MirMap<'tcx> {
+        &self.mir_map
     }
 
     pub fn metadata_symbol_name(&self) -> String {
@@ -714,10 +716,6 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
     pub fn reachable<'a>(&'a self) -> &'a NodeSet {
         &self.shared.reachable
-    }
-
-    pub fn item_symbols<'a>(&'a self) -> &'a RefCell<NodeMap<String>> {
-        &self.shared.item_symbols
     }
 
     pub fn link_meta<'a>(&'a self) -> &'a LinkMeta {
@@ -1099,45 +1097,7 @@ fn declare_intrinsic(ccx: &CrateContext, key: &str) -> Option<ValueRef> {
     ifn!("llvm.localrecover", fn(i8p, i8p, t_i32) -> i8p);
     ifn!("llvm.x86.seh.recoverfp", fn(i8p, i8p) -> i8p);
 
-    // Some intrinsics were introduced in later versions of LLVM, but they have
-    // fallbacks in libc or libm and such.
-    macro_rules! compatible_ifn {
-        ($name:expr, noop($cname:ident ($($arg:expr),*) -> void), $llvm_version:expr) => (
-            if unsafe { llvm::LLVMVersionMinor() >= $llvm_version } {
-                // The `if key == $name` is already in ifn!
-                ifn!($name, fn($($arg),*) -> void);
-            } else if key == $name {
-                let f = declare::declare_cfn(ccx, stringify!($cname),
-                                             Type::func(&[$($arg),*], &void));
-                llvm::SetLinkage(f, llvm::InternalLinkage);
-
-                let bld = ccx.builder();
-                let llbb = unsafe {
-                    llvm::LLVMAppendBasicBlockInContext(ccx.llcx(), f,
-                                                        "entry-block\0".as_ptr() as *const _)
-                };
-
-                bld.position_at_end(llbb);
-                bld.ret_void();
-
-                ccx.intrinsics().borrow_mut().insert($name, f.clone());
-                return Some(f);
-            }
-        );
-        ($name:expr, $cname:ident ($($arg:expr),*) -> $ret:expr, $llvm_version:expr) => (
-            if unsafe { llvm::LLVMVersionMinor() >= $llvm_version } {
-                // The `if key == $name` is already in ifn!
-                ifn!($name, fn($($arg),*) -> $ret);
-            } else if key == $name {
-                let f = declare::declare_cfn(ccx, stringify!($cname),
-                                             Type::func(&[$($arg),*], &$ret));
-                ccx.intrinsics().borrow_mut().insert($name, f.clone());
-                return Some(f);
-            }
-        )
-    }
-
-    compatible_ifn!("llvm.assume", noop(llvmcompat_assume(i1) -> void), 6);
+    ifn!("llvm.assume", fn(i1) -> void);
 
     if ccx.sess().opts.debuginfo != NoDebugInfo {
         ifn!("llvm.dbg.declare", fn(Type::metadata(ccx), Type::metadata(ccx)) -> void);

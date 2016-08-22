@@ -128,7 +128,7 @@ mod imp {
     pub const NAME1: [u8; 7] = [b'.', b'P', b'E', b'A', b'_', b'K', 0];
     pub const NAME2: [u8; 7] = [b'.', b'P', b'E', b'A', b'X', 0, 0];
 
-    extern {
+    extern "C" {
         pub static __ImageBase: u8;
     }
 
@@ -186,10 +186,7 @@ static mut THROW_INFO: _ThrowInfo = _ThrowInfo {
 
 static mut CATCHABLE_TYPE_ARRAY: _CatchableTypeArray = _CatchableTypeArray {
     nCatchableTypes: 2,
-    arrayOfCatchableTypes: [
-        ptr!(0),
-        ptr!(0),
-    ],
+    arrayOfCatchableTypes: [ptr!(0), ptr!(0)],
 };
 
 static mut CATCHABLE_TYPE1: _CatchableType = _CatchableType {
@@ -216,7 +213,7 @@ static mut CATCHABLE_TYPE2: _CatchableType = _CatchableType {
     copy_function: ptr!(0),
 };
 
-extern {
+extern "C" {
     // The leading `\x01` byte here is actually a magical signal to LLVM to
     // *not* apply any other mangling like prefixing with a `_` character.
     //
@@ -233,8 +230,7 @@ extern {
 // an argument to the C++ personality function.
 //
 // Again, I'm not entirely sure what this is describing, it just seems to work.
-#[cfg_attr(all(not(test), not(stage0)),
-           lang = "msvc_try_filter")]
+#[cfg_attr(not(test), lang = "msvc_try_filter")]
 static mut TYPE_DESCRIPTOR1: _TypeDescriptor = _TypeDescriptor {
     pVFTable: &TYPE_INFO_VTABLE as *const _ as *const _,
     spare: 0 as *mut _,
@@ -306,13 +302,6 @@ pub unsafe fn cleanup(payload: [u64; 2]) -> Box<Any + Send> {
         data: payload[0] as *mut _,
         vtable: payload[1] as *mut _,
     })
-}
-
-#[lang = "msvc_try_filter"]
-#[cfg(stage0)]
-unsafe extern fn __rust_try_filter(_eh_ptrs: *mut u8,
-                                   _payload: *mut u8) -> i32 {
-    return 0
 }
 
 // This is required by the compiler to exist (e.g. it's a lang item), but

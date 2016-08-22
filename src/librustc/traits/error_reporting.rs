@@ -37,8 +37,8 @@ use std::cmp;
 use std::fmt;
 use syntax::ast;
 use syntax::attr::{AttributeMethods, AttrMetaMethods};
-use syntax::codemap::Span;
-use syntax::errors::DiagnosticBuilder;
+use syntax_pos::Span;
+use errors::DiagnosticBuilder;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct TraitErrorKey<'tcx> {
@@ -907,6 +907,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             ObligationCauseCode::FieldSized => {
                 err.note("only the last field of a struct or enum variant \
                           may have a dynamically sized type");
+            }
+            ObligationCauseCode::ConstSized => {
+                err.note("constant expressions must have a statically known size");
             }
             ObligationCauseCode::SharedStatic => {
                 err.note("shared static variables must have a type that implements `Sync`");

@@ -105,19 +105,6 @@
 
 #endif /* Windows */
 
-#if defined(__linux__)
-#include <endian.h>
-
-#if __BYTE_ORDER == __BIG_ENDIAN
-#define _YUGA_LITTLE_ENDIAN 0
-#define _YUGA_BIG_ENDIAN    1
-#elif __BYTE_ORDER == __LITTLE_ENDIAN
-#define _YUGA_LITTLE_ENDIAN 1
-#define _YUGA_BIG_ENDIAN    0
-#endif /* __BYTE_ORDER */
-
-#endif /* GNU/Linux */
-
 #endif /* Clang or GCC. */
 
 /* . */

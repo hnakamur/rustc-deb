@@ -30,13 +30,13 @@
 
 use core::char::CharExt as C;
 use core::fmt;
-use tables::{derived_property, property, general_category, conversions};
+use tables::{conversions, derived_property, general_category, property};
 
 // stable reexports
 #[stable(feature = "rust1", since = "1.0.0")]
-pub use core::char::{MAX, from_u32, from_u32_unchecked, from_digit};
+pub use core::char::{MAX, from_digit, from_u32, from_u32_unchecked};
 #[stable(feature = "rust1", since = "1.0.0")]
-pub use core::char::{EscapeUnicode, EscapeDefault, EncodeUtf8, EncodeUtf16};
+pub use core::char::{EncodeUtf16, EncodeUtf8, EscapeDefault, EscapeUnicode};
 
 // unstable reexports
 #[unstable(feature = "unicode", issue = "27783")]
@@ -668,10 +668,13 @@ impl char {
     /// Basic usage:
     ///
     /// ```
-    /// assert_eq!('C'.to_lowercase().next(), Some('c'));
+    /// assert_eq!('C'.to_lowercase().collect::<String>(), "c");
+    ///
+    /// // Sometimes the result is more than one character:
+    /// assert_eq!('İ'.to_lowercase().collect::<String>(), "i\u{307}");
     ///
     /// // Japanese scripts do not have case, and so:
-    /// assert_eq!('山'.to_lowercase().next(), Some('山'));
+    /// assert_eq!('山'.to_lowercase().collect::<String>(), "山");
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
@@ -702,10 +705,13 @@ impl char {
     /// Basic usage:
     ///
     /// ```
-    /// assert_eq!('c'.to_uppercase().next(), Some('C'));
+    /// assert_eq!('c'.to_uppercase().collect::<String>(), "C");
+    ///
+    /// // Sometimes the result is more than one character:
+    /// assert_eq!('ß'.to_uppercase().collect::<String>(), "SS");
     ///
     /// // Japanese does not have case, and so:
-    /// assert_eq!('山'.to_uppercase().next(), Some('山'));
+    /// assert_eq!('山'.to_uppercase().collect::<String>(), "山");
     /// ```
     ///
     /// In Turkish, the equivalent of 'i' in Latin has five forms instead of two:
@@ -716,17 +722,17 @@ impl char {
     /// Note that the lowercase dotted 'i' is the same as the Latin. Therefore:
     ///
     /// ```
-    /// let upper_i = 'i'.to_uppercase().next();
+    /// let upper_i: String = 'i'.to_uppercase().collect();
     /// ```
     ///
     /// The value of `upper_i` here relies on the language of the text: if we're
-    /// in `en-US`, it should be `Some('I')`, but if we're in `tr_TR`, it should
-    /// be `Some('İ')`. `to_uppercase()` does not take this into account, and so:
+    /// in `en-US`, it should be `"I"`, but if we're in `tr_TR`, it should
+    /// be `"İ"`. `to_uppercase()` does not take this into account, and so:
     ///
     /// ```
-    /// let upper_i = 'i'.to_uppercase().next();
+    /// let upper_i: String = 'i'.to_uppercase().collect();
     ///
-    /// assert_eq!(Some('I'), upper_i);
+    /// assert_eq!(upper_i, "I");
     /// ```
     ///
     /// holds across languages.
@@ -808,16 +814,18 @@ pub fn decode_utf16<I: IntoIterator<Item = u16>>(iter: I) -> DecodeUtf16<I::Into
 }
 
 #[stable(feature = "decode_utf16", since = "1.9.0")]
-impl<I: Iterator<Item=u16>> Iterator for DecodeUtf16<I> {
+impl<I: Iterator<Item = u16>> Iterator for DecodeUtf16<I> {
     type Item = Result<char, DecodeUtf16Error>;
 
     fn next(&mut self) -> Option<Result<char, DecodeUtf16Error>> {
         let u = match self.buf.take() {
             Some(buf) => buf,
-            None => match self.iter.next() {
-                Some(u) => u,
-                None => return None,
-            },
+            None => {
+                match self.iter.next() {
+                    Some(u) => u,
+                    None => return None,
+                }
+            }
         };
 
         if u < 0xD800 || 0xDFFF < u {

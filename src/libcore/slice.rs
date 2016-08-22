@@ -50,6 +50,7 @@ use result::Result::{Ok, Err};
 use ptr;
 use mem;
 use marker::{Copy, Send, Sync, self};
+use iter_private::TrustedRandomAccess;
 
 #[repr(C)]
 struct Repr<T> {
@@ -554,7 +555,6 @@ fn slice_index_order_fail(index: usize, end: usize) -> ! {
     panic!("slice index starts at {} but ends at {}", index, end);
 }
 
-// FIXME implement indexing with inclusive ranges
 
 /// Implements slicing with syntax `&self[begin .. end]`.
 ///
@@ -622,7 +622,7 @@ impl<T> ops::Index<ops::RangeFrom<usize>> for [T] {
 
 /// Implements slicing with syntax `&self[..]`.
 ///
-/// Returns a slice of the whole slice. This operation can not panic.
+/// Returns a slice of the whole slice. This operation cannot panic.
 ///
 /// Equivalent to `&self[0 .. self.len()]`
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -835,7 +835,7 @@ macro_rules! iterator {
 
             #[inline]
             fn count(self) -> usize {
-                self.size_hint().0
+                self.len()
             }
 
             #[inline]
@@ -1444,7 +1444,7 @@ impl<'a, T> Iterator for Windows<'a, T> {
 
     #[inline]
     fn count(self) -> usize {
-        self.size_hint().0
+        self.len()
     }
 
     #[inline]
@@ -1541,7 +1541,7 @@ impl<'a, T> Iterator for Chunks<'a, T> {
 
     #[inline]
     fn count(self) -> usize {
-        self.size_hint().0
+        self.len()
     }
 
     #[inline]
@@ -1632,7 +1632,7 @@ impl<'a, T> Iterator for ChunksMut<'a, T> {
 
     #[inline]
     fn count(self) -> usize {
-        self.size_hint().0
+        self.len()
     }
 
     #[inline]
@@ -1831,6 +1831,9 @@ impl<A> SlicePartialEq<A> for [A]
         if self.len() != other.len() {
             return false;
         }
+        if self.as_ptr() == other.as_ptr() {
+            return true;
+        }
         unsafe {
             let size = mem::size_of_val(self);
             memcmp(self.as_ptr() as *const u8,
@@ -1940,3 +1943,17 @@ macro_rules! impl_marker_for {
 
 impl_marker_for!(BytewiseEquality,
                  u8 i8 u16 i16 u32 i32 u64 i64 usize isize char bool);
+
+#[doc(hidden)]
+unsafe impl<'a, T> TrustedRandomAccess for Iter<'a, T> {
+    unsafe fn get_unchecked(&mut self, i: usize) -> &'a T {
+        &*self.ptr.offset(i as isize)
+    }
+}
+
+#[doc(hidden)]
+unsafe impl<'a, T> TrustedRandomAccess for IterMut<'a, T> {
+    unsafe fn get_unchecked(&mut self, i: usize) -> &'a mut T {
+        &mut *self.ptr.offset(i as isize)
+    }
+}

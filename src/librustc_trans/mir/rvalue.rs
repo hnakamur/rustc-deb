@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use llvm::ValueRef;
+use llvm::{self, ValueRef};
 use rustc::ty::{self, Ty};
 use rustc::ty::cast::{CastTy, IntTy};
 use rustc::mir::repr as mir;
@@ -16,7 +16,7 @@ use rustc::mir::repr as mir;
 use asm;
 use base;
 use callee::Callee;
-use common::{self, C_uint, BlockAndBuilder, Result};
+use common::{self, val_ty, C_bool, C_null, C_uint, BlockAndBuilder, Result};
 use datum::{Datum, Lvalue};
 use debuginfo::DebugLoc;
 use adt;
@@ -25,11 +25,11 @@ use type_of;
 use tvec;
 use value::Value;
 use Disr;
-use glue;
 
 use super::MirContext;
+use super::constant::const_scalar_checked_binop;
 use super::operand::{OperandRef, OperandValue};
-use super::lvalue::{LvalueRef, get_dataptr, get_meta};
+use super::lvalue::{LvalueRef, get_dataptr};
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     pub fn trans_rvalue(&mut self,
@@ -48,7 +48,6 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                // FIXME: consider not copying constants through stack. (fixable by translating
                // constants into OperandValue::Ref, why don’t we do that yet if we don’t?)
                self.store_operand(&bcx, dest.llval, tr_operand);
-               self.set_operand_dropped(&bcx, operand);
                bcx
            }
 
@@ -68,9 +67,10 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 // `CoerceUnsized` can be passed by a where-clause,
                 // so the (generic) MIR may not be able to expand it.
                 let operand = self.trans_operand(&bcx, source);
+                let operand = operand.pack_if_pair(&bcx);
                 bcx.with_block(|bcx| {
                     match operand.val {
-                        OperandValue::FatPtr(..) => bug!(),
+                        OperandValue::Pair(..) => bug!(),
                         OperandValue::Immediate(llval) => {
                             // unsize from an immediate structure. We don't
                             // really need a temporary alloca here, but
@@ -92,7 +92,6 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         }
                     }
                 });
-                self.set_operand_dropped(&bcx, source);
                 bcx
             }
 
@@ -107,7 +106,6 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         block
                     })
                 });
-                self.set_operand_dropped(&bcx, elem);
                 bcx
             }
 
@@ -128,7 +126,6 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                                                             val, disr, i);
                                 self.store_operand(&bcx, lldest_i, op);
                             }
-                            self.set_operand_dropped(&bcx, operand);
                         }
                     },
                     _ => {
@@ -136,8 +133,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         if let mir::AggregateKind::Closure(def_id, substs) = *kind {
                             use rustc::hir;
                             use syntax::ast::DUMMY_NODE_ID;
-                            use syntax::codemap::DUMMY_SP;
                             use syntax::ptr::P;
+                            use syntax_pos::DUMMY_SP;
                             use closure;
 
                             closure::trans_closure_expr(closure::Dest::Ignore(bcx.ccx()),
@@ -167,30 +164,9 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                 let dest = bcx.gepi(dest.llval, &[0, i]);
                                 self.store_operand(&bcx, dest, op);
                             }
-                            self.set_operand_dropped(&bcx, operand);
                         }
                     }
                 }
-                bcx
-            }
-
-            mir::Rvalue::Slice { ref input, from_start, from_end } => {
-                let ccx = bcx.ccx();
-                let input = self.trans_lvalue(&bcx, input);
-                let ty = input.ty.to_ty(bcx.tcx());
-                let (llbase1, lllen) = match ty.sty {
-                    ty::TyArray(_, n) => {
-                        (bcx.gepi(input.llval, &[0, from_start]), C_uint(ccx, n))
-                    }
-                    ty::TySlice(_) | ty::TyStr => {
-                        (bcx.gepi(input.llval, &[from_start]), input.llextra)
-                    }
-                    _ => bug!("cannot slice {}", ty)
-                };
-                let adj = C_uint(ccx, from_start + from_end);
-                let lllen1 = bcx.sub(lllen, adj);
-                bcx.store(llbase1, get_dataptr(&bcx, dest.llval));
-                bcx.store(lllen1, get_meta(&bcx, dest.llval));
                 bcx
             }
 
@@ -209,9 +185,6 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     asm::trans_inline_asm(bcx, asm, outputs, input_vals);
                 });
 
-                for input in inputs {
-                    self.set_operand_dropped(&bcx, input);
-                }
                 bcx
             }
 
@@ -262,17 +235,16 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         assert!(common::type_is_fat_ptr(bcx.tcx(), cast_ty));
 
                         match operand.val {
-                            OperandValue::FatPtr(lldata, llextra) => {
+                            OperandValue::Pair(lldata, llextra) => {
                                 // unsize from a fat pointer - this is a
                                 // "trait-object-to-supertrait" coercion, for
                                 // example,
                                 //   &'a fmt::Debug+Send => &'a fmt::Debug,
                                 // So we need to pointercast the base to ensure
                                 // the types match up.
-                                self.set_operand_dropped(&bcx, source);
                                 let llcast_ty = type_of::fat_ptr_base_ty(bcx.ccx(), cast_ty);
                                 let lldata = bcx.pointercast(lldata, llcast_ty);
-                                OperandValue::FatPtr(lldata, llextra)
+                                OperandValue::Pair(lldata, llextra)
                             }
                             OperandValue::Immediate(lldata) => {
                                 // "standard" unsize
@@ -280,8 +252,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                     base::unsize_thin_ptr(bcx, lldata,
                                                           operand.ty, cast_ty)
                                 });
-                                self.set_operand_dropped(&bcx, source);
-                                OperandValue::FatPtr(lldata, llextra)
+                                OperandValue::Pair(lldata, llextra)
                             }
                             OperandValue::Ref(_) => {
                                 bug!("by-ref operand {:?} in trans_rvalue_operand",
@@ -352,13 +323,13 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     mir::CastKind::Misc => { // Casts from a fat-ptr.
                         let ll_cast_ty = type_of::immediate_type_of(bcx.ccx(), cast_ty);
                         let ll_from_ty = type_of::immediate_type_of(bcx.ccx(), operand.ty);
-                        if let OperandValue::FatPtr(data_ptr, meta_ptr) = operand.val {
+                        if let OperandValue::Pair(data_ptr, meta_ptr) = operand.val {
                             if common::type_is_fat_ptr(bcx.tcx(), cast_ty) {
                                 let ll_cft = ll_cast_ty.field_types();
                                 let ll_fft = ll_from_ty.field_types();
                                 let data_cast = bcx.pointercast(data_ptr, ll_cft[0]);
                                 assert_eq!(ll_cft[1].kind(), ll_fft[1].kind());
-                                OperandValue::FatPtr(data_cast, meta_ptr)
+                                OperandValue::Pair(data_cast, meta_ptr)
                             } else { // cast to thin-ptr
                                 // Cast of fat-ptr to thin-ptr is an extraction of data-ptr and
                                 // pointer-cast of that pointer to desired pointer type.
@@ -366,7 +337,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                 OperandValue::Immediate(llval)
                             }
                         } else {
-                            bug!("Unexpected non-FatPtr operand")
+                            bug!("Unexpected non-Pair operand")
                         }
                     }
                 };
@@ -382,7 +353,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
                 let ty = tr_lvalue.ty.to_ty(bcx.tcx());
                 let ref_ty = bcx.tcx().mk_ref(
-                    bcx.tcx().mk_region(ty::ReStatic),
+                    bcx.tcx().mk_region(ty::ReErased),
                     ty::TypeAndMut { ty: ty, mutbl: bk.to_mutbl_lossy() }
                 );
 
@@ -395,8 +366,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     }
                 } else {
                     OperandRef {
-                        val: OperandValue::FatPtr(tr_lvalue.llval,
-                                                  tr_lvalue.llextra),
+                        val: OperandValue::Pair(tr_lvalue.llval,
+                                                tr_lvalue.llextra),
                         ty: ref_ty,
                     }
                 };
@@ -417,8 +388,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 let rhs = self.trans_operand(&bcx, rhs);
                 let llresult = if common::type_is_fat_ptr(bcx.tcx(), lhs.ty) {
                     match (lhs.val, rhs.val) {
-                        (OperandValue::FatPtr(lhs_addr, lhs_extra),
-                         OperandValue::FatPtr(rhs_addr, rhs_extra)) => {
+                        (OperandValue::Pair(lhs_addr, lhs_extra),
+                         OperandValue::Pair(rhs_addr, rhs_extra)) => {
                             bcx.with_block(|bcx| {
                                 base::compare_fat_ptrs(bcx,
                                                        lhs_addr, lhs_extra,
@@ -439,6 +410,21 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     val: OperandValue::Immediate(llresult),
                     ty: self.mir.binop_ty(bcx.tcx(), op, lhs.ty, rhs.ty),
                 };
+                (bcx, operand)
+            }
+            mir::Rvalue::CheckedBinaryOp(op, ref lhs, ref rhs) => {
+                let lhs = self.trans_operand(&bcx, lhs);
+                let rhs = self.trans_operand(&bcx, rhs);
+                let result = self.trans_scalar_checked_binop(&bcx, op,
+                                                             lhs.immediate(), rhs.immediate(),
+                                                             lhs.ty);
+                let val_ty = self.mir.binop_ty(bcx.tcx(), op, lhs.ty, rhs.ty);
+                let operand_ty = bcx.tcx().mk_tup(vec![val_ty, bcx.tcx().types.bool]);
+                let operand = OperandRef {
+                    val: result,
+                    ty: operand_ty
+                };
+
                 (bcx, operand)
             }
 
@@ -492,7 +478,6 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
             mir::Rvalue::Repeat(..) |
             mir::Rvalue::Aggregate(..) |
-            mir::Rvalue::Slice { .. } |
             mir::Rvalue::InlineAsm { .. } => {
                 bug!("cannot generate operand from rvalue {:?}", rvalue);
 
@@ -567,33 +552,157 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
         }
     }
+
+    pub fn trans_scalar_checked_binop(&mut self,
+                                      bcx: &BlockAndBuilder<'bcx, 'tcx>,
+                                      op: mir::BinOp,
+                                      lhs: ValueRef,
+                                      rhs: ValueRef,
+                                      input_ty: Ty<'tcx>) -> OperandValue {
+        // This case can currently arise only from functions marked
+        // with #[rustc_inherit_overflow_checks] and inlined from
+        // another crate (mostly core::num generic/#[inline] fns),
+        // while the current crate doesn't use overflow checks.
+        if !bcx.ccx().check_overflow() {
+            let val = self.trans_scalar_binop(bcx, op, lhs, rhs, input_ty);
+            return OperandValue::Pair(val, C_bool(bcx.ccx(), false));
+        }
+
+        // First try performing the operation on constants, which
+        // will only succeed if both operands are constant.
+        // This is necessary to determine when an overflow Assert
+        // will always panic at runtime, and produce a warning.
+        if let Some((val, of)) = const_scalar_checked_binop(bcx.tcx(), op, lhs, rhs, input_ty) {
+            return OperandValue::Pair(val, C_bool(bcx.ccx(), of));
+        }
+
+        let (val, of) = match op {
+            // These are checked using intrinsics
+            mir::BinOp::Add | mir::BinOp::Sub | mir::BinOp::Mul => {
+                let oop = match op {
+                    mir::BinOp::Add => OverflowOp::Add,
+                    mir::BinOp::Sub => OverflowOp::Sub,
+                    mir::BinOp::Mul => OverflowOp::Mul,
+                    _ => unreachable!()
+                };
+                let intrinsic = get_overflow_intrinsic(oop, bcx, input_ty);
+                let res = bcx.call(intrinsic, &[lhs, rhs], None);
+
+                (bcx.extract_value(res, 0),
+                 bcx.extract_value(res, 1))
+            }
+            mir::BinOp::Shl | mir::BinOp::Shr => {
+                let lhs_llty = val_ty(lhs);
+                let rhs_llty = val_ty(rhs);
+                let invert_mask = bcx.with_block(|bcx| {
+                    common::shift_mask_val(bcx, lhs_llty, rhs_llty, true)
+                });
+                let outer_bits = bcx.and(rhs, invert_mask);
+
+                let of = bcx.icmp(llvm::IntNE, outer_bits, C_null(rhs_llty));
+                let val = self.trans_scalar_binop(bcx, op, lhs, rhs, input_ty);
+
+                (val, of)
+            }
+            _ => {
+                bug!("Operator `{:?}` is not a checkable operator", op)
+            }
+        };
+
+        OperandValue::Pair(val, of)
+    }
 }
 
-pub fn rvalue_creates_operand<'bcx, 'tcx>(mir: &mir::Mir<'tcx>,
-                                          bcx: &BlockAndBuilder<'bcx, 'tcx>,
+pub fn rvalue_creates_operand<'bcx, 'tcx>(_mir: &mir::Mir<'tcx>,
+                                          _bcx: &BlockAndBuilder<'bcx, 'tcx>,
                                           rvalue: &mir::Rvalue<'tcx>) -> bool {
     match *rvalue {
         mir::Rvalue::Ref(..) |
         mir::Rvalue::Len(..) |
         mir::Rvalue::Cast(..) | // (*)
         mir::Rvalue::BinaryOp(..) |
+        mir::Rvalue::CheckedBinaryOp(..) |
         mir::Rvalue::UnaryOp(..) |
-        mir::Rvalue::Box(..) =>
+        mir::Rvalue::Box(..) |
+        mir::Rvalue::Use(..) =>
             true,
         mir::Rvalue::Repeat(..) |
         mir::Rvalue::Aggregate(..) |
-        mir::Rvalue::Slice { .. } |
         mir::Rvalue::InlineAsm { .. } =>
             false,
-        mir::Rvalue::Use(ref operand) => {
-            let ty = mir.operand_ty(bcx.tcx(), operand);
-            let ty = bcx.monomorphize(&ty);
-            // Types that don't need dropping can just be an operand,
-            // this allows temporary lvalues, used as rvalues, to
-            // avoid a stack slot when it's unnecessary
-            !glue::type_needs_drop(bcx.tcx(), ty)
-        }
     }
 
     // (*) this is only true if the type is suitable
+}
+
+#[derive(Copy, Clone)]
+enum OverflowOp {
+    Add, Sub, Mul
+}
+
+fn get_overflow_intrinsic(oop: OverflowOp, bcx: &BlockAndBuilder, ty: Ty) -> ValueRef {
+    use syntax::ast::IntTy::*;
+    use syntax::ast::UintTy::*;
+    use rustc::ty::{TyInt, TyUint};
+
+    let tcx = bcx.tcx();
+
+    let new_sty = match ty.sty {
+        TyInt(Is) => match &tcx.sess.target.target.target_pointer_width[..] {
+            "32" => TyInt(I32),
+            "64" => TyInt(I64),
+            _ => panic!("unsupported target word size")
+        },
+        TyUint(Us) => match &tcx.sess.target.target.target_pointer_width[..] {
+            "32" => TyUint(U32),
+            "64" => TyUint(U64),
+            _ => panic!("unsupported target word size")
+        },
+        ref t @ TyUint(_) | ref t @ TyInt(_) => t.clone(),
+        _ => panic!("tried to get overflow intrinsic for op applied to non-int type")
+    };
+
+    let name = match oop {
+        OverflowOp::Add => match new_sty {
+            TyInt(I8) => "llvm.sadd.with.overflow.i8",
+            TyInt(I16) => "llvm.sadd.with.overflow.i16",
+            TyInt(I32) => "llvm.sadd.with.overflow.i32",
+            TyInt(I64) => "llvm.sadd.with.overflow.i64",
+
+            TyUint(U8) => "llvm.uadd.with.overflow.i8",
+            TyUint(U16) => "llvm.uadd.with.overflow.i16",
+            TyUint(U32) => "llvm.uadd.with.overflow.i32",
+            TyUint(U64) => "llvm.uadd.with.overflow.i64",
+
+            _ => unreachable!(),
+        },
+        OverflowOp::Sub => match new_sty {
+            TyInt(I8) => "llvm.ssub.with.overflow.i8",
+            TyInt(I16) => "llvm.ssub.with.overflow.i16",
+            TyInt(I32) => "llvm.ssub.with.overflow.i32",
+            TyInt(I64) => "llvm.ssub.with.overflow.i64",
+
+            TyUint(U8) => "llvm.usub.with.overflow.i8",
+            TyUint(U16) => "llvm.usub.with.overflow.i16",
+            TyUint(U32) => "llvm.usub.with.overflow.i32",
+            TyUint(U64) => "llvm.usub.with.overflow.i64",
+
+            _ => unreachable!(),
+        },
+        OverflowOp::Mul => match new_sty {
+            TyInt(I8) => "llvm.smul.with.overflow.i8",
+            TyInt(I16) => "llvm.smul.with.overflow.i16",
+            TyInt(I32) => "llvm.smul.with.overflow.i32",
+            TyInt(I64) => "llvm.smul.with.overflow.i64",
+
+            TyUint(U8) => "llvm.umul.with.overflow.i8",
+            TyUint(U16) => "llvm.umul.with.overflow.i16",
+            TyUint(U32) => "llvm.umul.with.overflow.i32",
+            TyUint(U64) => "llvm.umul.with.overflow.i64",
+
+            _ => unreachable!(),
+        },
+    };
+
+    bcx.ccx().get_intrinsic(&name)
 }

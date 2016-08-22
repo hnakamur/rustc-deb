@@ -69,9 +69,7 @@
 
 use cmp::PartialOrd;
 use fmt;
-use convert::From;
 use marker::{Sized, Unsize};
-use num::One;
 
 /// The `Drop` trait is used to run some code when a value goes out of scope.
 /// This is sometimes called a 'destructor'.
@@ -208,6 +206,7 @@ macro_rules! add_impl {
             type Output = $t;
 
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn add(self, other: $t) -> $t { self + other }
         }
 
@@ -261,6 +260,7 @@ macro_rules! sub_impl {
             type Output = $t;
 
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn sub(self, other: $t) -> $t { self - other }
         }
 
@@ -314,6 +314,7 @@ macro_rules! mul_impl {
             type Output = $t;
 
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn mul(self, other: $t) -> $t { self * other }
         }
 
@@ -511,6 +512,7 @@ macro_rules! neg_impl_core {
             type Output = $t;
 
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn neg(self) -> $t { let $id = self; $body }
         }
 
@@ -788,6 +790,7 @@ macro_rules! shl_impl {
             type Output = $t;
 
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn shl(self, other: $f) -> $t {
                 self << other
             }
@@ -859,6 +862,7 @@ macro_rules! shr_impl {
             type Output = $t;
 
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn shr(self, other: $f) -> $t {
                 self >> other
             }
@@ -923,6 +927,7 @@ macro_rules! add_assign_impl {
         #[stable(feature = "op_assign_traits", since = "1.8.0")]
         impl AddAssign for $t {
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn add_assign(&mut self, other: $t) { *self += other }
         }
     )+)
@@ -967,6 +972,7 @@ macro_rules! sub_assign_impl {
         #[stable(feature = "op_assign_traits", since = "1.8.0")]
         impl SubAssign for $t {
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn sub_assign(&mut self, other: $t) { *self -= other }
         }
     )+)
@@ -1011,6 +1017,7 @@ macro_rules! mul_assign_impl {
         #[stable(feature = "op_assign_traits", since = "1.8.0")]
         impl MulAssign for $t {
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn mul_assign(&mut self, other: $t) { *self *= other }
         }
     )+)
@@ -1275,6 +1282,7 @@ macro_rules! shl_assign_impl {
         #[stable(feature = "op_assign_traits", since = "1.8.0")]
         impl ShlAssign<$f> for $t {
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn shl_assign(&mut self, other: $f) {
                 *self <<= other
             }
@@ -1337,6 +1345,7 @@ macro_rules! shr_assign_impl {
         #[stable(feature = "op_assign_traits", since = "1.8.0")]
         impl ShrAssign<$f> for $t {
             #[inline]
+            #[rustc_inherit_overflow_checks]
             fn shr_assign(&mut self, other: $f) {
                 *self >>= other
             }
@@ -1464,7 +1473,7 @@ pub trait IndexMut<Idx: ?Sized>: Index<Idx> {
 ///     assert_eq!(arr[1..3], [  1,2  ]);
 /// }
 /// ```
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct RangeFull;
 
@@ -1483,7 +1492,6 @@ impl fmt::Debug for RangeFull {
 /// # Examples
 ///
 /// ```
-/// #![feature(iter_arith)]
 /// fn main() {
 ///     assert_eq!((3..5), std::ops::Range{ start: 3, end: 5 });
 ///     assert_eq!(3+4+5, (3..6).sum());
@@ -1495,7 +1503,7 @@ impl fmt::Debug for RangeFull {
 ///     assert_eq!(arr[1..3], [  1,2  ]);  // Range
 /// }
 /// ```
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]  // not Copy -- see #27186
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Range<Idx> {
     /// The lower bound of the range (inclusive).
@@ -1547,7 +1555,6 @@ impl<Idx: PartialOrd<Idx>> Range<Idx> {
 /// # Examples
 ///
 /// ```
-/// #![feature(iter_arith)]
 /// fn main() {
 ///     assert_eq!((2..), std::ops::RangeFrom{ start: 2 });
 ///     assert_eq!(2+3+4, (2..).take(3).sum());
@@ -1559,7 +1566,7 @@ impl<Idx: PartialOrd<Idx>> Range<Idx> {
 ///     assert_eq!(arr[1..3], [  1,2  ]);
 /// }
 /// ```
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]  // not Copy -- see #27186
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct RangeFrom<Idx> {
     /// The lower bound of the range (inclusive).
@@ -1597,6 +1604,7 @@ impl<Idx: PartialOrd<Idx>> RangeFrom<Idx> {
 /// See the [`contains()`](#method.contains) method for its characterization.
 ///
 /// It cannot serve as an iterator because it doesn't have a starting point.
+///
 /// ```
 /// fn main() {
 ///     assert_eq!((..5), std::ops::RangeTo{ end: 5 });
@@ -1608,7 +1616,7 @@ impl<Idx: PartialOrd<Idx>> RangeFrom<Idx> {
 ///     assert_eq!(arr[1..3], [  1,2  ]);
 /// }
 /// ```
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct RangeTo<Idx> {
     /// The upper bound of the range (exclusive).
@@ -1648,7 +1656,7 @@ impl<Idx: PartialOrd<Idx>> RangeTo<Idx> {
 /// # Examples
 ///
 /// ```
-/// #![feature(inclusive_range,inclusive_range_syntax,iter_arith)]
+/// #![feature(inclusive_range,inclusive_range_syntax)]
 /// fn main() {
 ///     assert_eq!((3...5), std::ops::RangeInclusive::NonEmpty{ start: 3, end: 5 });
 ///     assert_eq!(3+4+5, (3...5).sum());
@@ -1658,7 +1666,7 @@ impl<Idx: PartialOrd<Idx>> RangeTo<Idx> {
 ///     assert_eq!(arr[1...2], [  1,2  ]);  // RangeInclusive
 /// }
 /// ```
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]  // not Copy -- see #27186
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
 pub enum RangeInclusive<Idx> {
     /// Empty range (iteration has finished)
@@ -1698,24 +1706,6 @@ impl<Idx: fmt::Debug> fmt::Debug for RangeInclusive<Idx> {
         match *self {
             Empty { ref at } => write!(fmt, "[empty range @ {:?}]", at),
             NonEmpty { ref start, ref end } => write!(fmt, "{:?}...{:?}", start, end),
-        }
-    }
-}
-
-#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
-impl<Idx: PartialOrd + One + Sub<Output=Idx>> From<Range<Idx>> for RangeInclusive<Idx> {
-    fn from(range: Range<Idx>) -> RangeInclusive<Idx> {
-        use self::RangeInclusive::*;
-
-        if range.start < range.end {
-            NonEmpty {
-                start: range.start,
-                end: range.end - Idx::one() // can't underflow because end > start >= MIN
-            }
-        } else {
-            Empty {
-                at: range.start
-            }
         }
     }
 }
@@ -1763,7 +1753,7 @@ impl<Idx: PartialOrd<Idx>> RangeInclusive<Idx> {
 ///     assert_eq!(arr[1...2], [  1,2  ]);
 /// }
 /// ```
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
 pub struct RangeToInclusive<Idx> {
     /// The upper bound of the range (inclusive)

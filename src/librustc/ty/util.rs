@@ -27,7 +27,7 @@ use std::cmp;
 use std::hash::{Hash, SipHasher, Hasher};
 use syntax::ast::{self, Name};
 use syntax::attr::{self, SignedInt, UnsignedInt};
-use syntax::codemap::Span;
+use syntax_pos::Span;
 
 use hir;
 
@@ -62,6 +62,7 @@ impl IntTypeExt for attr::IntType {
             SignedInt(ast::IntTy::I32)   => ConstInt::I32(0),
             SignedInt(ast::IntTy::I64)   => ConstInt::I64(0),
             SignedInt(ast::IntTy::Is) => match tcx.sess.target.int_type {
+                ast::IntTy::I16 => ConstInt::Isize(ConstIsize::Is16(0)),
                 ast::IntTy::I32 => ConstInt::Isize(ConstIsize::Is32(0)),
                 ast::IntTy::I64 => ConstInt::Isize(ConstIsize::Is64(0)),
                 _ => bug!(),
@@ -71,6 +72,7 @@ impl IntTypeExt for attr::IntType {
             UnsignedInt(ast::UintTy::U32) => ConstInt::U32(0),
             UnsignedInt(ast::UintTy::U64) => ConstInt::U64(0),
             UnsignedInt(ast::UintTy::Us) => match tcx.sess.target.uint_type {
+                ast::UintTy::U16 => ConstInt::Usize(ConstUsize::Us16(0)),
                 ast::UintTy::U32 => ConstInt::Usize(ConstUsize::Us32(0)),
                 ast::UintTy::U64 => ConstInt::Usize(ConstUsize::Us64(0)),
                 _ => bug!(),
@@ -173,11 +175,11 @@ impl<'tcx> ParameterEnvironment<'tcx> {
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn pat_contains_ref_binding(self, pat: &hir::Pat) -> Option<hir::Mutability> {
-        pat_util::pat_contains_ref_binding(&self.def_map, pat)
+        pat_util::pat_contains_ref_binding(pat)
     }
 
     pub fn arm_contains_ref_binding(self, arm: &hir::Arm) -> Option<hir::Mutability> {
-        pat_util::arm_contains_ref_binding(&self.def_map, arm)
+        pat_util::arm_contains_ref_binding(arm)
     }
 
     /// Returns the type of element at index `i` in tuple or tuple-like type `t`.
@@ -346,7 +348,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
             let region = |state: &mut SipHasher, r: ty::Region| {
                 match r {
-                    ty::ReStatic => {}
+                    ty::ReStatic | ty::ReErased => {}
                     ty::ReLateBound(db, ty::BrAnon(i)) => {
                         db.hash(state);
                         i.hash(state);
@@ -710,16 +712,13 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                         // struct Foo;
                         // struct Bar<T> { x: Bar<Foo> }
 
-                        match iter.next() {
-                            Some(&seen_type) => {
-                                if same_struct_or_enum(seen_type, def) {
-                                    debug!("SelfRecursive: {:?} contains {:?}",
-                                           seen_type,
-                                           ty);
-                                    return Representability::SelfRecursive;
-                                }
+                        if let Some(&seen_type) = iter.next() {
+                            if same_struct_or_enum(seen_type, def) {
+                                debug!("SelfRecursive: {:?} contains {:?}",
+                                       seen_type,
+                                       ty);
+                                return Representability::SelfRecursive;
                             }
-                            None => {}
                         }
 
                         // We also need to know whether the first item contains other types

@@ -76,7 +76,6 @@ This API is completely unstable and subject to change.
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(iter_arith)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -85,6 +84,7 @@ This API is completely unstable and subject to change.
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
+extern crate syntax_pos;
 
 extern crate arena;
 extern crate fmt_macros;
@@ -93,6 +93,7 @@ extern crate rustc_platform_intrinsics as intrinsics;
 extern crate rustc_back;
 extern crate rustc_const_math;
 extern crate rustc_const_eval;
+extern crate rustc_errors as errors;
 
 pub use rustc::dep_graph;
 pub use rustc::hir;
@@ -103,7 +104,6 @@ pub use rustc::util;
 
 use dep_graph::DepNode;
 use hir::map as hir_map;
-use hir::def::Def;
 use rustc::infer::TypeOrigin;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
@@ -111,9 +111,9 @@ use rustc::traits::ProjectionMode;
 use session::{config, CompileResult};
 use util::common::time;
 
-use syntax::codemap::Span;
 use syntax::ast;
 use syntax::abi::Abi;
+use syntax_pos::Span;
 
 use std::cell::RefCell;
 use util::nodemap::NodeMap;
@@ -173,15 +173,6 @@ fn write_substs_to_tcx<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         assert!(!item_substs.substs.types.needs_infer());
 
         ccx.tcx.tables.borrow_mut().item_substs.insert(node_id, item_substs);
-    }
-}
-
-fn lookup_full_def(tcx: TyCtxt, sp: Span, id: ast::NodeId) -> Def {
-    match tcx.def_map.borrow().get(&id) {
-        Some(x) => x.full_def(),
-        None => {
-            span_fatal!(tcx.sess, sp, E0242, "internal error looking up a definition")
-        }
     }
 }
 
@@ -321,14 +312,13 @@ fn check_start_fn_ty(ccx: &CrateCtxt,
 fn check_for_entry_fn(ccx: &CrateCtxt) {
     let tcx = ccx.tcx;
     let _task = tcx.dep_graph.in_task(DepNode::CheckEntryFn);
-    match *tcx.sess.entry_fn.borrow() {
-        Some((id, sp)) => match tcx.sess.entry_type.get() {
+    if let Some((id, sp)) = *tcx.sess.entry_fn.borrow() {
+        match tcx.sess.entry_type.get() {
             Some(config::EntryMain) => check_main_fn_ty(ccx, id, sp),
             Some(config::EntryStart) => check_start_fn_ty(ccx, id, sp),
             Some(config::EntryNone) => {}
             None => bug!("entry function without a type")
-        },
-        None => {}
+        }
     }
 }
 

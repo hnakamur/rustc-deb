@@ -114,12 +114,20 @@ Non-doc comments are interpreted as a form of whitespace.
 
 ## Whitespace
 
-Whitespace is any non-empty string containing only the following characters:
+Whitespace is any non-empty string containing only characters that have the
+`Pattern_White_Space` Unicode property, namely:
 
+- `U+0009` (horizontal tab, `'\t'`)
+- `U+000A` (line feed, `'\n'`)
+- `U+000B` (vertical tab)
+- `U+000C` (form feed)
+- `U+000D` (carriage return, `'\r'`)
 - `U+0020` (space, `' '`)
-- `U+0009` (tab, `'\t'`)
-- `U+000A` (LF, `'\n'`)
-- `U+000D` (CR, `'\r'`)
+- `U+0085` (next line)
+- `U+200E` (left-to-right mark)
+- `U+200F` (right-to-left mark)
+- `U+2028` (line separator)
+- `U+2029` (paragraph separator)
 
 Rust is a "free-form" language, meaning that all forms of whitespace serve only
 to separate _tokens_ in the grammar, and have no semantic significance.
@@ -1628,7 +1636,7 @@ Functions within external blocks may be called by Rust code, just like
 functions defined in Rust. The Rust compiler automatically translates between
 the Rust ABI and the foreign ABI.
 
-A number of [attributes](#attributes) control the behavior of external blocks.
+A number of [attributes](#ffi-attributes) control the behavior of external blocks.
 
 By default external blocks assume that the library they are calling uses the
 standard C "cdecl" ABI. Other ABIs may be specified using an `abi` string, as
@@ -1983,6 +1991,7 @@ macro scope.
 
 ### Miscellaneous attributes
 
+- `deprecated` - mark the item as deprecated; the full attribute is `#[deprecated(since = "crate version", note = "...")`, where both arguments are optional.
 - `export_name` - on statics and functions, this determines the name of the
   exported symbol.
 - `link_section` - on statics and functions, this specifies the section of the
@@ -2426,12 +2435,12 @@ The currently implemented features of the reference compiler are:
 * - `stmt_expr_attributes` - Allows attributes on expressions and
                              non-item statements.
 
-* - `deprecated` - Allows using the `#[deprecated]` attribute.
-
 * - `type_ascription` - Allows type ascription expressions `expr: Type`.
 
 * - `abi_vectorcall` - Allows the usage of the vectorcall calling convention
                              (e.g. `extern "vectorcall" func fn_();`)
+
+* - `dotdot_in_tuple_patterns` - Allows `..` in tuple (struct) patterns.
 
 If a feature is promoted to a language feature, then all existing programs will
 start to receive compilation warnings about `#![feature]` directives which enabled

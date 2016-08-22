@@ -23,19 +23,21 @@ use hir::def_id::{CRATE_DEF_INDEX, DefId};
 use ty::{self, TyCtxt};
 use middle::privacy::AccessLevels;
 use syntax::parse::token::InternedString;
-use syntax::codemap::{Span, DUMMY_SP};
+use syntax_pos::{Span, DUMMY_SP};
 use syntax::ast;
 use syntax::ast::{NodeId, Attribute};
-use syntax::feature_gate::{GateIssue, emit_feature_err};
+use syntax::feature_gate::{GateIssue, emit_feature_err, find_lang_feature_accepted_version};
 use syntax::attr::{self, Stability, Deprecation, AttrMetaMethods};
 use util::nodemap::{DefIdMap, FnvHashSet, FnvHashMap};
 
 use hir;
 use hir::{Item, Generics, StructField, Variant, PatKind};
 use hir::intravisit::{self, Visitor};
+use hir::pat_util::EnumerateAndAdjustIterator;
 
 use std::mem::replace;
 use std::cmp::Ordering;
+use std::ops::Deref;
 
 #[derive(RustcEncodable, RustcDecodable, PartialEq, PartialOrd, Clone, Copy, Debug, Eq, Hash)]
 pub enum StabilityLevel {
@@ -321,7 +323,7 @@ impl<'a, 'tcx> Index<'tcx> {
 /// features and possibly prints errors. Returns a list of all
 /// features used.
 pub fn check_unstable_api_usage<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>)
-                                          -> FnvHashMap<InternedString, StabilityLevel> {
+                                          -> FnvHashMap<InternedString, attr::StabilityLevel> {
     let _task = tcx.dep_graph.in_task(DepNode::StabilityCheck);
     let ref active_lib_features = tcx.sess.features.borrow().declared_lib_features;
 
@@ -342,7 +344,7 @@ pub fn check_unstable_api_usage<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>)
 struct Checker<'a, 'tcx: 'a> {
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     active_features: FnvHashSet<InternedString>,
-    used_features: FnvHashMap<InternedString, StabilityLevel>,
+    used_features: FnvHashMap<InternedString, attr::StabilityLevel>,
     // Within a block where feature gate checking can be skipped.
     in_skip_block: u32,
 }
@@ -366,7 +368,8 @@ impl<'a, 'tcx> Checker<'a, 'tcx> {
 
         match *stab {
             Some(&Stability { level: attr::Unstable {ref reason, issue}, ref feature, .. }) => {
-                self.used_features.insert(feature.clone(), Unstable);
+                self.used_features.insert(feature.clone(),
+                                          attr::Unstable { reason: reason.clone(), issue: issue });
 
                 if !self.active_features.contains(feature) {
                     let msg = match *reason {
@@ -379,7 +382,7 @@ impl<'a, 'tcx> Checker<'a, 'tcx> {
                 }
             }
             Some(&Stability { ref level, ref feature, .. }) => {
-                self.used_features.insert(feature.clone(), StabilityLevel::from_attr_level(level));
+                self.used_features.insert(feature.clone(), level.clone());
 
                 // Stable APIs are always ok to call and deprecated APIs are
                 // handled by a lint.
@@ -491,7 +494,7 @@ pub fn check_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // individually as it's possible to have a stable trait with unstable
         // items.
         hir::ItemImpl(_, _, _, Some(ref t), _, ref impl_items) => {
-            let trait_did = tcx.def_map.borrow().get(&t.ref_id).unwrap().def_id();
+            let trait_did = tcx.expect_def(t.ref_id).def_id();
             let trait_items = tcx.trait_items(trait_did);
 
             for impl_item in impl_items {
@@ -577,7 +580,8 @@ pub fn check_path<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                             cb: &mut FnMut(DefId, Span,
                                            &Option<&Stability>,
                                            &Option<Deprecation>)) {
-    match tcx.def_map.borrow().get(&id).map(|d| d.full_def()) {
+    // Paths in import prefixes may have no resolution.
+    match tcx.expect_def_or_none(id) {
         Some(Def::PrimTy(..)) => {}
         Some(Def::SelfTy(..)) => {}
         Some(def) => {
@@ -592,12 +596,11 @@ pub fn check_path_list_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                       cb: &mut FnMut(DefId, Span,
                                                      &Option<&Stability>,
                                                      &Option<Deprecation>)) {
-    match tcx.def_map.borrow().get(&item.node.id()).map(|d| d.full_def()) {
-        Some(Def::PrimTy(..)) => {}
-        Some(def) => {
+    match tcx.expect_def(item.node.id()) {
+        Def::PrimTy(..) => {}
+        def => {
             maybe_do_stability_check(tcx, def.def_id(), item.span, cb);
         }
-        None => {}
     }
 }
 
@@ -614,10 +617,9 @@ pub fn check_pat<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, pat: &hir::Pat,
     };
     match pat.node {
         // Foo(a, b, c)
-        // A Variant(..) pattern `PatKind::TupleStruct(_, None)` doesn't have to be recursed into.
-        PatKind::TupleStruct(_, Some(ref pat_fields)) => {
-            for (field, struct_field) in pat_fields.iter().zip(&v.fields) {
-                maybe_do_stability_check(tcx, struct_field.did, field.span, cb)
+        PatKind::TupleStruct(_, ref pat_fields, ddpos) => {
+            for (i, field) in pat_fields.iter().enumerate_and_adjust(v.fields.len(), ddpos) {
+                maybe_do_stability_check(tcx, v.fields[i].did, field.span, cb)
             }
         }
         // Foo { a, b, c }
@@ -716,28 +718,32 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
 /// libraries, identify activated features that don't exist and error about them.
 pub fn check_unused_or_stable_features(sess: &Session,
                                        lib_features_used: &FnvHashMap<InternedString,
-                                                                      StabilityLevel>) {
+                                                                      attr::StabilityLevel>) {
     let ref declared_lib_features = sess.features.borrow().declared_lib_features;
     let mut remaining_lib_features: FnvHashMap<InternedString, Span>
         = declared_lib_features.clone().into_iter().collect();
 
-    let stable_msg = "this feature is stable. attribute no longer needed";
+    fn format_stable_since_msg(version: &str) -> String {
+        format!("this feature has been stable since {}. Attribute no longer needed", version)
+    }
 
-    for &span in &sess.features.borrow().declared_stable_lang_features {
+    for &(ref stable_lang_feature, span) in &sess.features.borrow().declared_stable_lang_features {
+        let version = find_lang_feature_accepted_version(stable_lang_feature.deref())
+            .expect("unexpectedly couldn't find version feature was stabilized");
         sess.add_lint(lint::builtin::STABLE_FEATURES,
                       ast::CRATE_NODE_ID,
                       span,
-                      stable_msg.to_string());
+                      format_stable_since_msg(version));
     }
 
     for (used_lib_feature, level) in lib_features_used {
         match remaining_lib_features.remove(used_lib_feature) {
             Some(span) => {
-                if *level == Stable {
+                if let &attr::StabilityLevel::Stable { since: ref version } = level {
                     sess.add_lint(lint::builtin::STABLE_FEATURES,
                                   ast::CRATE_NODE_ID,
                                   span,
-                                  stable_msg.to_string());
+                                  format_stable_since_msg(version.deref()));
                 }
             }
             None => ( /* used but undeclared, handled during the previous ast visit */ )

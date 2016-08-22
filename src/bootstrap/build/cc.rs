@@ -57,7 +57,9 @@ pub fn find(build: &mut Build) {
         let compiler = cfg.get_compiler();
         let ar = cc2ar(compiler.path(), target);
         build.verbose(&format!("CC_{} = {:?}", target, compiler.path()));
-        build.verbose(&format!("AR_{} = {:?}", target, ar));
+        if let Some(ref ar) = ar {
+            build.verbose(&format!("AR_{} = {:?}", target, ar));
+        }
         build.cc.insert(target.to_string(), (compiler, ar));
     }
 
@@ -88,6 +90,7 @@ fn set_compiler(cfg: &mut gcc::Config,
         // compiler already takes into account the triple in question.
         t if t.contains("android") => {
             if let Some(ndk) = config.and_then(|c| c.ndk.as_ref()) {
+                let target = target.replace("armv7", "arm");
                 let compiler = format!("{}-{}", target, gnu_compiler);
                 cfg.compiler(ndk.join("bin").join(compiler));
             }

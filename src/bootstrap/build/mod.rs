@@ -119,7 +119,7 @@ pub struct Build {
     lldb_python_dir: Option<String>,
 
     // Runtime state filled in later on
-    cc: HashMap<String, (gcc::Tool, PathBuf)>,
+    cc: HashMap<String, (gcc::Tool, Option<PathBuf>)>,
     cxx: HashMap<String, gcc::Tool>,
     compiler_rt_built: RefCell<HashMap<String, PathBuf>>,
 }
@@ -128,6 +128,7 @@ pub struct Build {
 ///
 /// These entries currently correspond to the various output directories of the
 /// build system, with each mod generating output in a different directory.
+#[derive(Clone, Copy)]
 pub enum Mode {
     /// This cargo is going to build the standard library, placing output in the
     /// "stageN-std" directory.
@@ -383,8 +384,7 @@ impl Build {
                                        "ui", "ui");
                 }
                 CheckDebuginfo { compiler } => {
-                    if target.target.contains("msvc") ||
-                       target.target.contains("android") {
+                    if target.target.contains("msvc") {
                         // nothing to do
                     } else if target.target.contains("apple") {
                         check::compiletest(self, &compiler, target.target,
@@ -434,8 +434,14 @@ impl Build {
                                            target.target);
                 }
 
+                AndroidCopyLibs { compiler } => {
+                    check::android_copy_libs(self, &compiler, target.target);
+                }
+
+                // pseudo-steps
                 Dist { .. } |
-                Doc { .. } | // pseudo-steps
+                Doc { .. } |
+                CheckTarget { .. } |
                 Check { .. } => {}
             }
         }
@@ -510,6 +516,14 @@ impl Build {
              .arg("-j").arg(self.jobs().to_string())
              .arg("--target").arg(target);
 
+        let stage;
+        if compiler.stage == 0 && self.config.local_rebuild {
+            // Assume the local-rebuild rustc already has stage1 features.
+            stage = 1;
+        } else {
+            stage = compiler.stage;
+        }
+
         // Customize the compiler we're running. Specify the compiler to cargo
         // as our shim and then pass it some various options used to configure
         // how the actual compiler itself is called.
@@ -518,7 +532,7 @@ impl Build {
         // src/bootstrap/{rustc,rustdoc.rs}
         cargo.env("RUSTC", self.out.join("bootstrap/debug/rustc"))
              .env("RUSTC_REAL", self.compiler_path(compiler))
-             .env("RUSTC_STAGE", compiler.stage.to_string())
+             .env("RUSTC_STAGE", stage.to_string())
              .env("RUSTC_DEBUGINFO", self.config.rust_debuginfo.to_string())
              .env("RUSTC_CODEGEN_UNITS",
                   self.config.rust_codegen_units.to_string())
@@ -541,7 +555,7 @@ impl Build {
         // FIXME: the guard against msvc shouldn't need to be here
         if !target.contains("msvc") {
             cargo.env(format!("CC_{}", target), self.cc(target))
-                 .env(format!("AR_{}", target), self.ar(target))
+                 .env(format!("AR_{}", target), self.ar(target).unwrap()) // only msvc is None
                  .env(format!("CFLAGS_{}", target), self.cflags(target).join(" "));
         }
 
@@ -744,7 +758,7 @@ impl Build {
         // In stage0 we're using a previously released stable compiler, so we
         // use the stage0 bootstrap key. Otherwise we use our own build's
         // bootstrap key.
-        let bootstrap_key = if compiler.is_snapshot(self) {
+        let bootstrap_key = if compiler.is_snapshot(self) && !self.config.local_rebuild {
             &self.bootstrap_key_stage0
         } else {
             &self.bootstrap_key
@@ -817,8 +831,8 @@ impl Build {
     }
 
     /// Returns the path to the `ar` archive utility for the target specified.
-    fn ar(&self, target: &str) -> &Path {
-        &self.cc[target].1
+    fn ar(&self, target: &str) -> Option<&Path> {
+        self.cc[target].1.as_ref().map(|p| &**p)
     }
 
     /// Returns the path to the C++ compiler for the target specified, may panic

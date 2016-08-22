@@ -15,8 +15,8 @@ use session::Session;
 use middle::lang_items;
 
 use syntax::ast;
-use syntax::codemap::Span;
 use syntax::parse::token::InternedString;
+use syntax_pos::Span;
 use hir::intravisit::Visitor;
 use hir::intravisit;
 use hir;
@@ -123,9 +123,8 @@ impl<'a> Context<'a> {
 
 impl<'a, 'v> Visitor<'v> for Context<'a> {
     fn visit_foreign_item(&mut self, i: &hir::ForeignItem) {
-        match lang_items::extract(&i.attrs) {
-            None => {}
-            Some(lang_item) => self.register(&lang_item, i.span),
+        if let Some(lang_item) = lang_items::extract(&i.attrs) {
+            self.register(&lang_item, i.span);
         }
         intravisit::walk_foreign_item(self, i)
     }

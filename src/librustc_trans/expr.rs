@@ -81,8 +81,9 @@ use type_::Type;
 
 use rustc::hir;
 
-use syntax::{ast, codemap};
+use syntax::ast;
 use syntax::parse::token::InternedString;
+use syntax_pos;
 use std::fmt;
 use std::mem;
 
@@ -153,7 +154,7 @@ pub fn trans_into<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             // have side effects. This seems to be reached through tuple struct constructors being
             // passed zero-size constants.
             if let hir::ExprPath(..) = expr.node {
-                match bcx.def(expr.id) {
+                match bcx.tcx().expect_def(expr.id) {
                     Def::Const(_) | Def::AssociatedConst(_) => {
                         assert!(type_is_zero_size(bcx.ccx(), bcx.tcx().node_id_to_type(expr.id)));
                         return bcx;
@@ -172,7 +173,7 @@ pub fn trans_into<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             // `[x; N]` somewhere within.
             match expr.node {
                 hir::ExprPath(..) => {
-                    match bcx.def(expr.id) {
+                    match bcx.tcx().expect_def(expr.id) {
                         Def::Const(did) | Def::AssociatedConst(did) => {
                             let empty_substs = bcx.tcx().mk_substs(Substs::empty());
                             let const_expr = consts::get_const_expr(bcx.ccx(), did, expr,
@@ -454,7 +455,7 @@ fn apply_adjustments<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 }
 
 fn coerce_unsized<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
-                              span: codemap::Span,
+                              span: syntax_pos::Span,
                               source: Datum<'tcx, Rvalue>,
                               target: Datum<'tcx, Rvalue>)
                               -> Block<'blk, 'tcx> {
@@ -651,7 +652,7 @@ fn trans_datum_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             trans(bcx, &e)
         }
         hir::ExprPath(..) => {
-            let var = trans_var(bcx, bcx.def(expr.id));
+            let var = trans_var(bcx, bcx.tcx().expect_def(expr.id));
             DatumBlock::new(bcx, var.to_expr_datum())
         }
         hir::ExprField(ref base, name) => {
@@ -1073,7 +1074,7 @@ fn trans_rvalue_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             trans_into(bcx, &e, dest)
         }
         hir::ExprPath(..) => {
-            trans_def_dps_unadjusted(bcx, expr, bcx.def(expr.id), dest)
+            trans_def_dps_unadjusted(bcx, expr, bcx.tcx().expect_def(expr.id), dest)
         }
         hir::ExprIf(ref cond, ref thn, ref els) => {
             controlflow::trans_if(bcx, expr.id, &cond, &thn, els.as_ref().map(|e| &**e), dest)
@@ -1265,7 +1266,7 @@ fn trans_def_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 fn trans_struct<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                             fields: &[hir::Field],
                             base: Option<&hir::Expr>,
-                            expr_span: codemap::Span,
+                            expr_span: syntax_pos::Span,
                             expr_id: ast::NodeId,
                             ty: Ty<'tcx>,
                             dest: Dest) -> Block<'blk, 'tcx> {
@@ -1978,7 +1979,7 @@ fn auto_ref<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     // Compute final type. Note that we are loose with the region and
     // mutability, since those things don't matter in trans.
     let referent_ty = lv_datum.ty;
-    let ptr_ty = bcx.tcx().mk_imm_ref(bcx.tcx().mk_region(ty::ReStatic), referent_ty);
+    let ptr_ty = bcx.tcx().mk_imm_ref(bcx.tcx().mk_region(ty::ReErased), referent_ty);
 
     // Construct the resulting datum. The right datum to return here would be an Lvalue datum,
     // because there is cleanup scheduled and the datum doesn't own the data, but for thin pointers
@@ -2155,11 +2156,13 @@ impl OverflowOpViaIntrinsic {
 
         let new_sty = match ty.sty {
             TyInt(Is) => match &tcx.sess.target.target.target_pointer_width[..] {
+                "16" => TyInt(I16),
                 "32" => TyInt(I32),
                 "64" => TyInt(I64),
                 _ => bug!("unsupported target word size")
             },
             TyUint(Us) => match &tcx.sess.target.target.target_pointer_width[..] {
+                "16" => TyUint(U16),
                 "32" => TyUint(U32),
                 "64" => TyUint(U64),
                 _ => bug!("unsupported target word size")
@@ -2218,6 +2221,8 @@ impl OverflowOpViaIntrinsic {
                                         rhs: ValueRef,
                                         binop_debug_loc: DebugLoc)
                                         -> (Block<'blk, 'tcx>, ValueRef) {
+        use rustc_const_math::{ConstMathErr, Op};
+
         let llfn = self.to_intrinsic(bcx, lhs_t);
 
         let val = Call(bcx, llfn, &[lhs, rhs], binop_debug_loc);
@@ -2228,13 +2233,19 @@ impl OverflowOpViaIntrinsic {
                         binop_debug_loc);
 
         let expect = bcx.ccx().get_intrinsic(&"llvm.expect.i1");
-        Call(bcx, expect, &[cond, C_integral(Type::i1(bcx.ccx()), 0, false)],
-             binop_debug_loc);
+        let expected = Call(bcx, expect, &[cond, C_bool(bcx.ccx(), false)],
+                            binop_debug_loc);
+
+        let op = match *self {
+            OverflowOpViaIntrinsic::Add => Op::Add,
+            OverflowOpViaIntrinsic::Sub => Op::Sub,
+            OverflowOpViaIntrinsic::Mul => Op::Mul
+        };
 
         let bcx =
-            base::with_cond(bcx, cond, |bcx|
+            base::with_cond(bcx, expected, |bcx|
                 controlflow::trans_fail(bcx, info,
-                    InternedString::new("arithmetic operation overflowed")));
+                    InternedString::new(ConstMathErr::Overflow(op).description())));
 
         (bcx, result)
     }
@@ -2250,6 +2261,8 @@ impl OverflowOpViaInputCheck {
                                           binop_debug_loc: DebugLoc)
                                           -> (Block<'blk, 'tcx>, ValueRef)
     {
+        use rustc_const_math::{ConstMathErr, Op};
+
         let lhs_llty = val_ty(lhs);
         let rhs_llty = val_ty(rhs);
 
@@ -2264,16 +2277,16 @@ impl OverflowOpViaInputCheck {
 
         let outer_bits = And(bcx, rhs, invert_mask, binop_debug_loc);
         let cond = build_nonzero_check(bcx, outer_bits, binop_debug_loc);
-        let result = match *self {
+        let (result, op) = match *self {
             OverflowOpViaInputCheck::Shl =>
-                build_unchecked_lshift(bcx, lhs, rhs, binop_debug_loc),
+                (build_unchecked_lshift(bcx, lhs, rhs, binop_debug_loc), Op::Shl),
             OverflowOpViaInputCheck::Shr =>
-                build_unchecked_rshift(bcx, lhs_t, lhs, rhs, binop_debug_loc),
+                (build_unchecked_rshift(bcx, lhs_t, lhs, rhs, binop_debug_loc), Op::Shr)
         };
         let bcx =
             base::with_cond(bcx, cond, |bcx|
                 controlflow::trans_fail(bcx, info,
-                    InternedString::new("shift operation overflowed")));
+                    InternedString::new(ConstMathErr::Overflow(op).description())));
 
         (bcx, result)
     }
@@ -2361,7 +2374,7 @@ fn expr_kind<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, expr: &hir::Expr) -> ExprKin
 
     match expr.node {
         hir::ExprPath(..) => {
-            match tcx.resolve_expr(expr) {
+            match tcx.expect_def(expr.id) {
                 // Put functions and ctors with the ADTs, as they
                 // are zero-sized, so DPS is the cheapest option.
                 Def::Struct(..) | Def::Variant(..) |

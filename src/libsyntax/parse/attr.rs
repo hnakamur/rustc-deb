@@ -10,7 +10,8 @@
 
 use attr;
 use ast;
-use codemap::{spanned, Spanned, mk_sp, Span};
+use syntax_pos::{mk_sp, Span};
+use codemap::{spanned, Spanned};
 use parse::common::SeqSep;
 use parse::PResult;
 use parse::token;
@@ -159,12 +160,9 @@ impl<'a> Parser<'a> {
             _ => None,
         };
 
-        match nt_meta {
-            Some(meta) => {
-                self.bump();
-                return Ok(meta);
-            }
-            None => {}
+        if let Some(meta) = nt_meta {
+            self.bump();
+            return Ok(meta);
         }
 
         let lo = self.span.lo;

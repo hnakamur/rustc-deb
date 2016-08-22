@@ -17,9 +17,9 @@ use std::env;
 use std::path::Path;
 
 use syntax::ast;
-use syntax::codemap::*;
 use syntax::parse::lexer::{self, Reader, StringReader};
 use syntax::parse::token::{self, keywords, Token};
+use syntax_pos::*;
 
 #[derive(Clone)]
 pub struct SpanUtils<'a> {
@@ -81,7 +81,7 @@ impl<'a> SpanUtils<'a> {
         // are incompatible with spans over other filemaps.
         let filemap = self.sess
                           .codemap()
-                          .new_filemap(String::from("<anon-dxr>"), self.snippet(span));
+                          .new_filemap(String::from("<anon-dxr>"), None, self.snippet(span));
         let s = self.sess;
         lexer::StringReader::new(s.diagnostic(), filemap)
     }

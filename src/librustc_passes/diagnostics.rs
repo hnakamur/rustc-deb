@@ -50,11 +50,36 @@ match 5u32 {
 "##,
 
 E0161: r##"
+A value was moved. However, its size was not known at compile time, and only
+values of a known size can be moved.
+
+Erroneous code example:
+
+```compile_fail
+#![feature(box_syntax)]
+
+fn main() {
+    let array: &[isize] = &[1, 2, 3];
+    let _x: Box<[isize]> = box *array;
+    // error: cannot move a value of type [isize]: the size of [isize] cannot
+    //        be statically determined
+}
+```
+
 In Rust, you can only move a value when its size is known at compile time.
 
 To work around this restriction, consider "hiding" the value behind a reference:
 either `&x` or `&mut x`. Since a reference has a fixed size, this lets you move
-it around as usual.
+it around as usual. Example:
+
+```
+#![feature(box_syntax)]
+
+fn main() {
+    let array: &[isize] = &[1, 2, 3];
+    let _x: Box<&[isize]> = box array; // ok!
+}
+```
 "##,
 
 E0265: r##"
@@ -114,6 +139,46 @@ fn some_func() {
     for _ in 0..10 {
         break; // ok!
     }
+}
+```
+"##,
+
+E0449: r##"
+A visibility qualifier was used when it was unnecessary. Erroneous code
+examples:
+
+```compile_fail
+struct Bar;
+
+trait Foo {
+    fn foo();
+}
+
+pub impl Bar {} // error: unnecessary visibility qualifier
+
+pub impl Foo for Bar { // error: unnecessary visibility qualifier
+    pub fn foo() {} // error: unnecessary visibility qualifier
+}
+```
+
+To fix this error, please remove the visibility qualifier when it is not
+required. Example:
+
+```ignore
+struct Bar;
+
+trait Foo {
+    fn foo();
+}
+
+// Directly implemented methods share the visibility of the type itself,
+// so `pub` is unnecessary here
+impl Bar {}
+
+// Trait methods share the visibility of the trait, so `pub` is
+// unnecessary in either case
+pub impl Foo for Bar {
+    pub fn foo() {}
 }
 ```
 "##,

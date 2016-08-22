@@ -9,8 +9,8 @@
 // except according to those terms.
 
 use ast;
-use codemap::{BytePos, CharPos, CodeMap, Pos, Span};
-use codemap;
+use syntax_pos::{self, BytePos, CharPos, Pos, Span};
+use codemap::CodeMap;
 use errors::{FatalError, Handler, DiagnosticBuilder};
 use ext::tt::transcribe::tt_next_token;
 use parse::token::{self, keywords, str_to_ident};
@@ -84,7 +84,7 @@ pub struct StringReader<'a> {
     pub col: CharPos,
     /// The last character to be read
     pub curr: Option<char>,
-    pub filemap: Rc<codemap::FileMap>,
+    pub filemap: Rc<syntax_pos::FileMap>,
     // cached:
     pub peek_tok: token::Token,
     pub peek_span: Span,
@@ -162,7 +162,7 @@ impl<'a> Reader for TtReader<'a> {
 impl<'a> StringReader<'a> {
     /// For comments.rs, which hackily pokes into pos and curr
     pub fn new_raw<'b>(span_diagnostic: &'b Handler,
-                       filemap: Rc<codemap::FileMap>)
+                       filemap: Rc<syntax_pos::FileMap>)
                        -> StringReader<'b> {
         if filemap.src.is_none() {
             span_diagnostic.bug(&format!("Cannot lex filemap \
@@ -181,7 +181,7 @@ impl<'a> StringReader<'a> {
             filemap: filemap,
             // dummy values; not read
             peek_tok: token::Eof,
-            peek_span: codemap::DUMMY_SP,
+            peek_span: syntax_pos::DUMMY_SP,
             source_text: source_text,
             fatal_errs: Vec::new(),
         };
@@ -190,7 +190,7 @@ impl<'a> StringReader<'a> {
     }
 
     pub fn new<'b>(span_diagnostic: &'b Handler,
-                   filemap: Rc<codemap::FileMap>)
+                   filemap: Rc<syntax_pos::FileMap>)
                    -> StringReader<'b> {
         let mut sr = StringReader::new_raw(span_diagnostic, filemap);
         if let Err(_) = sr.advance_token() {
@@ -217,12 +217,12 @@ impl<'a> StringReader<'a> {
 
     /// Report a fatal error spanning [`from_pos`, `to_pos`).
     fn fatal_span_(&self, from_pos: BytePos, to_pos: BytePos, m: &str) -> FatalError {
-        self.fatal_span(codemap::mk_sp(from_pos, to_pos), m)
+        self.fatal_span(syntax_pos::mk_sp(from_pos, to_pos), m)
     }
 
     /// Report a lexical error spanning [`from_pos`, `to_pos`).
     fn err_span_(&self, from_pos: BytePos, to_pos: BytePos, m: &str) {
-        self.err_span(codemap::mk_sp(from_pos, to_pos), m)
+        self.err_span(syntax_pos::mk_sp(from_pos, to_pos), m)
     }
 
     /// Report a lexical error spanning [`from_pos`, `to_pos`), appending an
@@ -246,7 +246,7 @@ impl<'a> StringReader<'a> {
         for c in c.escape_default() {
             m.push(c)
         }
-        self.span_diagnostic.struct_span_fatal(codemap::mk_sp(from_pos, to_pos), &m[..])
+        self.span_diagnostic.struct_span_fatal(syntax_pos::mk_sp(from_pos, to_pos), &m[..])
     }
 
     /// Report a lexical error spanning [`from_pos`, `to_pos`), appending an
@@ -270,7 +270,7 @@ impl<'a> StringReader<'a> {
         for c in c.escape_default() {
             m.push(c)
         }
-        self.span_diagnostic.struct_span_err(codemap::mk_sp(from_pos, to_pos), &m[..])
+        self.span_diagnostic.struct_span_err(syntax_pos::mk_sp(from_pos, to_pos), &m[..])
     }
 
     /// Report a lexical error spanning [`from_pos`, `to_pos`), appending the
@@ -294,11 +294,11 @@ impl<'a> StringReader<'a> {
             None => {
                 if self.is_eof() {
                     self.peek_tok = token::Eof;
-                    self.peek_span = codemap::mk_sp(self.filemap.end_pos, self.filemap.end_pos);
+                    self.peek_span = syntax_pos::mk_sp(self.filemap.end_pos, self.filemap.end_pos);
                 } else {
                     let start_bytepos = self.last_pos;
                     self.peek_tok = self.next_token_inner()?;
-                    self.peek_span = codemap::mk_sp(start_bytepos, self.last_pos);
+                    self.peek_span = syntax_pos::mk_sp(start_bytepos, self.last_pos);
                 };
             }
         }
@@ -470,15 +470,12 @@ impl<'a> StringReader<'a> {
     /// PRECONDITION: self.curr is not whitespace
     /// Eats any kind of comment.
     fn scan_comment(&mut self) -> Option<TokenAndSpan> {
-        match self.curr {
-            Some(c) => {
-                if c.is_whitespace() {
-                    self.span_diagnostic.span_err(codemap::mk_sp(self.last_pos, self.last_pos),
-                                                  "called consume_any_line_comment, but there \
-                                                   was whitespace");
-                }
+        if let Some(c) = self.curr {
+            if c.is_whitespace() {
+                self.span_diagnostic.span_err(syntax_pos::mk_sp(self.last_pos, self.last_pos),
+                                              "called consume_any_line_comment, but there \
+                                               was whitespace");
             }
-            None => {}
         }
 
         if self.curr_is('/') {
@@ -524,13 +521,13 @@ impl<'a> StringReader<'a> {
 
                             Some(TokenAndSpan {
                                 tok: tok,
-                                sp: codemap::mk_sp(start_bpos, self.last_pos),
+                                sp: syntax_pos::mk_sp(start_bpos, self.last_pos),
                             })
                         })
                     } else {
                         Some(TokenAndSpan {
                             tok: token::Comment,
-                            sp: codemap::mk_sp(start_bpos, self.last_pos),
+                            sp: syntax_pos::mk_sp(start_bpos, self.last_pos),
                         })
                     };
                 }
@@ -563,7 +560,7 @@ impl<'a> StringReader<'a> {
                     }
                     return Some(TokenAndSpan {
                         tok: token::Shebang(self.name_from(start)),
-                        sp: codemap::mk_sp(start, self.last_pos),
+                        sp: syntax_pos::mk_sp(start, self.last_pos),
                     });
                 }
             }
@@ -591,7 +588,7 @@ impl<'a> StringReader<'a> {
                 }
                 let c = Some(TokenAndSpan {
                     tok: token::Whitespace,
-                    sp: codemap::mk_sp(start_bpos, self.last_pos),
+                    sp: syntax_pos::mk_sp(start_bpos, self.last_pos),
                 });
                 debug!("scanning whitespace: {:?}", c);
                 c
@@ -653,7 +650,7 @@ impl<'a> StringReader<'a> {
 
             Some(TokenAndSpan {
                 tok: tok,
-                sp: codemap::mk_sp(start_bpos, self.last_pos),
+                sp: syntax_pos::mk_sp(start_bpos, self.last_pos),
             })
         })
     }
@@ -850,7 +847,7 @@ impl<'a> StringReader<'a> {
                                 let valid = if self.curr_is('{') {
                                     self.scan_unicode_escape(delim) && !ascii_only
                                 } else {
-                                    let span = codemap::mk_sp(start, self.last_pos);
+                                    let span = syntax_pos::mk_sp(start, self.last_pos);
                                     self.span_diagnostic
                                         .struct_span_err(span, "incorrect unicode escape sequence")
                                         .span_help(span,
@@ -888,13 +885,13 @@ impl<'a> StringReader<'a> {
                                                                         },
                                                                         c);
                                 if e == '\r' {
-                                    err.span_help(codemap::mk_sp(escaped_pos, last_pos),
+                                    err.span_help(syntax_pos::mk_sp(escaped_pos, last_pos),
                                                   "this is an isolated carriage return; consider \
                                                    checking your editor and version control \
                                                    settings");
                                 }
                                 if (e == '{' || e == '}') && !ascii_only {
-                                    err.span_help(codemap::mk_sp(escaped_pos, last_pos),
+                                    err.span_help(syntax_pos::mk_sp(escaped_pos, last_pos),
                                                   "if used in a formatting string, curly braces \
                                                    are escaped with `{{` and `}}`");
                                 }
@@ -1677,7 +1674,8 @@ fn ident_continue(c: Option<char>) -> bool {
 mod tests {
     use super::*;
 
-    use codemap::{BytePos, CodeMap, Span, NO_EXPANSION};
+    use syntax_pos::{BytePos, Span, NO_EXPANSION};
+    use codemap::CodeMap;
     use errors;
     use parse::token;
     use parse::token::str_to_ident;
@@ -1686,7 +1684,10 @@ mod tests {
 
     fn mk_sh(cm: Rc<CodeMap>) -> errors::Handler {
         // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
-        let emitter = errors::emitter::EmitterWriter::new(Box::new(io::sink()), None, cm);
+        let emitter = errors::emitter::EmitterWriter::new(Box::new(io::sink()),
+                                                None,
+                                                cm,
+                                                errors::snippet::FormatMode::EnvironmentSelected);
         errors::Handler::with_emitter(true, false, Box::new(emitter))
     }
 
@@ -1695,7 +1696,7 @@ mod tests {
                  span_handler: &'a errors::Handler,
                  teststr: String)
                  -> StringReader<'a> {
-        let fm = cm.new_filemap("zebra.rs".to_string(), teststr);
+        let fm = cm.new_filemap("zebra.rs".to_string(), None, teststr);
         StringReader::new(span_handler, fm)
     }
 
@@ -1889,7 +1890,7 @@ mod tests {
         let mut lexer = setup(&cm, &sh, "// test\r\n/// test\r\n".to_string());
         let comment = lexer.next_token();
         assert_eq!(comment.tok, token::Comment);
-        assert_eq!(comment.sp, ::codemap::mk_sp(BytePos(0), BytePos(7)));
+        assert_eq!(comment.sp, ::syntax_pos::mk_sp(BytePos(0), BytePos(7)));
         assert_eq!(lexer.next_token().tok, token::Whitespace);
         assert_eq!(lexer.next_token().tok,
                    token::DocComment(token::intern("/// test")));

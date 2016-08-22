@@ -9,9 +9,10 @@
 // except according to those terms.
 
 
-use rustc::ty::TyCtxt;
+use rustc::ty::{FnOutput, TyCtxt};
 use rustc::mir::repr::*;
 use rustc::util::nodemap::FnvHashMap;
+use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 
 use std::cell::{Cell};
 use std::collections::hash_map::Entry;
@@ -19,7 +20,6 @@ use std::fmt;
 use std::iter;
 use std::ops::Index;
 
-use super::dataflow::BitDenotation;
 use super::abs_domain::{AbstractElem, Lift};
 
 // This submodule holds some newtype'd Index wrappers that are using
@@ -29,17 +29,21 @@ use super::abs_domain::{AbstractElem, Lift};
 // (which is likely to yield a subtle off-by-one error).
 mod indexes {
     use core::nonzero::NonZero;
+    use rustc_data_structures::indexed_vec::Idx;
 
     macro_rules! new_index {
         ($Index:ident) => {
-            #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+            #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
             pub struct $Index(NonZero<usize>);
 
             impl $Index {
-                pub fn new(idx: usize) -> Self {
+            }
+
+            impl Idx for $Index {
+                fn new(idx: usize) -> Self {
                     unsafe { $Index(NonZero::new(idx + 1)) }
                 }
-                pub fn idx(&self) -> usize {
+                fn index(self) -> usize {
                     *self.0 - 1
                 }
             }
@@ -55,6 +59,12 @@ mod indexes {
 
 pub use self::indexes::MovePathIndex;
 pub use self::indexes::MoveOutIndex;
+
+impl self::indexes::MoveOutIndex {
+    pub fn move_path_index(&self, move_data: &MoveData) -> MovePathIndex {
+        move_data.moves[self.index()].path
+    }
+}
 
 /// `MovePath` is a canonicalized representation of a path that is
 /// moved or assigned to.
@@ -125,6 +135,7 @@ impl<'tcx> fmt::Debug for MovePath<'tcx> {
     }
 }
 
+#[derive(Debug)]
 pub struct MoveData<'tcx> {
     pub move_paths: MovePathData<'tcx>,
     pub moves: Vec<MoveOut>,
@@ -133,6 +144,7 @@ pub struct MoveData<'tcx> {
     pub rev_lookup: MovePathLookup<'tcx>,
 }
 
+#[derive(Debug)]
 pub struct LocMap {
     /// Location-indexed (BasicBlock for outer index, index within BB
     /// for inner index) map to list of MoveOutIndex's.
@@ -153,6 +165,7 @@ impl Index<Location> for LocMap {
     }
 }
 
+#[derive(Debug)]
 pub struct PathMap {
     /// Path-indexed map to list of MoveOutIndex's.
     ///
@@ -163,7 +176,7 @@ pub struct PathMap {
 impl Index<MovePathIndex> for PathMap {
     type Output = [MoveOutIndex];
     fn index(&self, index: MovePathIndex) -> &Self::Output {
-        &self.map[index.idx()]
+        &self.map[index.index()]
     }
 }
 
@@ -183,11 +196,11 @@ pub struct MoveOut {
 
 impl fmt::Debug for MoveOut {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "p{}@{:?}", self.path.idx(), self.source)
+        write!(fmt, "p{}@{:?}", self.path.index(), self.source)
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Location {
     /// block where action is located
     pub block: BasicBlock,
@@ -202,20 +215,21 @@ impl fmt::Debug for Location {
     }
 }
 
+#[derive(Debug)]
 pub struct MovePathData<'tcx> {
     move_paths: Vec<MovePath<'tcx>>,
+}
+
+impl<'tcx> MovePathData<'tcx> {
+    pub fn len(&self) -> usize { self.move_paths.len() }
 }
 
 impl<'tcx> Index<MovePathIndex> for MovePathData<'tcx> {
     type Output = MovePath<'tcx>;
     fn index(&self, i: MovePathIndex) -> &MovePath<'tcx> {
-        &self.move_paths[i.idx()]
+        &self.move_paths[i.index()]
     }
 }
-
-/// MovePathInverseMap maps from a uint in an lvalue-category to the
-/// MovePathIndex for the MovePath for that lvalue.
-type MovePathInverseMap = Vec<Option<MovePathIndex>>;
 
 struct MovePathDataBuilder<'a, 'tcx: 'a> {
     mir: &'a Mir<'tcx>,
@@ -224,10 +238,11 @@ struct MovePathDataBuilder<'a, 'tcx: 'a> {
 }
 
 /// Tables mapping from an l-value to its MovePathIndex.
+#[derive(Debug)]
 pub struct MovePathLookup<'tcx> {
-    vars: MovePathInverseMap,
-    temps: MovePathInverseMap,
-    args: MovePathInverseMap,
+    vars: IndexVec<Var, Option<MovePathIndex>>,
+    temps: IndexVec<Temp, Option<MovePathIndex>>,
+    args: IndexVec<Arg, Option<MovePathIndex>>,
 
     /// The move path representing the return value is constructed
     /// lazily when we first encounter it in the input MIR.
@@ -272,18 +287,19 @@ impl<T:Clone> FillTo for Vec<T> {
 
 #[derive(Clone, Debug)]
 enum LookupKind { Generate, Reuse }
+#[derive(Clone, Debug)]
 struct Lookup<T>(LookupKind, T);
 
 impl Lookup<MovePathIndex> {
-    fn idx(&self) -> usize { (self.1).idx() }
+    fn index(&self) -> usize { (self.1).index() }
 }
 
 impl<'tcx> MovePathLookup<'tcx> {
-    fn new() -> Self {
+    fn new(mir: &Mir) -> Self {
         MovePathLookup {
-            vars: vec![],
-            temps: vec![],
-            args: vec![],
+            vars: IndexVec::from_elem(None, &mir.var_decls),
+            temps: IndexVec::from_elem(None, &mir.temp_decls),
+            args: IndexVec::from_elem(None, &mir.arg_decls),
             statics: None,
             return_ptr: None,
             projections: vec![],
@@ -293,15 +309,14 @@ impl<'tcx> MovePathLookup<'tcx> {
 
     fn next_index(next: &mut MovePathIndex) -> MovePathIndex {
         let i = *next;
-        *next = MovePathIndex::new(i.idx() + 1);
+        *next = MovePathIndex::new(i.index() + 1);
         i
     }
 
-    fn lookup_or_generate(vec: &mut Vec<Option<MovePathIndex>>,
-                          idx: u32,
-                          next_index: &mut MovePathIndex) -> Lookup<MovePathIndex> {
-        let idx = idx as usize;
-        vec.fill_to_with(idx, None);
+    fn lookup_or_generate<I: Idx>(vec: &mut IndexVec<I, Option<MovePathIndex>>,
+                                  idx: I,
+                                  next_index: &mut MovePathIndex)
+                                  -> Lookup<MovePathIndex> {
         let entry = &mut vec[idx];
         match *entry {
             None => {
@@ -315,19 +330,19 @@ impl<'tcx> MovePathLookup<'tcx> {
         }
     }
 
-    fn lookup_var(&mut self, var_idx: u32) -> Lookup<MovePathIndex> {
+    fn lookup_var(&mut self, var_idx: Var) -> Lookup<MovePathIndex> {
         Self::lookup_or_generate(&mut self.vars,
                                  var_idx,
                                  &mut self.next_index)
     }
 
-    fn lookup_temp(&mut self, temp_idx: u32) -> Lookup<MovePathIndex> {
+    fn lookup_temp(&mut self, temp_idx: Temp) -> Lookup<MovePathIndex> {
         Self::lookup_or_generate(&mut self.temps,
                                  temp_idx,
                                  &mut self.next_index)
     }
 
-    fn lookup_arg(&mut self, arg_idx: u32) -> Lookup<MovePathIndex> {
+    fn lookup_arg(&mut self, arg_idx: Arg) -> Lookup<MovePathIndex> {
         Self::lookup_or_generate(&mut self.args,
                                  arg_idx,
                                  &mut self.next_index)
@@ -364,8 +379,8 @@ impl<'tcx> MovePathLookup<'tcx> {
                    base: MovePathIndex) -> Lookup<MovePathIndex> {
         let MovePathLookup { ref mut projections,
                              ref mut next_index, .. } = *self;
-        projections.fill_to(base.idx());
-        match projections[base.idx()].entry(proj.elem.lift()) {
+        projections.fill_to(base.index());
+        match projections[base.index()].entry(proj.elem.lift()) {
             Entry::Occupied(ent) => {
                 Lookup(LookupKind::Reuse, *ent.get())
             }
@@ -384,14 +399,14 @@ impl<'tcx> MovePathLookup<'tcx> {
     // unknown l-value; it will simply panic.
     pub fn find(&self, lval: &Lvalue<'tcx>) -> MovePathIndex {
         match *lval {
-            Lvalue::Var(var_idx) => self.vars[var_idx as usize].unwrap(),
-            Lvalue::Temp(temp_idx) => self.temps[temp_idx as usize].unwrap(),
-            Lvalue::Arg(arg_idx) => self.args[arg_idx as usize].unwrap(),
+            Lvalue::Var(var) => self.vars[var].unwrap(),
+            Lvalue::Temp(temp) => self.temps[temp].unwrap(),
+            Lvalue::Arg(arg) => self.args[arg].unwrap(),
             Lvalue::Static(ref _def_id) => self.statics.unwrap(),
             Lvalue::ReturnPointer => self.return_ptr.unwrap(),
             Lvalue::Projection(ref proj) => {
                 let base_index = self.find(&proj.base);
-                self.projections[base_index.idx()][&proj.elem.lift()]
+                self.projections[base_index.index()][&proj.elem.lift()]
             }
         }
     }
@@ -419,12 +434,19 @@ impl<'a, 'tcx> MovePathDataBuilder<'a, 'tcx> {
         self.rev_lookup.lookup_proj(proj, base_index)
     }
 
+    fn create_move_path(&mut self, lval: &Lvalue<'tcx>) {
+        // Create MovePath for `lval`, discarding returned index.
+        self.move_path_for(lval);
+    }
+
     fn move_path_for(&mut self, lval: &Lvalue<'tcx>) -> MovePathIndex {
+        debug!("move_path_for({:?})", lval);
+
         let lookup: Lookup<MovePathIndex> = self.lookup(lval);
 
         // `lookup` is either the previously assigned index or a
         // newly-allocated one.
-        debug_assert!(lookup.idx() <= self.pre_move_paths.len());
+        debug_assert!(lookup.index() <= self.pre_move_paths.len());
 
         if let Lookup(LookupKind::Generate, mpi) = lookup {
             let parent;
@@ -455,7 +477,7 @@ impl<'a, 'tcx> MovePathDataBuilder<'a, 'tcx> {
                     let idx = self.move_path_for(&proj.base);
                     parent = Some(idx);
 
-                    let parent_move_path = &mut self.pre_move_paths[idx.idx()];
+                    let parent_move_path = &mut self.pre_move_paths[idx.index()];
 
                     // At last: Swap in the new first_child.
                     sibling = parent_move_path.first_child.get();
@@ -491,15 +513,15 @@ impl<'a, 'tcx> MoveData<'tcx> {
 #[derive(Debug)]
 enum StmtKind {
     Use, Repeat, Cast, BinaryOp, UnaryOp, Box,
-    Aggregate, Drop, CallFn, CallArg, Return,
+    Aggregate, Drop, CallFn, CallArg, Return, If,
 }
 
 fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveData<'tcx> {
     use self::StmtKind as SK;
 
-    let bbs = mir.all_basic_blocks();
-    let mut moves = Vec::with_capacity(bbs.len());
-    let mut loc_map: Vec<_> = iter::repeat(Vec::new()).take(bbs.len()).collect();
+    let bb_count = mir.basic_blocks().len();
+    let mut moves = vec![];
+    let mut loc_map: Vec<_> = iter::repeat(Vec::new()).take(bb_count).collect();
     let mut path_map = Vec::new();
 
     // this is mutable only because we will move it to and fro' the
@@ -508,12 +530,32 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
     let mut builder = MovePathDataBuilder {
         mir: mir,
         pre_move_paths: Vec::new(),
-        rev_lookup: MovePathLookup::new(),
+        rev_lookup: MovePathLookup::new(mir),
     };
 
-    for bb in bbs {
+    // Before we analyze the program text, we create the MovePath's
+    // for all of the vars, args, and temps. (This enforces a basic
+    // property that even if the MIR body doesn't contain any
+    // references to a var/arg/temp, it will still be a valid
+    // operation to lookup the MovePath associated with it.)
+    assert!(mir.var_decls.len() <= ::std::u32::MAX as usize);
+    assert!(mir.arg_decls.len() <= ::std::u32::MAX as usize);
+    assert!(mir.temp_decls.len() <= ::std::u32::MAX as usize);
+    for var in mir.var_decls.indices() {
+        let path_idx = builder.move_path_for(&Lvalue::Var(var));
+        path_map.fill_to(path_idx.index());
+    }
+    for arg in mir.arg_decls.indices() {
+        let path_idx = builder.move_path_for(&Lvalue::Arg(arg));
+        path_map.fill_to(path_idx.index());
+    }
+    for temp in mir.temp_decls.indices() {
+        let path_idx = builder.move_path_for(&Lvalue::Temp(temp));
+        path_map.fill_to(path_idx.index());
+    }
+
+    for (bb, bb_data) in mir.basic_blocks().iter_enumerated() {
         let loc_map_bb = &mut loc_map[bb.index()];
-        let bb_data = mir.basic_block_data(bb);
 
         debug_assert!(loc_map_bb.len() == 0);
         let len = bb_data.statements.len();
@@ -521,7 +563,7 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
         debug_assert!(loc_map_bb.len() == len + 1);
 
         let mut bb_ctxt = BlockContext {
-            tcx: tcx,
+            _tcx: tcx,
             moves: &mut moves,
             builder: builder,
             path_map: &mut path_map,
@@ -532,8 +574,12 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
             let source = Location { block: bb, index: i };
             match stmt.kind {
                 StatementKind::Assign(ref lval, ref rval) => {
-                    // ensure MovePath created for `lval`.
-                    bb_ctxt.builder.move_path_for(lval);
+                    bb_ctxt.builder.create_move_path(lval);
+
+                    // Ensure that the path_map contains entries even
+                    // if the lvalue is assigned and never read.
+                    let assigned_path = bb_ctxt.builder.move_path_for(lval);
+                    bb_ctxt.path_map.fill_to(assigned_path.index());
 
                     match *rval {
                         Rvalue::Use(ref operand) => {
@@ -543,7 +589,8 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
                             bb_ctxt.on_operand(SK::Repeat, operand, source),
                         Rvalue::Cast(ref _kind, ref operand, ref _ty) =>
                             bb_ctxt.on_operand(SK::Cast, operand, source),
-                        Rvalue::BinaryOp(ref _binop, ref operand1, ref operand2) => {
+                        Rvalue::BinaryOp(ref _binop, ref operand1, ref operand2) |
+                        Rvalue::CheckedBinaryOp(ref _binop, ref operand1, ref operand2) => {
                             bb_ctxt.on_operand(SK::BinaryOp, operand1, source);
                             bb_ctxt.on_operand(SK::BinaryOp, operand2, source);
                         }
@@ -567,29 +614,49 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
                         Rvalue::Ref(..) |
                         Rvalue::Len(..) |
                         Rvalue::InlineAsm { .. } => {}
-
-                        Rvalue::Slice {..} => {
-                            bug!("cannot move out of slice");
-                        }
                     }
                 }
             }
         }
 
+        debug!("gather_moves({:?})", bb_data.terminator());
         match bb_data.terminator().kind {
-            TerminatorKind::Goto { target: _ } | TerminatorKind::Resume => { }
+            TerminatorKind::Goto { target: _ } |
+            TerminatorKind::Resume |
+            TerminatorKind::Unreachable => { }
 
             TerminatorKind::Return => {
                 let source = Location { block: bb,
                                         index: bb_data.statements.len() };
-                let lval = &Lvalue::ReturnPointer.deref();
-                bb_ctxt.on_move_out_lval(SK::Return, lval, source);
+                if let FnOutput::FnConverging(_) = bb_ctxt.builder.mir.return_ty {
+                    debug!("gather_moves Return on_move_out_lval return {:?}", source);
+                    bb_ctxt.on_move_out_lval(SK::Return, &Lvalue::ReturnPointer, source);
+                } else {
+                    debug!("gather_moves Return on_move_out_lval \
+                            assuming unreachable return {:?}", source);
+                }
             }
 
             TerminatorKind::If { ref cond, targets: _ } => {
+                let source = Location { block: bb,
+                                        index: bb_data.statements.len() };
+                bb_ctxt.on_operand(SK::If, cond, source);
+            }
+
+            TerminatorKind::Assert {
+                ref cond, expected: _,
+                ref msg, target: _, cleanup: _
+            } => {
                 // The `cond` is always of (copyable) type `bool`,
                 // so there will never be anything to move.
                 let _ = cond;
+                match *msg {
+                    AssertMessage:: BoundsCheck { ref len, ref index } => {
+                        // Same for the usize length and index in bounds-checking.
+                        let _ = (len, index);
+                    }
+                    AssertMessage::Math(_) => {}
+                }
             }
 
             TerminatorKind::SwitchInt { switch_ty: _, values: _, targets: _, ref discr } |
@@ -601,23 +668,36 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
                 let _ = discr;
             }
 
-            TerminatorKind::Drop { value: ref lval, target: _, unwind: _ } => {
+            TerminatorKind::Drop { ref location, target: _, unwind: _ } => {
                 let source = Location { block: bb,
                                         index: bb_data.statements.len() };
-                bb_ctxt.on_move_out_lval(SK::Drop, lval, source);
+                bb_ctxt.on_move_out_lval(SK::Drop, location, source);
             }
+            TerminatorKind::DropAndReplace { ref location, ref value, .. } => {
+                let assigned_path = bb_ctxt.builder.move_path_for(location);
+                bb_ctxt.path_map.fill_to(assigned_path.index());
 
+                let source = Location { block: bb,
+                                        index: bb_data.statements.len() };
+                bb_ctxt.on_operand(SK::Use, value, source);
+            }
             TerminatorKind::Call { ref func, ref args, ref destination, cleanup: _ } => {
                 let source = Location { block: bb,
                                         index: bb_data.statements.len() };
                 bb_ctxt.on_operand(SK::CallFn, func, source);
                 for arg in args {
+                    debug!("gather_moves Call on_operand {:?} {:?}", arg, source);
                     bb_ctxt.on_operand(SK::CallArg, arg, source);
                 }
                 if let Some((ref destination, _bb)) = *destination {
-                    // Create MovePath for `destination`, then
-                    // discard returned index.
-                    bb_ctxt.builder.move_path_for(destination);
+                    debug!("gather_moves Call create_move_path {:?} {:?}", destination, source);
+
+                    // Ensure that the path_map contains entries even
+                    // if the lvalue is assigned and never read.
+                    let assigned_path = bb_ctxt.builder.move_path_for(destination);
+                    bb_ctxt.path_map.fill_to(assigned_path.index());
+
+                    bb_ctxt.builder.create_move_path(destination);
                 }
             }
         }
@@ -635,7 +715,6 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
     //
     // well you know, lets actually try just asserting that the path map *is* complete.
     assert_eq!(path_map.len(), builder.pre_move_paths.len());
-    path_map.fill_to(builder.pre_move_paths.len() - 1);
 
     let pre_move_paths = builder.pre_move_paths;
     let move_paths: Vec<_> = pre_move_paths.into_iter()
@@ -646,8 +725,8 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
         let mut seen: Vec<_> = move_paths.iter().map(|_| false).collect();
         for (j, &MoveOut { ref path, ref source }) in moves.iter().enumerate() {
             debug!("MovePathData moves[{}]: MoveOut {{ path: {:?} = {:?}, source: {:?} }}",
-                   j, path, move_paths[path.idx()], source);
-            seen[path.idx()] = true;
+                   j, path, move_paths[path.index()], source);
+            seen[path.index()] = true;
         }
         for (j, path) in move_paths.iter().enumerate() {
             if !seen[j] {
@@ -667,7 +746,7 @@ fn gather_moves<'a, 'tcx>(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> MoveD
 }
 
 struct BlockContext<'b, 'a: 'b, 'tcx: 'a> {
-    tcx: TyCtxt<'b, 'tcx, 'tcx>,
+    _tcx: TyCtxt<'b, 'tcx, 'tcx>,
     moves: &'b mut Vec<MoveOut>,
     builder: MovePathDataBuilder<'a, 'tcx>,
     path_map: &'b mut Vec<Vec<MoveOutIndex>>,
@@ -679,31 +758,12 @@ impl<'b, 'a: 'b, 'tcx: 'a> BlockContext<'b, 'a, 'tcx> {
                         stmt_kind: StmtKind,
                         lval: &Lvalue<'tcx>,
                         source: Location) {
-        let tcx = self.tcx;
-        let lval_ty = self.builder.mir.lvalue_ty(tcx, lval);
-
-        // FIXME: does lvalue_ty ever return TyError, or is it
-        // guaranteed to always return non-Infer/non-Error values?
-
-        // This code is just trying to avoid creating a MoveOut
-        // entry for values that do not need move semantics.
-        //
-        // type_contents is imprecise (may claim needs drop for
-        // types that in fact have no destructor). But that is
-        // still usable for our purposes here.
-        let consumed = lval_ty.to_ty(tcx).type_contents(tcx).needs_drop(tcx);
-
-        if !consumed {
-            debug!("ctxt: {:?} no consume of lval: {:?} of type {:?}",
-                   stmt_kind, lval, lval_ty);
-            return;
-        }
         let i = source.index;
         let index = MoveOutIndex::new(self.moves.len());
 
         let path = self.builder.move_path_for(lval);
         self.moves.push(MoveOut { path: path, source: source.clone() });
-        self.path_map.fill_to(path.idx());
+        self.path_map.fill_to(path.index());
 
         debug!("ctxt: {:?} add consume of lval: {:?} \
                 at index: {:?} \
@@ -711,12 +771,12 @@ impl<'b, 'a: 'b, 'tcx: 'a> BlockContext<'b, 'a, 'tcx> {
                 to loc_map for loc: {:?}",
                stmt_kind, lval, index, path, source);
 
-        debug_assert!(path.idx() < self.path_map.len());
+        debug_assert!(path.index() < self.path_map.len());
         // this is actually a questionable assert; at the very
         // least, incorrect input code can probably cause it to
         // fire.
-        assert!(self.path_map[path.idx()].iter().find(|idx| **idx == index).is_none());
-        self.path_map[path.idx()].push(index);
+        assert!(self.path_map[path.index()].iter().find(|idx| **idx == index).is_none());
+        self.path_map[path.index()].push(index);
 
         debug_assert!(i < self.loc_map_bb.len());
         debug_assert!(self.loc_map_bb[i].iter().find(|idx| **idx == index).is_none());
@@ -730,15 +790,5 @@ impl<'b, 'a: 'b, 'tcx: 'a> BlockContext<'b, 'a, 'tcx> {
                 self.on_move_out_lval(stmt_kind, lval, source);
             }
         }
-    }
-}
-
-impl<'tcx> BitDenotation for MoveData<'tcx>{
-    type Bit = MoveOut;
-    fn bits_per_block(&self) -> usize {
-        self.moves.len()
-    }
-    fn interpret(&self, idx: usize) -> &Self::Bit {
-        &self.moves[idx]
     }
 }

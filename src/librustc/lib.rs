@@ -28,8 +28,8 @@
 #![feature(box_syntax)]
 #![feature(collections)]
 #![feature(const_fn)]
+#![feature(core_intrinsics)]
 #![feature(enumset)]
-#![feature(iter_arith)]
 #![feature(libc)]
 #![feature(nonzero)]
 #![feature(quote)]
@@ -54,8 +54,10 @@ extern crate rustc_data_structures;
 extern crate serialize;
 extern crate collections;
 extern crate rustc_const_math;
+extern crate rustc_errors as errors;
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
+#[macro_use] extern crate syntax_pos;
 #[macro_use] #[no_link] extern crate rustc_bitflags;
 
 extern crate serialize as rustc_serialize; // used by deriving
@@ -102,10 +104,12 @@ pub mod middle {
 }
 
 pub mod mir {
+    mod cache;
     pub mod repr;
     pub mod tcx;
     pub mod visit;
     pub mod transform;
+    pub mod traversal;
     pub mod mir_map;
 }
 

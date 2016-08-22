@@ -44,9 +44,9 @@ use std::ptr;
 use std::rc::Rc;
 use syntax;
 use syntax::util::interner::Interner;
-use syntax::codemap::Span;
-use syntax::{ast, codemap};
+use syntax::ast;
 use syntax::parse::token;
+use syntax_pos::{self, Span};
 
 
 // From DWARF 5.
@@ -563,7 +563,7 @@ fn vec_slice_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     assert!(member_descriptions.len() == member_llvm_types.len());
 
     let loc = span_start(cx, span);
-    let file_metadata = file_metadata(cx, &loc.file.name);
+    let file_metadata = file_metadata(cx, &loc.file.name, &loc.file.abs_path);
 
     let metadata = composite_type_metadata(cx,
                                            slice_llvm_type,
@@ -660,7 +660,7 @@ fn trait_pointer_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                             &[],
                             containing_scope,
                             NO_FILE_METADATA,
-                            codemap::DUMMY_SP)
+                            syntax_pos::DUMMY_SP)
 }
 
 pub fn type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
@@ -853,17 +853,19 @@ pub fn type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     metadata
 }
 
-pub fn file_metadata(cx: &CrateContext, full_path: &str) -> DIFile {
+pub fn file_metadata(cx: &CrateContext, path: &str, full_path: &Option<String>) -> DIFile {
     // FIXME (#9639): This needs to handle non-utf8 paths
     let work_dir = cx.sess().working_dir.to_str().unwrap();
     let file_name =
-        if full_path.starts_with(work_dir) {
-            &full_path[work_dir.len() + 1..full_path.len()]
-        } else {
-            full_path
-        };
+        full_path.as_ref().map(|p| p.as_str()).unwrap_or_else(|| {
+            if path.starts_with(work_dir) {
+                &path[work_dir.len() + 1..path.len()]
+            } else {
+                path
+            }
+        });
 
-    file_metadata_(cx, full_path, file_name, &work_dir)
+    file_metadata_(cx, path, file_name, &work_dir)
 }
 
 pub fn unknown_file_metadata(cx: &CrateContext) -> DIFile {
@@ -874,9 +876,8 @@ pub fn unknown_file_metadata(cx: &CrateContext) -> DIFile {
 }
 
 fn file_metadata_(cx: &CrateContext, key: &str, file_name: &str, work_dir: &str) -> DIFile {
-    match debug_context(cx).created_files.borrow().get(key) {
-        Some(file_metadata) => return *file_metadata,
-        None => ()
+    if let Some(file_metadata) = debug_context(cx).created_files.borrow().get(key) {
+        return *file_metadata;
     }
 
     debug!("file_metadata: file_name: {}, work_dir: {}", file_name, work_dir);
@@ -1384,7 +1385,7 @@ impl<'tcx> EnumMemberDescriptionFactory<'tcx> {
                                             &[sole_struct_member_description],
                                             self.containing_scope,
                                             self.file_metadata,
-                                            codemap::DUMMY_SP);
+                                            syntax_pos::DUMMY_SP);
 
                 // Encode the information about the null variant in the union
                 // member's name.
@@ -1614,7 +1615,7 @@ fn prepare_enum_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 let discriminant_base_type_metadata =
                     type_metadata(cx,
                                   adt::ty_of_inttype(cx.tcx(), inttype),
-                                  codemap::DUMMY_SP);
+                                  syntax_pos::DUMMY_SP);
                 let discriminant_name = get_enum_discriminant_name(cx, enum_def_id);
 
                 let name = CString::new(discriminant_name.as_bytes()).unwrap();
@@ -1848,9 +1849,9 @@ pub fn create_global_var_metadata(cx: &CrateContext,
     let node_def_id = cx.tcx().map.local_def_id(node_id);
     let (var_scope, span) = get_namespace_and_span_for_item(cx, node_def_id);
 
-    let (file_metadata, line_number) = if span != codemap::DUMMY_SP {
+    let (file_metadata, line_number) = if span != syntax_pos::DUMMY_SP {
         let loc = span_start(cx, span);
-        (file_metadata(cx, &loc.file.name), loc.line as c_uint)
+        (file_metadata(cx, &loc.file.name, &loc.file.abs_path), loc.line as c_uint)
     } else {
         (NO_FILE_METADATA, UNKNOWN_LINE_NUMBER)
     };
@@ -1889,11 +1890,8 @@ pub fn create_local_var_metadata(bcx: Block, local: &hir::Local) {
         return;
     }
 
-    let cx = bcx.ccx();
-    let def_map = &cx.tcx().def_map;
     let locals = bcx.fcx.lllocals.borrow();
-
-    pat_util::pat_bindings(def_map, &local.pat, |_, node_id, span, var_name| {
+    pat_util::pat_bindings(&local.pat, |_, node_id, span, var_name| {
         let datum = match locals.get(&node_id) {
             Some(datum) => datum,
             None => {
@@ -1945,7 +1943,7 @@ pub fn create_captured_var_metadata<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         }
         Some(hir_map::NodeLocal(pat)) => {
             match pat.node {
-                PatKind::Ident(_, ref path1, _) => {
+                PatKind::Binding(_, ref path1, _) => {
                     path1.node
                 }
                 _ => {
@@ -2062,7 +2060,6 @@ pub fn create_argument_metadata(bcx: Block, arg: &hir::Arg) {
         return;
     }
 
-    let def_map = &bcx.tcx().def_map;
     let scope_metadata = bcx
                          .fcx
                          .debug_context
@@ -2070,7 +2067,7 @@ pub fn create_argument_metadata(bcx: Block, arg: &hir::Arg) {
                          .fn_metadata;
     let locals = bcx.fcx.lllocals.borrow();
 
-    pat_util::pat_bindings(def_map, &arg.pat, |_, node_id, span, var_name| {
+    pat_util::pat_bindings(&arg.pat, |_, node_id, span, var_name| {
         let datum = match locals.get(&node_id) {
             Some(v) => v,
             None => {

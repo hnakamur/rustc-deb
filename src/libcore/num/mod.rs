@@ -66,6 +66,34 @@ impl<T: fmt::Display> fmt::Display for Wrapping<T> {
     }
 }
 
+#[stable(feature = "wrapping_fmt", since = "1.11.0")]
+impl<T: fmt::Binary> fmt::Binary for Wrapping<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[stable(feature = "wrapping_fmt", since = "1.11.0")]
+impl<T: fmt::Octal> fmt::Octal for Wrapping<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[stable(feature = "wrapping_fmt", since = "1.11.0")]
+impl<T: fmt::LowerHex> fmt::LowerHex for Wrapping<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[stable(feature = "wrapping_fmt", since = "1.11.0")]
+impl<T: fmt::UpperHex> fmt::UpperHex for Wrapping<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 mod wrapping;
 
 // All these modules are technically private and only exposed for libcoretest:
@@ -81,6 +109,8 @@ pub mod diy_float;
 #[unstable(feature = "zero_one",
            reason = "unsure of placement, wants to use associated constants",
            issue = "27739")]
+#[rustc_deprecated(since = "1.11.0", reason = "no longer used for \
+                                               Iterator::sum")]
 pub trait Zero: Sized {
     /// The "zero" (usually, additive identity) for this type.
     fn zero() -> Self;
@@ -93,6 +123,8 @@ pub trait Zero: Sized {
 #[unstable(feature = "zero_one",
            reason = "unsure of placement, wants to use associated constants",
            issue = "27739")]
+#[rustc_deprecated(since = "1.11.0", reason = "no longer used for \
+                                               Iterator::product")]
 pub trait One: Sized {
     /// The "one" (usually, multiplicative identity) for this type.
     fn one() -> Self;
@@ -103,6 +135,7 @@ macro_rules! zero_one_impl {
         #[unstable(feature = "zero_one",
                    reason = "unsure of placement, wants to use associated constants",
                    issue = "27739")]
+        #[allow(deprecated)]
         impl Zero for $t {
             #[inline]
             fn zero() -> Self { 0 }
@@ -110,6 +143,7 @@ macro_rules! zero_one_impl {
         #[unstable(feature = "zero_one",
                    reason = "unsure of placement, wants to use associated constants",
                    issue = "27739")]
+        #[allow(deprecated)]
         impl One for $t {
             #[inline]
             fn one() -> Self { 1 }
@@ -123,6 +157,7 @@ macro_rules! zero_one_impl_float {
         #[unstable(feature = "zero_one",
                    reason = "unsure of placement, wants to use associated constants",
                    issue = "27739")]
+        #[allow(deprecated)]
         impl Zero for $t {
             #[inline]
             fn zero() -> Self { 0.0 }
@@ -130,6 +165,7 @@ macro_rules! zero_one_impl_float {
         #[unstable(feature = "zero_one",
                    reason = "unsure of placement, wants to use associated constants",
                    issue = "27739")]
+        #[allow(deprecated)]
         impl One for $t {
             #[inline]
             fn one() -> Self { 1.0 }
@@ -576,7 +612,7 @@ macro_rules! int_impl {
         pub fn saturating_add(self, other: Self) -> Self {
             match self.checked_add(other) {
                 Some(x) => x,
-                None if other >= Self::zero() => Self::max_value(),
+                None if other >= 0 => Self::max_value(),
                 None => Self::min_value(),
             }
         }
@@ -597,7 +633,7 @@ macro_rules! int_impl {
         pub fn saturating_sub(self, other: Self) -> Self {
             match self.checked_sub(other) {
                 Some(x) => x,
-                None if other >= Self::zero() => Self::min_value(),
+                None if other >= 0 => Self::min_value(),
                 None => Self::max_value(),
             }
         }
@@ -1033,10 +1069,10 @@ macro_rules! int_impl {
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
-        #[rustc_no_mir] // FIXME #29769 MIR overflow checking is TBD.
+        #[rustc_inherit_overflow_checks]
         pub fn pow(self, mut exp: u32) -> Self {
             let mut base = self;
-            let mut acc = Self::one();
+            let mut acc = 1;
 
             while exp > 1 {
                 if (exp & 1) == 1 {
@@ -1075,7 +1111,7 @@ macro_rules! int_impl {
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
-        #[rustc_no_mir] // FIXME #29769 MIR overflow checking is TBD.
+        #[rustc_inherit_overflow_checks]
         pub fn abs(self) -> Self {
             if self.is_negative() {
                 // Note that the #[inline] above means that the overflow
@@ -1171,6 +1207,15 @@ impl i32 {
 #[lang = "i64"]
 impl i64 {
     int_impl! { i64, u64, 64,
+        intrinsics::add_with_overflow,
+        intrinsics::sub_with_overflow,
+        intrinsics::mul_with_overflow }
+}
+
+#[cfg(target_pointer_width = "16")]
+#[lang = "isize"]
+impl isize {
+    int_impl! { i16, u16, 16,
         intrinsics::add_with_overflow,
         intrinsics::sub_with_overflow,
         intrinsics::mul_with_overflow }
@@ -2052,10 +2097,10 @@ macro_rules! uint_impl {
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
-        #[rustc_no_mir] // FIXME #29769 MIR overflow checking is TBD.
+        #[rustc_inherit_overflow_checks]
         pub fn pow(self, mut exp: u32) -> Self {
             let mut base = self;
-            let mut acc = Self::one();
+            let mut acc = 1;
 
             let mut prev_base = self;
             let mut base_oflo = false;
@@ -2092,8 +2137,7 @@ macro_rules! uint_impl {
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
         pub fn is_power_of_two(self) -> bool {
-            (self.wrapping_sub(Self::one())) & self == Self::zero() &&
-                !(self == Self::zero())
+            (self.wrapping_sub(1)) & self == 0 && !(self == 0)
         }
 
         /// Returns the smallest power of two greater than or equal to `self`.
@@ -2111,7 +2155,7 @@ macro_rules! uint_impl {
         #[inline]
         pub fn next_power_of_two(self) -> Self {
             let bits = size_of::<Self>() * 8;
-            let one: Self = Self::one();
+            let one: Self = 1;
             one << ((bits - self.wrapping_sub(one).leading_zeros() as usize) % bits)
         }
 
@@ -2188,6 +2232,18 @@ impl u64 {
         intrinsics::mul_with_overflow }
 }
 
+#[cfg(target_pointer_width = "16")]
+#[lang = "usize"]
+impl usize {
+    uint_impl! { u16, 16,
+        intrinsics::ctpop,
+        intrinsics::ctlz,
+        intrinsics::cttz,
+        intrinsics::bswap,
+        intrinsics::add_with_overflow,
+        intrinsics::sub_with_overflow,
+        intrinsics::mul_with_overflow }
+}
 #[cfg(target_pointer_width = "32")]
 #[lang = "usize"]
 impl usize {
@@ -2254,26 +2310,44 @@ pub trait Float: Sized {
     /// Returns the NaN value.
     #[unstable(feature = "float_extras", reason = "needs removal",
                issue = "27752")]
+    #[rustc_deprecated(since = "1.11.0",
+                       reason = "never really came to fruition and easily \
+                                 implementable outside the standard library")]
     fn nan() -> Self;
     /// Returns the infinite value.
     #[unstable(feature = "float_extras", reason = "needs removal",
                issue = "27752")]
+    #[rustc_deprecated(since = "1.11.0",
+                       reason = "never really came to fruition and easily \
+                                 implementable outside the standard library")]
     fn infinity() -> Self;
     /// Returns the negative infinite value.
     #[unstable(feature = "float_extras", reason = "needs removal",
                issue = "27752")]
+    #[rustc_deprecated(since = "1.11.0",
+                       reason = "never really came to fruition and easily \
+                                 implementable outside the standard library")]
     fn neg_infinity() -> Self;
     /// Returns -0.0.
     #[unstable(feature = "float_extras", reason = "needs removal",
                issue = "27752")]
+    #[rustc_deprecated(since = "1.11.0",
+                       reason = "never really came to fruition and easily \
+                                 implementable outside the standard library")]
     fn neg_zero() -> Self;
     /// Returns 0.0.
     #[unstable(feature = "float_extras", reason = "needs removal",
                issue = "27752")]
+    #[rustc_deprecated(since = "1.11.0",
+                       reason = "never really came to fruition and easily \
+                                 implementable outside the standard library")]
     fn zero() -> Self;
     /// Returns 1.0.
     #[unstable(feature = "float_extras", reason = "needs removal",
                issue = "27752")]
+    #[rustc_deprecated(since = "1.11.0",
+                       reason = "never really came to fruition and easily \
+                                 implementable outside the standard library")]
     fn one() -> Self;
 
     /// Returns true if this value is NaN and false otherwise.
@@ -2296,6 +2370,9 @@ pub trait Float: Sized {
     /// Returns the mantissa, exponent and sign as integers, respectively.
     #[unstable(feature = "float_extras", reason = "signature is undecided",
                issue = "27752")]
+    #[rustc_deprecated(since = "1.11.0",
+                       reason = "never really came to fruition and easily \
+                                 implementable outside the standard library")]
     fn integer_decode(self) -> (u64, i16, i8);
 
     /// Computes the absolute value of `self`. Returns `Float::nan()` if the
@@ -2330,12 +2407,10 @@ pub trait Float: Sized {
     fn powi(self, n: i32) -> Self;
 
     /// Convert radians to degrees.
-    #[unstable(feature = "float_extras", reason = "desirability is unclear",
-               issue = "27752")]
+    #[stable(feature = "deg_rad_conversions", since="1.7.0")]
     fn to_degrees(self) -> Self;
     /// Convert degrees to radians.
-    #[unstable(feature = "float_extras", reason = "desirability is unclear",
-               issue = "27752")]
+    #[stable(feature = "deg_rad_conversions", since="1.7.0")]
     fn to_radians(self) -> Self;
 }
 

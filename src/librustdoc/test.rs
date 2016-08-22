@@ -28,14 +28,15 @@ use rustc::hir::map as hir_map;
 use rustc::session::{self, config};
 use rustc::session::config::{get_unstable_features_setting, OutputType};
 use rustc::session::search_paths::{SearchPaths, PathKind};
-use rustc::hir::lowering::{lower_crate, DummyResolver};
 use rustc_back::dynamic_lib::DynamicLibrary;
 use rustc_back::tempdir::TempDir;
 use rustc_driver::{driver, Compilation};
+use rustc_driver::driver::phase_2_configure_and_expand;
 use rustc_metadata::cstore::CStore;
+use rustc_resolve::MakeGlobMap;
 use syntax::codemap::CodeMap;
-use syntax::errors;
-use syntax::errors::emitter::ColorConfig;
+use errors;
+use errors::emitter::ColorConfig;
 use syntax::parse::token;
 
 use core;
@@ -93,21 +94,16 @@ pub fn run(input: &str,
     let mut cfg = config::build_configuration(&sess);
     cfg.extend(config::parse_cfgspecs(cfgs.clone()));
     let krate = panictry!(driver::phase_1_parse_input(&sess, cfg, &input));
-    let krate = driver::phase_2_configure_and_expand(&sess, &cstore, krate,
-                                                     "rustdoc-test", None)
-        .expect("phase_2_configure_and_expand aborted in rustdoc!");
-    let krate = driver::assign_node_ids(&sess, krate);
+    let driver::ExpansionResult { defs, mut hir_forest, .. } = {
+        phase_2_configure_and_expand(
+            &sess, &cstore, krate, "rustdoc-test", None, MakeGlobMap::No, |_| Ok(())
+        ).expect("phase_2_configure_and_expand aborted in rustdoc!")
+    };
+
     let dep_graph = DepGraph::new(false);
-    let defs = hir_map::collect_definitions(&krate);
-
-    let mut dummy_resolver = DummyResolver;
-    let krate = lower_crate(&sess, &krate, &sess, &mut dummy_resolver);
-
-    let opts = scrape_test_config(&krate);
-
+    let opts = scrape_test_config(hir_forest.krate());
     let _ignore = dep_graph.in_ignore();
-    let mut forest = hir_map::Forest::new(krate, &dep_graph);
-    let map = hir_map::map_crate(&mut forest, defs);
+    let map = hir_map::map_crate(&mut hir_forest, defs);
 
     let ctx = core::DocContext {
         map: &map,
@@ -180,7 +176,7 @@ fn scrape_test_config(krate: &::rustc::hir::Crate) -> TestOptions {
 fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
            externs: core::Externs,
            should_panic: bool, no_run: bool, as_test_harness: bool,
-           compile_fail: bool, opts: &TestOptions) {
+           compile_fail: bool, mut error_codes: Vec<String>, opts: &TestOptions) {
     // the test harness wants its own `main` & top level functions, so
     // never wrap the test in `fn main() { ... }`
     let test = maketest(test, Some(cratename), as_test_harness, opts);
@@ -233,10 +229,11 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
     let data = Arc::new(Mutex::new(Vec::new()));
     let codemap = Rc::new(CodeMap::new());
     let emitter = errors::emitter::EmitterWriter::new(box Sink(data.clone()),
-                                                      None,
-                                                      codemap.clone());
+                                                None,
+                                                codemap.clone(),
+                                                errors::snippet::FormatMode::EnvironmentSelected);
     let old = io::set_panic(box Sink(data.clone()));
-    let _bomb = Bomb(data, old.unwrap_or(box io::stdout()));
+    let _bomb = Bomb(data.clone(), old.unwrap_or(box io::stdout()));
 
     // Compile the code
     let diagnostic_handler = errors::Handler::with_emitter(true, false, box emitter);
@@ -271,15 +268,34 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
     match res {
         Ok(r) => {
             match r {
-                Err(count) if count > 0 && compile_fail == false => {
-                    sess.fatal("aborting due to previous error(s)")
+                Err(count) => {
+                    if count > 0 && compile_fail == false {
+                        sess.fatal("aborting due to previous error(s)")
+                    } else if count == 0 && compile_fail == true {
+                        panic!("test compiled while it wasn't supposed to")
+                    }
+                    if count > 0 && error_codes.len() > 0 {
+                        let out = String::from_utf8(data.lock().unwrap().to_vec()).unwrap();
+                        error_codes.retain(|err| !out.contains(err));
+                    }
                 }
                 Ok(()) if compile_fail => panic!("test compiled while it wasn't supposed to"),
                 _ => {}
             }
         }
-        Err(_) if compile_fail == false => panic!("couldn't compile the test"),
-        _ => {}
+        Err(_) => {
+            if compile_fail == false {
+                panic!("couldn't compile the test");
+            }
+            if error_codes.len() > 0 {
+                let out = String::from_utf8(data.lock().unwrap().to_vec()).unwrap();
+                error_codes.retain(|err| !out.contains(err));
+            }
+        }
+    }
+
+    if error_codes.len() > 0 {
+        panic!("Some expected error codes were not found: {:?}", error_codes);
     }
 
     if no_run { return }
@@ -411,7 +427,7 @@ impl Collector {
 
     pub fn add_test(&mut self, test: String,
                     should_panic: bool, no_run: bool, should_ignore: bool,
-                    as_test_harness: bool, compile_fail: bool) {
+                    as_test_harness: bool, compile_fail: bool, error_codes: Vec<String>) {
         let name = if self.use_headers {
             let s = self.current_header.as_ref().map(|s| &**s).unwrap_or("");
             format!("{}_{}", s, self.cnt)
@@ -442,6 +458,7 @@ impl Collector {
                         no_run,
                         as_test_harness,
                         compile_fail,
+                        error_codes,
                         &opts);
             })
         });

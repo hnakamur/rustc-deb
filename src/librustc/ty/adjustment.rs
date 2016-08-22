@@ -15,7 +15,7 @@ use ty::{self, Ty, TyCtxt, TypeAndMut, TypeFoldable};
 use ty::LvaluePreference::{NoPreference};
 
 use syntax::ast;
-use syntax::codemap::Span;
+use syntax_pos::Span;
 
 use hir;
 
@@ -235,8 +235,9 @@ impl<'a, 'gcx, 'tcx> ty::TyS<'tcx> {
             None => {
                 span_bug!(
                     expr_span,
-                    "the {}th autoderef failed: {}",
+                    "the {}th autoderef for {} failed: {}",
                     autoderef,
+                    expr_id,
                     adjusted_ty);
             }
         }

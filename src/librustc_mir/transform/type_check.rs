@@ -22,7 +22,9 @@ use rustc::mir::tcx::LvalueTy;
 use rustc::mir::transform::{MirPass, MirSource, Pass};
 use rustc::mir::visit::{self, Visitor};
 use std::fmt;
-use syntax::codemap::{Span, DUMMY_SP};
+use syntax_pos::{Span, DUMMY_SP};
+
+use rustc_data_structures::indexed_vec::Idx;
 
 macro_rules! span_mirbug {
     ($context:expr, $elem:expr, $($message:tt)*) => ({
@@ -118,10 +120,6 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
         self.cx.infcx.tcx
     }
 
-    fn infcx(&self) -> &'a InferCtxt<'a, 'gcx, 'tcx> {
-        self.cx.infcx
-    }
-
     fn sanitize_type(&mut self, parent: &fmt::Debug, ty: Ty<'tcx>) -> Ty<'tcx> {
         if ty.needs_infer() || ty.has_escaping_regions() || ty.references_error() {
             span_mirbug_and_err!(self, parent, "bad type {:?}", ty)
@@ -133,11 +131,9 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
     fn sanitize_lvalue(&mut self, lvalue: &Lvalue<'tcx>) -> LvalueTy<'tcx> {
         debug!("sanitize_lvalue: {:?}", lvalue);
         match *lvalue {
-            Lvalue::Var(index) => LvalueTy::Ty { ty: self.mir.var_decls[index as usize].ty },
-            Lvalue::Temp(index) =>
-                LvalueTy::Ty { ty: self.mir.temp_decls[index as usize].ty },
-            Lvalue::Arg(index) =>
-                LvalueTy::Ty { ty: self.mir.arg_decls[index as usize].ty },
+            Lvalue::Var(index) => LvalueTy::Ty { ty: self.mir.var_decls[index].ty },
+            Lvalue::Temp(index) => LvalueTy::Ty { ty: self.mir.temp_decls[index].ty },
+            Lvalue::Arg(index) => LvalueTy::Ty { ty: self.mir.arg_decls[index].ty },
             Lvalue::Static(def_id) =>
                 LvalueTy::Ty { ty: self.tcx().lookup_item_type(def_id).ty },
             Lvalue::ReturnPointer => {
@@ -205,6 +201,26 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
                         span_mirbug_and_err!(
                             self, lvalue, "index of non-array {:?}", base_ty)
                     })
+                }
+            }
+            ProjectionElem::Subslice { from, to } => {
+                LvalueTy::Ty {
+                    ty: match base_ty.sty {
+                        ty::TyArray(inner, size) => {
+                            let min_size = (from as usize) + (to as usize);
+                            if let Some(rest_size) = size.checked_sub(min_size) {
+                                tcx.mk_array(inner, rest_size)
+                            } else {
+                                span_mirbug_and_err!(
+                                    self, lvalue, "taking too-small slice of {:?}", base_ty)
+                            }
+                        }
+                        ty::TySlice(..) => base_ty,
+                        _ => {
+                            span_mirbug_and_err!(
+                                self, lvalue, "slice of non-array {:?}", base_ty)
+                        }
+                    }
                 }
             }
             ProjectionElem::Downcast(adt_def1, index) =>
@@ -292,29 +308,10 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
         };
 
         if let Some(field) = variant.fields.get(field.index()) {
-            Ok(self.normalize(field.ty(tcx, substs)))
+            Ok(self.cx.normalize(&field.ty(tcx, substs)))
         } else {
             Err(FieldAccessError::OutOfRange { field_count: variant.fields.len() })
         }
-    }
-
-    fn normalize(&mut self, ty: Ty<'tcx>) -> Ty<'tcx> {
-        let infcx = self.infcx();
-        let mut selcx = traits::SelectionContext::new(infcx);
-        let cause = traits::ObligationCause::misc(self.last_span, 0);
-        let traits::Normalized { value: ty, obligations } =
-            traits::normalize(&mut selcx, cause, &ty);
-
-        debug!("normalize: ty={:?} obligations={:?}",
-               ty,
-               obligations);
-
-        let mut fulfill_cx = &mut self.cx.fulfillment_cx;
-        for obligation in obligations {
-            fulfill_cx.register_predicate_obligation(infcx, obligation);
-        }
-
-        ty
     }
 }
 
@@ -373,7 +370,7 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
         }
     }
 
-    fn check_terminator(&self,
+    fn check_terminator(&mut self,
                         mir: &Mir<'tcx>,
                         term: &Terminator<'tcx>) {
         debug!("check_terminator: {:?}", term);
@@ -382,8 +379,23 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
             TerminatorKind::Goto { .. } |
             TerminatorKind::Resume |
             TerminatorKind::Return |
+            TerminatorKind::Unreachable |
             TerminatorKind::Drop { .. } => {
                 // no checks needed for these
+            }
+
+
+            TerminatorKind::DropAndReplace {
+                ref location,
+                ref value,
+                ..
+            } => {
+                let lv_ty = mir.lvalue_ty(tcx, location).to_ty(tcx);
+                let rv_ty = mir.operand_ty(tcx, value);
+                if let Err(terr) = self.sub_types(self.last_span, rv_ty, lv_ty) {
+                    span_mirbug!(self, term, "bad DropAndReplace ({:?} = {:?}): {:?}",
+                                 lv_ty, rv_ty, terr);
+                }
             }
 
             TerminatorKind::If { ref cond, .. } => {
@@ -431,12 +443,28 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                     }
                 };
                 let sig = tcx.erase_late_bound_regions(&func_ty.sig);
+                let sig = self.normalize(&sig);
                 self.check_call_dest(mir, term, &sig, destination);
 
                 if self.is_box_free(func) {
                     self.check_box_free_inputs(mir, term, &sig, args);
                 } else {
                     self.check_call_inputs(mir, term, &sig, args);
+                }
+            }
+            TerminatorKind::Assert { ref cond, ref msg, .. } => {
+                let cond_ty = mir.operand_ty(tcx, cond);
+                if cond_ty != tcx.types.bool {
+                    span_mirbug!(self, term, "bad Assert ({:?}, not bool", cond_ty);
+                }
+
+                if let AssertMessage::BoundsCheck { ref len, ref index } = *msg {
+                    if mir.operand_ty(tcx, len) != tcx.types.usize {
+                        span_mirbug!(self, len, "bounds-check length non-usize {:?}", len)
+                    }
+                    if mir.operand_ty(tcx, index) != tcx.types.usize {
+                        span_mirbug!(self, index, "bounds-check index non-usize {:?}", index)
+                    }
                 }
             }
         }
@@ -541,21 +569,106 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
         }
     }
 
+    fn check_iscleanup(&mut self, mir: &Mir<'tcx>, block: &BasicBlockData<'tcx>)
+    {
+        let is_cleanup = block.is_cleanup;
+        self.last_span = block.terminator().source_info.span;
+        match block.terminator().kind {
+            TerminatorKind::Goto { target } =>
+                self.assert_iscleanup(mir, block, target, is_cleanup),
+            TerminatorKind::If { targets: (on_true, on_false), .. } => {
+                self.assert_iscleanup(mir, block, on_true, is_cleanup);
+                self.assert_iscleanup(mir, block, on_false, is_cleanup);
+            }
+            TerminatorKind::Switch { ref targets, .. } |
+            TerminatorKind::SwitchInt { ref targets, .. } => {
+                for target in targets {
+                    self.assert_iscleanup(mir, block, *target, is_cleanup);
+                }
+            }
+            TerminatorKind::Resume => {
+                if !is_cleanup {
+                    span_mirbug!(self, block, "resume on non-cleanup block!")
+                }
+            }
+            TerminatorKind::Return => {
+                if is_cleanup {
+                    span_mirbug!(self, block, "return on cleanup block")
+                }
+            }
+            TerminatorKind::Unreachable => {}
+            TerminatorKind::Drop { target, unwind, .. } |
+            TerminatorKind::DropAndReplace { target, unwind, .. } |
+            TerminatorKind::Assert { target, cleanup: unwind, .. } => {
+                self.assert_iscleanup(mir, block, target, is_cleanup);
+                if let Some(unwind) = unwind {
+                    if is_cleanup {
+                        span_mirbug!(self, block, "unwind on cleanup block")
+                    }
+                    self.assert_iscleanup(mir, block, unwind, true);
+                }
+            }
+            TerminatorKind::Call { ref destination, cleanup, .. } => {
+                if let &Some((_, target)) = destination {
+                    self.assert_iscleanup(mir, block, target, is_cleanup);
+                }
+                if let Some(cleanup) = cleanup {
+                    if is_cleanup {
+                        span_mirbug!(self, block, "cleanup on cleanup block")
+                    }
+                    self.assert_iscleanup(mir, block, cleanup, true);
+                }
+            }
+        }
+    }
+
+    fn assert_iscleanup(&mut self,
+                        mir: &Mir<'tcx>,
+                        ctxt: &fmt::Debug,
+                        bb: BasicBlock,
+                        iscleanuppad: bool)
+    {
+        if mir[bb].is_cleanup != iscleanuppad {
+            span_mirbug!(self, ctxt, "cleanuppad mismatch: {:?} should be {:?}",
+                         bb, iscleanuppad);
+        }
+    }
+
     fn typeck_mir(&mut self, mir: &Mir<'tcx>) {
         self.last_span = mir.span;
         debug!("run_on_mir: {:?}", mir.span);
-        for block in &mir.basic_blocks {
+        for block in mir.basic_blocks() {
             for stmt in &block.statements {
-                if stmt.span != DUMMY_SP {
-                    self.last_span = stmt.span;
+                if stmt.source_info.span != DUMMY_SP {
+                    self.last_span = stmt.source_info.span;
                 }
                 self.check_stmt(mir, stmt);
             }
 
-            if let Some(ref terminator) = block.terminator {
-                self.check_terminator(mir, terminator);
-            }
+            self.check_terminator(mir, block.terminator());
+            self.check_iscleanup(mir, block);
         }
+    }
+
+
+    fn normalize<T>(&mut self, value: &T) -> T
+        where T: fmt::Debug + TypeFoldable<'tcx>
+    {
+        let mut selcx = traits::SelectionContext::new(self.infcx);
+        let cause = traits::ObligationCause::misc(self.last_span, 0);
+        let traits::Normalized { value, obligations } =
+            traits::normalize(&mut selcx, cause, value);
+
+        debug!("normalize: value={:?} obligations={:?}",
+               value,
+               obligations);
+
+        let mut fulfill_cx = &mut self.fulfillment_cx;
+        for obligation in obligations {
+            fulfill_cx.register_predicate_obligation(self.infcx, obligation);
+        }
+
+        value
     }
 
     fn verify_obligations(&mut self, mir: &Mir<'tcx>) {

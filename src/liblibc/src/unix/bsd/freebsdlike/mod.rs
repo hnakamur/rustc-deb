@@ -10,6 +10,7 @@ pub type pthread_key_t = ::c_int;
 pub type tcflag_t = ::c_uint;
 pub type speed_t = ::c_uint;
 pub type nl_item = ::c_int;
+pub type id_t = i64;
 
 pub enum timezone {}
 
@@ -530,6 +531,7 @@ pub const AF_UNIX: ::c_int = 1;
 pub const SOCK_STREAM: ::c_int = 1;
 pub const SOCK_DGRAM: ::c_int = 2;
 pub const SOCK_RAW: ::c_int = 3;
+pub const SOCK_SEQPACKET: ::c_int = 5;
 pub const IPPROTO_TCP: ::c_int = 6;
 pub const IPPROTO_IP: ::c_int = 0;
 pub const IPPROTO_IPV6: ::c_int = 41;
@@ -646,7 +648,11 @@ pub const _SC_HOST_NAME_MAX: ::c_int = 72;
 pub const PTHREAD_MUTEX_INITIALIZER: pthread_mutex_t = 0 as *mut _;
 pub const PTHREAD_COND_INITIALIZER: pthread_cond_t = 0 as *mut _;
 pub const PTHREAD_RWLOCK_INITIALIZER: pthread_rwlock_t = 0 as *mut _;
+pub const PTHREAD_MUTEX_ERRORCHECK: ::c_int = 1;
 pub const PTHREAD_MUTEX_RECURSIVE: ::c_int = 2;
+pub const PTHREAD_MUTEX_NORMAL: ::c_int = 3;
+pub const PTHREAD_MUTEX_ADAPTIVE_NP: ::c_int = 4;
+pub const PTHREAD_MUTEX_DEFAULT: ::c_int = PTHREAD_MUTEX_ERRORCHECK;
 
 pub const SCHED_FIFO: ::c_int = 1;
 pub const SCHED_OTHER: ::c_int = 2;
@@ -667,6 +673,9 @@ pub const LOG_NTP: ::c_int = 12 << 3;
 pub const LOG_SECURITY: ::c_int = 13 << 3;
 pub const LOG_CONSOLE: ::c_int = 14 << 3;
 pub const LOG_NFACILITIES: ::c_int = 24;
+
+pub const TIOCGWINSZ: ::c_ulong = 0x40087468;
+pub const TIOCSWINSZ: ::c_ulong = 0x80087467;
 
 #[link(name = "util")]
 extern {
@@ -742,6 +751,8 @@ extern {
     pub fn pthread_attr_getstack(attr: *const ::pthread_attr_t,
                                  stackaddr: *mut *mut ::c_void,
                                  stacksize: *mut ::size_t) -> ::c_int;
+    pub fn getpriority(which: ::c_int, who: ::c_int) -> ::c_int;
+    pub fn setpriority(which: ::c_int, who: ::c_int, prio: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

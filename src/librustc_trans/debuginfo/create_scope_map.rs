@@ -16,16 +16,17 @@ use llvm;
 use llvm::debuginfo::{DIScope, DISubprogram};
 use common::{CrateContext, FunctionContext};
 use rustc::hir::pat_util;
-use rustc::mir::repr::{Mir, ScopeId};
+use rustc::mir::repr::{Mir, VisibilityScope};
 use rustc::util::nodemap::NodeMap;
 
 use libc::c_uint;
 use std::ptr;
 
-use syntax::codemap::{Span, Pos};
+use syntax_pos::{Span, Pos};
 use syntax::{ast, codemap};
 
 use rustc_data_structures::bitvec::BitVector;
+use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use rustc::hir::{self, PatKind};
 
 // This procedure builds the *scope map* for a given function, which maps any
@@ -42,18 +43,15 @@ pub fn create_scope_map(cx: &CrateContext,
                         fn_ast_id: ast::NodeId)
                         -> NodeMap<DIScope> {
     let mut scope_map = NodeMap();
-
-    let def_map = &cx.tcx().def_map;
-
     let mut scope_stack = vec!(ScopeStackEntry { scope_metadata: fn_metadata, name: None });
     scope_map.insert(fn_ast_id, fn_metadata);
 
     // Push argument identifiers onto the stack so arguments integrate nicely
     // with variable shadowing.
     for arg in args {
-        pat_util::pat_bindings(def_map, &arg.pat, |_, node_id, _, path1| {
+        pat_util::pat_bindings(&arg.pat, |_, node_id, _, path1| {
             scope_stack.push(ScopeStackEntry { scope_metadata: fn_metadata,
-                                               name: Some(path1.node.unhygienize()) });
+                                               name: Some(path1.node) });
             scope_map.insert(node_id, fn_metadata);
         })
     }
@@ -72,9 +70,9 @@ pub fn create_scope_map(cx: &CrateContext,
 
 /// Produce DIScope DIEs for each MIR Scope which has variables defined in it.
 /// If debuginfo is disabled, the returned vector is empty.
-pub fn create_mir_scopes(fcx: &FunctionContext) -> Vec<DIScope> {
+pub fn create_mir_scopes(fcx: &FunctionContext) -> IndexVec<VisibilityScope, DIScope> {
     let mir = fcx.mir.clone().expect("create_mir_scopes: missing MIR for fn");
-    let mut scopes = vec![ptr::null_mut(); mir.scopes.len()];
+    let mut scopes = IndexVec::from_elem(ptr::null_mut(), &mir.visibility_scopes);
 
     let fn_metadata = match fcx.debug_context {
         FunctionDebugContext::RegularContext(box ref data) => data.fn_metadata,
@@ -85,14 +83,14 @@ pub fn create_mir_scopes(fcx: &FunctionContext) -> Vec<DIScope> {
     };
 
     // Find all the scopes with variables defined in them.
-    let mut has_variables = BitVector::new(mir.scopes.len());
+    let mut has_variables = BitVector::new(mir.visibility_scopes.len());
     for var in &mir.var_decls {
-        has_variables.insert(var.scope.index());
+        has_variables.insert(var.source_info.scope.index());
     }
 
     // Instantiate all scopes.
-    for idx in 0..mir.scopes.len() {
-        let scope = ScopeId::new(idx);
+    for idx in 0..mir.visibility_scopes.len() {
+        let scope = VisibilityScope::new(idx);
         make_mir_scope(fcx.ccx, &mir, &has_variables, fn_metadata, scope, &mut scopes);
     }
 
@@ -103,24 +101,23 @@ fn make_mir_scope(ccx: &CrateContext,
                   mir: &Mir,
                   has_variables: &BitVector,
                   fn_metadata: DISubprogram,
-                  scope: ScopeId,
-                  scopes: &mut [DIScope]) {
-    let idx = scope.index();
-    if !scopes[idx].is_null() {
+                  scope: VisibilityScope,
+                  scopes: &mut IndexVec<VisibilityScope, DIScope>) {
+    if !scopes[scope].is_null() {
         return;
     }
 
-    let scope_data = &mir.scopes[scope];
+    let scope_data = &mir.visibility_scopes[scope];
     let parent_scope = if let Some(parent) = scope_data.parent_scope {
         make_mir_scope(ccx, mir, has_variables, fn_metadata, parent, scopes);
-        scopes[parent.index()]
+        scopes[parent]
     } else {
         // The root is the function itself.
-        scopes[idx] = fn_metadata;
+        scopes[scope] = fn_metadata;
         return;
     };
 
-    if !has_variables.contains(idx) {
+    if !has_variables.contains(scope.index()) {
         // Do not create a DIScope if there are no variables
         // defined in this MIR Scope, to avoid debuginfo bloat.
 
@@ -128,14 +125,14 @@ fn make_mir_scope(ccx: &CrateContext,
         // our parent is the root, because we might want to
         // put arguments in the root and not have shadowing.
         if parent_scope != fn_metadata {
-            scopes[idx] = parent_scope;
+            scopes[scope] = parent_scope;
             return;
         }
     }
 
     let loc = span_start(ccx, scope_data.span);
-    let file_metadata = file_metadata(ccx, &loc.file.name);
-    scopes[idx] = unsafe {
+    scopes[scope] = unsafe {
+    let file_metadata = file_metadata(ccx, &loc.file.name, &loc.file.abs_path);
         llvm::LLVMDIBuilderCreateLexicalBlock(
             DIB(ccx),
             parent_scope,
@@ -155,7 +152,7 @@ fn with_new_scope<F>(cx: &CrateContext,
 {
     // Create a new lexical scope and push it onto the stack
     let loc = span_start(cx, scope_span);
-    let file_metadata = file_metadata(cx, &loc.file.name);
+    let file_metadata = file_metadata(cx, &loc.file.name, &loc.file.abs_path);
     let parent_scope = scope_stack.last().unwrap().scope_metadata;
 
     let scope_metadata = unsafe {
@@ -235,76 +232,66 @@ fn walk_pattern(cx: &CrateContext,
                 pat: &hir::Pat,
                 scope_stack: &mut Vec<ScopeStackEntry> ,
                 scope_map: &mut NodeMap<DIScope>) {
-
-    let def_map = &cx.tcx().def_map;
-
     // Unfortunately, we cannot just use pat_util::pat_bindings() or
     // ast_util::walk_pat() here because we have to visit *all* nodes in
     // order to put them into the scope map. The above functions don't do that.
     match pat.node {
-        PatKind::Ident(_, ref path1, ref sub_pat_opt) => {
+        PatKind::Binding(_, ref path1, ref sub_pat_opt) => {
+            // LLVM does not properly generate 'DW_AT_start_scope' fields
+            // for variable DIEs. For this reason we have to introduce
+            // an artificial scope at bindings whenever a variable with
+            // the same name is declared in *any* parent scope.
+            //
+            // Otherwise the following error occurs:
+            //
+            // let x = 10;
+            //
+            // do_something(); // 'gdb print x' correctly prints 10
+            //
+            // {
+            //     do_something(); // 'gdb print x' prints 0, because it
+            //                     // already reads the uninitialized 'x'
+            //                     // from the next line...
+            //     let x = 100;
+            //     do_something(); // 'gdb print x' correctly prints 100
+            // }
 
-            // Check if this is a binding. If so we need to put it on the
-            // scope stack and maybe introduce an artificial scope
-            if pat_util::pat_is_binding(&def_map.borrow(), &pat) {
+            // Is there already a binding with that name?
+            // N.B.: this comparison must be UNhygienic... because
+            // gdb knows nothing about the context, so any two
+            // variables with the same name will cause the problem.
+            let name = path1.node;
+            let need_new_scope = scope_stack
+                .iter()
+                .any(|entry| entry.name == Some(name));
 
-                let name = path1.node.unhygienize();
+            if need_new_scope {
+                // Create a new lexical scope and push it onto the stack
+                let loc = span_start(cx, pat.span);
+                let file_metadata = file_metadata(cx, &loc.file.name, &loc.file.abs_path);
+                let parent_scope = scope_stack.last().unwrap().scope_metadata;
 
-                // LLVM does not properly generate 'DW_AT_start_scope' fields
-                // for variable DIEs. For this reason we have to introduce
-                // an artificial scope at bindings whenever a variable with
-                // the same name is declared in *any* parent scope.
-                //
-                // Otherwise the following error occurs:
-                //
-                // let x = 10;
-                //
-                // do_something(); // 'gdb print x' correctly prints 10
-                //
-                // {
-                //     do_something(); // 'gdb print x' prints 0, because it
-                //                     // already reads the uninitialized 'x'
-                //                     // from the next line...
-                //     let x = 100;
-                //     do_something(); // 'gdb print x' correctly prints 100
-                // }
+                let scope_metadata = unsafe {
+                    llvm::LLVMDIBuilderCreateLexicalBlock(
+                        DIB(cx),
+                        parent_scope,
+                        file_metadata,
+                        loc.line as c_uint,
+                        loc.col.to_usize() as c_uint)
+                };
 
-                // Is there already a binding with that name?
-                // N.B.: this comparison must be UNhygienic... because
-                // gdb knows nothing about the context, so any two
-                // variables with the same name will cause the problem.
-                let need_new_scope = scope_stack
-                    .iter()
-                    .any(|entry| entry.name == Some(name));
+                scope_stack.push(ScopeStackEntry {
+                    scope_metadata: scope_metadata,
+                    name: Some(name)
+                });
 
-                if need_new_scope {
-                    // Create a new lexical scope and push it onto the stack
-                    let loc = span_start(cx, pat.span);
-                    let file_metadata = file_metadata(cx, &loc.file.name);
-                    let parent_scope = scope_stack.last().unwrap().scope_metadata;
-
-                    let scope_metadata = unsafe {
-                        llvm::LLVMDIBuilderCreateLexicalBlock(
-                            DIB(cx),
-                            parent_scope,
-                            file_metadata,
-                            loc.line as c_uint,
-                            loc.col.to_usize() as c_uint)
-                    };
-
-                    scope_stack.push(ScopeStackEntry {
-                        scope_metadata: scope_metadata,
-                        name: Some(name)
-                    });
-
-                } else {
-                    // Push a new entry anyway so the name can be found
-                    let prev_metadata = scope_stack.last().unwrap().scope_metadata;
-                    scope_stack.push(ScopeStackEntry {
-                        scope_metadata: prev_metadata,
-                        name: Some(name)
-                    });
-                }
+            } else {
+                // Push a new entry anyway so the name can be found
+                let prev_metadata = scope_stack.last().unwrap().scope_metadata;
+                scope_stack.push(ScopeStackEntry {
+                    scope_metadata: prev_metadata,
+                    name: Some(name)
+                });
             }
 
             scope_map.insert(pat.id, scope_stack.last().unwrap().scope_metadata);
@@ -318,13 +305,11 @@ fn walk_pattern(cx: &CrateContext,
             scope_map.insert(pat.id, scope_stack.last().unwrap().scope_metadata);
         }
 
-        PatKind::TupleStruct(_, ref sub_pats_opt) => {
+        PatKind::TupleStruct(_, ref sub_pats, _) => {
             scope_map.insert(pat.id, scope_stack.last().unwrap().scope_metadata);
 
-            if let Some(ref sub_pats) = *sub_pats_opt {
-                for p in sub_pats {
-                    walk_pattern(cx, &p, scope_stack, scope_map);
-                }
+            for p in sub_pats {
+                walk_pattern(cx, &p, scope_stack, scope_map);
             }
         }
 
@@ -343,7 +328,7 @@ fn walk_pattern(cx: &CrateContext,
             }
         }
 
-        PatKind::Tup(ref sub_pats) => {
+        PatKind::Tuple(ref sub_pats, _) => {
             scope_map.insert(pat.id, scope_stack.last().unwrap().scope_metadata);
 
             for sub_pat in sub_pats {

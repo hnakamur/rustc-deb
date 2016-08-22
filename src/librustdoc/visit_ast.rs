@@ -18,7 +18,7 @@ use syntax::abi;
 use syntax::ast;
 use syntax::attr;
 use syntax::attr::AttrMetaMethods;
-use syntax::codemap::Span;
+use syntax_pos::Span;
 
 use rustc::hir::map as hir_map;
 use rustc::hir::def::Def;
@@ -189,8 +189,8 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             }
             hir::ViewPathList(p, paths) => {
                 let mine = paths.into_iter().filter(|path| {
-                    !self.maybe_inline_local(path.node.id(), None, false, om,
-                                     please_inline)
+                    !self.maybe_inline_local(path.node.id(), path.node.rename(),
+                                             false, om, please_inline)
                 }).collect::<hir::HirVec<hir::PathListItem>>();
 
                 if mine.is_empty() {
@@ -241,20 +241,22 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             Some(tcx) => tcx,
             None => return false
         };
-        let def = tcx.def_map.borrow()[&id];
+        let def = tcx.expect_def(id);
         let def_did = def.def_id();
 
         let use_attrs = tcx.map.attrs(id).clean(self.cx);
-        let is_no_inline = use_attrs.list("doc").has_word("no_inline");
+        // Don't inline doc(hidden) imports so they can be stripped at a later stage.
+        let is_no_inline = use_attrs.list("doc").has_word("no_inline") ||
+                           use_attrs.list("doc").has_word("hidden");
 
         // For cross-crate impl inlining we need to know whether items are
         // reachable in documentation - a previously nonreachable item can be
         // made reachable by cross-crate inlining which we're checking here.
         // (this is done here because we need to know this upfront)
-        if !def.def_id().is_local() && !is_no_inline {
+        if !def_did.is_local() && !is_no_inline {
             let attrs = clean::inline::load_attrs(self.cx, tcx, def_did);
             let self_is_hidden = attrs.list("doc").has_word("hidden");
-            match def.base_def {
+            match def {
                 Def::Trait(did) |
                 Def::Struct(did) |
                 Def::Enum(did) |

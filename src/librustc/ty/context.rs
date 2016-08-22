@@ -665,7 +665,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     /// reference to the context, to allow formatting values that need it.
     pub fn create_and_enter<F, R>(s: &'tcx Session,
                                   arenas: &'tcx CtxtArenas<'tcx>,
-                                  def_map: RefCell<DefMap>,
+                                  def_map: DefMap,
                                   named_region_map: resolve_lifetime::NamedRegionMap,
                                   map: ast_map::Map<'tcx>,
                                   freevars: FreevarMap,
@@ -693,7 +693,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             item_variance_map: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             variance_computed: Cell::new(false),
             sess: s,
-            def_map: def_map,
+            def_map: RefCell::new(def_map),
             tables: RefCell::new(Tables::empty()),
             impl_trait_refs: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
             trait_defs: RefCell::new(DepTrackingMap::new(dep_graph.clone())),
@@ -862,7 +862,7 @@ pub mod tls {
 
     use std::cell::Cell;
     use std::fmt;
-    use syntax::codemap;
+    use syntax_pos;
 
     /// Marker types used for the scoped TLS slot.
     /// The type context cannot be used directly because the scoped TLS
@@ -875,7 +875,7 @@ pub mod tls {
                                      *const ThreadLocalInterners)>> = Cell::new(None)
     }
 
-    fn span_debug(span: codemap::Span, f: &mut fmt::Formatter) -> fmt::Result {
+    fn span_debug(span: syntax_pos::Span, f: &mut fmt::Formatter) -> fmt::Result {
         with(|tcx| {
             write!(f, "{}", tcx.sess.codemap().span_to_string(span))
         })
@@ -884,7 +884,7 @@ pub mod tls {
     pub fn enter_global<'gcx, F, R>(gcx: GlobalCtxt<'gcx>, f: F) -> R
         where F: for<'a> FnOnce(TyCtxt<'a, 'gcx, 'gcx>) -> R
     {
-        codemap::SPAN_DEBUG.with(|span_dbg| {
+        syntax_pos::SPAN_DEBUG.with(|span_dbg| {
             let original_span_debug = span_dbg.get();
             span_dbg.set(span_debug);
             let result = enter(&gcx, &gcx.global_interners, f);

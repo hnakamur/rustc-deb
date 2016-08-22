@@ -15,7 +15,8 @@ use ty::{ClosureSubsts, FnOutput, Region, Ty};
 use mir::repr::*;
 use rustc_const_math::ConstUsize;
 use rustc_data_structures::tuple_slice::TupleSlice;
-use syntax::codemap::Span;
+use rustc_data_structures::indexed_vec::Idx;
+use syntax_pos::Span;
 
 // # The MIR Visitor
 //
@@ -97,9 +98,9 @@ macro_rules! make_mir_visitor {
                 self.super_basic_block_data(block, data);
             }
 
-            fn visit_scope_data(&mut self,
-                                scope_data: & $($mutability)* ScopeData) {
-                self.super_scope_data(scope_data);
+            fn visit_visibility_scope_data(&mut self,
+                                           scope_data: & $($mutability)* VisibilityScopeData) {
+                self.super_visibility_scope_data(scope_data);
             }
 
             fn visit_statement(&mut self,
@@ -125,6 +126,11 @@ macro_rules! make_mir_visitor {
                                      block: BasicBlock,
                                      kind: & $($mutability)* TerminatorKind<'tcx>) {
                 self.super_terminator_kind(block, kind);
+            }
+
+            fn visit_assert_message(&mut self,
+                                    msg: & $($mutability)* AssertMessage<'tcx>) {
+                self.super_assert_message(msg);
             }
 
             fn visit_rvalue(&mut self,
@@ -181,6 +187,11 @@ macro_rules! make_mir_visitor {
                 self.super_span(span);
             }
 
+            fn visit_source_info(&mut self,
+                                 source_info: & $($mutability)* SourceInfo) {
+                self.super_source_info(source_info);
+            }
+
             fn visit_fn_output(&mut self,
                                fn_output: & $($mutability)* FnOutput<'tcx>) {
                 self.super_fn_output(fn_output);
@@ -231,9 +242,9 @@ macro_rules! make_mir_visitor {
                 self.super_arg_decl(arg_decl);
             }
 
-            fn visit_scope_id(&mut self,
-                              scope_id: & $($mutability)* ScopeId) {
-                self.super_scope_id(scope_id);
+            fn visit_visibility_scope(&mut self,
+                                      scope: & $($mutability)* VisibilityScope) {
+                self.super_visibility_scope(scope);
             }
 
             // The `super_xxx` methods comprise the default behavior and are
@@ -241,42 +252,30 @@ macro_rules! make_mir_visitor {
 
             fn super_mir(&mut self,
                          mir: & $($mutability)* Mir<'tcx>) {
-                let Mir {
-                    ref $($mutability)* basic_blocks,
-                    ref $($mutability)* scopes,
-                    promoted: _, // Visited by passes separately.
-                    ref $($mutability)* return_ty,
-                    ref $($mutability)* var_decls,
-                    ref $($mutability)* arg_decls,
-                    ref $($mutability)* temp_decls,
-                    upvar_decls: _,
-                    ref $($mutability)* span,
-                } = *mir;
-
-                for (index, data) in basic_blocks.into_iter().enumerate() {
+                for index in 0..mir.basic_blocks().len() {
                     let block = BasicBlock::new(index);
-                    self.visit_basic_block_data(block, data);
+                    self.visit_basic_block_data(block, &$($mutability)* mir[block]);
                 }
 
-                for scope in scopes {
-                    self.visit_scope_data(scope);
+                for scope in &$($mutability)* mir.visibility_scopes {
+                    self.visit_visibility_scope_data(scope);
                 }
 
-                self.visit_fn_output(return_ty);
+                self.visit_fn_output(&$($mutability)* mir.return_ty);
 
-                for var_decl in var_decls {
+                for var_decl in &$($mutability)* mir.var_decls {
                     self.visit_var_decl(var_decl);
                 }
 
-                for arg_decl in arg_decls {
+                for arg_decl in &$($mutability)* mir.arg_decls {
                     self.visit_arg_decl(arg_decl);
                 }
 
-                for temp_decl in temp_decls {
+                for temp_decl in &$($mutability)* mir.temp_decls {
                     self.visit_temp_decl(temp_decl);
                 }
 
-                self.visit_span(span);
+                self.visit_span(&$($mutability)* mir.span);
             }
 
             fn super_basic_block_data(&mut self,
@@ -297,16 +296,16 @@ macro_rules! make_mir_visitor {
                 }
             }
 
-            fn super_scope_data(&mut self,
-                                scope_data: & $($mutability)* ScopeData) {
-                let ScopeData {
+            fn super_visibility_scope_data(&mut self,
+                                           scope_data: & $($mutability)* VisibilityScopeData) {
+                let VisibilityScopeData {
                     ref $($mutability)* span,
                     ref $($mutability)* parent_scope,
                 } = *scope_data;
 
                 self.visit_span(span);
                 if let Some(ref $($mutability)* parent_scope) = *parent_scope {
-                    self.visit_scope_id(parent_scope);
+                    self.visit_visibility_scope(parent_scope);
                 }
             }
 
@@ -314,13 +313,11 @@ macro_rules! make_mir_visitor {
                                block: BasicBlock,
                                statement: & $($mutability)* Statement<'tcx>) {
                 let Statement {
-                    ref $($mutability)* span,
-                    ref $($mutability)* scope,
+                    ref $($mutability)* source_info,
                     ref $($mutability)* kind,
                 } = *statement;
 
-                self.visit_span(span);
-                self.visit_scope_id(scope);
+                self.visit_source_info(source_info);
                 match *kind {
                     StatementKind::Assign(ref $($mutability)* lvalue,
                                           ref $($mutability)* rvalue) => {
@@ -341,13 +338,11 @@ macro_rules! make_mir_visitor {
                                 block: BasicBlock,
                                 terminator: &$($mutability)* Terminator<'tcx>) {
                 let Terminator {
-                    ref $($mutability)* span,
-                    ref $($mutability)* scope,
+                    ref $($mutability)* source_info,
                     ref $($mutability)* kind,
                 } = *terminator;
 
-                self.visit_span(span);
-                self.visit_scope_id(scope);
+                self.visit_source_info(source_info);
                 self.visit_terminator_kind(block, kind);
             }
 
@@ -391,13 +386,24 @@ macro_rules! make_mir_visitor {
                     }
 
                     TerminatorKind::Resume |
-                    TerminatorKind::Return => {
+                    TerminatorKind::Return |
+                    TerminatorKind::Unreachable => {
                     }
 
-                    TerminatorKind::Drop { ref $($mutability)* value,
+                    TerminatorKind::Drop { ref $($mutability)* location,
                                            target,
                                            unwind } => {
-                        self.visit_lvalue(value, LvalueContext::Drop);
+                        self.visit_lvalue(location, LvalueContext::Drop);
+                        self.visit_branch(block, target);
+                        unwind.map(|t| self.visit_branch(block, t));
+                    }
+
+                    TerminatorKind::DropAndReplace { ref $($mutability)* location,
+                                                     ref $($mutability)* value,
+                                                     target,
+                                                     unwind } => {
+                        self.visit_lvalue(location, LvalueContext::Drop);
+                        self.visit_operand(value);
                         self.visit_branch(block, target);
                         unwind.map(|t| self.visit_branch(block, t));
                     }
@@ -416,6 +422,31 @@ macro_rules! make_mir_visitor {
                         }
                         cleanup.map(|t| self.visit_branch(block, t));
                     }
+
+                    TerminatorKind::Assert { ref $($mutability)* cond,
+                                             expected: _,
+                                             ref $($mutability)* msg,
+                                             target,
+                                             cleanup } => {
+                        self.visit_operand(cond);
+                        self.visit_assert_message(msg);
+                        self.visit_branch(block, target);
+                        cleanup.map(|t| self.visit_branch(block, t));
+                    }
+                }
+            }
+
+            fn super_assert_message(&mut self,
+                                    msg: & $($mutability)* AssertMessage<'tcx>) {
+                match *msg {
+                    AssertMessage::BoundsCheck {
+                        ref $($mutability)* len,
+                        ref $($mutability)* index
+                    } => {
+                        self.visit_operand(len);
+                        self.visit_operand(index);
+                    }
+                    AssertMessage::Math(_) => {}
                 }
             }
 
@@ -452,6 +483,9 @@ macro_rules! make_mir_visitor {
 
                     Rvalue::BinaryOp(_bin_op,
                                      ref $($mutability)* lhs,
+                                     ref $($mutability)* rhs) |
+                    Rvalue::CheckedBinaryOp(_bin_op,
+                                     ref $($mutability)* lhs,
                                      ref $($mutability)* rhs) => {
                         self.visit_operand(lhs);
                         self.visit_operand(rhs);
@@ -487,15 +521,6 @@ macro_rules! make_mir_visitor {
                         for operand in operands {
                             self.visit_operand(operand);
                         }
-                    }
-
-                    Rvalue::Slice { ref $($mutability)* input,
-                                    from_start,
-                                    from_end } => {
-                        self.visit_lvalue(input, LvalueContext::Slice {
-                            from_start: from_start,
-                            from_end: from_end,
-                        });
                     }
 
                     Rvalue::InlineAsm { ref $($mutability)* outputs,
@@ -558,6 +583,8 @@ macro_rules! make_mir_visitor {
                 match *proj {
                     ProjectionElem::Deref => {
                     }
+                    ProjectionElem::Subslice { from: _, to: _ } => {
+                    }
                     ProjectionElem::Field(_field, ref $($mutability)* ty) => {
                         self.visit_ty(ty);
                     }
@@ -579,13 +606,11 @@ macro_rules! make_mir_visitor {
                     mutability: _,
                     name: _,
                     ref $($mutability)* ty,
-                    ref $($mutability)* scope,
-                    ref $($mutability)* span,
+                    ref $($mutability)* source_info,
                 } = *var_decl;
 
                 self.visit_ty(ty);
-                self.visit_scope_id(scope);
-                self.visit_span(span);
+                self.visit_source_info(source_info);
             }
 
             fn super_temp_decl(&mut self,
@@ -608,8 +633,8 @@ macro_rules! make_mir_visitor {
                 self.visit_ty(ty);
             }
 
-            fn super_scope_id(&mut self,
-                              _scope_id: & $($mutability)* ScopeId) {
+            fn super_visibility_scope(&mut self,
+                                      _scope: & $($mutability)* VisibilityScope) {
             }
 
             fn super_branch(&mut self,
@@ -662,6 +687,16 @@ macro_rules! make_mir_visitor {
             }
 
             fn super_span(&mut self, _span: & $($mutability)* Span) {
+            }
+
+            fn super_source_info(&mut self, source_info: & $($mutability)* SourceInfo) {
+                let SourceInfo {
+                    ref $($mutability)* span,
+                    ref $($mutability)* scope,
+                } = *source_info;
+
+                self.visit_span(span);
+                self.visit_visibility_scope(scope);
             }
 
             fn super_fn_output(&mut self, fn_output: & $($mutability)* FnOutput<'tcx>) {

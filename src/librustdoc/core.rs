@@ -21,12 +21,12 @@ use rustc::lint;
 use rustc_trans::back::link;
 use rustc_resolve as resolve;
 use rustc_metadata::cstore::CStore;
-use rustc_metadata::creader::read_local_crates;
 
-use syntax::{ast, codemap, errors};
-use syntax::errors::emitter::ColorConfig;
+use syntax::{ast, codemap};
 use syntax::feature_gate::UnstableFeatures;
 use syntax::parse::token;
+use errors;
+use errors::emitter::ColorConfig;
 
 use std::cell::{RefCell, Cell};
 use std::collections::{HashMap, HashSet};
@@ -146,21 +146,12 @@ pub fn run_core(search_paths: SearchPaths,
 
     let krate = panictry!(driver::phase_1_parse_input(&sess, cfg, &input));
 
-    let name = link::find_crate_name(Some(&sess), &krate.attrs,
-                                     &input);
+    let name = link::find_crate_name(Some(&sess), &krate.attrs, &input);
 
-    let krate = driver::phase_2_configure_and_expand(&sess, &cstore, krate, &name, None)
-                    .expect("phase_2_configure_and_expand aborted in rustdoc!");
-
-    let krate = driver::assign_node_ids(&sess, krate);
-
-    let mut defs = hir_map::collect_definitions(&krate);
-    read_local_crates(&sess, &cstore, &defs, &krate, &name, &dep_graph);
-
-    // Lower ast -> hir and resolve.
-    let (analysis, resolutions, mut hir_forest) = {
-        driver::lower_and_resolve(&sess, &name, &mut defs, &krate,
-                                  &sess.dep_graph, resolve::MakeGlobMap::No)
+    let driver::ExpansionResult { defs, analysis, resolutions, mut hir_forest, .. } = {
+        driver::phase_2_configure_and_expand(
+            &sess, &cstore, krate, &name, None, resolve::MakeGlobMap::No, |_| Ok(()),
+        ).expect("phase_2_configure_and_expand aborted in rustdoc!")
     };
 
     let arenas = ty::CtxtArenas::new();

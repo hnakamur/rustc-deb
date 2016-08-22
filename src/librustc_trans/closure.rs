@@ -123,10 +123,10 @@ fn get_self_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                            -> Ty<'tcx> {
     match tcx.closure_kind(closure_id) {
         ty::ClosureKind::Fn => {
-            tcx.mk_imm_ref(tcx.mk_region(ty::ReStatic), fn_ty)
+            tcx.mk_imm_ref(tcx.mk_region(ty::ReErased), fn_ty)
         }
         ty::ClosureKind::FnMut => {
-            tcx.mk_mut_ref(tcx.mk_region(ty::ReStatic), fn_ty)
+            tcx.mk_mut_ref(tcx.mk_region(ty::ReErased), fn_ty)
         }
         ty::ClosureKind::FnOnce => fn_ty,
     }
@@ -150,7 +150,7 @@ fn get_or_create_closure_declaration<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         return llfn;
     }
 
-    let symbol = symbol_names::exported_name(ccx, &instance);
+    let symbol = instance.symbol_name(ccx.shared());
 
     // Compute the rust-call form of the closure call method.
     let sig = &tcx.closure_type(closure_id, substs).sig;
@@ -171,6 +171,7 @@ fn get_or_create_closure_declaration<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     // set an inline hint for all closures
     attributes::inline(llfn, attributes::InlineAttr::Hint);
+    attributes::set_frame_pointer_elimination(ccx, llfn);
 
     debug!("get_or_create_declaration_if_closure(): inserting new \
             closure {:?}: {:?}",
@@ -343,7 +344,7 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
     // Find a version of the closure type. Substitute static for the
     // region since it doesn't really matter.
     let closure_ty = tcx.mk_closure_from_closure_substs(closure_def_id, substs);
-    let ref_closure_ty = tcx.mk_imm_ref(tcx.mk_region(ty::ReStatic), closure_ty);
+    let ref_closure_ty = tcx.mk_imm_ref(tcx.mk_region(ty::ReErased), closure_ty);
 
     // Make a version with the type of by-ref closure.
     let ty::ClosureTy { unsafety, abi, mut sig } =
@@ -377,6 +378,7 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
     let function_name =
         symbol_names::internal_name_from_type_and_suffix(ccx, llonce_fn_ty, "once_shim");
     let lloncefn = declare::define_internal_fn(ccx, &function_name, llonce_fn_ty);
+    attributes::set_frame_pointer_elimination(ccx, lloncefn);
 
     let (block_arena, fcx): (TypedArena<_>, FunctionContext);
     block_arena = TypedArena::new();

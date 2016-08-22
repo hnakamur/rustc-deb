@@ -318,7 +318,11 @@ impl<'a> Display for Arguments<'a> {
 ///
 /// [module]: ../../std/fmt/index.html
 ///
-/// This trait can be used with `#[derive]`.
+/// This trait can be used with `#[derive]` if all fields implement `Debug`. When
+/// `derive`d for structs, it will use the name of the `struct`, then `{`, then a
+/// comma-separated list of each field's name and `Debug` value, then `}`. For
+/// `enum`s, it will use the name of the variant and, if applicable, `(`, then the
+/// `Debug` values of the fields, then `)`.
 ///
 /// # Examples
 ///
@@ -836,11 +840,8 @@ pub fn write(output: &mut Write, args: Arguments) -> Result {
     }
 
     // There can be only one trailing string piece left.
-    match pieces.next() {
-        Some(piece) => {
-            formatter.buf.write_str(*piece)?;
-        }
-        None => {}
+    if let Some(piece) = pieces.next() {
+        formatter.buf.write_str(*piece)?;
     }
 
     Ok(())
@@ -1380,7 +1381,7 @@ impl Debug for str {
         for (i, c) in self.char_indices() {
             let esc = c.escape_default();
             // If char needs escaping, flush backlog so far and write, else skip
-            if esc.size_hint() != (1, Some(1)) {
+            if esc.len() != 1 {
                 f.write_str(&self[from..i])?;
                 for c in esc {
                     f.write_char(c)?;

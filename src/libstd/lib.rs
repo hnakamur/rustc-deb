@@ -210,6 +210,8 @@
        test(no_crate_inject, attr(deny(warnings))),
        test(attr(allow(dead_code, deprecated, unused_variables, unused_mut))))]
 
+#![needs_panic_runtime]
+
 #![feature(alloc)]
 #![feature(allow_internal_unstable)]
 #![feature(asm)]
@@ -253,6 +255,7 @@
 #![feature(reflect_marker)]
 #![feature(rustc_attrs)]
 #![feature(shared)]
+#![feature(sip_hash_13)]
 #![feature(slice_bytes)]
 #![feature(slice_concat_ext)]
 #![feature(slice_patterns)]
@@ -272,6 +275,7 @@
 #![feature(zero_one)]
 #![feature(question_mark)]
 #![feature(try_from)]
+#![feature(needs_panic_runtime)]
 
 // Issue# 30592: Systematically use alloc_system during stage0 since jemalloc
 // might be unavailable or disabled
@@ -283,13 +287,6 @@
 #![deny(missing_docs)]
 #![allow(unused_features)] // std may use features in a platform-specific way
 #![cfg_attr(not(stage0), deny(warnings))]
-
-// FIXME(stage0): after a snapshot, move needs_panic_runtime up above and remove
-//                this `extern crate` declaration and feature(panic_unwind)
-#![cfg_attr(not(stage0), needs_panic_runtime)]
-#![cfg_attr(not(stage0), feature(needs_panic_runtime))]
-#[cfg(stage0)]
-extern crate panic_unwind as __please_just_link_me_dont_reference_me;
 
 #[cfg(test)] extern crate test;
 
@@ -471,3 +468,15 @@ pub mod __rand {
 // the rustdoc documentation for primitive types. Using `include!`
 // because rustdoc only looks for these modules at the crate level.
 include!("primitive_docs.rs");
+
+// FIXME(stage0): remove this after a snapshot
+// HACK: this is needed because the interpretation of slice
+// patterns changed between stage0 and now.
+#[cfg(stage0)]
+fn slice_pat<'a, 'b, T>(t: &'a &'b [T]) -> &'a &'b [T] {
+    t
+}
+#[cfg(not(stage0))]
+fn slice_pat<'a, 'b, T>(t: &'a &'b [T]) -> &'b [T] {
+    *t
+}

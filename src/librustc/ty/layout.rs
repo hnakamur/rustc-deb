@@ -17,9 +17,11 @@ use session::Session;
 use traits;
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 
+use util::common::slice_pat;
+
 use syntax::ast::{FloatTy, IntTy, UintTy};
 use syntax::attr;
-use syntax::codemap::DUMMY_SP;
+use syntax_pos::DUMMY_SP;
 
 use std::cmp;
 use std::fmt;
@@ -98,17 +100,17 @@ impl TargetDataLayout {
 
         let mut dl = TargetDataLayout::default();
         for spec in sess.target.target.data_layout.split("-") {
-            match &spec.split(":").collect::<Vec<_>>()[..] {
-                ["e"] => dl.endian = Endian::Little,
-                ["E"] => dl.endian = Endian::Big,
-                ["a", a..] => dl.aggregate_align = align(a, "a"),
-                ["f32", a..] => dl.f32_align = align(a, "f32"),
-                ["f64", a..] => dl.f64_align = align(a, "f64"),
-                [p @ "p", s, a..] | [p @ "p0", s, a..] => {
+            match slice_pat(&&spec.split(":").collect::<Vec<_>>()[..]) {
+                &["e"] => dl.endian = Endian::Little,
+                &["E"] => dl.endian = Endian::Big,
+                &["a", ref a..] => dl.aggregate_align = align(a, "a"),
+                &["f32", ref a..] => dl.f32_align = align(a, "f32"),
+                &["f64", ref a..] => dl.f64_align = align(a, "f64"),
+                &[p @ "p", s, ref a..] | &[p @ "p0", s, ref a..] => {
                     dl.pointer_size = size(s, p);
                     dl.pointer_align = align(a, p);
                 }
-                [s, a..] if s.starts_with("i") => {
+                &[s, ref a..] if s.starts_with("i") => {
                     let ty_align = match s[1..].parse::<u64>() {
                         Ok(1) => &mut dl.i8_align,
                         Ok(8) => &mut dl.i8_align,
@@ -123,7 +125,7 @@ impl TargetDataLayout {
                     };
                     *ty_align = align(a, s);
                 }
-                [s, a..] if s.starts_with("v") => {
+                &[s, ref a..] if s.starts_with("v") => {
                     let v_size = size(&s[1..], "v");
                     let a = align(a, s);
                     if let Some(v) = dl.vector_align.iter_mut().find(|v| v.0 == v_size) {
@@ -170,6 +172,7 @@ impl TargetDataLayout {
     /// address space on 64-bit ARMv8 and x86_64.
     pub fn obj_size_bound(&self) -> u64 {
         match self.pointer_size.bits() {
+            16 => 1 << 15,
             32 => 1 << 31,
             64 => 1 << 47,
             bits => bug!("obj_size_bound: unknown pointer bit size {}", bits)
@@ -178,6 +181,7 @@ impl TargetDataLayout {
 
     pub fn ptr_sized_integer(&self) -> Integer {
         match self.pointer_size.bits() {
+            16 => I16,
             32 => I32,
             64 => I64,
             bits => bug!("ptr_sized_integer: unknown pointer bit size {}", bits)

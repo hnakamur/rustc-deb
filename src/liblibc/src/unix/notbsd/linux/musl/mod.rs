@@ -56,6 +56,23 @@ s! {
         pub l_len: ::off_t,
         pub l_pid: ::pid_t,
     }
+
+    pub struct sysinfo {
+        pub uptime: ::c_ulong,
+        pub loads: [::c_ulong; 3],
+        pub totalram: ::c_ulong,
+        pub freeram: ::c_ulong,
+        pub sharedram: ::c_ulong,
+        pub bufferram: ::c_ulong,
+        pub totalswap: ::c_ulong,
+        pub freeswap: ::c_ulong,
+        pub procs: ::c_ushort,
+        pub pad: ::c_ushort,
+        pub totalhigh: ::c_ulong,
+        pub freehigh: ::c_ulong,
+        pub mem_unit: ::c_uint,
+        pub __reserved: [::c_char; 256],
+    }
 }
 
 pub const BUFSIZ: ::c_uint = 1024;
@@ -143,7 +160,7 @@ pub const TCSANOW: ::c_int = 0;
 pub const TCSADRAIN: ::c_int = 1;
 pub const TCSAFLUSH: ::c_int = 2;
 
-pub const TIOCINQ: ::c_ulong = ::FIONREAD;
+pub const TIOCINQ: ::c_int = ::FIONREAD;
 
 pub const RTLD_GLOBAL: ::c_int = 0x100;
 pub const RTLD_NOLOAD: ::c_int = 0x4;
@@ -156,6 +173,8 @@ pub const CLOCK_TAI: ::clockid_t = 11;
 extern {
     pub fn ioctl(fd: ::c_int, request: ::c_int, ...) -> ::c_int;
     pub fn ptrace(request: ::c_int, ...) -> ::c_long;
+    pub fn getpriority(which: ::c_int, who: ::id_t) -> ::c_int;
+    pub fn setpriority(which: ::c_int, who: ::id_t, prio: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

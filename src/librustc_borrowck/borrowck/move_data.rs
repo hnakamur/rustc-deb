@@ -28,7 +28,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::usize;
 use syntax::ast;
-use syntax::codemap::Span;
+use syntax_pos::Span;
 use rustc::hir;
 use rustc::hir::intravisit::IdRange;
 
@@ -274,11 +274,8 @@ impl<'a, 'tcx> MoveData<'tcx> {
     /// `lp` and any of its base paths that do not yet have an index.
     pub fn move_path(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
                      lp: Rc<LoanPath<'tcx>>) -> MovePathIndex {
-        match self.path_map.borrow().get(&lp) {
-            Some(&index) => {
-                return index;
-            }
-            None => {}
+        if let Some(&index) = self.path_map.borrow().get(&lp) {
+            return index;
         }
 
         let index = match lp.kind {

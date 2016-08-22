@@ -13,16 +13,16 @@ use super::NoMatchData;
 use super::{CandidateSource, ImplSource, TraitSource};
 use super::suggest;
 
-use check::{FnCtxt, UnresolvedTypeAction};
+use check::{FnCtxt};
 use hir::def_id::DefId;
 use hir::def::Def;
 use rustc::ty::subst;
 use rustc::ty::subst::Subst;
 use rustc::traits;
-use rustc::ty::{self, NoPreference, Ty, ToPolyTraitRef, TraitRef, TypeFoldable};
+use rustc::ty::{self, Ty, ToPolyTraitRef, TraitRef, TypeFoldable};
 use rustc::infer::{InferOk, TypeOrigin};
 use syntax::ast;
-use syntax::codemap::{Span, DUMMY_SP};
+use syntax_pos::{Span, DUMMY_SP};
 use rustc::hir;
 use std::collections::HashSet;
 use std::mem;
@@ -208,25 +208,22 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     fn create_steps(&self,
                     span: Span,
                     self_ty: Ty<'tcx>)
-                    -> Option<Vec<CandidateStep<'tcx>>> {
-        let mut steps = Vec::new();
+                    -> Option<Vec<CandidateStep<'tcx>>>
+    {
+        // FIXME: we don't need to create the entire steps in one pass
 
-        let (final_ty, dereferences, _) = self.autoderef(span,
-                                                         self_ty,
-                                                         || None,
-                                                         UnresolvedTypeAction::Error,
-                                                         NoPreference,
-                                                         |t, d| {
-            steps.push(CandidateStep {
-                self_ty: t,
-                autoderefs: d,
-                unsize: false
-            });
-            None::<()> // keep iterating until we can't anymore
-        });
+        let mut autoderef = self.autoderef(span, self_ty);
+        let mut steps: Vec<_> = autoderef.by_ref().map(|(ty, d)| CandidateStep {
+            self_ty: ty,
+            autoderefs: d,
+            unsize: false
+        }).collect();
 
+        let final_ty = autoderef.unambiguous_final_ty();
         match final_ty.sty {
             ty::TyArray(elem_ty, _) => {
+                let dereferences = steps.len() - 1;
+
                 steps.push(CandidateStep {
                     self_ty: self.tcx.mk_slice(elem_ty),
                     autoderefs: dereferences,
@@ -236,6 +233,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             ty::TyError => return None,
             _ => (),
         }
+
+        debug!("create_steps: steps={:?}", steps);
 
         Some(steps)
     }
@@ -865,9 +864,8 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
     // THE ACTUAL SEARCH
 
     fn pick(mut self) -> PickResult<'tcx> {
-        match self.pick_core() {
-            Some(r) => return r,
-            None => {}
+        if let Some(r) = self.pick_core() {
+            return r;
         }
 
         let static_candidates = mem::replace(&mut self.static_candidates, vec![]);
@@ -930,9 +928,8 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             return None;
         }
 
-        match self.pick_by_value_method(step) {
-            Some(result) => return Some(result),
-            None => {}
+        if let Some(result) = self.pick_by_value_method(step) {
+            return Some(result);
         }
 
         self.pick_autorefd_method(step)
@@ -977,7 +974,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
 
         // In general, during probing we erase regions. See
         // `impl_self_ty()` for an explanation.
-        let region = tcx.mk_region(ty::ReStatic);
+        let region = tcx.mk_region(ty::ReErased);
 
         // Search through mutabilities in order to find one where pick works:
         [hir::MutImmutable, hir::MutMutable].iter().filter_map(|&m| {
@@ -1004,12 +1001,10 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
         let mut possibly_unsatisfied_predicates = Vec::new();
 
         debug!("searching inherent candidates");
-        match self.consider_candidates(self_ty, &self.inherent_candidates,
-                                       &mut possibly_unsatisfied_predicates) {
-            None => {}
-            Some(pick) => {
-                return Some(pick);
-            }
+        if let Some(pick) = self.consider_candidates(self_ty,
+                                                     &self.inherent_candidates,
+                                                     &mut possibly_unsatisfied_predicates) {
+            return Some(pick);
         }
 
         debug!("searching extension candidates");
@@ -1241,7 +1236,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             let method_regions =
                 method.generics.regions.get_slice(subst::FnSpace)
                 .iter()
-                .map(|_| ty::ReStatic)
+                .map(|_| ty::ReErased)
                 .collect();
 
             placeholder = (*substs).clone().with_method(Vec::new(), method_regions);
@@ -1277,7 +1272,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
 
         let region_placeholders =
             impl_pty.generics.regions.map(
-                |_| ty::ReStatic); // see erase_late_bound_regions() for an expl of why 'static
+                |_| ty::ReErased); // see erase_late_bound_regions() for an expl of why 'erased
 
         let substs = subst::Substs::new(type_vars, region_placeholders);
         (impl_pty.ty, substs)

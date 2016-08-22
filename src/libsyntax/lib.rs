@@ -33,7 +33,7 @@
 #![feature(str_escape)]
 #![feature(unicode)]
 #![feature(question_mark)]
-#![feature(range_contains)]
+#![feature(rustc_diagnostic_macros)]
 
 extern crate serialize;
 extern crate term;
@@ -41,8 +41,11 @@ extern crate libc;
 #[macro_use] extern crate log;
 #[macro_use] #[no_link] extern crate rustc_bitflags;
 extern crate rustc_unicode;
+pub extern crate rustc_errors as errors;
+extern crate syntax_pos;
 
 extern crate serialize as rustc_serialize; // used by deriving
+
 
 // A variant of 'try!' that panics on an Err. This is used as a crutch on the
 // way towards a non-panic!-prone parser. It should be used for fatal parsing
@@ -53,7 +56,7 @@ extern crate serialize as rustc_serialize; // used by deriving
 macro_rules! panictry {
     ($e:expr) => ({
         use std::result::Result::{Ok, Err};
-        use $crate::errors::FatalError;
+        use errors::FatalError;
         match $e {
             Ok(e) => e,
             Err(mut e) => {
@@ -64,6 +67,18 @@ macro_rules! panictry {
     })
 }
 
+#[macro_use]
+pub mod diagnostics {
+    #[macro_use]
+    pub mod macros;
+    pub mod plugin;
+    pub mod metadata;
+}
+
+// NB: This module needs to be declared first so diagnostics are
+// registered before they are used.
+pub mod diagnostic_list;
+
 pub mod util {
     pub mod interner;
     pub mod lev_distance;
@@ -73,16 +88,12 @@ pub mod util {
     pub mod parser_testing;
     pub mod small_vector;
     pub mod move_map;
+
+    mod thin_vec;
+    pub use self::thin_vec::ThinVec;
 }
 
-pub mod diagnostics {
-    pub mod macros;
-    pub mod plugin;
-    pub mod registry;
-    pub mod metadata;
-}
-
-pub mod errors;
+pub mod json;
 
 pub mod syntax {
     pub use ext;
@@ -104,6 +115,7 @@ pub mod show_span;
 pub mod std_inject;
 pub mod str;
 pub mod test;
+pub mod tokenstream;
 pub mod visit;
 
 pub mod print {
@@ -125,3 +137,5 @@ pub mod ext {
         pub mod macro_rules;
     }
 }
+
+// __build_diagnostic_array! { libsyntax, DIAGNOSTICS }

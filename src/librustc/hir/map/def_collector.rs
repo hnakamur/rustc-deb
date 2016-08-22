@@ -25,15 +25,15 @@ pub struct DefCollector<'ast> {
     // If we are walking HIR (c.f., AST), we need to keep a reference to the
     // crate.
     hir_crate: Option<&'ast hir::Crate>,
-    pub definitions: Definitions,
+    definitions: &'ast mut Definitions,
     parent_def: Option<DefIndex>,
 }
 
 impl<'ast> DefCollector<'ast> {
-    pub fn root() -> DefCollector<'ast> {
+    pub fn root(definitions: &'ast mut Definitions) -> DefCollector<'ast> {
         let mut collector = DefCollector {
             hir_crate: None,
-            definitions: Definitions::new(),
+            definitions: definitions,
             parent_def: None,
         };
         let root = collector.create_def_with_parent(None, CRATE_NODE_ID, DefPathData::CrateRoot);
@@ -48,7 +48,7 @@ impl<'ast> DefCollector<'ast> {
     pub fn extend(parent_node: NodeId,
                   parent_def_path: DefPath,
                   parent_def_id: DefId,
-                  definitions: Definitions)
+                  definitions: &'ast mut Definitions)
                   -> DefCollector<'ast> {
         let mut collector = DefCollector {
             hir_crate: None,
@@ -98,7 +98,7 @@ impl<'ast> DefCollector<'ast> {
         self.parent_def = parent;
     }
 
-    fn visit_ast_const_integer(&mut self, expr: &'ast Expr) {
+    fn visit_ast_const_integer(&mut self, expr: &Expr) {
         // Find the node which will be used after lowering.
         if let ExprKind::Paren(ref inner) = expr.node {
             return self.visit_ast_const_integer(inner);
@@ -124,8 +124,8 @@ impl<'ast> DefCollector<'ast> {
     }
 }
 
-impl<'ast> visit::Visitor<'ast> for DefCollector<'ast> {
-    fn visit_item(&mut self, i: &'ast Item) {
+impl<'ast> visit::Visitor for DefCollector<'ast> {
+    fn visit_item(&mut self, i: &Item) {
         debug!("visit_item: {:?}", i);
 
         // Pick the def data. This need not be unique, but the more
@@ -183,7 +183,7 @@ impl<'ast> visit::Visitor<'ast> for DefCollector<'ast> {
         });
     }
 
-    fn visit_foreign_item(&mut self, foreign_item: &'ast ForeignItem) {
+    fn visit_foreign_item(&mut self, foreign_item: &ForeignItem) {
         let def = self.create_def(foreign_item.id, DefPathData::ValueNs(foreign_item.ident.name));
 
         self.with_parent(def, |this| {
@@ -191,7 +191,7 @@ impl<'ast> visit::Visitor<'ast> for DefCollector<'ast> {
         });
     }
 
-    fn visit_generics(&mut self, generics: &'ast Generics) {
+    fn visit_generics(&mut self, generics: &Generics) {
         for ty_param in generics.ty_params.iter() {
             self.create_def(ty_param.id, DefPathData::TypeParam(ty_param.ident.name));
         }
@@ -199,11 +199,12 @@ impl<'ast> visit::Visitor<'ast> for DefCollector<'ast> {
         visit::walk_generics(self, generics);
     }
 
-    fn visit_trait_item(&mut self, ti: &'ast TraitItem) {
+    fn visit_trait_item(&mut self, ti: &TraitItem) {
         let def_data = match ti.node {
             TraitItemKind::Method(..) | TraitItemKind::Const(..) =>
                 DefPathData::ValueNs(ti.ident.name),
             TraitItemKind::Type(..) => DefPathData::TypeNs(ti.ident.name),
+            TraitItemKind::Macro(..) => DefPathData::MacroDef(ti.ident.name),
         };
 
         let def = self.create_def(ti.id, def_data);
@@ -216,7 +217,7 @@ impl<'ast> visit::Visitor<'ast> for DefCollector<'ast> {
         });
     }
 
-    fn visit_impl_item(&mut self, ii: &'ast ImplItem) {
+    fn visit_impl_item(&mut self, ii: &ImplItem) {
         let def_data = match ii.node {
             ImplItemKind::Method(..) | ImplItemKind::Const(..) =>
                 DefPathData::ValueNs(ii.ident.name),
@@ -234,7 +235,7 @@ impl<'ast> visit::Visitor<'ast> for DefCollector<'ast> {
         });
     }
 
-    fn visit_pat(&mut self, pat: &'ast Pat) {
+    fn visit_pat(&mut self, pat: &Pat) {
         let parent_def = self.parent_def;
 
         if let PatKind::Ident(_, id, _) = pat.node {
@@ -246,7 +247,7 @@ impl<'ast> visit::Visitor<'ast> for DefCollector<'ast> {
         self.parent_def = parent_def;
     }
 
-    fn visit_expr(&mut self, expr: &'ast Expr) {
+    fn visit_expr(&mut self, expr: &Expr) {
         let parent_def = self.parent_def;
 
         if let ExprKind::Repeat(_, ref count) = expr.node {
@@ -262,18 +263,18 @@ impl<'ast> visit::Visitor<'ast> for DefCollector<'ast> {
         self.parent_def = parent_def;
     }
 
-    fn visit_ty(&mut self, ty: &'ast Ty) {
+    fn visit_ty(&mut self, ty: &Ty) {
         if let TyKind::FixedLengthVec(_, ref length) = ty.node {
             self.visit_ast_const_integer(length);
         }
         visit::walk_ty(self, ty);
     }
 
-    fn visit_lifetime_def(&mut self, def: &'ast LifetimeDef) {
+    fn visit_lifetime_def(&mut self, def: &LifetimeDef) {
         self.create_def(def.lifetime.id, DefPathData::LifetimeDef(def.lifetime.name));
     }
 
-    fn visit_macro_def(&mut self, macro_def: &'ast MacroDef) {
+    fn visit_macro_def(&mut self, macro_def: &MacroDef) {
         self.create_def(macro_def.id, DefPathData::MacroDef(macro_def.ident.name));
     }
 }
@@ -396,7 +397,7 @@ impl<'ast> intravisit::Visitor<'ast> for DefCollector<'ast> {
     fn visit_pat(&mut self, pat: &'ast hir::Pat) {
         let parent_def = self.parent_def;
 
-        if let hir::PatKind::Ident(_, name, _) = pat.node {
+        if let hir::PatKind::Binding(_, name, _) = pat.node {
             let def = self.create_def(pat.id, DefPathData::Binding(name.node));
             self.parent_def = Some(def);
         }

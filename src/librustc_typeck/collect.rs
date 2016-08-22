@@ -64,7 +64,6 @@ use hir::def::Def;
 use hir::def_id::DefId;
 use constrained_type_params as ctp;
 use middle::lang_items::SizedTraitLangItem;
-use middle::resolve_lifetime;
 use middle::const_val::ConstVal;
 use rustc_const_eval::EvalHint::UncheckedExprHint;
 use rustc_const_eval::{eval_const_expr_partial, ConstEvalErr};
@@ -89,9 +88,10 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::rc::Rc;
 
 use syntax::{abi, ast, attr};
-use syntax::codemap::Span;
 use syntax::parse::token::keywords;
 use syntax::ptr::P;
+use syntax_pos::Span;
+
 use rustc::hir::{self, PatKind};
 use rustc::hir::intravisit;
 use rustc::hir::print as pprust;
@@ -533,17 +533,13 @@ fn is_param<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                       -> bool
 {
     if let hir::TyPath(None, _) = ast_ty.node {
-        let path_res = *tcx.def_map.borrow().get(&ast_ty.id).unwrap();
+        let path_res = tcx.expect_resolution(ast_ty.id);
         match path_res.base_def {
-            Def::SelfTy(Some(def_id), None) => {
-                path_res.depth == 0 && def_id == tcx.map.local_def_id(param_id)
+            Def::SelfTy(Some(def_id), None) |
+            Def::TyParam(_, _, def_id, _) if path_res.depth == 0 => {
+                def_id == tcx.map.local_def_id(param_id)
             }
-            Def::TyParam(_, _, def_id, _) => {
-                path_res.depth == 0 && def_id == tcx.map.local_def_id(param_id)
-            }
-            _ => {
-                false
-            }
+            _ => false
         }
     } else {
         false
@@ -1720,7 +1716,7 @@ fn add_unsized_bound<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
     match unbound {
         Some(ref tpb) => {
             // FIXME(#8559) currently requires the unbound to be built-in.
-            let trait_def_id = tcx.trait_ref_to_def_id(tpb);
+            let trait_def_id = tcx.expect_def(tpb.ref_id).def_id();
             match kind_id {
                 Ok(kind_id) if trait_def_id != kind_id => {
                     tcx.sess.span_warn(span,
@@ -1745,14 +1741,16 @@ fn add_unsized_bound<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
 /// the lifetimes that are declared. For fns or methods, we have to
 /// screen out those that do not appear in any where-clauses etc using
 /// `resolve_lifetime::early_bound_lifetimes`.
-fn early_bound_lifetimes_from_generics(space: ParamSpace,
-                                       ast_generics: &hir::Generics)
-                                       -> Vec<hir::LifetimeDef>
+fn early_bound_lifetimes_from_generics<'a, 'tcx, 'hir>(
+    ccx: &CrateCtxt<'a, 'tcx>,
+    ast_generics: &'hir hir::Generics)
+    -> Vec<&'hir hir::LifetimeDef>
 {
-    match space {
-        SelfSpace | TypeSpace => ast_generics.lifetimes.to_vec(),
-        FnSpace => resolve_lifetime::early_bound_lifetimes(ast_generics),
-    }
+    ast_generics
+        .lifetimes
+        .iter()
+        .filter(|l| !ccx.tcx.named_region_map.late_bound.contains_key(&l.lifetime.id))
+        .collect()
 }
 
 fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
@@ -1781,7 +1779,7 @@ fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
     // Collect the region predicates that were declared inline as
     // well. In the case of parameters declared on a fn or method, we
     // have to be careful to only iterate over early-bound regions.
-    let early_lifetimes = early_bound_lifetimes_from_generics(space, ast_generics);
+    let early_lifetimes = early_bound_lifetimes_from_generics(ccx, ast_generics);
     for (index, param) in early_lifetimes.iter().enumerate() {
         let index = index as u32;
         let region =
@@ -1864,7 +1862,7 @@ fn ty_generics<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
     let tcx = ccx.tcx;
     let mut result = base_generics.clone();
 
-    let early_lifetimes = early_bound_lifetimes_from_generics(space, ast_generics);
+    let early_lifetimes = early_bound_lifetimes_from_generics(ccx, ast_generics);
     for (i, l) in early_lifetimes.iter().enumerate() {
         let bounds = l.bounds.iter()
                              .map(|l| ast_region_to_region(tcx, l))
@@ -2152,12 +2150,9 @@ fn compute_type_scheme_of_foreign_fn_decl<'a, 'tcx>(
 {
     for i in &decl.inputs {
         match i.pat.node {
-            PatKind::Ident(_, _, _) => (),
-            PatKind::Wild => (),
-            _ => {
-                span_err!(ccx.tcx.sess, i.pat.span, E0130,
-                          "patterns aren't allowed in foreign function declarations");
-            }
+            PatKind::Binding(..) | PatKind::Wild => {}
+            _ => span_err!(ccx.tcx.sess, i.pat.span, E0130,
+                           "patterns aren't allowed in foreign function declarations")
         }
     }
 

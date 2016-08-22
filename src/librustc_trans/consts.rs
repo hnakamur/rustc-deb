@@ -19,7 +19,7 @@ use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
 use rustc::hir::map as hir_map;
 use {abi, adt, closure, debuginfo, expr, machine};
-use base::{self, exported_name, imported_name, push_ctxt};
+use base::{self, push_ctxt};
 use callee::Callee;
 use collector;
 use trans_item::TransItem;
@@ -49,9 +49,9 @@ use std::borrow::Cow;
 use libc::c_uint;
 use syntax::ast::{self, LitKind};
 use syntax::attr::{self, AttrMetaMethods};
-use syntax::codemap::Span;
 use syntax::parse::token;
 use syntax::ptr::P;
+use syntax_pos::Span;
 
 pub type FnArgMap<'a> = Option<&'a NodeMap<ValueRef>>;
 
@@ -138,18 +138,15 @@ pub fn addr_of(ccx: &CrateContext,
                align: machine::llalign,
                kind: &str)
                -> ValueRef {
-    match ccx.const_globals().borrow().get(&cv) {
-        Some(&gv) => {
-            unsafe {
-                // Upgrade the alignment in cases where the same constant is used with different
-                // alignment requirements
-                if align > llvm::LLVMGetAlignment(gv) {
-                    llvm::LLVMSetAlignment(gv, align);
-                }
+    if let Some(&gv) = ccx.const_globals().borrow().get(&cv) {
+        unsafe {
+            // Upgrade the alignment in cases where the same constant is used with different
+            // alignment requirements
+            if align > llvm::LLVMGetAlignment(gv) {
+                llvm::LLVMSetAlignment(gv, align);
             }
-            return gv;
         }
-        None => {}
+        return gv;
     }
     let gv = addr_of_mut(ccx, cv, align, kind);
     unsafe {
@@ -297,8 +294,7 @@ pub fn get_const_expr_as_global<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         // `def` must be its own statement and cannot be in the `match`
         // otherwise the `def_map` will be borrowed for the entire match instead
         // of just to get the `def` value
-        let def = ccx.tcx().def_map.borrow().get(&expr.id).unwrap().full_def();
-        match def {
+        match ccx.tcx().expect_def(expr.id) {
             Def::Const(def_id) | Def::AssociatedConst(def_id) => {
                 if !ccx.tcx().tables.borrow().adjustments.contains_key(&expr.id) {
                     debug!("get_const_expr_as_global ({:?}): found const {:?}",
@@ -382,7 +378,7 @@ pub fn const_expr<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                     // Don't copy data to do a deref+ref
                     // (i.e., skip the last auto-deref).
                     llconst = addr_of(cx, llconst, type_of::align_of(cx, ty), "autoref");
-                    ty = cx.tcx().mk_imm_ref(cx.tcx().mk_region(ty::ReStatic), ty);
+                    ty = cx.tcx().mk_imm_ref(cx.tcx().mk_region(ty::ReErased), ty);
                 }
             } else if adj.autoderefs > 0 {
                 let (dv, dt) = const_deref(cx, llconst, ty);
@@ -716,7 +712,10 @@ fn const_expr_unadjusted<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             if iv >= len {
                 // FIXME #3170: report this earlier on in the const-eval
                 // pass. Reporting here is a bit late.
-                const_err(cx, e.span, Err(ErrKind::IndexOutOfBounds), trueconst)?;
+                const_err(cx, e.span, Err(ErrKind::IndexOutOfBounds {
+                    len: len,
+                    index: iv
+                }), trueconst)?;
                 C_undef(val_ty(arr).element_type())
             } else {
                 const_get_elt(arr, &[iv as c_uint])
@@ -800,8 +799,7 @@ fn const_expr_unadjusted<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                     _ => break,
                 }
             }
-            let opt_def = cx.tcx().def_map.borrow().get(&cur.id).map(|d| d.full_def());
-            if let Some(Def::Static(def_id, _)) = opt_def {
+            if let Some(Def::Static(def_id, _)) = cx.tcx().expect_def_or_none(cur.id) {
                 get_static(cx, def_id).val
             } else {
                 // If this isn't the address of a static, then keep going through
@@ -888,8 +886,7 @@ fn const_expr_unadjusted<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             }
         },
         hir::ExprPath(..) => {
-            let def = cx.tcx().def_map.borrow().get(&e.id).unwrap().full_def();
-            match def {
+            match cx.tcx().expect_def(e.id) {
                 Def::Local(_, id) => {
                     if let Some(val) = fn_args.and_then(|args| args.get(&id).cloned()) {
                         val
@@ -934,9 +931,8 @@ fn const_expr_unadjusted<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                     _ => break,
                 };
             }
-            let def = cx.tcx().def_map.borrow()[&callee.id].full_def();
             let arg_vals = map_list(args)?;
-            match def {
+            match cx.tcx().expect_def(callee.id) {
                 Def::Fn(did) | Def::Method(did) => {
                     const_fn_call(
                         cx,
@@ -1017,34 +1013,31 @@ pub fn get_static<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, def_id: DefId)
         return Datum::new(g, ty, Lvalue::new("static"));
     }
 
+    let sym = instance.symbol_name(ccx.shared());
+
     let g = if let Some(id) = ccx.tcx().map.as_local_node_id(def_id) {
         let llty = type_of::type_of(ccx, ty);
         match ccx.tcx().map.get(id) {
             hir_map::NodeItem(&hir::Item {
-                ref attrs, span, node: hir::ItemStatic(..), ..
+                span, node: hir::ItemStatic(..), ..
             }) => {
                 // If this static came from an external crate, then
                 // we need to get the symbol from metadata instead of
                 // using the current crate's name/version
                 // information in the hash of the symbol
-                let sym = exported_name(ccx, instance, attrs);
                 debug!("making {}", sym);
 
                 // Create the global before evaluating the initializer;
                 // this is necessary to allow recursive statics.
-                let g = declare::define_global(ccx, &sym, llty).unwrap_or_else(|| {
+                declare::define_global(ccx, &sym, llty).unwrap_or_else(|| {
                     ccx.sess().span_fatal(span,
                         &format!("symbol `{}` is already defined", sym))
-                });
-
-                ccx.item_symbols().borrow_mut().insert(id, sym);
-                g
+                })
             }
 
             hir_map::NodeForeignItem(&hir::ForeignItem {
-                ref attrs, name, span, node: hir::ForeignItemStatic(..), ..
+                ref attrs, span, node: hir::ForeignItemStatic(..), ..
             }) => {
-                let ident = imported_name(name, attrs);
                 let g = if let Some(name) =
                         attr::first_attr_value_str_by_name(&attrs, "linkage") {
                     // If this is a static with a linkage specified, then we need to handle
@@ -1066,7 +1059,7 @@ pub fn get_static<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, def_id: DefId)
                     };
                     unsafe {
                         // Declare a symbol `foo` with the desired linkage.
-                        let g1 = declare::declare_global(ccx, &ident, llty2);
+                        let g1 = declare::declare_global(ccx, &sym, llty2);
                         llvm::SetLinkage(g1, linkage);
 
                         // Declare an internal global `extern_with_linkage_foo` which
@@ -1076,10 +1069,10 @@ pub fn get_static<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, def_id: DefId)
                         // `extern_with_linkage_foo` will instead be initialized to
                         // zero.
                         let mut real_name = "_rust_extern_with_linkage_".to_string();
-                        real_name.push_str(&ident);
+                        real_name.push_str(&sym);
                         let g2 = declare::define_global(ccx, &real_name, llty).unwrap_or_else(||{
                             ccx.sess().span_fatal(span,
-                                &format!("symbol `{}` is already defined", ident))
+                                &format!("symbol `{}` is already defined", sym))
                         });
                         llvm::SetLinkage(g2, llvm::InternalLinkage);
                         llvm::LLVMSetInitializer(g2, g1);
@@ -1087,7 +1080,7 @@ pub fn get_static<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, def_id: DefId)
                     }
                 } else {
                     // Generate an external declaration.
-                    declare::declare_global(ccx, &ident, llty)
+                    declare::declare_global(ccx, &sym, llty)
                 };
 
                 for attr in attrs {
@@ -1104,8 +1097,7 @@ pub fn get_static<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, def_id: DefId)
     } else {
         // FIXME(nagisa): perhaps the map of externs could be offloaded to llvm somehow?
         // FIXME(nagisa): investigate whether it can be changed into define_global
-        let name = ccx.sess().cstore.item_symbol(def_id);
-        let g = declare::declare_global(ccx, &name, type_of::type_of(ccx, ty));
+        let g = declare::declare_global(ccx, &sym, type_of::type_of(ccx, ty));
         // Thread-local statics in some other crate need to *always* be linked
         // against in a thread-local fashion, so we need to be sure to apply the
         // thread-local attribute locally if it was present remotely. If we

@@ -59,6 +59,20 @@ impl<'a, 'gcx, 'tcx> LvalueTy<'tcx> {
                 LvalueTy::Ty {
                     ty: self.to_ty(tcx).builtin_index().unwrap()
                 },
+            ProjectionElem::Subslice { from, to } => {
+                let ty = self.to_ty(tcx);
+                LvalueTy::Ty {
+                    ty: match ty.sty {
+                        ty::TyArray(inner, size) => {
+                            tcx.mk_array(inner, size-(from as usize)-(to as usize))
+                        }
+                        ty::TySlice(..) => ty,
+                        _ => {
+                            bug!("cannot subslice non-array type: `{:?}`", self)
+                        }
+                    }
+                }
+            }
             ProjectionElem::Downcast(adt_def1, index) =>
                 match self.to_ty(tcx).sty {
                     ty::TyEnum(adt_def, substs) => {
@@ -140,11 +154,11 @@ impl<'a, 'gcx, 'tcx> Mir<'tcx> {
     {
         match *lvalue {
             Lvalue::Var(index) =>
-                LvalueTy::Ty { ty: self.var_decls[index as usize].ty },
+                LvalueTy::Ty { ty: self.var_decls[index].ty },
             Lvalue::Temp(index) =>
-                LvalueTy::Ty { ty: self.temp_decls[index as usize].ty },
+                LvalueTy::Ty { ty: self.temp_decls[index].ty },
             Lvalue::Arg(index) =>
-                LvalueTy::Ty { ty: self.arg_decls[index as usize].ty },
+                LvalueTy::Ty { ty: self.arg_decls[index].ty },
             Lvalue::Static(def_id) =>
                 LvalueTy::Ty { ty: tcx.lookup_item_type(def_id).ty },
             Lvalue::ReturnPointer =>
@@ -183,6 +197,13 @@ impl<'a, 'gcx, 'tcx> Mir<'tcx> {
                 let rhs_ty = self.operand_ty(tcx, rhs);
                 Some(self.binop_ty(tcx, op, lhs_ty, rhs_ty))
             }
+            Rvalue::CheckedBinaryOp(op, ref lhs, ref rhs) => {
+                let lhs_ty = self.operand_ty(tcx, lhs);
+                let rhs_ty = self.operand_ty(tcx, rhs);
+                let ty = self.binop_ty(tcx, op, lhs_ty, rhs_ty);
+                let ty = tcx.mk_tup(vec![ty, tcx.types.bool]);
+                Some(ty)
+            }
             Rvalue::UnaryOp(_, ref operand) => {
                 Some(self.operand_ty(tcx, operand))
             }
@@ -212,7 +233,6 @@ impl<'a, 'gcx, 'tcx> Mir<'tcx> {
                     }
                 }
             }
-            Rvalue::Slice { .. } => None,
             Rvalue::InlineAsm { .. } => None
         }
     }

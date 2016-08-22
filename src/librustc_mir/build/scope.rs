@@ -86,20 +86,22 @@ should go to.
 
 */
 
-use build::{BlockAnd, BlockAndExtension, Builder, CFG, ScopeAuxiliary};
+use build::{BlockAnd, BlockAndExtension, Builder, CFG, ScopeAuxiliary, ScopeId};
 use rustc::middle::region::{CodeExtent, CodeExtentData};
 use rustc::middle::lang_items;
 use rustc::ty::subst::{Substs, Subst, VecPerParamSpace};
-use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::{Ty, TyCtxt};
 use rustc::mir::repr::*;
-use syntax::codemap::{Span, DUMMY_SP};
-use syntax::parse::token::intern_and_get_ident;
-use rustc::middle::const_val::ConstVal;
-use rustc_const_math::ConstInt;
+use syntax_pos::Span;
+use rustc_data_structures::indexed_vec::Idx;
+use rustc_data_structures::fnv::FnvHashMap;
 
 pub struct Scope<'tcx> {
-    /// the scope-id within the scope_datas
+    /// the scope-id within the scope_auxiliary
     id: ScopeId,
+
+    /// The visibility scope this scope was created in.
+    visibility_scope: VisibilityScope,
 
     /// the extent of this scope within source code; also stored in
     /// `ScopeAuxiliary`, but kept here for convenience
@@ -126,12 +128,8 @@ pub struct Scope<'tcx> {
     /// stage.
     free: Option<FreeData<'tcx>>,
 
-    /// The cached block for the cleanups-on-diverge path. This block
-    /// contains a block that will just do a RESUME to an appropriate
-    /// place. This block does not execute any of the drops or free:
-    /// each of those has their own cached-blocks, which will branch
-    /// to this point.
-    cached_block: Option<BasicBlock>
+    /// The cache for drop chain on “normal” exit into a particular BasicBlock.
+    cached_exits: FnvHashMap<(BasicBlock, CodeExtent), BasicBlock>,
 }
 
 struct DropData<'tcx> {
@@ -139,7 +137,7 @@ struct DropData<'tcx> {
     span: Span,
 
     /// lvalue to drop
-    value: Lvalue<'tcx>,
+    location: Lvalue<'tcx>,
 
     /// The cached block for the cleanups-on-diverge path. This block
     /// contains code to run the current drop and all the preceding
@@ -171,7 +169,7 @@ pub struct LoopScope {
     pub continue_block: BasicBlock,
     /// Block to branch into when the loop terminates (either by being `break`-en out from, or by
     /// having its condition to become false)
-    pub break_block: BasicBlock, // where to go on a `break
+    pub break_block: BasicBlock,
     /// Indicates the reachability of the break_block for this loop
     pub might_break: bool
 }
@@ -182,7 +180,7 @@ impl<'tcx> Scope<'tcx> {
     /// Should always be run for all inner scopes when a drop is pushed into some scope enclosing a
     /// larger extent of code.
     fn invalidate_cache(&mut self) {
-        self.cached_block = None;
+        self.cached_exits = FnvHashMap();
         for dropdata in &mut self.drops {
             dropdata.cached_block = None;
         }
@@ -191,7 +189,7 @@ impl<'tcx> Scope<'tcx> {
         }
     }
 
-    /// Returns the cached block for this scope.
+    /// Returns the cached entrypoint for diverging exit from this scope.
     ///
     /// Precondition: the caches must be fully filled (i.e. diverge_cleanup is called) in order for
     /// this method to work correctly.
@@ -202,6 +200,14 @@ impl<'tcx> Scope<'tcx> {
             Some(data.cached_block.expect("free cache is not filled"))
         } else {
             None
+        }
+    }
+
+    /// Given a span and this scope's visibility scope, make a SourceInfo.
+    fn source_info(&self, span: Span) -> SourceInfo {
+        SourceInfo {
+            span: span,
+            scope: self.visibility_scope
         }
     }
 }
@@ -237,11 +243,11 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     /// Convenience wrapper that pushes a scope and then executes `f`
     /// to build its contents, popping the scope afterwards.
     pub fn in_scope<F, R>(&mut self, extent: CodeExtent, mut block: BasicBlock, f: F) -> BlockAnd<R>
-        where F: FnOnce(&mut Builder<'a, 'gcx, 'tcx>, ScopeId) -> BlockAnd<R>
+        where F: FnOnce(&mut Builder<'a, 'gcx, 'tcx>) -> BlockAnd<R>
     {
         debug!("in_scope(extent={:?}, block={:?})", extent, block);
-        let id = self.push_scope(extent, block);
-        let rv = unpack!(block = f(self, id));
+        self.push_scope(extent, block);
+        let rv = unpack!(block = f(self));
         unpack!(block = self.pop_scope(extent, block));
         debug!("in_scope: exiting extent={:?} block={:?}", extent, block);
         block.and(rv)
@@ -251,28 +257,23 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     /// scope and call `pop_scope` afterwards. Note that these two
     /// calls must be paired; using `in_scope` as a convenience
     /// wrapper maybe preferable.
-    pub fn push_scope(&mut self, extent: CodeExtent, entry: BasicBlock) -> ScopeId {
+    pub fn push_scope(&mut self, extent: CodeExtent, entry: BasicBlock) {
         debug!("push_scope({:?})", extent);
-        let parent_id = self.scopes.last().map(|s| s.id);
-        let id = ScopeId::new(self.scope_datas.len());
-        let tcx = self.hir.tcx();
-        self.scope_datas.push(ScopeData {
-            span: extent.span(&tcx.region_maps, &tcx.map).unwrap_or(DUMMY_SP),
-            parent_scope: parent_id,
-        });
+        let id = ScopeId::new(self.scope_auxiliary.len());
+        let vis_scope = self.visibility_scope;
         self.scopes.push(Scope {
             id: id,
+            visibility_scope: vis_scope,
             extent: extent,
             drops: vec![],
             free: None,
-            cached_block: None,
+            cached_exits: FnvHashMap()
         });
-        self.scope_auxiliary.vec.push(ScopeAuxiliary {
+        self.scope_auxiliary.push(ScopeAuxiliary {
             extent: extent,
             dom: self.cfg.current_location(entry),
             postdoms: vec![]
         });
-        id
     }
 
     /// Pops a scope, which should have extent `extent`, adding any
@@ -310,33 +311,50 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                                                       .unwrap_or_else(||{
             span_bug!(span, "extent {:?} does not enclose", extent)
         });
-
+        let len = self.scopes.len();
+        assert!(scope_count < len, "should not use `exit_scope` to pop ALL scopes");
         let tmp = self.get_unit_temp();
-        for (idx, ref scope) in self.scopes.iter().enumerate().rev().take(scope_count) {
-            unpack!(block = build_scope_drops(&mut self.cfg,
-                                              scope,
-                                              &self.scopes[..idx],
-                                              block));
+        {
+        let mut rest = &mut self.scopes[(len - scope_count)..];
+        while let Some((scope, rest_)) = {rest}.split_last_mut() {
+            rest = rest_;
+            block = if let Some(&e) = scope.cached_exits.get(&(target, extent)) {
+                self.cfg.terminate(block, scope.source_info(span),
+                                   TerminatorKind::Goto { target: e });
+                return;
+            } else {
+                let b = self.cfg.start_new_block();
+                self.cfg.terminate(block, scope.source_info(span),
+                                   TerminatorKind::Goto { target: b });
+                scope.cached_exits.insert((target, extent), b);
+                b
+            };
+            unpack!(block = build_scope_drops(&mut self.cfg, scope, rest, block));
             if let Some(ref free_data) = scope.free {
                 let next = self.cfg.start_new_block();
                 let free = build_free(self.hir.tcx(), &tmp, free_data, next);
-                self.cfg.terminate(block, scope.id, span, free);
+                self.cfg.terminate(block, scope.source_info(span), free);
                 block = next;
             }
             self.scope_auxiliary[scope.id]
                 .postdoms
                 .push(self.cfg.current_location(block));
         }
-
-        assert!(scope_count < self.scopes.len(),
-                "should never use `exit_scope` to pop *ALL* scopes");
-        let scope = self.scopes.iter().rev().skip(scope_count)
-                                            .next()
-                                            .unwrap();
-        self.cfg.terminate(block,
-                           scope.id,
-                           span,
+        }
+        let scope = &self.scopes[len - scope_count];
+        self.cfg.terminate(block, scope.source_info(span),
                            TerminatorKind::Goto { target: target });
+    }
+
+    /// Creates a new visibility scope, nested in the current one.
+    pub fn new_visibility_scope(&mut self, span: Span) -> VisibilityScope {
+        let parent = self.visibility_scope;
+        let scope = VisibilityScope::new(self.visibility_scopes.len());
+        self.visibility_scopes.push(VisibilityScopeData {
+            span: span,
+            parent_scope: Some(parent),
+        });
+        scope
     }
 
     // Finding scopes
@@ -363,8 +381,12 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         }.unwrap_or_else(|| span_bug!(span, "no enclosing loop scope found?"))
     }
 
-    pub fn innermost_scope_id(&self) -> ScopeId {
-        self.scopes.last().map(|scope| scope.id).unwrap()
+    /// Given a span and the current visibility scope, make a SourceInfo.
+    pub fn source_info(&self, span: Span) -> SourceInfo {
+        SourceInfo {
+            span: span,
+            scope: self.visibility_scope
+        }
     }
 
     pub fn extent_of_innermost_scope(&self) -> CodeExtent {
@@ -402,7 +424,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 // the drop that comes before it in the vector.
                 scope.drops.push(DropData {
                     span: span,
-                    value: lvalue.clone(),
+                    location: lvalue.clone(),
                     cached_block: None
                 });
                 return;
@@ -481,15 +503,16 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             target
         } else {
             let resumeblk = cfg.start_new_cleanup_block();
-            cfg.terminate(resumeblk, scopes[0].id, self.fn_span, TerminatorKind::Resume);
+            cfg.terminate(resumeblk,
+                          scopes[0].source_info(self.fn_span),
+                          TerminatorKind::Resume);
             *cached_resume_block = Some(resumeblk);
             resumeblk
         };
 
-        for scope in scopes {
+        for scope in scopes.iter_mut().filter(|s| !s.drops.is_empty() || s.free.is_some()) {
             target = build_diverge_scope(hir.tcx(), cfg, &unit_temp, scope, target);
         }
-
         Some(target)
     }
 
@@ -497,18 +520,35 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     pub fn build_drop(&mut self,
                       block: BasicBlock,
                       span: Span,
-                      value: Lvalue<'tcx>,
+                      location: Lvalue<'tcx>,
                       ty: Ty<'tcx>) -> BlockAnd<()> {
         if !self.hir.needs_drop(ty) {
             return block.unit();
         }
-        let scope_id = self.innermost_scope_id();
+        let source_info = self.source_info(span);
         let next_target = self.cfg.start_new_block();
         let diverge_target = self.diverge_cleanup();
-        self.cfg.terminate(block,
-                           scope_id,
-                           span,
+        self.cfg.terminate(block, source_info,
                            TerminatorKind::Drop {
+                               location: location,
+                               target: next_target,
+                               unwind: diverge_target,
+                           });
+        next_target.unit()
+    }
+
+    /// Utility function for *non*-scope code to build their own drops
+    pub fn build_drop_and_replace(&mut self,
+                                  block: BasicBlock,
+                                  span: Span,
+                                  location: Lvalue<'tcx>,
+                                  value: Operand<'tcx>) -> BlockAnd<()> {
+        let source_info = self.source_info(span);
+        let next_target = self.cfg.start_new_block();
+        let diverge_target = self.diverge_cleanup();
+        self.cfg.terminate(block, source_info,
+                           TerminatorKind::DropAndReplace {
+                               location: location,
                                value: value,
                                target: next_target,
                                unwind: diverge_target,
@@ -516,123 +556,31 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         next_target.unit()
     }
 
+    /// Create an Assert terminator and return the success block.
+    /// If the boolean condition operand is not the expected value,
+    /// a runtime panic will be caused with the given message.
+    pub fn assert(&mut self, block: BasicBlock,
+                  cond: Operand<'tcx>,
+                  expected: bool,
+                  msg: AssertMessage<'tcx>,
+                  span: Span)
+                  -> BasicBlock {
+        let source_info = self.source_info(span);
 
-    // Panicking
-    // =========
-    // FIXME: should be moved into their own module
-    pub fn panic_bounds_check(&mut self,
-                              block: BasicBlock,
-                              index: Operand<'tcx>,
-                              len: Operand<'tcx>,
-                              span: Span) {
-        // fn(&(filename: &'static str, line: u32), index: usize, length: usize) -> !
-        let region = ty::ReStatic; // FIXME(mir-borrowck): use a better region?
-        let func = self.lang_function(lang_items::PanicBoundsCheckFnLangItem);
-        let args = self.hir.tcx().replace_late_bound_regions(&func.ty.fn_args(), |_| region).0;
-
-        let ref_ty = args[0];
-        let tup_ty = if let ty::TyRef(_, tyandmut) = ref_ty.sty {
-            tyandmut.ty
-        } else {
-            span_bug!(span, "unexpected panic_bound_check type: {:?}", func.ty);
-        };
-
-        let (tuple, tuple_ref) = (self.temp(tup_ty), self.temp(ref_ty));
-        let (file, line) = self.span_to_fileline_args(span);
-        let elems = vec![Operand::Constant(file), Operand::Constant(line)];
-        let scope_id = self.innermost_scope_id();
-        // FIXME: We should have this as a constant, rather than a stack variable (to not pollute
-        // icache with cold branch code), however to achieve that we either have to rely on rvalue
-        // promotion or have some way, in MIR, to create constants.
-        self.cfg.push_assign(block, scope_id, span, &tuple, // tuple = (file_arg, line_arg);
-                             Rvalue::Aggregate(AggregateKind::Tuple, elems));
-        // FIXME: is this region really correct here?
-        self.cfg.push_assign(block, scope_id, span, &tuple_ref, // tuple_ref = &tuple;
-                             Rvalue::Ref(region, BorrowKind::Shared, tuple));
+        let success_block = self.cfg.start_new_block();
         let cleanup = self.diverge_cleanup();
-        self.cfg.terminate(block, scope_id, span, TerminatorKind::Call {
-            func: Operand::Constant(func),
-            args: vec![Operand::Consume(tuple_ref), index, len],
-            destination: None,
-            cleanup: cleanup,
-        });
+
+        self.cfg.terminate(block, source_info,
+                           TerminatorKind::Assert {
+                               cond: cond,
+                               expected: expected,
+                               msg: msg,
+                               target: success_block,
+                               cleanup: cleanup
+                           });
+
+        success_block
     }
-
-    /// Create diverge cleanup and branch to it from `block`.
-    pub fn panic(&mut self, block: BasicBlock, msg: &'static str, span: Span) {
-        // fn(&(msg: &'static str filename: &'static str, line: u32)) -> !
-        let region = ty::ReStatic; // FIXME(mir-borrowck): use a better region?
-        let func = self.lang_function(lang_items::PanicFnLangItem);
-        let args = self.hir.tcx().replace_late_bound_regions(&func.ty.fn_args(), |_| region).0;
-
-        let ref_ty = args[0];
-        let tup_ty = if let ty::TyRef(_, tyandmut) = ref_ty.sty {
-            tyandmut.ty
-        } else {
-            span_bug!(span, "unexpected panic type: {:?}", func.ty);
-        };
-
-        let (tuple, tuple_ref) = (self.temp(tup_ty), self.temp(ref_ty));
-        let (file, line) = self.span_to_fileline_args(span);
-        let message = Constant {
-            span: span,
-            ty: self.hir.tcx().mk_static_str(),
-            literal: self.hir.str_literal(intern_and_get_ident(msg))
-        };
-        let elems = vec![Operand::Constant(message),
-                         Operand::Constant(file),
-                         Operand::Constant(line)];
-        let scope_id = self.innermost_scope_id();
-        // FIXME: We should have this as a constant, rather than a stack variable (to not pollute
-        // icache with cold branch code), however to achieve that we either have to rely on rvalue
-        // promotion or have some way, in MIR, to create constants.
-        self.cfg.push_assign(block, scope_id, span, &tuple, // [1]
-                             Rvalue::Aggregate(AggregateKind::Tuple, elems));
-        // [1] tuple = (message_arg, file_arg, line_arg);
-        // FIXME: is this region really correct here?
-        self.cfg.push_assign(block, scope_id, span, &tuple_ref, // tuple_ref = &tuple;
-                             Rvalue::Ref(region, BorrowKind::Shared, tuple));
-        let cleanup = self.diverge_cleanup();
-        self.cfg.terminate(block, scope_id, span, TerminatorKind::Call {
-            func: Operand::Constant(func),
-            args: vec![Operand::Consume(tuple_ref)],
-            cleanup: cleanup,
-            destination: None,
-        });
-    }
-
-    fn lang_function(&mut self, lang_item: lang_items::LangItem) -> Constant<'tcx> {
-        let funcdid = match self.hir.tcx().lang_items.require(lang_item) {
-            Ok(d) => d,
-            Err(m) => {
-                self.hir.tcx().sess.fatal(&m)
-            }
-        };
-        Constant {
-            span: DUMMY_SP,
-            ty: self.hir.tcx().lookup_item_type(funcdid).ty,
-            literal: Literal::Item {
-                def_id: funcdid,
-                substs: self.hir.tcx().mk_substs(Substs::empty())
-            }
-        }
-    }
-
-    fn span_to_fileline_args(&mut self, span: Span) -> (Constant<'tcx>, Constant<'tcx>) {
-        let span_lines = self.hir.tcx().sess.codemap().lookup_char_pos(span.lo);
-        (Constant {
-            span: span,
-            ty: self.hir.tcx().mk_static_str(),
-            literal: self.hir.str_literal(intern_and_get_ident(&span_lines.file.name))
-        }, Constant {
-            span: span,
-            ty: self.hir.tcx().types.u32,
-            literal: Literal::Value {
-                value: ConstVal::Integral(ConstInt::U32(span_lines.line as u32)),
-            },
-        })
-    }
-
 }
 
 /// Builds drops for pop_scope and exit_scope.
@@ -652,8 +600,8 @@ fn build_scope_drops<'tcx>(cfg: &mut CFG<'tcx>,
             earlier_scopes.iter().rev().flat_map(|s| s.cached_block()).next()
         });
         let next = cfg.start_new_block();
-        cfg.terminate(block, scope.id, drop_data.span, TerminatorKind::Drop {
-            value: drop_data.value.clone(),
+        cfg.terminate(block, scope.source_info(drop_data.span), TerminatorKind::Drop {
+            location: drop_data.location.clone(),
             target: next,
             unwind: on_diverge
         });
@@ -682,15 +630,19 @@ fn build_diverge_scope<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
     // remainder. If everything is cached, we'll just walk right to
     // left reading the cached results but never created anything.
 
+    let visibility_scope = scope.visibility_scope;
+    let source_info = |span| SourceInfo {
+        span: span,
+        scope: visibility_scope
+    };
+
     // Next, build up any free.
     if let Some(ref mut free_data) = scope.free {
         target = if let Some(cached_block) = free_data.cached_block {
             cached_block
         } else {
             let into = cfg.start_new_cleanup_block();
-            cfg.terminate(into,
-                          scope.id,
-                          free_data.span,
+            cfg.terminate(into, source_info(free_data.span),
                           build_free(tcx, unit_temp, free_data, target));
             free_data.cached_block = Some(into);
             into
@@ -705,11 +657,9 @@ fn build_diverge_scope<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
             cached_block
         } else {
             let block = cfg.start_new_cleanup_block();
-            cfg.terminate(block,
-                          scope.id,
-                          drop_data.span,
+            cfg.terminate(block, source_info(drop_data.span),
                           TerminatorKind::Drop {
-                              value: drop_data.value.clone(),
+                              location: drop_data.location.clone(),
                               target: target,
                               unwind: None
                           });

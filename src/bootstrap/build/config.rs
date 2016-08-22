@@ -65,8 +65,9 @@ pub struct Config {
     pub build: String,
     pub host: Vec<String>,
     pub target: Vec<String>,
-    pub rustc: Option<String>,
-    pub cargo: Option<String>,
+    pub rustc: Option<PathBuf>,
+    pub cargo: Option<PathBuf>,
+    pub local_rebuild: bool,
 
     // libstd features
     pub debug_jemalloc: bool,
@@ -207,8 +208,8 @@ impl Config {
                 config.target.push(target.clone());
             }
         }
-        config.rustc = build.rustc;
-        config.cargo = build.cargo;
+        config.rustc = build.rustc.map(PathBuf::from);
+        config.cargo = build.cargo.map(PathBuf::from);
         set(&mut config.compiler_docs, build.compiler_docs);
         set(&mut config.docs, build.docs);
 
@@ -315,6 +316,7 @@ impl Config {
                 ("RPATH", self.rust_rpath),
                 ("OPTIMIZE_TESTS", self.rust_optimize_tests),
                 ("DEBUGINFO_TESTS", self.rust_debuginfo_tests),
+                ("LOCAL_REBUILD", self.local_rebuild),
             }
 
             match key {
@@ -366,16 +368,20 @@ impl Config {
                     target.ndk = Some(PathBuf::from(value));
                 }
                 "CFG_I686_LINUX_ANDROID_NDK" if value.len() > 0 => {
-                    let target = "i686-linux-androideabi".to_string();
+                    let target = "i686-linux-android".to_string();
                     let target = self.target_config.entry(target)
                                      .or_insert(Target::default());
                     target.ndk = Some(PathBuf::from(value));
                 }
                 "CFG_AARCH64_LINUX_ANDROID_NDK" if value.len() > 0 => {
-                    let target = "aarch64-linux-androideabi".to_string();
+                    let target = "aarch64-linux-android".to_string();
                     let target = self.target_config.entry(target)
                                      .or_insert(Target::default());
                     target.ndk = Some(PathBuf::from(value));
+                }
+                "CFG_LOCAL_RUST_ROOT" if value.len() > 0 => {
+                    self.rustc = Some(PathBuf::from(value).join("bin/rustc"));
+                    self.cargo = Some(PathBuf::from(value).join("bin/cargo"));
                 }
                 _ => {}
             }

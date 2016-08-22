@@ -30,7 +30,7 @@ use hir::{self, PatKind};
 
 use syntax::ast;
 use syntax::ptr::P;
-use syntax::codemap::Span;
+use syntax_pos::Span;
 
 ///////////////////////////////////////////////////////////////////////////
 // The Delegate trait
@@ -271,10 +271,19 @@ enum PassArgs {
 
 impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     pub fn new(delegate: &'a mut (Delegate<'tcx>+'a),
-               infcx: &'a InferCtxt<'a, 'gcx, 'tcx>) -> Self
+               infcx: &'a InferCtxt<'a, 'gcx, 'tcx>)
+               -> Self
+    {
+        ExprUseVisitor::with_options(delegate, infcx, mc::MemCategorizationOptions::default())
+    }
+
+    pub fn with_options(delegate: &'a mut (Delegate<'tcx>+'a),
+                        infcx: &'a InferCtxt<'a, 'gcx, 'tcx>,
+                        options: mc::MemCategorizationOptions)
+               -> Self
     {
         ExprUseVisitor {
-            mc: mc::MemCategorizationContext::new(infcx),
+            mc: mc::MemCategorizationContext::with_options(infcx, options),
             delegate: delegate
         }
     }
@@ -612,8 +621,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         match local.init {
             None => {
                 let delegate = &mut self.delegate;
-                pat_util::pat_bindings(&self.mc.infcx.tcx.def_map, &local.pat,
-                                       |_, id, span, _| {
+                pat_util::pat_bindings(&local.pat, |_, id, span, _| {
                     delegate.decl_without_init(id, span);
                 })
             }
@@ -736,26 +744,23 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
 
         for i in 0..autoderefs {
             let deref_id = ty::MethodCall::autoderef(expr.id, i as u32);
-            match self.mc.infcx.node_method_ty(deref_id) {
-                None => {}
-                Some(method_ty) => {
-                    let cmt = return_if_err!(self.mc.cat_expr_autoderefd(expr, i));
+            if let Some(method_ty) = self.mc.infcx.node_method_ty(deref_id) {
+                let cmt = return_if_err!(self.mc.cat_expr_autoderefd(expr, i));
 
-                    // the method call infrastructure should have
-                    // replaced all late-bound regions with variables:
-                    let self_ty = method_ty.fn_sig().input(0);
-                    let self_ty = self.tcx().no_late_bound_regions(&self_ty).unwrap();
+                // the method call infrastructure should have
+                // replaced all late-bound regions with variables:
+                let self_ty = method_ty.fn_sig().input(0);
+                let self_ty = self.tcx().no_late_bound_regions(&self_ty).unwrap();
 
-                    let (m, r) = match self_ty.sty {
-                        ty::TyRef(r, ref m) => (m.mutbl, r),
-                        _ => span_bug!(expr.span,
-                                "bad overloaded deref type {:?}",
-                                method_ty)
-                    };
-                    let bk = ty::BorrowKind::from_mutbl(m);
-                    self.delegate.borrow(expr.id, expr.span, cmt,
-                                         *r, bk, AutoRef);
-                }
+                let (m, r) = match self_ty.sty {
+                    ty::TyRef(r, ref m) => (m.mutbl, r),
+                    _ => span_bug!(expr.span,
+                                   "bad overloaded deref type {:?}",
+                                   method_ty)
+                };
+                let bk = ty::BorrowKind::from_mutbl(m);
+                self.delegate.borrow(expr.id, expr.span, cmt,
+                                     *r, bk, AutoRef);
             }
         }
     }
@@ -932,23 +937,16 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         debug!("determine_pat_move_mode cmt_discr={:?} pat={:?}", cmt_discr,
                pat);
         return_if_err!(self.mc.cat_pattern(cmt_discr, pat, |_mc, cmt_pat, pat| {
-            let def_map = &self.tcx().def_map;
-            if pat_util::pat_is_binding(&def_map.borrow(), pat) {
-                match pat.node {
-                    PatKind::Ident(hir::BindByRef(_), _, _) =>
-                        mode.lub(BorrowingMatch),
-                    PatKind::Ident(hir::BindByValue(_), _, _) => {
-                        match copy_or_move(self.mc.infcx, &cmt_pat, PatBindingMove) {
-                            Copy => mode.lub(CopyingMatch),
-                            Move(_) => mode.lub(MovingMatch),
-                        }
-                    }
-                    _ => {
-                        span_bug!(
-                            pat.span,
-                            "binding pattern not an identifier");
+            match pat.node {
+                PatKind::Binding(hir::BindByRef(..), _, _) =>
+                    mode.lub(BorrowingMatch),
+                PatKind::Binding(hir::BindByValue(..), _, _) => {
+                    match copy_or_move(self.mc.infcx, &cmt_pat, PatBindingMove) {
+                        Copy => mode.lub(CopyingMatch),
+                        Move(..) => mode.lub(MovingMatch),
                     }
                 }
+                _ => {}
             }
         }));
     }
@@ -963,88 +961,45 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         debug!("walk_pat cmt_discr={:?} pat={:?}", cmt_discr,
                pat);
 
+        let tcx = &self.tcx();
         let mc = &self.mc;
         let infcx = self.mc.infcx;
-        let def_map = &self.tcx().def_map;
         let delegate = &mut self.delegate;
         return_if_err!(mc.cat_pattern(cmt_discr.clone(), pat, |mc, cmt_pat, pat| {
-            if pat_util::pat_is_binding(&def_map.borrow(), pat) {
-                debug!("binding cmt_pat={:?} pat={:?} match_mode={:?}",
-                       cmt_pat,
-                       pat,
-                       match_mode);
+            match pat.node {
+                PatKind::Binding(bmode, _, _) => {
+                    debug!("binding cmt_pat={:?} pat={:?} match_mode={:?}",
+                           cmt_pat,
+                           pat,
+                           match_mode);
 
-                // pat_ty: the type of the binding being produced.
-                let pat_ty = return_if_err!(infcx.node_ty(pat.id));
+                    // pat_ty: the type of the binding being produced.
+                    let pat_ty = return_if_err!(infcx.node_ty(pat.id));
 
-                // Each match binding is effectively an assignment to the
-                // binding being produced.
-                let def = def_map.borrow().get(&pat.id).unwrap().full_def();
-                match mc.cat_def(pat.id, pat.span, pat_ty, def) {
-                    Ok(binding_cmt) => {
+                    // Each match binding is effectively an assignment to the
+                    // binding being produced.
+                    if let Ok(binding_cmt) = mc.cat_def(pat.id, pat.span, pat_ty,
+                                                        tcx.expect_def(pat.id)) {
                         delegate.mutate(pat.id, pat.span, binding_cmt, MutateMode::Init);
                     }
-                    Err(_) => { }
-                }
 
-                // It is also a borrow or copy/move of the value being matched.
-                match pat.node {
-                    PatKind::Ident(hir::BindByRef(m), _, _) => {
-                        if let ty::TyRef(&r, _) = pat_ty.sty {
-                            let bk = ty::BorrowKind::from_mutbl(m);
-                            delegate.borrow(pat.id, pat.span, cmt_pat,
-                                            r, bk, RefBinding);
+                    // It is also a borrow or copy/move of the value being matched.
+                    match bmode {
+                        hir::BindByRef(m) => {
+                            if let ty::TyRef(&r, _) = pat_ty.sty {
+                                let bk = ty::BorrowKind::from_mutbl(m);
+                                delegate.borrow(pat.id, pat.span, cmt_pat,
+                                                r, bk, RefBinding);
+                            }
+                        }
+                        hir::BindByValue(..) => {
+                            let mode = copy_or_move(infcx, &cmt_pat, PatBindingMove);
+                            debug!("walk_pat binding consuming pat");
+                            delegate.consume_pat(pat, cmt_pat, mode);
                         }
                     }
-                    PatKind::Ident(hir::BindByValue(_), _, _) => {
-                        let mode = copy_or_move(infcx, &cmt_pat, PatBindingMove);
-                        debug!("walk_pat binding consuming pat");
-                        delegate.consume_pat(pat, cmt_pat, mode);
-                    }
-                    _ => {
-                        span_bug!(
-                            pat.span,
-                            "binding pattern not an identifier");
-                    }
                 }
-            } else {
-                match pat.node {
-                    PatKind::Vec(_, Some(ref slice_pat), _) => {
-                        // The `slice_pat` here creates a slice into
-                        // the original vector.  This is effectively a
-                        // borrow of the elements of the vector being
-                        // matched.
-
-                        let (slice_cmt, slice_mutbl, slice_r) =
-                            return_if_err!(mc.cat_slice_pattern(cmt_pat, &slice_pat));
-
-                        // Note: We declare here that the borrow
-                        // occurs upon entering the `[...]`
-                        // pattern. This implies that something like
-                        // `[a; b]` where `a` is a move is illegal,
-                        // because the borrow is already in effect.
-                        // In fact such a move would be safe-ish, but
-                        // it effectively *requires* that we use the
-                        // nulling out semantics to indicate when a
-                        // value has been moved, which we are trying
-                        // to move away from.  Otherwise, how can we
-                        // indicate that the first element in the
-                        // vector has been moved?  Eventually, we
-                        // could perhaps modify this rule to permit
-                        // `[..a, b]` where `b` is a move, because in
-                        // that case we can adjust the length of the
-                        // original vec accordingly, but we'd have to
-                        // make trans do the right thing, and it would
-                        // only work for `Box<[T]>`s. It seems simpler
-                        // to just require that people call
-                        // `vec.pop()` or `vec.unshift()`.
-                        let slice_bk = ty::BorrowKind::from_mutbl(slice_mutbl);
-                        delegate.borrow(pat.id, pat.span,
-                                        slice_cmt, slice_r,
-                                        slice_bk, RefBinding);
-                    }
-                    _ => { }
-                }
+                _ => {}
             }
         }));
 
@@ -1053,19 +1008,11 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         // to the above loop's visit of than the bindings that form
         // the leaves of the pattern tree structure.
         return_if_err!(mc.cat_pattern(cmt_discr, pat, |mc, cmt_pat, pat| {
-            let def_map = def_map.borrow();
-            let tcx = infcx.tcx;
-
             match pat.node {
-                PatKind::TupleStruct(..) | PatKind::Path(..) | PatKind::QPath(..) |
-                PatKind::Ident(_, _, None) | PatKind::Struct(..) => {
-                    match def_map.get(&pat.id).map(|d| d.full_def()) {
-                        None => {
-                            // no definition found: pat is not a
-                            // struct or enum pattern.
-                        }
-
-                        Some(Def::Variant(enum_did, variant_did)) => {
+                PatKind::Struct(..) | PatKind::TupleStruct(..) |
+                PatKind::Path(..) | PatKind::QPath(..) => {
+                    match tcx.expect_def(pat.id) {
+                        Def::Variant(enum_did, variant_did) => {
                             let downcast_cmt =
                                 if tcx.lookup_adt_def(enum_did).is_univariant() {
                                     cmt_pat
@@ -1081,7 +1028,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                             delegate.matched_pat(pat, downcast_cmt, match_mode);
                         }
 
-                        Some(Def::Struct(..)) | Some(Def::TyAlias(..)) => {
+                        Def::Struct(..) | Def::TyAlias(..) => {
                             // A struct (in either the value or type
                             // namespace; we encounter the former on
                             // e.g. patterns for unit structs).
@@ -1093,15 +1040,13 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                             delegate.matched_pat(pat, cmt_pat, match_mode);
                         }
 
-                        Some(Def::Const(..)) |
-                        Some(Def::AssociatedConst(..)) |
-                        Some(Def::Local(..)) => {
+                        Def::Const(..) | Def::AssociatedConst(..) => {
                             // This is a leaf (i.e. identifier binding
                             // or constant value to match); thus no
                             // `matched_pat` call.
                         }
 
-                        Some(def) => {
+                        def => {
                             // An enum type should never be in a pattern.
                             // Remaining cases are e.g. Def::Fn, to
                             // which identifiers within patterns
@@ -1121,16 +1066,10 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                     }
                 }
 
-                PatKind::Ident(_, _, Some(_)) => {
-                    // Do nothing; this is a binding (not an enum
-                    // variant or struct), and the cat_pattern call
-                    // will visit the substructure recursively.
-                }
-
-                PatKind::Wild | PatKind::Tup(..) | PatKind::Box(..) |
+                PatKind::Wild | PatKind::Tuple(..) | PatKind::Box(..) |
                 PatKind::Ref(..) | PatKind::Lit(..) | PatKind::Range(..) |
-                PatKind::Vec(..) => {
-                    // Similarly, each of these cases does not
+                PatKind::Vec(..) | PatKind::Binding(..) => {
+                    // Each of these cases does not
                     // correspond to an enum variant or struct, so we
                     // do not do any `matched_pat` calls for these
                     // cases either.

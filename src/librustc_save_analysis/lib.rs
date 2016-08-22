@@ -27,6 +27,7 @@
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
 extern crate serialize as rustc_serialize;
+extern crate syntax_pos;
 
 mod csv_dumper;
 mod json_dumper;
@@ -38,7 +39,7 @@ pub mod external_data;
 pub mod span_utils;
 
 use rustc::hir;
-use rustc::hir::map::NodeItem;
+use rustc::hir::map::{Node, NodeItem};
 use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
 use rustc::session::config::CrateType::CrateTypeExecutable;
@@ -49,10 +50,11 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
 use syntax::ast::{self, NodeId, PatKind};
-use syntax::codemap::*;
 use syntax::parse::token::{self, keywords};
 use syntax::visit::{self, Visitor};
 use syntax::print::pprust::{ty_to_string, arg_to_string};
+use syntax::codemap::MacroAttribute;
+use syntax_pos::*;
 
 pub use self::csv_dumper::CsvDumper;
 pub use self::json_dumper::JsonDumper;
@@ -123,15 +125,14 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     pub fn get_item_data(&self, item: &ast::Item) -> Option<Data> {
         match item.node {
             ast::ItemKind::Fn(ref decl, _, _, _, ref generics, _) => {
-                let name = self.tcx.node_path_str(item.id);
-                let qualname = format!("::{}", name);
+                let qualname = format!("::{}", self.tcx.node_path_str(item.id));
                 let sub_span = self.span_utils.sub_span_after_keyword(item.span, keywords::Fn);
                 filter!(self.span_utils, sub_span, item.span, None);
 
 
                 Some(Data::FunctionData(FunctionData {
                     id: item.id,
-                    name: name,
+                    name: item.ident.to_string(),
                     qualname: qualname,
                     declaration: None,
                     span: sub_span.unwrap(),
@@ -154,6 +155,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 filter!(self.span_utils, sub_span, item.span, None);
                 Some(Data::VariableData(VariableData {
                     id: item.id,
+                    kind: VariableKind::Static,
                     name: item.ident.to_string(),
                     qualname: qualname,
                     span: sub_span.unwrap(),
@@ -168,6 +170,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 filter!(self.span_utils, sub_span, item.span, None);
                 Some(Data::VariableData(VariableData {
                     id: item.id,
+                    kind: VariableKind::Const,
                     name: item.ident.to_string(),
                     qualname: qualname,
                     span: sub_span.unwrap(),
@@ -191,6 +194,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     span: sub_span.unwrap(),
                     scope: self.enclosing_scope(item.id),
                     filename: filename,
+                    items: m.items.iter().map(|i| i.id).collect(),
                 }))
             }
             ast::ItemKind::Enum(ref def, _) => {
@@ -210,6 +214,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     span: sub_span.unwrap(),
                     qualname: qualname,
                     scope: self.enclosing_scope(item.id),
+                    variants: def.variants.iter().map(|v| v.node.data.id()).collect(),
                 }))
             }
             ast::ItemKind::Impl(_, _, _, ref trait_ref, ref typ, _) => {
@@ -267,6 +272,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
             filter!(self.span_utils, sub_span, field.span, None);
             Some(VariableData {
                 id: field.id,
+                kind: VariableKind::Field,
                 name: ident.to_string(),
                 qualname: qualname,
                 span: sub_span.unwrap(),
@@ -293,12 +299,10 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                             let mut result = String::from("<");
                             result.push_str(&rustc::hir::print::ty_to_string(&ty));
 
-                            match self.tcx.trait_of_item(self.tcx.map.local_def_id(id)) {
-                                Some(def_id) => {
-                                    result.push_str(" as ");
-                                    result.push_str(&self.tcx.item_path_str(def_id));
-                                }
-                                None => {}
+                            if let Some(def_id) = self.tcx
+                                    .trait_of_item(self.tcx.map.local_def_id(id)) {
+                                result.push_str(" as ");
+                                result.push_str(&self.tcx.item_path_str(def_id));
                             }
                             result.push_str(">");
                             result
@@ -392,7 +396,14 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
         }
         match expr.node {
             ast::ExprKind::Field(ref sub_ex, ident) => {
-                let hir_node = self.tcx.map.expect_expr(sub_ex.id);
+                let hir_node = match self.tcx.map.find(sub_ex.id) {
+                    Some(Node::NodeExpr(expr)) => expr,
+                    _ => {
+                        debug!("Missing or weird node for sub-expression {} in {:?}",
+                               sub_ex.id, expr);
+                        return None;
+                    }
+                };
                 match self.tcx.expr_ty_adjusted(&hir_node).sty {
                     ty::TyStruct(def, _) => {
                         let f = def.struct_variant().field_named(ident.node.name);
@@ -412,7 +423,6 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 }
             }
             ast::ExprKind::Struct(ref path, _, _) => {
-                let hir_node = self.tcx.map.expect_expr(expr.id);
                 match self.tcx.expr_ty_adjusted(&hir_node).sty {
                     ty::TyStruct(def, _) => {
                         let sub_span = self.span_utils.span_for_last_ident(path.span);
@@ -460,11 +470,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     }
 
     pub fn get_path_data(&self, id: NodeId, path: &ast::Path) -> Option<Data> {
-        let def_map = self.tcx.def_map.borrow();
-        if !def_map.contains_key(&id) {
-            span_bug!(path.span, "def_map has no key for {} in visit_expr", id);
-        }
-        let def = def_map.get(&id).unwrap().full_def();
+        let def = self.tcx.expect_def(id);
         let sub_span = self.span_utils.span_for_last_ident(path.span);
         filter!(self.span_utils, sub_span, path.span, None);
         match def {
@@ -632,13 +638,9 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
     }
 
     fn lookup_ref_id(&self, ref_id: NodeId) -> Option<DefId> {
-        if !self.tcx.def_map.borrow().contains_key(&ref_id) {
-            bug!("def_map has no key for {} in lookup_type_ref", ref_id);
-        }
-        let def = self.tcx.def_map.borrow().get(&ref_id).unwrap().full_def();
-        match def {
+        match self.tcx.expect_def(ref_id) {
             Def::PrimTy(_) | Def::SelfTy(..) => None,
-            _ => Some(def.def_id()),
+            def => Some(def.def_id()),
         }
     }
 
@@ -689,16 +691,15 @@ impl PathCollector {
     }
 }
 
-impl<'v> Visitor<'v> for PathCollector {
+impl Visitor for PathCollector {
     fn visit_pat(&mut self, p: &ast::Pat) {
         match p.node {
             PatKind::Struct(ref path, _, _) => {
                 self.collected_paths.push((p.id, path.clone(),
                                            ast::Mutability::Mutable, recorder::TypeRef));
             }
-            PatKind::TupleStruct(ref path, _) |
-            PatKind::Path(ref path) |
-            PatKind::QPath(_, ref path) => {
+            PatKind::TupleStruct(ref path, _, _) |
+            PatKind::Path(_, ref path) => {
                 self.collected_paths.push((p.id, path.clone(),
                                            ast::Mutability::Mutable, recorder::VarRef));
             }

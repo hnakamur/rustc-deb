@@ -9,27 +9,28 @@
 // except according to those terms.
 
 use dep_graph::DepGraph;
+use hir::def_id::DefIndex;
+use hir::svh::Svh;
 use lint;
 use middle::cstore::CrateStore;
 use middle::dependency_format;
 use session::search_paths::PathKind;
-use session::config::PanicStrategy;
+use session::config::{DebugInfoLevel, PanicStrategy};
 use ty::tls;
 use util::nodemap::{NodeMap, FnvHashMap};
 use mir::transform as mir_pass;
 
-use syntax::ast::{NodeId, NodeIdAssigner, Name};
-use syntax::codemap::{Span, MultiSpan};
-use syntax::errors::{self, DiagnosticBuilder};
-use syntax::errors::emitter::{Emitter, BasicEmitter, EmitterWriter};
-use syntax::errors::json::JsonEmitter;
-use syntax::diagnostics;
+use syntax::ast::{NodeId, Name};
+use errors::{self, DiagnosticBuilder};
+use errors::emitter::{Emitter, BasicEmitter, EmitterWriter};
+use syntax::json::JsonEmitter;
 use syntax::feature_gate;
 use syntax::parse;
 use syntax::parse::ParseSess;
 use syntax::parse::token;
 use syntax::{ast, codemap};
 use syntax::feature_gate::AttributeType;
+use syntax_pos::{Span, MultiSpan};
 
 use rustc_back::target::Target;
 use llvm;
@@ -249,15 +250,12 @@ impl Session {
                     msg: String) {
         let lint_id = lint::LintId::of(lint);
         let mut lints = self.lints.borrow_mut();
-        match lints.get_mut(&id) {
-            Some(arr) => {
-                let tuple = (lint_id, sp, msg);
-                if !arr.contains(&tuple) {
-                    arr.push(tuple);
-                }
-                return;
+        if let Some(arr) = lints.get_mut(&id) {
+            let tuple = (lint_id, sp, msg);
+            if !arr.contains(&tuple) {
+                arr.push(tuple);
             }
-            None => {}
+            return;
         }
         lints.insert(id, vec!((lint_id, sp, msg)));
     }
@@ -271,6 +269,9 @@ impl Session {
 
         id
     }
+    pub fn next_node_id(&self) -> NodeId {
+        self.reserve_node_ids(1)
+    }
     pub fn diagnostic<'a>(&'a self) -> &'a errors::Handler {
         &self.parse_sess.span_diagnostic
     }
@@ -281,9 +282,6 @@ impl Session {
     pub fn time_passes(&self) -> bool { self.opts.debugging_opts.time_passes }
     pub fn count_llvm_insns(&self) -> bool {
         self.opts.debugging_opts.count_llvm_insns
-    }
-    pub fn count_type_sizes(&self) -> bool {
-        self.opts.debugging_opts.count_type_sizes
     }
     pub fn time_llvm_passes(&self) -> bool {
         self.opts.debugging_opts.time_llvm_passes
@@ -312,6 +310,19 @@ impl Session {
     pub fn nonzeroing_move_hints(&self) -> bool {
         self.opts.debugging_opts.enable_nonzeroing_move_hints
     }
+
+    pub fn must_not_eliminate_frame_pointers(&self) -> bool {
+        self.opts.debuginfo != DebugInfoLevel::NoDebugInfo ||
+        !self.target.target.options.eliminate_frame_pointer
+    }
+
+    /// Returns the symbol name for the registrar function,
+    /// given the crate Svh and the function DefIndex.
+    pub fn generate_plugin_registrar_symbol(&self, svh: &Svh, index: DefIndex)
+                                            -> String {
+        format!("__rustc_plugin_registrar__{}_{}", svh, index.as_usize())
+    }
+
     pub fn sysroot<'a>(&'a self) -> &'a Path {
         match self.opts.maybe_sysroot {
             Some (ref sysroot) => sysroot,
@@ -331,20 +342,6 @@ impl Session {
             config::host_triple(),
             &self.opts.search_paths,
             kind)
-    }
-}
-
-impl NodeIdAssigner for Session {
-    fn next_node_id(&self) -> NodeId {
-        self.reserve_node_ids(1)
-    }
-
-    fn peek_node_id(&self) -> NodeId {
-        self.next_node_id.get().checked_add(1).unwrap()
-    }
-
-    fn diagnostic(&self) -> &errors::Handler {
-        self.diagnostic()
     }
 }
 
@@ -412,7 +409,7 @@ fn split_msg_into_multilines(msg: &str) -> Option<String> {
 pub fn build_session(sopts: config::Options,
                      dep_graph: &DepGraph,
                      local_crate_source_file: Option<PathBuf>,
-                     registry: diagnostics::registry::Registry,
+                     registry: errors::registry::Registry,
                      cstore: Rc<for<'a> CrateStore<'a>>)
                      -> Session {
     build_session_with_codemap(sopts,
@@ -426,7 +423,7 @@ pub fn build_session(sopts: config::Options,
 pub fn build_session_with_codemap(sopts: config::Options,
                                   dep_graph: &DepGraph,
                                   local_crate_source_file: Option<PathBuf>,
-                                  registry: diagnostics::registry::Registry,
+                                  registry: errors::registry::Registry,
                                   cstore: Rc<for<'a> CrateStore<'a>>,
                                   codemap: Rc<codemap::CodeMap>)
                                   -> Session {
@@ -443,7 +440,10 @@ pub fn build_session_with_codemap(sopts: config::Options,
 
     let emitter: Box<Emitter> = match sopts.error_format {
         config::ErrorOutputType::HumanReadable(color_config) => {
-            Box::new(EmitterWriter::stderr(color_config, Some(registry), codemap.clone()))
+            Box::new(EmitterWriter::stderr(color_config,
+                                           Some(registry),
+                                           codemap.clone(),
+                                           errors::snippet::FormatMode::EnvironmentSelected))
         }
         config::ErrorOutputType::Json => {
             Box::new(JsonEmitter::stderr(Some(registry), codemap.clone()))

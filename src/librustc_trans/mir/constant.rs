@@ -12,14 +12,17 @@ use llvm::{self, ValueRef};
 use rustc::middle::const_val::ConstVal;
 use rustc_const_eval::ErrKind;
 use rustc_const_math::ConstInt::*;
+use rustc_const_math::ConstFloat::*;
+use rustc_const_math::ConstMathErr;
 use rustc::hir::def_id::DefId;
 use rustc::infer::TransNormalize;
 use rustc::mir::repr as mir;
 use rustc::mir::tcx::LvalueTy;
 use rustc::traits;
-use rustc::ty::{self, Ty, TypeFoldable};
+use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 use rustc::ty::cast::{CastTy, IntTy};
 use rustc::ty::subst::Substs;
+use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use {abi, adt, base, Disr};
 use callee::Callee;
 use common::{self, BlockAndBuilder, CrateContext, const_get_elt, val_ty};
@@ -31,7 +34,7 @@ use type_of;
 use type_::Type;
 use value::Value;
 
-use syntax::codemap::{Span, DUMMY_SP};
+use syntax_pos::{Span, DUMMY_SP};
 
 use std::ptr;
 
@@ -62,7 +65,9 @@ impl<'tcx> Const<'tcx> {
                              -> Const<'tcx> {
         let llty = type_of::type_of(ccx, ty);
         let val = match cv {
-            ConstVal::Float(v) => C_floating_f64(v, llty),
+            ConstVal::Float(F32(v)) => C_floating_f64(v as f64, llty),
+            ConstVal::Float(F64(v)) => C_floating_f64(v, llty),
+            ConstVal::Float(FInfer {..}) => bug!("MIR must not use `{:?}`", cv),
             ConstVal::Bool(v) => C_bool(ccx, v),
             ConstVal::Integral(I8(v)) => C_integral(Type::i8(ccx), v as u64, true),
             ConstVal::Integral(I16(v)) => C_integral(Type::i16(ccx), v as u64, true),
@@ -80,14 +85,14 @@ impl<'tcx> Const<'tcx> {
                 let u = v.as_u64(ccx.tcx().sess.target.uint_type);
                 C_integral(Type::int(ccx), u, false)
             },
-            ConstVal::Integral(Infer(v)) => C_integral(llty, v as u64, false),
-            ConstVal::Integral(InferSigned(v)) => C_integral(llty, v as u64, true),
+            ConstVal::Integral(Infer(_)) |
+            ConstVal::Integral(InferSigned(_)) => bug!("MIR must not use `{:?}`", cv),
             ConstVal::Str(ref v) => C_str_slice(ccx, v.clone()),
             ConstVal::ByteStr(ref v) => consts::addr_of(ccx, C_bytes(ccx, v), 1, "byte_str"),
             ConstVal::Struct(_) | ConstVal::Tuple(_) |
             ConstVal::Array(..) | ConstVal::Repeat(..) |
             ConstVal::Function(_) => {
-                bug!("MIR must not use {:?} (which refers to a local ID)", cv)
+                bug!("MIR must not use `{:?}` (which refers to a local ID)", cv)
             }
             ConstVal::Char(c) => C_integral(Type::char(ccx), c as u64, false),
             ConstVal::Dummy => bug!(),
@@ -98,9 +103,15 @@ impl<'tcx> Const<'tcx> {
         Const::new(val, ty)
     }
 
+    fn get_pair(&self) -> (ValueRef, ValueRef) {
+        (const_get_elt(self.llval, &[0]),
+         const_get_elt(self.llval, &[1]))
+    }
+
     fn get_fat_ptr(&self) -> (ValueRef, ValueRef) {
-        (const_get_elt(self.llval, &[abi::FAT_PTR_ADDR as u32]),
-         const_get_elt(self.llval, &[abi::FAT_PTR_EXTRA as u32]))
+        assert_eq!(abi::FAT_PTR_ADDR, 0);
+        assert_eq!(abi::FAT_PTR_EXTRA, 1);
+        self.get_pair()
     }
 
     fn as_lvalue(&self) -> ConstLvalue<'tcx> {
@@ -115,10 +126,10 @@ impl<'tcx> Const<'tcx> {
         let llty = type_of::immediate_type_of(ccx, self.ty);
         let llvalty = val_ty(self.llval);
 
-        let val = if common::type_is_fat_ptr(ccx.tcx(), self.ty) {
-            let (data, extra) = self.get_fat_ptr();
-            OperandValue::FatPtr(data, extra)
-        } else if common::type_is_immediate(ccx, self.ty) && llty == llvalty {
+        let val = if llty == llvalty && common::type_is_imm_pair(ccx, self.ty) {
+            let (a, b) = self.get_pair();
+            OperandValue::Pair(a, b)
+        } else if llty == llvalty && common::type_is_immediate(ccx, self.ty) {
             // If the types match, we can use the value directly.
             OperandValue::Immediate(self.llval)
         } else {
@@ -192,17 +203,8 @@ struct MirConstContext<'a, 'tcx: 'a> {
     /// Type parameters for const fn and associated constants.
     substs: &'tcx Substs<'tcx>,
 
-    /// Arguments passed to a const fn.
-    args: Vec<Const<'tcx>>,
-
-    /// Variable values - specifically, argument bindings of a const fn.
-    vars: Vec<Option<Const<'tcx>>>,
-
-    /// Temp values.
-    temps: Vec<Option<Const<'tcx>>>,
-
-    /// Value assigned to Return, which is the resulting constant.
-    return_value: Option<Const<'tcx>>
+    /// Values of locals in a constant or const fn.
+    locals: IndexVec<mir::Local, Option<Const<'tcx>>>
 }
 
 
@@ -210,22 +212,24 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
     fn new(ccx: &'a CrateContext<'a, 'tcx>,
            mir: &'a mir::Mir<'tcx>,
            substs: &'tcx Substs<'tcx>,
-           args: Vec<Const<'tcx>>)
+           args: IndexVec<mir::Arg, Const<'tcx>>)
            -> MirConstContext<'a, 'tcx> {
-        MirConstContext {
+        let mut context = MirConstContext {
             ccx: ccx,
             mir: mir,
             substs: substs,
-            args: args,
-            vars: vec![None; mir.var_decls.len()],
-            temps: vec![None; mir.temp_decls.len()],
-            return_value: None
+            locals: (0..mir.count_locals()).map(|_| None).collect(),
+        };
+        for (i, arg) in args.into_iter().enumerate() {
+            let index = mir.local_index(&mir::Lvalue::Arg(mir::Arg::new(i))).unwrap();
+            context.locals[index] = Some(arg);
         }
+        context
     }
 
     fn trans_def(ccx: &'a CrateContext<'a, 'tcx>,
                  mut instance: Instance<'tcx>,
-                 args: Vec<Const<'tcx>>)
+                 args: IndexVec<mir::Arg, Const<'tcx>>)
                  -> Result<Const<'tcx>, ConstEvalFailure> {
         // Try to resolve associated constants.
         if instance.substs.self_ty().is_some() {
@@ -263,38 +267,63 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
     fn trans(&mut self) -> Result<Const<'tcx>, ConstEvalFailure> {
         let tcx = self.ccx.tcx();
         let mut bb = mir::START_BLOCK;
+
+        // Make sure to evaluate all statemenets to
+        // report as many errors as we possibly can.
+        let mut failure = Ok(());
+
         loop {
-            let data = self.mir.basic_block_data(bb);
+            let data = &self.mir[bb];
             for statement in &data.statements {
+                let span = statement.source_info.span;
                 match statement.kind {
                     mir::StatementKind::Assign(ref dest, ref rvalue) => {
                         let ty = self.mir.lvalue_ty(tcx, dest);
                         let ty = self.monomorphize(&ty).to_ty(tcx);
-                        let value = self.const_rvalue(rvalue, ty, statement.span)?;
-                        self.store(dest, value, statement.span);
+                        match self.const_rvalue(rvalue, ty, span) {
+                            Ok(value) => self.store(dest, value, span),
+                            Err(err) => if failure.is_ok() { failure = Err(err); }
+                        }
                     }
                 }
             }
 
             let terminator = data.terminator();
-            let span = terminator.span;
+            let span = terminator.source_info.span;
             bb = match terminator.kind {
                 mir::TerminatorKind::Drop { target, .. } | // No dropping.
                 mir::TerminatorKind::Goto { target } => target,
                 mir::TerminatorKind::Return => {
-                    return Ok(self.return_value.unwrap_or_else(|| {
+                    failure?;
+                    let index = self.mir.local_index(&mir::Lvalue::ReturnPointer).unwrap();
+                    return Ok(self.locals[index].unwrap_or_else(|| {
                         span_bug!(span, "no returned value in constant");
-                    }))
+                    }));
                 }
 
-                // This is only supported to make bounds checking work.
-                mir::TerminatorKind::If { ref cond, targets: (true_bb, false_bb) } => {
+                mir::TerminatorKind::Assert { ref cond, expected, ref msg, target, .. } => {
                     let cond = self.const_operand(cond, span)?;
-                    if common::const_to_uint(cond.llval) != 0 {
-                        true_bb
-                    } else {
-                        false_bb
+                    let cond_bool = common::const_to_uint(cond.llval) != 0;
+                    if cond_bool != expected {
+                        let err = match *msg {
+                            mir::AssertMessage::BoundsCheck { ref len, ref index } => {
+                                let len = self.const_operand(len, span)?;
+                                let index = self.const_operand(index, span)?;
+                                ErrKind::IndexOutOfBounds {
+                                    len: common::const_to_uint(len.llval),
+                                    index: common::const_to_uint(index.llval)
+                                }
+                            }
+                            mir::AssertMessage::Math(ref err) => {
+                                ErrKind::Math(err.clone())
+                            }
+                        };
+                        match consts::const_err(self.ccx, span, Err(err), TrueConst::Yes) {
+                            Ok(()) => {}
+                            Err(err) => if failure.is_ok() { failure = Err(err); }
+                        }
                     }
+                    target
                 }
 
                 mir::TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
@@ -308,22 +337,21 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                                        func, fn_ty)
                     };
 
-                    // Indexing OOB doesn't call a const fn, handle it.
-                    if Some(instance.def) == tcx.lang_items.panic_bounds_check_fn() {
-                        consts::const_err(self.ccx, span,
-                                          Err(ErrKind::IndexOutOfBounds),
-                                          TrueConst::Yes)?;
+                    let mut const_args = IndexVec::with_capacity(args.len());
+                    for arg in args {
+                        match self.const_operand(arg, span) {
+                            Ok(arg) => { const_args.push(arg); },
+                            Err(err) => if failure.is_ok() { failure = Err(err); }
+                        }
                     }
-
-                    let args = args.iter().map(|arg| {
-                        self.const_operand(arg, span)
-                    }).collect::<Result<Vec<_>, _>>()?;
-                    let value = MirConstContext::trans_def(self.ccx, instance, args)?;
                     if let Some((ref dest, target)) = *destination {
-                        self.store(dest, value, span);
+                        match MirConstContext::trans_def(self.ccx, instance, const_args) {
+                            Ok(value) => self.store(dest, value, span),
+                            Err(err) => if failure.is_ok() { failure = Err(err); }
+                        }
                         target
                     } else {
-                        span_bug!(span, "diverging {:?} in constant", terminator.kind)
+                        span_bug!(span, "diverging {:?} in constant", terminator.kind);
                     }
                 }
                 _ => span_bug!(span, "{:?} in constant", terminator.kind)
@@ -332,39 +360,34 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
     }
 
     fn store(&mut self, dest: &mir::Lvalue<'tcx>, value: Const<'tcx>, span: Span) {
-        let dest = match *dest {
-            mir::Lvalue::Var(index) => &mut self.vars[index as usize],
-            mir::Lvalue::Temp(index) => &mut self.temps[index as usize],
-            mir::Lvalue::ReturnPointer => &mut self.return_value,
-            _ => span_bug!(span, "assignment to {:?} in constant", dest)
-        };
-        *dest = Some(value);
+        if let Some(index) = self.mir.local_index(dest) {
+            self.locals[index] = Some(value);
+        } else {
+            span_bug!(span, "assignment to {:?} in constant", dest);
+        }
     }
 
     fn const_lvalue(&self, lvalue: &mir::Lvalue<'tcx>, span: Span)
                     -> Result<ConstLvalue<'tcx>, ConstEvalFailure> {
         let tcx = self.ccx.tcx();
+
+        if let Some(index) = self.mir.local_index(lvalue) {
+            return Ok(self.locals[index].unwrap_or_else(|| {
+                span_bug!(span, "{:?} not initialized", lvalue)
+            }).as_lvalue());
+        }
+
         let lvalue = match *lvalue {
-            mir::Lvalue::Var(index) => {
-                self.vars[index as usize].unwrap_or_else(|| {
-                    span_bug!(span, "var{} not initialized", index)
-                }).as_lvalue()
-            }
-            mir::Lvalue::Temp(index) => {
-                self.temps[index as usize].unwrap_or_else(|| {
-                    span_bug!(span, "tmp{} not initialized", index)
-                }).as_lvalue()
-            }
-            mir::Lvalue::Arg(index) => self.args[index as usize].as_lvalue(),
+            mir::Lvalue::Var(_) |
+            mir::Lvalue::Temp(_) |
+            mir::Lvalue::Arg(_) |
+            mir::Lvalue::ReturnPointer => bug!(), // handled above
             mir::Lvalue::Static(def_id) => {
                 ConstLvalue {
                     base: Base::Static(consts::get_static(self.ccx, def_id).val),
                     llextra: ptr::null_mut(),
                     ty: self.mir.lvalue_ty(tcx, lvalue).to_ty(tcx)
                 }
-            }
-            mir::Lvalue::ReturnPointer => {
-                span_bug!(span, "accessing Lvalue::ReturnPointer in constant")
             }
             mir::Lvalue::Projection(ref projection) => {
                 let tr_base = self.const_lvalue(&projection.base, span)?;
@@ -413,8 +436,16 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                         } else {
                             span_bug!(span, "index is not an integer-constant expression")
                         };
-                        (Base::Value(const_get_elt(base.llval, &[iv as u32])),
-                         ptr::null_mut())
+
+                        // Produce an undef instead of a LLVM assertion on OOB.
+                        let len = common::const_to_uint(tr_base.len(self.ccx));
+                        let llelem = if iv < len {
+                            const_get_elt(base.llval, &[iv as u32])
+                        } else {
+                            C_undef(type_of::type_of(self.ccx, projected_ty))
+                        };
+
+                        (Base::Value(llelem), ptr::null_mut())
                     }
                     _ => span_bug!(span, "{:?} in constant", projection.elem)
                 };
@@ -448,11 +479,11 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
 
                         let substs = self.monomorphize(&substs);
                         let instance = Instance::new(def_id, substs);
-                        MirConstContext::trans_def(self.ccx, instance, vec![])
+                        MirConstContext::trans_def(self.ccx, instance, IndexVec::new())
                     }
                     mir::Literal::Promoted { index } => {
                         let mir = &self.mir.promoted[index];
-                        MirConstContext::new(self.ccx, mir, self.substs, vec![]).trans()
+                        MirConstContext::new(self.ccx, mir, self.substs, IndexVec::new()).trans()
                     }
                     mir::Literal::Value { value } => {
                         Ok(Const::from_constval(self.ccx, value, ty))
@@ -485,9 +516,17 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
             }
 
             mir::Rvalue::Aggregate(ref kind, ref operands) => {
-                let fields = operands.iter().map(|operand| {
-                    Ok(self.const_operand(operand, span)?.llval)
-                }).collect::<Result<Vec<_>, _>>()?;
+                // Make sure to evaluate all operands to
+                // report as many errors as we possibly can.
+                let mut fields = Vec::with_capacity(operands.len());
+                let mut failure = Ok(());
+                for operand in operands {
+                    match self.const_operand(operand, span) {
+                        Ok(val) => fields.push(val.llval),
+                        Err(err) => if failure.is_ok() { failure = Err(err); }
+                    }
+                }
+                failure?;
 
                 // FIXME Shouldn't need to manually trigger closure instantiations.
                 if let mir::AggregateKind::Closure(def_id, substs) = *kind {
@@ -656,7 +695,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                                 consts::ptrcast(data_ptr, ll_cast_ty)
                             }
                         } else {
-                            bug!("Unexpected non-FatPtr operand")
+                            bug!("Unexpected non-fat-pointer operand")
                         }
                     }
                 };
@@ -667,7 +706,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 let tr_lvalue = self.const_lvalue(lvalue, span)?;
 
                 let ty = tr_lvalue.ty;
-                let ref_ty = tcx.mk_ref(tcx.mk_region(ty::ReStatic),
+                let ref_ty = tcx.mk_ref(tcx.mk_region(ty::ReErased),
                     ty::TypeAndMut { ty: ty, mutbl: bk.to_mutbl_lossy() });
 
                 let base = match tr_lvalue.base {
@@ -702,73 +741,28 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 let ty = lhs.ty;
                 let binop_ty = self.mir.binop_ty(tcx, op, lhs.ty, rhs.ty);
                 let (lhs, rhs) = (lhs.llval, rhs.llval);
-                assert!(!ty.is_simd());
-                let is_float = ty.is_fp();
-                let signed = ty.is_signed();
+                Const::new(const_scalar_binop(op, lhs, rhs, ty), binop_ty)
+            }
 
-                if let (Some(lhs), Some(rhs)) = (to_const_int(lhs, ty, tcx),
-                                                 to_const_int(rhs, ty, tcx)) {
-                    let result = match op {
-                        mir::BinOp::Add => lhs + rhs,
-                        mir::BinOp::Sub => lhs - rhs,
-                        mir::BinOp::Mul => lhs * rhs,
-                        mir::BinOp::Div => lhs / rhs,
-                        mir::BinOp::Rem => lhs % rhs,
-                        mir::BinOp::Shl => lhs << rhs,
-                        mir::BinOp::Shr => lhs >> rhs,
-                        _ => Ok(lhs)
-                    };
-                    consts::const_err(self.ccx, span,
-                                      result.map_err(ErrKind::Math),
-                                      TrueConst::Yes)?;
-                }
+            mir::Rvalue::CheckedBinaryOp(op, ref lhs, ref rhs) => {
+                let lhs = self.const_operand(lhs, span)?;
+                let rhs = self.const_operand(rhs, span)?;
+                let ty = lhs.ty;
+                let val_ty = self.mir.binop_ty(tcx, op, lhs.ty, rhs.ty);
+                let binop_ty = tcx.mk_tup(vec![val_ty, tcx.types.bool]);
+                let (lhs, rhs) = (lhs.llval, rhs.llval);
+                assert!(!ty.is_fp());
 
-                let llval = unsafe {
-                    match op {
-                        mir::BinOp::Add if is_float => llvm::LLVMConstFAdd(lhs, rhs),
-                        mir::BinOp::Add             => llvm::LLVMConstAdd(lhs, rhs),
-
-                        mir::BinOp::Sub if is_float => llvm::LLVMConstFSub(lhs, rhs),
-                        mir::BinOp::Sub             => llvm::LLVMConstSub(lhs, rhs),
-
-                        mir::BinOp::Mul if is_float => llvm::LLVMConstFMul(lhs, rhs),
-                        mir::BinOp::Mul             => llvm::LLVMConstMul(lhs, rhs),
-
-                        mir::BinOp::Div if is_float => llvm::LLVMConstFDiv(lhs, rhs),
-                        mir::BinOp::Div if signed   => llvm::LLVMConstSDiv(lhs, rhs),
-                        mir::BinOp::Div             => llvm::LLVMConstUDiv(lhs, rhs),
-
-                        mir::BinOp::Rem if is_float => llvm::LLVMConstFRem(lhs, rhs),
-                        mir::BinOp::Rem if signed   => llvm::LLVMConstSRem(lhs, rhs),
-                        mir::BinOp::Rem             => llvm::LLVMConstURem(lhs, rhs),
-
-                        mir::BinOp::BitXor => llvm::LLVMConstXor(lhs, rhs),
-                        mir::BinOp::BitAnd => llvm::LLVMConstAnd(lhs, rhs),
-                        mir::BinOp::BitOr  => llvm::LLVMConstOr(lhs, rhs),
-                        mir::BinOp::Shl    => {
-                            let rhs = base::cast_shift_const_rhs(op.to_hir_binop(), lhs, rhs);
-                            llvm::LLVMConstShl(lhs, rhs)
-                        }
-                        mir::BinOp::Shr    => {
-                            let rhs = base::cast_shift_const_rhs(op.to_hir_binop(), lhs, rhs);
-                            if signed { llvm::LLVMConstAShr(lhs, rhs) }
-                            else      { llvm::LLVMConstLShr(lhs, rhs) }
-                        }
-                        mir::BinOp::Eq | mir::BinOp::Ne |
-                        mir::BinOp::Lt | mir::BinOp::Le |
-                        mir::BinOp::Gt | mir::BinOp::Ge => {
-                            if is_float {
-                                let cmp = base::bin_op_to_fcmp_predicate(op.to_hir_binop());
-                                llvm::ConstFCmp(cmp, lhs, rhs)
-                            } else {
-                                let cmp = base::bin_op_to_icmp_predicate(op.to_hir_binop(),
-                                                                         signed);
-                                llvm::ConstICmp(cmp, lhs, rhs)
-                            }
-                        }
+                match const_scalar_checked_binop(tcx, op, lhs, rhs, ty) {
+                    Some((llval, of)) => {
+                        let llof = C_bool(self.ccx, of);
+                        Const::new(C_struct(self.ccx, &[llval, llof], false), binop_ty)
                     }
-                };
-                Const::new(llval, binop_ty)
+                    None => {
+                        span_bug!(span, "{:?} got non-integer operands: {:?} and {:?}",
+                                  rvalue, Value(lhs), Value(rhs));
+                    }
+                }
             }
 
             mir::Rvalue::UnaryOp(op, ref operand) => {
@@ -781,11 +775,6 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                         }
                     }
                     mir::UnOp::Neg => {
-                        if let Some(cval) = to_const_int(lloperand, operand.ty, tcx) {
-                            consts::const_err(self.ccx, span,
-                                              (-cval).map_err(ErrKind::Math),
-                                              TrueConst::Yes)?;
-                        }
                         let is_float = operand.ty.is_fp();
                         unsafe {
                             if is_float {
@@ -803,6 +792,97 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
         };
 
         Ok(val)
+    }
+
+}
+
+pub fn const_scalar_binop(op: mir::BinOp,
+                          lhs: ValueRef,
+                          rhs: ValueRef,
+                          input_ty: Ty) -> ValueRef {
+    assert!(!input_ty.is_simd());
+    let is_float = input_ty.is_fp();
+    let signed = input_ty.is_signed();
+
+    unsafe {
+        match op {
+            mir::BinOp::Add if is_float => llvm::LLVMConstFAdd(lhs, rhs),
+            mir::BinOp::Add             => llvm::LLVMConstAdd(lhs, rhs),
+
+            mir::BinOp::Sub if is_float => llvm::LLVMConstFSub(lhs, rhs),
+            mir::BinOp::Sub             => llvm::LLVMConstSub(lhs, rhs),
+
+            mir::BinOp::Mul if is_float => llvm::LLVMConstFMul(lhs, rhs),
+            mir::BinOp::Mul             => llvm::LLVMConstMul(lhs, rhs),
+
+            mir::BinOp::Div if is_float => llvm::LLVMConstFDiv(lhs, rhs),
+            mir::BinOp::Div if signed   => llvm::LLVMConstSDiv(lhs, rhs),
+            mir::BinOp::Div             => llvm::LLVMConstUDiv(lhs, rhs),
+
+            mir::BinOp::Rem if is_float => llvm::LLVMConstFRem(lhs, rhs),
+            mir::BinOp::Rem if signed   => llvm::LLVMConstSRem(lhs, rhs),
+            mir::BinOp::Rem             => llvm::LLVMConstURem(lhs, rhs),
+
+            mir::BinOp::BitXor => llvm::LLVMConstXor(lhs, rhs),
+            mir::BinOp::BitAnd => llvm::LLVMConstAnd(lhs, rhs),
+            mir::BinOp::BitOr  => llvm::LLVMConstOr(lhs, rhs),
+            mir::BinOp::Shl    => {
+                let rhs = base::cast_shift_const_rhs(op.to_hir_binop(), lhs, rhs);
+                llvm::LLVMConstShl(lhs, rhs)
+            }
+            mir::BinOp::Shr    => {
+                let rhs = base::cast_shift_const_rhs(op.to_hir_binop(), lhs, rhs);
+                if signed { llvm::LLVMConstAShr(lhs, rhs) }
+                else      { llvm::LLVMConstLShr(lhs, rhs) }
+            }
+            mir::BinOp::Eq | mir::BinOp::Ne |
+            mir::BinOp::Lt | mir::BinOp::Le |
+            mir::BinOp::Gt | mir::BinOp::Ge => {
+                if is_float {
+                    let cmp = base::bin_op_to_fcmp_predicate(op.to_hir_binop());
+                    llvm::ConstFCmp(cmp, lhs, rhs)
+                } else {
+                    let cmp = base::bin_op_to_icmp_predicate(op.to_hir_binop(),
+                                                                signed);
+                    llvm::ConstICmp(cmp, lhs, rhs)
+                }
+            }
+        }
+    }
+}
+
+pub fn const_scalar_checked_binop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                            op: mir::BinOp,
+                                            lllhs: ValueRef,
+                                            llrhs: ValueRef,
+                                            input_ty: Ty<'tcx>)
+                                            -> Option<(ValueRef, bool)> {
+    if let (Some(lhs), Some(rhs)) = (to_const_int(lllhs, input_ty, tcx),
+                                     to_const_int(llrhs, input_ty, tcx)) {
+        let result = match op {
+            mir::BinOp::Add => lhs + rhs,
+            mir::BinOp::Sub => lhs - rhs,
+            mir::BinOp::Mul => lhs * rhs,
+            mir::BinOp::Shl => lhs << rhs,
+            mir::BinOp::Shr => lhs >> rhs,
+            _ => {
+                bug!("Operator `{:?}` is not a checkable operator", op)
+            }
+        };
+
+        let of = match result {
+            Ok(_) => false,
+            Err(ConstMathErr::Overflow(_)) |
+            Err(ConstMathErr::ShiftNegative) => true,
+            Err(err) => {
+                bug!("Operator `{:?}` on `{:?}` and `{:?}` errored: {}",
+                     op, lhs, rhs, err.description());
+            }
+        };
+
+        Some((const_scalar_binop(op, lllhs, llrhs, input_ty), of))
+    } else {
+        None
     }
 }
 
@@ -824,11 +904,12 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
                 let substs = bcx.monomorphize(&substs);
                 let instance = Instance::new(def_id, substs);
-                MirConstContext::trans_def(bcx.ccx(), instance, vec![])
+                MirConstContext::trans_def(bcx.ccx(), instance, IndexVec::new())
             }
             mir::Literal::Promoted { index } => {
                 let mir = &self.mir.promoted[index];
-                MirConstContext::new(bcx.ccx(), mir, bcx.fcx().param_substs, vec![]).trans()
+                MirConstContext::new(bcx.ccx(), mir, bcx.fcx().param_substs,
+                                     IndexVec::new()).trans()
             }
             mir::Literal::Value { value } => {
                 Ok(Const::from_constval(bcx.ccx(), value, ty))
@@ -855,5 +936,5 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 pub fn trans_static_initializer(ccx: &CrateContext, def_id: DefId)
                                 -> Result<ValueRef, ConstEvalFailure> {
     let instance = Instance::mono(ccx.shared(), def_id);
-    MirConstContext::trans_def(ccx, instance, vec![]).map(|c| c.llval)
+    MirConstContext::trans_def(ccx, instance, IndexVec::new()).map(|c| c.llval)
 }
