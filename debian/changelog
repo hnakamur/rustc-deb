@@ -1,3 +1,9 @@
+rustc (1.11.0+dfsg1-1) UNRELEASED; urgency=medium
+
+  * New upstream release
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 22 Aug 2016 23:32:26 +0200
+
 rustc (1.10.0+dfsg1-3) unstable; urgency=medium
 
   * Rebuild with LLVM 3.8, same as what upstream are using
