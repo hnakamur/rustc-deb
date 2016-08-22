@@ -75,7 +75,7 @@ struct AsanInterceptorContext {
       }                                                                 \
       if (!suppressed) {                                                \
         GET_CURRENT_PC_BP_SP;                                           \
-        __asan_report_error(pc, bp, sp, __bad, isWrite, __size, 0);     \
+        ReportGenericError(pc, bp, sp, __bad, isWrite, __size, 0, false);\
       }                                                                 \
     }                                                                   \
   } while (0)
@@ -178,7 +178,7 @@ DECLARE_REAL_AND_INTERCEPTOR(void, free, void *)
   } while (false)
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) REAL(name)
 // Strict init-order checking is dlopen-hostile:
-// https://code.google.com/p/address-sanitizer/issues/detail?id=178
+// https://github.com/google/sanitizers/issues/178
 #define COMMON_INTERCEPTOR_ON_DLOPEN(filename, flag)                           \
   if (flags()->strict_init_order) {                                            \
     StopInitOrderChecking();                                                   \

@@ -15,6 +15,8 @@ use build::expr::category::Category;
 use hair::*;
 use rustc::mir::repr::*;
 
+use rustc_data_structures::indexed_vec::Idx;
+
 impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     /// Compile `expr`, yielding an lvalue that we can move from etc.
     pub fn as_lvalue<M>(&mut self,
@@ -34,11 +36,11 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         debug!("expr_as_lvalue(block={:?}, expr={:?})", block, expr);
 
         let this = self;
-        let scope_id = this.innermost_scope_id();
         let expr_span = expr.span;
+        let source_info = this.source_info(expr_span);
         match expr.kind {
             ExprKind::Scope { extent, value } => {
-                this.in_scope(extent, block, |this, _| this.as_lvalue(block, value))
+                this.in_scope(extent, block, |this| this.as_lvalue(block, value))
             }
             ExprKind::Field { lhs, name } => {
                 let lvalue = unpack!(block = this.as_lvalue(block, lhs));
@@ -59,26 +61,23 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
                 // bounds check:
                 let (len, lt) = (this.temp(usize_ty.clone()), this.temp(bool_ty));
-                this.cfg.push_assign(block, scope_id, expr_span, // len = len(slice)
+                this.cfg.push_assign(block, source_info, // len = len(slice)
                                      &len, Rvalue::Len(slice.clone()));
-                this.cfg.push_assign(block, scope_id, expr_span, // lt = idx < len
+                this.cfg.push_assign(block, source_info, // lt = idx < len
                                      &lt, Rvalue::BinaryOp(BinOp::Lt,
                                                            idx.clone(),
                                                            Operand::Consume(len.clone())));
 
-                let (success, failure) = (this.cfg.start_new_block(), this.cfg.start_new_block());
-                this.cfg.terminate(block,
-                                   scope_id,
-                                   expr_span,
-                                   TerminatorKind::If {
-                                       cond: Operand::Consume(lt),
-                                       targets: (success, failure),
-                                   });
-                this.panic_bounds_check(failure, idx.clone(), Operand::Consume(len), expr_span);
+                let msg = AssertMessage::BoundsCheck {
+                    len: Operand::Consume(len),
+                    index: idx.clone()
+                };
+                let success = this.assert(block, Operand::Consume(lt), true,
+                                          msg, expr_span);
                 success.and(slice.index(idx))
             }
             ExprKind::SelfRef => {
-                block.and(Lvalue::Arg(0))
+                block.and(Lvalue::Arg(Arg::new(0)))
             }
             ExprKind::VarRef { id } => {
                 let index = this.var_indices[&id];

@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use super::{DeferredCallResolution, Expectation, FnCtxt,
-            TupleArgumentsFlag, UnresolvedTypeAction};
+            TupleArgumentsFlag};
 
 use CrateCtxt;
 use middle::cstore::LOCAL_CRATE;
@@ -17,9 +17,9 @@ use hir::def::Def;
 use hir::def_id::DefId;
 use rustc::infer;
 use rustc::ty::{self, LvaluePreference, Ty};
-use syntax::codemap::Span;
 use syntax::parse::token;
 use syntax::ptr::P;
+use syntax_pos::Span;
 
 use rustc::hir;
 
@@ -72,15 +72,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     {
         self.check_expr(callee_expr);
         let original_callee_ty = self.expr_ty(callee_expr);
-        let (callee_ty, _, result) =
-            self.autoderef(callee_expr.span,
-                           original_callee_ty,
-                           || Some(callee_expr),
-                           UnresolvedTypeAction::Error,
-                           LvaluePreference::NoPreference,
-                           |adj_ty, idx| {
-                self.try_overloaded_call_step(call_expr, callee_expr, adj_ty, idx)
-        });
+
+        let mut autoderef = self.autoderef(callee_expr.span, original_callee_ty);
+        let result = autoderef.by_ref().flat_map(|(adj_ty, idx)| {
+            self.try_overloaded_call_step(call_expr, callee_expr, adj_ty, idx)
+        }).next();
+        let callee_ty = autoderef.unambiguous_final_ty();
+        autoderef.finalize(LvaluePreference::NoPreference, Some(callee_expr));
 
         match result {
             None => {
@@ -224,7 +222,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     let tcx = self.tcx;
                     if let Some(pr) = tcx.def_map.borrow().get(&expr.id) {
                         if pr.depth == 0 && pr.base_def != Def::Err {
-                            if let Some(span) = tcx.map.span_if_local(pr.def_id()) {
+                            if let Some(span) = tcx.map.span_if_local(pr.base_def.def_id()) {
                                 err.span_note(span, "defined here");
                             }
                         }

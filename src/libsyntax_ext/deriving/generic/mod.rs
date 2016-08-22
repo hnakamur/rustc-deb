@@ -197,12 +197,12 @@ use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::ext::base::{ExtCtxt, Annotatable};
 use syntax::ext::build::AstBuilder;
-use syntax::codemap::{self, DUMMY_SP};
-use syntax::codemap::Span;
-use syntax::errors::Handler;
+use syntax::codemap::{self, respan};
 use syntax::util::move_map::MoveMap;
-use syntax::parse::token::{intern, keywords, InternedString};
+use syntax::parse::token::{keywords, InternedString};
 use syntax::ptr::P;
+use syntax_pos::{Span, DUMMY_SP};
+use errors::Handler;
 
 use self::ty::{LifetimeBounds, Path, Ptr, PtrTy, Self_, Ty};
 
@@ -345,25 +345,25 @@ pub fn combine_substructure<'a>(f: CombineSubstructureFunc<'a>)
 /// This method helps to extract all the type parameters referenced from a
 /// type. For a type parameter `<T>`, it looks for either a `TyPath` that
 /// is not global and starts with `T`, or a `TyQPath`.
-fn find_type_parameters(ty: &ast::Ty, ty_param_names: &[ast::Name]) -> Vec<P<ast::Ty>> {
+fn find_type_parameters(ty: &ast::Ty, ty_param_names: &[ast::Name], span: Span, cx: &ExtCtxt)
+                        -> Vec<P<ast::Ty>> {
     use syntax::visit;
 
-    struct Visitor<'a> {
+    struct Visitor<'a, 'b: 'a> {
+        cx: &'a ExtCtxt<'b>,
+        span: Span,
         ty_param_names: &'a [ast::Name],
         types: Vec<P<ast::Ty>>,
     }
 
-    impl<'a> visit::Visitor<'a> for Visitor<'a> {
-        fn visit_ty(&mut self, ty: &'a ast::Ty) {
+    impl<'a, 'b> visit::Visitor for Visitor<'a, 'b> {
+        fn visit_ty(&mut self, ty: &ast::Ty) {
             match ty.node {
                 ast::TyKind::Path(_, ref path) if !path.global => {
-                    match path.segments.first() {
-                        Some(segment) => {
-                            if self.ty_param_names.contains(&segment.identifier.name) {
-                                self.types.push(P(ty.clone()));
-                            }
+                    if let Some(segment) = path.segments.first() {
+                        if self.ty_param_names.contains(&segment.identifier.name) {
+                            self.types.push(P(ty.clone()));
                         }
-                        None => {}
                     }
                 }
                 _ => {}
@@ -371,11 +371,18 @@ fn find_type_parameters(ty: &ast::Ty, ty_param_names: &[ast::Name]) -> Vec<P<ast
 
             visit::walk_ty(self, ty)
         }
+
+        fn visit_mac(&mut self, mac: &ast::Mac) {
+            let span = Span { expn_id: self.span.expn_id, ..mac.span };
+            self.cx.span_err(span, "`derive` cannot be used on items with type macros");
+        }
     }
 
     let mut visitor = Visitor {
         ty_param_names: ty_param_names,
         types: Vec::new(),
+        span: span,
+        cx: cx,
     };
 
     visit::Visitor::visit_ty(&mut visitor, ty);
@@ -556,7 +563,7 @@ impl<'a> TraitDef<'a> {
 
             let mut processed_field_types = HashSet::new();
             for field_ty in field_tys {
-                let tys = find_type_parameters(&field_ty, &ty_param_names);
+                let tys = find_type_parameters(&field_ty, &ty_param_names, self.span, cx);
 
                 for ty in tys {
                     // if we have already handled this type, skip it
@@ -806,25 +813,21 @@ impl<'a> MethodDef<'a> {
                                trait_: &TraitDef,
                                type_ident: Ident,
                                generics: &Generics)
-        -> (ast::ExplicitSelf, Vec<P<Expr>>, Vec<P<Expr>>, Vec<(Ident, P<ast::Ty>)>) {
+        -> (Option<ast::ExplicitSelf>, Vec<P<Expr>>, Vec<P<Expr>>, Vec<(Ident, P<ast::Ty>)>) {
 
         let mut self_args = Vec::new();
         let mut nonself_args = Vec::new();
         let mut arg_tys = Vec::new();
         let mut nonstatic = false;
 
-        let ast_explicit_self = match self.explicit_self {
-            Some(ref self_ptr) => {
-                let (self_expr, explicit_self) =
-                    ty::get_explicit_self(cx, trait_.span, self_ptr);
+        let ast_explicit_self = self.explicit_self.as_ref().map(|self_ptr| {
+            let (self_expr, explicit_self) = ty::get_explicit_self(cx, trait_.span, self_ptr);
 
-                self_args.push(self_expr);
-                nonstatic = true;
+            self_args.push(self_expr);
+            nonstatic = true;
 
-                explicit_self
-            }
-            None => codemap::respan(trait_.span, ast::SelfKind::Static),
-        };
+            explicit_self
+        });
 
         for (i, ty) in self.args.iter().enumerate() {
             let ast_ty = ty.to_ty(cx, trait_.span, type_ident, generics);
@@ -857,24 +860,20 @@ impl<'a> MethodDef<'a> {
                      type_ident: Ident,
                      generics: &Generics,
                      abi: Abi,
-                     explicit_self: ast::ExplicitSelf,
+                     explicit_self: Option<ast::ExplicitSelf>,
                      arg_types: Vec<(Ident, P<ast::Ty>)> ,
                      body: P<Expr>) -> ast::ImplItem {
 
         // create the generics that aren't for Self
         let fn_generics = self.generics.to_generics(cx, trait_.span, type_ident, generics);
 
-        let self_arg = match explicit_self.node {
-            ast::SelfKind::Static => None,
-            // creating fresh self id
-            _ => Some(ast::Arg::from_self(explicit_self.clone(), trait_.span,
-                                          ast::Mutability::Immutable)),
-        };
         let args = {
-            let args = arg_types.into_iter().map(|(name, ty)| {
-                    cx.arg(trait_.span, name, ty)
-                });
-            self_arg.into_iter().chain(args).collect()
+            let self_args = explicit_self.map(|explicit_self| {
+                ast::Arg::from_self(explicit_self, respan(trait_.span, keywords::SelfValue.ident()))
+            });
+            let nonself_args = arg_types.into_iter()
+                                        .map(|(name, ty)| cx.arg(trait_.span, name, ty));
+            self_args.into_iter().chain(nonself_args).collect()
         };
 
         let ret_type = self.get_ret_ty(cx, trait_, generics, type_ident);
@@ -900,7 +899,6 @@ impl<'a> MethodDef<'a> {
             node: ast::ImplItemKind::Method(ast::MethodSig {
                 generics: fn_generics,
                 abi: abi,
-                explicit_self: explicit_self,
                 unsafety: unsafety,
                 constness: ast::Constness::NotConst,
                 decl: fn_decl
@@ -1341,8 +1339,8 @@ impl<'a> MethodDef<'a> {
             //  }
             let all_match = cx.expr_match(sp, match_arg, match_arms);
             let arm_expr = cx.expr_if(sp, discriminant_test, all_match, Some(arm_expr));
-            cx.expr_block(
-                cx.block_all(sp, index_let_stmts, Some(arm_expr)))
+            index_let_stmts.push(cx.stmt_expr(arm_expr));
+            cx.expr_block(cx.block(sp, index_let_stmts))
         } else if variants.is_empty() {
             // As an additional wrinkle, For a zero-variant enum A,
             // currently the compiler
@@ -1429,31 +1427,13 @@ impl<'a> MethodDef<'a> {
 
 // general helper methods.
 impl<'a> TraitDef<'a> {
-    fn set_expn_info(&self,
-                     cx: &mut ExtCtxt,
-                     mut to_set: Span) -> Span {
-        let trait_name = match self.path.path.last() {
-            None => cx.span_bug(self.span, "trait with empty path in generic `derive`"),
-            Some(name) => *name
-        };
-        to_set.expn_id = cx.codemap().record_expansion(codemap::ExpnInfo {
-            call_site: to_set,
-            callee: codemap::NameAndSpan {
-                format: codemap::MacroAttribute(intern(&format!("derive({})", trait_name))),
-                span: Some(self.span),
-                allow_internal_unstable: false,
-            }
-        });
-        to_set
-    }
-
     fn summarise_struct(&self,
                         cx: &mut ExtCtxt,
                         struct_def: &VariantData) -> StaticFields {
         let mut named_idents = Vec::new();
         let mut just_spans = Vec::new();
         for field in struct_def.fields(){
-            let sp = self.set_expn_info(cx, field.span);
+            let sp = Span { expn_id: self.span.expn_id, ..field.span };
             match field.ident {
                 Some(ident) => named_idents.push((ident, sp)),
                 _ => just_spans.push(sp),
@@ -1495,7 +1475,7 @@ impl<'a> TraitDef<'a> {
         let mut paths = Vec::new();
         let mut ident_exprs = Vec::new();
         for (i, struct_field) in struct_def.fields().iter().enumerate() {
-            let sp = self.set_expn_info(cx, struct_field.span);
+            let sp = Span { expn_id: self.span.expn_id, ..struct_field.span };
             let ident = cx.ident_of(&format!("{}_{}", prefix, i));
             paths.push(codemap::Spanned{span: sp, node: ident});
             let val = cx.expr_deref(sp, cx.expr_path(cx.path_ident(sp,ident)));

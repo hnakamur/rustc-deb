@@ -11,8 +11,8 @@
 //
 // Interceptors for operators new and delete.
 //===----------------------------------------------------------------------===//
-#include "sanitizer_common/sanitizer_internal_defs.h"
 #include "interception/interception.h"
+#include "sanitizer_common/sanitizer_internal_defs.h"
 #include "tsan_interceptors.h"
 
 using namespace __tsan;  // NOLINT
@@ -23,7 +23,7 @@ struct nothrow_t {};
 
 DECLARE_REAL(void *, malloc, uptr size)
 DECLARE_REAL(void, free, void *ptr)
-#if SANITIZER_MAC
+#if SANITIZER_MAC || SANITIZER_ANDROID
 #define __libc_malloc REAL(malloc)
 #define __libc_free REAL(free)
 #endif

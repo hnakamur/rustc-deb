@@ -566,8 +566,8 @@ impl Wtf8 {
         if len < 3 {
             return None
         }
-        match &self.bytes[(len - 3)..] {
-            [0xED, b2 @ 0xA0...0xAF, b3] => Some(decode_surrogate(b2, b3)),
+        match ::slice_pat(&&self.bytes[(len - 3)..]) {
+            &[0xED, b2 @ 0xA0...0xAF, b3] => Some(decode_surrogate(b2, b3)),
             _ => None
         }
     }
@@ -578,8 +578,8 @@ impl Wtf8 {
         if len < 3 {
             return None
         }
-        match &self.bytes[..3] {
-            [0xED, b2 @ 0xB0...0xBF, b3] => Some(decode_surrogate(b2, b3)),
+        match ::slice_pat(&&self.bytes[..3]) {
+            &[0xED, b2 @ 0xB0...0xBF, b3] => Some(decode_surrogate(b2, b3)),
             _ => None
         }
     }
@@ -715,7 +715,7 @@ impl<'a> Iterator for Wtf8CodePoints<'a> {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let (len, _) = self.bytes.size_hint();
+        let len = self.bytes.len();
         (len.saturating_add(3) / 4, Some(len))
     }
 }

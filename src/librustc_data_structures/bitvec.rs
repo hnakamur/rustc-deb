@@ -11,7 +11,7 @@
 use std::iter::FromIterator;
 
 /// A very simple BitVector type.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BitVector {
     data: Vec<u64>,
 }
@@ -237,23 +237,9 @@ fn bitvec_iter_works() {
                [1, 10, 19, 62, 63, 64, 65, 66, 99]);
 }
 
+
 #[test]
 fn bitvec_iter_works_2() {
-    let mut bitvec = BitVector::new(300);
-    bitvec.insert(1);
-    bitvec.insert(10);
-    bitvec.insert(19);
-    bitvec.insert(62);
-    bitvec.insert(66);
-    bitvec.insert(99);
-    bitvec.insert(299);
-    assert_eq!(bitvec.iter().collect::<Vec<_>>(),
-               [1, 10, 19, 62, 66, 99, 299]);
-
-}
-
-#[test]
-fn bitvec_iter_works_3() {
     let mut bitvec = BitVector::new(319);
     bitvec.insert(0);
     bitvec.insert(127);

@@ -123,9 +123,10 @@ use std::io::prelude::*;
 use std::io;
 use std::rc::Rc;
 use syntax::ast::{self, NodeId};
-use syntax::codemap::{BytePos, original_sp, Span};
+use syntax::codemap::original_sp;
 use syntax::parse::token::keywords;
 use syntax::ptr::P;
+use syntax_pos::{BytePos, Span};
 
 use hir::Expr;
 use hir;
@@ -380,9 +381,7 @@ fn visit_fn(ir: &mut IrMaps,
     debug!("creating fn_maps: {:?}", &fn_maps as *const IrMaps);
 
     for arg in &decl.inputs {
-        pat_util::pat_bindings(&ir.tcx.def_map,
-                               &arg.pat,
-                               |_bm, arg_id, _x, path1| {
+        pat_util::pat_bindings(&arg.pat, |_bm, arg_id, _x, path1| {
             debug!("adding argument {}", arg_id);
             let name = path1.node;
             fn_maps.add_variable(Arg(arg_id, name));
@@ -415,7 +414,7 @@ fn visit_fn(ir: &mut IrMaps,
 }
 
 fn visit_local(ir: &mut IrMaps, local: &hir::Local) {
-    pat_util::pat_bindings(&ir.tcx.def_map, &local.pat, |_, p_id, sp, path1| {
+    pat_util::pat_bindings(&local.pat, |_, p_id, sp, path1| {
         debug!("adding local variable {}", p_id);
         let name = path1.node;
         ir.add_live_node_for_node(p_id, VarDefNode(sp));
@@ -429,7 +428,7 @@ fn visit_local(ir: &mut IrMaps, local: &hir::Local) {
 
 fn visit_arm(ir: &mut IrMaps, arm: &hir::Arm) {
     for pat in &arm.pats {
-        pat_util::pat_bindings(&ir.tcx.def_map, &pat, |bm, p_id, sp, path1| {
+        pat_util::pat_bindings(&pat, |bm, p_id, sp, path1| {
             debug!("adding local variable {} from match with bm {:?}",
                    p_id, bm);
             let name = path1.node;
@@ -447,7 +446,7 @@ fn visit_expr(ir: &mut IrMaps, expr: &Expr) {
     match expr.node {
       // live nodes required for uses or definitions of variables:
       hir::ExprPath(..) => {
-        let def = ir.tcx.def_map.borrow().get(&expr.id).unwrap().full_def();
+        let def = ir.tcx.expect_def(expr.id);
         debug!("expr {}: path that leads to {:?}", expr.id, def);
         if let Def::Local(..) = def {
             ir.add_live_node_for_node(expr.id, ExprNode(expr.span));
@@ -589,7 +588,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
     fn pat_bindings<F>(&mut self, pat: &hir::Pat, mut f: F) where
         F: FnMut(&mut Liveness<'a, 'tcx>, LiveNode, Variable, Span, NodeId),
     {
-        pat_util::pat_bindings(&self.ir.tcx.def_map, pat, |_bm, p_id, sp, _n| {
+        pat_util::pat_bindings(pat, |_bm, p_id, sp, _n| {
             let ln = self.live_node(p_id, sp);
             let var = self.variable(p_id, sp);
             f(self, ln, var, sp, p_id);
@@ -599,11 +598,8 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
     fn arm_pats_bindings<F>(&mut self, pat: Option<&hir::Pat>, f: F) where
         F: FnMut(&mut Liveness<'a, 'tcx>, LiveNode, Variable, Span, NodeId),
     {
-        match pat {
-            Some(pat) => {
-                self.pat_bindings(pat, f);
-            }
-            None => {}
+        if let Some(pat) = pat {
+            self.pat_bindings(pat, f);
         }
     }
 
@@ -697,8 +693,8 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
             Some(_) => {
                 // Refers to a labeled loop. Use the results of resolve
                 // to find with one
-                match self.ir.tcx.def_map.borrow().get(&id).map(|d| d.full_def()) {
-                    Some(Def::Label(loop_id)) => loop_id,
+                match self.ir.tcx.expect_def(id) {
+                    Def::Label(loop_id) => loop_id,
                     _ => span_bug!(sp, "label on break/loop \
                                         doesn't refer to a loop")
                 }
@@ -1271,7 +1267,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
     fn access_path(&mut self, expr: &Expr, succ: LiveNode, acc: u32)
                    -> LiveNode {
-        match self.ir.tcx.def_map.borrow().get(&expr.id).unwrap().full_def() {
+        match self.ir.tcx.expect_def(expr.id) {
           Def::Local(_, nid) => {
             let ln = self.live_node(expr.id, expr.span);
             if acc != 0 {
@@ -1536,9 +1532,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
     fn check_lvalue(&mut self, expr: &Expr) {
         match expr.node {
             hir::ExprPath(..) => {
-                if let Def::Local(_, nid) = self.ir.tcx.def_map.borrow().get(&expr.id)
-                                                                      .unwrap()
-                                                                      .full_def() {
+                if let Def::Local(_, nid) = self.ir.tcx.expect_def(expr.id) {
                     // Assignment to an immutable variable or argument: only legal
                     // if there is no later assignment. If this local is actually
                     // mutable, then check for a reassignment to flag the mutability
@@ -1567,9 +1561,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
     fn warn_about_unused_args(&self, decl: &hir::FnDecl, entry_ln: LiveNode) {
         for arg in &decl.inputs {
-            pat_util::pat_bindings(&self.ir.tcx.def_map,
-                                   &arg.pat,
-                                   |_bm, p_id, sp, path1| {
+            pat_util::pat_bindings(&arg.pat, |_bm, p_id, sp, path1| {
                 let var = self.variable(p_id, sp);
                 // Ignore unused self.
                 let name = path1.node;

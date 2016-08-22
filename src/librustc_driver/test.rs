@@ -26,18 +26,18 @@ use rustc::traits::ProjectionMode;
 use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 use rustc::infer::{self, InferOk, InferResult, TypeOrigin};
 use rustc_metadata::cstore::CStore;
-use rustc_metadata::creader::read_local_crates;
 use rustc::hir::map as hir_map;
 use rustc::session::{self, config};
 use std::rc::Rc;
 use syntax::ast;
 use syntax::abi::Abi;
-use syntax::codemap::{CodeMap, DUMMY_SP};
-use syntax::errors;
-use syntax::errors::emitter::{CoreEmitter, Emitter};
-use syntax::errors::{Level, RenderSpan};
+use syntax::codemap::CodeMap;
+use errors;
+use errors::emitter::{CoreEmitter, Emitter};
+use errors::{Level, RenderSpan};
 use syntax::parse::token;
 use syntax::feature_gate::UnstableFeatures;
+use syntax_pos::DUMMY_SP;
 
 use rustc::hir;
 
@@ -116,25 +116,19 @@ fn test_env<F>(source_string: &str,
         input: source_string.to_string(),
     };
     let krate = driver::phase_1_parse_input(&sess, krate_config, &input).unwrap();
-    let krate = driver::phase_2_configure_and_expand(&sess, &cstore, krate, "test", None)
-                    .expect("phase 2 aborted");
-
-    let krate = driver::assign_node_ids(&sess, krate);
-    let mut defs = hir_map::collect_definitions(&krate);
-    read_local_crates(&sess, &cstore, &defs, &krate, "test_crate", &dep_graph);
-    let _ignore = dep_graph.in_ignore();
-
-    let (_, resolutions, mut hir_forest) = {
-        driver::lower_and_resolve(&sess, "test-crate", &mut defs, &krate,
-                                  &sess.dep_graph, MakeGlobMap::No)
+    let driver::ExpansionResult { defs, resolutions, mut hir_forest, .. } = {
+        driver::phase_2_configure_and_expand(
+            &sess, &cstore, krate, "test", None, MakeGlobMap::No, |_| Ok(()),
+        ).expect("phase 2 aborted")
     };
+    let _ignore = dep_graph.in_ignore();
 
     let arenas = ty::CtxtArenas::new();
     let ast_map = hir_map::map_crate(&mut hir_forest, defs);
 
     // run just enough stuff to build a tcx:
     let lang_items = lang_items::collect_language_items(&sess, &ast_map);
-    let named_region_map = resolve_lifetime::krate(&sess, &ast_map, &resolutions.def_map.borrow());
+    let named_region_map = resolve_lifetime::krate(&sess, &ast_map, &resolutions.def_map);
     let region_map = region::resolve_crate(&sess, &ast_map);
     let index = stability::Index::new(&ast_map);
     TyCtxt::create_and_enter(&sess,

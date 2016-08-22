@@ -99,8 +99,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
 
     fn pat(&mut self, pat: &hir::Pat, pred: CFGIndex) -> CFGIndex {
         match pat.node {
-            PatKind::Ident(_, _, None) |
-            PatKind::TupleStruct(_, None) |
+            PatKind::Binding(_, _, None) |
             PatKind::Path(..) |
             PatKind::QPath(..) |
             PatKind::Lit(..) |
@@ -111,13 +110,13 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
 
             PatKind::Box(ref subpat) |
             PatKind::Ref(ref subpat, _) |
-            PatKind::Ident(_, _, Some(ref subpat)) => {
+            PatKind::Binding(_, _, Some(ref subpat)) => {
                 let subpat_exit = self.pat(&subpat, pred);
                 self.add_ast_node(pat.id, &[subpat_exit])
             }
 
-            PatKind::TupleStruct(_, Some(ref subpats)) |
-            PatKind::Tup(ref subpats) => {
+            PatKind::TupleStruct(_, ref subpats, _) |
+            PatKind::Tuple(ref subpats, _) => {
                 let pats_exit = self.pats_all(subpats.iter(), pred);
                 self.add_ast_node(pat.id, &[pats_exit])
             }
@@ -457,8 +456,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                     // Visit the guard expression
                     let guard_exit = self.expr(&guard, guard_start);
 
-                    let this_has_bindings = pat_util::pat_contains_bindings_or_wild(
-                        &self.tcx.def_map.borrow(), &pat);
+                    let this_has_bindings = pat_util::pat_contains_bindings_or_wild(&pat);
 
                     // If both this pattern and the previous pattern
                     // were free of bindings, they must consist only
@@ -576,8 +574,8 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
             return *self.loop_scopes.last().unwrap();
         }
 
-        match self.tcx.def_map.borrow().get(&expr.id).map(|d| d.full_def()) {
-            Some(Def::Label(loop_id)) => {
+        match self.tcx.expect_def(expr.id) {
+            Def::Label(loop_id) => {
                 for l in &self.loop_scopes {
                     if l.loop_id == loop_id {
                         return *l;

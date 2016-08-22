@@ -12,6 +12,7 @@
 
 #![allow(dead_code)]
 #![allow(unused_imports)]
+
 use self::HasTestSignature::*;
 
 use std::iter;
@@ -20,12 +21,15 @@ use std::mem;
 use std::vec;
 use attr::AttrMetaMethods;
 use attr;
-use codemap::{DUMMY_SP, Span, ExpnInfo, NameAndSpan, MacroAttribute};
-use codemap;
+use syntax_pos::{self, DUMMY_SP, NO_EXPANSION, Span, FileMap, BytePos};
+use std::rc::Rc;
+
+use codemap::{self, CodeMap, ExpnInfo, NameAndSpan, MacroAttribute};
 use errors;
+use errors::snippet::{RenderedLine, SnippetData};
 use config;
 use entry::{self, EntryPointType};
-use ext::base::ExtCtxt;
+use ext::base::{ExtCtxt, DummyMacroLoader};
 use ext::build::AstBuilder;
 use ext::expand::ExpansionConfig;
 use fold::Folder;
@@ -59,7 +63,6 @@ struct TestCtxt<'a> {
     testfns: Vec<Test>,
     reexport_test_harness_main: Option<InternedString>,
     is_test_crate: bool,
-    config: ast::CrateConfig,
 
     // top-level re-export submodule, filled out after folding is finished
     toplevel_reexport: Option<ast::Ident>,
@@ -68,14 +71,9 @@ struct TestCtxt<'a> {
 // Traverse the crate, collecting all the test functions, eliding any
 // existing main functions, and synthesizing a main test harness
 pub fn modify_for_testing(sess: &ParseSess,
-                          cfg: &ast::CrateConfig,
+                          should_test: bool,
                           krate: ast::Crate,
                           span_diagnostic: &errors::Handler) -> ast::Crate {
-    // We generate the test harness when building in the 'test'
-    // configuration, either with the '--test' or '--cfg test'
-    // command line options.
-    let should_test = attr::contains_name(&krate.config, "test");
-
     // Check for #[reexport_test_harness_main = "some_name"] which
     // creates a `use some_name = __test::main;`. This needs to be
     // unconditional, so that the attribute is still marked as used in
@@ -85,9 +83,9 @@ pub fn modify_for_testing(sess: &ParseSess,
                                            "reexport_test_harness_main");
 
     if should_test {
-        generate_test_harness(sess, reexport_test_harness_main, krate, cfg, span_diagnostic)
+        generate_test_harness(sess, reexport_test_harness_main, krate, span_diagnostic)
     } else {
-        strip_test_functions(span_diagnostic, krate)
+        krate
     }
 }
 
@@ -271,24 +269,22 @@ fn mk_reexport_mod(cx: &mut TestCtxt, tests: Vec<ast::Ident>,
 fn generate_test_harness(sess: &ParseSess,
                          reexport_test_harness_main: Option<InternedString>,
                          krate: ast::Crate,
-                         cfg: &ast::CrateConfig,
                          sd: &errors::Handler) -> ast::Crate {
     // Remove the entry points
     let mut cleaner = EntryPointCleaner { depth: 0 };
     let krate = cleaner.fold_crate(krate);
 
-    let mut feature_gated_cfgs = vec![];
+    let mut loader = DummyMacroLoader;
     let mut cx: TestCtxt = TestCtxt {
         sess: sess,
         span_diagnostic: sd,
-        ext_cx: ExtCtxt::new(sess, cfg.clone(),
+        ext_cx: ExtCtxt::new(sess, vec![],
                              ExpansionConfig::default("test".to_string()),
-                             &mut feature_gated_cfgs),
+                             &mut loader),
         path: Vec::new(),
         testfns: Vec::new(),
         reexport_test_harness_main: reexport_test_harness_main,
         is_test_crate: is_test_crate(&krate),
-        config: krate.config.clone(),
         toplevel_reexport: None,
     };
     cx.ext_cx.crate_root = Some("std");
@@ -310,16 +306,6 @@ fn generate_test_harness(sess: &ParseSess,
     let res = fold.fold_crate(krate);
     fold.cx.ext_cx.bt_pop();
     return res;
-}
-
-fn strip_test_functions(diagnostic: &errors::Handler, krate: ast::Crate)
-                        -> ast::Crate {
-    // When not compiling with --test we should not compile the
-    // #[test] functions
-    config::strip_items(diagnostic, krate, |attrs| {
-        !attr::contains_name(&attrs[..], "test") &&
-        !attr::contains_name(&attrs[..], "bench")
-    })
 }
 
 /// Craft a span that will be ignored by the stability lint's
@@ -492,7 +478,7 @@ fn mk_main(cx: &mut TestCtxt) -> P<ast::Item> {
     let main_attr = ecx.attribute(sp, main_meta);
     // pub fn main() { ... }
     let main_ret_ty = ecx.ty(sp, ast::TyKind::Tup(vec![]));
-    let main_body = ecx.block_all(sp, vec![call_test_main], None);
+    let main_body = ecx.block(sp, vec![call_test_main]);
     let main = ast::ItemKind::Fn(ecx.fn_decl(vec![], main_ret_ty),
                            ast::Unsafety::Normal,
                            ast::Constness::NotConst,
@@ -622,10 +608,10 @@ fn mk_test_descs(cx: &TestCtxt) -> P<ast::Expr> {
                     mk_test_desc_and_fn_rec(cx, test)
                 }).collect()),
                 span: DUMMY_SP,
-                attrs: None,
+                attrs: ast::ThinVec::new(),
             })),
         span: DUMMY_SP,
-        attrs: None,
+        attrs: ast::ThinVec::new(),
     })
 }
 

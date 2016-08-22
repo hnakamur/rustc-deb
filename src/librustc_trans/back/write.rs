@@ -19,9 +19,9 @@ use llvm::SMDiagnosticRef;
 use {CrateTranslation, ModuleTranslation};
 use util::common::time;
 use util::common::path2cstr;
-use syntax::codemap::MultiSpan;
-use syntax::errors::{self, Handler, Level, RenderSpan};
-use syntax::errors::emitter::CoreEmitter;
+use errors::{self, Handler, Level, RenderSpan};
+use errors::emitter::CoreEmitter;
+use syntax_pos::MultiSpan;
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -357,7 +357,7 @@ struct HandlerFreeVars<'a> {
 unsafe extern "C" fn report_inline_asm<'a, 'b>(cgcx: &'a CodegenContext<'a>,
                                                msg: &'b str,
                                                cookie: c_uint) {
-    use syntax::codemap::ExpnId;
+    use syntax_pos::ExpnId;
 
     match cgcx.lto_ctxt {
         Some((sess, _)) => {
@@ -616,9 +616,17 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
         }
     }
 
-    llvm::LLVMDisposeModule(llmod);
-    llvm::LLVMContextDispose(llcx);
     llvm::LLVMRustDisposeTargetMachine(tm);
+}
+
+
+pub fn cleanup_llvm(trans: &CrateTranslation) {
+    for module in trans.modules.iter() {
+        unsafe {
+            llvm::LLVMDisposeModule(module.llmod);
+            llvm::LLVMContextDispose(module.llcx);
+        }
+    }
 }
 
 pub fn run_passes(sess: &Session,
@@ -970,7 +978,7 @@ fn run_work_multithreaded(sess: &Session,
 }
 
 pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
-    let (pname, mut cmd) = get_linker(sess);
+    let (pname, mut cmd, _) = get_linker(sess);
 
     cmd.arg("-c").arg("-o").arg(&outputs.path(OutputType::Object))
                            .arg(&outputs.temp_path(OutputType::Assembly));

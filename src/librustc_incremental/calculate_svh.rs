@@ -114,8 +114,8 @@ mod svh_visitor {
     pub use self::SawStmtComponent::*;
     use self::SawAbiComponent::*;
     use syntax::ast::{self, Name, NodeId};
-    use syntax::codemap::Span;
     use syntax::parse::token;
+    use syntax_pos::Span;
     use rustc::ty::TyCtxt;
     use rustc::hir;
     use rustc::hir::*;
@@ -251,7 +251,7 @@ mod svh_visitor {
             ExprType(..)             => SawExprType,
             ExprIf(..)               => SawExprIf,
             ExprWhile(..)            => SawExprWhile,
-            ExprLoop(_, id)          => SawExprLoop(id.map(|id| id.as_str())),
+            ExprLoop(_, id)          => SawExprLoop(id.map(|id| id.node.as_str())),
             ExprMatch(..)            => SawExprMatch,
             ExprClosure(..)          => SawExprClosure,
             ExprBlock(..)            => SawExprBlock,
@@ -399,10 +399,6 @@ mod svh_visitor {
 
         fn visit_path(&mut self, path: &'a Path, _: ast::NodeId) {
             SawPath.hash(self.st); visit::walk_path(self, path)
-        }
-
-        fn visit_path_list_item(&mut self, prefix: &'a Path, item: &'a PathListItem) {
-            SawPath.hash(self.st); visit::walk_path_list_item(self, prefix, item)
         }
 
         fn visit_block(&mut self, b: &'a Block) {

@@ -27,8 +27,8 @@
 
 use syntax::abi::Abi;
 use syntax::ast::{NodeId, CRATE_NODE_ID, Name, Attribute};
-use syntax::attr::ThinAttributesExt;
-use syntax::codemap::Span;
+use syntax::codemap::Spanned;
+use syntax_pos::Span;
 use hir::*;
 
 use std::cmp;
@@ -132,6 +132,9 @@ pub trait Visitor<'v> : Sized {
     fn visit_generics(&mut self, g: &'v Generics) {
         walk_generics(self, g)
     }
+    fn visit_where_predicate(&mut self, predicate: &'v WherePredicate) {
+        walk_where_predicate(self, predicate)
+    }
     fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v FnDecl, b: &'v Block, s: Span, _: NodeId) {
         walk_fn(self, fk, fd, b, s)
     }
@@ -203,8 +206,14 @@ pub trait Visitor<'v> : Sized {
 }
 
 pub fn walk_opt_name<'v, V: Visitor<'v>>(visitor: &mut V, span: Span, opt_name: Option<Name>) {
-    for name in opt_name {
+    if let Some(name) = opt_name {
         visitor.visit_name(span, name);
+    }
+}
+
+pub fn walk_opt_sp_name<'v, V: Visitor<'v>>(visitor: &mut V, opt_sp_name: &Option<Spanned<Name>>) {
+    if let Some(ref sp_name) = *opt_sp_name {
+        visitor.visit_name(sp_name.span, sp_name.node);
     }
 }
 
@@ -274,12 +283,9 @@ pub fn walk_item<'v, V: Visitor<'v>>(visitor: &mut V, item: &'v Item) {
                     visitor.visit_path(path, item.id);
                 }
                 ViewPathList(ref prefix, ref list) => {
-                    if !list.is_empty() {
-                        for item in list {
-                            visitor.visit_path_list_item(prefix, item)
-                        }
-                    } else {
-                        visitor.visit_path(prefix, item.id);
+                    visitor.visit_path(prefix, item.id);
+                    for item in list {
+                        visitor.visit_path_list_item(prefix, item)
                     }
                 }
             }
@@ -413,12 +419,8 @@ pub fn walk_path<'v, V: Visitor<'v>>(visitor: &mut V, path: &'v Path) {
 }
 
 pub fn walk_path_list_item<'v, V: Visitor<'v>>(visitor: &mut V,
-                                               prefix: &'v Path,
+                                               _prefix: &'v Path,
                                                item: &'v PathListItem) {
-    for segment in &prefix.segments {
-        visitor.visit_path_segment(prefix.span, segment);
-    }
-
     walk_opt_name(visitor, item.span, item.node.name());
     walk_opt_name(visitor, item.span, item.node.rename());
 }
@@ -454,11 +456,9 @@ pub fn walk_assoc_type_binding<'v, V: Visitor<'v>>(visitor: &mut V,
 
 pub fn walk_pat<'v, V: Visitor<'v>>(visitor: &mut V, pattern: &'v Pat) {
     match pattern.node {
-        PatKind::TupleStruct(ref path, ref opt_children) => {
+        PatKind::TupleStruct(ref path, ref children, _) => {
             visitor.visit_path(path, pattern.id);
-            if let Some(ref children) = *opt_children {
-                walk_list!(visitor, visit_pat, children);
-            }
+            walk_list!(visitor, visit_pat, children);
         }
         PatKind::Path(ref path) => {
             visitor.visit_path(path, pattern.id);
@@ -474,14 +474,14 @@ pub fn walk_pat<'v, V: Visitor<'v>>(visitor: &mut V, pattern: &'v Pat) {
                 visitor.visit_pat(&field.node.pat)
             }
         }
-        PatKind::Tup(ref tuple_elements) => {
+        PatKind::Tuple(ref tuple_elements, _) => {
             walk_list!(visitor, visit_pat, tuple_elements);
         }
         PatKind::Box(ref subpattern) |
         PatKind::Ref(ref subpattern, _) => {
             visitor.visit_pat(subpattern)
         }
-        PatKind::Ident(_, ref pth1, ref optional_subpattern) => {
+        PatKind::Binding(_, ref pth1, ref optional_subpattern) => {
             visitor.visit_name(pth1.span, pth1.node);
             walk_list!(visitor, visit_pat, optional_subpattern);
         }
@@ -532,29 +532,34 @@ pub fn walk_generics<'v, V: Visitor<'v>>(visitor: &mut V, generics: &'v Generics
         walk_list!(visitor, visit_ty, &param.default);
     }
     walk_list!(visitor, visit_lifetime_def, &generics.lifetimes);
-    for predicate in &generics.where_clause.predicates {
-        match predicate {
-            &WherePredicate::BoundPredicate(WhereBoundPredicate{ref bounded_ty,
-                                                                          ref bounds,
-                                                                          ref bound_lifetimes,
-                                                                          ..}) => {
-                visitor.visit_ty(bounded_ty);
-                walk_list!(visitor, visit_ty_param_bound, bounds);
-                walk_list!(visitor, visit_lifetime_def, bound_lifetimes);
-            }
-            &WherePredicate::RegionPredicate(WhereRegionPredicate{ref lifetime,
-                                                                            ref bounds,
-                                                                            ..}) => {
-                visitor.visit_lifetime(lifetime);
-                walk_list!(visitor, visit_lifetime, bounds);
-            }
-            &WherePredicate::EqPredicate(WhereEqPredicate{id,
-                                                                    ref path,
-                                                                    ref ty,
-                                                                    ..}) => {
-                visitor.visit_path(path, id);
-                visitor.visit_ty(ty);
-            }
+    walk_list!(visitor, visit_where_predicate, &generics.where_clause.predicates);
+}
+
+pub fn walk_where_predicate<'v, V: Visitor<'v>>(
+    visitor: &mut V,
+    predicate: &'v WherePredicate)
+{
+    match predicate {
+        &WherePredicate::BoundPredicate(WhereBoundPredicate{ref bounded_ty,
+                                                            ref bounds,
+                                                            ref bound_lifetimes,
+                                                            ..}) => {
+            visitor.visit_ty(bounded_ty);
+            walk_list!(visitor, visit_ty_param_bound, bounds);
+            walk_list!(visitor, visit_lifetime_def, bound_lifetimes);
+        }
+        &WherePredicate::RegionPredicate(WhereRegionPredicate{ref lifetime,
+                                                              ref bounds,
+                                                              ..}) => {
+            visitor.visit_lifetime(lifetime);
+            walk_list!(visitor, visit_lifetime, bounds);
+        }
+        &WherePredicate::EqPredicate(WhereEqPredicate{id,
+                                                      ref path,
+                                                      ref ty,
+                                                      ..}) => {
+            visitor.visit_path(path, id);
+            visitor.visit_ty(ty);
         }
     }
 }
@@ -737,21 +742,21 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
             visitor.visit_block(if_block);
             walk_list!(visitor, visit_expr, optional_else);
         }
-        ExprWhile(ref subexpression, ref block, opt_name) => {
+        ExprWhile(ref subexpression, ref block, ref opt_sp_name) => {
             visitor.visit_expr(subexpression);
             visitor.visit_block(block);
-            walk_opt_name(visitor, expression.span, opt_name)
+            walk_opt_sp_name(visitor, opt_sp_name);
         }
-        ExprLoop(ref block, opt_name) => {
+        ExprLoop(ref block, ref opt_sp_name) => {
             visitor.visit_block(block);
-            walk_opt_name(visitor, expression.span, opt_name)
+            walk_opt_sp_name(visitor, opt_sp_name);
         }
         ExprMatch(ref subexpression, ref arms, _) => {
             visitor.visit_expr(subexpression);
             walk_list!(visitor, visit_arm, arms);
         }
         ExprClosure(_, ref function_declaration, ref body, _fn_decl_span) => {
-            visitor.visit_fn(FnKind::Closure(expression.attrs.as_attr_slice()),
+            visitor.visit_fn(FnKind::Closure(&expression.attrs),
                              function_declaration,
                              body,
                              expression.span,
@@ -784,9 +789,7 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
             visitor.visit_path(path, expression.id)
         }
         ExprBreak(ref opt_sp_name) | ExprAgain(ref opt_sp_name) => {
-            for sp_name in opt_sp_name {
-                visitor.visit_name(sp_name.span, sp_name.node);
-            }
+            walk_opt_sp_name(visitor, opt_sp_name);
         }
         ExprRet(ref optional_expression) => {
             walk_list!(visitor, visit_expr, optional_expression);

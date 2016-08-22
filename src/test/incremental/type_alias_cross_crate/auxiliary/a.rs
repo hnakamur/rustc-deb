@@ -16,6 +16,8 @@ pub type X = u32;
 #[cfg(rpass2)]
 pub type X = i32;
 
-pub type Y = char;
+// this version doesn't actually change anything:
+#[cfg(rpass3)]
+pub type X = i32;
 
-pub fn foo() { }
+pub type Y = char;

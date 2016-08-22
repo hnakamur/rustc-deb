@@ -36,13 +36,15 @@ use hir::def::Def;
 use hir::def_id::DefId;
 use util::nodemap::{NodeMap, FnvHashSet};
 
-use syntax::codemap::{self, mk_sp, respan, Span, Spanned, ExpnId};
+use syntax_pos::{mk_sp, Span, ExpnId};
+use syntax::codemap::{self, respan, Spanned};
 use syntax::abi::Abi;
-use syntax::ast::{Name, NodeId, DUMMY_NODE_ID, TokenTree, AsmDialect};
+use syntax::ast::{Name, NodeId, DUMMY_NODE_ID, AsmDialect};
 use syntax::ast::{Attribute, Lit, StrStyle, FloatTy, IntTy, UintTy, MetaItem};
-use syntax::attr::{ThinAttributes, ThinAttributesExt};
 use syntax::parse::token::{keywords, InternedString};
 use syntax::ptr::P;
+use syntax::tokenstream::TokenTree;
+use syntax::util::ThinVec;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -466,11 +468,11 @@ impl Pat {
         }
 
         match self.node {
-            PatKind::Ident(_, _, Some(ref p)) => p.walk_(it),
+            PatKind::Binding(_, _, Some(ref p)) => p.walk_(it),
             PatKind::Struct(_, ref fields, _) => {
                 fields.iter().all(|field| field.node.pat.walk_(it))
             }
-            PatKind::TupleStruct(_, Some(ref s)) | PatKind::Tup(ref s) => {
+            PatKind::TupleStruct(_, ref s, _) | PatKind::Tuple(ref s, _) => {
                 s.iter().all(|p| p.walk_(it))
             }
             PatKind::Box(ref s) | PatKind::Ref(ref s, _) => {
@@ -484,8 +486,7 @@ impl Pat {
             PatKind::Wild |
             PatKind::Lit(_) |
             PatKind::Range(_, _) |
-            PatKind::Ident(_, _, _) |
-            PatKind::TupleStruct(..) |
+            PatKind::Binding(..) |
             PatKind::Path(..) |
             PatKind::QPath(_, _) => {
                 true
@@ -525,23 +526,17 @@ pub enum PatKind {
     /// Represents a wildcard pattern (`_`)
     Wild,
 
-    /// A `PatKind::Ident` may either be a new bound variable,
-    /// or a unit struct/variant pattern, or a const pattern (in the last two cases
-    /// the third field must be `None`).
-    ///
-    /// In the unit or const pattern case, the parser can't determine
-    /// which it is. The resolver determines this, and
-    /// records this pattern's `NodeId` in an auxiliary
-    /// set (of "PatIdents that refer to unit patterns or constants").
-    Ident(BindingMode, Spanned<Name>, Option<P<Pat>>),
+    /// A fresh binding `ref mut binding @ OPT_SUBPATTERN`.
+    Binding(BindingMode, Spanned<Name>, Option<P<Pat>>),
 
     /// A struct or struct variant pattern, e.g. `Variant {x, y, ..}`.
     /// The `bool` is `true` in the presence of a `..`.
     Struct(Path, HirVec<Spanned<FieldPat>>, bool),
 
-    /// A tuple struct/variant pattern `Variant(x, y, z)`.
-    /// "None" means a `Variant(..)` pattern where we don't bind the fields to names.
-    TupleStruct(Path, Option<HirVec<P<Pat>>>),
+    /// A tuple struct/variant pattern `Variant(x, y, .., z)`.
+    /// If the `..` pattern fragment is present, then `Option<usize>` denotes its position.
+    /// 0 <= position <= subpats.len()
+    TupleStruct(Path, HirVec<P<Pat>>, Option<usize>),
 
     /// A path pattern.
     /// Such pattern can be resolved to a unit struct/variant or a constant.
@@ -553,8 +548,10 @@ pub enum PatKind {
     /// PatKind::Path, and the resolver will have to sort that out.
     QPath(QSelf, Path),
 
-    /// A tuple pattern `(a, b)`
-    Tup(HirVec<P<Pat>>),
+    /// A tuple pattern `(a, b)`.
+    /// If the `..` pattern fragment is present, then `Option<usize>` denotes its position.
+    /// 0 <= position <= subpats.len()
+    Tuple(HirVec<P<Pat>>, Option<usize>),
     /// A `box` pattern
     Box(P<Pat>),
     /// A reference pattern, e.g. `&mut (a, b)`
@@ -737,7 +734,7 @@ impl Stmt_ {
         match *self {
             StmtDecl(ref d, _) => d.node.attrs(),
             StmtExpr(ref e, _) |
-            StmtSemi(ref e, _) => e.attrs.as_attr_slice(),
+            StmtSemi(ref e, _) => &e.attrs,
         }
     }
 
@@ -761,7 +758,7 @@ pub struct Local {
     pub init: Option<P<Expr>>,
     pub id: NodeId,
     pub span: Span,
-    pub attrs: ThinAttributes,
+    pub attrs: ThinVec<Attribute>,
 }
 
 pub type Decl = Spanned<Decl_>;
@@ -777,7 +774,7 @@ pub enum Decl_ {
 impl Decl_ {
     pub fn attrs(&self) -> &[Attribute] {
         match *self {
-            DeclLocal(ref l) => l.attrs.as_attr_slice(),
+            DeclLocal(ref l) => &l.attrs,
             DeclItem(_) => &[]
         }
     }
@@ -822,7 +819,7 @@ pub struct Expr {
     pub id: NodeId,
     pub node: Expr_,
     pub span: Span,
-    pub attrs: ThinAttributes,
+    pub attrs: ThinVec<Attribute>,
 }
 
 impl fmt::Debug for Expr {
@@ -873,11 +870,11 @@ pub enum Expr_ {
     /// A while loop, with an optional label
     ///
     /// `'label: while expr { block }`
-    ExprWhile(P<Expr>, P<Block>, Option<Name>),
+    ExprWhile(P<Expr>, P<Block>, Option<Spanned<Name>>),
     /// Conditionless loop (can be exited with break, continue, or return)
     ///
     /// `'label: loop { block }`
-    ExprLoop(P<Block>, Option<Name>),
+    ExprLoop(P<Block>, Option<Spanned<Name>>),
     /// A `match` block, with a source that indicates whether or not it is
     /// the result of a desugaring, and if so, which kind.
     ExprMatch(P<Expr>, HirVec<Arm>, MatchSource),
@@ -1142,8 +1139,8 @@ pub type ExplicitSelf = Spanned<SelfKind>;
 
 impl Arg {
     pub fn to_self(&self) -> Option<ExplicitSelf> {
-        if let PatKind::Ident(BindByValue(mutbl), name, _) = self.pat.node {
-            if name.node.unhygienize() == keywords::SelfValue.name() {
+        if let PatKind::Binding(BindByValue(mutbl), name, _) = self.pat.node {
+            if name.node == keywords::SelfValue.name() {
                 return match self.ty.node {
                     TyInfer => Some(respan(self.pat.span, SelfKind::Value(mutbl))),
                     TyRptr(lt, MutTy{ref ty, mutbl}) if ty.node == TyInfer => {
@@ -1158,8 +1155,8 @@ impl Arg {
     }
 
     pub fn is_self(&self) -> bool {
-        if let PatKind::Ident(_, name, _) = self.pat.node {
-            name.node.unhygienize() == keywords::SelfValue.name()
+        if let PatKind::Binding(_, name, _) = self.pat.node {
+            name.node == keywords::SelfValue.name()
         } else {
             false
         }
@@ -1175,6 +1172,9 @@ pub struct FnDecl {
 }
 
 impl FnDecl {
+    pub fn get_self(&self) -> Option<ExplicitSelf> {
+        self.inputs.get(0).and_then(Arg::to_self)
+    }
     pub fn has_self(&self) -> bool {
         self.inputs.get(0).map(Arg::is_self).unwrap_or(false)
     }

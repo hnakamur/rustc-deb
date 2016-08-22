@@ -18,6 +18,8 @@ pub use self::bckerr_code::*;
 pub use self::AliasableViolationKind::*;
 pub use self::MovedValueUseKind::*;
 
+pub use self::mir::elaborate_drops::ElaborateDrops;
+
 use self::InteriorKind::*;
 
 use rustc::dep_graph::DepNode;
@@ -41,8 +43,8 @@ use std::mem;
 use std::rc::Rc;
 use syntax::ast;
 use syntax::attr::AttrMetaMethods;
-use syntax::codemap::{MultiSpan, Span};
-use syntax::errors::DiagnosticBuilder;
+use syntax_pos::{MultiSpan, Span};
+use errors::DiagnosticBuilder;
 
 use rustc::hir;
 use rustc::hir::{FnDecl, Block};
@@ -977,7 +979,11 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                         if let Categorization::Local(local_id) = err.cmt.cat {
                             let span = self.tcx.map.span(local_id);
                             if let Ok(snippet) = self.tcx.sess.codemap().span_to_snippet(span) {
-                                if snippet != "self" {
+                                if snippet.starts_with("ref ") {
+                                    db.span_label(span,
+                                        &format!("use `{}` here to make mutable",
+                                            snippet.replace("ref ", "ref mut ")));
+                                } else if snippet != "self" {
                                     db.span_label(span,
                                         &format!("use `mut {}` here to make mutable", snippet));
                                 }

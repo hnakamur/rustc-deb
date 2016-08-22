@@ -30,6 +30,7 @@ fn test2(a: isize) -> isize {
     callee(a)
 }
 
+#[derive(PartialEq, Eq, Debug)]
 struct Foo;
 impl Foo {
     fn inherent_method(&self, a: isize) -> isize { a }
@@ -147,6 +148,29 @@ fn test_fn_transmute_zst(x: ()) -> [(); 1] {
     })
 }
 
+#[rustc_mir]
+fn test_fn_ignored_pair() -> ((), ()) {
+    ((), ())
+}
+
+#[rustc_mir]
+fn test_fn_ignored_pair_0() {
+    test_fn_ignored_pair().0
+}
+
+#[rustc_mir]
+fn id<T>(x: T) -> T { x }
+
+#[rustc_mir]
+fn ignored_pair_named() -> (Foo, Foo) {
+    (Foo, Foo)
+}
+
+#[rustc_mir]
+fn test_fn_ignored_pair_named() -> (Foo, Foo) {
+    id(ignored_pair_named())
+}
+
 fn main() {
     assert_eq!(test1(1, (2, 3), &[4, 5, 6]), (1, (2, 3), &[4, 5, 6][..]));
     assert_eq!(test2(98), 98);
@@ -169,4 +193,7 @@ fn main() {
 
     assert_eq!(test_fn_nil_call(&(|| 42)), 42);
     assert_eq!(test_fn_transmute_zst(()), [()]);
+
+    assert_eq!(test_fn_ignored_pair_0(), ());
+    assert_eq!(test_fn_ignored_pair_named(), (Foo, Foo));
 }

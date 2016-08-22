@@ -10,6 +10,7 @@
 
 import argparse
 import contextlib
+import datetime
 import hashlib
 import os
 import shutil
@@ -17,6 +18,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+
+from time import time
 
 
 def get(url, path, verbose=False):
@@ -30,7 +33,7 @@ def get(url, path, verbose=False):
         download(sha_path, sha_url, verbose)
         download(temp_path, url, verbose)
         verify(temp_path, sha_path, verbose)
-        print("moving " + temp_path + " to " + path)
+        print("moving {} to {}".format(temp_path, path))
         shutil.move(temp_path, path)
     finally:
         delete_if_present(sha_path)
@@ -44,7 +47,7 @@ def delete_if_present(path):
 
 
 def download(path, url, verbose):
-    print("downloading " + url + " to " + path)
+    print("downloading {} to {}".format(url, path))
     # see http://serverfault.com/questions/301128/how-to-download
     if sys.platform == 'win32':
         run(["PowerShell.exe", "/nologo", "-Command",
@@ -108,14 +111,18 @@ def run(args, verbose=False):
 
 def stage0_data(rust_root):
     nightlies = os.path.join(rust_root, "src/stage0.txt")
+    data = {}
     with open(nightlies, 'r') as nightlies:
-        data = {}
-        for line in nightlies.read().split("\n"):
+        for line in nightlies:
+            line = line.rstrip()  # Strip newline character, '\n'
             if line.startswith("#") or line == '':
                 continue
             a, b = line.split(": ", 1)
             data[a] = b
-        return data
+    return data
+
+def format_build_time(duration):
+    return str(datetime.timedelta(seconds=int(duration)))
 
 class RustBuild:
     def download_stage0(self):
@@ -132,20 +139,20 @@ class RustBuild:
             if os.path.exists(self.bin_root()):
                 shutil.rmtree(self.bin_root())
             channel = self.stage0_rustc_channel()
-            filename = "rust-std-" + channel + "-" + self.build + ".tar.gz"
+            filename = "rust-std-{}-{}.tar.gz".format(channel, self.build)
             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
             if not os.path.exists(tarball):
-                get(url + "/" + filename, tarball, verbose=self.verbose)
+                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(),
                    match="rust-std-" + self.build,
                    verbose=self.verbose)
 
-            filename = "rustc-" + channel + "-" + self.build + ".tar.gz"
+            filename = "rustc-{}-{}.tar.gz".format(channel, self.build)
             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
             if not os.path.exists(tarball):
-                get(url + "/" + filename, tarball, verbose=self.verbose)
+                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(), match="rustc", verbose=self.verbose)
             with open(self.rustc_stamp(), 'w') as f:
                 f.write(self.stage0_rustc_date())
@@ -153,11 +160,11 @@ class RustBuild:
         if self.cargo().startswith(self.bin_root()) and \
            (not os.path.exists(self.cargo()) or self.cargo_out_of_date()):
             channel = self.stage0_cargo_channel()
-            filename = "cargo-" + channel + "-" + self.build + ".tar.gz"
+            filename = "cargo-{}-{}.tar.gz".format(channel, self.build)
             url = "https://static.rust-lang.org/cargo-dist/" + self.stage0_cargo_date()
             tarball = os.path.join(cargo_cache, filename)
             if not os.path.exists(tarball):
-                get(url + "/" + filename, tarball, verbose=self.verbose)
+                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(), match="cargo", verbose=self.verbose)
             with open(self.cargo_stamp(), 'w') as f:
                 f.write(self.stage0_cargo_date())
@@ -181,13 +188,13 @@ class RustBuild:
         return os.path.join(self.bin_root(), '.cargo-stamp')
 
     def rustc_out_of_date(self):
-        if not os.path.exists(self.rustc_stamp()):
+        if not os.path.exists(self.rustc_stamp()) or self.clean:
             return True
         with open(self.rustc_stamp(), 'r') as f:
             return self.stage0_rustc_date() != f.read()
 
     def cargo_out_of_date(self):
-        if not os.path.exists(self.cargo_stamp()):
+        if not os.path.exists(self.cargo_stamp()) or self.clean:
             return True
         with open(self.cargo_stamp(), 'r') as f:
             return self.stage0_cargo_date() != f.read()
@@ -234,8 +241,11 @@ class RustBuild:
             return ''
 
     def build_bootstrap(self):
+        build_dir = os.path.join(self.build_dir, "bootstrap")
+        if self.clean and os.path.exists(build_dir):
+            shutil.rmtree(build_dir)
         env = os.environ.copy()
-        env["CARGO_TARGET_DIR"] = os.path.join(self.build_dir, "bootstrap")
+        env["CARGO_TARGET_DIR"] = build_dir
         env["RUSTC"] = self.rustc()
         env["LD_LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib")
         env["DYLD_LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib")
@@ -246,7 +256,7 @@ class RustBuild:
                  env)
 
     def run(self, args, env):
-        proc = subprocess.Popen(args, env = env)
+        proc = subprocess.Popen(args, env=env)
         ret = proc.wait()
         if ret != 0:
             sys.exit(ret)
@@ -261,20 +271,19 @@ class RustBuild:
         try:
             ostype = subprocess.check_output(['uname', '-s']).strip()
             cputype = subprocess.check_output(['uname', '-m']).strip()
-        except FileNotFoundError:
+        except (subprocess.CalledProcessError, WindowsError):
             if sys.platform == 'win32':
                 return 'x86_64-pc-windows-msvc'
-            else:
-                err = "uname not found"
-                if self.verbose:
-                    raise Exception(err)
-                sys.exit(err)
+            err = "uname not found"
+            if self.verbose:
+                raise Exception(err)
+            sys.exit(err)
 
         # Darwin's `uname -s` lies and always returns i386. We have to use
         # sysctl instead.
         if ostype == 'Darwin' and cputype == 'i686':
             sysctl = subprocess.check_output(['sysctl', 'hw.optional.x86_64'])
-            if sysctl.contains(': 1'):
+            if ': 1' in sysctl:
                 cputype = 'x86_64'
 
         # The goal here is to come up with the same triple as LLVM would,
@@ -335,11 +344,12 @@ class RustBuild:
                 raise ValueError(err)
             sys.exit(err)
 
-        return cputype + '-' + ostype
+        return "{}-{}".format(cputype, ostype)
 
 def main():
     parser = argparse.ArgumentParser(description='Build rust')
     parser.add_argument('--config')
+    parser.add_argument('--clean', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true')
 
     args = [a for a in sys.argv if a != '-h']
@@ -352,6 +362,7 @@ def main():
     rb.rust_root = os.path.abspath(os.path.join(__file__, '../../..'))
     rb.build_dir = os.path.join(os.getcwd(), "build")
     rb.verbose = args.verbose
+    rb.clean = args.clean
 
     try:
         with open(args.config or 'config.toml') as config:
@@ -366,6 +377,8 @@ def main():
     data = stage0_data(rb.rust_root)
     rb._rustc_channel, rb._rustc_date = data['rustc'].split('-', 1)
     rb._cargo_channel, rb._cargo_date = data['cargo'].split('-', 1)
+
+    start_time = time()
 
     # Fetch/build the bootstrap
     rb.build = rb.build_triple()
@@ -384,6 +397,10 @@ def main():
     env = os.environ.copy()
     env["BOOTSTRAP_PARENT_ID"] = str(os.getpid())
     rb.run(args, env)
+
+    end_time = time()
+
+    print("Build completed in %s" % format_build_time(end_time - start_time))
 
 if __name__ == '__main__':
     main()

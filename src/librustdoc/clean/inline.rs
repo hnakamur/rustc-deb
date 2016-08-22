@@ -22,6 +22,7 @@ use rustc::hir::def_id::DefId;
 use rustc::hir::print as pprust;
 use rustc::ty::{self, TyCtxt};
 use rustc::ty::subst;
+use rustc::util::common::slice_pat;
 
 use rustc_const_eval::lookup_const_by_id;
 
@@ -49,8 +50,8 @@ pub fn try_inline(cx: &DocContext, id: ast::NodeId, into: Option<ast::Name>)
         Some(tcx) => tcx,
         None => return None,
     };
-    let def = match tcx.def_map.borrow().get(&id) {
-        Some(d) => d.full_def(),
+    let def = match tcx.expect_def_or_none(id) {
+        Some(def) => def,
         None => return None,
     };
     let did = def.def_id();
@@ -142,8 +143,14 @@ pub fn load_attrs<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
 pub fn record_extern_fqn(cx: &DocContext, did: DefId, kind: clean::TypeKind) {
     if let Some(tcx) = cx.tcx_opt() {
         let crate_name = tcx.sess.cstore.crate_name(did.krate).to_string();
-        let relative = tcx.def_path(did).data.into_iter().map(|elem| {
-            elem.data.to_string()
+        let relative = tcx.def_path(did).data.into_iter().filter_map(|elem| {
+            // extern blocks have an empty name
+            let s = elem.data.to_string();
+            if !s.is_empty() {
+                Some(s)
+            } else {
+                None
+            }
         });
         let fqn = once(crate_name).chain(relative).collect();
         cx.renderinfo.borrow_mut().external_paths.insert(did, (fqn, kind));
@@ -197,10 +204,10 @@ fn build_struct<'a, 'tcx>(cx: &DocContext, tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let variant = tcx.lookup_adt_def(did).struct_variant();
 
     clean::Struct {
-        struct_type: match &*variant.fields {
-            [] => doctree::Unit,
-            [_] if variant.kind == ty::VariantKind::Tuple => doctree::Newtype,
-            [..] if variant.kind == ty::VariantKind::Tuple => doctree::Tuple,
+        struct_type: match slice_pat(&&*variant.fields) {
+            &[] => doctree::Unit,
+            &[_] if variant.kind == ty::VariantKind::Tuple => doctree::Newtype,
+            &[..] if variant.kind == ty::VariantKind::Tuple => doctree::Tuple,
             _ => doctree::Plain,
         },
         generics: (&t.generics, &predicates, subst::TypeSpace).clean(cx),
@@ -425,7 +432,6 @@ pub fn build_impl<'a, 'tcx>(cx: &DocContext,
     ret.push(clean::Item {
         inner: clean::ImplItem(clean::Impl {
             unsafety: hir::Unsafety::Normal, // FIXME: this should be decoded
-            derived: clean::detect_derived(&attrs),
             provided_trait_methods: provided,
             trait_: trait_,
             for_: for_,

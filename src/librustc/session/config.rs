@@ -26,10 +26,11 @@ use middle::cstore;
 use syntax::ast::{self, IntTy, UintTy};
 use syntax::attr;
 use syntax::attr::AttrMetaMethods;
-use syntax::errors::{ColorConfig, Handler};
 use syntax::parse;
 use syntax::parse::token::InternedString;
 use syntax::feature_gate::UnstableFeatures;
+
+use errors::{ColorConfig, Handler};
 
 use getopts;
 use std::collections::HashMap;
@@ -112,7 +113,6 @@ pub struct Options {
     // with additional crate configurations during the compile process
     pub crate_types: Vec<CrateType>,
 
-    pub gc: bool,
     pub optimize: OptLevel,
     pub debug_assertions: bool,
     pub debuginfo: DebugInfoLevel,
@@ -242,7 +242,6 @@ pub fn host_triple() -> &'static str {
 pub fn basic_options() -> Options {
     Options {
         crate_types: Vec::new(),
-        gc: false,
         optimize: OptLevel::No,
         debuginfo: NoDebugInfo,
         lint_opts: Vec::new(),
@@ -632,14 +631,10 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
         "omit landing pads for unwinding"),
     debug_llvm: bool = (false, parse_bool,
         "enable debug output from LLVM"),
-    count_type_sizes: bool = (false, parse_bool,
-        "count the sizes of aggregate types"),
     meta_stats: bool = (false, parse_bool,
         "gather metadata statistics"),
     print_link_args: bool = (false, parse_bool,
         "print the arguments passed to the linker"),
-    gc: bool = (false, parse_bool,
-        "garbage collect shared data (experimental)"),
     print_llvm_passes: bool = (false, parse_bool,
         "prints the llvm optimization passes being run"),
     ast_json: bool = (false, parse_bool,
@@ -796,6 +791,7 @@ pub fn build_target_config(opts: &Options, sp: &Handler) -> Config {
     };
 
     let (int_type, uint_type) = match &target.target_pointer_width[..] {
+        "16" => (ast::IntTy::I16, ast::UintTy::U16),
         "32" => (ast::IntTy::I32, ast::UintTy::U32),
         "64" => (ast::IntTy::I64, ast::UintTy::U64),
         w    => panic!(sp.fatal(&format!("target specification was invalid: \
@@ -1104,7 +1100,7 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
     let no_analysis = debugging_opts.no_analysis;
 
     let mut output_types = HashMap::new();
-    if !debugging_opts.parse_only && !no_trans {
+    if !debugging_opts.parse_only {
         for list in matches.opt_strs("emit") {
             for output_type in list.split(',') {
                 let mut parts = output_type.splitn(2, '=');
@@ -1188,7 +1184,6 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
         }
     };
     let debug_assertions = cg.debug_assertions.unwrap_or(opt_level == OptLevel::No);
-    let gc = debugging_opts.gc;
     let debuginfo = if matches.opt_present("g") {
         if cg.debuginfo.is_some() {
             early_error(error_format, "-g and -C debuginfo both provided");
@@ -1271,7 +1266,6 @@ pub fn build_session_options(matches: &getopts::Matches) -> Options {
 
     Options {
         crate_types: crate_types,
-        gc: gc,
         optimize: opt_level,
         debuginfo: debuginfo,
         lint_opts: lint_opts,
@@ -1427,12 +1421,11 @@ mod tests {
     use middle::cstore::DummyCrateStore;
     use session::config::{build_configuration, build_session_options};
     use session::build_session;
-
+    use errors;
     use std::rc::Rc;
     use getopts::{getopts, OptGroup};
     use syntax::attr;
     use syntax::attr::AttrMetaMethods;
-    use syntax::diagnostics;
 
     fn optgroups() -> Vec<OptGroup> {
         super::rustc_optgroups().into_iter()
@@ -1449,7 +1442,7 @@ mod tests {
               Ok(m) => m,
               Err(f) => panic!("test_switch_implies_cfg_test: {}", f)
             };
-        let registry = diagnostics::registry::Registry::new(&[]);
+        let registry = errors::registry::Registry::new(&[]);
         let sessopts = build_session_options(matches);
         let sess = build_session(sessopts, &dep_graph, None, registry, Rc::new(DummyCrateStore));
         let cfg = build_configuration(&sess);
@@ -1469,7 +1462,7 @@ mod tests {
                 panic!("test_switch_implies_cfg_test_unless_cfg_test: {}", f)
               }
             };
-        let registry = diagnostics::registry::Registry::new(&[]);
+        let registry = errors::registry::Registry::new(&[]);
         let sessopts = build_session_options(matches);
         let sess = build_session(sessopts, &dep_graph, None, registry,
                                  Rc::new(DummyCrateStore));
@@ -1486,7 +1479,7 @@ mod tests {
             let matches = getopts(&[
                 "-Awarnings".to_string()
             ], &optgroups()).unwrap();
-            let registry = diagnostics::registry::Registry::new(&[]);
+            let registry = errors::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
             let sess = build_session(sessopts, &dep_graph, None, registry,
                                      Rc::new(DummyCrateStore));
@@ -1498,7 +1491,7 @@ mod tests {
                 "-Awarnings".to_string(),
                 "-Dwarnings".to_string()
             ], &optgroups()).unwrap();
-            let registry = diagnostics::registry::Registry::new(&[]);
+            let registry = errors::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
             let sess = build_session(sessopts, &dep_graph, None, registry,
                                      Rc::new(DummyCrateStore));
@@ -1509,7 +1502,7 @@ mod tests {
             let matches = getopts(&[
                 "-Adead_code".to_string()
             ], &optgroups()).unwrap();
-            let registry = diagnostics::registry::Registry::new(&[]);
+            let registry = errors::registry::Registry::new(&[]);
             let sessopts = build_session_options(&matches);
             let sess = build_session(sessopts, &dep_graph, None, registry,
                                      Rc::new(DummyCrateStore));

@@ -24,15 +24,14 @@ pub use self::SelfTy::*;
 pub use self::FunctionRetTy::*;
 pub use self::Visibility::*;
 
-use syntax;
 use syntax::abi::Abi;
 use syntax::ast;
 use syntax::attr;
 use syntax::attr::{AttributeMethods, AttrMetaMethods};
-use syntax::codemap;
-use syntax::codemap::{DUMMY_SP, Pos, Spanned};
+use syntax::codemap::Spanned;
 use syntax::parse::token::{self, InternedString, keywords};
 use syntax::ptr::P;
+use syntax_pos::{self, DUMMY_SP, Pos};
 
 use rustc_trans::back::link;
 use rustc::middle::cstore;
@@ -533,7 +532,7 @@ impl attr::AttrMetaMethods for Attribute {
         }
     }
     fn meta_item_list<'a>(&'a self) -> Option<&'a [P<ast::MetaItem>]> { None }
-    fn span(&self) -> codemap::Span { unimplemented!() }
+    fn span(&self) -> syntax_pos::Span { unimplemented!() }
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Debug)]
@@ -819,7 +818,7 @@ impl Clean<Option<Lifetime>> for ty::Region {
     fn clean(&self, cx: &DocContext) -> Option<Lifetime> {
         match *self {
             ty::ReStatic => Some(Lifetime::statik()),
-            ty::ReLateBound(_, ty::BrNamed(_, name)) => Some(Lifetime(name.to_string())),
+            ty::ReLateBound(_, ty::BrNamed(_, name, _)) => Some(Lifetime(name.to_string())),
             ty::ReEarlyBound(ref data) => Some(Lifetime(data.name.clean(cx))),
 
             ty::ReLateBound(..) |
@@ -827,7 +826,8 @@ impl Clean<Option<Lifetime>> for ty::Region {
             ty::ReScope(..) |
             ty::ReVar(..) |
             ty::ReSkolemized(..) |
-            ty::ReEmpty => None
+            ty::ReEmpty |
+            ty::ReErased => None
         }
     }
 }
@@ -1976,7 +1976,7 @@ impl Span {
     }
 }
 
-impl Clean<Span> for syntax::codemap::Span {
+impl Clean<Span> for syntax_pos::Span {
     fn clean(&self, cx: &DocContext) -> Span {
         if *self == DUMMY_SP {
             return Span::empty();
@@ -2239,12 +2239,7 @@ pub struct Impl {
     pub trait_: Option<Type>,
     pub for_: Type,
     pub items: Vec<Item>,
-    pub derived: bool,
     pub polarity: Option<ImplPolarity>,
-}
-
-fn detect_derived<M: AttrMetaMethods>(attrs: &[M]) -> bool {
-    attr::contains_name(attrs, "automatically_derived")
 }
 
 impl Clean<Vec<Item>> for doctree::Impl {
@@ -2283,7 +2278,6 @@ impl Clean<Vec<Item>> for doctree::Impl {
                 trait_: trait_,
                 for_: self.for_.clean(cx),
                 items: items,
-                derived: detect_derived(&self.attrs),
                 polarity: Some(self.polarity.clean(cx)),
             }),
         });
@@ -2388,9 +2382,11 @@ impl Clean<Vec<Item>> for doctree::Import {
         // We consider inlining the documentation of `pub use` statements, but we
         // forcefully don't inline if this is not public or if the
         // #[doc(no_inline)] attribute is present.
+        // Don't inline doc(hidden) imports so they can be stripped at a later stage.
         let denied = self.vis != hir::Public || self.attrs.iter().any(|a| {
             &a.name()[..] == "doc" && match a.meta_item_list() {
-                Some(l) => attr::contains_name(l, "no_inline"),
+                Some(l) => attr::contains_name(l, "no_inline") ||
+                           attr::contains_name(l, "hidden"),
                 None => false,
             }
         });
@@ -2540,7 +2536,7 @@ trait ToSource {
     fn to_src(&self, cx: &DocContext) -> String;
 }
 
-impl ToSource for syntax::codemap::Span {
+impl ToSource for syntax_pos::Span {
     fn to_src(&self, cx: &DocContext) -> String {
         debug!("converting span {:?} to snippet", self.clean(cx));
         let sn = match cx.sess().codemap().span_to_snippet(*self) {
@@ -2578,8 +2574,8 @@ fn name_from_pat(p: &hir::Pat) -> String {
 
     match p.node {
         PatKind::Wild => "_".to_string(),
-        PatKind::Ident(_, ref p, _) => p.node.to_string(),
-        PatKind::TupleStruct(ref p, _) | PatKind::Path(ref p) => path_to_string(p),
+        PatKind::Binding(_, ref p, _) => p.node.to_string(),
+        PatKind::TupleStruct(ref p, _, _) | PatKind::Path(ref p) => path_to_string(p),
         PatKind::QPath(..) => panic!("tried to get argument name from PatKind::QPath, \
                                 which is not allowed in function arguments"),
         PatKind::Struct(ref name, ref fields, etc) => {
@@ -2590,7 +2586,7 @@ fn name_from_pat(p: &hir::Pat) -> String {
                 if etc { ", ..." } else { "" }
             )
         },
-        PatKind::Tup(ref elts) => format!("({})", elts.iter().map(|p| name_from_pat(&**p))
+        PatKind::Tuple(ref elts, _) => format!("({})", elts.iter().map(|p| name_from_pat(&**p))
                                             .collect::<Vec<String>>().join(", ")),
         PatKind::Box(ref p) => name_from_pat(&**p),
         PatKind::Ref(ref p, _) => name_from_pat(&**p),
@@ -2630,7 +2626,7 @@ fn resolve_type(cx: &DocContext,
             };
         }
     };
-    let def = tcx.def_map.borrow().get(&id).expect("unresolved id not in defmap").full_def();
+    let def = tcx.expect_def(id);
     debug!("resolve_type: def={:?}", def);
 
     let is_generic = match def {
@@ -2699,7 +2695,7 @@ fn resolve_use_source(cx: &DocContext, path: Path, id: ast::NodeId) -> ImportSou
 
 fn resolve_def(cx: &DocContext, id: ast::NodeId) -> Option<DefId> {
     cx.tcx_opt().and_then(|tcx| {
-        tcx.def_map.borrow().get(&id).map(|d| register_def(cx, d.full_def()))
+        tcx.expect_def_or_none(id).map(|def| register_def(cx, def))
     })
 }
 

@@ -14,13 +14,14 @@
 
 use std;
 
+use attributes;
 use back::symbol_names;
 use llvm;
 use llvm::{ValueRef, get_param};
 use middle::lang_items::ExchangeFreeFnLangItem;
 use rustc::ty::subst::{Substs};
 use rustc::traits;
-use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 use abi::{Abi, FnType};
 use adt;
 use adt::GetDtorType; // for tcx.dtor_type()
@@ -42,7 +43,7 @@ use type_::Type;
 use value::Value;
 
 use arena::TypedArena;
-use syntax::codemap::DUMMY_SP;
+use syntax_pos::DUMMY_SP;
 
 pub fn trans_exchange_free_dyn<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                            v: ValueRef,
@@ -52,7 +53,7 @@ pub fn trans_exchange_free_dyn<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                            -> Block<'blk, 'tcx> {
     let _icx = push_ctxt("trans_exchange_free");
 
-    let def_id = langcall(bcx, None, "", ExchangeFreeFnLangItem);
+    let def_id = langcall(bcx.tcx(), None, "", ExchangeFreeFnLangItem);
     let args = [PointerCast(bcx, v, Type::i8p(bcx.ccx())), size, align];
     Callee::def(bcx.ccx(), def_id, bcx.tcx().mk_substs(Substs::empty()))
         .call(bcx, debug_loc, ArgVals(&args), None).bcx
@@ -96,10 +97,12 @@ pub fn type_needs_drop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
 pub fn get_drop_glue_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                     t: Ty<'tcx>) -> Ty<'tcx> {
+    assert!(t.is_normalized_for_trans());
+
     // Even if there is no dtor for t, there might be one deeper down and we
     // might need to pass in the vtable ptr.
     if !type_is_sized(tcx, t) {
-        return tcx.erase_regions(&t);
+        return t;
     }
 
     // FIXME (#22815): note that type_needs_drop conservatively
@@ -123,11 +126,11 @@ pub fn get_drop_glue_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                     // `Box<ZeroSizeType>` does not allocate.
                     tcx.types.i8
                 } else {
-                    tcx.erase_regions(&t)
+                    t
                 }
             })
         }
-        _ => tcx.erase_regions(&t)
+        _ => t
     }
 }
 
@@ -270,6 +273,7 @@ fn get_drop_glue_core<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let fn_nm = symbol_names::internal_name_from_type_and_suffix(ccx, t, suffix);
     assert!(declare::get_defined_value(ccx, &fn_nm).is_none());
     let llfn = declare::declare_cfn(ccx, &fn_nm, llfnty);
+    attributes::set_frame_pointer_elimination(ccx, llfn);
     ccx.available_drop_glues().borrow_mut().insert(g, fn_nm);
     ccx.drop_glues().borrow_mut().insert(g, llfn);
 

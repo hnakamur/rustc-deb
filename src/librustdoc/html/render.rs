@@ -399,7 +399,6 @@ fn init_ids() -> HashMap<String, usize> {
      "methods",
      "deref-methods",
      "implementations",
-     "derived_implementations"
      ].into_iter().map(|id| (String::from(*id), 1)).collect()
 }
 
@@ -590,19 +589,16 @@ fn build_index(krate: &clean::Crate, cache: &mut Cache) -> String {
     // Attach all orphan methods to the type's definition if the type
     // has since been learned.
     for &(did, ref item) in orphan_methods {
-        match paths.get(&did) {
-            Some(&(ref fqp, _)) => {
-                search_index.push(IndexItem {
-                    ty: shortty(item),
-                    name: item.name.clone().unwrap(),
-                    path: fqp[..fqp.len() - 1].join("::"),
-                    desc: Escape(&shorter(item.doc_value())).to_string(),
-                    parent: Some(did),
-                    parent_idx: None,
-                    search_type: get_index_search_type(&item),
-                });
-            },
-            None => {}
+        if let Some(&(ref fqp, _)) = paths.get(&did) {
+            search_index.push(IndexItem {
+                ty: shortty(item),
+                name: item.name.clone().unwrap(),
+                path: fqp[..fqp.len() - 1].join("::"),
+                desc: Escape(&shorter(item.doc_value())).to_string(),
+                parent: Some(did),
+                parent_idx: None,
+                search_type: get_index_search_type(&item),
+            });
         }
     }
 
@@ -1120,7 +1116,9 @@ impl DocFolder for Cache {
             clean::StructItem(..) | clean::EnumItem(..) |
             clean::TypedefItem(..) | clean::TraitItem(..) |
             clean::FunctionItem(..) | clean::ModuleItem(..) |
-            clean::ForeignFunctionItem(..) if !self.stripped_mod => {
+            clean::ForeignFunctionItem(..) | clean::ForeignStaticItem(..) |
+            clean::ConstantItem(..) | clean::StaticItem(..)
+            if !self.stripped_mod => {
                 // Reexported items mean that the same id can show up twice
                 // in the rustdoc ast that we're looking at. We know,
                 // however, that a reexported item doesn't show up in the
@@ -1255,7 +1253,6 @@ impl Context {
 
         info!("Recursing into {}", self.dst.display());
 
-        mkdir(&self.dst).unwrap();
         let ret = f(self);
 
         info!("Recursed; leaving {}", self.dst.display());
@@ -1299,7 +1296,7 @@ impl Context {
     fn item<F>(&mut self, item: clean::Item, mut f: F) -> Result<(), Error> where
         F: FnMut(&mut Context, clean::Item),
     {
-        fn render(w: File, cx: &Context, it: &clean::Item,
+        fn render(writer: &mut io::Write, cx: &Context, it: &clean::Item,
                   pushname: bool) -> io::Result<()> {
             // A little unfortunate that this is done like this, but it sure
             // does make formatting *a lot* nicer.
@@ -1334,28 +1331,24 @@ impl Context {
 
             reset_ids(true);
 
-            // We have a huge number of calls to write, so try to alleviate some
-            // of the pain by using a buffered writer instead of invoking the
-            // write syscall all the time.
-            let mut writer = BufWriter::new(w);
             if !cx.render_redirect_pages {
-                layout::render(&mut writer, &cx.shared.layout, &page,
+                layout::render(writer, &cx.shared.layout, &page,
                                &Sidebar{ cx: cx, item: it },
                                &Item{ cx: cx, item: it },
                                cx.shared.css_file_extension.is_some())?;
             } else {
                 let mut url = repeat("../").take(cx.current.len())
                                            .collect::<String>();
-                if let Some(&(ref names, _)) = cache().paths.get(&it.def_id) {
+                if let Some(&(ref names, ty)) = cache().paths.get(&it.def_id) {
                     for name in &names[..names.len() - 1] {
                         url.push_str(name);
                         url.push_str("/");
                     }
-                    url.push_str(&item_path(it));
-                    layout::redirect(&mut writer, &url)?;
+                    url.push_str(&item_path(ty, names.last().unwrap()));
+                    layout::redirect(writer, &url)?;
                 }
             }
-            writer.flush()
+            Ok(())
         }
 
         // Stripped modules survive the rustdoc passes (i.e. `strip-private`)
@@ -1376,9 +1369,16 @@ impl Context {
             let mut item = Some(item);
             self.recurse(name, |this| {
                 let item = item.take().unwrap();
-                let joint_dst = this.dst.join("index.html");
-                let dst = try_err!(File::create(&joint_dst), &joint_dst);
-                try_err!(render(dst, this, &item, false), &joint_dst);
+
+                let mut buf = Vec::new();
+                render(&mut buf, this, &item, false).unwrap();
+                // buf will be empty if the module is stripped and there is no redirect for it
+                if !buf.is_empty() {
+                    let joint_dst = this.dst.join("index.html");
+                    try_err!(fs::create_dir_all(&this.dst), &this.dst);
+                    let mut dst = try_err!(File::create(&joint_dst), &joint_dst);
+                    try_err!(dst.write_all(&buf), &joint_dst);
+                }
 
                 let m = match item.inner {
                     clean::StrippedItem(box clean::ModuleItem(m)) |
@@ -1387,7 +1387,7 @@ impl Context {
                 };
 
                 // render sidebar-items.js used throughout this module
-                {
+                if !this.render_redirect_pages {
                     let items = this.build_sidebar_items(&m);
                     let js_dst = this.dst.join("sidebar-items.js");
                     let mut js_out = BufWriter::new(try_err!(File::create(&js_dst), &js_dst));
@@ -1401,10 +1401,16 @@ impl Context {
                 Ok(())
             })
         } else if item.name.is_some() {
-            let joint_dst = self.dst.join(&item_path(&item));
-
-            let dst = try_err!(File::create(&joint_dst), &joint_dst);
-            try_err!(render(dst, self, &item, true), &joint_dst);
+            let mut buf = Vec::new();
+            render(&mut buf, self, &item, true).unwrap();
+            // buf will be empty if the item is stripped and there is no redirect for it
+            if !buf.is_empty() {
+                let joint_dst = self.dst.join(&item_path(shortty(&item),
+                                                         item.name.as_ref().unwrap()));
+                try_err!(fs::create_dir_all(&self.dst), &self.dst);
+                let mut dst = try_err!(File::create(&joint_dst), &joint_dst);
+                try_err!(dst.write_all(&buf), &joint_dst);
+            }
             Ok(())
         } else {
             Ok(())
@@ -1509,20 +1515,23 @@ impl<'a> Item<'a> {
         // located, then we return `None`.
         } else {
             let cache = cache();
-            let path = match cache.external_paths.get(&self.item.def_id) {
+            let external_path = match cache.external_paths.get(&self.item.def_id) {
                 Some(path) => path,
                 None => return None,
             };
-            let root = match cache.extern_locations.get(&self.item.def_id.krate) {
+            let mut path = match cache.extern_locations.get(&self.item.def_id.krate) {
                 Some(&(_, Remote(ref s))) => s.to_string(),
                 Some(&(_, Local)) => self.cx.root_path.clone(),
                 Some(&(_, Unknown)) => return None,
                 None => return None,
             };
-            Some(format!("{root}{path}/{file}?gotosrc={goto}",
-                         root = root,
-                         path = path[..path.len() - 1].join("/"),
-                         file = item_path(self.item),
+            for item in &external_path[..external_path.len() - 1] {
+                path.push_str(item);
+                path.push_str("/");
+            }
+            Some(format!("{path}{file}?gotosrc={goto}",
+                         path = path,
+                         file = item_path(shortty(self.item), external_path.last().unwrap()),
                          goto = self.item.def_id.index.as_usize()))
         }
     }
@@ -1614,13 +1623,10 @@ impl<'a> fmt::Display for Item<'a> {
     }
 }
 
-fn item_path(item: &clean::Item) -> String {
-    if item.is_mod() {
-        format!("{}/index.html", item.name.as_ref().unwrap())
-    } else {
-        format!("{}.{}.html",
-                shortty(item).to_static_str(),
-                *item.name.as_ref().unwrap())
+fn item_path(ty: ItemType, name: &str) -> String {
+    match ty {
+        ItemType::Module => format!("{}/index.html", name),
+        _ => format!("{}.{}.html", ty.to_static_str(), name),
     }
 }
 
@@ -1649,12 +1655,8 @@ fn plain_summary_line(s: Option<&str>) -> String {
 }
 
 fn document(w: &mut fmt::Formatter, cx: &Context, item: &clean::Item) -> fmt::Result {
-    for stability in short_stability(item, cx, true) {
-        write!(w, "<div class='stability'>{}</div>", stability)?;
-    }
-    if let Some(s) = item.doc_value() {
-        write!(w, "<div class='docblock'>{}</div>", Markdown(s))?;
-    }
+    document_stability(w, cx, item)?;
+    document_full(w, item)?;
     Ok(())
 }
 
@@ -1671,11 +1673,28 @@ fn document_short(w: &mut fmt::Formatter, item: &clean::Item, link: AssocItemLin
     Ok(())
 }
 
+fn document_full(w: &mut fmt::Formatter, item: &clean::Item) -> fmt::Result {
+    if let Some(s) = item.doc_value() {
+        write!(w, "<div class='docblock'>{}</div>", Markdown(s))?;
+    }
+    Ok(())
+}
+
+fn document_stability(w: &mut fmt::Formatter, cx: &Context, item: &clean::Item) -> fmt::Result {
+    for stability in short_stability(item, cx, true) {
+        write!(w, "<div class='stability'>{}</div>", stability)?;
+    }
+    Ok(())
+}
+
 fn item_module(w: &mut fmt::Formatter, cx: &Context,
                item: &clean::Item, items: &[clean::Item]) -> fmt::Result {
     document(w, cx, item)?;
 
     let mut indices = (0..items.len()).filter(|i| {
+        if let clean::DefaultImplItem(..) = items[*i].inner {
+            return false;
+        }
         !cx.maybe_ignore_item(&items[*i])
     }).collect::<Vec<usize>>();
 
@@ -1812,13 +1831,16 @@ fn item_module(w: &mut fmt::Formatter, cx: &Context,
                        docs = shorter(Some(&Markdown(doc_value).to_string())),
                        class = shortty(myitem),
                        stab = myitem.stability_class(),
-                       href = item_path(myitem),
+                       href = item_path(shortty(myitem), myitem.name.as_ref().unwrap()),
                        title = full_path(cx, myitem))?;
             }
         }
     }
 
-    write!(w, "</table>")
+    if curty.is_some() {
+        write!(w, "</table>")?;
+    }
+    Ok(())
 }
 
 fn short_stability(item: &clean::Item, cx: &Context, show_reason: bool) -> Vec<String> {
@@ -2068,15 +2090,12 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
         <h2 id='implementors'>Implementors</h2>
         <ul class='item-list' id='implementors-list'>
     ")?;
-    match cache.implementors.get(&it.def_id) {
-        Some(implementors) => {
-            for i in implementors {
-                write!(w, "<li><code>")?;
-                fmt_impl_for_trait_page(&i.impl_, w)?;
-                writeln!(w, "</code></li>")?;
-            }
+    if let Some(implementors) = cache.implementors.get(&it.def_id) {
+        for i in implementors {
+            write!(w, "<li><code>")?;
+            fmt_impl_for_trait_page(&i.impl_, w)?;
+            writeln!(w, "</code></li>")?;
         }
-        None => {}
     }
     write!(w, "</ul>")?;
     write!(w, r#"<script type="text/javascript" async
@@ -2243,26 +2262,24 @@ fn item_struct(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
     write!(w, "</pre>")?;
 
     document(w, cx, it)?;
-    let mut fields = s.fields.iter().filter(|f| {
+    let mut fields = s.fields.iter().filter_map(|f| {
         match f.inner {
-            clean::StructFieldItem(..) => true,
-            _ => false,
+            clean::StructFieldItem(ref ty) => Some((f, ty)),
+            _ => None,
         }
     }).peekable();
     if let doctree::Plain = s.struct_type {
         if fields.peek().is_some() {
-            write!(w, "<h2 class='fields'>Fields</h2>\n<table>")?;
-            for field in fields {
-                write!(w, "<tr class='stab {stab}'>
-                             <td id='{shortty}.{name}'>\
-                               <code>{name}</code></td><td>",
+            write!(w, "<h2 class='fields'>Fields</h2>")?;
+            for (field, ty) in fields {
+                write!(w, "<span id='{shortty}.{name}' class='{shortty}'><code>{name}: {ty}</code>
+                           </span><span class='stab {stab}'></span>",
                        shortty = ItemType::StructField,
                        stab = field.stability_class(),
-                       name = field.name.as_ref().unwrap())?;
+                       name = field.name.as_ref().unwrap(),
+                       ty = ty)?;
                 document(w, cx, field)?;
-                write!(w, "</td></tr>")?;
             }
-            write!(w, "</table>")?;
         }
     }
     render_assoc_items(w, cx, it, it.def_id, AssocItemRender::All)
@@ -2292,7 +2309,7 @@ fn item_enum(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
                             write!(w, "{}(", name)?;
                             for (i, ty) in tys.iter().enumerate() {
                                 if i > 0 {
-                                    write!(w, ", ")?
+                                    write!(w, ",&nbsp;")?
                                 }
                                 write!(w, "{}", *ty)?;
                             }
@@ -2324,40 +2341,47 @@ fn item_enum(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
 
     document(w, cx, it)?;
     if !e.variants.is_empty() {
-        write!(w, "<h2 class='variants'>Variants</h2>\n<table class='variants_table'>")?;
+        write!(w, "<h2 class='variants'>Variants</h2>\n")?;
         for variant in &e.variants {
-            write!(w, "<tr><td id='{shortty}.{name}'><code>{name}</code></td><td>",
+            write!(w, "<span id='{shortty}.{name}' class='variant'><code>{name}",
                    shortty = ItemType::Variant,
                    name = variant.name.as_ref().unwrap())?;
+            if let clean::VariantItem(ref var) = variant.inner {
+                if let clean::TupleVariant(ref tys) = var.kind {
+                    write!(w, "(")?;
+                    for (i, ty) in tys.iter().enumerate() {
+                        if i > 0 {
+                            write!(w, ",&nbsp;")?;
+                        }
+                        write!(w, "{}", *ty)?;
+                    }
+                    write!(w, ")")?;
+                }
+            }
+            write!(w, "</code></span>")?;
             document(w, cx, variant)?;
 
             use clean::{Variant, StructVariant};
             if let clean::VariantItem( Variant { kind: StructVariant(ref s) } ) = variant.inner {
-                let fields = s.fields.iter().filter(|f| {
-                    match f.inner {
-                        clean::StructFieldItem(..) => true,
-                        _ => false,
-                    }
-                });
                 write!(w, "<h3 class='fields'>Fields</h3>\n
                            <table>")?;
-                for field in fields {
-                    write!(w, "<tr><td \
-                               id='{shortty}.{v}.field.{f}'>\
-                               <code>{f}</code></td><td>",
-                           shortty = ItemType::Variant,
-                           v = variant.name.as_ref().unwrap(),
-                           f = field.name.as_ref().unwrap())?;
-                    document(w, cx, field)?;
-                    write!(w, "</td></tr>")?;
+                for field in &s.fields {
+                    use clean::StructFieldItem;
+                    if let StructFieldItem(ref ty) = field.inner {
+                        write!(w, "<tr><td \
+                                   id='variant.{v}.field.{f}'>\
+                                   <code>{f}:&nbsp;{t}</code></td><td>",
+                               v = variant.name.as_ref().unwrap(),
+                               f = field.name.as_ref().unwrap(),
+                               t = *ty)?;
+                        document(w, cx, field)?;
+                        write!(w, "</td></tr>")?;
+                    }
                 }
                 write!(w, "</table>")?;
             }
-            write!(w, "</td><td>")?;
             render_stability_since(w, variant, it)?;
-            write!(w, "</td></tr>")?;
         }
-        write!(w, "</table>")?;
     }
     render_assoc_items(w, cx, it, it.def_id, AssocItemRender::All)?;
     Ok(())
@@ -2496,24 +2520,10 @@ fn render_assoc_items(w: &mut fmt::Formatter,
         }
         write!(w, "<h2 id='implementations'>Trait \
                    Implementations</h2>")?;
-        let (derived, manual): (Vec<_>, Vec<&Impl>) = traits.iter().partition(|i| {
-            i.inner_impl().derived
-        });
-        for i in &manual {
+        for i in &traits {
             let did = i.trait_did().unwrap();
             let assoc_link = AssocItemLink::GotoSource(did, &i.inner_impl().provided_trait_methods);
             render_impl(w, cx, i, assoc_link, true, containing_item.stable_since())?;
-        }
-        if !derived.is_empty() {
-            write!(w, "<h3 id='derived_implementations'>\
-                           Derived Implementations \
-                       </h3>")?;
-            for i in &derived {
-                let did = i.trait_did().unwrap();
-                let assoc_link = AssocItemLink::GotoSource(did,
-                                                           &i.inner_impl().provided_trait_methods);
-                render_impl(w, cx, i, assoc_link, true, containing_item.stable_since())?;
-            }
         }
     }
     Ok(())
@@ -2623,20 +2633,26 @@ fn render_impl(w: &mut fmt::Formatter, cx: &Context, i: &Impl, link: AssocItemLi
 
         if !is_static || render_static {
             if !is_default_item {
-
-                if item.doc_value().is_some() {
-                    document(w, cx, item)?;
-                } else {
-                    // In case the item isn't documented,
-                    // provide short documentation from the trait
-                    if let Some(t) = trait_ {
-                        if let Some(it) = t.items.iter()
-                                           .find(|i| i.name == item.name) {
+                if let Some(t) = trait_ {
+                    // The trait item may have been stripped so we might not
+                    // find any documentation or stability for it.
+                    if let Some(it) = t.items.iter().find(|i| i.name == item.name) {
+                        // We need the stability of the item from the trait
+                        // because impls can't have a stability.
+                        document_stability(w, cx, it)?;
+                        if item.doc_value().is_some() {
+                            document_full(w, item)?;
+                        } else {
+                            // In case the item isn't documented,
+                            // provide short documentation from the trait.
                             document_short(w, it, link)?;
                         }
                     }
+                } else {
+                    document(w, cx, item)?;
                 }
             } else {
+                document_stability(w, cx, item)?;
                 document_short(w, item, link)?;
             }
         }

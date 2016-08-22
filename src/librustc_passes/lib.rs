@@ -34,9 +34,12 @@ extern crate rustc_const_math;
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
+extern crate syntax_pos;
+extern crate rustc_errors as errors;
 
 pub mod diagnostics;
 
+pub mod ast_validation;
 pub mod consts;
 pub mod loops;
 pub mod no_asm;

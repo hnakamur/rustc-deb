@@ -22,7 +22,7 @@ use rustc::ty;
 
 use std::rc::Rc;
 use syntax::ast;
-use syntax::codemap::Span;
+use syntax_pos::Span;
 use rustc::hir::{self, PatKind};
 
 struct GatherMoveInfo<'tcx> {
@@ -98,7 +98,7 @@ pub fn gather_move_from_pat<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                       move_pat: &hir::Pat,
                                       cmt: mc::cmt<'tcx>) {
     let pat_span_path_opt = match move_pat.node {
-        PatKind::Ident(_, ref path1, _) => {
+        PatKind::Binding(_, ref path1, _) => {
             Some(MoveSpanAndPath{span: move_pat.span,
                                  name: path1.node})
         },
@@ -122,15 +122,12 @@ fn gather_move<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
 
     let potentially_illegal_move =
                 check_and_get_illegal_move_origin(bccx, &move_info.cmt);
-    match potentially_illegal_move {
-        Some(illegal_move_origin) => {
-            debug!("illegal_move_origin={:?}", illegal_move_origin);
-            let error = MoveError::with_move_info(illegal_move_origin,
-                                                  move_info.span_path_opt);
-            move_error_collector.add_error(error);
-            return
-        }
-        None => ()
+    if let Some(illegal_move_origin) = potentially_illegal_move {
+        debug!("illegal_move_origin={:?}", illegal_move_origin);
+        let error = MoveError::with_move_info(illegal_move_origin,
+                                              move_info.span_path_opt);
+        move_error_collector.add_error(error);
+        return;
     }
 
     match opt_loan_path(&move_info.cmt) {

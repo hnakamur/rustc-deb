@@ -81,14 +81,13 @@ pub use self::compare_method::{compare_impl_method, compare_const_impl};
 use self::TupleArgumentsFlag::*;
 
 use astconv::{AstConv, ast_region_to_region, PathParamMode};
-use check::_match::PatCtxt;
 use dep_graph::DepNode;
 use fmt_macros::{Parser, Piece, Position};
 use middle::cstore::LOCAL_CRATE;
 use hir::def::{self, Def};
 use hir::def_id::DefId;
+use hir::pat_util;
 use rustc::infer::{self, InferCtxt, InferOk, TypeOrigin, TypeTrace, type_variable};
-use hir::pat_util::{self, pat_id_map};
 use rustc::ty::subst::{self, Subst, Substs, VecPerParamSpace, ParamSpace};
 use rustc::traits::{self, ProjectionMode};
 use rustc::ty::{GenericPredicates, TypeScheme};
@@ -102,7 +101,7 @@ use rustc::ty::util::{Representability, IntTypeExt};
 use require_c_abi_if_variadic;
 use rscope::{ElisionFailureInfo, RegionScope};
 use session::{Session, CompileResult};
-use {CrateCtxt, lookup_full_def};
+use CrateCtxt;
 use TypeAndSubsts;
 use lint;
 use util::common::{block_query, ErrorReported, indenter, loop_query};
@@ -116,11 +115,12 @@ use syntax::abi::Abi;
 use syntax::ast;
 use syntax::attr;
 use syntax::attr::AttrMetaMethods;
-use syntax::codemap::{self, Span, Spanned};
-use syntax::errors::DiagnosticBuilder;
+use syntax::codemap::{self, Spanned};
 use syntax::parse::token::{self, InternedString, keywords};
 use syntax::ptr::P;
 use syntax::util::lev_distance::find_best_match_for_name;
+use syntax_pos::{self, Span};
+use errors::DiagnosticBuilder;
 
 use rustc::hir::intravisit::{self, Visitor};
 use rustc::hir::{self, PatKind};
@@ -129,6 +129,7 @@ use rustc_back::slice;
 use rustc_const_eval::eval_repeat_count;
 
 mod assoc;
+mod autoderef;
 pub mod dropck;
 pub mod _match;
 pub mod writeback;
@@ -572,19 +573,17 @@ impl<'a, 'gcx, 'tcx> Visitor<'gcx> for GatherLocalsVisitor<'a, 'gcx, 'tcx> {
 
     // Add pattern bindings.
     fn visit_pat(&mut self, p: &'gcx hir::Pat) {
-        if let PatKind::Ident(_, ref path1, _) = p.node {
-            if pat_util::pat_is_binding(&self.fcx.tcx.def_map.borrow(), p) {
-                let var_ty = self.assign(p.span, p.id, None);
+        if let PatKind::Binding(_, ref path1, _) = p.node {
+            let var_ty = self.assign(p.span, p.id, None);
 
-                self.fcx.require_type_is_sized(var_ty, p.span,
-                                               traits::VariableType(p.id));
+            self.fcx.require_type_is_sized(var_ty, p.span,
+                                           traits::VariableType(p.id));
 
-                debug!("Pattern binding {} is assigned to {} with type {:?}",
-                       path1.node,
-                       self.fcx.ty_to_string(
-                           self.fcx.locals.borrow().get(&p.id).unwrap().clone()),
-                       var_ty);
-            }
+            debug!("Pattern binding {} is assigned to {} with type {:?}",
+                   path1.node,
+                   self.fcx.ty_to_string(
+                       self.fcx.locals.borrow().get(&p.id).unwrap().clone()),
+                   var_ty);
         }
         intravisit::walk_pat(self, p);
     }
@@ -632,8 +631,6 @@ fn check_fn<'a, 'gcx, 'tcx>(inherited: &'a Inherited<'a, 'gcx, 'tcx>,
                             body: &'gcx hir::Block)
                             -> FnCtxt<'a, 'gcx, 'tcx>
 {
-    let tcx = inherited.tcx;
-
     let arg_tys = &fn_sig.inputs;
     let ret_ty = fn_sig.output;
 
@@ -669,21 +666,13 @@ fn check_fn<'a, 'gcx, 'tcx>(inherited: &'a Inherited<'a, 'gcx, 'tcx>,
             fcx.register_old_wf_obligation(arg_ty, input.ty.span, traits::MiscObligation);
 
             // Create type variables for each argument.
-            pat_util::pat_bindings(
-                &tcx.def_map,
-                &input.pat,
-                |_bm, pat_id, sp, _path| {
-                    let var_ty = visit.assign(sp, pat_id, None);
-                    fcx.require_type_is_sized(var_ty, sp,
-                                              traits::VariableType(pat_id));
-                });
+            pat_util::pat_bindings(&input.pat, |_bm, pat_id, sp, _path| {
+                let var_ty = visit.assign(sp, pat_id, None);
+                fcx.require_type_is_sized(var_ty, sp, traits::VariableType(pat_id));
+            });
 
             // Check the pattern.
-            let pcx = PatCtxt {
-                fcx: &fcx,
-                map: pat_id_map(&tcx.def_map, &input.pat),
-            };
-            pcx.check_pat(&input.pat, *arg_ty);
+            fcx.check_pat(&input.pat, *arg_ty);
         }
 
         visit.visit_block(body);
@@ -1168,6 +1157,7 @@ fn check_const<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
         let rty = ccx.tcx.node_id_to_type(id);
         let fcx = FnCtxt::new(&inh, ty::FnConverging(rty), e.id);
         let declty = fcx.tcx.lookup_item_type(ccx.tcx.map.local_def_id(id)).ty;
+        fcx.require_type_is_sized(declty, e.span, traits::ConstSized);
         fcx.check_const_with_ty(sp, e, declty);
     });
 }
@@ -1410,17 +1400,6 @@ impl<'a, 'gcx, 'tcx> RegionScope for FnCtxt<'a, 'gcx, 'tcx> {
             self.next_region_var(infer::MiscVariable(span))
         }).collect())
     }
-}
-
-/// Whether `autoderef` requires types to resolve.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum UnresolvedTypeAction {
-    /// Produce an error and return `TyError` whenever a type cannot
-    /// be resolved (i.e. it is `TyInfer`).
-    Error,
-    /// Go on without emitting any errors, and return the unresolved
-    /// type. Useful for probing, e.g. in coercions.
-    Ignore
 }
 
 /// Controls whether the arguments are tupled. This is used for the call
@@ -1931,7 +1910,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             for ty in &self.unsolved_variables() {
                 if let ty::TyInfer(_) = self.shallow_resolve(ty).sty {
                     debug!("default_type_parameters: defaulting `{:?}` to error", ty);
-                    self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx().types.err);
+                    self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx().types.err);
                 }
             }
             return;
@@ -1942,18 +1921,18 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             if self.type_var_diverges(resolved) {
                 debug!("default_type_parameters: defaulting `{:?}` to `()` because it diverges",
                        resolved);
-                self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.mk_nil());
+                self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.mk_nil());
             } else {
                 match self.type_is_unconstrained_numeric(resolved) {
                     UnconstrainedInt => {
                         debug!("default_type_parameters: defaulting `{:?}` to `i32`",
                                resolved);
-                        self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.types.i32)
+                        self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.types.i32)
                     },
                     UnconstrainedFloat => {
                         debug!("default_type_parameters: defaulting `{:?}` to `f32`",
                                resolved);
-                        self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.types.f64)
+                        self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.types.f64)
                     }
                     Neither => { }
                 }
@@ -2016,7 +1995,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             for ty in &unsolved_variables {
                 let resolved = self.resolve_type_vars_if_possible(ty);
                 if self.type_var_diverges(resolved) {
-                    self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.mk_nil());
+                    self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.mk_nil());
                 } else {
                     match self.type_is_unconstrained_numeric(resolved) {
                         UnconstrainedInt | UnconstrainedFloat => {
@@ -2074,14 +2053,14 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             let _ = self.commit_if_ok(|_: &infer::CombinedSnapshot| {
                 for ty in &unbound_tyvars {
                     if self.type_var_diverges(ty) {
-                        self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.mk_nil());
+                        self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.mk_nil());
                     } else {
                         match self.type_is_unconstrained_numeric(ty) {
                             UnconstrainedInt => {
-                                self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.types.i32)
+                                self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.types.i32)
                             },
                             UnconstrainedFloat => {
-                                self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.types.f64)
+                                self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.types.f64)
                             }
                             Neither => {
                                 if let Some(default) = default_map.get(ty) {
@@ -2119,7 +2098,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         self.find_conflicting_default(&unbound_tyvars, &default_map, conflict)
                             .unwrap_or(type_variable::Default {
                                 ty: self.next_ty_var(),
-                                origin_span: codemap::DUMMY_SP,
+                                origin_span: syntax_pos::DUMMY_SP,
                                 def_id: self.tcx.map.local_def_id(0) // what do I put here?
                             });
 
@@ -2170,14 +2149,14 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // reporting for more then one conflict.
         for ty in &unbound_tyvars {
             if self.type_var_diverges(ty) {
-                self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.mk_nil());
+                self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.mk_nil());
             } else {
                 match self.type_is_unconstrained_numeric(ty) {
                     UnconstrainedInt => {
-                        self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.types.i32)
+                        self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.types.i32)
                     },
                     UnconstrainedFloat => {
-                        self.demand_eqtype(codemap::DUMMY_SP, *ty, self.tcx.types.f64)
+                        self.demand_eqtype(syntax_pos::DUMMY_SP, *ty, self.tcx.types.f64)
                     },
                     Neither => {
                         if let Some(default) = default_map.get(ty) {
@@ -2228,120 +2207,6 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
-    /// Executes an autoderef loop for the type `t`. At each step, invokes `should_stop`
-    /// to decide whether to terminate the loop. Returns the final type and number of
-    /// derefs that it performed.
-    ///
-    /// Note: this method does not modify the adjustments table. The caller is responsible for
-    /// inserting an AutoAdjustment record into the `self` using one of the suitable methods.
-    pub fn autoderef<'b, E, I, T, F>(&self,
-                                     sp: Span,
-                                     base_ty: Ty<'tcx>,
-                                     maybe_exprs: E,
-                                     unresolved_type_action: UnresolvedTypeAction,
-                                     mut lvalue_pref: LvaluePreference,
-                                     mut should_stop: F)
-                                     -> (Ty<'tcx>, usize, Option<T>)
-        // FIXME(eddyb) use copyable iterators when that becomes ergonomic.
-        where E: Fn() -> I,
-              I: IntoIterator<Item=&'b hir::Expr>,
-              F: FnMut(Ty<'tcx>, usize) -> Option<T>,
-    {
-        debug!("autoderef(base_ty={:?}, lvalue_pref={:?})",
-               base_ty, lvalue_pref);
-
-        let mut t = base_ty;
-        for autoderefs in 0..self.tcx.sess.recursion_limit.get() {
-            let resolved_t = match unresolved_type_action {
-                UnresolvedTypeAction::Error => {
-                    self.structurally_resolved_type(sp, t)
-                }
-                UnresolvedTypeAction::Ignore => {
-                    // We can continue even when the type cannot be resolved
-                    // (i.e. it is an inference variable) because `Ty::builtin_deref`
-                    // and `try_overloaded_deref` both simply return `None`
-                    // in such a case without producing spurious errors.
-                    self.resolve_type_vars_if_possible(&t)
-                }
-            };
-            if resolved_t.references_error() {
-                return (resolved_t, autoderefs, None);
-            }
-
-            match should_stop(resolved_t, autoderefs) {
-                Some(x) => return (resolved_t, autoderefs, Some(x)),
-                None => {}
-            }
-
-            // Otherwise, deref if type is derefable:
-
-            // Super subtle: it might seem as though we should
-            // pass `opt_expr` to `try_overloaded_deref`, so that
-            // the (implicit) autoref of using an overloaded deref
-            // would get added to the adjustment table. However we
-            // do not do that, because it's kind of a
-            // "meta-adjustment" -- instead, we just leave it
-            // unrecorded and know that there "will be" an
-            // autoref. regionck and other bits of the code base,
-            // when they encounter an overloaded autoderef, have
-            // to do some reconstructive surgery. This is a pretty
-            // complex mess that is begging for a proper MIR.
-            let mt = if let Some(mt) = resolved_t.builtin_deref(false, lvalue_pref) {
-                mt
-            } else if let Some(method) = self.try_overloaded_deref(sp, None,
-                                                                   resolved_t, lvalue_pref) {
-                for expr in maybe_exprs() {
-                    let method_call = MethodCall::autoderef(expr.id, autoderefs as u32);
-                    self.tables.borrow_mut().method_map.insert(method_call, method);
-                }
-                self.make_overloaded_lvalue_return_type(method)
-            } else {
-                return (resolved_t, autoderefs, None);
-            };
-
-            t = mt.ty;
-            if mt.mutbl == hir::MutImmutable {
-                lvalue_pref = NoPreference;
-            }
-        }
-
-        // We've reached the recursion limit, error gracefully.
-        span_err!(self.tcx.sess, sp, E0055,
-            "reached the recursion limit while auto-dereferencing {:?}",
-            base_ty);
-        (self.tcx.types.err, 0, None)
-    }
-
-    fn try_overloaded_deref(&self,
-                            span: Span,
-                            base_expr: Option<&hir::Expr>,
-                            base_ty: Ty<'tcx>,
-                            lvalue_pref: LvaluePreference)
-                            -> Option<MethodCallee<'tcx>>
-    {
-        // Try DerefMut first, if preferred.
-        let method = match (lvalue_pref, self.tcx.lang_items.deref_mut_trait()) {
-            (PreferMutLvalue, Some(trait_did)) => {
-                self.lookup_method_in_trait(span, base_expr,
-                                            token::intern("deref_mut"), trait_did,
-                                            base_ty, None)
-            }
-            _ => None
-        };
-
-        // Otherwise, fall back to Deref.
-        let method = match (method, self.tcx.lang_items.deref_trait()) {
-            (None, Some(trait_did)) => {
-                self.lookup_method_in_trait(span, base_expr,
-                                            token::intern("deref"), trait_did,
-                                            base_ty, None)
-            }
-            (method, _) => method
-        };
-
-        method
-    }
-
     /// For the overloaded lvalue expressions (`*x`, `x[3]`), the trait
     /// returns a type of `&T`, but the actual type we assign to the
     /// *expression* is `T`. So this function just peels off the return
@@ -2371,29 +2236,28 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // autoderef that normal method probing does. They could likely be
         // consolidated.
 
-        let (ty, autoderefs, final_mt) = self.autoderef(base_expr.span,
-                                                        base_ty,
-                                                        || Some(base_expr),
-                                                        UnresolvedTypeAction::Error,
-                                                        lvalue_pref,
-                                                        |adj_ty, idx| {
-            self.try_index_step(MethodCall::expr(expr.id), expr, base_expr,
-                                adj_ty, idx, false, lvalue_pref, idx_ty)
-        });
+        let mut autoderef = self.autoderef(base_expr.span, base_ty);
 
-        if final_mt.is_some() {
-            return final_mt;
-        }
+        while let Some((adj_ty, autoderefs)) = autoderef.next() {
+            if let Some(final_mt) = self.try_index_step(
+                MethodCall::expr(expr.id),
+                expr, base_expr, adj_ty, autoderefs,
+                false, lvalue_pref, idx_ty)
+            {
+                autoderef.finalize(lvalue_pref, Some(base_expr));
+                return Some(final_mt);
+            }
 
-        // After we have fully autoderef'd, if the resulting type is [T; n], then
-        // do a final unsized coercion to yield [T].
-        if let ty::TyArray(element_ty, _) = ty.sty {
-            let adjusted_ty = self.tcx.mk_slice(element_ty);
-            self.try_index_step(MethodCall::expr(expr.id), expr, base_expr,
-                                adjusted_ty, autoderefs, true, lvalue_pref, idx_ty)
-        } else {
-            None
+            if let ty::TyArray(element_ty, _) = adj_ty.sty {
+                autoderef.finalize(lvalue_pref, Some(base_expr));
+                let adjusted_ty = self.tcx.mk_slice(element_ty);
+                return self.try_index_step(
+                    MethodCall::expr(expr.id), expr, base_expr,
+                    adjusted_ty, autoderefs, true, lvalue_pref, idx_ty);
+            }
         }
+        autoderef.unambiguous_final_ty();
+        None
     }
 
     /// To type-check `base_expr[index_expr]`, we progressively autoderef
@@ -2540,29 +2404,45 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         let mut expected_arg_tys = expected_arg_tys;
         let expected_arg_count = fn_inputs.len();
+
+        fn parameter_count_error<'tcx>(sess: &Session, sp: Span, fn_inputs: &[Ty<'tcx>],
+                                       expected_count: usize, arg_count: usize, error_code: &str,
+                                       variadic: bool) {
+            let mut err = sess.struct_span_err_with_code(sp,
+                &format!("this function takes {}{} parameter{} but {} parameter{} supplied",
+                    if variadic {"at least "} else {""},
+                    expected_count,
+                    if expected_count == 1 {""} else {"s"},
+                    arg_count,
+                    if arg_count == 1 {" was"} else {"s were"}),
+                error_code);
+            let input_types = fn_inputs.iter().map(|i| format!("{:?}", i)).collect::<Vec<String>>();
+            if input_types.len() > 0 {
+                err.note(&format!("the following parameter type{} expected: {}",
+                        if expected_count == 1 {" was"} else {"s were"},
+                        input_types.join(", ")));
+            }
+            err.emit();
+        }
+
         let formal_tys = if tuple_arguments == TupleArguments {
             let tuple_type = self.structurally_resolved_type(sp, fn_inputs[0]);
             match tuple_type.sty {
+                ty::TyTuple(arg_types) if arg_types.len() != args.len() => {
+                    parameter_count_error(tcx.sess, sp, fn_inputs, arg_types.len(), args.len(),
+                                          "E0057", false);
+                    expected_arg_tys = &[];
+                    self.err_args(args.len())
+                }
                 ty::TyTuple(arg_types) => {
-                    if arg_types.len() != args.len() {
-                        span_err!(tcx.sess, sp, E0057,
-                            "this function takes {} parameter{} but {} parameter{} supplied",
-                            arg_types.len(),
-                            if arg_types.len() == 1 {""} else {"s"},
-                            args.len(),
-                            if args.len() == 1 {" was"} else {"s were"});
-                        expected_arg_tys = &[];
-                        self.err_args(args.len())
-                    } else {
-                        expected_arg_tys = match expected_arg_tys.get(0) {
-                            Some(&ty) => match ty.sty {
-                                ty::TyTuple(ref tys) => &tys,
-                                _ => &[]
-                            },
-                            None => &[]
-                        };
-                        arg_types.to_vec()
-                    }
+                    expected_arg_tys = match expected_arg_tys.get(0) {
+                        Some(&ty) => match ty.sty {
+                            ty::TyTuple(ref tys) => &tys,
+                            _ => &[]
+                        },
+                        None => &[]
+                    };
+                    arg_types.to_vec()
                 }
                 _ => {
                     span_err!(tcx.sess, sp, E0059,
@@ -2578,23 +2458,14 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             if supplied_arg_count >= expected_arg_count {
                 fn_inputs.to_vec()
             } else {
-                span_err!(tcx.sess, sp, E0060,
-                    "this function takes at least {} parameter{} \
-                     but {} parameter{} supplied",
-                    expected_arg_count,
-                    if expected_arg_count == 1 {""} else {"s"},
-                    supplied_arg_count,
-                    if supplied_arg_count == 1 {" was"} else {"s were"});
+                parameter_count_error(tcx.sess, sp, fn_inputs, expected_arg_count,
+                                      supplied_arg_count, "E0060", true);
                 expected_arg_tys = &[];
                 self.err_args(supplied_arg_count)
             }
         } else {
-            span_err!(tcx.sess, sp, E0061,
-                "this function takes {} parameter{} but {} parameter{} supplied",
-                expected_arg_count,
-                if expected_arg_count == 1 {""} else {"s"},
-                supplied_arg_count,
-                if supplied_arg_count == 1 {" was"} else {"s were"});
+            parameter_count_error(tcx.sess, sp, fn_inputs, expected_arg_count, supplied_arg_count,
+                                  "E0061", false);
             expected_arg_tys = &[];
             self.err_args(supplied_arg_count)
         };
@@ -3034,32 +2905,23 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         let expr_t = self.structurally_resolved_type(expr.span,
                                                      self.expr_ty(base));
         let mut private_candidate = None;
-        let (_, autoderefs, field_ty) = self.autoderef(expr.span,
-                                                       expr_t,
-                                                       || Some(base),
-                                                       UnresolvedTypeAction::Error,
-                                                       lvalue_pref,
-                                                       |base_t, _| {
-                if let ty::TyStruct(base_def, substs) = base_t.sty {
-                    debug!("struct named {:?}",  base_t);
-                    if let Some(field) = base_def.struct_variant().find_field_named(field.node) {
-                        let field_ty = self.field_ty(expr.span, field, substs);
-                        if field.vis.is_accessible_from(self.body_id, &self.tcx().map) {
-                            return Some(field_ty);
-                        }
-                        private_candidate = Some((base_def.did, field_ty));
+        let mut autoderef = self.autoderef(expr.span, expr_t);
+        while let Some((base_t, autoderefs)) = autoderef.next() {
+            if let ty::TyStruct(base_def, substs) = base_t.sty {
+                debug!("struct named {:?}",  base_t);
+                if let Some(field) = base_def.struct_variant().find_field_named(field.node) {
+                    let field_ty = self.field_ty(expr.span, field, substs);
+                    if field.vis.is_accessible_from(self.body_id, &self.tcx().map) {
+                        autoderef.finalize(lvalue_pref, Some(base));
+                        self.write_ty(expr.id, field_ty);
+                        self.write_autoderef_adjustment(base.id, autoderefs);
+                        return;
                     }
+                    private_candidate = Some((base_def.did, field_ty));
                 }
-                None
-            });
-        match field_ty {
-            Some(field_ty) => {
-                self.write_ty(expr.id, field_ty);
-                self.write_autoderef_adjustment(base.id, autoderefs);
-                return;
             }
-            None => {}
         }
+        autoderef.unambiguous_final_ty();
 
         if let Some((did, field_ty)) = private_candidate {
             let struct_path = self.tcx().item_path_str(did);
@@ -3132,42 +2994,39 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                                      self.expr_ty(base));
         let mut private_candidate = None;
         let mut tuple_like = false;
-        let (_, autoderefs, field_ty) = self.autoderef(expr.span,
-                                                       expr_t,
-                                                       || Some(base),
-                                                       UnresolvedTypeAction::Error,
-                                                       lvalue_pref,
-                                                       |base_t, _| {
-                let (base_def, substs) = match base_t.sty {
-                    ty::TyStruct(base_def, substs) => (base_def, substs),
-                    ty::TyTuple(ref v) => {
-                        tuple_like = true;
-                        return if idx.node < v.len() { Some(v[idx.node]) } else { None }
-                    }
-                    _ => return None,
-                };
+        let mut autoderef = self.autoderef(expr.span, expr_t);
+        while let Some((base_t, autoderefs)) = autoderef.next() {
+            let field = match base_t.sty {
+                ty::TyStruct(base_def, substs) => {
+                    tuple_like = base_def.struct_variant().is_tuple_struct();
+                    if !tuple_like { continue }
 
-                tuple_like = base_def.struct_variant().is_tuple_struct();
-                if !tuple_like { return None }
-
-                debug!("tuple struct named {:?}",  base_t);
-                if let Some(field) = base_def.struct_variant().fields.get(idx.node) {
-                    let field_ty = self.field_ty(expr.span, field, substs);
-                    if field.vis.is_accessible_from(self.body_id, &self.tcx().map) {
-                        return Some(field_ty);
-                    }
-                    private_candidate = Some((base_def.did, field_ty));
+                    debug!("tuple struct named {:?}",  base_t);
+                    base_def.struct_variant().fields.get(idx.node).and_then(|field| {
+                        let field_ty = self.field_ty(expr.span, field, substs);
+                        private_candidate = Some((base_def.did, field_ty));
+                        if field.vis.is_accessible_from(self.body_id, &self.tcx().map) {
+                            Some(field_ty)
+                        } else {
+                            None
+                        }
+                    })
                 }
-                None
-            });
-        match field_ty {
-            Some(field_ty) => {
+                ty::TyTuple(ref v) => {
+                    tuple_like = true;
+                    v.get(idx.node).cloned()
+                }
+                _ => continue
+            };
+
+            if let Some(field_ty) = field {
+                autoderef.finalize(lvalue_pref, Some(base));
                 self.write_ty(expr.id, field_ty);
                 self.write_autoderef_adjustment(base.id, autoderefs);
                 return;
             }
-            None => {}
         }
+        autoderef.unambiguous_final_ty();
 
         if let Some((did, field_ty)) = private_candidate {
             let struct_path = self.tcx().item_path_str(did);
@@ -3303,7 +3162,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         let tcx = self.tcx;
 
         // Find the relevant variant
-        let def = lookup_full_def(tcx, path.span, expr.id);
+        let def = tcx.expect_def(expr.id);
         if def == Def::Err {
             self.set_tainted_by_errors();
             self.check_struct_fields_on_error(expr.id, fields, base_expr);
@@ -3495,18 +3354,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                   self.to_ty(&qself.ty)
               });
 
-              let path_res = if let Some(&d) = tcx.def_map.borrow().get(&id) {
-                  d
-              } else if let Some(hir::QSelf { position: 0, .. }) = *maybe_qself {
-                    // Create some fake resolution that can't possibly be a type.
-                    def::PathResolution {
-                        base_def: Def::Mod(tcx.map.local_def_id(ast::CRATE_NODE_ID)),
-                        depth: path.segments.len()
-                    }
-                } else {
-                  span_bug!(expr.span, "unbound path {:?}", expr)
-              };
-
+              let path_res = tcx.expect_resolution(id);
               if let Some((opt_ty, segments, def)) =
                       self.resolve_ty_and_def_ufcs(path_res, opt_self_ty, path,
                                                    expr.span, expr.id) {
@@ -3856,6 +3704,33 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                expected);
     }
 
+    // Finish resolving a path in a struct expression or pattern `S::A { .. }` if necessary.
+    // The newly resolved definition is written into `def_map`.
+    pub fn finish_resolving_struct_path(&self,
+                                        path: &hir::Path,
+                                        node_id: ast::NodeId,
+                                        span: Span)
+                                        -> Def
+    {
+        let path_res = self.tcx().expect_resolution(node_id);
+        if path_res.depth == 0 {
+            // If fully resolved already, we don't have to do anything.
+            path_res.base_def
+        } else {
+            let base_ty_end = path.segments.len() - path_res.depth;
+            let (_ty, def) = AstConv::finish_resolving_def_to_ty(self, self, span,
+                                                                 PathParamMode::Optional,
+                                                                 path_res.base_def,
+                                                                 None,
+                                                                 node_id,
+                                                                 &path.segments[..base_ty_end],
+                                                                 &path.segments[base_ty_end..]);
+            // Write back the new resolution.
+            self.tcx().def_map.borrow_mut().insert(node_id, def::PathResolution::new(def));
+            def
+        }
+    }
+
     pub fn resolve_ty_and_def_ufcs<'b>(&self,
                                        path_res: def::PathResolution,
                                        opt_self_ty: Option<Ty<'tcx>>,
@@ -3897,10 +3772,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
             if let Some(def) = def {
                 // Write back the new resolution.
-                self.tcx().def_map.borrow_mut().insert(node_id, def::PathResolution {
-                    base_def: def,
-                    depth: 0,
-                });
+                self.tcx().def_map.borrow_mut().insert(node_id, def::PathResolution::new(def));
                 Some((Some(ty), slice::ref_slice(item_segment), def))
             } else {
                 self.write_error(node_id);
@@ -3934,8 +3806,6 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn check_decl_local(&self, local: &'gcx hir::Local)  {
-        let tcx = self.tcx;
-
         let t = self.local_ty(local.span, local.id);
         self.write_ty(local.id, t);
 
@@ -3947,11 +3817,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             }
         }
 
-        let pcx = PatCtxt {
-            fcx: self,
-            map: pat_id_map(&tcx.def_map, &local.pat),
-        };
-        pcx.check_pat(&local.pat, t);
+        self.check_pat(&local.pat, t);
         let pat_ty = self.node_ty(local.pat.id);
         if pat_ty.references_error() {
             self.write_ty(local.id, pat_ty);
@@ -4709,7 +4575,7 @@ pub fn may_break(tcx: TyCtxt, id: ast::NodeId, b: &hir::Block) -> bool {
     // <id> nested anywhere inside the loop?
     (block_query(b, |e| {
         if let hir::ExprBreak(Some(_)) = e.node {
-            lookup_full_def(tcx, e.span, e.id) == Def::Label(id)
+            tcx.expect_def(e.id) == Def::Label(id)
         } else {
             false
         }

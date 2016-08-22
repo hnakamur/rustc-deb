@@ -22,7 +22,7 @@ use dep_graph::{self, DepNode};
 use hir::map as ast_map;
 use middle;
 use middle::cstore::{self, LOCAL_CRATE};
-use hir::def::{self, Def, ExportMap};
+use hir::def::{Def, PathResolution, ExportMap};
 use hir::def_id::DefId;
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangItem};
 use middle::region::{CodeExtent, ROOT_CODE_EXTENT};
@@ -44,8 +44,8 @@ use std::slice;
 use std::vec::IntoIter;
 use syntax::ast::{self, CrateNum, Name, NodeId};
 use syntax::attr::{self, AttrMetaMethods};
-use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
+use syntax_pos::{DUMMY_SP, Span};
 
 use rustc_const_math::ConstInt;
 
@@ -60,6 +60,7 @@ pub use self::sty::{ClosureTy, InferTy, ParamTy, ProjectionTy, TraitTy};
 pub use self::sty::{ClosureSubsts, TypeAndMut};
 pub use self::sty::{TraitRef, TypeVariants, PolyTraitRef};
 pub use self::sty::{BoundRegion, EarlyBoundRegion, FreeRegion, Region};
+pub use self::sty::Issue32330;
 pub use self::sty::{TyVid, IntVid, FloatVid, RegionVid, SkolemizedRegionVid};
 pub use self::sty::BoundRegion::*;
 pub use self::sty::FnOutput::*;
@@ -307,13 +308,11 @@ impl Visibility {
         match *visibility {
             hir::Public => Visibility::Public,
             hir::Visibility::Crate => Visibility::Restricted(ast::CRATE_NODE_ID),
-            hir::Visibility::Restricted { id, .. } => match tcx.def_map.borrow().get(&id) {
-                Some(resolution) => Visibility::Restricted({
-                    tcx.map.as_local_node_id(resolution.base_def.def_id()).unwrap()
-                }),
+            hir::Visibility::Restricted { id, .. } => match tcx.expect_def(id) {
                 // If there is no resolution, `resolve` will have already reported an error, so
                 // assume that the visibility is public to avoid reporting more privacy errors.
-                None => Visibility::Public,
+                Def::Err => Visibility::Public,
+                def => Visibility::Restricted(tcx.map.as_local_node_id(def.def_id()).unwrap()),
             },
             hir::Inherited => Visibility::Restricted(tcx.map.get_module_parent(id)),
         }
@@ -514,19 +513,20 @@ bitflags! {
         const HAS_SELF           = 1 << 1,
         const HAS_TY_INFER       = 1 << 2,
         const HAS_RE_INFER       = 1 << 3,
-        const HAS_RE_EARLY_BOUND = 1 << 4,
-        const HAS_FREE_REGIONS   = 1 << 5,
-        const HAS_TY_ERR         = 1 << 6,
-        const HAS_PROJECTION     = 1 << 7,
-        const HAS_TY_CLOSURE     = 1 << 8,
+        const HAS_RE_SKOL        = 1 << 4,
+        const HAS_RE_EARLY_BOUND = 1 << 5,
+        const HAS_FREE_REGIONS   = 1 << 6,
+        const HAS_TY_ERR         = 1 << 7,
+        const HAS_PROJECTION     = 1 << 8,
+        const HAS_TY_CLOSURE     = 1 << 9,
 
         // true if there are "names" of types and regions and so forth
         // that are local to a particular fn
-        const HAS_LOCAL_NAMES   = 1 << 9,
+        const HAS_LOCAL_NAMES    = 1 << 10,
 
         // Present if the type belongs in a local type context.
         // Only set for TyInfer other than Fresh.
-        const KEEP_IN_LOCAL_TCX = 1 << 10,
+        const KEEP_IN_LOCAL_TCX  = 1 << 11,
 
         const NEEDS_SUBST        = TypeFlags::HAS_PARAMS.bits |
                                    TypeFlags::HAS_SELF.bits |
@@ -739,7 +739,8 @@ impl RegionParameterDef {
         })
     }
     pub fn to_bound_region(&self) -> ty::BoundRegion {
-        ty::BoundRegion::BrNamed(self.def_id, self.name)
+        // this is an early bound region, so unaffected by #32330
+        ty::BoundRegion::BrNamed(self.def_id, self.name, Issue32330::WontChange)
     }
 }
 
@@ -946,7 +947,28 @@ impl<'tcx> TraitPredicate<'tcx> {
 
     /// Creates the dep-node for selecting/evaluating this trait reference.
     fn dep_node(&self) -> DepNode<DefId> {
-        DepNode::TraitSelect(self.def_id())
+        // Ideally, the dep-node would just have all the input types
+        // in it.  But they are limited to including def-ids. So as an
+        // approximation we include the def-ids for all nominal types
+        // found somewhere. This means that we will e.g. conflate the
+        // dep-nodes for `u32: SomeTrait` and `u64: SomeTrait`, but we
+        // would have distinct dep-nodes for `Vec<u32>: SomeTrait`,
+        // `Rc<u32>: SomeTrait`, and `(Vec<u32>, Rc<u32>): SomeTrait`.
+        // Note that it's always sound to conflate dep-nodes, it just
+        // leads to more recompilation.
+        let def_ids: Vec<_> =
+            self.input_types()
+                .iter()
+                .flat_map(|t| t.walk())
+                .filter_map(|t| match t.sty {
+                    ty::TyStruct(adt_def, _) |
+                    ty::TyEnum(adt_def, _) =>
+                        Some(adt_def.did),
+                    _ =>
+                        None
+                })
+                .collect();
+        DepNode::TraitSelect(self.def_id(), def_ids)
     }
 
     pub fn input_types(&self) -> &[Ty<'tcx>] {
@@ -992,7 +1014,7 @@ pub type PolyTypeOutlivesPredicate<'tcx> = PolyOutlivesPredicate<Ty<'tcx>, ty::R
 /// equality between arbitrary types. Processing an instance of Form
 /// #2 eventually yields one of these `ProjectionPredicate`
 /// instances to normalize the LHS.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ProjectionPredicate<'tcx> {
     pub projection_ty: ProjectionTy<'tcx>,
     pub ty: Ty<'tcx>,
@@ -1768,9 +1790,8 @@ impl<'a, 'tcx> AdtDefData<'tcx, 'tcx> {
                                         stack: &mut Vec<AdtDefMaster<'tcx>>)
     {
 
-        let dep_node = DepNode::SizedConstraint(self.did);
-
-        if self.sized_constraint.get(dep_node).is_some() {
+        let dep_node = || DepNode::SizedConstraint(self.did);
+        if self.sized_constraint.get(dep_node()).is_some() {
             return;
         }
 
@@ -1780,7 +1801,7 @@ impl<'a, 'tcx> AdtDefData<'tcx, 'tcx> {
             //
             // Consider the type as Sized in the meanwhile to avoid
             // further errors.
-            self.sized_constraint.fulfill(dep_node, tcx.types.err);
+            self.sized_constraint.fulfill(dep_node(), tcx.types.err);
             return;
         }
 
@@ -1803,14 +1824,14 @@ impl<'a, 'tcx> AdtDefData<'tcx, 'tcx> {
             _ => tcx.mk_tup(tys)
         };
 
-        match self.sized_constraint.get(dep_node) {
+        match self.sized_constraint.get(dep_node()) {
             Some(old_ty) => {
                 debug!("calculate_sized_constraint: {:?} recurred", self);
                 assert_eq!(old_ty, tcx.types.err)
             }
             None => {
                 debug!("calculate_sized_constraint: {:?} => {:?}", self, ty);
-                self.sized_constraint.fulfill(dep_node, ty)
+                self.sized_constraint.fulfill(dep_node(), ty)
             }
         }
     }
@@ -2216,7 +2237,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         match self.map.find(id) {
             Some(ast_map::NodeLocal(pat)) => {
                 match pat.node {
-                    PatKind::Ident(_, ref path1, _) => path1.node.as_str(),
+                    PatKind::Binding(_, ref path1, _) => path1.node.as_str(),
                     _ => {
                         bug!("Variable id {} maps to {:?}, not local", id, pat);
                     },
@@ -2226,34 +2247,15 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
-    pub fn resolve_expr(self, expr: &hir::Expr) -> Def {
-        match self.def_map.borrow().get(&expr.id) {
-            Some(def) => def.full_def(),
-            None => {
-                span_bug!(expr.span, "no def-map entry for expr {}", expr.id);
-            }
-        }
-    }
-
     pub fn expr_is_lval(self, expr: &hir::Expr) -> bool {
          match expr.node {
             hir::ExprPath(..) => {
-                // We can't use resolve_expr here, as this needs to run on broken
-                // programs. We don't need to through - associated items are all
-                // rvalues.
-                match self.def_map.borrow().get(&expr.id) {
-                    Some(&def::PathResolution {
-                        base_def: Def::Static(..), ..
-                    }) | Some(&def::PathResolution {
-                        base_def: Def::Upvar(..), ..
-                    }) | Some(&def::PathResolution {
-                        base_def: Def::Local(..), ..
-                    }) => {
-                        true
-                    }
-                    Some(&def::PathResolution { base_def: Def::Err, .. })=> true,
-                    Some(..) => false,
-                    None => span_bug!(expr.span, "no def for path {}", expr.id)
+                // This function can be used during type checking when not all paths are
+                // fully resolved. Partially resolved paths in expressions can only legally
+                // refer to associated items which are always rvalues.
+                match self.expect_resolution(expr.id).base_def {
+                    Def::Local(..) | Def::Upvar(..) | Def::Static(..) | Def::Err => true,
+                    _ => false,
                 }
             }
 
@@ -2436,8 +2438,20 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
-    pub fn trait_ref_to_def_id(self, tr: &hir::TraitRef) -> DefId {
-        self.def_map.borrow().get(&tr.ref_id).expect("no def-map entry for trait").def_id()
+    /// Returns a path resolution for node id if it exists, panics otherwise.
+    pub fn expect_resolution(self, id: NodeId) -> PathResolution {
+        *self.def_map.borrow().get(&id).expect("no def-map entry for node id")
+    }
+
+    /// Returns a fully resolved definition for node id if it exists, panics otherwise.
+    pub fn expect_def(self, id: NodeId) -> Def {
+        self.expect_resolution(id).full_def()
+    }
+
+    /// Returns a fully resolved definition for node id if it exists, or none if no
+    /// definition exists, panics on partial resolutions to catch errors.
+    pub fn expect_def_or_none(self, id: NodeId) -> Option<Def> {
+        self.def_map.borrow().get(&id).map(|resolution| resolution.full_def())
     }
 
     pub fn def_key(self, id: DefId) -> ast_map::DefKey {
@@ -2478,6 +2492,18 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         lookup_locally_or_in_crate_store(
             "tcache", did, &self.tcache,
             || self.sess.cstore.item_type(self.global_tcx(), did))
+    }
+
+    pub fn opt_lookup_item_type(self, did: DefId) -> Option<TypeScheme<'gcx>> {
+        if let Some(scheme) = self.tcache.borrow_mut().get(&did) {
+            return Some(scheme.clone());
+        }
+
+        if did.krate == LOCAL_CRATE {
+            None
+        } else {
+            Some(self.sess.cstore.item_type(self.global_tcx(), did))
+        }
     }
 
     /// Given the did of a trait, returns its canonical trait ref.
@@ -2835,7 +2861,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         for def in generics.regions.as_slice() {
             let region =
                 ReFree(FreeRegion { scope: free_id_outlive,
-                                    bound_region: BrNamed(def.def_id, def.name) });
+                                    bound_region: def.to_bound_region() });
             debug!("push_region_params {:?}", region);
             regions.push(def.space, region);
         }

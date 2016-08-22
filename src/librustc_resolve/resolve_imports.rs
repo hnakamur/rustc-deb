@@ -25,10 +25,16 @@ use rustc::lint;
 use rustc::hir::def::*;
 
 use syntax::ast::{NodeId, Name};
-use syntax::codemap::{Span, DUMMY_SP};
 use syntax::util::lev_distance::find_best_match_for_name;
+use syntax_pos::{Span, DUMMY_SP};
 
 use std::cell::{Cell, RefCell};
+
+impl<'a> Resolver<'a> {
+    pub fn resolve_imports(&mut self) {
+        ImportResolver { resolver: self }.resolve_imports();
+    }
+}
 
 /// Contains data for specific types of import directives.
 #[derive(Clone, Debug)]
@@ -255,15 +261,6 @@ impl<'a> ::ModuleS<'a> {
         }
 
         Failed(None)
-    }
-
-    // Invariant: this may not be called until import resolution is complete.
-    pub fn resolve_name_in_lexical_scope(&self, name: Name, ns: Namespace)
-                                         -> Option<&'a NameBinding<'a>> {
-        self.resolution(name, ns).borrow().binding
-            .or_else(|| self.prelude.borrow().and_then(|prelude| {
-                prelude.resolve_name(name, ns, false).success()
-            }))
     }
 
     // Define the name or return the existing binding if there is a collision.
@@ -607,7 +604,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
             Some(def) => def,
             None => value_result.success().and_then(NameBinding::def).unwrap(),
         };
-        let path_resolution = PathResolution { base_def: def, depth: 0 };
+        let path_resolution = PathResolution::new(def);
         self.resolver.def_map.insert(directive.id, path_resolution);
 
         debug!("(resolving single import) successfully resolved import");
@@ -633,7 +630,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
         self.resolver.populate_module_if_necessary(target_module);
 
         if let GlobImport { is_prelude: true } = directive.subclass {
-            *module_.prelude.borrow_mut() = Some(target_module);
+            self.resolver.prelude = Some(target_module);
             return Success(());
         }
 
@@ -653,7 +650,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
 
         // Record the destination of this import
         if let Some(did) = target_module.def_id() {
-            let resolution = PathResolution { base_def: Def::Mod(did), depth: 0 };
+            let resolution = PathResolution::new(Def::Mod(did));
             self.resolver.def_map.insert(directive.id, resolution);
         }
 
@@ -730,9 +727,4 @@ fn import_directive_subclass_to_string(subclass: &ImportDirectiveSubclass) -> St
         SingleImport { source, .. } => source.to_string(),
         GlobImport { .. } => "*".to_string(),
     }
-}
-
-pub fn resolve_imports(resolver: &mut Resolver) {
-    let mut import_resolver = ImportResolver { resolver: resolver };
-    import_resolver.resolve_imports();
 }

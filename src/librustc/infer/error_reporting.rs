@@ -77,6 +77,7 @@ use hir::map as ast_map;
 use hir;
 use hir::print as pprust;
 
+use lint;
 use hir::def::Def;
 use hir::def_id::DefId;
 use infer::{self, TypeOrigin};
@@ -90,10 +91,10 @@ use std::cell::{Cell, RefCell};
 use std::char::from_u32;
 use std::fmt;
 use syntax::ast;
-use syntax::errors::{DiagnosticBuilder, check_old_skool};
-use syntax::codemap::{self, Pos, Span};
 use syntax::parse::token;
 use syntax::ptr::P;
+use syntax_pos::{self, Pos, Span};
+use errors::{DiagnosticBuilder, check_old_skool};
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn note_and_explain_region(self,
@@ -215,7 +216,10 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             //
             // We shouldn't really be having unification failures with ReVar
             // and ReLateBound though.
-            ty::ReSkolemized(..) | ty::ReVar(_) | ty::ReLateBound(..) => {
+            ty::ReSkolemized(..) |
+            ty::ReVar(_) |
+            ty::ReLateBound(..) |
+            ty::ReErased => {
                 (format!("lifetime {:?}", region), None)
             }
         };
@@ -1017,6 +1021,27 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         let (fn_decl, generics) = rebuilder.rebuild();
         self.give_expl_lifetime_param(err, &fn_decl, unsafety, constness, name, &generics, span);
     }
+
+    pub fn issue_32330_warnings(&self, span: Span, issue32330s: &[ty::Issue32330]) {
+        for issue32330 in issue32330s {
+            match *issue32330 {
+                ty::Issue32330::WontChange => { }
+                ty::Issue32330::WillChange { fn_def_id, region_name } => {
+                    self.tcx.sess.add_lint(
+                        lint::builtin::HR_LIFETIME_IN_ASSOC_TYPE,
+                        ast::CRATE_NODE_ID,
+                        span,
+                        format!("lifetime parameter `{0}` declared on fn `{1}` \
+                                 appears only in the return type, \
+                                 but here is required to be higher-ranked, \
+                                 which means that `{0}` must appear in both \
+                                 argument and return types",
+                                region_name,
+                                self.tcx.item_path_str(fn_def_id)));
+                }
+            }
+        }
+    }
 }
 
 struct RebuildPathInfo<'a> {
@@ -1129,7 +1154,7 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
                 ty::BrAnon(i) => {
                     anon_nums.insert(i);
                 }
-                ty::BrNamed(_, name) => {
+                ty::BrNamed(_, name, _) => {
                     region_names.insert(name);
                 }
                 _ => ()
@@ -1143,7 +1168,7 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
         for sr in self.same_regions {
             for br in &sr.regions {
                 match *br {
-                    ty::BrNamed(_, name) => {
+                    ty::BrNamed(_, name, _) => {
                         all_region_names.insert(name);
                     }
                     _ => ()
@@ -1332,17 +1357,7 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
                     ty_queue.push(&mut_ty.ty);
                 }
                 hir::TyPath(ref maybe_qself, ref path) => {
-                    let a_def = match self.tcx.def_map.borrow().get(&cur_ty.id) {
-                        None => {
-                            self.tcx
-                                .sess
-                                .fatal(&format!(
-                                        "unbound path {}",
-                                        pprust::path_to_string(path)))
-                        }
-                        Some(d) => d.full_def()
-                    };
-                    match a_def {
+                    match self.tcx.expect_def(cur_ty.id) {
                         Def::Enum(did) | Def::TyAlias(did) | Def::Struct(did) => {
                             let generics = self.tcx.lookup_item_type(did).generics;
 
@@ -1841,11 +1856,10 @@ fn lifetimes_in_scope<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
         },
         None => None
     };
-    if method_id_opt.is_some() {
-        let method_id = method_id_opt.unwrap();
+    if let Some(method_id) = method_id_opt {
         let parent = tcx.map.get_parent(method_id);
-        match tcx.map.find(parent) {
-            Some(node) => match node {
+        if let Some(node) = tcx.map.find(parent) {
+            match node {
                 ast_map::NodeItem(item) => match item.node {
                     hir::ItemImpl(_, _, ref gen, _, _, _) => {
                         taken.extend_from_slice(&gen.lifetimes);
@@ -1853,8 +1867,7 @@ fn lifetimes_in_scope<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
                     _ => ()
                 },
                 _ => ()
-            },
-            None => ()
+            }
         }
     }
     return taken;
@@ -1920,6 +1933,6 @@ impl LifeGiver {
 
 fn name_to_dummy_lifetime(name: ast::Name) -> hir::Lifetime {
     hir::Lifetime { id: ast::DUMMY_NODE_ID,
-                    span: codemap::DUMMY_SP,
+                    span: syntax_pos::DUMMY_SP,
                     name: name }
 }

@@ -28,7 +28,6 @@
 #![feature(const_fn)]
 #![feature(custom_attribute)]
 #![allow(unused_attributes)]
-#![feature(iter_arith)]
 #![feature(libc)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
@@ -48,7 +47,6 @@ extern crate rustc_back;
 extern crate rustc_data_structures;
 extern crate rustc_incremental;
 pub extern crate rustc_llvm as llvm;
-extern crate rustc_mir;
 extern crate rustc_platform_intrinsics as intrinsics;
 extern crate serialize;
 extern crate rustc_const_math;
@@ -56,6 +54,8 @@ extern crate rustc_const_eval;
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
+extern crate syntax_pos;
+extern crate rustc_errors as errors;
 
 pub use rustc::session;
 pub use rustc::middle;
@@ -145,6 +145,7 @@ pub struct CrateTranslation {
     pub metadata: Vec<u8>,
     pub reachable: Vec<String>,
     pub no_builtins: bool,
+    pub linker_info: back::linker::LinkerInfo
 }
 
 __build_diagnostic_array! { librustc_trans, DIAGNOSTICS }

@@ -39,6 +39,7 @@ use monomorphize;
 use type_::Type;
 use value::Value;
 use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::layout::Layout;
 use rustc::traits::{self, SelectionContext, ProjectionMode};
 use rustc::ty::fold::TypeFoldable;
 use rustc::hir;
@@ -51,9 +52,9 @@ use std::ffi::CString;
 use std::cell::{Cell, RefCell};
 
 use syntax::ast;
-use syntax::codemap::{DUMMY_SP, Span};
 use syntax::parse::token::InternedString;
 use syntax::parse::token;
+use syntax_pos::{DUMMY_SP, Span};
 
 pub use context::{CrateContext, SharedCrateContext};
 
@@ -96,6 +97,63 @@ pub fn type_is_immediate<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -
             llsize_of_alloc(ccx, llty) <= llsize_of_alloc(ccx, ccx.int_type())
         }
         _ => type_is_zero_size(ccx, ty)
+    }
+}
+
+/// Returns Some([a, b]) if the type has a pair of fields with types a and b.
+pub fn type_pair_fields<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
+                                  -> Option<[Ty<'tcx>; 2]> {
+    match ty.sty {
+        ty::TyEnum(adt, substs) | ty::TyStruct(adt, substs) => {
+            assert_eq!(adt.variants.len(), 1);
+            let fields = &adt.variants[0].fields;
+            if fields.len() != 2 {
+                return None;
+            }
+            Some([monomorphize::field_ty(ccx.tcx(), substs, &fields[0]),
+                  monomorphize::field_ty(ccx.tcx(), substs, &fields[1])])
+        }
+        ty::TyClosure(_, ty::ClosureSubsts { upvar_tys: tys, .. }) |
+        ty::TyTuple(tys) => {
+            if tys.len() != 2 {
+                return None;
+            }
+            Some([tys[0], tys[1]])
+        }
+        _ => None
+    }
+}
+
+/// Returns true if the type is represented as a pair of immediates.
+pub fn type_is_imm_pair<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
+                                  -> bool {
+    let tcx = ccx.tcx();
+    let layout = tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+        match ty.layout(&infcx) {
+            Ok(layout) => layout,
+            Err(err) => {
+                bug!("type_is_imm_pair: layout for `{:?}` failed: {}",
+                     ty, err);
+            }
+        }
+    });
+
+    match *layout {
+        Layout::FatPointer { .. } => true,
+        Layout::Univariant { ref variant, .. } => {
+            // There must be only 2 fields.
+            if variant.offset_after_field.len() != 2 {
+                return false;
+            }
+
+            match type_pair_fields(ccx, ty) {
+                Some([a, b]) => {
+                    type_is_immediate(ccx, a) && type_is_immediate(ccx, b)
+                }
+                None => false
+            }
+        }
+        _ => false
     }
 }
 
@@ -202,8 +260,7 @@ impl<'a, 'tcx> VariantInfo<'tcx> {
 
     /// Return the variant corresponding to a given node (e.g. expr)
     pub fn of_node(tcx: TyCtxt<'a, 'tcx, 'tcx>, ty: Ty<'tcx>, id: ast::NodeId) -> Self {
-        let node_def = tcx.def_map.borrow().get(&id).map(|v| v.full_def());
-        Self::from_ty(tcx, ty, node_def)
+        Self::from_ty(tcx, ty, Some(tcx.expect_def(id)))
     }
 
     pub fn field_index(&self, name: ast::Name) -> usize {
@@ -577,6 +634,15 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
         self.lpad.get()
     }
 
+    pub fn set_lpad_ref(&self, lpad: Option<&'blk LandingPad>) {
+        // FIXME: use an IVar?
+        self.lpad.set(lpad);
+    }
+
+    pub fn set_lpad(&self, lpad: Option<LandingPad>) {
+        self.set_lpad_ref(lpad.map(|p| &*self.fcx().lpad_arena.alloc(p)))
+    }
+
     pub fn mir(&self) -> CachedMir<'blk, 'tcx> {
         self.fcx.mir()
     }
@@ -587,15 +653,6 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
 
     pub fn node_id_to_string(&self, id: ast::NodeId) -> String {
         self.tcx().map.node_to_string(id).to_string()
-    }
-
-    pub fn def(&self, nid: ast::NodeId) -> Def {
-        match self.tcx().def_map.borrow().get(&nid) {
-            Some(v) => v.full_def(),
-            None => {
-                bug!("no def associated with node id {}", nid);
-            }
-        }
     }
 
     pub fn to_str(&self) -> String {
@@ -716,7 +773,16 @@ impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
     }
 
     pub fn set_lpad(&self, lpad: Option<LandingPad>) {
-        self.bcx.lpad.set(lpad.map(|p| &*self.fcx().lpad_arena.alloc(p)))
+        self.bcx.set_lpad(lpad)
+    }
+
+    pub fn set_lpad_ref(&self, lpad: Option<&'blk LandingPad>) {
+        // FIXME: use an IVar?
+        self.bcx.set_lpad_ref(lpad);
+    }
+
+    pub fn lpad(&self) -> Option<&'blk LandingPad> {
+        self.bcx.lpad()
     }
 }
 
@@ -760,6 +826,10 @@ impl LandingPad {
 
     pub fn bundle(&self) -> Option<&OperandBundleDef> {
         self.operand.as_ref()
+    }
+
+    pub fn cleanuppad(&self) -> Option<ValueRef> {
+        self.cleanuppad
     }
 }
 
@@ -1061,7 +1131,7 @@ pub fn fulfill_obligation<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
     let trait_ref = tcx.erase_regions(&trait_ref);
 
     scx.trait_cache().memoize(trait_ref, || {
-        debug!("trans fulfill_obligation: trait_ref={:?} def_id={:?}",
+        debug!("trans::fulfill_obligation(trait_ref={:?}, def_id={:?})",
                trait_ref, trait_ref.def_id());
 
         // Do the initial selection for the obligation. This yields the
@@ -1096,11 +1166,14 @@ pub fn fulfill_obligation<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                 }
             };
 
+            debug!("fulfill_obligation: selection={:?}", selection);
+
             // Currently, we use a fulfillment context to completely resolve
             // all nested obligations. This is because they can inform the
             // inference of the impl's type parameters.
             let mut fulfill_cx = traits::FulfillmentContext::new();
             let vtable = selection.map(|predicate| {
+                debug!("fulfill_obligation: register_predicate_obligation {:?}", predicate);
                 fulfill_cx.register_predicate_obligation(&infcx, predicate);
             });
             let vtable = infcx.drain_fulfillment_cx_or_panic(span, &mut fulfill_cx, &vtable);
@@ -1140,18 +1213,18 @@ pub fn normalize_and_test_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     })
 }
 
-pub fn langcall(bcx: Block,
+pub fn langcall(tcx: TyCtxt,
                 span: Option<Span>,
                 msg: &str,
                 li: LangItem)
                 -> DefId {
-    match bcx.tcx().lang_items.require(li) {
+    match tcx.lang_items.require(li) {
         Ok(id) => id,
         Err(s) => {
             let msg = format!("{} {}", msg, s);
             match span {
-                Some(span) => bcx.tcx().sess.span_fatal(span, &msg[..]),
-                None => bcx.tcx().sess.fatal(&msg[..]),
+                Some(span) => tcx.sess.span_fatal(span, &msg[..]),
+                None => tcx.sess.fatal(&msg[..]),
             }
         }
     }

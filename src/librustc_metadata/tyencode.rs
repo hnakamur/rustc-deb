@@ -29,7 +29,7 @@ use rustc::hir;
 
 use syntax::abi::Abi;
 use syntax::ast;
-use syntax::errors::Handler;
+use errors::Handler;
 
 use rbml::leb128;
 use encoder;
@@ -64,9 +64,9 @@ pub struct ty_abbrev {
 pub type abbrev_map<'tcx> = RefCell<FnvHashMap<Ty<'tcx>, ty_abbrev>>;
 
 pub fn enc_ty<'a, 'tcx>(w: &mut Cursor<Vec<u8>>, cx: &ctxt<'a, 'tcx>, t: Ty<'tcx>) {
-    match cx.abbrevs.borrow_mut().get(&t) {
-        Some(a) => { w.write_all(&a.s); return; }
-        None => {}
+    if let Some(a) = cx.abbrevs.borrow_mut().get(&t) {
+        w.write_all(&a.s);
+        return;
     }
 
     let pos = w.position();
@@ -283,6 +283,9 @@ pub fn enc_region(w: &mut Cursor<Vec<u8>>, cx: &ctxt, r: ty::Region) {
         ty::ReEmpty => {
             write!(w, "e");
         }
+        ty::ReErased => {
+            write!(w, "E");
+        }
         ty::ReVar(_) | ty::ReSkolemized(..) => {
             // these should not crop up after typeck
             bug!("cannot encode region variables");
@@ -308,10 +311,17 @@ fn enc_bound_region(w: &mut Cursor<Vec<u8>>, cx: &ctxt, br: ty::BoundRegion) {
         ty::BrAnon(idx) => {
             write!(w, "a{}|", idx);
         }
-        ty::BrNamed(d, name) => {
-            write!(w, "[{}|{}]",
-                     (cx.ds)(cx.tcx, d),
-                     name);
+        ty::BrNamed(d, name, issue32330) => {
+            write!(w, "[{}|{}|",
+                   (cx.ds)(cx.tcx, d),
+                   name);
+
+            match issue32330 {
+                ty::Issue32330::WontChange =>
+                    write!(w, "n]"),
+                ty::Issue32330::WillChange { fn_def_id, region_name } =>
+                    write!(w, "y{}|{}]", (cx.ds)(cx.tcx, fn_def_id), region_name),
+            };
         }
         ty::BrFresh(id) => {
             write!(w, "f{}|", id);
@@ -397,7 +407,14 @@ pub fn enc_existential_bounds<'a,'tcx>(w: &mut Cursor<Vec<u8>>,
 
     enc_region(w, cx, bs.region_bound);
 
-    for tp in &bs.projection_bounds {
+    // Encode projection_bounds in a stable order
+    let mut projection_bounds: Vec<_> = bs.projection_bounds
+                                          .iter()
+                                          .map(|b| (b.item_name().as_str(), b))
+                                          .collect();
+    projection_bounds.sort_by_key(|&(ref name, _)| name.clone());
+
+    for tp in projection_bounds.iter().map(|&(_, tp)| tp) {
         write!(w, "P");
         enc_projection_predicate(w, cx, &tp.0);
     }

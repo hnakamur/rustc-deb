@@ -19,5 +19,4 @@ fn main() {
     let foo = Foo;
     let ref_foo = &&Foo;
     ref_foo.foo(); //~ ERROR E0055
-                   //~^ ERROR E0275
 }

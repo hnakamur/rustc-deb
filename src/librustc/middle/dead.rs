@@ -26,6 +26,7 @@ use lint;
 use std::collections::HashSet;
 use syntax::{ast, codemap};
 use syntax::attr;
+use syntax_pos;
 
 // Any local node that may call something in its body block should be
 // explored. For example, if it's a live NodeItem that is a
@@ -84,36 +85,35 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
         }
     }
 
-    fn lookup_and_handle_definition(&mut self, id: &ast::NodeId) {
+    fn lookup_and_handle_definition(&mut self, id: ast::NodeId) {
         use ty::TypeVariants::{TyEnum, TyStruct};
 
         // If `bar` is a trait item, make sure to mark Foo as alive in `Foo::bar`
-        self.tcx.tables.borrow().item_substs.get(id)
+        self.tcx.tables.borrow().item_substs.get(&id)
             .and_then(|substs| substs.substs.self_ty())
             .map(|ty| match ty.sty {
                 TyEnum(tyid, _) | TyStruct(tyid, _) => self.check_def_id(tyid.did),
                 _ => (),
             });
 
-        self.tcx.def_map.borrow().get(id).map(|def| {
-            match def.full_def() {
-                Def::Const(_) | Def::AssociatedConst(..) => {
-                    self.check_def_id(def.def_id());
-                }
-                _ if self.ignore_non_const_paths => (),
-                Def::PrimTy(_) => (),
-                Def::SelfTy(..) => (),
-                Def::Variant(enum_id, variant_id) => {
-                    self.check_def_id(enum_id);
-                    if !self.ignore_variant_stack.contains(&variant_id) {
-                        self.check_def_id(variant_id);
-                    }
-                }
-                _ => {
-                    self.check_def_id(def.def_id());
+        let def = self.tcx.expect_def(id);
+        match def {
+            Def::Const(_) | Def::AssociatedConst(..) => {
+                self.check_def_id(def.def_id());
+            }
+            _ if self.ignore_non_const_paths => (),
+            Def::PrimTy(_) => (),
+            Def::SelfTy(..) => (),
+            Def::Variant(enum_id, variant_id) => {
+                self.check_def_id(enum_id);
+                if !self.ignore_variant_stack.contains(&variant_id) {
+                    self.check_def_id(variant_id);
                 }
             }
-        });
+            _ => {
+                self.check_def_id(def.def_id());
+            }
+        }
     }
 
     fn lookup_and_handle_method(&mut self, id: ast::NodeId) {
@@ -138,10 +138,10 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
 
     fn handle_field_pattern_match(&mut self, lhs: &hir::Pat,
                                   pats: &[codemap::Spanned<hir::FieldPat>]) {
-        let def = self.tcx.def_map.borrow().get(&lhs.id).unwrap().full_def();
-        let pat_ty = self.tcx.node_id_to_type(lhs.id);
-        let variant = match pat_ty.sty {
-            ty::TyStruct(adt, _) | ty::TyEnum(adt, _) => adt.variant_of_def(def),
+        let variant = match self.tcx.node_id_to_type(lhs.id).sty {
+            ty::TyStruct(adt, _) | ty::TyEnum(adt, _) => {
+                adt.variant_of_def(self.tcx.expect_def(lhs.id))
+            }
             _ => span_bug!(lhs.span, "non-ADT in struct pattern")
         };
         for pat in pats {
@@ -161,12 +161,9 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
             }
             scanned.insert(id);
 
-            match self.tcx.map.find(id) {
-                Some(ref node) => {
-                    self.live_symbols.insert(id);
-                    self.visit_node(node);
-                }
-                None => (),
+            if let Some(ref node) = self.tcx.map.find(id) {
+                self.live_symbols.insert(id);
+                self.visit_node(node);
             }
         }
     }
@@ -219,7 +216,7 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
 impl<'a, 'tcx, 'v> Visitor<'v> for MarkSymbolVisitor<'a, 'tcx> {
 
     fn visit_variant_data(&mut self, def: &hir::VariantData, _: ast::Name,
-                        _: &hir::Generics, _: ast::NodeId, _: codemap::Span) {
+                        _: &hir::Generics, _: ast::NodeId, _: syntax_pos::Span) {
         let has_extern_repr = self.struct_has_extern_repr;
         let inherited_pub_visibility = self.inherited_pub_visibility;
         let live_fields = def.fields().iter().filter(|f| {
@@ -272,7 +269,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for MarkSymbolVisitor<'a, 'tcx> {
             }
             _ if pat_util::pat_is_const(&def_map.borrow(), pat) => {
                 // it might be the only use of a const
-                self.lookup_and_handle_definition(&pat.id)
+                self.lookup_and_handle_definition(pat.id)
             }
             _ => ()
         }
@@ -283,12 +280,12 @@ impl<'a, 'tcx, 'v> Visitor<'v> for MarkSymbolVisitor<'a, 'tcx> {
     }
 
     fn visit_path(&mut self, path: &hir::Path, id: ast::NodeId) {
-        self.lookup_and_handle_definition(&id);
+        self.lookup_and_handle_definition(id);
         intravisit::walk_path(self, path);
     }
 
     fn visit_path_list_item(&mut self, path: &hir::Path, item: &hir::PathListItem) {
-        self.lookup_and_handle_definition(&item.node.id());
+        self.lookup_and_handle_definition(item.node.id());
         intravisit::walk_path_list_item(self, path, item);
     }
 }
@@ -373,9 +370,8 @@ fn create_and_seed_worklist<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 
     // Seed entry point
-    match *tcx.sess.entry_fn.borrow() {
-        Some((id, _)) => worklist.push(id),
-        None => ()
+    if let Some((id, _)) = *tcx.sess.entry_fn.borrow() {
+        worklist.push(id);
     }
 
     // Seed implemented trait items
@@ -465,16 +461,14 @@ impl<'a, 'tcx> DeadVisitor<'a, 'tcx> {
         // method of a private type is used, but the type itself is never
         // called directly.
         let impl_items = self.tcx.impl_items.borrow();
-        match self.tcx.inherent_impls.borrow().get(&self.tcx.map.local_def_id(id)) {
-            None => (),
-            Some(impl_list) => {
-                for impl_did in impl_list.iter() {
-                    for item_did in impl_items.get(impl_did).unwrap().iter() {
-                        if let Some(item_node_id) =
-                                self.tcx.map.as_local_node_id(item_did.def_id()) {
-                            if self.live_symbols.contains(&item_node_id) {
-                                return true;
-                            }
+        if let Some(impl_list) =
+                self.tcx.inherent_impls.borrow().get(&self.tcx.map.local_def_id(id)) {
+            for impl_did in impl_list.iter() {
+                for item_did in impl_items.get(impl_did).unwrap().iter() {
+                    if let Some(item_node_id) =
+                            self.tcx.map.as_local_node_id(item_did.def_id()) {
+                        if self.live_symbols.contains(&item_node_id) {
+                            return true;
                         }
                     }
                 }
@@ -485,7 +479,7 @@ impl<'a, 'tcx> DeadVisitor<'a, 'tcx> {
 
     fn warn_dead_code(&mut self,
                       id: ast::NodeId,
-                      span: codemap::Span,
+                      span: syntax_pos::Span,
                       name: ast::Name,
                       node_type: &str) {
         let name = name.as_str();

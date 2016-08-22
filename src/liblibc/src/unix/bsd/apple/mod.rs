@@ -19,6 +19,7 @@ pub type fsfilcnt_t = ::c_uint;
 pub type speed_t = ::c_ulong;
 pub type tcflag_t = ::c_ulong;
 pub type nl_item = ::c_int;
+pub type id_t = ::c_uint;
 
 pub enum timezone {}
 
@@ -761,6 +762,7 @@ pub const AF_INET6: ::c_int = 30;
 pub const SOCK_STREAM: ::c_int = 1;
 pub const SOCK_DGRAM: ::c_int = 2;
 pub const SOCK_RAW: ::c_int = 3;
+pub const SOCK_SEQPACKET: ::c_int = 5;
 pub const IPPROTO_TCP: ::c_int = 6;
 pub const IPPROTO_IP: ::c_int = 0;
 pub const IPPROTO_IPV6: ::c_int = 41;
@@ -931,7 +933,10 @@ pub const _SC_TRACE_SYS_MAX: ::c_int = 129;
 pub const _SC_TRACE_USER_EVENT_MAX: ::c_int = 130;
 pub const _SC_PASS_MAX: ::c_int = 131;
 
+pub const PTHREAD_MUTEX_NORMAL: ::c_int = 0;
+pub const PTHREAD_MUTEX_ERRORCHECK: ::c_int = 1;
 pub const PTHREAD_MUTEX_RECURSIVE: ::c_int = 2;
+pub const PTHREAD_MUTEX_DEFAULT: ::c_int = PTHREAD_MUTEX_NORMAL;
 pub const _PTHREAD_MUTEX_SIG_init: ::c_long = 0x32AAABA7;
 pub const _PTHREAD_COND_SIG_init: ::c_long = 0x3CB0B1BB;
 pub const _PTHREAD_RWLOCK_SIG_init: ::c_long = 0x2DA8B3B4;
@@ -1238,6 +1243,11 @@ pub const CTL_DEBUG_NAME: ::c_int = 0;
 pub const CTL_DEBUG_VALUE: ::c_int = 1;
 pub const CTL_DEBUG_MAXID: ::c_int = 20;
 
+pub const PRIO_DARWIN_THREAD: ::c_int = 3;
+pub const PRIO_DARWIN_PROCESS: ::c_int = 4;
+pub const PRIO_DARWIN_BG: ::c_int = 0x1000;
+pub const PRIO_DARWIN_NONUI: ::c_int = 0x1001;
+
 f! {
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
         status >> 8
@@ -1353,6 +1363,8 @@ extern {
                      base: ::locale_t) -> ::locale_t;
     pub fn uselocale(loc: ::locale_t) -> ::locale_t;
     pub fn querylocale(mask: ::c_int, loc: ::locale_t) -> *const ::c_char;
+    pub fn getpriority(which: ::c_int, who: ::id_t) -> ::c_int;
+    pub fn setpriority(which: ::c_int, who: ::id_t, prio: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

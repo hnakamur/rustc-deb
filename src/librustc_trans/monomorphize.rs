@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use back::symbol_names;
 use llvm::ValueRef;
 use llvm;
 use rustc::hir::def_id::DefId;
@@ -29,7 +28,7 @@ use rustc::util::ppaux;
 use rustc::hir;
 
 use syntax::attr;
-use syntax::errors;
+use errors;
 
 use std::fmt;
 
@@ -51,12 +50,9 @@ pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let mono_ty = apply_param_substs(ccx.tcx(), psubsts, &item_ty);
     debug!("mono_ty = {:?} (post-substitution)", mono_ty);
 
-    match ccx.instances().borrow().get(&instance) {
-        Some(&val) => {
-            debug!("leaving monomorphic fn {:?}", instance);
-            return (val, mono_ty);
-        }
-        None => ()
+    if let Some(&val) = ccx.instances().borrow().get(&instance) {
+        debug!("leaving monomorphic fn {:?}", instance);
+        return (val, mono_ty);
     }
 
     debug!("monomorphic_fn({:?})", instance);
@@ -88,7 +84,7 @@ pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         monomorphizing.insert(fn_id, depth + 1);
     }
 
-    let symbol = symbol_names::exported_name(ccx, &instance);
+    let symbol = instance.symbol_name(ccx.shared());
 
     debug!("monomorphize_fn mangled to {}", symbol);
     assert!(declare::get_defined_value(ccx, &symbol).is_none());
@@ -152,6 +148,7 @@ pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                 _ => bug!()
             };
             attributes::inline(lldecl, attributes::InlineAttr::Hint);
+            attributes::set_frame_pointer_elimination(ccx, lldecl);
             base::trans_ctor_shim(ccx, fn_node_id, disr, psubsts, lldecl);
         }
 
@@ -172,15 +169,14 @@ pub struct Instance<'tcx> {
 
 impl<'tcx> fmt::Display for Instance<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        ppaux::parameterized(f, &self.substs, self.def, ppaux::Ns::Value, &[],
-                             |tcx| tcx.lookup_item_type(self.def).generics)
+        ppaux::parameterized(f, &self.substs, self.def, ppaux::Ns::Value, &[], |_| None)
     }
 }
 
 impl<'tcx> Instance<'tcx> {
     pub fn new(def_id: DefId, substs: &'tcx Substs<'tcx>)
                -> Instance<'tcx> {
-        assert!(substs.regions.iter().all(|&r| r == ty::ReStatic));
+        assert!(substs.regions.iter().all(|&r| r == ty::ReErased));
         Instance { def: def_id, substs: substs }
     }
     pub fn mono<'a>(scx: &SharedCrateContext<'a, 'tcx>, def_id: DefId) -> Instance<'tcx> {

@@ -15,7 +15,7 @@
 use self::Family::*;
 
 use astencode::decode_inlined_item;
-use cstore::{self, crate_metadata};
+use cstore::{self, CrateMetadata};
 use common::*;
 use def_key;
 use encoder::def_to_u64;
@@ -30,7 +30,7 @@ use rustc::util::nodemap::FnvHashMap;
 use rustc::hir;
 use rustc::session::config::PanicStrategy;
 
-use middle::cstore::{LOCAL_CRATE, FoundAst, InlinedItem, LinkagePreference};
+use middle::cstore::{FoundAst, InlinedItem, LinkagePreference};
 use middle::cstore::{DefLike, DlDef, DlField, DlImpl, tls};
 use rustc::hir::def::Def;
 use rustc::hir::def_id::{DefId, DefIndex};
@@ -56,14 +56,14 @@ use syntax::attr;
 use syntax::parse::token::{self, IdentInterner};
 use syntax::ast;
 use syntax::abi::Abi;
-use syntax::codemap::{self, Span, BytePos, NO_EXPANSION};
+use syntax::codemap;
 use syntax::print::pprust;
 use syntax::ptr::P;
+use syntax_pos::{self, Span, BytePos, NO_EXPANSION};
 
+pub type Cmd<'a> = &'a CrateMetadata;
 
-pub type Cmd<'a> = &'a crate_metadata;
-
-impl crate_metadata {
+impl CrateMetadata {
     fn get_item(&self, item_id: DefIndex) -> Option<rbml::Doc> {
         self.index.lookup_item(self.data(), item_id).map(|pos| {
             reader::doc_at(self.data(), pos as usize).unwrap().doc
@@ -213,10 +213,6 @@ fn item_sort(item: rbml::Doc) -> Option<char> {
     })
 }
 
-fn item_symbol(item: rbml::Doc) -> String {
-    reader::get_doc(item, tag_items_data_item_symbol).as_str().to_string()
-}
-
 fn untranslated_def_id(d: rbml::Doc) -> DefId {
     let id = reader::doc_as_u64(d);
     let index = DefIndex::new((id & 0xFFFF_FFFF) as usize);
@@ -289,12 +285,17 @@ fn item_trait_ref<'a, 'tcx>(doc: rbml::Doc, tcx: TyCtxt<'a, 'tcx, 'tcx>, cdata: 
 }
 
 fn item_name(intr: &IdentInterner, item: rbml::Doc) -> ast::Name {
-    let name = reader::get_doc(item, tag_paths_data_name);
-    let string = name.as_str_slice();
-    match intr.find(string) {
-        None => token::intern(string),
-        Some(val) => val,
-    }
+    maybe_item_name(intr, item).expect("no item in item_name")
+}
+
+fn maybe_item_name(intr: &IdentInterner, item: rbml::Doc) -> Option<ast::Name> {
+    reader::maybe_get_doc(item, tag_paths_data_name).map(|name| {
+        let string = name.as_str_slice();
+        match intr.find(string) {
+            None => token::intern(string),
+            Some(val) => val,
+        }
+    })
 }
 
 fn family_to_variant_kind<'tcx>(family: Family) -> Option<ty::VariantKind> {
@@ -640,18 +641,6 @@ pub fn get_impl_trait<'a, 'tcx>(cdata: Cmd,
     }
 }
 
-pub fn get_symbol(cdata: Cmd, id: DefIndex) -> String {
-    return item_symbol(cdata.lookup_item(id));
-}
-
-/// If you have a crate_metadata, call get_symbol instead
-pub fn get_symbol_from_buf(data: &[u8], id: DefIndex) -> String {
-    let index = load_index(data);
-    let pos = index.lookup_item(data, id).unwrap();
-    let doc = reader::doc_at(data, pos as usize).unwrap().doc;
-    item_symbol(doc)
-}
-
 /// Iterates over the language items in the given crate.
 pub fn each_lang_item<F>(cdata: Cmd, mut f: F) -> bool where
     F: FnMut(DefIndex, usize) -> bool,
@@ -674,7 +663,7 @@ fn each_child_of_item_or_crate<F, G>(intr: Rc<IdentInterner>,
                                      mut get_crate_data: G,
                                      mut callback: F) where
     F: FnMut(DefLike, ast::Name, ty::Visibility),
-    G: FnMut(ast::CrateNum) -> Rc<crate_metadata>,
+    G: FnMut(ast::CrateNum) -> Rc<CrateMetadata>,
 {
     // Iterate over all children.
     for child_info_doc in reader::tagged_docs(item_doc, tag_mod_child) {
@@ -693,15 +682,12 @@ fn each_child_of_item_or_crate<F, G>(intr: Rc<IdentInterner>,
         };
 
         // Get the item.
-        match crate_data.get_item(child_def_id.index) {
-            None => {}
-            Some(child_item_doc) => {
-                // Hand off the item to the callback.
-                let child_name = item_name(&intr, child_item_doc);
-                let def_like = item_to_def_like(crate_data, child_item_doc, child_def_id);
-                let visibility = item_visibility(child_item_doc);
-                callback(def_like, child_name, visibility);
-            }
+        if let Some(child_item_doc) = crate_data.get_item(child_def_id.index) {
+            // Hand off the item to the callback.
+            let child_name = item_name(&intr, child_item_doc);
+            let def_like = item_to_def_like(crate_data, child_item_doc, child_def_id);
+            let visibility = item_visibility(child_item_doc);
+            callback(def_like, child_name, visibility);
         }
     }
 
@@ -769,7 +755,7 @@ pub fn each_child_of_item<F, G>(intr: Rc<IdentInterner>,
                                get_crate_data: G,
                                callback: F) where
     F: FnMut(DefLike, ast::Name, ty::Visibility),
-    G: FnMut(ast::CrateNum) -> Rc<crate_metadata>,
+    G: FnMut(ast::CrateNum) -> Rc<CrateMetadata>,
 {
     // Find the item.
     let item_doc = match cdata.get_item(id) {
@@ -790,7 +776,7 @@ pub fn each_top_level_item_of_crate<F, G>(intr: Rc<IdentInterner>,
                                           get_crate_data: G,
                                           callback: F) where
     F: FnMut(DefLike, ast::Name, ty::Visibility),
-    G: FnMut(ast::CrateNum) -> Rc<crate_metadata>,
+    G: FnMut(ast::CrateNum) -> Rc<CrateMetadata>,
 {
     let root_doc = rbml::Doc::new(cdata.data());
     let misc_info_doc = reader::get_doc(root_doc, tag_misc_info);
@@ -806,6 +792,11 @@ pub fn each_top_level_item_of_crate<F, G>(intr: Rc<IdentInterner>,
 
 pub fn get_item_name(intr: &IdentInterner, cdata: Cmd, id: DefIndex) -> ast::Name {
     item_name(intr, cdata.lookup_item(id))
+}
+
+pub fn maybe_get_item_name(intr: &IdentInterner, cdata: Cmd, id: DefIndex)
+                         -> Option<ast::Name> {
+    maybe_item_name(intr, cdata.lookup_item(id))
 }
 
 pub fn maybe_get_item_ast<'a, 'tcx>(cdata: Cmd, tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefIndex)
@@ -1236,7 +1227,7 @@ fn get_attributes(md: rbml::Doc) -> Vec<ast::Attribute> {
                         value: meta_item,
                         is_sugared_doc: is_sugared_doc,
                     },
-                    span: codemap::DUMMY_SP
+                    span: syntax_pos::DUMMY_SP
                 }
             }).collect()
         },
@@ -1354,25 +1345,16 @@ pub fn translate_def_id(cdata: Cmd, did: DefId) -> DefId {
         return DefId { krate: cdata.cnum, index: did.index };
     }
 
-    match cdata.cnum_map.borrow().get(&did.krate) {
-        Some(&n) => {
-            DefId {
-                krate: n,
-                index: did.index,
-            }
-        }
-        None => bug!("didn't find a crate in the cnum_map")
+    DefId {
+        krate: cdata.cnum_map.borrow()[did.krate],
+        index: did.index
     }
 }
 
 // Translate a DefId from the current compilation environment to a DefId
 // for an external crate.
 fn reverse_translate_def_id(cdata: Cmd, did: DefId) -> Option<DefId> {
-    if did.krate == cdata.cnum {
-        return Some(DefId { krate: LOCAL_CRATE, index: did.index });
-    }
-
-    for (&local, &global) in cdata.cnum_map.borrow().iter() {
+    for (local, &global) in cdata.cnum_map.borrow().iter_enumerated() {
         if global == did.krate {
             return Some(DefId { krate: local, index: did.index });
         }
@@ -1386,8 +1368,8 @@ fn reverse_translate_def_id(cdata: Cmd, did: DefId) -> Option<DefId> {
 pub fn translate_span(cdata: Cmd,
                       codemap: &codemap::CodeMap,
                       last_filemap_index_hint: &Cell<usize>,
-                      span: codemap::Span)
-                      -> codemap::Span {
+                      span: syntax_pos::Span)
+                      -> syntax_pos::Span {
     let span = if span.lo > span.hi {
         // Currently macro expansion sometimes produces invalid Span values
         // where lo > hi. In order not to crash the compiler when trying to
@@ -1396,7 +1378,7 @@ pub fn translate_span(cdata: Cmd,
         // least some of the time).
         // This workaround is only necessary as long as macro expansion is
         // not fixed. FIXME(#23480)
-        codemap::mk_sp(span.lo, span.lo)
+        syntax_pos::mk_sp(span.lo, span.lo)
     } else {
         span
     };
@@ -1436,7 +1418,7 @@ pub fn translate_span(cdata: Cmd,
     let hi = (span.hi - filemap.original_start_pos) +
               filemap.translated_filemap.start_pos;
 
-    codemap::mk_sp(lo, hi)
+    syntax_pos::mk_sp(lo, hi)
 }
 
 pub fn each_inherent_implementation_for_type<F>(cdata: Cmd,
@@ -1551,10 +1533,7 @@ pub fn get_dylib_dependency_formats(cdata: Cmd)
         let cnum = spec.split(':').nth(0).unwrap();
         let link = spec.split(':').nth(1).unwrap();
         let cnum: ast::CrateNum = cnum.parse().unwrap();
-        let cnum = match cdata.cnum_map.borrow().get(&cnum) {
-            Some(&n) => n,
-            None => bug!("didn't find a crate in the cnum_map")
-        };
+        let cnum = cdata.cnum_map.borrow()[cnum];
         result.push((cnum, if link == "d" {
             LinkagePreference::RequireDynamic
         } else {
@@ -1642,6 +1621,16 @@ pub fn is_extern_item<'a, 'tcx>(cdata: Cmd,
     }
 }
 
+pub fn is_foreign_item(cdata: Cmd, id: DefIndex) -> bool {
+    let item_doc = cdata.lookup_item(id);
+    let parent_item_id = match item_parent_item(cdata, item_doc) {
+        None => return false,
+        Some(item_id) => item_id,
+    };
+    let parent_item_doc = cdata.lookup_item(parent_item_id.index);
+    item_family(parent_item_doc) == ForeignMod
+}
+
 pub fn is_impl(cdata: Cmd, id: DefIndex) -> bool {
     let item_doc = cdata.lookup_item(id);
     match item_family(item_doc) {
@@ -1668,31 +1657,12 @@ fn doc_generics<'a, 'tcx>(base_doc: rbml::Doc,
     }
 
     let mut regions = subst::VecPerParamSpace::empty();
-    for rp_doc in reader::tagged_docs(doc, tag_region_param_def) {
-        let ident_str_doc = reader::get_doc(rp_doc,
-                                            tag_region_param_def_ident);
-        let name = item_name(&token::get_ident_interner(), ident_str_doc);
-        let def_id_doc = reader::get_doc(rp_doc,
-                                         tag_region_param_def_def_id);
-        let def_id = translated_def_id(cdata, def_id_doc);
-
-        let doc = reader::get_doc(rp_doc, tag_region_param_def_space);
-        let space = subst::ParamSpace::from_uint(reader::doc_as_u64(doc) as usize);
-
-        let doc = reader::get_doc(rp_doc, tag_region_param_def_index);
-        let index = reader::doc_as_u64(doc) as u32;
-
-        let bounds = reader::tagged_docs(rp_doc, tag_items_data_region).map(|p| {
+    for p in reader::tagged_docs(doc, tag_region_param_def) {
+        let bd =
             TyDecoder::with_doc(tcx, cdata.cnum, p,
                                 &mut |did| translate_def_id(cdata, did))
-            .parse_region()
-        }).collect();
-
-        regions.push(space, ty::RegionParameterDef { name: name,
-                                                     def_id: def_id,
-                                                     space: space,
-                                                     index: index,
-                                                     bounds: bounds });
+            .parse_region_param_def();
+        regions.push(bd.space, bd);
     }
 
     ty::Generics { types: types, regions: regions }
@@ -1748,7 +1718,7 @@ pub fn is_default_impl(cdata: Cmd, impl_id: DefIndex) -> bool {
     item_family(impl_doc) == Family::DefaultImpl
 }
 
-pub fn get_imported_filemaps(metadata: &[u8]) -> Vec<codemap::FileMap> {
+pub fn get_imported_filemaps(metadata: &[u8]) -> Vec<syntax_pos::FileMap> {
     let crate_doc = rbml::Doc::new(metadata);
     let cm_doc = reader::get_doc(crate_doc, tag_codemap);
 

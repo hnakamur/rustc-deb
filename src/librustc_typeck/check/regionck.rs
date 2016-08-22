@@ -99,7 +99,7 @@ use rustc::ty::wf::ImpliedBound;
 use std::mem;
 use std::ops::Deref;
 use syntax::ast;
-use syntax::codemap::Span;
+use syntax_pos::Span;
 use rustc::hir::intravisit::{self, Visitor};
 use rustc::hir::{self, PatKind};
 
@@ -452,7 +452,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
     fn constrain_bindings_in_pat(&mut self, pat: &hir::Pat) {
         let tcx = self.tcx;
         debug!("regionck::visit_pat(pat={:?})", pat);
-        pat_util::pat_bindings(&tcx.def_map, pat, |_, id, span, _| {
+        pat_util::pat_bindings(pat, |_, id, span, _| {
             // If we have a variable that contains region'd data, that
             // data will be accessible from anywhere that the variable is
             // accessed. We must be wary of loops like this:
@@ -1157,24 +1157,12 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         debug!("link_pattern(discr_cmt={:?}, root_pat={:?})",
                discr_cmt,
                root_pat);
-        let _ = mc.cat_pattern(discr_cmt, root_pat, |mc, sub_cmt, sub_pat| {
+    let _ = mc.cat_pattern(discr_cmt, root_pat, |_, sub_cmt, sub_pat| {
                 match sub_pat.node {
                     // `ref x` pattern
-                    PatKind::Ident(hir::BindByRef(mutbl), _, _) => {
+                    PatKind::Binding(hir::BindByRef(mutbl), _, _) => {
                         self.link_region_from_node_type(sub_pat.span, sub_pat.id,
                                                         mutbl, sub_cmt);
-                    }
-
-                    // `[_, ..slice, _]` pattern
-                    PatKind::Vec(_, Some(ref slice_pat), _) => {
-                        match mc.cat_slice_pattern(sub_cmt, &slice_pat) {
-                            Ok((slice_cmt, slice_mutbl, slice_r)) => {
-                                self.link_region(sub_pat.span, &slice_r,
-                                                 ty::BorrowKind::from_mutbl(slice_mutbl),
-                                                 slice_cmt);
-                            }
-                            Err(()) => {}
-                        }
                     }
                     _ => {}
                 }

@@ -10,6 +10,7 @@
 
 use std::rc::Rc;
 
+use attributes;
 use arena::TypedArena;
 use back::symbol_names;
 use llvm::{ValueRef, get_params};
@@ -35,7 +36,7 @@ use value::Value;
 use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 
 use syntax::ast::Name;
-use syntax::codemap::DUMMY_SP;
+use syntax_pos::DUMMY_SP;
 
 // drop_glue pointer, size, align.
 const VTABLE_OFFSET: usize = 3;
@@ -91,6 +92,7 @@ pub fn trans_object_shim<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
     let function_name =
         symbol_names::internal_name_from_type_and_suffix(ccx, method_ty, "object_shim");
     let llfn = declare::define_internal_fn(ccx, &function_name, method_ty);
+    attributes::set_frame_pointer_elimination(ccx, llfn);
 
     let (block_arena, fcx): (TypedArena<_>, FunctionContext);
     block_arena = TypedArena::new();
@@ -269,7 +271,7 @@ pub fn get_vtable_methods<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             // the method may have some early-bound lifetimes, add
             // regions for those
             let num_dummy_regions = trait_method_type.generics.regions.len(FnSpace);
-            let dummy_regions = vec![ty::ReStatic; num_dummy_regions];
+            let dummy_regions = vec![ty::ReErased; num_dummy_regions];
             let method_substs = substs.clone()
                                       .with_method(vec![], dummy_regions);
             let method_substs = tcx.mk_substs(method_substs);

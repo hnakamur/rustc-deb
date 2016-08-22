@@ -22,22 +22,22 @@ use Resolver;
 use {resolve_error, resolve_struct_error, ResolutionError};
 
 use rustc::middle::cstore::{ChildItem, DlDef};
-use rustc::lint;
 use rustc::hir::def::*;
 use rustc::hir::def_id::{CRATE_DEF_INDEX, DefId};
 use rustc::ty::{self, VariantKind};
 
-use syntax::ast::{Name, NodeId};
-use syntax::attr::AttrMetaMethods;
-use syntax::parse::token::{self, keywords};
-use syntax::codemap::{Span, DUMMY_SP};
+use syntax::ast::Name;
+use syntax::attr;
+use syntax::parse::token;
 
-use syntax::ast::{Block, Crate, DeclKind};
+use syntax::ast::{Block, Crate};
 use syntax::ast::{ForeignItem, ForeignItemKind, Item, ItemKind};
 use syntax::ast::{Mutability, PathListItemKind};
-use syntax::ast::{SelfKind, Stmt, StmtKind, TraitItemKind};
-use syntax::ast::{Variant, ViewPath, ViewPathGlob, ViewPathList, ViewPathSimple};
+use syntax::ast::{StmtKind, TraitItemKind};
+use syntax::ast::{Variant, ViewPathGlob, ViewPathList, ViewPathSimple};
 use syntax::visit::{self, Visitor};
+
+use syntax_pos::{Span, DUMMY_SP};
 
 trait ToNameBinding<'a> {
     fn to_name_binding(self) -> NameBinding<'a>;
@@ -58,6 +58,9 @@ impl<'a> ToNameBinding<'a> for (Def, Span, ty::Visibility) {
 impl<'b> Resolver<'b> {
     /// Constructs the reduced graph for the entire crate.
     pub fn build_reduced_graph(&mut self, krate: &Crate) {
+        let no_implicit_prelude = attr::contains_name(&krate.attrs, "no_implicit_prelude");
+        self.graph_root.no_implicit_prelude.set(no_implicit_prelude);
+
         let mut visitor = BuildReducedGraphVisitor {
             parent: self.graph_root,
             resolver: self,
@@ -82,47 +85,11 @@ impl<'b> Resolver<'b> {
     }
 
     fn block_needs_anonymous_module(&mut self, block: &Block) -> bool {
-        fn is_item(statement: &Stmt) -> bool {
-            if let StmtKind::Decl(ref declaration, _) = statement.node {
-                if let DeclKind::Item(_) = declaration.node {
-                    return true;
-                }
-            }
-            false
-        }
-
         // If any statements are items, we need to create an anonymous module
-        block.stmts.iter().any(is_item)
-    }
-
-    fn sanity_check_import(&self, view_path: &ViewPath, id: NodeId) {
-        let path = match view_path.node {
-            ViewPathSimple(_, ref path) |
-            ViewPathGlob (ref path) |
-            ViewPathList(ref path, _) => path
-        };
-
-        // Check for type parameters
-        let found_param = path.segments.iter().any(|segment| {
-            !segment.parameters.types().is_empty() ||
-            !segment.parameters.lifetimes().is_empty() ||
-            !segment.parameters.bindings().is_empty()
-        });
-        if found_param {
-            self.session.span_err(path.span, "type or lifetime parameters in import path");
-        }
-
-        // Checking for special identifiers in path
-        // prevent `self` or `super` at beginning of global path
-        if path.global && path.segments.len() > 0 {
-            let first = path.segments[0].identifier.name;
-            if first == keywords::Super.name() || first == keywords::SelfValue.name() {
-                self.session.add_lint(
-                    lint::builtin::SUPER_OR_SELF_IN_GLOBAL_PATH, id, path.span,
-                    format!("expected identifier, found keyword `{}`", first)
-                );
-            }
-        }
+        block.stmts.iter().any(|statement| match statement.node {
+            StmtKind::Item(_) => true,
+            _ => false,
+        })
     }
 
     /// Constructs the reduced graph for one item.
@@ -158,10 +125,8 @@ impl<'b> Resolver<'b> {
                     }
                 };
 
-                self.sanity_check_import(view_path, item.id);
-
                 // Build up the import directives.
-                let is_prelude = item.attrs.iter().any(|attr| attr.name() == "prelude_import");
+                let is_prelude = attr::contains_name(&item.attrs, "prelude_import");
 
                 match view_path.node {
                     ViewPathSimple(binding, ref full_path) => {
@@ -254,6 +219,10 @@ impl<'b> Resolver<'b> {
                 let parent_link = ModuleParentLink(parent, name);
                 let def = Def::Mod(self.definitions.local_def_id(item.id));
                 let module = self.new_module(parent_link, Some(def), false);
+                module.no_implicit_prelude.set({
+                    parent.no_implicit_prelude.get() ||
+                        attr::contains_name(&item.attrs, "no_implicit_prelude")
+                });
                 self.define(parent, name, TypeNS, (module, sp, vis));
                 self.module_map.insert(item.id, module);
                 *parent_ref = module;
@@ -335,10 +304,11 @@ impl<'b> Resolver<'b> {
                     let (def, ns) = match item.node {
                         TraitItemKind::Const(..) => (Def::AssociatedConst(item_def_id), ValueNS),
                         TraitItemKind::Method(ref sig, _) => {
-                            is_static_method = sig.explicit_self.node == SelfKind::Static;
+                            is_static_method = !sig.decl.has_self();
                             (Def::Method(item_def_id), ValueNS)
                         }
                         TraitItemKind::Type(..) => (Def::AssociatedTy(def_id, item_def_id), TypeNS),
+                        TraitItemKind::Macro(_) => panic!("unexpanded macro in resolve!"),
                     };
 
                     self.define(module_parent, item.ident.name, ns, (def, item.span, vis));
@@ -529,7 +499,7 @@ struct BuildReducedGraphVisitor<'a, 'b: 'a> {
     parent: Module<'b>,
 }
 
-impl<'a, 'b, 'v> Visitor<'v> for BuildReducedGraphVisitor<'a, 'b> {
+impl<'a, 'b> Visitor for BuildReducedGraphVisitor<'a, 'b> {
     fn visit_item(&mut self, item: &Item) {
         let old_parent = self.parent;
         self.resolver.build_reduced_graph_for_item(item, &mut self.parent);

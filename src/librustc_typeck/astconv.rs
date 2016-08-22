@@ -73,10 +73,10 @@ use util::nodemap::{NodeMap, FnvHashSet};
 use rustc_const_math::ConstInt;
 use std::cell::RefCell;
 use syntax::{abi, ast};
-use syntax::codemap::{Span, Pos};
-use syntax::errors::DiagnosticBuilder;
 use syntax::feature_gate::{GateIssue, emit_feature_err};
 use syntax::parse::token::{self, keywords};
+use syntax_pos::{Span, Pos};
+use errors::DiagnosticBuilder;
 
 pub trait AstConv<'gcx, 'tcx> {
     fn tcx<'a>(&'a self) -> TyCtxt<'a, 'gcx, 'tcx>;
@@ -170,7 +170,7 @@ type TraitAndProjections<'tcx> = (ty::PolyTraitRef<'tcx>, Vec<ty::PolyProjection
 
 pub fn ast_region_to_region(tcx: TyCtxt, lifetime: &hir::Lifetime)
                             -> ty::Region {
-    let r = match tcx.named_region_map.get(&lifetime.id) {
+    let r = match tcx.named_region_map.defs.get(&lifetime.id) {
         None => {
             // should have been recorded by the `resolve_lifetime` pass
             span_bug!(lifetime.span, "unresolved lifetime");
@@ -181,7 +181,20 @@ pub fn ast_region_to_region(tcx: TyCtxt, lifetime: &hir::Lifetime)
         }
 
         Some(&rl::DefLateBoundRegion(debruijn, id)) => {
-            ty::ReLateBound(debruijn, ty::BrNamed(tcx.map.local_def_id(id), lifetime.name))
+            // If this region is declared on a function, it will have
+            // an entry in `late_bound`, but if it comes from
+            // `for<'a>` in some type or something, it won't
+            // necessarily have one. In that case though, we won't be
+            // changed from late to early bound, so we can just
+            // substitute false.
+            let issue_32330 = tcx.named_region_map
+                                 .late_bound
+                                 .get(&id)
+                                 .cloned()
+                                 .unwrap_or(ty::Issue32330::WontChange);
+            ty::ReLateBound(debruijn, ty::BrNamed(tcx.map.local_def_id(id),
+                                                  lifetime.name,
+                                                  issue_32330))
         }
 
         Some(&rl::DefEarlyBoundRegion(space, index, _)) => {
@@ -193,11 +206,21 @@ pub fn ast_region_to_region(tcx: TyCtxt, lifetime: &hir::Lifetime)
         }
 
         Some(&rl::DefFreeRegion(scope, id)) => {
+            // As in DefLateBoundRegion above, could be missing for some late-bound
+            // regions, but also for early-bound regions.
+            let issue_32330 = tcx.named_region_map
+                                 .late_bound
+                                 .get(&id)
+                                 .cloned()
+                                 .unwrap_or(ty::Issue32330::WontChange);
             ty::ReFree(ty::FreeRegion {
                     scope: scope.to_code_extent(&tcx.region_maps),
                     bound_region: ty::BrNamed(tcx.map.local_def_id(id),
-                                              lifetime.name)
-                })
+                                              lifetime.name,
+                                              issue_32330)
+            })
+
+                // (*) -- not late-bound, won't change
         }
     };
 
@@ -711,7 +734,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
 
     fn trait_def_id(&self, trait_ref: &hir::TraitRef) -> DefId {
         let path = &trait_ref.path;
-        match ::lookup_full_def(self.tcx(), path.span, trait_ref.ref_id) {
+        match self.tcx().expect_def(trait_ref.ref_id) {
             Def::Trait(trait_def_id) => trait_def_id,
             Def::Err => {
                 self.tcx().sess.fatal("cannot continue compilation due to previous error");
@@ -911,7 +934,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
         debug!("late_bound_in_ty = {:?}", late_bound_in_ty);
         for br in late_bound_in_ty.difference(&late_bound_in_trait_ref) {
             let br_name = match *br {
-                ty::BrNamed(_, name) => name,
+                ty::BrNamed(_, name, _) => name,
                 _ => {
                     span_bug!(
                         binding.span,
@@ -1041,12 +1064,9 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
 
         match ty.node {
             hir::TyPath(None, ref path) => {
-                let def = match self.tcx().def_map.borrow().get(&ty.id) {
-                    Some(&def::PathResolution { base_def, depth: 0, .. }) => Some(base_def),
-                    _ => None
-                };
-                match def {
-                    Some(Def::Trait(trait_def_id)) => {
+                let resolution = self.tcx().expect_resolution(ty.id);
+                match resolution.base_def {
+                    Def::Trait(trait_def_id) if resolution.depth == 0 => {
                         let mut projection_bounds = Vec::new();
                         let trait_ref =
                             self.object_path_to_poly_trait_ref(rscope,
@@ -1675,7 +1695,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                 let late_bound_in_ret = tcx.collect_referenced_late_bound_regions(&output);
                 for br in late_bound_in_ret.difference(&late_bound_in_args) {
                     let br_name = match *br {
-                        ty::BrNamed(_, name) => name,
+                        ty::BrNamed(_, name, _) => name,
                         _ => {
                             span_bug!(
                                 bf.decl.output.span(),
@@ -1698,17 +1718,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
             }
             hir::TyPath(ref maybe_qself, ref path) => {
                 debug!("ast_ty_to_ty: maybe_qself={:?} path={:?}", maybe_qself, path);
-                let path_res = if let Some(&d) = tcx.def_map.borrow().get(&ast_ty.id) {
-                    d
-                } else if let Some(hir::QSelf { position: 0, .. }) = *maybe_qself {
-                    // Create some fake resolution that can't possibly be a type.
-                    def::PathResolution {
-                        base_def: Def::Mod(tcx.map.local_def_id(ast::CRATE_NODE_ID)),
-                        depth: path.segments.len()
-                    }
-                } else {
-                    span_bug!(ast_ty.span, "unbound path {:?}", ast_ty)
-                };
+                let path_res = tcx.expect_resolution(ast_ty.id);
                 let def = path_res.base_def;
                 let base_ty_end = path.segments.len() - path_res.depth;
                 let opt_self_ty = maybe_qself.as_ref().map(|qself| {
@@ -1725,10 +1735,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
 
                 if path_res.depth != 0 && ty.sty != ty::TyError {
                     // Write back the new resolution.
-                    tcx.def_map.borrow_mut().insert(ast_ty.id, def::PathResolution {
-                        base_def: def,
-                        depth: 0
-                    });
+                    tcx.def_map.borrow_mut().insert(ast_ty.id, def::PathResolution::new(def));
                 }
 
                 ty
@@ -1833,8 +1840,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
         // lifetime elision, we can determine it in two ways. First (determined
         // here), if self is by-reference, then the implied output region is the
         // region of the self parameter.
-        let explicit_self = decl.inputs.get(0).and_then(hir::Arg::to_self);
-        let (self_ty, explicit_self_category) = match (opt_untransformed_self_ty, explicit_self) {
+        let (self_ty, explicit_self_category) = match (opt_untransformed_self_ty, decl.get_self()) {
             (Some(untransformed_self_ty), Some(explicit_self)) => {
                 let self_type = self.determine_self_type(&rb, untransformed_self_ty,
                                                          &explicit_self);
@@ -2210,7 +2216,7 @@ pub fn partition_bounds<'a, 'b, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
     for ast_bound in ast_bounds {
         match *ast_bound {
             hir::TraitTyParamBound(ref b, hir::TraitBoundModifier::None) => {
-                match ::lookup_full_def(tcx, b.trait_ref.path.span, b.trait_ref.ref_id) {
+                match tcx.expect_def(b.trait_ref.ref_id) {
                     Def::Trait(trait_did) => {
                         if tcx.try_add_builtin_trait(trait_did,
                                                      &mut builtin_bounds) {

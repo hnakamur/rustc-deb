@@ -21,6 +21,7 @@ pub type nfds_t = ::c_uint;
 pub type rlim_t = ::c_ulong;
 pub type dev_t = ::c_ulong;
 pub type ino_t = ::c_ulong;
+pub type __CPU_BITTYPE = ::c_ulong;
 
 s! {
     pub struct dirent {
@@ -86,6 +87,13 @@ s! {
         pub l_start: ::off_t,
         pub l_len: ::off_t,
         pub l_pid: ::pid_t,
+    }
+
+    pub struct cpu_set_t {
+        #[cfg(target_pointer_width = "64")]
+        __bits: [__CPU_BITTYPE; 16],
+        #[cfg(target_pointer_width = "32")]
+        __bits: [__CPU_BITTYPE; 1],
     }
 }
 
@@ -157,7 +165,10 @@ pub const _SC_THREAD_PRIO_PROTECT: ::c_int = 84;
 pub const _SC_THREAD_SAFE_FUNCTIONS: ::c_int = 85;
 pub const _SC_NPROCESSORS_ONLN: ::c_int = 97;
 
+pub const PTHREAD_MUTEX_NORMAL: ::c_int = 0;
 pub const PTHREAD_MUTEX_RECURSIVE: ::c_int = 1;
+pub const PTHREAD_MUTEX_ERRORCHECK: ::c_int = 2;
+pub const PTHREAD_MUTEX_DEFAULT: ::c_int = PTHREAD_MUTEX_NORMAL;
 
 pub const FIOCLEX: ::c_int = 0x5451;
 
@@ -313,6 +324,7 @@ pub const ENOTRECOVERABLE: ::c_int = 131;
 
 pub const SOCK_STREAM: ::c_int = 1;
 pub const SOCK_DGRAM: ::c_int = 2;
+pub const SOCK_SEQPACKET: ::c_int = 5;
 
 pub const SOL_SOCKET: ::c_int = 1;
 
@@ -543,6 +555,11 @@ extern {
                        sevlen: ::size_t,
                        flags: ::c_int) -> ::c_int;
     pub fn ptrace(request: ::c_int, ...) -> ::c_long;
+    pub fn getpriority(which: ::c_int, who: ::c_int) -> ::c_int;
+    pub fn setpriority(which: ::c_int, who: ::c_int, prio: ::c_int) -> ::c_int;
+    pub fn __sched_cpualloc(count: ::size_t) -> *mut ::cpu_set_t;
+    pub fn __sched_cpufree(set: *mut ::cpu_set_t);
+    pub fn __sched_cpucount(setsize: ::size_t, set: *mut cpu_set_t) -> ::c_int;
 }
 
 cfg_if! {

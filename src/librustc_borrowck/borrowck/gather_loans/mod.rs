@@ -25,8 +25,8 @@ use rustc::middle::region;
 use rustc::ty::{self, TyCtxt};
 
 use syntax::ast;
-use syntax::codemap::Span;
 use syntax::ast::NodeId;
+use syntax_pos::Span;
 use rustc::hir;
 use rustc::hir::Expr;
 use rustc::hir::intravisit;
@@ -369,7 +369,8 @@ impl<'a, 'tcx> GatherLoanCtxt<'a, 'tcx> {
                     ty::ReLateBound(..) |
                     ty::ReEarlyBound(..) |
                     ty::ReVar(..) |
-                    ty::ReSkolemized(..) => {
+                    ty::ReSkolemized(..) |
+                    ty::ReErased => {
                         span_bug!(
                             cmt.span,
                             "invalid borrow lifetime: {:?}",

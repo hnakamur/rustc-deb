@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use super::archive::{ArchiveBuilder, ArchiveConfig};
-use super::linker::{Linker, GnuLinker, MsvcLinker};
+use super::linker::Linker;
 use super::rpath::RPathConfig;
 use super::rpath;
 use super::msvc;
@@ -42,8 +42,8 @@ use std::process::Command;
 use std::str;
 use flate;
 use syntax::ast;
-use syntax::codemap::Span;
 use syntax::attr::AttrMetaMethods;
+use syntax_pos::Span;
 
 // RLIB LLVM-BYTECODE OBJECT LAYOUT
 // Version 1
@@ -136,14 +136,17 @@ pub fn build_link_meta<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     return r;
 }
 
-pub fn get_linker(sess: &Session) -> (String, Command) {
+// The third parameter is for an extra path to add to PATH for MSVC
+// cross linkers for host toolchain DLL dependencies
+pub fn get_linker(sess: &Session) -> (String, Command, Option<PathBuf>) {
     if let Some(ref linker) = sess.opts.cg.linker {
-        (linker.clone(), Command::new(linker))
+        (linker.clone(), Command::new(linker), None)
     } else if sess.target.target.options.is_like_msvc {
-        ("link.exe".to_string(), msvc::link_exe_cmd(sess))
+        let (cmd, host) = msvc::link_exe_cmd(sess);
+        ("link.exe".to_string(), cmd, host)
     } else {
         (sess.target.target.options.linker.clone(),
-         Command::new(&sess.target.target.options.linker))
+         Command::new(&sess.target.target.options.linker), None)
     }
 }
 
@@ -153,7 +156,7 @@ pub fn get_ar_prog(sess: &Session) -> String {
     })
 }
 
-fn command_path(sess: &Session) -> OsString {
+fn command_path(sess: &Session, extra: Option<PathBuf>) -> OsString {
     // The compiler's sysroot often has some bundled tools, so add it to the
     // PATH for the child.
     let mut new_path = sess.host_filesearch(PathKind::All)
@@ -161,9 +164,7 @@ fn command_path(sess: &Session) -> OsString {
     if let Some(path) = env::var_os("PATH") {
         new_path.extend(env::split_paths(&path));
     }
-    if sess.target.target.options.is_like_msvc {
-        new_path.extend(msvc::host_dll_path());
-    }
+    new_path.extend(extra);
     env::join_paths(new_path).unwrap()
 }
 
@@ -188,6 +189,11 @@ pub fn link_binary(sess: &Session,
 
     let mut out_filenames = Vec::new();
     for &crate_type in sess.crate_types.borrow().iter() {
+        // Ignore executable crates if we have -Z no-trans, as they will error.
+        if sess.opts.no_trans && crate_type == config::CrateTypeExecutable {
+            continue;
+        }
+
         if invalid_output_for_target(sess, crate_type) {
            bug!("invalid output type `{:?}` for target os `{}`",
                 crate_type, sess.opts.target_triple);
@@ -374,7 +380,7 @@ fn archive_config<'a>(sess: &'a Session,
         src: input.map(|p| p.to_path_buf()),
         lib_search_paths: archive_search_paths(sess),
         ar_prog: get_ar_prog(sess),
-        command_path: command_path(sess),
+        command_path: command_path(sess, None),
     }
 }
 
@@ -406,13 +412,6 @@ fn link_rlib<'a>(sess: &'a Session,
     // After adding all files to the archive, we need to update the
     // symbol table of the archive.
     ab.update_symbols();
-
-    // For OSX/iOS, we must be careful to update symbols only when adding
-    // object files.  We're about to start adding non-object files, so run
-    // `ar` now to process the object files.
-    if sess.target.target.options.is_like_osx && !ab.using_llvm() {
-        ab.build();
-    }
 
     // Note that it is important that we add all of our non-object "magical
     // files" *after* all of the object files in the archive. The reason for
@@ -510,7 +509,7 @@ fn link_rlib<'a>(sess: &'a Session,
             // After adding all files to the archive, we need to update the
             // symbol table of the archive. This currently dies on OSX (see
             // #11162), and isn't necessary there anyway
-            if !sess.target.target.options.is_like_osx || ab.using_llvm() {
+            if !sess.target.target.options.is_like_osx {
                 ab.update_symbols();
             }
         }
@@ -570,9 +569,6 @@ fn write_rlib_bytecode_object_v1(writer: &mut Write,
 fn link_staticlib(sess: &Session, objects: &[PathBuf], out_filename: &Path,
                   tempdir: &Path) {
     let mut ab = link_rlib(sess, None, objects, out_filename, tempdir);
-    if sess.target.target.options.is_like_osx && !ab.using_llvm() {
-        ab.build();
-    }
     if !sess.target.target.options.no_compiler_rt {
         ab.add_native_library("compiler-rt");
     }
@@ -621,8 +617,8 @@ fn link_natively(sess: &Session,
     info!("preparing {:?} from {:?} to {:?}", crate_type, objects, out_filename);
 
     // The invocations of cc share some flags across platforms
-    let (pname, mut cmd) = get_linker(sess);
-    cmd.env("PATH", command_path(sess));
+    let (pname, mut cmd, extra) = get_linker(sess);
+    cmd.env("PATH", command_path(sess, extra));
 
     let root = sess.target_filesearch(PathKind::Native).get_lib_path();
     cmd.args(&sess.target.target.options.pre_link_args);
@@ -637,13 +633,9 @@ fn link_natively(sess: &Session,
     }
 
     {
-        let mut linker = if sess.target.target.options.is_like_msvc {
-            Box::new(MsvcLinker { cmd: &mut cmd, sess: &sess }) as Box<Linker>
-        } else {
-            Box::new(GnuLinker { cmd: &mut cmd, sess: &sess }) as Box<Linker>
-        };
+        let mut linker = trans.linker_info.to_linker(&mut cmd, &sess);
         link_args(&mut *linker, sess, crate_type, tmpdir,
-                  objects, out_filename, trans, outputs);
+                  objects, out_filename, outputs);
         if !sess.target.target.options.no_compiler_rt {
             linker.link_staticlib("compiler-rt");
         }
@@ -691,7 +683,16 @@ fn link_natively(sess: &Session,
             info!("linker stdout:\n{}", escape_string(&prog.stdout[..]));
         },
         Err(e) => {
-            sess.fatal(&format!("could not exec the linker `{}`: {}", pname, e));
+            sess.struct_err(&format!("could not exec the linker `{}`: {}", pname, e))
+                .note(&format!("{:?}", &cmd))
+                .emit();
+            if sess.target.target.options.is_like_msvc && e.kind() == io::ErrorKind::NotFound {
+                sess.note_without_error("the msvc targets depend on the msvc linker \
+                    but `link.exe` was not found");
+                sess.note_without_error("please ensure that VS 2013 or VS 2015 was installed \
+                    with the Visual C++ option");
+            }
+            sess.abort_if_errors();
         }
     }
 
@@ -712,7 +713,6 @@ fn link_args(cmd: &mut Linker,
              tmpdir: &Path,
              objects: &[PathBuf],
              out_filename: &Path,
-             trans: &CrateTranslation,
              outputs: &OutputFilenames) {
 
     // The default library location, we need this to find the runtime.
@@ -731,7 +731,7 @@ fn link_args(cmd: &mut Linker,
     // If we're building a dynamic library then some platforms need to make sure
     // that all symbols are exported correctly from the dynamic library.
     if crate_type != config::CrateTypeExecutable {
-        cmd.export_symbols(sess, trans, tmpdir, crate_type);
+        cmd.export_symbols(tmpdir, crate_type);
     }
 
     // When linking a dynamic library, we put the metadata into a section of the

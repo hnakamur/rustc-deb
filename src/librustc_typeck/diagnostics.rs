@@ -62,31 +62,6 @@ Check how many fields the enum was declared with and ensure that your pattern
 uses the same number.
 "##,
 
-E0024: r##"
-This error indicates that a pattern attempted to extract the fields of an enum
-variant with no fields. Here's a tiny example of this error:
-
-```compile_fail
-// This enum has two variants.
-enum Number {
-    // This variant has no fields.
-    Zero,
-    // This variant has one field.
-    One(u32)
-}
-
-// Assuming x is a Number we can pattern match on its contents.
-match x {
-    Number::Zero(inside) => {},
-    Number::One(inside) => {},
-}
-```
-
-The pattern match `Zero(inside)` is incorrect because the `Zero` variant
-contains no fields, yet the `inside` name attempts to bind the first field of
-the enum.
-"##,
-
 E0025: r##"
 Each field of a struct can only be bound once in a pattern. Erroneous code
 example:
@@ -956,7 +931,7 @@ first instance of `Foo` could be made to initialize another instance!
 
 Here's an example of a struct that has this problem:
 
-```compile_fail
+```ignore
 struct Foo { x: Box<Foo> } // error
 ```
 
@@ -977,19 +952,19 @@ are generic.
 
 This will cause an error:
 
-```compile_fail
-#![feature(simd)]
+```ignore
+#![feature(repr_simd)]
 
-#[simd]
+#[repr(simd)]
 struct Bad<T>(T, T, T);
 ```
 
 This will not:
 
 ```
-#![feature(simd)]
+#![feature(repr_simd)]
 
-#[simd]
+#[repr(simd)]
 struct Good(u32, u32, u32);
 ```
 "##,
@@ -1026,18 +1001,18 @@ will trigger this error.
 This will cause an error:
 
 ```compile_fail
-#![feature(simd)]
+#![feature(repr_simd)]
 
-#[simd]
+#[repr(simd)]
 struct Bad(u16, u32, u32);
 ```
 
 This will not:
 
 ```
-#![feature(simd)]
+#![feature(repr_simd)]
 
-#[simd]
+#[repr(simd)]
 struct Good(u32, u32, u32);
 ```
 "##,
@@ -1049,18 +1024,18 @@ must be machine types so SIMD operations can be applied to them.
 This will cause an error:
 
 ```compile_fail
-#![feature(simd)]
+#![feature(repr_simd)]
 
-#[simd]
+#[repr(simd)]
 struct Bad(String);
 ```
 
 This will not:
 
 ```
-#![feature(simd)]
+#![feature(repr_simd)]
 
-#[simd]
+#[repr(simd)]
 struct Good(u32, u32, u32);
 ```
 "##,
@@ -1168,7 +1143,7 @@ for an explicit choice of the discriminant type. In either cases, the
 discriminant values must fall within a valid range for the expected type;
 otherwise this error is raised. For example:
 
-```compile_fail
+```ignore
 #[repr(u8)]
 enum Thing {
     A = 1024,
@@ -1179,7 +1154,7 @@ enum Thing {
 Here, 1024 lies outside the valid range for `u8`, so the discriminant for `A` is
 invalid. Here is another, more subtle example which depends on target word size:
 
-```compile_fail
+```ignore
 enum DependsOnPointerSize {
     A = 1 << 32
 }
@@ -1193,12 +1168,32 @@ discriminant values so that they fit within the existing type.
 "##,
 
 E0084: r##"
+An unsupported representation was attempted on a zero-variant enum.
+
+Erroneous code example:
+
+```compile_fail
+#[repr(i32)]
+enum NightsWatch {} // error: unsupported representation for zero-variant enum
+```
+
 It is impossible to define an integer type to be used to represent zero-variant
 enum values because there are no zero-variant enum values. There is no way to
-construct an instance of the following type using only safe code:
+construct an instance of the following type using only safe code. So you have
+two solutions. Either you add variants in your enum:
 
 ```
-enum Empty {}
+#[repr(i32)]
+enum NightsWatch {
+    JonSnow,
+    Commander,
+}
+```
+
+or you remove the integer represention of your enum:
+
+```
+enum NightsWatch {}
 ```
 "##,
 
@@ -1869,11 +1864,34 @@ fn main<T>() { // error: main function is not allowed to have type parameters
 "##,
 
 E0132: r##"
+A function with the `start` attribute was declared with type parameters.
+
+Erroneous code example:
+
+```compile_fail
+#![feature(start)]
+
+#[start]
+fn f<T>() {}
+```
+
 It is not possible to declare type parameters on a function that has the `start`
-attribute. Such a function must have the following type signature:
+attribute. Such a function must have the following type signature (for more
+information: http://doc.rust-lang.org/stable/book/no-stdlib.html):
 
 ```ignore
 fn(isize, *const *const u8) -> isize;
+```
+
+Example:
+
+```
+#![feature(start)]
+
+#[start]
+fn my_start(argc: isize, argv: *const *const u8) -> isize {
+    0
+}
 ```
 "##,
 
@@ -1972,6 +1990,89 @@ To learn more about traits, take a look at the Book:
 https://doc.rust-lang.org/book/traits.html
 "##,
 
+E0174: r##"
+This error occurs because of the explicit use of unboxed closure methods
+that are an experimental feature in current Rust version.
+
+Example of erroneous code:
+
+```compile_fail
+fn foo<F: Fn(&str)>(mut f: F) {
+    f.call(("call",));
+    // error: explicit use of unboxed closure method `call`
+    f.call_mut(("call_mut",));
+    // error: explicit use of unboxed closure method `call_mut`
+    f.call_once(("call_once",));
+    // error: explicit use of unboxed closure method `call_once`
+}
+
+fn bar(text: &str) {
+    println!("Calling {} it works!", text);
+}
+
+fn main() {
+    foo(bar);
+}
+```
+
+Rust's implementation of closures is a bit different than other languages.
+They are effectively syntax sugar for traits `Fn`, `FnMut` and `FnOnce`.
+To understand better how the closures are implemented see here:
+https://doc.rust-lang.org/book/closures.html#closure-implementation
+
+To fix this you can call them using parenthesis, like this: `foo()`.
+When you execute the closure with parenthesis, under the hood you are executing
+the method `call`, `call_mut` or `call_once`. However, using them explicitly is
+currently an experimental feature.
+
+Example of an implicit call:
+
+```
+fn foo<F: Fn(&str)>(f: F) {
+    f("using ()"); // Calling using () it works!
+}
+
+fn bar(text: &str) {
+    println!("Calling {} it works!", text);
+}
+
+fn main() {
+    foo(bar);
+}
+```
+
+To enable the explicit calls you need to add `#![feature(unboxed_closures)]`.
+
+This feature is still unstable so you will also need to add
+`#![feature(fn_traits)]`.
+More details about this issue here:
+https://github.com/rust-lang/rust/issues/29625
+
+Example of use:
+
+```
+#![feature(fn_traits)]
+#![feature(unboxed_closures)]
+
+fn foo<F: Fn(&str)>(mut f: F) {
+    f.call(("call",)); // Calling 'call' it works!
+    f.call_mut(("call_mut",)); // Calling 'call_mut' it works!
+    f.call_once(("call_once",)); // Calling 'call_once' it works!
+}
+
+fn bar(text: &str) {
+    println!("Calling '{}' it works!", text);
+}
+
+fn main() {
+    foo(bar);
+}
+```
+
+To see more about closures take a look here:
+https://doc.rust-lang.org/book/closures.html`
+"##,
+
 E0178: r##"
 In types, the `+` type operator has low precedence, so it is often necessary
 to use parentheses.
@@ -2022,6 +2123,7 @@ impl Foo for Bar {
     // the trait
     fn foo(&self) {}
 }
+```
 "##,
 
 E0186: r##"
@@ -2081,7 +2183,7 @@ E0193: r##"
 `where` clauses must use generic type parameters: it does not make sense to use
 them otherwise. An example causing this error:
 
-```compile_fail
+```ignore
 trait Foo {
     fn bar(&self);
 }
@@ -2387,39 +2489,135 @@ impl Copy for &'static Bar { } // error
 "##,
 
 E0207: r##"
-You declared an unused type parameter when implementing a trait on an object.
-Erroneous code example:
+Any type parameter or lifetime parameter of an `impl` must meet at least one of
+the following criteria:
+
+ - it appears in the self type of the impl
+ - for a trait impl, it appears in the trait reference
+ - it is bound as an associated type
+
+### Error example 1
+
+Suppose we have a struct `Foo` and we would like to define some methods for it.
+The following definition leads to a compiler error:
 
 ```compile_fail
-trait MyTrait {
-    fn get(&self) -> usize;
-}
-
 struct Foo;
 
-impl<T> MyTrait for Foo {
-    fn get(&self) -> usize {
-        0
+impl<T: Default> Foo {
+// error: the type parameter `T` is not constrained by the impl trait, self
+// type, or predicates [E0207]
+    fn get(&self) -> T {
+        <T as Default>::default()
     }
 }
 ```
 
-Please check your object definition and remove unused type
-parameter(s). Example:
+The problem is that the parameter `T` does not appear in the self type (`Foo`)
+of the impl. In this case, we can fix the error by moving the type parameter
+from the `impl` to the method `get`:
+
 
 ```
-trait MyTrait {
-    fn get(&self) -> usize;
-}
-
 struct Foo;
 
-impl MyTrait for Foo {
-    fn get(&self) -> usize {
-        0
+// Move the type parameter from the impl to the method
+impl Foo {
+    fn get<T: Default>(&self) -> T {
+        <T as Default>::default()
     }
 }
 ```
+
+### Error example 2
+
+As another example, suppose we have a `Maker` trait and want to establish a
+type `FooMaker` that makes `Foo`s:
+
+```compile_fail
+trait Maker {
+    type Item;
+    fn make(&mut self) -> Self::Item;
+}
+
+struct Foo<T> {
+    foo: T
+}
+
+struct FooMaker;
+
+impl<T: Default> Maker for FooMaker {
+// error: the type parameter `T` is not constrained by the impl trait, self
+// type, or predicates [E0207]
+    type Item = Foo<T>;
+
+    fn make(&mut self) -> Foo<T> {
+        Foo { foo: <T as Default>::default() }
+    }
+}
+```
+
+This fails to compile because `T` does not appear in the trait or in the
+implementing type.
+
+One way to work around this is to introduce a phantom type parameter into
+`FooMaker`, like so:
+
+```
+use std::marker::PhantomData;
+
+trait Maker {
+    type Item;
+    fn make(&mut self) -> Self::Item;
+}
+
+struct Foo<T> {
+    foo: T
+}
+
+// Add a type parameter to `FooMaker`
+struct FooMaker<T> {
+    phantom: PhantomData<T>,
+}
+
+impl<T: Default> Maker for FooMaker<T> {
+    type Item = Foo<T>;
+
+    fn make(&mut self) -> Foo<T> {
+        Foo {
+            foo: <T as Default>::default(),
+        }
+    }
+}
+```
+
+Another way is to do away with the associated type in `Maker` and use an input
+type parameter instead:
+
+```
+// Use a type parameter instead of an associated type here
+trait Maker<Item> {
+    fn make(&mut self) -> Item;
+}
+
+struct Foo<T> {
+    foo: T
+}
+
+struct FooMaker;
+
+impl<T: Default> Maker<Foo<T>> for FooMaker {
+    fn make(&mut self) -> Foo<T> {
+        Foo { foo: <T as Default>::default() }
+    }
+}
+```
+
+### Additional information
+
+For more information, please see [RFC 447].
+
+[RFC 447]: https://github.com/rust-lang/rfcs/blob/master/text/0447-no-unused-impl-parameters.md
 "##,
 
 E0210: r##"
@@ -2589,23 +2787,42 @@ You used an associated type which isn't defined in the trait.
 Erroneous code example:
 
 ```compile_fail
-trait Trait {
+trait T1 {
     type Bar;
 }
 
-type Foo = Trait<F=i32>; // error: associated type `F` not found for
-                         //        `Trait`
+type Foo = T1<F=i32>; // error: associated type `F` not found for `T1`
+
+// or:
+
+trait T2 {
+    type Bar;
+
+    // error: Baz is used but not declared
+    fn return_bool(&self, &Self::Bar, &Self::Baz) -> bool;
+}
 ```
 
-Please verify you used the right trait or you didn't misspell the
+Make sure that you have defined the associated type in the trait body.
+Also, verify that you used the right trait or you didn't misspell the
 associated type name. Example:
 
 ```
-trait Trait {
+trait T1 {
     type Bar;
 }
 
-type Foo = Trait<Bar=i32>; // ok!
+type Foo = T1<Bar=i32>; // ok!
+
+// or:
+
+trait T2 {
+    type Bar;
+    type Baz; // we declare `Baz` in our trait.
+
+    // and now we can use it here:
+    fn return_bool(&self, &Self::Bar, &Self::Baz) -> bool;
+}
 ```
 "##,
 
@@ -3049,7 +3266,7 @@ An attempt was made to access an associated constant through either a generic
 type parameter or `Self`. This is not supported yet. An example causing this
 error is shown below:
 
-```compile_fail
+```ignore
 #![feature(associated_consts)]
 
 trait Foo {
@@ -3236,6 +3453,7 @@ The maximum value of an enum was reached, so it cannot be automatically
 set in the next enum value. Erroneous code example:
 
 ```compile_fail
+#[deny(overflowing_literals)]
 enum Foo {
     X = 0x7fffffffffffffff,
     Y, // error: enum discriminant overflowed on value after
@@ -3891,7 +4109,6 @@ register_diagnostics! {
     E0167,
 //  E0168,
 //  E0173, // manual implementations of unboxed closure traits are experimental
-    E0174, // explicit use of unboxed closure methods are experimental
     E0182,
     E0183,
 //  E0187, // can't infer the kind of the closure
@@ -3927,7 +4144,7 @@ register_diagnostics! {
 //  E0239, // `next` method of `Iterator` trait has unexpected type
 //  E0240,
 //  E0241,
-    E0242, // internal error looking up a definition
+//  E0242,
     E0245, // not a trait
 //  E0246, // invalid recursive type
 //  E0247,
@@ -3941,5 +4158,8 @@ register_diagnostics! {
            // type `{}` was overridden
     E0436, // functional record update requires a struct
     E0513, // no type for local variable ..
-    E0521  // redundant default implementations of trait
+    E0521, // redundant default implementations of trait
+    E0527, // expected {} elements, found {}
+    E0528, // expected at least {} elements, found {}
+    E0529, // slice pattern expects array or slice, not `{}`
 }

@@ -45,6 +45,7 @@ extern crate rustc;
 extern crate log;
 extern crate rustc_back;
 extern crate rustc_const_eval;
+extern crate syntax_pos;
 
 pub use rustc::lint as lint;
 pub use rustc::middle as middle;
@@ -163,7 +164,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         },
         FutureIncompatibleInfo {
             id: LintId::of(INVALID_TYPE_PARAM_DEFAULT),
-            reference: "PR 30742 <https://github.com/rust-lang/rust/pull/30724>",
+            reference: "PR 30724 <https://github.com/rust-lang/rust/pull/30724>",
         },
         FutureIncompatibleInfo {
             id: LintId::of(SUPER_OR_SELF_IN_GLOBAL_PATH),
@@ -201,6 +202,10 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         FutureIncompatibleInfo {
             id: LintId::of(HR_LIFETIME_IN_ASSOC_TYPE),
             reference: "issue #33685 <https://github.com/rust-lang/rust/issues/33685>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(LIFETIME_UNDERSCORE),
+            reference: "RFC 1177 <https://github.com/rust-lang/rfcs/pull/1177>",
         },
         ]);
 

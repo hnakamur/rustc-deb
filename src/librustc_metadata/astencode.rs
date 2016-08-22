@@ -37,9 +37,9 @@ use middle::region;
 use rustc::ty::subst;
 use rustc::ty::{self, Ty, TyCtxt};
 
-use syntax::{ast, codemap};
-use syntax::ast::NodeIdAssigner;
+use syntax::ast;
 use syntax::ptr::P;
+use syntax_pos;
 
 use std::cell::Cell;
 use std::io::SeekFrom;
@@ -55,13 +55,12 @@ use rustc_serialize::{Encodable, EncoderHelpers};
 
 #[cfg(test)] use std::io::Cursor;
 #[cfg(test)] use syntax::parse;
-#[cfg(test)] use syntax::ast::NodeId;
 #[cfg(test)] use rustc::hir::print as pprust;
 #[cfg(test)] use rustc::hir::lowering::{LoweringContext, DummyResolver};
 
 struct DecodeContext<'a, 'b, 'tcx: 'a> {
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    cdata: &'b cstore::crate_metadata,
+    cdata: &'b cstore::CrateMetadata,
     from_id_range: IdRange,
     to_id_range: IdRange,
     // Cache the last used filemap for translating spans as an optimization.
@@ -115,14 +114,14 @@ impl<'a, 'b, 'c, 'tcx> ast_map::FoldOps for &'a DecodeContext<'b, 'c, 'tcx> {
     fn new_def_id(&self, def_id: DefId) -> DefId {
         self.tr_def_id(def_id)
     }
-    fn new_span(&self, span: codemap::Span) -> codemap::Span {
+    fn new_span(&self, span: syntax_pos::Span) -> syntax_pos::Span {
         self.tr_span(span)
     }
 }
 
 /// Decodes an item from its AST in the cdata's metadata and adds it to the
 /// ast-map.
-pub fn decode_inlined_item<'a, 'tcx>(cdata: &cstore::crate_metadata,
+pub fn decode_inlined_item<'a, 'tcx>(cdata: &cstore::CrateMetadata,
                                      tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                      parent_def_path: ast_map::DefPath,
                                      parent_did: DefId,
@@ -206,7 +205,7 @@ impl<'a, 'b, 'tcx> DecodeContext<'a, 'b, 'tcx> {
 
     /// Translates a `Span` from an extern crate to the corresponding `Span`
     /// within the local crate's codemap.
-    pub fn tr_span(&self, span: codemap::Span) -> codemap::Span {
+    pub fn tr_span(&self, span: syntax_pos::Span) -> syntax_pos::Span {
         decoder::translate_span(self.cdata,
                                 self.tcx.sess.codemap(),
                                 &self.last_filemap_index,
@@ -226,8 +225,8 @@ impl tr for Option<DefId> {
     }
 }
 
-impl tr for codemap::Span {
-    fn tr(&self, dcx: &DecodeContext) -> codemap::Span {
+impl tr for syntax_pos::Span {
+    fn tr(&self, dcx: &DecodeContext) -> syntax_pos::Span {
         dcx.tr_span(*self)
     }
 }
@@ -247,7 +246,7 @@ impl<S:serialize::Encoder> def_id_encoder_helpers for S
 trait def_id_decoder_helpers {
     fn read_def_id(&mut self, dcx: &DecodeContext) -> DefId;
     fn read_def_id_nodcx(&mut self,
-                         cdata: &cstore::crate_metadata) -> DefId;
+                         cdata: &cstore::CrateMetadata) -> DefId;
 }
 
 impl<D:serialize::Decoder> def_id_decoder_helpers for D
@@ -259,7 +258,7 @@ impl<D:serialize::Decoder> def_id_decoder_helpers for D
     }
 
     fn read_def_id_nodcx(&mut self,
-                         cdata: &cstore::crate_metadata)
+                         cdata: &cstore::CrateMetadata)
                          -> DefId {
         let did: DefId = Decodable::decode(self).unwrap();
         decoder::translate_def_id(cdata, did)
@@ -719,7 +718,7 @@ fn encode_side_tables_for_id(ecx: &e::EncodeContext,
 
     debug!("Encoding side tables for id {}", id);
 
-    if let Some(def) = tcx.def_map.borrow().get(&id).map(|d| d.full_def()) {
+    if let Some(def) = tcx.expect_def_or_none(id) {
         rbml_w.tag(c::tag_table_def, |rbml_w| {
             rbml_w.id(id);
             def.encode(rbml_w).unwrap();
@@ -859,17 +858,17 @@ trait rbml_decoder_decoder_helpers<'tcx> {
     // Versions of the type reading functions that don't need the full
     // DecodeContext.
     fn read_ty_nodcx<'a>(&mut self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                         cdata: &cstore::crate_metadata) -> Ty<'tcx>;
+                         cdata: &cstore::CrateMetadata) -> Ty<'tcx>;
     fn read_tys_nodcx<'a>(&mut self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                          cdata: &cstore::crate_metadata) -> Vec<Ty<'tcx>>;
+                          cdata: &cstore::CrateMetadata) -> Vec<Ty<'tcx>>;
     fn read_substs_nodcx<'a>(&mut self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                             cdata: &cstore::crate_metadata)
+                             cdata: &cstore::CrateMetadata)
                              -> subst::Substs<'tcx>;
 }
 
 impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
     fn read_ty_nodcx<'b>(&mut self, tcx: TyCtxt<'b, 'tcx, 'tcx>,
-                         cdata: &cstore::crate_metadata)
+                         cdata: &cstore::CrateMetadata)
                          -> Ty<'tcx> {
         self.read_opaque(|_, doc| {
             Ok(
@@ -880,7 +879,7 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
     }
 
     fn read_tys_nodcx<'b>(&mut self, tcx: TyCtxt<'b, 'tcx, 'tcx>,
-                          cdata: &cstore::crate_metadata) -> Vec<Ty<'tcx>> {
+                          cdata: &cstore::CrateMetadata) -> Vec<Ty<'tcx>> {
         self.read_to_vec(|this| Ok(this.read_ty_nodcx(tcx, cdata)) )
             .unwrap()
             .into_iter()
@@ -888,7 +887,7 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
     }
 
     fn read_substs_nodcx<'b>(&mut self, tcx: TyCtxt<'b, 'tcx, 'tcx>,
-                             cdata: &cstore::crate_metadata)
+                             cdata: &cstore::CrateMetadata)
                              -> subst::Substs<'tcx>
     {
         self.read_opaque(|_, doc| {
@@ -1133,10 +1132,7 @@ fn decode_side_tables(dcx: &DecodeContext,
                 match value {
                     c::tag_table_def => {
                         let def = decode_def(dcx, val_dsr);
-                        dcx.tcx.def_map.borrow_mut().insert(id, def::PathResolution {
-                            base_def: def,
-                            depth: 0
-                        });
+                        dcx.tcx.def_map.borrow_mut().insert(id, def::PathResolution::new(def));
                     }
                     c::tag_table_node_type => {
                         let ty = val_dsr.read_ty(dcx);
@@ -1271,7 +1267,7 @@ fn decode_item_ast(item_doc: rbml::Doc) -> hir::Item {
 
 #[cfg(test)]
 trait FakeExtCtxt {
-    fn call_site(&self) -> codemap::Span;
+    fn call_site(&self) -> syntax_pos::Span;
     fn cfg(&self) -> ast::CrateConfig;
     fn ident_of(&self, st: &str) -> ast::Ident;
     fn name_of(&self, st: &str) -> ast::Name;
@@ -1280,11 +1276,11 @@ trait FakeExtCtxt {
 
 #[cfg(test)]
 impl FakeExtCtxt for parse::ParseSess {
-    fn call_site(&self) -> codemap::Span {
-        codemap::Span {
-            lo: codemap::BytePos(0),
-            hi: codemap::BytePos(0),
-            expn_id: codemap::NO_EXPANSION,
+    fn call_site(&self) -> syntax_pos::Span {
+        syntax_pos::Span {
+            lo: syntax_pos::BytePos(0),
+            hi: syntax_pos::BytePos(0),
+            expn_id: syntax_pos::NO_EXPANSION,
         }
     }
     fn cfg(&self) -> ast::CrateConfig { Vec::new() }
@@ -1298,31 +1294,14 @@ impl FakeExtCtxt for parse::ParseSess {
 }
 
 #[cfg(test)]
-struct FakeNodeIdAssigner;
-
-#[cfg(test)]
-// It should go without saying that this may give unexpected results. Avoid
-// lowering anything which needs new nodes.
-impl NodeIdAssigner for FakeNodeIdAssigner {
-    fn next_node_id(&self) -> NodeId {
-        0
-    }
-
-    fn peek_node_id(&self) -> NodeId {
-        0
-    }
-}
-
-#[cfg(test)]
 fn mk_ctxt() -> parse::ParseSess {
     parse::ParseSess::new()
 }
 
 #[cfg(test)]
 fn with_testing_context<T, F: FnOnce(&mut LoweringContext) -> T>(f: F) -> T {
-    let assigner = FakeNodeIdAssigner;
     let mut resolver = DummyResolver;
-    let mut lcx = LoweringContext::testing_context(&assigner, &mut resolver);
+    let mut lcx = LoweringContext::testing_context(&mut resolver);
     f(&mut lcx)
 }
 

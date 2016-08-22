@@ -182,8 +182,10 @@ impl FromInner<AnonPipe> for ChildStderr {
     }
 }
 
-/// The `Command` type acts as a process builder, providing fine-grained control
-/// over how a new process should be spawned. A default configuration can be
+/// A process builder, providing fine-grained control
+/// over how a new process should be spawned.
+///
+/// A default configuration can be
 /// generated using `Command::new(program)`, where `program` gives a path to the
 /// program to be executed. Additional builder methods allow the configuration
 /// to be changed (for example, by adding arguments) prior to spawning:
@@ -195,7 +197,7 @@ impl FromInner<AnonPipe> for ChildStderr {
 ///                      .arg("-c")
 ///                      .arg("echo hello")
 ///                      .output()
-///                      .expect("failed to execute proces");
+///                      .expect("failed to execute process");
 ///
 /// let hello = output.stdout;
 /// ```
@@ -711,16 +713,17 @@ impl Child {
     /// ```should_panic
     /// use std::process::{Command, Stdio};
     ///
-    /// let mut child = Command::new("/bin/cat")
-    ///                         .arg("file.txt")
-    ///                         .stdout(Stdio::piped())
-    ///                         .spawn()
-    ///                         .expect("failed to execute child");
+    /// let child = Command::new("/bin/cat")
+    ///     .arg("file.txt")
+    ///     .stdout(Stdio::piped())
+    ///     .spawn()
+    ///     .expect("failed to execute child");
     ///
-    /// let ecode = child.wait_with_output()
-    ///                  .expect("failed to wait on child");
+    /// let output = child
+    ///     .wait_with_output()
+    ///     .expect("failed to wait on child");
     ///
-    /// assert!(ecode.status.success());
+    /// assert!(output.status.success());
     /// ```
     ///
     #[stable(feature = "process", since = "1.0.0")]

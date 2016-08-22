@@ -26,16 +26,17 @@ use std::fmt::Display;
 use std::io;
 use std::io::prelude::*;
 
-use syntax::codemap::{CodeMap, Span};
+use syntax::codemap::CodeMap;
 use syntax::parse::lexer::{self, Reader, TokenAndSpan};
 use syntax::parse::token;
 use syntax::parse;
+use syntax_pos::Span;
 
 /// Highlights `src`, returning the HTML output.
 pub fn render_with_highlighting(src: &str, class: Option<&str>, id: Option<&str>) -> String {
     debug!("highlighting: ================\n{}\n==============", src);
     let sess = parse::ParseSess::new();
-    let fm = sess.codemap().new_filemap("<stdin>".to_string(), src.to_string());
+    let fm = sess.codemap().new_filemap("<stdin>".to_string(), None, src.to_string());
 
     let mut out = Vec::new();
     write_header(class, id, &mut out).unwrap();
@@ -55,7 +56,7 @@ pub fn render_with_highlighting(src: &str, class: Option<&str>, id: Option<&str>
 /// an enclosing `<pre>` block.
 pub fn render_inner_with_highlighting(src: &str) -> io::Result<String> {
     let sess = parse::ParseSess::new();
-    let fm = sess.codemap().new_filemap("<stdin>".to_string(), src.to_string());
+    let fm = sess.codemap().new_filemap("<stdin>".to_string(), None, src.to_string());
 
     let mut out = Vec::new();
     let mut classifier = Classifier::new(lexer::StringReader::new(&sess.span_diagnostic, fm),
@@ -337,7 +338,7 @@ impl Class {
             Class::MacroNonTerminal => "macro-nonterminal",
             Class::String => "string",
             Class::Number => "number",
-            Class::Bool => "boolvalue",
+            Class::Bool => "bool-val",
             Class::Ident => "ident",
             Class::Lifetime => "lifetime",
             Class::PreludeTy => "prelude-ty",
@@ -351,9 +352,8 @@ fn write_header(class: Option<&str>,
                 out: &mut Write)
                 -> io::Result<()> {
     write!(out, "<pre ")?;
-    match id {
-        Some(id) => write!(out, "id='{}' ", id)?,
-        None => {}
+    if let Some(id) = id {
+        write!(out, "id='{}' ", id)?;
     }
     write!(out, "class='rust {}'>\n", class.unwrap_or(""))
 }

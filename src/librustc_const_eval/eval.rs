@@ -19,7 +19,7 @@ use rustc::hir::map as ast_map;
 use rustc::hir::map::blocks::FnLikeNode;
 use rustc::middle::cstore::{self, InlinedItem};
 use rustc::traits;
-use rustc::hir::def::Def;
+use rustc::hir::def::{Def, PathResolution};
 use rustc::hir::def_id::DefId;
 use rustc::hir::pat_util::def_to_path;
 use rustc::ty::{self, Ty, TyCtxt, subst};
@@ -33,10 +33,10 @@ use syntax::ast;
 use rustc::hir::{Expr, PatKind};
 use rustc::hir;
 use rustc::hir::intravisit::FnKind;
-use syntax::codemap::Span;
 use syntax::ptr::P;
 use syntax::codemap;
 use syntax::attr::IntType;
+use syntax_pos::{self, Span};
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -271,17 +271,16 @@ pub fn const_expr_to_pat<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
     let pat = match expr.node {
         hir::ExprTup(ref exprs) =>
-            PatKind::Tup(try!(exprs.iter()
-                                  .map(|expr| const_expr_to_pat(tcx, &expr,
-                                                                pat_id, span))
-                                  .collect())),
+            PatKind::Tuple(try!(exprs.iter()
+                                     .map(|expr| const_expr_to_pat(tcx, &expr, pat_id, span))
+                                     .collect()), None),
 
         hir::ExprCall(ref callee, ref args) => {
-            let def = *tcx.def_map.borrow().get(&callee.id).unwrap();
+            let def = tcx.expect_def(callee.id);
             if let Vacant(entry) = tcx.def_map.borrow_mut().entry(expr.id) {
-               entry.insert(def);
+               entry.insert(PathResolution::new(def));
             }
-            let path = match def.full_def() {
+            let path = match def {
                 Def::Struct(def_id) => def_to_path(tcx, def_id),
                 Def::Variant(_, variant_did) => def_to_path(tcx, variant_did),
                 Def::Fn(..) | Def::Method(..) => return Ok(P(hir::Pat {
@@ -295,14 +294,14 @@ pub fn const_expr_to_pat<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                 .map(|expr| const_expr_to_pat(tcx, &**expr,
                                                               pat_id, span))
                                 .collect());
-            PatKind::TupleStruct(path, Some(pats))
+            PatKind::TupleStruct(path, pats, None)
         }
 
         hir::ExprStruct(ref path, ref fields, None) => {
             let field_pats =
                 try!(fields.iter()
                            .map(|field| Ok(codemap::Spanned {
-                               span: codemap::DUMMY_SP,
+                               span: syntax_pos::DUMMY_SP,
                                node: hir::FieldPat {
                                    name: field.name.node,
                                    pat: try!(const_expr_to_pat(tcx, &field.expr,
@@ -323,12 +322,9 @@ pub fn const_expr_to_pat<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }
 
         hir::ExprPath(_, ref path) => {
-            let opt_def = tcx.def_map.borrow().get(&expr.id).map(|d| d.full_def());
-            match opt_def {
-                Some(Def::Struct(..)) | Some(Def::Variant(..)) =>
-                    PatKind::Path(path.clone()),
-                Some(Def::Const(def_id)) |
-                Some(Def::AssociatedConst(def_id)) => {
+            match tcx.expect_def(expr.id) {
+                Def::Struct(..) | Def::Variant(..) => PatKind::Path(path.clone()),
+                Def::Const(def_id) | Def::AssociatedConst(def_id) => {
                     let substs = Some(tcx.node_id_item_substs(expr.id).substs);
                     let (expr, _ty) = lookup_const_by_id(tcx, def_id, substs).unwrap();
                     return const_expr_to_pat(tcx, expr, pat_id, span);
@@ -381,12 +377,6 @@ pub enum ErrKind {
     NotOn(ConstVal),
     CallOn(ConstVal),
 
-    DivideByZero,
-    DivideWithOverflow,
-    ModuloByZero,
-    ModuloWithOverflow,
-    ShiftLeftWithOverflow,
-    ShiftRightWithOverflow,
     MissingStructField,
     NonConstPath,
     UnimplementedConstVal(&'static str),
@@ -397,7 +387,7 @@ pub enum ErrKind {
     IndexedNonVec,
     IndexNegative,
     IndexNotInt,
-    IndexOutOfBounds,
+    IndexOutOfBounds { len: u64, index: u64 },
     RepeatCountNotNatural,
     RepeatCountNotInt,
 
@@ -437,12 +427,6 @@ impl ConstEvalErr {
             NotOn(ref const_val) => format!("not on {}", const_val.description()).into_cow(),
             CallOn(ref const_val) => format!("call on {}", const_val.description()).into_cow(),
 
-            DivideByZero         => "attempted to divide by zero".into_cow(),
-            DivideWithOverflow   => "attempted to divide with overflow".into_cow(),
-            ModuloByZero         => "attempted remainder with a divisor of zero".into_cow(),
-            ModuloWithOverflow   => "attempted remainder with overflow".into_cow(),
-            ShiftLeftWithOverflow => "attempted left shift with overflow".into_cow(),
-            ShiftRightWithOverflow => "attempted right shift with overflow".into_cow(),
             MissingStructField  => "nonexistent struct field".into_cow(),
             NonConstPath        => "non-constant path in constant expression".into_cow(),
             UnimplementedConstVal(what) =>
@@ -454,7 +438,10 @@ impl ConstEvalErr {
             IndexedNonVec => "indexing is only supported for arrays".into_cow(),
             IndexNegative => "indices must be non-negative integers".into_cow(),
             IndexNotInt => "indices must be integers".into_cow(),
-            IndexOutOfBounds => "array index out of bounds".into_cow(),
+            IndexOutOfBounds { len, index } => {
+                format!("index out of bounds: the len is {} but the index is {}",
+                        len, index).into_cow()
+            }
             RepeatCountNotNatural => "repeat count must be a natural number".into_cow(),
             RepeatCountNotInt => "repeat count must be integers".into_cow(),
 
@@ -583,6 +570,9 @@ pub fn eval_const_expr_partial<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 (&LitKind::Int(n, Unsuffixed), Some(&ty::TyInt(IntTy::Is))) |
                 (&LitKind::Int(n, Signed(IntTy::Is)), _) => {
                     match tcx.sess.target.int_type {
+                        IntTy::I16 => if n == I16_OVERFLOW {
+                            return Ok(Integral(Isize(Is16(::std::i16::MIN))));
+                        },
                         IntTy::I32 => if n == I32_OVERFLOW {
                             return Ok(Integral(Isize(Is32(::std::i32::MIN))));
                         },
@@ -621,18 +611,19 @@ pub fn eval_const_expr_partial<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         match (eval_const_expr_partial(tcx, &a, ty_hint, fn_args)?,
                eval_const_expr_partial(tcx, &b, b_ty, fn_args)?) {
           (Float(a), Float(b)) => {
+            use std::cmp::Ordering::*;
             match op.node {
-              hir::BiAdd => Float(a + b),
-              hir::BiSub => Float(a - b),
-              hir::BiMul => Float(a * b),
-              hir::BiDiv => Float(a / b),
-              hir::BiRem => Float(a % b),
-              hir::BiEq => Bool(a == b),
-              hir::BiLt => Bool(a < b),
-              hir::BiLe => Bool(a <= b),
-              hir::BiNe => Bool(a != b),
-              hir::BiGe => Bool(a >= b),
-              hir::BiGt => Bool(a > b),
+              hir::BiAdd => Float(math!(e, a + b)),
+              hir::BiSub => Float(math!(e, a - b)),
+              hir::BiMul => Float(math!(e, a * b)),
+              hir::BiDiv => Float(math!(e, a / b)),
+              hir::BiRem => Float(math!(e, a % b)),
+              hir::BiEq => Bool(math!(e, a.try_cmp(b)) == Equal),
+              hir::BiLt => Bool(math!(e, a.try_cmp(b)) == Less),
+              hir::BiLe => Bool(math!(e, a.try_cmp(b)) != Greater),
+              hir::BiNe => Bool(math!(e, a.try_cmp(b)) != Equal),
+              hir::BiGe => Bool(math!(e, a.try_cmp(b)) != Less),
+              hir::BiGt => Bool(math!(e, a.try_cmp(b)) == Greater),
               _ => signal!(e, InvalidOpForFloats(op.node)),
             }
           }
@@ -713,21 +704,13 @@ pub fn eval_const_expr_partial<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }
       }
       hir::ExprPath(..) => {
-          let opt_def = if let Some(def) = tcx.def_map.borrow().get(&e.id) {
-              // After type-checking, def_map contains definition of the
-              // item referred to by the path. During type-checking, it
-              // can contain the raw output of path resolution, which
-              // might be a partially resolved path.
-              // FIXME: There's probably a better way to make sure we don't
-              // panic here.
-              if def.depth != 0 {
-                  signal!(e, UnresolvedPath);
-              }
-              def.full_def()
-          } else {
-              signal!(e, NonConstPath);
-          };
-          match opt_def {
+          // This function can be used before type checking when not all paths are fully resolved.
+          // FIXME: There's probably a better way to make sure we don't panic here.
+          let resolution = tcx.expect_resolution(e.id);
+          if resolution.depth != 0 {
+              signal!(e, UnresolvedPath);
+          }
+          match resolution.base_def {
               Def::Const(def_id) |
               Def::AssociatedConst(def_id) => {
                   let substs = if let ExprTypeChecked = ty_hint {
@@ -838,7 +821,9 @@ pub fn eval_const_expr_partial<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         };
         assert_eq!(idx as usize as u64, idx);
         match arr {
-            Array(_, n) if idx >= n => signal!(e, IndexOutOfBounds),
+            Array(_, n) if idx >= n => {
+                signal!(e, IndexOutOfBounds { len: n, index: idx })
+            }
             Array(v, n) => if let hir::ExprVec(ref v) = tcx.map.expect_expr(v).node {
                 assert_eq!(n as usize as u64, n);
                 eval_const_expr_partial(tcx, &v[idx as usize], ty_hint, fn_args)?
@@ -846,7 +831,9 @@ pub fn eval_const_expr_partial<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 bug!()
             },
 
-            Repeat(_, n) if idx >= n => signal!(e, IndexOutOfBounds),
+            Repeat(_, n) if idx >= n => {
+                signal!(e, IndexOutOfBounds { len: n, index: idx })
+            }
             Repeat(elem, _) => eval_const_expr_partial(
                 tcx,
                 &tcx.map.expect_expr(elem),
@@ -854,14 +841,13 @@ pub fn eval_const_expr_partial<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 fn_args,
             )?,
 
-            ByteStr(ref data) if idx >= data.len() as u64 => signal!(e, IndexOutOfBounds),
+            ByteStr(ref data) if idx >= data.len() as u64 => {
+                signal!(e, IndexOutOfBounds { len: data.len() as u64, index: idx })
+            }
             ByteStr(data) => {
                 Integral(U8(data[idx as usize]))
             },
 
-            Str(ref s) if idx as usize >= s.len() => signal!(e, IndexOutOfBounds),
-            // FIXME: return a const char
-            Str(_) => signal!(e, UnimplementedConstVal("indexing into str")),
             _ => signal!(e, IndexedNonVec),
         }
       }
@@ -952,10 +938,7 @@ fn infer<'a, 'tcx>(i: ConstInt,
         (&ty::TyInt(IntTy::I32), Infer(i)) => Ok(I32(i as i64 as i32)),
         (&ty::TyInt(IntTy::I64), Infer(i)) => Ok(I64(i as i64)),
         (&ty::TyInt(IntTy::Is), Infer(i)) => {
-            match ConstIsize::new(i as i64, tcx.sess.target.int_type) {
-                Ok(val) => Ok(Isize(val)),
-                Err(_) => Ok(Isize(ConstIsize::Is32(i as i64 as i32))),
-            }
+            Ok(Isize(ConstIsize::new_truncating(i as i64, tcx.sess.target.int_type)))
         },
 
         (&ty::TyInt(IntTy::I8), InferSigned(i)) => Ok(I8(i as i8)),
@@ -963,10 +946,7 @@ fn infer<'a, 'tcx>(i: ConstInt,
         (&ty::TyInt(IntTy::I32), InferSigned(i)) => Ok(I32(i as i32)),
         (&ty::TyInt(IntTy::I64), InferSigned(i)) => Ok(I64(i)),
         (&ty::TyInt(IntTy::Is), InferSigned(i)) => {
-            match ConstIsize::new(i, tcx.sess.target.int_type) {
-                Ok(val) => Ok(Isize(val)),
-                Err(_) => Ok(Isize(ConstIsize::Is32(i as i32))),
-            }
+            Ok(Isize(ConstIsize::new_truncating(i, tcx.sess.target.int_type)))
         },
 
         (&ty::TyUint(UintTy::U8), Infer(i)) => Ok(U8(i as u8)),
@@ -974,10 +954,7 @@ fn infer<'a, 'tcx>(i: ConstInt,
         (&ty::TyUint(UintTy::U32), Infer(i)) => Ok(U32(i as u32)),
         (&ty::TyUint(UintTy::U64), Infer(i)) => Ok(U64(i)),
         (&ty::TyUint(UintTy::Us), Infer(i)) => {
-            match ConstUsize::new(i, tcx.sess.target.uint_type) {
-                Ok(val) => Ok(Usize(val)),
-                Err(_) => Ok(Usize(ConstUsize::Us32(i as u32))),
-            }
+            Ok(Usize(ConstUsize::new_truncating(i, tcx.sess.target.uint_type)))
         },
         (&ty::TyUint(_), InferSigned(_)) => Err(IntermediateUnsignedNegative),
 
@@ -1059,29 +1036,23 @@ fn cast_const_int<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, val: ConstInt, ty: ty::
         ty::TyInt(ast::IntTy::I32) => Ok(Integral(I32(v as i64 as i32))),
         ty::TyInt(ast::IntTy::I64) => Ok(Integral(I64(v as i64))),
         ty::TyInt(ast::IntTy::Is) => {
-            match ConstIsize::new(v as i64, tcx.sess.target.int_type) {
-                Ok(val) => Ok(Integral(Isize(val))),
-                Err(_) => Ok(Integral(Isize(ConstIsize::Is32(v as i64 as i32)))),
-            }
+            Ok(Integral(Isize(ConstIsize::new_truncating(v as i64, tcx.sess.target.int_type))))
         },
         ty::TyUint(ast::UintTy::U8) => Ok(Integral(U8(v as u8))),
         ty::TyUint(ast::UintTy::U16) => Ok(Integral(U16(v as u16))),
         ty::TyUint(ast::UintTy::U32) => Ok(Integral(U32(v as u32))),
         ty::TyUint(ast::UintTy::U64) => Ok(Integral(U64(v))),
         ty::TyUint(ast::UintTy::Us) => {
-            match ConstUsize::new(v, tcx.sess.target.uint_type) {
-                Ok(val) => Ok(Integral(Usize(val))),
-                Err(_) => Ok(Integral(Usize(ConstUsize::Us32(v as u32)))),
-            }
+            Ok(Integral(Usize(ConstUsize::new_truncating(v, tcx.sess.target.uint_type))))
         },
         ty::TyFloat(ast::FloatTy::F64) => match val.erase_type() {
-            Infer(u) => Ok(Float(u as f64)),
-            InferSigned(i) => Ok(Float(i as f64)),
+            Infer(u) => Ok(Float(F64(u as f64))),
+            InferSigned(i) => Ok(Float(F64(i as f64))),
             _ => bug!("ConstInt::erase_type returned something other than Infer/InferSigned"),
         },
         ty::TyFloat(ast::FloatTy::F32) => match val.erase_type() {
-            Infer(u) => Ok(Float(u as f32 as f64)),
-            InferSigned(i) => Ok(Float(i as f32 as f64)),
+            Infer(u) => Ok(Float(F32(u as f32))),
+            InferSigned(i) => Ok(Float(F32(i as f32))),
             _ => bug!("ConstInt::erase_type returned something other than Infer/InferSigned"),
         },
         ty::TyRawPtr(_) => Err(ErrKind::UnimplementedConstVal("casting an address to a raw ptr")),
@@ -1094,13 +1065,35 @@ fn cast_const_int<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, val: ConstInt, ty: ty::
     }
 }
 
-fn cast_const_float<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, f: f64, ty: ty::Ty) -> CastResult {
+fn cast_const_float<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                              val: ConstFloat,
+                              ty: ty::Ty) -> CastResult {
     match ty.sty {
-        ty::TyInt(_) if f >= 0.0 => cast_const_int(tcx, Infer(f as u64), ty),
-        ty::TyInt(_) => cast_const_int(tcx, InferSigned(f as i64), ty),
-        ty::TyUint(_) if f >= 0.0 => cast_const_int(tcx, Infer(f as u64), ty),
-        ty::TyFloat(ast::FloatTy::F64) => Ok(Float(f)),
-        ty::TyFloat(ast::FloatTy::F32) => Ok(Float(f as f32 as f64)),
+        ty::TyInt(_) | ty::TyUint(_) => {
+            let i = match val {
+                F32(f) if f >= 0.0 => Infer(f as u64),
+                FInfer { f64: f, .. } |
+                F64(f) if f >= 0.0 => Infer(f as u64),
+
+                F32(f) => InferSigned(f as i64),
+                FInfer { f64: f, .. } |
+                F64(f) => InferSigned(f as i64)
+            };
+
+            if let (InferSigned(_), &ty::TyUint(_)) = (i, &ty.sty) {
+                return Err(CannotCast);
+            }
+
+            cast_const_int(tcx, i, ty)
+        }
+        ty::TyFloat(ast::FloatTy::F64) => Ok(Float(F64(match val {
+            F32(f) => f as f64,
+            FInfer { f64: f, .. } | F64(f) => f
+        }))),
+        ty::TyFloat(ast::FloatTy::F32) => Ok(Float(F32(match val {
+            F64(f) => f as f32,
+            FInfer { f32: f, .. } | F32(f) => f
+        }))),
         _ => Err(CannotCast),
     }
 }
@@ -1116,6 +1109,7 @@ fn cast_const<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, val: ConstVal, ty: ty::Ty) 
             ty::TyRawPtr(_) => {
                 Err(ErrKind::UnimplementedConstVal("casting a bytestr to a raw ptr"))
             },
+            ty::TyRef(..) => Err(ErrKind::UnimplementedConstVal("casting a bytestr to slice")),
             _ => Err(CannotCast),
         },
         _ => Err(CannotCast),
@@ -1158,33 +1152,43 @@ fn lit_to_const<'a, 'tcx>(lit: &ast::LitKind,
             infer(Infer(n), tcx, &ty::TyUint(ity)).map(Integral)
         },
 
-        LitKind::Float(ref n, _) |
+        LitKind::Float(ref n, fty) => {
+            Ok(Float(parse_float(n, Some(fty), span)))
+        }
         LitKind::FloatUnsuffixed(ref n) => {
-            if let Ok(x) = n.parse::<f64>() {
-                Ok(Float(x))
-            } else {
-                // FIXME(#31407) this is only necessary because float parsing is buggy
-                span_bug!(span, "could not evaluate float literal (see issue #31407)");
-            }
+            let fty_hint = match ty_hint.map(|t| &t.sty) {
+                Some(&ty::TyFloat(fty)) => Some(fty),
+                _ => None
+            };
+            Ok(Float(parse_float(n, fty_hint, span)))
         }
         LitKind::Bool(b) => Ok(Bool(b)),
         LitKind::Char(c) => Ok(Char(c)),
     }
 }
 
+fn parse_float(num: &str, fty_hint: Option<ast::FloatTy>, span: Span) -> ConstFloat {
+    let val = match fty_hint {
+        Some(ast::FloatTy::F32) => num.parse::<f32>().map(F32),
+        Some(ast::FloatTy::F64) => num.parse::<f64>().map(F64),
+        None => {
+            num.parse::<f32>().and_then(|f32| {
+                num.parse::<f64>().map(|f64| {
+                    FInfer { f32: f32, f64: f64 }
+                })
+            })
+        }
+    };
+    val.unwrap_or_else(|_| {
+        // FIXME(#31407) this is only necessary because float parsing is buggy
+        span_bug!(span, "could not evaluate float literal (see issue #31407)");
+    })
+}
+
 pub fn compare_const_vals(a: &ConstVal, b: &ConstVal) -> Option<Ordering> {
     match (a, b) {
         (&Integral(a), &Integral(b)) => a.try_cmp(b).ok(),
-        (&Float(a), &Float(b)) => {
-            // This is pretty bad but it is the existing behavior.
-            Some(if a == b {
-                Ordering::Equal
-            } else if a < b {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            })
-        }
+        (&Float(a), &Float(b)) => a.try_cmp(b).ok(),
         (&Str(ref a), &Str(ref b)) => Some(a.cmp(b)),
         (&Bool(a), &Bool(b)) => Some(a.cmp(&b)),
         (&ByteStr(ref a), &ByteStr(ref b)) => Some(a.cmp(b)),

@@ -20,6 +20,7 @@ use std::iter::repeat;
 
 use rustc::middle::cstore::LOCAL_CRATE;
 use rustc::hir::def_id::{CRATE_DEF_INDEX, DefId};
+use rustc::util::common::slice_pat;
 use syntax::abi::Abi;
 use rustc::hir;
 
@@ -111,28 +112,27 @@ impl fmt::Display for clean::Generics {
 
         for (i, life) in self.lifetimes.iter().enumerate() {
             if i > 0 {
-                f.write_str(", ")?;
+                f.write_str(",&nbsp;")?;
             }
             write!(f, "{}", *life)?;
         }
 
         if !self.type_params.is_empty() {
             if !self.lifetimes.is_empty() {
-                f.write_str(", ")?;
+                f.write_str(",&nbsp;")?;
             }
             for (i, tp) in self.type_params.iter().enumerate() {
                 if i > 0 {
-                    f.write_str(", ")?
+                    f.write_str(",&nbsp;")?
                 }
                 f.write_str(&tp.name)?;
 
                 if !tp.bounds.is_empty() {
-                    write!(f, ": {}", TyParamBounds(&tp.bounds))?;
+                    write!(f, ":&nbsp;{}", TyParamBounds(&tp.bounds))?;
                 }
 
-                match tp.default {
-                    Some(ref ty) => { write!(f, " = {}", ty)?; },
-                    None => {}
+                if let Some(ref ty) = tp.default {
+                    write!(f, "&nbsp;=&nbsp;{}", ty)?;
                 };
             }
         }
@@ -229,21 +229,21 @@ impl fmt::Display for clean::PathParameters {
                     let mut comma = false;
                     for lifetime in lifetimes {
                         if comma {
-                            f.write_str(", ")?;
+                            f.write_str(",&nbsp;")?;
                         }
                         comma = true;
                         write!(f, "{}", *lifetime)?;
                     }
                     for ty in types {
                         if comma {
-                            f.write_str(", ")?;
+                            f.write_str(",&nbsp;")?;
                         }
                         comma = true;
                         write!(f, "{}", *ty)?;
                     }
                     for binding in bindings {
                         if comma {
-                            f.write_str(", ")?;
+                            f.write_str(",&nbsp;")?;
                         }
                         comma = true;
                         write!(f, "{}", *binding)?;
@@ -400,15 +400,12 @@ fn primitive_link(f: &mut fmt::Formatter,
                 }
                 (_, render::Unknown) => None,
             };
-            match loc {
-                Some(root) => {
-                    write!(f, "<a class='primitive' href='{}{}/primitive.{}.html'>",
-                           root,
-                           path.0.first().unwrap(),
-                           prim.to_url_str())?;
-                    needs_termination = true;
-                }
-                None => {}
+            if let Some(root) = loc {
+                write!(f, "<a class='primitive' href='{}{}/primitive.{}.html'>",
+                       root,
+                       path.0.first().unwrap(),
+                       prim.to_url_str())?;
+                needs_termination = true;
             }
         }
         None => {}
@@ -474,9 +471,9 @@ impl fmt::Display for clean::Type {
                        decl.decl)
             }
             clean::Tuple(ref typs) => {
-                match &**typs {
-                    [] => primitive_link(f, clean::PrimitiveTuple, "()"),
-                    [ref one] => {
+                match slice_pat(&&**typs) {
+                    &[] => primitive_link(f, clean::PrimitiveTuple, "()"),
+                    &[ref one] => {
                         primitive_link(f, clean::PrimitiveTuple, "(")?;
                         write!(f, "{},", one)?;
                         primitive_link(f, clean::PrimitiveTuple, ")")

@@ -69,15 +69,12 @@ pub enum Ns {
     Value
 }
 
-fn number_of_supplied_defaults<'a, 'gcx, 'tcx, GG>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
-                                                   substs: &subst::Substs,
-                                                   space: subst::ParamSpace,
-                                                   get_generics: GG)
-                                                   -> usize
-    where GG: FnOnce(TyCtxt<'a, 'gcx, 'tcx>) -> ty::Generics<'tcx>
+fn number_of_supplied_defaults<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
+                                               substs: &subst::Substs,
+                                               space: subst::ParamSpace,
+                                               generics: ty::Generics<'tcx>)
+                                               -> usize
 {
-    let generics = get_generics(tcx);
-
     let has_self = substs.self_ty().is_some();
     let ty_params = generics.types.get_slice(space);
     let tps = substs.types.get_slice(space);
@@ -115,7 +112,8 @@ pub fn parameterized<GG>(f: &mut fmt::Formatter,
                          projections: &[ty::ProjectionPredicate],
                          get_generics: GG)
                          -> fmt::Result
-    where GG: for<'a, 'gcx, 'tcx> FnOnce(TyCtxt<'a, 'gcx, 'tcx>) -> ty::Generics<'tcx>
+    where GG: for<'a, 'gcx, 'tcx> FnOnce(TyCtxt<'a, 'gcx, 'tcx>)
+                                         -> Option<ty::Generics<'tcx>>
 {
     if let (Ns::Value, Some(self_ty)) = (ns, substs.self_ty()) {
         write!(f, "<{} as ", self_ty)?;
@@ -150,39 +148,46 @@ pub fn parameterized<GG>(f: &mut fmt::Formatter,
             write!(f, "{}", cont)
         }
     };
-    let print_region = |f: &mut fmt::Formatter, region: &ty::Region| -> _ {
-        if verbose {
-            write!(f, "{:?}", region)
-        } else {
-            let s = region.to_string();
-            if s.is_empty() {
-                // This happens when the value of the region
-                // parameter is not easily serialized. This may be
-                // because the user omitted it in the first place,
-                // or because it refers to some block in the code,
-                // etc. I'm not sure how best to serialize this.
-                write!(f, "'_")
+
+    let print_regions = |f: &mut fmt::Formatter, start: &str, regions: &[ty::Region]| {
+        // Don't print any regions if they're all erased.
+        if regions.iter().all(|r| *r == ty::ReErased) {
+            return Ok(());
+        }
+
+        for region in regions {
+            start_or_continue(f, start, ", ")?;
+            if verbose {
+                write!(f, "{:?}", region)?;
             } else {
-                write!(f, "{}", s)
+                let s = region.to_string();
+                if s.is_empty() {
+                    // This happens when the value of the region
+                    // parameter is not easily serialized. This may be
+                    // because the user omitted it in the first place,
+                    // or because it refers to some block in the code,
+                    // etc. I'm not sure how best to serialize this.
+                    write!(f, "'_")?;
+                } else {
+                    write!(f, "{}", s)?;
+                }
             }
         }
+
+        Ok(())
     };
 
-    for region in substs.regions.get_slice(subst::TypeSpace) {
-        start_or_continue(f, "<", ", ")?;
-        print_region(f, region)?;
-    }
+    print_regions(f, "<", substs.regions.get_slice(subst::TypeSpace))?;
 
     let num_supplied_defaults = if verbose {
         0
     } else {
-        // It is important to execute this conditionally, only if -Z
-        // verbose is false. Otherwise, debug logs can sometimes cause
-        // ICEs trying to fetch the generics early in the pipeline. This
-        // is kind of a hacky workaround in that -Z verbose is required to
-        // avoid those ICEs.
         ty::tls::with(|tcx| {
-            number_of_supplied_defaults(tcx, substs, subst::TypeSpace, get_generics)
+            if let Some(generics) = get_generics(tcx) {
+                number_of_supplied_defaults(tcx, substs, subst::TypeSpace, generics)
+            } else {
+                0
+            }
         })
     };
 
@@ -214,10 +219,7 @@ pub fn parameterized<GG>(f: &mut fmt::Formatter,
             write!(f, "::{}", item_name)?;
         }
 
-        for region in substs.regions.get_slice(subst::FnSpace) {
-            start_or_continue(f, "::<", ", ")?;
-            print_region(f, region)?;
-        }
+        print_regions(f, "::<", substs.regions.get_slice(subst::FnSpace))?;
 
         // FIXME: consider being smart with defaults here too
         for ty in substs.types.get_slice(subst::FnSpace) {
@@ -261,7 +263,7 @@ fn in_binder<'a, 'gcx, 'tcx, T, U>(f: &mut fmt::Formatter,
     let new_value = tcx.replace_late_bound_regions(&value, |br| {
         let _ = start_or_continue(f, "for<", ", ");
         ty::ReLateBound(ty::DebruijnIndex::new(1), match br {
-            ty::BrNamed(_, name) => {
+            ty::BrNamed(_, name, _) => {
                 let _ = write!(f, "{}", name);
                 br
             }
@@ -270,7 +272,9 @@ fn in_binder<'a, 'gcx, 'tcx, T, U>(f: &mut fmt::Formatter,
             ty::BrEnv => {
                 let name = token::intern("'r");
                 let _ = write!(f, "{}", name);
-                ty::BrNamed(tcx.map.local_def_id(CRATE_NODE_ID), name)
+                ty::BrNamed(tcx.map.local_def_id(CRATE_NODE_ID),
+                            name,
+                            ty::Issue32330::WontChange)
             }
         })
     }).0;
@@ -310,7 +314,7 @@ impl<'tcx> fmt::Display for TraitAndProjections<'tcx> {
                       trait_ref.def_id,
                       Ns::Type,
                       projection_bounds,
-                      |tcx| tcx.lookup_trait_def(trait_ref.def_id).generics.clone())
+                      |tcx| Some(tcx.lookup_trait_def(trait_ref.def_id).generics.clone()))
     }
 }
 
@@ -485,7 +489,7 @@ impl fmt::Display for ty::BoundRegion {
         }
 
         match *self {
-            BrNamed(_, name) => write!(f, "{}", name),
+            BrNamed(_, name, _) => write!(f, "{}", name),
             BrAnon(_) | BrFresh(_) | BrEnv => Ok(())
         }
     }
@@ -496,8 +500,9 @@ impl fmt::Debug for ty::BoundRegion {
         match *self {
             BrAnon(n) => write!(f, "BrAnon({:?})", n),
             BrFresh(n) => write!(f, "BrFresh({:?})", n),
-            BrNamed(did, name) => {
-                write!(f, "BrNamed({:?}:{:?}, {:?})", did.krate, did.index, name)
+            BrNamed(did, name, issue32330) => {
+                write!(f, "BrNamed({:?}:{:?}, {:?}, {:?})",
+                       did.krate, did.index, name, issue32330)
             }
             BrEnv => "BrEnv".fmt(f),
         }
@@ -536,7 +541,9 @@ impl fmt::Debug for ty::Region {
                 write!(f, "ReSkolemized({}, {:?})", id.index, bound_region)
             }
 
-            ty::ReEmpty => write!(f, "ReEmpty")
+            ty::ReEmpty => write!(f, "ReEmpty"),
+
+            ty::ReErased => write!(f, "ReErased")
         }
     }
 }
@@ -600,7 +607,8 @@ impl fmt::Display for ty::Region {
                 write!(f, "{}", br)
             }
             ty::ReScope(_) |
-            ty::ReVar(_) => Ok(()),
+            ty::ReVar(_) |
+            ty::ReErased => Ok(()),
             ty::ReStatic => write!(f, "'static"),
             ty::ReEmpty => write!(f, "'<empty>"),
         }
@@ -811,7 +819,7 @@ impl fmt::Display for ty::Binder<ty::OutlivesPredicate<ty::Region, ty::Region>> 
 impl<'tcx> fmt::Display for ty::TraitRef<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         parameterized(f, self.substs, self.def_id, Ns::Type, &[],
-                      |tcx| tcx.lookup_trait_def(self.def_id).generics.clone())
+                      |tcx| Some(tcx.lookup_trait_def(self.def_id).generics.clone()))
     }
 }
 
@@ -863,8 +871,9 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                 }
 
                 write!(f, "{} {{", bare_fn.sig.0)?;
-                parameterized(f, substs, def_id, Ns::Value, &[],
-                              |tcx| tcx.lookup_item_type(def_id).generics)?;
+                parameterized(
+                    f, substs, def_id, Ns::Value, &[],
+                    |tcx| tcx.opt_lookup_item_type(def_id).map(|t| t.generics))?;
                 write!(f, "}}")
             }
             TyFnPtr(ref bare_fn) => {
@@ -887,8 +896,12 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                           !tcx.tcache.borrow().contains_key(&def.did) {
                         write!(f, "{}<..>", tcx.item_path_str(def.did))
                     } else {
-                        parameterized(f, substs, def.did, Ns::Type, &[],
-                                      |tcx| tcx.lookup_item_type(def.did).generics)
+                        parameterized(
+                            f, substs, def.did, Ns::Type, &[],
+                            |tcx| {
+                                tcx.opt_lookup_item_type(def.did).
+                                    map(|t| t.generics)
+                            })
                     }
                 })
             }
