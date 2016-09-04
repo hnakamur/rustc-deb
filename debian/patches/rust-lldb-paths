@@ -6,7 +6,7 @@ Forwarded: not-needed
 
 --- a/src/etc/rust-lldb
 +++ b/src/etc/rust-lldb
-@@ -29,11 +29,8 @@
+@@ -29,13 +29,10 @@
  # Make sure to delete the tempfile no matter what
  trap "rm -f $TMPFILE; exit" INT TERM EXIT
  
@@ -19,3 +19,6 @@ Forwarded: not-needed
  echo "type summary add --no-value --python-function lldb_rust_formatters.print_val -x \".*\" --category Rust" >> $TMPFILE
  echo "type category enable Rust" >> $TMPFILE
  
+ # Call LLDB with the script added to the argument list
+-lldb --source-before-file="$TMPFILE" "$@"
++lldb-3.8 --source-before-file="$TMPFILE" "$@"
