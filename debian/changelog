@@ -1,9 +1,9 @@
-rustc (1.11.0+dfsg1-1) UNRELEASED; urgency=medium
+rustc (1.11.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
   * Add versioned binutils dependency. (Closes: #819475, #823540)
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 22 Aug 2016 23:32:26 +0200
+ -- Ximin Luo <infinity0@debian.org>  Wed, 07 Sep 2016 10:31:57 +0200
 
 rustc (1.10.0+dfsg1-3) unstable; urgency=medium
 
