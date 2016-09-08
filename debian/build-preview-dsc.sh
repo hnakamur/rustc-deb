@@ -118,7 +118,7 @@ rm -f dl
 cp -al ../"dl_${CFG_RELEASE}" dl
 # set build-dep arch exceptions
 deb_bd_arch_ex="$(echo "$ARCHES" | sed -e 's/\S*/!\0/g')"
-sed -e 's/rustc (\(.*\)) \[\(.*\)\]/rustc (\1) ['"$deb_bd_arch_ex"']/g' -i debian/control
+sed -e 's/rustc (\(.*\))\( *\[\(.*\)\]\)\?/rustc (\1) ['"$deb_bd_arch_ex"']/g' -i debian/control
 
 rm debian/missing-sources/jquery-*
 cp "../$(basename "$JQUERY")" debian/missing-sources
