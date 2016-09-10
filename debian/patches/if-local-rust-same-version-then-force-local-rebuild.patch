@@ -1,0 +1,120 @@
+Description: If local-rust is the same as the current version, then force a local-rebuild
+Author: Ximin Luo <infinity0@pwned.gg>
+Bug: https://github.com/rust-lang/rust/pull/34779
+Applied-Upstream: commit:dc8212ff200dc54113a87b3a7033879133fdfff0
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/configure
++++ b/configure
+@@ -611,7 +611,7 @@
+ opt fast-make 0 "use .gitmodules as timestamp for submodule deps"
+ opt ccache 0 "invoke gcc/clang via ccache to reuse object files between builds"
+ opt local-rust 0 "use an installed rustc rather than downloading a snapshot"
+-opt local-rebuild 0 "use an installed rustc matching the current version, for rebuilds"
++opt local-rebuild 0 "assume local-rust matches the current version, for rebuilds; implies local-rust, and is implied if local-rust already matches the current version"
+ opt llvm-static-stdcpp 0 "statically link to libstdc++ for LLVM"
+ opt rpath 1 "build rpaths into rustc itself"
+ opt stage0-landing-pads 1 "enable landing pads during bootstrap with stage0"
+--- a/mk/main.mk
++++ b/mk/main.mk
+@@ -20,29 +20,6 @@
+ # versions (section 9)
+ CFG_PRERELEASE_VERSION=.3
+ 
+-# Append a version-dependent hash to each library, so we can install different
+-# versions in the same place
+-CFG_FILENAME_EXTRA=$(shell printf '%s' $(CFG_RELEASE)$(CFG_EXTRA_FILENAME) | $(CFG_HASH_COMMAND))
+-
+-# A magic value that allows the compiler to use unstable features during the
+-# bootstrap even when doing so would normally be an error because of feature
+-# staging or because the build turns on warnings-as-errors and unstable features
+-# default to warnings. The build has to match this key in an env var.
+-#
+-# This value is keyed off the release to ensure that all compilers for one
+-# particular release have the same bootstrap key. Note that this is
+-# intentionally not "secure" by any definition, this is largely just a deterrent
+-# from users enabling unstable features on the stable compiler.
+-CFG_BOOTSTRAP_KEY=$(CFG_FILENAME_EXTRA)
+-
+-# The stage0 compiler needs to use the previous key recorded in src/stage0.txt,
+-# except for local-rebuild when it just uses the same current key.
+-ifdef CFG_ENABLE_LOCAL_REBUILD
+-CFG_BOOTSTRAP_KEY_STAGE0=$(CFG_BOOTSTRAP_KEY)
+-else
+-CFG_BOOTSTRAP_KEY_STAGE0=$(shell grep 'rustc_key' $(S)src/stage0.txt | sed 's/rustc_key: '//)
+-endif
+-
+ ifeq ($(CFG_RELEASE_CHANNEL),stable)
+ # This is the normal semver version string, e.g. "0.12.0", "0.12.0-nightly"
+ CFG_RELEASE=$(CFG_RELEASE_NUM)
+@@ -72,6 +49,38 @@
+ CFG_PACKAGE_VERS=$(CFG_RELEASE_NUM)-dev
+ endif
+ 
++# Append a version-dependent hash to each library, so we can install different
++# versions in the same place
++CFG_FILENAME_EXTRA=$(shell printf '%s' $(CFG_RELEASE)$(CFG_EXTRA_FILENAME) | $(CFG_HASH_COMMAND))
++
++# A magic value that allows the compiler to use unstable features during the
++# bootstrap even when doing so would normally be an error because of feature
++# staging or because the build turns on warnings-as-errors and unstable features
++# default to warnings. The build has to match this key in an env var.
++#
++# This value is keyed off the release to ensure that all compilers for one
++# particular release have the same bootstrap key. Note that this is
++# intentionally not "secure" by any definition, this is largely just a deterrent
++# from users enabling unstable features on the stable compiler.
++CFG_BOOTSTRAP_KEY=$(CFG_FILENAME_EXTRA)
++
++# If local-rust is the same as the current version, then force a local-rebuild
++ifdef CFG_ENABLE_LOCAL_RUST
++ifeq ($(CFG_RELEASE),\
++      $(shell $(S)src/etc/local_stage0.sh --print-rustc-release $(CFG_LOCAL_RUST_ROOT)))
++    CFG_INFO := $(info cfg: auto-detected local-rebuild $(CFG_RELEASE))
++    CFG_ENABLE_LOCAL_REBUILD = 1
++endif
++endif
++
++# The stage0 compiler needs to use the previous key recorded in src/stage0.txt,
++# except for local-rebuild when it just uses the same current key.
++ifdef CFG_ENABLE_LOCAL_REBUILD
++CFG_BOOTSTRAP_KEY_STAGE0=$(CFG_BOOTSTRAP_KEY)
++else
++CFG_BOOTSTRAP_KEY_STAGE0=$(shell sed -ne 's/^rustc_key: //p' $(S)src/stage0.txt)
++endif
++
+ # The name of the package to use for creating tarballs, installers etc.
+ CFG_PACKAGE_NAME=rustc-$(CFG_PACKAGE_VERS)
+ 
+--- a/mk/stage0.mk
++++ b/mk/stage0.mk
+@@ -11,6 +11,7 @@
+ 
+ $(SNAPSHOT_RUSTC_POST_CLEANUP): \
+ 		$(S)src/stage0.txt \
++		$(S)src/etc/local_stage0.sh \
+ 		$(S)src/etc/get-stage0.py $(MKFILE_DEPS) \
+ 		| $(HBIN0_H_$(CFG_BUILD))/
+ 	@$(call E, fetch: $@)
+--- a/src/etc/local_stage0.sh
++++ b/src/etc/local_stage0.sh
+@@ -49,6 +49,13 @@
+     exit 1
+ fi
+ 
++case "$TARG_DIR" in
++--print-rustc-release)
++  # not actually copying to TARG_DIR, just print the local rustc version and exit
++  ${PREFIX}/bin/rustc${BIN_SUF} --version --verbose | sed -ne 's/^release: //p'
++;;
++*)
++
+ cp ${PREFIX}/bin/rustc${BIN_SUF} ${TARG_DIR}/stage0/bin/
+ cp ${PREFIX}/${LIB_DIR}/${RUSTLIBDIR}/${TARG_DIR}/${LIB_DIR}/* ${TARG_DIR}/stage0/${LIB_DIR}/
+ cp ${PREFIX}/${LIB_DIR}/${LIB_PREFIX}extra*${LIB_SUF} ${TARG_DIR}/stage0/${LIB_DIR}/
+@@ -66,3 +73,5 @@
+ 
+ # do not fail if one of the above fails, as all we need is a working rustc!
+ exit 0
++
++esac

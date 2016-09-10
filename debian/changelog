@@ -1,3 +1,11 @@
+rustc (1.11.0+dfsg1-2) UNRELEASED; urgency=medium
+
+  * Fix rebuilding against the current version, by backporting a patch I wrote
+    that was already applied upstream. Should fix the FTBFS that was observed
+    by tests.reproducible-builds.org.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 10 Sep 2016 22:01:04 +0200
+
 rustc (1.11.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release

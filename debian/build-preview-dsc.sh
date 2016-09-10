@@ -35,6 +35,7 @@ case "$1" in
 	# rm patches applied upstream
 	dquilt delete avoid-redundant-dls.diff
 	dquilt delete ignore-failing-armhf-tests_04.patch
+	dquilt delete if-local-rust-same-version-then-force-local-rebuild.patch
 	;;
 esac
 }

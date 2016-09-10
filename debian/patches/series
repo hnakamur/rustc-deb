@@ -10,3 +10,4 @@ ignore-failing-armhf-tests_02.patch
 ignore-failing-armhf-tests_03.patch
 ignore-failing-armhf-tests_04.patch
 dynamic-link-llvm.patch
+if-local-rust-same-version-then-force-local-rebuild.patch
