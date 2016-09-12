@@ -126,8 +126,13 @@ generate-sources:
 override_dh_auto_build-arch: generate-sources
 	dh_auto_build -- all-no-docs VERBOSE=1
 
+# note: this is only for buildds that want to do a separate arch:all build;
+# there is no point running this yourself "to save time" since it implicitly
+# depends on build-arch anyways.
 override_dh_auto_build-indep: generate-sources
-	$(if $(BUILD_DOCS),dh_auto_build -- docs)
+ifneq (,$(BUILD_DOCS))
+	dh_auto_build -- docs VERBOSE=1
+endif
 
 override_dh_auto_install:
 	dh_auto_install --destdir=$(DEB_DESTDIR)
