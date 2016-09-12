@@ -1,4 +1,4 @@
-rustc (1.11.0+dfsg1-2) UNRELEASED; urgency=medium
+rustc (1.11.0+dfsg1-2) unstable; urgency=medium
 
   * Fix rebuilding against the current version, by backporting a patch I wrote
     that was already applied upstream. Should fix the FTBFS that was observed
@@ -6,7 +6,7 @@ rustc (1.11.0+dfsg1-2) UNRELEASED; urgency=medium
   * Ignore a failing stdcall test on arm64; should fix the FTBFS there.
   * Backport a doctest fix I wrote, already applied upstream.
 
- -- Ximin Luo <infinity0@debian.org>  Sat, 10 Sep 2016 22:01:04 +0200
+ -- Ximin Luo <infinity0@debian.org>  Mon, 12 Sep 2016 17:40:12 +0200
 
 rustc (1.11.0+dfsg1-1) unstable; urgency=medium
 
