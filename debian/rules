@@ -119,11 +119,14 @@ override_dh_auto_clean:
 	$(RM) src/rt/hoedown/src/html_blocks.c # clean up after building this ourselves
 	$(RM) src/bootstrap/bootstrap.pyc
 
-override_dh_auto_build-arch:
-	$(MAKE) -C src/rt/hoedown src/html_blocks.c # upstream bundles this in the source, but in Debian we rebuild everything yo
-	dh_auto_build -- all VERBOSE=1
+# upstream bundles this in the source, but in Debian we rebuild everything yo
+generate-sources:
+	$(MAKE) -C src/rt/hoedown src/html_blocks.c
 
-override_dh_auto_build-indep:
+override_dh_auto_build-arch: generate-sources
+	dh_auto_build -- all-no-docs VERBOSE=1
+
+override_dh_auto_build-indep: generate-sources
 	$(if $(BUILD_DOCS),dh_auto_build -- docs)
 
 override_dh_auto_install:

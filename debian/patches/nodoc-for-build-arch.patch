@@ -1,0 +1,20 @@
+Description: mk: add a all-no-docs target to build everything except docs
+ This makes things slightly more efficient for Debian's auto-builders where the
+ docs can be built on just one architecture, and distributed to users of all
+ other architectures as well.
+Author: Ximin Luo <infinity0@pwned.gg>
+Bug: https://github.com/rust-lang/rust/pull/36445
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/mk/main.mk
++++ b/mk/main.mk
+@@ -634,7 +634,8 @@
+ 	$(foreach host,$(CFG_HOST), \
+  all-target-$(target)-host-$(host)))
+ 
+-all: $(ALL_TARGET_RULES) $(GENERATED) docs
++all-no-docs: $(ALL_TARGET_RULES) $(GENERATED)
++all: all-no-docs docs
+ 
+ ######################################################################
+ # Build system documentation
