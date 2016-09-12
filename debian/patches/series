@@ -12,3 +12,4 @@ ignore-failing-armhf-tests_04.patch
 dynamic-link-llvm.patch
 if-local-rust-same-version-then-force-local-rebuild.patch
 ignore-stdcall-test-on-arm64.patch
+fix-non-x86-doc-tests.patch
