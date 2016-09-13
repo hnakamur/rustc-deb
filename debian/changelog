@@ -1,8 +1,8 @@
-rustc (1.11.0+dfsg1-3) UNRELEASED; urgency=medium
+rustc (1.11.0+dfsg1-3) unstable; urgency=medium
 
   * Fix separate build-arch and build-indep builds.
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 12 Sep 2016 21:38:11 +0200
+ -- Ximin Luo <infinity0@debian.org>  Tue, 13 Sep 2016 12:30:41 +0200
 
 rustc (1.11.0+dfsg1-2) unstable; urgency=medium
 
