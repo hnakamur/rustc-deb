@@ -270,6 +270,7 @@ impl<'a> LoweringContext<'a> {
                         decl: self.lower_fn_decl(&f.decl),
                     }))
                 }
+                Never => hir::TyNever,
                 Tup(ref tys) => hir::TyTup(tys.iter().map(|ty| self.lower_ty(ty)).collect()),
                 Paren(ref ty) => {
                     return self.lower_ty(ty);
@@ -293,8 +294,10 @@ impl<'a> LoweringContext<'a> {
                     hir::TyTypeof(self.lower_expr(expr))
                 }
                 PolyTraitRef(ref bounds) => {
-                    let bounds = bounds.iter().map(|b| self.lower_ty_param_bound(b)).collect();
-                    hir::TyPolyTraitRef(bounds)
+                    hir::TyPolyTraitRef(self.lower_bounds(bounds))
+                }
+                ImplTrait(ref bounds) => {
+                    hir::TyImplTrait(self.lower_bounds(bounds))
                 }
                 Mac(_) => panic!("TyMac should have been expanded by now."),
             },
@@ -400,7 +403,6 @@ impl<'a> LoweringContext<'a> {
             output: match decl.output {
                 FunctionRetTy::Ty(ref ty) => hir::Return(self.lower_ty(ty)),
                 FunctionRetTy::Default(span) => hir::DefaultReturn(span),
-                FunctionRetTy::None(span) => hir::NoReturn(span),
             },
             variadic: decl.variadic,
         })
@@ -862,7 +864,8 @@ impl<'a> LoweringContext<'a> {
                                                       respan(pth1.span, pth1.node.name),
                                                       sub.as_ref().map(|x| this.lower_pat(x)))
                             }
-                            _ => hir::PatKind::Path(hir::Path::from_name(pth1.span, pth1.node.name))
+                            _ => hir::PatKind::Path(None, hir::Path::from_name(pth1.span,
+                                                                               pth1.node.name))
                         }
                     })
                 }
@@ -872,15 +875,11 @@ impl<'a> LoweringContext<'a> {
                                               pats.iter().map(|x| self.lower_pat(x)).collect(),
                                               ddpos)
                 }
-                PatKind::Path(None, ref pth) => {
-                    hir::PatKind::Path(self.lower_path(pth))
-                }
-                PatKind::Path(Some(ref qself), ref pth) => {
-                    let qself = hir::QSelf {
-                        ty: self.lower_ty(&qself.ty),
-                        position: qself.position,
-                    };
-                    hir::PatKind::QPath(qself, self.lower_path(pth))
+                PatKind::Path(ref opt_qself, ref path) => {
+                    let opt_qself = opt_qself.as_ref().map(|qself| {
+                        hir::QSelf { ty: self.lower_ty(&qself.ty), position: qself.position }
+                    });
+                    hir::PatKind::Path(opt_qself, self.lower_path(path))
                 }
                 PatKind::Struct(ref pth, ref fields, etc) => {
                     let pth = self.lower_path(pth);
@@ -1831,7 +1830,7 @@ impl<'a> LoweringContext<'a> {
                 -> P<hir::Pat> {
         let def = self.resolver.resolve_generated_global_path(&path, true);
         let pt = if subpats.is_empty() {
-            hir::PatKind::Path(path)
+            hir::PatKind::Path(None, path)
         } else {
             hir::PatKind::TupleStruct(path, subpats, None)
         };
@@ -1857,7 +1856,7 @@ impl<'a> LoweringContext<'a> {
 
         let parent_def = self.parent_def;
         let def = self.resolver.definitions().map(|defs| {
-            let def_path_data = DefPathData::Binding(name);
+            let def_path_data = DefPathData::Binding(name.as_str());
             let def_index = defs.create_def_with_parent(parent_def, pat.id, def_path_data);
             Def::Local(DefId::local(def_index), pat.id)
         }).unwrap_or(Def::Err);

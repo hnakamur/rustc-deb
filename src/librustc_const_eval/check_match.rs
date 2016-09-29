@@ -17,6 +17,7 @@ use rustc::middle::const_val::ConstVal;
 use ::{eval_const_expr, eval_const_expr_partial, compare_const_vals};
 use ::{const_expr_to_pat, lookup_const_by_id};
 use ::EvalHint::ExprTypeChecked;
+use eval::report_const_eval_err;
 use rustc::hir::def::*;
 use rustc::hir::def_id::{DefId};
 use rustc::middle::expr_use_visitor::{ConsumeMode, Delegate, ExprUseVisitor};
@@ -24,7 +25,7 @@ use rustc::middle::expr_use_visitor::{LoanCause, MutateMode};
 use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::mem_categorization::{cmt};
 use rustc::hir::pat_util::*;
-use rustc::traits::ProjectionMode;
+use rustc::traits::Reveal;
 use rustc::ty::*;
 use rustc::ty;
 use std::cmp::Ordering;
@@ -33,7 +34,7 @@ use std::iter::{FromIterator, IntoIterator, repeat};
 
 use rustc::hir;
 use rustc::hir::{Pat, PatKind};
-use rustc::hir::intravisit::{self, IdVisitor, IdVisitingOperation, Visitor, FnKind};
+use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc_back::slice;
 
 use syntax::ast::{self, DUMMY_NODE_ID, NodeId};
@@ -42,8 +43,8 @@ use syntax_pos::{Span, DUMMY_SP};
 use rustc::hir::fold::{Folder, noop_fold_pat};
 use rustc::hir::print::pat_to_string;
 use syntax::ptr::P;
+use rustc::util::common::ErrorReported;
 use rustc::util::nodemap::FnvHashMap;
-use rustc::util::common::slice_pat;
 
 pub const DUMMY_WILD_PAT: &'static Pat = &Pat {
     id: DUMMY_NODE_ID,
@@ -214,7 +215,7 @@ fn check_expr(cx: &mut MatchCheckCtxt, ex: &hir::Expr) {
             // Check for empty enum, because is_useful only works on inhabited types.
             let pat_ty = cx.tcx.node_id_to_type(scrut.id);
             if inlined_arms.is_empty() {
-                if !pat_ty.is_empty(cx.tcx) {
+                if !pat_ty.is_uninhabited(cx.tcx) {
                     // We know the type is inhabited, so this must be wrong
                     let mut err = struct_span_err!(cx.tcx.sess, ex.span, E0002,
                                                    "non-exhaustive patterns: type {} is non-empty",
@@ -224,7 +225,7 @@ fn check_expr(cx: &mut MatchCheckCtxt, ex: &hir::Expr) {
                          possibly adding wildcards or more match arms.");
                     err.emit();
                 }
-                // If the type *is* empty, it's vacuously exhaustive
+                // If the type *is* uninhabited, it's vacuously exhaustive
                 return;
             }
 
@@ -234,7 +235,7 @@ fn check_expr(cx: &mut MatchCheckCtxt, ex: &hir::Expr) {
                 .flat_map(|arm| &arm.0)
                 .map(|pat| vec![wrap_pat(cx, &pat)])
                 .collect();
-            check_exhaustive(cx, ex.span, &matrix, source);
+            check_exhaustive(cx, scrut.span, &matrix, source);
         },
         _ => ()
     }
@@ -246,9 +247,9 @@ fn check_for_bindings_named_the_same_as_variants(cx: &MatchCheckCtxt, pat: &Pat)
             let pat_ty = cx.tcx.pat_ty(p);
             if let ty::TyEnum(edef, _) = pat_ty.sty {
                 if let Def::Local(..) = cx.tcx.expect_def(p.id) {
-                    if edef.variants.iter().any(|variant|
-                        variant.name == name.node && variant.kind() == VariantKind::Unit
-                    ) {
+                    if edef.variants.iter().any(|variant| {
+                        variant.name == name.node && variant.kind == VariantKind::Unit
+                    }) {
                         let ty_path = cx.tcx.item_path_str(edef.did);
                         let mut err = struct_span_warn!(cx.tcx.sess, p.span, E0170,
                             "pattern binding `{}` is named the same as one \
@@ -280,13 +281,7 @@ fn check_for_static_nan(cx: &MatchCheckCtxt, pat: &Pat) {
                 Ok(_) => {}
 
                 Err(err) => {
-                    let mut diag = struct_span_err!(cx.tcx.sess, err.span, E0471,
-                                                    "constant evaluation error: {}",
-                                                    err.description());
-                    if !p.span.contains(err.span) {
-                        diag.span_note(p.span, "in pattern here");
-                    }
-                    diag.emit();
+                    report_const_eval_err(cx.tcx, &err, p.span, "pattern").emit();
                 }
             }
         }
@@ -316,7 +311,10 @@ fn check_arms(cx: &MatchCheckCtxt,
                                 let &(ref first_arm_pats, _) = &arms[0];
                                 let first_pat = &first_arm_pats[0];
                                 let span = first_pat.span;
-                                span_err!(cx.tcx.sess, span, E0162, "irrefutable if-let pattern");
+                                struct_span_err!(cx.tcx.sess, span, E0162,
+                                                "irrefutable if-let pattern")
+                                    .span_label(span, &format!("irrefutable pattern"))
+                                    .emit();
                                 printed_if_let_err = true;
                             }
                         },
@@ -340,6 +338,7 @@ fn check_arms(cx: &MatchCheckCtxt,
                         hir::MatchSource::Normal => {
                             let mut err = struct_span_err!(cx.tcx.sess, pat.span, E0001,
                                                            "unreachable pattern");
+                            err.span_label(pat.span, &format!("this is an unreachable pattern"));
                             // if we had a catchall pattern, hint at that
                             for row in &seen.0 {
                                 if pat_is_catchall(&cx.tcx.def_map.borrow(), row[0].0) {
@@ -400,7 +399,7 @@ fn check_exhaustive<'a, 'tcx>(cx: &MatchCheckCtxt<'a, 'tcx>,
                 hir::MatchSource::ForLoopDesugar => {
                     // `witnesses[0]` has the form `Some(<head>)`, peel off the `Some`
                     let witness = match witnesses[0].node {
-                        PatKind::TupleStruct(_, ref pats, _) => match slice_pat(&&pats[..]) {
+                        PatKind::TupleStruct(_, ref pats, _) => match &pats[..] {
                             &[ref pat] => &**pat,
                             _ => bug!(),
                         },
@@ -428,10 +427,15 @@ fn check_exhaustive<'a, 'tcx>(cx: &MatchCheckCtxt<'a, 'tcx>,
                             format!("`{}` and {} more", head.join("`, `"), tail.len())
                         }
                     };
-                    span_err!(cx.tcx.sess, sp, E0004,
+
+                    let label_text = match pattern_strings.len(){
+                        1 => format!("pattern {} not covered", joined_patterns),
+                        _ => format!("patterns {} not covered", joined_patterns)
+                    };
+                    struct_span_err!(cx.tcx.sess, sp, E0004,
                         "non-exhaustive patterns: {} not covered",
                         joined_patterns
-                    );
+                    ).span_label(sp, &label_text).emit();
                 },
             }
         }
@@ -479,7 +483,7 @@ struct RenamingRecorder<'map> {
     renaming_map: &'map mut FnvHashMap<(NodeId, Span), NodeId>
 }
 
-impl<'map> IdVisitingOperation for RenamingRecorder<'map> {
+impl<'v, 'map> Visitor<'v> for RenamingRecorder<'map> {
     fn visit_id(&mut self, node_id: NodeId) {
         let key = (node_id, self.origin_span);
         self.renaming_map.insert(key, self.substituted_node_id);
@@ -489,7 +493,7 @@ impl<'map> IdVisitingOperation for RenamingRecorder<'map> {
 impl<'a, 'tcx> Folder for StaticInliner<'a, 'tcx> {
     fn fold_pat(&mut self, pat: P<Pat>) -> P<Pat> {
         return match pat.node {
-            PatKind::Path(..) | PatKind::QPath(..) => {
+            PatKind::Path(..) => {
                 match self.tcx.expect_def(pat.id) {
                     Def::AssociatedConst(did) | Def::Const(did) => {
                         let substs = Some(self.tcx.node_id_item_substs(pat.id).substs);
@@ -534,9 +538,7 @@ impl<'a, 'tcx> Folder for StaticInliner<'a, 'tcx> {
                 renaming_map: renaming_map,
             };
 
-            let mut id_visitor = IdVisitor::new(&mut renaming_recorder);
-
-            id_visitor.visit_expr(const_expr);
+            renaming_recorder.visit_expr(const_expr);
         }
     }
 }
@@ -563,7 +565,7 @@ fn construct_witness<'a,'tcx>(cx: &MatchCheckCtxt<'a,'tcx>, ctor: &Constructor,
 
         ty::TyEnum(adt, _) | ty::TyStruct(adt, _)  => {
             let v = ctor.variant_for_adt(adt);
-            match v.kind() {
+            match v.kind {
                 VariantKind::Struct => {
                     let field_pats: hir::HirVec<_> = v.fields.iter()
                         .zip(pats)
@@ -583,7 +585,7 @@ fn construct_witness<'a,'tcx>(cx: &MatchCheckCtxt<'a,'tcx>, ctor: &Constructor,
                     PatKind::TupleStruct(def_to_path(cx.tcx, v.did), pats.collect(), None)
                 }
                 VariantKind::Unit => {
-                    PatKind::Path(def_to_path(cx.tcx, v.did))
+                    PatKind::Path(None, def_to_path(cx.tcx, v.did))
                 }
             }
         }
@@ -706,12 +708,9 @@ fn is_useful<'a, 'tcx>(cx: &MatchCheckCtxt<'a, 'tcx>,
     debug!("is_useful - pat_constructors = {:?} left_ty = {:?}", constructors,
            left_ty);
     if constructors.is_empty() {
-        // v[0] is a wildcard pattern - `pat_constructors` should really be returning
-        // an Option.
         let constructors = missing_constructors(cx, matrix, left_ty, max_slice_length);
         debug!("is_useful - missing_constructors = {:?}", constructors);
         if constructors.is_empty() {
-            // all constructors are covered - must check them all.
             all_constructors(cx, left_ty, max_slice_length).into_iter().map(|c| {
                 match is_useful_specialized(cx, matrix, v, c.clone(), left_ty, witness) {
                     UsefulWithWitness(pats) => UsefulWithWitness({
@@ -730,7 +729,6 @@ fn is_useful<'a, 'tcx>(cx: &MatchCheckCtxt<'a, 'tcx>,
                 }
             }).find(|result| result != &NotUseful).unwrap_or(NotUseful)
         } else {
-            // some constructor is only covered by wildcards - pick it.
             let matrix = rows.iter().filter_map(|r| {
                 match raw_pat(r[0].0).node {
                     PatKind::Binding(..) | PatKind::Wild => Some(r[1..].to_vec()),
@@ -751,38 +749,9 @@ fn is_useful<'a, 'tcx>(cx: &MatchCheckCtxt<'a, 'tcx>,
             }
         }
     } else {
-        // `v` is not a wildcard
         constructors.into_iter().map(|c|
             is_useful_specialized(cx, matrix, v, c.clone(), left_ty, witness)
         ).find(|result| result != &NotUseful).unwrap_or(NotUseful)
-    }
-}
-
-fn check_for_ref_splitting<'s, 'a, 'tcx, I>(cx: &MatchCheckCtxt<'a, 'tcx>, data: I)
-    where I: Iterator<Item=(&'s Pat, Option<Ty<'tcx>>)>
-{
-    let mut ref_pattern = None;
-    let mut lit_pattern = None;
-
-    for (pat, _ty) in data {
-        match pat.node {
-            PatKind::Lit(..) => {
-                lit_pattern = Some(pat);
-            }
-            PatKind::Ref(..) => {
-                ref_pattern = Some(pat);
-            }
-            _ => {}
-        };
-        if let (Some(lit_pattern), Some(ref_pattern)) = (lit_pattern, ref_pattern) {
-            cx.tcx.sess.struct_span_err(
-                ref_pattern.span,
-                &format!("as a temporary restriction, literal patterns can't be split \
-                - see issue #35044")
-            ).span_note(lit_pattern.span, &format!("split literal here"))
-            .emit();
-            cx.tcx.sess.abort_if_errors();
-        }
     }
 }
 
@@ -795,10 +764,6 @@ fn is_useful_specialized<'a, 'tcx>(
     witness: WitnessPreference) -> Usefulness
 {
     let arity = constructor_arity(cx, &ctor, lty);
-    check_for_ref_splitting(
-        cx,
-        m.iter().map(|r| r[0]).chain(Some(v[0]))
-    );
     let matrix = Matrix(m.iter().filter_map(|r| {
         specialize(cx, &r[..], &ctor, 0, arity)
     }).collect());
@@ -818,22 +783,17 @@ fn is_useful_specialized<'a, 'tcx>(
 /// On the other hand, a wild pattern and an identifier pattern cannot be
 /// specialized in any way.
 fn pat_constructors(cx: &MatchCheckCtxt, p: &Pat,
-                    left_ty: Ty, max_slice_length: usize)
-                    -> Vec<Constructor> {
+                    left_ty: Ty, max_slice_length: usize) -> Vec<Constructor> {
     let pat = raw_pat(p);
     match pat.node {
         PatKind::Struct(..) | PatKind::TupleStruct(..) | PatKind::Path(..) =>
             match cx.tcx.expect_def(pat.id) {
-                Def::Const(..) | Def::AssociatedConst(..) =>
-                    span_bug!(pat.span, "const pattern should've \
-                                         been rewritten"),
-                Def::Struct(..) | Def::TyAlias(..) => vec![Single],
                 Def::Variant(_, id) => vec![Variant(id)],
-                def => span_bug!(pat.span, "pat_constructors: unexpected \
-                                            definition {:?}", def),
+                Def::Struct(..) | Def::TyAlias(..) | Def::AssociatedTy(..) => vec![Single],
+                Def::Const(..) | Def::AssociatedConst(..) =>
+                    span_bug!(pat.span, "const pattern should've been rewritten"),
+                def => span_bug!(pat.span, "pat_constructors: unexpected definition {:?}", def),
             },
-        PatKind::QPath(..) =>
-            span_bug!(pat.span, "const pattern should've been rewritten"),
         PatKind::Lit(ref expr) =>
             vec![ConstantValue(eval_const_expr(cx.tcx, &expr))],
         PatKind::Range(ref lo, ref hi) =>
@@ -881,22 +841,19 @@ pub fn constructor_arity(_cx: &MatchCheckCtxt, ctor: &Constructor, ty: Ty) -> us
     }
 }
 
-fn range_covered_by_constructor(ctor: &Constructor,
-                                from: &ConstVal, to: &ConstVal) -> Option<bool> {
+fn range_covered_by_constructor(tcx: TyCtxt, span: Span,
+                                ctor: &Constructor,
+                                from: &ConstVal, to: &ConstVal)
+                                -> Result<bool, ErrorReported> {
     let (c_from, c_to) = match *ctor {
         ConstantValue(ref value)        => (value, value),
         ConstantRange(ref from, ref to) => (from, to),
-        Single                          => return Some(true),
+        Single                          => return Ok(true),
         _                               => bug!()
     };
-    let cmp_from = compare_const_vals(c_from, from);
-    let cmp_to = compare_const_vals(c_to, to);
-    match (cmp_from, cmp_to) {
-        (Some(cmp_from), Some(cmp_to)) => {
-            Some(cmp_from != Ordering::Less && cmp_to != Ordering::Greater)
-        }
-        _ => None
-    }
+    let cmp_from = compare_const_vals(tcx, span, c_from, from)?;
+    let cmp_to = compare_const_vals(tcx, span, c_to, to)?;
+    Ok(cmp_from != Ordering::Less && cmp_to != Ordering::Greater)
 }
 
 fn wrap_pat<'a, 'b, 'tcx>(cx: &MatchCheckCtxt<'b, 'tcx>,
@@ -972,10 +929,6 @@ pub fn specialize<'a, 'b, 'tcx>(
             }
         }
 
-        PatKind::QPath(_, _) => {
-            span_bug!(pat_span, "const pattern should've been rewritten")
-        }
-
         PatKind::Struct(_, ref pattern_fields, _) => {
             let adt = cx.tcx.node_id_to_type(pat_id).ty_adt_def().unwrap();
             let variant = constructor.variant_for_adt(adt);
@@ -1012,13 +965,12 @@ pub fn specialize<'a, 'b, 'tcx>(
                 Some(vec![(pat, Some(mt.ty))])
             } else {
                 let expr_value = eval_const_expr(cx.tcx, &expr);
-                match range_covered_by_constructor(constructor, &expr_value, &expr_value) {
-                    Some(true) => Some(vec![]),
-                    Some(false) => None,
-                    None => {
-                        span_err!(cx.tcx.sess, pat_span, E0298, "mismatched types between arms");
-                        None
-                    }
+                match range_covered_by_constructor(
+                    cx.tcx, expr.span, constructor, &expr_value, &expr_value
+                ) {
+                    Ok(true) => Some(vec![]),
+                    Ok(false) => None,
+                    Err(ErrorReported) => None,
                 }
             }
         }
@@ -1026,13 +978,12 @@ pub fn specialize<'a, 'b, 'tcx>(
         PatKind::Range(ref from, ref to) => {
             let from_value = eval_const_expr(cx.tcx, &from);
             let to_value = eval_const_expr(cx.tcx, &to);
-            match range_covered_by_constructor(constructor, &from_value, &to_value) {
-                Some(true) => Some(vec![]),
-                Some(false) => None,
-                None => {
-                    span_err!(cx.tcx.sess, pat_span, E0299, "mismatched types between arms");
-                    None
-                }
+            match range_covered_by_constructor(
+                cx.tcx, pat_span, constructor, &from_value, &to_value
+            ) {
+                Ok(true) => Some(vec![]),
+                Ok(false) => None,
+                Err(ErrorReported) => None,
             }
         }
 
@@ -1105,7 +1056,7 @@ fn check_fn(cx: &mut MatchCheckCtxt,
         _ => cx.param_env = ParameterEnvironment::for_item(cx.tcx, fn_id),
     }
 
-    intravisit::walk_fn(cx, kind, decl, body, sp);
+    intravisit::walk_fn(cx, kind, decl, body, sp, fn_id);
 
     for input in &decl.inputs {
         check_irrefutable(cx, &input.pat, true);
@@ -1159,9 +1110,15 @@ fn check_legality_of_move_bindings(cx: &MatchCheckCtxt,
 
         // x @ Foo(..) is legal, but x @ Foo(y) isn't.
         if sub.map_or(false, |p| pat_contains_bindings(&p)) {
-            span_err!(cx.tcx.sess, p.span, E0007, "cannot bind by-move with sub-bindings");
+            struct_span_err!(cx.tcx.sess, p.span, E0007,
+                             "cannot bind by-move with sub-bindings")
+                .span_label(p.span, &format!("binds an already bound by-move value by moving it"))
+                .emit();
         } else if has_guard {
-            span_err!(cx.tcx.sess, p.span, E0008, "cannot bind by-move into a pattern guard");
+            struct_span_err!(cx.tcx.sess, p.span, E0008,
+                      "cannot bind by-move into a pattern guard")
+                .span_label(p.span, &format!("moves value into pattern guard"))
+                .emit();
         } else if by_ref_span.is_some() {
             let mut err = struct_span_err!(cx.tcx.sess, p.span, E0009,
                                            "cannot bind by-move and by-ref in the same pattern");
@@ -1176,7 +1133,7 @@ fn check_legality_of_move_bindings(cx: &MatchCheckCtxt,
                 let pat_ty = cx.tcx.node_id_to_type(p.id);
                 //FIXME: (@jroesch) this code should be floated up as well
                 cx.tcx.infer_ctxt(None, Some(cx.param_env.clone()),
-                                  ProjectionMode::AnyFinal).enter(|infcx| {
+                                  Reveal::NotSpecializable).enter(|infcx| {
                     if infcx.type_moves_by_default(pat_ty, pat.span) {
                         check_move(p, sub.as_ref().map(|p| &**p));
                     }
@@ -1192,7 +1149,7 @@ fn check_legality_of_move_bindings(cx: &MatchCheckCtxt,
 fn check_for_mutation_in_guard<'a, 'tcx>(cx: &'a MatchCheckCtxt<'a, 'tcx>,
                                          guard: &hir::Expr) {
     cx.tcx.infer_ctxt(None, Some(cx.param_env.clone()),
-                      ProjectionMode::AnyFinal).enter(|infcx| {
+                      Reveal::NotSpecializable).enter(|infcx| {
         let mut checker = MutationChecker {
             cx: cx,
         };
@@ -1218,8 +1175,10 @@ impl<'a, 'gcx, 'tcx> Delegate<'tcx> for MutationChecker<'a, 'gcx> {
               _: LoanCause) {
         match kind {
             MutBorrow => {
-                span_err!(self.cx.tcx.sess, span, E0301,
+                struct_span_err!(self.cx.tcx.sess, span, E0301,
                           "cannot mutably borrow in a pattern guard")
+                    .span_label(span, &format!("borrowed mutably in pattern guard"))
+                    .emit();
             }
             ImmBorrow | UniqueImmBorrow => {}
         }
@@ -1228,7 +1187,9 @@ impl<'a, 'gcx, 'tcx> Delegate<'tcx> for MutationChecker<'a, 'gcx> {
     fn mutate(&mut self, _: NodeId, span: Span, _: cmt, mode: MutateMode) {
         match mode {
             MutateMode::JustWrite | MutateMode::WriteAndRead => {
-                span_err!(self.cx.tcx.sess, span, E0302, "cannot assign in a pattern guard")
+                struct_span_err!(self.cx.tcx.sess, span, E0302, "cannot assign in a pattern guard")
+                    .span_label(span, &format!("assignment in pattern guard"))
+                    .emit();
             }
             MutateMode::Init => {}
         }

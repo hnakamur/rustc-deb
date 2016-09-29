@@ -63,9 +63,11 @@ impl<'a, 'tcx> EffectCheckVisitor<'a, 'tcx> {
         match self.unsafe_context.root {
             SafeContext => {
                 // Report an error.
-                span_err!(self.tcx.sess, span, E0133,
-                          "{} requires unsafe function or block",
-                          description);
+                struct_span_err!(
+                    self.tcx.sess, span, E0133,
+                    "{} requires unsafe function or block", description)
+                    .span_label(span, &format!("unsafe call requires unsafe function or block"))
+                    .emit();
             }
             UnsafeBlock(block_id) => {
                 // OK, but record this.
@@ -79,7 +81,7 @@ impl<'a, 'tcx> EffectCheckVisitor<'a, 'tcx> {
 
 impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
     fn visit_fn(&mut self, fn_kind: FnKind<'v>, fn_decl: &'v hir::FnDecl,
-                block: &'v hir::Block, span: Span, _: ast::NodeId) {
+                block: &'v hir::Block, span: Span, id: ast::NodeId) {
 
         let (is_item_fn, is_unsafe_fn) = match fn_kind {
             FnKind::ItemFn(_, _, unsafety, _, _, _, _) =>
@@ -96,7 +98,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for EffectCheckVisitor<'a, 'tcx> {
             self.unsafe_context = UnsafeContext::new(SafeContext)
         }
 
-        intravisit::walk_fn(self, fn_kind, fn_decl, block, span);
+        intravisit::walk_fn(self, fn_kind, fn_decl, block, span, id);
 
         self.unsafe_context = old_unsafe_context
     }

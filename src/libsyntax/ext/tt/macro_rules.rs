@@ -28,6 +28,7 @@ use util::small_vector::SmallVector;
 use std::cell::RefCell;
 use std::collections::{HashMap};
 use std::collections::hash_map::{Entry};
+use std::rc::Rc;
 
 struct ParserAnyMacro<'a> {
     parser: RefCell<Parser<'a>>,
@@ -122,7 +123,7 @@ impl<'a> MacResult for ParserAnyMacro<'a> {
             let mut parser = self.parser.borrow_mut();
             match parser.token {
                 token::Eof => break,
-                _ => match parser.parse_stmt() {
+                _ => match parser.parse_full_stmt(true) {
                     Ok(maybe_stmt) => match maybe_stmt {
                         Some(stmt) => ret.push(stmt),
                         None => (),
@@ -262,7 +263,7 @@ pub fn compile<'cx>(cx: &'cx mut ExtCtxt,
     let match_lhs_tok = MatchNt(lhs_nm, token::str_to_ident("tt"));
     let match_rhs_tok = MatchNt(rhs_nm, token::str_to_ident("tt"));
     let argument_gram = vec![
-        TokenTree::Sequence(DUMMY_SP, tokenstream::SequenceRepetition {
+        TokenTree::Sequence(DUMMY_SP, Rc::new(tokenstream::SequenceRepetition {
             tts: vec![
                 TokenTree::Token(DUMMY_SP, match_lhs_tok),
                 TokenTree::Token(DUMMY_SP, token::FatArrow),
@@ -271,14 +272,14 @@ pub fn compile<'cx>(cx: &'cx mut ExtCtxt,
             separator: Some(token::Semi),
             op: tokenstream::KleeneOp::OneOrMore,
             num_captures: 2,
-        }),
+        })),
         // to phase into semicolon-termination instead of semicolon-separation
-        TokenTree::Sequence(DUMMY_SP, tokenstream::SequenceRepetition {
+        TokenTree::Sequence(DUMMY_SP, Rc::new(tokenstream::SequenceRepetition {
             tts: vec![TokenTree::Token(DUMMY_SP, token::Semi)],
             separator: None,
             op: tokenstream::KleeneOp::ZeroOrMore,
             num_captures: 0
-        }),
+        })),
     ];
 
     // Parse the macro_rules! invocation (`none` is for no interpolations):
@@ -301,7 +302,7 @@ pub fn compile<'cx>(cx: &'cx mut ExtCtxt,
     let mut valid = true;
 
     // Extract the arguments:
-    let lhses = match **argument_map.get(&lhs_nm.name).unwrap() {
+    let lhses = match **argument_map.get(&lhs_nm).unwrap() {
         MatchedSeq(ref s, _) => {
             s.iter().map(|m| match **m {
                 MatchedNonterminal(NtTT(ref tt)) => {
@@ -314,7 +315,7 @@ pub fn compile<'cx>(cx: &'cx mut ExtCtxt,
         _ => cx.span_bug(def.span, "wrong-structured lhs")
     };
 
-    let rhses = match **argument_map.get(&rhs_nm.name).unwrap() {
+    let rhses = match **argument_map.get(&rhs_nm).unwrap() {
         MatchedSeq(ref s, _) => {
             s.iter().map(|m| match **m {
                 MatchedNonterminal(NtTT(ref tt)) => (**tt).clone(),

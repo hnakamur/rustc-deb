@@ -10,15 +10,17 @@
 
 use build::{Location, ScopeAuxiliaryVec, ScopeId};
 use rustc::hir;
+use rustc::hir::def_id::DefId;
 use rustc::mir::repr::*;
+use rustc::mir::mir_map::MirMap;
 use rustc::mir::transform::MirSource;
-use rustc::ty::{self, TyCtxt};
+use rustc::ty::TyCtxt;
 use rustc_data_structures::fnv::FnvHashMap;
 use rustc_data_structures::indexed_vec::{Idx};
 use std::fmt::Display;
 use std::fs;
 use std::io::{self, Write};
-use syntax::ast::NodeId;
+use std::path::{PathBuf, Path};
 
 const INDENT: &'static str = "    ";
 /// Alignment for lining up comments following MIR statements
@@ -66,9 +68,15 @@ pub fn dump_mir<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         _ => String::new()
     };
 
+    let mut file_path = PathBuf::new();
+    if let Some(ref file_dir) = tcx.sess.opts.debugging_opts.dump_mir_dir {
+        let p = Path::new(file_dir);
+        file_path.push(p);
+    };
     let file_name = format!("rustc.node{}{}.{}.{}.mir",
                             node_id, promotion_id, pass_name, disambiguator);
-    let _ = fs::File::create(&file_name).and_then(|mut file| {
+    file_path.push(&file_name);
+    let _ = fs::File::create(&file_path).and_then(|mut file| {
         try!(writeln!(file, "// MIR for `{}`", node_path));
         try!(writeln!(file, "// node_id = {}", node_id));
         try!(writeln!(file, "// pass_name = {}", pass_name));
@@ -82,12 +90,15 @@ pub fn dump_mir<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 /// Write out a human-readable textual representation for the given MIR.
 pub fn write_mir_pretty<'a, 'b, 'tcx, I>(tcx: TyCtxt<'b, 'tcx, 'tcx>,
                                          iter: I,
+                                         mir_map: &MirMap<'tcx>,
                                          w: &mut Write)
                                          -> io::Result<()>
-    where I: Iterator<Item=(&'a NodeId, &'a Mir<'tcx>)>, 'tcx: 'a
+    where I: Iterator<Item=DefId>, 'tcx: 'a
 {
     let mut first = true;
-    for (&id, mir) in iter {
+    for def_id in iter {
+        let mir = &mir_map.map[&def_id];
+
         if first {
             first = false;
         } else {
@@ -95,6 +106,7 @@ pub fn write_mir_pretty<'a, 'b, 'tcx, I>(tcx: TyCtxt<'b, 'tcx, 'tcx>,
             writeln!(w, "")?;
         }
 
+        let id = tcx.map.as_local_node_id(def_id).unwrap();
         let src = MirSource::from_node(tcx, id);
         write_mir_fn(tcx, src, mir, w, None)?;
 
@@ -195,7 +207,7 @@ fn write_basic_block(tcx: TyCtxt,
              ALIGN,
              comment(tcx, data.terminator().source_info))?;
 
-    writeln!(w, "{}}}\n", INDENT)
+    writeln!(w, "{}}}", INDENT)
 }
 
 fn comment(tcx: TyCtxt, SourceInfo { span, scope }: SourceInfo) -> String {
@@ -308,16 +320,10 @@ fn write_mir_sig(tcx: TyCtxt, src: MirSource, mir: &Mir, w: &mut Write)
             write!(w, "{:?}: {}", Lvalue::Arg(i), arg.ty)?;
         }
 
-        write!(w, ") -> ")?;
-
-        // fn return type.
-        match mir.return_ty {
-            ty::FnOutput::FnConverging(ty) => write!(w, "{}", ty),
-            ty::FnOutput::FnDiverging => write!(w, "!"),
-        }
+        write!(w, ") -> {}", mir.return_ty)
     } else {
         assert!(mir.arg_decls.is_empty());
-        write!(w, ": {} =", mir.return_ty.unwrap())
+        write!(w, ": {} =", mir.return_ty)
     }
 }
 

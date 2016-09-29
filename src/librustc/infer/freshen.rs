@@ -168,9 +168,11 @@ impl<'a, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for TypeFreshener<'a, 'gcx, 'tcx> {
             ty::TyTrait(..) |
             ty::TyStruct(..) |
             ty::TyClosure(..) |
+            ty::TyNever |
             ty::TyTuple(..) |
             ty::TyProjection(..) |
-            ty::TyParam(..) => {
+            ty::TyParam(..) |
+            ty::TyAnon(..) => {
                 t.super_fold_with(self)
             }
         }

@@ -60,6 +60,14 @@ impl<'tcx> Mirror<'tcx> for &'tcx hir::Expr {
                     kind: ExprKind::UnsafeFnPointer { source: expr.to_ref() },
                 };
             }
+            Some(&ty::adjustment::AdjustNeverToAny(adjusted_ty)) => {
+                expr = Expr {
+                    temp_lifetime: temp_lifetime,
+                    ty: adjusted_ty,
+                    span: self.span,
+                    kind: ExprKind::NeverToAny { source: expr.to_ref() },
+                };
+            }
             Some(&ty::adjustment::AdjustMutToConstPointer) => {
                 let adjusted_ty = cx.tcx.expr_ty_adjusted(self);
                 expr = Expr {
@@ -88,9 +96,9 @@ impl<'tcx> Mirror<'tcx> for &'tcx hir::Expr {
 
                         let ref_ty = cx.tcx.no_late_bound_regions(&meth_ty.fn_ret());
                         let (region, mutbl) = match ref_ty {
-                            Some(ty::FnConverging(&ty::TyS {
+                            Some(&ty::TyS {
                                 sty: ty::TyRef(region, mt), ..
-                            })) => (region, mt.mutbl),
+                            }) => (region, mt.mutbl),
                             _ => span_bug!(expr.span, "autoderef returned bad type")
                         };
 
@@ -700,19 +708,7 @@ fn convert_path_expr<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             ref sty => bug!("unexpected sty: {:?}", sty)
         },
         Def::Const(def_id) |
-        Def::AssociatedConst(def_id) => {
-            let substs = Some(cx.tcx.node_id_item_substs(expr.id).substs);
-            let tcx = cx.tcx.global_tcx();
-            if let Some((e, _)) = const_eval::lookup_const_by_id(tcx, def_id, substs) {
-                // FIXME ConstVal can't be yet used with adjustments, as they would be lost.
-                if !cx.tcx.tables.borrow().adjustments.contains_key(&e.id) {
-                    if let Some(v) = cx.try_const_eval_literal(e) {
-                        return ExprKind::Literal { literal: v };
-                    }
-                }
-            }
-            def_id
-        }
+        Def::AssociatedConst(def_id) => def_id,
 
         Def::Static(node_id, _) => return ExprKind::StaticRef {
             id: node_id,
@@ -958,10 +954,8 @@ fn overloaded_lvalue<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
     let tables = cx.tcx.tables.borrow();
     let callee = &tables.method_map[&method_call];
     let ref_ty = callee.ty.fn_ret();
-    let ref_ty = cx.tcx.no_late_bound_regions(&ref_ty).unwrap().unwrap();
-    //                                              1~~~~~   2~~~~~
-    // (1) callees always have all late-bound regions fully instantiated,
-    // (2) overloaded methods don't return `!`
+    let ref_ty = cx.tcx.no_late_bound_regions(&ref_ty).unwrap();
+    // callees always have all late-bound regions fully instantiated,
 
     // construct the complete expression `foo()` for the overloaded call,
     // which will yield the &T type

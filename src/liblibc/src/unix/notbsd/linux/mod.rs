@@ -93,15 +93,16 @@ s! {
     }
 
     pub struct pthread_cond_t {
-        #[cfg(any(target_env = "musl",
-                  target_env = "musleabi",
-                  target_env = "musleabihf"))]
+        #[cfg(any(target_env = "musl"))]
         __align: [*const ::c_void; 0],
-        #[cfg(not(any(target_env = "musl",
-                      target_env = "musleabi",
-                      target_env = "musleabihf")))]
+        #[cfg(not(any(target_env = "musl")))]
         __align: [::c_longlong; 0],
         size: [u8; __SIZEOF_PTHREAD_COND_T],
+    }
+
+    pub struct pthread_condattr_t {
+        __align: [::c_int; 0],
+        size: [u8; __SIZEOF_PTHREAD_CONDATTR_T],
     }
 
     pub struct passwd {
@@ -181,6 +182,12 @@ s! {
         #[cfg(target_pointer_width = "64")]
         bits: [u64; 16],
     }
+
+    pub struct if_nameindex {
+        pub if_index: ::c_uint,
+        pub if_name: *mut ::c_char,
+    }
+
 }
 
 pub const ABDAY_1: ::nl_item = 0x20000;
@@ -253,7 +260,15 @@ pub const NOSTR: ::nl_item = 0x50003;
 
 pub const FILENAME_MAX: ::c_uint = 4096;
 pub const L_tmpnam: ::c_uint = 20;
+pub const _PC_LINK_MAX: ::c_int = 0;
+pub const _PC_MAX_CANON: ::c_int = 1;
+pub const _PC_MAX_INPUT: ::c_int = 2;
 pub const _PC_NAME_MAX: ::c_int = 3;
+pub const _PC_PATH_MAX: ::c_int = 4;
+pub const _PC_PIPE_BUF: ::c_int = 5;
+pub const _PC_CHOWN_RESTRICTED: ::c_int = 6;
+pub const _PC_NO_TRUNC: ::c_int = 7;
+pub const _PC_VDISABLE: ::c_int = 8;
 
 pub const _SC_ARG_MAX: ::c_int = 0;
 pub const _SC_CHILD_MAX: ::c_int = 1;
@@ -452,6 +467,16 @@ pub const AF_NETLINK: ::c_int = 16;
 
 pub const LOG_NFACILITIES: ::c_int = 24;
 
+pub const SEM_FAILED: *mut ::sem_t = 0 as *mut sem_t;
+
+pub const RB_AUTOBOOT: ::c_int = 0x01234567u32 as i32;
+pub const RB_HALT_SYSTEM: ::c_int = 0xcdef0123u32 as i32;
+pub const RB_ENABLE_CAD: ::c_int = 0x89abcdefu32 as i32;
+pub const RB_DISABLE_CAD: ::c_int = 0x00000000u32 as i32;
+pub const RB_POWER_OFF: ::c_int = 0x4321fedcu32 as i32;
+pub const RB_SW_SUSPEND: ::c_int = 0xd000fce2u32 as i32;
+pub const RB_KEXEC: ::c_int = 0x45584543u32 as i32;
+
 f! {
     pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
         for slot in cpuset.bits.iter_mut() {
@@ -475,10 +500,6 @@ f! {
     pub fn CPU_EQUAL(set1: &cpu_set_t, set2: &cpu_set_t) -> bool {
         set1.bits == set2.bits
     }
-}
-
-extern {
-    static mut program_invocation_short_name: *mut ::c_char;
 }
 
 extern {
@@ -627,12 +648,17 @@ extern {
                              remote_iov: *const ::iovec,
                              riovcnt: ::c_ulong,
                              flags: ::c_ulong) -> isize;
+    pub fn reboot(how_to: ::c_int) -> ::c_int;
+
+    // Not available now on Android
+    pub fn mkfifoat(dirfd: ::c_int, pathname: *const ::c_char,
+                    mode: ::mode_t) -> ::c_int;
+    pub fn if_nameindex() -> *mut if_nameindex;
+    pub fn if_freenameindex(ptr: *mut if_nameindex);
 }
 
 cfg_if! {
     if #[cfg(any(target_env = "musl",
-                 target_env = "musleabi",
-                 target_env = "musleabihf",
                  target_os = "emscripten"))] {
         mod musl;
         pub use self::musl::*;

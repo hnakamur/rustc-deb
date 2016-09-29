@@ -24,13 +24,18 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn prohibit_type_params(self, segments: &[ast::PathSegment]) {
         for segment in segments {
             for typ in segment.parameters.types() {
-                span_err!(self.sess, typ.span, E0109,
-                          "type parameters are not allowed on this type");
+                struct_span_err!(self.sess, typ.span, E0109,
+                                 "type parameters are not allowed on this type")
+                    .span_label(typ.span, &format!("type parameter not allowed"))
+                    .emit();
                 break;
             }
             for lifetime in segment.parameters.lifetimes() {
-                span_err!(self.sess, lifetime.span, E0110,
-                          "lifetime parameters are not allowed on this type");
+                struct_span_err!(self.sess, lifetime.span, E0110,
+                                 "lifetime parameters are not allowed on this type")
+                    .span_label(lifetime.span,
+                                &format!("lifetime parameter not allowed on this type"))
+                    .emit();
                 break;
             }
             for binding in segment.parameters.bindings() {
@@ -42,8 +47,9 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     pub fn prohibit_projection(self, span: Span)
     {
-        span_err!(self.sess, span, E0229,
-                  "associated type bindings are not allowed here");
+        let mut err = struct_span_err!(self.sess, span, E0229,
+                                       "associated type bindings are not allowed here");
+        err.span_label(span, &format!("associate type not allowed here")).emit();
     }
 
     pub fn prim_ty_to_ty(self,

@@ -14,7 +14,7 @@ use decoder;
 use encoder;
 use loader;
 
-use middle::cstore::{CrateStore, CrateSource, ChildItem, ExternCrate, FoundAst, DefLike};
+use middle::cstore::{InlinedItem, CrateStore, CrateSource, ChildItem, ExternCrate, DefLike};
 use middle::cstore::{NativeLibraryKind, LinkMeta, LinkagePreference};
 use rustc::hir::def;
 use middle::lang_items;
@@ -127,7 +127,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     {
         self.dep_graph.read(DepNode::MetaData(def));
         let cdata = self.get_crate_data(def.krate);
-        decoder::get_adt_def(&self.intr, &cdata, def.index, tcx)
+        decoder::get_adt_def(&cdata, def.index, tcx)
     }
 
     fn method_arg_names(&self, did: DefId) -> Vec<String>
@@ -140,13 +140,13 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     fn item_name(&self, def: DefId) -> ast::Name {
         self.dep_graph.read(DepNode::MetaData(def));
         let cdata = self.get_crate_data(def.krate);
-        decoder::get_item_name(&self.intr, &cdata, def.index)
+        decoder::get_item_name(&cdata, def.index)
     }
 
     fn opt_item_name(&self, def: DefId) -> Option<ast::Name> {
         self.dep_graph.read(DepNode::MetaData(def));
         let cdata = self.get_crate_data(def.krate);
-        decoder::maybe_get_item_name(&self.intr, &cdata, def.index)
+        decoder::maybe_get_item_name(&cdata, def.index)
     }
 
     fn inherent_implementations_for_type(&self, def_id: DefId) -> Vec<DefId>
@@ -176,7 +176,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     {
         self.dep_graph.read(DepNode::MetaData(def));
         let cdata = self.get_crate_data(def.krate);
-        decoder::get_provided_trait_methods(self.intr.clone(), &cdata, def.index, tcx)
+        decoder::get_provided_trait_methods(&cdata, def.index, tcx)
     }
 
     fn trait_item_def_ids(&self, def: DefId)
@@ -222,7 +222,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
                              -> Vec<Rc<ty::AssociatedConst<'tcx>>> {
         self.dep_graph.read(DepNode::MetaData(def));
         let cdata = self.get_crate_data(def.krate);
-        decoder::get_associated_consts(self.intr.clone(), &cdata, def.index, tcx)
+        decoder::get_associated_consts(&cdata, def.index, tcx)
     }
 
     fn impl_parent(&self, impl_def: DefId) -> Option<DefId> {
@@ -243,11 +243,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     {
         self.dep_graph.read(DepNode::MetaData(def));
         let cdata = self.get_crate_data(def.krate);
-        decoder::get_impl_or_trait_item(
-            self.intr.clone(),
-            &cdata,
-            def.index,
-            tcx)
+        decoder::get_impl_or_trait_item(&cdata, def.index, tcx)
     }
 
     fn is_const_fn(&self, did: DefId) -> bool
@@ -460,7 +456,7 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
     {
         self.dep_graph.read(DepNode::MetaData(def));
         let cdata = self.get_crate_data(def.krate);
-        decoder::get_struct_field_names(&self.intr, &cdata, def.index)
+        decoder::get_struct_field_names(&cdata, def.index)
     }
 
     fn item_children(&self, def_id: DefId) -> Vec<ChildItem>
@@ -469,14 +465,9 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         let mut result = vec![];
         let crate_data = self.get_crate_data(def_id.krate);
         let get_crate_data = |cnum| self.get_crate_data(cnum);
-        decoder::each_child_of_item(
-            self.intr.clone(), &crate_data,
-            def_id.index, get_crate_data,
-            |def, name, vis| result.push(ChildItem {
-                def: def,
-                name: name,
-                vis: vis
-            }));
+        decoder::each_child_of_item(&crate_data, def_id.index, get_crate_data, |def, name, vis| {
+            result.push(ChildItem { def: def, name: name, vis: vis });
+        });
         result
     }
 
@@ -485,22 +476,154 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         let mut result = vec![];
         let crate_data = self.get_crate_data(cnum);
         let get_crate_data = |cnum| self.get_crate_data(cnum);
-        decoder::each_top_level_item_of_crate(
-            self.intr.clone(), &crate_data, get_crate_data,
-            |def, name, vis| result.push(ChildItem {
-                def: def,
-                name: name,
-                vis: vis
-            }));
+        decoder::each_top_level_item_of_crate(&crate_data, get_crate_data, |def, name, vis| {
+            result.push(ChildItem { def: def, name: name, vis: vis });
+        });
         result
     }
 
-    fn maybe_get_item_ast<'a>(&'tcx self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
-                              -> FoundAst<'tcx>
+    fn maybe_get_item_ast<'a>(&'tcx self,
+                              tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                              def_id: DefId)
+                              -> Option<(&'tcx InlinedItem, ast::NodeId)>
     {
-        self.dep_graph.read(DepNode::MetaData(def));
-        let cdata = self.get_crate_data(def.krate);
-        decoder::maybe_get_item_ast(&cdata, tcx, def.index)
+        self.dep_graph.read(DepNode::MetaData(def_id));
+
+        match self.inlined_item_cache.borrow().get(&def_id) {
+            Some(&None) => {
+                return None; // Not inlinable
+            }
+            Some(&Some(ref cached_inlined_item)) => {
+                // Already inline
+                debug!("maybe_get_item_ast({}): already inline as node id {}",
+                          tcx.item_path_str(def_id), cached_inlined_item.item_id);
+                return Some((tcx.map.expect_inlined_item(cached_inlined_item.inlined_root),
+                             cached_inlined_item.item_id));
+            }
+            None => {
+                // Not seen yet
+            }
+        }
+
+        debug!("maybe_get_item_ast({}): inlining item", tcx.item_path_str(def_id));
+
+        let cdata = self.get_crate_data(def_id.krate);
+        let inlined = decoder::maybe_get_item_ast(&cdata, tcx, def_id.index);
+
+        let cache_inlined_item = |original_def_id, inlined_item_id, inlined_root_node_id| {
+            let cache_entry = cstore::CachedInlinedItem {
+                inlined_root: inlined_root_node_id,
+                item_id: inlined_item_id,
+            };
+            self.inlined_item_cache
+                .borrow_mut()
+                .insert(original_def_id, Some(cache_entry));
+            self.defid_for_inlined_node
+                .borrow_mut()
+                .insert(inlined_item_id, original_def_id);
+        };
+
+        let find_inlined_item_root = |inlined_item_id| {
+            let mut node = inlined_item_id;
+            let mut path = Vec::with_capacity(10);
+
+            // If we can't find the inline root after a thousand hops, we can
+            // be pretty sure there's something wrong with the HIR map.
+            for _ in 0 .. 1000 {
+                path.push(node);
+                let parent_node = tcx.map.get_parent_node(node);
+                if parent_node == node {
+                    return node;
+                }
+                node = parent_node;
+            }
+            bug!("cycle in HIR map parent chain")
+        };
+
+        match inlined {
+            decoder::FoundAst::NotFound => {
+                self.inlined_item_cache
+                    .borrow_mut()
+                    .insert(def_id, None);
+            }
+            decoder::FoundAst::Found(&InlinedItem::Item(d, ref item)) => {
+                assert_eq!(d, def_id);
+                let inlined_root_node_id = find_inlined_item_root(item.id);
+                cache_inlined_item(def_id, item.id, inlined_root_node_id);
+            }
+            decoder::FoundAst::Found(&InlinedItem::Foreign(d, ref item)) => {
+                assert_eq!(d, def_id);
+                let inlined_root_node_id = find_inlined_item_root(item.id);
+                cache_inlined_item(def_id, item.id, inlined_root_node_id);
+            }
+            decoder::FoundAst::FoundParent(parent_did, item) => {
+                let inlined_root_node_id = find_inlined_item_root(item.id);
+                cache_inlined_item(parent_did, item.id, inlined_root_node_id);
+
+                match item.node {
+                    hir::ItemEnum(ref ast_def, _) => {
+                        let ast_vs = &ast_def.variants;
+                        let ty_vs = &tcx.lookup_adt_def(parent_did).variants;
+                        assert_eq!(ast_vs.len(), ty_vs.len());
+                        for (ast_v, ty_v) in ast_vs.iter().zip(ty_vs.iter()) {
+                            cache_inlined_item(ty_v.did,
+                                               ast_v.node.data.id(),
+                                               inlined_root_node_id);
+                        }
+                    }
+                    hir::ItemStruct(ref struct_def, _) => {
+                        if struct_def.is_struct() {
+                            bug!("instantiate_inline: called on a non-tuple struct")
+                        } else {
+                            cache_inlined_item(def_id,
+                                               struct_def.id(),
+                                               inlined_root_node_id);
+                        }
+                    }
+                    _ => bug!("instantiate_inline: item has a \
+                               non-enum, non-struct parent")
+                }
+            }
+            decoder::FoundAst::Found(&InlinedItem::TraitItem(_, ref trait_item)) => {
+                let inlined_root_node_id = find_inlined_item_root(trait_item.id);
+                cache_inlined_item(def_id, trait_item.id, inlined_root_node_id);
+
+                // Associated consts already have to be evaluated in `typeck`, so
+                // the logic to do that already exists in `middle`. In order to
+                // reuse that code, it needs to be able to look up the traits for
+                // inlined items.
+                let ty_trait_item = tcx.impl_or_trait_item(def_id).clone();
+                let trait_item_def_id = tcx.map.local_def_id(trait_item.id);
+                tcx.impl_or_trait_items.borrow_mut()
+                   .insert(trait_item_def_id, ty_trait_item);
+            }
+            decoder::FoundAst::Found(&InlinedItem::ImplItem(_, ref impl_item)) => {
+                let inlined_root_node_id = find_inlined_item_root(impl_item.id);
+                cache_inlined_item(def_id, impl_item.id, inlined_root_node_id);
+            }
+        }
+
+        // We can be sure to hit the cache now
+        return self.maybe_get_item_ast(tcx, def_id);
+    }
+
+    fn local_node_for_inlined_defid(&'tcx self, def_id: DefId) -> Option<ast::NodeId> {
+        assert!(!def_id.is_local());
+        match self.inlined_item_cache.borrow().get(&def_id) {
+            Some(&Some(ref cached_inlined_item)) => {
+                Some(cached_inlined_item.item_id)
+            }
+            Some(&None) => {
+                None
+            }
+            _ => {
+                bug!("Trying to lookup inlined NodeId for unexpected item");
+            }
+        }
+    }
+
+    fn defid_for_inlined_node(&'tcx self, node_id: ast::NodeId) -> Option<DefId> {
+        self.defid_for_inlined_node.borrow().get(&node_id).map(|x| *x)
     }
 
     fn maybe_get_item_mir<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
@@ -647,3 +770,4 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         visible_parent_map
     }
 }
+

@@ -322,11 +322,11 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
         match ty.sty {
             ty::TyBool |
             ty::TyChar | ty::TyInt(_) | ty::TyUint(_) |
-            ty::TyFloat(_) | ty::TyStr => {
+            ty::TyFloat(_) | ty::TyStr | ty::TyNever => {
                 /* leaf type -- noop */
             }
 
-            ty::TyClosure(..) => {
+            ty::TyClosure(..) | ty::TyAnon(..) => {
                 bug!("Unexpected closure type in variance computation");
             }
 
@@ -490,9 +490,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
         for &input in &sig.0.inputs {
             self.add_constraints_from_ty(generics, input, contra);
         }
-        if let ty::FnConverging(result_type) = sig.0.output {
-            self.add_constraints_from_ty(generics, result_type, variance);
-        }
+        self.add_constraints_from_ty(generics, sig.0.output, variance);
     }
 
     /// Adds constraints appropriate for a region appearing in a

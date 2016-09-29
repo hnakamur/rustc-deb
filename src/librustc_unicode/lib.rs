@@ -32,7 +32,9 @@
 #![cfg_attr(not(stage0), deny(warnings))]
 #![no_std]
 
+#![feature(char_escape_debug)]
 #![feature(core_char_ext)]
+#![feature(decode_utf8)]
 #![feature(lang_items)]
 #![feature(staged_api)]
 #![feature(unicode)]

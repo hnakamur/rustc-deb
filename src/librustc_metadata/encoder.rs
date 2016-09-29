@@ -44,7 +44,7 @@ use std::rc::Rc;
 use std::u32;
 use syntax::abi::Abi;
 use syntax::ast::{self, NodeId, Name, CRATE_NODE_ID, CrateNum};
-use syntax::attr;
+use syntax::attr::{self,AttrMetaMethods,AttributeMethods};
 use errors::Handler;
 use syntax;
 use syntax_pos::BytePos;
@@ -217,7 +217,7 @@ fn encode_parent_item(rbml_w: &mut Encoder, id: DefId) {
 fn encode_struct_fields(rbml_w: &mut Encoder,
                         variant: ty::VariantDef) {
     for f in &variant.fields {
-        if variant.is_tuple_struct() {
+        if variant.kind == ty::VariantKind::Tuple {
             rbml_w.start_tag(tag_item_unnamed_field);
         } else {
             rbml_w.start_tag(tag_item_field);
@@ -250,7 +250,7 @@ fn encode_enum_variant_info<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         let _task = index.record(vid, rbml_w);
         rbml_w.start_tag(tag_items_data_item);
         encode_def_id_and_key(ecx, rbml_w, vid);
-        encode_family(rbml_w, match variant.kind() {
+        encode_family(rbml_w, match variant.kind {
             ty::VariantKind::Struct => 'V',
             ty::VariantKind::Tuple => 'v',
             ty::VariantKind::Unit => 'w',
@@ -743,7 +743,8 @@ fn encode_repr_attrs(rbml_w: &mut Encoder,
 }
 
 fn encode_mir(ecx: &EncodeContext, rbml_w: &mut Encoder, node_id: NodeId) {
-    if let Some(mir) = ecx.mir_map.map.get(&node_id) {
+    let def_id = ecx.tcx.map.local_def_id(node_id);
+    if let Some(mir) = ecx.mir_map.map.get(&def_id) {
         rbml_w.start_tag(tag_mir as usize);
         rbml_w.emit_opaque(|opaque_encoder| {
             tls::enter_encoding_context(ecx, opaque_encoder, |_, opaque_encoder| {
@@ -861,7 +862,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         encode_bounds_and_type_for_item(rbml_w, ecx, index, item.id);
         encode_name(rbml_w, item.name);
         encode_attributes(rbml_w, &item.attrs);
-        encode_inlined_item(ecx, rbml_w, InlinedItemRef::Item(item));
+        encode_inlined_item(ecx, rbml_w, InlinedItemRef::Item(def_id, item));
         encode_mir(ecx, rbml_w, item.id);
         encode_visibility(rbml_w, vis);
         encode_stability(rbml_w, stab);
@@ -879,7 +880,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         encode_attributes(rbml_w, &item.attrs);
         let needs_inline = tps_len > 0 || attr::requests_inline(&item.attrs);
         if needs_inline || constness == hir::Constness::Const {
-            encode_inlined_item(ecx, rbml_w, InlinedItemRef::Item(item));
+            encode_inlined_item(ecx, rbml_w, InlinedItemRef::Item(def_id, item));
             encode_mir(ecx, rbml_w, item.id);
         }
         encode_constness(rbml_w, constness);
@@ -942,7 +943,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         for v in &enum_definition.variants {
             encode_variant_id(rbml_w, ecx.tcx.map.local_def_id(v.node.data.id()));
         }
-        encode_inlined_item(ecx, rbml_w, InlinedItemRef::Item(item));
+        encode_inlined_item(ecx, rbml_w, InlinedItemRef::Item(def_id, item));
         encode_mir(ecx, rbml_w, item.id);
 
         // Encode inherent implementations for this enumeration.
@@ -989,7 +990,7 @@ fn encode_info_for_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         needs to know*/
         encode_struct_fields(rbml_w, variant);
 
-        encode_inlined_item(ecx, rbml_w, InlinedItemRef::Item(item));
+        encode_inlined_item(ecx, rbml_w, InlinedItemRef::Item(def_id, item));
         encode_mir(ecx, rbml_w, item.id);
 
         // Encode inherent implementations for this structure.
@@ -1311,7 +1312,7 @@ fn encode_info_for_foreign_item<'a, 'tcx>(ecx: &EncodeContext<'a, 'tcx>,
         encode_bounds_and_type_for_item(rbml_w, ecx, index, nitem.id);
         encode_name(rbml_w, nitem.name);
         if abi == Abi::RustIntrinsic || abi == Abi::PlatformIntrinsic {
-            encode_inlined_item(ecx, rbml_w, InlinedItemRef::Foreign(nitem));
+            encode_inlined_item(ecx, rbml_w, InlinedItemRef::Foreign(def_id, nitem));
             encode_mir(ecx, rbml_w, nitem.id);
         }
         encode_attributes(rbml_w, &nitem.attrs);
@@ -1361,7 +1362,7 @@ fn my_visit_expr(expr: &hir::Expr,
             ecx.tcx.closure_kind(def_id).encode(rbml_w).unwrap();
             rbml_w.end_tag();
 
-            assert!(ecx.mir_map.map.contains_key(&expr.id));
+            assert!(ecx.mir_map.map.contains_key(&def_id));
             encode_mir(ecx, rbml_w, expr.id);
 
             rbml_w.end_tag();
@@ -1388,6 +1389,20 @@ impl<'a, 'b, 'c, 'tcx> Visitor<'tcx> for EncodeVisitor<'a, 'b, 'c, 'tcx> {
     fn visit_foreign_item(&mut self, ni: &'tcx hir::ForeignItem) {
         intravisit::walk_foreign_item(self, ni);
         encode_info_for_foreign_item(self.ecx, self.rbml_w_for_visit_item, ni, self.index);
+    }
+    fn visit_ty(&mut self, ty: &'tcx hir::Ty) {
+        intravisit::walk_ty(self, ty);
+
+        if let hir::TyImplTrait(_) = ty.node {
+            let rbml_w = &mut *self.rbml_w_for_visit_item;
+            let def_id = self.ecx.tcx.map.local_def_id(ty.id);
+            let _task = self.index.record(def_id, rbml_w);
+            rbml_w.start_tag(tag_items_data_item);
+            encode_def_id_and_key(self.ecx, rbml_w, def_id);
+            encode_family(rbml_w, 'y');
+            encode_bounds_and_type_for_item(rbml_w, self.ecx, self.index, ty.id);
+            rbml_w.end_tag();
+        }
     }
 }
 
@@ -1431,31 +1446,28 @@ fn encode_item_index(rbml_w: &mut Encoder, index: IndexData) {
 }
 
 fn encode_meta_item(rbml_w: &mut Encoder, mi: &ast::MetaItem) {
-    match mi.node {
-      ast::MetaItemKind::Word(ref name) => {
+    if mi.is_word() {
+        let name = mi.name();
         rbml_w.start_tag(tag_meta_item_word);
-        rbml_w.wr_tagged_str(tag_meta_item_name, name);
+        rbml_w.wr_tagged_str(tag_meta_item_name, &name);
         rbml_w.end_tag();
-      }
-      ast::MetaItemKind::NameValue(ref name, ref value) => {
-        match value.node {
-          ast::LitKind::Str(ref value, _) => {
-            rbml_w.start_tag(tag_meta_item_name_value);
-            rbml_w.wr_tagged_str(tag_meta_item_name, name);
-            rbml_w.wr_tagged_str(tag_meta_item_value, value);
-            rbml_w.end_tag();
-          }
-          _ => {/* FIXME (#623): encode other variants */ }
-        }
-      }
-      ast::MetaItemKind::List(ref name, ref items) => {
+    } else if mi.is_value_str() {
+        let name = mi.name();
+        /* FIXME (#623): support other literal kinds */
+        let value = mi.value_str().unwrap();
+        rbml_w.start_tag(tag_meta_item_name_value);
+        rbml_w.wr_tagged_str(tag_meta_item_name, &name);
+        rbml_w.wr_tagged_str(tag_meta_item_value, &value);
+        rbml_w.end_tag();
+    } else { // it must be a list
+        let name = mi.name();
+        let items = mi.meta_item_list().unwrap();
         rbml_w.start_tag(tag_meta_item_list);
-        rbml_w.wr_tagged_str(tag_meta_item_name, name);
+        rbml_w.wr_tagged_str(tag_meta_item_name, &name);
         for inner_item in items {
             encode_meta_item(rbml_w, &inner_item);
         }
         rbml_w.end_tag();
-      }
     }
 }
 
@@ -1464,7 +1476,7 @@ fn encode_attributes(rbml_w: &mut Encoder, attrs: &[ast::Attribute]) {
     for attr in attrs {
         rbml_w.start_tag(tag_attribute);
         rbml_w.wr_tagged_u8(tag_attribute_is_sugared_doc, attr.node.is_sugared_doc as u8);
-        encode_meta_item(rbml_w, &attr.node.value);
+        encode_meta_item(rbml_w, attr.meta());
         rbml_w.end_tag();
     }
     rbml_w.end_tag();
@@ -1893,7 +1905,7 @@ fn encode_metadata_inner(rbml_w: &mut Encoder,
     encode_crate_name(rbml_w, &ecx.link_meta.crate_name);
     encode_crate_triple(rbml_w, &ecx.tcx.sess.opts.target_triple);
     encode_hash(rbml_w, &ecx.link_meta.crate_hash);
-    encode_crate_disambiguator(rbml_w, &ecx.tcx.sess.crate_disambiguator.get().as_str());
+    encode_crate_disambiguator(rbml_w, &ecx.tcx.sess.local_crate_disambiguator());
     encode_dylib_dependency_formats(rbml_w, &ecx);
     encode_panic_strategy(rbml_w, &ecx);
 

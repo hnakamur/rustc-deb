@@ -253,6 +253,7 @@ fn ty_is_local_constructor(tcx: TyCtxt, ty: Ty, infer_is_local: InferIsLocal)-> 
         ty::TySlice(..) |
         ty::TyRawPtr(..) |
         ty::TyRef(..) |
+        ty::TyNever |
         ty::TyTuple(..) |
         ty::TyParam(..) |
         ty::TyProjection(..) => {
@@ -281,7 +282,7 @@ fn ty_is_local_constructor(tcx: TyCtxt, ty: Ty, infer_is_local: InferIsLocal)-> 
             true
         }
 
-        ty::TyClosure(..) => {
+        ty::TyClosure(..) | ty::TyAnon(..) => {
             bug!("ty_is_local invoked on unexpected type: {:?}", ty)
         }
     }

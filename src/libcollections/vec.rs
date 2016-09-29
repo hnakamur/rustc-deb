@@ -73,6 +73,7 @@ use core::mem;
 use core::ops::{Index, IndexMut};
 use core::ops;
 use core::ptr;
+use core::ptr::Shared;
 use core::slice;
 
 use super::SpecExtend;
@@ -342,11 +343,17 @@ impl<T> Vec<T> {
     ///
     /// * `ptr` needs to have been previously allocated via `String`/`Vec<T>`
     ///   (at least, it's highly likely to be incorrect if it wasn't).
-    /// * `length` needs to be the length that less than or equal to `capacity`.
+    /// * `length` needs to be less than or equal to `capacity`.
     /// * `capacity` needs to be the capacity that the pointer was allocated with.
     ///
     /// Violating these may cause problems like corrupting the allocator's
     /// internal datastructures.
+    ///
+    /// The ownership of `ptr` is effectively transferred to the
+    /// `Vec<T>` which may then deallocate, reallocate or change the
+    /// contents of memory pointed to by the pointer at will. Ensure
+    /// that nothing else uses the pointer after calling this
+    /// function.
     ///
     /// # Examples
     ///
@@ -469,6 +476,25 @@ impl<T> Vec<T> {
     /// Note that this will drop any excess capacity. Calling this and
     /// converting back to a vector with `into_vec()` is equivalent to calling
     /// `shrink_to_fit()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let v = vec![1, 2, 3];
+    ///
+    /// let slice = v.into_boxed_slice();
+    /// ```
+    ///
+    /// Any excess capacity is removed:
+    ///
+    /// ```
+    /// let mut vec = Vec::with_capacity(10);
+    /// vec.extend([1, 2, 3].iter().cloned());
+    ///
+    /// assert_eq!(vec.capacity(), 10);
+    /// let slice = vec.into_boxed_slice();
+    /// assert_eq!(slice.into_vec().capacity(), 3);
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn into_boxed_slice(mut self) -> Box<[T]> {
         unsafe {
@@ -479,18 +505,45 @@ impl<T> Vec<T> {
         }
     }
 
-    /// Shorten a vector to be `len` elements long, dropping excess elements.
+    /// Shortens the vector, keeping the first `len` elements and dropping
+    /// the rest.
     ///
     /// If `len` is greater than the vector's current length, this has no
     /// effect.
     ///
+    /// The [`drain`] method can emulate `truncate`, but causes the excess
+    /// elements to be returned instead of dropped.
+    ///
     /// # Examples
+    ///
+    /// Truncating a five element vector to two elements:
     ///
     /// ```
     /// let mut vec = vec![1, 2, 3, 4, 5];
     /// vec.truncate(2);
     /// assert_eq!(vec, [1, 2]);
     /// ```
+    ///
+    /// No truncation occurs when `len` is greater than the vector's current
+    /// length:
+    ///
+    /// ```
+    /// let mut vec = vec![1, 2, 3];
+    /// vec.truncate(8);
+    /// assert_eq!(vec, [1, 2, 3]);
+    /// ```
+    ///
+    /// Truncating when `len == 0` is equivalent to calling the [`clear`]
+    /// method.
+    ///
+    /// ```
+    /// let mut vec = vec![1, 2, 3];
+    /// vec.truncate(0);
+    /// assert_eq!(vec, []);
+    /// ```
+    ///
+    /// [`clear`]: #method.clear
+    /// [`drain`]: #method.drain
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn truncate(&mut self, len: usize) {
         unsafe {
@@ -508,6 +561,14 @@ impl<T> Vec<T> {
     /// Extracts a slice containing the entire vector.
     ///
     /// Equivalent to `&s[..]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::{self, Write};
+    /// let buffer = vec![1, 2, 3, 5, 8];
+    /// io::sink().write(buffer.as_slice()).unwrap();
+    /// ```
     #[inline]
     #[stable(feature = "vec_as_slice", since = "1.7.0")]
     pub fn as_slice(&self) -> &[T] {
@@ -517,10 +578,18 @@ impl<T> Vec<T> {
     /// Extracts a mutable slice of the entire vector.
     ///
     /// Equivalent to `&mut s[..]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::{self, Read};
+    /// let mut buffer = vec![0; 3];
+    /// io::repeat(0b101).read_exact(buffer.as_mut_slice()).unwrap();
+    /// ```
     #[inline]
     #[stable(feature = "vec_as_slice", since = "1.7.0")]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        &mut self[..]
+        self
     }
 
     /// Sets the length of a vector.
@@ -532,9 +601,38 @@ impl<T> Vec<T> {
     /// # Examples
     ///
     /// ```
-    /// let mut v = vec![1, 2, 3, 4];
+    /// use std::ptr;
+    ///
+    /// let mut vec = vec!['r', 'u', 's', 't'];
+    ///
     /// unsafe {
-    ///     v.set_len(1);
+    ///     ptr::drop_in_place(&mut vec[3]);
+    ///     vec.set_len(3);
+    /// }
+    /// assert_eq!(vec, ['r', 'u', 's']);
+    /// ```
+    ///
+    /// In this example, there is a memory leak since the memory locations
+    /// owned by the inner vectors were not freed prior to the `set_len` call:
+    ///
+    /// ```
+    /// let mut vec = vec![vec![1, 0, 0],
+    ///                    vec![0, 1, 0],
+    ///                    vec![0, 0, 1]];
+    /// unsafe {
+    ///     vec.set_len(0);
+    /// }
+    /// ```
+    ///
+    /// In this example, the vector gets expanded from zero to four items
+    /// without any memory allocations occurring, resulting in vector
+    /// values of unallocated memory:
+    ///
+    /// ```
+    /// let mut vec: Vec<char> = Vec::new();
+    ///
+    /// unsafe {
+    ///     vec.set_len(4);
     /// }
     /// ```
     #[inline]
@@ -821,8 +919,8 @@ impl<T> Vec<T> {
             Drain {
                 tail_start: end,
                 tail_len: len - end,
-                iter: range_slice.iter_mut(),
-                vec: self as *mut _,
+                iter: range_slice.iter(),
+                vec: Shared::new(self as *mut _),
             }
         }
     }
@@ -1348,18 +1446,18 @@ impl<T> IntoIterator for Vec<T> {
     #[inline]
     fn into_iter(mut self) -> IntoIter<T> {
         unsafe {
-            let ptr = self.as_mut_ptr();
-            assume(!ptr.is_null());
-            let begin = ptr as *const T;
+            let begin = self.as_mut_ptr();
+            assume(!begin.is_null());
             let end = if mem::size_of::<T>() == 0 {
-                arith_offset(ptr as *const i8, self.len() as isize) as *const T
+                arith_offset(begin as *const i8, self.len() as isize) as *const T
             } else {
-                ptr.offset(self.len() as isize) as *const T
+                begin.offset(self.len() as isize) as *const T
             };
-            let buf = ptr::read(&self.buf);
+            let cap = self.buf.cap();
             mem::forget(self);
             IntoIter {
-                _buf: buf,
+                buf: Shared::new(begin),
+                cap: cap,
                 ptr: begin,
                 end: end,
             }
@@ -1603,11 +1701,60 @@ impl<'a, T> FromIterator<T> for Cow<'a, [T]> where T: Clone {
 ////////////////////////////////////////////////////////////////////////////////
 
 /// An iterator that moves out of a vector.
+///
+/// This `struct` is created by the `into_iter` method on [`Vec`][`Vec`] (provided
+/// by the [`IntoIterator`] trait).
+///
+/// [`Vec`]: struct.Vec.html
+/// [`IntoIterator`]: ../../std/iter/trait.IntoIterator.html
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IntoIter<T> {
-    _buf: RawVec<T>,
+    buf: Shared<T>,
+    cap: usize,
     ptr: *const T,
     end: *const T,
+}
+
+impl<T> IntoIter<T> {
+    /// Returns the remaining items of this iterator as a slice.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #![feature(vec_into_iter_as_slice)]
+    /// let vec = vec!['a', 'b', 'c'];
+    /// let mut into_iter = vec.into_iter();
+    /// assert_eq!(into_iter.as_slice(), &['a', 'b', 'c']);
+    /// let _ = into_iter.next().unwrap();
+    /// assert_eq!(into_iter.as_slice(), &['b', 'c']);
+    /// ```
+    #[unstable(feature = "vec_into_iter_as_slice", issue = "35601")]
+    pub fn as_slice(&self) -> &[T] {
+        unsafe {
+            slice::from_raw_parts(self.ptr, self.len())
+        }
+    }
+
+    /// Returns the remaining items of this iterator as a mutable slice.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #![feature(vec_into_iter_as_slice)]
+    /// let vec = vec!['a', 'b', 'c'];
+    /// let mut into_iter = vec.into_iter();
+    /// assert_eq!(into_iter.as_slice(), &['a', 'b', 'c']);
+    /// into_iter.as_mut_slice()[2] = 'z';
+    /// assert_eq!(into_iter.next().unwrap(), 'a');
+    /// assert_eq!(into_iter.next().unwrap(), 'b');
+    /// assert_eq!(into_iter.next().unwrap(), 'z');
+    /// ```
+    #[unstable(feature = "vec_into_iter_as_slice", issue = "35601")]
+    pub fn as_mut_slice(&self) -> &mut [T] {
+        unsafe {
+            slice::from_raw_parts_mut(self.ptr as *mut T, self.len())
+        }
+    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1622,14 +1769,14 @@ impl<T> Iterator for IntoIter<T> {
     #[inline]
     fn next(&mut self) -> Option<T> {
         unsafe {
-            if self.ptr == self.end {
+            if self.ptr as *const _ == self.end {
                 None
             } else {
                 if mem::size_of::<T>() == 0 {
                     // purposefully don't use 'ptr.offset' because for
                     // vectors with 0-size elements this would return the
                     // same pointer.
-                    self.ptr = arith_offset(self.ptr as *const i8, 1) as *const T;
+                    self.ptr = arith_offset(self.ptr as *const i8, 1) as *mut T;
 
                     // Use a non-null pointer value
                     Some(ptr::read(EMPTY as *mut T))
@@ -1672,7 +1819,7 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
             } else {
                 if mem::size_of::<T>() == 0 {
                     // See above for why 'ptr.offset' isn't used
-                    self.end = arith_offset(self.end as *const i8, -1) as *const T;
+                    self.end = arith_offset(self.end as *const i8, -1) as *mut T;
 
                     // Use a non-null pointer value
                     Some(ptr::read(EMPTY as *mut T))
@@ -1692,9 +1839,7 @@ impl<T> ExactSizeIterator for IntoIter<T> {}
 #[stable(feature = "vec_into_iter_clone", since = "1.8.0")]
 impl<T: Clone> Clone for IntoIter<T> {
     fn clone(&self) -> IntoIter<T> {
-        unsafe {
-            slice::from_raw_parts(self.ptr, self.len()).to_owned().into_iter()
-        }
+        self.as_slice().to_owned().into_iter()
     }
 }
 
@@ -1703,13 +1848,19 @@ impl<T> Drop for IntoIter<T> {
     #[unsafe_destructor_blind_to_params]
     fn drop(&mut self) {
         // destroy the remaining elements
-        for _x in self {}
+        for _x in self.by_ref() {}
 
         // RawVec handles deallocation
+        let _ = unsafe { RawVec::from_raw_parts(*self.buf, self.cap) };
     }
 }
 
 /// A draining iterator for `Vec<T>`.
+///
+/// This `struct` is created by the [`drain`] method on [`Vec`].
+///
+/// [`drain`]: struct.Vec.html#method.drain
+/// [`Vec`]: struct.Vec.html
 #[stable(feature = "drain", since = "1.6.0")]
 pub struct Drain<'a, T: 'a> {
     /// Index of tail to preserve
@@ -1717,8 +1868,8 @@ pub struct Drain<'a, T: 'a> {
     /// Length of tail
     tail_len: usize,
     /// Current remaining range to remove
-    iter: slice::IterMut<'a, T>,
-    vec: *mut Vec<T>,
+    iter: slice::Iter<'a, T>,
+    vec: Shared<Vec<T>>,
 }
 
 #[stable(feature = "drain", since = "1.6.0")]
@@ -1756,7 +1907,7 @@ impl<'a, T> Drop for Drain<'a, T> {
 
         if self.tail_len > 0 {
             unsafe {
-                let source_vec = &mut *self.vec;
+                let source_vec = &mut **self.vec;
                 // memmove back untouched tail, update to new length
                 let start = source_vec.len();
                 let tail = self.tail_start;

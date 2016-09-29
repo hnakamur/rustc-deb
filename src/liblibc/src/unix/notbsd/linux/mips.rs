@@ -189,6 +189,15 @@ s! {
         pub mem_unit: ::c_uint,
         pub _f: [::c_char; 8],
     }
+
+    // FIXME this is actually a union
+    pub struct sem_t {
+        #[cfg(target_pointer_width = "32")]
+        __size: [::c_char; 16],
+        #[cfg(target_pointer_width = "64")]
+        __size: [::c_char; 32],
+        __align: [::c_long; 0],
+    }
 }
 
 pub const BUFSIZ: ::c_uint = 8192;
@@ -369,6 +378,7 @@ pub const SO_RCVTIMEO: ::c_int = 4102;
 pub const SO_SNDTIMEO: ::c_int = 4101;
 pub const SO_ACCEPTCONN: ::c_int = 4105;
 
+pub const __SIZEOF_PTHREAD_CONDATTR_T: usize = 4;
 pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 24;
 pub const __SIZEOF_PTHREAD_RWLOCK_T: usize = 32;
 pub const __SIZEOF_PTHREAD_MUTEXATTR_T: usize = 4;
@@ -517,6 +527,21 @@ pub const TIOCCONS: ::c_ulong = 0x80047478;
 pub const RTLD_DEEPBIND: ::c_int = 0x10;
 pub const RTLD_GLOBAL: ::c_int = 0x4;
 pub const RTLD_NOLOAD: ::c_int = 0x8;
+
+pub const LINUX_REBOOT_MAGIC1: ::c_int = 0xfee1dead;
+pub const LINUX_REBOOT_MAGIC2: ::c_int = 672274793;
+pub const LINUX_REBOOT_MAGIC2A: ::c_int = 85072278;
+pub const LINUX_REBOOT_MAGIC2B: ::c_int = 369367448;
+pub const LINUX_REBOOT_MAGIC2C: ::c_int = 537993216;
+
+pub const LINUX_REBOOT_CMD_RESTART: ::c_int = 0x01234567;
+pub const LINUX_REBOOT_CMD_HALT: ::c_int = 0xCDEF0123;
+pub const LINUX_REBOOT_CMD_CAD_ON: ::c_int = 0x89ABCDEF;
+pub const LINUX_REBOOT_CMD_CAD_OFF: ::c_int = 0x00000000;
+pub const LINUX_REBOOT_CMD_POWER_OFF: ::c_int = 0x4321FEDC;
+pub const LINUX_REBOOT_CMD_RESTART2: ::c_int = 0xA1B2C3D4;
+pub const LINUX_REBOOT_CMD_SW_SUSPEND: ::c_int = 0xD000FCE2;
+pub const LINUX_REBOOT_CMD_KEXEC: ::c_int = 0x45584543;
 
 pub const SYS_gettid: ::c_long = 4222;   // Valid for O32
 

@@ -55,7 +55,7 @@ use hir::intravisit::Visitor;
 
 pub use self::sty::{Binder, DebruijnIndex};
 pub use self::sty::{BuiltinBound, BuiltinBounds, ExistentialBounds};
-pub use self::sty::{BareFnTy, FnSig, PolyFnSig, FnOutput, PolyFnOutput};
+pub use self::sty::{BareFnTy, FnSig, PolyFnSig};
 pub use self::sty::{ClosureTy, InferTy, ParamTy, ProjectionTy, TraitTy};
 pub use self::sty::{ClosureSubsts, TypeAndMut};
 pub use self::sty::{TraitRef, TypeVariants, PolyTraitRef};
@@ -63,7 +63,6 @@ pub use self::sty::{BoundRegion, EarlyBoundRegion, FreeRegion, Region};
 pub use self::sty::Issue32330;
 pub use self::sty::{TyVid, IntVid, FloatVid, RegionVid, SkolemizedRegionVid};
 pub use self::sty::BoundRegion::*;
-pub use self::sty::FnOutput::*;
 pub use self::sty::InferTy::*;
 pub use self::sty::Region::*;
 pub use self::sty::TypeVariants::*;
@@ -1404,9 +1403,13 @@ impl<'a, 'tcx> ParameterEnvironment<'tcx> {
                     }
                 }
             }
-            Some(ast_map::NodeExpr(..)) => {
+            Some(ast_map::NodeExpr(expr)) => {
                 // This is a convenience to allow closures to work.
-                ParameterEnvironment::for_item(tcx, tcx.map.get_parent(id))
+                if let hir::ExprClosure(..) = expr.node {
+                    ParameterEnvironment::for_item(tcx, tcx.map.get_parent(id))
+                } else {
+                    tcx.empty_parameter_environment()
+                }
             }
             Some(ast_map::NodeForeignItem(item)) => {
                 let def_id = tcx.map.local_def_id(id);
@@ -1715,7 +1718,7 @@ impl<'a, 'gcx, 'tcx, 'container> AdtDefData<'gcx, 'container> {
     pub fn variant_of_def(&self, def: Def) -> &VariantDefData<'gcx, 'container> {
         match def {
             Def::Variant(_, vid) => self.variant_with_id(vid),
-            Def::Struct(..) | Def::TyAlias(..) => self.struct_variant(),
+            Def::Struct(..) | Def::TyAlias(..) | Def::AssociatedTy(..) => self.struct_variant(),
             _ => bug!("unexpected def {:?} in variant_of_def", def)
         }
     }
@@ -1757,8 +1760,7 @@ impl<'a, 'gcx, 'tcx, 'container> AdtDefData<'tcx, 'container> {
     /// Due to normalization being eager, this applies even if
     /// the associated type is behind a pointer, e.g. issue #31299.
     pub fn sized_constraint(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> Ty<'tcx> {
-        let dep_node = DepNode::SizedConstraint(self.did);
-        match self.sized_constraint.get(dep_node) {
+        match self.sized_constraint.get(DepNode::SizedConstraint(self.did)) {
             None => {
                 let global_tcx = tcx.global_tcx();
                 let this = global_tcx.lookup_adt_def_master(self.did);
@@ -1786,12 +1788,18 @@ impl<'a, 'tcx> AdtDefData<'tcx, 'tcx> {
     ///       such.
     ///     - a TyError, if a type contained itself. The representability
     ///       check should catch this case.
-    fn calculate_sized_constraint_inner(&'tcx self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    fn calculate_sized_constraint_inner(&'tcx self,
+                                        tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                         stack: &mut Vec<AdtDefMaster<'tcx>>)
     {
-
         let dep_node = || DepNode::SizedConstraint(self.did);
-        if self.sized_constraint.get(dep_node()).is_some() {
+
+        // Follow the memoization pattern: push the computation of
+        // DepNode::SizedConstraint as our current task.
+        let _task = tcx.dep_graph.in_task(dep_node());
+        if self.sized_constraint.untracked_get().is_some() {
+            //                   ---------------
+            // can skip the dep-graph read since we just pushed the task
             return;
         }
 
@@ -1845,7 +1853,7 @@ impl<'a, 'tcx> AdtDefData<'tcx, 'tcx> {
         let result = match ty.sty {
             TyBool | TyChar | TyInt(..) | TyUint(..) | TyFloat(..) |
             TyBox(..) | TyRawPtr(..) | TyRef(..) | TyFnDef(..) | TyFnPtr(_) |
-            TyArray(..) | TyClosure(..) => {
+            TyArray(..) | TyClosure(..) | TyNever => {
                 vec![]
             }
 
@@ -1880,7 +1888,7 @@ impl<'a, 'tcx> AdtDefData<'tcx, 'tcx> {
                 }
             }
 
-            TyProjection(..) => {
+            TyProjection(..) | TyAnon(..) => {
                 // must calculate explicitly.
                 // FIXME: consider special-casing always-Sized projections
                 vec![ty]
@@ -1923,14 +1931,6 @@ impl<'tcx, 'container> VariantDefData<'tcx, 'container> {
     #[inline]
     fn fields_iter(&self) -> slice::Iter<FieldDefData<'tcx, 'container>> {
         self.fields.iter()
-    }
-
-    pub fn kind(&self) -> VariantKind {
-        self.kind
-    }
-
-    pub fn is_tuple_struct(&self) -> bool {
-        self.kind() == VariantKind::Tuple
     }
 
     #[inline]
@@ -2452,6 +2452,20 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     /// definition exists, panics on partial resolutions to catch errors.
     pub fn expect_def_or_none(self, id: NodeId) -> Option<Def> {
         self.def_map.borrow().get(&id).map(|resolution| resolution.full_def())
+    }
+
+    // Returns `ty::VariantDef` if `def` refers to a struct,
+    // or variant or their constructors, panics otherwise.
+    pub fn expect_variant_def(self, def: Def) -> VariantDef<'tcx> {
+        match def {
+            Def::Variant(enum_did, did) => {
+                self.lookup_adt_def(enum_did).variant_with_id(did)
+            }
+            Def::Struct(did) => {
+                self.lookup_adt_def(did).struct_variant()
+            }
+            _ => bug!("expect_variant_def used with unexpected def {:?}", def)
+        }
     }
 
     pub fn def_key(self, id: DefId) -> ast_map::DefKey {

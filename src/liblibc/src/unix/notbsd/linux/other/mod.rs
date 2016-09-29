@@ -121,6 +121,15 @@ s! {
         __unused4: ::c_ulong,
         __unused5: ::c_ulong
     }
+
+    // FIXME this is actually a union
+    pub struct sem_t {
+        #[cfg(target_pointer_width = "32")]
+        __size: [::c_char; 16],
+        #[cfg(target_pointer_width = "64")]
+        __size: [::c_char; 32],
+        __align: [::c_long; 0],
+    }
 }
 
 pub const RLIMIT_RSS: ::c_int = 5;
@@ -420,6 +429,9 @@ pub const F_SETOWN: ::c_int = 8;
 pub const F_SETLK: ::c_int = 6;
 pub const F_SETLKW: ::c_int = 7;
 
+pub const SEEK_DATA: ::c_int = 3;
+pub const SEEK_HOLE: ::c_int = 4;
+
 pub const SFD_NONBLOCK: ::c_int = 0x0800;
 
 pub const TCSANOW: ::c_int = 0;
@@ -461,6 +473,21 @@ pub const TIOCCONS: ::c_ulong = 0x541D;
 pub const RTLD_DEEPBIND: ::c_int = 0x8;
 pub const RTLD_GLOBAL: ::c_int = 0x100;
 pub const RTLD_NOLOAD: ::c_int = 0x4;
+
+pub const LINUX_REBOOT_MAGIC1: ::c_int = 0xfee1dead;
+pub const LINUX_REBOOT_MAGIC2: ::c_int = 672274793;
+pub const LINUX_REBOOT_MAGIC2A: ::c_int = 85072278;
+pub const LINUX_REBOOT_MAGIC2B: ::c_int = 369367448;
+pub const LINUX_REBOOT_MAGIC2C: ::c_int = 537993216;
+
+pub const LINUX_REBOOT_CMD_RESTART: ::c_int = 0x01234567;
+pub const LINUX_REBOOT_CMD_HALT: ::c_int = 0xCDEF0123;
+pub const LINUX_REBOOT_CMD_CAD_ON: ::c_int = 0x89ABCDEF;
+pub const LINUX_REBOOT_CMD_CAD_OFF: ::c_int = 0x00000000;
+pub const LINUX_REBOOT_CMD_POWER_OFF: ::c_int = 0x4321FEDC;
+pub const LINUX_REBOOT_CMD_RESTART2: ::c_int = 0xA1B2C3D4;
+pub const LINUX_REBOOT_CMD_SW_SUSPEND: ::c_int = 0xD000FCE2;
+pub const LINUX_REBOOT_CMD_KEXEC: ::c_int = 0x45584543;
 
 cfg_if! {
     if #[cfg(any(target_arch = "arm", target_arch = "x86",
@@ -506,6 +533,7 @@ extern {
     pub fn pthread_setaffinity_np(thread: ::pthread_t,
                                   cpusetsize: ::size_t,
                                   cpuset: *const ::cpu_set_t) -> ::c_int;
+    pub fn sched_getcpu() -> ::c_int;
 }
 
 cfg_if! {

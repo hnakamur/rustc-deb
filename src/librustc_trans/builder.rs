@@ -11,7 +11,7 @@
 #![allow(dead_code)] // FFI wrappers
 
 use llvm;
-use llvm::{AtomicBinOp, AtomicOrdering, SynchronizationScope, AsmDialect};
+use llvm::{AtomicRmwBinOp, AtomicOrdering, SynchronizationScope, AsmDialect};
 use llvm::{Opcode, IntPredicate, RealPredicate, False, OperandBundleDef};
 use llvm::{ValueRef, BasicBlockRef, BuilderRef, ModuleRef};
 use base;
@@ -177,7 +177,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
         check_call("invoke", llfn, args);
 
-        let bundle = bundle.as_ref().map(|b| b.raw()).unwrap_or(0 as *mut _);
+        let bundle = bundle.as_ref().map(|b| b.raw()).unwrap_or(ptr::null_mut());
 
         unsafe {
             llvm::LLVMRustBuildInvoke(self.llbuilder,
@@ -503,8 +503,8 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         unsafe {
             let ty = Type::from_ref(llvm::LLVMTypeOf(ptr));
             let align = llalign_of_pref(self.ccx, ty.element_type());
-            llvm::LLVMBuildAtomicLoad(self.llbuilder, ptr, noname(), order,
-                                      align as c_uint)
+            llvm::LLVMRustBuildAtomicLoad(self.llbuilder, ptr, noname(), order,
+                                          align as c_uint)
         }
     }
 
@@ -565,7 +565,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         unsafe {
             let ty = Type::from_ref(llvm::LLVMTypeOf(ptr));
             let align = llalign_of_pref(self.ccx, ty.element_type());
-            llvm::LLVMBuildAtomicStore(self.llbuilder, val, ptr, order, align as c_uint);
+            llvm::LLVMRustBuildAtomicStore(self.llbuilder, val, ptr, order, align as c_uint);
         }
     }
 
@@ -840,8 +840,8 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         debug!("Asm Output Type: {:?}", output);
         let fty = Type::func(&argtys[..], &output);
         unsafe {
-            let v = llvm::LLVMInlineAsm(
-                fty.to_ref(), asm, cons, volatile, alignstack, dia as c_uint);
+            let v = llvm::LLVMRustInlineAsm(
+                fty.to_ref(), asm, cons, volatile, alignstack, dia);
             self.call(v, inputs, None)
         }
     }
@@ -859,7 +859,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
         check_call("call", llfn, args);
 
-        let bundle = bundle.as_ref().map(|b| b.raw()).unwrap_or(0 as *mut _);
+        let bundle = bundle.as_ref().map(|b| b.raw()).unwrap_or(ptr::null_mut());
 
         unsafe {
             llvm::LLVMRustBuildCall(self.llbuilder, llfn, args.as_ptr(),
@@ -961,7 +961,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             self.count_insn("trap");
             llvm::LLVMRustBuildCall(self.llbuilder, t,
                                     args.as_ptr(), args.len() as c_uint,
-                                    0 as *mut _,
+                                    ptr::null_mut(),
                                     noname());
         }
     }
@@ -1000,7 +1000,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                        parent: Option<ValueRef>,
                        args: &[ValueRef]) -> ValueRef {
         self.count_insn("cleanuppad");
-        let parent = parent.unwrap_or(0 as *mut _);
+        let parent = parent.unwrap_or(ptr::null_mut());
         let name = CString::new("cleanuppad").unwrap();
         let ret = unsafe {
             llvm::LLVMRustBuildCleanupPad(self.llbuilder,
@@ -1016,7 +1016,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     pub fn cleanup_ret(&self, cleanup: ValueRef,
                        unwind: Option<BasicBlockRef>) -> ValueRef {
         self.count_insn("cleanupret");
-        let unwind = unwind.unwrap_or(0 as *mut _);
+        let unwind = unwind.unwrap_or(ptr::null_mut());
         let ret = unsafe {
             llvm::LLVMRustBuildCleanupRet(self.llbuilder, cleanup, unwind)
         };
@@ -1052,8 +1052,8 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                         unwind: Option<BasicBlockRef>,
                         num_handlers: usize) -> ValueRef {
         self.count_insn("catchswitch");
-        let parent = parent.unwrap_or(0 as *mut _);
-        let unwind = unwind.unwrap_or(0 as *mut _);
+        let parent = parent.unwrap_or(ptr::null_mut());
+        let unwind = unwind.unwrap_or(ptr::null_mut());
         let name = CString::new("catchswitch").unwrap();
         let ret = unsafe {
             llvm::LLVMRustBuildCatchSwitch(self.llbuilder, parent, unwind,
@@ -1083,11 +1083,11 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                          failure_order: AtomicOrdering,
                          weak: llvm::Bool) -> ValueRef {
         unsafe {
-            llvm::LLVMBuildAtomicCmpXchg(self.llbuilder, dst, cmp, src,
+            llvm::LLVMRustBuildAtomicCmpXchg(self.llbuilder, dst, cmp, src,
                                          order, failure_order, weak)
         }
     }
-    pub fn atomic_rmw(&self, op: AtomicBinOp,
+    pub fn atomic_rmw(&self, op: AtomicRmwBinOp,
                      dst: ValueRef, src: ValueRef,
                      order: AtomicOrdering) -> ValueRef {
         unsafe {
@@ -1097,7 +1097,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
     pub fn atomic_fence(&self, order: AtomicOrdering, scope: SynchronizationScope) {
         unsafe {
-            llvm::LLVMBuildAtomicFence(self.llbuilder, order, scope);
+            llvm::LLVMRustBuildAtomicFence(self.llbuilder, order, scope);
         }
     }
 }

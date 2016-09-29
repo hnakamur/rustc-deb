@@ -100,21 +100,13 @@ s! {
 
     pub struct sched_param {
         pub sched_priority: ::c_int,
-        #[cfg(any(target_env = "musl",
-                  target_env = "musleabi",
-                  target_env = "musleabihf"))]
+        #[cfg(any(target_env = "musl"))]
         pub sched_ss_low_priority: ::c_int,
-        #[cfg(any(target_env = "musl",
-                  target_env = "musleabi",
-                  target_env = "musleabihf"))]
+        #[cfg(any(target_env = "musl"))]
         pub sched_ss_repl_period: ::timespec,
-        #[cfg(any(target_env = "musl",
-                  target_env = "musleabi",
-                  target_env = "musleabihf"))]
+        #[cfg(any(target_env = "musl"))]
         pub sched_ss_init_budget: ::timespec,
-        #[cfg(any(target_env = "musl",
-                  target_env = "musleabi",
-                  target_env = "musleabihf"))]
+        #[cfg(any(target_env = "musl"))]
         pub sched_ss_max_repl: ::c_int,
     }
 
@@ -501,6 +493,8 @@ pub const EPOLL_CTL_ADD: ::c_int = 1;
 pub const EPOLL_CTL_MOD: ::c_int = 3;
 pub const EPOLL_CTL_DEL: ::c_int = 2;
 
+pub const EPOLL_CLOEXEC: ::c_int = 0x80000;
+
 pub const MNT_DETACH: ::c_int = 0x2;
 pub const MNT_EXPIRE: ::c_int = 0x4;
 
@@ -627,7 +621,16 @@ pub const CLONE_NEWPID: ::c_int = 0x20000000;
 pub const CLONE_NEWNET: ::c_int = 0x40000000;
 pub const CLONE_IO: ::c_int = 0x80000000;
 
-pub const WNOHANG: ::c_int = 1;
+pub const WNOHANG: ::c_int = 0x00000001;
+pub const WUNTRACED: ::c_int = 0x00000002;
+pub const WSTOPPED: ::c_int = WUNTRACED;
+pub const WEXITED: ::c_int = 0x00000004;
+pub const WCONTINUED: ::c_int = 0x00000008;
+pub const WNOWAIT: ::c_int = 0x01000000;
+
+pub const __WNOTHREAD: ::c_int = 0x20000000;
+pub const __WALL: ::c_int = 0x40000000;
+pub const __WCLONE: ::c_int = 0x80000000;
 
 pub const SPLICE_F_MOVE: ::c_uint = 0x01;
 pub const SPLICE_F_NONBLOCK: ::c_uint = 0x02;
@@ -682,16 +685,32 @@ f! {
         }
     }
 
+    pub fn WIFSTOPPED(status: ::c_int) -> bool {
+        (status & 0xff) == 0x7f
+    }
+
+    pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
+        (status >> 8) & 0xff
+    }
+
+    pub fn WIFSIGNALED(status: ::c_int) -> bool {
+        (status & 0x7f) + 1 >= 2
+    }
+
+    pub fn WTERMSIG(status: ::c_int) -> ::c_int {
+        status & 0x7f
+    }
+
     pub fn WIFEXITED(status: ::c_int) -> bool {
-        (status & 0xff) == 0
+        (status & 0x7f) == 0
     }
 
     pub fn WEXITSTATUS(status: ::c_int) -> ::c_int {
         (status >> 8) & 0xff
     }
 
-    pub fn WTERMSIG(status: ::c_int) -> ::c_int {
-        status & 0x7f
+    pub fn WCOREDUMP(status: ::c_int) -> bool {
+        (status & 0x80) != 0
     }
 }
 
@@ -724,6 +743,7 @@ extern {
     pub fn sched_get_priority_max(policy: ::c_int) -> ::c_int;
     pub fn sched_get_priority_min(policy: ::c_int) -> ::c_int;
     pub fn epoll_create(size: ::c_int) -> ::c_int;
+    pub fn epoll_create1(flags: ::c_int) -> ::c_int;
     pub fn epoll_ctl(epfd: ::c_int,
                      op: ::c_int,
                      fd: ::c_int,
@@ -804,6 +824,38 @@ extern {
     pub fn stat64(path: *const c_char, buf: *mut stat64) -> ::c_int;
     pub fn eventfd(init: ::c_uint, flags: ::c_int) -> ::c_int;
     pub fn sysinfo (info: *mut ::sysinfo) -> ::c_int;
+
+    pub fn openat(dirfd: ::c_int, pathname: *const ::c_char,
+                  flags: ::c_int, ...) -> ::c_int;
+    pub fn faccessat(dirfd: ::c_int, pathname: *const ::c_char,
+                     mode: ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn fchmodat(dirfd: ::c_int, pathname: *const ::c_char,
+                    mode: ::mode_t, flags: ::c_int) -> ::c_int;
+    pub fn fchownat(dirfd: ::c_int, pathname: *const ::c_char,
+                    owner: ::uid_t, group: ::gid_t,
+                    flags: ::c_int) -> ::c_int;
+    pub fn fstatat(dirfd: ::c_int, pathname: *const ::c_char,
+                   buf: *mut stat, flags: ::c_int) -> ::c_int;
+    pub fn linkat(olddirfd: ::c_int, oldpath: *const ::c_char,
+                  newdirfd: ::c_int, newpath: *const ::c_char,
+                  flags: ::c_int) -> ::c_int;
+    pub fn mkdirat(dirfd: ::c_int, pathname: *const ::c_char,
+                   mode: ::mode_t) -> ::c_int;
+    pub fn mknodat(dirfd: ::c_int, pathname: *const ::c_char,
+                   mode: ::mode_t, dev: dev_t) -> ::c_int;
+    pub fn readlinkat(dirfd: ::c_int, pathname: *const ::c_char,
+                      buf: *mut ::c_char, bufsiz: ::size_t) -> ::ssize_t;
+    pub fn renameat(olddirfd: ::c_int, oldpath: *const ::c_char,
+                    newdirfd: ::c_int, newpath: *const ::c_char)
+                    -> ::c_int;
+    pub fn symlinkat(target: *const ::c_char, newdirfd: ::c_int,
+                     linkpath: *const ::c_char) -> ::c_int;
+    pub fn unlinkat(dirfd: ::c_int, pathname: *const ::c_char,
+                    flags: ::c_int) -> ::c_int;
+    pub fn pthread_condattr_getclock(attr: *const pthread_condattr_t,
+                                     clock_id: *mut clockid_t) -> ::c_int;
+    pub fn pthread_condattr_setclock(attr: *mut pthread_condattr_t,
+                                     clock_id: clockid_t) -> ::c_int;
 }
 
 cfg_if! {

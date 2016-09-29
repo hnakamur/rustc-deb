@@ -214,7 +214,7 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
     fn sort_string(&self, tcx: TyCtxt<'a, 'gcx, 'lcx>) -> String {
         match self.sty {
             ty::TyBool | ty::TyChar | ty::TyInt(_) |
-            ty::TyUint(_) | ty::TyFloat(_) | ty::TyStr => self.to_string(),
+            ty::TyUint(_) | ty::TyFloat(_) | ty::TyStr | ty::TyNever => self.to_string(),
             ty::TyTuple(ref tys) if tys.is_empty() => self.to_string(),
 
             ty::TyEnum(def, _) => format!("enum `{}`", tcx.item_path_str(def.did)),
@@ -222,7 +222,24 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
             ty::TyArray(_, n) => format!("array of {} elements", n),
             ty::TySlice(_) => "slice".to_string(),
             ty::TyRawPtr(_) => "*-ptr".to_string(),
-            ty::TyRef(_, _) => "&-ptr".to_string(),
+            ty::TyRef(region, tymut) => {
+                let tymut_string = tymut.to_string();
+                if tymut_string == "_" ||         //unknown type name,
+                   tymut_string.len() > 10 ||     //name longer than saying "reference",
+                   region.to_string() != ""       //... or a complex type
+                {
+                    match tymut {
+                        ty::TypeAndMut{mutbl, ..} => {
+                            format!("{}reference", match mutbl {
+                                hir::Mutability::MutMutable => "mutable ",
+                                _ => ""
+                            })
+                        }
+                    }
+                } else {
+                    format!("&{}", tymut_string)
+                }
+            }
             ty::TyFnDef(..) => format!("fn item"),
             ty::TyFnPtr(_) => "fn pointer".to_string(),
             ty::TyTrait(ref inner) => {
@@ -247,6 +264,7 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
                     "type parameter".to_string()
                 }
             }
+            ty::TyAnon(..) => "anonymized type".to_string(),
             ty::TyError => "type error".to_string(),
         }
     }

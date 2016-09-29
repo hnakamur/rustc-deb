@@ -36,6 +36,7 @@ use value::Value;
 
 use syntax_pos::{Span, DUMMY_SP};
 
+use std::fmt;
 use std::ptr;
 
 use super::operand::{OperandRef, OperandValue};
@@ -144,6 +145,12 @@ impl<'tcx> Const<'tcx> {
             val: val,
             ty: self.ty
         }
+    }
+}
+
+impl<'tcx> fmt::Debug for Const<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Const({:?}: {:?})", Value(self.llval), self.ty)
     }
 }
 
@@ -278,12 +285,17 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 let span = statement.source_info.span;
                 match statement.kind {
                     mir::StatementKind::Assign(ref dest, ref rvalue) => {
-                        let ty = self.mir.lvalue_ty(tcx, dest);
+                        let ty = dest.ty(self.mir, tcx);
                         let ty = self.monomorphize(&ty).to_ty(tcx);
                         match self.const_rvalue(rvalue, ty, span) {
                             Ok(value) => self.store(dest, value, span),
                             Err(err) => if failure.is_ok() { failure = Err(err); }
                         }
+                    }
+                    mir::StatementKind::StorageLive(_) |
+                    mir::StatementKind::StorageDead(_) => {}
+                    mir::StatementKind::SetDiscriminant{ .. } => {
+                        span_bug!(span, "SetDiscriminant should not appear in constants?");
                     }
                 }
             }
@@ -327,7 +339,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 }
 
                 mir::TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
-                    let fn_ty = self.mir.operand_ty(tcx, func);
+                    let fn_ty = func.ty(self.mir, tcx);
                     let fn_ty = self.monomorphize(&fn_ty);
                     let instance = match fn_ty.sty {
                         ty::TyFnDef(def_id, substs, _) => {
@@ -386,7 +398,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 ConstLvalue {
                     base: Base::Static(consts::get_static(self.ccx, def_id).val),
                     llextra: ptr::null_mut(),
-                    ty: self.mir.lvalue_ty(tcx, lvalue).to_ty(tcx)
+                    ty: lvalue.ty(self.mir, tcx).to_ty(tcx)
                 }
             }
             mir::Lvalue::Projection(ref projection) => {
@@ -461,7 +473,8 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
 
     fn const_operand(&self, operand: &mir::Operand<'tcx>, span: Span)
                      -> Result<Const<'tcx>, ConstEvalFailure> {
-        match *operand {
+        debug!("const_operand({:?} @ {:?})", operand, span);
+        let result = match *operand {
             mir::Operand::Consume(ref lvalue) => {
                 Ok(self.const_lvalue(lvalue, span)?.to_const(span))
             }
@@ -490,13 +503,33 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                     }
                 }
             }
-        }
+        };
+        debug!("const_operand({:?} @ {:?}) = {:?}", operand, span,
+               result.as_ref().ok());
+        result
+    }
+
+    fn const_array(&self, array_ty: Ty<'tcx>, fields: &[ValueRef])
+                   -> Const<'tcx>
+    {
+        let elem_ty = array_ty.builtin_index().unwrap_or_else(|| {
+            bug!("bad array type {:?}", array_ty)
+        });
+        let llunitty = type_of::type_of(self.ccx, elem_ty);
+        // If the array contains enums, an LLVM array won't work.
+        let val = if fields.iter().all(|&f| val_ty(f) == llunitty) {
+            C_array(llunitty, fields)
+        } else {
+            C_struct(self.ccx, fields, false)
+        };
+        Const::new(val, array_ty)
     }
 
     fn const_rvalue(&self, rvalue: &mir::Rvalue<'tcx>,
                     dest_ty: Ty<'tcx>, span: Span)
                     -> Result<Const<'tcx>, ConstEvalFailure> {
         let tcx = self.ccx.tcx();
+        debug!("const_rvalue({:?}: {:?} @ {:?})", rvalue, dest_ty, span);
         let val = match *rvalue {
             mir::Rvalue::Use(ref operand) => self.const_operand(operand, span)?,
 
@@ -504,15 +537,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 let elem = self.const_operand(elem, span)?;
                 let size = count.value.as_u64(tcx.sess.target.uint_type);
                 let fields = vec![elem.llval; size as usize];
-
-                let llunitty = type_of::type_of(self.ccx, elem.ty);
-                // If the array contains enums, an LLVM array won't work.
-                let val = if val_ty(elem.llval) == llunitty {
-                    C_array(llunitty, &fields)
-                } else {
-                    C_struct(self.ccx, &fields, false)
-                };
-                Const::new(val, dest_ty)
+                self.const_array(dest_ty, &fields)
             }
 
             mir::Rvalue::Aggregate(ref kind, ref operands) => {
@@ -530,44 +555,32 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
 
                 // FIXME Shouldn't need to manually trigger closure instantiations.
                 if let mir::AggregateKind::Closure(def_id, substs) = *kind {
-                    use rustc::hir;
-                    use syntax::ast::DUMMY_NODE_ID;
-                    use syntax::ptr::P;
                     use closure;
-
-                    closure::trans_closure_expr(closure::Dest::Ignore(self.ccx),
-                                                &hir::FnDecl {
-                                                    inputs: P::new(),
-                                                    output: hir::NoReturn(DUMMY_SP),
-                                                    variadic: false
-                                                },
-                                                &hir::Block {
-                                                    stmts: P::new(),
-                                                    expr: None,
-                                                    id: DUMMY_NODE_ID,
-                                                    rules: hir::DefaultBlock,
-                                                    span: DUMMY_SP
-                                                },
-                                                DUMMY_NODE_ID, def_id,
-                                                self.monomorphize(&substs));
+                    closure::trans_closure_body_via_mir(self.ccx,
+                                                        def_id,
+                                                        self.monomorphize(&substs));
                 }
 
-                let val = if let mir::AggregateKind::Adt(adt_def, index, _) = *kind {
-                    let repr = adt::represent_type(self.ccx, dest_ty);
-                    let disr = Disr::from(adt_def.variants[index].disr_val);
-                    adt::trans_const(self.ccx, &repr, disr, &fields)
-                } else if let ty::TyArray(elem_ty, _) = dest_ty.sty {
-                    let llunitty = type_of::type_of(self.ccx, elem_ty);
-                    // If the array contains enums, an LLVM array won't work.
-                    if fields.iter().all(|&f| val_ty(f) == llunitty) {
-                        C_array(llunitty, &fields)
-                    } else {
-                        C_struct(self.ccx, &fields, false)
+                match *kind {
+                    mir::AggregateKind::Vec => {
+                        self.const_array(dest_ty, &fields)
                     }
-                } else {
-                    C_struct(self.ccx, &fields, false)
-                };
-                Const::new(val, dest_ty)
+                    mir::AggregateKind::Adt(..) |
+                    mir::AggregateKind::Closure(..) |
+                    mir::AggregateKind::Tuple => {
+                        let disr = match *kind {
+                            mir::AggregateKind::Adt(adt_def, index, _) => {
+                                Disr::from(adt_def.variants[index].disr_val)
+                            }
+                            _ => Disr(0)
+                        };
+                        let repr = adt::represent_type(self.ccx, dest_ty);
+                        Const::new(
+                            adt::trans_const(self.ccx, &repr, disr, &fields),
+                            dest_ty
+                        )
+                    }
+                }
             }
 
             mir::Rvalue::Cast(ref kind, ref source, cast_ty) => {
@@ -739,7 +752,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 let lhs = self.const_operand(lhs, span)?;
                 let rhs = self.const_operand(rhs, span)?;
                 let ty = lhs.ty;
-                let binop_ty = self.mir.binop_ty(tcx, op, lhs.ty, rhs.ty);
+                let binop_ty = op.ty(tcx, lhs.ty, rhs.ty);
                 let (lhs, rhs) = (lhs.llval, rhs.llval);
                 Const::new(const_scalar_binop(op, lhs, rhs, ty), binop_ty)
             }
@@ -748,7 +761,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                 let lhs = self.const_operand(lhs, span)?;
                 let rhs = self.const_operand(rhs, span)?;
                 let ty = lhs.ty;
-                let val_ty = self.mir.binop_ty(tcx, op, lhs.ty, rhs.ty);
+                let val_ty = op.ty(tcx, lhs.ty, rhs.ty);
                 let binop_ty = tcx.mk_tup(vec![val_ty, tcx.types.bool]);
                 let (lhs, rhs) = (lhs.llval, rhs.llval);
                 assert!(!ty.is_fp());
@@ -790,6 +803,8 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
 
             _ => span_bug!(span, "{:?} in constant", rvalue)
         };
+
+        debug!("const_rvalue({:?}: {:?} @ {:?}) = {:?}", rvalue, dest_ty, span, val);
 
         Ok(val)
     }
@@ -840,11 +855,11 @@ pub fn const_scalar_binop(op: mir::BinOp,
             mir::BinOp::Gt | mir::BinOp::Ge => {
                 if is_float {
                     let cmp = base::bin_op_to_fcmp_predicate(op.to_hir_binop());
-                    llvm::ConstFCmp(cmp, lhs, rhs)
+                    llvm::LLVMConstFCmp(cmp, lhs, rhs)
                 } else {
                     let cmp = base::bin_op_to_icmp_predicate(op.to_hir_binop(),
                                                                 signed);
-                    llvm::ConstICmp(cmp, lhs, rhs)
+                    llvm::LLVMConstICmp(cmp, lhs, rhs)
                 }
             }
         }
@@ -892,6 +907,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                           constant: &mir::Constant<'tcx>)
                           -> Const<'tcx>
     {
+        debug!("trans_constant({:?})", constant);
         let ty = bcx.monomorphize(&constant.ty);
         let result = match constant.literal.clone() {
             mir::Literal::Item { def_id, substs } => {
@@ -916,7 +932,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
         };
 
-        match result {
+        let result = match result {
             Ok(v) => v,
             Err(ConstEvalFailure::Compiletime(_)) => {
                 // We've errored, so we don't have to produce working code.
@@ -925,10 +941,13 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
             Err(ConstEvalFailure::Runtime(err)) => {
                 span_bug!(constant.span,
-                          "MIR constant {:?} results in runtime panic: {}",
+                          "MIR constant {:?} results in runtime panic: {:?}",
                           constant, err.description())
             }
-        }
+        };
+
+        debug!("trans_constant({:?}) = {:?}", constant, result);
+        result
     }
 }
 

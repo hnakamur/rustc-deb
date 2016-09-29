@@ -11,7 +11,6 @@
 //! Numeric traits and functions for the built-in numeric types.
 
 #![stable(feature = "rust1", since = "1.0.0")]
-#![allow(missing_docs)]
 
 use char::CharExt;
 use cmp::PartialOrd;
@@ -188,6 +187,12 @@ macro_rules! int_impl {
      $sub_with_overflow:path,
      $mul_with_overflow:path) => {
         /// Returns the smallest value that can be represented by this integer type.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// assert_eq!(i8::min_value(), -128);
+        /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
         pub const fn min_value() -> Self {
@@ -195,6 +200,12 @@ macro_rules! int_impl {
         }
 
         /// Returns the largest value that can be represented by this integer type.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// assert_eq!(i8::max_value(), 127);
+        /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
         pub const fn max_value() -> Self {
@@ -288,6 +299,8 @@ macro_rules! int_impl {
         /// Shifts the bits to the left by a specified amount, `n`,
         /// wrapping the truncated bits to the end of the resulting integer.
         ///
+        /// Please note this isn't the same operation as `<<`!
+        ///
         /// # Examples
         ///
         /// Basic usage:
@@ -307,6 +320,8 @@ macro_rules! int_impl {
         /// Shifts the bits to the right by a specified amount, `n`,
         /// wrapping the truncated bits to the beginning of the resulting
         /// integer.
+        ///
+        /// Please note this isn't the same operation as `>>`!
         ///
         /// # Examples
         ///
@@ -596,6 +611,31 @@ macro_rules! int_impl {
             if b {None} else {Some(a)}
         }
 
+        /// Checked absolute value. Computes `self.abs()`, returning `None` if
+        /// `self == MIN`.
+        ///
+        /// # Examples
+        ///
+        /// Basic usage:
+        ///
+        /// ```
+        /// # #![feature(no_panic_abs)]
+        ///
+        /// use std::i32;
+        ///
+        /// assert_eq!((-5i32).checked_abs(), Some(5));
+        /// assert_eq!(i32::MIN.checked_abs(), None);
+        /// ```
+        #[unstable(feature = "no_panic_abs", issue = "35057")]
+        #[inline]
+        pub fn checked_abs(self) -> Option<Self> {
+            if self.is_negative() {
+                self.checked_neg()
+            } else {
+                Some(self)
+            }
+        }
+
         /// Saturating integer addition. Computes `self + other`, saturating at
         /// the numeric bounds instead of overflowing.
         ///
@@ -848,6 +888,36 @@ macro_rules! int_impl {
             self.overflowing_shr(rhs).0
         }
 
+        /// Wrapping (modular) absolute value. Computes `self.abs()`,
+        /// wrapping around at the boundary of the type.
+        ///
+        /// The only case where such wrapping can occur is when one takes
+        /// the absolute value of the negative minimal value for the type
+        /// this is a positive value that is too large to represent in the
+        /// type. In such a case, this function returns `MIN` itself.
+        ///
+        /// # Examples
+        ///
+        /// Basic usage:
+        ///
+        /// ```
+        /// # #![feature(no_panic_abs)]
+        ///
+        /// assert_eq!(100i8.wrapping_abs(), 100);
+        /// assert_eq!((-100i8).wrapping_abs(), 100);
+        /// assert_eq!((-128i8).wrapping_abs(), -128);
+        /// assert_eq!((-128i8).wrapping_abs() as u8, 128);
+        /// ```
+        #[unstable(feature = "no_panic_abs", issue = "35057")]
+        #[inline(always)]
+        pub fn wrapping_abs(self) -> Self {
+            if self.is_negative() {
+                self.wrapping_neg()
+            } else {
+                self
+            }
+        }
+
         /// Calculates `self` + `rhs`
         ///
         /// Returns a tuple of the addition along with a boolean indicating
@@ -1056,6 +1126,35 @@ macro_rules! int_impl {
             (self >> (rhs & ($BITS - 1)), (rhs > ($BITS - 1)))
         }
 
+        /// Computes the absolute value of `self`.
+        ///
+        /// Returns a tuple of the absolute version of self along with a
+        /// boolean indicating whether an overflow happened. If self is the
+        /// minimum value (e.g. i32::MIN for values of type i32), then the
+        /// minimum value will be returned again and true will be returned for
+        /// an overflow happening.
+        ///
+        /// # Examples
+        ///
+        /// Basic usage:
+        ///
+        /// ```
+        /// # #![feature(no_panic_abs)]
+        ///
+        /// assert_eq!(10i8.overflowing_abs(), (10,false));
+        /// assert_eq!((-10i8).overflowing_abs(), (10,false));
+        /// assert_eq!((-128i8).overflowing_abs(), (-128,true));
+        /// ```
+        #[unstable(feature = "no_panic_abs", issue = "35057")]
+        #[inline]
+        pub fn overflowing_abs(self) -> (Self, bool) {
+            if self.is_negative() {
+                self.overflowing_neg()
+            } else {
+                (self, false)
+            }
+        }
+
         /// Raises self to the power of `exp`, using exponentiation by squaring.
         ///
         /// # Examples
@@ -1250,11 +1349,23 @@ macro_rules! uint_impl {
      $sub_with_overflow:path,
      $mul_with_overflow:path) => {
         /// Returns the smallest value that can be represented by this integer type.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// assert_eq!(u8::min_value(), 0);
+        /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
         pub const fn min_value() -> Self { 0 }
 
         /// Returns the largest value that can be represented by this integer type.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// assert_eq!(u8::max_value(), 255);
+        /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline]
         pub const fn max_value() -> Self { !0 }
@@ -1361,6 +1472,8 @@ macro_rules! uint_impl {
         /// Shifts the bits to the left by a specified amount, `n`,
         /// wrapping the truncated bits to the end of the resulting integer.
         ///
+        /// Please note this isn't the same operation as `<<`!
+        ///
         /// # Examples
         ///
         /// Basic usage:
@@ -1382,6 +1495,8 @@ macro_rules! uint_impl {
         /// Shifts the bits to the right by a specified amount, `n`,
         /// wrapping the truncated bits to the beginning of the resulting
         /// integer.
+        ///
+        /// Please note this isn't the same operation as `>>`!
         ///
         /// # Examples
         ///
@@ -2277,26 +2392,45 @@ impl usize {
 ///
 /// [`f32::classify()`]: ../../std/primitive.f32.html#method.classify
 /// [`f64::classify()`]: ../../std/primitive.f64.html#method.classify
+///
+/// # Examples
+///
+/// ```
+/// use std::num::FpCategory;
+/// use std::f32;
+///
+/// let num = 12.4_f32;
+/// let inf = f32::INFINITY;
+/// let zero = 0f32;
+/// let sub: f32 = 1.1754942e-38;
+/// let nan = f32::NAN;
+///
+/// assert_eq!(num.classify(), FpCategory::Normal);
+/// assert_eq!(inf.classify(), FpCategory::Infinite);
+/// assert_eq!(zero.classify(), FpCategory::Zero);
+/// assert_eq!(nan.classify(), FpCategory::Nan);
+/// assert_eq!(sub.classify(), FpCategory::Subnormal);
+/// ```
 #[derive(Copy, Clone, PartialEq, Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub enum FpCategory {
-    /// "Not a Number", often obtained by dividing by zero
+    /// "Not a Number", often obtained by dividing by zero.
     #[stable(feature = "rust1", since = "1.0.0")]
     Nan,
 
-    /// Positive or negative infinity
+    /// Positive or negative infinity.
     #[stable(feature = "rust1", since = "1.0.0")]
     Infinite ,
 
-    /// Positive or negative zero
+    /// Positive or negative zero.
     #[stable(feature = "rust1", since = "1.0.0")]
     Zero,
 
-    /// De-normalized floating point representation (less precise than `Normal`)
+    /// De-normalized floating point representation (less precise than `Normal`).
     #[stable(feature = "rust1", since = "1.0.0")]
     Subnormal,
 
-    /// A regular floating point number
+    /// A regular floating point number.
     #[stable(feature = "rust1", since = "1.0.0")]
     Normal,
 }

@@ -256,7 +256,7 @@ fn move_path_children_matching<'tcx, F>(move_paths: &MovePathData<'tcx>,
 fn lvalue_contents_drop_state_cannot_differ<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                       mir: &Mir<'tcx>,
                                                       lv: &repr::Lvalue<'tcx>) -> bool {
-    let ty = mir.lvalue_ty(tcx, lv).to_ty(tcx);
+    let ty = lv.ty(mir, tcx).to_ty(tcx);
     match ty.sty {
         ty::TyArray(..) | ty::TySlice(..) | ty::TyRef(..) | ty::TyRawPtr(..) => {
             debug!("lvalue_contents_drop_state_cannot_differ lv: {:?} ty: {:?} refd => false",
@@ -355,7 +355,7 @@ fn drop_flag_effects_for_location<'a, 'tcx, F>(
 
         // don't move out of non-Copy things
         if let MovePathContent::Lvalue(ref lvalue) = move_data.move_paths[path].content {
-            let ty = mir.lvalue_ty(tcx, lvalue).to_ty(tcx);
+            let ty = lvalue.ty(mir, tcx).to_ty(tcx);
             if !ty.moves_by_default(tcx, param_env, DUMMY_SP) {
                 continue;
             }
@@ -369,12 +369,17 @@ fn drop_flag_effects_for_location<'a, 'tcx, F>(
     let block = &mir[loc.block];
     match block.statements.get(loc.index) {
         Some(stmt) => match stmt.kind {
+            repr::StatementKind::SetDiscriminant{ .. } => {
+                span_bug!(stmt.source_info.span, "SetDiscrimant should not exist during borrowck");
+            }
             repr::StatementKind::Assign(ref lvalue, _) => {
                 debug!("drop_flag_effects: assignment {:?}", stmt);
                  on_all_children_bits(tcx, mir, move_data,
                                      move_data.rev_lookup.find(lvalue),
                                      |moi| callback(moi, DropFlagState::Present))
             }
+            repr::StatementKind::StorageLive(_) |
+            repr::StatementKind::StorageDead(_) => {}
         },
         None => {
             debug!("drop_flag_effects: replace {:?}", block.terminator());

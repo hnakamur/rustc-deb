@@ -19,6 +19,7 @@ use rustc::mir::visit::{Visitor, LvalueContext};
 use rustc::mir::traversal;
 use common::{self, Block, BlockAndBuilder};
 use glue;
+use std::iter;
 use super::rvalue;
 
 pub fn lvalue_locals<'bcx, 'tcx>(bcx: Block<'bcx,'tcx>,
@@ -31,7 +32,7 @@ pub fn lvalue_locals<'bcx, 'tcx>(bcx: Block<'bcx,'tcx>,
     let local_types = mir.arg_decls.iter().map(|a| a.ty)
                .chain(mir.var_decls.iter().map(|v| v.ty))
                .chain(mir.temp_decls.iter().map(|t| t.ty))
-               .chain(mir.return_ty.maybe_converging());
+               .chain(iter::once(mir.return_ty));
     for (index, ty) in local_types.enumerate() {
         let ty = bcx.monomorphize(&ty);
         debug!("local {} has type {:?}", index, ty);
@@ -47,6 +48,12 @@ pub fn lvalue_locals<'bcx, 'tcx>(bcx: Block<'bcx,'tcx>,
                     common::type_is_fat_ptr(bcx.tcx(), ty));
         } else if common::type_is_imm_pair(bcx.ccx(), ty) {
             // We allow pairs and uses of any of their 2 fields.
+        } else if !analyzer.seen_assigned.contains(index) {
+            // No assignment has been seen, which means that
+            // either the local has been marked as lvalue
+            // already, or there is no possible initialization
+            // for the local, making any reads invalid.
+            // This is useful in weeding out dead temps.
         } else {
             // These sorts of types require an alloca. Note that
             // type_is_immediate() may *still* be true, particularly
@@ -143,7 +150,8 @@ impl<'mir, 'bcx, 'tcx> Visitor<'tcx> for LocalAnalyzer<'mir, 'bcx, 'tcx> {
         // Allow uses of projections of immediate pair fields.
         if let mir::Lvalue::Projection(ref proj) = *lvalue {
             if self.mir.local_index(&proj.base).is_some() {
-                let ty = self.mir.lvalue_ty(self.bcx.tcx(), &proj.base);
+                let ty = proj.base.ty(self.mir, self.bcx.tcx());
+
                 let ty = self.bcx.monomorphize(&ty.to_ty(self.bcx.tcx()));
                 if common::type_is_imm_pair(self.bcx.ccx(), ty) {
                     if let mir::ProjectionElem::Field(..) = proj.elem {
@@ -160,8 +168,11 @@ impl<'mir, 'bcx, 'tcx> Visitor<'tcx> for LocalAnalyzer<'mir, 'bcx, 'tcx> {
                 LvalueContext::Call => {
                     self.mark_assigned(index);
                 }
-                LvalueContext::Consume => {
-                }
+
+                LvalueContext::StorageLive |
+                LvalueContext::StorageDead |
+                LvalueContext::Consume => {}
+
                 LvalueContext::Store |
                 LvalueContext::Inspect |
                 LvalueContext::Borrow { .. } |
@@ -169,8 +180,9 @@ impl<'mir, 'bcx, 'tcx> Visitor<'tcx> for LocalAnalyzer<'mir, 'bcx, 'tcx> {
                 LvalueContext::Projection => {
                     self.mark_as_lvalue(index);
                 }
+
                 LvalueContext::Drop => {
-                    let ty = self.mir.lvalue_ty(self.bcx.tcx(), lvalue);
+                    let ty = lvalue.ty(self.mir, self.bcx.tcx());
                     let ty = self.bcx.monomorphize(&ty.to_ty(self.bcx.tcx()));
 
                     // Only need the lvalue if we're actually dropping it.

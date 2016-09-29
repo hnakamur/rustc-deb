@@ -26,10 +26,12 @@ pub enum SimplifiedType {
     StrSimplifiedType,
     VecSimplifiedType,
     PtrSimplifiedType,
+    NeverSimplifiedType,
     TupleSimplifiedType(usize),
     TraitSimplifiedType(DefId),
     StructSimplifiedType(DefId),
     ClosureSimplifiedType(DefId),
+    AnonSimplifiedType(DefId),
     FunctionSimplifiedType(usize),
     ParameterSimplifiedType,
 }
@@ -80,6 +82,7 @@ pub fn simplify_type<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
         ty::TyClosure(def_id, _) => {
             Some(ClosureSimplifiedType(def_id))
         }
+        ty::TyNever => Some(NeverSimplifiedType),
         ty::TyTuple(ref tys) => {
             Some(TupleSimplifiedType(tys.len()))
         }
@@ -97,6 +100,9 @@ pub fn simplify_type<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
             } else {
                 None
             }
+        }
+        ty::TyAnon(def_id, _) => {
+            Some(AnonSimplifiedType(def_id))
         }
         ty::TyInfer(_) | ty::TyError => None,
     }

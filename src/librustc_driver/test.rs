@@ -22,7 +22,7 @@ use rustc::middle::resolve_lifetime;
 use rustc::middle::stability;
 use rustc::ty::subst;
 use rustc::ty::subst::Subst;
-use rustc::traits::ProjectionMode;
+use rustc::traits::Reveal;
 use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 use rustc::infer::{self, InferOk, InferResult, TypeOrigin};
 use rustc_metadata::cstore::CStore;
@@ -33,8 +33,8 @@ use syntax::ast;
 use syntax::abi::Abi;
 use syntax::codemap::CodeMap;
 use errors;
-use errors::emitter::{CoreEmitter, Emitter};
-use errors::{Level, RenderSpan};
+use errors::emitter::Emitter;
+use errors::{Level, DiagnosticBuilder};
 use syntax::parse::token;
 use syntax::feature_gate::UnstableFeatures;
 use syntax_pos::DUMMY_SP;
@@ -76,15 +76,12 @@ fn remove_message(e: &mut ExpectErrorEmitter, msg: &str, lvl: Level) {
     }
 }
 
-impl CoreEmitter for ExpectErrorEmitter {
-    fn emit_message(&mut self,
-                    _sp: &RenderSpan,
-                    msg: &str,
-                    _: Option<&str>,
-                    lvl: Level,
-                    _is_header: bool,
-                    _show_snippet: bool) {
-        remove_message(self, msg, lvl);
+impl Emitter for ExpectErrorEmitter {
+    fn emit(&mut self, db: &DiagnosticBuilder) {
+        remove_message(self, &db.message, db.level);
+        for child in &db.children {
+            remove_message(self, &child.message, child.level);
+        }
     }
 }
 
@@ -106,7 +103,7 @@ fn test_env<F>(source_string: &str,
 
     let dep_graph = DepGraph::new(false);
     let _ignore = dep_graph.in_ignore();
-    let cstore = Rc::new(CStore::new(&dep_graph, token::get_ident_interner()));
+    let cstore = Rc::new(CStore::new(&dep_graph));
     let sess = session::build_session_(options, &dep_graph, None, diagnostic_handler,
                                        Rc::new(CodeMap::new()), cstore.clone());
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
@@ -134,6 +131,7 @@ fn test_env<F>(source_string: &str,
     TyCtxt::create_and_enter(&sess,
                              &arenas,
                              resolutions.def_map,
+                             resolutions.trait_map,
                              named_region_map.unwrap(),
                              ast_map,
                              resolutions.freevars,
@@ -143,7 +141,7 @@ fn test_env<F>(source_string: &str,
                              index,
                              "test_crate",
                              |tcx| {
-        tcx.infer_ctxt(None, None, ProjectionMode::AnyFinal).enter(|infcx| {
+        tcx.infer_ctxt(None, None, Reveal::NotSpecializable).enter(|infcx| {
 
             body(Env { infcx: &infcx });
             let free_regions = FreeRegionMap::new();
@@ -264,7 +262,7 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
             abi: Abi::Rust,
             sig: ty::Binder(ty::FnSig {
                 inputs: input_args,
-                output: ty::FnConverging(output_ty),
+                output: output_ty,
                 variadic: false,
             }),
         }))

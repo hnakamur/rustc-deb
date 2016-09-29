@@ -32,7 +32,7 @@
 //! atomically-reference-counted shared pointer).
 //!
 //! Most atomic types may be stored in static variables, initialized using
-//! the provided static initializers like `INIT_ATOMIC_BOOL`. Atomic statics
+//! the provided static initializers like `ATOMIC_BOOL_INIT`. Atomic statics
 //! are often used for lazy global initialization.
 //!
 //!
@@ -74,6 +74,8 @@
 //! ```
 
 #![stable(feature = "rust1", since = "1.0.0")]
+#![cfg_attr(not(target_has_atomic = "8"), allow(dead_code))]
+#![cfg_attr(not(target_has_atomic = "8"), allow(unused_imports))]
 
 use self::Ordering::*;
 

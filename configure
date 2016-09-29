@@ -600,7 +600,7 @@ opt debug-assertions 0 "build with debugging assertions"
 opt fast-make 0 "use .gitmodules as timestamp for submodule deps"
 opt ccache 0 "invoke gcc/clang via ccache to reuse object files between builds"
 opt local-rust 0 "use an installed rustc rather than downloading a snapshot"
-opt local-rebuild 0 "use an installed rustc matching the current version, for rebuilds"
+opt local-rebuild 0 "assume local-rust matches the current version, for rebuilds; implies local-rust, and is implied if local-rust already matches the current version"
 opt llvm-static-stdcpp 0 "statically link to libstdc++ for LLVM"
 opt rpath 1 "build rpaths into rustc itself"
 opt stage0-landing-pads 1 "enable landing pads during bootstrap with stage0"
@@ -609,9 +609,10 @@ opt dist-host-only 0 "only install bins for the host architecture"
 opt inject-std-version 1 "inject the current compiler version of libstd into programs"
 opt llvm-version-check 1 "check if the LLVM version is supported, build anyway"
 opt rustbuild 0 "use the rust and cargo based build system"
-opt orbit 0 "get MIR where it belongs - everywhere; most importantly, in orbit"
+opt orbit 1 "get MIR where it belongs - everywhere; most importantly, in orbit"
 opt codegen-tests 1 "run the src/test/codegen tests"
 opt option-checking 1 "complain about unrecognized options in this configure script"
+opt ninja 0 "build LLVM using the Ninja generator (for MSVC, requires building in the correct environment)"
 
 # Optimization and debugging options. These may be overridden by the release channel, etc.
 opt_nosave optimize 1 "build optimized rust code"
@@ -637,9 +638,19 @@ valopt arm-linux-androideabi-ndk "" "arm-linux-androideabi NDK standalone path"
 valopt armv7-linux-androideabi-ndk "" "armv7-linux-androideabi NDK standalone path"
 valopt aarch64-linux-android-ndk "" "aarch64-linux-android NDK standalone path"
 valopt nacl-cross-path  "" "NaCl SDK path (Pepper Canary is recommended). Must be absolute!"
-valopt release-channel "dev" "the name of the release channel to build"
 valopt musl-root "/usr/local" "MUSL root installation directory"
 valopt extra-filename "" "Additional data that is hashed and passed to the -C extra-filename flag"
+
+if [ -e ${CFG_SRC_DIR}.git ]
+then
+    valopt release-channel "dev" "the name of the release channel to build"
+else
+    # If we have no git directory then we are probably a tarball distribution
+    # and should default to stable channel - Issue 28322
+    probe CFG_GIT          git
+    msg "git: no git directory. Changing default release channel to stable"
+    valopt release-channel "stable" "the name of the release channel to build"
+fi
 
 # Used on systems where "cc" and "ar" are unavailable
 valopt default-linker "cc" "the default linker"
@@ -722,7 +733,7 @@ if [ -n "$CFG_ENABLE_DEBUG_ASSERTIONS" ]; then putvar CFG_ENABLE_DEBUG_ASSERTION
 if [ -n "$CFG_ENABLE_DEBUGINFO" ]; then putvar CFG_ENABLE_DEBUGINFO; fi
 if [ -n "$CFG_ENABLE_DEBUG_JEMALLOC" ]; then putvar CFG_ENABLE_DEBUG_JEMALLOC; fi
 
-if [ -n "$CFG_ENABLE_ORBIT" ]; then putvar CFG_ENABLE_ORBIT; fi
+if [ -n "$CFG_DISABLE_ORBIT" ]; then putvar CFG_DISABLE_ORBIT; fi
 
 step_msg "looking for build programs"
 
@@ -774,6 +785,17 @@ probe CFG_FLEX             flex
 probe CFG_BISON            bison
 probe CFG_GDB              gdb
 probe CFG_LLDB             lldb
+
+if [ -n "$CFG_ENABLE_NINJA" ]
+then
+  probe CFG_NINJA            ninja
+  if [ -z "$CFG_NINJA" ]
+  then
+    # On Debian and Fedora, the `ninja` binary is an IRC bot, so the build tool was
+    # renamed. Handle this case.
+    probe CFG_NINJA            ninja-build
+  fi
+fi
 
 # For building LLVM
 probe_need CFG_CMAKE cmake
@@ -991,13 +1013,19 @@ then
     LLVM_VERSION=$($LLVM_CONFIG --version)
 
     case $LLVM_VERSION in
-        (3.[7-8]*)
+        (3.[7-9]*)
             msg "found ok version of LLVM: $LLVM_VERSION"
             ;;
         (*)
             err "bad LLVM version: $LLVM_VERSION, need >=3.7"
             ;;
     esac
+
+    if "$CFG_LLVM_ROOT/bin/llvm-mc" -help | grep -- "-relocation-model"; then
+        msg "found older llvm-mc"
+        CFG_LLVM_MC_HAS_RELOCATION_MODEL=1
+        putvar CFG_LLVM_MC_HAS_RELOCATION_MODEL
+    fi
 fi
 
 # Even when the user overrides the choice of CC, still try to detect
@@ -1170,7 +1198,7 @@ do
             ;;
 
 
-        x86_64-*-musl)
+        x86_64-*-musl | arm-*-musleabi)
             if [ ! -f $CFG_MUSL_ROOT/lib/libc.a ]
             then
                 err "musl libc $CFG_MUSL_ROOT/lib/libc.a not found"
@@ -1524,7 +1552,10 @@ do
     fi
 
     # We need the generator later on for compiler-rt even if LLVM's not built
-    if [ ${is_msvc} -ne 0 ]
+    if [ -n "$CFG_NINJA" ]
+    then
+        generator="Ninja"
+    elif [ ${is_msvc} -ne 0 ]
     then
         case "$CFG_MSVC_ROOT" in
             *14.0*)

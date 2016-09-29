@@ -11,8 +11,10 @@ pub type tcflag_t = ::c_uint;
 pub type nl_item = c_long;
 pub type clockid_t = ::c_int;
 pub type id_t = ::uint32_t;
+pub type sem_t = *mut sem;
 
 pub enum timezone {}
+pub enum sem {}
 
 s! {
     pub struct sigaction {
@@ -179,6 +181,7 @@ pub const SIGINT : ::c_int = 2;
 pub const SIGQUIT : ::c_int = 3;
 pub const SIGILL : ::c_int = 4;
 pub const SIGABRT : ::c_int = 6;
+pub const SIGEMT: ::c_int = 7;
 pub const SIGFPE : ::c_int = 8;
 pub const SIGKILL : ::c_int = 9;
 pub const SIGSEGV : ::c_int = 11;
@@ -445,6 +448,22 @@ pub const LOG_NFACILITIES: ::c_int = 24;
 
 pub const HW_NCPU: ::c_int = 3;
 
+pub const SEM_FAILED: *mut sem_t = 0 as *mut sem_t;
+
+f! {
+    pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
+        status >> 8
+    }
+
+    pub fn WIFSIGNALED(status: ::c_int) -> bool {
+        (status & 0o177) != 0o177 && (status & 0o177) != 0
+    }
+
+    pub fn WIFSTOPPED(status: ::c_int) -> bool {
+        (status & 0o177) == 0o177
+    }
+}
+
 #[link(name = "util")]
 extern {
     pub fn mincore(addr: *mut ::c_void, len: ::size_t,
@@ -476,6 +495,38 @@ extern {
                    winp: *mut ::winsize) -> ::pid_t;
     pub fn getpriority(which: ::c_int, who: ::id_t) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::id_t, prio: ::c_int) -> ::c_int;
+
+    pub fn openat(dirfd: ::c_int, pathname: *const ::c_char,
+                  flags: ::c_int, ...) -> ::c_int;
+    pub fn faccessat(dirfd: ::c_int, pathname: *const ::c_char,
+                     mode: ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn fchmodat(dirfd: ::c_int, pathname: *const ::c_char,
+                    mode: ::mode_t, flags: ::c_int) -> ::c_int;
+    pub fn fchownat(dirfd: ::c_int, pathname: *const ::c_char,
+                    owner: ::uid_t, group: ::gid_t,
+                    flags: ::c_int) -> ::c_int;
+    pub fn fstatat(dirfd: ::c_int, pathname: *const ::c_char,
+                   buf: *mut stat, flags: ::c_int) -> ::c_int;
+    pub fn linkat(olddirfd: ::c_int, oldpath: *const ::c_char,
+                  newdirfd: ::c_int, newpath: *const ::c_char,
+                  flags: ::c_int) -> ::c_int;
+   pub fn mkdirat(dirfd: ::c_int, pathname: *const ::c_char,
+                  mode: ::mode_t) -> ::c_int;
+   pub fn mknodat(dirfd: ::c_int, pathname: *const ::c_char,
+                 mode: ::mode_t, dev: dev_t) -> ::c_int;
+   pub fn readlinkat(dirfd: ::c_int, pathname: *const ::c_char,
+                     buf: *mut ::c_char, bufsiz: ::size_t) -> ::ssize_t;
+   pub fn renameat(olddirfd: ::c_int, oldpath: *const ::c_char,
+                   newdirfd: ::c_int, newpath: *const ::c_char)
+                   -> ::c_int;
+   pub fn symlinkat(target: *const ::c_char, newdirfd: ::c_int,
+                    linkpath: *const ::c_char) -> ::c_int;
+   pub fn unlinkat(dirfd: ::c_int, pathname: *const ::c_char,
+                   flags: ::c_int) -> ::c_int;
+   pub fn mkfifoat(dirfd: ::c_int, pathname: *const ::c_char,
+                   mode: ::mode_t) -> ::c_int;
+    pub fn pthread_condattr_setclock(attr: *mut pthread_condattr_t,
+                                     clock_id: clockid_t) -> ::c_int;
 }
 
 cfg_if! {

@@ -301,7 +301,6 @@
 
 use clone::Clone;
 use cmp;
-use default::Default;
 use fmt;
 use iter_private::TrustedRandomAccess;
 use ops::FnMut;
@@ -626,7 +625,9 @@ impl<A, B> DoubleEndedIterator for Chain<A, B> where
 pub struct Zip<A, B> {
     a: A,
     b: B,
-    spec: <(A, B) as ZipImplData>::Data,
+    // index and len are only used by the specialized version of zip
+    index: usize,
+    len: usize,
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -668,17 +669,6 @@ trait ZipImpl<A, B> {
               B: DoubleEndedIterator + ExactSizeIterator;
 }
 
-// Zip specialization data members
-#[doc(hidden)]
-trait ZipImplData {
-    type Data: 'static + Clone + Default + fmt::Debug;
-}
-
-#[doc(hidden)]
-impl<T> ZipImplData for T {
-    default type Data = ();
-}
-
 // General Zip impl
 #[doc(hidden)]
 impl<A, B> ZipImpl<A, B> for Zip<A, B>
@@ -689,7 +679,8 @@ impl<A, B> ZipImpl<A, B> for Zip<A, B>
         Zip {
             a: a,
             b: b,
-            spec: Default::default(), // unused
+            index: 0, // unused
+            len: 0, // unused
         }
     }
 
@@ -743,20 +734,6 @@ impl<A, B> ZipImpl<A, B> for Zip<A, B>
 }
 
 #[doc(hidden)]
-#[derive(Default, Debug, Clone)]
-struct ZipImplFields {
-    index: usize,
-    len: usize,
-}
-
-#[doc(hidden)]
-impl<A, B> ZipImplData for (A, B)
-    where A: TrustedRandomAccess, B: TrustedRandomAccess
-{
-    type Data = ZipImplFields;
-}
-
-#[doc(hidden)]
 impl<A, B> ZipImpl<A, B> for Zip<A, B>
     where A: TrustedRandomAccess, B: TrustedRandomAccess
 {
@@ -765,18 +742,16 @@ impl<A, B> ZipImpl<A, B> for Zip<A, B>
         Zip {
             a: a,
             b: b,
-            spec: ZipImplFields {
-                index: 0,
-                len: len,
-            }
+            index: 0,
+            len: len,
         }
     }
 
     #[inline]
     fn next(&mut self) -> Option<(A::Item, B::Item)> {
-        if self.spec.index < self.spec.len {
-            let i = self.spec.index;
-            self.spec.index += 1;
+        if self.index < self.len {
+            let i = self.index;
+            self.index += 1;
             unsafe {
                 Some((self.a.get_unchecked(i), self.b.get_unchecked(i)))
             }
@@ -787,7 +762,7 @@ impl<A, B> ZipImpl<A, B> for Zip<A, B>
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.spec.len - self.spec.index;
+        let len = self.len - self.index;
         (len, Some(len))
     }
 
@@ -796,9 +771,9 @@ impl<A, B> ZipImpl<A, B> for Zip<A, B>
         where A: DoubleEndedIterator + ExactSizeIterator,
               B: DoubleEndedIterator + ExactSizeIterator
     {
-        if self.spec.index < self.spec.len {
-            self.spec.len -= 1;
-            let i = self.spec.len;
+        if self.index < self.len {
+            self.len -= 1;
+            let i = self.len;
             unsafe {
                 Some((self.a.get_unchecked(i), self.b.get_unchecked(i)))
             }
@@ -1198,17 +1173,15 @@ impl<I: ExactSizeIterator> ExactSizeIterator for Peekable<I> {}
 impl<I: Iterator> Peekable<I> {
     /// Returns a reference to the next() value without advancing the iterator.
     ///
-    /// The `peek()` method will return the value that a call to [`next()`] would
-    /// return, but does not advance the iterator. Like [`next()`], if there is
-    /// a value, it's wrapped in a `Some(T)`, but if the iterator is over, it
-    /// will return `None`.
+    /// Like [`next()`], if there is a value, it is wrapped in a `Some(T)`.
+    /// But if the iteration is over, `None` is returned.
     ///
     /// [`next()`]: trait.Iterator.html#tymethod.next
     ///
-    /// Because `peek()` returns reference, and many iterators iterate over
-    /// references, this leads to a possibly confusing situation where the
+    /// Because `peek()` returns a reference, and many iterators iterate over
+    /// references, there can be a possibly confusing situation where the
     /// return value is a double reference. You can see this effect in the
-    /// examples below, with `&&i32`.
+    /// examples below.
     ///
     /// # Examples
     ///
@@ -1225,13 +1198,13 @@ impl<I: Iterator> Peekable<I> {
     ///
     /// assert_eq!(iter.next(), Some(&2));
     ///
-    /// // we can peek() multiple times, the iterator won't advance
+    /// // The iterator does not advance even if we `peek` multiple times
     /// assert_eq!(iter.peek(), Some(&&3));
     /// assert_eq!(iter.peek(), Some(&&3));
     ///
     /// assert_eq!(iter.next(), Some(&3));
     ///
-    /// // after the iterator is finished, so is peek()
+    /// // After the iterator is finished, so is `peek()`
     /// assert_eq!(iter.peek(), None);
     /// assert_eq!(iter.next(), None);
     /// ```
@@ -1245,39 +1218,6 @@ impl<I: Iterator> Peekable<I> {
             Some(ref value) => Some(value),
             None => None,
         }
-    }
-
-    /// Checks if the iterator has finished iterating.
-    ///
-    /// Returns `true` if there are no more elements in the iterator, and
-    /// `false` if there are.
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// #![feature(peekable_is_empty)]
-    ///
-    /// let xs = [1, 2, 3];
-    ///
-    /// let mut iter = xs.iter().peekable();
-    ///
-    /// // there are still elements to iterate over
-    /// assert_eq!(iter.is_empty(), false);
-    ///
-    /// // let's consume the iterator
-    /// iter.next();
-    /// iter.next();
-    /// iter.next();
-    ///
-    /// assert_eq!(iter.is_empty(), true);
-    /// ```
-    #[unstable(feature = "peekable_is_empty", issue = "32111")]
-    #[inline]
-    #[rustc_deprecated(since = "1.10.0", reason = "replaced by .peek().is_none()")]
-    pub fn is_empty(&mut self) -> bool {
-        self.peek().is_none()
     }
 }
 

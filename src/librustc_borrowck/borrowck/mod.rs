@@ -168,8 +168,10 @@ fn borrowck_fn(this: &mut BorrowckCtxt,
                attributes: &[ast::Attribute]) {
     debug!("borrowck_fn(id={})", id);
 
+    let def_id = this.tcx.map.local_def_id(id);
+
     if attributes.iter().any(|item| item.check_name("rustc_mir_borrowck")) {
-        let mir = this.mir_map.unwrap().map.get(&id).unwrap();
+        let mir = this.mir_map.unwrap().map.get(&def_id).unwrap();
         this.with_temp_region_map(id, |this| {
             mir::borrowck_mir(this, fk, decl, mir, body, sp, id, attributes)
         });
@@ -197,7 +199,7 @@ fn borrowck_fn(this: &mut BorrowckCtxt,
                              decl,
                              body);
 
-    intravisit::walk_fn(this, fk, decl, body, sp);
+    intravisit::walk_fn(this, fk, decl, body, sp, id);
 }
 
 fn build_borrowck_dataflow_data<'a, 'tcx>(this: &mut BorrowckCtxt<'a, 'tcx>,
@@ -758,12 +760,16 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                                                 lp: &LoanPath<'tcx>,
                                                 assign:
                                                 &move_data::Assignment) {
-        struct_span_err!(
+        let mut err = struct_span_err!(
             self.tcx.sess, span, E0384,
             "re-assignment of immutable variable `{}`",
-            self.loan_path_to_string(lp))
-            .span_note(assign.span, "prior assignment occurs here")
-            .emit();
+            self.loan_path_to_string(lp));
+        err.span_label(span, &format!("re-assignment of immutable variable"));
+        if span != assign.span {
+            err.span_label(assign.span, &format!("first assignment to `{}`",
+                                              self.loan_path_to_string(lp)));
+        }
+        err.emit();
     }
 
     pub fn span_err(&self, s: Span, m: &str) {
@@ -942,8 +948,11 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                           but it borrows {}, \
                           which is owned by the current function",
                          cmt_path_or_string)
-            .span_note(capture_span,
+            .span_label(capture_span,
                        &format!("{} is borrowed here",
+                                cmt_path_or_string))
+            .span_label(err.span,
+                       &format!("may outlive borrowed value {}",
                                 cmt_path_or_string))
             .span_suggestion(err.span,
                              &format!("to force the closure to take ownership of {} \

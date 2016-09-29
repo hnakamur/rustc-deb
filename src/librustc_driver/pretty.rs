@@ -456,7 +456,7 @@ impl<'ast> pprust::PpAnn for HygieneAnnotation<'ast> {
                 pp::space(&mut s.s)?;
                 // FIXME #16420: this doesn't display the connections
                 // between syntax contexts
-                s.synth_comment(format!("{}#{}", nm, ctxt.0))
+                s.synth_comment(format!("{}{:?}", nm, ctxt))
             }
             pprust::NodeName(&ast::Name(nm)) => {
                 pp::space(&mut s.s)?;
@@ -956,20 +956,24 @@ fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
             PpmMir | PpmMirCFG => {
                 if let Some(mir_map) = mir_map {
                     if let Some(nodeid) = nodeid {
-                        let mir = mir_map.map.get(&nodeid).unwrap_or_else(|| {
-                            sess.fatal(&format!("no MIR map entry for node {}", nodeid))
-                        });
+                        let def_id = tcx.map.local_def_id(nodeid);
                         match ppm {
-                            PpmMir => write_mir_pretty(tcx, iter::once((&nodeid, mir)), &mut out),
+                            PpmMir => write_mir_pretty(tcx, iter::once(def_id), &mir_map, &mut out),
                             PpmMirCFG => {
-                                write_mir_graphviz(tcx, iter::once((&nodeid, mir)), &mut out)
+                                write_mir_graphviz(tcx, iter::once(def_id), &mir_map, &mut out)
                             }
                             _ => unreachable!(),
                         }?;
                     } else {
                         match ppm {
-                            PpmMir => write_mir_pretty(tcx, mir_map.map.iter(), &mut out),
-                            PpmMirCFG => write_mir_graphviz(tcx, mir_map.map.iter(), &mut out),
+                            PpmMir => write_mir_pretty(tcx,
+                                                       mir_map.map.keys().into_iter(),
+                                                       &mir_map,
+                                                       &mut out),
+                            PpmMirCFG => write_mir_graphviz(tcx,
+                                                            mir_map.map.keys().into_iter(),
+                                                            &mir_map,
+                                                            &mut out),
                             _ => unreachable!(),
                         }?;
                     }

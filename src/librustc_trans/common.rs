@@ -40,7 +40,7 @@ use type_::Type;
 use value::Value;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::layout::Layout;
-use rustc::traits::{self, SelectionContext, ProjectionMode};
+use rustc::traits::{self, SelectionContext, Reveal};
 use rustc::ty::fold::TypeFoldable;
 use rustc::hir;
 use util::nodemap::NodeMap;
@@ -128,7 +128,7 @@ pub fn type_pair_fields<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
 pub fn type_is_imm_pair<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
                                   -> bool {
     let tcx = ccx.tcx();
-    let layout = tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+    let layout = tcx.normalizing_infer_ctxt(Reveal::All).enter(|infcx| {
         match ty.layout(&infcx) {
             Ok(layout) => layout,
             Err(err) => {
@@ -558,7 +558,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
             abi: Abi::C,
             sig: ty::Binder(ty::FnSig {
                 inputs: vec![tcx.mk_mut_ptr(tcx.types.u8)],
-                output: ty::FnDiverging,
+                output: tcx.types.never,
                 variadic: false
             }),
         }));
@@ -980,7 +980,7 @@ pub fn C_cstr(cx: &CrateContext, s: InternedString, null_terminated: bool) -> Va
         });
         llvm::LLVMSetInitializer(g, sc);
         llvm::LLVMSetGlobalConstant(g, True);
-        llvm::SetLinkage(g, llvm::InternalLinkage);
+        llvm::LLVMSetLinkage(g, llvm::InternalLinkage);
 
         cx.const_cstr_cache().borrow_mut().insert(s, g);
         g
@@ -1136,7 +1136,7 @@ pub fn fulfill_obligation<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 
         // Do the initial selection for the obligation. This yields the
         // shallow result we are looking for -- that is, what specific impl.
-        tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+        tcx.normalizing_infer_ctxt(Reveal::All).enter(|infcx| {
             let mut selcx = SelectionContext::new(&infcx);
 
             let obligation_cause = traits::ObligationCause::misc(span,
@@ -1195,7 +1195,7 @@ pub fn normalize_and_test_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     debug!("normalize_and_test_predicates(predicates={:?})",
            predicates);
 
-    tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+    tcx.normalizing_infer_ctxt(Reveal::All).enter(|infcx| {
         let mut selcx = SelectionContext::new(&infcx);
         let mut fulfill_cx = traits::FulfillmentContext::new();
         let cause = traits::ObligationCause::dummy();
@@ -1235,23 +1235,27 @@ pub fn inlined_variant_def<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                                      inlined_vid: ast::NodeId)
                                      -> ty::VariantDef<'tcx>
 {
-
     let ctor_ty = ccx.tcx().node_id_to_type(inlined_vid);
     debug!("inlined_variant_def: ctor_ty={:?} inlined_vid={:?}", ctor_ty,
            inlined_vid);
     let adt_def = match ctor_ty.sty {
         ty::TyFnDef(_, _, &ty::BareFnTy { sig: ty::Binder(ty::FnSig {
-            output: ty::FnConverging(ty), ..
-        }), ..}) => ty,
+            output, ..
+        }), ..}) => output,
         _ => ctor_ty
     }.ty_adt_def().unwrap();
-    let inlined_vid_def_id = ccx.tcx().map.local_def_id(inlined_vid);
-    adt_def.variants.iter().find(|v| {
-        inlined_vid_def_id == v.did ||
-            ccx.external().borrow().get(&v.did) == Some(&Some(inlined_vid))
-    }).unwrap_or_else(|| {
-        bug!("no variant for {:?}::{}", adt_def, inlined_vid)
-    })
+    let variant_def_id = if ccx.tcx().map.is_inlined_node_id(inlined_vid) {
+        ccx.defid_for_inlined_node(inlined_vid).unwrap()
+    } else {
+        ccx.tcx().map.local_def_id(inlined_vid)
+    };
+
+    adt_def.variants
+           .iter()
+           .find(|v| variant_def_id == v.did)
+           .unwrap_or_else(|| {
+                bug!("no variant for {:?}::{}", adt_def, inlined_vid)
+            })
 }
 
 // To avoid UB from LLVM, these two functions mask RHS with an

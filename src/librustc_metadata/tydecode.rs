@@ -311,6 +311,7 @@ impl<'a,'tcx> TyDecoder<'a,'tcx> {
         let tcx = self.tcx;
         match self.next() {
             'b' => return tcx.types.bool,
+            '!' => return tcx.types.never,
             'i' => { /* eat the s of is */ self.next(); return tcx.types.isize },
             'u' => { /* eat the s of us */ self.next(); return tcx.types.usize },
             'M' => {
@@ -445,6 +446,13 @@ impl<'a,'tcx> TyDecoder<'a,'tcx> {
                 let name = token::intern(&self.parse_str(']'));
                 return tcx.mk_projection(trait_ref, name);
             }
+            'A' => {
+                assert_eq!(self.next(), '[');
+                let def_id = self.parse_def();
+                let substs = self.parse_substs();
+                assert_eq!(self.next(), ']');
+                return self.tcx.mk_anon(def_id, self.tcx.mk_substs(substs));
+            }
             'e' => {
                 return tcx.types.err;
             }
@@ -532,13 +540,7 @@ impl<'a,'tcx> TyDecoder<'a,'tcx> {
             'N' => false,
             r => bug!("bad variadic: {}", r),
         };
-        let output = match self.peek() {
-            'z' => {
-                self.pos += 1;
-                ty::FnDiverging
-            }
-            _ => ty::FnConverging(self.parse_ty())
-        };
+        let output = self.parse_ty();
         ty::Binder(ty::FnSig {inputs: inputs,
                               output: output,
                               variadic: variadic})

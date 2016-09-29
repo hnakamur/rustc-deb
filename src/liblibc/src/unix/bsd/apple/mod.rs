@@ -20,6 +20,7 @@ pub type speed_t = ::c_ulong;
 pub type tcflag_t = ::c_ulong;
 pub type nl_item = ::c_int;
 pub type id_t = ::c_uint;
+pub type sem_t = ::c_int;
 
 pub enum timezone {}
 
@@ -111,6 +112,11 @@ s! {
     pub struct pthread_cond_t {
         __sig: ::c_long,
         __opaque: [u8; __PTHREAD_COND_SIZE__],
+    }
+
+    pub struct pthread_condattr_t {
+        __sig: ::c_long,
+        __opaque: [u8; __PTHREAD_CONDATTR_SIZE__],
     }
 
     pub struct pthread_rwlock_t {
@@ -385,8 +391,15 @@ pub const FOPEN_MAX: ::c_uint = 20;
 pub const FILENAME_MAX: ::c_uint = 1024;
 pub const L_tmpnam: ::c_uint = 1024;
 pub const TMP_MAX: ::c_uint = 308915776;
+pub const _PC_LINK_MAX: ::c_int = 1;
+pub const _PC_MAX_CANON: ::c_int = 2;
+pub const _PC_MAX_INPUT: ::c_int = 3;
 pub const _PC_NAME_MAX: ::c_int = 4;
-
+pub const _PC_PATH_MAX: ::c_int = 5;
+pub const _PC_PIPE_BUF: ::c_int = 6;
+pub const _PC_CHOWN_RESTRICTED: ::c_int = 7;
+pub const _PC_NO_TRUNC: ::c_int = 8;
+pub const _PC_VDISABLE: ::c_int = 9;
 pub const O_RDONLY: ::c_int = 0;
 pub const O_WRONLY: ::c_int = 1;
 pub const O_RDWR: ::c_int = 2;
@@ -1248,6 +1261,8 @@ pub const PRIO_DARWIN_PROCESS: ::c_int = 4;
 pub const PRIO_DARWIN_BG: ::c_int = 0x1000;
 pub const PRIO_DARWIN_NONUI: ::c_int = 0x1001;
 
+pub const SEM_FAILED: *mut sem_t = -1isize as *mut ::sem_t;
+
 f! {
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
         status >> 8
@@ -1365,6 +1380,33 @@ extern {
     pub fn querylocale(mask: ::c_int, loc: ::locale_t) -> *const ::c_char;
     pub fn getpriority(which: ::c_int, who: ::id_t) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::id_t, prio: ::c_int) -> ::c_int;
+
+    pub fn openat(dirfd: ::c_int, pathname: *const ::c_char,
+                  flags: ::c_int, ...) -> ::c_int;
+    pub fn faccessat(dirfd: ::c_int, pathname: *const ::c_char,
+                     mode: ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn fchmodat(dirfd: ::c_int, pathname: *const ::c_char,
+                    mode: ::mode_t, flags: ::c_int) -> ::c_int;
+    pub fn fchownat(dirfd: ::c_int, pathname: *const ::c_char,
+                    owner: ::uid_t, group: ::gid_t,
+                    flags: ::c_int) -> ::c_int;
+    #[cfg_attr(target_os = "macos", link_name = "fstatat$INODE64")]
+    pub fn fstatat(dirfd: ::c_int, pathname: *const ::c_char,
+                   buf: *mut stat, flags: ::c_int) -> ::c_int;
+    pub fn linkat(olddirfd: ::c_int, oldpath: *const ::c_char,
+                  newdirfd: ::c_int, newpath: *const ::c_char,
+                  flags: ::c_int) -> ::c_int;
+   pub fn mkdirat(dirfd: ::c_int, pathname: *const ::c_char,
+                  mode: ::mode_t) -> ::c_int;
+   pub fn readlinkat(dirfd: ::c_int, pathname: *const ::c_char,
+                     buf: *mut ::c_char, bufsiz: ::size_t) -> ::ssize_t;
+   pub fn renameat(olddirfd: ::c_int, oldpath: *const ::c_char,
+                   newdirfd: ::c_int, newpath: *const ::c_char)
+                   -> ::c_int;
+   pub fn symlinkat(target: *const ::c_char, newdirfd: ::c_int,
+                    linkpath: *const ::c_char) -> ::c_int;
+   pub fn unlinkat(dirfd: ::c_int, pathname: *const ::c_char,
+                   flags: ::c_int) -> ::c_int;
 }
 
 cfg_if! {

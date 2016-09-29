@@ -9,6 +9,7 @@
 // except according to those terms.
 
 use std::fmt::Debug;
+use std::sync::Arc;
 
 macro_rules! try_opt {
     ($e:expr) => (
@@ -19,7 +20,7 @@ macro_rules! try_opt {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, RustcEncodable, RustcDecodable)]
 pub enum DepNode<D: Clone + Debug> {
     // The `D` type is "how definitions are identified".
     // During compilation, it is always `DefId`, but when serializing
@@ -44,6 +45,10 @@ pub enum DepNode<D: Clone + Debug> {
     // Represents the metadata for a given HIR node, typically found
     // in an extern crate.
     MetaData(D),
+
+    // Represents some artifact that we save to disk. Note that these
+    // do not have a def-id as part of their identifier.
+    WorkProduct(Arc<WorkProductId>),
 
     // Represents different phases in the compiler.
     CrateReader,
@@ -77,9 +82,11 @@ pub enum DepNode<D: Clone + Debug> {
     Privacy,
     IntrinsicCheck(D),
     MatchCheck(D),
-    MirMapConstruction(D),
-    MirPass(D),
-    MirTypeck(D),
+
+    // Represents the MIR for a fn; also used as the task node for
+    // things read/modify that MIR.
+    Mir(D),
+
     BorrowCheck(D),
     RvalueCheck(D),
     Reachability,
@@ -143,6 +150,7 @@ impl<D: Clone + Debug> DepNode<D> {
         check! {
             CollectItem,
             BorrowCheck,
+            Hir,
             TransCrateItem,
             TypeckItemType,
             TypeckItemBody,
@@ -189,6 +197,11 @@ impl<D: Clone + Debug> DepNode<D> {
             TransCrate => Some(TransCrate),
             TransWriteMetadata => Some(TransWriteMetadata),
             LinkBinary => Some(LinkBinary),
+
+            // work product names do not need to be mapped, because
+            // they are always absolute.
+            WorkProduct(ref id) => Some(WorkProduct(id.clone())),
+
             Hir(ref d) => op(d).map(Hir),
             MetaData(ref d) => op(d).map(MetaData),
             CollectItem(ref d) => op(d).map(CollectItem),
@@ -204,9 +217,7 @@ impl<D: Clone + Debug> DepNode<D> {
             CheckConst(ref d) => op(d).map(CheckConst),
             IntrinsicCheck(ref d) => op(d).map(IntrinsicCheck),
             MatchCheck(ref d) => op(d).map(MatchCheck),
-            MirMapConstruction(ref d) => op(d).map(MirMapConstruction),
-            MirPass(ref d) => op(d).map(MirPass),
-            MirTypeck(ref d) => op(d).map(MirTypeck),
+            Mir(ref d) => op(d).map(Mir),
             BorrowCheck(ref d) => op(d).map(BorrowCheck),
             RvalueCheck(ref d) => op(d).map(RvalueCheck),
             TransCrateItem(ref d) => op(d).map(TransCrateItem),
@@ -229,3 +240,12 @@ impl<D: Clone + Debug> DepNode<D> {
         }
     }
 }
+
+/// A "work product" corresponds to a `.o` (or other) file that we
+/// save in between runs. These ids do not have a DefId but rather
+/// some independent path or string that persists between runs without
+/// the need to be mapped or unmapped. (This ensures we can serialize
+/// them even in the absence of a tcx.)
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, RustcEncodable, RustcDecodable)]
+pub struct WorkProductId(pub String);
+

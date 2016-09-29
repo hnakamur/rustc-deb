@@ -60,14 +60,11 @@ There are some shortcomings in this design:
 
 use astconv::{AstConv, ast_region_to_region, Bounds, PartitionedBounds, partition_bounds};
 use lint;
-use hir::def::Def;
-use hir::def_id::DefId;
 use constrained_type_params as ctp;
 use middle::lang_items::SizedTraitLangItem;
 use middle::const_val::ConstVal;
 use rustc_const_eval::EvalHint::UncheckedExprHint;
-use rustc_const_eval::{eval_const_expr_partial, ConstEvalErr};
-use rustc_const_eval::ErrKind::ErroneousReferencedConstant;
+use rustc_const_eval::{eval_const_expr_partial, report_const_eval_err};
 use rustc::ty::subst::{Substs, FnSpace, ParamSpace, SelfSpace, TypeSpace, VecPerParamSpace};
 use rustc::ty::{ToPredicate, ImplContainer, ImplOrTraitItemContainer, TraitContainer};
 use rustc::ty::{self, ToPolyTraitRef, Ty, TyCtxt, TypeScheme};
@@ -75,7 +72,6 @@ use rustc::ty::{VariantKind};
 use rustc::ty::util::IntTypeExt;
 use rscope::*;
 use rustc::dep_graph::DepNode;
-use rustc::hir::map as hir_map;
 use util::common::{ErrorReported, MemoizationMap};
 use util::nodemap::{NodeMap, FnvHashMap};
 use {CrateCtxt, write_ty_to_tcx};
@@ -92,9 +88,9 @@ use syntax::parse::token::keywords;
 use syntax::ptr::P;
 use syntax_pos::Span;
 
-use rustc::hir::{self, PatKind};
-use rustc::hir::intravisit;
-use rustc::hir::print as pprust;
+use rustc::hir::{self, intravisit, map as hir_map, print as pprust};
+use rustc::hir::def::Def;
+use rustc::hir::def_id::DefId;
 
 ///////////////////////////////////////////////////////////////////////////
 // Main entry point
@@ -188,6 +184,7 @@ impl<'a,'tcx> CrateCtxt<'a,'tcx> {
 
         let mut err = struct_span_err!(tcx.sess, span, E0391,
             "unsupported cyclic reference between types/traits detected");
+        err.span_label(span, &format!("cyclic reference"));
 
         match cycle[0] {
             AstConvRequest::GetItemTypeScheme(def_id) |
@@ -370,8 +367,13 @@ impl<'a, 'tcx> AstConv<'tcx, 'tcx> for ItemCtxt<'a, 'tcx> {
                 _substs: Option<&mut Substs<'tcx>>,
                 _space: Option<ParamSpace>,
                 span: Span) -> Ty<'tcx> {
-        span_err!(self.tcx().sess, span, E0121,
-                  "the type placeholder `_` is not allowed within types on item signatures");
+        struct_span_err!(
+            self.tcx().sess,
+            span,
+            E0121,
+            "the type placeholder `_` is not allowed within types on item signatures"
+        ).span_label(span, &format!("not allowed in type signatures"))
+        .emit();
         self.tcx().types.err
     }
 
@@ -562,13 +564,17 @@ fn convert_method<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     let ty_generic_predicates =
         ty_generic_predicates_for_fn(ccx, &sig.generics, rcvr_ty_predicates);
 
-    let (fty, explicit_self_category) =
+    let (fty, explicit_self_category) = {
+        let anon_scope = match container {
+            ImplContainer(_) => Some(AnonTypeScope::new(&ty_generics)),
+            TraitContainer(_) => None
+        };
         AstConv::ty_of_method(&ccx.icx(&(rcvr_ty_predicates, &sig.generics)),
-                              sig,
-                              untransformed_rcvr_ty);
+                              sig, untransformed_rcvr_ty, anon_scope)
+    };
 
     let def_id = ccx.tcx.map.local_def_id(id);
-    let substs = mk_item_substs(ccx, &ty_generics);
+    let substs = mk_item_substs(ccx.tcx, &ty_generics);
 
     let ty_method = ty::Method::new(name,
                                     ty_generics,
@@ -773,9 +779,10 @@ fn convert_item(ccx: &CrateCtxt, it: &hir::Item) {
                         let mut err = struct_span_err!(tcx.sess, impl_item.span, E0201,
                                                        "duplicate definitions with name `{}`:",
                                                        impl_item.name);
-                        span_note!(&mut err, *entry.get(),
-                                   "previous definition of `{}` here",
-                                   impl_item.name);
+                        err.span_label(*entry.get(),
+                                   &format!("previous definition of `{}` here",
+                                        impl_item.name));
+                        err.span_label(impl_item.span, &format!("duplicate definition"));
                         err.emit();
                     }
                     Vacant(entry) => {
@@ -949,7 +956,7 @@ fn convert_variant_ctor<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                   scheme: ty::TypeScheme<'tcx>,
                                   predicates: ty::GenericPredicates<'tcx>) {
     let tcx = ccx.tcx;
-    let ctor_ty = match variant.kind() {
+    let ctor_ty = match variant.kind {
         VariantKind::Unit | VariantKind::Struct => scheme.ty,
         VariantKind::Tuple => {
             let inputs: Vec<_> =
@@ -958,13 +965,13 @@ fn convert_variant_ctor<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                 .map(|field| field.unsubst_ty())
                 .collect();
             let def_id = tcx.map.local_def_id(ctor_id);
-            let substs = mk_item_substs(ccx, &scheme.generics);
+            let substs = mk_item_substs(tcx, &scheme.generics);
             tcx.mk_fn_def(def_id, substs, tcx.mk_bare_fn(ty::BareFnTy {
                 unsafety: hir::Unsafety::Normal,
                 abi: abi::Abi::Rust,
                 sig: ty::Binder(ty::FnSig {
                     inputs: inputs,
-                    output: ty::FnConverging(scheme.ty),
+                    output: scheme.ty,
                     variadic: false
                 })
             }))
@@ -1014,11 +1021,12 @@ fn convert_struct_variant<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         let fid = ccx.tcx.map.local_def_id(f.id);
         let dup_span = seen_fields.get(&f.name).cloned();
         if let Some(prev_span) = dup_span {
-            let mut err = struct_span_err!(ccx.tcx.sess, f.span, E0124,
-                                           "field `{}` is already declared",
-                                           f.name);
-            span_note!(&mut err, prev_span, "previously declared here");
-            err.emit();
+            struct_span_err!(ccx.tcx.sess, f.span, E0124,
+                             "field `{}` is already declared",
+                             f.name)
+                .span_label(f.span, &"field already declared")
+                .span_label(prev_span, &format!("`{}` first declared here", f.name))
+                .emit();
         } else {
             seen_fields.insert(f.name, f.span);
         }
@@ -1040,15 +1048,17 @@ fn convert_struct_def<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                 def: &hir::VariantData)
                                 -> ty::AdtDefMaster<'tcx>
 {
-
     let did = ccx.tcx.map.local_def_id(it.id);
-    let ctor_id = if !def.is_struct() {
-        ccx.tcx.map.local_def_id(def.id())
-    } else {
-        did
-    };
-    ccx.tcx.intern_adt_def(did, ty::AdtKind::Struct,
-        vec![convert_struct_variant(ccx, ctor_id, it.name, ConstInt::Infer(0), def)])
+    // Use separate constructor id for unit/tuple structs and reuse did for braced structs.
+    let ctor_id = if !def.is_struct() { Some(ccx.tcx.map.local_def_id(def.id())) } else { None };
+    let variants = vec![convert_struct_variant(ccx, ctor_id.unwrap_or(did), it.name,
+                                               ConstInt::Infer(0), def)];
+    let adt = ccx.tcx.intern_adt_def(did, ty::AdtKind::Struct, variants);
+    if let Some(ctor_id) = ctor_id {
+        // Make adt definition available through constructor id as well.
+        ccx.tcx.insert_adt_def(ctor_id, adt);
+    }
+    adt
 }
 
     fn evaluate_disr_expr(ccx: &CrateCtxt, repr_ty: attr::IntType, e: &hir::Expr)
@@ -1059,6 +1069,7 @@ fn convert_struct_def<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
         let print_err = |cv: ConstVal| {
             struct_span_err!(ccx.tcx.sess, e.span, E0079, "mismatched types")
                 .note_expected_found(&"type", &ty_hint, &format!("{}", cv.description()))
+                .span_label(e.span, &format!("expected '{}' type", ty_hint))
                 .emit();
         };
 
@@ -1089,14 +1100,9 @@ fn convert_struct_def<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
             },
             // enum variant evaluation happens before the global constant check
             // so we need to report the real error
-            Err(ConstEvalErr { kind: ErroneousReferencedConstant(box err), ..}) |
             Err(err) => {
-                let mut diag = struct_span_err!(ccx.tcx.sess, err.span, E0080,
-                                                "constant evaluation error: {}",
-                                                err.description());
-                if !e.span.contains(err.span) {
-                    diag.span_note(e.span, "for enum discriminant here");
-                }
+                let mut diag = report_const_eval_err(
+                    ccx.tcx, &err, e.span, "enum discriminant");
                 diag.emit();
                 None
             }
@@ -1188,10 +1194,11 @@ fn ensure_super_predicates_step(ccx: &CrateCtxt,
         // Convert the bounds that follow the colon, e.g. `Bar+Zed` in `trait Foo : Bar+Zed`.
         let self_param_ty = tcx.mk_self_type();
         let superbounds1 = compute_bounds(&ccx.icx(scope),
-                                    self_param_ty,
-                                    bounds,
-                                    SizedByDefault::No,
-                                    item.span);
+                                          self_param_ty,
+                                          bounds,
+                                          SizedByDefault::No,
+                                          None,
+                                          item.span);
 
         let superbounds1 = superbounds1.predicates(tcx, self_param_ty);
 
@@ -1401,6 +1408,7 @@ fn convert_trait_predicates<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>, it: &hir::Item)
                                         assoc_ty,
                                         bounds,
                                         SizedByDefault::Yes,
+                                        None,
                                         trait_item.span);
 
             bounds.predicates(ccx.tcx, assoc_ty).into_iter()
@@ -1440,6 +1448,7 @@ fn type_scheme_of_item<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
         // NB. Since the `memoized` function enters a new task, and we
         // are giving this task access to the item `item`, we must
         // register a read.
+        assert!(!ccx.tcx.map.is_inlined_def_id(item_def_id));
         ccx.tcx.dep_graph.read(DepNode::Hir(item_def_id));
         compute_type_scheme_of_item(ccx, item)
     })
@@ -1457,9 +1466,10 @@ fn compute_type_scheme_of_item<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
         }
         hir::ItemFn(ref decl, unsafety, _, abi, ref generics, _) => {
             let ty_generics = ty_generics_for_fn(ccx, generics, &ty::Generics::empty());
-            let tofd = AstConv::ty_of_bare_fn(&ccx.icx(generics), unsafety, abi, &decl);
+            let tofd = AstConv::ty_of_bare_fn(&ccx.icx(generics), unsafety, abi, &decl,
+                                              Some(AnonTypeScope::new(&ty_generics)));
             let def_id = ccx.tcx.map.local_def_id(it.id);
-            let substs = mk_item_substs(ccx, &ty_generics);
+            let substs = mk_item_substs(tcx, &ty_generics);
             let ty = tcx.mk_fn_def(def_id, substs, tofd);
             ty::TypeScheme { ty: ty, generics: ty_generics }
         }
@@ -1471,14 +1481,14 @@ fn compute_type_scheme_of_item<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
         hir::ItemEnum(ref ei, ref generics) => {
             let def = convert_enum_def(ccx, it, ei);
             let ty_generics = ty_generics_for_type(ccx, generics);
-            let substs = mk_item_substs(ccx, &ty_generics);
+            let substs = mk_item_substs(tcx, &ty_generics);
             let t = tcx.mk_enum(def, substs);
             ty::TypeScheme { ty: t, generics: ty_generics }
         }
         hir::ItemStruct(ref si, ref generics) => {
             let def = convert_struct_def(ccx, it, si);
             let ty_generics = ty_generics_for_type(ccx, generics);
-            let substs = mk_item_substs(ccx, &ty_generics);
+            let substs = mk_item_substs(tcx, &ty_generics);
             let t = tcx.mk_struct(def, substs);
             ty::TypeScheme { ty: t, generics: ty_generics }
         }
@@ -1567,6 +1577,7 @@ fn type_scheme_of_foreign_item<'a, 'tcx>(
         // NB. Since the `memoized` function enters a new task, and we
         // are giving this task access to the item `item`, we must
         // register a read.
+        assert!(!ccx.tcx.map.is_inlined_def_id(item_def_id));
         ccx.tcx.dep_graph.read(DepNode::Hir(item_def_id));
         compute_type_scheme_of_foreign_item(ccx, item, abi)
     })
@@ -1690,10 +1701,10 @@ fn ty_generic_predicates_for_fn<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
 }
 
 // Add the Sized bound, unless the type parameter is marked as `?Sized`.
-fn add_unsized_bound<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
-                           bounds: &mut ty::BuiltinBounds,
-                           ast_bounds: &[hir::TyParamBound],
-                           span: Span)
+fn add_unsized_bound<'gcx: 'tcx, 'tcx>(astconv: &AstConv<'gcx, 'tcx>,
+                                       bounds: &mut ty::BuiltinBounds,
+                                       ast_bounds: &[hir::TyParamBound],
+                                       span: Span)
 {
     let tcx = astconv.tcx();
 
@@ -1771,6 +1782,7 @@ fn ty_generic_predicates<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
                                     param_ty,
                                     &param.bounds,
                                     SizedByDefault::Yes,
+                                    None,
                                     param.span);
         let predicates = bounds.predicates(ccx.tcx, param_ty);
         result.predicates.extend(space, predicates.into_iter());
@@ -1899,9 +1911,12 @@ fn convert_default_type_parameter<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     for leaf_ty in ty.walk() {
         if let ty::TyParam(p) = leaf_ty.sty {
             if p.space == space && p.idx >= index {
-                span_err!(ccx.tcx.sess, path.span, E0128,
-                          "type parameters with a default cannot use \
-                           forward declared identifiers");
+                struct_span_err!(ccx.tcx.sess, path.span, E0128,
+                                 "type parameters with a default cannot use \
+                                 forward declared identifiers")
+                    .span_label(path.span, &format!("defaulted type parameters \
+                                                    cannot be forward declared"))
+                    .emit();
 
                 return ccx.tcx.types.err
             }
@@ -2031,34 +2046,52 @@ fn compute_object_lifetime_default<'a,'tcx>(ccx: &CrateCtxt<'a,'tcx>,
     }
 }
 
-enum SizedByDefault { Yes, No, }
+pub enum SizedByDefault { Yes, No, }
 
 /// Translate the AST's notion of ty param bounds (which are an enum consisting of a newtyped Ty or
 /// a region) to ty's notion of ty param bounds, which can either be user-defined traits, or the
 /// built-in trait (formerly known as kind): Send.
-fn compute_bounds<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
-                        param_ty: ty::Ty<'tcx>,
-                        ast_bounds: &[hir::TyParamBound],
-                        sized_by_default: SizedByDefault,
-                        span: Span)
-                        -> Bounds<'tcx>
+pub fn compute_bounds<'gcx: 'tcx, 'tcx>(astconv: &AstConv<'gcx, 'tcx>,
+                                        param_ty: ty::Ty<'tcx>,
+                                        ast_bounds: &[hir::TyParamBound],
+                                        sized_by_default: SizedByDefault,
+                                        anon_scope: Option<AnonTypeScope>,
+                                        span: Span)
+                                        -> Bounds<'tcx>
 {
-    let mut bounds =
-        conv_param_bounds(astconv,
-                          span,
-                          param_ty,
-                          ast_bounds);
+    let tcx = astconv.tcx();
+    let PartitionedBounds {
+        mut builtin_bounds,
+        trait_bounds,
+        region_bounds
+    } = partition_bounds(tcx, span, &ast_bounds);
 
     if let SizedByDefault::Yes = sized_by_default {
-        add_unsized_bound(astconv,
-                          &mut bounds.builtin_bounds,
-                          ast_bounds,
-                          span);
+        add_unsized_bound(astconv, &mut builtin_bounds, ast_bounds, span);
     }
 
-    bounds.trait_bounds.sort_by(|a,b| a.def_id().cmp(&b.def_id()));
+    let mut projection_bounds = vec![];
 
-    bounds
+    let rscope = MaybeWithAnonTypes::new(ExplicitRscope, anon_scope);
+    let mut trait_bounds: Vec<_> = trait_bounds.iter().map(|&bound| {
+        astconv.instantiate_poly_trait_ref(&rscope,
+                                           bound,
+                                           Some(param_ty),
+                                           &mut projection_bounds)
+    }).collect();
+
+    let region_bounds = region_bounds.into_iter().map(|r| {
+        ast_region_to_region(tcx, r)
+    }).collect();
+
+    trait_bounds.sort_by(|a,b| a.def_id().cmp(&b.def_id()));
+
+    Bounds {
+        region_bounds: region_bounds,
+        builtin_bounds: builtin_bounds,
+        trait_bounds: trait_bounds,
+        projection_bounds: projection_bounds,
+    }
 }
 
 /// Converts a specific TyParamBound from the AST into a set of
@@ -2091,53 +2124,17 @@ fn predicates_from_bound<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
     }
 }
 
-fn conv_poly_trait_ref<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
-                             param_ty: Ty<'tcx>,
-                             trait_ref: &hir::PolyTraitRef,
-                             projections: &mut Vec<ty::PolyProjectionPredicate<'tcx>>)
-                             -> ty::PolyTraitRef<'tcx>
+fn conv_poly_trait_ref<'gcx: 'tcx, 'tcx>(astconv: &AstConv<'gcx, 'tcx>,
+                                         param_ty: Ty<'tcx>,
+                                         trait_ref: &hir::PolyTraitRef,
+                                         projections: &mut Vec<ty::PolyProjectionPredicate<'tcx>>)
+                                         -> ty::PolyTraitRef<'tcx>
 {
     AstConv::instantiate_poly_trait_ref(astconv,
                                         &ExplicitRscope,
                                         trait_ref,
                                         Some(param_ty),
                                         projections)
-}
-
-fn conv_param_bounds<'a,'tcx>(astconv: &AstConv<'tcx, 'tcx>,
-                              span: Span,
-                              param_ty: ty::Ty<'tcx>,
-                              ast_bounds: &[hir::TyParamBound])
-                              -> Bounds<'tcx>
-{
-    let tcx = astconv.tcx();
-    let PartitionedBounds {
-        builtin_bounds,
-        trait_bounds,
-        region_bounds
-    } = partition_bounds(tcx, span, &ast_bounds);
-
-    let mut projection_bounds = Vec::new();
-
-    let trait_bounds: Vec<ty::PolyTraitRef> =
-        trait_bounds.iter()
-                    .map(|bound| conv_poly_trait_ref(astconv,
-                                                     param_ty,
-                                                     *bound,
-                                                     &mut projection_bounds))
-                    .collect();
-
-    let region_bounds: Vec<ty::Region> =
-        region_bounds.into_iter()
-                     .map(|r| ast_region_to_region(tcx, r))
-                     .collect();
-
-    Bounds {
-        region_bounds: region_bounds,
-        builtin_bounds: builtin_bounds,
-        trait_bounds: trait_bounds,
-        projection_bounds: projection_bounds,
-    }
 }
 
 fn compute_type_scheme_of_foreign_fn_decl<'a, 'tcx>(
@@ -2148,14 +2145,6 @@ fn compute_type_scheme_of_foreign_fn_decl<'a, 'tcx>(
     abi: abi::Abi)
     -> ty::TypeScheme<'tcx>
 {
-    for i in &decl.inputs {
-        match i.pat.node {
-            PatKind::Binding(..) | PatKind::Wild => {}
-            _ => span_err!(ccx.tcx.sess, i.pat.span, E0130,
-                           "patterns aren't allowed in foreign function declarations")
-        }
-    }
-
     let ty_generics = ty_generics_for_fn(ccx, ast_generics, &ty::Generics::empty());
 
     let rb = BindingRscope::new();
@@ -2166,11 +2155,9 @@ fn compute_type_scheme_of_foreign_fn_decl<'a, 'tcx>(
 
     let output = match decl.output {
         hir::Return(ref ty) =>
-            ty::FnConverging(AstConv::ast_ty_to_ty(&ccx.icx(ast_generics), &rb, &ty)),
+            AstConv::ast_ty_to_ty(&ccx.icx(ast_generics), &rb, &ty),
         hir::DefaultReturn(..) =>
-            ty::FnConverging(ccx.tcx.mk_nil()),
-        hir::NoReturn(..) =>
-            ty::FnDiverging
+            ccx.tcx.mk_nil(),
     };
 
     // feature gate SIMD types in FFI, since I (huonw) am not sure the
@@ -2191,11 +2178,11 @@ fn compute_type_scheme_of_foreign_fn_decl<'a, 'tcx>(
             check(&input.ty, ty)
         }
         if let hir::Return(ref ty) = decl.output {
-            check(&ty, output.unwrap())
+            check(&ty, output)
         }
     }
 
-    let substs = mk_item_substs(ccx, &ty_generics);
+    let substs = mk_item_substs(ccx.tcx, &ty_generics);
     let t_fn = ccx.tcx.mk_fn_def(id, substs, ccx.tcx.mk_bare_fn(ty::BareFnTy {
         abi: abi,
         unsafety: hir::Unsafety::Unsafe,
@@ -2210,19 +2197,19 @@ fn compute_type_scheme_of_foreign_fn_decl<'a, 'tcx>(
     }
 }
 
-fn mk_item_substs<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
-                            ty_generics: &ty::Generics<'tcx>)
-                            -> &'tcx Substs<'tcx>
+pub fn mk_item_substs<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
+                                      ty_generics: &ty::Generics)
+                                      -> &'tcx Substs<'tcx>
 {
     let types =
         ty_generics.types.map(
-            |def| ccx.tcx.mk_param_from_def(def));
+            |def| tcx.mk_param_from_def(def));
 
     let regions =
         ty_generics.regions.map(
             |def| def.to_early_bound_region());
 
-    ccx.tcx.mk_substs(Substs::new(types, regions))
+    tcx.mk_substs(Substs::new(types, regions))
 }
 
 /// Checks that all the type parameters on an impl
@@ -2241,9 +2228,9 @@ fn enforce_impl_params_are_constrained<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     // reachable from there, to start (if this is an inherent impl,
     // then just examine the self type).
     let mut input_parameters: HashSet<_> =
-        ctp::parameters_for_type(impl_scheme.ty, false).into_iter().collect();
+        ctp::parameters_for(&impl_scheme.ty, false).into_iter().collect();
     if let Some(ref trait_ref) = impl_trait_ref {
-        input_parameters.extend(ctp::parameters_for_trait_ref(trait_ref, false));
+        input_parameters.extend(ctp::parameters_for(trait_ref, false));
     }
 
     ctp::setup_constraining_predicates(impl_predicates.predicates.get_mut_slice(TypeSpace),
@@ -2271,9 +2258,9 @@ fn enforce_impl_lifetimes_are_constrained<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     let impl_trait_ref = ccx.tcx.impl_trait_ref(impl_def_id);
 
     let mut input_parameters: HashSet<_> =
-        ctp::parameters_for_type(impl_scheme.ty, false).into_iter().collect();
+        ctp::parameters_for(&impl_scheme.ty, false).into_iter().collect();
     if let Some(ref trait_ref) = impl_trait_ref {
-        input_parameters.extend(ctp::parameters_for_trait_ref(trait_ref, false));
+        input_parameters.extend(ctp::parameters_for(trait_ref, false));
     }
     ctp::identify_constrained_type_params(
         &impl_predicates.predicates.as_slice(), impl_trait_ref, &mut input_parameters);
@@ -2284,7 +2271,7 @@ fn enforce_impl_lifetimes_are_constrained<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
             ty::TypeTraitItem(ref assoc_ty) => assoc_ty.ty,
             ty::ConstTraitItem(..) | ty::MethodTraitItem(..) => None
         })
-        .flat_map(|ty| ctp::parameters_for_type(ty, true))
+        .flat_map(|ty| ctp::parameters_for(&ty, true))
         .filter_map(|p| match p {
             ctp::Parameter::Type(_) => None,
             ctp::Parameter::Region(r) => Some(r),
@@ -2329,8 +2316,12 @@ fn report_unused_parameter(ccx: &CrateCtxt,
                            kind: &str,
                            name: &str)
 {
-    span_err!(ccx.tcx.sess, span, E0207,
-              "the {} parameter `{}` is not constrained by the \
-               impl trait, self type, or predicates",
-              kind, name);
+    struct_span_err!(
+        ccx.tcx.sess, span, E0207,
+        "the {} parameter `{}` is not constrained by the \
+        impl trait, self type, or predicates",
+        kind, name)
+        .span_label(span, &format!("unconstrained lifetime parameter"))
+        .emit();
+
 }

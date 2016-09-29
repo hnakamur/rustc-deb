@@ -13,6 +13,7 @@ pub type useconds_t = u32;
 pub type socklen_t = i32;
 pub type pthread_t = ::c_long;
 pub type pthread_mutexattr_t = ::c_long;
+pub type pthread_condattr_t = ::c_long;
 pub type sigset_t = ::c_ulong;
 pub type time64_t = i64; // N/A on android
 pub type fsfilcnt_t = ::c_ulong;
@@ -95,6 +96,10 @@ s! {
         #[cfg(target_pointer_width = "32")]
         __bits: [__CPU_BITTYPE; 1],
     }
+
+    pub struct sem_t {
+        count: ::c_uint,
+    }
 }
 
 pub const BUFSIZ: ::c_uint = 1024;
@@ -102,7 +107,15 @@ pub const FILENAME_MAX: ::c_uint = 1024;
 pub const FOPEN_MAX: ::c_uint = 20;
 pub const L_tmpnam: ::c_uint = 1024;
 pub const TMP_MAX: ::c_uint = 308915776;
+pub const _PC_LINK_MAX: ::c_int = 1;
+pub const _PC_MAX_CANON: ::c_int = 2;
+pub const _PC_MAX_INPUT: ::c_int = 3;
 pub const _PC_NAME_MAX: ::c_int = 4;
+pub const _PC_PATH_MAX: ::c_int = 5;
+pub const _PC_PIPE_BUF: ::c_int = 6;
+pub const _PC_CHOWN_RESTRICTED: ::c_int = 14;
+pub const _PC_NO_TRUNC: ::c_int = 15;
+pub const _PC_VDISABLE: ::c_int = 16;
 
 pub const FIONBIO: ::c_int = 0x5421;
 
@@ -472,6 +485,23 @@ pub const RTLD_NOLOAD: ::c_int = 0x4;
 pub const RTLD_NOW: ::c_int = 0;
 pub const RTLD_DEFAULT: *mut ::c_void = -1isize as *mut ::c_void;
 
+pub const SEM_FAILED: *mut sem_t = 0 as *mut sem_t;
+
+pub const LINUX_REBOOT_MAGIC1: ::c_int = 0xfee1dead;
+pub const LINUX_REBOOT_MAGIC2: ::c_int = 672274793;
+pub const LINUX_REBOOT_MAGIC2A: ::c_int = 85072278;
+pub const LINUX_REBOOT_MAGIC2B: ::c_int = 369367448;
+pub const LINUX_REBOOT_MAGIC2C: ::c_int = 537993216;
+
+pub const LINUX_REBOOT_CMD_RESTART: ::c_int = 0x01234567;
+pub const LINUX_REBOOT_CMD_HALT: ::c_int = 0xCDEF0123;
+pub const LINUX_REBOOT_CMD_CAD_ON: ::c_int = 0x89ABCDEF;
+pub const LINUX_REBOOT_CMD_CAD_OFF: ::c_int = 0x00000000;
+pub const LINUX_REBOOT_CMD_POWER_OFF: ::c_int = 0x4321FEDC;
+pub const LINUX_REBOOT_CMD_RESTART2: ::c_int = 0xA1B2C3D4;
+pub const LINUX_REBOOT_CMD_SW_SUSPEND: ::c_int = 0xD000FCE2;
+pub const LINUX_REBOOT_CMD_KEXEC: ::c_int = 0x45584543;
+
 f! {
     pub fn sigemptyset(set: *mut sigset_t) -> ::c_int {
         *set = 0;
@@ -560,6 +590,7 @@ extern {
     pub fn __sched_cpualloc(count: ::size_t) -> *mut ::cpu_set_t;
     pub fn __sched_cpufree(set: *mut ::cpu_set_t);
     pub fn __sched_cpucount(setsize: ::size_t, set: *mut cpu_set_t) -> ::c_int;
+    pub fn sched_getcpu() -> ::c_int;
 }
 
 cfg_if! {

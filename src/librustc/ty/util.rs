@@ -10,14 +10,14 @@
 
 //! misc. type-system utilities too small to deserve their own file
 
-use hir::svh::Svh;
 use hir::def_id::DefId;
 use ty::subst;
 use infer::InferCtxt;
 use hir::pat_util;
-use traits::{self, ProjectionMode};
+use traits::{self, Reveal};
 use ty::{self, Ty, TyCtxt, TypeAndMut, TypeFlags, TypeFoldable};
 use ty::{Disr, ParameterEnvironment};
+use ty::fold::TypeVisitor;
 use ty::layout::{Layout, LayoutError};
 use ty::TypeVariants::*;
 
@@ -25,6 +25,7 @@ use rustc_const_math::{ConstInt, ConstIsize, ConstUsize};
 
 use std::cmp;
 use std::hash::{Hash, SipHasher, Hasher};
+use std::intrinsics;
 use syntax::ast::{self, Name};
 use syntax::attr::{self, SignedInt, UnsignedInt};
 use syntax_pos::Span;
@@ -136,8 +137,7 @@ impl<'tcx> ParameterEnvironment<'tcx> {
                                        self_type: Ty<'tcx>, span: Span)
                                        -> Result<(),CopyImplementationError> {
         // FIXME: (@jroesch) float this code up
-        tcx.infer_ctxt(None, Some(self.clone()),
-                       ProjectionMode::Topmost).enter(|infcx| {
+        tcx.infer_ctxt(None, Some(self.clone()), Reveal::ExactMatch).enter(|infcx| {
             let adt = match self_type.sty {
                 ty::TyStruct(struct_def, substs) => {
                     for field in struct_def.all_fields() {
@@ -180,6 +180,21 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     pub fn arm_contains_ref_binding(self, arm: &hir::Arm) -> Option<hir::Mutability> {
         pat_util::arm_contains_ref_binding(arm)
+    }
+
+    pub fn has_error_field(self, ty: Ty<'tcx>) -> bool {
+        match ty.sty {
+            ty::TyStruct(def, substs) | ty::TyEnum(def, substs) => {
+                for field in def.all_fields() {
+                    let field_ty = field.ty(self, substs);
+                    if let TyError = field_ty.sty {
+                        return true;
+                    }
+                }
+            }
+            _ => ()
+        }
+        false
     }
 
     /// Returns the type of element at index `i` in tuple or tuple-like type `t`.
@@ -335,148 +350,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     /// Creates a hash of the type `Ty` which will be the same no matter what crate
     /// context it's calculated within. This is used by the `type_id` intrinsic.
-    pub fn hash_crate_independent(self, ty: Ty<'tcx>, svh: &Svh) -> u64 {
-        let mut state = SipHasher::new();
-        helper(self, ty, svh, &mut state);
-        return state.finish();
-
-        fn helper<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
-                                  ty: Ty<'tcx>, svh: &Svh,
-                                  state: &mut SipHasher) {
-            macro_rules! byte { ($b:expr) => { ($b as u8).hash(state) } }
-            macro_rules! hash { ($e:expr) => { $e.hash(state) }  }
-
-            let region = |state: &mut SipHasher, r: ty::Region| {
-                match r {
-                    ty::ReStatic | ty::ReErased => {}
-                    ty::ReLateBound(db, ty::BrAnon(i)) => {
-                        db.hash(state);
-                        i.hash(state);
-                    }
-                    ty::ReEmpty |
-                    ty::ReEarlyBound(..) |
-                    ty::ReLateBound(..) |
-                    ty::ReFree(..) |
-                    ty::ReScope(..) |
-                    ty::ReVar(..) |
-                    ty::ReSkolemized(..) => {
-                        bug!("unexpected region found when hashing a type")
-                    }
-                }
-            };
-            let did = |state: &mut SipHasher, did: DefId| {
-                let h = if did.is_local() {
-                    svh.clone()
-                } else {
-                    tcx.sess.cstore.crate_hash(did.krate)
-                };
-                h.hash(state);
-                did.index.hash(state);
-            };
-            let mt = |state: &mut SipHasher, mt: TypeAndMut| {
-                mt.mutbl.hash(state);
-            };
-            let fn_sig = |state: &mut SipHasher, sig: &ty::Binder<ty::FnSig<'tcx>>| {
-                let sig = tcx.anonymize_late_bound_regions(sig).0;
-                for a in &sig.inputs { helper(tcx, *a, svh, state); }
-                if let ty::FnConverging(output) = sig.output {
-                    helper(tcx, output, svh, state);
-                }
-            };
-            ty.maybe_walk(|ty| {
-                match ty.sty {
-                    TyBool => byte!(2),
-                    TyChar => byte!(3),
-                    TyInt(i) => {
-                        byte!(4);
-                        hash!(i);
-                    }
-                    TyUint(u) => {
-                        byte!(5);
-                        hash!(u);
-                    }
-                    TyFloat(f) => {
-                        byte!(6);
-                        hash!(f);
-                    }
-                    TyStr => {
-                        byte!(7);
-                    }
-                    TyEnum(d, _) => {
-                        byte!(8);
-                        did(state, d.did);
-                    }
-                    TyBox(_) => {
-                        byte!(9);
-                    }
-                    TyArray(_, n) => {
-                        byte!(10);
-                        n.hash(state);
-                    }
-                    TySlice(_) => {
-                        byte!(11);
-                    }
-                    TyRawPtr(m) => {
-                        byte!(12);
-                        mt(state, m);
-                    }
-                    TyRef(r, m) => {
-                        byte!(13);
-                        region(state, *r);
-                        mt(state, m);
-                    }
-                    TyFnDef(def_id, _, _) => {
-                        byte!(14);
-                        hash!(def_id);
-                    }
-                    TyFnPtr(ref b) => {
-                        byte!(15);
-                        hash!(b.unsafety);
-                        hash!(b.abi);
-                        fn_sig(state, &b.sig);
-                        return false;
-                    }
-                    TyTrait(ref data) => {
-                        byte!(17);
-                        did(state, data.principal_def_id());
-                        hash!(data.bounds);
-
-                        let principal = tcx.anonymize_late_bound_regions(&data.principal).0;
-                        for subty in &principal.substs.types {
-                            helper(tcx, subty, svh, state);
-                        }
-
-                        return false;
-                    }
-                    TyStruct(d, _) => {
-                        byte!(18);
-                        did(state, d.did);
-                    }
-                    TyTuple(ref inner) => {
-                        byte!(19);
-                        hash!(inner.len());
-                    }
-                    TyParam(p) => {
-                        byte!(20);
-                        hash!(p.space);
-                        hash!(p.idx);
-                        hash!(p.name.as_str());
-                    }
-                    TyInfer(_) => bug!(),
-                    TyError => byte!(21),
-                    TyClosure(d, _) => {
-                        byte!(22);
-                        did(state, d);
-                    }
-                    TyProjection(ref data) => {
-                        byte!(23);
-                        did(state, data.trait_ref.def_id);
-                        hash!(data.item_name.as_str());
-                    }
-                }
-                true
-            });
-        }
+    pub fn type_id_hash(self, ty: Ty<'tcx>) -> u64 {
+        let mut hasher = TypeIdHasher {
+            tcx: self,
+            state: SipHasher::new()
+        };
+        hasher.visit_ty(ty);
+        hasher.state.finish()
     }
 
     /// Returns true if this ADT is a dtorck type.
@@ -510,12 +390,151 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     }
 }
 
+struct TypeIdHasher<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
+    tcx: TyCtxt<'a, 'gcx, 'tcx>,
+    state: SipHasher
+}
+
+impl<'a, 'gcx, 'tcx> TypeIdHasher<'a, 'gcx, 'tcx> {
+    fn hash<T: Hash>(&mut self, x: T) {
+        x.hash(&mut self.state);
+    }
+
+    fn hash_discriminant_u8<T>(&mut self, x: &T) {
+        let v = unsafe {
+            intrinsics::discriminant_value(x)
+        };
+        let b = v as u8;
+        assert_eq!(v, b as u64);
+        self.hash(b)
+    }
+
+    fn def_id(&mut self, did: DefId) {
+        // Hash the crate identification information.
+        let name = self.tcx.crate_name(did.krate);
+        let disambiguator = self.tcx.crate_disambiguator(did.krate);
+        self.hash((name, disambiguator));
+
+        // Hash the item path within that crate.
+        // FIXME(#35379) This should use a deterministic
+        // DefPath hashing mechanism, not the DefIndex.
+        self.hash(did.index);
+    }
+}
+
+impl<'a, 'gcx, 'tcx> TypeVisitor<'tcx> for TypeIdHasher<'a, 'gcx, 'tcx> {
+    fn visit_ty(&mut self, ty: Ty<'tcx>) -> bool {
+        // Distinguish between the Ty variants uniformly.
+        self.hash_discriminant_u8(&ty.sty);
+
+        match ty.sty {
+            TyInt(i) => self.hash(i),
+            TyUint(u) => self.hash(u),
+            TyFloat(f) => self.hash(f),
+            TyStruct(d, _) |
+            TyEnum(d, _) => self.def_id(d.did),
+            TyArray(_, n) => self.hash(n),
+            TyRawPtr(m) |
+            TyRef(_, m) => self.hash(m.mutbl),
+            TyClosure(def_id, _) |
+            TyAnon(def_id, _) |
+            TyFnDef(def_id, _, _) => self.def_id(def_id),
+            TyFnPtr(f) => {
+                self.hash(f.unsafety);
+                self.hash(f.abi);
+                self.hash(f.sig.variadic());
+            }
+            TyTrait(ref data) => {
+                // Trait objects have a list of projection bounds
+                // that are not guaranteed to be sorted in an order
+                // that gets preserved across crates, so we need
+                // to sort them again by the name, in string form.
+
+                // Hash the whole principal trait ref.
+                self.def_id(data.principal_def_id());
+                data.principal.visit_with(self);
+
+                // Hash region and builtin bounds.
+                data.bounds.region_bound.visit_with(self);
+                self.hash(data.bounds.builtin_bounds);
+
+                // Only projection bounds are left, sort and hash them.
+                let mut projection_bounds: Vec<_> = data.bounds.projection_bounds
+                                                        .iter()
+                                                        .map(|b| (b.item_name().as_str(), b))
+                                                        .collect();
+                projection_bounds.sort_by_key(|&(ref name, _)| name.clone());
+                for (name, bound) in projection_bounds {
+                    self.def_id(bound.0.projection_ty.trait_ref.def_id);
+                    self.hash(name);
+                    bound.visit_with(self);
+                }
+
+                // Bypass super_visit_with, we've visited everything.
+                return false;
+            }
+            TyTuple(tys) => {
+                self.hash(tys.len());
+            }
+            TyParam(p) => {
+                self.hash(p.space);
+                self.hash(p.idx);
+                self.hash(p.name.as_str());
+            }
+            TyProjection(ref data) => {
+                self.def_id(data.trait_ref.def_id);
+                self.hash(data.item_name.as_str());
+            }
+            TyNever |
+            TyBool |
+            TyChar |
+            TyStr |
+            TyBox(_) |
+            TySlice(_) |
+            TyError => {}
+            TyInfer(_) => bug!()
+        }
+
+        ty.super_visit_with(self)
+    }
+
+    fn visit_region(&mut self, r: ty::Region) -> bool {
+        match r {
+            ty::ReStatic | ty::ReErased => {
+                self.hash::<u32>(0);
+            }
+            ty::ReLateBound(db, ty::BrAnon(i)) => {
+                assert!(db.depth > 0);
+                self.hash::<u32>(db.depth);
+                self.hash(i);
+            }
+            ty::ReEmpty |
+            ty::ReEarlyBound(..) |
+            ty::ReLateBound(..) |
+            ty::ReFree(..) |
+            ty::ReScope(..) |
+            ty::ReVar(..) |
+            ty::ReSkolemized(..) => {
+                bug!("unexpected region found when hashing a type")
+            }
+        }
+        false
+    }
+
+    fn visit_binder<T: TypeFoldable<'tcx>>(&mut self, x: &ty::Binder<T>) -> bool {
+        // Anonymize late-bound regions so that, for example:
+        // `for<'a, b> fn(&'a &'b T)` and `for<'a, b> fn(&'b &'a T)`
+        // result in the same TypeId (the two types are equivalent).
+        self.tcx.anonymize_late_bound_regions(x).super_visit_with(self)
+    }
+}
+
 impl<'a, 'tcx> ty::TyS<'tcx> {
     fn impls_bound(&'tcx self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
                    param_env: &ParameterEnvironment<'tcx>,
                    bound: ty::BuiltinBound, span: Span) -> bool
     {
-        tcx.infer_ctxt(None, Some(param_env.clone()), ProjectionMode::Topmost).enter(|infcx| {
+        tcx.infer_ctxt(None, Some(param_env.clone()), Reveal::ExactMatch).enter(|infcx| {
             traits::type_known_to_meet_builtin_bound(&infcx, self, bound, span)
         })
     }
@@ -532,7 +551,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
 
         // Fast-path for primitive types
         let result = match self.sty {
-            TyBool | TyChar | TyInt(..) | TyUint(..) | TyFloat(..) |
+            TyBool | TyChar | TyInt(..) | TyUint(..) | TyFloat(..) | TyNever |
             TyRawPtr(..) | TyFnDef(..) | TyFnPtr(_) | TyRef(_, TypeAndMut {
                 mutbl: hir::MutImmutable, ..
             }) => Some(false),
@@ -542,7 +561,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
             }) => Some(true),
 
             TyArray(..) | TySlice(_) | TyTrait(..) | TyTuple(..) |
-            TyClosure(..) | TyEnum(..) | TyStruct(..) |
+            TyClosure(..) | TyEnum(..) | TyStruct(..) | TyAnon(..) |
             TyProjection(..) | TyParam(..) | TyInfer(..) | TyError => None
         }.unwrap_or_else(|| !self.impls_bound(tcx, param_env, ty::BoundCopy, span));
 
@@ -578,12 +597,12 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
         let result = match self.sty {
             TyBool | TyChar | TyInt(..) | TyUint(..) | TyFloat(..) |
             TyBox(..) | TyRawPtr(..) | TyRef(..) | TyFnDef(..) | TyFnPtr(_) |
-            TyArray(..) | TyTuple(..) | TyClosure(..) => Some(true),
+            TyArray(..) | TyTuple(..) | TyClosure(..) | TyNever => Some(true),
 
             TyStr | TyTrait(..) | TySlice(_) => Some(false),
 
             TyEnum(..) | TyStruct(..) | TyProjection(..) | TyParam(..) |
-            TyInfer(..) | TyError => None
+            TyInfer(..) | TyAnon(..) | TyError => None
         }.unwrap_or_else(|| self.impls_bound(tcx, param_env, ty::BoundSized, span));
 
         if !self.has_param_types() && !self.has_self_ty() {
@@ -609,7 +628,6 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
         }
 
         let layout = Layout::compute_uncached(self, infcx)?;
-        let layout = tcx.intern_layout(layout);
         if can_cache {
             tcx.layout_cache.borrow_mut().insert(self, layout);
         }

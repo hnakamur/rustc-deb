@@ -29,10 +29,14 @@ pub struct MacroLoader<'a> {
 }
 
 impl<'a> MacroLoader<'a> {
-    pub fn new(sess: &'a Session, cstore: &'a CStore, crate_name: &str) -> MacroLoader<'a> {
+    pub fn new(sess: &'a Session,
+               cstore: &'a CStore,
+               crate_name: &str,
+               crate_config: ast::CrateConfig)
+               -> MacroLoader<'a> {
         MacroLoader {
             sess: sess,
-            reader: CrateReader::new(sess, cstore, crate_name),
+            reader: CrateReader::new(sess, cstore, crate_name, crate_config),
         }
     }
 }
@@ -60,10 +64,10 @@ impl<'a> ext::base::MacroLoader for MacroLoader<'a> {
                     }
                     if let (Some(sel), Some(names)) = (import.as_mut(), names) {
                         for attr in names {
-                            if let ast::MetaItemKind::Word(ref name) = attr.node {
-                                sel.insert(name.clone(), attr.span);
+                            if attr.is_word() {
+                                sel.insert(attr.name().clone(), attr.span());
                             } else {
-                                span_err!(self.sess, attr.span, E0466, "bad macro import");
+                                span_err!(self.sess, attr.span(), E0466, "bad macro import");
                             }
                         }
                     }
@@ -78,10 +82,10 @@ impl<'a> ext::base::MacroLoader for MacroLoader<'a> {
                     };
 
                     for attr in names {
-                        if let ast::MetaItemKind::Word(ref name) = attr.node {
-                            reexport.insert(name.clone(), attr.span);
+                        if attr.is_word() {
+                            reexport.insert(attr.name().clone(), attr.span());
                         } else {
-                            call_bad_macro_reexport(self.sess, attr.span);
+                            call_bad_macro_reexport(self.sess, attr.span());
                         }
                     }
                 }

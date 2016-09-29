@@ -69,7 +69,7 @@ use tvec;
 use type_of;
 use value::Value;
 use Disr;
-use rustc::ty::adjustment::{AdjustDerefRef, AdjustReifyFnPointer};
+use rustc::ty::adjustment::{AdjustNeverToAny, AdjustDerefRef, AdjustReifyFnPointer};
 use rustc::ty::adjustment::{AdjustUnsafeFnPointer, AdjustMutToConstPointer};
 use rustc::ty::adjustment::CustomCoerceUnsized;
 use rustc::ty::{self, Ty, TyCtxt};
@@ -348,6 +348,7 @@ fn adjustment_required<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     }
 
     match adjustment {
+        AdjustNeverToAny(..) => true,
         AdjustReifyFnPointer => true,
         AdjustUnsafeFnPointer | AdjustMutToConstPointer => {
             // purely a type-level thing
@@ -380,6 +381,12 @@ fn apply_adjustments<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     debug!("unadjusted datum for expr {:?}: {:?} adjustment={:?}",
            expr, datum, adjustment);
     match adjustment {
+        AdjustNeverToAny(ref target) => {
+            let mono_target = bcx.monomorphize(target);
+            let llty = type_of::type_of(bcx.ccx(), mono_target);
+            let dummy = C_undef(llty.ptr_to());
+            datum = Datum::new(dummy, mono_target, Lvalue::new("never")).to_expr_datum();
+        }
         AdjustReifyFnPointer => {
             match datum.ty.sty {
                 ty::TyFnDef(def_id, substs, _) => {
@@ -796,7 +803,7 @@ fn trans_index<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             let ix_datum = unpack_datum!(bcx, trans(bcx, idx));
 
             let ref_ty = // invoked methods have LB regions instantiated:
-                bcx.tcx().no_late_bound_regions(&method_ty.fn_ret()).unwrap().unwrap();
+                bcx.tcx().no_late_bound_regions(&method_ty.fn_ret()).unwrap();
             let elt_ty = match ref_ty.builtin_deref(true, ty::NoPreference) {
                 None => {
                     span_bug!(index_expr.span,
@@ -1512,7 +1519,7 @@ fn trans_unary<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                           C_integral(llty, min, true), debug_loc);
                         with_cond(bcx, is_min, |bcx| {
                             let msg = InternedString::new(
-                                "attempted to negate with overflow");
+                                "attempt to negate with overflow");
                             controlflow::trans_fail(bcx, expr_info(expr), msg)
                         })
                     } else {
@@ -1695,10 +1702,12 @@ fn trans_scalar_binop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 }
 
 // refinement types would obviate the need for this
+#[derive(Clone, Copy)]
 enum lazy_binop_ty {
     lazy_and,
     lazy_or,
 }
+
 
 fn trans_lazy_binop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                                 binop_expr: &hir::Expr,
@@ -1715,6 +1724,17 @@ fn trans_lazy_binop<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
 
     if past_lhs.unreachable.get() {
         return immediate_rvalue_bcx(past_lhs, lhs, binop_ty).to_expr_datumblock();
+    }
+
+    // If the rhs can never be reached, don't generate code for it.
+    if let Some(cond_val) = const_to_opt_uint(lhs) {
+        match (cond_val, op) {
+            (0, lazy_and) |
+            (1, lazy_or)  => {
+                return immediate_rvalue_bcx(past_lhs, lhs, binop_ty).to_expr_datumblock();
+            }
+            _ => { /* continue */ }
+        }
     }
 
     let join = fcx.new_id_block("join", binop_expr.id);
@@ -2040,7 +2060,7 @@ fn deref_once<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             };
 
             let ref_ty = // invoked methods have their LB regions instantiated
-                ccx.tcx().no_late_bound_regions(&method_ty.fn_ret()).unwrap().unwrap();
+                ccx.tcx().no_late_bound_regions(&method_ty.fn_ret()).unwrap();
             let scratch = rvalue_scratch_datum(bcx, ref_ty, "overloaded_deref");
 
             bcx = Callee::method(bcx, method)
