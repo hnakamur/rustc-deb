@@ -1,7 +1,6 @@
 rust-gdb-paths
 rust-lldb-paths
 add-soname
-avoid-redundant-dls.diff
 dont-download-stage0.diff
 reproducible-dl-stage0.patch
 fix-configure-for-deb-arches.patch
