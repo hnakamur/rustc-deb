@@ -14,7 +14,7 @@ use ty::subst::{self, Subst};
 use ty::{BrAnon, BrEnv, BrFresh, BrNamed};
 use ty::{TyBool, TyChar, TyStruct, TyEnum};
 use ty::{TyError, TyStr, TyArray, TySlice, TyFloat, TyFnDef, TyFnPtr};
-use ty::{TyParam, TyRawPtr, TyRef, TyTuple};
+use ty::{TyParam, TyRawPtr, TyRef, TyNever, TyTuple};
 use ty::TyClosure;
 use ty::{TyBox, TyTrait, TyInt, TyUint, TyInfer};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
@@ -34,7 +34,7 @@ pub fn verbose() -> bool {
 fn fn_sig(f: &mut fmt::Formatter,
           inputs: &[Ty],
           variadic: bool,
-          output: ty::FnOutput)
+          output: Ty)
           -> fmt::Result {
     write!(f, "(")?;
     let mut inputs = inputs.iter();
@@ -48,18 +48,11 @@ fn fn_sig(f: &mut fmt::Formatter,
         }
     }
     write!(f, ")")?;
-
-    match output {
-        ty::FnConverging(ty) => {
-            if !ty.is_nil() {
-                write!(f, " -> {}", ty)?;
-            }
-            Ok(())
-        }
-        ty::FnDiverging => {
-            write!(f, " -> !")
-        }
+    if !output.is_nil() {
+        write!(f, " -> {}", output)?;
     }
+
+    Ok(())
 }
 
 /// Namespace of the path given to parameterized to print.
@@ -135,7 +128,7 @@ pub fn parameterized<GG>(f: &mut fmt::Formatter,
     if !verbose && fn_trait_kind.is_some() && projections.len() == 1 {
         let projection_ty = projections[0].ty;
         if let TyTuple(ref args) = substs.types.get_slice(subst::TypeSpace)[0].sty {
-            return fn_sig(f, args, false, ty::FnConverging(projection_ty));
+            return fn_sig(f, args, false, projection_ty);
         }
     }
 
@@ -429,6 +422,9 @@ impl<'tcx, 'container> fmt::Debug for ty::AdtDefData<'tcx, 'container> {
 impl<'tcx> fmt::Debug for ty::adjustment::AutoAdjustment<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            ty::adjustment::AdjustNeverToAny(ref target) => {
+                write!(f, "AdjustNeverToAny({:?})", target)
+            }
             ty::adjustment::AdjustReifyFnPointer => {
                 write!(f, "AdjustReifyFnPointer")
             }
@@ -847,6 +843,7 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                 }
                 write!(f, "{}", tm)
             }
+            TyNever => write!(f, "!"),
             TyTuple(ref tys) => {
                 write!(f, "(")?;
                 let mut tys = tys.iter();
@@ -907,6 +904,37 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
             }
             TyTrait(ref data) => write!(f, "{}", data),
             ty::TyProjection(ref data) => write!(f, "{}", data),
+            ty::TyAnon(def_id, substs) => {
+                ty::tls::with(|tcx| {
+                    // Grab the "TraitA + TraitB" from `impl TraitA + TraitB`,
+                    // by looking up the projections associated with the def_id.
+                    let item_predicates = tcx.lookup_predicates(def_id);
+                    let substs = tcx.lift(&substs).unwrap_or_else(|| {
+                        tcx.mk_substs(subst::Substs::empty())
+                    });
+                    let bounds = item_predicates.instantiate(tcx, substs);
+
+                    let mut first = true;
+                    let mut is_sized = false;
+                    write!(f, "impl")?;
+                    for predicate in bounds.predicates.into_vec() {
+                        if let Some(trait_ref) = predicate.to_opt_poly_trait_ref() {
+                            // Don't print +Sized, but rather +?Sized if absent.
+                            if Some(trait_ref.def_id()) == tcx.lang_items.sized_trait() {
+                                is_sized = true;
+                                continue;
+                            }
+
+                            write!(f, "{}{}", if first { " " } else { "+" }, trait_ref)?;
+                            first = false;
+                        }
+                    }
+                    if !is_sized {
+                        write!(f, "{}?Sized", if first { " " } else { "+" })?;
+                    }
+                    Ok(())
+                })
+            }
             TyStr => write!(f, "str"),
             TyClosure(did, substs) => ty::tls::with(|tcx| {
                 write!(f, "[closure")?;
@@ -974,7 +1002,9 @@ impl fmt::Display for ty::InferTy {
             ty::TyVar(ref vid) if print_var_ids => write!(f, "{:?}", vid),
             ty::IntVar(ref vid) if print_var_ids => write!(f, "{:?}", vid),
             ty::FloatVar(ref vid) if print_var_ids => write!(f, "{:?}", vid),
-            ty::TyVar(_) | ty::IntVar(_) | ty::FloatVar(_) => write!(f, "_"),
+            ty::TyVar(_) => write!(f, "_"),
+            ty::IntVar(_) => write!(f, "{}", "{integer}"),
+            ty::FloatVar(_) => write!(f, "{}", "{float}"),
             ty::FreshTy(v) => write!(f, "FreshTy({})", v),
             ty::FreshIntTy(v) => write!(f, "FreshIntTy({})", v),
             ty::FreshFloatTy(v) => write!(f, "FreshFloatTy({})", v)

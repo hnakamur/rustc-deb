@@ -321,6 +321,7 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
                 ty::TyFloat(..) |
                 ty::TyError |
                 ty::TyStr |
+                ty::TyNever |
                 ty::TyParam(_) => {
                     // WfScalar, WfParameter, etc
                 }
@@ -381,6 +382,12 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
                 ty::TyFnDef(..) | ty::TyFnPtr(_) => {
                     // let the loop iterate into the argument/return
                     // types appearing in the fn signature
+                }
+
+                ty::TyAnon(..) => {
+                    // all of the requirements on type parameters
+                    // should've been checked by the instantiation
+                    // of whatever returned this exact `impl Trait`.
                 }
 
                 ty::TyTrait(ref data) => {

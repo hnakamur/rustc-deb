@@ -124,6 +124,49 @@ fn test_is_digit() {
 }
 
 #[test]
+fn test_escape_debug() {
+    fn string(c: char) -> String {
+        c.escape_debug().collect()
+    }
+    let s = string('\n');
+    assert_eq!(s, "\\n");
+    let s = string('\r');
+    assert_eq!(s, "\\r");
+    let s = string('\'');
+    assert_eq!(s, "\\'");
+    let s = string('"');
+    assert_eq!(s, "\\\"");
+    let s = string(' ');
+    assert_eq!(s, " ");
+    let s = string('a');
+    assert_eq!(s, "a");
+    let s = string('~');
+    assert_eq!(s, "~");
+    let s = string('é');
+    assert_eq!(s, "é");
+    let s = string('\x00');
+    assert_eq!(s, "\\u{0}");
+    let s = string('\x1f');
+    assert_eq!(s, "\\u{1f}");
+    let s = string('\x7f');
+    assert_eq!(s, "\\u{7f}");
+    let s = string('\u{80}');
+    assert_eq!(s, "\\u{80}");
+    let s = string('\u{ff}');
+    assert_eq!(s, "\u{ff}");
+    let s = string('\u{11b}');
+    assert_eq!(s, "\u{11b}");
+    let s = string('\u{1d4b6}');
+    assert_eq!(s, "\u{1d4b6}");
+    let s = string('\u{200b}'); // zero width space
+    assert_eq!(s, "\\u{200b}");
+    let s = string('\u{e000}'); // private use 1
+    assert_eq!(s, "\\u{e000}");
+    let s = string('\u{100000}'); // private use 2
+    assert_eq!(s, "\\u{100000}");
+}
+
+#[test]
 fn test_escape_default() {
     fn string(c: char) -> String {
         c.escape_default().collect()
@@ -142,18 +185,28 @@ fn test_escape_default() {
     assert_eq!(s, "a");
     let s = string('~');
     assert_eq!(s, "~");
+    let s = string('é');
+    assert_eq!(s, "\\u{e9}");
     let s = string('\x00');
     assert_eq!(s, "\\u{0}");
     let s = string('\x1f');
     assert_eq!(s, "\\u{1f}");
     let s = string('\x7f');
     assert_eq!(s, "\\u{7f}");
+    let s = string('\u{80}');
+    assert_eq!(s, "\\u{80}");
     let s = string('\u{ff}');
     assert_eq!(s, "\\u{ff}");
     let s = string('\u{11b}');
     assert_eq!(s, "\\u{11b}");
     let s = string('\u{1d4b6}');
     assert_eq!(s, "\\u{1d4b6}");
+    let s = string('\u{200b}'); // zero width space
+    assert_eq!(s, "\\u{200b}");
+    let s = string('\u{e000}'); // private use 1
+    assert_eq!(s, "\\u{e000}");
+    let s = string('\u{100000}'); // private use 2
+    assert_eq!(s, "\\u{100000}");
 }
 
 #[test]
@@ -301,4 +354,33 @@ fn eu_iterator_specializations() {
     check('\u{1234}');
     check('\u{12340}');
     check('\u{10FFFF}');
+}
+
+#[test]
+fn test_decode_utf8() {
+    use core::char::*;
+    use core::iter::FromIterator;
+
+    for &(str, bs) in [("", &[] as &[u8]),
+                       ("A", &[0x41u8] as &[u8]),
+                       ("�", &[0xC1u8, 0x81u8] as &[u8]),
+                       ("♥", &[0xE2u8, 0x99u8, 0xA5u8]),
+                       ("♥A", &[0xE2u8, 0x99u8, 0xA5u8, 0x41u8] as &[u8]),
+                       ("�", &[0xE2u8, 0x99u8] as &[u8]),
+                       ("�A", &[0xE2u8, 0x99u8, 0x41u8] as &[u8]),
+                       ("�", &[0xC0u8] as &[u8]),
+                       ("�A", &[0xC0u8, 0x41u8] as &[u8]),
+                       ("�", &[0x80u8] as &[u8]),
+                       ("�A", &[0x80u8, 0x41u8] as &[u8]),
+                       ("�", &[0xFEu8] as &[u8]),
+                       ("�A", &[0xFEu8, 0x41u8] as &[u8]),
+                       ("�", &[0xFFu8] as &[u8]),
+                       ("�A", &[0xFFu8, 0x41u8] as &[u8])].into_iter() {
+        assert!(Iterator::eq(str.chars(),
+                             decode_utf8(bs.into_iter().map(|&b|b))
+                                 .map(|r_b| r_b.unwrap_or('\u{FFFD}'))),
+                "chars = {}, bytes = {:?}, decoded = {:?}", str, bs,
+                Vec::from_iter(decode_utf8(bs.into_iter().map(|&b|b))
+                                   .map(|r_b| r_b.unwrap_or('\u{FFFD}'))));
+    }
 }

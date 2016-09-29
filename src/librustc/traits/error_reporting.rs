@@ -26,8 +26,9 @@ use super::{
 
 use fmt_macros::{Parser, Piece, Position};
 use hir::def_id::DefId;
-use infer::{InferCtxt};
+use infer::{self, InferCtxt, TypeOrigin};
 use ty::{self, ToPredicate, ToPolyTraitRef, Ty, TyCtxt, TypeFoldable};
+use ty::error::ExpectedFound;
 use ty::fast_reject;
 use ty::fold::TypeFolder;
 use ty::subst::{self, Subst, TypeSpace};
@@ -107,24 +108,63 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         let predicate =
             self.resolve_type_vars_if_possible(&obligation.predicate);
 
-        if !predicate.references_error() {
-            if let Some(warning_node_id) = warning_node_id {
-                self.tcx.sess.add_lint(
-                    ::lint::builtin::UNSIZED_IN_TUPLE,
-                    warning_node_id,
-                    obligation.cause.span,
-                    format!("type mismatch resolving `{}`: {}",
-                            predicate,
-                            error.err));
-            } else {
-                let mut err = struct_span_err!(self.tcx.sess, obligation.cause.span, E0271,
-                                               "type mismatch resolving `{}`: {}",
-                                               predicate,
-                                               error.err);
-                self.note_obligation_cause(&mut err, obligation);
-                err.emit();
-            }
+        if predicate.references_error() {
+            return
         }
+        if let Some(warning_node_id) = warning_node_id {
+            self.tcx.sess.add_lint(
+                ::lint::builtin::UNSIZED_IN_TUPLE,
+                warning_node_id,
+                obligation.cause.span,
+                format!("type mismatch resolving `{}`: {}",
+                        predicate,
+                        error.err));
+            return
+        }
+        self.probe(|_| {
+            let origin = TypeOrigin::Misc(obligation.cause.span);
+            let err_buf;
+            let mut err = &error.err;
+            let mut values = None;
+
+            // try to find the mismatched types to report the error with.
+            //
+            // this can fail if the problem was higher-ranked, in which
+            // cause I have no idea for a good error message.
+            if let ty::Predicate::Projection(ref data) = predicate {
+                let mut selcx = SelectionContext::new(self);
+                let (data, _) = self.replace_late_bound_regions_with_fresh_var(
+                    obligation.cause.span,
+                    infer::LateBoundRegionConversionTime::HigherRankedType,
+                    data);
+                let normalized = super::normalize_projection_type(
+                    &mut selcx,
+                    data.projection_ty,
+                    obligation.cause.clone(),
+                    0
+                );
+                let origin = TypeOrigin::Misc(obligation.cause.span);
+                if let Err(error) = self.eq_types(
+                    false, origin,
+                    data.ty, normalized.value
+                ) {
+                    values = Some(infer::ValuePairs::Types(ExpectedFound {
+                        expected: normalized.value,
+                        found: data.ty,
+                    }));
+                    err_buf = error;
+                    err = &err_buf;
+                }
+            }
+
+            let mut diag = struct_span_err!(
+                self.tcx.sess, origin.span(), E0271,
+                "type mismatch resolving `{}`", predicate
+            );
+            self.note_type_err(&mut diag, origin, values, err);
+            self.note_obligation_cause(&mut diag, obligation);
+            diag.emit();
+        });
     }
 
     fn impl_substs(&self,
@@ -171,6 +211,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 ty::TyTuple(..) => Some(12),
                 ty::TyProjection(..) => Some(13),
                 ty::TyParam(..) => Some(14),
+                ty::TyAnon(..) => Some(15),
+                ty::TyNever => Some(16),
                 ty::TyInfer(..) | ty::TyError => None
             }
         }
@@ -614,6 +656,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         let mut err = struct_span_err!(self.sess, span, E0072,
                                        "recursive type `{}` has infinite size",
                                        self.item_path_str(type_def_id));
+        err.span_label(span, &format!("recursive type has infinite size"));
         err.help(&format!("insert indirection (e.g., a `Box`, `Rc`, or `&`) \
                            at some point to make `{}` representable",
                           self.item_path_str(type_def_id)));
@@ -630,10 +673,15 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         let mut err = match warning_node_id {
             Some(_) => None,
             None => {
-                Some(struct_span_err!(
-                    self.sess, span, E0038,
-                    "the trait `{}` cannot be made into an object",
-                    self.item_path_str(trait_def_id)))
+                let trait_str = self.item_path_str(trait_def_id);
+                let mut db = struct_span_err!(
+                            self.sess, span, E0038,
+                            "the trait `{}` cannot be made into an object",
+                            trait_str);
+                db.span_label(span,
+                              &format!("the trait `{}` cannot be made \
+                              into an object", trait_str));
+                Some(db)
             }
         };
 
@@ -830,10 +878,12 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
 
     fn need_type_info(&self, span: Span, ty: Ty<'tcx>) {
-        span_err!(self.tcx.sess, span, E0282,
-                  "unable to infer enough type information about `{}`; \
-                   type annotations or generic parameter binding required",
-                  ty);
+        let mut err = struct_span_err!(self.tcx.sess, span, E0282,
+                                       "unable to infer enough type information about `{}`",
+                                       ty);
+        err.note("type annotations or generic parameter binding required");
+        err.span_label(span, &format!("cannot infer type for `{}`", ty));
+        err.emit()
     }
 
     fn note_obligation_cause<T>(&self,

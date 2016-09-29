@@ -1,4 +1,4 @@
-.TH RUSTC "1" "August 2015" "rustc 1.2.0" "User Commands"
+.TH RUSTC "1" "August 2016" "rustc 1.12.0" "User Commands"
 .SH NAME
 rustc \- The Rust compiler
 .SH SYNOPSIS
@@ -44,7 +44,7 @@ The optional \fIKIND\fR can be one of \fIstatic\fR, \fIdylib\fR, or
 \fIframework\fR.
 If omitted, \fIdylib\fR is assumed.
 .TP
-\fB\-\-crate\-type\fR [bin|lib|rlib|dylib|staticlib]
+\fB\-\-crate\-type\fR [bin|lib|rlib|dylib|cdylib|staticlib]
 Comma separated list of types of crates for the compiler to emit.
 .TP
 \fB\-\-crate\-name\fR \fINAME\fR
@@ -264,7 +264,8 @@ which link to the standard library.
 .TP
 \fBRUST_TEST_THREADS\fR
 The test framework Rust provides executes tests in parallel. This variable sets
-the maximum number of threads used for this purpose.
+the maximum number of threads used for this purpose. This setting is overridden
+by the --test-threads option.
 
 .TP
 \fBRUST_TEST_NOCAPTURE\fR
@@ -299,7 +300,7 @@ To build an executable with debug info:
 See https://github.com/rust\-lang/rust/issues for issues.
 
 .SH "AUTHOR"
-See \fIAUTHORS.txt\fR in the Rust source distribution.
+See https://github.com/rust\-lang/rust/graphs/contributors or use `git log --all --format='%cN <%cE>' | sort -u` in the rust source distribution.
 
 .SH "COPYRIGHT"
 This work is dual\[hy]licensed under Apache\ 2.0 and MIT terms.

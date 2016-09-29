@@ -13,10 +13,11 @@
 use rustc::hir::def_id::DefId;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::layout::{Layout, Primitive};
+use rustc::traits::Reveal;
 use middle::const_val::ConstVal;
 use rustc_const_eval::eval_const_expr_partial;
 use rustc_const_eval::EvalHint::ExprTypeChecked;
-use util::common::slice_pat;
 use util::nodemap::{FnvHashSet};
 use lint::{LateContext, LintContext, LintArray};
 use lint::{LintPass, LateLintPass};
@@ -75,6 +76,12 @@ declare_lint! {
     EXCEEDING_BITSHIFTS,
     Deny,
     "shift exceeds the type's number of bits"
+}
+
+declare_lint! {
+    VARIANT_SIZE_DIFFERENCES,
+    Allow,
+    "detects enums with widely varying variant sizes"
 }
 
 #[derive(Copy, Clone)]
@@ -461,7 +468,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                 // Check for a repr() attribute to specify the size of the
                 // discriminant.
                 let repr_hints = cx.lookup_repr_hints(def.did);
-                match slice_pat(&&**repr_hints) {
+                match &repr_hints[..] {
                     &[] => {
                         // Special-case types like `Option<extern fn()>`.
                         if !is_repr_nullable_ptr(cx, def, substs) {
@@ -516,7 +523,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
 
             // Primitive types with a stable representation.
             ty::TyBool | ty::TyInt(..) | ty::TyUint(..) |
-            ty::TyFloat(..) => FfiSafe,
+            ty::TyFloat(..) | ty::TyNever => FfiSafe,
 
             ty::TyBox(..) => {
                 FfiUnsafe("found Rust type Box<_> in foreign module, \
@@ -566,16 +573,11 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                 }
 
                 let sig = cx.erase_late_bound_regions(&bare_fn.sig);
-                match sig.output {
-                    ty::FnDiverging => {}
-                    ty::FnConverging(output) => {
-                        if !output.is_nil() {
-                            let r = self.check_type_for_ffi(cache, output);
-                            match r {
-                                FfiSafe => {}
-                                _ => { return r; }
-                            }
-                        }
+                if !sig.output.is_nil() {
+                    let r = self.check_type_for_ffi(cache, sig.output);
+                    match r {
+                        FfiSafe => {}
+                        _ => { return r; }
                     }
                 }
                 for arg in sig.inputs {
@@ -589,7 +591,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
             }
 
             ty::TyParam(..) | ty::TyInfer(..) | ty::TyError |
-            ty::TyClosure(..) | ty::TyProjection(..) |
+            ty::TyClosure(..) | ty::TyProjection(..) | ty::TyAnon(..) |
             ty::TyFnDef(..) => {
                 bug!("Unexpected type in foreign function")
             }
@@ -634,7 +636,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
         }
 
         if let hir::Return(ref ret_hir) = decl.output {
-            let ret_ty = sig.output.unwrap();
+            let ret_ty = sig.output;
             if !ret_ty.is_nil() {
                 self.check_type_for_ffi_and_report_errors(ret_hir.span, ret_ty);
             }
@@ -670,6 +672,68 @@ impl LateLintPass for ImproperCTypes {
                         hir::ForeignItemStatic(ref ty, _) => {
                             vis.check_foreign_static(ni.id, ty.span);
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub struct VariantSizeDifferences;
+
+impl LintPass for VariantSizeDifferences {
+    fn get_lints(&self) -> LintArray {
+        lint_array!(VARIANT_SIZE_DIFFERENCES)
+    }
+}
+
+impl LateLintPass for VariantSizeDifferences {
+    fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
+        if let hir::ItemEnum(ref enum_definition, ref gens) = it.node {
+            if gens.ty_params.is_empty() {  // sizes only make sense for non-generic types
+                let t = cx.tcx.node_id_to_type(it.id);
+                let layout = cx.tcx.normalizing_infer_ctxt(Reveal::All).enter(|infcx| {
+                    let ty = cx.tcx.erase_regions(&t);
+                    ty.layout(&infcx).unwrap_or_else(|e| {
+                        bug!("failed to get layout for `{}`: {}", t, e)
+                    })
+                });
+
+                if let Layout::General { ref variants, ref size, discr, .. } = *layout {
+                    let discr_size = Primitive::Int(discr).size(&cx.tcx.data_layout).bytes();
+
+                    debug!("enum `{}` is {} bytes large", t, size.bytes());
+
+                    let (largest, slargest, largest_index) = enum_definition.variants
+                        .iter()
+                        .zip(variants)
+                        .map(|(variant, variant_layout)| {
+                            // Subtract the size of the enum discriminant
+                            let bytes = variant_layout.min_size().bytes()
+                                                                 .saturating_sub(discr_size);
+
+                            debug!("- variant `{}` is {} bytes large", variant.node.name, bytes);
+                            bytes
+                        })
+                        .enumerate()
+                        .fold((0, 0, 0),
+                            |(l, s, li), (idx, size)|
+                                if size > l {
+                                    (size, l, idx)
+                                } else if size > s {
+                                    (l, size, li)
+                                } else {
+                                    (l, s, li)
+                                }
+                        );
+
+                    // we only warn if the largest variant is at least thrice as large as
+                    // the second-largest.
+                    if largest > slargest * 3 && slargest > 0 {
+                        cx.span_lint(VARIANT_SIZE_DIFFERENCES,
+                                     enum_definition.variants[largest_index].span,
+                                     &format!("enum variant is more than three times larger \
+                                               ({} bytes) than the next largest", largest));
                     }
                 }
             }

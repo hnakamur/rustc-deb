@@ -22,7 +22,7 @@ use mir::transform as mir_pass;
 
 use syntax::ast::{NodeId, Name};
 use errors::{self, DiagnosticBuilder};
-use errors::emitter::{Emitter, BasicEmitter, EmitterWriter};
+use errors::emitter::{Emitter, EmitterWriter};
 use syntax::json::JsonEmitter;
 use syntax::feature_gate;
 use syntax::parse;
@@ -79,7 +79,7 @@ pub struct Session {
     // forms a unique global identifier for the crate. It is used to allow
     // multiple crates with the same name to coexist. See the
     // trans::back::symbol_names module for more information.
-    pub crate_disambiguator: Cell<ast::Name>,
+    pub crate_disambiguator: RefCell<token::InternedString>,
     pub features: RefCell<feature_gate::Features>,
 
     /// The maximum recursion limit for potentially infinitely recursive
@@ -105,6 +105,9 @@ pub struct Session {
 }
 
 impl Session {
+    pub fn local_crate_disambiguator(&self) -> token::InternedString {
+        self.crate_disambiguator.borrow().clone()
+    }
     pub fn struct_span_warn<'a, S: Into<MultiSpan>>(&'a self,
                                                     sp: S,
                                                     msg: &str)
@@ -125,20 +128,14 @@ impl Session {
                                                    sp: S,
                                                    msg: &str)
                                                    -> DiagnosticBuilder<'a>  {
-        match split_msg_into_multilines(msg) {
-            Some(ref msg) => self.diagnostic().struct_span_err(sp, msg),
-            None => self.diagnostic().struct_span_err(sp, msg),
-        }
+        self.diagnostic().struct_span_err(sp, msg)
     }
     pub fn struct_span_err_with_code<'a, S: Into<MultiSpan>>(&'a self,
                                                              sp: S,
                                                              msg: &str,
                                                              code: &str)
                                                              -> DiagnosticBuilder<'a>  {
-        match split_msg_into_multilines(msg) {
-            Some(ref msg) => self.diagnostic().struct_span_err_with_code(sp, msg, code),
-            None => self.diagnostic().struct_span_err_with_code(sp, msg, code),
-        }
+        self.diagnostic().struct_span_err_with_code(sp, msg, code)
     }
     pub fn struct_err<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a>  {
         self.diagnostic().struct_err(msg)
@@ -177,16 +174,10 @@ impl Session {
         }
     }
     pub fn span_err<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
-        match split_msg_into_multilines(msg) {
-            Some(msg) => self.diagnostic().span_err(sp, &msg),
-            None => self.diagnostic().span_err(sp, msg)
-        }
+        self.diagnostic().span_err(sp, msg)
     }
     pub fn span_err_with_code<S: Into<MultiSpan>>(&self, sp: S, msg: &str, code: &str) {
-        match split_msg_into_multilines(msg) {
-            Some(msg) => self.diagnostic().span_err_with_code(sp, &msg, code),
-            None => self.diagnostic().span_err_with_code(sp, msg, code)
-        }
+        self.diagnostic().span_err_with_code(sp, &msg, code)
     }
     pub fn err(&self, msg: &str) {
         self.diagnostic().err(msg)
@@ -304,9 +295,6 @@ impl Session {
     pub fn unstable_options(&self) -> bool {
         self.opts.debugging_opts.unstable_options
     }
-    pub fn print_enum_sizes(&self) -> bool {
-        self.opts.debugging_opts.print_enum_sizes
-    }
     pub fn nonzeroing_move_hints(&self) -> bool {
         self.opts.debugging_opts.enable_nonzeroing_move_hints
     }
@@ -345,67 +333,6 @@ impl Session {
     }
 }
 
-fn split_msg_into_multilines(msg: &str) -> Option<String> {
-    // Conditions for enabling multi-line errors:
-    if !msg.contains("mismatched types") &&
-        !msg.contains("type mismatch resolving") &&
-        !msg.contains("if and else have incompatible types") &&
-        !msg.contains("if may be missing an else clause") &&
-        !msg.contains("match arms have incompatible types") &&
-        !msg.contains("structure constructor specifies a structure of type") &&
-        !msg.contains("has an incompatible type for trait") {
-            return None
-    }
-    let first = msg.match_indices("expected").filter(|s| {
-        let last = msg[..s.0].chars().rev().next();
-        last == Some(' ') || last == Some('(')
-    }).map(|(a, b)| (a - 1, a + b.len()));
-    let second = msg.match_indices("found").filter(|s| {
-        msg[..s.0].chars().rev().next() == Some(' ')
-    }).map(|(a, b)| (a - 1, a + b.len()));
-
-    let mut new_msg = String::new();
-    let mut head = 0;
-
-    // Insert `\n` before expected and found.
-    for (pos1, pos2) in first.zip(second) {
-        new_msg = new_msg +
-        // A `(` may be preceded by a space and it should be trimmed
-                  msg[head..pos1.0].trim_right() + // prefix
-                  "\n" +                           // insert before first
-                  &msg[pos1.0..pos1.1] +           // insert what first matched
-                  &msg[pos1.1..pos2.0] +           // between matches
-                  "\n   " +                        // insert before second
-        //           123
-        // `expected` is 3 char longer than `found`. To align the types,
-        // `found` gets 3 spaces prepended.
-                  &msg[pos2.0..pos2.1];            // insert what second matched
-
-        head = pos2.1;
-    }
-
-    let mut tail = &msg[head..];
-    let third = tail.find("(values differ")
-                   .or(tail.find("(lifetime"))
-                   .or(tail.find("(cyclic type of infinite size"));
-    // Insert `\n` before any remaining messages which match.
-    if let Some(pos) = third {
-        // The end of the message may just be wrapped in `()` without
-        // `expected`/`found`.  Push this also to a new line and add the
-        // final tail after.
-        new_msg = new_msg +
-        // `(` is usually preceded by a space and should be trimmed.
-                  tail[..pos].trim_right() + // prefix
-                  "\n" +                     // insert before paren
-                  &tail[pos..];              // append the tail
-
-        tail = "";
-    }
-
-    new_msg.push_str(tail);
-    return Some(new_msg);
-}
-
 pub fn build_session(sopts: config::Options,
                      dep_graph: &DepGraph,
                      local_crate_source_file: Option<PathBuf>,
@@ -436,14 +363,12 @@ pub fn build_session_with_codemap(sopts: config::Options,
         .map(|&(_, ref level)| *level != lint::Allow)
         .last()
         .unwrap_or(true);
-    let treat_err_as_bug = sopts.treat_err_as_bug;
+    let treat_err_as_bug = sopts.debugging_opts.treat_err_as_bug;
 
     let emitter: Box<Emitter> = match sopts.error_format {
         config::ErrorOutputType::HumanReadable(color_config) => {
             Box::new(EmitterWriter::stderr(color_config,
-                                           Some(registry),
-                                           codemap.clone(),
-                                           errors::snippet::FormatMode::EnvironmentSelected))
+                                           Some(codemap.clone())))
         }
         config::ErrorOutputType::Json => {
             Box::new(JsonEmitter::stderr(Some(registry), codemap.clone()))
@@ -513,7 +438,7 @@ pub fn build_session_(sopts: config::Options,
         plugin_attributes: RefCell::new(Vec::new()),
         crate_types: RefCell::new(Vec::new()),
         dependency_formats: RefCell::new(FnvHashMap()),
-        crate_disambiguator: Cell::new(token::intern("")),
+        crate_disambiguator: RefCell::new(token::intern("").as_str()),
         features: RefCell::new(feature_gate::Features::new()),
         recursion_limit: Cell::new(64),
         next_node_id: Cell::new(1),
@@ -578,24 +503,28 @@ unsafe fn configure_llvm(sess: &Session) {
 }
 
 pub fn early_error(output: config::ErrorOutputType, msg: &str) -> ! {
-    let mut emitter: Box<Emitter> = match output {
+    let emitter: Box<Emitter> = match output {
         config::ErrorOutputType::HumanReadable(color_config) => {
-            Box::new(BasicEmitter::stderr(color_config))
+            Box::new(EmitterWriter::stderr(color_config,
+                                           None))
         }
         config::ErrorOutputType::Json => Box::new(JsonEmitter::basic()),
     };
-    emitter.emit(&MultiSpan::new(), msg, None, errors::Level::Fatal);
+    let handler = errors::Handler::with_emitter(true, false, emitter);
+    handler.emit(&MultiSpan::new(), msg, errors::Level::Fatal);
     panic!(errors::FatalError);
 }
 
 pub fn early_warn(output: config::ErrorOutputType, msg: &str) {
-    let mut emitter: Box<Emitter> = match output {
+    let emitter: Box<Emitter> = match output {
         config::ErrorOutputType::HumanReadable(color_config) => {
-            Box::new(BasicEmitter::stderr(color_config))
+            Box::new(EmitterWriter::stderr(color_config,
+                                           None))
         }
         config::ErrorOutputType::Json => Box::new(JsonEmitter::basic()),
     };
-    emitter.emit(&MultiSpan::new(), msg, None, errors::Level::Warning);
+    let handler = errors::Handler::with_emitter(true, false, emitter);
+    handler.emit(&MultiSpan::new(), msg, errors::Level::Warning);
 }
 
 // Err(0) means compilation was stopped, but no errors were found.

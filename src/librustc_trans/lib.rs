@@ -37,6 +37,8 @@
 #![feature(unicode)]
 #![feature(question_mark)]
 
+use rustc::dep_graph::WorkProduct;
+
 extern crate arena;
 extern crate flate;
 extern crate getopts;
@@ -86,6 +88,7 @@ mod macros;
 mod abi;
 mod adt;
 mod asm;
+mod assert_module_sources;
 mod attributes;
 mod base;
 mod basic_block;
@@ -122,6 +125,7 @@ mod meth;
 mod mir;
 mod monomorphize;
 mod partitioning;
+mod symbol_map;
 mod symbol_names_test;
 mod trans_item;
 mod tvec;
@@ -129,8 +133,29 @@ mod type_;
 mod type_of;
 mod value;
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct ModuleTranslation {
+    /// The name of the module. When the crate may be saved between
+    /// compilations, incremental compilation requires that name be
+    /// unique amongst **all** crates.  Therefore, it should contain
+    /// something unique to this crate (e.g., a module path) as well
+    /// as the crate name and disambiguator.
+    pub name: String,
+    pub symbol_name_hash: u64,
+    pub source: ModuleSource,
+}
+
+#[derive(Clone)]
+pub enum ModuleSource {
+    /// Copy the `.o` files or whatever from the incr. comp. directory.
+    Preexisting(WorkProduct),
+
+    /// Rebuild from this LLVM module.
+    Translated(ModuleLlvm),
+}
+
+#[derive(Copy, Clone)]
+pub struct ModuleLlvm {
     pub llcx: llvm::ContextRef,
     pub llmod: llvm::ModuleRef,
 }

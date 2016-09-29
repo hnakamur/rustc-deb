@@ -230,7 +230,7 @@ pub struct Cache {
 
     /// Similar to `paths`, but only holds external paths. This is only used for
     /// generating explicit hyperlinks to other crates.
-    pub external_paths: HashMap<DefId, Vec<String>>,
+    pub external_paths: HashMap<DefId, (Vec<String>, ItemType)>,
 
     /// This map contains information about all known traits of this crate.
     /// Implementations of a crate should inherit the documentation of the
@@ -248,9 +248,6 @@ pub struct Cache {
 
     /// Cache of where documentation for primitives can be found.
     pub primitive_locations: HashMap<clean::PrimitiveType, ast::CrateNum>,
-
-    /// Set of definitions which have been inlined from external crates.
-    pub inlined: HashSet<DefId>,
 
     // Note that external items for which `doc(hidden)` applies to are shown as
     // non-reachable while local items aren't. This is because we're reusing
@@ -505,20 +502,20 @@ pub fn run(mut krate: clean::Crate,
 
     // Crawl the crate to build various caches used for the output
     let RenderInfo {
-        inlined,
+        inlined: _,
         external_paths,
         external_typarams,
         deref_trait_did,
     } = renderinfo;
 
-    let paths = external_paths.into_iter()
-                              .map(|(k, (v, t))| (k, (v, ItemType::from_type_kind(t))))
-                              .collect::<HashMap<_, _>>();
+    let external_paths = external_paths.into_iter()
+        .map(|(k, (v, t))| (k, (v, ItemType::from_type_kind(t))))
+        .collect();
 
     let mut cache = Cache {
         impls: HashMap::new(),
-        external_paths: paths.iter().map(|(&k, v)| (k, v.0.clone())).collect(),
-        paths: paths,
+        external_paths: external_paths,
+        paths: HashMap::new(),
         implementors: HashMap::new(),
         stack: Vec::new(),
         parent_stack: Vec::new(),
@@ -534,7 +531,6 @@ pub fn run(mut krate: clean::Crate,
         traits: mem::replace(&mut krate.external_traits, HashMap::new()),
         deref_trait_did: deref_trait_did,
         typarams: external_typarams,
-        inlined: inlined,
     };
 
     // Cache where all our extern crates are located
@@ -542,7 +538,7 @@ pub fn run(mut krate: clean::Crate,
         cache.extern_locations.insert(n, (e.name.clone(),
                                           extern_location(e, &cx.dst)));
         let did = DefId { krate: n, index: CRATE_DEF_INDEX };
-        cache.paths.insert(did, (vec![e.name.to_string()], ItemType::Module));
+        cache.external_paths.insert(did, (vec![e.name.to_string()], ItemType::Module));
     }
 
     // Cache where all known primitives have their documentation located.
@@ -753,7 +749,10 @@ fn write_shared(cx: &Context,
         //        theory it should be...
         let &(ref remote_path, remote_item_type) = match cache.paths.get(&did) {
             Some(p) => p,
-            None => continue,
+            None => match cache.external_paths.get(&did) {
+                Some(p) => p,
+                None => continue,
+            }
         };
 
         let mut mydst = dst.clone();
@@ -1055,12 +1054,11 @@ impl DocFolder for Cache {
                         let last = self.parent_stack.last().unwrap();
                         let did = *last;
                         let path = match self.paths.get(&did) {
-                            Some(&(_, ItemType::Trait)) =>
-                                Some(&self.stack[..self.stack.len() - 1]),
                             // The current stack not necessarily has correlation
                             // for where the type was defined. On the other
                             // hand, `paths` always has the right
                             // information if present.
+                            Some(&(ref fqp, ItemType::Trait)) |
                             Some(&(ref fqp, ItemType::Struct)) |
                             Some(&(ref fqp, ItemType::Enum)) =>
                                 Some(&fqp[..fqp.len() - 1]),
@@ -1092,12 +1090,10 @@ impl DocFolder for Cache {
                         });
                     }
                 }
-                (Some(parent), None) if is_method || (!self.stripped_mod)=> {
-                    if parent.is_local() {
-                        // We have a parent, but we don't know where they're
-                        // defined yet. Wait for later to index this item.
-                        self.orphan_methods.push((parent, item.clone()))
-                    }
+                (Some(parent), None) if is_method => {
+                    // We have a parent, but we don't know where they're
+                    // defined yet. Wait for later to index this item.
+                    self.orphan_methods.push((parent, item.clone()));
                 }
                 _ => {}
             }
@@ -1127,7 +1123,6 @@ impl DocFolder for Cache {
                 // not a public item.
                 if
                     !self.paths.contains_key(&item.def_id) ||
-                    !item.def_id.is_local() ||
                     self.access_levels.is_public(item.def_id)
                 {
                     self.paths.insert(item.def_id,
@@ -1304,7 +1299,12 @@ impl Context {
                 *slot.borrow_mut() = cx.current.clone();
             });
 
-            let mut title = cx.current.join("::");
+            let mut title = if it.is_primitive() {
+                // No need to include the namespace for primitive types
+                String::new()
+            } else {
+                cx.current.join("::")
+            };
             if pushname {
                 if !title.is_empty() {
                     title.push_str("::");
@@ -1516,7 +1516,7 @@ impl<'a> Item<'a> {
         } else {
             let cache = cache();
             let external_path = match cache.external_paths.get(&self.item.def_id) {
-                Some(path) => path,
+                Some(&(ref path, _)) => path,
                 None => return None,
             };
             let mut path = match cache.extern_locations.get(&self.item.def_id.krate) {
@@ -1555,11 +1555,7 @@ impl<'a> fmt::Display for Item<'a> {
             clean::PrimitiveItem(..) => write!(fmt, "Primitive Type ")?,
             _ => {}
         }
-        let is_primitive = match self.item.inner {
-            clean::PrimitiveItem(..) => true,
-            _ => false,
-        };
-        if !is_primitive {
+        if !self.item.is_primitive() {
             let cur = &self.cx.current;
             let amt = if self.item.is_mod() { cur.len() - 1 } else { cur.len() };
             for (i, component) in cur.iter().enumerate().take(amt) {
@@ -1591,7 +1587,7 @@ impl<'a> fmt::Display for Item<'a> {
         // [src] link in the downstream documentation will actually come back to
         // this page, and this link will be auto-clicked. The `id` attribute is
         // used to find the link to auto-click.
-        if self.cx.shared.include_sources && !is_primitive {
+        if self.cx.shared.include_sources && !self.item.is_primitive() {
             if let Some(l) = self.href() {
                 write!(fmt, "<a id='src-{}' class='srclink' \
                               href='{}' title='{}'>[src]</a>",
@@ -2105,7 +2101,7 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
            path = if it.def_id.is_local() {
                cx.current.join("/")
            } else {
-               let path = &cache.external_paths[&it.def_id];
+               let (ref path, _) = cache.external_paths[&it.def_id];
                path[..path.len() - 1].join("/")
            },
            ty = shortty(it).to_static_str(),
@@ -2413,10 +2409,13 @@ fn render_struct(w: &mut fmt::Formatter, it: &clean::Item,
            if structhead {"struct "} else {""},
            it.name.as_ref().unwrap())?;
     if let Some(g) = g {
-        write!(w, "{}{}", *g, WhereClause(g))?
+        write!(w, "{}", g)?
     }
     match ty {
         doctree::Plain => {
+            if let Some(g) = g {
+                write!(w, "{}", WhereClause(g))?
+            }
             write!(w, " {{\n{}", tab)?;
             for field in fields {
                 if let clean::StructFieldItem(ref ty) = field.inner {
@@ -2449,9 +2448,17 @@ fn render_struct(w: &mut fmt::Formatter, it: &clean::Item,
                     _ => unreachable!()
                 }
             }
-            write!(w, ");")?;
+            write!(w, ")")?;
+            if let Some(g) = g {
+                write!(w, "{}", WhereClause(g))?
+            }
+            write!(w, ";")?;
         }
         doctree::Unit => {
+            // Needed for PhantomData.
+            if let Some(g) = g {
+                write!(w, "{}", WhereClause(g))?
+            }
             write!(w, ";")?;
         }
     }
@@ -2715,7 +2722,7 @@ impl<'a> fmt::Display for Sidebar<'a> {
         let parentlen = cx.current.len() - if it.is_mod() {1} else {0};
 
         // the sidebar is designed to display sibling functions, modules and
-        // other miscellaneous informations. since there are lots of sibling
+        // other miscellaneous information. since there are lots of sibling
         // items (and that causes quadratic growth in large modules),
         // we refactor common parts into a shared JavaScript file per module.
         // still, we don't move everything into JS because we want to preserve

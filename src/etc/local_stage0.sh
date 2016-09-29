@@ -49,8 +49,16 @@ if [ -z $TARG_DIR ]; then
     exit 1
 fi
 
+case "$TARG_DIR" in
+--print-rustc-release)
+  # not actually copying to TARG_DIR, just print the local rustc version and exit
+  ${PREFIX}/bin/rustc${BIN_SUF} --version --verbose | sed -ne 's/^release: //p'
+;;
+*)
+
 cp ${PREFIX}/bin/rustc${BIN_SUF} ${TARG_DIR}/stage0/bin/
 cp ${PREFIX}/${LIB_DIR}/${RUSTLIBDIR}/${TARG_DIR}/${LIB_DIR}/* ${TARG_DIR}/stage0/${LIB_DIR}/
+cp ${PREFIX}/${LIB_DIR}/${LIB_PREFIX}arena*${LIB_SUF} ${TARG_DIR}/stage0/${LIB_DIR}/
 cp ${PREFIX}/${LIB_DIR}/${LIB_PREFIX}extra*${LIB_SUF} ${TARG_DIR}/stage0/${LIB_DIR}/
 cp ${PREFIX}/${LIB_DIR}/${LIB_PREFIX}rust*${LIB_SUF} ${TARG_DIR}/stage0/${LIB_DIR}/
 cp ${PREFIX}/${LIB_DIR}/${LIB_PREFIX}std*${LIB_SUF} ${TARG_DIR}/stage0/${LIB_DIR}/
@@ -66,3 +74,5 @@ cp ${PREFIX}/${LIB_DIR}/${LIB_PREFIX}term*${LIB_SUF} ${TARG_DIR}/stage0/${LIB_DI
 
 # do not fail if one of the above fails, as all we need is a working rustc!
 exit 0
+
+esac

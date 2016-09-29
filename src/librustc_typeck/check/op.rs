@@ -41,7 +41,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         let tcx = self.tcx;
         if !tcx.expr_is_lval(lhs_expr) {
-            span_err!(tcx.sess, lhs_expr.span, E0067, "invalid left-hand side expression");
+            struct_span_err!(
+                tcx.sess, lhs_expr.span,
+                E0067, "invalid left-hand side expression")
+            .span_label(
+                lhs_expr.span,
+                &format!("invalid expression for left-hand side"))
+            .emit();
         }
     }
 
@@ -176,11 +182,15 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 // error types are considered "builtin"
                 if !lhs_ty.references_error() {
                     if let IsAssign::Yes = is_assign {
-                        span_err!(self.tcx.sess, lhs_expr.span, E0368,
-                                  "binary assignment operation `{}=` \
-                                   cannot be applied to type `{}`",
-                                  op.node.as_str(),
-                                  lhs_ty);
+                        struct_span_err!(self.tcx.sess, lhs_expr.span, E0368,
+                                         "binary assignment operation `{}=` \
+                                          cannot be applied to type `{}`",
+                                         op.node.as_str(),
+                                         lhs_ty)
+                            .span_label(lhs_expr.span,
+                                        &format!("cannot use `{}=` on type `{}`",
+                                        op.node.as_str(), lhs_ty))
+                            .emit();
                     } else {
                         let mut err = struct_span_err!(self.tcx.sess, lhs_expr.span, E0369,
                             "binary operation `{}` cannot be applied to type `{}`",
@@ -239,7 +249,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 self.type_error_message(ex.span, |actual| {
                     format!("cannot apply unary operator `{}` to type `{}`",
                             op_str, actual)
-                }, operand_ty, None);
+                }, operand_ty);
                 self.tcx.types.err
             }
         }
@@ -339,7 +349,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 // extract return type for method; all late bound regions
                 // should have been instantiated by now
                 let ret_ty = method_ty.fn_ret();
-                Ok(self.tcx.no_late_bound_regions(&ret_ty).unwrap().unwrap())
+                Ok(self.tcx.no_late_bound_regions(&ret_ty).unwrap())
             }
             None => {
                 Err(())

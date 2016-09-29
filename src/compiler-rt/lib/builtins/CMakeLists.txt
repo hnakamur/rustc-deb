@@ -2,9 +2,27 @@
 # generic implementations of the core runtime library along with optimized
 # architecture-specific code in various subdirectories.
 
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  cmake_minimum_required(VERSION 3.4.3)
+
+  project(CompilerRTBuiltins C ASM)
+  set(COMPILER_RT_STANDALONE_BUILD TRUE)
+  set(COMPILER_RT_BUILTINS_STANDALONE_BUILD TRUE)
+  list(INSERT CMAKE_MODULE_PATH 0
+    "${CMAKE_SOURCE_DIR}/../../cmake"
+    "${CMAKE_SOURCE_DIR}/../../cmake/Modules")
+  include(base-config-ix)
+  include(CompilerRTUtils)
+  if(APPLE)
+    include(CompilerRTDarwinUtils)
+  endif()
+  include(AddCompilerRT)
+endif()
+
+include(builtin-config-ix)
+
 # TODO: Need to add a mechanism for logging errors when builtin source files are
 # added to a sub-directory and not this CMakeLists file.
-
 set(GENERIC_SOURCES
   absvdi2.c
   absvsi2.c
@@ -30,6 +48,7 @@ set(GENERIC_SOURCES
   cmpti2.c
   comparedf2.c
   comparesf2.c
+  cpu_model.c
   ctzdi2.c
   ctzsi2.c
   ctzti2.c
@@ -41,6 +60,7 @@ set(GENERIC_SOURCES
   divsc3.c
   divsf3.c
   divsi3.c
+  divtc3.c
   divti3.c
   divtf3.c
   divxc3.c
@@ -142,6 +162,15 @@ set(GENERIC_SOURCES
   umodsi3.c
   umodti3.c)
 
+set(MSVC_SOURCES
+ divsc3.c
+ divdc3.c
+ divxc3.c
+ mulsc3.c
+ muldc3.c
+ mulxc3.c)
+
+
 if(APPLE)
   set(GENERIC_SOURCES
     ${GENERIC_SOURCES}
@@ -215,19 +244,21 @@ if (NOT MSVC)
       ${i386_SOURCES})
 else () # MSVC
   # Use C versions of functions when building on MSVC
-  # MSVC's assembler takes Intel syntax, not AT&T syntax
+  # MSVC's assembler takes Intel syntax, not AT&T syntax.
+  # Also use only MSVC compilable builtin implementations.
   set(x86_64_SOURCES
       x86_64/floatdidf.c
       x86_64/floatdisf.c
       x86_64/floatdixf.c
-      ${GENERIC_SOURCES})
+      ${MSVC_SOURCES})
   set(x86_64h_SOURCES ${x86_64_SOURCES})
-  set(i386_SOURCES ${GENERIC_SOURCES})
+  set(i386_SOURCES ${MSVC_SOURCES})
   set(i686_SOURCES ${i386_SOURCES})
 endif () # if (NOT MSVC)
 
-# These are sources that should be appropriate for any ARM platform.
-set(arm_GENERIC_SOURCES
+set(arm_SOURCES
+  arm/adddf3vfp.S
+  arm/addsf3vfp.S
   arm/aeabi_cdcmp.S
   arm/aeabi_cdcmpeq_check_nan.c
   arm/aeabi_cfcmp.S
@@ -250,17 +281,71 @@ set(arm_GENERIC_SOURCES
   arm/clzdi2.S
   arm/clzsi2.S
   arm/comparesf2.S
+  arm/divdf3vfp.S
   arm/divmodsi4.S
+  arm/divsf3vfp.S
   arm/divsi3.S
+  arm/eqdf2vfp.S
+  arm/eqsf2vfp.S
+  arm/extendsfdf2vfp.S
+  arm/fixdfsivfp.S
+  arm/fixsfsivfp.S
+  arm/fixunsdfsivfp.S
+  arm/fixunssfsivfp.S
+  arm/floatsidfvfp.S
+  arm/floatsisfvfp.S
+  arm/floatunssidfvfp.S
+  arm/floatunssisfvfp.S
+  arm/gedf2vfp.S
+  arm/gesf2vfp.S
+  arm/gtdf2vfp.S
+  arm/gtsf2vfp.S
+  arm/ledf2vfp.S
+  arm/lesf2vfp.S
+  arm/ltdf2vfp.S
+  arm/ltsf2vfp.S
   arm/modsi3.S
+  arm/muldf3vfp.S
+  arm/mulsf3vfp.S
+  arm/nedf2vfp.S
+  arm/negdf2vfp.S
+  arm/negsf2vfp.S
+  arm/nesf2vfp.S
+  arm/restore_vfp_d8_d15_regs.S
+  arm/save_vfp_d8_d15_regs.S
+  arm/subdf3vfp.S
+  arm/subsf3vfp.S
   arm/switch16.S
   arm/switch32.S
   arm/switch8.S
   arm/switchu8.S
+  arm/sync_fetch_and_add_4.S
+  arm/sync_fetch_and_add_8.S
+  arm/sync_fetch_and_and_4.S
+  arm/sync_fetch_and_and_8.S
+  arm/sync_fetch_and_max_4.S
+  arm/sync_fetch_and_max_8.S
+  arm/sync_fetch_and_min_4.S
+  arm/sync_fetch_and_min_8.S
+  arm/sync_fetch_and_nand_4.S
+  arm/sync_fetch_and_nand_8.S
+  arm/sync_fetch_and_or_4.S
+  arm/sync_fetch_and_or_8.S
+  arm/sync_fetch_and_sub_4.S
+  arm/sync_fetch_and_sub_8.S
+  arm/sync_fetch_and_umax_4.S
+  arm/sync_fetch_and_umax_8.S
+  arm/sync_fetch_and_umin_4.S
+  arm/sync_fetch_and_umin_8.S
+  arm/sync_fetch_and_xor_4.S
+  arm/sync_fetch_and_xor_8.S
   arm/sync_synchronize.S
+  arm/truncdfsf2vfp.S
   arm/udivmodsi4.S
   arm/udivsi3.S
   arm/umodsi3.S
+  arm/unorddf2vfp.S
+  arm/unordsf2vfp.S
   ${GENERIC_SOURCES})
 
 set(aarch64_SOURCES
@@ -282,100 +367,34 @@ set(aarch64_SOURCES
   trunctfsf2.c
   ${GENERIC_SOURCES})
 
-# These are sources for the ARM platform that require Thumb2 instructions
-# support.
-set(arm_THUMB_SOURCES
-  arm/sync_fetch_and_add_4.S
-  arm/sync_fetch_and_add_8.S
-  arm/sync_fetch_and_and_4.S
-  arm/sync_fetch_and_and_8.S
-  arm/sync_fetch_and_max_4.S
-  arm/sync_fetch_and_max_8.S
-  arm/sync_fetch_and_min_4.S
-  arm/sync_fetch_and_min_8.S
-  arm/sync_fetch_and_nand_4.S
-  arm/sync_fetch_and_nand_8.S
-  arm/sync_fetch_and_or_4.S
-  arm/sync_fetch_and_or_8.S
-  arm/sync_fetch_and_sub_4.S
-  arm/sync_fetch_and_sub_8.S
-  arm/sync_fetch_and_umax_4.S
-  arm/sync_fetch_and_umax_8.S
-  arm/sync_fetch_and_umin_4.S
-  arm/sync_fetch_and_umin_8.S
-  arm/sync_fetch_and_xor_4.S
-  arm/sync_fetch_and_xor_8.S)
-
-# These are sources for the ARM platform that require VFP instructions support.
-set(arm_VFP_SOURCES
-  arm/adddf3vfp.S
-  arm/addsf3vfp.S
-  arm/divdf3vfp.S
-  arm/divsf3vfp.S
-  arm/eqdf2vfp.S
-  arm/eqsf2vfp.S
-  arm/extendsfdf2vfp.S
-  arm/fixdfsivfp.S
-  arm/fixsfsivfp.S
-  arm/fixunsdfsivfp.S
-  arm/fixunssfsivfp.S
-  arm/floatsidfvfp.S
-  arm/floatsisfvfp.S
-  arm/floatunssidfvfp.S
-  arm/floatunssisfvfp.S
-  arm/gedf2vfp.S
-  arm/gesf2vfp.S
-  arm/gtdf2vfp.S
-  arm/gtsf2vfp.S
-  arm/ledf2vfp.S
-  arm/lesf2vfp.S
-  arm/ltdf2vfp.S
-  arm/ltsf2vfp.S
-  arm/muldf3vfp.S
-  arm/mulsf3vfp.S
-  arm/negdf2vfp.S
-  arm/negsf2vfp.S
-  arm/nedf2vfp.S
-  arm/nesf2vfp.S
-  arm/restore_vfp_d8_d15_regs.S
-  arm/save_vfp_d8_d15_regs.S
-  arm/subdf3vfp.S
-  arm/subsf3vfp.S
-  arm/truncdfsf2vfp.S
-  arm/unorddf2vfp.S
-  arm/unordsf2vfp.S)
-
-set(arm_SOURCES ${arm_GENERIC_SOURCES})
-set(armhf_SOURCES ${arm_GENERIC_SOURCES} ${arm_VFP_SOURCES})
-set(armv7_SOURCES ${arm_GENERIC_SOURCES} ${arm_VFP_SOURCES} ${arm_THUMB_SOURCES})
-set(armv7s_SOURCES ${arm_GENERIC_SOURCES} ${arm_VFP_SOURCES} ${arm_THUMB_SOURCES})
+set(armhf_SOURCES ${arm_SOURCES})
+set(armv7_SOURCES ${arm_SOURCES})
+set(armv7s_SOURCES ${arm_SOURCES})
+set(armv7k_SOURCES ${arm_SOURCES})
 set(arm64_SOURCES ${aarch64_SOURCES})
 
 # macho_embedded archs
 set(armv6m_SOURCES ${GENERIC_SOURCES})
-set(armv7m_SOURCES ${arm_GENERIC_SOURCES} ${arm_THUMB_SOURCES})
-set(armv7em_SOURCES ${arm_GENERIC_SOURCES} ${arm_THUMB_SOURCES})
+set(armv7m_SOURCES ${arm_SOURCES})
+set(armv7em_SOURCES ${arm_SOURCES})
 
 set(mips_SOURCES ${GENERIC_SOURCES})
 set(mipsel_SOURCES ${mips_SOURCES})
 set(mips64_SOURCES ${mips_SOURCES})
 set(mips64el_SOURCES ${mips_SOURCES})
 
-set(powerpc_SOURCES ${GENERIC_SOURCES})
-set(powerpc64_SOURCES ${GENERIC_SOURCES})
-set(powerpc64le_SOURCES ${GENERIC_SOURCES})
-
 set(wasm32_SOURCES ${GENERIC_SOURCES})
 set(wasm64_SOURCES ${GENERIC_SOURCES})
 
 add_custom_target(builtins)
+set_target_properties(builtins PROPERTIES FOLDER "Compiler-RT Misc")
 
 if (APPLE)
   add_subdirectory(Darwin-excludes)
   add_subdirectory(macho_embedded)
   darwin_add_builtin_libraries(${BUILTIN_SUPPORTED_OS})
 else ()
-  append_string_if(COMPILER_RT_HAS_STD_C99_FLAG -std=c99 maybe_stdc99)
+  append_string_if(COMPILER_RT_HAS_STD_C99_FLAG -std=gnu99 maybe_stdc99)
 
   foreach (arch ${BUILTIN_SUPPORTED_ARCH})
     if (CAN_TARGET_${arch})
@@ -390,16 +409,11 @@ else ()
         endif ()
       endforeach ()
 
-      # Rust: don't insert a reference to MSVCRT.lib/etc
-      if (MSVC)
-        set(maybe_zl -Zl)
-      endif ()
-
       add_compiler_rt_runtime(clang_rt.builtins
                               STATIC
                               ARCHS ${arch}
                               SOURCES ${${arch}_SOURCES}
-                              CFLAGS ${maybe_stdc99} ${maybe_zl}
+                              CFLAGS ${maybe_stdc99}
                               PARENT_TARGET builtins)
     endif ()
   endforeach ()

@@ -227,6 +227,11 @@ impl<T: ?Sized> !RefUnwindSafe for UnsafeCell<T> {}
 #[stable(feature = "catch_unwind", since = "1.9.0")]
 impl<T> RefUnwindSafe for AssertUnwindSafe<T> {}
 
+#[stable(feature = "unwind_safe_lock_refs", since = "1.12.0")]
+impl<T: ?Sized> RefUnwindSafe for Mutex<T> {}
+#[stable(feature = "unwind_safe_lock_refs", since = "1.12.0")]
+impl<T: ?Sized> RefUnwindSafe for RwLock<T> {}
+
 #[stable(feature = "catch_unwind", since = "1.9.0")]
 impl<T> Deref for AssertUnwindSafe<T> {
     type Target = T;
@@ -335,5 +340,5 @@ pub fn catch_unwind<F: FnOnce() -> R + UnwindSafe, R>(f: F) -> Result<R> {
 /// ```
 #[stable(feature = "resume_unwind", since = "1.9.0")]
 pub fn resume_unwind(payload: Box<Any + Send>) -> ! {
-    panicking::rust_panic(payload)
+    panicking::update_count_then_panic(payload)
 }

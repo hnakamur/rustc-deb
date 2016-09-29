@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-emscripten No support for threads
+
 #![allow(unknown_features)]
-#![feature(unboxed_closures, std_misc)]
+#![feature(std_misc)]
 
 /**
    A somewhat reduced test case to expose some Valgrind issues.

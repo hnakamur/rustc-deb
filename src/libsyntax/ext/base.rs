@@ -26,7 +26,6 @@ use parse::token::{InternedString, intern, str_to_ident};
 use ptr::P;
 use util::small_vector::SmallVector;
 use util::lev_distance::find_best_match_for_name;
-use ext::mtwt;
 use fold::Folder;
 
 use std::collections::{HashMap, HashSet};
@@ -483,15 +482,12 @@ pub type NamedSyntaxExtension = (Name, SyntaxExtension);
 pub struct BlockInfo {
     /// Should macros escape from this scope?
     pub macros_escape: bool,
-    /// What are the pending renames?
-    pub pending_renames: mtwt::RenameList,
 }
 
 impl BlockInfo {
     pub fn new() -> BlockInfo {
         BlockInfo {
             macros_escape: false,
-            pending_renames: Vec::new(),
         }
     }
 }
@@ -637,7 +633,7 @@ impl<'a> ExtCtxt<'a> {
 
     /// Returns a `Folder` for deeply expanding all macros in an AST node.
     pub fn expander<'b>(&'b mut self) -> expand::MacroExpander<'b, 'a> {
-        expand::MacroExpander::new(self)
+        expand::MacroExpander::new(self, false, false)
     }
 
     pub fn new_parser_from_tts(&self, tts: &[tokenstream::TokenTree])

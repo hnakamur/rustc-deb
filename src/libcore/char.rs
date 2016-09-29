@@ -17,6 +17,7 @@
 
 use prelude::v1::*;
 
+use char_private::is_printable;
 use mem::transmute;
 
 // UTF-8 ranges and tags for encoding characters
@@ -263,6 +264,8 @@ pub trait CharExt {
     fn escape_unicode(self) -> EscapeUnicode;
     #[stable(feature = "core", since = "1.6.0")]
     fn escape_default(self) -> EscapeDefault;
+    #[unstable(feature = "char_escape_debug", issue = "35068")]
+    fn escape_debug(self) -> EscapeDebug;
     #[stable(feature = "core", since = "1.6.0")]
     fn len_utf8(self) -> usize;
     #[stable(feature = "core", since = "1.6.0")]
@@ -324,6 +327,19 @@ impl CharExt for char {
             _ => EscapeDefaultState::Unicode(self.escape_unicode())
         };
         EscapeDefault { state: init_state }
+    }
+
+    #[inline]
+    fn escape_debug(self) -> EscapeDebug {
+        let init_state = match self {
+            '\t' => EscapeDefaultState::Backslash('t'),
+            '\r' => EscapeDefaultState::Backslash('r'),
+            '\n' => EscapeDefaultState::Backslash('n'),
+            '\\' | '\'' | '"' => EscapeDefaultState::Backslash(self),
+            c if is_printable(c) => EscapeDefaultState::Char(c),
+            c => EscapeDefaultState::Unicode(c.escape_unicode()),
+        };
+        EscapeDebug(EscapeDefault { state: init_state })
     }
 
     #[inline]
@@ -600,6 +616,27 @@ impl ExactSizeIterator for EscapeDefault {
     }
 }
 
+/// An iterator that yields the literal escape code of a `char`.
+///
+/// This `struct` is created by the [`escape_debug()`] method on [`char`]. See its
+/// documentation for more.
+///
+/// [`escape_debug()`]: ../../std/primitive.char.html#method.escape_debug
+/// [`char`]: ../../std/primitive.char.html
+#[unstable(feature = "char_escape_debug", issue = "35068")]
+#[derive(Clone, Debug)]
+pub struct EscapeDebug(EscapeDefault);
+
+#[unstable(feature = "char_escape_debug", issue = "35068")]
+impl Iterator for EscapeDebug {
+    type Item = char;
+    fn next(&mut self) -> Option<char> { self.0.next() }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.0.size_hint() }
+}
+
+#[unstable(feature = "char_escape_debug", issue = "35068")]
+impl ExactSizeIterator for EscapeDebug { }
+
 /// An iterator over `u8` entries represending the UTF-8 encoding of a `char`
 /// value.
 ///
@@ -674,5 +711,52 @@ impl Iterator for EncodeUtf16 {
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.as_slice().iter().size_hint()
+    }
+}
+
+
+/// An iterator over an iterator of bytes of the characters the bytes represent
+/// as UTF-8
+#[unstable(feature = "decode_utf8", issue = "33906")]
+#[derive(Clone, Debug)]
+pub struct DecodeUtf8<I: Iterator<Item = u8>>(::iter::Peekable<I>);
+
+/// Decodes an `Iterator` of bytes as UTF-8.
+#[unstable(feature = "decode_utf8", issue = "33906")]
+#[inline]
+pub fn decode_utf8<I: IntoIterator<Item = u8>>(i: I) -> DecodeUtf8<I::IntoIter> {
+    DecodeUtf8(i.into_iter().peekable())
+}
+
+/// `<DecodeUtf8 as Iterator>::next` returns this for an invalid input sequence.
+#[unstable(feature = "decode_utf8", issue = "33906")]
+#[derive(PartialEq, Debug)]
+pub struct InvalidSequence(());
+
+#[unstable(feature = "decode_utf8", issue = "33906")]
+impl<I: Iterator<Item = u8>> Iterator for DecodeUtf8<I> {
+    type Item = Result<char, InvalidSequence>;
+    #[inline]
+    fn next(&mut self) -> Option<Result<char, InvalidSequence>> {
+        self.0.next().map(|b| {
+            if b & 0x80 == 0 { Ok(b as char) } else {
+                let l = (!b).leading_zeros() as usize; // number of bytes in UTF-8 representation
+                if l < 2 || l > 6 { return Err(InvalidSequence(())) };
+                let mut x = (b as u32) & (0x7F >> l);
+                for _ in 0..l-1 {
+                    match self.0.peek() {
+                        Some(&b) if b & 0xC0 == 0x80 => {
+                            self.0.next();
+                            x = (x << 6) | (b as u32) & 0x3F;
+                        },
+                        _ => return Err(InvalidSequence(())),
+                    }
+                }
+                match from_u32(x) {
+                    Some(x) if l == x.len_utf8() => Ok(x),
+                    _ => Err(InvalidSequence(())),
+                }
+            }
+        })
     }
 }

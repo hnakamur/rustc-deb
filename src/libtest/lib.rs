@@ -73,6 +73,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Instant, Duration};
 
+const TEST_WARN_TIMEOUT_S: u64 = 60;
+
 // to be used by rustc to compile tests in libtest
 pub mod test {
     pub use {Bencher, TestName, TestResult, TestDesc, TestDescAndFn, TestOpts, TrFailed,
@@ -300,6 +302,7 @@ pub struct TestOpts {
     pub nocapture: bool,
     pub color: ColorConfig,
     pub quiet: bool,
+    pub test_threads: Option<usize>,
 }
 
 impl TestOpts {
@@ -314,6 +317,7 @@ impl TestOpts {
             nocapture: false,
             color: AutoColor,
             quiet: false,
+            test_threads: None,
         }
     }
 }
@@ -331,6 +335,8 @@ fn optgroups() -> Vec<getopts::OptGroup> {
                           of stdout", "PATH"),
       getopts::optflag("", "nocapture", "don't capture stdout/stderr of each \
                                          task, allow printing directly"),
+      getopts::optopt("", "test-threads", "Number of threads used for running tests \
+                                           in parallel", "n_threads"),
       getopts::optflag("q", "quiet", "Display one character per test instead of one line"),
       getopts::optopt("", "color", "Configure coloring of output:
             auto   = colorize if stdout is a tty and tests are run on serially (default);
@@ -346,7 +352,8 @@ The FILTER string is tested against the name of all tests, and only those
 tests whose names contain the filter are run.
 
 By default, all tests are run in parallel. This can be altered with the
-RUST_TEST_THREADS environment variable when running tests (set it to 1).
+--test-threads flag or the RUST_TEST_THREADS environment variable when running
+tests (set it to 1).
 
 All tests have their standard output and standard error captured by default.
 This can be overridden with the --nocapture flag or setting RUST_TEST_NOCAPTURE
@@ -405,6 +412,18 @@ pub fn parse_opts(args: &[String]) -> Option<OptRes> {
         };
     }
 
+    let test_threads = match matches.opt_str("test-threads") {
+        Some(n_str) =>
+            match n_str.parse::<usize>() {
+                Ok(n) => Some(n),
+                Err(e) =>
+                    return Some(Err(format!("argument for --test-threads must be a number > 0 \
+                                             (error: {})", e)))
+            },
+        None =>
+            None,
+    };
+
     let color = match matches.opt_str("color").as_ref().map(|s| &**s) {
         Some("auto") | None => AutoColor,
         Some("always") => AlwaysColor,
@@ -426,6 +445,7 @@ pub fn parse_opts(args: &[String]) -> Option<OptRes> {
         nocapture: nocapture,
         color: color,
         quiet: quiet,
+        test_threads: test_threads,
     };
 
     Some(Ok(test_opts))
@@ -592,6 +612,12 @@ impl<T: Write> ConsoleTestState<T> {
         }
     }
 
+    pub fn write_timeout(&mut self, desc: &TestDesc) -> io::Result<()> {
+        self.write_plain(&format!("test {} has been running for over {} seconds\n",
+                                  desc.name,
+                                  TEST_WARN_TIMEOUT_S))
+    }
+
     pub fn write_log(&mut self, test: &TestDesc, result: &TestResult) -> io::Result<()> {
         match self.log_out {
             None => Ok(()),
@@ -709,6 +735,7 @@ pub fn run_tests_console(opts: &TestOpts, tests: Vec<TestDescAndFn>) -> io::Resu
         match (*event).clone() {
             TeFiltered(ref filtered_tests) => st.write_run_start(filtered_tests.len()),
             TeWait(ref test, padding) => st.write_test_start(test, padding),
+            TeTimeout(ref test) => st.write_timeout(test),
             TeResult(test, result, stdout) => {
                 st.write_log(&test, &result)?;
                 st.write_result(&result)?;
@@ -830,6 +857,7 @@ enum TestEvent {
     TeFiltered(Vec<TestDesc>),
     TeWait(TestDesc, NamePadding),
     TeResult(TestDesc, TestResult, Vec<u8>),
+    TeTimeout(TestDesc),
 }
 
 pub type MonitorMsg = (TestDesc, TestResult, Vec<u8>);
@@ -838,6 +866,9 @@ pub type MonitorMsg = (TestDesc, TestResult, Vec<u8>);
 fn run_tests<F>(opts: &TestOpts, tests: Vec<TestDescAndFn>, mut callback: F) -> io::Result<()>
     where F: FnMut(TestEvent) -> io::Result<()>
 {
+    use std::collections::HashMap;
+    use std::sync::mpsc::RecvTimeoutError;
+
     let mut filtered_tests = filter_tests(opts, tests);
     if !opts.bench_benchmarks {
         filtered_tests = convert_benchmarks_to_tests(filtered_tests);
@@ -857,15 +888,39 @@ fn run_tests<F>(opts: &TestOpts, tests: Vec<TestDescAndFn>, mut callback: F) -> 
             }
         });
 
-    // It's tempting to just spawn all the tests at once, but since we have
-    // many tests that run in other processes we would be making a big mess.
-    let concurrency = get_concurrency();
+    let concurrency = match opts.test_threads {
+        Some(n) => n,
+        None => get_concurrency(),
+    };
 
     let mut remaining = filtered_tests;
     remaining.reverse();
     let mut pending = 0;
 
     let (tx, rx) = channel::<MonitorMsg>();
+
+    let mut running_tests: HashMap<TestDesc, Instant> = HashMap::new();
+
+    fn get_timed_out_tests(running_tests: &mut HashMap<TestDesc, Instant>) -> Vec<TestDesc> {
+        let now = Instant::now();
+        let timed_out = running_tests.iter()
+            .filter_map(|(desc, timeout)| if &now >= timeout { Some(desc.clone())} else { None })
+            .collect();
+        for test in &timed_out {
+            running_tests.remove(test);
+        }
+        timed_out
+    };
+
+    fn calc_timeout(running_tests: &HashMap<TestDesc, Instant>) -> Option<Duration> {
+        running_tests.values().min().map(|next_timeout| {
+            let now = Instant::now();
+            if *next_timeout >= now {
+                *next_timeout - now
+            } else {
+                Duration::new(0, 0)
+            }})
+    };
 
     while pending > 0 || !remaining.is_empty() {
         while pending < concurrency && !remaining.is_empty() {
@@ -876,11 +931,31 @@ fn run_tests<F>(opts: &TestOpts, tests: Vec<TestDescAndFn>, mut callback: F) -> 
                 // that hang forever.
                 callback(TeWait(test.desc.clone(), test.testfn.padding()))?;
             }
+            let timeout = Instant::now() + Duration::from_secs(TEST_WARN_TIMEOUT_S);
+            running_tests.insert(test.desc.clone(), timeout);
             run_test(opts, !opts.run_tests, test, tx.clone());
             pending += 1;
         }
 
-        let (desc, result, stdout) = rx.recv().unwrap();
+        let mut res;
+        loop {
+            if let Some(timeout) = calc_timeout(&running_tests) {
+                res = rx.recv_timeout(timeout);
+                for test in get_timed_out_tests(&mut running_tests) {
+                    callback(TeTimeout(test))?;
+                }
+                if res != Err(RecvTimeoutError::Timeout) {
+                    break;
+                }
+            } else {
+                res = rx.recv().map_err(|_| RecvTimeoutError::Disconnected);
+                break;
+            }
+        }
+
+        let (desc, result, stdout) = res.unwrap();
+        running_tests.remove(&desc);
+
         if concurrency != 1 {
             callback(TeWait(desc.clone(), PadNone))?;
         }
@@ -959,6 +1034,8 @@ fn get_concurrency() -> usize {
               target_os = "bitrig",
               target_os = "netbsd"))]
     fn num_cpus() -> usize {
+        use std::ptr;
+
         let mut cpus: libc::c_uint = 0;
         let mut cpus_size = std::mem::size_of_val(&cpus);
 
@@ -972,7 +1049,7 @@ fn get_concurrency() -> usize {
                              2,
                              &mut cpus as *mut _ as *mut _,
                              &mut cpus_size as *mut _ as *mut _,
-                             0 as *mut _,
+                             ptr::null_mut(),
                              0);
             }
             if cpus < 1 {
@@ -984,6 +1061,8 @@ fn get_concurrency() -> usize {
 
     #[cfg(target_os = "openbsd")]
     fn num_cpus() -> usize {
+        use std::ptr;
+
         let mut cpus: libc::c_uint = 0;
         let mut cpus_size = std::mem::size_of_val(&cpus);
         let mut mib = [libc::CTL_HW, libc::HW_NCPU, 0, 0];
@@ -993,7 +1072,7 @@ fn get_concurrency() -> usize {
                          2,
                          &mut cpus as *mut _ as *mut _,
                          &mut cpus_size as *mut _ as *mut _,
-                         0 as *mut _,
+                         ptr::null_mut(),
                          0);
         }
         if cpus < 1 {

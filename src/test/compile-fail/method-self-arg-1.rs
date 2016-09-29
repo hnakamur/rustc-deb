@@ -21,9 +21,9 @@ fn main() {
     Foo::bar(x); //~  ERROR mismatched types
                  //~| expected type `&Foo`
                  //~| found type `Foo`
-                 //~| expected &-ptr, found struct `Foo`
+                 //~| expected &Foo, found struct `Foo`
     Foo::bar(&42); //~  ERROR mismatched types
                       //~| expected type `&Foo`
-                      //~| found type `&_`
+                      //~| found type `&{integer}`
                       //~| expected struct `Foo`, found integral variable
 }

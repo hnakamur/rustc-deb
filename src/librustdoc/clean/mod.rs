@@ -36,8 +36,10 @@ use syntax_pos::{self, DUMMY_SP, Pos};
 use rustc_trans::back::link;
 use rustc::middle::cstore;
 use rustc::middle::privacy::AccessLevels;
+use rustc::middle::resolve_lifetime::DefRegion::*;
 use rustc::hir::def::Def;
 use rustc::hir::def_id::{DefId, DefIndex, CRATE_DEF_INDEX};
+use rustc::hir::fold::Folder;
 use rustc::hir::print as pprust;
 use rustc::ty::subst::{self, ParamSpace, VecPerParamSpace};
 use rustc::ty;
@@ -317,6 +319,9 @@ impl Item {
     pub fn is_ty_method(&self) -> bool {
         ItemType::from_item(self) == ItemType::TyMethod
     }
+    pub fn is_primitive(&self) -> bool {
+        ItemType::from_item(self) == ItemType::Primitive
+    }
     pub fn is_stripped(&self) -> bool {
         match self.inner { StrippedItem(..) => true, _ => false }
     }
@@ -495,21 +500,20 @@ pub enum Attribute {
 
 impl Clean<Attribute> for ast::MetaItem {
     fn clean(&self, cx: &DocContext) -> Attribute {
-        match self.node {
-            ast::MetaItemKind::Word(ref s) => Word(s.to_string()),
-            ast::MetaItemKind::List(ref s, ref l) => {
-                List(s.to_string(), l.clean(cx))
-            }
-            ast::MetaItemKind::NameValue(ref s, ref v) => {
-                NameValue(s.to_string(), lit_to_string(v))
-            }
-        }
+        if self.is_word() {
+            Word(self.name().to_string())
+        } else if let Some(v) = self.value_str() {
+            NameValue(self.name().to_string(), v.to_string())
+        } else { // must be a list
+            let l = self.meta_item_list().unwrap();
+            List(self.name().to_string(), l.clean(cx))
+       }
     }
 }
 
 impl Clean<Attribute> for ast::Attribute {
     fn clean(&self, cx: &DocContext) -> Attribute {
-        self.with_desugared_doc(|a| a.node.value.clean(cx))
+        self.with_desugared_doc(|a| a.meta().clean(cx))
     }
 }
 
@@ -532,6 +536,28 @@ impl attr::AttrMetaMethods for Attribute {
         }
     }
     fn meta_item_list<'a>(&'a self) -> Option<&'a [P<ast::MetaItem>]> { None }
+
+    fn is_word(&self) -> bool {
+      match *self {
+        Word(_) => true,
+        _ => false,
+      }
+    }
+
+    fn is_value_str(&self) -> bool {
+      match *self {
+        NameValue(..) => true,
+        _ => false,
+      }
+    }
+
+    fn is_meta_item_list(&self) -> bool {
+      match *self {
+        List(..) => true,
+        _ => false,
+      }
+    }
+
     fn span(&self) -> syntax_pos::Span { unimplemented!() }
 }
 
@@ -1150,15 +1176,6 @@ impl Clean<FnDecl> for hir::FnDecl {
     }
 }
 
-impl<'tcx> Clean<Type> for ty::FnOutput<'tcx> {
-    fn clean(&self, cx: &DocContext) -> Type {
-        match *self {
-            ty::FnConverging(ty) => ty.clean(cx),
-            ty::FnDiverging => Bottom
-        }
-    }
-}
-
 impl<'a, 'tcx> Clean<FnDecl> for (DefId, &'a ty::PolyFnSig<'tcx>) {
     fn clean(&self, cx: &DocContext) -> FnDecl {
         let (did, sig) = *self;
@@ -1228,7 +1245,6 @@ impl Clean<Argument> for hir::Arg {
 pub enum FunctionRetTy {
     Return(Type),
     DefaultReturn,
-    NoReturn
 }
 
 impl Clean<FunctionRetTy> for hir::FunctionRetTy {
@@ -1236,7 +1252,6 @@ impl Clean<FunctionRetTy> for hir::FunctionRetTy {
         match *self {
             hir::Return(ref typ) => Return(typ.clean(cx)),
             hir::DefaultReturn(..) => DefaultReturn,
-            hir::NoReturn(..) => NoReturn
         }
     }
 }
@@ -1444,8 +1459,7 @@ pub enum Type {
     Tuple(Vec<Type>),
     Vector(Box<Type>),
     FixedVector(Box<Type>, String),
-    /// aka TyBot
-    Bottom,
+    Never,
     Unique(Box<Type>),
     RawPointer(Mutability, Box<Type>),
     BorrowedRef {
@@ -1466,6 +1480,9 @@ pub enum Type {
 
     // for<'a> Foo(&'a)
     PolyTraitRef(Vec<TyParamBound>),
+
+    // impl TraitA+TraitB
+    ImplTrait(Vec<TyParamBound>),
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Hash, Copy, Debug)]
@@ -1612,20 +1629,113 @@ impl PrimitiveType {
     }
 }
 
+
+// Poor man's type parameter substitution at HIR level.
+// Used to replace private type aliases in public signatures with their aliased types.
+struct SubstAlias<'a, 'tcx: 'a> {
+    tcx: &'a ty::TyCtxt<'a, 'tcx, 'tcx>,
+    // Table type parameter definition -> substituted type
+    ty_substs: HashMap<Def, hir::Ty>,
+    // Table node id of lifetime parameter definition -> substituted lifetime
+    lt_substs: HashMap<ast::NodeId, hir::Lifetime>,
+}
+
+impl<'a, 'tcx: 'a, 'b: 'tcx> Folder for SubstAlias<'a, 'tcx> {
+    fn fold_ty(&mut self, ty: P<hir::Ty>) -> P<hir::Ty> {
+        if let hir::TyPath(..) = ty.node {
+            let def = self.tcx.expect_def(ty.id);
+            if let Some(new_ty) = self.ty_substs.get(&def).cloned() {
+                return P(new_ty);
+            }
+        }
+        hir::fold::noop_fold_ty(ty, self)
+    }
+    fn fold_lifetime(&mut self, lt: hir::Lifetime) -> hir::Lifetime {
+        let def = self.tcx.named_region_map.defs.get(&lt.id).cloned();
+        match def {
+            Some(DefEarlyBoundRegion(_, _, node_id)) |
+            Some(DefLateBoundRegion(_, node_id)) |
+            Some(DefFreeRegion(_, node_id)) => {
+                if let Some(lt) = self.lt_substs.get(&node_id).cloned() {
+                    return lt;
+                }
+            }
+            _ => {}
+        }
+        hir::fold::noop_fold_lifetime(lt, self)
+    }
+}
+
 impl Clean<Type> for hir::Ty {
     fn clean(&self, cx: &DocContext) -> Type {
         use rustc::hir::*;
         match self.node {
+            TyNever => Never,
             TyPtr(ref m) => RawPointer(m.mutbl.clean(cx), box m.ty.clean(cx)),
             TyRptr(ref l, ref m) =>
                 BorrowedRef {lifetime: l.clean(cx), mutability: m.mutbl.clean(cx),
                              type_: box m.ty.clean(cx)},
             TyVec(ref ty) => Vector(box ty.clean(cx)),
-            TyFixedLengthVec(ref ty, ref e) =>
-                FixedVector(box ty.clean(cx), pprust::expr_to_string(e)),
+            TyFixedLengthVec(ref ty, ref e) => {
+                let n = if let Some(tcx) = cx.tcx_opt() {
+                    use rustc_const_math::{ConstInt, ConstUsize};
+                    use rustc_const_eval::eval_const_expr;
+                    use rustc::middle::const_val::ConstVal;
+                    match eval_const_expr(tcx, e) {
+                        ConstVal::Integral(ConstInt::Usize(u)) => match u {
+                            ConstUsize::Us16(u) => u.to_string(),
+                            ConstUsize::Us32(u) => u.to_string(),
+                            ConstUsize::Us64(u) => u.to_string(),
+                        },
+                        // after type checking this can't fail
+                        _ => unreachable!(),
+                    }
+                } else {
+                    pprust::expr_to_string(e)
+                };
+                FixedVector(box ty.clean(cx), n)
+            },
             TyTup(ref tys) => Tuple(tys.clean(cx)),
-            TyPath(None, ref p) => {
-                resolve_type(cx, p.clean(cx), self.id)
+            TyPath(None, ref path) => {
+                if let Some(tcx) = cx.tcx_opt() {
+                    // Substitute private type aliases
+                    let def = tcx.expect_def(self.id);
+                    if let Def::TyAlias(def_id) = def {
+                        if let Some(node_id) = tcx.map.as_local_node_id(def_id) {
+                            if !cx.access_levels.borrow().is_exported(def_id) {
+                                let item = tcx.map.expect_item(node_id);
+                                if let hir::ItemTy(ref ty, ref generics) = item.node {
+                                    let provided_params = &path.segments.last().unwrap().parameters;
+                                    let mut ty_substs = HashMap::new();
+                                    let mut lt_substs = HashMap::new();
+                                    for (i, ty_param) in generics.ty_params.iter().enumerate() {
+                                        let ty_param_def = tcx.expect_def(ty_param.id);
+                                        if let Some(ty) = provided_params.types().get(i).cloned()
+                                                                                        .cloned() {
+                                            ty_substs.insert(ty_param_def, ty.unwrap());
+                                        } else if let Some(default) = ty_param.default.clone() {
+                                            ty_substs.insert(ty_param_def, default.unwrap());
+                                        }
+                                    }
+                                    for (i, lt_param) in generics.lifetimes.iter().enumerate() {
+                                        if let Some(lt) = provided_params.lifetimes().get(i)
+                                                                                     .cloned()
+                                                                                     .cloned() {
+                                            lt_substs.insert(lt_param.lifetime.id, lt);
+                                        }
+                                    }
+                                    let mut subst_alias = SubstAlias {
+                                        tcx: &tcx,
+                                        ty_substs: ty_substs,
+                                        lt_substs: lt_substs
+                                    };
+                                    return subst_alias.fold_ty(ty.clone()).clean(cx);
+                                }
+                            }
+                        }
+                    }
+                }
+                resolve_type(cx, path.clean(cx), self.id)
             }
             TyPath(Some(ref qself), ref p) => {
                 let mut segments: Vec<_> = p.segments.clone().into();
@@ -1659,6 +1769,7 @@ impl Clean<Type> for hir::Ty {
             }
             TyBareFn(ref barefn) => BareFunction(box barefn.clean(cx)),
             TyPolyTraitRef(ref bounds) => PolyTraitRef(bounds.clean(cx)),
+            TyImplTrait(ref bounds) => ImplTrait(bounds.clean(cx)),
             TyInfer => Infer,
             TyTypeof(..) => panic!("Unimplemented type {:?}", self.node),
         }
@@ -1668,6 +1779,7 @@ impl Clean<Type> for hir::Ty {
 impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
     fn clean(&self, cx: &DocContext) -> Type {
         match self.sty {
+            ty::TyNever => Never,
             ty::TyBool => Primitive(Bool),
             ty::TyChar => Primitive(Char),
             ty::TyInt(ast::IntTy::Is) => Primitive(Isize),
@@ -1744,6 +1856,18 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
             ty::TyProjection(ref data) => data.clean(cx),
 
             ty::TyParam(ref p) => Generic(p.name.to_string()),
+
+            ty::TyAnon(def_id, substs) => {
+                // Grab the "TraitA + TraitB" from `impl TraitA + TraitB`,
+                // by looking up the projections associated with the def_id.
+                let item_predicates = cx.tcx().lookup_predicates(def_id);
+                let substs = cx.tcx().lift(&substs).unwrap();
+                let bounds = item_predicates.instantiate(cx.tcx(), substs);
+                let predicates = bounds.predicates.into_vec();
+                ImplTrait(predicates.into_iter().filter_map(|predicate| {
+                    predicate.to_opt_poly_trait_ref().clean(cx)
+                }).collect())
+            }
 
             ty::TyClosure(..) => Tuple(vec![]), // FIXME(pcwalton)
 
@@ -1901,7 +2025,7 @@ impl Clean<Item> for doctree::Variant {
 
 impl<'tcx> Clean<Item> for ty::VariantDefData<'tcx, 'static> {
     fn clean(&self, cx: &DocContext) -> Item {
-        let kind = match self.kind() {
+        let kind = match self.kind {
             ty::VariantKind::Unit => CLikeVariant,
             ty::VariantKind::Tuple => {
                 TupleVariant(
@@ -2548,26 +2672,6 @@ impl ToSource for syntax_pos::Span {
     }
 }
 
-fn lit_to_string(lit: &ast::Lit) -> String {
-    match lit.node {
-        ast::LitKind::Str(ref st, _) => st.to_string(),
-        ast::LitKind::ByteStr(ref data) => format!("{:?}", data),
-        ast::LitKind::Byte(b) => {
-            let mut res = String::from("b'");
-            for c in (b as char).escape_default() {
-                res.push(c);
-            }
-            res.push('\'');
-            res
-        },
-        ast::LitKind::Char(c) => format!("'{}'", c),
-        ast::LitKind::Int(i, _t) => i.to_string(),
-        ast::LitKind::Float(ref f, _t) => f.to_string(),
-        ast::LitKind::FloatUnsuffixed(ref f) => f.to_string(),
-        ast::LitKind::Bool(b) => b.to_string(),
-    }
-}
-
 fn name_from_pat(p: &hir::Pat) -> String {
     use rustc::hir::*;
     debug!("Trying to get a name from pattern: {:?}", p);
@@ -2575,9 +2679,9 @@ fn name_from_pat(p: &hir::Pat) -> String {
     match p.node {
         PatKind::Wild => "_".to_string(),
         PatKind::Binding(_, ref p, _) => p.node.to_string(),
-        PatKind::TupleStruct(ref p, _, _) | PatKind::Path(ref p) => path_to_string(p),
-        PatKind::QPath(..) => panic!("tried to get argument name from PatKind::QPath, \
-                                which is not allowed in function arguments"),
+        PatKind::TupleStruct(ref p, _, _) | PatKind::Path(None, ref p) => path_to_string(p),
+        PatKind::Path(..) => panic!("tried to get argument name from qualified PatKind::Path, \
+                                     which is not allowed in function arguments"),
         PatKind::Struct(ref name, ref fields, etc) => {
             format!("{} {{ {}{} }}", path_to_string(name),
                 fields.iter().map(|&Spanned { node: ref fp, .. }|
@@ -2650,7 +2754,7 @@ fn resolve_type(cx: &DocContext,
         Def::SelfTy(..) if path.segments.len() == 1 => {
             return Generic(keywords::SelfType.name().to_string());
         }
-        Def::SelfTy(..) | Def::TyParam(..) => true,
+        Def::SelfTy(..) | Def::TyParam(..) | Def::AssociatedTy(..) => true,
         _ => false,
     };
     let did = register_def(&*cx, def);
@@ -2670,7 +2774,12 @@ fn register_def(cx: &DocContext, def: Def) -> DefId {
         Def::Static(i, _) => (i, TypeStatic),
         Def::Variant(i, _) => (i, TypeEnum),
         Def::SelfTy(Some(def_id), _) => (def_id, TypeTrait),
-        Def::SelfTy(_, Some(impl_id)) => return cx.map.local_def_id(impl_id),
+        Def::SelfTy(_, Some(impl_id)) => {
+            // For Def::SelfTy() values inlined from another crate, the
+            // impl_id will be DUMMY_NODE_ID, which would cause problems.
+            // But we should never run into an impl from another crate here.
+            return cx.map.local_def_id(impl_id)
+        }
         _ => return def.def_id()
     };
     if did.is_local() { return did }

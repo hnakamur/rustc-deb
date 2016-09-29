@@ -108,36 +108,13 @@ use rustc::ty::{self, TyCtxt, TypeFoldable};
 use rustc::ty::item_path::{self, ItemPathBuffer, RootMode};
 use rustc::hir::map::definitions::{DefPath, DefPathData};
 
-use std::fmt::Write;
 use syntax::attr;
 use syntax::parse::token::{self, InternedString};
 use serialize::hex::ToHex;
 
 pub fn def_id_to_string<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> String {
     let def_path = tcx.def_path(def_id);
-    def_path_to_string(tcx, &def_path)
-}
-
-fn def_path_to_string<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_path: &DefPath) -> String {
-    let mut s = String::with_capacity(def_path.data.len() * 16);
-
-    if def_path.krate == cstore::LOCAL_CRATE {
-        s.push_str(&tcx.crate_name(def_path.krate));
-    } else {
-        s.push_str(&tcx.sess.cstore.original_crate_name(def_path.krate));
-    }
-    s.push_str("/");
-    s.push_str(&tcx.crate_disambiguator(def_path.krate));
-
-    for component in &def_path.data {
-        write!(s,
-               "::{}[{}]",
-               component.data.as_interned_str(),
-               component.disambiguator)
-            .unwrap();
-    }
-
-    s
+    def_path.to_string(tcx)
 }
 
 fn get_symbol_hash<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
@@ -167,7 +144,7 @@ fn get_symbol_hash<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
     // the main symbol name is not necessarily unique; hash in the
     // compiler's internal def-path, guaranteeing each symbol has a
     // truly unique path
-    hash_state.input_str(&def_path_to_string(tcx, def_path));
+    hash_state.input_str(&def_path.to_string(tcx));
 
     // Include the main item-type. Note that, in this case, the
     // assertions about `needs_subst` may not hold, but this item-type
@@ -302,6 +279,19 @@ impl ItemPathBuffer for SymbolPathBuffer {
     fn push(&mut self, text: &str) {
         self.names.push(token::intern(text).as_str());
     }
+}
+
+pub fn exported_name_from_type_and_prefix<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
+                                                    t: ty::Ty<'tcx>,
+                                                    prefix: &str)
+                                                    -> String {
+    let empty_def_path = DefPath {
+        data: vec![],
+        krate: cstore::LOCAL_CRATE,
+    };
+    let hash = get_symbol_hash(scx, &empty_def_path, t, &[]);
+    let path = [token::intern_and_get_ident(prefix)];
+    mangle(path.iter().cloned(), Some(&hash[..]))
 }
 
 /// Only symbols that are invisible outside their compilation unit should use a

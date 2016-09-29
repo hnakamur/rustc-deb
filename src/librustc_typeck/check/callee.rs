@@ -27,32 +27,9 @@ use rustc::hir;
 /// to `trait_id` (this only cares about the trait, not the specific
 /// method that is called)
 pub fn check_legal_trait_for_method_call(ccx: &CrateCtxt, span: Span, trait_id: DefId) {
-    let tcx = ccx.tcx;
-    let did = Some(trait_id);
-    let li = &tcx.lang_items;
-
-    if did == li.drop_trait() {
-        span_err!(tcx.sess, span, E0040, "explicit use of destructor method");
-    } else if !tcx.sess.features.borrow().unboxed_closures {
-        // the #[feature(unboxed_closures)] feature isn't
-        // activated so we need to enforce the closure
-        // restrictions.
-
-        let method = if did == li.fn_trait() {
-            "call"
-        } else if did == li.fn_mut_trait() {
-            "call_mut"
-        } else if did == li.fn_once_trait() {
-            "call_once"
-        } else {
-            return // not a closure method, everything is OK.
-        };
-
-        struct_span_err!(tcx.sess, span, E0174,
-                         "explicit use of unboxed closure method `{}` is experimental",
-                         method)
-            .help("add `#![feature(unboxed_closures)]` to the crate \
-                  attributes to enable")
+    if ccx.tcx.lang_items.drop_trait() == Some(trait_id) {
+        struct_span_err!(ccx.tcx.sess, span, E0040, "explicit use of destructor method")
+            .span_label(span, &format!("call to destructor method"))
             .emit();
     }
 }
@@ -216,7 +193,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             _ => {
                 let mut err = self.type_error_struct(call_expr.span, |actual| {
                     format!("expected function, found `{}`", actual)
-                }, callee_ty, None);
+                }, callee_ty);
 
                 if let hir::ExprCall(ref expr, _) = call_expr.node {
                     let tcx = self.tcx;
@@ -236,7 +213,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 // set up all the node type bindings.
                 error_fn_sig = ty::Binder(ty::FnSig {
                     inputs: self.err_args(arg_exprs.len()),
-                    output: ty::FnConverging(self.tcx.types.err),
+                    output: self.tcx.types.err,
                     variadic: false
                 });
 
@@ -368,10 +345,9 @@ impl<'gcx, 'tcx> DeferredCallResolution<'gcx, 'tcx> for CallResolution<'gcx, 'tc
                     fcx.demand_eqtype(self.call_expr.span, self_arg_ty, method_arg_ty);
                 }
 
-                let nilty = fcx.tcx.mk_nil();
                 fcx.demand_eqtype(self.call_expr.span,
-                                  method_sig.output.unwrap_or(nilty),
-                                  self.fn_sig.output.unwrap_or(nilty));
+                                  method_sig.output,
+                                  self.fn_sig.output);
 
                 fcx.write_overloaded_call_method_map(self.call_expr, method_callee);
             }

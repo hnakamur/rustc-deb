@@ -46,6 +46,7 @@ use intrinsic;
 use machine::llalign_of_min;
 use meth;
 use monomorphize::{self, Instance};
+use trans_item::TransItem;
 use type_::Type;
 use type_of;
 use value::Value;
@@ -302,7 +303,7 @@ pub fn trans_fn_pointer_shim<'a, 'tcx>(
     let tcx = ccx.tcx();
 
     // Normalize the type for better caching.
-    let bare_fn_ty = tcx.erase_regions(&bare_fn_ty);
+    let bare_fn_ty = tcx.normalize_associated_type(&bare_fn_ty);
 
     // If this is an impl of `Fn` or `FnMut` trait, the receiver is `&self`.
     let is_by_ref = match closure_kind {
@@ -468,7 +469,7 @@ fn get_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         // Should be either intra-crate or inlined.
         assert_eq!(def_id.krate, LOCAL_CRATE);
 
-        let substs = tcx.mk_substs(substs.clone().erase_regions());
+        let substs = tcx.normalize_associated_type(&substs);
         let (val, fn_ty) = monomorphize::monomorphic_fn(ccx, def_id, substs);
         let fn_ptr_ty = match fn_ty.sty {
             ty::TyFnDef(_, _, fty) => {
@@ -536,13 +537,15 @@ fn get_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     // reference. It also occurs when testing libcore and in some
     // other weird situations. Annoying.
 
-    let sym = instance.symbol_name(ccx.shared());
+    let sym = ccx.symbol_map().get_or_compute(ccx.shared(),
+                                              TransItem::Fn(instance));
+
     let llptrty = type_of::type_of(ccx, fn_ptr_ty);
     let llfn = if let Some(llfn) = declare::get_declared_value(ccx, &sym) {
         if let Some(span) = local_item {
             if declare::get_defined_value(ccx, &sym).is_some() {
                 ccx.sess().span_fatal(span,
-                    &format!("symbol `{}` is already defined", sym));
+                    &format!("symbol `{}` is already defined", &sym));
             }
         }
 
@@ -638,10 +641,7 @@ fn trans_call_inner<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
     let opt_llretslot = dest.and_then(|dest| match dest {
         expr::SaveIn(dst) => Some(dst),
         expr::Ignore => {
-            let needs_drop = || match output {
-                ty::FnConverging(ret_ty) => bcx.fcx.type_needs_drop(ret_ty),
-                ty::FnDiverging => false
-            };
+            let needs_drop = || bcx.fcx.type_needs_drop(output);
             if fn_ty.ret.is_indirect() || fn_ty.ret.cast.is_some() || needs_drop() {
                 // Push the out-pointer if we use an out-pointer for this
                 // return type, otherwise push "undef".
@@ -703,16 +703,17 @@ fn trans_call_inner<'a, 'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>,
 
     // If the caller doesn't care about the result of this fn call,
     // drop the temporary slot we made.
-    match (dest, opt_llretslot, output) {
-        (Some(expr::Ignore), Some(llretslot), ty::FnConverging(ret_ty)) => {
+    match (dest, opt_llretslot) {
+        (Some(expr::Ignore), Some(llretslot)) => {
             // drop the value if it is not being saved.
-            bcx = glue::drop_ty(bcx, llretslot, ret_ty, debug_loc);
+            bcx = glue::drop_ty(bcx, llretslot, output, debug_loc);
             call_lifetime_end(bcx, llretslot);
         }
         _ => {}
     }
 
-    if output == ty::FnDiverging {
+    // FIXME(canndrew): This is_never should really be an is_uninhabited
+    if output.is_never() {
         Unreachable(bcx);
     }
 

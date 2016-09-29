@@ -353,6 +353,7 @@ pub fn noop_fold_ty<T: Folder>(t: P<Ty>, fld: &mut T) -> P<Ty> {
                         }
                     }))
                 }
+                TyNever => node,
                 TyTup(tys) => TyTup(tys.move_map(|ty| fld.fold_ty(ty))),
                 TyPath(qself, path) => {
                     let qself = qself.map(|QSelf { ty, position }| {
@@ -374,6 +375,9 @@ pub fn noop_fold_ty<T: Folder>(t: P<Ty>, fld: &mut T) -> P<Ty> {
                 }
                 TyPolyTraitRef(bounds) => {
                     TyPolyTraitRef(bounds.move_map(|b| fld.fold_ty_param_bound(b)))
+                }
+                TyImplTrait(bounds) => {
+                    TyImplTrait(bounds.move_map(|b| fld.fold_ty_param_bound(b)))
                 }
             },
             span: fld.new_span(span),
@@ -512,7 +516,6 @@ pub fn noop_fold_fn_decl<T: Folder>(decl: P<FnDecl>, fld: &mut T) -> P<FnDecl> {
             output: match output {
                 Return(ty) => Return(fld.fold_ty(ty)),
                 DefaultReturn(span) => DefaultReturn(span),
-                NoReturn(span) => NoReturn(span),
             },
             variadic: variadic,
         }
@@ -930,12 +933,11 @@ pub fn noop_fold_pat<T: Folder>(p: P<Pat>, folder: &mut T) -> P<Pat> {
                     PatKind::TupleStruct(folder.fold_path(pth),
                             pats.move_map(|x| folder.fold_pat(x)), ddpos)
                 }
-                PatKind::Path(pth) => {
-                    PatKind::Path(folder.fold_path(pth))
-                }
-                PatKind::QPath(qself, pth) => {
-                    let qself = QSelf { ty: folder.fold_ty(qself.ty), ..qself };
-                    PatKind::QPath(qself, folder.fold_path(pth))
+                PatKind::Path(opt_qself, pth) => {
+                    let opt_qself = opt_qself.map(|qself| {
+                        QSelf { ty: folder.fold_ty(qself.ty), position: qself.position }
+                    });
+                    PatKind::Path(opt_qself, folder.fold_path(pth))
                 }
                 PatKind::Struct(pth, fields, etc) => {
                     let pth = folder.fold_path(pth);

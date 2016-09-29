@@ -10,10 +10,13 @@
 
 use rustc::mir::repr as mir;
 
+use base;
 use common::{self, BlockAndBuilder};
 
 use super::MirContext;
 use super::LocalRef;
+use super::super::adt;
+use super::super::disr::Disr;
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     pub fn trans_statement(&mut self,
@@ -39,7 +42,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                             bcx
                         }
                         LocalRef::Operand(Some(_)) => {
-                            let ty = self.lvalue_ty(lvalue);
+                            let ty = self.monomorphized_lvalue_ty(lvalue);
 
                             if !common::type_is_zero_size(bcx.ccx(), ty) {
                                 span_bug!(statement.source_info.span,
@@ -57,6 +60,37 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     self.trans_rvalue(bcx, tr_dest, rvalue, debug_loc)
                 }
             }
+            mir::StatementKind::SetDiscriminant{ref lvalue, variant_index} => {
+                let ty = self.monomorphized_lvalue_ty(lvalue);
+                let repr = adt::represent_type(bcx.ccx(), ty);
+                let lvalue_transed = self.trans_lvalue(&bcx, lvalue);
+                bcx.with_block(|bcx|
+                    adt::trans_set_discr(bcx,
+                                         &repr,
+                                        lvalue_transed.llval,
+                                        Disr::from(variant_index))
+                );
+                bcx
+            }
+            mir::StatementKind::StorageLive(ref lvalue) => {
+                self.trans_storage_liveness(bcx, lvalue, base::Lifetime::Start)
+            }
+            mir::StatementKind::StorageDead(ref lvalue) => {
+                self.trans_storage_liveness(bcx, lvalue, base::Lifetime::End)
+            }
         }
+    }
+
+    fn trans_storage_liveness(&self,
+                              bcx: BlockAndBuilder<'bcx, 'tcx>,
+                              lvalue: &mir::Lvalue<'tcx>,
+                              intrinsic: base::Lifetime)
+                              -> BlockAndBuilder<'bcx, 'tcx> {
+        if let Some(index) = self.mir.local_index(lvalue) {
+            if let LocalRef::Lvalue(tr_lval) = self.locals[index] {
+                intrinsic.call(&bcx, tr_lval.llval);
+            }
+        }
+        bcx
     }
 }

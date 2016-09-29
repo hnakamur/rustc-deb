@@ -242,6 +242,8 @@ pub fn token_to_string(tok: &Token) -> String {
         token::CloseDelim(token::Bracket) => "]".to_string(),
         token::OpenDelim(token::Brace) => "{".to_string(),
         token::CloseDelim(token::Brace) => "}".to_string(),
+        token::OpenDelim(token::NoDelim) => " ".to_string(),
+        token::CloseDelim(token::NoDelim) => " ".to_string(),
         token::Pound                => "#".to_string(),
         token::Dollar               => "$".to_string(),
         token::Question             => "?".to_string(),
@@ -974,6 +976,9 @@ impl<'a> State<'a> {
                 try!(self.print_opt_lifetime(lifetime));
                 try!(self.print_mt(mt));
             }
+            ast::TyKind::Never => {
+                try!(word(&mut self.s, "!"));
+            },
             ast::TyKind::Tup(ref elts) => {
                 try!(self.popen());
                 try!(self.commasep(Inconsistent, &elts[..],
@@ -1015,6 +1020,9 @@ impl<'a> State<'a> {
             }
             ast::TyKind::PolyTraitRef(ref bounds) => {
                 try!(self.print_bounds("", &bounds[..]));
+            }
+            ast::TyKind::ImplTrait(ref bounds) => {
+                try!(self.print_bounds("impl ", &bounds[..]));
             }
             ast::TyKind::FixedLengthVec(ref ty, ref v) => {
                 try!(word(&mut self.s, "["));
@@ -1638,9 +1646,8 @@ impl<'a> State<'a> {
                     _ => token::Paren
                 };
                 try!(self.print_mac(&mac, delim));
-                match style {
-                    ast::MacStmtStyle::Braces => {}
-                    _ => try!(word(&mut self.s, ";")),
+                if style == ast::MacStmtStyle::Semicolon {
+                    try!(word(&mut self.s, ";"));
                 }
             }
         }
@@ -1778,12 +1785,14 @@ impl<'a> State<'a> {
                 try!(self.head(""));
                 try!(self.bopen());
             }
+            token::NoDelim => {}
         }
         try!(self.print_tts(&m.node.tts));
         match delim {
             token::Paren => self.pclose(),
             token::Bracket => word(&mut self.s, "]"),
             token::Brace => self.bclose(m.span),
+            token::NoDelim => Ok(()),
         }
     }
 
@@ -2687,10 +2696,6 @@ impl<'a> State<'a> {
                 self.maybe_print_comment(ty.span.lo)
             }
             ast::FunctionRetTy::Default(..) => unreachable!(),
-            ast::FunctionRetTy::None(span) => {
-                try!(self.word_nbsp("!"));
-                self.maybe_print_comment(span.lo)
-            }
         }
     }
 
@@ -2946,8 +2951,6 @@ impl<'a> State<'a> {
         try!(self.ibox(INDENT_UNIT));
         try!(self.word_space("->"));
         match decl.output {
-            ast::FunctionRetTy::None(_) =>
-                try!(self.word_nbsp("!")),
             ast::FunctionRetTy::Default(..) => unreachable!(),
             ast::FunctionRetTy::Ty(ref ty) =>
                 try!(self.print_type(&ty))

@@ -9,15 +9,15 @@ path = "lib.rs"
 
 [[bin]]
 name = "bootstrap"
-path = "main.rs"
+path = "bin/main.rs"
 
 [[bin]]
 name = "rustc"
-path = "rustc.rs"
+path = "bin/rustc.rs"
 
 [[bin]]
 name = "rustdoc"
-path = "rustdoc.rs"
+path = "bin/rustdoc.rs"
 
 [dependencies]
 build_helper = { path = "../build_helper" }
@@ -29,6 +29,7 @@ getopts = "0.2"
 rustc-serialize = "0.3"
 winapi = "0.2"
 kernel32-sys = "0.2"
-gcc = "0.3.17"
+gcc = { git = "https://github.com/alexcrichton/gcc-rs" }
 libc = "0.2"
 md5 = "0.1"
+regex = "0.1.73"

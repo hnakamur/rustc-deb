@@ -15,7 +15,7 @@ use rustc::dep_graph::DepNode;
 use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::mem_categorization as mc;
 use rustc::ty::{self, TyCtxt, ParameterEnvironment};
-use rustc::traits::ProjectionMode;
+use rustc::traits::Reveal;
 
 use rustc::hir;
 use rustc::hir::intravisit;
@@ -41,7 +41,7 @@ impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for RvalueContext<'a, 'tcx> {
         // FIXME (@jroesch) change this to be an inference context
         let param_env = ParameterEnvironment::for_item(self.tcx, fn_id);
         self.tcx.infer_ctxt(None, Some(param_env.clone()),
-                            ProjectionMode::AnyFinal).enter(|infcx| {
+                            Reveal::NotSpecializable).enter(|infcx| {
             let mut delegate = RvalueContextDelegate {
                 tcx: infcx.tcx,
                 param_env: &param_env
@@ -49,7 +49,7 @@ impl<'a, 'tcx, 'v> intravisit::Visitor<'v> for RvalueContext<'a, 'tcx> {
             let mut euv = euv::ExprUseVisitor::new(&mut delegate, &infcx);
             euv.walk_fn(fd, b);
         });
-        intravisit::walk_fn(self, fk, fd, b, s)
+        intravisit::walk_fn(self, fk, fd, b, s, fn_id)
     }
 }
 

@@ -196,6 +196,8 @@ __gcc_personality_v0(int version, _Unwind_Action actions,
         return continueUnwind(exceptionObject, context);
 
     uintptr_t pc = _Unwind_GetIP(context)-1;
+    uintptr_t funcStart = _Unwind_GetRegionStart(context);
+    uintptr_t pcOffset = pc - funcStart;
 
     /* Parse LSDA header. */
     uint8_t lpStartEncoding = *lsda++;
@@ -206,43 +208,17 @@ __gcc_personality_v0(int version, _Unwind_Action actions,
     if (ttypeEncoding != DW_EH_PE_omit) {
         readULEB128(&lsda);  
     }
-
-    uintptr_t       resumeIp = 0;
+    /* Walk call-site table looking for range that includes current PC. */
     uint8_t         callSiteEncoding = *lsda++;
     uint32_t        callSiteTableLength = readULEB128(&lsda);
-    const uint8_t*  callSite = lsda;
-
-#if defined(__USING_SJLJ_EXCEPTIONS__)
-    (void)callSiteEncoding;
-    (void)callSiteTableLength;    
-    /* The given "IP" is an index into the call-site table, with two
-    exceptions -- -1 means no-action, and 0 means terminate.  But
-    since we're using uleb128 values, we've not got random access
-    to the array.  */
-    if ((int) pc <= 0) {
-        return _URC_CONTINUE_UNWIND;
-    } else {
-        uintptr_t csLp;
-        do {
-            csLp = readULEB128(&callSite);
-            readULEB128(&callSite); // skip cs action
-        } while (--pc);
-
-        /* Can never have null landing pad for sjlj -- that would have
-        been indicated by a -1 call site index.  */
-        resumeIp = csLp + 1;
-    }
-#else
-    /* Walk call-site table looking for range that includes current PC. */
-    uintptr_t funcStart = _Unwind_GetRegionStart(context);
-    uintptr_t pcOffset = pc - funcStart;
-    const uint8_t* callSiteTableEnd = callSite + callSiteTableLength;
-
-    while (callSite < callSiteTableEnd) {
-        uintptr_t start = readEncodedPointer(&callSite, callSiteEncoding);
-        uintptr_t length = readEncodedPointer(&callSite, callSiteEncoding);
-        uintptr_t landingPad = readEncodedPointer(&callSite, callSiteEncoding);
-        readULEB128(&callSite); /* action value not used for C code */
+    const uint8_t*  callSiteTableStart = lsda;
+    const uint8_t*  callSiteTableEnd = callSiteTableStart + callSiteTableLength;
+    const uint8_t* p=callSiteTableStart;
+    while (p < callSiteTableEnd) {
+        uintptr_t start = readEncodedPointer(&p, callSiteEncoding);
+        uintptr_t length = readEncodedPointer(&p, callSiteEncoding);
+        uintptr_t landingPad = readEncodedPointer(&p, callSiteEncoding);
+        readULEB128(&p); /* action value not used for C code */
         if ( landingPad == 0 )
             continue; /* no landing pad for this entry */
         if ( (start <= pcOffset) && (pcOffset < (start+length)) ) {
@@ -251,21 +227,15 @@ __gcc_personality_v0(int version, _Unwind_Action actions,
              * at landing pad. The landing pad is created by the compiler
              * to take two parameters in registers.
              */
-            resumeIp = funcStart + landingPad;
-            break;
+            _Unwind_SetGR(context, __builtin_eh_return_data_regno(0),
+                          (uintptr_t)exceptionObject);
+            _Unwind_SetGR(context, __builtin_eh_return_data_regno(1), 0);
+            _Unwind_SetIP(context, (funcStart + landingPad));
+            return _URC_INSTALL_CONTEXT;
         }
     }
-#endif // SJ/LJ
 
-    if (resumeIp == 0) {
-        /* No landing pad found, continue unwinding. */
-        return continueUnwind(exceptionObject, context);
-    } else {
-        _Unwind_SetGR(context, __builtin_eh_return_data_regno(0),
-                      (uintptr_t)exceptionObject);
-        _Unwind_SetGR(context, __builtin_eh_return_data_regno(1), 0);
-        _Unwind_SetIP(context, resumeIp);
-        return _URC_INSTALL_CONTEXT;
-    }
+    /* No landing pad found, continue unwinding. */
+    return continueUnwind(exceptionObject, context);
 }
 

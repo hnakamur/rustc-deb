@@ -120,6 +120,11 @@ s! {
     pub struct fsid_t {
         __fsid_val: [::int32_t; 2],
     }
+
+    pub struct if_nameindex {
+        pub if_index: ::c_uint,
+        pub if_name: *mut ::c_char,
+    }
 }
 
 pub const LC_ALL: ::c_int = 0;
@@ -285,7 +290,8 @@ pub const FLUSHO: ::tcflag_t = 0x00800000;
 pub const PENDIN: ::tcflag_t = 0x20000000;
 pub const NOFLSH: ::tcflag_t = 0x80000000;
 
-pub const WNOHANG: ::c_int = 1;
+pub const WNOHANG: ::c_int = 0x00000001;
+pub const WUNTRACED: ::c_int = 0x00000002;
 
 pub const RTLD_NOW: ::c_int = 0x2;
 pub const RTLD_DEFAULT: *mut ::c_void = -2isize as *mut ::c_void;
@@ -324,16 +330,16 @@ f! {
         }
     }
 
+    pub fn WTERMSIG(status: ::c_int) -> ::c_int {
+        status & 0o177
+    }
+
     pub fn WIFEXITED(status: ::c_int) -> bool {
-        (status & 0x7f) == 0
+        (status & 0o177) == 0
     }
 
     pub fn WEXITSTATUS(status: ::c_int) -> ::c_int {
         status >> 8
-    }
-
-    pub fn WTERMSIG(status: ::c_int) -> ::c_int {
-        status & 0o177
     }
 
     pub fn WCOREDUMP(status: ::c_int) -> bool {
@@ -357,6 +363,8 @@ extern {
     pub fn getprogname() -> *const ::c_char;
     pub fn setprogname(name: *const ::c_char);
     pub fn getloadavg(loadavg: *mut ::c_double, nelem: ::c_int) -> ::c_int;
+    pub fn if_nameindex() -> *mut if_nameindex;
+    pub fn if_freenameindex(ptr: *mut if_nameindex);
 }
 
 cfg_if! {

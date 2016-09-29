@@ -10,7 +10,7 @@
 
 use arena::TypedArena;
 use back::symbol_names;
-use llvm::{ValueRef, get_param, get_params};
+use llvm::{self, ValueRef, get_param, get_params};
 use rustc::hir::def_id::DefId;
 use abi::{Abi, FnType};
 use adt;
@@ -167,18 +167,57 @@ fn get_or_create_closure_declaration<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
             variadic: false
         })
     }));
-    let llfn = declare::define_internal_fn(ccx, &symbol, function_type);
+    let llfn = declare::declare_fn(ccx, &symbol, function_type);
 
-    // set an inline hint for all closures
-    attributes::inline(llfn, attributes::InlineAttr::Hint);
     attributes::set_frame_pointer_elimination(ccx, llfn);
 
     debug!("get_or_create_declaration_if_closure(): inserting new \
             closure {:?}: {:?}",
            instance, Value(llfn));
-    ccx.instances().borrow_mut().insert(instance, llfn);
+
+    // NOTE: We do *not* store llfn in the ccx.instances() map here,
+    //       that is only done, when the closures body is translated.
 
     llfn
+}
+
+fn translating_closure_body_via_mir_will_fail(ccx: &CrateContext,
+                                              closure_def_id: DefId)
+                                              -> bool {
+    let default_to_mir = ccx.sess().opts.debugging_opts.orbit;
+    let invert = if default_to_mir { "rustc_no_mir" } else { "rustc_mir" };
+    let use_mir = default_to_mir ^ ccx.tcx().has_attr(closure_def_id, invert);
+
+    !use_mir
+}
+
+pub fn trans_closure_body_via_mir<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                                            closure_def_id: DefId,
+                                            closure_substs: ty::ClosureSubsts<'tcx>) {
+    use syntax::ast::DUMMY_NODE_ID;
+    use syntax_pos::DUMMY_SP;
+    use syntax::ptr::P;
+
+    trans_closure_expr(Dest::Ignore(ccx),
+                       &hir::FnDecl {
+                           inputs: P::new(),
+                           output: hir::Return(P(hir::Ty {
+                               id: DUMMY_NODE_ID,
+                               span: DUMMY_SP,
+                               node: hir::Ty_::TyNever,
+                           })),
+                           variadic: false
+                       },
+                       &hir::Block {
+                           stmts: P::new(),
+                           expr: None,
+                           id: DUMMY_NODE_ID,
+                           rules: hir::DefaultBlock,
+                           span: DUMMY_SP
+                       },
+                       DUMMY_NODE_ID,
+                       closure_def_id,
+                       closure_substs);
 }
 
 pub enum Dest<'a, 'tcx: 'a> {
@@ -197,8 +236,8 @@ pub fn trans_closure_expr<'a, 'tcx>(dest: Dest<'a, 'tcx>,
     // (*) Note that in the case of inlined functions, the `closure_def_id` will be the
     // defid of the closure in its original crate, whereas `id` will be the id of the local
     // inlined copy.
-
-    let param_substs = closure_substs.func_substs;
+    debug!("trans_closure_expr(id={:?}, closure_def_id={:?}, closure_substs={:?})",
+           id, closure_def_id, closure_substs);
 
     let ccx = match dest {
         Dest::SaveIn(bcx, _) => bcx.ccx(),
@@ -207,39 +246,56 @@ pub fn trans_closure_expr<'a, 'tcx>(dest: Dest<'a, 'tcx>,
     let tcx = ccx.tcx();
     let _icx = push_ctxt("closure::trans_closure_expr");
 
-    debug!("trans_closure_expr(id={:?}, closure_def_id={:?}, closure_substs={:?})",
-           id, closure_def_id, closure_substs);
+    let param_substs = closure_substs.func_substs;
+    let instance = Instance::new(closure_def_id, param_substs);
 
-    let llfn = get_or_create_closure_declaration(ccx, closure_def_id, closure_substs);
+    // If we have not done so yet, translate this closure's body
+    if  !ccx.instances().borrow().contains_key(&instance) {
+        let llfn = get_or_create_closure_declaration(ccx, closure_def_id, closure_substs);
 
-    // Get the type of this closure. Use the current `param_substs` as
-    // the closure substitutions. This makes sense because the closure
-    // takes the same set of type arguments as the enclosing fn, and
-    // this function (`trans_closure`) is invoked at the point
-    // of the closure expression.
+        unsafe {
+            if ccx.sess().target.target.options.allows_weak_linkage {
+                llvm::LLVMSetLinkage(llfn, llvm::WeakODRLinkage);
+                llvm::SetUniqueComdat(ccx.llmod(), llfn);
+            } else {
+                llvm::LLVMSetLinkage(llfn, llvm::InternalLinkage);
+            }
+        }
 
-    let sig = &tcx.closure_type(closure_def_id, closure_substs).sig;
-    let sig = tcx.erase_late_bound_regions(sig);
-    let sig = tcx.normalize_associated_type(&sig);
+        // set an inline hint for all closures
+        attributes::inline(llfn, attributes::InlineAttr::Hint);
 
-    let closure_type = tcx.mk_closure_from_closure_substs(closure_def_id,
-                                                          closure_substs);
-    let sig = ty::FnSig {
-        inputs: Some(get_self_type(tcx, closure_def_id, closure_type))
-                    .into_iter().chain(sig.inputs).collect(),
-        output: sig.output,
-        variadic: false
-    };
+        // Get the type of this closure. Use the current `param_substs` as
+        // the closure substitutions. This makes sense because the closure
+        // takes the same set of type arguments as the enclosing fn, and
+        // this function (`trans_closure`) is invoked at the point
+        // of the closure expression.
 
-    trans_closure(ccx,
-                  decl,
-                  body,
-                  llfn,
-                  Instance::new(closure_def_id, param_substs),
-                  id,
-                  &sig,
-                  Abi::RustCall,
-                  ClosureEnv::Closure(closure_def_id, id));
+        let sig = &tcx.closure_type(closure_def_id, closure_substs).sig;
+        let sig = tcx.erase_late_bound_regions(sig);
+        let sig = tcx.normalize_associated_type(&sig);
+
+        let closure_type = tcx.mk_closure_from_closure_substs(closure_def_id,
+                                                              closure_substs);
+        let sig = ty::FnSig {
+            inputs: Some(get_self_type(tcx, closure_def_id, closure_type))
+                        .into_iter().chain(sig.inputs).collect(),
+            output: sig.output,
+            variadic: false
+        };
+
+        trans_closure(ccx,
+                      decl,
+                      body,
+                      llfn,
+                      Instance::new(closure_def_id, param_substs),
+                      id,
+                      &sig,
+                      Abi::RustCall,
+                      ClosureEnv::Closure(closure_def_id, id));
+
+        ccx.instances().borrow_mut().insert(instance, llfn);
+    }
 
     // Don't hoist this to the top of the function. It's perfectly legitimate
     // to have a zero-size closure (in which case dest will be `Ignore`) and
@@ -285,6 +341,39 @@ pub fn trans_closure_method<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
 {
     // If this is a closure, redirect to it.
     let llfn = get_or_create_closure_declaration(ccx, closure_def_id, substs);
+
+    // If weak linkage is not allowed, we have to make sure that a local,
+    // private copy of the closure is available in this codegen unit
+    if !ccx.sess().target.target.options.allows_weak_linkage &&
+       !ccx.sess().opts.single_codegen_unit() {
+
+        if let Some(node_id) = ccx.tcx().map.as_local_node_id(closure_def_id) {
+            // If the closure is defined in the local crate, we can always just
+            // translate it.
+            let (decl, body) = match ccx.tcx().map.expect_expr(node_id).node {
+                hir::ExprClosure(_, ref decl, ref body, _) => (decl, body),
+                _ => { unreachable!() }
+            };
+
+            trans_closure_expr(Dest::Ignore(ccx),
+                               decl,
+                               body,
+                               node_id,
+                               closure_def_id,
+                               substs);
+        } else {
+            // If the closure is defined in an upstream crate, we can only
+            // translate it if MIR-trans is active.
+
+            if translating_closure_body_via_mir_will_fail(ccx, closure_def_id) {
+                ccx.sess().fatal("You have run into a known limitation of the \
+                                  MingW toolchain. Either compile with -Zorbit or \
+                                  with -Ccodegen-units=1 to work around it.");
+            }
+
+            trans_closure_body_via_mir(ccx, closure_def_id, substs);
+        }
+    }
 
     // If the closure is a Fn closure, but a FnOnce is needed (etc),
     // then adapt the self type
@@ -377,7 +466,7 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
     // Create the by-value helper.
     let function_name =
         symbol_names::internal_name_from_type_and_suffix(ccx, llonce_fn_ty, "once_shim");
-    let lloncefn = declare::define_internal_fn(ccx, &function_name, llonce_fn_ty);
+    let lloncefn = declare::declare_fn(ccx, &function_name, llonce_fn_ty);
     attributes::set_frame_pointer_elimination(ccx, lloncefn);
 
     let (block_arena, fcx): (TypedArena<_>, FunctionContext);

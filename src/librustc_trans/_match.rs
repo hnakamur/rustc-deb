@@ -190,7 +190,7 @@ use self::FailureHandler::*;
 
 use llvm::{ValueRef, BasicBlockRef};
 use rustc_const_eval::check_match::{self, Constructor, StaticInliner};
-use rustc_const_eval::{compare_lit_exprs, eval_const_expr};
+use rustc_const_eval::{compare_lit_exprs, eval_const_expr, fatal_const_eval_err};
 use rustc::hir::def::{Def, DefMap};
 use rustc::hir::def_id::DefId;
 use middle::expr_use_visitor as euv;
@@ -217,7 +217,7 @@ use type_of;
 use Disr;
 use value::Value;
 use rustc::ty::{self, Ty, TyCtxt};
-use rustc::traits::ProjectionMode;
+use rustc::traits::Reveal;
 use session::config::NoDebugInfo;
 use util::common::indenter;
 use util::nodemap::FnvHashMap;
@@ -239,9 +239,9 @@ struct ConstantExpr<'a>(&'a hir::Expr);
 
 impl<'a> ConstantExpr<'a> {
     fn eq<'b, 'tcx>(self, other: ConstantExpr<'a>, tcx: TyCtxt<'b, 'tcx, 'tcx>) -> bool {
-        match compare_lit_exprs(tcx, self.0, other.0) {
-            Some(result) => result == Ordering::Equal,
-            None => bug!("compare_list_exprs: type mismatch"),
+        match compare_lit_exprs(tcx, self.0.span, self.0, other.0) {
+            Ok(result) => result == Ordering::Equal,
+            Err(_) => bug!("compare_list_exprs: type mismatch"),
         }
     }
 }
@@ -288,7 +288,9 @@ impl<'a, 'b, 'tcx> Opt<'a, 'tcx> {
                 let expr = consts::const_expr(ccx, &lit_expr, bcx.fcx.param_substs, None, Yes);
                 let llval = match expr {
                     Ok((llval, _)) => llval,
-                    Err(err) => bcx.ccx().sess().span_fatal(lit_expr.span, &err.description()),
+                    Err(err) => {
+                        fatal_const_eval_err(bcx.tcx(), err.as_inner(), lit_expr.span, "pattern");
+                    }
                 };
                 let lit_datum = immediate_rvalue(llval, lit_ty);
                 let lit_datum = unpack_datum!(bcx, lit_datum.to_appropriate_datum(bcx));
@@ -297,11 +299,11 @@ impl<'a, 'b, 'tcx> Opt<'a, 'tcx> {
             ConstantRange(ConstantExpr(ref l1), ConstantExpr(ref l2), _) => {
                 let l1 = match consts::const_expr(ccx, &l1, bcx.fcx.param_substs, None, Yes) {
                     Ok((l1, _)) => l1,
-                    Err(err) => bcx.ccx().sess().span_fatal(l1.span, &err.description()),
+                    Err(err) => fatal_const_eval_err(bcx.tcx(), err.as_inner(), l1.span, "pattern"),
                 };
                 let l2 = match consts::const_expr(ccx, &l2, bcx.fcx.param_substs, None, Yes) {
                     Ok((l2, _)) => l2,
-                    Err(err) => bcx.ccx().sess().span_fatal(l2.span, &err.description()),
+                    Err(err) => fatal_const_eval_err(bcx.tcx(), err.as_inner(), l2.span, "pattern"),
                 };
                 RangeResult(Result::new(bcx, l1), Result::new(bcx, l2))
             }
@@ -796,7 +798,7 @@ fn any_irrefutable_adt_pat(tcx: TyCtxt, m: &[Match], col: usize) -> bool {
             PatKind::Tuple(..) => true,
             PatKind::Struct(..) | PatKind::TupleStruct(..) | PatKind::Path(..) => {
                 match tcx.expect_def(pat.id) {
-                    Def::Struct(..) | Def::TyAlias(..) => true,
+                    Def::Struct(..) | Def::TyAlias(..) | Def::AssociatedTy(..) => true,
                     _ => false,
                 }
             }
@@ -1469,7 +1471,7 @@ fn is_discr_reassigned(bcx: Block, discr: &hir::Expr, body: &hir::Expr) -> bool 
         field: field,
         reassigned: false
     };
-    bcx.tcx().normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+    bcx.tcx().normalizing_infer_ctxt(Reveal::All).enter(|infcx| {
         let mut visitor = euv::ExprUseVisitor::new(&mut rc, &infcx);
         visitor.walk_expr(body);
     });
@@ -1495,20 +1497,27 @@ impl<'tcx> euv::Delegate<'tcx> for ReassignmentChecker {
     fn decl_without_init(&mut self, _: ast::NodeId, _: Span) {}
 
     fn mutate(&mut self, _: ast::NodeId, _: Span, cmt: mc::cmt, _: euv::MutateMode) {
+        let cmt_id = |cmt: &mc::cmt| match cmt.cat {
+            Categorization::Upvar(mc::Upvar { id: ty::UpvarId { var_id: vid, ..}, ..}) |
+            Categorization::Local(vid) => Some(vid),
+            Categorization::Interior(ref base_cmt, mc::InteriorField(_)) => Some(base_cmt.id),
+            _ => None
+        };
         match cmt.cat {
             Categorization::Upvar(mc::Upvar { id: ty::UpvarId { var_id: vid, .. }, .. }) |
             Categorization::Local(vid) => self.reassigned |= self.node == vid,
-            Categorization::Interior(ref base_cmt, mc::InteriorField(field)) => {
-                match base_cmt.cat {
-                    Categorization::Upvar(mc::Upvar { id: ty::UpvarId { var_id: vid, .. }, .. }) |
-                    Categorization::Local(vid) => {
-                        self.reassigned |= self.node == vid &&
-                            (self.field.is_none() || Some(field) == self.field)
-                    },
-                    _ => {}
+            ref cat => {
+                let mut cat = cat;
+                while let &Categorization::Interior(ref base_cmt, mc::InteriorField(field)) = cat {
+                    if let Some(vid) = cmt_id(base_cmt) {
+                        if self.node == vid && (self.field.is_none() || self.field == Some(field)) {
+                            self.reassigned = true;
+                            return;
+                        }
+                    }
+                    cat = &base_cmt.cat;
                 }
-            },
-            _ => {}
+            }
         }
     }
 }
@@ -1584,7 +1593,7 @@ fn trans_match_inner<'blk, 'tcx>(scope_cx: Block<'blk, 'tcx>,
     }
 
     let t = node_id_type(bcx, discr_expr.id);
-    let chk = if t.is_empty(tcx) {
+    let chk = if t.is_uninhabited(tcx) {
         Unreachable
     } else {
         Infallible
@@ -1996,7 +2005,7 @@ pub fn bind_irrefutable_pat<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                         cleanup_scope)
                 });
         }
-        PatKind::Path(..) | PatKind::QPath(..) | PatKind::Wild |
+        PatKind::Path(..) | PatKind::Wild |
         PatKind::Lit(..) | PatKind::Range(..) => ()
     }
     return bcx;

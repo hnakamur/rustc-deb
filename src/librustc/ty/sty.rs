@@ -29,7 +29,6 @@ use serialize::{Decodable, Decoder, Encodable, Encoder};
 
 use hir;
 
-use self::FnOutput::*;
 use self::InferTy::*;
 use self::TypeVariants::*;
 
@@ -159,12 +158,21 @@ pub enum TypeVariants<'tcx> {
     /// `|a| a`.
     TyClosure(DefId, ClosureSubsts<'tcx>),
 
+    /// The never type `!`
+    TyNever,
+
     /// A tuple type.  For example, `(i32, bool)`.
     TyTuple(&'tcx [Ty<'tcx>]),
 
     /// The projection of an associated type.  For example,
     /// `<T as Trait<..>>::N`.
     TyProjection(ProjectionTy<'tcx>),
+
+    /// Anonymized (`impl Trait`) type found in a return type.
+    /// The DefId comes from the `impl Trait` ast::Ty node, and the
+    /// substitutions are for the generics of the function in question.
+    /// After typeck, the concrete type can be found in the `tcache` map.
+    TyAnon(DefId, &'tcx Substs<'tcx>),
 
     /// A type parameter; for example, `T` in `fn f<T>(x: T) {}
     TyParam(ParamTy),
@@ -468,47 +476,6 @@ pub struct ClosureTy<'tcx> {
     pub sig: PolyFnSig<'tcx>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
-pub enum FnOutput<'tcx> {
-    FnConverging(Ty<'tcx>),
-    FnDiverging
-}
-
-impl<'tcx> FnOutput<'tcx> {
-    pub fn diverges(&self) -> bool {
-        *self == FnDiverging
-    }
-
-    pub fn unwrap(self) -> Ty<'tcx> {
-        match self {
-            ty::FnConverging(t) => t,
-            ty::FnDiverging => bug!()
-        }
-    }
-
-    pub fn unwrap_or(self, def: Ty<'tcx>) -> Ty<'tcx> {
-        match self {
-            ty::FnConverging(t) => t,
-            ty::FnDiverging => def
-        }
-    }
-
-    pub fn maybe_converging(self) -> Option<Ty<'tcx>> {
-        match self {
-            ty::FnConverging(t) => Some(t),
-            ty::FnDiverging => None
-        }
-    }
-}
-
-pub type PolyFnOutput<'tcx> = Binder<FnOutput<'tcx>>;
-
-impl<'tcx> PolyFnOutput<'tcx> {
-    pub fn diverges(&self) -> bool {
-        self.0.diverges()
-    }
-}
-
 /// Signature of a function type, which I have arbitrarily
 /// decided to use to refer to the input/output types.
 ///
@@ -518,7 +485,7 @@ impl<'tcx> PolyFnOutput<'tcx> {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FnSig<'tcx> {
     pub inputs: Vec<Ty<'tcx>>,
-    pub output: FnOutput<'tcx>,
+    pub output: Ty<'tcx>,
     pub variadic: bool
 }
 
@@ -531,7 +498,7 @@ impl<'tcx> PolyFnSig<'tcx> {
     pub fn input(&self, index: usize) -> ty::Binder<Ty<'tcx>> {
         self.map_bound_ref(|fn_sig| fn_sig.inputs[index])
     }
-    pub fn output(&self) -> ty::Binder<FnOutput<'tcx>> {
+    pub fn output(&self) -> ty::Binder<Ty<'tcx>> {
         self.map_bound_ref(|fn_sig| fn_sig.output.clone())
     }
     pub fn variadic(&self) -> bool {
@@ -927,11 +894,27 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         }
     }
 
-    pub fn is_empty(&self, _cx: TyCtxt) -> bool {
-        // FIXME(#24885): be smarter here
+    pub fn is_never(&self) -> bool {
+        match self.sty {
+            TyNever => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_uninhabited(&self, _cx: TyCtxt) -> bool {
+        // FIXME(#24885): be smarter here, the AdtDefData::is_empty method could easily be made
+        // more complete.
         match self.sty {
             TyEnum(def, _) | TyStruct(def, _) => def.is_empty(),
-            _ => false
+
+            // FIXME(canndrew): There's no reason why these can't be uncommented, they're tested
+            // and they don't break anything. But I'm keeping my changes small for now.
+            //TyNever => true,
+            //TyTuple(ref tys) => tys.iter().any(|ty| ty.is_uninhabited(cx)),
+
+            // FIXME(canndrew): this line breaks core::fmt
+            //TyRef(_, ref tm) => tm.ty.is_uninhabited(cx),
+            _ => false,
         }
     }
 
@@ -1189,7 +1172,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         self.fn_sig().inputs()
     }
 
-    pub fn fn_ret(&self) -> Binder<FnOutput<'tcx>> {
+    pub fn fn_ret(&self) -> Binder<Ty<'tcx>> {
         self.fn_sig().output()
     }
 
@@ -1232,7 +1215,8 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
                 v
             }
             TyEnum(_, substs) |
-            TyStruct(_, substs) => {
+            TyStruct(_, substs) |
+            TyAnon(_, substs) => {
                 substs.regions.as_slice().to_vec()
             }
             TyClosure(_, ref substs) => {
@@ -1253,6 +1237,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
             TyArray(_, _) |
             TySlice(_) |
             TyRawPtr(_) |
+            TyNever |
             TyTuple(_) |
             TyParam(_) |
             TyInfer(_) |

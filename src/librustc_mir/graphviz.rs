@@ -9,8 +9,10 @@
 // except according to those terms.
 
 use dot;
+use rustc::hir::def_id::DefId;
 use rustc::mir::repr::*;
-use rustc::ty::{self, TyCtxt};
+use rustc::mir::mir_map::MirMap;
+use rustc::ty::TyCtxt;
 use std::fmt::Debug;
 use std::io::{self, Write};
 use syntax::ast::NodeId;
@@ -19,10 +21,16 @@ use rustc_data_structures::indexed_vec::Idx;
 
 /// Write a graphviz DOT graph of a list of MIRs.
 pub fn write_mir_graphviz<'a, 'b, 'tcx, W, I>(tcx: TyCtxt<'b, 'tcx, 'tcx>,
-                                              iter: I, w: &mut W)
+                                              iter: I,
+                                              mir_map: &MirMap<'tcx>,
+                                              w: &mut W)
                                               -> io::Result<()>
-where W: Write, I: Iterator<Item=(&'a NodeId, &'a Mir<'a>)> {
-    for (&nodeid, mir) in iter {
+    where W: Write, I: Iterator<Item=DefId>
+{
+    for def_id in iter {
+        let nodeid = tcx.map.as_local_node_id(def_id).unwrap();
+        let mir = &mir_map.map[&def_id];
+
         writeln!(w, "digraph Mir_{} {{", nodeid)?;
 
         // Global graph properties
@@ -135,14 +143,7 @@ fn write_graph_label<'a, 'tcx, W: Write>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         write!(w, "{:?}: {}", Lvalue::Arg(Arg::new(i)), escape(&arg.ty))?;
     }
 
-    write!(w, ") -&gt; ")?;
-
-    // fn return type.
-    match mir.return_ty {
-        ty::FnOutput::FnConverging(ty) => write!(w, "{}", escape(ty))?,
-        ty::FnOutput::FnDiverging => write!(w, "!")?,
-    }
-
+    write!(w, ") -&gt; {}", escape(mir.return_ty))?;
     write!(w, r#"<br align="left"/>"#)?;
 
     // User variable types (including the user's name in a comment).

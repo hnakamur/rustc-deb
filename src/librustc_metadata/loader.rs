@@ -400,7 +400,7 @@ impl<'a> Context<'a> {
         if self.hash.is_none() {
             self.should_match_name = false;
             if let Some(s) = self.sess.opts.externs.get(self.crate_name) {
-                return self.find_commandline_library(s);
+                return self.find_commandline_library(s.iter());
             }
             self.should_match_name = true;
         }
@@ -661,7 +661,9 @@ impl<'a> Context<'a> {
         (t.options.staticlib_prefix.clone(), t.options.staticlib_suffix.clone())
     }
 
-    fn find_commandline_library(&mut self, locs: &[String]) -> Option<Library> {
+    fn find_commandline_library<'b, LOCS> (&mut self, locs: LOCS) -> Option<Library>
+        where LOCS: Iterator<Item=&'b String>
+    {
         // First, filter out all libraries that look suspicious. We only accept
         // files which actually exist that have the correct naming scheme for
         // rlibs/dylibs.
@@ -670,7 +672,7 @@ impl<'a> Context<'a> {
         let mut rlibs = HashMap::new();
         let mut dylibs = HashMap::new();
         {
-            let locs = locs.iter().map(|l| PathBuf::from(l)).filter(|loc| {
+            let locs = locs.map(|l| PathBuf::from(l)).filter(|loc| {
                 if !loc.exists() {
                     sess.err(&format!("extern location for {} does not exist: {}",
                                      self.crate_name, loc.display()));
@@ -867,34 +869,29 @@ fn get_metadata_section_imp(target: &Target, flavor: CrateFlavor, filename: &Pat
 }
 
 pub fn meta_section_name(target: &Target) -> &'static str {
+    // Historical note:
+    //
+    // When using link.exe it was seen that the section name `.note.rustc`
+    // was getting shortened to `.note.ru`, and according to the PE and COFF
+    // specification:
+    //
+    // > Executable images do not use a string table and do not support
+    // > section names longer than 8 characters
+    //
+    // https://msdn.microsoft.com/en-us/library/windows/hardware/gg463119.aspx
+    //
+    // As a result, we choose a slightly shorter name! As to why
+    // `.note.rustc` works on MinGW, that's another good question...
+
     if target.options.is_like_osx {
-        "__DATA,__note.rustc"
-    } else if target.options.is_like_msvc {
-        // When using link.exe it was seen that the section name `.note.rustc`
-        // was getting shortened to `.note.ru`, and according to the PE and COFF
-        // specification:
-        //
-        // > Executable images do not use a string table and do not support
-        // > section names longer than 8 characters
-        //
-        // https://msdn.microsoft.com/en-us/library/windows/hardware/gg463119.aspx
-        //
-        // As a result, we choose a slightly shorter name! As to why
-        // `.note.rustc` works on MinGW, that's another good question...
-        ".rustc"
+        "__DATA,.rustc"
     } else {
-        ".note.rustc"
+        ".rustc"
     }
 }
 
-pub fn read_meta_section_name(target: &Target) -> &'static str {
-    if target.options.is_like_osx {
-        "__note.rustc"
-    } else if target.options.is_like_msvc {
-        ".rustc"
-    } else {
-        ".note.rustc"
-    }
+pub fn read_meta_section_name(_target: &Target) -> &'static str {
+    ".rustc"
 }
 
 // A diagnostic function for dumping crate metadata to an output stream

@@ -980,15 +980,19 @@ impl<'a> Formatter<'a> {
             return self.buf.write_str(s);
         }
         // The `precision` field can be interpreted as a `max-width` for the
-        // string being formatted
-        if let Some(max) = self.precision {
-            // If there's a maximum width and our string is longer than
-            // that, then we must always have truncation. This is the only
-            // case where the maximum length will matter.
+        // string being formatted.
+        let s = if let Some(max) = self.precision {
+            // If our string is longer that the precision, then we must have
+            // truncation. However other flags like `fill`, `width` and `align`
+            // must act as always.
             if let Some((i, _)) = s.char_indices().skip(max).next() {
-                return self.buf.write_str(&s[..i])
+                &s[..i]
+            } else {
+                &s
             }
-        }
+        } else {
+            &s
+        };
         // The `width` field is more of a `min-width` parameter at this point.
         match self.width {
             // If we're under the maximum length, and there's no minimum length
@@ -1359,6 +1363,29 @@ macro_rules! fmt_refs {
 
 fmt_refs! { Debug, Display, Octal, Binary, LowerHex, UpperHex, LowerExp, UpperExp }
 
+// Note: This macro is a temporary hack that can be remove once we are building with a compiler
+// that supports `!`
+macro_rules! not_stage0 {
+    () => {
+        #[unstable(feature = "never_type", issue = "35121")]
+        impl Debug for ! {
+            fn fmt(&self, _: &mut Formatter) -> Result {
+                *self
+            }
+        }
+
+        #[unstable(feature = "never_type", issue = "35121")]
+        impl Display for ! {
+            fn fmt(&self, _: &mut Formatter) -> Result {
+                *self
+            }
+        }
+    }
+}
+
+#[cfg(not(stage0))]
+not_stage0!();
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Debug for bool {
     fn fmt(&self, f: &mut Formatter) -> Result {
@@ -1379,7 +1406,7 @@ impl Debug for str {
         f.write_char('"')?;
         let mut from = 0;
         for (i, c) in self.char_indices() {
-            let esc = c.escape_default();
+            let esc = c.escape_debug();
             // If char needs escaping, flush backlog so far and write, else skip
             if esc.len() != 1 {
                 f.write_str(&self[from..i])?;
@@ -1405,7 +1432,7 @@ impl Display for str {
 impl Debug for char {
     fn fmt(&self, f: &mut Formatter) -> Result {
         f.write_char('\'')?;
-        for c in self.escape_default() {
+        for c in self.escape_debug() {
             f.write_char(c)?
         }
         f.write_char('\'')

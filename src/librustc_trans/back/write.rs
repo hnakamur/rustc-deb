@@ -10,20 +10,22 @@
 
 use back::lto;
 use back::link::{get_linker, remove};
-use session::config::{OutputFilenames, Passes, SomePasses, AllPasses};
+use rustc_incremental::save_trans_partition;
+use session::config::{OutputFilenames, OutputTypes, Passes, SomePasses, AllPasses};
 use session::Session;
 use session::config::{self, OutputType};
 use llvm;
 use llvm::{ModuleRef, TargetMachineRef, PassManagerRef, DiagnosticInfoRef, ContextRef};
 use llvm::SMDiagnosticRef;
-use {CrateTranslation, ModuleTranslation};
+use {CrateTranslation, ModuleLlvm, ModuleSource, ModuleTranslation};
 use util::common::time;
 use util::common::path2cstr;
-use errors::{self, Handler, Level, RenderSpan};
-use errors::emitter::CoreEmitter;
+use util::fs::link_or_copy;
+use errors::{self, Handler, Level, DiagnosticBuilder};
+use errors::emitter::Emitter;
 use syntax_pos::MultiSpan;
+use context::{is_pie_binary, get_reloc_model};
 
-use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,6 +34,21 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::channel;
 use std::thread;
 use libc::{c_uint, c_void};
+
+pub const RELOC_MODEL_ARGS : [(&'static str, llvm::RelocMode); 4] = [
+    ("pic", llvm::RelocMode::PIC),
+    ("static", llvm::RelocMode::Static),
+    ("default", llvm::RelocMode::Default),
+    ("dynamic-no-pic", llvm::RelocMode::DynamicNoPic),
+];
+
+pub const CODE_GEN_MODEL_ARGS : [(&'static str, llvm::CodeModel); 5] = [
+    ("default", llvm::CodeModel::Default),
+    ("small", llvm::CodeModel::Small),
+    ("kernel", llvm::CodeModel::Kernel),
+    ("medium", llvm::CodeModel::Medium),
+    ("large", llvm::CodeModel::Large),
+];
 
 pub fn llvm_err(handler: &errors::Handler, msg: String) -> ! {
     match llvm::last_error() {
@@ -51,7 +68,7 @@ pub fn write_output_file(
         let output_c = path2cstr(output);
         let result = llvm::LLVMRustWriteOutputFile(
                 target, pm, m, output_c.as_ptr(), file_type);
-        if !result {
+        if result.into_result().is_err() {
             llvm_err(handler, format!("could not write output to {}", output.display()));
         }
     }
@@ -100,22 +117,22 @@ impl SharedEmitter {
     }
 }
 
-impl CoreEmitter for SharedEmitter {
-    fn emit_message(&mut self,
-                    _rsp: &RenderSpan,
-                    msg: &str,
-                    code: Option<&str>,
-                    lvl: Level,
-                    _is_header: bool,
-                    _show_snippet: bool) {
+impl Emitter for SharedEmitter {
+    fn emit(&mut self, db: &DiagnosticBuilder) {
         self.buffer.lock().unwrap().push(Diagnostic {
-            msg: msg.to_string(),
-            code: code.map(|s| s.to_string()),
-            lvl: lvl,
+            msg: db.message.to_string(),
+            code: db.code.clone(),
+            lvl: db.level,
         });
+        for child in &db.children {
+            self.buffer.lock().unwrap().push(Diagnostic {
+                msg: child.message.to_string(),
+                code: None,
+                lvl: child.level,
+            });
+        }
     }
 }
-
 
 // On android, we by default compile for armv7 processors. This enables
 // things like double word CAS instructions (rather than emulating them)
@@ -135,11 +152,11 @@ fn target_feature(sess: &Session) -> String {
 
 fn get_llvm_opt_level(optimize: config::OptLevel) -> llvm::CodeGenOptLevel {
     match optimize {
-      config::OptLevel::No => llvm::CodeGenLevelNone,
-      config::OptLevel::Less => llvm::CodeGenLevelLess,
-      config::OptLevel::Default => llvm::CodeGenLevelDefault,
-      config::OptLevel::Aggressive => llvm::CodeGenLevelAggressive,
-      _ => llvm::CodeGenLevelDefault,
+      config::OptLevel::No => llvm::CodeGenOptLevel::None,
+      config::OptLevel::Less => llvm::CodeGenOptLevel::Less,
+      config::OptLevel::Default => llvm::CodeGenOptLevel::Default,
+      config::OptLevel::Aggressive => llvm::CodeGenOptLevel::Aggressive,
+      _ => llvm::CodeGenOptLevel::Default,
     }
 }
 
@@ -152,31 +169,10 @@ fn get_llvm_opt_size(optimize: config::OptLevel) -> llvm::CodeGenOptSize {
 }
 
 pub fn create_target_machine(sess: &Session) -> TargetMachineRef {
-    let reloc_model_arg = match sess.opts.cg.relocation_model {
-        Some(ref s) => &s[..],
-        None => &sess.target.target.options.relocation_model[..],
-    };
-    let reloc_model = match reloc_model_arg {
-        "pic" => llvm::RelocPIC,
-        "static" => llvm::RelocStatic,
-        "default" => llvm::RelocDefault,
-        "dynamic-no-pic" => llvm::RelocDynamicNoPic,
-        _ => {
-            sess.err(&format!("{:?} is not a valid relocation mode",
-                             sess.opts
-                                 .cg
-                                 .relocation_model));
-            sess.abort_if_errors();
-            bug!();
-        }
-    };
+    let reloc_model = get_reloc_model(sess);
 
     let opt_level = get_llvm_opt_level(sess.opts.optimize);
     let use_softfp = sess.opts.cg.soft_float;
-
-    let any_library = sess.crate_types.borrow().iter().any(|ty| {
-        *ty != config::CrateTypeExecutable
-    });
 
     let ffunction_sections = sess.target.target.options.function_sections;
     let fdata_sections = ffunction_sections;
@@ -186,12 +182,9 @@ pub fn create_target_machine(sess: &Session) -> TargetMachineRef {
         None => &sess.target.target.options.code_model[..],
     };
 
-    let code_model = match code_model_arg {
-        "default" => llvm::CodeModelDefault,
-        "small" => llvm::CodeModelSmall,
-        "kernel" => llvm::CodeModelKernel,
-        "medium" => llvm::CodeModelMedium,
-        "large" => llvm::CodeModelLarge,
+    let code_model = match CODE_GEN_MODEL_ARGS.iter().find(
+        |&&arg| arg.0 == code_model_arg) {
+        Some(x) => x.1,
         _ => {
             sess.err(&format!("{:?} is not a valid code model",
                              sess.opts
@@ -218,7 +211,7 @@ pub fn create_target_machine(sess: &Session) -> TargetMachineRef {
             reloc_model,
             opt_level,
             use_softfp,
-            !any_library && reloc_model == llvm::RelocPIC,
+            is_pie_binary(sess),
             ffunction_sections,
             fdata_sections,
         )
@@ -335,6 +328,8 @@ struct CodegenContext<'a> {
     remark: Passes,
     // Worker thread number
     worker: usize,
+    // Directory where incremental data is stored (if any)
+    incremental: Option<PathBuf>,
 }
 
 impl<'a> CodegenContext<'a> {
@@ -345,6 +340,7 @@ impl<'a> CodegenContext<'a> {
             plugin_passes: sess.plugin_llvm_passes.borrow().clone(),
             remark: sess.opts.cg.remark.clone(),
             worker: 0,
+            incremental: sess.opts.incremental.clone(),
         }
     }
 }
@@ -380,7 +376,7 @@ unsafe extern "C" fn inline_asm_handler(diag: SMDiagnosticRef,
                                         cookie: c_uint) {
     let HandlerFreeVars { cgcx, .. } = *(user as *const HandlerFreeVars);
 
-    let msg = llvm::build_string(|s| llvm::LLVMWriteSMDiagnosticToString(diag, s))
+    let msg = llvm::build_string(|s| llvm::LLVMRustWriteSMDiagnosticToString(diag, s))
         .expect("non-UTF8 SMDiagnostic");
 
     report_inline_asm(cgcx, &msg[..], cookie);
@@ -422,10 +418,11 @@ unsafe extern "C" fn diagnostic_handler(info: DiagnosticInfoRef, user: *mut c_vo
 // Unsafe due to LLVM calls.
 unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
                                mtrans: ModuleTranslation,
+                               mllvm: ModuleLlvm,
                                config: ModuleConfig,
-                               name_extra: String,
                                output_names: OutputFilenames) {
-    let ModuleTranslation { llmod, llcx } = mtrans;
+    let llmod = mllvm.llmod;
+    let llcx = mllvm.llcx;
     let tm = config.tm;
 
     // llcx doesn't outlive this function, so we can put this on the stack.
@@ -435,12 +432,13 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
     };
     let fv = &fv as *const HandlerFreeVars as *mut c_void;
 
-    llvm::LLVMSetInlineAsmDiagnosticHandler(llcx, inline_asm_handler, fv);
+    llvm::LLVMRustSetInlineAsmDiagnosticHandler(llcx, inline_asm_handler, fv);
     llvm::LLVMContextSetDiagnosticHandler(llcx, diagnostic_handler, fv);
 
+    let module_name = Some(&mtrans.name[..]);
+
     if config.emit_no_opt_bc {
-        let ext = format!("{}.no-opt.bc", name_extra);
-        let out = output_names.with_extension(&ext);
+        let out = output_names.temp_path_ext("no-opt.bc", module_name);
         let out = path2cstr(&out);
         llvm::LLVMWriteBitcodeToFile(llmod, out.as_ptr());
     }
@@ -462,9 +460,9 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
                 return false;
             }
             let pass_manager = match llvm::LLVMRustPassKind(pass) {
-                llvm::SupportedPassKind::Function => fpm,
-                llvm::SupportedPassKind::Module => mpm,
-                llvm::SupportedPassKind::Unsupported => {
+                llvm::PassKind::Function => fpm,
+                llvm::PassKind::Module => mpm,
+                llvm::PassKind::Other => {
                     cgcx.handler.err("Encountered LLVM pass kind we can't handle");
                     return true
                 },
@@ -512,13 +510,18 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 
         match cgcx.lto_ctxt {
             Some((sess, reachable)) if sess.lto() =>  {
-                time(sess.time_passes(), "all lto passes", ||
-                     lto::run(sess, llmod, tm, reachable, &config,
-                              &name_extra, &output_names));
-
+                time(sess.time_passes(), "all lto passes", || {
+                    let temp_no_opt_bc_filename =
+                        output_names.temp_path_ext("no-opt.lto.bc", module_name);
+                    lto::run(sess,
+                             llmod,
+                             tm,
+                             reachable,
+                             &config,
+                             &temp_no_opt_bc_filename);
+                });
                 if config.emit_lto_bc {
-                    let name = format!("{}.lto.bc", name_extra);
-                    let out = output_names.with_extension(&name);
+                    let out = output_names.temp_path_ext("lto.bc", module_name);
                     let out = path2cstr(&out);
                     llvm::LLVMWriteBitcodeToFile(llmod, out.as_ptr());
                 }
@@ -556,8 +559,8 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
     let write_obj = config.emit_obj && !config.obj_is_bitcode;
     let copy_bc_to_obj = config.emit_obj && config.obj_is_bitcode;
 
-    let bc_out = output_names.with_extension(&format!("{}.bc", name_extra));
-    let obj_out = output_names.with_extension(&format!("{}.o", name_extra));
+    let bc_out = output_names.temp_path(OutputType::Bitcode, module_name);
+    let obj_out = output_names.temp_path(OutputType::Object, module_name);
 
     if write_bc {
         let bc_out_c = path2cstr(&bc_out);
@@ -566,8 +569,7 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 
     time(config.time_passes, &format!("codegen passes [{}]", cgcx.worker), || {
         if config.emit_ir {
-            let ext = format!("{}.ll", name_extra);
-            let out = output_names.with_extension(&ext);
+            let out = output_names.temp_path(OutputType::LlvmAssembly, module_name);
             let out = path2cstr(&out);
             with_codegen(tm, llmod, config.no_builtins, |cpm| {
                 llvm::LLVMRustPrintModule(cpm, llmod, out.as_ptr());
@@ -576,7 +578,7 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
         }
 
         if config.emit_asm {
-            let path = output_names.with_extension(&format!("{}.s", name_extra));
+            let path = output_names.temp_path(OutputType::Assembly, module_name);
 
             // We can't use the same module for asm and binary output, because that triggers
             // various errors like invalid IR or broken binaries, so we might have to clone the
@@ -588,7 +590,7 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
             };
             with_codegen(tm, llmod, config.no_builtins, |cpm| {
                 write_output_file(cgcx.handler, tm, cpm, llmod, &path,
-                                  llvm::AssemblyFileType);
+                                  llvm::FileType::AssemblyFile);
             });
             if config.emit_obj {
                 llvm::LLVMDisposeModule(llmod);
@@ -597,14 +599,15 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 
         if write_obj {
             with_codegen(tm, llmod, config.no_builtins, |cpm| {
-                write_output_file(cgcx.handler, tm, cpm, llmod, &obj_out, llvm::ObjectFileType);
+                write_output_file(cgcx.handler, tm, cpm, llmod, &obj_out,
+                                  llvm::FileType::ObjectFile);
             });
         }
     });
 
     if copy_bc_to_obj {
         debug!("copying bitcode {:?} to obj {:?}", bc_out, obj_out);
-        if let Err(e) = fs::copy(&bc_out, &obj_out) {
+        if let Err(e) = link_or_copy(&bc_out, &obj_out) {
             cgcx.handler.err(&format!("failed to copy bitcode to object file: {}", e));
         }
     }
@@ -623,15 +626,21 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
 pub fn cleanup_llvm(trans: &CrateTranslation) {
     for module in trans.modules.iter() {
         unsafe {
-            llvm::LLVMDisposeModule(module.llmod);
-            llvm::LLVMContextDispose(module.llcx);
+            match module.source {
+                ModuleSource::Translated(llvm) => {
+                    llvm::LLVMDisposeModule(llvm.llmod);
+                    llvm::LLVMContextDispose(llvm.llcx);
+                }
+                ModuleSource::Preexisting(_) => {
+                }
+            }
         }
     }
 }
 
 pub fn run_passes(sess: &Session,
                   trans: &CrateTranslation,
-                  output_types: &HashMap<OutputType, Option<PathBuf>>,
+                  output_types: &OutputTypes,
                   crate_output: &OutputFilenames) {
     // It's possible that we have `codegen_units > 1` but only one item in
     // `trans.modules`.  We could theoretically proceed and do LTO in that
@@ -713,27 +722,50 @@ pub fn run_passes(sess: &Session,
 
     {
         let work = build_work_item(sess,
-                                   trans.metadata_module,
+                                   trans.metadata_module.clone(),
                                    metadata_config.clone(),
-                                   crate_output.clone(),
-                                   "metadata".to_string());
+                                   crate_output.clone());
         work_items.push(work);
     }
 
-    for (index, mtrans) in trans.modules.iter().enumerate() {
+    for mtrans in trans.modules.iter() {
         let work = build_work_item(sess,
-                                   *mtrans,
+                                   mtrans.clone(),
                                    modules_config.clone(),
-                                   crate_output.clone(),
-                                   format!("{}", index));
+                                   crate_output.clone());
         work_items.push(work);
+    }
+
+    if sess.opts.debugging_opts.incremental_info {
+        dump_incremental_data(&trans);
     }
 
     // Process the work items, optionally using worker threads.
-    if sess.opts.cg.codegen_units == 1 {
+    // NOTE: This code is not really adapted to incremental compilation where
+    //       the compiler decides the number of codegen units (and will
+    //       potentially create hundreds of them).
+    let num_workers = work_items.len() - 1;
+    if num_workers == 1 {
         run_work_singlethreaded(sess, &trans.reachable, work_items);
     } else {
-        run_work_multithreaded(sess, work_items, sess.opts.cg.codegen_units);
+        run_work_multithreaded(sess, work_items, num_workers);
+    }
+
+    // If in incr. comp. mode, preserve the `.o` files for potential re-use
+    for mtrans in trans.modules.iter() {
+        let mut files = vec![];
+
+        if modules_config.emit_obj {
+            let path = crate_output.temp_path(OutputType::Object, Some(&mtrans.name));
+            files.push((OutputType::Object, path));
+        }
+
+        if modules_config.emit_bc {
+            let path = crate_output.temp_path(OutputType::Bitcode, Some(&mtrans.name));
+            files.push((OutputType::Bitcode, path));
+        }
+
+        save_trans_partition(sess, &mtrans.name, mtrans.symbol_name_hash, &files);
     }
 
     // All codegen is finished.
@@ -748,32 +780,42 @@ pub fn run_passes(sess: &Session,
         }
     };
 
-    let copy_if_one_unit = |ext: &str,
-                            output_type: OutputType,
+    let copy_if_one_unit = |output_type: OutputType,
                             keep_numbered: bool| {
-        if sess.opts.cg.codegen_units == 1 {
+        if trans.modules.len() == 1 {
             // 1) Only one codegen unit.  In this case it's no difficulty
             //    to copy `foo.0.x` to `foo.x`.
-            copy_gracefully(&crate_output.with_extension(ext),
+            let module_name = Some(&(trans.modules[0].name)[..]);
+            let path = crate_output.temp_path(output_type, module_name);
+            copy_gracefully(&path,
                             &crate_output.path(output_type));
             if !sess.opts.cg.save_temps && !keep_numbered {
-                // The user just wants `foo.x`, not `foo.0.x`.
-                remove(sess, &crate_output.with_extension(ext));
+                // The user just wants `foo.x`, not `foo.#module-name#.x`.
+                remove(sess, &path);
             }
-        } else if crate_output.outputs.contains_key(&output_type) {
-            // 2) Multiple codegen units, with `--emit foo=some_name`.  We have
-            //    no good solution for this case, so warn the user.
-            sess.warn(&format!("ignoring emit path because multiple .{} files \
-                                were produced", ext));
-        } else if crate_output.single_output_file.is_some() {
-            // 3) Multiple codegen units, with `-o some_name`.  We have
-            //    no good solution for this case, so warn the user.
-            sess.warn(&format!("ignoring -o because multiple .{} files \
-                                were produced", ext));
         } else {
-            // 4) Multiple codegen units, but no explicit name.  We
-            //    just leave the `foo.0.x` files in place.
-            // (We don't have to do any work in this case.)
+            let ext = crate_output.temp_path(output_type, None)
+                                  .extension()
+                                  .unwrap()
+                                  .to_str()
+                                  .unwrap()
+                                  .to_owned();
+
+            if crate_output.outputs.contains_key(&output_type) {
+                // 2) Multiple codegen units, with `--emit foo=some_name`.  We have
+                //    no good solution for this case, so warn the user.
+                sess.warn(&format!("ignoring emit path because multiple .{} files \
+                                    were produced", ext));
+            } else if crate_output.single_output_file.is_some() {
+                // 3) Multiple codegen units, with `-o some_name`.  We have
+                //    no good solution for this case, so warn the user.
+                sess.warn(&format!("ignoring -o because multiple .{} files \
+                                    were produced", ext));
+            } else {
+                // 4) Multiple codegen units, but no explicit name.  We
+                //    just leave the `foo.0.x` files in place.
+                // (We don't have to do any work in this case.)
+            }
         }
     };
 
@@ -789,17 +831,17 @@ pub fn run_passes(sess: &Session,
                 // Copy to .bc, but always keep the .0.bc.  There is a later
                 // check to figure out if we should delete .0.bc files, or keep
                 // them for making an rlib.
-                copy_if_one_unit("0.bc", OutputType::Bitcode, true);
+                copy_if_one_unit(OutputType::Bitcode, true);
             }
             OutputType::LlvmAssembly => {
-                copy_if_one_unit("0.ll", OutputType::LlvmAssembly, false);
+                copy_if_one_unit(OutputType::LlvmAssembly, false);
             }
             OutputType::Assembly => {
-                copy_if_one_unit("0.s", OutputType::Assembly, false);
+                copy_if_one_unit(OutputType::Assembly, false);
             }
             OutputType::Object => {
                 user_wants_objects = true;
-                copy_if_one_unit("0.o", OutputType::Object, true);
+                copy_if_one_unit(OutputType::Object, true);
             }
             OutputType::Exe |
             OutputType::DepInfo => {}
@@ -810,51 +852,55 @@ pub fn run_passes(sess: &Session,
     // Clean up unwanted temporary files.
 
     // We create the following files by default:
-    //  - crate.0.bc
-    //  - crate.0.o
+    //  - crate.#module-name#.bc
+    //  - crate.#module-name#.o
     //  - crate.metadata.bc
     //  - crate.metadata.o
     //  - crate.o (linked from crate.##.o)
-    //  - crate.bc (copied from crate.0.bc)
+    //  - crate.bc (copied from crate.##.bc)
     // We may create additional files if requested by the user (through
     // `-C save-temps` or `--emit=` flags).
 
     if !sess.opts.cg.save_temps {
-        // Remove the temporary .0.o objects.  If the user didn't
+        // Remove the temporary .#module-name#.o objects.  If the user didn't
         // explicitly request bitcode (with --emit=bc), and the bitcode is not
-        // needed for building an rlib, then we must remove .0.bc as well.
+        // needed for building an rlib, then we must remove .#module-name#.bc as
+        // well.
 
-        // Specific rules for keeping .0.bc:
+        // Specific rules for keeping .#module-name#.bc:
         //  - If we're building an rlib (`needs_crate_bitcode`), then keep
         //    it.
         //  - If the user requested bitcode (`user_wants_bitcode`), and
         //    codegen_units > 1, then keep it.
         //  - If the user requested bitcode but codegen_units == 1, then we
-        //    can toss .0.bc because we copied it to .bc earlier.
+        //    can toss .#module-name#.bc because we copied it to .bc earlier.
         //  - If we're not building an rlib and the user didn't request
-        //    bitcode, then delete .0.bc.
+        //    bitcode, then delete .#module-name#.bc.
         // If you change how this works, also update back::link::link_rlib,
-        // where .0.bc files are (maybe) deleted after making an rlib.
+        // where .#module-name#.bc files are (maybe) deleted after making an
+        // rlib.
         let keep_numbered_bitcode = needs_crate_bitcode ||
                 (user_wants_bitcode && sess.opts.cg.codegen_units > 1);
 
         let keep_numbered_objects = needs_crate_object ||
                 (user_wants_objects && sess.opts.cg.codegen_units > 1);
 
-        for i in 0..trans.modules.len() {
+        for module_name in trans.modules.iter().map(|m| Some(&m.name[..])) {
             if modules_config.emit_obj && !keep_numbered_objects {
-                let ext = format!("{}.o", i);
-                remove(sess, &crate_output.with_extension(&ext));
+                let path = crate_output.temp_path(OutputType::Object, module_name);
+                remove(sess, &path);
             }
 
             if modules_config.emit_bc && !keep_numbered_bitcode {
-                let ext = format!("{}.bc", i);
-                remove(sess, &crate_output.with_extension(&ext));
+                let path = crate_output.temp_path(OutputType::Bitcode, module_name);
+                remove(sess, &path);
             }
         }
 
         if metadata_config.emit_bc && !user_wants_bitcode {
-            remove(sess, &crate_output.with_extension("metadata.bc"));
+            let path = crate_output.temp_path(OutputType::Bitcode,
+                                              Some(&trans.metadata_module.name[..]));
+            remove(sess, &path);
         }
     }
 
@@ -871,31 +917,72 @@ pub fn run_passes(sess: &Session,
     }
 }
 
+fn dump_incremental_data(trans: &CrateTranslation) {
+    let mut reuse = 0;
+    for mtrans in trans.modules.iter() {
+        match mtrans.source {
+            ModuleSource::Preexisting(..) => reuse += 1,
+            ModuleSource::Translated(..) => (),
+        }
+    }
+    println!("incremental: re-using {} out of {} modules", reuse, trans.modules.len());
+}
+
 struct WorkItem {
     mtrans: ModuleTranslation,
     config: ModuleConfig,
-    output_names: OutputFilenames,
-    name_extra: String
+    output_names: OutputFilenames
 }
 
 fn build_work_item(sess: &Session,
                    mtrans: ModuleTranslation,
                    config: ModuleConfig,
-                   output_names: OutputFilenames,
-                   name_extra: String)
+                   output_names: OutputFilenames)
                    -> WorkItem
 {
     let mut config = config;
     config.tm = create_target_machine(sess);
-    WorkItem { mtrans: mtrans, config: config, output_names: output_names,
-               name_extra: name_extra }
+    WorkItem {
+        mtrans: mtrans,
+        config: config,
+        output_names: output_names
+    }
 }
 
 fn execute_work_item(cgcx: &CodegenContext,
                      work_item: WorkItem) {
     unsafe {
-        optimize_and_codegen(cgcx, work_item.mtrans, work_item.config,
-                             work_item.name_extra, work_item.output_names);
+        match work_item.mtrans.source {
+            ModuleSource::Translated(mllvm) => {
+                debug!("llvm-optimizing {:?}", work_item.mtrans.name);
+                optimize_and_codegen(cgcx,
+                                     work_item.mtrans,
+                                     mllvm,
+                                     work_item.config,
+                                     work_item.output_names);
+            }
+            ModuleSource::Preexisting(wp) => {
+                let incremental = cgcx.incremental.as_ref().unwrap();
+                let name = &work_item.mtrans.name;
+                for (kind, saved_file) in wp.saved_files {
+                    let obj_out = work_item.output_names.temp_path(kind, Some(name));
+                    let source_file = incremental.join(&saved_file);
+                    debug!("copying pre-existing module `{}` from {:?} to {}",
+                           work_item.mtrans.name,
+                           source_file,
+                           obj_out.display());
+                    match link_or_copy(&source_file, &obj_out) {
+                        Ok(()) => { }
+                        Err(err) => {
+                            cgcx.handler.err(&format!("unable to copy {} to {}: {}",
+                                                      source_file.display(),
+                                                      obj_out.display(),
+                                                      err));
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -914,6 +1001,8 @@ fn run_work_singlethreaded(sess: &Session,
 fn run_work_multithreaded(sess: &Session,
                           work_items: Vec<WorkItem>,
                           num_workers: usize) {
+    assert!(num_workers > 0);
+
     // Run some workers to process the work items.
     let work_items_arc = Arc::new(Mutex::new(work_items));
     let mut diag_emitter = SharedEmitter::new();
@@ -929,6 +1018,8 @@ fn run_work_multithreaded(sess: &Session,
         let mut tx = Some(tx);
         futures.push(rx);
 
+        let incremental = sess.opts.incremental.clone();
+
         thread::Builder::new().name(format!("codegen-{}", i)).spawn(move || {
             let diag_handler = Handler::with_emitter(true, false, box diag_emitter);
 
@@ -940,6 +1031,7 @@ fn run_work_multithreaded(sess: &Session,
                 plugin_passes: plugin_passes,
                 remark: remark,
                 worker: i,
+                incremental: incremental,
             };
 
             loop {
@@ -981,7 +1073,7 @@ pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
     let (pname, mut cmd, _) = get_linker(sess);
 
     cmd.arg("-c").arg("-o").arg(&outputs.path(OutputType::Object))
-                           .arg(&outputs.temp_path(OutputType::Assembly));
+                           .arg(&outputs.temp_path(OutputType::Assembly, None));
     debug!("{:?}", cmd);
 
     match cmd.output() {
@@ -1013,7 +1105,7 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
     // reasonable defaults and prepare it to actually populate the pass
     // manager.
     let builder = llvm::LLVMPassManagerBuilderCreate();
-    let opt_level = config.opt_level.unwrap_or(llvm::CodeGenLevelNone);
+    let opt_level = config.opt_level.unwrap_or(llvm::CodeGenOptLevel::None);
     let opt_size = config.opt_size.unwrap_or(llvm::CodeGenOptSizeNone);
     let inline_threshold = config.inline_threshold;
 
@@ -1037,7 +1129,7 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
         (_, _, Some(t)) => {
             llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, t as u32);
         }
-        (llvm::CodeGenLevelAggressive, _, _) => {
+        (llvm::CodeGenOptLevel::Aggressive, _, _) => {
             llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 275);
         }
         (_, llvm::CodeGenOptSizeDefault, _) => {
@@ -1046,14 +1138,17 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
         (_, llvm::CodeGenOptSizeAggressive, _) => {
             llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 25);
         }
-        (llvm::CodeGenLevelNone, _, _) => {
+        (llvm::CodeGenOptLevel::None, _, _) => {
             llvm::LLVMRustAddAlwaysInlinePass(builder, false);
         }
-        (llvm::CodeGenLevelLess, _, _) => {
+        (llvm::CodeGenOptLevel::Less, _, _) => {
             llvm::LLVMRustAddAlwaysInlinePass(builder, true);
         }
-        (llvm::CodeGenLevelDefault, _, _) => {
+        (llvm::CodeGenOptLevel::Default, _, _) => {
             llvm::LLVMPassManagerBuilderUseInlinerWithThreshold(builder, 225);
+        }
+        (llvm::CodeGenOptLevel::Other, _, _) => {
+            bug!("CodeGenOptLevel::Other selected")
         }
     }
 

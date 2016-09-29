@@ -17,7 +17,7 @@ use rustc_data_structures::control_flow_graph::{GraphPredecessors, GraphSuccesso
 use rustc_data_structures::control_flow_graph::ControlFlowGraph;
 use hir::def_id::DefId;
 use ty::subst::Substs;
-use ty::{self, AdtDef, ClosureSubsts, FnOutput, Region, Ty};
+use ty::{self, AdtDef, ClosureSubsts, Region, Ty};
 use util::ppaux;
 use rustc_back::slice;
 use hir::InlineAsm;
@@ -74,7 +74,7 @@ pub struct Mir<'tcx> {
     pub promoted: IndexVec<Promoted, Mir<'tcx>>,
 
     /// Return type of the function.
-    pub return_ty: FnOutput<'tcx>,
+    pub return_ty: Ty<'tcx>,
 
     /// Variables: these are stack slots corresponding to user variables. They may be
     /// assigned many times.
@@ -107,7 +107,7 @@ impl<'tcx> Mir<'tcx> {
     pub fn new(basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>,
                visibility_scopes: IndexVec<VisibilityScope, VisibilityScopeData>,
                promoted: IndexVec<Promoted, Mir<'tcx>>,
-               return_ty: FnOutput<'tcx>,
+               return_ty: Ty<'tcx>,
                var_decls: IndexVec<Var, VarDecl<'tcx>>,
                arg_decls: IndexVec<Arg, ArgDecl<'tcx>>,
                temp_decls: IndexVec<Temp, TempDecl<'tcx>>,
@@ -688,14 +688,29 @@ pub struct Statement<'tcx> {
 
 #[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub enum StatementKind<'tcx> {
+    /// Write the RHS Rvalue to the LHS Lvalue.
     Assign(Lvalue<'tcx>, Rvalue<'tcx>),
+
+    /// Write the discriminant for a variant to the enum Lvalue.
+    SetDiscriminant { lvalue: Lvalue<'tcx>, variant_index: usize },
+
+    /// Start a live range for the storage of the local.
+    StorageLive(Lvalue<'tcx>),
+
+    /// End the current live range for the storage of the local.
+    StorageDead(Lvalue<'tcx>),
 }
 
 impl<'tcx> Debug for Statement<'tcx> {
     fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
         use self::StatementKind::*;
         match self.kind {
-            Assign(ref lv, ref rv) => write!(fmt, "{:?} = {:?}", lv, rv)
+            Assign(ref lv, ref rv) => write!(fmt, "{:?} = {:?}", lv, rv),
+            StorageLive(ref lv) => write!(fmt, "StorageLive({:?})", lv),
+            StorageDead(ref lv) => write!(fmt, "StorageDead({:?})", lv),
+            SetDiscriminant{lvalue: ref lv, variant_index: index} => {
+                write!(fmt, "discriminant({:?}) = {:?}", lv, index)
+            }
         }
     }
 }
@@ -1063,7 +1078,7 @@ impl<'tcx> Debug for Rvalue<'tcx> {
                             Some(tcx.lookup_item_type(variant_def.did).generics)
                         })?;
 
-                        match variant_def.kind() {
+                        match variant_def.kind {
                             ty::VariantKind::Unit => Ok(()),
                             ty::VariantKind::Tuple => fmt_tuple(fmt, lvs),
                             ty::VariantKind::Struct => {

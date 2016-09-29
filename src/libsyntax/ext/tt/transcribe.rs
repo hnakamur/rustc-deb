@@ -9,12 +9,12 @@
 // except according to those terms.
 use self::LockstepIterSize::*;
 
-use ast::{Ident, Name};
+use ast::Ident;
 use syntax_pos::{Span, DUMMY_SP};
 use errors::{Handler, DiagnosticBuilder};
 use ext::tt::macro_parser::{NamedMatch, MatchedSeq, MatchedNonterminal};
 use parse::token::{DocComment, MatchNt, SubstNt};
-use parse::token::{Token, NtIdent, SpecialMacroVar};
+use parse::token::{Token, Interpolated, NtIdent, NtTT, SpecialMacroVar};
 use parse::token;
 use parse::lexer::TokenAndSpan;
 use tokenstream::{self, TokenTree};
@@ -38,7 +38,7 @@ pub struct TtReader<'a> {
     /// the unzipped tree:
     stack: Vec<TtFrame>,
     /* for MBE-style macro transcription */
-    interpolations: HashMap<Name, Rc<NamedMatch>>,
+    interpolations: HashMap<Ident, Rc<NamedMatch>>,
     imported_from: Option<Ident>,
 
     // Some => return imported_from as the next token
@@ -57,7 +57,7 @@ pub struct TtReader<'a> {
 /// `src` contains no `TokenTree::Sequence`s, `MatchNt`s or `SubstNt`s, `interp` can
 /// (and should) be None.
 pub fn new_tt_reader(sp_diag: &Handler,
-                     interp: Option<HashMap<Name, Rc<NamedMatch>>>,
+                     interp: Option<HashMap<Ident, Rc<NamedMatch>>>,
                      imported_from: Option<Ident>,
                      src: Vec<tokenstream::TokenTree>)
                      -> TtReader {
@@ -71,7 +71,7 @@ pub fn new_tt_reader(sp_diag: &Handler,
 /// `src` contains no `TokenTree::Sequence`s, `MatchNt`s or `SubstNt`s, `interp` can
 /// (and should) be None.
 pub fn new_tt_reader_with_doc_flag(sp_diag: &Handler,
-                                   interp: Option<HashMap<Name, Rc<NamedMatch>>>,
+                                   interp: Option<HashMap<Ident, Rc<NamedMatch>>>,
                                    imported_from: Option<Ident>,
                                    src: Vec<tokenstream::TokenTree>,
                                    desugar_doc_comments: bool)
@@ -79,11 +79,11 @@ pub fn new_tt_reader_with_doc_flag(sp_diag: &Handler,
     let mut r = TtReader {
         sp_diag: sp_diag,
         stack: vec!(TtFrame {
-            forest: TokenTree::Sequence(DUMMY_SP, tokenstream::SequenceRepetition {
+            forest: TokenTree::Sequence(DUMMY_SP, Rc::new(tokenstream::SequenceRepetition {
                 tts: src,
                 // doesn't matter. This merely holds the root unzipping.
                 separator: None, op: tokenstream::KleeneOp::ZeroOrMore, num_captures: 0
-            }),
+            })),
             idx: 0,
             dotdotdoted: false,
             sep: None,
@@ -119,7 +119,7 @@ fn lookup_cur_matched_by_matched(r: &TtReader, start: Rc<NamedMatch>) -> Rc<Name
 }
 
 fn lookup_cur_matched(r: &TtReader, name: Ident) -> Option<Rc<NamedMatch>> {
-    let matched_opt = r.interpolations.get(&name.name).cloned();
+    let matched_opt = r.interpolations.get(&name).cloned();
     matched_opt.map(|s| lookup_cur_matched_by_matched(r, s))
 }
 
@@ -278,9 +278,9 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
             }
             // FIXME #2887: think about span stuff here
             TokenTree::Token(sp, SubstNt(ident)) => {
-                r.stack.last_mut().unwrap().idx += 1;
                 match lookup_cur_matched(r, ident) {
                     None => {
+                        r.stack.last_mut().unwrap().idx += 1;
                         r.cur_span = sp;
                         r.cur_tok = SubstNt(ident);
                         return ret_val;
@@ -292,14 +292,24 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
                             // (a) idents can be in lots of places, so it'd be a pain
                             // (b) we actually can, since it's a token.
                             MatchedNonterminal(NtIdent(ref sn)) => {
+                                r.stack.last_mut().unwrap().idx += 1;
                                 r.cur_span = sn.span;
                                 r.cur_tok = token::Ident(sn.node);
                                 return ret_val;
                             }
+                            MatchedNonterminal(NtTT(ref tt)) => {
+                                r.stack.push(TtFrame {
+                                    forest: TokenTree::Token(sp, Interpolated(NtTT(tt.clone()))),
+                                    idx: 0,
+                                    dotdotdoted: false,
+                                    sep: None,
+                                });
+                            }
                             MatchedNonterminal(ref other_whole_nt) => {
+                                r.stack.last_mut().unwrap().idx += 1;
                                 // FIXME(pcwalton): Bad copy.
                                 r.cur_span = sp;
-                                r.cur_tok = token::Interpolated((*other_whole_nt).clone());
+                                r.cur_tok = Interpolated((*other_whole_nt).clone());
                                 return ret_val;
                             }
                             MatchedSeq(..) => {

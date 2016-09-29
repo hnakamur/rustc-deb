@@ -12,6 +12,7 @@
 //! intrinsics that the compiler exposes.
 
 use intrinsics;
+use rustc::infer::TypeOrigin;
 use rustc::ty::subst::{self, Substs};
 use rustc::ty::FnSig;
 use rustc::ty::{self, Ty};
@@ -29,8 +30,8 @@ fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
                                    it: &hir::ForeignItem,
                                    n_tps: usize,
                                    abi: Abi,
-                                   inputs: Vec<ty::Ty<'tcx>>,
-                                   output: ty::FnOutput<'tcx>) {
+                                   inputs: Vec<Ty<'tcx>>,
+                                   output: Ty<'tcx>) {
     let tcx = ccx.tcx;
     let def_id = tcx.map.local_def_id(it.id);
     let i_ty = tcx.lookup_item_type(def_id);
@@ -50,16 +51,17 @@ fn equate_intrinsic_type<'a, 'tcx>(ccx: &CrateCtxt<'a, 'tcx>,
     }));
     let i_n_tps = i_ty.generics.types.len(subst::FnSpace);
     if i_n_tps != n_tps {
-        span_err!(tcx.sess, it.span, E0094,
+        struct_span_err!(tcx.sess, it.span, E0094,
             "intrinsic has wrong number of type \
              parameters: found {}, expected {}",
-             i_n_tps, n_tps);
+             i_n_tps, n_tps)
+             .span_label(it.span, &format!("expected {} type parameter", n_tps))
+             .emit();
     } else {
         require_same_types(ccx,
-                           it.span,
+                           TypeOrigin::IntrinsicType(it.span),
                            i_ty.ty,
-                           fty,
-                           "intrinsic has wrong type");
+                           fty);
     }
 }
 
@@ -97,14 +99,16 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
                 (0, Vec::new(), tcx.mk_nil())
             }
             op => {
-                span_err!(tcx.sess, it.span, E0092,
-                    "unrecognized atomic operation function: `{}`", op);
+                struct_span_err!(tcx.sess, it.span, E0092,
+                      "unrecognized atomic operation function: `{}`", op)
+                  .span_label(it.span, &format!("unrecognized atomic operation"))
+                  .emit();
                 return;
             }
         };
-        (n_tps, inputs, ty::FnConverging(output))
+        (n_tps, inputs, output)
     } else if &name[..] == "abort" || &name[..] == "unreachable" {
-        (0, Vec::new(), ty::FnDiverging)
+        (0, Vec::new(), tcx.types.never)
     } else {
         let (n_tps, inputs, output) = match &name[..] {
             "breakpoint" => (0, Vec::new(), tcx.mk_nil()),
@@ -275,8 +279,6 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
             "fadd_fast" | "fsub_fast" | "fmul_fast" | "fdiv_fast" | "frem_fast" =>
                 (1, vec![param(ccx, 0), param(ccx, 0)], param(ccx, 0)),
 
-            "return_address" => (0, vec![], tcx.mk_imm_ptr(tcx.types.u8)),
-
             "assume" => (0, vec![tcx.types.bool], tcx.mk_nil()),
 
             "discriminant_value" => (1, vec![
@@ -291,7 +293,7 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
                     abi: Abi::Rust,
                     sig: ty::Binder(FnSig {
                         inputs: vec![mut_u8],
-                        output: ty::FnOutput::FnConverging(tcx.mk_nil()),
+                        output: tcx.mk_nil(),
                         variadic: false,
                     }),
                 });
@@ -304,7 +306,7 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
                 return;
             }
         };
-        (n_tps, inputs, ty::FnConverging(output))
+        (n_tps, inputs, output)
     };
     equate_intrinsic_type(ccx, it, n_tps, Abi::RustIntrinsic, inputs, output)
 }
@@ -377,7 +379,7 @@ pub fn check_platform_intrinsic_type(ccx: &CrateCtxt,
                     }
                     match_intrinsic_type_to_type(ccx, "return value", it.span,
                                                  &mut structural_to_nomimal,
-                                                 &intr.output, sig.output.unwrap());
+                                                 &intr.output, sig.output);
                     return
                 }
                 None => {
@@ -390,7 +392,7 @@ pub fn check_platform_intrinsic_type(ccx: &CrateCtxt,
     };
 
     equate_intrinsic_type(ccx, it, n_tps, Abi::PlatformIntrinsic,
-                          inputs, ty::FnConverging(output))
+                          inputs, output)
 }
 
 // walk the expected type and the actual type in lock step, checking they're

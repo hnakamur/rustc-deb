@@ -25,7 +25,7 @@
 use rustc::mir::repr::*;
 use rustc::mir::visit::{LvalueContext, MutVisitor, Visitor};
 use rustc::mir::traversal::ReversePostorder;
-use rustc::ty::{self, TyCtxt};
+use rustc::ty::TyCtxt;
 use syntax_pos::Span;
 
 use build::Location;
@@ -87,8 +87,12 @@ impl<'tcx> Visitor<'tcx> for TempCollector {
         if let Lvalue::Temp(index) = *lvalue {
             // Ignore drops, if the temp gets promoted,
             // then it's constant and thus drop is noop.
-            if let LvalueContext::Drop = context {
-                return;
+            // Storage live ranges are also irrelevant.
+            match context {
+                LvalueContext::Drop |
+                LvalueContext::StorageLive |
+                LvalueContext::StorageDead => return,
+                _ => {}
             }
 
             let temp = &mut self.temps[index];
@@ -219,7 +223,13 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
         let (mut rvalue, mut call) = (None, None);
         let source_info = if stmt_idx < no_stmts {
             let statement = &mut self.source[bb].statements[stmt_idx];
-            let StatementKind::Assign(_, ref mut rhs) = statement.kind;
+            let rhs = match statement.kind {
+                StatementKind::Assign(_, ref mut rhs) => rhs,
+                _ => {
+                    span_bug!(statement.source_info.span, "{:?} is not an assignment",
+                              statement);
+                }
+            };
             if self.keep_original {
                 rvalue = Some(rhs.clone());
             } else {
@@ -293,17 +303,19 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
         let span = self.promoted.span;
         let new_operand = Operand::Constant(Constant {
             span: span,
-            ty: self.promoted.return_ty.unwrap(),
+            ty: self.promoted.return_ty,
             literal: Literal::Promoted {
                 index: Promoted::new(self.source.promoted.len())
             }
         });
         let mut rvalue = match candidate {
             Candidate::Ref(Location { block: bb, statement_index: stmt_idx }) => {
-                match self.source[bb].statements[stmt_idx].kind {
+                let ref mut statement = self.source[bb].statements[stmt_idx];
+                match statement.kind {
                     StatementKind::Assign(_, ref mut rvalue) => {
                         mem::replace(rvalue, Rvalue::Use(new_operand))
                     }
+                    _ => bug!()
                 }
             }
             Candidate::ShuffleIndices(bb) => {
@@ -340,20 +352,26 @@ pub fn promote_candidates<'a, 'tcx>(mir: &mut Mir<'tcx>,
         let (span, ty) = match candidate {
             Candidate::Ref(Location { block: bb, statement_index: stmt_idx }) => {
                 let statement = &mir[bb].statements[stmt_idx];
-                let StatementKind::Assign(ref dest, _) = statement.kind;
+                let dest = match statement.kind {
+                    StatementKind::Assign(ref dest, _) => dest,
+                    _ => {
+                        span_bug!(statement.source_info.span,
+                                  "expected assignment to promote");
+                    }
+                };
                 if let Lvalue::Temp(index) = *dest {
                     if temps[index] == TempState::PromotedOut {
                         // Already promoted.
                         continue;
                     }
                 }
-                (statement.source_info.span, mir.lvalue_ty(tcx, dest).to_ty(tcx))
+                (statement.source_info.span, dest.ty(mir, tcx).to_ty(tcx))
             }
             Candidate::ShuffleIndices(bb) => {
                 let terminator = mir[bb].terminator();
                 let ty = match terminator.kind {
                     TerminatorKind::Call { ref args, .. } => {
-                        mir.operand_ty(tcx, &args[2])
+                        args[2].ty(mir, tcx)
                     }
                     _ => {
                         span_bug!(terminator.source_info.span,
@@ -373,7 +391,7 @@ pub fn promote_candidates<'a, 'tcx>(mir: &mut Mir<'tcx>,
                     parent_scope: None
                 }).into_iter().collect(),
                 IndexVec::new(),
-                ty::FnConverging(ty),
+                ty,
                 IndexVec::new(),
                 IndexVec::new(),
                 IndexVec::new(),
@@ -392,7 +410,9 @@ pub fn promote_candidates<'a, 'tcx>(mir: &mut Mir<'tcx>,
     for block in mir.basic_blocks_mut() {
         block.statements.retain(|statement| {
             match statement.kind {
-                StatementKind::Assign(Lvalue::Temp(index), _) => {
+                StatementKind::Assign(Lvalue::Temp(index), _) |
+                StatementKind::StorageLive(Lvalue::Temp(index)) |
+                StatementKind::StorageDead(Lvalue::Temp(index)) => {
                     !promoted(index)
                 }
                 _ => true

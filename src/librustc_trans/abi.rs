@@ -229,6 +229,7 @@ impl ArgType {
 ///
 /// I will do my best to describe this structure, but these
 /// comments are reverse-engineered and may be inaccurate. -NDM
+#[derive(Clone)]
 pub struct FnType {
     /// The LLVM types of each argument.
     pub args: Vec<ArgType>,
@@ -325,10 +326,7 @@ impl FnType {
             }
         };
 
-        let ret_ty = match sig.output {
-            ty::FnConverging(ret_ty) => ret_ty,
-            ty::FnDiverging => ccx.tcx().mk_nil()
-        };
+        let ret_ty = sig.output;
         let mut ret = arg_of(ret_ty, true);
 
         if !type_is_fat_ptr(ccx.tcx(), ret_ty) {
@@ -469,7 +467,7 @@ impl FnType {
             };
             // Fat pointers are returned by-value.
             if !self.ret.is_ignore() {
-                if !type_is_fat_ptr(ccx.tcx(), sig.output.unwrap()) {
+                if !type_is_fat_ptr(ccx.tcx(), sig.output) {
                     fixup(&mut self.ret);
                 }
             }
@@ -551,13 +549,13 @@ impl FnType {
     pub fn apply_attrs_llfn(&self, llfn: ValueRef) {
         let mut i = if self.ret.is_indirect() { 1 } else { 0 };
         if !self.ret.is_ignore() {
-            self.ret.attrs.apply_llfn(i, llfn);
+            self.ret.attrs.apply_llfn(llvm::AttributePlace::Argument(i), llfn);
         }
         i += 1;
         for arg in &self.args {
             if !arg.is_ignore() {
                 if arg.pad.is_some() { i += 1; }
-                arg.attrs.apply_llfn(i, llfn);
+                arg.attrs.apply_llfn(llvm::AttributePlace::Argument(i), llfn);
                 i += 1;
             }
         }
@@ -566,13 +564,13 @@ impl FnType {
     pub fn apply_attrs_callsite(&self, callsite: ValueRef) {
         let mut i = if self.ret.is_indirect() { 1 } else { 0 };
         if !self.ret.is_ignore() {
-            self.ret.attrs.apply_callsite(i, callsite);
+            self.ret.attrs.apply_callsite(llvm::AttributePlace::Argument(i), callsite);
         }
         i += 1;
         for arg in &self.args {
             if !arg.is_ignore() {
                 if arg.pad.is_some() { i += 1; }
-                arg.attrs.apply_callsite(i, callsite);
+                arg.attrs.apply_callsite(llvm::AttributePlace::Argument(i), callsite);
                 i += 1;
             }
         }

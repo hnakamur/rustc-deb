@@ -50,7 +50,10 @@ pub struct ParseSess {
 impl ParseSess {
     pub fn new() -> ParseSess {
         let cm = Rc::new(CodeMap::new());
-        let handler = Handler::with_tty_emitter(ColorConfig::Auto, None, true, false, cm.clone());
+        let handler = Handler::with_tty_emitter(ColorConfig::Auto,
+                                                true,
+                                                false,
+                                                Some(cm.clone()));
         ParseSess::with_span_handler(handler, cm)
     }
 
@@ -224,8 +227,16 @@ pub fn filemap_to_parser<'a>(sess: &'a ParseSess,
 // compiler expands into it
 pub fn new_parser_from_tts<'a>(sess: &'a ParseSess,
                                cfg: ast::CrateConfig,
-                               tts: Vec<tokenstream::TokenTree>) -> Parser<'a> {
+                               tts: Vec<tokenstream::TokenTree>)
+                               -> Parser<'a> {
     tts_to_parser(sess, tts, cfg)
+}
+
+pub fn new_parser_from_ts<'a>(sess: &'a ParseSess,
+                              cfg: ast::CrateConfig,
+                              ts: tokenstream::TokenStream)
+                              -> Parser<'a> {
+    tts_to_parser(sess, ts.to_tts(), cfg)
 }
 
 
@@ -662,6 +673,7 @@ pub fn integer_lit(s: &str,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
     use syntax_pos::{Span, BytePos, Pos, NO_EXPANSION};
     use codemap::Spanned;
     use ast::{self, PatKind};
@@ -763,7 +775,7 @@ mod tests {
                             )
                             if first_delimed.delim == token::Paren
                             && ident.name.as_str() == "a" => {},
-                            _ => panic!("value 3: {:?}", *first_delimed),
+                            _ => panic!("value 3: {:?}", **first_delimed),
                         }
                         let tts = &second_delimed.tts[..];
                         match (tts.len(), tts.get(0), tts.get(1)) {
@@ -774,10 +786,10 @@ mod tests {
                             )
                             if second_delimed.delim == token::Paren
                             && ident.name.as_str() == "a" => {},
-                            _ => panic!("value 4: {:?}", *second_delimed),
+                            _ => panic!("value 4: {:?}", **second_delimed),
                         }
                     },
-                    _ => panic!("value 2: {:?}", *macro_delimed),
+                    _ => panic!("value 2: {:?}", **macro_delimed),
                 }
             },
             _ => panic!("value: {:?}",tts),
@@ -793,7 +805,7 @@ mod tests {
             TokenTree::Token(sp(3, 4), token::Ident(str_to_ident("a"))),
             TokenTree::Delimited(
                 sp(5, 14),
-                tokenstream::Delimited {
+                Rc::new(tokenstream::Delimited {
                     delim: token::DelimToken::Paren,
                     open_span: sp(5, 6),
                     tts: vec![
@@ -802,10 +814,10 @@ mod tests {
                         TokenTree::Token(sp(10, 13), token::Ident(str_to_ident("i32"))),
                     ],
                     close_span: sp(13, 14),
-                }),
+                })),
             TokenTree::Delimited(
                 sp(15, 21),
-                tokenstream::Delimited {
+                Rc::new(tokenstream::Delimited {
                     delim: token::DelimToken::Brace,
                     open_span: sp(15, 16),
                     tts: vec![
@@ -813,7 +825,7 @@ mod tests {
                         TokenTree::Token(sp(18, 19), token::Semi),
                     ],
                     close_span: sp(20, 21),
-                })
+                }))
         ];
 
         assert_eq!(tts, expected);

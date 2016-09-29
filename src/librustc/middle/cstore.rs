@@ -44,7 +44,7 @@ use syntax::parse::token::InternedString;
 use syntax_pos::Span;
 use rustc_back::target::Target;
 use hir;
-use hir::intravisit::{IdVisitor, IdVisitingOperation, Visitor};
+use hir::intravisit::Visitor;
 
 pub use self::DefLike::{DlDef, DlField, DlImpl};
 pub use self::NativeLibraryKind::{NativeStatic, NativeFramework, NativeUnknown};
@@ -73,7 +73,7 @@ pub enum LinkagePreference {
 }
 
 enum_from_u32! {
-    #[derive(Copy, Clone, PartialEq)]
+    #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub enum NativeLibraryKind {
         NativeStatic,    // native static library (.a archive)
         NativeFramework, // OSX-specific
@@ -94,19 +94,19 @@ pub enum DefLike {
 /// that we trans.
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum InlinedItem {
-    Item(P<hir::Item>),
+    Item(DefId /* def-id in source crate */, P<hir::Item>),
     TraitItem(DefId /* impl id */, P<hir::TraitItem>),
     ImplItem(DefId /* impl id */, P<hir::ImplItem>),
-    Foreign(P<hir::ForeignItem>),
+    Foreign(DefId /* extern item */, P<hir::ForeignItem>),
 }
 
 /// A borrowed version of `hir::InlinedItem`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum InlinedItemRef<'a> {
-    Item(&'a hir::Item),
+    Item(DefId, &'a hir::Item),
     TraitItem(DefId, &'a hir::TraitItem),
     ImplItem(DefId, &'a hir::ImplItem),
-    Foreign(&'a hir::ForeignItem)
+    Foreign(DefId, &'a hir::ForeignItem)
 }
 
 /// Item definitions in the currently-compiled crate would have the CrateNum
@@ -118,12 +118,6 @@ pub struct ChildItem {
     pub def: DefLike,
     pub name: ast::Name,
     pub vis: ty::Visibility,
-}
-
-pub enum FoundAst<'ast> {
-    Found(&'ast InlinedItem),
-    FoundParent(DefId, &'ast hir::Item),
-    NotFound,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -250,7 +244,10 @@ pub trait CrateStore<'tcx> {
 
     // misc. metadata
     fn maybe_get_item_ast<'a>(&'tcx self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
-                              -> FoundAst<'tcx>;
+                              -> Option<(&'tcx InlinedItem, ast::NodeId)>;
+    fn local_node_for_inlined_defid(&'tcx self, def_id: DefId) -> Option<ast::NodeId>;
+    fn defid_for_inlined_node(&'tcx self, node_id: ast::NodeId) -> Option<DefId>;
+
     fn maybe_get_item_mir<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
                               -> Option<Mir<'tcx>>;
     fn is_item_mir_available(&self, def: DefId) -> bool;
@@ -286,16 +283,11 @@ impl InlinedItem {
         where V: Visitor<'ast>
     {
         match *self {
-            InlinedItem::Item(ref i) => visitor.visit_item(&i),
-            InlinedItem::Foreign(ref i) => visitor.visit_foreign_item(&i),
+            InlinedItem::Item(_, ref i) => visitor.visit_item(&i),
+            InlinedItem::Foreign(_, ref i) => visitor.visit_foreign_item(&i),
             InlinedItem::TraitItem(_, ref ti) => visitor.visit_trait_item(ti),
             InlinedItem::ImplItem(_, ref ii) => visitor.visit_impl_item(ii),
         }
-    }
-
-    pub fn visit_ids<O: IdVisitingOperation>(&self, operation: &mut O) {
-        let mut id_visitor = IdVisitor::new(operation);
-        self.visit(&mut id_visitor);
     }
 }
 
@@ -452,7 +444,16 @@ impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
 
     // misc. metadata
     fn maybe_get_item_ast<'a>(&'tcx self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
-                              -> FoundAst<'tcx> { bug!("maybe_get_item_ast") }
+                              -> Option<(&'tcx InlinedItem, ast::NodeId)> {
+        bug!("maybe_get_item_ast")
+    }
+    fn local_node_for_inlined_defid(&'tcx self, def_id: DefId) -> Option<ast::NodeId> {
+        bug!("local_node_for_inlined_defid")
+    }
+    fn defid_for_inlined_node(&'tcx self, node_id: ast::NodeId) -> Option<DefId> {
+        bug!("defid_for_inlined_node")
+    }
+
     fn maybe_get_item_mir<'a>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, def: DefId)
                               -> Option<Mir<'tcx>> { bug!("maybe_get_item_mir") }
     fn is_item_mir_available(&self, def: DefId) -> bool {

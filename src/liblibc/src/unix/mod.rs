@@ -55,9 +55,7 @@ s! {
         pub ru_nvcsw: c_long,
         pub ru_nivcsw: c_long,
 
-        #[cfg(any(target_env = "musl",
-                  target_env = "musleabi",
-                  target_env = "musleabihf"))]
+        #[cfg(any(target_env = "musl"))]
         __reserved: [c_long; 16],
     }
 
@@ -108,6 +106,11 @@ s! {
         pub ws_col: ::c_ushort,
         pub ws_xpixel: ::c_ushort,
         pub ws_ypixel: ::c_ushort,
+    }
+
+    pub struct linger {
+        pub l_onoff: ::c_int,
+        pub l_linger: ::c_int,
     }
 }
 
@@ -194,9 +197,7 @@ cfg_if! {
     } else if #[cfg(all(not(stdbuild), feature = "use_std"))] {
         // cargo build, don't pull in anything extra as the libstd  dep
         // already pulls in all libs.
-    } else if #[cfg(any(all(target_env = "musl", not(target_arch = "mips")),
-                        target_env = "musleabi",
-                        target_env = "musleabihf"))] {
+    } else if #[cfg(any(all(target_env = "musl", not(target_arch = "mips"))))] {
         #[link(name = "c", kind = "static")]
         extern {}
     } else if #[cfg(target_os = "emscripten")] {
@@ -335,6 +336,10 @@ extern {
     pub fn chdir(dir: *const c_char) -> ::c_int;
     pub fn chown(path: *const c_char, uid: uid_t,
                  gid: gid_t) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "lchown$UNIX2003")]
+    pub fn lchown(path: *const c_char, uid: uid_t,
+                  gid: gid_t) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "close$UNIX2003")]
     pub fn close(fd: ::c_int) -> ::c_int;
@@ -530,6 +535,10 @@ extern {
                                      _type: ::c_int) -> ::c_int;
 
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "pthread_cond_init$UNIX2003")]
+    pub fn pthread_cond_init(cond: *mut pthread_cond_t,
+                             attr: *const pthread_condattr_t) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "pthread_cond_wait$UNIX2003")]
     pub fn pthread_cond_wait(cond: *mut pthread_cond_t,
                              lock: *mut pthread_mutex_t) -> ::c_int;
@@ -541,6 +550,8 @@ extern {
     pub fn pthread_cond_signal(cond: *mut pthread_cond_t) -> ::c_int;
     pub fn pthread_cond_broadcast(cond: *mut pthread_cond_t) -> ::c_int;
     pub fn pthread_cond_destroy(cond: *mut pthread_cond_t) -> ::c_int;
+    pub fn pthread_condattr_init(attr: *mut pthread_condattr_t) -> ::c_int;
+    pub fn pthread_condattr_destroy(attr: *mut pthread_condattr_t) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "pthread_rwlock_destroy$UNIX2003")]
     pub fn pthread_rwlock_destroy(lock: *mut pthread_rwlock_t) -> ::c_int;
@@ -673,6 +684,20 @@ extern {
     pub fn setlocale(category: ::c_int,
                      locale: *const ::c_char) -> *mut ::c_char;
     pub fn localeconv() -> *mut lconv;
+
+    pub fn sem_destroy(sem: *mut sem_t) -> ::c_int;
+    pub fn sem_open(name: *const ::c_char, oflag: ::c_int, ...) -> *mut sem_t;
+    pub fn sem_close(sem: *mut sem_t) -> ::c_int;
+    pub fn sem_unlink(name: *const ::c_char) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "sem_wait$UNIX2003")]
+    pub fn sem_wait(sem: *mut sem_t) -> ::c_int;
+    pub fn sem_trywait(sem: *mut sem_t) -> ::c_int;
+    pub fn sem_post(sem: *mut sem_t) -> ::c_int;
+    pub fn sem_init(sem: *mut sem_t,
+                    pshared: ::c_int,
+                    value: ::c_uint)
+                    -> ::c_int;
 }
 
 // TODO: get rid of this cfg(not(...))

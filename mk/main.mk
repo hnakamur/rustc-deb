@@ -13,35 +13,12 @@
 ######################################################################
 
 # The version number
-CFG_RELEASE_NUM=1.11.0
+CFG_RELEASE_NUM=1.12.0
 
 # An optional number to put after the label, e.g. '.2' -> '-beta.2'
 # NB Make sure it starts with a dot to conform to semver pre-release
 # versions (section 9)
-CFG_PRERELEASE_VERSION=.3
-
-# Append a version-dependent hash to each library, so we can install different
-# versions in the same place
-CFG_FILENAME_EXTRA=$(shell printf '%s' $(CFG_RELEASE)$(CFG_EXTRA_FILENAME) | $(CFG_HASH_COMMAND))
-
-# A magic value that allows the compiler to use unstable features during the
-# bootstrap even when doing so would normally be an error because of feature
-# staging or because the build turns on warnings-as-errors and unstable features
-# default to warnings. The build has to match this key in an env var.
-#
-# This value is keyed off the release to ensure that all compilers for one
-# particular release have the same bootstrap key. Note that this is
-# intentionally not "secure" by any definition, this is largely just a deterrent
-# from users enabling unstable features on the stable compiler.
-CFG_BOOTSTRAP_KEY=$(CFG_FILENAME_EXTRA)
-
-# The stage0 compiler needs to use the previous key recorded in src/stage0.txt,
-# except for local-rebuild when it just uses the same current key.
-ifdef CFG_ENABLE_LOCAL_REBUILD
-CFG_BOOTSTRAP_KEY_STAGE0=$(CFG_BOOTSTRAP_KEY)
-else
-CFG_BOOTSTRAP_KEY_STAGE0=$(shell grep 'rustc_key' $(S)src/stage0.txt | sed 's/rustc_key: '//)
-endif
+CFG_PRERELEASE_VERSION=.6
 
 ifeq ($(CFG_RELEASE_CHANNEL),stable)
 # This is the normal semver version string, e.g. "0.12.0", "0.12.0-nightly"
@@ -70,6 +47,38 @@ endif
 ifeq ($(CFG_RELEASE_CHANNEL),dev)
 CFG_RELEASE=$(CFG_RELEASE_NUM)-dev
 CFG_PACKAGE_VERS=$(CFG_RELEASE_NUM)-dev
+endif
+
+# Append a version-dependent hash to each library, so we can install different
+# versions in the same place
+CFG_FILENAME_EXTRA=$(shell printf '%s' $(CFG_RELEASE)$(CFG_EXTRA_FILENAME) | $(CFG_HASH_COMMAND))
+
+# A magic value that allows the compiler to use unstable features during the
+# bootstrap even when doing so would normally be an error because of feature
+# staging or because the build turns on warnings-as-errors and unstable features
+# default to warnings. The build has to match this key in an env var.
+#
+# This value is keyed off the release to ensure that all compilers for one
+# particular release have the same bootstrap key. Note that this is
+# intentionally not "secure" by any definition, this is largely just a deterrent
+# from users enabling unstable features on the stable compiler.
+CFG_BOOTSTRAP_KEY=$(CFG_FILENAME_EXTRA)
+
+# If local-rust is the same as the current version, then force a local-rebuild
+ifdef CFG_ENABLE_LOCAL_RUST
+ifeq ($(CFG_RELEASE),\
+      $(shell $(S)src/etc/local_stage0.sh --print-rustc-release $(CFG_LOCAL_RUST_ROOT)))
+    CFG_INFO := $(info cfg: auto-detected local-rebuild $(CFG_RELEASE))
+    CFG_ENABLE_LOCAL_REBUILD = 1
+endif
+endif
+
+# The stage0 compiler needs to use the previous key recorded in src/stage0.txt,
+# except for local-rebuild when it just uses the same current key.
+ifdef CFG_ENABLE_LOCAL_REBUILD
+CFG_BOOTSTRAP_KEY_STAGE0=$(CFG_BOOTSTRAP_KEY)
+else
+CFG_BOOTSTRAP_KEY_STAGE0=$(shell sed -ne 's/^rustc_key: //p' $(S)src/stage0.txt)
 endif
 
 # The name of the package to use for creating tarballs, installers etc.
@@ -153,9 +162,10 @@ ifdef CFG_ENABLE_DEBUGINFO
   CFG_RUSTC_FLAGS += -g
 endif
 
-ifdef CFG_ENABLE_ORBIT
-  $(info cfg: launching MIR (CFG_ENABLE_ORBIT))
-  CFG_RUSTC_FLAGS += -Z orbit
+ifdef CFG_DISABLE_ORBIT
+  $(info cfg: HOLD HOLD HOLD (CFG_DISABLE_ORBIT))
+  RUSTFLAGS_STAGE1 += -Z orbit=off
+  RUSTFLAGS_STAGE2 += -Z orbit=off
 endif
 
 ifdef SAVE_TEMPS

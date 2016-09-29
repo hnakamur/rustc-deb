@@ -23,6 +23,7 @@ use common::{C_bool, C_str_slice, C_struct, C_u32, C_undef};
 use consts;
 use debuginfo::DebugLoc;
 use Disr;
+use expr;
 use machine::{llalign_of_min, llbitsize_of_real};
 use meth;
 use type_of;
@@ -230,7 +231,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
 
             mir::TerminatorKind::Drop { ref location, target, unwind } => {
-                let ty = mir.lvalue_ty(bcx.tcx(), location).to_ty(bcx.tcx());
+                let ty = location.ty(&mir, bcx.tcx()).to_ty(bcx.tcx());
                 let ty = bcx.monomorphize(&ty);
 
                 // Double check for necessity to drop
@@ -242,10 +243,28 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 let lvalue = self.trans_lvalue(&bcx, location);
                 let drop_fn = glue::get_drop_glue(bcx.ccx(), ty);
                 let drop_ty = glue::get_drop_glue_type(bcx.tcx(), ty);
-                let llvalue = if drop_ty != ty {
-                    bcx.pointercast(lvalue.llval, type_of::type_of(bcx.ccx(), drop_ty).ptr_to())
+                let is_sized = common::type_is_sized(bcx.tcx(), ty);
+                let llvalue = if is_sized {
+                    if drop_ty != ty {
+                        bcx.pointercast(lvalue.llval, type_of::type_of(bcx.ccx(), drop_ty).ptr_to())
+                    } else {
+                        lvalue.llval
+                    }
                 } else {
-                    lvalue.llval
+                    // FIXME(#36457) Currently drop glue takes sized
+                    // values as a `*(data, meta)`, but elsewhere in
+                    // MIR we pass `(data, meta)` as two separate
+                    // arguments. It would be better to fix drop glue,
+                    // but I am shooting for a quick fix to #35546
+                    // here that can be cleanly backported to beta, so
+                    // I want to avoid touching all of trans.
+                    bcx.with_block(|bcx| {
+                        let scratch = base::alloc_ty(bcx, ty, "drop");
+                        base::call_lifetime_start(bcx, scratch);
+                        build::Store(bcx, lvalue.llval, expr::get_dataptr(bcx, scratch));
+                        build::Store(bcx, lvalue.llextra, expr::get_meta(bcx, scratch));
+                        scratch
+                    })
                 };
                 if let Some(unwind) = unwind {
                     bcx.invoke(drop_fn,
@@ -261,7 +280,23 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
             mir::TerminatorKind::Assert { ref cond, expected, ref msg, target, cleanup } => {
                 let cond = self.trans_operand(&bcx, cond).immediate();
-                let const_cond = common::const_to_opt_uint(cond).map(|c| c == 1);
+                let mut const_cond = common::const_to_opt_uint(cond).map(|c| c == 1);
+
+                // This case can currently arise only from functions marked
+                // with #[rustc_inherit_overflow_checks] and inlined from
+                // another crate (mostly core::num generic/#[inline] fns),
+                // while the current crate doesn't use overflow checks.
+                // NOTE: Unlike binops, negation doesn't have its own
+                // checked operation, just a comparison with the minimum
+                // value, so we have to check for the assert message.
+                if !bcx.ccx().check_overflow() {
+                    use rustc_const_math::ConstMathErr::Overflow;
+                    use rustc_const_math::Op::Neg;
+
+                    if let mir::AssertMessage::Math(Overflow(Neg)) = *msg {
+                        const_cond = Some(expected);
+                    }
+                }
 
                 // Don't translate the panic block if success if known.
                 if const_cond == Some(expected) {
@@ -284,6 +319,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
                 // After this point, bcx is the block for the call to panic.
                 bcx = panic_block.build();
+                debug_loc.apply_to_bcx(&bcx);
 
                 // Get the location information.
                 let loc = bcx.sess().codemap().lookup_char_pos(span.lo);
@@ -416,7 +452,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
                 let extra_args = &args[sig.inputs.len()..];
                 let extra_args = extra_args.iter().map(|op_arg| {
-                    let op_ty = self.mir.operand_ty(bcx.tcx(), op_arg);
+                    let op_ty = op_arg.ty(&self.mir, bcx.tcx());
                     bcx.monomorphize(&op_ty)
                 }).collect::<Vec<_>>();
                 let fn_ty = callee.direct_fn_type(bcx.ccx(), &extra_args);
@@ -508,7 +544,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                             // Make a fake operand for store_return
                             let op = OperandRef {
                                 val: Ref(dst),
-                                ty: sig.output.unwrap()
+                                ty: sig.output,
                             };
                             self.store_return(&bcx, ret_dest, fn_ty.ret, op);
                         }
@@ -546,7 +582,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                             debug_loc.apply_to_bcx(ret_bcx);
                             let op = OperandRef {
                                 val: Immediate(invokeret),
-                                ty: sig.output.unwrap()
+                                ty: sig.output,
                             };
                             self.store_return(&ret_bcx, ret_dest, fn_ty.ret, op);
                         });
@@ -557,7 +593,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                     if let Some((_, target)) = *destination {
                         let op = OperandRef {
                             val: Immediate(llret),
-                            ty: sig.output.unwrap()
+                            ty: sig.output,
                         };
                         self.store_return(&bcx, ret_dest, fn_ty.ret, op);
                         funclet_br(self, bcx, target);
@@ -811,7 +847,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             return ReturnDest::Nothing;
         }
         let dest = if let Some(index) = self.mir.local_index(dest) {
-            let ret_ty = self.lvalue_ty(dest);
+            let ret_ty = self.monomorphized_lvalue_ty(dest);
             match self.locals[index] {
                 LocalRef::Lvalue(dest) => dest,
                 LocalRef::Operand(None) => {

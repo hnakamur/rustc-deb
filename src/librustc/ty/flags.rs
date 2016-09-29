@@ -60,6 +60,7 @@ impl FlagComputation {
             &ty::TyInt(_) |
             &ty::TyFloat(_) |
             &ty::TyUint(_) |
+            &ty::TyNever |
             &ty::TyStr => {
             }
 
@@ -108,6 +109,11 @@ impl FlagComputation {
             &ty::TyProjection(ref data) => {
                 self.add_flags(TypeFlags::HAS_PROJECTION);
                 self.add_projection_ty(data);
+            }
+
+            &ty::TyAnon(_, substs) => {
+                self.add_flags(TypeFlags::HAS_PROJECTION);
+                self.add_substs(substs);
             }
 
             &ty::TyTrait(box ty::TraitTy { ref principal, ref bounds }) => {
@@ -166,10 +172,7 @@ impl FlagComputation {
         let mut computation = FlagComputation::new();
 
         computation.add_tys(&fn_sig.0.inputs);
-
-        if let ty::FnConverging(output) = fn_sig.0.output {
-            computation.add_ty(output);
-        }
+        computation.add_ty(fn_sig.0.output);
 
         self.add_bound_computation(&computation);
     }

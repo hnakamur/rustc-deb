@@ -504,6 +504,9 @@ impl<'a> State<'a> {
                 self.print_opt_lifetime(lifetime)?;
                 self.print_mt(mt)?;
             }
+            hir::TyNever => {
+                word(&mut self.s, "!")?;
+            },
             hir::TyTup(ref elts) => {
                 self.popen()?;
                 self.commasep(Inconsistent, &elts[..], |s, ty| s.print_type(&ty))?;
@@ -535,6 +538,9 @@ impl<'a> State<'a> {
             }
             hir::TyPolyTraitRef(ref bounds) => {
                 self.print_bounds("", &bounds[..])?;
+            }
+            hir::TyImplTrait(ref bounds) => {
+                self.print_bounds("impl ", &bounds[..])?;
             }
             hir::TyFixedLengthVec(ref ty, ref v) => {
                 word(&mut self.s, "[")?;
@@ -1750,10 +1756,10 @@ impl<'a> State<'a> {
                 }
                 try!(self.pclose());
             }
-            PatKind::Path(ref path) => {
+            PatKind::Path(None, ref path) => {
                 self.print_path(path, true, 0)?;
             }
-            PatKind::QPath(ref qself, ref path) => {
+            PatKind::Path(Some(ref qself), ref path) => {
                 self.print_qpath(path, qself, false)?;
             }
             PatKind::Struct(ref path, ref fields, etc) => {
@@ -1956,10 +1962,6 @@ impl<'a> State<'a> {
                 self.maybe_print_comment(ty.span.lo)
             }
             hir::DefaultReturn(..) => unreachable!(),
-            hir::NoReturn(span) => {
-                self.word_nbsp("!")?;
-                self.maybe_print_comment(span.lo)
-            }
         }
     }
 
@@ -2192,7 +2194,6 @@ impl<'a> State<'a> {
         self.ibox(indent_unit)?;
         self.word_space("->")?;
         match decl.output {
-            hir::NoReturn(_) => self.word_nbsp("!")?,
             hir::DefaultReturn(..) => unreachable!(),
             hir::Return(ref ty) => self.print_type(&ty)?,
         }

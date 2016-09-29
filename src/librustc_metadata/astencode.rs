@@ -18,7 +18,7 @@ use rustc::session::Session;
 use rustc::hir;
 use rustc::hir::fold;
 use rustc::hir::fold::Folder;
-use rustc::hir::intravisit::{IdRange, IdRangeComputingVisitor, IdVisitingOperation};
+use rustc::hir::intravisit::{Visitor, IdRangeComputingVisitor, IdRange};
 
 use common as c;
 use cstore;
@@ -78,8 +78,8 @@ pub fn encode_inlined_item(ecx: &e::EncodeContext,
                            rbml_w: &mut Encoder,
                            ii: InlinedItemRef) {
     let id = match ii {
-        InlinedItemRef::Item(i) => i.id,
-        InlinedItemRef::Foreign(i) => i.id,
+        InlinedItemRef::Item(_, i) => i.id,
+        InlinedItemRef::Foreign(_, i) => i.id,
         InlinedItemRef::TraitItem(_, ti) => ti.id,
         InlinedItemRef::ImplItem(_, ii) => ii.id,
     };
@@ -88,8 +88,9 @@ pub fn encode_inlined_item(ecx: &e::EncodeContext,
            rbml_w.writer.seek(SeekFrom::Current(0)));
 
     // Folding could be avoided with a smarter encoder.
-    let ii = simplify_ast(ii);
+    let (ii, expected_id_range) = simplify_ast(ii);
     let id_range = inlined_item_id_range(&ii);
+    assert_eq!(expected_id_range, id_range);
 
     rbml_w.start_tag(c::tag_ast as usize);
     id_range.encode(rbml_w);
@@ -145,8 +146,8 @@ pub fn decode_inlined_item<'a, 'tcx>(cdata: &cstore::CrateMetadata,
                                        decode_ast(ast_doc),
                                        dcx);
     let name = match *ii {
-        InlinedItem::Item(ref i) => i.name,
-        InlinedItem::Foreign(ref i) => i.name,
+        InlinedItem::Item(_, ref i) => i.name,
+        InlinedItem::Foreign(_, ref i) => i.name,
         InlinedItem::TraitItem(_, ref ti) => ti.name,
         InlinedItem::ImplItem(_, ref ii) => ii.name
     };
@@ -157,7 +158,7 @@ pub fn decode_inlined_item<'a, 'tcx>(cdata: &cstore::CrateMetadata,
     region::resolve_inlined_item(&tcx.sess, &tcx.region_maps, ii);
     decode_side_tables(dcx, ast_doc);
     copy_item_types(dcx, ii, orig_did);
-    if let InlinedItem::Item(ref i) = *ii {
+    if let InlinedItem::Item(_, ref i) = *ii {
         debug!(">>> DECODED ITEM >>>\n{}\n<<< DECODED ITEM <<<",
                ::rustc::hir::print::item_to_string(&i));
     }
@@ -186,6 +187,10 @@ impl<'a, 'b, 'tcx> DecodeContext<'a, 'b, 'tcx> {
     pub fn tr_id(&self, id: ast::NodeId) -> ast::NodeId {
         // from_id_range should be non-empty
         assert!(!self.from_id_range.empty());
+        // Make sure that translating the NodeId will actually yield a
+        // meaningful result
+        assert!(self.from_id_range.contains(id));
+
         // Use wrapping arithmetic because otherwise it introduces control flow.
         // Maybe we should just have the control flow? -- aatch
         (id.wrapping_sub(self.from_id_range.min).wrapping_add(self.to_id_range.min))
@@ -279,9 +284,23 @@ fn encode_ast(rbml_w: &mut Encoder, item: &InlinedItem) {
     rbml_w.end_tag();
 }
 
-struct NestedItemsDropper;
+struct NestedItemsDropper {
+    id_range: IdRange
+}
 
 impl Folder for NestedItemsDropper {
+
+    // The unit tests below run on HIR with NodeIds not properly assigned. That
+    // causes an integer overflow. So we just don't track the id_range when
+    // building the unit tests.
+    #[cfg(not(test))]
+    fn new_id(&mut self, id: ast::NodeId) -> ast::NodeId {
+        // Record the range of NodeIds we are visiting, so we can do a sanity
+        // check later
+        self.id_range.add(id);
+        id
+    }
+
     fn fold_block(&mut self, blk: P<hir::Block>) -> P<hir::Block> {
         blk.and_then(|hir::Block {id, stmts, expr, rules, span, ..}| {
             let stmts_sans_items = stmts.into_iter().filter_map(|stmt| {
@@ -322,13 +341,15 @@ impl Folder for NestedItemsDropper {
 // As it happens, trans relies on the fact that we do not export
 // nested items, as otherwise it would get confused when translating
 // inlined items.
-fn simplify_ast(ii: InlinedItemRef) -> InlinedItem {
-    let mut fld = NestedItemsDropper;
+fn simplify_ast(ii: InlinedItemRef) -> (InlinedItem, IdRange) {
+    let mut fld = NestedItemsDropper {
+        id_range: IdRange::max()
+    };
 
-    match ii {
+    let ii = match ii {
         // HACK we're not dropping items.
-        InlinedItemRef::Item(i) => {
-            InlinedItem::Item(P(fold::noop_fold_item(i.clone(), &mut fld)))
+        InlinedItemRef::Item(d, i) => {
+            InlinedItem::Item(d, P(fold::noop_fold_item(i.clone(), &mut fld)))
         }
         InlinedItemRef::TraitItem(d, ti) => {
             InlinedItem::TraitItem(d, P(fold::noop_fold_trait_item(ti.clone(), &mut fld)))
@@ -336,10 +357,12 @@ fn simplify_ast(ii: InlinedItemRef) -> InlinedItem {
         InlinedItemRef::ImplItem(d, ii) => {
             InlinedItem::ImplItem(d, P(fold::noop_fold_impl_item(ii.clone(), &mut fld)))
         }
-        InlinedItemRef::Foreign(i) => {
-            InlinedItem::Foreign(P(fold::noop_fold_foreign_item(i.clone(), &mut fld)))
+        InlinedItemRef::Foreign(d, i) => {
+            InlinedItem::Foreign(d, P(fold::noop_fold_foreign_item(i.clone(), &mut fld)))
         }
-    }
+    };
+
+    (ii, fld.id_range)
 }
 
 fn decode_ast(item_doc: rbml::Doc) -> InlinedItem {
@@ -361,8 +384,18 @@ impl tr for Def {
         match *self {
           Def::Fn(did) => Def::Fn(did.tr(dcx)),
           Def::Method(did) => Def::Method(did.tr(dcx)),
-          Def::SelfTy(opt_did, impl_id) => { Def::SelfTy(opt_did.map(|did| did.tr(dcx)),
-                                                         impl_id.map(|id| dcx.tr_id(id))) }
+          Def::SelfTy(opt_did, impl_id) => {
+              // Since the impl_id will never lie within the reserved range of
+              // imported NodeIds, it does not make sense to translate it.
+              // The result would not make any sense within the importing crate.
+              // We also don't allow for impl items to be inlined (just their
+              // members), so even if we had a DefId here, we wouldn't be able
+              // to do much with it.
+              // So, we set the id to DUMMY_NODE_ID. That way we make it
+              // explicit that this is no usable NodeId.
+              Def::SelfTy(opt_did.map(|did| did.tr(dcx)),
+                          impl_id.map(|_| ast::DUMMY_NODE_ID))
+          }
           Def::Mod(did) => { Def::Mod(did.tr(dcx)) }
           Def::ForeignMod(did) => { Def::ForeignMod(did.tr(dcx)) }
           Def::Static(did, m) => { Def::Static(did.tr(dcx), m) }
@@ -611,6 +644,12 @@ impl<'a, 'tcx> rbml_writer_helpers<'tcx> for Encoder<'a> {
                             |this| Ok(this.emit_auto_deref_ref(ecx, auto_deref_ref)))
                     })
                 }
+
+                adjustment::AdjustNeverToAny(ref ty) => {
+                    this.emit_enum_variant("AdjustNeverToAny", 5, 1, |this| {
+                        this.emit_enum_variant_arg(0, |this| Ok(this.emit_ty(ecx, ty)))
+                    })
+                }
             }
         });
     }
@@ -693,7 +732,7 @@ struct SideTableEncodingIdVisitor<'a, 'b:'a, 'c:'a, 'tcx:'c> {
     rbml_w: &'a mut Encoder<'b>,
 }
 
-impl<'a, 'b, 'c, 'tcx> IdVisitingOperation for
+impl<'a, 'b, 'c, 'tcx, 'v> Visitor<'v> for
         SideTableEncodingIdVisitor<'a, 'b, 'c, 'tcx> {
     fn visit_id(&mut self, id: ast::NodeId) {
         encode_side_tables_for_id(self.ecx, self.rbml_w, id)
@@ -704,7 +743,7 @@ fn encode_side_tables_for_ii(ecx: &e::EncodeContext,
                              rbml_w: &mut Encoder,
                              ii: &InlinedItem) {
     rbml_w.start_tag(c::tag_table as usize);
-    ii.visit_ids(&mut SideTableEncodingIdVisitor {
+    ii.visit(&mut SideTableEncodingIdVisitor {
         ecx: ecx,
         rbml_w: rbml_w
     });
@@ -984,7 +1023,8 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
                                     -> adjustment::AutoAdjustment<'tcx> {
         self.read_enum("AutoAdjustment", |this| {
             let variants = ["AdjustReifyFnPointer", "AdjustUnsafeFnPointer",
-                            "AdjustMutToConstPointer", "AdjustDerefRef"];
+                            "AdjustMutToConstPointer", "AdjustDerefRef",
+                            "AdjustNeverToAny"];
             this.read_enum_variant(&variants, |this, i| {
                 Ok(match i {
                     1 => adjustment::AdjustReifyFnPointer,
@@ -996,6 +1036,13 @@ impl<'a, 'tcx> rbml_decoder_decoder_helpers<'tcx> for reader::Decoder<'a> {
                                 |this| Ok(this.read_auto_deref_ref(dcx))).unwrap();
 
                         adjustment::AdjustDerefRef(auto_deref_ref)
+                    }
+                    5 => {
+                        let ty: Ty<'tcx> = this.read_enum_variant_arg(0, |this| {
+                            Ok(this.read_ty(dcx))
+                        }).unwrap();
+
+                        adjustment::AdjustNeverToAny(ty)
                     }
                     _ => bug!("bad enum variant for adjustment::AutoAdjustment")
                 })
@@ -1208,15 +1255,15 @@ fn copy_item_types(dcx: &DecodeContext, ii: &InlinedItem, orig_did: DefId) {
     }
     // copy the entry for the item itself
     let item_node_id = match ii {
-        &InlinedItem::Item(ref i) => i.id,
+        &InlinedItem::Item(_, ref i) => i.id,
         &InlinedItem::TraitItem(_, ref ti) => ti.id,
         &InlinedItem::ImplItem(_, ref ii) => ii.id,
-        &InlinedItem::Foreign(ref fi) => fi.id
+        &InlinedItem::Foreign(_, ref fi) => fi.id
     };
     copy_item_type(dcx, item_node_id, orig_did);
 
     // copy the entries of inner items
-    if let &InlinedItem::Item(ref item) = ii {
+    if let &InlinedItem::Item(_, ref item) = ii {
         match item.node {
             hir::ItemEnum(ref def, _) => {
                 let orig_def = dcx.tcx.lookup_adt_def(orig_did);
@@ -1242,9 +1289,9 @@ fn copy_item_types(dcx: &DecodeContext, ii: &InlinedItem, orig_did: DefId) {
     }
 }
 
-fn inlined_item_id_range(v: &InlinedItem) -> IdRange {
+fn inlined_item_id_range(ii: &InlinedItem) -> IdRange {
     let mut visitor = IdRangeComputingVisitor::new();
-    v.visit_ids(&mut visitor);
+    ii.visit(&mut visitor);
     visitor.result()
 }
 
@@ -1350,6 +1397,9 @@ fn test_more() {
 
 #[test]
 fn test_simplification() {
+    use middle::cstore::LOCAL_CRATE;
+    use rustc::hir::def_id::CRATE_DEF_INDEX;
+
     let cx = mk_ctxt();
     let item = quote_item!(&cx,
         fn new_int_alist<B>() -> alist<isize, B> {
@@ -1360,15 +1410,16 @@ fn test_simplification() {
     let cx = mk_ctxt();
     with_testing_context(|lcx| {
         let hir_item = lcx.lower_item(&item);
-        let item_in = InlinedItemRef::Item(&hir_item);
-        let item_out = simplify_ast(item_in);
-        let item_exp = InlinedItem::Item(P(lcx.lower_item(&quote_item!(&cx,
+        let def_id = DefId { krate: LOCAL_CRATE, index: CRATE_DEF_INDEX }; // dummy
+        let item_in = InlinedItemRef::Item(def_id, &hir_item);
+        let (item_out, _) = simplify_ast(item_in);
+        let item_exp = InlinedItem::Item(def_id, P(lcx.lower_item(&quote_item!(&cx,
             fn new_int_alist<B>() -> alist<isize, B> {
                 return alist {eq_fn: eq_int, data: Vec::new()};
             }
         ).unwrap())));
         match (item_out, item_exp) {
-            (InlinedItem::Item(item_out), InlinedItem::Item(item_exp)) => {
+            (InlinedItem::Item(_, item_out), InlinedItem::Item(_, item_exp)) => {
                  assert!(pprust::item_to_string(&item_out) ==
                          pprust::item_to_string(&item_exp));
             }

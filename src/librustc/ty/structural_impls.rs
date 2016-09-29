@@ -115,16 +115,26 @@ impl<'tcx, A: Copy+Lift<'tcx>, B: Copy+Lift<'tcx>> Lift<'tcx> for ty::OutlivesPr
     }
 }
 
+impl<'a, 'tcx> Lift<'tcx> for ty::ProjectionTy<'a> {
+    type Lifted = ty::ProjectionTy<'tcx>;
+    fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>)
+                             -> Option<ty::ProjectionTy<'tcx>> {
+        tcx.lift(&self.trait_ref).map(|trait_ref| {
+            ty::ProjectionTy {
+                trait_ref: trait_ref,
+                item_name: self.item_name
+            }
+        })
+    }
+}
+
 impl<'a, 'tcx> Lift<'tcx> for ty::ProjectionPredicate<'a> {
     type Lifted = ty::ProjectionPredicate<'tcx>;
     fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>)
                              -> Option<ty::ProjectionPredicate<'tcx>> {
-        tcx.lift(&(self.projection_ty.trait_ref, self.ty)).map(|(trait_ref, ty)| {
+        tcx.lift(&(self.projection_ty, self.ty)).map(|(projection_ty, ty)| {
             ty::ProjectionPredicate {
-                projection_ty: ty::ProjectionTy {
-                    trait_ref: trait_ref,
-                    item_name: self.projection_ty.item_name
-                },
+                projection_ty: projection_ty,
                 ty: ty
             }
         })
@@ -206,18 +216,6 @@ impl<'a, 'tcx> Lift<'tcx> for ty::adjustment::AutoRef<'a> {
             ty::adjustment::AutoUnsafe(m) => {
                 Some(ty::adjustment::AutoUnsafe(m))
             }
-        }
-    }
-}
-
-impl<'a, 'tcx> Lift<'tcx> for ty::FnOutput<'a> {
-    type Lifted = ty::FnOutput<'tcx>;
-    fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
-        match *self {
-            ty::FnConverging(ty) => {
-                tcx.lift(&ty).map(ty::FnConverging)
-            }
-            ty::FnDiverging => Some(ty::FnDiverging)
         }
     }
 }
@@ -485,9 +483,10 @@ impl<'tcx> TypeFoldable<'tcx> for Ty<'tcx> {
             ty::TyStruct(did, substs) => ty::TyStruct(did, substs.fold_with(folder)),
             ty::TyClosure(did, substs) => ty::TyClosure(did, substs.fold_with(folder)),
             ty::TyProjection(ref data) => ty::TyProjection(data.fold_with(folder)),
+            ty::TyAnon(did, substs) => ty::TyAnon(did, substs.fold_with(folder)),
             ty::TyBool | ty::TyChar | ty::TyStr | ty::TyInt(_) |
             ty::TyUint(_) | ty::TyFloat(_) | ty::TyError | ty::TyInfer(_) |
-            ty::TyParam(..) => self.sty.clone(),
+            ty::TyParam(..) | ty::TyNever => self.sty.clone(),
         };
         folder.tcx().mk_ty(sty)
     }
@@ -513,9 +512,10 @@ impl<'tcx> TypeFoldable<'tcx> for Ty<'tcx> {
             ty::TyStruct(_did, ref substs) => substs.visit_with(visitor),
             ty::TyClosure(_did, ref substs) => substs.visit_with(visitor),
             ty::TyProjection(ref data) => data.visit_with(visitor),
+            ty::TyAnon(_, ref substs) => substs.visit_with(visitor),
             ty::TyBool | ty::TyChar | ty::TyStr | ty::TyInt(_) |
             ty::TyUint(_) | ty::TyFloat(_) | ty::TyError | ty::TyInfer(_) |
-            ty::TyParam(..) => false,
+            ty::TyParam(..) | ty::TyNever => false,
         }
     }
 
@@ -572,26 +572,6 @@ impl<'tcx> TypeFoldable<'tcx> for ty::TypeAndMut<'tcx> {
 
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
         self.ty.visit_with(visitor)
-    }
-}
-
-impl<'tcx> TypeFoldable<'tcx> for ty::FnOutput<'tcx> {
-    fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
-        match *self {
-            ty::FnConverging(ref ty) => ty::FnConverging(ty.fold_with(folder)),
-            ty::FnDiverging => ty::FnDiverging
-        }
-    }
-
-    fn fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
-        folder.fold_output(self)
-    }
-
-    fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
-        match *self {
-            ty::FnConverging(ref ty) => ty.visit_with(visitor),
-            ty::FnDiverging => false,
-        }
     }
 }
 
@@ -1016,5 +996,18 @@ impl<'tcx> TypeFoldable<'tcx> for ty::TypeScheme<'tcx>  {
 
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
         self.generics.visit_with(visitor) || self.ty.visit_with(visitor)
+    }
+}
+
+impl<'tcx, T: TypeFoldable<'tcx>> TypeFoldable<'tcx> for ty::error::ExpectedFound<T> {
+    fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
+        ty::error::ExpectedFound {
+            expected: self.expected.fold_with(folder),
+            found: self.found.fold_with(folder),
+        }
+    }
+
+    fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
+        self.expected.visit_with(visitor) || self.found.visit_with(visitor)
     }
 }

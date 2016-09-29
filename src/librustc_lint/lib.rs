@@ -108,6 +108,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                  HardwiredLints,
                  WhileTrue,
                  ImproperCTypes,
+                 VariantSizeDifferences,
                  BoxPointers,
                  UnusedAttributes,
                  PathStatements,
@@ -123,7 +124,6 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                  UnusedAllocation,
                  MissingCopyImplementations,
                  UnstableFeatures,
-                 Deprecated,
                  UnconditionalRecursion,
                  InvalidNoMangleItems,
                  PluginAsLibrary,
@@ -132,6 +132,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                  );
 
     add_builtin_with_new!(sess,
+                          Deprecated,
                           TypeLimits,
                           MissingDoc,
                           MissingDebugImplementations,
@@ -156,7 +157,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
     store.register_future_incompatible(sess, vec![
         FutureIncompatibleInfo {
             id: LintId::of(PRIVATE_IN_PUBLIC),
-            reference: "the explanation for E0446 (`--explain E0446`)",
+            reference: "issue #34537 <https://github.com/rust-lang/rust/issues/34537>",
         },
         FutureIncompatibleInfo {
             id: LintId::of(INACCESSIBLE_EXTERN_CRATE),
@@ -208,9 +209,6 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             reference: "RFC 1177 <https://github.com/rust-lang/rfcs/pull/1177>",
         },
         ]);
-
-    // We have one lint pass defined specially
-    store.register_late_pass(sess, false, box lint::GatherNodeLevels);
 
     // Register renamed and removed lints
     store.register_renamed("unknown_features", "unused_features");

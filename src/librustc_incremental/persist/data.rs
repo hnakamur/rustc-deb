@@ -10,15 +10,15 @@
 
 //! The data that we will serialize and deserialize.
 
-use rustc::dep_graph::DepNode;
+use rustc::dep_graph::{DepNode, WorkProduct, WorkProductId};
 use rustc::hir::def_id::DefIndex;
+use std::sync::Arc;
 
 use super::directory::DefPathIndex;
 
 /// Data for use when recompiling the **current crate**.
 #[derive(Debug, RustcEncodable, RustcDecodable)]
 pub struct SerializedDepGraph {
-    pub nodes: Vec<DepNode<DefPathIndex>>,
     pub edges: Vec<SerializedEdge>,
 
     /// These are hashes of two things:
@@ -43,16 +43,32 @@ pub struct SerializedDepGraph {
     pub hashes: Vec<SerializedHash>,
 }
 
+/// Represents a "reduced" dependency edge. Unlike the full dep-graph,
+/// the dep-graph we serialize contains only edges `S -> T` where the
+/// source `S` is something hashable (a HIR node or foreign metadata)
+/// and the target `T` is something significant, like a work-product.
+/// Normally, significant nodes are only those that have saved data on
+/// disk, but in unit-testing the set of significant nodes can be
+/// increased.
 pub type SerializedEdge = (DepNode<DefPathIndex>, DepNode<DefPathIndex>);
 
 #[derive(Debug, RustcEncodable, RustcDecodable)]
 pub struct SerializedHash {
-    /// node being hashed; either a Hir or MetaData variant, in
-    /// practice
-    pub node: DepNode<DefPathIndex>,
+    /// def-id of thing being hashed
+    pub dep_node: DepNode<DefPathIndex>,
 
-    /// the hash itself, computed by `calculate_item_hash`
+    /// the hash as of previous compilation, computed by code in
+    /// `hash` module
     pub hash: u64,
+}
+
+#[derive(Debug, RustcEncodable, RustcDecodable)]
+pub struct SerializedWorkProduct {
+    /// node that produced the work-product
+    pub id: Arc<WorkProductId>,
+
+    /// work-product data itself
+    pub work_product: WorkProduct,
 }
 
 /// Data for use when downstream crates get recompiled.

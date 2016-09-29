@@ -16,11 +16,12 @@
 
 use rustc_data_structures::bitvec::BitVector;
 use rustc_data_structures::indexed_vec::{IndexVec, Idx};
+use rustc::dep_graph::DepNode;
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::hir::intravisit::FnKind;
 use rustc::hir::map::blocks::FnLikeNode;
-use rustc::traits::{self, ProjectionMode};
+use rustc::traits::{self, Reveal};
 use rustc::ty::{self, TyCtxt, Ty};
 use rustc::ty::cast::CastTy;
 use rustc::mir::repr::*;
@@ -415,7 +416,7 @@ impl<'a, 'tcx> Qualifier<'a, 'tcx, 'tcx> {
             }
         }
 
-        let return_ty = mir.return_ty.unwrap();
+        let return_ty = mir.return_ty;
         self.qualif = self.return_qualif.unwrap_or(Qualif::NOT_CONST);
 
         match self.mode {
@@ -485,8 +486,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                                 this.add(Qualif::STATIC);
                             }
 
-                            let base_ty = this.mir.lvalue_ty(this.tcx, &proj.base)
-                                              .to_ty(this.tcx);
+                            let base_ty = proj.base.ty(this.mir, this.tcx).to_ty(this.tcx);
                             if let ty::TyRawPtr(_) = base_ty.sty {
                                 this.add(Qualif::NOT_CONST);
                                 if this.mode != Mode::Fn {
@@ -505,8 +505,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                                           "cannot refer to the interior of another \
                                            static, use a constant instead");
                             }
-                            let ty = this.mir.lvalue_ty(this.tcx, lvalue)
-                                         .to_ty(this.tcx);
+                            let ty = lvalue.ty(this.mir, this.tcx).to_ty(this.tcx);
                             this.qualif.restrict(ty, this.tcx, &this.param_env);
                         }
 
@@ -591,7 +590,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                     self.add(Qualif::STATIC_REF);
                 }
 
-                let ty = self.mir.lvalue_ty(self.tcx, lvalue).to_ty(self.tcx);
+                let ty = lvalue.ty(self.mir, self.tcx).to_ty(self.tcx);
                 if kind == BorrowKind::Mut {
                     // In theory, any zero-sized value could be borrowed
                     // mutably without consequences. However, only &mut []
@@ -616,9 +615,12 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                     if !allow {
                         self.add(Qualif::NOT_CONST);
                         if self.mode != Mode::Fn {
-                            span_err!(self.tcx.sess, self.span, E0017,
-                                      "references in {}s may only refer \
-                                       to immutable values", self.mode);
+                            struct_span_err!(self.tcx.sess,  self.span, E0017,
+                                             "references in {}s may only refer \
+                                              to immutable values", self.mode)
+                                .span_label(self.span, &format!("{}s require immutable values",
+                                                                self.mode))
+                                .emit();
                         }
                     }
                 } else {
@@ -651,7 +653,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
             }
 
             Rvalue::Cast(CastKind::Misc, ref operand, cast_ty) => {
-                let operand_ty = self.mir.operand_ty(self.tcx, operand);
+                let operand_ty = operand.ty(self.mir, self.tcx);
                 let cast_in = CastTy::from_ty(operand_ty).expect("bad input type for cast");
                 let cast_out = CastTy::from_ty(cast_ty).expect("bad output type for cast");
                 match (cast_in, cast_out) {
@@ -669,7 +671,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
             }
 
             Rvalue::BinaryOp(op, ref lhs, _) => {
-                if let ty::TyRawPtr(_) = self.mir.operand_ty(self.tcx, lhs).sty {
+                if let ty::TyRawPtr(_) = lhs.ty(self.mir, self.tcx).sty {
                     assert!(op == BinOp::Eq || op == BinOp::Ne ||
                             op == BinOp::Le || op == BinOp::Lt ||
                             op == BinOp::Ge || op == BinOp::Gt);
@@ -686,8 +688,10 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
             Rvalue::Box(_) => {
                 self.add(Qualif::NOT_CONST);
                 if self.mode != Mode::Fn {
-                    span_err!(self.tcx.sess, self.span, E0010,
-                              "allocations are not allowed in {}s", self.mode);
+                    struct_span_err!(self.tcx.sess, self.span, E0010,
+                                     "allocations are not allowed in {}s", self.mode)
+                        .span_label(self.span, &format!("allocation not allowed in {}s", self.mode))
+                        .emit();
                 }
             }
 
@@ -699,7 +703,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                     }
 
                     if Some(def.did) == self.tcx.lang_items.unsafe_cell_type() {
-                        let ty = self.mir.rvalue_ty(self.tcx, rvalue).unwrap();
+                        let ty = rvalue.ty(self.mir, self.tcx).unwrap();
                         self.add_type(ty);
                         assert!(self.qualif.intersects(Qualif::MUTABLE_INTERIOR));
                         // Even if the value inside may not need dropping,
@@ -721,7 +725,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
         if let TerminatorKind::Call { ref func, ref args, ref destination, .. } = *kind {
             self.visit_operand(func);
 
-            let fn_ty = self.mir.operand_ty(self.tcx, func);
+            let fn_ty = func.ty(self.mir, self.tcx);
             let (is_shuffle, is_const_fn) = match fn_ty.sty {
                 ty::TyFnDef(def_id, _, f) => {
                     (f.abi == Abi::PlatformIntrinsic &&
@@ -801,7 +805,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                 } else {
                     // Be conservative about the returned value of a const fn.
                     let tcx = self.tcx;
-                    let ty = self.mir.lvalue_ty(tcx, dest).to_ty(tcx);
+                    let ty = dest.ty(self.mir, tcx).to_ty(tcx);
                     self.qualif = Qualif::empty();
                     self.add_type(ty);
 
@@ -850,7 +854,17 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
 
     fn visit_statement(&mut self, bb: BasicBlock, statement: &Statement<'tcx>) {
         assert_eq!(self.location.block, bb);
-        self.nest(|this| this.super_statement(bb, statement));
+        self.nest(|this| {
+            this.visit_source_info(&statement.source_info);
+            match statement.kind {
+                StatementKind::Assign(ref lvalue, ref rvalue) => {
+                    this.visit_assign(bb, lvalue, rvalue);
+                }
+                StatementKind::SetDiscriminant { .. } |
+                StatementKind::StorageLive(_) |
+                StatementKind::StorageDead(_) => {}
+            }
+        });
         self.location.statement_index += 1;
     }
 
@@ -881,8 +895,8 @@ fn qualify_const_item_cached<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     let extern_mir;
     let param_env_and_mir = if def_id.is_local() {
-        let node_id = tcx.map.as_local_node_id(def_id).unwrap();
-        mir_map.and_then(|map| map.map.get(&node_id)).map(|mir| {
+        mir_map.and_then(|map| map.map.get(&def_id)).map(|mir| {
+            let node_id = tcx.map.as_local_node_id(def_id).unwrap();
             (ty::ParameterEnvironment::for_item(tcx, node_id), mir)
         })
     } else if let Some(mir) = tcx.sess.cstore.maybe_get_item_mir(tcx, def_id) {
@@ -917,9 +931,10 @@ impl<'tcx> MirMapPass<'tcx> for QualifyAndPromoteConstants {
 
         // First, visit `const` items, potentially recursing, to get
         // accurate MUTABLE_INTERIOR and NEEDS_DROP qualifications.
-        for &id in map.map.keys() {
-            let def_id = tcx.map.local_def_id(id);
-            let _task = tcx.dep_graph.in_task(self.dep_node(def_id));
+        let keys = map.map.keys();
+        for &def_id in &keys {
+            let _task = tcx.dep_graph.in_task(DepNode::Mir(def_id));
+            let id = tcx.map.as_local_node_id(def_id).unwrap();
             let src = MirSource::from_node(tcx, id);
             if let MirSource::Const(_) = src {
                 qualify_const_item_cached(tcx, &mut qualif_map, Some(map), def_id);
@@ -929,9 +944,9 @@ impl<'tcx> MirMapPass<'tcx> for QualifyAndPromoteConstants {
         // Then, handle everything else, without recursing,
         // as the MIR map is not shared, since promotion
         // in functions (including `const fn`) mutates it.
-        for (&id, mir) in &mut map.map {
-            let def_id = tcx.map.local_def_id(id);
-            let _task = tcx.dep_graph.in_task(self.dep_node(def_id));
+        for &def_id in &keys {
+            let _task = tcx.dep_graph.in_task(DepNode::Mir(def_id));
+            let id = tcx.map.as_local_node_id(def_id).unwrap();
             let src = MirSource::from_node(tcx, id);
             let mode = match src {
                 MirSource::Fn(_) => {
@@ -948,6 +963,7 @@ impl<'tcx> MirMapPass<'tcx> for QualifyAndPromoteConstants {
             };
             let param_env = ty::ParameterEnvironment::for_item(tcx, id);
 
+            let mir = map.map.get_mut(&def_id).unwrap();
             for hook in &mut *hooks {
                 hook.on_mir_pass(tcx, src, mir, self, false);
             }
@@ -985,8 +1001,8 @@ impl<'tcx> MirMapPass<'tcx> for QualifyAndPromoteConstants {
 
             // Statics must be Sync.
             if mode == Mode::Static {
-                let ty = mir.return_ty.unwrap();
-                tcx.infer_ctxt(None, None, ProjectionMode::AnyFinal).enter(|infcx| {
+                let ty = mir.return_ty;
+                tcx.infer_ctxt(None, None, Reveal::NotSpecializable).enter(|infcx| {
                     let cause = traits::ObligationCause::new(mir.span, id, traits::SharedStatic);
                     let mut fulfillment_cx = traits::FulfillmentContext::new();
                     fulfillment_cx.register_builtin_bound(&infcx, ty, ty::BoundSync, cause);

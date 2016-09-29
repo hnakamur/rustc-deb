@@ -32,6 +32,7 @@ use hir::print as pprust;
 
 use arena::TypedArena;
 use std::cell::RefCell;
+use std::cmp;
 use std::io;
 use std::mem;
 
@@ -49,6 +50,7 @@ pub enum Node<'ast> {
     NodeVariant(&'ast Variant),
     NodeExpr(&'ast Expr),
     NodeStmt(&'ast Stmt),
+    NodeTy(&'ast Ty),
     NodeLocal(&'ast Pat),
     NodePat(&'ast Pat),
     NodeBlock(&'ast Block),
@@ -75,6 +77,7 @@ pub enum MapEntry<'ast> {
     EntryVariant(NodeId, &'ast Variant),
     EntryExpr(NodeId, &'ast Expr),
     EntryStmt(NodeId, &'ast Stmt),
+    EntryTy(NodeId, &'ast Ty),
     EntryLocal(NodeId, &'ast Pat),
     EntryPat(NodeId, &'ast Pat),
     EntryBlock(NodeId, &'ast Block),
@@ -103,6 +106,7 @@ impl<'ast> MapEntry<'ast> {
             NodeVariant(n) => EntryVariant(p, n),
             NodeExpr(n) => EntryExpr(p, n),
             NodeStmt(n) => EntryStmt(p, n),
+            NodeTy(n) => EntryTy(p, n),
             NodeLocal(n) => EntryLocal(p, n),
             NodePat(n) => EntryPat(p, n),
             NodeBlock(n) => EntryBlock(p, n),
@@ -121,13 +125,17 @@ impl<'ast> MapEntry<'ast> {
             EntryVariant(id, _) => id,
             EntryExpr(id, _) => id,
             EntryStmt(id, _) => id,
+            EntryTy(id, _) => id,
             EntryLocal(id, _) => id,
             EntryPat(id, _) => id,
             EntryBlock(id, _) => id,
             EntryStructCtor(id, _) => id,
             EntryLifetime(id, _) => id,
             EntryTyParam(id, _) => id,
-            _ => return None
+
+            NotPresent |
+            RootCrate |
+            RootInlinedParent(_) => return None,
         })
     }
 
@@ -140,6 +148,7 @@ impl<'ast> MapEntry<'ast> {
             EntryVariant(_, n) => NodeVariant(n),
             EntryExpr(_, n) => NodeExpr(n),
             EntryStmt(_, n) => NodeStmt(n),
+            EntryTy(_, n) => NodeTy(n),
             EntryLocal(_, n) => NodeLocal(n),
             EntryPat(_, n) => NodePat(n),
             EntryBlock(_, n) => NodeBlock(n),
@@ -196,9 +205,25 @@ pub struct Map<'ast> {
     map: RefCell<Vec<MapEntry<'ast>>>,
 
     definitions: RefCell<Definitions>,
+
+    /// All NodeIds that are numerically greater or equal to this value come
+    /// from inlined items.
+    local_node_id_watermark: NodeId,
+
+    /// All def-indices that are numerically greater or equal to this value come
+    /// from inlined items.
+    local_def_id_watermark: usize,
 }
 
 impl<'ast> Map<'ast> {
+    pub fn is_inlined_def_id(&self, id: DefId) -> bool {
+        id.is_local() && id.index.as_usize() >= self.local_def_id_watermark
+    }
+
+    pub fn is_inlined_node_id(&self, id: NodeId) -> bool {
+        id >= self.local_node_id_watermark
+    }
+
     /// Registers a read in the dependency graph of the AST node with
     /// the given `id`. This needs to be called each time a public
     /// function returns the HIR for a node -- in other words, when it
@@ -206,60 +231,101 @@ impl<'ast> Map<'ast> {
     /// otherwise have had access to those contents, and hence needs a
     /// read recorded). If the function just returns a DefId or
     /// NodeId, no actual content was returned, so no read is needed.
-    fn read(&self, id: NodeId) {
+    pub fn read(&self, id: NodeId) {
         self.dep_graph.read(self.dep_node(id));
     }
 
     fn dep_node(&self, id0: NodeId) -> DepNode<DefId> {
         let map = self.map.borrow();
         let mut id = id0;
-        loop {
-            match map[id as usize] {
-                EntryItem(_, item) => {
-                    let def_id = self.local_def_id(item.id);
-                    // NB                          ^~~~~~~
-                    //
-                    // You would expect that `item.id == id`, but this
-                    // is not always the case. In particular, for a
-                    // ViewPath item like `use self::{mem, foo}`, we
-                    // map the ids for `mem` and `foo` to the
-                    // enclosing view path item. This seems mega super
-                    // ultra wrong, but then who am I to judge?
-                    // -nmatsakis
-                    return DepNode::Hir(def_id);
+        if !self.is_inlined_node_id(id) {
+            loop {
+                match map[id as usize] {
+                    EntryItem(_, item) => {
+                        let def_id = self.local_def_id(item.id);
+                        // NB                          ^~~~~~~
+                        //
+                        // You would expect that `item.id == id`, but this
+                        // is not always the case. In particular, for a
+                        // ViewPath item like `use self::{mem, foo}`, we
+                        // map the ids for `mem` and `foo` to the
+                        // enclosing view path item. This seems mega super
+                        // ultra wrong, but then who am I to judge?
+                        // -nmatsakis
+                        assert!(!self.is_inlined_def_id(def_id));
+                        return DepNode::Hir(def_id);
+                    }
+
+                    EntryForeignItem(p, _) |
+                    EntryTraitItem(p, _) |
+                    EntryImplItem(p, _) |
+                    EntryVariant(p, _) |
+                    EntryExpr(p, _) |
+                    EntryStmt(p, _) |
+                EntryTy(p, _) |
+                    EntryLocal(p, _) |
+                    EntryPat(p, _) |
+                    EntryBlock(p, _) |
+                    EntryStructCtor(p, _) |
+                    EntryLifetime(p, _) |
+                    EntryTyParam(p, _) =>
+                        id = p,
+
+                    RootCrate =>
+                        return DepNode::Krate,
+
+                    RootInlinedParent(_) =>
+                        bug!("node {} has inlined ancestor but is not inlined", id0),
+
+                    NotPresent =>
+                        // Some nodes, notably struct fields, are not
+                        // present in the map for whatever reason, but
+                        // they *do* have def-ids. So if we encounter an
+                        // empty hole, check for that case.
+                        return self.opt_local_def_id(id)
+                                   .map(|def_id| DepNode::Hir(def_id))
+                                   .unwrap_or_else(|| {
+                                       bug!("Walking parents from `{}` \
+                                             led to `NotPresent` at `{}`",
+                                            id0, id)
+                                   }),
                 }
+            }
+        } else {
+            // reading from an inlined def-id is really a read out of
+            // the metadata from which we loaded the item.
+            loop {
+                match map[id as usize] {
+                    EntryItem(p, _) |
+                    EntryForeignItem(p, _) |
+                    EntryTraitItem(p, _) |
+                    EntryImplItem(p, _) |
+                    EntryVariant(p, _) |
+                    EntryExpr(p, _) |
+                    EntryStmt(p, _) |
+                    EntryTy(p, _) |
+                    EntryLocal(p, _) |
+                    EntryPat(p, _) |
+                    EntryBlock(p, _) |
+                    EntryStructCtor(p, _) |
+                    EntryLifetime(p, _) |
+                    EntryTyParam(p, _) =>
+                        id = p,
 
-                EntryForeignItem(p, _) |
-                EntryTraitItem(p, _) |
-                EntryImplItem(p, _) |
-                EntryVariant(p, _) |
-                EntryExpr(p, _) |
-                EntryStmt(p, _) |
-                EntryLocal(p, _) |
-                EntryPat(p, _) |
-                EntryBlock(p, _) |
-                EntryStructCtor(p, _) |
-                EntryLifetime(p, _) |
-                EntryTyParam(p, _) =>
-                    id = p,
+                    RootInlinedParent(parent) => match *parent {
+                        InlinedItem::Item(def_id, _) |
+                        InlinedItem::TraitItem(def_id, _) |
+                        InlinedItem::ImplItem(def_id, _) |
+                        InlinedItem::Foreign(def_id, _) =>
+                            return DepNode::MetaData(def_id)
+                    },
 
-                RootCrate |
-                RootInlinedParent(_) =>
-                    // FIXME(#32015) clarify story about cross-crate dep tracking
-                    return DepNode::Krate,
+                    RootCrate =>
+                        bug!("node {} has crate ancestor but is inlined", id0),
 
-                NotPresent =>
-                    // Some nodes, notably struct fields, are not
-                    // present in the map for whatever reason, but
-                    // they *do* have def-ids. So if we encounter an
-                    // empty hole, check for that case.
-                    return self.opt_local_def_id(id)
-                               .map(|def_id| DepNode::Hir(def_id))
-                               .unwrap_or_else(|| {
-                                   bug!("Walking parents from `{}` \
-                                         led to `NotPresent` at `{}`",
-                                        id0, id)
-                               }),
+                    NotPresent =>
+                        bug!("node {} is inlined but not present in map", id0),
+                }
             }
         }
     }
@@ -550,6 +616,13 @@ impl<'ast> Map<'ast> {
         }
     }
 
+    pub fn expect_inlined_item(&self, id: NodeId) -> &'ast InlinedItem {
+        match self.find_entry(id) {
+            Some(RootInlinedParent(inlined_item)) => inlined_item,
+            _ => bug!("expected inlined item, found {}", self.node_to_string(id)),
+        }
+    }
+
     /// Returns the name associated with the given NodeId's AST.
     pub fn name(&self, id: NodeId) -> Name {
         match self.get(id) {
@@ -614,6 +687,7 @@ impl<'ast> Map<'ast> {
             Some(NodeVariant(variant)) => variant.span,
             Some(NodeExpr(expr)) => expr.span,
             Some(NodeStmt(stmt)) => stmt.span,
+            Some(NodeTy(ty)) => ty.span,
             Some(NodeLocal(pat)) => pat.span,
             Some(NodePat(pat)) => pat.span,
             Some(NodeBlock(block)) => block.span,
@@ -765,13 +839,37 @@ pub trait FoldOps {
 }
 
 /// A Folder that updates IDs and Span's according to fold_ops.
-struct IdAndSpanUpdater<F> {
-    fold_ops: F
+pub struct IdAndSpanUpdater<F> {
+    fold_ops: F,
+    min_id_assigned: NodeId,
+    max_id_assigned: NodeId,
+}
+
+impl<F: FoldOps> IdAndSpanUpdater<F> {
+    pub fn new(fold_ops: F) -> IdAndSpanUpdater<F> {
+        IdAndSpanUpdater {
+            fold_ops: fold_ops,
+            min_id_assigned: ::std::u32::MAX,
+            max_id_assigned: ::std::u32::MIN,
+        }
+    }
+
+    pub fn id_range(&self) -> intravisit::IdRange {
+        intravisit::IdRange {
+            min: self.min_id_assigned,
+            max: self.max_id_assigned + 1,
+        }
+    }
 }
 
 impl<F: FoldOps> Folder for IdAndSpanUpdater<F> {
     fn new_id(&mut self, id: NodeId) -> NodeId {
-        self.fold_ops.new_id(id)
+        let id = self.fold_ops.new_id(id);
+
+        self.min_id_assigned = cmp::min(self.min_id_assigned, id);
+        self.max_id_assigned = cmp::max(self.max_id_assigned, id);
+
+        id
     }
 
     fn new_span(&mut self, span: Span) -> Span {
@@ -802,11 +900,16 @@ pub fn map_crate<'ast>(forest: &'ast mut Forest,
               entries, vector_length, (entries as f64 / vector_length as f64) * 100.);
     }
 
+    let local_node_id_watermark = map.len() as NodeId;
+    let local_def_id_watermark = definitions.len();
+
     Map {
         forest: forest,
         dep_graph: forest.dep_graph.clone(),
         map: RefCell::new(map),
         definitions: RefCell::new(definitions),
+        local_node_id_watermark: local_node_id_watermark,
+        local_def_id_watermark: local_def_id_watermark,
     }
 }
 
@@ -818,9 +921,10 @@ pub fn map_decoded_item<'ast, F: FoldOps>(map: &Map<'ast>,
                                           ii: InlinedItem,
                                           fold_ops: F)
                                           -> &'ast InlinedItem {
-    let mut fld = IdAndSpanUpdater { fold_ops: fold_ops };
+    let mut fld = IdAndSpanUpdater::new(fold_ops);
     let ii = match ii {
-        II::Item(i) => II::Item(i.map(|i| fld.fold_item(i))),
+        II::Item(d, i) => II::Item(fld.fold_ops.new_def_id(d),
+                                   i.map(|i| fld.fold_item(i))),
         II::TraitItem(d, ti) => {
             II::TraitItem(fld.fold_ops.new_def_id(d),
                           ti.map(|ti| fld.fold_trait_item(ti)))
@@ -829,11 +933,18 @@ pub fn map_decoded_item<'ast, F: FoldOps>(map: &Map<'ast>,
             II::ImplItem(fld.fold_ops.new_def_id(d),
                          ii.map(|ii| fld.fold_impl_item(ii)))
         }
-        II::Foreign(i) => II::Foreign(i.map(|i| fld.fold_foreign_item(i)))
+        II::Foreign(d, i) => II::Foreign(fld.fold_ops.new_def_id(d),
+                                         i.map(|i| fld.fold_foreign_item(i)))
     };
 
     let ii = map.forest.inlined_items.alloc(ii);
     let ii_parent_id = fld.new_id(DUMMY_NODE_ID);
+
+    // Assert that the ii_parent_id is the last NodeId in our reserved range
+    assert!(ii_parent_id == fld.max_id_assigned);
+    // Assert that we did not violate the invariant that all inlined HIR items
+    // have NodeIds greater than or equal to `local_node_id_watermark`
+    assert!(fld.min_id_assigned >= map.local_node_id_watermark);
 
     let defs = &mut *map.definitions.borrow_mut();
     let mut def_collector = DefCollector::extend(ii_parent_id,
@@ -868,6 +979,7 @@ impl<'a> NodePrinter for pprust::State<'a> {
             NodeVariant(a)     => self.print_variant(&a),
             NodeExpr(a)        => self.print_expr(&a),
             NodeStmt(a)        => self.print_stmt(&a),
+            NodeTy(a)          => self.print_type(&a),
             NodePat(a)         => self.print_pat(&a),
             NodeBlock(a)       => self.print_block(&a),
             NodeLifetime(a)    => self.print_lifetime(&a),
@@ -955,6 +1067,9 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
         }
         Some(NodeStmt(ref stmt)) => {
             format!("stmt {}{}", pprust::stmt_to_string(&stmt), id_str)
+        }
+        Some(NodeTy(ref ty)) => {
+            format!("type {}{}", pprust::ty_to_string(&ty), id_str)
         }
         Some(NodeLocal(ref pat)) => {
             format!("local {}{}", pprust::pat_to_string(&pat), id_str)

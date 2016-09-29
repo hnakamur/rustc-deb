@@ -29,13 +29,12 @@ use dep_graph::DepNode;
 use middle::privacy::AccessLevels;
 use ty::TyCtxt;
 use session::{config, early_error, Session};
-use lint::{Level, LevelSource, Lint, LintId, LintArray, LintPass};
-use lint::{EarlyLintPassObject, LateLintPass, LateLintPassObject};
+use lint::{Level, LevelSource, Lint, LintId, LintPass, LintSource};
+use lint::{EarlyLintPassObject, LateLintPassObject};
 use lint::{Default, CommandLine, Node, Allow, Warn, Deny, Forbid};
 use lint::builtin;
 use util::nodemap::FnvHashMap;
 
-use std::cell::RefCell;
 use std::cmp;
 use std::default::Default as StdDefault;
 use std::mem;
@@ -46,7 +45,6 @@ use syntax_pos::Span;
 use errors::DiagnosticBuilder;
 use hir;
 use hir::intravisit as hir_visit;
-use hir::intravisit::{IdVisitor, IdVisitingOperation};
 use syntax::visit as ast_visit;
 
 /// Information about the registered lints.
@@ -311,10 +309,6 @@ pub struct LateContext<'a, 'tcx: 'a> {
     /// levels, this stack keeps track of the previous lint levels of whatever
     /// was modified.
     level_stack: Vec<(LintId, LevelSource)>,
-
-    /// Level of lints for certain NodeIds, stored here because the body of
-    /// the lint needs to run in trans.
-    node_levels: RefCell<FnvHashMap<(ast::NodeId, LintId), LevelSource>>,
 }
 
 /// Context for lint checking of the AST, after expansion, before lowering to
@@ -371,18 +365,18 @@ pub fn gather_attr(attr: &ast::Attribute)
     attr::mark_used(attr);
 
     let meta = &attr.node.value;
-    let metas = match meta.node {
-        ast::MetaItemKind::List(_, ref metas) => metas,
-        _ => {
-            out.push(Err(meta.span));
-            return out;
-        }
+    let metas = if let Some(metas) = meta.meta_item_list() {
+        metas
+    } else {
+        out.push(Err(meta.span));
+        return out;
     };
 
     for meta in metas {
-        out.push(match meta.node {
-            ast::MetaItemKind::Word(ref lint_name) => Ok((lint_name.clone(), level, meta.span)),
-            _ => Err(meta.span),
+        out.push(if meta.is_word() {
+            Ok((meta.name().clone(), level, meta.span))
+        } else {
+            Err(meta.span)
         });
     }
 
@@ -605,13 +599,23 @@ pub trait LintContext: Sized {
             };
 
             for (lint_id, level, span) in v {
-                let now = self.lints().get_level_source(lint_id).0;
+                let (now, now_source) = self.lints().get_level_source(lint_id);
                 if now == Forbid && level != Forbid {
                     let lint_name = lint_id.as_str();
-                    span_err!(self.sess(), span, E0453,
-                              "{}({}) overruled by outer forbid({})",
-                              level.as_str(), lint_name,
-                              lint_name);
+                    let mut diag_builder = struct_span_err!(self.sess(), span, E0453,
+                                                            "{}({}) overruled by outer forbid({})",
+                                                            level.as_str(), lint_name,
+                                                            lint_name);
+                    match now_source {
+                        LintSource::Default => &mut diag_builder,
+                        LintSource::Node(forbid_source_span) => {
+                            diag_builder.span_note(forbid_source_span,
+                                                   "`forbid` lint level set here")
+                        },
+                        LintSource::CommandLine => {
+                            diag_builder.note("`forbid` lint level was set on command line")
+                        }
+                    }.emit()
                 } else if now != level {
                     let src = self.lints().get_level_source(lint_id).1;
                     self.level_stack().push((lint_id, (now, src)));
@@ -664,14 +668,15 @@ impl<'a, 'tcx> LateContext<'a, 'tcx> {
             access_levels: access_levels,
             lints: lint_store,
             level_stack: vec![],
-            node_levels: RefCell::new(FnvHashMap()),
         }
     }
 
     fn visit_ids<F>(&mut self, f: F)
-        where F: FnOnce(&mut IdVisitor<LateContext>)
+        where F: FnOnce(&mut IdVisitor)
     {
-        let mut v = IdVisitor::new(self);
+        let mut v = IdVisitor {
+            cx: self
+        };
         f(&mut v);
     }
 }
@@ -785,7 +790,7 @@ impl<'a, 'tcx, 'v> hir_visit::Visitor<'v> for LateContext<'a, 'tcx> {
     fn visit_fn(&mut self, fk: hir_visit::FnKind<'v>, decl: &'v hir::FnDecl,
                 body: &'v hir::Block, span: Span, id: ast::NodeId) {
         run_lints!(self, check_fn, late_passes, fk, decl, body, span, id);
-        hir_visit::walk_fn(self, fk, decl, body, span);
+        hir_visit::walk_fn(self, fk, decl, body, span, id);
         run_lints!(self, check_fn_post, late_passes, fk, decl, body, span, id);
     }
 
@@ -826,7 +831,7 @@ impl<'a, 'tcx, 'v> hir_visit::Visitor<'v> for LateContext<'a, 'tcx> {
 
     fn visit_mod(&mut self, m: &hir::Mod, s: Span, n: ast::NodeId) {
         run_lints!(self, check_mod, late_passes, m, s, n);
-        hir_visit::walk_mod(self, m);
+        hir_visit::walk_mod(self, m, n);
         run_lints!(self, check_mod_post, late_passes, m, s, n);
     }
 
@@ -865,7 +870,7 @@ impl<'a, 'tcx, 'v> hir_visit::Visitor<'v> for LateContext<'a, 'tcx> {
     fn visit_trait_item(&mut self, trait_item: &hir::TraitItem) {
         self.with_lint_attrs(&trait_item.attrs, |cx| {
             run_lints!(cx, check_trait_item, late_passes, trait_item);
-            cx.visit_ids(|v| v.visit_trait_item(trait_item));
+            cx.visit_ids(|v| hir_visit::walk_trait_item(v, trait_item));
             hir_visit::walk_trait_item(cx, trait_item);
             run_lints!(cx, check_trait_item_post, late_passes, trait_item);
         });
@@ -874,7 +879,7 @@ impl<'a, 'tcx, 'v> hir_visit::Visitor<'v> for LateContext<'a, 'tcx> {
     fn visit_impl_item(&mut self, impl_item: &hir::ImplItem) {
         self.with_lint_attrs(&impl_item.attrs, |cx| {
             run_lints!(cx, check_impl_item, late_passes, impl_item);
-            cx.visit_ids(|v| v.visit_impl_item(impl_item));
+            cx.visit_ids(|v| hir_visit::walk_impl_item(v, impl_item));
             hir_visit::walk_impl_item(cx, impl_item);
             run_lints!(cx, check_impl_item_post, late_passes, impl_item);
         });
@@ -1052,47 +1057,29 @@ impl<'a> ast_visit::Visitor for EarlyContext<'a> {
     }
 }
 
+struct IdVisitor<'a, 'b: 'a, 'tcx: 'a+'b> {
+    cx: &'a mut LateContext<'b, 'tcx>
+}
+
 // Output any lints that were previously added to the session.
-impl<'a, 'tcx> IdVisitingOperation for LateContext<'a, 'tcx> {
+impl<'a, 'b, 'tcx, 'v> hir_visit::Visitor<'v> for IdVisitor<'a, 'b, 'tcx> {
+
     fn visit_id(&mut self, id: ast::NodeId) {
-        if let Some(lints) = self.sess().lints.borrow_mut().remove(&id) {
+        if let Some(lints) = self.cx.sess().lints.borrow_mut().remove(&id) {
             debug!("LateContext::visit_id: id={:?} lints={:?}", id, lints);
             for (lint_id, span, msg) in lints {
-                self.span_lint(lint_id.lint, span, &msg[..])
+                self.cx.span_lint(lint_id.lint, span, &msg[..])
             }
         }
     }
-}
 
-// This lint pass is defined here because it touches parts of the `LateContext`
-// that we don't want to expose. It records the lint level at certain AST
-// nodes, so that the variant size difference check in trans can call
-// `raw_emit_lint`.
-
-pub struct GatherNodeLevels;
-
-impl LintPass for GatherNodeLevels {
-    fn get_lints(&self) -> LintArray {
-        lint_array!()
+    fn visit_trait_item(&mut self, _ti: &hir::TraitItem) {
+        // Do not recurse into trait or impl items automatically. These are
+        // processed separately by calling hir_visit::walk_trait_item()
     }
-}
 
-impl LateLintPass for GatherNodeLevels {
-    fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
-        match it.node {
-            hir::ItemEnum(..) => {
-                let lint_id = LintId::of(builtin::VARIANT_SIZE_DIFFERENCES);
-                let lvlsrc = cx.lints.get_level_source(lint_id);
-                match lvlsrc {
-                    (lvl, _) if lvl != Allow => {
-                        cx.node_levels.borrow_mut()
-                            .insert((it.id, lint_id), lvlsrc);
-                    },
-                    _ => { }
-                }
-            },
-            _ => { }
-        }
+    fn visit_impl_item(&mut self, _ii: &hir::ImplItem) {
+        // See visit_trait_item()
     }
 }
 
@@ -1210,7 +1197,6 @@ pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     // Visit the whole crate.
     cx.with_lint_attrs(&krate.attrs, |cx| {
-        cx.visit_id(ast::CRATE_NODE_ID);
         cx.visit_ids(|v| {
             hir_visit::walk_crate(v, krate);
         });
@@ -1233,8 +1219,6 @@ pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                       lint.as_str(), tcx.map.node_to_string(*id), *msg)
         }
     }
-
-    *tcx.node_lint_levels.borrow_mut() = cx.node_levels.into_inner();
 
     // Put the lint store back in the session.
     mem::replace(&mut *tcx.sess.lint_store.borrow_mut(), cx.lints);

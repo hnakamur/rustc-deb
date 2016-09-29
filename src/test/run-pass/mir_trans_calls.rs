@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(rustc_attrs, unboxed_closures, fn_traits)]
+#![feature(rustc_attrs, fn_traits)]
 
 #[rustc_mir]
 fn test1(a: isize, b: (i32, i32), c: &[i32]) -> (isize, (i32, i32), &[i32]) {
@@ -171,6 +171,13 @@ fn test_fn_ignored_pair_named() -> (Foo, Foo) {
     id(ignored_pair_named())
 }
 
+#[rustc_mir]
+fn test_fn_nested_pair(x: &((f32, f32), u32)) -> (f32, f32) {
+    let y = *x;
+    let z = y.0;
+    (z.0, z.1)
+}
+
 fn main() {
     assert_eq!(test1(1, (2, 3), &[4, 5, 6]), (1, (2, 3), &[4, 5, 6][..]));
     assert_eq!(test2(98), 98);
@@ -196,4 +203,5 @@ fn main() {
 
     assert_eq!(test_fn_ignored_pair_0(), ());
     assert_eq!(test_fn_ignored_pair_named(), (Foo, Foo));
+    assert_eq!(test_fn_nested_pair(&((1.0, 2.0), 0)), (1.0, 2.0));
 }

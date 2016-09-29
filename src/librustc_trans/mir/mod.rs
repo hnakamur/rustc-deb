@@ -26,6 +26,7 @@ use syntax::parse::token::keywords;
 
 use std::ops::Deref;
 use std::rc::Rc;
+use std::iter;
 
 use basic_block::BasicBlock;
 
@@ -183,7 +184,7 @@ pub fn trans_mir<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) {
 
         let locals = mir.temp_decls.iter().enumerate().map(|(i, decl)| {
             (mir::Lvalue::Temp(mir::Temp::new(i)), decl.ty)
-        }).chain(mir.return_ty.maybe_converging().map(|ty| (mir::Lvalue::ReturnPointer, ty)));
+        }).chain(iter::once((mir::Lvalue::ReturnPointer, mir.return_ty)));
 
         args.into_iter().chain(vars).chain(locals.map(|(lvalue, ty)| {
             let ty = bcx.monomorphize(&ty);
@@ -324,8 +325,8 @@ fn arg_local_refs<'bcx, 'tcx>(bcx: &BlockAndBuilder<'bcx, 'tcx>,
                         machine::llelement_offset(bcx.ccx(), lltuplety, i);
 
                     let ops = unsafe {
-                        [llvm::LLVMDIBuilderCreateOpDeref(),
-                         llvm::LLVMDIBuilderCreateOpPlus(),
+                        [llvm::LLVMRustDIBuilderCreateOpDeref(),
+                         llvm::LLVMRustDIBuilderCreateOpPlus(),
                          byte_offset_of_var_in_tuple as i64]
                     };
 
@@ -450,10 +451,10 @@ fn arg_local_refs<'bcx, 'tcx>(bcx: &BlockAndBuilder<'bcx, 'tcx>,
                     machine::llelement_offset(bcx.ccx(), llclosurety, i);
 
                 let ops = unsafe {
-                    [llvm::LLVMDIBuilderCreateOpDeref(),
-                     llvm::LLVMDIBuilderCreateOpPlus(),
+                    [llvm::LLVMRustDIBuilderCreateOpDeref(),
+                     llvm::LLVMRustDIBuilderCreateOpPlus(),
                      byte_offset_of_var_in_env as i64,
-                     llvm::LLVMDIBuilderCreateOpDeref()]
+                     llvm::LLVMRustDIBuilderCreateOpDeref()]
                 };
 
                 // The environment and the capture can each be indirect.
