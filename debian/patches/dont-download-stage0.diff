@@ -5,9 +5,11 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
---- a/src/bootstrap/bootstrap.py
-+++ b/src/bootstrap/bootstrap.py
-@@ -22,15 +22,17 @@
+Index: rust/src/bootstrap/bootstrap.py
+===================================================================
+--- rust.orig/src/bootstrap/bootstrap.py
++++ rust/src/bootstrap/bootstrap.py
+@@ -22,15 +22,17 @@ import tempfile
  from time import time
  
  
@@ -27,9 +29,9 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 +        else:
 +            download(sha_path, sha_url, verbose)
          if os.path.exists(path):
-             if verify(path, sha_path, verbose):
+             if verify(path, sha_path, False):
                  print("using already-download file " + path)
-@@ -44,7 +46,6 @@
+@@ -44,7 +46,6 @@ def get(url, path, verbose=False):
          print("moving {} to {}".format(temp_path, path))
          shutil.move(temp_path, path)
      finally:
@@ -37,9 +39,11 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          delete_if_present(temp_path)
  
  
---- a/src/etc/get-stage0.py
-+++ b/src/etc/get-stage0.py
-@@ -31,7 +31,7 @@
+Index: rust/src/etc/get-stage0.py
+===================================================================
+--- rust.orig/src/etc/get-stage0.py
++++ rust/src/etc/get-stage0.py
+@@ -31,7 +31,7 @@ def main(triple):
      filename = 'rustc-{}-{}.tar.gz'.format(channel, triple)
      url = 'https://static.rust-lang.org/dist/{}/{}'.format(date, filename)
      dst = dl_dir + '/' + filename

@@ -6,9 +6,11 @@ Author: Ximin Luo <infinity0@pwned.gg>
 Bug: https://github.com/rust-lang/rust/pull/36445
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
---- a/mk/main.mk
-+++ b/mk/main.mk
-@@ -634,7 +634,8 @@
+Index: rust/mk/main.mk
+===================================================================
+--- rust.orig/mk/main.mk
++++ rust/mk/main.mk
+@@ -635,7 +635,8 @@ ALL_TARGET_RULES = $(foreach target,$(CF
  	$(foreach host,$(CFG_HOST), \
   all-target-$(target)-host-$(host)))
  
