@@ -1,3 +1,9 @@
+rustc (1.12.0+dfsg1-1) unstable; urgency=medium
+
+  * new upstream release
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 29 Sep 2016 20:45:04 +0200
+
 rustc (1.11.0+dfsg1-3) unstable; urgency=medium
 
   * Fix separate build-arch and build-indep builds.
