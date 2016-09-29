@@ -1,6 +1,6 @@
-Index: rust/tmp/rust/src/test/run-pass/issue-36023.rs
+Index: src/test/run-pass/issue-36023.rs
 ===================================================================
---- rust.orig/tmp/rust/src/test/run-pass/issue-36023.rs
+--- rust.orig/src/test/run-pass/issue-36023.rs
 +++ /dev/null
 @@ -1,32 +0,0 @@
 -// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
