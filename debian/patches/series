@@ -4,13 +4,9 @@ add-soname
 dont-download-stage0.diff
 reproducible-dl-stage0.patch
 fix-configure-for-deb-arches.patch
-ignore-failing-armhf-tests_01.patch
 ignore-failing-armhf-tests_02.patch
 ignore-failing-armhf-tests_03.patch
-ignore-failing-armhf-tests_04.patch
 dynamic-link-llvm.patch
-if-local-rust-same-version-then-force-local-rebuild.patch
 ignore-stdcall-test-on-arm64.patch
-fix-non-x86-doc-tests.patch
 nodoc-for-build-arch.patch
 delete-test-issue-36023.diff
