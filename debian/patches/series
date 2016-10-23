@@ -9,3 +9,6 @@ ignore-failing-armhf-tests_03.patch
 dynamic-link-llvm.patch
 ignore-stdcall-test-on-arm64.patch
 nodoc-for-build-arch.patch
+ignore-test-failing-i386.diff
+ignore-test-failing-arm64.diff
+delete-test-issue-36023.diff

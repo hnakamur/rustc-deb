@@ -28,7 +28,7 @@ Index: rust/src/librustc_llvm/build.rs
 +       // Link in all LLVM libraries
 +       // Link in Debian full LLVM shared library.
 +       // TODO: not sure what to do in the cross-compiling case.
-+       println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
++       println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.8");
      }
 -    cmd.args(&components[..]);
 -
@@ -113,7 +113,7 @@ Index: rust/src/etc/mklldeps.py
 -    f.write(")]\n")
 +# Link in Debian full LLVM shared library.
 +# TODO: not sure what to do in the cross-compiling case.
-+f.write("#[link(name = \"LLVM-3.9\")]\n")
++f.write("#[link(name = \"LLVM-3.8\")]\n")
 +
  
  # LLVM ldflags

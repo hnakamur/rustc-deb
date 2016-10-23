@@ -52,7 +52,7 @@ DEB_CONFIGURE_FLAGS = \
                --prefix=/usr
 
 # Use system LLVM (comment out to use vendored LLVM)
-DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
+DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.8
 
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
 # README.Debian for more details of the cases described below.
