@@ -2,6 +2,7 @@ rustc (1.12.1+dfsg1-1) unstable; urgency=medium
 
   * New (minor) upstream release
   * Missing dependency from rust-lldb to python-lldb-3.8 (Closes: #841833)
+  * Switch to llvm 3.9
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Mon, 24 Oct 2016 11:01:31 +0200
 
