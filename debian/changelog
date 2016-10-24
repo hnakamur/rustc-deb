@@ -1,3 +1,9 @@
+rustc (1.12.0+dfsg1-3) UNRELEASED; urgency=medium
+
+  * Missing dependency from rust-lldb to python-lldb-3.8 (Closes: #841833)
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Mon, 24 Oct 2016 11:01:31 +0200
+
 rustc (1.12.0+dfsg1-2) unstable; urgency=medium
 
   * Ignore test run-make/no-duplicate-libs. Fails on i386
