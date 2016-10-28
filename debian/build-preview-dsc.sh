@@ -29,14 +29,8 @@ for f in *; do
 	if test -f "${fb}_${verprefix}"*; then mv "${fb}_${verprefix}"* "$f"; fi
 done )
 case "$1" in
-"1.12."*|"1.13."*)
-	# update patch for new version
-	diff -ru ./src/test/debuginfo/function-prologue-stepping-no-stack-check.rs /dev/null > debian/patches/ignore-failing-armhf-tests_01.patch && true
-	# rm patches applied upstream
-	dquilt delete avoid-redundant-dls.diff
-	dquilt delete ignore-failing-armhf-tests_04.patch
-	dquilt delete if-local-rust-same-version-then-force-local-rebuild.patch
-	dquilt delete fix-non-x86-doc-tests.patch
+"1.13."*|"1.14."*)
+	dquilt delete nodoc-for-build-arch.patch
 	;;
 esac
 }

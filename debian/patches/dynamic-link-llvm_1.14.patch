@@ -11,7 +11,7 @@ Forwarded: not-needed
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/librustc_llvm/build.rs
 +++ b/src/librustc_llvm/build.rs
-@@ -120,50 +120,10 @@
+@@ -123,50 +123,10 @@
         .cpp_link_stdlib(None) // we handle this below
         .compile("librustllvm.a");
  
@@ -40,7 +40,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -            // that off
 -            lib.trim_right_matches(".lib")
 -        } else {
--            continue
+-            continue;
 -        };
 -
 -        // Don't need or want this library, but LLVM's CMake build system
@@ -49,7 +49,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -        // library and it otherwise may just pull in extra dependencies on
 -        // libedit which we don't want
 -        if name == "LLVMLineEditor" {
--            continue
+-            continue;
 -        }
 -
 -        let kind = if name.starts_with("LLVM") {
@@ -62,13 +62,13 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 +    // Link in all LLVM libraries
 +    // Link in Debian full LLVM shared library.
 +    // TODO: not sure what to do in the cross-compiling case.
-+    println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.8");
++    println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
  
      // LLVM ldflags
      //
 --- a/src/etc/mklldeps.py
 +++ b/src/etc/mklldeps.py
-@@ -56,38 +56,12 @@
+@@ -56,38 +56,13 @@
  
  f.write("\n")
  
@@ -107,7 +107,8 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -    f.write(")]\n")
 +# Link in Debian full LLVM shared library.
 +# TODO: not sure what to do in the cross-compiling case.
-+f.write("#[link(name = \"LLVM-3.8\")]\n")
++f.write("#[link(name = \"LLVM-3.9\")]\n")
++
  
  # LLVM ldflags
  out = run([llvm_config, '--ldflags'])
