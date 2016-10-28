@@ -52,6 +52,7 @@ DEB_CONFIGURE_FLAGS = \
                --prefix=/usr
 
 # Use system LLVM (comment out to use vendored LLVM)
+OLD_LLVM_VERSION = 3.8
 DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
 
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
@@ -106,6 +107,8 @@ endif
 
 # Note: SHELL is not set by dash, but the configure script wants to use it
 override_dh_auto_configure:
+	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
+	! grep --color=always -i 'll...$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
 	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" DEB_HOST_ARCH="$(DEB_HOST_ARCH)" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)

@@ -3,11 +3,11 @@ Description: Disable reference.md "Items_and_attributes_14" doctest, hanging on 
  .
  See https://gist.github.com/infinity0/2f5452d4ee9deb2f1bacb8b39c987c9c
  for thread stacktrace during the hang; eddyb from #rustc suggests this might
- be an LLVM issue. Unsure if this is Debian-specific; we should re-enable this
- test again when we move to LLVM-3.8 (what Rust upstream is using) and if it
+ be an LLVM issue. This might be updated with our newer Debian LLVM versions;
+ we should try to re-enable this test again when we switch on armhf again.
  still occurs then file a bug upstream.
 Author: Ximin Luo <infinity0@debian.org>
-Bug: TODO pending LLVM-3.8 switch
+Bug: TODO pending enabling armhf in Debian
 Forwarded: not-needed
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/

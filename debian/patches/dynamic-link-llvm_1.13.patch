@@ -62,7 +62,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 +    // Link in all LLVM libraries
 +    // Link in Debian full LLVM shared library.
 +    // TODO: not sure what to do in the cross-compiling case.
-+    println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.8");
++    println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
  
      // LLVM ldflags
      //
@@ -107,7 +107,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -    f.write(")]\n")
 +# Link in Debian full LLVM shared library.
 +# TODO: not sure what to do in the cross-compiling case.
-+f.write("#[link(name = \"LLVM-3.8\")]\n")
++f.write("#[link(name = \"LLVM-3.9\")]\n")
  
  # LLVM ldflags
  out = run([llvm_config, '--ldflags'])
