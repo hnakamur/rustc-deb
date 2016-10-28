@@ -1,0 +1,67 @@
+Description: Delete stuff that should have been deleted
+ According to the github tag markers here
+ https://github.com/rust-lang/rust/commit/2ad98a0b42917dbb0914f458829db7511be168d4
+ the code is present in both 1.12.0 and 1.12.1.
+ However the comments clearly say that this should be deleted after the next
+ release, and in fact the build fails otherwise.
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/pull/37451
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/libpanic_unwind/gcc.rs
++++ b/src/libpanic_unwind/gcc.rs
+@@ -264,30 +264,6 @@
+     eh::find_eh_action(lsda, &eh_context)
+ }
+ 
+-// *** Delete after a new snapshot ***
+-#[cfg(all(stage0, any(target_os = "ios", not(target_arch = "arm"))))]
+-#[lang = "eh_personality_catch"]
+-#[no_mangle]
+-pub unsafe extern "C" fn rust_eh_personality_catch(version: c_int,
+-                                                    actions: uw::_Unwind_Action,
+-                                                    exception_class: uw::_Unwind_Exception_Class,
+-                                                    ue_header: *mut uw::_Unwind_Exception,
+-                                                    context: *mut uw::_Unwind_Context)
+-                                                    -> uw::_Unwind_Reason_Code {
+-    rust_eh_personality(version, actions, exception_class, ue_header, context)
+-}
+-
+-// *** Delete after a new snapshot ***
+-#[cfg(all(stage0, target_arch = "arm", not(target_os = "ios")))]
+-#[lang = "eh_personality_catch"]
+-#[no_mangle]
+-pub unsafe extern "C" fn rust_eh_personality_catch(state: uw::_Unwind_State,
+-                                                    ue_header: *mut uw::_Unwind_Exception,
+-                                                    context: *mut uw::_Unwind_Context)
+-                                                    -> uw::_Unwind_Reason_Code {
+-    rust_eh_personality(state, ue_header, context)
+-}
+-
+ // See docs in the `unwind` module.
+ #[cfg(all(target_os="windows", target_arch = "x86", target_env="gnu"))]
+ #[lang = "eh_unwind_resume"]
+--- a/src/libpanic_unwind/seh64_gnu.rs
++++ b/src/libpanic_unwind/seh64_gnu.rs
+@@ -81,21 +81,6 @@
+ // This is considered acceptable, because the behavior of throwing exceptions
+ // through a C ABI boundary is undefined.
+ 
+-// *** Delete after a new snapshot ***
+-#[cfg(stage0)]
+-#[lang = "eh_personality_catch"]
+-#[cfg(not(test))]
+-unsafe extern "C" fn rust_eh_personality_catch(exceptionRecord: *mut c::EXCEPTION_RECORD,
+-                                               establisherFrame: c::LPVOID,
+-                                               contextRecord: *mut c::CONTEXT,
+-                                               dispatcherContext: *mut c::DISPATCHER_CONTEXT)
+-                                               -> c::EXCEPTION_DISPOSITION {
+-    rust_eh_personality(exceptionRecord,
+-                        establisherFrame,
+-                        contextRecord,
+-                        dispatcherContext)
+-}
+-
+ #[lang = "eh_personality"]
+ #[cfg(not(test))]
+ unsafe extern "C" fn rust_eh_personality(exceptionRecord: *mut c::EXCEPTION_RECORD,
