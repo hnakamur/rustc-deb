@@ -110,6 +110,11 @@ override_dh_auto_configure:
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
+# temporary hack to make 1.12.1 compile against 1.12.0. rust upstream tells me this is
+# "supposed to" work, they just didn't handle it properly. future versions won't need
+# this at all since they have looser logic on which versions they can bootstrap from.
+	if [ "$$(/usr/bin/rustc --version --verbose | sed -ne 's/^release: //p')" = "1.12.0" ]; then \
+	  printf "rustc: 1.12.0\nrustc_key: 40393716\n" > src/stage0.txt; fi
 	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" DEB_HOST_ARCH="$(DEB_HOST_ARCH)" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
