@@ -7,14 +7,14 @@
 -    write(cx.dst.join("jquery.js"),
 -          include_bytes!("static/jquery-2.1.4.min.js"))?;
 +    {
-+        // In Debian, just copy the system jquery instead.
-+        // If the file gets installed, we can eventually create something like
-+        // dh_rustdoc, similar to dh_sphinxdoc to detect these copies and
-+        // convert them into symlinks.
++        // In Debian, just link to the system jquery instead
 +        let jquery_system_path = "/usr/share/javascript/jquery/jquery.min.js";
 +        let jquery = cx.dst.join("jquery.js");
 +        let jquery = jquery.as_path();
-+        try_err!(fs::copy(jquery_system_path, jquery), &jquery);
++        if jquery.symlink_metadata().is_ok() { // exists() returns false for broken symlinks but we also need to rm those
++            try_err!(fs::remove_file(jquery), &jquery);
++        }
++        try_err!(::std::os::unix::fs::symlink(jquery_system_path, jquery), &jquery);
 +    }
      write(cx.dst.join("main.js"),
            include_bytes!("static/main.js"))?;
