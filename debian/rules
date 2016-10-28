@@ -71,10 +71,20 @@ ifeq (0,$(shell ls -1 dl/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l))
     # In this case, we use the distro's rustc - either the previous or current version.
     ifeq (,$(findstring pkg.rustc.dlstage0,$(DEB_BUILD_PROFILES)))
         DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=/usr
+        # FIXME: Remove for versions after 1.12.1:
+        # Dynamically apply rust-boot-1.12.1-from-1.12.0.diff (or not) depending on
+        # the version of /usr/bin/rustc that you're bootstrapping from. We assume
+        # that it's one of the versions adhering to what's specified by d/control.
+        ifeq (1.12.0,$(shell /usr/bin/rustc --version --verbose | sed -ne 's/^release: //p'))
+            PRECONFIGURE_CHECK = debian/ensure-patch -N debian/patches/rust-boot-1.12.1-from-1.12.0.diff
+        else
+            PRECONFIGURE_CHECK = debian/ensure-patch -R debian/patches/rust-boot-1.12.1-from-1.12.0.diff
+        endif
     endif
     #
     # Case A-2: the builder selected the "dlstage0" build profile.
     # In this case, the rust build scripts will download a stage0 into dl/ and use that.
+    # We don't need to do anything specific in this build file, so this case is empty.
 else
     # Case B (Bootstrapping a new distro): the extracted source tree does
     # include a bootstrapping tarball for the current architecture; see the
@@ -110,11 +120,6 @@ override_dh_auto_configure:
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
-# temporary hack to make 1.12.1 compile against 1.12.0. rust upstream tells me this is
-# "supposed to" work, they just didn't handle it properly. future versions won't need
-# this at all since they have looser logic on which versions they can bootstrap from.
-	if [ "$$(/usr/bin/rustc --version --verbose | sed -ne 's/^release: //p')" = "1.12.0" ]; then \
-	  printf "rustc: 1.12.0\nrustc_key: 40393716\n" > src/stage0.txt; fi
 	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" DEB_HOST_ARCH="$(DEB_HOST_ARCH)" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
