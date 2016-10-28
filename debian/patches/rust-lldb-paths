@@ -6,6 +6,15 @@ Forwarded: not-needed
 
 --- a/src/etc/rust-lldb
 +++ b/src/etc/rust-lldb
+@@ -12,7 +12,7 @@
+ # Exit if anything fails
+ set -e
+ 
+-LLDB_VERSION=`lldb --version 2>/dev/null | head -1 | cut -d. -f1`
++LLDB_VERSION=`lldb-3.9 --version 2>/dev/null | head -1 | cut -d. -f1`
+ 
+ if [ "$LLDB_VERSION" = "lldb-350" ]
+ then
 @@ -29,13 +29,10 @@
  # Make sure to delete the tempfile no matter what
  trap "rm -f $TMPFILE; exit" INT TERM EXIT
@@ -21,4 +30,4 @@ Forwarded: not-needed
  
  # Call LLDB with the script added to the argument list
 -lldb --source-before-file="$TMPFILE" "$@"
-+lldb-3.8 --source-before-file="$TMPFILE" "$@"
++lldb-3.9 --source-before-file="$TMPFILE" "$@"
