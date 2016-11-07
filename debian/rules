@@ -174,7 +174,8 @@ ifneq (,$(BUILD_DOCS))
 	  sed -i -e "s,https://doc.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," \
               -e "s,https://www.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," "$$file"; \
 	done
-
+	# TODO: replace embedded jquery with symlink to jquery. This should
+	# eventually become part of a dh_rustdoc program.
 	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete
 endif
 
