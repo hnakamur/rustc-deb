@@ -8,6 +8,3 @@ Abstract:
 Format: HTML
 Index: /usr/share/doc/rust-doc/html/reference.html
 Files: /usr/share/doc/rust-doc/html/reference.html
-
-Format: PDF
-Files: /usr/share/doc/rust-doc/html/reference.pdf.gz
