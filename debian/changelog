@@ -1,9 +1,12 @@
-rustc (1.12.1+dfsg1-2) UNRELEASED; urgency=medium
+rustc (1.13.0+dfsg1-1) unstable; urgency=medium
 
+  * New upstream release
+
+  [ Ximin Luo ]
   * WIP, do not release. See TODO in d/control and d/rules.
   * Use Debian system jquery instead of upstream's embedded copy.
 
- -- Ximin Luo <infinity0@debian.org>  Mon, 07 Nov 2016 17:28:02 +0100
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 11 Nov 2016 13:35:23 +0100
 
 rustc (1.12.1+dfsg1-1) unstable; urgency=medium
 
