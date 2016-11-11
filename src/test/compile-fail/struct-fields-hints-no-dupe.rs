@@ -17,8 +17,9 @@ struct A {
 fn main() {
     let a = A {
         foo : 5,
-        bar : 42,//~ ERROR structure `A` has no field named `bar`
-        //~^ HELP did you mean `barr`?
+        bar : 42,
+        //~^ ERROR struct `A` has no field named `bar`
+        //~| NOTE field does not exist - did you mean `barr`?
         car : 9,
     };
 }

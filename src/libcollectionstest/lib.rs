@@ -16,12 +16,12 @@
 #![feature(collections)]
 #![feature(collections_bound)]
 #![feature(const_fn)]
-#![feature(fn_traits)]
 #![feature(enumset)]
 #![feature(pattern)]
 #![feature(rand)]
 #![feature(step_by)]
 #![feature(str_escape)]
+#![feature(str_replacen)]
 #![feature(test)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
@@ -31,7 +31,8 @@ extern crate collections;
 extern crate test;
 extern crate rustc_unicode;
 
-use std::hash::{Hash, Hasher, SipHasher};
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 
 #[cfg(test)] #[macro_use] mod bench;
 
@@ -47,7 +48,7 @@ mod vec_deque;
 mod vec;
 
 fn hash<T: Hash>(t: &T) -> u64 {
-    let mut s = SipHasher::new();
+    let mut s = DefaultHasher::new();
     t.hash(&mut s);
     s.finish()
 }

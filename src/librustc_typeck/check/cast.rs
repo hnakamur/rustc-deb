@@ -78,8 +78,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     fn unsize_kind(&self, t: Ty<'tcx>) -> Option<UnsizeKind<'tcx>> {
         match t.sty {
             ty::TySlice(_) | ty::TyStr => Some(UnsizeKind::Length),
-            ty::TyTrait(ref tty) => Some(UnsizeKind::Vtable(tty.principal_def_id())),
-            ty::TyStruct(def, substs) => {
+            ty::TyTrait(ref tty) => Some(UnsizeKind::Vtable(tty.principal.def_id())),
+            ty::TyAdt(def, substs) if def.is_struct() => {
                 // FIXME(arielb1): do some kind of normalization
                 match def.struct_variant().fields.last() {
                     None => None,
@@ -161,6 +161,7 @@ impl<'a, 'gcx, 'tcx> CastCheck<'tcx> {
             }
             CastError::CastToBool => {
                 struct_span_err!(fcx.tcx.sess, self.span, E0054, "cannot cast as `bool`")
+                    .span_label(self.span, &format!("unsupported cast"))
                     .help("compare with zero instead")
                     .emit();
             }
@@ -318,9 +319,9 @@ impl<'a, 'gcx, 'tcx> CastCheck<'tcx> {
             (Some(t_from), Some(t_cast)) => (t_from, t_cast),
             // Function item types may need to be reified before casts.
             (None, Some(t_cast)) => {
-                if let ty::TyFnDef(_, _, f) = self.expr_ty.sty {
+                if let ty::TyFnDef(.., f) = self.expr_ty.sty {
                     // Attempt a coercion to a fn pointer type.
-                    let res = fcx.try_coerce(self.expr, fcx.tcx.mk_fn_ptr(f));
+                    let res = fcx.try_coerce(self.expr, self.expr_ty, fcx.tcx.mk_fn_ptr(f));
                     if !res.is_ok() {
                         return Err(CastError::NonScalar);
                     }
@@ -470,7 +471,7 @@ impl<'a, 'gcx, 'tcx> CastCheck<'tcx> {
     }
 
     fn try_coercion_cast(&self, fcx: &FnCtxt<'a, 'gcx, 'tcx>) -> bool {
-        fcx.try_coerce(self.expr, self.cast_ty).is_ok()
+        fcx.try_coerce(self.expr, self.expr_ty, self.cast_ty).is_ok()
     }
 
 }

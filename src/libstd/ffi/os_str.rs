@@ -8,14 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use borrow::{Borrow, Cow, ToOwned};
+use borrow::{Borrow, Cow};
 use fmt::{self, Debug};
 use mem;
-use string::String;
 use ops;
 use cmp;
 use hash::{Hash, Hasher};
-use vec::Vec;
 
 use sys::os_str::{Buf, Slice};
 use sys_common::{AsInner, IntoInner, FromInner};
@@ -172,6 +170,7 @@ impl ops::Deref for OsString {
 
 #[stable(feature = "osstring_default", since = "1.9.0")]
 impl Default for OsString {
+    /// Constructs an empty `OsString`.
     #[inline]
     fn default() -> OsString {
         OsString::new()
@@ -251,6 +250,14 @@ impl Hash for OsString {
 
 impl OsStr {
     /// Coerces into an `OsStr` slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::ffi::OsStr;
+    ///
+    /// let os_str = OsStr::new("foo");
+    /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new<S: AsRef<OsStr> + ?Sized>(s: &S) -> &OsStr {
         s.as_ref()
@@ -283,6 +290,18 @@ impl OsStr {
     }
 
     /// Checks whether the `OsStr` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::ffi::OsStr;
+    ///
+    /// let os_str = OsStr::new("");
+    /// assert!(os_str.is_empty());
+    ///
+    /// let os_str = OsStr::new("foo");
+    /// assert!(!os_str.is_empty());
+    /// ```
     #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn is_empty(&self) -> bool {
         self.inner.inner.is_empty()
@@ -296,6 +315,18 @@ impl OsStr {
     /// other methods like `OsString::with_capacity` to avoid reallocations.
     ///
     /// See `OsStr` introduction for more information about encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::ffi::OsStr;
+    ///
+    /// let os_str = OsStr::new("");
+    /// assert_eq!(os_str.len(), 0);
+    ///
+    /// let os_str = OsStr::new("foo");
+    /// assert_eq!(os_str.len(), 3);
+    /// ```
     #[stable(feature = "osstring_simple_functions", since = "1.9.0")]
     pub fn len(&self) -> usize {
         self.inner.inner.len()
@@ -312,6 +343,7 @@ impl OsStr {
 
 #[stable(feature = "osstring_default", since = "1.9.0")]
 impl<'a> Default for &'a OsStr {
+    /// Creates an empty `OsStr`.
     #[inline]
     fn default() -> &'a OsStr {
         OsStr::new("")

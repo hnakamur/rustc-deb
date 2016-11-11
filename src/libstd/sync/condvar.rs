@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use sync::atomic::{AtomicUsize, Ordering};
 use sync::{mutex, MutexGuard, PoisonError};
 use sys_common::condvar as sys;
@@ -82,10 +80,14 @@ impl Condvar {
     /// notified.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn new() -> Condvar {
-        Condvar {
+        let mut c = Condvar {
             inner: box sys::Condvar::new(),
             mutex: AtomicUsize::new(0),
+        };
+        unsafe {
+            c.inner.init();
         }
+        c
     }
 
     /// Blocks the current thread until this condition variable receives a
@@ -140,6 +142,10 @@ impl Condvar {
     /// differences that may not cause the maximum amount of time
     /// waited to be precisely `ms`.
     ///
+    /// Note that the best effort is made to ensure that the time waited is
+    /// measured with a monotonic clock, and not affected by the changes made to
+    /// the system time.
+    ///
     /// The returned boolean is `false` only if the timeout is known
     /// to have elapsed.
     ///
@@ -163,6 +169,10 @@ impl Condvar {
     /// method should not be used for precise timing due to anomalies such as
     /// preemption or platform differences that may not cause the maximum
     /// amount of time waited to be precisely `dur`.
+    ///
+    /// Note that the best effort is made to ensure that the time waited is
+    /// measured with a monotonic clock, and not affected by the changes made to
+    /// the system time.
     ///
     /// The returned `WaitTimeoutResult` value indicates if the timeout is
     /// known to have elapsed.
@@ -231,6 +241,7 @@ impl Condvar {
 
 #[stable(feature = "condvar_default", since = "1.9.0")]
 impl Default for Condvar {
+    /// Creates a `Condvar` which is ready to be waited on and notified.
     fn default() -> Condvar {
         Condvar::new()
     }
@@ -245,8 +256,6 @@ impl Drop for Condvar {
 
 #[cfg(test)]
 mod tests {
-    use prelude::v1::*;
-
     use sync::mpsc::channel;
     use sync::{Condvar, Mutex, Arc};
     use thread;

@@ -8,65 +8,91 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use rbml::opaque::Encoder;
 use rustc::dep_graph::DepNode;
 use rustc::hir::def_id::DefId;
-use rustc::middle::cstore::LOCAL_CRATE;
+use rustc::hir::svh::Svh;
 use rustc::session::Session;
 use rustc::ty::TyCtxt;
 use rustc_data_structures::fnv::FnvHashMap;
 use rustc_serialize::Encodable as RustcEncodable;
-use std::hash::{Hash, Hasher, SipHasher};
+use rustc_serialize::opaque::Encoder;
+use std::hash::{Hash, Hasher};
 use std::io::{self, Cursor, Write};
 use std::fs::{self, File};
 use std::path::PathBuf;
+use std::collections::hash_map::DefaultHasher;
 
+use IncrementalHashesMap;
 use super::data::*;
 use super::directory::*;
 use super::hash::*;
 use super::preds::*;
-use super::util::*;
+use super::fs::*;
+use super::dirty_clean;
+use super::file_format;
 
-pub fn save_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
+pub fn save_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                incremental_hashes_map: &IncrementalHashesMap,
+                                svh: Svh) {
     debug!("save_dep_graph()");
     let _ignore = tcx.dep_graph.in_ignore();
     let sess = tcx.sess;
     if sess.opts.incremental.is_none() {
         return;
     }
-    let mut hcx = HashContext::new(tcx);
+
     let mut builder = DefIdDirectoryBuilder::new(tcx);
     let query = tcx.dep_graph.query();
+    let mut hcx = HashContext::new(tcx, incremental_hashes_map);
     let preds = Predecessors::new(&query, &mut hcx);
+    let mut current_metadata_hashes = FnvHashMap();
+
+    // IMPORTANT: We are saving the metadata hashes *before* the dep-graph,
+    //            since metadata-encoding might add new entries to the
+    //            DefIdDirectory (which is saved in the dep-graph file).
     save_in(sess,
-            dep_graph_path(tcx),
+            metadata_hash_export_path(sess),
+            |e| encode_metadata_hashes(tcx,
+                                       svh,
+                                       &preds,
+                                       &mut builder,
+                                       &mut current_metadata_hashes,
+                                       e));
+    save_in(sess,
+            dep_graph_path(sess),
             |e| encode_dep_graph(&preds, &mut builder, e));
-    save_in(sess,
-            metadata_hash_path(tcx, LOCAL_CRATE),
-            |e| encode_metadata_hashes(tcx, &preds, &mut builder, e));
+
+    let prev_metadata_hashes = incremental_hashes_map.prev_metadata_hashes.borrow();
+    dirty_clean::check_dirty_clean_metadata(tcx,
+                                            &*prev_metadata_hashes,
+                                            &current_metadata_hashes);
 }
 
-pub fn save_work_products(sess: &Session, local_crate_name: &str) {
+pub fn save_work_products(sess: &Session) {
+    if sess.opts.incremental.is_none() {
+        return;
+    }
+
     debug!("save_work_products()");
     let _ignore = sess.dep_graph.in_ignore();
-    let path = sess_work_products_path(sess, local_crate_name);
+    let path = work_products_path(sess);
     save_in(sess, path, |e| encode_work_products(sess, e));
 }
 
-fn save_in<F>(sess: &Session, opt_path_buf: Option<PathBuf>, encode: F)
+fn save_in<F>(sess: &Session, path_buf: PathBuf, encode: F)
     where F: FnOnce(&mut Encoder) -> io::Result<()>
 {
-    let path_buf = match opt_path_buf {
-        Some(p) => p,
-        None => return,
-    };
-
-    // FIXME(#32754) lock file?
+    debug!("save: storing data in {}", path_buf.display());
 
     // delete the old dep-graph, if any
+    // Note: It's important that we actually delete the old file and not just
+    // truncate and overwrite it, since it might be a shared hard-link, the
+    // underlying data of which we don't want to modify
     if path_buf.exists() {
         match fs::remove_file(&path_buf) {
-            Ok(()) => {}
+            Ok(()) => {
+                debug!("save: remove old file");
+            }
             Err(err) => {
                 sess.err(&format!("unable to delete old dep-graph at `{}`: {}",
                                   path_buf.display(),
@@ -78,6 +104,7 @@ fn save_in<F>(sess: &Session, opt_path_buf: Option<PathBuf>, encode: F)
 
     // generate the data in a memory buffer
     let mut wr = Cursor::new(Vec::new());
+    file_format::write_file_header(&mut wr).unwrap();
     match encode(&mut Encoder::new(&mut wr)) {
         Ok(()) => {}
         Err(err) => {
@@ -91,7 +118,9 @@ fn save_in<F>(sess: &Session, opt_path_buf: Option<PathBuf>, encode: F)
     // write the data out
     let data = wr.into_inner();
     match File::create(&path_buf).and_then(|mut file| file.write_all(&data)) {
-        Ok(_) => {}
+        Ok(_) => {
+            debug!("save: data written to disk successfully");
+        }
         Err(err) => {
             sess.err(&format!("failed to write dep-graph to `{}`: {}",
                               path_buf.display(),
@@ -107,7 +136,7 @@ pub fn encode_dep_graph(preds: &Predecessors,
                         -> io::Result<()> {
     // First encode the commandline arguments hash
     let tcx = builder.tcx();
-    try!(tcx.sess.opts.dep_tracking_hash().encode(encoder));
+    tcx.sess.opts.dep_tracking_hash().encode(encoder)?;
 
     // Create a flat list of (Input, WorkProduct) edges for
     // serialization.
@@ -146,27 +175,19 @@ pub fn encode_dep_graph(preds: &Predecessors,
     debug!("graph = {:#?}", graph);
 
     // Encode the directory and then the graph data.
-    try!(builder.directory().encode(encoder));
-    try!(graph.encode(encoder));
+    builder.directory().encode(encoder)?;
+    graph.encode(encoder)?;
 
     Ok(())
 }
 
 pub fn encode_metadata_hashes(tcx: TyCtxt,
+                              svh: Svh,
                               preds: &Predecessors,
                               builder: &mut DefIdDirectoryBuilder,
+                              current_metadata_hashes: &mut FnvHashMap<DefId, u64>,
                               encoder: &mut Encoder)
                               -> io::Result<()> {
-    let mut def_id_hashes = FnvHashMap();
-    let mut def_id_hash = |def_id: DefId| -> u64 {
-        *def_id_hashes.entry(def_id)
-            .or_insert_with(|| {
-                let index = builder.add(def_id);
-                let path = builder.lookup_def_path(index);
-                path.deterministic_hash(tcx)
-            })
-    };
-
     // For each `MetaData(X)` node where `X` is local, accumulate a
     // hash.  These are the metadata items we export. Downstream
     // crates will want to see a hash that tells them whether we might
@@ -174,7 +195,13 @@ pub fn encode_metadata_hashes(tcx: TyCtxt,
     // compiled.
     //
     // (I initially wrote this with an iterator, but it seemed harder to read.)
-    let mut serialized_hashes = SerializedMetadataHashes { hashes: vec![] };
+    let mut serialized_hashes = SerializedMetadataHashes {
+        hashes: vec![],
+        index_map: FnvHashMap()
+    };
+
+    let mut def_id_hashes = FnvHashMap();
+
     for (&target, sources) in &preds.inputs {
         let def_id = match *target {
             DepNode::MetaData(def_id) => {
@@ -182,6 +209,15 @@ pub fn encode_metadata_hashes(tcx: TyCtxt,
                 def_id
             }
             _ => continue,
+        };
+
+        let mut def_id_hash = |def_id: DefId| -> u64 {
+            *def_id_hashes.entry(def_id)
+                .or_insert_with(|| {
+                    let index = builder.add(def_id);
+                    let path = builder.lookup_def_path(index);
+                    path.deterministic_hash(tcx)
+                })
         };
 
         // To create the hash for each item `X`, we don't hash the raw
@@ -206,7 +242,7 @@ pub fn encode_metadata_hashes(tcx: TyCtxt,
             .collect();
 
         hashes.sort();
-        let mut state = SipHasher::new();
+        let mut state = DefaultHasher::new();
         hashes.hash(&mut state);
         let hash = state.finish();
 
@@ -217,8 +253,25 @@ pub fn encode_metadata_hashes(tcx: TyCtxt,
         });
     }
 
+    if tcx.sess.opts.debugging_opts.query_dep_graph {
+        for serialized_hash in &serialized_hashes.hashes {
+            let def_id = DefId::local(serialized_hash.def_index);
+
+            // Store entry in the index_map
+            let def_path_index = builder.add(def_id);
+            serialized_hashes.index_map.insert(def_id.index, def_path_index);
+
+            // Record hash in current_metadata_hashes
+            current_metadata_hashes.insert(def_id, serialized_hash.hash);
+        }
+
+        debug!("save: stored index_map (len={}) for serialized hashes",
+               serialized_hashes.index_map.len());
+    }
+
     // Encode everything.
-    try!(serialized_hashes.encode(encoder));
+    svh.encode(encoder)?;
+    serialized_hashes.encode(encoder)?;
 
     Ok(())
 }

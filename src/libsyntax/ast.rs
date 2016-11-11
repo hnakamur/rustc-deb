@@ -27,7 +27,9 @@ use tokenstream::{TokenTree};
 
 use std::fmt;
 use std::rc::Rc;
-use serialize::{Encodable, Decodable, Encoder, Decoder};
+use std::u32;
+
+use serialize::{self, Encodable, Decodable, Encoder, Decoder};
 
 /// A name is a part of an identifier, representing a string or gensym. It's
 /// the result of interning.
@@ -298,17 +300,53 @@ pub struct ParenthesizedParameterData {
     pub output: Option<P<Ty>>,
 }
 
-pub type CrateNum = u32;
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Debug)]
+pub struct NodeId(u32);
 
-pub type NodeId = u32;
+impl NodeId {
+    pub fn new(x: usize) -> NodeId {
+        assert!(x < (u32::MAX as usize));
+        NodeId(x as u32)
+    }
+
+    pub fn from_u32(x: u32) -> NodeId {
+        NodeId(x)
+    }
+
+    pub fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
+
+    pub fn as_u32(&self) -> u32 {
+        self.0
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl serialize::UseSpecializedEncodable for NodeId {
+    fn default_encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        s.emit_u32(self.0)
+    }
+}
+
+impl serialize::UseSpecializedDecodable for NodeId {
+    fn default_decode<D: Decoder>(d: &mut D) -> Result<NodeId, D::Error> {
+        d.read_u32().map(NodeId)
+    }
+}
 
 /// Node id used to represent the root of the crate.
-pub const CRATE_NODE_ID: NodeId = 0;
+pub const CRATE_NODE_ID: NodeId = NodeId(0);
 
 /// When parsing and doing expansions, we initially give all AST nodes this AST
 /// node value. Then later, in the renumber pass, we renumber them to have
 /// small, positive ids.
-pub const DUMMY_NODE_ID: NodeId = !0;
+pub const DUMMY_NODE_ID: NodeId = NodeId(!0);
 
 /// The AST represents all type param bounds as types.
 /// typeck::collect::compute_bounds matches these against
@@ -336,7 +374,7 @@ pub struct TyParam {
     pub id: NodeId,
     pub bounds: TyParamBounds,
     pub default: Option<P<Ty>>,
-    pub span: Span
+    pub span: Span,
 }
 
 /// Represents lifetimes and type parameters attached to a declaration
@@ -346,6 +384,7 @@ pub struct Generics {
     pub lifetimes: Vec<LifetimeDef>,
     pub ty_params: P<[TyParam]>,
     pub where_clause: WhereClause,
+    pub span: Span,
 }
 
 impl Generics {
@@ -361,6 +400,7 @@ impl Generics {
 }
 
 impl Default for Generics {
+    /// Creates an instance of `Generics`.
     fn default() ->  Generics {
         Generics {
             lifetimes: Vec::new(),
@@ -368,7 +408,8 @@ impl Default for Generics {
             where_clause: WhereClause {
                 id: DUMMY_NODE_ID,
                 predicates: Vec::new(),
-            }
+            },
+            span: DUMMY_SP,
         }
     }
 }
@@ -439,6 +480,22 @@ pub struct Crate {
     pub exported_macros: Vec<MacroDef>,
 }
 
+/// A spanned compile-time attribute list item.
+pub type NestedMetaItem = Spanned<NestedMetaItemKind>;
+
+/// Possible values inside of compile-time attribute lists.
+///
+/// E.g. the '..' in `#[name(..)]`.
+#[derive(Clone, Eq, RustcEncodable, RustcDecodable, Hash, Debug, PartialEq)]
+pub enum NestedMetaItemKind {
+    /// A full MetaItem, for recursive meta items.
+    MetaItem(P<MetaItem>),
+    /// A literal.
+    ///
+    /// E.g. "foo", 64, true
+    Literal(Lit),
+}
+
 /// A spanned compile-time attribute item.
 ///
 /// E.g. `#[test]`, `#[derive(..)]` or `#[feature = "foo"]`
@@ -456,7 +513,7 @@ pub enum MetaItemKind {
     /// List meta item.
     ///
     /// E.g. `derive(..)` as in `#[derive(..)]`
-    List(InternedString, Vec<P<MetaItem>>),
+    List(InternedString, Vec<NestedMetaItem>),
     /// Name value meta item.
     ///
     /// E.g. `feature = "foo"` as in `#[feature = "foo"]`
@@ -472,19 +529,21 @@ impl PartialEq for MetaItemKind {
                 Word(ref no) => (*ns) == (*no),
                 _ => false
             },
+            List(ref ns, ref miss) => match *other {
+                List(ref no, ref miso) => {
+                    ns == no &&
+                        miss.iter().all(|mi| {
+                            miso.iter().any(|x| x.node == mi.node)
+                        })
+                }
+                _ => false
+            },
             NameValue(ref ns, ref vs) => match *other {
                 NameValue(ref no, ref vo) => {
                     (*ns) == (*no) && vs.node == vo.node
                 }
                 _ => false
             },
-            List(ref ns, ref miss) => match *other {
-                List(ref no, ref miso) => {
-                    ns == no &&
-                        miss.iter().all(|mi| miso.iter().any(|x| x.node == mi.node))
-                }
-                _ => false
-            }
         }
     }
 }
@@ -541,8 +600,8 @@ impl Pat {
             }
             PatKind::Wild |
             PatKind::Lit(_) |
-            PatKind::Range(_, _) |
-            PatKind::Ident(_, _, _) |
+            PatKind::Range(..) |
+            PatKind::Ident(..) |
             PatKind::Path(..) |
             PatKind::Mac(_) => {
                 true
@@ -1105,6 +1164,30 @@ impl LitKind {
             _ => false,
         }
     }
+
+    /// Returns true if this literal has no suffix. Note: this will return true
+    /// for literals with prefixes such as raw strings and byte strings.
+    pub fn is_unsuffixed(&self) -> bool {
+        match *self {
+            // unsuffixed variants
+            LitKind::Str(..) => true,
+            LitKind::ByteStr(..) => true,
+            LitKind::Byte(..) => true,
+            LitKind::Char(..) => true,
+            LitKind::Int(_, LitIntType::Unsuffixed) => true,
+            LitKind::FloatUnsuffixed(..) => true,
+            LitKind::Bool(..) => true,
+            // suffixed variants
+            LitKind::Int(_, LitIntType::Signed(..)) => false,
+            LitKind::Int(_, LitIntType::Unsigned(..)) => false,
+            LitKind::Float(..) => false,
+        }
+    }
+
+    /// Returns true if this literal has a suffix.
+    pub fn is_suffixed(&self) -> bool {
+        !self.is_unsuffixed()
+    }
 }
 
 // NB: If you change this, you'll probably want to change the corresponding
@@ -1120,7 +1203,7 @@ pub struct MutTy {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct MethodSig {
     pub unsafety: Unsafety,
-    pub constness: Constness,
+    pub constness: Spanned<Constness>,
     pub abi: Abi,
     pub decl: P<FnDecl>,
     pub generics: Generics,
@@ -1624,42 +1707,14 @@ pub struct Variant_ {
 pub type Variant = Spanned<Variant_>;
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
-pub enum PathListItemKind {
-    Ident {
-        name: Ident,
-        /// renamed in list, e.g. `use foo::{bar as baz};`
-        rename: Option<Ident>,
-        id: NodeId
-    },
-    Mod {
-        /// renamed in list, e.g. `use foo::{self as baz};`
-        rename: Option<Ident>,
-        id: NodeId
-    }
+pub struct PathListItem_ {
+    pub name: Ident,
+    /// renamed in list, e.g. `use foo::{bar as baz};`
+    pub rename: Option<Ident>,
+    pub id: NodeId,
 }
 
-impl PathListItemKind {
-    pub fn id(&self) -> NodeId {
-        match *self {
-            PathListItemKind::Ident { id, .. } | PathListItemKind::Mod { id, .. } => id
-        }
-    }
-
-    pub fn name(&self) -> Option<Ident> {
-        match *self {
-            PathListItemKind::Ident { name, .. } => Some(name),
-            PathListItemKind::Mod { .. } => None,
-        }
-    }
-
-    pub fn rename(&self) -> Option<Ident> {
-        match *self {
-            PathListItemKind::Ident { rename, .. } | PathListItemKind::Mod { rename, .. } => rename
-        }
-    }
-}
-
-pub type PathListItem = Spanned<PathListItemKind>;
+pub type PathListItem = Spanned<PathListItem_>;
 
 pub type ViewPath = Spanned<ViewPath_>;
 
@@ -1846,7 +1901,7 @@ pub enum ItemKind {
     /// A function declaration (`fn` or `pub fn`).
     ///
     /// E.g. `fn foo(bar: usize) -> usize { .. }`
-    Fn(P<FnDecl>, Unsafety, Constness, Abi, Generics, P<Block>),
+    Fn(P<FnDecl>, Unsafety, Spanned<Constness>, Abi, Generics, P<Block>),
     /// A module declaration (`mod` or `pub mod`).
     ///
     /// E.g. `mod foo;` or `mod foo { .. }`
@@ -1867,6 +1922,10 @@ pub enum ItemKind {
     ///
     /// E.g. `struct Foo<A> { x: A }`
     Struct(VariantData, Generics),
+    /// A union definition (`union` or `pub union`).
+    ///
+    /// E.g. `union Foo<A, B> { x: A, y: B }`
+    Union(VariantData, Generics),
     /// A Trait declaration (`trait` or `pub trait`).
     ///
     /// E.g. `trait Foo { .. }` or `trait Foo<T> { .. }`
@@ -1903,6 +1962,7 @@ impl ItemKind {
             ItemKind::Ty(..) => "type alias",
             ItemKind::Enum(..) => "enum",
             ItemKind::Struct(..) => "struct",
+            ItemKind::Union(..) => "union",
             ItemKind::Trait(..) => "trait",
             ItemKind::Mac(..) |
             ItemKind::Impl(..) |

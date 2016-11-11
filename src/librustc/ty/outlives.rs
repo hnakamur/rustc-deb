@@ -17,7 +17,7 @@ use ty::{self, Ty, TypeFoldable};
 
 #[derive(Debug)]
 pub enum Component<'tcx> {
-    Region(ty::Region),
+    Region(&'tcx ty::Region),
     Param(ty::ParamTy),
     UnresolvedInferenceVariable(ty::InferTy),
 
@@ -172,8 +172,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             ty::TyUint(..) |        // OutlivesScalar
             ty::TyFloat(..) |       // OutlivesScalar
             ty::TyNever |           // ...
-            ty::TyEnum(..) |        // OutlivesNominalType
-            ty::TyStruct(..) |      // OutlivesNominalType
+            ty::TyAdt(..) |         // OutlivesNominalType
             ty::TyBox(..) |         // OutlivesNominalType (ish)
             ty::TyAnon(..) |        // OutlivesNominalType (ish)
             ty::TyStr |             // OutlivesScalar (ish)
@@ -210,7 +209,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     }
 }
 
-fn push_region_constraints<'tcx>(out: &mut Vec<Component<'tcx>>, regions: Vec<ty::Region>) {
+fn push_region_constraints<'tcx>(out: &mut Vec<Component<'tcx>>, regions: Vec<&'tcx ty::Region>) {
     for r in regions {
         if !r.is_bound() {
             out.push(Component::Region(r));

@@ -8,19 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use clone::Clone;
-use cmp::{Ord, PartialOrd, PartialEq, Ordering};
-use default::Default;
-use ops::FnMut;
-use option::Option::{self, Some, None};
-use marker::Sized;
+use cmp::Ordering;
 
 use super::{Chain, Cycle, Cloned, Enumerate, Filter, FilterMap, FlatMap, Fuse};
 use super::{Inspect, Map, Peekable, Scan, Skip, SkipWhile, Take, TakeWhile, Rev};
 use super::{Zip, Sum, Product};
-use super::ChainState;
-use super::{DoubleEndedIterator, ExactSizeIterator, Extend, FromIterator};
-use super::{IntoIterator, ZipImpl};
+use super::{ChainState, FromIterator, ZipImpl};
 
 fn _assert_is_object_safe(_: &Iterator<Item=()>) {}
 
@@ -1664,6 +1657,32 @@ pub trait Iterator {
             .map(|(_, x)| x)
     }
 
+    /// Returns the element that gives the maximum value with respect to the
+    /// specified comparison function.
+    ///
+    /// Returns the rightmost element if the comparison determines two elements
+    /// to be equally maximum.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(iter_max_by)]
+    /// let a = [-3_i32, 0, 1, 5, -10];
+    /// assert_eq!(*a.iter().max_by(|x, y| x.cmp(y)).unwrap(), 5);
+    /// ```
+    #[inline]
+    #[unstable(feature = "iter_max_by", issue="36105")]
+    fn max_by<F>(self, mut compare: F) -> Option<Self::Item>
+        where Self: Sized, F: FnMut(&Self::Item, &Self::Item) -> Ordering,
+    {
+        select_fold1(self,
+                     |_| (),
+                     // switch to y even if it is only equal, to preserve
+                     // stability.
+                     |_, x, _, y| Ordering::Greater != compare(x, y))
+            .map(|(_, x)| x)
+    }
+
     /// Returns the element that gives the minimum value from the
     /// specified function.
     ///
@@ -1687,6 +1706,33 @@ pub trait Iterator {
                      |x_p, _, y_p, _| x_p > y_p)
             .map(|(_, x)| x)
     }
+
+    /// Returns the element that gives the minimum value with respect to the
+    /// specified comparison function.
+    ///
+    /// Returns the latest element if the comparison determines two elements
+    /// to be equally minimum.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(iter_min_by)]
+    /// let a = [-3_i32, 0, 1, 5, -10];
+    /// assert_eq!(*a.iter().min_by(|x, y| x.cmp(y)).unwrap(), -10);
+    /// ```
+    #[inline]
+    #[unstable(feature = "iter_min_by", issue="36105")]
+    fn min_by<F>(self, mut compare: F) -> Option<Self::Item>
+        where Self: Sized, F: FnMut(&Self::Item, &Self::Item) -> Ordering,
+    {
+        select_fold1(self,
+                     |_| (),
+                     // switch to y even if it is strictly smaller, to
+                     // preserve stability.
+                     |_, x, _, y| Ordering::Greater == compare(x, y))
+            .map(|(_, x)| x)
+    }
+
 
     /// Reverses an iterator's direction.
     ///
@@ -1821,7 +1867,8 @@ pub trait Iterator {
     /// # Panics
     ///
     /// When calling `sum` and a primitive integer type is being returned, this
-    /// method will panic if the computation overflows.
+    /// method will panic if the computation overflows and debug assertions are
+    /// enabled.
     ///
     /// # Examples
     ///
@@ -1848,7 +1895,8 @@ pub trait Iterator {
     /// # Panics
     ///
     /// When calling `product` and a primitive integer type is being returned,
-    /// this method will panic if the computation overflows.
+    /// method will panic if the computation overflows and debug assertions are
+    /// enabled.
     ///
     /// # Examples
     ///

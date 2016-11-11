@@ -17,7 +17,6 @@ use asm;
 use base;
 use callee::Callee;
 use common::{self, val_ty, C_bool, C_null, C_uint, BlockAndBuilder, Result};
-use datum::{Datum, Lvalue};
 use debuginfo::DebugLoc;
 use adt;
 use machine;
@@ -101,7 +100,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 let size = C_uint(bcx.ccx(), size);
                 let base = get_dataptr(&bcx, dest.llval);
                 let bcx = bcx.map_block(|block| {
-                    tvec::iter_vec_raw(block, base, tr_elem.ty, size, |block, llslot, _| {
+                    tvec::slice_for_each(block, base, tr_elem.ty, size, |block, llslot| {
                         self.store_operand_direct(block, llslot, tr_elem);
                         block
                     })
@@ -111,19 +110,21 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
             mir::Rvalue::Aggregate(ref kind, ref operands) => {
                 match *kind {
-                    mir::AggregateKind::Adt(adt_def, index, _) => {
-                        let repr = adt::represent_type(bcx.ccx(), dest.ty.to_ty(bcx.tcx()));
-                        let disr = Disr::from(adt_def.variants[index].disr_val);
+                    mir::AggregateKind::Adt(adt_def, variant_index, _, active_field_index) => {
+                        let disr = Disr::from(adt_def.variants[variant_index].disr_val);
                         bcx.with_block(|bcx| {
-                            adt::trans_set_discr(bcx, &repr, dest.llval, Disr::from(disr));
+                            adt::trans_set_discr(bcx,
+                                dest.ty.to_ty(bcx.tcx()), dest.llval, Disr::from(disr));
                         });
                         for (i, operand) in operands.iter().enumerate() {
                             let op = self.trans_operand(&bcx, operand);
                             // Do not generate stores and GEPis for zero-sized fields.
                             if !common::type_is_zero_size(bcx.ccx(), op.ty) {
                                 let val = adt::MaybeSizedValue::sized(dest.llval);
-                                let lldest_i = adt::trans_field_ptr_builder(&bcx, &repr,
-                                                                            val, disr, i);
+                                let field_index = active_field_index.unwrap_or(i);
+                                let lldest_i = adt::trans_field_ptr_builder(&bcx,
+                                    dest.ty.to_ty(bcx.tcx()),
+                                    val, disr, field_index);
                                 self.store_operand(&bcx, lldest_i, op);
                             }
                         }
@@ -157,8 +158,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             mir::Rvalue::InlineAsm { ref asm, ref outputs, ref inputs } => {
                 let outputs = outputs.iter().map(|output| {
                     let lvalue = self.trans_lvalue(&bcx, output);
-                    Datum::new(lvalue.llval, lvalue.ty.to_ty(bcx.tcx()),
-                               Lvalue::new("out"))
+                    (lvalue.llval, lvalue.ty.to_ty(bcx.tcx()))
                 }).collect();
 
                 let input_vals = inputs.iter().map(|input| {
@@ -202,7 +202,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                             ty::TyFnDef(def_id, substs, _) => {
                                 OperandValue::Immediate(
                                     Callee::def(bcx.ccx(), def_id, substs)
-                                        .reify(bcx.ccx()).val)
+                                        .reify(bcx.ccx()))
                             }
                             _ => {
                                 bug!("{} cannot be reified to a fn ptr", operand.ty)
@@ -271,17 +271,17 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         let ll_t_in = type_of::immediate_type_of(bcx.ccx(), operand.ty);
                         let ll_t_out = type_of::immediate_type_of(bcx.ccx(), cast_ty);
                         let (llval, signed) = if let CastTy::Int(IntTy::CEnum) = r_t_in {
-                            let repr = adt::represent_type(bcx.ccx(), operand.ty);
+                            let l = bcx.ccx().layout_of(operand.ty);
                             let discr = match operand.val {
                                 OperandValue::Immediate(llval) => llval,
                                 OperandValue::Ref(llptr) => {
                                     bcx.with_block(|bcx| {
-                                        adt::trans_get_discr(bcx, &repr, llptr, None, true)
+                                        adt::trans_get_discr(bcx, operand.ty, llptr, None, true)
                                     })
                                 }
                                 OperandValue::Pair(..) => bug!("Unexpected Pair operand")
                             };
-                            (discr, adt::is_discr_signed(&repr))
+                            (discr, adt::is_discr_signed(&l))
                         } else {
                             (operand.immediate(), operand.ty.is_signed())
                         };

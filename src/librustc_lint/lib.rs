@@ -31,6 +31,7 @@
 #![cfg_attr(test, feature(test))]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
+#![feature(dotdot_in_tuple_patterns)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_private)]
@@ -127,8 +128,8 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                  UnconditionalRecursion,
                  InvalidNoMangleItems,
                  PluginAsLibrary,
-                 DropWithReprExtern,
                  MutableTransmutes,
+                 UnionsWithDropFields,
                  );
 
     add_builtin_with_new!(sess,
@@ -193,20 +194,16 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             reference: "RFC 1445 <https://github.com/rust-lang/rfcs/pull/1445>",
         },
         FutureIncompatibleInfo {
-            id: LintId::of(UNSIZED_IN_TUPLE),
-            reference: "issue #33242 <https://github.com/rust-lang/rust/issues/33242>",
-        },
-        FutureIncompatibleInfo {
-            id: LintId::of(OBJECT_UNSAFE_FRAGMENT),
-            reference: "issue #33243 <https://github.com/rust-lang/rust/issues/33243>",
-        },
-        FutureIncompatibleInfo {
             id: LintId::of(HR_LIFETIME_IN_ASSOC_TYPE),
             reference: "issue #33685 <https://github.com/rust-lang/rust/issues/33685>",
         },
         FutureIncompatibleInfo {
             id: LintId::of(LIFETIME_UNDERSCORE),
             reference: "RFC 1177 <https://github.com/rust-lang/rfcs/pull/1177>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(SAFE_EXTERN_STATICS),
+            reference: "issue 36247 <https://github.com/rust-lang/rust/issues/35112>",
         },
         ]);
 
@@ -218,4 +215,5 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
     // This was renamed to raw_pointer_derive, which was then removed,
     // so it is also considered removed
     store.register_removed("raw_pointer_deriving", "using derive with raw pointers is ok");
+    store.register_removed("drop_with_repr_extern", "drop flags have been removed");
 }

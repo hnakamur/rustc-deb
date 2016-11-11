@@ -12,6 +12,7 @@
 
 #![feature(plugin_registrar)]
 #![feature(box_syntax)]
+#![feature(dotdot_in_tuple_patterns)]
 #![feature(rustc_private)]
 
 extern crate syntax;
@@ -21,12 +22,11 @@ extern crate rustc;
 extern crate rustc_plugin;
 
 use syntax::ast;
-use syntax::attr::AttrMetaMethods;
 use syntax::ext::base::{MultiDecorator, ExtCtxt, Annotatable};
 use syntax::ext::build::AstBuilder;
 use syntax::parse::token;
 use syntax::ptr::P;
-use syntax_ext::deriving::generic::{cs_fold, TraitDef, MethodDef, combine_substructure};
+use syntax_ext::deriving::generic::{TraitDef, MethodDef, combine_substructure};
 use syntax_ext::deriving::generic::{Substructure, Struct, EnumMatching};
 use syntax_ext::deriving::generic::ty::{Literal, LifetimeBounds, Path, borrowed_explicit_self};
 use syntax_pos::Span;
@@ -52,6 +52,7 @@ fn expand(cx: &mut ExtCtxt,
         generics: LifetimeBounds::empty(),
         associated_types: vec![],
         is_unsafe: false,
+        supports_unions: false,
         methods: vec![
             MethodDef {
                 name: "total_sum",
@@ -75,7 +76,7 @@ fn expand(cx: &mut ExtCtxt,
 fn totalsum_substructure(cx: &mut ExtCtxt, trait_span: Span,
                          substr: &Substructure) -> P<ast::Expr> {
     let fields = match *substr.fields {
-        Struct(_, ref fs) | EnumMatching(_, _, ref fs) => fs,
+        Struct(_, ref fs) | EnumMatching(.., ref fs) => fs,
         _ => cx.span_bug(trait_span, "impossible substructure")
     };
 

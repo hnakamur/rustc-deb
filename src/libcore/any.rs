@@ -72,12 +72,7 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use fmt;
-use marker::Send;
-use mem::transmute;
-use option::Option::{self, Some, None};
-use raw::TraitObject;
 use intrinsics;
-use marker::{Reflect, Sized};
 
 ///////////////////////////////////////////////////////////////////////////////
 // Any trait
@@ -90,7 +85,7 @@ use marker::{Reflect, Sized};
 ///
 /// [mod]: index.html
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait Any: Reflect + 'static {
+pub trait Any: 'static {
     /// Gets the `TypeId` of `self`.
     ///
     /// # Examples
@@ -116,7 +111,7 @@ pub trait Any: Reflect + 'static {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Reflect + 'static + ?Sized > Any for T {
+impl<T: 'static + ?Sized > Any for T {
     fn get_type_id(&self) -> TypeId { TypeId::of::<T>() }
 }
 
@@ -201,11 +196,7 @@ impl Any {
     pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
         if self.is::<T>() {
             unsafe {
-                // Get the raw representation of the trait object
-                let to: TraitObject = transmute(self);
-
-                // Extract the data pointer
-                Some(&*(to.data as *const T))
+                Some(&*(self as *const Any as *const T))
             }
         } else {
             None
@@ -242,11 +233,7 @@ impl Any {
     pub fn downcast_mut<T: Any>(&mut self) -> Option<&mut T> {
         if self.is::<T>() {
             unsafe {
-                // Get the raw representation of the trait object
-                let to: TraitObject = transmute(self);
-
-                // Extract the data pointer
-                Some(&mut *(to.data as *const T as *mut T))
+                Some(&mut *(self as *mut Any as *mut T))
             }
         } else {
             None
@@ -378,7 +365,7 @@ impl TypeId {
     /// }
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn of<T: ?Sized + Reflect + 'static>() -> TypeId {
+    pub fn of<T: ?Sized + 'static>() -> TypeId {
         TypeId {
             t: unsafe { intrinsics::type_id::<T>() },
         }

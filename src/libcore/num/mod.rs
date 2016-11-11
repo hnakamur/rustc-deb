@@ -12,17 +12,11 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use char::CharExt;
-use cmp::PartialOrd;
-use convert::{From, TryFrom};
+use convert::TryFrom;
 use fmt;
 use intrinsics;
-use marker::{Copy, Sized};
 use mem::size_of;
-use option::Option::{self, Some, None};
-use result::Result::{self, Ok, Err};
-use str::{FromStr, StrExt};
-use slice::SliceExt;
+use str::FromStr;
 
 /// Provides intentionally-wrapped arithmetic on `T`.
 ///
@@ -619,14 +613,12 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// # #![feature(no_panic_abs)]
-        ///
         /// use std::i32;
         ///
         /// assert_eq!((-5i32).checked_abs(), Some(5));
         /// assert_eq!(i32::MIN.checked_abs(), None);
         /// ```
-        #[unstable(feature = "no_panic_abs", issue = "35057")]
+        #[stable(feature = "no_panic_abs", since = "1.13.0")]
         #[inline]
         pub fn checked_abs(self) -> Option<Self> {
             if self.is_negative() {
@@ -901,14 +893,12 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// # #![feature(no_panic_abs)]
-        ///
         /// assert_eq!(100i8.wrapping_abs(), 100);
         /// assert_eq!((-100i8).wrapping_abs(), 100);
         /// assert_eq!((-128i8).wrapping_abs(), -128);
         /// assert_eq!((-128i8).wrapping_abs() as u8, 128);
         /// ```
-        #[unstable(feature = "no_panic_abs", issue = "35057")]
+        #[stable(feature = "no_panic_abs", since = "1.13.0")]
         #[inline(always)]
         pub fn wrapping_abs(self) -> Self {
             if self.is_negative() {
@@ -1139,13 +1129,11 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// # #![feature(no_panic_abs)]
-        ///
         /// assert_eq!(10i8.overflowing_abs(), (10,false));
         /// assert_eq!((-10i8).overflowing_abs(), (10,false));
         /// assert_eq!((-128i8).overflowing_abs(), (-128,true));
         /// ```
-        #[unstable(feature = "no_panic_abs", issue = "35057")]
+        #[stable(feature = "no_panic_abs", since = "1.13.0")]
         #[inline]
         pub fn overflowing_abs(self) -> (Self, bool) {
             if self.is_negative() {
@@ -2217,25 +2205,21 @@ macro_rules! uint_impl {
             let mut base = self;
             let mut acc = 1;
 
-            let mut prev_base = self;
-            let mut base_oflo = false;
-            while exp > 0 {
+            while exp > 1 {
                 if (exp & 1) == 1 {
-                    if base_oflo {
-                        // ensure overflow occurs in the same manner it
-                        // would have otherwise (i.e. signal any exception
-                        // it would have otherwise).
-                        acc = acc * (prev_base * prev_base);
-                    } else {
-                        acc = acc * base;
-                    }
+                    acc = acc * base;
                 }
-                prev_base = base;
-                let (new_base, new_base_oflo) = base.overflowing_mul(base);
-                base = new_base;
-                base_oflo = new_base_oflo;
                 exp /= 2;
+                base = base * base;
             }
+
+            // Deal with the final bit of the exponent separately, since
+            // squaring the base afterwards is not necessary and may cause a
+            // needless overflow.
+            if exp == 1 {
+                acc = acc * base;
+            }
+
             acc
         }
 
@@ -2411,7 +2395,7 @@ impl usize {
 /// assert_eq!(nan.classify(), FpCategory::Nan);
 /// assert_eq!(sub.classify(), FpCategory::Subnormal);
 /// ```
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub enum FpCategory {
     /// "Not a Number", often obtained by dividing by zero.
@@ -2754,11 +2738,11 @@ fn from_str_radix<T: FromStrRadixHelper>(src: &str, radix: u32)
 /// on the primitive integer types, such as [`i8::from_str_radix()`].
 ///
 /// [`i8::from_str_radix()`]: ../../std/primitive.i8.html#method.from_str_radix
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct ParseIntError { kind: IntErrorKind }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum IntErrorKind {
     Empty,
     InvalidDigit,

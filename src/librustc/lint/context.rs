@@ -38,7 +38,7 @@ use util::nodemap::FnvHashMap;
 use std::cmp;
 use std::default::Default as StdDefault;
 use std::mem;
-use syntax::attr::{self, AttrMetaMethods};
+use syntax::attr;
 use syntax::parse::token::InternedString;
 use syntax::ast;
 use syntax_pos::Span;
@@ -372,12 +372,10 @@ pub fn gather_attr(attr: &ast::Attribute)
         return out;
     };
 
-    for meta in metas {
-        out.push(if meta.is_word() {
-            Ok((meta.name().clone(), level, meta.span))
-        } else {
-            Err(meta.span)
-        });
+    for li in metas {
+        out.push(li.word().map_or(Err(li.span), |word| {
+            Ok((word.name().clone(), level, word.span))
+        }));
     }
 
     out
@@ -601,16 +599,17 @@ pub trait LintContext: Sized {
             for (lint_id, level, span) in v {
                 let (now, now_source) = self.lints().get_level_source(lint_id);
                 if now == Forbid && level != Forbid {
-                    let lint_name = lint_id.as_str();
+                    let lint_name = lint_id.to_string();
                     let mut diag_builder = struct_span_err!(self.sess(), span, E0453,
                                                             "{}({}) overruled by outer forbid({})",
                                                             level.as_str(), lint_name,
                                                             lint_name);
+                    diag_builder.span_label(span, &format!("overruled by previous forbid"));
                     match now_source {
                         LintSource::Default => &mut diag_builder,
                         LintSource::Node(forbid_source_span) => {
-                            diag_builder.span_note(forbid_source_span,
-                                                   "`forbid` lint level set here")
+                            diag_builder.span_label(forbid_source_span,
+                                                    &format!("`forbid` level set here"))
                         },
                         LintSource::CommandLine => {
                             diag_builder.note("`forbid` lint level was set on command line")
@@ -1216,7 +1215,7 @@ pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         for &(lint, span, ref msg) in v {
             span_bug!(span,
                       "unprocessed lint {} at {}: {}",
-                      lint.as_str(), tcx.map.node_to_string(*id), *msg)
+                      lint.to_string(), tcx.map.node_to_string(*id), *msg)
         }
     }
 
@@ -1252,7 +1251,7 @@ pub fn check_ast_crate(sess: &Session, krate: &ast::Crate) {
     // in the iteration code.
     for (_, v) in sess.lints.borrow().iter() {
         for &(lint, span, ref msg) in v {
-            span_bug!(span, "unprocessed lint {}: {}", lint.as_str(), *msg)
+            span_bug!(span, "unprocessed lint {}: {}", lint.to_string(), *msg)
         }
     }
 }

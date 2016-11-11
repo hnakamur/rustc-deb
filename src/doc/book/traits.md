@@ -47,6 +47,34 @@ As you can see, the `trait` block looks very similar to the `impl` block,
 but we don’t define a body, only a type signature. When we `impl` a trait,
 we use `impl Trait for Item`, rather than only `impl Item`.
 
+`Self` may be used in a type annotation to refer to an instance of the type
+implementing this trait passed as a parameter. `Self`, `&Self` or `&mut Self`
+may be used depending on the level of ownership required.
+
+```rust
+struct Circle {
+    x: f64,
+    y: f64,
+    radius: f64,
+}
+
+trait HasArea {
+    fn area(&self) -> f64;
+
+    fn is_larger(&self, &Self) -> bool;
+}
+
+impl HasArea for Circle {
+    fn area(&self) -> f64 {
+        std::f64::consts::PI * (self.radius * self.radius)
+    }
+
+    fn is_larger(&self, other: &Self) -> bool {
+        self.area() > other.area()
+    }
+}
+```
+
 ## Trait bounds on generic functions
 
 Traits are useful because they allow a type to make certain promises about its
@@ -247,7 +275,7 @@ won’t have its methods:
 [write]: ../std/io/trait.Write.html
 
 ```rust,ignore
-let mut f = std::fs::File::open("foo.txt").expect("Couldn’t open foo.txt");
+let mut f = std::fs::File::create("foo.txt").expect("Couldn’t create foo.txt");
 let buf = b"whatever"; // byte string literal. buf: &[u8; 8]
 let result = f.write(buf);
 # result.unwrap(); // ignore the error
@@ -263,10 +291,10 @@ let result = f.write(buf);
 
 We need to `use` the `Write` trait first:
 
-```rust,ignore
+```rust,no_run
 use std::io::Write;
 
-let mut f = std::fs::File::open("foo.txt").expect("Couldn’t open foo.txt");
+let mut f = std::fs::File::create("foo.txt").expect("Couldn’t create foo.txt");
 let buf = b"whatever";
 let result = f.write(buf);
 # result.unwrap(); // ignore the error

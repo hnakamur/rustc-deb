@@ -7,11 +7,7 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-
-use option::Option::{self, Some};
-use marker::Sized;
-
-use super::Iterator;
+use ops::{Mul, Add};
 
 /// Conversion from an `Iterator`.
 ///
@@ -586,41 +582,34 @@ pub trait Product<A = Self>: Sized {
     fn product<I: Iterator<Item=A>>(iter: I) -> Self;
 }
 
+// NB: explicitly use Add and Mul here to inherit overflow checks
 macro_rules! integer_sum_product {
     ($($a:ident)*) => ($(
         #[stable(feature = "iter_arith_traits", since = "1.12.0")]
         impl Sum for $a {
             fn sum<I: Iterator<Item=$a>>(iter: I) -> $a {
-                iter.fold(0, |a, b| {
-                    a.checked_add(b).expect("overflow in sum")
-                })
+                iter.fold(0, Add::add)
             }
         }
 
         #[stable(feature = "iter_arith_traits", since = "1.12.0")]
         impl Product for $a {
             fn product<I: Iterator<Item=$a>>(iter: I) -> $a {
-                iter.fold(1, |a, b| {
-                    a.checked_mul(b).expect("overflow in product")
-                })
+                iter.fold(1, Mul::mul)
             }
         }
 
         #[stable(feature = "iter_arith_traits", since = "1.12.0")]
         impl<'a> Sum<&'a $a> for $a {
             fn sum<I: Iterator<Item=&'a $a>>(iter: I) -> $a {
-                iter.fold(0, |a, b| {
-                    a.checked_add(*b).expect("overflow in sum")
-                })
+                iter.cloned().fold(0, Add::add)
             }
         }
 
         #[stable(feature = "iter_arith_traits", since = "1.12.0")]
         impl<'a> Product<&'a $a> for $a {
             fn product<I: Iterator<Item=&'a $a>>(iter: I) -> $a {
-                iter.fold(1, |a, b| {
-                    a.checked_mul(*b).expect("overflow in product")
-                })
+                iter.cloned().fold(1, Mul::mul)
             }
         }
     )*)
@@ -660,3 +649,19 @@ macro_rules! float_sum_product {
 
 integer_sum_product! { i8 i16 i32 i64 isize u8 u16 u32 u64 usize }
 float_sum_product! { f32 f64 }
+
+/// An iterator that always continues to yield `None` when exhausted.
+///
+/// Calling next on a fused iterator that has returned `None` once is guaranteed
+/// to return `None` again. This trait is should be implemented by all iterators
+/// that behave this way because it allows for some significant optimizations.
+///
+/// Note: In general, you should not use `FusedIterator` in generic bounds if
+/// you need a fused iterator. Instead, you should just call `Iterator::fused()`
+/// on the iterator. If the iterator is already fused, the additional `Fuse`
+/// wrapper will be a no-op with no performance penalty.
+#[unstable(feature = "fused", issue = "35602")]
+pub trait FusedIterator: Iterator {}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, I: FusedIterator + ?Sized> FusedIterator for &'a mut I {}

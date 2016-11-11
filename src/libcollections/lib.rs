@@ -37,6 +37,7 @@
 #![feature(core_intrinsics)]
 #![feature(dropck_parametricity)]
 #![feature(fmt_internals)]
+#![feature(fused)]
 #![feature(heap_api)]
 #![feature(inclusive_range)]
 #![feature(lang_items)]
@@ -51,7 +52,7 @@
 #![feature(step_by)]
 #![feature(unicode)]
 #![feature(unique)]
-#![feature(unsafe_no_drop_flag)]
+#![cfg_attr(stage0, feature(unsafe_no_drop_flag))]
 #![cfg_attr(test, feature(rand, test))]
 
 #![no_std]

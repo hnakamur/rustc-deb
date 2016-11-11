@@ -15,8 +15,8 @@ use hir::def_id::DefId;
 use middle::free_region::FreeRegionMap;
 use rustc::infer;
 use middle::region;
-use rustc::ty::subst::{self, Subst};
-use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::subst::{Subst, Substs};
+use rustc::ty::{self, AdtKind, Ty, TyCtxt};
 use rustc::traits::{self, Reveal};
 use util::nodemap::FnvHashSet;
 
@@ -41,16 +41,13 @@ use syntax_pos::{self, Span};
 ///    cannot do `struct S<T>; impl<T:Clone> Drop for S<T> { ... }`).
 ///
 pub fn check_drop_impl(ccx: &CrateCtxt, drop_impl_did: DefId) -> Result<(), ()> {
-    let ty::TypeScheme { generics: ref dtor_generics,
-                         ty: dtor_self_type } = ccx.tcx.lookup_item_type(drop_impl_did);
+    let dtor_self_type = ccx.tcx.lookup_item_type(drop_impl_did).ty;
     let dtor_predicates = ccx.tcx.lookup_predicates(drop_impl_did);
     match dtor_self_type.sty {
-        ty::TyEnum(adt_def, self_to_impl_substs) |
-        ty::TyStruct(adt_def, self_to_impl_substs) => {
+        ty::TyAdt(adt_def, self_to_impl_substs) => {
             ensure_drop_params_and_item_params_correspond(ccx,
                                                           drop_impl_did,
-                                                          dtor_generics,
-                                                          &dtor_self_type,
+                                                          dtor_self_type,
                                                           adt_def.did)?;
 
             ensure_drop_predicates_are_implied_by_item_defn(ccx,
@@ -73,8 +70,7 @@ pub fn check_drop_impl(ccx: &CrateCtxt, drop_impl_did: DefId) -> Result<(), ()> 
 fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
     ccx: &CrateCtxt<'a, 'tcx>,
     drop_impl_did: DefId,
-    drop_impl_generics: &ty::Generics<'tcx>,
-    drop_impl_ty: &ty::Ty<'tcx>,
+    drop_impl_ty: Ty<'tcx>,
     self_type_did: DefId) -> Result<(), ()>
 {
     let tcx = ccx.tcx;
@@ -93,8 +89,8 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
 
         let drop_impl_span = tcx.map.def_id_span(drop_impl_did, syntax_pos::DUMMY_SP);
         let fresh_impl_substs =
-            infcx.fresh_substs_for_generics(drop_impl_span, drop_impl_generics);
-        let fresh_impl_self_ty = drop_impl_ty.subst(tcx, &fresh_impl_substs);
+            infcx.fresh_substs_for_item(drop_impl_span, drop_impl_did);
+        let fresh_impl_self_ty = drop_impl_ty.subst(tcx, fresh_impl_substs);
 
         if let Err(_) = infcx.eq_types(true, infer::TypeOrigin::Misc(drop_impl_span),
                                        named_type, fresh_impl_self_ty) {
@@ -114,10 +110,6 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
             return Err(());
         }
 
-    if let Err(ref errors) = fulfillment_cx.select_rfc1592_obligations(&infcx) {
-        infcx.report_fulfillment_errors_as_warnings(errors, drop_impl_node_id);
-    }
-
         let free_regions = FreeRegionMap::new();
         infcx.resolve_regions_and_report_errors(&free_regions, drop_impl_node_id);
         Ok(())
@@ -131,7 +123,7 @@ fn ensure_drop_predicates_are_implied_by_item_defn<'a, 'tcx>(
     drop_impl_did: DefId,
     dtor_predicates: &ty::GenericPredicates<'tcx>,
     self_type_did: DefId,
-    self_to_impl_substs: &subst::Substs<'tcx>) -> Result<(), ()> {
+    self_to_impl_substs: &Substs<'tcx>) -> Result<(), ()> {
 
     // Here is an example, analogous to that from
     // `compare_impl_method`.
@@ -179,10 +171,7 @@ fn ensure_drop_predicates_are_implied_by_item_defn<'a, 'tcx>(
     let generic_assumptions = tcx.lookup_predicates(self_type_did);
 
     let assumptions_in_impl_context = generic_assumptions.instantiate(tcx, &self_to_impl_substs);
-    assert!(assumptions_in_impl_context.predicates.is_empty_in(subst::SelfSpace));
-    assert!(assumptions_in_impl_context.predicates.is_empty_in(subst::FnSpace));
-    let assumptions_in_impl_context =
-        assumptions_in_impl_context.predicates.get_slice(subst::TypeSpace);
+    let assumptions_in_impl_context = assumptions_in_impl_context.predicates;
 
     // An earlier version of this code attempted to do this checking
     // via the traits::fulfill machinery. However, it ran into trouble
@@ -190,10 +179,8 @@ fn ensure_drop_predicates_are_implied_by_item_defn<'a, 'tcx>(
     // 'a:'b and T:'b into region inference constraints. It is simpler
     // just to look for all the predicates directly.
 
-    assert!(dtor_predicates.predicates.is_empty_in(subst::SelfSpace));
-    assert!(dtor_predicates.predicates.is_empty_in(subst::FnSpace));
-    let predicates = dtor_predicates.predicates.get_slice(subst::TypeSpace);
-    for predicate in predicates {
+    assert_eq!(dtor_predicates.parent, None);
+    for predicate in &dtor_predicates.predicates {
         // (We do not need to worry about deep analysis of type
         // expressions etc because the Drop impls are already forced
         // to take on a structure that is roughly an alpha-renaming of
@@ -312,11 +299,13 @@ pub fn check_safety_of_destructor_if_necessary<'a, 'gcx, 'tcx>(
                 TypeContext::ADT { def_id, variant, field } => {
                     let adt = tcx.lookup_adt_def(def_id);
                     let variant_name = match adt.adt_kind() {
-                        ty::AdtKind::Enum => format!("enum {} variant {}",
-                                                     tcx.item_path_str(def_id),
-                                                     variant),
-                        ty::AdtKind::Struct => format!("struct {}",
-                                                       tcx.item_path_str(def_id))
+                        AdtKind::Enum => format!("enum {} variant {}",
+                                                 tcx.item_path_str(def_id),
+                                                 variant),
+                        AdtKind::Struct => format!("struct {}",
+                                                   tcx.item_path_str(def_id)),
+                        AdtKind::Union => format!("union {}",
+                                                  tcx.item_path_str(def_id)),
                     };
                     span_note!(
                         &mut err,
@@ -420,7 +409,7 @@ fn iterate_over_potentially_unsafe_regions_in_type<'a, 'b, 'gcx, 'tcx>(
                ty);
 
         cx.rcx.type_must_outlive(infer::SubregionOrigin::SafeDestructor(cx.span),
-                                 ty, ty::ReScope(cx.parent_scope));
+                                 ty, tcx.mk_region(ty::ReScope(cx.parent_scope)));
 
         return Ok(());
     }
@@ -444,14 +433,14 @@ fn iterate_over_potentially_unsafe_regions_in_type<'a, 'b, 'gcx, 'tcx>(
                 cx, context, ity, depth+1)
         }
 
-        ty::TyStruct(def, substs) if def.is_phantom_data() => {
+        ty::TyAdt(def, substs) if def.is_phantom_data() => {
             // PhantomData<T> - behaves identically to T
-            let ity = *substs.types.get(subst::TypeSpace, 0);
+            let ity = substs.type_at(0);
             iterate_over_potentially_unsafe_regions_in_type(
                 cx, context, ity, depth+1)
         }
 
-        ty::TyStruct(def, substs) | ty::TyEnum(def, substs) => {
+        ty::TyAdt(def, substs) => {
             let did = def.did;
             for variant in &def.variants {
                 for field in variant.fields.iter() {
@@ -506,7 +495,7 @@ fn iterate_over_potentially_unsafe_regions_in_type<'a, 'b, 'gcx, 'tcx>(
 fn has_dtor_of_interest<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
                                         ty: Ty<'tcx>) -> bool {
     match ty.sty {
-        ty::TyEnum(def, _) | ty::TyStruct(def, _) => {
+        ty::TyAdt(def, _) => {
             def.is_dtorck(tcx)
         }
         ty::TyTrait(..) | ty::TyProjection(..) | ty::TyAnon(..) => {

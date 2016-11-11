@@ -8,163 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use llvm::ValueRef;
-use llvm;
+use common::*;
 use rustc::hir::def_id::DefId;
 use rustc::infer::TransNormalize;
-use rustc::ty::subst;
+use rustc::ty::fold::{TypeFolder, TypeFoldable};
 use rustc::ty::subst::{Subst, Substs};
-use rustc::ty::{self, Ty, TypeFoldable, TyCtxt};
-use attributes;
-use base::{push_ctxt};
-use base;
-use common::*;
-use declare;
-use Disr;
-use rustc::hir::map as hir_map;
+use rustc::ty::{self, Ty, TyCtxt};
 use rustc::util::ppaux;
-
-use rustc::hir;
-
-use errors;
-
+use rustc::util::common::MemoizationMap;
 use std::fmt;
-use trans_item::TransItem;
-
-pub fn monomorphic_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                                fn_id: DefId,
-                                psubsts: &'tcx subst::Substs<'tcx>)
-                                -> (ValueRef, Ty<'tcx>) {
-    debug!("monomorphic_fn(fn_id={:?}, real_substs={:?})", fn_id, psubsts);
-    assert!(!psubsts.types.needs_infer() && !psubsts.types.has_param_types());
-
-    let _icx = push_ctxt("monomorphic_fn");
-
-    let instance = Instance::new(fn_id, psubsts);
-
-    let item_ty = ccx.tcx().lookup_item_type(fn_id).ty;
-
-    debug!("monomorphic_fn about to subst into {:?}", item_ty);
-    let mono_ty = apply_param_substs(ccx.tcx(), psubsts, &item_ty);
-    debug!("mono_ty = {:?} (post-substitution)", mono_ty);
-
-    if let Some(&val) = ccx.instances().borrow().get(&instance) {
-        debug!("leaving monomorphic fn {:?}", instance);
-        return (val, mono_ty);
-    } else {
-        assert!(!ccx.codegen_unit().contains_item(&TransItem::Fn(instance)));
-    }
-
-    debug!("monomorphic_fn({:?})", instance);
-
-    ccx.stats().n_monos.set(ccx.stats().n_monos.get() + 1);
-
-    let depth;
-    {
-        let mut monomorphizing = ccx.monomorphizing().borrow_mut();
-        depth = match monomorphizing.get(&fn_id) {
-            Some(&d) => d, None => 0
-        };
-
-        debug!("monomorphic_fn: depth for fn_id={:?} is {:?}", fn_id, depth+1);
-
-        // Random cut-off -- code that needs to instantiate the same function
-        // recursively more than thirty times can probably safely be assumed
-        // to be causing an infinite expansion.
-        if depth > ccx.sess().recursion_limit.get() {
-            let error = format!("reached the recursion limit while instantiating `{}`",
-                                instance);
-            if let Some(id) = ccx.tcx().map.as_local_node_id(fn_id) {
-                ccx.sess().span_fatal(ccx.tcx().map.span(id), &error);
-            } else {
-                ccx.sess().fatal(&error);
-            }
-        }
-
-        monomorphizing.insert(fn_id, depth + 1);
-    }
-
-    let symbol = ccx.symbol_map().get_or_compute(ccx.shared(),
-                                                 TransItem::Fn(instance));
-
-    debug!("monomorphize_fn mangled to {}", &symbol);
-    assert!(declare::get_defined_value(ccx, &symbol).is_none());
-
-    // FIXME(nagisa): perhaps needs a more fine grained selection?
-    let lldecl = declare::define_internal_fn(ccx, &symbol, mono_ty);
-    // FIXME(eddyb) Doubt all extern fn should allow unwinding.
-    attributes::unwind(lldecl, true);
-
-    ccx.instances().borrow_mut().insert(instance, lldecl);
-
-    // we can only monomorphize things in this crate (or inlined into it)
-    let fn_node_id = ccx.tcx().map.as_local_node_id(fn_id).unwrap();
-    let map_node = errors::expect(
-        ccx.sess().diagnostic(),
-        ccx.tcx().map.find(fn_node_id),
-        || {
-            format!("while instantiating `{}`, couldn't find it in \
-                     the item map (may have attempted to monomorphize \
-                     an item defined in a different crate?)",
-                    instance)
-        });
-    match map_node {
-        hir_map::NodeItem(&hir::Item {
-            ref attrs,
-            node: hir::ItemFn(..), ..
-        }) |
-        hir_map::NodeImplItem(&hir::ImplItem {
-            ref attrs, node: hir::ImplItemKind::Method(
-                hir::MethodSig { .. }, _), ..
-        }) |
-        hir_map::NodeTraitItem(&hir::TraitItem {
-            ref attrs, node: hir::MethodTraitItem(
-                hir::MethodSig { .. }, Some(_)), ..
-        }) => {
-            let trans_item = TransItem::Fn(instance);
-
-            if ccx.shared().translation_items().borrow().contains(&trans_item) {
-                attributes::from_fn_attrs(ccx, attrs, lldecl);
-                unsafe {
-                    llvm::LLVMSetLinkage(lldecl, llvm::ExternalLinkage);
-                }
-            } else {
-                // FIXME: #34151
-                // Normally, getting here would indicate a bug in trans::collector,
-                // since it seems to have missed a translation item. When we are
-                // translating with non-MIR based trans, however, the results of
-                // the collector are not entirely reliable since it bases its
-                // analysis on MIR. Thus, we'll instantiate the missing function
-                // privately in this codegen unit, so that things keep working.
-                ccx.stats().n_fallback_instantiations.set(ccx.stats()
-                                                             .n_fallback_instantiations
-                                                             .get() + 1);
-                trans_item.predefine(ccx, llvm::InternalLinkage);
-                trans_item.define(ccx);
-            }
-        }
-
-        hir_map::NodeVariant(_) | hir_map::NodeStructCtor(_) => {
-            let disr = match map_node {
-                hir_map::NodeVariant(_) => {
-                    Disr::from(inlined_variant_def(ccx, fn_node_id).disr_val)
-                }
-                hir_map::NodeStructCtor(_) => Disr(0),
-                _ => bug!()
-            };
-            attributes::inline(lldecl, attributes::InlineAttr::Hint);
-            attributes::set_frame_pointer_elimination(ccx, lldecl);
-            base::trans_ctor_shim(ccx, fn_node_id, disr, psubsts, lldecl);
-        }
-
-        _ => bug!("can't monomorphize a {:?}", map_node)
-    };
-
-    ccx.monomorphizing().borrow_mut().insert(fn_id, depth);
-
-    debug!("leaving monomorphic fn {}", ccx.tcx().item_path_str(fn_id));
-    (lldecl, mono_ty)
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Instance<'tcx> {
@@ -174,14 +26,14 @@ pub struct Instance<'tcx> {
 
 impl<'tcx> fmt::Display for Instance<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        ppaux::parameterized(f, &self.substs, self.def, ppaux::Ns::Value, &[], |_| None)
+        ppaux::parameterized(f, &self.substs, self.def, &[])
     }
 }
 
 impl<'tcx> Instance<'tcx> {
     pub fn new(def_id: DefId, substs: &'tcx Substs<'tcx>)
                -> Instance<'tcx> {
-        assert!(substs.regions.iter().all(|&r| r == ty::ReErased));
+        assert!(substs.regions().all(|&r| r == ty::ReErased));
         Instance { def: def_id, substs: substs }
     }
     pub fn mono<'a>(scx: &SharedCrateContext<'a, 'tcx>, def_id: DefId) -> Instance<'tcx> {
@@ -191,14 +43,17 @@ impl<'tcx> Instance<'tcx> {
 
 /// Monomorphizes a type from the AST by first applying the in-scope
 /// substitutions and then normalizing any associated types.
-pub fn apply_param_substs<'a, 'tcx, T>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+pub fn apply_param_substs<'a, 'tcx, T>(scx: &SharedCrateContext<'a, 'tcx>,
                                        param_substs: &Substs<'tcx>,
                                        value: &T)
                                        -> T
     where T: TransNormalize<'tcx>
 {
+    let tcx = scx.tcx();
+    debug!("apply_param_substs(param_substs={:?}, value={:?})", param_substs, value);
     let substituted = value.subst(tcx, param_substs);
-    tcx.normalize_associated_type(&substituted)
+    let substituted = scx.tcx().erase_regions(&substituted);
+    AssociatedTypeNormalizer::new(scx).fold(&substituted)
 }
 
 
@@ -209,4 +64,41 @@ pub fn field_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                           -> Ty<'tcx>
 {
     tcx.normalize_associated_type(&f.ty(tcx, param_substs))
+}
+
+struct AssociatedTypeNormalizer<'a, 'b: 'a, 'gcx: 'b> {
+    shared: &'a SharedCrateContext<'b, 'gcx>,
+}
+
+impl<'a, 'b, 'gcx> AssociatedTypeNormalizer<'a, 'b, 'gcx> {
+    fn new(shared: &'a SharedCrateContext<'b, 'gcx>) -> Self {
+        AssociatedTypeNormalizer {
+            shared: shared,
+        }
+    }
+
+    fn fold<T:TypeFoldable<'gcx>>(&mut self, value: &T) -> T {
+        if !value.has_projection_types() {
+            value.clone()
+        } else {
+            value.fold_with(self)
+        }
+    }
+}
+
+impl<'a, 'b, 'gcx> TypeFolder<'gcx, 'gcx> for AssociatedTypeNormalizer<'a, 'b, 'gcx> {
+    fn tcx<'c>(&'c self) -> TyCtxt<'c, 'gcx, 'gcx> {
+        self.shared.tcx()
+    }
+
+    fn fold_ty(&mut self, ty: Ty<'gcx>) -> Ty<'gcx> {
+        if !ty.has_projection_types() {
+            ty
+        } else {
+            self.shared.project_cache().memoize(ty, || {
+                debug!("AssociatedTypeNormalizer: ty={:?}", ty);
+                self.shared.tcx().normalize_associated_type(&ty)
+            })
+        }
+    }
 }

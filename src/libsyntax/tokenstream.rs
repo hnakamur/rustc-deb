@@ -33,6 +33,7 @@ use parse::lexer::comments::{doc_comment_style, strip_doc_comment_decoration};
 use parse::lexer;
 use parse;
 use parse::token::{self, Token, Lit, Nonterminal};
+use print::pprust;
 
 use std::fmt;
 use std::iter::*;
@@ -589,6 +590,12 @@ impl TokenStream {
         TokenStream::mk_leaf(Rc::new(trees), span)
     }
 
+    /// Convert a vector of Tokens into a TokenStream.
+    pub fn from_tokens(tokens: Vec<Token>) -> TokenStream {
+        // FIXME do something nicer with the spans
+        TokenStream::from_tts(tokens.into_iter().map(|t| TokenTree::Token(DUMMY_SP, t)).collect())
+    }
+
     /// Manually change a TokenStream's span.
     pub fn respan(self, span: Span) -> TokenStream {
         match self.ts {
@@ -772,6 +779,12 @@ impl TokenStream {
         });
 
         TokenStream::from_tts(vec![TokenTree::Delimited(new_sp, new_delim)])
+    }
+}
+
+impl fmt::Display for TokenStream {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&pprust::tts_to_string(&self.to_tts()))
     }
 }
 

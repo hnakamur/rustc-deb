@@ -1327,30 +1327,6 @@ let x: i32 = "I am not a number!";
 //      |
 //    type `i32` assigned to variable `x`
 ```
-
-Another situation in which this occurs is when you attempt to use the `try!`
-macro inside a function that does not return a `Result<T, E>`:
-
-```compile_fail,E0308
-use std::fs::File;
-
-fn main() {
-    let mut f = try!(File::create("foo.txt"));
-}
-```
-
-This code gives an error like this:
-
-```text
-<std macros>:5:8: 6:42 error: mismatched types:
- expected `()`,
-     found `core::result::Result<_, _>`
- (expected (),
-     found enum `core::result::Result`) [E0308]
-```
-
-`try!` returns a `Result<T, E>`, and so the function must. But `main()` has
-`()` as its return type, hence the error.
 "##,
 
 E0309: r##"
@@ -1527,6 +1503,37 @@ fn main() {
 ```
 "##,
 
+E0478: r##"
+A lifetime bound was not satisfied.
+
+Erroneous code example:
+
+```compile_fail,E0478
+// Check that the explicit lifetime bound (`'SnowWhite`, in this example) must
+// outlive all the superbounds from the trait (`'kiss`, in this example).
+
+trait Wedding<'t>: 't { }
+
+struct Prince<'kiss, 'SnowWhite> {
+    child: Box<Wedding<'kiss> + 'SnowWhite>,
+    // error: lifetime bound not satisfied
+}
+```
+
+In this example, the `'SnowWhite` lifetime is supposed to outlive the `'kiss`
+lifetime but the declaration of the `Prince` struct doesn't enforce it. To fix
+this issue, you need to specify it:
+
+```
+trait Wedding<'t>: 't { }
+
+struct Prince<'kiss, 'SnowWhite: 'kiss> { // You say here that 'kiss must live
+                                          // longer than 'SnowWhite.
+    child: Box<Wedding<'kiss> + 'SnowWhite>, // And now it's all good!
+}
+```
+"##,
+
 E0496: r##"
 A lifetime name is shadowing another lifetime name. Erroneous code example:
 
@@ -1690,6 +1697,50 @@ fn cookie() -> ! { // error: definition of an unknown language item: `cookie`
 ```
 "##,
 
+E0525: r##"
+A closure was attempted to get used whereas it doesn't implement the expected
+trait.
+
+Erroneous code example:
+
+```compile_fail,E0525
+struct X;
+
+fn foo<T>(_: T) {}
+fn bar<T: Fn(u32)>(_: T) {}
+
+fn main() {
+    let x = X;
+    let closure = |_| foo(x); // error: expected a closure that implements
+                              //        the `Fn` trait, but this closure only
+                              //        implements `FnOnce`
+    bar(closure);
+}
+```
+
+In the example above, `closure` is an `FnOnce` closure whereas the `bar`
+function expected an `Fn` closure. In this case, it's simple to fix the issue,
+you just have to implement `Copy` and `Clone` traits on `struct X` and it'll
+be ok:
+
+```
+#[derive(Clone, Copy)] // We implement `Clone` and `Copy` traits.
+struct X;
+
+fn foo<T>(_: T) {}
+fn bar<T: Fn(u32)>(_: T) {}
+
+fn main() {
+    let x = X;
+    let closure = |_| foo(x);
+    bar(closure); // ok!
+}
+```
+
+To understand better how closures work in Rust, read:
+https://doc.rust-lang.org/book/closures.html
+"##,
+
 }
 
 
@@ -1715,7 +1766,6 @@ register_diagnostics! {
     E0475, // index of slice outside its lifetime
     E0476, // lifetime of the source pointer does not outlive lifetime bound...
     E0477, // the type `..` does not fulfill the required lifetime...
-    E0478, // lifetime bound not satisfied
     E0479, // the type `..` (provided as the value of a type parameter) is...
     E0480, // lifetime of method receiver does not outlive the method call
     E0481, // lifetime of function argument does not outlive the function call
@@ -1730,5 +1780,5 @@ register_diagnostics! {
     E0490, // a value of type `..` is borrowed for too long
     E0491, // in type `..`, reference has a longer lifetime than the data it...
     E0495, // cannot infer an appropriate lifetime due to conflicting requirements
-    E0525  // expected a closure that implements `..` but this closure only implements `..`
+    E0566  // conflicting representation hints
 }

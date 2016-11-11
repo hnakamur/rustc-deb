@@ -23,7 +23,6 @@ use io::{self, SeekFrom, Seek, Read, Write};
 use path::{Path, PathBuf};
 use sys::fs as fs_imp;
 use sys_common::{AsInnerMut, FromInner, AsInner, IntoInner};
-use vec::Vec;
 use time::SystemTime;
 
 /// A reference to an open file on the filesystem.
@@ -1056,6 +1055,15 @@ impl DirEntry {
     }
 }
 
+#[stable(feature = "dir_entry_debug", since = "1.13.0")]
+impl fmt::Debug for DirEntry {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("DirEntry")
+            .field(&self.path())
+            .finish()
+    }
+}
+
 impl AsInner<fs_imp::DirEntry> for DirEntry {
     fn as_inner(&self) -> &fs_imp::DirEntry { &self.0 }
 }
@@ -1511,8 +1519,11 @@ pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
 
 /// Returns an iterator over the entries within a directory.
 ///
-/// The iterator will yield instances of `io::Result<DirEntry>`. New errors may
-/// be encountered after an iterator is initially constructed.
+/// The iterator will yield instances of [`io::Result`]`<`[`DirEntry`]`>`.
+/// New errors may be encountered after an iterator is initially constructed.
+///
+/// [`io::Result`]: ../io/type.Result.html
+/// [`DirEntry`]: struct.DirEntry.html
 ///
 /// # Platform-specific behavior
 ///
@@ -1677,7 +1688,6 @@ impl AsInnerMut<fs_imp::DirBuilder> for DirBuilder {
 
 #[cfg(test)]
 mod tests {
-    use prelude::v1::*;
     use io::prelude::*;
 
     use fs::{self, File, OpenOptions};
@@ -2638,6 +2648,17 @@ mod tests {
                 f => panic!("unknown file name: {:?}", f),
             }
         }
+    }
+
+    #[test]
+    fn dir_entry_debug() {
+        let tmpdir = tmpdir();
+        File::create(&tmpdir.join("b")).unwrap();
+        let mut read_dir = tmpdir.path().read_dir().unwrap();
+        let dir_entry = read_dir.next().unwrap().unwrap();
+        let actual = format!("{:?}", dir_entry);
+        let expected = format!("DirEntry({:?})", dir_entry.0.path());
+        assert_eq!(actual, expected);
     }
 
     #[test]

@@ -135,33 +135,26 @@
 //!
 //! ## Thread-local storage
 //!
-//! This module also provides an implementation of thread local storage for Rust
-//! programs. Thread local storage is a method of storing data into a global
-//! variable which each thread in the program will have its own copy of.
+//! This module also provides an implementation of thread-local storage for Rust
+//! programs. Thread-local storage is a method of storing data into a global
+//! variable that each thread in the program will have its own copy of.
 //! Threads do not share this data, so accesses do not need to be synchronized.
 //!
-//! At a high level, this module provides two variants of storage:
-//!
-//! * Owned thread-local storage. This is a type of thread local key which
-//!   owns the value that it contains, and will destroy the value when the
-//!   thread exits. This variant is created with the `thread_local!` macro and
-//!   can contain any value which is `'static` (no borrowed pointers).
-//!
-//! * Scoped thread-local storage. This type of key is used to store a reference
-//!   to a value into local storage temporarily for the scope of a function
-//!   call. There are no restrictions on what types of values can be placed
-//!   into this key.
-//!
-//! Both forms of thread local storage provide an accessor function, `with`,
-//! which will yield a shared reference to the value to the specified
-//! closure. Thread-local keys only allow shared access to values as there is no
-//! way to guarantee uniqueness if a mutable borrow was allowed. Most values
+//! A thread-local key owns the value it contains and will destroy the value when the
+//! thread exits. It is created with the [`thread_local!`] macro and can contain any
+//! value that is `'static` (no borrowed pointers). It provides an accessor function,
+//! [`with`], that yields a shared reference to the value to the specified
+//! closure. Thread-local keys allow only shared access to values, as there would be no
+//! way to guarantee uniqueness if mutable borrows were allowed. Most values
 //! will want to make use of some form of **interior mutability** through the
-//! `Cell` or `RefCell` types.
+//! [`Cell`] or [`RefCell`] types.
+//!
+//! [`Cell`]: ../cell/struct.Cell.html
+//! [`RefCell`]: ../cell/struct.RefCell.html
+//! [`thread_local!`]: ../macro.thread_local!.html
+//! [`with`]: struct.LocalKey.html#method.with
 
 #![stable(feature = "rust1", since = "1.0.0")]
-
-use prelude::v1::*;
 
 use any::Any;
 use cell::UnsafeCell;
@@ -322,6 +315,24 @@ pub fn spawn<F, T>(f: F) -> JoinHandle<T> where
 }
 
 /// Gets a handle to the thread that invokes it.
+///
+/// #Examples
+///
+/// Getting a handle to the current thread with `thread::current()`:
+///
+/// ```
+/// use std::thread;
+///
+/// let handler = thread::Builder::new()
+///     .name("named thread".into())
+///     .spawn(|| {
+///         let handle = thread::current();
+///         assert_eq!(handle.name(), Some("named thread"));
+///     })
+///     .unwrap();
+///
+/// handler.join().unwrap();
+/// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn current() -> Thread {
     thread_info::current_thread().expect("use of std::thread::current() is not \
@@ -732,8 +743,6 @@ fn _assert_sync_and_send() {
 
 #[cfg(test)]
 mod tests {
-    use prelude::v1::*;
-
     use any::Any;
     use sync::mpsc::{channel, Sender};
     use result;
@@ -786,8 +795,6 @@ mod tests {
 
     #[test]
     fn test_spawn_sched() {
-        use clone::Clone;
-
         let (tx, rx) = channel();
 
         fn f(i: i32, tx: Sender<()>) {

@@ -76,7 +76,7 @@ pub trait Delegate<'tcx> {
               borrow_id: ast::NodeId,
               borrow_span: Span,
               cmt: mc::cmt<'tcx>,
-              loan_region: ty::Region,
+              loan_region: &'tcx ty::Region,
               bk: ty::BorrowKind,
               loan_cause: LoanCause);
 
@@ -301,11 +301,11 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         for arg in &decl.inputs {
             let arg_ty = return_if_err!(self.mc.infcx.node_ty(arg.pat.id));
 
-            let fn_body_scope = self.tcx().region_maps.node_extent(body.id);
+            let fn_body_scope_r = self.tcx().node_scope_region(body.id);
             let arg_cmt = self.mc.cat_rvalue(
                 arg.id,
                 arg.pat.span,
-                ty::ReScope(fn_body_scope), // Args live only as long as the fn body.
+                fn_body_scope_r, // Args live only as long as the fn body.
                 arg_ty);
 
             self.walk_irrefutable_pat(arg_cmt, &arg.pat);
@@ -352,7 +352,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
 
     fn borrow_expr(&mut self,
                    expr: &hir::Expr,
-                   r: ty::Region,
+                   r: &'tcx ty::Region,
                    bk: ty::BorrowKind,
                    cause: LoanCause) {
         debug!("borrow_expr(expr={:?}, r={:?}, bk={:?})",
@@ -409,12 +409,12 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 self.consume_exprs(args);
             }
 
-            hir::ExprMethodCall(_, _, ref args) => { // callee.m(args)
+            hir::ExprMethodCall(.., ref args) => { // callee.m(args)
                 self.consume_exprs(args);
             }
 
             hir::ExprStruct(_, ref fields, ref opt_with) => {
-                self.walk_struct_expr(expr, fields, opt_with);
+                self.walk_struct_expr(fields, opt_with);
             }
 
             hir::ExprTup(ref exprs) => {
@@ -431,7 +431,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
 
             hir::ExprMatch(ref discr, ref arms, _) => {
                 let discr_cmt = return_if_err!(self.mc.cat_expr(&discr));
-                self.borrow_expr(&discr, ty::ReEmpty, ty::ImmBorrow, MatchDiscriminant);
+                let r = self.tcx().mk_region(ty::ReEmpty);
+                self.borrow_expr(&discr, r, ty::ImmBorrow, MatchDiscriminant);
 
                 // treatment of the discriminant is handled while walking the arms.
                 for arm in arms {
@@ -449,7 +450,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 // make sure that the thing we are pointing out stays valid
                 // for the lifetime `scope_r` of the resulting ptr:
                 let expr_ty = return_if_err!(self.mc.infcx.node_ty(expr.id));
-                if let ty::TyRef(&r, _) = expr_ty.sty {
+                if let ty::TyRef(r, _) = expr_ty.sty {
                     let bk = ty::BorrowKind::from_mutbl(m);
                     self.borrow_expr(&base, r, bk, AddrOf);
                 }
@@ -543,7 +544,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 self.consume_expr(&count);
             }
 
-            hir::ExprClosure(_, _, _, fn_decl_span) => {
+            hir::ExprClosure(.., fn_decl_span) => {
                 self.walk_captures(expr, fn_decl_span)
             }
 
@@ -557,7 +558,6 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         let callee_ty = return_if_err!(self.mc.infcx.expr_ty_adjusted(callee));
         debug!("walk_callee: callee={:?} callee_ty={:?}",
                callee, callee_ty);
-        let call_scope = self.tcx().region_maps.node_extent(call.id);
         match callee_ty.sty {
             ty::TyFnDef(..) | ty::TyFnPtr(_) => {
                 self.consume_expr(callee);
@@ -578,14 +578,16 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                     };
                 match overloaded_call_type {
                     FnMutOverloadedCall => {
+                        let call_scope_r = self.tcx().node_scope_region(call.id);
                         self.borrow_expr(callee,
-                                         ty::ReScope(call_scope),
+                                         call_scope_r,
                                          ty::MutBorrow,
                                          ClosureInvocation);
                     }
                     FnOverloadedCall => {
+                        let call_scope_r = self.tcx().node_scope_region(call.id);
                         self.borrow_expr(callee,
-                                         ty::ReScope(call_scope),
+                                         call_scope_r,
                                          ty::ImmBorrow,
                                          ClosureInvocation);
                     }
@@ -653,7 +655,6 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     }
 
     fn walk_struct_expr(&mut self,
-                        _expr: &hir::Expr,
                         fields: &[hir::Field],
                         opt_with: &Option<P<hir::Expr>>) {
         // Consume the expressions supplying values for each field.
@@ -670,30 +671,33 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
 
         // Select just those fields of the `with`
         // expression that will actually be used
-        if let ty::TyStruct(def, substs) = with_cmt.ty.sty {
-            // Consume those fields of the with expression that are needed.
-            for with_field in &def.struct_variant().fields {
-                if !contains_field_named(with_field, fields) {
-                    let cmt_field = self.mc.cat_field(
-                        &*with_expr,
-                        with_cmt.clone(),
-                        with_field.name,
-                        with_field.ty(self.tcx(), substs)
-                    );
-                    self.delegate_consume(with_expr.id, with_expr.span, cmt_field);
+        match with_cmt.ty.sty {
+            ty::TyAdt(adt, substs) if adt.is_struct() => {
+                // Consume those fields of the with expression that are needed.
+                for with_field in &adt.struct_variant().fields {
+                    if !contains_field_named(with_field, fields) {
+                        let cmt_field = self.mc.cat_field(
+                            &*with_expr,
+                            with_cmt.clone(),
+                            with_field.name,
+                            with_field.ty(self.tcx(), substs)
+                        );
+                        self.delegate_consume(with_expr.id, with_expr.span, cmt_field);
+                    }
                 }
             }
-        } else {
-            // the base expression should always evaluate to a
-            // struct; however, when EUV is run during typeck, it
-            // may not. This will generate an error earlier in typeck,
-            // so we can just ignore it.
-            if !self.tcx().sess.has_errors() {
-                span_bug!(
-                    with_expr.span,
-                    "with expression doesn't evaluate to a struct");
+            _ => {
+                // the base expression should always evaluate to a
+                // struct; however, when EUV is run during typeck, it
+                // may not. This will generate an error earlier in typeck,
+                // so we can just ignore it.
+                if !self.tcx().sess.has_errors() {
+                    span_bug!(
+                        with_expr.span,
+                        "with expression doesn't evaluate to a struct");
+                }
             }
-        };
+        }
 
         // walk the with expression so that complex expressions
         // are properly handled.
@@ -761,7 +765,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 };
                 let bk = ty::BorrowKind::from_mutbl(m);
                 self.delegate.borrow(expr.id, expr.span, cmt,
-                                     *r, bk, AutoRef);
+                                     r, bk, AutoRef);
             }
         }
     }
@@ -822,7 +826,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 self.delegate.borrow(expr.id,
                                      expr.span,
                                      cmt_base,
-                                     *r,
+                                     r,
                                      ty::BorrowKind::from_mutbl(m),
                                      AutoRef);
             }
@@ -835,7 +839,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 // Converting from a &T to *T (or &mut T to *mut T) is
                 // treated as borrowing it for the enclosing temporary
                 // scope.
-                let r = ty::ReScope(self.tcx().region_maps.node_extent(expr.id));
+                let r = self.tcx().node_scope_region(expr.id);
 
                 self.delegate.borrow(expr.id,
                                      expr.span,
@@ -890,7 +894,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         // methods are implicitly autoref'd which sadly does not use
         // adjustments, so we must hardcode the borrow here.
 
-        let r = ty::ReScope(self.tcx().region_maps.node_extent(expr.id));
+        let r = self.tcx().node_scope_region(expr.id);
         let bk = ty::ImmBorrow;
 
         for &arg in &rhs {
@@ -939,9 +943,9 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                pat);
         return_if_err!(self.mc.cat_pattern(cmt_discr, pat, |_mc, cmt_pat, pat| {
             match pat.node {
-                PatKind::Binding(hir::BindByRef(..), _, _) =>
+                PatKind::Binding(hir::BindByRef(..), ..) =>
                     mode.lub(BorrowingMatch),
-                PatKind::Binding(hir::BindByValue(..), _, _) => {
+                PatKind::Binding(hir::BindByValue(..), ..) => {
                     match copy_or_move(self.mc.infcx, &cmt_pat, PatBindingMove) {
                         Copy => mode.lub(CopyingMatch),
                         Move(..) => mode.lub(MovingMatch),
@@ -963,7 +967,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         let infcx = self.mc.infcx;
         let delegate = &mut self.delegate;
         return_if_err!(mc.cat_pattern(cmt_discr.clone(), pat, |mc, cmt_pat, pat| {
-            if let PatKind::Binding(bmode, _, _) = pat.node {
+            if let PatKind::Binding(bmode, ..) = pat.node {
                 debug!("binding cmt_pat={:?} pat={:?} match_mode={:?}", cmt_pat, pat, match_mode);
 
                 // pat_ty: the type of the binding being produced.
@@ -979,7 +983,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 // It is also a borrow or copy/move of the value being matched.
                 match bmode {
                     hir::BindByRef(m) => {
-                        if let ty::TyRef(&r, _) = pat_ty.sty {
+                        if let ty::TyRef(r, _) = pat_ty.sty {
                             let bk = ty::BorrowKind::from_mutbl(m);
                             delegate.borrow(pat.id, pat.span, cmt_pat, r, bk, RefBinding);
                         }
@@ -999,7 +1003,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         // the leaves of the pattern tree structure.
         return_if_err!(mc.cat_pattern(cmt_discr, pat, |mc, cmt_pat, pat| {
             match tcx.expect_def_or_none(pat.id) {
-                Some(Def::Variant(enum_did, variant_did)) => {
+                Some(Def::Variant(variant_did)) => {
+                    let enum_did = tcx.parent_def_id(variant_did).unwrap();
                     let downcast_cmt = if tcx.lookup_adt_def(enum_did).is_univariant() {
                         cmt_pat
                     } else {
@@ -1010,7 +1015,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                     debug!("variant downcast_cmt={:?} pat={:?}", downcast_cmt, pat);
                     delegate.matched_pat(pat, downcast_cmt, match_mode);
                 }
-                Some(Def::Struct(..)) | Some(Def::TyAlias(..)) | Some(Def::AssociatedTy(..)) => {
+                Some(Def::Struct(..)) | Some(Def::Union(..)) |
+                Some(Def::TyAlias(..)) | Some(Def::AssociatedTy(..)) => {
                     debug!("struct cmt_pat={:?} pat={:?}", cmt_pat, pat);
                     delegate.matched_pat(pat, cmt_pat, match_mode);
                 }
@@ -1024,7 +1030,8 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
 
         self.tcx().with_freevars(closure_expr.id, |freevars| {
             for freevar in freevars {
-                let id_var = freevar.def.var_id();
+                let def_id = freevar.def.def_id();
+                let id_var = self.tcx().map.as_local_node_id(def_id).unwrap();
                 let upvar_id = ty::UpvarId { var_id: id_var,
                                              closure_expr_id: closure_expr.id };
                 let upvar_capture = self.mc.infcx.upvar_capture(upvar_id).unwrap();
@@ -1056,7 +1063,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                         -> mc::McResult<mc::cmt<'tcx>> {
         // Create the cmt for the variable being borrowed, from the
         // caller's perspective
-        let var_id = upvar_def.var_id();
+        let var_id = self.tcx().map.as_local_node_id(upvar_def.def_id()).unwrap();
         let var_ty = self.mc.infcx.node_ty(var_id)?;
         self.mc.cat_def(closure_id, closure_span, var_ty, upvar_def)
     }

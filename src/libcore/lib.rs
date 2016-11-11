@@ -42,6 +42,11 @@
 //!   line. It is up to consumers of this core library to define this panic
 //!   function; it is only required to never return. This requires a `lang`
 //!   attribute named `panic_fmt`.
+//!
+//! * `rust_eh_personality` - is used by the failure mechanisms of the
+//!    compiler. This is often mapped to GCC's personality function, but crates
+//!    which do not trigger a panic can be assured that this function is never
+//!    called. The `lang` attribute is called `eh_personality`.
 
 // Since libcore defines many fundamental lang items, all tests live in a
 // separate crate, libcoretest, to avoid bizarre issues.
@@ -61,8 +66,6 @@
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 #![cfg_attr(not(stage0), deny(warnings))]
-
-#![cfg_attr(stage0, allow(unused_attributes))]
 
 #![feature(allow_internal_unstable)]
 #![feature(asm)]
@@ -86,10 +89,13 @@
 #![feature(specialization)]
 #![feature(staged_api)]
 #![feature(unboxed_closures)]
-#![feature(question_mark)]
+#![cfg_attr(stage0, feature(question_mark))]
+#![feature(never_type)]
+#![feature(prelude_import)]
 
-// NOTE: remove the cfg_attr next snapshot
-#![cfg_attr(not(stage0), feature(never_type))]
+#[prelude_import]
+#[allow(unused)]
+use prelude::v1::*;
 
 #[macro_use]
 mod macros;

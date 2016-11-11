@@ -129,6 +129,32 @@ s! {
         __unused5: ::c_ulong
     }
 
+    pub struct msqid_ds {
+        pub msg_perm: ::ipc_perm,
+        #[cfg(target_endian = "big")]
+        __glibc_reserved1: ::c_ulong,
+        pub msg_stime: ::time_t,
+        #[cfg(target_endian = "little")]
+        __glibc_reserved1: ::c_ulong,
+        #[cfg(target_endian = "big")]
+        __glibc_reserved2: ::c_ulong,
+        pub msg_rtime: ::time_t,
+        #[cfg(target_endian = "little")]
+        __glibc_reserved2: ::c_ulong,
+        #[cfg(target_endian = "big")]
+        __glibc_reserved3: ::c_ulong,
+        pub msg_ctime: ::time_t,
+        #[cfg(target_endian = "little")]
+        __glibc_reserved3: ::c_ulong,
+        __msg_cbytes: ::c_ulong,
+        pub msg_qnum: ::msgqnum_t,
+        pub msg_qbytes: ::msglen_t,
+        pub msg_lspid: ::pid_t,
+        pub msg_lrpid: ::pid_t,
+        __glibc_reserved4: ::c_ulong,
+        __glibc_reserved5: ::c_ulong,
+    }
+
     pub struct statfs {
         pub f_type: ::c_long,
         pub f_bsize: ::c_long,
@@ -203,14 +229,14 @@ s! {
 pub const BUFSIZ: ::c_uint = 8192;
 pub const TMP_MAX: ::c_uint = 238328;
 pub const FOPEN_MAX: ::c_uint = 16;
+pub const POSIX_FADV_DONTNEED: ::c_int = 4;
+pub const POSIX_FADV_NOREUSE: ::c_int = 5;
 pub const POSIX_MADV_DONTNEED: ::c_int = 4;
 pub const _SC_2_C_VERSION: ::c_int = 96;
-pub const RUSAGE_THREAD: ::c_int = 1;
 pub const O_ACCMODE: ::c_int = 3;
 pub const O_DIRECT: ::c_int = 0x8000;
 pub const O_DIRECTORY: ::c_int = 0x10000;
 pub const O_NOFOLLOW: ::c_int = 0x20000;
-pub const RUSAGE_CHILDREN: ::c_int = -1;
 pub const ST_RELATIME: ::c_ulong = 4096;
 pub const NI_MAXHOST: ::socklen_t = 1025;
 
@@ -363,6 +389,7 @@ pub const SOCK_SEQPACKET: ::c_int = 5;
 pub const SOL_SOCKET: ::c_int = 0xffff;
 
 pub const SO_REUSEADDR: ::c_int = 4;
+pub const SO_REUSEPORT: ::c_int = 0x200;
 pub const SO_TYPE: ::c_int = 4104;
 pub const SO_ERROR: ::c_int = 4103;
 pub const SO_DONTROUTE: ::c_int = 16;
@@ -412,6 +439,11 @@ pub const SIGPWR: ::c_int = 19;
 pub const SIG_SETMASK: ::c_int = 3;
 pub const SIG_BLOCK: ::c_int = 0x1;
 pub const SIG_UNBLOCK: ::c_int = 0x2;
+
+pub const POLLRDNORM: ::c_short = 0x040;
+pub const POLLWRNORM: ::c_short = 0x004;
+pub const POLLRDBAND: ::c_short = 0x080;
+pub const POLLWRBAND: ::c_short = 0x100;
 
 pub const PTHREAD_STACK_MIN: ::size_t = 131072;
 
@@ -544,6 +576,51 @@ pub const LINUX_REBOOT_CMD_SW_SUSPEND: ::c_int = 0xD000FCE2;
 pub const LINUX_REBOOT_CMD_KEXEC: ::c_int = 0x45584543;
 
 pub const SYS_gettid: ::c_long = 4222;   // Valid for O32
+
+pub const MCL_CURRENT: ::c_int = 0x0001;
+pub const MCL_FUTURE: ::c_int = 0x0002;
+
+pub const SIGSTKSZ: ::size_t = 8192;
+pub const CBAUD: ::tcflag_t = 0o0010017;
+pub const TAB1: ::c_int = 0x00000800;
+pub const TAB2: ::c_int = 0x00001000;
+pub const TAB3: ::c_int = 0x00001800;
+pub const CR1: ::c_int  = 0x00000200;
+pub const CR2: ::c_int  = 0x00000400;
+pub const CR3: ::c_int  = 0x00000600;
+pub const FF1: ::c_int  = 0x00008000;
+pub const BS1: ::c_int  = 0x00002000;
+pub const VT1: ::c_int  = 0x00004000;
+pub const VWERASE: usize = 14;
+pub const VREPRINT: usize = 12;
+pub const VSUSP: usize = 10;
+pub const VSTART: usize = 8;
+pub const VSTOP: usize = 9;
+pub const VDISCARD: usize = 13;
+pub const VTIME: usize = 5;
+pub const IXON: ::tcflag_t = 0x00000400;
+pub const IXOFF: ::tcflag_t = 0x00001000;
+pub const ONLCR: ::tcflag_t = 0x4;
+pub const CSIZE: ::tcflag_t = 0x00000030;
+pub const CS6: ::tcflag_t = 0x00000010;
+pub const CS7: ::tcflag_t = 0x00000020;
+pub const CS8: ::tcflag_t = 0x00000030;
+pub const CSTOPB: ::tcflag_t = 0x00000040;
+pub const CREAD: ::tcflag_t = 0x00000080;
+pub const PARENB: ::tcflag_t = 0x00000100;
+pub const PARODD: ::tcflag_t = 0x00000200;
+pub const HUPCL: ::tcflag_t = 0x00000400;
+pub const CLOCAL: ::tcflag_t = 0x00000800;
+pub const ECHOKE: ::tcflag_t = 0x00000800;
+pub const ECHOE: ::tcflag_t = 0x00000010;
+pub const ECHOK: ::tcflag_t = 0x00000020;
+pub const ECHONL: ::tcflag_t = 0x00000040;
+pub const ECHOPRT: ::tcflag_t = 0x00000400;
+pub const ECHOCTL: ::tcflag_t = 0x00000200;
+pub const ISIG: ::tcflag_t = 0x00000001;
+pub const ICANON: ::tcflag_t = 0x00000002;
+pub const PENDIN: ::tcflag_t = 0x00004000;
+pub const NOFLSH: ::tcflag_t = 0x00000080;
 
 #[link(name = "util")]
 extern {

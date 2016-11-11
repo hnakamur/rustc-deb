@@ -6,6 +6,7 @@ pub type speed_t = ::c_uint;
 pub type tcflag_t = ::c_uint;
 pub type loff_t = ::c_longlong;
 pub type clockid_t = ::c_int;
+pub type key_t = ::c_int;
 pub type id_t = ::c_uint;
 
 pub enum timezone {}
@@ -219,6 +220,7 @@ pub const CLOCK_BOOTTIME_ALARM: clockid_t = 9;
 // 2014.) See also musl/mod.rs
 // pub const CLOCK_SGI_CYCLE: clockid_t = 10;
 // pub const CLOCK_TAI: clockid_t = 11;
+pub const TIMER_ABSTIME: ::c_int = 1;
 
 pub const RLIMIT_CPU: ::c_int = 0;
 pub const RLIMIT_FSIZE: ::c_int = 1;
@@ -306,9 +308,6 @@ pub const MAP_PRIVATE: ::c_int = 0x0002;
 pub const MAP_FIXED: ::c_int = 0x0010;
 
 pub const MAP_FAILED: *mut ::c_void = !0 as *mut ::c_void;
-
-pub const MCL_CURRENT: ::c_int = 0x0001;
-pub const MCL_FUTURE: ::c_int = 0x0002;
 
 // MS_ flags for msync(2)
 pub const MS_ASYNC: ::c_int = 0x0001;
@@ -416,11 +415,27 @@ pub const MADV_MERGEABLE: ::c_int = 12;
 pub const MADV_UNMERGEABLE: ::c_int = 13;
 pub const MADV_HWPOISON: ::c_int = 100;
 
+pub const IFF_UP: ::c_int = 0x1;
+pub const IFF_BROADCAST: ::c_int = 0x2;
+pub const IFF_DEBUG: ::c_int = 0x4;
 pub const IFF_LOOPBACK: ::c_int = 0x8;
+pub const IFF_POINTOPOINT: ::c_int = 0x10;
+pub const IFF_NOTRAILERS: ::c_int = 0x20;
+pub const IFF_RUNNING: ::c_int = 0x40;
+pub const IFF_NOARP: ::c_int = 0x80;
+pub const IFF_PROMISC: ::c_int = 0x100;
+pub const IFF_ALLMULTI: ::c_int = 0x200;
+pub const IFF_MASTER: ::c_int = 0x400;
+pub const IFF_SLAVE: ::c_int = 0x800;
+pub const IFF_MULTICAST: ::c_int = 0x1000;
+pub const IFF_PORTSEL: ::c_int = 0x2000;
+pub const IFF_AUTOMEDIA: ::c_int = 0x4000;
+pub const IFF_DYNAMIC: ::c_int = 0x8000;
 
 pub const AF_UNIX: ::c_int = 1;
 pub const AF_INET: ::c_int = 2;
 pub const AF_INET6: ::c_int = 10;
+pub const AF_NETLINK: ::c_int = 16;
 pub const SOCK_RAW: ::c_int = 3;
 pub const IPPROTO_TCP: ::c_int = 6;
 pub const IPPROTO_IP: ::c_int = 0;
@@ -454,6 +469,8 @@ pub const IPV6_V6ONLY: ::c_int = 26;
 
 pub const SO_DEBUG: ::c_int = 1;
 
+pub const MSG_NOSIGNAL: ::c_int = 0x4000;
+
 pub const SHUT_RD: ::c_int = 0;
 pub const SHUT_WR: ::c_int = 1;
 pub const SHUT_RDWR: ::c_int = 2;
@@ -462,8 +479,6 @@ pub const LOCK_SH: ::c_int = 1;
 pub const LOCK_EX: ::c_int = 2;
 pub const LOCK_NB: ::c_int = 4;
 pub const LOCK_UN: ::c_int = 8;
-
-pub const SIGSTKSZ: ::size_t = 8192;
 
 pub const SA_NODEFER: ::c_int = 0x40000000;
 pub const SA_RESETHAND: ::c_int = 0x80000000;
@@ -512,8 +527,6 @@ pub const QIF_USAGE: ::uint32_t = 10;
 pub const QIF_TIMES: ::uint32_t = 48;
 pub const QIF_ALL: ::uint32_t = 63;
 
-pub const CBAUD: ::tcflag_t = 0o0010017;
-
 pub const EFD_CLOEXEC: ::c_int = 0x80000;
 
 pub const MNT_FORCE: ::c_int = 0x1;
@@ -534,31 +547,15 @@ pub const TCIOFLUSH: ::c_int = 2;
 pub const NL0: ::c_int  = 0x00000000;
 pub const NL1: ::c_int  = 0x00000100;
 pub const TAB0: ::c_int = 0x00000000;
-pub const TAB1: ::c_int = 0x00000800;
-pub const TAB2: ::c_int = 0x00001000;
-pub const TAB3: ::c_int = 0x00001800;
 pub const CR0: ::c_int  = 0x00000000;
-pub const CR1: ::c_int  = 0x00000200;
-pub const CR2: ::c_int  = 0x00000400;
-pub const CR3: ::c_int  = 0x00000600;
 pub const FF0: ::c_int  = 0x00000000;
-pub const FF1: ::c_int  = 0x00008000;
 pub const BS0: ::c_int  = 0x00000000;
-pub const BS1: ::c_int  = 0x00002000;
 pub const VT0: ::c_int  = 0x00000000;
-pub const VT1: ::c_int  = 0x00004000;
 pub const VERASE: usize = 2;
-pub const VWERASE: usize = 14;
 pub const VKILL: usize = 3;
-pub const VREPRINT: usize = 12;
 pub const VINTR: usize = 0;
 pub const VQUIT: usize = 1;
-pub const VSUSP: usize = 10;
-pub const VSTART: usize = 8;
-pub const VSTOP: usize = 9;
 pub const VLNEXT: usize = 15;
-pub const VDISCARD: usize = 13;
-pub const VTIME: usize = 5;
 pub const IGNBRK: ::tcflag_t = 0x00000001;
 pub const BRKINT: ::tcflag_t = 0x00000002;
 pub const IGNPAR: ::tcflag_t = 0x00000004;
@@ -568,35 +565,12 @@ pub const ISTRIP: ::tcflag_t = 0x00000020;
 pub const INLCR: ::tcflag_t = 0x00000040;
 pub const IGNCR: ::tcflag_t = 0x00000080;
 pub const ICRNL: ::tcflag_t = 0x00000100;
-pub const IXON: ::tcflag_t = 0x00000400;
-pub const IXOFF: ::tcflag_t = 0x00001000;
 pub const IXANY: ::tcflag_t = 0x00000800;
 pub const IMAXBEL: ::tcflag_t = 0x00002000;
 pub const OPOST: ::tcflag_t = 0x1;
-pub const ONLCR: ::tcflag_t = 0x4;
-pub const CSIZE: ::tcflag_t = 0x00000030;
 pub const CS5: ::tcflag_t = 0x00000000;
-pub const CS6: ::tcflag_t = 0x00000010;
-pub const CS7: ::tcflag_t = 0x00000020;
-pub const CS8: ::tcflag_t = 0x00000030;
-pub const CSTOPB: ::tcflag_t = 0x00000040;
-pub const CREAD: ::tcflag_t = 0x00000080;
-pub const PARENB: ::tcflag_t = 0x00000100;
-pub const PARODD: ::tcflag_t = 0x00000200;
-pub const HUPCL: ::tcflag_t = 0x00000400;
-pub const CLOCAL: ::tcflag_t = 0x00000800;
 pub const CRTSCTS: ::tcflag_t = 0x80000000;
-pub const ECHOKE: ::tcflag_t = 0x00000800;
-pub const ECHOE: ::tcflag_t = 0x00000010;
-pub const ECHOK: ::tcflag_t = 0x00000020;
 pub const ECHO: ::tcflag_t = 0x00000008;
-pub const ECHONL: ::tcflag_t = 0x00000040;
-pub const ECHOPRT: ::tcflag_t = 0x00000400;
-pub const ECHOCTL: ::tcflag_t = 0x00000200;
-pub const ISIG: ::tcflag_t = 0x00000001;
-pub const ICANON: ::tcflag_t = 0x00000002;
-pub const PENDIN: ::tcflag_t = 0x00004000;
-pub const NOFLSH: ::tcflag_t = 0x00000080;
 
 pub const CLONE_VM: ::c_int = 0x100;
 pub const CLONE_FS: ::c_int = 0x200;
@@ -643,8 +617,6 @@ pub const POSIX_FADV_NORMAL: ::c_int = 0;
 pub const POSIX_FADV_RANDOM: ::c_int = 1;
 pub const POSIX_FADV_SEQUENTIAL: ::c_int = 2;
 pub const POSIX_FADV_WILLNEED: ::c_int = 3;
-pub const POSIX_FADV_DONTNEED: ::c_int = 4;
-pub const POSIX_FADV_NOREUSE: ::c_int = 5;
 
 pub const AT_FDCWD: ::c_int = -100;
 pub const AT_SYMLINK_NOFOLLOW: ::c_int = 0x100;
@@ -715,6 +687,11 @@ f! {
 }
 
 extern {
+    pub fn getpwnam_r(name: *const ::c_char,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut passwd) -> ::c_int;
     pub fn getpwuid_r(uid: ::uid_t,
                       pwd: *mut passwd,
                       buf: *mut ::c_char,
@@ -725,6 +702,10 @@ extern {
                    vec: *mut ::c_uchar) -> ::c_int;
     pub fn clock_getres(clk_id: clockid_t, tp: *mut ::timespec) -> ::c_int;
     pub fn clock_gettime(clk_id: clockid_t, tp: *mut ::timespec) -> ::c_int;
+    pub fn clock_nanosleep(clk_id: clockid_t,
+                           flags: ::c_int,
+                           rqtp: *const ::timespec,
+                           rmtp:  *mut ::timespec) -> ::c_int;
     pub fn prctl(option: ::c_int, ...) -> ::c_int;
     pub fn pthread_getattr_np(native: ::pthread_t,
                               attr: *mut ::pthread_attr_t) -> ::c_int;
@@ -856,6 +837,20 @@ extern {
                                      clock_id: *mut clockid_t) -> ::c_int;
     pub fn pthread_condattr_setclock(attr: *mut pthread_condattr_t,
                                      clock_id: clockid_t) -> ::c_int;
+    pub fn sched_getaffinity(pid: ::pid_t,
+                             cpusetsize: ::size_t,
+                             cpuset: *mut cpu_set_t) -> ::c_int;
+    pub fn sched_setaffinity(pid: ::pid_t,
+                             cpusetsize: ::size_t,
+                             cpuset: *const cpu_set_t) -> ::c_int;
+    pub fn unshare(flags: ::c_int) -> ::c_int;
+    pub fn setns(fd: ::c_int, nstype: ::c_int) -> ::c_int;
+    pub fn sem_timedwait(sem: *mut sem_t,
+                         abstime: *const ::timespec) -> ::c_int;
+    pub fn accept4(fd: ::c_int, addr: *mut ::sockaddr, len: *mut ::socklen_t,
+                   flg: ::c_int) -> ::c_int;
+    pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
+                                   abstime: *const ::timespec) -> ::c_int;
 }
 
 cfg_if! {

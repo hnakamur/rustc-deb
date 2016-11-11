@@ -15,11 +15,9 @@ use rustc::session::Session;
 
 use rustc::mir::transform::MirMapPass;
 
-use syntax::ext::base::{SyntaxExtension, NamedSyntaxExtension, NormalTT};
-use syntax::ext::base::{IdentTT, MultiModifier, MultiDecorator};
-use syntax::ext::base::{MacroExpanderFn, MacroRulesTT};
+use syntax::ext::base::{SyntaxExtension, NamedSyntaxExtension, NormalTT, IdentTT};
+use syntax::ext::base::MacroExpanderFn;
 use syntax::parse::token;
-use syntax::ptr::P;
 use syntax::ast;
 use syntax::feature_gate::AttributeType;
 use syntax_pos::Span;
@@ -41,7 +39,7 @@ pub struct Registry<'a> {
     pub sess: &'a Session,
 
     #[doc(hidden)]
-    pub args_hidden: Option<Vec<P<ast::MetaItem>>>,
+    pub args_hidden: Option<Vec<ast::NestedMetaItem>>,
 
     #[doc(hidden)]
     pub krate_span: Span,
@@ -70,11 +68,11 @@ pub struct Registry<'a> {
 
 impl<'a> Registry<'a> {
     #[doc(hidden)]
-    pub fn new(sess: &'a Session, krate: &ast::Crate) -> Registry<'a> {
+    pub fn new(sess: &'a Session, krate_span: Span) -> Registry<'a> {
         Registry {
             sess: sess,
             args_hidden: None,
-            krate_span: krate.span,
+            krate_span: krate_span,
             syntax_exts: vec!(),
             early_lint_passes: vec!(),
             late_lint_passes: vec!(),
@@ -95,7 +93,7 @@ impl<'a> Registry<'a> {
     ///
     /// Returns empty slice in case the plugin was loaded
     /// with `--extra-plugins`
-    pub fn args<'b>(&'b self) -> &'b [P<ast::MetaItem>] {
+    pub fn args<'b>(&'b self) -> &'b [ast::NestedMetaItem] {
         self.args_hidden.as_ref().map(|v| &v[..]).unwrap_or(&[])
     }
 
@@ -103,6 +101,9 @@ impl<'a> Registry<'a> {
     ///
     /// This is the most general hook into `libsyntax`'s expansion behavior.
     pub fn register_syntax_extension(&mut self, name: ast::Name, extension: SyntaxExtension) {
+        if name.as_str() == "macro_rules" {
+            panic!("user-defined macros may not be named `macro_rules`");
+        }
         self.syntax_exts.push((name, match extension {
             NormalTT(ext, _, allow_internal_unstable) => {
                 NormalTT(ext, Some(self.krate_span), allow_internal_unstable)
@@ -110,12 +111,7 @@ impl<'a> Registry<'a> {
             IdentTT(ext, _, allow_internal_unstable) => {
                 IdentTT(ext, Some(self.krate_span), allow_internal_unstable)
             }
-            MultiDecorator(ext) => MultiDecorator(ext),
-            MultiModifier(ext) => MultiModifier(ext),
-            MacroRulesTT => {
-                self.sess.err("plugin tried to register a new MacroRulesTT");
-                return;
-            }
+            _ => extension,
         }));
     }
 
@@ -156,7 +152,6 @@ impl<'a> Registry<'a> {
     pub fn register_llvm_pass(&mut self, name: &str) {
         self.llvm_passes.push(name.to_owned());
     }
-
 
     /// Register an attribute with an attribute type.
     ///

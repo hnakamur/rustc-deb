@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
-
 use cell::UnsafeCell;
 use fmt;
 use marker;
@@ -289,6 +287,7 @@ impl<T: ?Sized> Drop for Mutex<T> {
 
 #[stable(feature = "mutex_default", since = "1.9.0")]
 impl<T: ?Sized + Default> Default for Mutex<T> {
+    /// Creates a `Mutex<T>`, with the `Default` value for T.
     fn default() -> Mutex<T> {
         Mutex::new(Default::default())
     }
@@ -355,8 +354,6 @@ pub fn guard_poison<'a, T: ?Sized>(guard: &MutexGuard<'a, T>) -> &'a poison::Fla
 
 #[cfg(test)]
 mod tests {
-    use prelude::v1::*;
-
     use sync::mpsc::channel;
     use sync::{Arc, Mutex, Condvar};
     use sync::atomic::{AtomicUsize, Ordering};

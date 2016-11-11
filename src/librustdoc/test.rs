@@ -8,8 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::cell::{RefCell, Cell};
-use std::collections::{HashMap, HashSet};
+use std::cell::Cell;
 use std::env;
 use std::ffi::OsString;
 use std::io::prelude::*;
@@ -26,8 +25,7 @@ use rustc_lint;
 use rustc::dep_graph::DepGraph;
 use rustc::hir::map as hir_map;
 use rustc::session::{self, config};
-use rustc::session::config::{get_unstable_features_setting, OutputType,
-                             OutputTypes, Externs};
+use rustc::session::config::{OutputType, OutputTypes, Externs};
 use rustc::session::search_paths::{SearchPaths, PathKind};
 use rustc_back::dynamic_lib::DynamicLibrary;
 use rustc_back::tempdir::TempDir;
@@ -36,6 +34,7 @@ use rustc_driver::driver::phase_2_configure_and_expand;
 use rustc_metadata::cstore::CStore;
 use rustc_resolve::MakeGlobMap;
 use syntax::codemap::CodeMap;
+use syntax::feature_gate::UnstableFeatures;
 use errors;
 use errors::emitter::ColorConfig;
 
@@ -69,7 +68,7 @@ pub fn run(input: &str,
         search_paths: libs.clone(),
         crate_types: vec!(config::CrateTypeDylib),
         externs: externs.clone(),
-        unstable_features: get_unstable_features_setting(),
+        unstable_features: UnstableFeatures::from_environment(),
         ..config::basic_options().clone()
     };
 
@@ -94,7 +93,7 @@ pub fn run(input: &str,
     let krate = panictry!(driver::phase_1_parse_input(&sess, cfg, &input));
     let driver::ExpansionResult { defs, mut hir_forest, .. } = {
         phase_2_configure_and_expand(
-            &sess, &cstore, krate, "rustdoc-test", None, MakeGlobMap::No, |_| Ok(())
+            &sess, &cstore, krate, None, "rustdoc-test", None, MakeGlobMap::No, |_| Ok(())
         ).expect("phase_2_configure_and_expand aborted in rustdoc!")
     };
 
@@ -107,11 +106,14 @@ pub fn run(input: &str,
         map: &map,
         maybe_typed: core::NotTyped(&sess),
         input: input,
-        external_traits: RefCell::new(HashMap::new()),
-        populated_crate_impls: RefCell::new(HashSet::new()),
+        populated_all_crate_impls: Cell::new(false),
+        external_traits: Default::default(),
         deref_trait_did: Cell::new(None),
+        deref_mut_trait_did: Cell::new(None),
         access_levels: Default::default(),
         renderinfo: Default::default(),
+        ty_substs: Default::default(),
+        lt_substs: Default::default(),
     };
 
     let mut v = RustdocVisitor::new(&ctx);
@@ -140,7 +142,6 @@ pub fn run(input: &str,
 
 // Look for #![doc(test(no_crate_inject))], used by crates in the std facade
 fn scrape_test_config(krate: &::rustc::hir::Crate) -> TestOptions {
-    use syntax::attr::AttrMetaMethods;
     use syntax::print::pprust;
 
     let mut opts = TestOptions {
@@ -162,7 +163,7 @@ fn scrape_test_config(krate: &::rustc::hir::Crate) -> TestOptions {
         if attr.check_name("attr") {
             if let Some(l) = attr.meta_item_list() {
                 for item in l {
-                    opts.attrs.push(pprust::meta_item_to_string(item));
+                    opts.attrs.push(pprust::meta_list_item_to_string(item));
                 }
             }
         }
@@ -196,7 +197,7 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
             .. config::basic_codegen_options()
         },
         test: as_test_harness,
-        unstable_features: get_unstable_features_setting(),
+        unstable_features: UnstableFeatures::from_environment(),
         ..config::basic_options().clone()
     };
 

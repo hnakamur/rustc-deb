@@ -30,7 +30,6 @@ use middle::weak_lang_items;
 use util::nodemap::FnvHashMap;
 
 use syntax::ast;
-use syntax::attr::AttrMetaMethods;
 use syntax::parse::token::InternedString;
 use hir::intravisit::Visitor;
 use hir;
@@ -44,7 +43,7 @@ macro_rules! language_item_table {
 
 
 enum_from_u32! {
-    #[derive(Copy, Clone, PartialEq, Eq, Hash)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
     pub enum LangItem {
         $($variant,)*
     }

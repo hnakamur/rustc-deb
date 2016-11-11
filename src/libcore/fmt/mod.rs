@@ -12,8 +12,6 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use prelude::v1::*;
-
 use cell::{UnsafeCell, Cell, RefCell, Ref, RefMut, BorrowState};
 use marker::PhantomData;
 use mem;
@@ -274,10 +272,14 @@ impl<'a> Arguments<'a> {
 /// safely be done so, so no constructors are given and the fields are private
 /// to prevent modification.
 ///
-/// The `format_args!` macro will safely create an instance of this structure
+/// The [`format_args!`] macro will safely create an instance of this structure
 /// and pass it to a function or closure, passed as the first argument. The
-/// macro validates the format string at compile-time so usage of the `write`
-/// and `format` functions can be safely performed.
+/// macro validates the format string at compile-time so usage of the [`write`]
+/// and [`format`] functions can be safely performed.
+///
+/// [`format_args!`]: ../../std/macro.format_args.html
+/// [`format`]: ../../std/fmt/fn.format.html
+/// [`write`]: ../../std/fmt/fn.write.html
 #[stable(feature = "rust1", since = "1.0.0")]
 #[derive(Copy, Clone)]
 pub struct Arguments<'a> {
@@ -905,8 +907,6 @@ impl<'a> Formatter<'a> {
                         prefix: &str,
                         buf: &str)
                         -> Result {
-        use char::CharExt;
-
         let mut width = buf.len();
 
         let mut sign = None;
@@ -1020,7 +1020,6 @@ impl<'a> Formatter<'a> {
                        f: F) -> Result
         where F: FnOnce(&mut Formatter) -> Result,
     {
-        use char::CharExt;
         let align = match self.align {
             rt::v1::Alignment::Unknown => default,
             _ => self.align
@@ -1363,28 +1362,19 @@ macro_rules! fmt_refs {
 
 fmt_refs! { Debug, Display, Octal, Binary, LowerHex, UpperHex, LowerExp, UpperExp }
 
-// Note: This macro is a temporary hack that can be remove once we are building with a compiler
-// that supports `!`
-macro_rules! not_stage0 {
-    () => {
-        #[unstable(feature = "never_type", issue = "35121")]
-        impl Debug for ! {
-            fn fmt(&self, _: &mut Formatter) -> Result {
-                *self
-            }
-        }
-
-        #[unstable(feature = "never_type", issue = "35121")]
-        impl Display for ! {
-            fn fmt(&self, _: &mut Formatter) -> Result {
-                *self
-            }
-        }
+#[unstable(feature = "never_type", issue = "35121")]
+impl Debug for ! {
+    fn fmt(&self, _: &mut Formatter) -> Result {
+        *self
     }
 }
 
-#[cfg(not(stage0))]
-not_stage0!();
+#[unstable(feature = "never_type", issue = "35121")]
+impl Display for ! {
+    fn fmt(&self, _: &mut Formatter) -> Result {
+        *self
+    }
+}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Debug for bool {

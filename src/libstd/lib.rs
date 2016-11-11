@@ -175,7 +175,7 @@
 //! [`atomic`]: sync/atomic/index.html
 //! [`collections`]: collections/index.html
 //! [`for`]: ../book/loops.html#for
-//! [`format!`]: macro.format!.html
+//! [`format!`]: macro.format.html
 //! [`fs`]: fs/index.html
 //! [`io`]: io/index.html
 //! [`iter`]: iter/index.html
@@ -224,14 +224,17 @@
 #![feature(char_internals)]
 #![feature(collections)]
 #![feature(collections_bound)]
+#![feature(compiler_builtins_lib)]
 #![feature(const_fn)]
 #![feature(core_float)]
 #![feature(core_intrinsics)]
+#![feature(dotdot_in_tuple_patterns)]
 #![feature(dropck_parametricity)]
 #![feature(float_extras)]
 #![feature(float_from_str_radix)]
 #![feature(fn_traits)]
 #![feature(fnbox)]
+#![feature(fused)]
 #![feature(hashmap_hasher)]
 #![feature(heap_api)]
 #![feature(inclusive_range)]
@@ -251,10 +254,10 @@
 #![feature(optin_builtin_traits)]
 #![feature(panic_unwind)]
 #![feature(placement_in_syntax)]
-#![feature(question_mark)]
+#![feature(prelude_import)]
+#![cfg_attr(stage0, feature(question_mark))]
 #![feature(rand)]
 #![feature(raw)]
-#![feature(reflect_marker)]
 #![feature(repr_simd)]
 #![feature(rustc_attrs)]
 #![feature(shared)]
@@ -269,12 +272,11 @@
 #![feature(str_utf16)]
 #![feature(test, rustc_private)]
 #![feature(thread_local)]
-#![feature(try_borrow)]
 #![feature(try_from)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
 #![feature(unique)]
-#![feature(unsafe_no_drop_flag, filling_drop)]
+#![cfg_attr(stage0, feature(unsafe_no_drop_flag))]
 #![feature(unwind_attributes)]
 #![feature(vec_push_all)]
 #![feature(zero_one)]
@@ -291,13 +293,17 @@
 #![allow(unused_features)] // std may use features in a platform-specific way
 #![cfg_attr(not(stage0), deny(warnings))]
 
+#[prelude_import]
+#[allow(unused)]
+use prelude::v1::*;
+
 #[cfg(test)] extern crate test;
 
 // We want to reexport a few macros from core but libcore has already been
 // imported by the compiler (via our #[no_std] attribute) In this case we just
 // add a new crate name so we can attach the reexports to it.
-#[macro_reexport(assert, assert_eq, debug_assert, debug_assert_eq,
-                 unreachable, unimplemented, write, writeln, try)]
+#[macro_reexport(assert, assert_eq, assert_ne, debug_assert, debug_assert_eq,
+                 debug_assert_ne, unreachable, unimplemented, write, writeln, try)]
 extern crate core as __core;
 
 #[macro_use]
@@ -314,6 +320,9 @@ extern crate unwind;
 
 #[cfg(stage0)]
 extern crate alloc_system;
+
+// compiler-rt intrinsics
+extern crate compiler_builtins;
 
 // Make std testable by not duplicating lang items and other globals. See #2912
 #[cfg(test)] extern crate std as realstd;

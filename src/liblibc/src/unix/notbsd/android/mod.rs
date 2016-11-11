@@ -1,5 +1,7 @@
 //! Android-specific definitions for linux-like values
 
+use dox::mem;
+
 pub type c_char = u8;
 pub type clock_t = ::c_long;
 pub type time_t = ::c_long;
@@ -100,11 +102,42 @@ s! {
     pub struct sem_t {
         count: ::c_uint,
     }
+
+    pub struct lastlog {
+        ll_time: ::time_t,
+        ll_line: [::c_char; UT_LINESIZE],
+        ll_host: [::c_char; UT_HOSTSIZE],
+    }
+
+    pub struct exit_status {
+        pub e_termination: ::c_short,
+        pub e_exit: ::c_short,
+    }
+
+    pub struct utmp {
+        pub ut_type: ::c_short,
+        pub ut_pid: ::pid_t,
+        pub ut_line: [::c_char; UT_LINESIZE],
+        pub ut_id: [::c_char; 4],
+
+        pub ut_user: [::c_char; UT_NAMESIZE],
+        pub ut_host: [::c_char; UT_HOSTSIZE],
+        pub ut_exit: exit_status,
+        pub ut_session: ::c_long,
+        pub ut_tv: ::timeval,
+
+        pub ut_addr_v6: [::int32_t; 4],
+        unused: [::c_char; 20],
+    }
 }
+
+pub const USER_PROCESS: ::c_short = 7;
 
 pub const BUFSIZ: ::c_uint = 1024;
 pub const FILENAME_MAX: ::c_uint = 1024;
 pub const FOPEN_MAX: ::c_uint = 20;
+pub const POSIX_FADV_DONTNEED: ::c_int = 4;
+pub const POSIX_FADV_NOREUSE: ::c_int = 5;
 pub const L_tmpnam: ::c_uint = 1024;
 pub const TMP_MAX: ::c_uint = 308915776;
 pub const _PC_LINK_MAX: ::c_int = 1;
@@ -502,6 +535,112 @@ pub const LINUX_REBOOT_CMD_RESTART2: ::c_int = 0xA1B2C3D4;
 pub const LINUX_REBOOT_CMD_SW_SUSPEND: ::c_int = 0xD000FCE2;
 pub const LINUX_REBOOT_CMD_KEXEC: ::c_int = 0x45584543;
 
+pub const MCL_CURRENT: ::c_int = 0x0001;
+pub const MCL_FUTURE: ::c_int = 0x0002;
+
+pub const SIGSTKSZ: ::size_t = 8192;
+pub const CBAUD: ::tcflag_t = 0o0010017;
+pub const TAB1: ::c_int = 0x00000800;
+pub const TAB2: ::c_int = 0x00001000;
+pub const TAB3: ::c_int = 0x00001800;
+pub const CR1: ::c_int  = 0x00000200;
+pub const CR2: ::c_int  = 0x00000400;
+pub const CR3: ::c_int  = 0x00000600;
+pub const FF1: ::c_int  = 0x00008000;
+pub const BS1: ::c_int  = 0x00002000;
+pub const VT1: ::c_int  = 0x00004000;
+pub const VWERASE: usize = 14;
+pub const VREPRINT: usize = 12;
+pub const VSUSP: usize = 10;
+pub const VSTART: usize = 8;
+pub const VSTOP: usize = 9;
+pub const VDISCARD: usize = 13;
+pub const VTIME: usize = 5;
+pub const IXON: ::tcflag_t = 0x00000400;
+pub const IXOFF: ::tcflag_t = 0x00001000;
+pub const ONLCR: ::tcflag_t = 0x4;
+pub const CSIZE: ::tcflag_t = 0x00000030;
+pub const CS6: ::tcflag_t = 0x00000010;
+pub const CS7: ::tcflag_t = 0x00000020;
+pub const CS8: ::tcflag_t = 0x00000030;
+pub const CSTOPB: ::tcflag_t = 0x00000040;
+pub const CREAD: ::tcflag_t = 0x00000080;
+pub const PARENB: ::tcflag_t = 0x00000100;
+pub const PARODD: ::tcflag_t = 0x00000200;
+pub const HUPCL: ::tcflag_t = 0x00000400;
+pub const CLOCAL: ::tcflag_t = 0x00000800;
+pub const ECHOKE: ::tcflag_t = 0x00000800;
+pub const ECHOE: ::tcflag_t = 0x00000010;
+pub const ECHOK: ::tcflag_t = 0x00000020;
+pub const ECHONL: ::tcflag_t = 0x00000040;
+pub const ECHOPRT: ::tcflag_t = 0x00000400;
+pub const ECHOCTL: ::tcflag_t = 0x00000200;
+pub const ISIG: ::tcflag_t = 0x00000001;
+pub const ICANON: ::tcflag_t = 0x00000002;
+pub const PENDIN: ::tcflag_t = 0x00004000;
+pub const NOFLSH: ::tcflag_t = 0x00000080;
+
+pub const EAI_SYSTEM: ::c_int = 11;
+
+pub const NETLINK_ROUTE: ::c_int = 0;
+pub const NETLINK_UNUSED: ::c_int = 1;
+pub const NETLINK_USERSOCK: ::c_int = 2;
+pub const NETLINK_FIREWALL: ::c_int = 3;
+pub const NETLINK_SOCK_DIAG: ::c_int = 4;
+pub const NETLINK_NFLOG: ::c_int = 5;
+pub const NETLINK_XFRM: ::c_int = 6;
+pub const NETLINK_SELINUX: ::c_int = 7;
+pub const NETLINK_ISCSI: ::c_int = 8;
+pub const NETLINK_AUDIT: ::c_int = 9;
+pub const NETLINK_FIB_LOOKUP: ::c_int = 10;
+pub const NETLINK_CONNECTOR: ::c_int = 11;
+pub const NETLINK_NETFILTER: ::c_int = 12;
+pub const NETLINK_IP6_FW: ::c_int = 13;
+pub const NETLINK_DNRTMSG: ::c_int = 14;
+pub const NETLINK_KOBJECT_UEVENT: ::c_int = 15;
+pub const NETLINK_GENERIC: ::c_int = 16;
+pub const NETLINK_SCSITRANSPORT: ::c_int = 18;
+pub const NETLINK_ECRYPTFS: ::c_int = 19;
+pub const NETLINK_RDMA: ::c_int = 20;
+pub const NETLINK_CRYPTO: ::c_int = 21;
+pub const NETLINK_INET_DIAG: ::c_int = NETLINK_SOCK_DIAG;
+
+pub const MAX_LINKS: ::c_int = 32;
+
+pub const NLM_F_REQUEST: ::c_int = 1;
+pub const NLM_F_MULTI: ::c_int = 2;
+pub const NLM_F_ACK: ::c_int = 4;
+pub const NLM_F_ECHO: ::c_int = 8;
+pub const NLM_F_DUMP_INTR: ::c_int = 16;
+
+pub const NLM_F_ROOT: ::c_int = 0x100;
+pub const NLM_F_MATCH: ::c_int = 0x200;
+pub const NLM_F_ATOMIC: ::c_int = 0x400;
+pub const NLM_F_DUMP: ::c_int = NLM_F_ROOT | NLM_F_MATCH;
+
+pub const NLM_F_REPLACE: ::c_int = 0x100;
+pub const NLM_F_EXCL: ::c_int = 0x200;
+pub const NLM_F_CREATE: ::c_int = 0x400;
+pub const NLM_F_APPEND: ::c_int = 0x800;
+
+pub const NLMSG_NOOP: ::c_int = 0x1;
+pub const NLMSG_ERROR: ::c_int = 0x2;
+pub const NLMSG_DONE: ::c_int = 0x3;
+pub const NLMSG_OVERRUN: ::c_int = 0x4;
+pub const NLMSG_MIN_TYPE: ::c_int = 0x10;
+
+pub const NETLINK_ADD_MEMBERSHIP: ::c_int = 1;
+pub const NETLINK_DROP_MEMBERSHIP: ::c_int = 2;
+pub const NETLINK_PKTINFO: ::c_int = 3;
+pub const NETLINK_BROADCAST_ERROR: ::c_int = 4;
+pub const NETLINK_NO_ENOBUFS: ::c_int = 5;
+pub const NETLINK_RX_RING: ::c_int = 6;
+pub const NETLINK_TX_RING: ::c_int = 7;
+
+pub const NLA_F_NESTED: ::c_int = 1 << 15;
+pub const NLA_F_NET_BYTEORDER: ::c_int = 1 << 14;
+pub const NLA_TYPE_MASK: ::c_int = !(NLA_F_NESTED | NLA_F_NET_BYTEORDER);
+
 f! {
     pub fn sigemptyset(set: *mut sigset_t) -> ::c_int {
         *set = 0;
@@ -555,6 +694,36 @@ f! {
     pub fn tcsendbreak(fd: ::c_int, duration: ::c_int) -> ::c_int {
         ioctl(fd, TCSBRKP, duration as *mut ::c_void)
     }
+
+    pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
+        for slot in cpuset.__bits.iter_mut() {
+            *slot = 0;
+        }
+    }
+
+    pub fn CPU_SET(cpu: usize, cpuset: &mut cpu_set_t) -> () {
+        let size_in___bits = 8 * mem::size_of_val(&cpuset.__bits[0]);
+        let (idx, offset) = (cpu / size_in___bits, cpu % size_in___bits);
+        cpuset.__bits[idx] |= 1 << offset;
+        ()
+    }
+
+    pub fn CPU_CLR(cpu: usize, cpuset: &mut cpu_set_t) -> () {
+        let size_in___bits = 8 * mem::size_of_val(&cpuset.__bits[0]);
+        let (idx, offset) = (cpu / size_in___bits, cpu % size_in___bits);
+        cpuset.__bits[idx] &= !(1 << offset);
+        ()
+    }
+
+    pub fn CPU_ISSET(cpu: usize, cpuset: &cpu_set_t) -> bool {
+        let size_in___bits = 8 * mem::size_of_val(&cpuset.__bits[0]);
+        let (idx, offset) = (cpu / size_in___bits, cpu % size_in___bits);
+        0 != (cpuset.__bits[idx] & (1 << offset))
+    }
+
+    pub fn CPU_EQUAL(set1: &cpu_set_t, set2: &cpu_set_t) -> bool {
+        set1.__bits == set2.__bits
+    }
 }
 
 extern {
@@ -591,6 +760,10 @@ extern {
     pub fn __sched_cpufree(set: *mut ::cpu_set_t);
     pub fn __sched_cpucount(setsize: ::size_t, set: *mut cpu_set_t) -> ::c_int;
     pub fn sched_getcpu() -> ::c_int;
+
+    pub fn utmpname(name: *const ::c_char) -> ::c_int;
+    pub fn setutent();
+    pub fn getutent() -> *mut utmp;
 }
 
 cfg_if! {

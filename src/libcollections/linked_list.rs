@@ -19,7 +19,7 @@ use alloc::boxed::{Box, IntermediateBox};
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{Hasher, Hash};
-use core::iter::FromIterator;
+use core::iter::{FromIterator, FusedIterator};
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::{BoxPlace, InPlace, Place, Placer};
@@ -164,6 +164,7 @@ impl<T> LinkedList<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Default for LinkedList<T> {
+    /// Creates an empty `LinkedList<T>`.
     #[inline]
     fn default() -> Self {
         Self::new()
@@ -754,6 +755,9 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T> FusedIterator for Iter<'a, T> {}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Iterator for IterMut<'a, T> {
     type Item = &'a mut T;
@@ -797,6 +801,9 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T> FusedIterator for IterMut<'a, T> {}
 
 impl<'a, T> IterMut<'a, T> {
     /// Inserts the given element just after the element most recently returned by `.next()`.
@@ -904,6 +911,9 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> ExactSizeIterator for IntoIter<T> {}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<T> FusedIterator for IntoIter<T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> FromIterator<T> for LinkedList<T> {
@@ -1150,9 +1160,6 @@ unsafe impl<'a, T: Sync> Sync for IterMut<'a, T> {}
 
 #[cfg(test)]
 mod tests {
-    use std::clone::Clone;
-    use std::iter::{Iterator, IntoIterator, Extend};
-    use std::option::Option::{self, Some, None};
     use std::__rand::{thread_rng, Rng};
     use std::thread;
     use std::vec::Vec;
@@ -1310,7 +1317,6 @@ mod tests {
 
     #[test]
     fn test_26021() {
-        use std::iter::ExactSizeIterator;
         // There was a bug in split_off that failed to null out the RHS's head's prev ptr.
         // This caused the RHS's dtor to walk up into the LHS at drop and delete all of
         // its nodes.

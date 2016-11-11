@@ -17,7 +17,6 @@
 //! * Executing a panic up to doing the actual implementation
 //! * Shims around "try"
 
-use prelude::v1::*;
 use io::prelude::*;
 
 use any::Any;
@@ -85,6 +84,20 @@ static mut HOOK: Hook = Hook::Default;
 /// # Panics
 ///
 /// Panics if called from a panicking thread.
+///
+/// # Examples
+///
+/// The following will print "Custom panic hook":
+///
+/// ```should_panic
+/// use std::panic;
+///
+/// panic::set_hook(Box::new(|_| {
+///     println!("Custom panic hook");
+/// }));
+///
+/// panic!("Normal panic");
+/// ```
 #[stable(feature = "panic_hooks", since = "1.10.0")]
 pub fn set_hook(hook: Box<Fn(&PanicInfo) + 'static + Sync + Send>) {
     if thread::panicking() {
@@ -110,6 +123,22 @@ pub fn set_hook(hook: Box<Fn(&PanicInfo) + 'static + Sync + Send>) {
 /// # Panics
 ///
 /// Panics if called from a panicking thread.
+///
+/// # Examples
+///
+/// The following will print "Normal panic":
+///
+/// ```should_panic
+/// use std::panic;
+///
+/// panic::set_hook(Box::new(|_| {
+///     println!("Custom panic hook");
+/// }));
+///
+/// let _ = panic::take_hook();
+///
+/// panic!("Normal panic");
+/// ```
 #[stable(feature = "panic_hooks", since = "1.10.0")]
 pub fn take_hook() -> Box<Fn(&PanicInfo) + 'static + Sync + Send> {
     if thread::panicking() {

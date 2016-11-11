@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::v1::*;
 use io::prelude::*;
 
 use fmt;
@@ -46,7 +45,6 @@ pub struct TcpStream(net_imp::TcpStream);
 ///
 /// ```no_run
 /// use std::net::{TcpListener, TcpStream};
-/// use std::thread;
 ///
 /// let listener = TcpListener::bind("127.0.0.1:80").unwrap();
 ///
@@ -58,17 +56,11 @@ pub struct TcpStream(net_imp::TcpStream);
 /// for stream in listener.incoming() {
 ///     match stream {
 ///         Ok(stream) => {
-///             thread::spawn(move|| {
-///                 // connection succeeded
-///                 handle_client(stream)
-///             });
+///             handle_client(stream);
 ///         }
 ///         Err(e) => { /* connection failed */ }
 ///     }
 /// }
-///
-/// // close the socket server
-/// drop(listener);
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct TcpListener(net_imp::TcpListener);
@@ -438,8 +430,6 @@ impl fmt::Debug for TcpListener {
 
 #[cfg(test)]
 mod tests {
-    use prelude::v1::*;
-
     use io::ErrorKind;
     use io::prelude::*;
     use net::*;

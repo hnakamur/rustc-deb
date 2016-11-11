@@ -97,24 +97,36 @@
 //! virtually impossible. Thus, symbol hash generation exclusively relies on
 //! DefPaths which are much more robust in the face of changes to the code base.
 
-use common::{CrateContext, SharedCrateContext, gensym_name};
+use common::SharedCrateContext;
 use monomorphize::Instance;
 use util::sha2::{Digest, Sha256};
 
-use rustc::middle::{cstore, weak_lang_items};
-use rustc::hir::def_id::DefId;
+use rustc::middle::weak_lang_items;
+use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::hir::map as hir_map;
-use rustc::ty::{self, TyCtxt, TypeFoldable};
+use rustc::ty::{self, Ty, TypeFoldable};
+use rustc::ty::fold::TypeVisitor;
 use rustc::ty::item_path::{self, ItemPathBuffer, RootMode};
+use rustc::ty::subst::Substs;
 use rustc::hir::map::definitions::{DefPath, DefPathData};
+use rustc::util::common::record_time;
 
 use syntax::attr;
 use syntax::parse::token::{self, InternedString};
 use serialize::hex::ToHex;
 
-pub fn def_id_to_string<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> String {
-    let def_path = tcx.def_path(def_id);
-    def_path.to_string(tcx)
+use std::hash::Hasher;
+
+struct Sha256Hasher<'a>(&'a mut Sha256);
+
+impl<'a> Hasher for Sha256Hasher<'a> {
+    fn write(&mut self, msg: &[u8]) {
+        self.0.input(msg)
+    }
+
+    fn finish(&self) -> u64 {
+        bug!("Sha256Hasher::finish should not be called");
+    }
 }
 
 fn get_symbol_hash<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
@@ -126,53 +138,50 @@ fn get_symbol_hash<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                              // parameters substituted; this is
                              // included in the hash as a kind of
                              // safeguard.
-                             item_type: ty::Ty<'tcx>,
+                             item_type: Ty<'tcx>,
 
                              // values for generic type parameters,
                              // if any.
-                             parameters: &[ty::Ty<'tcx>])
+                             substs: Option<&'tcx Substs<'tcx>>)
                              -> String {
     debug!("get_symbol_hash(def_path={:?}, parameters={:?})",
-           def_path, parameters);
+           def_path, substs);
 
     let tcx = scx.tcx();
 
     let mut hash_state = scx.symbol_hasher().borrow_mut();
+    record_time(&tcx.sess.perf_stats.symbol_hash_time, || {
+        hash_state.reset();
+        let hasher = Sha256Hasher(&mut hash_state);
+        let mut hasher = ty::util::TypeIdHasher::new(tcx, hasher);
 
-    hash_state.reset();
+        // the main symbol name is not necessarily unique; hash in the
+        // compiler's internal def-path, guaranteeing each symbol has a
+        // truly unique path
+        hasher.def_path(def_path);
 
-    // the main symbol name is not necessarily unique; hash in the
-    // compiler's internal def-path, guaranteeing each symbol has a
-    // truly unique path
-    hash_state.input_str(&def_path.to_string(tcx));
+        // Include the main item-type. Note that, in this case, the
+        // assertions about `needs_subst` may not hold, but this item-type
+        // ought to be the same for every reference anyway.
+        assert!(!item_type.has_erasable_regions());
+        hasher.visit_ty(item_type);
 
-    // Include the main item-type. Note that, in this case, the
-    // assertions about `needs_subst` may not hold, but this item-type
-    // ought to be the same for every reference anyway.
-    assert!(!item_type.has_erasable_regions());
-    let encoded_item_type = tcx.sess.cstore.encode_type(tcx, item_type, def_id_to_string);
-    hash_state.input(&encoded_item_type[..]);
+        // also include any type parameters (for generic items)
+        if let Some(substs) = substs {
+            assert!(!substs.has_erasable_regions());
+            assert!(!substs.needs_subst());
+            substs.visit_with(&mut hasher);
+        }
+    });
 
-    // also include any type parameters (for generic items)
-    for t in parameters {
-       assert!(!t.has_erasable_regions());
-       assert!(!t.needs_subst());
-       let encoded_type = tcx.sess.cstore.encode_type(tcx, t, def_id_to_string);
-       hash_state.input(&encoded_type[..]);
-    }
-
-    return format!("h{}", truncated_hash_result(&mut *hash_state));
-
-    fn truncated_hash_result(symbol_hasher: &mut Sha256) -> String {
-        let output = symbol_hasher.result_bytes();
-        // 64 bits should be enough to avoid collisions.
-        output[.. 8].to_hex()
-    }
+    // 64 bits should be enough to avoid collisions.
+    let output = hash_state.result_bytes();
+    format!("h{}", output[..8].to_hex())
 }
 
 impl<'a, 'tcx> Instance<'tcx> {
     pub fn symbol_name(self, scx: &SharedCrateContext<'a, 'tcx>) -> String {
-        let Instance { def: def_id, ref substs } = self;
+        let Instance { def: def_id, substs } = self;
 
         debug!("symbol_name(def_id={:?}, substs={:?})",
                def_id, substs);
@@ -184,6 +193,11 @@ impl<'a, 'tcx> Instance<'tcx> {
                 let svh = &scx.link_meta().crate_hash;
                 let idx = def_id.index;
                 return scx.sess().generate_plugin_registrar_symbol(svh, idx);
+            }
+            if scx.sess().derive_registrar_fn.get() == Some(id) {
+                let svh = &scx.link_meta().crate_hash;
+                let idx = def_id.index;
+                return scx.sess().generate_derive_registrar_symbol(svh, idx);
             }
         }
 
@@ -252,7 +266,7 @@ impl<'a, 'tcx> Instance<'tcx> {
         // and should not matter anyhow.
         let instance_ty = scx.tcx().erase_regions(&instance_ty.ty);
 
-        let hash = get_symbol_hash(scx, &def_path, instance_ty, substs.types.as_slice());
+        let hash = get_symbol_hash(scx, &def_path, instance_ty, Some(substs));
 
         let mut buffer = SymbolPathBuffer {
             names: Vec::with_capacity(def_path.data.len())
@@ -262,7 +276,7 @@ impl<'a, 'tcx> Instance<'tcx> {
             scx.tcx().push_item_path(&mut buffer, def_id);
         });
 
-        mangle(buffer.names.into_iter(), Some(&hash[..]))
+        mangle(buffer.names.into_iter(), &hash)
     }
 }
 
@@ -282,32 +296,16 @@ impl ItemPathBuffer for SymbolPathBuffer {
 }
 
 pub fn exported_name_from_type_and_prefix<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
-                                                    t: ty::Ty<'tcx>,
+                                                    t: Ty<'tcx>,
                                                     prefix: &str)
                                                     -> String {
     let empty_def_path = DefPath {
         data: vec![],
-        krate: cstore::LOCAL_CRATE,
+        krate: LOCAL_CRATE,
     };
-    let hash = get_symbol_hash(scx, &empty_def_path, t, &[]);
+    let hash = get_symbol_hash(scx, &empty_def_path, t, None);
     let path = [token::intern_and_get_ident(prefix)];
-    mangle(path.iter().cloned(), Some(&hash[..]))
-}
-
-/// Only symbols that are invisible outside their compilation unit should use a
-/// name generated by this function.
-pub fn internal_name_from_type_and_suffix<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
-                                                    t: ty::Ty<'tcx>,
-                                                    suffix: &str)
-                                                    -> String {
-    let path = [token::intern(&t.to_string()).as_str(),
-                gensym_name(suffix).as_str()];
-    let def_path = DefPath {
-        data: vec![],
-        krate: cstore::LOCAL_CRATE,
-    };
-    let hash = get_symbol_hash(ccx.shared(), &def_path, t, &[]);
-    mangle(path.iter().cloned(), Some(&hash[..]))
+    mangle(path.iter().cloned(), &hash)
 }
 
 // Name sanitation. LLVM will happily accept identifiers with weird names, but
@@ -360,7 +358,7 @@ pub fn sanitize(s: &str) -> String {
     return result;
 }
 
-pub fn mangle<PI: Iterator<Item=InternedString>>(path: PI, hash: Option<&str>) -> String {
+fn mangle<PI: Iterator<Item=InternedString>>(path: PI, hash: &str) -> String {
     // Follow C++ namespace-mangling style, see
     // http://en.wikipedia.org/wiki/Name_mangling for more info.
     //
@@ -387,9 +385,7 @@ pub fn mangle<PI: Iterator<Item=InternedString>>(path: PI, hash: Option<&str>) -
         push(&mut n, &data);
     }
 
-    if let Some(s) = hash {
-        push(&mut n, s)
-    }
+    push(&mut n, hash);
 
     n.push('E'); // End name-sequence.
     n

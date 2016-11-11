@@ -59,10 +59,12 @@ fn main()
     //~^ ERROR casting
     //~^^ HELP through a usize first
     let _ = 3_i32 as bool;
-    //~^ ERROR cannot cast as `bool`
+    //~^ ERROR cannot cast as `bool` [E0054]
+    //~| unsupported cast
     //~| HELP compare with zero
     let _ = E::A as bool;
-    //~^ ERROR cannot cast as `bool`
+    //~^ ERROR cannot cast as `bool` [E0054]
+    //~| unsupported cast
     //~| HELP compare with zero
     let _ = 0x61u32 as char; //~ ERROR only `u8` can be cast
 
@@ -90,6 +92,7 @@ fn main()
     let _ = v as *const [u8]; //~ ERROR cannot cast
     let _ = fat_v as *const Foo;
     //~^ ERROR the trait bound `[u8]: std::marker::Sized` is not satisfied
+    //~| NOTE trait `[u8]: std::marker::Sized` not satisfied
     //~| NOTE `[u8]` does not have a constant size known at compile-time
     //~| NOTE required for the cast to the object type `Foo`
     let _ = foo as *const str; //~ ERROR casting
@@ -104,6 +107,7 @@ fn main()
     let a : *const str = "hello";
     let _ = a as *const Foo;
     //~^ ERROR the trait bound `str: std::marker::Sized` is not satisfied
+    //~| NOTE trait `str: std::marker::Sized` not satisfied
     //~| NOTE `str` does not have a constant size known at compile-time
     //~| NOTE required for the cast to the object type `Foo`
 

@@ -12,7 +12,7 @@
 
 use common::CrateContext;
 use rustc::hir::def_id::DefId;
-use rustc::ty::subst;
+use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty};
 
 use rustc::hir;
@@ -44,8 +44,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         ty::TyInt(int_ty) => output.push_str(int_ty.ty_to_string()),
         ty::TyUint(uint_ty) => output.push_str(uint_ty.ty_to_string()),
         ty::TyFloat(float_ty) => output.push_str(float_ty.ty_to_string()),
-        ty::TyStruct(def, substs) |
-        ty::TyEnum(def, substs) => {
+        ty::TyAdt(def, substs) => {
             push_item_name(cx, def.did, qualified, output);
             push_type_params(cx, substs, output);
         },
@@ -95,11 +94,12 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
             output.push(']');
         },
         ty::TyTrait(ref trait_data) => {
-            let principal = cx.tcx().erase_late_bound_regions(&trait_data.principal);
+            let principal = cx.tcx().erase_late_bound_regions_and_normalize(
+                &trait_data.principal);
             push_item_name(cx, principal.def_id, false, output);
             push_type_params(cx, principal.substs, output);
         },
-        ty::TyFnDef(_, _, &ty::BareFnTy{ unsafety, abi, ref sig } ) |
+        ty::TyFnDef(.., &ty::BareFnTy{ unsafety, abi, ref sig } ) |
         ty::TyFnPtr(&ty::BareFnTy{ unsafety, abi, ref sig } ) => {
             if unsafety == hir::Unsafety::Unsafe {
                 output.push_str("unsafe ");
@@ -113,8 +113,7 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
             output.push_str("fn(");
 
-            let sig = cx.tcx().erase_late_bound_regions(sig);
-            let sig = cx.tcx().normalize_associated_type(&sig);
+            let sig = cx.tcx().erase_late_bound_regions_and_normalize(sig);
             if !sig.inputs.is_empty() {
                 for &parameter_type in &sig.inputs {
                     push_debuginfo_type_name(cx, parameter_type, true, output);
@@ -173,15 +172,15 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     // would be possible but with inlining and LTO we have to use the least
     // common denominator - otherwise we would run into conflicts.
     fn push_type_params<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
-                                  substs: &subst::Substs<'tcx>,
+                                  substs: &Substs<'tcx>,
                                   output: &mut String) {
-        if substs.types.is_empty() {
+        if substs.types().next().is_none() {
             return;
         }
 
         output.push('<');
 
-        for &type_parameter in &substs.types {
+        for type_parameter in substs.types() {
             push_debuginfo_type_name(cx, type_parameter, true, output);
             output.push_str(", ");
         }

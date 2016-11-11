@@ -61,12 +61,12 @@ use core::borrow;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{self, Hash};
+use core::iter::FusedIterator;
 use core::marker::{self, Unsize};
 use core::mem;
 use core::ops::{CoerceUnsized, Deref, DerefMut};
 use core::ops::{BoxPlace, Boxed, InPlace, Place, Placer};
 use core::ptr::{self, Unique};
-use core::raw::TraitObject;
 use core::convert::From;
 
 /// A value that represents the heap. This is the default place that the `box`
@@ -271,6 +271,10 @@ impl<T: ?Sized> Box<T> {
     /// proper way to do so is to convert the raw pointer back into a
     /// `Box` with the `Box::from_raw` function.
     ///
+    /// Note: this is an associated function, which means that you have
+    /// to call it as `Box::into_raw(b)` instead of `b.into_raw()`. This
+    /// is so that there is no conflict with a method on the inner type.
+    ///
     /// # Examples
     ///
     /// ```
@@ -286,6 +290,7 @@ impl<T: ?Sized> Box<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Default> Default for Box<T> {
+    /// Creates a `Box<T>`, with the `Default` value for T.
     fn default() -> Box<T> {
         box Default::default()
     }
@@ -427,12 +432,8 @@ impl Box<Any> {
     pub fn downcast<T: Any>(self) -> Result<Box<T>, Box<Any>> {
         if self.is::<T>() {
             unsafe {
-                // Get the raw representation of the trait object
-                let raw = Box::into_raw(self);
-                let to: TraitObject = mem::transmute::<*mut Any, TraitObject>(raw);
-
-                // Extract the data pointer
-                Ok(Box::from_raw(to.data as *mut T))
+                let raw: *mut Any = Box::into_raw(self);
+                Ok(Box::from_raw(raw as *mut T))
             }
         } else {
             Err(self)
@@ -528,6 +529,9 @@ impl<I: DoubleEndedIterator + ?Sized> DoubleEndedIterator for Box<I> {
 }
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<I: ExactSizeIterator + ?Sized> ExactSizeIterator for Box<I> {}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<I: FusedIterator + ?Sized> FusedIterator for Box<I> {}
 
 
 /// `FnBox` is a version of the `FnOnce` intended for use with boxed

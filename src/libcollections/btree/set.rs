@@ -15,7 +15,7 @@ use core::cmp::Ordering::{self, Less, Greater, Equal};
 use core::cmp::{min, max};
 use core::fmt::Debug;
 use core::fmt;
-use core::iter::{Peekable, FromIterator};
+use core::iter::{Peekable, FromIterator, FusedIterator};
 use core::ops::{BitOr, BitAnd, BitXor, Sub};
 
 use borrow::Borrow;
@@ -674,6 +674,7 @@ impl<'a, T: 'a + Ord + Copy> Extend<&'a T> for BTreeSet<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Ord> Default for BTreeSet<T> {
+    /// Makes an empty `BTreeSet<T>` with a reasonable choice of B.
     fn default() -> BTreeSet<T> {
         BTreeSet::new()
     }
@@ -805,6 +806,8 @@ impl<'a, T> ExactSizeIterator for Iter<'a, T> {
     fn len(&self) -> usize { self.iter.len() }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T> FusedIterator for Iter<'a, T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Iterator for IntoIter<T> {
@@ -828,6 +831,8 @@ impl<T> ExactSizeIterator for IntoIter<T> {
     fn len(&self) -> usize { self.iter.len() }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<T> FusedIterator for IntoIter<T> {}
 
 impl<'a, T> Clone for Range<'a, T> {
     fn clone(&self) -> Range<'a, T> {
@@ -846,6 +851,9 @@ impl<'a, T> DoubleEndedIterator for Range<'a, T> {
         self.iter.next_back().map(|(k, _)| k)
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T> FusedIterator for Range<'a, T> {}
 
 /// Compare `x` and `y`, but return `short` if x is None and `long` if y is None
 fn cmp_opt<T: Ord>(x: Option<&T>, y: Option<&T>, short: Ordering, long: Ordering) -> Ordering {
@@ -890,6 +898,9 @@ impl<'a, T: Ord> Iterator for Difference<'a, T> {
     }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T: Ord> FusedIterator for Difference<'a, T> {}
+
 impl<'a, T> Clone for SymmetricDifference<'a, T> {
     fn clone(&self) -> SymmetricDifference<'a, T> {
         SymmetricDifference {
@@ -919,6 +930,9 @@ impl<'a, T: Ord> Iterator for SymmetricDifference<'a, T> {
         (0, Some(self.a.len() + self.b.len()))
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T: Ord> FusedIterator for SymmetricDifference<'a, T> {}
 
 impl<'a, T> Clone for Intersection<'a, T> {
     fn clone(&self) -> Intersection<'a, T> {
@@ -960,6 +974,9 @@ impl<'a, T: Ord> Iterator for Intersection<'a, T> {
     }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T: Ord> FusedIterator for Intersection<'a, T> {}
+
 impl<'a, T> Clone for Union<'a, T> {
     fn clone(&self) -> Union<'a, T> {
         Union {
@@ -991,3 +1008,6 @@ impl<'a, T: Ord> Iterator for Union<'a, T> {
         (max(a_len, b_len), Some(a_len + b_len))
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T: Ord> FusedIterator for Union<'a, T> {}

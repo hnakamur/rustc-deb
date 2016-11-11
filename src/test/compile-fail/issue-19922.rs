@@ -14,5 +14,6 @@ enum Homura {
 
 fn main() {
     let homura = Homura::Akemi { kaname: () };
-    //~^ ERROR struct variant `Homura::Akemi` has no field named `kaname`
+    //~^ ERROR variant `Homura::Akemi` has no field named `kaname`
+    //~| NOTE field does not exist - did you mean `madoka`?
 }

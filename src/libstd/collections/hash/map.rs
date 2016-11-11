@@ -14,8 +14,9 @@ use self::VacantEntryState::*;
 use borrow::Borrow;
 use cmp::max;
 use fmt::{self, Debug};
+#[allow(deprecated)]
 use hash::{Hash, Hasher, BuildHasher, SipHasher13};
-use iter::FromIterator;
+use iter::{FromIterator, FusedIterator};
 use mem::{self, replace};
 use ops::{Deref, Index};
 use rand::{self, Rng};
@@ -206,7 +207,7 @@ fn test_resize_policy() {
 /// require this behavior you can create your own hashing function using
 /// [BuildHasherDefault](../hash/struct.BuildHasherDefault.html).
 ///
-/// It is required that the keys implement the `Eq` and `Hash` traits, although
+/// It is required that the keys implement the [`Eq`] and [`Hash`] traits, although
 /// this can frequently be achieved by using `#[derive(PartialEq, Eq, Hash)]`.
 /// If you implement these yourself, it is important that the following
 /// property holds:
@@ -218,9 +219,9 @@ fn test_resize_policy() {
 /// In other words, if two keys are equal, their hashes must be equal.
 ///
 /// It is a logic error for a key to be modified in such a way that the key's
-/// hash, as determined by the `Hash` trait, or its equality, as determined by
-/// the `Eq` trait, changes while it is in the map. This is normally only
-/// possible through `Cell`, `RefCell`, global state, I/O, or unsafe code.
+/// hash, as determined by the [`Hash`] trait, or its equality, as determined by
+/// the [`Eq`] trait, changes while it is in the map. This is normally only
+/// possible through [`Cell`], [`RefCell`], global state, I/O, or unsafe code.
 ///
 /// Relevant papers/articles:
 ///
@@ -298,8 +299,14 @@ fn test_resize_policy() {
 /// *stat += random_stat_buff();
 /// ```
 ///
-/// The easiest way to use `HashMap` with a custom type as key is to derive `Eq` and `Hash`.
-/// We must also derive `PartialEq`.
+/// The easiest way to use `HashMap` with a custom type as key is to derive [`Eq`] and [`Hash`].
+/// We must also derive [`PartialEq`].
+///
+/// [`Eq`]: ../../std/cmp/trait.Eq.html
+/// [`Hash`]: ../../std/hash/trait.Hash.html
+/// [`PartialEq`]: ../../std/cmp/trait.PartialEq.html
+/// [`RefCell`]: ../../std/cell/struct.RefCell.html
+/// [`Cell`]: ../../std/cell/struct.Cell.html
 ///
 /// ```
 /// use std::collections::HashMap;
@@ -525,7 +532,7 @@ impl<K, V, S> HashMap<K, V, S>
 }
 
 impl<K: Hash + Eq, V> HashMap<K, V, RandomState> {
-    /// Creates an empty HashMap.
+    /// Creates an empty `HashMap`.
     ///
     /// # Examples
     ///
@@ -539,7 +546,7 @@ impl<K: Hash + Eq, V> HashMap<K, V, RandomState> {
         Default::default()
     }
 
-    /// Creates an empty hash map with the given initial capacity.
+    /// Creates an empty `HashMap` with the given initial capacity.
     ///
     /// # Examples
     ///
@@ -557,7 +564,7 @@ impl<K: Hash + Eq, V> HashMap<K, V, RandomState> {
 impl<K, V, S> HashMap<K, V, S>
     where K: Eq + Hash, S: BuildHasher
 {
-    /// Creates an empty hashmap which will use the given hash builder to hash
+    /// Creates an empty `HashMap` which will use the given hash builder to hash
     /// keys.
     ///
     /// The created map has the default initial capacity.
@@ -587,7 +594,7 @@ impl<K, V, S> HashMap<K, V, S>
         }
     }
 
-    /// Creates an empty HashMap with space for at least `capacity`
+    /// Creates an empty `HashMap` with space for at least `capacity`
     /// elements, using `hasher` to hash the keys.
     ///
     /// Warning: `hasher` is normally randomly generated, and
@@ -677,7 +684,7 @@ impl<K, V, S> HashMap<K, V, S>
     /// Resizes the internal vectors to a new capacity. It's your responsibility to:
     ///   1) Make sure the new capacity is enough for all the elements, accounting
     ///      for the load factor.
-    ///   2) Ensure new_capacity is a power of two or zero.
+    ///   2) Ensure `new_capacity` is a power of two or zero.
     fn resize(&mut self, new_capacity: usize) {
         assert!(self.table.size() <= new_capacity);
         assert!(new_capacity.is_power_of_two() || new_capacity == 0);
@@ -1040,8 +1047,11 @@ impl<K, V, S> HashMap<K, V, S>
     /// Returns a reference to the value corresponding to the key.
     ///
     /// The key may be any borrowed form of the map's key type, but
-    /// `Hash` and `Eq` on the borrowed form *must* match those for
+    /// [`Hash`] and [`Eq`] on the borrowed form *must* match those for
     /// the key type.
+    ///
+    /// [`Eq`]: ../../std/cmp/trait.Eq.html
+    /// [`Hash`]: ../../std/hash/trait.Hash.html
     ///
     /// # Examples
     ///
@@ -1063,8 +1073,11 @@ impl<K, V, S> HashMap<K, V, S>
     /// Returns true if the map contains a value for the specified key.
     ///
     /// The key may be any borrowed form of the map's key type, but
-    /// `Hash` and `Eq` on the borrowed form *must* match those for
+    /// [`Hash`] and [`Eq`] on the borrowed form *must* match those for
     /// the key type.
+    ///
+    /// [`Eq`]: ../../std/cmp/trait.Eq.html
+    /// [`Hash`]: ../../std/hash/trait.Hash.html
     ///
     /// # Examples
     ///
@@ -1086,8 +1099,11 @@ impl<K, V, S> HashMap<K, V, S>
     /// Returns a mutable reference to the value corresponding to the key.
     ///
     /// The key may be any borrowed form of the map's key type, but
-    /// `Hash` and `Eq` on the borrowed form *must* match those for
+    /// [`Hash`] and [`Eq`] on the borrowed form *must* match those for
     /// the key type.
+    ///
+    /// [`Eq`]: ../../std/cmp/trait.Eq.html
+    /// [`Hash`]: ../../std/hash/trait.Hash.html
     ///
     /// # Examples
     ///
@@ -1143,8 +1159,11 @@ impl<K, V, S> HashMap<K, V, S>
     /// was previously in the map.
     ///
     /// The key may be any borrowed form of the map's key type, but
-    /// `Hash` and `Eq` on the borrowed form *must* match those for
+    /// [`Hash`] and [`Eq`] on the borrowed form *must* match those for
     /// the key type.
+    ///
+    /// [`Eq`]: ../../std/cmp/trait.Eq.html
+    /// [`Hash`]: ../../std/hash/trait.Hash.html
     ///
     /// # Examples
     ///
@@ -1200,6 +1219,7 @@ impl<K, V, S> Default for HashMap<K, V, S>
     where K: Eq + Hash,
           S: BuildHasher + Default,
 {
+    /// Creates an empty `HashMap<K, V, S>`, with the `Default` value for the hasher.
     fn default() -> HashMap<K, V, S> {
         HashMap::with_hasher(Default::default())
     }
@@ -1484,6 +1504,9 @@ impl<'a, K, V> ExactSizeIterator for Iter<'a, K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for Iter<'a, K, V> {}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K, V> Iterator for IterMut<'a, K, V> {
     type Item = (&'a K, &'a mut V);
@@ -1495,6 +1518,8 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
 impl<'a, K, V> ExactSizeIterator for IterMut<'a, K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for IterMut<'a, K, V> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<K, V> Iterator for IntoIter<K, V> {
@@ -1507,6 +1532,8 @@ impl<K, V> Iterator for IntoIter<K, V> {
 impl<K, V> ExactSizeIterator for IntoIter<K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
+#[unstable(feature = "fused", issue = "35602")]
+impl<K, V> FusedIterator for IntoIter<K, V> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K, V> Iterator for Keys<'a, K, V> {
@@ -1519,6 +1546,8 @@ impl<'a, K, V> Iterator for Keys<'a, K, V> {
 impl<'a, K, V> ExactSizeIterator for Keys<'a, K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for Keys<'a, K, V> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K, V> Iterator for Values<'a, K, V> {
@@ -1531,6 +1560,8 @@ impl<'a, K, V> Iterator for Values<'a, K, V> {
 impl<'a, K, V> ExactSizeIterator for Values<'a, K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for Values<'a, K, V> {}
 
 #[stable(feature = "map_values_mut", since = "1.10.0")]
 impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
@@ -1543,6 +1574,8 @@ impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
 impl<'a, K, V> ExactSizeIterator for ValuesMut<'a, K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, K, V> Iterator for Drain<'a, K, V> {
@@ -1555,6 +1588,8 @@ impl<'a, K, V> Iterator for Drain<'a, K, V> {
 impl<'a, K, V> ExactSizeIterator for Drain<'a, K, V> {
     #[inline] fn len(&self) -> usize { self.inner.len() }
 }
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K, V> FusedIterator for Drain<'a, K, V> {}
 
 impl<'a, K, V> Entry<'a, K, V> {
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -1889,11 +1924,14 @@ impl<'a, K, V, S> Extend<(&'a K, &'a V)> for HashMap<K, V, S>
     }
 }
 
-/// `RandomState` is the default state for `HashMap` types.
+/// `RandomState` is the default state for [`HashMap`] types.
 ///
 /// A particular instance `RandomState` will create the same instances of
-/// `Hasher`, but the hashers created by two different `RandomState`
+/// [`Hasher`], but the hashers created by two different `RandomState`
 /// instances are unlikely to produce the same result for the same values.
+///
+/// [`HashMap`]: struct.HashMap.html
+/// [`Hasher`]: ../../hash/trait.Hasher.html
 ///
 /// # Examples
 ///
@@ -1960,19 +1998,45 @@ impl RandomState {
 impl BuildHasher for RandomState {
     type Hasher = DefaultHasher;
     #[inline]
+    #[allow(deprecated)]
     fn build_hasher(&self) -> DefaultHasher {
         DefaultHasher(SipHasher13::new_with_keys(self.k0, self.k1))
     }
 }
 
-/// The default `Hasher` used by `RandomState`.
+/// The default [`Hasher`] used by [`RandomState`].
 ///
 /// The internal algorithm is not specified, and so it and its hashes should
 /// not be relied upon over releases.
-#[unstable(feature = "hashmap_default_hasher", issue = "0")]
+///
+/// [`RandomState`]: struct.RandomState.html
+/// [`Hasher`]: ../../hash/trait.Hasher.html
+#[stable(feature = "hashmap_default_hasher", since = "1.13.0")]
+#[allow(deprecated)]
+#[derive(Debug)]
 pub struct DefaultHasher(SipHasher13);
 
-#[unstable(feature = "hashmap_default_hasher", issue = "0")]
+impl DefaultHasher {
+    /// Creates a new `DefaultHasher`.
+    ///
+    /// This hasher is not guaranteed to be the same as all other
+    /// `DefaultHasher` instances, but is the same as all other `DefaultHasher`
+    /// instances created through `new` or `default`.
+    #[stable(feature = "hashmap_default_hasher", since = "1.13.0")]
+    #[allow(deprecated)]
+    pub fn new() -> DefaultHasher {
+        DefaultHasher(SipHasher13::new_with_keys(0, 0))
+    }
+}
+
+#[stable(feature = "hashmap_default_hasher", since = "1.13.0")]
+impl Default for DefaultHasher {
+    fn default() -> DefaultHasher {
+        DefaultHasher::new()
+    }
+}
+
+#[stable(feature = "hashmap_default_hasher", since = "1.13.0")]
 impl Hasher for DefaultHasher {
     #[inline]
     fn write(&mut self, msg: &[u8]) {
@@ -1987,6 +2051,7 @@ impl Hasher for DefaultHasher {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Default for RandomState {
+    /// Constructs a new `RandomState`.
     #[inline]
     fn default() -> RandomState {
         RandomState::new()
@@ -2038,16 +2103,31 @@ fn assert_covariance() {
     fn keys_val<'a, 'new>(v: Keys<'a, u8, &'static str>) -> Keys<'a, u8, &'new str> { v }
     fn values_key<'a, 'new>(v: Values<'a, &'static str, u8>) -> Values<'a, &'new str, u8> { v }
     fn values_val<'a, 'new>(v: Values<'a, u8, &'static str>) -> Values<'a, u8, &'new str> { v }
+    fn drain<'new>(d: Drain<'static, &'static str, &'static str>)
+        -> Drain<'new, &'new str, &'new str> { d }
 }
 
 #[cfg(test)]
 mod test_map {
-    use prelude::v1::*;
-
     use super::HashMap;
     use super::Entry::{Occupied, Vacant};
+    use super::RandomState;
     use cell::RefCell;
     use rand::{thread_rng, Rng};
+
+    #[test]
+    fn test_create_capacities() {
+        type HM = HashMap<i32, i32>;
+
+        let m = HM::new();
+        assert_eq!(m.capacity(), 0);
+
+        let m = HM::default();
+        assert_eq!(m.capacity(), 0);
+
+        let m = HM::with_hasher(RandomState::new());
+        assert_eq!(m.capacity(), 0);
+    }
 
     #[test]
     fn test_create_capacity_zero() {

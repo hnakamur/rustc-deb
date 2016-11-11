@@ -124,11 +124,14 @@ const UNWIND_DATA_REG: (i32, i32) = (0, 1); // RAX, RDX
 #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
 const UNWIND_DATA_REG: (i32, i32) = (0, 1); // R0, R1 / X0, X1
 
-#[cfg(any(target_arch = "mips", target_arch = "mipsel"))]
+#[cfg(any(target_arch = "mips", target_arch = "mipsel", target_arch = "mips64"))]
 const UNWIND_DATA_REG: (i32, i32) = (4, 5); // A0, A1
 
 #[cfg(any(target_arch = "powerpc", target_arch = "powerpc64"))]
 const UNWIND_DATA_REG: (i32, i32) = (3, 4); // R3, R4 / X3, X4
+
+#[cfg(target_arch = "s390x")]
+const UNWIND_DATA_REG: (i32, i32) = (6, 7); // R6, R7
 
 // The following code is based on GCC's C and C++ personality routines.  For reference, see:
 // https://github.com/gcc-mirror/gcc/blob/master/libstdc++-v3/libsupc++/eh_personality.cc
@@ -262,30 +265,6 @@ unsafe fn find_eh_action(context: *mut uw::_Unwind_Context) -> EHAction {
         get_data_start: &|| uw::_Unwind_GetDataRelBase(context),
     };
     eh::find_eh_action(lsda, &eh_context)
-}
-
-// *** Delete after a new snapshot ***
-#[cfg(all(stage0, any(target_os = "ios", not(target_arch = "arm"))))]
-#[lang = "eh_personality_catch"]
-#[no_mangle]
-pub unsafe extern "C" fn rust_eh_personality_catch(version: c_int,
-                                                    actions: uw::_Unwind_Action,
-                                                    exception_class: uw::_Unwind_Exception_Class,
-                                                    ue_header: *mut uw::_Unwind_Exception,
-                                                    context: *mut uw::_Unwind_Context)
-                                                    -> uw::_Unwind_Reason_Code {
-    rust_eh_personality(version, actions, exception_class, ue_header, context)
-}
-
-// *** Delete after a new snapshot ***
-#[cfg(all(stage0, target_arch = "arm", not(target_os = "ios")))]
-#[lang = "eh_personality_catch"]
-#[no_mangle]
-pub unsafe extern "C" fn rust_eh_personality_catch(state: uw::_Unwind_State,
-                                                    ue_header: *mut uw::_Unwind_Exception,
-                                                    context: *mut uw::_Unwind_Context)
-                                                    -> uw::_Unwind_Reason_Code {
-    rust_eh_personality(state, ue_header, context)
 }
 
 // See docs in the `unwind` module.

@@ -234,7 +234,7 @@ impl PpSourceMode {
                                                                  resolutions.clone(),
                                                                  arenas,
                                                                  id,
-                                                                 |tcx, _, _, _| {
+                                                                 |tcx, _, _, _, _| {
                     let annotation = TypedAnnotation {
                         tcx: tcx,
                     };
@@ -539,6 +539,7 @@ impl FromStr for UserIdentifiedItem {
     type Err = ();
     fn from_str(s: &str) -> Result<UserIdentifiedItem, ()> {
         Ok(s.parse()
+            .map(ast::NodeId::new)
             .map(ItemViaNode)
             .unwrap_or_else(|_| ItemViaPath(s.split("::").map(|s| s.to_string()).collect())))
     }
@@ -951,7 +952,7 @@ fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
                                                      resolutions.clone(),
                                                      arenas,
                                                      crate_name,
-                                                     |tcx, mir_map, _, _| {
+                                                     |tcx, mir_map, _, _, _| {
         match ppm {
             PpmMir | PpmMirCFG => {
                 if let Some(mir_map) = mir_map {

@@ -14,7 +14,7 @@ fn main() {
     let mut a = 0i32;
     let b = &(a as i32);
     a = 1;
-    assert!((&a as *const i32) != (b as *const i32));
+    assert_ne!(&a as *const i32, b as *const i32);
     assert_eq!(*b, 0);
 
     assert_eq!(issue_36936(), 1);

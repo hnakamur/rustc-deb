@@ -25,9 +25,7 @@ use middle::mem_categorization as mc;
 use middle::mem_categorization::McResult;
 use middle::region::CodeExtent;
 use mir::tcx::LvalueTy;
-use ty::subst;
-use ty::subst::Substs;
-use ty::subst::Subst;
+use ty::subst::{Subst, Substs};
 use ty::adjustment;
 use ty::{TyVid, IntVid, FloatVid};
 use ty::{self, Ty, TyCtxt};
@@ -138,13 +136,6 @@ pub struct InferCtxt<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     // avoid reporting the same error twice.
     pub reported_trait_errors: RefCell<FnvHashSet<traits::TraitErrorKey<'tcx>>>,
 
-    // This is a temporary field used for toggling on normalization in the inference context,
-    // as we move towards the approach described here:
-    // https://internals.rust-lang.org/t/flattening-the-contexts-for-fun-and-profit/2293
-    // At a point sometime in the future normalization will be done by the typing context
-    // directly.
-    normalize: bool,
-
     // Sadly, the behavior of projection varies a bit depending on the
     // stage of compilation. The specifics are given in the
     // documentation for `Reveal`.
@@ -179,7 +170,7 @@ pub struct InferCtxt<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
 
 /// A map returned by `skolemize_late_bound_regions()` indicating the skolemized
 /// region that each late-bound region was replaced with.
-pub type SkolemizationMap = FnvHashMap<ty::BoundRegion, ty::Region>;
+pub type SkolemizationMap<'tcx> = FnvHashMap<ty::BoundRegion, &'tcx ty::Region>;
 
 /// Why did we require that the two types be related?
 ///
@@ -234,7 +225,7 @@ impl TypeOrigin {
             &TypeOrigin::RelateOutputImplTypes(_) |
             &TypeOrigin::ExprAssignable(_) => "mismatched types",
             &TypeOrigin::MethodCompatCheck(_) => "method not compatible with trait",
-            &TypeOrigin::MatchExpressionArm(_, _, source) => match source {
+            &TypeOrigin::MatchExpressionArm(.., source) => match source {
                 hir::MatchSource::IfLetDesugar{..} => "`if let` arms have incompatible types",
                 _ => "match arms have incompatible types",
             },
@@ -257,7 +248,7 @@ impl TypeOrigin {
             &TypeOrigin::RelateOutputImplTypes(_) => {
                 "trait type parameters matches those specified on the impl"
             }
-            &TypeOrigin::MatchExpressionArm(_, _, _) => "match arms have compatible types",
+            &TypeOrigin::MatchExpressionArm(..) => "match arms have compatible types",
             &TypeOrigin::IfExpression(_) => "if and else have compatible types",
             &TypeOrigin::IfExpressionWithNoElse(_) => "if missing an else returns ()",
             &TypeOrigin::RangeExpression(_) => "start and end of range have compatible types",
@@ -460,7 +451,6 @@ pub struct InferCtxtBuilder<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     tables: Option<RefCell<ty::Tables<'tcx>>>,
     param_env: Option<ty::ParameterEnvironment<'gcx>>,
     projection_mode: Reveal,
-    normalize: bool
 }
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'gcx> {
@@ -475,19 +465,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'gcx> {
             tables: tables.map(RefCell::new),
             param_env: param_env,
             projection_mode: projection_mode,
-            normalize: false
-        }
-    }
-
-    pub fn normalizing_infer_ctxt(self, projection_mode: Reveal)
-                                  -> InferCtxtBuilder<'a, 'gcx, 'tcx> {
-        InferCtxtBuilder {
-            global_tcx: self,
-            arenas: ty::CtxtArenas::new(),
-            tables: None,
-            param_env: None,
-            projection_mode: projection_mode,
-            normalize: false
         }
     }
 
@@ -508,7 +485,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'gcx> {
             evaluation_cache: traits::EvaluationCache::new(),
             projection_cache: RefCell::new(traits::ProjectionCache::new()),
             reported_trait_errors: RefCell::new(FnvHashSet()),
-            normalize: false,
             projection_mode: Reveal::NotSpecializable,
             tainted_by_errors_flag: Cell::new(false),
             err_count_on_creation: self.sess.err_count(),
@@ -527,7 +503,6 @@ impl<'a, 'gcx, 'tcx> InferCtxtBuilder<'a, 'gcx, 'tcx> {
             ref tables,
             ref mut param_env,
             projection_mode,
-            normalize
         } = *self;
         let tables = if let Some(ref tables) = *tables {
             InferTables::Local(tables)
@@ -549,7 +524,6 @@ impl<'a, 'gcx, 'tcx> InferCtxtBuilder<'a, 'gcx, 'tcx> {
             selection_cache: traits::SelectionCache::new(),
             evaluation_cache: traits::EvaluationCache::new(),
             reported_trait_errors: RefCell::new(FnvHashSet()),
-            normalize: normalize,
             projection_mode: projection_mode,
             tainted_by_errors_flag: Cell::new(false),
             err_count_on_creation: tcx.sess.err_count(),
@@ -609,7 +583,8 @@ impl_trans_normalize!('gcx,
     ty::FnSig<'gcx>,
     &'gcx ty::BareFnTy<'gcx>,
     ty::ClosureSubsts<'gcx>,
-    ty::PolyTraitRef<'gcx>
+    ty::PolyTraitRef<'gcx>,
+    ty::ExistentialTraitRef<'gcx>
 );
 
 impl<'gcx> TransNormalize<'gcx> for LvalueTy<'gcx> {
@@ -629,6 +604,18 @@ impl<'gcx> TransNormalize<'gcx> for LvalueTy<'gcx> {
 
 // NOTE: Callable from trans only!
 impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
+    /// Currently, higher-ranked type bounds inhibit normalization. Therefore,
+    /// each time we erase them in translation, we need to normalize
+    /// the contents.
+    pub fn erase_late_bound_regions_and_normalize<T>(self, value: &ty::Binder<T>)
+        -> T
+        where T: TransNormalize<'tcx>
+    {
+        assert!(!value.needs_subst());
+        let value = self.erase_late_bound_regions(value);
+        self.normalize_associated_type(&value)
+    }
+
     pub fn normalize_associated_type<T>(self, value: &T) -> T
         where T: TransNormalize<'tcx>
     {
@@ -685,6 +672,15 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         self.drain_fulfillment_cx_or_panic(DUMMY_SP, &mut fulfill_cx, &result)
     }
 
+    /// Finishes processes any obligations that remain in the
+    /// fulfillment context, and then returns the result with all type
+    /// variables removed and regions erased. Because this is intended
+    /// for use after type-check has completed, if any errors occur,
+    /// it will panic. It is used during normalization and other cases
+    /// where processing the obligations in `fulfill_cx` may cause
+    /// type inference variables that appear in `result` to be
+    /// unified, and hence we need to process those obligations to get
+    /// the complete picture of the type.
     pub fn drain_fulfillment_cx_or_panic<T>(&self,
                                             span: Span,
                                             fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
@@ -694,45 +690,26 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     {
         debug!("drain_fulfillment_cx_or_panic()");
 
-        let when = "resolving bounds after type-checking";
-        let v = match self.drain_fulfillment_cx(fulfill_cx, result) {
-            Ok(v) => v,
-            Err(errors) => {
-                span_bug!(span, "Encountered errors `{:?}` {}", errors, when);
-            }
-        };
-
-        match self.tcx.lift_to_global(&v) {
-            Some(v) => v,
-            None => {
-                span_bug!(span, "Uninferred types/regions in `{:?}` {}", v, when);
-            }
-        }
-    }
-
-    /// Finishes processes any obligations that remain in the fulfillment
-    /// context, and then "freshens" and returns `result`. This is
-    /// primarily used during normalization and other cases where
-    /// processing the obligations in `fulfill_cx` may cause type
-    /// inference variables that appear in `result` to be unified, and
-    /// hence we need to process those obligations to get the complete
-    /// picture of the type.
-    pub fn drain_fulfillment_cx<T>(&self,
-                                   fulfill_cx: &mut traits::FulfillmentContext<'tcx>,
-                                   result: &T)
-                                   -> Result<T,Vec<traits::FulfillmentError<'tcx>>>
-        where T : TypeFoldable<'tcx>
-    {
-        debug!("drain_fulfillment_cx(result={:?})",
-               result);
-
         // In principle, we only need to do this so long as `result`
         // contains unbound type parameters. It could be a slight
         // optimization to stop iterating early.
-        fulfill_cx.select_all_or_error(self)?;
+        match fulfill_cx.select_all_or_error(self) {
+            Ok(()) => { }
+            Err(errors) => {
+                span_bug!(span, "Encountered errors `{:?}` resolving bounds after type-checking",
+                          errors);
+            }
+        }
 
         let result = self.resolve_type_vars_if_possible(result);
-        Ok(self.tcx.erase_regions(&result))
+        let result = self.tcx.erase_regions(&result);
+
+        match self.tcx.lift_to_global(&result) {
+            Some(result) => result,
+            None => {
+                span_bug!(span, "Uninferred types/regions in `{:?}`", result);
+            }
+        }
     }
 
     pub fn projection_mode(&self) -> Reveal {
@@ -864,6 +841,33 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         let mut fields = self.combine_fields(trace);
         let result = fields.glb(a_is_expected).relate(a, b);
         result.map(move |t| InferOk { value: t, obligations: fields.obligations })
+    }
+
+    // Clear the "obligations in snapshot" flag, invoke the closure,
+    // then restore the flag to its original value. This flag is a
+    // debugging measure designed to detect cases where we start a
+    // snapshot, create type variables, register obligations involving
+    // those type variables in the fulfillment cx, and then have to
+    // unroll the snapshot, leaving "dangling type variables" behind.
+    // In such cases, the flag will be set by the fulfillment cx, and
+    // an assertion will fail when rolling the snapshot back.  Very
+    // useful, much better than grovelling through megabytes of
+    // RUST_LOG output.
+    //
+    // HOWEVER, in some cases the flag is wrong. In particular, we
+    // sometimes create a "mini-fulfilment-cx" in which we enroll
+    // obligations. As long as this fulfillment cx is fully drained
+    // before we return, this is not a problem, as there won't be any
+    // escaping obligations in the main cx. In those cases, you can
+    // use this function.
+    pub fn save_and_restore_obligations_in_snapshot_flag<F, R>(&self, func: F) -> R
+        where F: FnOnce(&Self) -> R
+    {
+        let flag = self.obligations_in_snapshot.get();
+        self.obligations_in_snapshot.set(false);
+        let result = func(self);
+        self.obligations_in_snapshot.set(flag);
+        result
     }
 
     fn start_snapshot(&self) -> CombinedSnapshot {
@@ -1125,8 +1129,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     pub fn sub_regions(&self,
                        origin: SubregionOrigin<'tcx>,
-                       a: ty::Region,
-                       b: ty::Region) {
+                       a: &'tcx ty::Region,
+                       b: &'tcx ty::Region) {
         debug!("sub_regions({:?} <: {:?})", a, b);
         self.region_vars.make_subregion(origin, a, b);
     }
@@ -1149,7 +1153,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     pub fn region_outlives_predicate(&self,
                                      span: Span,
-                                     predicate: &ty::PolyRegionOutlivesPredicate)
+                                     predicate: &ty::PolyRegionOutlivesPredicate<'tcx>)
         -> UnitResult<'tcx>
     {
         self.commit_if_ok(|snapshot| {
@@ -1172,15 +1176,6 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         self.tcx.mk_var(self.next_ty_var_id(false))
     }
 
-    pub fn next_ty_var_with_default(&self,
-                                    default: Option<type_variable::Default<'tcx>>) -> Ty<'tcx> {
-        let ty_var_id = self.type_variables
-                            .borrow_mut()
-                            .new_var(false, default);
-
-        self.tcx.mk_var(ty_var_id)
-    }
-
     pub fn next_diverging_ty_var(&self) -> Ty<'tcx> {
         self.tcx.mk_var(self.next_ty_var_id(true))
     }
@@ -1201,96 +1196,63 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             .new_key(None)
     }
 
-    pub fn next_region_var(&self, origin: RegionVariableOrigin) -> ty::Region {
-        ty::ReVar(self.region_vars.new_region_var(origin))
+    pub fn next_region_var(&self, origin: RegionVariableOrigin)
+                           -> &'tcx ty::Region {
+        self.tcx.mk_region(ty::ReVar(self.region_vars.new_region_var(origin)))
     }
 
-    pub fn region_vars_for_defs(&self,
-                                span: Span,
-                                defs: &[ty::RegionParameterDef])
-                                -> Vec<ty::Region> {
-        defs.iter()
-            .map(|d| self.next_region_var(EarlyBoundRegion(span, d.name)))
-            .collect()
-    }
-
-    // We have to take `&mut Substs` in order to provide the correct substitutions for defaults
-    // along the way, for this reason we don't return them.
-    pub fn type_vars_for_defs(&self,
+    /// Create a region inference variable for the given
+    /// region parameter definition.
+    pub fn region_var_for_def(&self,
                               span: Span,
-                              space: subst::ParamSpace,
-                              substs: &mut Substs<'tcx>,
-                              defs: &[ty::TypeParameterDef<'tcx>]) {
+                              def: &ty::RegionParameterDef)
+                              -> &'tcx ty::Region {
+        self.next_region_var(EarlyBoundRegion(span, def.name))
+    }
 
-        for def in defs.iter() {
-            let default = def.default.map(|default| {
-                type_variable::Default {
-                    ty: default.subst_spanned(self.tcx, substs, Some(span)),
-                    origin_span: span,
-                    def_id: def.default_def_id
-                }
-            });
+    /// Create a type inference variable for the given
+    /// type parameter definition. The substitutions are
+    /// for actual parameters that may be referred to by
+    /// the default of this type parameter, if it exists.
+    /// E.g. `struct Foo<A, B, C = (A, B)>(...);` when
+    /// used in a path such as `Foo::<T, U>::new()` will
+    /// use an inference variable for `C` with `[T, U]`
+    /// as the substitutions for the default, `(T, U)`.
+    pub fn type_var_for_def(&self,
+                            span: Span,
+                            def: &ty::TypeParameterDef<'tcx>,
+                            substs: &Substs<'tcx>)
+                            -> Ty<'tcx> {
+        let default = def.default.map(|default| {
+            type_variable::Default {
+                ty: default.subst_spanned(self.tcx, substs, Some(span)),
+                origin_span: span,
+                def_id: def.default_def_id
+            }
+        });
 
-            let ty_var = self.next_ty_var_with_default(default);
-            substs.types.push(space, ty_var);
-        }
+
+        let ty_var_id = self.type_variables
+                            .borrow_mut()
+                            .new_var(false, default);
+
+        self.tcx.mk_var(ty_var_id)
     }
 
     /// Given a set of generics defined on a type or impl, returns a substitution mapping each
     /// type/region parameter to a fresh inference variable.
-    pub fn fresh_substs_for_generics(&self,
-                                     span: Span,
-                                     generics: &ty::Generics<'tcx>)
-                                     -> &'tcx subst::Substs<'tcx>
-    {
-        let type_params = subst::VecPerParamSpace::empty();
-
-        let region_params =
-            generics.regions.map(
-                |d| self.next_region_var(EarlyBoundRegion(span, d.name)));
-
-        let mut substs = subst::Substs::new(type_params, region_params);
-
-        for space in subst::ParamSpace::all().iter() {
-            self.type_vars_for_defs(
-                span,
-                *space,
-                &mut substs,
-                generics.types.get_slice(*space));
-        }
-
-        self.tcx.mk_substs(substs)
+    pub fn fresh_substs_for_item(&self,
+                                 span: Span,
+                                 def_id: DefId)
+                                 -> &'tcx Substs<'tcx> {
+        Substs::for_item(self.tcx, def_id, |def, _| {
+            self.region_var_for_def(span, def)
+        }, |def, substs| {
+            self.type_var_for_def(span, def, substs)
+        })
     }
 
-    /// Given a set of generics defined on a trait, returns a substitution mapping each output
-    /// type/region parameter to a fresh inference variable, and mapping the self type to
-    /// `self_ty`.
-    pub fn fresh_substs_for_trait(&self,
-                                  span: Span,
-                                  generics: &ty::Generics<'tcx>,
-                                  self_ty: Ty<'tcx>)
-                                  -> subst::Substs<'tcx>
-    {
-
-        assert!(generics.types.len(subst::SelfSpace) == 1);
-        assert!(generics.types.len(subst::FnSpace) == 0);
-        assert!(generics.regions.len(subst::SelfSpace) == 0);
-        assert!(generics.regions.len(subst::FnSpace) == 0);
-
-        let type_params = Vec::new();
-
-        let region_param_defs = generics.regions.get_slice(subst::TypeSpace);
-        let regions = self.region_vars_for_defs(span, region_param_defs);
-
-        let mut substs = subst::Substs::new_trait(type_params, regions, self_ty);
-
-        let type_parameter_defs = generics.types.get_slice(subst::TypeSpace);
-        self.type_vars_for_defs(span, subst::TypeSpace, &mut substs, type_parameter_defs);
-
-        return substs;
-    }
-
-    pub fn fresh_bound_region(&self, debruijn: ty::DebruijnIndex) -> ty::Region {
+    pub fn fresh_bound_region(&self, debruijn: ty::DebruijnIndex) -> &'tcx ty::Region {
         self.region_vars.new_bound(debruijn)
     }
 
@@ -1575,7 +1537,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         span: Span,
         lbrct: LateBoundRegionConversionTime,
         value: &ty::Binder<T>)
-        -> (T, FnvHashMap<ty::BoundRegion,ty::Region>)
+        -> (T, FnvHashMap<ty::BoundRegion, &'tcx ty::Region>)
         where T : TypeFoldable<'tcx>
     {
         self.tcx.replace_late_bound_regions(
@@ -1621,8 +1583,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     pub fn verify_generic_bound(&self,
                                 origin: SubregionOrigin<'tcx>,
                                 kind: GenericKind<'tcx>,
-                                a: ty::Region,
-                                bound: VerifyBound) {
+                                a: &'tcx ty::Region,
+                                bound: VerifyBound<'tcx>) {
         debug!("verify_generic_bound({:?}, {:?} <: {:?})",
                kind,
                a,
@@ -1711,7 +1673,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         self.tcx.region_maps.temporary_scope(rvalue_id)
     }
 
-    pub fn upvar_capture(&self, upvar_id: ty::UpvarId) -> Option<ty::UpvarCapture> {
+    pub fn upvar_capture(&self, upvar_id: ty::UpvarId) -> Option<ty::UpvarCapture<'tcx>> {
         self.tables.borrow().upvar_capture_map.get(&upvar_id).cloned()
     }
 
@@ -1746,17 +1708,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         }
 
         let closure_ty = self.tcx.closure_type(def_id, substs);
-        if self.normalize {
-            let closure_ty = self.tcx.erase_regions(&closure_ty);
-
-            if !closure_ty.has_projection_types() {
-                return closure_ty;
-            }
-
-            self.normalize_projections_in(&closure_ty)
-        } else {
-            closure_ty
-        }
+        closure_ty
     }
 }
 
@@ -1800,7 +1752,7 @@ impl TypeOrigin {
             TypeOrigin::ExprAssignable(span) => span,
             TypeOrigin::Misc(span) => span,
             TypeOrigin::RelateOutputImplTypes(span) => span,
-            TypeOrigin::MatchExpressionArm(match_span, _, _) => match_span,
+            TypeOrigin::MatchExpressionArm(match_span, ..) => match_span,
             TypeOrigin::IfExpression(span) => span,
             TypeOrigin::IfExpressionWithNoElse(span) => span,
             TypeOrigin::RangeExpression(span) => span,
@@ -1853,7 +1805,7 @@ impl RegionVariableOrigin {
             Autoref(a) => a,
             Coercion(a) => a,
             EarlyBoundRegion(a, _) => a,
-            LateBoundRegion(a, _, _) => a,
+            LateBoundRegion(a, ..) => a,
             BoundRegionInCoherence(_) => syntax_pos::DUMMY_SP,
             UpvarRegion(_, a) => a
         }

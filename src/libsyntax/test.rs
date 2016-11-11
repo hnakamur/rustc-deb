@@ -19,17 +19,16 @@ use std::iter;
 use std::slice;
 use std::mem;
 use std::vec;
-use attr::AttrMetaMethods;
 use attr;
 use syntax_pos::{self, DUMMY_SP, NO_EXPANSION, Span, FileMap, BytePos};
 use std::rc::Rc;
 
-use codemap::{self, CodeMap, ExpnInfo, NameAndSpan, MacroAttribute};
+use codemap::{self, CodeMap, ExpnInfo, NameAndSpan, MacroAttribute, dummy_spanned};
 use errors;
 use errors::snippet::{SnippetData};
 use config;
 use entry::{self, EntryPointType};
-use ext::base::{ExtCtxt, DummyMacroLoader};
+use ext::base::{ExtCtxt, Resolver};
 use ext::build::AstBuilder;
 use ext::expand::ExpansionConfig;
 use fold::Folder;
@@ -71,6 +70,7 @@ struct TestCtxt<'a> {
 // Traverse the crate, collecting all the test functions, eliding any
 // existing main functions, and synthesizing a main test harness
 pub fn modify_for_testing(sess: &ParseSess,
+                          resolver: &mut Resolver,
                           should_test: bool,
                           krate: ast::Crate,
                           span_diagnostic: &errors::Handler) -> ast::Crate {
@@ -83,7 +83,7 @@ pub fn modify_for_testing(sess: &ParseSess,
                                            "reexport_test_harness_main");
 
     if should_test {
-        generate_test_harness(sess, reexport_test_harness_main, krate, span_diagnostic)
+        generate_test_harness(sess, resolver, reexport_test_harness_main, krate, span_diagnostic)
     } else {
         krate
     }
@@ -210,9 +210,8 @@ impl fold::Folder for EntryPointCleaner {
                 folded.map(|ast::Item {id, ident, attrs, node, vis, span}| {
                     let allow_str = InternedString::new("allow");
                     let dead_code_str = InternedString::new("dead_code");
-                    let allow_dead_code_item =
-                        attr::mk_list_item(allow_str,
-                                           vec![attr::mk_word_item(dead_code_str)]);
+                    let word_vec = vec![attr::mk_list_word_item(dead_code_str)];
+                    let allow_dead_code_item = attr::mk_list_item(allow_str, word_vec);
                     let allow_dead_code = attr::mk_attr_outer(attr::mk_attr_id(),
                                                               allow_dead_code_item);
 
@@ -250,27 +249,28 @@ fn mk_reexport_mod(cx: &mut TestCtxt, tests: Vec<ast::Ident>,
     }).chain(tested_submods.into_iter().map(|(r, sym)| {
         let path = cx.ext_cx.path(DUMMY_SP, vec![super_, r, sym]);
         cx.ext_cx.item_use_simple_(DUMMY_SP, ast::Visibility::Public, r, path)
-    }));
+    })).collect();
 
     let reexport_mod = ast::Mod {
         inner: DUMMY_SP,
-        items: items.collect(),
+        items: items,
     };
 
     let sym = token::gensym_ident("__test_reexports");
-    let it = P(ast::Item {
+    let it = cx.ext_cx.monotonic_expander().fold_item(P(ast::Item {
         ident: sym.clone(),
         attrs: Vec::new(),
         id: ast::DUMMY_NODE_ID,
         node: ast::ItemKind::Mod(reexport_mod),
         vis: ast::Visibility::Public,
         span: DUMMY_SP,
-    });
+    })).pop().unwrap();
 
     (it, sym)
 }
 
 fn generate_test_harness(sess: &ParseSess,
+                         resolver: &mut Resolver,
                          reexport_test_harness_main: Option<InternedString>,
                          krate: ast::Crate,
                          sd: &errors::Handler) -> ast::Crate {
@@ -278,13 +278,10 @@ fn generate_test_harness(sess: &ParseSess,
     let mut cleaner = EntryPointCleaner { depth: 0 };
     let krate = cleaner.fold_crate(krate);
 
-    let mut loader = DummyMacroLoader;
     let mut cx: TestCtxt = TestCtxt {
         sess: sess,
         span_diagnostic: sd,
-        ext_cx: ExtCtxt::new(sess, vec![],
-                             ExpansionConfig::default("test".to_string()),
-                             &mut loader),
+        ext_cx: ExtCtxt::new(sess, vec![], ExpansionConfig::default("test".to_string()), resolver),
         path: Vec::new(),
         testfns: Vec::new(),
         reexport_test_harness_main: reexport_test_harness_main,
@@ -302,14 +299,11 @@ fn generate_test_harness(sess: &ParseSess,
         }
     });
 
-    let mut fold = TestHarnessGenerator {
+    TestHarnessGenerator {
         cx: cx,
         tests: Vec::new(),
         tested_submods: Vec::new(),
-    };
-    let res = fold.fold_crate(krate);
-    fold.cx.ext_cx.bt_pop();
-    return res;
+    }.fold_crate(krate)
 }
 
 /// Craft a span that will be ignored by the stability lint's
@@ -413,6 +407,7 @@ fn should_panic(i: &ast::Item) -> ShouldPanic {
         Some(attr) => {
             let msg = attr.meta_item_list()
                 .and_then(|list| list.iter().find(|mi| mi.check_name("expected")))
+                .and_then(|li| li.meta_item())
                 .and_then(|mi| mi.value_str());
             ShouldPanic::Yes(msg)
         }
@@ -485,7 +480,7 @@ fn mk_main(cx: &mut TestCtxt) -> P<ast::Item> {
     let main_body = ecx.block(sp, vec![call_test_main]);
     let main = ast::ItemKind::Fn(ecx.fn_decl(vec![], main_ret_ty),
                            ast::Unsafety::Normal,
-                           ast::Constness::NotConst,
+                           dummy_spanned(ast::Constness::NotConst),
                            ::abi::Abi::Rust, ast::Generics::default(), main_body);
     let main = P(ast::Item {
         ident: token::str_to_ident("main"),
@@ -515,16 +510,17 @@ fn mk_test_module(cx: &mut TestCtxt) -> (P<ast::Item>, Option<P<ast::Item>>) {
         items: vec![import, mainfn, tests],
     };
     let item_ = ast::ItemKind::Mod(testmod);
-
     let mod_ident = token::gensym_ident("__test");
-    let item = P(ast::Item {
+
+    let mut expander = cx.ext_cx.monotonic_expander();
+    let item = expander.fold_item(P(ast::Item {
         id: ast::DUMMY_NODE_ID,
         ident: mod_ident,
         attrs: vec![],
         node: item_,
         vis: ast::Visibility::Public,
         span: DUMMY_SP,
-    });
+    })).pop().unwrap();
     let reexport = cx.reexport_test_harness_main.as_ref().map(|s| {
         // building `use <ident> = __test::main`
         let reexport_ident = token::str_to_ident(&s);
@@ -533,14 +529,14 @@ fn mk_test_module(cx: &mut TestCtxt) -> (P<ast::Item>, Option<P<ast::Item>>) {
             nospan(ast::ViewPathSimple(reexport_ident,
                                        path_node(vec![mod_ident, token::str_to_ident("main")])));
 
-        P(ast::Item {
+        expander.fold_item(P(ast::Item {
             id: ast::DUMMY_NODE_ID,
             ident: keywords::Invalid.ident(),
             attrs: vec![],
             node: ast::ItemKind::Use(P(use_path)),
             vis: ast::Visibility::Inherited,
             span: DUMMY_SP
-        })
+        })).pop().unwrap()
     });
 
     debug!("Synthetic test module:\n{}\n", pprust::item_to_string(&item));

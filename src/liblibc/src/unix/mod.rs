@@ -17,6 +17,13 @@ pub enum DIR {}
 pub enum locale_t {}
 
 s! {
+    pub struct group {
+        pub gr_name: *mut ::c_char,
+        pub gr_passwd: *mut ::c_char,
+        pub gr_gid: ::gid_t,
+        pub gr_mem: *mut *mut ::c_char,
+    }
+
     pub struct utimbuf {
         pub actime: time_t,
         pub modtime: time_t,
@@ -217,6 +224,10 @@ cfg_if! {
         #[link(name = "c")]
         #[link(name = "m")]
         extern {}
+    } else if #[cfg(target_os = "haiku")] {
+        #[link(name = "root")]
+        #[link(name = "network")]
+        extern {}
     } else {
         #[link(name = "c")]
         #[link(name = "m")]
@@ -226,6 +237,15 @@ cfg_if! {
 }
 
 extern {
+    pub fn getgrnam(name: *const ::c_char) -> *mut group;
+    pub fn getgrgid(gid: ::gid_t) -> *mut group;
+
+    pub fn endpwent();
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwnam50")]
+    pub fn getpwnam(name: *const ::c_char) -> *mut passwd;
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwuid50")]
+    pub fn getpwuid(uid: ::uid_t) -> *mut passwd;
+
     pub fn fprintf(stream: *mut ::FILE,
                    format: *const ::c_char, ...) -> ::c_int;
     pub fn printf(format: *const ::c_char, ...) -> ::c_int;
@@ -235,6 +255,8 @@ extern {
     pub fn fscanf(stream: *mut ::FILE, format: *const ::c_char, ...) -> ::c_int;
     pub fn scanf(format: *const ::c_char, ...) -> ::c_int;
     pub fn sscanf(s: *const ::c_char, format: *const ::c_char, ...) -> ::c_int;
+    pub fn getchar_unlocked() -> ::c_int;
+    pub fn putchar_unlocked(c: ::c_int) -> ::c_int;
 
     #[cfg_attr(target_os = "netbsd", link_name = "__socket30")]
     pub fn socket(domain: ::c_int, ty: ::c_int, protocol: ::c_int) -> ::c_int;
@@ -365,6 +387,7 @@ extern {
                link_name = "getopt$UNIX2003")]
     pub fn getopt(argc: ::c_int, argv: *const *mut c_char,
                   optstr: *const c_char) -> ::c_int;
+    pub fn getpgid(pid: pid_t) -> pid_t;
     pub fn getpgrp() -> pid_t;
     pub fn getpid() -> pid_t;
     pub fn getppid() -> pid_t;
@@ -626,6 +649,10 @@ extern {
                link_name = "mktime$UNIX2003")]
     #[cfg_attr(target_os = "netbsd", link_name = "__mktime50")]
     pub fn mktime(tm: *mut tm) -> time_t;
+    #[cfg_attr(target_os = "netbsd", link_name = "__time50")]
+    pub fn time(time: *mut time_t) -> time_t;
+    #[cfg_attr(target_os = "netbsd", link_name = "__locatime50")]
+    pub fn localtime(time: *const time_t) -> *mut tm;
 
     #[cfg_attr(target_os = "netbsd", link_name = "__mknod50")]
     pub fn mknod(pathname: *const ::c_char, mode: ::mode_t,
@@ -703,8 +730,6 @@ extern {
 // TODO: get rid of this cfg(not(...))
 #[cfg(not(target_os = "android"))] // " if " -- appease style checker
 extern {
-    pub fn getifaddrs(ifap: *mut *mut ifaddrs) -> ::c_int;
-    pub fn freeifaddrs(ifa: *mut ifaddrs);
     #[cfg_attr(target_os = "macos", link_name = "glob$INODE64")]
     #[cfg_attr(target_os = "netbsd", link_name = "__glob30")]
     pub fn glob(pattern: *const c_char,
@@ -828,6 +853,9 @@ cfg_if! {
     } else if #[cfg(target_os = "solaris")] {
         mod solaris;
         pub use self::solaris::*;
+    } else if #[cfg(target_os = "haiku")] {
+        mod haiku;
+        pub use self::haiku::*;
     } else {
         // Unknown target_os
     }

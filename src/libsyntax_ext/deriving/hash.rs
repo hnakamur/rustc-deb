@@ -36,6 +36,7 @@ pub fn expand_deriving_hash(cx: &mut ExtCtxt,
         additional_bounds: Vec::new(),
         generics: LifetimeBounds::empty(),
         is_unsafe: false,
+        supports_unions: false,
         methods: vec![MethodDef {
                           name: "hash",
                           generics: LifetimeBounds {
@@ -81,7 +82,7 @@ fn hash_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substructure) 
 
     let fields = match *substr.fields {
         Struct(_, ref fs) => fs,
-        EnumMatching(_, _, ref fs) => {
+        EnumMatching(.., ref fs) => {
             let variant_value = deriving::call_intrinsic(cx,
                                                          trait_span,
                                                          "discriminant_value",

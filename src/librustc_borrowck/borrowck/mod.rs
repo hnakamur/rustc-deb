@@ -41,8 +41,8 @@ use rustc::ty::{self, TyCtxt};
 use std::fmt;
 use std::mem;
 use std::rc::Rc;
+use std::hash::{Hash, Hasher};
 use syntax::ast;
-use syntax::attr::AttrMetaMethods;
 use syntax_pos::{MultiSpan, Span};
 use errors::DiagnosticBuilder;
 
@@ -142,7 +142,7 @@ fn borrowck_item(this: &mut BorrowckCtxt, item: &hir::Item) {
     // loan step is intended for things that have a data
     // flow dependent conditions.
     match item.node {
-        hir::ItemStatic(_, _, ref ex) |
+        hir::ItemStatic(.., ref ex) |
         hir::ItemConst(_, ref ex) => {
             gather_loans::gather_loans_in_static_initializer(this, item.id, &ex);
         }
@@ -345,7 +345,7 @@ impl<'tcx> Loan<'tcx> {
     }
 }
 
-#[derive(Eq, Hash)]
+#[derive(Eq)]
 pub struct LoanPath<'tcx> {
     kind: LoanPathKind<'tcx>,
     ty: ty::Ty<'tcx>,
@@ -353,10 +353,13 @@ pub struct LoanPath<'tcx> {
 
 impl<'tcx> PartialEq for LoanPath<'tcx> {
     fn eq(&self, that: &LoanPath<'tcx>) -> bool {
-        let r = self.kind == that.kind;
-        debug_assert!(self.ty == that.ty || !r,
-                      "Somehow loan paths are equal though their tys are not.");
-        r
+        self.kind == that.kind
+    }
+}
+
+impl<'tcx> Hash for LoanPath<'tcx> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
     }
 }
 
@@ -365,7 +368,7 @@ pub enum LoanPathKind<'tcx> {
     LpVar(ast::NodeId),                         // `x` in README.md
     LpUpvar(ty::UpvarId),                       // `x` captured by-value into closure
     LpDowncast(Rc<LoanPath<'tcx>>, DefId), // `x` downcast to particular enum variant
-    LpExtend(Rc<LoanPath<'tcx>>, mc::MutabilityCategory, LoanPathElem)
+    LpExtend(Rc<LoanPath<'tcx>>, mc::MutabilityCategory, LoanPathElem<'tcx>)
 }
 
 impl<'tcx> LoanPath<'tcx> {
@@ -410,8 +413,8 @@ impl ToInteriorKind for mc::InteriorKind {
 // `enum E { X { foo: u32 }, Y { foo: u32 }}`
 // each `foo` is qualified by the definitition id of the variant (`X` or `Y`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum LoanPathElem {
-    LpDeref(mc::PointerKind),
+pub enum LoanPathElem<'tcx> {
+    LpDeref(mc::PointerKind<'tcx>),
     LpInterior(Option<DefId>, InteriorKind),
 }
 
@@ -419,7 +422,7 @@ pub fn closure_to_block(closure_id: ast::NodeId,
                         tcx: TyCtxt) -> ast::NodeId {
     match tcx.map.get(closure_id) {
         hir_map::NodeExpr(expr) => match expr.node {
-            hir::ExprClosure(_, _, ref block, _) => {
+            hir::ExprClosure(.., ref block, _) => {
                 block.id
             }
             _ => {
@@ -439,7 +442,7 @@ impl<'a, 'tcx> LoanPath<'tcx> {
                 tcx.region_maps.node_extent(block_id)
             }
             LpDowncast(ref base, _) |
-            LpExtend(ref base, _, _) => base.kill_scope(tcx),
+            LpExtend(ref base, ..) => base.kill_scope(tcx),
         }
     }
 
@@ -461,7 +464,7 @@ impl<'a, 'tcx> LoanPath<'tcx> {
     fn depth(&self) -> usize {
         match self.kind {
             LpExtend(ref base, _, LpDeref(_)) => base.depth(),
-            LpExtend(ref base, _, LpInterior(_, _)) => base.depth() + 1,
+            LpExtend(ref base, _, LpInterior(..)) => base.depth() + 1,
             _ => 0,
         }
     }
@@ -474,8 +477,6 @@ impl<'a, 'tcx> LoanPath<'tcx> {
                     base.common(&base2).map(|x| {
                         let xd = x.depth();
                         if base.depth() == xd && base2.depth() == xd {
-                            assert_eq!(base.ty, base2.ty);
-                            assert_eq!(self.ty, other.ty);
                             LoanPath {
                                 kind: LpExtend(Rc::new(x), a, LpInterior(opt_variant_id, id)),
                                 ty: self.ty,
@@ -492,7 +493,6 @@ impl<'a, 'tcx> LoanPath<'tcx> {
             (_, &LpExtend(ref other, _, LpDeref(_))) => self.common(&other),
             (&LpVar(id), &LpVar(id2)) => {
                 if id == id2 {
-                    assert_eq!(self.ty, other.ty);
                     Some(LoanPath { kind: LpVar(id), ty: self.ty })
                 } else {
                     None
@@ -500,7 +500,6 @@ impl<'a, 'tcx> LoanPath<'tcx> {
             }
             (&LpUpvar(id), &LpUpvar(id2)) => {
                 if id == id2 {
-                    assert_eq!(self.ty, other.ty);
                     Some(LoanPath { kind: LpUpvar(id), ty: self.ty })
                 } else {
                     None
@@ -564,10 +563,11 @@ pub fn opt_loan_path<'tcx>(cmt: &mc::cmt<'tcx>) -> Option<Rc<LoanPath<'tcx>>> {
 
 // Errors that can occur
 #[derive(PartialEq)]
-pub enum bckerr_code {
+pub enum bckerr_code<'tcx> {
     err_mutbl,
-    err_out_of_scope(ty::Region, ty::Region), // superscope, subscope
-    err_borrowed_pointer_too_short(ty::Region, ty::Region), // loan, ptr
+    /// superscope, subscope, loan cause
+    err_out_of_scope(&'tcx ty::Region, &'tcx ty::Region, euv::LoanCause),
+    err_borrowed_pointer_too_short(&'tcx ty::Region, &'tcx ty::Region), // loan, ptr
 }
 
 // Combination of an error code and the categorization of the expression
@@ -577,7 +577,7 @@ pub struct BckError<'tcx> {
     span: Span,
     cause: AliasableViolationKind,
     cmt: mc::cmt<'tcx>,
-    code: bckerr_code
+    code: bckerr_code<'tcx>
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -605,7 +605,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
         self.free_region_map = old_free_region_map;
     }
 
-    pub fn is_subregion_of(&self, r_sub: ty::Region, r_sup: ty::Region)
+    pub fn is_subregion_of(&self, r_sub: &'tcx ty::Region, r_sup: &'tcx ty::Region)
                            -> bool
     {
         self.free_region_map.is_subregion_of(self.tcx, r_sub, r_sup)
@@ -614,9 +614,9 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
     pub fn report(&self, err: BckError<'tcx>) {
         // Catch and handle some particular cases.
         match (&err.code, &err.cause) {
-            (&err_out_of_scope(ty::ReScope(_), ty::ReStatic),
+            (&err_out_of_scope(&ty::ReScope(_), &ty::ReStatic, _),
              &BorrowViolation(euv::ClosureCapture(span))) |
-            (&err_out_of_scope(ty::ReScope(_), ty::ReFree(..)),
+            (&err_out_of_scope(&ty::ReScope(_), &ty::ReFree(..), _),
              &BorrowViolation(euv::ClosureCapture(span))) => {
                 return self.report_out_of_scope_escaping_closure_capture(&err, span);
             }
@@ -711,7 +711,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
 
             move_data::Captured =>
                 (match self.tcx.map.expect_expr(the_move.id).node {
-                    hir::ExprClosure(_, _, _, fn_decl_span) => fn_decl_span,
+                    hir::ExprClosure(.., fn_decl_span) => fn_decl_span,
                     ref r => bug!("Captured({}) maps to non-closure: {:?}",
                                   the_move.id, r),
                 }, " (into closure)"),
@@ -914,14 +914,18 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
             }
             mc::AliasableStatic |
             mc::AliasableStaticMut => {
-                struct_span_err!(
+                let mut err = struct_span_err!(
                     self.tcx.sess, span, E0388,
-                    "{} in a static location", prefix)
+                    "{} in a static location", prefix);
+                err.span_label(span, &format!("cannot write data in a static definition"));
+                err
             }
             mc::AliasableBorrowed => {
-                struct_span_err!(
+                let mut e = struct_span_err!(
                     self.tcx.sess, span, E0389,
-                    "{} in a `&` reference", prefix)
+                    "{} in a `&` reference", prefix);
+                e.span_label(span, &"assignment into an immutable reference");
+                e
             }
         };
 
@@ -961,6 +965,22 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                                        cmt_path_or_string),
                              suggestion)
             .emit();
+    }
+
+    fn region_end_span(&self, region: &'tcx ty::Region) -> Option<Span> {
+        match *region {
+            ty::ReScope(scope) => {
+                match scope.span(&self.tcx.region_maps, &self.tcx.map) {
+                    Some(s) => {
+                        Some(s.end_point())
+                    }
+                    None => {
+                        None
+                    }
+                }
+            }
+            _ => None
+        }
     }
 
     pub fn note_and_explain_bckerr(&self, db: &mut DiagnosticBuilder, err: BckError<'tcx>,
@@ -1003,21 +1023,73 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                 }
             }
 
-            err_out_of_scope(super_scope, sub_scope) => {
-                self.tcx.note_and_explain_region(
-                    db,
-                    "reference must be valid for ",
-                    sub_scope,
-                    "...");
-                self.tcx.note_and_explain_region(
-                    db,
-                    "...but borrowed value is only valid for ",
-                    super_scope,
-                    "");
-                if let Some(span) = statement_scope_span(self.tcx, super_scope) {
-                    db.span_label(error_span, &format!("does not live long enough"));
-                    db.span_help(span,
-                                 "consider using a `let` binding to increase its lifetime");
+            err_out_of_scope(super_scope, sub_scope, cause) => {
+                let (value_kind, value_msg) = match err.cmt.cat {
+                    mc::Categorization::Rvalue(_) =>
+                        ("temporary value", "temporary value created here"),
+                    _ =>
+                        ("borrowed value", "does not live long enough")
+                };
+                match cause {
+                    euv::ClosureCapture(s) => {
+                        // The primary span starts out as the closure creation point.
+                        // Change the primary span here to highlight the use of the variable
+                        // in the closure, because it seems more natural. Highlight
+                        // closure creation point as a secondary span.
+                        match db.span.primary_span() {
+                            Some(primary) => {
+                                db.span = MultiSpan::from_span(s);
+                                db.span_label(primary, &format!("capture occurs here"));
+                                db.span_label(s, &value_msg);
+                            }
+                            None => ()
+                        }
+                    }
+                    _ => {
+                        db.span_label(error_span, &value_msg);
+                    }
+                }
+
+                let sub_span = self.region_end_span(sub_scope);
+                let super_span = self.region_end_span(super_scope);
+
+                match (sub_span, super_span) {
+                    (Some(s1), Some(s2)) if s1 == s2 => {
+                        db.span_label(s1, &format!("{} dropped before borrower", value_kind));
+                        db.note("values in a scope are dropped in the opposite order \
+                                they are created");
+                    }
+                    _ => {
+                        match sub_span {
+                            Some(s) => {
+                                db.span_label(s, &format!("{} needs to live until here",
+                                                          value_kind));
+                            }
+                            None => {
+                                self.tcx.note_and_explain_region(
+                                    db,
+                                    "borrowed value must be valid for ",
+                                    sub_scope,
+                                    "...");
+                            }
+                        }
+                        match super_span {
+                            Some(s) => {
+                                db.span_label(s, &format!("{} only lives until here", value_kind));
+                            }
+                            None => {
+                                self.tcx.note_and_explain_region(
+                                    db,
+                                    "...but borrowed value is only valid for ",
+                                    super_scope,
+                                    "");
+                            }
+                        }
+                    }
+                }
+
+                if let Some(_) = statement_scope_span(self.tcx, super_scope) {
+                    db.note("consider using a `let` binding to increase its lifetime");
                 }
             }
 
@@ -1059,7 +1131,6 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                 out.push_str(&self.tcx.item_path_str(variant_def_id));
                 out.push(')');
             }
-
 
             LpExtend(ref lp_base, _, LpInterior(_, InteriorField(fname))) => {
                 self.append_autoderefd_loan_path_to_string(&lp_base, out);
@@ -1106,7 +1177,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                 out.push(')');
             }
 
-            LpVar(..) | LpUpvar(..) | LpExtend(_, _, LpInterior(..)) => {
+            LpVar(..) | LpUpvar(..) | LpExtend(.., LpInterior(..)) => {
                 self.append_loan_path_to_string(loan_path, out)
             }
         }
@@ -1130,8 +1201,8 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
     }
 }
 
-fn statement_scope_span(tcx: TyCtxt, region: ty::Region) -> Option<Span> {
-    match region {
+fn statement_scope_span(tcx: TyCtxt, region: &ty::Region) -> Option<Span> {
+    match *region {
         ty::ReScope(scope) => {
             match tcx.map.find(scope.node_id(&tcx.region_maps)) {
                 Some(hir_map::NodeStmt(stmt)) => Some(stmt.span),

@@ -20,6 +20,7 @@
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
+#![feature(dotdot_in_tuple_patterns)]
 #![feature(libc)]
 #![feature(rustc_private)]
 #![feature(set_stdio)]
@@ -27,7 +28,7 @@
 #![feature(staged_api)]
 #![feature(test)]
 #![feature(unicode)]
-#![feature(question_mark)]
+#![cfg_attr(stage0, feature(question_mark))]
 
 extern crate arena;
 extern crate getopts;
@@ -35,6 +36,7 @@ extern crate libc;
 extern crate rustc;
 extern crate rustc_const_eval;
 extern crate rustc_const_math;
+extern crate rustc_data_structures;
 extern crate rustc_trans;
 extern crate rustc_driver;
 extern crate rustc_resolve;
@@ -86,34 +88,8 @@ pub mod plugins;
 pub mod visit_ast;
 pub mod visit_lib;
 pub mod test;
-mod flock;
 
 use clean::Attributes;
-
-type Pass = (&'static str,                                      // name
-             fn(clean::Crate) -> plugins::PluginResult,         // fn
-             &'static str);                                     // description
-
-const PASSES: &'static [Pass] = &[
-    ("strip-hidden", passes::strip_hidden,
-     "strips all doc(hidden) items from the output"),
-    ("unindent-comments", passes::unindent_comments,
-     "removes excess indentation on comments in order for markdown to like it"),
-    ("collapse-docs", passes::collapse_docs,
-     "concatenates all document attributes into one document attribute"),
-    ("strip-private", passes::strip_private,
-     "strips all private items from a crate which cannot be seen externally, \
-      implies strip-priv-imports"),
-    ("strip-priv-imports", passes::strip_priv_imports,
-     "strips all private import statements (`use`, `extern crate`) from a crate"),
-];
-
-const DEFAULT_PASSES: &'static [&'static str] = &[
-    "strip-hidden",
-    "strip-private",
-    "collapse-docs",
-    "unindent-comments",
-];
 
 struct Output {
     krate: clean::Crate,
@@ -122,7 +98,7 @@ struct Output {
 }
 
 pub fn main() {
-    const STACK_SIZE: usize = 32000000; // 32MB
+    const STACK_SIZE: usize = 32_000_000; // 32MB
     let res = std::thread::Builder::new().stack_size(STACK_SIZE).spawn(move || {
         let s = env::args().collect::<Vec<_>>();
         main_args(&s)
@@ -185,6 +161,7 @@ pub fn opts() -> Vec<RustcOptGroup> {
                          own theme", "PATH")),
         unstable(optmulti("Z", "",
                           "internal and debugging options (only on nightly build)", "FLAG")),
+        stable(optopt("", "sysroot", "Override the system root", "PATH")),
     )
 }
 
@@ -221,11 +198,11 @@ pub fn main_args(args: &[String]) -> isize {
 
     if matches.opt_strs("passes") == ["list"] {
         println!("Available passes for running rustdoc:");
-        for &(name, _, description) in PASSES {
+        for &(name, _, description) in passes::PASSES {
             println!("{:>20} - {}", name, description);
         }
         println!("\nDefault passes for rustdoc:");
-        for &name in DEFAULT_PASSES {
+        for &name in passes::DEFAULT_PASSES {
             println!("{:>20}", name);
         }
         return 0;
@@ -234,7 +211,8 @@ pub fn main_args(args: &[String]) -> isize {
     if matches.free.is_empty() {
         println!("expected an input file to act on");
         return 1;
-    } if matches.free.len() > 1 {
+    }
+    if matches.free.len() > 1 {
         println!("only one input file may be specified");
         return 1;
     }
@@ -369,6 +347,7 @@ fn rust_input(cratefile: &str, externs: Externs, matches: &getopts::Matches) -> 
     }
     let cfgs = matches.opt_strs("cfg");
     let triple = matches.opt_str("target");
+    let maybe_sysroot = matches.opt_str("sysroot").map(PathBuf::from);
 
     let cr = PathBuf::from(cratefile);
     info!("starting to run rustc");
@@ -378,7 +357,7 @@ fn rust_input(cratefile: &str, externs: Externs, matches: &getopts::Matches) -> 
         use rustc::session::config::Input;
 
         tx.send(core::run_core(paths, cfgs, externs, Input::File(cr),
-                               triple)).unwrap();
+                               triple, maybe_sysroot)).unwrap();
     });
     let (mut krate, renderinfo) = rx.recv().unwrap();
     info!("finished with rustc");
@@ -409,7 +388,7 @@ fn rust_input(cratefile: &str, externs: Externs, matches: &getopts::Matches) -> 
     }
 
     if default_passes {
-        for name in DEFAULT_PASSES.iter().rev() {
+        for name in passes::DEFAULT_PASSES.iter().rev() {
             passes.insert(0, name.to_string());
         }
     }
@@ -419,11 +398,11 @@ fn rust_input(cratefile: &str, externs: Externs, matches: &getopts::Matches) -> 
                       .unwrap_or("/tmp/rustdoc/plugins".to_string());
     let mut pm = plugins::PluginManager::new(PathBuf::from(path));
     for pass in &passes {
-        let plugin = match PASSES.iter()
-                                 .position(|&(p, _, _)| {
-                                     p == *pass
-                                 }) {
-            Some(i) => PASSES[i].1,
+        let plugin = match passes::PASSES.iter()
+                                         .position(|&(p, ..)| {
+                                             p == *pass
+                                         }) {
+            Some(i) => passes::PASSES[i].1,
             None => {
                 error!("unknown pass {}, skipping", *pass);
                 continue

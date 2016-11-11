@@ -44,8 +44,8 @@ use lint::{LintPass, LateLintPass};
 use std::collections::HashSet;
 
 use syntax::{ast};
-use syntax::attr::{self, AttrMetaMethods, AttributeMethods};
-use syntax_pos::{self, Span};
+use syntax::attr;
+use syntax_pos::{Span};
 
 use rustc::hir::{self, PatKind};
 use rustc::hir::intravisit::FnKind;
@@ -72,7 +72,7 @@ impl LintPass for WhileTrue {
 
 impl LateLintPass for WhileTrue {
     fn check_expr(&mut self, cx: &LateContext, e: &hir::Expr) {
-        if let hir::ExprWhile(ref cond, _, _) = e.node {
+        if let hir::ExprWhile(ref cond, ..) = e.node {
             if let hir::ExprLit(ref lit) = cond.node {
                 if let ast::LitKind::Bool(true) = lit.node {
                     cx.span_lint(WHILE_TRUE, e.span,
@@ -116,7 +116,8 @@ impl LateLintPass for BoxPointers {
             hir::ItemFn(..) |
             hir::ItemTy(..) |
             hir::ItemEnum(..) |
-            hir::ItemStruct(..) =>
+            hir::ItemStruct(..) |
+            hir::ItemUnion(..) =>
                 self.check_heap_type(cx, it.span,
                                      cx.tcx.node_id_to_type(it.id)),
             _ => ()
@@ -124,7 +125,8 @@ impl LateLintPass for BoxPointers {
 
         // If it's a struct, we also have to check the fields' types
         match it.node {
-            hir::ItemStruct(ref struct_def, _) => {
+            hir::ItemStruct(ref struct_def, _) |
+            hir::ItemUnion(ref struct_def, _) => {
                 for struct_field in struct_def.fields() {
                     self.check_heap_type(cx, struct_field.span,
                                          cx.tcx.node_id_to_type(struct_field.id));
@@ -201,10 +203,10 @@ impl LateLintPass for UnsafeCode {
 
     fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
         match it.node {
-            hir::ItemTrait(hir::Unsafety::Unsafe, _, _, _) =>
+            hir::ItemTrait(hir::Unsafety::Unsafe, ..) =>
                 cx.span_lint(UNSAFE_CODE, it.span, "declaration of an `unsafe` trait"),
 
-            hir::ItemImpl(hir::Unsafety::Unsafe, _, _, _, _, _) =>
+            hir::ItemImpl(hir::Unsafety::Unsafe, ..) =>
                 cx.span_lint(UNSAFE_CODE, it.span, "implementation of an `unsafe` trait"),
 
             _ => return,
@@ -214,10 +216,10 @@ impl LateLintPass for UnsafeCode {
     fn check_fn(&mut self, cx: &LateContext, fk: FnKind, _: &hir::FnDecl,
                 _: &hir::Block, span: Span, _: ast::NodeId) {
         match fk {
-            FnKind::ItemFn(_, _, hir::Unsafety::Unsafe, _, _, _, _) =>
+            FnKind::ItemFn(_, _, hir::Unsafety::Unsafe, ..) =>
                 cx.span_lint(UNSAFE_CODE, span, "declaration of an `unsafe` function"),
 
-            FnKind::Method(_, sig, _, _) => {
+            FnKind::Method(_, sig, ..) => {
                 if sig.unsafety == hir::Unsafety::Unsafe {
                     cx.span_lint(UNSAFE_CODE, span, "implementation of an `unsafe` method")
                 }
@@ -317,7 +319,7 @@ impl LateLintPass for MissingDoc {
         let doc_hidden = self.doc_hidden() || attrs.iter().any(|attr| {
             attr.check_name("doc") && match attr.meta_item_list() {
                 None => false,
-                Some(l) => attr::contains_name(&l[..], "hidden"),
+                Some(l) => attr::list_contains_name(&l[..], "hidden"),
             }
         });
         self.doc_hidden_stack.push(doc_hidden);
@@ -348,7 +350,8 @@ impl LateLintPass for MissingDoc {
             hir::ItemMod(..) => "a module",
             hir::ItemEnum(..) => "an enum",
             hir::ItemStruct(..) => "a struct",
-            hir::ItemTrait(_, _, _, ref items) => {
+            hir::ItemUnion(..) => "a union",
+            hir::ItemTrait(.., ref items) => {
                 // Issue #11592, traits are always considered exported, even when private.
                 if it.vis == hir::Visibility::Inherited {
                     self.private_traits.insert(it.id);
@@ -360,7 +363,7 @@ impl LateLintPass for MissingDoc {
                 "a trait"
             },
             hir::ItemTy(..) => "a type alias",
-            hir::ItemImpl(_, _, _, Some(ref trait_ref), _, ref impl_items) => {
+            hir::ItemImpl(.., Some(ref trait_ref), _, ref impl_items) => {
                 // If the trait is private, add the impl items to private_traits so they don't get
                 // reported for missing docs.
                 let real_trait = cx.tcx.expect_def(trait_ref.ref_id).def_id();
@@ -465,16 +468,21 @@ impl LateLintPass for MissingCopyImplementations {
                     return;
                 }
                 let def = cx.tcx.lookup_adt_def(cx.tcx.map.local_def_id(item.id));
-                (def, cx.tcx.mk_struct(def,
-                                       cx.tcx.mk_substs(Substs::empty())))
+                (def, cx.tcx.mk_adt(def, Substs::empty(cx.tcx)))
+            }
+            hir::ItemUnion(_, ref ast_generics) => {
+                if ast_generics.is_parameterized() {
+                    return;
+                }
+                let def = cx.tcx.lookup_adt_def(cx.tcx.map.local_def_id(item.id));
+                (def, cx.tcx.mk_adt(def, Substs::empty(cx.tcx)))
             }
             hir::ItemEnum(_, ref ast_generics) => {
                 if ast_generics.is_parameterized() {
                     return;
                 }
                 let def = cx.tcx.lookup_adt_def(cx.tcx.map.local_def_id(item.id));
-                (def, cx.tcx.mk_enum(def,
-                                     cx.tcx.mk_substs(Substs::empty())))
+                (def, cx.tcx.mk_adt(def, Substs::empty(cx.tcx)))
             }
             _ => return,
         };
@@ -525,7 +533,7 @@ impl LateLintPass for MissingDebugImplementations {
         }
 
         match item.node {
-            hir::ItemStruct(..) | hir::ItemEnum(..) => {},
+            hir::ItemStruct(..) | hir::ItemUnion(..) | hir::ItemEnum(..) => {},
             _ => return,
         }
 
@@ -898,7 +906,7 @@ impl LateLintPass for UnconditionalRecursion {
                 // A trait method, from any number of possible sources.
                 // Attempt to select a concrete impl before checking.
                 ty::TraitContainer(trait_def_id) => {
-                    let trait_ref = callee_substs.to_trait_ref(tcx, trait_def_id);
+                    let trait_ref = ty::TraitRef::from_method(tcx, trait_def_id, callee_substs);
                     let trait_ref = ty::Binder(trait_ref);
                     let span = tcx.map.span(expr_id);
                     let obligation =
@@ -918,8 +926,7 @@ impl LateLintPass for UnconditionalRecursion {
                             // If `T` is `Self`, then this call is inside
                             // a default method definition.
                             Ok(Some(traits::VtableParam(_))) => {
-                                let self_ty = callee_substs.self_ty();
-                                let on_self = self_ty.map_or(false, |t| t.is_self());
+                                let on_self = trait_ref.self_ty().is_self();
                                 // We can only be recurring in a default
                                 // method if we're being called literally
                                 // on the `Self` type.
@@ -1030,7 +1037,7 @@ impl LintPass for InvalidNoMangleItems {
 impl LateLintPass for InvalidNoMangleItems {
     fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
         match it.node {
-            hir::ItemFn(_, _, _, _, ref generics, _) => {
+            hir::ItemFn(.., ref generics, _) => {
                 if attr::contains_name(&it.attrs, "no_mangle") {
                     if !cx.access_levels.is_reachable(it.id) {
                         let msg = format!("function {} is marked #[no_mangle], but not exported",
@@ -1109,7 +1116,7 @@ impl LateLintPass for MutableTransmutes {
                 }
                 let typ = cx.tcx.node_id_to_type(expr.id);
                 match typ.sty {
-                    ty::TyFnDef(_, _, ref bare_fn) if bare_fn.abi == RustIntrinsic => {
+                    ty::TyFnDef(.., ref bare_fn) if bare_fn.abi == RustIntrinsic => {
                         let from = bare_fn.sig.0.inputs[0];
                         let to = bare_fn.sig.0.output;
                         return Some((&from.sty, &to.sty));
@@ -1122,7 +1129,7 @@ impl LateLintPass for MutableTransmutes {
 
         fn def_id_is_transmute(cx: &LateContext, def_id: DefId) -> bool {
             match cx.tcx.lookup_item_type(def_id).ty.sty {
-                ty::TyFnDef(_, _, ref bfty) if bfty.abi == RustIntrinsic => (),
+                ty::TyFnDef(.., ref bfty) if bfty.abi == RustIntrinsic => (),
                 _ => return false
             }
             cx.tcx.item_name(def_id).as_str() == "transmute"
@@ -1148,7 +1155,7 @@ impl LintPass for UnstableFeatures {
 
 impl LateLintPass for UnstableFeatures {
     fn check_attribute(&mut self, ctx: &LateContext, attr: &ast::Attribute) {
-        if attr::contains_name(&[attr.meta().clone()], "feature") {
+        if attr.meta().check_name("feature") {
             if let Some(items) = attr.meta().meta_item_list() {
                 for item in items {
                     ctx.span_lint(UNSTABLE_FEATURES, item.span(), "unstable feature");
@@ -1158,55 +1165,35 @@ impl LateLintPass for UnstableFeatures {
     }
 }
 
-/// Lints for attempts to impl Drop on types that have `#[repr(C)]`
-/// attribute (see issue #24585).
-#[derive(Copy, Clone)]
-pub struct DropWithReprExtern;
+/// Lint for unions that contain fields with possibly non-trivial destructors.
+pub struct UnionsWithDropFields;
 
 declare_lint! {
-    DROP_WITH_REPR_EXTERN,
+    UNIONS_WITH_DROP_FIELDS,
     Warn,
-    "use of #[repr(C)] on a type that implements Drop"
+    "use of unions that contain fields with possibly non-trivial drop code"
 }
 
-impl LintPass for DropWithReprExtern {
+impl LintPass for UnionsWithDropFields {
     fn get_lints(&self) -> LintArray {
-        lint_array!(DROP_WITH_REPR_EXTERN)
+        lint_array!(UNIONS_WITH_DROP_FIELDS)
     }
 }
 
-impl LateLintPass for DropWithReprExtern {
-    fn check_crate(&mut self, ctx: &LateContext, _: &hir::Crate) {
-        let drop_trait = match ctx.tcx.lang_items.drop_trait() {
-            Some(id) => ctx.tcx.lookup_trait_def(id), None => { return }
-        };
-        drop_trait.for_each_impl(ctx.tcx, |drop_impl_did| {
-            if !drop_impl_did.is_local() {
-                return;
-            }
-            let dtor_self_type = ctx.tcx.lookup_item_type(drop_impl_did).ty;
-
-            match dtor_self_type.sty {
-                ty::TyEnum(self_type_def, _) |
-                ty::TyStruct(self_type_def, _) => {
-                    let self_type_did = self_type_def.did;
-                    let hints = ctx.tcx.lookup_repr_hints(self_type_did);
-                    if hints.iter().any(|attr| *attr == attr::ReprExtern) &&
-                        self_type_def.dtor_kind().has_drop_flag() {
-                        let drop_impl_span = ctx.tcx.map.def_id_span(drop_impl_did,
-                                                                     syntax_pos::DUMMY_SP);
-                        let self_defn_span = ctx.tcx.map.def_id_span(self_type_did,
-                                                                     syntax_pos::DUMMY_SP);
-                        ctx.span_lint_note(DROP_WITH_REPR_EXTERN,
-                                           drop_impl_span,
-                                           "implementing Drop adds hidden state to types, \
-                                            possibly conflicting with `#[repr(C)]`",
-                                            self_defn_span,
-                                            "the `#[repr(C)]` attribute is attached here");
-                    }
+impl LateLintPass for UnionsWithDropFields {
+    fn check_item(&mut self, ctx: &LateContext, item: &hir::Item) {
+        if let hir::ItemUnion(ref vdata, _) = item.node {
+            let param_env = &ty::ParameterEnvironment::for_item(ctx.tcx, item.id);
+            for field in vdata.fields() {
+                let field_ty = ctx.tcx.node_id_to_type(field.id);
+                if ctx.tcx.type_needs_drop_given_env(field_ty, param_env) {
+                    ctx.span_lint(UNIONS_WITH_DROP_FIELDS,
+                                  field.span,
+                                  "union contains a field with possibly non-trivial drop code, \
+                                   drop code of union fields is ignored when dropping the union");
+                    return;
                 }
-                _ => {}
             }
-        })
+        }
     }
 }

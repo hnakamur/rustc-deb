@@ -125,8 +125,8 @@ impl<'a> Parser<'a> {
 
                 self.expect(&token::OpenDelim(token::Bracket))?;
                 let meta_item = self.parse_meta_item()?;
-                let hi = self.span.hi;
                 self.expect(&token::CloseDelim(token::Bracket))?;
+                let hi = self.last_span.hi;
 
                 (mk_sp(lo, hi), meta_item, style)
             }
@@ -193,9 +193,26 @@ impl<'a> Parser<'a> {
         Ok(attrs)
     }
 
-    /// matches meta_item = IDENT
-    /// | IDENT = lit
-    /// | IDENT meta_seq
+    fn parse_unsuffixed_lit(&mut self) -> PResult<'a, ast::Lit> {
+        let lit = self.parse_lit()?;
+        debug!("Checking if {:?} is unusuffixed.", lit);
+
+        if !lit.node.is_unsuffixed() {
+            let msg = "suffixed literals are not allowed in attributes";
+            self.diagnostic().struct_span_err(lit.span, msg)
+                             .help("instead of using a suffixed literal \
+                                    (1u8, 1.0f32, etc.), use an unsuffixed version \
+                                    (1, 1.0, etc.).")
+                             .emit()
+        }
+
+        Ok(lit)
+    }
+
+    /// Per RFC#1559, matches the following grammar:
+    ///
+    /// meta_item : IDENT ( '=' UNSUFFIXED_LIT | '(' meta_item_inner? ')' )? ;
+    /// meta_item_inner : (meta_item | UNSUFFIXED_LIT) (',' meta_item_inner)? ;
     pub fn parse_meta_item(&mut self) -> PResult<'a, P<ast::MetaItem>> {
         let nt_meta = match self.token {
             token::Interpolated(token::NtMeta(ref e)) => Some(e.clone()),
@@ -213,22 +230,13 @@ impl<'a> Parser<'a> {
         match self.token {
             token::Eq => {
                 self.bump();
-                let lit = self.parse_lit()?;
-                // FIXME #623 Non-string meta items are not serialized correctly;
-                // just forbid them for now
-                match lit.node {
-                    ast::LitKind::Str(..) => {}
-                    _ => {
-                        self.span_err(lit.span,
-                                      "non-string literals are not allowed in meta-items");
-                    }
-                }
-                let hi = self.span.hi;
+                let lit = self.parse_unsuffixed_lit()?;
+                let hi = self.last_span.hi;
                 Ok(P(spanned(lo, hi, ast::MetaItemKind::NameValue(name, lit))))
             }
             token::OpenDelim(token::Paren) => {
                 let inner_items = self.parse_meta_seq()?;
-                let hi = self.span.hi;
+                let hi = self.last_span.hi;
                 Ok(P(spanned(lo, hi, ast::MetaItemKind::List(name, inner_items))))
             }
             _ => {
@@ -238,11 +246,35 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// matches meta_seq = ( COMMASEP(meta_item) )
-    fn parse_meta_seq(&mut self) -> PResult<'a, Vec<P<ast::MetaItem>>> {
+    /// matches meta_item_inner : (meta_item | UNSUFFIXED_LIT) ;
+    fn parse_meta_item_inner(&mut self) -> PResult<'a, ast::NestedMetaItem> {
+        let sp = self.span;
+        let lo = self.span.lo;
+
+        match self.parse_unsuffixed_lit() {
+            Ok(lit) => {
+                return Ok(spanned(lo, self.last_span.hi, ast::NestedMetaItemKind::Literal(lit)))
+            }
+            Err(ref mut err) => self.diagnostic().cancel(err)
+        }
+
+        match self.parse_meta_item() {
+            Ok(mi) => {
+                return Ok(spanned(lo, self.last_span.hi, ast::NestedMetaItemKind::MetaItem(mi)))
+            }
+            Err(ref mut err) => self.diagnostic().cancel(err)
+        }
+
+        let found = self.this_token_to_string();
+        let msg = format!("expected unsuffixed literal or identifier, found {}", found);
+        Err(self.diagnostic().struct_span_err(sp, &msg))
+    }
+
+    /// matches meta_seq = ( COMMASEP(meta_item_inner) )
+    fn parse_meta_seq(&mut self) -> PResult<'a, Vec<ast::NestedMetaItem>> {
         self.parse_unspanned_seq(&token::OpenDelim(token::Paren),
                                  &token::CloseDelim(token::Paren),
                                  SeqSep::trailing_allowed(token::Comma),
-                                 |p: &mut Parser<'a>| p.parse_meta_item())
+                                 |p: &mut Parser<'a>| p.parse_meta_item_inner())
     }
 }

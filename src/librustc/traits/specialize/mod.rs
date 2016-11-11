@@ -18,7 +18,7 @@
 // fits together with the rest of the trait machinery.
 
 use super::{SelectionContext, FulfillmentContext};
-use super::util::{fresh_type_vars_for_impl, impl_trait_ref_and_oblig};
+use super::util::impl_trait_ref_and_oblig;
 
 use rustc_data_structures::fnv::FnvHashMap;
 use hir::def_id::DefId;
@@ -26,8 +26,10 @@ use infer::{InferCtxt, TypeOrigin};
 use middle::region;
 use ty::subst::{Subst, Substs};
 use traits::{self, Reveal, ObligationCause, Normalized};
-use ty::{self, TyCtxt};
+use ty::{self, TyCtxt, TypeFoldable};
 use syntax_pos::DUMMY_SP;
+
+use syntax::ast;
 
 pub mod specialization_graph;
 
@@ -44,11 +46,10 @@ pub struct OverlapError {
 /// When we have selected one impl, but are actually using item definitions from
 /// a parent impl providing a default, we need a way to translate between the
 /// type parameters of the two impls. Here the `source_impl` is the one we've
-/// selected, and `source_substs` is a substitution of its generics (and
-/// possibly some relevant `FnSpace` variables as well). And `target_node` is
-/// the impl/trait we're actually going to get the definition from. The resulting
-/// substitution will map from `target_node`'s generics to `source_impl`'s
-/// generics as instantiated by `source_subst`.
+/// selected, and `source_substs` is a substitution of its generics.
+/// And `target_node` is the impl/trait we're actually going to get the
+/// definition from. The resulting substitution will map from `target_node`'s
+/// generics to `source_impl`'s generics as instantiated by `source_subst`.
 ///
 /// For example, consider the following scenario:
 ///
@@ -101,7 +102,42 @@ pub fn translate_substs<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
     };
 
     // directly inherent the method generics, since those do not vary across impls
-    infcx.tcx.mk_substs(target_substs.with_method_from_subst(source_substs))
+    source_substs.rebase_onto(infcx.tcx, source_impl, target_substs)
+}
+
+/// Given a selected impl described by `impl_data`, returns the
+/// definition and substitions for the method with the name `name`,
+/// and trait method substitutions `substs`, in that impl, a less
+/// specialized impl, or the trait default, whichever applies.
+pub fn find_method<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                             name: ast::Name,
+                             substs: &'tcx Substs<'tcx>,
+                             impl_data: &super::VtableImplData<'tcx, ()>)
+                             -> (DefId, &'tcx Substs<'tcx>)
+{
+    assert!(!substs.needs_infer());
+
+    let trait_def_id = tcx.trait_id_of_impl(impl_data.impl_def_id).unwrap();
+    let trait_def = tcx.lookup_trait_def(trait_def_id);
+
+    match trait_def.ancestors(impl_data.impl_def_id).fn_defs(tcx, name).next() {
+        Some(node_item) => {
+            let substs = tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
+                let substs = substs.rebase_onto(tcx, trait_def_id, impl_data.substs);
+                let substs = translate_substs(&infcx, impl_data.impl_def_id,
+                                              substs, node_item.node);
+                tcx.lift(&substs).unwrap_or_else(|| {
+                    bug!("find_method: translate_substs \
+                          returned {:?} which contains inference types/regions",
+                         substs);
+                })
+            });
+            (node_item.item.def_id, substs)
+        }
+        None => {
+            bug!("method {:?} not found in {:?}", name, impl_data.impl_def_id)
+        }
+    }
 }
 
 /// Is impl1 a specialization of impl2?
@@ -112,6 +148,8 @@ pub fn translate_substs<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
 pub fn specializes<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                              impl1_def_id: DefId,
                              impl2_def_id: DefId) -> bool {
+    debug!("specializes({:?}, {:?})", impl1_def_id, impl2_def_id);
+
     if let Some(r) = tcx.specializes_cache.borrow().check(impl1_def_id, impl2_def_id) {
         return r;
     }
@@ -141,24 +179,23 @@ pub fn specializes<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 
     // create a parameter environment corresponding to a (skolemized) instantiation of impl1
-    let scheme = tcx.lookup_item_type(impl1_def_id);
-    let predicates = tcx.lookup_predicates(impl1_def_id);
-    let mut penv = tcx.construct_parameter_environment(DUMMY_SP,
-                                                       &scheme.generics,
-                                                       &predicates,
-                                                       region::DUMMY_CODE_EXTENT);
+    let penv = tcx.construct_parameter_environment(DUMMY_SP,
+                                                   impl1_def_id,
+                                                   region::DUMMY_CODE_EXTENT);
     let impl1_trait_ref = tcx.impl_trait_ref(impl1_def_id)
                              .unwrap()
                              .subst(tcx, &penv.free_substs);
 
-    let result = tcx.normalizing_infer_ctxt(Reveal::ExactMatch).enter(|mut infcx| {
+    // Create a infcx, taking the predicates of impl1 as assumptions:
+    let result = tcx.infer_ctxt(None, Some(penv), Reveal::ExactMatch).enter(|mut infcx| {
         // Normalize the trait reference, adding any obligations
         // that arise into the impl1 assumptions.
         let Normalized { value: impl1_trait_ref, obligations: normalization_obligations } = {
             let selcx = &mut SelectionContext::new(&infcx);
             traits::normalize(selcx, ObligationCause::dummy(), &impl1_trait_ref)
         };
-        penv.caller_bounds.extend(normalization_obligations.into_iter().map(|o| {
+        infcx.parameter_environment.caller_bounds
+            .extend(normalization_obligations.into_iter().map(|o| {
             match tcx.lift_to_global(&o.predicate) {
                 Some(predicate) => predicate,
                 None => {
@@ -166,9 +203,6 @@ pub fn specializes<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 }
             }
         }));
-
-        // Install the parameter environment, taking the predicates of impl1 as assumptions:
-        infcx.parameter_environment = penv;
 
         // Attempt to prove that impl2 applies, given all of the above.
         fulfill_implication(&infcx, impl1_trait_ref, impl2_def_id).is_ok()
@@ -188,10 +222,10 @@ fn fulfill_implication<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
                                        target_impl: DefId)
                                        -> Result<&'tcx Substs<'tcx>, ()> {
     let selcx = &mut SelectionContext::new(&infcx);
-    let target_substs = fresh_type_vars_for_impl(&infcx, DUMMY_SP, target_impl);
+    let target_substs = infcx.fresh_substs_for_item(DUMMY_SP, target_impl);
     let (target_trait_ref, obligations) = impl_trait_ref_and_oblig(selcx,
                                                                    target_impl,
-                                                                   &target_substs);
+                                                                   target_substs);
 
     // do the impls unify? If not, no specialization.
     if let Err(_) = infcx.eq_trait_refs(true,
@@ -207,29 +241,34 @@ fn fulfill_implication<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
     // attempt to prove all of the predicates for impl2 given those for impl1
     // (which are packed up in penv)
 
-    let mut fulfill_cx = FulfillmentContext::new();
-    for oblig in obligations.into_iter() {
-        fulfill_cx.register_predicate_obligation(&infcx, oblig);
-    }
+    infcx.save_and_restore_obligations_in_snapshot_flag(|infcx| {
+        let mut fulfill_cx = FulfillmentContext::new();
+        for oblig in obligations.into_iter() {
+            fulfill_cx.register_predicate_obligation(&infcx, oblig);
+        }
+        match fulfill_cx.select_all_or_error(infcx) {
+            Err(errors) => {
+                // no dice!
+                debug!("fulfill_implication: for impls on {:?} and {:?}, \
+                        could not fulfill: {:?} given {:?}",
+                       source_trait_ref,
+                       target_trait_ref,
+                       errors,
+                       infcx.parameter_environment.caller_bounds);
+                Err(())
+            }
 
-    if let Err(errors) = infcx.drain_fulfillment_cx(&mut fulfill_cx, &()) {
-        // no dice!
-        debug!("fulfill_implication: for impls on {:?} and {:?}, could not fulfill: {:?} given \
-                {:?}",
-               source_trait_ref,
-               target_trait_ref,
-               errors,
-               infcx.parameter_environment.caller_bounds);
-        Err(())
-    } else {
-        debug!("fulfill_implication: an impl for {:?} specializes {:?}",
-               source_trait_ref,
-               target_trait_ref);
+            Ok(()) => {
+                debug!("fulfill_implication: an impl for {:?} specializes {:?}",
+                       source_trait_ref,
+                       target_trait_ref);
 
-        // Now resolve the *substitution* we built for the target earlier, replacing
-        // the inference variables inside with whatever we got from fulfillment.
-        Ok(infcx.resolve_type_vars_if_possible(&target_substs))
-    }
+                // Now resolve the *substitution* we built for the target earlier, replacing
+                // the inference variables inside with whatever we got from fulfillment.
+                Ok(infcx.resolve_type_vars_if_possible(&target_substs))
+            }
+        }
+    })
 }
 
 pub struct SpecializesCache {

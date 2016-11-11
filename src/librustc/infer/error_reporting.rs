@@ -82,7 +82,6 @@ use hir::def::Def;
 use hir::def_id::DefId;
 use infer::{self, TypeOrigin};
 use middle::region;
-use ty::subst;
 use ty::{self, TyCtxt, TypeFoldable};
 use ty::{Region, ReFree};
 use ty::error::TypeError;
@@ -100,12 +99,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn note_and_explain_region(self,
                                    err: &mut DiagnosticBuilder,
                                    prefix: &str,
-                                   region: ty::Region,
+                                   region: &'tcx ty::Region,
                                    suffix: &str) {
         fn item_scope_tag(item: &hir::Item) -> &'static str {
             match item.node {
                 hir::ItemImpl(..) => "impl",
                 hir::ItemStruct(..) => "struct",
+                hir::ItemUnion(..) => "union",
                 hir::ItemEnum(..) => "enum",
                 hir::ItemTrait(..) => "trait",
                 hir::ItemFn(..) => "function body",
@@ -121,7 +121,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
              Some(span))
         }
 
-        let (description, span) = match region {
+        let (description, span) = match *region {
             ty::ReScope(scope) => {
                 let new_string;
                 let unknown_scope = || {
@@ -140,9 +140,9 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     Some(ast_map::NodeExpr(expr)) => match expr.node {
                         hir::ExprCall(..) => "call",
                         hir::ExprMethodCall(..) => "method call",
-                        hir::ExprMatch(_, _, hir::MatchSource::IfLetDesugar { .. }) => "if let",
-                        hir::ExprMatch(_, _, hir::MatchSource::WhileLetDesugar) =>  "while let",
-                        hir::ExprMatch(_, _, hir::MatchSource::ForLoopDesugar) =>  "for",
+                        hir::ExprMatch(.., hir::MatchSource::IfLetDesugar { .. }) => "if let",
+                        hir::ExprMatch(.., hir::MatchSource::WhileLetDesugar) =>  "while let",
+                        hir::ExprMatch(.., hir::MatchSource::ForLoopDesugar) =>  "for",
                         hir::ExprMatch(..) => "match",
                         _ => "expression",
                     },
@@ -406,12 +406,12 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         }
 
         fn free_regions_from_same_fn<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
-                                                     sub: Region,
-                                                     sup: Region)
+                                                     sub: &'tcx Region,
+                                                     sup: &'tcx Region)
                                                      -> Option<FreeRegionsFromSameFn> {
             debug!("free_regions_from_same_fn(sub={:?}, sup={:?})", sub, sup);
             let (scope_id, fr1, fr2) = match (sub, sup) {
-                (ReFree(fr1), ReFree(fr2)) => {
+                (&ReFree(fr1), &ReFree(fr2)) => {
                     if fr1.scope != fr2.scope {
                         return None
                     }
@@ -488,10 +488,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 // if they are both "path types", there's a chance of ambiguity
                 // due to different versions of the same crate
                 match (&exp_found.expected.sty, &exp_found.found.sty) {
-                    (&ty::TyEnum(ref exp_adt, _), &ty::TyEnum(ref found_adt, _)) |
-                    (&ty::TyStruct(ref exp_adt, _), &ty::TyStruct(ref found_adt, _)) |
-                    (&ty::TyEnum(ref exp_adt, _), &ty::TyStruct(ref found_adt, _)) |
-                    (&ty::TyStruct(ref exp_adt, _), &ty::TyEnum(ref found_adt, _)) => {
+                    (&ty::TyAdt(exp_adt, _), &ty::TyAdt(found_adt, _)) => {
                         report_path_match(err, exp_adt.did, found_adt.did);
                     },
                     _ => ()
@@ -524,6 +521,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     pub fn note_type_err(&self,
                          diag: &mut DiagnosticBuilder<'tcx>,
                          origin: TypeOrigin,
+                         secondary_span: Option<(Span, String)>,
                          values: Option<ValuePairs<'tcx>>,
                          terr: &TypeError<'tcx>)
     {
@@ -549,11 +547,25 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             };
 
             if !is_simple_error {
-                diag.note_expected_found(&"type", &expected, &found);
+                if expected == found {
+                    if let &TypeError::Sorts(ref values) = terr {
+                        diag.note_expected_found_extra(
+                            &"type", &expected, &found,
+                            &format!(" ({})", values.expected.sort_string(self.tcx)),
+                            &format!(" ({})", values.found.sort_string(self.tcx)));
+                    } else {
+                        diag.note_expected_found(&"type", &expected, &found);
+                    }
+                } else {
+                    diag.note_expected_found(&"type", &expected, &found);
+                }
             }
         }
 
         diag.span_label(span, &terr);
+        if let Some((sp, msg)) = secondary_span {
+            diag.span_label(sp, &msg);
+        }
 
         self.note_error_origin(diag, &origin);
         self.check_and_note_conflicting_crates(diag, terr, span);
@@ -570,7 +582,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             self.tcx.sess, trace.origin.span(), E0308,
             "{}", trace.origin.as_failure_str()
         );
-        self.note_type_err(&mut diag, trace.origin, Some(trace.values), terr);
+        self.note_type_err(&mut diag, trace.origin, None, Some(trace.values), terr);
         diag
     }
 
@@ -599,7 +611,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     fn report_generic_bound_failure(&self,
                                     origin: SubregionOrigin<'tcx>,
                                     bound_kind: GenericKind<'tcx>,
-                                    sub: Region)
+                                    sub: &'tcx Region)
     {
         // FIXME: it would be better to report the first error message
         // with the span of the parameter itself, rather than the span
@@ -613,7 +625,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 format!("the associated type `{}`", p),
         };
 
-        let mut err = match sub {
+        let mut err = match *sub {
             ty::ReFree(ty::FreeRegion {bound_region: ty::BrNamed(..), ..}) => {
                 // Does the required lifetime have a nice name we can print?
                 let mut err = struct_span_err!(self.tcx.sess,
@@ -664,8 +676,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     fn report_concrete_failure(&self,
                                origin: SubregionOrigin<'tcx>,
-                               sub: Region,
-                               sup: Region)
+                               sub: &'tcx Region,
+                               sup: &'tcx Region)
                                 -> DiagnosticBuilder<'tcx> {
         match origin {
             infer::Subtype(trace) => {
@@ -936,9 +948,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     fn report_sub_sup_conflict(&self,
                                var_origin: RegionVariableOrigin,
                                sub_origin: SubregionOrigin<'tcx>,
-                               sub_region: Region,
+                               sub_region: &'tcx Region,
                                sup_origin: SubregionOrigin<'tcx>,
-                               sup_region: Region) {
+                               sup_region: &'tcx Region) {
         let mut err = self.report_inference_failure(var_origin);
 
         self.tcx.note_and_explain_region(&mut err,
@@ -1027,7 +1039,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                     = node_inner.expect("expect item fn");
         let rebuilder = Rebuilder::new(self.tcx, fn_decl, generics, same_regions, &life_giver);
         let (fn_decl, generics) = rebuilder.rebuild();
-        self.give_expl_lifetime_param(err, &fn_decl, unsafety, constness, name, &generics, span);
+        self.give_expl_lifetime_param(
+            err, &fn_decl, unsafety, constness, name, &generics, span);
     }
 
     pub fn issue_32330_warnings(&self, span: Span, issue32330s: &[ty::Issue32330]) {
@@ -1294,6 +1307,7 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
             lifetimes: lifetimes.into(),
             ty_params: ty_params,
             where_clause: where_clause,
+            span: generics.span,
         }
     }
 
@@ -1365,11 +1379,12 @@ impl<'a, 'gcx, 'tcx> Rebuilder<'a, 'gcx, 'tcx> {
                 }
                 hir::TyPath(ref maybe_qself, ref path) => {
                     match self.tcx.expect_def(cur_ty.id) {
-                        Def::Enum(did) | Def::TyAlias(did) | Def::Struct(did) => {
-                            let generics = self.tcx.lookup_item_type(did).generics;
+                        Def::Enum(did) | Def::TyAlias(did) |
+                        Def::Struct(did) | Def::Union(did) => {
+                            let generics = self.tcx.lookup_generics(did);
 
                             let expected =
-                                generics.regions.len(subst::TypeSpace) as u32;
+                                generics.regions.len() as u32;
                             let lifetimes =
                                 path.segments.last().unwrap().parameters.lifetimes();
                             let mut insert = Vec::new();
@@ -1780,7 +1795,7 @@ fn lifetimes_in_scope<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
     let method_id_opt = match tcx.map.find(parent) {
         Some(node) => match node {
             ast_map::NodeItem(item) => match item.node {
-                hir::ItemFn(_, _, _, _, ref gen, _) => {
+                hir::ItemFn(.., ref gen, _) => {
                     taken.extend_from_slice(&gen.lifetimes);
                     None
                 },
@@ -1804,7 +1819,7 @@ fn lifetimes_in_scope<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
         if let Some(node) = tcx.map.find(parent) {
             match node {
                 ast_map::NodeItem(item) => match item.node {
-                    hir::ItemImpl(_, _, ref gen, _, _, _) => {
+                    hir::ItemImpl(_, _, ref gen, ..) => {
                         taken.extend_from_slice(&gen.lifetimes);
                     }
                     _ => ()

@@ -29,6 +29,7 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use core::char::CharExt as C;
+use core::iter::FusedIterator;
 use core::fmt;
 use tables::{conversions, derived_property, general_category, property};
 
@@ -39,6 +40,8 @@ pub use core::char::{MAX, from_digit, from_u32, from_u32_unchecked};
 pub use core::char::{EncodeUtf16, EncodeUtf8, EscapeDebug, EscapeDefault, EscapeUnicode};
 
 // unstable reexports
+#[unstable(feature = "try_from", issue = "33417")]
+pub use core::char::CharTryFromError;
 #[unstable(feature = "decode_utf8", issue = "33906")]
 pub use core::char::{DecodeUtf8, decode_utf8};
 #[unstable(feature = "unicode", issue = "27783")]
@@ -62,6 +65,9 @@ impl Iterator for ToLowercase {
     }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl FusedIterator for ToLowercase {}
+
 /// Returns an iterator that yields the uppercase equivalent of a `char`.
 ///
 /// This `struct` is created by the [`to_uppercase()`] method on [`char`]. See
@@ -80,6 +86,8 @@ impl Iterator for ToUppercase {
     }
 }
 
+#[unstable(feature = "fused", issue = "35602")]
+impl FusedIterator for ToUppercase {}
 
 enum CaseMappingIter {
     Three(char, char, char),

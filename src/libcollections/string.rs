@@ -57,7 +57,7 @@
 
 use core::fmt;
 use core::hash;
-use core::iter::FromIterator;
+use core::iter::{FromIterator, FusedIterator};
 use core::mem;
 use core::ops::{self, Add, AddAssign, Index, IndexMut};
 use core::ptr;
@@ -132,7 +132,7 @@ use boxed::Box;
 /// [`OsString`]: ../../std/ffi/struct.OsString.html
 ///
 /// Indexing is intended to be a constant-time operation, but UTF-8 encoding
-/// does not allow us to do this. Furtheremore, it's not clear what sort of
+/// does not allow us to do this. Furthermore, it's not clear what sort of
 /// thing the index should return: a byte, a codepoint, or a grapheme cluster.
 /// The [`as_bytes()`] and [`chars()`] methods return iterators over the first
 /// two, respectively.
@@ -1567,6 +1567,7 @@ impl_eq! { Cow<'a, str>, String }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Default for String {
+    /// Creates an empty `String`.
     #[inline]
     fn default() -> String {
         String::new()
@@ -1975,3 +1976,6 @@ impl<'a> DoubleEndedIterator for Drain<'a> {
         self.iter.next_back()
     }
 }
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a> FusedIterator for Drain<'a> {}
