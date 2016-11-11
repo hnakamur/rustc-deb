@@ -78,7 +78,7 @@ ifeq (0,$(shell ls -1 dl/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l))
         ifeq (1.12.0,$(shell /usr/bin/rustc --version --verbose | sed -ne 's/^release: //p'))
             PRECONFIGURE_CHECK = debian/ensure-patch -N debian/patches/rust-boot-1.12.1-from-1.12.0.diff
         else
-            PRECONFIGURE_CHECK = debian/ensure-patch -R debian/patches/rust-boot-1.12.1-from-1.12.0.diff
+            PRECONFIGURE_CHECK =
         endif
     endif
     #
